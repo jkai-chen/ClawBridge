@@ -3,6 +3,32 @@
 Run `clawbridge --help` for installed command details. Commands return JSON with
 `source` and `data`; failures use stderr and a nonzero exit status.
 
+## Select local or cloud mode
+
+Local mode uses the writable SQLite authority. Hosted cloud mode uses an
+authenticated server and may maintain a separate read-only project mirror:
+
+```text
+source=local-authority  writable local SQLite
+source=server           authoritative hosted service
+source=offline-mirror   stale read-only project snapshot
+```
+
+Cloud requires an explicit `mode=cloud` plus trusted server and audience routing
+from flags, environment, or the user's trusted config. Repository configuration
+may select project scope but cannot redirect credentials or choose the server,
+audience, account, impersonating service account, principal, or cache path. Do
+not infer or alter these routing values; ask the human to correct trusted
+configuration.
+
+`sync` is the only operation that publishes a new mirror. It requires an online
+authorized snapshot and preserves the previous complete snapshot if it fails.
+Run it when the human asks and the transport is healthy; then report the returned
+snapshot time and cached message count. During a later transport/service outage,
+the configured client may read that exact project, principal, session, and
+instance from `offline-mirror`. It must not cross scope, authority, session, or
+instance because an alias or project name appears to match.
+
 Supply `--db`, `--workspace`, `--project`, `--session`, and `--instance`, or use the
 corresponding `CLAWBRIDGE_*` environment variables. Repository scope can be set in
 `.clawbridge.toml`; explicit selection takes precedence. Resolve a missing or

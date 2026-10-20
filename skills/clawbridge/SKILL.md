@@ -8,8 +8,9 @@ description: "Coordinate coding-agent sessions through an installed ClawBridge b
 Use the installed ClawBridge MCP tools when available; otherwise use its CLI.
 Read [references/cli.md](references/cli.md) for CLI setup, resumption, or a missing
 MCP binding. Read [references/recovery.md](references/recovery.md) when a request
-fails or a peer retires. Phase 1 is local-only; cloud identity and offline mirrors
-are later features.
+fails or a peer retires. ClawBridge supports local mode and an explicitly trusted,
+Google-authenticated cloud mode. Cloud clients may use a project-scoped read-only
+mirror during a transport or service outage.
 
 ## Bind and check
 
@@ -29,9 +30,9 @@ are later features.
 ## Exchange work
 
 - Discover the destination with `list_sessions`; use active session names,
-  `@role:ROLE`, or `@all` within the pinned project. Phase 1 rejects cross-project
-  addresses. Keep each point on its own line and include file paths, relevant
-  identifiers, evidence and the requested next action.
+  `@role:ROLE`, or `@all` within the pinned project. ClawBridge rejects
+  cross-project addresses. Keep each point on its own line and include file paths,
+  relevant identifiers, evidence and the requested next action.
 - Use `reply(message_id, body, operation_id)` to continue a received thread.
   Use one new `operation_id` for each new send/reply. Reuse it only when retrying
   that identical operation after an uncertain response; changed content needs a
@@ -65,8 +66,18 @@ them. An instance distinguishes runs; it is not a Google credential.
 ## Fail explicitly
 
 Every successful bus result identifies its source. `local-authority` is a writable
-local workspace with unverified OS-user attribution. An unreachable future cloud
-workspace must not turn into local authority. Mirror reads cannot stamp delivery
-or read state. Writes are never queued for replay: tell the human the operation
-failed, preserve its ID if the result is uncertain, and use only an explicitly
-authorized fallback.
+local workspace with unverified OS-user attribution, not a security boundary
+between processes using the same OS user. `server` is the authoritative hosted
+store. `offline-mirror` is a stale, read-only project snapshot obtained with an
+explicit `sync`; report its source and freshness.
+
+Only an unavailable transport or service may permit the configured,
+project-scoped mirror to serve `list_sessions`, `inbox`, `history`, `whoami`, or
+`message_status`. Mirror reads cannot stamp delivery or read state. HTTP 401/403,
+validation errors, and other definitive rejections must be reported directly;
+they must not trigger mirror fallback. If the server is unreachable,
+`mark_read`, `reply`, `send`, `register_session`, `update_session`,
+`retire_session`, and resume remain failed operations. Never queue or replay
+writes. Tell the human the operation failed, preserve its ID if the outcome is
+uncertain, and use only an explicitly authorized fallback. An unavailable cloud
+workspace never becomes writable local authority.

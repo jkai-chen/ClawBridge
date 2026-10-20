@@ -283,3 +283,24 @@ required doctor checks passed. The deployment runbook and reviewer report own
 exact artifact, backup and independent postdeployment evidence. Prior live Google
 consent evidence remains separate from the synthetic same-config transition
 tests; no new consent or broader platform claims are implied by this deployment.
+
+### Boot-disk maintenance and session limits
+
+The owner authorized boot-disk cleanup after deployment. Engineer owns the
+inventory and removal of disposable caches and temporary transfer artifacts;
+reviewer independently checks targets and retained resources, then service and
+storage health. Preserve containers, database/Caddy volumes, current and rollback
+images, recovery sources, private environment and backup artifacts. Root owns
+documentation reconciliation and publication of the resulting evidence.
+
+The owner explicitly directs all three sessions to wait for the reset and
+continue if a ChatGPT usage limit is reached. Preserve progress and ownership
+across the wait; a usage-limit interruption does not cancel the authorized task.
+
+Engineer inventoried cleanup targets and reviewer independently approved them.
+An Orca queued-question state blocked follow-up prompts to engineer; root
+therefore performed only the agreed cache/package/exact-transfer-archive cleanup.
+Boot-disk usage fell from 97% (329 MB free) to 38% (5.7 GB free), while all five
+containers, seven images and four volumes remained. No restart or disk expansion
+was needed. The deployment runbook records commands and retained-resource checks;
+the reviewer report records independent post-cleanup verification.

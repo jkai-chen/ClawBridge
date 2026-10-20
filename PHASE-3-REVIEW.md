@@ -1530,3 +1530,41 @@ provide the additional deployment correspondence checked here. These checks do
 not assert image reproducibility or a new end-user OAuth transition. Prior live
 and operational limits remain as documented above. No implementation/deployment
 changes, staging or commits were performed by the reviewer.
+
+
+### Independent boot-disk cleanup verification — PASS, 20 October 2026 22:36 UTC
+
+Owner-authorized targets were reviewed before deletion: inactive Docker builder
+cache (no active build), downloaded APT packages, and the exact checksum-verified
+`/tmp/clawbridge-f913ffa80443.tar.gz` transfer archive. No objection. Root
+performed those three agreed operations after engineer messaging became blocked;
+the reviewer performed only read-only VM/HTTPS checks and this report edit.
+
+Independent IAP SSH baseline at 22:32 UTC and after-state at 22:34:47 UTC:
+
+| Check | Independent result |
+| --- | --- |
+| Boot filesystem | **Pass**: 97% used / 329 MB free -> 38% used / 5.7 GB free |
+| Persistent data filesystem | **Pass**: `/dev/sdb`, 49 MB used / 1%, unchanged; mount predicate succeeds |
+| Containers | **Pass**: all five exact IDs unchanged; Phase 3 API/Caddy running, both databases healthy, Phase 2 API remains stopped |
+| Images and volumes | **Pass**: all seven exact image IDs retained, including dangling rollback images; all four volume names retained, including the anonymous volume |
+| Data and recovery | **Pass**: DB/Caddy bind/volume paths unchanged; all four repo/current/recovery directories remain; SQL counts `1/1/5/4` |
+| Deployed implementation | **Pass**: marker remains `f913ffa80443a47bf0faa62b55936a14802c570e`; all four final PASS source fingerprints match |
+| Private environment | **Pass**: mode 0600 and stable environment-file symlink intact; no contents printed |
+| Backup and mount readiness | **Pass**: Docker active, timer active/enabled with next 02:30 UTC deadline; last backup `Result=success`, `ExecMainStatus=0`; loaded Docker mount guard remains present; executable installed runner matches repository runner SHA-256; Compose file present |
+| Backup objects | **Pass**: read-only `sudo gcloud storage ls` confirms all four documented dump/checksum pairs remain (`215100Z`, `215427Z`, `222251Z`, `222706Z` on 20 October) |
+| Disposable targets | **Pass**: APT archives now 16 KB; the previously validated exact transfer archive is absent as intended |
+
+Focused command:
+`CLAWBRIDGE_TEST_PUBLIC_URL=https://34-142-66-102.sslip.io go test ./integration -run '^TestDeploymentLiveHTTPSContract$' -count=1 -v`
+**Pass**, integration 0.530s: exact four nonempty config fields, no-store/JSON,
+unauthenticated execute **401** / `unauthenticated`. Independent Python TLS/health
+read also **Pass**: verified TLS 1.3 with hostname checking, `/healthz` **200** and
+expected JSON. No installed-app credential values were printed or recorded.
+
+Reread root's `deploy/README.md` cleanup section: consistent with independent
+observations and correctly attributes removal to root. The deleted transfer copy
+was validated before deletion; future verification uses current sources, marker
+and image, not the now-removed temporary archive. No heavy suite, service restart,
+new backup execution, restore, reboot or consent was performed by the reviewer.
+Prior platform/operational limits remain unchanged.

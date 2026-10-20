@@ -638,9 +638,107 @@ successfully (SHA-256
 Both use the existing `clawbridge-backups-claw-bridge-dev` bucket. This update
 reused the earlier isolated restore proof; it did not repeat a restore or reboot.
 
-Material capacity limit: the 9.7 GiB boot filesystem was 97% used with about
+Capacity at deployment: the 9.7 GiB boot filesystem was 97% used with about
 329 MiB free after the successful build. All existing images, volumes and recovery
 sources were preserved; no pruning, disk expansion, new resources or IAM grants
 were performed. Future builds need a deliberate capacity check; if native builds
 cannot fit, use an exact-SHA locally built Linux image/binary preserving the
 reviewed Dockerfile runtime guarantees rather than deleting recovery artifacts.
+
+### Boot-disk cleanup — 2026-10-20 22:34 UTC
+
+The owner authorized cleanup of the pilot boot disk. Engineer inventoried usage
+and proposed inactive Docker build cache, downloaded APT packages and the verified
+transfer archive. Reviewer independently approved these targets and captured the
+retained-resource baseline. An Orca queued-question state blocked further prompts
+to the engineer, so root executed the agreed operational cleanup directly.
+
+Before cleanup, Docker reported 42 inactive build-cache records (4.955 GB),
+APT archives occupied 206 MB, and `/` had only 329 MB free (97% used). Root
+confirmed no active build processes and compared the transfer archive against
+the recorded SHA-256 before running only:
+
+```sh
+sudo docker builder prune --all --force
+sudo apt-get clean
+sudo rm -- /tmp/clawbridge-f913ffa80443.tar.gz
+```
+
+Builder pruning reported 5.086 GB reclaimed. After cleanup, `/dev/sda1` was
+38% used with 5.7 GB available; Docker build cache was zero and APT archives
+were 16 KB. The data disk remained 1% used (49 MB). All five exact container IDs,
+seven image IDs (including dangling rollback images), and four volume names
+(including the anonymous volume) matched the baseline. No service was restarted.
+Current and recovery sources, private environment, database/Caddy volumes,
+backups and journals were preserved. The removed archive is reproducible from
+the published commit; its earlier checksum evidence remains historical.
+
+Root verified the deployed marker remains `f913ffa80443a47bf0faa62b55936a14802c570e`,
+the persistent mount and four source/recovery directories remain present, and
+the private environment remains mode 0600 with the stable symlink. Docker and
+the backup timer remained active; the timer remained enabled, the last backup
+service result was success and the installed backup runner remained executable.
+Postgres row counts remained `1/1/5/4` (workspaces/projects/sessions/messages).
+An authenticated read-only `whoami` through the existing explicit operator
+impersonation route returned `source=server`, verified Google identity and the
+expected pilot/project. This did not repeat end-user OAuth consent.
+Independent post-cleanup verification is recorded in PHASE-3-REVIEW.md.
+
+Check `df -h /` and `docker system df` before future builds. Inactive builder
+cache and package downloads can be regenerated; remove them only when no build
+is active. Do not substitute `docker system prune`, image pruning or volume
+pruning: retained recovery images and database volumes may appear unused.
+No scheduled cleanup, disk expansion or additional billed resource was added.
+
+### Boot-disk disposable-cache cleanup — 2026-10-20 22:35 UTC
+
+The owner authorized boot-disk inspection and cleanup after the reviewed deploy.
+The initial read-only inventory showed `/dev/sda1` (9.7 GiB) at 97% used:
+8.8 GiB used, 329 MiB available. The separate database disk remained 20 GiB with
+49 MiB used. `docker system df` showed 42 inactive build-cache records with
+4.955 GB reclaimable private cache (builder inventory including shared data:
+5.086 GB); downloaded APT archives were 206 MiB (33 `.deb` files,
+215,433,248 bytes). APT lists were 161 MiB, journals 24 MiB and container logs
+about 240 KiB. These latter small/diagnostic caches were left alone.
+
+The proposed exact targets were sent for reviewer inspection before cleanup:
+`sudo docker builder prune --all --force` (build cache only),
+`sudo apt-get clean` (downloaded package archives), and only the known transfer
+copy `/tmp/clawbridge-f913ffa80443.tar.gz` after checksum comparison. No
+system/image/volume prune was authorized or used. The archive checksum had been
+verified as `95cbed36b52ef2e5f6e51385cfddf551ef9959e7e81733a58fb3fc9cbe0aea52`.
+The uncertain `/tmp/clawbridge-postboot-ops.sh` and all other temp files were
+left alone. Reviewer tool delivery disconnected; the exact candidate inventory
+was also surfaced to the coordinator.
+
+Attribution limit: the engineer cleanup invocation reported `Total: 0B` from
+builder pruning, completed `apt-get clean`, then stopped safely at its checksum
+precondition because the transfer archive was already absent. A subsequent
+read-only inventory established that the build cache had already become empty
+between initial inspection and that invocation. The engineer did not execute the
+following archive `rm`. The precise reclaiming invocation is not established by
+this engineer transcript; do not attribute a 5 GB deletion to its zero-byte
+prune result. No further deletion was needed.
+
+The final inventory showed 38% boot usage: 3.5 GiB used and 5.7 GiB available,
+comfortably above the 20% free target. Build cache was zero and APT archives
+16 KiB. All seven image IDs, five container IDs, four volume names, source and
+recovery directory names, container start timestamps and restart counts compared
+identically against the pre-cleanup baseline. Protected private-env and deployed
+SHA checksums also matched (private checksums were not printed). Thus current
+and rollback images, the stopped Phase 2 API, both databases, Caddy volumes,
+recovery sources and credentials were preserved. No service restart, disk
+expansion, new resources or IAM grants occurred.
+
+Focused engineer post-cleanup verification passed: HTTPS health 200, exact four
+nonempty config fields without printing values, unauthenticated execute 401,
+and authenticated read-only whoami with `source=server` through the existing
+explicit impersonation route. Database counts remained 1 workspace / 1 project /
+5 sessions / 4 messages. Docker and the backup timer were active; the latest
+backup service result remained successful, the runner executable and stable env
+readable, with `CLAWBRIDGE_DEPLOY_DIR=/opt/clawbridge/repo`. The Docker mount-guard
+drop-in remained installed and `/dev/sdb` remained mounted at
+`/var/lib/clawbridge-postgres`. Backup readiness was checked without creating an
+extra dump, restart, reboot or restore drill. Reviewer was notified for
+independent read-only capacity/resource/HTTPS/readiness checks. No heavy tests,
+new consent, staging or commit were performed for this maintenance.

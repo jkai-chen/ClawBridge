@@ -28,6 +28,12 @@ type TokenSourceFunc func(context.Context) (string, error)
 
 func (f TokenSourceFunc) Token(ctx context.Context) (string, error) { return f(ctx) }
 
+// credentialError is a definitive local credential failure, not a server outage.
+// It prevents reads from silently falling back to an unrelated cached view.
+type credentialError struct{ error }
+
+func (e *credentialError) Unwrap() error { return e.error }
+
 // GcloudTokenSource never persists tokens. Its explicit selection avoids silently
 // borrowing the default project/account or misattributing a shared service account.
 type GcloudTokenSource struct {
@@ -44,13 +50,13 @@ func (s *GcloudTokenSource) Token(ctx context.Context) (string, error) {
 		return s.token, nil
 	}
 	if s.Account == "" || s.Audience == "" {
-		return "", errors.New("select an explicit Google account and audience before cloud requests")
+		return "", &credentialError{errors.New("select an explicit Google account and audience before cloud requests")}
 	}
 	if s.ImpersonateServiceAccount == "" {
-		return "", errors.New("audience-bound gcloud credentials require an explicitly selected impersonation service account; generic human development tokens are unsupported")
+		return "", &credentialError{errors.New("audience-bound gcloud credentials require an explicitly selected impersonation service account; generic human development tokens are unsupported")}
 	}
 	if s.Account == s.ImpersonateServiceAccount {
-		return "", errors.New("self-impersonation is not supported; select the initiating human or workload account")
+		return "", &credentialError{errors.New("self-impersonation is not supported; select the initiating human or workload account")}
 	}
 	args := []string{"auth", "print-identity-token", "--quiet", "--account", s.Account, "--audiences", s.Audience, "--impersonate-service-account", s.ImpersonateServiceAccount, "--include-email"}
 	bounded, cancel := context.WithTimeout(ctx, 12*time.Second)
@@ -60,11 +66,11 @@ func (s *GcloudTokenSource) Token(ctx context.Context) (string, error) {
 	cmd.Stderr = &stderr
 	raw, err := cmd.Output()
 	if err != nil {
-		return "", errors.New("cannot obtain an audience-bound Google token; check account login, explicit impersonation permission and connectivity (no credentials logged)")
+		return "", &credentialError{errors.New("cannot obtain an audience-bound Google token; check account login, explicit impersonation permission and connectivity (no credentials logged)")}
 	}
 	token := strings.TrimSpace(string(raw))
 	if len(token) == 0 || len(token) > 16384 || strings.ContainsAny(token, " \r\n\t") {
-		return "", errors.New("gcloud returned an invalid token")
+		return "", &credentialError{errors.New("gcloud returned an invalid token")}
 	}
 	s.token = token
 	s.until = time.Now().Add(4 * time.Minute)
@@ -123,7 +129,8 @@ func (e *HTTPError) Error() string {
 func (c *Client) call(ctx context.Context, r bus.Request) (bus.Result, bool, error) {
 	token, err := c.tokens.Token(ctx)
 	if err != nil {
-		return bus.Result{}, ctx.Err() == nil, err
+		var credential *credentialError
+		return bus.Result{}, ctx.Err() == nil && !errors.As(err, &credential), err
 	}
 	if len(token) == 0 || len(token) > 16384 || strings.ContainsAny(token, " \r\n\t") {
 		return bus.Result{}, false, errors.New("invalid identity token from credential source")

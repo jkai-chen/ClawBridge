@@ -5,6 +5,13 @@ The application and Postgres run as separate services on one VM. Postgres has no
 published host port; the API publishes only on VM loopback. The distroless app runs
 as a non-root user with a read-only filesystem and no Linux capabilities.
 
+The pilot deployment uses one `g1-small` Debian VM in `europe-west2-a` with a
+10 GiB boot disk. A VM failure stops both services. There is currently no off-VM
+backup or snapshot schedule, so the named Docker volume is not a recovery plan.
+The default project network also has site-wide ICMP, RDP and broad internal rules;
+The previous world-open SSH rule was disabled. Review the inherited ICMP, RDP and
+internal rules before treating the pilot as a team service.
+
 ## Decisions before provisioning
 
 The owner selects GCP project, region/zone, machine and disk size, backup retention,
@@ -52,6 +59,10 @@ file and `deploy/compose.yaml`. This repository does not create the VM, firewall
 IAM bindings, disks or billing resources automatically. PostgreSQL should stay
 private; do not publish its port to make a connection work.
 
+Keep the repository and environment file in a private deployment directory such as
+`/opt/clawbridge`. Rebuild and recreate the API after every application commit;
+restarting a VM only restarts the existing container image.
+
 ## Connect through IAP-mediated SSH
 
 With the template's loopback-only host API, use an IAP-mediated SSH port forward:
@@ -70,6 +81,16 @@ default template. Public HTTPS requires a properly configured TLS proxy.
 
 The VM needs an approved egress path for image retrieval and Google signing-key
 refresh. Include any NAT/address/registry implications in the cost estimate.
+
+## Verified pilot state
+
+On 20 October 2026, commit `67c8935` was built on the existing
+`instance-claw-bridge-dev` VM. Real Google impersonation, token verification,
+workspace/project creation, two-session message exchange, authorization denial,
+snapshot publication and outage reads were exercised through an IAP-mediated
+loopback tunnel. A container restart preserved the Postgres volume and message
+state. This does not cover a VM or disk restore, live client model workflows or
+team-scale operation.
 
 ## Verification and limits
 

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -163,5 +164,29 @@ func TestGcloudUsesExplicitAccountAudienceAndImpersonation(t *testing.T) {
 	}
 	if _, err := (&GcloudTokenSource{Account: "human@example.test", Audience: "aud"}).Token(context.Background()); err == nil {
 		t.Fatal("generic development token path accepted")
+	}
+}
+
+func TestCredentialFailureDoesNotFallBackToMirror(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "cache.db")
+	tokens := TokenSourceFunc(func(context.Context) (string, error) {
+		return "", &credentialError{errors.New("local credential unavailable")}
+	})
+	client, err := NewWithTokenSource(Config{
+		URL:       "http://127.0.0.1:1",
+		Audience:  "audience",
+		Principal: "alice@example.test",
+		CachePath: path,
+	}, tokens)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = client.Execute(context.Background(), bus.Request{Operation: "inbox", Workspace: "w", Project: "p", Session: "worker", Args: map[string]any{"instance": "instance-1"}})
+	if err == nil || strings.Contains(err.Error(), "mirror") {
+		t.Fatalf("credential failure attempted mirror fallback: %v", err)
+	}
+	var credential *credentialError
+	if !errors.As(err, &credential) {
+		t.Fatalf("credential error classification lost: %v", err)
 	}
 }

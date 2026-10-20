@@ -711,13 +711,15 @@ The uncertain `/tmp/clawbridge-postboot-ops.sh` and all other temp files were
 left alone. Reviewer tool delivery disconnected; the exact candidate inventory
 was also surfaced to the coordinator.
 
-Attribution limit: the engineer cleanup invocation reported `Total: 0B` from
+Engineer follow-up: the engineer cleanup invocation reported `Total: 0B` from
 builder pruning, completed `apt-get clean`, then stopped safely at its checksum
 precondition because the transfer archive was already absent. A subsequent
 read-only inventory established that the build cache had already become empty
 between initial inspection and that invocation. The engineer did not execute the
-following archive `rm`. The precise reclaiming invocation is not established by
-this engineer transcript; do not attribute a 5 GB deletion to its zero-byte
+following archive `rm`. Root's earlier 22:34:14 UTC invocation, recorded in the
+preceding section and independently reconciled by reviewer, accounts for the
+reclaimed cache and removed archive. The engineer's later invocation was an
+empty-cache recheck; do not attribute the 5.086 GB reclamation to its zero-byte
 prune result. No further deletion was needed.
 
 The final inventory showed 38% boot usage: 3.5 GiB used and 5.7 GiB available,

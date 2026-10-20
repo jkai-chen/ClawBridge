@@ -234,7 +234,7 @@ conformance limit; see docs/CLIENT-CHECKS.md and REVIEW.md.
 
 # Phase 2 hosted contract
 
-Status: implemented and source frozen for reviewer final checks. Local behavior
+Status: implemented and accepted by the reviewer. Local behavior
 above remains supported. New dependencies: pgx v5.11.0 and Google API v0.305.0;
 Go >=1.26 is required (local toolchain 1.27).
 

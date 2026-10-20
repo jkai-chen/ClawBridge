@@ -1,11 +1,12 @@
 # Phase 2 independent review
 
-Status: **Fail — one open shipped-documentation defect; Phase 2 implementation
-checks pass.** Reviewer: cb-tester-reviewer. Final checkpoint: 20 October 2026.
-Baseline main 4c66800. Phase 1 REVIEW.md remains historical and unchanged.
+Status: **Pass — Phase 2 local automated acceptance complete. No open reproduced
+defects.** Reviewer: cb-tester-reviewer. Final checkpoint: 20 October 2026.
+Baseline main 4c66800; accepted Phase 2 implementation commit 91b6618 and
+documentation fix 4d08718. Phase 1 REVIEW.md remains historical and unchanged.
 
 Reviewer owns `integration/**`, this report, the disposable Postgres lifecycle and
-final full/race/vet/cross-build checks. All five defects independently found in
+final full/race/vet/cross-build checks. All six defects independently found in
 Phase 2 were fixed by their owners and independently reproduced as passing.
 No implementation files, real user configurations or credentials were edited or
 used. No cloud resource, IAM grant, deployment, paid service or agent model request
@@ -34,6 +35,22 @@ DSNs were never checked in or written to this report.
 | Full test/race/vet/cross builds | Pass | Final uncached full and race suites, vet, and three CGO-disabled builds all pass |
 | Cleanup | Pass | Both final runner containers and their anonymous volumes confirmed absent |
 
+Exact final command results against frozen code:
+
+| Command | Result |
+| --- | --- |
+| `integration/run-postgres.sh go test ./... -count=1` | PASS; integration 11.526s, bus 0.662s, CLI 1.503s, install 0.350s, MCP 0.352s, remote 0.348s |
+| `integration/run-postgres.sh go test -race ./... -count=1` | PASS; integration 14.753s, bus 2.559s, CLI 3.429s, install 1.434s, MCP 1.470s, remote 1.787s |
+| `go vet ./...` | PASS, no findings |
+| `CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build ./cmd/clawbridge` | PASS; Mach-O arm64 output verified |
+| `CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build ./cmd/clawbridge` | PASS; statically linked ELF x86-64 output verified |
+| `CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build ./cmd/clawbridge` | PASS; PE32+ x86-64 output verified |
+
+The two full-suite PG runs reported `psql (PostgreSQL) 17.11` and
+`CLAWBRIDGE_REQUIRE_POSTGRES=1`; the test fixture fails rather than skips when a
+required DSN is absent. Cross-build artifacts were compiled, inspected by `file`
+and not executed off-host.
+
 ## Acceptance matrix
 
 | Area | State | Required evidence |
@@ -44,18 +61,21 @@ DSNs were never checked in or written to this report.
 | Isolation | Pass | Duplicate names/slugs across projects/workspaces, foreign message IDs and concurrent principal state remain isolated |
 | Transactions/replay | Pass | Concurrent identical sends produce one logical send; mismatched replay refused; injected fanout failure rolls back fully |
 | Snapshot privacy | Pass | Only bound session's received bodies and own sent metadata; no other inbox/body; no delivery/read stamping |
+| Snapshot bounds/retention | Pass | Explicit failure above 10000 rows; expiry fixed at snapshot time; logical purge keeps retry tombstones |
 | HTTP Google identity | Pass | Missing/bad/wrong-audience/wrong-issuer/expired/unsigned and malformed tokens fail without execution; production path cannot disable verification |
 | HTTP input/error limits | Pass | Principal overrides rejected; request body and execution time bounded; response does not reflect tokens, SQL, DSNs or backend secrets |
 | Remote token/URL boundary | Pass | Explicit account/audience/impersonation invocation; HTTPS or loopback HTTP only; redirects not followed; client email is not authority |
 | Offline fallback | Pass | Only matching server/scope/principal/session/instance reads; freshness and `offline-mirror` source; writes refused; 401/403 never fall back |
 | Sync atomicity | Pass | Invalid or mismatched sync preserves the previous complete mirror and cannot mix authority or scope |
 | Stable pagination/state | Pass | Stable cursors avoid skips/duplicates; delivered and read are distinct; `thread_id` and immediate `reply_to` are distinct |
-| Packaged agent guidance | Fail | Current skill still labels cloud/offline mirror as future Phase 1 work |
+| Secret handling | Pass | Private-key, GitHub, AWS and OpenAI fixture patterns rejected without echo; rejected sends add no delivery or audit |
+| Retirement/successors | Pass | Self, missing, foreign and cyclic successors refused; sends to/from retired sessions fail; no silent forwarding |
+| Packaged agent guidance | Pass | Skill now describes both modes, scoped mirror outage reads, definitive-denial behavior and refused offline mutations |
 | Local compatibility | Pass | All Phase 1 tests remain in the final full and race runs |
 
 ## Reproduced defects
 
-P2-R1 through P2-R5 below are retained as historical exact reproductions. Each
+P2-R1 through P2-R6 below are retained as historical exact reproductions. Each
 was reproduced on the current source, reported to its owner, fixed without removing
 the affected capability, and independently retested. No reproduced defect remains
 open.
@@ -233,7 +253,7 @@ with access to one workspace resolves only that one. PG resume fences all old
 actor operations while preserving immutable send/retry identity. A separate temp
 Postgres schema with version99 is refused without creating application tables.
 
-## P2-R6 — Fail: packaged skill contradicts hosted Phase 2 behavior
+## P2-R6 — Resolved / retested Pass: packaged skill contradicted hosted Phase 2
 
 Owner: cb-designer (`skills/clawbridge/SKILL.md`).
 Exact repro: `rg -n 'Phase 1 is local-only|unreachable future cloud workspace'
@@ -249,6 +269,16 @@ trusted cloud configuration, permits only scoped mirror reads on transport outag
 and says writes, mark-read, resume and 401/403 failures never fall back or queue.
 The existing local-authority explanation and same-OS-user limitation should remain.
 No implementation defect or failed test is implied by this documentation finding.
+
+Retest after documentation fix 4d08718: the exact stale-claim search returns no
+matches. The skill and references now distinguish `local-authority`, `server`, and
+`offline-mirror`; bind mirror reads to the configured scope/principal/session/
+instance; require freshness reporting; reject fallback for HTTP 401/403 and other
+definitive failures; and refuse to queue offline writes, mark-read or resume.
+Frontmatter, required mode/fallback terms and both relative reference links pass
+the reviewer's deterministic checks; `git diff --check` passes. The external
+`skills-ref` validator was not available in this checkout session, so this retest
+does not claim that external validator ran.
 
 ## Final checks — Pass
 
@@ -270,8 +300,25 @@ Cleanup: container `a68a69da50ad97220eef3ae6b932c79b3bf63b8454a823d75eb5c4cfb6a2
 
 ## Verification limits
 
-Google authentication evidence uses the official verifier with intercepted
-synthetic keys. No live Google-issued token, IAP request, VM deployment, backup
-restore or billed cloud resource was exercised. The single-VM Compose template is
-reviewable but not deployed. The installed Claude client connected and discovered
-all tools; Claude tool execution and model-driven conformance remain unclaimed.
+The evidence is separated by what actually ran:
+
+- **Automated local evidence:** actual PostgreSQL 17.11 inside disposable
+  containers, the real local HTTP handler over loopback, and scoped live-sync,
+  outage, denial, mirror and CLI tests.
+- **Synthetic identity evidence:** official Google-library verification against
+  locally generated and signed fixtures, fake application identities used at
+  route boundaries, and temporary fake `gcloud` executables. These are not live
+  Google authentication, IAM validation or real `gcloud` execution.
+- **Designer-reported manual client evidence:** [docs/CLIENT-CHECKS.md](docs/CLIENT-CHECKS.md)
+  records an actual installed Codex app-server exchange (MCP send, CLI reply, MCP
+  inbox) and an actual installed Claude SDK-control connection with discovery of
+  all 11 tools. Both used isolated temporary configurations and made no model
+  requests. The reviewer did not independently rerun these manual checks.
+- **Not claimed:** live Google credentials/authentication, live IAM authorization,
+  a deployed Google VM or Compose stack, backup restore, billed cloud resources,
+  Claude tool execution through the installed client, or model-driven workflow
+  conformance.
+
+No live Google-issued token, IAP request, VM deployment, backup restore or billed
+cloud resource was exercised. The single-VM Compose template is reviewable but was
+not deployed.

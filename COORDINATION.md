@@ -73,7 +73,7 @@ scope or actor. Explicit installer names allow multiple configured agent session
 Current ownership remains with the existing coworkers; no additional agents were
 started for implementation. Installer code writes real settings only when invoked
 explicitly. No hosted resources, paid deployment, licence choice, or publication
-was made. The next hosted design work is the transport/identity experiment below.
+was made. The completed hosted transport and identity work is summarized below.
 
 ## Deployment steering
 
@@ -87,7 +87,7 @@ the local Phase 1 implementation.
 ## Phase 2 completion
 
 Hosted Postgres, verified Google identity, CLI/MCP remote execution and explicit
-read-only mirror sync are implemented. The reviewer reproduced and retested five
+read-only mirror sync are implemented. The reviewer reproduced and retested six
 defects, then completed uncached real-PostgreSQL full and race suites, vet, and
 CGO-disabled Darwin/arm64, Linux/amd64 and Windows/amd64 builds successfully.
 Exact evidence and limits are in PHASE-2-REVIEW.md. No cloud resource, IAM grant,

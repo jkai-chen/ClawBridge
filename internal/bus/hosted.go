@@ -1,0 +1,267 @@
+package bus
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+)
+
+func (s *Store) projectRole(ctx context.Context, tx *transaction, w map[string]any, pid string) (string, error) {
+	if w["owner_principal"] == s.principal {
+		return "owner", nil
+	}
+	row, err := one(ctx, tx, `SELECT role FROM project_roles WHERE project_id=? AND principal=?`, pid, s.principal)
+	if err != nil {
+		return "", scopedError(err, "project membership required", "forbidden")
+	}
+	return row["role"].(string), nil
+}
+func (s *Store) setProjectRole(ctx context.Context, tx *transaction, wid, pid string, a map[string]any) (any, error) {
+	principal, role := str(a, "principal"), str(a, "role")
+	if !validPrincipal(principal) {
+		return nil, errors.New("principal must be an email")
+	}
+	switch role {
+	case "owner", "lead", "member", "reader":
+	default:
+		return nil, errors.New("role must be owner, lead, member or reader")
+	}
+	now := stamp()
+	if _, err := tx.ExecContext(ctx, `INSERT INTO members(workspace_id,principal,added_by,added_at) VALUES(?,?,?,?) ON CONFLICT(workspace_id,principal) DO NOTHING`, wid, principal, s.principal, now); err != nil {
+		return nil, err
+	}
+	old, err := query(ctx, tx, `SELECT role FROM project_roles WHERE project_id=? AND principal=?`, pid, principal)
+	if err != nil {
+		return nil, err
+	}
+	if len(old) > 0 && old[0]["role"] == role {
+		return one(ctx, tx, `SELECT * FROM project_roles WHERE project_id=? AND principal=?`, pid, principal)
+	}
+	if _, err = tx.ExecContext(ctx, `INSERT INTO project_roles(project_id,principal,role,granted_by,granted_at) VALUES(?,?,?,?,?) ON CONFLICT(project_id,principal) DO UPDATE SET role=excluded.role,granted_by=excluded.granted_by,granted_at=excluded.granted_at`, pid, principal, role, s.principal, now); err != nil {
+		return nil, err
+	}
+	var before any
+	if len(old) > 0 {
+		before = old[0]["role"]
+	}
+	if err = s.audit(ctx, tx, wid, pid, "", "project_role", principal, "set", map[string]any{"old": before, "role": role, "principal": principal}); err != nil {
+		return nil, err
+	}
+	return one(ctx, tx, `SELECT * FROM project_roles WHERE project_id=? AND principal=?`, pid, principal)
+}
+func (s *Store) resolveInTransaction(ctx context.Context, tx *transaction, r Request) (any, error) {
+	q := `SELECT w.id AS workspace_id,p.id AS project_id FROM projects p JOIN workspaces w ON w.id=p.workspace_id WHERE `
+	args := []any{}
+	if s.postgres {
+		q += `w.mode='server' AND EXISTS(SELECT 1 FROM members m WHERE m.workspace_id=w.id AND m.principal=?) AND (w.owner_principal=? OR EXISTS(SELECT 1 FROM project_roles pr WHERE pr.project_id=p.id AND pr.principal=?))`
+		args = append(args, s.principal, s.principal, s.principal)
+	} else {
+		q += `w.mode='local' AND w.owner_principal=?`
+		args = append(args, s.principal)
+	}
+	if r.Workspace != "" {
+		q += ` AND (w.id=? OR w.name=?)`
+		args = append(args, r.Workspace, r.Workspace)
+	}
+	if r.Project != "" {
+		q += ` AND (p.id=? OR p.slug=?)`
+		args = append(args, r.Project, r.Project)
+	} else {
+		remote, err := NormalizeRemote(str(r.Args, "git_remote"))
+		if err != nil {
+			return nil, err
+		}
+		if remote == "" {
+			return nil, errors.New("project selector or registered git remote required")
+		}
+		q += ` AND p.git_remote=?`
+		args = append(args, remote)
+	}
+	rows, err := query(ctx, tx, q, args...)
+	if err != nil {
+		return nil, err
+	}
+	if len(rows) != 1 {
+		return nil, errors.New("project not found, not authorized or ambiguous; select explicit workspace and project")
+	}
+	if r.Session != "" || str(r.Args, "instance") != "" {
+		if err = s.touchReadActor(ctx, tx, rows[0]["project_id"].(string), r); err != nil {
+			return nil, err
+		}
+	}
+	return rows[0], nil
+}
+func (s *Store) snapshot(ctx context.Context, tx *transaction, w, p map[string]any, r Request) (any, error) {
+	pid := p["id"].(string)
+	if r.Session == "" || str(r.Args, "instance") == "" {
+		return nil, errors.New("snapshot requires a bound session and instance")
+	}
+	actor, err := one(ctx, tx, `SELECT * FROM sessions WHERE project_id=? AND (id=? OR name=?) AND instance=? AND owner_principal=?`, pid, r.Session, r.Session, str(r.Args, "instance"), s.principal)
+	if err != nil {
+		return nil, scopedError(err, "snapshot session ownership or instance mismatch", "forbidden")
+	}
+	sid := actor["id"].(string)
+	now := stamp()
+	if err = s.snapshotBudget(ctx, tx, w["id"].(string), pid, sid, now); err != nil {
+		return nil, err
+	}
+	datasets := map[string][]map[string]any{}
+	datasets["sessions"], err = query(ctx, tx, `SELECT * FROM sessions WHERE project_id=? ORDER BY sequence LIMIT 10001`, pid)
+	if err != nil {
+		return nil, err
+	}
+	datasets["messages"], err = query(ctx, tx, `SELECT m.sequence,m.id,m.project_id,m.source_project_id,m.sender_id,s.name AS sender,m.address,m.thread_id,m.reply_to,m.kind,m.body,m.created_at,m.expires_at,m.created_by_principal,d.delivered_at,d.read_at FROM messages m JOIN deliveries d ON d.project_id=m.project_id AND d.message_id=m.id JOIN sessions s ON s.id=m.sender_id AND s.project_id=m.source_project_id WHERE d.project_id=? AND d.recipient_id=? AND m.expires_at>? ORDER BY m.sequence LIMIT 10001`, pid, sid, now)
+	if err != nil {
+		return nil, err
+	}
+	sent, err := query(ctx, tx, `SELECT id,sequence,project_id,sender_id,thread_id,reply_to,created_at,expires_at FROM messages WHERE project_id=? AND sender_id=? AND expires_at>? ORDER BY sequence LIMIT 10001`, pid, sid, now)
+	if err != nil {
+		return nil, err
+	}
+	byID := map[string]map[string]any{}
+	for _, m := range sent {
+		m["deliveries"] = []map[string]any{}
+		byID[m["id"].(string)] = m
+	}
+	deliveryRows, err := query(ctx, tx, `SELECT m.id AS message_id,d.recipient_id,s.name AS recipient,d.delivered_at,d.read_at FROM messages m JOIN deliveries d ON d.project_id=m.project_id AND d.message_id=m.id JOIN sessions s ON s.project_id=d.project_id AND s.id=d.recipient_id WHERE m.project_id=? AND m.sender_id=? AND m.expires_at>? ORDER BY m.sequence,d.recipient_id`, pid, sid, now)
+	if err != nil {
+		return nil, err
+	}
+	for _, d := range deliveryRows {
+		m := byID[d["message_id"].(string)]
+		delete(d, "message_id")
+		m["deliveries"] = append(m["deliveries"].([]map[string]any), d)
+	}
+	datasets["sent_messages"] = sent
+	datasets["events"], err = query(ctx, tx, `SELECT * FROM history WHERE workspace_id=? AND project_id=? ORDER BY sequence LIMIT 10001`, w["id"], pid)
+	if err != nil {
+		return nil, err
+	}
+	for name, rows := range datasets {
+		if len(rows) > 10000 {
+			return nil, fmt.Errorf("snapshot exceeds 10000 %s; no complete snapshot produced", name)
+		}
+	}
+	// Routing is discoverable, but instance tokens for peers are not exported by the hosted service.
+	for _, row := range datasets["sessions"] {
+		if row["id"] != sid {
+			delete(row, "instance")
+		}
+	}
+	result := map[string]any{"workspace": w, "project": p, "session": actor, "principal": s.principal, "verified": true, "identity_provenance": "google-id-token", "storage_mode": "cloud", "snapshot_at": now}
+	for k, v := range datasets {
+		result[k] = v
+	}
+	encoded, e := json.Marshal(result)
+	if e != nil || len(encoded) > 12<<20 {
+		return nil, errors.New("snapshot exceeds supported byte budget; no complete snapshot produced")
+	}
+	return result, nil
+}
+func (s *Store) purgeExpired(ctx context.Context, tx *transaction, wid, pid string) (any, error) {
+	now := stamp()
+	res, err := tx.ExecContext(ctx, `DELETE FROM deliveries WHERE project_id=? AND message_id IN(SELECT id FROM messages WHERE project_id=? AND expires_at<=?)`, pid, pid, now)
+	if err != nil {
+		return nil, err
+	}
+	deliveries, err := res.RowsAffected()
+	if err != nil {
+		return nil, err
+	}
+	res, err = tx.ExecContext(ctx, `UPDATE messages SET body='',purged_at=? WHERE project_id=? AND expires_at<=? AND purged_at IS NULL`, now, pid, now)
+	if err != nil {
+		return nil, err
+	}
+	messages, err := res.RowsAffected()
+	if err != nil {
+		return nil, err
+	}
+	result := map[string]any{"purged_messages": messages, "deleted_deliveries": deliveries}
+	if messages > 0 || deliveries > 0 {
+		if err = s.audit(ctx, tx, wid, pid, "", "retention", pid, "purged", result); err != nil {
+			return nil, err
+		}
+	}
+	return result, nil
+}
+
+func redactPeerInstances(v any, principal string) {
+	switch value := v.(type) {
+	case map[string]any:
+		if owner, ok := value["owner_principal"].(string); ok && owner != principal {
+			delete(value, "instance")
+		}
+		for _, child := range value {
+			redactPeerInstances(child, principal)
+		}
+	case []map[string]any:
+		for _, child := range value {
+			redactPeerInstances(child, principal)
+		}
+	case []any:
+		for _, child := range value {
+			redactPeerInstances(child, principal)
+		}
+	}
+}
+
+// Audit records identify rotations by fingerprint, never by exporting resumable
+// instance tokens. This also sanitizes records created by earlier schema-1 builds.
+func hostedAuditDetails(v any) any {
+	switch value := v.(type) {
+	case map[string]any:
+		out := map[string]any{}
+		for k, child := range value {
+			if k == "instance" || k == "prior_instance" {
+				out[k+"_fingerprint"] = hashPayload(child)
+			} else {
+				out[k] = hostedAuditDetails(child)
+			}
+		}
+		return out
+	case []map[string]any:
+		out := make([]map[string]any, len(value))
+		for i, child := range value {
+			out[i] = hostedAuditDetails(child).(map[string]any)
+		}
+		return out
+	case []any:
+		out := make([]any, len(value))
+		for i, child := range value {
+			out[i] = hostedAuditDetails(child)
+		}
+		return out
+	default:
+		return value
+	}
+}
+
+// Count and estimate before materializing text-heavy datasets. Row caps are
+// independent; the lower byte cap keeps a single sync within HTTP/cache limits.
+func (s *Store) snapshotBudget(ctx context.Context, tx *transaction, wid, pid, sid, now string) error {
+	checks := []struct {
+		name, sql string
+		args      []any
+	}{
+		{"sessions", `SELECT COUNT(*),COALESCE(SUM(octet_length(notes)+octet_length(transport)+2048),0)::BIGINT FROM sessions WHERE project_id=?`, []any{pid}},
+		{"messages", `SELECT COUNT(*),COALESCE(SUM(octet_length(m.body)+2048),0)::BIGINT FROM messages m JOIN deliveries d ON d.project_id=m.project_id AND d.message_id=m.id WHERE d.project_id=? AND d.recipient_id=? AND m.expires_at>?`, []any{pid, sid, now}},
+		{"sent_messages", `SELECT COUNT(*),COALESCE(SUM(2048+(SELECT COUNT(*)*512 FROM deliveries d WHERE d.project_id=m.project_id AND d.message_id=m.id)),0)::BIGINT FROM messages m WHERE project_id=? AND sender_id=? AND expires_at>?`, []any{pid, sid, now}},
+		{"events", `SELECT COUNT(*),COALESCE(SUM(octet_length(details)+1024),0)::BIGINT FROM history WHERE workspace_id=? AND project_id=?`, []any{wid, pid}},
+	}
+	var total int64
+	for _, check := range checks {
+		var count, size int64
+		if err := tx.QueryRowContext(ctx, check.sql, check.args...).Scan(&count, &size); err != nil {
+			return err
+		}
+		if count > 10000 {
+			return fmt.Errorf("snapshot exceeds 10000 %s; no complete snapshot produced", check.name)
+		}
+		total += size
+		if total > 8<<20 {
+			return errors.New("snapshot exceeds supported byte budget; no complete snapshot produced")
+		}
+	}
+	return nil
+}

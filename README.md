@@ -1,12 +1,14 @@
 # ClawBridge
 
-A project-scoped messaging bus for coding agents. The current implementation is
-the approved local Phase 1: SQLite, CLI, and stdio MCP using one Go executable.
-Hosted Postgres, Google identity, synchronization, and the TUI are later phases.
+A project-scoped messaging bus for coding agents. ClawBridge supports a local
+SQLite mode and a hosted Postgres mode with verified Google identity, plus CLI,
+stdio MCP, and an explicitly synchronized read-only offline mirror. The TUI,
+cross-project links, and automated cloud provisioning are later phases.
 
 ## Build
 
-Requires Go 1.25 or newer. No database server or C compiler is required.
+Requires Go 1.26 or newer. Local mode needs no database server and neither mode
+needs a C compiler.
 
 ```sh
 mkdir -p bin
@@ -111,11 +113,14 @@ go test -race ./...
 go vet ./...
 ```
 
-Cross-project links, cloud/mirror operation, resource provisioning, notifier
-adapters, and hosted authorization are not implemented in this local phase.
-Cloud writes cannot fall back to a writable local bus. Deployment choices,
-including one Compute Engine VM, are discussed in
-[docs/DEPLOYMENT-OPTIONS.md](docs/DEPLOYMENT-OPTIONS.md).
+The hosted service requires Postgres and validates Google-issued ID tokens without
+trusting a caller-supplied email. CLI and MCP clients can sync a project-scoped
+snapshot and read it during an outage; writes never fall back to a writable local
+bus. See [PHASE-2-PLAN.md](PHASE-2-PLAN.md), [CORE-API.md](CORE-API.md), and
+[PHASE-2-REVIEW.md](PHASE-2-REVIEW.md). Cross-project links, resource provisioning,
+and notifier adapters remain future work. Deployment choices, including one Compute
+Engine VM, are discussed in [docs/DEPLOYMENT-OPTIONS.md](docs/DEPLOYMENT-OPTIONS.md),
+with a reviewable template in [deploy/README.md](deploy/README.md).
 
 Repository: [jkai-chen/ClawBridge](https://github.com/jkai-chen/ClawBridge), initially
 private. The owner has not selected a distribution licence.

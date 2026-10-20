@@ -14,13 +14,15 @@ import (
 	"strings"
 	"time"
 
+	"clawbridge/internal/remote"
 	"github.com/pelletier/go-toml/v2"
 )
 
 type Options struct {
-	Agent, Config, Command, Name              string
-	DB, Workspace, Project, Session, Instance string
-	DryRun                                    bool
+	Agent, Config, Command, Name                                                 string
+	DB, Workspace, Project, Session, Instance                                    string
+	Mode, Server, Audience, Account, ImpersonateServiceAccount, Principal, Cache string
+	DryRun                                                                       bool
 }
 
 type Result struct {
@@ -47,6 +49,13 @@ func Run(args []string) error {
 	f.StringVar(&o.Project, "project", "", "project slug or ID (required)")
 	f.StringVar(&o.Session, "session", "", "unique agent session name (required)")
 	f.StringVar(&o.Instance, "instance", "", "explicit instance to resume (optional)")
+	f.StringVar(&o.Mode, "mode", "", "local or cloud (inferred from --server)")
+	f.StringVar(&o.Server, "server", "", "trusted cloud server URL")
+	f.StringVar(&o.Audience, "audience", "", "Google ID-token audience")
+	f.StringVar(&o.Account, "account", "", "explicit initiating Google account")
+	f.StringVar(&o.ImpersonateServiceAccount, "impersonate-service-account", "", "explicit audience-bound service identity")
+	f.StringVar(&o.Principal, "principal", "", "expected verified principal for scoped offline reads")
+	f.StringVar(&o.Cache, "cache", "", "cloud mirror path")
 	f.BoolVar(&o.DryRun, "dry-run", false, "preview the entry without writing files")
 	f.Bool("json", true, "return JSON (the default output format)")
 	if err := f.Parse(args); err != nil {
@@ -130,7 +139,45 @@ func Install(o Options) (Result, error) {
 		return r, err
 	}
 	r.Path = path
-	argv := []string{"mcp", "--db", db, "--workspace", o.Workspace, "--project", o.Project, "--session", o.Session}
+	if o.Mode == "" {
+		o.Mode = "local"
+		if o.Server != "" {
+			o.Mode = "cloud"
+		}
+	}
+	argv := []string{"mcp", "--mode", o.Mode, "--workspace", o.Workspace, "--project", o.Project, "--session", o.Session}
+	switch o.Mode {
+	case "local":
+		if o.Server != "" || o.Audience != "" || o.Account != "" || o.ImpersonateServiceAccount != "" || o.Principal != "" || o.Cache != "" {
+			return r, errors.New("cloud credential routing cannot be supplied for a local MCP entry")
+		}
+		argv = append(argv, "--db", db)
+	case "cloud":
+		if o.Server == "" || o.Audience == "" || o.Account == "" || o.ImpersonateServiceAccount == "" || o.Principal == "" {
+			return r, errors.New("cloud installation requires server, audience, initiating account, impersonation service account and expected principal")
+		}
+		if o.Cache == "" {
+			u, e := os.UserHomeDir()
+			if e != nil {
+				return r, e
+			}
+			home := os.Getenv("CLAWBRIDGE_HOME")
+			if home == "" {
+				home = filepath.Join(u, ".clawbridge")
+			}
+			o.Cache = filepath.Join(home, "cache.db")
+		}
+		cache, e := filepath.Abs(o.Cache)
+		if e != nil {
+			return r, e
+		}
+		if _, e = remote.New(remote.Config{URL: o.Server, Audience: o.Audience, Account: o.Account, ImpersonateServiceAccount: o.ImpersonateServiceAccount, Principal: o.Principal, CachePath: cache}); e != nil {
+			return r, e
+		}
+		argv = append(argv, "--server", o.Server, "--audience", o.Audience, "--account", o.Account, "--impersonate-service-account", o.ImpersonateServiceAccount, "--principal", o.Principal, "--cache", cache)
+	default:
+		return r, errors.New("MCP installation mode must be local or cloud")
+	}
 	if o.Instance != "" {
 		argv = append(argv, "--instance", o.Instance)
 	}

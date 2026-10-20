@@ -1,4 +1,4 @@
-// Package bus implements the explicitly local ClawBridge authority.
+// Package bus shares messaging policy across local SQLite and hosted PostgreSQL authorities.
 package bus
 
 import (
@@ -33,8 +33,10 @@ type Result struct {
 	Data   any    `json:"data"`
 }
 type Store struct {
-	db        *sql.DB
-	principal string
+	db             *sql.DB
+	principal      string
+	postgres       bool
+	bootstrapOwner string
 }
 
 func Open(path string) (*Store, error) {
@@ -142,7 +144,7 @@ const timestampLayout = "2006-01-02T15:04:05.000000000Z07:00"
 func stamp() string                         { return time.Now().UTC().Format(timestampLayout) }
 func str(a map[string]any, k string) string { v, _ := a[k].(string); return v }
 func asJSON(v any) string                   { b, _ := json.Marshal(v); return string(b) }
-func query(ctx context.Context, tx *sql.Tx, q string, args ...any) ([]map[string]any, error) {
+func query(ctx context.Context, tx *transaction, q string, args ...any) ([]map[string]any, error) {
 	rows, err := tx.QueryContext(ctx, q, args...)
 	if err != nil {
 		return nil, err
@@ -171,6 +173,9 @@ func query(ctx context.Context, tx *sql.Tx, q string, args ...any) ([]map[string
 			if c == "transport" || c == "details" {
 				var decoded any
 				if t, ok := v[i].(string); ok && json.Unmarshal([]byte(t), &decoded) == nil {
+					if tx.postgres && c == "details" {
+						decoded = hostedAuditDetails(decoded)
+					}
 					m[c] = decoded
 				}
 			}
@@ -180,23 +185,29 @@ func query(ctx context.Context, tx *sql.Tx, q string, args ...any) ([]map[string
 	}
 	return out, rows.Err()
 }
-func one(ctx context.Context, tx *sql.Tx, q string, args ...any) (map[string]any, error) {
+func one(ctx context.Context, tx *transaction, q string, args ...any) (map[string]any, error) {
 	r, err := query(ctx, tx, q, args...)
 	if err != nil {
 		return nil, err
 	}
 	if len(r) != 1 {
-		return nil, errors.New("scope or entity not found or ambiguous")
+		return nil, errNotFound
 	}
 	return r[0], nil
 }
-func (s *Store) audit(ctx context.Context, tx *sql.Tx, w, p, session, entity, key, action string, details any) error {
+func (s *Store) audit(ctx context.Context, tx *transaction, w, p, session, entity, key, action string, details any) error {
+	if tx.actorID != "" {
+		session = tx.actorID
+	}
 	var project, actor any
 	if p != "" {
 		project = p
 	}
 	if session != "" {
 		actor = session
+	}
+	if s.postgres {
+		details = hostedAuditDetails(details)
 	}
 	_, err := tx.ExecContext(ctx, `INSERT INTO history(id,workspace_id,project_id,entity,entity_key,action,details,changed_at,changed_by_principal,changed_by_session) VALUES(?,?,?,?,?,?,?,?,?,?)`, newID("evt_"), w, project, entity, key, action, asJSON(details), stamp(), s.principal, actor)
 	return err
@@ -212,7 +223,7 @@ func nameOK(v string) error {
 }
 func validateArgs(op string, a map[string]any) error {
 	allowed := map[string]string{
-		"workspace_init": "mode name retention_days", "project_create": "slug name git_remote", "register_session": "instance resume role agent_kind model host account notes transport", "list_sessions": "instance status role limit after", "send": "instance to body kind thread_id operation_id", "reply": "instance message_id body kind operation_id", "inbox": "instance unread_only limit after", "mark_read": "instance ids", "update_session": "instance role model host account notes transport", "retire_session": "instance successor status", "history": "instance entity key limit after", "whoami": "instance", "message_status": "instance message_id",
+		"workspace_init": "mode name retention_days", "project_create": "slug name git_remote", "register_session": "instance resume role agent_kind model host account notes transport", "list_sessions": "instance status role limit after", "send": "instance to body kind thread_id operation_id", "reply": "instance message_id body kind operation_id", "inbox": "instance unread_only limit after", "mark_read": "instance ids", "update_session": "instance target_session role model host account notes transport", "retire_session": "instance target_session successor status", "history": "instance entity key limit after", "whoami": "instance", "message_status": "instance message_id", "resolve_project": "git_remote instance", "snapshot": "instance", "project_role_set": "instance principal role", "purge_expired": "instance",
 	}
 	keys, ok := allowed[op]
 	if !ok {
@@ -287,27 +298,83 @@ func limit(a map[string]any) (int, error) {
 	return 100, nil
 }
 func (s *Store) Execute(ctx context.Context, r Request) (Result, error) {
+	if s.postgres {
+		return Result{}, errors.New("Postgres requires trusted ExecuteAs identity")
+	}
+	return s.executeRequest(ctx, r)
+}
+func (s *Store) ExecuteAs(ctx context.Context, principal string, r Request) (Result, error) {
+	if !s.postgres {
+		return Result{}, errors.New("ExecuteAs is only available on the hosted authority")
+	}
+	if !validPrincipal(principal) {
+		return Result{}, errors.New("verified email principal is required")
+	}
+	scoped := *s
+	scoped.principal = principal
+	result, err := scoped.executeRequest(ctx, r)
+	return result, classify(err)
+}
+func (s *Store) executeRequest(ctx context.Context, r Request) (Result, error) {
 	if err := validateArgs(r.Operation, r.Args); err != nil {
 		return Result{}, err
 	}
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return Result{}, fmt.Errorf("SQLite unavailable (no write queued): %w", err)
+	options := &sql.TxOptions{}
+	if s.postgres && r.Operation == "snapshot" {
+		options.Isolation = sql.LevelRepeatableRead
+		options.ReadOnly = true
 	}
+	raw, err := s.db.BeginTx(ctx, options)
+	if err != nil {
+		return Result{}, errors.New("authority unavailable; no write queued")
+	}
+	tx := &transaction{Tx: raw, postgres: s.postgres}
 	defer tx.Rollback()
+	if s.postgres {
+		if _, err = tx.ExecContext(ctx, `SET LOCAL statement_timeout='12s'`); err != nil {
+			return Result{}, err
+		}
+		if _, err = tx.ExecContext(ctx, `SET LOCAL lock_timeout='5s'`); err != nil {
+			return Result{}, err
+		}
+	}
+	if s.postgres && r.Operation != "snapshot" {
+		// Serialize a principal's rate-limit accounting across its workspaces.
+		if _, err = tx.ExecContext(ctx, `SELECT pg_advisory_xact_lock(hashtextextended(?,0))`, "principal:"+s.principal); err != nil {
+			return Result{}, err
+		}
+	}
 	data, err := s.execute(ctx, tx, r)
 	if err != nil {
 		return Result{}, err
 	}
 	if err = tx.Commit(); err != nil {
-		return Result{}, fmt.Errorf("SQLite commit failed (no write queued): %w", err)
+		return Result{}, errors.New("authority commit failed; no write queued")
 	}
-	return Result{Source: "local-authority", Data: data}, nil
+	source := "local-authority"
+	if s.postgres {
+		source = "server"
+	}
+	if s.postgres {
+		redactPeerInstances(data, s.principal)
+	}
+	return Result{Source: source, Data: data}, nil
 }
-func (s *Store) execute(ctx context.Context, tx *sql.Tx, r Request) (any, error) {
+func (s *Store) execute(ctx context.Context, tx *transaction, r Request) (any, error) {
 	a := r.Args
 	if r.Operation == "workspace_init" {
+		if s.postgres {
+			if _, err := tx.ExecContext(ctx, `SELECT pg_advisory_xact_lock(882712311)`); err != nil {
+				return nil, err
+			}
+		}
 		return s.initWorkspace(ctx, tx, r)
+	}
+	if r.Operation == "resolve_project" {
+		return s.resolveInTransaction(ctx, tx, r)
+	}
+	if !s.postgres && (r.Operation == "snapshot" || r.Operation == "project_role_set" || r.Operation == "purge_expired") {
+		return nil, errors.New("operation requires hosted authority")
 	}
 	if r.Workspace == "" {
 		return nil, errors.New("workspace is required; run setup --local explicitly")
@@ -316,13 +383,29 @@ func (s *Store) execute(ctx context.Context, tx *sql.Tx, r Request) (any, error)
 	if err != nil {
 		return nil, err
 	}
-	if w["mode"] != "local" {
-		return nil, errors.New("workspace is not explicit local authority; cloud writes unavailable, no write queued")
+	wid := w["id"].(string)
+	expectedMode := "local"
+	if s.postgres {
+		expectedMode = "server"
 	}
-	if w["owner_principal"] != s.principal {
+	if w["mode"] != expectedMode {
+		return nil, errors.New("workspace storage mode mismatch; no fallback or queued write")
+	}
+	if s.postgres {
+		if _, err = one(ctx, tx, `SELECT principal FROM members WHERE workspace_id=? AND principal=?`, wid, s.principal); err != nil {
+			return nil, scopedError(err, "workspace membership required", "forbidden")
+		}
+		if r.Operation != "snapshot" {
+			if _, err = tx.ExecContext(ctx, `SELECT pg_advisory_xact_lock(hashtextextended(?,0))`, "workspace:"+wid); err != nil {
+				return nil, err
+			}
+		}
+		if r.Operation == "project_create" && w["owner_principal"] != s.principal {
+			return nil, errors.New("workspace owner required to create projects")
+		}
+	} else if w["owner_principal"] != s.principal {
 		return nil, errors.New("local workspace belongs to a different OS user")
 	}
-	wid := w["id"].(string)
 	if r.Operation == "project_create" {
 		return s.createProject(ctx, tx, wid, a)
 	}
@@ -334,6 +417,38 @@ func (s *Store) execute(ctx context.Context, tx *sql.Tx, r Request) (any, error)
 		return nil, err
 	}
 	pid := p["id"].(string)
+	projectRole := "owner"
+	if s.postgres {
+		projectRole, err = s.projectRole(ctx, tx, w, pid)
+		if err != nil {
+			return nil, err
+		}
+		switch r.Operation {
+		case "register_session", "send", "reply", "update_session", "retire_session":
+			if projectRole == "reader" {
+				return nil, errors.New("project member permission required")
+			}
+		case "project_role_set", "purge_expired":
+			if projectRole != "owner" {
+				return nil, errors.New("project owner permission required")
+			}
+		}
+		if r.Operation == "project_role_set" {
+			if err = s.touchReadActor(ctx, tx, pid, r); err != nil {
+				return nil, err
+			}
+			return s.setProjectRole(ctx, tx, wid, pid, a)
+		}
+		if r.Operation == "purge_expired" {
+			if err = s.touchReadActor(ctx, tx, pid, r); err != nil {
+				return nil, err
+			}
+			return s.purgeExpired(ctx, tx, wid, pid)
+		}
+		if r.Operation == "snapshot" {
+			return s.snapshot(ctx, tx, w, p, r)
+		}
+	}
 	if r.Operation == "register_session" {
 		return s.register(ctx, tx, wid, pid, r)
 	}
@@ -397,12 +512,30 @@ func (s *Store) execute(ctx context.Context, tx *sql.Tx, r Request) (any, error)
 		decorateSession(actor)
 	}
 	if r.Operation == "whoami" {
-		return map[string]any{"workspace": w, "project": p, "session": actor, "principal": s.principal, "identity_provenance": "local-os-user-unverified", "verified": false, "storage_mode": "local", "online": true}, nil
+		provenance, mode := "local-os-user-unverified", "local"
+		if s.postgres {
+			provenance, mode = "google-id-token", "cloud"
+		}
+		return map[string]any{"workspace": w, "project": p, "session": actor, "principal": s.principal, "identity_provenance": provenance, "verified": s.postgres, "storage_mode": mode, "online": true}, nil
 	}
 	if actor == nil {
 		return nil, errors.New("session is required; register and pass --session and --instance")
 	}
 	sid := actor["id"].(string)
+	tx.actorID = sid
+	target := actor
+	if selector := str(a, "target_session"); selector != "" {
+		if !s.postgres || (projectRole != "owner" && projectRole != "lead") {
+			return nil, errors.New("project lead or owner permission required to target another session")
+		}
+		if actor["status"] != "active" {
+			return nil, errors.New("active actor permission required for peer administration")
+		}
+		target, err = one(ctx, tx, `SELECT * FROM sessions WHERE project_id=? AND (id=? OR name=?)`, pid, selector, selector)
+		if err != nil {
+			return nil, err
+		}
+	}
 	if actor["status"] != "active" && r.Operation != "message_status" && r.Operation != "inbox" && r.Operation != "mark_read" && r.Operation != "retire_session" && r.Operation != "send" && r.Operation != "reply" {
 		return nil, errors.New("session is retired or moved; it cannot perform this operation")
 	}
@@ -416,16 +549,20 @@ func (s *Store) execute(ctx context.Context, tx *sql.Tx, r Request) (any, error)
 	case "message_status":
 		return s.messageStatus(ctx, tx, pid, sid, str(a, "message_id"))
 	case "update_session":
-		return s.update(ctx, tx, wid, pid, actor, a)
+		return s.update(ctx, tx, wid, pid, target, a)
 	case "retire_session":
-		return s.retire(ctx, tx, wid, pid, actor, a)
+		return s.retire(ctx, tx, wid, pid, target, a)
 	}
 	return nil, errors.New("unsupported operation")
 }
-func (s *Store) initWorkspace(ctx context.Context, tx *sql.Tx, r Request) (any, error) {
+func (s *Store) initWorkspace(ctx context.Context, tx *transaction, r Request) (any, error) {
 	a := r.Args
-	if str(a, "mode") != "local" {
-		return nil, errors.New("explicit mode=local is required; cloud setup is not implemented")
+	mode := "local"
+	if s.postgres {
+		mode = "server"
+	}
+	if str(a, "mode") != mode {
+		return nil, fmt.Errorf("explicit mode=%s is required", mode)
 	}
 	name := r.Workspace
 	if name == "" {
@@ -446,22 +583,30 @@ func (s *Store) initWorkspace(ctx context.Context, tx *sql.Tx, r Request) (any, 
 		return nil, err
 	}
 	if len(existing) > 0 {
-		if existing[0]["owner_principal"] != s.principal || existing[0]["mode"] != "local" || existing[0]["retention_days"] != int64(retention) {
+		if existing[0]["owner_principal"] != s.principal || existing[0]["mode"] != mode || existing[0]["retention_days"] != int64(retention) {
 			return nil, errors.New("workspace exists with conflicting owner, mode or retention")
 		}
 		return existing[0], nil
 	}
+	if s.postgres && s.principal != s.bootstrapOwner {
+		return nil, errors.New("only the configured bootstrap owner may initialize a new workspace")
+	}
 	id := newID("ws_")
-	_, err = tx.ExecContext(ctx, `INSERT INTO workspaces VALUES(?,?,?,?,?,?)`, id, name, "local", retention, s.principal, stamp())
+	_, err = tx.ExecContext(ctx, `INSERT INTO workspaces VALUES(?,?,?,?,?,?)`, id, name, mode, retention, s.principal, stamp())
 	if err != nil {
 		return nil, err
 	}
-	if err = s.audit(ctx, tx, id, "", "", "workspace", id, "initialized", map[string]any{"mode": "local", "retention_days": retention}); err != nil {
+	if s.postgres {
+		if _, err = tx.ExecContext(ctx, `INSERT INTO members(workspace_id,principal,added_by,added_at) VALUES(?,?,?,?)`, id, s.principal, s.principal, stamp()); err != nil {
+			return nil, err
+		}
+	}
+	if err = s.audit(ctx, tx, id, "", "", "workspace", id, "initialized", map[string]any{"mode": mode, "retention_days": retention}); err != nil {
 		return nil, err
 	}
 	return one(ctx, tx, `SELECT * FROM workspaces WHERE id=?`, id)
 }
-func (s *Store) createProject(ctx context.Context, tx *sql.Tx, wid string, a map[string]any) (any, error) {
+func (s *Store) createProject(ctx context.Context, tx *transaction, wid string, a map[string]any) (any, error) {
 	slug := str(a, "slug")
 	if err := nameOK(slug); err != nil {
 		return nil, err
@@ -481,6 +626,11 @@ func (s *Store) createProject(ctx context.Context, tx *sql.Tx, wid string, a map
 	_, err = tx.ExecContext(ctx, `INSERT INTO projects(id,workspace_id,slug,name,git_remote,created_at) VALUES(?,?,?,?,?,?)`, id, wid, slug, name, remote, stamp())
 	if err != nil {
 		return nil, fmt.Errorf("create project (slug must be unique in workspace): %w", err)
+	}
+	if s.postgres {
+		if _, err = tx.ExecContext(ctx, `INSERT INTO project_roles(project_id,principal,role,granted_by,granted_at) VALUES(?,?,?,?,?)`, id, s.principal, "owner", s.principal, stamp()); err != nil {
+			return nil, err
+		}
 	}
 	if err = s.audit(ctx, tx, wid, id, "", "project", id, "created", map[string]any{"slug": slug, "git_remote": remote}); err != nil {
 		return nil, err
@@ -582,15 +732,19 @@ func decorateSession(m map[string]any) {
 	m["presence"] = presence
 	m["stale"] = stale
 }
-func (s *Store) touchReadActor(ctx context.Context, tx *sql.Tx, pid string, r Request) error {
+func (s *Store) touchReadActor(ctx context.Context, tx *transaction, pid string, r Request) error {
 	instance := str(r.Args, "instance")
-	if instance == "" {
+	if instance == "" && (!s.postgres || r.Session == "") {
 		return nil
+	}
+	if r.Session == "" {
+		return errors.New("session is required with instance")
 	}
 	actor, err := one(ctx, tx, `SELECT id FROM sessions WHERE project_id=? AND (id=? OR name=?) AND instance=? AND owner_principal=?`, pid, r.Session, r.Session, instance, s.principal)
 	if err != nil {
-		return errors.New("session instance mismatch; pass the instance returned by register")
+		return scopedError(err, "session instance mismatch; pass the instance returned by register", "forbidden")
 	}
+	tx.actorID = actor["id"].(string)
 	_, err = tx.ExecContext(ctx, `UPDATE sessions SET last_seen=? WHERE project_id=? AND id=?`, stamp(), pid, actor["id"])
 	return err
 }

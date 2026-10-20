@@ -1,6 +1,6 @@
 # ClawBridge local core API
 
-Status: implemented, cb-engineer. Module `clawbridge`, Go >=1.25, modernc SQLite
+Status: local contract retained; hosted Phase 2 additions are below. Module `clawbridge`, Go >=1.26, modernc SQLite
 v1.39.1. MCP SDK v1.8.0 and TOML v2.4.3 are retained in go.mod/go.sum.
 
 ## Application boundary
@@ -231,3 +231,188 @@ Final independent verification reported in REVIEW.md: `go test ./... -count=1`,
 linux/amd64, windows/amd64 builds all pass after the R1/R2 and lifecycle fixes.
 Full installed Claude tool execution remains a separately documented client
 conformance limit; see docs/CLIENT-CHECKS.md and REVIEW.md.
+
+# Phase 2 hosted contract
+
+Status: implemented and source frozen for reviewer final checks. Local behavior
+above remains supported. New dependencies: pgx v5.11.0 and Google API v0.305.0;
+Go >=1.26 is required (local toolchain 1.27).
+
+## Trusted service API and shared policy
+
+```go
+bus.OpenPostgres(ctx context.Context, dsn, bootstrapOwner string) (*Store,error)
+(*Store).ExecuteAs(ctx context.Context, verifiedPrincipal string, req Request) (Result,error)
+```
+
+ExecuteAs is a trusted server boundary after cryptographic Google verification,
+never a client-supplied principal field. It copies the Store's immutable execution
+configuration per call and never mutates shared identity. Execute on PG and
+ExecuteAs on local SQLite both fail. PG success source is `server`.
+
+Validation, session lifecycle, message addressing, retries, deliveries, expiration
+and audit behavior share the SQLite service path. A transaction wrapper binds SQL
+placeholders and PG's explicit session sequence. PG migrations are separate,
+transactional and versioned in `clawbridge_schema` (version 1), with generated
+sequences, constraints and append-only history triggers. Newer versions fail.
+
+Non-snapshot transactions lock principal then workspace with advisory transaction
+locks: concurrent retry contenders allocate one message/delivery set/audit event.
+Principal send cap is 600/minute, session cap 120/minute; exact retries do not
+consume another send. Lock wait is bounded to 5 seconds, statements to 12 seconds,
+startup migration to 15 seconds. Caller timestamps never become authority time.
+
+Hosted service errors expose `Code() string`: forbidden, not_found, conflict,
+invalid, rate_limited, unavailable. Real query/transport failures retain their cause
+for unavailable handling rather than being recast as missing membership. HTTP
+mapping is designer-owned and never reflects raw SQL, DSNs or credentials.
+
+## Hosted permissions and added operations
+
+Every project operation checks workspace membership and project authorization
+inside its transaction, including discovery/history/resolution/snapshot. Workspace
+owner has owner authority; other principals require an explicit project role.
+Roles owner/lead/member/reader are independent of session routing role.
+
+Member/lead/owner can register/send/reply/update/retire. Reader can discovery,
+history, whoami, existing own inbox/read receipts and sent status. Actor ownership
+and matching instance are checked, including discovery with a supplied actor.
+Denied operations roll back their heartbeat and all other mutations.
+
+| Operation | Request selectors / Args | Result |
+| --- | --- | --- |
+| workspace_init | Workspace name (or args.name), mode=server required, optional retention_days | Workspace entity with mode=server |
+| project_create | Workspace; args.slug, optional name/git_remote | Project entity; creator gets owner role |
+| project_role_set | Workspace/project; args.principal and role, optional bound instance | project_id/principal/role/granted_by/granted_at |
+| resolve_project | Workspace/Project selectors; optional args.git_remote | {workspace_id,project_id} |
+| snapshot | Bound Workspace/Project/Session and args.instance | Complete scoped snapshot below |
+| purge_expired | Workspace/project; optional bound actor/instance | {purged_messages,deleted_deliveries} |
+
+Only the operator-configured bootstrap owner may initialize a **new** workspace.
+An existing workspace cannot be adopted by changing that flag. Initialization adds
+its owner's workspace membership. Workspace owner may create projects. Workspace
+or project owner may set project roles; the grant adds membership and project role
+atomically with audit. Routing lead never grants administrative permission.
+
+update_session/retire_session additionally accept args.target_session. Project
+lead/owner may explicitly target a same-project peer while bound to their own
+active actor. Member/reader/local mode cannot target peers. Target owner_principal
+never changes. Audit identifies actual caller and actor, with target entity key;
+peer metadata updates do not refresh the peer's last_seen. Own-session and resume
+behavior remain unchanged. Hosted output omits other principals' instance tokens.
+
+purge_expired logically blanks expired message bodies, removes their deliveries,
+sets purged_at and appends a retention event. Immutable message/retry/thread
+identities and hashes remain as tombstones, so old retries never resurrect mail.
+Physical pages, backups and cryptographic erasure are outside this cleanup.
+
+## Snapshot shape and privacy
+
+```text
+{
+  workspace: <workspace entity, mode=server>,
+  project: <project entity>,
+  session: <owned session entity with current instance and sequence>,
+  principal: <authenticated email>, verified: true,
+  identity_provenance: "google-id-token", storage_mode: "cloud",
+  snapshot_at: <server UTC timestamp>,
+  sessions: [routing session rows, each with sequence],
+  messages: [only bound session's received unexpired inbox rows],
+  sent_messages: [only bound session's unexpired sent status metadata],
+  events: [project audit rows]
+}
+```
+
+Snapshot uses one read-only repeatable-read transaction and fixes expiration at
+snapshot_at. It does not heartbeat or stamp delivery/read. Received rows match
+inbox fields above, including sender name, body and the caller's nullable delivery/
+read fields. Sent rows match message_status fields above, include recipient status
+metadata and never a body. Sent statuses/deliveries are collected in bulk. Routing
+rows omit non-bound instances. Audit details replace instance/prior_instance with
+SHA256 fingerprint fields on write and export, including older schema-1 records.
+Caller identity cannot be overridden by snapshot args.
+
+Preflight rejects >10000 rows in **any** dataset without truncation. It also rejects
+a conservative aggregate size estimate over 8 MiB or encoded result over 12 MiB
+(HTTP/cache transport cap 16 MiB). Failure produces no new snapshot or side effects.
+Online paging remains usable when an oversized audit scope cannot sync. Paged
+incremental sync and audit retention administration are future work; audit deletion
+is not supplied as a workaround for this explicit scale limit.
+
+## Cloud CLI and trusted configuration
+
+Added global flags/env:
+
+| Flag | Environment / trusted TOML key |
+| --- | --- |
+| --mode local|cloud | CLAWBRIDGE_MODE / mode |
+| --server URL | CLAWBRIDGE_SERVER / server |
+| --audience AUDIENCE | CLAWBRIDGE_AUDIENCE / audience |
+| --account EMAIL | CLAWBRIDGE_ACCOUNT / account |
+| --impersonate-service-account EMAIL | CLAWBRIDGE_IMPERSONATE_SERVICE_ACCOUNT / impersonate_service_account |
+| --principal EMAIL | CLAWBRIDGE_PRINCIPAL / principal |
+| --cache PATH | CLAWBRIDGE_CACHE / cache |
+
+Credential-routing precedence is flags > environment > trusted explicit/home
+config. Repository config may overlay db/workspace/project/session/instance/mode;
+it cannot inject server/audience/account/impersonation/principal/cache. Explicit
+config bypasses home and repo config. Relative trusted cache paths resolve against
+the config directory (flag/env relative cache paths against the state directory).
+Cloud routing requires explicit mode=cloud and trusted server+audience. Unknown
+modes fail. Cloud CLI never opens the writable SQLite authority or falls back to
+local mode. Local defaults and explicit local initialization remain unchanged.
+
+```text
+serve [--listen ADDRESS] --audience AUDIENCE --bootstrap-owner EMAIL [--database-url-env NAME]
+setup --cloud --mode cloud --workspace NAME [--retention-days DAYS]
+project role-set EMAIL ROLE
+project role set EMAIL ROLE
+update ... [--target-session NAME_OR_ID]
+retire ... [--target-session NAME_OR_ID]
+purge-expired
+sync
+```
+
+serve must be the first command token: it delegates all remaining operator flags
+to server.Run before reading local config or opening any local DB. Server uses
+CLAWBRIDGE_DATABASE_URL by default and requires audience/bootstrap owner; production
+Run always uses Google's verifier. No skip-auth flag or fake verifier CLI exists.
+setup --cloud sends mode=server, requires the verified bootstrap owner, and persists
+trusted routing only after successful initialization. setup --local cannot replace
+a configured cloud mode. --session-account selects session metadata in either
+mode; local register/update --account retains the Phase 1 metadata behavior, while
+cloud --account selects the gcloud initiating identity.
+
+Cloud wiring uses designer APIs:
+
+```go
+server.Run(ctx context.Context,args []string) error
+remote.New(remote.Config{URL,Audience,Account,ImpersonateServiceAccount,Principal,CachePath})
+(*remote.Client).Execute(ctx,request)
+(*remote.Client).ResolveProject(ctx,workspace,project,gitRemote)
+(*remote.Client).Sync(ctx,workspace,project,session,instance)
+mcpserver.RunExecutor(ctx,executor,workspace,project,session,instance)
+```
+
+All Config fields are strings. Remote principal binds cache identity; it is not
+authentication. MCP is pinned to resolved immutable scope. sync is explicit,
+online-only snapshot publication. The designer's remote/mirror packages enforce
+endpoint/audience/principal/workspace/project/session/instance binding, atomic
+publication, expiry and read-only outage fallback. Rejected HTTP requests never
+become cached successes; offline writes, including mark-read/resume, are not queued.
+
+## Verification and coordination
+
+Focused go test ./internal/bus ./internal/cli passes, including shared/local
+regressions, trusted/local identity guards, dialect binding, audit fingerprints,
+repository credential-routing exclusion, serve bypass/no local DB and cloud
+whoami/sync with loopback + synthetic gcloud only. A separate-principal PG role
+denial/no-side-effect unit test runs with reviewer disposable DSN.
+
+The reviewer ran actual PG lifecycle and final full/race/vet/cross builds. Independent
+real PG17.11 checks passed roles/concurrency/replay, HTTP403 denial semantics,
+snapshot body/instance privacy, retention tombstones, fanout rollback, honest row
+cap, workspaces/resume/schema and built cloud CLI routing/sync. Exact final evidence
+and remaining limits are in PHASE-2-REVIEW.md. Auth tests use synthetic keys/verifiers;
+no live Google-issued token or cloud deployment is claimed. No billable resource,
+IAM grant or real agent config change was created by verification.

@@ -4,17 +4,21 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
+	"time"
 )
 
 func isolated(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
-	for _, k := range []string{"DB", "WORKSPACE", "PROJECT", "SESSION", "INSTANCE", "CONFIG", "MODE"} {
+	for _, k := range []string{"DB", "WORKSPACE", "PROJECT", "SESSION", "INSTANCE", "CONFIG", "MODE", "SERVER", "AUDIENCE", "ACCOUNT", "IMPERSONATE_SERVICE_ACCOUNT", "PRINCIPAL", "CACHE"} {
 		t.Setenv("CLAWBRIDGE_"+k, "")
 	}
 	t.Setenv("CLAWBRIDGE_HOME", filepath.Join(dir, "state"))
@@ -164,5 +168,123 @@ func TestLiteralCommandWordsAreMessageArguments(t *testing.T) {
 	sent := invoke(t, "--session", "a", "--instance", "i", "send", "mcp", "install", "--operation-id", "literal")
 	if sent["address"] != "mcp" || sent["body"] != "install" {
 		t.Fatal("command words were not preserved")
+	}
+}
+
+func TestRepoCannotInjectCloudCredentialRouting(t *testing.T) {
+	dir := isolated(t)
+	git(t, "init", "-q")
+	home := filepath.Join(dir, "state")
+	if e := os.MkdirAll(home, 0700); e != nil {
+		t.Fatal(e)
+	}
+	trusted := "mode='cloud'\nserver='https://trusted.example'\naudience='trusted-audience'\naccount='human@example.test'\nimpersonate_service_account='service@example.test'\nprincipal='service@example.test'\ncache='trusted-cache.db'\n"
+	if e := os.WriteFile(filepath.Join(home, "config.toml"), []byte(trusted), 0600); e != nil {
+		t.Fatal(e)
+	}
+	untrusted := "workspace='repo-w'\nproject='repo-p'\nmode='cloud'\nserver='https://evil.example'\naudience='evil-audience'\naccount='evil@example.test'\nimpersonate_service_account='evil@example.test'\nprincipal='evil@example.test'\ncache='evil.db'\n"
+	if e := os.WriteFile(filepath.Join(dir, ".clawbridge.toml"), []byte(untrusted), 0600); e != nil {
+		t.Fatal(e)
+	}
+	c, _, e := resolveConfig(context.Background(), Config{})
+	if e != nil {
+		t.Fatal(e)
+	}
+	if c.Server != "https://trusted.example" || c.Audience != "trusted-audience" || c.Account != "human@example.test" || c.ImpersonateServiceAccount != "service@example.test" || c.Principal != "service@example.test" || c.Cache != filepath.Join(home, "trusted-cache.db") {
+		t.Fatalf("repository redirected credential routing: %#v", c)
+	}
+	if c.Workspace != "repo-w" || c.Project != "repo-p" {
+		t.Fatal("repository scope selection lost")
+	}
+	t.Setenv("CLAWBRIDGE_AUDIENCE", "env-audience")
+	c, _, e = resolveConfig(context.Background(), Config{Audience: "flag-audience"})
+	if e != nil || c.Audience != "flag-audience" {
+		t.Fatal("flag/env credential precedence failed", e)
+	}
+}
+func TestServeDoesNotReadConfigOrOpenLocalDatabase(t *testing.T) {
+	dir := isolated(t)
+	path := filepath.Join(dir, "bad.toml")
+	if e := os.WriteFile(path, []byte("invalid = ["), 0600); e != nil {
+		t.Fatal(e)
+	}
+	t.Setenv("CLAWBRIDGE_CONFIG", path)
+	t.Setenv("CLAWBRIDGE_DATABASE_URL", "")
+	var out, diagnostics bytes.Buffer
+	e := Run(context.Background(), []string{"serve", "--audience", "test", "--bootstrap-owner", "owner@example.test"}, &out, &diagnostics)
+	if e == nil || !strings.Contains(e.Error(), "Postgres connection") {
+		t.Fatal("serve did not delegate before config resolution", e)
+	}
+	if _, e = os.Stat(filepath.Join(dir, "state", "local.db")); !os.IsNotExist(e) {
+		t.Fatal("serve opened a local authority")
+	}
+}
+func TestCloudCLIAndExplicitSyncUseRemoteOnly(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("hermetic gcloud shim is a POSIX test fixture")
+	}
+	dir := isolated(t)
+	shim := filepath.Join(dir, "gcloud")
+	if e := os.WriteFile(shim, []byte("#!/bin/sh\nprintf '%s' 'synthetic-cli-token'\n"), 0700); e != nil {
+		t.Fatal(e)
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	principal := "service@example.test"
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	host := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "Bearer synthetic-cli-token" {
+			t.Error("missing synthetic token")
+		}
+		var req struct {
+			Operation, Workspace, Project, Session string
+			Args                                   map[string]any
+		}
+		if e := json.NewDecoder(r.Body).Decode(&req); e != nil {
+			t.Error(e)
+		}
+		data := map[string]any{}
+		switch req.Operation {
+		case "resolve_project":
+			data = map[string]any{"workspace_id": "ws-cloud", "project_id": "prj-cloud"}
+		case "whoami":
+			data = map[string]any{"principal": principal, "verified": true, "storage_mode": "cloud"}
+		case "snapshot":
+			data = map[string]any{"workspace": map[string]any{"id": "ws-cloud", "name": "w"}, "project": map[string]any{"id": "prj-cloud", "workspace_id": "ws-cloud", "slug": "p"}, "session": map[string]any{"id": "ses-cloud", "name": "a", "project_id": "prj-cloud", "instance": "cloud-inst", "owner_principal": principal}, "principal": principal, "verified": true, "storage_mode": "cloud", "identity_provenance": "google-id-token", "snapshot_at": now, "sessions": []any{}, "messages": []any{}, "sent_messages": []any{}, "events": []any{}}
+		default:
+			t.Errorf("unexpected cloud operation %s", req.Operation)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]any{"source": "server", "data": data})
+	}))
+	defer host.Close()
+	for k, v := range map[string]string{"MODE": "cloud", "SERVER": host.URL, "AUDIENCE": "test-audience", "ACCOUNT": "human@example.test", "IMPERSONATE_SERVICE_ACCOUNT": principal, "PRINCIPAL": principal, "CACHE": filepath.Join(dir, "mirror.db"), "WORKSPACE": "w", "PROJECT": "p", "SESSION": "a", "INSTANCE": "cloud-inst"} {
+		t.Setenv("CLAWBRIDGE_"+k, v)
+	}
+	run := func(command string) map[string]any {
+		t.Helper()
+		var out, diag bytes.Buffer
+		if e := Run(context.Background(), []string{command}, &out, &diag); e != nil {
+			t.Fatal(e)
+		}
+		var value map[string]any
+		if e := json.Unmarshal(out.Bytes(), &value); e != nil {
+			t.Fatal(e)
+		}
+		if value["source"] != "server" {
+			t.Fatal("cloud command did not report server")
+		}
+		return value["data"].(map[string]any)
+	}
+	if run("whoami")["principal"] != principal {
+		t.Fatal("wrong remote identity")
+	}
+	if run("sync")["cache_updated"] != true {
+		t.Fatal("explicit sync did not publish mirror")
+	}
+	if _, e := os.Stat(filepath.Join(dir, "mirror.db")); e != nil {
+		t.Fatal(e)
+	}
+	if _, e := os.Stat(filepath.Join(dir, "state", "local.db")); !os.IsNotExist(e) {
+		t.Fatal("cloud command opened writable SQLite authority")
 	}
 }

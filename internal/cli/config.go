@@ -13,12 +13,18 @@ import (
 )
 
 type Config struct {
-	DB        string `toml:"db"`
-	Workspace string `toml:"workspace"`
-	Project   string `toml:"project"`
-	Session   string `toml:"session"`
-	Instance  string `toml:"instance"`
-	Mode      string `toml:"mode"`
+	DB                        string `toml:"db"`
+	Workspace                 string `toml:"workspace"`
+	Project                   string `toml:"project"`
+	Session                   string `toml:"session"`
+	Instance                  string `toml:"instance"`
+	Mode                      string `toml:"mode"`
+	Server                    string `toml:"server"`
+	Audience                  string `toml:"audience"`
+	Account                   string `toml:"account"`
+	ImpersonateServiceAccount string `toml:"impersonate_service_account"`
+	Principal                 string `toml:"principal"`
+	Cache                     string `toml:"cache"`
 }
 
 func stateHome() (string, error) {
@@ -62,6 +68,9 @@ func readConfig(path string, required bool) (Config, error) {
 	if c.DB != "" && !filepath.IsAbs(c.DB) {
 		c.DB = filepath.Join(filepath.Dir(path), c.DB)
 	}
+	if c.Cache != "" && !filepath.IsAbs(c.Cache) {
+		c.Cache = filepath.Join(filepath.Dir(path), c.Cache)
+	}
 	return c, nil
 }
 func overlay(base, top Config) Config {
@@ -82,6 +91,24 @@ func overlay(base, top Config) Config {
 	}
 	if top.Mode != "" {
 		base.Mode = top.Mode
+	}
+	if top.Server != "" {
+		base.Server = top.Server
+	}
+	if top.Audience != "" {
+		base.Audience = top.Audience
+	}
+	if top.Account != "" {
+		base.Account = top.Account
+	}
+	if top.ImpersonateServiceAccount != "" {
+		base.ImpersonateServiceAccount = top.ImpersonateServiceAccount
+	}
+	if top.Principal != "" {
+		base.Principal = top.Principal
+	}
+	if top.Cache != "" {
+		base.Cache = top.Cache
 	}
 	return base
 }
@@ -109,10 +136,17 @@ func resolveConfig(ctx context.Context, flags Config) (Config, string, error) {
 			if e != nil {
 				return Config{}, "", e
 			}
+			// Repository files select scope; they cannot route credentials or cache.
+			repo.Server = ""
+			repo.Audience = ""
+			repo.Account = ""
+			repo.ImpersonateServiceAccount = ""
+			repo.Principal = ""
+			repo.Cache = ""
 			base = overlay(base, repo)
 		}
 	}
-	env := Config{DB: os.Getenv("CLAWBRIDGE_DB"), Workspace: os.Getenv("CLAWBRIDGE_WORKSPACE"), Project: os.Getenv("CLAWBRIDGE_PROJECT"), Session: os.Getenv("CLAWBRIDGE_SESSION"), Instance: os.Getenv("CLAWBRIDGE_INSTANCE"), Mode: os.Getenv("CLAWBRIDGE_MODE")}
+	env := Config{DB: os.Getenv("CLAWBRIDGE_DB"), Workspace: os.Getenv("CLAWBRIDGE_WORKSPACE"), Project: os.Getenv("CLAWBRIDGE_PROJECT"), Session: os.Getenv("CLAWBRIDGE_SESSION"), Instance: os.Getenv("CLAWBRIDGE_INSTANCE"), Mode: os.Getenv("CLAWBRIDGE_MODE"), Server: os.Getenv("CLAWBRIDGE_SERVER"), Audience: os.Getenv("CLAWBRIDGE_AUDIENCE"), Account: os.Getenv("CLAWBRIDGE_ACCOUNT"), ImpersonateServiceAccount: os.Getenv("CLAWBRIDGE_IMPERSONATE_SERVICE_ACCOUNT"), Principal: os.Getenv("CLAWBRIDGE_PRINCIPAL"), Cache: os.Getenv("CLAWBRIDGE_CACHE")}
 	base = overlay(overlay(base, env), flags)
 	if base.DB == "" {
 		base.DB = filepath.Join(home, "local.db")
@@ -122,8 +156,20 @@ func resolveConfig(ctx context.Context, flags Config) (Config, string, error) {
 		return Config{}, "", err
 	}
 	base.DB = abs
-	if base.Mode != "" && base.Mode != "local" {
-		return Config{}, "", errors.New("configured storage mode is not local; cloud/mirror mode is unavailable, no write queued")
+	if base.Mode != "" && base.Mode != "local" && base.Mode != "cloud" {
+		return Config{}, "", errors.New("unsupported storage mode; no write queued")
+	}
+	if base.Mode == "" {
+		if base.Server != "" || base.Audience != "" || base.Principal != "" || base.ImpersonateServiceAccount != "" || base.Cache != "" {
+			return Config{}, "", errors.New("cloud routing requires explicit mode=cloud; no local fallback")
+		}
+		base.Mode = "local"
+	}
+	if base.Mode == "cloud" && (base.Server == "" || base.Audience == "") {
+		return Config{}, "", errors.New("cloud mode requires trusted server and audience configuration")
+	}
+	if base.Cache != "" && !filepath.IsAbs(base.Cache) {
+		base.Cache = filepath.Join(home, base.Cache)
 	}
 	return base, path, nil
 }
@@ -139,12 +185,24 @@ func writeSetupConfig(path string, c Config) error {
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return err
 	}
-	if old, ok := values["mode"].(string); ok && old != "" && old != "local" {
+	mode := c.Mode
+	if mode == "" {
+		mode = "local"
+	}
+	if old, ok := values["mode"].(string); ok && old != "" && old != mode {
 		return errors.New("refusing to replace nonlocal configuration")
 	}
-	values["mode"] = "local"
+	values["mode"] = mode
 	values["workspace"] = c.Workspace
-	values["db"] = c.DB
+	if mode == "local" {
+		values["db"] = c.DB
+	} else {
+		for key, value := range map[string]string{"server": c.Server, "audience": c.Audience, "account": c.Account, "impersonate_service_account": c.ImpersonateServiceAccount, "principal": c.Principal, "cache": c.Cache} {
+			if value != "" {
+				values[key] = value
+			}
+		}
+	}
 	b, err = toml.Marshal(values)
 	if err != nil {
 		return err

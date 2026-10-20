@@ -1,0 +1,10 @@
+.git
+.remember
+.env
+.env.*
+bin
+*.db
+*.db-shm
+*.db-wal
+*.clawbridge-backup-*
+*.clawbridge.lock

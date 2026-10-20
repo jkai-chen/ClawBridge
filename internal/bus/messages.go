@@ -2,7 +2,6 @@ package bus
 
 import (
 	"context"
-	"database/sql"
 	"errors"
 	"fmt"
 	"regexp"
@@ -41,7 +40,7 @@ func validateBody(body string) error {
 	}
 	return nil
 }
-func (s *Store) send(ctx context.Context, tx *sql.Tx, wid, pid string, actor map[string]any, r Request) (any, error) {
+func (s *Store) send(ctx context.Context, tx *transaction, wid, pid string, actor map[string]any, r Request) (any, error) {
 	a := r.Args
 	body := str(a, "body")
 	if err := validateBody(body); err != nil {
@@ -100,7 +99,7 @@ func (s *Store) send(ctx context.Context, tx *sql.Tx, wid, pid string, actor map
 		}
 	}
 	if strings.Contains(to, "/") {
-		return nil, errors.New("cross-project messaging is not supported in local Phase 1")
+		return nil, errors.New("cross-project messaging is not supported")
 	}
 	var recipients []map[string]any
 	switch {
@@ -136,6 +135,15 @@ func (s *Store) send(ctx context.Context, tx *sql.Tx, wid, pid string, actor map
 	if recent >= 120 {
 		return nil, errors.New("session send rate limit (120/minute) reached; no write queued")
 	}
+	if s.postgres {
+		var principalRecent int
+		if err = tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM messages WHERE created_by_principal=? AND created_at>=?`, s.principal, time.Now().UTC().Add(-time.Minute).Format(timestampLayout)).Scan(&principalRecent); err != nil {
+			return nil, err
+		}
+		if principalRecent >= 600 {
+			return nil, errors.New("principal send rate limit (600/minute) reached; no write queued")
+		}
+	}
 	var retention int
 	if err = tx.QueryRowContext(ctx, `SELECT retention_days FROM workspaces WHERE id=?`, wid).Scan(&retention); err != nil {
 		return nil, err
@@ -166,14 +174,14 @@ func (s *Store) send(ctx context.Context, tx *sql.Tx, wid, pid string, actor map
 	}
 	return s.message(ctx, tx, pid, id)
 }
-func (s *Store) participatingMessage(ctx context.Context, tx *sql.Tx, pid, sid, id string) (map[string]any, error) {
+func (s *Store) participatingMessage(ctx context.Context, tx *transaction, pid, sid, id string) (map[string]any, error) {
 	m, err := one(ctx, tx, `SELECT m.* FROM messages m WHERE m.project_id=? AND m.id=? AND m.expires_at>? AND (m.sender_id=? OR EXISTS(SELECT 1 FROM deliveries d WHERE d.project_id=m.project_id AND d.message_id=m.id AND d.recipient_id=?))`, pid, id, stamp(), sid, sid)
 	if err != nil {
-		return nil, errors.New("message not found in this session's scope")
+		return nil, scopedError(err, "message not found in this session's scope", "not_found")
 	}
 	return m, nil
 }
-func (s *Store) message(ctx context.Context, tx *sql.Tx, pid, id string) (any, error) {
+func (s *Store) message(ctx context.Context, tx *transaction, pid, id string) (any, error) {
 	m, err := one(ctx, tx, `SELECT sequence,id,project_id,source_project_id,sender_id,address,thread_id,reply_to,kind,body,created_at,expires_at,created_by_principal,operation_id FROM messages WHERE project_id=? AND id=?`, pid, id)
 	if err != nil {
 		return nil, err
@@ -185,10 +193,10 @@ func (s *Store) message(ctx context.Context, tx *sql.Tx, pid, id string) (any, e
 	m["deliveries"] = d
 	return m, nil
 }
-func (s *Store) messageStatus(ctx context.Context, tx *sql.Tx, pid, sid, id string) (any, error) {
+func (s *Store) messageStatus(ctx context.Context, tx *transaction, pid, sid, id string) (any, error) {
 	m, err := one(ctx, tx, `SELECT id,sequence,project_id,sender_id,thread_id,reply_to,created_at,expires_at FROM messages WHERE project_id=? AND sender_id=? AND id=? AND expires_at>?`, pid, sid, id, stamp())
 	if err != nil {
-		return nil, errors.New("message status is available only to its sender in this project")
+		return nil, scopedError(err, "message status is available only to its sender in this project", "not_found")
 	}
 	d, err := query(ctx, tx, `SELECT d.recipient_id,s.name AS recipient,d.delivered_at,d.read_at FROM deliveries d JOIN sessions s ON s.id=d.recipient_id AND s.project_id=d.project_id WHERE d.project_id=? AND d.message_id=? ORDER BY d.recipient_id`, pid, id)
 	if err != nil {
@@ -197,7 +205,7 @@ func (s *Store) messageStatus(ctx context.Context, tx *sql.Tx, pid, sid, id stri
 	m["deliveries"] = d
 	return m, nil
 }
-func (s *Store) inbox(ctx context.Context, tx *sql.Tx, wid, pid, sid string, a map[string]any) (any, error) {
+func (s *Store) inbox(ctx context.Context, tx *transaction, wid, pid, sid string, a map[string]any) (any, error) {
 	n, err := limit(a)
 	if err != nil {
 		return nil, err
@@ -210,7 +218,7 @@ func (s *Store) inbox(ctx context.Context, tx *sql.Tx, wid, pid, sid string, a m
 	if v, ok := a["unread_only"]; ok {
 		unread = v.(bool)
 	}
-	messages, err := query(ctx, tx, `SELECT m.sequence,m.id,m.project_id,m.source_project_id,m.sender_id,s.name AS sender,m.address,m.thread_id,m.reply_to,m.kind,m.body,m.created_at,m.expires_at,m.created_by_principal,d.delivered_at,d.read_at FROM messages m JOIN deliveries d ON d.project_id=m.project_id AND d.message_id=m.id JOIN sessions s ON s.id=m.sender_id AND s.project_id=m.source_project_id WHERE d.project_id=? AND d.recipient_id=? AND (?=0 OR d.read_at IS NULL) AND m.expires_at>? AND m.sequence>? ORDER BY m.sequence LIMIT ?`, pid, sid, unread, stamp(), after, n+1)
+	messages, err := query(ctx, tx, `SELECT m.sequence,m.id,m.project_id,m.source_project_id,m.sender_id,s.name AS sender,m.address,m.thread_id,m.reply_to,m.kind,m.body,m.created_at,m.expires_at,m.created_by_principal,d.delivered_at,d.read_at FROM messages m JOIN deliveries d ON d.project_id=m.project_id AND d.message_id=m.id JOIN sessions s ON s.id=m.sender_id AND s.project_id=m.source_project_id WHERE d.project_id=? AND d.recipient_id=? AND (?=FALSE OR d.read_at IS NULL) AND m.expires_at>? AND m.sequence>? ORDER BY m.sequence LIMIT ?`, pid, sid, unread, stamp(), after, n+1)
 	if err != nil {
 		return nil, err
 	}
@@ -235,7 +243,7 @@ func (s *Store) inbox(ctx context.Context, tx *sql.Tx, wid, pid, sid string, a m
 	}
 	return envelope, nil
 }
-func (s *Store) markRead(ctx context.Context, tx *sql.Tx, wid, pid, sid string, a map[string]any) (any, error) {
+func (s *Store) markRead(ctx context.Context, tx *transaction, wid, pid, sid string, a map[string]any) (any, error) {
 	ids := []string{}
 	switch v := a["ids"].(type) {
 	case []string:
@@ -263,7 +271,7 @@ func (s *Store) markRead(ctx context.Context, tx *sql.Tx, wid, pid, sid string, 
 		seen[id] = true
 		d, err := one(ctx, tx, `SELECT d.message_id,d.recipient_id,d.delivered_at,d.read_at FROM deliveries d JOIN messages m ON m.id=d.message_id AND m.project_id=d.project_id WHERE d.project_id=? AND d.message_id=? AND d.recipient_id=? AND m.expires_at>?`, pid, id, sid, now)
 		if err != nil {
-			return nil, errors.New("message is not in this session's inbox")
+			return nil, scopedError(err, "message is not in this session's inbox", "forbidden")
 		}
 		if d["read_at"] == nil {
 			_, err = tx.ExecContext(ctx, `UPDATE deliveries SET delivered_at=COALESCE(delivered_at,?),read_at=COALESCE(read_at,?) WHERE project_id=? AND message_id=? AND recipient_id=?`, now, now, pid, id, sid)
@@ -290,7 +298,11 @@ func (s *Store) markRead(ctx context.Context, tx *sql.Tx, wid, pid, sid string, 
 // Selectors take precedence over normalized remote fallback. Workspace may be omitted
 // for remote fallback only when the remote resolves uniquely across owned workspaces.
 func (s *Store) ResolveProject(ctx context.Context, workspace, project, remote string) (string, string, error) {
-	tx, err := s.db.BeginTx(ctx, nil)
+	if s.postgres {
+		return "", "", errors.New("hosted resolution requires trusted ExecuteAs with resolve_project")
+	}
+	raw, err := s.db.BeginTx(ctx, nil)
+	tx := &transaction{Tx: raw, postgres: s.postgres}
 	if err != nil {
 		return "", "", err
 	}

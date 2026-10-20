@@ -2,7 +2,6 @@ package bus
 
 import (
 	"context"
-	"database/sql"
 	"errors"
 	"fmt"
 	"strings"
@@ -22,7 +21,7 @@ func metadata(a map[string]any) error {
 	}
 	return nil
 }
-func (s *Store) register(ctx context.Context, tx *sql.Tx, wid, pid string, r Request) (any, error) {
+func (s *Store) register(ctx context.Context, tx *transaction, wid, pid string, r Request) (any, error) {
 	if err := nameOK(r.Session); err != nil {
 		return nil, err
 	}
@@ -96,7 +95,7 @@ func (s *Store) register(ctx context.Context, tx *sql.Tx, wid, pid string, r Req
 	}
 	return one(ctx, tx, `SELECT * FROM sessions WHERE id=? AND project_id=?`, id, pid)
 }
-func (s *Store) update(ctx context.Context, tx *sql.Tx, wid, pid string, actor map[string]any, a map[string]any) (any, error) {
+func (s *Store) update(ctx context.Context, tx *transaction, wid, pid string, actor map[string]any, a map[string]any) (any, error) {
 	if err := metadata(a); err != nil {
 		return nil, err
 	}
@@ -118,9 +117,14 @@ func (s *Store) update(ctx context.Context, tx *sql.Tx, wid, pid string, actor m
 	if len(sets) == 0 {
 		return nil, errors.New("no session fields supplied")
 	}
-	sets = append(sets, "updated_at=?", "last_seen=?")
+	sets = append(sets, "updated_at=?")
 	now := stamp()
-	values = append(values, now, now, sid, pid)
+	values = append(values, now)
+	if tx.actorID == "" || tx.actorID == sid {
+		sets = append(sets, "last_seen=?")
+		values = append(values, now)
+	}
+	values = append(values, sid, pid)
 	_, err := tx.ExecContext(ctx, `UPDATE sessions SET `+strings.Join(sets, ",")+` WHERE id=? AND project_id=?`, values...)
 	if err != nil {
 		return nil, err
@@ -130,7 +134,7 @@ func (s *Store) update(ctx context.Context, tx *sql.Tx, wid, pid string, actor m
 	}
 	return one(ctx, tx, `SELECT * FROM sessions WHERE id=? AND project_id=?`, sid, pid)
 }
-func (s *Store) retire(ctx context.Context, tx *sql.Tx, wid, pid string, actor map[string]any, a map[string]any) (any, error) {
+func (s *Store) retire(ctx context.Context, tx *transaction, wid, pid string, actor map[string]any, a map[string]any) (any, error) {
 	sid := actor["id"].(string)
 	status := str(a, "status")
 	if status == "" {
@@ -143,7 +147,7 @@ func (s *Store) retire(ctx context.Context, tx *sql.Tx, wid, pid string, actor m
 	if name := str(a, "successor"); name != "" {
 		next, err := one(ctx, tx, `SELECT * FROM sessions WHERE project_id=? AND (id=? OR name=?)`, pid, name, name)
 		if err != nil {
-			return nil, errors.New("successor must exist in the same project")
+			return nil, scopedError(err, "successor must exist in the same project", "invalid")
 		}
 		if next["id"] == sid {
 			return nil, errors.New("session cannot succeed itself")

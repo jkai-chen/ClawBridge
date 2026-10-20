@@ -14,13 +14,16 @@ import (
 	"clawbridge/internal/bus"
 	"clawbridge/internal/install"
 	"clawbridge/internal/mcpserver"
+	"clawbridge/internal/remote"
+	"clawbridge/internal/server"
 )
 
-const Usage = `clawbridge: explicitly local agent messaging
+const Usage = `clawbridge: local and authenticated hosted agent messaging
 Global flags: --db PATH --workspace NAME_OR_ID --project SLUG_OR_ID --session NAME_OR_ID --instance ID --json
 Commands: setup --local, project create SLUG, register [NAME], sessions, send TO BODY --operation-id ID,
           inbox, mark-read ID..., reply ID BODY --operation-id ID, update, retire, history, whoami, status ID,
-          mcp, mcp install ...
+          mcp, mcp install ..., serve, sync, purge-expired
+Cloud flags: --mode cloud --server URL --audience AUDIENCE [--account EMAIL] [--impersonate-service-account EMAIL] [--principal EMAIL] [--cache PATH]
 All normal results are JSON with source. See CORE-API.md for command flags and isolated test environment variables.
 `
 
@@ -29,7 +32,7 @@ All normal results are JSON with source. See CORE-API.md for command flags and i
 func extractGlobals(args []string) (Config, []string, error) {
 	var c Config
 	rest := []string{}
-	targets := map[string]*string{"db": &c.DB, "workspace": &c.Workspace, "project": &c.Project, "session": &c.Session, "instance": &c.Instance}
+	targets := map[string]*string{"db": &c.DB, "workspace": &c.Workspace, "project": &c.Project, "session": &c.Session, "instance": &c.Instance, "server": &c.Server, "audience": &c.Audience, "account": &c.Account, "impersonate-service-account": &c.ImpersonateServiceAccount, "principal": &c.Principal, "cache": &c.Cache, "mode": &c.Mode}
 	for i := 0; i < len(args); i++ {
 		arg := args[i]
 		if arg == "--" {
@@ -110,6 +113,10 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		_, err := io.WriteString(stdout, Usage)
 		return err
 	}
+	// A server invocation has its own operator flags and never opens local state.
+	if args[0] == "serve" {
+		return server.Run(ctx, args[1:])
+	}
 	flags, rest, err := extractGlobals(args)
 	if err != nil {
 		return err
@@ -121,7 +128,7 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	// may themselves be literal command words such as "mcp install".
 	if len(rest) >= 2 && rest[0] == "mcp" && rest[1] == "install" {
 		installerArgs := append([]string{}, rest[2:]...)
-		for _, entry := range []struct{ name, value string }{{"db", flags.DB}, {"workspace", flags.Workspace}, {"project", flags.Project}, {"session", flags.Session}, {"instance", flags.Instance}} {
+		for _, entry := range []struct{ name, value string }{{"db", flags.DB}, {"workspace", flags.Workspace}, {"project", flags.Project}, {"session", flags.Session}, {"instance", flags.Instance}, {"mode", flags.Mode}, {"server", flags.Server}, {"audience", flags.Audience}, {"account", flags.Account}, {"impersonate-service-account", flags.ImpersonateServiceAccount}, {"principal", flags.Principal}, {"cache", flags.Cache}} {
 			if entry.value != "" {
 				installerArgs = append(installerArgs, "--"+entry.name, entry.value)
 			}
@@ -130,6 +137,9 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	}
 	command := rest[0]
 	rest = rest[1:]
+	if command == "serve" {
+		return errors.New("serve operator flags must follow serve directly")
+	}
 	config, configPath, err := resolveConfig(ctx, flags)
 	if err != nil {
 		return err
@@ -145,22 +155,39 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	case "setup":
 		op = "workspace_init"
 		f.Bool("local", false, "explicit local authority")
+		f.Bool("cloud", false, "initialize hosted workspace as verified bootstrap owner")
 		f.String("name", "", "workspace name")
 		f.Int("retention-days", 90, "message retention days (proposed default 90)")
 	case "project":
-		if len(rest) == 0 || rest[0] != "create" {
-			return errors.New("usage: clawbridge project create SLUG [--name NAME] [--git-remote URL]")
+		if len(rest) == 0 {
+			return errors.New("usage: project create SLUG, or project role-set EMAIL ROLE")
 		}
-		rest = rest[1:]
-		op = "project_create"
-		arityMin, arityMax = 1, 1
-		stringArg("name", "name")
-		stringArg("git-remote", "git_remote")
+		switch rest[0] {
+		case "create":
+			rest = rest[1:]
+			op = "project_create"
+			arityMin, arityMax = 1, 1
+			stringArg("name", "name")
+			stringArg("git-remote", "git_remote")
+		case "role-set":
+			rest = rest[1:]
+			op = "project_role_set"
+			arityMin, arityMax = 2, 2
+		case "role":
+			if len(rest) < 2 || rest[1] != "set" {
+				return errors.New("usage: project role set EMAIL ROLE")
+			}
+			rest = rest[2:]
+			op = "project_role_set"
+			arityMin, arityMax = 2, 2
+		default:
+			return errors.New("unknown project command")
+		}
 	case "register":
 		f.Bool("resume", false, "rotate a known instance and fence its prior process")
 		op = "register_session"
 		arityMax = 1
-		for _, k := range []string{"role", "agent-kind", "model", "host", "account", "notes", "transport"} {
+		for _, k := range []string{"role", "agent-kind", "model", "host", "account", "session-account", "notes", "transport"} {
 			stringArg(k, strings.ReplaceAll(k, "-", "_"))
 		}
 	case "sessions":
@@ -187,11 +214,13 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		stringArg("operation-id", "operation_id")
 		stringArg("kind", "kind")
 	case "update":
+		stringArg("target-session", "target_session")
 		op = "update_session"
-		for _, k := range []string{"role", "model", "host", "account", "notes", "transport"} {
+		for _, k := range []string{"role", "model", "host", "account", "session-account", "notes", "transport"} {
 			stringArg(k, k)
 		}
 	case "retire":
+		stringArg("target-session", "target_session")
 		op = "retire_session"
 		stringArg("successor", "successor")
 		stringArg("status", "status")
@@ -200,6 +229,12 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		commonPage()
 		stringArg("entity", "entity")
 		stringArg("key", "key")
+	case "sync":
+		if config.Mode != "cloud" {
+			return errors.New("sync requires explicit cloud mode")
+		}
+	case "purge-expired":
+		op = "purge_expired"
 	case "whoami":
 		op = "whoami"
 	case "status":
@@ -226,32 +261,54 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	f.Visit(func(fl *flag.Flag) {
 		key := strings.ReplaceAll(fl.Name, "-", "_")
 		switch fl.Name {
-		case "local", "name", "retention-days":
+		case "local", "cloud", "name", "retention-days":
 			return
 		}
 		if getter, ok := fl.Value.(flag.Getter); ok {
 			a[key] = getter.Get()
 		}
 	})
+	if v, ok := a["session_account"]; ok {
+		a["account"] = v
+		delete(a, "session_account")
+	}
+	if config.Mode == "local" && (command == "register" || command == "update") && flags.Account != "" {
+		a["account"] = flags.Account
+	}
 	if command == "setup" {
-		if !f.Lookup("local").Value.(flag.Getter).Get().(bool) {
-			return errors.New("setup requires --local; cloud setup is unavailable")
+		local := f.Lookup("local").Value.(flag.Getter).Get().(bool)
+		cloud := f.Lookup("cloud").Value.(flag.Getter).Get().(bool)
+		if local == cloud {
+			return errors.New("setup requires exactly one of --local or --cloud")
+		}
+		if (local && config.Mode != "local") || (cloud && config.Mode != "cloud") {
+			return errors.New("setup mode conflicts with configured storage mode; no fallback")
 		}
 		name := f.Lookup("name").Value.String()
 		if name != "" {
 			config.Workspace = name
 		}
 		if config.Workspace == "" {
+			if cloud {
+				return errors.New("cloud setup requires explicit workspace name")
+			}
 			config.Workspace = "local"
 		}
 		a["mode"] = "local"
+		if cloud {
+			a["mode"] = "server"
+		}
 		a["retention_days"] = f.Lookup("retention-days").Value.(flag.Getter).Get()
 	}
 	switch command {
 	case "project":
-		a["slug"] = pos[0]
-		if v := f.Lookup("name").Value.String(); v != "" {
-			a["name"] = v
+		if op == "project_create" {
+			a["slug"] = pos[0]
+			if v := f.Lookup("name").Value.String(); v != "" {
+				a["name"] = v
+			}
+		} else {
+			a["principal"], a["role"] = pos[0], pos[1]
 		}
 	case "register":
 		if len(pos) > 0 {
@@ -276,13 +333,28 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		}
 		a["transport"] = transport
 	}
-	store, err := bus.Open(config.DB)
-	if err != nil {
-		return err
+	var executor interface {
+		Execute(context.Context, bus.Request) (bus.Result, error)
+		ResolveProject(context.Context, string, string, string) (string, string, error)
 	}
-	defer store.Close()
-	if command != "setup" && command != "project" {
-		workspace, project, e := store.ResolveProject(ctx, config.Workspace, config.Project, gitRemote(ctx))
+	var localStore *bus.Store
+	var cloudClient *remote.Client
+	if config.Mode == "cloud" {
+		cloudClient, err = remote.New(remote.Config{URL: config.Server, Audience: config.Audience, Account: config.Account, ImpersonateServiceAccount: config.ImpersonateServiceAccount, Principal: config.Principal, CachePath: config.Cache})
+		if err != nil {
+			return err
+		}
+		executor = cloudClient
+	} else {
+		localStore, err = bus.Open(config.DB)
+		if err != nil {
+			return err
+		}
+		defer localStore.Close()
+		executor = localStore
+	}
+	if command != "setup" && op != "project_create" {
+		workspace, project, e := executor.ResolveProject(ctx, config.Workspace, config.Project, gitRemote(ctx))
 		if e != nil {
 			return e
 		}
@@ -292,18 +364,28 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		if config.Session == "" {
 			return errors.New("mcp requires an explicit --session or configured session")
 		}
-		if err = store.Close(); err != nil {
+		if cloudClient != nil {
+			return mcpserver.RunExecutor(ctx, cloudClient, config.Workspace, config.Project, config.Session, config.Instance)
+		}
+		if err = localStore.Close(); err != nil {
 			return err
 		}
 		return mcpserver.Run(ctx, config.DB, config.Workspace, config.Project, config.Session, config.Instance)
 	}
+	if command == "sync" {
+		result, e := cloudClient.Sync(ctx, config.Workspace, config.Project, config.Session, config.Instance)
+		if e != nil {
+			return e
+		}
+		return json.NewEncoder(stdout).Encode(result)
+	}
 	if config.Instance != "" {
 		switch op {
-		case "register_session", "list_sessions", "history", "send", "reply", "inbox", "mark_read", "update_session", "retire_session", "whoami", "message_status":
+		case "register_session", "list_sessions", "history", "send", "reply", "inbox", "mark_read", "update_session", "retire_session", "whoami", "message_status", "project_role_set", "purge_expired":
 			a["instance"] = config.Instance
 		}
 	}
-	result, err := store.Execute(ctx, bus.Request{Operation: op, Workspace: config.Workspace, Project: config.Project, Session: config.Session, Args: a})
+	result, err := executor.Execute(ctx, bus.Request{Operation: op, Workspace: config.Workspace, Project: config.Project, Session: config.Session, Args: a})
 	if err != nil {
 		return err
 	}

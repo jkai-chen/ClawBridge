@@ -1,0 +1,7 @@
+/clawbridge
+/bin/
+*.db
+*.db-shm
+*.db-wal
+*.clawbridge-backup-*
+*.clawbridge.lock

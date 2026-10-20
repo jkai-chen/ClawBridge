@@ -1,0 +1,596 @@
+// Package bus implements the explicitly local ClawBridge authority.
+package bus
+
+import (
+	"context"
+	"crypto/rand"
+	"crypto/sha256"
+	"database/sql"
+	"encoding/hex"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"net/url"
+	"os"
+	"os/user"
+	"path/filepath"
+	"regexp"
+	"strings"
+	"time"
+
+	_ "modernc.org/sqlite"
+)
+
+type Request struct {
+	Operation string         `json:"operation"`
+	Workspace string         `json:"workspace"`
+	Project   string         `json:"project"`
+	Session   string         `json:"session"`
+	Args      map[string]any `json:"args"`
+}
+type Result struct {
+	Source string `json:"source"`
+	Data   any    `json:"data"`
+}
+type Store struct {
+	db        *sql.DB
+	principal string
+}
+
+func Open(path string) (*Store, error) {
+	if path == "" {
+		return nil, errors.New("explicit database path is required")
+	}
+	if path != ":memory:" {
+		abs, err := filepath.Abs(path)
+		if err != nil {
+			return nil, err
+		}
+		path = abs
+		if err = os.MkdirAll(filepath.Dir(path), 0700); err != nil {
+			return nil, err
+		}
+		// Never raw-open an existing SQLite inode: closing that descriptor can
+		// release POSIX locks held by another SQLite connection in this process.
+		f, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_RDWR, 0600)
+		if err != nil && !errors.Is(err, os.ErrExist) {
+			return nil, err
+		}
+		if err == nil {
+			if err = f.Close(); err != nil {
+				return nil, err
+			}
+		}
+	}
+	dsn := ":memory:?_pragma=foreign_keys(1)&_pragma=busy_timeout(5000)&_txlock=immediate"
+	if path != ":memory:" {
+		u := url.URL{Scheme: "file", Path: path}
+		dsn = u.String() + "?_pragma=foreign_keys(1)&_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)&_txlock=immediate"
+	}
+	db, err := sql.Open("sqlite", dsn)
+	if err != nil {
+		return nil, err
+	}
+	db.SetMaxOpenConns(1)
+	u, err := user.Current()
+	if err != nil {
+		db.Close()
+		return nil, fmt.Errorf("local OS identity: %w", err)
+	}
+	s := &Store{db: db, principal: "local:" + u.Uid + ":" + u.Username}
+	if err = s.migrate(); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("initialize SQLite: %w", err)
+	}
+	return s, nil
+}
+func (s *Store) Close() error { return s.db.Close() }
+
+func (s *Store) migrate() error {
+	tx, err := s.db.BeginTx(context.Background(), nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	var version int
+	if err = tx.QueryRow("PRAGMA user_version").Scan(&version); err != nil {
+		return err
+	}
+	if version > 1 {
+		return errors.New("database schema is newer than this ClawBridge binary")
+	}
+	if version == 0 {
+		var tables int
+		if err = tx.QueryRow("SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'").Scan(&tables); err != nil {
+			return err
+		}
+		if tables != 0 {
+			return errors.New("database is not an initialized ClawBridge store; refusing to modify unrelated tables")
+		}
+		if _, err = tx.Exec(schema); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
+const schema = `
+CREATE TABLE IF NOT EXISTS workspaces(id TEXT PRIMARY KEY,name TEXT NOT NULL UNIQUE,mode TEXT NOT NULL CHECK(mode='local'),retention_days INTEGER NOT NULL,owner_principal TEXT NOT NULL,created_at TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS projects(id TEXT PRIMARY KEY,workspace_id TEXT NOT NULL REFERENCES workspaces(id),slug TEXT NOT NULL,name TEXT NOT NULL,git_remote TEXT NOT NULL DEFAULT '',created_at TEXT NOT NULL,UNIQUE(workspace_id,slug),UNIQUE(workspace_id,id));
+CREATE TABLE IF NOT EXISTS sessions(id TEXT PRIMARY KEY,project_id TEXT NOT NULL REFERENCES projects(id),name TEXT NOT NULL,instance TEXT NOT NULL,owner_principal TEXT NOT NULL,role TEXT NOT NULL,agent_kind TEXT NOT NULL,model TEXT NOT NULL,host TEXT NOT NULL,account TEXT NOT NULL,transport TEXT NOT NULL,notes TEXT NOT NULL,status TEXT NOT NULL CHECK(status IN ('active','retired','moved')),successor TEXT REFERENCES sessions(id),last_seen TEXT NOT NULL,created_at TEXT NOT NULL,updated_at TEXT NOT NULL,UNIQUE(project_id,name),UNIQUE(project_id,id));
+CREATE TABLE IF NOT EXISTS messages(sequence INTEGER PRIMARY KEY AUTOINCREMENT,id TEXT NOT NULL UNIQUE,project_id TEXT NOT NULL REFERENCES projects(id),source_project_id TEXT NOT NULL,sender_id TEXT NOT NULL,address TEXT NOT NULL,thread_id TEXT NOT NULL REFERENCES messages(id) DEFERRABLE INITIALLY DEFERRED,reply_to TEXT REFERENCES messages(id),kind TEXT NOT NULL,body TEXT NOT NULL,created_at TEXT NOT NULL,expires_at TEXT NOT NULL,created_by_principal TEXT NOT NULL,operation_id TEXT NOT NULL,payload_hash TEXT NOT NULL,FOREIGN KEY(project_id,sender_id) REFERENCES sessions(project_id,id),FOREIGN KEY(source_project_id) REFERENCES projects(id),UNIQUE(sender_id,operation_id),UNIQUE(project_id,id));
+CREATE TABLE IF NOT EXISTS deliveries(message_id TEXT NOT NULL,project_id TEXT NOT NULL,recipient_id TEXT NOT NULL,delivered_at TEXT,read_at TEXT,PRIMARY KEY(message_id,project_id,recipient_id),FOREIGN KEY(project_id,message_id) REFERENCES messages(project_id,id),FOREIGN KEY(project_id,recipient_id) REFERENCES sessions(project_id,id));
+CREATE TABLE IF NOT EXISTS history(sequence INTEGER PRIMARY KEY AUTOINCREMENT,id TEXT NOT NULL UNIQUE,workspace_id TEXT NOT NULL REFERENCES workspaces(id),project_id TEXT REFERENCES projects(id),entity TEXT NOT NULL,entity_key TEXT NOT NULL,action TEXT NOT NULL,details TEXT NOT NULL,changed_at TEXT NOT NULL,changed_by_principal TEXT NOT NULL,changed_by_session TEXT);
+CREATE INDEX IF NOT EXISTS inbox_recipient ON deliveries(project_id,recipient_id,message_id);
+CREATE INDEX IF NOT EXISTS project_messages ON messages(project_id,sequence);
+CREATE INDEX IF NOT EXISTS project_history ON history(workspace_id,project_id,sequence);
+CREATE TRIGGER IF NOT EXISTS immutable_history_update BEFORE UPDATE ON history BEGIN SELECT RAISE(ABORT,'history is append-only'); END;
+CREATE TRIGGER IF NOT EXISTS immutable_history_delete BEFORE DELETE ON history BEGIN SELECT RAISE(ABORT,'history is append-only'); END;
+PRAGMA user_version=1;
+`
+
+func newID(prefix string) string {
+	var b [16]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		panic(err)
+	}
+	return prefix + hex.EncodeToString(b[:])
+}
+
+const timestampLayout = "2006-01-02T15:04:05.000000000Z07:00"
+
+func stamp() string                         { return time.Now().UTC().Format(timestampLayout) }
+func str(a map[string]any, k string) string { v, _ := a[k].(string); return v }
+func asJSON(v any) string                   { b, _ := json.Marshal(v); return string(b) }
+func query(ctx context.Context, tx *sql.Tx, q string, args ...any) ([]map[string]any, error) {
+	rows, err := tx.QueryContext(ctx, q, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	cols, err := rows.Columns()
+	if err != nil {
+		return nil, err
+	}
+	out := []map[string]any{}
+	for rows.Next() {
+		v := make([]any, len(cols))
+		p := make([]any, len(cols))
+		for i := range v {
+			p[i] = &v[i]
+		}
+		if err = rows.Scan(p...); err != nil {
+			return nil, err
+		}
+		m := map[string]any{}
+		for i, c := range cols {
+			if b, ok := v[i].([]byte); ok {
+				v[i] = string(b)
+			}
+			m[c] = v[i]
+			if c == "transport" || c == "details" {
+				var decoded any
+				if t, ok := v[i].(string); ok && json.Unmarshal([]byte(t), &decoded) == nil {
+					m[c] = decoded
+				}
+			}
+		}
+		decorateSession(m)
+		out = append(out, m)
+	}
+	return out, rows.Err()
+}
+func one(ctx context.Context, tx *sql.Tx, q string, args ...any) (map[string]any, error) {
+	r, err := query(ctx, tx, q, args...)
+	if err != nil {
+		return nil, err
+	}
+	if len(r) != 1 {
+		return nil, errors.New("scope or entity not found or ambiguous")
+	}
+	return r[0], nil
+}
+func (s *Store) audit(ctx context.Context, tx *sql.Tx, w, p, session, entity, key, action string, details any) error {
+	var project, actor any
+	if p != "" {
+		project = p
+	}
+	if session != "" {
+		actor = session
+	}
+	_, err := tx.ExecContext(ctx, `INSERT INTO history(id,workspace_id,project_id,entity,entity_key,action,details,changed_at,changed_by_principal,changed_by_session) VALUES(?,?,?,?,?,?,?,?,?,?)`, newID("evt_"), w, project, entity, key, action, asJSON(details), stamp(), s.principal, actor)
+	return err
+}
+
+var namePattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$`)
+
+func nameOK(v string) error {
+	if !namePattern.MatchString(v) {
+		return errors.New("name must be 1–128 letters, digits, dot, underscore or hyphen")
+	}
+	return nil
+}
+func validateArgs(op string, a map[string]any) error {
+	allowed := map[string]string{
+		"workspace_init": "mode name retention_days", "project_create": "slug name git_remote", "register_session": "instance resume role agent_kind model host account notes transport", "list_sessions": "instance status role limit after", "send": "instance to body kind thread_id operation_id", "reply": "instance message_id body kind operation_id", "inbox": "instance unread_only limit after", "mark_read": "instance ids", "update_session": "instance role model host account notes transport", "retire_session": "instance successor status", "history": "instance entity key limit after", "whoami": "instance", "message_status": "instance message_id",
+	}
+	keys, ok := allowed[op]
+	if !ok {
+		return fmt.Errorf("unsupported operation %q", op)
+	}
+	for k, v := range a {
+		if !strings.Contains(" "+keys+" ", " "+k+" ") {
+			return fmt.Errorf("unsupported argument %q for %s", k, op)
+		}
+		switch k {
+		case "retention_days", "limit", "after":
+			if _, err := integer(v); err != nil {
+				return fmt.Errorf("%s: %w", k, err)
+			}
+		case "transport":
+			if _, ok := v.(map[string]any); !ok {
+				return errors.New("transport must be an object")
+			}
+		case "ids":
+			switch v.(type) {
+			case []string, []any:
+			default:
+				return errors.New("ids must be an array of strings")
+			}
+		case "unread_only", "resume":
+			if _, ok := v.(bool); !ok {
+				return fmt.Errorf("%s must be boolean", k)
+			}
+		default:
+			if _, ok := v.(string); !ok {
+				return fmt.Errorf("%s must be a string", k)
+			}
+		}
+	}
+	encoded, err := json.Marshal(a)
+	if err != nil {
+		return errors.New("arguments must be JSON serializable")
+	}
+	if len(encoded) > 80000 {
+		return errors.New("request arguments exceed size limit")
+	}
+	return nil
+}
+func integer(v any) (int, error) {
+	switch n := v.(type) {
+	case int:
+		return n, nil
+	case int64:
+		if n >= 0 && n <= 9007199254740991 {
+			return int(n), nil
+		}
+	case float64:
+		if n >= 0 && n <= 9007199254740991 && n == float64(int(n)) {
+			return int(n), nil
+		}
+	case json.Number:
+		i, e := n.Int64()
+		if e == nil && i >= 0 && i <= 9007199254740991 {
+			return int(i), nil
+		}
+	}
+	return 0, errors.New("expected bounded integer")
+}
+func limit(a map[string]any) (int, error) {
+	if v, ok := a["limit"]; ok {
+		n, e := integer(v)
+		if e != nil || n < 1 || n > 1000 {
+			return 0, errors.New("limit must be 1–1000")
+		}
+		return n, nil
+	}
+	return 100, nil
+}
+func (s *Store) Execute(ctx context.Context, r Request) (Result, error) {
+	if err := validateArgs(r.Operation, r.Args); err != nil {
+		return Result{}, err
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return Result{}, fmt.Errorf("SQLite unavailable (no write queued): %w", err)
+	}
+	defer tx.Rollback()
+	data, err := s.execute(ctx, tx, r)
+	if err != nil {
+		return Result{}, err
+	}
+	if err = tx.Commit(); err != nil {
+		return Result{}, fmt.Errorf("SQLite commit failed (no write queued): %w", err)
+	}
+	return Result{Source: "local-authority", Data: data}, nil
+}
+func (s *Store) execute(ctx context.Context, tx *sql.Tx, r Request) (any, error) {
+	a := r.Args
+	if r.Operation == "workspace_init" {
+		return s.initWorkspace(ctx, tx, r)
+	}
+	if r.Workspace == "" {
+		return nil, errors.New("workspace is required; run setup --local explicitly")
+	}
+	w, err := one(ctx, tx, `SELECT * FROM workspaces WHERE id=? OR name=?`, r.Workspace, r.Workspace)
+	if err != nil {
+		return nil, err
+	}
+	if w["mode"] != "local" {
+		return nil, errors.New("workspace is not explicit local authority; cloud writes unavailable, no write queued")
+	}
+	if w["owner_principal"] != s.principal {
+		return nil, errors.New("local workspace belongs to a different OS user")
+	}
+	wid := w["id"].(string)
+	if r.Operation == "project_create" {
+		return s.createProject(ctx, tx, wid, a)
+	}
+	if r.Project == "" {
+		return nil, errors.New("project is required; select an existing project explicitly")
+	}
+	p, err := one(ctx, tx, `SELECT * FROM projects WHERE workspace_id=? AND (id=? OR slug=?)`, wid, r.Project, r.Project)
+	if err != nil {
+		return nil, err
+	}
+	pid := p["id"].(string)
+	if r.Operation == "register_session" {
+		return s.register(ctx, tx, wid, pid, r)
+	}
+	if r.Operation == "list_sessions" {
+		if err = s.touchReadActor(ctx, tx, pid, r); err != nil {
+			return nil, err
+		}
+		n, e := limit(a)
+		if e != nil {
+			return nil, e
+		}
+		status, role := str(a, "status"), str(a, "role")
+		if status != "" && status != "active" && status != "retired" && status != "moved" {
+			return nil, errors.New("invalid session status")
+		}
+		after, e := cursor(a)
+		if e != nil {
+			return nil, e
+		}
+		rows, e := query(ctx, tx, `SELECT rowid AS sequence,* FROM sessions WHERE project_id=? AND (?='' OR status=?) AND (?='' OR role=?) AND rowid>? ORDER BY rowid LIMIT ?`, pid, status, status, role, role, after, n+1)
+		if e != nil {
+			return nil, e
+		}
+		return page("sessions", rows, n, after), nil
+	}
+	if r.Operation == "history" {
+		if err = s.touchReadActor(ctx, tx, pid, r); err != nil {
+			return nil, err
+		}
+		n, e := limit(a)
+		if e != nil {
+			return nil, e
+		}
+		entity, key := str(a, "entity"), str(a, "key")
+		after, e := cursor(a)
+		if e != nil {
+			return nil, e
+		}
+		rows, e := query(ctx, tx, `SELECT * FROM history WHERE workspace_id=? AND project_id=? AND (?='' OR entity=?) AND (?='' OR entity_key=?) AND sequence>? ORDER BY sequence LIMIT ?`, wid, pid, entity, entity, key, key, after, n+1)
+		if e != nil {
+			return nil, e
+		}
+		return page("events", rows, n, after), nil
+	}
+	var actor map[string]any
+	if r.Session != "" {
+		actor, err = one(ctx, tx, `SELECT * FROM sessions WHERE project_id=? AND (id=? OR name=?)`, pid, r.Session, r.Session)
+		if err != nil {
+			return nil, err
+		}
+		if actor["owner_principal"] != s.principal || str(a, "instance") == "" || actor["instance"] != str(a, "instance") {
+			return nil, errors.New("session instance mismatch; pass the instance returned by register")
+		}
+	}
+	if actor != nil {
+		now := stamp()
+		if _, err = tx.ExecContext(ctx, `UPDATE sessions SET last_seen=? WHERE project_id=? AND id=?`, now, pid, actor["id"]); err != nil {
+			return nil, err
+		}
+		actor["last_seen"] = now
+		decorateSession(actor)
+	}
+	if r.Operation == "whoami" {
+		return map[string]any{"workspace": w, "project": p, "session": actor, "principal": s.principal, "identity_provenance": "local-os-user-unverified", "verified": false, "storage_mode": "local", "online": true}, nil
+	}
+	if actor == nil {
+		return nil, errors.New("session is required; register and pass --session and --instance")
+	}
+	sid := actor["id"].(string)
+	if actor["status"] != "active" && r.Operation != "message_status" && r.Operation != "inbox" && r.Operation != "mark_read" && r.Operation != "retire_session" && r.Operation != "send" && r.Operation != "reply" {
+		return nil, errors.New("session is retired or moved; it cannot perform this operation")
+	}
+	switch r.Operation {
+	case "send", "reply":
+		return s.send(ctx, tx, wid, pid, actor, r)
+	case "inbox":
+		return s.inbox(ctx, tx, wid, pid, sid, a)
+	case "mark_read":
+		return s.markRead(ctx, tx, wid, pid, sid, a)
+	case "message_status":
+		return s.messageStatus(ctx, tx, pid, sid, str(a, "message_id"))
+	case "update_session":
+		return s.update(ctx, tx, wid, pid, actor, a)
+	case "retire_session":
+		return s.retire(ctx, tx, wid, pid, actor, a)
+	}
+	return nil, errors.New("unsupported operation")
+}
+func (s *Store) initWorkspace(ctx context.Context, tx *sql.Tx, r Request) (any, error) {
+	a := r.Args
+	if str(a, "mode") != "local" {
+		return nil, errors.New("explicit mode=local is required; cloud setup is not implemented")
+	}
+	name := r.Workspace
+	if name == "" {
+		name = str(a, "name")
+	}
+	if err := nameOK(name); err != nil {
+		return nil, err
+	}
+	retention := 90
+	if v, ok := a["retention_days"]; ok {
+		retention, _ = integer(v)
+	}
+	if retention < 1 || retention > 3650 {
+		return nil, errors.New("retention_days must be 1–3650")
+	}
+	existing, err := query(ctx, tx, `SELECT * FROM workspaces WHERE name=?`, name)
+	if err != nil {
+		return nil, err
+	}
+	if len(existing) > 0 {
+		if existing[0]["owner_principal"] != s.principal || existing[0]["mode"] != "local" || existing[0]["retention_days"] != int64(retention) {
+			return nil, errors.New("workspace exists with conflicting owner, mode or retention")
+		}
+		return existing[0], nil
+	}
+	id := newID("ws_")
+	_, err = tx.ExecContext(ctx, `INSERT INTO workspaces VALUES(?,?,?,?,?,?)`, id, name, "local", retention, s.principal, stamp())
+	if err != nil {
+		return nil, err
+	}
+	if err = s.audit(ctx, tx, id, "", "", "workspace", id, "initialized", map[string]any{"mode": "local", "retention_days": retention}); err != nil {
+		return nil, err
+	}
+	return one(ctx, tx, `SELECT * FROM workspaces WHERE id=?`, id)
+}
+func (s *Store) createProject(ctx context.Context, tx *sql.Tx, wid string, a map[string]any) (any, error) {
+	slug := str(a, "slug")
+	if err := nameOK(slug); err != nil {
+		return nil, err
+	}
+	name := str(a, "name")
+	if name == "" {
+		name = slug
+	}
+	if len(name) > 512 {
+		return nil, errors.New("project name too long")
+	}
+	remote, err := NormalizeRemote(str(a, "git_remote"))
+	if err != nil {
+		return nil, err
+	}
+	id := newID("prj_")
+	_, err = tx.ExecContext(ctx, `INSERT INTO projects(id,workspace_id,slug,name,git_remote,created_at) VALUES(?,?,?,?,?,?)`, id, wid, slug, name, remote, stamp())
+	if err != nil {
+		return nil, fmt.Errorf("create project (slug must be unique in workspace): %w", err)
+	}
+	if err = s.audit(ctx, tx, wid, id, "", "project", id, "created", map[string]any{"slug": slug, "git_remote": remote}); err != nil {
+		return nil, err
+	}
+	return one(ctx, tx, `SELECT * FROM projects WHERE id=?`, id)
+}
+
+// NormalizeRemote preserves repository path case and normalizes common Git transports.
+func NormalizeRemote(raw string) (string, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return "", nil
+	}
+	var host, path string
+	if strings.Contains(raw, "://") {
+		u, e := url.Parse(raw)
+		if e != nil || u.Hostname() == "" {
+			return "", errors.New("invalid git remote URL")
+		}
+		if u.RawQuery != "" || u.Fragment != "" {
+			return "", errors.New("git remote must not contain query or fragment")
+		}
+		host = strings.ToLower(u.Hostname())
+		if u.Port() != "" {
+			host += ":" + u.Port()
+		}
+		path = u.Path
+	} else {
+		v := raw
+		if i := strings.LastIndex(v, "@"); i >= 0 {
+			v = v[i+1:]
+		}
+		if i := strings.Index(v, ":"); i > 0 {
+			host = strings.ToLower(v[:i])
+			path = v[i+1:]
+		} else {
+			if i = strings.Index(v, "/"); i > 0 {
+				host = strings.ToLower(v[:i])
+				path = v[i+1:]
+			} else {
+				return "", errors.New("git remote must include host and repository path")
+			}
+		}
+	}
+	path = strings.TrimSuffix(strings.TrimRight(path, "/"), ".git")
+	path = strings.TrimLeft(path, "/")
+	if path == "" || host == "" || strings.ContainsAny(host, " \t\n") || strings.ContainsAny(path, "\r\n") {
+		return "", errors.New("invalid git remote")
+	}
+	return host + "/" + path, nil
+}
+func hashPayload(v any) string {
+	h := sha256.Sum256([]byte(asJSON(v)))
+	return hex.EncodeToString(h[:])
+}
+
+func cursor(a map[string]any) (int64, error) {
+	if v, ok := a["after"]; ok {
+		n, e := integer(v)
+		if e != nil || n < 0 {
+			return 0, errors.New("after must be a nonnegative integer sequence")
+		}
+		return int64(n), nil
+	}
+	return 0, nil
+}
+func page(key string, rows []map[string]any, n int, after int64) map[string]any {
+	more := len(rows) > n
+	if more {
+		rows = rows[:n]
+	}
+	next := after
+	if len(rows) > 0 {
+		next = rows[len(rows)-1]["sequence"].(int64)
+	}
+	return map[string]any{key: rows, "next_cursor": next, "has_more": more}
+}
+
+const staleAfter = 15 * time.Minute
+
+func decorateSession(m map[string]any) {
+	raw, ok := m["last_seen"].(string)
+	if !ok {
+		return
+	}
+	status, ok := m["status"].(string)
+	if !ok {
+		return
+	}
+	presence := status
+	stale := false
+	if status == "active" {
+		t, e := time.Parse(time.RFC3339Nano, raw)
+		if e != nil || time.Since(t) > staleAfter {
+			presence = "stale"
+			stale = true
+		}
+	}
+	m["presence"] = presence
+	m["stale"] = stale
+}
+func (s *Store) touchReadActor(ctx context.Context, tx *sql.Tx, pid string, r Request) error {
+	instance := str(r.Args, "instance")
+	if instance == "" {
+		return nil
+	}
+	actor, err := one(ctx, tx, `SELECT id FROM sessions WHERE project_id=? AND (id=? OR name=?) AND instance=? AND owner_principal=?`, pid, r.Session, r.Session, instance, s.principal)
+	if err != nil {
+		return errors.New("session instance mismatch; pass the instance returned by register")
+	}
+	_, err = tx.ExecContext(ctx, `UPDATE sessions SET last_seen=? WHERE project_id=? AND id=?`, stamp(), pid, actor["id"])
+	return err
+}

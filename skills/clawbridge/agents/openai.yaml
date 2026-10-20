@@ -1,0 +1,4 @@
+interface:
+  display_name: "ClawBridge"
+  short_description: "Coordinate agent sessions through ClawBridge"
+  default_prompt: "Use $clawbridge to check my project inbox and coordinate the current task with its active peers."

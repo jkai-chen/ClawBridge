@@ -30,11 +30,19 @@ func TestPostgresRoleDenialHasNoSideEffects(t *testing.T) {
 	}
 	call(owner, "workspace_init", "", map[string]any{"mode": "server"})
 	call(owner, "project_create", "", map[string]any{"slug": "p"})
+	projects := call(owner, "list_projects", "", nil).Data.(map[string]any)
+	if len(projects["projects"].([]map[string]any)) != 1 || projects["projects"].([]map[string]any)[0]["role"] != "owner" {
+		t.Fatal("workspace owner did not see project role")
+	}
 	call(owner, "project_role_set", "", map[string]any{"principal": member, "role": "member"})
 	call(owner, "project_role_set", "", map[string]any{"principal": reader, "role": "member"})
 	call(member, "register_session", "worker", map[string]any{"instance": "worker-inst", "role": "lead"})
 	call(reader, "register_session", "reader", map[string]any{"instance": "reader-inst"})
 	call(owner, "project_role_set", "", map[string]any{"principal": reader, "role": "reader"})
+	members := call(owner, "list_members", "", nil).Data.(map[string]any)
+	if len(members["members"].([]map[string]any)) != 3 {
+		t.Fatal("project member listing omitted assignments")
+	}
 	before := call(owner, "history", "", nil)
 	for _, tc := range []struct {
 		principal, op, session string

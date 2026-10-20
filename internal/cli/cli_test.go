@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -18,7 +19,12 @@ import (
 func isolated(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
-	for _, k := range []string{"DB", "WORKSPACE", "PROJECT", "SESSION", "INSTANCE", "CONFIG", "MODE", "SERVER", "AUDIENCE", "ACCOUNT", "IMPERSONATE_SERVICE_ACCOUNT", "PRINCIPAL", "CACHE"} {
+	for _, k := range []string{
+		"DB", "WORKSPACE", "PROJECT", "SESSION", "INSTANCE", "CONFIG", "MODE", "SERVER",
+		"AUDIENCE", "ACCOUNT", "IMPERSONATE_SERVICE_ACCOUNT", "PRINCIPAL", "CACHE",
+		"CREDENTIAL_SOURCE", "CREDENTIALS_FILE", "OAUTH_CLIENT_ID", "OAUTH_CLIENT_SECRET",
+		"OAUTH_DEVICE_CLIENT_ID", "OAUTH_DEVICE_CLIENT_SECRET", "OAUTH_KEYRING_SERVICE",
+	} {
 		t.Setenv("CLAWBRIDGE_"+k, "")
 	}
 	t.Setenv("CLAWBRIDGE_HOME", filepath.Join(dir, "state"))
@@ -182,7 +188,7 @@ func TestRepoCannotInjectCloudCredentialRouting(t *testing.T) {
 	if e := os.WriteFile(filepath.Join(home, "config.toml"), []byte(trusted), 0600); e != nil {
 		t.Fatal(e)
 	}
-	untrusted := "workspace='repo-w'\nproject='repo-p'\nmode='cloud'\nserver='https://evil.example'\naudience='evil-audience'\naccount='evil@example.test'\nimpersonate_service_account='evil@example.test'\nprincipal='evil@example.test'\ncache='evil.db'\n"
+	untrusted := "workspace='repo-w'\nproject='repo-p'\nmode='cloud'\nserver='https://evil.example'\naudience='evil-audience'\naccount='evil@example.test'\nimpersonate_service_account='evil@example.test'\nprincipal='evil@example.test'\ncache='evil.db'\ncredential_source='oauth'\noauth_client_id='evil-client'\noauth_client_secret='synthetic-repo-browser-credential'\noauth_device_client_id='evil-device-client'\noauth_device_client_secret='synthetic-repo-device-credential'\n"
 	if e := os.WriteFile(filepath.Join(dir, ".clawbridge.toml"), []byte(untrusted), 0600); e != nil {
 		t.Fatal(e)
 	}
@@ -193,6 +199,10 @@ func TestRepoCannotInjectCloudCredentialRouting(t *testing.T) {
 	if c.Server != "https://trusted.example" || c.Audience != "trusted-audience" || c.Account != "human@example.test" || c.ImpersonateServiceAccount != "service@example.test" || c.Principal != "service@example.test" || c.Cache != filepath.Join(home, "trusted-cache.db") {
 		t.Fatalf("repository redirected credential routing: %#v", c)
 	}
+	if c.CredentialSource != "" || c.OAuthClientID != "" || c.OAuthClientSecret != "" ||
+		c.OAuthDeviceClientID != "" || c.OAuthDeviceClientSecret != "" {
+		t.Fatalf("repository injected OAuth routing or installed-app credentials: %#v", c)
+	}
 	if c.Workspace != "repo-w" || c.Project != "repo-p" {
 		t.Fatal("repository scope selection lost")
 	}
@@ -202,6 +212,93 @@ func TestRepoCannotInjectCloudCredentialRouting(t *testing.T) {
 		t.Fatal("flag/env credential precedence failed", e)
 	}
 }
+
+func TestRepositoryModeCannotSwitchTrustedAuthority(t *testing.T) {
+	dir := isolated(t)
+	git(t, "init", "-q")
+	home := filepath.Join(dir, "state")
+	if err := os.MkdirAll(home, 0700); err != nil {
+		t.Fatal(err)
+	}
+	dbPath := filepath.Join(home, "local.db")
+	trusted := "mode='local'\nworkspace='trusted-workspace'\ndb='" + dbPath + "'\n"
+	if err := os.WriteFile(filepath.Join(home, "config.toml"), []byte(trusted), 0600); err != nil {
+		t.Fatal(err)
+	}
+	repo := "mode='cloud'\nserver='https://attacker.example.test'\naudience='attacker-audience'\ncredential_source='oauth'\noauth_client_id='attacker-client'\noauth_client_secret='synthetic-repo-browser-credential'\noauth_device_client_id='attacker-device-client'\noauth_device_client_secret='synthetic-repo-device-credential'\nworkspace='repo-workspace'\nproject='repo-project'\n"
+	if err := os.WriteFile(filepath.Join(dir, ".clawbridge.toml"), []byte(repo), 0600); err != nil {
+		t.Fatal(err)
+	}
+	config, _, err := resolveConfig(context.Background(), Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if config.Mode != "local" {
+		t.Fatalf("repository switched trusted authority mode to %q", config.Mode)
+	}
+	if config.Workspace != "repo-workspace" || config.Project != "repo-project" {
+		t.Fatalf("repository scope selection was lost: %#v", config)
+	}
+	if config.Server != "" || config.Audience != "" || config.CredentialSource != "" ||
+		config.OAuthClientID != "" || config.OAuthClientSecret != "" ||
+		config.OAuthDeviceClientID != "" || config.OAuthDeviceClientSecret != "" {
+		t.Fatalf("repository injected trusted cloud routing: %#v", config)
+	}
+
+	invoke(t, "setup", "--local", "--workspace", "review-workspace")
+	raw, err := os.ReadFile(filepath.Join(home, "config.toml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(raw), "mode = 'local'") && !strings.Contains(string(raw), `mode = "local"`) {
+		t.Fatalf("trusted local mode was not preserved: %s", raw)
+	}
+	for _, injected := range []string{
+		"attacker.example.test", "attacker-audience", "attacker-client",
+		"synthetic-repo-browser-credential", "attacker-device-client",
+		"synthetic-repo-device-credential", "credential_source",
+	} {
+		if strings.Contains(string(raw), injected) {
+			t.Fatalf("repository injected %q into trusted configuration: %s", injected, raw)
+		}
+	}
+}
+
+func TestOAuthDeviceCredentialFlagsAndEnvironmentRemainTrusted(t *testing.T) {
+	dir := isolated(t)
+	home := filepath.Join(dir, "state")
+	if err := os.MkdirAll(home, 0700); err != nil {
+		t.Fatal(err)
+	}
+	trusted := "mode='cloud'\nserver='https://trusted.example.test'\nprincipal='alice@example.test'\ncache='cache.db'\ncredential_source='oauth'\n"
+	if err := os.WriteFile(filepath.Join(home, "config.toml"), []byte(trusted), 0600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("CLAWBRIDGE_OAUTH_CLIENT_ID", "browser-client.apps.googleusercontent.com")
+	t.Setenv("CLAWBRIDGE_OAUTH_CLIENT_SECRET", "synthetic-env-browser-credential")
+	t.Setenv("CLAWBRIDGE_OAUTH_DEVICE_CLIENT_ID", "device-client.apps.googleusercontent.com")
+	t.Setenv("CLAWBRIDGE_OAUTH_DEVICE_CLIENT_SECRET", "synthetic-env-device-credential")
+	flags, rest, err := extractGlobals([]string{
+		"--oauth-device-client-secret", "synthetic-flag-device-credential",
+		"login", "--device",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(rest, " ") != "login --device" {
+		t.Fatalf("credential flag leaked into command arguments: %#v", rest)
+	}
+	config, _, err := resolveLoginConfig(context.Background(), flags, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if config.OAuthDeviceClientID != "device-client.apps.googleusercontent.com" ||
+		config.OAuthDeviceClientSecret != "synthetic-flag-device-credential" ||
+		config.OAuthClientSecret != "synthetic-env-browser-credential" {
+		t.Fatal("OAuth credential precedence failed")
+	}
+}
+
 func TestServeDoesNotReadConfigOrOpenLocalDatabase(t *testing.T) {
 	dir := isolated(t)
 	path := filepath.Join(dir, "bad.toml")
@@ -211,7 +308,7 @@ func TestServeDoesNotReadConfigOrOpenLocalDatabase(t *testing.T) {
 	t.Setenv("CLAWBRIDGE_CONFIG", path)
 	t.Setenv("CLAWBRIDGE_DATABASE_URL", "")
 	var out, diagnostics bytes.Buffer
-	e := Run(context.Background(), []string{"serve", "--audience", "test", "--bootstrap-owner", "owner@example.test"}, &out, &diagnostics)
+	e := Run(context.Background(), []string{"serve", "--audience", "desktop-client.apps.googleusercontent.com,device-client.apps.googleusercontent.com", "--bootstrap-owner", "owner@example.test"}, &out, &diagnostics)
 	if e == nil || !strings.Contains(e.Error(), "Postgres connection") {
 		t.Fatal("serve did not delegate before config resolution", e)
 	}
@@ -286,5 +383,76 @@ func TestCloudCLIAndExplicitSyncUseRemoteOnly(t *testing.T) {
 	}
 	if _, e := os.Stat(filepath.Join(dir, "state", "local.db")); !os.IsNotExist(e) {
 		t.Fatal("cloud command opened writable SQLite authority")
+	}
+}
+
+func TestCloudInstallerRequiresExplicitSourceAndNeverForwardsSecret(t *testing.T) {
+	dir := isolated(t)
+	command := filepath.Join(dir, "clawbridge")
+	if err := os.WriteFile(command, []byte("#!/bin/sh\n"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	configPath := filepath.Join(dir, "mcp.json")
+	base := []string{
+		"mcp", "install", "--agent", "claude-code", "--config", configPath,
+		"--command", command, "--mode", "cloud", "--server", "https://server.example.test",
+		"--audience", "desktop-client.apps.googleusercontent.com", "--principal", "alice@example.test",
+		"--cache", filepath.Join(dir, "cache.db"), "--workspace", "w",
+		"--project", "p", "--session", "alice",
+	}
+	var out, diagnostics bytes.Buffer
+	err := Run(context.Background(), base, &out, &diagnostics)
+	if err == nil || !strings.Contains(err.Error(), "explicit credential source") {
+		t.Fatalf("cloud installer inferred a credential source: %v", err)
+	}
+	oauthArgs := append([]string{}, base...)
+	oauthArgs = append(oauthArgs,
+		"--credential-source", "oauth",
+		"--oauth-client-id", "desktop-client.apps.googleusercontent.com",
+		"--oauth-client-secret", "synthetic-browser-client-credential",
+		"--oauth-device-client-id", "device-client.apps.googleusercontent.com",
+		"--oauth-device-client-secret", "synthetic-device-client-credential",
+		"--oauth-keyring-service", "review-keyring",
+		"--dry-run",
+	)
+	originalStdout := os.Stdout
+	readOutput, writeOutput, pipeErr := os.Pipe()
+	if pipeErr != nil {
+		t.Fatal(pipeErr)
+	}
+	os.Stdout = writeOutput
+	t.Cleanup(func() { os.Stdout = originalStdout })
+	if err = Run(context.Background(), oauthArgs, &out, &diagnostics); err != nil {
+		writeOutput.Close()
+		readOutput.Close()
+		t.Fatal(err)
+	}
+	if err = writeOutput.Close(); err != nil {
+		readOutput.Close()
+		t.Fatal(err)
+	}
+	installOutput, err := io.ReadAll(readOutput)
+	if err != nil {
+		readOutput.Close()
+		t.Fatal(err)
+	}
+	readOutput.Close()
+	for _, forbidden := range []string{
+		"oauth_client_secret", "oauth-client-secret", "synthetic-browser-client-credential",
+		"oauth_device_client_secret", "oauth-device-client-secret", "synthetic-device-client-credential",
+		"browser_client_secret", "device_client_secret", "refresh_token", "id_token", "access_token",
+	} {
+		if bytes.Contains(installOutput, []byte(forbidden)) {
+			t.Fatalf("installer output contains forbidden credential field %q: %s", forbidden, installOutput)
+		}
+	}
+	raw, err := os.ReadFile(configPath)
+	if err == nil {
+		t.Fatalf("default-output installer unexpectedly touched stdout fixture: %s", raw)
+	}
+	for _, forbidden := range []string{"oauth_client_secret", "oauth-client-secret", "refresh_token", "id_token", "access_token"} {
+		if strings.Contains(diagnostics.String(), forbidden) {
+			t.Fatalf("installer diagnostics contains forbidden credential field %q", forbidden)
+		}
 	}
 }

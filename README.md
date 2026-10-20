@@ -57,12 +57,47 @@ add `.clawbridge.toml` to the repository root:
 ```toml
 workspace = "demo"
 project = "clawbridge"
-mode = "local"
 ```
+
+Repository config may set only db/workspace/project/session/instance; repository
+mode, server, audience, principal, credentials, and cache are always ignored. In
+particular, putting `mode = "cloud"` in a checked-out repository cannot redirect
+an existing local client to a remote server.
 
 Without a project selector, a registered normalized Git remote can resolve it.
 Missing/ambiguous projects fail; a project is never silently created. An MCP
 process pins its scope at startup. Session names are unique within each project.
+
+## Join a hosted workspace
+
+Browser sign-in uses Google OAuth with a loopback callback and PKCE. It needs no
+`gcloud` installation:
+
+```sh
+bin/clawbridge login
+bin/clawbridge doctor
+```
+
+Use `bin/clawbridge login --device` on an SSH or remote machine without a usable
+browser. Both login commands discover the applicable installed-app OAuth client
+from the trusted cloud server's `/v1/config` endpoint by default. A preconfigured
+trusted `oauth_client_id` for browser login or `oauth_device_client_id` for
+`--device` is optional and overrides discovery together with its matching trusted
+installed-app credential. Discovery returns both client IDs and their matching
+application credentials; these identifiers are safe for public installed-app
+distribution but are still never logged, echoed, or placed in MCP/installer argv.
+Trusted configuration must select cloud mode, OAuth as the credential source, and
+the cloud server; successful login writes the selected ID/credential, matching
+audience and verified principal. Existing pilot installations may continue using
+explicit gcloud or ADC impersonation, but new cloud installation flows must pin
+one credential source. Sign-in stores only the refresh credential in the OS
+keychain; access and identity tokens remain in memory.
+
+`bin/clawbridge logout` removes only the active OAuth keychain entry. It does not
+revoke other Google credentials or alter agent configuration. See
+[PHASE-3-PLAN.md](PHASE-3-PLAN.md), [CORE-API.md](CORE-API.md), and
+[PHASE-3-REVIEW.md](PHASE-3-REVIEW.md) for the exact routing contract and the
+remaining live Google acceptance limits.
 
 ## MCP and installation
 

@@ -10,8 +10,11 @@ import (
 	"io"
 	"strconv"
 	"strings"
+	"time"
 
+	"clawbridge/internal/auth"
 	"clawbridge/internal/bus"
+	"clawbridge/internal/doctor"
 	"clawbridge/internal/install"
 	"clawbridge/internal/mcpserver"
 	"clawbridge/internal/remote"
@@ -22,22 +25,47 @@ const Usage = `clawbridge: local and authenticated hosted agent messaging
 Global flags: --db PATH --workspace NAME_OR_ID --project SLUG_OR_ID --session NAME_OR_ID --instance ID --json
 Commands: setup --local, project create SLUG, register [NAME], sessions, send TO BODY --operation-id ID,
           inbox, mark-read ID..., reply ID BODY --operation-id ID, update, retire, history, whoami, status ID,
-          mcp, mcp install ..., serve, sync, purge-expired
-Cloud flags: --mode cloud --server URL --audience AUDIENCE [--account EMAIL] [--impersonate-service-account EMAIL] [--principal EMAIL] [--cache PATH]
+          mcp, mcp install ..., serve, sync, purge-expired, doctor
+Commands: login [--device|--use-gcloud], logout
+Cloud flags: --mode cloud --server URL --audience AUDIENCE [--credential-source oauth|gcloud|adc] [--oauth-client-id ID --oauth-client-secret CREDENTIAL --oauth-device-client-id ID --oauth-device-client-secret CREDENTIAL] [--principal EMAIL] [--cache PATH]
 All normal results are JSON with source. See CORE-API.md for command flags and isolated test environment variables.
 `
+
+var (
+	browserLoginStaged   = auth.BrowserLoginStaged
+	deviceLoginStaged    = auth.DeviceLoginStaged
+	loginCredentialStore = func(service string) auth.Store {
+		return auth.KeyringStore{Service: service}
+	}
+	writeLoginConfig   = writeCredentialSourceConfig
+	discoverLoginOAuth = remote.DiscoverOAuthClient
+)
 
 // extractGlobals permits global flags before or after commands without swallowing
 // flag-looking message bodies: use -- to mark the remainder as positional text.
 func extractGlobals(args []string) (Config, []string, error) {
 	var c Config
 	rest := []string{}
-	targets := map[string]*string{"db": &c.DB, "workspace": &c.Workspace, "project": &c.Project, "session": &c.Session, "instance": &c.Instance, "server": &c.Server, "audience": &c.Audience, "account": &c.Account, "impersonate-service-account": &c.ImpersonateServiceAccount, "principal": &c.Principal, "cache": &c.Cache, "mode": &c.Mode}
+	targets := map[string]*string{
+		"db": &c.DB, "workspace": &c.Workspace, "project": &c.Project,
+		"session": &c.Session, "instance": &c.Instance, "server": &c.Server,
+		"audience": &c.Audience, "account": &c.Account,
+		"impersonate-service-account": &c.ImpersonateServiceAccount,
+		"principal":                   &c.Principal, "cache": &c.Cache, "mode": &c.Mode,
+		"credential-source": &c.CredentialSource, "credentials-file": &c.CredentialsFile,
+		"oauth-client-id": &c.OAuthClientID, "oauth-client-secret": &c.OAuthClientSecret,
+		"oauth-device-client-id": &c.OAuthDeviceClientID, "oauth-device-client-secret": &c.OAuthDeviceClientSecret,
+		"oauth-keyring-service": &c.OAuthKeyringService,
+	}
 	for i := 0; i < len(args); i++ {
 		arg := args[i]
 		if arg == "--" {
 			rest = append(rest, args[i:]...)
 			break
+		}
+		if (arg == "--help" || arg == "-h") && len(rest) > 0 {
+			rest = append(rest, arg)
+			continue
 		}
 		name, val, has := strings.Cut(strings.TrimPrefix(arg, "--"), "=")
 		if !strings.HasPrefix(arg, "--") {
@@ -86,6 +114,10 @@ func interspersedFlags(f *flag.FlagSet, args []string) ([]string, error) {
 			pos = append(pos, arg)
 			continue
 		}
+		if arg == "--help" || arg == "-h" {
+			opts = append(opts, arg)
+			continue
+		}
 		name := strings.TrimLeft(arg, "-")
 		name, _, has := strings.Cut(name, "=")
 		fl := f.Lookup(name)
@@ -124,11 +156,216 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	if len(rest) == 0 {
 		return errors.New("command is required")
 	}
+	if rest[0] == "login" || rest[0] == "logout" {
+		command := rest[0]
+		commandArgs := rest[1:]
+		f := flag.NewFlagSet(command, flag.ContinueOnError)
+		f.SetOutput(stderr)
+		device := f.Bool("device", false, "sign in with a code on another device")
+		useGcloud := f.Bool("use-gcloud", false, "try the complete explicit gcloud route, then browser OAuth")
+		ordered, err := interspersedFlags(f, commandArgs)
+		if err != nil {
+			if errors.Is(err, flag.ErrHelp) {
+				return nil
+			}
+			return err
+		}
+		if err = f.Parse(ordered); err != nil {
+			if errors.Is(err, flag.ErrHelp) {
+				return nil
+			}
+			return err
+		}
+		if f.NArg() != 0 {
+			return fmt.Errorf("%s accepts flags only", command)
+		}
+		var config Config
+		var configPath string
+		if command == "login" && *useGcloud {
+			// A gcloud probe is a separate, explicitly selected route. It may
+			// borrow server/audience/scope from trusted config but cannot inherit
+			// OAuth client material, and an OAuth fallback cannot inherit the
+			// gcloud account/impersonation fields used only for that probe.
+			gcloudConfig, _, gcloudErr := resolveConfigVariant(ctx, flags, func(c Config) Config {
+				c.CredentialsFile = ""
+				c.OAuthClientID = ""
+				c.OAuthClientSecret = ""
+				c.OAuthDeviceClientID = ""
+				c.OAuthDeviceClientSecret = ""
+				c.OAuthKeyringService = ""
+				return c
+			})
+			if gcloudErr == nil {
+				source := &remote.GcloudTokenSource{
+					Account: gcloudConfig.Account, Audience: gcloudConfig.Audience,
+					ImpersonateServiceAccount: gcloudConfig.ImpersonateServiceAccount,
+				}
+				if _, probeErr := source.Token(ctx); probeErr == nil {
+					return json.NewEncoder(stdout).Encode(map[string]any{
+						"credential_source": "gcloud", "principal": gcloudConfig.ImpersonateServiceAccount,
+					})
+				}
+			}
+			config, configPath, err = resolveConfigVariantMode(ctx, flags, func(c Config) Config {
+				c.CredentialSource = "oauth"
+				c.Account = ""
+				c.ImpersonateServiceAccount = ""
+				c.CredentialsFile = ""
+				return c
+			}, true, *device)
+			if err != nil {
+				return fmt.Errorf("gcloud was unavailable and browser OAuth fallback is not valid: %w", err)
+			}
+		} else {
+			if command == "login" {
+				config, configPath, err = resolveLoginConfig(ctx, flags, *device)
+			} else {
+				config, configPath, err = resolveConfig(ctx, flags)
+			}
+			if err != nil {
+				return err
+			}
+		}
+		if command == "logout" {
+			if *device || *useGcloud {
+				return errors.New("logout accepts only global configuration flags")
+			}
+			if config.OAuthClientID == "" {
+				return errors.New("no OAuth client is configured; logout cannot identify a keychain entry")
+			}
+			if err = auth.Logout(ctx, loginCredentialStore(config.OAuthKeyringService), config.OAuthClientID); err != nil {
+				return err
+			}
+			return json.NewEncoder(stdout).Encode(map[string]any{"logged_out": true, "client_id": config.OAuthClientID})
+		}
+		if *device && *useGcloud {
+			return errors.New("login accepts either --device or --use-gcloud, not both")
+		}
+		applicableID := config.OAuthClientID
+		applicableSecret := config.OAuthClientSecret
+		if *device {
+			applicableID = config.OAuthDeviceClientID
+			applicableSecret = config.OAuthDeviceClientSecret
+		} else if applicableID != "" && applicableID == config.OAuthDeviceClientID {
+			// Device promotion selects the runtime client, not a Desktop client.
+			// Rediscover the browser pair rather than attempting loopback with it.
+			applicableID, applicableSecret = "", ""
+		}
+		var discovery *remote.OAuthDiscovery
+		if applicableID == "" {
+			discovered, discoveryErr := discoverLoginOAuth(ctx, config.Server, nil)
+			if discoveryErr != nil {
+				kind := "Desktop-app browser"
+				field := "browser_client_id"
+				if *device {
+					kind = "TVs and Limited Input devices"
+					field = "device_client_id"
+				}
+				return fmt.Errorf("cannot discover the %s OAuth client because no trusted oauth client ID is configured; set the applicable trusted ID or fix %s discovery: %w", kind, field, discoveryErr)
+			}
+			discovery = &discovered
+			if *device {
+				applicableID = discovered.DeviceClientID
+				applicableSecret = discovered.DeviceClientSecret
+			} else {
+				applicableID = discovered.BrowserClientID
+				applicableSecret = discovered.BrowserClientSecret
+			}
+			if applicableID == "" {
+				field := "browser_client_id"
+				if *device {
+					field = "device_client_id"
+				}
+				return fmt.Errorf("trusted server OAuth discovery returned an empty %s; configure the applicable trusted client ID or fix server discovery before login", field)
+			}
+			if applicableSecret == "" {
+				field := "browser_client_secret"
+				if *device {
+					field = "device_client_secret"
+				}
+				return fmt.Errorf("trusted server OAuth discovery returned an empty %s; configure the applicable installed-app credential or fix server discovery before login", field)
+			}
+		}
+		if !*device && applicableID == config.OAuthDeviceClientID {
+			return errors.New("browser OAuth client must be distinct from the known device client; fix trusted Desktop-app discovery before login")
+		}
+		if applicableSecret == "" {
+			field := "oauth_client_secret"
+			if *device {
+				field = "oauth_device_client_secret"
+			}
+			return fmt.Errorf("the configured OAuth client requires a matching trusted %s before login", field)
+		}
+		keyring := loginCredentialStore(config.OAuthKeyringService)
+		loginConfig := auth.Config{
+			ClientID:          applicableID,
+			ClientSecret:      applicableSecret,
+			ExpectedPrincipal: config.Principal,
+			Store:             keyring,
+		}
+		var credential auth.Credential
+		var transaction *auth.CredentialTransaction
+		if *device {
+			loginConfig.ClientID = applicableID
+			credential, transaction, err = deviceLoginStaged(ctx, loginConfig, func(prompt auth.DevicePrompt) {
+				_, _ = fmt.Fprintf(stderr, "Open %s and enter code %s (expires in %s).\n", prompt.VerificationURL, prompt.UserCode, prompt.ExpiresIn.Round(time.Second))
+			})
+		} else {
+			_, _ = fmt.Fprintln(stderr, "Opening Google sign-in in your browser...")
+			credential, transaction, err = browserLoginStaged(ctx, loginConfig)
+		}
+		if err != nil {
+			return err
+		}
+		config.CredentialSource = "oauth"
+		config.Account = ""
+		config.ImpersonateServiceAccount = ""
+		config.CredentialsFile = ""
+		config.Principal = credential.Principal
+		if *device {
+			config.OAuthDeviceClientID = applicableID
+			config.OAuthDeviceClientSecret = applicableSecret
+			config.OAuthClientID = applicableID
+			config.OAuthClientSecret = applicableSecret
+		} else {
+			config.OAuthClientID = applicableID
+			config.OAuthClientSecret = applicableSecret
+			if config.OAuthDeviceClientID == "" && discovery != nil && discovery.DeviceClientID != "" {
+				config.OAuthDeviceClientID = discovery.DeviceClientID
+				config.OAuthDeviceClientSecret = discovery.DeviceClientSecret
+			} else if config.OAuthDeviceClientSecret == "" && discovery != nil &&
+				config.OAuthDeviceClientID == discovery.DeviceClientID {
+				config.OAuthDeviceClientSecret = discovery.DeviceClientSecret
+			}
+		}
+		config.Audience = applicableID
+		if err = writeLoginConfig(configPath, config); err != nil {
+			rollbackErr := transaction.Rollback(ctx)
+			if rollbackErr != nil {
+				return fmt.Errorf("login credential staged but trusted config write and keychain rollback both failed; prior configuration remains effective and login must be retried: %w", err)
+			}
+			return fmt.Errorf("login did not complete because trusted config update failed; prior configuration and keychain state were preserved: %w", err)
+		}
+		transaction.Commit()
+		return json.NewEncoder(stdout).Encode(map[string]any{
+			"logged_in": true, "credential_source": "oauth",
+			"principal": credential.Principal, "oauth_client_id": config.OAuthClientID,
+		})
+	}
 	// Dispatch only from the command position; recipient names and message bodies
 	// may themselves be literal command words such as "mcp install".
 	if len(rest) >= 2 && rest[0] == "mcp" && rest[1] == "install" {
 		installerArgs := append([]string{}, rest[2:]...)
-		for _, entry := range []struct{ name, value string }{{"db", flags.DB}, {"workspace", flags.Workspace}, {"project", flags.Project}, {"session", flags.Session}, {"instance", flags.Instance}, {"mode", flags.Mode}, {"server", flags.Server}, {"audience", flags.Audience}, {"account", flags.Account}, {"impersonate-service-account", flags.ImpersonateServiceAccount}, {"principal", flags.Principal}, {"cache", flags.Cache}} {
+		for _, entry := range []struct{ name, value string }{
+			{"db", flags.DB}, {"workspace", flags.Workspace}, {"project", flags.Project},
+			{"session", flags.Session}, {"instance", flags.Instance}, {"mode", flags.Mode},
+			{"server", flags.Server}, {"audience", flags.Audience}, {"account", flags.Account},
+			{"impersonate-service-account", flags.ImpersonateServiceAccount}, {"principal", flags.Principal},
+			{"cache", flags.Cache}, {"credential-source", flags.CredentialSource},
+			{"credentials-file", flags.CredentialsFile}, {"oauth-client-id", flags.OAuthClientID},
+			{"oauth-device-client-id", flags.OAuthDeviceClientID},
+			{"oauth-keyring-service", flags.OAuthKeyringService},
+		} {
 			if entry.value != "" {
 				installerArgs = append(installerArgs, "--"+entry.name, entry.value)
 			}
@@ -143,6 +380,9 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	config, configPath, err := resolveConfig(ctx, flags)
 	if err != nil {
 		return err
+	}
+	if command == "doctor" {
+		return runDoctor(ctx, config, configPath, stdout)
 	}
 	f := flag.NewFlagSet(command, flag.ContinueOnError)
 	f.SetOutput(stderr)
@@ -240,6 +480,9 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	case "status":
 		op = "message_status"
 		arityMin, arityMax = 1, 1
+	case "doctor":
+		// Handled above before executor construction so local diagnostics never
+		// cache a listed project.
 	case "mcp":
 		if len(rest) > 0 {
 			return errors.New("usage: clawbridge mcp [global flags], or clawbridge mcp install ...")
@@ -340,7 +583,15 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	var localStore *bus.Store
 	var cloudClient *remote.Client
 	if config.Mode == "cloud" {
-		cloudClient, err = remote.New(remote.Config{URL: config.Server, Audience: config.Audience, Account: config.Account, ImpersonateServiceAccount: config.ImpersonateServiceAccount, Principal: config.Principal, CachePath: config.Cache})
+		cloudClient, err = remote.New(remote.Config{
+			URL: config.Server, Audience: config.Audience, Account: config.Account,
+			ImpersonateServiceAccount: config.ImpersonateServiceAccount,
+			Principal:                 config.Principal, CachePath: config.Cache,
+			CredentialSource: config.CredentialSource, CredentialsFile: config.CredentialsFile,
+			OAuthClientID: config.OAuthClientID, OAuthClientSecret: config.OAuthClientSecret,
+			OAuthDeviceClientID: config.OAuthDeviceClientID, OAuthDeviceClientSecret: config.OAuthDeviceClientSecret,
+			OAuthKeyringService: config.OAuthKeyringService,
+		})
 		if err != nil {
 			return err
 		}
@@ -395,4 +646,58 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		}
 	}
 	return json.NewEncoder(stdout).Encode(result)
+}
+
+func runDoctor(ctx context.Context, config Config, configPath string, stdout io.Writer) error {
+	in := doctor.Input{
+		Config: doctor.Config{
+			Path: configPath, Present: true, Valid: true,
+			Mode: config.Mode, DB: config.DB, Workspace: config.Workspace,
+			Project: config.Project, Session: config.Session, Instance: config.Instance,
+			Server: config.Server, Audience: config.Audience,
+			Account: config.Account, ImpersonateServiceAccount: config.ImpersonateServiceAccount,
+			Principal: config.Principal, Cache: config.Cache,
+			CredentialSource: config.CredentialSource, CredentialsFile: config.CredentialsFile,
+			OAuthClientID: config.OAuthClientID, OAuthDeviceClientID: config.OAuthDeviceClientID,
+			OAuthKeyringService: config.OAuthKeyringService,
+		},
+	}
+	var executor interface {
+		Execute(context.Context, bus.Request) (bus.Result, error)
+		ResolveProject(context.Context, string, string, string) (string, string, error)
+	}
+	if config.Mode == "cloud" {
+		routeConfig := remote.Config{
+			URL: config.Server, Audience: config.Audience, Account: config.Account,
+			ImpersonateServiceAccount: config.ImpersonateServiceAccount,
+			Principal:                 config.Principal, CachePath: config.Cache,
+			CredentialSource: config.CredentialSource, CredentialsFile: config.CredentialsFile,
+			OAuthClientID: config.OAuthClientID, OAuthClientSecret: config.OAuthClientSecret,
+			OAuthDeviceClientID: config.OAuthDeviceClientID, OAuthDeviceClientSecret: config.OAuthDeviceClientSecret,
+			OAuthKeyringService: config.OAuthKeyringService,
+		}
+		tokens, err := remote.NewTokenSource(ctx, routeConfig)
+		if err == nil {
+			client, e := remote.NewWithTokenSource(routeConfig, tokens)
+			if e == nil {
+				executor = client
+				in.TokenSource = tokens
+			}
+		}
+	} else {
+		store, err := bus.Open(config.DB)
+		if err != nil {
+			return err
+		}
+		defer store.Close()
+		executor = store
+	}
+	report := doctor.Run(ctx, in, executor)
+	if err := json.NewEncoder(stdout).Encode(report); err != nil {
+		return err
+	}
+	if !report.OK() {
+		return errors.New("doctor found required failures")
+	}
+	return nil
 }

@@ -104,14 +104,14 @@ func TestPostgresCloudCLITrustedRoutingAndOffline(t *testing.T) {
 	}
 	// Installer cloud flags must preserve every trusted route and never infer local.
 	installPath := filepath.Join(p.dir, "isolated-mcp.json")
-	cmd := exec.Command(p.binary, "mcp", "install", "--agent", "claude-code", "--config", installPath, "--command", p.binary, "--mode", "cloud", "--server", endpoint.URL, "--audience", "https://trusted-audience.example.test", "--account", "human@example.test", "--impersonate-service-account", "agent@project.iam.gserviceaccount.com", "--principal", pgPrincipal("bob"), "--cache", cache, "--workspace", f.w, "--project", "p", "--session", "bob", "--instance", "bob-instance")
+	cmd := exec.Command(p.binary, "mcp", "install", "--agent", "claude-code", "--config", installPath, "--command", p.binary, "--mode", "cloud", "--server", endpoint.URL, "--audience", "https://trusted-audience.example.test", "--credential-source", "gcloud", "--account", "human@example.test", "--impersonate-service-account", "agent@project.iam.gserviceaccount.com", "--principal", pgPrincipal("bob"), "--cache", cache, "--workspace", f.w, "--project", "p", "--session", "bob", "--instance", "bob-instance")
 	cmd.Dir = p.dir
 	cmd.Env = env
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("cloud installer: %v %s", err, out)
 	}
 	installed, _ := os.ReadFile(installPath)
-	for _, want := range []string{"--mode", "cloud", "--server", endpoint.URL, "--audience", "--account", "--impersonate-service-account", "--principal", "--cache"} {
+	for _, want := range []string{"--mode", "cloud", "--server", endpoint.URL, "--audience", "--credential-source", "gcloud", "--account", "--impersonate-service-account", "--principal", "--cache"} {
 		if !bytes.Contains(installed, []byte(want)) {
 			t.Errorf("cloud entry omitted %s: %s", want, installed)
 		}

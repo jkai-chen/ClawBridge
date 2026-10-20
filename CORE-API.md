@@ -45,6 +45,8 @@ list/history, it is validated and refreshes the bound actor's heartbeat.
 | --- | --- |
 | `workspace_init` | `mode:"local"` required; Workspace selector or `name`; optional `retention_days` (default 90, 1–3650) |
 | `project_create` | Workspace required; `slug`; optional `name`, `git_remote` |
+| `list_projects` | Workspace required; no project selector; returns projects visible to the verified principal |
+| `list_members` | Workspace and project required; returns project role assignments |
 | `register_session` | Workspace/project/session required; optional `instance`, `resume` boolean, `role`, `agent_kind`, `model`, `host`, `account`, `notes`, `transport` object |
 | `list_sessions` | Optional `status` (active/retired/moved), `role`, `limit`, `after`; no actor required |
 | `send` | `to`, `body`, `operation_id`; optional `kind`, `thread_id` |
@@ -88,6 +90,13 @@ create new ones. Concurrent duplicate operations create one message/audit event.
 
 Workspace: `id`, `name`, `mode`, `retention_days`, `owner_principal`, `created_at`.
 Project: `id`, `workspace_id`, `slug`, `name`, `git_remote`, `created_at`.
+List projects returns `{"projects":[...]}`, where each hosted row also has the
+caller's effective `role` (owner/lead/member/reader). List members returns
+`{"project_id":"prj_...","members":[{"principal","display_name","role",
+"granted_by","granted_at"}]}`. The hosted workspace owner is always an effective
+project owner. Both reads enforce workspace membership and project scope; local
+mode returns projects from the explicitly opened workspace and has no hosted
+member list.
 Session: `id`, `project_id`, `name`, `instance`, `owner_principal`, `role`,
 `agent_kind`, `model`, `host`, `account`, `transport` object, `notes`, `status`,
 `successor` (session ID or null), `last_seen`, `created_at`, `updated_at`,
@@ -177,9 +186,14 @@ Default state directory: CLAWBRIDGE_HOME or ~/.clawbridge. Setup persists select
 DB/workspace and mode=local to its config.toml, preserving unrelated TOML keys with
 an atomic rename. CLAWBRIDGE_CONFIG selects another file (missing is allowed for
 first setup) and bypasses home config. Otherwise checkout-root .clawbridge.toml
-overlays home config, including in linked worktrees. Recognized TOML keys: db,
-workspace, project, session, instance, mode. Relative config DB paths are resolved
-against the config directory. Flags > environment > checkout config > home config.
+overlays home config, including in linked worktrees. Repository configuration may
+provide only db, workspace, project, session and instance scope. Phase 2 briefly
+allowed a repository `mode`; Phase 3 removed that allowance. Relative config DB
+paths are resolved against the config directory. Flags > environment > trusted
+home/explicit configuration > repository scope. A repository cannot select,
+create or switch `mode`, even though trusted home, environment or explicit
+configuration can. See [Cloud CLI and trusted
+configuration](#cloud-cli-and-trusted-configuration) for the frozen rule.
 
 If project is absent, match a registered normalized origin remote. Unknown/multiple
 matches fail; no slug is invented. Normalization strips transport/user/trailing
@@ -345,7 +359,7 @@ Added global flags/env:
 
 | Flag | Environment / trusted TOML key |
 | --- | --- |
-| --mode local|cloud | CLAWBRIDGE_MODE / mode |
+| --mode local|cloud | CLAWBRIDGE_MODE / trusted mode |
 | --server URL | CLAWBRIDGE_SERVER / server |
 | --audience AUDIENCE | CLAWBRIDGE_AUDIENCE / audience |
 | --account EMAIL | CLAWBRIDGE_ACCOUNT / account |
@@ -354,16 +368,22 @@ Added global flags/env:
 | --cache PATH | CLAWBRIDGE_CACHE / cache |
 
 Credential-routing precedence is flags > environment > trusted explicit/home
-config. Repository config may overlay db/workspace/project/session/instance/mode;
-it cannot inject server/audience/account/impersonation/principal/cache. Explicit
-config bypasses home and repo config. Relative trusted cache paths resolve against
-the config directory (flag/env relative cache paths against the state directory).
-Cloud routing requires explicit mode=cloud and trusted server+audience. Unknown
-modes fail. Cloud CLI never opens the writable SQLite authority or falls back to
-local mode. Local defaults and explicit local initialization remain unchanged.
+config. Phase 3 deliberately supersedes the Phase 2 repository-mode allowance:
+repository config may overlay db/workspace/project/session/instance scope, but it
+cannot select or switch authority mode, or inject
+server/audience/account/impersonation/principal/cache. This prevents a checked-out
+repository from moving a trusted local route into cloud mode or a trusted cloud
+route into local mode. Explicit config bypasses home and repo config. Relative
+trusted cache paths resolve against the config directory (flag/env relative cache
+paths against the state directory). Cloud routing requires explicit mode=cloud
+and trusted server+audience. Unknown modes fail. Cloud CLI never opens the
+writable SQLite authority or falls back to local mode. Local defaults and explicit
+local initialization remain unchanged.
 
 ```text
-serve [--listen ADDRESS] --audience AUDIENCE --bootstrap-owner EMAIL [--database-url-env NAME]
+serve [--listen ADDRESS] --audience AUDIENCE[,AUDIENCE...] --bootstrap-owner EMAIL
+      [--oauth-client-id CLIENT_ID] [--oauth-device-client-id CLIENT_ID]
+      [--database-url-env NAME]
 setup --cloud --mode cloud --workspace NAME [--retention-days DAYS]
 project role-set EMAIL ROLE
 project role set EMAIL ROLE
@@ -376,7 +396,84 @@ sync
 serve must be the first command token: it delegates all remaining operator flags
 to server.Run before reading local config or opening any local DB. Server uses
 CLAWBRIDGE_DATABASE_URL by default and requires audience/bootstrap owner; production
-Run always uses Google's verifier. No skip-auth flag or fake verifier CLI exists.
+Run always uses Google's verifier. `--audience` accepts one exact audience for
+backward compatibility or a comma-separated ordered set of exact audiences. The
+set supports the separate Desktop browser client ID and TVs/Limited Input device
+client ID used by the two OAuth acquisition flows. Entries are trimmed only at
+the ends; case and all interior characters are significant. Empty entries,
+entries containing whitespace/control characters, duplicate entries, more than
+16 entries, and entries longer than 2048 bytes fail before Postgres is opened.
+Google's official validator must accept the token's exact `aud` value from the
+configured set while retaining its normal signature, issuer, expiry and claim
+checks. An unlisted audience fails authentication. The set's order is preserved
+and verification tries entries in that order. The exported
+`NewGoogleVerifier(ctx, audience)` constructor remains the single-audience
+compatibility API; `NewGoogleVerifierForAudiences(ctx, audiences []string)` is the
+set-based server API and copies the caller's slice. No skip-auth flag or fake
+verifier CLI exists.
+
+`--oauth-client-id` and `--oauth-device-client-id` are optional. When supplied,
+each value must exactly match one entry in `--audience`, the two values must be
+distinct, and each is limited to 2048 bytes with no whitespace or control
+characters. A configured ID requires its matching installed-app credential from
+`CLAWBRIDGE_OAUTH_CLIENT_SECRET` or
+`CLAWBRIDGE_OAUTH_DEVICE_CLIENT_SECRET`, respectively. The credential is never a
+server command-line flag. Validation occurs before Postgres initialization.
+Omitting both ID/credential pairs preserves the previous execution API and
+returns four empty strings from the public config endpoint.
+
+Google treats secrets for distributed native application clients as application
+identifiers rather than confidential server credentials. They are still treated
+as sensitive by ClawBridge: never print or log them, pass them through process
+argv, place them in an agent MCP entry or expose unrelated routing metadata
+alongside them.
+
+The server exposes one public, unauthenticated discovery endpoint:
+
+```text
+GET /v1/config
+Content-Type: application/json
+Cache-Control: no-store
+
+{"browser_client_id":"DESKTOP_CLIENT_ID","browser_client_secret":"DESKTOP_CLIENT_CREDENTIAL","device_client_id":"DEVICE_CLIENT_ID","device_client_secret":"DEVICE_CLIENT_CREDENTIAL"}
+```
+
+This is a strict four-field JSON object. Each value is the corresponding exact
+configured installed-app OAuth client ID or its matching application credential,
+or `""` when the pair was omitted. It never includes the audience set beyond
+those client IDs, refresh/access/ID tokens, principal or account,
+workspace/project/session scope, server or database addresses, credential
+source, cache, ADC path, environment values, health state or session tokens.
+`GET` is the only accepted method; other methods return 405. The endpoint does
+not invoke Google token verification or the application executor.
+`/v1/execute` retains its authenticated boundary and `/healthz` retains its
+existing narrow status response.
+
+The server-side discovery API additions are:
+
+```go
+type OAuthMetadata struct {
+    BrowserClientID     string
+    BrowserClientSecret string
+    DeviceClientID      string
+    DeviceClientSecret  string
+}
+func NewHandlerWithOAuthClientIDs(
+    store Executor,
+    verifier Verifier,
+    browserClientID, deviceClientID string,
+) http.Handler
+func NewHandlerWithOAuthMetadata(
+    store Executor,
+    verifier Verifier,
+    metadata OAuthMetadata,
+) http.Handler
+```
+
+`NewHandler(store, verifier)` remains compatible and uses empty discovery fields.
+The Compose deployment routes the API and Caddy through a separate non-internal
+egress network because the server fetches Google signing certificates; the API
+and Postgres have no public host port and the backend network is internal-only.
 setup --cloud sends mode=server, requires the verified bootstrap owner, and persists
 trusted routing only after successful initialization. setup --local cannot replace
 a configured cloud mode. --session-account selects session metadata in either
@@ -416,3 +513,352 @@ cap, workspaces/resume/schema and built cloud CLI routing/sync. Exact final evid
 and remaining limits are in PHASE-2-REVIEW.md. Auth tests use synthetic keys/verifiers;
 no live Google-issued token or cloud deployment is claimed. No billable resource,
 IAM grant or real agent config change was created by verification.
+
+# Phase 3 authentication and routing contract
+
+Status: frozen local/synthetic contract accepted by independent review. Live
+Google, real OS-keychain subprocess and deployed behavior remain pending. The
+deployment direction is Docker Compose on one Compute Engine VM; Cloud Run/IAM
+is no longer the Phase 3 target. Field and package names in this section are the
+names exposed by the current Phase 3 patch. Changes after this point require an
+explicit contract change and a coordinated test update.
+
+## Credential backends and trusted configuration
+
+Cloud clients can use exactly one of three explicit credential backends:
+
+| `credential_source` | Credential and token behavior | Required settings |
+| --- | --- | --- |
+| `oauth` | Refresh from the OS keychain and mint a short-lived ID token in memory | `oauth_client_id` plus matching `oauth_client_secret`; `oauth_device_client_id` plus matching `oauth_device_client_secret` for device login; `oauth_keyring_service` |
+| `gcloud` | Invoke `gcloud auth print-identity-token` | `account`, `impersonate_service_account`; distinct initiating and impersonation identities |
+| `adc` | Read an explicitly selected authorized-user ADC file and impersonate a controlled service account | `credentials_file`, `account`, `impersonate_service_account`; distinct initiating and impersonation identities |
+
+An empty `credential_source` retains the Phase 2 pilot behavior and means
+`gcloud`. New cloud setup, doctor and MCP installation flows must write an explicit
+source. There is no implicit fallback between backends and the client never uses
+the Compute Engine metadata server. Selecting OAuth together with gcloud account,
+impersonation or ADC fields is a configuration error. Selecting OAuth client
+fields with any other backend is a configuration error.
+
+Trusted TOML keys and matching flags/environment overrides are:
+
+| Trusted key | Flag | Environment |
+| --- | --- | --- |
+| `credential_source` | `--credential-source oauth|gcloud|adc` | `CLAWBRIDGE_CREDENTIAL_SOURCE` |
+| `credentials_file` | `--credentials-file PATH` | `CLAWBRIDGE_CREDENTIALS_FILE` |
+| `oauth_client_id` | `--oauth-client-id ID` | `CLAWBRIDGE_OAUTH_CLIENT_ID` |
+| `oauth_client_secret` | `--oauth-client-secret SECRET` | `CLAWBRIDGE_OAUTH_CLIENT_SECRET` |
+| `oauth_device_client_id` | `--oauth-device-client-id ID` | `CLAWBRIDGE_OAUTH_DEVICE_CLIENT_ID` |
+| `oauth_device_client_secret` | `--oauth-device-client-secret SECRET` | `CLAWBRIDGE_OAUTH_DEVICE_CLIENT_SECRET` |
+| `oauth_keyring_service` | `--oauth-keyring-service NAME` | `CLAWBRIDGE_OAUTH_KEYRING_SERVICE` |
+
+Repository `.clawbridge.toml` cannot select any of these fields, nor `server`,
+`audience`, `account`, `impersonate_service_account`, `principal`, `cache` or
+`mode`. It may provide database/workspace/project/session/instance scope only.
+This prohibition is intentional and frozen for Phase 3: repository values for
+those routing fields are ignored in both directions, regardless of whether the
+trusted mode is local or cloud. Ignoring includes discarding a repository-only
+`mode`: it cannot trigger trusted cloud validation or make a missing trusted
+route valid. A trusted local route remains local when a repository says
+`mode=cloud`; a trusted cloud route remains cloud, and still requires trusted
+server, audience and credentials, when a repository says `mode=local`. If no
+trusted route selects cloud, the normal local default remains effective.
+Flags override environment, which overrides trusted config. Explicit
+`CLAWBRIDGE_CONFIG` bypasses home and repository configuration. Relative trusted
+`credentials_file` and `cache` paths resolve against the config directory;
+relative flag/environment paths resolve against the ClawBridge state directory.
+Cloud routing still requires `mode = "cloud"`, `server` and `audience`.
+
+The OAuth browser client is a Google **Desktop app** OAuth client configured by
+`oauth_client_id`. The OAuth device flow uses the separate
+`oauth_device_client_id`, whose Google application type must be **TVs and Limited
+Input devices**. Both request only `openid email`. Supporting both flows therefore
+requires two registered client IDs from the same Google Cloud project and
+consent-screen configuration. Local validation requires the applicable explicit
+client ID; only Google can verify the client's registered application type, so a
+wrong-type device client fails at Google's device-authorization endpoint without
+falling back.
+
+## Authentication commands
+
+```text
+clawbridge login [--device|--use-gcloud]
+clawbridge logout
+```
+
+`login` uses the applicable client ID from trusted configuration:
+`oauth_client_id` for browser login and `oauth_device_client_id` for `--device`.
+An explicitly configured applicable ID wins and skips discovery. A nonempty
+`oauth_client_id` equal to `oauth_device_client_id` identifies the active promoted
+device client, not an applicable Desktop client. Plain browser `login` in that
+state discards the active device pair for acquisition and discovers the Desktop
+pair from the trusted server. A distinct explicit Desktop pair still skips
+discovery. When the applicable value is absent, login performs discovery against the
+trusted cloud `server`; repository configuration cannot supply that server.
+Browser login selects `browser_client_id`, while `--device` selects
+`device_client_id`.
+
+Browser-after-device discovery must fail closed if discovery fails or the selected
+browser ID is still the known device ID. It must never send the promoted device
+credential to the browser flow. Acquisition or config-publication failure retains
+the previous active device route and keychain state under the existing rollback
+contract. Successful browser login promotes the Desktop pair and preserves the
+device pair for a later `--device` login. Switching active clients does not revoke
+the previous client's credential; `logout` still removes only the active entry.
+
+Discovery requests exactly `GET <trusted-server>/v1/config`. It requires HTTPS
+except for numeric `127.0.0.1` or `::1` loopback, refuses every redirect, uses a
+bounded timeout and body, and accepts only one JSON object with exactly the four
+required string fields `browser_client_id`, `browser_client_secret`,
+`device_client_id` and `device_client_secret`. Missing, unknown, duplicate or
+non-string fields, malformed JSON, trailing content, non-2xx status and an empty
+applicable ID or credential fail before OAuth acquisition. Errors do not echo
+response bodies, tokens, credentials or untrusted URLs.
+
+Browser login opens the system browser; `--device` prints the verification URL,
+user code and expiry to stderr and polls until approval, denial or expiry. On
+success, both flows verify the returned Google ID token, save the refresh token
+plus safe principal metadata in the OS keychain, and atomically write
+`credential_source = "oauth"`, the verified `principal`, the selected
+installed-app ID/credential and matching `audience` to trusted configuration.
+Browser login
+sets active `oauth_client_id` and `oauth_client_secret` to the browser pair,
+preserves an explicitly configured device pair, and fills a missing device pair
+from a successful discovery response. Device login keys its credential under
+the selected device client ID, retains that value in
+`oauth_device_client_id`/`oauth_device_client_secret`, promotes both to active
+`oauth_client_id`/`oauth_client_secret`, and sets `audience` to the same ID.
+Success reports the actual promoted ID:
+
+```json
+{"logged_in":true,"credential_source":"oauth","principal":"human@example.com","oauth_client_id":"CLIENT_ID.apps.googleusercontent.com"}
+```
+
+Login refuses a principal that conflicts with an existing trusted `principal`.
+It leaves the prior trusted configuration intact if verification, keychain save
+or the atomic config update fails. Access tokens, ID tokens, refresh tokens,
+authorization codes, PKCE verifiers and client credentials are never included in
+command output, installer/MCP argv or doctor output. They may be stored only in
+trusted client configuration after an explicit login or configured by the
+operator. Keychain staging precedes the atomic trusted-config rename. A
+trusted-config failure rolls back a newly created keychain entry or restores a
+replaced prior entry and leaves prior config bytes effective. Normal cloud
+commands continue to require the complete route written by login; they never
+perform discovery or accept a half-promoted audience/client pair. For OAuth,
+runtime validation requires `audience == oauth_client_id`.
+
+`--use-gcloud` first attempts the configured gcloud route when `account`,
+`audience` and `impersonate_service_account` are complete. If it can mint a token,
+the command reports:
+
+```json
+{"credential_source":"gcloud","principal":"clawbridge-human@PROJECT.iam.gserviceaccount.com"}
+```
+
+and does not change trusted configuration. If gcloud is absent, fails or is
+incomplete, login falls back to browser OAuth. A successful fallback writes the
+OAuth route as above. `--device` and `--use-gcloud` are mutually exclusive.
+
+`logout` requires `oauth_client_id` and removes only its keyed OS-keychain entry.
+It does not revoke Google grants, delete ADC files, change gcloud login, remove
+mirror data or alter agent configuration. Success is:
+
+```json
+{"logged_out":true,"client_id":"CLIENT_ID.apps.googleusercontent.com"}
+```
+
+Logout is idempotent when the keychain entry is already absent. A keychain access
+failure exits nonzero.
+
+## Public OAuth package
+
+Package `clawbridge/internal/auth` exposes:
+
+```go
+const DefaultKeyringService = "clawbridge-oauth"
+var ErrCredentialNotFound = errors.New("ClawBridge OAuth credential not found")
+var GoogleEndpoints auth.Endpoints
+
+type Credential struct {
+    Version      int
+    ClientID     string
+    Principal    string
+    Subject      string
+    RefreshToken string
+}
+type Store interface {
+    Load(context.Context, string) (Credential, error)
+    Save(context.Context, string, Credential) error
+    Delete(context.Context, string) error
+}
+type KeyringStore struct { Service string }
+type Identity struct { Principal, Subject string }
+type VerifyFunc func(context.Context, string /* idToken */, string /* audience */) (Identity, error)
+type Endpoints struct {
+    AuthorizationURL string
+    TokenURL         string
+    DeviceAuthURL    string
+}
+type Config struct {
+    ClientID, ClientSecret, ExpectedPrincipal string
+    Endpoints                                 Endpoints
+    HTTPClient                                *http.Client
+    Store                                     Store
+    OpenBrowser                               func(context.Context, string) error
+    Verify                                    VerifyFunc
+}
+type DevicePrompt struct {
+    VerificationURL string
+    UserCode        string
+    ExpiresIn       time.Duration
+}
+
+func Key(clientID string) string
+func BrowserConfig(Config) (Config, error)
+func DeviceConfig(Config) (Config, error)
+func BrowserLogin(context.Context, Config) (Credential, error)
+func DeviceLogin(context.Context, Config, func(DevicePrompt)) (Credential, error)
+func NewTokenSource(context.Context, Config) (*TokenSource, error)
+func (*TokenSource) Token(context.Context) (string, error)
+func Logout(context.Context, Store, string /* clientID */) error
+```
+
+`Credential` is persisted as keychain value under `Key(ClientID)`. No access or
+ID token is durable. `ExpectedPrincipal`, when set, must match the verified login
+identity before any credential is saved. `BrowserConfig` validates the
+Desktop-app browser configuration. `DeviceConfig` requires an explicit device
+client ID separately from the browser client. `BrowserLogin` binds only to
+numeric IPv4 loopback, uses a new random state and PKCE `S256` verifier, accepts
+one loopback GET callback with an exact state match, and rejects provider or
+callback failure without saving a credential. `DeviceLogin` reports a
+`DevicePrompt` once and handles pending, `slow_down`, denial and expiry through
+the device protocol. With the present Phase 3 CLI bridge, successful
+`login --device` promotes `oauth_device_client_id` to the active
+`oauth_client_id` after the credential has been keyed under the device client ID;
+this keeps one active keychain-backed runtime client and retains the device client
+for later `--device` acquisition. Subsequent plain browser login rediscovers the
+Desktop pair when the active client equals that known device client, as specified
+above. The trusted-config update is atomic. A failure
+after keychain save must clean up the newly created keychain entry and preserve
+the prior configuration, so login never reports success with an unusable route.
+`NewTokenSource` loads the keychain credential,
+validates the refreshed identity against the stored principal and subject, and
+accepts only a nonempty, bounded, whitespace-free ID token cached in memory until
+its expiry.
+
+## Remote integration
+
+`remote.Config` adds:
+
+```go
+const (
+    CredentialSourceGcloud = "gcloud"
+    CredentialSourceADC    = "adc"
+    CredentialSourceOAuth  = "oauth"
+)
+
+type Config struct {
+    URL, Audience, Account, ImpersonateServiceAccount, Principal, CachePath string
+    CredentialSource, CredentialsFile string
+    OAuthClientID, OAuthDeviceClientID, OAuthClientSecret string
+    OAuthDeviceClientSecret, OAuthKeyringService string
+}
+
+type Route struct {
+    URL, Audience, Account, ImpersonateServiceAccount, Principal, CachePath string
+    CredentialSource, CredentialsFile string
+    OAuthClientID, OAuthDeviceClientID, OAuthKeyringService string
+}
+
+func (Config) PublicRoute() Route
+func ValidateRoute(Config) (Config, error)
+```
+
+`remote.New` constructs a token source from this explicit route. `Route` is the
+safe, non-secret routing projection; it has no active or device OAuth
+credential, refresh token or minted token field. `ValidateRoute` applies the same
+exclusivity policy used by the runtime, installer and diagnostics. For `oauth`,
+it also requires `Audience == OAuthClientID`.
+`NewWithTokenSource` remains the injection boundary for tests. OAuth keychain,
+refresh, validation and mint failures must be credential failures: they occur
+before HTTP or mirror access and never produce an `offline-mirror` result, cache
+write or queued operation. A transport or server service outage may still use a
+scope-bound read-only mirror exactly as in Phase 2. All writes, mark-read, resume,
+HTTP 401 and HTTP 403 fail without fallback.
+
+Package `clawbridge/internal/remote` also exposes the bounded login discovery
+client:
+
+```go
+type OAuthDiscovery struct {
+    BrowserClientID     string
+    BrowserClientSecret string
+    DeviceClientID      string
+    DeviceClientSecret  string
+}
+
+func DiscoverOAuthClient(
+    context.Context,
+    serverURL string,
+    *http.Client,
+) (OAuthDiscovery, error)
+```
+
+The optional HTTP client can inject transport policy for embedded use and tests;
+discovery replaces its redirect policy, enforces a maximum ten-second timeout,
+and retains any shorter supplied timeout. The function validates the trusted
+server URL itself and returns only the four installed-app discovery fields.
+
+## MCP and installer routing
+
+Cloud `mcp install` emits a pinned stdio entry with only routing and scope values
+needed to reconstruct the selected client. Permitted cloud arguments are
+`--server`, `--audience`, `--principal`, `--cache`, `--mode`,
+`--workspace`, `--project`, `--session`, optional `--instance`, the selected
+`--credential-source`, and for OAuth `--oauth-client-id`,
+`--oauth-device-client-id` and optional `--oauth-keyring-service`. OAuth
+`--oauth-client-secret` is not permitted in argv or environment.
+
+ADC routing may include the absolute `--credentials-file` path and safe account,
+impersonation and audience identifiers. gcloud routing may include the explicit
+account, impersonation and audience identifiers. Installed argv and process
+environment must never contain refresh/access/ID tokens, authorization codes,
+PKCE verifiers, OAuth client-secret values, ADC JSON, private keys or database
+credentials. The MCP process reads the keychain itself; agents never receive its
+contents or minted tokens.
+
+Installer and doctor must derive scope and credential values from the same
+trusted route. Doctor reports stable JSON checks rather than raw credentials and
+must recognize OAuth as a different credential mode from gcloud/ADC impersonation.
+An absent or conflicting entry is a diagnostic failure or warning with no repair
+or credential fallback.
+Doctor must inspect installed `env` as well as argv: credential-bearing variables
+and ClawBridge route overrides cannot be treated as a match for the pinned safe
+route. Unrelated benign environment entries are permitted. Invalid environment
+shapes fail diagnostics, and reports never echo environment values.
+
+## Setup and TUI scaffold boundaries
+
+These packages remain scaffolds, rather than delivered create/join/TUI CLI
+commands. Their callable adapters still enforce the reviewed plan and display
+boundaries:
+
+- `setup.Operation.Command` and `Runner.Run` use a complete tokenized command
+  starting with `gcloud`. `GCloudRunner` validates that executable token, uses its
+  configured executable path, and passes only the remaining tokens as arguments.
+  It never invokes a shell or includes the executable again as the first argument.
+- TUI output treats peer and other dynamic text as data. Message bodies, names,
+  scope labels, diagnostics and drafts cannot emit terminal control sequences,
+  including OSC clipboard operations. Render controls as visible escaped text
+  before applying trusted styling; preserve ordinary Unicode and intended
+  newline/tab layout. Rendering does not rewrite persisted message content.
+
+## Verification boundary
+
+Hermetic tests may inject loopback HTTP authorization/token/device endpoints,
+synthetic signers and ID tokens, temporary CLI homes and fake keychain stores.
+Those fixtures verify protocol and failure behavior; they are separate from live
+Google browser/device consent, Google ID-token issuance, Caddy certificate
+issuance, Compose networking and deployed authorization. Final Phase 3 review
+must name those live checks separately and must not infer them from synthetic
+tests.

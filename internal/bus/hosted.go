@@ -50,6 +50,41 @@ func (s *Store) setProjectRole(ctx context.Context, tx *transaction, wid, pid st
 	}
 	return one(ctx, tx, `SELECT * FROM project_roles WHERE project_id=? AND principal=?`, pid, principal)
 }
+
+// listProjects returns only projects visible to the verified caller. Hosted
+// workspace owners see the whole workspace; other principals see explicit roles.
+func (s *Store) listProjects(ctx context.Context, tx *transaction, w map[string]any) (any, error) {
+	wid := w["id"].(string)
+	q := `SELECT p.*,`
+	args := []any{}
+	if s.postgres {
+		q += ` CASE WHEN ?=? THEN 'owner' ELSE pr.role END AS role FROM projects p LEFT JOIN project_roles pr ON pr.project_id=p.id AND pr.principal=? WHERE p.workspace_id=? AND (?=? OR pr.principal IS NOT NULL) ORDER BY p.created_at,p.id`
+		args = append(args, w["owner_principal"], s.principal, s.principal, wid, w["owner_principal"], s.principal)
+	} else {
+		q += ` 'owner' AS role FROM projects p WHERE p.workspace_id=? ORDER BY p.created_at,p.id`
+		args = append(args, wid)
+	}
+	rows, err := query(ctx, tx, q, args...)
+	if err != nil {
+		return nil, err
+	}
+	return map[string]any{"projects": rows}, nil
+}
+
+// listMembers exposes project role assignments without session instance tokens.
+// The workspace owner is included as the effective project owner even when it
+// has no separate project_roles row.
+func (s *Store) listMembers(ctx context.Context, tx *transaction, pid string) (any, error) {
+	if !s.postgres {
+		return map[string]any{"project_id": pid, "members": []map[string]any{}}, nil
+	}
+	rows, err := query(ctx, tx, `SELECT c.principal,c.display_name,c.role,c.granted_by,c.granted_at FROM (SELECT pr.principal,COALESCE(m.display_name,'') AS display_name,pr.role,pr.granted_by,pr.granted_at FROM project_roles pr LEFT JOIN members m ON m.workspace_id=(SELECT workspace_id FROM projects WHERE id=?) AND m.principal=pr.principal WHERE pr.project_id=? UNION ALL SELECT w.owner_principal AS principal,COALESCE(m.display_name,'') AS display_name,'owner' AS role,w.owner_principal AS granted_by,w.created_at AS granted_at FROM workspaces w JOIN projects p ON p.workspace_id=w.id LEFT JOIN members m ON m.workspace_id=w.id AND m.principal=w.owner_principal WHERE p.id=? AND NOT EXISTS(SELECT 1 FROM project_roles pr WHERE pr.project_id=p.id AND pr.principal=w.owner_principal)) c ORDER BY c.principal`, pid, pid, pid)
+	if err != nil {
+		return nil, err
+	}
+	return map[string]any{"project_id": pid, "members": rows}, nil
+}
+
 func (s *Store) resolveInTransaction(ctx context.Context, tx *transaction, r Request) (any, error) {
 	q := `SELECT w.id AS workspace_id,p.id AS project_id FROM projects p JOIN workspaces w ON w.id=p.workspace_id WHERE `
 	args := []any{}

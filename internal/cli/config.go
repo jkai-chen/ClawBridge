@@ -25,6 +25,13 @@ type Config struct {
 	ImpersonateServiceAccount string `toml:"impersonate_service_account"`
 	Principal                 string `toml:"principal"`
 	Cache                     string `toml:"cache"`
+	CredentialSource          string `toml:"credential_source"`
+	CredentialsFile           string `toml:"credentials_file"`
+	OAuthClientID             string `toml:"oauth_client_id"`
+	OAuthClientSecret         string `toml:"oauth_client_secret"`
+	OAuthDeviceClientID       string `toml:"oauth_device_client_id"`
+	OAuthDeviceClientSecret   string `toml:"oauth_device_client_secret"`
+	OAuthKeyringService       string `toml:"oauth_keyring_service"`
 }
 
 func stateHome() (string, error) {
@@ -110,9 +117,49 @@ func overlay(base, top Config) Config {
 	if top.Cache != "" {
 		base.Cache = top.Cache
 	}
+	if top.CredentialSource != "" {
+		base.CredentialSource = top.CredentialSource
+	}
+	if top.CredentialsFile != "" {
+		base.CredentialsFile = top.CredentialsFile
+	}
+	if top.OAuthClientID != "" {
+		base.OAuthClientID = top.OAuthClientID
+	}
+	if top.OAuthClientSecret != "" {
+		base.OAuthClientSecret = top.OAuthClientSecret
+	}
+	if top.OAuthDeviceClientID != "" {
+		base.OAuthDeviceClientID = top.OAuthDeviceClientID
+	}
+	if top.OAuthDeviceClientSecret != "" {
+		base.OAuthDeviceClientSecret = top.OAuthDeviceClientSecret
+	}
+	if top.OAuthKeyringService != "" {
+		base.OAuthKeyringService = top.OAuthKeyringService
+	}
 	return base
 }
 func resolveConfig(ctx context.Context, flags Config) (Config, string, error) {
+	return resolveConfigVariant(ctx, flags, nil)
+}
+
+// resolveLoginConfig permits OAuth discovery to fill an absent active browser
+// client ID. Every other cloud command uses resolveConfig and therefore still
+// refuses an incomplete route until login atomically writes it.
+func resolveLoginConfig(ctx context.Context, flags Config, device bool) (Config, string, error) {
+	return resolveConfigVariantMode(ctx, flags, nil, true, device)
+}
+
+// resolveConfigVariant applies the same trusted precedence everywhere. The
+// optional variant sees the merged route before validation so commands which
+// deliberately probe one credential backend can isolate it from another without
+// mutating the trusted configuration.
+func resolveConfigVariant(ctx context.Context, flags Config, variant func(Config) Config) (Config, string, error) {
+	return resolveConfigVariantMode(ctx, flags, variant, false, false)
+}
+
+func resolveConfigVariantMode(ctx context.Context, flags Config, variant func(Config) Config, login, device bool) (Config, string, error) {
 	home, err := stateHome()
 	if err != nil {
 		return Config{}, "", err
@@ -137,17 +184,42 @@ func resolveConfig(ctx context.Context, flags Config) (Config, string, error) {
 				return Config{}, "", e
 			}
 			// Repository files select scope; they cannot route credentials or cache.
+			// Authority mode is trusted configuration too: a repository may not
+			// switch local to cloud, or cloud to local.
+			repo.Mode = ""
 			repo.Server = ""
 			repo.Audience = ""
 			repo.Account = ""
 			repo.ImpersonateServiceAccount = ""
 			repo.Principal = ""
 			repo.Cache = ""
+			repo.CredentialSource = ""
+			repo.CredentialsFile = ""
+			repo.OAuthClientID = ""
+			repo.OAuthClientSecret = ""
+			repo.OAuthDeviceClientID = ""
+			repo.OAuthDeviceClientSecret = ""
+			repo.OAuthKeyringService = ""
 			base = overlay(base, repo)
 		}
 	}
-	env := Config{DB: os.Getenv("CLAWBRIDGE_DB"), Workspace: os.Getenv("CLAWBRIDGE_WORKSPACE"), Project: os.Getenv("CLAWBRIDGE_PROJECT"), Session: os.Getenv("CLAWBRIDGE_SESSION"), Instance: os.Getenv("CLAWBRIDGE_INSTANCE"), Mode: os.Getenv("CLAWBRIDGE_MODE"), Server: os.Getenv("CLAWBRIDGE_SERVER"), Audience: os.Getenv("CLAWBRIDGE_AUDIENCE"), Account: os.Getenv("CLAWBRIDGE_ACCOUNT"), ImpersonateServiceAccount: os.Getenv("CLAWBRIDGE_IMPERSONATE_SERVICE_ACCOUNT"), Principal: os.Getenv("CLAWBRIDGE_PRINCIPAL"), Cache: os.Getenv("CLAWBRIDGE_CACHE")}
+	env := Config{
+		DB: os.Getenv("CLAWBRIDGE_DB"), Workspace: os.Getenv("CLAWBRIDGE_WORKSPACE"),
+		Project: os.Getenv("CLAWBRIDGE_PROJECT"), Session: os.Getenv("CLAWBRIDGE_SESSION"),
+		Instance: os.Getenv("CLAWBRIDGE_INSTANCE"), Mode: os.Getenv("CLAWBRIDGE_MODE"),
+		Server: os.Getenv("CLAWBRIDGE_SERVER"), Audience: os.Getenv("CLAWBRIDGE_AUDIENCE"),
+		Account: os.Getenv("CLAWBRIDGE_ACCOUNT"), ImpersonateServiceAccount: os.Getenv("CLAWBRIDGE_IMPERSONATE_SERVICE_ACCOUNT"),
+		Principal: os.Getenv("CLAWBRIDGE_PRINCIPAL"), Cache: os.Getenv("CLAWBRIDGE_CACHE"),
+		CredentialSource: os.Getenv("CLAWBRIDGE_CREDENTIAL_SOURCE"), CredentialsFile: os.Getenv("CLAWBRIDGE_CREDENTIALS_FILE"),
+		OAuthClientID: os.Getenv("CLAWBRIDGE_OAUTH_CLIENT_ID"), OAuthClientSecret: os.Getenv("CLAWBRIDGE_OAUTH_CLIENT_SECRET"),
+		OAuthDeviceClientID:     os.Getenv("CLAWBRIDGE_OAUTH_DEVICE_CLIENT_ID"),
+		OAuthDeviceClientSecret: os.Getenv("CLAWBRIDGE_OAUTH_DEVICE_CLIENT_SECRET"),
+		OAuthKeyringService:     os.Getenv("CLAWBRIDGE_OAUTH_KEYRING_SERVICE"),
+	}
 	base = overlay(overlay(base, env), flags)
+	if variant != nil {
+		base = variant(base)
+	}
 	if base.DB == "" {
 		base.DB = filepath.Join(home, "local.db")
 	}
@@ -160,16 +232,55 @@ func resolveConfig(ctx context.Context, flags Config) (Config, string, error) {
 		return Config{}, "", errors.New("unsupported storage mode; no write queued")
 	}
 	if base.Mode == "" {
-		if base.Server != "" || base.Audience != "" || base.Principal != "" || base.ImpersonateServiceAccount != "" || base.Cache != "" {
+		if base.Server != "" || base.Audience != "" || base.Principal != "" || base.ImpersonateServiceAccount != "" || base.Cache != "" ||
+			base.CredentialSource != "" || base.CredentialsFile != "" || base.OAuthClientID != "" ||
+			base.OAuthClientSecret != "" || base.OAuthDeviceClientID != "" || base.OAuthDeviceClientSecret != "" ||
+			base.OAuthKeyringService != "" {
 			return Config{}, "", errors.New("cloud routing requires explicit mode=cloud; no local fallback")
 		}
 		base.Mode = "local"
 	}
-	if base.Mode == "cloud" && (base.Server == "" || base.Audience == "") {
+	if base.Mode == "cloud" && (base.Server == "" || (base.Audience == "" && !login)) {
 		return Config{}, "", errors.New("cloud mode requires trusted server and audience configuration")
 	}
 	if base.Cache != "" && !filepath.IsAbs(base.Cache) {
 		base.Cache = filepath.Join(home, base.Cache)
+	}
+	if base.CredentialsFile != "" && !filepath.IsAbs(base.CredentialsFile) {
+		base.CredentialsFile = filepath.Join(home, base.CredentialsFile)
+	}
+	if base.CredentialSource != "" && base.CredentialSource != "gcloud" && base.CredentialSource != "adc" && base.CredentialSource != "oauth" {
+		return Config{}, "", errors.New("unsupported credential source; select oauth, gcloud or adc")
+	}
+	if base.CredentialSource == "oauth" {
+		if !login && base.OAuthClientID == "" && base.OAuthDeviceClientID == "" {
+			return Config{}, "", errors.New("OAuth credential source requires oauth_client_id or oauth_device_client_id in trusted configuration")
+		}
+		if base.Account != "" || base.ImpersonateServiceAccount != "" || base.CredentialsFile != "" {
+			return Config{}, "", errors.New("OAuth credential source cannot be combined with gcloud account, impersonation or credentials_file")
+		}
+		if !login && base.OAuthClientID != "" && base.OAuthClientSecret == "" {
+			return Config{}, "", errors.New("the active OAuth client ID requires a matching oauth_client_secret in trusted configuration")
+		}
+	}
+	if base.CredentialSource == "adc" && base.CredentialsFile == "" {
+		return Config{}, "", errors.New("ADC credential source requires credentials_file in trusted configuration")
+	}
+	if base.CredentialSource == "gcloud" && (base.Account == "" || base.ImpersonateServiceAccount == "") {
+		return Config{}, "", errors.New("gcloud credential source requires trusted account and impersonate_service_account")
+	}
+	if base.CredentialSource == "gcloud" && base.Account == base.ImpersonateServiceAccount {
+		return Config{}, "", errors.New("gcloud credential source cannot self-impersonate")
+	}
+	if base.CredentialSource != "adc" && base.CredentialsFile != "" {
+		return Config{}, "", errors.New("credentials_file is supported only with credential_source=adc")
+	}
+	if (base.OAuthClientID != "" || base.OAuthClientSecret != "" || base.OAuthDeviceClientID != "" ||
+		base.OAuthDeviceClientSecret != "" || base.OAuthKeyringService != "") && base.CredentialSource != "oauth" {
+		return Config{}, "", errors.New("OAuth client settings are supported only with credential_source=oauth")
+	}
+	if login && base.CredentialSource != "oauth" {
+		return Config{}, "", errors.New("OAuth login requires trusted credential_source=oauth; no credential backend fallback is available")
 	}
 	return base, path, nil
 }
@@ -197,7 +308,16 @@ func writeSetupConfig(path string, c Config) error {
 	if mode == "local" {
 		values["db"] = c.DB
 	} else {
-		for key, value := range map[string]string{"server": c.Server, "audience": c.Audience, "account": c.Account, "impersonate_service_account": c.ImpersonateServiceAccount, "principal": c.Principal, "cache": c.Cache} {
+		for key, value := range map[string]string{
+			"server": c.Server, "audience": c.Audience, "account": c.Account,
+			"impersonate_service_account": c.ImpersonateServiceAccount,
+			"principal":                   c.Principal, "cache": c.Cache,
+			"credential_source": c.CredentialSource, "credentials_file": c.CredentialsFile,
+			"oauth_client_id": c.OAuthClientID, "oauth_client_secret": c.OAuthClientSecret,
+			"oauth_device_client_id":     c.OAuthDeviceClientID,
+			"oauth_device_client_secret": c.OAuthDeviceClientSecret,
+			"oauth_keyring_service":      c.OAuthKeyringService,
+		} {
 			if value != "" {
 				values[key] = value
 			}
@@ -217,6 +337,79 @@ func writeSetupConfig(path string, c Config) error {
 	tmp := f.Name()
 	defer os.Remove(tmp)
 	if _, err = f.Write(b); err != nil {
+		f.Close()
+		return err
+	}
+	if err = f.Sync(); err != nil {
+		f.Close()
+		return err
+	}
+	if err = f.Close(); err != nil {
+		return err
+	}
+	return os.Rename(tmp, path)
+}
+
+// writeCredentialSourceConfig changes only the trusted credential route. It
+// refuses local and malformed files and preserves every unrelated key.
+func writeCredentialSourceConfig(path string, c Config) error {
+	values := map[string]any{}
+	raw, err := os.ReadFile(path)
+	if err == nil {
+		if err = toml.Unmarshal(raw, &values); err != nil {
+			return errors.New("trusted configuration is malformed; no credential route was written")
+		}
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	if mode, _ := values["mode"].(string); mode != "cloud" && c.Mode != "cloud" {
+		return errors.New("OAuth login requires explicit cloud mode in trusted configuration")
+	}
+	values["mode"] = "cloud"
+	values["credential_source"] = "oauth"
+	values["oauth_client_id"] = c.OAuthClientID
+	values["principal"] = c.Principal
+	values["audience"] = c.Audience
+	for _, key := range []string{"account", "impersonate_service_account", "credentials_file"} {
+		delete(values, key)
+	}
+	if c.OAuthClientSecret == "" {
+		delete(values, "oauth_client_secret")
+	}
+	if c.OAuthDeviceClientSecret == "" {
+		delete(values, "oauth_device_client_secret")
+	}
+	for key, value := range map[string]string{
+		"oauth_client_secret":        c.OAuthClientSecret,
+		"oauth_device_client_id":     c.OAuthDeviceClientID,
+		"oauth_device_client_secret": c.OAuthDeviceClientSecret,
+		"oauth_keyring_service":      c.OAuthKeyringService,
+		"server":                     c.Server, "audience": c.Audience, "cache": c.Cache,
+		"workspace": c.Workspace, "project": c.Project, "session": c.Session,
+		"instance": c.Instance,
+	} {
+		if value != "" {
+			values[key] = value
+		}
+	}
+	encoded, err := toml.Marshal(values)
+	if err != nil {
+		return err
+	}
+	if err = os.MkdirAll(filepath.Dir(path), 0700); err != nil {
+		return err
+	}
+	f, err := os.CreateTemp(filepath.Dir(path), ".clawbridge-config-*")
+	if err != nil {
+		return err
+	}
+	tmp := f.Name()
+	defer os.Remove(tmp)
+	if err = f.Chmod(0600); err != nil {
+		f.Close()
+		return err
+	}
+	if _, err = f.Write(encoded); err != nil {
 		f.Close()
 		return err
 	}

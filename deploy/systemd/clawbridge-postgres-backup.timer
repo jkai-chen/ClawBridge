@@ -1,0 +1,11 @@
+[Unit]
+Description=Run the ClawBridge Postgres backup daily at 02:30 UTC
+
+[Timer]
+OnCalendar=*-*-* 02:30:00 UTC
+Persistent=true
+AccuracySec=1min
+Unit=clawbridge-postgres-backup.service
+
+[Install]
+WantedBy=timers.target

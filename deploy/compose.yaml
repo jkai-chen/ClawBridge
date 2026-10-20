@@ -6,13 +6,16 @@ services:
       POSTGRES_USER: clawbridge
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set a private random database password}
     volumes:
-      - postgres-data:/var/lib/postgresql/data
+      - ${CLAWBRIDGE_POSTGRES_DATA_PATH:-postgres-data}:/var/lib/postgresql/data
     healthcheck:
       test: [CMD-SHELL, "pg_isready -h 127.0.0.1 -U clawbridge -d clawbridge"]
       interval: 5s
       timeout: 3s
       retries: 12
+    networks:
+      - backend
     restart: unless-stopped
+
   api:
     build:
       context: ..
@@ -21,13 +24,17 @@ services:
       - --listen
       - 0.0.0.0:8080
       - --audience
-      - ${CLAWBRIDGE_AUDIENCE:?Select the service-specific Google ID-token audience}
+      - ${CLAWBRIDGE_AUDIENCE:?Select the Google ID-token audience set}
       - --bootstrap-owner
       - ${CLAWBRIDGE_BOOTSTRAP_OWNER:?Select the verified bootstrap principal}
+      - --oauth-client-id
+      - ${CLAWBRIDGE_OAUTH_CLIENT_ID:?Set the Desktop-app OAuth client ID}
+      - --oauth-device-client-id
+      - ${CLAWBRIDGE_OAUTH_DEVICE_CLIENT_ID:?Set the TVs and Limited Input devices OAuth client ID}
     environment:
       CLAWBRIDGE_DATABASE_URL: postgres://clawbridge:${POSTGRES_PASSWORD:?Set a private random database password}@db:5432/clawbridge?sslmode=disable
-    ports:
-      - 127.0.0.1:8080:8080
+      CLAWBRIDGE_OAUTH_CLIENT_SECRET: ${CLAWBRIDGE_OAUTH_CLIENT_SECRET:?Set the Desktop-app installed client credential}
+      CLAWBRIDGE_OAUTH_DEVICE_CLIENT_SECRET: ${CLAWBRIDGE_OAUTH_DEVICE_CLIENT_SECRET:?Set the device-app installed client credential}
     depends_on:
       db:
         condition: service_healthy
@@ -36,6 +43,49 @@ services:
       - no-new-privileges:true
     cap_drop:
       - ALL
+    networks:
+      - backend
+      - egress
     restart: unless-stopped
+
+  caddy:
+    image: caddy:2.10-alpine
+    command:
+      - caddy
+      - reverse-proxy
+      - --from
+      - ${CLAWBRIDGE_DOMAIN:?Set the public DNS name for ClawBridge}
+      - --to
+      - api:8080
+      - --disable-redirects
+    ports:
+      - 443:443
+    volumes:
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on:
+      api:
+        condition: service_started
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - NET_BIND_SERVICE
+    networks:
+      - backend
+      - egress
+    restart: unless-stopped
+
+networks:
+  backend:
+    internal: true
+  egress:
+
 volumes:
   postgres-data:
+  caddy-data:
+  caddy-config:

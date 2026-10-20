@@ -148,8 +148,8 @@ func TestServerGoogleVerifierSyntheticCrypto(t *testing.T) {
 	if _, err := server.NewGoogleVerifier(context.Background(), ""); err == nil {
 		t.Fatal("empty production audience allowed")
 	}
-	claims := func() map[string]any {
-		return map[string]any{"iss": "https://accounts.google.com", "aud": audience, "sub": "review-subject", "exp": time.Now().Add(time.Hour).Unix(), "iat": time.Now().Unix(), "email": pgPrincipal("alice"), "email_verified": true}
+	claims := func(tokenAudience string) map[string]any {
+		return map[string]any{"iss": "https://accounts.google.com", "aud": tokenAudience, "sub": "review-subject", "exp": time.Now().Add(time.Hour).Unix(), "iat": time.Now().Unix(), "email": pgPrincipal("alice"), "email_verified": true}
 	}
 	token := func(c map[string]any, alg string) string {
 		kid := "review-key"
@@ -169,7 +169,7 @@ func TestServerGoogleVerifierSyntheticCrypto(t *testing.T) {
 		}
 		return unsigned + "." + b64(signature)
 	}
-	identity, err := verifier.Verify(context.Background(), token(claims(), "RS256"))
+	identity, err := verifier.Verify(context.Background(), token(claims(audience), "RS256"))
 	if err != nil || identity.Principal != pgPrincipal("alice") {
 		t.Fatalf("production verifier rejected valid synthetic signed fixture: %v %+v", err, identity)
 	}
@@ -178,7 +178,7 @@ func TestServerGoogleVerifierSyntheticCrypto(t *testing.T) {
 		value     any
 	}{{"wrong-audience", "aud", "wrong"}, {"wrong-issuer", "iss", "https://evil.example.test"}, {"expired", "exp", time.Now().Add(-time.Hour).Unix()}, {"unverified-email", "email_verified", false}, {"missing-subject", "sub", ""}} {
 		t.Run(tc.name, func(t *testing.T) {
-			c := claims()
+			c := claims(audience)
 			c[tc.key] = tc.value
 			if _, err := verifier.Verify(context.Background(), token(c, "RS256")); err == nil {
 				t.Fatal("invalid token accepted")
@@ -192,10 +192,26 @@ func TestServerGoogleVerifierSyntheticCrypto(t *testing.T) {
 					t.Errorf("malformed token panics production verifier: %v", p)
 				}
 			}()
-			if _, err := verifier.Verify(context.Background(), token(claims(), alg)); err == nil {
+			if _, err := verifier.Verify(context.Background(), token(claims(audience), alg)); err == nil {
 				t.Fatal("invalid signature/algorithm accepted")
 			}
 		})
+	}
+
+	desktopAudience := "desktop-client.apps.googleusercontent.com"
+	deviceAudience := "device-client.apps.googleusercontent.com"
+	multiVerifier, err := server.NewGoogleVerifierForAudiences(context.Background(), []string{desktopAudience, deviceAudience})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tokenAudience := range []string{desktopAudience, deviceAudience} {
+		identity, err := multiVerifier.Verify(context.Background(), token(claims(tokenAudience), "RS256"))
+		if err != nil || identity.Principal != pgPrincipal("alice") {
+			t.Fatalf("multi-audience verifier rejected configured audience %q: %v %+v", tokenAudience, err, identity)
+		}
+	}
+	if _, err := multiVerifier.Verify(context.Background(), token(claims("unlisted-client.apps.googleusercontent.com"), "RS256")); err == nil {
+		t.Fatal("multi-audience verifier accepted an unlisted audience")
 	}
 }
 

@@ -23,6 +23,11 @@ func newHarness(t *testing.T) *harness {
 	t.Cleanup(func() { s.Close() })
 	h := &harness{t, s}
 	h.call("workspace_init", "", map[string]any{"mode": "local"})
+	h.call("project_create", "", map[string]any{"slug": "listed"})
+	projects := h.call("list_projects", "", nil).(map[string]any)
+	if len(projects["projects"].([]map[string]any)) != 1 {
+		t.Fatal("local project listing omitted project")
+	}
 	h.call("project_create", "", map[string]any{"slug": "p"})
 	for _, name := range []string{"a", "b", "c"} {
 		h.call("register_session", name, map[string]any{"instance": name + "-instance", "role": "worker"})

@@ -1,0 +1,24 @@
+[Unit]
+Description=Create and upload the ClawBridge Postgres daily backup
+Documentation=file:/opt/clawbridge/repo/deploy/README.md
+Wants=network-online.target
+Requires=docker.service
+RequiresMountsFor=/var/lib/clawbridge-postgres
+After=network-online.target docker.service
+AssertPathIsMountPoint=/var/lib/clawbridge-postgres
+AssertPathExists=/etc/clawbridge/clawbridge.env
+AssertPathExists=/usr/local/libexec/clawbridge/backup-postgres.sh
+
+[Service]
+Type=oneshot
+User=root
+Group=root
+Environment=HOME=/root
+Environment=CLAWBRIDGE_ENV_FILE=/etc/clawbridge/clawbridge.env
+Environment=CLAWBRIDGE_DEPLOY_DIR=/opt/clawbridge/repo
+Environment=CLOUDSDK_CORE_DISABLE_PROMPTS=1
+ExecStart=/usr/local/libexec/clawbridge/backup-postgres.sh
+UMask=0077
+PrivateTmp=true
+NoNewPrivileges=true
+TimeoutStartSec=30min

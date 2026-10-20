@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -43,10 +44,16 @@ func testResolution(t *testing.T, parent *processFixture) {
 		t.Fatalf("remote resolution chose wrong project: %v", who)
 	}
 	config := filepath.Join(root, ".clawbridge.toml")
-	writeScope(t, config, "w", "p", p.db, "local")
+	// With no trusted route, a repository-only cloud mode cannot manufacture one.
+	// The permitted scope still resolves through the normal local default. A
+	// non-loopback HTTP URL would fail if cloud validation were wrongly triggered.
+	repoOnlyCloud := fmt.Sprintf("workspace = %q\nproject = %q\ndb = %q\nmode = \"cloud\"\nserver = \"http://attacker.example.test\"\naudience = \"attacker-audience\"\ncredential_source = \"oauth\"\noauth_client_id = \"attacker-client\"\n", "w", "p", p.db)
+	if err := os.WriteFile(config, []byte(repoOnlyCloud), 0600); err != nil {
+		t.Fatal(err)
+	}
 	who = resolved.run("whoami")
 	if stringField(t, object(t, who)["project"], "slug") != "p" {
-		t.Fatalf("checkout root config was not found from subdirectory")
+		t.Fatalf("repository-only cloud mode replaced the trusted local default: %v", who)
 	}
 	who = resolved.run("--workspace", "w", "--project", "other", "whoami")
 	if stringField(t, object(t, who)["project"], "slug") != "other" {
@@ -62,15 +69,32 @@ func testResolution(t *testing.T, parent *processFixture) {
 	if stringField(t, object(t, who)["project"], "slug") != "p" {
 		t.Fatalf("flags did not override environment")
 	}
-	writeScope(t, config, "w", "p", p.db, "cloud")
-	resolved.fail("whoami")
-	resolved.fail("--workspace", "w", "--project", "p", "setup", "--local")
-	after, _ := os.ReadFile(config)
-	if string(after) == "" {
-		t.Fatal("cloud config removed")
+	// Repository mode and routing fields are untrusted and ignored. They cannot
+	// switch the trusted local authority to cloud.
+	repoCloud := "workspace = \"w\"\nproject = \"p\"\nmode = \"cloud\"\nserver = \"https://attacker.example.test\"\naudience = \"attacker-audience\"\naccount = \"attacker@example.test\"\nimpersonate_service_account = \"attacker@evil.example.test\"\nprincipal = \"attacker@example.test\"\ncache = \"attacker-cache.db\"\ncredential_source = \"oauth\"\noauth_client_id = \"attacker-client\"\n"
+	if err := os.WriteFile(config, []byte(repoCloud), 0600); err != nil {
+		t.Fatal(err)
 	}
-	writeScope(t, config, "w", "p", p.db, "offline-mirror")
+	who = resolved.run("whoami")
+	if stringField(t, object(t, who)["project"], "slug") != "p" {
+		t.Fatalf("repository mode switched trusted local authority: %v", who)
+	}
+	resolved.run("--workspace", "w", "--project", "p", "setup", "--local")
+
+	// The same authority rule applies to an explicit trusted-home config. An
+	// unsupported home mode must fail before mirror or local fallback.
+	stateDir := strings.TrimPrefix(resolved.env[len(resolved.env)-1], "CLAWBRIDGE_HOME=")
+	homeConfig := filepath.Join(stateDir, "config.toml")
+	if err := os.MkdirAll(stateDir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(homeConfig, []byte("mode = \"offline-mirror\"\nworkspace = \"w\"\nproject = \"p\"\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
 	resolved.fail("whoami")
+	if err := os.Remove(homeConfig); err != nil {
+		t.Fatal(err)
+	}
 	if err := os.Remove(config); err != nil {
 		t.Fatal(err)
 	}

@@ -1,0 +1,707 @@
+// Package doctor inspects trusted routing, authority health and local client
+// integration without modifying configuration or printing credentials.
+package doctor
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"os"
+	"path/filepath"
+	"sort"
+	"strings"
+	"time"
+
+	"clawbridge/internal/bus"
+	"clawbridge/internal/mirror"
+	"clawbridge/internal/remote"
+	"github.com/pelletier/go-toml/v2"
+)
+
+const (
+	Pass = "pass"
+	Warn = "warn"
+	Fail = "fail"
+)
+
+// Executor is the shared application boundary. Doctor only invokes nonmutating
+// operations through it.
+type Executor interface {
+	Execute(context.Context, bus.Request) (bus.Result, error)
+	ResolveProject(context.Context, string, string, string) (string, string, error)
+}
+
+// TokenSource validates the selected hosted credential route by minting an
+// ephemeral token. Doctor never retains or renders the returned token.
+type TokenSource interface {
+	Token(context.Context) (string, error)
+}
+
+// Config is a plain, importable view of trusted routing. Doctor treats these as
+// already resolved values and labels their source; it does not implement CLI
+// config precedence.
+type Config struct {
+	Path                      string `json:"path"`
+	Present                   bool   `json:"present"`
+	Valid                     bool   `json:"valid"`
+	Mode                      string `json:"mode"`
+	DB                        string `json:"db"`
+	Workspace                 string `json:"workspace"`
+	Project                   string `json:"project"`
+	Session                   string `json:"session"`
+	Instance                  string `json:"instance"`
+	Server                    string `json:"server"`
+	Audience                  string `json:"audience"`
+	Account                   string `json:"account"`
+	ImpersonateServiceAccount string `json:"impersonate_service_account"`
+	Principal                 string `json:"principal"`
+	Cache                     string `json:"cache"`
+	CredentialSource          string `json:"credential_source"`
+	CredentialsFile           string `json:"credentials_file,omitempty"`
+	OAuthClientID             string `json:"oauth_client_id,omitempty"`
+	OAuthDeviceClientID       string `json:"oauth_device_client_id,omitempty"`
+	OAuthKeyringService       string `json:"oauth_keyring_service,omitempty"`
+}
+
+// MCPConfig identifies one installed-client configuration and the expected
+// ClawBridge entry. Doctor reads these paths and never repairs them.
+type MCPConfig struct {
+	Agent                     string `json:"agent"`
+	Name                      string `json:"name"`
+	Path                      string `json:"path"`
+	DB                        string `json:"db"`
+	Workspace                 string `json:"workspace"`
+	Project                   string `json:"project"`
+	Session                   string `json:"session"`
+	Instance                  string `json:"instance"`
+	Mode                      string `json:"mode"`
+	Server                    string `json:"server"`
+	Audience                  string `json:"audience"`
+	Account                   string `json:"account"`
+	ImpersonateServiceAccount string `json:"impersonate_service_account"`
+	Principal                 string `json:"principal"`
+	Cache                     string `json:"cache"`
+	CredentialSource          string `json:"credential_source"`
+	CredentialsFile           string `json:"credentials_file,omitempty"`
+	OAuthClientID             string `json:"oauth_client_id,omitempty"`
+	OAuthDeviceClientID       string `json:"oauth_device_client_id,omitempty"`
+	OAuthKeyringService       string `json:"oauth_keyring_service,omitempty"`
+}
+
+// Input controls deterministic diagnostics. Now and MirrorStaleAfter are
+// injected so freshness tests do not sleep or depend on wall-clock timing.
+type Input struct {
+	Config           Config
+	GitRemote        string
+	Now              time.Time
+	MirrorStaleAfter time.Duration
+	TokenSource      TokenSource
+	MCPConfigs       []MCPConfig
+}
+
+// Check is one stable machine-readable diagnostic.
+type Check struct {
+	ID      string `json:"id"`
+	Title   string `json:"title"`
+	Status  string `json:"status"`
+	Message string `json:"message"`
+	Path    string `json:"path,omitempty"`
+	Action  string `json:"action,omitempty"`
+}
+
+// Report has an aggregate status derived from the most severe check.
+type Report struct {
+	Status      string  `json:"status"`
+	GeneratedAt string  `json:"generated_at"`
+	Checks      []Check `json:"checks"`
+}
+
+// OK means there are no required failures. Warnings do not make doctor fail.
+func (r Report) OK() bool { return r.Status != Fail }
+
+// ExitCode returns zero for a passing or warning-only report.
+func (r Report) ExitCode() int {
+	if r.OK() {
+		return 0
+	}
+	return 1
+}
+
+// Run performs read-only diagnostics. It does not open a database, change agent
+// configuration, sync a mirror or perform any hosted write.
+func Run(ctx context.Context, in Input, executor Executor) Report {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if in.Now.IsZero() {
+		in.Now = time.Now().UTC()
+	}
+	if in.MirrorStaleAfter <= 0 {
+		in.MirrorStaleAfter = 24 * time.Hour
+	}
+	report := Report{GeneratedAt: in.Now.UTC().Format(time.RFC3339)}
+	add := func(check Check) { report.Checks = append(report.Checks, check) }
+
+	configOK := checkConfig(in.Config, add)
+	authorityOK, projectsOK := checkAuthority(ctx, in.Config, executor, add)
+	checkCredentials(ctx, in, configOK, add)
+	wid, pid, resolutionOK := checkResolution(ctx, in.Config, in.GitRemote, executor, authorityOK, projectsOK, add)
+	checkMirror(ctx, in, wid, pid, resolutionOK, add)
+	for _, mcp := range in.MCPConfigs {
+		if mcp.Agent == "" {
+			mcp.Agent = "codex"
+		}
+		if mcp.Name == "" {
+			mcp.Name = "clawbridge"
+		}
+		checkMCP(mcp, add)
+	}
+	if len(in.MCPConfigs) == 0 {
+		add(Check{
+			ID: "mcp.entries", Title: "Installed MCP entries", Status: Warn,
+			Message: "No agent MCP configuration paths were selected for inspection.",
+			Action:  "Pass explicit temporary or installed paths when an MCP entry should be checked.",
+		})
+	}
+	report.Status = aggregate(report.Checks)
+	return report
+}
+
+func checkConfig(config Config, add func(Check)) bool {
+	check := Check{ID: "config.trusted", Title: "Trusted configuration", Status: Fail, Path: config.Path}
+	if !config.Present {
+		check.Message = "No trusted ClawBridge configuration is present."
+		check.Action = "Create local or cloud setup routing first; doctor will not invent a default project or authority."
+		add(check)
+		return false
+	}
+	if !config.Valid {
+		check.Message = "Trusted ClawBridge configuration could not be parsed."
+		check.Action = "Correct the configuration file; doctor will not rewrite it."
+		add(check)
+		return false
+	}
+	if config.Path == "" {
+		check.Message = "Trusted configuration has no explicit source path."
+		check.Action = "Select the exact home, explicit or repository configuration source."
+		add(check)
+		return false
+	}
+	switch config.Mode {
+	case "local":
+		if config.DB == "" || config.Workspace == "" {
+			check.Message = "Local routing is incomplete: explicit database and workspace are required."
+			check.Action = "Run local setup or select the missing trusted route."
+			add(check)
+			return false
+		}
+	case "cloud":
+		if _, err := remote.ValidateRoute(remote.Config{
+			URL: config.Server, Audience: config.Audience, Account: config.Account,
+			ImpersonateServiceAccount: config.ImpersonateServiceAccount,
+			Principal:                 config.Principal, CachePath: config.Cache,
+			CredentialSource: config.CredentialSource, CredentialsFile: config.CredentialsFile,
+			OAuthClientID: config.OAuthClientID, OAuthDeviceClientID: config.OAuthDeviceClientID,
+			OAuthKeyringService: config.OAuthKeyringService,
+		}); err != nil {
+			check.Message = "Cloud credential routing is incomplete or inconsistent."
+			check.Action = "Rerun authenticated cloud join or select one complete explicit oauth, gcloud or ADC route."
+			add(check)
+			return false
+		}
+	default:
+		check.Message = "Trusted storage mode is absent or unsupported."
+		check.Action = "Select explicit local or cloud mode."
+		add(check)
+		return false
+	}
+	check.Status = Pass
+	check.Message = "Trusted configuration is present, parseable and complete for " + config.Mode + " mode."
+	add(check)
+	return true
+}
+
+func checkAuthority(ctx context.Context, config Config, executor Executor, add func(Check)) (bool, bool) {
+	check := Check{ID: "authority.health", Title: "Authority health", Status: Fail, Path: config.Path}
+	if config.Mode != "local" && config.Mode != "cloud" {
+		check.Message = "Authority cannot be checked without a supported storage mode."
+		add(check)
+		return false, false
+	}
+	if executor == nil {
+		check.Message = "No authority executor is configured."
+		check.Action = "Select the configured local store or authenticated cloud client."
+		add(check)
+		return false, false
+	}
+	if config.Workspace == "" {
+		check.Message = "The configured workspace is absent."
+		check.Action = "Select an explicit workspace in trusted configuration."
+		add(check)
+		return false, false
+	}
+	result, err := executor.Execute(ctx, bus.Request{
+		Operation: "list_projects",
+		Workspace: config.Workspace,
+		Args:      map[string]any{},
+	})
+	if err != nil {
+		check.Message = "The configured authority did not return its visible projects (" + safeCode(err) + ")."
+		check.Action = "Verify the selected authority, network, login and workspace; no repair or fallback was attempted."
+		add(check)
+		return false, false
+	}
+	expectedSource := "local-authority"
+	if config.Mode == "cloud" {
+		expectedSource = "server"
+	}
+	data, ok := result.Data.(map[string]any)
+	if !ok {
+		check.Message = "The authority returned an unexpected result type or nonauthoritative source."
+		check.Action = "Verify config mode and server address; offline mirrors cannot establish authority health."
+		add(check)
+		return false, false
+	}
+	var count int
+	switch projects := data["projects"].(type) {
+	case []any:
+		count = len(projects)
+	case []map[string]any:
+		count = len(projects)
+	default:
+		check.Message = "The authority project list has an unexpected type."
+		check.Action = "Verify the selected authority and binary versions; no repair was attempted."
+		add(check)
+		return false, false
+	}
+	if result.Source != expectedSource {
+		check.Message = "The authority returned an unexpected result type or nonauthoritative source."
+		check.Action = "Verify config mode and server address; offline mirrors cannot establish authority health."
+		add(check)
+		return false, false
+	}
+	check.Status = Pass
+	check.Message = fmt.Sprintf("The %s authority is reachable and returned %d visible project(s).", config.Mode, count)
+	add(check)
+	return true, true
+}
+
+func checkCredentials(ctx context.Context, in Input, configOK bool, add func(Check)) {
+	check := Check{ID: "auth.token-selection", Title: "Google token selection", Status: Fail}
+	if in.Config.Mode == "local" {
+		check.Status = Pass
+		check.Message = "Local mode does not use Google credentials."
+		add(check)
+		return
+	}
+	if in.Config.Mode != "cloud" || !configOK {
+		check.Message = "Google token routing cannot be selected from incomplete cloud configuration."
+		check.Action = "Complete trusted cloud routing before authenticating."
+		add(check)
+		return
+	}
+	if in.TokenSource == nil {
+		check.Message = "No explicit Google token source is configured."
+		check.Action = "Select the initiating account, audience and impersonation service account."
+		add(check)
+		return
+	}
+	token, err := in.TokenSource.Token(ctx)
+	if err != nil {
+		check.Message = "The selected Google credential route could not mint an audience-bound token."
+		check.Action = "Reauthenticate the explicit account and verify token-creation IAM; credentials were not printed."
+		add(check)
+		return
+	}
+	if token == "" || len(token) > 16384 || strings.ContainsAny(token, " \r\n\t") {
+		check.Message = "The credential source returned invalid token material."
+		check.Action = "Reauthenticate the explicit account; credentials were not printed."
+		add(check)
+		return
+	}
+	check.Status = Pass
+	check.Message = "The explicit " + in.Config.CredentialSource + " credential route produced a token."
+	add(check)
+}
+
+func checkResolution(ctx context.Context, config Config, remote string, executor Executor, authorityOK, projectsOK bool, add func(Check)) (string, string, bool) {
+	check := Check{ID: "project.resolution", Title: "Project resolution", Status: Fail}
+	if !authorityOK || !projectsOK || executor == nil {
+		check.Message = "Project resolution was not attempted because the authority check failed."
+		check.Action = "Restore authority health first."
+		add(check)
+		return "", "", false
+	}
+	if config.Project == "" && remote == "" {
+		check.Message = "No explicit project or registered git remote is selected."
+		check.Action = "Select a project or configure a known repository remote; doctor will not infer a slug."
+		add(check)
+		return "", "", false
+	}
+	wid, pid, err := executor.ResolveProject(ctx, config.Workspace, config.Project, remote)
+	if err != nil {
+		check.Message = "The selected project did not resolve uniquely and authoritatively (" + safeCode(err) + ")."
+		check.Action = "Select an existing visible project or register the repository remote in that scope."
+		add(check)
+		return "", "", false
+	}
+	if wid == "" || pid == "" {
+		check.Message = "Project resolution returned incomplete immutable identity."
+		check.Action = "Verify authority health; no project was created."
+		add(check)
+		return "", "", false
+	}
+	check.Status = Pass
+	check.Message = "The configured project resolved to immutable workspace and project identifiers."
+	add(check)
+	return wid, pid, true
+}
+
+func checkMirror(ctx context.Context, in Input, wid, pid string, resolved bool, add func(Check)) {
+	check := Check{ID: "mirror.freshness", Title: "Offline mirror freshness", Status: Warn, Path: in.Config.Cache}
+	if in.Config.Mode == "local" {
+		check.Status = Pass
+		check.Message = "Local authority mode does not use a cloud offline mirror."
+		add(check)
+		return
+	}
+	if in.Config.Cache == "" {
+		check.Message = "Cloud routing has no offline mirror path."
+		check.Action = "Select a trusted cache path; writes will still never be queued."
+		add(check)
+		return
+	}
+	if !resolved {
+		check.Message = "Mirror freshness cannot be bound because project resolution failed."
+		check.Action = "Restore unique project resolution and sync an authorized snapshot."
+		add(check)
+		return
+	}
+	snapshot, err := mirror.Load(ctx, in.Config.Cache, mirror.Binding{
+		Server: in.Config.Server, Audience: in.Config.Audience, Principal: in.Config.Principal,
+		Workspace: wid, Project: pid, Session: in.Config.Session, Instance: in.Config.Instance,
+	})
+	if err != nil {
+		check.Message = "No complete mirror matches this trusted authority, principal and scope."
+		check.Action = "Run an authorized sync while online; doctor did not create or modify the cache."
+		add(check)
+		return
+	}
+	updated, err := time.Parse(time.RFC3339Nano, snapshot.UpdatedAt)
+	if err != nil {
+		check.Message = "The mirror has an invalid snapshot timestamp."
+		check.Action = "Replace it with a successful online sync; existing cache bytes were not changed."
+		add(check)
+		return
+	}
+	age := in.Now.Sub(updated)
+	if age < 0 {
+		age = 0
+	}
+	check.Message = "The matching mirror is " + age.Round(time.Second).String() + " old."
+	if age > in.MirrorStaleAfter {
+		check.Status = Warn
+		check.Message += " It exceeds the " + in.MirrorStaleAfter.String() + " freshness target."
+		check.Action = "Run an authorized sync when online; retain read-only and instance-bound semantics."
+		add(check)
+		return
+	}
+	check.Status = Pass
+	add(check)
+}
+
+func checkMCP(mcp MCPConfig, add func(Check)) {
+	id := "mcp." + mcp.Agent + "." + mcp.Name
+	check := Check{ID: id, Title: "Installed MCP entry", Status: Fail, Path: mcp.Path}
+	if mcp.Agent != "codex" && mcp.Agent != "claude-code" {
+		check.Message = "The selected MCP agent kind is unsupported."
+		check.Action = "Inspect Codex or Claude Code entries only."
+		add(check)
+		return
+	}
+	if mcp.Name == "" || mcp.Path == "" || !filepath.IsAbs(mcp.Path) {
+		check.Message = "The MCP inspection requires an entry name and absolute exact path."
+		check.Action = "Select the installed configuration path explicitly."
+		add(check)
+		return
+	}
+	info, err := os.Lstat(mcp.Path)
+	if errors.Is(err, os.ErrNotExist) {
+		check.Status = Warn
+		check.Message = "No MCP configuration file exists at the selected path."
+		check.Action = "Install an explicitly scoped MCP entry if this client should use ClawBridge."
+		add(check)
+		return
+	}
+	if err != nil || !info.Mode().IsRegular() {
+		check.Message = "The MCP configuration cannot be read as a regular file."
+		check.Action = "Select the exact regular client configuration path; no file was changed."
+		add(check)
+		return
+	}
+	if info.Size() > 4<<20 {
+		check.Message = "The MCP configuration exceeds the 4 MiB inspection limit."
+		check.Action = "Select the intended client configuration; no file was changed."
+		add(check)
+		return
+	}
+	raw, err := os.ReadFile(mcp.Path)
+	if err != nil {
+		check.Message = "The MCP configuration could not be read."
+		check.Action = "Correct file permissions; no file was changed."
+		add(check)
+		return
+	}
+	entry, found, err := parseMCPEntry(mcp.Agent, mcp.Name, raw)
+	if err != nil {
+		check.Message = "The MCP configuration is malformed or has an unsupported server shape."
+		check.Action = "Correct the configuration explicitly; doctor will not rewrite or repair it."
+		add(check)
+		return
+	}
+	if !found {
+		check.Status = Warn
+		check.Message = "The expected ClawBridge MCP entry is absent from this client configuration."
+		check.Action = "Install the explicitly scoped entry when this client should use ClawBridge."
+		add(check)
+		return
+	}
+	expected, err := expectedMCPEntry(mcp)
+	if err != nil {
+		check.Message = "The expected MCP scope or credential route is incomplete."
+		check.Action = "Select the complete trusted route before inspecting installation."
+		add(check)
+		return
+	}
+	if !entryMatches(entry, expected) {
+		check.Message = "The installed MCP entry conflicts with the expected project, session, mode or credential route."
+		check.Action = "Inspect the entry and reinstall with the intended exact scope and a distinct entry name if needed; doctor made no change."
+		add(check)
+		return
+	}
+	command, _ := entry["command"].(string)
+	if !filepath.IsAbs(command) {
+		check.Message = "The installed MCP command is not an absolute executable path."
+		check.Action = "Reinstall with the intended absolute ClawBridge binary path; doctor made no change."
+		add(check)
+		return
+	}
+	if info, err := os.Stat(command); err != nil || info.IsDir() {
+		check.Status = Warn
+		check.Message = "The installed MCP command does not currently resolve to an executable file."
+		check.Action = "Restore or reinstall the intended ClawBridge binary at that path."
+		add(check)
+		return
+	}
+	check.Status = Pass
+	check.Message = "The installed MCP entry matches the expected authority, scope and credential route."
+	add(check)
+}
+
+func parseMCPEntry(agent, name string, raw []byte) (map[string]any, bool, error) {
+	root := map[string]any{}
+	key := "mcpServers"
+	if agent == "codex" {
+		key = "mcp_servers"
+		if len(bytes.TrimSpace(raw)) == 0 {
+			return nil, false, nil
+		}
+		if toml.Unmarshal(raw, &root) != nil {
+			return nil, false, errors.New("invalid TOML")
+		}
+	} else {
+		decoder := json.NewDecoder(bytes.NewReader(raw))
+		decoder.UseNumber()
+		if decoder.Decode(&root) != nil || root == nil {
+			return nil, false, errors.New("invalid JSON object")
+		}
+		var extra any
+		if decoder.Decode(&extra) != io.EOF {
+			return nil, false, errors.New("trailing JSON")
+		}
+	}
+	rawServers, exists := root[key]
+	if !exists {
+		return nil, false, nil
+	}
+	servers, ok := rawServers.(map[string]any)
+	if !ok {
+		return nil, false, errors.New("server setting is not an object")
+	}
+	rawEntry, exists := servers[name]
+	if !exists {
+		return nil, false, nil
+	}
+	entry, ok := rawEntry.(map[string]any)
+	if !ok {
+		return nil, false, errors.New("entry is not an object")
+	}
+	return entry, true, nil
+}
+
+func expectedMCPEntry(mcp MCPConfig) (map[string]any, error) {
+	if mcp.Workspace == "" || mcp.Project == "" || mcp.Session == "" {
+		return nil, errors.New("scope required")
+	}
+	mode := mcp.Mode
+	if mode == "" {
+		mode = "local"
+		if mcp.Server != "" {
+			mode = "cloud"
+		}
+	}
+	args := []any{"mcp", "--mode", mode, "--workspace", mcp.Workspace, "--project", mcp.Project, "--session", mcp.Session}
+	switch mode {
+	case "local":
+		if mcp.DB == "" {
+			return nil, errors.New("database required")
+		}
+		args = append(args, "--db", mcp.DB)
+	case "cloud":
+		if !filepath.IsAbs(mcp.Cache) {
+			return nil, errors.New("absolute cache path required")
+		}
+		route, err := remote.ValidateRoute(remote.Config{
+			URL: mcp.Server, Audience: mcp.Audience, Account: mcp.Account,
+			ImpersonateServiceAccount: mcp.ImpersonateServiceAccount,
+			Principal:                 mcp.Principal, CachePath: mcp.Cache,
+			CredentialSource: mcp.CredentialSource, CredentialsFile: mcp.CredentialsFile,
+			OAuthClientID: mcp.OAuthClientID, OAuthDeviceClientID: mcp.OAuthDeviceClientID,
+			OAuthKeyringService: mcp.OAuthKeyringService,
+		})
+		if err != nil {
+			return nil, err
+		}
+		args = append(args, "--server", route.URL, "--audience", route.Audience, "--credential-source", route.CredentialSource)
+		switch route.CredentialSource {
+		case remote.CredentialSourceGcloud:
+			args = append(args, "--account", route.Account, "--impersonate-service-account", route.ImpersonateServiceAccount)
+		case remote.CredentialSourceADC:
+			args = append(args, "--credentials-file", route.CredentialsFile, "--account", route.Account, "--impersonate-service-account", route.ImpersonateServiceAccount)
+		case remote.CredentialSourceOAuth:
+			args = append(args, "--oauth-client-id", route.OAuthClientID)
+			if route.OAuthDeviceClientID != "" {
+				args = append(args, "--oauth-device-client-id", route.OAuthDeviceClientID)
+			}
+			if route.OAuthKeyringService != "" {
+				args = append(args, "--oauth-keyring-service", route.OAuthKeyringService)
+			}
+		}
+		args = append(args, "--principal", route.Principal, "--cache", route.CachePath)
+	default:
+		return nil, errors.New("mode required")
+	}
+	if mcp.Instance != "" {
+		args = append(args, "--instance", mcp.Instance)
+	}
+	return map[string]any{"command": nil, "args": args}, nil
+}
+
+func entryMatches(actual, expected map[string]any) bool {
+	// Installed entries may add unrelated environment values, but must not
+	// carry credentials or override the pinned route through environment.
+	if value, exists := actual["env"]; exists {
+		env, ok := value.(map[string]any)
+		if !ok {
+			return false
+		}
+		for name, value := range env {
+			if _, ok := value.(string); !ok || !safeMCPEnvironmentName(name) {
+				return false
+			}
+		}
+	}
+	if value, exists := actual["env_vars"]; exists {
+		names, ok := value.([]any)
+		if !ok {
+			return false
+		}
+		for _, value := range names {
+			name, ok := value.(string)
+			if !ok || !safeMCPEnvironmentName(name) {
+				return false
+			}
+		}
+	}
+	actualCommand, actualHasCommand := actual["command"].(string)
+	expectedCommand, expectedHasCommand := expected["command"].(string)
+	if expectedHasCommand && (!actualHasCommand || actualCommand != expectedCommand) {
+		return false
+	}
+	actualArgs, ok := actual["args"].([]any)
+	if !ok {
+		return false
+	}
+	expectedArgs, _ := expected["args"].([]any)
+	if len(actualArgs) != len(expectedArgs) {
+		return false
+	}
+	for i := range expectedArgs {
+		if fmt.Sprint(actualArgs[i]) != fmt.Sprint(expectedArgs[i]) {
+			return false
+		}
+	}
+	if _, ok := actual["type"]; ok {
+		if actual["type"] != "stdio" {
+			return false
+		}
+	}
+	return true
+}
+
+func safeMCPEnvironmentName(name string) bool {
+	name = strings.ToUpper(name)
+	if strings.HasPrefix(name, "CLAWBRIDGE_") || strings.HasPrefix(name, "CLOUDSDK_") {
+		return false
+	}
+	for _, marker := range []string{"SECRET", "TOKEN", "PASSWORD", "CREDENTIAL", "PRIVATE_KEY"} {
+		if strings.Contains(name, marker) {
+			return false
+		}
+	}
+	return true
+}
+
+func safeCode(err error) string {
+	var coded interface{ Code() string }
+	if errors.As(err, &coded) {
+		switch coded.Code() {
+		case "forbidden", "not_found", "conflict", "invalid", "rate_limited", "unavailable":
+			return coded.Code()
+		}
+	}
+	text := strings.ToLower(err.Error())
+	switch {
+	case strings.Contains(text, "permission") || strings.Contains(text, "membership") || strings.Contains(text, "authorized"):
+		return "forbidden"
+	case strings.Contains(text, "not found") || strings.Contains(text, "ambiguous"):
+		return "not_found"
+	case strings.Contains(text, "context") || strings.Contains(text, "timeout") || strings.Contains(text, "unavailable") || strings.Contains(text, "connection"):
+		return "unavailable"
+	}
+	return "rejected"
+}
+
+func aggregate(checks []Check) string {
+	status := Pass
+	for _, check := range checks {
+		if check.Status == Fail {
+			return Fail
+		}
+		if check.Status == Warn {
+			status = Warn
+		}
+	}
+	return status
+}
+
+// SortedChecks returns a name-sorted copy for stable external rendering while
+// leaving the diagnostic execution order intact.
+func SortedChecks(checks []Check) []Check {
+	out := append([]Check{}, checks...)
+	sort.SliceStable(out, func(i, j int) bool { return out[i].ID < out[j].ID })
+	return out
+}

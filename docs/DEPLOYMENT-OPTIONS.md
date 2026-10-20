@@ -1,14 +1,19 @@
 # Hosted deployment options
 
-Status: design candidates, not deployed. The owner suggested a single Compute
-Engine VM on 20 October 2026. Local Phase 1 does not provision cloud resources.
+Status: deployed pilot plus design candidates. The owner fixed the deployment
+direction to Docker Compose on one existing Compute Engine VM, replacing the
+Cloud Run plus Cloud SQL direction for the Phase 3 deployment. It can become a
+team service after shared identity, backup and recovery controls are verified.
 
 ## Candidate: one Compute Engine VM
 
-Run `clawbridge serve` and Postgres as separate services on the same VM, with
-Postgres reachable only on loopback or a private container network. Put database
-data on persistent storage. Keep the Go application independent of Cloud Run
-deployment details so both hosting models use the same server and policy checks.
+Run `clawbridge serve`, Postgres and Caddy as separate services on the same VM.
+Only Caddy publishes TCP 443. The API and Postgres use an internal-only Compose
+network. Caddy joins a separate non-internal egress network for ACME/OCSP and
+Google signing-key access; the API also joins that egress network to fetch
+Google's token-signing certificates. Point DNS at a static external address and
+allow public ingress only on TCP 443. Put database data on a persistent attached
+disk and retain Caddy state in persistent volumes.
 
 This may reduce baseline cost for a small team, but no saving is established
 until region, machine size, disks, backups and network charges are estimated.
@@ -29,24 +34,30 @@ apply Cloud Run's IAM invoker protection to an arbitrary application port.
 2. HTTPS IAP in front of a Compute Engine backend uses a load balancer. It
    provides signed identity assertions that the backend validates, and can suit
    direct HTTPS clients, but the load balancer changes the baseline cost.
-3. Direct HTTPS with application validation of Google-issued credentials is
-   another design candidate. Validate actual user and service-account flows,
-   issuer, audience, signature, expiry and principal mapping before adopting it.
-   A development `gcloud` identity token is not evidence that an arbitrary
-   production audience/user login flow works.
+3. Direct HTTPS with Caddy and application validation of Google-issued
+   credentials is the fixed Phase 3 Compose direction. The Phase 3 browser/device
+   OAuth path is the target join flow, but has not yet been accepted against live
+   Google clients. It stores only a refresh credential in the OS keychain and
+   keeps short-lived ID tokens in memory. Explicit gcloud impersonation and
+   authorized-user ADC plus impersonation remain supported operator alternatives.
 
-Before the hosted implementation, run a focused authentication experiment using
-the chosen transport. Demonstrate distinct human principals, role denial, token
-expiry, and an unattended-agent identity without service-account key files.
-IAP tunnel access alone does not complete this experiment.
+Before treating the pilot as a shared team service, run a focused authentication
+experiment using the chosen transport. Demonstrate distinct human principals,
+role denial, token expiry, and an unattended-agent identity without
+service-account key files. Phase 2 exercised real Google impersonation and token
+verification through the existing tunnel; Phase 3 still has to establish its live
+browser/device OAuth client configuration and acceptance. IAP tunnel access alone
+does not complete this experiment.
 
-## Original managed option
-
-Cloud Run plus Cloud SQL remains the source design's original hosting choice.
-It reduces database/host maintenance work and provides an IAM-protected HTTPS
-entry point. The application must still derive verified caller identity and
-enforce ClawBridge project roles; service invocation permission is not project
-authorization.
+The public unauthenticated `GET /v1/config` endpoint exposes the configured
+Desktop-app and device OAuth IDs plus their matching installed-app application
+credentials for first-time discovery. Google treats those native-client
+credentials as non-confidential application identifiers once the application is
+distributed; ClawBridge still keeps them out of logs, errors, server argv,
+MCP/installer argv and agent configuration. Token state, principals, scope,
+storage addresses, unrelated credential routes and health details stay private.
+`/v1/execute` retains Google ID-token verification. ClawBridge session-token
+exchange is not part of this deployment slice.
 
 ## Deployment decision gate
 

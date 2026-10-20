@@ -223,7 +223,7 @@ func nameOK(v string) error {
 }
 func validateArgs(op string, a map[string]any) error {
 	allowed := map[string]string{
-		"workspace_init": "mode name retention_days", "project_create": "slug name git_remote", "register_session": "instance resume role agent_kind model host account notes transport", "list_sessions": "instance status role limit after", "send": "instance to body kind thread_id operation_id", "reply": "instance message_id body kind operation_id", "inbox": "instance unread_only limit after", "mark_read": "instance ids", "update_session": "instance target_session role model host account notes transport", "retire_session": "instance target_session successor status", "history": "instance entity key limit after", "whoami": "instance", "message_status": "instance message_id", "resolve_project": "git_remote instance", "snapshot": "instance", "project_role_set": "instance principal role", "purge_expired": "instance",
+		"workspace_init": "mode name retention_days", "project_create": "slug name git_remote", "list_projects": "", "list_members": "", "register_session": "instance resume role agent_kind model host account notes transport", "list_sessions": "instance status role limit after", "send": "instance to body kind thread_id operation_id", "reply": "instance message_id body kind operation_id", "inbox": "instance unread_only limit after", "mark_read": "instance ids", "update_session": "instance target_session role model host account notes transport", "retire_session": "instance target_session successor status", "history": "instance entity key limit after", "whoami": "instance", "message_status": "instance message_id", "resolve_project": "git_remote instance", "snapshot": "instance", "project_role_set": "instance principal role", "purge_expired": "instance",
 	}
 	keys, ok := allowed[op]
 	if !ok {
@@ -409,6 +409,9 @@ func (s *Store) execute(ctx context.Context, tx *transaction, r Request) (any, e
 	if r.Operation == "project_create" {
 		return s.createProject(ctx, tx, wid, a)
 	}
+	if r.Operation == "list_projects" {
+		return s.listProjects(ctx, tx, w)
+	}
 	if r.Project == "" {
 		return nil, errors.New("project is required; select an existing project explicitly")
 	}
@@ -438,6 +441,9 @@ func (s *Store) execute(ctx context.Context, tx *transaction, r Request) (any, e
 				return nil, err
 			}
 			return s.setProjectRole(ctx, tx, wid, pid, a)
+		}
+		if r.Operation == "list_members" {
+			return s.listMembers(ctx, tx, pid)
 		}
 		if r.Operation == "purge_expired" {
 			if err = s.touchReadActor(ctx, tx, pid, r); err != nil {

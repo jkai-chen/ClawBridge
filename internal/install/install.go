@@ -22,6 +22,8 @@ type Options struct {
 	Agent, Config, Command, Name                                                 string
 	DB, Workspace, Project, Session, Instance                                    string
 	Mode, Server, Audience, Account, ImpersonateServiceAccount, Principal, Cache string
+	CredentialSource, CredentialsFile, OAuthClientID                             string
+	OAuthDeviceClientID, OAuthKeyringService                                     string
 	DryRun                                                                       bool
 }
 
@@ -56,6 +58,11 @@ func Run(args []string) error {
 	f.StringVar(&o.ImpersonateServiceAccount, "impersonate-service-account", "", "explicit audience-bound service identity")
 	f.StringVar(&o.Principal, "principal", "", "expected verified principal for scoped offline reads")
 	f.StringVar(&o.Cache, "cache", "", "cloud mirror path")
+	f.StringVar(&o.CredentialSource, "credential-source", "", "explicit oauth, gcloud or adc backend")
+	f.StringVar(&o.CredentialsFile, "credentials-file", "", "explicit authorized-user ADC file")
+	f.StringVar(&o.OAuthClientID, "oauth-client-id", "", "active OAuth Desktop client ID")
+	f.StringVar(&o.OAuthDeviceClientID, "oauth-device-client-id", "", "separate device-flow OAuth client ID")
+	f.StringVar(&o.OAuthKeyringService, "oauth-keyring-service", "", "OS keychain service name")
 	f.BoolVar(&o.DryRun, "dry-run", false, "preview the entry without writing files")
 	f.Bool("json", true, "return JSON (the default output format)")
 	if err := f.Parse(args); err != nil {
@@ -148,13 +155,14 @@ func Install(o Options) (Result, error) {
 	argv := []string{"mcp", "--mode", o.Mode, "--workspace", o.Workspace, "--project", o.Project, "--session", o.Session}
 	switch o.Mode {
 	case "local":
-		if o.Server != "" || o.Audience != "" || o.Account != "" || o.ImpersonateServiceAccount != "" || o.Principal != "" || o.Cache != "" {
+		if o.Server != "" || o.Audience != "" || o.Account != "" || o.ImpersonateServiceAccount != "" || o.Principal != "" || o.Cache != "" ||
+			o.CredentialSource != "" || o.CredentialsFile != "" || o.OAuthClientID != "" || o.OAuthDeviceClientID != "" || o.OAuthKeyringService != "" {
 			return r, errors.New("cloud credential routing cannot be supplied for a local MCP entry")
 		}
 		argv = append(argv, "--db", db)
 	case "cloud":
-		if o.Server == "" || o.Audience == "" || o.Account == "" || o.ImpersonateServiceAccount == "" || o.Principal == "" {
-			return r, errors.New("cloud installation requires server, audience, initiating account, impersonation service account and expected principal")
+		if o.CredentialSource == "" {
+			return r, errors.New("cloud installation requires an explicit credential source")
 		}
 		if o.Cache == "" {
 			u, e := os.UserHomeDir()
@@ -171,10 +179,36 @@ func Install(o Options) (Result, error) {
 		if e != nil {
 			return r, e
 		}
-		if _, e = remote.New(remote.Config{URL: o.Server, Audience: o.Audience, Account: o.Account, ImpersonateServiceAccount: o.ImpersonateServiceAccount, Principal: o.Principal, CachePath: cache}); e != nil {
+		route, e := remote.ValidateRoute(remote.Config{
+			URL: o.Server, Audience: o.Audience, Account: o.Account,
+			ImpersonateServiceAccount: o.ImpersonateServiceAccount,
+			Principal:                 o.Principal, CachePath: cache,
+			CredentialSource: o.CredentialSource, CredentialsFile: o.CredentialsFile,
+			OAuthClientID: o.OAuthClientID, OAuthDeviceClientID: o.OAuthDeviceClientID,
+			OAuthKeyringService: o.OAuthKeyringService,
+		})
+		if e != nil {
 			return r, e
 		}
-		argv = append(argv, "--server", o.Server, "--audience", o.Audience, "--account", o.Account, "--impersonate-service-account", o.ImpersonateServiceAccount, "--principal", o.Principal, "--cache", cache)
+		argv = append(argv, "--server", route.URL, "--audience", route.Audience, "--credential-source", route.CredentialSource)
+		switch route.CredentialSource {
+		case remote.CredentialSourceGcloud:
+			argv = append(argv, "--account", route.Account, "--impersonate-service-account", route.ImpersonateServiceAccount)
+		case remote.CredentialSourceADC:
+			if !filepath.IsAbs(route.CredentialsFile) {
+				return r, errors.New("ADC credentials file must be an absolute path")
+			}
+			argv = append(argv, "--credentials-file", route.CredentialsFile, "--account", route.Account, "--impersonate-service-account", route.ImpersonateServiceAccount)
+		case remote.CredentialSourceOAuth:
+			argv = append(argv, "--oauth-client-id", route.OAuthClientID)
+			if route.OAuthDeviceClientID != "" {
+				argv = append(argv, "--oauth-device-client-id", route.OAuthDeviceClientID)
+			}
+			if route.OAuthKeyringService != "" {
+				argv = append(argv, "--oauth-keyring-service", route.OAuthKeyringService)
+			}
+		}
+		argv = append(argv, "--principal", route.Principal, "--cache", route.CachePath)
 	default:
 		return r, errors.New("MCP installation mode must be local or cloud")
 	}

@@ -147,3 +147,41 @@ func TestLockPreventsConcurrentOverwrite(t *testing.T) {
 		t.Fatal("locked target created")
 	}
 }
+
+func TestOAuthInstallRequiresSelectedAudienceAndSafeArgv(t *testing.T) {
+	o := options(t, "claude-code")
+	o.Mode = "cloud"
+	o.Server = "https://server.example.test"
+	o.Audience = "active-client.apps.googleusercontent.com"
+	o.Principal = "alice@example.test"
+	o.Cache = filepath.Join(filepath.Dir(o.Config), "cache.db")
+	o.CredentialSource = "oauth"
+	o.OAuthClientID = "active-client.apps.googleusercontent.com"
+	o.OAuthDeviceClientID = "device-client.apps.googleusercontent.com"
+	o.OAuthKeyringService = "review-keyring"
+	result, err := Install(o)
+	if err != nil {
+		t.Fatal(err)
+	}
+	args := result.Entry["args"].([]string)
+	joined := strings.Join(args, "\x00")
+	for _, want := range []string{
+		"--audience\x00active-client.apps.googleusercontent.com",
+		"--oauth-client-id\x00active-client.apps.googleusercontent.com",
+		"--oauth-device-client-id\x00device-client.apps.googleusercontent.com",
+		"--oauth-keyring-service\x00review-keyring",
+	} {
+		if !strings.Contains(joined, want) {
+			t.Fatalf("OAuth installer argv omitted %q: %#v", want, args)
+		}
+	}
+	for _, forbidden := range []string{
+		"oauth-client-secret", "oauth-device-client-secret",
+		"browser_client_secret", "device_client_secret",
+		"refresh_token", "id_token", "access_token",
+	} {
+		if strings.Contains(joined, forbidden) {
+			t.Fatalf("OAuth installer argv exposed %q: %#v", forbidden, args)
+		}
+	}
+}

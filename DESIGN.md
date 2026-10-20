@@ -37,8 +37,8 @@ It replaces three things that break today:
 
 | Decision | Detail |
 | --- | --- |
-| Master store | A Google Cloud SQL (Postgres) database is the master. |
-| Sign-in | Borrow Google identity (`gcloud auth`); no home-made passwords or tokens. |
+| Master store | PostgreSQL in Docker Compose on a Compute Engine VM is the master for the pilot. |
+| Sign-in | Google identity through browser or device OAuth; no home-made passwords or tokens. `gcloud` and ADC remain explicit operator alternatives. |
 | Offline | A local SQLite copy per machine, **read-only**. |
 | Orca | No longer required. It becomes an optional local adapter. |
 | Agent integration | MCP, plus a command-line client for agents and scripts without MCP. |
@@ -51,8 +51,8 @@ It replaces three things that break today:
 
 ## 3. Concepts
 
-- **Workspace:** one per team or organisation. Maps to one deployment (one Cloud Run service + one Cloud SQL
-  database) and to a Google Cloud project's IAM. Members are Google identities.
+- **Workspace:** one per team or organisation. Maps to one deployment (one HTTPS ClawBridge endpoint backed by the
+  Compose PostgreSQL authority) and to a Google Cloud project's IAM. Members are Google identities.
 - **Project:** one per codebase or effort (e.g. `acme-web`, `acme-backend`). Identified by a slug. Each project has its
   own sessions, routing table, inboxes and roles.
 - **Session:** one running agent, named uniquely **within its project** (e.g. `lead`, `review-02`). Records agent kind
@@ -73,20 +73,22 @@ It replaces three things that break today:
 
 ```
  agent (any CLI) ──stdio MCP──▶ clawbridge mcp ─┐
- human / script  ──────────────▶ clawbridge CLI ─┼─HTTPS + Google ID token─▶ Cloud Run "clawbridge-server" ──▶ Cloud SQL (Postgres, private IP)
- human           ──────────────▶ clawbridge tui ─┘                                     │
-                                                                                       └─▶ (optional) Pub/Sub or Postgres LISTEN/NOTIFY for push
+ human / script  ──────────────▶ clawbridge CLI ─┼─HTTPS + Google ID token─▶ Caddy ──▶ clawbridge serve ──▶ Postgres
+ human           ──────────────▶ clawbridge tui ─┘                             │            │
+                                                                               └─ managed   └─ attached persistent data disk
+                                                                                  TLS
  local machine: ~/.clawbridge/cache.db (SQLite, read-only mirror) + config
 ```
 
 - **One binary, `clawbridge`**, with subcommands: `mcp` (stdio MCP server), CLI verbs, `tui`, `setup`, `serve` (the
-  server, also deployable to Cloud Run), `sync` (refresh the local mirror), `notify` (optional local notifier).
+  server), `sync` (refresh the local mirror), `notify` (optional local notifier).
 - **Why a local stdio MCP process** instead of a remote MCP endpoint: every agent supports stdio MCP, and the local
-  process can reuse the user's `gcloud` credentials to mint ID tokens, read the repo's project config from the working
-  folder, and fall back to the offline mirror. Remote MCP auth differs per agent; this avoids it.
-- **Why Cloud Run in front of Cloud SQL** instead of direct DB access: HTTPS on 443 works on networks that block Cloud
-  SQL's port (seen in practice); one place for validation, rate limits, retention and scoping; IAM invoker auth
-  for free.
+  process can refresh its own keychain-backed Google credential to mint ID tokens, read the repo's project config from
+  the working folder, and fall back to the offline mirror for reads during transport outages. Remote MCP auth differs
+  per agent; this avoids it.
+- **Why a reverse proxy on the VM** instead of direct database access: clients use one HTTPS endpoint, the proxy
+  obtains and renews a managed TLS certificate, and only the server validates Google ID tokens, rate limits requests
+  and enforces project scoping. PostgreSQL stays on the private Compose network with no host port.
 - **Suggested stack:** Go for everything (server, CLI, MCP, TUI) to match the owner's backend direction. Single
   static binary per platform. TUI with Bubble Tea + Lip Gloss. Postgres via pgx; SQLite via modernc.org/sqlite (no
   cgo) for the mirror. MCP via an established Go MCP SDK. Confirm with the user before locking the stack.
@@ -172,15 +174,17 @@ An agent only sees mail when it calls `inbox`. v1:
    - Choose or create a Google Cloud project (list the projects the user can see; never use the gcloud default
      project silently; it is often a personal one).
    - Choose the region (default suggestion: the user's data region, e.g. `europe-west1`; explain residency).
-   - Show the estimated monthly cost (smallest Cloud SQL tier + Cloud Run) and require an explicit typed
+   - Show the estimated monthly cost (Compute Engine, persistent disks, backups, public address and egress) and require
+     an explicit typed
      confirmation before creating anything that bills.
-   - Then: enable APIs (Cloud Run, Cloud SQL Admin, IAM, Secret Manager for the DB password or IAM DB auth),
-     create the Cloud SQL instance (private IP or IAM DB auth), create the DB and schema, deploy `clawbridge serve`
-     to Cloud Run with `--no-allow-unauthenticated`, create a service account for the server, and grant the user
-     `owner` on the workspace and `roles/run.invoker`.
+   - Then: provision or select the Compute Engine VM and persistent data disk, reserve its public address, configure
+     DNS and firewall rules, register the Desktop-app and TVs/Limited-Input OAuth clients, and deploy the Compose
+     stack. Caddy terminates HTTPS; `clawbridge serve` and PostgreSQL remain on the private Compose network.
    - Write the workspace address to `~/.clawbridge/config.toml`.
-2. **Join** an existing bus: enter its URL (or pick from a list the user can see). If the user lacks
-   `roles/run.invoker`, print the exact grant an admin must run and wait.
+2. **Join** an existing bus: enter its HTTPS URL (or pick from a list the user can see). Fetch the public installed-app
+   OAuth client metadata from the service, sign in through browser OAuth by default, or use
+   `clawbridge login --device` when the machine has no usable browser. Joining needs no `gcloud` installation and no
+   IAP tunnel.
 3. **Local only:** SQLite on this machine, no cloud. For solo use, trials and offline work. Upgrade later with
    `clawbridge setup --migrate-to <url>`, which imports projects, sessions and history.
 
@@ -207,9 +211,27 @@ An agent only sees mail when it calls `inbox`. v1:
 
 ## 10. Security, privacy, cost
 
-- Auth: Cloud Run IAM invoker check + server-side project-role check on every request. Agents use their human's
-  `gcloud` identity (ID token minted locally) or a service account the human owns; record both principal and session.
-- Never expose Cloud SQL publicly. Server ↔ DB over private IP or the Cloud SQL connector with IAM DB auth.
+- Auth: server-side Google ID-token verification plus a workspace/project-role check on every request. Caddy provides
+  the HTTPS transport; it does not authenticate callers. The client obtains identity through browser OAuth (loopback
+  with PKCE) or device OAuth by default.
+  It stores only a refresh token in the native OS keychain and mints a short-lived ID token for the audience on each
+  session, retaining that token in memory. Agents never receive the refresh token or minted ID token.
+- Accept the Desktop-app and TVs/Limited-Input client IDs as separate allowed audiences. Public `GET /v1/config`
+  publishes exactly `browser_client_id`, `browser_client_secret`, `device_client_id` and `device_client_secret`.
+  These installed-app credentials are distributed application metadata, never user refresh tokens. Each flow uses
+  its matching pair; device login promotes that pair into the active client configuration. Do not echo the values
+  in diagnostics, logs, MCP arguments or agent environment. No ClawBridge session-token exchange is introduced.
+- Identity source selection is explicit and fail closed: `oauth`, `gcloud` or ADC, with no metadata-server or
+  cross-backend fallback. OAuth/keychain/refresh/token failures never use the mirror. Only a service outage may permit
+  a scoped read-only mirror read; writes, mark-read and resume never fall back or queue. Trusted configuration chooses
+  the route; repository configuration cannot.
+- Every action records the Google principal verified from its ID token and the agent session. Browser/device login
+  identifies the human; explicit impersonation identifies the service account. An initiating human's local setting
+  does not prove a separate server-verified human identity. Automatic per-user service-account provisioning,
+  collision handling and time-limited IAM grants remain future work; they are not shipped Phase 3 guarantees.
+- Never expose PostgreSQL publicly. It has no host port and is reachable only from `clawbridge serve` on the Compose
+  network. Back up the database off-VM nightly and attach a scheduled disk-snapshot policy; an untested backup is not
+  a recovery plan.
 - No secrets in messages: the server rejects bodies matching common key/token patterns, with a clear error.
 - Residency: one region per workspace, chosen at setup; messages may contain business data, so state this in setup.
 - Retention: default 90 days, user-chosen; `history` kept longer (configurable).

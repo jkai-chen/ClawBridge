@@ -403,14 +403,40 @@ result. Record the current commit, rendered service state and the most recent
 verified backup timestamp. Never delete the only Postgres volume with
 `docker compose down -v`.
 
-Update only a clean, reviewed checkout:
+The pilot uses a source-only archive deployment; `/opt/clawbridge/repo` has no
+remote Git credentials or `.git` directory. On the operator checkout, verify the
+reviewed commit was pushed, then export exactly that commit (never the dirty tree):
 
 ```sh
-cd /opt/clawbridge/repo
-git status --short
-PREVIOUS_SHA=$(git rev-parse HEAD)
-git fetch origin main
-git merge --ff-only origin/main
+DEPLOY_SHA=<full-reviewed-pushed-commit>
+git cat-file -e "$DEPLOY_SHA^{commit}"
+git archive --format=tar.gz --output=/tmp/clawbridge-release.tar.gz "$DEPLOY_SHA"
+shasum -a 256 /tmp/clawbridge-release.tar.gz
+# Transfer through the approved IAP path; compare SHA-256 on the VM before use.
+gcloud compute scp /tmp/clawbridge-release.tar.gz \
+  instance-claw-bridge-dev:/tmp/clawbridge-release.tar.gz \
+  --project claw-bridge-dev --zone europe-west2-a --tunnel-through-iap
+```
+
+On the VM, first run `sudo systemctl start clawbridge-postgres-backup.service`
+and require a successful result and uploaded checksum. Confirm the persistent
+mount, existing containers, stable private env symlink, and sufficient disk space.
+Extract into a new empty directory; retain the previous source directory under a
+unique timestamped recovery name before moving the new directory to the stable
+path. Do not replace `/opt/clawbridge/.env.phase3` or database/Caddy volumes.
+
+```sh
+# Set these again in the VM shell: local operator variables do not cross SSH.
+DEPLOY_SHA=<full-reviewed-pushed-commit>
+EXPECTED_ARCHIVE_SHA256=<checksum-recorded-on-operator-machine>
+actual=$(sha256sum /tmp/clawbridge-release.tar.gz | cut -d ' ' -f1)
+[ "$actual" = "$EXPECTED_ARCHIVE_SHA256" ] || exit 1
+stamp=$(date -u +%Y%m%dT%H%M%SZ)
+sudo mkdir "/opt/clawbridge/repo-next-$stamp"
+sudo tar -xzf /tmp/clawbridge-release.tar.gz -C "/opt/clawbridge/repo-next-$stamp"
+sudo mv /opt/clawbridge/repo "/opt/clawbridge/repo-recovery-$stamp"
+sudo mv "/opt/clawbridge/repo-next-$stamp" /opt/clawbridge/repo
+printf '%s\n' "$DEPLOY_SHA" | sudo tee /opt/clawbridge/repo/DEPLOYED_SHA
 sudo docker compose --env-file /etc/clawbridge/clawbridge.env \
   --project-name clawbridge-phase3 \
   -f /opt/clawbridge/repo/deploy/compose.yaml config --quiet
@@ -419,25 +445,21 @@ sudo docker compose --env-file /etc/clawbridge/clawbridge.env \
   -f /opt/clawbridge/repo/deploy/compose.yaml build api
 sudo docker compose --env-file /etc/clawbridge/clawbridge.env \
   --project-name clawbridge-phase3 \
-  -f /opt/clawbridge/repo/deploy/compose.yaml up -d
-sudo systemctl start clawbridge-postgres-backup.service
+  -f /opt/clawbridge/repo/deploy/compose.yaml up -d --no-deps api
 ```
 
-Check `/healthz`, `/v1/config`, an authenticated read-only request, and the new
-backup pair before declaring the update complete.
+Record the archive checksum, image ID, source fingerprints, recovery directory,
+and deployed SHA. Check HTTPS `/healthz`, the exact four-field `/v1/config`
+shape without printing credential values, unauthenticated execute 401, authenticated
+read-only whoami and doctor. Run the backup service again and confirm publication.
+Only recreate Caddy if its reviewed configuration changed and requires it.
 
-For an application-only rollback using the recorded revision:
-
-```sh
-cd /opt/clawbridge/repo
-git checkout --detach "$PREVIOUS_SHA"
-sudo docker compose --env-file /etc/clawbridge/clawbridge.env \
-  --project-name clawbridge-phase3 \
-  -f /opt/clawbridge/repo/deploy/compose.yaml build api
-sudo docker compose --env-file /etc/clawbridge/clawbridge.env \
-  --project-name clawbridge-phase3 \
-  -f /opt/clawbridge/repo/deploy/compose.yaml up -d --force-recreate api caddy
-```
+For application-only rollback, preserve the failed release under another unique
+name, restore the recorded recovery directory to `/opt/clawbridge/repo`, and
+repeat Compose validation/build/API recreation above. Retain the same project,
+private env and volumes; do not run `down -v`. The external `DEPLOYED_SHA` marker
+is operator evidence, not a cryptographic attestation; compare archived source
+fingerprints as well.
 
 For a rollback that crosses a schema change, do not run the older binary against
 the newer schema. Use the production restore procedure with a dump taken before
@@ -566,3 +588,59 @@ impersonation probes above do not establish those end-user flows. Native
 Windows/Linux keychains, unattended timer firing, physical disk-loss replacement
 and live model-driven client execution remain unverified. Failure-injection
 rollback is covered by automated fixtures, not a destructive live-Google drill.
+
+### Reviewed exact-SHA archive update — 2026-10-20 22:27 UTC
+
+The approved pilot was updated from the pushed commit
+`f913ffa80443a47bf0faa62b55936a14802c570e` using `git archive`, transferred via
+IAP. No remote Git checkout or credentials were introduced. Archive SHA-256:
+`95cbed36b52ef2e5f6e51385cfddf551ef9959e7e81733a58fb3fc9cbe0aea52`.
+The checksum was compared on the VM before extraction. Previous sources remain
+at `/opt/clawbridge/repo-recovery-20261020T222255Z`; the stable source path is
+`/opt/clawbridge/repo`, with an external `DEPLOYED_SHA` marker. The private env,
+persistent data and Compose project were unchanged.
+
+The standard Dockerfile build completed on the VM. Running API image ID:
+`sha256:211e529908ce9a46667e84923a36094e0286e61f4b093f6126e00b2c80e1bfb2`.
+Inspection confirmed `nonroot:nonroot`, read-only root filesystem, and running
+state. Only the API container was recreated; Caddy and both healthy databases
+retained their running containers. The older Phase 2 API remained stopped.
+The reviewed source SHA-256 fingerprints matched the transferred source:
+
+| File | SHA-256 |
+| --- | --- |
+| `internal/setup/setup.go` | `37a6e0f423877b9d419d12d6c8242818da1e337e7c9fdd5c3d57177590a51e52` |
+| `internal/tui/view.go` | `77f64b7920d7495e591050493ef0e8149c3bc41f242c1d32c6f5a919de47fcd5` |
+| `internal/doctor/doctor.go` | `e7431788286589a34b64e8df716c34ec2353afbb96a9a52b72d7197c09013ee6` |
+| `internal/cli/cli.go` | `34e02cfc2cdf2c35421524c12a25a689a8f76710e660c81c8b31bb4227b05b65` |
+
+Focused engineer postdeploy checks against
+`https://34-142-66-102.sslip.io` passed: HTTPS `/healthz` 200; `/v1/config` 200
+with exactly the four nonempty string fields (values withheld); unauthenticated
+`POST /v1/execute` 401; authenticated read-only `whoami` returned `source=server`,
+cloud storage and verified Google identity for the existing explicit
+service-account impersonation route. Doctor exited 0: trusted configuration,
+authority health, token selection and immutable project resolution passed. Its
+only warnings were no complete matching mirror and no selected agent MCP config
+paths. Checks used a temporary unbound routing config; the old probe config's
+nonexistent session was omitted without changing any installed configuration.
+No new consent or OAuth/keychain acceptance was performed for this update; the
+separate root live evidence and previously documented platform limits still apply.
+
+The mounted data remained `/dev/sdb` at `/var/lib/clawbridge-postgres` and row
+counts remained one workspace, one project, five sessions and four messages.
+Pre-update backup `postgres/daily/20261020T222251Z.dump` and checksum uploaded
+successfully (SHA-256
+`d9506ed8404db653662542ba98030d7356a1a77bef4ca02609fd089b7a6f045c`).
+Post-update backup `postgres/daily/20261020T222706Z.dump` and checksum uploaded
+successfully (SHA-256
+`8fbe75a054d37d86348a43341cdf5712963acc0273f46793e0f3347053fd4f2a`).
+Both use the existing `clawbridge-backups-claw-bridge-dev` bucket. This update
+reused the earlier isolated restore proof; it did not repeat a restore or reboot.
+
+Material capacity limit: the 9.7 GiB boot filesystem was 97% used with about
+329 MiB free after the successful build. All existing images, volumes and recovery
+sources were preserved; no pruning, disk expansion, new resources or IAM grants
+were performed. Future builds need a deliberate capacity check; if native builds
+cannot fit, use an exact-SHA locally built Linux image/binary preserving the
+reviewed Dockerfile runtime guarantees rather than deleting recovery artifacts.

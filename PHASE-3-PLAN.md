@@ -11,7 +11,10 @@ Operational acceptance and the subsequent full implementation audit passed.
 Reviewer independently closed A1–A3 and verified the final full/race suites on
 real PostgreSQL, vet and cross builds; see PHASE-3-REVIEW.md. Exact end-user
 evidence and limits are in PHASE-3-LIVE-ACCEPTANCE.md; backup, restore and reboot
-evidence is in deploy/README.md. The audit fixes remain undeployed and uncommitted.
+evidence is in deploy/README.md. The reviewed implementation is committed and
+pushed as `f913ffa80443a47bf0faa62b55936a14802c570e` and deployed to the pilot.
+Postdeployment evidence and the retained recovery source are recorded in the
+runbook and reviewer report.
 
 Implementation checkpoint: preserve the reviewed Phase 2 behavior. The minimum
 Phase 3 coding slice makes browser and device OAuth the supported join paths,

@@ -1496,3 +1496,37 @@ remain unclaimed. Setup automation/TUI remain callable scaffolds; automatic
 per-user service-account provisioning, duplicate-name collision handling and IAM
 Condition expiry remain future work. Cloud Run references describe historical
 plans; the accepted deployment direction is Compose/Caddy on Compute Engine.
+
+
+### Independent exact-SHA pilot postdeploy check — PASS, 2026-10-20 22:27 UTC
+
+Reviewed deployment: `f913ffa80443a47bf0faa62b55936a14802c570e`, endpoint
+`https://34-142-66-102.sslip.io`. This is a focused read-only postdeploy check;
+no heavy suites, new Google consent or keychain lifecycle was repeated.
+
+- `CLAWBRIDGE_TEST_PUBLIC_URL=https://34-142-66-102.sslip.io go test ./integration -run '^TestDeploymentLiveHTTPSContract$' -count=1 -v`:
+  **Pass**, integration 0.552s. Actual HTTPS returned exactly the four required
+  nonempty string fields, no extra fields/trailing content, JSON content type and
+  `Cache-Control: no-store`; unauthenticated `POST /v1/execute` returned **401**
+  with `error.code=unauthenticated`. Installed-app credential values were not
+  printed or recorded.
+- Independent Python standard-library TLS socket and HTTPS health read:
+  **Pass**, TLS 1.3 with CA verification and hostname checking enabled;
+  `GET /healthz` **200**, expected `{"status":"ok"}`.
+- Independent read-only `gcloud compute ssh instance-claw-bridge-dev --project
+  claw-bridge-dev --zone europe-west2-a --tunnel-through-iap --command ...`
+  inspected only the deployment marker, source/archive hashes and API image
+  identity/state. `/opt/clawbridge/repo/DEPLOYED_SHA` equals the exact requested
+  commit. All four final PASS fingerprints (`internal/setup/setup.go`,
+  `internal/tui/view.go`, `internal/doctor/doctor.go`, `internal/cli/cli.go`)
+  match the values recorded above.
+- Remote `/tmp/clawbridge-f913ffa80443.tar.gz` SHA-256 matches independently
+  generated local `git archive --format=tar.gz f913ffa80443a47bf0faa62b55936a14802c570e | shasum -a 256`:
+  `95cbed36b52ef2e5f6e51385cfddf551ef9959e7e81733a58fb3fc9cbe0aea52`.
+  Running API image: `sha256:211e529908ce9a46667e84923a36094e0286e61f4b093f6126e00b2c80e1bfb2`.
+
+The marker alone is operator evidence; independent archive and source comparisons
+provide the additional deployment correspondence checked here. These checks do
+not assert image reproducibility or a new end-user OAuth transition. Prior live
+and operational limits remain as documented above. No implementation/deployment
+changes, staging or commits were performed by the reviewer.

@@ -265,4 +265,21 @@ manual audit with no additional promoted finding. Final uncached full and race
 suites passed with real disposable PostgreSQL 17.11, as did vet and CGO-disabled
 darwin/arm64, linux/amd64 and windows/amd64 builds. Both fixtures and anonymous
 volumes were confirmed removed. PHASE-3-REVIEW.md owns the final evidence and
-limits. Audit fixes have not been deployed, staged or committed.
+limits. This audit checkpoint preceded the publication and deployment below.
+
+### Phase 3 publication and pilot deployment
+
+The owner authorized publication and deployment after the independent audit.
+Reviewer inspected the publication file set without finding apparent live
+credentials or private artifacts; all four recorded implementation fingerprints
+matched. Root committed and pushed the reviewed Phase 3 implementation as
+`f913ffa80443a47bf0faa62b55936a14802c570e` to `jkai-chen/ClawBridge` main.
+
+Engineer deployed an archive of that exact commit to the approved Compute Engine
+pilot, retaining the previous source directory and preserving private environment,
+database disk, Caddy volumes and Phase 2 recovery containers. HTTPS health,
+four-field discovery, unauthenticated execute rejection, authenticated whoami and
+required doctor checks passed. The deployment runbook and reviewer report own
+exact artifact, backup and independent postdeployment evidence. Prior live Google
+consent evidence remains separate from the synthetic same-config transition
+tests; no new consent or broader platform claims are implied by this deployment.

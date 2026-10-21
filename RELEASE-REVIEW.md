@@ -1,6 +1,6 @@
 # Release distribution independent review
 
-Status: **Final local automated/static PASS on revised frozen source. O1/R2 closed. Native Windows PS5.1/7, actual public CI and release/install delivery remain Pending root-controlled execution.** Reviewer owns this document and integration probes. Root owns contracts/history audit/external publication; engineer owns production. No real repository tag, release, visibility change, deployment, credential/config mutation or hosted CI execution by reviewer.
+Status: **Scoped release acceptance PASS: local/public CI, independent v0.1.0 asset verification and root-operated Darwin/arm64 pinned/latest installer/native-version smoke. O1/R2 closed; attribution and remaining platform limits below.** Reviewer owns this document and integration probes. Root owns contracts/history audit/external publication; engineer owns production. No real repository tag, release, visibility change, deployment, credential/config mutation or hosted CI execution by reviewer.
 
 Contract read in full: RELEASE-DESIGN.md (21 October 2026). CORE release extension was absent on initial read and subsequently published; its version/assets/installers/public-only CI semantics match the design. Exact CLI/script contract is sufficient to prepare probes; new production scripts/APIs were not yet present. Native PowerShell (`pwsh`/`powershell`) is unavailable locally. Native Windows runtime acceptance remains Pending actual Windows CI; cross-builds cannot substitute for it.
 
@@ -9,17 +9,17 @@ Contract read in full: RELEASE-DESIGN.md (21 October 2026). CORE release extensi
 | Version boundary | Actual binary `version` and `--version` exact source=build JSON; dev/unknown defaults, injected exact tag/full commit/UTC build timestamp; malformed/inaccessible route/config, poisoned env and nonTTY cannot trigger authority/keychain/network/filesystem activity. Extra arguments reject early. | Pass |
 | Tag/build validation | Canonical vMAJOR.MINOR.PATCH only, exact matching tag at clean source; reject dirty tracked/nonignored input, wrong/missing tag, unsafe/ambiguous output, caller GOOS/GOARCH interference. Use isolated local clone/tag only. | Pass |
 | Asset completeness | Exactly five raw target executables, two installers, SOURCE-COMMIT.txt and SHA256SUMS; metadata injected from tagged commit/time; deterministic manifest covers every other exact basename once with lowercase hash/two spaces. No archive execution or target binary execution by builder. | Pass; foreign runtime unclaimed |
-| Platform mapping | POSIX Darwin/Linux x86_64/amd64 and arm64/aarch64; Windows native x64 including 32-bit process; unsupported OS/arch reject before downloads/destination mutation. | POSIX Pass; Windows runtime Pending CI |
-| Latest pinning | Latest discovery exactly once; strict validated stable tag reused for every download. Explicit version performs no discovery. Invalid tags/ref/URL/option/path reject early. | POSIX Pass; Windows static/parser Pass, native Pending CI |
+| Platform mapping | POSIX Darwin/Linux x86_64/amd64 and arm64/aarch64; Windows native x64 including 32-bit process; unsupported OS/arch reject before downloads/destination mutation. | Hosted POSIX and native Windows fixtures Pass |
+| Latest pinning | Latest discovery exactly once; strict validated stable tag reused for every download. Explicit version performs no discovery. Invalid tags/ref/URL/option/path reject early. | Hosted POSIX/Windows fixtures Pass; actual public install Pending |
 | Transport | Fixed HTTPS jkai-chen/ClawBridge routes, bounded connect/total timeout and HTTP failure; asset HTTPS redirect allowed, downgrade refused. Local tests stub commands/transport, no production URL override. | Static/fake-transport Pass; public delivery Pending |
-| Strict checksum | Exactly one selected basename entry with valid lowercase SHA256/two spaces; absent/duplicate/malformed/hostile lines reject; no substring/path collision; empty binary/mismatch/download failure reject. | POSIX Pass; Windows native Pending CI |
-| Atomic preservation | Private temporary download, verification before same-filesystem staging/replacement; existing binary preserved on all failures; write/rename/in-use failures visible; symlink/directory/reparse destinations refused. | POSIX Pass; Windows native Pending CI |
-| Paths and cleanup | Spaces and shell/PowerShell metacharacters inert; absolute destinations validated; only installer-owned temporary artifacts removed; no leftovers on success/failure. | POSIX Pass; Windows native Pending CI |
-| No side effects | No execution of downloaded binary/text; no eval/source, sudo/prerequisite install, config/cache/native credentials/profile/PATH/services/db/process changes; quoted PATH guidance only. --help no network/mutation. | POSIX/version Pass; Windows native Pending CI |
-| CI security | Public-only explicit job gates, main/PR/manual triggers, pinned action SHA, readonly tokens/no secrets to forks, Go from go.mod, standard runners/timeouts/retention. Actual PG full/race via existing runner plus vet/installer and native Windows/macOS gates. | Static/actionlint Pass; actual public CI Pending |
+| Strict checksum | Exactly one selected basename entry with valid lowercase SHA256/two spaces; absent/duplicate/malformed/hostile lines reject; no substring/path collision; empty binary/mismatch/download failure reject. | Hosted POSIX/Windows fixtures Pass |
+| Atomic preservation | Private temporary download, verification before same-filesystem staging/replacement; existing binary preserved on all failures; write/rename/in-use failures visible; symlink/directory/reparse destinations refused. | Hosted POSIX/Windows fixtures Pass |
+| Paths and cleanup | Spaces and shell/PowerShell metacharacters inert; absolute destinations validated; only installer-owned temporary artifacts removed; no leftovers on success/failure. | Hosted POSIX/Windows fixtures Pass |
+| No side effects | No execution of downloaded binary/text; no eval/source, sudo/prerequisite install, config/cache/native credentials/profile/PATH/services/db/process changes; quoted PATH guidance only. --help no network/mutation. | Hosted installer/version fixtures Pass; no actual credentials used |
+| CI security | Public-only explicit job gates, main/PR/manual triggers, pinned action SHA, readonly tokens/no secrets to forks, Go from go.mod, standard runners/timeouts/retention. Actual PG full/race via existing runner plus vet/installer and native Windows/macOS gates. | Static/actionlint and actual manual public CI Pass; other event paths static only |
 | Release publication | Strict tag trigger, exact tagged full history, required gates at same commit, separate contents:write publishing, draft/upload/verify/publish exact asset set, refuse existing release/overwrite; no arbitrary dispatch publish. | Static/fake-gh Pass; actual release Pending |
 | Documentation | Dev defaults, fixed/pinned/latest install distinction, checksum integrity vs publisher signature, no signing/notarization claim, no prerequisite or native runtime overclaim. | Static Pass; root publication/history audit separately owned |
-| Final local gates | Explicit engineer freeze, stable fingerprints; independent focused/full/race/vet/cross for changed boundary. Unchanged backend retains historical PG baseline locally; actual public CI PG execution separately attributed. | Pass; historical PG baseline retained |
+| Final local gates | Explicit engineer freeze, stable fingerprints; independent focused/full/race/vet/cross for changed boundary. Unchanged backend retains historical PG baseline locally; actual public CI PG execution separately attributed. | Pass; actual public CI PG full/race also Pass |
 
 ## Probe approach and evidence boundaries
 
@@ -129,3 +129,112 @@ CI YAML and publisher code review: every job is public-gated; official action us
 Both final ordinary full and race runs explicitly skip 12 PostgreSQL tests plus three opt-in live HTTPS/Google/device tests. cmd/clawbridge, internal/buildinfo and internal/mirror have no test files. No native PowerShell installer fixture executes in those local Go runs. Prior actual PG17.11 baseline and exact container/volume cleanup are historical GUIDED-SETUP-REVIEW.md evidence (full 46.907s, race 54.282s); unchanged backend/dependencies do not justify repeating that lifecycle locally. Public Linux CI must actually exercise PG before its result is called Pass.
 
 Still Pending: root publication/history completion and visibility transition; actual public Linux PG/full/race/vet and macOS/native Windows PS5.1/7 CI results; actual tag/release draft/upload/publish; isolated public latest/pinned installer+version smoke. Source signing/notarization and foreign-platform app/OAuth/native-keychain runtime are unclaimed. Owner's prior Linux reuse/resize/archive completion remains narrowly attributed and establishes no release-delivery or new consent/lifecycle/MCP acceptance. Local Pass is not a claim that v0.1.0 is published or installation from GitHub already works.
+
+### Latest explicit freeze reconciliation
+
+The later explicit complete 13-hash handoff was reconciled again against the authoritative owned-manifest.json and completed acceptance snapshots: **13/13 identical**, with **all 105 current review files unchanged**. Saved full/race results (66.027s/74.130s integration), vet/three cross builds and successful final actionlint were rechecked. No duplicate heavy run was made for byte-identical source. Evidence: latest-explicit-freeze-reconciliation.json. This confirms the final local Pass above; it does not close native/public execution gates.
+
+## Actual public CI observation — run 39647665688 (in progress)
+
+Independent read-only GitHub API observation confirms [CI run 39647665688](https://github.com/jkai-chen/ClawBridge/actions/runs/39647665688), workflow_dispatch attempt 1, exact head `dd3432242b9656bd4bad0aa8dfc9d963c5f38628`, created 21 October 2026 at 17:52:35 UTC. Root's initial dispatch HTTP500/no-run and subsequent single retry are root-attributed; reviewer issued no dispatch, retry, cancellation or other mutation.
+
+| Hosted job | Independent observed result |
+| --- | --- |
+| macos-installer, job 119387423800 | Success, 17:52:39–17:52:56 UTC. Downloaded completed-job log identifies macOS and seven POSIX installer fixture tests passing in 6.755s. Transport/platform cases remain fixtures, not actual public installer delivery |
+| windows-installer, job 119387423911 | Success, 17:52:38–17:52:57 UTC. Log identifies Microsoft Windows Server 2025; own suite prints PASS in Windows PowerShell and pwsh; independent fixture prints PASS in both native shell steps. This closes the narrow native installer fixture gate including ACL/atomic replacement, locked-file preservation and junction checks, not actual ClawBridge Windows/OAuth/keychain runtime |
+| linux, job 119387423373 | Still in progress at observation; Full tests with real disposable PostgreSQL running. Race/vet and later fixture steps not yet complete. Overall public CI/PG gate remains Pending |
+
+Logs and API snapshots saved at `/var/folders/h6/qh_thy6s4_n4ccxfqhc9gp080000gn/T/cb-release-ci-39647665688-sx80i8j3`. Anonymous metadata succeeds; anonymous log API returned403, and gh run view deferred logs until full run completion. Read-only gh job-log API then retrieved completed-job logs; raw terminal escapes were preserved only in local files and selected output was safely escaped. No local tests or live application/credential operations were run.
+
+This hosted observation supersedes prior Pending native Windows fixture status for these exact four successful steps only. Actual Linux PG/full/race completion, entire public CI, tag/release publication and public installer smoke remain Pending. Warnings about pinned checkout action Node.js20 deprecation/forced Node.js24 and macOS runner capacity were observed; completed jobs still succeeded. No broad Windows app/runtime or publication claim follows from installer fakes.
+
+## Actual public CI final verdict — PASS
+
+[Run 39647665688](https://github.com/jkai-chen/ClawBridge/actions/runs/39647665688) completed **success** at 17:58:54 UTC on 21 October 2026, workflow_dispatch attempt 1, exact source `dd3432242b9656bd4bad0aa8dfc9d963c5f38628`. Independent final API metadata confirms repository private=false and all three jobs completed successfully. Initial in-progress checkpoint above is superseded. No worker dispatched/retried/cancelled CI or changed visibility/tags/releases.
+
+| Hosted job / step | Actual log evidence |
+| --- | --- |
+| Linux job 119387423373 | Success, completed 17:58:53 UTC |
+| PG full: `bash integration/run-postgres.sh go test ./... -count=1` | Actual postgres:17-alpine image, psql PostgreSQL 17.11; integration Pass 182.789s, runner cleanup success |
+| PG race: `bash integration/run-postgres.sh go test -race ./... -count=1` | Separate real PostgreSQL 17.11 fixture; integration Pass 59.683s, runner cleanup success; no race diagnostic |
+| Linux vet / installer / release / publication / syntax steps | All success. POSIX seven tests 2.136s; release two tests 0.890s; fake-gh publication six tests 0.954s. These fixtures do not publish a release |
+| macOS job 119387423800 | Success, completed 17:52:56 UTC; seven installer fixture tests 6.755s |
+| Windows job 119387423911 | Success, completed 17:52:57 UTC; Windows Server 2025, own installer fixture PASS twice and independent fixture PASS twice in Windows PowerShell/pwsh steps |
+
+Actual CI disposable PostgreSQL resources (both numeric loopback; root's workflow, not a reviewer-created local fixture):
+
+| Gate | Container ID | Port | Anonymous volume | Observed cleanup |
+| --- | --- | --- | --- | --- |
+| Full | `d851dd2ac4ced919350ff5884b1f5f20d2dc4de2f79bfe79b7b6350291e056ed` | 32768 | `8527593207e4c9e372aeb6024c3ea036a52290ecd9af4faee7e08cdff787e7a0` | Runner log reports exact container and attached anonymous volume removed; step success |
+| Race | `6a017c5b2999f488094f4bd0d9e1177b2a3732dd6ddb90ed1112cf949ac4b269` | 32769 | `49eb00db6b47152186930018cf086d8a7094a25182ab1878cf97e932bc55c350` | Runner log reports exact container and attached anonymous volume removed; step success |
+
+Cleanup is independently read from the hosted logs and the reviewed runner's cleanup checks, not a direct reviewer Docker inspection of the remote runner. No new local PostgreSQL lifecycle occurred. The earlier 12 PostgreSQL skips apply only to ordinary local runs; hosted commands explicitly configure and exercise real PG fixtures. Opt-in live Google/deployment application checks were not authorized/exercised by this run and remain separately attributed.
+
+Native Windows installer fixture acceptance is now **Pass** for these actual native shell steps, superseding prior Pending wiring/parser-only status. It covers real ACL/file primitives, replacement and file-in-use/junction behavior with fake transport/payloads. It proves no actual ClawBridge Windows app/OAuth/Credential Manager or model/MCP behavior. macOS/Linux installer transport remains stubbed in fixtures; actual public release download/install is still Pending root smoke. The manual dispatch passed; future PR/fork/tag release event behavior has only static/fake-fixture coverage until it runs.
+
+Saved independent evidence: run-final.json, jobs-final.json, hosted-summary.json and three completed-job logs in `/var/folders/h6/qh_thy6s4_n4ccxfqhc9gp080000gn/T/cb-release-ci-39647665688-sx80i8j3`. Log SHA256:
+
+```
+28a5da3d1ed0ddaf85add470896232486157635dfb8b1d1011f72717de88bc07  linux.log
+d02e50846aaf009ea016d6d3e22df008cf5402155acde8b338b1dbc9418f73c3  macos-installer.log
+7d46228793c0c811757bbd7ed324142db21d017fa2068a9c1ed94d5c4fe5738c  windows-installer.log
+```
+
+Remaining root gates: actual strict tag/release workflow, complete published asset/manifest verification and isolated latest/pinned public installer/version smoke. No claim of a working published v0.1.0 install yet. Read-only observation only; no local test duplicates, target app execution, real credentials or external mutation. Nonfatal checkout Node.js20/forced Node.js24 and macOS-capacity notices are retained in the CI evidence; no job failed.
+
+## Tag / release-run handoff checkpoint
+
+Root reported creating/pushing annotated v0.1.0 after the completed first public CI. Independent read-only GitHub API inspection verifies tag object `d6796c996aced8120661775f1c829758e14cc316` points to commit `dd3432242b9656bd4bad0aa8dfc9d963c5f38628`. [Release workflow 39648840179](https://github.com/jkai-chen/ClawBridge/actions/runs/39648840179) is a push-triggered attempt 1 on v0.1.0 at that same head, created 18:00:32 UTC; still in progress at this checkpoint. This proves tag/run attribution only, not a published release or available/verified assets.
+
+First CI final log reconciliation above is complete. Reviewer awaits root's published asset/install-smoke evidence; root retains release operations. No local gate repeats, tag/publish action, app execution or credential access by reviewer. Public asset completeness/hashes/source marker, actual release workflow completion and public installer/version smoke remain Pending.
+
+## Actual v0.1.0 publication and independent asset verification — PASS
+
+[Release workflow 39648840179](https://github.com/jkai-chen/ClawBridge/actions/runs/39648840179) completed success, push attempt 1 at `dd3432242b9656bd4bad0aa8dfc9d963c5f38628`. Independent API metadata confirms all five jobs succeeded:
+
+| Job | Job ID | Result |
+| --- | --- | --- |
+| checks / linux | 119391500840 | success |
+| checks / windows-installer | 119391501089 | success |
+| checks / macos-installer | 119391501351 | success |
+| build | 119394708173 | success |
+| publish | 119396650346 | success |
+
+Downloaded build/publish logs independently confirm the builder reported v0.1.0 at that exact commit and the publish job returned the release URL. This is actual workflow execution, supplementing the earlier fake-gh transaction coverage. First manual public CI's native/PG raw logs are reconciled above; tag-run check-job successes are separately recorded, with no local repeats.
+
+[Published v0.1.0](https://github.com/jkai-chen/ClawBridge/releases/tag/v0.1.0), release ID 419891918, is draft=false, prerelease=false, published 2026-10-21T18:10:46Z. API assets contain exactly nine uploaded entries (five raw executables, two installers, SOURCE-COMMIT.txt and SHA256SUMS). GitHub's automatic source ZIP/tar links are not extra uploaded payload assets.
+
+Reviewer independently downloaded **all nine** public browser_download_url assets over verified HTTPS with downgrade-refusing redirect handling and exact published-size bounds, without executing any downloaded file. All payload hashes match the strict eight-entry lowercase/two-space manifest, and each of the nine downloaded hashes also matches GitHub asset digest metadata. SOURCE-COMMIT.txt equals the full dd343224 commit plus newline; both installers are byte-identical to the tagged scripts. Published release notes match the tagged RELEASE-NOTES.md, excluding incidental surrounding whitespace.
+
+| Downloaded asset | Independently computed SHA256 |
+| --- | --- |
+| SHA256SUMS | `f05dcc8bb9a868bf9152ac279f4ea0486fd2007bb6277a0b0805cf3e0aa95205` |
+| SOURCE-COMMIT.txt | `c03b2ff7fae7531bc23bca8e1b00216b539793d80f3efe66e145407791483ef6` |
+| clawbridge_v0.1.0_darwin_amd64 | `f99a3fd3fbd28c5347927088474cadafd54b53a960ffa8006df4f68591c80c70` |
+| clawbridge_v0.1.0_darwin_arm64 | `6797d75ed8e4c934c44e41ebb6c93c71ecf82ceb660c7d3944c6d1db69db5f25` |
+| clawbridge_v0.1.0_linux_amd64 | `a64821494fae325a4346048c5d9c99158a19dbf24a7a81e225588818d9a4b1b9` |
+| clawbridge_v0.1.0_linux_arm64 | `e353e7d4338013e549b4fbb022a4d7474282985387b264ed7735dc89f7e54b46` |
+| clawbridge_v0.1.0_windows_amd64.exe | `1feb1eec164fdf27ccb8c481ce7232cdaf2a2f8ceda91eafbf702e6c47e72142` |
+| install.ps1 | `965a3f34c7499d466a9664b6affa11308d0cde8390b1cddf7e65b5bc148f2f45` |
+| install.sh | `1b25bd77484fc6fa49ad0aadcff98b8215d342713f4970c42374ae2ff9a5cd47` |
+
+All five executables were inspected with `go version -m` as data only: correct OS/architecture, CGO_ENABLED=0, trimpath=true, exact clean VCS revision and embedded v0.1.0/full commit/commit-time UTC values. Expected build timestamp: `2026-10-21T17:51:13Z`. No cross-platform/native binary was executed by reviewer, no reproducible rebuild was performed, and metadata/checksum matching is not an independent publisher signature or notarization claim.
+
+Evidence directory: `/var/folders/h6/qh_thy6s4_n4ccxfqhc9gp080000gn/T/cb-release-public-v0.1.0-e6aj965s`, containing all public assets, release/run/job API snapshots, public-assets-verification.json, five static metadata files and downloaded release-build.log/release-publish.log. No source test, app/installer execution, configuration/credential operation or external mutation by reviewer. Root's isolated actual pinned/latest public installer plus darwin/arm64 native version smoke is still running/pending supplied results; no duplicate worker execution. Foreign-platform installer delivery/app version/OAuth behavior remains unclaimed beyond the native Windows fixture CI evidence already recorded.
+
+## Root-operated public installation smoke — attributed PASS
+
+Reviewer read `/tmp/clawbridge-public-install-smoke.py`, `/tmp/clawbridge-public-install-smoke-result.json` and `/tmp/clawbridge-latest-bootstrap-result.json` without executing them. Root reports **Pass on Darwin/arm64**. The harness/result pair supports:
+
+- Actual public tagged installer and SOURCE-COMMIT.txt downloaded over HTTPS and checked against the published manifest.
+- Pinned v0.1.0 installation into a private path containing spaces; latest discovery installation into default bin under a separate isolated HOME. Selected binary digest matches `clawbridge_v0.1.0_darwin_arm64`.
+- Both `version` and `--version` execute natively for each installed copy and return exact source=build JSON: v0.1.0, commit `dd3432242b9656bd4bad0aa8dfc9d963c5f38628`, build_time `2026-10-21T17:51:13Z`.
+- Temporary installer storage empty after each run; malformed sentinel contents preserved; temporary HOME/destinations removed by the root harness. No normal startup, join/consent, app credentials or real user installation/profile is used.
+
+Root's latest bootstrap URL was fetched separately and matches the independently verified tagged install.sh digest `1b25bd77484fc6fa49ad0aadcff98b8215d342713f4970c42374ae2ff9a5cd47`; that bootstrap download was not executed. The latest-mode smoke executes the downloaded tagged installer without a version argument, proving actual latest binary discovery; byte equality supports the moving bootstrap's current equivalence, without claiming the literal README curl-pipe command was run.
+
+**Harness evidence limit:** the preserved sentinel is `$HOME/.config/clawbridge/config.toml`, whereas current CLI stateHome defaults to `$HOME/.clawbridge/config.toml`. The root smoke therefore proves preservation of that sentinel, not a failure-triggering active malformed-config bypass in the published binary. This is a nonblocking assertion/attribution limit, not a production defect: independent pre-release version subprocess probes already used poisoned active CLAWBRIDGE_HOME and passed, and code review confirms version returns before route resolution. Root notified; reviewer did not rerun or alter the smoke.
+
+Root smoke version/commit/time and latest bootstrap hash independently reconcile with the public assets downloaded by reviewer. Copies retained as root-smoke-initial-harness.py, root-smoke-initial-result.json and root-latest-bootstrap-result.json in the public asset evidence directory. Root is the execution actor; reviewer independently reconciled evidence only. No duplicate app execution, local source tests, credential access or external mutation by reviewer.
+
+Final scoped release verdict: **Pass** for this exact source/tag/release distribution increment. Actual public CI and published assets are independently observed; native installation/version smoke is root-operated as attributed. No claim of public installer execution on Linux/Windows/Intel macOS, foreign binary app/OAuth/keychain behavior, new Google consent/lifecycle/MCP acceptance, signing/notarization or reproducible-binary proof. Root retains docs-only publication completion; implementation/tag/asset bytes need no change for this report.

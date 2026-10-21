@@ -1,6 +1,6 @@
 # ClawBridge active coordination
 
-## Current phase: release automation accepted locally; public CI and v0.1.0 next
+## Current phase: v0.1.0 published; release distribution complete
 
 Guided startup is committed and pushed as `0340a8a`. The responsive TUI and
 derived 24-hour archive implementation passed independent automated acceptance.
@@ -55,6 +55,24 @@ root-controlled next gates. Initial tree/history audit found only synthetic
 test-key markers, with no private artifact or credential finding. Root will
 commit/push, complete the final reachable-history check, make the repository
 public under existing owner authorization and observe CI before tagging v0.1.0.
+
+Those source/publication steps are complete: dd34322 is pushed, all 105 accepted
+review hashes matched, 17-commit/249-blob screening passed, and the repository is
+now public under prior owner authorization. Private CI skipped; actual public
+CI run 39647665688 is running on that exact commit. No release tag or release is
+published yet. Root waits for actual Linux PG/macOS/native Windows results before
+tagging; PUBLICATION-REVIEW.md owns the external operation record.
+
+Public CI 39647665688 then passed all Linux real-PG/full/race and macOS/native
+Windows installer jobs. Root pushed annotated v0.1.0 at exact source dd34322;
+release workflow 39648840179 passed its checks/build and verified complete draft
+assets before publication. v0.1.0 is publicly available with all five binaries,
+both installers, source marker and manifest. Root actual pinned/latest public
+installer smoke passed on Darwin/arm64 in isolated destinations; both version
+aliases match the exact source and build timestamp. Latest bootstrap bytes match
+the tagged installer. PUBLICATION-REVIEW.md and RELEASE-REVIEW.md record evidence
+and native-runtime limits. No source changes, new tag, server deployment or
+additional local tests are needed for the final documentation reconciliation.
 
 ## Historical Phase 3 checkpoint
 
@@ -452,5 +470,5 @@ project instructions or initiates consent implicitly.
 Owner authorizes making jkai-chen/ClawBridge public after the work is complete.
 Keep the repository private during live onboarding and release preparation;
 review the publication set and Git history for private artifacts before changing
-visibility. Visibility has not been changed; CI billing eligibility has not been
-verified or claimed.
+visibility. That authorization was exercised after final local release acceptance
+and the complete tree/history audit; the current public CI/release state is above.

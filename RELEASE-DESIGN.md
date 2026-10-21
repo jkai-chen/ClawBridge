@@ -1,5 +1,9 @@
 # Release distribution contract
 
+Delivery: v0.1.0 is published at source dd34322. Local independent review,
+actual public CI/release and isolated public installer/version smoke passed;
+PUBLICATION-REVIEW.md and RELEASE-REVIEW.md own results and evidence limits.
+
 Owner requested GitHub release builds, a curl-based macOS/Linux installer and a
 PowerShell Windows installer, then public repository visibility after completion.
 The owner reported "all done" after the reviewed bad2d9e Linux reuse/resize/archive

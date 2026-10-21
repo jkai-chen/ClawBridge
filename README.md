@@ -9,8 +9,9 @@ provisioning remain future work.
 
 ## Install release binaries
 
-Release distribution is being prepared for **v0.1.0**. The commands below become
-available when that release is published; source builds remain available now.
+**[v0.1.0 is available](https://github.com/jkai-chen/ClawBridge/releases/tag/v0.1.0)**
+with versioned binaries, installers and SHA256 checksums. Source builds remain
+available below.
 
 For macOS or Linux, the installer selects Intel/AMD64 or ARM64, verifies the
 release checksum and installs into `~/.local/bin`:

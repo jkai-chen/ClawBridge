@@ -309,7 +309,7 @@ The evidence is separated by what actually ran:
   locally generated and signed fixtures, fake application identities used at
   route boundaries, and temporary fake `gcloud` executables. These are not live
   Google authentication, IAM validation or real `gcloud` execution.
-- **Designer-reported manual client evidence:** [docs/CLIENT-CHECKS.md](docs/CLIENT-CHECKS.md)
+- **Designer-reported manual client evidence:** [docs/CLIENT-CHECKS.md](installed-agent-clients.md)
   records an actual installed Codex app-server exchange (MCP send, CLI reply, MCP
   inbox) and an actual installed Claude SDK-control connection with discovery of
   all 11 tools. Both used isolated temporary configurations and made no model

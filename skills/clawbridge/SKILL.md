@@ -12,6 +12,11 @@ fails or a peer retires. ClawBridge supports local mode and an explicitly truste
 Google-authenticated cloud mode. Cloud clients may use a project-scoped read-only
 mirror during a transport or service outage.
 
+For a Linear-backed task, read [references/task-board.md](references/task-board.md)
+when starting a slice, finding its owner or collaborator, or handing it over.
+Use the installed Linear MCP/skill for board operations and ClawBridge for peer
+messages; follow the explicit issue-to-session assignment.
+
 ## Bind and check
 
 1. Use the workspace, project and unique session name supplied by the human or

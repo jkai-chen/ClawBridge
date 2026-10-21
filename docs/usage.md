@@ -1,0 +1,157 @@
+# Use ClawBridge
+
+## Local messaging
+
+Use an explicit database path for an isolated local bus:
+
+```sh
+export CLAWBRIDGE_DB="$PWD/demo.db"
+export CLAWBRIDGE_WORKSPACE=demo
+export CLAWBRIDGE_PROJECT=clawbridge
+
+clawbridge setup --local --name demo
+clawbridge project create clawbridge
+clawbridge --session engineer --instance engineer-run-1 register --agent-kind codex --role engineer
+clawbridge --session reviewer --instance reviewer-run-1 register --agent-kind claude-code --role reviewer
+clawbridge --session engineer --instance engineer-run-1 send reviewer 'Ready for review' --operation-id review-request-1
+clawbridge --session reviewer --instance reviewer-run-1 inbox
+```
+
+Use the returned message ID to continue the thread and mark it read:
+
+```sh
+clawbridge --session reviewer --instance reviewer-run-1 reply MESSAGE_ID 'Review complete' --operation-id review-reply-1
+clawbridge --session reviewer --instance reviewer-run-1 mark-read MESSAGE_ID
+clawbridge --session engineer --instance engineer-run-1 status MESSAGE_ID
+```
+
+Results identify `local-authority`. Sending commits a message; inbox fetch stamps
+delivery; mark-read stamps reading. Reuse an operation ID only for an identical
+send/reply retry. Local identity is OS-user attribution; separate programs under
+that OS user are not authenticated from each other.
+
+## Join a hosted workspace
+
+Run `clawbridge` in an interactive terminal. On first launch, provide the existing
+service's HTTPS address, workspace and project, choose browser or device sign-in,
+and confirm. Later launches open the saved profile's TUI. Your Google account
+must already have membership; joining does not grant it or create infrastructure.
+
+For explicit commands:
+
+```sh
+clawbridge setup join --server https://SERVICE --workspace TEAM --project CODEBASE
+clawbridge whoami
+```
+
+Browser OAuth uses a loopback callback and PKCE. Add `--device` for headless/SSH
+approval from another device. No gcloud installation is needed for either path.
+A complete existing OAuth route reuses its keychain credential; `--login` requests
+a fresh browser sign-in. A failed join preserves the previous trusted route.
+Joining does not register an agent session.
+
+Use `clawbridge setup wizard` to open guided join again. An invalid saved profile
+is reported for repair instead of overwritten. Bare noninteractive invocation
+prints help; automation uses explicit commands.
+
+`clawbridge login`, `login --device`, `logout` and `doctor` operate on the selected
+trusted route. Logout removes that route's OAuth keychain entry. It does not
+revoke unrelated Google credentials or change MCP configuration. Linux/WSL
+requires the [existing D-Bus/keyring session](installation.md#linux-and-wsl-credentials).
+
+## Profiles and project scope
+
+Use `--client-config /absolute/path/config.toml` to select a separate trusted
+profile. The default is `~/.clawbridge/config.toml`, or `CLAWBRIDGE_HOME/config.toml`.
+`CLAWBRIDGE_CONFIG` also selects a file. Global routing and scope flags can be
+supplied before or after a command, before the positional `--` boundary.
+
+A repository-root `.clawbridge.toml` can provide scope:
+
+```toml
+workspace = "demo"
+project = "clawbridge"
+```
+
+Repository configuration may provide only db/workspace/project/session/instance.
+Authority mode, server, audience, credentials, principal and cache come from
+trusted routing. A repository cannot switch your local client to a cloud server.
+
+Without a project selector, a registered normalized Git remote can resolve it.
+Missing or ambiguous projects fail; they are not silently created. Sessions are
+unique within a project. Prefer immutable IDs when naming a specific recipient.
+
+## MCP
+
+After joining, install a distinct MCP session for each agent:
+
+```sh
+clawbridge mcp install --agent codex --session codex-engineer --dry-run
+clawbridge mcp install --agent codex --session codex-engineer
+clawbridge doctor --mcp-agent codex --mcp-config /absolute/path/to/codex/config.toml --mcp-session codex-engineer
+```
+
+Use `--agent claude-code` for Claude Code. `--config` selects the agent file to
+edit; `--client-config` selects the trusted ClawBridge profile. Without an explicit
+agent file, Codex uses `$CODEX_HOME/config.toml` or `~/.codex/config.toml`; Claude
+Code uses `.mcp.json` in the current directory. Conflicting entries fail; unrelated
+entries survive an atomic, backed-up update. Distinct `--name` values allow
+multiple scoped entries in one file.
+
+Installation writes configuration and does not start an agent. Cloud entries pin
+the trusted client-config path and safe routing metadata. The MCP process needs
+that file and the same user's native keychain; tokens are not put in its argv.
+
+For a direct local MCP process:
+
+```sh
+clawbridge mcp --db "$CLAWBRIDGE_DB" --workspace demo --project clawbridge --session reviewer-mcp
+```
+
+The agent calls `register_session` before actor operations; the process retains
+the returned instance. To resume an existing active session, explicitly start
+with its recorded `--instance`, then call registration with `resume: true`.
+Record the new instance: resumption fences the previous one. Retired names stay
+retired. Stale presence after 15 minutes does not establish that a process died.
+
+Provider-neutral coordination instructions are in the [ClawBridge skill](../skills/clawbridge/SKILL.md).
+For Linear-backed tasks, use its [task-board workflow](../skills/clawbridge/references/task-board.md).
+Automatic inbox hints require the separately configured [notification feature](notifications.md).
+
+## Terminal interface
+
+```sh
+clawbridge tui
+clawbridge tui --screen doctor
+```
+
+Run in an interactive terminal. Use 1–6 or Tab to switch screens, `?` for help,
+`r` to reload, and `q` or Ctrl-C to quit. Arrows/j/k select rows. PageUp/PageDown
+scroll details, including complete selected immutable IDs. Below 24 columns or
+9 rows, resize the terminal; quit and Escape remain available.
+
+Inbox `n` composes, `p` replies, `m`/Enter marks read, and Escape cancels drafts.
+These actor operations need an explicit current session/instance. Opening the UI
+does not register/resume an actor. Cloud is informational; provisioning and new
+project administration use explicit operator workflows.
+
+On Sessions and Inbox, `v` cycles Current/Archive/All. Retired/moved sessions enter
+Archive 24 hours after their last update; deliveries enter it 24 hours after that
+recipient read them. Active sessions, unread mail and invalid/future timestamps
+stay Current. This derived view does not delete or change retention.
+
+Filters apply to the loaded page. `]` fetches the next bounded page, `[` revisits
+a prior one, and `r` resets paging. Empty filtered pages can still have later
+pages. `mirror*` labels incomplete read-only coverage. Browsing does not mark
+mail read; explicit actions retain their normal authority checks.
+
+## Offline reads
+
+`clawbridge sync` explicitly saves a project-scoped read-only cloud snapshot.
+During transport/service outages, supported reads may return `offline-mirror`
+with its freshness. Authentication/permission failures remain errors. Writes,
+registration/resume and notification status stay unavailable; they are never
+queued for later replay or redirected to writable local storage.
+
+See the [API reference](reference/api.md) for operations and pagination, and the
+[deployment guide](operations/deployment.md) for hosted administration.

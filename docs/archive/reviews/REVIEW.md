@@ -104,7 +104,7 @@ edited by reviewer.
 ## Installed-client evidence and remaining limits
 
 **Separate manual evidence, performed by cb-designer:** reviewed
-[docs/CLIENT-CHECKS.md](docs/CLIENT-CHECKS.md). This supplements the independent raw
+[docs/CLIENT-CHECKS.md](installed-agent-clients.md). This supplements the independent raw
 JSON-RPC suite and is not silently run by `go test`.
 
 | Client check | State | Proven scope / limit |

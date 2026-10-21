@@ -1,0 +1,277 @@
+# Hosted deployment
+
+The checked-in deployment runs the API, PostgreSQL and Caddy with Docker Compose.
+It joins existing cloud resources; the repository does not provision them.
+Only Caddy exposes TCP 443. The API and database use an internal network; the API
+and Caddy also need egress for Google signing certificates and TLS operations.
+
+Choose the deployment project, VM/zone, DNS, persistent data disk, private
+configuration, backup bucket and administrative access path for your environment.
+Keep database data on a separately mounted disk and maintain an off-VM recovery
+copy. The runbook examples retain the existing Compose project name
+`clawbridge-phase3`; keep your initialized project/volumes consistent on updates.
+Historical pilot resource names and observations are in the
+[deployment archive](../archive/reviews/deployment-pilot.md).
+
+## Google identity
+
+End users sign in with browser OAuth and loopback PKCE, or device authorization
+on headless machines. The client stores only a refresh
+credential in the native OS keychain and mints a short-lived, audience-bound ID
+token. The server verifies signature, issuer, audience, expiry and verified email,
+then independently enforces ClawBridge membership and project roles. Agents do
+not receive the refresh credential or minted token. Joining an existing workspace
+does not require gcloud.
+
+Explicit gcloud or authorized-user ADC with service-account impersonation are
+operator alternatives. Their audited principal is the service account in the
+verified token; sharing that account shares its application identity. Configure
+the initiating account, target account and audience explicitly.
+
+Configure workspace membership and project permissions separately from Google
+sign-in. Provisioning the VM, database, OAuth clients and IAM grants is an operator
+workflow outside client onboarding. The service validates Google ID tokens;
+IAP-signed HTTP assertions are outside its implemented identity path.
+
+## Private configuration
+
+Set these in a private, access-restricted environment file outside version control:
+
+```text
+POSTGRES_PASSWORD=<random hexadecimal password>
+CLAWBRIDGE_DOMAIN=clawbridge.example.com
+CLAWBRIDGE_AUDIENCE=DESKTOP_CLIENT_ID.apps.googleusercontent.com,DEVICE_CLIENT_ID.apps.googleusercontent.com
+CLAWBRIDGE_OAUTH_CLIENT_ID=DESKTOP_CLIENT_ID.apps.googleusercontent.com
+CLAWBRIDGE_OAUTH_DEVICE_CLIENT_ID=DEVICE_CLIENT_ID.apps.googleusercontent.com
+CLAWBRIDGE_OAUTH_CLIENT_SECRET=DESKTOP_CLIENT_INSTALLED_APP_CREDENTIAL
+CLAWBRIDGE_OAUTH_DEVICE_CLIENT_SECRET=DEVICE_CLIENT_INSTALLED_APP_CREDENTIAL
+CLAWBRIDGE_BOOTSTRAP_OWNER=owner-identity@your-project.iam.gserviceaccount.com
+CLAWBRIDGE_POSTGRES_DATA_PATH=/var/lib/clawbridge-postgres/data
+CLAWBRIDGE_BACKUP_BUCKET=private-clawbridge-backup-bucket
+COMPOSE_PROJECT_NAME=clawbridge-phase3
+```
+
+Use a random hexadecimal password so it can be interpolated safely into the
+Postgres URL. Install the environment file as
+`/etc/clawbridge/clawbridge.env`, owned by `root:root` with mode `0600`. This file
+is a deployment secret, not a ClawBridge message. Docker configuration rendering
+may include its value; keep rendered config and logs private.
+
+The two OAuth client IDs must match the Desktop-app and TVs/Limited Input devices
+clients in the Google project. Their matching Google installed-app application
+credentials are supplied only through the two `*_CLIENT_SECRET` environment
+entries shown above, never through the Compose command or any server flag. Both
+IDs must appear exactly in `CLAWBRIDGE_AUDIENCE`; the server rejects an omitted
+audience match, an unmatched credential or duplicate roles. Google treats native
+application credentials as non-confidential after distribution, and the two
+credentials are intentionally exposed with the IDs at the public `/v1/config`
+discovery endpoint. They must still not appear in logs, error output,
+MCP/installer arguments or agent configuration.
+
+The Compose file retains a named-volume default so isolated configuration tests
+can render without host paths. That default is not approved for production.
+Production sets
+`CLAWBRIDGE_POSTGRES_DATA_PATH=/var/lib/clawbridge-postgres/data` and installs
+the Docker mount guard below. Changing the source of an initialized database
+without copying or restoring its contents starts an empty database. The named
+Caddy volumes preserve account keys, certificates and proxy configuration
+across container recreation.
+
+After approved VM setup, the operator can run Docker Compose with that environment
+file and `deploy/compose.yaml`. This repository does not create the VM, firewall,
+IAM bindings, disks or billing resources automatically. PostgreSQL should stay
+private; do not publish its port to make a connection work.
+
+Point the chosen DNS name at the VM's static external IP before starting Caddy.
+Allow public ingress only on TCP 443. Do not publish API, Postgres, port 80 or the
+Caddy admin port. Caddy obtains the initial certificate with TLS-ALPN over TCP
+443 and `--disable-redirects` prevents an HTTP listener that cannot be reached.
+Its separate egress network needs DNS, HTTPS and OCSP reachability; restrict egress
+only if the selected firewall still permits those certificate and Google paths.
+The VM needs outbound access to container registries, ACME, OCSP and Google's
+token-signing certificate endpoints.
+
+For an ingress firewall that allows only TCP 443, the operator must also permit
+SSH/IAP through the separately reviewed administrative path; this repository does
+not open SSH itself. TCP 443 exposes only Caddy. `/v1/config` is intentionally
+public; `/v1/execute` continues to require a verified Google bearer token.
+`/healthz` checks only the API process; Compose service health and external
+monitoring must be configured separately. If DNS, TCP 443 or the egress path is
+wrong, Caddy cannot obtain a certificate and HTTPS clients fail even if the API
+container is running.
+
+Keep the repository and environment file in a private deployment directory such as
+`/opt/clawbridge/repo`. Rebuild and recreate the API after every application commit;
+restarting a VM only restarts the existing container image.
+
+## Persistent disk and backup guards
+
+These commands assume the reviewed checkout is `/opt/clawbridge/repo`, the initialized
+data disk is already attached and mounted, and the VM's Google identity may create
+objects in the private backup bucket. Do not format or initialize an existing data
+disk while installing the guard.
+
+First verify the existing filesystem and record its UUID. If the selected data disk uses
+`/etc/fstab`, an equivalent line is required so a failed mount can leave the VM
+reachable for repair:
+
+```sh
+sudo findmnt -T /var/lib/clawbridge-postgres
+sudo blkid /dev/disk/by-id/DATA_DISK
+sudo cp /etc/fstab /etc/fstab.clawbridge-pre-mount-guard
+# Replace DATA_DISK_UUID with the value printed above; do not use mkfs here.
+if ! sudo grep -Eq '[[:space:]]/var/lib/clawbridge-postgres[[:space:]]' /etc/fstab; then
+  sudo sh -c 'printf "%s\n" "UUID=DATA_DISK_UUID /var/lib/clawbridge-postgres ext4 defaults,nofail 0 2" >> /etc/fstab'
+fi
+sudo systemctl daemon-reload
+sudo mount -a
+sudo mountpoint -q /var/lib/clawbridge-postgres
+sudo mkdir -p /var/lib/clawbridge-postgres/data
+sudo findmnt -T /var/lib/clawbridge-postgres/data
+```
+
+The `nofail` option permits an IAP/SSH recovery session when the disk is absent.
+The Docker drop-in is therefore mandatory: it blocks the Docker daemon from
+starting if the exact directory is not a mountpoint. This prevents Postgres from
+silently creating a new database under the boot filesystem.
+
+```sh
+sudo install -d -o root -g root -m 0755 /etc/systemd/system/docker.service.d
+sudo install -o root -g root -m 0644 \
+  /opt/clawbridge/repo/deploy/systemd/docker.service.d/10-clawbridge-postgres-mount.conf \
+  /etc/systemd/system/docker.service.d/10-clawbridge-postgres-mount.conf
+sudo systemctl daemon-reload
+sudo systemctl restart docker
+sudo systemctl is-active docker
+sudo docker compose --env-file /etc/clawbridge/clawbridge.env \
+  --project-name clawbridge-phase3 \
+  -f /opt/clawbridge/repo/deploy/compose.yaml up -d
+```
+
+At this point Docker must start only while `/var/lib/clawbridge-postgres` is
+mounted. If it is absent after a reboot, attach or restore the disk, verify
+`/etc/fstab`, run `sudo mount -a`, inspect `sudo systemctl status docker`, and
+then start Docker. Never bypass the guard by starting the stack against the empty
+boot-directory mountpoint.
+The guard protects the whole Docker daemon on this host, so restarting Docker
+affects every container on the VM; inspect `docker ps -a` before installing or
+testing it.
+
+An existing deployment may keep the private environment at
+`/opt/clawbridge/.env.phase3` and exposes the stable systemd path as a symlink.
+Verify the target and link it before installing the units:
+
+```sh
+sudo install -d -o root -g root -m 0755 /etc/clawbridge /usr/local/libexec/clawbridge
+test -f /opt/clawbridge/.env.phase3
+sudo ln -sfn /opt/clawbridge/.env.phase3 /etc/clawbridge/clawbridge.env
+sudo test -r /etc/clawbridge/clawbridge.env
+sudo install -o root -g root -m 0755 \
+  /opt/clawbridge/repo/deploy/backup-postgres.sh \
+  /usr/local/libexec/clawbridge/backup-postgres.sh
+sudo install -o root -g root -m 0644 \
+  /opt/clawbridge/repo/deploy/systemd/clawbridge-postgres-backup.service \
+  /etc/systemd/system/clawbridge-postgres-backup.service
+sudo install -o root -g root -m 0644 \
+  /opt/clawbridge/repo/deploy/systemd/clawbridge-postgres-backup.timer \
+  /etc/systemd/system/clawbridge-postgres-backup.timer
+sudo systemctl daemon-reload
+sudo systemctl enable --now clawbridge-postgres-backup.timer
+sudo systemctl start clawbridge-postgres-backup.service
+sudo systemctl status clawbridge-postgres-backup.service --no-pager
+sudo systemctl list-timers clawbridge-postgres-backup.timer --no-pager
+```
+
+The service runs as root because it needs the local Docker socket and the VM's
+Google identity. The runner uses `umask 077`, a protected temporary directory and
+a cleanup trap. It parses only the backup bucket, production data path and Compose
+project name from the private environment file, passes that file to Compose, and
+never sources it into the backup process. Docker, Postgres and gcloud read their
+own credentials directly; the runner does not print the environment, password,
+token, client secret or credential file contents.
+
+## HTTPS and operator access
+
+Configure ClawBridge's server URL as `https://CLAWBRIDGE_DOMAIN` and a server audience set containing the
+client route's selected audience. The four installed-app
+discovery values are available at `https://CLAWBRIDGE_DOMAIN/v1/config`. Every
+application request still needs its own verified Google ID token; DNS or TLS
+access alone is not per-request identity.
+
+Use an explicit administrative access path for shell access and disk maintenance.
+The application no longer needs an IAP tunnel to its loopback API for normal
+clients. The VM needs an approved egress path for image retrieval, ACME and
+Google signing-key refresh. Include static-address, disk, egress and registry
+implications in the cost estimate.
+
+## Update and rollback
+
+Before every update, run a backup and confirm its checksum and timer/service
+result. Record the current commit, rendered service state and the most recent
+verified backup timestamp. Never delete the only Postgres volume with
+`docker compose down -v`.
+
+For a source-only archive deployment, `/opt/clawbridge/repo` has no
+remote Git credentials or `.git` directory. On the operator checkout, verify the
+reviewed commit was pushed, then export exactly that commit (never the dirty tree):
+
+```sh
+DEPLOY_SHA=<full-reviewed-pushed-commit>
+git cat-file -e "$DEPLOY_SHA^{commit}"
+git archive --format=tar.gz --output=/tmp/clawbridge-release.tar.gz "$DEPLOY_SHA"
+shasum -a 256 /tmp/clawbridge-release.tar.gz
+# Transfer through the approved IAP path; compare SHA-256 on the VM before use.
+gcloud compute scp /tmp/clawbridge-release.tar.gz \
+  VM_NAME:/tmp/clawbridge-release.tar.gz \
+  --project PROJECT_ID --zone ZONE --tunnel-through-iap
+```
+
+On the VM, first run `sudo systemctl start clawbridge-postgres-backup.service`
+and require a successful result and uploaded checksum. Confirm the persistent
+mount, existing containers, stable private env symlink, and sufficient disk space.
+Extract into a new empty directory; retain the previous source directory under a
+unique timestamped recovery name before moving the new directory to the stable
+path. Do not replace `/opt/clawbridge/.env.phase3` or database/Caddy volumes.
+
+```sh
+# Set these again in the VM shell: local operator variables do not cross SSH.
+DEPLOY_SHA=<full-reviewed-pushed-commit>
+EXPECTED_ARCHIVE_SHA256=<checksum-recorded-on-operator-machine>
+actual=$(sha256sum /tmp/clawbridge-release.tar.gz | cut -d ' ' -f1)
+[ "$actual" = "$EXPECTED_ARCHIVE_SHA256" ] || exit 1
+stamp=$(date -u +%Y%m%dT%H%M%SZ)
+sudo mkdir "/opt/clawbridge/repo-next-$stamp"
+sudo tar -xzf /tmp/clawbridge-release.tar.gz -C "/opt/clawbridge/repo-next-$stamp"
+sudo mv /opt/clawbridge/repo "/opt/clawbridge/repo-recovery-$stamp"
+sudo mv "/opt/clawbridge/repo-next-$stamp" /opt/clawbridge/repo
+printf '%s\n' "$DEPLOY_SHA" | sudo tee /opt/clawbridge/repo/DEPLOYED_SHA
+sudo docker compose --env-file /etc/clawbridge/clawbridge.env \
+  --project-name clawbridge-phase3 \
+  -f /opt/clawbridge/repo/deploy/compose.yaml config --quiet
+sudo docker compose --env-file /etc/clawbridge/clawbridge.env \
+  --project-name clawbridge-phase3 \
+  -f /opt/clawbridge/repo/deploy/compose.yaml build api
+sudo docker compose --env-file /etc/clawbridge/clawbridge.env \
+  --project-name clawbridge-phase3 \
+  -f /opt/clawbridge/repo/deploy/compose.yaml up -d --no-deps api
+```
+
+Record the archive checksum, image ID, source fingerprints, recovery directory,
+and deployed SHA. Check HTTPS `/healthz`, the exact four-field `/v1/config`
+shape without printing credential values, unauthenticated execute 401, authenticated
+read-only whoami and doctor. Run the backup service again and confirm publication.
+Only recreate Caddy if its reviewed configuration changed and requires it.
+
+For application-only rollback, preserve the failed release under another unique
+name, restore the recorded recovery directory to `/opt/clawbridge/repo`, and
+repeat Compose validation/build/API recreation above. Retain the same project,
+private env and volumes; do not run `down -v`. The external `DEPLOYED_SHA` marker
+is operator evidence, not a cryptographic attestation; compare archived source
+fingerprints as well.
+
+For a rollback that crosses a schema change, do not run the older binary against
+the newer schema. Use the production restore procedure with a dump taken before
+the migration. Compose project and Caddy volumes stay in place throughout; never
+use `docker compose down -v`.
+
+See [backup and recovery](backup-and-recovery.md) for dump verification and restore.

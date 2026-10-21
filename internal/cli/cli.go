@@ -25,6 +25,7 @@ Global flags: --db PATH --workspace NAME_OR_ID --project SLUG_OR_ID --session NA
 Commands: setup --local, project create SLUG, register [NAME], sessions, send TO BODY --operation-id ID,
           inbox, mark-read ID..., reply ID BODY --operation-id ID, update, retire, history, whoami, status ID,
           mcp, mcp install ..., serve, sync, purge-expired, doctor, tui [--screen SCREEN]
+Interactive: bare clawbridge opens the selected profile or guided join; setup wizard starts guided join.
 Onboarding: setup join --server URL --workspace TEAM --project CODEBASE [--login|--device]
 setup --cloud initializes an existing service only; no infrastructure is created.
 Global: --client-config /absolute/path/config.toml (trusted route; not agent --config)
@@ -151,12 +152,12 @@ func interspersedFlags(f *flag.FlagSet, args []string) ([]string, error) {
 }
 
 func Run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
-	if len(args) == 0 || (len(args) == 1 && (args[0] == "--help" || args[0] == "help" || args[0] == "-h")) {
+	if len(args) == 1 && (args[0] == "--help" || args[0] == "help" || args[0] == "-h") {
 		_, err := io.WriteString(stdout, Usage)
 		return err
 	}
 	// A server invocation has its own operator flags and never opens local state.
-	if args[0] == "serve" {
+	if len(args) > 0 && args[0] == "serve" {
 		return server.Run(ctx, args[1:])
 	}
 	flags, rest, err := extractGlobals(args)
@@ -164,7 +165,10 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		return err
 	}
 	if len(rest) == 0 {
-		return errors.New("command is required")
+		return runStartup(ctx, flags, args, stdout, stderr)
+	}
+	if len(rest) >= 2 && rest[0] == "setup" && rest[1] == "wizard" {
+		return runWizard(ctx, flags, rest[2:], stdout, stderr)
 	}
 	if len(rest) >= 2 && rest[0] == "setup" && rest[1] == "join" {
 		return runJoin(ctx, flags, rest[2:], stdout, stderr)

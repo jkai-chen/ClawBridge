@@ -87,8 +87,8 @@ Commands/results:
 
 Verdict: **focused automated Pass, no reproduced defect in this frozen scope**.
 No full/PG/heavy reruns were needed for the presentation-only change. Owner
-retest of Projects/Sessions in the replacement Linux artifact remains **Pending**;
-the earlier published artifact's reported misalignment is not retroactively Pass.
+retest of Projects/Sessions alignment in the replacement Linux artifact is
+**owner-reported Pass**, as attributed below; the original build remains historical.
 
 ## Remaining acceptance
 
@@ -99,8 +99,8 @@ the earlier published artifact's reported misalignment is not retroactively Pass
 - Real installed MCP client, fresh process with OAuth, selected doctor and actual
   tool execution; model-driven behavior attributed separately.
 - Second human member and nonmember denied join, without implicit membership grants.
-- Focused alignment regression and owner confirmation of the replacement TUI;
-  explicit terminal restoration/cancellation and any intended actor actions.
+- Explicit terminal restoration/cancellation and any intended actor actions;
+  replacement Projects/Sessions alignment is owner-reported Pass below.
 - Other native platforms, physically SDK-free observations beyond this reported
   target, and any separately authorized deployment/release distribution.
 
@@ -108,3 +108,26 @@ No credentials, consent codes, secret config contents or tokens are recorded.
 Reviewer performed no live requests, consent or target operations. Automated
 rendering tests are attributed separately above. No schema/user-host-session implementation or
 acceptance is implied by the prospective design work.
+
+## Owner screenshot attribution checkpoint
+
+Owner supplied SOURCE-COMMIT `4a39235114b00873c39d1a0d67e9ee2b13bcd0e0`
+and terminal size 50 rows × 215 columns. Root inspected the two Desktop
+screenshots dated 21 October at 13:20:06 and 13:20:11: shifted selected rows and
+old session headers correspond to the original build. This is owner/root-attributed
+original-build evidence, **not a reproduced failure of cdc1b0d**. The later owner confirmation below supersedes the pending alignment retest.
+No new target-machine operation by reviewer; this does not independently establish
+that owner ran checksum/source-marker verification on the target.
+
+## Owner replacement-build alignment confirmation
+
+After root's instructions to transfer replacement `cdc1b0d`, owner reported:
+
+> I confirmed it is fix, I put wrong file name in scp cause transfer the old file
+
+Projects/Sessions alignment: **Pass, owner-reported replacement-build live retest**.
+Earlier screenshots remain explicitly original `4a39235` evidence at 50 rows ×
+215 columns, not a replacement failure. This confirmation closes only the narrow
+alignment gate; it establishes no new OAuth transition, logout, real MCP,
+host-recording, actor-action or terminal-lifecycle acceptance. Reviewer did not
+perform a target-machine operation or independently observe the replacement UI.

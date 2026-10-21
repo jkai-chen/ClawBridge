@@ -336,6 +336,32 @@ SDK-free machine and second-human acceptance remain Pending.
 
 ### Live onboarding and release distribution follow-up
 
+Guided startup automated review is complete: GUIDED-SETUP-REVIEW.md records
+PostgreSQL full/race, vet, three CGO0 cross-builds, terminal startup probes and
+final stable fingerprints. G-O2 cleanup failure and G-O3 preflight wording are
+closed. Live guided consent/native-store acceptance remains separate. No server
+deployment is needed for this client increment.
+
+Next owner-requested design: full terminal width/height adaptation, plus archive
+views for retired sessions and old messages. Proposed defaults are retired
+sessions after 24 hours since retirement and read inbox deliveries after 24 hours
+since read; unread messages remain visible. Archive is a reversible view filter,
+not deletion or a change to retention. Exact contracts and migration/offline
+behavior must be published before implementation; these proposals are not yet
+shipped behavior.
+
+Guided startup requested by owner: GUIDED-SETUP-DESIGN.md and CORE-API publish
+the contract before implementation. Root owns design/docs; engineer owns guided
+startup and keyring diagnostics; reviewer owns independent probes after contract
+and final checks after freeze. Existing Linux keyring outage is a session-bus
+recovery issue; reuse the original saved login, do not rejoin to repair it.
+Owner reports preflight passes after same-session keyring recovery. This proves
+bus/service visibility only; renewed whoami and replacement UI observations are
+still awaited.
+Owner subsequently confirmed the replacement build fixes Projects/Sessions
+alignment; the earlier unchanged result came from an scp filename selecting the
+old archive. Reviewer records this as a narrow owner-reported live UI Pass.
+
 Owner selected a separate Ubuntu 22.04.5 LTS WSL2 x64 environment without gcloud,
 accessed headlessly/over SSH, for Phase 4 live onboarding (correcting the initial
 Windows selection). Use device consent after checking session D-Bus and Secret

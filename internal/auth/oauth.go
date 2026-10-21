@@ -145,7 +145,7 @@ func (s KeyringStore) Load(ctx context.Context, key string) (Credential, error) 
 		return Credential{}, ErrCredentialNotFound
 	}
 	if err != nil {
-		return Credential{}, errors.New("cannot read the ClawBridge credential from the OS keychain")
+		return Credential{}, nativeStoreError("read")
 	}
 	var credential Credential
 	if json.Unmarshal([]byte(raw), &credential) != nil || credential.Version != credentialVersion ||
@@ -165,7 +165,7 @@ func (s KeyringStore) Save(ctx context.Context, key string, credential Credentia
 		return errors.New("cannot encode the ClawBridge credential")
 	}
 	if err = keyring.Set(s.service(), key, string(raw)); err != nil {
-		return errors.New("cannot save the ClawBridge credential in the OS keychain; use --device on a machine with an available keyring")
+		return nativeStoreError("save")
 	}
 	return nil
 }
@@ -179,7 +179,7 @@ func (s KeyringStore) Delete(ctx context.Context, key string) error {
 		return nil
 	}
 	if err != nil {
-		return errors.New("cannot remove the ClawBridge credential from the OS keychain")
+		return nativeStoreError("remove")
 	}
 	return nil
 }

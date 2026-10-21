@@ -217,6 +217,9 @@ func resolveConfigVariantMode(ctx context.Context, flags Config, variant func(Co
 		OAuthDeviceClientSecret: os.Getenv("CLAWBRIDGE_OAUTH_DEVICE_CLIENT_SECRET"),
 		OAuthKeyringService:     os.Getenv("CLAWBRIDGE_OAUTH_KEYRING_SERVICE"),
 	}
+	if guided, _ := ctx.Value(guidedRouteKey{}).(bool); guided {
+		env = Config{}
+	}
 	base = overlay(overlay(base, env), flags)
 	if variant != nil {
 		base = variant(base)

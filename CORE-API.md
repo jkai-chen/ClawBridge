@@ -873,6 +873,29 @@ tests.
 
 ## Phase 4: existing-service onboarding contract
 
+### Guided startup extension (21 October 2026)
+
+`clawbridge` with no command on terminal stdin/stdout opens the TUI when the
+selected trusted config exists, or guided existing-service join when it is absent.
+`clawbridge --client-config /absolute/path` selects an isolated startup profile.
+Other flags without a command fail. Bare non-TTY invocation prints usage without
+side effects. Help retains its existing behavior.
+
+`clawbridge setup wizard [--client-config /absolute/path]` requires terminal
+stdin/stdout. Prompts collect explicit URL/workspace/project, browser/device
+choice, then a default-no confirmation. No pilot authority is hardcoded. OAuth
+discovery and the existing join transaction are reused, ignoring inherited fresh
+route/backend/actor fields. Existing target validation remains mandatory. Native
+keyring availability is checked before consent on Linux using a bounded existing
+local Unix session bus; service presence does not prove unlock or write readiness.
+macOS/Windows rely on actual native credential operations rather than a separate
+availability probe. Unconfirmed terminal-reader cleanup fails without entering
+acquisition/TUI. No plaintext fallback, service
+startup or provisioning occurs. On successful join the wizard opens the TUI;
+later TUI failure preserves and identifies the completed join. Interactive output
+is human-readable; explicit setup join JSON and automation semantics are unchanged.
+See GUIDED-SETUP-DESIGN.md for cancellation, routing and acceptance requirements.
+
 Contract published 21 October 2026; implementation and acceptance are tracked in
 PHASE-4-PLAN.md and PHASE-4-REVIEW.md. This section extends earlier command
 contracts. It does not expose infrastructure `BuildPlan`/`Apply` through CLI/TUI.

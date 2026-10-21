@@ -72,6 +72,19 @@ process pins its scope at startup. Session names are unique within each project.
 
 ## Join a hosted workspace
 
+In an interactive terminal, start the guided setup with:
+
+```sh
+clawbridge
+```
+
+On first launch, enter the service URL, workspace and project, choose browser or
+device sign-in, then confirm. Future launches open the TUI with the saved route.
+Use `clawbridge setup wizard` to explicitly open guided join, or
+`clawbridge --client-config /absolute/path/config.toml` for a separate startup
+profile. Existing invalid configuration is reported rather than overwritten.
+Bare noninteractive invocation prints help; automation uses explicit commands.
+
 This joins an existing deployment; it never provisions resources or grants
 membership. Ask the workspace
 administrator for the HTTPS address, workspace and project and ensure your Google
@@ -209,8 +222,8 @@ help and `q` or Ctrl-C to quit. Overview, Projects and Sessions show existing
 read views. Inbox send/reply/mark-read require an explicitly selected current
 session and instance; opening the UI does not register or resume an actor.
 Cloud is informational: infrastructure provisioning is unavailable. Use the
-CLI setup/join commands first; interactive first-run forms and new project
-administration are separate future increments.
+guided startup or CLI setup/join commands first. New project administration is
+an explicit CLI operation; startup does not create projects or memberships.
 
 Session records include their owner and optional host/local-account labels. The
 Sessions view presents this attribution with details for the selected session.
@@ -248,3 +261,25 @@ with a reviewable template in [deploy/README.md](deploy/README.md).
 
 Repository: [jkai-chen/ClawBridge](https://github.com/jkai-chen/ClawBridge), initially
 private. The owner has not selected a distribution licence.
+
+## Linux credential storage
+
+OAuth refresh tokens use Linux Secret Service, not plaintext files. The
+ClawBridge process and the unlocked keyring must share the same user D-Bus
+session. This also applies to WSL and headless SSH: device sign-in changes the
+Google consent flow; it does **not** remove the native credential-store
+prerequisite. Windows Credential Manager is not automatically bridged into WSL.
+
+To inspect the current session without starting a service or accessing a token:
+
+```sh
+busctl --user --timeout=3 call org.freedesktop.DBus /org/freedesktop/DBus \
+  org.freedesktop.DBus NameHasOwner s org.freedesktop.secrets
+```
+
+`b true` confirms service presence only, not that the keyring is unlocked or
+write-ready. If the bus or service is unavailable, restore the existing desktop
+or SSH session in which the keyring was available, and run ClawBridge there.
+An already-authorized profile can run `whoami` again from that session; do not
+rejoin merely to repair the D-Bus environment. ClawBridge does not start services,
+provision a keyring, capture a keyring password, or fall back to plaintext storage.

@@ -200,3 +200,42 @@ Independent static review passes for exact source `25c43c65cbc5567a54f3a9c187481
 Root-operated macOS arm64 `version` and `--version` smoke records return the exact candidate metadata and report preserved active poisoned config. Reviewer confirmed the saved outputs and current malformed fixture state, without executing the application or independently observing its original environment. Fuller evidence: independent-candidate-review.json in the candidate temp directory. No rebuild, download or tests performed.
 
 This is local preparation, not public CI/release/install-route acceptance or deployment. Native Windows notification runtime, native MCP-resource-to-model behavior and cloud notification remain unverified. Linear execution awaits owner-selected team/issue; no board operations performed. Prior automated and real-host evidence retains its separate scope.
+
+### Subsequent remote WSL Codex E2E — 21 October 2026
+
+**PASS within the SSH-mediated, isolated local-authority scope.** Root connected
+to the owner's WSL2 x86-64 desktop and supplied the unchanged v0.2.0 Linux AMD64
+candidate from source `25c43c65cbc5567a54f3a9c187481f3690637602` (binary SHA256
+`9e286eb85f8e1a2583bd4ba8fe87645bd84c9697e591f1a2eaa5dfd5d6fb5024`).
+The new E2E tester created one remote recipient on the existing Codex 0.163.0
+host and one independent evidence-review subagent. Private routing identifiers,
+host paths and instance bindings remain outside this public report.
+
+Two nonce exchanges passed: startup unread pickup, then fresh arrival while an
+empty watcher was already polling. Fixed metadata-only notices automatically
+started distinct remote model turns after setup completed; no operator turn
+start followed setup. Each turn fetched its pinned inbox, replied with the exact
+fetched nonce and marked the request read. The Mac-controlled SSH sender fetched
+and marked both replies read. The independent subagent reconciled the host trace,
+command receipts and final SQLite records; all four messages/deliveries are read.
+
+Seven snapshot pairs have identical raw table data during status-only polling
+and restart checks. The checkpoint advanced from 1 to 3; all four unchanged or
+read-backlog restarts were silent. The recipient inherited its existing read-only
+sandbox and on-request policy. Seven normal individual command approvals covered
+bootstrap and mailbox actions, without policy amendments or settings overrides.
+Automatic wake is demonstrated; fully unattended processing is not claimed.
+
+Root independently confirmed the four test-owned processes absent, the existing
+shared host still running, the remote binary hash unchanged and all 111 accepted
+Go/module fingerprints unchanged. The reviewer independently recomputed the
+captured evidence without SSH, application calls or credential access. Final
+result and review are `result.json` and `independent-review.json` in private
+evidence directory `clawbridge-wsl-e2e-sz0vjvwr`. No implementation change or
+duplicate heavy gate was needed.
+
+This verifies WSL/Linux queue-triggered processing through an explicit CLI
+mapping and SSH-mediated SQLite authority. It does not establish public HTTPS or
+Google transport, hosted rollout, native MCP-resource wake, native Windows
+notification behavior, another platform, exactly-once delivery or a latency
+guarantee. Earlier observations retain their original dates and scope.

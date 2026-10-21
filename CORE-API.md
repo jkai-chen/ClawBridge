@@ -839,9 +839,10 @@ shapes fail diagnostics, and reports never echo environment values.
 
 ## Setup and TUI scaffold boundaries
 
-These packages remain scaffolds, rather than delivered create/join/TUI CLI
-commands. Their callable adapters still enforce the reviewed plan and display
-boundaries:
+At the Phase 3 baseline these packages remained scaffolds, rather than delivered
+create/join/TUI CLI commands. The Phase 4 contract below wires existing-service
+join and the operator TUI; infrastructure provisioning remains a scaffold. The
+callable adapters retain the reviewed plan and display boundaries:
 
 - `setup.Operation.Command` and `Runner.Run` use a complete tokenized command
   starting with `gcloud`. `GCloudRunner` validates that executable token, uses its
@@ -862,3 +863,182 @@ Google browser/device consent, Google ID-token issuance, Caddy certificate
 issuance, Compose networking and deployed authorization. Final Phase 3 review
 must name those live checks separately and must not infer them from synthetic
 tests.
+
+## Phase 4: existing-service onboarding contract
+
+Contract published 21 October 2026; implementation and acceptance are tracked in
+PHASE-4-PLAN.md and PHASE-4-REVIEW.md. This section extends earlier command
+contracts. It does not expose infrastructure `BuildPlan`/`Apply` through CLI/TUI.
+
+### Trusted client-config selection
+
+```text
+clawbridge --client-config /absolute/path/config.toml COMMAND ...
+```
+
+`--client-config` is a global flag, accepted before or after a command. It names
+the trusted ClawBridge client config, not the agent configuration target. Require
+an absolute path; reject an empty path or duplicate occurrences. It takes
+precedence over `CLAWBRIDGE_CONFIG`, bypasses home/repository configuration, and
+allows a missing file for first setup/login/join. Other flags and environment
+overlays retain their existing precedence. Repository configuration can never
+select this path. Existing `CLAWBRIDGE_CONFIG` semantics remain available.
+`mcp install --config PATH` still selects the agent config to edit.
+
+### Join CLI and transaction
+
+```text
+clawbridge setup join --server URL --workspace NAME_OR_ID --project SLUG_OR_ID
+    [--login|--device] [--cache PATH] [--session NAME_OR_ID --instance ID]
+```
+
+Server, workspace and project must be supplied explicitly as global command-line
+flags for join; neither repository scope nor inherited defaults replace them.
+No positional arguments are accepted after `join`. `--login` forces fresh browser
+acquisition, and `--device` forces fresh device acquisition; they are mutually
+exclusive. Both use only OAuth. `--mode`, when supplied, must be `cloud`.
+For a fresh route, omitted mode/source mean cloud/OAuth for this explicit join
+command only. No other command changes its default authority/backend.
+
+A fresh OAuth route with no active client ID acquires browser credentials by
+default. A complete existing OAuth route reuses its current keychain credential;
+failure to refresh/verify it does not cause fresh interactive acquisition or
+another backend. Explain that `login` or explicit `setup join --login|--device`
+is needed. Existing explicitly selected gcloud/ADC routes may join without OAuth
+acquisition; `--login` and `--device` conflict with those backends. New routes
+never infer the legacy empty-source gcloud default. All Phase 3 discovery,
+applicable-client pairing, principal verification and secret-redaction rules
+apply, including browser-after-device rediscovery.
+
+Before acquisition or authority requests, validate URL, explicit scope, backend,
+target config and session/instance pairing. Accept HTTPS, with numeric loopback
+HTTP only for local deployments/tests; no URL userinfo/query/fragment or redirect
+is accepted. A present target must be valid TOML in a regular nonsymlink file;
+reject local mode, conflicting pinned principal or a different existing server.
+Use a separate client config to select another authority. Explicit workspace and
+project flags authorize scope selection within the same service. A changed scope
+clears prior session/instance unless both were supplied explicitly for this join.
+Omitted session/instance do not register, resume or adopt any actor.
+
+Acquire fresh credentials through the staged auth transaction, keeping the
+candidate route in memory. Resolve workspace/project online and request `whoami`
+for the immutable IDs. Success requires `source=server`, `online=true`,
+`verified=true`, `storage_mode=cloud`, `identity_provenance=google-id-token`, the
+expected verified principal and both exact resolved IDs. No mirror response can
+authorize join. Neither `workspace_init`, `project_create`, role changes, sync,
+registration nor any infrastructure command may be invoked by join.
+
+Only after those checks, atomically publish the complete trusted cloud route:
+mode, server, audience, explicit credential source, verified principal, immutable
+workspace/project IDs, cache path and the backend's required fields. OAuth
+publishes both applicable installed-app pairs, never refresh/access/ID tokens.
+The default cache is `<ClawBridge state directory>/cache.db`; relative explicit
+cache paths resolve against that state directory. Preserve unrelated TOML keys,
+remove stale fields belonging to other credential backends, use same-directory
+temporary file plus atomic rename and private 0600 permissions. Deletion-only
+or permission corrections count as changes. Identical private routing is a
+byte-level no-op (`changed=false`).
+
+Commit staged keychain credentials only after successful config publication.
+Every failure before publication preserves prior config bytes and rolls back
+new/replaced staged credentials; cancellation uses a bounded cleanup context
+independent of the canceled operation context. Report a failed rollback as a
+partial keychain-cleanup failure without claiming full restoration. A reused
+credential requires no staged rollback. Authorization failure is never login
+success, membership creation or an offline success. Server-side read bookkeeping
+may occur, but there is no application mutation requested by join.
+
+Successful stdout is exactly one JSON result (progress/consent goes to stderr):
+
+```json
+{"source":"server","data":{"joined":true,"config_path":"/absolute/path/config.toml","workspace":"ws_ID","project":"prj_ID","principal":"human@example.com","credential_source":"oauth","changed":true}}
+```
+
+Errors return nonzero with no success JSON and no secret values. Existing
+`setup.Join` remains the reusable online validation/publication boundary. Extend
+`setup.JoinInput` with `OAuthClientSecret` and `OAuthDeviceClientSecret` string
+fields for private publication only; these fields must be excluded from JSON
+serialization and diagnostic rendering. CLI coordinates acquisition/rollback;
+`Join` does not perform OAuth or call gcloud. Existing `JoinResult` fields remain
+unchanged; CLI adds `joined`, `credential_source` and the `source/data` envelope.
+
+### Creation and administration boundary
+
+`setup --local [--name NAME] [--retention-days DAYS]` and
+`setup --cloud --workspace NAME [--retention-days DAYS]` retain their previous
+argument/output shapes and explicit authority checks. The latter initializes
+only the existing hosted service as its verified bootstrap owner. Its remote
+operation and local config write cannot form one transaction: if the operation
+succeeds but publication fails, report "workspace initialized but config write
+failed" and do not claim rollback. Neither command invokes infrastructure apply.
+No new `setup create`, automatic resource wizard or TUI infrastructure apply is
+delivered in this increment. Help must describe this boundary plainly.
+
+### Installed MCP route and diagnostic selection
+
+`mcp install` now resolves the trusted client route before building an entry.
+Global routing flags override inherited values; installer-specific flags retain
+their existing meaning. Inherit mode, immutable scope when available, backend,
+principal, cache and nonsecret client identifiers from the same resolver used by
+runtime. Never infer a local entry from a saved cloud route. Require an explicit
+distinct `--session` for installation rather than inheriting an operator actor.
+Do not auto-register a session or alter the client route. Existing install result
+shape, dry-run, target conflict/backup preservation and idempotence remain.
+
+Cloud entries additionally pin the effective absolute trusted client config as
+`--client-config PATH` in argv. This is a nonsecret path, not file contents.
+The MCP process reads applicable installed-app credentials from that trusted file;
+client-secret values and tokens remain forbidden in installed argv/environment.
+A fresh MCP process must reconstruct OAuth routing without inheriting the
+installer's environment. Other environment overrides remain rejected by doctor.
+Programmatic installer callers can supply `Options.ClientConfig`; when supplied
+it must be absolute. Existing callers without that field retain their prior
+entry format. `doctor.MCPConfig.ClientConfig` supplies the expected pinned path
+and expected argv order must agree with the installer.
+
+```text
+clawbridge doctor [--mcp-agent codex|claude-code --mcp-config PATH
+    --mcp-session NAME [--mcp-name NAME] [--mcp-instance ID]]
+```
+
+The three agent/config/session options are required together; name defaults to
+`clawbridge`; instance is optional. The diagnostic selection is independent of
+the operator session and never registers/resumes it. Resolve the explicit target
+path to absolute, construct expected MCP routing from the trusted route and the
+selected session, and use the existing read-only doctor checks. Normal `doctor`
+retains its output and unselected-MCP warning. Invalid/extra arguments fail
+before storage/network activity; installed secret/environment checks retain A1.
+
+### Terminal UI entry
+
+```text
+clawbridge tui [--screen overview|projects|sessions|inbox|cloud|doctor]
+```
+
+Global trusted routing/scope flags are accepted. Screen defaults to overview.
+No other command-specific arguments or positionals are accepted. Help returns
+without initializing configuration, storage, authentication or terminal mode.
+Non-terminal stdin/stdout and `TERM=dumb` fail promptly with an actionable CLI
+alternative before opening storage or contacting a service. No hidden `/dev/tty`
+fallback or process launch is allowed. Interactive stdout carries terminal UI,
+not a JSON result. The normal CLI/MCP JSON protocol is unchanged.
+
+Resolve/pin immutable workspace/project once, create the selected local or
+remote executor and inject it into `tui.New`; attach doctor with the same route.
+Do not register/resume an actor, log in, install an entry or initialize setup.
+Actorless read screens are allowed; send/reply/inbox/mark-read require the
+explicit matching current session/instance. Inbox delivery/last_seen bookkeeping
+retains the existing semantics. Existing keys/actions of the reviewed model are
+used: 1–6/tab navigation, r reload, arrows/j/k selection, ? help, q/Ctrl-C exit;
+Inbox n composes, p replies, m/Enter mark-read, Escape cancels drafts. Draft
+submission is an explicit mutation; failed writes are never queued or retried
+by switching authority. Quit/cancellation closes local resources and cancels
+in-flight work, restoring the terminal.
+
+Overview, Projects and Sessions expose existing read views, not new project
+administration. Cloud is informational and states provisioning unavailable;
+no SetupSource/Apply is installed by production CLI. Doctor is read-only.
+Dynamic text retains A3 escaping. Transport-only mirror reads keep explicit
+source/freshness; credential/401/403 errors never fall back. Startup does not
+open a local authority in cloud mode. Interactive first-run forms, project
+administration and cloud infrastructure creation remain future increments.

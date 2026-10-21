@@ -69,6 +69,7 @@ type Config struct {
 // MCPConfig identifies one installed-client configuration and the expected
 // ClawBridge entry. Doctor reads these paths and never repairs them.
 type MCPConfig struct {
+	ClientConfig              string `json:"client_config,omitempty"`
 	Agent                     string `json:"agent"`
 	Name                      string `json:"name"`
 	Path                      string `json:"path"`
@@ -596,6 +597,12 @@ func expectedMCPEntry(mcp MCPConfig) (map[string]any, error) {
 	}
 	if mcp.Instance != "" {
 		args = append(args, "--instance", mcp.Instance)
+	}
+	if mcp.ClientConfig != "" {
+		if !filepath.IsAbs(mcp.ClientConfig) {
+			return nil, errors.New("absolute client config required")
+		}
+		args = append(args, "--client-config", mcp.ClientConfig)
 	}
 	return map[string]any{"command": nil, "args": args}, nil
 }

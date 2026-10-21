@@ -304,3 +304,32 @@ Boot-disk usage fell from 97% (329 MB free) to 38% (5.7 GB free), while all five
 containers, seven images and four volumes remained. No restart or disk expansion
 was needed. The deployment runbook records commands and retained-resource checks;
 the reviewer report records independent post-cleanup verification.
+
+### Phase 4: onboarding and operator TUI
+
+Owner authorized the next increment on 21 October 2026. Baseline `e8db318` is
+pushed; prior deployment/cleanup and first unattended backup evidence are closed.
+Root published PHASE-4-PLAN.md and the exact Phase 4 section in CORE-API.md.
+Scope: transactional SDK-free `setup join`, explicit trusted `--client-config`,
+MCP installation inheriting/pinning that route, explicit MCP doctor selection,
+and a `tui` entry for the existing six-screen operator model. Existing local
+creation and hosted bootstrap initialization remain explicit commands. The old
+infrastructure provisioner stays disconnected; no new cloud resources, pilot
+deployment or real-user config/consent operations are part of implementation.
+
+Root owns plan/contract/README and coordination; cb-engineer owns all production
+implementation and focused tests; cb-tester-reviewer owns integration probes,
+PHASE-4-REVIEW.md and heavy checks after exact engineer freeze. Fresh no-gcloud
+live onboarding and a second human user remain separate manual acceptance gates.
+
+Implementation and automated independent acceptance passed. Reviewer retested
+empty immutable-ID rejection, diagnostic redaction, actorless TUI guards and
+complete OAuth-pair preflight; transaction tests cover rollback failures and
+uncanceled cleanup. CLI preflight, pinned installer routing and a fresh-process
+MCP/selected doctor exchange use synthetic credentials. Full uncached and race
+suites passed with disposable PostgreSQL 17.11, alongside vet and three CGO0
+cross-builds. Both exact containers/volumes are absent and all 73 frozen Go/module
+fingerprints remain unchanged. PHASE-4-REVIEW.md owns exact results. Root handles
+documentation/publication only; no Phase 4 pilot deployment occurred. The manual
+checklist is in PHASE-4-PLAN.md; live consent, platform keychains, a physically
+SDK-free machine and second-human acceptance remain Pending.

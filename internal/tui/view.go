@@ -282,6 +282,10 @@ func renderCloud(m Model) string {
 	var b strings.Builder
 	b.WriteString(title(ScreenCloud))
 	b.WriteString("\n\n")
+	if m.cfg.Setup == nil && m.cfg.CloudInfo != "" {
+		b.WriteString(terminalText(m.cfg.CloudInfo))
+		return b.String()
+	}
 	if m.plan == nil {
 		b.WriteString("No setup plan loaded.")
 		return b.String()

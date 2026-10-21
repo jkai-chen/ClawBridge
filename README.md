@@ -2,8 +2,10 @@
 
 A project-scoped messaging bus for coding agents. ClawBridge supports a local
 SQLite mode and a hosted Postgres mode with verified Google identity, plus CLI,
-stdio MCP, and an explicitly synchronized read-only offline mirror. The TUI,
-cross-project links, and automated cloud provisioning are later phases.
+stdio MCP, and an explicitly synchronized read-only offline mirror. The Phase 4
+onboarding/TUI increment passed automated independent review; see
+[PHASE-4-REVIEW.md](PHASE-4-REVIEW.md). Cross-project links and automated cloud
+provisioning remain future work.
 
 ## Build
 
@@ -70,6 +72,30 @@ process pins its scope at startup. Session names are unique within each project.
 
 ## Join a hosted workspace
 
+This joins an existing deployment; it never provisions resources or grants
+membership. Ask the workspace
+administrator for the HTTPS address, workspace and project and ensure your Google
+account already has access:
+
+```sh
+bin/clawbridge setup join --server https://SERVICE \
+  --workspace TEAM --project CODEBASE
+bin/clawbridge whoami
+```
+
+First join opens browser sign-in by default; add `--device` to approve from
+another device. A complete existing OAuth route reuses its keychain credential.
+Use `--login` for an explicit fresh browser sign-in. A successful join saves the
+verified principal and resolved project IDs in private trusted configuration.
+Denied membership or an unreachable service leaves the previous route intact.
+Joining does not register an agent session.
+
+To keep another trusted route, use the global
+`--client-config /absolute/path/config.toml`. Join requires an explicit server,
+workspace and project; repository files cannot choose the server or credentials.
+
+The standalone Phase 3 login commands remain supported:
+
 Browser sign-in uses Google OAuth with a loopback callback and PKCE. It needs no
 `gcloud` installation:
 
@@ -99,7 +125,41 @@ revoke other Google credentials or alter agent configuration. See
 [PHASE-3-REVIEW.md](PHASE-3-REVIEW.md) for the exact routing contract and the
 remaining live Google acceptance limits.
 
+### Create locally or initialize an existing hosted service
+
+`setup --local` in the local example creates a local workspace. For an already
+deployed hosted service, only its configured bootstrap owner can initialize it:
+
+```sh
+bin/clawbridge login --mode cloud --credential-source oauth --server https://SERVICE
+bin/clawbridge setup --cloud --workspace TEAM --retention-days 90
+bin/clawbridge project create CODEBASE
+```
+
+These are explicit administrative operations. `setup --cloud` does not create
+Compute Engine, PostgreSQL, OAuth clients or IAM grants. The existing Compose
+deployment instructions are in [deploy/README.md](deploy/README.md); the older
+infrastructure setup scaffold is not exposed as an automatic provisioning path.
+
 ## MCP and installation
+
+After a Phase 4 join, MCP installation inherits the saved trusted cloud route.
+Choose a distinct session per agent; preview the target before writing it:
+
+```sh
+bin/clawbridge mcp install --agent codex --session codex-engineer --dry-run
+bin/clawbridge mcp install --agent codex --session codex-engineer
+bin/clawbridge doctor --mcp-agent codex --mcp-config /absolute/path/to/codex/config.toml \
+  --mcp-session codex-engineer
+```
+
+Use `--agent claude-code` and a separate session for Claude Code. Installation
+writes configuration only; the agent calls `register_session` after connecting.
+Cloud entries pin the trusted client-config path and safe routing identifiers.
+They contain no installed-app credentials or user tokens. Keep that trusted
+config file and its native keychain available to the user running the MCP process.
+`--client-config` selects the ClawBridge route; installer `--config` selects the
+agent file to edit. Diagnostics never repair entries automatically.
 
 Start an MCP process with a distinct session name for each agent:
 
@@ -134,6 +194,27 @@ The installer follows the official [Codex MCP configuration](https://developers.
 and [Claude Code MCP configuration](https://code.claude.com/docs/en/mcp).
 It writes config only when invoked; it never starts agents. The provider-neutral
 agent instructions live in [skills/clawbridge](skills/clawbridge/SKILL.md).
+
+## Terminal interface
+
+The Phase 4 terminal entry uses the same saved authority and pinned project:
+
+```sh
+bin/clawbridge tui
+bin/clawbridge tui --screen doctor
+```
+
+Run it in an interactive terminal. Use 1–6 or Tab to switch screens, `?` for
+help and `q` or Ctrl-C to quit. Overview, Projects and Sessions show existing
+read views. Inbox send/reply/mark-read require an explicitly selected current
+session and instance; opening the UI does not register or resume an actor.
+Cloud is informational: infrastructure provisioning is unavailable. Use the
+CLI setup/join commands first; interactive first-run forms and new project
+administration are separate future increments.
+
+Phase 4 automated fixtures and the earlier Phase 3 live Google/macOS evidence
+are separate. See [PHASE-4-REVIEW.md](PHASE-4-REVIEW.md) for the current acceptance
+status; a new real clean-machine onboarding journey is not yet claimed.
 
 ## Behavior and verification
 

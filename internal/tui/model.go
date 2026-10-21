@@ -145,9 +145,11 @@ func (f SetupFuncs) Apply(ctx context.Context, confirmation string) (ApplyResult
 // already-opened local executor; TUI never creates one. Cloud mode expects an
 // authenticated remote executor or compatible adapter.
 type Config struct {
-	Executor Executor
-	Doctor   DoctorSource
-	Setup    SetupSource
+	InitialScreen Screen
+	CloudInfo     string
+	Executor      Executor
+	Doctor        DoctorSource
+	Setup         SetupSource
 	// AllowSetupOnly permits a fresh cloud install to browse the Cloud screen
 	// before an authority executor or workspace scope exists. Any authority-backed
 	// view still fails with an actionable configuration error.
@@ -334,6 +336,18 @@ func New(cfg Config) (Model, error) {
 		cfg.Now = time.Now
 	}
 	m := Model{cfg: cfg, screen: ScreenOverview, width: 100, height: 30}
+	if cfg.InitialScreen != "" {
+		valid := false
+		for _, screen := range orderedScreens {
+			if screen == cfg.InitialScreen {
+				valid = true
+			}
+		}
+		if !valid {
+			return Model{}, errors.New("invalid initial TUI screen")
+		}
+		m.screen = cfg.InitialScreen
+	}
 	m.workspace = WorkspaceView{Name: cfg.Workspace}
 	m.project = ProjectView{Slug: cfg.Project}
 	m.session = SessionView{Name: cfg.Session}
@@ -491,6 +505,11 @@ func (m Model) SelectedMessage() (MessageRow, bool) {
 
 // BeginReply opens an explicit reply draft for the selected inbox message.
 func (m Model) BeginReply() Model {
+	if m.cfg.Session == "" || m.cfg.Instance == "" {
+		m.actionErr = "this action requires a bound session and matching instance; use explicit --session and --instance"
+		return m
+	}
+
 	if _, ok := m.SelectedMessage(); !ok {
 		m.actionErr = "select an inbox message before replying"
 		return m
@@ -508,6 +527,11 @@ func (m Model) BeginReply() Model {
 // BeginSend opens an explicit broadcast-to-peer send draft. The recipient is
 // entered before the body as "session|body" when submitted by the TUI.
 func (m Model) BeginSend() Model {
+	if m.cfg.Session == "" || m.cfg.Instance == "" {
+		m.actionErr = "this action requires a bound session and matching instance; use explicit --session and --instance"
+		return m
+	}
+
 	if m.writesBlocked() {
 		m.actionErr = "the authority is offline; sends are not queued and remain unavailable until reconnect"
 		return m
@@ -529,6 +553,11 @@ func (m Model) CancelInput() Model {
 
 // Reply is an explicit mutation. It is never invoked by navigation or refresh.
 func (m Model) Reply(messageID, body, operationID string) (Model, tea.Cmd) {
+	if m.cfg.Session == "" || m.cfg.Instance == "" {
+		m.actionErr = "this action requires a bound session and matching instance; use explicit --session and --instance"
+		return m, nil
+	}
+
 	if messageID == "" || strings.TrimSpace(body) == "" || operationID == "" {
 		m.actionErr = "reply requires a selected message, nonempty body and operation ID"
 		return m, nil
@@ -549,6 +578,11 @@ func (m Model) Reply(messageID, body, operationID string) (Model, tea.Cmd) {
 
 // Send is an explicit mutation. operationID is required for safe idempotent retry.
 func (m Model) Send(to, body, operationID string) (Model, tea.Cmd) {
+	if m.cfg.Session == "" || m.cfg.Instance == "" {
+		m.actionErr = "this action requires a bound session and matching instance; use explicit --session and --instance"
+		return m, nil
+	}
+
 	if strings.TrimSpace(to) == "" || strings.TrimSpace(body) == "" || operationID == "" {
 		m.actionErr = "send requires a recipient, nonempty body and operation ID"
 		return m, nil
@@ -569,6 +603,11 @@ func (m Model) Send(to, body, operationID string) (Model, tea.Cmd) {
 
 // MarkRead is an explicit mutation. Offline mirror reads never become writes.
 func (m Model) MarkRead(ids []string) (Model, tea.Cmd) {
+	if m.cfg.Session == "" || m.cfg.Instance == "" {
+		m.actionErr = "this action requires a bound session and matching instance; use explicit --session and --instance"
+		return m, nil
+	}
+
 	if len(ids) == 0 {
 		m.actionErr = "select at least one message to mark read"
 		return m, nil
@@ -730,6 +769,9 @@ func (m Model) refresh() (Model, tea.Cmd) {
 	case ScreenCloud:
 		return m, func() tea.Msg {
 			if m.cfg.Setup == nil {
+				if m.cfg.CloudInfo != "" {
+					return loadedMsg{request: requestID, screen: screen, kind: loadCloud, plan: &SetupPlan{Title: "Selected authority", Plan: m.cfg.CloudInfo}}
+				}
 				return loadedMsg{request: requestID, screen: screen, kind: loadCloud,
 					err: errors.New("cloud setup planning is not configured; use the deployment CLI or configure a setup adapter")}
 			}

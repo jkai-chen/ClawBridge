@@ -380,3 +380,30 @@ func TestEnterMarksSelectedInboxMessageRead(t *testing.T) {
 		t.Fatal("mark_read was not issued")
 	}
 }
+
+func TestActorlessMutationsNeverReachExecutor(t *testing.T) {
+	for _, actor := range [][2]string{{"", ""}, {"session", ""}, {"", "instance"}} {
+		authority := &fakeAuthority{}
+		model, err := New(Config{Executor: authority, Mode: ModeCloud, Workspace: "w", Project: "p", Session: actor[0], Instance: actor[1]})
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, action := range []func(Model) (Model, tea.Cmd){
+			func(m Model) (Model, tea.Cmd) { return m.Send("peer", "body", "op") },
+			func(m Model) (Model, tea.Cmd) { return m.Reply("message", "body", "op") },
+			func(m Model) (Model, tea.Cmd) { return m.MarkRead([]string{"message"}) },
+		} {
+			updated, cmd := action(model)
+			if cmd != nil {
+				cmd()
+				t.Fatal("actorless action created authority command")
+			}
+			if !strings.Contains(updated.actionErr, "session") || !strings.Contains(updated.actionErr, "instance") {
+				t.Fatal("missing actor warning")
+			}
+		}
+		if len(authority.calls) != 0 {
+			t.Fatal("actorless mutation reached executor")
+		}
+	}
+}

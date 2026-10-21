@@ -130,3 +130,23 @@ func TestInstalledEnvironmentCannotCarryCredentialsOrOverrideRoute(t *testing.T)
 		t.Fatal("credential argv accepted")
 	}
 }
+
+func TestPinnedClientConfigIsComparedExactly(t *testing.T) {
+	m := MCPConfig{Agent: "claude-code", Mode: "cloud", Workspace: "w", Project: "p", Session: "agent", Server: "https://service.example.test", Audience: "desktop", Principal: "human@example.test", Cache: filepath.Join(t.TempDir(), "cache.db"), CredentialSource: "oauth", OAuthClientID: "desktop", ClientConfig: filepath.Join(t.TempDir(), "trusted.toml")}
+	entry, err := expectedMCPEntry(m)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !entryMatches(entry, entry) {
+		t.Fatal("same pinned route rejected")
+	}
+	other := m
+	other.ClientConfig = filepath.Join(t.TempDir(), "other.toml")
+	wrong, err := expectedMCPEntry(other)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if entryMatches(entry, wrong) {
+		t.Fatal("different trusted client config accepted")
+	}
+}

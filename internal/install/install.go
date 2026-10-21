@@ -19,6 +19,7 @@ import (
 )
 
 type Options struct {
+	ClientConfig                                                                 string
 	Agent, Config, Command, Name                                                 string
 	DB, Workspace, Project, Session, Instance                                    string
 	Mode, Server, Audience, Account, ImpersonateServiceAccount, Principal, Cache string
@@ -38,10 +39,14 @@ type Result struct {
 var namePattern = regexp.MustCompile(`^[A-Za-z0-9_-]+$`)
 
 // Run is the CLI entry point. Tests should use Install with an isolated path.
-func Run(args []string) error {
+func Run(args []string) error { return RunWithIO(args, os.Stdout, os.Stderr) }
+
+// RunWithIO preserves CLI stream ownership for embedded callers.
+func RunWithIO(args []string, stdout, stderr io.Writer) error {
 	f := flag.NewFlagSet("mcp install", flag.ContinueOnError)
-	f.SetOutput(os.Stderr)
+	f.SetOutput(stderr)
 	o := Options{}
+	f.StringVar(&o.ClientConfig, "client-config", "", "absolute trusted client config path")
 	f.StringVar(&o.Agent, "agent", "", "codex or claude-code")
 	f.StringVar(&o.Config, "config", "", "explicit target configuration path")
 	f.StringVar(&o.Command, "command", "", "absolute clawbridge binary path")
@@ -78,13 +83,16 @@ func Run(args []string) error {
 	if err != nil {
 		return err
 	}
-	return json.NewEncoder(os.Stdout).Encode(r)
+	return json.NewEncoder(stdout).Encode(r)
 }
 
 // Install preserves unrelated settings, rejects a conflicting entry, backs up
 // existing bytes, and atomically replaces the target. A repeat is a byte-level no-op.
 func Install(o Options) (Result, error) {
 	r := Result{DryRun: o.DryRun}
+	if o.ClientConfig != "" && !filepath.IsAbs(o.ClientConfig) {
+		return r, errors.New("client config must be absolute")
+	}
 	if o.Agent != "codex" && o.Agent != "claude-code" {
 		return r, errors.New("--agent must be codex or claude-code")
 	}
@@ -214,6 +222,9 @@ func Install(o Options) (Result, error) {
 	}
 	if o.Instance != "" {
 		argv = append(argv, "--instance", o.Instance)
+	}
+	if o.ClientConfig != "" {
+		argv = append(argv, "--client-config", o.ClientConfig)
 	}
 	entry := map[string]any{"command": command, "args": argv}
 	if o.Agent == "claude-code" {

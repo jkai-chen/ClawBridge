@@ -13,6 +13,7 @@ import (
 )
 
 type Config struct {
+	ClientConfig              string `toml:"-"`
 	DB                        string `toml:"db"`
 	Workspace                 string `toml:"workspace"`
 	Project                   string `toml:"project"`
@@ -166,7 +167,7 @@ func resolveConfigVariantMode(ctx context.Context, flags Config, variant func(Co
 	}
 	path := filepath.Join(home, "config.toml")
 	base := Config{}
-	if explicit := os.Getenv("CLAWBRIDGE_CONFIG"); explicit != "" {
+	if explicit := firstConfigPath(flags.ClientConfig, os.Getenv("CLAWBRIDGE_CONFIG")); explicit != "" {
 		path = explicit
 		c, e := readConfig(path, false)
 		if e != nil {
@@ -282,6 +283,11 @@ func resolveConfigVariantMode(ctx context.Context, flags Config, variant func(Co
 	if login && base.CredentialSource != "oauth" {
 		return Config{}, "", errors.New("OAuth login requires trusted credential_source=oauth; no credential backend fallback is available")
 	}
+	path, err = filepath.Abs(path)
+	if err != nil {
+		return Config{}, "", err
+	}
+	base.ClientConfig = path
 	return base, path, nil
 }
 
@@ -421,4 +427,11 @@ func writeCredentialSourceConfig(path string, c Config) error {
 		return err
 	}
 	return os.Rename(tmp, path)
+}
+
+func firstConfigPath(explicit, environment string) string {
+	if explicit != "" {
+		return explicit
+	}
+	return environment
 }

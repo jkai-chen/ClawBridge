@@ -3,6 +3,7 @@ package setup
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -48,6 +49,7 @@ func oauthJoin(t *testing.T) JoinInput {
 		Server: "https://server.example.test", Audience: "desktop-client",
 		Principal: "alice@example.test", Cache: filepath.Join(dir, "cache.db"),
 		CredentialSource: "oauth", OAuthClientID: "desktop-client",
+		OAuthClientSecret: "synthetic-desktop-app", OAuthDeviceClientSecret: "synthetic-device-app",
 		OAuthDeviceClientID: "device-client", OAuthKeyringService: "review-keyring",
 	}
 }
@@ -70,12 +72,13 @@ func TestJoinPersistsOnlySafeOAuthRouteAfterVerification(t *testing.T) {
 		"mode = 'cloud'", "credential_source = 'oauth'", "oauth_client_id = 'desktop-client'",
 		"oauth_device_client_id = 'device-client'", "oauth_keyring_service = 'review-keyring'",
 		"server = 'https://server.example.test'", "audience = 'desktop-client'",
+		"oauth_client_secret = 'synthetic-desktop-app'", "oauth_device_client_secret = 'synthetic-device-app'",
 	} {
 		if !strings.Contains(config, wanted) {
 			t.Fatalf("trusted OAuth join omitted %q: %s", wanted, config)
 		}
 	}
-	for _, forbidden := range []string{"oauth_client_secret", "refresh_token", "id_token", "access_token"} {
+	for _, forbidden := range []string{"refresh_token", "id_token", "access_token"} {
 		if strings.Contains(config, forbidden) {
 			t.Fatalf("trusted join persisted secret-like field %q: %s", forbidden, config)
 		}
@@ -122,5 +125,79 @@ func TestGCloudRunnerConsumesFullCommandExactlyOnce(t *testing.T) {
 		if _, err := runner.Run(context.Background(), command); err == nil {
 			t.Fatal("invalid executable token accepted")
 		}
+	}
+}
+
+type emptyJoinExecutor struct {
+	joinExecutor
+	workspace, project string
+	calls              *int
+}
+
+func (e emptyJoinExecutor) ResolveProject(context.Context, string, string, string) (string, string, error) {
+	return e.workspace, e.project, nil
+}
+func (e emptyJoinExecutor) Execute(context.Context, bus.Request) (bus.Result, error) {
+	*e.calls++
+	return bus.Result{}, nil
+}
+func TestJoinRejectsEmptyResolvedIDsBeforeWhoami(t *testing.T) {
+	for _, ids := range [][2]string{{"", "prj"}, {"ws", ""}, {" ", "prj"}} {
+		in := oauthJoin(t)
+		calls := 0
+		_, err := Join(context.Background(), in, emptyJoinExecutor{joinExecutor{in}, ids[0], ids[1], &calls})
+		if err == nil || calls != 0 {
+			t.Fatal("empty resolution reached authorization")
+		}
+		if _, err = os.Stat(in.ConfigPath); !os.IsNotExist(err) {
+			t.Fatal("published empty scope")
+		}
+	}
+}
+func TestJoinInputDiagnosticsRedactPrivatePairs(t *testing.T) {
+	in := oauthJoin(t)
+	in.OAuthClientSecret = "synthetic-desktop-secret"
+	in.OAuthDeviceClientSecret = "synthetic-device-secret"
+	for _, format := range []string{"%v", "%+v", "%#v"} {
+		value := fmt.Sprintf(format, in)
+		if strings.Contains(value, in.OAuthClientSecret) || strings.Contains(value, in.OAuthDeviceClientSecret) {
+			t.Fatal("private pair in diagnostics")
+		}
+	}
+}
+
+type forbiddenJoinExecutor struct{ t *testing.T }
+
+func (e forbiddenJoinExecutor) ResolveProject(context.Context, string, string, string) (string, string, error) {
+	e.t.Fatal("incomplete credential reached authority resolution")
+	return "", "", nil
+}
+func (e forbiddenJoinExecutor) Execute(context.Context, bus.Request) (bus.Result, error) {
+	e.t.Fatal("incomplete credential reached authority execution")
+	return bus.Result{}, nil
+}
+func TestJoinRejectsIncompleteOAuthPairsBeforeAuthority(t *testing.T) {
+	for name, mutate := range map[string]func(*JoinInput){
+		"active-secret-missing": func(in *JoinInput) { in.OAuthClientSecret = "" },
+		"active-secret-blank":   func(in *JoinInput) { in.OAuthClientSecret = " " },
+		"device-secret-missing": func(in *JoinInput) { in.OAuthDeviceClientSecret = "" },
+		"device-id-missing":     func(in *JoinInput) { in.OAuthDeviceClientID = "" },
+	} {
+		t.Run(name, func(t *testing.T) {
+			in := oauthJoin(t)
+			mutate(&in)
+			if _, err := Join(context.Background(), in, forbiddenJoinExecutor{t}); err == nil {
+				t.Fatal("incomplete OAuth pair accepted")
+			}
+			if _, err := os.Stat(in.ConfigPath); !os.IsNotExist(err) {
+				t.Fatal("incomplete route published")
+			}
+		})
+	}
+	in := oauthJoin(t)
+	in.OAuthDeviceClientID = ""
+	in.OAuthDeviceClientSecret = ""
+	if _, err := Join(context.Background(), in, joinExecutor{in}); err != nil {
+		t.Fatalf("optional device pair required: %v", err)
 	}
 }

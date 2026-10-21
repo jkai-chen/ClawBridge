@@ -14,6 +14,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/url"
 	"os"
 	"os/exec"
@@ -144,6 +145,8 @@ type LocalResult struct {
 // JoinInput routes an online authorization check to an existing hosted service.
 // ConfigPath is updated only after the server proves the expected identity.
 type JoinInput struct {
+	OAuthClientSecret         string `json:"-"`
+	OAuthDeviceClientSecret   string `json:"-"`
 	ConfigPath                string `json:"config_path"`
 	Workspace                 string `json:"workspace"`
 	Project                   string `json:"project"`
@@ -161,6 +164,18 @@ type JoinInput struct {
 	OAuthClientID             string `json:"oauth_client_id"`
 	OAuthDeviceClientID       string `json:"oauth_device_client_id"`
 	OAuthKeyringService       string `json:"oauth_keyring_service"`
+}
+
+// Format keeps private installed-app credentials out of all fmt diagnostics,
+// including Go-syntax formatting (%#v). JSON uses the same public projection.
+func (in JoinInput) Format(state fmt.State, verb rune) {
+	type public JoinInput
+	raw, err := json.Marshal(public(in))
+	if err != nil {
+		_, _ = io.WriteString(state, "JoinInput{redacted}")
+		return
+	}
+	_, _ = state.Write(raw)
 }
 
 // JoinResult describes the trusted route written after a successful online check.
@@ -496,6 +511,9 @@ func Local(ctx context.Context, executor Executor, workspace string, retentionDa
 // Join proves an online hosted identity and only then atomically writes trusted
 // cloud routing. It never initializes or adopts a workspace.
 func Join(ctx context.Context, in JoinInput, executor Executor) (JoinResult, error) {
+	if err := ValidateJoinTarget(in.ConfigPath, in.Server, in.Principal); err != nil {
+		return JoinResult{}, err
+	}
 	if err := validateJoinInput(in); err != nil {
 		return JoinResult{}, err
 	}
@@ -505,6 +523,9 @@ func Join(ctx context.Context, in JoinInput, executor Executor) (JoinResult, err
 	wid, pid, err := executor.ResolveProject(ctx, in.Workspace, in.Project, in.GitRemote)
 	if err != nil {
 		return JoinResult{}, fmt.Errorf("online join resolution failed: %w", err)
+	}
+	if strings.TrimSpace(wid) == "" || strings.TrimSpace(pid) == "" {
+		return JoinResult{}, errors.New("join requires nonempty immutable resolved workspace and project IDs; no routing written")
 	}
 	args := map[string]any{}
 	if in.Instance != "" {
@@ -531,6 +552,12 @@ func Join(ctx context.Context, in JoinInput, executor Executor) (JoinResult, err
 	if text(workspace, "id") != wid || text(project, "id") != pid {
 		return JoinResult{}, errors.New("join response did not preserve the resolved scope; no routing written")
 	}
+	if err := ctx.Err(); err != nil {
+		return JoinResult{}, err
+	}
+	if err := ValidateJoinTarget(in.ConfigPath, in.Server, in.Principal); err != nil {
+		return JoinResult{}, err
+	}
 	changed, err := writeCloudConfig(in.ConfigPath, wid, pid, in)
 	if err != nil {
 		return JoinResult{}, err
@@ -555,7 +582,7 @@ func validateJoinInput(in JoinInput) error {
 	if err != nil || u.Host == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" {
 		return errors.New("join requires a valid trusted server URL")
 	}
-	if u.Scheme != "https" && !(u.Scheme == "http" && (u.Hostname() == "127.0.0.1" || u.Hostname() == "localhost" || u.Hostname() == "::1")) {
+	if u.Scheme != "https" && !(u.Scheme == "http" && (net.ParseIP(u.Hostname()) != nil && net.ParseIP(u.Hostname()).IsLoopback())) {
 		return errors.New("join server requires HTTPS except on loopback")
 	}
 	if strings.TrimSpace(in.CredentialSource) == "" {
@@ -564,12 +591,19 @@ func validateJoinInput(in JoinInput) error {
 	if strings.TrimSpace(in.Cache) == "" {
 		return errors.New("join requires an explicit mirror cache path")
 	}
+	if in.CredentialSource == "oauth" && strings.TrimSpace(in.OAuthClientSecret) == "" {
+		return errors.New("join requires a complete active OAuth client pair; acquire the matching installed-app credential before joining")
+	}
+	if in.CredentialSource == "oauth" && (strings.TrimSpace(in.OAuthDeviceClientID) == "") != (strings.TrimSpace(in.OAuthDeviceClientSecret) == "") {
+		return errors.New("join requires both device OAuth client ID and matching installed-app credential when either is configured")
+	}
 	if _, err = remote.ValidateRoute(remote.Config{
 		URL: in.Server, Audience: in.Audience, Account: in.Account,
 		ImpersonateServiceAccount: in.ImpersonateServiceAccount,
 		Principal:                 in.Principal, CachePath: in.Cache,
 		CredentialSource: in.CredentialSource, CredentialsFile: in.CredentialsFile,
 		OAuthClientID: in.OAuthClientID, OAuthDeviceClientID: in.OAuthDeviceClientID,
+		OAuthClientSecret: in.OAuthClientSecret, OAuthDeviceClientSecret: in.OAuthDeviceClientSecret,
 		OAuthKeyringService: in.OAuthKeyringService,
 	}); err != nil {
 		return fmt.Errorf("join credential route: %w", err)
@@ -585,6 +619,7 @@ func writeCloudConfig(path, workspace, project string, in JoinInput) (bool, erro
 		return false, fmt.Errorf("cannot inspect trusted config: %w", err)
 	}
 	mode := os.FileMode(0600)
+	var previous []byte
 	if exists {
 		if !info.Mode().IsRegular() {
 			return false, errors.New("trusted config path must be a regular file")
@@ -599,10 +634,25 @@ func writeCloudConfig(path, workspace, project string, in JoinInput) (bool, erro
 		if e = toml.Unmarshal(raw, &values); e != nil {
 			return false, errors.New("trusted config is malformed; no routing written")
 		}
-		mode = info.Mode().Perm()
+		previous = raw
 	}
 	if old, _ := values["mode"].(string); old != "" && old != "cloud" {
 		return false, errors.New("refusing to replace non-cloud trusted configuration")
+	}
+	if in.CredentialSource != "oauth" {
+		in.OAuthClientID = ""
+		in.OAuthClientSecret = ""
+		in.OAuthDeviceClientID = ""
+		in.OAuthDeviceClientSecret = ""
+		in.OAuthKeyringService = ""
+	}
+	if in.CredentialSource == "oauth" {
+		in.Account = ""
+		in.ImpersonateServiceAccount = ""
+		in.CredentialsFile = ""
+	}
+	if in.CredentialSource != "adc" {
+		in.CredentialsFile = ""
 	}
 	updates := map[string]any{
 		"mode": "cloud", "workspace": workspace, "project": project,
@@ -614,7 +664,8 @@ func writeCloudConfig(path, workspace, project string, in JoinInput) (bool, erro
 		"account": in.Account, "impersonate_service_account": in.ImpersonateServiceAccount,
 		"credentials_file": in.CredentialsFile, "oauth_client_id": in.OAuthClientID,
 		"oauth_device_client_id": in.OAuthDeviceClientID,
-		"oauth_keyring_service":  in.OAuthKeyringService,
+		"oauth_client_secret":    in.OAuthClientSecret, "oauth_device_client_secret": in.OAuthDeviceClientSecret,
+		"oauth_keyring_service": in.OAuthKeyringService,
 	} {
 		if value != "" {
 			updates[key] = value
@@ -625,23 +676,22 @@ func writeCloudConfig(path, workspace, project string, in JoinInput) (bool, erro
 	if in.Session != "" {
 		updates["session"] = in.Session
 		updates["instance"] = in.Instance
-	} else {
+	} else if values["workspace"] != workspace || values["project"] != project {
 		delete(values, "session")
 		delete(values, "instance")
 	}
-	changed := false
 	for key, value := range updates {
-		if !reflect.DeepEqual(values[key], value) {
-			changed = true
-		}
 		values[key] = value
-	}
-	if !changed {
-		return false, nil
 	}
 	raw, err := toml.Marshal(values)
 	if err != nil {
 		return false, errors.New("cannot encode trusted config")
+	}
+	if exists && info.Mode().Perm() == 0600 {
+		var old map[string]any
+		if toml.Unmarshal(previous, &old) == nil && reflect.DeepEqual(old, values) {
+			return false, nil
+		}
 	}
 	if err = os.MkdirAll(filepath.Dir(path), 0700); err != nil {
 		return false, err
@@ -689,4 +739,50 @@ func SortedOperations(operations []Operation) []Operation {
 	out := append([]Operation{}, operations...)
 	sort.SliceStable(out, func(i, j int) bool { return out[i].Name < out[j].Name })
 	return out
+}
+
+// ValidateJoinTarget performs offline authority/config preflight before consent.
+func ValidateJoinTarget(path, server, principal string) error {
+	if !filepath.IsAbs(path) {
+		return errors.New("join requires an absolute trusted config path")
+	}
+	u, err := url.Parse(server)
+	if err != nil || u.Host == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" || u.RawPath != "" || (u.Path != "" && u.Path != "/") {
+		return errors.New("join requires a valid trusted server URL")
+	}
+	ip := net.ParseIP(u.Hostname())
+	if u.Scheme != "https" && !(u.Scheme == "http" && ip != nil && ip.IsLoopback()) {
+		return errors.New("join requires HTTPS except numeric loopback")
+	}
+	info, err := os.Lstat(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return errors.New("cannot inspect trusted config")
+	}
+	if !info.Mode().IsRegular() || info.Size() > 4<<20 {
+		return errors.New("trusted config must be a regular nonsymlink file within 4 MiB")
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return errors.New("cannot read trusted config")
+	}
+	var values map[string]any
+	if toml.Unmarshal(raw, &values) != nil {
+		return errors.New("trusted config is malformed")
+	}
+	mode, _ := values["mode"].(string)
+	if mode != "" && mode != "cloud" {
+		return errors.New("join refuses non-cloud trusted configuration; select another client config")
+	}
+	old, _ := values["server"].(string)
+	if old != "" && strings.TrimRight(old, "/") != strings.TrimRight(server, "/") {
+		return errors.New("join refuses a different existing server; select another client config")
+	}
+	oldPrincipal, _ := values["principal"].(string)
+	if principal != "" && oldPrincipal != "" && !strings.EqualFold(principal, oldPrincipal) {
+		return errors.New("join refuses a conflicting pinned principal; select another client config")
+	}
+	return nil
 }

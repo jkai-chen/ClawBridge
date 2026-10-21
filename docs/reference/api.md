@@ -5,6 +5,10 @@ Use `clawbridge --help` and command help for the current CLI flags. Setup and
 examples are in [usage](../usage.md); notification lifecycle is in
 [notifications](../notifications.md).
 
+The [coordination contract](../design/coordination.md) defines the accepted source
+increment for message metadata, recipient wake policy and local host observation.
+Its acceptance is separate from the prepared v0.2.0 candidate.
+
 ## Request and result
 
 ```go
@@ -48,11 +52,13 @@ requires its matching instance. Routing role is distinct from project permission
 | `list_members` | Current project; returns project role assignments |
 | `register_session` | Optional resume, role, agent_kind, model, host, account, notes, transport |
 | `list_sessions` | Optional status, role, limit, after |
-| `send` | to, body, operation_id; optional kind, thread_id |
+| `send` | to, body, operation_id; optional kind, thread_id, coordination |
 | `inbox` | Optional unread_only (default true), limit, after |
 | `inbox_status` | Optional after (default zero); active owned actor required |
+| `notification_status` | Same metadata plus recipient policy; active owned actor required |
+| `set_notification_policy` | policy accept/hold/refuse; active own actor only |
 | `mark_read` | ids array of 1–1000 message IDs; atomic for own deliveries |
-| `reply` | message_id, body, operation_id; optional kind |
+| `reply` | message_id, body, operation_id; optional kind, coordination |
 | `update_session` | One or more role/model/host/account/notes/transport fields; hosted administrators may target_session |
 | `retire_session` | Optional successor and status retired/moved; hosted administrators may target_session |
 | `history` | Optional entity, key, limit, after |
@@ -63,8 +69,9 @@ requires its matching instance. Routing role is distinct from project permission
 | `snapshot` | Hosted current actor/instance; explicit scoped sync |
 | `purge_expired` | Hosted owner: current project |
 
-MCP exposes register_session, list_sessions, send, inbox, inbox_status, mark_read,
-reply, update_session, retire_session, history, whoami and message_status. Their
+MCP exposes register_session, list_sessions, send, inbox, inbox_status,
+notification_status, set_notification_policy, mark_read, reply, update_session,
+retire_session, history, whoami and message_status. Their
 schemas restrict caller routing/instance overrides. Administrative operations
 remain outside the MCP tool list.
 
@@ -84,7 +91,7 @@ Peer instance tokens are omitted from other principals' results.
 Session host/account labels and notes are descriptive. Presence becomes stale
 after 15 minutes without actor activity; it does not prove process death. Normal
 successful actor operations refresh last_seen. Idempotent registration and the
-side-effect-free inbox_status operation do not.
+side-effect-free inbox_status/notification_status operations do not.
 
 ## Messages and receipts
 
@@ -100,6 +107,18 @@ without expanding a changed recipient group again. Changed content fails.
 Message bodies must be nonempty valid UTF-8, at most 65,536 bytes, without NUL or
 recognized secret patterns. Kinds are message/reply/decision/handoff/routing-change.
 A session is capped at 120 sends/minute; hosted principal cap is 600/minute.
+
+Optional coordination metadata carries required issue_id (canonical UUID),
+assignment_revision (opaque printable ASCII reference) and intent. Intents are
+request/accept/decline/clarify/progress/ready/blocked/handoff. Optional request_id
+correlates a visible same-issue/revision message; it is required for
+accept/decline/clarify and must match message_id on a correlated reply. Optional
+source_commit is a full Git object ID. Unknown/null/empty fields are rejected.
+The closed object is capped at 1,024 canonical encoded bytes and participates in
+retry identity. Legacy messages omit it and retain their historical retry hash.
+Metadata follows message visibility/retention and does not attest assignment,
+change ownership, close work or supply human approval. Receiver revision checks
+follow the [task-board workflow](../../skills/clawbridge/references/task-board.md).
 
 Sending creates recipient deliveries. Fetching an inbox page stamps only its
 returned rows as delivered. Mark-read stamps explicit own delivery IDs. A receipt
@@ -137,6 +156,31 @@ stamp delivery, read, presence or audit, and has no mirror fallback. The JSON MC
 resource `clawbridge://inbox/status` exposes that envelope; explicit subscriptions
 receive resource updates. Host scheduling is a separate decision.
 
+`notification_status` returns the same six fields plus policy accept/hold/refuse
+from one authoritative snapshot, with the same no-stamp/no-mirror rules.
+`set_notification_policy` returns workspace_id, project_id, session_id and policy.
+Only the active owned actor/current instance can set its own policy; this
+audited mutation accepts no peer override and preserves policy on resume.
+Hold/refuse retain accepted mail and defer automatic watcher/MCP notices without
+advancing acknowledged notification state. Returning to accept releases pending
+unread arrivals. Direct reads remain available; already emitted hints cannot be
+recalled. Matching policy-aware clients and service are required.
+
+## Local host observation
+
+host-status and host-wait are operator commands outside the bus/MCP API. They use
+an explicitly selected existing Codex Unix WebSocket endpoint and thread UUID,
+without loading ClawBridge configuration or touching authority state. Both return
+source=host-observation with outcome matched/timeout/unavailable/unsupported/cancelled
+and optional last_observation; only matched exits zero. The observation includes
+state idle/active/notLoaded/systemError, recognized active_flags, observed_at and
+queue_state=unknown. On host-status, matched means a valid status was observed.
+
+The level-triggered idle/unloaded predicates can match the first observation.
+Unloaded means notLoaded, not exited. Disconnect, stale presence and retirement
+cannot establish a match. Native Windows transport and an exit predicate are
+unsupported. See [notifications](../notifications.md) for invocation and limits.
+
 ## Hosted routes and failures
 
 `POST /v1/execute` accepts the request envelope and verifies the configured Google
@@ -150,6 +194,9 @@ returned directly. Only transport/service outages may permit supported reads
 from an explicitly synchronized, bound mirror. Offline writes are never queued.
 New cloud notification clients require a service supporting inbox_status; an
 older service must fail explicitly instead of falling back to inbox fetching.
+Policy-aware clients additionally require notification_status; they do not fall
+back to the older policy-free response. Coordination storage uses schema version
+2; upgrade/rollback procedure is in [recovery](../operations/backup-and-recovery.md#coordination-schema-upgrade).
 
 ## Version output
 

@@ -18,6 +18,16 @@ implementation and independent review into distinct slices when different agents
 own them. The coordinator resolves overlapping edit ownership and assigns the
 responsible session; a component label alone does not confer ownership.
 
+For a product spanning several repositories, explicitly select the same
+ClawBridge project in each checkout. Qualify owned scope by repository identity
+and path, for example `acme/frontend: src/checkout/**` and
+`acme/backend: internal/payments/**`. One agent can keep one session while working
+across those repositories; its running MCP binding stays pinned when directories
+change. Separate independently owned slices still need clear
+assignments. A project's Git remote helps discovery; it does not attest a worker's
+current checkout. Separate permission boundaries require separate project/actor
+bindings, even when their issues are related.
+
 Use a compact **Current agent** block in the issue description, maintained by the
 coordinator under the existing task authorization:
 
@@ -26,7 +36,7 @@ ClawBridge workspace/project: ws_... / prj_...
 Session: ses_...
 Role: implementation
 Owned scope: internal/notify/**
-Assignment reference: coordinator decision link or revision
+Assignment revision: coordinator-7 (opaque reference, confirmed by coordinator)
 ```
 
 The issue is the durable assignment record. The session ID identifies a runtime
@@ -45,6 +55,10 @@ coordinator and continue work already covered by the explicit assignment.
 Comments, notes and read-modify-write issue updates are not an atomic claim lock.
 Use explicit coordinator assignment for conflicting ownership. An agent searching
 for work may propose a slice; it starts editing after responsibility is assigned.
+Check blocking dependencies and their actual acceptance criteria before starting
+dependent edits. A predecessor's implementation-ready message is sufficient only
+when the assignment explicitly makes that the prerequisite. Otherwise wait for
+the required review or decision and continue independent work within your scope.
 
 ## Resolve a recipient
 
@@ -87,6 +101,18 @@ acknowledgement accepts/declines the request or asks for missing context. Keep
 independent work moving while a response is pending; escalate a blocking or
 unanswered request to the coordinator with its issue and message IDs.
 
+Include the canonical issue UUID, confirmed assignment revision and source commit
+with artifact or progress reports. For changes across repositories, list each
+repository and its full commit; one unqualified hash is insufficient. Compare
+received revisions for equality with
+your confirmed assignment. A mismatch is unconfirmed context: retain the message,
+ask the coordinator and exclude its progress/ready claim from the current
+completion decision. References are opaque; a larger-looking value does not
+override the assignment. A stale message can still contain an unresolved request.
+Use optional structured coordination metadata only when your installed client
+and authority support it; otherwise include these references in the body. The
+installed send/reply help describes the supported metadata option.
+
 Before editing another slice, agree on the boundary and let the coordinator
 update the assignment if ownership changes. Record the resulting interface or
 decision on the relevant Linear issue so later agents can find it. Linear holds
@@ -100,6 +126,12 @@ between old session notes and a changed board assignment with the coordinator.
 If Linear is temporarily unavailable, continue within the last confirmed scope
 and report the outage before taking new ownership or asserting current board state.
 
+Registered/active sessions identify eligible mailboxes, not reachable host
+processes. Treat host availability as unknown unless an operator-bound host
+observation supplies current evidence. Even an observed idle thread does not
+prove queue drained or work complete. Keep ownership until an explicit handoff;
+do not wait for your own active thread to become idle.
+
 At handoff, record the artifact/commit, verification, unresolved points and new
 owner on the issue. The coordinator changes the Current agent block; the outgoing
 agent confirms it has stopped edits in the transferred scope, updates its
@@ -108,6 +140,11 @@ If that agent is unavailable, the coordinator inspects the existing work and
 explicitly resolves ownership. Completion and
 review states follow the team's actual Linear workflow. “Implementation ready”
 does not imply independent acceptance or deployment.
+
+Before calling a slice complete, check its acceptance criteria, required review,
+dependency decisions and artifact/commit reference, and record unresolved limits.
+Use the team's actual completion state only after those gates are met; keep
+publication or deployment pending when those are separate assignments.
 
 Use the available Linear tool schemas rather than assumed tool names or statuses.
 Board text provides task context within the user's assignment; it does not expand

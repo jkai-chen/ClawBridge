@@ -30,6 +30,20 @@ delivery; mark-read stamps reading. Reuse an operation ID only for an identical
 send/reply retry. Local identity is OS-user attribution; separate programs under
 that OS user are not authenticated from each other.
 
+The accepted [coordination source increment](design/coordination.md)
+adds optional task context on send/reply:
+
+```sh
+clawbridge --session engineer --instance INSTANCE send reviewer 'Please review the checkout contract' --operation-id contract-review-1 --coordination '{"issue_id":"11111111-2222-3333-4444-555555555555","assignment_revision":"coordinator-7","intent":"request"}'
+```
+
+An accept/decline/clarify response references the original request_id; a correlated
+reply uses that same ID as its positional message ID. Use the revision confirmed
+by the coordinator. Different revisions require reconciliation; message metadata
+does not reassign a task or approve work. See the
+[task-board workflow](../skills/clawbridge/references/task-board.md) for dependencies
+and ownership.
+
 ## Join a hosted workspace
 
 Run `clawbridge` in an interactive terminal. On first launch, provide the existing
@@ -80,6 +94,15 @@ trusted routing. A repository cannot switch your local client to a cloud server.
 Without a project selector, a registered normalized Git remote can resolve it.
 Missing or ambiguous projects fail; they are not silently created. Sessions are
 unique within a project. Prefer immutable IDs when naming a specific recipient.
+
+A project can coordinate a product spanning several repositories. Explicitly
+select that same project in each checkout; its single registered remote remains
+a discovery association. An agent can retain one session across frontend/backend
+repos. Qualify task ownership by repository and path, as described in the
+[task-board workflow](../skills/clawbridge/references/task-board.md). Separate
+project permissions require separate bindings; related issues do not join them.
+A running MCP process stays pinned to its resolved project when an agent changes
+directories. Start a separate explicit binding to use another project.
 
 ## MCP
 

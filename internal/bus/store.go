@@ -98,7 +98,7 @@ func (s *Store) migrate() error {
 	if err = tx.QueryRow("PRAGMA user_version").Scan(&version); err != nil {
 		return err
 	}
-	if version > 1 {
+	if version > 2 {
 		return errors.New("database schema is newer than this ClawBridge binary")
 	}
 	if version == 0 {
@@ -110,6 +110,11 @@ func (s *Store) migrate() error {
 			return errors.New("database is not an initialized ClawBridge store; refusing to modify unrelated tables")
 		}
 		if _, err = tx.Exec(schema); err != nil {
+			return err
+		}
+	}
+	if version < 2 {
+		if _, err = tx.Exec(`ALTER TABLE messages ADD COLUMN coordination TEXT; ALTER TABLE sessions ADD COLUMN notification_policy TEXT NOT NULL DEFAULT 'accept' CHECK(notification_policy IN ('accept','hold','refuse')); PRAGMA user_version=2;`); err != nil {
 			return err
 		}
 	}
@@ -170,7 +175,11 @@ func query(ctx context.Context, tx *transaction, q string, args ...any) ([]map[s
 				v[i] = string(b)
 			}
 			m[c] = v[i]
-			if c == "transport" || c == "details" {
+			if c == "coordination" && v[i] == nil {
+				delete(m, c)
+				continue
+			}
+			if c == "transport" || c == "details" || c == "coordination" {
 				var decoded any
 				if t, ok := v[i].(string); ok && json.Unmarshal([]byte(t), &decoded) == nil {
 					if tx.postgres && c == "details" {
@@ -223,8 +232,10 @@ func nameOK(v string) error {
 }
 func validateArgs(op string, a map[string]any) error {
 	allowed := map[string]string{
-		"inbox_status":   "instance after",
-		"workspace_init": "mode name retention_days", "project_create": "slug name git_remote", "list_projects": "", "list_members": "", "register_session": "instance resume role agent_kind model host account notes transport", "list_sessions": "instance status role limit after", "send": "instance to body kind thread_id operation_id", "reply": "instance message_id body kind operation_id", "inbox": "instance unread_only limit after", "mark_read": "instance ids", "update_session": "instance target_session role model host account notes transport", "retire_session": "instance target_session successor status", "history": "instance entity key limit after", "whoami": "instance", "message_status": "instance message_id", "resolve_project": "git_remote instance", "snapshot": "instance", "project_role_set": "instance principal role", "purge_expired": "instance",
+		"inbox_status":            "instance after",
+		"notification_status":     "instance after",
+		"set_notification_policy": "instance policy",
+		"workspace_init":          "mode name retention_days", "project_create": "slug name git_remote", "list_projects": "", "list_members": "", "register_session": "instance resume role agent_kind model host account notes transport", "list_sessions": "instance status role limit after", "send": "instance to body kind thread_id operation_id coordination", "reply": "instance message_id body kind operation_id coordination", "inbox": "instance unread_only limit after", "mark_read": "instance ids", "update_session": "instance target_session role model host account notes transport", "retire_session": "instance target_session successor status", "history": "instance entity key limit after", "whoami": "instance", "message_status": "instance message_id", "resolve_project": "git_remote instance", "snapshot": "instance", "project_role_set": "instance principal role", "purge_expired": "instance",
 	}
 	keys, ok := allowed[op]
 	if !ok {
@@ -238,6 +249,10 @@ func validateArgs(op string, a map[string]any) error {
 		case "retention_days", "limit", "after":
 			if _, err := integer(v); err != nil {
 				return fmt.Errorf("%s: %w", k, err)
+			}
+		case "coordination":
+			if _, err := ParseCoordination(v); err != nil {
+				return err
 			}
 		case "transport":
 			if _, ok := v.(map[string]any); !ok {
@@ -303,7 +318,7 @@ func (s *Store) Execute(ctx context.Context, r Request) (Result, error) {
 		return Result{}, errors.New("Postgres requires trusted ExecuteAs identity")
 	}
 	result, err := s.executeRequest(ctx, r)
-	if r.Operation == "inbox_status" {
+	if r.Operation == "inbox_status" || r.Operation == "notification_status" {
 		err = classify(err)
 	}
 	return result, err
@@ -325,7 +340,7 @@ func (s *Store) executeRequest(ctx context.Context, r Request) (Result, error) {
 		return Result{}, err
 	}
 	options := &sql.TxOptions{}
-	if s.postgres && (r.Operation == "snapshot" || r.Operation == "inbox_status") {
+	if s.postgres && (r.Operation == "snapshot" || r.Operation == "inbox_status" || r.Operation == "notification_status") {
 		options.Isolation = sql.LevelRepeatableRead
 		options.ReadOnly = true
 	}
@@ -343,7 +358,7 @@ func (s *Store) executeRequest(ctx context.Context, r Request) (Result, error) {
 			return Result{}, err
 		}
 	}
-	if s.postgres && r.Operation != "snapshot" && r.Operation != "inbox_status" {
+	if s.postgres && r.Operation != "snapshot" && r.Operation != "inbox_status" && r.Operation != "notification_status" {
 		// Serialize a principal's rate-limit accounting across its workspaces.
 		if _, err = tx.ExecContext(ctx, `SELECT pg_advisory_xact_lock(hashtextextended(?,0))`, "principal:"+s.principal); err != nil {
 			return Result{}, err
@@ -400,7 +415,7 @@ func (s *Store) execute(ctx context.Context, tx *transaction, r Request) (any, e
 		if _, err = one(ctx, tx, `SELECT principal FROM members WHERE workspace_id=? AND principal=?`, wid, s.principal); err != nil {
 			return nil, scopedError(err, "workspace membership required", "forbidden")
 		}
-		if r.Operation != "snapshot" && r.Operation != "inbox_status" {
+		if r.Operation != "snapshot" && r.Operation != "inbox_status" && r.Operation != "notification_status" {
 			if _, err = tx.ExecContext(ctx, `SELECT pg_advisory_xact_lock(hashtextextended(?,0))`, "workspace:"+wid); err != nil {
 				return nil, err
 			}
@@ -515,11 +530,15 @@ func (s *Store) execute(ctx context.Context, tx *transaction, r Request) (any, e
 		}
 	}
 	// Metadata polling authorizes the actor above, but must never heartbeat it.
-	if r.Operation == "inbox_status" {
+	if r.Operation == "inbox_status" || r.Operation == "notification_status" {
 		if actor == nil || actor["status"] != "active" {
 			return nil, errors.New("active owned session permission required for inbox status")
 		}
-		return s.inboxStatus(ctx, tx, wid, pid, actor["id"].(string), a)
+		result, e := s.inboxStatus(ctx, tx, wid, pid, actor["id"].(string), a)
+		if e == nil && r.Operation == "notification_status" {
+			result.(map[string]any)["policy"] = actor["notification_policy"]
+		}
+		return result, e
 	}
 	if actor != nil {
 		now := stamp()
@@ -558,6 +577,8 @@ func (s *Store) execute(ctx context.Context, tx *transaction, r Request) (any, e
 		return nil, errors.New("session is retired or moved; it cannot perform this operation")
 	}
 	switch r.Operation {
+	case "set_notification_policy":
+		return s.setNotificationPolicy(ctx, tx, wid, pid, actor, a)
 	case "send", "reply":
 		return s.send(ctx, tx, wid, pid, actor, r)
 	case "inbox":

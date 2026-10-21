@@ -30,6 +30,9 @@ func (e *notificationMCPExecutor) Execute(_ context.Context, r bus.Request) (bus
 	if r.Operation == "register_session" {
 		return bus.Result{Source: "local-authority", Data: map[string]any{"instance": "rotated-instance"}}, nil
 	}
+	if r.Operation == "notification_status" {
+		return notificationPolicyResult(e.unread, e.sequence, e.unread), nil
+	}
 	if r.Operation != "inbox_status" {
 		return bus.Result{}, fmt.Errorf("unexpected mutation or heartbeat operation %s", r.Operation)
 	}
@@ -198,7 +201,11 @@ func notificationMCPSubscriptionLifecycle(t *testing.T, version string) {
 	executor.mu.Lock()
 	defer executor.mu.Unlock()
 	for i, r := range executor.requests {
-		if r.Operation != "inbox_status" || r.Args["instance"] != "private-instance" || r.Args["after"] != int64(0) {
+		wantOperation := "notification_status"
+		if i == 0 {
+			wantOperation = "inbox_status"
+		}
+		if r.Operation != wantOperation || r.Args["instance"] != "private-instance" || r.Args["after"] != int64(0) {
 			t.Fatalf("poll mutated or lost actor: %+v", r)
 		}
 		if i > 0 && (r.Workspace != "ws_canonical" || r.Project != "prj_canonical" || r.Session != "ses_canonical") {
@@ -254,7 +261,7 @@ func TestNotificationMCPDisconnectAndRotationStop(t *testing.T) {
 				ops = append(ops, r.Operation)
 			}
 			executor.mu.Unlock()
-			want := []string{"inbox_status", "inbox_status"}
+			want := []string{"notification_status", "notification_status"}
 			if action == "resume" {
 				want = append(want, "register_session")
 			}

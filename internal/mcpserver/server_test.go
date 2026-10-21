@@ -46,7 +46,7 @@ func TestPinnedScopeRegistrationAndOverrideRejection(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(tools.Tools) != 12 {
+	if len(tools.Tools) != 14 {
 		t.Fatalf("got %d tools", len(tools.Tools))
 	}
 	call := func(name string, args map[string]any) *mcp.CallToolResult {
@@ -88,5 +88,46 @@ func TestPinnedScopeRegistrationAndOverrideRejection(t *testing.T) {
 	defer store.mu.Unlock()
 	if len(store.calls) != 2 {
 		t.Fatal("rejected scope override reached application")
+	}
+}
+
+func TestCoordinationMCPRejectsExplicitNullAndEmptyOptionalMetadata(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	store := &recordingStore{}
+	server := NewServer(store, "workspace", "project", "actor", "instance")
+	st, ct := mcp.NewInMemoryTransports()
+	ss, err := server.Connect(ctx, st, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ss.Close()
+	client := mcp.NewClient(&mcp.Implementation{Name: "coord-test", Version: "1"}, nil)
+	cs, err := client.Connect(ctx, ct, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cs.Close()
+	valid := map[string]any{"issue_id": "11111111-2222-3333-4444-555555555555", "assignment_revision": "revision", "intent": "request"}
+	for _, invalid := range []any{nil, map[string]any{}, map[string]any{"issue_id": valid["issue_id"], "assignment_revision": "revision", "intent": "request", "request_id": nil}, map[string]any{"issue_id": valid["issue_id"], "assignment_revision": "revision", "intent": "request", "source_commit": ""}} {
+		result, err := cs.CallTool(ctx, &mcp.CallToolParams{Name: "send", Arguments: map[string]any{"to": "peer", "body": "request", "operation_id": "bad", "coordination": invalid}})
+		if err == nil && !result.IsError {
+			t.Fatal("malformed metadata accepted", invalid)
+		}
+	}
+	store.mu.Lock()
+	calls := len(store.calls)
+	store.mu.Unlock()
+	if calls != 0 {
+		t.Fatal("malformed metadata reached store", calls)
+	}
+	result, err := cs.CallTool(ctx, &mcp.CallToolParams{Name: "send", Arguments: map[string]any{"to": "peer", "body": "request", "operation_id": "valid", "coordination": valid}})
+	if err != nil || result.IsError {
+		t.Fatal(result, err)
+	}
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	if len(store.calls) != 1 || store.calls[0].Args["coordination"] == nil {
+		t.Fatal(store.calls)
 	}
 }

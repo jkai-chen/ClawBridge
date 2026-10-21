@@ -19,6 +19,7 @@ for setup, usage and operations.
 
 ## Reviews and live observations
 
+- [COORDINATION REVIEW](reviews/COORDINATION-REVIEW.md)
 - [GUIDED SETUP REVIEW](reviews/GUIDED-SETUP-REVIEW.md)
 - [NOTIFICATION REVIEW](reviews/NOTIFICATION-REVIEW.md)
 - [PHASE 2 REVIEW](reviews/PHASE-2-REVIEW.md)

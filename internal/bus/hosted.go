@@ -146,11 +146,11 @@ func (s *Store) snapshot(ctx context.Context, tx *transaction, w, p map[string]a
 	if err != nil {
 		return nil, err
 	}
-	datasets["messages"], err = query(ctx, tx, `SELECT m.sequence,m.id,m.project_id,m.source_project_id,m.sender_id,s.name AS sender,m.address,m.thread_id,m.reply_to,m.kind,m.body,m.created_at,m.expires_at,m.created_by_principal,d.delivered_at,d.read_at FROM messages m JOIN deliveries d ON d.project_id=m.project_id AND d.message_id=m.id JOIN sessions s ON s.id=m.sender_id AND s.project_id=m.source_project_id WHERE d.project_id=? AND d.recipient_id=? AND m.expires_at>? ORDER BY m.sequence LIMIT 10001`, pid, sid, now)
+	datasets["messages"], err = query(ctx, tx, `SELECT m.sequence,m.id,m.project_id,m.source_project_id,m.sender_id,s.name AS sender,m.address,m.thread_id,m.reply_to,m.kind,m.body,m.coordination,m.created_at,m.expires_at,m.created_by_principal,d.delivered_at,d.read_at FROM messages m JOIN deliveries d ON d.project_id=m.project_id AND d.message_id=m.id JOIN sessions s ON s.id=m.sender_id AND s.project_id=m.source_project_id WHERE d.project_id=? AND d.recipient_id=? AND m.expires_at>? ORDER BY m.sequence LIMIT 10001`, pid, sid, now)
 	if err != nil {
 		return nil, err
 	}
-	sent, err := query(ctx, tx, `SELECT id,sequence,project_id,sender_id,thread_id,reply_to,created_at,expires_at FROM messages WHERE project_id=? AND sender_id=? AND expires_at>? ORDER BY sequence LIMIT 10001`, pid, sid, now)
+	sent, err := query(ctx, tx, `SELECT id,sequence,project_id,sender_id,thread_id,reply_to,coordination,created_at,expires_at FROM messages WHERE project_id=? AND sender_id=? AND expires_at>? ORDER BY sequence LIMIT 10001`, pid, sid, now)
 	if err != nil {
 		return nil, err
 	}
@@ -204,7 +204,7 @@ func (s *Store) purgeExpired(ctx context.Context, tx *transaction, wid, pid stri
 	if err != nil {
 		return nil, err
 	}
-	res, err = tx.ExecContext(ctx, `UPDATE messages SET body='',purged_at=? WHERE project_id=? AND expires_at<=? AND purged_at IS NULL`, now, pid, now)
+	res, err = tx.ExecContext(ctx, `UPDATE messages SET body='',coordination=NULL,purged_at=? WHERE project_id=? AND expires_at<=? AND purged_at IS NULL`, now, pid, now)
 	if err != nil {
 		return nil, err
 	}
@@ -280,7 +280,7 @@ func (s *Store) snapshotBudget(ctx context.Context, tx *transaction, wid, pid, s
 		args      []any
 	}{
 		{"sessions", `SELECT COUNT(*),COALESCE(SUM(octet_length(notes)+octet_length(transport)+2048),0)::BIGINT FROM sessions WHERE project_id=?`, []any{pid}},
-		{"messages", `SELECT COUNT(*),COALESCE(SUM(octet_length(m.body)+2048),0)::BIGINT FROM messages m JOIN deliveries d ON d.project_id=m.project_id AND d.message_id=m.id WHERE d.project_id=? AND d.recipient_id=? AND m.expires_at>?`, []any{pid, sid, now}},
+		{"messages", `SELECT COUNT(*),COALESCE(SUM(octet_length(m.body)+COALESCE(octet_length(m.coordination),0)+2048),0)::BIGINT FROM messages m JOIN deliveries d ON d.project_id=m.project_id AND d.message_id=m.id WHERE d.project_id=? AND d.recipient_id=? AND m.expires_at>?`, []any{pid, sid, now}},
 		{"sent_messages", `SELECT COUNT(*),COALESCE(SUM(2048+(SELECT COUNT(*)*512 FROM deliveries d WHERE d.project_id=m.project_id AND d.message_id=m.id)),0)::BIGINT FROM messages m WHERE project_id=? AND sender_id=? AND expires_at>?`, []any{pid, sid, now}},
 		{"events", `SELECT COUNT(*),COALESCE(SUM(octet_length(details)+1024),0)::BIGINT FROM history WHERE workspace_id=? AND project_id=?`, []any{wid, pid}},
 	}

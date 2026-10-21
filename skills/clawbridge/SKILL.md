@@ -82,7 +82,7 @@ project-scoped mirror to serve `list_sessions`, `inbox`, `history`, `whoami`, or
 validation errors, and other definitive rejections must be reported directly;
 they must not trigger mirror fallback. If the server is unreachable,
 `mark_read`, `reply`, `send`, `register_session`, `update_session`,
-`retire_session`, and resume remain failed operations. Never queue or replay
+`retire_session`, `set_notification_policy`, and resume remain failed operations. Never queue or replay
 writes. Tell the human the operation failed, preserve its ID if the outcome is
 uncertain, and use only an explicitly authorized fallback. An unavailable cloud
 workspace never becomes writable local authority.

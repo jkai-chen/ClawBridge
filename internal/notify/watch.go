@@ -135,11 +135,12 @@ func once(ctx context.Context, c Config, path string, f *checkpointFile, state *
 		b.Session = state.Scope.SessionID
 	}
 	bounded, cancel := context.WithTimeout(ctx, c.RequestTimeout)
-	result, s, err := Fetch(bounded, c.Executor, bus.Request{Workspace: b.Workspace, Project: b.Project, Session: b.Session, Args: map[string]any{"instance": b.Instance, "after": state.After}})
+	result, notification, err := FetchNotification(bounded, c.Executor, bus.Request{Workspace: b.Workspace, Project: b.Project, Session: b.Session, Args: map[string]any{"instance": b.Instance, "after": state.After}})
 	cancel()
 	if err != nil {
 		return err
 	}
+	s := notification.Status
 	if err = validateAfter(s, state.After); err != nil {
 		return err
 	}
@@ -151,6 +152,9 @@ func once(ctx context.Context, c Config, path string, f *checkpointFile, state *
 		if err = f.save(*state); err != nil {
 			return Permanent(errors.New("cannot persist initial notification binding"))
 		}
+	}
+	if notification.Policy != "accept" {
+		return nil
 	}
 	if s.NewCount == 0 {
 		return nil

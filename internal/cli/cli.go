@@ -25,6 +25,8 @@ const Usage = `clawbridge: local and authenticated hosted agent messaging
 Global flags: --db PATH --workspace NAME_OR_ID --project SLUG_OR_ID --session NAME_OR_ID --instance ID --json
 Commands: setup --local, project create SLUG, register [NAME], sessions, send TO BODY --operation-id ID,
           inbox, inbox-status [--after N], mark-read ID..., reply ID BODY --operation-id ID, update, retire, history, whoami, status ID,
+          notification-status [--after N], notification-policy --policy accept|hold|refuse,
+          host-status|host-wait --adapter codex --endpoint unix:///absolute/socket --thread UUID,
           notify --adapter json|codex --state ABSOLUTE_PATH [--thread UUID] [--interval 5s] [--once],
           mcp, mcp install ..., serve, sync, purge-expired, doctor, tui [--screen SCREEN], version
 Interactive: bare clawbridge opens the selected profile or guided join; setup wizard starts guided join.
@@ -186,6 +188,9 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	}
 	if rest[0] == "tui" {
 		return runTUI(ctx, flags, rest[1:], stdout, stderr)
+	}
+	if rest[0] == "host-status" || rest[0] == "host-wait" {
+		return runHost(ctx, rest[0], rest[1:], stdout, stderr)
 	}
 	if rest[0] == "notify" {
 		return runNotify(ctx, flags, rest[1:], stdout, stderr)
@@ -369,10 +374,17 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		stringArg("operation-id", "operation_id")
 		stringArg("kind", "kind")
 		stringArg("thread-id", "thread_id")
+		stringArg("coordination", "coordination")
 	case "inbox":
 		op = "inbox"
 		commonPage()
 		f.Bool("unread-only", true, "return only unread messages")
+	case "notification-status":
+		op = "notification_status"
+		f.Int64("after", 0, "exclusive sequence cursor")
+	case "notification-policy":
+		op = "set_notification_policy"
+		stringArg("policy", "policy")
 	case "inbox-status":
 		op = "inbox_status"
 		f.Int64("after", 0, "exclusive sequence cursor")
@@ -380,6 +392,7 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		op = "mark_read"
 		arityMin, arityMax = 1, 1000
 	case "reply":
+		stringArg("coordination", "coordination")
 		op = "reply"
 		arityMin, arityMax = 2, 2
 		stringArg("operation-id", "operation_id")
@@ -500,6 +513,17 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	case "status":
 		a["message_id"] = pos[0]
 	}
+	if raw, ok := a["coordination"]; ok {
+		var object any
+		if json.Unmarshal([]byte(raw.(string)), &object) != nil {
+			return errors.New("--coordination must be a JSON object")
+		}
+		c, e := bus.ParseCoordination(object)
+		if e != nil {
+			return e
+		}
+		a["coordination"] = c
+	}
 	if raw, ok := a["transport"]; ok {
 		var transport map[string]any
 		if e := json.Unmarshal([]byte(raw.(string)), &transport); e != nil || transport == nil {
@@ -563,7 +587,7 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	}
 	if config.Instance != "" {
 		switch op {
-		case "register_session", "list_sessions", "history", "send", "reply", "inbox", "inbox_status", "mark_read", "update_session", "retire_session", "whoami", "message_status", "project_role_set", "purge_expired":
+		case "register_session", "list_sessions", "history", "send", "reply", "inbox", "inbox_status", "notification_status", "set_notification_policy", "mark_read", "update_session", "retire_session", "whoami", "message_status", "project_role_set", "purge_expired":
 			a["instance"] = config.Instance
 		}
 	}

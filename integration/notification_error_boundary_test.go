@@ -50,7 +50,7 @@ func notificationRealErrorFixture(t *testing.T, kind string) notificationErrorFi
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
-		w.Write([]byte(`{"source":"server","data":{"workspace_id":"ws_canonical","project_id":"prj_canonical","session_id":"ses_canonical","unread_count":0,"latest_sequence":0,"new_count":0}}`))
+		w.Write([]byte(`{"source":"server","data":{"workspace_id":"ws_canonical","project_id":"prj_canonical","session_id":"ses_canonical","unread_count":0,"latest_sequence":0,"new_count":0,"policy":"accept"}}`))
 	}))
 	t.Cleanup(endpoint.Close)
 	client, err := remote.NewWithTokenSource(remote.Config{URL: endpoint.URL, Audience: "synthetic-test-audience", Principal: "recipient@example.test"}, remote.TokenSourceFunc(func(context.Context) (string, error) {

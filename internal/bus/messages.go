@@ -66,6 +66,15 @@ func (s *Store) send(ctx context.Context, tx *transaction, wid, pid string, acto
 	// Hash the supplied operation before resolving dynamic role membership or retirement.
 	// A successful exact retry returns the original message even after recipients change.
 	payload := map[string]any{"operation": r.Operation, "to": str(a, "to"), "body": body, "kind": kind, "thread_id": str(a, "thread_id"), "message_id": str(a, "message_id")}
+	var coordination *Coordination
+	if raw, ok := a["coordination"]; ok {
+		c, e := ParseCoordination(raw)
+		if e != nil {
+			return nil, e
+		}
+		coordination = &c
+		payload["coordination"] = c
+	}
 	digest := hashPayload(payload)
 	previous, err := query(ctx, tx, `SELECT id,payload_hash FROM messages WHERE project_id=? AND sender_id=? AND operation_id=?`, pid, sid, op)
 	if err != nil {
@@ -79,6 +88,11 @@ func (s *Store) send(ctx context.Context, tx *transaction, wid, pid string, acto
 	}
 	if actor["status"] != "active" {
 		return nil, errors.New("session is retired or moved; no new send is permitted")
+	}
+	if coordination != nil {
+		if err := s.correlateCoordination(ctx, tx, pid, sid, *coordination, r); err != nil {
+			return nil, err
+		}
 	}
 	to, thread, replyTo := str(a, "to"), str(a, "thread_id"), ""
 	if r.Operation == "reply" {
@@ -157,7 +171,7 @@ func (s *Store) send(ctx context.Context, tx *transaction, wid, pid string, acto
 		parent = replyTo
 	}
 	now := time.Now().UTC()
-	_, err = tx.ExecContext(ctx, `INSERT INTO messages(id,project_id,source_project_id,sender_id,address,thread_id,reply_to,kind,body,created_at,expires_at,created_by_principal,operation_id,payload_hash) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, id, pid, pid, sid, to, thread, parent, kind, body, now.Format(timestampLayout), now.AddDate(0, 0, retention).Format(timestampLayout), s.principal, op, digest)
+	_, err = tx.ExecContext(ctx, `INSERT INTO messages(id,project_id,source_project_id,sender_id,address,thread_id,reply_to,kind,body,created_at,expires_at,created_by_principal,operation_id,payload_hash,coordination) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, id, pid, pid, sid, to, thread, parent, kind, body, now.Format(timestampLayout), now.AddDate(0, 0, retention).Format(timestampLayout), s.principal, op, digest, coordinationJSON(coordination))
 	if err != nil {
 		return nil, err
 	}
@@ -182,7 +196,7 @@ func (s *Store) participatingMessage(ctx context.Context, tx *transaction, pid, 
 	return m, nil
 }
 func (s *Store) message(ctx context.Context, tx *transaction, pid, id string) (any, error) {
-	m, err := one(ctx, tx, `SELECT sequence,id,project_id,source_project_id,sender_id,address,thread_id,reply_to,kind,body,created_at,expires_at,created_by_principal,operation_id FROM messages WHERE project_id=? AND id=?`, pid, id)
+	m, err := one(ctx, tx, `SELECT sequence,id,project_id,source_project_id,sender_id,address,thread_id,reply_to,kind,body,coordination,created_at,expires_at,created_by_principal,operation_id FROM messages WHERE project_id=? AND id=?`, pid, id)
 	if err != nil {
 		return nil, err
 	}
@@ -194,7 +208,7 @@ func (s *Store) message(ctx context.Context, tx *transaction, pid, id string) (a
 	return m, nil
 }
 func (s *Store) messageStatus(ctx context.Context, tx *transaction, pid, sid, id string) (any, error) {
-	m, err := one(ctx, tx, `SELECT id,sequence,project_id,sender_id,thread_id,reply_to,created_at,expires_at FROM messages WHERE project_id=? AND sender_id=? AND id=? AND expires_at>?`, pid, sid, id, stamp())
+	m, err := one(ctx, tx, `SELECT id,sequence,project_id,sender_id,thread_id,reply_to,coordination,created_at,expires_at FROM messages WHERE project_id=? AND sender_id=? AND id=? AND expires_at>?`, pid, sid, id, stamp())
 	if err != nil {
 		return nil, scopedError(err, "message status is available only to its sender in this project", "not_found")
 	}
@@ -218,7 +232,7 @@ func (s *Store) inbox(ctx context.Context, tx *transaction, wid, pid, sid string
 	if v, ok := a["unread_only"]; ok {
 		unread = v.(bool)
 	}
-	messages, err := query(ctx, tx, `SELECT m.sequence,m.id,m.project_id,m.source_project_id,m.sender_id,s.name AS sender,m.address,m.thread_id,m.reply_to,m.kind,m.body,m.created_at,m.expires_at,m.created_by_principal,d.delivered_at,d.read_at FROM messages m JOIN deliveries d ON d.project_id=m.project_id AND d.message_id=m.id JOIN sessions s ON s.id=m.sender_id AND s.project_id=m.source_project_id WHERE d.project_id=? AND d.recipient_id=? AND (?=FALSE OR d.read_at IS NULL) AND m.expires_at>? AND m.sequence>? ORDER BY m.sequence LIMIT ?`, pid, sid, unread, stamp(), after, n+1)
+	messages, err := query(ctx, tx, `SELECT m.sequence,m.id,m.project_id,m.source_project_id,m.sender_id,s.name AS sender,m.address,m.thread_id,m.reply_to,m.kind,m.body,m.coordination,m.created_at,m.expires_at,m.created_by_principal,d.delivered_at,d.read_at FROM messages m JOIN deliveries d ON d.project_id=m.project_id AND d.message_id=m.id JOIN sessions s ON s.id=m.sender_id AND s.project_id=m.source_project_id WHERE d.project_id=? AND d.recipient_id=? AND (?=FALSE OR d.read_at IS NULL) AND m.expires_at>? AND m.sequence>? ORDER BY m.sequence LIMIT ?`, pid, sid, unread, stamp(), after, n+1)
 	if err != nil {
 		return nil, err
 	}
@@ -335,4 +349,11 @@ func (s *Store) ResolveProject(ctx context.Context, workspace, project, remote s
 		return "", "", fmt.Errorf("project resolution found %d matches; select --workspace and --project explicitly", len(rows))
 	}
 	return rows[0]["workspace"].(string), rows[0]["project"].(string), nil
+}
+
+func coordinationJSON(c *Coordination) any {
+	if c == nil {
+		return nil
+	}
+	return asJSON(c)
 }

@@ -28,13 +28,21 @@ func (f notificationExecutorFunc) Execute(c context.Context, r bus.Request) (bus
 func notificationResult(unread, latest, fresh int64) bus.Result {
 	return bus.Result{Source: "local-authority", Data: notify.Status{WorkspaceID: "ws_canonical", ProjectID: "prj_canonical", SessionID: "ses_canonical", UnreadCount: unread, LatestSequence: latest, NewCount: fresh}}
 }
+
+// Automatic notification polls use the policy envelope; original resource/status
+// assertions keep notificationResult as the exact six-field contract.
+func notificationPolicyResult(unread, latest, fresh int64) bus.Result {
+	r := notificationResult(unread, latest, fresh)
+	r.Data = notify.NotificationStatus{Status: r.Data.(notify.Status), Policy: "accept"}
+	return r
+}
 func notificationConfig(t *testing.T) notify.Config {
 	t.Helper()
 	return notify.Config{Binding: notify.Binding{Authority: "synthetic-local-authority-route", Principal: "local-test-principal", Workspace: "workspace-alias", Project: "project-alias", Session: "recipient-alias", Instance: "private-instance", Adapter: "json"}, StatePath: filepath.Join(t.TempDir(), "private state", "checkpoint.json"), Interval: time.Second, Once: true, Output: io.Discard, Diagnostics: io.Discard}
 }
 func notificationCursor(t *testing.T, r bus.Request) int64 {
 	t.Helper()
-	if r.Operation != "inbox_status" || len(r.Args) != 2 || r.Args["instance"] != "private-instance" {
+	if r.Operation != "notification_status" || len(r.Args) != 2 || r.Args["instance"] != "private-instance" {
 		t.Fatalf("poll used wrong operation/actor/args: %+v", r)
 	}
 	switch n := r.Args["after"].(type) {
@@ -81,13 +89,13 @@ func TestNotificationJSONCheckpointAndCanonicalPinning(t *testing.T) {
 		}
 		switch phase {
 		case 0:
-			return notificationResult(3, 9, 3), nil
+			return notificationPolicyResult(3, 9, 3), nil
 		case 1:
-			return notificationResult(3, 9, 0), nil
+			return notificationPolicyResult(3, 9, 0), nil
 		case 2:
-			return notificationResult(0, 0, 0), nil
+			return notificationPolicyResult(0, 0, 0), nil
 		default:
-			return notificationResult(1, 12, 1), nil
+			return notificationPolicyResult(1, 12, 1), nil
 		}
 	})
 	for phase = 0; phase < 4; phase++ {
@@ -133,7 +141,7 @@ func TestNotificationOutputFailureRetainsEventAndCursor(t *testing.T) {
 		if notificationCursor(t, r) != 0 {
 			t.Error("failed sink advanced cursor")
 		}
-		return notificationResult(2, 7, 2), nil
+		return notificationPolicyResult(2, 7, 2), nil
 	})
 	if err := notify.Run(context.Background(), c); err == nil {
 		t.Fatal("output failure reported success")
@@ -155,7 +163,7 @@ func TestNotificationBindingAndUnsafeStateRefusals(t *testing.T) {
 			calls := 0
 			c.Executor = notificationExecutorFunc(func(context.Context, bus.Request) (bus.Result, error) {
 				calls++
-				return notificationResult(0, 0, 0), nil
+				return notificationPolicyResult(0, 0, 0), nil
 			})
 			if err := notify.Run(context.Background(), c); err != nil {
 				t.Fatal(err)
@@ -219,7 +227,7 @@ func TestNotificationBindingAndUnsafeStateRefusals(t *testing.T) {
 			}
 			c.Executor = notificationExecutorFunc(func(context.Context, bus.Request) (bus.Result, error) {
 				t.Error("unsafe state reached authority")
-				return notificationResult(0, 0, 0), nil
+				return notificationPolicyResult(0, 0, 0), nil
 			})
 			if err := notify.Run(context.Background(), c); err == nil {
 				t.Fatal("unsafe state accepted")
@@ -250,7 +258,7 @@ func TestNotificationBackoffAndCancellation(t *testing.T) {
 		if calls <= 8 {
 			return bus.Result{}, errors.New("temporary outage")
 		}
-		return notificationResult(0, 0, 0), nil
+		return notificationPolicyResult(0, 0, 0), nil
 	})
 	c.Wait = func(_ context.Context, d time.Duration) error {
 		waits = append(waits, d)
@@ -293,7 +301,7 @@ func TestNotificationConcurrentStateLock(t *testing.T) {
 		close(entered)
 		select {
 		case <-release:
-			return notificationResult(0, 0, 0), nil
+			return notificationPolicyResult(0, 0, 0), nil
 		case <-ctx.Done():
 			return bus.Result{}, ctx.Err()
 		}
@@ -310,7 +318,7 @@ func TestNotificationConcurrentStateLock(t *testing.T) {
 	second := c
 	second.Executor = notificationExecutorFunc(func(context.Context, bus.Request) (bus.Result, error) {
 		t.Error("duplicate writer reached authority")
-		return notificationResult(0, 0, 0), nil
+		return notificationPolicyResult(0, 0, 0), nil
 	})
 	if err := notify.Run(ctx, second); err == nil {
 		t.Error("concurrent writer accepted")
@@ -347,7 +355,7 @@ func TestNotificationCodexArgvAndAmbiguousRetry(t *testing.T) {
 		if after == 7 {
 			fresh = 0
 		}
-		return notificationResult(2, 7, fresh), nil
+		return notificationPolicyResult(2, 7, fresh), nil
 	})
 	var submitted [][]string
 	attempt := 0
@@ -409,7 +417,7 @@ func TestNotificationCodexCheckpointHostBinding(t *testing.T) {
 			calls, hosts := 0, 0
 			c.Executor = notificationExecutorFunc(func(context.Context, bus.Request) (bus.Result, error) {
 				calls++
-				return notificationResult(0, 0, 0), nil
+				return notificationPolicyResult(0, 0, 0), nil
 			})
 			c.Runner = notify.RunnerFunc(func(context.Context, string, []string) ([]byte, error) {
 				hosts++
@@ -447,7 +455,7 @@ func TestNotificationCodexCheckpointHostBinding(t *testing.T) {
 func TestNotificationAcceptedHintCheckpointFailureStops(t *testing.T) {
 	c := notificationConfig(t)
 	c.Once = false
-	c.Executor = notificationExecutorFunc(func(context.Context, bus.Request) (bus.Result, error) { return notificationResult(1, 8, 1), nil })
+	c.Executor = notificationExecutorFunc(func(context.Context, bus.Request) (bus.Result, error) { return notificationPolicyResult(1, 8, 1), nil })
 	var output bytes.Buffer
 	c.Output = notificationWriterFunc(func(p []byte) (int, error) {
 		n, _ := output.Write(p)
@@ -512,7 +520,7 @@ func TestNotificationPollAndHostCancellation(t *testing.T) {
 				})
 			} else {
 				c = notificationCodexConfig(t)
-				c.Executor = notificationExecutorFunc(func(context.Context, bus.Request) (bus.Result, error) { return notificationResult(1, 1, 1), nil })
+				c.Executor = notificationExecutorFunc(func(context.Context, bus.Request) (bus.Result, error) { return notificationPolicyResult(1, 1, 1), nil })
 				c.Runner = notify.RunnerFunc(func(ctx context.Context, _ string, args []string) ([]byte, error) {
 					if len(args) == 2 {
 						return []byte("queue --thread --message"), nil
@@ -561,7 +569,7 @@ printf '%s\n' 'synthetic-host-output-not-for-user'
 	if err := os.WriteFile(c.CodexCommand, []byte(script), 0700); err != nil {
 		t.Fatal(err)
 	}
-	c.Executor = notificationExecutorFunc(func(context.Context, bus.Request) (bus.Result, error) { return notificationResult(1, 3, 1), nil })
+	c.Executor = notificationExecutorFunc(func(context.Context, bus.Request) (bus.Result, error) { return notificationPolicyResult(1, 3, 1), nil })
 	var out, diag bytes.Buffer
 	c.Output = &out
 	c.Diagnostics = &diag
@@ -592,7 +600,7 @@ func TestNotificationCorruptCheckpointCursorRefused(t *testing.T) {
 			calls := 0
 			c.Executor = notificationExecutorFunc(func(context.Context, bus.Request) (bus.Result, error) {
 				calls++
-				return notificationResult(1, 7, 1), nil
+				return notificationPolicyResult(1, 7, 1), nil
 			})
 			if err := notify.Run(context.Background(), c); err != nil {
 				t.Fatal(err)
@@ -647,7 +655,7 @@ func TestNotificationCheckpointMandatoryFields(t *testing.T) {
 				calls := 0
 				c.Executor = notificationExecutorFunc(func(context.Context, bus.Request) (bus.Result, error) {
 					calls++
-					return notificationResult(0, 0, 0), nil
+					return notificationPolicyResult(0, 0, 0), nil
 				})
 				if err := notify.Run(context.Background(), c); err != nil {
 					t.Fatal(err)

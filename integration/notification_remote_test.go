@@ -46,29 +46,34 @@ func TestNotificationStatusNeverUsesMirror(t *testing.T) {
 	if err != nil || cached.Source != "offline-mirror" {
 		t.Fatalf("fixture mirror unavailable: source=%q err=%v", cached.Source, err)
 	}
-	request.Operation = "inbox_status"
-	if mirror.Readable(request.Operation) {
-		t.Fatal("status advertised as mirror-readable")
-	}
-	if _, err := mirror.Offline(context.Background(), path, b, request); err == nil {
-		t.Fatal("direct mirror status succeeded")
-	}
-	for _, code := range []int32{400, 401, 403, 500, 502, 503, 504} {
-		mode.Store(code)
-		if result, err := client.Execute(context.Background(), request); err == nil || result.Source == "offline-mirror" {
-			t.Fatalf("HTTP %d produced cached/accepted status: source=%q err=%v", code, result.Source, err)
+	for _, operation := range []string{"inbox_status", "notification_status"} {
+		request.Operation = operation
+		if mirror.Readable(request.Operation) {
+			t.Fatal("status advertised as mirror-readable")
+		}
+		if _, err := mirror.Offline(context.Background(), path, b, request); err == nil {
+			t.Fatal("direct mirror status succeeded")
+		}
+		for _, code := range []int32{400, 401, 403, 500, 502, 503, 504} {
+			mode.Store(code)
+			if result, err := client.Execute(context.Background(), request); err == nil || result.Source == "offline-mirror" {
+				t.Fatalf("HTTP %d produced cached/accepted status: source=%q err=%v", code, result.Source, err)
+			}
+		}
+		failedCredentials, err := remote.NewWithTokenSource(config, remote.TokenSourceFunc(func(context.Context) (string, error) { return "", errors.New("synthetic credential unavailable") }))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if result, err := failedCredentials.Execute(context.Background(), request); err == nil || result.Source == "offline-mirror" {
+			t.Fatal("credential failure used mirror status")
 		}
 	}
-	failedCredentials, err := remote.NewWithTokenSource(config, remote.TokenSourceFunc(func(context.Context) (string, error) { return "", errors.New("synthetic credential unavailable") }))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if result, err := failedCredentials.Execute(context.Background(), request); err == nil || result.Source == "offline-mirror" {
-		t.Fatal("credential failure used mirror status")
-	}
 	endpoint.Close()
-	if result, err := client.Execute(context.Background(), request); err == nil || result.Source == "offline-mirror" {
-		t.Fatal("transport outage used mirror status")
+	for _, operation := range []string{"inbox_status", "notification_status"} {
+		request.Operation = operation
+		if result, err := client.Execute(context.Background(), request); err == nil || result.Source == "offline-mirror" {
+			t.Fatal("transport outage used mirror status")
+		}
 	}
 	after, err := os.ReadFile(path)
 	if err != nil {

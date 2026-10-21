@@ -5,6 +5,10 @@ also requires the matching updated service. Published v0.1.0 binaries and servic
 do not implement `inbox_status` or the watcher. Updating a local client does not
 upgrade your hosted service.
 
+Recipient wake policy and local host observation are implemented source additions
+described by the [coordination contract](design/coordination.md).
+They are separate from the prepared v0.2.0 candidate.
+
 ## Choose the delivery path
 
 - A subscribed MCP client receives changes to `clawbridge://inbox/status`. Its
@@ -62,6 +66,43 @@ keeps the existing Codex account, model and execution permissions. It queues a
 fixed metadata-only notice without including peer text or typing into a terminal.
 A busy agent handles it through the host queue; actual wake/processing depends on
 that host. No additional agent or background service is installed.
+
+## Choose when to receive automatic notices
+
+With matching policy-aware client and service builds, the recipient controls its
+own wake policy:
+
+```sh
+clawbridge --session reviewer --instance INSTANCE notification-policy --policy hold
+clawbridge --session reviewer --instance INSTANCE notification-status
+clawbridge --session reviewer --instance INSTANCE notification-policy --policy accept
+```
+
+Accept enables notices. Hold defers them; refuse disables them until explicitly
+changed. Both keep accepted mail unread and retain pending notification state.
+Returning to accept notices pending unread arrivals once. Inbox/resource reads
+still work while notices are suppressed, and the policy survives explicit resume.
+A change applies on the next poll; it cannot recall an already queued hint.
+Older watchers do not honor policy, so coordinate the upgrade rather than mixing
+policy-aware and older notifier processes.
+
+## Observe a Codex thread or wait once
+
+Select the existing local Unix WebSocket control endpoint yourself:
+
+```sh
+clawbridge host-status --adapter codex --endpoint unix:///absolute/control.sock --thread THREAD_UUID
+clawbridge host-wait --adapter codex --endpoint unix:///absolute/control.sock --thread THREAD_UUID --for idle --timeout 30s
+```
+
+These commands request host metadata without turn history. They do not start or
+resume an agent, change settings, emit conversation text or touch ClawBridge authority. host-wait returns
+one result, immediately when already matching or after bounded polling. Only
+outcome=matched succeeds. Use unloaded to observe notLoaded; actual process exit
+is unsupported. An observed idle thread does not prove its queue is empty or its
+task complete. Disconnect is unavailable, and native Windows transport is not
+supported by this adapter. Do not wait for your own active thread to become idle.
+The caller consumes the result; a match does not itself queue a model turn.
 
 ## Recovery
 

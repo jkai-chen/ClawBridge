@@ -22,7 +22,7 @@ func (f executorFunc) Execute(ctx context.Context, r bus.Request) (bus.Result, e
 	return f(ctx, r)
 }
 func result(unread, latest, fresh int64) bus.Result {
-	return bus.Result{Source: "local-authority", Data: Status{"ws-id", "prj-id", "ses-id", unread, latest, fresh}}
+	return bus.Result{Source: "local-authority", Data: NotificationStatus{Status: Status{"ws-id", "prj-id", "ses-id", unread, latest, fresh}, Policy: "accept"}}
 }
 func config(t *testing.T) Config {
 	t.Helper()
@@ -57,7 +57,7 @@ func TestNotificationJSONCoalescesPinsAndNeverRegressesAcrossRestart(t *testing.
 	steps := [][3]int64{{2, 42, 2}, {2, 42, 0}, {0, 0, 0}, {1, 50, 1}}
 	calls := 0
 	c.Executor = executorFunc(func(_ context.Context, r bus.Request) (bus.Result, error) {
-		if r.Operation != "inbox_status" || r.Args["instance"] != "SECRET-INSTANCE" {
+		if r.Operation != "notification_status" || r.Args["instance"] != "SECRET-INSTANCE" {
 			t.Fatal(r)
 		}
 		after := int64(0)

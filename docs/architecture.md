@@ -38,6 +38,12 @@ Polling is bounded and opt-in. The checkpoint coalesces arrivals and survives
 restart. An uncertain queue outcome can duplicate a hint; durable inbox/read
 metadata remains the processing record. See [notifications](notifications.md).
 
+The source-checkout [coordination increment](design/coordination.md)
+adds recipient policy to automatic notices and a separate local host observer.
+Host observations never substitute for bus presence, message receipts or task
+acceptance. Optional issue/revision message metadata remains descriptive; Linear
+and coordinator decisions determine current ownership.
+
 ## Offline behavior
 
 Cloud clients can explicitly sync a project-scoped read-only mirror. Supported

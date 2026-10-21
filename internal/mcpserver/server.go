@@ -80,6 +80,8 @@ func NewServerWithOptions(store Executor, workspace, project, session, instance 
 	add[sendInput](s, b, "send", "Send to a session, @all, or @role:ROLE. Reuse operation_id only for an identical retry.", false, true)
 	add[inboxInput](s, b, "inbox", "Read this session's inbox; fetching marks delivered, not read. unread_only defaults to true.", false, true)
 	add[inboxStatusInput](s, b, "inbox_status", "Inspect authoritative unread metadata without heartbeat, delivery, read or history writes.", true, true)
+	add[inboxStatusInput](s, b, "notification_status", "Read authoritative unread metadata and own wake policy without stamps.", true, true)
+	add[notificationPolicyInput](s, b, "set_notification_policy", "Set this active actor's own wake policy; does not read mail.", false, true)
 	add[markReadInput](s, b, "mark_read", "Mark this session's deliveries read, preserving original timestamps on repeated calls.", false, true)
 	add[replyInput](s, b, "reply", "Reply to a received message, preserving its thread and recording the parent message.", false, true)
 	add[updateInput](s, b, "update_session", "Update this session's descriptive fields; role changes do not grant authority.", false, false)
@@ -95,7 +97,22 @@ func add[In any](s *mcp.Server, b *binding, operation, description string, readO
 	destructive := operation == "register_session" || operation == "update_session" || operation == "retire_session"
 	mcp.AddTool(s, &mcp.Tool{Name: operation, Description: description, Annotations: &mcp.ToolAnnotations{
 		ReadOnlyHint: readOnly, IdempotentHint: idempotent, OpenWorldHint: &closed, DestructiveHint: &destructive,
-	}}, func(ctx context.Context, _ *mcp.CallToolRequest, in In) (*mcp.CallToolResult, bus.Result, error) {
+	}}, func(ctx context.Context, request *mcp.CallToolRequest, in In) (*mcp.CallToolResult, bus.Result, error) {
+		var supplied map[string]json.RawMessage
+		if request != nil && request.Params != nil && (operation == "send" || operation == "reply") {
+			if json.Unmarshal(request.Params.Arguments, &supplied) != nil {
+				return nil, bus.Result{}, errors.New("invalid tool arguments")
+			}
+			if raw, ok := supplied["coordination"]; ok {
+				var object any
+				if json.Unmarshal(raw, &object) != nil {
+					return nil, bus.Result{}, errors.New("invalid coordination")
+				}
+				if _, err := bus.ParseCoordination(object); err != nil {
+					return nil, bus.Result{}, err
+				}
+			}
+		}
 		raw, err := json.Marshal(in)
 		if err != nil {
 			return nil, bus.Result{}, errors.New("cannot encode tool arguments")
@@ -144,6 +161,9 @@ type emptyInput struct{}
 type inboxStatusInput struct {
 	After *int64 `json:"after,omitempty"`
 }
+type notificationPolicyInput struct {
+	Policy string `json:"policy"`
+}
 type registerInput struct {
 	Resume    bool           `json:"resume,omitempty" jsonschema:"Explicitly rotate an existing configured instance to resume an active session, fencing its previous process."`
 	Name      string         `json:"name,omitempty" jsonschema:"Must match the session configured for this MCP process; omit to use that name."`
@@ -162,11 +182,12 @@ type listInput struct {
 	After  *int64 `json:"after,omitempty"`
 }
 type sendInput struct {
-	To          string `json:"to"`
-	Body        string `json:"body"`
-	OperationID string `json:"operation_id" jsonschema:"A caller-generated retry identifier; reuse only with an identical request."`
-	Kind        string `json:"kind,omitempty"`
-	ThreadID    string `json:"thread_id,omitempty"`
+	Coordination *bus.Coordination `json:"coordination,omitempty"`
+	To           string            `json:"to"`
+	Body         string            `json:"body"`
+	OperationID  string            `json:"operation_id" jsonschema:"A caller-generated retry identifier; reuse only with an identical request."`
+	Kind         string            `json:"kind,omitempty"`
+	ThreadID     string            `json:"thread_id,omitempty"`
 }
 type inboxInput struct {
 	UnreadOnly *bool  `json:"unread_only,omitempty"`
@@ -177,10 +198,11 @@ type markReadInput struct {
 	IDs []string `json:"ids"`
 }
 type replyInput struct {
-	MessageID   string `json:"message_id"`
-	Body        string `json:"body"`
-	OperationID string `json:"operation_id"`
-	Kind        string `json:"kind,omitempty"`
+	Coordination *bus.Coordination `json:"coordination,omitempty"`
+	MessageID    string            `json:"message_id"`
+	Body         string            `json:"body"`
+	OperationID  string            `json:"operation_id"`
+	Kind         string            `json:"kind,omitempty"`
 }
 type updateInput struct {
 	TargetSession string         `json:"target_session,omitempty" jsonschema:"Hosted lead/owner only: explicitly target another session; this does not change the calling actor."`

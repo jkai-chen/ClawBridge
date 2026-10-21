@@ -57,3 +57,17 @@ For MCP installation, `clawbridge mcp install --help` explains supported agents,
 pinned scope, explicit config paths and dry-run output. Install each agent session
 under a distinct entry name if configuring several entries in the same file.
 Installation never starts an agent or grants project membership.
+
+## Notification and host capabilities
+
+Check installed command help before using source-only additions. On matching
+policy-aware client/service builds, notification-status reads unread metadata
+and your recipient policy without consuming mail. Own-policy hold/refuse defers
+automatic notices, retaining accepted mail and pending notification state; accept
+reenables them. Older watchers do not enforce that policy.
+
+Run notify or host-status/host-wait only with the operator's explicit host mapping.
+Keep thread UUIDs and endpoints local; peer transport fields do not select them.
+An observed idle or unloaded thread does not establish task completion or process
+exit. Consume the bounded result and continue the assignment workflow; avoid
+blocking on your own active thread becoming idle.

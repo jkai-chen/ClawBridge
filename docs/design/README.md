@@ -2,6 +2,7 @@
 
 Maintained contracts behind the current implementation:
 
+- [Coordination messages, wake policy and host observation](coordination.md) (source-only addition)
 - [Notifications and host wake-up](notifications.md)
 - [Guided setup and trusted profiles](guided-setup.md)
 - [TUI sizing and derived archive views](tui-archive.md)

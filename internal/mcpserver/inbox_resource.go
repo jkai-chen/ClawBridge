@@ -54,22 +54,22 @@ func newInboxResource(b *binding, o Options) *inboxResource {
 	}
 	return &inboxResource{b: b, options: o, listeners: map[*mcp.ServerSession]*resourceListener{}, observed: map[*mcp.ServerSession]bool{}}
 }
-func (r *inboxResource) fetch(ctx context.Context) (bus.Result, notify.Status, uint64, error) {
+func (r *inboxResource) fetch(ctx context.Context, automatic bool) (bus.Result, notify.NotificationStatus, uint64, error) {
 	bounded, cancel := context.WithTimeout(ctx, r.options.PollTimeout)
 	defer cancel()
 	for !r.b.mu.TryLock() {
 		if err := notify.Wait(bounded, time.Millisecond); err != nil {
-			return bus.Result{}, notify.Status{}, r.b.generation.Load(), err
+			return bus.Result{}, notify.NotificationStatus{}, r.b.generation.Load(), err
 		}
 	}
 	defer r.b.mu.Unlock()
 	if bounded.Err() != nil {
-		return bus.Result{}, notify.Status{}, r.b.generation.Load(), bounded.Err()
+		return bus.Result{}, notify.NotificationStatus{}, r.b.generation.Load(), bounded.Err()
 	}
 	b := r.b
 	gen := b.generation.Load()
 	if b.instance == "" {
-		return bus.Result{}, notify.Status{}, gen, notify.Permanent(errors.New("register or configure an exact current instance before inbox subscription"))
+		return bus.Result{}, notify.NotificationStatus{}, gen, notify.Permanent(errors.New("register or configure an exact current instance before inbox subscription"))
 	}
 	w, p, s := b.workspace, b.project, b.session
 	if b.statusScope.WorkspaceID != "" {
@@ -77,10 +77,19 @@ func (r *inboxResource) fetch(ctx context.Context) (bus.Result, notify.Status, u
 		p = b.statusScope.ProjectID
 		s = b.statusScope.SessionID
 	}
-	result, status, err := notify.Fetch(bounded, b.store, bus.Request{Workspace: w, Project: p, Session: s, Args: map[string]any{"instance": b.instance, "after": int64(0)}})
+	request := bus.Request{Workspace: w, Project: p, Session: s, Args: map[string]any{"instance": b.instance, "after": int64(0)}}
+	var result bus.Result
+	var status notify.NotificationStatus
+	var err error
+	if automatic {
+		result, status, err = notify.FetchNotification(bounded, b.store, request)
+	} else {
+		result, status.Status, err = notify.Fetch(bounded, b.store, request)
+		status.Policy = "accept"
+	}
 	if err == nil {
 		if b.statusScope.WorkspaceID != "" && b.statusScope != status.Scope() {
-			return bus.Result{}, notify.Status{}, gen, notify.Permanent(errors.New("inbox resource changed bound recipient"))
+			return bus.Result{}, notify.NotificationStatus{}, gen, notify.Permanent(errors.New("inbox resource changed bound recipient"))
 		}
 		b.statusScope = status.Scope()
 	}
@@ -90,7 +99,7 @@ func (r *inboxResource) read(ctx context.Context, req *mcp.ReadResourceRequest) 
 	if req.Params.URI != InboxStatusURI {
 		return nil, errors.New("unknown inbox status resource")
 	}
-	result, _, _, err := r.fetch(ctx)
+	result, _, _, err := r.fetch(ctx, false)
 	if err != nil {
 		return nil, err
 	}
@@ -104,7 +113,7 @@ func (r *inboxResource) subscribe(ctx context.Context, req *mcp.SubscribeRequest
 	if req.Params.URI != InboxStatusURI {
 		return errors.New("unknown inbox status subscription")
 	}
-	_, _, gen, err := r.fetch(ctx)
+	_, _, gen, err := r.fetch(ctx, true)
 	if err != nil {
 		return err
 	}
@@ -242,7 +251,7 @@ func (r *inboxResource) poll(ctx context.Context, gen, epoch uint64) {
 			return
 		}
 		first = false
-		_, status, current, err := r.fetch(ctx)
+		_, status, current, err := r.fetch(ctx, true)
 		if ctx.Err() != nil || current != gen {
 			return
 		}
@@ -259,13 +268,17 @@ func (r *inboxResource) poll(ctx context.Context, gen, epoch uint64) {
 			r.mu.Unlock()
 			return
 		}
-		r.publication = status
+		if status.Policy != "accept" {
+			r.mu.Unlock()
+			continue
+		}
+		r.publication = status.Status
 		r.publicationGen = gen
 		r.publicationCtx = ctx
 		changed := false
 		for _, l := range r.listeners {
 			if l.active {
-				if needsNotice(l, status) {
+				if needsNotice(l, status.Status) {
 					changed = true
 				} else if !l.seen {
 					l.seen = true

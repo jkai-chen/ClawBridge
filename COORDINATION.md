@@ -1,6 +1,6 @@
 # ClawBridge active coordination
 
-## Current phase: responsive TUI and archive views accepted; Linux bundle next
+## Current phase: responsive TUI and archive views accepted; Linux owner test next
 
 Guided startup is committed and pushed as `0340a8a`. The responsive TUI and
 derived 24-hour archive implementation passed independent automated acceptance.
@@ -12,7 +12,13 @@ cb-engineer is idle. Coworker updates use Codex internal queued messages, as the
 owner requested. No duplicate designer is running; the attempted original-session
 resume failed during configuration load.
 
-The next delivery is an exact-commit Linux bundle after independent acceptance.
+The accepted implementation is committed and pushed as
+`bad2d9e61f5781ebb710dd33d4d52bf7ee19d9ec`. Engineer built the Linux amd64 reuse
+bundle from that exact source archive, preserving the reviewed reuse launcher
+and its original trusted profile/keyring namespace. Artifact:
+`clawbridge-responsive-linux-amd64-bad2d9e.tar.gz`, SHA256
+`9a948a1c734d61ca92ff55555c29aca475f882afa616a75267474738015f7267`.
+TUI-ARCHIVE-REVIEW.md records its independent static acceptance separately.
 Native Linux resizing remains an owner observation. Release automation and
 installers follow; repository visibility stays private until that work and the
 publication/history review are complete. No server deployment is needed.

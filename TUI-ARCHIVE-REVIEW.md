@@ -17,9 +17,9 @@ Reviewer owns this report and integration probes only. Contract: TUI-ARCHIVE-DES
 | Compatibility | No Store/HTTP/CLI/MCP/schema/auth contract change. Focused/full/race/vet/cross checks after freeze; unchanged PostgreSQL suites not repeated without cause. | Pass |
 | Native live | Linux terminal resizing/interaction requires owner observation; synthetic model probes do not establish native acceptance. | Pending |
 
-Contract inspection: exact additive API is published: Config.Now, ArchiveFilter, SetFilter/CycleFilter, NextPage/PreviousPage/Scroll, Snapshot paging/filter/scroll fields and ArchiveTickMsg. No contract contradiction identified on initial read. Existing rendering still has the old cap while engineer is editing; this is an in-progress observation, not a promoted defect.
+Contract inspection: exact additive API is published: Config.Now, ArchiveFilter, SetFilter/CycleFilter, NextPage/PreviousPage/Scroll, Snapshot paging/filter/scroll fields and ArchiveTickMsg. No contract contradiction identified on initial read. The initial in-progress renderer still had the old width cap; frozen implementation removes it, as verified by code review and expanded sizing probes.
 
-Evidence boundaries: prior owner bundle reuse and Projects/Sessions alignment evidence remain in PHASE-4-LIVE-ACCEPTANCE.md. They do not prove guided consent or this new resize/archive increment. Final automated gates await explicit freeze.
+Evidence boundaries: prior owner bundle reuse and Projects/Sessions alignment evidence remain in PHASE-4-LIVE-ACCEPTANCE.md. They do not prove guided consent or this new resize/archive increment. Final corrected-freeze automated results are recorded below.
 
 ## Pre-freeze focused evidence
 
@@ -31,7 +31,7 @@ Two reproducible **observations, not promoted frozen defects** in the in-progres
 - O1: `go test ./integration -run '^TestTUIArchiveDiagnosticTailInspectable$' -count=1 -v`: fake executor returns 80 repetitions of diagnostic context followed by DIAGNOSTIC-END. At 40×12, scrolling through 180 offsets never exposes the tail. Error remains in truncated header outside scrollable content. Expected: full sanitized diagnostics inspectable without authority calls.
 - O2: `go test ./integration -run '^TestTUIArchiveSmallEditorRetainsCancelAndDraft$' -count=1 -v`: loaded Inbox source=server, BeginSend, draft peer|DRAFT-PRESERVED, WindowSizeMsg 24×9. Output consumes five header/status rows plus three frame rows and partial editor; Esc cancel/footer absent. Expected: reserve editor/cancel before final screen fitting, preserve draft and cell/row bounds.
 
-Engineer owns correction; independent probes remain strict. No implementation files changed, heavy gates run, or live/native behavior claimed.
+Engineer owns correction; independent probes remain strict. At this pre-freeze checkpoint, reviewer had changed no implementation files, run no heavy gates, and claimed no live/native behavior.
 
 ## Expanded independent pre-freeze checkpoint
 
@@ -112,3 +112,27 @@ Final evidence in the directory above: a1-focused.log, a1-full.jsonl, a1-race.js
 Actual final full and race skips are each exactly 12 PostgreSQL tests plus three opt-in live tests. PG: internal/bus TestPostgresRoleDenialHasNoSideEffects; integration TestPostgresCloudCLITrustedRoutingAndOffline, TestPostgresProjectAndMemberViewsAreScoped, TestPostgresRetentionRollbackAndHonestCap, TestPostgresRejectsNewerSchema, TestPostgresBootstrapAndAuthorization, TestPostgresSnapshotPrivacyAndScope, TestPostgresConcurrentPrincipalsAndReplay, TestPostgresWorkspaceIsolationAndResume, TestPostgresRemoteSyncOfflineAndDenial, TestPostgresRemoteResolutionCannotMixAliases, TestPostgresHTTPRoundtripAndDenial. Live: TestDeploymentLiveHTTPSContract, TestLiveGoogleDiscoveredClientsExchangeWithMatchingSecrets, TestLiveDeviceLoginDiscoveryReachesPollingNoGcloud. cmd/clawbridge and internal/mirror have no test files. Prior actual PG 17.11 full/race and resource cleanup remain historical evidence in GUIDED-SETUP-REVIEW.md, not fresh execution for this increment.
 
 Manual code/contract review covers complete screen budgeting and sanitized content, local one-minute reclassification with one time per pass, retained raw page records, strict retired/moved and per-recipient read stamps, exact scoped bounded after requests, visited cursor rollback on failed next/previous/refresh, immutable selected-ID preservation, pinned reply-target lifecycle, offline read-only coverage labels and input/confirmation isolation. README and CORE additive API match these semantics. No deployment, native terminal/keychain/Google operation or real user-config access by reviewer. This synthetic automated Pass does not establish native Linux resizing/archive interaction; that remains the owner live gate. Earlier owner reuse/alignment evidence stays narrowly attributed in PHASE-4-LIVE-ACCEPTANCE.md, with no inferred guided consent.
+
+## Exact-commit Linux reuse bundle — independent static PASS
+
+Artifact: `/Users/oriixchan/Downloads/clawbridge-responsive-linux-amd64-bad2d9e.tar.gz`.
+Source commit: `bad2d9e61f5781ebb710dd33d4d52bf7ee19d9ec`.
+Archive SHA256: `9a948a1c734d61ca92ff55555c29aca475f882afa616a75267474738015f7267`; supplied companion file matches the exact filename/digest.
+
+Independently verified six regular files plus their one top-level directory, with no symlinks, hardlinks, absolute/traversal paths or extra payloads. Archive bytes equal the supplied inspected directory. SHA256SUMS contains exactly five distinct payload entries and all five hashes match; manifest SHA256 `ca7cc42bee761f8f4ca2ae415fcfbb86c3099c0742cf0ad78a2d15b377efc42d`.
+
+| Payload | Independently matched SHA256 |
+| --- | --- |
+| BUILD-INFO.txt | `6c5cb560e476d37dc159bb48bbf75be95dc2f057ff50f44996c39b933f6db3c6` |
+| README.txt | `c8375f8464aae4f061675a70b6a0d566cb72f83be9c01820c9d3c9d10336f78f` |
+| SOURCE-COMMIT.txt | `7b5f03053624ae9c52c101ea8d92062b0ee585153a2474d1c7fc3c568b93f269` |
+| clawbridge | `a6c2254253c065868915a27e9aaeb7975bd694b924bad2ae5d5c2f4b9cc99fa9` |
+| reuse-existing.sh | `60fe691d2c7a33d098a6aadf8d2a6fc11d3d2defa960c7c14d5a026948a45d36` |
+
+SOURCE-COMMIT.txt matches the full published commit. Independent `git show COMMIT:PATH` reconciliation matches all 86 accepted Go/module hashes. Independent `git archive --format=tar COMMIT` digest matches the recorded source archive SHA256 `77a12bb11a3d7d42bbd5cb3ae4197b4ea1950dece3e8cf7ffd2ffe480e54da06`. BUILD-INFO records the engineer's cached, network-disabled build command from extracted source. This verifies recorded source attribution and binary metadata, not an independently reproduced binary build.
+
+Static ELF parsing and `file` confirm ELF64 little-endian x86-64, machine 62, static executable with no program interpreter. `go version -m` reads Go 1.27.0, CGO_ENABLED=0, GOOS=linux, GOARCH=amd64, GOAMD64=v1 and trimpath=true; no VCS revision is embedded, consistent with archive extraction. `sh -n reuse-existing.sh` passes. Byte comparison against guided-0340a8a archive (verified SHA256 `5ad70285fb74b991e322f0180e79c0bbc49afbfeb54f40a130b44146cfa07917`) proves the reviewed launcher is unchanged.
+
+Instructions preserve original profile/cache/state and native namespace `clawbridge-phase4-linux-8fae89c143150f33`, require the original unlocked D-Bus/Secret Service session, and explicitly limit reuse to preflight → whoami → tui. No fresh guided launcher/config/credentials are included. Preflight is correctly described as checking service presence rather than unlock/write readiness; failure guidance stops before rejoin. Inherited join/logout actions exist in the unchanged launcher but are explicitly outside this test. Safe owner sequence after archive/manifest/source-marker verification is `sh ./reuse-existing.sh preflight`, `sh ./reuse-existing.sh whoami`, `sh ./reuse-existing.sh tui` from the new extraction directory in that existing shell. README accurately describes resize/filter/paging/ID inspection and forbids send/reply/read/config changes for this observation.
+
+No bundled configuration or credential artifact found among the exact file set. Narrow private-key/installed-app-secret/Google token pattern scan matched no filenames; this is not an exhaustive secret detector. App and launcher were not executed; no rebuild, credential access, target mutation, consent, network/live request or heavy test repeat. Prior bundles preserved. Evidence: bundle-static-results.json and bundle-go-metadata.txt in the final evidence directory above. `git diff --check` passes. No static artifact blocker; native Linux responsive/archive owner observation remains Pending.

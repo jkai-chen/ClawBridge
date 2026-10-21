@@ -219,6 +219,8 @@ type SessionRow struct {
 	ID        string `json:"id"`
 	Name      string `json:"name"`
 	Owner     string `json:"owner_principal,omitempty"`
+	Host      string `json:"host,omitempty"`
+	Account   string `json:"account,omitempty"`
 	Role      string `json:"role,omitempty"`
 	AgentKind string `json:"agent_kind,omitempty"`
 	Status    string `json:"status,omitempty"`
@@ -1219,7 +1221,7 @@ func sessionRows(rows []map[string]any) []SessionRow {
 	out := make([]SessionRow, 0, len(rows))
 	for _, r := range rows {
 		out = append(out, SessionRow{
-			ID: text(r, "id"), Name: text(r, "name"), Owner: text(r, "owner_principal"),
+			ID: text(r, "id"), Name: text(r, "name"), Owner: text(r, "owner_principal"), Host: text(r, "host"), Account: text(r, "account"),
 			Role: text(r, "role"), AgentKind: text(r, "agent_kind"), Status: text(r, "status"),
 			Presence: text(r, "presence"), Stale: boolean(r, "stale"),
 		})

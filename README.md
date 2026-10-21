@@ -212,6 +212,14 @@ Cloud is informational: infrastructure provisioning is unavailable. Use the
 CLI setup/join commands first; interactive first-run forms and new project
 administration are separate future increments.
 
+Session records include their owner and optional host/local-account labels. The
+Sessions view presents this attribution with details for the selected session.
+In cloud mode, the owner comes from authenticated Google identity; host and local
+account are descriptive client-supplied labels. Supply the existing `--host`
+option when registering a session to record its execution host. Older sessions
+can show “Not recorded”; a shared host can have sessions from several users.
+See [host attribution design](HOST-IDENTITY-DESIGN.md).
+
 Phase 4 automated fixtures and the earlier Phase 3 live Google/macOS evidence
 are separate. See [PHASE-4-REVIEW.md](PHASE-4-REVIEW.md) for the current acceptance
 status; a new real clean-machine onboarding journey is not yet claimed.

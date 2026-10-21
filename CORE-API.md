@@ -102,6 +102,13 @@ Session: `id`, `project_id`, `name`, `instance`, `owner_principal`, `role`,
 `successor` (session ID or null), `last_seen`, `created_at`, `updated_at`,
 `presence`, `stale`. Setup/project/register/update/retire return one entity object.
 
+In hosted mode `owner_principal` is the authenticated session owner. `host` and
+`account` are client-supplied descriptive labels; neither proves machine ownership
+or Google identity. A host label can be shared by multiple users and is not a
+stable machine identifier. Missing labels remain missing; clients must not infer
+peer host/account metadata from the viewing machine. See HOST-IDENTITY-DESIGN.md
+for the additive presentation scope and future inventory boundary.
+
 Session presence is derived: active sessions become `presence="stale", stale=true`
 after 15 minutes without successful actor use; status stays active. Other presence
 values are active/retired/moved. Successful actor use refreshes last_seen in the

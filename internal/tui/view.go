@@ -7,6 +7,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
 )
 
 var (
@@ -21,8 +22,8 @@ var (
 // Render returns a terminal-safe view for a Model. It has no side effects.
 func Render(m Model) string {
 	width := m.width
-	if width < 56 {
-		width = 56
+	if width <= 0 {
+		width = 80
 	}
 	if width > 140 {
 		width = 140
@@ -200,16 +201,11 @@ func renderProjects(m Model) string {
 		b.WriteString("No projects returned for this workspace.")
 		return b.String()
 	}
-	b.WriteString(mutedStyle.Render(fmt.Sprintf("%-28s %-10s %s\n", "SLUG", "ROLE", "NAME")))
+	rows := make([][]string, len(m.projects))
 	for i, p := range m.projects {
-		line := fmt.Sprintf("%-28s %-10s %s", clip(terminalText(p.Slug), 28), clip(firstNonempty(terminalText(p.Role), "-"), 10), clip(terminalText(p.Name), 42))
-		if i == m.selected {
-			line = accentStyle.Render("› " + line)
-		} else {
-			line = "  " + line
-		}
-		b.WriteString(line + "\n")
+		rows[i] = []string{p.Slug, firstNonempty(p.Role, "-"), p.Name}
 	}
+	b.WriteString(renderTable(m, []string{"SLUG", "ROLE", "NAME"}, []int{28, 10, 42}, rows))
 	return strings.TrimRight(b.String(), "\n")
 }
 
@@ -223,18 +219,89 @@ func renderSessions(m Model) string {
 		b.WriteString("No sessions returned for this project.")
 		return b.String()
 	}
-	b.WriteString(mutedStyle.Render(fmt.Sprintf("%-22s %-10s %-12s %-10s %s\n", "NAME", "ROLE", "AGENT", "STATUS", "PRESENCE")))
+	rows := make([][]string, len(m.sessions))
 	for i, s := range m.sessions {
-		presence := firstNonempty(terminalText(s.Presence), terminalText(s.Status), "-")
-		line := fmt.Sprintf("%-22s %-10s %-12s %-10s %s", clip(terminalText(s.Name), 22), clip(terminalText(s.Role), 10), clip(terminalText(s.AgentKind), 12), clip(terminalText(s.Status), 10), presence)
-		if i == m.selected {
-			line = accentStyle.Render("› " + line)
-		} else {
-			line = "  " + line
-		}
-		b.WriteString(line + "\n")
+		rows[i] = []string{s.Name, firstNonempty(s.Owner, "Not recorded"), firstNonempty(s.Host, "Not recorded"), s.AgentKind, firstNonempty(s.Presence, s.Status, "-"), s.Role, s.Status}
 	}
+	b.WriteString(renderTable(m, []string{"NAME", "OWNER", "HOST", "AGENT", "PRESENCE", "ROLE", "STATUS"}, []int{22, 28, 22, 12, 12, 10, 10}, rows))
+	if m.selected >= 0 && m.selected < len(m.sessions) {
+		row := m.sessions[m.selected]
+		details := []struct{ label, value string }{
+			{"Session", row.Name}, {"Owner principal", firstNonempty(row.Owner, "Not recorded")},
+			{"Host label (self-reported)", firstNonempty(row.Host, "Not recorded")},
+			{"Account label (self-reported, not verified identity)", firstNonempty(row.Account, "Not recorded")},
+			{"Agent", row.AgentKind}, {"Role", row.Role}, {"Status", row.Status}, {"Presence", firstNonempty(row.Presence, row.Status, "-")},
+		}
+		b.WriteString("\n\nSelected session\n")
+		for _, d := range details {
+			value := strings.NewReplacer("\n", " ", "\t", " ").Replace(terminalText(d.value))
+			b.WriteString(ansi.Hardwrap(d.label+": "+value, tableBudget(m), true) + "\n")
+		}
+		if m.cfg.Mode == ModeLocal {
+			b.WriteString(ansi.Hardwrap("Local OS-user authority; no Google verification claimed.", tableBudget(m), true))
+		}
+	}
+
 	return strings.TrimRight(b.String(), "\n")
+}
+
+func tableBudget(m Model) int {
+	width := m.width
+	if width <= 0 {
+		width = 80
+	}
+	return max(1, min(width, 140)-6)
+}
+
+// renderTable shares the header/data gutter and measures terminal cells, not
+// bytes or runes. Keep each row within the box so wrapping cannot split columns.
+func renderTable(m Model, headers []string, preferred []int, rows [][]string) string {
+	budget := tableBudget(m)
+	gutter := min(2, max(0, budget-1))
+	available := budget - gutter
+	// Drop trailing columns before they become unreadable; the selected details
+	// retain every field even when only the name fits.
+	count := min(len(headers), max(1, (available+1)/9))
+	widths := append([]int(nil), preferred[:count]...)
+	total := count - 1
+	for _, w := range widths {
+		total += w
+	}
+	for total > available {
+		largest := 0
+		for i := range widths {
+			if widths[i] > widths[largest] {
+				largest = i
+			}
+		}
+		widths[largest]--
+		total--
+	}
+	line := func(values []string, prefix string) string {
+		cells := make([]string, count)
+		for i, w := range widths {
+			// Newlines and tabs belong in message bodies, not single-line table cells.
+			text := strings.NewReplacer("\n", " ", "\t", " ").Replace(terminalText(values[i]))
+			text = ansi.Truncate(text, w, "…")
+			cells[i] = text + strings.Repeat(" ", max(0, w-ansi.StringWidth(text)))
+		}
+		return prefix + strings.Join(cells, " ")
+	}
+	var b strings.Builder
+	b.WriteString(mutedStyle.Render(line(headers, strings.Repeat(" ", gutter))))
+	for i, row := range rows {
+		b.WriteByte('\n')
+		prefix := strings.Repeat(" ", gutter)
+		if i == m.selected && gutter == 2 {
+			prefix = "› "
+		}
+		text := line(row, prefix)
+		if i == m.selected {
+			text = accentStyle.Render(text)
+		}
+		b.WriteString(text)
+	}
+	return b.String()
 }
 
 func renderInbox(m Model) string {

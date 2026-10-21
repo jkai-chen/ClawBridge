@@ -333,3 +333,38 @@ fingerprints remain unchanged. PHASE-4-REVIEW.md owns exact results. Root handle
 documentation/publication only; no Phase 4 pilot deployment occurred. The manual
 checklist is in PHASE-4-PLAN.md; live consent, platform keychains, a physically
 SDK-free machine and second-human acceptance remain Pending.
+
+### Live onboarding and release distribution follow-up
+
+Owner selected a separate Ubuntu 22.04.5 LTS WSL2 x64 environment without gcloud,
+accessed headlessly/over SSH, for Phase 4 live onboarding (correcting the initial
+Windows selection). Use device consent after checking session D-Bus and Secret
+Service availability; do not assume a Windows credential-store bridge. Engineer prepares a
+standalone exact-published-SHA binary and isolated shell procedure; reviewer
+checks the procedure and evidence boundaries. Owner has now observed device
+join, fresh-process authenticated whoami and all four required doctor checks
+passing on WSL with an explicitly unlocked GNOME Keyring. This demonstrates
+fresh-process OAuth credential reuse; forced token-expiry refresh has not been
+separately observed. TUI browsing worked except reported alignment issues on
+Projects and Sessions. Real MCP execution, logout and remaining manual gates
+remain Pending. Reviewer records owner-attributed evidence separately.
+
+Owner requested user/host/session visibility. HOST-IDENTITY-DESIGN.md defines
+the immediate existing-field display increment and the future inventory
+boundary. Engineer fixes table alignment and displays verified session owner
+plus descriptive host metadata; reviewer independently checks the focused
+change after freeze. No migration, automatic host collection or server deploy.
+
+Owner requested release distribution next: GitHub Actions builds versioned
+release binaries with checksums, a curl-based macOS/Linux installer and a
+PowerShell Windows installer. Root owns the release contract, engineer owns
+implementation, reviewer owns independent verification. Installer behavior must
+pin a release, verify its checksum, select the matching OS/architecture, and
+preserve user configuration and credentials. No installer executes remote
+project instructions or initiates consent implicitly.
+
+Owner authorizes making jkai-chen/ClawBridge public after the work is complete.
+Keep the repository private during live onboarding and release preparation;
+review the publication set and Git history for private artifacts before changing
+visibility. Visibility has not been changed; CI billing eligibility has not been
+verified or claimed.

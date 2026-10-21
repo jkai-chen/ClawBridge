@@ -7,6 +7,66 @@ onboarding/TUI increment passed automated independent review; see
 [PHASE-4-REVIEW.md](PHASE-4-REVIEW.md). Cross-project links and automated cloud
 provisioning remain future work.
 
+## Install release binaries
+
+Release distribution is being prepared for **v0.1.0**. The commands below become
+available when that release is published; source builds remain available now.
+
+For macOS or Linux, the installer selects Intel/AMD64 or ARM64, verifies the
+release checksum and installs into `~/.local/bin`:
+
+```sh
+curl --fail --silent --show-error --location --proto '=https' --proto-redir '=https' \
+  https://github.com/jkai-chen/ClawBridge/releases/latest/download/install.sh | sh
+export PATH="$HOME/.local/bin:$PATH"
+clawbridge --version
+clawbridge
+```
+
+To pin the installer and binary version:
+
+```sh
+curl --fail --silent --show-error --location --proto '=https' --proto-redir '=https' \
+  https://github.com/jkai-chen/ClawBridge/releases/download/v0.1.0/install.sh \
+  | sh -s -- --version v0.1.0
+```
+
+Use `--bin-dir /absolute/path` to choose another destination. The installer prints
+the PATH step; it does not change shell profiles or PATH itself. If a download or
+checksum fails, the existing binary stays in place. An update replaces the binary
+while preserving your saved route, database/cache and native credentials.
+
+On Windows x64, download and run the PowerShell installer:
+
+```powershell
+Invoke-WebRequest -Uri 'https://github.com/jkai-chen/ClawBridge/releases/latest/download/install.ps1' -OutFile "$env:TEMP\clawbridge-install.ps1"
+& "$env:TEMP\clawbridge-install.ps1"
+$env:Path = "$env:LOCALAPPDATA\Programs\ClawBridge;$env:Path"
+clawbridge --version
+clawbridge
+```
+
+Use `-Version v0.1.0` for an explicit binary version or `-InstallDir 'C:\absolute\path'`
+for a different directory. Default is `%LOCALAPPDATA%\Programs\ClawBridge`.
+The PATH command above affects the current session; add the directory to your
+user PATH through Windows settings for future terminals. Installer support is
+Windows PowerShell 5.1 and PowerShell 7 on Windows x64. Native platform runtime
+acceptance is recorded in RELEASE-REVIEW.md.
+
+Installation does not launch ClawBridge. Running `clawbridge` opens your saved
+profile or first-run guided setup. Linux/WSL still requires an existing working
+Secret Service session for OAuth, as described below. No gcloud installation is
+needed for browser/device OAuth. Binaries are unsigned; macOS notarization and
+Windows installer packages are separate future distribution options.
+
+You can also download the matching raw binary from the release and verify it
+against `SHA256SUMS`. The manifest covers five executables, both installers and
+the full `SOURCE-COMMIT.txt`. Checksums verify integrity against that release
+manifest; they are not a separate publisher signature.
+
+`clawbridge version` and `clawbridge --version` print JSON with version, commit and
+build timestamp without loading app state. Source builds use dev/unknown defaults.
+
 ## Build
 
 Requires Go 1.26 or newer. Local mode needs no database server and neither mode

@@ -1,6 +1,6 @@
 # ClawBridge active coordination
 
-## Current phase: responsive TUI and archive views accepted; Linux owner test next
+## Current phase: release automation accepted locally; public CI and v0.1.0 next
 
 Guided startup is committed and pushed as `0340a8a`. The responsive TUI and
 derived 24-hour archive implementation passed independent automated acceptance.
@@ -19,8 +19,12 @@ and its original trusted profile/keyring namespace. Artifact:
 `clawbridge-responsive-linux-amd64-bad2d9e.tar.gz`, SHA256
 `9a948a1c734d61ca92ff55555c29aca475f882afa616a75267474738015f7267`.
 TUI-ARCHIVE-REVIEW.md records its independent static acceptance separately.
-Native Linux resizing remains an owner observation. Release automation and
-installers follow; repository visibility stays private until that work and the
+Owner reported "all done" after the exact bad2d9e Linux transfer/verification,
+preflight/whoami/TUI and resize/archive observation guide. Record this as narrow
+owner-reported completion, without per-command transcript or new authentication,
+MCP, lifecycle or other-platform claims. Release automation and installers are
+now active under RELEASE-DESIGN.md. Repository visibility stays private until
+that work and the
 publication/history review are complete. No server deployment is needed.
 
 Final corrected-tree checks passed: uncached full and race suites, vet, and
@@ -29,7 +33,28 @@ confirmed all 86 Go/module fingerprints stable. A1 is closed: full sanitized
 selected session/message IDs are inspectable through scrolling. Twelve
 PostgreSQL-dependent and three opt-in live tests skipped in ordinary runs;
 the prior PostgreSQL 17.11 baseline remains historical evidence, as no backend
-or schema changed. Native Linux resize/archive acceptance remains pending.
+or schema changed. Native Linux resize/archive acceptance is now owner-reported
+Pass; the reviewer did not independently operate the target.
+
+Release work: cb-n-engineer owns workflows/build/install scripts/build metadata;
+cb-tester-reviewer owns independent probes and RELEASE-REVIEW.md. Root owns
+contract/README/publication/history audit and final external operations. First
+stable target v0.1.0; canonical tag, five raw CGO0 platform binaries, complete
+checksums and per-user POSIX/PowerShell installers. Latest resolves once before
+pinning all downloads. Installation preserves user app state and never initiates
+consent. Public-only workflow gates prevent private runner usage during prep.
+No license is added without an owner selection; existing license status remains.
+
+RELEASE-REVIEW.md records final independent local automated/static Pass on the
+revised source. O1 (trailing-slash symlink) and R2 (persistent Go environment
+source override) are closed. Full/race/vet/cross, installer/build/publication
+fixtures, PowerShell syntax and workflow lint passed; all 91 Go/module and 105
+complete review fingerprints stayed stable. Native Windows/macOS hosted checks,
+fresh real PG CI, actual release delivery and public install/version smoke remain
+root-controlled next gates. Initial tree/history audit found only synthetic
+test-key markers, with no private artifact or credential finding. Root will
+commit/push, complete the final reachable-history check, make the repository
+public under existing owner authorization and observe CI before tagging v0.1.0.
 
 ## Historical Phase 3 checkpoint
 

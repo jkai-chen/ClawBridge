@@ -1112,3 +1112,26 @@ cannot retarget submission. Filtering/paging do not run while editing/confirming
 Complete-screen rendering has no 140-column cap; below 24×9 it shows a bounded
 resize hint while Ctrl-C/Escape remain available. Native resize delivery depends
 on terminal/PTY support; this increment does not add Windows signal support.
+
+## Release distribution extension (21 October 2026)
+
+RELEASE-DESIGN.md owns the exact asset, version, build, installer and workflow
+contract. Initial stable target v0.1.0 is not published until final acceptance
+and root publication review. `clawbridge version` and `clawbridge --version`
+return `{"source":"build","data":{"version":"v0.1.0","commit":"FULL_SHA","build_time":"RFC3339_UTC"}}`
+without reading configuration, opening storage, contacting authority or accessing
+credentials. Source builds default to dev/unknown/unknown. Extra arguments fail
+before state access. Existing scoped CLI/MCP contracts are unchanged.
+
+Release asset names are `clawbridge_VERSION_OS_ARCH` (Windows adds `.exe`) for
+darwin/linux amd64/arm64 and windows amd64; releases also contain `install.sh`,
+`install.ps1`, `SOURCE-COMMIT.txt` and `SHA256SUMS`. Installers discover latest once
+or accept a strict explicit vMAJOR.MINOR.PATCH, then download from that fixed
+release and require exactly one matching valid checksum before atomic binary
+replacement. POSIX defaults to `$HOME/.local/bin/clawbridge`; Windows defaults to
+`$env:LOCALAPPDATA\Programs\ClawBridge\clawbridge.exe`. They preserve app state,
+credentials, profiles and PATH; installation does not launch the app or sign in.
+Native shell instructions and exact validation/evidence limits live in the
+release design and user documentation. CI and tag publication jobs are disabled
+for private repositories; root owns the authorized visibility transition after
+review. Workers do not publish or create tags.

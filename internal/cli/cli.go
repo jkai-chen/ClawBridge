@@ -13,6 +13,7 @@ import (
 	"strings"
 
 	"clawbridge/internal/auth"
+	"clawbridge/internal/buildinfo"
 	"clawbridge/internal/bus"
 	"clawbridge/internal/doctor"
 	"clawbridge/internal/mcpserver"
@@ -24,7 +25,7 @@ const Usage = `clawbridge: local and authenticated hosted agent messaging
 Global flags: --db PATH --workspace NAME_OR_ID --project SLUG_OR_ID --session NAME_OR_ID --instance ID --json
 Commands: setup --local, project create SLUG, register [NAME], sessions, send TO BODY --operation-id ID,
           inbox, mark-read ID..., reply ID BODY --operation-id ID, update, retire, history, whoami, status ID,
-          mcp, mcp install ..., serve, sync, purge-expired, doctor, tui [--screen SCREEN]
+          mcp, mcp install ..., serve, sync, purge-expired, doctor, tui [--screen SCREEN], version
 Interactive: bare clawbridge opens the selected profile or guided join; setup wizard starts guided join.
 Onboarding: setup join --server URL --workspace TEAM --project CODEBASE [--login|--device]
 setup --cloud initializes an existing service only; no infrastructure is created.
@@ -152,6 +153,15 @@ func interspersedFlags(f *flag.FlagSet, args []string) ([]string, error) {
 }
 
 func Run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
+	if len(args) > 0 && (args[0] == "version" || args[0] == "--version") {
+		if len(args) != 1 {
+			return errors.New("version accepts no arguments")
+		}
+		return json.NewEncoder(stdout).Encode(struct {
+			Source string         `json:"source"`
+			Data   buildinfo.Info `json:"data"`
+		}{Source: "build", Data: buildinfo.Current()})
+	}
 	if len(args) == 1 && (args[0] == "--help" || args[0] == "help" || args[0] == "-h") {
 		_, err := io.WriteString(stdout, Usage)
 		return err

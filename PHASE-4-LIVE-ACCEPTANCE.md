@@ -137,3 +137,22 @@ Earlier screenshots remain explicitly original `4a39235` evidence at 50 rows ×
 alignment gate; it establishes no new OAuth transition, logout, real MCP,
 host-recording, actor-action or terminal-lifecycle acceptance. Reviewer did not
 perform a target-machine operation or independently observe the replacement UI.
+
+
+## Owner-reported responsive/archive reuse completion
+
+On 21 October root relayed the owner's "all done" report after the exact
+`bad2d9e61f5781ebb710dd33d4d52bf7ee19d9ec` Linux reuse/resize/archive guide.
+**Pass — owner-reported completion of that narrow guide.** The reviewed bundle
+preserves the original profile and native namespace; its sequence is existing
+session preflight, whoami and TUI, followed by resize, scrolling and page-local
+archive inspection. No per-command transcript or independent reviewer observation
+of those native results was supplied; no exact resize dimensions or additional
+specific substep outcome is inferred from the aggregate report.
+
+This supersedes the packaging checkpoint's Pending owner resize/archive observation.
+It does not establish fresh guided/browser/device consent, logout or native-entry
+removal, forced-expiry refresh, terminal lifecycle, real installed MCP/model
+behavior, second-human access or additional platform acceptance. Those separate
+remaining gates retain their prior status. Reviewer performed no live request,
+credential access, target operation or new execution for this update.

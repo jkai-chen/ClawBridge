@@ -1,6 +1,6 @@
 # Responsive TUI / archive independent review
 
-Status: **Automated PASS on corrected A1 refreeze. Native Linux resize/archive acceptance remains Pending owner observation.**
+Status: **Automated PASS on corrected A1 refreeze; Linux reuse/resize/archive completion is owner-reported PASS, as attributed below.**
 Reviewer owns this report and integration probes only. Contract: TUI-ARCHIVE-DESIGN.md and CORE-API.md responsive/archive additive adapter API. No live operations or credential access; no implementation edits.
 
 | Gate | Acceptance / independent probe | Status |
@@ -15,7 +15,7 @@ Reviewer owns this report and integration probes only. Contract: TUI-ARCHIVE-DES
 | Input / actions | v/[ /] inert during editing/confirmation; authorized actions unchanged; browsing does not mark read or introduce mutations. Draft survives resize/scroll. | Pass |
 | Offline | Explicit scoped read-only mirror source/freshness and incomplete coverage; no credential/401/403 fallback or queued writes. | Pass |
 | Compatibility | No Store/HTTP/CLI/MCP/schema/auth contract change. Focused/full/race/vet/cross checks after freeze; unchanged PostgreSQL suites not repeated without cause. | Pass |
-| Native live | Linux terminal resizing/interaction requires owner observation; synthetic model probes do not establish native acceptance. | Pending |
+| Native live | Owner reports completion of the exact bad2d9e Linux reuse/resize/archive guide. No per-command transcript or independent native observation supplied. | Owner-reported Pass |
 
 Contract inspection: exact additive API is published: Config.Now, ArchiveFilter, SetFilter/CycleFilter, NextPage/PreviousPage/Scroll, Snapshot paging/filter/scroll fields and ArchiveTickMsg. No contract contradiction identified on initial read. The initial in-progress renderer still had the old width cap; frozen implementation removes it, as verified by code review and expanded sizing probes.
 
@@ -136,3 +136,9 @@ Static ELF parsing and `file` confirm ELF64 little-endian x86-64, machine 62, st
 Instructions preserve original profile/cache/state and native namespace `clawbridge-phase4-linux-8fae89c143150f33`, require the original unlocked D-Bus/Secret Service session, and explicitly limit reuse to preflight → whoami → tui. No fresh guided launcher/config/credentials are included. Preflight is correctly described as checking service presence rather than unlock/write readiness; failure guidance stops before rejoin. Inherited join/logout actions exist in the unchanged launcher but are explicitly outside this test. Safe owner sequence after archive/manifest/source-marker verification is `sh ./reuse-existing.sh preflight`, `sh ./reuse-existing.sh whoami`, `sh ./reuse-existing.sh tui` from the new extraction directory in that existing shell. README accurately describes resize/filter/paging/ID inspection and forbids send/reply/read/config changes for this observation.
 
 No bundled configuration or credential artifact found among the exact file set. Narrow private-key/installed-app-secret/Google token pattern scan matched no filenames; this is not an exhaustive secret detector. App and launcher were not executed; no rebuild, credential access, target mutation, consent, network/live request or heavy test repeat. Prior bundles preserved. Evidence: bundle-static-results.json and bundle-go-metadata.txt in the final evidence directory above. `git diff --check` passes. No static artifact blocker; native Linux responsive/archive owner observation remains Pending.
+
+## Owner-reported Linux responsive/archive completion
+
+On 21 October root relayed the owner's report that the exact bad2d9e step-by-step Linux reuse/resize/archive guide was "all done". Record **Pass — owner-reported completion** of that guide using the reviewed reuse-only bundle, superseding the Pending owner-observation status at packaging. This is an aggregate completion report; no per-command transcript, exact resize dimensions, screenshots or independent reviewer observation of the native run was supplied.
+
+This closes only the narrow reported existing-profile Linux reuse/resize/archive observation. It does not establish new guided/browser/device consent, forced-expiry refresh, logout/keychain removal, terminal restoration/cancellation, installed MCP/model behavior, second-human access or any additional lifecycle/platform acceptance. Reviewer performed no target or credential operations. Automated/model and static packaging evidence above remain separately attributed.

@@ -283,3 +283,30 @@ or SSH session in which the keyring was available, and run ClawBridge there.
 An already-authorized profile can run `whoami` again from that session; do not
 rejoin merely to repair the D-Bus environment. ClawBridge does not start services,
 provision a keyring, capture a keyring password, or fall back to plaintext storage.
+
+### TUI sizing and retained archive views
+
+This client increment passed independent automated review; see
+[TUI-ARCHIVE-REVIEW.md](TUI-ARCHIVE-REVIEW.md) for checks and evidence limits.
+Native Linux resize/archive interaction remains a separate live acceptance step.
+
+The TUI uses the terminal's initial size and resize events, without refreshing
+or changing authority. Content scrolls with PageUp/PageDown; arrows or j/k select
+rows and keep the selection visible. Headers, tabs, editor/cancel controls and
+help share the available screen. Below 24 columns or 9 rows, resize the terminal;
+quit and Escape still work. Long selected session attribution, message bodies,
+project details and diagnostics remain available through content scrolling.
+
+On Sessions and Inbox, `v` cycles **Current**, **Archive**, **All**. Archive is a
+derived display filter, not a delete or retention setting: retired/moved sessions
+archive 24 hours after their last update; inbox deliveries archive 24 hours after
+that recipient's read stamp. Unread deliveries and active sessions stay Current.
+Missing, invalid or future timestamps stay Current. Classification updates locally
+once a minute and on entry/refresh/filter changes, without network polling.
+
+Filters apply only to the loaded server page. `]` requests the next bounded page;
+`[` revisits a previous page; `r` resets paging and reloads. Empty filtered pages
+may still have a next page. The header shows filter/page/remaining-page status.
+`mirror*` means incomplete, read-only mirror coverage—not an exhaustive archive.
+Browsing does not mark messages read; existing explicit read/send/reply actions,
+actor requirements, authorization and expiry rules are unchanged.

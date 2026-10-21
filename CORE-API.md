@@ -873,6 +873,18 @@ tests.
 
 ## Phase 4: existing-service onboarding contract
 
+### Responsive TUI and archive extension (21 October 2026)
+
+TUI-ARCHIVE-DESIGN.md defines the client-only increment: full-screen terminal
+resize/scrolling and Current/Archive/All filters (`v`) on Sessions and Inbox.
+Archived sessions are retired/moved with updated_at at least 24 hours old;
+archived deliveries have read_at at least 24 hours old. Invalid/future timestamps
+remain Current. Classification is a view only; authority operations, retention,
+permissions and existing response shapes are unchanged. TUI reads session
+updated_at additively into its display model. Server page cursors remain intact;
+`[`/`]` navigate visited/next pages, with explicit partial-page coverage. No new
+Store/HTTP/CLI/MCP operation, schema or archive mutation is introduced.
+
 ### Guided startup extension (21 October 2026)
 
 `clawbridge` with no command on terminal stdin/stdout opens the TUI when the
@@ -1070,5 +1082,33 @@ administration. Cloud is informational and states provisioning unavailable;
 no SetupSource/Apply is installed by production CLI. Doctor is read-only.
 Dynamic text retains A3 escaping. Transport-only mirror reads keep explicit
 source/freshness; credential/401/403 errors never fall back. Startup does not
-open a local authority in cloud mode. Interactive first-run forms, project
-administration and cloud infrastructure creation remain future increments.
+open a local authority in cloud mode. Guided first-run join is defined above;
+project administration UI and infrastructure creation are separate increments.
+
+### Responsive/archive TUI additive adapter API
+
+`SessionRow.UpdatedAt string` carries the existing authority `updated_at` stamp.
+`ArchiveFilter` constants `FilterCurrent`, `FilterArchive`, `FilterAll` select
+page-local derived views. `Model.SetFilter(ArchiveFilter) Model`,
+`Model.CycleFilter() Model`, `Model.NextPage() (Model, tea.Cmd)`,
+`Model.PreviousPage() (Model, tea.Cmd)`, and `Model.Scroll(int) Model` are additive.
+`Snapshot.Filter`, `Page` (one-based), `HasMore`, `Cursor`, `ScrollOffset` expose
+view state. `ArchiveTickMsg{Now time.Time}` supports deterministic local reclassification;
+production schedules one local minute tick, never an authority poll.
+Sessions/Inbox page requests use existing `limit=100`, request `after` and response
+`next_cursor`/`has_more`;
+`v`, `]`, `[` select filter/next/visited previous page. PgUp/PgDown scroll content.
+Filters retain raw page rows and preserve selected immutable ID when present.
+Selected project, session and message details expose the complete sanitized
+immutable ID through content scrolling, including when list previews are clipped.
+No archive mutation, credential access, schema or backend change is introduced.
+
+`ScrollOffset` is the effective content-line viewport offset, including automatic
+selection following. `Scroll(n)` is a relative content-line movement, clamped to
+the current content; selecting another row restores automatic selection following.
+Failed page loads retain the last successfully loaded page and its navigation.
+A reply draft pins its original message ID, so local minute reclassification
+cannot retarget submission. Filtering/paging do not run while editing/confirming.
+Complete-screen rendering has no 140-column cap; below 24×9 it shows a bounded
+resize hint while Ctrl-C/Escape remain available. Native resize delivery depends
+on terminal/PTY support; this increment does not add Windows signal support.

@@ -21,52 +21,7 @@ var (
 
 // Render returns a terminal-safe view for a Model. It has no side effects.
 func Render(m Model) string {
-	width := m.width
-	if width <= 0 {
-		width = 80
-	}
-	if width > 140 {
-		width = 140
-	}
-
-	var b strings.Builder
-	b.WriteString(accentStyle.Render("ClawBridge"))
-	b.WriteString("  ")
-	b.WriteString(modeLabel(m))
-	b.WriteString("\n")
-	b.WriteString(mutedStyle.Render(scopeLine(m)))
-	b.WriteString("\n")
-	b.WriteString(renderTabs(m.screen))
-	b.WriteString("\n\n")
-
-	if m.loading {
-		b.WriteString(mutedStyle.Render("Refreshing through the pinned application boundary…"))
-		b.WriteString("\n\n")
-	}
-	if source := sourceLine(m); source != "" {
-		b.WriteString(source)
-		b.WriteString("\n\n")
-	}
-	if terminalText(m.errText) != "" {
-		b.WriteString(errorStyle.Render("Error  "))
-		b.WriteString(terminalText(m.errText))
-		b.WriteString("\n\n")
-	}
-	if terminalText(m.actionErr) != "" {
-		b.WriteString(warnStyle.Render("Notice  "))
-		b.WriteString(terminalText(m.actionErr))
-		b.WriteString("\n\n")
-	}
-
-	body := renderBody(m)
-	b.WriteString(boxStyle.Width(max(10, width-4)).Render(body))
-	b.WriteString("\n")
-	b.WriteString(renderInput(m))
-	if m.inputMode != inputNone || m.confirming || terminalText(m.actionErr) != "" {
-		b.WriteString("\n")
-	}
-	b.WriteString(mutedStyle.Render(helpText))
-	return b.String()
+	return renderResponsive(m)
 }
 
 // RenderPlain removes Lip Gloss ANSI styling from Render's model output.
@@ -206,6 +161,10 @@ func renderProjects(m Model) string {
 		rows[i] = []string{p.Slug, firstNonempty(p.Role, "-"), p.Name}
 	}
 	b.WriteString(renderTable(m, []string{"SLUG", "ROLE", "NAME"}, []int{28, 10, 42}, rows))
+	if m.selected >= 0 && m.selected < len(m.projects) {
+		p := m.projects[m.selected]
+		b.WriteString("\n\nSelected project\n" + terminalText("ID: "+p.ID+"\nSlug: "+p.Slug+"\nName: "+p.Name+"\nRole: "+p.Role+"\nGit remote: "+p.GitRepo))
+	}
 	return strings.TrimRight(b.String(), "\n")
 }
 
@@ -227,7 +186,7 @@ func renderSessions(m Model) string {
 	if m.selected >= 0 && m.selected < len(m.sessions) {
 		row := m.sessions[m.selected]
 		details := []struct{ label, value string }{
-			{"Session", row.Name}, {"Owner principal", firstNonempty(row.Owner, "Not recorded")},
+			{"Session ID", row.ID}, {"Session", row.Name}, {"Owner principal", firstNonempty(row.Owner, "Not recorded")},
 			{"Host label (self-reported)", firstNonempty(row.Host, "Not recorded")},
 			{"Account label (self-reported, not verified identity)", firstNonempty(row.Account, "Not recorded")},
 			{"Agent", row.AgentKind}, {"Role", row.Role}, {"Status", row.Status}, {"Presence", firstNonempty(row.Presence, row.Status, "-")},
@@ -250,7 +209,7 @@ func tableBudget(m Model) int {
 	if width <= 0 {
 		width = 80
 	}
-	return max(1, min(width, 140)-6)
+	return max(1, width-4)
 }
 
 // renderTable shares the header/data gutter and measures terminal cells, not
@@ -335,11 +294,14 @@ func renderInbox(m Model) string {
 		b.WriteString(" · ")
 		b.WriteString(clip(firstNonempty(terminalText(message.CreatedAt), terminalText(message.ID)), 36))
 		b.WriteString("\n    ")
-		b.WriteString(clip(strings.ReplaceAll(terminalText(message.Body), "\n", " "), 92))
+		b.WriteString(terminalText(message.Body))
 		b.WriteString("\n")
 		if terminalText(message.ReplyTo) != "" {
 			b.WriteString(mutedStyle.Render("    reply to " + terminalText(message.ReplyTo)))
 			b.WriteString("\n")
+		}
+		if i == m.selected {
+			b.WriteString("    Message ID: " + terminalText(message.ID) + "\n")
 		}
 	}
 	return strings.TrimRight(b.String(), "\n")

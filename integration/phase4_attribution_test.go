@@ -31,7 +31,7 @@ func TestPhase4SessionsDisplayExistingAttributionWithoutPeerInstance(t *testing.
 	host := "界e\u0301👩‍💻-" + strings.Repeat("long-host", 7) + "\x1b[2J\r\u202e"
 	account := "local-account-not-google\n\t\x1b]52;c;payload\a"
 	for _, mode := range []tui.Mode{tui.ModeLocal, tui.ModeCloud} {
-		for _, width := range []int{8, 12, 20, 32, 56, 80, 140} {
+		for _, width := range []int{8, 12, 20, 24, 32, 56, 80, 140} {
 			t.Run(fmt.Sprintf("%s/%d", mode, width), func(t *testing.T) {
 				e := &attributionExecutor{row: map[string]any{"name": "worker", "owner_principal": owner, "host": host, "account": account, "instance": "PEER-INSTANCE-MUST-NOT-LEAK", "agent_kind": "codex", "presence": "online"}}
 				m, err := tui.New(tui.Config{Executor: e, Mode: mode, Workspace: "workspace", Project: "project"})
@@ -51,6 +51,18 @@ func TestPhase4SessionsDisplayExistingAttributionWithoutPeerInstance(t *testing.
 				output := ansi.Strip(tui.Render(m))
 				if strings.Contains(output, "PEER-INSTANCE-MUST-NOT-LEAK") || strings.ContainsAny(output, "\x1b\r\a\u202e") {
 					t.Fatal("peer instance or executable control leaked")
+				}
+				if width < 24 {
+					if !strings.Contains(output, "Resize") {
+						t.Fatal("tiny view lacks resize hint")
+					}
+					m = m.SetSize(32, 45)
+					output = ansi.Strip(m.View())
+				}
+				// Gather overlapping viewports so full attribution remains inspectable.
+				for i := 0; i < 120; i++ {
+					m = m.Scroll(1)
+					output += "\n" + ansi.Strip(m.View())
 				}
 				// Remove only presentation whitespace and borders to check wrapped details.
 				flat := strings.Map(func(r rune) rune {

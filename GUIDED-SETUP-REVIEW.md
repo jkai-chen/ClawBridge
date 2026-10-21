@@ -229,3 +229,51 @@ Prior owner-reported WSL onboarding and replacement alignment Pass remain in
 PHASE-4-LIVE-ACCEPTANCE.md; neither establishes live guided startup. Guided live
 acceptance, other previously pending lifecycle/MCP gates and release distribution
 remain separate work. No staging, commit, push or consent by reviewer.
+
+## Standalone Linux bundle static review
+
+Reviewed `/Users/oriixchan/Downloads/clawbridge-guided-linux-amd64-0340a8a.tar.gz`.
+Initial owner-supplied SHA256 `f121358dac3a3a5fec9cc5162a9b0769f5450a8290c773f0ef15ddc78c33a5cc`
+matched. Reviewer identified stale `launch.sh` help and ambiguous native-session
+isolation wording; engineer corrected only packaging instructions/help and
+repacked. **Use revised archive SHA256:**
+
+```text
+5ad70285fb74b991e322f0180e79c0bbc49afbfeb54f40a130b44146cfa07917
+```
+
+**Static Pass on revised archive.** Six regular top-level members, no symlinks or
+traversal: README.txt, SHA256SUMS, SOURCE-COMMIT.txt, clawbridge, guided.sh and
+reuse-existing.sh. All five manifest hashes match. Source marker is full
+`0340a8ad898a0c0e8bc8132b9ab16eec1572e48c`; independent `git show` reconciliation
+matches all 81 final acceptance source/module fingerprints. Engineer attributes
+the binary to `git archive FULL_SHA` extracted outside .git, then
+`CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -o <bundle>/clawbridge ./cmd/clawbridge`.
+Binary metadata independently confirms Linux/amd64 CGO0/trimpath and static ELF;
+no VCS revision is embedded because the archive lacks .git. Reviewer did not
+rebuild or independently prove reproducibility. Binary unchanged across repack:
+`8f88834ce3ac0fc13762f6b9196d988a0154b8ccf4065dc23f1e21d2680711a8`.
+
+Both launchers pass `/bin/sh -n`. They verify manifest before binary execution,
+sanitize child environment, retain HOME/locale/terminal/DBUS/XDG pointers and
+use system PATH. PATH sanitization is not proof gcloud is physically absent.
+No config/credential files are bundled; selected token/private-key/app-secret
+pattern scan found no matches (not a claim of exhaustive secret detection).
+Reuse pins the original custom profile/service. Fresh file/state roots differ,
+but wizard uses default native service `clawbridge-oauth`: file isolation does
+not isolate keychain entries. Revised README correctly requires a known-empty
+applicable entry or genuinely separate credential store, and explicitly says
+`dbus-run-session` alone is insufficient. If unknown, fresh consent is blocked;
+do not delete credentials or rejoin the existing profile to work around it.
+
+Safe owner sequence after transfer into a new extraction folder (same working
+D-Bus/keyring shell, original cdc1b0d folder retained): verify archive SHA256 and
+`sha256sum -c SHA256SUMS`, verify full SOURCE-COMMIT, then
+`sh ./reuse-existing.sh preflight`, `sh ./reuse-existing.sh whoami`, and
+`sh ./reuse-existing.sh tui`. Do not invoke join/logout for reuse. Fresh
+`sh ./guided.sh` requires separately established namespace safety and owner
+consent authorization; default-no decline does not acquire credentials.
+
+No binary/launcher execution, target mutation, native credential access, network
+request, consent or heavy rerun by reviewer. Temporary local extraction used only
+for static metadata/syntax checks was removed. No source implementation change.

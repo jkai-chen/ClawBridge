@@ -1,14 +1,41 @@
 # ClawBridge active coordination
 
-## Current phase: Phase 3 Compose/OAuth-discovery surface implemented; review and live checks pending
+## Current phase: responsive TUI and archive views accepted; Linux bundle next
+
+Guided startup is committed and pushed as `0340a8a`. The responsive TUI and
+derived 24-hour archive implementation passed independent automated acceptance.
+TUI-ARCHIVE-DESIGN.md owns the contract and TUI-ARCHIVE-REVIEW.md owns
+acceptance evidence. Root recovered the cb-designer context into the current
+conversation on 21 October and continues design/docs/coordination with the
+recovered cb-n-engineer and existing cb-tester-reviewer sessions. The original
+cb-engineer is idle. Coworker updates use Codex internal queued messages, as the
+owner requested. No duplicate designer is running; the attempted original-session
+resume failed during configuration load.
+
+The next delivery is an exact-commit Linux bundle after independent acceptance.
+Native Linux resizing remains an owner observation. Release automation and
+installers follow; repository visibility stays private until that work and the
+publication/history review are complete. No server deployment is needed.
+
+Final corrected-tree checks passed: uncached full and race suites, vet, and
+CGO-disabled darwin/arm64, linux/amd64 and windows/amd64 builds. The reviewer
+confirmed all 86 Go/module fingerprints stable. A1 is closed: full sanitized
+selected session/message IDs are inspectable through scrolling. Twelve
+PostgreSQL-dependent and three opt-in live tests skipped in ordinary runs;
+the prior PostgreSQL 17.11 baseline remains historical evidence, as no backend
+or schema changed. Native Linux resize/archive acceptance remains pending.
+
+## Historical Phase 3 checkpoint
 
 The owner resumed the work on 20 October 2026 and directed the existing
 cb-engineer and cb-tester-reviewer coworkers to continue. Root owns the Phase 3
 plan and contracts; cb-engineer implements and tests owned source; the reviewer
 owns independent integration coverage, defect reports and final heavy checks.
 
-The tree is dirty and uncommitted. Do not deploy, stage, commit, alter real agent
-configuration or create billed cloud resources from this checkpoint.
+At this historical checkpoint the tree was dirty and uncommitted, with no
+authorization to deploy, stage, commit, alter real agent configuration or create
+billed cloud resources. Later completion and publication decisions are recorded
+below.
 
 Frozen Phase 3 contract decisions:
 
@@ -342,13 +369,15 @@ final stable fingerprints. G-O2 cleanup failure and G-O3 preflight wording are
 closed. Live guided consent/native-store acceptance remains separate. No server
 deployment is needed for this client increment.
 
-Next owner-requested design: full terminal width/height adaptation, plus archive
-views for retired sessions and old messages. Proposed defaults are retired
-sessions after 24 hours since retirement and read inbox deliveries after 24 hours
-since read; unread messages remain visible. Archive is a reversible view filter,
-not deletion or a change to retention. Exact contracts and migration/offline
-behavior must be published before implementation; these proposals are not yet
-shipped behavior.
+Owner authorized the next increment after reporting bundle test completion.
+TUI-ARCHIVE-DESIGN.md and CORE-API now publish full terminal width/height
+adaptation, viewport scrolling and derived archive filters. Retired/moved sessions
+archive after updated_at is 24 hours old (a conservative quiet period after
+retirement); read inbox deliveries archive 24 hours after read_at. Unread and
+active sessions remain Current. Archive changes presentation, not retention or
+authority state. Current/Archive/All and explicit server-page navigation preserve
+scoped offline limits. Root owns contract; engineer implementation; reviewer
+independent probes/final checks after freeze. No migration or server deploy.
 
 Guided startup requested by owner: GUIDED-SETUP-DESIGN.md and CORE-API publish
 the contract before implementation. Root owns design/docs; engineer owns guided

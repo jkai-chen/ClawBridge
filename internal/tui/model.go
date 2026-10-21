@@ -216,6 +216,7 @@ type ProjectRow struct {
 
 // SessionRow is the display-safe session listing shape.
 type SessionRow struct {
+	UpdatedAt string `json:"updated_at,omitempty"`
 	ID        string `json:"id"`
 	Name      string `json:"name"`
 	Owner     string `json:"owner_principal,omitempty"`
@@ -251,10 +252,15 @@ type Freshness struct {
 
 // Snapshot is a stable, renderable copy of the current model state.
 type Snapshot struct {
-	Screen  Screen
-	Mode    Mode
-	Loading bool
-	Error   string
+	Filter       ArchiveFilter
+	Page         int
+	HasMore      bool
+	Cursor       int64
+	ScrollOffset int
+	Screen       Screen
+	Mode         Mode
+	Loading      bool
+	Error        string
 
 	Source     string
 	Workspace  WorkspaceView
@@ -280,11 +286,12 @@ type Model struct {
 	width  int
 	height int
 
-	loading bool
-	errText string
-	source  string
-	fresh   Freshness
-	online  *bool
+	tickStarted bool
+	loading     bool
+	errText     string
+	source      string
+	fresh       Freshness
+	online      *bool
 
 	workspace WorkspaceView
 	project   ProjectView
@@ -298,14 +305,26 @@ type Model struct {
 	checks   []Check
 	apply    *ApplyResult
 
-	selected int
-	request  uint64
+	selected     int
+	rawSessions  []SessionRow
+	rawMessages  []MessageRow
+	filter       ArchiveFilter
+	classifiedAt time.Time
+	pages        []int64
+	pageIndex    int
+	pageRollback *pagingState
+	nextCursor   int64
+	hasMore      bool
+	scroll       int
+	scrollManual bool
+	request      uint64
 
-	inputMode  inputMode
-	draft      string
-	confirming bool
-	confirm    string
-	actionErr  string
+	inputMode   inputMode
+	draft       string
+	replyTarget string
+	confirming  bool
+	confirm     string
+	actionErr   string
 }
 
 type inputMode uint8
@@ -337,7 +356,7 @@ func New(cfg Config) (Model, error) {
 	if cfg.Now == nil {
 		cfg.Now = time.Now
 	}
-	m := Model{cfg: cfg, screen: ScreenOverview, width: 100, height: 30}
+	m := Model{cfg: cfg, screen: ScreenOverview, width: 100, height: 30, pages: []int64{0}, classifiedAt: cfg.Now()}
 	if cfg.InitialScreen != "" {
 		valid := false
 		for _, screen := range orderedScreens {
@@ -365,6 +384,10 @@ func NewModel(cfg Config) (Model, error) { return New(cfg) }
 
 // Init loads the first view without changing authority.
 func (m Model) Init() tea.Cmd {
+	if m.screen != ScreenOverview {
+		_, cmd := m.refreshView()
+		return cmd
+	}
 	screen, request := m.screen, m.request
 	return func() tea.Msg { return m.loadOverviewFor(screen, request) }
 }
@@ -378,6 +401,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 // UpdateModel is the concrete counterpart to Update for tests and embedders.
 func (m Model) UpdateModel(msg tea.Msg) (Model, tea.Cmd) {
 	switch x := msg.(type) {
+	case ArchiveTickMsg:
+		m = m.reclassify(x.Now)
+		return m, archiveTick()
 	case tea.WindowSizeMsg:
 		m.width, m.height = x.Width, x.Height
 		return m, nil
@@ -391,13 +417,19 @@ func (m Model) UpdateModel(msg tea.Msg) (Model, tea.Cmd) {
 		m.errText = ""
 		m.actionErr = ""
 		if x.err != nil {
+			m = m.restorePage()
 			m.errText = displayError(x.err)
 			if x.kind == loadProjects {
 				m.errText = projectError(x.err)
 			}
 			return m, nil
 		}
+		m.pageRollback = nil
 		(&m).applyLoad(x)
+		if !m.tickStarted {
+			m.tickStarted = true
+			return m, archiveTick()
+		}
 		return m, nil
 	case actionMsg:
 		if x.request != m.request {
@@ -457,6 +489,12 @@ func (m Model) Show(screen Screen) (Model, tea.Cmd) {
 		return m, nil
 	}
 	m.screen = screen
+	m.pageRollback = nil
+	m.pages = []int64{0}
+	m.pageIndex = 0
+	m.scroll = 0
+	m.scrollManual = false
+	m = m.reclassify(m.cfg.Now())
 	m.selected = 0
 	m.inputMode = inputNone
 	m.confirming = false
@@ -467,12 +505,21 @@ func (m Model) Show(screen Screen) (Model, tea.Cmd) {
 
 // Reload refreshes the selected screen through the configured executor or
 // read-only adapter.
-func (m Model) Reload() (Model, tea.Cmd) { return m.refresh() }
+func (m Model) Reload() (Model, tea.Cmd) {
+	m = m.stagePage()
+	m.pages = []int64{0}
+	m.pageIndex = 0
+	m.scroll = 0
+	m.scrollManual = false
+	return m.refresh()
+}
 
 func (m Model) reload() (Model, tea.Cmd) { return m.refresh() }
 
 // Select moves the current list selection while keeping it in range.
 func (m Model) Select(index int) Model {
+	m.scroll = 0
+	m.scrollManual = false
 	n := len(m.currentRows())
 	if n == 0 {
 		m.selected = 0
@@ -488,6 +535,8 @@ func (m Model) Select(index int) Model {
 
 // Move changes the selection by delta, wrapping at the ends.
 func (m Model) Move(delta int) Model {
+	m.scroll = 0
+	m.scrollManual = false
 	n := len(m.currentRows())
 	if n == 0 {
 		m.selected = 0
@@ -512,7 +561,8 @@ func (m Model) BeginReply() Model {
 		return m
 	}
 
-	if _, ok := m.SelectedMessage(); !ok {
+	selected, ok := m.SelectedMessage()
+	if !ok {
 		m.actionErr = "select an inbox message before replying"
 		return m
 	}
@@ -520,6 +570,7 @@ func (m Model) BeginReply() Model {
 		m.actionErr = "the authority is offline; replies are not queued and remain unavailable until reconnect"
 		return m
 	}
+	m.replyTarget = selected.ID
 	m.inputMode = inputReply
 	m.draft = ""
 	m.actionErr = ""
@@ -546,6 +597,7 @@ func (m Model) BeginSend() Model {
 
 // CancelInput abandons a draft without writing.
 func (m Model) CancelInput() Model {
+	m.replyTarget = ""
 	m.inputMode = inputNone
 	m.draft = ""
 	m.confirming = false
@@ -701,6 +753,9 @@ type actionMsg struct {
 
 func (m Model) refresh() (Model, tea.Cmd) {
 	m.request++
+	return m.refreshView()
+}
+func (m Model) refreshView() (Model, tea.Cmd) {
 	m.loading = true
 	m.errText = ""
 	m.actionErr = ""
@@ -746,7 +801,7 @@ func (m Model) refresh() (Model, tea.Cmd) {
 			}
 		}
 		return m, func() tea.Msg {
-			result, err := m.cfg.Executor.Execute(m.cfg.Context, m.requestWithInstance("list_sessions", nil))
+			result, err := m.cfg.Executor.Execute(m.cfg.Context, m.requestWithInstance("list_sessions", map[string]any{"limit": 100, "after": m.pageCursor()}))
 			return loadedMsg{request: requestID, screen: screen, kind: loadSessions, result: result, err: err}
 		}
 	case ScreenInbox:
@@ -764,7 +819,7 @@ func (m Model) refresh() (Model, tea.Cmd) {
 		}
 		return m, func() tea.Msg {
 			result, err := m.cfg.Executor.Execute(m.cfg.Context, m.requestWithInstance("inbox", map[string]any{
-				"unread_only": false, "limit": 100,
+				"unread_only": false, "limit": 100, "after": m.pageCursor(),
 			}))
 			return loadedMsg{request: requestID, screen: screen, kind: loadInbox, result: result, err: err}
 		}
@@ -823,7 +878,7 @@ func (m Model) loadOverviewFor(screen Screen, requestID uint64) loadedMsg {
 	}
 	msg := loadedMsg{request: requestID, screen: screen, kind: loadOverview, result: result}
 	if m.cfg.Workspace != "" && m.cfg.Project != "" {
-		if sessions, e := m.cfg.Executor.Execute(m.cfg.Context, m.requestWithInstance("list_sessions", nil)); e == nil {
+		if sessions, e := m.cfg.Executor.Execute(m.cfg.Context, m.requestWithInstance("list_sessions", map[string]any{"limit": 100, "after": m.pageCursor()})); e == nil {
 			data := mapData(sessions.Data)
 			if rows := records(data["sessions"]); rows != nil {
 				msg.result.Data = mergeResultData(msg.result.Data, sessions.Data, "sessions", sessionRows(rows))
@@ -888,6 +943,21 @@ func (m Model) command(requestID uint64, kind actionKind, req bus.Request) tea.C
 }
 
 func (m *Model) applyLoad(x loadedMsg) {
+	oldID := ""
+	oldRows := m.currentRows()
+	if m.selected >= 0 && m.selected < len(oldRows) {
+		oldID = oldRows[m.selected]
+	}
+	defer func() {
+		rows := m.currentRows()
+		m.selected = min(m.selected, max(0, len(rows)-1))
+		for i, id := range rows {
+			if id == oldID {
+				m.selected = i
+				break
+			}
+		}
+	}()
 	m.source = x.result.Source
 	switch x.kind {
 	case loadOverview, loadProjects, loadSessions, loadInbox:
@@ -933,9 +1003,15 @@ func (m *Model) applyLoaded(kind loadKind, result bus.Result) {
 	case loadProjects:
 		m.projects = projectRows(records(data["projects"]))
 	case loadSessions:
-		m.sessions = sessionRows(records(data["sessions"]))
+		m.rawSessions = sessionRows(records(data["sessions"]))
+		m.hasMore = boolean(data, "has_more")
+		m.nextCursor = integer(data, "next_cursor")
+		*m = m.reclassify(m.cfg.Now())
 	case loadInbox:
-		m.messages = messageRows(records(data["messages"]))
+		m.rawMessages = messageRows(records(data["messages"]))
+		m.hasMore = boolean(data, "has_more")
+		m.nextCursor = integer(data, "next_cursor")
+		*m = m.reclassify(m.cfg.Now())
 		m.selected = min(m.selected, max(0, len(m.messages)-1))
 	}
 }
@@ -968,7 +1044,9 @@ func (m *Model) applyWhoami(data map[string]any) {
 }
 
 func (m Model) snapshot() Snapshot {
+	_, lines, budget := layoutParts(m)
 	s := Snapshot{
+		Filter: m.filter, Page: m.pageIndex + 1, HasMore: m.hasMore, Cursor: m.pageCursor(), ScrollOffset: bodyOffset(m, lines, budget),
 		Screen: m.screen, Mode: m.cfg.Mode, Loading: m.loading,
 		Error: firstNonempty(m.errText, m.actionErr), Source: m.source,
 		Workspace: m.workspace, Project: m.project, Session: m.session, Identity: m.identity,
@@ -1054,6 +1132,16 @@ func (m Model) updateKey(msg tea.KeyMsg) (Model, tea.Cmd) {
 		return m.Show(screenAt(indexOf(m.screen) + 1))
 	case "shift+tab", "left":
 		return m.Show(screenAt(indexOf(m.screen) - 1))
+	case "v":
+		return m.CycleFilter(), nil
+	case "]":
+		return m.NextPage()
+	case "[":
+		return m.PreviousPage()
+	case "pgdown":
+		return m.Scroll(max(1, m.height/2)), nil
+	case "pgup":
+		return m.Scroll(-max(1, m.height/2)), nil
 	case "r":
 		return m.Reload()
 	case "up", "k":
@@ -1118,8 +1206,8 @@ func (m Model) updateEditor(key string, runes []rune) (Model, tea.Cmd) {
 			return m.ApplySetup(m.confirm)
 		}
 		if m.inputMode == inputReply {
-			if selected, ok := m.SelectedMessage(); ok {
-				return m.Reply(selected.ID, m.draft, m.operationID("reply"))
+			if m.replyTarget != "" {
+				return m.Reply(m.replyTarget, m.draft, m.operationID("reply"))
 			}
 			m.actionErr = "selected inbox message is no longer available"
 			return m, nil
@@ -1221,7 +1309,7 @@ func sessionRows(rows []map[string]any) []SessionRow {
 	out := make([]SessionRow, 0, len(rows))
 	for _, r := range rows {
 		out = append(out, SessionRow{
-			ID: text(r, "id"), Name: text(r, "name"), Owner: text(r, "owner_principal"), Host: text(r, "host"), Account: text(r, "account"),
+			UpdatedAt: text(r, "updated_at"), ID: text(r, "id"), Name: text(r, "name"), Owner: text(r, "owner_principal"), Host: text(r, "host"), Account: text(r, "account"),
 			Role: text(r, "role"), AgentKind: text(r, "agent_kind"), Status: text(r, "status"),
 			Presence: text(r, "presence"), Stale: boolean(r, "stale"),
 		})

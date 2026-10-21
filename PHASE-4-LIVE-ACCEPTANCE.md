@@ -121,6 +121,12 @@ that owner ran checksum/source-marker verification on the target.
 
 ## Owner replacement-build alignment confirmation
 
+On 21 October the owner also reported "test done go ahead" after the reviewed
+0340a8a bundle reuse instructions (preflight/whoami/tui). Record this as
+owner-reported completion of the reuse test sequence; no per-command transcript
+was supplied. It does not establish fresh guided consent or a new native-store
+isolation test. Responsive sizing and archive were not included in that bundle.
+
 After root's instructions to transfer replacement `cdc1b0d`, owner reported:
 
 > I confirmed it is fix, I put wrong file name in scp cause transfer the old file

@@ -1568,3 +1568,33 @@ was validated before deletion; future verification uses current sources, marker
 and image, not the now-removed temporary archive. No heavy suite, service restart,
 new backup execution, restore, reboot or consent was performed by the reviewer.
 Prior platform/operational limits remain unchanged.
+
+
+### Independent first unattended daily backup observation — PASS, 21 October 2026 06:08 UTC
+
+Read-only checks against the existing pilot independently confirm the first
+unattended 02:30 UTC timer execution. No manual service invocation or operational
+change was made for this observation. Local baseline was clean pushed
+`74075991ffca32c8b21b33d9a5780f88fcba1bc5`.
+
+Using `gcloud compute ssh instance-claw-bridge-dev --project claw-bridge-dev
+--zone europe-west2-a --tunnel-through-iap --command ...`, independently inspected
+`systemctl show`, `systemctl list-timers`, the bounded 02:20–03:00 UTC service/timer
+journal, and GCS object metadata/content reads:
+
+| Evidence | Independent result |
+| --- | --- |
+| Schedule | **Pass**: daily 02:30 UTC; timer active/enabled; last trigger 2026-10-21 02:30:08 UTC; next deadline 2026-10-22 02:30 UTC |
+| Execution | **Pass**: service started 02:30:08 UTC, exited 02:30:12 UTC, `Result=success`, `ExecMainStatus=0`; invocation `bd553e56e0514a88939024b1409e3cfe` |
+| Journal | **Pass**: records start, dump/checksum uploads and successful completion in that same interval |
+| New dump | **Pass**: `gs://clawbridge-backups-claw-bridge-dev/postgres/daily/20261021T023008Z.dump`, 28,047 bytes, generation `1792549810853037` |
+| Companion checksum | **Pass**: same prefix, `20261021T023008Z.sha256`, 88 bytes, generation `1792549812402822` |
+| Stored-content verification | **Pass**: independently streamed `gcloud storage cat` dump into `sha256sum` under `bash -o pipefail`; compared with the companion checksum and obtained `e1fe8d9702d737a1fea900639a26972945863751dfb1d3b91e9f25c7089a1f9d` |
+
+No dump copy was written locally, and no dump contents or credentials were
+printed. Reread engineer's `deploy/README.md` diff: timestamps, object generations,
+sizes and digest match these independent observations. This supersedes earlier
+unattended-firing Pending limits for this single observed execution. It does not
+prove missed-schedule catch-up or restore of this new dump; prior isolated restore
+evidence and other platform/operational limits remain separate. No heavy tests,
+new consent, scheduling, deployment, staging or commit was performed.

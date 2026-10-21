@@ -561,8 +561,9 @@ credential was printed. This is not browser/device user-consent evidence.
 
 Local operational checks passed: `sh -n deploy/backup-postgres.sh`, focused
 `TestDeploymentBackupRunnerFailsClosedWithoutConfiguration|TestCompose`, and
-`git diff --check`. The timer was invoked manually before and after reboot; an
-unattended 02:30 UTC firing and missed-schedule catch-up have not yet been observed.
+`git diff --check`. The service was invoked manually before and after reboot.
+The first unattended 02:30 UTC firing was subsequently verified on 2026-10-21
+(see evidence below); missed-schedule catch-up remains unobserved.
 Root subsequently completed browser/device consent and real macOS Keychain
 acceptance; see [PHASE-3-LIVE-ACCEPTANCE.md](../PHASE-3-LIVE-ACCEPTANCE.md).
 That acceptance intentionally added the now-retired session
@@ -585,8 +586,8 @@ Actual browser/device Google consent and fresh-process macOS Keychain
 refresh/whoami/doctor/logout are recorded separately in
 [PHASE-3-LIVE-ACCEPTANCE.md](../PHASE-3-LIVE-ACCEPTANCE.md); the operator
 impersonation probes above do not establish those end-user flows. Native
-Windows/Linux keychains, unattended timer firing, physical disk-loss replacement
-and live model-driven client execution remain unverified. Failure-injection
+Windows/Linux keychains, missed-schedule timer catch-up, physical disk-loss
+replacement and live model-driven client execution remain unverified. Failure-injection
 rollback is covered by automated fixtures, not a destructive live-Google drill.
 
 ### Reviewed exact-SHA archive update — 2026-10-20 22:27 UTC
@@ -744,3 +745,35 @@ drop-in remained installed and `/dev/sdb` remained mounted at
 extra dump, restart, reboot or restore drill. Reviewer was notified for
 independent read-only capacity/resource/HTTPS/readiness checks. No heavy tests,
 new consent, staging or commit were performed for this maintenance.
+
+
+### First unattended daily backup — 2026-10-21 02:30 UTC
+
+Read-only inspection at 06:08 UTC confirmed the first unattended daily firing.
+The installed timer has `OnCalendar=*-*-* 02:30:00 UTC`, `Persistent=true` and
+`AccuracySec=1min`. Its `LastTriggerUSec` was 2026-10-21 02:30:08 UTC; the next
+scheduled firing was 2026-10-22 02:30:00 UTC and the timer remained active.
+The service identifies `TriggeredBy=clawbridge-postgres-backup.timer`, started
+at 02:30:08 UTC and exited at 02:30:12 UTC with `Result=success` and
+`ExecMainStatus=0`. The journal independently records that start, both uploads,
+and successful completion in the same interval.
+
+The new objects in `gs://clawbridge-backups-claw-bridge-dev/` were independently
+read back:
+
+| Object | Bytes | Generation |
+| --- | --- | --- |
+| `postgres/daily/20261021T023008Z.dump` | 28,047 | `1792549810853037` |
+| `postgres/daily/20261021T023008Z.sha256` | 88 | `1792549812402822` |
+
+The checksum object's entry for `20261021T023008Z.dump` was
+`e1fe8d9702d737a1fea900639a26972945863751dfb1d3b91e9f25c7089a1f9d`.
+Streaming the stored dump directly into SHA-256 produced the identical digest;
+no dump contents or credentials were printed. This establishes actual unattended
+execution and publication with matching checksum, not a restore of this new dump
+or missed-schedule catch-up. Earlier isolated restore evidence remains separate.
+No manual backup, cleanup, deployment, service/configuration change, reboot or
+consent was performed for this observation. The application deployment remains
+`f913ffa80443a47bf0faa62b55936a14802c570e`; local documentation baseline was
+clean pushed `7407599`. Reviewer was sent the exact timestamps, object generations
+and checksum for independent read-only verification.

@@ -223,6 +223,7 @@ func nameOK(v string) error {
 }
 func validateArgs(op string, a map[string]any) error {
 	allowed := map[string]string{
+		"inbox_status":   "instance after",
 		"workspace_init": "mode name retention_days", "project_create": "slug name git_remote", "list_projects": "", "list_members": "", "register_session": "instance resume role agent_kind model host account notes transport", "list_sessions": "instance status role limit after", "send": "instance to body kind thread_id operation_id", "reply": "instance message_id body kind operation_id", "inbox": "instance unread_only limit after", "mark_read": "instance ids", "update_session": "instance target_session role model host account notes transport", "retire_session": "instance target_session successor status", "history": "instance entity key limit after", "whoami": "instance", "message_status": "instance message_id", "resolve_project": "git_remote instance", "snapshot": "instance", "project_role_set": "instance principal role", "purge_expired": "instance",
 	}
 	keys, ok := allowed[op]
@@ -301,7 +302,11 @@ func (s *Store) Execute(ctx context.Context, r Request) (Result, error) {
 	if s.postgres {
 		return Result{}, errors.New("Postgres requires trusted ExecuteAs identity")
 	}
-	return s.executeRequest(ctx, r)
+	result, err := s.executeRequest(ctx, r)
+	if r.Operation == "inbox_status" {
+		err = classify(err)
+	}
+	return result, err
 }
 func (s *Store) ExecuteAs(ctx context.Context, principal string, r Request) (Result, error) {
 	if !s.postgres {
@@ -320,7 +325,7 @@ func (s *Store) executeRequest(ctx context.Context, r Request) (Result, error) {
 		return Result{}, err
 	}
 	options := &sql.TxOptions{}
-	if s.postgres && r.Operation == "snapshot" {
+	if s.postgres && (r.Operation == "snapshot" || r.Operation == "inbox_status") {
 		options.Isolation = sql.LevelRepeatableRead
 		options.ReadOnly = true
 	}
@@ -338,7 +343,7 @@ func (s *Store) executeRequest(ctx context.Context, r Request) (Result, error) {
 			return Result{}, err
 		}
 	}
-	if s.postgres && r.Operation != "snapshot" {
+	if s.postgres && r.Operation != "snapshot" && r.Operation != "inbox_status" {
 		// Serialize a principal's rate-limit accounting across its workspaces.
 		if _, err = tx.ExecContext(ctx, `SELECT pg_advisory_xact_lock(hashtextextended(?,0))`, "principal:"+s.principal); err != nil {
 			return Result{}, err
@@ -395,7 +400,7 @@ func (s *Store) execute(ctx context.Context, tx *transaction, r Request) (any, e
 		if _, err = one(ctx, tx, `SELECT principal FROM members WHERE workspace_id=? AND principal=?`, wid, s.principal); err != nil {
 			return nil, scopedError(err, "workspace membership required", "forbidden")
 		}
-		if r.Operation != "snapshot" {
+		if r.Operation != "snapshot" && r.Operation != "inbox_status" {
 			if _, err = tx.ExecContext(ctx, `SELECT pg_advisory_xact_lock(hashtextextended(?,0))`, "workspace:"+wid); err != nil {
 				return nil, err
 			}
@@ -508,6 +513,13 @@ func (s *Store) execute(ctx context.Context, tx *transaction, r Request) (any, e
 		if actor["owner_principal"] != s.principal || str(a, "instance") == "" || actor["instance"] != str(a, "instance") {
 			return nil, errors.New("session instance mismatch; pass the instance returned by register")
 		}
+	}
+	// Metadata polling authorizes the actor above, but must never heartbeat it.
+	if r.Operation == "inbox_status" {
+		if actor == nil || actor["status"] != "active" {
+			return nil, errors.New("active owned session permission required for inbox status")
+		}
+		return s.inboxStatus(ctx, tx, wid, pid, actor["id"].(string), a)
 	}
 	if actor != nil {
 		now := stamp()

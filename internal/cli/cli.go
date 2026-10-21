@@ -24,7 +24,8 @@ import (
 const Usage = `clawbridge: local and authenticated hosted agent messaging
 Global flags: --db PATH --workspace NAME_OR_ID --project SLUG_OR_ID --session NAME_OR_ID --instance ID --json
 Commands: setup --local, project create SLUG, register [NAME], sessions, send TO BODY --operation-id ID,
-          inbox, mark-read ID..., reply ID BODY --operation-id ID, update, retire, history, whoami, status ID,
+          inbox, inbox-status [--after N], mark-read ID..., reply ID BODY --operation-id ID, update, retire, history, whoami, status ID,
+          notify --adapter json|codex --state ABSOLUTE_PATH [--thread UUID] [--interval 5s] [--once],
           mcp, mcp install ..., serve, sync, purge-expired, doctor, tui [--screen SCREEN], version
 Interactive: bare clawbridge opens the selected profile or guided join; setup wizard starts guided join.
 Onboarding: setup join --server URL --workspace TEAM --project CODEBASE [--login|--device]
@@ -185,6 +186,9 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	}
 	if rest[0] == "tui" {
 		return runTUI(ctx, flags, rest[1:], stdout, stderr)
+	}
+	if rest[0] == "notify" {
+		return runNotify(ctx, flags, rest[1:], stdout, stderr)
 	}
 	if rest[0] == "doctor" {
 		return runDoctorCommand(ctx, flags, rest[1:], stdout, stderr)
@@ -369,6 +373,9 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		op = "inbox"
 		commonPage()
 		f.Bool("unread-only", true, "return only unread messages")
+	case "inbox-status":
+		op = "inbox_status"
+		f.Int64("after", 0, "exclusive sequence cursor")
 	case "mark-read":
 		op = "mark_read"
 		arityMin, arityMax = 1, 1000
@@ -556,7 +563,7 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	}
 	if config.Instance != "" {
 		switch op {
-		case "register_session", "list_sessions", "history", "send", "reply", "inbox", "mark_read", "update_session", "retire_session", "whoami", "message_status", "project_role_set", "purge_expired":
+		case "register_session", "list_sessions", "history", "send", "reply", "inbox", "inbox_status", "mark_read", "update_session", "retire_session", "whoami", "message_status", "project_role_set", "purge_expired":
 			a["instance"] = config.Instance
 		}
 	}

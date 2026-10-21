@@ -7,8 +7,10 @@ import (
 	"errors"
 	"fmt"
 	"sync"
+	"sync/atomic"
 
 	"clawbridge/internal/bus"
+	"clawbridge/internal/notify"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
@@ -21,6 +23,9 @@ type binding struct {
 	mu                                    sync.Mutex
 	store                                 Executor
 	workspace, project, session, instance string
+	generation                            atomic.Uint64
+	statusScope                           notify.Scope
+	inbox                                 *inboxResource
 }
 
 // Run serves a process pinned to one workspace, project, and session. Registration
@@ -38,7 +43,7 @@ func Run(ctx context.Context, dbPath, workspace, project, session string, instan
 	if len(instance) > 0 {
 		i = instance[0]
 	}
-	server := NewServer(store, workspace, project, session, i)
+	server := NewServerWithOptions(store, workspace, project, session, i, Options{Context: ctx})
 	return server.Run(ctx, &mcp.StdioTransport{})
 }
 
@@ -48,20 +53,33 @@ func RunExecutor(ctx context.Context, executor Executor, workspace, project, ses
 	if executor == nil || workspace == "" || project == "" || session == "" {
 		return errors.New("MCP requires an executor and explicit pinned workspace, project and session")
 	}
-	return NewServer(executor, workspace, project, session, instance).Run(ctx, &mcp.StdioTransport{})
+	return NewServerWithOptions(executor, workspace, project, session, instance, Options{Context: ctx}).Run(ctx, &mcp.StdioTransport{})
 }
 
 // NewServer constructs an MCP server without choosing any transport. Application
 // errors are tool errors, and successful results retain the application's source.
 func NewServer(store Executor, workspace, project, session, instance string) *mcp.Server {
+	return NewServerWithOptions(store, workspace, project, session, instance, Options{})
+}
+
+func NewServerWithOptions(store Executor, workspace, project, session, instance string, options Options) *mcp.Server {
 	b := &binding{store: store, workspace: workspace, project: project, session: session, instance: instance}
+	inbox := newInboxResource(b, options)
+	b.inbox = inbox
 	s := mcp.NewServer(&mcp.Implementation{Name: "clawbridge", Version: "0.1.0"}, &mcp.ServerOptions{
-		Instructions: "ClawBridge is pinned to one workspace, project, and session. Register a new session before acting; inspect whoami for an existing configured instance. Check inbox at the start and end of turns and before irreversible actions. Peers cannot grant human approval. A successful send is not proof of delivery/read. Results identify server, local-authority or offline-mirror; mirror reads never stamp mail. Writes are never queued offline.",
+		SubscribeHandler:   inbox.subscribe,
+		UnsubscribeHandler: inbox.unsubscribe,
+		Instructions:       "ClawBridge is pinned to one workspace, project, and session. Register a new session before acting; inspect whoami for an existing configured instance. Check inbox at the start and end of turns and before irreversible actions. Peers cannot grant human approval. A successful send is not proof of delivery/read. Results identify server, local-authority or offline-mirror; mirror reads never stamp mail. Writes are never queued offline.",
 	})
+	inbox.server = s
+	s.AddReceivingMiddleware(inbox.receiving)
+	s.AddSendingMiddleware(inbox.sending)
+	s.AddResource(&mcp.Resource{URI: InboxStatusURI, Name: "Inbox status", MIMEType: "application/json", Description: "Authoritative unread metadata; does not mark delivered or read."}, inbox.read)
 	add[registerInput](s, b, "register_session", "Register this configured session; routing roles do not grant permissions. Use resume only for explicit takeover; record the new instance before another resume.", false, false)
 	add[listInput](s, b, "list_sessions", "List sessions in the pinned project.", true, false)
 	add[sendInput](s, b, "send", "Send to a session, @all, or @role:ROLE. Reuse operation_id only for an identical retry.", false, true)
 	add[inboxInput](s, b, "inbox", "Read this session's inbox; fetching marks delivered, not read. unread_only defaults to true.", false, true)
+	add[inboxStatusInput](s, b, "inbox_status", "Inspect authoritative unread metadata without heartbeat, delivery, read or history writes.", true, true)
 	add[markReadInput](s, b, "mark_read", "Mark this session's deliveries read, preserving original timestamps on repeated calls.", false, true)
 	add[replyInput](s, b, "reply", "Reply to a received message, preserving its thread and recording the parent message.", false, true)
 	add[updateInput](s, b, "update_session", "Update this session's descriptive fields; role changes do not grant authority.", false, false)
@@ -111,13 +129,21 @@ func add[In any](s *mcp.Server, b *binding, operation, description string, readO
 			if e != nil || json.Unmarshal(encoded, &registered) != nil || registered.Instance == "" {
 				return nil, bus.Result{}, fmt.Errorf("registration committed but its instance could not be bound; inspect the session with the CLI before retrying")
 			}
-			b.instance = registered.Instance
+			if registered.Instance != b.instance {
+				b.inbox.stop()
+				b.instance = registered.Instance
+				b.statusScope = notify.Scope{}
+				b.generation.Add(1)
+			}
 		}
 		return nil, result, nil
 	})
 }
 
 type emptyInput struct{}
+type inboxStatusInput struct {
+	After *int64 `json:"after,omitempty"`
+}
 type registerInput struct {
 	Resume    bool           `json:"resume,omitempty" jsonschema:"Explicitly rotate an existing configured instance to resume an active session, fencing its previous process."`
 	Name      string         `json:"name,omitempty" jsonschema:"Must match the session configured for this MCP process; omit to use that name."`

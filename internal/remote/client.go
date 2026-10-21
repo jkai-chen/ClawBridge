@@ -93,6 +93,11 @@ func (f TokenSourceFunc) Token(ctx context.Context) (string, error) { return f(c
 type credentialError struct{ error }
 
 func (e *credentialError) Unwrap() error { return e.error }
+func (e *credentialError) Code() string  { return "unauthenticated" }
+
+type metadataError struct{ error }
+
+func (e *metadataError) Code() string { return "invalid" }
 
 func asCredentialError(err error, message string) error {
 	if err == nil {
@@ -460,6 +465,15 @@ func (c *Client) Execute(ctx context.Context, r bus.Request) (bus.Result, error)
 	result, unavailable, err := c.call(ctx, r)
 	if err == nil {
 		return result, nil
+	}
+	if r.Operation == "inbox_status" {
+		// Notification metadata is authoritative only, never an offline wake.
+		var credential *credentialError
+		var httpErr *HTTPError
+		if !unavailable && ctx.Err() == nil && !errors.As(err, &credential) && !errors.As(err, &httpErr) {
+			return bus.Result{}, &metadataError{err}
+		}
+		return bus.Result{}, err
 	}
 	if unavailable && mirror.Readable(r.Operation) && c.config.CachePath != "" && c.config.Principal != "" {
 		cached, e := mirror.Offline(ctx, c.config.CachePath, c.binding(r), r)

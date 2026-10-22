@@ -146,8 +146,12 @@ try {
     $records = @(Install-ClawBridge -NoModifyPath -Version 'v1.2.3' -InstallDir $directory 3>&1)
     $env:CB_PROBE_SKILL_EXIT = '0'
     $warnings = @($records | Where-Object { $_ -is [Management.Automation.WarningRecord] })
-    Assert-Probe ($warnings.Count -eq 1) 'Skill failure did not warn exactly once'
-    Assert-Probe ($warnings[0].Message -like '*agent skill was not installed*clawbridge skill install*') ('Skill failure warning lacks the recovery command: ' + $warnings[0].Message)
+    $skillWarnings = @($warnings | Where-Object { $_.Message -like '*agent skill was not installed*' })
+    Assert-Probe ($skillWarnings.Count -eq 1) 'Skill failure did not warn exactly once'
+    Assert-Probe ($skillWarnings[0].Message -like '*clawbridge skill install*') ('Skill failure warning lacks the recovery command: ' + $skillWarnings[0].Message)
+    # This directory holds ';', which PATH cannot: that is the only other warning.
+    Assert-Probe (@($warnings | Where-Object { $_.Message -like 'PATH was not changed:*' }).Count -eq 1) 'A ; directory did not warn that PATH was not changed'
+    Assert-Probe ($warnings.Count -eq 2) ('Unexpected installer warnings: ' + (@($warnings | ForEach-Object { $_.Message }) -join ' | '))
     Assert-Probe ((Get-FileHash -LiteralPath $destination -Algorithm SHA256).Hash.ToLowerInvariant() -eq $script:Digest) 'Skill failure undid the install'
     Assert-SkillRan
     Assert-Cleanup
@@ -266,6 +270,30 @@ try {
     $state = Get-TestPath
     Assert-Probe ($state.Kind -eq [Microsoft.Win32.RegistryValueKind]::ExpandString -and $state.Raw -ceq $pathDir) 'An absent user Path was not created as the install directory'
     Assert-NoSkillRun 'A -NoSkill PATH install ran the skill step'
+    # A directory PATH cannot hold (';') is never persisted, even by default.
+    Set-TestPath $seed ([Microsoft.Win32.RegistryValueKind]::ExpandString)
+    $sessionPath = $env:PATH
+    $records = @(Install-ClawBridge -Version 'v1.2.3' -InstallDir $directory -NoSkill -PathRegistryKey $pathKey 3>&1)
+    Assert-Probe ($env:PATH -ceq $sessionPath) 'A ; directory changed the session PATH'
+    $env:PATH = $sessionPath
+    Assert-Probe ((Get-TestPath).Raw -ceq $seed) 'A ; directory was written to the user Path'
+    Assert-Probe (@($records | Where-Object { $_ -is [Management.Automation.WarningRecord] -and $_.Message -like 'PATH was not changed:*' }).Count -eq 1) 'A ; directory did not warn that PATH was not changed'
+    # Another clawbridge earlier on PATH: the install warns, names it, and puts
+    # the new binary first in this session; the user Path still only appends.
+    $shadowDir = Join-Path $fixture 'older bin'
+    $null = [IO.Directory]::CreateDirectory($shadowDir)
+    [IO.File]::WriteAllBytes((Join-Path $shadowDir 'clawbridge.exe'), $script:Payload)
+    $sessionPath = $env:PATH
+    try {
+        $env:PATH = $shadowDir + ';' + $sessionPath
+        $records = @(Install-ClawBridge -Version 'v1.2.3' -InstallDir $pathDir -NoSkill -PathRegistryKey $pathKey 3>&1)
+        $shadowWarnings = @($records | Where-Object { $_ -is [Management.Automation.WarningRecord] -and $_.Message -like ('*' + $shadowDir + '*') })
+        Assert-Probe ($shadowWarnings.Count -eq 1) 'A shadowing clawbridge earlier on PATH was not named in a warning'
+        Assert-Probe ($env:PATH.StartsWith($pathDir + ';')) 'This session does not run the new binary first'
+        $resolved = (Get-Command clawbridge -CommandType Application -ErrorAction Stop | Select-Object -First 1).Path
+        Assert-Probe ([IO.Path]::GetFullPath($resolved) -eq [IO.Path]::GetFullPath($pathExe)) ('This session still resolves another clawbridge: ' + $resolved)
+    } finally { $env:PATH = $sessionPath }
+    Assert-Probe ((Get-TestPath).Raw -ceq ($seed + ';' + $pathDir)) 'The user Path was not appended exactly once alongside a shadowing install'
     # Architecture mapping test uses original production function, then restores env.
     $env:PROCESSOR_ARCHITECTURE = 'x86'
     $env:PROCESSOR_ARCHITEW6432 = 'AMD64'

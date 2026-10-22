@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -12,6 +13,7 @@ import (
 
 	"clawbridge/internal/install"
 	"clawbridge/internal/linearprovider"
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
 func TestLinearInstalledProfileMatchesDoctorExactly(t *testing.T) {
@@ -172,5 +174,46 @@ func TestDoctorListsEveryLinearCapabilityWithItsOffReason(t *testing.T) {
 				t.Fatalf("off reason wrong: %q", check.Message)
 			}
 		})
+	}
+}
+
+// catalogCaller serves a fixed tool catalog and refuses every tool call.
+type catalogCaller []*mcp.Tool
+
+func (c catalogCaller) ListTools(context.Context, *mcp.ListToolsParams) (*mcp.ListToolsResult, error) {
+	return &mcp.ListToolsResult{Tools: c}, nil
+}
+func (catalogCaller) CallTool(context.Context, *mcp.CallToolParams) (*mcp.CallToolResult, error) {
+	return nil, errors.New("capability negotiation must not call a tool")
+}
+
+// The fixture holds today's native schemas (from the 68-tool catalog of
+// 2026-10-22) for the tools capability negotiation reads. A capability that
+// would be off against them fails here, so adding one forces a decision
+// instead of a permanent doctor warning.
+func TestEveryDoctorCapabilityFlagIsOnAgainstTheNativeCatalog(t *testing.T) {
+	raw, err := os.ReadFile("testdata/linear-native-catalog-20261022.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var tools []*mcp.Tool
+	if err = json.Unmarshal(raw, &tools); err != nil {
+		t.Fatal(err)
+	}
+	p, err := linearprovider.NewWithCaller(context.Background(), catalogCaller(tools))
+	if err != nil {
+		t.Fatal(err)
+	}
+	caps, err := p.Capabilities(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, flag := range capabilityFlags(caps) {
+		if !flag.on {
+			t.Errorf("%s is off against the native catalog: %s", flag.key, caps.Reasons[flag.key])
+		}
+	}
+	if len(caps.Reasons) != 0 {
+		t.Errorf("off reasons on a healthy catalog: %v", caps.Reasons)
 	}
 }

@@ -49,6 +49,43 @@ function Invoke-ClawBridgeDownload([Uri]$Uri, [string]$OutFile, [long]$MaxBytes)
     }
     return $url
 }
+# PATH writes go to a throwaway HKCU key; the real user Path is never touched.
+$testRegistryRoot = 'Software\ClawBridgeTest\' + [Guid]::NewGuid().ToString('N')
+$script:registryKey = $testRegistryRoot + '\Environment'
+$savedPath = $env:Path
+$savedProtocols = [Net.ServicePointManager]::SecurityProtocol
+$originalInstall = ${function:Install-ClawBridge}
+function Install-ClawBridge([string]$Version = '', [string]$InstallDir = '', [switch]$NoSkill, [switch]$NoModifyPath) {
+    & $originalInstall -Version $Version -InstallDir $InstallDir -NoSkill:$NoSkill -NoModifyPath:$NoModifyPath -PathRegistryKey $script:registryKey
+}
+$script:broadcasts = 0
+function Send-ClawBridgeEnvironmentChange { $script:broadcasts++ }
+$script:backups = New-Object 'Collections.Generic.List[string]'
+$originalBackupPath = ${function:Get-ClawBridgeBackupPath}
+function Get-ClawBridgeBackupPath([string]$InstallDir) {
+    $path = & $originalBackupPath $InstallDir
+    $script:backups.Add($path)
+    return $path
+}
+function Set-TestUserPath([string]$Value, [Microsoft.Win32.RegistryValueKind]$Kind = [Microsoft.Win32.RegistryValueKind]::ExpandString) {
+    $key = [Microsoft.Win32.Registry]::CurrentUser.CreateSubKey($script:registryKey)
+    try { $key.SetValue('Path', $Value, $Kind) } finally { $key.Dispose() }
+}
+function Clear-TestUserPath {
+    $key = [Microsoft.Win32.Registry]::CurrentUser.CreateSubKey($script:registryKey)
+    try { $key.DeleteValue('Path', $false) } finally { $key.Dispose() }
+}
+function Get-TestUserPath {
+    $key = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey($script:registryKey)
+    if ($null -eq $key) { return $null }
+    try {
+        if (-not ($key.GetValueNames() -contains 'Path')) { return $null }
+        return [pscustomobject]@{
+            Value = $key.GetValue('Path', $null, [Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames)
+            Kind = $key.GetValueKind('Path')
+        }
+    } finally { $key.Dispose() }
+}
 $script:skillRuns = New-Object 'Collections.Generic.List[string]'
 function Invoke-ClawBridgeSkillInstall([string]$Binary) {
     $script:skillRuns.Add($Binary)
@@ -62,6 +99,7 @@ function Expect-Failure([scriptblock]$Body) {
 }
 function Assert-Cleanup {
     foreach ($path in $script:privateDirectories) { Assert-True (-not (Test-Path -LiteralPath $path)) ('temporary leaked: ' + $path) }
+    foreach ($path in $script:backups) { Assert-True (-not (Test-Path -LiteralPath $path)) ('backup leaked: ' + $path) }
 }
 try {
     $destination = Join-Path $fixtureRoot 'bin with spaces'
@@ -72,10 +110,19 @@ try {
     Assert-True ((Get-FileHash -LiteralPath $binary).Hash.ToLowerInvariant() -ceq $script:digest) 'installed digest mismatch'
     Assert-Cleanup
     Assert-True ($script:skillRuns.Count -eq 1 -and $script:skillRuns[0] -ceq $binary) 'the installed binary must install the skill once'
+    $userPath = Get-TestUserPath
+    Assert-True ($null -ne $userPath -and $userPath.Value -ceq $destination) 'install directory not added to the user Path'
+    Assert-True ($userPath.Kind -eq [Microsoft.Win32.RegistryValueKind]::ExpandString) 'a new user Path must be REG_EXPAND_SZ'
+    Assert-True ($script:broadcasts -eq 1) 'a Path change must broadcast WM_SETTINGCHANGE once'
+    Assert-True (Test-ClawBridgePathContains $env:Path $destination) 'current session Path not updated'
     $script:requests.Clear()
     Install-ClawBridge -Version v0.1.0 -InstallDir $destination -NoSkill | Out-Null
     Assert-True ($script:requests.Count -eq 2) 'explicit version must skip discovery'
     Assert-True ($script:skillRuns.Count -eq 1) '-NoSkill still installed the skill'
+    Assert-True ((Get-TestUserPath).Value -ceq $destination) 'a rerun duplicated the user Path entry'
+    Assert-True ($script:broadcasts -eq 1) 'an unchanged Path must not broadcast'
+    Assert-True (@($env:Path.Split(';') | Where-Object { $_ -eq $destination }).Count -eq 1) 'a rerun duplicated the session Path entry'
+    Assert-Cleanup
     $script:mode = 'skill-failure'
     $output = Install-ClawBridge -Version v0.1.0 -InstallDir $destination 3>&1 | Out-String
     Assert-True ($script:skillRuns.Count -eq 2) 'skill step not attempted'
@@ -118,10 +165,89 @@ try {
     Assert-True ($script:requests.Count -eq 1) 'bad latest downloaded a payload'
     $script:mode = 'ok'
     $script:requests.Clear()
-    # A locked existing executable must survive atomic replacement failure.
+    # A locked existing executable must survive atomic replacement failure,
+    # with a clear instruction and no success message.
+    $lockedOutput = New-Object 'Collections.Generic.List[string]'
+    $lockedError = ''
     $locked = [IO.File]::Open($binary, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::None)
-    try { Expect-Failure { Install-ClawBridge -Version v0.1.0 -InstallDir $destination } } finally { $locked.Dispose() }
+    try {
+        try { Install-ClawBridge -Version v0.1.0 -InstallDir $destination -NoSkill | ForEach-Object { $lockedOutput.Add([string]$_) } } catch { $lockedError = $_.Exception.Message }
+    } finally { $locked.Dispose() }
+    Assert-True ($lockedError -like '*Close the agents running `clawbridge mcp`*run the installer again*') ('locked replacement must explain the fix: ' + $lockedError)
+    Assert-True (@($lockedOutput | Where-Object { $_ -like 'Installed*' }).Count -eq 0) 'locked replacement claimed success'
     Assert-True ([IO.File]::ReadAllText($binary) -ceq 'old binary') 'locked binary was changed'
+    Assert-Cleanup
+    # A running binary can be renamed but not deleted: the upgrade succeeds and
+    # leaves its old copy behind without failing.
+    $running = $null
+    $script:backups.Clear()
+    try {
+        [IO.File]::Copy((Join-Path $env:WINDIR 'System32\PING.EXE'), $binary, $true)
+        $running = Start-Process -FilePath $binary -ArgumentList '-n', '120', '127.0.0.1' -WindowStyle Hidden -PassThru
+        Start-Sleep -Milliseconds 500
+        Assert-True (-not $running.HasExited) 'fixture process did not stay running'
+        $runningOutput = Install-ClawBridge -Version v0.1.0 -InstallDir $destination -NoSkill 3>&1 | Out-String
+        Assert-True ((Get-FileHash -LiteralPath $binary).Hash.ToLowerInvariant() -ceq $script:digest) 'running binary was not replaced'
+        Assert-True ($runningOutput -like '*Installed v0.1.0*') 'running upgrade did not report success'
+        Assert-True ($runningOutput -like '*still running*') 'running upgrade did not report its leftover'
+        Assert-True ($script:backups.Count -eq 1 -and [IO.File]::Exists($script:backups[0])) 'the running copy must stay at its backup path'
+    } finally {
+        if ($null -ne $running -and -not $running.HasExited) { $running.Kill(); $running.WaitForExit() }
+    }
+    foreach ($path in $script:backups) { if ([IO.File]::Exists($path)) { [IO.File]::Delete($path) } }
+    Assert-Cleanup
+    # User Path persistence: %VARIABLES% and the value kind survive, entries
+    # match case-insensitively and with trailing slashes, and failures only warn.
+    $env:CLAWBRIDGE_TEST_ROOT = $fixtureRoot
+    $broadcastsBefore = $script:broadcasts
+    Set-TestUserPath '%SystemRoot%\tools;C:\Other'
+    Install-ClawBridge -Version v0.1.0 -InstallDir $destination -NoSkill | Out-Null
+    $userPath = Get-TestUserPath
+    Assert-True ($userPath.Value -ceq ('%SystemRoot%\tools;C:\Other;' + $destination)) ('variables not preserved: ' + $userPath.Value)
+    Assert-True ($userPath.Kind -eq [Microsoft.Win32.RegistryValueKind]::ExpandString) 'REG_EXPAND_SZ not kept'
+    Assert-True ($script:broadcasts -eq $broadcastsBefore + 1) 'appending did not broadcast'
+    Set-TestUserPath 'C:\Other;' ([Microsoft.Win32.RegistryValueKind]::String)
+    Install-ClawBridge -Version v0.1.0 -InstallDir $destination -NoSkill | Out-Null
+    $userPath = Get-TestUserPath
+    Assert-True ($userPath.Value -ceq ('C:\Other;' + $destination)) ('trailing separator mishandled: ' + $userPath.Value)
+    Assert-True ($userPath.Kind -eq [Microsoft.Win32.RegistryValueKind]::String) 'REG_SZ kind not kept'
+    $broadcastsBefore = $script:broadcasts
+    foreach ($present in @(
+        ('C:\Other;' + $destination.ToUpperInvariant() + '\'),
+        ($destination.ToLowerInvariant() + '/;C:\Other'),
+        '%CLAWBRIDGE_TEST_ROOT%\bin with spaces\',
+        ('"' + $destination + '"'))) {
+        Set-TestUserPath $present
+        Install-ClawBridge -Version v0.1.0 -InstallDir $destination -NoSkill | Out-Null
+        Assert-True ((Get-TestUserPath).Value -ceq $present) ('duplicate added to: ' + $present)
+    }
+    Assert-True ($script:broadcasts -eq $broadcastsBefore) 'an existing entry must not broadcast'
+    Clear-TestUserPath
+    $env:Path = $savedPath
+    $noModifyOutput = Install-ClawBridge -Version v0.1.0 -InstallDir $destination -NoSkill -NoModifyPath | Out-String
+    Assert-True ($null -eq (Get-TestUserPath)) '-NoModifyPath wrote the user Path'
+    Assert-True ($env:Path -ceq $savedPath) '-NoModifyPath changed the session Path'
+    Assert-True ($script:broadcasts -eq $broadcastsBefore) '-NoModifyPath broadcast'
+    Assert-True ($noModifyOutput -like '*PATH was not changed*') '-NoModifyPath must print the manual step'
+    $key = [Microsoft.Win32.Registry]::CurrentUser.CreateSubKey($script:registryKey)
+    try { $key.SetValue('Path', 7, [Microsoft.Win32.RegistryValueKind]::DWord) } finally { $key.Dispose() }
+    [IO.File]::WriteAllText($binary, 'old binary')
+    $warned = Install-ClawBridge -Version v0.1.0 -InstallDir $destination -NoSkill 3>&1 | Out-String
+    Assert-True ($warned -like '*user PATH was not updated*') 'a registry failure must warn'
+    Assert-True ((Get-FileHash -LiteralPath $binary).Hash.ToLowerInvariant() -ceq $script:digest) 'a registry failure undid the install'
+    Assert-True ((Get-TestUserPath).Kind -eq [Microsoft.Win32.RegistryValueKind]::DWord) 'an unexpected Path value was overwritten'
+    Assert-Cleanup
+    $env:Path = $savedPath
+    # TLS 1.2 (and 1.3 where supported) is added to, never replaces, the enabled protocols.
+    [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls11
+    Install-ClawBridge -Version v0.1.0 -InstallDir $destination -NoSkill -NoModifyPath | Out-Null
+    $protocols = [Net.ServicePointManager]::SecurityProtocol
+    Assert-True (($protocols -band [Net.SecurityProtocolType]::Tls12) -eq [Net.SecurityProtocolType]::Tls12) 'TLS 1.2 not enabled'
+    Assert-True (($protocols -band [Net.SecurityProtocolType]::Tls11) -eq [Net.SecurityProtocolType]::Tls11) 'an enabled protocol was removed'
+    if ([Enum]::GetNames([Net.SecurityProtocolType]) -contains 'Tls13' -and [Environment]::OSVersion.Version.Build -ge 20348) {
+        Assert-True (($protocols -band [Net.SecurityProtocolType]::Tls13) -eq [Net.SecurityProtocolType]::Tls13) 'TLS 1.3 not enabled where supported'
+    }
+    [Net.ServicePointManager]::SecurityProtocol = $savedProtocols
     Assert-Cleanup
     $savedLocalAppData = $env:LOCALAPPDATA
     try {
@@ -143,8 +269,19 @@ try {
     Expect-Failure { Install-ClawBridge -Version v0.1.0 -InstallDir $destination }
     Assert-True ($script:requests.Count -eq 0) 'directory destination accessed transport'
     Assert-Cleanup
-    Write-Output 'PASS: native Windows installer latest/pinning/atomic replacement/preservation/validation/reparse/cleanup/skill fixtures'
+    Write-Output 'PASS: native Windows installer latest/pinning/atomic replacement/running upgrade/preservation/validation/reparse/cleanup/skill/user PATH/TLS fixtures'
 } finally {
+    $env:Path = $savedPath
+    Remove-Item Env:CLAWBRIDGE_TEST_ROOT -ErrorAction SilentlyContinue
+    [Net.ServicePointManager]::SecurityProtocol = $savedProtocols
+    [Microsoft.Win32.Registry]::CurrentUser.DeleteSubKeyTree($testRegistryRoot, $false)
+    $parent = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey('Software\ClawBridgeTest')
+    if ($null -ne $parent) {
+        $empty = $parent.SubKeyCount -eq 0 -and $parent.ValueCount -eq 0
+        $parent.Dispose()
+        if ($empty) { [Microsoft.Win32.Registry]::CurrentUser.DeleteSubKey('Software\ClawBridgeTest', $false) }
+    }
+    foreach ($path in $script:backups) { if ([IO.File]::Exists($path)) { [IO.File]::Delete($path) } }
     if (Test-Path -LiteralPath (Join-Path $fixtureRoot 'junction')) { [IO.Directory]::Delete((Join-Path $fixtureRoot 'junction')) }
     [IO.Directory]::Delete($fixtureRoot, $true)
 }

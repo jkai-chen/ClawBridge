@@ -27,8 +27,8 @@ Use `--bin-dir /absolute/path` to choose another destination. After installing,
 the installer runs the new binary once as `clawbridge skill install`, which
 installs the [agent skill](#agent-skill) for the agents configured on this machine;
 `--no-skill` skips that. A skill failure is a warning; the binary stays installed.
-The installer prints the PATH step; it does not change shell profiles or PATH
-itself. If a download or
+On macOS and Linux the installer prints the PATH step; it does not change shell
+profiles or PATH itself. If a download or
 checksum fails, the existing binary stays in place. An update replaces the binary
 while preserving your saved route, database/cache and native credentials.
 
@@ -36,22 +36,56 @@ On Windows x64, download and run the PowerShell installer:
 
 ```powershell
 Invoke-WebRequest -Uri 'https://github.com/jkai-chen/ClawBridge/releases/latest/download/install.ps1' -OutFile "$env:TEMP\clawbridge-install.ps1"
-& "$env:TEMP\clawbridge-install.ps1"
-$env:Path = "$env:LOCALAPPDATA\Programs\ClawBridge;$env:Path"
+powershell -NoProfile -ExecutionPolicy Bypass -File "$env:TEMP\clawbridge-install.ps1"
+```
+
+Windows' default execution policy refuses to run a downloaded script, so the
+second line bypasses it for that one `powershell` process only; your saved
+policy does not change. On Windows PowerShell 5.1, if `Invoke-WebRequest` fails
+with a TLS or "secure channel" error, run
+`[Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12`
+first. The installer itself enables TLS 1.2 for its own downloads.
+
+Then open a new terminal and run:
+
+```powershell
 clawbridge --version
 clawbridge
 ```
 
 Use `-Version v0.1.0` for an explicit binary version or `-InstallDir 'C:\absolute\path'`
-for a different directory. As on macOS and Linux, the installer then runs
-`clawbridge skill install` once, a failure only warns, and `-NoSkill` skips it. Default is `%LOCALAPPDATA%\Programs\ClawBridge`.
-The PATH command above affects the current session; add the directory to your
-user PATH through Windows settings for future terminals. Installer support is
-Windows PowerShell 5.1 and PowerShell 7 on Windows x64. Native platform runtime
-acceptance is recorded in the [release review](archive/reviews/RELEASE-REVIEW.md).
+for a different directory; add them after the script path. Default is
+`%LOCALAPPDATA%\Programs\ClawBridge`. As on macOS and Linux, the installer then runs
+`clawbridge skill install` once, a failure only warns, and `-NoSkill` skips it.
+
+Unlike the macOS and Linux installer, the Windows installer adds its directory to
+your **user** PATH (`HKCU\Environment\Path`), so new terminals find
+`clawbridge`. It appends the directory once and never adds a duplicate: an
+existing entry matches regardless of case, a trailing backslash or `%VARIABLES%`.
+Other entries and their `%VARIABLES%` are kept unexpanded, and the system PATH is
+never touched. Terminals that were already open still need
+`$env:Path += ';<install directory>'`, which the installer prints. If the PATH
+update fails, the installer warns and the install still succeeds. Pass
+`-NoModifyPath` to leave PATH alone; the installer then prints the manual step.
+To remove the entry later, open *Edit environment variables for your account*
+(Start menu, or `rundll32 sysdm.cpl,EditEnvironmentVariables`), select `Path`
+under your user variables, then delete the ClawBridge directory.
+
+To update while an agent is running `clawbridge mcp`, rerun the installer. Windows
+lets the running binary be renamed, so the new one takes its place, and the old
+copy is deleted, or, if it is still running, left as a
+`clawbridge-previous-*.exe.old` file in `%TEMP%` (or beside the binary when that
+is on another drive) for you to delete later. If Windows refuses the replacement,
+the installer stops before reporting success and keeps the old binary. Close the
+agents running `clawbridge mcp` and any other `clawbridge` process, then run it
+again.
+
+Installer support is Windows PowerShell 5.1 and PowerShell 7 on Windows x64. Native
+platform runtime acceptance is recorded in the
+[release review](archive/reviews/RELEASE-REVIEW.md).
 
 Apart from `skill install`, installation does not run ClawBridge, and it never
-signs in or changes a configuration. Running `clawbridge` opens your saved
+signs in or changes a ClawBridge configuration. Running `clawbridge` opens your saved
 profile or first-run guided setup. Linux/WSL still requires an existing working
 Secret Service session for OAuth, as described under Linux and WSL credentials below. No gcloud installation is
 needed for browser/device OAuth. Binaries are unsigned; macOS notarization and

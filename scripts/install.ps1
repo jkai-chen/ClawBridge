@@ -3,6 +3,7 @@ param(
     [string]$Version = '',
     [string]$InstallDir = '',
     [switch]$NoSkill,
+    [switch]$NoModifyPath,
     [switch]$Help
 )
 Set-StrictMode -Version 2.0
@@ -51,6 +52,16 @@ function New-ClawBridgePrivateDirectory([string]$Parent) {
         [IO.Directory]::Delete($path, $true)
         throw
     }
+}
+
+# Windows PowerShell 5.1 may default to protocols GitHub refuses; add TLS 1.2
+# (and 1.3 where the OS supports it) without removing any enabled protocol.
+function Enable-ClawBridgeTls {
+    $protocols = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
+    if ([Enum]::GetNames([Net.SecurityProtocolType]) -contains 'Tls13' -and [Environment]::OSVersion.Version.Build -ge 20348) {
+        $protocols = $protocols -bor [Net.SecurityProtocolType]::Tls13
+    }
+    [Net.ServicePointManager]::SecurityProtocol = $protocols
 }
 
 function Invoke-ClawBridgeDownload([Uri]$Uri, [string]$OutFile, [long]$MaxBytes) {
@@ -107,7 +118,88 @@ function Invoke-ClawBridgeSkillInstall([string]$Binary) {
     if ($LASTEXITCODE -ne 0) { throw ('skill install exited ' + $LASTEXITCODE) }
 }
 
-function Install-ClawBridge([string]$Version = '', [string]$InstallDir = '', [switch]$NoSkill) {
+function Format-ClawBridgePathEntry([string]$Entry) {
+    return $Entry.Trim().Trim('"').TrimEnd([char[]]'\/')
+}
+
+# Matches case-insensitively, ignoring trailing slashes, and also after
+# expanding %VARIABLES%, as Windows itself resolves PATH entries.
+function Test-ClawBridgePathContains([string]$PathValue, [string]$Directory) {
+    $wanted = Format-ClawBridgePathEntry $Directory
+    foreach ($entry in $PathValue.Split(';')) {
+        if ($entry.Trim() -eq '') { continue }
+        foreach ($candidate in @($entry, [Environment]::ExpandEnvironmentVariables($entry))) {
+            if ([string]::Equals((Format-ClawBridgePathEntry $candidate), $wanted, [StringComparison]::OrdinalIgnoreCase)) { return $true }
+        }
+    }
+    return $false
+}
+
+function Join-ClawBridgePath([string]$PathValue, [string]$Directory) {
+    if ($PathValue -eq '') { return $Directory }
+    if ($PathValue.EndsWith(';')) { return $PathValue + $Directory }
+    return $PathValue + ';' + $Directory
+}
+
+# Appends Directory to the per-user Path under HKCU\<RegistryKey>; returns
+# $false when it is already there. The raw value is read unexpanded and written
+# back with its kind, so %VARIABLES% and REG_EXPAND_SZ survive.
+function Add-ClawBridgeUserPath([string]$Directory, [string]$RegistryKey = 'Environment') {
+    $key = [Microsoft.Win32.Registry]::CurrentUser.CreateSubKey($RegistryKey)
+    try {
+        $kind = [Microsoft.Win32.RegistryValueKind]::ExpandString
+        $current = ''
+        if ($key.GetValueNames() -contains 'Path') {
+            $kind = $key.GetValueKind('Path')
+            if ($kind -ne [Microsoft.Win32.RegistryValueKind]::ExpandString -and $kind -ne [Microsoft.Win32.RegistryValueKind]::String) { throw ('the user Path value has unexpected type ' + $kind) }
+            $current = [string]$key.GetValue('Path', '', [Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames)
+        }
+        if (Test-ClawBridgePathContains $current $Directory) { return $false }
+        $key.SetValue('Path', (Join-ClawBridgePath $current $Directory), $kind)
+        return $true
+    } finally {
+        $key.Dispose()
+    }
+}
+
+# Tells Explorer and other listeners to reload the environment, so terminals
+# opened afterwards see the new Path without signing out.
+function Send-ClawBridgeEnvironmentChange {
+    if (-not ('ClawBridgeInstaller.NativeMethods' -as [type])) {
+        Add-Type -Namespace ClawBridgeInstaller -Name NativeMethods -MemberDefinition @'
+[DllImport("user32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
+public static extern IntPtr SendMessageTimeout(IntPtr hWnd, uint Msg, UIntPtr wParam, string lParam, uint fuFlags, uint uTimeout, out UIntPtr lpdwResult);
+'@
+    }
+    $result = [UIntPtr]::Zero
+    # HWND_BROADCAST, WM_SETTINGCHANGE, SMTO_ABORTIFHUNG, 5 seconds.
+    $null = [ClawBridgeInstaller.NativeMethods]::SendMessageTimeout([IntPtr]0xffff, 0x1A, [UIntPtr]::Zero, 'Environment', 2, 5000, [ref]$result)
+}
+
+# The replaced binary is renamed to this path. A running `clawbridge mcp` keeps
+# it mapped, so it may outlive the install: it goes to %TEMP% where possible
+# (renames need the same volume) and otherwise beside the binary, never as .exe.
+function Get-ClawBridgeBackupPath([string]$InstallDir) {
+    $name = 'clawbridge-previous-' + [Guid]::NewGuid().ToString('N') + '.exe.old'
+    $temp = [IO.Path]::GetTempPath()
+    if ([string]::Equals([IO.Path]::GetPathRoot($temp), [IO.Path]::GetPathRoot($InstallDir), [StringComparison]::OrdinalIgnoreCase)) {
+        return (Join-Path $temp $name)
+    }
+    return (Join-Path $InstallDir ('.' + $name))
+}
+
+# Best effort: a leftover must never fail an install that already succeeded.
+function Remove-ClawBridgeLeftover([string]$Path) {
+    try {
+        if ([IO.Directory]::Exists($Path)) { [IO.Directory]::Delete($Path, $true) }
+        elseif ([IO.File]::Exists($Path)) { [IO.File]::Delete($Path) }
+        return $true
+    } catch {
+        return $false
+    }
+}
+
+function Install-ClawBridge([string]$Version = '', [string]$InstallDir = '', [switch]$NoSkill, [switch]$NoModifyPath, [string]$PathRegistryKey = 'Environment') {
     if ($Version -ne '' -and -not (Test-ClawBridgeVersion $Version)) { throw 'Invalid canonical release version' }
     $platform = Get-ClawBridgePlatform
     if ($platform -cne 'windows_amd64') { throw 'Unsupported platform' }
@@ -132,6 +224,7 @@ function Install-ClawBridge([string]$Version = '', [string]$InstallDir = '', [sw
     $stage = $null
     try {
         $temporary = New-ClawBridgePrivateDirectory ([IO.Path]::GetTempPath())
+        Enable-ClawBridgeTls
         $releaseBase = 'https://github.com/jkai-chen/ClawBridge/releases'
         if ($Version -eq '') {
             $latest = Invoke-ClawBridgeDownload -Uri ($releaseBase + '/latest') -OutFile (Join-Path $temporary 'latest') -MaxBytes 1048576
@@ -165,13 +258,24 @@ function Install-ClawBridge([string]$Version = '', [string]$InstallDir = '', [sw
         $stagedBinary = Join-Path $stage 'clawbridge.exe'
         [IO.File]::Copy($binary, $stagedBinary, $false)
         Assert-ClawBridgePath $destination
+        $backup = $null
         if ([IO.File]::Exists($destination)) {
-            # Replace is atomic on the same volume; backup stays in private stage.
-            [IO.File]::Replace($stagedBinary, $destination, (Join-Path $stage 'previous.exe'))
+            $backup = Get-ClawBridgeBackupPath $InstallDir
+            try {
+                # Replace is atomic on the same volume.
+                [IO.File]::Replace($stagedBinary, $destination, $backup)
+            } catch {
+                # Replace can fail after renaming the old binary to the backup.
+                if (-not [IO.File]::Exists($destination) -and [IO.File]::Exists($backup)) { [IO.File]::Move($backup, $destination) }
+                throw ('Could not replace ' + $destination + ', which is in use. Close the agents running `clawbridge mcp` and any other clawbridge process, then run the installer again. (' + $_.Exception.Message + ')')
+            }
         } else {
             [IO.File]::Move($stagedBinary, $destination)
         }
         Write-Output ('Installed ' + $Version + ' at ' + $destination)
+        if ($null -ne $backup -and -not (Remove-ClawBridgeLeftover $backup)) {
+            Write-Output ('The previous version is still running; its old copy at ' + $backup + ' can be deleted once it exits.')
+        }
         # The agent skill is a convenience: a failure warns and never fails the install.
         if (-not $NoSkill) {
             try {
@@ -181,19 +285,39 @@ function Install-ClawBridge([string]$Version = '', [string]$InstallDir = '', [sw
                 Write-Warning 'The agent skill was not installed; run `clawbridge skill install --agent claude-code|codex|all` later.'
             }
         }
-        Write-Output ('$env:PATH = ' + "'" + $InstallDir.Replace("'", "''") + ";' + " + '$env:PATH')
-        Write-Output 'For future shells, add that directory through your per-user Environment Variables settings.'
+        $sessionStep = '$env:Path += ' + "';" + $InstallDir.Replace("'", "''") + "'"
+        if ($NoModifyPath) {
+            Write-Output ('PATH was not changed. For this terminal: ' + $sessionStep)
+            Write-Output 'For future terminals, add that directory through your per-user Environment Variables settings.'
+            return
+        }
+        # A PATH failure is a warning: the binary is already installed.
+        try {
+            if (Add-ClawBridgeUserPath -Directory $InstallDir -RegistryKey $PathRegistryKey) {
+                try { Send-ClawBridgeEnvironmentChange } catch { Write-Verbose ('Environment change broadcast failed: ' + $_.Exception.Message) }
+                Write-Output ('Added ' + $InstallDir + ' to your user PATH for new terminals.')
+            } else {
+                Write-Output ($InstallDir + ' is already on your user PATH.')
+            }
+        } catch {
+            Write-Warning ('Your user PATH was not updated (' + $_.Exception.Message + '); add ' + $InstallDir + ' through your per-user Environment Variables settings.')
+        }
+        if (-not (Test-ClawBridgePathContains ([string]$env:Path) $InstallDir)) {
+            $env:Path = Join-ClawBridgePath ([string]$env:Path) $InstallDir
+        }
+        Write-Output ('Terminals that were already open need: ' + $sessionStep)
     } finally {
-        if ($null -ne $stage) { [IO.Directory]::Delete($stage, $true) }
-        if ($null -ne $temporary) { [IO.Directory]::Delete($temporary, $true) }
+        if ($null -ne $stage -and -not (Remove-ClawBridgeLeftover $stage)) { Write-Warning ('Could not remove the temporary directory ' + $stage) }
+        if ($null -ne $temporary -and -not (Remove-ClawBridgeLeftover $temporary)) { Write-Warning ('Could not remove the temporary directory ' + $temporary) }
     }
 }
 
 # Dot-source to import testable functions without installation or network work.
 if ($MyInvocation.InvocationName -eq '.') { return }
 if ($Help) {
-    Write-Output 'Usage: .\install.ps1 [-Version vX.Y.Z] [-InstallDir ABSOLUTE_PATH] [-NoSkill] [-Help]'
-    Write-Output 'After installing, runs `clawbridge skill install` for the agents configured here unless -NoSkill.'
+    Write-Output 'Usage: powershell -NoProfile -ExecutionPolicy Bypass -File install.ps1 [-Version vX.Y.Z] [-InstallDir ABSOLUTE_PATH] [-NoSkill] [-NoModifyPath] [-Help]'
+    Write-Output 'After installing, runs `clawbridge skill install` for the agents configured here unless -NoSkill,'
+    Write-Output 'and appends the install directory to your user PATH unless -NoModifyPath.'
     return
 }
-Install-ClawBridge -Version $Version -InstallDir $InstallDir -NoSkill:$NoSkill
+Install-ClawBridge -Version $Version -InstallDir $InstallDir -NoSkill:$NoSkill -NoModifyPath:$NoModifyPath

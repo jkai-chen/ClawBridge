@@ -177,6 +177,13 @@ ID must agree with any flat ID. Null-versus-present IDs and malformed numeric,
 boolean or array scope fields fail closed. A label without a verified immutable
 ID remains insufficient. Bounded integer page sizes may target an advertised
 integer or number schema; the actual supplied value remains integral and bounded.
+Responses may pair a display `id` with an immutable `uuid`; use the UUID for
+identity and retain the display ID only as a label. All supplied immutable ID
+representations must agree. A display ID alone cannot establish identity. For
+issue reads, negotiate a fixed internal field projection when the provider
+advertises a compatible string-array schema. Request immutable identity and scope,
+including `projectId`, so an unset project is explicitly null. Omitted project
+metadata remains unknown; it must not be treated as an unprojected issue.
 
 Read/list/get actions must establish the selected team/project scope before
 returning a body. Get includes available parent/subissues/dependency and assignment

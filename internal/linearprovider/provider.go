@@ -290,6 +290,126 @@ func field(props map[string]any, aliases []string, kind string) (string, bool) {
 	return "", false
 }
 
+// issueReadProjection selects only fixed native fields, never caller-supplied
+// schema properties. Missing scope values must be returned explicitly as null.
+func issueReadProjection(props map[string]any) ([]string, error) {
+	raw, advertised := props["fields"]
+	if !advertised {
+		return nil, nil
+	}
+	bad := func() ([]string, error) { return nil, fail("capability_unavailable") }
+	array, ok := raw.(map[string]any)
+	if !ok {
+		return bad()
+	}
+	if variants, union := array["anyOf"]; union {
+		for key := range array {
+			if key != "anyOf" && key != "description" && key != "title" && key != "default" {
+				return bad()
+			}
+		}
+		branches, ok := variants.([]any)
+		if !ok || len(branches) != 2 {
+			return bad()
+		}
+		var selected map[string]any
+		nulls := 0
+		for _, branch := range branches {
+			node, ok := branch.(map[string]any)
+			if !ok {
+				return bad()
+			}
+			if node["type"] == "null" {
+				for key := range node {
+					if key != "type" && key != "description" && key != "title" {
+						return bad()
+					}
+				}
+				nulls++
+			} else if node["type"] == "array" && selected == nil {
+				selected = node
+			} else {
+				return bad()
+			}
+		}
+		if selected == nil || nulls != 1 {
+			return bad()
+		}
+		array = selected
+	}
+	for key := range array {
+		switch key {
+		case "type", "items", "minItems", "maxItems", "uniqueItems", "description", "title", "default":
+		default:
+			return bad()
+		}
+	}
+	if kinds, ok := array["type"].([]any); ok {
+		seen := map[string]bool{}
+		for _, kind := range kinds {
+			text, ok := kind.(string)
+			if !ok || (text != "array" && text != "null") || seen[text] {
+				return bad()
+			}
+			seen[text] = true
+		}
+		if !seen["array"] || len(kinds) > 2 {
+			return bad()
+		}
+	} else if array["type"] != "array" {
+		return bad()
+	}
+	items, ok := array["items"].(map[string]any)
+	if !ok || items["type"] != "string" {
+		return bad()
+	}
+	for key := range items {
+		if key != "type" && key != "enum" && key != "description" && key != "title" {
+			return bad()
+		}
+	}
+	choices, ok := items["enum"].([]any)
+	if !ok || len(choices) == 0 || len(choices) > 256 {
+		return bad()
+	}
+	allowed := map[string]bool{}
+	for _, choice := range choices {
+		name, ok := choice.(string)
+		if !ok || !referenceIdentifier.MatchString(name) || allowed[name] {
+			return bad()
+		}
+		allowed[name] = true
+	}
+	selected := []string{"id", "uuid", "teamId", "projectId"}
+	for _, name := range selected {
+		if !allowed[name] {
+			return bad()
+		}
+	}
+	for _, name := range []string{"identifier", "title", "description", "stateId", "state", "status", "statusType", "assignee", "url", "parentId", "parent", "subIssues", "subissues", "relations", "dependencies"} {
+		if allowed[name] {
+			selected = append(selected, name)
+		}
+	}
+	for _, bound := range []string{"minItems", "maxItems"} {
+		if raw, present := array[bound]; present {
+			value, ok := raw.(float64)
+			if !ok || value < 0 || value > 256 || value != float64(int(value)) {
+				return bad()
+			}
+			if (bound == "minItems" && len(selected) < int(value)) || (bound == "maxItems" && len(selected) > int(value)) {
+				return bad()
+			}
+		}
+	}
+	if unique, present := array["uniqueItems"]; present {
+		if _, ok := unique.(bool); !ok {
+			return bad()
+		}
+	}
+	return selected, nil
+}
+
 type arg struct {
 	aliases []string
 	value   any
@@ -318,6 +438,14 @@ func (p *Provider) negotiate(names []string, args ...arg) (string, map[string]an
 				break
 			}
 			v[k] = x.value
+		}
+		if name == "get_issue" || name == "list_issues" {
+			projection, projectionErr := issueReadProjection(props)
+			if projectionErr != nil {
+				valid = false
+			} else if projection != nil {
+				v["fields"] = projection
+			}
 		}
 		for _, k := range req {
 			if _, ok := v[k]; !ok {
@@ -390,11 +518,37 @@ func (p *Provider) call(ctx context.Context, names []string, args ...arg) (map[s
 func str(m map[string]any, k string) string         { x, _ := m[k].(string); return x }
 func obj(m map[string]any, k string) map[string]any { x, _ := m[k].(map[string]any); return x }
 func id(m map[string]any) (string, error) {
-	s := str(m, "id")
-	if !ValidID(s) {
+	// Some provider entities expose a display identifier in id and the
+	// immutable identity in uuid. A display identifier never supplies scope.
+	var canonical string
+	if raw, present := m["uuid"]; present {
+		value, ok := raw.(string)
+		if !ok || !ValidID(value) {
+			return "", fail("invalid_response")
+		}
+		canonical = value
+	}
+	if raw, present := m["id"]; present {
+		value, ok := raw.(string)
+		if !ok || !referenceIdentifier.MatchString(value) {
+			return "", fail("invalid_response")
+		}
+		if ValidID(strings.ToLower(value)) {
+			if !ValidID(value) {
+				return "", fail("invalid_response")
+			}
+			if canonical != "" && canonical != value {
+				return "", fail("scope_mismatch")
+			}
+			canonical = value
+		} else if canonical == "" {
+			return "", fail("invalid_response")
+		}
+	}
+	if canonical == "" {
 		return "", fail("invalid_response")
 	}
-	return s, nil
+	return canonical, nil
 }
 
 // scopedID accepts equivalent flat/nested UUID representations, but never lets
@@ -481,9 +635,12 @@ func unwrap(m map[string]any, key string) map[string]any {
 		return nil
 	}
 	if v := obj(m, key); v != nil {
-		if outer, ok := m["id"]; ok {
-			inner, e := id(v)
-			if e != nil || outer != inner {
+		_, hasID := m["id"]
+		_, hasUUID := m["uuid"]
+		if hasID || hasUUID {
+			outer, outerErr := id(m)
+			inner, innerErr := id(v)
+			if outerErr != nil || innerErr != nil || outer != inner {
 				return nil
 			}
 		}
@@ -665,7 +822,11 @@ func (p *Provider) Projects(ctx context.Context, o PageOptions) (Page[Project], 
 		pr, e := parseProject(r)
 		if e != nil {
 			if pe, ok := e.(*Error); ok && pe.Kind == "scope_metadata_missing" {
-				pr, e = p.GetProject(ctx, str(r, "id"))
+				canonical, identityErr := entityID(r, "projectId")
+				if identityErr != nil {
+					return out, identityErr
+				}
+				pr, e = p.GetProject(ctx, canonical)
 			}
 		}
 		if e != nil {
@@ -708,7 +869,11 @@ func (p *Provider) parseIssue(ctx context.Context, m map[string]any) (result Iss
 	if e != nil {
 		return Issue{}, e
 	}
-	x := Issue{ID: i, Identifier: str(m, "identifier"), Title: str(m, "title"), Description: str(m, "description"), TeamID: team, ProjectID: project, URL: str(m, "url"), Context: map[string]any{}}
+	identifier := str(m, "identifier")
+	if identifier == "" && !ValidID(str(m, "id")) {
+		identifier = str(m, "id")
+	}
+	x := Issue{ID: i, Identifier: identifier, Title: str(m, "title"), Description: str(m, "description"), TeamID: team, ProjectID: project, URL: str(m, "url"), Context: map[string]any{}}
 	_, hasState := m["state"]
 	if _, flat := m["stateId"]; flat || hasState {
 		state, e := scopedID(m, "stateId", "state", true)
@@ -730,6 +895,9 @@ func (p *Provider) parseIssue(ctx context.Context, m map[string]any) (result Iss
 			}
 		}
 	} else {
+		x.State = str(m, "status")
+	}
+	if x.State == "" {
 		x.State = str(m, "status")
 	}
 	if as := obj(m, "assignee"); as != nil {
@@ -781,13 +949,17 @@ func linkedReferences(value any) []map[string]string {
 					return
 				}
 			}
-			if identifier := str(node, "id"); ValidID(identifier) {
+			if identifier, identityErr := entityID(node, "issueId"); identityErr == nil {
 				if seen[identifier] {
 					return
 				}
 				seen[identifier] = true
 				ref := map[string]string{"id": identifier}
-				if label := str(node, "identifier"); referenceIdentifier.MatchString(label) {
+				label := str(node, "identifier")
+				if label == "" && !ValidID(str(node, "id")) {
+					label = str(node, "id")
+				}
+				if referenceIdentifier.MatchString(label) {
 					ref["identifier"] = label
 				}
 				kind := str(node, "type")
@@ -848,8 +1020,12 @@ func (p *Provider) Issues(ctx context.Context, q IssueQuery) (Page[Issue], error
 	out := Page[Issue]{Items: []Issue{}, NextCursor: n, Complete: c}
 	for _, r := range rows {
 		x, e := p.parseIssue(ctx, r)
-		if pe, ok := e.(*Error); ok && pe.Kind == "scope_metadata_missing" && ValidID(str(r, "id")) {
-			x, e = p.GetIssue(ctx, str(r, "id"))
+		if pe, ok := e.(*Error); ok && pe.Kind == "scope_metadata_missing" {
+			canonical, identityErr := entityID(r, "issueId")
+			if identityErr != nil {
+				return out, identityErr
+			}
+			x, e = p.GetIssue(ctx, canonical)
 		}
 		if e != nil {
 			return out, e

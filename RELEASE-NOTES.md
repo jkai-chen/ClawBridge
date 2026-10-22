@@ -9,6 +9,8 @@ notifications while keeping normal messaging independent of those integrations.
 - Link a ClawBridge project to verified Linear teams and an optional Linear
   project. Team boards work without creating a project. Each teammate connects
   their own account; switching accounts does not change the shared mapping.
+  Native responses retain display labels while routing by immutable UUIDs;
+  issue reads request explicit scope fields before exposing task content.
 - Browse setup and issues in the Linear TUI view. Native CLI and pinned local MCP
   tools list/get issues and explicitly create, update or comment within the
   selected board. Inspection never claims a task or changes its assignment.
@@ -47,8 +49,9 @@ automatic task claim or production deployment is included.
 Assets retain five CGO-disabled targets, installers, selected checksums and a full
 source marker. Binaries are unsigned; macOS binaries are not notarized. Checksums
 verify integrity against the manifest rather than an independent signature.
-Native Windows notification/Linear runtime and host transport need their own
-platform checks; cross-build and installer-fixture results have narrower scope.
+Native macOS read-only OAuth and board reads were exercised against Linear.
+Windows checks cover profile privacy, redirected input and a synthetic keyring
+item; account OAuth and notification host transport retain separate platform limits.
 
 See docs/linear.md, docs/notifications.md and docs/reference/api.md for setup and
 behavior. Dated acceptance records and their exact limits live under

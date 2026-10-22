@@ -99,6 +99,14 @@ function Invoke-ClawBridgeSkillInstall([string]$Binary) {
     $script:skillRuns.Add($Binary)
     if ($script:mode -eq 'skill-failure') { throw 'synthetic skill failure' }
 }
+# Joins output and warning records by their messages. Out-String would render
+# them at the console width and break long paths across lines.
+function ConvertTo-RecordText {
+    $messages = @(foreach ($record in $input) {
+        if ($record -is [Management.Automation.WarningRecord]) { $record.Message } else { [string]$record }
+    })
+    return ($messages -join "`n")
+}
 function Assert-True([bool]$Value, [string]$Message) { if (-not $Value) { throw $Message } }
 function Expect-Failure([scriptblock]$Body) {
     $failed = $false
@@ -132,7 +140,7 @@ try {
     Assert-True (@($env:Path.Split(';') | Where-Object { $_ -eq $destination }).Count -eq 1) 'a rerun duplicated the session Path entry'
     Assert-Cleanup
     $script:mode = 'skill-failure'
-    $output = Install-ClawBridge -Version v0.1.0 -InstallDir $destination 3>&1 | Out-String
+    $output = Install-ClawBridge -Version v0.1.0 -InstallDir $destination 3>&1 | ConvertTo-RecordText
     Assert-True ($script:skillRuns.Count -eq 2) 'skill step not attempted'
     Assert-True ($output -like '*agent skill was not installed*') 'skill failure must warn'
     Assert-True ((Get-FileHash -LiteralPath $binary).Hash.ToLowerInvariant() -ceq $script:digest) 'skill failure undid the install'
@@ -221,7 +229,7 @@ try {
         $running = Start-Process -FilePath $binary -ArgumentList '-n', '120', '127.0.0.1' -WindowStyle Hidden -PassThru
         Start-Sleep -Milliseconds 500
         Assert-True (-not $running.HasExited) 'fixture process did not stay running'
-        $runningOutput = Install-ClawBridge -Version v0.1.0 -InstallDir $destination -NoSkill 3>&1 | Out-String
+        $runningOutput = Install-ClawBridge -Version v0.1.0 -InstallDir $destination -NoSkill 3>&1 | ConvertTo-RecordText
         Assert-True ((Get-FileHash -LiteralPath $binary).Hash.ToLowerInvariant() -ceq $script:digest) 'running binary was not replaced'
         Assert-True ($runningOutput -like '*Installed v0.1.0*') 'running upgrade did not report success'
         Assert-True ($runningOutput -like '*still running*') 'running upgrade did not report its leftover'
@@ -262,7 +270,7 @@ try {
     Set-TestUserPath 'C:\Other'
     $env:Path = $savedPath
     foreach ($attempt in 1..2) {
-        $refused = Install-ClawBridge -Version v0.1.0 -InstallDir $semicolon -NoSkill 3>&1 | Out-String
+        $refused = Install-ClawBridge -Version v0.1.0 -InstallDir $semicolon -NoSkill 3>&1 | ConvertTo-RecordText
         Assert-True ($refused -like '*PATH was not changed*contains ; or "*') ('a ; directory must warn: ' + $refused)
         Assert-True ((Get-TestUserPath).Value -ceq 'C:\Other') ('a ; directory reached the user Path: ' + (Get-TestUserPath).Value)
         Assert-True ($env:Path -ceq $savedPath) 'a ; directory reached the session Path'
@@ -277,18 +285,18 @@ try {
     $olderBinary = Join-Path $older 'clawbridge.exe'
     [IO.File]::WriteAllText($olderBinary, 'older binary')
     $env:Path = $older + ';' + $savedPath
-    $shadowOutput = Install-ClawBridge -Version v0.1.0 -InstallDir $destination -NoSkill 3>&1 | Out-String
+    $shadowOutput = Install-ClawBridge -Version v0.1.0 -InstallDir $destination -NoSkill 3>&1 | ConvertTo-RecordText
     Assert-True ($shadowOutput -like ('*' + $olderBinary + '*not the binary just installed at ' + $binary + '*')) ('shadowing must warn with both paths: ' + $shadowOutput)
     Assert-True ($env:Path -ceq ($destination + ';' + $older + ';' + $savedPath)) ('the session must put the new binary first: ' + $env:Path)
     Assert-True ((Get-Command -Name clawbridge -CommandType Application | Select-Object -First 1).Path -ieq $binary) 'this session does not resolve the new binary'
     Assert-True ((Get-TestUserPath).Value -ceq ('C:\Other;' + $destination)) 'the persisted Path must append'
-    $rerun = Install-ClawBridge -Version v0.1.0 -InstallDir $destination -NoSkill 3>&1 | Out-String
+    $rerun = Install-ClawBridge -Version v0.1.0 -InstallDir $destination -NoSkill 3>&1 | ConvertTo-RecordText
     Assert-True (-not ($rerun -like '*not the binary just installed*')) 'a resolved install still warned about shadowing'
     Assert-True ($env:Path -ceq ($destination + ';' + $older + ';' + $savedPath)) 'a rerun changed the session Path again'
     Assert-Cleanup
     Clear-TestUserPath
     $env:Path = $savedPath
-    $noModifyOutput = Install-ClawBridge -Version v0.1.0 -InstallDir $destination -NoSkill -NoModifyPath | Out-String
+    $noModifyOutput = Install-ClawBridge -Version v0.1.0 -InstallDir $destination -NoSkill -NoModifyPath | ConvertTo-RecordText
     Assert-True ($null -eq (Get-TestUserPath)) '-NoModifyPath wrote the user Path'
     Assert-True ($env:Path -ceq $savedPath) '-NoModifyPath changed the session Path'
     Assert-True ($script:broadcasts -eq $broadcastsBefore) '-NoModifyPath broadcast'
@@ -296,7 +304,7 @@ try {
     $key = [Microsoft.Win32.Registry]::CurrentUser.CreateSubKey($script:registryKey)
     try { $key.SetValue('Path', 7, [Microsoft.Win32.RegistryValueKind]::DWord) } finally { $key.Dispose() }
     [IO.File]::WriteAllText($binary, 'old binary')
-    $warned = Install-ClawBridge -Version v0.1.0 -InstallDir $destination -NoSkill 3>&1 | Out-String
+    $warned = Install-ClawBridge -Version v0.1.0 -InstallDir $destination -NoSkill 3>&1 | ConvertTo-RecordText
     Assert-True ($warned -like '*user PATH was not updated*') 'a registry failure must warn'
     Assert-True ((Get-FileHash -LiteralPath $binary).Hash.ToLowerInvariant() -ceq $script:digest) 'a registry failure undid the install'
     Assert-True ((Get-TestUserPath).Kind -eq [Microsoft.Win32.RegistryValueKind]::DWord) 'an unexpected Path value was overwritten'

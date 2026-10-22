@@ -208,3 +208,59 @@ func TestL2NativeLabelNamesProvenBeforePublicClear(t *testing.T) {
 		})
 	}
 }
+
+// Native list rows name their labels. A label-filtered list is accepted only
+// when every names-only row carries the selected label's name, unique in the
+// team's full catalog, so a filter Linear silently ignored cannot pass rows
+// with other labels.
+func TestL2NativeLabelFilteredIssueListProvesNames(t *testing.T) {
+	const labelName = "Synthetic label"
+	for _, mode := range []string{"filtered", "filter_ignored", "ambiguous_name"} {
+		t.Run(mode, func(t *testing.T) {
+			f := newFixture(t)
+			f.setup("w", "p")
+			f.call("taskboard_set_v2", "w", "p", "", l2MappingArgs(0))
+			peer := newL1ProviderPeer()
+			peer.tools = []*mcp.Tool{peer.tools[0], peer.tools[1], peer.tools[2], l2NativeLabelListTool(), l2NativeIssueListTool(), l2ActualSaveIssueTool(t)}
+			cfg := l1ServiceConfig(t, f.store, &l1SyntheticProvider{})
+			cfg.Open = func(ctx context.Context, _ *http.Client, _ bool) (linearboard.Provider, error) {
+				return linearprovider.NewWithCaller(ctx, peer)
+			}
+			peer.result = func(name string, args map[string]any) (any, error) {
+				switch name {
+				case "get_team", "get_project":
+					return l1PeerResult(name, args)
+				case "list_issue_labels":
+					rows := []any{l2NativeLabelRow(l2LabelA)}
+					if mode == "ambiguous_name" && args["includeGroups"] == true {
+						// Only the full catalog shows a second label with the name.
+						rows = append(rows, l2NativeLabelRow(l2LabelB))
+					}
+					return map[string]any{"labels": rows, "hasNextPage": false}, nil
+				case "list_issues":
+					if args["label"] != l2LabelA {
+						t.Fatalf("label filter was not sent as the UUID: %+v", args)
+					}
+					rows := []any{map[string]any{"id": "SYN-1", "uuid": l1IssueID, "identifier": "SYN-1", "teamId": l1TeamA, "projectId": l1Project, "title": "Synthetic labelled issue", "labels": []any{labelName}}}
+					if mode == "filter_ignored" {
+						rows = append(rows, map[string]any{"id": "SYN-2", "uuid": "dddddddd-dddd-4ddd-8ddd-dddddddddddd", "identifier": "SYN-2", "teamId": l1TeamA, "projectId": l1Project, "title": "Synthetic other issue", "labels": []any{"Synthetic other"}})
+					}
+					return map[string]any{"issues": rows, "hasNextPage": false}, nil
+				default:
+					t.Fatalf("unexpected native tool: %s", name)
+					return nil, nil
+				}
+			}
+			page, err := linearboard.New(cfg).IssuesV2(context.Background(), f.request("", "w", "p", "worker", actor("worker", nil)), linearboard.IssuesInputV2{Limit: 50, LabelID: l2LabelA})
+			if mode != "filtered" {
+				if err == nil || len(page.Items) != 0 {
+					t.Fatal("unproven label-filtered list was accepted", page.Items, err)
+				}
+				return
+			}
+			if err != nil || len(page.Items) != 1 || page.Items[0].ID != l1IssueID || page.Items[0].LabelsKnown {
+				t.Fatal("proven names-only label filter was refused or overclaimed", page, err)
+			}
+		})
+	}
+}

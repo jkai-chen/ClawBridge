@@ -12,8 +12,10 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
+	"time"
 
 	"clawbridge/internal/buildinfo"
 	"clawbridge/skills"
@@ -51,6 +53,11 @@ type State struct {
 	Current          bool     `json:"current"`
 	Modified         []string `json:"modified,omitempty"`
 	Unmanaged        []string `json:"unmanaged,omitempty"`
+	// Unsafe lists symbolic links and other non-regular entries; nothing is
+	// read through or removed from them.
+	Unsafe []string `json:"unsafe,omitempty"`
+	// Corrupt says why the marker cannot be trusted; it is then ignored.
+	Corrupt string `json:"corrupt,omitempty"`
 }
 
 // Result is the outcome of an install or uninstall for one target.
@@ -58,6 +65,8 @@ type Result struct {
 	State
 	Changed bool   `json:"changed"`
 	Refused string `json:"refused,omitempty"`
+	// Backup is where --force moved a folder holding files we did not install.
+	Backup string `json:"backup,omitempty"`
 }
 
 // agentHome is the agent's own configuration home, which also holds its
@@ -157,9 +166,45 @@ func digest(hashes map[string]string) string {
 	return hex.EncodeToString(h.Sum(nil))
 }
 
-// inspect reads a target without changing it.
+var errUnsafe = errors.New("symbolic link or non-regular file")
+
+// regularUnder checks every component of rel below dir with Lstat: none may
+// be a symbolic link, inner ones must be directories, and the leaf a regular
+// file (or, when wantDir, a directory).
+func regularUnder(dir, rel string, wantDir bool) error {
+	parts := strings.Split(rel, "/")
+	current := dir
+	for n, part := range parts {
+		current = filepath.Join(current, part)
+		info, err := os.Lstat(current)
+		if err != nil {
+			return err
+		}
+		last := n == len(parts)-1
+		switch {
+		case info.Mode()&fs.ModeSymlink != 0:
+			return errUnsafe
+		case !last || wantDir:
+			if !info.IsDir() {
+				return errUnsafe
+			}
+		case !info.Mode().IsRegular():
+			return errUnsafe
+		}
+	}
+	return nil
+}
+
+// validMarkerPath accepts only a clean relative slash path that this binary
+// embeds, so a marker can never name a file outside the skill folder.
+func validMarkerPath(p string, files map[string][]byte) bool {
+	_, embeds := files[p]
+	return embeds && p != Marker && p == path.Clean(p) && !path.IsAbs(p) && !strings.Contains(p, "\\") && filepath.IsLocal(filepath.FromSlash(p))
+}
+
+// inspect reads a target without changing it and without following links.
 func inspect(t Target) (State, *marker, error) {
-	_, want, err := embedded()
+	files, want, err := embedded()
 	if err != nil {
 		return State{}, nil, err
 	}
@@ -172,46 +217,65 @@ func inspect(t Target) (State, *marker, error) {
 		return s, nil, err
 	}
 	if !info.IsDir() {
-		s.Unmanaged = []string{"."}
+		s.Unsafe = []string{"."}
 		return s, nil, nil
-	}
-	raw, err := os.ReadFile(filepath.Join(t.Dir, Marker))
-	var m *marker
-	if err == nil {
-		m = &marker{}
-		if json.Unmarshal(raw, m) != nil || m.Files == nil {
-			m = nil
-		}
-	} else if !errors.Is(err, fs.ErrNotExist) {
-		return s, nil, err
 	}
 	present, err := tree(t.Dir)
 	if err != nil {
 		return s, nil, err
 	}
+	markerPresent := false
 	for _, p := range present {
-		if p == Marker {
-			continue
+		if err := regularUnder(t.Dir, p, false); err != nil {
+			s.Unsafe = append(s.Unsafe, p)
+		} else if p == Marker {
+			markerPresent = true
 		}
-		if m == nil || m.Files[p] == "" {
+	}
+	var m *marker
+	if markerPresent {
+		raw, err := os.ReadFile(filepath.Join(t.Dir, Marker))
+		if err != nil {
+			return s, nil, err
+		}
+		m = &marker{}
+		if json.Unmarshal(raw, m) != nil || len(m.Files) == 0 {
+			s.Corrupt = "the installation marker is unreadable"
+		}
+		for p, h := range m.Files {
+			if b, e := hex.DecodeString(h); !validMarkerPath(p, files) || e != nil || len(b) != sha256.Size {
+				s.Corrupt = "the installation marker lists a path or hash this binary does not install"
+			}
+		}
+		if s.Corrupt != "" {
+			m = nil
+		}
+	}
+	for _, p := range present {
+		if p != Marker && (m == nil || m.Files[p] == "") && !slices.Contains(s.Unsafe, p) {
 			s.Unmanaged = append(s.Unmanaged, p)
 		}
 	}
 	if m == nil {
-		if len(present) > 0 && s.Unmanaged == nil {
-			s.Unmanaged = []string{Marker}
-		}
 		return s, nil, nil
 	}
 	s.Installed, s.InstalledVersion = true, m.Version
 	for p, h := range m.Files {
+		if err := regularUnder(t.Dir, p, false); err != nil {
+			if !errors.Is(err, fs.ErrNotExist) && !slices.Contains(s.Unsafe, p) {
+				s.Unsafe = append(s.Unsafe, p)
+			}
+			s.Modified = append(s.Modified, p)
+			continue
+		}
 		b, err := os.ReadFile(filepath.Join(t.Dir, filepath.FromSlash(p)))
 		if err != nil || sum(b) != h {
 			s.Modified = append(s.Modified, p)
 		}
 	}
 	sort.Strings(s.Modified)
-	s.Current = m.Digest == want && m.Version == buildinfo.Version && len(s.Modified) == 0
+	sort.Strings(s.Unsafe)
+	s.Current = m.Digest == want && m.Version == buildinfo.Version && len(s.Modified) == 0 && len(s.Unsafe) == 0
 	return s, m, nil
 }
 
@@ -247,9 +311,15 @@ func Status(targets []Target) ([]State, error) {
 	return out, nil
 }
 
+// foreign reports whether the target holds anything we did not install.
+func (s State) foreign() bool {
+	return len(s.Unmanaged) > 0 || len(s.Unsafe) > 0 || s.Corrupt != ""
+}
+
 // Install writes the embedded skill to each target. A current installation
-// is left alone. A target holding files we did not install, or files we
-// installed that were since changed, is refused unless force is set.
+// is left alone. Without force, a target with changed files or anything we
+// did not install is refused. With force, our changed files are replaced and
+// a folder holding anything else is moved to a backup, never deleted.
 func Install(targets []Target, force bool) ([]Result, error) {
 	files, want, err := embedded()
 	if err != nil {
@@ -263,13 +333,13 @@ func Install(targets []Target, force bool) ([]Result, error) {
 		}
 		r := Result{State: s}
 		switch {
-		case s.Current:
+		case s.Current && !s.foreign():
+		case !force && s.foreign():
+			r.Refused = "the folder holds files ClawBridge did not install, links, or an untrusted marker; rerun with --force to move it to a backup"
 		case !force && len(s.Modified) > 0:
 			r.Refused = "installed files were changed since installation; rerun with --force to replace them"
-		case !force && len(s.Unmanaged) > 0:
-			r.Refused = "the directory holds files ClawBridge did not install; rerun with --force to replace it"
 		default:
-			if err = replace(t.Dir, files, want); err != nil {
+			if r.Backup, err = replace(t.Dir, files, want, s.foreign()); err != nil {
 				return out, err
 			}
 			r.Changed = true
@@ -282,61 +352,87 @@ func Install(targets []Target, force bool) ([]Result, error) {
 	return out, nil
 }
 
-// replace builds the new skill beside the target and swaps it in, so readers
-// see the old or the new skill, never a partial one.
-func replace(dir string, files map[string][]byte, want string) error {
+// backupPath names a backup beside the agent's skills directory, where the
+// agent does not load it as a second skill.
+func backupPath(dir string) (string, error) {
+	p := filepath.Join(filepath.Dir(filepath.Dir(dir)), Name+"-skill-backup-"+time.Now().UTC().Format("20060102T150405.000000000Z"))
+	if _, err := os.Lstat(p); !errors.Is(err, fs.ErrNotExist) {
+		return "", fmt.Errorf("backup path %s already exists", p)
+	}
+	return p, nil
+}
+
+// replace stages the new skill beside the target and swaps it in, so an
+// agent never reads a half-written skill; the folder is absent only between
+// the two renames. A previous folder holding anything we did not install
+// (keep) is moved to a backup, whose path is returned; one holding only our
+// files is deleted.
+func replace(dir string, files map[string][]byte, want string, keep bool) (string, error) {
 	parent := filepath.Dir(dir)
 	if err := os.MkdirAll(parent, 0o755); err != nil {
-		return err
+		return "", err
 	}
 	staged, err := os.MkdirTemp(parent, ".clawbridge-skill-new-")
 	if err != nil {
-		return err
+		return "", err
 	}
 	defer os.RemoveAll(staged)
 	hashes := map[string]string{}
 	for p, b := range files {
 		target := filepath.Join(staged, filepath.FromSlash(p))
 		if err = os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
-			return err
+			return "", err
 		}
 		if err = writeFile(target, b); err != nil {
-			return err
+			return "", err
 		}
 		hashes[p] = sum(b)
 	}
 	raw, err := json.MarshalIndent(marker{Version: buildinfo.Version, Commit: buildinfo.Commit, Digest: want, Files: hashes}, "", "  ")
 	if err != nil {
-		return err
+		return "", err
 	}
 	if err = writeFile(filepath.Join(staged, Marker), append(raw, '\n')); err != nil {
-		return err
+		return "", err
 	}
 	if err = os.Chmod(staged, 0o755); err != nil {
-		return err
+		return "", err
 	}
 	if _, err = os.Lstat(dir); errors.Is(err, fs.ErrNotExist) {
-		return os.Rename(staged, dir)
+		return "", os.Rename(staged, dir)
 	} else if err != nil {
-		return err
+		return "", err
+	}
+	if keep {
+		backup, err := backupPath(dir)
+		if err != nil {
+			return "", err
+		}
+		if err = os.Rename(dir, backup); err != nil {
+			return "", err
+		}
+		if err = os.Rename(staged, dir); err != nil {
+			return backup, fmt.Errorf("%w; the previous folder is kept at %s", err, backup)
+		}
+		return backup, nil
 	}
 	old, err := os.MkdirTemp(parent, ".clawbridge-skill-old-")
 	if err != nil {
-		return err
+		return "", err
 	}
 	retired := filepath.Join(old, Name)
 	if err = os.Rename(dir, retired); err != nil {
 		os.Remove(old)
-		return err
+		return "", err
 	}
 	if err = os.Rename(staged, dir); err != nil {
 		if back := os.Rename(retired, dir); back != nil {
-			return fmt.Errorf("%w; the previous skill is kept at %s", err, retired)
+			return "", fmt.Errorf("%w; the previous skill is kept at %s", err, retired)
 		}
 		os.Remove(old)
-		return err
+		return "", err
 	}
-	return os.RemoveAll(old)
+	return "", os.RemoveAll(old)
 }
 
 func writeFile(p string, b []byte) error {
@@ -355,8 +451,9 @@ func writeFile(p string, b []byte) error {
 	return f.Close()
 }
 
-// Uninstall removes only the files our marker lists. A changed file is kept
-// unless force is set; files we did not install are always kept.
+// Uninstall removes only the regular files our trusted marker lists. A
+// changed file is kept unless force is set. Files we did not install are
+// always kept, and a link or an untrusted marker refuses the uninstall.
 func Uninstall(targets []Target, force bool) ([]Result, error) {
 	out := []Result{}
 	for _, t := range targets {
@@ -366,6 +463,10 @@ func Uninstall(targets []Target, force bool) ([]Result, error) {
 		}
 		r := Result{State: s}
 		switch {
+		case s.Corrupt != "":
+			r.Refused = s.Corrupt + "; nothing was removed"
+		case len(s.Unsafe) > 0:
+			r.Refused = "the folder holds symbolic links or non-regular files; nothing was removed"
 		case m == nil:
 			if len(s.Unmanaged) > 0 {
 				r.Refused = "no ClawBridge installation marker; nothing was removed"
@@ -379,6 +480,9 @@ func Uninstall(targets []Target, force bool) ([]Result, error) {
 			}
 			names = append(names, Marker)
 			for _, p := range names {
+				if regularUnder(t.Dir, p, false) != nil {
+					continue
+				}
 				if err = os.Remove(filepath.Join(t.Dir, filepath.FromSlash(p))); err != nil && !errors.Is(err, fs.ErrNotExist) {
 					return out, err
 				}
@@ -395,9 +499,9 @@ func Uninstall(targets []Target, force bool) ([]Result, error) {
 }
 
 // removeEmptyDirs removes the directories our files lived in, deepest first,
-// and only while they are empty.
+// only while they are real, link-free directories and empty.
 func removeEmptyDirs(dir string, names []string) {
-	dirs := map[string]bool{".": true}
+	dirs := map[string]bool{}
 	for _, p := range names {
 		for d := path.Dir(p); d != "."; d = path.Dir(d) {
 			dirs[d] = true
@@ -408,9 +512,14 @@ func removeEmptyDirs(dir string, names []string) {
 		list = append(list, d)
 	}
 	// A directory's path is longer than its parent's, so longest first is
-	// deepest first, and "." comes last.
+	// deepest first.
 	sort.Slice(list, func(i, j int) bool { return len(list[i]) > len(list[j]) })
 	for _, d := range list {
-		os.Remove(filepath.Join(dir, filepath.FromSlash(d)))
+		if regularUnder(dir, d, true) == nil {
+			os.Remove(filepath.Join(dir, filepath.FromSlash(d)))
+		}
+	}
+	if info, err := os.Lstat(dir); err == nil && info.IsDir() {
+		os.Remove(dir)
 	}
 }

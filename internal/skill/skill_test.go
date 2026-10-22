@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 
@@ -274,5 +275,160 @@ func TestSkillCommandReportsJSONAndFailsOnRefusal(t *testing.T) {
 	}
 	if err := RunWithIO([]string{"remove"}, &out, &errs); err == nil {
 		t.Fatal("unknown subcommand accepted")
+	}
+}
+
+// skillsHome lays out AGENT_HOME/skills like an agent, returning both.
+func skillsHome(t *testing.T) (home, skills string) {
+	home = t.TempDir()
+	skills = filepath.Join(home, "skills")
+	if err := os.MkdirAll(skills, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	return home, skills
+}
+
+func readMarker(t *testing.T, dir string) map[string]any {
+	t.Helper()
+	m := map[string]any{}
+	raw, _ := os.ReadFile(filepath.Join(dir, Marker))
+	if err := json.Unmarshal(raw, &m); err != nil {
+		t.Fatal(err)
+	}
+	return m
+}
+
+func writeMarker(t *testing.T, dir string, m map[string]any) {
+	t.Helper()
+	raw, _ := json.Marshal(m)
+	if err := os.WriteFile(filepath.Join(dir, Marker), raw, 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestAMarkerNamingAPathOutsideTheSkillIsNeverTrusted(t *testing.T) {
+	one := oneOf(t)
+	home, skills := skillsHome(t)
+	targets, _ := Targets("", skills)
+	dir := targets[0].Dir
+	one(Install(targets, false))
+	victim := filepath.Join(home, "victim.txt")
+	os.WriteFile(victim, []byte("keep me"), 0o644)
+	for _, bad := range []string{"../../victim.txt", "/" + victim, "references/../../../victim.txt", "notes.md"} {
+		m := readMarker(t, dir)
+		m["files"].(map[string]any)[bad] = sum([]byte("keep me"))
+		writeMarker(t, dir, m)
+		s, err := Status(targets)
+		if err != nil || s[0].Corrupt == "" || s[0].Installed {
+			t.Fatalf("%s: marker trusted: %+v %v", bad, s, err)
+		}
+		for _, force := range []bool{false, true} {
+			if r := one(Uninstall(targets, force)); r.Changed || r.Refused == "" {
+				t.Fatalf("%s: uninstall with an untrusted marker: %+v", bad, r)
+			}
+		}
+		if r := one(Install(targets, false)); r.Changed || r.Refused == "" {
+			t.Fatalf("%s: install over an untrusted marker: %+v", bad, r)
+		}
+		if b, err := os.ReadFile(victim); err != nil || string(b) != "keep me" {
+			t.Fatalf("%s: file outside the skill touched", bad)
+		}
+		delete(m["files"].(map[string]any), bad)
+		writeMarker(t, dir, m)
+	}
+	writeMarker(t, dir, map[string]any{"files": "not a map"})
+	if s, _ := Status(targets); s[0].Corrupt == "" {
+		t.Fatal("unreadable marker trusted")
+	}
+}
+
+func TestALinkInsideTheSkillIsNeverFollowed(t *testing.T) {
+	one := oneOf(t)
+	home, skills := skillsHome(t)
+	targets, _ := Targets("", skills)
+	dir := targets[0].Dir
+	one(Install(targets, false))
+	// Move references outside and link it back: hashes still match through
+	// the link, but nothing may be read or removed through it.
+	outside := filepath.Join(home, "outside")
+	if err := os.Rename(filepath.Join(dir, "references"), outside); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, filepath.Join(dir, "references")); err != nil {
+		t.Fatal(err)
+	}
+	before, _ := tree(outside)
+	s, _ := Status(targets)
+	if s[0].Current || !slices.Contains(s[0].Unsafe, "references") {
+		t.Fatalf("link not reported: %+v", s[0])
+	}
+	for _, force := range []bool{false, true} {
+		if r := one(Uninstall(targets, force)); r.Changed || r.Refused == "" {
+			t.Fatalf("uninstall through a link: %+v", r)
+		}
+	}
+	if r := one(Install(targets, false)); r.Changed || r.Refused == "" {
+		t.Fatalf("install over a link: %+v", r)
+	}
+	r := one(Install(targets, true))
+	if !r.Changed || !r.Current || r.Backup == "" {
+		t.Fatalf("--force must move the linked folder to a backup: %+v", r)
+	}
+	if after, _ := tree(outside); !reflect.DeepEqual(before, after) {
+		t.Fatal("files behind the link changed", before, after)
+	}
+	if target, err := os.Readlink(filepath.Join(r.Backup, "references")); err != nil || target != outside {
+		t.Fatal("backup lost the link", target, err)
+	}
+	if !strings.HasPrefix(r.Backup, home+string(filepath.Separator)) || strings.HasPrefix(r.Backup, skills) {
+		t.Fatal("backup must sit beside the skills directory, not in it", r.Backup)
+	}
+}
+
+func TestForceMovesForeignFilesToABackupAndNeverDeletesThem(t *testing.T) {
+	one := oneOf(t)
+	for name, prepare := range map[string]func(t *testing.T, dir string){
+		"unmarked folder": func(t *testing.T, dir string) {
+			os.MkdirAll(dir, 0o755)
+			os.WriteFile(filepath.Join(dir, "SKILL.md"), []byte("someone else's skill"), 0o644)
+		},
+		"added file": func(t *testing.T, dir string) {
+			one(Install([]Target{{Agent: "custom", Dir: dir}}, false))
+			os.WriteFile(filepath.Join(dir, "notes.md"), []byte("user notes"), 0o644)
+		},
+		"corrupt marker": func(t *testing.T, dir string) {
+			one(Install([]Target{{Agent: "custom", Dir: dir}}, false))
+			os.WriteFile(filepath.Join(dir, Marker), []byte("{"), 0o644)
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			_, skills := skillsHome(t)
+			targets, _ := Targets("", skills)
+			dir := targets[0].Dir
+			prepare(t, dir)
+			before, _ := tree(dir)
+			r := one(Install(targets, true))
+			if !r.Changed || !r.Current || r.Backup == "" {
+				t.Fatalf("%+v", r)
+			}
+			if after, _ := tree(r.Backup); !reflect.DeepEqual(before, after) {
+				t.Fatal("backup is not the previous folder", before, after)
+			}
+			entries, _ := os.ReadDir(skills)
+			if len(entries) != 1 || entries[0].Name() != Name {
+				t.Fatal("the backup would load as a second skill", entries)
+			}
+		})
+	}
+}
+
+func TestRemoveEmptyDirsLeavesALinkedDirectory(t *testing.T) {
+	dir, outside := t.TempDir(), t.TempDir()
+	if err := os.Symlink(outside, filepath.Join(dir, "references")); err != nil {
+		t.Fatal(err)
+	}
+	removeEmptyDirs(dir, []string{"references/cli.md"})
+	if _, err := os.Lstat(filepath.Join(dir, "references")); err != nil {
+		t.Fatal("a linked directory was removed", err)
 	}
 }

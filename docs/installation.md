@@ -80,14 +80,23 @@ An agent counts as configured when its configuration directory exists. Use
 `--agent claude-code`, `--agent codex` or `--agent all` to choose explicitly, or
 `--dir SKILLS_DIR` to install into `SKILLS_DIR/clawbridge` for another agent.
 
-Repeating the install changes nothing. After an update, it replaces the skill as
-a whole, so an agent never reads a half-written skill. A `.clawbridge-skill.json`
-marker records the version and a hash of every file it wrote. The install refuses,
-and changes nothing, when you edited one of those files or added files of your own
-to the folder; `--force` replaces them. `clawbridge skill status` compares the
-installed version with the binary's, and `clawbridge doctor` warns when they
-differ. `clawbridge skill uninstall` removes only the files the marker lists, and
-keeps any file you added.
+Repeating the install changes nothing. After an update, it swaps in a fully
+written copy, so an agent never reads a half-written skill (the folder is absent
+only between two renames). A `.clawbridge-skill.json` marker records the version
+and a hash of every file it wrote. The marker is trusted only when it lists
+plain relative paths that this binary installs; otherwise it is reported as
+corrupt and ignored. Nothing is read or removed through a symbolic link.
+
+Without `--force`, the install refuses and changes nothing when you edited one
+of its files, or when the folder holds files it did not install, links, or an
+untrusted marker. `--force` replaces the files it installed. It never deletes
+anything else: a folder holding other files is first moved, whole, to
+`clawbridge-skill-backup-TIMESTAMP` beside the agent's `skills` directory (where
+the agent does not load it), and the JSON result reports that path.
+`clawbridge skill status` compares the installed version with the binary's, and
+`clawbridge doctor` warns when they differ. `clawbridge skill uninstall` removes
+only the files the trusted marker lists and keeps any file you added; it refuses,
+even with `--force`, when the marker is untrusted or the folder holds links.
 
 ## Build from source
 

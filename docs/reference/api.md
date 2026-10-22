@@ -294,8 +294,10 @@ the exact tagged commit. Extra version arguments fail before state access.
 `clawbridge skill install|status|uninstall` needs no configuration and returns
 source=skill with one entry per target: agent, dir, installed,
 installed_version, binary_version and current, plus modified (installed files
-changed since) and unmanaged (files it did not install). Install and uninstall
-add changed and refused; any refused target also makes the command exit nonzero.
+changed since), unmanaged (files it did not install), unsafe (links and other
+non-regular entries) and corrupt (why the marker is not trusted). Install and
+uninstall add changed and refused, and install adds backup when `--force` moved
+a folder aside; any refused target also makes the command exit nonzero.
 
 Historical per-increment Go adapter contracts, reviewed hashes and evidence are
 preserved under [the archive](../archive/README.md).

@@ -8,14 +8,28 @@ import (
 	"clawbridge/internal/linearprovider"
 )
 
+// checkLabelV2 accepts a label verified to be the team's own or a workspace
+// label (explicit null team) listed for that team; unscoped rows and other
+// teams' labels are refused.
 func checkLabelV2(label linearprovider.Label, team string) error {
-	if !linearprovider.ValidID(label.ID) || label.TeamID != team || label.Global {
+	if !linearprovider.ValidID(label.ID) {
+		return errors.New("label team scope is not verified")
+	}
+	if label.Global {
+		if label.TeamID != "" {
+			return errors.New("label team scope is not verified")
+		}
+		return nil
+	}
+	if label.TeamID != team {
 		return errors.New("label team scope is not verified")
 	}
 	return nil
 }
+
+// eligibleLabelV2 applies the same proof to team and workspace labels.
 func eligibleLabelV2(label linearprovider.Label) error {
-	if !label.EligibilityKnown || label.Archived || label.Group || label.Global {
+	if !label.EligibilityKnown || label.Archived || label.Group {
 		return errors.New("label is not proven eligible for application")
 	}
 	return nil
@@ -168,8 +182,8 @@ func (s *Service) LabelsV2(ctx context.Context, scope bus.Request, team string, 
 	if e = validProviderPageV2(page.NextCursor, page.Complete, c.Provider, len(page.Items), limit); e != nil {
 		return empty, e
 	}
-	// The listing returns only rows verified to be in this team's scope;
-	// workspace and unscoped rows are omitted rather than failing the page.
+	// The listing returns only rows verified to be the team's own or workspace
+	// labels; unscoped and other-team rows are omitted rather than failing the page.
 	seen := map[string]string{}
 	items := []linearprovider.Label{}
 	for _, label := range page.Items {

@@ -301,25 +301,33 @@ func (s *Service) IssuesV2(ctx context.Context, scope bus.Request, in IssuesInpu
 	}
 	pairs := v.Pairs
 	if in.LabelID != "" {
-		team := ""
+		// A team label selects its one team; a workspace label spans every
+		// allowed team that lists it.
+		teams := map[string]bool{}
+		global, scoped := false, false
 		for _, id := range SortedTeams(b.LinearTeamIDs) {
 			label, e := findLabelV2(ctx, p2, id, in.LabelID)
 			if e != nil {
 				return empty, e
 			}
 			if label != nil {
-				if team != "" && team != id {
-					return empty, errors.New("ambiguous label team")
-				}
-				team = id
+				teams[id] = true
+				global = global || label.Global
+				scoped = scoped || !label.Global
 			}
 		}
-		if team == "" {
+		if len(teams) == 0 {
 			return empty, errors.New("label is not verified for an allowed team")
+		}
+		if global && scoped {
+			return empty, errors.New("contradictory label scope")
+		}
+		if !global && len(teams) > 1 {
+			return empty, errors.New("ambiguous label team")
 		}
 		pairs = nil
 		for _, pair := range v.Pairs {
-			if pair.TeamID == team {
+			if teams[pair.TeamID] {
 				pairs = append(pairs, pair)
 			}
 		}

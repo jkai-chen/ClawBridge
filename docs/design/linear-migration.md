@@ -65,8 +65,10 @@ and the original expected revision. Personal profiles and credentials stay local
 
 - Omitted fields remain unchanged; explicit null clears only fields documented
   as clearable. Validate canonical IDs and current scope before dispatch.
-- Labels resolve to the target issue's allowed team. Workspace-global labels are
-  excluded unless the owner separately approves them. Label replacement must be
+- Labels resolve to the target issue's allowed team. Workspace labels (explicit
+  null team) listed for that team are allowed under the same eligibility proof
+  as team labels (owner-approved); unscoped and other-team labels are refused.
+  Label replacement must be
   explicit; never disguise replacement as an atomic merge or silently overwrite
   unrelated human labels.
 - Normalize `blocked by` into a directed `blocks` edge; normalize symmetric
@@ -199,8 +201,9 @@ change into replacement. An update that supplies labels must also supply
 current canonical set must equal it at preflight and again on the fresh read
 inside the operation lock; a mismatch inside the lock is a terminal
 refused-before-dispatch result for that operation ID. The expectation is part of
-the ledger payload digest and never alters the replacement set. No global/group/archived
-labels may be newly applied. Membership must prove the canonical user belongs to
+the ledger payload digest and never alters the replacement set. No group or
+archived label, and no label without supported eligibility proof, may be newly
+applied; a workspace label needs the same proof as a team label. Membership must prove the canonical user belongs to
 the effective issue team; reject known inactive users and require supported
 eligibility proof rather than treating unknown as active.
 

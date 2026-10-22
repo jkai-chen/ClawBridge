@@ -155,6 +155,10 @@ clawbridge linear labels --profile PROFILE_ID --team TEAM_UUID --limit 50
 clawbridge linear members --profile PROFILE_ID --team TEAM_UUID --limit 50
 ```
 
+`linear labels` lists the team's own labels and workspace labels available to it.
+A workspace label can be applied under the same eligibility proof as a team
+label; a label without that proof is refused.
+
 | Explicit field | Meaning |
 | --- | --- |
 | `--linear-project UUID` | Create destination or requested project move; update preserves the issue's team |

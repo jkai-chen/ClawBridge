@@ -388,22 +388,11 @@ func (p *Provider) Capabilities(context.Context) (Capabilities, error) {
 	labels := has([]string{"list_issue_labels"}, a(sample, "team", "teamId"), arg{[]string{"limit", "first"}, 1, "integer"})
 	members := has([]string{"list_users", "list_team_members"}, a(sample, "team", "teamId"), arg{[]string{"limit", "first"}, 1, "integer"})
 	capabilities := Capabilities{Labels: labels, Members: members, CreateProject: has([]string{"create_issue", "save_issue"}, append(create, a(sample, "projectId", "project"))...), UpdateProject: has([]string{"update_issue", "save_issue"}, append(update, a(sample, "projectId", "project"))...), ReplaceLabels: has([]string{"update_issue", "save_issue"}, append(update, arg{[]string{"labelIds", "labels"}, []string{}, "array"})...), Parent: has([]string{"update_issue", "save_issue"}, append(update, a(sample, "parentId"))...), Assignee: has([]string{"update_issue", "save_issue"}, append(update, a(sample, "assigneeId", "assignee"))...)}
-	// This explicit extension is a testable semantic attestation, not inferred
-	// from descriptions or the mere existence of parent/project fields. The
-	// official parent/project field shapes alone provide no such semantic proof.
+	// Parent/project field shapes, descriptions and schema extensions provide
+	// no semantic proof that a parent change preserves the destination.
 	for _, name := range []string{"create_issue", "update_issue", "save_issue"} {
-		if t := p.tools[name]; t != nil {
-			root := schemaProperty(t.InputSchema)
-			if root["x-clawbridge-parent-preserves-destination"] == true {
-				props, _, e := schema(t)
-				if e == nil {
-					_, parent := field(props, []string{"parentId"}, "string")
-					_, project := field(props, []string{"projectId", "project"}, "string")
-					if parent && project {
-						capabilities.ParentPreservesDestination = true
-					}
-				}
-			}
+		if p.parentSafe(name) {
+			capabilities.ParentPreservesDestination = true
 		}
 	}
 	for _, action := range []string{"add", "remove"} {
@@ -779,11 +768,7 @@ func (p *Provider) Members(ctx context.Context, team string, o PageOptions) (Pag
 
 func (p *Provider) parentSafe(name string) bool {
 	t := p.tools[name]
-	if t == nil {
-		return false
-	}
-	root := schemaProperty(t.InputSchema)
-	if root["x-clawbridge-parent-preserves-destination"] != true {
+	if !p.parentProven || t == nil {
 		return false
 	}
 	props, _, e := schema(t)

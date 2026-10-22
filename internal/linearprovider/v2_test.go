@@ -14,7 +14,7 @@ const uid = "940a5670-8981-49b1-9b3c-f9773dc63052"
 func issueResult() map[string]any {
 	return map[string]any{"id": iid, "teamId": tid, "projectId": nil, "description": "main authorized body"}
 }
-func v2MutationTool(name string, nullable bool, safeParent bool) *mcp.Tool {
+func v2MutationTool(name string, nullable bool) *mcp.Tool {
 	props := map[string]any{}
 	for _, key := range []string{"id", "teamId", "projectId", "title", "description", "stateId", "parentId", "assigneeId"} {
 		kind := any("string")
@@ -30,7 +30,7 @@ func v2MutationTool(name string, nullable bool, safeParent bool) *mcp.Tool {
 	} else {
 		required = []string{"id"}
 	}
-	return &mcp.Tool{Name: name, InputSchema: map[string]any{"type": "object", "properties": props, "required": required, "x-clawbridge-parent-preserves-destination": safeParent}}
+	return &mcp.Tool{Name: name, InputSchema: map[string]any{"type": "object", "properties": props, "required": required}}
 }
 func TestV2KnownnessAndCanonicalContext(t *testing.T) {
 	result := issueResult()
@@ -78,7 +78,7 @@ func TestV2KnownnessAndCanonicalContext(t *testing.T) {
 	}
 }
 func TestV2PresenceNullAndNoUnknownFieldMutation(t *testing.T) {
-	f := &fake{tools: []*mcp.Tool{v2MutationTool("update_issue", true, true)}, result: issueResult()}
+	f := &fake{tools: []*mcp.Tool{v2MutationTool("update_issue", true)}, result: issueResult()}
 	p, _ := NewWithCaller(context.Background(), f)
 	in := UpdateInputV2{UpdateInput: UpdateInput{ID: iid}, Labels: Field[[]string]{Present: true, Value: []string{}}, Parent: Field[*string]{Present: true}, Assignee: Field[*string]{Present: true}, Project: Field[*string]{Present: true}}
 	if _, e := p.UpdateV2(context.Background(), in); e != nil {
@@ -101,7 +101,7 @@ func TestV2PresenceNullAndNoUnknownFieldMutation(t *testing.T) {
 	if _, e := p.UpdateV2(context.Background(), in); e == nil || len(f.calls) != 0 {
 		t.Fatal("null labels dispatched")
 	}
-	f.tools = []*mcp.Tool{v2MutationTool("update_issue", false, false)}
+	f.tools = []*mcp.Tool{v2MutationTool("update_issue", false)}
 	p, _ = NewWithCaller(context.Background(), f)
 	if _, e := p.UpdateV2(context.Background(), UpdateInputV2{UpdateInput: UpdateInput{ID: iid}, Assignee: Field[*string]{Present: true}}); e == nil || len(f.calls) != 0 {
 		t.Fatal("unsupported clear dispatched")
@@ -110,10 +110,34 @@ func TestV2PresenceNullAndNoUnknownFieldMutation(t *testing.T) {
 	if _, e := p.UpdateV2(context.Background(), UpdateInputV2{UpdateInput: UpdateInput{ID: iid}, Parent: Field[*string]{Present: true, Value: &parent}}); e == nil || len(f.calls) != 0 {
 		t.Fatal("unproved hierarchy semantics dispatched")
 	}
-	f.tools = []*mcp.Tool{v2MutationTool("update_issue", true, true)}
+	f.tools = []*mcp.Tool{v2MutationTool("update_issue", true)}
 	p, _ = NewWithCaller(context.Background(), f)
+	p.parentProven = true
 	if _, e := p.UpdateV2(context.Background(), UpdateInputV2{UpdateInput: UpdateInput{ID: iid}, Parent: Field[*string]{Present: true, Value: &parent}}); e != nil || len(f.calls) != 1 {
 		t.Fatal("explicit supported parent failed", e, f.calls)
+	}
+}
+func TestV2SchemaCannotAttestParentDestination(t *testing.T) {
+	tools := []*mcp.Tool{}
+	for _, name := range []string{"create_issue", "update_issue"} {
+		tool := v2MutationTool(name, true)
+		tool.InputSchema.(map[string]any)["x-clawbridge-parent-preserves-destination"] = true
+		tools = append(tools, tool)
+	}
+	save := officialSaveIssue(t)
+	schemaProperty(save.InputSchema)["x-clawbridge-parent-preserves-destination"] = true
+	f := &fake{tools: append(tools, save), result: issueResult()}
+	p, _ := NewWithCaller(context.Background(), f)
+	caps, e := p.Capabilities(context.Background())
+	if e != nil || !caps.Parent || caps.ParentPreservesDestination {
+		t.Fatal("schema attested parent destination", caps, e)
+	}
+	parent := uid
+	if e = p.ValidateCreateV2(CreateInputV2{CreateInput: CreateInput{TeamID: tid, Title: "ok"}, Parent: Field[*string]{Present: true, Value: &parent}}); e == nil {
+		t.Fatal("schema-attested parent create preflight succeeded")
+	}
+	if _, e = p.UpdateV2(context.Background(), UpdateInputV2{UpdateInput: UpdateInput{ID: iid}, Parent: Field[*string]{Present: true, Value: &parent}}); e == nil || len(f.calls) != 0 {
+		t.Fatal("schema-attested parent dispatched", e, f.calls)
 	}
 }
 func TestV2TeamScopedDiscoveryAndEligibility(t *testing.T) {
@@ -148,7 +172,7 @@ func TestV2TeamScopedDiscoveryAndEligibility(t *testing.T) {
 	}
 }
 func TestV2RelationSingleEdgeAndUnprovenCapabilities(t *testing.T) {
-	f := &fake{tools: []*mcp.Tool{v2MutationTool("update_issue", true, false), tool("create_issue_relation", map[string]string{"issueId": "string", "relatedIssueId": "string", "type": "string"}, "issueId", "relatedIssueId", "type"), tool("remove_issue_relation", map[string]string{"issueId": "string", "relatedIssueId": "string", "type": "string"}, "issueId", "relatedIssueId", "type")}, result: map[string]any{"ok": true}}
+	f := &fake{tools: []*mcp.Tool{v2MutationTool("update_issue", true), tool("create_issue_relation", map[string]string{"issueId": "string", "relatedIssueId": "string", "type": "string"}, "issueId", "relatedIssueId", "type"), tool("remove_issue_relation", map[string]string{"issueId": "string", "relatedIssueId": "string", "type": "string"}, "issueId", "relatedIssueId", "type")}, result: map[string]any{"ok": true}}
 	p, _ := NewWithCaller(context.Background(), f)
 	caps, e := p.Capabilities(context.Background())
 	if e != nil || !caps.RelationAdd || !caps.RelationRemove || caps.ParentPreservesDestination || len(f.calls) != 0 {
@@ -199,7 +223,7 @@ func TestV2ProjectionLabelFilterAndDuplicateIdentity(t *testing.T) {
 }
 
 func TestV2PreflightAndTypedSchemaConstraints(t *testing.T) {
-	f := &fake{tools: []*mcp.Tool{v2MutationTool("create_issue", false, false), v2MutationTool("update_issue", false, false)}, result: issueResult()}
+	f := &fake{tools: []*mcp.Tool{v2MutationTool("create_issue", false), v2MutationTool("update_issue", false)}, result: issueResult()}
 	p, _ := NewWithCaller(context.Background(), f)
 	if e := p.ValidateCreateV2(CreateInputV2{CreateInput: CreateInput{TeamID: tid, Title: "ok"}, Assignee: Field[*string]{Present: true}}); e == nil {
 		t.Fatal("unsupported clear preflight succeeded")
@@ -210,7 +234,7 @@ func TestV2PreflightAndTypedSchemaConstraints(t *testing.T) {
 	if len(f.calls) != 0 {
 		t.Fatal("preflight performedIO")
 	}
-	tool := v2MutationTool("update_issue", true, true)
+	tool := v2MutationTool("update_issue", true)
 	schema := tool.InputSchema.(map[string]any)
 	props := schema["properties"].(map[string]any)
 	props["labelIds"].(map[string]any)["maxItems"] = 1

@@ -95,6 +95,10 @@ func (s *Store) send(ctx context.Context, tx *transaction, wid, pid string, acto
 		}
 	}
 	to, thread, replyTo := str(a, "to"), str(a, "thread_id"), ""
+	var recipients []map[string]any
+	// A reply to one's own message continues to its recipients rather than
+	// returning to the sender, so the delivery set is taken from the parent.
+	replyToOwn := false
 	if r.Operation == "reply" {
 		replyTo = str(a, "message_id")
 		parent, e := s.participatingMessage(ctx, tx, pid, sid, replyTo)
@@ -103,6 +107,14 @@ func (s *Store) send(ctx context.Context, tx *transaction, wid, pid string, acto
 		}
 		to = parent["sender_id"].(string)
 		thread = parent["thread_id"].(string)
+		if to == sid {
+			replyToOwn = true
+			to = parent["address"].(string)
+			recipients, err = query(ctx, tx, `SELECT d.recipient_id AS id FROM deliveries d JOIN sessions s ON s.project_id=d.project_id AND s.id=d.recipient_id WHERE d.project_id=? AND d.message_id=? AND d.recipient_id<>? AND s.status='active' ORDER BY d.recipient_id`, pid, replyTo, sid)
+			if err != nil {
+				return nil, err
+			}
+		}
 	} else if thread != "" {
 		parent, e := s.participatingMessage(ctx, tx, pid, sid, thread)
 		if e != nil {
@@ -115,8 +127,8 @@ func (s *Store) send(ctx context.Context, tx *transaction, wid, pid string, acto
 	if strings.Contains(to, "/") {
 		return nil, errors.New("cross-project messaging is not supported")
 	}
-	var recipients []map[string]any
 	switch {
+	case replyToOwn:
 	case to == "@all":
 		recipients, err = query(ctx, tx, `SELECT id FROM sessions WHERE project_id=? AND status='active' AND id<>? ORDER BY id`, pid, sid)
 	case strings.HasPrefix(to, "@role:"):
@@ -134,7 +146,7 @@ func (s *Store) send(ctx context.Context, tx *transaction, wid, pid string, acto
 	if err != nil {
 		return nil, err
 	}
-	if len(recipients) > 1 && to != "@all" && !strings.HasPrefix(to, "@role:") {
+	if len(recipients) > 1 && !replyToOwn && to != "@all" && !strings.HasPrefix(to, "@role:") {
 		return nil, errors.New("recipient selector is ambiguous; use the immutable session ID")
 	}
 	if len(recipients) == 0 {

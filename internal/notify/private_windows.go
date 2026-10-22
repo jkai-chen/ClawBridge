@@ -40,15 +40,20 @@ func checkPrivate(path string, _ os.FileInfo) error {
 	if err != nil || dacl == nil {
 		return errors.New("notification state requires private ACL")
 	}
+	entries := make([]aclEntry, 0, dacl.AceCount)
 	for i := uint32(0); i < uint32(dacl.AceCount); i++ {
 		var ace *windows.ACCESS_ALLOWED_ACE
 		if err = windows.GetAce(dacl, i, &ace); err != nil {
 			return err
 		}
-		if ace.Header.AceType != windows.ACCESS_ALLOWED_ACE_TYPE || !(*windows.SID)(unsafe.Pointer(&ace.SidStart)).Equals(u.User.Sid) {
-			return errors.New("notification state ACL must allow only this user")
+		entry := aclEntry{kind: ace.Header.AceType, flags: ace.Header.AceFlags}
+		// Allow and deny entries share this layout; the SID of any other
+		// entry type is never read, and privateACL refuses the entry.
+		if entry.kind == aceAllowed || entry.kind == aceDenied {
+			entry.sid = (*windows.SID)(unsafe.Pointer(&ace.SidStart)).String()
 		}
+		entries = append(entries, entry)
 	}
-	return nil
+	return privateACL(entries, u.User.Sid.String())
 }
 func syncDirectory(string) error { return nil }

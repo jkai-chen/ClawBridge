@@ -2,9 +2,12 @@ package linearboard
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"clawbridge/internal/linearprovider"
@@ -56,20 +59,31 @@ func TestLinearV2ProofsRefreshInsideOperationLockBeforeMutation(t *testing.T) {
 			if p.writes != 0 {
 				t.Fatal("provider mutation occurred after revocation/scope change")
 			}
-			if entries, _ := os.ReadDir(filepath.Join(s.cfg.LedgerDirectory, digest(digest([]string{s.cfg.Authority, a.b.WorkspaceID, a.b.ProjectID, a.actor})))); len(entries) != 0 {
-				t.Fatal("never-dispatched refusal left a pending record", entries)
+			if state := ledgerStateV2(t, s, a, in.OperationID); state != "refused" {
+				t.Fatal("drift was not recorded as a terminal refusal", state)
 			}
-			// The same operation ID is re-evaluated against the now-current
-			// state: still-invalid intent stays refused, valid intent dispatches once.
+			// The same ID returns the recorded refusal without opening Linear,
+			// so it can never act on state the caller did not see.
+			open := s.cfg.Open
+			s.cfg.Open = func(context.Context, *http.Client, bool) (Provider, error) {
+				t.Fatal("terminal refusal retry opened Linear")
+				return nil, nil
+			}
+			if _, e := s.WriteV2(context.Background(), scope, in); e == nil || !strings.Contains(e.Error(), "refused before dispatch; nothing was sent") || p.writes != 0 {
+				t.Fatal("same-ID retry after drift was not the recorded refusal", e)
+			}
+			// A new operation ID is evaluated normally against current state.
+			s.cfg.Open = open
+			in.OperationID = "fresh-proof-reread"
 			_, e := s.WriteV2(context.Background(), scope, in)
 			switch mode {
 			case "member revoked", "parent unavailable":
 				if e == nil || p.writes != 0 {
-					t.Fatal("refreshed refusal was bypassed on retry", e)
+					t.Fatal("still-invalid intent dispatched under a new operation ID", e)
 				}
 			default:
 				if e != nil || p.writes != 1 {
-					t.Fatal("never-dispatched operation ID was burned", e, p.writes)
+					t.Fatal("new operation ID was not evaluated normally", e, p.writes)
 				}
 			}
 		})
@@ -149,4 +163,17 @@ func TestLinearV2UnknownRelationCompletenessCannotProveAbsence(t *testing.T) {
 	if e == nil || r != nil || len(p.edges) != 0 {
 		t.Fatal("incomplete relation list proved absence", r, e)
 	}
+}
+func ledgerStateV2(t *testing.T, s *Service, a *authorityV2, operationID string) string {
+	t.Helper()
+	namespace := digest([]string{s.cfg.Authority, a.b.WorkspaceID, a.b.ProjectID, a.actor})
+	raw, e := os.ReadFile(filepath.Join(s.cfg.LedgerDirectory, digest(namespace), digest(operationID)+".json"))
+	if os.IsNotExist(e) {
+		return "absent"
+	}
+	var record ledgerRecord
+	if e != nil || json.Unmarshal(raw, &record) != nil {
+		t.Fatal("unreadable ledger record", e)
+	}
+	return record.State
 }

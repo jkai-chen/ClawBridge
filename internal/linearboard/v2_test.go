@@ -378,8 +378,8 @@ func TestLinearV2ProviderErrorStaysUncertainWhenBindingChanges(t *testing.T) {
 	}
 }
 
-func TestLinearV2PreDispatchRefusalAllowsSameOperationRetry(t *testing.T) {
-	t.Run("write cancelled inside lock", func(t *testing.T) {
+func TestLinearV2PreDispatchFailureClassification(t *testing.T) {
+	t.Run("transient write cancel releases the ID", func(t *testing.T) {
 		s, a, p, scope := testV2(t)
 		ctx, cancel := context.WithCancel(context.Background())
 		a.afterAccess = func(n int) {
@@ -389,15 +389,33 @@ func TestLinearV2PreDispatchRefusalAllowsSameOperationRetry(t *testing.T) {
 		}
 		title := "task"
 		in := WriteInputV2{WriteInput: WriteInput{Operation: "update", OperationID: "cancel-before-dispatch", IssueID: issueID, Title: &title}}
-		if _, e := s.WriteV2(ctx, scope, in); !errors.Is(e, context.Canceled) || p.writes != 0 {
-			t.Fatal("cancellation before dispatch reported as maybe dispatched", e, p.writes)
+		if _, e := s.WriteV2(ctx, scope, in); !errors.Is(e, context.Canceled) || p.writes != 0 || ledgerStateV2(t, s, a, in.OperationID) != "absent" {
+			t.Fatal("cancellation before dispatch was not released", e, p.writes)
 		}
 		a.afterAccess = nil
 		if _, e := s.WriteV2(context.Background(), scope, in); e != nil || p.writes != 1 {
 			t.Fatal("never-dispatched operation ID was burned", e, p.writes)
 		}
 	})
-	t.Run("relation actor revoked inside lock", func(t *testing.T) {
+	t.Run("transient provider read failure releases the ID", func(t *testing.T) {
+		s, a, p, scope := testV2(t)
+		p.issues[parentA] = linearprovider.IssueV2{Issue: linearprovider.Issue{ID: parentA, TeamID: otherTeamID, ProjectID: projectB}, ProjectKnown: true, RelationsKnown: true}
+		i := p.issues[issueID]
+		i.RelationsKnown = true
+		p.issues[issueID] = i
+		failing := &failingReadsV2{providerV2: p}
+		s.cfg.Open = func(context.Context, *http.Client, bool) (Provider, error) { return failing, nil }
+		a.afterAccess = func(n int) { failing.fail = n == 2 }
+		in := RelationInputV2{OperationID: "read-failure-before-dispatch", Action: "add", Type: "blocks", FromID: issueID, ToID: parentA}
+		if _, e := s.RelationV2(context.Background(), scope, in); e == nil || strings.Contains(e.Error(), "uncertain") || len(p.edges) != 0 || ledgerStateV2(t, s, a, in.OperationID) != "absent" {
+			t.Fatal("provider read failure before dispatch was not released", e, p.edges)
+		}
+		a.afterAccess, failing.fail = nil, false
+		if _, e := s.RelationV2(context.Background(), scope, in); e != nil || len(p.edges) != 1 {
+			t.Fatal("transiently refused operation ID was burned", e, p.edges)
+		}
+	})
+	t.Run("relation actor revoked inside lock is terminal", func(t *testing.T) {
 		s, a, p, scope := testV2(t)
 		p.issues[parentA] = linearprovider.IssueV2{Issue: linearprovider.Issue{ID: parentA, TeamID: otherTeamID, ProjectID: projectB}, ProjectKnown: true, RelationsKnown: true}
 		i := p.issues[issueID]
@@ -405,12 +423,33 @@ func TestLinearV2PreDispatchRefusalAllowsSameOperationRetry(t *testing.T) {
 		p.issues[issueID] = i
 		a.afterAccess = func(n int) { a.deny = n == 2 }
 		in := RelationInputV2{OperationID: "revoked-before-dispatch", Action: "add", Type: "blocks", FromID: issueID, ToID: parentA}
-		if _, e := s.RelationV2(context.Background(), scope, in); e == nil || strings.Contains(e.Error(), "uncertain") || len(p.edges) != 0 {
-			t.Fatal("pre-dispatch refusal reported as maybe dispatched", e, p.edges)
+		if _, e := s.RelationV2(context.Background(), scope, in); e == nil || !strings.Contains(e.Error(), "refused before dispatch; nothing was sent") || len(p.edges) != 0 || ledgerStateV2(t, s, a, in.OperationID) != "refused" {
+			t.Fatal("access revocation was not a terminal refusal", e, p.edges)
 		}
 		a.afterAccess, a.deny = nil, false
+		s.cfg.Open = func(context.Context, *http.Client, bool) (Provider, error) {
+			t.Fatal("terminal refusal retry opened Linear")
+			return nil, nil
+		}
+		if _, e := s.RelationV2(context.Background(), scope, in); e == nil || !strings.Contains(e.Error(), "refused before dispatch") || len(p.edges) != 0 {
+			t.Fatal("same-ID retry after drift was not the recorded refusal", e)
+		}
+		s.cfg.Open = func(context.Context, *http.Client, bool) (Provider, error) { return p, nil }
+		in.OperationID = "revoked-then-new-id"
 		if _, e := s.RelationV2(context.Background(), scope, in); e != nil || len(p.edges) != 1 {
-			t.Fatal("never-dispatched operation ID was burned", e, p.edges)
+			t.Fatal("new operation ID was not evaluated normally", e, p.edges)
 		}
 	})
+}
+
+type failingReadsV2 struct {
+	*providerV2
+	fail bool
+}
+
+func (p *failingReadsV2) IssueV2(ctx context.Context, id string) (linearprovider.IssueV2, error) {
+	if p.fail {
+		return linearprovider.IssueV2{}, &linearprovider.Error{Kind: "unavailable"}
+	}
+	return p.providerV2.IssueV2(ctx, id)
 }

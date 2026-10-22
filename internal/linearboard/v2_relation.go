@@ -81,32 +81,32 @@ func (s *Service) RelationV2(ctx context.Context, scope bus.Request, in Relation
 	}
 	return l.write(namespace, in.OperationID, payload, func() (any, error) {
 		if e := s.unchangedV2(ctx, scope, b); e != nil {
-			return nil, notDispatched(e)
+			return nil, authorityFailure(e)
 		}
 		fresh, e := s.writeAccessV2(ctx, scope, b)
 		if e != nil {
-			return nil, notDispatched(e)
+			return nil, authorityFailure(e)
 		}
 		if fresh.SessionID != access.SessionID {
-			return nil, notDispatched(errors.New("task-board actor changed before dispatch"))
+			return nil, refusedBeforeDispatch(errActorChanged)
 		}
 		freshPairs, e := verifyBindingV2(ctx, p, b)
 		if e != nil {
-			return nil, notDispatched(e)
+			return nil, proofFailure(e)
 		}
 		existing, observed, e := relationEvidenceV2(ctx, p2, b, freshPairs, in)
 		if e != nil {
-			return nil, notDispatched(e)
+			return nil, proofFailure(e)
 		}
 		if e = s.unchangedV2(ctx, scope, b); e != nil {
-			return nil, notDispatched(e)
+			return nil, authorityFailure(e)
 		}
 		fresh, e = s.writeAccessV2(ctx, scope, b)
 		if e != nil {
-			return nil, notDispatched(e)
+			return nil, authorityFailure(e)
 		}
 		if fresh.SessionID != access.SessionID {
-			return nil, notDispatched(errors.New("task-board actor changed before dispatch"))
+			return nil, refusedBeforeDispatch(errActorChanged)
 		}
 		if e = ctx.Err(); e != nil {
 			return nil, notDispatched(e)

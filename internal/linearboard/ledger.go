@@ -3,6 +3,7 @@ package linearboard
 import (
 	"bytes"
 	"clawbridge/internal/linearprovider"
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -21,16 +22,53 @@ var operationPattern = regexp.MustCompile(`\A[A-Za-z0-9._-]{1,128}\z`)
 // after a provider error must never replace the uncertain result.
 var errBindingChangedAfterProviderError = errors.New("task-board binding changed after the provider error")
 
-// notDispatchedError is returned by a dispatch closure only for a failure
-// before its first provider mutation call could start. The ledger then
-// removes the pending record it wrote for this call, so the same
-// operation_id can be retried. It must never wrap an error from, or after,
-// a provider mutation call.
+// Dispatch closures classify every failure before their first provider
+// mutation call; neither marker may wrap an error from, or after, that call.
+//
+// notDispatchedError is a transient failure that learned nothing about Linear
+// or binding state (cancellation, provider or authority read errors). The
+// ledger removes the pending record this call wrote, so the same
+// operation_id can be retried.
+//
+// refusedBeforeDispatchError is observed drift (binding changed, access
+// revoked, actor changed, refreshed proof mismatch). The ledger records a
+// terminal refusal: a same-ID retry returns it without any Linear I/O, because
+// retrying would act on state the caller never saw.
 type notDispatchedError struct{ err error }
+type refusedBeforeDispatchError struct{ err error }
 
-func (e notDispatchedError) Error() string { return e.err.Error() }
-func (e notDispatchedError) Unwrap() error { return e.err }
-func notDispatched(err error) error        { return notDispatchedError{err} }
+func (e notDispatchedError) Error() string         { return e.err.Error() }
+func (e notDispatchedError) Unwrap() error         { return e.err }
+func notDispatched(err error) error                { return notDispatchedError{err} }
+func (e refusedBeforeDispatchError) Error() string { return e.err.Error() }
+func (e refusedBeforeDispatchError) Unwrap() error { return e.err }
+func refusedBeforeDispatch(err error) error        { return refusedBeforeDispatchError{err} }
+
+var errActorChanged = errors.New("task-board actor changed before dispatch")
+var errWriteAccessDenied = errors.New("current ClawBridge project role/actor does not permit task-board writes")
+
+// authorityFailure classifies a binding or write-access check: a definite
+// change or denial is drift, any other authority error is a failed read.
+func authorityFailure(err error) error {
+	var changed *ReceiptError
+	if errors.As(err, &changed) || errors.Is(err, errWriteAccessDenied) {
+		return refusedBeforeDispatch(err)
+	}
+	return notDispatched(err)
+}
+
+// proofFailure classifies a refreshed Linear proof: a provider read failure or
+// cancellation is transient, a board verification mismatch is drift.
+func proofFailure(err error) error {
+	var provider *linearprovider.Error
+	if errors.As(err, &provider) || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return notDispatched(err)
+	}
+	return refusedBeforeDispatch(err)
+}
+func refusalError(reason string) error {
+	return errors.New("refused before dispatch; nothing was sent: " + reason + "; re-read and submit a new operation_id")
+}
 
 type ledgerRecord struct {
 	Outcome   string          `json:"outcome,omitempty"`
@@ -38,6 +76,7 @@ type ledgerRecord struct {
 	Digest    string          `json:"digest"`
 	State     string          `json:"state"`
 	Receipt   json.RawMessage `json:"receipt,omitempty"`
+	Reason    string          `json:"reason,omitempty"`
 	UpdatedAt string          `json:"updated_at"`
 }
 type ledger struct {
@@ -53,7 +92,8 @@ func digest(v any) string {
 
 // A pending record is durable before dispatch. It is never automatically cleared
 // or retried: process loss and unknown provider outcomes require operator readback.
-// The only exception is a closure failure explicitly marked notDispatched.
+// The only exceptions are closure failures explicitly marked notDispatched
+// (record removed) or refusedBeforeDispatch (record made a terminal refusal).
 func (l ledger) write(profile, operationID string, payload any, dispatch func() (any, error)) (any, error) {
 	if !operationPattern.MatchString(operationID) {
 		return nil, errors.New("operation_id requires 1–128 ASCII identifier characters")
@@ -109,6 +149,19 @@ func (l ledger) write(profile, operationID string, payload any, dispatch func() 
 			return nil, errors.New("operation ledger could not release a never-dispatched operation; inspect before retrying")
 		}
 		return nil, never.err
+	}
+	if refused, ok := err.(refusedBeforeDispatchError); ok && receipt == nil {
+		reason := refused.err.Error()
+		if len(reason) > 512 {
+			reason = reason[:512]
+		}
+		record.State = "refused"
+		record.Reason = reason
+		record.UpdatedAt = l.now().UTC().Format(time.RFC3339Nano)
+		if saveLedger(path, record) != nil {
+			return nil, errors.New("refused before dispatch; nothing was sent, but the refusal could not be recorded and the operation stays pending; inspect before retrying")
+		}
+		return nil, refusalError(reason)
 	}
 	var receiptError *ReceiptError
 	if err != nil && (receipt == nil || !errors.As(err, &receiptError)) {
@@ -219,6 +272,16 @@ func readLedger(path, hash string) (any, bool, error) {
 	if previous.Digest != hash {
 		return nil, true, errors.New("operation_id already used with a different scoped payload")
 	}
+	if (previous.State == "refused") != (previous.Reason != "") {
+		return nil, true, errors.New("corrupt operation ledger")
+	}
+	if previous.State == "refused" {
+		if len(previous.Receipt) != 0 || previous.Outcome != "" {
+			return nil, true, errors.New("corrupt operation ledger")
+		}
+		return nil, true, refusalError(previous.Reason)
+	}
+	// pending and any unknown state remain uncertain (fail closed).
 	if previous.State != "accepted" {
 		return nil, true, errors.New("operation outcome uncertain; read back Linear before a new operation_id")
 	}

@@ -180,7 +180,7 @@ func (s *Service) checkWriteAccess(ctx context.Context, scope bus.Request, b bus
 		return access, err
 	}
 	if access.WorkspaceID != b.WorkspaceID || access.ProjectID != b.ProjectID || !access.CanWrite {
-		return access, errors.New("current ClawBridge project role/actor does not permit task-board writes")
+		return access, errWriteAccessDenied
 	}
 	return access, nil
 }
@@ -553,14 +553,14 @@ func (s *Service) Write(ctx context.Context, scope bus.Request, in WriteInput) (
 	return (ledger{s.cfg.LedgerDirectory, s.cfg.Now}).write(namespace, in.OperationID, ledgerPayload, func() (any, error) {
 		// Last revision check occurs after obtaining the private per-operation lock.
 		if e := s.unchanged(ctx, scope, b); e != nil {
-			return nil, notDispatched(e)
+			return nil, authorityFailure(e)
 		}
 		fresh, e := s.checkWriteAccess(ctx, scope, b)
 		if e != nil {
-			return nil, notDispatched(e)
+			return nil, authorityFailure(e)
 		}
 		if fresh.SessionID != access.SessionID {
-			return nil, notDispatched(errors.New("task-board actor changed before dispatch"))
+			return nil, refusedBeforeDispatch(errActorChanged)
 		}
 		switch in.Operation {
 		case "create":

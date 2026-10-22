@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -21,11 +22,12 @@ const otherTeamID = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
 const issueID = "22222222-2222-3333-4444-555555555555"
 
 type fakeAuthority struct {
-	binding  bus.TaskboardBinding
-	calls    int
-	deny     bool
-	accesses int
-	onAccess func(int)
+	binding    bus.TaskboardBinding
+	calls      int
+	deny       bool
+	accesses   int
+	onAccess   func(int)
+	failAccess int
 }
 
 func (a *fakeAuthority) Execute(_ context.Context, r bus.Request) (bus.Result, error) {
@@ -34,6 +36,9 @@ func (a *fakeAuthority) Execute(_ context.Context, r bus.Request) (bus.Result, e
 		a.accesses++
 		if a.onAccess != nil {
 			a.onAccess(a.accesses)
+		}
+		if a.accesses == a.failAccess {
+			return bus.Result{}, errors.New("authority unavailable")
 		}
 		return bus.Result{Source: "local-authority", Data: bus.TaskboardAccess{WorkspaceID: a.binding.WorkspaceID, ProjectID: a.binding.ProjectID, SessionID: "ses", CanWrite: !a.deny, ProjectRole: "member"}}, nil
 	}
@@ -200,9 +205,16 @@ func TestLinearLedgerReleasesOnlyNeverDispatchedFailures(t *testing.T) {
 	if _, e := os.Stat(path); !os.IsNotExist(e) {
 		t.Fatal("never-dispatched record retained", e)
 	}
-	// Only the closure's own top-level marker releases the record; a marker
-	// nested inside another error, or any plain error, stays uncertain.
-	for _, failure := range []error{errors.Join(errors.New("provider"), notDispatched(refused)), errors.New("provider")} {
+	if _, err = l.write("ns", "drift", "payload", func() (any, error) { return nil, refusedBeforeDispatch(refused) }); err == nil || !strings.Contains(err.Error(), "refused before dispatch; nothing was sent: actor changed before dispatch; re-read and submit a new operation_id") {
+		t.Fatal("drift was not a terminal refusal", err)
+	}
+	again, err := l.write("ns", "drift", "payload", func() (any, error) { t.Fatal("terminal refusal redispatched"); return nil, nil })
+	if again != nil || err == nil || !strings.Contains(err.Error(), "refused before dispatch; nothing was sent: actor changed") {
+		t.Fatal("recorded refusal not returned", again, err)
+	}
+	// Only the closure's own top-level marker is honoured; a marker nested
+	// inside another error, or any plain error, stays uncertain.
+	for _, failure := range []error{errors.Join(errors.New("provider"), notDispatched(refused)), errors.Join(errors.New("provider"), refusedBeforeDispatch(refused)), fmt.Errorf("wrapped: %w", refusedBeforeDispatch(refused)), errors.New("provider")} {
 		if _, err = l.write("ns", "op", "payload", func() (any, error) { return nil, failure }); err == nil || !strings.Contains(err.Error(), "outcome uncertain") {
 			t.Fatal("dispatched failure released", err)
 		}
@@ -212,16 +224,38 @@ func TestLinearLedgerReleasesOnlyNeverDispatchedFailures(t *testing.T) {
 		_ = os.Remove(path)
 	}
 }
-func TestLinearPreDispatchRefusalAllowsSameOperationRetry(t *testing.T) {
-	service, a, p, scope := testService(t)
-	a.onAccess = func(n int) { a.deny = n == 2 }
+func TestLinearPreDispatchFailureClassification(t *testing.T) {
 	title := "task"
-	in := WriteInput{Operation: "create", OperationID: "retry-after-refusal", Title: &title}
-	if _, err := service.Write(context.Background(), scope, in); err == nil || strings.Contains(err.Error(), "uncertain") || p.writes != 0 {
-		t.Fatal("pre-dispatch refusal reported as maybe dispatched", err, p.writes)
+	// A failed authority read learned nothing: the same ID may be retried.
+	service, a, p, scope := testService(t)
+	a.failAccess = 2
+	in := WriteInput{Operation: "create", OperationID: "authority-read-failure", Title: &title}
+	if _, err := service.Write(context.Background(), scope, in); err == nil || strings.Contains(err.Error(), "uncertain") || strings.Contains(err.Error(), "refused") || p.writes != 0 {
+		t.Fatal("transient authority failure misclassified", err, p.writes)
 	}
 	if receipt, err := service.Write(context.Background(), scope, in); err != nil || receipt == nil || p.writes != 1 {
-		t.Fatal("never-dispatched operation ID was burned", receipt, err, p.writes)
+		t.Fatal("transiently refused operation ID was burned", receipt, err, p.writes)
+	}
+	// Access revoked inside the lock is drift: the same ID stays refused
+	// without opening Linear; a new ID is evaluated normally.
+	service, a, p, scope = testService(t)
+	a.onAccess = func(n int) { a.deny = n == 2 }
+	in.OperationID = "access-revoked"
+	if _, err := service.Write(context.Background(), scope, in); err == nil || !strings.Contains(err.Error(), "refused before dispatch; nothing was sent") || p.writes != 0 {
+		t.Fatal("access revocation was not a terminal refusal", err, p.writes)
+	}
+	open := service.cfg.Open
+	service.cfg.Open = func(context.Context, *http.Client, bool) (Provider, error) {
+		t.Fatal("terminal refusal retry opened Linear")
+		return nil, nil
+	}
+	if _, err := service.Write(context.Background(), scope, in); err == nil || !strings.Contains(err.Error(), "refused before dispatch") || p.writes != 0 {
+		t.Fatal("same-ID retry after drift was not the recorded refusal", err)
+	}
+	service.cfg.Open = open
+	in.OperationID = "access-restored-new-id"
+	if receipt, err := service.Write(context.Background(), scope, in); err != nil || receipt == nil || p.writes != 1 {
+		t.Fatal("new operation ID was not evaluated normally", receipt, err, p.writes)
 	}
 }
 func TestLinearScopeAndCursorRevisionFence(t *testing.T) {

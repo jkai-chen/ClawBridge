@@ -103,3 +103,108 @@ func TestL2NativeFilterScopedLabelAppliesThroughPublicWrite(t *testing.T) {
 		})
 	}
 }
+
+// l2NativeIssueListTool mirrors the native list_issues filters the label
+// membership proof relies on: label is documented as "Label name or ID".
+func l2NativeIssueListTool() *mcp.Tool {
+	return &mcp.Tool{
+		Name: "list_issues",
+		InputSchema: map[string]any{"type": "object", "additionalProperties": false, "properties": map[string]any{
+			"cursor":          map[string]any{"type": "string"},
+			"includeArchived": map[string]any{"type": "boolean", "default": false, "description": "Include archived items"},
+			"label":           map[string]any{"type": "string", "description": "Label name or ID"},
+			"limit":           map[string]any{"type": "number", "default": 50, "maximum": 250},
+			"orderBy":         map[string]any{"type": "string", "enum": []any{"createdAt", "updatedAt"}},
+			"project":         map[string]any{"type": "string", "description": "Project name, ID, identifier (e.g., P-ENG-123), or slug"},
+			"team":            map[string]any{"type": "string", "description": "Team name or ID"},
+		}},
+	}
+}
+
+// Native issue reads return label names only. A clear must prove the label
+// IDs (unique name in the full catalog, list_issues by the label UUID) before
+// comparing them with the caller's expected set, and must never send a name.
+func TestL2NativeLabelNamesProvenBeforePublicClear(t *testing.T) {
+	const labelName = "Synthetic Alpha"
+	for _, mode := range []string{"proven", "ambiguous_name", "not_listed"} {
+		t.Run(mode, func(t *testing.T) {
+			f := newFixture(t)
+			f.setup("w", "p")
+			f.call("taskboard_set_v2", "w", "p", "", l2MappingArgs(0))
+			peer := newL1ProviderPeer()
+			peer.tools = []*mcp.Tool{peer.tools[0], peer.tools[1], peer.tools[2], l2NativeLabelListTool(), l2NativeIssueListTool(), l2ActualSaveIssueTool(t)}
+			cfg := l1ServiceConfig(t, f.store, &l1SyntheticProvider{})
+			cfg.Open = func(ctx context.Context, _ *http.Client, _ bool) (linearboard.Provider, error) {
+				return linearprovider.NewWithCaller(ctx, peer)
+			}
+			labels := []any{labelName}
+			issue := func() map[string]any {
+				return map[string]any{"id": "SYN-1", "uuid": l1IssueID, "identifier": "SYN-1", "teamId": l1TeamA, "projectId": l1Project, "title": "Synthetic scoped issue", "labels": labels}
+			}
+			saves := []map[string]any{}
+			peer.result = func(name string, args map[string]any) (any, error) {
+				switch name {
+				case "get_team", "get_project":
+					return l1PeerResult(name, args)
+				case "get_issue":
+					return issue(), nil
+				case "list_issue_labels":
+					// Name uniqueness is checked over the full catalog only.
+					if args["team"] != l1TeamA || args["includeArchived"] != true || args["includeGroups"] != true {
+						t.Fatalf("label catalog was not the full team listing: %+v", args)
+					}
+					rows := []any{map[string]any{"id": l2LabelA, "name": labelName, "archivedAt": nil}, map[string]any{"id": l2LabelB, "name": "Synthetic Beta", "archivedAt": nil}}
+					if mode == "ambiguous_name" {
+						// e.g. children of two groups sharing a name.
+						rows[1] = map[string]any{"id": l2LabelB, "name": labelName, "archivedAt": nil}
+					}
+					return map[string]any{"labels": rows, "hasNextPage": false}, nil
+				case "list_issues":
+					if label, _ := args["label"].(string); !linearprovider.ValidID(label) {
+						t.Fatalf("a label name or non-UUID was sent to list_issues: %+v", args)
+					}
+					if args["label"] != l2LabelA || args["team"] != l1TeamA || args["project"] != l1Project || args["includeArchived"] != true {
+						t.Fatalf("membership query was not scoped to the issue and label: %+v", args)
+					}
+					rows := []any{}
+					if mode != "not_listed" {
+						rows = append(rows, map[string]any{"id": "SYN-1", "uuid": l1IssueID, "teamId": l1TeamA, "projectId": l1Project, "title": "Synthetic scoped issue"})
+					}
+					return map[string]any{"issues": rows, "hasNextPage": false}, nil
+				case "save_issue":
+					saves = append(saves, args)
+					labels = []any{}
+					return issue(), nil
+				default:
+					t.Fatalf("unexpected native tool: %s", name)
+					return nil, nil
+				}
+			}
+			scope := f.request("", "w", "p", "worker", actor("worker", nil))
+			plain, err := linearboard.New(cfg).IssueV2(context.Background(), scope, l1IssueID)
+			if err != nil || plain.LabelsKnown || !reflect.DeepEqual(plain.LabelNames, []string{labelName}) {
+				t.Fatal("plain read did not keep names-only labels unknown", plain, err)
+			}
+			for _, call := range peer.calls {
+				if call.Name == "list_issues" || call.Name == "list_issue_labels" {
+					t.Fatal("plain read made label-proof calls")
+				}
+			}
+			in := linearboard.WriteInputV2{
+				WriteInput:     linearboard.WriteInput{Operation: "update", OperationID: "native-label-clear-" + mode, IssueID: l1IssueID},
+				Labels:         linearprovider.Field[[]string]{Present: true, Value: []string{}},
+				ExpectedLabels: linearprovider.Field[[]string]{Present: true, Value: []string{l2LabelA}},
+			}
+			result, err := linearboard.New(cfg).WriteV2(context.Background(), scope, in)
+			if mode != "proven" {
+				if err == nil || result != nil || len(saves) != 0 {
+					t.Fatal("unproven native label set was replaced", err, saves)
+				}
+				return
+			}
+			if err != nil || len(saves) != 1 || !reflect.DeepEqual(saves[0], map[string]any{"id": l1IssueID, "labels": []any{}}) {
+				t.Fatal("proven native label clear did not send exactly an empty label set", err, saves)
+			}
+		})
+	}
+}

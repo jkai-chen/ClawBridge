@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"reflect"
+	"strings"
 	"testing"
 
 	"clawbridge/internal/linearboard"
@@ -253,8 +254,9 @@ func TestL2NativeLabelFilteredIssueListProvesNames(t *testing.T) {
 			}
 			page, err := linearboard.New(cfg).IssuesV2(context.Background(), f.request("", "w", "p", "worker", actor("worker", nil)), linearboard.IssuesInputV2{Limit: 50, LabelID: l2LabelA})
 			if mode != "filtered" {
-				if err == nil || len(page.Items) != 0 {
-					t.Fatal("unproven label-filtered list was accepted", page.Items, err)
+				// The board's own proof must refuse, not an unrelated failure.
+				if err == nil || !strings.Contains(err.Error(), "provider did not prove the selected label filter") || len(page.Items) != 0 {
+					t.Fatal("unproven label-filtered list was not refused by the label proof", page.Items, err)
 				}
 				return
 			}

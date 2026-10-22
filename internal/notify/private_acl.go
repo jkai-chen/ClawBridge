@@ -17,6 +17,23 @@ type aclEntry struct {
 	sid         string
 }
 
+// privateOwner accepts state owned by this user, or by the Administrators
+// group when this process runs elevated as one of its members: Windows makes
+// the group, not the user, the default owner of what an elevated
+// administrator creates. Anyone who can act as that group can already read
+// and take ownership of any file, so it grants no access the user lacks; a
+// non-elevated or non-admin process never accepts it, because the group's
+// owner then is someone else who could have planted the state.
+func privateOwner(owner, user string, elevatedAdministrator bool) error {
+	switch {
+	case owner != "" && owner == user:
+	case owner == sidAdministrators && elevatedAdministrator:
+	default:
+		return errors.New("notification state owner mismatch")
+	}
+	return nil
+}
+
 // privateACL accepts the protected DACL makePrivate writes and the standard
 // Windows user-profile ACL: allow entries only for this user, LocalSystem and
 // the Administrators group, which can read any file anyway, plus CREATOR OWNER

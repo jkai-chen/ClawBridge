@@ -33,8 +33,17 @@ func checkPrivate(path string, _ os.FileInfo) error {
 		return err
 	}
 	owner, _, err := sd.Owner()
-	if err != nil || !owner.Equals(u.User.Sid) {
+	if err != nil {
 		return errors.New("notification state owner mismatch")
+	}
+	elevated := false
+	if admins, e := windows.CreateWellKnownSid(windows.WinBuiltinAdministratorsSid); e == nil && owner.Equals(admins) {
+		// IsMember counts only an enabled group: an elevated administrator,
+		// not a filtered (non-elevated) token where the group is deny-only.
+		elevated, _ = windows.Token(0).IsMember(admins)
+	}
+	if err = privateOwner(owner.String(), u.User.Sid.String(), elevated); err != nil {
+		return err
 	}
 	dacl, _, err := sd.DACL()
 	if err != nil || dacl == nil {

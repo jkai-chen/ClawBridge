@@ -28,3 +28,23 @@ func TestPrivateACLAcceptsUserProfileEntriesOnly(t *testing.T) {
 		}
 	}
 }
+
+func TestPrivateOwnerAcceptsAdministratorsOnlyWhenElevatedAsOne(t *testing.T) {
+	const user = "S-1-5-21-1000-2000-3000-1001"
+	for name, c := range map[string]struct {
+		owner    string
+		elevated bool
+		ok       bool
+	}{
+		"this user":                       {user, false, true},
+		"administrators, elevated member": {sidAdministrators, true, true},
+		"administrators, not elevated":    {sidAdministrators, false, false},
+		"another user, elevated":          {"S-1-5-21-1000-2000-3000-1002", true, false},
+		"system":                          {sidLocalSystem, true, false},
+		"unreadable owner":                {"", true, false},
+	} {
+		if err := privateOwner(c.owner, user, c.elevated); (err == nil) != c.ok {
+			t.Errorf("%s: accepted=%v, want %v", name, err == nil, c.ok)
+		}
+	}
+}

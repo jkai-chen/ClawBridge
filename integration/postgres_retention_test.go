@@ -90,14 +90,31 @@ func TestPostgresRetentionRollbackAndHonestCap(t *testing.T) {
 		t.Fatal(err)
 	}
 	f.send("p", "alice", "@all", "atomic fanout", "atomic-fanout")
-	// Exceed the documented snapshot cap without 10001 application roundtrips.
-	_, err = db.Exec(`INSERT INTO history(id,workspace_id,project_id,entity,entity_key,action,details,changed_at,changed_by_principal) SELECT 'review-cap-' || $1 || '-' || g::text,$2,$1,'fixture','fixture','fixture','{}',$3,$4 FROM generate_series(1,10001) g`, pid, wid, time.Now().UTC().Format(time.RFC3339Nano), pgOwner)
+	// Long history no longer fails the snapshot: it holds the newest 5000
+	// events and says that older ones were left out.
+	capStamp := time.Now().UTC().Format(time.RFC3339Nano)
+	_, err = db.Exec(`INSERT INTO history(id,workspace_id,project_id,entity,entity_key,action,details,changed_at,changed_by_principal) SELECT 'review-cap-' || $1 || '-' || g::text,$2,$1,'fixture','fixture','fixture','{}',$3,$4 FROM generate_series(1,10001) g`, pid, wid, capStamp, pgOwner)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var newest string
+	if err = db.QueryRow(`SELECT id FROM history WHERE project_id=$1 ORDER BY sequence DESC LIMIT 1`, pid).Scan(&newest); err != nil {
+		t.Fatal(err)
+	}
+	snapshot = object(t, f.call(pgPrincipal("bob"), "snapshot", "p", "bob", actor("bob", nil)))
+	events, _ := snapshot["events"].([]any)
+	if snapshot["events_truncated"] != true || len(events) != 5000 || object(t, events[len(events)-1])["id"] != newest {
+		t.Fatalf("long history was not bounded to its newest 5000 events: truncated=%v events=%d", snapshot["events_truncated"], len(events))
+	}
+	// Active sessions are never truncated, so more than 10000 still fails
+	// explicitly instead of producing a partial roster.
+	_, err = db.Exec(`INSERT INTO sessions(id,project_id,name,instance,owner_principal,role,agent_kind,model,host,account,transport,notes,status,last_seen,created_at,updated_at) SELECT 'review-active-'||$1||'-'||g,$1,'review-active-'||g,'review-active-inst-'||g,$2,'worker','','','','','','','active',$3,$3,$3 FROM generate_series(1,10001) g`, pid, pgOwner, capStamp)
 	if err != nil {
 		t.Fatal(err)
 	}
 	err = f.reject(pgPrincipal("bob"), "snapshot", "p", "bob", actor("bob", nil))
-	if !strings.Contains(err.Error(), "10000") {
-		t.Fatalf("cap failure not explicit: %v", err)
+	if !strings.Contains(err.Error(), "10000 active sessions") {
+		t.Fatalf("active-session cap failure not explicit: %v", err)
 	}
 }
 

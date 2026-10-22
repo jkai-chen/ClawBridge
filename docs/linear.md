@@ -26,6 +26,10 @@ Preview and confirm linking the current ClawBridge project. A team such as
 FJ-AgentTaskBoard is distinct from a Linear project. Projects can include several
 teams; stable IDs keep the selection unambiguous.
 
+A Linear project is optional. The curated ClawBridge tools create issues and
+comments; they do not create Linear projects. If you want that extra grouping,
+create it in Linear and then select it here.
+
 The board mapping is shared by the ClawBridge project. Each teammate connects
 their own Linear account and independently verifies access to the selected teams
 and project. Credentials stay in that person's native keyring. No Orca, Node or

@@ -1,6 +1,6 @@
 # Native Linear L1 independent review
 
-Status: **PASS — scoped local/hermetic automated acceptance and source/contract review on final cwviluwz bytes. All reproduced findings closed; no remaining reproduced implementation defect. Targeted native Windows follow-up also passes below; actual account consent and authenticated official-provider acceptance remain unproved.** Baseline `a19e249f614799e45785848d6a1779ffc48cced1`. Read the full [L1 contract](../../design/linear.md), approved 22 October 2026. Root owns contracts/guides/skills; engineer owns production/focused tests; reviewer owns this report and `integration/**`; the separate E2E tester owns authorized private live evidence.
+Status: **PASS — scoped local/hermetic automated acceptance and source/contract review on final cwviluwz bytes. All reproduced findings closed; no remaining reproduced implementation defect. Targeted native Windows follow-up also passes below; later root-operated follow-ups verify one owner's native read OAuth and official-provider reads. Native write, multiple-account and Windows OAuth acceptance remain unclaimed.** Baseline `a19e249f614799e45785848d6a1779ffc48cced1`. Read the full [L1 contract](../../design/linear.md), approved 22 October 2026. Root owns contracts/guides/skills; engineer owns production/focused tests; reviewer owns this report and `integration/**`; the separate E2E tester owns authorized private live evidence.
 
 ## Current focused gate status (latest evidence)
 
@@ -376,3 +376,67 @@ This supplies actual official authenticated native **READ** compatibility for th
 Private artifact reconciliation: `native-root-artifact-review.json` under `/tmp/cb-native-provider-review-path`, SHA256 `4dcb64388326c302c808fbdf80ce3852d0797fa3493a3258e0f4f3e3502fad52`. The focused normal/race/vet results above remain the current independent code gates; no full/PG/platform repeat, source edit, credential operation, deployment or publication followed this report-only reconciliation.
 
 **Subsequent root-operated ordinary full gate:** `go test -json ./... -count=1` with offline Go settings **PASS**, 22 October 2026 **09:54:16.529–09:55:52.214 UTC**, integration **93.118s**. Reviewer read `full-current-summary.json` and the raw JSON log: all 16 tested packages pass, no failures; **29 PG test/subtest records and three opt-in live tests skip without a PG DSN/live opt-in**. Packages without test files are separate from those test skips. Root also reports `go vet ./...` **PASS 0.515s**. The captured `current-go-inputs.json` contains 194 entries, matches the independent focused manifest exactly, and still matches current files with drift zero, including exact `x693hqlb` provider bytes. These root-attributed results do not turn the older actual-PG full/race evidence into a new PG run, broaden native READ scope into Linear writes, or establish a cloud upgrade. No tests were rerun by reviewer; report/source writes are held for root commit.
+
+
+## Root-operated personal setup and pilot activation — 22 October 2026
+
+Root activated exact source `8aef0f97802169efdf6895eb84bf468a3a9f05c8`
+using the independently reviewed candidate and staged immutable image. This is a
+pilot deployment and local candidate installation, not a public v0.2.0 release.
+The 194 current Go/module files remained identical to that commit; subsequent
+root changes are documentation only.
+
+The private cutover helper's initial reviews found rollback prerequisite/identity,
+journal-independent cleanup, authentication-error classification and clean-stop
+weaknesses. These were corrected before any live phase. Final helper SHA256
+`4e8ff1b18bcf3f2a6a57d9b33574cec949e20b1238d7be5687e95931970e5c28`
+passed targeted independent static/synthetic review. A separate owned local PG
+probe verified its fixed SCRAM startup, actual wrong-password rejection and
+normal exit/no-OOM shutdown; an earlier root probe with unsuitable socket
+readiness remains recorded separately. No change was made to the live HBA policy.
+
+All four root-executed phases completed with exit0/success: writer freeze and fresh
+backup, separate verified recovery copy, private migration/readiness, and public
+promotion. The fresh frozen-writer dump was downloaded off-VM, checksum-verified,
+restored into an owned network-none PG17 instance and migrated from schema1 to3.
+The exact old-column counts and hashes for all eight existing domain tables
+matched before and after. The real separate VM recovery copy additionally
+verified app-role access, password rejection and clean shutdown before sealing.
+Live migration enforced the same eight-table equality before public writers
+resumed. This does not claim unchanged rows after later business configuration.
+
+The selected DB and Caddy container identities/mounts were preserved; only the API
+and source route were promoted. Public HTTPS health, missing-auth401 and genuine
+Google-authenticated actorless schema3 task-board readiness passed. The backup
+timer was active, known private containers were absent, and the sealed schema1
+recovery tree remained unchanged. Live rollback was prepared, not exercised; the
+upgraded database must not be paired with the old server image.
+
+Root separately verified the owner's native Google credential against the service,
+previewed then confirmed an FJA **team board** at revision1, and performed native
+Linear context/issues reads through the personal read profile. No Linear project,
+issue or comment was created or changed. The previous default client configuration
+was preserved, the verified personal route became the default, and the exact
+candidate binary was installed on the existing PATH. Default-route identity and
+binding checks passed. Credentials remain in the normal native stores.
+
+A new post-configuration backup was downloaded, checksum-verified and actually
+restored into a separate owned local PG instance: schema3, one revision1 binding
+and the exact saved mapping were verified. All owned local restore containers and
+volumes were removed and absence checked. Both backup copies and the separate VM
+recovery data were retained. Evidence is private under
+`clawbridge-native-completion-u7jwrjr_`: `completion-summary.json`,
+`upgrade-8aef0f9/phase-*.json`, final journal/state, both restore results,
+`live-owner-board/`, and default-client receipts. This paragraph attributes live
+operations to root; independent artifact reconciliation is recorded separately.
+
+The Finjourney requirements were read after activation. The linked L2 migration
+proposal flags project sets, labels, relations, parents and explicit assignment
+as contract extensions. The owner subsequently approved all five for L2. No
+saved mapping or provider write permission was expanded by that design work.
+
+Independent saved-artifact reconciliation subsequently returned **PASS with stated
+limits, no blockers**, in `final-native-activation-independent-review.json`
+(SHA256 `60e36d43f58751d0b47e6ea090026b0e2527fc593c7de01271874c98bae4c9bd`). It checked phase/helper/image bindings, actual backup
+bytes and restore results, recovery/cleanup, later native reads and default-client
+receipts. The reviewer performed no external or credential operation.

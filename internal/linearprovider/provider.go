@@ -74,6 +74,15 @@ type Provider struct {
 	// connection is reopened with a fresh tools/list before its next command.
 	broken atomic.Bool
 	sent   atomic.Uint64
+	// capHits counts responses the transport cut at MaxResultBytes. go-sdk
+	// reports that failure only as text, so invoke compares this count
+	// instead. It is nil for an injected caller. The count is per connection,
+	// which is sound because a provider runs one call at a time (the MCP
+	// adapter and the board serialise commands per process).
+	capHits *atomic.Uint64
+	// reopen opens a fresh session on the same transport, replacing one a
+	// cut response closed. It is nil for an injected caller.
+	reopen func(context.Context) (ToolCaller, interface{ Close() error }, error)
 }
 type PageOptions struct {
 	Limit  int
@@ -144,7 +153,8 @@ func New(ctx context.Context, h *http.Client, readonly bool) (*Provider, error) 
 	if base == nil {
 		base = http.DefaultTransport
 	}
-	bounded.Transport = boundedTransport{base}
+	hits := new(atomic.Uint64)
+	bounded.Transport = boundedTransport{base, hits}
 	previousRedirect := bounded.CheckRedirect
 	bounded.CheckRedirect = func(req *http.Request, via []*http.Request) error {
 		if req.URL.Scheme != "https" || req.URL.Host != "mcp.linear.app" || len(via) > 5 {
@@ -155,21 +165,67 @@ func New(ctx context.Context, h *http.Client, readonly bool) (*Provider, error) 
 		}
 		return nil
 	}
-	c := mcp.NewClient(&mcp.Implementation{Name: "clawbridge-linear", Version: "1"}, nil)
-	s, e := c.Connect(ctx, &mcp.StreamableClientTransport{Endpoint: endpoint, HTTPClient: &bounded, MaxRetries: -1, DisableStandaloneSSE: true, MaxEventSize: MaxResultBytes}, nil)
+	connect := func(ctx context.Context) (*mcp.ClientSession, error) {
+		c := mcp.NewClient(&mcp.Implementation{Name: "clawbridge-linear", Version: "1"}, nil)
+		s, e := c.Connect(ctx, &mcp.StreamableClientTransport{Endpoint: endpoint, HTTPClient: &bounded, MaxRetries: -1, DisableStandaloneSSE: true, MaxEventSize: MaxResultBytes}, nil)
+		if e != nil {
+			return nil, fail("unavailable")
+		}
+		return s, nil
+	}
+	s, e := connect(ctx)
 	if e != nil {
-		return nil, fail("unavailable")
+		return nil, e
 	}
 	p, e := NewWithCaller(ctx, s)
 	if e != nil {
 		s.Close()
 		return nil, e
 	}
-	p.closer = s
+	p.closer, p.capHits = s, hits
+	p.reopen = func(ctx context.Context) (ToolCaller, interface{ Close() error }, error) {
+		s, e := connect(ctx)
+		return s, s, e
+	}
 	return p, nil
 }
 
-type boundedTransport struct{ base http.RoundTripper }
+// reopenSession replaces a session a cut response closed; the advertised
+// tools are kept, since the endpoint is the same. Closing the old session and
+// initializing the new one are both bounded by ctx. The connection stays
+// marked broken, so the pool opens a new one for the next command.
+func (p *Provider) reopenSession(ctx context.Context) error {
+	if p.reopen == nil {
+		return nil
+	}
+	if old := p.closer; old != nil {
+		closed := make(chan struct{})
+		go func() {
+			old.Close()
+			close(closed)
+		}()
+		select {
+		case <-closed:
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+		p.closer = nil
+	}
+	caller, closer, e := p.reopen(ctx)
+	if e != nil {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		return e
+	}
+	p.caller, p.closer = caller, closer
+	return nil
+}
+
+type boundedTransport struct {
+	base http.RoundTripper
+	hits *atomic.Uint64
+}
 
 // RoundTrip marks the failures that prove a request never reached the
 // server's tool: an error before any header was written (DNS, dial, TLS,
@@ -200,7 +256,7 @@ func (t boundedTransport) RoundTrip(r *http.Request) (*http.Response, error) {
 		return nil, refused
 	}
 	if response.Body != nil {
-		response.Body = &boundedBody{ReadCloser: response.Body, left: MaxResultBytes}
+		response.Body = &boundedBody{ReadCloser: response.Body, left: MaxResultBytes, hits: t.hits}
 	}
 	return response, nil
 }
@@ -208,6 +264,7 @@ func (t boundedTransport) RoundTrip(r *http.Request) (*http.Response, error) {
 type boundedBody struct {
 	io.ReadCloser
 	left int
+	hits *atomic.Uint64
 }
 
 func (b *boundedBody) Read(p []byte) (int, error) {
@@ -215,6 +272,9 @@ func (b *boundedBody) Read(p []byte) (int, error) {
 		var probe [1]byte
 		n, e := b.ReadCloser.Read(probe[:])
 		if n > 0 {
+			if b.hits != nil {
+				b.hits.Add(1)
+			}
 			return 0, fail("result_limit")
 		}
 		return 0, e
@@ -565,7 +625,14 @@ func (p *Provider) call(ctx context.Context, names []string, args ...arg) (map[s
 	return p.invoke(ctx, chosen, values)
 }
 func (p *Provider) invoke(ctx context.Context, chosen string, values map[string]any) (map[string]any, error) {
+	var before uint64
+	if p.capHits != nil {
+		before = p.capHits.Load()
+	}
 	out, e := p.invokeOnce(ctx, chosen, values)
+	if e != nil && p.capHits != nil && p.capHits.Load() != before {
+		e = fail("result_limit")
+	}
 	var unsent *Error
 	if !errors.As(e, &unsent) || !unsent.NotSent {
 		p.sent.Add(1)
@@ -658,7 +725,7 @@ func (p *Provider) invokeOnce(ctx context.Context, chosen string, values map[str
 		return nil, fail("invalid_response")
 	}
 	if rows, ok := decoded.([]any); ok {
-		keys := map[string]string{"list_teams": "teams", "list_projects": "projects", "list_issues": "issues", "list_issue_statuses": "statuses", "list_issue_labels": "labels", "list_users": "users", "list_team_members": "members"}
+		keys := map[string]string{"list_teams": "teams", "list_projects": "projects", "list_issues": "issues", "list_issue_statuses": "statuses", "list_issue_labels": "labels", "list_users": "users", "list_team_members": "members", "list_comments": "comments"}
 		key := keys[chosen]
 		if key == "" {
 			return nil, fail("invalid_response")
@@ -805,6 +872,17 @@ func unwrap(m map[string]any, key string) map[string]any {
 	return m
 }
 func list(m map[string]any, key string) ([]map[string]any, string, bool, error) {
+	items, next, complete, e := listRows(m, key)
+	if e != nil {
+		return nil, "", false, e
+	}
+	return items, next, complete, nil
+}
+
+// listRows is list, except that a page whose continuation is unusable
+// (hasNextPage true without a recognised cursor) still returns its rows with
+// the pagination_unavailable error, for reads that can use them.
+func listRows(m map[string]any, key string) ([]map[string]any, string, bool, error) {
 	raw, ok := m[key].([]any)
 	if !ok {
 		return nil, "", false, fail("invalid_response")
@@ -828,7 +906,7 @@ func list(m map[string]any, key string) ([]map[string]any, string, bool, error) 
 	if b, ok := m["hasNextPage"].(bool); ok {
 		complete = !b
 		if b && next == "" {
-			return nil, "", false, fail("pagination_unavailable")
+			return items, "", false, fail("pagination_unavailable")
 		}
 	}
 	if pi := obj(m, "pageInfo"); pi != nil {
@@ -837,7 +915,7 @@ func list(m map[string]any, key string) ([]map[string]any, string, bool, error) 
 			if b {
 				next = str(pi, "endCursor")
 				if next == "" {
-					return nil, "", false, fail("pagination_unavailable")
+					return items, "", false, fail("pagination_unavailable")
 				}
 			}
 		}
@@ -1396,7 +1474,13 @@ func (p *Provider) Update(ctx context.Context, in UpdateInput) (Issue, error) {
 	return x, e
 }
 func (p *Provider) Comment(ctx context.Context, issue, body string) (Receipt, error) {
-	if !ValidID(issue) || body == "" || !textOK(body, MaxBodyBytes) {
+	return p.CommentOnIssue(ctx, issue, "", body)
+}
+
+// CommentOnIssue is Comment for an issue whose display identifier was proven
+// by a read, so the readback also accepts a row that names the issue by it.
+func (p *Provider) CommentOnIssue(ctx context.Context, issue, identifier, body string) (Receipt, error) {
+	if !ValidID(issue) || body == "" || !textOK(body, MaxBodyBytes) || (identifier != "" && !ValidIssueIdentifier(identifier)) {
 		return Receipt{}, fail("invalid")
 	}
 	m, e := p.call(ctx, []string{"create_comment", "save_comment"}, a(issue, "issueId", "issue"), a(body, "body"))
@@ -1418,7 +1502,7 @@ func (p *Provider) Comment(ctx context.Context, issue, body string) (Receipt, er
 	// A receipt that does not name its issue is confirmed by reading the
 	// issue's comments; without that evidence the comment stays uncertain.
 	if !known {
-		if found, e := p.commentOnIssue(ctx, issue, i); e != nil || !found {
+		if found, e := p.commentOnIssue(ctx, issue, identifier, i); e != nil || !found {
 			return Receipt{}, fail("receipt_unverified")
 		}
 	}
@@ -1451,31 +1535,38 @@ func commentParent(m map[string]any) (string, bool, error) {
 	return parent, known, nil
 }
 
-// commentPages bounds the read that confirms a comment's issue: 4 pages of 50
-// in Linear's default order. list_comments documents orderBy fields but not
-// their direction, so no order is requested; on an issue with more comments
-// the receipt can stay unverified (see docs/linear.md).
+// commentPages bounds the read that confirms a comment's issue: 4 pages of up
+// to 50 in Linear's default order, each retried smaller when it is larger than
+// the response cap. list_comments documents orderBy fields but not their
+// direction, so no order is requested; on an issue with more comments the
+// receipt can stay unverified (see docs/linear.md).
 const commentPages = 4
 
-func (p *Provider) commentOnIssue(ctx context.Context, issue, comment string) (bool, error) {
-	cursor := ""
+func (p *Provider) commentOnIssue(ctx context.Context, issue, identifier, comment string) (bool, error) {
+	cursor, size, calls := "", commentPageSizeV2, 0
 	for page := 0; page < commentPages; page++ {
-		args := []arg{a(issue, "issueId"), {[]string{"limit"}, 50, "integer"}}
-		if cursor != "" {
-			args = append(args, a(cursor, "cursor"))
-		}
-		m, e := p.call(ctx, []string{"list_comments"}, args...)
+		m, e := p.pageShrinking(ctx, &size, &calls, commentCallsV2, func(limit int) (map[string]any, int, error) {
+			args := []arg{a(issue, "issueId"), {[]string{"limit"}, limit, "integer"}}
+			if cursor != "" {
+				args = append(args, a(cursor, "cursor"))
+			}
+			m, e := p.call(ctx, []string{"list_comments"}, args...)
+			return m, limit, e
+		})
 		if e != nil {
 			return false, e
 		}
-		rows, next, done, e := list(m, "comments")
-		if e != nil {
-			return false, e
-		}
+		// The page's rows are searched before an unusable continuation fails
+		// the read, so a comment on this page is still found. A row that names
+		// another issue is not evidence.
+		rows, next, done, e := listRows(m, "comments")
 		for _, row := range rows {
-			if i, e := id(row); e == nil && i == comment {
+			if i, e := id(row); e == nil && i == comment && commentIssueRef(row, issue, identifier) == nil {
 				return true, nil
 			}
+		}
+		if e != nil {
+			return false, e
 		}
 		if done || next == "" || next == cursor {
 			return false, nil

@@ -799,5 +799,79 @@
   },
   "name": "list_issue_statuses",
   "title": "List issue statuses"
+ },
+ {
+  "_meta": {
+   "microsoft/allowedDomains": [
+    "linear.app<https://linear.app/>"
+   ]
+  },
+  "annotations": {
+   "destructiveHint": false,
+   "idempotentHint": true,
+   "openWorldHint": false,
+   "readOnlyHint": true
+  },
+  "description": "List comments on a Linear issue, project, initiative, document, project milestone, or project/initiative status update. Provide exactly one of `issueId`, `projectId`, `initiativeId`, `documentId`, `milestoneId`, or `statusUpdateId`. `statusUpdateType` applies only to `statusUpdateId`; omit it for every other parent. For issues, projects, and initiatives this returns both top-level discussion threads and inline description comments. Inline (anchored) comments carry a non-null `quotedText` set to the snippet of description text they reference. Returned comments include `author` and nullable `onBehalfOf`; when set, `onBehalfOf` identifies the user the agent author acted for. Files uploaded in comment bodies are returned in `attachments` with titles and download URLs, not issue attachment IDs. Signed upload URLs expire after five minutes; call list_comments again to refresh them. Download documents using these URLs and process them with your own file tools.",
+  "inputSchema": {
+   "$schema": "https://json-schema.org/draft/2020-12/schema",
+   "additionalProperties": false,
+   "properties": {
+    "cursor": {
+     "description": "Omit for the first page. To continue, pass the previous response's cursor when hasNextPage is true",
+     "type": "string"
+    },
+    "documentId": {
+     "description": "Document ID or slug (provide exactly one parent)",
+     "type": "string"
+    },
+    "initiativeId": {
+     "description": "Initiative name, ID, identifier (e.g., I-123), or slug (provide exactly one parent)",
+     "type": "string"
+    },
+    "issueId": {
+     "description": "Issue ID or identifier (e.g., LIN-123). P-prefixed identifiers (e.g., P-ENG-123) are projects, not issues (provide exactly one parent)",
+     "type": "string"
+    },
+    "limit": {
+     "default": 50,
+     "description": "Maximum number of results to return per page",
+     "maximum": 250,
+     "type": "number"
+    },
+    "milestoneId": {
+     "description": "Milestone UUID (provide exactly one parent). Resolve milestone names via `list_milestones` first.",
+     "type": "string"
+    },
+    "orderBy": {
+     "default": "updatedAt",
+     "description": "Timestamp to sort results by: creation time or last update time",
+     "enum": [
+      "createdAt",
+      "updatedAt"
+     ],
+     "type": "string"
+    },
+    "projectId": {
+     "description": "Project name, ID, identifier (e.g., P-ENG-123), or slug (provide exactly one parent)",
+     "type": "string"
+    },
+    "statusUpdateId": {
+     "description": "Status update UUID (provide exactly one parent). Resolve status updates via `get_status_updates` first.",
+     "type": "string"
+    },
+    "statusUpdateType": {
+     "description": "Set only together with `statusUpdateId`; omit for issue, project, initiative, document, and milestone comments. Type of status update named by `statusUpdateId`, as returned by `get_status_updates`. Omit to check both project and initiative status updates.",
+     "enum": [
+      "project",
+      "initiative"
+     ],
+     "type": "string"
+    }
+   },
+   "type": "object"
+  },
+  "name": "list_comments",
+  "title": "List comments"
  }
 ]

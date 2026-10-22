@@ -127,7 +127,11 @@ capability flags and, for any that are off, a `reasons` entry explaining why.
 rows updated earlier refuse the page.
 `taskboard_issue_v2` accepts `resolve_labels: true` to prove label IDs when Linear
 returns label names only, and returns `description_sha256`, the SHA-256 of the
-description it read. `taskboard_update_v2` accepts the optional guards
+description it read. With `comments: true` it also returns `comments` (bodies as
+`untrusted_body`), `comments_complete`, `comments_truncated`, `comments_order`
+and `comments_order_direction`. A complete read adds `comments_watermark`; pass
+it back as `comments_since` for newer or edited comments. An incomplete read
+gives `comments_watermark_reason` instead (see [Linear](../linear.md)). `taskboard_update_v2` accepts the optional guards
 `expected_title` (with `title`) and `expected_description_sha256` (with
 `description`); a different current value is refused and nothing is sent.
 If Linear's read omits the description, the read has no `description_sha256`

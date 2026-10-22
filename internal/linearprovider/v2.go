@@ -113,6 +113,9 @@ type Capabilities struct {
 	// UpdatedAfterFilter: list_issues filters by "updated after" and returns
 	// each row's updatedAt, so the filter can be checked row by row.
 	UpdatedAfterFilter bool `json:"updated_after_filter"`
+	// CommentsRead: list_comments pins the issue parent, page size,
+	// creation-time order and cursor, and documents onBehalfOf.
+	CommentsRead bool `json:"comments_read"`
 	// MemberTeamFilter and StatusTeamFilter: the member and workflow-state
 	// listings document their team filter, so rows that carry no team of
 	// their own belong to the team asked for.
@@ -529,6 +532,11 @@ func (p *Provider) Capabilities(context.Context) (Capabilities, error) {
 	capabilities.UpdatedAfterFilter = updatedAfter == ""
 	if updatedAfter != "" {
 		capabilities.Reasons["updated_after_filter"] = updatedAfter
+	}
+	comments := p.commentsReason()
+	capabilities.CommentsRead = comments == ""
+	if comments != "" {
+		capabilities.Reasons["comments_read"] = comments
 	}
 	switch {
 	case !shape:

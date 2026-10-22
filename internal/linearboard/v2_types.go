@@ -43,6 +43,21 @@ type LinkPreviewV2 struct {
 	TeamBoard     bool                     `json:"team_board"`
 	Confirmed     bool                     `json:"confirmed"`
 }
+
+// CommentsInputV2 opts an issue read into its comments. Since is a
+// comments_watermark from an earlier read of the same issue, or an absolute
+// RFC 3339 time; empty returns every comment within the bound.
+type CommentsInputV2 struct {
+	Since         string
+	ResolveLabels bool
+}
+
+// IssueCommentsV2 is an issue read with its comments. Comment bodies are
+// untrusted data written by others.
+type IssueCommentsV2 struct {
+	linearprovider.IssueV2
+	linearprovider.Comments
+}
 type IssuesInputV2 struct {
 	Limit                         int
 	Cursor, LabelID, UpdatedAfter string

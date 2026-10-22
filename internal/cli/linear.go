@@ -100,11 +100,11 @@ type linearFlags struct {
 	teams                                                                                                                []string
 	projects, labels, expectedLabels, addLabels, removeLabels                                                            []string
 	team, parent, assignee, relationType, relationAction, labelFilter                                                    string
-	expectTitle, expectDescriptionSHA256, updatedAfter                                                                   string
+	expectTitle, expectDescriptionSHA256, updatedAfter, commentsSince                                                    string
 	clearProject, clearLabels, clearParent, clearAssignee, expectNoLabels                                                bool
 	limit                                                                                                                int
 	revision                                                                                                             int64
-	teamBoard, confirm, noBrowser, tokenStdin, resolveLabels                                                             bool
+	teamBoard, confirm, noBrowser, tokenStdin, resolveLabels, comments                                                   bool
 }
 type repeatedIDs []string
 
@@ -166,6 +166,8 @@ func parseLinear(command string, args []string, stderr io.Writer) (linearFlags, 
 		profile()
 		if command == "issue" {
 			f.BoolVar(&v.resolveLabels, "resolve-labels", false, "prove label IDs when Linear returns label names only (extra reads)")
+			f.BoolVar(&v.comments, "comments", false, "also read the issue's comments (untrusted text; extra reads)")
+			f.StringVar(&v.commentsSince, "comments-since", "", "with --comments: a comments_watermark from an earlier read, or an absolute RFC 3339 time")
 		}
 		min, max = 1, 1
 	case "link":
@@ -270,6 +272,9 @@ func parseLinear(command string, args []string, stderr io.Writer) (linearFlags, 
 		if !linearprovider.ValidID(v.team) {
 			return v, nil, errors.New("discovery requires --team UUID")
 		}
+	}
+	if v.supplied["comments-since"] && !v.comments {
+		return v, nil, errors.New("--comments-since requires --comments")
 	}
 	if v.supplied["label"] && command == "issues" && !linearprovider.ValidID(v.labelFilter) {
 		return v, nil, errors.New("label filter requires UUID")
@@ -652,7 +657,9 @@ func runLinear(ctx context.Context, flags Config, args []string, stdout, stderr 
 	case "issues":
 		data, err = service.IssuesV2(bounded, scope, linearboard.IssuesInputV2{Limit: v.limit, Cursor: v.cursor, LabelID: v.labelFilter, UpdatedAfter: v.updatedAfter})
 	case "issue":
-		if v.resolveLabels {
+		if v.comments {
+			data, err = service.IssueV2WithComments(bounded, scope, pos[0], linearboard.CommentsInputV2{Since: v.commentsSince, ResolveLabels: v.resolveLabels})
+		} else if v.resolveLabels {
 			data, err = service.IssueV2ResolvedLabels(bounded, scope, pos[0])
 		} else {
 			data, err = service.IssueV2(bounded, scope, pos[0])

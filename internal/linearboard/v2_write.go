@@ -639,7 +639,9 @@ func (s *Service) WriteV2(ctx context.Context, scope bus.Request, in WriteInputV
 				receipt = ReceiptV2{Kind: "issue", Outcome: "accepted", ID: issue.ID, Identifier: issue.Identifier, TeamID: issue.TeamID, ProjectID: projectPointerV2(issue.ProjectID), Unverified: unverified, LabelsAdded: plan.Add, LabelsRemoved: plan.Remove}
 			}
 		default:
-			r, err := p.Comment(ctx, in.IssueID, in.Body)
+			// The proven identifier lets the readback accept a row that names
+			// the issue by it.
+			r, err := commentV2(ctx, p, in.IssueID, current.Identifier, in.Body)
 			if err != nil {
 				return nil, writeFailure(p, sent, known, err, post)
 			}
@@ -844,4 +846,15 @@ func receiptParentV2(issue linearprovider.IssueV2, parent linearprovider.Field[*
 		return nil
 	}
 	return errors.New("receipt parent does not match the requested parent")
+}
+
+// commentV2 comments through CommentOnIssue when the provider has it and the
+// read proved a display identifier, and through Comment otherwise.
+func commentV2(ctx context.Context, p Provider, issue, identifier, body string) (linearprovider.Receipt, error) {
+	if c, ok := p.(interface {
+		CommentOnIssue(context.Context, string, string, string) (linearprovider.Receipt, error)
+	}); ok && linearprovider.ValidIssueIdentifier(identifier) {
+		return c.CommentOnIssue(ctx, issue, identifier, body)
+	}
+	return p.Comment(ctx, issue, body)
 }

@@ -114,3 +114,20 @@ func TestLinearV2LabelDeltaFlagsReachTheWriteInput(t *testing.T) {
 		t.Fatalf("label deltas lost: %+v %v", input, err)
 	}
 }
+
+func TestLinearV2CommentFlagsAreOptIn(t *testing.T) {
+	const a = "11111111-1111-4111-8111-111111111111"
+	v, pos, err := parseLinear("issue", []string{a, "--profile", "native", "--comments", "--comments-since", "2026-10-22T07:00:00Z"}, &bytes.Buffer{})
+	if err != nil || !v.comments || v.commentsSince != "2026-10-22T07:00:00Z" || pos[0] != a {
+		t.Fatal("comment flags lost", v.comments, v.commentsSince, err)
+	}
+	if v, _, err = parseLinear("issue", []string{a, "--profile", "native"}, &bytes.Buffer{}); err != nil || v.comments {
+		t.Fatal("plain issue read opted into comments", err)
+	}
+	if _, _, err = parseLinear("issue", []string{a, "--profile", "native", "--comments-since", "2026-10-22T07:00:00Z"}, &bytes.Buffer{}); err == nil {
+		t.Fatal("--comments-since without --comments accepted")
+	}
+	if _, _, err = parseLinear("issues", []string{"--profile", "native", "--comments"}, &bytes.Buffer{}); err == nil {
+		t.Fatal("--comments accepted on the issue list")
+	}
+}

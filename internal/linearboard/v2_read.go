@@ -502,59 +502,111 @@ func (s *Service) IssuesV2(ctx context.Context, scope bus.Request, in IssuesInpu
 	return page, nil
 }
 func (s *Service) IssueV2(ctx context.Context, scope bus.Request, id string) (linearprovider.IssueV2, error) {
-	return s.issueV2(ctx, scope, id, false)
+	issue, _, e := s.issueV2(ctx, scope, id, false, nil)
+	return issue, e
 }
 
 // IssueV2ResolvedLabels is the opt-in read that proves the issue's label IDs
 // when native Linear returns label names only; see resolveLabelsV2.
 func (s *Service) IssueV2ResolvedLabels(ctx context.Context, scope bus.Request, id string) (linearprovider.IssueV2, error) {
-	return s.issueV2(ctx, scope, id, true)
+	issue, _, e := s.issueV2(ctx, scope, id, true, nil)
+	return issue, e
 }
-func (s *Service) issueV2(ctx context.Context, scope bus.Request, id string, resolve bool) (linearprovider.IssueV2, error) {
+
+// IssueV2WithComments is the opt-in read that also returns the issue's
+// comments. The issue read stays the scope proof: comments are read only
+// after it passes, by the proven issue UUID.
+func (s *Service) IssueV2WithComments(ctx context.Context, scope bus.Request, id string, in CommentsInputV2) (IssueCommentsV2, error) {
+	if !linearprovider.ValidID(id) {
+		return IssueCommentsV2{}, errors.New("issue requires immutable UUID")
+	}
+	since, e := linearprovider.ParseCommentsSince(id, in.Since)
+	if e != nil {
+		return IssueCommentsV2{}, e
+	}
+	issue, comments, e := s.issueV2(ctx, scope, id, in.ResolveLabels, &since)
+	if e != nil {
+		return IssueCommentsV2{}, e
+	}
+	return IssueCommentsV2{IssueV2: issue, Comments: comments}, nil
+}
+func (s *Service) issueV2(ctx context.Context, scope bus.Request, id string, resolve bool, comments *linearprovider.CommentsSince) (issue linearprovider.IssueV2, out linearprovider.Comments, e error) {
 	empty := linearprovider.IssueV2{}
 	if !linearprovider.ValidID(id) {
-		return empty, errors.New("issue requires immutable UUID")
+		return empty, out, errors.New("issue requires immutable UUID")
 	}
 	b, e := s.BindingV2(ctx, scope)
 	if e != nil {
-		return empty, e
+		return empty, out, e
 	}
 	_, p, done, e := s.open(ctx)
 	if e != nil {
-		return empty, e
+		return empty, out, e
 	}
 	defer done()
 	v, e := s.verifyReadBindingV2(ctx, p, b)
 	if e != nil {
-		return empty, e
+		return empty, out, e
 	}
 	p2, ok := p.(ProviderV2)
 	if !ok {
-		return empty, errors.New("native provider lacks V2 issue capability")
+		return empty, out, errors.New("native provider lacks V2 issue capability")
 	}
-	issue, e := p2.IssueV2(ctx, id)
+	issue, e = p2.IssueV2(ctx, id)
 	if e != nil {
-		return empty, e
+		return empty, out, e
 	}
 	if issue.ID != id {
-		return empty, errors.New("provider returned another issue")
+		return empty, out, errors.New("provider returned another issue")
 	}
 	if e = checkIssueV2(issue, b, v); e != nil {
-		return empty, e
+		return empty, out, e
 	}
 	if resolve {
 		if issue, e = resolveLabelsV2(ctx, p2, issue); e != nil {
-			return empty, e
+			return empty, out, e
+		}
+	}
+	if comments != nil {
+		reader, ok := p2.(commentReaderV2)
+		if !ok {
+			return empty, out, errors.New("native provider lacks issue comment reads")
+		}
+		// The walk stops short of the caller's deadline, returning an
+		// incomplete read (reason deadline) with time left to finish.
+		walk, cancel := ctx, context.CancelFunc(func() {})
+		if deadline, ok := ctx.Deadline(); ok {
+			walk, cancel = context.WithDeadline(ctx, deadline.Add(-commentsReserveV2))
+		}
+		// An identifier the plain read tolerated but that is not a display
+		// identifier is left out, so comments never fail a read that passes.
+		identifier := ""
+		if linearprovider.ValidIssueIdentifier(issue.Identifier) {
+			identifier = issue.Identifier
+		}
+		out, e = reader.IssueComments(walk, linearprovider.CommentsQuery{IssueID: issue.ID, Identifier: identifier, Since: *comments})
+		cancel()
+		if e != nil {
+			return empty, out, e
 		}
 	}
 	if e = s.unchangedV2(ctx, scope, b); e != nil {
-		return empty, e
+		return empty, out, e
 	}
 	if issue.DescriptionKnown {
 		issue.DescriptionSHA256 = descriptionSHA256(issue.Description)
 	}
-	return issue, nil
+	return issue, out, nil
 }
+
+// commentReaderV2 is the optional provider support for reading comments.
+type commentReaderV2 interface {
+	IssueComments(context.Context, linearprovider.CommentsQuery) (linearprovider.Comments, error)
+}
+
+// commentsReserveV2 is the time a comment read leaves before the request's
+// deadline for the binding check and the reply.
+const commentsReserveV2 = 5 * time.Second
 
 // labelMembershipV2 is the optional provider support for proving label IDs
 // from names. Providers without it leave name-only label sets unknown.

@@ -177,3 +177,31 @@ func TestLinearMCPV2ExpectedLabelsOnlyOnUpdate(t *testing.T) {
 		t.Fatal("create accepted expected_label_ids", result, err)
 	}
 }
+
+func TestLinearMCPV2IssueCommentsAreOptInAndMarkedUntrusted(t *testing.T) {
+	p := &recordingBoardV2{recordingBoard: recordingBoard{data: map[string]any{"ok": true}}}
+	ctx, cs := boardSession(t, p)
+	listed, err := cs.ListTools(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tool := range listed.Tools {
+		raw, _ := json.Marshal(tool.InputSchema)
+		has := strings.Contains(string(raw), `"comments"`) && strings.Contains(string(raw), `"comments_since"`)
+		if has != (tool.Name == "taskboard_issue_v2") {
+			t.Fatalf("%s comments presence = %v", tool.Name, has)
+		}
+		if tool.Name == "taskboard_issue_v2" && (!strings.Contains(string(raw), "untrusted") || !strings.Contains(tool.Description, "untrusted_body")) {
+			t.Fatal("issue tool does not mark comment bodies untrusted")
+		}
+	}
+	const id = "11111111-1111-4111-8111-111111111111"
+	for _, args := range []map[string]any{{"id": id, "comments": "yes"}, {"id": id, "comments": true, "comments_since": strings.Repeat("x", 513)}} {
+		if result, e := cs.CallTool(ctx, &mcp.CallToolParams{Name: "taskboard_issue_v2", Arguments: args}); (e == nil && !result.IsError) || p.count() != 0 {
+			t.Fatal("invalid comment arguments reached the adapter", args)
+		}
+	}
+	if _, e := cs.CallTool(ctx, &mcp.CallToolParams{Name: "taskboard_issue_v2", Arguments: map[string]any{"id": id, "comments": true, "comments_since": "2026-10-22T07:00:00Z"}}); e != nil || p.count() != 1 {
+		t.Fatal("valid comment read not forwarded", e)
+	}
+}

@@ -11,7 +11,7 @@ import (
 // ExecuteV2 is the closed native adapter used by additive, scope-pinned MCP tools.
 func (s *Service) ExecuteV2(ctx context.Context, scope bus.Request, operation string, args map[string]any) (_ any, err error) {
 	defer func() { s.settle(err) }()
-	allowed := map[string][]string{"binding": {}, "context": {}, "issues": {"limit", "cursor", "label_id", "updated_after"}, "issue": {"id", "resolve_labels"}, "labels": {"team_id", "limit", "cursor"}, "members": {"team_id", "limit", "cursor"}, "create": {"title", "description", "state_id", "operation_id", "team_id", "project_id", "label_ids", "parent_id", "assignee_id"}, "update": {"id", "title", "description", "state_id", "operation_id", "project_id", "label_ids", "expected_label_ids", "add_label_ids", "remove_label_ids", "expected_title", "expected_description_sha256", "parent_id", "assignee_id"}, "comment": {"id", "body", "operation_id"}, "relation_add": {"from_id", "to_id", "type", "operation_id"}, "relation_remove": {"from_id", "to_id", "type", "operation_id"}}
+	allowed := map[string][]string{"binding": {}, "context": {}, "issues": {"limit", "cursor", "label_id", "updated_after"}, "issue": {"id", "resolve_labels", "comments", "comments_since"}, "labels": {"team_id", "limit", "cursor"}, "members": {"team_id", "limit", "cursor"}, "create": {"title", "description", "state_id", "operation_id", "team_id", "project_id", "label_ids", "parent_id", "assignee_id"}, "update": {"id", "title", "description", "state_id", "operation_id", "project_id", "label_ids", "expected_label_ids", "add_label_ids", "remove_label_ids", "expected_title", "expected_description_sha256", "parent_id", "assignee_id"}, "comment": {"id", "body", "operation_id"}, "relation_add": {"from_id", "to_id", "type", "operation_id"}, "relation_remove": {"from_id", "to_id", "type", "operation_id"}}
 	keys, ok := allowed[operation]
 	if !ok {
 		return nil, errors.New("unsupported task-board V2 operation")
@@ -31,9 +31,9 @@ func (s *Service) ExecuteV2(ctx context.Context, scope bus.Request, operation st
 			}
 			continue
 		}
-		if key == "resolve_labels" {
+		if key == "resolve_labels" || key == "comments" {
 			if _, ok := value.(bool); !ok {
-				return nil, errors.New("resolve_labels requires a boolean")
+				return nil, errors.New(key + " requires a boolean")
 			}
 			continue
 		}
@@ -60,7 +60,14 @@ func (s *Service) ExecuteV2(ctx context.Context, scope bus.Request, operation st
 	case "issues":
 		return s.IssuesV2(ctx, scope, IssuesInputV2{Limit: limit, Cursor: text("cursor"), LabelID: text("label_id"), UpdatedAfter: text("updated_after")})
 	case "issue":
-		if resolve, _ := args["resolve_labels"].(bool); resolve {
+		resolve, _ := args["resolve_labels"].(bool)
+		if comments, _ := args["comments"].(bool); comments {
+			return s.IssueV2WithComments(ctx, scope, text("id"), CommentsInputV2{Since: text("comments_since"), ResolveLabels: resolve})
+		}
+		if _, ok := args["comments_since"]; ok {
+			return nil, errors.New("comments_since requires comments: true")
+		}
+		if resolve {
 			return s.IssueV2ResolvedLabels(ctx, scope, text("id"))
 		}
 		return s.IssueV2(ctx, scope, text("id"))

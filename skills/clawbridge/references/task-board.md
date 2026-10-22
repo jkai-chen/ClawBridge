@@ -20,7 +20,10 @@ decisions. Resolve the canonical issue UUID and authorized Linear workspace;
 display identifiers such as ENG-123 can change when an issue moves teams.
 Check the configured team and project separately: a team is not a project, and
 a project can span multiple teams. An explicitly linked team board may have no
-Linear project. Reconnection to another personal account does not change the
+Linear project. When the installed adapter supports a project set, an issue must
+match an allowed project/team pair, not just two separately allowed IDs. A
+multi-project create needs its explicit destination. Reconnection to another
+personal account does not change the
 shared ClawBridge board binding or authorize broader searches.
 Follow returned cursors and completeness markers before treating an issue or
 dependency as absent. If parent/dependency context is unavailable, ask the
@@ -131,6 +134,31 @@ Before editing another slice, agree on the boundary and let the coordinator
 update the assignment if ownership changes. Record the resulting interface or
 decision on the relevant Linear issue so later agents can find it. Linear holds
 the durable decision and blocker; routine back-and-forth stays in ClawBridge.
+
+## Change issue structure
+
+Discover the installed capability before using project sets, labels, parents,
+human assignment or relation mutations. Older adapters expose fewer fields;
+an unavailable capability goes to the coordinator rather than a broader account
+or an arbitrary provider tool. Administrative project/label creation remains a
+separate operator action.
+
+Use canonical IDs from scoped provider discovery. Preserve omitted fields;
+clear or replace them only when the assignment requests that exact change. Review
+existing labels before an explicit replacement, including labels maintained by
+people. A label's name does not prove its team, and a global user record does not
+prove membership in the issue's team.
+
+Check both issues before adding a dependency or parent. Their effective project
+and team must remain in the binding; required ancestry must be available and
+acyclic. Request one relation edge at a time. A successful edge write is not a
+transaction across tasks, and an observed unchanged edge is only a read result.
+Keep the receipt and reconcile uncertain outcomes through read-back.
+
+Set a human assignee only when explicitly requested and verified as an eligible
+team member. That assignment does not replace the coordinator's Current agent
+block or transfer repository ownership. After a requested project/parent change,
+verify the returned effective scope before asserting success.
 
 ## Resume and close
 

@@ -189,7 +189,10 @@ Use separate typed V2 inputs and an explicit Present flag. Do not extend legacy
 digest structs in place. Label arrays are unique sorted IDs: omission preserves,
 present[] clears, null rejects. Replacement must be explicit and cannot silently
 remove unrelated human labels; if canonical existing-label context or safe
-provider semantics is missing, refuse that update. No global/group/archived
+provider semantics is missing, refuse that update. Supplying labels declares the
+complete desired replacement set, including removal of known labels left out;
+CLI/tool help must make that consequence clear. Do not turn an unspecified label
+change into replacement. No global/group/archived
 labels may be newly applied. Membership must prove the canonical user belongs to
 the effective issue team; reject known inactive users and require supported
 eligibility proof rather than treating unknown as active.
@@ -203,6 +206,10 @@ explicit effective destination. No automatic hierarchy repair or implicit move.
 Add-existing/remove-absent may return `observed_unchanged` without a provider write
 only from authoritative edge evidence (complete context is required to prove
 absence). The receipt describes an observation, not a provider CAS guarantee.
+This remains a mutation-intent request: require current ClawBridge write rights
+and a write-capable personal profile even when no provider write is necessary.
+An already accepted identical ledger retry retains the existing no-provider-I/O
+receipt path.
 Otherwise require a genuine one-edge operation. An edge receipt records normalized
 action/type/endpoints and an optional real provider edge UUID, never a fabricated
 ID. Caller-supplied arbitrary edge IDs are not accepted. Unknown outcome retains

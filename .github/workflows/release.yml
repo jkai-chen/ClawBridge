@@ -8,13 +8,32 @@ concurrency:
   group: release-${{ github.ref }}
   cancel-in-progress: false
 jobs:
+  # A tag on a commit that never reached main (a side branch, a fork's commit
+  # pushed by mistake) must not build or publish anything.
+  on-main:
+    if: ${{ github.event.repository.private == false && github.repository == 'jkai-chen/ClawBridge' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Require the tagged commit on main
+        run: |
+          git fetch --no-tags origin +refs/heads/main:refs/remotes/origin/main
+          git merge-base --is-ancestor "$GITHUB_SHA" refs/remotes/origin/main || { echo "::error::$GITHUB_SHA is not an ancestor of origin/main"; exit 1; }
   checks:
+    needs: on-main
     if: ${{ github.event.repository.private == false && github.repository == 'jkai-chen/ClawBridge' }}
     uses: ./.github/workflows/ci.yml
     permissions:
       contents: read
   build:
-    needs: checks
+    needs: [on-main, checks]
     if: ${{ github.event.repository.private == false && github.repository == 'jkai-chen/ClawBridge' }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
@@ -41,8 +60,11 @@ jobs:
           if-no-files-found: error
           retention-days: 3
   publish:
-    needs: [checks, build]
+    needs: [on-main, checks, build]
     if: ${{ github.event.repository.private == false && github.repository == 'jkai-chen/ClawBridge' }}
+    # Required reviewers on this environment hold publication for a human
+    # approval; see docs/design/releases.md for the one-time repository setting.
+    environment: release
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
@@ -57,6 +79,11 @@ jobs:
         with:
           name: release-assets
           path: ${{ runner.temp }}/release-assets
+      # Checked again after the approval wait, against main as it is now.
+      - name: Require the tagged commit on main
+        run: |
+          git fetch --no-tags origin +refs/heads/main:refs/remotes/origin/main
+          git merge-base --is-ancestor "$GITHUB_SHA" refs/remotes/origin/main || { echo "::error::$GITHUB_SHA is not an ancestor of origin/main"; exit 1; }
       - name: Draft, upload, verify downloaded bytes, then publish
         env:
           GH_TOKEN: ${{ github.token }}

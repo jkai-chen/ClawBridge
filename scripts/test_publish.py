@@ -16,8 +16,14 @@ import json,os,pathlib,shutil,sys
 p=pathlib.Path(os.environ['PUBLISH_FIXTURE']);args=sys.argv[1:];mode=os.environ.get('PUBLISH_MODE','ok')
 with (p/'calls').open('a') as f:f.write(json.dumps(args)+'\n')
 if args[0]=='api':
- if mode=='api-failure':sys.exit(1)
- if mode=='existing':print('123')
+ query=args[args.index('--jq')+1]
+ if 'prerelease' in query:
+  # The latest-release query: one JSON object per published or draft release.
+  if mode=='latest-api-failure':sys.exit(1)
+  for release in json.loads(os.environ.get('PUBLISH_RELEASES','[]')):print(json.dumps(release))
+ else:
+  if mode=='api-failure':sys.exit(1)
+  if mode=='existing':print('123')
 elif args[:2]==['release','create']:
  assert '--draft' in args and '--verify-tag' in args
  assert '--notes-file' in args
@@ -36,7 +42,9 @@ elif args[:2]==['release','download']:
 elif args[:2]==['release','view']:print('true')
 elif args[:2]==['release','edit']:
  assert '--draft=false' in args
- (p/'published').write_text('published')
+ latest=[a for a in args if a.startswith('--latest')]
+ assert latest in (['--latest=true'],['--latest=false']),latest
+ (p/'published').write_text(latest[0].split('=')[1])
 else:raise RuntimeError(args)
 '''
 
@@ -75,8 +83,31 @@ class PublishTests(unittest.TestCase):
         # Mutable checkout text must not replace the notes at the exact tag.
         (self.repo / "RELEASE-NOTES.md").write_text("uncommitted notes must not publish\n")
         calls = self.publish(ok=True)
-        self.assertEqual([c[:2] for c in calls[1:]], [["release", "create"], ["release", "upload"], ["release", "download"], ["release", "view"], ["release", "edit"]])
-        self.assertTrue((self.root / "published").exists())
+        self.assertEqual([c[:2] for c in calls[1:]], [["release", "create"], ["release", "upload"], ["release", "download"], ["release", "view"], ["api", "--paginate"], ["release", "edit"]])
+        self.assertEqual((self.root / "published").read_text(), "true")
+
+    def publish_latest(self, releases):
+        self.env["PUBLISH_RELEASES"] = json.dumps([{"tag_name": tag, "draft": draft, "prerelease": prerelease} for tag, draft, prerelease in releases])
+        self.publish(ok=True)
+        return (self.root / "published").read_text()
+
+    def test_first_release_becomes_latest(self):
+        self.assertEqual(self.publish_latest([]), "true")
+
+    def test_newest_stable_release_becomes_latest(self):
+        self.assertEqual(self.publish_latest([("v0.0.9", False, False), ("v0.0.10", False, False)]), "true")
+
+    def test_backport_does_not_become_latest(self):
+        self.assertEqual(self.publish_latest([("v0.10.0", False, False), ("v0.0.3", False, False)]), "false")
+
+    def test_prereleases_drafts_and_noncanonical_tags_are_ignored(self):
+        self.assertEqual(self.publish_latest([("v0.2.0", False, True), ("v0.3.0", True, False), ("v0.4.0-rc1", False, False), ("nightly", False, False), ("v0.0.1", False, False)]), "true")
+
+    def test_failed_latest_query_leaves_only_draft(self):
+        calls = self.publish("latest-api-failure")
+        self.assertTrue((self.root / "draft").exists())
+        self.assertFalse((self.root / "published").exists())
+        self.assertNotIn(["release", "edit"], [c[:2] for c in calls])
 
     def test_existing_or_api_failure_never_creates(self):
         for mode in ["existing", "api-failure"]:

@@ -87,6 +87,23 @@ root recovery, never a partial published release. No arbitrary workflow-dispatch
 ref can publish. Avoid long-lived credentials or third-party release actions;
 GitHub's job token and gh CLI are sufficient. Use short artifact retention.
 
+Before anything builds, the release workflow requires the tagged commit to be an
+ancestor of `main` (`git merge-base --is-ancestor` after fetching `main`), and
+the publish job checks it again just before publishing. A tag on a commit that
+never reached `main` fails without a draft. Publication marks the release as
+Latest only when its version is higher than every published stable release;
+drafts, prereleases and noncanonical tags are ignored. So a backport such as
+v0.1.4 after v0.2.0 is published without moving `releases/latest`, which the
+installers follow. If the release list cannot be read, the verified draft stays
+unpublished.
+
+The publish job runs in the `release` GitHub Environment so publication can wait
+for a human approval. This needs a one-time repository setting by the owner:
+Settings → Environments → New environment `release` → Required reviewers (the
+owner), and under Deployment branches and tags, allow only tags matching
+`v*.*.*`. Until that environment exists with reviewers, GitHub creates it
+unprotected on first use and the job runs without waiting.
+
 Root performs local acceptance while private, reviews the final tree and all
 reachable Git history for private artifacts, commits/pushes the accepted code,
 then makes the repository public under the owner's existing authorization.

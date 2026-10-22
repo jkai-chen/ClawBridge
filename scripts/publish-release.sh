@@ -45,4 +45,21 @@ for release_file in "$release_assets/"*; do
   cmp "$release_file" "$release_verify/download/${release_file##*/}"
 done
 [[ $(gh release view "$release_version" --json isDraft,tagName --jq '.isDraft') == true ]] || { echo 'expected draft before publication' >&2; exit 1; }
-gh release edit "$release_version" --draft=false --latest
+# Only the highest stable version becomes Latest, so a backport (v0.1.4 after
+# v0.2.0) never redirects releases/latest. Drafts, prereleases and noncanonical
+# tags are ignored. A failed query stops here and leaves the verified draft.
+release_latest=$(gh api --paginate 'repos/jkai-chen/ClawBridge/releases?per_page=100' --jq '.[] | {tag_name, draft, prerelease}' | python3 -c '
+import json,re,sys
+def version(tag):
+ m=re.fullmatch(r"v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)",tag)
+ return tuple(map(int,m.groups())) if m else None
+mine=version(sys.argv[1])
+for line in sys.stdin:
+ release=json.loads(line)
+ if release["draft"] or release["prerelease"]: continue
+ other=version(release["tag_name"])
+ if other is not None and other>mine: print("false"); break
+else: print("true")
+' "$release_version")
+[[ $release_latest == true || $release_latest == false ]] || { echo 'could not decide the latest release' >&2; exit 1; }
+gh release edit "$release_version" --draft=false --latest="$release_latest"

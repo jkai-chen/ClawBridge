@@ -53,7 +53,33 @@ func validProviderPageV2(next string, complete bool, previous string, count, lim
 	}
 	return nil
 }
+
+// findLabelV2 resolves one label; see findLabelsV2.
 func findLabelV2(ctx context.Context, p ProviderV2, team, id string) (*linearprovider.Label, error) {
+	found, e := findLabelsV2(ctx, p, team, []string{id})
+	if e != nil {
+		return nil, e
+	}
+	if label, ok := found[id]; ok {
+		return &label, nil
+	}
+	return nil, nil
+}
+
+// findLabelsV2 resolves every requested label in one walk of the team's label
+// listing, stopping once all are found or the listing completes. Every walked
+// row still gets the identity and contradiction checks; scope and eligibility
+// are checked on the requested rows. A requested label that is absent from
+// the complete listing is simply missing from the result.
+func findLabelsV2(ctx context.Context, p ProviderV2, team string, ids []string) (map[string]linearprovider.Label, error) {
+	wanted := map[string]bool{}
+	for _, id := range ids {
+		wanted[id] = true
+	}
+	found := map[string]linearprovider.Label{}
+	if len(wanted) == 0 {
+		return found, nil
+	}
 	cursor := ""
 	seen := map[string]bool{}
 	for pageNumber := 0; pageNumber < 64; pageNumber++ {
@@ -64,11 +90,10 @@ func findLabelV2(ctx context.Context, p ProviderV2, team, id string) (*linearpro
 		if e = validProviderPageV2(page.NextCursor, page.Complete, cursor, len(page.Items), 100); e != nil {
 			return nil, e
 		}
-		seenIDs := map[string]string{}
-		var found *linearprovider.Label
 		// Other rows may be workspace, unscoped or ineligible labels; they are
-		// still checked for contradictions but only the requested row's scope
-		// and eligibility decide the lookup.
+		// still checked for contradictions but only requested rows' scope and
+		// eligibility decide the lookup.
+		seenIDs := map[string]string{}
 		for _, label := range page.Items {
 			if !linearprovider.ValidID(label.ID) {
 				return nil, errors.New("label identity is invalid")
@@ -78,22 +103,21 @@ func findLabelV2(ctx context.Context, p ProviderV2, team, id string) (*linearpro
 				return nil, errors.New("contradictory label identity")
 			}
 			seenIDs[label.ID] = h
-			if label.ID == id {
-				copy := label
-				found = &copy
-			}
 		}
-		if found != nil {
-			if e = checkLabelV2(*found, team); e != nil {
+		for _, label := range page.Items {
+			if !wanted[label.ID] {
+				continue
+			}
+			if e = checkLabelV2(label, team); e != nil {
 				return nil, e
 			}
-			if e = eligibleLabelV2(*found); e != nil {
+			if e = eligibleLabelV2(label); e != nil {
 				return nil, e
 			}
+			found[label.ID] = label
+		}
+		if len(found) == len(wanted) || page.Complete {
 			return found, nil
-		}
-		if page.Complete {
-			return nil, nil
 		}
 		if seen[page.NextCursor] {
 			return nil, errors.New("label pagination cycle")

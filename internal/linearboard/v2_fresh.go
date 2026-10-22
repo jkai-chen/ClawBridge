@@ -65,14 +65,12 @@ func refreshWriteProofV2(ctx context.Context, p Provider, p2 ProviderV2, b bus.T
 		return e
 	}
 	if in.Labels.Present {
-		for _, id := range in.Labels.Value {
-			label, e := findLabelV2(ctx, p2, team, id)
-			if e != nil {
-				return e
-			}
-			if label == nil {
-				return errors.New("selected label no longer belongs to the target team")
-			}
+		found, e := findLabelsV2(ctx, p2, team, in.Labels.Value)
+		if e != nil {
+			return e
+		}
+		if len(found) != len(in.Labels.Value) {
+			return errors.New("selected label no longer belongs to the target team")
 		}
 	}
 	if in.Assignee.Present && in.Assignee.Value != nil {

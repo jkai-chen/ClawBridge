@@ -279,14 +279,12 @@ func (s *Service) WriteV2(ctx context.Context, scope bus.Request, in WriteInputV
 				return nil, errors.New("issue labels differ from expected_label_ids; inspect current labels")
 			}
 		}
-		for _, id := range in.Labels.Value {
-			label, e := findLabelV2(ctx, p2, team, id)
-			if e != nil {
-				return nil, e
-			}
-			if label == nil {
-				return nil, errors.New("selected label is outside target team")
-			}
+		found, e := findLabelsV2(ctx, p2, team, in.Labels.Value)
+		if e != nil {
+			return nil, e
+		}
+		if len(found) != len(in.Labels.Value) {
+			return nil, errors.New("selected label is outside target team")
 		}
 	}
 	if in.Assignee.Present {

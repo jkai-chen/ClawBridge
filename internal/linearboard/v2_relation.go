@@ -117,9 +117,10 @@ func (s *Service) RelationV2(ctx context.Context, scope bus.Request, in Relation
 			}
 			return s.postReceiptV2(ctx, scope, b, receipt)
 		}
+		sent, known := sentCount(p2)
 		r, e := p2.Relation(ctx, linearprovider.RelationInput{Action: in.Action, Type: in.Type, FromID: in.FromID, ToID: in.ToID})
 		if e != nil {
-			return nil, s.postFailureV2(ctx, scope, b, e)
+			return nil, writeFailure(p2, sent, known, e, func(e error) error { return s.postFailureV2(ctx, scope, b, e) })
 		}
 		if r.Action != in.Action || r.Type != in.Type || r.FromID != in.FromID || r.ToID != in.ToID || (r.ID != "" && !linearprovider.ValidID(r.ID)) {
 			return nil, errors.New("relation receipt does not match the normalized edge")

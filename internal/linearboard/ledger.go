@@ -3,11 +3,13 @@ package linearboard
 import (
 	"bytes"
 	"clawbridge/internal/linearprovider"
+	"cmp"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -66,6 +68,42 @@ func proofFailure(err error) error {
 	}
 	return refusedBeforeDispatch(err)
 }
+
+// sentCount reads how many tool calls a provider may have sent to Linear;
+// known is false for a provider that cannot tell.
+func sentCount(p any) (count uint64, known bool) {
+	c, ok := p.(interface{ Sent() uint64 })
+	if !ok {
+		return 0, false
+	}
+	return c.Sent(), true
+}
+
+// writeFailure classifies a failed provider write. When the provider proves
+// no tool call reached Linear since before was read, nothing was dispatched;
+// any other failure goes to post and stays possibly dispatched.
+func writeFailure(p any, before uint64, known bool, err error, post func(error) error) error {
+	if after, ok := sentCount(p); known && ok && after == before {
+		return notDispatched(fmt.Errorf("nothing was sent to Linear (%s); retry with the same operation_id", cmp.Or(safeFailure(err), "unavailable")))
+	}
+	return post(err)
+}
+
+// safeFailure names a provider failure without its text, or returns "" for
+// a failure that is not the provider's.
+func safeFailure(err error) string {
+	var provider *linearprovider.Error
+	switch {
+	case errors.As(err, &provider):
+		return provider.Detail()
+	case errors.Is(err, context.DeadlineExceeded):
+		return "timeout"
+	case errors.Is(err, context.Canceled):
+		return "canceled"
+	}
+	return ""
+}
+
 func refusalError(reason string) error {
 	return errors.New("refused before dispatch; nothing was sent: " + reason + "; re-read and submit a new operation_id")
 }
@@ -165,10 +203,19 @@ func (l ledger) write(profile, operationID string, payload any, dispatch func() 
 	}
 	var receiptError *ReceiptError
 	if err != nil && (receipt == nil || !errors.As(err, &receiptError)) {
-		message := "Linear operation may have been dispatched; outcome uncertain, inspect Linear before retrying"
+		// The record stays pending; its reason keeps only the safe failure code.
+		reason := safeFailure(err)
+		message := "Linear operation may have been dispatched; outcome uncertain"
+		if reason != "" {
+			message += " (" + reason + ")"
+		}
+		message += ", inspect Linear before retrying"
 		if errors.Is(err, errBindingChangedAfterProviderError) {
 			message += "; the task-board binding also changed"
 		}
+		record.Reason = reason
+		record.UpdatedAt = l.now().UTC().Format(time.RFC3339Nano)
+		_ = saveLedger(path, record)
 		return nil, errors.New(message)
 	}
 	if receiptError != nil {
@@ -272,7 +319,9 @@ func readLedger(path, hash string) (any, bool, error) {
 	if previous.Digest != hash {
 		return nil, true, errors.New("operation_id already used with a different scoped payload")
 	}
-	if (previous.State == "refused") != (previous.Reason != "") {
+	// A refusal always has a reason; a pending record may keep the safe code
+	// of its uncertain failure; nothing else has one.
+	if (previous.State == "refused" && previous.Reason == "") || (previous.State != "refused" && previous.State != "pending" && previous.Reason != "") || len(previous.Reason) > 512 {
 		return nil, true, errors.New("corrupt operation ledger")
 	}
 	if previous.State == "refused" {
@@ -283,7 +332,11 @@ func readLedger(path, hash string) (any, bool, error) {
 	}
 	// pending and any unknown state remain uncertain (fail closed).
 	if previous.State != "accepted" {
-		return nil, true, errors.New("operation outcome uncertain; read back Linear before a new operation_id")
+		message := "operation outcome uncertain"
+		if previous.State == "pending" && previous.Reason != "" {
+			message += " (" + previous.Reason + ")"
+		}
+		return nil, true, errors.New(message + "; read back Linear before a new operation_id")
 	}
 	var receipt map[string]any
 	if len(previous.Receipt) > 65536 || json.Unmarshal(previous.Receipt, &receipt) != nil || receipt == nil {

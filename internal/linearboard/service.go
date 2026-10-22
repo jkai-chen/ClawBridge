@@ -591,6 +591,8 @@ func (s *Service) Write(ctx context.Context, scope bus.Request, in WriteInput) (
 		if fresh.SessionID != access.SessionID {
 			return nil, refusedBeforeDispatch(errActorChanged)
 		}
+		post := func(e error) error { return s.postFailure(ctx, scope, b, e) }
+		sent, known := sentCount(p)
 		switch in.Operation {
 		case "create":
 			description := ""
@@ -603,7 +605,7 @@ func (s *Service) Write(ctx context.Context, scope bus.Request, in WriteInput) (
 			}
 			issue, e := p.Create(ctx, linearprovider.CreateInput{TeamID: team, ProjectID: b.LinearProjectID, Title: *in.Title, Description: description, StateID: state})
 			if e != nil {
-				return nil, s.postFailure(ctx, scope, b, e)
+				return nil, writeFailure(p, sent, known, e, post)
 			}
 			if checkIssue(issue, b) != nil || issue.TeamID != team {
 				return nil, errors.New("created issue receipt scope mismatch")
@@ -612,7 +614,7 @@ func (s *Service) Write(ctx context.Context, scope bus.Request, in WriteInput) (
 		case "update":
 			issue, e := p.Update(ctx, linearprovider.UpdateInput{ID: in.IssueID, Title: in.Title, Description: in.Description, StateID: in.StateID})
 			if e != nil {
-				return nil, s.postFailure(ctx, scope, b, e)
+				return nil, writeFailure(p, sent, known, e, post)
 			}
 			if issue.ID != in.IssueID || checkIssue(issue, b) != nil {
 				return nil, errors.New("updated issue receipt scope mismatch")
@@ -621,7 +623,7 @@ func (s *Service) Write(ctx context.Context, scope bus.Request, in WriteInput) (
 		default:
 			receipt, e := p.Comment(ctx, in.IssueID, in.Body)
 			if e != nil {
-				return nil, s.postFailure(ctx, scope, b, e)
+				return nil, writeFailure(p, sent, known, e, post)
 			}
 			if receipt.IssueID != in.IssueID || !linearprovider.ValidID(receipt.ID) {
 				return nil, errors.New("comment receipt scope mismatch")

@@ -401,6 +401,8 @@ func (s *Service) WriteV2(ctx context.Context, scope bus.Request, in WriteInputV
 		if e = ctx.Err(); e != nil {
 			return nil, notDispatched(e)
 		}
+		post := func(e error) error { return s.postFailureV2(ctx, scope, b, e) }
+		sent, known := sentCount(p)
 		var receipt any
 		switch in.Operation {
 		case "create":
@@ -426,7 +428,7 @@ func (s *Service) WriteV2(ctx context.Context, scope bus.Request, in WriteInputV
 				issue, e = p2.CreateV2(ctx, create)
 			}
 			if e != nil {
-				return nil, s.postFailureV2(ctx, scope, b, e)
+				return nil, writeFailure(p, sent, known, e, post)
 			}
 			if checkIssueV2(issue, b, v) != nil || issue.TeamID != team || issue.ProjectID != project {
 				return nil, errors.New("created issue receipt scope mismatch")
@@ -455,7 +457,7 @@ func (s *Service) WriteV2(ctx context.Context, scope bus.Request, in WriteInputV
 				issue, e = p2.UpdateV2(ctx, update)
 			}
 			if e != nil {
-				return nil, s.postFailureV2(ctx, scope, b, e)
+				return nil, writeFailure(p, sent, known, e, post)
 			}
 			if issue.ID != in.IssueID || checkIssueV2(issue, b, v) != nil || issue.TeamID != team || ((in.Project.Present || legacy || current.ProjectKnown) && issue.ProjectID != project) {
 				return nil, errors.New("updated issue receipt scope mismatch")
@@ -471,7 +473,7 @@ func (s *Service) WriteV2(ctx context.Context, scope bus.Request, in WriteInputV
 		default:
 			r, err := p.Comment(ctx, in.IssueID, in.Body)
 			if err != nil {
-				return nil, s.postFailureV2(ctx, scope, b, err)
+				return nil, writeFailure(p, sent, known, err, post)
 			}
 			if r.IssueID != in.IssueID || !linearprovider.ValidID(r.ID) {
 				return nil, errors.New("comment receipt scope mismatch")

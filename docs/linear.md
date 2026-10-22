@@ -140,7 +140,13 @@ references on the issue, with routine peer conversation in ClawBridge. See the
 Task-board inspection is read-only. Creating/updating/commenting requires explicit
 write capability and an operation ID. Retry an accepted operation only with the
 same ID and payload. An uncertain write is held for read-back rather than replayed
-automatically. This local retry protection does not promise exactly-once writes
+automatically; its message names a safe failure code, such as
+`provider_rejected` with Linear's code (`RATELIMITED`) or `unavailable`, never
+Linear's message text. A write that provably never reached Linear (a network
+failure before the request was sent, or Linear's HTTP layer answering 429, 401
+or 403) reports "nothing was sent to Linear" with the code, HTTP status and any
+Retry-After, and can be retried with the same operation ID. ClawBridge never
+retries a write by itself. This local retry protection does not promise exactly-once writes
 across machines. A peer's ready/accept message does not close an issue or confer
 human approval.
 

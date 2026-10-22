@@ -381,3 +381,46 @@ func TestLinearBoardNeverInventsProviderExhaustion(t *testing.T) {
 		}
 	}
 }
+
+type countingProvider struct{ sent uint64 }
+
+func (c *countingProvider) Sent() uint64 { return c.sent }
+
+func TestLinearWriteThatSentNothingIsReleasedAndAnyOtherStaysUncertain(t *testing.T) {
+	l := ledger{dir: filepath.Join(t.TempDir(), "ledger")}
+	post := func(e error) error { return e }
+	rateLimited := &linearprovider.Error{Kind: "rate_limited", Status: 429, RetryAfter: "30", NotSent: true}
+	p := &countingProvider{sent: 4}
+	_, err := l.write("ns", "op", "payload", func() (any, error) {
+		before, known := sentCount(p)
+		return nil, writeFailure(p, before, known, rateLimited, post)
+	})
+	if err == nil || err.Error() != "nothing was sent to Linear (rate_limited, HTTP 429, retry after 30); retry with the same operation_id" {
+		t.Fatal(err)
+	}
+	// Released: the same operation_id dispatches again.
+	rejected := &linearprovider.Error{Kind: "provider_rejected", LinearCode: "RATELIMITED"}
+	_, err = l.write("ns", "op", "payload", func() (any, error) {
+		before, known := sentCount(p)
+		p.sent++
+		return nil, writeFailure(p, before, known, rejected, post)
+	})
+	if err == nil || !strings.Contains(err.Error(), "outcome uncertain (provider_rejected, Linear code RATELIMITED)") {
+		t.Fatal("a sent write must stay uncertain", err)
+	}
+	_, err = l.write("ns", "op", "payload", func() (any, error) { t.Fatal("pending operation redispatched"); return nil, nil })
+	if err == nil || !strings.Contains(err.Error(), "operation outcome uncertain (provider_rejected, Linear code RATELIMITED)") {
+		t.Fatal("pending record lost its safe reason", err)
+	}
+	// A provider that cannot count, or a failure that is not the provider's,
+	// stays uncertain without a code.
+	_, err = l.write("ns", "op2", "payload", func() (any, error) {
+		return nil, writeFailure(struct{}{}, 0, false, rateLimited, post)
+	})
+	if err == nil || !strings.Contains(err.Error(), "outcome uncertain (rate_limited, HTTP 429, retry after 30)") {
+		t.Fatal("an uncounted provider must stay uncertain", err)
+	}
+	if _, err = l.write("ns", "op3", "payload", func() (any, error) { return nil, errors.New("receipt mismatch") }); err == nil || !strings.Contains(err.Error(), "outcome uncertain, inspect") {
+		t.Fatal(err)
+	}
+}

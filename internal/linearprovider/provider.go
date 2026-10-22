@@ -6,8 +6,10 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
+	"net/http/httptrace"
 	"regexp"
 	"strings"
 	"sync/atomic"
@@ -21,11 +23,40 @@ const Endpoint = "https://mcp.linear.app/mcp"
 const MaxResultBytes = 1 << 20
 const MaxBodyBytes = 64 << 10
 
-type Error struct{ Kind string }
+// Error is a provider failure with only safe, bounded detail: a kind, the
+// HTTP status, a Retry-After value and a Linear error code, never free text.
+type Error struct {
+	Kind       string
+	Status     int
+	RetryAfter string
+	LinearCode string
+	// NotSent means the request provably never reached Linear's MCP server
+	// tool: it failed before its headers were written, or the server's HTTP
+	// layer refused it (429, 401, 403) before parsing it.
+	NotSent bool
+}
 
-func (e *Error) Error() string { return "Linear provider: " + e.Kind }
+func (e *Error) Error() string { return "Linear provider: " + e.Detail() }
 func (e *Error) Code() string  { return e.Kind }
-func fail(s string) error      { return &Error{Kind: s} }
+
+// Detail is the kind plus its safe detail, for messages and records.
+func (e *Error) Detail() string {
+	s := e.Kind
+	if e.Status != 0 {
+		s += fmt.Sprintf(", HTTP %d", e.Status)
+	}
+	if e.RetryAfter != "" {
+		s += ", retry after " + e.RetryAfter
+	}
+	if e.LinearCode != "" {
+		s += ", Linear code " + e.LinearCode
+	}
+	return s
+}
+func fail(s string) error { return &Error{Kind: s} }
+
+var linearCode = regexp.MustCompile(`^[A-Z_]{3,40}$`)
+var retryAfter = regexp.MustCompile(`^(?:[0-9]{1,6}|[A-Za-z0-9 ,:]{1,40})$`)
 
 var uuid = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
 
@@ -42,6 +73,7 @@ type Provider struct {
 	// broken records any failed call or missing capability, so a kept-open
 	// connection is reopened with a fresh tools/list before its next command.
 	broken atomic.Bool
+	sent   atomic.Uint64
 }
 type PageOptions struct {
 	Limit  int
@@ -139,10 +171,33 @@ func New(ctx context.Context, h *http.Client, readonly bool) (*Provider, error) 
 
 type boundedTransport struct{ base http.RoundTripper }
 
+// RoundTrip marks the failures that prove a request never reached the
+// server's tool: an error before any header was written (DNS, dial, TLS,
+// a changed profile), and a 429, 401 or 403 from the HTTP layer. Every other
+// failure stays a plain error, which callers treat as possibly sent.
 func (t boundedTransport) RoundTrip(r *http.Request) (*http.Response, error) {
+	var wrote atomic.Bool
+	trace := &httptrace.ClientTrace{WroteHeaders: func() { wrote.Store(true) }}
+	r = r.WithContext(httptrace.WithClientTrace(r.Context(), trace))
 	response, err := t.base.RoundTrip(r)
 	if err != nil {
+		if !wrote.Load() && r.Context().Err() == nil {
+			return nil, &Error{Kind: "unavailable", NotSent: true}
+		}
 		return nil, err
+	}
+	switch response.StatusCode {
+	case http.StatusTooManyRequests, http.StatusUnauthorized, http.StatusForbidden:
+		refused := &Error{Kind: "unauthorized", Status: response.StatusCode, NotSent: true}
+		if response.StatusCode == http.StatusTooManyRequests {
+			refused.Kind = "rate_limited"
+			if v := strings.TrimSpace(response.Header.Get("Retry-After")); retryAfter.MatchString(v) {
+				refused.RetryAfter = v
+			}
+		}
+		io.Copy(io.Discard, io.LimitReader(response.Body, MaxBodyBytes))
+		response.Body.Close()
+		return nil, refused
 	}
 	if response.Body != nil {
 		response.Body = &boundedBody{ReadCloser: response.Body, left: MaxResultBytes}
@@ -511,10 +566,56 @@ func (p *Provider) call(ctx context.Context, names []string, args ...arg) (map[s
 }
 func (p *Provider) invoke(ctx context.Context, chosen string, values map[string]any) (map[string]any, error) {
 	out, e := p.invokeOnce(ctx, chosen, values)
+	var unsent *Error
+	if !errors.As(e, &unsent) || !unsent.NotSent {
+		p.sent.Add(1)
+	}
 	if e != nil {
 		p.broken.Store(true)
 	}
 	return out, e
+}
+
+// Sent counts tool calls that may have reached Linear. A write whose count
+// did not change sent nothing.
+func (p *Provider) Sent() uint64 { return p.sent.Load() }
+
+// rejectionCode returns Linear's error code from a rejected tool result, only
+// when its JSON carries one in the expected place and shape.
+func rejectionCode(r *mcp.CallToolResult) string {
+	if r == nil {
+		return ""
+	}
+	for _, c := range r.Content {
+		t, ok := c.(*mcp.TextContent)
+		if !ok || len(t.Text) > MaxBodyBytes {
+			continue
+		}
+		var body struct {
+			Code       string `json:"code"`
+			Extensions struct {
+				Code string `json:"code"`
+			} `json:"extensions"`
+			Errors []struct {
+				Extensions struct {
+					Code string `json:"code"`
+				} `json:"extensions"`
+			} `json:"errors"`
+		}
+		if json.Unmarshal([]byte(t.Text), &body) != nil {
+			continue
+		}
+		candidates := []string{body.Extensions.Code, body.Code}
+		for _, e := range body.Errors {
+			candidates = append(candidates, e.Extensions.Code)
+		}
+		for _, code := range candidates {
+			if linearCode.MatchString(code) {
+				return code
+			}
+		}
+	}
+	return ""
 }
 func (p *Provider) invokeOnce(ctx context.Context, chosen string, values map[string]any) (map[string]any, error) {
 	var e error
@@ -525,10 +626,15 @@ func (p *Provider) invokeOnce(ctx context.Context, chosen string, values map[str
 		if errors.Is(e, context.Canceled) || errors.Is(e, context.DeadlineExceeded) {
 			return nil, e
 		}
+		var transport *Error
+		if errors.As(e, &transport) {
+			copied := *transport
+			return nil, &copied
+		}
 		return nil, fail("unavailable")
 	}
 	if r == nil || r.IsError {
-		return nil, fail("provider_rejected")
+		return nil, &Error{Kind: "provider_rejected", LinearCode: rejectionCode(r)}
 	}
 	var b []byte
 	if r.StructuredContent != nil {

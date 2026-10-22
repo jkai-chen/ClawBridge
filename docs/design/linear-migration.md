@@ -215,6 +215,12 @@ action/type/endpoints and an optional real provider edge UUID, never a fabricate
 ID. Caller-supplied arbitrary edge IDs are not accepted. Unknown outcome retains
 pending and requires read-back; never compensate or blindly repeat.
 
+The observed official `save_issue` schema also provides a safe curated form:
+`id` plus one UUID in `blocks`/`relatedTo` appends that edge, and
+`removeBlocks`/`removeRelatedTo` removes that endpoint. Negotiate those typed
+fields explicitly and send exactly one endpoint. This is an edge operation,
+not permission to read and replace the existing relation arrays.
+
 Composite cursor version2 is bounded to8192 bytes and binds personal profile,
 canonical ClawBridge scope, mapping version/revision, sorted mapping/filter digest,
 verified pair index and provider cursor. Traverse sorted pairs with one provider

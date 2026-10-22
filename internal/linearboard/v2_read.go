@@ -129,10 +129,17 @@ func (s *Service) ContextV2(ctx context.Context, scope bus.Request) (ContextV2, 
 	if _, e = verifyBindingV2(ctx, p, b); e != nil {
 		return ContextV2{}, e
 	}
+	out := ContextV2{Binding: b, Profile: profile, WorkspaceIDAvailable: profile.WorkspaceID != ""}
+	if p2, ok := p.(ProviderV2); ok {
+		// Capability negotiation reads only the advertised tool list.
+		if caps, e := p2.Capabilities(ctx); e == nil {
+			out.Capabilities = &caps
+		}
+	}
 	if e = s.unchangedV2(ctx, scope, b); e != nil {
 		return ContextV2{}, e
 	}
-	return ContextV2{b, profile, profile.WorkspaceID != ""}, nil
+	return out, nil
 }
 func (s *Service) LinkV2(ctx context.Context, scope bus.Request, in LinkInputV2) (any, error) {
 	if e := ValidateLinkV2(in); e != nil {

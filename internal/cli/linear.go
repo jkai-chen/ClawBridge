@@ -40,6 +40,26 @@ var newLinearManager = func(directory string) *linearconn.Manager {
 	}})
 }
 var openLinearProvider = linearprovider.New
+
+// linearCapabilities opens the personal profile's provider and reports its
+// negotiated capabilities. It reads only the advertised tool list.
+func linearCapabilities(ctx context.Context, manager *linearconn.Manager, profileID string) (linearprovider.Capabilities, error) {
+	profile, err := manager.Status(ctx, profileID)
+	if err != nil {
+		return linearprovider.Capabilities{}, err
+	}
+	client, err := manager.HTTPClient(ctx, profileID)
+	if err != nil {
+		return linearprovider.Capabilities{}, err
+	}
+	provider, err := openLinearProvider(ctx, client, profile.Access == linearconn.Read)
+	if err != nil {
+		return linearprovider.Capabilities{}, err
+	}
+	defer provider.Close()
+	return provider.Capabilities(ctx)
+}
+
 var openLinearBrowser = func(ctx context.Context, url string) error {
 	var command string
 	var args []string
@@ -540,7 +560,19 @@ func runLinear(ctx context.Context, flags Config, args []string, stdout, stderr 
 		if e != nil {
 			return e
 		}
-		return emit(profile)
+		// Capability state is best effort: an unreachable provider is
+		// reported, never turned into a failed status.
+		status := struct {
+			linearconn.Profile
+			Capabilities      *linearprovider.Capabilities `json:"capabilities,omitempty"`
+			CapabilitiesError string                       `json:"capabilities_error,omitempty"`
+		}{Profile: profile}
+		if caps, e := linearCapabilities(bounded, manager, v.profile); e != nil {
+			status.CapabilitiesError = "capabilities unavailable: " + linearCapabilityCode(e)
+		} else {
+			status.Capabilities = &caps
+		}
+		return emit(status)
 	case "logout":
 		if e := manager.Logout(bounded, v.profile); e != nil {
 			return e
@@ -635,4 +667,14 @@ func linearAuthority(c Config) string {
 	raw, _ := json.Marshal(route)
 	h := sha256.Sum256(raw)
 	return hex.EncodeToString(h[:])
+}
+
+// linearCapabilityCode renders a provider failure without its text, which may
+// carry transport detail.
+func linearCapabilityCode(err error) string {
+	var coded interface{ Code() string }
+	if errors.As(err, &coded) {
+		return coded.Code()
+	}
+	return "unavailable"
 }

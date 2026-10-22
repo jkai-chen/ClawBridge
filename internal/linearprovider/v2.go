@@ -66,6 +66,10 @@ type Capabilities struct {
 	RelationAdd              bool `json:"relation_add"`
 	RelationRemove           bool `json:"relation_remove"`
 	LabelEligibilityByFilter bool `json:"label_eligibility_by_filter"`
+	// Reasons explains, per capability key, why a capability is off, so a
+	// silent switch-off (for example after a provider schema change) is
+	// visible in status and doctor output.
+	Reasons map[string]string `json:"reasons,omitempty"`
 }
 type CreateInputV2 struct {
 	CreateInput
@@ -424,12 +428,29 @@ func (p *Provider) Capabilities(context.Context) (Capabilities, error) {
 	// parent change preserves the destination. This capability only says the
 	// provider can express a parent beside a project and read issues back;
 	// the board proves preservation by allowing same-destination parents only.
+	shape := false
 	for _, name := range []string{"create_issue", "update_issue", "save_issue"} {
-		if p.parentShape(name) && p.tools["get_issue"] != nil {
-			capabilities.ParentSameDestination = true
-		}
+		shape = shape || p.parentShape(name)
 	}
-	capabilities.LabelEligibilityByFilter = capabilities.Labels && p.labelFilterProof()
+	capabilities.ParentSameDestination = shape && p.tools["get_issue"] != nil
+	reason := p.labelFilterReason()
+	if !capabilities.Labels {
+		reason = "label listing is unavailable"
+	}
+	capabilities.LabelEligibilityByFilter = reason == ""
+	capabilities.Reasons = map[string]string{}
+	if reason != "" {
+		capabilities.Reasons["label_eligibility_by_filter"] = reason
+	}
+	switch {
+	case !shape:
+		capabilities.Reasons["parent_same_destination"] = "no issue mutation tool accepts parentId beside project"
+	case p.tools["get_issue"] == nil:
+		capabilities.Reasons["parent_same_destination"] = "get_issue is not advertised"
+	}
+	if len(capabilities.Reasons) == 0 {
+		capabilities.Reasons = nil
+	}
 	for _, action := range []string{"add", "remove"} {
 		available := true
 		for _, kind := range []string{"blocks", "related"} {
@@ -757,31 +778,39 @@ func explicitBool(m map[string]any, keys ...string) (bool, bool, error) {
 // default to false. Any drift in names, types, defaults or the documented
 // meaning disables it, and labels then stay unproven as before. This is an
 // inference from Linear's documented list filters, pinned by schema.
-func (p *Provider) labelFilterProof() bool {
+func (p *Provider) labelFilterProof() bool { return p.labelFilterReason() == "" }
+
+// labelFilterReason returns "" when the pinned contract holds, otherwise a
+// short, credential-free description of the first difference.
+func (p *Provider) labelFilterReason() string {
 	t := p.tools["list_issue_labels"]
-	if t == nil || !strings.Contains(t.Description, "retiredAt") || !strings.Contains(t.Description, "cannot be applied") {
-		return false
+	if t == nil {
+		return "list_issue_labels is not advertised"
+	}
+	if !strings.Contains(t.Description, "retiredAt") || !strings.Contains(t.Description, "cannot be applied") {
+		return "list_issue_labels schema changed: the retiredAt rule is no longer documented"
 	}
 	props, _, e := schema(t)
 	if e != nil {
-		return false
+		return "list_issue_labels schema is unreadable"
 	}
 	if team, ok := props["team"].(map[string]any); !ok || team["type"] != "string" {
-		return false
+		return "list_issue_labels schema changed: team filter missing or not a string"
 	}
-	for name, meaning := range map[string][]string{"includeArchived": {"Include archived"}, "includeGroups": {"Include label groups", "isGroup", "cannot be applied directly"}} {
+	meanings := map[string][]string{"includeArchived": {"Include archived"}, "includeGroups": {"Include label groups", "isGroup", "cannot be applied directly"}}
+	for _, name := range []string{"includeArchived", "includeGroups"} {
 		filter, ok := props[name].(map[string]any)
 		if !ok || filter["type"] != "boolean" || filter["default"] != false {
-			return false
+			return "list_issue_labels schema changed: " + name + " missing or no longer a boolean defaulting to false"
 		}
 		text, _ := filter["description"].(string)
-		for _, want := range meaning {
+		for _, want := range meanings[name] {
 			if !strings.Contains(text, want) {
-				return false
+				return "list_issue_labels schema changed: " + name + " no longer has its documented meaning"
 			}
 		}
 	}
-	return true
+	return ""
 }
 func (p *Provider) Labels(ctx context.Context, team string, o PageOptions) (Page[Label], error) {
 	if !ValidID(team) {

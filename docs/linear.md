@@ -105,6 +105,15 @@ process's profile/project; tool arguments cannot choose another account or board
 When checking that installation with `doctor`, pass the same `--linear-profile`
 alongside its MCP agent/config/session selection so the expected routes agree.
 
+Optional native capabilities can switch off on their own when Linear changes a
+tool schema. With `--linear-profile`, `doctor` adds a `linear.capabilities` check
+showing `label_eligibility_by_filter` and `parent_same_destination` as on or off,
+with the reason when off (for example "list_issue_labels schema changed"); off is
+a warning. `clawbridge linear status --profile ID` reports the same `capabilities`
+object (or `capabilities_error` if Linear is unreachable), and
+`linear context` and the `taskboard_context_v2` tool include it so agents can
+see it. Reading capabilities lists the provider's tools only; it writes nothing.
+
 Start from the assigned issue and read its scope, dependencies, acceptance criteria
 and Current agent block. Resolve that immutable session through project-scoped,
 paged session discovery. Ask the coordinator about ambiguous or changed ownership;

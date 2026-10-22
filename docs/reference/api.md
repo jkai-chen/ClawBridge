@@ -102,6 +102,8 @@ issue, create, update, comment, labels, members, relation_add and relation_remov
 each named `taskboard_<operation>_v2`. It advertises 32 tools in total; a V1-only
 adapter retains 21 and an unconfigured adapter retains 14. Prefer the advertised
 V2 family for new board calls. Initialization and listing do not access Linear.
+`taskboard_context_v2` includes a `capabilities` object with the negotiated
+capability flags and, for any that are off, a `reasons` entry explaining why.
 `taskboard_update_v2` requires `expected_label_ids` whenever it sends
 `label_ids`: the complete label set last read, refused on mismatch.
 The [L2 contract](../design/linear-migration.md) defines the closed schemas and

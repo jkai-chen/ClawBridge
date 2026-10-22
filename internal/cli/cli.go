@@ -11,11 +11,13 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	"clawbridge/internal/auth"
 	"clawbridge/internal/buildinfo"
 	"clawbridge/internal/bus"
 	"clawbridge/internal/doctor"
+	"clawbridge/internal/linearprovider"
 	"clawbridge/internal/mcpserver"
 	"clawbridge/internal/remote"
 	"clawbridge/internal/server"
@@ -679,6 +681,17 @@ func collectDoctor(ctx context.Context, config Config, configPath string, existi
 		executor = store
 	}
 	in.MCPConfigs = selections
+	if config.LinearProfile != "" && validLinearProfile(config.LinearProfile) {
+		directory, err := linearDirectory()
+		if err == nil {
+			manager := newLinearManager(directory)
+			in.LinearCapabilities = func(ctx context.Context) (linearprovider.Capabilities, error) {
+				bounded, cancel := context.WithTimeout(ctx, 45*time.Second)
+				defer cancel()
+				return linearCapabilities(bounded, manager, config.LinearProfile)
+			}
+		}
+	}
 	return doctor.Run(ctx, in, executor), nil
 }
 

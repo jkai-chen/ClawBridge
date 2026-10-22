@@ -23,6 +23,10 @@ type ContextV2 struct {
 	Binding              bus.TaskboardBindingV2 `json:"binding"`
 	Profile              linearconn.Profile     `json:"profile"`
 	WorkspaceIDAvailable bool                   `json:"linear_workspace_id_available"`
+	// Capabilities is the provider's negotiated capability state, including
+	// why a capability is off. It is omitted for a provider without V2
+	// capability reporting.
+	Capabilities *linearprovider.Capabilities `json:"capabilities,omitempty"`
 }
 type LinkInputV2 struct {
 	TeamIDs            []string

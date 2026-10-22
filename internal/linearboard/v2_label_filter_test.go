@@ -68,3 +68,13 @@ func TestLinearV2FilterScopedLabelsApplyOnlyFromTheIssueTeamList(t *testing.T) {
 		t.Fatal("filter-scoped row with its own scope accepted")
 	}
 }
+
+func TestLinearV2ContextReportsCapabilityState(t *testing.T) {
+	s, _, p, scope := testV2(t)
+	p.caps.LabelEligibilityByFilter = false
+	p.caps.Reasons = map[string]string{"label_eligibility_by_filter": "list_issue_labels is not advertised"}
+	got, e := s.ContextV2(context.Background(), scope)
+	if e != nil || got.Capabilities == nil || got.Capabilities.LabelEligibilityByFilter || got.Capabilities.Reasons["label_eligibility_by_filter"] == "" || !got.Capabilities.ParentSameDestination || p.writes != 0 {
+		t.Fatal("context omitted capability state", got.Capabilities, e)
+	}
+}

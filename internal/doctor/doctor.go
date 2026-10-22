@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"clawbridge/internal/bus"
+	"clawbridge/internal/linearprovider"
 	"clawbridge/internal/mirror"
 	"clawbridge/internal/remote"
 	"github.com/pelletier/go-toml/v2"
@@ -103,6 +104,10 @@ type Input struct {
 	MirrorStaleAfter time.Duration
 	TokenSource      TokenSource
 	MCPConfigs       []MCPConfig
+	// LinearCapabilities, when a personal Linear profile is configured, reads
+	// the provider's negotiated capabilities from its advertised tool list.
+	// It performs no Linear write. Nil skips the Linear section.
+	LinearCapabilities func(context.Context) (linearprovider.Capabilities, error)
 }
 
 // Check is one stable machine-readable diagnostic.
@@ -162,6 +167,9 @@ func Run(ctx context.Context, in Input, executor Executor) Report {
 		}
 		checkMCP(mcp, add)
 	}
+	if in.LinearCapabilities != nil {
+		checkLinearCapabilities(ctx, in.LinearCapabilities, add)
+	}
 	if len(in.MCPConfigs) == 0 {
 		add(Check{
 			ID: "mcp.entries", Title: "Installed MCP entries", Status: Warn,
@@ -173,6 +181,42 @@ func Run(ctx context.Context, in Input, executor Executor) Report {
 	return report
 }
 
+// checkLinearCapabilities makes a silent capability switch-off visible. The
+// capabilities are optional, so an off state is a warning, never a failure.
+func checkLinearCapabilities(ctx context.Context, read func(context.Context) (linearprovider.Capabilities, error), add func(Check)) {
+	check := Check{ID: "linear.capabilities", Title: "Linear capabilities"}
+	caps, err := read(ctx)
+	if err != nil {
+		check.Status = Warn
+		check.Message = "Linear capabilities could not be read (" + safeCode(err) + ")."
+		check.Action = "Check the personal Linear profile with `clawbridge linear status --profile ID`."
+		add(check)
+		return
+	}
+	state := func(on bool) string {
+		if on {
+			return "on"
+		}
+		return "off"
+	}
+	parts := []string{"label_eligibility_by_filter=" + state(caps.LabelEligibilityByFilter), "parent_same_destination=" + state(caps.ParentSameDestination)}
+	off := []string{}
+	for _, key := range []string{"label_eligibility_by_filter", "parent_same_destination"} {
+		if reason := caps.Reasons[key]; reason != "" {
+			off = append(off, key+": "+reason)
+		}
+	}
+	check.Status = Pass
+	check.Message = strings.Join(parts, ", ") + "."
+	if !caps.LabelEligibilityByFilter || !caps.ParentSameDestination {
+		check.Status = Warn
+		if len(off) > 0 {
+			check.Message += " Off because " + strings.Join(off, "; ") + "."
+		}
+		check.Action = "Label application or parent changes are refused until the capability returns; report a provider schema change to the coordinator."
+	}
+	add(check)
+}
 func checkConfig(config Config, add func(Check)) bool {
 	check := Check{ID: "config.trusted", Title: "Trusted configuration", Status: Fail, Path: config.Path}
 	if !config.Present {

@@ -195,6 +195,7 @@ func renderSessions(m Model) string {
 			{"Host label (self-reported)", firstNonempty(row.Host, "Not recorded")},
 			{"Account label (self-reported, not verified identity)", firstNonempty(row.Account, "Not recorded")},
 			{"Agent", row.AgentKind}, {"Role", row.Role}, {"Status", row.Status}, {"Presence", firstNonempty(row.Presence, row.Status, "-")},
+			{"Assignment", firstNonempty(row.Assignment, "None")},
 		}
 		b.WriteString("\n\nSelected session\n")
 		for _, d := range details {

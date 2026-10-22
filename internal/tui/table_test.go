@@ -69,3 +69,19 @@ func TestSessionsAttributionDetailsPreserveFullSanitizedMetadata(t *testing.T) {
 		t.Fatal("missing host must be explicit")
 	}
 }
+
+func TestSessionsDetailsShowTheLiveAssignment(t *testing.T) {
+	rows := sessionRows([]map[string]any{
+		{"name": "eng", "assignment": map[string]any{"state": "confirmed", "issue_uuid": "0e0e0e0e-0e0e-4e0e-8e0e-0e0e0e0e0e0e", "issue_identifier": "SYN-5", "task_role": "engineer", "scope_paths": []any{"internal/tui/**", "docs"}, "assignment_stale": true}},
+		{"name": "idle", "assignment": nil},
+	})
+	if rows[0].Assignment != "confirmed SYN-5 (engineer) internal/tui/**, docs [owner stale]" || rows[1].Assignment != "" {
+		t.Fatalf("%q %q", rows[0].Assignment, rows[1].Assignment)
+	}
+	for selected, want := range []string{"Assignment: confirmed SYN-5", "Assignment: None"} {
+		m := Model{width: 140, sessions: rows, selected: selected}
+		if out := ansi.Strip(renderSessions(m)); !strings.Contains(out, want) {
+			t.Fatalf("missing %q:\n%s", want, out)
+		}
+	}
+}

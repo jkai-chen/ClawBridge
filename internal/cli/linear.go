@@ -97,6 +97,7 @@ type repeatedIDs []string
 
 func (v *repeatedIDs) String() string     { return strings.Join(*v, ",") }
 func (v *repeatedIDs) Set(s string) error { *v = append(*v, s); return nil }
+func (v *repeatedIDs) Get() any           { return []string(*v) }
 func linearDirectory() (string, error) {
 	home, err := stateHome()
 	if err != nil {

@@ -31,6 +31,10 @@ Global flags: --db PATH --workspace NAME_OR_ID --project SLUG_OR_ID --session NA
 Commands: setup --local, project create SLUG, register [NAME], sessions, send TO BODY --operation-id ID,
           inbox, inbox-status [--after N], mark-read ID..., reply ID BODY --operation-id ID, update, retire, history, whoami, status ID,
           notification-status [--after N], notification-policy --policy accept|hold|refuse,
+          assignment propose [--issue-uuid UUID --issue-identifier ID] [--task-role ROLE] [--scope-repo REMOTE] [--scope-path PATTERN]...,
+          assignment confirm SESSION --revision REV [--allow-overlap], assignment release [SESSION] --revision REV,
+          project coordinator-set SESSION, project coordinator-clear,
+          sessions [--issue ID] [--scope-path PATH] [--assignment-state proposed|confirmed],
           host-status|host-wait --adapter codex --endpoint unix:///absolute/socket --thread UUID,
           notify --adapter json|codex --state ABSOLUTE_PATH [--thread UUID] [--interval 5s] [--once],
           linear COMMAND --help (native connection, scoped task board and task actions),
@@ -365,6 +369,13 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 			rest = rest[1:]
 			op = "project_role_set"
 			arityMin, arityMax = 2, 2
+		case "coordinator-set", "coordinator-clear":
+			// Designating the session that confirms assignments grants no other rights.
+			op = "coordinator_set"
+			if rest[0] == "coordinator-set" {
+				arityMin, arityMax = 1, 1
+			}
+			rest = rest[1:]
 		case "role-revoke":
 			rest = rest[1:]
 			op = "project_role_revoke"
@@ -395,6 +406,34 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		commonPage()
 		stringArg("role", "role")
 		stringArg("status", "status")
+		stringArg("issue", "Linear issue UUID or display identifier of a live assignment")
+		stringArg("scope-path", "repository path covered by a live assignment")
+		stringArg("assignment-state", "proposed or confirmed")
+	case "assignment":
+		if len(rest) == 0 {
+			return errors.New("usage: assignment propose|confirm|release ...")
+		}
+		switch rest[0] {
+		case "propose":
+			op = "assignment_propose"
+			stringArg("issue-uuid", "Linear issue UUID")
+			stringArg("issue-identifier", "Linear display identifier, such as ABC-12")
+			stringArg("task-role", "task role, such as engineer or reviewer")
+			stringArg("scope-repo", "git remote of the owned repository")
+			f.Var(&repeatedIDs{}, "scope-path", "owned path pattern, repeatable (internal/bus/**, docs/*.md)")
+		case "confirm":
+			op = "assignment_confirm"
+			arityMin, arityMax = 1, 1
+			stringArg("revision", "the assignment revision you reviewed")
+			f.Bool("allow-overlap", false, "confirm although a confirmed assignment overlaps")
+		case "release":
+			op = "assignment_release"
+			arityMax = 1
+			stringArg("revision", "the assignment's current revision")
+		default:
+			return errors.New("usage: assignment propose|confirm|release ...")
+		}
+		rest = rest[1:]
 	case "send":
 		op = "send"
 		arityMin, arityMax = 2, 2
@@ -523,6 +562,11 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 			}
 		} else if op == "project_role_revoke" {
 			a["principal"] = pos[0]
+		} else if op == "coordinator_set" {
+			a["target_session"] = ""
+			if len(pos) > 0 {
+				a["target_session"] = pos[0]
+			}
 		} else {
 			a["principal"], a["role"] = pos[0], pos[1]
 		}
@@ -539,6 +583,14 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		a["message_id"], a["body"] = pos[0], pos[1]
 	case "mark-read":
 		a["ids"] = pos
+	case "assignment":
+		if len(pos) > 0 {
+			a["target_session"] = pos[0]
+		}
+		if v, ok := a["scope_path"]; ok {
+			a["scope_paths"] = v
+			delete(a, "scope_path")
+		}
 	case "status":
 		a["message_id"] = pos[0]
 	}
@@ -635,7 +687,7 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	}
 	if config.Instance != "" {
 		switch op {
-		case "register_session", "list_sessions", "history", "send", "reply", "inbox", "inbox_status", "notification_status", "set_notification_policy", "mark_read", "update_session", "retire_session", "whoami", "message_status", "project_role_set", "project_role_revoke", "purge_expired":
+		case "register_session", "list_sessions", "history", "send", "reply", "inbox", "inbox_status", "notification_status", "set_notification_policy", "mark_read", "update_session", "retire_session", "whoami", "message_status", "project_role_set", "project_role_revoke", "purge_expired", "assignment_propose", "assignment_confirm", "assignment_release", "coordinator_set":
 			a["instance"] = config.Instance
 		}
 	}

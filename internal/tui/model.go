@@ -228,6 +228,8 @@ type SessionRow struct {
 	Status    string `json:"status,omitempty"`
 	Presence  string `json:"presence,omitempty"`
 	Stale     bool   `json:"stale"`
+	// Assignment summarizes the live assignment: state, issue, task role, scope.
+	Assignment string `json:"assignment,omitempty"`
 }
 
 // MessageRow is one inbox item. Delivery and read stamps come from the server.
@@ -1356,10 +1358,37 @@ func sessionRows(rows []map[string]any) []SessionRow {
 		out = append(out, SessionRow{
 			UpdatedAt: text(r, "updated_at"), ID: text(r, "id"), Name: text(r, "name"), Owner: text(r, "owner_principal"), Host: text(r, "host"), Account: text(r, "account"),
 			Role: text(r, "role"), AgentKind: text(r, "agent_kind"), Status: text(r, "status"),
-			Presence: text(r, "presence"), Stale: boolean(r, "stale"),
+			Presence: text(r, "presence"), Stale: boolean(r, "stale"), Assignment: assignmentSummary(r["assignment"]),
 		})
 	}
 	return out
+}
+
+func assignmentSummary(v any) string {
+	a, ok := v.(map[string]any)
+	if !ok {
+		return ""
+	}
+	parts := []string{text(a, "state")}
+	if issue := firstNonempty(text(a, "issue_identifier"), text(a, "issue_uuid")); issue != "" {
+		parts = append(parts, issue)
+	}
+	if role := text(a, "task_role"); role != "" {
+		parts = append(parts, "("+role+")")
+	}
+	if paths, ok := a["scope_paths"].([]any); ok && len(paths) > 0 {
+		scope := []string{}
+		for _, p := range paths {
+			if s, ok := p.(string); ok {
+				scope = append(scope, s)
+			}
+		}
+		parts = append(parts, strings.Join(scope, ", "))
+	}
+	if stale, _ := a["assignment_stale"].(bool); stale {
+		parts = append(parts, "[owner stale]")
+	}
+	return strings.Join(parts, " ")
 }
 
 func messageRows(rows []map[string]any) []MessageRow {

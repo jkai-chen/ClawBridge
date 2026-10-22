@@ -83,7 +83,7 @@ func NewServerWithOptions(store Executor, workspace, project, session, instance 
 	s.AddSendingMiddleware(inbox.sending)
 	s.AddResource(&mcp.Resource{URI: InboxStatusURI, Name: "Inbox status", MIMEType: "application/json", Description: "Authoritative unread metadata; does not mark delivered or read."}, inbox.read)
 	add[registerInput](s, b, "register_session", "Register this configured session; routing roles do not grant permissions. Use resume only for explicit takeover; record the new instance before another resume.", false, false)
-	add[listInput](s, b, "list_sessions", "List sessions in the pinned project.", true, false)
+	add[listInput](s, b, "list_sessions", "List sessions in the pinned project with their live assignments; filter by issue, scope_path or assignment_state to find slice owners.", true, false)
 	add[sendInput](s, b, "send", "Send to a session, @all, or @role:ROLE. Reuse operation_id only for an identical retry.", false, true)
 	add[inboxInput](s, b, "inbox", "Read this session's inbox; fetching marks delivered, not read. unread_only defaults to true.", false, true)
 	add[inboxStatusInput](s, b, "inbox_status", "Inspect authoritative unread metadata without heartbeat, delivery, read or history writes.", true, true)
@@ -93,6 +93,9 @@ func NewServerWithOptions(store Executor, workspace, project, session, instance 
 	add[replyInput](s, b, "reply", "Reply to a received message, preserving its thread and recording the parent message.", false, true)
 	add[updateInput](s, b, "update_session", "Update this session's descriptive fields; role changes do not grant authority.", false, false)
 	add[retireInput](s, b, "retire_session", "Retire this session with an optional successor; messages are not silently forwarded.", false, true)
+	add[proposeInput](s, b, "assignment_propose", "Propose this session's own assignment (Linear issue, task role, repository path patterns), replacing its previous one. It describes ownership, is not a lock and grants no rights; tell the coordinator with a coordination message.", false, false)
+	add[confirmInput](s, b, "assignment_confirm", "Designated coordinator session only: confirm a session's proposed assignment at the revision you reviewed. Overlap with a confirmed assignment is refused unless allow_overlap.", false, false)
+	add[releaseInput](s, b, "assignment_release", "Release this session's assignment, or as the designated coordinator another session's, at its current revision.", false, false)
 	add[historyInput](s, b, "history", "Read the pinned project's append-only audit trail.", true, false)
 	add[emptyInput](s, b, "whoami", "Show pinned scope, session identity, principal provenance, and storage mode.", true, false)
 	add[statusInput](s, b, "message_status", "Inspect delivery/read metadata for a message sent by this session.", true, false)
@@ -102,7 +105,7 @@ func NewServerWithOptions(store Executor, workspace, project, session, instance 
 
 func add[In any](s *mcp.Server, b *binding, operation, description string, readOnly, idempotent bool) {
 	closed := false
-	destructive := operation == "register_session" || operation == "update_session" || operation == "retire_session"
+	destructive := operation == "register_session" || operation == "update_session" || operation == "retire_session" || operation == "assignment_propose" || operation == "assignment_release"
 	mcp.AddTool(s, &mcp.Tool{Name: operation, Description: description, Annotations: &mcp.ToolAnnotations{
 		ReadOnlyHint: readOnly, IdempotentHint: idempotent, OpenWorldHint: &closed, DestructiveHint: &destructive,
 	}}, func(ctx context.Context, request *mcp.CallToolRequest, in In) (*mcp.CallToolResult, bus.Result, error) {
@@ -184,10 +187,29 @@ type registerInput struct {
 	Transport map[string]any `json:"transport,omitempty"`
 }
 type listInput struct {
-	Status string `json:"status,omitempty"`
-	Role   string `json:"role,omitempty"`
-	Limit  *int   `json:"limit,omitempty"`
-	After  *int64 `json:"after,omitempty"`
+	Status          string `json:"status,omitempty"`
+	Role            string `json:"role,omitempty"`
+	Issue           string `json:"issue,omitempty" jsonschema:"Linear issue UUID or display identifier of a live assignment."`
+	ScopePath       string `json:"scope_path,omitempty" jsonschema:"Repository-relative path; lists sessions whose live assignment covers it."`
+	AssignmentState string `json:"assignment_state,omitempty" jsonschema:"proposed or confirmed."`
+	Limit           *int   `json:"limit,omitempty"`
+	After           *int64 `json:"after,omitempty"`
+}
+type proposeInput struct {
+	IssueUUID       string   `json:"issue_uuid,omitempty" jsonschema:"Lowercase Linear issue UUID."`
+	IssueIdentifier string   `json:"issue_identifier,omitempty" jsonschema:"Display identifier such as ABC-12; requires issue_uuid."`
+	TaskRole        string   `json:"task_role,omitempty"`
+	ScopeRepo       string   `json:"scope_repo,omitempty" jsonschema:"Git remote of the owned repository."`
+	ScopePaths      []string `json:"scope_paths,omitempty" jsonschema:"Up to 32 repository-relative path patterns; a pattern covers what it matches and everything beneath, and ** is allowed only whole or as a final /**."`
+}
+type confirmInput struct {
+	TargetSession string `json:"target_session,omitempty" jsonschema:"The session whose assignment to confirm; omit for this session."`
+	Revision      string `json:"revision" jsonschema:"The assignment revision you reviewed."`
+	AllowOverlap  bool   `json:"allow_overlap,omitempty" jsonschema:"Confirm although a confirmed assignment overlaps; audited."`
+}
+type releaseInput struct {
+	TargetSession string `json:"target_session,omitempty" jsonschema:"Designated coordinator only: another session; omit for this session."`
+	Revision      string `json:"revision" jsonschema:"The assignment's current revision."`
 }
 type sendInput struct {
 	Coordination *bus.Coordination `json:"coordination,omitempty"`

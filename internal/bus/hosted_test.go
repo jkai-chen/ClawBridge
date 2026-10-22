@@ -161,3 +161,36 @@ func TestPostgresSessionNameCannotImpersonateSessionID(t *testing.T) {
 		}
 	}
 }
+func TestPrincipalGrantsNormaliseToTokenForm(t *testing.T) {
+	for in, want := range map[string]string{"Bob@X.com": "bob@x.com", " Owner@Example.COM\t": "owner@example.com", "bob@x.com": "bob@x.com"} {
+		if got := normalPrincipal(in); got != want || !validPrincipal(got) {
+			t.Fatalf("normalPrincipal(%q) = %q, want valid %q", in, got, want)
+		}
+	}
+}
+func TestPostgresMixedCaseGrantMatchesTokenPrincipal(t *testing.T) {
+	dsn := os.Getenv("CLAWBRIDGE_TEST_POSTGRES_DSN")
+	if dsn == "" {
+		t.Skip("reviewer supplies disposable Postgres DSN")
+	}
+	ctx := context.Background()
+	// Operators and owners may type mixed case; the server always executes as
+	// the lowercased verified token email.
+	s, err := OpenPostgres(ctx, dsn, " Owner@Bus-Test.example ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	w := newID("unit_")
+	call := func(principal, op, session string, a map[string]any) {
+		t.Helper()
+		if _, e := s.ExecuteAs(ctx, principal, Request{Operation: op, Workspace: w, Project: "p", Session: session, Args: a}); e != nil {
+			t.Fatalf("%s as %s: %v", op, principal, e)
+		}
+	}
+	owner, bob := "owner@bus-test.example", "bob@bus-test.example"
+	call(owner, "workspace_init", "", map[string]any{"mode": "server"})
+	call(owner, "project_create", "", map[string]any{"slug": "p"})
+	call(owner, "project_role_set", "", map[string]any{"principal": "Bob@Bus-Test.example", "role": "member"})
+	call(bob, "register_session", "bob", map[string]any{"instance": "bob-inst"})
+}

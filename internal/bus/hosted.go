@@ -18,7 +18,7 @@ func (s *Store) projectRole(ctx context.Context, tx *transaction, w map[string]a
 	return row["role"].(string), nil
 }
 func (s *Store) setProjectRole(ctx context.Context, tx *transaction, wid, pid string, a map[string]any) (any, error) {
-	principal, role := str(a, "principal"), str(a, "role")
+	principal, role := normalPrincipal(str(a, "principal")), str(a, "role")
 	if !validPrincipal(principal) {
 		return nil, errors.New("principal must be an email")
 	}

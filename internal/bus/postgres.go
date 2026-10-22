@@ -11,6 +11,9 @@ import (
 	_ "github.com/jackc/pgx/v5/stdlib"
 )
 
+// normalPrincipal matches the server's verified-token form (lowercase), so a
+// stored grant compares equal to the principal a request is executed as.
+func normalPrincipal(p string) string { return strings.ToLower(strings.TrimSpace(p)) }
 func validPrincipal(p string) bool {
 	v, e := mail.ParseAddress(p)
 	return e == nil && v.Address == p && strings.Contains(p, "@") && len(p) <= 320 && !strings.ContainsAny(p, "\r\n")
@@ -19,6 +22,7 @@ func validPrincipal(p string) bool {
 // OpenPostgres opens only PostgreSQL. bootstrapOwner is a trusted operator setting,
 // never a request field. ExecuteAs must receive a verified identity from the server.
 func OpenPostgres(ctx context.Context, dsn, bootstrapOwner string) (*Store, error) {
+	bootstrapOwner = normalPrincipal(bootstrapOwner)
 	if dsn == "" || !validPrincipal(bootstrapOwner) {
 		return nil, errors.New("Postgres DSN and bootstrap owner email are required")
 	}

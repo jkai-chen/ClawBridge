@@ -228,8 +228,14 @@ func (s *Store) snapshot(ctx context.Context, tx *transaction, w, p map[string]a
 		return nil, err
 	}
 	datasets := map[string][]map[string]any{}
-	datasets["sessions"], err = query(ctx, tx, `SELECT * FROM sessions WHERE project_id=? ORDER BY sequence LIMIT 10001`, pid)
+	// Retired and moved sessions are never deleted, so only the most recent of
+	// them are included; every active session always is.
+	datasets["sessions"], err = query(ctx, tx, `SELECT * FROM sessions WHERE project_id=? AND (status='active' OR id IN (SELECT id FROM sessions WHERE project_id=? AND status<>'active' ORDER BY sequence DESC LIMIT `+fmt.Sprint(snapshotRetiredSessions)+`)) ORDER BY sequence`, pid, pid)
 	if err != nil {
+		return nil, err
+	}
+	var inactive int
+	if err = tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM sessions WHERE project_id=? AND status<>'active'`, pid).Scan(&inactive); err != nil {
 		return nil, err
 	}
 	datasets["messages"], err = query(ctx, tx, `SELECT m.sequence,m.id,m.project_id,m.source_project_id,m.sender_id,s.name AS sender,m.address,m.thread_id,m.reply_to,m.kind,m.body,m.coordination,m.created_at,m.expires_at,m.created_by_principal,d.delivered_at,d.read_at FROM messages m JOIN deliveries d ON d.project_id=m.project_id AND d.message_id=m.id JOIN sessions s ON s.id=m.sender_id AND s.project_id=m.source_project_id WHERE d.project_id=? AND d.recipient_id=? AND m.expires_at>? ORDER BY m.sequence LIMIT 10001`, pid, sid, now)
@@ -255,12 +261,18 @@ func (s *Store) snapshot(ctx context.Context, tx *transaction, w, p map[string]a
 		m["deliveries"] = append(m["deliveries"].([]map[string]any), d)
 	}
 	datasets["sent_messages"] = sent
-	datasets["events"], err = query(ctx, tx, `SELECT * FROM history WHERE workspace_id=? AND project_id=? ORDER BY sequence LIMIT 10001`, w["id"], pid)
+	// History is append-only, so only its most recent window is included; one
+	// extra row shows whether anything older was left out.
+	datasets["events"], err = query(ctx, tx, `SELECT * FROM (SELECT * FROM history WHERE workspace_id=? AND project_id=? ORDER BY sequence DESC LIMIT `+fmt.Sprint(snapshotEvents+1)+`) recent ORDER BY sequence`, w["id"], pid)
 	if err != nil {
 		return nil, err
 	}
-	for name, rows := range datasets {
-		if len(rows) > 10000 {
+	eventsTruncated := len(datasets["events"]) > snapshotEvents
+	if eventsTruncated {
+		datasets["events"] = datasets["events"][1:]
+	}
+	for _, name := range []string{"messages", "sent_messages"} {
+		if len(datasets[name]) > 10000 {
 			return nil, fmt.Errorf("snapshot exceeds 10000 %s; no complete snapshot produced", name)
 		}
 	}
@@ -274,6 +286,11 @@ func (s *Store) snapshot(ctx context.Context, tx *transaction, w, p map[string]a
 	for k, v := range datasets {
 		result[k] = v
 	}
+	result["events_truncated"] = eventsTruncated
+	if len(datasets["events"]) > 0 {
+		result["events_oldest_sequence"] = datasets["events"][0]["sequence"]
+	}
+	result["sessions_truncated"] = inactive > snapshotRetiredSessions
 	encoded, e := json.Marshal(result)
 	if e != nil || len(encoded) > 12<<20 {
 		return nil, errors.New("snapshot exceeds supported byte budget; no complete snapshot produced")
@@ -358,17 +375,26 @@ func hostedAuditDetails(v any) any {
 	}
 }
 
+// A snapshot holds the newest snapshotEvents history events and, besides every
+// active session, the snapshotRetiredSessions most recent other sessions.
+const (
+	snapshotEvents          = 5000
+	snapshotRetiredSessions = 1000
+)
+
 // Count and estimate before materializing text-heavy datasets. Row caps are
 // independent; the lower byte cap keeps a single sync within HTTP/cache limits.
+// Sessions and events are measured over the same windows the snapshot takes.
 func (s *Store) snapshotBudget(ctx context.Context, tx *transaction, wid, pid, sid, now string) error {
 	checks := []struct {
 		name, sql string
 		args      []any
 	}{
-		{"sessions", `SELECT COUNT(*),COALESCE(SUM(octet_length(notes)+octet_length(transport)+2048),0)::BIGINT FROM sessions WHERE project_id=?`, []any{pid}},
+		{"active sessions", `SELECT COUNT(*),COALESCE(SUM(octet_length(notes)+octet_length(transport)+2048),0)::BIGINT FROM sessions WHERE project_id=? AND status='active'`, []any{pid}},
+		{"retired sessions", `SELECT COUNT(*),COALESCE(SUM(octet_length(notes)+octet_length(transport)+2048),0)::BIGINT FROM (SELECT notes,transport FROM sessions WHERE project_id=? AND status<>'active' ORDER BY sequence DESC LIMIT ` + fmt.Sprint(snapshotRetiredSessions) + `) recent`, []any{pid}},
 		{"messages", `SELECT COUNT(*),COALESCE(SUM(octet_length(m.body)+COALESCE(octet_length(m.coordination),0)+2048),0)::BIGINT FROM messages m JOIN deliveries d ON d.project_id=m.project_id AND d.message_id=m.id WHERE d.project_id=? AND d.recipient_id=? AND m.expires_at>?`, []any{pid, sid, now}},
 		{"sent_messages", `SELECT COUNT(*),COALESCE(SUM(2048+(SELECT COUNT(*)*512 FROM deliveries d WHERE d.project_id=m.project_id AND d.message_id=m.id)),0)::BIGINT FROM messages m WHERE project_id=? AND sender_id=? AND expires_at>?`, []any{pid, sid, now}},
-		{"events", `SELECT COUNT(*),COALESCE(SUM(octet_length(details)+1024),0)::BIGINT FROM history WHERE workspace_id=? AND project_id=?`, []any{wid, pid}},
+		{"events", `SELECT COUNT(*),COALESCE(SUM(octet_length(details)+1024),0)::BIGINT FROM (SELECT details FROM history WHERE workspace_id=? AND project_id=? ORDER BY sequence DESC LIMIT ` + fmt.Sprint(snapshotEvents) + `) recent`, []any{wid, pid}},
 	}
 	var total int64
 	for _, check := range checks {

@@ -364,6 +364,14 @@ func Offline(ctx context.Context, path string, b Binding, r bus.Request) (bus.Re
 			next, _ = number(filtered[len(filtered)-1]["sequence"])
 		}
 		data = map[string]any{key: filtered, "next_cursor": next, "has_more": more}
+		// The hosted snapshot holds only recent history and retired sessions;
+		// say so, so a missing older row is not read as absent.
+		switch key {
+		case "events":
+			data["truncated"] = s.Data["events_truncated"] == true
+		case "sessions":
+			data["truncated"] = s.Data["sessions_truncated"] == true
+		}
 	}
 	updated, e := time.Parse(time.RFC3339Nano, s.UpdatedAt)
 	if e != nil {

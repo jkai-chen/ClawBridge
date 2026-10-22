@@ -188,6 +188,11 @@ function Get-ClawBridgeBackupPath([string]$InstallDir) {
     return (Join-Path $InstallDir ('.' + $name))
 }
 
+# The one file-move primitive of an install, separate so fixtures can fail it.
+function Move-ClawBridgeFile([string]$Source, [string]$Destination) {
+    [IO.File]::Move($Source, $Destination)
+}
+
 # Best effort: a leftover must never fail an install that already succeeded.
 function Remove-ClawBridgeLeftover([string]$Path) {
     try {
@@ -271,23 +276,23 @@ function Install-ClawBridge([string]$Version = '', [string]$InstallDir = '', [sw
             # File.Replace refuses a running image, but Windows allows renaming
             # it, so move the old binary aside, then move the new one in.
             try {
-                [IO.File]::Move($destination, $backup)
+                Move-ClawBridgeFile $destination $backup
             } catch {
                 throw ($inUse + ' (' + $_.Exception.Message + ')')
             }
             try {
-                [IO.File]::Move($stagedBinary, $destination)
+                Move-ClawBridgeFile $stagedBinary $destination
             } catch {
                 $reason = $_.Exception.Message
                 try {
-                    [IO.File]::Move($backup, $destination)
+                    Move-ClawBridgeFile $backup $destination
                 } catch {
                     throw ('Could not install ' + $destination + ' or restore the previous binary, which is now at ' + $backup + '; move it back to ' + $destination + '. (' + $reason + ')')
                 }
                 throw ($inUse + ' (' + $reason + ')')
             }
         } else {
-            [IO.File]::Move($stagedBinary, $destination)
+            Move-ClawBridgeFile $stagedBinary $destination
         }
         Write-Output ('Installed ' + $Version + ' at ' + $destination)
         if ($null -ne $backup -and -not (Remove-ClawBridgeLeftover $backup)) {

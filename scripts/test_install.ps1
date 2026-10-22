@@ -86,6 +86,14 @@ function Get-TestUserPath {
         }
     } finally { $key.Dispose() }
 }
+# Fails the move of the new binary into place, and in 'restore-failure' also
+# the move of the previous binary back.
+function Move-ClawBridgeFile([string]$Source, [string]$Destination) {
+    $staged = $Source -like '*\.clawbridge-install-*'
+    $restoring = $Source -like '*clawbridge-previous-*'
+    if (($script:mode -eq 'move-in-failure' -and $staged) -or ($script:mode -eq 'restore-failure' -and ($staged -or $restoring))) { throw 'synthetic move failure' }
+    [IO.File]::Move($Source, $Destination)
+}
 $script:skillRuns = New-Object 'Collections.Generic.List[string]'
 function Invoke-ClawBridgeSkillInstall([string]$Binary) {
     $script:skillRuns.Add($Binary)
@@ -173,9 +181,36 @@ try {
     try {
         try { Install-ClawBridge -Version v0.1.0 -InstallDir $destination -NoSkill | ForEach-Object { $lockedOutput.Add([string]$_) } } catch { $lockedError = $_.Exception.Message }
     } finally { $locked.Dispose() }
-    Assert-True ($lockedError -like '*Close the agents running `clawbridge mcp`*run the installer again*') ('locked replacement must explain the fix: ' + $lockedError)
+    Assert-True ($lockedError.Contains('Close the agents running `clawbridge mcp`') -and $lockedError.Contains('run the installer again')) ('locked replacement must explain the fix: ' + $lockedError)
     Assert-True (@($lockedOutput | Where-Object { $_ -like 'Installed*' }).Count -eq 0) 'locked replacement claimed success'
     Assert-True ([IO.File]::ReadAllText($binary) -ceq 'old binary') 'locked binary was changed'
+    Assert-Cleanup
+    # If the new binary cannot move in, the previous one is moved back.
+    $script:backups.Clear()
+    [IO.File]::WriteAllText($binary, 'old binary')
+    $script:mode = 'move-in-failure'
+    $moveOutput = New-Object 'Collections.Generic.List[string]'
+    $moveError = ''
+    try { Install-ClawBridge -Version v0.1.0 -InstallDir $destination -NoSkill | ForEach-Object { $moveOutput.Add([string]$_) } } catch { $moveError = $_.Exception.Message }
+    $script:mode = 'ok'
+    Assert-True ($moveError.Contains('Close the agents running `clawbridge mcp`') -and $moveError.Contains('run the installer again') -and $moveError.Contains('synthetic move failure')) ('failed move-in must explain the fix: ' + $moveError)
+    Assert-True (@($moveOutput | Where-Object { $_ -like 'Installed*' }).Count -eq 0) 'failed move-in claimed success'
+    Assert-True ([IO.File]::ReadAllText($binary) -ceq 'old binary') 'failed move-in did not restore the previous binary'
+    Assert-True ($script:backups.Count -eq 1) 'the previous binary was not moved aside first'
+    Assert-Cleanup
+    # If moving it back fails too, the error names where the previous binary is.
+    $script:backups.Clear()
+    $script:mode = 'restore-failure'
+    $moveOutput.Clear()
+    $moveError = ''
+    try { Install-ClawBridge -Version v0.1.0 -InstallDir $destination -NoSkill | ForEach-Object { $moveOutput.Add([string]$_) } } catch { $moveError = $_.Exception.Message }
+    $script:mode = 'ok'
+    Assert-True ($script:backups.Count -eq 1) 'the previous binary was not moved aside first'
+    $stranded = $script:backups[0]
+    Assert-True ($moveError.Contains('restore the previous binary, which is now at ' + $stranded + '; move it back to ' + $binary)) ('double failure must name the backup: ' + $moveError)
+    Assert-True (@($moveOutput | Where-Object { $_ -like 'Installed*' }).Count -eq 0) 'double failure claimed success'
+    Assert-True (-not [IO.File]::Exists($binary) -and [IO.File]::ReadAllText($stranded) -ceq 'old binary') 'the previous binary is not at the named backup'
+    [IO.File]::Move($stranded, $binary)
     Assert-Cleanup
     # A running binary can be renamed but not deleted: the upgrade succeeds and
     # leaves its old copy behind without failing.

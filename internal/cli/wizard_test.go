@@ -3,8 +3,11 @@ package cli
 import (
 	"bytes"
 	"clawbridge/internal/auth"
+	"clawbridge/internal/doctor"
+	"clawbridge/internal/install"
 	"clawbridge/internal/remote"
 	"clawbridge/internal/setup"
+	"clawbridge/internal/skill"
 	"context"
 	"errors"
 	"io"
@@ -40,6 +43,25 @@ func wizardHooks(t *testing.T, input string) *wizardReader {
 		return nil
 	}
 	wizardTUI = func(context.Context, Config, io.Writer, io.Writer) error { t.Fatal("unexpected TUI"); return nil }
+	f, g, h, i, j := wizardSkillTargets, wizardSkillInstall, wizardLinearConnect, wizardMCPInstall, wizardDoctor
+	t.Cleanup(func() {
+		wizardSkillTargets, wizardSkillInstall, wizardLinearConnect, wizardMCPInstall, wizardDoctor = f, g, h, i, j
+	})
+	// After a join, onboarding sees no configured agent and a passing doctor
+	// unless a test says otherwise; it never writes without a stub.
+	wizardSkillTargets = func() ([]skill.Target, error) { return nil, errors.New("no agents") }
+	wizardSkillInstall = func([]skill.Target) ([]skill.Result, error) { t.Fatal("unexpected skill install"); return nil, nil }
+	wizardLinearConnect = func(context.Context, string, string, string, io.Writer) (string, error) {
+		t.Fatal("unexpected Linear connection")
+		return "", nil
+	}
+	wizardMCPInstall = func(context.Context, string, string, string, string, bool, io.Writer) (install.Result, error) {
+		t.Fatal("unexpected MCP install")
+		return install.Result{}, nil
+	}
+	wizardDoctor = func(context.Context, string, string, []string) (doctor.Report, error) {
+		return doctor.Report{Status: doctor.Pass}, nil
+	}
 	return r
 }
 

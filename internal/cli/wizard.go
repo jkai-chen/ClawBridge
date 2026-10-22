@@ -118,53 +118,16 @@ func runWizard(ctx context.Context, flags Config, args []string, stdout, stderr 
 	if err != nil {
 		return err
 	}
-	input, err := wizardInput()
+	prompt, err := newWizardPrompt(ctx, stdout, "guided terminal input cleanup failed; no OAuth acquisition or join was started, restore the terminal before retrying")
 	if err != nil {
-		return errors.New("cannot open cancellable terminal input")
-	}
-	closeAttempted := false
-	var closeErr error
-	closeInput := func() error {
-		if !closeAttempted {
-			closeAttempted = true // A failed native close may already have closed handles.
-			if input.Close() != nil {
-				closeErr = errors.New("guided terminal input cleanup failed; no OAuth acquisition or join was started, restore the terminal before retrying")
-			}
-		}
-		return closeErr
+		return err
 	}
 	defer func() {
-		if e := closeInput(); e != nil && !errors.Is(retErr, e) {
+		if e := prompt.close(); e != nil && !errors.Is(retErr, e) {
 			retErr = errors.Join(retErr, e)
 		}
 	}()
-	ask := func(prompt string) (string, error) {
-		if err := ctx.Err(); err != nil {
-			return "", err
-		}
-		fmt.Fprint(stdout, prompt)
-		type answer struct {
-			text string
-			err  error
-		}
-		done := make(chan answer, 1)
-		go func() { text, e := readWizardLine(input); done <- answer{text, e} }()
-		select {
-		case <-ctx.Done():
-			if !input.Cancel() {
-				closeInput()
-			}
-			select {
-			case <-done:
-				return "", ctx.Err()
-			case <-time.After(time.Second):
-				closeInput()
-				return "", errors.New("guided setup canceled; terminal input cleanup could not be confirmed, restart the command before retrying")
-			}
-		case a := <-done:
-			return strings.TrimSpace(a.text), a.err
-		}
-	}
+	ask := prompt.ask
 	fmt.Fprintln(stdout, "Join an existing ClawBridge service (OAuth). No infrastructure or membership is created.")
 	url, err := ask("Service HTTPS URL: ")
 	if err != nil {
@@ -206,7 +169,7 @@ func runWizard(ctx context.Context, flags Config, args []string, stdout, stderr 
 	if err = ctx.Err(); err != nil {
 		return err
 	}
-	if err = closeInput(); err != nil {
+	if err = prompt.close(); err != nil {
 		return err
 	} // No wizard reader survives into acquisition or the TUI.
 	if err = wizardKeyring(ctx); err != nil {
@@ -222,11 +185,72 @@ func runWizard(ctx context.Context, flags Config, args []string, stdout, stderr 
 	if err = wizardJoin(isolated, candidate, joinArgs, io.Discard, stderr); err != nil {
 		return err
 	}
-	fmt.Fprintln(stdout, "Join completed and trusted route saved. Opening TUI… Optional: 7 Linear → Connect Linear, or Later by staying in the current view.")
+	fmt.Fprintln(stdout, "Join completed and trusted route saved.")
+	if err = runOnboarding(isolated, path, stdout, stderr); err != nil {
+		return fmt.Errorf("join completed; saved route preserved, but guided setup stopped: %w", err)
+	}
+	fmt.Fprintln(stdout, "Opening TUI…")
 	if err = wizardTUI(isolated, Config{ClientConfig: path}, stdout, stderr); err != nil {
 		return fmt.Errorf("join completed; saved route preserved, but TUI startup failed: %w", err)
 	}
 	return nil
+}
+
+// wizardPrompt reads answers from a cancellable terminal reader. Close it
+// before any credential acquisition or the TUI, so neither shares stdin.
+type wizardPrompt struct {
+	ctx      context.Context
+	out      io.Writer
+	input    cancelreader.CancelReader
+	closeMsg string
+	closed   bool
+	closeErr error
+}
+
+func newWizardPrompt(ctx context.Context, out io.Writer, closeMsg string) (*wizardPrompt, error) {
+	input, err := wizardInput()
+	if err != nil {
+		return nil, errors.New("cannot open cancellable terminal input")
+	}
+	return &wizardPrompt{ctx: ctx, out: out, input: input, closeMsg: closeMsg}, nil
+}
+
+func (p *wizardPrompt) close() error {
+	if !p.closed {
+		p.closed = true // A failed native close may already have closed handles.
+		if p.input.Close() != nil {
+			p.closeErr = errors.New(p.closeMsg)
+		}
+	}
+	return p.closeErr
+}
+
+func (p *wizardPrompt) ask(prompt string) (string, error) {
+	if err := p.ctx.Err(); err != nil {
+		return "", err
+	}
+	fmt.Fprint(p.out, prompt)
+	type answer struct {
+		text string
+		err  error
+	}
+	done := make(chan answer, 1)
+	go func() { text, e := readWizardLine(p.input); done <- answer{text, e} }()
+	select {
+	case <-p.ctx.Done():
+		if !p.input.Cancel() {
+			p.close()
+		}
+		select {
+		case <-done:
+			return "", p.ctx.Err()
+		case <-time.After(time.Second):
+			p.close()
+			return "", errors.New("guided setup canceled; terminal input cleanup could not be confirmed, restart the command before retrying")
+		}
+	case a := <-done:
+		return strings.TrimSpace(a.text), a.err
+	}
 }
 
 // Read one byte at a time so no buffered read consumes later TUI keystrokes.

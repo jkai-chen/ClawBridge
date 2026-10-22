@@ -10,14 +10,14 @@ import (
 func metadata(a map[string]any) error {
 	for _, k := range []string{"instance", "role", "agent_kind", "model", "host", "account"} {
 		if len(str(a, k)) > 256 {
-			return fmt.Errorf("%s exceeds 256 bytes", k)
+			return invalid(fmt.Sprintf("%s exceeds 256 bytes", k))
 		}
 	}
 	if len(str(a, "notes")) > 8192 {
-		return errors.New("notes exceed 8192 bytes")
+		return invalid("notes exceed 8192 bytes")
 	}
 	if len(asJSON(a["transport"])) > 8192 {
-		return errors.New("transport exceeds 8192 bytes")
+		return invalid("transport exceeds 8192 bytes")
 	}
 	return nil
 }
@@ -39,7 +39,7 @@ func (s *Store) register(ctx context.Context, tx *transaction, wid, pid string, 
 			return nil, errors.New("session name already registered to another instance; use a distinct name")
 		}
 		if old["status"] != "active" {
-			return nil, errors.New("retired session names cannot be reused; use a distinct name")
+			return nil, invalid("retired session names cannot be reused; use a distinct name")
 		}
 		for k, v := range a {
 			if k != "instance" && k != "resume" && asJSON(old[k]) != asJSON(v) {
@@ -59,14 +59,14 @@ func (s *Store) register(ctx context.Context, tx *transaction, wid, pid string, 
 		return old, nil
 	}
 	if resume, _ := a["resume"].(bool); resume {
-		return nil, errors.New("cannot resume an unknown session; register a new name first")
+		return nil, invalid("cannot resume an unknown session; register a new name first")
 	}
 	var count int
 	if err = tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM sessions WHERE project_id=? AND status='active'`, pid).Scan(&count); err != nil {
 		return nil, err
 	}
 	if count >= 1000 {
-		return nil, errors.New("project active-session limit (1000) reached")
+		return nil, invalid("project active-session limit (1000) reached")
 	}
 	instance := str(a, "instance")
 	if instance == "" {
@@ -79,7 +79,7 @@ func (s *Store) register(ctx context.Context, tx *transaction, wid, pid string, 
 	switch kind {
 	case "claude-code", "codex", "gemini-cli", "antigravity", "human", "other":
 	default:
-		return nil, errors.New("unsupported agent_kind")
+		return nil, invalid("unsupported agent_kind")
 	}
 	transport := a["transport"]
 	if transport == nil {
@@ -115,7 +115,7 @@ func (s *Store) update(ctx context.Context, tx *transaction, wid, pid string, ac
 		}
 	}
 	if len(sets) == 0 {
-		return nil, errors.New("no session fields supplied")
+		return nil, invalid("no session fields supplied")
 	}
 	sets = append(sets, "updated_at=?")
 	now := stamp()
@@ -141,7 +141,7 @@ func (s *Store) retire(ctx context.Context, tx *transaction, wid, pid string, ac
 		status = "retired"
 	}
 	if status != "retired" && status != "moved" {
-		return nil, errors.New("retirement status must be retired or moved")
+		return nil, invalid("retirement status must be retired or moved")
 	}
 	var successor any
 	if name := str(a, "successor"); name != "" {
@@ -151,10 +151,10 @@ func (s *Store) retire(ctx context.Context, tx *transaction, wid, pid string, ac
 			return nil, scopedError(err, "successor must exist in the same project", "invalid")
 		}
 		if next["id"] == sid {
-			return nil, errors.New("session cannot succeed itself")
+			return nil, invalid("session cannot succeed itself")
 		}
 		if next["status"] != "active" {
-			return nil, errors.New("successor must be active")
+			return nil, invalid("successor must be active")
 		}
 		successor = next["id"]
 		seen := map[string]bool{sid: true}
@@ -162,7 +162,7 @@ func (s *Store) retire(ctx context.Context, tx *transaction, wid, pid string, ac
 		for cursor != nil {
 			key := cursor["id"].(string)
 			if seen[key] {
-				return nil, errors.New("successor cycle is forbidden")
+				return nil, invalid("successor cycle is forbidden")
 			}
 			seen[key] = true
 			if cursor["successor"] == nil {

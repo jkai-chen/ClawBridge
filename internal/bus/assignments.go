@@ -50,15 +50,15 @@ func scopePaths(v any) ([]string, error) {
 		for _, item := range list {
 			s, ok := item.(string)
 			if !ok {
-				return nil, errors.New("scope_paths must be strings")
+				return nil, invalid("scope_paths must be strings")
 			}
 			raw = append(raw, s)
 		}
 	default:
-		return nil, errors.New("scope_paths must be an array of strings")
+		return nil, invalid("scope_paths must be an array of strings")
 	}
 	if len(raw) > maxScopePaths {
-		return nil, errors.New("scope_paths allows at most 32 patterns")
+		return nil, invalid("scope_paths allows at most 32 patterns")
 	}
 	seen := map[string]bool{}
 	out := []string{}
@@ -75,7 +75,7 @@ func scopePaths(v any) ([]string, error) {
 	return out, nil
 }
 func scopePathOK(p string) error {
-	bad := errors.New("scope paths must be clean repository-relative patterns of at most 256 bytes")
+	bad := invalid("scope paths must be clean repository-relative patterns of at most 256 bytes")
 	if p == "" || len(p) > maxScopePathBytes || strings.ContainsAny(p, "\\") || path.IsAbs(p) || path.Clean(p) != p || p == "." || p == ".." || strings.HasPrefix(p, "../") {
 		return bad
 	}
@@ -89,7 +89,7 @@ func scopePathOK(p string) error {
 		base = "*"
 	}
 	if strings.Contains(base, "**") {
-		return errors.New(`"**" is allowed only as a whole pattern or a final "/**"`)
+		return invalid(`"**" is allowed only as a whole pattern or a final "/**"`)
 	}
 	if _, err := path.Match(base, ""); err != nil {
 		return bad
@@ -275,7 +275,9 @@ func assignmentView(a map[string]any, session map[string]any) map[string]any {
 	return out
 }
 
-func scoped(message, code string) error { return &serviceError{code: code, cause: errors.New(message)} }
+func scoped(message, code string) error {
+	return &serviceError{code: code, cause: errors.New(message), public: true}
+}
 
 // coordinatorMay authorizes the designated coordinator session to
 // confirm or release another session's assignment.
@@ -296,7 +298,7 @@ func (s *Store) assignment(ctx context.Context, tx *transaction, w, p map[string
 	a := r.Args
 	wid, pid, sid := w["id"].(string), p["id"].(string), actor["id"].(string)
 	if actor["status"] != "active" {
-		return nil, errors.New("session is retired or moved; it cannot perform this operation")
+		return nil, invalid("session is retired or moved; it cannot perform this operation")
 	}
 	target := actor
 	if selector := str(a, "target_session"); selector != "" {
@@ -317,7 +319,7 @@ func (s *Store) assignment(ctx context.Context, tx *transaction, w, p map[string
 		var next any
 		if str(a, "target_session") != "" {
 			if target["status"] != "active" {
-				return nil, errors.New("coordinator session must be active")
+				return nil, invalid("coordinator session must be active")
 			}
 			next = tid
 		}
@@ -347,20 +349,20 @@ func (s *Store) assignment(ctx context.Context, tx *transaction, w, p map[string
 		return map[string]any{"project_id": pid, "coordinator_session": next}, nil
 	case "assignment_propose":
 		if tid != sid {
-			return nil, errors.New("a session proposes only its own assignment")
+			return nil, invalid("a session proposes only its own assignment")
 		}
 		if projectRole == "reader" {
 			return nil, scoped("project member permission required", "forbidden")
 		}
 		issue, identifier, role := str(a, "issue_uuid"), str(a, "issue_identifier"), str(a, "task_role")
 		if issue != "" && !issueUUIDPattern.MatchString(issue) {
-			return nil, errors.New("issue_uuid must be a lowercase Linear issue UUID")
+			return nil, invalid("issue_uuid must be a lowercase Linear issue UUID")
 		}
 		if identifier != "" && (issue == "" || !issueIdentifierPattern.MatchString(identifier)) {
-			return nil, errors.New("issue_identifier needs issue_uuid and must be a short display identifier such as ABC-12")
+			return nil, invalid("issue_identifier needs issue_uuid and must be a short display identifier such as ABC-12")
 		}
 		if len(role) > 256 || strings.IndexFunc(role, unicode.IsControl) >= 0 {
-			return nil, errors.New("task_role must be at most 256 bytes without control characters")
+			return nil, invalid("task_role must be at most 256 bytes without control characters")
 		}
 		repo, err := NormalizeRemote(str(a, "scope_repo"))
 		if err != nil {
@@ -371,7 +373,7 @@ func (s *Store) assignment(ctx context.Context, tx *transaction, w, p map[string
 			return nil, err
 		}
 		if issue == "" && len(paths) == 0 {
-			return nil, errors.New("an assignment needs issue_uuid or scope_paths")
+			return nil, invalid("an assignment needs issue_uuid or scope_paths")
 		}
 		if _, err = s.releaseAssignment(ctx, tx, wid, pid, sid, "replaced"); err != nil {
 			return nil, err
@@ -395,7 +397,7 @@ func (s *Store) assignment(ctx context.Context, tx *transaction, w, p map[string
 	case "assignment_confirm", "assignment_release":
 		revision := str(a, "revision")
 		if revision == "" {
-			return nil, errors.New("revision is required; pass the assignment revision you reviewed")
+			return nil, invalid("revision is required; pass the assignment revision you reviewed")
 		}
 		if r.Operation == "assignment_confirm" || tid != sid {
 			if err := s.coordinatorMay(ctx, tx, w, p, projectRole, actor, target); err != nil {
@@ -454,7 +456,7 @@ func (s *Store) assignment(ctx context.Context, tx *transaction, w, p map[string
 		}
 		return map[string]any{"confirmed": true, "assignment": assignmentView(live, target), "conflicts": found}, nil
 	}
-	return nil, errors.New("unsupported operation")
+	return nil, invalid("unsupported operation")
 }
 
 // listSessions pages a project's sessions with their live assignments. The
@@ -463,10 +465,10 @@ func (s *Store) assignment(ctx context.Context, tx *transaction, w, p map[string
 func (s *Store) listSessions(ctx context.Context, tx *transaction, pid, status, role string, a map[string]any, after int64, n int) (any, error) {
 	issue, scopePath, state := str(a, "issue"), str(a, "scope_path"), str(a, "assignment_state")
 	if state != "" && state != "proposed" && state != "confirmed" {
-		return nil, errors.New("assignment_state must be proposed or confirmed")
+		return nil, invalid("assignment_state must be proposed or confirmed")
 	}
 	if scopePath != "" && (len(scopePath) > maxScopePathBytes || path.IsAbs(scopePath) || path.Clean(scopePath) != scopePath || scopePath == "." || strings.HasPrefix(scopePath, "../") || scopePath == ".." || strings.ContainsAny(scopePath, "\\")) {
-		return nil, errors.New("scope_path must be a clean repository-relative path")
+		return nil, invalid("scope_path must be a clean repository-relative path")
 	}
 	filtered := issue != "" || scopePath != "" || state != ""
 	q := `SELECT rowid AS sequence,* FROM sessions WHERE project_id=? AND (?='' OR status=?) AND (?='' OR role=?) AND rowid>?`

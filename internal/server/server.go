@@ -321,7 +321,7 @@ func NewHandlerWithOAuthMetadata(store Executor, verifier Verifier, metadata OAu
 		result, err := store.ExecuteAs(ctx, identity.Principal, request)
 		if err != nil {
 			code, status := serviceError(err)
-			fail(w, status, code, publicMessage(code))
+			fail(w, status, code, responseMessage(code, err))
 			return
 		}
 		result.Source = "server"
@@ -367,6 +367,20 @@ func serviceError(err error) (string, int) {
 		return "unavailable", 503
 	}
 	return "invalid", 400
+}
+
+// responseMessage shows a validation refusal's own message when the bus
+// marked it as written for the caller; every other failure, including
+// database and unknown errors, gets only the generic text for its code.
+func responseMessage(code string, err error) string {
+	if code == "invalid" {
+		if message, ok := bus.PublicMessage(err); ok {
+			if safe, ok := bus.SafePublicText(message); ok {
+				return safe
+			}
+		}
+	}
+	return publicMessage(code)
 }
 func publicMessage(code string) string {
 	switch code {

@@ -387,9 +387,15 @@ func NewWithHTTPClient(c Config, tokens TokenSource, httpClient *http.Client) (*
 type HTTPError struct {
 	Status int
 	Code   string
+	// Message is the server's caller-facing reason for a 400 refusal, kept
+	// only when it is one line of printable text.
+	Message string
 }
 
 func (e *HTTPError) Error() string {
+	if e.Message != "" {
+		return fmt.Sprintf("cloud request rejected (%d, %s): %s; no write queued", e.Status, e.Code, e.Message)
+	}
 	return fmt.Sprintf("cloud request rejected (%d, %s); no write queued", e.Status, e.Code)
 }
 func (c *Client) call(ctx context.Context, r bus.Request) (bus.Result, bool, error) {
@@ -430,10 +436,11 @@ func (c *Client) call(ctx context.Context, r bus.Request) (bus.Result, bool, err
 		return bus.Result{}, false, errors.New("invalid or oversized cloud response")
 	}
 	if response.StatusCode != http.StatusOK {
-		code := "rejected"
+		code, message := "rejected", ""
 		var body struct {
 			Error struct {
-				Code string `json:"code"`
+				Code    string `json:"code"`
+				Message string `json:"message"`
 			} `json:"error"`
 		}
 		if json.Unmarshal(encoded, &body) == nil {
@@ -441,8 +448,11 @@ func (c *Client) call(ctx context.Context, r bus.Request) (bus.Result, bool, err
 			case "unauthenticated", "forbidden", "invalid", "conflict", "not_found", "rate_limited", "unavailable":
 				code = body.Error.Code
 			}
+			if response.StatusCode == http.StatusBadRequest && code == "invalid" {
+				message, _ = bus.SafePublicText(body.Error.Message)
+			}
 		}
-		return bus.Result{}, response.StatusCode == 502 || response.StatusCode == 503 || response.StatusCode == 504, &HTTPError{Status: response.StatusCode, Code: code}
+		return bus.Result{}, response.StatusCode == 502 || response.StatusCode == 503 || response.StatusCode == 504, &HTTPError{Status: response.StatusCode, Code: code, Message: message}
 	}
 	var result bus.Result
 	decoder := json.NewDecoder(bytes.NewReader(encoded))

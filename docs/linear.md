@@ -223,6 +223,12 @@ leaves the set unknown and the update is refused. `linear issue --resolve-labels
 (MCP `resolve_labels: true`) runs the same proof on a read so you can pass the
 result as `--expect-label`; it costs one listing walk plus one check per label.
 
+`linear issues --label UUID` (MCP `label_id`) relies on the same filter: on
+native Linear the rows name their labels, so Linear's list filtered by the label
+UUID is the proof that each returned issue carries it, and the rows keep
+`labels_known: false`. If the `list_issues` label filter is no longer the
+documented "Label name or ID" string, the filtered list is refused.
+
 | Explicit field | Meaning |
 | --- | --- |
 | `--linear-project UUID` | Create destination or requested project move; update preserves the issue's team |

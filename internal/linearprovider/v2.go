@@ -827,10 +827,13 @@ func (p *Provider) IssuesV2(ctx context.Context, q IssueQueryV2) (Page[IssueV2],
 		if x.TeamID != q.TeamID || (q.ProjectID != "" && x.ProjectID != q.ProjectID) {
 			return Page[IssueV2]{}, fail("scope_mismatch")
 		}
-		if q.LabelID != "" {
-			if !x.LabelsKnown {
+		if q.LabelID != "" && !x.LabelsKnown {
+			// Native rows carry label names only; the pinned server filter,
+			// sent with the UUID, is the membership proof for this page.
+			if p.labelFilterProofReason() != "" {
 				return Page[IssueV2]{}, fail("capability_unavailable")
 			}
+		} else if q.LabelID != "" {
 			found := false
 			for _, label := range x.LabelIDs {
 				if label == q.LabelID {
@@ -1301,7 +1304,18 @@ func (p *Provider) labelMembershipReason() string {
 			return "list_issue_labels schema changed: " + name + " is not a boolean"
 		}
 	}
-	props, _, e = schema(issues)
+	return p.labelFilterProofReason()
+}
+
+// labelFilterProofReason is empty when list_issues pins the documented
+// "Label name or ID" filter, so a list filtered by a label UUID proves that
+// every returned issue carries that label.
+func (p *Provider) labelFilterProofReason() string {
+	issues := p.tools["list_issues"]
+	if issues == nil {
+		return "list_issues is not advertised"
+	}
+	props, _, e := schema(issues)
 	if e != nil {
 		return "list_issues schema is unreadable"
 	}

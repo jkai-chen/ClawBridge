@@ -100,3 +100,31 @@ func TestV2LabelMembershipCapabilityPinsTheLabelFilter(t *testing.T) {
 		t.Fatal("membership check ran without the pinned filter")
 	}
 }
+
+// Native list rows name their labels, so the pinned server-side label filter
+// is the membership proof for the page; a drifted filter refuses.
+func TestV2LabelFilterOnNativeRowsUsesTheServerFilterAsProof(t *testing.T) {
+	f := &fake{tools: []*mcp.Tool{nativeIssueList()}, result: map[string]any{"issues": []any{listRow("SYN-5", uid)}, "hasNextPage": false}}
+	p, _ := NewWithCaller(context.Background(), f)
+	page, e := p.IssuesV2(context.Background(), IssueQueryV2{IssueQuery: IssueQuery{TeamID: tid, ProjectID: uid}, LabelID: iid})
+	if e != nil || len(page.Items) != 1 || page.Items[0].LabelsKnown {
+		t.Fatal("native label filter refused or overclaimed", page, e)
+	}
+	if args := f.args[len(f.args)-1]; args["label"] != iid {
+		t.Fatal("label filter not sent as the canonical UUID", args)
+	}
+	// A row whose label set is known and lacks the label contradicts the filter.
+	known := listRow("SYN-6", uid)
+	known["labels"] = []any{}
+	f.result = map[string]any{"issues": []any{known}, "hasNextPage": false}
+	if _, e = p.IssuesV2(context.Background(), IssueQueryV2{IssueQuery: IssueQuery{TeamID: tid, ProjectID: uid}, LabelID: iid}); e == nil {
+		t.Fatal("row without the label accepted")
+	}
+	drifted := nativeIssueList()
+	drifted.InputSchema.(map[string]any)["properties"].(map[string]any)["label"] = map[string]any{"type": "string", "description": "Label name"}
+	f = &fake{tools: []*mcp.Tool{drifted}, result: map[string]any{"issues": []any{listRow("SYN-5", uid)}, "hasNextPage": false}}
+	p, _ = NewWithCaller(context.Background(), f)
+	if _, e = p.IssuesV2(context.Background(), IssueQueryV2{IssueQuery: IssueQuery{TeamID: tid, ProjectID: uid}, LabelID: iid}); e == nil {
+		t.Fatal("drifted label filter accepted as proof")
+	}
+}

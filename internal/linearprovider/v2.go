@@ -108,6 +108,11 @@ type Relation struct {
 	Type   string `json:"type"`
 	FromID string `json:"from_id"`
 	ToID   string `json:"to_id"`
+	// Native Linear may name an endpoint only by its display identifier; the
+	// matching UUID field is then empty. Readers resolve it against issues
+	// they have read and never treat it as scope.
+	FromIdentifier string `json:"from_identifier,omitempty"`
+	ToIdentifier   string `json:"to_identifier,omitempty"`
 }
 type RelationInput struct{ Action, Type, FromID, ToID string }
 type RelationReceipt struct {
@@ -598,7 +603,67 @@ func (p *Provider) parseIssueV2(ctx context.Context, m map[string]any) (IssueV2,
 		complete, ok := m["relationsComplete"].(bool)
 		x.RelationsKnown = ok && complete && !skipped
 	}
+	// Native get_issue returns relations as an object of per-kind arrays. It
+	// proves the listed edges exist but carries no completeness flag, so it
+	// never makes RelationsKnown true: empty arrays are not an absence proof.
+	if native, ok := m["relations"].(map[string]any); ok {
+		x.Relations = append(x.Relations, nativeRelationsV2(x.Issue, native)...)
+	}
 	return x, nil
+}
+
+// nativeRelationsV2 reads blocks, blockedBy and relatedTo. An endpoint may be
+// a UUID, a display identifier or an object carrying either; an element in any
+// other form, and duplicateOf, are skipped rather than failing the issue read.
+func nativeRelationsV2(self Issue, native map[string]any) []Relation {
+	ref := func(v any) (string, string) {
+		switch item := v.(type) {
+		case string:
+			if ValidID(item) {
+				return item, ""
+			}
+			if ValidIssueIdentifier(item) {
+				return "", item
+			}
+		case map[string]any:
+			id, identifier := str(item, "uuid"), str(item, "identifier")
+			if raw := str(item, "id"); ValidID(raw) && id == "" {
+				id = raw
+			} else if ValidIssueIdentifier(raw) && identifier == "" {
+				identifier = raw
+			}
+			if id != "" && !ValidID(id) {
+				return "", ""
+			}
+			if identifier != "" && !ValidIssueIdentifier(identifier) {
+				identifier = ""
+			}
+			return id, identifier
+		}
+		return "", ""
+	}
+	var out []Relation
+	for _, kind := range []struct {
+		key, relation string
+		outgoing      bool
+	}{{"blocks", "blocks", true}, {"blockedBy", "blocks", false}, {"relatedTo", "related", true}} {
+		rows, _ := native[kind.key].([]any)
+		if len(rows) > 250 {
+			rows = rows[:0]
+		}
+		for _, row := range rows {
+			id, identifier := ref(row)
+			if (id == "" && identifier == "") || (id != "" && id == self.ID) || (identifier != "" && identifier == self.Identifier) {
+				continue
+			}
+			edge := Relation{Type: kind.relation, FromID: self.ID, FromIdentifier: self.Identifier, ToID: id, ToIdentifier: identifier}
+			if !kind.outgoing {
+				edge = Relation{Type: kind.relation, FromID: id, FromIdentifier: identifier, ToID: self.ID, ToIdentifier: self.Identifier}
+			}
+			out = append(out, edge)
+		}
+	}
+	return out
 }
 
 // IssueV2 reads one issue by UUID or by display identifier. An identifier read

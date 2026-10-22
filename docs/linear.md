@@ -213,6 +213,10 @@ clawbridge linear relation add FROM_ISSUE_UUID TO_ISSUE_UUID \
 Use `remove` for removal, or types `blocked-by` and `related` for their respective
 directions. Both issues must be in scope. Keep the exact operation ID and payload
 for an accepted retry; read back an uncertain outcome before any further action.
+Issue reads list the blocking and related edges native Linear reports, naming an
+endpoint by UUID or by display identifier. That list proves the edges shown exist
+but not that it is complete, so `relations_known` stays false: adding an edge
+already shown is recorded as `observed_unchanged`, while a removal is always sent.
 The versioned MCP family exposes the same scoped operations through the existing
 profile opt-in. Prefer advertised `taskboard_*_v2` tools on L2 builds; original
 tools remain available for representable L1 mappings.

@@ -126,10 +126,33 @@ func relationEvidenceV2(ctx context.Context, p ProviderV2, b bus.TaskboardBindin
 	if e = checkIssueV2(to, b, v); e != nil {
 		return nil, false, e
 	}
+	// Native edges may name an endpoint only by display identifier; resolve it
+	// against the two issues read here. An edge to any other issue is
+	// irrelevant to this request.
+	resolve := func(id, identifier string) (string, bool) {
+		switch {
+		case id != "":
+			return id, linearprovider.ValidID(id)
+		case identifier != "" && identifier == from.Identifier:
+			return from.ID, true
+		case identifier != "" && identifier == to.Identifier:
+			return to.ID, true
+		}
+		return "", true
+	}
 	var existing *linearprovider.Relation
 	for _, issue := range []linearprovider.IssueV2{from, to} {
 		for _, edge := range issue.Relations {
-			if (edge.Type != "blocks" && edge.Type != "related") || !linearprovider.ValidID(edge.FromID) || !linearprovider.ValidID(edge.ToID) || edge.FromID == edge.ToID || (edge.ID != "" && !linearprovider.ValidID(edge.ID)) {
+			fromID, okFrom := resolve(edge.FromID, edge.FromIdentifier)
+			toID, okTo := resolve(edge.ToID, edge.ToIdentifier)
+			if !okFrom || !okTo {
+				return nil, false, errors.New("invalid authoritative relation evidence")
+			}
+			if fromID == "" || toID == "" {
+				continue
+			}
+			edge.FromID, edge.ToID, edge.FromIdentifier, edge.ToIdentifier = fromID, toID, "", ""
+			if (edge.Type != "blocks" && edge.Type != "related") || edge.FromID == edge.ToID || (edge.ID != "" && !linearprovider.ValidID(edge.ID)) {
 				return nil, false, errors.New("invalid authoritative relation evidence")
 			}
 			if edge.Type == "related" && edge.FromID > edge.ToID {

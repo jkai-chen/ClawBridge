@@ -55,19 +55,22 @@ func (a *authorityV2) Execute(_ context.Context, r bus.Request) (bus.Result, err
 
 type providerV2 struct {
 	fakeProvider
-	projects     map[string][]string
-	issues       map[string]linearprovider.IssueV2
-	caps         linearprovider.Capabilities
-	labels       []linearprovider.Label
-	members      []linearprovider.Member
-	pages        []linearprovider.Page[linearprovider.IssueV2]
-	queries      []linearprovider.IssueQueryV2
-	created      []linearprovider.CreateInputV2
-	updated      []linearprovider.UpdateInputV2
-	edges        []linearprovider.RelationInput
-	after        func()
-	preflightErr error
-	writeErr     error
+	projects map[string][]string
+	issues   map[string]linearprovider.IssueV2
+	caps     linearprovider.Capabilities
+	labels   []linearprovider.Label
+	members  []linearprovider.Member
+	pages    []linearprovider.Page[linearprovider.IssueV2]
+	queries  []linearprovider.IssueQueryV2
+	created  []linearprovider.CreateInputV2
+	updated  []linearprovider.UpdateInputV2
+	edges    []linearprovider.RelationInput
+	after    func()
+	// unconfirmedEdges makes Relation answer like save_issue, without
+	// naming the edge, so the board must confirm it by a read.
+	unconfirmedEdges bool
+	preflightErr     error
+	writeErr         error
 }
 
 func (p *providerV2) GetProject(_ context.Context, id string) (linearprovider.Project, error) {
@@ -138,6 +141,19 @@ func (p *providerV2) UpdateV2(_ context.Context, in linearprovider.UpdateInputV2
 			i.ProjectID = *in.Project.Value
 		}
 	}
+	// The receipt reports what was set, as Linear's updated issue does.
+	if in.Labels.Present {
+		i.LabelIDs, i.LabelsKnown = append([]string{}, in.Labels.Value...), true
+	}
+	if in.Assignee.Present {
+		i.AssigneeID, i.AssigneeKnown = "", true
+		if in.Assignee.Value != nil {
+			i.AssigneeID = *in.Assignee.Value
+		}
+	}
+	if in.StateID != nil {
+		i.StateID = *in.StateID
+	}
 	if in.Parent.Present {
 		// Native Linear reports the parent by its display identifier.
 		i.ParentKnown, i.ParentID, i.ParentIdentifier = true, "", ""
@@ -160,7 +176,7 @@ func (p *providerV2) Relation(_ context.Context, in linearprovider.RelationInput
 	if p.after != nil {
 		p.after()
 	}
-	return linearprovider.RelationReceipt{Action: in.Action, Type: in.Type, FromID: in.FromID, ToID: in.ToID}, p.writeErr
+	return linearprovider.RelationReceipt{Action: in.Action, Type: in.Type, FromID: in.FromID, ToID: in.ToID, Confirmed: !p.unconfirmedEdges}, p.writeErr
 }
 func testV2(t *testing.T) (*Service, *authorityV2, *providerV2, bus.Request) {
 	t.Helper()

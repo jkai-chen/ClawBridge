@@ -17,6 +17,7 @@ import (
 	"time"
 	"unicode"
 
+	"github.com/zalando/go-keyring"
 	"golang.org/x/oauth2"
 )
 
@@ -429,7 +430,9 @@ func (m *Manager) Logout(ctx context.Context, id string) error {
 	if e = ctx.Err(); e != nil {
 		return e
 	}
-	if e = m.config.Store.Delete(Service, id); e != nil {
+	// A credential already missing from the store is already logged out; the
+	// profile must still be removable.
+	if e = m.config.Store.Delete(Service, id); e != nil && !errors.Is(e, keyring.ErrNotFound) {
 		return problem("secure credential deletion failed")
 	}
 	x.Profiles = append(x.Profiles[:at], x.Profiles[at+1:]...)

@@ -769,5 +769,35 @@
   },
   "name": "list_users",
   "title": "List users"
+ },
+ {
+  "_meta": {
+   "microsoft/allowedDomains": [
+    "linear.app<https://linear.app/>"
+   ]
+  },
+  "annotations": {
+   "destructiveHint": false,
+   "idempotentHint": true,
+   "openWorldHint": false,
+   "readOnlyHint": true
+  },
+  "description": "List available issue statuses in a Linear team",
+  "inputSchema": {
+   "$schema": "https://json-schema.org/draft/2020-12/schema",
+   "additionalProperties": false,
+   "properties": {
+    "team": {
+     "description": "Team name or ID",
+     "type": "string"
+    }
+   },
+   "required": [
+    "team"
+   ],
+   "type": "object"
+  },
+  "name": "list_issue_statuses",
+  "title": "List issue statuses"
  }
 ]

@@ -158,7 +158,7 @@ func TestV2SchemaCannotAttestParentDestination(t *testing.T) {
 	}
 }
 func TestV2TeamScopedDiscoveryAndEligibility(t *testing.T) {
-	f := &fake{tools: []*mcp.Tool{tool("list_issue_labels", map[string]string{"team": "string", "limit": "number"}), tool("list_users", map[string]string{"team": "string", "limit": "number"})}, result: map[string]any{"labels": []any{map[string]any{"id": tid, "teamId": tid, "name": "Migration", "archived": false, "isGroup": false}}, "hasNextPage": false}}
+	f := &fake{tools: []*mcp.Tool{tool("list_issue_labels", map[string]string{"team": "string", "limit": "number"}), nativeUserList()}, result: map[string]any{"labels": []any{map[string]any{"id": tid, "teamId": tid, "name": "Migration", "archived": false, "isGroup": false}}, "hasNextPage": false}}
 	p, _ := NewWithCaller(context.Background(), f)
 	labels, e := p.Labels(context.Background(), tid, PageOptions{})
 	if e != nil || !labels.Complete || !labels.Items[0].EligibilityKnown {
@@ -180,6 +180,15 @@ func TestV2TeamScopedDiscoveryAndEligibility(t *testing.T) {
 	f.result = map[string]any{"users": []any{map[string]any{"id": uid, "teamId": iid, "active": true}}, "hasNextPage": false}
 	if _, e = p.Members(context.Background(), tid, PageOptions{}); e == nil {
 		t.Fatal("foreign member accepted")
+	}
+	// Without the documented team filter, a team-less row is listed but never
+	// eligible; a row naming its own team still is.
+	f.tools = []*mcp.Tool{tool("list_users", map[string]string{"team": "string", "limit": "number"})}
+	p, _ = NewWithCaller(context.Background(), f)
+	f.result = map[string]any{"users": []any{map[string]any{"id": uid, "active": true}, map[string]any{"id": iid, "teamId": tid, "active": true}}, "hasNextPage": false}
+	members, e = p.Members(context.Background(), tid, PageOptions{})
+	if e != nil || members.Items[0].EligibilityKnown || !members.Items[1].EligibilityKnown {
+		t.Fatal("undocumented team filter proved membership", members, e)
 	}
 	f.tools = []*mcp.Tool{tool("list_users", map[string]string{"query": "string", "limit": "number"})}
 	p, _ = NewWithCaller(context.Background(), f)

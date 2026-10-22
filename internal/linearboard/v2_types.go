@@ -80,4 +80,8 @@ type ReceiptV2 struct {
 	Type       string  `json:"type,omitempty"`
 	FromID     string  `json:"from_id,omitempty"`
 	ToID       string  `json:"to_id,omitempty"`
+	// Unverified names the requested fields (labels, assignee, parent,
+	// state) that Linear's response did not report, so the write could not
+	// confirm them.
+	Unverified []string `json:"unverified,omitempty"`
 }

@@ -108,9 +108,12 @@ alongside its MCP agent/config/session selection so the expected routes agree.
 Optional native capabilities can switch off on their own when Linear changes a
 tool schema. With `--linear-profile`, `doctor` adds a `linear.capabilities` check
 showing every capability flag (for example `label_eligibility_by_filter`,
-`label_membership_proof` and `parent_same_destination`) as on or off, with the
+`label_membership_proof`, `member_team_filter`, `status_team_filter` and
+`parent_same_destination`) as on or off, with the
 reason when off (for example "list_issue_labels schema changed"); any flag off is
-a warning. `clawbridge linear status --profile ID` reports the same `capabilities`
+a warning. Linear's member and workflow-state listings return rows without a
+team, so those rows count as the team's only while `member_team_filter` and
+`status_team_filter` are on; when off, assignee and state changes are refused. `clawbridge linear status --profile ID` reports the same `capabilities`
 object (or `capabilities_error` if Linear is unreachable), and
 `linear context` and the `taskboard_context_v2` tool include it so agents can
 see it. Reading capabilities lists the provider's tools only; it writes nothing.
@@ -170,7 +173,21 @@ failure before the request was sent, or Linear's HTTP layer answering 429, 401
 or 403) reports "nothing was sent to Linear" with the code, HTTP status and any
 Retry-After, and can be retried with the same operation ID. ClawBridge never
 retries a write by itself. This local retry protection does not promise exactly-once writes
-across machines. A peer's ready/accept message does not close an issue or confer
+across machines.
+
+A write is accepted only on evidence that it landed where it was asked to:
+
+- A comment's receipt must name its issue, or a read of that issue's comments
+  must find it.
+- An edge must be named by Linear's response or seen on a read afterwards (a
+  removed edge must have been visible before and be gone).
+- A created or updated issue's labels, assignee and state must match what was
+  asked whenever Linear reports them.
+
+Otherwise the write is uncertain (`receipt_unverified` or `receipt_mismatch`).
+When Linear's response simply leaves a field out, the receipt lists it under
+`unverified` (`labels`, `assignee`, `parent`, `state`): accepted, but read the
+issue back before relying on that field. A peer's ready/accept message does not close an issue or confer
 human approval.
 
 Project readers can inspect tasks. Owner/lead/member writes also require personal
@@ -284,6 +301,8 @@ Issue reads list the blocking and related edges native Linear reports, naming an
 endpoint by UUID or by display identifier. That list proves the edges shown exist
 but not that it is complete, so `relations_known` stays false: adding an edge
 already shown is recorded as `observed_unchanged`, while a removal is always sent.
+For the same reason a removal is confirmed only when the edge was shown before it
+and is gone after; removing an edge that was never shown ends uncertain.
 The versioned MCP family exposes the same scoped operations through the existing
 profile opt-in. Prefer advertised `taskboard_*_v2` tools on L2 builds; original
 tools remain available for representable L1 mappings.

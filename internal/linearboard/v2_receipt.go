@@ -18,6 +18,16 @@ func validReceiptV2(raw []byte) bool {
 	if r.Outcome != "accepted" && r.Outcome != "observed_unchanged" {
 		return false
 	}
+	fields := map[string]bool{}
+	for _, f := range r.Unverified {
+		if fields[f] || (f != "labels" && f != "assignee" && f != "parent" && f != "state") {
+			return false
+		}
+		fields[f] = true
+	}
+	if r.Unverified != nil && (len(r.Unverified) == 0 || r.Kind != "issue" || r.Outcome != "accepted") {
+		return false
+	}
 	switch r.Kind {
 	case "issue":
 		return r.Outcome == "accepted" && linearprovider.ValidID(r.ID) && linearprovider.ValidID(r.TeamID) && (r.ProjectID == nil || linearprovider.ValidID(*r.ProjectID)) && r.IssueID == "" && r.Action == "" && r.Type == "" && r.FromID == "" && r.ToID == ""

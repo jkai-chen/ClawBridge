@@ -1307,10 +1307,17 @@ func (p *Provider) Statuses(ctx context.Context, team string) ([]Status, error) 
 	if e != nil {
 		return nil, e
 	}
-	raw, _, _, e := list(m, "statuses")
+	raw, next, complete, e := list(m, "statuses")
 	if e != nil {
 		return nil, e
 	}
+	// list_issue_statuses cannot page, so a response that says more follows
+	// cannot be completed and is refused rather than treated as the team's
+	// whole workflow. (hasNextPage true without a cursor already failed.)
+	if next != "" && !complete {
+		return nil, fail("pagination_unavailable")
+	}
+	filtered := p.statusTeamFilterReason() == ""
 	out := []Status{}
 	for _, v := range raw {
 		i, e := entityID(v, "stateId", "statusId")
@@ -1325,6 +1332,10 @@ func (p *Provider) Statuses(ctx context.Context, team string) ([]Status, error) 
 				return nil, e
 			}
 			tid = resolved
+		} else if !filtered {
+			// A team-less row belongs to the team only through the
+			// documented filter.
+			return nil, fail("capability_unavailable")
 		}
 		if tid != team {
 			return nil, fail("scope_mismatch")
@@ -1397,8 +1408,76 @@ func (p *Provider) Comment(ctx context.Context, issue, body string) (Receipt, er
 	if e != nil {
 		return Receipt{}, e
 	}
-	if parent := str(m, "issueId"); parent != "" && parent != issue {
+	parent, known, e := commentParent(m)
+	if e != nil {
+		return Receipt{}, e
+	}
+	if known && parent != issue {
 		return Receipt{}, fail("scope_mismatch")
 	}
+	// A receipt that does not name its issue is confirmed by reading the
+	// issue's comments; without that evidence the comment stays uncertain.
+	if !known {
+		if found, e := p.commentOnIssue(ctx, issue, i); e != nil || !found {
+			return Receipt{}, fail("receipt_unverified")
+		}
+	}
 	return Receipt{i, issue}, nil
+}
+
+// commentParent reads the issue UUID a comment receipt names, flat or nested.
+// A display identifier names no UUID, so the parent is then unknown.
+func commentParent(m map[string]any) (string, bool, error) {
+	parent, known := "", false
+	take := func(v string) error {
+		if known && v != parent {
+			return fail("scope_mismatch")
+		}
+		parent, known = v, true
+		return nil
+	}
+	if v, ok := m["issueId"].(string); ok && ValidID(v) {
+		if e := take(v); e != nil {
+			return "", false, e
+		}
+	}
+	if nested := obj(m, "issue"); nested != nil {
+		if v, e := id(nested); e == nil {
+			if e = take(v); e != nil {
+				return "", false, e
+			}
+		}
+	}
+	return parent, known, nil
+}
+
+// commentPages bounds the read that confirms a comment's issue.
+const commentPages = 4
+
+func (p *Provider) commentOnIssue(ctx context.Context, issue, comment string) (bool, error) {
+	cursor := ""
+	for page := 0; page < commentPages; page++ {
+		args := []arg{a(issue, "issueId"), {[]string{"limit"}, 50, "integer"}}
+		if cursor != "" {
+			args = append(args, a(cursor, "cursor"))
+		}
+		m, e := p.call(ctx, []string{"list_comments"}, args...)
+		if e != nil {
+			return false, e
+		}
+		rows, next, done, e := list(m, "comments")
+		if e != nil {
+			return false, e
+		}
+		for _, row := range rows {
+			if i, e := id(row); e == nil && i == comment {
+				return true, nil
+			}
+		}
+		if done || next == "" || next == cursor {
+			return false, nil
+		}
+		cursor = next
+	}
+	return false, nil
 }

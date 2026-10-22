@@ -113,6 +113,11 @@ type Capabilities struct {
 	// UpdatedAfterFilter: list_issues filters by "updated after" and returns
 	// each row's updatedAt, so the filter can be checked row by row.
 	UpdatedAfterFilter bool `json:"updated_after_filter"`
+	// MemberTeamFilter and StatusTeamFilter: the member and workflow-state
+	// listings document their team filter, so rows that carry no team of
+	// their own belong to the team asked for.
+	MemberTeamFilter bool `json:"member_team_filter"`
+	StatusTeamFilter bool `json:"status_team_filter"`
 	// Reasons explains, per capability key, why a capability is off, so a
 	// silent switch-off (for example after a provider schema change) is
 	// visible in status and doctor output.
@@ -168,6 +173,9 @@ type RelationReceipt struct {
 	FromID string `json:"from_id"`
 	ToID   string `json:"to_id"`
 	ID     string `json:"id,omitempty"`
+	// Confirmed is true only when Linear's response itself names this edge's
+	// from, to and type; otherwise the caller must confirm it by a read.
+	Confirmed bool `json:"-"`
 }
 
 func canonicalIDs(ids []string, limit int) ([]string, error) {
@@ -499,6 +507,13 @@ func (p *Provider) Capabilities(context.Context) (Capabilities, error) {
 	if membership != "" {
 		capabilities.Reasons["label_membership_proof"] = membership
 	}
+	for key, reason := range map[string]string{"member_team_filter": p.memberTeamFilterReason(), "status_team_filter": p.statusTeamFilterReason()} {
+		if reason != "" {
+			capabilities.Reasons[key] = reason
+		}
+	}
+	capabilities.MemberTeamFilter = capabilities.Reasons["member_team_filter"] == ""
+	capabilities.StatusTeamFilter = capabilities.Reasons["status_team_filter"] == ""
 	updatedAfter := p.updatedAfterReason()
 	capabilities.UpdatedAfterFilter = updatedAfter == ""
 	if updatedAfter != "" {
@@ -863,8 +878,11 @@ func (p *Provider) IssuesV2(ctx context.Context, q IssueQueryV2) (Page[IssueV2],
 	seen := map[string]string{}
 	for _, row := range rows {
 		x, e := p.parseIssueV2(ctx, row)
-		if pe, ok := e.(*Error); ok && pe.Kind == "scope_metadata_missing" && ValidID(str(row, "id")) {
-			x, e = p.IssueV2(ctx, str(row, "id"))
+		if pe, ok := e.(*Error); ok && pe.Kind == "scope_metadata_missing" {
+			// Native rows carry a display id beside the uuid.
+			if uuid, idErr := id(row); idErr == nil {
+				x, e = p.IssueV2(ctx, uuid)
+			}
 		}
 		if e != nil {
 			return Page[IssueV2]{}, e
@@ -1088,7 +1106,8 @@ func (p *Provider) Members(ctx context.Context, team string, o PageOptions) (Pag
 		}
 		_, flat := row["teamId"]
 		_, nested := row["team"]
-		if flat || nested {
+		teamKnown := flat || nested
+		if teamKnown {
 			scope, e := scopedID(row, "teamId", "team", false)
 			if e != nil {
 				return Page[Member]{}, e
@@ -1111,6 +1130,11 @@ func (p *Provider) Members(ctx context.Context, team string, o PageOptions) (Pag
 			}
 			active = !disabled
 			known = true
+		}
+		// A row without its own team belongs to the team only through the
+		// documented filter; without it the member is listed, never eligible.
+		if !teamKnown && p.memberTeamFilterReason() != "" {
+			known = false
 		}
 		out.Items = append(out.Items, Member{ID: i, Name: str(row, "name"), TeamID: team, Active: active, EligibilityKnown: known})
 	}
@@ -1307,14 +1331,17 @@ func (p *Provider) Relation(ctx context.Context, in RelationInput) (RelationRece
 		}
 		receipt.ID = value
 	}
+	named := map[string]bool{}
 	for key, want := range map[string]string{"fromId": in.FromID, "issueId": in.FromID, "toId": in.ToID, "relatedIssueId": in.ToID, "type": in.Type, "action": in.Action} {
 		if raw, present := m[key]; present {
 			value, ok := raw.(string)
 			if !ok || value != want {
 				return RelationReceipt{}, fail("scope_mismatch")
 			}
+			named[key] = true
 		}
 	}
+	receipt.Confirmed = (named["fromId"] || named["issueId"]) && (named["toId"] || named["relatedIssueId"]) && named["type"]
 	return receipt, nil
 }
 
@@ -1355,6 +1382,53 @@ func (p *Provider) labelMembershipReason() string {
 		}
 	}
 	return p.labelFilterProofReason()
+}
+
+// memberTeamFilterReason is empty when the member listing filters by team:
+// list_team_members by its name, or list_users by a team filter documented
+// as returning only that team's members.
+func (p *Provider) memberTeamFilterReason() string {
+	name := "list_users"
+	if p.tools[name] == nil {
+		name = "list_team_members"
+	}
+	if p.tools[name] == nil {
+		return "no member listing tool is advertised"
+	}
+	props, _, e := schema(p.tools[name])
+	if e != nil {
+		return name + " schema is unreadable"
+	}
+	team, ok := props["team"].(map[string]any)
+	if !ok {
+		team, ok = props["teamId"].(map[string]any)
+	}
+	text, _ := team["description"].(string)
+	if !ok || team["type"] != "string" || (name == "list_users" && !strings.Contains(text, "Only return members of this team")) {
+		return name + " schema changed: team filter missing or no longer documented as returning only that team's members"
+	}
+	return ""
+}
+
+// statusTeamFilterReason is empty when list_issue_statuses is documented as
+// listing one team's statuses, selected by a string team filter.
+func (p *Provider) statusTeamFilterReason() string {
+	t := p.tools["list_issue_statuses"]
+	if t == nil {
+		return "list_issue_statuses is not advertised"
+	}
+	props, _, e := schema(t)
+	if e != nil {
+		return "list_issue_statuses schema is unreadable"
+	}
+	team, ok := props["team"].(map[string]any)
+	if !ok {
+		team, ok = props["teamId"].(map[string]any)
+	}
+	if !ok || team["type"] != "string" || !strings.Contains(t.Description, "in a Linear team") {
+		return "list_issue_statuses schema changed: no longer documented as one team's statuses"
+	}
+	return ""
 }
 
 // updatedAfterReason is empty when list_issues pins the documented

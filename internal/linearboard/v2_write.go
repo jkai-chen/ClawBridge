@@ -440,6 +440,7 @@ func (s *Service) WriteV2(ctx context.Context, scope bus.Request, in WriteInputV
 		post := func(e error) error { return s.postFailureV2(ctx, scope, b, e) }
 		sent, known := sentCount(p)
 		var receipt any
+		var unverified []string
 		switch in.Operation {
 		case "create":
 			description, state := "", ""
@@ -472,10 +473,13 @@ func (s *Service) WriteV2(ctx context.Context, scope bus.Request, in WriteInputV
 			if !legacy && receiptParentV2(issue, in.Parent, parentIssue) != nil {
 				return nil, errors.New("created issue receipt parent mismatch")
 			}
+			if unverified, e = receiptFieldsV2(issue, in, legacy); e != nil {
+				return nil, post(e)
+			}
 			if legacy {
 				receipt = map[string]any{"id": issue.ID, "identifier": issue.Identifier, "team_id": issue.TeamID, "project_id": issue.ProjectID}
 			} else {
-				receipt = ReceiptV2{Kind: "issue", Outcome: "accepted", ID: issue.ID, Identifier: issue.Identifier, TeamID: issue.TeamID, ProjectID: projectPointerV2(issue.ProjectID)}
+				receipt = ReceiptV2{Kind: "issue", Outcome: "accepted", ID: issue.ID, Identifier: issue.Identifier, TeamID: issue.TeamID, ProjectID: projectPointerV2(issue.ProjectID), Unverified: unverified}
 			}
 		case "update":
 			base := linearprovider.UpdateInput{ID: in.IssueID, Title: in.Title, Description: in.Description, StateID: in.StateID}
@@ -501,10 +505,13 @@ func (s *Service) WriteV2(ctx context.Context, scope bus.Request, in WriteInputV
 			if !legacy && receiptParentV2(issue, in.Parent, parentIssue) != nil {
 				return nil, errors.New("updated issue receipt parent mismatch")
 			}
+			if unverified, e = receiptFieldsV2(issue, in, legacy); e != nil {
+				return nil, post(e)
+			}
 			if legacy {
 				receipt = map[string]any{"id": issue.ID, "identifier": issue.Identifier, "team_id": issue.TeamID, "project_id": issue.ProjectID}
 			} else {
-				receipt = ReceiptV2{Kind: "issue", Outcome: "accepted", ID: issue.ID, Identifier: issue.Identifier, TeamID: issue.TeamID, ProjectID: projectPointerV2(issue.ProjectID)}
+				receipt = ReceiptV2{Kind: "issue", Outcome: "accepted", ID: issue.ID, Identifier: issue.Identifier, TeamID: issue.TeamID, ProjectID: projectPointerV2(issue.ProjectID), Unverified: unverified}
 			}
 		default:
 			r, err := p.Comment(ctx, in.IssueID, in.Body)
@@ -597,6 +604,57 @@ func sameDestinationParentV2(parent linearprovider.IssueV2, team, project string
 
 // receiptParentV2 checks a mutation receipt's parent against the request when
 // the receipt reports it; native Linear reports the parent's identifier.
+// receiptFieldsV2 compares the labels, assignee, parent and state a create or
+// update set with the issue Linear returned. A field the receipt reports and
+// that differs makes the write uncertain; a field it does not report is named
+// as unverified rather than assumed. The parent's value is checked by
+// receiptParentV2; here it is only named when the receipt cannot show it.
+func receiptFieldsV2(issue linearprovider.IssueV2, in WriteInputV2, legacy bool) ([]string, error) {
+	if legacy {
+		return nil, nil
+	}
+	mismatch := &linearprovider.Error{Kind: "receipt_mismatch"}
+	var unverified []string
+	if in.Labels.Present {
+		if !issue.LabelsKnown {
+			unverified = append(unverified, "labels")
+		} else {
+			got := issue.LabelIDs
+			if got == nil {
+				got = []string{}
+			}
+			got, e := sortedUniqueIDs(got, 100)
+			if e != nil || digest(got) != digest(in.Labels.Value) {
+				return nil, mismatch
+			}
+		}
+	}
+	if in.Assignee.Present {
+		want := ""
+		if in.Assignee.Value != nil {
+			want = *in.Assignee.Value
+		}
+		switch {
+		case !issue.AssigneeKnown:
+			unverified = append(unverified, "assignee")
+		case issue.AssigneeID != want:
+			return nil, mismatch
+		}
+	}
+	if in.Parent.Present && !issue.ParentKnown {
+		unverified = append(unverified, "parent")
+	}
+	if in.StateID != nil {
+		switch {
+		case issue.StateID == "":
+			unverified = append(unverified, "state")
+		case issue.StateID != *in.StateID:
+			return nil, mismatch
+		}
+	}
+	return unverified, nil
+}
+
 func receiptParentV2(issue linearprovider.IssueV2, parent linearprovider.Field[*string], verified linearprovider.IssueV2) error {
 	if !parent.Present || !issue.ParentKnown {
 		return nil

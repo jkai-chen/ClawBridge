@@ -214,7 +214,9 @@ not a provider CAS guarantee. A fresh mutation-intent request still requires
 current ClawBridge write rights and a personal Linear Write profile. An accepted
 identical ledger retry checks current ClawBridge authority and returns the saved
 receipt without provider or keyring access. Keep the receipt and reconcile
-uncertain outcomes through read-back.
+uncertain outcomes through read-back. A receipt listing fields under
+`unverified` was accepted, but Linear did not report those fields; read the
+issue before relying on them.
 
 Set a human assignee only when explicitly requested and verified as an eligible
 team member. That assignment does not replace the coordinator's Current agent

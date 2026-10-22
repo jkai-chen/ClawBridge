@@ -22,6 +22,21 @@ func nativeIssueList() *mcp.Tool {
 	}}}
 }
 
+// nativeUserList and nativeStatusList mirror the documented native team
+// filters of the member and workflow-state listings.
+func nativeUserList() *mcp.Tool {
+	return &mcp.Tool{Name: "list_users", InputSchema: map[string]any{"type": "object", "properties": map[string]any{
+		"team":   map[string]any{"type": "string", "description": "Team name or ID. Only return members of this team; omit to search the workspace"},
+		"limit":  map[string]any{"type": "number", "default": 50, "maximum": 250},
+		"cursor": map[string]any{"type": "string"},
+	}}}
+}
+func nativeStatusList() *mcp.Tool {
+	return &mcp.Tool{Name: "list_issue_statuses", Description: "List available issue statuses in a Linear team", InputSchema: map[string]any{"type": "object", "properties": map[string]any{
+		"team": map[string]any{"type": "string", "description": "Team name or ID"},
+	}, "required": []any{"team"}}}
+}
+
 // listRow mirrors a default native list_issues row: display id, uuid and
 // label names, with no assignee or parent keys.
 func listRow(identifier, uuid string) map[string]any {

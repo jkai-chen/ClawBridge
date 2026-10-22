@@ -125,6 +125,19 @@ func (s *Service) RelationV2(ctx context.Context, scope bus.Request, in Relation
 		if r.Action != in.Action || r.Type != in.Type || r.FromID != in.FromID || r.ToID != in.ToID || (r.ID != "" && !linearprovider.ValidID(r.ID)) {
 			return nil, errors.New("relation receipt does not match the normalized edge")
 		}
+		// A response that does not itself name the edge is confirmed by
+		// reading it back: an added edge must be visible, and a removed one
+		// must have been visible before and be gone now (native relation
+		// lists are visible, not complete, so absence alone proves nothing).
+		if !r.Confirmed {
+			after, observedAfter, e := relationEvidenceV2(ctx, p2, b, v, in)
+			if e != nil || !(observedAfter || (in.Action == "remove" && existing != nil && after == nil)) {
+				return nil, s.postFailureV2(ctx, scope, b, &linearprovider.Error{Kind: "receipt_unverified"})
+			}
+			if r.ID == "" && after != nil {
+				r.ID = after.ID
+			}
+		}
 		receipt.ID = r.ID
 		return s.postReceiptV2(ctx, scope, b, receipt)
 	})

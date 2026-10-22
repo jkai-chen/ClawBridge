@@ -99,6 +99,7 @@ func runOnboarding(ctx context.Context, path string, stdout, stderr io.Writer) (
 	}
 	yes := func(question string) (bool, error) {
 		a, e := ask(question+" [y/N]: ", "")
+		a = strings.ToLower(a)
 		return a == "y" || a == "yes", e
 	}
 	failed := func(e error) string { return "failed: " + wizardSafe(e.Error()) }
@@ -161,6 +162,7 @@ func runOnboarding(ctx context.Context, path string, stdout, stderr io.Writer) (
 		if e != nil {
 			return e
 		}
+		access = strings.ToLower(access)
 		if ended {
 			record("Linear", "skipped", linearLater)
 		} else if access != "read" && access != "write" {
@@ -255,20 +257,30 @@ func runOnboarding(ctx context.Context, path string, stdout, stderr io.Writer) (
 		installed = append(installed, entry{agent, result.Path, session})
 	}
 
-	// 4. Doctor, with the first configured MCP entry, then the summary.
-	args := []string{}
-	if len(installed) > 0 {
-		args = []string{"--mcp-agent", installed[0].agent, "--mcp-config", installed[0].path, "--mcp-session", installed[0].session}
+	// 4. Doctor, once per MCP entry configured here (doctor checks one entry
+	// per run), or once without one, then the summary.
+	type doctorRun struct {
+		name string
+		args []string
 	}
-	if report, e := wizardDoctor(ctx, path, profile, args); e != nil {
-		record("Doctor", failed(e), "clawbridge doctor")
-	} else {
-		record("Doctor", doctorSummary(report), "clawbridge doctor")
+	runs := []doctorRun{{"Doctor", nil}}
+	if len(installed) > 0 {
+		runs = nil
+	}
+	for _, m := range installed {
+		runs = append(runs, doctorRun{"Doctor (" + wizardAgentNames[m.agent] + ")", []string{"--mcp-agent", m.agent, "--mcp-config", m.path, "--mcp-session", m.session}})
+	}
+	for _, run := range runs {
+		if report, e := wizardDoctor(ctx, path, profile, run.args); e != nil {
+			record(run.name, failed(e), "clawbridge doctor")
+		} else {
+			record(run.name, doctorSummary(report), "clawbridge doctor")
+		}
 	}
 	fmt.Fprintln(stdout, "\nSummary:")
 	for _, s := range steps {
 		fmt.Fprintf(stdout, "- %s: %s\n", s.name, s.outcome)
-		if s.later != "" && s.name != "Doctor" {
+		if s.later != "" && !strings.HasPrefix(s.name, "Doctor") {
 			fmt.Fprintf(stdout, "  later: %s\n", s.later)
 		}
 	}

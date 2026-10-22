@@ -91,23 +91,26 @@ func (o *onboardingRun) want(calls ...string) {
 }
 
 func TestGuidedOnboardingRunsEachConfirmedStepInOrder(t *testing.T) {
-	// Skill yes; Linear yes as "Work" with default read access; Claude Code
-	// yes as session "eng" and written; Codex no.
-	o := newOnboardingRun(t, "y\ny\nWork\n\ny\neng\ny\nn\n")
+	// Skill Yes; Linear YES as "Work" with READ access; Claude Code yes as
+	// session "eng" and written; Codex yes as "cx" and written. Answers are
+	// case-insensitive.
+	o := newOnboardingRun(t, "Yes\nYES\nWork\n READ \ny\neng\nY\ny\ncx\nyes\n")
 	if err := o.run(); err != nil {
 		t.Fatal(err, o.out.String())
 	}
 	o.want("keyring", "join", "skill", "linear:Work:read", "doctor:lin_synthetic:",
 		"mcp-preview:claude-code:eng:lin_synthetic", "mcp-write:claude-code:eng:lin_synthetic",
-		"doctor:lin_synthetic:--mcp-agent claude-code --mcp-config /synthetic/claude-code.json --mcp-session eng", "tui")
+		"mcp-preview:codex:cx:lin_synthetic", "mcp-write:codex:cx:lin_synthetic",
+		"doctor:lin_synthetic:--mcp-agent claude-code --mcp-config /synthetic/claude-code.json --mcp-session eng",
+		"doctor:lin_synthetic:--mcp-agent codex --mcp-config /synthetic/codex.json --mcp-session cx", "tui")
 	out := o.out.String()
 	for _, want := range []string{
 		"- Agent skill: installed",
 		"- Linear: connected (read access, profile lin_synthetic); capabilities pass",
 		"- MCP for Claude Code: configured in /synthetic/claude-code.json",
-		"- MCP for Codex: skipped",
-		"later: clawbridge mcp install --agent codex --session NAME --linear-profile lin_synthetic --dry-run",
-		"- Doctor: warn (warn Agent skill)",
+		"- MCP for Codex: configured in /synthetic/codex.json",
+		"- Doctor (Claude Code): warn (warn Agent skill)",
+		"- Doctor (Codex): warn (warn Agent skill)",
 	} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("output lacks %q:\n%s", want, out)

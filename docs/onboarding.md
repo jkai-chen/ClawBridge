@@ -70,8 +70,8 @@ without undoing the earlier ones:
 3. **MCP for each agent.** Asks for a session name, shows the entry it would
    write as a dry run, and writes it after you confirm. With a Linear profile from
    step 2, the entry also enables the native task-board tools.
-4. **Doctor.** Runs `clawbridge doctor` with the new MCP entry and prints a
-   summary of what was set up, what was skipped, and the exact command for each
+4. **Doctor.** Runs `clawbridge doctor` once for each MCP entry it configured
+   and prints a summary of what was set up, what was skipped, and the exact command for each
    skipped step.
 
 The terminal view opens afterwards.

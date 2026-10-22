@@ -60,8 +60,8 @@ requires its matching instance. Routing role is distinct from project permission
 | `set_notification_policy` | policy accept/hold/refuse; active own actor only |
 | `mark_read` | ids array of 1–1000 message IDs; atomic for own deliveries |
 | `reply` | message_id, body, operation_id; optional kind, coordination |
-| `update_session` | One or more role/model/host/account/notes/transport fields; hosted administrators may target_session |
-| `retire_session` | Optional successor and status retired/moved; hosted administrators may target_session |
+| `update_session` | One or more role/model/host/account/notes/transport fields; hosted owners and leads may target_session (see below) |
+| `retire_session` | Optional successor and status retired/moved; hosted owners and leads may target_session (see below) |
 | `history` | Optional entity, key, limit, after |
 | `whoami` | No extra arguments |
 | `message_status` | message_id; sender-only receipt metadata |
@@ -77,6 +77,12 @@ requires its matching instance. Routing role is distinct from project permission
 | `project_role_revoke` | Hosted owner: principal. Deletes the project role, retires that principal's active sessions in the project and removes workspace membership when no project role remains; refuses the workspace owner and self-revoke |
 | `snapshot` | Hosted current actor/instance; explicit scoped sync |
 | `purge_expired` | Hosted owner: current project |
+
+Peer administration through `target_session` is hosted-only. A project owner may
+update or retire any session in the project. A lead may target its own sessions
+and sessions owned by member or reader principals, never the owner's, another
+lead's or one whose principal holds no project role, and may change the `role`
+field only on sessions it owns.
 
 MCP exposes register_session, list_sessions, send, inbox, inbox_status,
 notification_status, set_notification_policy, mark_read, reply, update_session,

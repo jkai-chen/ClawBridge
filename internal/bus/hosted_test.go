@@ -267,3 +267,77 @@ func TestPostgresProjectRoleRevokeRemovesAccess(t *testing.T) {
 	}
 	call(carol, "q", "list_sessions", "", nil)
 }
+func TestPostgresLeadPeerAdministrationIsBounded(t *testing.T) {
+	dsn := os.Getenv("CLAWBRIDGE_TEST_POSTGRES_DSN")
+	if dsn == "" {
+		t.Skip("reviewer supplies disposable Postgres DSN")
+	}
+	ctx := context.Background()
+	owner := "owner@bus-test.example"
+	people := map[string]string{"lead": "lead@bus-test.example", "peer": "peer@bus-test.example", "member": "member@bus-test.example", "reader": "reader@bus-test.example"}
+	s, err := OpenPostgres(ctx, dsn, owner)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	w := newID("unit_")
+	exec := func(principal, op, session string, a map[string]any) error {
+		_, e := s.ExecuteAs(ctx, principal, Request{Operation: op, Workspace: w, Project: "p", Session: session, Args: a})
+		return e
+	}
+	must := func(principal, op, session string, a map[string]any) {
+		t.Helper()
+		if e := exec(principal, op, session, a); e != nil {
+			t.Fatalf("%s %s as %s: %v", op, session, principal, e)
+		}
+	}
+	forbidden := func(e error) bool {
+		var coded interface{ Code() string }
+		return errors.As(e, &coded) && coded.Code() == "forbidden"
+	}
+	must(owner, "workspace_init", "", map[string]any{"mode": "server"})
+	must(owner, "project_create", "", map[string]any{"slug": "p"})
+	must(owner, "register_session", "boss", map[string]any{"instance": "boss-inst"})
+	for name, principal := range people {
+		role := "member"
+		if name == "lead" || name == "peer" {
+			role = "lead"
+		}
+		must(owner, "project_role_set", "", map[string]any{"principal": principal, "role": role})
+		must(principal, "register_session", name, map[string]any{"instance": name + "-inst"})
+	}
+	must(people["lead"], "register_session", "lead-second", map[string]any{"instance": "lead-second-inst"})
+	must(owner, "project_role_set", "", map[string]any{"principal": people["reader"], "role": "reader"})
+	lead := func(op, target string, extra map[string]any) error {
+		a := map[string]any{"instance": "lead-inst", "target_session": target}
+		for k, v := range extra {
+			a[k] = v
+		}
+		return exec(people["lead"], op, "lead", a)
+	}
+	for _, target := range []string{"boss", "peer"} {
+		if e := lead("update_session", target, map[string]any{"notes": "x"}); !forbidden(e) {
+			t.Fatalf("lead updated %s: %v", target, e)
+		}
+		if e := lead("retire_session", target, nil); !forbidden(e) {
+			t.Fatalf("lead retired %s: %v", target, e)
+		}
+	}
+	if e := lead("update_session", "member", map[string]any{"role": "lead"}); !forbidden(e) {
+		t.Fatalf("lead relabelled a session it does not own: %v", e)
+	}
+	for _, target := range []string{"member", "reader"} {
+		if e := lead("update_session", target, map[string]any{"notes": "routing note"}); e != nil {
+			t.Fatalf("lead could not administer %s: %v", target, e)
+		}
+	}
+	if e := lead("update_session", "lead-second", map[string]any{"role": "reviewer"}); e != nil {
+		t.Fatalf("lead could not relabel its own session: %v", e)
+	}
+	if e := lead("retire_session", "member", nil); e != nil {
+		t.Fatalf("lead could not retire a member session: %v", e)
+	}
+	// The owner keeps full peer administration.
+	must(owner, "update_session", "boss", map[string]any{"instance": "boss-inst", "target_session": "lead", "role": "observer"})
+	must(owner, "retire_session", "boss", map[string]any{"instance": "boss-inst", "target_session": "peer"})
+}

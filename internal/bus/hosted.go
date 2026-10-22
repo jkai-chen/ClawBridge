@@ -51,6 +51,33 @@ func (s *Store) setProjectRole(ctx context.Context, tx *transaction, wid, pid st
 	return one(ctx, tx, `SELECT * FROM project_roles WHERE project_id=? AND principal=?`, pid, principal)
 }
 
+// leadMayAdminister limits a lead's peer administration of another principal's
+// session: only sessions owned by member or reader principals, never the
+// owner's, another lead's or an unassigned principal's, and never a change of
+// that session's routing role. Owners keep full peer administration.
+func (s *Store) leadMayAdminister(ctx context.Context, tx *transaction, w map[string]any, pid string, target map[string]any, a map[string]any) error {
+	principal, _ := target["owner_principal"].(string)
+	role := ""
+	if principal == w["owner_principal"] {
+		role = "owner"
+	} else {
+		rows, err := query(ctx, tx, `SELECT role FROM project_roles WHERE project_id=? AND principal=?`, pid, principal)
+		if err != nil {
+			return err
+		}
+		if len(rows) > 0 {
+			role, _ = rows[0]["role"].(string)
+		}
+	}
+	if role != "member" && role != "reader" {
+		return errors.New("project lead permission covers only its own sessions and those of members or readers")
+	}
+	if _, ok := a["role"]; ok {
+		return errors.New("project lead permission cannot change the role of a session it does not own")
+	}
+	return nil
+}
+
 // revokeProjectRole removes a principal's access to one project: its role row,
 // its active sessions there (retired, so messages to them fail), and its
 // workspace membership once it holds no role in any project of the workspace.

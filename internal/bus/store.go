@@ -667,6 +667,11 @@ func (s *Store) execute(ctx context.Context, tx *transaction, r Request) (any, e
 		if err != nil {
 			return nil, err
 		}
+		if projectRole == "lead" && target["owner_principal"] != s.principal {
+			if err = s.leadMayAdminister(ctx, tx, w, pid, target, a); err != nil {
+				return nil, err
+			}
+		}
 	}
 	if actor["status"] != "active" && r.Operation != "message_status" && r.Operation != "inbox" && r.Operation != "mark_read" && r.Operation != "retire_session" && r.Operation != "send" && r.Operation != "reply" {
 		return nil, errors.New("session is retired or moved; it cannot perform this operation")

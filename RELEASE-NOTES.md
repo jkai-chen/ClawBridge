@@ -29,9 +29,11 @@ notifications while keeping normal messaging independent of those integrations.
   parent is allowed. Relation edges are readable; an existing edge is reported
   unchanged without a write, and a remove is always sent.
 - `doctor`, `linear status` and the task-board context report every Linear
-  capability and why one is off.
-- The MCP server keeps one Linear connection per process and briefly reuses a
-  read's binding proof; every write opens a fresh connection and fully verifies.
+  capability, with a reason for the schema-pinned ones when they are off.
+- The MCP server keeps one Linear connection per process and reuses a read's
+  binding proof for up to 60 seconds; writes never use it. Every write opens a
+  fresh connection, verifies the binding and re-reads the affected issue state
+  before dispatch.
   A write rejected by Linear before it runs (rate limit or authorization) is
   reported as not sent, with a safe error code; other failures stay uncertain.
 - Owners can revoke project access; leads can administer only their own,
@@ -77,8 +79,8 @@ Assets retain five CGO-disabled targets, installers, the MIT licence, selected
 checksums and a full source marker. Binaries are unsigned; macOS binaries are not
 notarized. Checksums verify integrity against the manifest rather than an
 independent signature. On macOS against Linear, project sets, assignee set and
-clear, label apply, replace and clear, parent set and clear, and blocks add and
-remove were exercised on test fixtures; local automated acceptance uses isolated
+clear, label apply, replace and clear, and blocks add and remove were exercised
+through ClawBridge on test fixtures, and parent set and clear by a provider probe; local automated acceptance uses isolated
 providers and disposable PostgreSQL.
 Windows checks cover profile privacy, redirected input and a synthetic keyring
 item; account OAuth and notification host transport retain separate platform limits.

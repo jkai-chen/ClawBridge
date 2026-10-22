@@ -4,6 +4,18 @@ Back up the store before upgrading. Schema 5 is a one-way migration: older
 binaries refuse the upgraded store. Upgrade the service before clients; an older
 service rejects the new assignment operations.
 
+- Windows fixes:
+  - Guided setup accepts typed input. Characters echo, Enter, Backspace and
+    Ctrl+C work. Previously the first prompt ignored input.
+  - The installer adds its directory to your user PATH, so new terminals find
+    `clawbridge`. `-NoModifyPath` opts out; the system PATH is never changed.
+  - Upgrading while an agent runs `clawbridge mcp` works: the running binary
+    is moved aside and removed once it exits.
+  - The installer enables TLS 1.2 on Windows PowerShell 5.1. Run it with
+    `powershell -NoProfile -ExecutionPolicy Bypass -File …`.
+  - Local mode (`setup --local`) opens its SQLite store again.
+  - Notification state in the usual profile folder is accepted, including
+    from an elevated administrator session.
 - Structured session assignments. A session proposes its issue, task role and
   repository path scope; the project's designated coordinator session confirms
   or releases it. Find owners with `sessions --issue` or `--scope-path`;

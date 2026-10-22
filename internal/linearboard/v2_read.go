@@ -152,7 +152,7 @@ func (s *Service) LinkV2(ctx context.Context, scope bus.Request, in LinkInputV2)
 	if b.Revision != in.ExpectedRevision {
 		return nil, errors.New("task-board revision conflict")
 	}
-	profile, p, done, e := s.open(ctx)
+	profile, p, done, e := s.openForWrite(ctx)
 	if e != nil {
 		return nil, e
 	}

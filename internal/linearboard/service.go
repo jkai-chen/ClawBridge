@@ -94,10 +94,19 @@ func (s *Service) Binding(ctx context.Context, scope bus.Request) (bus.Taskboard
 	return s.binding(ctx, scope)
 }
 
-// open returns the native connection for one command and the function that
-// releases it. The profile is checked on every command, even when a kept-open
-// connection is reused.
+// open returns the native connection for one read command and the function
+// that releases it. The profile is checked on every command, even when a
+// kept-open connection is reused.
 func (s *Service) open(ctx context.Context) (linearconn.Profile, Provider, func(), error) {
+	return s.connect(ctx, false)
+}
+
+// openForWrite always opens a fresh connection, so a write negotiates against
+// Linear's current tool schemas rather than a kept tools/list.
+func (s *Service) openForWrite(ctx context.Context) (linearconn.Profile, Provider, func(), error) {
+	return s.connect(ctx, true)
+}
+func (s *Service) connect(ctx context.Context, write bool) (linearconn.Profile, Provider, func(), error) {
 	if s.cfg.Connections == nil || s.cfg.ProfileID == "" {
 		return linearconn.Profile{}, nil, nil, errors.New("select a personal native Linear profile explicitly")
 	}
@@ -118,7 +127,7 @@ func (s *Service) open(ctx context.Context) (linearconn.Profile, Provider, func(
 		return s.cfg.Open(ctx, client, profile.Access == linearconn.Read)
 	}
 	if s.pool != nil {
-		provider, done, err := s.pool.open(ctx, profile.Access == linearconn.Read, s.cfg.Now(), fresh)
+		provider, done, err := s.pool.open(ctx, profile.Access == linearconn.Read, write, s.cfg.Now(), fresh)
 		return profile, provider, done, err
 	}
 	provider, err := fresh()
@@ -268,7 +277,7 @@ func (s *Service) Link(ctx context.Context, scope bus.Request, in LinkInput) (an
 	if b.Revision != in.ExpectedRevision {
 		return nil, errors.New("task-board revision conflict")
 	}
-	profile, p, done, err := s.open(ctx)
+	profile, p, done, err := s.openForWrite(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -525,7 +534,7 @@ func (s *Service) Write(ctx context.Context, scope bus.Request, in WriteInput) (
 		}
 		return s.postReceipt(ctx, scope, b, receipt)
 	}
-	profile, p, done, err := s.open(ctx)
+	profile, p, done, err := s.openForWrite(ctx)
 	if err != nil {
 		return nil, err
 	}

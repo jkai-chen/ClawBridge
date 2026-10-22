@@ -12,8 +12,8 @@ const ProviderTTL = 5 * time.Minute
 
 // providerPool keeps one open native connection per Service, and so per
 // profile, inside one process. Nothing is shared across processes. A kept
-// connection is reopened, with a fresh tools/list, when it is older than the
-// TTL, when the profile's access changes, when a call on it failed or missed a
+// connection is reopened, with a fresh tools/list, for every write, when it is
+// older than the TTL, when the profile's access changes, when a call on it failed or missed a
 // capability, when its session no longer answers, or after any command error.
 type providerPool struct {
 	ttl     time.Duration
@@ -50,12 +50,14 @@ func (s *Service) settle(err error) {
 	}
 }
 
-func (pool *providerPool) open(ctx context.Context, readonly bool, now time.Time, fresh func() (Provider, error)) (Provider, func(), error) {
+// open reuses the kept connection for a read. A write always replaces it with a
+// fresh one, which later reads then reuse.
+func (pool *providerPool) open(ctx context.Context, readonly, write bool, now time.Time, fresh func() (Provider, error)) (Provider, func(), error) {
 	pool.mu.Lock()
 	defer pool.mu.Unlock()
 	if c := pool.current; c != nil {
 		age := now.Sub(c.opened)
-		if c.readonly == readonly && age >= 0 && age < pool.ttl && alive(ctx, c.p) {
+		if !write && c.readonly == readonly && age >= 0 && age < pool.ttl && alive(ctx, c.p) {
 			c.users++
 			return c.p, pool.release(c), nil
 		}

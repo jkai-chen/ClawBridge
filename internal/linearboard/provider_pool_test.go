@@ -12,13 +12,19 @@ import (
 	"clawbridge/internal/linearprovider"
 )
 
-// pooledV2 is one opened native connection: it counts binding reads and
-// reports whether it was closed or its session went away.
+// pooledV2 is one opened native connection: it counts binding reads, reports
+// whether it was closed or its session went away, and keeps the capabilities
+// of the tools/list it was opened with.
 type pooledV2 struct {
 	*providerV2
 	teams, projects int
 	closed          bool
 	dead            bool
+	caps            linearprovider.Capabilities
+}
+
+func (p *pooledV2) Capabilities(context.Context) (linearprovider.Capabilities, error) {
+	return p.caps, nil
 }
 
 func (p *pooledV2) GetTeam(ctx context.Context, id string) (linearprovider.Team, error) {
@@ -60,7 +66,7 @@ func newPoolHarness(t *testing.T, keep bool) *poolHarness {
 	s.cfg.Now = func() time.Time { return h.now }
 	s.cfg.Connections = accessConnections{&h.access}
 	s.cfg.Open = func(_ context.Context, _ *http.Client, ro bool) (Provider, error) {
-		c := &pooledV2{providerV2: p}
+		c := &pooledV2{providerV2: p, caps: p.caps}
 		h.opened = append(h.opened, c)
 		h.ro = append(h.ro, ro)
 		return c, nil
@@ -123,7 +129,8 @@ func TestLinearV2MCPKeepsOneConnectionWithIdenticalReadsAndErrors(t *testing.T) 
 			t.Fatal("per-call connection left open")
 		}
 	}
-	// Kept: the failed read (command 3) forces exactly one reopen.
+	// Kept: the failed read (command 3) retires the first connection, the
+	// write opens fresh and the last read reuses the write's connection.
 	if len(kept.opened) != 2 || !kept.opened[0].closed || kept.opened[1].closed {
 		t.Fatalf("kept opens = %d", len(kept.opened))
 	}
@@ -179,8 +186,50 @@ func TestLinearV2MCPReopensOnCapabilityUnavailable(t *testing.T) {
 	}
 	h.p.preflightErr = nil
 	h.run(t, "issue", map[string]any{"id": issueID})
-	if len(h.opened) != 2 || !h.opened[0].closed {
+	// The write opened fresh; its failure retires that connection too.
+	if len(h.opened) != 3 || !h.opened[0].closed || !h.opened[1].closed {
 		t.Fatalf("opens after capability_unavailable = %d", len(h.opened))
+	}
+}
+
+func TestLinearV2MCPWriteSeesASchemaChangeWithinTheTTL(t *testing.T) {
+	h := newPoolHarness(t, true)
+	h.p.members = []linearprovider.Member{{ID: memberA, TeamID: teamID, Active: true, EligibilityKnown: true}}
+	assign := map[string]any{"id": issueID, "assignee_id": memberA, "operation_id": "pool-assign"}
+	h.run(t, "issue", map[string]any{"id": issueID})
+	// Linear drops the assignee field from its write schema; the kept
+	// connection still holds the old tools/list.
+	h.p.caps.Assignee = false
+	h.now = h.now.Add(time.Minute)
+	if _, e := h.run(t, "update", assign); e == "" || h.p.writes != 0 {
+		t.Fatalf("write used the kept tools/list: %q writes=%d", e, h.p.writes)
+	}
+	if len(h.opened) != 2 || !h.opened[0].closed {
+		t.Fatalf("write did not open fresh: opens=%d", len(h.opened))
+	}
+	// Once the field is back, a write within the TTL succeeds on a fresh
+	// connection, and the next read reuses it.
+	h.p.caps.Assignee = true
+	if _, e := h.run(t, "update", map[string]any{"id": issueID, "assignee_id": memberA, "operation_id": "pool-assign-2"}); e != "" || h.p.writes != 1 {
+		t.Fatalf("write after the schema returned: %q writes=%d", e, h.p.writes)
+	}
+	h.run(t, "issue", map[string]any{"id": issueID})
+	if len(h.opened) != 3 || h.opened[2].closed {
+		t.Fatalf("opens = %d", len(h.opened))
+	}
+}
+
+func TestLinearV2MCPRelationWriteSeesASchemaChangeWithinTheTTL(t *testing.T) {
+	h := newPoolHarness(t, true)
+	h.p.issues[parentA] = linearprovider.IssueV2{Issue: linearprovider.Issue{ID: parentA, TeamID: otherTeamID, ProjectID: projectB}, ProjectKnown: true, RelationsKnown: true}
+	h.run(t, "issue", map[string]any{"id": issueID})
+	h.p.caps.RelationAdd = false
+	if _, e := h.run(t, "relation_add", map[string]any{"from_id": issueID, "to_id": parentA, "type": "blocks", "operation_id": "pool-edge"}); e == "" || h.p.writes != 0 {
+		t.Fatalf("relation used the kept tools/list: %q writes=%d", e, h.p.writes)
+	}
+	h.p.caps.RelationAdd = true
+	if _, e := h.run(t, "relation_add", map[string]any{"from_id": issueID, "to_id": parentA, "type": "blocks", "operation_id": "pool-edge-2"}); e != "" || h.p.writes != 1 {
+		t.Fatalf("relation after the schema returned: %q writes=%d", e, h.p.writes)
 	}
 }
 
@@ -204,8 +253,8 @@ func TestProviderPoolClosesARetiredConnectionOnlyAfterItsLastUser(t *testing.T) 
 		opened = append(opened, c)
 		return c, nil
 	}
-	_, releaseA, _ := pool.open(context.Background(), false, now, fresh)
-	_, releaseB, _ := pool.open(context.Background(), false, now, fresh)
+	_, releaseA, _ := pool.open(context.Background(), false, false, now, fresh)
+	_, releaseB, _ := pool.open(context.Background(), false, false, now, fresh)
 	pool.drop()
 	releaseA()
 	releaseA()
@@ -216,7 +265,7 @@ func TestProviderPoolClosesARetiredConnectionOnlyAfterItsLastUser(t *testing.T) 
 	if len(opened) != 1 || !opened[0].closed {
 		t.Fatal("retired connection not closed after its last user")
 	}
-	if _, _, e := pool.open(context.Background(), false, now, func() (Provider, error) { return nil, fmt.Errorf("offline") }); e == nil || pool.current != nil {
+	if _, _, e := pool.open(context.Background(), false, false, now, func() (Provider, error) { return nil, fmt.Errorf("offline") }); e == nil || pool.current != nil {
 		t.Fatal("a failed open was kept")
 	}
 }

@@ -168,7 +168,7 @@ func (s *Service) WriteV2(ctx context.Context, scope bus.Request, in WriteInputV
 		}
 		return s.postReceiptV2(ctx, scope, b, receipt)
 	}
-	profile, p, done, e := s.open(ctx)
+	profile, p, done, e := s.openForWrite(ctx)
 	if e != nil {
 		return nil, e
 	}

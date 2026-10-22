@@ -114,14 +114,16 @@ object (or `capabilities_error` if Linear is unreachable), and
 `linear context` and the `taskboard_context_v2` tool include it so agents can
 see it. Reading capabilities lists the provider's tools only; it writes nothing.
 
-A `clawbridge mcp` process keeps one native connection open for its profile,
-instead of reconnecting and listing Linear's tools on every tool call. It
-reconnects, with a fresh tool list, after five minutes, when the profile's access
+A `clawbridge mcp` process keeps one native connection open for its profile, so
+read tools don't reconnect and list Linear's tools on every call. Every write tool
+(create, update, comment, relation changes, linking) opens a fresh connection and
+tool list, so writes always negotiate against Linear's current schemas. The kept
+connection is also replaced after five minutes, when the profile's access
 changes, when Linear's session stops answering, and after any failed tool call,
-including a `capability_unavailable` one. So a capability that Linear switches
-off is noticed on the next call after a failure, or within five minutes at most.
-The connection is never shared with another process, and every call still checks
-the profile first. CLI commands connect once per command as before.
+including a `capability_unavailable` one. So a read can see a capability change
+up to five minutes late; a write never does. The connection is never shared with
+another process, and every call still checks the profile first. CLI commands
+connect once per command as before.
 
 Start from the assigned issue and read its scope, dependencies, acceptance criteria
 and Current agent block. Resolve that immutable session through project-scoped,

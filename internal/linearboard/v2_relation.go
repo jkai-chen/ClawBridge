@@ -56,7 +56,7 @@ func (s *Service) RelationV2(ctx context.Context, scope bus.Request, in Relation
 		}
 		return s.postReceiptV2(ctx, scope, b, r)
 	}
-	profile, p, done, e := s.open(ctx)
+	profile, p, done, e := s.openForWrite(ctx)
 	if e != nil {
 		return nil, e
 	}

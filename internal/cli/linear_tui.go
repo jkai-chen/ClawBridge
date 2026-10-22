@@ -44,8 +44,8 @@ func (s *linearTUISource) Do(ctx context.Context, r tui.LinearRequest) (tui.Line
 			return err
 		}
 		data.Profiles = profiles
-		b, err := service.Binding(ctx, s.scope)
-		data.Binding = b
+		b, err := service.BindingV2(ctx, s.scope)
+		data.BindingV2 = &b
 		return err
 	}
 	switch r.Operation {
@@ -83,42 +83,51 @@ func (s *linearTUISource) Do(ctx context.Context, r tui.LinearRequest) (tui.Line
 		}
 		return data, err
 	case "preview", "link":
-		result, err := service.Link(ctx, s.scope, r.Link)
+		input := linearboard.LinkInputV2{TeamIDs: r.Link.TeamIDs, DefaultTeamID: r.Link.DefaultTeamID, ProjectIDs: []string{}, ExpectedRevision: r.Link.ExpectedRevision, TeamBoard: r.Link.TeamBoard, Confirm: r.Link.Confirm}
+		if r.Link.ProjectID != "" {
+			input.ProjectIDs = []string{r.Link.ProjectID}
+		}
+		if r.LinkV2 != nil {
+			input = *r.LinkV2
+		}
+		result, err := service.LinkV2(ctx, s.scope, input)
 		if err != nil {
 			return data, err
 		}
 		if r.Operation == "link" {
-			data.Binding, err = bus.ParseTaskboardBinding(result)
+			binding, e := bus.ParseTaskboardBindingV2(result)
+			data.BindingV2, err = &binding, e
 		} else {
-			preview, ok := result.(linearboard.LinkPreview)
-			if !ok || preview.Binding.Revision != r.Link.ExpectedRevision {
+			preview, ok := result.(linearboard.LinkPreviewV2)
+			if !ok || preview.Binding.Revision != input.ExpectedRevision {
 				return data, errors.New("task-board preview revision changed; refresh and preview again")
 			}
-			data.Binding = preview.Binding
+			data.BindingV2 = &preview.Binding
 			raw, _ := json.MarshalIndent(preview, "", "  ")
 			data.Preview = string(raw)
 		}
 		return data, err
 	case "unlink-preview", "unlink":
-		result, err := service.Unlink(ctx, s.scope, r.ExpectedRevision, r.Confirm)
+		result, err := service.UnlinkV2(ctx, s.scope, r.ExpectedRevision, r.Confirm)
 		if err != nil {
 			return data, err
 		}
 		if r.Operation == "unlink" {
-			data.Binding, err = bus.ParseTaskboardBinding(result)
+			binding, e := bus.ParseTaskboardBindingV2(result)
+			data.BindingV2, err = &binding, e
 		} else {
 			raw, _ := json.MarshalIndent(result, "", "  ")
 			data.Preview = string(raw)
 		}
 		return data, err
 	case "issues":
-		page, err := service.Issues(ctx, s.scope, r.Limit, r.Cursor)
-		data.Issues = page
+		page, err := service.IssuesV2(ctx, s.scope, linearboard.IssuesInputV2{Limit: r.Limit, Cursor: r.Cursor})
+		data.IssuesV2 = &page
 		return data, err
 	case "issue":
-		issue, err := service.Issue(ctx, s.scope, r.IssueID)
+		issue, err := service.IssueV2(ctx, s.scope, r.IssueID)
 		if err == nil {
-			data.Issue = &issue
+			data.IssueV2 = &issue
 		}
 		return data, err
 	default:

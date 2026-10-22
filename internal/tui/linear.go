@@ -29,23 +29,30 @@ type LinearRequest struct {
 	Cursor                     string
 	IssueID                    string
 	Link                       linearboard.LinkInput
+	LinkV2                     *linearboard.LinkInputV2
 	ExpectedRevision           int64
 	Confirm                    bool
 }
 type LinearData struct {
-	Profiles []linearconn.Profile
-	Binding  bus.TaskboardBinding
-	Teams    linearprovider.Page[linearprovider.Team]
-	Projects linearprovider.Page[linearprovider.Project]
-	Issues   linearprovider.Page[linearprovider.Issue]
-	Issue    *linearprovider.Issue
-	Preview  any
+	Profiles  []linearconn.Profile
+	Binding   bus.TaskboardBinding
+	BindingV2 *bus.TaskboardBindingV2
+	IssuesV2  *linearprovider.Page[linearprovider.IssueV2]
+	IssueV2   *linearprovider.IssueV2
+	Teams     linearprovider.Page[linearprovider.Team]
+	Projects  linearprovider.Page[linearprovider.Project]
+	Issues    linearprovider.Page[linearprovider.Issue]
+	Issue     *linearprovider.Issue
+	Preview   any
 }
 type linearState struct {
 	step                 string
 	profile              string
 	profiles             []linearconn.Profile
 	binding              bus.TaskboardBinding
+	bindingV2            *bus.TaskboardBindingV2
+	issueV2              *linearprovider.IssueV2
+	selectedProjects     []string
 	teams                []linearprovider.Team
 	projects             []linearprovider.Project
 	issues               []linearprovider.Issue
@@ -62,6 +69,9 @@ type linearState struct {
 type LinearSnapshot struct {
 	Step, ProfileID          string
 	Binding                  bus.TaskboardBinding
+	BindingV2                *bus.TaskboardBindingV2
+	SelectedProjectIDs       []string
+	IssueV2                  *linearprovider.IssueV2
 	SelectedTeamIDs          []string
 	DefaultTeamID, ProjectID string
 	TeamBoard                bool
@@ -70,7 +80,32 @@ type LinearSnapshot struct {
 }
 
 func (m Model) LinearState() LinearSnapshot {
-	return LinearSnapshot{m.linear.step, m.linear.profile, m.linear.binding, append([]string(nil), m.linear.chosen...), m.linear.defaultTeam, m.linear.project, m.linear.teamBoard, m.linear.next, m.linear.issue}
+	return LinearSnapshot{Step: m.linear.step, ProfileID: m.linear.profile, Binding: m.linear.binding, BindingV2: m.linear.bindingV2, SelectedProjectIDs: append([]string{}, m.linear.selectedProjects...), IssueV2: m.linear.issueV2, SelectedTeamIDs: append([]string(nil), m.linear.chosen...), DefaultTeamID: m.linear.defaultTeam, ProjectID: m.linear.project, TeamBoard: m.linear.teamBoard, NextCursor: m.linear.next, Issue: m.linear.issue}
+}
+
+func (m Model) linearConfigured() bool {
+	if m.linear.bindingV2 != nil {
+		return m.linear.bindingV2.Configured
+	}
+	return m.linear.binding.Configured
+}
+func (m Model) linearRevision() int64 {
+	if m.linear.bindingV2 != nil {
+		return m.linear.bindingV2.Revision
+	}
+	return m.linear.binding.Revision
+}
+func (m *Model) applyLinearBinding(data LinearData) {
+	if data.BindingV2 != nil {
+		value := *data.BindingV2
+		value.LinearTeamIDs = append([]string{}, value.LinearTeamIDs...)
+		value.LinearProjectIDs = append([]string{}, value.LinearProjectIDs...)
+		m.linear.bindingV2 = &value
+		m.linear.binding = bus.TaskboardBinding{} // no fabricated legacy team board
+	} else {
+		m.linear.binding = data.Binding
+		m.linear.bindingV2 = nil
+	}
 }
 
 type linearLoadedMsg struct {
@@ -145,7 +180,7 @@ func (m Model) applyLinear(x linearLoadedMsg) Model {
 	switch x.operation {
 	case "profiles", "connect", "logout":
 		m.linear.profiles = append([]linearconn.Profile(nil), x.data.Profiles...)
-		m.linear.binding = x.data.Binding
+		m.applyLinearBinding(x.data)
 		m.linear.step = "profiles"
 		m.selected = 0
 		if x.operation == "connect" {
@@ -161,9 +196,11 @@ func (m Model) applyLinear(x linearLoadedMsg) Model {
 	case "projects":
 		m.linear.projects = nil
 		for _, p := range x.data.Projects.Items {
-			ok := true
+			ok := m.linear.bindingV2 == nil
 			for _, id := range m.linear.chosen {
-				if !linearHas(p.TeamIDs, id) {
+				if m.linear.bindingV2 != nil {
+					ok = ok || linearHas(p.TeamIDs, id)
+				} else if !linearHas(p.TeamIDs, id) {
 					ok = false
 				}
 			}
@@ -179,7 +216,7 @@ func (m Model) applyLinear(x linearLoadedMsg) Model {
 		// Keep the revision submitted for this preview. A later metadata read
 		// must never promote the confirmation's compare-and-swap precondition.
 	case "link":
-		m.linear.binding = x.data.Binding
+		m.applyLinearBinding(x.data)
 		m.linear.step = "tasks"
 		m.linear.cursor = ""
 		m.linear.visited = []string{""}
@@ -189,15 +226,27 @@ func (m Model) applyLinear(x linearLoadedMsg) Model {
 		m.linear.preview = fmt.Sprint(x.data.Preview)
 		m.linear.step = "unlink"
 	case "unlink":
-		m.linear.binding = x.data.Binding
+		m.applyLinearBinding(x.data)
 		m.linear.step = "profiles"
 		m.actionErr = "Project unlinked. Personal connections preserved."
 	case "issues":
 		m.linear.issues = append([]linearprovider.Issue(nil), x.data.Issues.Items...)
 		m.linear.next = x.data.Issues.NextCursor
+		if x.data.IssuesV2 != nil {
+			m.linear.issues = nil
+			for _, issue := range x.data.IssuesV2.Items {
+				m.linear.issues = append(m.linear.issues, issue.Issue)
+			}
+			m.linear.next = x.data.IssuesV2.NextCursor
+		}
 		m.selected = 0
 	case "issue":
 		m.linear.issue = x.data.Issue
+		m.linear.issueV2 = x.data.IssueV2
+		if x.data.IssueV2 != nil {
+			value := x.data.IssueV2.Issue
+			m.linear.issue = &value
+		}
 		m.linear.step = "details"
 		m.scroll = 0
 	}
@@ -265,12 +314,15 @@ func (m Model) linearPage(next bool) (Model, tea.Cmd) {
 	return m.linearRefresh()
 }
 func (m Model) linearLink(confirm bool) (Model, tea.Cmd) {
-	return m.linearCommand(LinearRequest{Operation: func() string {
-		if confirm {
-			return "link"
-		}
-		return "preview"
-	}(), ProfileID: m.linear.profile, Link: linearboard.LinkInput{TeamIDs: append([]string(nil), m.linear.chosen...), DefaultTeamID: m.linear.defaultTeam, ProjectID: m.linear.project, ExpectedRevision: m.linear.binding.Revision, TeamBoard: m.linear.teamBoard, Confirm: confirm}})
+	operation := "preview"
+	if confirm {
+		operation = "link"
+	}
+	request := LinearRequest{Operation: operation, ProfileID: m.linear.profile, Link: linearboard.LinkInput{TeamIDs: append([]string{}, m.linear.chosen...), DefaultTeamID: m.linear.defaultTeam, ProjectID: m.linear.project, ExpectedRevision: m.linearRevision(), TeamBoard: m.linear.teamBoard, Confirm: confirm}}
+	if m.linear.bindingV2 != nil {
+		request.LinkV2 = &linearboard.LinkInputV2{TeamIDs: append([]string{}, m.linear.chosen...), DefaultTeamID: m.linear.defaultTeam, ProjectIDs: append([]string{}, m.linear.selectedProjects...), ExpectedRevision: m.linearRevision(), TeamBoard: m.linear.teamBoard, Confirm: confirm}
+	}
+	return m.linearCommand(request)
 }
 func (m Model) linearKey(key string) (Model, tea.Cmd) {
 	if key == "esc" {
@@ -305,6 +357,9 @@ func (m Model) linearKey(key string) (Model, tea.Cmd) {
 		m.linear.visited = []string{""}
 		m.linear.page = 0
 		m.linear.chosen = nil
+		m.linear.selectedProjects = nil
+		m.linear.project = ""
+		m.linear.teamBoard = false
 		return m.linearRefresh()
 	}
 	if key == "x" && m.linear.step == "profiles" {
@@ -312,8 +367,8 @@ func (m Model) linearKey(key string) (Model, tea.Cmd) {
 			return m.linearCommand(LinearRequest{Operation: "logout", ProfileID: id})
 		}
 	}
-	if key == "u" && m.linear.binding.Configured {
-		return m.linearCommand(LinearRequest{Operation: "unlink-preview", ExpectedRevision: m.linear.binding.Revision})
+	if key == "u" && m.linearConfigured() {
+		return m.linearCommand(LinearRequest{Operation: "unlink-preview", ExpectedRevision: m.linearRevision()})
 	}
 	if key == " " && m.linear.step == "teams" {
 		id := m.linearSelected()
@@ -339,6 +394,39 @@ func (m Model) linearKey(key string) (Model, tea.Cmd) {
 		m.linear.chosen = ids
 		return m, nil
 	}
+	if key == " " && m.linear.step == "projects" && m.linear.bindingV2 != nil {
+		id := m.linearSelected()
+		if id == "" {
+			return m, nil
+		}
+		if id == "team-board" {
+			m.linear.teamBoard = true
+			m.linear.selectedProjects = nil
+			m.linear.project = ""
+			return m, nil
+		}
+		m.linear.teamBoard = false
+		if linearHas(m.linear.selectedProjects, id) {
+			ids := []string{}
+			for _, value := range m.linear.selectedProjects {
+				if value != id {
+					ids = append(ids, value)
+				}
+			}
+			m.linear.selectedProjects = ids
+		} else {
+			if len(m.linear.selectedProjects) >= 50 {
+				m.actionErr = "Select at most50 projects."
+				return m, nil
+			}
+			m.linear.selectedProjects = append(append([]string{}, m.linear.selectedProjects...), id)
+		}
+		m.linear.project = ""
+		if len(m.linear.selectedProjects) == 1 {
+			m.linear.project = m.linear.selectedProjects[0]
+		}
+		return m, nil
+	}
 	if key != "enter" {
 		return m, nil
 	}
@@ -353,7 +441,7 @@ func (m Model) linearKey(key string) (Model, tea.Cmd) {
 		m.linear.cursor = ""
 		m.linear.page = 0
 		m.linear.visited = []string{""}
-		if m.linear.binding.Configured {
+		if m.linearConfigured() {
 			m.linear.step = "tasks"
 		} else {
 			m.linear.step = "teams"
@@ -382,16 +470,30 @@ func (m Model) linearKey(key string) (Model, tea.Cmd) {
 		if id == "" {
 			return m, nil
 		}
-		m.linear.teamBoard = id == "team-board"
-		m.linear.project = ""
-		if !m.linear.teamBoard {
-			m.linear.project = id
+		if m.linear.bindingV2 != nil {
+			if len(m.linear.selectedProjects) == 0 && !m.linear.teamBoard {
+				if id == "team-board" {
+					m.linear.teamBoard = true
+				} else {
+					m.linear.selectedProjects = []string{id}
+				}
+			}
+			m.linear.project = ""
+			if len(m.linear.selectedProjects) == 1 {
+				m.linear.project = m.linear.selectedProjects[0]
+			}
+		} else {
+			m.linear.teamBoard = id == "team-board"
+			m.linear.project = ""
+			if !m.linear.teamBoard {
+				m.linear.project = id
+			}
 		}
 		return m.linearLink(false)
 	case "preview":
 		return m.linearLink(true)
 	case "unlink":
-		return m.linearCommand(LinearRequest{Operation: "unlink", ExpectedRevision: m.linear.binding.Revision, Confirm: true})
+		return m.linearCommand(LinearRequest{Operation: "unlink", ExpectedRevision: m.linearRevision(), Confirm: true})
 	case "tasks":
 		id := m.linearSelected()
 		if id != "" {
@@ -408,19 +510,32 @@ func renderLinear(m Model) string {
 	b.WriteString("Settings / Integrations / Linear\n\n")
 	b.WriteString("Optional native connection. c Connect read · w Connect write · Later: choose another view.\n")
 	b.WriteString("Task ownership comes from the coordinator's issue assignment; selecting a row never claims or completes work.\n")
-	b.WriteString(fmt.Sprintf("Shared board: configured=%t · revision=%d\n", m.linear.binding.Configured, m.linear.binding.Revision))
-	if m.linear.binding.Configured {
-		b.WriteString("Allowed teams: " + strings.Join(m.linear.binding.LinearTeamIDs, ", ") + "\nDefault team: " + m.linear.binding.LinearDefaultTeamID + "\n")
-		project := m.linear.binding.LinearProjectID
-		if project == "" {
-			project = "Team board — no Linear project"
+	b.WriteString(fmt.Sprintf("Shared board: configured=%t · revision=%d\n", m.linearConfigured(), m.linearRevision()))
+	if m.linearConfigured() {
+		if v := m.linear.bindingV2; v != nil {
+			b.WriteString("Allowed teams: " + strings.Join(v.LinearTeamIDs, ", ") + "\nDefault team: " + v.LinearDefaultTeamID + "\n")
+			if v.Mode == "team_board" {
+				b.WriteString("Board: Team board — no Linear project\n")
+			} else {
+				b.WriteString("Project set: " + strings.Join(v.LinearProjectIDs, ", ") + "\n")
+			}
+		} else {
+			b.WriteString("Allowed teams: " + strings.Join(m.linear.binding.LinearTeamIDs, ", ") + "\nDefault team: " + m.linear.binding.LinearDefaultTeamID + "\n")
+			project := m.linear.binding.LinearProjectID
+			if project == "" {
+				project = "Team board — no Linear project"
+			}
+			b.WriteString("Board: " + project + "\n")
 		}
-		b.WriteString("Board: " + project + "\n")
 	}
 	b.WriteString("Personal profile: " + terminalText(m.linear.profile) + " · workspace UUID may be unavailable\n")
 	b.WriteString("Step: " + terminalText(m.linear.step) + " · ↑↓ choose · Enter continue · Esc profiles · l relink · u unlink · [ ] pages\n\n")
 	if m.linear.step == "preview" || m.linear.step == "unlink" {
-		b.WriteString("REVIEW BEFORE SAVE. Enter confirms; Esc cancels.\n" + terminalText(m.linear.preview) + "\nAllowed team IDs: " + strings.Join(m.linear.chosen, ", ") + "\nDefault: " + m.linear.defaultTeam + "\nProject: " + m.linear.project + fmt.Sprintf(" · team board=%t\n", m.linear.teamBoard))
+		projects := m.linear.project
+		if m.linear.bindingV2 != nil {
+			projects = strings.Join(m.linear.selectedProjects, ", ")
+		}
+		b.WriteString("REVIEW BEFORE SAVE. Enter confirms; Esc cancels.\n" + terminalText(m.linear.preview) + "\nAllowed team IDs: " + strings.Join(m.linear.chosen, ", ") + "\nDefault: " + m.linear.defaultTeam + "\nProject selection: " + projects + fmt.Sprintf(" · team board=%t\n", m.linear.teamBoard))
 		return b.String()
 	}
 	rows := m.linearRows()
@@ -450,6 +565,13 @@ func renderLinear(m Model) string {
 			} else {
 				p := m.linear.projects[index-1]
 				label = p.Name + " · " + p.ID
+				if m.linear.bindingV2 != nil {
+					check := "[ ] "
+					if linearHas(m.linear.selectedProjects, p.ID) {
+						check = "[x] "
+					}
+					label = check + label
+				}
 			}
 		case "tasks":
 			i := m.linear.issues[index]
@@ -460,12 +582,35 @@ func renderLinear(m Model) string {
 	if m.linear.step == "teams" {
 		b.WriteString("\nSpace toggles a team; Enter chooses default. Selected: " + strings.Join(m.linear.chosen, ", ") + "\n")
 	}
+	if m.linear.step == "projects" && m.linear.bindingV2 != nil {
+		b.WriteString("\nSpace toggles up to50 projects, or explicitly selects Team board. Enter previews. Selected project IDs: " + strings.Join(m.linear.selectedProjects, ", ") + "\n")
+	}
 	if m.linear.step == "profiles" {
 		b.WriteString("\nx logs out only the selected personal connection; shared binding is retained.\n")
 	}
 	if m.linear.step == "details" && m.linear.issue != nil {
 		i := m.linear.issue
 		b.WriteString(fmt.Sprintf("Issue %s · %s\nID: %s\nTeam: %s · Project: %s\nState: %s · Assignee: %s\n\n%s\n\nParent / subissues / dependencies / assignment context:\n%s\nContext complete: %t\n", terminalText(i.Identifier), terminalText(i.Title), i.ID, i.TeamID, i.ProjectID, terminalText(i.State), terminalText(i.Assignee), terminalText(i.Description), terminalText(fmt.Sprint(i.Context)), i.ContextComplete))
+	}
+	if m.linear.step == "details" && m.linear.issueV2 != nil {
+		i := m.linear.issueV2
+		value := func(known bool, id string) string {
+			if !known {
+				return "unavailable"
+			}
+			if id == "" {
+				return "none"
+			}
+			return terminalText(id)
+		}
+		labels := "unavailable"
+		if i.LabelsKnown {
+			labels = strings.Join(i.LabelIDs, ", ")
+			if labels == "" {
+				labels = "none"
+			}
+		}
+		b.WriteString("\nVerified L2 context\nProject ID: " + value(i.ProjectKnown, i.ProjectID) + "\nParent ID: " + value(i.ParentKnown, i.ParentID) + "\nAssignee ID: " + value(i.AssigneeKnown, i.AssigneeID) + "\nLabel IDs: " + terminalText(labels) + "\n")
 	}
 	if m.linear.next != "" {
 		b.WriteString("\nMore provider rows available: ] next page.\n")

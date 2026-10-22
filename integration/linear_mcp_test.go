@@ -34,7 +34,7 @@ func TestL1MCPNativeToolsRealStorePermissionAndPinnedRoute(t *testing.T) {
 	service := l1ServiceFor(t, f.store, p)
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	server := mcpserver.NewServerWithOptions(f.store, "w", "p", "worker", "worker-instance", mcpserver.Options{Context: ctx, Taskboard: service})
+	server := mcpserver.NewServerWithOptions(f.store, "w", "p", "worker", "worker-instance", mcpserver.Options{Context: ctx, Taskboard: l2LegacyOnlyTools{service}})
 	client := notificationMCPConnect(t, ctx, server, make(chan string, 1))
 	observer := localNotificationAuthority(t, f)
 	before := l1BindingSnapshot(t, observer)

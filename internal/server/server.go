@@ -351,7 +351,7 @@ func serviceError(err error) (string, int) {
 			return c, 403
 		case "not_found":
 			return c, 404
-		case "conflict":
+		case "conflict", "unsupported_mapping":
 			return c, 409
 		case "rate_limited":
 			return c, 429

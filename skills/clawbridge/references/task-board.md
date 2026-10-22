@@ -155,8 +155,9 @@ prove membership in the issue's team.
 Check both issues before adding a dependency or parent. Their effective project
 and team must remain in the binding; required ancestry must be available and
 acyclic. Request one relation edge at a time. A successful edge write is not a
-transaction across tasks, and an observed unchanged edge is only a read result.
-Keep the receipt and reconcile uncertain outcomes through read-back.
+transaction across tasks. An observed unchanged edge records the existing state;
+a fresh request still requires current write authorization. Keep the receipt
+and reconcile uncertain outcomes through read-back.
 
 Set a human assignee only when explicitly requested and verified as an eligible
 team member. That assignment does not replace the coordinator's Current agent

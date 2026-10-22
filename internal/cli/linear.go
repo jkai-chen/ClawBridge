@@ -15,6 +15,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"strings"
 	"time"
 
@@ -65,6 +66,9 @@ type linearFlags struct {
 	supplied                                                                                                             map[string]bool
 	profile, name, access, cursor, project, defaultTeam, title, description, descriptionFile, state, operation, bodyFile string
 	teams                                                                                                                []string
+	projects, labels                                                                                                     []string
+	team, parent, assignee, relationType, relationAction, labelFilter                                                    string
+	clearProject, clearLabels, clearParent, clearAssignee                                                                bool
 	limit                                                                                                                int
 	revision                                                                                                             int64
 	teamBoard, confirm, noBrowser, tokenStdin                                                                            bool
@@ -96,6 +100,10 @@ func parseLinear(command string, args []string, stderr io.Writer) (linearFlags, 
 		f.StringVar(&v.description, "description", "", "explicit description")
 		f.StringVar(&v.descriptionFile, "description-file", "", "bounded UTF-8 description file")
 		f.StringVar(&v.state, "state", "", "workflow state UUID")
+		f.StringVar(&v.project, "linear-project", "", "explicit allowed Linear destination UUID")
+		f.Var((*repeatedIDs)(&v.labels), "label", "team label UUID; explicit replacement (repeat up to100)")
+		f.StringVar(&v.parent, "parent", "", "in-scope parent issue UUID")
+		f.StringVar(&v.assignee, "assignee", "", "canonical active member UUID of the effective team")
 	}
 	min, max := 0, 0
 	switch command {
@@ -113,6 +121,12 @@ func parseLinear(command string, args []string, stderr io.Writer) (linearFlags, 
 		profile()
 	case "teams", "projects", "issues":
 		page()
+		if command == "issues" {
+			f.StringVar(&v.labelFilter, "label", "", "verified team-label UUID filter")
+		}
+	case "labels", "members":
+		page()
+		f.StringVar(&v.team, "team", "", "required allowed team UUID")
 	case "issue", "states":
 		profile()
 		min, max = 1, 1
@@ -120,7 +134,7 @@ func parseLinear(command string, args []string, stderr io.Writer) (linearFlags, 
 		profile()
 		f.Var((*repeatedIDs)(&v.teams), "team", "allowed team UUID (repeat up to20)")
 		f.StringVar(&v.defaultTeam, "default-team", "", "default selected team UUID")
-		f.StringVar(&v.project, "linear-project", "", "optional Linear project UUID")
+		f.Var((*repeatedIDs)(&v.projects), "linear-project", "allowed Linear project UUID (repeat up to50)")
 		f.BoolVar(&v.teamBoard, "team-board", false, "explicit team board without a Linear project")
 		f.Int64Var(&v.revision, "expected-revision", -1, "required current mapping revision")
 		f.BoolVar(&v.confirm, "confirm", false, "commit the displayed binding preview")
@@ -130,10 +144,19 @@ func parseLinear(command string, args []string, stderr io.Writer) (linearFlags, 
 	case "create":
 		write()
 		fields()
+		f.StringVar(&v.team, "team", "", "explicit allowed issue team UUID")
 	case "update":
 		write()
 		fields()
+		f.BoolVar(&v.clearProject, "clear-project", false, "explicitly clear project (team-board mapping only)")
+		f.BoolVar(&v.clearLabels, "clear-labels", false, "explicitly replace labels with an empty set")
+		f.BoolVar(&v.clearParent, "clear-parent", false, "explicitly clear parent")
+		f.BoolVar(&v.clearAssignee, "clear-assignee", false, "explicitly clear assignee")
 		min, max = 1, 1
+	case "relation":
+		write()
+		f.StringVar(&v.relationType, "type", "", "blocks, blocked-by or related; one edge only")
+		min, max = 2, 2
 	case "comment":
 		write()
 		f.StringVar(&v.bodyFile, "body-file", "", "bounded UTF-8 comment file")
@@ -171,7 +194,7 @@ func parseLinear(command string, args []string, stderr io.Writer) (linearFlags, 
 		return v, nil, errors.New("invalid page limit or cursor")
 	}
 	if command == "link" {
-		if len(v.teams) < 1 || len(v.teams) > 20 || !linearprovider.ValidID(v.defaultTeam) || v.teamBoard == (v.project != "") {
+		if len(v.teams) < 1 || len(v.teams) > 20 || !linearprovider.ValidID(v.defaultTeam) || v.teamBoard == (len(v.projects) > 0) {
 			return v, nil, errors.New("link requires teams/default and --team-board or --linear-project")
 		}
 		seen := map[string]bool{}
@@ -181,12 +204,36 @@ func parseLinear(command string, args []string, stderr io.Writer) (linearFlags, 
 			}
 			seen[id] = true
 		}
-		if !seen[v.defaultTeam] || v.project != "" && !linearprovider.ValidID(v.project) {
+		if !seen[v.defaultTeam] || len(v.projects) > 50 {
 			return v, nil, errors.New("invalid selected project/default team")
+		}
+		seenProjects := map[string]bool{}
+		for _, id := range v.projects {
+			if !linearprovider.ValidID(id) || seenProjects[id] {
+				return v, nil, errors.New("invalid or duplicate project UUID")
+			}
+			seenProjects[id] = true
+		}
+		sort.Strings(v.projects)
+		if len(v.projects) == 1 {
+			v.project = v.projects[0]
 		}
 	}
 	if (command == "link" || command == "unlink") && (v.revision < 0 || v.revision >= 9007199254740991) {
 		return v, nil, errors.New("expected-revision is required")
+	}
+	if command == "labels" || command == "members" {
+		if !linearprovider.ValidID(v.team) {
+			return v, nil, errors.New("discovery requires --team UUID")
+		}
+	}
+	if v.supplied["label"] && command == "issues" && !linearprovider.ValidID(v.labelFilter) {
+		return v, nil, errors.New("label filter requires UUID")
+	}
+	if command == "relation" {
+		if !validLinearOperation(v.operation) || !linearprovider.ValidID(pos[0]) || !linearprovider.ValidID(pos[1]) || pos[0] == pos[1] || (v.relationType != "blocks" && v.relationType != "blocked-by" && v.relationType != "related") {
+			return v, nil, errors.New("relation requires distinct issue UUIDs, supported --type and --operation-id")
+		}
 	}
 	if command == "create" || command == "update" || command == "comment" {
 		if !validLinearOperation(v.operation) {
@@ -204,10 +251,34 @@ func parseLinear(command string, args []string, stderr io.Writer) (linearFlags, 
 		if len(v.title) > 512 || len(v.description) > 65536 || v.state != "" && !linearprovider.ValidID(v.state) {
 			return v, nil, errors.New("invalid task field bounds")
 		}
+		for _, pair := range []struct {
+			set, clear string
+			active     bool
+		}{{"linear-project", "clear-project", v.clearProject}, {"label", "clear-labels", v.clearLabels}, {"parent", "clear-parent", v.clearParent}, {"assignee", "clear-assignee", v.clearAssignee}} {
+			if v.supplied[pair.set] && pair.active {
+				return v, nil, errors.New("set and clear flags conflict")
+			}
+		}
+		for _, value := range []struct{ key, id string }{{"linear-project", v.project}, {"parent", v.parent}, {"assignee", v.assignee}, {"team", v.team}, {"state", v.state}} {
+			if v.supplied[value.key] && !linearprovider.ValidID(value.id) {
+				return v, nil, errors.New("explicit destination/member/parent/team requires UUID")
+			}
+		}
+		seenLabels := map[string]bool{}
+		if len(v.labels) > 100 {
+			return v, nil, errors.New("at most100 labels")
+		}
+		for _, id := range v.labels {
+			if !linearprovider.ValidID(id) || seenLabels[id] {
+				return v, nil, errors.New("invalid or duplicate label UUID")
+			}
+			seenLabels[id] = true
+		}
+		sort.Strings(v.labels)
 		if command == "update" {
-			changed := false
+			changed := v.clearProject || v.clearLabels || v.clearParent || v.clearAssignee
 			f.Visit(func(fl *flag.Flag) {
-				if fl.Name == "title" || fl.Name == "description" || fl.Name == "description-file" || fl.Name == "state" {
+				if fl.Name == "title" || fl.Name == "description" || fl.Name == "description-file" || fl.Name == "state" || fl.Name == "linear-project" || fl.Name == "label" || fl.Name == "parent" || fl.Name == "assignee" {
 					changed = true
 				}
 			})
@@ -299,52 +370,96 @@ func newLinearService(directory, profile string, manager *linearconn.Manager, ex
 		return openLinearProvider(ctx, h, ro)
 	}})
 }
+func linearWriteInput(command string, v linearFlags, pos []string) (linearboard.WriteInputV2, error) {
+	var writeInput linearboard.WriteInputV2
+	var err error
+	writeInput = linearboard.WriteInputV2{WriteInput: linearboard.WriteInput{Operation: command, OperationID: v.operation}, TeamID: v.team}
+	if len(pos) > 0 {
+		writeInput.IssueID = pos[0]
+	}
+	if v.supplied["title"] {
+		writeInput.Title = &v.title
+	}
+	if v.supplied["description"] {
+		writeInput.Description = &v.description
+	}
+	if v.descriptionFile != "" {
+		text, e := readLinearFile(v.descriptionFile)
+		if e != nil {
+			return writeInput, e
+		}
+		writeInput.Description = &text
+	}
+	if v.state != "" {
+		writeInput.StateID = &v.state
+	}
+	if command == "comment" {
+		if len(pos) == 2 {
+			writeInput.Body = pos[1]
+		} else {
+			writeInput.Body, err = readLinearFile(v.bodyFile)
+			if err != nil {
+				return writeInput, err
+			}
+		}
+	}
+	if v.supplied["linear-project"] {
+		writeInput.Project = linearprovider.Field[*string]{Present: true, Value: &v.project}
+	}
+	if v.clearProject {
+		writeInput.Project = linearprovider.Field[*string]{Present: true}
+	}
+	if v.supplied["label"] {
+		writeInput.Labels = linearprovider.Field[[]string]{Present: true, Value: append([]string{}, v.labels...)}
+	}
+	if v.clearLabels {
+		writeInput.Labels = linearprovider.Field[[]string]{Present: true, Value: []string{}}
+	}
+	if v.supplied["parent"] {
+		writeInput.Parent = linearprovider.Field[*string]{Present: true, Value: &v.parent}
+	}
+	if v.clearParent {
+		writeInput.Parent = linearprovider.Field[*string]{Present: true}
+	}
+	if v.supplied["assignee"] {
+		writeInput.Assignee = linearprovider.Field[*string]{Present: true, Value: &v.assignee}
+	}
+	if v.clearAssignee {
+		writeInput.Assignee = linearprovider.Field[*string]{Present: true}
+	}
+	if err = linearboard.ValidateWriteV2(writeInput); err != nil {
+		return writeInput, err
+	}
+	return writeInput, nil
+}
+
 func runLinear(ctx context.Context, flags Config, args []string, stdout, stderr io.Writer) error {
 	if len(args) == 0 || len(args) == 1 && (args[0] == "--help" || args[0] == "-h" || args[0] == "help") {
-		_, err := io.WriteString(stdout, "clawbridge linear connect|import|profiles|status|logout|teams|projects|binding|link|unlink|context|issues|issue|states|create|update|comment\nUse COMMAND --help for explicit flags. Token import accepts --token-stdin only.\n")
+		_, err := io.WriteString(stdout, "clawbridge linear connect|import|profiles|status|logout|teams|projects|binding|link|unlink|context|issues|issue|states|labels|members|create|update|comment|relation\nUse COMMAND --help for explicit flags. Token import accepts --token-stdin only.\n")
 		return err
 	}
 	command := args[0]
-	v, pos, err := parseLinear(command, args[1:], stderr)
+	parseArgs := args[1:]
+	relationAction := ""
+	if command == "relation" && len(parseArgs) > 0 && parseArgs[0] != "--help" && parseArgs[0] != "-h" {
+		relationAction = parseArgs[0]
+		if relationAction != "add" && relationAction != "remove" {
+			return errors.New("relation requires add or remove")
+		}
+		parseArgs = parseArgs[1:]
+	}
+	v, pos, err := parseLinear(command, parseArgs, stderr)
+	v.relationAction = relationAction
 	if errors.Is(err, flag.ErrHelp) {
 		return nil
 	}
 	if err != nil {
 		return err
 	}
-	var writeInput linearboard.WriteInput
+	var writeInput linearboard.WriteInputV2
 	if command == "create" || command == "update" || command == "comment" {
-		writeInput = linearboard.WriteInput{Operation: command, OperationID: v.operation}
-		if len(pos) > 0 {
-			writeInput.IssueID = pos[0]
-		}
-		if v.supplied["title"] {
-			writeInput.Title = &v.title
-		}
-		if v.supplied["description"] {
-			writeInput.Description = &v.description
-		}
-		if v.descriptionFile != "" {
-			text, e := readLinearFile(v.descriptionFile)
-			if e != nil {
-				return e
-			}
-			writeInput.Description = &text
-		}
-		if v.state != "" {
-			writeInput.StateID = &v.state
-		}
-		if command == "comment" {
-			if len(pos) == 2 {
-				writeInput.Body = pos[1]
-			} else {
-				writeInput.Body, err = readLinearFile(v.bodyFile)
-				if err != nil {
-					return err
-				}
-			}
-		}
-		if err = linearboard.ValidateWrite(writeInput); err != nil {
+		writeInput, err = linearWriteInput(command, v, pos)
+		if err != nil {
 			return err
 		}
 	}
@@ -437,21 +552,27 @@ func runLinear(ctx context.Context, flags Config, args []string, stdout, stderr 
 	var data any
 	switch command {
 	case "binding":
-		data, err = service.Binding(bounded, scope)
+		data, err = service.BindingV2(bounded, scope)
 	case "link":
-		data, err = service.Link(bounded, scope, linearboard.LinkInput{TeamIDs: v.teams, DefaultTeamID: v.defaultTeam, ProjectID: v.project, ExpectedRevision: v.revision, TeamBoard: v.teamBoard, Confirm: v.confirm})
+		data, err = service.LinkV2(bounded, scope, linearboard.LinkInputV2{TeamIDs: v.teams, DefaultTeamID: v.defaultTeam, ProjectIDs: append([]string{}, v.projects...), ExpectedRevision: v.revision, TeamBoard: v.teamBoard, Confirm: v.confirm})
 	case "unlink":
-		data, err = service.Unlink(bounded, scope, v.revision, v.confirm)
+		data, err = service.UnlinkV2(bounded, scope, v.revision, v.confirm)
 	case "context":
-		data, err = service.Context(bounded, scope)
+		data, err = service.ContextV2(bounded, scope)
 	case "issues":
-		data, err = service.Issues(bounded, scope, v.limit, v.cursor)
+		data, err = service.IssuesV2(bounded, scope, linearboard.IssuesInputV2{Limit: v.limit, Cursor: v.cursor, LabelID: v.labelFilter})
 	case "issue":
-		data, err = service.Issue(bounded, scope, pos[0])
+		data, err = service.IssueV2(bounded, scope, pos[0])
 	case "states":
-		data, err = service.States(bounded, scope, pos[0])
+		data, err = service.StatesV2(bounded, scope, pos[0])
+	case "labels":
+		data, err = service.LabelsV2(bounded, scope, v.team, v.limit, v.cursor)
+	case "members":
+		data, err = service.MembersV2(bounded, scope, v.team, v.limit, v.cursor)
+	case "relation":
+		data, err = service.RelationV2(bounded, scope, linearboard.RelationInputV2{OperationID: v.operation, Action: v.relationAction, Type: v.relationType, FromID: pos[0], ToID: pos[1]})
 	default:
-		data, err = service.Write(bounded, scope, writeInput)
+		data, err = service.WriteV2(bounded, scope, writeInput)
 	}
 	if err != nil {
 		var receipt *linearboard.ReceiptError

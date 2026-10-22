@@ -53,6 +53,9 @@ func addTaskboardTools(s *mcp.Server, b *binding, provider TaskboardTools) {
 	addBoard[boardCreateInput](s, b, provider, "create", false)
 	addBoard[boardUpdateInput](s, b, provider, "update", false)
 	addBoard[boardCommentInput](s, b, provider, "comment", false)
+	if v2, ok := provider.(TaskboardToolsV2); ok {
+		addTaskboardToolsV2(s, b, v2)
+	}
 }
 func addBoard[In any](s *mcp.Server, b *binding, p TaskboardTools, operation string, readOnly bool) {
 	closed := false

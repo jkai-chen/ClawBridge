@@ -1,0 +1,58 @@
+package main
+
+// Historical fixture generator. Compile/run only inside the named actual L1
+// source archive; this file is not linked into ClawBridge or ordinary tests.
+import (
+ "context"
+ "encoding/json"
+ "errors"
+ "net/http"
+ "os"
+ "path/filepath"
+ "time"
+ "clawbridge/internal/bus"
+ "clawbridge/internal/linearboard"
+ "clawbridge/internal/linearconn"
+ "clawbridge/internal/linearprovider"
+)
+const team = "11111111-1111-4111-8111-111111111111"
+const project = "33333333-3333-4333-8333-333333333333"
+const issue = "55555555-5555-4555-8555-555555555555"
+const profile = "lin_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+const authority = "synthetic:actual-l1-schema3-ledger-authority"
+type connection struct{}
+func(connection)Status(context.Context,string)(linearconn.Profile,error){return linearconn.Profile{ID:profile,Access:linearconn.Write},nil}
+func(connection)HTTPClient(context.Context,string)(*http.Client,error){return &http.Client{Transport: denyHTTP{}},nil}
+type denyHTTP struct{}
+func(denyHTTP)RoundTrip(*http.Request)(*http.Response,error){return nil,errors.New("fixture forbids network")}
+type provider struct { creates int }
+func(*provider)Close()error{return nil}
+func(*provider)GetTeam(_ context.Context,id string)(linearprovider.Team,error){return linearprovider.Team{ID:id,Name:"Synthetic legacy team"},nil}
+func(*provider)GetProject(_ context.Context,id string)(linearprovider.Project,error){return linearprovider.Project{ID:id,Name:"Synthetic legacy project",TeamIDs:[]string{team}},nil}
+func(*provider)Issues(context.Context,linearprovider.IssueQuery)(linearprovider.Page[linearprovider.Issue],error){return linearprovider.Page[linearprovider.Issue]{Items:[]linearprovider.Issue{},Complete:true},nil}
+func(*provider)GetIssue(context.Context,string)(linearprovider.Issue,error){return linearprovider.Issue{ID:issue,TeamID:team,Title:"Synthetic legacy issue"},nil}
+func(*provider)Statuses(context.Context,string)([]linearprovider.Status,error){return nil,nil}
+func(p *provider)Create(_ context.Context,in linearprovider.CreateInput)(linearprovider.Issue,error){p.creates++;if p.creates==2{return linearprovider.Issue{},errors.New("synthetic response lost after accepted dispatch")};return linearprovider.Issue{ID:issue,Identifier:"SYN-OLD-1",Title:in.Title,TeamID:in.TeamID,ProjectID:in.ProjectID},nil}
+func(*provider)Update(context.Context,linearprovider.UpdateInput)(linearprovider.Issue,error){return linearprovider.Issue{},errors.New("unexpected update")}
+func(*provider)Comment(context.Context,string,string)(linearprovider.Receipt,error){return linearprovider.Receipt{},errors.New("unexpected comment")}
+func must(err error){if err!=nil{panic(err)}}
+func main(){
+ if len(os.Args)!=2{panic("owned output directory required")};out:=os.Args[1];must(os.MkdirAll(out,0700));ctx:=context.Background()
+ s,err:=bus.Open(filepath.Join(out,"schema3.db"));must(err)
+ call:=func(op,slug,session string,args map[string]any)bus.Result{r,e:=s.Execute(ctx,bus.Request{Operation:op,Workspace:"legacy-ledger-fixture",Project:slug,Session:session,Args:args});must(e);if r.Source!="local-authority"{panic("unexpected authority")};return r}
+ call("workspace_init","","",map[string]any{"mode":"local"})
+ for _,slug:=range []string{"board","cleared"}{call("project_create","","",map[string]any{"slug":slug});call("taskboard_set",slug,"",map[string]any{"expected_revision":0,"linear_team_ids":[]string{team},"linear_default_team_id":team,"linear_project_id":nil})}
+ call("taskboard_clear","cleared","",map[string]any{"expected_revision":1})
+ call("register_session","board","worker",map[string]any{"instance":"legacy-worker-instance","role":"member"})
+ scope:=bus.Request{Workspace:"legacy-ledger-fixture",Project:"board",Session:"worker",Args:map[string]any{"instance":"legacy-worker-instance"}}
+ rawAccess,e:=s.Execute(ctx,bus.Request{Operation:"taskboard_access",Workspace:scope.Workspace,Project:scope.Project,Session:scope.Session,Args:scope.Args});must(e);access,e:=bus.ParseTaskboardAccess(rawAccess.Data);must(e)
+ p:=&provider{};ledgerDir:=filepath.Join(out,"ledger")
+ service:=linearboard.New(linearboard.Config{Authority:authority,Executor:s,Connections:connection{},ProfileID:profile,LedgerDirectory:ledgerDir,Now:func()time.Time{return time.Date(2026,10,22,12,0,0,0,time.UTC)},Open:func(context.Context,*http.Client,bool)(linearboard.Provider,error){return p,nil}})
+ titleA,titleP:="Historical accepted synthetic issue","Historical uncertain synthetic issue"
+ accepted:=linearboard.WriteInput{Operation:"create",OperationID:"actual-l1-accepted-v3",Title:&titleA}
+ pending:=linearboard.WriteInput{Operation:"create",OperationID:"actual-l1-pending-v3",Title:&titleP}
+ receipt,e:=service.Write(ctx,scope,accepted);must(e);lost,pendingErr:=service.Write(ctx,scope,pending);if pendingErr==nil||lost!=nil||p.creates!=2{panic("pending fixture failed")}
+ call("taskboard_get","board","",nil);must(s.Close())
+ metadata:=map[string]any{"source_commit":"8aef0f97802169efdf6895eb84bf468a3a9f05c8","schema_version":3,"authority":authority,"profile_id":profile,"scope":scope,"canonical_scope":access,"accepted_input":accepted,"pending_input":pending,"accepted_receipt":receipt,"pending_error":pendingErr.Error(),"synthetic_provider_create_dispatches":p.creates,"network_operations":0,"native_credential_operations":0}
+ f,e:=os.OpenFile(filepath.Join(out,"generation.json"),os.O_CREATE|os.O_EXCL|os.O_WRONLY,0600);must(e);must(json.NewEncoder(f).Encode(metadata));must(f.Close())
+}

@@ -200,7 +200,11 @@ func readLedger(path, hash string) (any, bool, error) {
 		return nil, true, errors.New("invalid recorded receipt")
 	}
 	id, _ := receipt["id"].(string)
-	if !linearprovider.ValidID(id) {
+	if _, v2 := receipt["kind"]; v2 {
+		if !validReceiptV2(previous.Receipt) {
+			return nil, true, errors.New("invalid recorded V2 receipt")
+		}
+	} else if !linearprovider.ValidID(id) {
 		return nil, true, errors.New("invalid recorded receipt")
 	}
 	if previous.Outcome != "" {

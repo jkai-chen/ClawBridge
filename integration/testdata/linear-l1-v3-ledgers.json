@@ -1,0 +1,64 @@
+{
+  "accepted_input": {
+    "Body": "",
+    "Description": null,
+    "IssueID": "",
+    "Operation": "create",
+    "OperationID": "actual-l1-accepted-v3",
+    "StateID": null,
+    "Title": "Historical accepted synthetic issue"
+  },
+  "accepted_receipt": {
+    "id": "55555555-5555-4555-8555-555555555555",
+    "identifier": "SYN-OLD-1",
+    "project_id": "",
+    "team_id": "11111111-1111-4111-8111-111111111111"
+  },
+  "authority": "synthetic:actual-l1-schema3-ledger-authority",
+  "canonical_scope": {
+    "can_write": true,
+    "project_id": "prj_c3abb00cf1513be99e6420013d2dd070",
+    "project_role": "owner",
+    "session_id": "ses_9d469ac6727a903ee7557ada820cce4f",
+    "workspace_id": "ws_845da0452eae27818620420ee170d9de"
+  },
+  "generation_provenance": {
+    "CLI_coverage": "Historical public Service serialization only; new CLI compatibility remains a separate acceptance gate.",
+    "build_exit": 0,
+    "generator_sha256": "2e6ea32df3293db0a69a39f99ea663b2d344cc8442041f79c32446feb81c0228",
+    "ledger_reencoding": "None: original complete UTF-8 ledger file bytes stored as JSON strings, including newline.",
+    "local_principal_portability_substitution": "__LOCAL_PRINCIPAL__",
+    "source_archive_sha256": "af6f565b3173ce197214120ae31008bc9dcfd7303df96fdefe4941c0beb387fd",
+    "source_commit": "8aef0f97802169efdf6895eb84bf468a3a9f05c8",
+    "sqlite_sql_sha256": "0e6f0ac74a07d6aa2c0887f40e3b70626b322108088b96c948622003469c97a5"
+  },
+  "ledger_files": {
+    "344a2caac7a1e44612b18052cc09852d21f9cbb9f99e4e21772e06a2934e02d2/04f9cfe3c0546a54fdc3dc624effdd132d28b9dafba126615a7f2ebb82303f4a.json": "{\"version\":1,\"digest\":\"872e5e83cf9d33375246ed5ad4cb8c1d90b7654f3bec5ad035a7f5988266ef7e\",\"state\":\"pending\",\"updated_at\":\"2026-10-22T12:00:00Z\"}\n",
+    "344a2caac7a1e44612b18052cc09852d21f9cbb9f99e4e21772e06a2934e02d2/94b3009fd91359354f86e809305a59b8cc2d2f98a0d2c45997b31f078a0c2afb.json": "{\"version\":1,\"digest\":\"483ac34bff17b68a711404cf2a5f0c7c8b8acdf59dbae3fe39ff41b279d039cd\",\"state\":\"accepted\",\"receipt\":{\"id\":\"55555555-5555-4555-8555-555555555555\",\"identifier\":\"SYN-OLD-1\",\"project_id\":\"\",\"team_id\":\"11111111-1111-4111-8111-111111111111\"},\"updated_at\":\"2026-10-22T12:00:00Z\"}\n"
+  },
+  "native_credential_operations": 0,
+  "network_operations": 0,
+  "pending_error": "Linear operation may have been dispatched; outcome uncertain, inspect Linear before retrying",
+  "pending_input": {
+    "Body": "",
+    "Description": null,
+    "IssueID": "",
+    "Operation": "create",
+    "OperationID": "actual-l1-pending-v3",
+    "StateID": null,
+    "Title": "Historical uncertain synthetic issue"
+  },
+  "profile_id": "lin_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "schema_version": 3,
+  "scope": {
+    "args": {
+      "instance": "legacy-worker-instance"
+    },
+    "operation": "",
+    "project": "board",
+    "session": "worker",
+    "workspace": "legacy-ledger-fixture"
+  },
+  "source_commit": "8aef0f97802169efdf6895eb84bf468a3a9f05c8",
+  "synthetic_provider_create_dispatches": 2
+}

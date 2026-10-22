@@ -2,7 +2,6 @@ package bus
 
 import (
 	"bytes"
-	"context"
 	"encoding/json"
 	"errors"
 	"regexp"
@@ -179,78 +178,4 @@ func ParseTaskboardBinding(v any) (TaskboardBinding, error) {
 	b.LinearProjectID = mapping.LinearProjectID
 	b.LinearWorkspaceID = mapping.LinearWorkspaceID
 	return b, nil
-}
-
-func (s *Store) taskboard(ctx context.Context, tx *transaction, wid, pid, op string, a map[string]any) (any, error) {
-	rows, e := query(ctx, tx, `SELECT revision,mapping,updated_at FROM taskboard_bindings WHERE project_id=?`, pid)
-	if e != nil {
-		return nil, e
-	}
-	b := TaskboardBinding{WorkspaceID: wid, ProjectID: pid}
-	if len(rows) > 0 {
-		b.Revision = rows[0]["revision"].(int64)
-		b.UpdatedAt = rows[0]["updated_at"].(string)
-		if mapping, ok := rows[0]["mapping"].(string); ok {
-			var stored map[string]any
-			if e = json.Unmarshal([]byte(mapping), &stored); e != nil {
-				return nil, errors.New("corrupt taskboard mapping")
-			}
-			parsed, err := parseTaskboardMapping(stored)
-			if err != nil {
-				return nil, errors.New("corrupt taskboard mapping")
-			}
-			parsed.WorkspaceID = wid
-			parsed.ProjectID = pid
-			parsed.Revision = b.Revision
-			parsed.UpdatedAt = b.UpdatedAt
-			b = parsed
-			b.Configured = true
-		}
-	}
-	if op == "taskboard_get" {
-		return bindingMap(b), nil
-	}
-	expected, e := taskboardExpected(a)
-	if e != nil {
-		return nil, e
-	}
-	if b.Revision != expected {
-		return nil, &serviceError{code: "conflict", cause: errors.New("taskboard revision conflict; refresh binding")}
-	}
-	next := TaskboardBinding{WorkspaceID: wid, ProjectID: pid, Revision: expected + 1, UpdatedAt: stamp()}
-	var mapping any
-	if op == "taskboard_set" {
-		next, e = parseTaskboardMapping(a)
-		if e != nil {
-			return nil, e
-		}
-		next.Configured = true
-		stored := mappingMap(next)
-		mapping = asJSON(stored)
-		next.WorkspaceID = wid
-		next.ProjectID = pid
-		next.Revision = expected + 1
-		next.UpdatedAt = stamp()
-	}
-	var affected int64
-	if len(rows) == 0 {
-		r, e := tx.ExecContext(ctx, `INSERT INTO taskboard_bindings(project_id,revision,mapping,updated_at) VALUES(?,?,?,?) ON CONFLICT(project_id) DO NOTHING`, pid, next.Revision, mapping, next.UpdatedAt)
-		if e != nil {
-			return nil, e
-		}
-		affected, _ = r.RowsAffected()
-	} else {
-		r, e := tx.ExecContext(ctx, `UPDATE taskboard_bindings SET revision=?,mapping=?,updated_at=? WHERE project_id=? AND revision=?`, next.Revision, mapping, next.UpdatedAt, pid, expected)
-		if e != nil {
-			return nil, e
-		}
-		affected, _ = r.RowsAffected()
-	}
-	if affected != 1 {
-		return nil, &serviceError{code: "conflict", cause: errors.New("taskboard revision conflict; refresh binding")}
-	}
-	if e = s.audit(ctx, tx, wid, pid, "", "taskboard", pid, op, map[string]any{"revision": next.Revision, "configured": next.Configured}); e != nil {
-		return nil, e
-	}
-	return bindingMap(next), nil
 }

@@ -98,7 +98,7 @@ func (s *Store) migrate() error {
 	if err = tx.QueryRow("PRAGMA user_version").Scan(&version); err != nil {
 		return err
 	}
-	if version > 3 {
+	if version > 4 {
 		return errors.New("database schema is newer than this ClawBridge binary")
 	}
 	if version == 0 {
@@ -120,6 +120,11 @@ func (s *Store) migrate() error {
 	}
 	if version < 3 {
 		if _, err = tx.Exec(taskboardSchema + `PRAGMA user_version=3;`); err != nil {
+			return err
+		}
+	}
+	if version < 4 {
+		if _, err = tx.Exec(taskboardSchemaV4 + `PRAGMA user_version=4;`); err != nil {
 			return err
 		}
 	}
@@ -238,6 +243,9 @@ func nameOK(v string) error {
 func validateArgs(op string, a map[string]any) error {
 	allowed := map[string]string{
 		"taskboard_get":           "instance",
+		"taskboard_get_v2":        "instance",
+		"taskboard_set_v2":        "instance expected_revision mode linear_team_ids linear_default_team_id linear_project_ids linear_workspace_id",
+		"taskboard_clear_v2":      "instance expected_revision",
 		"taskboard_access":        "instance",
 		"taskboard_set":           "instance expected_revision linear_team_ids linear_default_team_id linear_project_id linear_workspace_id",
 		"taskboard_clear":         "instance expected_revision",
@@ -273,7 +281,7 @@ func validateArgs(op string, a map[string]any) error {
 			if _, ok := v.(map[string]any); !ok {
 				return errors.New("transport must be an object")
 			}
-		case "ids", "linear_team_ids":
+		case "ids", "linear_team_ids", "linear_project_ids":
 			switch v.(type) {
 			case []string, []any:
 			default:
@@ -289,9 +297,14 @@ func validateArgs(op string, a map[string]any) error {
 			}
 		}
 	}
-	if op == "taskboard_set" || op == "taskboard_clear" {
+	if op == "taskboard_set" || op == "taskboard_clear" || op == "taskboard_set_v2" || op == "taskboard_clear_v2" {
 		if _, err := taskboardExpected(a); err != nil {
 			return err
+		}
+		if op == "taskboard_set_v2" {
+			if _, err := parseTaskboardMappingV2(a); err != nil {
+				return err
+			}
 		}
 		if op == "taskboard_set" {
 			if _, err := parseTaskboardMapping(a); err != nil {
@@ -365,7 +378,7 @@ func (s *Store) executeRequest(ctx context.Context, r Request) (Result, error) {
 		return Result{}, err
 	}
 	options := &sql.TxOptions{}
-	if s.postgres && (r.Operation == "snapshot" || r.Operation == "inbox_status" || r.Operation == "notification_status" || r.Operation == "taskboard_get" || r.Operation == "taskboard_access") {
+	if s.postgres && (r.Operation == "snapshot" || r.Operation == "inbox_status" || r.Operation == "notification_status" || r.Operation == "taskboard_get" || r.Operation == "taskboard_get_v2" || r.Operation == "taskboard_access") {
 		options.Isolation = sql.LevelRepeatableRead
 		options.ReadOnly = true
 	}
@@ -383,7 +396,7 @@ func (s *Store) executeRequest(ctx context.Context, r Request) (Result, error) {
 			return Result{}, err
 		}
 	}
-	if s.postgres && r.Operation != "snapshot" && r.Operation != "inbox_status" && r.Operation != "notification_status" && r.Operation != "taskboard_get" && r.Operation != "taskboard_access" {
+	if s.postgres && r.Operation != "snapshot" && r.Operation != "inbox_status" && r.Operation != "notification_status" && r.Operation != "taskboard_get" && r.Operation != "taskboard_get_v2" && r.Operation != "taskboard_access" {
 		// Serialize a principal's rate-limit accounting across its workspaces.
 		if _, err = tx.ExecContext(ctx, `SELECT pg_advisory_xact_lock(hashtextextended(?,0))`, "principal:"+s.principal); err != nil {
 			return Result{}, err
@@ -440,7 +453,7 @@ func (s *Store) execute(ctx context.Context, tx *transaction, r Request) (any, e
 		if _, err = one(ctx, tx, `SELECT principal FROM members WHERE workspace_id=? AND principal=?`, wid, s.principal); err != nil {
 			return nil, scopedError(err, "workspace membership required", "forbidden")
 		}
-		if r.Operation != "snapshot" && r.Operation != "inbox_status" && r.Operation != "notification_status" && r.Operation != "taskboard_get" && r.Operation != "taskboard_access" {
+		if r.Operation != "snapshot" && r.Operation != "inbox_status" && r.Operation != "notification_status" && r.Operation != "taskboard_get" && r.Operation != "taskboard_get_v2" && r.Operation != "taskboard_access" {
 			if _, err = tx.ExecContext(ctx, `SELECT pg_advisory_xact_lock(hashtextextended(?,0))`, "workspace:"+wid); err != nil {
 				return nil, err
 			}
@@ -554,7 +567,7 @@ func (s *Store) execute(ctx context.Context, tx *transaction, r Request) (any, e
 			return nil, errors.New("session instance mismatch; pass the instance returned by register")
 		}
 	}
-	if r.Operation == "taskboard_access" || r.Operation == "taskboard_get" || r.Operation == "taskboard_set" || r.Operation == "taskboard_clear" {
+	if r.Operation == "taskboard_access" || r.Operation == "taskboard_get" || r.Operation == "taskboard_set" || r.Operation == "taskboard_clear" || r.Operation == "taskboard_get_v2" || r.Operation == "taskboard_set_v2" || r.Operation == "taskboard_clear_v2" {
 		if r.Session == "" && str(a, "instance") != "" {
 			return nil, errors.New("instance requires session")
 		}
@@ -566,7 +579,7 @@ func (s *Store) execute(ctx context.Context, tx *transaction, r Request) (any, e
 			}
 			return accessMap(access), nil
 		}
-		if r.Operation != "taskboard_get" && r.Operation != "taskboard_access" {
+		if r.Operation != "taskboard_get" && r.Operation != "taskboard_get_v2" && r.Operation != "taskboard_access" {
 			if projectRole != "owner" && projectRole != "lead" {
 				return nil, errors.New("project lead or owner permission required")
 			}

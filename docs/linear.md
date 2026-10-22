@@ -1,14 +1,22 @@
 # Linear task boards
 
-This source increment passed [independent automated acceptance](archive/reviews/LINEAR-REVIEW.md)
+The L1 increment passed [independent automated acceptance](archive/reviews/LINEAR-REVIEW.md)
 after the coordination increment. It is not in published v0.1.0; v0.2.0 candidate
 builds remain unpublished. The [design contract](design/linear.md) and review
 record distinguish synthetic, native-platform and live-provider evidence.
 
+The [L2 extension](design/linear-migration.md) adds project sets, labels,
+dependencies, parents and explicit assignment in current source. Its
+[independent automated acceptance](archive/reviews/LINEAR-L2-REVIEW.md) passed;
+these additions are not in the installed L1 build or a published release. Native
+reads were exercised separately. Label eligibility and parent preservation remain
+explicit native capability limits; new live mutation effects are unverified.
+
 ## Connect and choose a board
 
-Cloud users need the matching schema-3 service before using the Linear view or
-linking a shared board. Personal CLI connection/profile commands work separately.
+Cloud users need the matching service before using the Linear view or linking a
+shared board: schema 3 for L1, schema 4 for L2. Personal CLI connection/profile
+commands work separately.
 Follow the [backup and recovery guide](operations/backup-and-recovery.md) before
 upgrading a store; updating the client alone does not upgrade a hosted service.
 
@@ -21,7 +29,8 @@ Sign-in times out after three minutes, so complete the browser prompt when it
 opens. If it expires, start Connect again when ready; no new connection is saved.
 
 The OAuth session selects your Linear workspace. Choose the allowed team(s), a
-default team for new issues, then a Linear project or **Team board — no project**.
+default team for new issues, then a Linear project (or several on L2) or
+**Team board — no project**.
 Preview and confirm linking the current ClawBridge project. A team such as
 FJ-AgentTaskBoard is distinct from a Linear project. Projects can include several
 teams; stable IDs keep the selection unambiguous.
@@ -32,14 +41,14 @@ create it in Linear and then select it here.
 
 The board mapping is shared by the ClawBridge project. Each teammate connects
 their own Linear account and independently verifies access to the selected teams
-and project. Credentials stay in that person's native keyring. No Orca, Node or
+and projects. Credentials stay in that person's native keyring. No Orca, Node or
 another teammate's host is required. A provider that omits its workspace UUID is
 shown honestly; ClawBridge does not invent an ID from its display name.
 
 | Setting | Owner and location |
 | --- | --- |
 | Personal Linear connection | Each teammate; credentials in their native keyring |
-| Allowed teams and optional project | ClawBridge project owner/lead; shared authority settings |
+| Allowed teams and selected project(s) | ClawBridge project owner/lead; shared authority settings |
 | Issue slice, session and assignment revision | Coordinator; the Linear issue's Current agent block |
 
 One product project can coordinate frontend/backend repositories through that
@@ -89,7 +98,7 @@ clawbridge mcp install --agent codex --session engineer \
 
 Review the installation preview and repeat without `--dry-run` to save it. Use
 `--agent claude-code` for Claude Code, or pass `--linear-profile PROFILE_ID`
-when starting a direct `clawbridge mcp` process. The native tools are
+when starting a direct `clawbridge mcp` process. The original task-board tools are
 `taskboard_binding`, `taskboard_context`, `taskboard_issues`, `taskboard_issue`,
 `taskboard_create`, `taskboard_update` and `taskboard_comment`. Tools pin the
 process's profile/project; tool arguments cannot choose another account or board.
@@ -114,6 +123,65 @@ Project readers can inspect tasks. Owner/lead/member writes also require persona
 Linear write access and a current owned actor when one is supplied. To add that
 personal capability, reconnect explicitly with `--access write`; no tool elevates
 it automatically. Discover each tool's advertised input schema before a write.
+
+## L2 project sets and issue structure
+
+Use this section only with the matching L2 client and schema-4 service. Personal
+connection commands remain separate from the authority upgrade. An older service
+fails explicitly; updating a client does not update the service. L1 team-board and
+single-project mappings retain their old representation. An older client cannot
+represent a multi-project mapping and receives `unsupported_mapping`.
+
+Select several projects in the TUI with Space, then Enter to preview and confirm.
+For CLI setup, repeat `--linear-project`:
+
+```sh
+clawbridge linear link --profile PROFILE_ID \
+  --team TEAM_UUID --default-team TEAM_UUID \
+  --linear-project PROJECT_A_UUID --linear-project PROJECT_B_UUID \
+  --expected-revision CURRENT_REVISION
+```
+
+Review that preview and repeat with `--confirm`. Each project must include an
+allowed team, and each allowed team must be represented. Issue access requires
+the verified project/team pair. A multi-project create needs its explicit
+destination; a singleton can supply its sole project. Global `--project` still
+selects the ClawBridge scope; `--linear-project` selects the Linear destination.
+
+Discover scoped metadata before writing:
+
+```sh
+clawbridge linear labels --profile PROFILE_ID --team TEAM_UUID --limit 50
+clawbridge linear members --profile PROFILE_ID --team TEAM_UUID --limit 50
+```
+
+| Explicit field | Meaning |
+| --- | --- |
+| `--linear-project UUID` | Create destination or requested project move; update preserves the issue's team |
+| Repeated `--label UUID` | Complete replacement label set, including removal of existing omitted labels |
+| `--parent UUID` | Scoped, acyclic parent with verified destination-preserving behavior |
+| `--assignee UUID` | Explicit eligible team member; no agent claim or permission change |
+| Update `--clear-project`, `--clear-labels`, `--clear-parent`, `--clear-assignee` | Explicit clearing; project clear is limited to team-board mode |
+
+Omission preserves a field. Set and clear conflict; discover native support
+before using either. Unknown label ownership, membership or hierarchy context
+causes an explicit refusal before dispatch. Provider automation and concurrent
+changes remain separate from ClawBridge's requested fields and local retry ledger.
+Project and label administration stay in Linear's UI.
+
+One dependency edge is changed per request:
+
+```sh
+clawbridge linear relation add FROM_ISSUE_UUID TO_ISSUE_UUID \
+  --type blocks --profile PROFILE_ID --operation-id DEPENDENCY_OPERATION_ID
+```
+
+Use `remove` for removal, or types `blocked-by` and `related` for their respective
+directions. Both issues must be in scope. Keep the exact operation ID and payload
+for an accepted retry; read back an uncertain outcome before any further action.
+The versioned MCP family exposes the same scoped operations through the existing
+profile opt-in. Prefer advertised `taskboard_*_v2` tools on L2 builds; original
+tools remain available for representable L1 mappings.
 
 ## Accounts and recovery
 

@@ -78,14 +78,14 @@ func TestTaskboardConcurrentCAS(t *testing.T) {
 		t.Fatal(success)
 	}
 }
-func TestTaskboardSchemaThreeAndMigration(t *testing.T) {
+func TestTaskboardSchemaFourAndMigration(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "migrate.db")
 	s, e := Open(path)
 	if e != nil {
 		t.Fatal(e)
 	}
 	var v int
-	if e = s.db.QueryRow("PRAGMA user_version").Scan(&v); e != nil || v != 3 {
+	if e = s.db.QueryRow("PRAGMA user_version").Scan(&v); e != nil || v != 4 {
 		t.Fatal(v, e)
 	}
 	if _, e = s.db.Exec("DROP TABLE taskboard_bindings; PRAGMA user_version=2"); e != nil {
@@ -101,7 +101,7 @@ func TestTaskboardSchemaThreeAndMigration(t *testing.T) {
 	if e != nil {
 		t.Fatal(e)
 	}
-	if _, e = s.db.Exec("PRAGMA user_version=4"); e != nil {
+	if _, e = s.db.Exec("PRAGMA user_version=5"); e != nil {
 		t.Fatal(e)
 	}
 	s.Close()

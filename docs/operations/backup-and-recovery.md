@@ -8,8 +8,10 @@ existing deployment; preserve its private environment and volume bindings.
 ## Coordination schema upgrade
 
 The [coordination increment](../design/coordination.md) introduces schema version
-2; [native Linear settings](../design/linear.md) add version 3. Before an upgrade,
-stop API/client writers and save a verified recovery copy of the existing version.
+2; [native Linear settings](../design/linear.md) add version 3, and
+[Linear project sets](../design/linear-migration.md) add version 4. Before an
+upgrade, stop API/client writers and save a verified recovery copy of the existing
+version.
 
 For PostgreSQL, use the dump/checksum pair and disposable restore drill below.
 For local SQLite, use a consistent SQLite backup, keeping the original store
@@ -32,6 +34,29 @@ The shared backup contains board UUIDs and mapping revisions, not personal Linea
 credentials. Each teammate reconnects or restores their own native secure store
 separately. A restored board mapping still requires that connection to verify
 access to its teams/project; a display label cannot establish access.
+
+### Linear project-set upgrade
+
+L2 clients need the schema-4 service and versioned taskboard operations. Opening
+an existing schema-3 store with the matching service adds `mapping_version` to
+`taskboard_bindings`, defaulting existing rows to 1. Existing mapping JSON,
+revisions, clear tombstones and other domain rows remain unchanged. A V2 read
+normalizes an old mapping without rewriting it. Once a multi-project mapping is
+saved, an older client's taskboard operations return `unsupported_mapping`
+instead of choosing a project.
+
+Before promoting schema 4, restore a fresh schema-3 recovery copy into a separate
+target, open it with the candidate service, and compare all prior domain columns
+and rows, including `taskboard_bindings`. Verify the new column defaults to 1
+for prior rows, authorized V2 metadata reads work, and representable mappings
+retain their V1 response. Keep a separate, verified schema-3 recovery target and
+the exact older image for rollback. Replacing the image alone cannot roll back a
+schema-4 database.
+
+The upgrade changes shared ClawBridge settings; it does not connect to Linear,
+create Linear projects or change issues. Each teammate's native connection stays
+local. Source acceptance and a disposable migration test do not perform the
+deployment or establish that a production backup was restored successfully.
 
 ## Backup format and schedule
 

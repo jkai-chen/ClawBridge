@@ -466,8 +466,8 @@ func (c *Client) Execute(ctx context.Context, r bus.Request) (bus.Result, error)
 	if err == nil {
 		return result, nil
 	}
-	if r.Operation == "inbox_status" || r.Operation == "notification_status" || r.Operation == "taskboard_get" || r.Operation == "taskboard_access" {
-		// Notification metadata is authoritative only, never an offline wake.
+	if r.Operation == "inbox_status" || r.Operation == "notification_status" || r.Operation == "taskboard_get" || r.Operation == "taskboard_get_v2" || r.Operation == "taskboard_access" {
+		// Status and binding metadata require the authority, never a mirror.
 		var credential *credentialError
 		var httpErr *HTTPError
 		if !unavailable && ctx.Err() == nil && !errors.As(err, &credential) && !errors.As(err, &httpErr) {

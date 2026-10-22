@@ -70,6 +70,9 @@ requires its matching instance. Routing role is distinct from project permission
 | `taskboard_access` | Own effective project-write capability; optional actor/instance |
 | `taskboard_set` | expected_revision, linear_team_ids, linear_default_team_id, linear_project_id (UUID/null); optional linear_workspace_id (UUID/null) |
 | `taskboard_clear` | expected_revision; authorized owner/lead |
+| `taskboard_get_v2` | Versioned shared mapping; optional current actor/instance |
+| `taskboard_set_v2` | expected_revision, mode, linear_team_ids, linear_default_team_id, linear_project_ids; optional nullable linear_workspace_id |
+| `taskboard_clear_v2` | expected_revision; authorized owner/lead |
 | `project_role_set` | Hosted owner: principal, role |
 | `snapshot` | Hosted current actor/instance; explicit scoped sync |
 | `purge_expired` | Hosted owner: current project |
@@ -86,6 +89,15 @@ expose scoped `taskboard_binding`, `taskboard_context`, `taskboard_issues`,
 These call Linear through the native adapter; their source is `linear`. They
 cannot choose another profile/authority/project through tool arguments. Board
 administration remains in CLI/TUI. See [Linear setup](../linear.md).
+
+The L2 native adapter adds eleven versioned tools: binding, context, issues,
+issue, create, update, comment, labels, members, relation_add and relation_remove,
+each named `taskboard_<operation>_v2`. It advertises 32 tools in total; a V1-only
+adapter retains 21 and an unconfigured adapter retains 14. Prefer the advertised
+V2 family for new board calls. Initialization and listing do not access Linear.
+The [L2 contract](../design/linear-migration.md) defines the closed schemas and
+scope rules; [L2 review](../archive/reviews/LINEAR-L2-REVIEW.md) records acceptance
+progress and native capability limits.
 
 ## Identity and lifecycle
 
@@ -219,6 +231,22 @@ their original profile, scope and mapping revision; an uncertain external write
 is not automatically replayed. The mapping is an administrator selection, not a
 claim that the authority itself authenticated to Linear or assigned an agent.
 
+Schema 4 adds a stored mapping version while preserving schema-3 mapping bytes
+and revision history. V2 results contain exactly workspace_id, project_id,
+configured, revision, mapping_version, binding and updated_at. The response
+mapping_version is 2. A configured binding contains provider, mode,
+linear_team_ids, linear_default_team_id, linear_project_ids and
+linear_workspace_id. Mode is team_board with no projects, or project_set with
+1–50 sorted unique project UUIDs. Teams remain bounded to 20. The native adapter
+verifies each allowed project/team intersection before exposing an issue or
+dispatching a write.
+
+V2 get normalizes a stored L1 mapping without writing it. Representable team
+boards and singleton project sets retain the exact L1 wire shape through the
+old operations. An authorized L1 get/set/clear on a multi-project mapping fails
+with `unsupported_mapping` (HTTP 409) before mutation. It never chooses a first
+project. Both versions share the same CAS revision and clear tombstone.
+
 ## Hosted routes and failures
 
 `POST /v1/execute` accepts the request envelope and verifies the configured Google
@@ -234,8 +262,12 @@ New cloud notification clients require a service supporting inbox_status; an
 older service must fail explicitly instead of falling back to inbox fetching.
 Policy-aware clients additionally require notification_status; they do not fall
 back to the older policy-free response. Shared task-board operations require the
-matching schema-3 service. The version-2 coordination and version-3 settings
-upgrades are described in [recovery](../operations/backup-and-recovery.md#coordination-schema-upgrade).
+matching schema-3 service; V2 project-set operations require schema 4. An
+old-service refusal is definitive and does not trigger a mirror fallback.
+The version-2 coordination and version-3 settings upgrades are described in
+[recovery](../operations/backup-and-recovery.md#coordination-schema-upgrade);
+the [project-set upgrade](../operations/backup-and-recovery.md#linear-project-set-upgrade)
+covers schema 4.
 
 ## Version output
 

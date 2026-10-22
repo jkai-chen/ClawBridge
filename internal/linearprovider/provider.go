@@ -468,6 +468,10 @@ func (p *Provider) call(ctx context.Context, names []string, args ...arg) (map[s
 	if e != nil {
 		return nil, e
 	}
+	return p.invoke(ctx, chosen, values)
+}
+func (p *Provider) invoke(ctx context.Context, chosen string, values map[string]any) (map[string]any, error) {
+	var e error
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 	r, e := p.caller.CallTool(ctx, &mcp.CallToolParams{Name: chosen, Arguments: values})
@@ -502,7 +506,7 @@ func (p *Provider) call(ctx context.Context, names []string, args ...arg) (map[s
 		return nil, fail("invalid_response")
 	}
 	if rows, ok := decoded.([]any); ok {
-		keys := map[string]string{"list_teams": "teams", "list_projects": "projects", "list_issues": "issues", "list_issue_statuses": "statuses"}
+		keys := map[string]string{"list_teams": "teams", "list_projects": "projects", "list_issues": "issues", "list_issue_statuses": "statuses", "list_issue_labels": "labels", "list_users": "users", "list_team_members": "members"}
 		key := keys[chosen]
 		if key == "" {
 			return nil, fail("invalid_response")

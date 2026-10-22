@@ -54,7 +54,7 @@ func (s *Store) migratePostgres(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	if version > 3 {
+	if version > 4 {
 		return errors.New("Postgres schema is newer than this binary")
 	}
 	if version == 0 {
@@ -69,6 +69,11 @@ func (s *Store) migratePostgres(ctx context.Context) error {
 	}
 	if version < 3 {
 		if _, err = tx.ExecContext(ctx, taskboardSchema+`INSERT INTO clawbridge_schema(version) VALUES(3)`); err != nil {
+			return err
+		}
+	}
+	if version < 4 {
+		if _, err = tx.ExecContext(ctx, taskboardSchemaV4+`INSERT INTO clawbridge_schema(version) VALUES(4)`); err != nil {
 			return err
 		}
 	}

@@ -1,5 +1,7 @@
 #!/bin/sh
-# Downloaded text is data. Never source, evaluate or run a release payload.
+# Downloaded text is data. Never source or evaluate it. The binary runs only
+# after its checksum matched and it is installed, for `skill install` (--no-skill
+# skips that).
 set -eu
 umask 077
 fail() { printf 'clawbridge install: %s\n' "$*" >&2; exit 1; }
@@ -9,16 +11,20 @@ valid_version() {
 }
 install_version=''
 install_bin_dir=${HOME:+$HOME/.local/bin}
+install_skill=1
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --help|-h)
-      printf '%s\n' 'Usage: sh install.sh [--version vX.Y.Z] [--bin-dir ABSOLUTE_PATH]' 'Default: $HOME/.local/bin/clawbridge. No PATH/configuration/sign-in changes.'
+      printf '%s\n' 'Usage: sh install.sh [--version vX.Y.Z] [--bin-dir ABSOLUTE_PATH] [--no-skill]' 'Default: $HOME/.local/bin/clawbridge, then `clawbridge skill install` for the agents configured here.' 'No PATH/configuration/sign-in changes.'
       exit 0 ;;
     --version)
       [ "$#" -ge 2 ] && [ -z "$install_version" ] || fail '--version requires one value, once'
       install_version=$2
       valid_version "$install_version" || fail 'invalid canonical release version'
       shift 2 ;;
+    --no-skill)
+      install_skill=0
+      shift ;;
     --bin-dir)
       [ "$#" -ge 2 ] || fail '--bin-dir requires a value'
       install_bin_dir=$2
@@ -92,6 +98,14 @@ check_destination
 mv -f -- "$install_stage" "$install_bin_dir/clawbridge"
 install_stage=''
 printf 'Installed %s at %s\n' "$install_version" "$install_bin_dir/clawbridge"
+# The agent skill is a convenience: a failure warns and never fails the install.
+if [ "$install_skill" = 1 ]; then
+  if "$install_bin_dir/clawbridge" skill install >/dev/null; then
+    printf '%s\n' 'Installed the ClawBridge agent skill (see: clawbridge skill status).'
+  else
+    printf '%s\n' 'clawbridge install: warning: the agent skill was not installed; run `clawbridge skill install --agent claude-code|codex|all` later.' >&2
+  fi
+fi
 case ":${PATH:-}:" in *":$install_bin_dir:"*) ;; *)
   install_quoted=$(printf '%s' "$install_bin_dir" | sed "s/'/'\\\\''/g")
   printf "For this shell, run: export PATH='%s':\"\$PATH\"\n" "$install_quoted"

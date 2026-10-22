@@ -2,6 +2,7 @@
 param(
     [string]$Version = '',
     [string]$InstallDir = '',
+    [switch]$NoSkill,
     [switch]$Help
 )
 Set-StrictMode -Version 2.0
@@ -100,7 +101,13 @@ function Invoke-ClawBridgeDownload([Uri]$Uri, [string]$OutFile, [long]$MaxBytes)
     throw 'Redirect limit exceeded'
 }
 
-function Install-ClawBridge([string]$Version = '', [string]$InstallDir = '') {
+# Runs the installed, checksum-verified binary once to install the agent skill.
+function Invoke-ClawBridgeSkillInstall([string]$Binary) {
+    $null = & $Binary skill install
+    if ($LASTEXITCODE -ne 0) { throw ('skill install exited ' + $LASTEXITCODE) }
+}
+
+function Install-ClawBridge([string]$Version = '', [string]$InstallDir = '', [switch]$NoSkill) {
     if ($Version -ne '' -and -not (Test-ClawBridgeVersion $Version)) { throw 'Invalid canonical release version' }
     $platform = Get-ClawBridgePlatform
     if ($platform -cne 'windows_amd64') { throw 'Unsupported platform' }
@@ -165,6 +172,15 @@ function Install-ClawBridge([string]$Version = '', [string]$InstallDir = '') {
             [IO.File]::Move($stagedBinary, $destination)
         }
         Write-Output ('Installed ' + $Version + ' at ' + $destination)
+        # The agent skill is a convenience: a failure warns and never fails the install.
+        if (-not $NoSkill) {
+            try {
+                Invoke-ClawBridgeSkillInstall $destination
+                Write-Output 'Installed the ClawBridge agent skill (see: clawbridge skill status).'
+            } catch {
+                Write-Warning 'The agent skill was not installed; run `clawbridge skill install --agent claude-code|codex|all` later.'
+            }
+        }
         Write-Output ('$env:PATH = ' + "'" + $InstallDir.Replace("'", "''") + ";' + " + '$env:PATH')
         Write-Output 'For future shells, add that directory through your per-user Environment Variables settings.'
     } finally {
@@ -176,7 +192,8 @@ function Install-ClawBridge([string]$Version = '', [string]$InstallDir = '') {
 # Dot-source to import testable functions without installation or network work.
 if ($MyInvocation.InvocationName -eq '.') { return }
 if ($Help) {
-    Write-Output 'Usage: .\install.ps1 [-Version vX.Y.Z] [-InstallDir ABSOLUTE_PATH] [-Help]'
+    Write-Output 'Usage: .\install.ps1 [-Version vX.Y.Z] [-InstallDir ABSOLUTE_PATH] [-NoSkill] [-Help]'
+    Write-Output 'After installing, runs `clawbridge skill install` for the agents configured here unless -NoSkill.'
     return
 }
-Install-ClawBridge -Version $Version -InstallDir $InstallDir
+Install-ClawBridge -Version $Version -InstallDir $InstallDir -NoSkill:$NoSkill

@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""POSIX installer black-box fixtures; no network or downloaded code execution."""
+"""POSIX installer black-box fixtures; no network. The fixture payload only
+records how the installer ran it."""
 import hashlib
 import json
 import os
@@ -33,7 +34,9 @@ if url==base+'/latest':
  sys.exit(0)
 assert url.startswith(base+'/download/v0.1.0/'),url
 asset='clawbridge_v0.1.0_'+os.environ.get('ASSET_OS','linux')+'_'+os.environ.get('ASSET_ARCH','amd64')
-payload=b'#!/bin/sh\ntouch NEVER-EXECUTE-RELEASE\n'
+# Run only as the installed binary, for `skill install`: record that, then
+# exit with SKILL_EXIT.
+payload=b'#!/bin/sh\nprintf "%s %s\\n" "$0" "$*" >> "$FIXTURE/ran"\nexit "${SKILL_EXIT:-0}"\n'
 digest=hashlib.sha256(payload).hexdigest()
 entry=digest+'  '+asset+'\n'
 output=pathlib.Path(args[args.index('--output')+1])
@@ -79,11 +82,14 @@ class InstallerTests(unittest.TestCase):
         self.assertEqual(result.returncode == 0, ok, result.stdout + result.stderr)
         self.assertEqual(list(self.scratch.iterdir()), [], "download temp leaked")
         self.assertEqual(list(self.state.iterdir()), [], "configuration/profile was changed")
-        self.assertFalse((self.root / "NEVER-EXECUTE-RELEASE").exists())
         self.assertFalse((self.root / "hostile").exists())
         if self.destination.exists():
             self.assertFalse(any(p.name.startswith(".clawbridge-install") for p in self.destination.iterdir()))
         return result
+
+    def ran(self):
+        p = self.root / "ran"
+        return p.read_text().splitlines() if p.exists() else []
 
     def requests(self):
         p = self.root / "requests"
@@ -99,6 +105,18 @@ class InstallerTests(unittest.TestCase):
         instruction = result.stdout.split("For this shell, run: ", 1)[1].strip()
         check = subprocess.run(["/bin/sh", "-c", instruction + '\nprintf "%s" "$PATH"'], env=self.env, capture_output=True, text=True, check=True)
         self.assertTrue(check.stdout.startswith(str(self.destination) + ":"))
+        # Only the installed binary runs, once, to install the agent skill.
+        self.assertEqual(self.ran(), [str(self.destination / "clawbridge") + " skill install"])
+        self.assertIn("Installed the ClawBridge agent skill", result.stdout)
+
+    def test_skill_step_is_optional_and_never_fails_the_install(self):
+        self.run_installer("--no-skill", "--bin-dir", str(self.destination))
+        self.assertEqual(self.ran(), [])
+        self.assertTrue((self.destination / "clawbridge").exists())
+        result = self.run_installer("--bin-dir", str(self.destination), SKILL_EXIT="1")
+        self.assertEqual(len(self.ran()), 1)
+        self.assertIn("warning: the agent skill was not installed", result.stderr)
+        self.assertIn("Installed v0.1.0", result.stdout)
 
     def test_explicit_platform_matrix_replaces_existing(self):
         for system, architecture, asset_os, asset_arch in [("Darwin", "x86_64", "darwin", "amd64"), ("Darwin", "arm64", "darwin", "arm64"), ("Linux", "amd64", "linux", "amd64"), ("Linux", "aarch64", "linux", "arm64")]:
@@ -125,10 +143,12 @@ class InstallerTests(unittest.TestCase):
                 target.write_bytes(b"previous")
                 self.run_installer("--version", "v0.1.0", "--bin-dir", str(self.destination), ok=False, TEST_MODE=mode)
                 self.assertEqual(target.read_bytes(), b"previous")
+                self.assertEqual(self.ran(), [], "a failed install ran a binary")
         for operation in ["cp", "chmod", "mv"]:
             with self.subTest(operation=operation):
                 self.run_installer("--version", "v0.1.0", "--bin-dir", str(self.destination), ok=False, FAIL_WRITE=operation)
                 self.assertEqual(target.read_bytes(), b"previous")
+                self.assertEqual(self.ran(), [], "a failed install ran a binary")
 
     def test_symlink_and_directory_refused_before_network(self):
         self.destination.mkdir()

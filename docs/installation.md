@@ -23,8 +23,12 @@ curl --fail --silent --show-error --location --proto '=https' --proto-redir '=ht
   | sh -s -- --version v0.1.0
 ```
 
-Use `--bin-dir /absolute/path` to choose another destination. The installer prints
-the PATH step; it does not change shell profiles or PATH itself. If a download or
+Use `--bin-dir /absolute/path` to choose another destination. After installing,
+the installer runs the new binary once as `clawbridge skill install`, which
+installs the [agent skill](#agent-skill) for the agents configured on this machine;
+`--no-skill` skips that. A skill failure is a warning; the binary stays installed.
+The installer prints the PATH step; it does not change shell profiles or PATH
+itself. If a download or
 checksum fails, the existing binary stays in place. An update replaces the binary
 while preserving your saved route, database/cache and native credentials.
 
@@ -39,13 +43,15 @@ clawbridge
 ```
 
 Use `-Version v0.1.0` for an explicit binary version or `-InstallDir 'C:\absolute\path'`
-for a different directory. Default is `%LOCALAPPDATA%\Programs\ClawBridge`.
+for a different directory. As on macOS and Linux, the installer then runs
+`clawbridge skill install` once, a failure only warns, and `-NoSkill` skips it. Default is `%LOCALAPPDATA%\Programs\ClawBridge`.
 The PATH command above affects the current session; add the directory to your
 user PATH through Windows settings for future terminals. Installer support is
 Windows PowerShell 5.1 and PowerShell 7 on Windows x64. Native platform runtime
 acceptance is recorded in the [release review](archive/reviews/RELEASE-REVIEW.md).
 
-Installation does not launch ClawBridge. Running `clawbridge` opens your saved
+Apart from `skill install`, installation does not run ClawBridge, and it never
+signs in or changes a configuration. Running `clawbridge` opens your saved
 profile or first-run guided setup. Linux/WSL still requires an existing working
 Secret Service session for OAuth, as described under Linux and WSL credentials below. No gcloud installation is
 needed for browser/device OAuth. Binaries are unsigned; macOS notarization and

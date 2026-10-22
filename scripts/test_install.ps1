@@ -49,6 +49,11 @@ function Invoke-ClawBridgeDownload([Uri]$Uri, [string]$OutFile, [long]$MaxBytes)
     }
     return $url
 }
+$script:skillRuns = New-Object 'Collections.Generic.List[string]'
+function Invoke-ClawBridgeSkillInstall([string]$Binary) {
+    $script:skillRuns.Add($Binary)
+    if ($script:mode -eq 'skill-failure') { throw 'synthetic skill failure' }
+}
 function Assert-True([bool]$Value, [string]$Message) { if (-not $Value) { throw $Message } }
 function Expect-Failure([scriptblock]$Body) {
     $failed = $false
@@ -66,14 +71,24 @@ try {
     $binary = Join-Path $destination 'clawbridge.exe'
     Assert-True ((Get-FileHash -LiteralPath $binary).Hash.ToLowerInvariant() -ceq $script:digest) 'installed digest mismatch'
     Assert-Cleanup
+    Assert-True ($script:skillRuns.Count -eq 1 -and $script:skillRuns[0] -ceq $binary) 'the installed binary must install the skill once'
     $script:requests.Clear()
-    Install-ClawBridge -Version v0.1.0 -InstallDir $destination | Out-Null
+    Install-ClawBridge -Version v0.1.0 -InstallDir $destination -NoSkill | Out-Null
     Assert-True ($script:requests.Count -eq 2) 'explicit version must skip discovery'
+    Assert-True ($script:skillRuns.Count -eq 1) '-NoSkill still installed the skill'
+    $script:mode = 'skill-failure'
+    $output = Install-ClawBridge -Version v0.1.0 -InstallDir $destination 3>&1 | Out-String
+    Assert-True ($script:skillRuns.Count -eq 2) 'skill step not attempted'
+    Assert-True ($output -like '*agent skill was not installed*') 'skill failure must warn'
+    Assert-True ((Get-FileHash -LiteralPath $binary).Hash.ToLowerInvariant() -ceq $script:digest) 'skill failure undid the install'
+    $script:mode = 'ok'
+    $script:skillRuns.Clear()
     foreach ($failure in @('duplicate','missing','malformed','bad-hash','hostile','download-failure','mismatch','empty','write-failure')) {
         $script:mode = $failure
         [IO.File]::WriteAllText($binary, 'old binary')
         Expect-Failure { Install-ClawBridge -Version v0.1.0 -InstallDir $destination }
         Assert-True ([IO.File]::ReadAllText($binary) -ceq 'old binary') ('old binary changed: ' + $failure)
+        Assert-True ($script:skillRuns.Count -eq 0) ('a failed install ran a binary: ' + $failure)
         Assert-Cleanup
     }
     $script:mode = 'ok'
@@ -128,7 +143,7 @@ try {
     Expect-Failure { Install-ClawBridge -Version v0.1.0 -InstallDir $destination }
     Assert-True ($script:requests.Count -eq 0) 'directory destination accessed transport'
     Assert-Cleanup
-    Write-Output 'PASS: native Windows installer latest/pinning/atomic replacement/preservation/validation/reparse/cleanup fixtures'
+    Write-Output 'PASS: native Windows installer latest/pinning/atomic replacement/preservation/validation/reparse/cleanup/skill fixtures'
 } finally {
     if (Test-Path -LiteralPath (Join-Path $fixtureRoot 'junction')) { [IO.Directory]::Delete((Join-Path $fixtureRoot 'junction')) }
     [IO.Directory]::Delete($fixtureRoot, $true)

@@ -130,6 +130,8 @@ returns label names only, and returns `description_sha256`, the SHA-256 of the
 description it read. `taskboard_update_v2` accepts the optional guards
 `expected_title` (with `title`) and `expected_description_sha256` (with
 `description`); a different current value is refused and nothing is sent.
+If Linear's read omits the description, the read has no `description_sha256`
+and a description guard is refused rather than checked against nothing.
 The [L2 contract](../design/linear-migration.md) defines the closed schemas and
 scope rules; [L2 review](../archive/reviews/LINEAR-L2-REVIEW.md) records acceptance
 progress and native capability limits.

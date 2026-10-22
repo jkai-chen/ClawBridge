@@ -27,9 +27,12 @@ func descriptionSHA256(description string) string {
 
 // textGuardV2 compares the optional title and description guards with a
 // fresh read of the issue.
-func textGuardV2(in WriteInputV2, current linearprovider.Issue) error {
+func textGuardV2(in WriteInputV2, current linearprovider.IssueV2) error {
 	if in.ExpectedTitle != nil && current.Title != *in.ExpectedTitle {
 		return errors.New("issue title differs from expected_title; inspect the current issue")
+	}
+	if in.ExpectedDescriptionSHA256 != nil && !current.DescriptionKnown {
+		return errors.New("the current description could not be read, so expected_description_sha256 cannot be checked")
 	}
 	if in.ExpectedDescriptionSHA256 != nil && descriptionSHA256(current.Description) != *in.ExpectedDescriptionSHA256 {
 		return errors.New("issue description differs from expected_description_sha256; inspect the current issue")
@@ -73,8 +76,8 @@ func ValidateWriteV2(in WriteInputV2) error {
 	} else if in.Operation == "update" && in.Labels.Present {
 		return errors.New("label replacement requires expected_label_ids: the complete label set you last read")
 	}
-	if in.ExpectedTitle != nil && (in.Operation != "update" || in.Title == nil) {
-		return errors.New("expected_title applies only to an update that replaces the title")
+	if in.ExpectedTitle != nil && (in.Operation != "update" || in.Title == nil || len(*in.ExpectedTitle) > 1024) {
+		return errors.New("expected_title applies only to an update that replaces the title, up to 1024 bytes")
 	}
 	if in.ExpectedDescriptionSHA256 != nil && (in.Operation != "update" || in.Description == nil || !sha256Pattern.MatchString(*in.ExpectedDescriptionSHA256)) {
 		return errors.New("expected_description_sha256 applies only to an update that replaces the description, as 64 lowercase hex characters")
@@ -245,7 +248,7 @@ func (s *Service) WriteV2(ctx context.Context, scope bus.Request, in WriteInputV
 		if e = checkIssueV2(current, b, v); e != nil {
 			return nil, e
 		}
-		if e = textGuardV2(in, current.Issue); e != nil {
+		if e = textGuardV2(in, current); e != nil {
 			return nil, e
 		}
 		if !legacy && in.Labels.Present {

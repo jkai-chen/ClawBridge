@@ -51,6 +51,9 @@ type IssueV2 struct {
 	// DescriptionSHA256 is set only by a single-issue board read; a caller
 	// sends it back as expected_description_sha256.
 	DescriptionSHA256 string `json:"description_sha256,omitempty"`
+	// DescriptionKnown is true when the read returned the description as a
+	// string or an explicit null, rather than omitting it.
+	DescriptionKnown bool `json:"-"`
 	// UpdatedAt is Linear's last-update time when the read returned it.
 	UpdatedAt string `json:"updated_at,omitempty"`
 }
@@ -614,6 +617,10 @@ func (p *Provider) parseIssueV2(ctx context.Context, m map[string]any) (IssueV2,
 		return IssueV2{}, e
 	}
 	x := IssueV2{Issue: base, ProjectKnown: true}
+	switch m["description"].(type) {
+	case string, nil:
+		_, x.DescriptionKnown = m["description"]
+	}
 	x.LabelIDs, x.LabelsKnown, e = parseLabelIDs(m)
 	if e == nil && !x.LabelsKnown {
 		x.LabelNames = parseLabelNames(m)

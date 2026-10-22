@@ -71,3 +71,31 @@ func TestV2IssueProjectionRequestsUpdatedAt(t *testing.T) {
 		t.Fatal("projection omits updatedAt, so the filter cannot be checked", fields)
 	}
 }
+
+func TestV2DescriptionKnownOnlyWhenReturned(t *testing.T) {
+	for name, c := range map[string]struct {
+		value   any
+		present bool
+		known   bool
+	}{
+		"text":          {"body", true, true},
+		"explicit null": {nil, true, true},
+		"omitted":       {nil, false, false},
+		"wrong type":    {42.0, true, false},
+	} {
+		row := issueResult()
+		delete(row, "description")
+		if c.present {
+			row["description"] = c.value
+		}
+		f := &fake{tools: []*mcp.Tool{tool("get_issue", map[string]string{"id": "string"})}, result: row}
+		p, _ := NewWithCaller(context.Background(), f)
+		x, e := p.IssueV2(context.Background(), iid)
+		if e == nil && x.DescriptionKnown != c.known {
+			t.Errorf("%s: DescriptionKnown=%v, want %v", name, x.DescriptionKnown, c.known)
+		}
+		if e != nil && c.known {
+			t.Errorf("%s: %v", name, e)
+		}
+	}
+}

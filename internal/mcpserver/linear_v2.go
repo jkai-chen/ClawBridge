@@ -64,7 +64,7 @@ func boardSchemaV2(operation string) map[string]any {
 		} else {
 			props["id"] = uuid(false)
 			props["expected_label_ids"] = map[string]any{"type": "array", "maxItems": 100, "uniqueItems": true, "items": uuid(false)}
-			props["expected_title"] = map[string]any{"type": "string", "maxLength": 512, "description": "Optional guard with title: the title you last read; a different current title refuses the update"}
+			props["expected_title"] = map[string]any{"type": "string", "maxLength": 1024, "description": "Optional guard with title: the title you last read; a different current title refuses the update"}
 			props["expected_description_sha256"] = map[string]any{"type": "string", "pattern": "^[0-9a-f]{64}$", "description": "Optional guard with description: description_sha256 from your last issue read; a different current description refuses the update"}
 			required = append(required, "id")
 		}

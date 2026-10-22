@@ -12,6 +12,7 @@ func textIssueV2(p *providerV2, title, description string) {
 	i := p.issues[issueID]
 	i.Title = title
 	i.Description = description
+	i.DescriptionKnown = true
 	p.issues[issueID] = i
 }
 
@@ -115,5 +116,47 @@ func TestLinearV2TextGuardsThroughAdapter(t *testing.T) {
 	}
 	if _, e := s.ExecuteV2(context.Background(), scope, "update", map[string]any{"id": issueID, "operation_id": "adapter-3", "title": "new", "expected_title": nil}); e == nil {
 		t.Fatal("adapter accepted a null title guard")
+	}
+}
+
+// A read that omits the description cannot back a description guard: the
+// read shows no description_sha256 and a guarded write is refused.
+func TestLinearV2DescriptionGuardFailsClosedWhenTheDescriptionIsUnknown(t *testing.T) {
+	s, a, p, scope := testV2(t)
+	textIssueV2(p, "title", "")
+	i := p.issues[issueID]
+	i.DescriptionKnown = false
+	p.issues[issueID] = i
+	read, e := s.IssueV2(context.Background(), scope, issueID)
+	if e != nil || read.DescriptionSHA256 != "" {
+		t.Fatal("unknown description was hashed", read.DescriptionSHA256, e)
+	}
+	empty := descriptionSHA256("")
+	in := WriteInputV2{WriteInput: WriteInput{Operation: "update", OperationID: "unknown-body", IssueID: issueID, Description: ptrV2("new")}, ExpectedDescriptionSHA256: &empty}
+	if _, e = s.WriteV2(context.Background(), scope, in); e == nil || !strings.Contains(e.Error(), "could not be read") || p.writes != 0 || ledgerStateV2(t, s, a, in.OperationID) != "absent" {
+		t.Fatal("description guard passed against an unread description", e)
+	}
+	// The same holds when the description becomes unreadable inside the lock.
+	s, a, p, scope = testV2(t)
+	textIssueV2(p, "title", "")
+	in.OperationID = "unknown-in-lock"
+	a.afterAccess = func(n int) {
+		if n == 2 {
+			i := p.issues[issueID]
+			i.DescriptionKnown = false
+			p.issues[issueID] = i
+		}
+	}
+	if _, e = s.WriteV2(context.Background(), scope, in); e == nil || p.writes != 0 || ledgerStateV2(t, s, a, in.OperationID) != "refused" {
+		t.Fatal("description guard passed against an unread in-lock description", e)
+	}
+}
+
+func TestLinearV2ExpectedTitleIsBounded(t *testing.T) {
+	s, _, p, scope := testV2(t)
+	long := strings.Repeat("t", 1025)
+	in := WriteInputV2{WriteInput: WriteInput{Operation: "update", OperationID: "long", IssueID: issueID, Title: ptrV2("new")}, ExpectedTitle: &long}
+	if _, e := s.WriteV2(context.Background(), scope, in); e == nil || p.reads != 0 {
+		t.Fatal("oversized expected_title accepted or read", e)
 	}
 }

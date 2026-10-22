@@ -550,7 +550,9 @@ func (s *Service) issueV2(ctx context.Context, scope bus.Request, id string, res
 	if e = s.unchangedV2(ctx, scope, b); e != nil {
 		return empty, e
 	}
-	issue.DescriptionSHA256 = descriptionSHA256(issue.Description)
+	if issue.DescriptionKnown {
+		issue.DescriptionSHA256 = descriptionSHA256(issue.Description)
+	}
 	return issue, nil
 }
 

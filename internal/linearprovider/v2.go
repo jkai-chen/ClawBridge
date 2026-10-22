@@ -20,15 +20,19 @@ type IssueQueryV2 struct {
 }
 type IssueV2 struct {
 	Issue
-	ProjectKnown   bool       `json:"project_known"`
-	LabelIDs       []string   `json:"label_ids,omitempty"`
-	LabelsKnown    bool       `json:"labels_known"`
-	ParentID       string     `json:"parent_id,omitempty"`
-	ParentKnown    bool       `json:"parent_known"`
-	AssigneeID     string     `json:"assignee_id,omitempty"`
-	AssigneeKnown  bool       `json:"assignee_known"`
-	Relations      []Relation `json:"relations,omitempty"`
-	RelationsKnown bool       `json:"relations_known"`
+	ProjectKnown bool     `json:"project_known"`
+	LabelIDs     []string `json:"label_ids,omitempty"`
+	LabelsKnown  bool     `json:"labels_known"`
+	ParentID     string   `json:"parent_id,omitempty"`
+	// ParentIdentifier holds a parent reported only by its display identifier
+	// (native Linear returns parentId as e.g. "TEAM-4"). It is never turned
+	// into a UUID here; a reader resolves it with IssueV2 when needed.
+	ParentIdentifier string     `json:"parent_identifier,omitempty"`
+	ParentKnown      bool       `json:"parent_known"`
+	AssigneeID       string     `json:"assignee_id,omitempty"`
+	AssigneeKnown    bool       `json:"assignee_known"`
+	Relations        []Relation `json:"relations,omitempty"`
+	RelationsKnown   bool       `json:"relations_known"`
 }
 type Label struct {
 	ID       string `json:"id"`
@@ -51,30 +55,50 @@ type Member struct {
 	EligibilityKnown bool   `json:"eligibility_known"`
 }
 type Capabilities struct {
-	Labels                     bool `json:"labels"`
-	Members                    bool `json:"members"`
-	CreateProject              bool `json:"create_project"`
-	UpdateProject              bool `json:"update_project"`
-	ReplaceLabels              bool `json:"replace_labels"`
-	Parent                     bool `json:"parent"`
-	Assignee                   bool `json:"assignee"`
-	ParentPreservesDestination bool `json:"parent_preserves_destination"`
-	RelationAdd                bool `json:"relation_add"`
-	RelationRemove             bool `json:"relation_remove"`
-	LabelEligibilityByFilter   bool `json:"label_eligibility_by_filter"`
+	Labels                   bool `json:"labels"`
+	Members                  bool `json:"members"`
+	CreateProject            bool `json:"create_project"`
+	UpdateProject            bool `json:"update_project"`
+	ReplaceLabels            bool `json:"replace_labels"`
+	Parent                   bool `json:"parent"`
+	Assignee                 bool `json:"assignee"`
+	ParentSameDestination    bool `json:"parent_same_destination"`
+	RelationAdd              bool `json:"relation_add"`
+	RelationRemove           bool `json:"relation_remove"`
+	LabelEligibilityByFilter bool `json:"label_eligibility_by_filter"`
 }
 type CreateInputV2 struct {
 	CreateInput
 	Project          Field[*string]
 	Labels           Field[[]string]
 	Parent, Assignee Field[*string]
+	// parentVerified is set only through WithSameDestinationParent. No wire
+	// argument, schema, flag or environment maps to it, and it is never
+	// serialized.
+	parentVerified bool
 }
 type UpdateInputV2 struct {
 	UpdateInput
 	Project          Field[*string]
 	Labels           Field[[]string]
 	Parent, Assignee Field[*string]
+	parentVerified   bool
 }
+
+// WithSameDestinationParent marks a parent set that the caller has verified,
+// from its own reads, to share the child's team and project. Only the task
+// board calls it, after that verification.
+func (in CreateInputV2) WithSameDestinationParent() CreateInputV2 {
+	in.parentVerified = true
+	return in
+}
+
+// WithSameDestinationParent is the update form of CreateInputV2's marker.
+func (in UpdateInputV2) WithSameDestinationParent() UpdateInputV2 {
+	in.parentVerified = true
+	return in
+}
+
 type Relation struct {
 	ID     string `json:"id,omitempty"`
 	Type   string `json:"type"`
@@ -396,11 +420,13 @@ func (p *Provider) Capabilities(context.Context) (Capabilities, error) {
 	labels := has([]string{"list_issue_labels"}, a(sample, "team", "teamId"), arg{[]string{"limit", "first"}, 1, "integer"})
 	members := has([]string{"list_users", "list_team_members"}, a(sample, "team", "teamId"), arg{[]string{"limit", "first"}, 1, "integer"})
 	capabilities := Capabilities{Labels: labels, Members: members, CreateProject: has([]string{"create_issue", "save_issue"}, append(create, a(sample, "projectId", "project"))...), UpdateProject: has([]string{"update_issue", "save_issue"}, append(update, a(sample, "projectId", "project"))...), ReplaceLabels: has([]string{"update_issue", "save_issue"}, append(update, arg{[]string{"labelIds", "labels"}, []string{}, "array"})...), Parent: has([]string{"update_issue", "save_issue"}, append(update, a(sample, "parentId"))...), Assignee: has([]string{"update_issue", "save_issue"}, append(update, a(sample, "assigneeId", "assignee"))...)}
-	// Parent/project field shapes, descriptions and schema extensions provide
-	// no semantic proof that a parent change preserves the destination.
+	// Field shapes, descriptions and schema extensions never prove that a
+	// parent change preserves the destination. This capability only says the
+	// provider can express a parent beside a project and read issues back;
+	// the board proves preservation by allowing same-destination parents only.
 	for _, name := range []string{"create_issue", "update_issue", "save_issue"} {
-		if p.parentSafe(name) {
-			capabilities.ParentPreservesDestination = true
+		if p.parentShape(name) && p.tools["get_issue"] != nil {
+			capabilities.ParentSameDestination = true
 		}
 	}
 	capabilities.LabelEligibilityByFilter = capabilities.Labels && p.labelFilterProof()
@@ -512,7 +538,7 @@ func (p *Provider) parseIssueV2(ctx context.Context, m map[string]any) (IssueV2,
 	if e != nil {
 		return IssueV2{}, e
 	}
-	x.ParentID, x.ParentKnown, e = optionalCanonical(m, "parentId", "parent")
+	x.ParentID, x.ParentIdentifier, x.ParentKnown, e = parseParentV2(m)
 	if e != nil {
 		return IssueV2{}, e
 	}
@@ -553,8 +579,12 @@ func (p *Provider) parseIssueV2(ctx context.Context, m map[string]any) (IssueV2,
 	}
 	return x, nil
 }
+
+// IssueV2 reads one issue by UUID or by display identifier. An identifier read
+// must return that exact identifier together with a canonical UUID.
 func (p *Provider) IssueV2(ctx context.Context, id string) (IssueV2, error) {
-	if !ValidID(id) {
+	byIdentifier := !ValidID(id)
+	if byIdentifier && !ValidIssueIdentifier(id) {
 		return IssueV2{}, fail("invalid")
 	}
 	m, e := p.v2Call(ctx, []string{"get_issue"}, a(id, "id", "query", "issueId"))
@@ -565,10 +595,82 @@ func (p *Provider) IssueV2(ctx context.Context, id string) (IssueV2, error) {
 	if e != nil {
 		return IssueV2{}, e
 	}
-	if x.ID != id {
+	if (byIdentifier && x.Identifier != id) || (!byIdentifier && x.ID != id) {
 		return IssueV2{}, fail("scope_mismatch")
 	}
 	return x, nil
+}
+
+var issueIdentifier = regexp.MustCompile(`^[A-Z][A-Z0-9]{0,9}-[1-9][0-9]{0,9}$`)
+
+// ValidIssueIdentifier reports whether s is a Linear issue display identifier
+// such as "TEAM-123". It names an issue but never supplies scope.
+func ValidIssueIdentifier(s string) bool { return issueIdentifier.MatchString(s) }
+
+// parseParentV2 reads parentId/parent. A canonical UUID, a display identifier
+// and explicit null are all known; a descriptive string parent without
+// parentId stays unknown; anything else is invalid.
+func parseParentV2(m map[string]any) (string, string, bool, error) {
+	var uuidRef, identifierRef string
+	known := false
+	take := func(v any) error {
+		if v == nil {
+			if uuidRef != "" || identifierRef != "" {
+				return fail("scope_mismatch")
+			}
+			known = true
+			return nil
+		}
+		s, ok := v.(string)
+		switch {
+		case ok && ValidID(s):
+			if uuidRef != "" && uuidRef != s {
+				return fail("scope_mismatch")
+			}
+			uuidRef = s
+		case ok && ValidIssueIdentifier(s):
+			if identifierRef != "" && identifierRef != s {
+				return fail("scope_mismatch")
+			}
+			identifierRef = s
+		default:
+			return fail("invalid_response")
+		}
+		known = true
+		return nil
+	}
+	flat, hasFlat := m["parentId"]
+	if hasFlat {
+		if e := take(flat); e != nil {
+			return "", "", false, e
+		}
+	}
+	switch nested := m["parent"].(type) {
+	case nil:
+		if _, present := m["parent"]; present {
+			if e := take(nil); e != nil {
+				return "", "", false, e
+			}
+		}
+	case string:
+		// A descriptive label carries no identity and cannot supply one.
+	case map[string]any:
+		for _, key := range []string{"id", "uuid", "identifier"} {
+			if v, present := nested[key]; present {
+				if e := take(v); e != nil {
+					return "", "", false, e
+				}
+			}
+		}
+	default:
+		return "", "", false, fail("invalid_response")
+	}
+	if !hasFlat {
+		if _, label := m["parent"].(string); label {
+			return "", "", false, nil
+		}
+	}
+	return uuidRef, identifierRef, known, nil
 }
 func (p *Provider) IssuesV2(ctx context.Context, q IssueQueryV2) (Page[IssueV2], error) {
 	if !ValidID(q.TeamID) || (q.ProjectID != "" && !ValidID(q.ProjectID)) || (q.LabelID != "" && !ValidID(q.LabelID)) {
@@ -835,9 +937,9 @@ func (p *Provider) Members(ctx context.Context, team string, o PageOptions) (Pag
 	return out, nil
 }
 
-func (p *Provider) parentSafe(name string) bool {
+func (p *Provider) parentShape(name string) bool {
 	t := p.tools[name]
-	if !p.parentProven || t == nil {
+	if t == nil {
 		return false
 	}
 	props, _, e := schema(t)
@@ -848,12 +950,18 @@ func (p *Provider) parentSafe(name string) bool {
 	_, project := field(props, []string{"projectId", "project"}, "string")
 	return parent && project
 }
-func (p *Provider) mutateV2(ctx context.Context, names []string, args []arg, parent Field[*string]) (map[string]any, error) {
+
+// parentSafe allows a parent set only when the caller marked it as verified
+// same-destination and the tool can express parent beside project.
+func (p *Provider) parentSafe(name string, verified bool) bool {
+	return verified && p.parentShape(name)
+}
+func (p *Provider) mutateV2(ctx context.Context, names []string, args []arg, parent Field[*string], verified bool) (map[string]any, error) {
 	name, values, e := p.v2Negotiation(names, args)
 	if e != nil {
 		return nil, e
 	}
-	if parent.Present && parent.Value != nil && !p.parentSafe(name) {
+	if parent.Present && parent.Value != nil && !p.parentSafe(name, verified) {
 		return nil, fail("capability_unavailable")
 	}
 	return p.invoke(ctx, name, values)
@@ -867,21 +975,21 @@ func (p *Provider) ValidateCreateV2(in CreateInputV2) error {
 	if e != nil {
 		return e
 	}
-	return p.validateMutationV2([]string{"create_issue", "save_issue"}, args, in.Parent)
+	return p.validateMutationV2([]string{"create_issue", "save_issue"}, args, in.Parent, in.parentVerified)
 }
 func (p *Provider) ValidateUpdateV2(in UpdateInputV2) error {
 	args, e := updateArgsV2(in)
 	if e != nil {
 		return e
 	}
-	return p.validateMutationV2([]string{"update_issue", "save_issue"}, args, in.Parent)
+	return p.validateMutationV2([]string{"update_issue", "save_issue"}, args, in.Parent, in.parentVerified)
 }
-func (p *Provider) validateMutationV2(names []string, args []arg, parent Field[*string]) error {
+func (p *Provider) validateMutationV2(names []string, args []arg, parent Field[*string], verified bool) error {
 	name, _, e := p.v2Negotiation(names, args)
 	if e != nil {
 		return e
 	}
-	if parent.Present && parent.Value != nil && !p.parentSafe(name) {
+	if parent.Present && parent.Value != nil && !p.parentSafe(name, verified) {
 		return fail("capability_unavailable")
 	}
 	return nil
@@ -914,7 +1022,7 @@ func (p *Provider) CreateV2(ctx context.Context, in CreateInputV2) (IssueV2, err
 	if e != nil {
 		return IssueV2{}, e
 	}
-	m, e := p.mutateV2(ctx, []string{"create_issue", "save_issue"}, args, in.Parent)
+	m, e := p.mutateV2(ctx, []string{"create_issue", "save_issue"}, args, in.Parent, in.parentVerified)
 	if e != nil {
 		return IssueV2{}, e
 	}
@@ -967,7 +1075,7 @@ func (p *Provider) UpdateV2(ctx context.Context, in UpdateInputV2) (IssueV2, err
 	if e != nil {
 		return IssueV2{}, e
 	}
-	m, e := p.mutateV2(ctx, []string{"update_issue", "save_issue"}, args, in.Parent)
+	m, e := p.mutateV2(ctx, []string{"update_issue", "save_issue"}, args, in.Parent, in.parentVerified)
 	if e != nil {
 		return IssueV2{}, e
 	}

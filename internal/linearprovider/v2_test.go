@@ -130,8 +130,7 @@ func TestV2PresenceNullAndNoUnknownFieldMutation(t *testing.T) {
 	}
 	f.tools = []*mcp.Tool{v2MutationTool("update_issue", true)}
 	p, _ = NewWithCaller(context.Background(), f)
-	p.parentProven = true
-	if _, e := p.UpdateV2(context.Background(), UpdateInputV2{UpdateInput: UpdateInput{ID: iid}, Parent: Field[*string]{Present: true, Value: &parent}}); e != nil || len(f.calls) != 1 {
+	if _, e := p.UpdateV2(context.Background(), UpdateInputV2{UpdateInput: UpdateInput{ID: iid}, Parent: Field[*string]{Present: true, Value: &parent}}.WithSameDestinationParent()); e != nil || len(f.calls) != 1 {
 		t.Fatal("explicit supported parent failed", e, f.calls)
 	}
 }
@@ -147,7 +146,7 @@ func TestV2SchemaCannotAttestParentDestination(t *testing.T) {
 	f := &fake{tools: append(tools, save), result: issueResult()}
 	p, _ := NewWithCaller(context.Background(), f)
 	caps, e := p.Capabilities(context.Background())
-	if e != nil || !caps.Parent || caps.ParentPreservesDestination {
+	if e != nil || !caps.Parent || caps.ParentSameDestination {
 		t.Fatal("schema attested parent destination", caps, e)
 	}
 	parent := uid
@@ -193,7 +192,7 @@ func TestV2RelationSingleEdgeAndUnprovenCapabilities(t *testing.T) {
 	f := &fake{tools: []*mcp.Tool{v2MutationTool("update_issue", true), tool("create_issue_relation", map[string]string{"issueId": "string", "relatedIssueId": "string", "type": "string"}, "issueId", "relatedIssueId", "type"), tool("remove_issue_relation", map[string]string{"issueId": "string", "relatedIssueId": "string", "type": "string"}, "issueId", "relatedIssueId", "type")}, result: map[string]any{"ok": true}}
 	p, _ := NewWithCaller(context.Background(), f)
 	caps, e := p.Capabilities(context.Background())
-	if e != nil || !caps.RelationAdd || !caps.RelationRemove || caps.ParentPreservesDestination || len(f.calls) != 0 {
+	if e != nil || !caps.RelationAdd || !caps.RelationRemove || caps.ParentSameDestination || len(f.calls) != 0 {
 		t.Fatal("capability inference/call", caps, e)
 	}
 	receipt, e := p.Relation(context.Background(), RelationInput{Action: "add", Type: "blocks", FromID: iid, ToID: uid})

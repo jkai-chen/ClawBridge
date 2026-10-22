@@ -302,19 +302,27 @@ func (s *Service) WriteV2(ctx context.Context, scope bus.Request, in WriteInputV
 			}
 		}
 	}
+	var parentIssue linearprovider.IssueV2
 	if in.Parent.Present {
-		if !caps.Parent || !caps.ParentPreservesDestination {
-			return nil, errors.New("provider cannot prove parent intent preserves the explicit destination")
+		if !caps.Parent || !caps.ParentSameDestination {
+			return nil, errors.New("provider cannot express a verified same-destination parent")
 		}
 		if in.Operation == "update" && !in.Project.Present && !current.ProjectKnown {
 			return nil, errors.New("current project is unavailable; parent mutation refused")
 		}
+		if in.Parent.Value == nil && !parentClearAllowed {
+			return nil, errors.New("parent clear is not enabled")
+		}
 		if in.Parent.Value != nil {
-			if e = verifyParentV2(ctx, p2, b, v, in.IssueID, *in.Parent.Value); e != nil {
+			if parentIssue, e = verifyParentV2(ctx, p2, b, v, in.IssueID, *in.Parent.Value); e != nil {
+				return nil, e
+			}
+			if e = sameDestinationParentV2(parentIssue, team, project); e != nil {
 				return nil, e
 			}
 		}
 	}
+	verifiedParent := in.Parent.Present && in.Parent.Value != nil
 	if in.StateID != nil {
 		states, e := p.Statuses(ctx, team)
 		if e != nil {
@@ -343,9 +351,17 @@ func (s *Service) WriteV2(ctx context.Context, scope bus.Request, in WriteInputV
 				if in.StateID != nil {
 					state = *in.StateID
 				}
-				e = validation.ValidateCreateV2(linearprovider.CreateInputV2{CreateInput: linearprovider.CreateInput{TeamID: team, ProjectID: project, Title: *in.Title, Description: description, StateID: state}, Project: in.Project, Labels: in.Labels, Parent: in.Parent, Assignee: in.Assignee})
+				create := linearprovider.CreateInputV2{CreateInput: linearprovider.CreateInput{TeamID: team, ProjectID: project, Title: *in.Title, Description: description, StateID: state}, Project: in.Project, Labels: in.Labels, Parent: in.Parent, Assignee: in.Assignee}
+				if verifiedParent {
+					create = create.WithSameDestinationParent()
+				}
+				e = validation.ValidateCreateV2(create)
 			} else if in.Operation == "update" {
-				e = validation.ValidateUpdateV2(linearprovider.UpdateInputV2{UpdateInput: linearprovider.UpdateInput{ID: in.IssueID, Title: in.Title, Description: in.Description, StateID: in.StateID}, Project: in.Project, Labels: in.Labels, Parent: in.Parent, Assignee: in.Assignee})
+				update := linearprovider.UpdateInputV2{UpdateInput: linearprovider.UpdateInput{ID: in.IssueID, Title: in.Title, Description: in.Description, StateID: in.StateID}, Project: in.Project, Labels: in.Labels, Parent: in.Parent, Assignee: in.Assignee}
+				if verifiedParent {
+					update = update.WithSameDestinationParent()
+				}
+				e = validation.ValidateUpdateV2(update)
 			}
 			if e != nil {
 				return nil, e
@@ -400,13 +416,20 @@ func (s *Service) WriteV2(ctx context.Context, scope bus.Request, in WriteInputV
 				issue.Issue = i
 				issue.ProjectKnown = true
 			} else {
-				issue, e = p2.CreateV2(ctx, linearprovider.CreateInputV2{CreateInput: base, Project: in.Project, Labels: in.Labels, Parent: in.Parent, Assignee: in.Assignee})
+				create := linearprovider.CreateInputV2{CreateInput: base, Project: in.Project, Labels: in.Labels, Parent: in.Parent, Assignee: in.Assignee}
+				if verifiedParent {
+					create = create.WithSameDestinationParent()
+				}
+				issue, e = p2.CreateV2(ctx, create)
 			}
 			if e != nil {
 				return nil, s.postFailureV2(ctx, scope, b, e)
 			}
 			if checkIssueV2(issue, b, v) != nil || issue.TeamID != team || issue.ProjectID != project {
 				return nil, errors.New("created issue receipt scope mismatch")
+			}
+			if !legacy && receiptParentV2(issue, in.Parent, parentIssue) != nil {
+				return nil, errors.New("created issue receipt parent mismatch")
 			}
 			if legacy {
 				receipt = map[string]any{"id": issue.ID, "identifier": issue.Identifier, "team_id": issue.TeamID, "project_id": issue.ProjectID}
@@ -422,13 +445,20 @@ func (s *Service) WriteV2(ctx context.Context, scope bus.Request, in WriteInputV
 				issue.Issue = i
 				issue.ProjectKnown = true
 			} else {
-				issue, e = p2.UpdateV2(ctx, linearprovider.UpdateInputV2{UpdateInput: base, Project: in.Project, Labels: in.Labels, Parent: in.Parent, Assignee: in.Assignee})
+				update := linearprovider.UpdateInputV2{UpdateInput: base, Project: in.Project, Labels: in.Labels, Parent: in.Parent, Assignee: in.Assignee}
+				if verifiedParent {
+					update = update.WithSameDestinationParent()
+				}
+				issue, e = p2.UpdateV2(ctx, update)
 			}
 			if e != nil {
 				return nil, s.postFailureV2(ctx, scope, b, e)
 			}
 			if issue.ID != in.IssueID || checkIssueV2(issue, b, v) != nil || issue.TeamID != team || ((in.Project.Present || legacy || current.ProjectKnown) && issue.ProjectID != project) {
 				return nil, errors.New("updated issue receipt scope mismatch")
+			}
+			if !legacy && receiptParentV2(issue, in.Parent, parentIssue) != nil {
+				return nil, errors.New("updated issue receipt parent mismatch")
 			}
 			if legacy {
 				receipt = map[string]any{"id": issue.ID, "identifier": issue.Identifier, "team_id": issue.TeamID, "project_id": issue.ProjectID}
@@ -458,36 +488,86 @@ func projectPointerV2(s string) *string {
 	}
 	return &s
 }
-func verifyParentV2(ctx context.Context, p ProviderV2, b bus.TaskboardBindingV2, v verifiedV2, child, parent string) error {
+
+// parentClearAllowed enables explicit parent removal. An owner-approved live
+// probe showed that clearing a parent preserves the child's team and project.
+const parentClearAllowed = true
+
+// verifyParentV2 walks the requested parent's ancestry and returns the
+// immediate parent. Native Linear reports parentId as a display identifier,
+// so each ancestor is read by the reference its child exposes and matched on
+// UUID or identifier; cycles are detected on both.
+func verifyParentV2(ctx context.Context, p ProviderV2, b bus.TaskboardBindingV2, v verifiedV2, child, parent string) (linearprovider.IssueV2, error) {
+	var first linearprovider.IssueV2
 	seen := map[string]bool{}
 	if child != "" {
 		seen[child] = true
 	}
 	for depth := 0; depth < 64; depth++ {
 		if seen[parent] {
-			return errors.New("parent hierarchy contains a self-reference or cycle")
+			return first, errors.New("parent hierarchy contains a self-reference or cycle")
 		}
-		seen[parent] = true
 		issue, e := p.IssueV2(ctx, parent)
 		if e != nil {
-			return e
+			return first, e
 		}
-		if issue.ID != parent {
-			return errors.New("parent identity changed")
+		if issue.ID != parent && (issue.Identifier == "" || issue.Identifier != parent) {
+			return first, errors.New("parent identity changed")
+		}
+		if seen[issue.ID] || (issue.Identifier != "" && seen[issue.Identifier]) {
+			return first, errors.New("parent hierarchy contains a self-reference or cycle")
+		}
+		seen[parent], seen[issue.ID] = true, true
+		if issue.Identifier != "" {
+			seen[issue.Identifier] = true
+		}
+		if depth == 0 {
+			first = issue
 		}
 		if e = checkIssueV2(issue, b, v); e != nil {
-			return e
+			return first, e
 		}
 		if !issue.ParentKnown {
-			return errors.New("required parent ancestry is incomplete")
+			return first, errors.New("required parent ancestry is incomplete")
 		}
-		if issue.ParentID == "" {
-			return nil
+		next := issue.ParentID
+		if next == "" {
+			next = issue.ParentIdentifier
 		}
-		if !linearprovider.ValidID(issue.ParentID) {
-			return errors.New("invalid parent ancestry")
+		if next == "" {
+			return first, nil
 		}
-		parent = issue.ParentID
+		if !linearprovider.ValidID(next) && !linearprovider.ValidIssueIdentifier(next) {
+			return first, errors.New("invalid parent ancestry")
+		}
+		parent = next
 	}
-	return errors.New("parent ancestry exceeds 64 ancestors")
+	return first, errors.New("parent ancestry exceeds 64 ancestors")
+}
+
+// sameDestinationParentV2 is the preservation proof: whatever team or project
+// a parent passes on, it already equals the child's effective destination.
+func sameDestinationParentV2(parent linearprovider.IssueV2, team, project string) error {
+	if parent.TeamID != team || !parent.ProjectKnown || parent.ProjectID != project {
+		return errors.New("parent must share the child's team and project; cross-team and cross-project parents are not supported")
+	}
+	return nil
+}
+
+// receiptParentV2 checks a mutation receipt's parent against the request when
+// the receipt reports it; native Linear reports the parent's identifier.
+func receiptParentV2(issue linearprovider.IssueV2, parent linearprovider.Field[*string], verified linearprovider.IssueV2) error {
+	if !parent.Present || !issue.ParentKnown {
+		return nil
+	}
+	if parent.Value == nil {
+		if issue.ParentID != "" || issue.ParentIdentifier != "" {
+			return errors.New("receipt parent was not cleared")
+		}
+		return nil
+	}
+	if issue.ParentID == *parent.Value || (issue.ParentID == "" && issue.ParentIdentifier != "" && issue.ParentIdentifier == verified.Identifier) {
+		return nil
+	}
+	return errors.New("receipt parent does not match the requested parent")
 }

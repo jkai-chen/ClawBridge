@@ -81,7 +81,11 @@ func refreshWriteProofV2(ctx context.Context, p Provider, p2 ProviderV2, b bus.T
 		}
 	}
 	if in.Parent.Present && in.Parent.Value != nil {
-		if e = verifyParentV2(ctx, p2, b, v, in.IssueID, *in.Parent.Value); e != nil {
+		parent, e := verifyParentV2(ctx, p2, b, v, in.IssueID, *in.Parent.Value)
+		if e != nil {
+			return e
+		}
+		if e = sameDestinationParentV2(parent, team, project); e != nil {
 			return e
 		}
 	}

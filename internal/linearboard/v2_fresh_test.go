@@ -30,7 +30,7 @@ func TestLinearV2ProofsRefreshInsideOperationLockBeforeMutation(t *testing.T) {
 				in.ExpectedLabels = linearprovider.Field[[]string]{Present: true, Value: []string{}}
 			case "parent unavailable":
 				in.Parent = linearprovider.Field[*string]{Present: true, Value: ptrV2(parentA)}
-				p.issues[parentA] = linearprovider.IssueV2{Issue: linearprovider.Issue{ID: parentA, TeamID: otherTeamID, ProjectID: projectB}, ProjectKnown: true, ParentKnown: true}
+				p.issues[parentA] = linearprovider.IssueV2{Issue: linearprovider.Issue{ID: parentA, TeamID: teamID, ProjectID: projectA}, ProjectKnown: true, ParentKnown: true}
 			}
 			a.afterAccess = func(n int) {
 				if n != 2 {

@@ -161,7 +161,9 @@ team, and a global user record does not prove membership in the issue's team.
 
 Check both issues before adding a dependency or parent. Their effective project
 and team must remain in the binding; required ancestry must be available and
-acyclic. Request one relation edge at a time. A successful edge write is not a
+acyclic. A parent must be in the child's own team and project; a parent elsewhere
+is refused, so ask the coordinator instead of moving issues to make it fit.
+Linear may show a parent by its identifier (such as `TEAM-4`) rather than its UUID. Request one relation edge at a time. A successful edge write is not a
 transaction across tasks. An `observed_unchanged` receipt records an observation,
 not a provider CAS guarantee. A fresh mutation-intent request still requires
 current ClawBridge write rights and a personal Linear Write profile. An accepted

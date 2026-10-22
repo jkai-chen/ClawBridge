@@ -10,7 +10,7 @@ dependencies, parents and explicit assignment in current source. Its
 [independent automated acceptance](archive/reviews/LINEAR-L2-REVIEW.md) passed;
 these additions are not in the installed L1 build or a published release. Native
 reads were exercised separately. Native label eligibility is a supported capability
-(below); parent preservation remains an explicit native capability limit.
+(below), and so is a same-destination parent.
 
 ## Connect and choose a board
 
@@ -173,9 +173,17 @@ applying a label group itself.
 | `--linear-project UUID` | Create destination or requested project move; update preserves the issue's team |
 | Repeated `--label UUID` | Complete replacement label set, including removal of existing omitted labels |
 | Update `--expect-label UUID` (repeat) or `--expect-no-labels` | Required with `--label` or `--clear-labels`: the complete label set the issue had when you last read it. A mismatch refuses the update; nothing is sent |
-| `--parent UUID` | Scoped, acyclic parent; refused, including `--clear-parent`, until the provider has a reviewed destination-preservation proof |
+| `--parent UUID` | Scoped, acyclic parent in the child's own team and project; a parent in another team or project is refused |
 | `--assignee UUID` | Explicit eligible team member; no agent claim or permission change |
 | Update `--clear-project`, `--clear-labels`, `--clear-parent`, `--clear-assignee` | Explicit clearing; project clear is limited to team-board mode |
+
+A parent is accepted only when it shares the child's effective team and project.
+Linear can pass a parent's team and project on to a sub-issue, so this restriction
+is what guarantees that setting a parent never moves the child. An owner-approved
+live check confirmed that setting and clearing a same-destination parent leave the
+child's team and project unchanged. The returned issue is still checked after
+each change. Native Linear reports a parent by its display identifier (such as
+`TEAM-4`); ClawBridge reads the parent by that identifier when it needs the UUID.
 
 Omission preserves a field. Set and clear conflict; discover native support
 before using either. Before replacing labels, read the issue and pass exactly the

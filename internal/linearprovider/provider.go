@@ -37,10 +37,6 @@ type Provider struct {
 	caller ToolCaller
 	tools  map[string]*mcp.Tool
 	closer interface{ Close() error }
-	// parentProven is the only source of parent destination preservation. No
-	// tool schema, environment or flag sets it; until a reviewed proof
-	// mechanism exists, only in-package tests do.
-	parentProven bool
 }
 type PageOptions struct {
 	Limit  int

@@ -77,6 +77,12 @@ func (p *providerV2) IssueV2(_ context.Context, id string) (linearprovider.Issue
 	p.reads++
 	i, ok := p.issues[id]
 	if !ok {
+		// Like native get_issue, also resolve a display identifier.
+		for _, candidate := range p.issues {
+			if candidate.Identifier != "" && candidate.Identifier == id {
+				return candidate, nil
+			}
+		}
 		return i, errors.New("inaccessible issue")
 	}
 	return i, nil
@@ -132,6 +138,17 @@ func (p *providerV2) UpdateV2(_ context.Context, in linearprovider.UpdateInputV2
 			i.ProjectID = *in.Project.Value
 		}
 	}
+	if in.Parent.Present {
+		// Native Linear reports the parent by its display identifier.
+		i.ParentKnown, i.ParentID, i.ParentIdentifier = true, "", ""
+		if in.Parent.Value != nil {
+			if parent := p.issues[*in.Parent.Value]; parent.Identifier != "" {
+				i.ParentIdentifier = parent.Identifier
+			} else {
+				i.ParentID = *in.Parent.Value
+			}
+		}
+	}
 	if p.after != nil {
 		p.after()
 	}
@@ -148,7 +165,7 @@ func (p *providerV2) Relation(_ context.Context, in linearprovider.RelationInput
 func testV2(t *testing.T) (*Service, *authorityV2, *providerV2, bus.Request) {
 	t.Helper()
 	a := &authorityV2{actor: "ses", b: bus.TaskboardBindingV2{WorkspaceID: "ws", ProjectID: "prj", Configured: true, Revision: 1, MappingVersion: 2, UpdatedAt: "2026-10-22T12:00:00Z", Provider: "linear", Mode: "project_set", LinearTeamIDs: []string{teamID, otherTeamID}, LinearDefaultTeamID: teamID, LinearProjectIDs: []string{projectA, projectB}}}
-	p := &providerV2{projects: map[string][]string{projectA: {teamID}, projectB: {otherTeamID}}, issues: map[string]linearprovider.IssueV2{issueID: {Issue: linearprovider.Issue{ID: issueID, TeamID: teamID, ProjectID: projectA}, ProjectKnown: true, LabelsKnown: true, ParentKnown: true}}, caps: linearprovider.Capabilities{Labels: true, Members: true, CreateProject: true, UpdateProject: true, ReplaceLabels: true, Parent: true, Assignee: true, ParentPreservesDestination: true, RelationAdd: true, RelationRemove: true}}
+	p := &providerV2{projects: map[string][]string{projectA: {teamID}, projectB: {otherTeamID}}, issues: map[string]linearprovider.IssueV2{issueID: {Issue: linearprovider.Issue{ID: issueID, TeamID: teamID, ProjectID: projectA}, ProjectKnown: true, LabelsKnown: true, ParentKnown: true}}, caps: linearprovider.Capabilities{Labels: true, Members: true, CreateProject: true, UpdateProject: true, ReplaceLabels: true, Parent: true, Assignee: true, ParentSameDestination: true, RelationAdd: true, RelationRemove: true}}
 	a.old = bus.TaskboardBinding{WorkspaceID: a.b.WorkspaceID, ProjectID: a.b.ProjectID, Configured: true, Revision: 1, UpdatedAt: a.b.UpdatedAt, Provider: "linear", LinearTeamIDs: []string{teamID}, LinearDefaultTeamID: teamID, LinearProjectID: projectA}
 	s := New(Config{Authority: "local-v2", Executor: a, Connections: fakeConnections{}, ProfileID: "profile-1", LedgerDirectory: filepath.Join(t.TempDir(), "ledger"), Open: func(context.Context, *http.Client, bool) (Provider, error) { return p, nil }})
 	return s, a, p, bus.Request{Workspace: "ws", Project: "prj", Session: "ses", Args: map[string]any{"instance": "secret-instance"}}
@@ -241,7 +258,7 @@ func TestLinearV2EligibilityAncestryAndNegotiationFailBeforePending(t *testing.T
 	in.Assignee.Present = false
 	in.Assignee.Value = nil
 	in.Parent = linearprovider.Field[*string]{Present: true, Value: ptrV2(parentA)}
-	p.issues[parentA] = linearprovider.IssueV2{Issue: linearprovider.Issue{ID: parentA, TeamID: otherTeamID, ProjectID: projectB}, ProjectKnown: true, ParentKnown: true, ParentID: issueID}
+	p.issues[parentA] = linearprovider.IssueV2{Issue: linearprovider.Issue{ID: parentA, TeamID: teamID, ProjectID: projectA}, ProjectKnown: true, ParentKnown: true, ParentID: issueID}
 	if _, e := s.WriteV2(context.Background(), scope, in); e == nil {
 		t.Fatal("parent cycle accepted")
 	}
@@ -256,8 +273,8 @@ func TestLinearV2EligibilityAncestryAndNegotiationFailBeforePending(t *testing.T
 		t.Fatal("preflight refusal created pending state or dispatched", e)
 	}
 	p.preflightErr = nil
-	if _, e := s.WriteV2(context.Background(), scope, in); e != nil {
-		t.Fatal("valid cross-project parent failed", e)
+	if _, e := s.WriteV2(context.Background(), scope, in); e != nil || p.writes != 1 {
+		t.Fatal("valid same-destination parent failed", e)
 	}
 }
 func TestLinearV2EdgeNormalizationObservedReceiptAndKnownContextChange(t *testing.T) {

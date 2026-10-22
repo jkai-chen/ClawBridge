@@ -37,7 +37,7 @@ func TestV2NativeSaveIssueSingleEdge(t *testing.T) {
 					t.Fatal(err)
 				}
 				caps, err := p.Capabilities(context.Background())
-				if err != nil || !caps.RelationAdd || !caps.RelationRemove || caps.ParentPreservesDestination || len(f.calls) != 0 {
+				if err != nil || !caps.RelationAdd || !caps.RelationRemove || caps.ParentSameDestination || len(f.calls) != 0 {
 					t.Fatal("wrong capability or negotiation performed I/O", caps, err, f.calls)
 				}
 				receipt, err := p.Relation(context.Background(), RelationInput{Action: action, Type: kind, FromID: iid, ToID: uid})

@@ -79,7 +79,9 @@ and the original expected revision. Personal profiles and credentials stay local
   refuse an unsupported safe edge operation.
 - Parent and child must both be in scope. Respect provider hierarchy constraints
   and verify effective team/project context; setting a parent must not silently
-  inherit an unapproved destination.
+  inherit an unapproved destination. Supported rule (owner-approved): a parent
+  must share the child's effective team and project, so any inheritance is a
+  no-op; explicit parent clear is allowed.
 - Assignees must resolve to canonical users with verified membership in the
   target issue's team. No name-only matching, automatic `me`, implicit assignment
   from a label, or assignment inferred from peer/task text. Explicit clearing is
@@ -220,10 +222,21 @@ the effective issue team; reject known inactive users and require supported
 eligibility proof rather than treating unknown as active.
 
 Expose canonical label, parent and assignee IDs with explicit knownness. Unknown
-is not null/absence. Parent traversal is bounded to64 ancestors; reject self/cycle,
-incomplete or inaccessible required ancestry. Parent/child may cross selected
-projects/teams only when both are in scope and the provider can preserve the
-explicit effective destination. No automatic hierarchy repair or implicit move.
+is not null/absence. Parent traversal is bounded to 64 ancestors; reject self/cycle,
+incomplete or inaccessible required ancestry. A parent must share the child's
+effective team and project: that structural rule is the destination-preservation
+proof, so no provider schema or description is trusted for it. The board verifies
+it at preflight and again inside the operation lock, then marks the provider
+input; only that board marker lets the provider send a parent, and no wire
+field, schema, flag or environment can set it. Cross-team and cross-project
+parents are refused. Explicit parent clear is allowed (an owner-approved live
+probe showed set and clear preserve team and project). Native Linear returns
+`parentId` as the parent's display identifier, not its UUID; issue reads keep it
+as a known parent identifier, ancestry reads resolve it with get_issue, cycles
+are detected on both forms, and a mutation receipt's parent must match the
+request (UUID, or the verified parent's identifier). A parent's `updatedAt` moves
+when a child is attached and is never used as a staleness signal. No automatic
+hierarchy repair or implicit move.
 
 Add-existing/remove-absent may return `observed_unchanged` without a provider write
 only from authoritative edge evidence (complete context is required to prove

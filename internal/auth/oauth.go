@@ -15,8 +15,6 @@ import (
 	"net"
 	"net/http"
 	"net/url"
-	"os/exec"
-	"runtime"
 	"strings"
 	"sync"
 	"time"
@@ -209,7 +207,10 @@ type Config struct {
 	HTTPClient        *http.Client
 	Store             Store
 	OpenBrowser       func(context.Context, string) error
-	Verify            VerifyFunc
+	// ShowURL, when set, shows the sign-in URL if the browser launch cannot
+	// be confirmed, instead of failing the sign-in.
+	ShowURL func(string)
+	Verify  VerifyFunc
 }
 
 type DevicePrompt struct {
@@ -235,7 +236,8 @@ func (c Config) normalized() (Config, *oauth2.Config, error) {
 		c.Store = KeyringStore{}
 	}
 	if c.OpenBrowser == nil {
-		c.OpenBrowser = openBrowser
+		show := c.ShowURL
+		c.OpenBrowser = func(ctx context.Context, target string) error { return openBrowser(ctx, target, show) }
 	}
 	if c.Verify == nil {
 		c.Verify = verifyGoogleIDToken
@@ -555,22 +557,20 @@ func isLoopbackRemote(remoteAddress string) bool {
 	return ip != nil && ip.IsLoopback()
 }
 
-func openBrowser(ctx context.Context, target string) error {
+// openBrowser opens a sign-in URL. When the launch cannot be confirmed, or
+// fails, and the caller can show text, it shows the URL so the person can
+// open it themselves; the local callback keeps waiting either way.
+func openBrowser(ctx context.Context, target string, show func(string)) error {
 	if parsed, err := url.Parse(target); err != nil || parsed.Scheme != "https" {
 		return errors.New("invalid browser sign-in URL")
 	}
-	var command *exec.Cmd
-	switch runtime.GOOS {
-	case "darwin":
-		command = exec.CommandContext(ctx, "open", target)
-	case "windows":
-		command = exec.CommandContext(ctx, "rundll32", "url.dll,FileProtocolHandler", target)
-	default:
-		command = exec.CommandContext(ctx, "xdg-open", target)
+	opened, err := LaunchBrowser(ctx, target, browserWait)
+	if opened {
+		return nil
 	}
-	if err := command.Start(); err != nil {
+	if show == nil {
 		return err
 	}
-	go func() { _ = command.Wait() }()
+	show(target)
 	return nil
 }

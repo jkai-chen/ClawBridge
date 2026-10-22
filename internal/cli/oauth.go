@@ -74,6 +74,9 @@ func acquireOAuth(ctx context.Context, config Config, device bool, stderr io.Wri
 		ClientSecret:      applicableSecret,
 		ExpectedPrincipal: config.Principal,
 		Store:             keyring,
+		ShowURL: func(target string) {
+			_, _ = fmt.Fprintf(stderr, "If no browser opened, open this URL on this computer:\n%s\n", target)
+		},
 	}
 	var credential auth.Credential
 	var transaction *auth.CredentialTransaction

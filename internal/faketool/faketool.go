@@ -14,6 +14,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 )
 
 const env = "CLAWBRIDGE_FAKE_TOOL"
@@ -33,6 +34,7 @@ func Main(m *testing.M) {
 //	args        print each argument on its own line
 //	print:TEXT  print TEXT without a newline
 //	exit:N      exit with status N
+//	sleep:D     stay running for duration D, then exit 0
 func Install(t testing.TB, dir, name, behaviour string) string {
 	t.Helper()
 	self, err := os.Executable()
@@ -77,6 +79,11 @@ func run(behaviour string, args []string, out io.Writer) int {
 	case strings.HasPrefix(behaviour, "print:"):
 		fmt.Fprint(out, strings.TrimPrefix(behaviour, "print:"))
 		return 0
+	case strings.HasPrefix(behaviour, "sleep:"):
+		if d, err := time.ParseDuration(strings.TrimPrefix(behaviour, "sleep:")); err == nil {
+			time.Sleep(d)
+			return 0
+		}
 	case strings.HasPrefix(behaviour, "exit:"):
 		code, err := strconv.Atoi(strings.TrimPrefix(behaviour, "exit:"))
 		if err == nil {

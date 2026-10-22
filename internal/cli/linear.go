@@ -12,13 +12,12 @@ import (
 	"net/http"
 	"net/url"
 	"os"
-	"os/exec"
 	"path/filepath"
-	"runtime"
 	"sort"
 	"strings"
 	"time"
 
+	"clawbridge/internal/auth"
 	"clawbridge/internal/bus"
 	"clawbridge/internal/linearboard"
 	"clawbridge/internal/linearconn"
@@ -60,26 +59,14 @@ func linearCapabilities(ctx context.Context, manager *linearconn.Manager, profil
 	return provider.Capabilities(ctx)
 }
 
-var openLinearBrowser = func(ctx context.Context, url string) error {
-	var command string
-	var args []string
-	switch runtime.GOOS {
-	case "darwin":
-		command = "open"
-		args = []string{url}
-	case "windows":
-		command = "rundll32"
-		args = []string{"url.dll,FileProtocolHandler", url}
-	default:
-		command = "xdg-open"
-		args = []string{url}
+// openLinearBrowser opens the Linear sign-in URL and reports whether the
+// launch was confirmed; an unconfirmed launch is not an error.
+var openLinearBrowser = func(ctx context.Context, url string) (bool, error) {
+	opened, err := auth.LaunchBrowser(ctx, url, 5*time.Second)
+	if err != nil {
+		return false, errors.New("cannot open browser; reconnect with --no-browser and arrange the loopback route")
 	}
-	bounded, cancel := context.WithTimeout(ctx, 10*time.Second)
-	defer cancel()
-	if exec.CommandContext(bounded, command, args...).Run() != nil {
-		return errors.New("cannot open browser; reconnect with --no-browser and arrange the loopback route")
-	}
-	return nil
+	return opened, nil
 }
 
 type linearFlags struct {
@@ -554,7 +541,11 @@ func runLinear(ctx context.Context, flags Config, args []string, stdout, stderr 
 				_, e := fmt.Fprintln(stderr, url)
 				return e
 			}
-			return openLinearBrowser(bounded, url)
+			opened, e := openLinearBrowser(bounded, url)
+			if e == nil && !opened {
+				_, e = fmt.Fprintf(stderr, "If no browser opened, open this URL on this computer:\n%s\n", url)
+			}
+			return e
 		}})
 		if e != nil {
 			return e

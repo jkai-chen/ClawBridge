@@ -52,7 +52,7 @@ func (s *linearTUISource) Do(ctx context.Context, r tui.LinearRequest) (tui.Line
 	case "profiles":
 		return data, loadProfiles()
 	case "connect":
-		_, err := s.manager.Connect(ctx, linearconn.ConnectOptions{Name: r.Name, Access: r.Access, PresentURL: func(url string) error { return openLinearBrowser(ctx, url) }})
+		_, err := s.manager.Connect(ctx, linearconn.ConnectOptions{Name: r.Name, Access: r.Access, PresentURL: func(url string) error { _, e := openLinearBrowser(ctx, url); return e }})
 		if err != nil {
 			return data, err
 		}

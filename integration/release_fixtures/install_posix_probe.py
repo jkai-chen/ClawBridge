@@ -57,8 +57,10 @@ class Installer(unittest.TestCase):
             p.mkdir()
         self.log = self.root / "requests.jsonl"
         self.payload = self.root / "payload"
-        self.executed = self.root / "MUST-NOT-EXECUTE"
-        self.payload.write_text("#!/bin/sh\nprintf executed > " + shlex.quote(str(self.executed)) + "\n")
+        # The payload logs every execution. After a verified install the
+        # installer may run only the installed binary, once, as `skill install`.
+        self.executed = self.root / "EXECUTIONS"
+        self.payload.write_text("#!/bin/sh\nprintf '%s\\n' \"$0 $*\" >> " + shlex.quote(str(self.executed)) + "\nexit \"${PROBE_SKILL_EXIT:-0}\"\n")
         self.manifest = self.root / "manifest"
         self.env = os.environ.copy()
         for k in list(self.env):
@@ -81,11 +83,16 @@ class Installer(unittest.TestCase):
         digest = hashlib.sha256(self.payload.read_bytes()).hexdigest()
         self.manifest.write_text(text if text is not None else digest+"  "+self.asset+"\n")
 
-    def call(self, *args, success=True):
+    def call(self, *args, success=True, skill=True):
         before = {str(p.relative_to(self.home)): p.read_bytes() for p in self.home.rglob("*") if p.is_file() and p != self.bin/"clawbridge"}
         result = subprocess.run(["/bin/sh", str(SCRIPT), *args], env=self.env, cwd=self.root, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=20)
         self.assertEqual(result.returncode == 0, success, (result.returncode, result.stdout.decode(errors="replace"), result.stderr.decode(errors="replace")))
-        self.assertFalse(self.executed.exists(), "installer executed downloaded payload")
+        runs = self.executed.read_text().splitlines() if self.executed.exists() else []
+        self.executed.unlink(missing_ok=True)
+        if success and skill and "--help" not in args and "-h" not in args:
+            self.assertEqual(runs, [str(self.bin/"clawbridge")+" skill install"], "installer must run only the installed binary, once, as skill install")
+        else:
+            self.assertEqual(runs, [], "installer executed a payload without a verified install or with --no-skill")
         after = {str(p.relative_to(self.home)): p.read_bytes() for p in self.home.rglob("*") if p.is_file() and p != self.bin/"clawbridge"}
         self.assertEqual(before, after, "installer changed other HOME files")
         self.assertEqual(self.sentinel.read_text(), "preserve-profile\n")
@@ -103,7 +110,7 @@ class Installer(unittest.TestCase):
         target.write_bytes(b"OLD-BINARY")
         return target
 
-    def test_latest_once_pins_all_downloads_and_never_executes(self):
+    def test_latest_once_pins_all_downloads_and_runs_only_skill_install(self):
         target = self.existing()
         result = self.call("--bin-dir", str(self.bin))
         instruction = next(line for line in result.stdout.decode().splitlines() if line.startswith("For this shell, run: ")).removeprefix("For this shell, run: ")
@@ -120,6 +127,16 @@ class Installer(unittest.TestCase):
         urls = self.urls()
         self.assertEqual(urls.count("https://github.com/jkai-chen/ClawBridge/releases/latest"), 1)
         self.assertEqual(set(urls[1:]), {"https://github.com/jkai-chen/ClawBridge/releases/download/v1.2.3/SHA256SUMS", "https://github.com/jkai-chen/ClawBridge/releases/download/v1.2.3/"+self.asset})
+
+    def test_no_skill_never_executes(self):
+        self.call("--version", "v1.2.3", "--bin-dir", str(self.bin), "--no-skill", skill=False)
+        self.assertEqual((self.bin/"clawbridge").read_bytes(), self.payload.read_bytes())
+
+    def test_skill_failure_only_warns(self):
+        self.env["PROBE_SKILL_EXIT"] = "3"
+        result = self.call("--version", "v1.2.3", "--bin-dir", str(self.bin))
+        self.assertIn(b"warning: the agent skill was not installed", result.stderr)
+        self.assertEqual((self.bin/"clawbridge").read_bytes(), self.payload.read_bytes())
 
     def test_default_destination_only_installs_binary(self):
         self.bin = self.home / ".local" / "bin"

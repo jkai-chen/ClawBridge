@@ -23,7 +23,7 @@ func TestReleaseBuilderIndependent(t *testing.T) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, python, "release_fixtures/build_probe.py", root)
+	cmd := exec.CommandContext(ctx, python, "-I", "release_fixtures/build_probe.py", root)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("independent release builder: %v\n%s", err, out)
 	} else {
@@ -45,7 +45,7 @@ func TestReleaseBuilderRejectsExternalSourceOverrides(t *testing.T) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, python, "release_fixtures/build_override_probe.py", root)
+	cmd := exec.CommandContext(ctx, python, "-I", "release_fixtures/build_override_probe.py", root)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("release source overrides: %v\n%s", err, out)
 	} else {

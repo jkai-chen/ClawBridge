@@ -23,7 +23,7 @@ func TestReleasePOSIXInstallerIndependent(t *testing.T) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, python, "release_fixtures/install_posix_probe.py", script)
+	cmd := exec.CommandContext(ctx, python, "-I", "release_fixtures/install_posix_probe.py", script)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("independent POSIX installer: %v\n%s", err, out)
 	} else {

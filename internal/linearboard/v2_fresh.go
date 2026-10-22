@@ -38,6 +38,9 @@ func refreshWriteProofV2(ctx context.Context, p Provider, p2 ProviderV2, b bus.T
 		if in.Labels.Present {
 			// The fresh in-lock read must equal the set the caller last read,
 			// not merely the set this call read moments earlier.
+			if current, e = resolveLabelsV2(ctx, p2, current); e != nil {
+				return e
+			}
 			if !current.LabelsKnown {
 				return errors.New("canonical labels became unavailable before replacement")
 			}

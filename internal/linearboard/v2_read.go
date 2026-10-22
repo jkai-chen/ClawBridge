@@ -397,6 +397,15 @@ func (s *Service) IssuesV2(ctx context.Context, scope bus.Request, in IssuesInpu
 	return page, nil
 }
 func (s *Service) IssueV2(ctx context.Context, scope bus.Request, id string) (linearprovider.IssueV2, error) {
+	return s.issueV2(ctx, scope, id, false)
+}
+
+// IssueV2ResolvedLabels is the opt-in read that proves the issue's label IDs
+// when native Linear returns label names only; see resolveLabelsV2.
+func (s *Service) IssueV2ResolvedLabels(ctx context.Context, scope bus.Request, id string) (linearprovider.IssueV2, error) {
+	return s.issueV2(ctx, scope, id, true)
+}
+func (s *Service) issueV2(ctx context.Context, scope bus.Request, id string, resolve bool) (linearprovider.IssueV2, error) {
 	empty := linearprovider.IssueV2{}
 	if !linearprovider.ValidID(id) {
 		return empty, errors.New("issue requires immutable UUID")
@@ -428,9 +437,98 @@ func (s *Service) IssueV2(ctx context.Context, scope bus.Request, id string) (li
 	if e = checkIssueV2(issue, b, v); e != nil {
 		return empty, e
 	}
+	if resolve {
+		if issue, e = resolveLabelsV2(ctx, p2, issue); e != nil {
+			return empty, e
+		}
+	}
 	if e = s.unchangedV2(ctx, scope, b); e != nil {
 		return empty, e
 	}
+	return issue, nil
+}
+
+// labelMembershipV2 is the optional provider support for proving label IDs
+// from names. Providers without it leave name-only label sets unknown.
+type labelMembershipV2 interface {
+	LabelCatalog(context.Context, string, linearprovider.PageOptions) (linearprovider.Page[linearprovider.LabelName], error)
+	IssueHasLabel(ctx context.Context, issue, team, project, label string) (bool, bool, error)
+}
+
+// resolveLabelsV2 proves an issue's label IDs when the read returned names
+// only. Each name must match exactly one canonical label in the team's
+// complete listing (archived labels and groups included), and list_issues
+// filtered by that label's UUID must return the issue. Any ambiguous,
+// missing, unconfirmed or unbounded step leaves LabelsKnown false, so a
+// replacement is refused exactly as before. Provider read errors are returned.
+func resolveLabelsV2(ctx context.Context, p ProviderV2, issue linearprovider.IssueV2) (linearprovider.IssueV2, error) {
+	if issue.LabelsKnown || len(issue.LabelNames) == 0 {
+		return issue, nil
+	}
+	m, ok := p.(labelMembershipV2)
+	if !ok {
+		return issue, nil
+	}
+	caps, e := p.Capabilities(ctx)
+	if e != nil || !caps.LabelMembershipProof {
+		return issue, e
+	}
+	names := map[string]bool{}
+	for _, name := range issue.LabelNames {
+		if names[name] {
+			return issue, nil
+		}
+		names[name] = true
+	}
+	byName := map[string][]string{}
+	cursor, seen, complete := "", map[string]bool{}, false
+	for page := 0; page < 64 && !complete; page++ {
+		rows, e := m.LabelCatalog(ctx, issue.TeamID, linearprovider.PageOptions{Limit: 100, Cursor: cursor})
+		if e != nil {
+			return issue, e
+		}
+		if e = validProviderPageV2(rows.NextCursor, rows.Complete, cursor, len(rows.Items), 100); e != nil {
+			return issue, e
+		}
+		for _, row := range rows.Items {
+			if names[row.Name] {
+				byName[row.Name] = append(byName[row.Name], row.ID)
+			}
+		}
+		complete = rows.Complete
+		if !complete {
+			if seen[rows.NextCursor] {
+				return issue, errors.New("label pagination cycle")
+			}
+			seen[rows.NextCursor] = true
+			cursor = rows.NextCursor
+		}
+	}
+	if !complete {
+		return issue, nil
+	}
+	ids := []string{}
+	for name := range names {
+		candidates := byName[name]
+		if len(candidates) != 1 || !linearprovider.ValidID(candidates[0]) {
+			return issue, nil
+		}
+		ids = append(ids, candidates[0])
+	}
+	for _, id := range ids {
+		found, done, e := m.IssueHasLabel(ctx, issue.ID, issue.TeamID, issue.ProjectID, id)
+		if e != nil {
+			return issue, e
+		}
+		if !found || !done {
+			return issue, nil
+		}
+	}
+	proven, e := sortedUniqueIDs(ids, 100)
+	if e != nil {
+		return issue, nil
+	}
+	issue.LabelIDs, issue.LabelsKnown = proven, true
 	return issue, nil
 }
 

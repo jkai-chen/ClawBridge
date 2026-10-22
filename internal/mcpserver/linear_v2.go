@@ -46,6 +46,7 @@ func boardSchemaV2(operation string) map[string]any {
 		required = append(required, "team_id")
 	case "issue":
 		props["id"] = uuid(false)
+		props["resolve_labels"] = map[string]any{"type": "boolean", "description": "Prove label IDs when Linear returns label names only (extra reads); needed before replacing or clearing labels"}
 		required = append(required, "id")
 	case "create", "update":
 		write()

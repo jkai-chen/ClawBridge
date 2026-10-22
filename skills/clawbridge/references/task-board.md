@@ -151,7 +151,9 @@ clear or replace them only when the assignment requests that exact change.
 Supplied label IDs replace the complete set: known labels omitted from that set
 are removed, `[]` clears it, and omission preserves it. Review existing labels
 before replacement, including labels maintained by people, and send the labels
-you read as `expected_label_ids` (`[]` if there were none). If they changed, the
+you read as `expected_label_ids` (`[]` if there were none). Native reads show
+label names only; read the issue with `resolve_labels` to get proven label IDs
+before replacing or clearing labels. If they changed, the
 update is refused and nothing is sent; re-read and use a new `operation_id`.
 Use only label IDs returned by scoped label discovery for the issue's own team,
 team or workspace; both need eligibility proof before they apply. On native

@@ -215,6 +215,11 @@ func (s *Service) WriteV2(ctx context.Context, scope bus.Request, in WriteInputV
 		if e = checkIssueV2(current, b, v); e != nil {
 			return nil, e
 		}
+		if !legacy && in.Labels.Present {
+			if current, e = resolveLabelsV2(ctx, p2, current); e != nil {
+				return nil, e
+			}
+		}
 		team = current.TeamID
 		project = current.ProjectID
 	} else {

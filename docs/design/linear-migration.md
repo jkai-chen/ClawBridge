@@ -217,7 +217,20 @@ absent `retiredAt` means not retired, and a group row contradicts the filter
 and fails the page. Such rows are filter-scoped, never given a fabricated team;
 a label is applicable only from the filtered list of the issue's own team, and
 in issue filtering a label listed for several allowed teams spans them. Any
-schema drift disables the capability. Membership must prove the canonical user belongs to
+schema drift disables the capability.
+
+Native `get_issue`/`list_issues` return an issue's labels as names only. On the
+label write paths (preflight and the in-lock refresh) and on the opt-in resolve
+read, the owner-approved "label membership proof" turns names into IDs: walk the
+team's complete label listing (`includeArchived` and `includeGroups` true); each
+issue label name must match exactly one canonical label; then `list_issues`
+filtered by that label UUID (team, project when set, `includeArchived` true, at
+most 4 pages of 250) must return the issue. k names with k distinct confirmed
+IDs make the set known. A duplicate or missing name, a non-UUID candidate, an
+unconfirmed label or an exceeded bound leave it unknown, so replacement is
+refused. The capability pins `list_issues.label` (a string documented as "Label
+name or ID"); only UUIDs are sent. Plain reads keep names with `labels_known`
+false. Membership must prove the canonical user belongs to
 the effective issue team; reject known inactive users and require supported
 eligibility proof rather than treating unknown as active.
 

@@ -175,7 +175,19 @@ explicitly excluded, and accepts a label only if it is in the list for the
 issue's own team, is not retired (`retiredAt`) and is not archived. If the
 advertised filters change in name, type, default or documented meaning, the
 capability turns off and labels are refused again. Linear also rejects
-applying a label group itself.
+applying a label group itself. Those filter-scoped rows show
+`team_filter_scoped: true` and no `global` field, because a row cannot tell a
+team label from a workspace label.
+
+Native Linear issue reads return label names, not IDs, so a plain
+`linear issue` shows `label_names` with `labels_known: false`. Before replacing
+or clearing labels, ClawBridge proves the IDs: each name must match exactly one
+label in the team's complete listing (archived labels and groups included), and
+Linear's issue list filtered by that label's ID must return the issue. Only the
+label ID is ever sent, never a name. Any ambiguous, missing or unconfirmed label
+leaves the set unknown and the update is refused. `linear issue --resolve-labels`
+(MCP `resolve_labels: true`) runs the same proof on a read so you can pass the
+result as `--expect-label`; it costs one listing walk plus one check per label.
 
 | Explicit field | Meaning |
 | --- | --- |

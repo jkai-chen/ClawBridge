@@ -93,10 +93,10 @@ func TestV2LabelFilterSchemaDriftDisablesEligibility(t *testing.T) {
 }
 
 func TestV2CapabilityReasonsExplainSwitchOff(t *testing.T) {
-	f := &fake{tools: []*mcp.Tool{nativeLabelList(), v2MutationTool("update_issue", true), tool("get_issue", map[string]string{"id": "string"})}}
+	f := &fake{tools: []*mcp.Tool{nativeLabelList(), nativeIssueList(), v2MutationTool("update_issue", true), tool("get_issue", map[string]string{"id": "string"})}}
 	p, _ := NewWithCaller(context.Background(), f)
 	caps, err := p.Capabilities(context.Background())
-	if err != nil || !caps.LabelEligibilityByFilter || !caps.ParentSameDestination || caps.Reasons != nil {
+	if err != nil || !caps.LabelEligibilityByFilter || !caps.ParentSameDestination || !caps.LabelMembershipProof || caps.Reasons != nil {
 		t.Fatal("healthy capabilities reported a reason", caps, err)
 	}
 	drifted := nativeLabelList()

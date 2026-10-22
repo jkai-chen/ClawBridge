@@ -23,7 +23,11 @@ type IssueV2 struct {
 	ProjectKnown bool     `json:"project_known"`
 	LabelIDs     []string `json:"label_ids,omitempty"`
 	LabelsKnown  bool     `json:"labels_known"`
-	ParentID     string   `json:"parent_id,omitempty"`
+	// LabelNames holds the display names native Linear returns instead of
+	// label IDs. Names never become IDs here; see LabelCatalog and
+	// IssueHasLabel for the server-proved resolution.
+	LabelNames []string `json:"label_names,omitempty"`
+	ParentID   string   `json:"parent_id,omitempty"`
 	// ParentIdentifier holds a parent reported only by its display identifier
 	// (native Linear returns parentId as e.g. "TEAM-4"). It is never turned
 	// into a UUID here; a reader resolves it with IssueV2 when needed.
@@ -47,6 +51,24 @@ type Label struct {
 	FilterScoped     bool `json:"team_filter_scoped,omitempty"`
 	EligibilityKnown bool `json:"eligibility_known"`
 }
+
+// MarshalJSON omits global for a filter-scoped row, whose own fields cannot
+// tell a team label from a workspace label.
+func (l Label) MarshalJSON() ([]byte, error) {
+	type plain Label
+	if !l.FilterScoped {
+		return json.Marshal(plain(l))
+	}
+	return json.Marshal(struct {
+		ID               string `json:"id"`
+		Name             string `json:"name"`
+		Archived         bool   `json:"archived"`
+		Group            bool   `json:"group"`
+		FilterScoped     bool   `json:"team_filter_scoped"`
+		EligibilityKnown bool   `json:"eligibility_known"`
+	}{l.ID, l.Name, l.Archived, l.Group, true, l.EligibilityKnown})
+}
+
 type Member struct {
 	ID               string `json:"id"`
 	Name             string `json:"name"`
@@ -66,6 +88,9 @@ type Capabilities struct {
 	RelationAdd              bool `json:"relation_add"`
 	RelationRemove           bool `json:"relation_remove"`
 	LabelEligibilityByFilter bool `json:"label_eligibility_by_filter"`
+	// LabelMembershipProof: issue label IDs can be proven when reads return
+	// only names (full label listing plus list_issues filtered by label ID).
+	LabelMembershipProof bool `json:"label_membership_proof"`
 	// Reasons explains, per capability key, why a capability is off, so a
 	// silent switch-off (for example after a provider schema change) is
 	// visible in status and doctor output.
@@ -447,6 +472,11 @@ func (p *Provider) Capabilities(context.Context) (Capabilities, error) {
 	if reason != "" {
 		capabilities.Reasons["label_eligibility_by_filter"] = reason
 	}
+	membership := p.labelMembershipReason()
+	capabilities.LabelMembershipProof = membership == ""
+	if membership != "" {
+		capabilities.Reasons["label_membership_proof"] = membership
+	}
 	switch {
 	case !shape:
 		capabilities.Reasons["parent_same_destination"] = "no issue mutation tool accepts parentId beside project"
@@ -561,6 +591,9 @@ func (p *Provider) parseIssueV2(ctx context.Context, m map[string]any) (IssueV2,
 	}
 	x := IssueV2{Issue: base, ProjectKnown: true}
 	x.LabelIDs, x.LabelsKnown, e = parseLabelIDs(m)
+	if e == nil && !x.LabelsKnown {
+		x.LabelNames = parseLabelNames(m)
+	}
 	if e != nil {
 		return IssueV2{}, e
 	}
@@ -1230,4 +1263,147 @@ func (p *Provider) Relation(ctx context.Context, in RelationInput) (RelationRece
 		}
 	}
 	return receipt, nil
+}
+
+// parseLabelNames returns the label display names of a native issue whose
+// labels field is a plain string array; any other shape yields nil.
+func parseLabelNames(m map[string]any) []string {
+	rows, ok := m["labels"].([]any)
+	if !ok || len(rows) == 0 || len(rows) > 100 {
+		return nil
+	}
+	names := make([]string, 0, len(rows))
+	for _, row := range rows {
+		name, ok := row.(string)
+		if !ok || name == "" || len(name) > 512 {
+			return nil
+		}
+		names = append(names, name)
+	}
+	return names
+}
+
+// labelMembershipReason returns "" when label IDs can be proven from names:
+// list_issue_labels can include archived labels and groups, and list_issues
+// filters by a label ID ("Label name or ID") within a team and project. A
+// name is never sent; the board sends only canonical label UUIDs.
+func (p *Provider) labelMembershipReason() string {
+	catalog, issues := p.tools["list_issue_labels"], p.tools["list_issues"]
+	if catalog == nil || issues == nil {
+		return "list_issue_labels or list_issues is not advertised"
+	}
+	props, _, e := schema(catalog)
+	if e != nil {
+		return "list_issue_labels schema is unreadable"
+	}
+	for _, name := range []string{"includeArchived", "includeGroups"} {
+		if filter, ok := props[name].(map[string]any); !ok || filter["type"] != "boolean" {
+			return "list_issue_labels schema changed: " + name + " is not a boolean"
+		}
+	}
+	props, _, e = schema(issues)
+	if e != nil {
+		return "list_issues schema is unreadable"
+	}
+	label, ok := props["label"].(map[string]any)
+	if text, _ := label["description"].(string); !ok || label["type"] != "string" || !strings.Contains(text, "Label name or ID") {
+		return "list_issues schema changed: label filter missing or no longer documented as name or ID"
+	}
+	for _, name := range []string{"team", "project"} {
+		if filter, ok := props[name].(map[string]any); !ok || filter["type"] != "string" {
+			return "list_issues schema changed: " + name + " filter missing"
+		}
+	}
+	if filter, ok := props["includeArchived"].(map[string]any); !ok || filter["type"] != "boolean" {
+		return "list_issues schema changed: includeArchived is not a boolean"
+	}
+	return ""
+}
+
+// LabelName is one row of a team's complete label listing.
+type LabelName struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+}
+
+// LabelCatalog reads one page of every label available to the team,
+// including archived labels and groups, so name uniqueness is checked over
+// everything an issue could carry. It never proves eligibility.
+func (p *Provider) LabelCatalog(ctx context.Context, team string, o PageOptions) (Page[LabelName], error) {
+	if !ValidID(team) || p.labelMembershipReason() != "" {
+		return Page[LabelName]{}, fail("capability_unavailable")
+	}
+	args, e := pageArgs(o)
+	if e != nil {
+		return Page[LabelName]{}, e
+	}
+	args = append(args, a(team, "team", "teamId"), arg{[]string{"includeArchived"}, true, "boolean"}, arg{[]string{"includeGroups"}, true, "boolean"})
+	m, e := p.v2Call(ctx, []string{"list_issue_labels"}, args...)
+	if e != nil {
+		return Page[LabelName]{}, e
+	}
+	rows, cursor, complete, e := list(m, "labels")
+	if e != nil {
+		return Page[LabelName]{}, e
+	}
+	out := Page[LabelName]{Items: []LabelName{}, NextCursor: cursor, Complete: complete}
+	for _, row := range rows {
+		i, e := entityID(row, "labelId")
+		if e != nil {
+			return Page[LabelName]{}, e
+		}
+		out.Items = append(out.Items, LabelName{ID: i, Name: str(row, "name")})
+	}
+	return out, nil
+}
+
+// labelMembershipPages bounds one membership check to 4 pages of 250 issues.
+const labelMembershipPages = 4
+
+// IssueHasLabel asks list_issues, filtered by the label's canonical UUID in
+// the issue's team (and project, when it has one), whether the issue is
+// returned. complete=false means the bound was reached without an answer,
+// which callers must treat as unknown.
+func (p *Provider) IssueHasLabel(ctx context.Context, issue, team, project, label string) (found, complete bool, err error) {
+	if !ValidID(issue) || !ValidID(team) || !ValidID(label) || (project != "" && !ValidID(project)) {
+		return false, false, fail("invalid")
+	}
+	if p.labelMembershipReason() != "" {
+		return false, false, fail("capability_unavailable")
+	}
+	cursor := ""
+	for page := 0; page < labelMembershipPages; page++ {
+		args := []arg{{[]string{"limit"}, 250, "integer"}, a(team, "team"), a(label, "label"), arg{[]string{"includeArchived"}, true, "boolean"}}
+		if project != "" {
+			args = append(args, a(project, "project"))
+		}
+		if cursor != "" {
+			args = append(args, a(cursor, "cursor"))
+		}
+		m, e := p.v2Call(ctx, []string{"list_issues"}, args...)
+		if e != nil {
+			return false, false, e
+		}
+		rows, next, done, e := list(m, "issues")
+		if e != nil {
+			return false, false, e
+		}
+		for _, row := range rows {
+			i, e := id(row)
+			if e != nil {
+				return false, false, e
+			}
+			if i == issue {
+				return true, true, nil
+			}
+		}
+		if done {
+			return false, true, nil
+		}
+		if next == "" || next == cursor {
+			return false, false, fail("pagination_unavailable")
+		}
+		cursor = next
+	}
+	return false, false, nil
 }

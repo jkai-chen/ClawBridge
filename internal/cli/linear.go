@@ -91,7 +91,7 @@ type linearFlags struct {
 	clearProject, clearLabels, clearParent, clearAssignee, expectNoLabels                                                bool
 	limit                                                                                                                int
 	revision                                                                                                             int64
-	teamBoard, confirm, noBrowser, tokenStdin                                                                            bool
+	teamBoard, confirm, noBrowser, tokenStdin, resolveLabels                                                             bool
 }
 type repeatedIDs []string
 
@@ -149,6 +149,9 @@ func parseLinear(command string, args []string, stderr io.Writer) (linearFlags, 
 		f.StringVar(&v.team, "team", "", "required allowed team UUID")
 	case "issue", "states":
 		profile()
+		if command == "issue" {
+			f.BoolVar(&v.resolveLabels, "resolve-labels", false, "prove label IDs when Linear returns label names only (extra reads)")
+		}
 		min, max = 1, 1
 	case "link":
 		profile()
@@ -624,7 +627,11 @@ func runLinear(ctx context.Context, flags Config, args []string, stdout, stderr 
 	case "issues":
 		data, err = service.IssuesV2(bounded, scope, linearboard.IssuesInputV2{Limit: v.limit, Cursor: v.cursor, LabelID: v.labelFilter})
 	case "issue":
-		data, err = service.IssueV2(bounded, scope, pos[0])
+		if v.resolveLabels {
+			data, err = service.IssueV2ResolvedLabels(bounded, scope, pos[0])
+		} else {
+			data, err = service.IssueV2(bounded, scope, pos[0])
+		}
 	case "states":
 		data, err = service.StatesV2(bounded, scope, pos[0])
 	case "labels":

@@ -75,10 +75,15 @@ func classify(err error) error {
 		switch state.SQLState() {
 		case "23505":
 			code = "conflict"
-		case "23503", "23514", "22001":
+		case "23503", "23514":
 			code = "invalid"
 		default:
 			code = "unavailable"
+			// Class 22 is a data exception, such as an untranslatable
+			// character or an overlong value: the input is at fault.
+			if strings.HasPrefix(state.SQLState(), "22") {
+				code = "invalid"
+			}
 		}
 	} else {
 		text := err.Error()

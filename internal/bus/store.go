@@ -400,6 +400,43 @@ func limit(a map[string]any) (int, error) {
 	}
 	return 100, nil
 }
+
+// rejectNUL refuses a NUL byte anywhere in a request's text before it reaches
+// a database: Postgres rejects it as a data exception, and SQLite would store
+// a string other tools truncate.
+func rejectNUL(r Request) error {
+	var walk func(v any) bool
+	walk = func(v any) bool {
+		switch x := v.(type) {
+		case string:
+			return strings.ContainsRune(x, 0)
+		case []string:
+			for _, s := range x {
+				if strings.ContainsRune(s, 0) {
+					return true
+				}
+			}
+		case []any:
+			for _, item := range x {
+				if walk(item) {
+					return true
+				}
+			}
+		case map[string]any:
+			for key, item := range x {
+				if strings.ContainsRune(key, 0) || walk(item) {
+					return true
+				}
+			}
+		}
+		return false
+	}
+	if walk(r.Operation) || walk(r.Workspace) || walk(r.Project) || walk(r.Session) || walk(r.Args) {
+		return invalid("text arguments must not contain NUL bytes")
+	}
+	return nil
+}
+
 func (s *Store) Execute(ctx context.Context, r Request) (Result, error) {
 	if s.postgres {
 		return Result{}, errors.New("Postgres requires trusted ExecuteAs identity")
@@ -423,6 +460,9 @@ func (s *Store) ExecuteAs(ctx context.Context, principal string, r Request) (Res
 	return result, classify(err)
 }
 func (s *Store) executeRequest(ctx context.Context, r Request) (Result, error) {
+	if err := rejectNUL(r); err != nil {
+		return Result{}, err
+	}
 	if err := validateArgs(r.Operation, r.Args); err != nil {
 		return Result{}, err
 	}

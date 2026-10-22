@@ -93,20 +93,24 @@ func (l2ReadConnections) Status(_ context.Context, id string) (linearconn.Profil
 }
 
 func TestL2ExplicitLabelsReplaceClearAndOmissionPreserve(t *testing.T) {
-	for _, intent := range []string{"replace", "clear", "omitted", "unknown_existing", "unsafe_label", "unknown_eligibility"} {
+	for _, intent := range []string{"replace", "clear", "omitted", "stale_expectation", "unknown_existing", "unsafe_label", "unknown_eligibility"} {
 		t.Run(intent, func(t *testing.T) {
 			f := newFixture(t)
 			f.setup("w", "p")
 			f.call("taskboard_set_v2", "w", "p", "", l2MappingArgs(0))
 			p := l2IntentFixture()
-			in := linearboard.WriteInputV2{WriteInput: linearboard.WriteInput{Operation: "update", OperationID: "explicit-label-" + intent, IssueID: l1IssueID}, Labels: linearprovider.Field[[]string]{Present: true, Value: []string{l2LabelB}}}
+			// Replacement must state the complete set the caller last read.
+			in := linearboard.WriteInputV2{WriteInput: linearboard.WriteInput{Operation: "update", OperationID: "explicit-label-" + intent, IssueID: l1IssueID}, Labels: linearprovider.Field[[]string]{Present: true, Value: []string{l2LabelB}}, ExpectedLabels: linearprovider.Field[[]string]{Present: true, Value: []string{l2LabelA, l2LabelB}}}
 			switch intent {
 			case "clear":
 				in.Labels.Value = []string{}
 			case "omitted":
 				in.Labels = linearprovider.Field[[]string]{}
+				in.ExpectedLabels = linearprovider.Field[[]string]{}
 				title := "explicit title only"
 				in.Title = &title
+			case "stale_expectation":
+				in.ExpectedLabels.Value = []string{l2LabelA}
 			case "unknown_existing":
 				issue := p.issues[l1IssueID]
 				issue.LabelsKnown = false
@@ -117,7 +121,7 @@ func TestL2ExplicitLabelsReplaceClearAndOmissionPreserve(t *testing.T) {
 				p.labels[1].EligibilityKnown = false
 			}
 			_, err := l1ServiceFor(t, f.store, p).WriteV2(context.Background(), f.request("", "w", "p", "worker", actor("worker", nil)), in)
-			denied := intent == "unknown_existing" || intent == "unsafe_label" || intent == "unknown_eligibility"
+			denied := intent == "stale_expectation" || intent == "unknown_existing" || intent == "unsafe_label" || intent == "unknown_eligibility"
 			if denied {
 				if err == nil || len(p.updates) != 0 || p.writes.Load() != 0 {
 					t.Fatal("unsafe/unknown label replacement dispatched", err)
@@ -156,6 +160,7 @@ func TestL2MutationVerificationRejectsContradictoryDuplicateTarget(t *testing.T)
 				}
 				p.labels = []linearprovider.Label{good, conflicting}
 				in.Labels = linearprovider.Field[[]string]{Present: true, Value: []string{l2LabelB}}
+				in.ExpectedLabels = linearprovider.Field[[]string]{Present: true, Value: []string{l2LabelA, l2LabelB}}
 			} else {
 				good := linearprovider.Member{ID: l2LabelA, TeamID: l1TeamA, Active: true, EligibilityKnown: true}
 				conflicting := good

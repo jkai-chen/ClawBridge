@@ -65,8 +65,9 @@ func TestL2LabelRetiredAtPreventsApplication(t *testing.T) {
 			f.call("taskboard_set_v2", "w", "p", "", l2MappingArgs(0))
 			p := &l2RetirementProvider{l2IntentProvider: l2IntentFixture(), catalog: catalog}
 			in := linearboard.WriteInputV2{
-				WriteInput: linearboard.WriteInput{Operation: "update", OperationID: "label-retirement-" + mode, IssueID: l1IssueID},
-				Labels:     linearprovider.Field[[]string]{Present: true, Value: []string{l2LabelB}},
+				WriteInput:     linearboard.WriteInput{Operation: "update", OperationID: "label-retirement-" + mode, IssueID: l1IssueID},
+				Labels:         linearprovider.Field[[]string]{Present: true, Value: []string{l2LabelB}},
+				ExpectedLabels: linearprovider.Field[[]string]{Present: true, Value: []string{l2LabelA, l2LabelB}},
 			}
 			result, writeErr := l1ServiceFor(t, f.store, p).WriteV2(context.Background(), f.request("", "w", "p", "worker", actor("worker", nil)), in)
 			if mode == "active_control" {

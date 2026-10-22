@@ -135,7 +135,8 @@ func TestL2MCPV2ClosedTriStateAndPinnedScope(t *testing.T) {
 		valid bool
 	}{
 		{"omit", map[string]any{"id": l1IssueID, "operation_id": "omit", "title": "synthetic title"}, true},
-		{"explicit_nulls", map[string]any{"id": l1IssueID, "operation_id": "nulls", "project_id": nil, "parent_id": nil, "assignee_id": nil, "label_ids": []string{}}, true},
+		{"explicit_nulls", map[string]any{"id": l1IssueID, "operation_id": "nulls", "project_id": nil, "parent_id": nil, "assignee_id": nil, "label_ids": []string{}, "expected_label_ids": []string{l2LabelA, l2LabelB}}, true},
+		{"duplicate_expected_labels", map[string]any{"id": l1IssueID, "operation_id": "bad", "label_ids": []string{}, "expected_label_ids": []string{l2LabelA, l2LabelA}}, false},
 		{"null_labels", map[string]any{"id": l1IssueID, "operation_id": "bad", "label_ids": nil}, false},
 		{"duplicate_labels", map[string]any{"id": l1IssueID, "operation_id": "bad", "label_ids": []string{l2LabelA, l2LabelA}}, false},
 		{"wrong_parent_type", map[string]any{"id": l1IssueID, "operation_id": "bad", "parent_id": true}, false},
@@ -186,6 +187,9 @@ func TestL2MCPV2ClosedTriStateAndPinnedScope(t *testing.T) {
 				}
 				if labels, ok := got.Args["label_ids"].([]any); !ok || len(labels) != 0 {
 					t.Fatal("explicit empty labels lost")
+				}
+				if expected, ok := got.Args["expected_label_ids"].([]any); !ok || len(expected) != 2 {
+					t.Fatal("expected label set lost")
 				}
 			}
 		})

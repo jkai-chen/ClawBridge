@@ -78,8 +78,25 @@ func (p *l2IntentProvider) UpdateV2(_ context.Context, in linearprovider.UpdateI
 	}
 	return issue, nil
 }
+// Relation applies the edge to the issues IssueV2 reads, as Linear would, so
+// the board's read-back sees an added edge and no longer sees a removed one.
+// Its receipt does not name the edge, like native save_issue's.
 func (p *l2IntentProvider) Relation(_ context.Context, in linearprovider.RelationInput) (linearprovider.RelationReceipt, error) {
 	p.edges = append(p.edges, in)
+	for _, id := range []string{in.FromID, in.ToID} {
+		issue := p.issues[id]
+		kept := []linearprovider.Relation{}
+		for _, edge := range issue.Relations {
+			if edge.Type != in.Type || edge.FromID != in.FromID || edge.ToID != in.ToID {
+				kept = append(kept, edge)
+			}
+		}
+		if in.Action == "add" && id == in.FromID {
+			kept = append(kept, linearprovider.Relation{Type: in.Type, FromID: in.FromID, ToID: in.ToID})
+		}
+		issue.Relations = kept
+		p.issues[id] = issue
+	}
 	if p.lostEdgeResponse {
 		return linearprovider.RelationReceipt{}, errors.New("synthetic response lost AFTER one accepted edge dispatch")
 	}

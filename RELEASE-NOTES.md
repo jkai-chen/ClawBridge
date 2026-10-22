@@ -17,9 +17,30 @@ notifications while keeping normal messaging independent of those integrations.
   Local operation records prevent blind replay of uncertain external writes.
 - Versioned task-board tools add explicit destinations, label replacement,
   one-edge dependencies, parents and assignment. Each action requires verified
-  scope and provider support. Native label eligibility and parent-preservation
-  proof remain limited; unsupported actions fail before dispatch. These fields
-  never claim a task, grant permission or substitute for coordinator ownership.
+  scope and provider support; unsupported actions fail before dispatch. These
+  fields never claim a task, grant permission or substitute for coordinator
+  ownership.
+- Native labels: eligibility comes from Linear's documented list filters, pinned
+  by schema, and team or workspace labels both apply; groups, retired and archived
+  labels are refused. A label replacement or clear must send
+  `expected_label_ids`, the complete set last read; current label IDs are proved
+  server-side before any replacement, and `--resolve-labels` shows them.
+- Native parents: a parent must share the child's team and project; clearing a
+  parent is allowed. Relation edges are readable; an existing edge is reported
+  unchanged without a write, and a remove is always sent.
+- `doctor`, `linear status` and the task-board context report every Linear
+  capability and why one is off.
+- The MCP server keeps one Linear connection per process and briefly reuses a
+  read's binding proof; every write opens a fresh connection and fully verifies.
+  A write rejected by Linear before it runs (rate limit or authorization) is
+  reported as not sent, with a safe error code; other failures stay uncertain.
+- Owners can revoke project access; leads can administer only their own,
+  member and reader sessions. A session name can no longer impersonate a
+  session ID, and role grants ignore email case.
+- `clawbridge skill install|status|uninstall` ships the agent skill with the
+  binary; the installers run it by default (`--no-skill` to skip). Guided setup
+  after joining offers the skill, a personal Linear connection, MCP for each
+  agent and `doctor`. See docs/onboarding.md.
 - Optional issue/revision/intent message metadata links requests, acknowledgements
   and progress while preserving legacy retry identity. Coordinator assignments
   remain authoritative; a peer receipt does not confer human approval or close work.
@@ -52,12 +73,13 @@ stated test boundaries; they do not substitute for first-login consent or prove
 all real provider schemas. No webhook service, background model launcher,
 automatic task claim or production deployment is included.
 
-Assets retain five CGO-disabled targets, installers, selected checksums and a full
-source marker. Binaries are unsigned; macOS binaries are not notarized. Checksums
-verify integrity against the manifest rather than an independent signature.
-Native macOS OAuth consent and board reads were exercised against Linear.
-New L2 mutation effects remain unverified; local automated acceptance uses
-isolated providers and disposable PostgreSQL.
+Assets retain five CGO-disabled targets, installers, the MIT licence, selected
+checksums and a full source marker. Binaries are unsigned; macOS binaries are not
+notarized. Checksums verify integrity against the manifest rather than an
+independent signature. On macOS against Linear, project sets, assignee set and
+clear, label apply, replace and clear, parent set and clear, and blocks add and
+remove were exercised on test fixtures; local automated acceptance uses isolated
+providers and disposable PostgreSQL.
 Windows checks cover profile privacy, redirected input and a synthetic keyring
 item; account OAuth and notification host transport retain separate platform limits.
 

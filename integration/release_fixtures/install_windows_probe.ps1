@@ -62,6 +62,20 @@ try {
         }
         return $url
     }
+    # The installer's one post-install step is `clawbridge skill install` on the
+    # installed binary. Record which binary it would run instead of starting the
+    # fake payload; the rule under test is exactly one run, of the destination.
+    $script:SkillRuns = New-Object Collections.ArrayList
+    $script:SkillFails = $false
+    function Invoke-ClawBridgeSkillInstall([string]$Binary) {
+        $null = $script:SkillRuns.Add($Binary)
+        if ($script:SkillFails) { throw 'Injected skill failure' }
+    }
+    function Assert-SkillRan {
+        Assert-Probe ($script:SkillRuns.Count -eq 1) 'Successful install did not run the skill step exactly once'
+        Assert-Probe ([IO.Path]::GetFullPath($script:SkillRuns[0]) -eq [IO.Path]::GetFullPath($destination)) 'Skill step ran something other than the installed binary'
+        $script:SkillRuns.Clear()
+    }
     function Assert-Cleanup {
         Assert-Probe (@(Get-ChildItem -LiteralPath $env:TEMP -Force).Count -eq 0) 'Private temporary directory leaked'
         Assert-Probe (@(Get-ChildItem -LiteralPath $directory -Force).Count -eq 1) 'Destination stage leaked'
@@ -70,10 +84,12 @@ try {
         Assert-Probe (-not (Test-Path -LiteralPath (Join-Path $fixture 'INJECTED'))) 'Hostile text executed'
     }
     function Expect-Failure([string]$Version = 'v1.2.3', [string]$Target = $directory) {
+        $script:SkillRuns.Clear()
         $failed = $false
         try { $null = Install-ClawBridge -Version $Version -InstallDir $Target } catch { $failed = $true }
         Assert-Probe $failed 'Expected installer rejection'
         Assert-Probe ([IO.File]::ReadAllText($destination) -eq 'OLD') 'Failure replaced existing binary'
+        Assert-Probe ($script:SkillRuns.Count -eq 0) 'Failed install ran the skill step'
         Assert-Cleanup
     }
     [IO.File]::WriteAllText($destination, 'OLD')
@@ -81,10 +97,23 @@ try {
     Assert-Probe ((Get-FileHash -LiteralPath $destination -Algorithm SHA256).Hash.ToLowerInvariant() -eq $script:Digest) 'Latest replacement mismatch'
     Assert-Probe (@($script:Calls | Where-Object { $_ -eq 'https://github.com/jkai-chen/ClawBridge/releases/latest' }).Count -eq 1) 'Latest not discovered exactly once'
     Assert-Probe ($script:Calls.Count -eq 3) 'Unexpected download count'
+    Assert-SkillRan
     Assert-Cleanup
     $script:Calls.Clear()
     $null = Install-ClawBridge -Version 'v1.2.3' -InstallDir $directory
     Assert-Probe ($script:Calls.Count -eq 2) 'Explicit version performed discovery'
+    Assert-SkillRan
+    Assert-Cleanup
+    $null = Install-ClawBridge -Version 'v1.2.3' -InstallDir $directory -NoSkill
+    Assert-Probe ($script:SkillRuns.Count -eq 0) '-NoSkill still ran the skill step'
+    Assert-Cleanup
+    # A failing skill step only warns: the install still succeeds.
+    $script:SkillFails = $true
+    [IO.File]::WriteAllText($destination, 'OLD')
+    $null = Install-ClawBridge -Version 'v1.2.3' -InstallDir $directory 3>$null
+    $script:SkillFails = $false
+    Assert-Probe ((Get-FileHash -LiteralPath $destination -Algorithm SHA256).Hash.ToLowerInvariant() -eq $script:Digest) 'Skill failure undid the install'
+    Assert-SkillRan
     Assert-Cleanup
     foreach ($mode in @('duplicate', 'malformed', 'absent', 'hostile', 'empty', 'mismatch', 'download-failure')) {
         $script:Mode = $mode
@@ -102,12 +131,14 @@ try {
     Assert-Probe ($script:Calls.Count -eq 0) 'Invalid path reached network'
     # Actual native file-in-use behavior, not a mocked Replace implementation.
     $locked = [IO.File]::Open($destination, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::None)
+    $script:SkillRuns.Clear()
     try {
         $failed = $false
         try { $null = Install-ClawBridge -Version 'v1.2.3' -InstallDir $directory } catch { $failed = $true }
         Assert-Probe $failed 'Locked existing executable replacement succeeded'
     } finally { $locked.Dispose() }
     Assert-Probe ([IO.File]::ReadAllText($destination) -eq 'OLD') 'Locked binary changed'
+    Assert-Probe ($script:SkillRuns.Count -eq 0) 'Failed locked install ran the skill step'
     Assert-Cleanup
     # Junction refusal exercises native reparse-point handling without symlink privilege.
     $junction = Join-Path $fixture 'junction'
@@ -121,7 +152,7 @@ try {
     $env:PROCESSOR_ARCHITECTURE = 'x86'
     $env:PROCESSOR_ARCHITEW6432 = 'AMD64'
     Assert-Probe ((& $nativePlatform) -eq 'windows_amd64') '32-bit process x64 mapping failed'
-    Write-Output 'PASS independent native Windows installer fixtures; platform mapping, latest pinning, preservation, locked file and junction checks'
+    Write-Output 'PASS independent native Windows installer fixtures; platform mapping, latest pinning, preservation, skill step once/never/warn-only, locked file and junction checks'
 } finally {
     $env:LOCALAPPDATA = $oldLocal
     $env:TEMP = $oldTemp

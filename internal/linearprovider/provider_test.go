@@ -12,8 +12,8 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
-const tid = "440a5670-8981-49b1-9b3c-f9773dc63052"
-const iid = "740a5670-8981-49b1-9b3c-f9773dc63052"
+const tid = "11111111-1111-4111-8111-111111111111"
+const iid = "22222222-2222-4222-8222-222222222222"
 
 type fake struct {
 	tools  []*mcp.Tool
@@ -133,7 +133,7 @@ func TestRawResponseCapAndTextShapes(t *testing.T) {
 	if e != nil {
 		t.Fatal(e)
 	}
-	f.text = `{"teams":[{"id":"` + tid + `","name":"FJA"}],"hasNextPage":false}`
+	f.text = `{"teams":[{"id":"` + tid + `","name":"Test team"}],"hasNextPage":false}`
 	r, e := p.Teams(context.Background(), PageOptions{})
 	if e != nil || !r.Complete || len(r.Items) != 1 {
 		t.Fatal(r, e)
@@ -154,7 +154,7 @@ func (f *textFake) CallTool(context.Context, *mcp.CallToolParams) (*mcp.CallTool
 }
 
 func TestIssueLinkedContextNeverReturnsNestedBodies(t *testing.T) {
-	foreign := "840a5670-8981-49b1-9b3c-f9773dc63052"
+	foreign := "33333333-3333-4333-8333-333333333333"
 	f := &fake{tools: []*mcp.Tool{tool("get_issue", map[string]string{"id": "string"})}, result: map[string]any{"id": iid, "teamId": tid, "project": nil, "description": "main authorized body", "parent": map[string]any{"id": foreign, "identifier": "OTHER-1", "description": "FOREIGN_SECRET", "comments": []any{"PRIVATE_COMMENT"}, "instructions": "EXECUTE_ME"}, "relations": map[string]any{"blocks": []any{map[string]any{"id": foreign, "description": "FOREIGN_SECRET"}}}, "labels": []any{map[string]any{"description": "LABEL_SECRET"}}}}
 	p, _ := NewWithCaller(context.Background(), f)
 	issue, e := p.GetIssue(context.Background(), iid)
@@ -172,7 +172,7 @@ func TestIssueLinkedContextNeverReturnsNestedBodies(t *testing.T) {
 	}
 	many := []any{}
 	for i := 0; i < 1000; i++ {
-		many = append(many, map[string]any{"id": fmt.Sprintf("%08x-8981-49b1-9b3c-f9773dc63052", i), "identifier": strings.Repeat("x", 1000)})
+		many = append(many, map[string]any{"id": fmt.Sprintf("%08x-4444-4444-8444-444444444444", i), "identifier": strings.Repeat("x", 1000)})
 	}
 	refs := linkedReferences(many)
 	if len(refs) != 128 {
@@ -218,7 +218,7 @@ func TestVerifyAccessNegotiatesWithoutMutation(t *testing.T) {
 }
 
 func TestScopeRepresentationsMustAgreeWithoutFallback(t *testing.T) {
-	foreign := "840a5670-8981-49b1-9b3c-f9773dc63052"
+	foreign := "33333333-3333-4333-8333-333333333333"
 	for _, tc := range []struct {
 		name  string
 		field string
@@ -261,7 +261,7 @@ func TestScopeRepresentationsMustAgreeWithoutFallback(t *testing.T) {
 	}
 }
 func TestStatusScopeRepresentationsMustAgree(t *testing.T) {
-	foreign := "840a5670-8981-49b1-9b3c-f9773dc63052"
+	foreign := "33333333-3333-4333-8333-333333333333"
 	for _, nested := range []any{map[string]any{"id": foreign}, 42, nil} {
 		f := &fake{tools: []*mcp.Tool{tool("list_issue_statuses", map[string]string{"team": "string"})}, result: map[string]any{"statuses": []any{map[string]any{"id": iid, "teamId": tid, "team": nested}}, "hasNextPage": false}}
 		p, _ := NewWithCaller(context.Background(), f)

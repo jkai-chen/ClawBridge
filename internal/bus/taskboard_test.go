@@ -9,7 +9,7 @@ import (
 	"testing"
 )
 
-const teamOne = "440a5670-8981-49b1-9b3c-f9773dc63052"
+const teamOne = "11111111-1111-4111-8111-111111111111"
 
 func taskboardArgs(rev int) map[string]any {
 	return map[string]any{"expected_revision": rev, "linear_project_id": nil, "linear_team_ids": []string{teamOne}, "linear_default_team_id": teamOne}

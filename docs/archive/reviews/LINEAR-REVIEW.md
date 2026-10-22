@@ -319,3 +319,11 @@ Full private evidence: `clawbridge-v020-linear-candidate-vdd17d88/independent-ca
 ### Subsequent public-start review closure — 22 October 2026
 
 The corrected run's `independent-final-review.json` subsequently became available and was read and hash-verified: SHA256 `ac71effaf58c0e7dfb4c10522f904a1c0b3265d538aad2010edb3011914c5c87`, status **PASS_PUBLIC_DISCOVERY_DCR_PKCE_START_CANCEL_ONLY_WITH_STATED_LIMITS**, no blockers. It supports the narrowly stated public discovery/single registration/PKCE URL/cancel/listener observation above; the earlier written-time absence note remains historical. Consent, token exchange, authenticated MCP and real account lifecycle remain unproved. The registration budget is consumed; no repeat is authorized. This was report-only reconciliation, with no source/test/live operation or candidate change.
+
+### Synthetic fixture follow-up — 22 October 2026
+
+A root read-only check of the delayed private-harness handoff confirmed that `internal/bus/taskboard_test.go` and `internal/linearprovider/provider_test.go` still used the selected test team's real UUID. Root replaced it and the related derived fixture UUIDs with synthetic UUIDs, and changed the fake provider's team label to a generic test label. The current tracked files contain no selected private workspace/team UUID or reused UUID suffix. This check concerns the current tree; earlier source commits and private evidence retain their historical bytes.
+
+`GOENV=off GOWORK=off GOFLAGS= GOTOOLCHAIN=local GOPROXY=off GOSUMDB=off go test ./internal/bus ./internal/linearprovider -count=1` — **PASS**, bus **0.539s**, provider **0.381s**. `git diff --check` also passes. All **72 accepted production/runtime/module fingerprints remain identical**; the only differences against the prior 55-file owned freeze are these two test files. No production change, full/PG repetition, live request, credential operation or candidate rebuild followed. The prepared candidate remains attributed to `fbbb7f0` above.
+
+Private follow-up evidence: `clawbridge-linear-synthetic-fixtures-hmk4w_6d/result.json`, SHA256 `3d594f2bd3f65db0fc35b6bc1c7208fe0b88d1457e68203e3f500c3bee7693ea`, with the exact test output and fixture diff alongside it. Prior full/race acceptance and candidate evidence remain attributed to their recorded manifests and commits.

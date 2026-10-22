@@ -75,3 +75,33 @@ func TestLinearV2UnknownProjectCannotExposeProjectSetIssue(t *testing.T) {
 		t.Fatalf("unknown page project exposed: %+v %v", page, err)
 	}
 }
+
+func TestLinearV2WorkspaceLabelRowsDoNotAbortTeamLookup(t *testing.T) {
+	const globalLabel = "88888888-8888-4888-8888-888888888888"
+	const unscopedLabel = "99999999-9999-4999-8999-999999999999"
+	s, _, p, scope := testV2(t)
+	s.cfg.Open = func(context.Context, *http.Client, bool) (Provider, error) { return unfilteredCatalogV2{p}, nil }
+	p.labels = []linearprovider.Label{
+		{ID: globalLabel, Global: true, EligibilityKnown: true},
+		{ID: unscopedLabel},
+		{ID: labelA, TeamID: teamID, EligibilityKnown: true},
+	}
+	page, err := s.LabelsV2(context.Background(), scope, teamID, 50, "")
+	if err != nil || len(page.Items) != 1 || page.Items[0].ID != labelA {
+		t.Fatalf("listing must return only verified team rows: %+v %v", page, err)
+	}
+	for n, id := range []string{globalLabel, unscopedLabel} {
+		in := WriteInputV2{WriteInput: WriteInput{Operation: "update", OperationID: "refused-" + id, IssueID: issueID}, Labels: linearprovider.Field[[]string]{Present: true, Value: []string{id}}}
+		if _, err = s.WriteV2(context.Background(), scope, in); err == nil || p.writes != 0 {
+			t.Fatalf("requested out-of-team label %d applied: %v", n, err)
+		}
+	}
+	in := WriteInputV2{WriteInput: WriteInput{Operation: "update", OperationID: "team-label", IssueID: issueID}, Labels: linearprovider.Field[[]string]{Present: true, Value: []string{labelA}}}
+	if _, err = s.WriteV2(context.Background(), scope, in); err != nil || p.writes != 1 {
+		t.Fatalf("workspace row aborted team label lookup: %v writes=%d", err, p.writes)
+	}
+	p.labels = append(p.labels, linearprovider.Label{ID: globalLabel, Global: true})
+	if _, err = s.LabelsV2(context.Background(), scope, teamID, 50, ""); err == nil {
+		t.Fatal("contradictory skipped row was not detected")
+	}
+}

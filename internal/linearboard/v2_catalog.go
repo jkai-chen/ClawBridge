@@ -45,9 +45,12 @@ func findLabelV2(ctx context.Context, p ProviderV2, team, id string) (*linearpro
 		}
 		seenIDs := map[string]string{}
 		var found *linearprovider.Label
+		// Other rows may be workspace, unscoped or ineligible labels; they are
+		// still checked for contradictions but only the requested row's scope
+		// and eligibility decide the lookup.
 		for _, label := range page.Items {
-			if e = checkLabelV2(label, team); e != nil {
-				return nil, e
+			if !linearprovider.ValidID(label.ID) {
+				return nil, errors.New("label identity is invalid")
 			}
 			h := digest(label)
 			if old, ok := seenIDs[label.ID]; ok && old != h {
@@ -60,6 +63,9 @@ func findLabelV2(ctx context.Context, p ProviderV2, team, id string) (*linearpro
 			}
 		}
 		if found != nil {
+			if e = checkLabelV2(*found, team); e != nil {
+				return nil, e
+			}
 			if e = eligibleLabelV2(*found); e != nil {
 				return nil, e
 			}
@@ -162,17 +168,24 @@ func (s *Service) LabelsV2(ctx context.Context, scope bus.Request, team string, 
 	if e = validProviderPageV2(page.NextCursor, page.Complete, c.Provider, len(page.Items), limit); e != nil {
 		return empty, e
 	}
+	// The listing returns only rows verified to be in this team's scope;
+	// workspace and unscoped rows are omitted rather than failing the page.
 	seen := map[string]string{}
+	items := []linearprovider.Label{}
 	for _, label := range page.Items {
-		if e = checkLabelV2(label, team); e != nil {
-			return empty, e
+		if !linearprovider.ValidID(label.ID) {
+			return empty, errors.New("label identity is invalid")
 		}
 		h := digest(label)
 		if old, ok := seen[label.ID]; ok && old != h {
 			return empty, errors.New("contradictory label identity")
 		}
 		seen[label.ID] = h
+		if checkLabelV2(label, team) == nil {
+			items = append(items, label)
+		}
 	}
+	page.Items = items
 	if e = s.unchangedV2(ctx, scope, b); e != nil {
 		return empty, e
 	}

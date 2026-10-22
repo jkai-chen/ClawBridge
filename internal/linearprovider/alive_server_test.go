@@ -60,11 +60,13 @@ func TestAliveReopensAnExpiredOrKilledSession(t *testing.T) {
 		t.Fatal("a session the server expired was reported alive")
 	}
 
-	p, _, h := realServer(t, false)
-	h.CloseClientConnections()
-	h.Close()
-	if p.Alive(context.Background()) {
-		t.Fatal("a killed server was reported alive")
+	for _, stateless := range []bool{false, true} {
+		p, _, h := realServer(t, stateless)
+		h.CloseClientConnections()
+		h.Close()
+		if p.Alive(context.Background()) {
+			t.Fatalf("a killed server (stateless=%v) was reported alive", stateless)
+		}
 	}
 }
 

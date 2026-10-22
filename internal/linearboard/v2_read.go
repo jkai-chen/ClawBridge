@@ -119,10 +119,11 @@ type teamProjectLister interface {
 const maxProjectListPages = 10
 
 // listBoundProjects reads each allowed team's project list once and returns
-// the bound projects found live in it, matched by UUID only. A trashed row, a
-// project listed differently under two teams, or one not listed is left out, so
-// the caller verifies it with get_project. A provider without the listing, or a
-// listing Linear answers in an unexpected shape, falls back the same way.
+// the bound projects found live in it, matched by UUID only. A bound project
+// listed as trashed refuses the binding. One listed differently under two teams,
+// or not listed, is left out, so the caller verifies it with get_project. A
+// provider without the listing, or a listing Linear answers in an unexpected
+// shape, falls back the same way.
 func listBoundProjects(ctx context.Context, p Provider, teams, bound []string) (map[string]linearprovider.Project, error) {
 	found := map[string]linearprovider.Project{}
 	lister, ok := p.(teamProjectLister)
@@ -149,7 +150,11 @@ func listBoundProjects(ctx context.Context, p Provider, teams, bound []string) (
 				if !want[row.ID] || excluded[row.ID] {
 					continue
 				}
-				if prior, seen := found[row.ID]; row.Trashed || (seen && !slices.Equal(prior.TeamIDs, row.TeamIDs)) {
+				if row.Trashed {
+					// get_project cannot see the trash, so never fall back.
+					return nil, errors.New("bound Linear project is in trash; relink the task board")
+				}
+				if prior, seen := found[row.ID]; seen && !slices.Equal(prior.TeamIDs, row.TeamIDs) {
 					delete(found, row.ID)
 					excluded[row.ID] = true
 					continue

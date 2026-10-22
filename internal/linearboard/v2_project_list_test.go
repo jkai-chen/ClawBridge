@@ -81,13 +81,9 @@ func TestLinearV2BindingVerifiesProjectsFromOneListPerTeam(t *testing.T) {
 	}
 }
 
-func TestLinearV2BindingChecksTrashedMissingOrInconsistentProjectsIndividually(t *testing.T) {
+func TestLinearV2BindingChecksMissingOrInconsistentProjectsIndividually(t *testing.T) {
 	_, a, _, _ := testV2(t)
 	for name, change := range map[string]func(*listingV2){
-		// The bound project itself is trashed; its live twin's name never matches.
-		"trashed": func(l *listingV2) {
-			l.pages[otherTeamID] = complete(row(projectB, "B", true, otherTeamID), row(trashedTwin, "B", false, otherTeamID))
-		},
 		"missing": func(l *listingV2) { l.pages[otherTeamID] = complete() },
 		"listed differently under two teams": func(l *listingV2) {
 			l.pages[teamID] = complete(row(projectB, "B", false, teamID, otherTeamID), row(projectA, "A", false, teamID))
@@ -163,5 +159,16 @@ func TestLinearV2BindingListingFailures(t *testing.T) {
 		if _, e := verifyBindingV2(context.Background(), l, a.b); !errors.Is(e, err) || *projects != 0 || l.lists != 1 {
 			t.Fatal(err, e, *projects, l.lists)
 		}
+	}
+}
+
+func TestLinearV2BindingRefusesATrashedBoundProjectWithoutGetProject(t *testing.T) {
+	_, a, _, _ := testV2(t)
+	l, _, _, projects := newListing(t)
+	// Bound project B is trashed; a live project shares its name.
+	l.pages[otherTeamID] = complete(row(trashedTwin, "B", false, otherTeamID), row(projectB, "B", true, otherTeamID))
+	_, e := verifyBindingV2(context.Background(), l, a.b)
+	if e == nil || e.Error() != "bound Linear project is in trash; relink the task board" || *projects != 0 {
+		t.Fatal(e, *projects)
 	}
 }

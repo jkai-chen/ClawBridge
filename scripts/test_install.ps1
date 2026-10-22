@@ -167,7 +167,7 @@ try {
     # "skill install", succeeds on exit 0 and throws with the code otherwise.
     $env:CB_PROBE_SKILL_EXIT = '0'
     & $originalSkillInstall $script:fakeSkill
-    $runs = Get-SkillLog
+    $runs = @(Get-SkillLog)
     # The log holds the path the OS reports, which may be the 8.3 form of TEMP, so
     # only the file name and the arguments are compared.
     Assert-True ($runs.Count -eq 1 -and $runs[0].EndsWith("\fake-clawbridge.exe`tskill install", [StringComparison]::OrdinalIgnoreCase)) ('skill step ran with the wrong binary or arguments: ' + ($runs -join ' | '))
@@ -185,7 +185,7 @@ try {
     Assert-True ((Get-FileHash -LiteralPath $binary).Hash.ToLowerInvariant() -ceq $script:digest) 'installed digest mismatch'
     Assert-Cleanup
     Assert-True ($script:skillRuns.Count -eq 1 -and $script:skillRuns[0] -ceq $binary) 'the installed binary must install the skill once'
-    Assert-True (@(Get-SkillLog).Count -eq 1 -and (Get-SkillLog)[0].EndsWith("`tskill install")) 'the real skill step must run "skill install" once'
+    Assert-True (@(Get-SkillLog).Count -eq 1 -and @(Get-SkillLog)[0].EndsWith("`tskill install")) 'the real skill step must run "skill install" once'
     $userPath = Get-TestUserPath
     Assert-True ($null -ne $userPath -and $userPath.Value -ceq $destination) 'install directory not added to the user Path'
     Assert-True ($userPath.Kind -eq [Microsoft.Win32.RegistryValueKind]::ExpandString) 'a new user Path must be REG_EXPAND_SZ'

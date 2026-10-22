@@ -1,90 +1,36 @@
-# ClawBridge v0.2.0
+# ClawBridge v0.2.1
 
-Adds native Linear task boards, structured coordination and controlled inbox
-notifications while keeping normal messaging independent of those integrations.
+Back up the store before upgrading. Schema 5 is a one-way migration: older
+binaries refuse the upgraded store. Upgrade the service before clients; an older
+service rejects the new assignment operations.
 
-- Connect Linear through native public-client OAuth/PKCE or explicit token import
-  from stdin. Personal credentials stay in the native keyring; no Orca or Node
-  runtime is required. Read access is the default and write access is explicit.
-- Link a ClawBridge project to verified Linear teams and a set of Linear
-  projects. Team boards work without creating a project. Each teammate connects
-  their own account; switching accounts does not change the shared mapping.
-  Native responses retain display labels while routing by immutable UUIDs;
-  issue reads request explicit scope fields before exposing task content.
-- Browse setup and issues in the Linear TUI view. Native CLI and pinned local MCP
-  tools list/get issues and explicitly create, update or comment within the
-  selected board. Inspection never claims a task or changes its assignment.
-  Local operation records prevent blind replay of uncertain external writes.
-- Versioned task-board tools add explicit destinations, label replacement,
-  one-edge dependencies, parents and assignment. Each action requires verified
-  scope and provider support; unsupported actions fail before dispatch. These
-  fields never claim a task, grant permission or substitute for coordinator
-  ownership.
-- Native labels: eligibility comes from Linear's documented list filters, pinned
-  by schema, and team or workspace labels both apply; groups, retired and archived
-  labels are refused. A label replacement or clear must send
-  `expected_label_ids`, the complete set last read; current label IDs are proved
-  server-side before any replacement, and `--resolve-labels` shows them.
-- Native parents: a parent must share the child's team and project; clearing a
-  parent is allowed. Relation edges are readable; an existing edge is reported
-  unchanged without a write, and a remove is always sent.
-- `doctor`, `linear status` and the task-board context report every Linear
-  capability, with a reason for the schema-pinned ones when they are off.
-- The MCP server keeps one Linear connection per process and reuses a read's
-  binding proof for up to 60 seconds; writes never use it. Every write opens a
-  fresh connection, verifies the binding and re-reads the affected issue state
-  before dispatch.
-  A write rejected by Linear before it runs (rate limit or authorization) is
-  reported as not sent, with a safe error code; other failures stay uncertain.
-- Owners can revoke project access; leads can administer only their own,
-  member and reader sessions. A session name can no longer impersonate a
-  session ID, and role grants ignore email case.
-- `clawbridge skill install|status|uninstall` ships the agent skill with the
-  binary; the installers run it by default (`--no-skill` to skip). Guided setup
-  after joining offers the skill, a personal Linear connection, MCP for each
-  agent and `doctor`. See docs/onboarding.md.
-- Optional issue/revision/intent message metadata links requests, acknowledgements
-  and progress while preserving legacy retry identity. Coordinator assignments
-  remain authoritative; a peer receipt does not confer human approval or close work.
-- Recipient notification policy supports accept, hold and refuse. Suppression
-  retains unread mail and pending notification progress for a later accept.
-- Authority-only inbox metadata leaves delivery/read/presence/audit unchanged.
-  Explicit MCP resource subscriptions receive invalidations; the host decides
-  whether to start an agent turn.
-- The foreground JSON/Codex watcher queues only a fixed inbox-check hint to an
-  explicitly selected existing thread. Private checkpoints bind authority,
-  recipient, instance, executable, host home and thread. Queue acceptance remains
-  separate from processing; crashes or ambiguous outcomes can duplicate hints.
-- Bounded `host-status` and `host-wait` observe an explicitly selected existing
-  Codex Unix WebSocket endpoint without starting or resuming a thread. Idle and
-  unloaded are distinct from task completion, drained queues or process exit.
-- Current guides, design contracts and dated review evidence have separate homes
-  under `docs/`. The agent skill covers paged ownership discovery, cooperation,
-  repository-qualified slices and explicit handoffs.
-
-Schema 3 adds shared board settings after the schema-2 coordination migration;
-schema 4 adds versioned project-set mappings while preserving old mapping data.
-Back up the existing store before upgrade and deploy matching clients/service.
-An older service rejects the new operations; installing a client does not upgrade
-that service. Older binaries refuse newer schemas; rollback restores a verified
-pre-upgrade backup rather than editing the version marker.
-
-OAuth consent, keyring availability and native host behavior depend on the user's
-environment. Automated providers and authenticated test relays establish their
-stated test boundaries; they do not substitute for first-login consent or prove
-all real provider schemas. No webhook service, background model launcher,
-automatic task claim or production deployment is included.
+- Structured session assignments. A session proposes its issue, task role and
+  repository path scope; the project's designated coordinator session confirms
+  or releases it. Find owners with `sessions --issue` or `--scope-path`;
+  `whoami` and session details show the assignment and whether it is stale.
+  Overlapping assignments are refused at confirmation unless the coordinator
+  explicitly overrides, which is audited. A handoff passes the assignment to
+  the successor as a proposal. Assignments are descriptive: no locks, no rights.
+- Filtering issues by label works on native Linear. Linear's server-side label
+  filter, sent with the label UUID, is accepted only when the label's name is
+  unique in the team's full label list and each returned issue carries it;
+  otherwise the page is refused.
+- Optional write guards for text: issue reads return `description_sha256`, and
+  an update can send `expected_title` and `expected_description_sha256`
+  (`--expect-title`, `--expect-description-sha256`). A mismatch is refused
+  before anything is sent. A later release will require the description guard.
+- `--updated-after` (MCP `updated_after`) lists only issues changed since an
+  absolute time; every returned issue must satisfy it.
+- The agent skill documents a `needs-agent` label convention: people add it,
+  the coordinator lists those issues when it runs, and the label never grants
+  approval or assignment.
+- Binding verification reads one Linear project list per team, so a nine-project
+  board costs two calls instead of ten. A bound project in Linear's trash now
+  refuses the binding; relink the task board.
 
 Assets retain five CGO-disabled targets, installers, the MIT licence, selected
 checksums and a full source marker. Binaries are unsigned; macOS binaries are not
-notarized. Checksums verify integrity against the manifest rather than an
-independent signature. On macOS against Linear, project sets, assignee set and
-clear, label apply, replace and clear, and blocks add and remove were exercised
-through ClawBridge on test fixtures, and parent set and clear by a provider probe; local automated acceptance uses isolated
-providers and disposable PostgreSQL.
-Windows checks cover profile privacy, redirected input and a synthetic keyring
-item; account OAuth and notification host transport retain separate platform limits.
+notarized.
 
-See docs/linear.md, docs/notifications.md and docs/reference/api.md for setup and
-behavior. Dated acceptance records and their exact limits live under
-docs/archive/reviews/.
+See docs/onboarding.md, docs/linear.md, docs/reference/api.md and
+docs/operations/backup-and-recovery.md.

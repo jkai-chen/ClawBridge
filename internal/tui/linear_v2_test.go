@@ -102,3 +102,21 @@ func TestLinearV2TUIUnknownContextAndCancel(t *testing.T) {
 		t.Fatal("cancel dispatched or changed screen", source.calls, model.LinearState())
 	}
 }
+
+func TestLinearV2TUIShowsIdentifierOnlyParent(t *testing.T) {
+	model, err := New(testConfig(&fakeAuthority{}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	model.screen = ScreenLinear
+	model.linear.step = "details"
+	issue := linearprovider.IssueV2{Issue: linearprovider.Issue{ID: linearTestTeam, Title: "safe"}, ParentKnown: true, ParentIdentifier: "SYN-4"}
+	model.linear.issueV2, model.linear.issue = &issue, &issue.Issue
+	if view := renderLinear(model); !strings.Contains(view, "Parent ID: SYN-4") || strings.Contains(view, "Parent ID: none") {
+		t.Fatal("identifier-only parent shown as absent", view)
+	}
+	issue.ParentIdentifier = ""
+	if view := renderLinear(model); !strings.Contains(view, "Parent ID: none") {
+		t.Fatal("known absent parent not shown as none", view)
+	}
+}

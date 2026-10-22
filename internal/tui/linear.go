@@ -610,7 +610,12 @@ func renderLinear(m Model) string {
 				labels = "none"
 			}
 		}
-		b.WriteString("\nVerified L2 context\nProject ID: " + value(i.ProjectKnown, i.ProjectID) + "\nParent ID: " + value(i.ParentKnown, i.ParentID) + "\nAssignee ID: " + value(i.AssigneeKnown, i.AssigneeID) + "\nLabel IDs: " + terminalText(labels) + "\n")
+		// Native Linear may report a parent only by its display identifier.
+		parent := i.ParentID
+		if parent == "" {
+			parent = i.ParentIdentifier
+		}
+		b.WriteString("\nVerified L2 context\nProject ID: " + value(i.ProjectKnown, i.ProjectID) + "\nParent ID: " + value(i.ParentKnown, parent) + "\nAssignee ID: " + value(i.AssigneeKnown, i.AssigneeID) + "\nLabel IDs: " + terminalText(labels) + "\n")
 	}
 	if m.linear.next != "" {
 		b.WriteString("\nMore provider rows available: ] next page.\n")

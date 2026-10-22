@@ -553,14 +553,14 @@ func (s *Service) Write(ctx context.Context, scope bus.Request, in WriteInput) (
 	return (ledger{s.cfg.LedgerDirectory, s.cfg.Now}).write(namespace, in.OperationID, ledgerPayload, func() (any, error) {
 		// Last revision check occurs after obtaining the private per-operation lock.
 		if e := s.unchanged(ctx, scope, b); e != nil {
-			return nil, e
+			return nil, notDispatched(e)
 		}
 		fresh, e := s.checkWriteAccess(ctx, scope, b)
 		if e != nil {
-			return nil, e
+			return nil, notDispatched(e)
 		}
 		if fresh.SessionID != access.SessionID {
-			return nil, errors.New("task-board actor changed before dispatch")
+			return nil, notDispatched(errors.New("task-board actor changed before dispatch"))
 		}
 		switch in.Operation {
 		case "create":

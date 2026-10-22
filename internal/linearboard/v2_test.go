@@ -377,3 +377,40 @@ func TestLinearV2ProviderErrorStaysUncertainWhenBindingChanges(t *testing.T) {
 		})
 	}
 }
+
+func TestLinearV2PreDispatchRefusalAllowsSameOperationRetry(t *testing.T) {
+	t.Run("write cancelled inside lock", func(t *testing.T) {
+		s, a, p, scope := testV2(t)
+		ctx, cancel := context.WithCancel(context.Background())
+		a.afterAccess = func(n int) {
+			if n == 3 {
+				cancel()
+			}
+		}
+		title := "task"
+		in := WriteInputV2{WriteInput: WriteInput{Operation: "update", OperationID: "cancel-before-dispatch", IssueID: issueID, Title: &title}}
+		if _, e := s.WriteV2(ctx, scope, in); !errors.Is(e, context.Canceled) || p.writes != 0 {
+			t.Fatal("cancellation before dispatch reported as maybe dispatched", e, p.writes)
+		}
+		a.afterAccess = nil
+		if _, e := s.WriteV2(context.Background(), scope, in); e != nil || p.writes != 1 {
+			t.Fatal("never-dispatched operation ID was burned", e, p.writes)
+		}
+	})
+	t.Run("relation actor revoked inside lock", func(t *testing.T) {
+		s, a, p, scope := testV2(t)
+		p.issues[parentA] = linearprovider.IssueV2{Issue: linearprovider.Issue{ID: parentA, TeamID: otherTeamID, ProjectID: projectB}, ProjectKnown: true, RelationsKnown: true}
+		i := p.issues[issueID]
+		i.RelationsKnown = true
+		p.issues[issueID] = i
+		a.afterAccess = func(n int) { a.deny = n == 2 }
+		in := RelationInputV2{OperationID: "revoked-before-dispatch", Action: "add", Type: "blocks", FromID: issueID, ToID: parentA}
+		if _, e := s.RelationV2(context.Background(), scope, in); e == nil || strings.Contains(e.Error(), "uncertain") || len(p.edges) != 0 {
+			t.Fatal("pre-dispatch refusal reported as maybe dispatched", e, p.edges)
+		}
+		a.afterAccess, a.deny = nil, false
+		if _, e := s.RelationV2(context.Background(), scope, in); e != nil || len(p.edges) != 1 {
+			t.Fatal("never-dispatched operation ID was burned", e, p.edges)
+		}
+	})
+}

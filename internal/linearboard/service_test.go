@@ -21,14 +21,20 @@ const otherTeamID = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
 const issueID = "22222222-2222-3333-4444-555555555555"
 
 type fakeAuthority struct {
-	binding bus.TaskboardBinding
-	calls   int
-	deny    bool
+	binding  bus.TaskboardBinding
+	calls    int
+	deny     bool
+	accesses int
+	onAccess func(int)
 }
 
 func (a *fakeAuthority) Execute(_ context.Context, r bus.Request) (bus.Result, error) {
 	a.calls++
 	if r.Operation == "taskboard_access" {
+		a.accesses++
+		if a.onAccess != nil {
+			a.onAccess(a.accesses)
+		}
 		return bus.Result{Source: "local-authority", Data: bus.TaskboardAccess{WorkspaceID: a.binding.WorkspaceID, ProjectID: a.binding.ProjectID, SessionID: "ses", CanWrite: !a.deny, ProjectRole: "member"}}, nil
 	}
 	if r.Operation != "taskboard_get" {
@@ -176,6 +182,46 @@ func TestLinearProviderErrorStaysUncertainWhenBindingChanges(t *testing.T) {
 	a.binding.Revision--
 	if _, err = service.Write(context.Background(), scope, in); err == nil || !strings.Contains(err.Error(), "uncertain") || p.writes != 1 {
 		t.Fatal("uncertain operation was not left pending", err, p.writes)
+	}
+}
+func TestLinearLedgerReleasesOnlyNeverDispatchedFailures(t *testing.T) {
+	l := ledger{dir: filepath.Join(t.TempDir(), "ledger")}
+	path := filepath.Join(l.dir, digest("ns"), digest("op")+".json")
+	refused := errors.New("actor changed before dispatch")
+	pendingSeen := false
+	_, err := l.write("ns", "op", "payload", func() (any, error) {
+		_, e := os.Stat(path)
+		pendingSeen = e == nil
+		return nil, notDispatched(refused)
+	})
+	if err != refused || !pendingSeen {
+		t.Fatal("pre-dispatch refusal lost or not durably pending during dispatch", err, pendingSeen)
+	}
+	if _, e := os.Stat(path); !os.IsNotExist(e) {
+		t.Fatal("never-dispatched record retained", e)
+	}
+	// Only the closure's own top-level marker releases the record; a marker
+	// nested inside another error, or any plain error, stays uncertain.
+	for _, failure := range []error{errors.Join(errors.New("provider"), notDispatched(refused)), errors.New("provider")} {
+		if _, err = l.write("ns", "op", "payload", func() (any, error) { return nil, failure }); err == nil || !strings.Contains(err.Error(), "outcome uncertain") {
+			t.Fatal("dispatched failure released", err)
+		}
+		if _, err = l.write("ns", "op", "payload", func() (any, error) { t.Fatal("pending replayed"); return nil, nil }); err == nil || !strings.Contains(err.Error(), "uncertain") {
+			t.Fatal("pending operation not refused", err)
+		}
+		_ = os.Remove(path)
+	}
+}
+func TestLinearPreDispatchRefusalAllowsSameOperationRetry(t *testing.T) {
+	service, a, p, scope := testService(t)
+	a.onAccess = func(n int) { a.deny = n == 2 }
+	title := "task"
+	in := WriteInput{Operation: "create", OperationID: "retry-after-refusal", Title: &title}
+	if _, err := service.Write(context.Background(), scope, in); err == nil || strings.Contains(err.Error(), "uncertain") || p.writes != 0 {
+		t.Fatal("pre-dispatch refusal reported as maybe dispatched", err, p.writes)
+	}
+	if receipt, err := service.Write(context.Background(), scope, in); err != nil || receipt == nil || p.writes != 1 {
+		t.Fatal("never-dispatched operation ID was burned", receipt, err, p.writes)
 	}
 }
 func TestLinearScopeAndCursorRevisionFence(t *testing.T) {

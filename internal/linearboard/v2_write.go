@@ -339,30 +339,30 @@ func (s *Service) WriteV2(ctx context.Context, scope bus.Request, in WriteInputV
 	}
 	return l.write(namespace, in.OperationID, payload, func() (any, error) {
 		if e := s.unchangedV2(ctx, scope, b); e != nil {
-			return nil, e
+			return nil, notDispatched(e)
 		}
 		fresh, e := s.writeAccessV2(ctx, scope, b)
 		if e != nil {
-			return nil, e
+			return nil, notDispatched(e)
 		}
 		if fresh.SessionID != access.SessionID {
-			return nil, errors.New("task-board actor changed before dispatch")
+			return nil, notDispatched(errors.New("task-board actor changed before dispatch"))
 		}
 		if e = refreshWriteProofV2(ctx, p, p2, b, in, team, project, current, legacy); e != nil {
-			return nil, e
+			return nil, notDispatched(e)
 		}
 		if e = s.unchangedV2(ctx, scope, b); e != nil {
-			return nil, e
+			return nil, notDispatched(e)
 		}
 		fresh, e = s.writeAccessV2(ctx, scope, b)
 		if e != nil {
-			return nil, e
+			return nil, notDispatched(e)
 		}
 		if fresh.SessionID != access.SessionID {
-			return nil, errors.New("task-board actor changed before dispatch")
+			return nil, notDispatched(errors.New("task-board actor changed before dispatch"))
 		}
 		if e = ctx.Err(); e != nil {
-			return nil, e
+			return nil, notDispatched(e)
 		}
 		var receipt any
 		switch in.Operation {

@@ -21,6 +21,17 @@ var operationPattern = regexp.MustCompile(`\A[A-Za-z0-9._-]{1,128}\z`)
 // after a provider error must never replace the uncertain result.
 var errBindingChangedAfterProviderError = errors.New("task-board binding changed after the provider error")
 
+// notDispatchedError is returned by a dispatch closure only for a failure
+// before its first provider mutation call could start. The ledger then
+// removes the pending record it wrote for this call, so the same
+// operation_id can be retried. It must never wrap an error from, or after,
+// a provider mutation call.
+type notDispatchedError struct{ err error }
+
+func (e notDispatchedError) Error() string { return e.err.Error() }
+func (e notDispatchedError) Unwrap() error { return e.err }
+func notDispatched(err error) error        { return notDispatchedError{err} }
+
 type ledgerRecord struct {
 	Outcome   string          `json:"outcome,omitempty"`
 	Version   int             `json:"version"`
@@ -42,6 +53,7 @@ func digest(v any) string {
 
 // A pending record is durable before dispatch. It is never automatically cleared
 // or retried: process loss and unknown provider outcomes require operator readback.
+// The only exception is a closure failure explicitly marked notDispatched.
 func (l ledger) write(profile, operationID string, payload any, dispatch func() (any, error)) (any, error) {
 	if !operationPattern.MatchString(operationID) {
 		return nil, errors.New("operation_id requires 1–128 ASCII identifier characters")
@@ -89,10 +101,16 @@ func (l ledger) write(profile, operationID string, payload any, dispatch func() 
 		return nil, err
 	}
 	receipt, err := dispatch()
-	var receiptError *ReceiptError
-	if err != nil && receipt == nil && errors.As(err, &receiptError) {
-		return nil, receiptError
+	if never, ok := err.(notDispatchedError); ok && receipt == nil {
+		// This call created the record under the exclusive lock and nothing
+		// was dispatched, so removing it restores the prior absent state. A
+		// failed removal leaves it pending, which still fails closed.
+		if os.Remove(path) != nil || syncDirectory(directory) != nil {
+			return nil, errors.New("operation ledger could not release a never-dispatched operation; inspect before retrying")
+		}
+		return nil, never.err
 	}
+	var receiptError *ReceiptError
 	if err != nil && (receipt == nil || !errors.As(err, &receiptError)) {
 		message := "Linear operation may have been dispatched; outcome uncertain, inspect Linear before retrying"
 		if errors.Is(err, errBindingChangedAfterProviderError) {

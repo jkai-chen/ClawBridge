@@ -56,8 +56,21 @@ func TestLinearV2ProofsRefreshInsideOperationLockBeforeMutation(t *testing.T) {
 			if p.writes != 0 {
 				t.Fatal("provider mutation occurred after revocation/scope change")
 			}
-			if _, e := s.WriteV2(context.Background(), scope, in); e == nil || p.writes != 0 {
-				t.Fatal("pending operation replayed")
+			if entries, _ := os.ReadDir(filepath.Join(s.cfg.LedgerDirectory, digest(digest([]string{s.cfg.Authority, a.b.WorkspaceID, a.b.ProjectID, a.actor})))); len(entries) != 0 {
+				t.Fatal("never-dispatched refusal left a pending record", entries)
+			}
+			// The same operation ID is re-evaluated against the now-current
+			// state: still-invalid intent stays refused, valid intent dispatches once.
+			_, e := s.WriteV2(context.Background(), scope, in)
+			switch mode {
+			case "member revoked", "parent unavailable":
+				if e == nil || p.writes != 0 {
+					t.Fatal("refreshed refusal was bypassed on retry", e)
+				}
+			default:
+				if e != nil || p.writes != 1 {
+					t.Fatal("never-dispatched operation ID was burned", e, p.writes)
+				}
 			}
 		})
 	}

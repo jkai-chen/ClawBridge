@@ -60,27 +60,35 @@ jobs:
       - name: Native Windows CLI-owned stdin regressions
         shell: pwsh
         run: go test ./internal/cli -run '^TestLinearImportReader' -count=1
+      # Each step from here reports on its own; the job still fails if any does.
+      - name: Guided setup typed into a real Windows console (ConPTY)
+        if: ${{ !cancelled() }}
+        shell: pwsh
+        run: go test ./integration -run '^TestWindowsGuidedSetupConsoleInput$' -count=1 -v
+      - name: Windows PowerShell 5.1 installer fixtures
+        if: ${{ !cancelled() }}
+        shell: powershell
+        run: .\scripts\test_install.ps1
+      - name: PowerShell 7 installer fixtures
+        if: ${{ !cancelled() }}
+        shell: pwsh
+        run: .\scripts\test_install.ps1
+      - name: Independent Windows PowerShell 5.1 installer probes
+        if: ${{ !cancelled() }}
+        shell: powershell
+        run: powershell -NoProfile -File integration/release_fixtures/install_windows_probe.ps1
+      - name: Independent PowerShell 7 installer probes
+        if: ${{ !cancelled() }}
+        shell: pwsh
+        run: pwsh -NoProfile -File integration/release_fixtures/install_windows_probe.ps1
+      # Last, so a failure here never hides the installer and console steps.
       # Under the user profile, as for a real user: the runner's own TEMP is
       # outside it, with a different ACL.
       - name: Native Windows notify, setup and CLI tests under the user profile
+        if: ${{ !cancelled() }}
         shell: pwsh
         run: |
           $env:TEMP = Join-Path $env:LOCALAPPDATA 'Temp'
           $env:TMP = $env:TEMP
           $null = New-Item -ItemType Directory -Force -Path $env:TEMP
           go test ./internal/notify ./internal/setup ./internal/cli -count=1
-      - name: Guided setup typed into a real Windows console (ConPTY)
-        shell: pwsh
-        run: go test ./integration -run '^TestWindowsGuidedSetupConsoleInput$' -count=1 -v
-      - name: Windows PowerShell 5.1 installer fixtures
-        shell: powershell
-        run: .\scripts\test_install.ps1
-      - name: PowerShell 7 installer fixtures
-        shell: pwsh
-        run: .\scripts\test_install.ps1
-      - name: Independent Windows PowerShell 5.1 installer probes
-        shell: powershell
-        run: powershell -NoProfile -File integration/release_fixtures/install_windows_probe.ps1
-      - name: Independent PowerShell 7 installer probes
-        shell: pwsh
-        run: pwsh -NoProfile -File integration/release_fixtures/install_windows_probe.ps1

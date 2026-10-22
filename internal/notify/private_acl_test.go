@@ -1,6 +1,9 @@
 package notify
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestPrivateACLAcceptsUserProfileEntriesOnly(t *testing.T) {
 	const user = "S-1-5-21-1000-2000-3000-1001"
@@ -43,8 +46,17 @@ func TestPrivateOwnerAcceptsAdministratorsOnlyWhenElevatedAsOne(t *testing.T) {
 		"system":                          {sidLocalSystem, true, false},
 		"unreadable owner":                {"", true, false},
 	} {
-		if err := privateOwner(c.owner, user, c.elevated); (err == nil) != c.ok {
+		if err := privateOwner(`C:\state`, c.owner, user, c.elevated); (err == nil) != c.ok {
 			t.Errorf("%s: accepted=%v, want %v", name, err == nil, c.ok)
 		}
+	}
+	// A non-elevated session says why and what to do; others keep the
+	// generic refusal.
+	err := privateOwner(`C:\state`, sidAdministrators, user, false)
+	if err == nil || !strings.Contains(err.Error(), "created by an elevated (administrator) session; delete C:\\state or run elevated") {
+		t.Fatal("non-elevated refusal does not explain itself", err)
+	}
+	if err = privateOwner(`C:\state`, "S-1-5-21-1000-2000-3000-1002", user, false); err == nil || strings.Contains(err.Error(), "elevated") {
+		t.Fatal("foreign owner given the elevated-session hint", err)
 	}
 }

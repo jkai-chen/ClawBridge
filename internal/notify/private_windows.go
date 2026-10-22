@@ -42,7 +42,7 @@ func checkPrivate(path string, _ os.FileInfo) error {
 		// not a filtered (non-elevated) token where the group is deny-only.
 		elevated, _ = windows.Token(0).IsMember(admins)
 	}
-	if err = privateOwner(owner.String(), u.User.Sid.String(), elevated); err != nil {
+	if err = privateOwner(path, owner.String(), u.User.Sid.String(), elevated); err != nil {
 		return err
 	}
 	dacl, _, err := sd.DACL()

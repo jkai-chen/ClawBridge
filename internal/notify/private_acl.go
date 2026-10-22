@@ -1,6 +1,9 @@
 package notify
 
-import "errors"
+import (
+	"errors"
+	"fmt"
+)
 
 // Well-known SIDs and ACE fields used by the Windows private-state check.
 const (
@@ -24,10 +27,12 @@ type aclEntry struct {
 // and take ownership of any file, so it grants no access the user lacks; a
 // non-elevated or non-admin process never accepts it, because the group's
 // owner then is someone else who could have planted the state.
-func privateOwner(owner, user string, elevatedAdministrator bool) error {
+func privateOwner(path, owner, user string, elevatedAdministrator bool) error {
 	switch {
 	case owner != "" && owner == user:
 	case owner == sidAdministrators && elevatedAdministrator:
+	case owner == sidAdministrators:
+		return fmt.Errorf("notification state was created by an elevated (administrator) session; delete %s or run elevated", path)
 	default:
 		return errors.New("notification state owner mismatch")
 	}

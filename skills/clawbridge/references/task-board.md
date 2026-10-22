@@ -153,8 +153,10 @@ are removed, `[]` clears it, and omission preserves it. Review existing labels
 before replacement, including labels maintained by people, and send the labels
 you read as `expected_label_ids` (`[]` if there were none). If they changed, the
 update is refused and nothing is sent; re-read and use a new `operation_id`.
-Use only label IDs returned by scoped label discovery, team or workspace; both
-need eligibility proof before they apply. A label's name does not prove its
+Use only label IDs returned by scoped label discovery for the issue's own team,
+team or workspace; both need eligibility proof before they apply. On native
+Linear that proof comes from Linear's documented list filters, so a label
+discovered for another team is refused even if the names match. A label's name does not prove its
 team, and a global user record does not prove membership in the issue's team.
 
 Check both issues before adding a dependency or parent. Their effective project

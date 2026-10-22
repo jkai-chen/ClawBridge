@@ -9,8 +9,8 @@ The [L2 extension](design/linear-migration.md) adds project sets, labels,
 dependencies, parents and explicit assignment in current source. Its
 [independent automated acceptance](archive/reviews/LINEAR-L2-REVIEW.md) passed;
 these additions are not in the installed L1 build or a published release. Native
-reads were exercised separately. Label eligibility and parent preservation remain
-explicit native capability limits; new live mutation effects are unverified.
+reads were exercised separately. Native label eligibility is a supported capability
+(below); parent preservation remains an explicit native capability limit.
 
 ## Connect and choose a board
 
@@ -158,6 +158,15 @@ clawbridge linear members --profile PROFILE_ID --team TEAM_UUID --limit 50
 `linear labels` lists the team's own labels and workspace labels available to it.
 A workspace label can be applied under the same eligibility proof as a team
 label; a label without that proof is refused.
+
+Native Linear label rows carry no team or group field. Eligibility on native
+Linear therefore relies on Linear's documented list filters, pinned by schema:
+ClawBridge asks for one team's labels with archived items and label groups
+explicitly excluded, and accepts a label only if it is in the list for the
+issue's own team, is not retired (`retiredAt`) and is not archived. If the
+advertised filters change in name, type, default or documented meaning, the
+capability turns off and labels are refused again. Linear also rejects
+applying a label group itself.
 
 | Explicit field | Meaning |
 | --- | --- |

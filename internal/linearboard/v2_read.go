@@ -301,8 +301,9 @@ func (s *Service) IssuesV2(ctx context.Context, scope bus.Request, in IssuesInpu
 	}
 	pairs := v.Pairs
 	if in.LabelID != "" {
-		// A team label selects its one team; a workspace label spans every
-		// allowed team that lists it.
+		// A team label selects its one team; a workspace label, or a row
+		// scoped only by the provider's team filter, spans every allowed team
+		// whose listing returns it.
 		teams := map[string]bool{}
 		global, scoped := false, false
 		for _, id := range SortedTeams(b.LinearTeamIDs) {
@@ -312,8 +313,9 @@ func (s *Service) IssuesV2(ctx context.Context, scope bus.Request, in IssuesInpu
 			}
 			if label != nil {
 				teams[id] = true
-				global = global || label.Global
-				scoped = scoped || !label.Global
+				spans := label.Global || label.FilterScoped
+				global = global || spans
+				scoped = scoped || !spans
 			}
 		}
 		if len(teams) == 0 {

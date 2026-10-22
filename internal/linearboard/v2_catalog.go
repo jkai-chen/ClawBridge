@@ -8,12 +8,19 @@ import (
 	"clawbridge/internal/linearprovider"
 )
 
-// checkLabelV2 accepts a label verified to be the team's own or a workspace
-// label (explicit null team) listed for that team; unscoped rows and other
-// teams' labels are refused.
+// checkLabelV2 accepts a label verified to be the team's own, a workspace
+// label (explicit null team) listed for that team, or a row the provider's
+// pinned team filter returned for that team; unscoped rows and other teams'
+// labels are refused. It is only ever applied to rows of the team's listing.
 func checkLabelV2(label linearprovider.Label, team string) error {
 	if !linearprovider.ValidID(label.ID) {
 		return errors.New("label team scope is not verified")
+	}
+	if label.FilterScoped {
+		if label.TeamID != "" || label.Global {
+			return errors.New("label team scope is contradictory")
+		}
+		return nil
 	}
 	if label.Global {
 		if label.TeamID != "" {

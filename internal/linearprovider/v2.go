@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"regexp"
 	"sort"
+	"strings"
 	"unicode/utf8"
 )
 
@@ -30,13 +31,17 @@ type IssueV2 struct {
 	RelationsKnown bool       `json:"relations_known"`
 }
 type Label struct {
-	ID               string `json:"id"`
-	Name             string `json:"name"`
-	TeamID           string `json:"team_id,omitempty"`
-	Archived         bool   `json:"archived"`
-	Group            bool   `json:"group"`
-	Global           bool   `json:"global"`
-	EligibilityKnown bool   `json:"eligibility_known"`
+	ID       string `json:"id"`
+	Name     string `json:"name"`
+	TeamID   string `json:"team_id,omitempty"`
+	Archived bool   `json:"archived"`
+	Group    bool   `json:"group"`
+	Global   bool   `json:"global"`
+	// FilterScoped marks a row whose scope comes from the provider's pinned
+	// team filter: it is available to the queried team (team or workspace
+	// label; the row itself carries no team). TeamID stays empty.
+	FilterScoped     bool `json:"team_filter_scoped,omitempty"`
+	EligibilityKnown bool `json:"eligibility_known"`
 }
 type Member struct {
 	ID               string `json:"id"`
@@ -56,6 +61,7 @@ type Capabilities struct {
 	ParentPreservesDestination bool `json:"parent_preserves_destination"`
 	RelationAdd                bool `json:"relation_add"`
 	RelationRemove             bool `json:"relation_remove"`
+	LabelEligibilityByFilter   bool `json:"label_eligibility_by_filter"`
 }
 type CreateInputV2 struct {
 	CreateInput
@@ -197,6 +203,8 @@ func constrainedValue(raw any, value any) bool {
 		kind = "integer"
 	case []string:
 		kind = "array"
+	case bool:
+		kind = "boolean"
 	}
 	selected := typedVariant(raw, kind)
 	if selected == nil && kind == "integer" {
@@ -395,6 +403,7 @@ func (p *Provider) Capabilities(context.Context) (Capabilities, error) {
 			capabilities.ParentPreservesDestination = true
 		}
 	}
+	capabilities.LabelEligibilityByFilter = capabilities.Labels && p.labelFilterProof()
 	for _, action := range []string{"add", "remove"} {
 		available := true
 		for _, kind := range []string{"blocks", "related"} {
@@ -639,6 +648,39 @@ func explicitBool(m map[string]any, keys ...string) (bool, bool, error) {
 	}
 	return result, known, nil
 }
+
+// labelFilterProof reports whether list_issue_labels advertises exactly the
+// documented filters that make eligibility provable without per-row team or
+// group fields: a team scope, and includeArchived/includeGroups booleans that
+// default to false. Any drift in names, types, defaults or the documented
+// meaning disables it, and labels then stay unproven as before. This is an
+// inference from Linear's documented list filters, pinned by schema.
+func (p *Provider) labelFilterProof() bool {
+	t := p.tools["list_issue_labels"]
+	if t == nil || !strings.Contains(t.Description, "retiredAt") || !strings.Contains(t.Description, "cannot be applied") {
+		return false
+	}
+	props, _, e := schema(t)
+	if e != nil {
+		return false
+	}
+	if team, ok := props["team"].(map[string]any); !ok || team["type"] != "string" {
+		return false
+	}
+	for name, meaning := range map[string][]string{"includeArchived": {"Include archived"}, "includeGroups": {"Include label groups", "isGroup", "cannot be applied directly"}} {
+		filter, ok := props[name].(map[string]any)
+		if !ok || filter["type"] != "boolean" || filter["default"] != false {
+			return false
+		}
+		text, _ := filter["description"].(string)
+		for _, want := range meaning {
+			if !strings.Contains(text, want) {
+				return false
+			}
+		}
+	}
+	return true
+}
 func (p *Provider) Labels(ctx context.Context, team string, o PageOptions) (Page[Label], error) {
 	if !ValidID(team) {
 		return Page[Label]{}, fail("invalid")
@@ -648,6 +690,10 @@ func (p *Provider) Labels(ctx context.Context, team string, o PageOptions) (Page
 		return Page[Label]{}, e
 	}
 	args = append(args, a(team, "team", "teamId"))
+	byFilter := p.labelFilterProof()
+	if byFilter {
+		args = append(args, arg{[]string{"includeArchived"}, false, "boolean"}, arg{[]string{"includeGroups"}, false, "boolean"})
+	}
 	m, e := p.v2Call(ctx, []string{"list_issue_labels"}, args...)
 	if e != nil {
 		return Page[Label]{}, e
@@ -710,6 +756,19 @@ func (p *Provider) Labels(ctx context.Context, team string, o PageOptions) (Page
 		group, groupKnown, e := explicitBool(row, "isGroup", "group")
 		if e != nil {
 			return Page[Label]{}, e
+		}
+		if byFilter {
+			// includeGroups=false and includeArchived=false were sent
+			// explicitly. A group row contradicts the filter; a row without
+			// its own team is available to the queried team by the filter.
+			if group {
+				return Page[Label]{}, fail("scope_mismatch")
+			}
+			groupKnown, archivedKnown = true, true
+			if !scopeKnown {
+				label.FilterScoped = true
+				scopeKnown = true
+			}
 		}
 		label.Archived = archived
 		label.Group = group

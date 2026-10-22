@@ -203,7 +203,19 @@ inside the operation lock; a mismatch inside the lock is a terminal
 refused-before-dispatch result for that operation ID. The expectation is part of
 the ledger payload digest and never alters the replacement set. No group or
 archived label, and no label without supported eligibility proof, may be newly
-applied; a workspace label needs the same proof as a team label. Membership must prove the canonical user belongs to
+applied; a workspace label needs the same proof as a team label. On native
+Linear, whose label rows carry no team or group field, the proof is the
+owner-approved "label eligibility by filter" capability: an inference from
+Linear's documented `list_issue_labels` filters, pinned by schema (a string
+`team`, and boolean `includeArchived`/`includeGroups` defaulting to false, with
+their documented meanings and the documented `retiredAt` rule). Under it the
+provider sends both filters as false explicitly; a returned row is eligible for
+the queried team unless it carries a non-null `retiredAt` or `archivedAt`, an
+absent `retiredAt` means not retired, and a group row contradicts the filter
+and fails the page. Such rows are filter-scoped, never given a fabricated team;
+a label is applicable only from the filtered list of the issue's own team, and
+in issue filtering a label listed for several allowed teams spans them. Any
+schema drift disables the capability. Membership must prove the canonical user belongs to
 the effective issue team; reject known inactive users and require supported
 eligibility proof rather than treating unknown as active.
 

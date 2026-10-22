@@ -203,8 +203,14 @@ func TestUninstallRemovesOnlyOurFiles(t *testing.T) {
 	if r = one(Uninstall(targets, false)); r.Changed || r.Refused == "" {
 		t.Fatal("changed file removed without --force", r)
 	}
-	if r = one(Uninstall(targets, true)); !r.Changed {
+	if r = one(Uninstall(targets, true)); !r.Changed || r.Backup == "" {
 		t.Fatal("--force uninstall", r)
+	}
+	if b, _ := os.ReadFile(filepath.Join(r.Backup, "SKILL.md")); string(b) != "my edits" {
+		t.Fatal("--force uninstall deleted the edited file instead of backing it up")
+	}
+	if entries, _ := os.ReadDir(r.Backup); len(entries) != 1 {
+		t.Fatal("unedited files were backed up too", entries)
 	}
 	if _, err := os.Stat(filepath.Join(parent, Name)); !os.IsNotExist(err) {
 		t.Fatal("empty skill directory left behind", err)

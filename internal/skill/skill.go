@@ -456,8 +456,9 @@ func writeFile(p string, b []byte) error {
 }
 
 // Uninstall removes only the regular files our trusted marker lists. A
-// changed file is kept unless force is set. Files we did not install are
-// always kept, and a link or an untrusted marker refuses the uninstall.
+// changed file refuses the uninstall unless force is set, which moves it to a
+// backup instead of deleting it. Files we did not install are always kept,
+// and a link or an untrusted marker refuses the uninstall.
 func Uninstall(targets []Target, force bool) ([]Result, error) {
 	out := []Result{}
 	for _, t := range targets {
@@ -483,6 +484,9 @@ func Uninstall(targets []Target, force bool) ([]Result, error) {
 				names = append(names, p)
 			}
 			names = append(names, Marker)
+			if r.Backup, err = backupModified(t.Dir, s.Modified); err != nil {
+				return out, err
+			}
 			for _, p := range names {
 				if regularUnder(t.Dir, p, false) != nil {
 					continue
@@ -500,6 +504,31 @@ func Uninstall(targets []Target, force bool) ([]Result, error) {
 		out = append(out, r)
 	}
 	return out, nil
+}
+
+// backupModified moves the changed files that still exist into a new backup
+// beside the skills directory, keeping their paths, and returns the backup.
+func backupModified(dir string, modified []string) (string, error) {
+	backup := ""
+	for _, p := range modified {
+		if regularUnder(dir, p, false) != nil {
+			continue
+		}
+		if backup == "" {
+			var err error
+			if backup, err = backupPath(dir); err != nil {
+				return "", err
+			}
+		}
+		target := filepath.Join(backup, filepath.FromSlash(p))
+		if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+			return backup, err
+		}
+		if err := os.Rename(filepath.Join(dir, filepath.FromSlash(p)), target); err != nil {
+			return backup, err
+		}
+	}
+	return backup, nil
 }
 
 // removeEmptyDirs removes the directories our files lived in, deepest first,

@@ -97,8 +97,10 @@ files, other files, links or an untrusted marker is first moved, whole, to
 the agent does not load it), and the JSON result reports that path.
 `clawbridge skill status` compares the installed version with the binary's, and
 `clawbridge doctor` warns when they differ. `clawbridge skill uninstall` removes
-only the files the trusted marker lists and keeps any file you added; it refuses,
-even with `--force`, when the marker is untrusted or the folder holds links.
+only the files the trusted marker lists and keeps any file you added. An edited
+file refuses the uninstall; `--force` moves it to such a backup instead of
+deleting it. It refuses, even with `--force`, when the marker is untrusted or the
+folder holds links.
 
 ## Build from source
 

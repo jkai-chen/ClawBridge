@@ -32,7 +32,7 @@ Commands: setup --local, project create SLUG, register [NAME], sessions, send TO
           inbox, inbox-status [--after N], mark-read ID..., reply ID BODY --operation-id ID, update, retire, history, whoami, status ID,
           notification-status [--after N], notification-policy --policy accept|hold|refuse,
           assignment propose [--issue-uuid UUID --issue-identifier ID] [--task-role ROLE] [--scope-repo REMOTE] [--scope-path PATTERN]...,
-          assignment confirm SESSION --revision REV [--allow-overlap], assignment release [SESSION] --revision REV,
+          assignment confirm TARGET_SESSION --revision REV [--allow-overlap], assignment release [TARGET_SESSION] --revision REV,
           project coordinator-set SESSION, project coordinator-clear,
           sessions [--issue ID] [--scope-path PATH] [--assignment-state proposed|confirmed],
           host-status|host-wait --adapter codex --endpoint unix:///absolute/socket --thread UUID,
@@ -412,6 +412,18 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	case "assignment":
 		if len(rest) == 0 {
 			return errors.New("usage: assignment propose|confirm|release ...")
+		}
+		// The positional argument names a session, never an assignment ID.
+		synopsis := map[string]string{
+			"propose": "usage: clawbridge assignment propose [flags]\n  Proposes an assignment for your own session.",
+			"confirm": "usage: clawbridge assignment confirm TARGET_SESSION --revision REV [--allow-overlap]\n  TARGET_SESSION is the name or ID of the session whose proposed assignment\n  you confirm, not an assignment ID; only the coordinator session confirms.",
+			"release": "usage: clawbridge assignment release [TARGET_SESSION] --revision REV\n  TARGET_SESSION is the name or ID of the session whose assignment you\n  release, not an assignment ID; omit it to release your own.",
+		}
+		if text, ok := synopsis[rest[0]]; ok {
+			f.Usage = func() {
+				fmt.Fprintln(f.Output(), text)
+				f.PrintDefaults()
+			}
 		}
 		switch rest[0] {
 		case "propose":

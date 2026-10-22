@@ -1,7 +1,10 @@
 package cli
 
 import (
+	"bytes"
+	"context"
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -41,4 +44,18 @@ func TestCLIAssignmentRoundTrip(t *testing.T) {
 	}
 	rejectCLI(t, "--session", "eng", "--instance", "eng-i", "assignment", "bogus")
 	rejectCLI(t, "--session", "coord", "--instance", "coord-i", "project", "coordinator-set")
+}
+
+// The positional argument of confirm and release names the target session,
+// which help must say: it is not an assignment ID.
+func TestAssignmentHelpNamesTheTargetSession(t *testing.T) {
+	isolated(t)
+	for _, sub := range []string{"confirm", "release"} {
+		var out, errs bytes.Buffer
+		_ = Run(context.Background(), []string{"assignment", sub, "--help"}, &out, &errs)
+		help := errs.String()
+		if !strings.Contains(help, "assignment "+sub+" ") || !strings.Contains(help, "TARGET_SESSION") || !strings.Contains(help, "not an assignment ID") || !strings.Contains(help, "-revision") {
+			t.Fatalf("%s help does not explain its positional argument:\n%s", sub, help)
+		}
+	}
 }

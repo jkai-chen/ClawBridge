@@ -178,7 +178,9 @@ across machines.
 A write is accepted only on evidence that it landed where it was asked to:
 
 - A comment's receipt must name its issue, or a read of that issue's comments
-  must find it.
+  must find it. That read covers at most 200 comments in Linear's default
+  order, whose direction Linear does not document, so on an issue with more
+  comments a new comment's receipt can end uncertain; read the issue back.
 - An edge must be named by Linear's response or seen on a read afterwards (a
   removed edge must have been visible before and be gone).
 - A created or updated issue's labels, assignee and state must match what was

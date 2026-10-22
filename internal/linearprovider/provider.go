@@ -1451,7 +1451,10 @@ func commentParent(m map[string]any) (string, bool, error) {
 	return parent, known, nil
 }
 
-// commentPages bounds the read that confirms a comment's issue.
+// commentPages bounds the read that confirms a comment's issue: 4 pages of 50
+// in Linear's default order. list_comments documents orderBy fields but not
+// their direction, so no order is requested; on an issue with more comments
+// the receipt can stay unverified (see docs/linear.md).
 const commentPages = 4
 
 func (p *Provider) commentOnIssue(ctx context.Context, issue, comment string) (bool, error) {

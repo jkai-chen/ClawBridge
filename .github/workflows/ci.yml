@@ -60,6 +60,18 @@ jobs:
       - name: Native Windows CLI-owned stdin regressions
         shell: pwsh
         run: go test ./internal/cli -run '^TestLinearImportReader' -count=1
+      # Under the user profile, as for a real user: the runner's own TEMP is
+      # outside it, with a different ACL.
+      - name: Native Windows notify, setup and CLI tests under the user profile
+        shell: pwsh
+        run: |
+          $env:TEMP = Join-Path $env:LOCALAPPDATA 'Temp'
+          $env:TMP = $env:TEMP
+          $null = New-Item -ItemType Directory -Force -Path $env:TEMP
+          go test ./internal/notify ./internal/setup ./internal/cli -count=1
+      - name: Guided setup typed into a real Windows console (ConPTY)
+        shell: pwsh
+        run: go test ./integration -run '^TestWindowsGuidedSetupConsoleInput$' -count=1 -v
       - name: Windows PowerShell 5.1 installer fixtures
         shell: powershell
         run: .\scripts\test_install.ps1

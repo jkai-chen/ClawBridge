@@ -10,7 +10,7 @@ import (
 
 // ExecuteV2 is the closed native adapter used by additive, scope-pinned MCP tools.
 func (s *Service) ExecuteV2(ctx context.Context, scope bus.Request, operation string, args map[string]any) (any, error) {
-	allowed := map[string][]string{"binding": {}, "context": {}, "issues": {"limit", "cursor", "label_id"}, "issue": {"id"}, "labels": {"team_id", "limit", "cursor"}, "members": {"team_id", "limit", "cursor"}, "create": {"title", "description", "state_id", "operation_id", "team_id", "project_id", "label_ids", "parent_id", "assignee_id"}, "update": {"id", "title", "description", "state_id", "operation_id", "project_id", "label_ids", "parent_id", "assignee_id"}, "comment": {"id", "body", "operation_id"}, "relation_add": {"from_id", "to_id", "type", "operation_id"}, "relation_remove": {"from_id", "to_id", "type", "operation_id"}}
+	allowed := map[string][]string{"binding": {}, "context": {}, "issues": {"limit", "cursor", "label_id"}, "issue": {"id"}, "labels": {"team_id", "limit", "cursor"}, "members": {"team_id", "limit", "cursor"}, "create": {"title", "description", "state_id", "operation_id", "team_id", "project_id", "label_ids", "parent_id", "assignee_id"}, "update": {"id", "title", "description", "state_id", "operation_id", "project_id", "label_ids", "expected_label_ids", "parent_id", "assignee_id"}, "comment": {"id", "body", "operation_id"}, "relation_add": {"from_id", "to_id", "type", "operation_id"}, "relation_remove": {"from_id", "to_id", "type", "operation_id"}}
 	keys, ok := allowed[operation]
 	if !ok {
 		return nil, errors.New("unsupported task-board V2 operation")
@@ -30,7 +30,7 @@ func (s *Service) ExecuteV2(ctx context.Context, scope bus.Request, operation st
 			}
 			continue
 		}
-		if key == "label_ids" {
+		if key == "label_ids" || key == "expected_label_ids" {
 			if _, e := labelArgumentV2(value); e != nil {
 				return nil, e
 			}
@@ -87,6 +87,13 @@ func (s *Service) ExecuteV2(ctx context.Context, scope bus.Request, operation st
 				return nil, e
 			}
 			in.Labels = linearprovider.Field[[]string]{Present: true, Value: ids}
+		}
+		if v, ok := args["expected_label_ids"]; ok {
+			ids, e := labelArgumentV2(v)
+			if e != nil {
+				return nil, e
+			}
+			in.ExpectedLabels = linearprovider.Field[[]string]{Present: true, Value: ids}
 		}
 		return s.WriteV2(ctx, scope, in)
 	}

@@ -48,11 +48,14 @@ type IssuesInputV2 struct {
 // input. Present distinguishes omitted fields from explicit null/empty values.
 type WriteInputV2 struct {
 	WriteInput
-	TeamID   string
-	Project  linearprovider.Field[*string]
-	Labels   linearprovider.Field[[]string]
-	Parent   linearprovider.Field[*string]
-	Assignee linearprovider.Field[*string]
+	TeamID  string
+	Project linearprovider.Field[*string]
+	Labels  linearprovider.Field[[]string]
+	// ExpectedLabels is the complete label set the caller last read. It is
+	// required for, and only valid with, an update that replaces labels.
+	ExpectedLabels linearprovider.Field[[]string]
+	Parent         linearprovider.Field[*string]
+	Assignee       linearprovider.Field[*string]
 }
 type RelationInputV2 struct{ OperationID, Action, Type, FromID, ToID string }
 type ReceiptV2 struct {

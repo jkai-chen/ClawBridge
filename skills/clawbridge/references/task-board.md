@@ -150,7 +150,9 @@ Use canonical IDs from scoped provider discovery. Preserve omitted fields;
 clear or replace them only when the assignment requests that exact change.
 Supplied label IDs replace the complete set: known labels omitted from that set
 are removed, `[]` clears it, and omission preserves it. Review existing labels
-before replacement, including labels maintained by people. A label's name does
+before replacement, including labels maintained by people, and send the labels
+you read as `expected_label_ids` (`[]` if there were none). If they changed, the
+update is refused and nothing is sent; re-read and use a new `operation_id`. A label's name does
 not prove its team, and a global user record does not prove membership in the
 issue's team.
 

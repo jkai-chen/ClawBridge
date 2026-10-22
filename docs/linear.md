@@ -159,12 +159,16 @@ clawbridge linear members --profile PROFILE_ID --team TEAM_UUID --limit 50
 | --- | --- |
 | `--linear-project UUID` | Create destination or requested project move; update preserves the issue's team |
 | Repeated `--label UUID` | Complete replacement label set, including removal of existing omitted labels |
+| Update `--expect-label UUID` (repeat) or `--expect-no-labels` | Required with `--label` or `--clear-labels`: the complete label set the issue had when you last read it. A mismatch refuses the update; nothing is sent |
 | `--parent UUID` | Scoped, acyclic parent; refused, including `--clear-parent`, until the provider has a reviewed destination-preservation proof |
 | `--assignee UUID` | Explicit eligible team member; no agent claim or permission change |
 | Update `--clear-project`, `--clear-labels`, `--clear-parent`, `--clear-assignee` | Explicit clearing; project clear is limited to team-board mode |
 
 Omission preserves a field. Set and clear conflict; discover native support
-before using either. Unknown label ownership, membership or hierarchy context
+before using either. Before replacing labels, read the issue and pass exactly the
+labels you saw; the CLI never fills the expectation for you. If the labels have
+changed by the time the update runs, it is refused before dispatch and that
+`--operation-id` stays refused: re-read the issue and use a new operation ID. Unknown label ownership, membership or hierarchy context
 causes an explicit refusal before dispatch. Provider automation and concurrent
 changes remain separate from ClawBridge's requested fields and local retry ledger.
 Project and label administration stay in Linear's UI.

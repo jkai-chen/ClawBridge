@@ -156,7 +156,8 @@ exclusive with --team-board. Preview and confirm retain the original revision.
 
 Create/update add --linear-project, repeated --label (up to100), --parent and
 --assignee. Update adds explicit --clear-project, --clear-labels, --clear-parent,
---clear-assignee; set/clear conflicts reject before I/O. Create alone accepts
+--clear-assignee; set/clear conflicts reject before I/O. A label replace or clear
+on update also requires repeated --expect-label UUID or --expect-no-labels. Create alone accepts
 --team. Global --project before the command still means the ClawBridge scope;
 --linear-project always means the provider destination. One selected project may
 be the implicit create destination; multiple projects require an explicit one.
@@ -192,7 +193,13 @@ remove unrelated human labels; if canonical existing-label context or safe
 provider semantics is missing, refuse that update. Supplying labels declares the
 complete desired replacement set, including removal of known labels left out;
 CLI/tool help must make that consequence clear. Do not turn an unspecified label
-change into replacement. No global/group/archived
+change into replacement. An update that supplies labels must also supply
+`expected_label_ids`, the complete set the caller last read (unique sorted IDs;
+`[]` means none). It is invalid without a label replacement and on create. The
+current canonical set must equal it at preflight and again on the fresh read
+inside the operation lock; a mismatch inside the lock is a terminal
+refused-before-dispatch result for that operation ID. The expectation is part of
+the ledger payload digest and never alters the replacement set. No global/group/archived
 labels may be newly applied. Membership must prove the canonical user belongs to
 the effective issue team; reject known inactive users and require supported
 eligibility proof rather than treating unknown as active.

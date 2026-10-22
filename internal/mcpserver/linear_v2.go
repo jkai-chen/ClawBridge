@@ -61,6 +61,7 @@ func boardSchemaV2(operation string) map[string]any {
 			required = append(required, "title")
 		} else {
 			props["id"] = uuid(false)
+			props["expected_label_ids"] = map[string]any{"type": "array", "maxItems": 100, "uniqueItems": true, "items": uuid(false)}
 			required = append(required, "id")
 		}
 	case "comment":
@@ -83,7 +84,7 @@ func addTaskboardToolsV2(s *mcp.Server, b *binding, p TaskboardToolsV2) {
 		closed := false
 		mcp.AddTool(s, &mcp.Tool{
 			Name: "taskboard_" + operation + "_v2", InputSchema: boardSchemaV2(operation),
-			Description: "Use the native scoped Linear board. Explicit labels replace the label set; null clears only project, parent or assignee. Relation changes affect one edge. Missing native capabilities fail explicitly. Assignment is not a claim or human approval.",
+			Description: "Use the native scoped Linear board. Explicit labels replace the label set; an update that sets label_ids must also send expected_label_ids, the complete label set you last read, and a mismatch is refused. Null clears only project, parent or assignee. Relation changes affect one edge. Missing native capabilities fail explicitly. Assignment is not a claim or human approval.",
 			Annotations: &mcp.ToolAnnotations{ReadOnlyHint: readOnly, IdempotentHint: readOnly, OpenWorldHint: &closed},
 		}, func(ctx context.Context, _ *mcp.CallToolRequest, args map[string]any) (*mcp.CallToolResult, bus.Result, error) {
 			b.mu.Lock()

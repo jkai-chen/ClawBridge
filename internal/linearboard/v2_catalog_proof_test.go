@@ -45,6 +45,7 @@ func TestLinearV2MutationValidatesWholeCatalogPageBeforeSelectingProof(t *testin
 				in.Assignee = linearprovider.Field[*string]{Present: true, Value: ptrV2(memberA)}
 			} else {
 				in.Labels = linearprovider.Field[[]string]{Present: true, Value: []string{labelA}}
+				in.ExpectedLabels = linearprovider.Field[[]string]{Present: true, Value: []string{}}
 			}
 			_, err := s.WriteV2(context.Background(), scope, in)
 			positive := kind == "identical label" || kind == "identical member"
@@ -91,12 +92,12 @@ func TestLinearV2WorkspaceLabelRowsDoNotAbortTeamLookup(t *testing.T) {
 		t.Fatalf("listing must return only verified team rows: %+v %v", page, err)
 	}
 	for n, id := range []string{globalLabel, unscopedLabel} {
-		in := WriteInputV2{WriteInput: WriteInput{Operation: "update", OperationID: "refused-" + id, IssueID: issueID}, Labels: linearprovider.Field[[]string]{Present: true, Value: []string{id}}}
+		in := WriteInputV2{WriteInput: WriteInput{Operation: "update", OperationID: "refused-" + id, IssueID: issueID}, Labels: linearprovider.Field[[]string]{Present: true, Value: []string{id}}, ExpectedLabels: linearprovider.Field[[]string]{Present: true, Value: []string{}}}
 		if _, err = s.WriteV2(context.Background(), scope, in); err == nil || p.writes != 0 {
 			t.Fatalf("requested out-of-team label %d applied: %v", n, err)
 		}
 	}
-	in := WriteInputV2{WriteInput: WriteInput{Operation: "update", OperationID: "team-label", IssueID: issueID}, Labels: linearprovider.Field[[]string]{Present: true, Value: []string{labelA}}}
+	in := WriteInputV2{WriteInput: WriteInput{Operation: "update", OperationID: "team-label", IssueID: issueID}, Labels: linearprovider.Field[[]string]{Present: true, Value: []string{labelA}}, ExpectedLabels: linearprovider.Field[[]string]{Present: true, Value: []string{}}}
 	if _, err = s.WriteV2(context.Background(), scope, in); err != nil || p.writes != 1 {
 		t.Fatalf("workspace row aborted team label lookup: %v writes=%d", err, p.writes)
 	}

@@ -66,9 +66,9 @@ type linearFlags struct {
 	supplied                                                                                                             map[string]bool
 	profile, name, access, cursor, project, defaultTeam, title, description, descriptionFile, state, operation, bodyFile string
 	teams                                                                                                                []string
-	projects, labels                                                                                                     []string
+	projects, labels, expectedLabels                                                                                     []string
 	team, parent, assignee, relationType, relationAction, labelFilter                                                    string
-	clearProject, clearLabels, clearParent, clearAssignee                                                                bool
+	clearProject, clearLabels, clearParent, clearAssignee, expectNoLabels                                                bool
 	limit                                                                                                                int
 	revision                                                                                                             int64
 	teamBoard, confirm, noBrowser, tokenStdin                                                                            bool
@@ -150,6 +150,8 @@ func parseLinear(command string, args []string, stderr io.Writer) (linearFlags, 
 		fields()
 		f.BoolVar(&v.clearProject, "clear-project", false, "explicitly clear project (team-board mapping only)")
 		f.BoolVar(&v.clearLabels, "clear-labels", false, "explicitly replace labels with an empty set")
+		f.Var((*repeatedIDs)(&v.expectedLabels), "expect-label", "label UUID the issue has now; required with --label/--clear-labels (repeat for the complete set)")
+		f.BoolVar(&v.expectNoLabels, "expect-no-labels", false, "the issue has no labels now; required instead of --expect-label when it has none")
 		f.BoolVar(&v.clearParent, "clear-parent", false, "explicitly clear parent")
 		f.BoolVar(&v.clearAssignee, "clear-assignee", false, "explicitly clear assignee")
 		min, max = 1, 1
@@ -275,6 +277,28 @@ func parseLinear(command string, args []string, stderr io.Writer) (linearFlags, 
 			seenLabels[id] = true
 		}
 		sort.Strings(v.labels)
+		replacing := v.supplied["label"] || v.clearLabels
+		expecting := v.supplied["expect-label"] || v.expectNoLabels
+		if v.supplied["expect-label"] && v.expectNoLabels {
+			return v, nil, errors.New("choose --expect-label or --expect-no-labels")
+		}
+		if expecting && !replacing {
+			return v, nil, errors.New("expected labels apply only with --label or --clear-labels")
+		}
+		if command == "update" && replacing && !expecting {
+			return v, nil, errors.New("label replacement requires --expect-label (the complete set you last read) or --expect-no-labels")
+		}
+		seenExpected := map[string]bool{}
+		if len(v.expectedLabels) > 100 {
+			return v, nil, errors.New("at most100 expected labels")
+		}
+		for _, id := range v.expectedLabels {
+			if !linearprovider.ValidID(id) || seenExpected[id] {
+				return v, nil, errors.New("invalid or duplicate expected label UUID")
+			}
+			seenExpected[id] = true
+		}
+		sort.Strings(v.expectedLabels)
 		if command == "update" {
 			changed := v.clearProject || v.clearLabels || v.clearParent || v.clearAssignee
 			f.Visit(func(fl *flag.Flag) {
@@ -414,6 +438,12 @@ func linearWriteInput(command string, v linearFlags, pos []string) (linearboard.
 	}
 	if v.clearLabels {
 		writeInput.Labels = linearprovider.Field[[]string]{Present: true, Value: []string{}}
+	}
+	if v.supplied["expect-label"] {
+		writeInput.ExpectedLabels = linearprovider.Field[[]string]{Present: true, Value: append([]string{}, v.expectedLabels...)}
+	}
+	if v.expectNoLabels {
+		writeInput.ExpectedLabels = linearprovider.Field[[]string]{Present: true, Value: []string{}}
 	}
 	if v.supplied["parent"] {
 		writeInput.Parent = linearprovider.Field[*string]{Present: true, Value: &v.parent}

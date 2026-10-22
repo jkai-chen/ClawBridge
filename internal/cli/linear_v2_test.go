@@ -23,7 +23,7 @@ func TestLinearV2ExplicitDestinationsAndClearIntent(t *testing.T) {
 	for _, command := range []string{"create", "update"} {
 		args := []string{"--profile", "native", "--operation-id", "explicit", "--title", "new", "--linear-project", a, "--parent", b, "--assignee", a, "--label", b, "--label", a}
 		if command == "update" {
-			args = append([]string{a}, args...)
+			args = append([]string{a, "--expect-label", b}, args...)
 		}
 		v, pos, e := parseLinear(command, args, &bytes.Buffer{})
 		if e != nil {
@@ -34,7 +34,7 @@ func TestLinearV2ExplicitDestinationsAndClearIntent(t *testing.T) {
 			t.Fatalf("typed intent lost: %+v %v", input, e)
 		}
 	}
-	v, pos, err := parseLinear("update", []string{a, "--profile", "native", "--operation-id", "clear", "--clear-project", "--clear-labels", "--clear-parent", "--clear-assignee"}, &bytes.Buffer{})
+	v, pos, err := parseLinear("update", []string{a, "--profile", "native", "--operation-id", "clear", "--clear-project", "--clear-labels", "--expect-no-labels", "--clear-parent", "--clear-assignee"}, &bytes.Buffer{})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -27,6 +27,7 @@ func TestLinearV2ProofsRefreshInsideOperationLockBeforeMutation(t *testing.T) {
 				in.Assignee = linearprovider.Field[*string]{Present: true, Value: nil}
 			case "new human label":
 				in.Labels = linearprovider.Field[[]string]{Present: true, Value: []string{}}
+				in.ExpectedLabels = linearprovider.Field[[]string]{Present: true, Value: []string{}}
 			case "parent unavailable":
 				in.Parent = linearprovider.Field[*string]{Present: true, Value: ptrV2(parentA)}
 				p.issues[parentA] = linearprovider.IssueV2{Issue: linearprovider.Issue{ID: parentA, TeamID: otherTeamID, ProjectID: projectB}, ProjectKnown: true, ParentKnown: true}
@@ -75,6 +76,10 @@ func TestLinearV2ProofsRefreshInsideOperationLockBeforeMutation(t *testing.T) {
 			// A new operation ID is evaluated normally against current state.
 			s.cfg.Open = open
 			in.OperationID = "fresh-proof-reread"
+			if mode == "new human label" {
+				// The new ID must state the label set it re-read.
+				in.ExpectedLabels.Value = []string{labelA}
+			}
 			_, e := s.WriteV2(context.Background(), scope, in)
 			switch mode {
 			case "member revoked", "parent unavailable":

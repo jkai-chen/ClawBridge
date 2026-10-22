@@ -62,7 +62,7 @@ func TestLinearMCPV2ClosedNullablePinnedTools(t *testing.T) {
 		{"issues", map[string]any{"limit": 2, "cursor": "opaque", "label_id": id}, true},
 		{"issue", map[string]any{"id": id}, true},
 		{"create", map[string]any{"title": "new", "operation_id": "create", "team_id": id, "parent_id": nil, "assignee_id": nil}, false},
-		{"update", map[string]any{"id": id, "operation_id": "update", "project_id": nil, "parent_id": nil, "assignee_id": nil, "label_ids": []string{}}, false},
+		{"update", map[string]any{"id": id, "operation_id": "update", "project_id": nil, "parent_id": nil, "assignee_id": nil, "label_ids": []string{}, "expected_label_ids": []string{id}}, false},
 		{"comment", map[string]any{"id": id, "body": "body", "operation_id": "comment"}, false},
 		{"labels", map[string]any{"team_id": id, "limit": 1}, true},
 		{"members", map[string]any{"team_id": id, "cursor": "opaque"}, true},
@@ -150,5 +150,30 @@ func TestLinearMCPV2PreservesKnownReceipt(t *testing.T) {
 	raw, _ := json.Marshal(result.StructuredContent)
 	if !strings.Contains(string(raw), "known-endpoint") || !strings.Contains(string(raw), "accepted_ledger_unrecorded") || !strings.Contains(string(raw), "linear") {
 		t.Fatal("receipt dropped", string(raw))
+	}
+}
+
+func TestLinearMCPV2ExpectedLabelsOnlyOnUpdate(t *testing.T) {
+	p := &recordingBoardV2{recordingBoard: recordingBoard{data: map[string]any{"ok": true}}}
+	ctx, cs := boardSession(t, p)
+	listed, err := cs.ListTools(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tool := range listed.Tools {
+		raw, _ := json.Marshal(tool.InputSchema)
+		has := strings.Contains(string(raw), `"expected_label_ids"`)
+		if has != (tool.Name == "taskboard_update_v2") {
+			t.Fatalf("%s expected_label_ids presence = %v", tool.Name, has)
+		}
+		if tool.Name == "taskboard_update_v2" && !strings.Contains(tool.Description, "expected_label_ids") {
+			t.Fatal("update tool does not advertise the expectation requirement")
+		}
+	}
+	const id = "11111111-1111-4111-8111-111111111111"
+	before := p.count()
+	result, err := cs.CallTool(ctx, &mcp.CallToolParams{Name: "taskboard_create_v2", Arguments: map[string]any{"title": "t", "operation_id": "c", "expected_label_ids": []string{id}}})
+	if (err == nil && !result.IsError) || p.count() != before {
+		t.Fatal("create accepted expected_label_ids", result, err)
 	}
 }

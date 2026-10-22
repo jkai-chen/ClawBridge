@@ -36,26 +36,25 @@ func refreshWriteProofV2(ctx context.Context, p Provider, p2 ProviderV2, b bus.T
 			return e
 		}
 		if in.Labels.Present {
-			if !current.LabelsKnown || !original.LabelsKnown {
+			// The fresh in-lock read must equal the set the caller last read,
+			// not merely the set this call read moments earlier.
+			if !current.LabelsKnown {
 				return errors.New("canonical labels became unavailable before replacement")
 			}
-			oldIDs, newIDs := original.LabelIDs, current.LabelIDs
-			if oldIDs == nil {
-				oldIDs = []string{}
-			}
+			newIDs := current.LabelIDs
 			if newIDs == nil {
 				newIDs = []string{}
-			}
-			oldIDs, e = sortedUniqueIDs(oldIDs, 100)
-			if e != nil {
-				return e
 			}
 			newIDs, e = sortedUniqueIDs(newIDs, 100)
 			if e != nil {
 				return e
 			}
-			if digest(oldIDs) != digest(newIDs) {
-				return errors.New("issue labels changed before explicit replacement; inspect current labels")
+			expected, e := sortedUniqueIDs(in.ExpectedLabels.Value, 100)
+			if e != nil {
+				return e
+			}
+			if digest(expected) != digest(newIDs) {
+				return errors.New("issue labels differ from expected_label_ids before replacement; inspect current labels")
 			}
 		}
 		if in.Parent.Present && !in.Project.Present && !current.ProjectKnown {

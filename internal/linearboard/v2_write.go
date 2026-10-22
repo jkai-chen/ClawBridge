@@ -10,7 +10,7 @@ import (
 )
 
 func legacyOnlyV2(in WriteInputV2) bool {
-	return in.TeamID == "" && !in.Project.Present && !in.Labels.Present && !in.Parent.Present && !in.Assignee.Present
+	return in.TeamID == "" && !in.Project.Present && !in.Labels.Present && !in.ExpectedLabels.Present && !in.Parent.Present && !in.Assignee.Present
 }
 func ValidateWriteV2(in WriteInputV2) error {
 	if !operationPattern.MatchString(in.OperationID) {
@@ -36,6 +36,18 @@ func ValidateWriteV2(in WriteInputV2) error {
 		}
 	} else if in.Labels.Value != nil {
 		return errors.New("label values require explicit replacement intent")
+	}
+	if in.ExpectedLabels.Present {
+		if in.Operation != "update" || !in.Labels.Present {
+			return errors.New("expected_label_ids applies only to an update that replaces labels")
+		}
+		if _, e := sortedUniqueIDs(in.ExpectedLabels.Value, 100); e != nil {
+			return e
+		}
+	} else if in.ExpectedLabels.Value != nil {
+		return errors.New("expected label values require explicit presence")
+	} else if in.Operation == "update" && in.Labels.Present {
+		return errors.New("label replacement requires expected_label_ids: the complete label set you last read")
 	}
 	if in.TeamID != "" && !linearprovider.ValidID(in.TeamID) {
 		return errors.New("team requires UUID")
@@ -107,6 +119,9 @@ func (s *Service) WriteV2(ctx context.Context, scope bus.Request, in WriteInputV
 	}
 	if in.Labels.Present {
 		in.Labels.Value, _ = sortedUniqueIDs(in.Labels.Value, 100)
+	}
+	if in.ExpectedLabels.Present {
+		in.ExpectedLabels.Value, _ = sortedUniqueIDs(in.ExpectedLabels.Value, 100)
 	}
 	b, e := s.BindingV2(ctx, scope)
 	if e != nil {
@@ -257,8 +272,11 @@ func (s *Service) WriteV2(ctx context.Context, scope bus.Request, in WriteInputV
 			if existing == nil {
 				existing = []string{}
 			}
-			if _, e = sortedUniqueIDs(existing, 100); e != nil {
+			if existing, e = sortedUniqueIDs(existing, 100); e != nil {
 				return nil, errors.New("existing canonical label context is invalid")
+			}
+			if digest(existing) != digest(in.ExpectedLabels.Value) {
+				return nil, errors.New("issue labels differ from expected_label_ids; inspect current labels")
 			}
 		}
 		for _, id := range in.Labels.Value {

@@ -84,3 +84,19 @@ func TestVersionLinkedMetadataRealSubprocess(t *testing.T) {
 		t.Fatal("version subprocess created state", err)
 	}
 }
+
+func TestSkillCommandNeedsNoTrustedConfiguration(t *testing.T) {
+	dir := isolated(t)
+	config := filepath.Join(dir, "malformed.toml")
+	if err := os.WriteFile(config, []byte("[broken"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("CLAWBRIDGE_CONFIG", config)
+	skills := filepath.Join(dir, "skills")
+	for _, args := range [][]string{{"skill", "install", "--dir", skills}, {"skill", "status", "--dir", skills}} {
+		var out bytes.Buffer
+		if err := Run(context.Background(), args, &out, &bytes.Buffer{}); err != nil || !strings.Contains(out.String(), `"current":true`) {
+			t.Fatal(args, err, out.String())
+		}
+	}
+}

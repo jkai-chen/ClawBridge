@@ -22,6 +22,7 @@ import (
 	"clawbridge/internal/mcpserver"
 	"clawbridge/internal/remote"
 	"clawbridge/internal/server"
+	"clawbridge/internal/skill"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
@@ -34,6 +35,7 @@ Commands: setup --local, project create SLUG, register [NAME], sessions, send TO
           notify --adapter json|codex --state ABSOLUTE_PATH [--thread UUID] [--interval 5s] [--once],
           linear COMMAND --help (native connection, scoped task board and task actions),
           mcp [--linear-profile ID], mcp install ... [--linear-profile ID] (opt-in native Linear tools),
+          skill install|status|uninstall [--agent claude-code|codex|all] [--dir SKILLS_DIR] [--force],
           serve, sync, purge-expired, doctor, tui [--screen SCREEN], version
 Interactive: bare clawbridge opens the selected profile or guided join; setup wizard starts guided join.
 Onboarding: setup join --server URL --workspace TEAM --project CODEBASE [--login|--device]
@@ -173,6 +175,11 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 			Source string         `json:"source"`
 			Data   buildinfo.Info `json:"data"`
 		}{Source: "build", Data: buildinfo.Current()})
+	}
+	// The skill command needs no trusted configuration, so it runs before any
+	// route is resolved.
+	if len(args) > 0 && args[0] == "skill" {
+		return skill.RunWithIO(args[1:], stdout, stderr)
 	}
 	if len(args) == 1 && (args[0] == "--help" || args[0] == "help" || args[0] == "-h") {
 		_, err := io.WriteString(stdout, Usage)
@@ -644,6 +651,15 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	return json.NewEncoder(stdout).Encode(result)
 }
 
+// doctorSkills reads the skill installations of the agents configured here.
+var doctorSkills = func() ([]skill.State, error) {
+	targets, err := skill.Targets("", "")
+	if err != nil {
+		return nil, nil
+	}
+	return skill.Status(targets)
+}
+
 func collectDoctor(ctx context.Context, config Config, configPath string, existing doctor.Executor, selections ...doctor.MCPConfig) (doctor.Report, error) {
 	in := doctor.Input{
 		Config: doctor.Config{
@@ -657,6 +673,7 @@ func collectDoctor(ctx context.Context, config Config, configPath string, existi
 			OAuthClientID: config.OAuthClientID, OAuthDeviceClientID: config.OAuthDeviceClientID,
 			OAuthKeyringService: config.OAuthKeyringService,
 		},
+		Skills: doctorSkills,
 	}
 	var executor doctor.Executor = existing
 	if config.Mode == "cloud" {

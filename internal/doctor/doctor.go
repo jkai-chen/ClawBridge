@@ -22,6 +22,7 @@ import (
 	"clawbridge/internal/linearprovider"
 	"clawbridge/internal/mirror"
 	"clawbridge/internal/remote"
+	"clawbridge/internal/skill"
 	"github.com/pelletier/go-toml/v2"
 )
 
@@ -110,6 +111,8 @@ type Input struct {
 	// the provider's negotiated capabilities from its advertised tool list.
 	// It performs no Linear write. Nil skips the Linear section.
 	LinearCapabilities func(context.Context) (linearprovider.Capabilities, error)
+	// Skills reports the agent skill installations. Nil skips the check.
+	Skills func() ([]skill.State, error)
 }
 
 // Check is one stable machine-readable diagnostic.
@@ -172,6 +175,9 @@ func Run(ctx context.Context, in Input, executor Executor) Report {
 	if in.LinearCapabilities != nil {
 		checkLinearCapabilities(ctx, in.LinearCapabilities, add)
 	}
+	if in.Skills != nil {
+		checkSkills(in.Skills, add)
+	}
 	if len(in.MCPConfigs) == 0 {
 		add(Check{
 			ID: "mcp.entries", Title: "Installed MCP entries", Status: Warn,
@@ -215,6 +221,53 @@ func checkLinearCapabilities(ctx context.Context, read func(context.Context) (li
 			check.Message += " Off because " + strings.Join(off, "; ") + "."
 		}
 		check.Action = "Commands that need an off capability are refused until it returns; report a provider schema change to the coordinator."
+	}
+	add(check)
+}
+
+// checkSkills warns when no agent skill is installed, or when an installed
+// one is not the skill this binary carries.
+func checkSkills(read func() ([]skill.State, error), add func(Check)) {
+	check := Check{ID: "skill.version", Title: "Agent skill", Status: Pass}
+	states, err := read()
+	if err != nil {
+		check.Status = Warn
+		check.Message = "Agent skill installations could not be read."
+		check.Action = "Run `clawbridge skill status` for details."
+		add(check)
+		return
+	}
+	parts, force := []string{}, false
+	for _, s := range states {
+		switch {
+		case !s.Installed:
+			parts = append(parts, s.Agent+": not installed")
+		case len(s.Modified) > 0:
+			check.Status, force = Warn, true
+			parts = append(parts, s.Agent+": "+strings.Join(s.Modified, ", ")+" changed since installation")
+		case !s.Current:
+			check.Status = Warn
+			parts = append(parts, s.Agent+": installed "+s.InstalledVersion+", binary "+s.BinaryVersion)
+		default:
+			parts = append(parts, s.Agent+": current ("+s.InstalledVersion+")")
+		}
+	}
+	if !slices.ContainsFunc(states, func(s skill.State) bool { return s.Installed }) {
+		check.Status = Warn
+		check.Message = "No ClawBridge agent skill is installed."
+		if len(parts) > 0 {
+			check.Message += " " + strings.Join(parts, "; ") + "."
+		}
+		check.Action = "Run `clawbridge skill install` so agents get this version's workflow."
+		add(check)
+		return
+	}
+	check.Message = strings.Join(parts, "; ") + "."
+	if check.Status == Warn {
+		check.Action = "Run `clawbridge skill install` to install this binary's skill."
+		if force {
+			check.Action = "Review the changed files, then run `clawbridge skill install --force` to replace them."
+		}
 	}
 	add(check)
 }

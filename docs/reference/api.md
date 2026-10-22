@@ -289,5 +289,13 @@ commit and build_time without loading configuration, storage or credentials.
 Source builds default to dev/unknown/unknown; release metadata is injected from
 the exact tagged commit. Extra version arguments fail before state access.
 
+## Skill output
+
+`clawbridge skill install|status|uninstall` needs no configuration and returns
+source=skill with one entry per target: agent, dir, installed,
+installed_version, binary_version and current, plus modified (installed files
+changed since) and unmanaged (files it did not install). Install and uninstall
+add changed and refused; any refused target also makes the command exit nonzero.
+
 Historical per-increment Go adapter contracts, reviewed hashes and evidence are
 preserved under [the archive](../archive/README.md).

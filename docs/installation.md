@@ -59,6 +59,30 @@ manifest; they are not a separate publisher signature.
 `clawbridge version` and `clawbridge --version` print JSON with version, commit and
 build timestamp without loading app state. Source builds use dev/unknown defaults.
 
+## Agent skill
+
+The binary carries the ClawBridge agent skill of its own version.
+`clawbridge skill install` copies it into the per-user skill directory of each
+agent configured on this machine:
+
+| Agent | Skill directory |
+| --- | --- |
+| Claude Code | `$CLAUDE_CONFIG_DIR/skills/clawbridge`, default `~/.claude/skills/clawbridge` |
+| Codex | `$CODEX_HOME/skills/clawbridge`, default `~/.codex/skills/clawbridge` |
+
+An agent counts as configured when its configuration directory exists. Use
+`--agent claude-code`, `--agent codex` or `--agent all` to choose explicitly, or
+`--dir SKILLS_DIR` to install into `SKILLS_DIR/clawbridge` for another agent.
+
+Repeating the install changes nothing. After an update, it replaces the skill as
+a whole, so an agent never reads a half-written skill. A `.clawbridge-skill.json`
+marker records the version and a hash of every file it wrote. The install refuses,
+and changes nothing, when you edited one of those files or added files of your own
+to the folder; `--force` replaces them. `clawbridge skill status` compares the
+installed version with the binary's, and `clawbridge doctor` warns when they
+differ. `clawbridge skill uninstall` removes only the files the marker lists, and
+keeps any file you added.
+
 ## Build from source
 
 Requires Go 1.26 or newer. Local mode needs no database server and neither mode

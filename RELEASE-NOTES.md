@@ -10,10 +10,14 @@ service rejects the new assignment operations.
   - The installer adds its directory to your user PATH, so new terminals find
     `clawbridge`. `-NoModifyPath` opts out; the system PATH is never changed.
   - Upgrading while an agent runs `clawbridge mcp` works: the running binary
-    is moved aside and removed once it exits.
+    is moved aside, and the installer says where, so the old copy can be
+    deleted once it exits. A directory containing `;` or `"` is never written
+    to PATH, and the installer warns when another `clawbridge` earlier on PATH
+    would run instead.
   - The installer enables TLS 1.2 on Windows PowerShell 5.1. Run it with
     `powershell -NoProfile -ExecutionPolicy Bypass -File …`.
-  - Local mode (`setup --local`) opens its SQLite store again.
+  - Local mode (`setup --local`) now works on Windows; earlier releases could
+    not open its SQLite store there.
   - Notification state in the usual profile folder is accepted, including
     from an elevated administrator session.
 - Structured session assignments. A session proposes its issue, task role and

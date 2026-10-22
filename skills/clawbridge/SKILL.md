@@ -17,7 +17,10 @@ when starting a slice, finding its owner or collaborator, changing issue
 structure, or handing it over.
 Use ClawBridge's native task-board tools when configured, otherwise the installed
 official Linear MCP/skill. Follow the explicit issue-to-session assignment and
-use ClawBridge for peer messages.
+use ClawBridge for peer messages. Record your own assignment with
+`assignment_propose`; only the project's designated coordinator session confirms
+it. Find a slice's owner with `list_sessions` filtered by `issue` or
+`scope_path`.
 
 ## Bind and check
 
@@ -61,7 +64,9 @@ Discover an active successor in the same project. Send a `handoff` message namin
 the successor, current task, changed files, tests, pending decisions and next step.
 Record its ID, then retire this session with that explicit successor when the
 human-authorized work is ready to transfer. Retirement records routing history;
-it does not forward mail or prove the successor accepted responsibility.
+it does not forward mail or prove the successor accepted responsibility. With
+`status: moved`, your assignment passes to the successor as a proposal for the
+coordinator to confirm.
 
 On resumption, inspect the existing binding before registering again. Start with
 the recorded instance and call `register_session` with `resume: true` to rotate
@@ -84,7 +89,8 @@ project-scoped mirror to serve `list_sessions`, `inbox`, `history`, `whoami`, or
 validation errors, and other definitive rejections must be reported directly;
 they must not trigger mirror fallback. If the server is unreachable,
 `mark_read`, `reply`, `send`, `register_session`, `update_session`,
-`retire_session`, `set_notification_policy`, and resume remain failed operations. Never queue or replay
+`retire_session`, `set_notification_policy`, the `assignment_*` operations, and
+resume remain failed operations. Never queue or replay
 writes. Tell the human the operation failed, preserve its ID if the outcome is
 uncertain, and use only an explicitly authorized fallback. An unavailable cloud
 workspace never becomes writable local authority.

@@ -56,7 +56,7 @@ ClawBridge workspace/project: ws_... / prj_...
 Session: ses_...
 Role: implementation
 Owned scope: internal/notify/**
-Assignment revision: coordinator-7 (opaque reference, confirmed by coordinator)
+Assignment revision: rev_... (the ClawBridge assignment revision the coordinator confirmed)
 ```
 
 The issue is the durable assignment record. The session ID identifies a runtime
@@ -65,12 +65,26 @@ different identities. One person or app can have several active agent sessions.
 Keep host thread UUIDs, instance tokens and executable routes in the local host
 configuration, outside this public-to-team assignment block.
 
-After checking `whoami`, advertise the assigned issue URL/UUID, task role and
-owned scope in your own session notes through `update_session`, preserving other
-useful notes. Notes help peers discover the assignment; they are descriptive and
-must agree with the coordinator's board assignment. They grant no project rights.
-If board access is read-only, send the proposed assignment block to the
-coordinator and continue work already covered by the explicit assignment.
+After checking `whoami`, record your assignment with `assignment_propose`: the
+issue UUID and display identifier, your task role, and the owned scope as the
+repository (`scope_repo`) and path patterns (`scope_paths`, such as
+`internal/notify/**`). A pattern covers what it matches and everything beneath
+it. Then send the coordinator a message with structured `coordination`
+(`issue_id` and the returned `assignment_revision`) asking it to confirm. Read
+any `conflicts` in the result: they name sessions whose live assignment shares
+the issue or overlaps the scope, and belong in that message. Proposing again
+replaces your previous assignment. Session notes stay for free-text context;
+they no longer record ownership.
+
+Only the project's designated coordinator session confirms or releases another
+session's assignment, at the revision it reviewed. The project owner designates
+it with `clawbridge project coordinator-set SESSION`; a lead can designate only
+its own or member and reader sessions. Confirmation refuses overlap with an
+already confirmed assignment unless the coordinator passes `allow_overlap`,
+which is audited. An assignment is descriptive: it is not a lock, does not
+assign the Linear issue and grants no project rights. Until yours is confirmed,
+continue only work already covered by an explicit assignment. If board access
+is read-only, send the proposed assignment block to the coordinator as well.
 
 Comments, notes and read-modify-write issue updates are not an atomic claim lock.
 Use explicit coordinator assignment for conflicting ownership. An agent searching
@@ -87,9 +101,12 @@ When you need an answer or shared change:
 1. Follow the specific dependency or related slice from your issue. Read its
    scope and current assignment before searching the wider project.
 2. Resolve that issue's session ID through `list_sessions` in the assigned
-   ClawBridge project. Check the exact project, active status and matching task
-   advertisement. Follow next_cursor/has_more pagination before treating an owner
-   as absent. Use the immutable session ID as the destination.
+   ClawBridge project, filtered by `issue` (UUID or display identifier) or by
+   `scope_path` for a file. Trust a `confirmed` assignment; treat a `proposed`
+   one, or a confirmed one flagged `assignment_stale`, as a question for the
+   coordinator. Check the exact project and active status, and follow
+   next_cursor/has_more pagination before treating an owner as absent. Use the
+   immutable session ID as the destination.
 3. If no explicit owner is available, search same-project slices by component,
    declared interface or owned path. Treat those matches as candidates, then ask
    the coordinator to select the owner when more than one could be responsible.
@@ -181,8 +198,9 @@ verify the returned effective scope before asserting success.
 ## Resume and close
 
 On resumption, re-read the current assignment and confirm the configured actor;
-use the existing explicit ClawBridge resumption rules. Resolve disagreements
-between old session notes and a changed board assignment with the coordinator.
+use the existing explicit ClawBridge resumption rules. Check your assignment in
+`whoami`; resolve a disagreement between it and a changed board assignment with
+the coordinator.
 If Linear is temporarily unavailable, continue within the last confirmed scope
 and report the outage before taking new ownership or asserting current board state.
 
@@ -194,8 +212,10 @@ do not wait for your own active thread to become idle.
 
 At handoff, record the artifact/commit, verification, unresolved points and new
 owner on the issue. The coordinator changes the Current agent block; the outgoing
-agent confirms it has stopped edits in the transferred scope, updates its
-advertisement and sends a ClawBridge handoff before the replacement starts editing.
+agent confirms it has stopped edits in the transferred scope, sends a ClawBridge
+handoff and retires with `status: moved` and the replacement as `successor`. The
+replacement inherits the assignment as a proposal, and starts editing after the
+coordinator confirms it. Retiring without a successor releases the assignment.
 If that agent is unavailable, the coordinator inspects the existing work and
 explicitly resolves ownership. Completion and
 review states follow the team's actual Linear workflow. “Implementation ready”

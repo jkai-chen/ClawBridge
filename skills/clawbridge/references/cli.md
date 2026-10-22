@@ -53,6 +53,19 @@ clawbridge --workspace team --project app --session reviewer --instance INSTANCE
 clawbridge --workspace team --project app --session reviewer --instance INSTANCE send lead 'Review ready; see REVIEW.md' --operation-id review-ready-1
 ```
 
+Assignments from the CLI:
+
+```sh
+clawbridge --session reviewer --instance INSTANCE assignment propose --issue-uuid ISSUE_UUID --issue-identifier ABC-12 --task-role reviewer --scope-path 'internal/notify/**'
+clawbridge --session coord --instance INSTANCE assignment confirm reviewer --revision REVISION
+clawbridge sessions --issue ABC-12
+clawbridge sessions --scope-path internal/notify/watch.go --assignment-state confirmed
+clawbridge --session reviewer --instance INSTANCE assignment release --revision REVISION
+```
+
+The project owner designates the confirming session with
+`clawbridge --session OWNER_SESSION --instance INSTANCE project coordinator-set coord`.
+
 For MCP installation, `clawbridge mcp install --help` explains supported agents,
 pinned scope, explicit config paths and dry-run output. Install each agent session
 under a distinct entry name if configuring several entries in the same file.

@@ -8,8 +8,9 @@ existing deployment; preserve its private environment and volume bindings.
 ## Coordination schema upgrade
 
 The [coordination increment](../design/coordination.md) introduces schema version
-2; [native Linear settings](../design/linear.md) add version 3, and
-[Linear project sets](../design/linear-migration.md) add version 4. Before an
+2; [native Linear settings](../design/linear.md) add version 3,
+[Linear project sets](../design/linear-migration.md) add version 4, and session
+assignments add version 5. Before an
 upgrade, stop API/client writers and save a verified recovery copy of the existing
 version.
 
@@ -34,6 +35,16 @@ The shared backup contains board UUIDs and mapping revisions, not personal Linea
 credentials. Each teammate reconnects or restores their own native secure store
 separately. A restored board mapping still requires that connection to verify
 access to its teams/project; a display label cannot establish access.
+
+### Session assignment upgrade
+
+Schema 5 adds the `session_assignments` table and the nullable
+`projects.coordinator_session` column; no existing row changes. The upgrade is
+one-way: an older binary refuses the schema-5 store, so take and verify the
+recovery copy above first, and keep the exact older image with it. Upgrade the
+service before clients use the assignment operations; an older service answers
+them with "unsupported operation". Older clients keep working and ignore the
+`assignment` field that `list_sessions` rows gain.
 
 ### Linear project-set upgrade
 

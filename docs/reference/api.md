@@ -52,7 +52,7 @@ requires its matching instance. Routing role is distinct from project permission
 | `list_projects` | No project selector; returns authorized projects |
 | `list_members` | Current project; returns project role assignments |
 | `register_session` | Optional resume, role, agent_kind, model, host, account, notes, transport |
-| `list_sessions` | Optional status, role, limit, after |
+| `list_sessions` | Optional status, role, limit, after; assignment filters issue (UUID or display identifier), scope_path (a repository path a live assignment covers) and assignment_state (proposed/confirmed). Each row carries its live `assignment` or null |
 | `send` | to, body, operation_id; optional kind, thread_id, coordination |
 | `inbox` | Optional unread_only (default true), limit, after |
 | `inbox_status` | Optional after (default zero); active owned actor required |
@@ -63,7 +63,11 @@ requires its matching instance. Routing role is distinct from project permission
 | `update_session` | One or more role/model/host/account/notes/transport fields; hosted owners and leads may target_session (see below) |
 | `retire_session` | Optional successor and status retired/moved; hosted owners and leads may target_session (see below) |
 | `history` | Optional entity, key, limit, after |
-| `whoami` | No extra arguments |
+| `whoami` | No extra arguments; the session includes its live `assignment` and the project its `coordinator_session` |
+| `assignment_propose` | Own session only: optional issue_uuid (lowercase UUID), issue_identifier (needs issue_uuid), task_role, scope_repo (git remote), scope_paths (up to 32 patterns); needs an issue or a path. Replaces the session's live assignment and returns overlapping live assignments as `conflicts` |
+| `assignment_confirm` | Designated coordinator session: revision, optional target_session, allow_overlap. Refuses overlap with a confirmed assignment unless allow_overlap (audited as conflict_overridden) |
+| `assignment_release` | revision; optional target_session for the designated coordinator |
+| `coordinator_set` | Owner, or lead for its own and member/reader sessions: target_session, or empty to clear |
 | `message_status` | message_id; sender-only receipt metadata |
 | `resolve_project` | Explicit project or optional git_remote fallback |
 | `taskboard_get` | Shared Linear mapping; optional current actor/instance |
@@ -84,9 +88,22 @@ and sessions owned by member or reader principals, never the owner's, another
 lead's or one whose principal holds no project role, and may change the `role`
 field only on sessions it owns.
 
+Assignments describe who owns a slice; they are not locks and grant no rights.
+Scope patterns are clean repository-relative paths; a pattern covers what it
+matches and everything beneath it, and `**` is allowed only as the whole pattern
+or a final `/**`. Two live assignments overlap when they share an issue UUID, or
+when their repositories are the same or unset and the literal prefixes of their
+patterns nest (a conservative test that can report false overlaps). A session
+keeps one live assignment. Retiring a session releases it; `status: moved` with a
+successor hands it to the successor as a proposal unless the successor already has
+one. Retiring or revoking the coordinator session clears the designation. Schema
+5 adds `session_assignments` and `projects.coordinator_session`; the offline
+mirror does not include assignments.
+
 MCP exposes register_session, list_sessions, send, inbox, inbox_status,
 notification_status, set_notification_policy, mark_read, reply, update_session,
-retire_session, history, whoami and message_status. Their
+retire_session, assignment_propose, assignment_confirm, assignment_release,
+history, whoami and message_status. Their
 schemas restrict caller routing/instance overrides. Administrative operations
 remain outside the MCP tool list.
 
@@ -99,8 +116,8 @@ administration remains in CLI/TUI. See [Linear setup](../linear.md).
 
 The L2 native adapter adds eleven versioned tools: binding, context, issues,
 issue, create, update, comment, labels, members, relation_add and relation_remove,
-each named `taskboard_<operation>_v2`. It advertises 32 tools in total; a V1-only
-adapter retains 21 and an unconfigured adapter retains 14. Prefer the advertised
+each named `taskboard_<operation>_v2`. It advertises 35 tools in total; a V1-only
+adapter retains 24 and an unconfigured adapter retains 17. Prefer the advertised
 V2 family for new board calls. Initialization and listing do not access Linear.
 `taskboard_context_v2` includes a `capabilities` object with the negotiated
 capability flags and, for any that are off, a `reasons` entry explaining why.

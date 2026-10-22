@@ -226,3 +226,33 @@ func TestBoundedInputAndNoImplicitAuthority(t *testing.T) {
 		t.Fatal("opening database implicitly initialized writable workspace")
 	}
 }
+func TestSessionNameCannotImpersonateSessionID(t *testing.T) {
+	h := newHarness(t)
+	victim := h.call("whoami", "b", nil).(map[string]any)["session"].(map[string]any)["id"].(string)
+	for _, name := range []string{victim, strings.ToUpper(victim[:4]) + victim[4:], "ses_custom"} {
+		h.fail("register_session", name, map[string]any{"instance": "impostor-instance"})
+	}
+	// A pre-existing row (allowed before this fix) carrying the victim's ID as its name.
+	if _, e := h.s.db.Exec(`UPDATE sessions SET name=? WHERE name='c'`, victim); e != nil {
+		t.Fatal(e)
+	}
+	impostor := func() int {
+		var n int
+		if e := h.s.db.QueryRow(`SELECT COUNT(*) FROM deliveries d JOIN sessions s ON s.id=d.recipient_id WHERE s.name=?`, victim).Scan(&n); e != nil {
+			t.Fatal(e)
+		}
+		return n
+	}
+	sent := h.call("send", "a", map[string]any{"to": victim, "body": "to the real b", "operation_id": "before-retire"}).(map[string]any)
+	if d := sent["deliveries"].([]map[string]any); len(d) != 1 || d[0]["recipient_id"] != victim || impostor() != 0 {
+		t.Fatal("ID address was ambiguous or reached the impostor", d)
+	}
+	question := h.call("send", "b", map[string]any{"to": "a", "body": "question", "operation_id": "question"}).(map[string]any)
+	h.call("retire_session", "b", nil)
+	h.fail("send", "a", map[string]any{"to": victim, "body": "after retire", "operation_id": "after-retire"})
+	h.fail("reply", "a", map[string]any{"message_id": question["id"], "body": "answer", "operation_id": "reply-retired"})
+	h.fail("retire_session", "a", map[string]any{"successor": victim})
+	if impostor() != 0 {
+		t.Fatal("retired session ID address was forwarded to an impostor name")
+	}
+}

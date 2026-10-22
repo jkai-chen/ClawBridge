@@ -240,6 +240,30 @@ func nameOK(v string) error {
 	}
 	return nil
 }
+
+// sessionIDShaped reports whether a session address is in the ses_ ID
+// namespace. Such addresses resolve by exact ID only and are never names.
+func sessionIDShaped(v string) bool {
+	return len(v) >= 4 && strings.EqualFold(v[:4], "ses_")
+}
+func sessionNameOK(v string) error {
+	if err := nameOK(v); err != nil {
+		return err
+	}
+	if sessionIDShaped(v) {
+		return errors.New("session names cannot use the reserved ses_ session-ID prefix")
+	}
+	return nil
+}
+
+// sessionAddress returns the SQL predicate and arguments that resolve a
+// session address: an exact ID for ID-shaped addresses, otherwise ID or name.
+func sessionAddress(v string) (string, []any) {
+	if sessionIDShaped(v) {
+		return "id=?", []any{v}
+	}
+	return "(id=? OR name=?)", []any{v, v}
+}
 func validateArgs(op string, a map[string]any) error {
 	allowed := map[string]string{
 		"taskboard_get":           "instance",
@@ -559,7 +583,8 @@ func (s *Store) execute(ctx context.Context, tx *transaction, r Request) (any, e
 	}
 	var actor map[string]any
 	if r.Session != "" {
-		actor, err = one(ctx, tx, `SELECT * FROM sessions WHERE project_id=? AND (id=? OR name=?)`, pid, r.Session, r.Session)
+		match, args := sessionAddress(r.Session)
+		actor, err = one(ctx, tx, `SELECT * FROM sessions WHERE project_id=? AND `+match, append([]any{pid}, args...)...)
 		if err != nil {
 			return nil, err
 		}
@@ -631,7 +656,8 @@ func (s *Store) execute(ctx context.Context, tx *transaction, r Request) (any, e
 		if actor["status"] != "active" {
 			return nil, errors.New("active actor permission required for peer administration")
 		}
-		target, err = one(ctx, tx, `SELECT * FROM sessions WHERE project_id=? AND (id=? OR name=?)`, pid, selector, selector)
+		match, args := sessionAddress(selector)
+		target, err = one(ctx, tx, `SELECT * FROM sessions WHERE project_id=? AND `+match, append([]any{pid}, args...)...)
 		if err != nil {
 			return nil, err
 		}
@@ -842,7 +868,8 @@ func (s *Store) touchReadActor(ctx context.Context, tx *transaction, pid string,
 	if r.Session == "" {
 		return errors.New("session is required with instance")
 	}
-	actor, err := one(ctx, tx, `SELECT id FROM sessions WHERE project_id=? AND (id=? OR name=?) AND instance=? AND owner_principal=?`, pid, r.Session, r.Session, instance, s.principal)
+	match, args := sessionAddress(r.Session)
+	actor, err := one(ctx, tx, `SELECT id FROM sessions WHERE project_id=? AND `+match+` AND instance=? AND owner_principal=?`, append(append([]any{pid}, args...), instance, s.principal)...)
 	if err != nil {
 		return scopedError(err, "session instance mismatch; pass the instance returned by register", "forbidden")
 	}

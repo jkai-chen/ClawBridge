@@ -106,3 +106,58 @@ func TestHostedAuditUsesFingerprints(t *testing.T) {
 		t.Fatal("audit redaction mutated caller data")
 	}
 }
+func TestPostgresSessionNameCannotImpersonateSessionID(t *testing.T) {
+	dsn := os.Getenv("CLAWBRIDGE_TEST_POSTGRES_DSN")
+	if dsn == "" {
+		t.Skip("reviewer supplies disposable Postgres DSN")
+	}
+	ctx := context.Background()
+	owner := "owner@bus-test.example"
+	s, err := OpenPostgres(ctx, dsn, owner)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	w := newID("unit_")
+	exec := func(op, session string, a map[string]any) (Result, error) {
+		return s.ExecuteAs(ctx, owner, Request{Operation: op, Workspace: w, Project: "p", Session: session, Args: a})
+	}
+	call := func(op, session string, a map[string]any) map[string]any {
+		t.Helper()
+		r, e := exec(op, session, a)
+		if e != nil {
+			t.Fatalf("%s: %v", op, e)
+		}
+		return r.Data.(map[string]any)
+	}
+	call("workspace_init", "", map[string]any{"mode": "server"})
+	call("project_create", "", map[string]any{"slug": "p"})
+	sessions := map[string]string{}
+	for _, name := range []string{"a", "b", "c"} {
+		sessions[name] = call("register_session", name, map[string]any{"instance": name + "-inst"})["id"].(string)
+	}
+	victim := sessions["b"]
+	if _, e := exec("register_session", victim, map[string]any{"instance": "impostor-inst"}); e == nil {
+		t.Fatal("ID-shaped session name registered")
+	}
+	if _, e := s.db.ExecContext(ctx, `UPDATE sessions SET name=$1 WHERE id=$2`, victim, sessions["c"]); e != nil {
+		t.Fatal(e)
+	}
+	sent := call("send", "a", map[string]any{"instance": "a-inst", "to": victim, "body": "to b", "operation_id": "before"})
+	if d := sent["deliveries"].([]map[string]any); len(d) != 1 || d[0]["recipient_id"] != victim {
+		t.Fatal("ID address was ambiguous or reached the impostor", d)
+	}
+	question := call("send", "b", map[string]any{"instance": "b-inst", "to": "a", "body": "question", "operation_id": "question"})
+	call("retire_session", "b", map[string]any{"instance": "b-inst"})
+	for _, tc := range []struct {
+		op string
+		a  map[string]any
+	}{
+		{"send", map[string]any{"instance": "a-inst", "to": victim, "body": "after", "operation_id": "after"}},
+		{"reply", map[string]any{"instance": "a-inst", "message_id": question["id"], "body": "answer", "operation_id": "reply"}},
+	} {
+		if _, e := exec(tc.op, "a", tc.a); e == nil {
+			t.Fatalf("%s to a retired session ID reached the impostor name", tc.op)
+		}
+	}
+}

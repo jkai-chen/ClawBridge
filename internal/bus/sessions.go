@@ -22,7 +22,7 @@ func metadata(a map[string]any) error {
 	return nil
 }
 func (s *Store) register(ctx context.Context, tx *transaction, wid, pid string, r Request) (any, error) {
-	if err := nameOK(r.Session); err != nil {
+	if err := sessionNameOK(r.Session); err != nil {
 		return nil, err
 	}
 	a := r.Args
@@ -145,7 +145,8 @@ func (s *Store) retire(ctx context.Context, tx *transaction, wid, pid string, ac
 	}
 	var successor any
 	if name := str(a, "successor"); name != "" {
-		next, err := one(ctx, tx, `SELECT * FROM sessions WHERE project_id=? AND (id=? OR name=?)`, pid, name, name)
+		match, args := sessionAddress(name)
+		next, err := one(ctx, tx, `SELECT * FROM sessions WHERE project_id=? AND `+match, append([]any{pid}, args...)...)
 		if err != nil {
 			return nil, scopedError(err, "successor must exist in the same project", "invalid")
 		}

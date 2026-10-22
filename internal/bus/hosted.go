@@ -132,7 +132,8 @@ func (s *Store) snapshot(ctx context.Context, tx *transaction, w, p map[string]a
 	if r.Session == "" || str(r.Args, "instance") == "" {
 		return nil, errors.New("snapshot requires a bound session and instance")
 	}
-	actor, err := one(ctx, tx, `SELECT * FROM sessions WHERE project_id=? AND (id=? OR name=?) AND instance=? AND owner_principal=?`, pid, r.Session, r.Session, str(r.Args, "instance"), s.principal)
+	match, args := sessionAddress(r.Session)
+	actor, err := one(ctx, tx, `SELECT * FROM sessions WHERE project_id=? AND `+match+` AND instance=? AND owner_principal=?`, append(append([]any{pid}, args...), str(r.Args, "instance"), s.principal)...)
 	if err != nil {
 		return nil, scopedError(err, "snapshot session ownership or instance mismatch", "forbidden")
 	}

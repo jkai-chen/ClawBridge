@@ -128,7 +128,8 @@ func (s *Store) send(ctx context.Context, tx *transaction, wid, pid string, acto
 	case to == "" || strings.HasPrefix(to, "@"):
 		return nil, errors.New("invalid recipient address")
 	default:
-		recipients, err = query(ctx, tx, `SELECT id FROM sessions WHERE project_id=? AND (id=? OR name=?) AND status='active' ORDER BY id`, pid, to, to)
+		match, args := sessionAddress(to)
+		recipients, err = query(ctx, tx, `SELECT id FROM sessions WHERE project_id=? AND `+match+` AND status='active' ORDER BY id`, append([]any{pid}, args...)...)
 	}
 	if err != nil {
 		return nil, err

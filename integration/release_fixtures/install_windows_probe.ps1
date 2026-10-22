@@ -223,7 +223,9 @@ try {
         $user = [Environment]::ExpandEnvironmentVariables((Get-TestPath).Raw)
         $start = New-Object Diagnostics.ProcessStartInfo
         $start.FileName = (Get-Process -Id $PID).Path
-        $start.Arguments = '-NoProfile -NonInteractive -Command "& clawbridge path-lookup; exit $LASTEXITCODE"'
+        # Stop, so an unresolvable clawbridge fails the shell instead of
+        # continuing to `exit $LASTEXITCODE` with no exit code set.
+        $start.Arguments = '-NoProfile -NonInteractive -Command "$ErrorActionPreference = ''Stop''; & clawbridge path-lookup; exit $LASTEXITCODE"'
         $start.UseShellExecute = $false
         $start.RedirectStandardOutput = $true
         $start.RedirectStandardError = $true

@@ -199,7 +199,7 @@ func (s *Service) LabelsV2(ctx context.Context, scope bus.Request, team string, 
 		return empty, e
 	}
 	defer done()
-	if _, e = verifyBindingV2(ctx, p, b); e != nil {
+	if _, e = s.verifyReadBindingV2(ctx, p, b); e != nil {
 		return empty, e
 	}
 	p2, ok := p.(ProviderV2)
@@ -262,7 +262,7 @@ func (s *Service) MembersV2(ctx context.Context, scope bus.Request, team string,
 		return empty, e
 	}
 	defer done()
-	if _, e = verifyBindingV2(ctx, p, b); e != nil {
+	if _, e = s.verifyReadBindingV2(ctx, p, b); e != nil {
 		return empty, e
 	}
 	p2, ok := p.(ProviderV2)

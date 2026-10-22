@@ -46,8 +46,9 @@ type Config struct {
 	Now             func() time.Time
 }
 type Service struct {
-	cfg  Config
-	pool *providerPool
+	cfg    Config
+	pool   *providerPool
+	proofs *bindingProofCache
 }
 
 func New(c Config) *Service {

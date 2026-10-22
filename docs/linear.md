@@ -122,8 +122,12 @@ connection is also replaced after five minutes, when the profile's access
 changes, when Linear's session stops answering, and after any failed tool call,
 including a `capability_unavailable` one. So a read can see a capability change
 up to five minutes late; a write never does. The connection is never shared with
-another process, and every call still checks the profile first. CLI commands
-connect once per command as before.
+another process, and every call still checks the profile first. Read tools also
+reuse a verified board binding (its Linear teams and projects) for up to 60
+seconds, as long as the binding itself hasn't changed and no tool call failed in
+between; a read can therefore see a team or project change in Linear up to a
+minute late. Write tools always verify the binding against Linear. CLI commands
+connect and verify once per command as before.
 
 Start from the assigned issue and read its scope, dependencies, acceptance criteria
 and Current agent block. Resolve that immutable session through project-scoped,

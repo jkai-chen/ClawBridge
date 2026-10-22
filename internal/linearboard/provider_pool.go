@@ -36,17 +36,20 @@ func (s *Service) KeepProviderOpen(ttl time.Duration) {
 	}
 }
 
-// Close releases a kept-open native connection.
+// Close releases a kept-open native connection and any cached binding proof.
 func (s *Service) Close() error {
 	s.pool.drop()
+	s.proofs.drop()
 	return nil
 }
 
-// settle reopens the kept connection after any failed command, so an error
-// never leaves a suspect session or tool list in use.
+// settle reopens the kept connection and forgets the cached binding proof after
+// any failed command, so an error never leaves a suspect session, tool list or
+// proof in use.
 func (s *Service) settle(err error) {
 	if err != nil {
 		s.pool.drop()
+		s.proofs.drop()
 	}
 }
 

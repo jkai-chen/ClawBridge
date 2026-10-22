@@ -603,8 +603,10 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 			manager := newLinearManager(directory)
 			board := newLinearService(directory, flags.LinearProfile, manager, executor, linearAuthority(config))
 			// The MCP process lives for the whole client session, so it keeps one
-			// native connection open instead of reconnecting on every tool call.
+			// native connection open instead of reconnecting on every tool call,
+			// and read tools reuse a verified binding briefly. Writes do neither.
 			board.KeepProviderOpen(linearboard.ProviderTTL)
+			board.CacheReadBindingProof(linearboard.BindingProofTTL)
 			defer board.Close()
 			native := mcpserver.NewServerWithOptions(executor, config.Workspace, config.Project, config.Session, config.Instance, mcpserver.Options{Context: ctx, Taskboard: board})
 			return native.Run(ctx, &mcp.StdioTransport{})

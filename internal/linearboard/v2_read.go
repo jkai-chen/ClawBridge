@@ -126,7 +126,7 @@ func (s *Service) ContextV2(ctx context.Context, scope bus.Request) (ContextV2, 
 		return ContextV2{}, e
 	}
 	defer done()
-	if _, e = verifyBindingV2(ctx, p, b); e != nil {
+	if _, e = s.verifyReadBindingV2(ctx, p, b); e != nil {
 		return ContextV2{}, e
 	}
 	out := ContextV2{Binding: b, Profile: profile, WorkspaceIDAvailable: profile.WorkspaceID != ""}
@@ -298,7 +298,7 @@ func (s *Service) IssuesV2(ctx context.Context, scope bus.Request, in IssuesInpu
 		return empty, e
 	}
 	defer done()
-	v, e := verifyBindingV2(ctx, p, b)
+	v, e := s.verifyReadBindingV2(ctx, p, b)
 	if e != nil {
 		return empty, e
 	}
@@ -419,7 +419,7 @@ func (s *Service) issueV2(ctx context.Context, scope bus.Request, id string, res
 		return empty, e
 	}
 	defer done()
-	v, e := verifyBindingV2(ctx, p, b)
+	v, e := s.verifyReadBindingV2(ctx, p, b)
 	if e != nil {
 		return empty, e
 	}

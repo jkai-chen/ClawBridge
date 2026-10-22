@@ -51,6 +51,7 @@ const missingIssueV2 = "99999999-9999-4999-8999-999999999999"
 
 type poolHarness struct {
 	s      *Service
+	a      *authorityV2
 	scope  bus.Request
 	p      *providerV2
 	opened []*pooledV2
@@ -61,8 +62,8 @@ type poolHarness struct {
 
 func newPoolHarness(t *testing.T, keep bool) *poolHarness {
 	t.Helper()
-	s, _, p, scope := testV2(t)
-	h := &poolHarness{s: s, scope: scope, p: p, now: time.Date(2026, 10, 22, 12, 0, 0, 0, time.UTC), access: linearconn.Write}
+	s, a, p, scope := testV2(t)
+	h := &poolHarness{s: s, a: a, scope: scope, p: p, now: time.Date(2026, 10, 22, 12, 0, 0, 0, time.UTC), access: linearconn.Write}
 	s.cfg.Now = func() time.Time { return h.now }
 	s.cfg.Connections = accessConnections{&h.access}
 	s.cfg.Open = func(_ context.Context, _ *http.Client, ro bool) (Provider, error) {

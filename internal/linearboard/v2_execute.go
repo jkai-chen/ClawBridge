@@ -168,7 +168,7 @@ func (s *Service) StatesV2(ctx context.Context, scope bus.Request, team string) 
 		return nil, e
 	}
 	defer done()
-	if _, e = verifyBindingV2(ctx, p, b); e != nil {
+	if _, e = s.verifyReadBindingV2(ctx, p, b); e != nil {
 		return nil, e
 	}
 	states, e := p.Statuses(ctx, team)

@@ -433,6 +433,7 @@ func (s *Service) IssuesV2(ctx context.Context, scope bus.Request, in IssuesInpu
 		return empty, errors.New("incomplete or contradictory issue continuation")
 	}
 	seen := map[string]string{}
+	filteredName := ""
 	for _, issue := range page.Items {
 		if e = checkIssueV2(issue, b, v); e != nil {
 			return empty, e
@@ -440,7 +441,18 @@ func (s *Service) IssuesV2(ctx context.Context, scope bus.Request, in IssuesInpu
 		if issue.TeamID != pair.TeamID || (b.Mode == "project_set" && issue.ProjectID != pair.ProjectID) {
 			return empty, errors.New("provider page escaped the selected pair")
 		}
-		if in.LabelID != "" && (!issue.LabelsKnown || !contains(issue.LabelIDs, in.LabelID)) {
+		if in.LabelID != "" && !issue.LabelsKnown {
+			// Native rows name their labels; one catalog walk per page names
+			// the selected label, and each row must carry that name.
+			if filteredName == "" {
+				if filteredName, e = filteredLabelNameV2(ctx, p2, pair.TeamID, in.LabelID); e != nil {
+					return empty, e
+				}
+			}
+			if !contains(issue.LabelNames, filteredName) {
+				return empty, errors.New("provider did not prove the selected label filter")
+			}
+		} else if in.LabelID != "" && !contains(issue.LabelIDs, in.LabelID) {
 			return empty, errors.New("provider did not prove the selected label filter")
 		}
 		h := digest(issue)
@@ -555,32 +567,9 @@ func resolveLabelsV2(ctx context.Context, p ProviderV2, issue linearprovider.Iss
 		}
 		names[name] = true
 	}
-	byName := map[string][]string{}
-	cursor, seen, complete := "", map[string]bool{}, false
-	for page := 0; page < 64 && !complete; page++ {
-		rows, e := m.LabelCatalog(ctx, issue.TeamID, linearprovider.PageOptions{Limit: 100, Cursor: cursor})
-		if e != nil {
-			return issue, e
-		}
-		if e = validProviderPageV2(rows.NextCursor, rows.Complete, cursor, len(rows.Items), 100); e != nil {
-			return issue, e
-		}
-		for _, row := range rows.Items {
-			if names[row.Name] {
-				byName[row.Name] = append(byName[row.Name], row.ID)
-			}
-		}
-		complete = rows.Complete
-		if !complete {
-			if seen[rows.NextCursor] {
-				return issue, errors.New("label pagination cycle")
-			}
-			seen[rows.NextCursor] = true
-			cursor = rows.NextCursor
-		}
-	}
-	if !complete {
-		return issue, nil
+	byName, complete, e := labelCatalogV2(ctx, m, issue.TeamID)
+	if e != nil || !complete {
+		return issue, e
 	}
 	ids := []string{}
 	for name := range names {
@@ -605,6 +594,72 @@ func resolveLabelsV2(ctx context.Context, p ProviderV2, issue linearprovider.Iss
 	}
 	issue.LabelIDs, issue.LabelsKnown = proven, true
 	return issue, nil
+}
+
+// labelCatalogV2 walks a team's complete label listing (archived labels and
+// groups included) into name -> IDs. complete=false means the walk hit its
+// bound, which callers treat as unknown.
+func labelCatalogV2(ctx context.Context, m labelMembershipV2, team string) (map[string][]string, bool, error) {
+	byName := map[string][]string{}
+	cursor, seen := "", map[string]bool{}
+	for page := 0; page < 64; page++ {
+		rows, e := m.LabelCatalog(ctx, team, linearprovider.PageOptions{Limit: 100, Cursor: cursor})
+		if e != nil {
+			return nil, false, e
+		}
+		if e = validProviderPageV2(rows.NextCursor, rows.Complete, cursor, len(rows.Items), 100); e != nil {
+			return nil, false, e
+		}
+		for _, row := range rows.Items {
+			byName[row.Name] = append(byName[row.Name], row.ID)
+		}
+		if rows.Complete {
+			return byName, true, nil
+		}
+		if seen[rows.NextCursor] {
+			return nil, false, errors.New("label pagination cycle")
+		}
+		seen[rows.NextCursor] = true
+		cursor = rows.NextCursor
+	}
+	return nil, false, nil
+}
+
+// filteredLabelNameV2 names the selected label for rows that carry label names
+// only. The provider must prove membership from names, and the label's name
+// must be unique in the team's complete listing, as in resolveLabelsV2; a
+// names-only row is then accepted only if it carries that name, so a filter
+// Linear silently ignored cannot pass rows with other labels.
+func filteredLabelNameV2(ctx context.Context, p ProviderV2, team, label string) (string, error) {
+	refuse := errors.New("provider did not prove the selected label filter")
+	m, ok := p.(labelMembershipV2)
+	if !ok {
+		return "", refuse
+	}
+	caps, e := p.Capabilities(ctx)
+	if e != nil {
+		return "", e
+	}
+	if !caps.LabelMembershipProof {
+		return "", refuse
+	}
+	byName, complete, e := labelCatalogV2(ctx, m, team)
+	if e != nil {
+		return "", e
+	}
+	name := ""
+	for candidate, ids := range byName {
+		if contains(ids, label) {
+			if name != "" || len(ids) != 1 {
+				return "", refuse
+			}
+			name = candidate
+		}
+	}
+	if !complete || name == "" {
+		return "", refuse
+	}
+	return name, nil
 }
 
 func sortedUniqueIDs(ids []string, max int) ([]string, error) {

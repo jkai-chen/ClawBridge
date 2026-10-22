@@ -108,3 +108,40 @@ func TestLinearV2UnprovenNamedLabelsAreRefused(t *testing.T) {
 		})
 	}
 }
+
+// Native list rows name their labels. A filtered page is accepted only when
+// the selected label's name is unique in the team's complete catalog and every
+// names-only row carries it, so an ignored filter cannot pass other rows.
+func TestLinearV2NamesOnlyRowsProveTheLabelFilterByUniqueName(t *testing.T) {
+	named := func(id string, names ...string) linearprovider.IssueV2 {
+		return linearprovider.IssueV2{Issue: linearprovider.Issue{ID: id, TeamID: teamID, ProjectID: projectA}, ProjectKnown: true, LabelNames: names}
+	}
+	for name, tc := range map[string]struct {
+		catalog []linearprovider.LabelName
+		rows    []linearprovider.IssueV2
+		proof   bool
+		ok      bool
+	}{
+		"filtered page":             {[]linearprovider.LabelName{{ID: labelA, Name: "Bug"}, {ID: memberA, Name: "Ops"}}, []linearprovider.IssueV2{named(issueID, "Ops", "Bug"), named(parentA, "Bug")}, true, true},
+		"filter ignored by Linear":  {[]linearprovider.LabelName{{ID: labelA, Name: "Bug"}, {ID: memberA, Name: "Ops"}}, []linearprovider.IssueV2{named(issueID, "Bug"), named(parentA, "Ops")}, true, false},
+		"unlabelled names-only row": {[]linearprovider.LabelName{{ID: labelA, Name: "Bug"}}, []linearprovider.IssueV2{named(issueID)}, true, false},
+		"duplicate name":            {[]linearprovider.LabelName{{ID: labelA, Name: "Bug"}, {ID: memberA, Name: "Bug"}}, []linearprovider.IssueV2{named(issueID, "Bug")}, true, false},
+		"label absent from catalog": {[]linearprovider.LabelName{{ID: memberA, Name: "Bug"}}, []linearprovider.IssueV2{named(issueID, "Bug")}, true, false},
+		"no membership capability":  {[]linearprovider.LabelName{{ID: labelA, Name: "Bug"}}, []linearprovider.IssueV2{named(issueID, "Bug")}, false, false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			s, p, m, _ := resolvingV2(t, nil, tc.catalog, nil)
+			_, _, _, scope := testV2(t)
+			p.caps.LabelMembershipProof = tc.proof
+			p.labels = []linearprovider.Label{{ID: labelA, TeamID: teamID, EligibilityKnown: true}}
+			p.pages = []linearprovider.Page[linearprovider.IssueV2]{{Items: tc.rows, Complete: true}}
+			page, e := s.IssuesV2(context.Background(), scope, IssuesInputV2{Limit: 10, LabelID: labelA})
+			if tc.ok != (e == nil) {
+				t.Fatalf("accepted=%v want %v: %v", e == nil, tc.ok, e)
+			}
+			if tc.ok && (len(page.Items) != 2 || page.Items[0].LabelsKnown || *m.catalogs != 1 || *m.checks != 0) {
+				t.Fatalf("filtered page overclaimed or walked the catalog per row: %+v catalogs=%d checks=%d", page.Items, *m.catalogs, *m.checks)
+			}
+		})
+	}
+}

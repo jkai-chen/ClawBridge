@@ -223,11 +223,13 @@ leaves the set unknown and the update is refused. `linear issue --resolve-labels
 (MCP `resolve_labels: true`) runs the same proof on a read so you can pass the
 result as `--expect-label`; it costs one listing walk plus one check per label.
 
-`linear issues --label UUID` (MCP `label_id`) relies on the same filter: on
-native Linear the rows name their labels, so Linear's list filtered by the label
-UUID is the proof that each returned issue carries it, and the rows keep
-`labels_known: false`. If the `list_issues` label filter is no longer the
-documented "Label name or ID" string, the filtered list is refused.
+`linear issues --label UUID` (MCP `label_id`) relies on the same proof. On
+native Linear the rows name their labels, so ClawBridge sends only the label
+UUID to Linear's filter, walks the team's complete label listing once per page,
+and accepts a row only if it carries the selected label's name and that name is
+unique in the listing. A row with another label (a filter Linear ignored), a
+duplicate or missing name, or a drifted label filter refuses the whole page. The
+rows keep `labels_known: false`.
 
 | Explicit field | Meaning |
 | --- | --- |

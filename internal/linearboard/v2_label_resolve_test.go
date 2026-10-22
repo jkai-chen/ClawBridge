@@ -145,3 +145,34 @@ func TestLinearV2NamesOnlyRowsProveTheLabelFilterByUniqueName(t *testing.T) {
 		})
 	}
 }
+
+func TestLinearV2UpdatedAfterIsCheckedAndBindsTheCursor(t *testing.T) {
+	s, _, p, scope := testV2(t)
+	row := func(updated string) linearprovider.IssueV2 {
+		return linearprovider.IssueV2{Issue: linearprovider.Issue{ID: issueID, TeamID: teamID, ProjectID: projectA}, ProjectKnown: true, LabelsKnown: true, UpdatedAt: updated}
+	}
+	in := IssuesInputV2{Limit: 10, UpdatedAfter: "2026-10-22T09:00:00Z"}
+	p.pages = []linearprovider.Page[linearprovider.IssueV2]{{Items: []linearprovider.IssueV2{row("2026-10-22T09:00:00Z")}, Complete: true}}
+	page, e := s.IssuesV2(context.Background(), scope, in)
+	if e != nil || len(page.Items) != 1 || p.queries[0].UpdatedAfter != in.UpdatedAfter {
+		t.Fatal("updated-after filter not passed or row refused", page, e, p.queries)
+	}
+	p.pages = []linearprovider.Page[linearprovider.IssueV2]{{Items: []linearprovider.IssueV2{row("2026-10-21T09:00:00Z")}, Complete: true}}
+	if _, e = s.IssuesV2(context.Background(), scope, in); e == nil || !strings.Contains(e.Error(), "updated_after") {
+		t.Fatal("older row passed the board", e)
+	}
+	// A continuation from an unfiltered list cannot continue a filtered one.
+	p.pages = []linearprovider.Page[linearprovider.IssueV2]{{NextCursor: "next", Complete: false}}
+	plain, e := s.IssuesV2(context.Background(), scope, IssuesInputV2{Limit: 10})
+	if e != nil || plain.NextCursor == "" {
+		t.Fatal(plain, e)
+	}
+	in.Cursor = plain.NextCursor
+	if _, e = s.IssuesV2(context.Background(), scope, in); e == nil {
+		t.Fatal("unfiltered cursor continued a filtered list")
+	}
+	queries := len(p.queries)
+	if _, e = s.IssuesV2(context.Background(), scope, IssuesInputV2{Limit: 10, UpdatedAfter: "-P1D"}); e == nil || len(p.queries) != queries {
+		t.Fatal("relative bound accepted")
+	}
+}

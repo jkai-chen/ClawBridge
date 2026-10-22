@@ -88,7 +88,7 @@ type linearFlags struct {
 	teams                                                                                                                []string
 	projects, labels, expectedLabels                                                                                     []string
 	team, parent, assignee, relationType, relationAction, labelFilter                                                    string
-	expectTitle, expectDescriptionSHA256                                                                                 string
+	expectTitle, expectDescriptionSHA256, updatedAfter                                                                   string
 	clearProject, clearLabels, clearParent, clearAssignee, expectNoLabels                                                bool
 	limit                                                                                                                int
 	revision                                                                                                             int64
@@ -145,6 +145,7 @@ func parseLinear(command string, args []string, stderr io.Writer) (linearFlags, 
 		page()
 		if command == "issues" {
 			f.StringVar(&v.labelFilter, "label", "", "verified team-label UUID filter")
+			f.StringVar(&v.updatedAfter, "updated-after", "", "only issues updated at or after this absolute RFC 3339 time")
 		}
 	case "labels", "members":
 		page()
@@ -635,7 +636,7 @@ func runLinear(ctx context.Context, flags Config, args []string, stdout, stderr 
 	case "context":
 		data, err = service.ContextV2(bounded, scope)
 	case "issues":
-		data, err = service.IssuesV2(bounded, scope, linearboard.IssuesInputV2{Limit: v.limit, Cursor: v.cursor, LabelID: v.labelFilter})
+		data, err = service.IssuesV2(bounded, scope, linearboard.IssuesInputV2{Limit: v.limit, Cursor: v.cursor, LabelID: v.labelFilter, UpdatedAfter: v.updatedAfter})
 	case "issue":
 		if v.resolveLabels {
 			data, err = service.IssueV2ResolvedLabels(bounded, scope, pos[0])

@@ -18,6 +18,7 @@ func nativeIssueList() *mcp.Tool {
 		"includeArchived": map[string]any{"type": "boolean", "default": false, "description": "Include archived items"},
 		"limit":           map[string]any{"type": "number", "default": 50, "maximum": 250},
 		"cursor":          map[string]any{"type": "string"},
+		"updatedAt":       map[string]any{"type": "string", "description": "Updated after: ISO-8601 date/duration (e.g., -P1D)"},
 	}}}
 }
 

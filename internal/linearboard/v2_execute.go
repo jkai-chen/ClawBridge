@@ -11,7 +11,7 @@ import (
 // ExecuteV2 is the closed native adapter used by additive, scope-pinned MCP tools.
 func (s *Service) ExecuteV2(ctx context.Context, scope bus.Request, operation string, args map[string]any) (_ any, err error) {
 	defer func() { s.settle(err) }()
-	allowed := map[string][]string{"binding": {}, "context": {}, "issues": {"limit", "cursor", "label_id"}, "issue": {"id", "resolve_labels"}, "labels": {"team_id", "limit", "cursor"}, "members": {"team_id", "limit", "cursor"}, "create": {"title", "description", "state_id", "operation_id", "team_id", "project_id", "label_ids", "parent_id", "assignee_id"}, "update": {"id", "title", "description", "state_id", "operation_id", "project_id", "label_ids", "expected_label_ids", "expected_title", "expected_description_sha256", "parent_id", "assignee_id"}, "comment": {"id", "body", "operation_id"}, "relation_add": {"from_id", "to_id", "type", "operation_id"}, "relation_remove": {"from_id", "to_id", "type", "operation_id"}}
+	allowed := map[string][]string{"binding": {}, "context": {}, "issues": {"limit", "cursor", "label_id", "updated_after"}, "issue": {"id", "resolve_labels"}, "labels": {"team_id", "limit", "cursor"}, "members": {"team_id", "limit", "cursor"}, "create": {"title", "description", "state_id", "operation_id", "team_id", "project_id", "label_ids", "parent_id", "assignee_id"}, "update": {"id", "title", "description", "state_id", "operation_id", "project_id", "label_ids", "expected_label_ids", "expected_title", "expected_description_sha256", "parent_id", "assignee_id"}, "comment": {"id", "body", "operation_id"}, "relation_add": {"from_id", "to_id", "type", "operation_id"}, "relation_remove": {"from_id", "to_id", "type", "operation_id"}}
 	keys, ok := allowed[operation]
 	if !ok {
 		return nil, errors.New("unsupported task-board V2 operation")
@@ -58,7 +58,7 @@ func (s *Service) ExecuteV2(ctx context.Context, scope bus.Request, operation st
 	case "context":
 		return s.ContextV2(ctx, scope)
 	case "issues":
-		return s.IssuesV2(ctx, scope, IssuesInputV2{Limit: limit, Cursor: text("cursor"), LabelID: text("label_id")})
+		return s.IssuesV2(ctx, scope, IssuesInputV2{Limit: limit, Cursor: text("cursor"), LabelID: text("label_id"), UpdatedAfter: text("updated_after")})
 	case "issue":
 		if resolve, _ := args["resolve_labels"].(bool); resolve {
 			return s.IssueV2ResolvedLabels(ctx, scope, text("id"))

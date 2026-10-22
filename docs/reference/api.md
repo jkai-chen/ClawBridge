@@ -123,6 +123,8 @@ V2 family for new board calls. Initialization and listing do not access Linear.
 capability flags and, for any that are off, a `reasons` entry explaining why.
 `taskboard_update_v2` requires `expected_label_ids` whenever it sends
 `label_ids`: the complete label set last read, refused on mismatch.
+`taskboard_issues_v2` accepts `updated_after`, an absolute RFC 3339 time;
+rows updated earlier refuse the page.
 `taskboard_issue_v2` accepts `resolve_labels: true` to prove label IDs when Linear
 returns label names only, and returns `description_sha256`, the SHA-256 of the
 description it read. `taskboard_update_v2` accepts the optional guards

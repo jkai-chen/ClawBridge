@@ -9,6 +9,7 @@ import (
 	"io"
 	"slices"
 	"sort"
+	"time"
 
 	"clawbridge/internal/bus"
 	"clawbridge/internal/linearprovider"
@@ -356,13 +357,25 @@ func encodeCursorV2(c cursorV2) (string, error) {
 	}
 	return s, nil
 }
-func issueCursorKeyV2(profile string, b bus.TaskboardBindingV2, label string, pairs []pairV2) string {
-	return digest([]any{profile, b.WorkspaceID, b.ProjectID, b.MappingVersion, b.Revision, b.Mode, SortedTeams(b.LinearTeamIDs), SortedTeams(b.LinearProjectIDs), label, pairs})
+func issueCursorKeyV2(profile string, b bus.TaskboardBindingV2, label, updatedAfter string, pairs []pairV2) string {
+	key := []any{profile, b.WorkspaceID, b.ProjectID, b.MappingVersion, b.Revision, b.Mode, SortedTeams(b.LinearTeamIDs), SortedTeams(b.LinearProjectIDs), label, pairs}
+	if updatedAfter != "" {
+		// Appended only when set, so unfiltered cursors keep their key.
+		key = append(key, updatedAfter)
+	}
+	return digest(key)
 }
 func (s *Service) IssuesV2(ctx context.Context, scope bus.Request, in IssuesInputV2) (linearprovider.Page[linearprovider.IssueV2], error) {
 	empty := linearprovider.Page[linearprovider.IssueV2]{}
 	if in.Limit < 1 || in.Limit > 100 || len(in.Cursor) > 8192 || (in.LabelID != "" && !linearprovider.ValidID(in.LabelID)) {
 		return empty, errors.New("invalid V2 issue pagination or filter")
+	}
+	var after time.Time
+	if in.UpdatedAfter != "" {
+		var ok bool
+		if after, ok = linearprovider.UpdatedAfterTime(in.UpdatedAfter); !ok {
+			return empty, errors.New("updated_after requires an absolute RFC 3339 time")
+		}
 	}
 	b, e := s.BindingV2(ctx, scope)
 	if e != nil {
@@ -416,7 +429,7 @@ func (s *Service) IssuesV2(ctx context.Context, scope bus.Request, in IssuesInpu
 			}
 		}
 	}
-	key := issueCursorKeyV2(s.cfg.ProfileID, b, in.LabelID, pairs)
+	key := issueCursorKeyV2(s.cfg.ProfileID, b, in.LabelID, in.UpdatedAfter, pairs)
 	c, e := readCursorV2(in.Cursor, key, len(pairs))
 	if e != nil {
 		return empty, e
@@ -425,7 +438,7 @@ func (s *Service) IssuesV2(ctx context.Context, scope bus.Request, in IssuesInpu
 		return empty, errors.New("no verified issue pair")
 	}
 	pair := pairs[c.Pair]
-	page, e := p2.IssuesV2(ctx, linearprovider.IssueQueryV2{IssueQuery: linearprovider.IssueQuery{TeamID: pair.TeamID, ProjectID: pair.ProjectID, Limit: in.Limit, Cursor: c.Provider}, LabelID: in.LabelID})
+	page, e := p2.IssuesV2(ctx, linearprovider.IssueQueryV2{IssueQuery: linearprovider.IssueQuery{TeamID: pair.TeamID, ProjectID: pair.ProjectID, Limit: in.Limit, Cursor: c.Provider}, LabelID: in.LabelID, UpdatedAfter: in.UpdatedAfter})
 	if e != nil {
 		return empty, e
 	}
@@ -440,6 +453,11 @@ func (s *Service) IssuesV2(ctx context.Context, scope bus.Request, in IssuesInpu
 		}
 		if issue.TeamID != pair.TeamID || (b.Mode == "project_set" && issue.ProjectID != pair.ProjectID) {
 			return empty, errors.New("provider page escaped the selected pair")
+		}
+		if in.UpdatedAfter != "" {
+			if updated, ok := linearprovider.UpdatedAfterTime(issue.UpdatedAt); !ok || updated.Before(after) {
+				return empty, errors.New("provider did not prove the updated_after filter")
+			}
 		}
 		if in.LabelID != "" && !issue.LabelsKnown {
 			// Native rows name their labels; one catalog walk per page names

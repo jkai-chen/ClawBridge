@@ -6,6 +6,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"time"
 	"unicode/utf8"
 )
 
@@ -17,7 +18,17 @@ type Field[T any] struct {
 type IssueQueryV2 struct {
 	IssueQuery
 	LabelID string
+	// UpdatedAfter is an absolute RFC 3339 time; rows updated earlier refuse
+	// the page, so a filter Linear ignored cannot pass.
+	UpdatedAfter string
 }
+
+// UpdatedAfterTime parses an absolute RFC 3339 time, never a duration.
+func UpdatedAfterTime(value string) (time.Time, bool) {
+	t, e := time.Parse(time.RFC3339Nano, value)
+	return t, e == nil && len(value) <= 64
+}
+
 type IssueV2 struct {
 	Issue
 	ProjectKnown bool     `json:"project_known"`
@@ -40,6 +51,8 @@ type IssueV2 struct {
 	// DescriptionSHA256 is set only by a single-issue board read; a caller
 	// sends it back as expected_description_sha256.
 	DescriptionSHA256 string `json:"description_sha256,omitempty"`
+	// UpdatedAt is Linear's last-update time when the read returned it.
+	UpdatedAt string `json:"updated_at,omitempty"`
 }
 type Label struct {
 	ID       string `json:"id"`
@@ -94,6 +107,9 @@ type Capabilities struct {
 	// LabelMembershipProof: issue label IDs can be proven when reads return
 	// only names (full label listing plus list_issues filtered by label ID).
 	LabelMembershipProof bool `json:"label_membership_proof"`
+	// UpdatedAfterFilter: list_issues filters by "updated after" and returns
+	// each row's updatedAt, so the filter can be checked row by row.
+	UpdatedAfterFilter bool `json:"updated_after_filter"`
 	// Reasons explains, per capability key, why a capability is off, so a
 	// silent switch-off (for example after a provider schema change) is
 	// visible in status and doctor output.
@@ -480,6 +496,11 @@ func (p *Provider) Capabilities(context.Context) (Capabilities, error) {
 	if membership != "" {
 		capabilities.Reasons["label_membership_proof"] = membership
 	}
+	updatedAfter := p.updatedAfterReason()
+	capabilities.UpdatedAfterFilter = updatedAfter == ""
+	if updatedAfter != "" {
+		capabilities.Reasons["updated_after_filter"] = updatedAfter
+	}
 	switch {
 	case !shape:
 		capabilities.Reasons["parent_same_destination"] = "no issue mutation tool accepts parentId beside project"
@@ -600,6 +621,7 @@ func (p *Provider) parseIssueV2(ctx context.Context, m map[string]any) (IssueV2,
 	if e != nil {
 		return IssueV2{}, e
 	}
+	x.UpdatedAt = str(m, "updatedAt")
 	x.ParentID, x.ParentIdentifier, x.ParentKnown, e = parseParentV2(m)
 	if e != nil {
 		return IssueV2{}, e
@@ -798,6 +820,16 @@ func (p *Provider) IssuesV2(ctx context.Context, q IssueQueryV2) (Page[IssueV2],
 	if !ValidID(q.TeamID) || (q.ProjectID != "" && !ValidID(q.ProjectID)) || (q.LabelID != "" && !ValidID(q.LabelID)) {
 		return Page[IssueV2]{}, fail("invalid")
 	}
+	var after time.Time
+	if q.UpdatedAfter != "" {
+		var ok bool
+		if after, ok = UpdatedAfterTime(q.UpdatedAfter); !ok {
+			return Page[IssueV2]{}, fail("invalid")
+		}
+		if p.updatedAfterReason() != "" {
+			return Page[IssueV2]{}, fail("capability_unavailable")
+		}
+	}
 	args, e := pageArgs(PageOptions{Limit: q.Limit, Cursor: q.Cursor})
 	if e != nil {
 		return Page[IssueV2]{}, e
@@ -808,6 +840,9 @@ func (p *Provider) IssuesV2(ctx context.Context, q IssueQueryV2) (Page[IssueV2],
 	}
 	if q.LabelID != "" {
 		args = append(args, a(q.LabelID, "label", "labelId"))
+	}
+	if q.UpdatedAfter != "" {
+		args = append(args, a(after.UTC().Format(time.RFC3339Nano), "updatedAt"))
 	}
 	m, e := p.v2Call(ctx, []string{"list_issues"}, args...)
 	if e != nil {
@@ -829,6 +864,11 @@ func (p *Provider) IssuesV2(ctx context.Context, q IssueQueryV2) (Page[IssueV2],
 		}
 		if x.TeamID != q.TeamID || (q.ProjectID != "" && x.ProjectID != q.ProjectID) {
 			return Page[IssueV2]{}, fail("scope_mismatch")
+		}
+		if q.UpdatedAfter != "" {
+			if updated, ok := UpdatedAfterTime(x.UpdatedAt); !ok || updated.Before(after) {
+				return Page[IssueV2]{}, fail("scope_mismatch")
+			}
 		}
 		if q.LabelID != "" && !x.LabelsKnown {
 			// Native rows carry label names only; the pinned server filter,
@@ -1308,6 +1348,24 @@ func (p *Provider) labelMembershipReason() string {
 		}
 	}
 	return p.labelFilterProofReason()
+}
+
+// updatedAfterReason is empty when list_issues pins the documented
+// "Updated after" string filter and can return each row's updatedAt.
+func (p *Provider) updatedAfterReason() string {
+	issues := p.tools["list_issues"]
+	if issues == nil {
+		return "list_issues is not advertised"
+	}
+	props, _, e := schema(issues)
+	if e != nil {
+		return "list_issues schema is unreadable"
+	}
+	filter, ok := props["updatedAt"].(map[string]any)
+	if text, _ := filter["description"].(string); !ok || filter["type"] != "string" || !strings.Contains(text, "Updated after") {
+		return "list_issues schema changed: updatedAt filter missing or no longer documented as updated after"
+	}
+	return ""
 }
 
 // labelFilterProofReason is empty when list_issues pins the documented

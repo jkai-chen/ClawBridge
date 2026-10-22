@@ -154,7 +154,11 @@ To ask for agent attention, people add the label `needs-agent` to an issue
 issues when it runs, with `linear issues --label UUID` (MCP `label_id`) for each
 bound team. The label is a request, never approval or an assignment: the
 coordinator still assigns the work through ClawBridge, and people remove the
-label.
+label. Add `--updated-after 2026-10-22T09:00:00Z` (MCP `updated_after`, an
+absolute RFC 3339 time, never a duration) to list only issues changed since the
+last check. Every returned row must report an `updated_at` at or after that
+time, or the page is refused; the `updated_after_filter` capability shows
+whether Linear still documents the filter.
 
 Task-board inspection is read-only. Creating/updating/commenting requires explicit
 write capability and an operation ID. Retry an accepted operation only with the

@@ -479,7 +479,7 @@ func issueReadProjection(props map[string]any) ([]string, error) {
 			return bad()
 		}
 	}
-	for _, name := range []string{"identifier", "title", "description", "stateId", "state", "status", "statusType", "assignee", "url", "parentId", "parent", "subIssues", "subissues", "relations", "dependencies"} {
+	for _, name := range []string{"identifier", "title", "description", "stateId", "state", "status", "statusType", "assignee", "url", "updatedAt", "parentId", "parent", "subIssues", "subissues", "relations", "dependencies"} {
 		if allowed[name] {
 			selected = append(selected, name)
 		}

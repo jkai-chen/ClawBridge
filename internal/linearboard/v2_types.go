@@ -44,8 +44,8 @@ type LinkPreviewV2 struct {
 	Confirmed     bool                     `json:"confirmed"`
 }
 type IssuesInputV2 struct {
-	Limit           int
-	Cursor, LabelID string
+	Limit                         int
+	Cursor, LabelID, UpdatedAfter string
 }
 
 // WriteInputV2 deliberately embeds, rather than extends, the historical digest

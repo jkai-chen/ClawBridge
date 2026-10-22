@@ -40,6 +40,7 @@ func boardSchemaV2(operation string) map[string]any {
 	case "issues":
 		page()
 		props["label_id"] = uuid(false)
+		props["updated_after"] = map[string]any{"type": "string", "maxLength": 64, "description": "Only issues updated at or after this absolute RFC 3339 time, for example 2026-10-22T09:00:00Z"}
 	case "labels", "members":
 		page()
 		props["team_id"] = uuid(false)

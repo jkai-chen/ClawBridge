@@ -101,7 +101,9 @@ Creating that label is an operator action; agents do not create it.
 
 - The coordinator session checks for it when it runs. For each bound team, find
   the label's UUID with `labels`, then list `issues` with that `label_id`
-  (CLI `linear issues --label UUID`), following cursors until complete.
+  (CLI `linear issues --label UUID`), following cursors until complete. To
+  see only issues changed since your last check, add `updated_after` with the
+  absolute time of that check.
 - Other sessions do not pick work from this list; they wait for the
   coordinator's assignment.
 - The label asks for attention. It is not approval, an assignment or a scope

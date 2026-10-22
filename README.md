@@ -59,4 +59,4 @@ See [Linux credentials](docs/installation.md#linux-and-wsl-credentials) for chec
 and recovery.
 
 Historical design and test evidence is indexed in [the archive](docs/archive/README.md).
-The owner has not selected a distribution licence.
+ClawBridge is released under the [MIT License](LICENSE).

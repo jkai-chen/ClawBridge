@@ -187,5 +187,13 @@ func (s *Store) retire(ctx context.Context, tx *transaction, wid, pid string, ac
 	if err = s.audit(ctx, tx, wid, pid, sid, "session", sid, status, map[string]any{"successor": successor}); err != nil {
 		return nil, err
 	}
-	return one(ctx, tx, `SELECT * FROM sessions WHERE id=? AND project_id=?`, sid, pid)
+	ended, err := s.endSessionAssignment(ctx, tx, wid, pid, sid, status, successor)
+	if err != nil {
+		return nil, err
+	}
+	row, err := one(ctx, tx, `SELECT * FROM sessions WHERE id=? AND project_id=?`, sid, pid)
+	if err == nil && len(ended) > 0 {
+		row["assignment"] = ended
+	}
+	return row, err
 }

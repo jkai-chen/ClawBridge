@@ -98,7 +98,7 @@ func (s *Store) migrate() error {
 	if err = tx.QueryRow("PRAGMA user_version").Scan(&version); err != nil {
 		return err
 	}
-	if version > 4 {
+	if version > 5 {
 		return errors.New("database schema is newer than this ClawBridge binary")
 	}
 	if version == 0 {
@@ -125,6 +125,11 @@ func (s *Store) migrate() error {
 	}
 	if version < 4 {
 		if _, err = tx.Exec(taskboardSchemaV4 + `PRAGMA user_version=4;`); err != nil {
+			return err
+		}
+	}
+	if version < 5 {
+		if _, err = tx.Exec(assignmentSchemaV5 + `PRAGMA user_version=5;`); err != nil {
 			return err
 		}
 	}
@@ -189,7 +194,7 @@ func query(ctx context.Context, tx *transaction, q string, args ...any) ([]map[s
 				delete(m, c)
 				continue
 			}
-			if c == "transport" || c == "details" || c == "coordination" {
+			if c == "transport" || c == "details" || c == "coordination" || c == "scope_paths" {
 				var decoded any
 				if t, ok := v[i].(string); ok && json.Unmarshal([]byte(t), &decoded) == nil {
 					if tx.postgres && c == "details" {
@@ -276,7 +281,11 @@ func validateArgs(op string, a map[string]any) error {
 		"inbox_status":            "instance after",
 		"notification_status":     "instance after",
 		"set_notification_policy": "instance policy",
-		"workspace_init":          "mode name retention_days", "project_create": "slug name git_remote", "list_projects": "", "list_members": "", "register_session": "instance resume role agent_kind model host account notes transport", "list_sessions": "instance status role limit after", "send": "instance to body kind thread_id operation_id coordination", "reply": "instance message_id body kind operation_id coordination", "inbox": "instance unread_only limit after", "mark_read": "instance ids", "update_session": "instance target_session role model host account notes transport", "retire_session": "instance target_session successor status", "history": "instance entity key limit after", "whoami": "instance", "message_status": "instance message_id", "resolve_project": "git_remote instance", "snapshot": "instance", "project_role_set": "instance principal role", "project_role_revoke": "instance principal", "purge_expired": "instance",
+		"assignment_propose":      "instance issue_uuid issue_identifier task_role scope_repo scope_paths",
+		"assignment_confirm":      "instance target_session revision allow_overlap",
+		"assignment_release":      "instance target_session revision",
+		"coordinator_set":         "instance target_session",
+		"workspace_init":          "mode name retention_days", "project_create": "slug name git_remote", "list_projects": "", "list_members": "", "register_session": "instance resume role agent_kind model host account notes transport", "list_sessions": "instance status role limit after issue scope_path assignment_state", "send": "instance to body kind thread_id operation_id coordination", "reply": "instance message_id body kind operation_id coordination", "inbox": "instance unread_only limit after", "mark_read": "instance ids", "update_session": "instance target_session role model host account notes transport", "retire_session": "instance target_session successor status", "history": "instance entity key limit after", "whoami": "instance", "message_status": "instance message_id", "resolve_project": "git_remote instance", "snapshot": "instance", "project_role_set": "instance principal role", "project_role_revoke": "instance principal", "purge_expired": "instance",
 	}
 	keys, ok := allowed[op]
 	if !ok {
@@ -305,13 +314,13 @@ func validateArgs(op string, a map[string]any) error {
 			if _, ok := v.(map[string]any); !ok {
 				return errors.New("transport must be an object")
 			}
-		case "ids", "linear_team_ids", "linear_project_ids":
+		case "ids", "linear_team_ids", "linear_project_ids", "scope_paths":
 			switch v.(type) {
 			case []string, []any:
 			default:
 				return errors.New("ids must be an array of strings")
 			}
-		case "unread_only", "resume":
+		case "unread_only", "resume", "allow_overlap":
 			if _, ok := v.(bool); !ok {
 				return fmt.Errorf("%s must be boolean", k)
 			}
@@ -509,7 +518,7 @@ func (s *Store) execute(ctx context.Context, tx *transaction, r Request) (any, e
 			return nil, err
 		}
 		switch r.Operation {
-		case "register_session", "send", "reply", "update_session", "retire_session":
+		case "register_session", "send", "reply", "update_session", "retire_session", "assignment_propose", "assignment_confirm", "assignment_release", "coordinator_set":
 			if projectRole == "reader" {
 				return nil, errors.New("project member permission required")
 			}
@@ -562,11 +571,7 @@ func (s *Store) execute(ctx context.Context, tx *transaction, r Request) (any, e
 		if e != nil {
 			return nil, e
 		}
-		rows, e := query(ctx, tx, `SELECT rowid AS sequence,* FROM sessions WHERE project_id=? AND (?='' OR status=?) AND (?='' OR role=?) AND rowid>? ORDER BY rowid LIMIT ?`, pid, status, status, role, role, after, n+1)
-		if e != nil {
-			return nil, e
-		}
-		return page("sessions", rows, n, after), nil
+		return s.listSessions(ctx, tx, pid, status, role, a, after, n)
 	}
 	if r.Operation == "history" {
 		if err = s.touchReadActor(ctx, tx, pid, r); err != nil {
@@ -647,6 +652,13 @@ func (s *Store) execute(ctx context.Context, tx *transaction, r Request) (any, e
 		if s.postgres {
 			provenance, mode = "google-id-token", "cloud"
 		}
+		if actor != nil {
+			live, e := liveAssignment(ctx, tx, pid, actor["id"].(string))
+			if e != nil {
+				return nil, e
+			}
+			actor["assignment"] = assignmentView(live, actor)
+		}
 		return map[string]any{"workspace": w, "project": p, "session": actor, "principal": s.principal, "identity_provenance": provenance, "verified": s.postgres, "storage_mode": mode, "online": true}, nil
 	}
 	if actor == nil {
@@ -654,6 +666,9 @@ func (s *Store) execute(ctx context.Context, tx *transaction, r Request) (any, e
 	}
 	sid := actor["id"].(string)
 	tx.actorID = sid
+	if assignmentOperation(r.Operation) {
+		return s.assignment(ctx, tx, w, p, projectRole, actor, r)
+	}
 	target := actor
 	if selector := str(a, "target_session"); selector != "" {
 		if !s.postgres || (projectRole != "owner" && projectRole != "lead") {

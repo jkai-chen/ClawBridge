@@ -79,8 +79,15 @@ type ConnectOptions struct {
 	RedirectURL string
 }
 
-type Error struct{ Kind string }
+// Error is a Linear connection failure. Kind is a stable code; Detail, when
+// set, adds the specifics a person needs, such as who holds a lock.
+type Error struct{ Kind, Detail string }
 
-func (e *Error) Error() string  { return "Linear connection: " + e.Kind }
+func (e *Error) Error() string {
+	if e.Detail != "" {
+		return "Linear connection: " + e.Kind + ": " + e.Detail
+	}
+	return "Linear connection: " + e.Kind
+}
 func (e *Error) Code() string   { return e.Kind }
 func problem(kind string) error { return &Error{Kind: kind} }

@@ -162,7 +162,7 @@ func (m *Manager) accessToken(ctx context.Context, id string, expectedAccess Acc
 		return "", problem("invalid secure credential")
 	}
 	conf := oauth2.Config{ClientID: c.ClientID, ClientSecret: c.ClientSecret, RedirectURL: c.RedirectURL, Scopes: c.Scopes, Endpoint: oauth2.Endpoint{TokenURL: Origin + "/token", AuthStyle: oauth2.AuthStyleInParams}}
-	httpctx, cancel := context.WithTimeout(ctx, 20*time.Second)
+	httpctx, cancel := context.WithTimeout(ctx, refreshTimeout)
 	defer cancel()
 	httpctx = context.WithValue(httpctx, oauth2.HTTPClient, m.baseClient())
 	// Force the OAuth library's clock-independent refresh decision: Now is an

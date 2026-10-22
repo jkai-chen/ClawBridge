@@ -10,5 +10,8 @@ Maintained contracts behind the current implementation:
 - [Host attribution](host-attribution.md)
 - [Release distribution](releases.md)
 
+Approved next increment: [Linear migration workflow](linear-migration.md), with
+the versioned L2 contract for project sets, labels, relations, parents and assignment.
+
 Use the [current guides](../README.md) for setup and routine usage. Earlier phase
 plans and acceptance records live in [the archive](../archive/README.md).

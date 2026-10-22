@@ -6,6 +6,10 @@ independent acceptance and bounded live testing overnight. Orca's existing Linea
 authentication may assist tests; the installed product must work without Orca,
 Node, a teammate's agent host or a separately registered OAuth application.
 
+The Finjourney migration requests additional capabilities. The separate
+[L2 migration extension](linear-migration.md) records the owner-approved scope
+and versioned implementation contract. The deployed L1 contract remains unchanged.
+
 Root owns this contract, guides and skills. Engineer owns production and focused
 tests; reviewer owns `integration/**` and the archived `LINEAR-REVIEW.md`; the E2E
 tester owns private live evidence and bounded test-team fixtures. Coordinate by

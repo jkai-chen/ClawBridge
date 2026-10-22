@@ -470,8 +470,34 @@ func finishLogin(ctx context.Context, config Config, oauthConfig *oauth2.Config,
 	return credential, transaction, nil
 }
 
+// newIDTokenValidator builds the Google ID token validator; tests replace it.
+var newIDTokenValidator = func() (*idtoken.Validator, error) {
+	return idtoken.NewValidator(context.Background(), idtoken.WithHTTPClient(&http.Client{Timeout: 8 * time.Second}))
+}
+
+var idTokenValidator struct {
+	sync.Mutex
+	v *idtoken.Validator
+}
+
+// sharedIDTokenValidator returns one validator for the process, so Google's
+// signing certificates stay cached across token refreshes. A failed build is
+// not kept, and the next call tries again.
+func sharedIDTokenValidator() (*idtoken.Validator, error) {
+	idTokenValidator.Lock()
+	defer idTokenValidator.Unlock()
+	if idTokenValidator.v == nil {
+		v, err := newIDTokenValidator()
+		if err != nil {
+			return nil, err
+		}
+		idTokenValidator.v = v
+	}
+	return idTokenValidator.v, nil
+}
+
 func verifyGoogleIDToken(ctx context.Context, token, audience string) (Identity, error) {
-	validator, err := idtoken.NewValidator(ctx, idtoken.WithHTTPClient(&http.Client{Timeout: 8 * time.Second}))
+	validator, err := sharedIDTokenValidator()
 	if err != nil {
 		return Identity{}, err
 	}

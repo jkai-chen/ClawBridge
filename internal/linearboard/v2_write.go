@@ -385,7 +385,7 @@ func (s *Service) WriteV2(ctx context.Context, scope bus.Request, in WriteInputV
 		if fresh.SessionID != access.SessionID {
 			return nil, refusedBeforeDispatch(errActorChanged)
 		}
-		if e = refreshWriteProofV2(ctx, p, p2, b, in, team, project, current, legacy); e != nil {
+		if e = refreshWriteProofV2(ctx, p, p2, b, v, in, team, project, current, legacy); e != nil {
 			return nil, proofFailure(e)
 		}
 		if e = s.unchangedV2(ctx, scope, b); e != nil {

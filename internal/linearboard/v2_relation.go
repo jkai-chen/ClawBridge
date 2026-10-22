@@ -90,11 +90,9 @@ func (s *Service) RelationV2(ctx context.Context, scope bus.Request, in Relation
 		if fresh.SessionID != access.SessionID {
 			return nil, refusedBeforeDispatch(errActorChanged)
 		}
-		freshPairs, e := verifyBindingV2(ctx, p, b)
-		if e != nil {
-			return nil, proofFailure(e)
-		}
-		existing, observed, e := relationEvidenceV2(ctx, p2, b, freshPairs, in)
+		// The same command's binding verification is reused; both issues and
+		// their edges are re-read here, and unchangedV2 re-checks the binding.
+		existing, observed, e := relationEvidenceV2(ctx, p2, b, v, in)
 		if e != nil {
 			return nil, proofFailure(e)
 		}

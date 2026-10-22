@@ -10,11 +10,13 @@ import (
 
 // refreshWriteProofV2 runs under the operation lock. These are observations,
 // not a provider CAS: a visible intervening scope/eligibility change is refused.
-func refreshWriteProofV2(ctx context.Context, p Provider, p2 ProviderV2, b bus.TaskboardBindingV2, in WriteInputV2, team, project string, original linearprovider.IssueV2, legacy bool) error {
-	v, e := verifyBindingV2(ctx, p, b)
-	if e != nil {
-		return e
-	}
+// refreshWriteProofV2 re-reads, inside the operation lock, every Linear fact
+// the write depends on: the issue, its labels, the assignee, the parent and
+// the state. It reuses the same command's binding verification v (team and
+// project structure, read moments earlier at preflight); the ClawBridge
+// binding revision itself is re-checked around this call by unchangedV2.
+func refreshWriteProofV2(ctx context.Context, p Provider, p2 ProviderV2, b bus.TaskboardBindingV2, v verifiedV2, in WriteInputV2, team, project string, original linearprovider.IssueV2, legacy bool) error {
+	var e error
 	if in.Operation != "create" {
 		var current linearprovider.IssueV2
 		if legacy {

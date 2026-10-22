@@ -145,9 +145,12 @@ single checksum entry, no remote code execution, private staging, same-volume
 atomic replacement, existing-binary preservation, cleanup and no-auto-launch
 rules apply. Use Get-FileHash SHA256 and .NET/native file primitives compatible
 with both shells. Refuse destination reparse points/symlinks/directories. A file
-in use or replacement failure must leave the old file intact and report failure.
-Do not change user/system PATH or PowerShell profile automatically; print the
-explicit next PATH step for the current session/per-user configuration.
+whose replacement Windows refuses must stay intact, failing before success is
+reported; a running binary that can only be renamed is replaced, and its renamed
+copy is removed best effort. Append the install directory to the per-user PATH
+(HKCU\Environment\Path) once by default, preserving the value's kind and
+unexpanded %VARIABLES%; -NoModifyPath opts out and prints the manual step. Never
+change the system PATH or a PowerShell profile.
 Existing configuration and Credential Manager entries stay untouched.
 
 ## Independent acceptance and publication

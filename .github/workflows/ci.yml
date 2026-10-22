@@ -54,6 +54,12 @@ jobs:
       - name: Native Windows Linear profile privacy regressions
         shell: pwsh
         run: go test ./internal/linearconn -run "^TestLinear(ProfileArtifactsUsePlatformPrivacy|ProfileStorageRejectsFinalDirectoryAndFileSymlinks|WindowsExistingUnsafeACLIsRefusedWithoutRepair)$" -count=1
+      - name: Independent native Windows Linear profile ACL regression
+        shell: pwsh
+        run: go test ./integration -run '^TestL1ProfileWindowsExplicitACLCreateReloadAndRejectBroadFile$' -count=1
+      - name: Native Windows CLI-owned stdin regressions
+        shell: pwsh
+        run: go test ./internal/cli -run '^TestLinearImportReader' -count=1
       - name: Windows PowerShell 5.1 installer fixtures
         shell: powershell
         run: .\scripts\test_install.ps1

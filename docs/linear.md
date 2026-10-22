@@ -17,6 +17,8 @@ ClawBridge, or return to it later. Connecting
 Linear is optional; skipping it preserves normal messaging. Choose a personal
 connection and authorize Linear in the browser. Read access is the default; enable
 write access explicitly when agents should create/update issues or comment.
+Sign-in times out after three minutes, so complete the browser prompt when it
+opens. If it expires, start Connect again when ready; no new connection is saved.
 
 The OAuth session selects your Linear workspace. Choose the allowed team(s), a
 default team for new issues, then a Linear project or **Team board — no project**.

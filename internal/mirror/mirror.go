@@ -126,7 +126,74 @@ func Save(ctx context.Context, path string, s Snapshot) error {
 	if _, e = tx.ExecContext(ctx, "INSERT INTO snapshots(key,data) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET data=excluded.data", key(b), raw); e != nil {
 		return e
 	}
+	if e = pruneOrphans(ctx, tx, raw); e != nil {
+		return e
+	}
 	return tx.Commit()
+}
+
+// pruneOrphans deletes the views that no live binding of this principal and
+// project can load again, with their message bodies: the saving session's
+// views under a rotated instance, and views of sessions that are no longer
+// active. The new snapshot lists every active session, so it decides. Views of
+// other projects, principals or servers are never touched, and nothing is
+// deleted unless the snapshot lists the saving session as active.
+func pruneOrphans(ctx context.Context, tx *sql.Tx, raw []byte) error {
+	saved, e := decode(raw)
+	if e != nil {
+		return e
+	}
+	b := saved.Binding
+	sessions, ok := saved.Data["sessions"].([]any)
+	if !ok {
+		return nil
+	}
+	active := map[string]bool{}
+	for _, row := range records(sessions) {
+		if row["status"] == "active" {
+			active[text(row, "id")], active[text(row, "name")] = true, true
+		}
+	}
+	delete(active, "")
+	if !active[b.Session] {
+		return nil
+	}
+	rows, e := tx.QueryContext(ctx, "SELECT key,data FROM snapshots WHERE key<>?", key(b))
+	if e != nil {
+		return e
+	}
+	var orphans []string
+	for rows.Next() {
+		var k string
+		var data []byte
+		if e = rows.Scan(&k, &data); e != nil {
+			rows.Close()
+			return e
+		}
+		var other struct{ Binding Binding }
+		if json.Unmarshal(data, &other) != nil {
+			continue
+		}
+		o := other.Binding
+		if !sameAuthority(o, b) || o.Workspace != b.Workspace || o.Project != b.Project {
+			continue
+		}
+		if o.Session == b.Session || !active[o.Session] {
+			orphans = append(orphans, k)
+		}
+	}
+	if e = rows.Close(); e != nil {
+		return e
+	}
+	if e = rows.Err(); e != nil {
+		return e
+	}
+	for _, k := range orphans {
+		if _, e = tx.ExecContext(ctx, "DELETE FROM snapshots WHERE key=?", k); e != nil {
+			return e
+		}
+	}
+	return nil
 }
 
 func snapshots(ctx context.Context, path string) ([]Snapshot, error) {

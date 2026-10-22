@@ -21,6 +21,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"regexp"
+	"runtime"
 	"sort"
 	"strings"
 
@@ -611,6 +612,14 @@ func validateJoinInput(in JoinInput) error {
 	return nil
 }
 
+// privateConfigMode reports whether an existing config's mode is already the
+// one a rewrite would set, so identical content needs no rewrite. Windows
+// reports only the read-only bit (0666 or 0444), never 0600, so there the
+// content comparison alone decides.
+func privateConfigMode(goos string, perm os.FileMode) bool {
+	return goos == "windows" || perm == 0600
+}
+
 func writeCloudConfig(path, workspace, project string, in JoinInput) (bool, error) {
 	values := map[string]any{}
 	info, err := os.Lstat(path)
@@ -687,7 +696,7 @@ func writeCloudConfig(path, workspace, project string, in JoinInput) (bool, erro
 	if err != nil {
 		return false, errors.New("cannot encode trusted config")
 	}
-	if exists && info.Mode().Perm() == 0600 {
+	if exists && privateConfigMode(runtime.GOOS, info.Mode().Perm()) {
 		var old map[string]any
 		if toml.Unmarshal(previous, &old) == nil && reflect.DeepEqual(old, values) {
 			return false, nil

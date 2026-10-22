@@ -24,6 +24,8 @@ import (
 	"github.com/zalando/go-keyring"
 	"golang.org/x/oauth2"
 	"google.golang.org/api/idtoken"
+
+	"clawbridge/internal/principal"
 )
 
 const (
@@ -507,16 +509,11 @@ func verifyGoogleIDToken(ctx context.Context, token, audience string) (Identity,
 	}
 	email, _ := payload.Claims["email"].(string)
 	verified, _ := payload.Claims["email_verified"].(bool)
-	if !verified || !validEmail(email) {
+	email = strings.ToLower(email)
+	if !verified || !principal.Valid(email) {
 		return Identity{}, errors.New("a verified Google email is required")
 	}
-	return Identity{Principal: strings.ToLower(email), Subject: payload.Subject}, nil
-}
-
-func validEmail(email string) bool {
-	return len(email) <= 320 && strings.Count(email, "@") == 1 &&
-		!strings.ContainsAny(email, " \t\r\n\x00") &&
-		!strings.HasPrefix(email, "@") && !strings.HasSuffix(email, "@")
+	return Identity{Principal: email, Subject: payload.Subject}, nil
 }
 
 func rawIDToken(token *oauth2.Token) string {

@@ -18,6 +18,7 @@ import (
 	"unicode"
 
 	"clawbridge/internal/bus"
+	"clawbridge/internal/principal"
 	"google.golang.org/api/idtoken"
 )
 
@@ -164,13 +165,11 @@ func verifiedIdentity(p *idtoken.Payload, audience string, now time.Time) (Ident
 	}
 	email, _ := p.Claims["email"].(string)
 	verified, _ := p.Claims["email_verified"].(bool)
-	if !verified || !validPrincipal(email) {
+	email = strings.ToLower(email)
+	if !verified || !principal.Valid(email) {
 		return Identity{}, errors.New("verified Google email is required")
 	}
-	return Identity{Principal: strings.ToLower(email), Subject: p.Subject}, nil
-}
-func validPrincipal(p string) bool {
-	return len(p) <= 320 && strings.Count(p, "@") == 1 && !strings.ContainsAny(p, " \t\r\n\x00") && !strings.HasPrefix(p, "@") && !strings.HasSuffix(p, "@")
+	return Identity{Principal: email, Subject: p.Subject}, nil
 }
 
 type errorBody struct {
@@ -293,7 +292,7 @@ func NewHandlerWithOAuthMetadata(store Executor, verifier Verifier, metadata OAu
 		ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
 		defer cancel()
 		identity, err := verifier.Verify(ctx, fields[1])
-		if err != nil || !validPrincipal(identity.Principal) || identity.Subject == "" {
+		if err != nil || !principal.Valid(identity.Principal) || identity.Subject == "" {
 			fail(w, 401, "unauthenticated", "Google identity verification failed")
 			return
 		}
@@ -419,7 +418,7 @@ func Run(ctx context.Context, args []string) error {
 		return errors.New("serve accepts flags only")
 	}
 	audiences, err := parseAudiences(*audience)
-	if err != nil || !validPrincipal(*owner) {
+	if err != nil || !principal.Valid(*owner) {
 		return errors.New("serve requires --audience and --bootstrap-owner")
 	}
 	metadata, err := validateOAuthMetadata(audiences, OAuthMetadata{

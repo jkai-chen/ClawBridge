@@ -4,20 +4,17 @@ import (
 	"context"
 	"database/sql"
 	"errors"
-	"net/mail"
-	"strings"
 	"time"
 
 	_ "github.com/jackc/pgx/v5/stdlib"
+
+	"clawbridge/internal/principal"
 )
 
 // normalPrincipal matches the server's verified-token form (lowercase), so a
 // stored grant compares equal to the principal a request is executed as.
-func normalPrincipal(p string) string { return strings.ToLower(strings.TrimSpace(p)) }
-func validPrincipal(p string) bool {
-	v, e := mail.ParseAddress(p)
-	return e == nil && v.Address == p && strings.Contains(p, "@") && len(p) <= 320 && !strings.ContainsAny(p, "\r\n")
-}
+func normalPrincipal(p string) string { return principal.Normal(p) }
+func validPrincipal(p string) bool    { return principal.Valid(p) }
 
 // OpenPostgres opens only PostgreSQL. bootstrapOwner is a trusted operator setting,
 // never a request field. ExecuteAs must receive a verified identity from the server.

@@ -84,13 +84,15 @@ Repeating the install changes nothing. After an update, it swaps in a fully
 written copy, so an agent never reads a half-written skill (the folder is absent
 only between two renames). A `.clawbridge-skill.json` marker records the version
 and a hash of every file it wrote. The marker is trusted only when it lists
-plain relative paths that this binary installs; otherwise it is reported as
-corrupt and ignored. Nothing is read or removed through a symbolic link.
+clean relative paths inside the folder with valid hashes; otherwise it is
+reported as corrupt and ignored. A file an older version installed and this one
+no longer ships is removed on upgrade while its hash still matches. Nothing is
+read or removed through a symbolic link.
 
 Without `--force`, the install refuses and changes nothing when you edited one
 of its files, or when the folder holds files it did not install, links, or an
-untrusted marker. `--force` replaces the files it installed. It never deletes
-anything else: a folder holding other files is first moved, whole, to
+untrusted marker. `--force` never deletes your work: a folder holding edited
+files, other files, links or an untrusted marker is first moved, whole, to
 `clawbridge-skill-backup-TIMESTAMP` beside the agent's `skills` directory (where
 the agent does not load it), and the JSON result reports that path.
 `clawbridge skill status` compares the installed version with the binary's, and

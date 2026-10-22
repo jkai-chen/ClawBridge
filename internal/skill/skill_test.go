@@ -3,6 +3,7 @@ package skill
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -314,7 +315,7 @@ func TestAMarkerNamingAPathOutsideTheSkillIsNeverTrusted(t *testing.T) {
 	one(Install(targets, false))
 	victim := filepath.Join(home, "victim.txt")
 	os.WriteFile(victim, []byte("keep me"), 0o644)
-	for _, bad := range []string{"../../victim.txt", "/" + victim, "references/../../../victim.txt", "notes.md"} {
+	for _, bad := range []string{"../../victim.txt", "/" + victim, "references/../../../victim.txt", "references/./cli.md", "references\\cli.md", Marker} {
 		m := readMarker(t, dir)
 		m["files"].(map[string]any)[bad] = sum([]byte("keep me"))
 		writeMarker(t, dir, m)
@@ -339,6 +340,65 @@ func TestAMarkerNamingAPathOutsideTheSkillIsNeverTrusted(t *testing.T) {
 	writeMarker(t, dir, map[string]any{"files": "not a map"})
 	if s, _ := Status(targets); s[0].Corrupt == "" {
 		t.Fatal("unreadable marker trusted")
+	}
+	many := map[string]any{}
+	for n := 0; n <= maxMarkerFiles; n++ {
+		many[fmt.Sprintf("f%d.md", n)] = sum(nil)
+	}
+	writeMarker(t, dir, map[string]any{"files": many})
+	if s, _ := Status(targets); s[0].Corrupt == "" {
+		t.Fatal("unbounded marker trusted")
+	}
+}
+
+// staleSetup installs, then makes the marker look like an older version that
+// also shipped old.md, which this binary no longer embeds.
+func staleSetup(t *testing.T, oldContent, onDisk string) ([]Target, string) {
+	t.Helper()
+	_, skills := skillsHome(t)
+	targets, _ := Targets("", skills)
+	dir := targets[0].Dir
+	oneOf(t)(Install(targets, false))
+	m := readMarker(t, dir)
+	m["files"].(map[string]any)["old.md"] = sum([]byte(oldContent))
+	m["version"] = "v0.0.1"
+	writeMarker(t, dir, m)
+	os.WriteFile(filepath.Join(dir, "old.md"), []byte(onDisk), 0o644)
+	return targets, dir
+}
+
+func TestAnUpgradeRemovesAStaleFileTheOldVersionInstalled(t *testing.T) {
+	one := oneOf(t)
+	targets, dir := staleSetup(t, "old skill text", "old skill text")
+	s, _ := Status(targets)
+	if s[0].Corrupt != "" || !s[0].Installed || len(s[0].Unmanaged) != 0 || len(s[0].Modified) != 0 {
+		t.Fatalf("a stale entry is not corruption: %+v", s[0])
+	}
+	r := one(Install(targets, false))
+	if !r.Changed || !r.Current || r.Backup != "" {
+		t.Fatalf("plain upgrade: %+v", r)
+	}
+	if _, err := os.Lstat(filepath.Join(dir, "old.md")); !os.IsNotExist(err) {
+		t.Fatal("stale file left behind", err)
+	}
+}
+
+func TestAChangedStaleFileIsRefusedThenBackedUp(t *testing.T) {
+	one := oneOf(t)
+	targets, dir := staleSetup(t, "old skill text", "my edits")
+	r := one(Install(targets, false))
+	if r.Changed || r.Refused == "" || !reflect.DeepEqual(r.Modified, []string{"old.md"}) {
+		t.Fatalf("changed stale file not refused: %+v", r)
+	}
+	if b, _ := os.ReadFile(filepath.Join(dir, "old.md")); string(b) != "my edits" {
+		t.Fatal("changed stale file touched")
+	}
+	r = one(Install(targets, true))
+	if !r.Changed || !r.Current || r.Backup == "" {
+		t.Fatalf("--force: %+v", r)
+	}
+	if b, _ := os.ReadFile(filepath.Join(r.Backup, "old.md")); string(b) != "my edits" {
+		t.Fatal("backup lost the changed stale file")
 	}
 }
 

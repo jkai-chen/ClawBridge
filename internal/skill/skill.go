@@ -195,16 +195,19 @@ func regularUnder(dir, rel string, wantDir bool) error {
 	return nil
 }
 
-// validMarkerPath accepts only a clean relative slash path that this binary
-// embeds, so a marker can never name a file outside the skill folder.
-func validMarkerPath(p string, files map[string][]byte) bool {
-	_, embeds := files[p]
-	return embeds && p != Marker && p == path.Clean(p) && !path.IsAbs(p) && !strings.Contains(p, "\\") && filepath.IsLocal(filepath.FromSlash(p))
+// maxMarkerFiles bounds a marker; the skill has far fewer files.
+const maxMarkerFiles = 512
+
+// validMarkerPath accepts only a clean relative slash path inside the skill
+// folder. A path this binary no longer embeds is a stale entry from an older
+// version: trusted only while its file is regular and its hash matches.
+func validMarkerPath(p string) bool {
+	return p != "" && p != Marker && p == path.Clean(p) && !path.IsAbs(p) && !strings.Contains(p, "\\") && filepath.IsLocal(filepath.FromSlash(p))
 }
 
 // inspect reads a target without changing it and without following links.
 func inspect(t Target) (State, *marker, error) {
-	files, want, err := embedded()
+	_, want, err := embedded()
 	if err != nil {
 		return State{}, nil, err
 	}
@@ -239,12 +242,12 @@ func inspect(t Target) (State, *marker, error) {
 			return s, nil, err
 		}
 		m = &marker{}
-		if json.Unmarshal(raw, m) != nil || len(m.Files) == 0 {
+		if json.Unmarshal(raw, m) != nil || len(m.Files) == 0 || len(m.Files) > maxMarkerFiles {
 			s.Corrupt = "the installation marker is unreadable"
 		}
 		for p, h := range m.Files {
-			if b, e := hex.DecodeString(h); !validMarkerPath(p, files) || e != nil || len(b) != sha256.Size {
-				s.Corrupt = "the installation marker lists a path or hash this binary does not install"
+			if b, e := hex.DecodeString(h); !validMarkerPath(p) || e != nil || len(b) != sha256.Size {
+				s.Corrupt = "the installation marker lists an invalid path or hash"
 			}
 		}
 		if s.Corrupt != "" {
@@ -318,8 +321,8 @@ func (s State) foreign() bool {
 
 // Install writes the embedded skill to each target. A current installation
 // is left alone. Without force, a target with changed files or anything we
-// did not install is refused. With force, our changed files are replaced and
-// a folder holding anything else is moved to a backup, never deleted.
+// did not install is refused. With force, a folder holding changed files or
+// anything else is moved to a backup, never deleted.
 func Install(targets []Target, force bool) ([]Result, error) {
 	files, want, err := embedded()
 	if err != nil {
@@ -339,7 +342,8 @@ func Install(targets []Target, force bool) ([]Result, error) {
 		case !force && len(s.Modified) > 0:
 			r.Refused = "installed files were changed since installation; rerun with --force to replace them"
 		default:
-			if r.Backup, err = replace(t.Dir, files, want, s.foreign()); err != nil {
+			// Changed files are the user's work too: keep them in a backup.
+			if r.Backup, err = replace(t.Dir, files, want, s.foreign() || len(s.Modified) > 0); err != nil {
 				return out, err
 			}
 			r.Changed = true

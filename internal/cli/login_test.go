@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"clawbridge/internal/auth"
+	"clawbridge/internal/faketool"
 	"clawbridge/internal/remote"
 )
 
@@ -483,6 +484,8 @@ func TestRunNormalCloudCommandRejectsIncompleteLoginRoute(t *testing.T) {
 	if err := os.WriteFile(path, []byte(body), 0600); err != nil {
 		t.Fatal(err)
 	}
+	original := discoverLoginOAuth
+	t.Cleanup(func() { discoverLoginOAuth = original })
 	discoverLoginOAuth = func(context.Context, string, *http.Client) (remote.OAuthDiscovery, error) {
 		t.Fatal("normal cloud command attempted login discovery")
 		return remote.OAuthDiscovery{}, nil
@@ -571,9 +574,7 @@ func TestUseGcloudFallsBackToBrowserAndClearsLegacyRoute(t *testing.T) {
 	if err := os.MkdirAll(shimDir, 0700); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(shimDir, "gcloud"), []byte("#!/bin/sh\nexit 1\n"), 0700); err != nil {
-		t.Fatal(err)
-	}
+	faketool.Install(t, shimDir, "gcloud", "exit:1")
 	t.Setenv("PATH", shimDir+string(os.PathListSeparator)+os.Getenv("PATH"))
 	out, _, err := runLogin(t, "login", "--use-gcloud")
 	if err != nil {
@@ -600,9 +601,7 @@ func TestUseGcloudProbeCanUseSeparateExplicitGcloudProfile(t *testing.T) {
 	if err := os.MkdirAll(shimDir, 0700); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(shimDir, "gcloud"), []byte("#!/bin/sh\nprintf '%s' 'synthetic-profile-token'\n"), 0700); err != nil {
-		t.Fatal(err)
-	}
+	faketool.Install(t, shimDir, "gcloud", "print:synthetic-profile-token")
 	t.Setenv("PATH", shimDir+string(os.PathListSeparator)+os.Getenv("PATH"))
 	store := &loginMemoryStore{}
 	installLoginTestHooks(t, store, auth.Credential{
@@ -652,9 +651,7 @@ func TestUseGcloudFallbackCannotInheritInvalidMixedProfile(t *testing.T) {
 	if err := os.MkdirAll(shimDir, 0700); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(shimDir, "gcloud"), []byte("#!/bin/sh\nexit 1\n"), 0700); err != nil {
-		t.Fatal(err)
-	}
+	faketool.Install(t, shimDir, "gcloud", "exit:1")
 	t.Setenv("PATH", shimDir+string(os.PathListSeparator)+os.Getenv("PATH"))
 	out, _, err := runLogin(t,
 		"--account", "human@example.test",
@@ -696,10 +693,7 @@ func TestUseGcloudSucceedsWithoutOAuthConfiguration(t *testing.T) {
 	if err := os.MkdirAll(shimDir, 0700); err != nil {
 		t.Fatal(err)
 	}
-	shim := "#!/bin/sh\nprintf '%s' 'synthetic-gcloud-token'\n"
-	if err := os.WriteFile(filepath.Join(shimDir, "gcloud"), []byte(shim), 0700); err != nil {
-		t.Fatal(err)
-	}
+	faketool.Install(t, shimDir, "gcloud", "print:synthetic-gcloud-token")
 	t.Setenv("PATH", shimDir+string(os.PathListSeparator)+os.Getenv("PATH"))
 	body := "mode='cloud'\nserver='https://trusted.example.test'\naudience='audience'\naccount='human@example.test'\nimpersonate_service_account='agent@example.test'\nprincipal='agent@example.test'\ncache='cache.db'\ncredential_source='gcloud'\n"
 	if err := os.WriteFile(filepath.Join(home, "config.toml"), []byte(body), 0600); err != nil {

@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"clawbridge/internal/bus"
+	"clawbridge/internal/faketool"
 )
 
 type joinExecutor struct {
@@ -105,10 +106,7 @@ func TestJoinRejectsMixedAndImplicitCredentialRoutesWithoutWriting(t *testing.T)
 }
 
 func TestGCloudRunnerConsumesFullCommandExactlyOnce(t *testing.T) {
-	fake := filepath.Join(t.TempDir(), "fake-gcloud")
-	if err := os.WriteFile(fake, []byte("#!/bin/sh\nprintf '%s\\n' \"$@\"\n"), 0700); err != nil {
-		t.Fatal(err)
-	}
+	fake := faketool.Install(t, t.TempDir(), "fake-gcloud", "args")
 	runner := GCloudRunner{Path: fake}
 	command := []string{"gcloud", "projects", "describe", "review-project", "--quiet"}
 	output, err := runner.Run(context.Background(), command)

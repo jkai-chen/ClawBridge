@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"clawbridge/internal/bus"
+	"clawbridge/internal/faketool"
 )
 
 type executorFunc func(context.Context, bus.Request) (bus.Result, error)
@@ -42,11 +43,7 @@ func load(t *testing.T, path string) checkpoint {
 }
 func fakeCodex(t *testing.T) string {
 	t.Helper()
-	p := filepath.Join(t.TempDir(), "fake codex")
-	if e := os.WriteFile(p, []byte("#!/bin/sh\nexit 99\n"), 0700); e != nil {
-		t.Fatal(e)
-	}
-	return p
+	return faketool.Install(t, t.TempDir(), "fake codex", "exit:99")
 }
 
 func TestNotificationJSONCoalescesPinsAndNeverRegressesAcrossRestart(t *testing.T) {

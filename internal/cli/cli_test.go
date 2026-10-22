@@ -10,10 +10,11 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"testing"
 	"time"
+
+	"clawbridge/internal/faketool"
 )
 
 func isolated(t *testing.T) string {
@@ -317,14 +318,8 @@ func TestServeDoesNotReadConfigOrOpenLocalDatabase(t *testing.T) {
 	}
 }
 func TestCloudCLIAndExplicitSyncUseRemoteOnly(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("hermetic gcloud shim is a POSIX test fixture")
-	}
 	dir := isolated(t)
-	shim := filepath.Join(dir, "gcloud")
-	if e := os.WriteFile(shim, []byte("#!/bin/sh\nprintf '%s' 'synthetic-cli-token'\n"), 0700); e != nil {
-		t.Fatal(e)
-	}
+	faketool.Install(t, dir, "gcloud", "print:synthetic-cli-token")
 	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
 	principal := "service@example.test"
 	now := time.Now().UTC().Format(time.RFC3339Nano)
@@ -388,10 +383,7 @@ func TestCloudCLIAndExplicitSyncUseRemoteOnly(t *testing.T) {
 
 func TestCloudInstallerRequiresExplicitSourceAndNeverForwardsSecret(t *testing.T) {
 	dir := isolated(t)
-	command := filepath.Join(dir, "clawbridge")
-	if err := os.WriteFile(command, []byte("#!/bin/sh\n"), 0700); err != nil {
-		t.Fatal(err)
-	}
+	command := faketool.Install(t, dir, "clawbridge", "exit:0")
 	configPath := filepath.Join(dir, "mcp.json")
 	base := []string{
 		"mcp", "install", "--agent", "claude-code", "--config", configPath,

@@ -104,6 +104,22 @@ owner), and under Deployment branches and tags, allow only tags matching
 `v*.*.*`. Until that environment exists with reviewers, GitHub creates it
 unprotected on first use and the job runs without waiting.
 
+These checks guard against mistakes, not against someone with write access. A
+tag push runs the workflow file as it is at the tagged commit, so whoever can
+push a `v*` tag can point it at a commit whose workflow drops the `on-main` job
+or the `environment:` line, and publish without approval. The boundary is who
+may create `v*` tags, enforced by a repository tag ruleset (owner, one-time):
+Settings → Rules → Rulesets → New ruleset → New tag ruleset:
+
+- Ruleset name `release-tags`, Enforcement status **Active**.
+- Bypass list: **Repository admin** only (the owner), with "Always allow".
+- Target tags: Include by pattern `v*`.
+- Rules: **Restrict creations**, **Restrict updates**, **Restrict deletions**
+  and **Block force pushes**.
+
+With that ruleset only the owner can create, move or delete a release tag, so the
+workflow file a release runs is always one the owner chose to tag.
+
 Root performs local acceptance while private, reviews the final tree and all
 reachable Git history for private artifacts, commits/pushes the accepted code,
 then makes the repository public under the owner's existing authorization.

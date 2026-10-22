@@ -15,6 +15,7 @@ import (
 	"os/user"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"strings"
 	"time"
 
@@ -37,6 +38,21 @@ type Store struct {
 	principal      string
 	postgres       bool
 	bootstrapOwner string
+}
+
+// SQLiteURIPath is the path part of a file: URI that SQLite resolves to path.
+// A Windows path such as C:\dir\bus.db must become /C:/dir/bus.db: given as
+// is, the drive letter and backslashes make the URI's authority or a relative
+// path, and SQLite cannot open the database.
+func SQLiteURIPath(goos, path string) string {
+	if goos != "windows" {
+		return path
+	}
+	p := strings.ReplaceAll(path, `\`, "/")
+	if len(p) >= 2 && p[1] == ':' {
+		return "/" + p
+	}
+	return p
 }
 
 func Open(path string) (*Store, error) {
@@ -66,7 +82,7 @@ func Open(path string) (*Store, error) {
 	}
 	dsn := ":memory:?_pragma=foreign_keys(1)&_pragma=busy_timeout(5000)&_txlock=immediate"
 	if path != ":memory:" {
-		u := url.URL{Scheme: "file", Path: path}
+		u := url.URL{Scheme: "file", Path: SQLiteURIPath(runtime.GOOS, path)}
 		dsn = u.String() + "?_pragma=foreign_keys(1)&_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)&_txlock=immediate"
 	}
 	db, err := sql.Open("sqlite", dsn)

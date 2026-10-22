@@ -14,6 +14,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"time"
 
@@ -65,7 +66,7 @@ func open(path string, write bool) (*sql.DB, error) {
 			}
 		}
 	}
-	u := url.URL{Scheme: "file", Path: abs}
+	u := url.URL{Scheme: "file", Path: bus.SQLiteURIPath(runtime.GOOS, abs)}
 	query := url.Values{"_pragma": []string{"busy_timeout(3000)"}}
 	if !write {
 		query.Set("mode", "ro")

@@ -194,11 +194,11 @@ func (s *Service) LabelsV2(ctx context.Context, scope bus.Request, team string, 
 	if e != nil {
 		return empty, e
 	}
-	_, p, e := s.open(ctx)
+	_, p, done, e := s.open(ctx)
 	if e != nil {
 		return empty, e
 	}
-	defer p.Close()
+	defer done()
 	if _, e = verifyBindingV2(ctx, p, b); e != nil {
 		return empty, e
 	}
@@ -257,11 +257,11 @@ func (s *Service) MembersV2(ctx context.Context, scope bus.Request, team string,
 	if e != nil {
 		return empty, e
 	}
-	_, p, e := s.open(ctx)
+	_, p, done, e := s.open(ctx)
 	if e != nil {
 		return empty, e
 	}
-	defer p.Close()
+	defer done()
 	if _, e = verifyBindingV2(ctx, p, b); e != nil {
 		return empty, e
 	}

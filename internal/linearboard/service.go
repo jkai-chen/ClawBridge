@@ -45,7 +45,10 @@ type Config struct {
 	Open            func(context.Context, *http.Client, bool) (Provider, error)
 	Now             func() time.Time
 }
-type Service struct{ cfg Config }
+type Service struct {
+	cfg  Config
+	pool *providerPool
+}
 
 func New(c Config) *Service {
 	if c.Now == nil {
@@ -56,7 +59,7 @@ func New(c Config) *Service {
 			return linearprovider.New(ctx, h, ro)
 		}
 	}
-	return &Service{c}
+	return &Service{cfg: c}
 }
 
 type Context struct {
@@ -90,23 +93,39 @@ func instanceArgs(args map[string]any) map[string]any {
 func (s *Service) Binding(ctx context.Context, scope bus.Request) (bus.TaskboardBinding, error) {
 	return s.binding(ctx, scope)
 }
-func (s *Service) open(ctx context.Context) (linearconn.Profile, Provider, error) {
+
+// open returns the native connection for one command and the function that
+// releases it. The profile is checked on every command, even when a kept-open
+// connection is reused.
+func (s *Service) open(ctx context.Context) (linearconn.Profile, Provider, func(), error) {
 	if s.cfg.Connections == nil || s.cfg.ProfileID == "" {
-		return linearconn.Profile{}, nil, errors.New("select a personal native Linear profile explicitly")
+		return linearconn.Profile{}, nil, nil, errors.New("select a personal native Linear profile explicitly")
 	}
 	profile, err := s.cfg.Connections.Status(ctx, s.cfg.ProfileID)
 	if err != nil {
-		return profile, nil, err
+		s.pool.drop()
+		return profile, nil, nil, err
 	}
 	if profile.ID != s.cfg.ProfileID {
-		return profile, nil, errors.New("personal profile identity changed")
+		s.pool.drop()
+		return profile, nil, nil, errors.New("personal profile identity changed")
 	}
-	client, err := s.cfg.Connections.HTTPClient(ctx, s.cfg.ProfileID)
+	fresh := func() (Provider, error) {
+		client, err := s.cfg.Connections.HTTPClient(ctx, s.cfg.ProfileID)
+		if err != nil {
+			return nil, err
+		}
+		return s.cfg.Open(ctx, client, profile.Access == linearconn.Read)
+	}
+	if s.pool != nil {
+		provider, done, err := s.pool.open(ctx, profile.Access == linearconn.Read, s.cfg.Now(), fresh)
+		return profile, provider, done, err
+	}
+	provider, err := fresh()
 	if err != nil {
-		return profile, nil, err
+		return profile, provider, nil, err
 	}
-	provider, err := s.cfg.Open(ctx, client, profile.Access == linearconn.Read)
-	return profile, provider, err
+	return profile, provider, func() { provider.Close() }, nil
 }
 func verifyBinding(ctx context.Context, p Provider, b bus.TaskboardBinding) error {
 	if !b.Configured {
@@ -199,11 +218,11 @@ func (s *Service) Context(ctx context.Context, scope bus.Request) (Context, erro
 	if err != nil {
 		return Context{}, err
 	}
-	profile, p, err := s.open(ctx)
+	profile, p, done, err := s.open(ctx)
 	if err != nil {
 		return Context{}, err
 	}
-	defer p.Close()
+	defer done()
 	if err = verifyBinding(ctx, p, b); err != nil {
 		return Context{}, err
 	}
@@ -249,11 +268,11 @@ func (s *Service) Link(ctx context.Context, scope bus.Request, in LinkInput) (an
 	if b.Revision != in.ExpectedRevision {
 		return nil, errors.New("task-board revision conflict")
 	}
-	profile, p, err := s.open(ctx)
+	profile, p, done, err := s.open(ctx)
 	if err != nil {
 		return nil, err
 	}
-	defer p.Close()
+	defer done()
 	mapping := b
 	mapping.Configured = true
 	mapping.Provider = "linear"
@@ -350,11 +369,11 @@ func (s *Service) Issues(ctx context.Context, scope bus.Request, limit int, opaq
 			return empty, errors.New("cursor does not belong to current profile and binding revision")
 		}
 	}
-	_, p, err := s.open(ctx)
+	_, p, done, err := s.open(ctx)
 	if err != nil {
 		return empty, err
 	}
-	defer p.Close()
+	defer done()
 	if err = verifyBinding(ctx, p, b); err != nil {
 		return empty, err
 	}
@@ -407,11 +426,11 @@ func (s *Service) Issue(ctx context.Context, scope bus.Request, id string) (line
 	if err != nil {
 		return linearprovider.Issue{}, err
 	}
-	_, p, err := s.open(ctx)
+	_, p, done, err := s.open(ctx)
 	if err != nil {
 		return linearprovider.Issue{}, err
 	}
-	defer p.Close()
+	defer done()
 	if err = verifyBinding(ctx, p, b); err != nil {
 		return linearprovider.Issue{}, err
 	}
@@ -442,11 +461,11 @@ func (s *Service) States(ctx context.Context, scope bus.Request, issueID string)
 	if err = checkIssue(issue, b); err != nil {
 		return nil, err
 	}
-	_, p, err := s.open(ctx)
+	_, p, done, err := s.open(ctx)
 	if err != nil {
 		return nil, err
 	}
-	defer p.Close()
+	defer done()
 	if err = verifyBinding(ctx, p, b); err != nil {
 		return nil, err
 	}
@@ -506,11 +525,11 @@ func (s *Service) Write(ctx context.Context, scope bus.Request, in WriteInput) (
 		}
 		return s.postReceipt(ctx, scope, b, receipt)
 	}
-	profile, p, err := s.open(ctx)
+	profile, p, done, err := s.open(ctx)
 	if err != nil {
 		return nil, err
 	}
-	defer p.Close()
+	defer done()
 	if profile.Access != linearconn.Write {
 		return nil, errors.New("personal Linear profile is read-only; reconnect explicitly with write access")
 	}
@@ -611,7 +630,8 @@ func (s *Service) postFailure(ctx context.Context, scope bus.Request, b bus.Task
 }
 
 // Execute is the curated adapter boundary shared by the pinned local MCP tools.
-func (s *Service) Execute(ctx context.Context, scope bus.Request, operation string, args map[string]any) (any, error) {
+func (s *Service) Execute(ctx context.Context, scope bus.Request, operation string, args map[string]any) (_ any, err error) {
+	defer func() { s.settle(err) }()
 	allowed := map[string][]string{"binding": {}, "context": {}, "issues": {"limit", "cursor"}, "issue": {"id"}, "create": {"title", "description", "state_id", "operation_id"}, "update": {"id", "title", "description", "state_id", "operation_id"}, "comment": {"id", "body", "operation_id"}}
 	keys, ok := allowed[operation]
 	if !ok {

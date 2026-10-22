@@ -121,11 +121,11 @@ func (s *Service) ContextV2(ctx context.Context, scope bus.Request) (ContextV2, 
 	if e != nil {
 		return ContextV2{}, e
 	}
-	profile, p, e := s.open(ctx)
+	profile, p, done, e := s.open(ctx)
 	if e != nil {
 		return ContextV2{}, e
 	}
-	defer p.Close()
+	defer done()
 	if _, e = verifyBindingV2(ctx, p, b); e != nil {
 		return ContextV2{}, e
 	}
@@ -152,11 +152,11 @@ func (s *Service) LinkV2(ctx context.Context, scope bus.Request, in LinkInputV2)
 	if b.Revision != in.ExpectedRevision {
 		return nil, errors.New("task-board revision conflict")
 	}
-	profile, p, e := s.open(ctx)
+	profile, p, done, e := s.open(ctx)
 	if e != nil {
 		return nil, e
 	}
-	defer p.Close()
+	defer done()
 	mapping := b
 	mapping.Configured = true
 	mapping.Provider = "linear"
@@ -293,11 +293,11 @@ func (s *Service) IssuesV2(ctx context.Context, scope bus.Request, in IssuesInpu
 	if e != nil {
 		return empty, e
 	}
-	_, p, e := s.open(ctx)
+	_, p, done, e := s.open(ctx)
 	if e != nil {
 		return empty, e
 	}
-	defer p.Close()
+	defer done()
 	v, e := verifyBindingV2(ctx, p, b)
 	if e != nil {
 		return empty, e
@@ -414,11 +414,11 @@ func (s *Service) issueV2(ctx context.Context, scope bus.Request, id string, res
 	if e != nil {
 		return empty, e
 	}
-	_, p, e := s.open(ctx)
+	_, p, done, e := s.open(ctx)
 	if e != nil {
 		return empty, e
 	}
-	defer p.Close()
+	defer done()
 	v, e := verifyBindingV2(ctx, p, b)
 	if e != nil {
 		return empty, e

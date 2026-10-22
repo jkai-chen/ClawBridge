@@ -17,6 +17,7 @@ import (
 	"clawbridge/internal/buildinfo"
 	"clawbridge/internal/bus"
 	"clawbridge/internal/doctor"
+	"clawbridge/internal/linearboard"
 	"clawbridge/internal/linearprovider"
 	"clawbridge/internal/mcpserver"
 	"clawbridge/internal/remote"
@@ -601,6 +602,10 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 			}
 			manager := newLinearManager(directory)
 			board := newLinearService(directory, flags.LinearProfile, manager, executor, linearAuthority(config))
+			// The MCP process lives for the whole client session, so it keeps one
+			// native connection open instead of reconnecting on every tool call.
+			board.KeepProviderOpen(linearboard.ProviderTTL)
+			defer board.Close()
 			native := mcpserver.NewServerWithOptions(executor, config.Workspace, config.Project, config.Session, config.Instance, mcpserver.Options{Context: ctx, Taskboard: board})
 			return native.Run(ctx, &mcp.StdioTransport{})
 		}

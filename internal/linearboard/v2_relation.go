@@ -56,11 +56,11 @@ func (s *Service) RelationV2(ctx context.Context, scope bus.Request, in Relation
 		}
 		return s.postReceiptV2(ctx, scope, b, r)
 	}
-	profile, p, e := s.open(ctx)
+	profile, p, done, e := s.open(ctx)
 	if e != nil {
 		return nil, e
 	}
-	defer p.Close()
+	defer done()
 	if profile.Access != linearconn.Write {
 		return nil, errors.New("personal Linear profile is read-only")
 	}

@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"regexp"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -37,6 +38,9 @@ type Provider struct {
 	caller ToolCaller
 	tools  map[string]*mcp.Tool
 	closer interface{ Close() error }
+	// broken records any failed call or missing capability, so a kept-open
+	// connection is reopened with a fresh tools/list before its next command.
+	broken atomic.Bool
 }
 type PageOptions struct {
 	Limit  int
@@ -206,6 +210,28 @@ func (p *Provider) Close() error {
 		return p.closer.Close()
 	}
 	return nil
+}
+
+// Alive reports whether a kept-open connection may serve another command: no
+// call on it has failed or missed a capability, and the remote session still
+// answers a ping. A dead session is reopened instead of failing the command.
+func (p *Provider) Alive(ctx context.Context) bool {
+	if p.broken.Load() {
+		return false
+	}
+	pinger, ok := p.caller.(interface {
+		Ping(context.Context, *mcp.PingParams) error
+	})
+	if !ok {
+		return true
+	}
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	if pinger.Ping(ctx, nil) != nil {
+		p.broken.Store(true)
+		return false
+	}
+	return true
 }
 
 // Verify retains the read-only connection verification contract.
@@ -459,6 +485,7 @@ func (p *Provider) negotiate(names []string, args ...arg) (string, map[string]an
 		}
 	}
 	if chosen == "" {
+		p.broken.Store(true)
 		return "", nil, fail("capability_unavailable")
 	}
 	return chosen, values, nil
@@ -471,6 +498,13 @@ func (p *Provider) call(ctx context.Context, names []string, args ...arg) (map[s
 	return p.invoke(ctx, chosen, values)
 }
 func (p *Provider) invoke(ctx context.Context, chosen string, values map[string]any) (map[string]any, error) {
+	out, e := p.invokeOnce(ctx, chosen, values)
+	if e != nil {
+		p.broken.Store(true)
+	}
+	return out, e
+}
+func (p *Provider) invokeOnce(ctx context.Context, chosen string, values map[string]any) (map[string]any, error) {
 	var e error
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()

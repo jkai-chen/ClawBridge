@@ -67,10 +67,12 @@ with tempfile.TemporaryDirectory(prefix="cb-release-clone-") as temporary:
     run(["bash", builder, "v1.2.3", str(output)], clone, extra={"GOOS":"windows", "GOARCH":"386", "CGO_ENABLED":"1", "GOAMD64":"v4"})
     targets = [("darwin","amd64"),("darwin","arm64"),("linux","amd64"),("linux","arm64"),("windows","amd64")]
     assets = {"clawbridge_v1.2.3_"+system+"_"+arch+(".exe" if system=="windows" else "") for system,arch in targets}
-    assert {p.name for p in output.iterdir()}==assets|{"install.sh","install.ps1","SOURCE-COMMIT.txt","SHA256SUMS"}
+    assert {p.name for p in output.iterdir()}==assets|{"install.sh","install.ps1","LICENSE","SOURCE-COMMIT.txt","SHA256SUMS"}
     assert (output/"SOURCE-COMMIT.txt").read_text()==commit+"\n"
     for installer in ["install.sh","install.ps1"]:
         assert (output/installer).read_bytes()==(clone/"scripts"/installer).read_bytes()
+    # The shipped licence is the tagged source's own LICENSE, byte for byte.
+    assert (output/"LICENSE").read_bytes()==(clone/"LICENSE").read_bytes()
     expected = "".join(hashlib.sha256(p.read_bytes()).hexdigest()+"  "+p.name+"\n" for p in sorted(output.iterdir()) if p.name!="SHA256SUMS")
     assert (output/"SHA256SUMS").read_text()==expected
     for system,arch in targets:

@@ -11,7 +11,9 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"reflect"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -193,29 +195,48 @@ func checkLinearCapabilities(ctx context.Context, read func(context.Context) (li
 		add(check)
 		return
 	}
-	state := func(on bool) string {
-		if on {
-			return "on"
+	flags := capabilityFlags(caps)
+	parts, off := []string{}, []string{}
+	for _, flag := range flags {
+		state := "on"
+		if !flag.on {
+			state = "off"
 		}
-		return "off"
-	}
-	parts := []string{"label_eligibility_by_filter=" + state(caps.LabelEligibilityByFilter), "parent_same_destination=" + state(caps.ParentSameDestination)}
-	off := []string{}
-	for _, key := range []string{"label_eligibility_by_filter", "parent_same_destination"} {
-		if reason := caps.Reasons[key]; reason != "" {
-			off = append(off, key+": "+reason)
+		parts = append(parts, flag.key+"="+state)
+		if reason := caps.Reasons[flag.key]; !flag.on && reason != "" {
+			off = append(off, flag.key+": "+reason)
 		}
 	}
 	check.Status = Pass
 	check.Message = strings.Join(parts, ", ") + "."
-	if !caps.LabelEligibilityByFilter || !caps.ParentSameDestination {
+	if slices.ContainsFunc(flags, func(f capabilityFlag) bool { return !f.on }) {
 		check.Status = Warn
 		if len(off) > 0 {
 			check.Message += " Off because " + strings.Join(off, "; ") + "."
 		}
-		check.Action = "Label application or parent changes are refused until the capability returns; report a provider schema change to the coordinator."
+		check.Action = "Commands that need an off capability are refused until it returns; report a provider schema change to the coordinator."
 	}
 	add(check)
+}
+
+type capabilityFlag struct {
+	key string
+	on  bool
+}
+
+// capabilityFlags lists every boolean capability by its JSON key, in
+// declaration order, so a new capability shows up without a doctor change.
+func capabilityFlags(caps linearprovider.Capabilities) []capabilityFlag {
+	v := reflect.ValueOf(caps)
+	flags := []capabilityFlag{}
+	for n := 0; n < v.NumField(); n++ {
+		field := v.Type().Field(n)
+		key, _, _ := strings.Cut(field.Tag.Get("json"), ",")
+		if field.Type.Kind() == reflect.Bool && key != "" && key != "-" {
+			flags = append(flags, capabilityFlag{key, v.Field(n).Bool()})
+		}
+	}
+	return flags
 }
 func checkConfig(config Config, add func(Check)) bool {
 	check := Check{ID: "config.trusted", Title: "Trusted configuration", Status: Fail, Path: config.Path}

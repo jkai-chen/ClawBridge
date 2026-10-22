@@ -3,6 +3,7 @@ package doctor
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -67,7 +68,7 @@ func TestLinearCapabilitiesAreVisibleInDoctor(t *testing.T) {
 		status string
 		want   []string
 	}{
-		"on":         {linearprovider.Capabilities{LabelEligibilityByFilter: true, ParentSameDestination: true}, nil, Pass, []string{"label_eligibility_by_filter=on", "parent_same_destination=on"}},
+		"on":         {allCapabilities(), nil, Pass, []string{"label_eligibility_by_filter=on", "parent_same_destination=on", "label_membership_proof=on"}},
 		"off":        {linearprovider.Capabilities{ParentSameDestination: true, Reasons: map[string]string{"label_eligibility_by_filter": "list_issue_labels schema changed: includeGroups missing or no longer a boolean defaulting to false"}}, nil, Warn, []string{"label_eligibility_by_filter=off", "includeGroups"}},
 		"unreadable": {linearprovider.Capabilities{}, fmt.Errorf("dial secret transport detail: %w", &linearprovider.Error{Kind: "unavailable"}), Warn, []string{"could not be read (unavailable)"}},
 	}
@@ -93,5 +94,83 @@ func TestLinearCapabilitiesAreVisibleInDoctor(t *testing.T) {
 		if check.ID == "linear.capabilities" {
 			t.Fatal("Linear section shown without a configured profile")
 		}
+	}
+}
+
+// allCapabilities turns every boolean capability on, found through its JSON
+// form so the test does not repeat the field list.
+func allCapabilities() linearprovider.Capabilities {
+	var caps linearprovider.Capabilities
+	raw, _ := json.Marshal(caps)
+	fields := map[string]any{}
+	json.Unmarshal(raw, &fields)
+	for key, value := range fields {
+		if _, ok := value.(bool); ok {
+			fields[key] = true
+		}
+	}
+	raw, _ = json.Marshal(fields)
+	json.Unmarshal(raw, &caps)
+	return caps
+}
+
+func TestDoctorListsEveryLinearCapabilityWithItsOffReason(t *testing.T) {
+	all := allCapabilities()
+	raw, _ := json.Marshal(all)
+	fields := map[string]any{}
+	json.Unmarshal(raw, &fields)
+	keys := []string{}
+	for key, value := range fields {
+		if _, ok := value.(bool); ok {
+			keys = append(keys, key)
+		}
+	}
+	if len(keys) < 12 {
+		t.Fatalf("capability fixture lost flags: %v", keys)
+	}
+	run := func(caps linearprovider.Capabilities) Check {
+		var checks []Check
+		checkLinearCapabilities(context.Background(), func(context.Context) (linearprovider.Capabilities, error) { return caps, nil }, func(c Check) { checks = append(checks, c) })
+		if len(checks) != 1 {
+			t.Fatal(checks)
+		}
+		return checks[0]
+	}
+	if check := run(all); check.Status != Pass || strings.Contains(check.Message, "=off") {
+		t.Fatal("all capabilities on", check)
+	}
+	for _, key := range keys {
+		t.Run(key, func(t *testing.T) {
+			fields := map[string]any{}
+			json.Unmarshal(raw, &fields)
+			fields[key] = false
+			// A reason left on a flag that is on is stale and must not show.
+			stale := keys[0]
+			if stale == key {
+				stale = keys[1]
+			}
+			fields["reasons"] = map[string]string{key: "synthetic reason for " + key, stale: "stale"}
+			b, _ := json.Marshal(fields)
+			var caps linearprovider.Capabilities
+			if err := json.Unmarshal(b, &caps); err != nil {
+				t.Fatal(err)
+			}
+			check := run(caps)
+			if check.Status != Warn || check.Action == "" {
+				t.Fatal("an off capability did not warn", check)
+			}
+			for _, other := range keys {
+				want := other + "=on"
+				if other == key {
+					want = other + "=off"
+				}
+				if msg := ", " + check.Message; !strings.Contains(msg, ", "+want+",") && !strings.Contains(msg, ", "+want+".") {
+					t.Fatalf("message %q lacks %q", check.Message, want)
+				}
+			}
+			if !strings.Contains(check.Message, key+": synthetic reason for "+key) || strings.Contains(check.Message, "stale") {
+				t.Fatalf("off reason wrong: %q", check.Message)
+			}
+		})
 	}
 }

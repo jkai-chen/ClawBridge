@@ -107,8 +107,9 @@ alongside its MCP agent/config/session selection so the expected routes agree.
 
 Optional native capabilities can switch off on their own when Linear changes a
 tool schema. With `--linear-profile`, `doctor` adds a `linear.capabilities` check
-showing `label_eligibility_by_filter` and `parent_same_destination` as on or off,
-with the reason when off (for example "list_issue_labels schema changed"); off is
+showing every capability flag (for example `label_eligibility_by_filter`,
+`label_membership_proof` and `parent_same_destination`) as on or off, with the
+reason when off (for example "list_issue_labels schema changed"); any flag off is
 a warning. `clawbridge linear status --profile ID` reports the same `capabilities`
 object (or `capabilities_error` if Linear is unreachable), and
 `linear context` and the `taskboard_context_v2` tool include it so agents can

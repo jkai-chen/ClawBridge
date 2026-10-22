@@ -159,7 +159,7 @@ clawbridge linear members --profile PROFILE_ID --team TEAM_UUID --limit 50
 | --- | --- |
 | `--linear-project UUID` | Create destination or requested project move; update preserves the issue's team |
 | Repeated `--label UUID` | Complete replacement label set, including removal of existing omitted labels |
-| `--parent UUID` | Scoped, acyclic parent with verified destination-preserving behavior |
+| `--parent UUID` | Scoped, acyclic parent; refused, including `--clear-parent`, until the provider has a reviewed destination-preservation proof |
 | `--assignee UUID` | Explicit eligible team member; no agent claim or permission change |
 | Update `--clear-project`, `--clear-labels`, `--clear-parent`, `--clear-assignee` | Explicit clearing; project clear is limited to team-board mode |
 

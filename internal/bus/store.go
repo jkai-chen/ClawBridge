@@ -470,10 +470,54 @@ func pureRead(r Request) bool {
 	switch r.Operation {
 	case "snapshot", "inbox_status", "notification_status", "taskboard_get", "taskboard_get_v2", "taskboard_access", "list_projects", "list_members":
 		return true
-	case "list_sessions", "history", "whoami", "resolve_project":
+	case "list_sessions", "history", "whoami":
+		// Naming a session with its instance makes it a heartbeat read: the
+		// read itself is pure and the heartbeat follows (see beat).
+		return (r.Session == "") == (str(r.Args, "instance") == "")
+	case "resolve_project":
 		return r.Session == "" && str(r.Args, "instance") == ""
 	}
 	return false
+}
+
+// heartbeat is the session a pure read names, recorded after the read.
+type heartbeat struct{ workspace, project, session string }
+
+// logHeartbeatSkipped reports a heartbeat that failed (not one skipped for a
+// busy lock); tests replace it. It never fails the read.
+var logHeartbeatSkipped = func(operation string, err error) {
+	log.Printf("clawbridge: %s heartbeat skipped: %v", operation, err)
+}
+
+// beat records a heartbeat read's last_seen after the read has committed, in
+// its own short transaction. It takes the workspace lock only if it is free,
+// so the read never queues behind a write: a busy lock skips the beat
+// silently, and any failure (a serialization error, a timeout) is logged and
+// skipped. The session's next read records it.
+func (s *Store) beat(ctx context.Context, r Request, b *heartbeat) (string, bool) {
+	ctx, cancel := context.WithTimeout(ctx, 3*time.Second)
+	defer cancel()
+	raw, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		logHeartbeatSkipped(r.Operation, err)
+		return "", false
+	}
+	tx := &transaction{Tx: raw, postgres: true}
+	defer tx.Rollback()
+	var acquired bool
+	now := stamp()
+	if _, err = tx.ExecContext(ctx, `SET LOCAL lock_timeout='1s'`); err == nil {
+		err = tx.QueryRowContext(ctx, `SELECT pg_try_advisory_xact_lock(hashtextextended(?,0))`, "workspace:"+b.workspace).Scan(&acquired)
+	}
+	if err == nil && acquired {
+		if _, err = tx.ExecContext(ctx, `UPDATE sessions SET last_seen=? WHERE project_id=? AND id=?`, now, b.project, b.session); err == nil {
+			err = tx.Commit()
+		}
+	}
+	if err != nil {
+		logHeartbeatSkipped(r.Operation, err)
+	}
+	return now, err == nil && acquired
 }
 
 // logMisclassifiedRead reports a pure read that tried to write; tests
@@ -535,6 +579,16 @@ func (s *Store) executeRequest(ctx context.Context, r Request) (Result, error) {
 	if err = tx.Commit(); err != nil {
 		return Result{}, errors.New("authority commit failed; no write queued")
 	}
+	if tx.beat != nil {
+		if now, ok := s.beat(ctx, r, tx.beat); ok && r.Operation == "whoami" {
+			// whoami shows the heartbeat it just recorded; when the beat was
+			// skipped it shows the last recorded one.
+			if session, _ := data.(map[string]any)["session"].(map[string]any); session != nil {
+				session["last_seen"] = now
+				decorateSession(session)
+			}
+		}
+	}
 	source := "local-authority"
 	if s.postgres {
 		source = "server"
@@ -568,6 +622,7 @@ func (s *Store) execute(ctx context.Context, tx *transaction, r Request) (any, e
 		return nil, err
 	}
 	wid := w["id"].(string)
+	tx.workspace = wid
 	expectedMode := "local"
 	if s.postgres {
 		expectedMode = "server"
@@ -733,11 +788,15 @@ func (s *Store) execute(ctx context.Context, tx *transaction, r Request) (any, e
 		return result, e
 	}
 	if actor != nil {
-		now := stamp()
-		if _, err = tx.ExecContext(ctx, `UPDATE sessions SET last_seen=? WHERE project_id=? AND id=?`, now, pid, actor["id"]); err != nil {
-			return nil, err
+		if tx.pure {
+			tx.beat = &heartbeat{wid, pid, actor["id"].(string)}
+		} else {
+			now := stamp()
+			if _, err = tx.ExecContext(ctx, `UPDATE sessions SET last_seen=? WHERE project_id=? AND id=?`, now, pid, actor["id"]); err != nil {
+				return nil, err
+			}
+			actor["last_seen"] = now
 		}
-		actor["last_seen"] = now
 		decorateSession(actor)
 	}
 	if r.Operation == "whoami" {
@@ -993,6 +1052,12 @@ func (s *Store) touchReadActor(ctx context.Context, tx *transaction, pid string,
 		return scopedError(err, "session instance mismatch; pass the instance returned by register", "forbidden")
 	}
 	tx.actorID = actor["id"].(string)
+	if tx.pure {
+		// A heartbeat read: the session is verified here, read-only, and
+		// its last_seen is recorded after the read.
+		tx.beat = &heartbeat{tx.workspace, pid, tx.actorID}
+		return nil
+	}
 	_, err = tx.ExecContext(ctx, `UPDATE sessions SET last_seen=? WHERE project_id=? AND id=?`, stamp(), pid, actor["id"])
 	return err
 }

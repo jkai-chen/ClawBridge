@@ -32,10 +32,12 @@ func TestPureReadClassification(t *testing.T) {
 		{"history", "", nil, true},
 		{"whoami", "", nil, true},
 		{"resolve_project", "", nil, true},
-		// Naming a session heartbeats it, so these write.
-		{"list_sessions", "me", session, false},
-		{"history", "me", session, false},
-		{"whoami", "me", session, false},
+		// Naming a session with its instance is a heartbeat read: the read is
+		// pure and the heartbeat follows in its own transaction.
+		{"list_sessions", "me", session, true},
+		{"history", "me", session, true},
+		{"whoami", "me", session, true},
+		// resolve_project still heartbeats inside its transaction.
 		{"resolve_project", "me", session, false},
 		// A session without an instance still names a session to heartbeat
 		// (or to refuse), and an instance alone is refused in the transaction.
@@ -239,8 +241,7 @@ func TestPostgresPureReadsSkipTheWorkspaceLock(t *testing.T) {
 	f.readsWithoutWaiting(key, release, pureReadCases)
 	release()
 	for _, write := range []readLockCase{
-		{"whoami", "me", nil},
-		{"list_sessions", "me", nil},
+		{"inbox", "me", nil},
 		{"send", "me", map[string]any{"to": "peer", "body": "after the lock", "operation_id": "serialised"}},
 	} {
 		f.writeWaits(key, write)
@@ -350,5 +351,92 @@ func TestPostgresReadOnlyTransactionWrites(t *testing.T) {
 	}
 	if got := codeOf(classify(misclassifiedRead(&transaction{}, Request{Operation: "send"}, write))); got != "unavailable" {
 		t.Fatalf("driver 25006 outside a pure read: %s, want unavailable", got)
+	}
+}
+
+func (f *readLockFixture) lastSeen(name string) string {
+	f.t.Helper()
+	var seen string
+	if e := f.other.QueryRow(`SELECT last_seen FROM sessions WHERE project_id=$1 AND name=$2`, f.pid, name).Scan(&seen); e != nil {
+		f.t.Fatal(e)
+	}
+	return seen
+}
+
+var heartbeatReadCases = []readLockCase{{"whoami", "me", nil}, {"list_sessions", "me", nil}, {"history", "me", nil}}
+
+// Reads that name their session no longer queue behind a held workspace
+// lock: the heartbeat after the read only tries the lock and is skipped while
+// it is held, so last_seen stays put and whoami shows the stored value.
+func TestPostgresHeartbeatReadsSkipABusyWorkspaceLock(t *testing.T) {
+	f := newReadLockFixture(t)
+	failures := []string{}
+	old := logHeartbeatSkipped
+	logHeartbeatSkipped = func(op string, err error) { failures = append(failures, op) }
+	t.Cleanup(func() { logHeartbeatSkipped = old })
+	key := "workspace:" + f.wid
+	before := f.lastSeen("me")
+	release := f.hold(key)
+	f.readsWithoutWaiting(key, release, heartbeatReadCases)
+	if after := f.lastSeen("me"); after != before {
+		t.Fatalf("heartbeat written under a held workspace lock: %s -> %s", before, after)
+	}
+	who, e := f.exec(context.Background(), "whoami", "me", nil)
+	if e != nil {
+		t.Fatal(e)
+	}
+	if shown := who.Data.(map[string]any)["session"].(map[string]any)["last_seen"]; shown != before {
+		t.Fatalf("whoami showed %v while its heartbeat was skipped, want the stored %s", shown, before)
+	}
+	if len(failures) != 0 {
+		t.Fatal("a busy lock was logged as a failure", failures)
+	}
+	release()
+	for _, read := range heartbeatReadCases {
+		prior := f.lastSeen("me")
+		time.Sleep(2 * time.Millisecond)
+		result, e := f.exec(context.Background(), read.op, read.session, nil)
+		if e != nil {
+			t.Fatal(read.op, e)
+		}
+		now := f.lastSeen("me")
+		if now <= prior {
+			t.Fatalf("%s did not advance last_seen: %s -> %s", read.op, prior, now)
+		}
+		if read.op == "whoami" {
+			session := result.Data.(map[string]any)["session"].(map[string]any)
+			if session["last_seen"] != now || session["presence"] != "active" {
+				t.Fatalf("whoami did not show its heartbeat: %v, stored %s", session, now)
+			}
+		}
+	}
+	if f.lastSeen("peer") == f.lastSeen("me") {
+		t.Fatal("heartbeat touched another session")
+	}
+}
+
+// A heartbeat that fails (here a row lock held past lock_timeout) is logged
+// and skipped; the read still succeeds.
+func TestPostgresHeartbeatFailureNeverFailsTheRead(t *testing.T) {
+	f := newReadLockFixture(t)
+	failures := []string{}
+	old := logHeartbeatSkipped
+	logHeartbeatSkipped = func(op string, err error) { failures = append(failures, op+": "+codeOf(classify(err))) }
+	t.Cleanup(func() { logHeartbeatSkipped = old })
+	before := f.lastSeen("me")
+	locker, e := f.other.BeginTx(context.Background(), nil)
+	if e != nil {
+		t.Fatal(e)
+	}
+	t.Cleanup(func() { locker.Rollback() })
+	if _, e = locker.Exec(`SELECT 1 FROM sessions WHERE project_id=$1 AND name='me' FOR UPDATE`, f.pid); e != nil {
+		t.Fatal(e)
+	}
+	if _, e = f.exec(context.Background(), "list_sessions", "me", nil); e != nil {
+		t.Fatal("heartbeat failure failed the read", e)
+	}
+	locker.Rollback()
+	if len(failures) != 1 || failures[0] != "list_sessions: unavailable" || f.lastSeen("me") != before {
+		t.Fatal("failed heartbeat not logged and skipped", failures)
 	}
 }

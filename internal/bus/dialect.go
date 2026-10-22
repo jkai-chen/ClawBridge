@@ -16,6 +16,10 @@ type transaction struct {
 	// opened read-only and takes neither advisory lock.
 	pure    bool
 	actorID string
+	// workspace is the resolved workspace ID once execute has checked it;
+	// beat is the heartbeat a pure read leaves for after its commit.
+	workspace string
+	beat      *heartbeat
 }
 
 func (t *transaction) bind(q string) string {

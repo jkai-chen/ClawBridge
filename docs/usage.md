@@ -136,6 +136,10 @@ the returned instance. To resume an existing active session, explicitly start
 with its recorded `--instance`, then call registration with `resume: true`.
 Record the new instance: resumption fences the previous one. Retired names stay
 retired. Stale presence after 15 minutes does not establish that a process died.
+On a hosted server, `whoami`, `list_sessions` and `history` that name the session
+record its `last_seen` after the read, and only when no write holds the
+workspace at that moment. Otherwise the beat is skipped, and `last_seen` can lag
+by one poll until the session's next read or write.
 
 Provider-neutral coordination instructions are in the [ClawBridge skill](../skills/clawbridge/SKILL.md).
 For Linear-backed tasks, use its [task-board workflow](../skills/clawbridge/references/task-board.md).

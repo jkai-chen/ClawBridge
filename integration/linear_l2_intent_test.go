@@ -28,7 +28,7 @@ type l2IntentProvider struct {
 
 func l2IntentFixture() *l2IntentProvider {
 	p := &l2IntentProvider{l2ScopedProvider: l2ScopedFixture()}
-	p.caps = linearprovider.Capabilities{Labels: true, Members: true, CreateProject: true, UpdateProject: true, ReplaceLabels: true, Parent: true, Assignee: true, ParentPreservesDestination: true, RelationAdd: true, RelationRemove: true}
+	p.caps = linearprovider.Capabilities{Labels: true, Members: true, CreateProject: true, UpdateProject: true, ReplaceLabels: true, Parent: true, Assignee: true, ParentSameDestination: true, RelationAdd: true, RelationRemove: true}
 	p.labels = []linearprovider.Label{{ID: l2LabelA, TeamID: l1TeamA, EligibilityKnown: true}, {ID: l2LabelB, TeamID: l1TeamA, EligibilityKnown: true}}
 	issue := l2Issue(l1IssueID, l1TeamA, l1Project)
 	issue.LabelIDs = []string{l2LabelA, l2LabelB}

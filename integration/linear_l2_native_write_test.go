@@ -51,8 +51,10 @@ func TestL2OfficialSaveIssueOneEdgeUsesOnlyCanonicalEndpointArray(t *testing.T) 
 				}
 				defer p.Close()
 				caps, err := p.Capabilities(context.Background())
-				if err != nil || !caps.RelationAdd || !caps.RelationRemove || caps.ParentPreservesDestination || len(peer.calls) != 0 {
-					t.Fatal("actual schema negotiation claimed unsafe parent semantics or invoked provider", caps, err)
+				// save_issue alone can express a parent beside a project, but
+				// without get_issue nothing can verify a same-destination parent.
+				if err != nil || !caps.RelationAdd || !caps.RelationRemove || caps.ParentSameDestination || len(peer.calls) != 0 {
+					t.Fatal("actual schema negotiation claimed parent support without issue reads or invoked provider", caps, err)
 				}
 				r, err := p.Relation(context.Background(), linearprovider.RelationInput{Action: action, Type: kind, FromID: l1IssueID, ToID: l1StateID})
 				if err != nil || r.ID != "" || r.Action != action || r.Type != kind || r.FromID != l1IssueID || r.ToID != l1StateID {
@@ -129,7 +131,7 @@ func TestL2OfficialSchemaParentSetNeedsProofAndClearUsesExactNull(t *testing.T) 
 	parent := l1StateID
 	in := linearprovider.UpdateInputV2{UpdateInput: linearprovider.UpdateInput{ID: l1IssueID}, Parent: linearprovider.Field[*string]{Present: true, Value: &parent}}
 	if err := p.ValidateUpdateV2(in); err == nil {
-		t.Fatal("ordinary parent/project fields manufactured destination-preservation proof")
+		t.Fatal("ordinary parent/project fields allowed a parent set without the board's same-destination verification")
 	}
 	if issue, err := p.UpdateV2(context.Background(), in); err == nil || !reflect.DeepEqual(issue, linearprovider.IssueV2{}) || len(peer.calls) != 0 {
 		t.Fatal("unproved native parent set dispatched", err, peer.calls)
@@ -209,4 +211,88 @@ func TestL2OfficialSaveIssueServicePendingPrecedesDispatchAndNeverReplays(t *tes
 	if dispatches != 1 || len(peer.calls) != beforeCalls || forbidden.calls.Load() != 0 || !reflect.DeepEqual(before, l1LedgerBytes(t, cfg.LedgerDirectory)) {
 		t.Fatal("pending retry touched native route or rewrote ledger")
 	}
+}
+
+// Native Linear reports issue ids and parentId as display identifiers, with
+// the canonical UUID beside them. A same-destination parent set and a clear
+// must go through the public write, and parented reads must keep working.
+func TestL2NativeIdentifierParentSetClearAndRead(t *testing.T) {
+	const parentUUID = "dddddddd-dddd-4ddd-8ddd-dddddddddddd"
+	f := newFixture(t)
+	f.setup("w", "p")
+	f.call("taskboard_set_v2", "w", "p", "", l2MappingArgs(0))
+	peer := newL1ProviderPeer()
+	peer.tools = []*mcp.Tool{peer.tools[0], peer.tools[1], peer.tools[2], l2ActualSaveIssueTool(t)}
+	cfg := l1ServiceConfig(t, f.store, &l1SyntheticProvider{})
+	cfg.Open = func(ctx context.Context, _ *http.Client, _ bool) (linearboard.Provider, error) {
+		return linearprovider.NewWithCaller(ctx, peer)
+	}
+	identifiers := map[string]string{l1IssueID: "SYN-1", parentUUID: "SYN-2"}
+	parents := map[string]any{l1IssueID: nil, parentUUID: nil}
+	native := func(id string) map[string]any {
+		return map[string]any{"id": identifiers[id], "uuid": id, "identifier": identifiers[id], "teamId": l1TeamA, "projectId": l1Project, "title": "Synthetic scoped issue", "parentId": parents[id]}
+	}
+	lookup := func(ref string) string {
+		for id, identifier := range identifiers {
+			if ref == id || ref == identifier {
+				return id
+			}
+		}
+		t.Fatalf("unknown synthetic issue reference %q", ref)
+		return ""
+	}
+	saves := []map[string]any{}
+	peer.result = func(name string, args map[string]any) (any, error) {
+		switch name {
+		case "get_team", "get_project":
+			return l1PeerResult(name, args)
+		case "get_issue":
+			return native(lookup(args["id"].(string))), nil
+		case "save_issue":
+			saves = append(saves, args)
+			id := lookup(args["id"].(string))
+			if parent, ok := args["parentId"]; ok {
+				parents[id] = nil
+				if parent != nil {
+					parents[id] = identifiers[lookup(parent.(string))]
+				}
+			}
+			return native(id), nil
+		default:
+			t.Fatalf("unexpected native tool: %s", name)
+			return nil, nil
+		}
+	}
+	scope := f.request("", "w", "p", "worker", actor("worker", nil))
+	parent := parentUUID
+	set := linearboard.WriteInputV2{WriteInput: linearboard.WriteInput{Operation: "update", OperationID: "native-parent-set", IssueID: l1IssueID}, Parent: linearprovider.Field[*string]{Present: true, Value: &parent}}
+	if _, err := linearboard.New(cfg).WriteV2(context.Background(), scope, set); err != nil {
+		t.Fatal("same-destination parent with an identifier receipt refused", err)
+	}
+	if len(saves) != 1 || !reflect.DeepEqual(saves[0], map[string]any{"id": l1IssueID, "parentId": parentUUID}) {
+		t.Fatalf("parent set sent unrelated fields or a non-canonical parent: %+v", saves)
+	}
+	read, err := linearboard.New(cfg).ExecuteV2(context.Background(), scope, "issue", map[string]any{"id": l1IssueID})
+	if err != nil {
+		t.Fatal("identifier-form parentId broke the parented issue read", err)
+	}
+	if issue := object(t, jsonData(t, read)); !strings.Contains(string(mustJSON(t, issue)), `"SYN-2"`) {
+		t.Fatalf("parented read lost the parent identifier: %v", issue)
+	}
+	clear := linearboard.WriteInputV2{WriteInput: linearboard.WriteInput{Operation: "update", OperationID: "native-parent-clear", IssueID: l1IssueID}, Parent: linearprovider.Field[*string]{Present: true}}
+	if _, err := linearboard.New(cfg).WriteV2(context.Background(), scope, clear); err != nil {
+		t.Fatal("parent clear refused", err)
+	}
+	if len(saves) != 2 || !reflect.DeepEqual(saves[1], map[string]any{"id": l1IssueID, "parentId": nil}) {
+		t.Fatalf("parent clear sent inheritance or unrelated fields: %+v", saves)
+	}
+}
+
+func mustJSON(t *testing.T, v any) []byte {
+	t.Helper()
+	raw, err := json.Marshal(v)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return raw
 }

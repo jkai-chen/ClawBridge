@@ -19,18 +19,29 @@ func (p *l2ObservedIntentProvider) IssueV2(ctx context.Context, id string) (line
 	return p.l2IntentProvider.IssueV2(ctx, id)
 }
 
+// l2SameDestinationParent shares the child's team and project, the only
+// parent the board accepts.
+const l2SameDestinationParent = "cccccccc-cccc-4ccc-8ccc-cccccccccccc"
+
 func TestL2ParentExplicitIntentAndBoundedScopedAncestry(t *testing.T) {
-	for _, mode := range []string{"cross_pair_explicit", "clear", "self", "cycle", "unknown_ancestry", "outside_scope", "cannot_preserve_destination", "depth64", "depth65"} {
+	for _, mode := range []string{"same_destination", "clear", "cross_destination", "self", "cycle", "unknown_ancestry", "outside_scope", "no_capability", "clear_no_capability", "depth64", "depth65"} {
 		t.Run(mode, func(t *testing.T) {
 			f := newFixture(t)
 			f.setup("w", "p")
 			f.call("taskboard_set_v2", "w", "p", "", l2MappingArgs(0))
 			p := &l2ObservedIntentProvider{l2IntentProvider: l2IntentFixture()}
-			parentID := l1StateID
+			sibling := l2Issue(l2SameDestinationParent, l1TeamA, l1Project)
+			sibling.ParentKnown = true
+			p.issues[l2SameDestinationParent] = sibling
+			parentID := l2SameDestinationParent
 			in := linearboard.WriteInputV2{WriteInput: linearboard.WriteInput{Operation: "update", OperationID: "parent-" + mode, IssueID: l1IssueID}, Parent: linearprovider.Field[*string]{Present: true, Value: &parentID}}
 			switch mode {
 			case "clear":
 				in.Parent.Value = nil
+			case "cross_destination":
+				// Another allowed team and project: refused, because Linear
+				// would pass that destination on to the child.
+				parentID = l1StateID
 			case "self":
 				parentID = l1IssueID
 			case "cycle":
@@ -45,8 +56,11 @@ func TestL2ParentExplicitIntentAndBoundedScopedAncestry(t *testing.T) {
 				issue := p.issues[parentID]
 				issue.TeamID = l1Workspace
 				p.issues[parentID] = issue
-			case "cannot_preserve_destination":
-				p.caps.ParentPreservesDestination = false
+			case "no_capability":
+				p.caps.ParentSameDestination = false
+			case "clear_no_capability":
+				in.Parent.Value = nil
+				p.caps.ParentSameDestination = false
 			case "depth64", "depth65":
 				count := 64
 				if mode == "depth65" {
@@ -67,7 +81,7 @@ func TestL2ParentExplicitIntentAndBoundedScopedAncestry(t *testing.T) {
 				}
 			}
 			_, err := l1ServiceFor(t, f.store, p).WriteV2(context.Background(), f.request("", "w", "p", "worker", actor("worker", nil)), in)
-			allowed := mode == "cross_pair_explicit" || mode == "clear" || mode == "depth64"
+			allowed := mode == "same_destination" || mode == "clear" || mode == "depth64"
 			if !allowed {
 				if err == nil || len(p.updates) != 0 {
 					t.Fatal("unsafe/incomplete parent dispatched", err)

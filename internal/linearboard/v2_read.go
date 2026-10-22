@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"slices"
 	"sort"
 
 	"clawbridge/internal/bus"
@@ -70,11 +71,19 @@ func verifyBindingV2(ctx context.Context, p Provider, b bus.TaskboardBindingV2) 
 	if b.Mode != "project_set" || len(b.LinearProjectIDs) == 0 {
 		return out, errors.New("unsupported task-board mapping mode")
 	}
+	listed, e := listBoundProjects(ctx, p, teams, b.LinearProjectIDs)
+	if e != nil {
+		return out, e
+	}
 	covered := map[string]bool{}
 	for _, id := range SortedTeams(b.LinearProjectIDs) {
-		project, e := p.GetProject(ctx, id)
-		if e != nil {
-			return out, e
+		project, ok := listed[id]
+		if !ok {
+			// Trashed, missing from the listing, or listed inconsistently:
+			// verify individually, exactly as before batching.
+			if project, e = p.GetProject(ctx, id); e != nil {
+				return out, e
+			}
 		}
 		if project.ID != id {
 			return out, errors.New("Linear project identity changed")
@@ -99,6 +108,67 @@ func verifyBindingV2(ctx context.Context, p Provider, b bus.TaskboardBindingV2) 
 	}
 	return out, nil
 }
+
+// teamProjectLister lists a team's projects, trashed ones included and marked.
+type teamProjectLister interface {
+	TeamProjects(context.Context, string, linearprovider.PageOptions) (linearprovider.Page[linearprovider.ProjectListing], error)
+}
+
+// maxProjectListPages bounds the batch listing per team; projects beyond it are
+// verified individually.
+const maxProjectListPages = 10
+
+// listBoundProjects reads each allowed team's project list once and returns
+// the bound projects found live in it, matched by UUID only. A trashed row, a
+// project listed differently under two teams, or one not listed is left out, so
+// the caller verifies it with get_project. A provider without the listing, or a
+// listing Linear answers in an unexpected shape, falls back the same way.
+func listBoundProjects(ctx context.Context, p Provider, teams, bound []string) (map[string]linearprovider.Project, error) {
+	found := map[string]linearprovider.Project{}
+	lister, ok := p.(teamProjectLister)
+	if !ok {
+		return found, nil
+	}
+	want := map[string]bool{}
+	for _, id := range bound {
+		want[id] = true
+	}
+	excluded := map[string]bool{}
+	for _, team := range teams {
+		cursor := ""
+		for page := 0; page < maxProjectListPages; page++ {
+			rows, e := lister.TeamProjects(ctx, team, linearprovider.PageOptions{Cursor: cursor})
+			if e != nil {
+				var pe *linearprovider.Error
+				if errors.As(e, &pe) && !pe.NotSent && batchFallbackKinds[pe.Kind] {
+					return map[string]linearprovider.Project{}, nil
+				}
+				return nil, e
+			}
+			for _, row := range rows.Items {
+				if !want[row.ID] || excluded[row.ID] {
+					continue
+				}
+				if prior, seen := found[row.ID]; row.Trashed || (seen && !slices.Equal(prior.TeamIDs, row.TeamIDs)) {
+					delete(found, row.ID)
+					excluded[row.ID] = true
+					continue
+				}
+				found[row.ID] = row.Project
+			}
+			if rows.Complete {
+				break
+			}
+			cursor = rows.NextCursor
+		}
+	}
+	return found, nil
+}
+
+// batchFallbackKinds are listing failures that say nothing about the bound
+// projects themselves; individual verification still decides.
+var batchFallbackKinds = map[string]bool{"capability_unavailable": true, "invalid_response": true, "scope_metadata_missing": true, "pagination_unavailable": true, "result_limit": true}
+
 func checkIssueV2(issue linearprovider.IssueV2, b bus.TaskboardBindingV2, v verifiedV2) error {
 	if !linearprovider.ValidID(issue.ID) || !contains(b.LinearTeamIDs, issue.TeamID) {
 		return errors.New("issue is outside the selected task-board scope")

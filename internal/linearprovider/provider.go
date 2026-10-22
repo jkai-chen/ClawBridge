@@ -992,6 +992,98 @@ func (p *Provider) Projects(ctx context.Context, o PageOptions) (Page[Project], 
 	}
 	return out, nil
 }
+
+// ProjectListing is one row of a team's project list.
+type ProjectListing struct {
+	Project
+	Trashed bool `json:"trashed"`
+}
+
+var projectListFields = []string{"id", "uuid", "name", "teams", "trashed"}
+
+// teamProjectsSupported reports whether list_projects advertises the exact
+// team, archive, projection and paging inputs TeamProjects sends.
+func (p *Provider) teamProjectsSupported() bool {
+	t := p.tools["list_projects"]
+	if t == nil {
+		return false
+	}
+	props, req, e := schema(t)
+	if e != nil {
+		return false
+	}
+	for _, f := range []struct{ name, kind string }{{"team", "string"}, {"includeArchived", "boolean"}, {"fields", "array"}, {"limit", "integer"}, {"cursor", "string"}} {
+		if k, ok := field(props, []string{f.name}, f.kind); !ok || k != f.name {
+			return false
+		}
+	}
+	for _, k := range req {
+		if k != "team" {
+			return false
+		}
+	}
+	items, _ := obj(props, "fields")["items"].(map[string]any)
+	if enum, listed := items["enum"].([]any); listed {
+		for _, want := range projectListFields {
+			found := false
+			for _, v := range enum {
+				found = found || v == want
+			}
+			if !found {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+// TeamProjects lists one page of a team's projects, trashed ones included and
+// marked, so a caller can verify many projects in one read. Without the
+// advertised inputs it fails with capability_unavailable before any call, and
+// the connection stays usable.
+func (p *Provider) TeamProjects(ctx context.Context, team string, o PageOptions) (Page[ProjectListing], error) {
+	if !ValidID(team) || o.Limit < 0 || o.Limit > 50 || len(o.Cursor) > 2048 {
+		return Page[ProjectListing]{}, fail("invalid")
+	}
+	if !p.teamProjectsSupported() {
+		return Page[ProjectListing]{}, fail("capability_unavailable")
+	}
+	if o.Limit == 0 {
+		o.Limit = 50
+	}
+	args := []arg{a(team, "team"), {[]string{"includeArchived"}, true, "boolean"}, {[]string{"fields"}, projectListFields, "array"}, {[]string{"limit"}, o.Limit, "integer"}}
+	if o.Cursor != "" {
+		args = append(args, a(o.Cursor, "cursor"))
+	}
+	m, e := p.call(ctx, []string{"list_projects"}, args...)
+	if e != nil {
+		return Page[ProjectListing]{}, e
+	}
+	rows, n, c, e := list(m, "projects")
+	if e != nil {
+		return Page[ProjectListing]{}, e
+	}
+	if !c && n == "" {
+		return Page[ProjectListing]{}, fail("pagination_unavailable")
+	}
+	out := Page[ProjectListing]{Items: []ProjectListing{}, NextCursor: n, Complete: c}
+	for _, r := range rows {
+		var trashed bool
+		switch v := r["trashed"].(type) {
+		case nil:
+		case bool:
+			trashed = v
+		default:
+			return Page[ProjectListing]{}, fail("invalid_response")
+		}
+		pr, e := parseProject(r)
+		if e != nil {
+			return Page[ProjectListing]{}, e
+		}
+		out.Items = append(out.Items, ProjectListing{pr, trashed})
+	}
+	return out, nil
+}
 func (p *Provider) GetProject(ctx context.Context, i string) (Project, error) {
 	if !ValidID(i) {
 		return Project{}, fail("invalid")

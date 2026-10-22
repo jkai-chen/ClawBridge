@@ -130,6 +130,15 @@ between; a read can therefore see a team or project change in Linear up to a
 minute late. Write tools always verify the binding against Linear. CLI commands
 connect and verify once per command as before.
 
+Verifying a project-set binding reads each allowed team once, then that team's
+project list once (`list_projects`, trashed projects included and marked, 50
+per page), instead of reading every bound project separately. A bound project
+matches only by its UUID, never by name. A bound project that is trashed, not in
+its teams' lists, or listed with different teams under two teams is still read
+on its own with `get_project`, and decides the binding exactly as before. When
+Linear's `list_projects` lacks the inputs this needs, or answers in an
+unexpected shape, every bound project is read on its own instead.
+
 Start from the assigned issue and read its scope, dependencies, acceptance criteria
 and Current agent block. Resolve that immutable session through project-scoped,
 paged session discovery. Ask the coordinator about ambiguous or changed ownership;

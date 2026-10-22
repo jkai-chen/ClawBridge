@@ -147,17 +147,22 @@ or an arbitrary provider tool. Administrative project/label creation remains a
 separate operator action.
 
 Use canonical IDs from scoped provider discovery. Preserve omitted fields;
-clear or replace them only when the assignment requests that exact change. Review
-existing labels before an explicit replacement, including labels maintained by
-people. A label's name does not prove its team, and a global user record does not
-prove membership in the issue's team.
+clear or replace them only when the assignment requests that exact change.
+Supplied label IDs replace the complete set: known labels omitted from that set
+are removed, `[]` clears it, and omission preserves it. Review existing labels
+before replacement, including labels maintained by people. A label's name does
+not prove its team, and a global user record does not prove membership in the
+issue's team.
 
 Check both issues before adding a dependency or parent. Their effective project
 and team must remain in the binding; required ancestry must be available and
 acyclic. Request one relation edge at a time. A successful edge write is not a
-transaction across tasks. An observed unchanged edge records the existing state;
-a fresh request still requires current write authorization. Keep the receipt
-and reconcile uncertain outcomes through read-back.
+transaction across tasks. An `observed_unchanged` receipt records an observation,
+not a provider CAS guarantee. A fresh mutation-intent request still requires
+current ClawBridge write rights and a personal Linear Write profile. An accepted
+identical ledger retry checks current ClawBridge authority and returns the saved
+receipt without provider or keyring access. Keep the receipt and reconcile
+uncertain outcomes through read-back.
 
 Set a human assignee only when explicitly requested and verified as an eligible
 team member. That assignment does not replace the coordinator's Current agent

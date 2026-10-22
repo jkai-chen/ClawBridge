@@ -1,5 +1,6 @@
 # Documentation
 
+- [Join a ClawBridge project](onboarding.md)
 - [Install and update](installation.md)
 - [Messaging, hosted login, profiles, MCP and TUI](usage.md)
 - [Inbox notifications and Codex wake-up](notifications.md)

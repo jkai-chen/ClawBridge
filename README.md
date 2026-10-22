@@ -24,7 +24,8 @@ and preserve application state. Binaries are unsigned.
 
 Run `clawbridge` in a terminal to open a saved profile or join an existing hosted
 workspace. Have its HTTPS address, workspace, project and an authorized Google
-account ready. For an isolated local bus, see [local messaging](docs/usage.md#local-messaging).
+account ready; [joining a project](docs/onboarding.md) walks through it. For an
+isolated local bus, see [local messaging](docs/usage.md#local-messaging).
 
 Install a separate MCP session for each agent:
 
@@ -38,6 +39,7 @@ connecting. See [MCP setup](docs/usage.md#mcp) for profiles and resumption.
 
 ## Documentation
 
+- [Join a ClawBridge project](docs/onboarding.md)
 - [Install and update](docs/installation.md)
 - [Messaging, hosted login, MCP and TUI](docs/usage.md)
 - [Inbox notifications and Codex wake-up](docs/notifications.md)

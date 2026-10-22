@@ -149,6 +149,13 @@ stale presence does not release a slice. Record decisions and artifact/commit
 references on the issue, with routine peer conversation in ClawBridge. See the
 [agent workflow](../skills/clawbridge/references/task-board.md).
 
+To ask for agent attention, people add the label `needs-agent` to an issue
+(create the label once as an operator). The coordinator session lists those
+issues when it runs, with `linear issues --label UUID` (MCP `label_id`) for each
+bound team. The label is a request, never approval or an assignment: the
+coordinator still assigns the work through ClawBridge, and people remove the
+label.
+
 Task-board inspection is read-only. Creating/updating/commenting requires explicit
 write capability and an operation ID. Retry an accepted operation only with the
 same ID and payload. An uncertain write is held for read-back rather than replayed

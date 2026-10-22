@@ -20,7 +20,8 @@ official Linear MCP/skill. Follow the explicit issue-to-session assignment and
 use ClawBridge for peer messages. Record your own assignment with
 `assignment_propose`; only the project's designated coordinator session confirms
 it. Find a slice's owner with `list_sessions` filtered by `issue` or
-`scope_path`.
+`scope_path`. Issues labelled `needs-agent` ask for agent attention; only the
+coordinator lists them, and the label is never approval or an assignment.
 
 ## Bind and check
 

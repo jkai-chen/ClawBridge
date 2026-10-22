@@ -101,3 +101,16 @@ func TestLinearV2TextGuardFlagsReachTheWriteInput(t *testing.T) {
 		t.Fatal("unguarded update gained guards", input, err)
 	}
 }
+
+func TestLinearV2LabelDeltaFlagsReachTheWriteInput(t *testing.T) {
+	const a = "11111111-1111-4111-8111-111111111111"
+	const b = "22222222-2222-4222-8222-222222222222"
+	v, pos, err := parseLinear("update", []string{a, "--profile", "native", "--operation-id", "delta", "--add-label", b, "--remove-label", a}, &bytes.Buffer{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	input, err := linearWriteInput("update", v, pos)
+	if err != nil || !reflect.DeepEqual(input.AddLabels, []string{b}) || !reflect.DeepEqual(input.RemoveLabels, []string{a}) || input.Labels.Present {
+		t.Fatalf("label deltas lost: %+v %v", input, err)
+	}
+}

@@ -145,6 +145,20 @@ func (p *providerV2) UpdateV2(_ context.Context, in linearprovider.UpdateInputV2
 	if in.Labels.Present {
 		i.LabelIDs, i.LabelsKnown = append([]string{}, in.Labels.Value...), true
 	}
+	if in.AddLabels != nil || in.RemoveLabels != nil {
+		labels := []string{}
+		for _, id := range i.LabelIDs {
+			if !contains(in.RemoveLabels, id) {
+				labels = append(labels, id)
+			}
+		}
+		for _, id := range in.AddLabels {
+			if !contains(labels, id) {
+				labels = append(labels, id)
+			}
+		}
+		i.LabelIDs = labels
+	}
 	if in.Assignee.Present {
 		i.AssigneeID, i.AssigneeKnown = "", true
 		if in.Assignee.Value != nil {

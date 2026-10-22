@@ -15,7 +15,62 @@ import (
 var sha256Pattern = regexp.MustCompile(`\A[0-9a-f]{64}\z`)
 
 func legacyOnlyV2(in WriteInputV2) bool {
-	return in.TeamID == "" && !in.Project.Present && !in.Labels.Present && !in.ExpectedLabels.Present && !in.Parent.Present && !in.Assignee.Present && in.ExpectedTitle == nil && in.ExpectedDescriptionSHA256 == nil
+	return in.TeamID == "" && !in.Project.Present && !in.Labels.Present && !in.ExpectedLabels.Present && !in.Parent.Present && !in.Assignee.Present && in.ExpectedTitle == nil && in.ExpectedDescriptionSHA256 == nil && in.AddLabels == nil && in.RemoveLabels == nil
+}
+
+// labelPlanV2 is the part of the requested label deltas that would change the
+// issue: adds of labels not proven present, removes of labels proven present.
+type labelPlanV2 struct{ Add, Remove []string }
+
+func (p labelPlanV2) empty() bool { return len(p.Add) == 0 && len(p.Remove) == 0 }
+
+// labelDeltaPlanV2 decides each delta from the issue's label membership: the
+// known label IDs, or else the server-side list filter by label UUID. An add
+// whose membership is unknown is still sent (native adds are append-only); a
+// remove is sent only when the label is proven present, and an unknown remove
+// is refused because absence cannot be claimed.
+func labelDeltaPlanV2(ctx context.Context, p ProviderV2, issue linearprovider.IssueV2, adds, removes []string) (labelPlanV2, error) {
+	plan := labelPlanV2{}
+	m, membership := p.(labelMembershipV2)
+	if !issue.LabelsKnown && membership {
+		caps, e := p.Capabilities(ctx)
+		if e != nil {
+			return plan, e
+		}
+		membership = caps.LabelMembershipProof
+	}
+	has := func(label string) (present, known bool, err error) {
+		if issue.LabelsKnown {
+			return contains(issue.LabelIDs, label), true, nil
+		}
+		if !membership {
+			return false, false, nil
+		}
+		found, complete, e := m.IssueHasLabel(ctx, issue.ID, issue.TeamID, issue.ProjectID, label)
+		return found, found || complete, e
+	}
+	for _, label := range adds {
+		present, known, e := has(label)
+		if e != nil {
+			return plan, e
+		}
+		if !known || !present {
+			plan.Add = append(plan.Add, label)
+		}
+	}
+	for _, label := range removes {
+		present, known, e := has(label)
+		if e != nil {
+			return plan, e
+		}
+		if !known {
+			return plan, errors.New("label membership is unknown, so its removal is refused; nothing was sent")
+		}
+		if present {
+			plan.Remove = append(plan.Remove, label)
+		}
+	}
+	return plan, nil
 }
 
 // descriptionSHA256 is the hex SHA-256 of the exact description bytes a read
@@ -75,6 +130,27 @@ func ValidateWriteV2(in WriteInputV2) error {
 		return errors.New("expected label values require explicit presence")
 	} else if in.Operation == "update" && in.Labels.Present {
 		return errors.New("label replacement requires expected_label_ids: the complete label set you last read")
+	}
+	if in.AddLabels != nil || in.RemoveLabels != nil {
+		if in.Operation != "update" || in.Labels.Present || in.ExpectedLabels.Present {
+			return errors.New("add_label_ids and remove_label_ids apply only to an update that does not replace labels")
+		}
+		seen := map[string]bool{}
+		for _, ids := range [][]string{in.AddLabels, in.RemoveLabels} {
+			if ids == nil {
+				continue
+			}
+			sorted, e := sortedUniqueIDs(ids, 20)
+			if e != nil || len(sorted) == 0 {
+				return errors.New("label deltas name 1–20 unique label UUIDs")
+			}
+			for _, id := range sorted {
+				if seen[id] {
+					return errors.New("a label cannot be both added and removed")
+				}
+				seen[id] = true
+			}
+		}
 	}
 	if in.ExpectedTitle != nil && (in.Operation != "update" || in.Title == nil || len(*in.ExpectedTitle) > 1024) {
 		return errors.New("expected_title applies only to an update that replaces the title, up to 1024 bytes")
@@ -155,6 +231,12 @@ func (s *Service) WriteV2(ctx context.Context, scope bus.Request, in WriteInputV
 	}
 	if in.ExpectedLabels.Present {
 		in.ExpectedLabels.Value, _ = sortedUniqueIDs(in.ExpectedLabels.Value, 100)
+	}
+	if in.AddLabels != nil {
+		in.AddLabels, _ = sortedUniqueIDs(in.AddLabels, 20)
+	}
+	if in.RemoveLabels != nil {
+		in.RemoveLabels, _ = sortedUniqueIDs(in.RemoveLabels, 20)
 	}
 	b, e := s.BindingV2(ctx, scope)
 	if e != nil {
@@ -328,6 +410,31 @@ func (s *Service) WriteV2(ctx context.Context, scope bus.Request, in WriteInputV
 			return nil, errors.New("selected label is outside target team")
 		}
 	}
+	var plan labelPlanV2
+	deltas := in.AddLabels != nil || in.RemoveLabels != nil
+	if deltas {
+		if !caps.LabelDeltas {
+			return nil, errors.New("provider cannot add or remove single labels")
+		}
+		if in.AddLabels != nil {
+			if !caps.Labels {
+				return nil, errors.New("provider cannot prove label eligibility")
+			}
+			found, e := findLabelsV2(ctx, p2, team, in.AddLabels)
+			if e != nil {
+				return nil, e
+			}
+			if len(found) != len(in.AddLabels) {
+				return nil, errors.New("selected label is outside target team")
+			}
+		}
+		if plan, e = labelDeltaPlanV2(ctx, p2, current, in.AddLabels, in.RemoveLabels); e != nil {
+			return nil, e
+		}
+	}
+	// A request whose only intent is label deltas that are already in effect
+	// is recorded as observed_unchanged and sends nothing.
+	unchanged := deltas && plan.empty() && in.Title == nil && in.Description == nil && in.StateID == nil && !in.Project.Present && !in.Parent.Present && !in.Assignee.Present
 	if in.Assignee.Present {
 		if !caps.Assignee {
 			return nil, errors.New("provider cannot express assignee set/clear")
@@ -395,8 +502,8 @@ func (s *Service) WriteV2(ctx context.Context, scope bus.Request, in WriteInputV
 					create = create.WithSameDestinationParent()
 				}
 				e = validation.ValidateCreateV2(create)
-			} else if in.Operation == "update" {
-				update := linearprovider.UpdateInputV2{UpdateInput: linearprovider.UpdateInput{ID: in.IssueID, Title: in.Title, Description: in.Description, StateID: in.StateID}, Project: in.Project, Labels: in.Labels, Parent: in.Parent, Assignee: in.Assignee}
+			} else if in.Operation == "update" && !unchanged {
+				update := linearprovider.UpdateInputV2{UpdateInput: linearprovider.UpdateInput{ID: in.IssueID, Title: in.Title, Description: in.Description, StateID: in.StateID}, Project: in.Project, Labels: in.Labels, Parent: in.Parent, Assignee: in.Assignee, AddLabels: nonEmptyV2(plan.Add), RemoveLabels: nonEmptyV2(plan.Remove)}
 				if verifiedParent {
 					update = update.WithSameDestinationParent()
 				}
@@ -421,7 +528,7 @@ func (s *Service) WriteV2(ctx context.Context, scope bus.Request, in WriteInputV
 		if fresh.SessionID != access.SessionID {
 			return nil, refusedBeforeDispatch(errActorChanged)
 		}
-		if e = refreshWriteProofV2(ctx, p, p2, b, v, in, team, project, current, legacy); e != nil {
+		if e = refreshWriteProofV2(ctx, p, p2, b, v, in, team, project, current, legacy, plan); e != nil {
 			return nil, proofFailure(e)
 		}
 		if e = s.unchangedV2(ctx, scope, b); e != nil {
@@ -436,6 +543,9 @@ func (s *Service) WriteV2(ctx context.Context, scope bus.Request, in WriteInputV
 		}
 		if e = ctx.Err(); e != nil {
 			return nil, notDispatched(e)
+		}
+		if unchanged {
+			return s.postReceiptV2(ctx, scope, b, ReceiptV2{Kind: "issue", Outcome: "observed_unchanged", ID: in.IssueID, Identifier: current.Identifier, TeamID: team, ProjectID: projectPointerV2(project)})
 		}
 		post := func(e error) error { return s.postFailureV2(ctx, scope, b, e) }
 		sent, known := sentCount(p)
@@ -490,7 +600,7 @@ func (s *Service) WriteV2(ctx context.Context, scope bus.Request, in WriteInputV
 				issue.Issue = i
 				issue.ProjectKnown = true
 			} else {
-				update := linearprovider.UpdateInputV2{UpdateInput: base, Project: in.Project, Labels: in.Labels, Parent: in.Parent, Assignee: in.Assignee}
+				update := linearprovider.UpdateInputV2{UpdateInput: base, Project: in.Project, Labels: in.Labels, Parent: in.Parent, Assignee: in.Assignee, AddLabels: nonEmptyV2(plan.Add), RemoveLabels: nonEmptyV2(plan.Remove)}
 				if verifiedParent {
 					update = update.WithSameDestinationParent()
 				}
@@ -511,7 +621,7 @@ func (s *Service) WriteV2(ctx context.Context, scope bus.Request, in WriteInputV
 			if legacy {
 				receipt = map[string]any{"id": issue.ID, "identifier": issue.Identifier, "team_id": issue.TeamID, "project_id": issue.ProjectID}
 			} else {
-				receipt = ReceiptV2{Kind: "issue", Outcome: "accepted", ID: issue.ID, Identifier: issue.Identifier, TeamID: issue.TeamID, ProjectID: projectPointerV2(issue.ProjectID), Unverified: unverified}
+				receipt = ReceiptV2{Kind: "issue", Outcome: "accepted", ID: issue.ID, Identifier: issue.Identifier, TeamID: issue.TeamID, ProjectID: projectPointerV2(issue.ProjectID), Unverified: unverified, LabelsAdded: plan.Add, LabelsRemoved: plan.Remove}
 			}
 		default:
 			r, err := p.Comment(ctx, in.IssueID, in.Body)
@@ -529,6 +639,12 @@ func (s *Service) WriteV2(ctx context.Context, scope bus.Request, in WriteInputV
 		}
 		return s.postReceiptV2(ctx, scope, b, receipt)
 	})
+}
+func nonEmptyV2(ids []string) []string {
+	if len(ids) == 0 {
+		return nil
+	}
+	return ids
 }
 func projectPointerV2(s string) *string {
 	if s == "" {
@@ -626,6 +742,22 @@ func receiptFieldsV2(issue linearprovider.IssueV2, in WriteInputV2, legacy bool)
 			got, e := sortedUniqueIDs(got, 100)
 			if e != nil || digest(got) != digest(in.Labels.Value) {
 				return nil, mismatch
+			}
+		}
+	}
+	if in.AddLabels != nil || in.RemoveLabels != nil {
+		if !issue.LabelsKnown {
+			unverified = append(unverified, "labels")
+		} else {
+			for _, id := range in.AddLabels {
+				if !contains(issue.LabelIDs, id) {
+					return nil, mismatch
+				}
+			}
+			for _, id := range in.RemoveLabels {
+				if contains(issue.LabelIDs, id) {
+					return nil, mismatch
+				}
 			}
 		}
 	}

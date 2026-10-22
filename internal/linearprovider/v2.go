@@ -118,6 +118,9 @@ type Capabilities struct {
 	// their own belong to the team asked for.
 	MemberTeamFilter bool `json:"member_team_filter"`
 	StatusTeamFilter bool `json:"status_team_filter"`
+	// LabelDeltas: an issue update can add or remove single labels by ID
+	// (native addLabels/removeLabels) without replacing the set.
+	LabelDeltas bool `json:"label_deltas"`
 	// Reasons explains, per capability key, why a capability is off, so a
 	// silent switch-off (for example after a provider schema change) is
 	// visible in status and doctor output.
@@ -138,7 +141,10 @@ type UpdateInputV2 struct {
 	Project          Field[*string]
 	Labels           Field[[]string]
 	Parent, Assignee Field[*string]
-	parentVerified   bool
+	// AddLabels and RemoveLabels are label UUIDs added to or removed from
+	// the current set (native addLabels/removeLabels); never with Labels.
+	AddLabels, RemoveLabels []string
+	parentVerified          bool
 }
 
 // WithSameDestinationParent marks a parent set that the caller has verified,
@@ -514,6 +520,11 @@ func (p *Provider) Capabilities(context.Context) (Capabilities, error) {
 	}
 	capabilities.MemberTeamFilter = capabilities.Reasons["member_team_filter"] == ""
 	capabilities.StatusTeamFilter = capabilities.Reasons["status_team_filter"] == ""
+	deltas := p.labelDeltasReason()
+	capabilities.LabelDeltas = deltas == ""
+	if deltas != "" {
+		capabilities.Reasons["label_deltas"] = deltas
+	}
 	updatedAfter := p.updatedAfterReason()
 	capabilities.UpdatedAfterFilter = updatedAfter == ""
 	if updatedAfter != "" {
@@ -1186,6 +1197,9 @@ func (p *Provider) ValidateUpdateV2(in UpdateInputV2) error {
 	if e != nil {
 		return e
 	}
+	if (in.AddLabels != nil || in.RemoveLabels != nil) && p.labelDeltasReason() != "" {
+		return fail("capability_unavailable")
+	}
 	return p.validateMutationV2([]string{"update_issue", "save_issue"}, args, in.Parent, in.parentVerified)
 }
 func (p *Provider) validateMutationV2(names []string, args []arg, parent Field[*string], verified bool) error {
@@ -1247,10 +1261,26 @@ func (p *Provider) CreateV2(ctx context.Context, in CreateInputV2) (IssueV2, err
 	return x, nil
 }
 func updateArgsV2(in UpdateInputV2) ([]arg, error) {
-	if !ValidID(in.ID) || (in.Title == nil && in.Description == nil && in.StateID == nil && !in.Project.Present && !in.Labels.Present && !in.Parent.Present && !in.Assignee.Present) {
+	if !ValidID(in.ID) || (in.Title == nil && in.Description == nil && in.StateID == nil && !in.Project.Present && !in.Labels.Present && !in.Parent.Present && !in.Assignee.Present && in.AddLabels == nil && in.RemoveLabels == nil) {
+		return nil, fail("invalid")
+	}
+	if in.Labels.Present && (in.AddLabels != nil || in.RemoveLabels != nil) {
 		return nil, fail("invalid")
 	}
 	args := []arg{a(in.ID, "id", "issueId")}
+	for _, delta := range []struct {
+		ids []string
+		key string
+	}{{in.AddLabels, "addLabels"}, {in.RemoveLabels, "removeLabels"}} {
+		if delta.ids == nil {
+			continue
+		}
+		ids, e := canonicalIDs(delta.ids, 20)
+		if e != nil || len(ids) == 0 {
+			return nil, fail("invalid")
+		}
+		args = append(args, arg{[]string{delta.key}, ids, "array"})
+	}
 	for _, f := range []struct {
 		value *string
 		max   int
@@ -1278,6 +1308,9 @@ func (p *Provider) UpdateV2(ctx context.Context, in UpdateInputV2) (IssueV2, err
 	args, e := updateArgsV2(in)
 	if e != nil {
 		return IssueV2{}, e
+	}
+	if (in.AddLabels != nil || in.RemoveLabels != nil) && p.labelDeltasReason() != "" {
+		return IssueV2{}, fail("capability_unavailable")
 	}
 	m, e := p.mutateV2(ctx, []string{"update_issue", "save_issue"}, args, in.Parent, in.parentVerified)
 	if e != nil {
@@ -1429,6 +1462,33 @@ func (p *Provider) statusTeamFilterReason() string {
 		return "list_issue_statuses schema changed: no longer documented as one team's statuses"
 	}
 	return ""
+}
+
+// labelDeltasReason is empty when the issue update tool documents addLabels
+// as an append-only array of label strings and removeLabels as an array that
+// removes them, so one label can change without replacing the set.
+func (p *Provider) labelDeltasReason() string {
+	for _, name := range []string{"update_issue", "save_issue"} {
+		if p.tools[name] == nil {
+			continue
+		}
+		props, _, e := schema(p.tools[name])
+		if e != nil {
+			continue
+		}
+		add, addOK := props["addLabels"].(map[string]any)
+		remove, removeOK := props["removeLabels"].(map[string]any)
+		if !addOK && !removeOK {
+			continue
+		}
+		addText, _ := add["description"].(string)
+		removeText, _ := remove["description"].(string)
+		if !addOK || !removeOK || add["type"] != "array" || remove["type"] != "array" || !allowsArrayStrings(add) || !allowsArrayStrings(remove) || !strings.Contains(addText, "Append-only") || !strings.Contains(removeText, "to remove") {
+			return name + " schema changed: addLabels/removeLabels missing or no longer documented as add-only and remove arrays"
+		}
+		return ""
+	}
+	return "no issue update tool accepts addLabels and removeLabels"
 }
 
 // updatedAfterReason is empty when list_issues pins the documented

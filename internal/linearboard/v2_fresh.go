@@ -3,6 +3,7 @@ package linearboard
 import (
 	"context"
 	"errors"
+	"reflect"
 
 	"clawbridge/internal/bus"
 	"clawbridge/internal/linearprovider"
@@ -15,7 +16,7 @@ import (
 // the state. It reuses the same command's binding verification v (team and
 // project structure, read moments earlier at preflight); the ClawBridge
 // binding revision itself is re-checked around this call by unchangedV2.
-func refreshWriteProofV2(ctx context.Context, p Provider, p2 ProviderV2, b bus.TaskboardBindingV2, v verifiedV2, in WriteInputV2, team, project string, original linearprovider.IssueV2, legacy bool) error {
+func refreshWriteProofV2(ctx context.Context, p Provider, p2 ProviderV2, b bus.TaskboardBindingV2, v verifiedV2, in WriteInputV2, team, project string, original linearprovider.IssueV2, legacy bool, plan labelPlanV2) error {
 	var e error
 	if in.Operation != "create" {
 		var current linearprovider.IssueV2
@@ -39,6 +40,15 @@ func refreshWriteProofV2(ctx context.Context, p Provider, p2 ProviderV2, b bus.T
 		}
 		if e = textGuardV2(in, current); e != nil {
 			return e
+		}
+		if in.AddLabels != nil || in.RemoveLabels != nil {
+			fresh, e := labelDeltaPlanV2(ctx, p2, current, in.AddLabels, in.RemoveLabels)
+			if e != nil {
+				return e
+			}
+			if !reflect.DeepEqual(fresh, plan) {
+				return errors.New("issue labels changed before dispatch; re-read and retry with a new operation_id")
+			}
 		}
 		if in.Labels.Present {
 			// The fresh in-lock read must equal the set the caller last read,
@@ -72,12 +82,15 @@ func refreshWriteProofV2(ctx context.Context, p Provider, p2 ProviderV2, b bus.T
 	if e = checkIssueV2(linearprovider.IssueV2{Issue: linearprovider.Issue{ID: "00000000-0000-0000-0000-000000000000", TeamID: team, ProjectID: project}, ProjectKnown: true}, b, v); e != nil {
 		return e
 	}
-	if in.Labels.Present {
-		found, e := findLabelsV2(ctx, p2, team, in.Labels.Value)
+	for _, labels := range [][]string{in.Labels.Value, in.AddLabels} {
+		if len(labels) == 0 {
+			continue
+		}
+		found, e := findLabelsV2(ctx, p2, team, labels)
 		if e != nil {
 			return e
 		}
-		if len(found) != len(in.Labels.Value) {
+		if len(found) != len(labels) {
 			return errors.New("selected label no longer belongs to the target team")
 		}
 	}

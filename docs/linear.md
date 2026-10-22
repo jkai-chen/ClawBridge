@@ -157,7 +157,7 @@ To ask for agent attention, people add the label `needs-agent` to an issue
 issues when it runs, with `linear issues --label UUID` (MCP `label_id`) for each
 bound team. The label is a request, never approval or an assignment: the
 coordinator still assigns the work through ClawBridge, and people remove the
-label. Add `--updated-after 2026-10-22T09:00:00Z` (MCP `updated_after`, an
+label (or ask an agent to, with `--remove-label UUID`). Add `--updated-after 2026-10-22T09:00:00Z` (MCP `updated_after`, an
 absolute RFC 3339 time, never a duration) to list only issues changed since the
 last check. Every returned row must report an `updated_at` at or after that
 time, or the page is refused; the `updated_after_filter` capability shows
@@ -265,6 +265,7 @@ rows keep `labels_known: false`.
 | Repeated `--label UUID` | Complete replacement label set, including removal of existing omitted labels |
 | Update `--expect-label UUID` (repeat) or `--expect-no-labels` | Required with `--label` or `--clear-labels`: the complete label set the issue had when you last read it. A mismatch refuses the update; nothing is sent |
 | Update `--expect-title TEXT` | Optional with `--title`: the title you last read. A different current title refuses the update; nothing is sent |
+| Update `--add-label UUID` / `--remove-label UUID` (repeat, up to 20 each) | Add or remove single labels without replacing the set; not with `--label`/`--clear-labels`. An added label needs the same eligibility proof as a replacement. Each label's membership is checked first, through Linear's list filtered by the label UUID: a label already in the requested state is not sent (`observed_unchanged` when nothing else changes), an add with unknown membership is still sent (Linear only appends), and a removal with unknown membership is refused. A membership change before dispatch refuses the operation |
 | Update `--expect-description-sha256 HEX` | Optional with `--description`: the `description_sha256` from your last `linear issue` read. A different current description refuses the update; nothing is sent. Planned to become required in v0.2.2 |
 | `--parent UUID` | Scoped, acyclic parent in the child's own team and project; a parent in another team or project is refused |
 | `--assignee UUID` | Explicit eligible team member; no agent claim or permission change |

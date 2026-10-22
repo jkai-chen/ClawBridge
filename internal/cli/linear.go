@@ -86,7 +86,7 @@ type linearFlags struct {
 	supplied                                                                                                             map[string]bool
 	profile, name, access, cursor, project, defaultTeam, title, description, descriptionFile, state, operation, bodyFile string
 	teams                                                                                                                []string
-	projects, labels, expectedLabels                                                                                     []string
+	projects, labels, expectedLabels, addLabels, removeLabels                                                            []string
 	team, parent, assignee, relationType, relationAction, labelFilter                                                    string
 	expectTitle, expectDescriptionSHA256, updatedAfter                                                                   string
 	clearProject, clearLabels, clearParent, clearAssignee, expectNoLabels                                                bool
@@ -178,6 +178,8 @@ func parseLinear(command string, args []string, stderr io.Writer) (linearFlags, 
 		f.BoolVar(&v.clearLabels, "clear-labels", false, "explicitly replace labels with an empty set")
 		f.Var((*repeatedIDs)(&v.expectedLabels), "expect-label", "label UUID the issue has now; required with --label/--clear-labels (repeat for the complete set)")
 		f.BoolVar(&v.expectNoLabels, "expect-no-labels", false, "the issue has no labels now; required instead of --expect-label when it has none")
+		f.Var((*repeatedIDs)(&v.addLabels), "add-label", "label UUID to add without replacing the set (repeat; up to 20)")
+		f.Var((*repeatedIDs)(&v.removeLabels), "remove-label", "label UUID to remove without replacing the set (repeat; up to 20)")
 		f.StringVar(&v.expectTitle, "expect-title", "", "the title you last read; with --title, a different current title refuses the update")
 		f.StringVar(&v.expectDescriptionSHA256, "expect-description-sha256", "", "description_sha256 from your last issue read; with --description, a different current description refuses the update")
 		f.BoolVar(&v.clearParent, "clear-parent", false, "explicitly clear parent")
@@ -330,7 +332,7 @@ func parseLinear(command string, args []string, stderr io.Writer) (linearFlags, 
 		if command == "update" {
 			changed := v.clearProject || v.clearLabels || v.clearParent || v.clearAssignee
 			f.Visit(func(fl *flag.Flag) {
-				if fl.Name == "title" || fl.Name == "description" || fl.Name == "description-file" || fl.Name == "state" || fl.Name == "linear-project" || fl.Name == "label" || fl.Name == "parent" || fl.Name == "assignee" {
+				if fl.Name == "title" || fl.Name == "description" || fl.Name == "description-file" || fl.Name == "state" || fl.Name == "linear-project" || fl.Name == "label" || fl.Name == "add-label" || fl.Name == "remove-label" || fl.Name == "parent" || fl.Name == "assignee" {
 					changed = true
 				}
 			})
@@ -472,6 +474,12 @@ func linearWriteInput(command string, v linearFlags, pos []string) (linearboard.
 	}
 	if v.expectNoLabels {
 		writeInput.ExpectedLabels = linearprovider.Field[[]string]{Present: true, Value: []string{}}
+	}
+	if v.supplied["add-label"] {
+		writeInput.AddLabels = append([]string{}, v.addLabels...)
+	}
+	if v.supplied["remove-label"] {
+		writeInput.RemoveLabels = append([]string{}, v.removeLabels...)
 	}
 	if v.supplied["expect-title"] {
 		writeInput.ExpectedTitle = &v.expectTitle

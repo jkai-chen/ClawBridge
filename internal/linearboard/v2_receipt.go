@@ -28,9 +28,19 @@ func validReceiptV2(raw []byte) bool {
 	if r.Unverified != nil && (len(r.Unverified) == 0 || r.Kind != "issue" || r.Outcome != "accepted") {
 		return false
 	}
+	deltas := func(ids []string) bool {
+		if ids == nil {
+			return true
+		}
+		_, e := sortedUniqueIDs(ids, 20)
+		return e == nil && len(ids) > 0
+	}
+	if (r.LabelsAdded != nil || r.LabelsRemoved != nil) && (r.Kind != "issue" || r.Outcome != "accepted" || !deltas(r.LabelsAdded) || !deltas(r.LabelsRemoved)) {
+		return false
+	}
 	switch r.Kind {
 	case "issue":
-		return r.Outcome == "accepted" && linearprovider.ValidID(r.ID) && linearprovider.ValidID(r.TeamID) && (r.ProjectID == nil || linearprovider.ValidID(*r.ProjectID)) && r.IssueID == "" && r.Action == "" && r.Type == "" && r.FromID == "" && r.ToID == ""
+		return linearprovider.ValidID(r.ID) && linearprovider.ValidID(r.TeamID) && (r.ProjectID == nil || linearprovider.ValidID(*r.ProjectID)) && r.IssueID == "" && r.Action == "" && r.Type == "" && r.FromID == "" && r.ToID == ""
 	case "comment":
 		return r.Outcome == "accepted" && linearprovider.ValidID(r.ID) && linearprovider.ValidID(r.IssueID) && r.TeamID == "" && r.ProjectID == nil && r.Action == "" && r.Type == "" && r.FromID == "" && r.ToID == ""
 	case "edge":

@@ -11,7 +11,7 @@ import (
 // ExecuteV2 is the closed native adapter used by additive, scope-pinned MCP tools.
 func (s *Service) ExecuteV2(ctx context.Context, scope bus.Request, operation string, args map[string]any) (_ any, err error) {
 	defer func() { s.settle(err) }()
-	allowed := map[string][]string{"binding": {}, "context": {}, "issues": {"limit", "cursor", "label_id", "updated_after"}, "issue": {"id", "resolve_labels"}, "labels": {"team_id", "limit", "cursor"}, "members": {"team_id", "limit", "cursor"}, "create": {"title", "description", "state_id", "operation_id", "team_id", "project_id", "label_ids", "parent_id", "assignee_id"}, "update": {"id", "title", "description", "state_id", "operation_id", "project_id", "label_ids", "expected_label_ids", "expected_title", "expected_description_sha256", "parent_id", "assignee_id"}, "comment": {"id", "body", "operation_id"}, "relation_add": {"from_id", "to_id", "type", "operation_id"}, "relation_remove": {"from_id", "to_id", "type", "operation_id"}}
+	allowed := map[string][]string{"binding": {}, "context": {}, "issues": {"limit", "cursor", "label_id", "updated_after"}, "issue": {"id", "resolve_labels"}, "labels": {"team_id", "limit", "cursor"}, "members": {"team_id", "limit", "cursor"}, "create": {"title", "description", "state_id", "operation_id", "team_id", "project_id", "label_ids", "parent_id", "assignee_id"}, "update": {"id", "title", "description", "state_id", "operation_id", "project_id", "label_ids", "expected_label_ids", "add_label_ids", "remove_label_ids", "expected_title", "expected_description_sha256", "parent_id", "assignee_id"}, "comment": {"id", "body", "operation_id"}, "relation_add": {"from_id", "to_id", "type", "operation_id"}, "relation_remove": {"from_id", "to_id", "type", "operation_id"}}
 	keys, ok := allowed[operation]
 	if !ok {
 		return nil, errors.New("unsupported task-board V2 operation")
@@ -37,7 +37,7 @@ func (s *Service) ExecuteV2(ctx context.Context, scope bus.Request, operation st
 			}
 			continue
 		}
-		if key == "label_ids" || key == "expected_label_ids" {
+		if key == "label_ids" || key == "expected_label_ids" || key == "add_label_ids" || key == "remove_label_ids" {
 			if _, e := labelArgumentV2(value); e != nil {
 				return nil, e
 			}
@@ -97,6 +97,15 @@ func (s *Service) ExecuteV2(ctx context.Context, scope bus.Request, operation st
 				return nil, e
 			}
 			in.Labels = linearprovider.Field[[]string]{Present: true, Value: ids}
+		}
+		for key, target := range map[string]*[]string{"add_label_ids": &in.AddLabels, "remove_label_ids": &in.RemoveLabels} {
+			if v, ok := args[key]; ok {
+				ids, e := labelArgumentV2(v)
+				if e != nil {
+					return nil, e
+				}
+				*target = ids
+			}
 		}
 		if v, ok := args["expected_label_ids"]; ok {
 			ids, e := labelArgumentV2(v)

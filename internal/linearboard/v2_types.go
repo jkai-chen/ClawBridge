@@ -66,6 +66,10 @@ type WriteInputV2 struct {
 	// digest of unguarded writes identical to v0.2.0.
 	ExpectedTitle             *string `json:",omitempty"`
 	ExpectedDescriptionSHA256 *string `json:",omitempty"`
+	// AddLabels and RemoveLabels change single labels without replacing the
+	// set; omitempty keeps the ledger digest of other writes unchanged.
+	AddLabels    []string `json:",omitempty"`
+	RemoveLabels []string `json:",omitempty"`
 }
 type RelationInputV2 struct{ OperationID, Action, Type, FromID, ToID string }
 type ReceiptV2 struct {
@@ -84,4 +88,7 @@ type ReceiptV2 struct {
 	// state) that Linear's response did not report, so the write could not
 	// confirm them.
 	Unverified []string `json:"unverified,omitempty"`
+	// LabelsAdded and LabelsRemoved are the label deltas actually sent.
+	LabelsAdded   []string `json:"labels_added,omitempty"`
+	LabelsRemoved []string `json:"labels_removed,omitempty"`
 }

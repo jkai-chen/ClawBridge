@@ -29,6 +29,9 @@ func v2MutationTool(name string, nullable bool) *mcp.Tool {
 		required = []string{"teamId", "title"}
 	} else {
 		required = []string{"id"}
+		// Native update documents single-label deltas beside replacement.
+		props["addLabels"] = map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "Label names or IDs to add. Append-only; existing labels are never removed"}
+		props["removeLabels"] = map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "Label names or IDs to remove. Only valid when updating an existing issue"}
 	}
 	return &mcp.Tool{Name: name, InputSchema: map[string]any{"type": "object", "properties": props, "required": required}}
 }

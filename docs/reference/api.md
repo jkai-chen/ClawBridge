@@ -132,6 +132,9 @@ description it read. `taskboard_update_v2` accepts the optional guards
 `description`); a different current value is refused and nothing is sent.
 If Linear's read omits the description, the read has no `description_sha256`
 and a description guard is refused rather than checked against nothing.
+`taskboard_update_v2` also accepts `add_label_ids` and `remove_label_ids` (1–20
+label UUIDs each, not with `label_ids`) to change single labels; the receipt
+lists `labels_added` and `labels_removed`, or reports `observed_unchanged`.
 The [L2 contract](../design/linear-migration.md) defines the closed schemas and
 scope rules; [L2 review](../archive/reviews/LINEAR-L2-REVIEW.md) records acceptance
 progress and native capability limits.

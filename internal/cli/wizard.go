@@ -8,7 +8,9 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
+	"sync/atomic"
 	"time"
 	"unicode"
 
@@ -21,7 +23,20 @@ type guidedRouteKey struct{}
 
 // Adapter seams keep terminal/credential/authority boundaries hermetic in tests.
 var wizardTerminal = func(out io.Writer) error { return checkTUITerminal(os.Stdin, out) }
-var wizardInput = func() (cancelreader.CancelReader, error) { return cancelreader.NewReader(os.Stdin) }
+var wizardInput = func() (cancelreader.CancelReader, error) { return newWizardInput(runtime.GOOS, os.Stdin) }
+
+// newWizardInput opens the guided prompts' reader. On Windows, cancelreader
+// switches a console *os.File to raw mode (no echo, Enter sends a lone CR,
+// Ctrl+C arrives as a byte), so it is given a plain reader instead: its
+// fallback leaves the console's normal line editing in place, at the cost of
+// not interrupting a blocked read, which ask already treats as unconfirmed.
+func newWizardInput(goos string, stdin *os.File) (cancelreader.CancelReader, error) {
+	if goos == "windows" {
+		return cancelreader.NewReader(struct{ io.Reader }{stdin})
+	}
+	return cancelreader.NewReader(stdin)
+}
+
 var wizardKeyring = auth.CheckNativeAvailability
 var wizardJoin = runJoin
 var wizardTUI = func(ctx context.Context, c Config, out, errout io.Writer) error {
@@ -253,14 +268,27 @@ func (p *wizardPrompt) ask(prompt string) (string, error) {
 	}
 }
 
+// wizardAfterCR records that the last line ended with a CR, so the LF of a
+// CRLF pair is not read as an empty answer to the next prompt. It is shared
+// because every prompt reads the same stdin, and prompts are reopened.
+var wizardAfterCR atomic.Bool
+
 // Read one byte at a time so no buffered read consumes later TUI keystrokes.
+// A line ends at LF, CR or CRLF.
 func readWizardLine(r io.Reader) (string, error) {
 	var b strings.Builder
 	var one [1]byte
 	for b.Len() <= 4096 {
 		n, err := r.Read(one[:])
 		if n > 0 {
-			if one[0] == '\n' {
+			afterCR := wizardAfterCR.Swap(false)
+			switch {
+			case one[0] == '\n' && afterCR && b.Len() == 0:
+				continue
+			case one[0] == '\n':
+				return b.String(), nil
+			case one[0] == '\r':
+				wizardAfterCR.Store(true)
 				return b.String(), nil
 			}
 			b.WriteByte(one[0])

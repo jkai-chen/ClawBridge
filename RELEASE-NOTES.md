@@ -1,52 +1,45 @@
-# ClawBridge v0.2.1
+# ClawBridge v0.2.2
 
-Back up the store before upgrading. Schema 5 is a one-way migration: older
-binaries refuse the upgraded store. Upgrade the service before clients; an older
-service rejects the new assignment operations.
+No schema change: v0.2.1 stores open as they are. Upgrade the service and
+clients in any order; a client shows a refusal's own message only once the
+service is upgraded.
 
-- Windows fixes:
-  - Guided setup accepts typed input. Characters echo, Enter, Backspace and
-    Ctrl+C work. Previously the first prompt ignored input.
-  - The installer adds its directory to your user PATH, so new terminals find
-    `clawbridge`. `-NoModifyPath` opts out; the system PATH is never changed.
-  - Upgrading while an agent runs `clawbridge mcp` works: the running binary
-    is moved aside, and the installer says where, so the old copy can be
-    deleted once it exits. A directory containing `;` or `"` is never written
-    to PATH, and the installer warns when another `clawbridge` earlier on PATH
-    would run instead.
-  - The installer enables TLS 1.2 on Windows PowerShell 5.1. Run it with
-    `powershell -NoProfile -ExecutionPolicy Bypass -File …`.
-  - Local mode (`setup --local`) now works on Windows; earlier releases could
-    not open its SQLite store there.
-  - Notification state in the usual profile folder is accepted, including
-    from an elevated administrator session.
-- Structured session assignments. A session proposes its issue, task role and
-  repository path scope; the project's designated coordinator session confirms
-  or releases it. Find owners with `sessions --issue` or `--scope-path`;
-  `whoami` and session details show the assignment and whether it is stale.
-  Overlapping assignments are refused at confirmation unless the coordinator
-  explicitly overrides, which is audited. A handoff passes the assignment to
-  the successor as a proposal. Assignments are descriptive: no locks, no rights.
-- Filtering issues by label works on native Linear. Linear's server-side label
-  filter, sent with the label UUID, is accepted only when the label's name is
-  unique in the team's full label list and each returned issue carries it;
-  otherwise the page is refused.
-- Optional write guards for text: issue reads return `description_sha256`, and
-  an update can send `expected_title` and `expected_description_sha256`
-  (`--expect-title`, `--expect-description-sha256`). A mismatch is refused
-  before anything is sent. A later release will require the description guard.
-- `--updated-after` (MCP `updated_after`) lists only issues changed since an
-  absolute time; every returned issue must satisfy it.
-- The agent skill documents a `needs-agent` label convention: people add it,
-  the coordinator lists those issues when it runs, and the label never grants
-  approval or assignment.
-- Binding verification reads one Linear project list per team, so a nine-project
-  board costs two calls instead of ten. A bound project in Linear's trash now
-  refuses the binding; relink the task board.
+- Linear writes are recorded as accepted only on evidence they landed. A comment
+  or relation receipt that does not name the intended issue or edge is checked
+  by reading back; without evidence the outcome is uncertain. An issue receipt
+  that contradicts a requested label, assignee or state is uncertain; a field
+  Linear did not report is listed as `unverified`.
+- Add or remove single labels without replacing the set (`--add-label`,
+  `--remove-label`; MCP `add_label_ids`, `remove_label_ids`). A label is removed
+  only when Linear proves it is present; afterwards each change is confirmed
+  through Linear's label filter. Use this to clear `needs-agent`.
+- Assignee and state checks rely on Linear's documented team filters, pinned by
+  schema (`member_team_filter`, `status_team_filter` in `doctor`). An incomplete
+  status list no longer counts as complete.
+- Native issue lists recover when a row lacks project metadata. Logging out
+  works when the stored credential is already gone.
+- Replying to your own message reaches its original recipients.
+- Offline sync keeps working on busy projects: the snapshot carries the newest
+  5,000 history events and all active sessions (plus recent retired ones), with
+  `truncated` flags. The local mirror removes views of retired sessions and
+  rotated instances.
+- A validation refusal now shows its own message, for example
+  `cloud request rejected (400, invalid): target session must exist in the same project`.
+  Database and unexpected errors stay generic.
+- `assignment confirm` and `release` help names the target session argument.
+- Text containing NUL bytes is refused as invalid instead of reported as an
+  outage. Email principals follow one rule everywhere.
+- Waiting for another process's Linear token refresh no longer reports a busy
+  profile after 5 seconds; the message names the process holding the lock.
+- On Linux, sign-in no longer fails when the browser opener keeps running; if no
+  browser is confirmed, the sign-in URL is printed.
+- Releases are marked latest only when they are the highest version, a tag must
+  be on `main`, and publishing waits on the `release` environment. These checks
+  catch mistakes; restricting who may create `v*` tags is the real boundary
+  (see docs/design/releases.md).
 
 Assets retain five CGO-disabled targets, installers, the MIT licence, selected
 checksums and a full source marker. Binaries are unsigned; macOS binaries are not
 notarized.
 
-See docs/onboarding.md, docs/linear.md, docs/reference/api.md and
-docs/operations/backup-and-recovery.md.
+See docs/linear.md, docs/reference/api.md and docs/design/releases.md.

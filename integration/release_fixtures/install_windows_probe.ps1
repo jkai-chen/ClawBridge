@@ -28,6 +28,18 @@ try {
 $skillLog = Join-Path $fixture 'skill-runs.log'
 $oldSkillLog = $env:CB_PROBE_SKILL_LOG
 $oldSkillExit = $env:CB_PROBE_SKILL_EXIT
+# The real per-user Path must never change: these cases pass -NoModifyPath, and
+# the PATH cases below write only to a throwaway key.
+function Get-UserPathState {
+    $key = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey('Environment')
+    if ($null -eq $key) { return '<no key>' }
+    try {
+        if ($key.GetValueNames() -notcontains 'Path') { return '<no value>' }
+        return [string]$key.GetValueKind('Path') + '|' + [string]$key.GetValue('Path', '', [Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames)
+    } finally { $key.Dispose() }
+}
+$realUserPath = Get-UserPathState
+$testRoot = 'Software\ClawBridgeTest\' + [Guid]::NewGuid().ToString('N')
 try {
     $env:LOCALAPPDATA = Join-Path $fixture 'isolated local'
     $env:TEMP = Join-Path $fixture 'temporary'
@@ -106,32 +118,32 @@ try {
     function Expect-Failure([string]$Version = 'v1.2.3', [string]$Target = $directory) {
         Clear-SkillRuns
         $failed = $false
-        try { $null = Install-ClawBridge -Version $Version -InstallDir $Target } catch { $failed = $true }
+        try { $null = Install-ClawBridge -NoModifyPath -Version $Version -InstallDir $Target } catch { $failed = $true }
         Assert-Probe $failed 'Expected installer rejection'
         Assert-Probe ([IO.File]::ReadAllText($destination) -eq 'OLD') 'Failure replaced existing binary'
         Assert-NoSkillRun 'Failed install ran the skill step'
         Assert-Cleanup
     }
     [IO.File]::WriteAllText($destination, 'OLD')
-    $null = Install-ClawBridge -InstallDir $directory
+    $null = Install-ClawBridge -NoModifyPath -InstallDir $directory
     Assert-Probe ((Get-FileHash -LiteralPath $destination -Algorithm SHA256).Hash.ToLowerInvariant() -eq $script:Digest) 'Latest replacement mismatch'
     Assert-Probe (@($script:Calls | Where-Object { $_ -eq 'https://github.com/jkai-chen/ClawBridge/releases/latest' }).Count -eq 1) 'Latest not discovered exactly once'
     Assert-Probe ($script:Calls.Count -eq 3) 'Unexpected download count'
     Assert-SkillRan
     Assert-Cleanup
     $script:Calls.Clear()
-    $null = Install-ClawBridge -Version 'v1.2.3' -InstallDir $directory
+    $null = Install-ClawBridge -NoModifyPath -Version 'v1.2.3' -InstallDir $directory
     Assert-Probe ($script:Calls.Count -eq 2) 'Explicit version performed discovery'
     Assert-SkillRan
     Assert-Cleanup
-    $null = Install-ClawBridge -Version 'v1.2.3' -InstallDir $directory -NoSkill
+    $null = Install-ClawBridge -NoModifyPath -Version 'v1.2.3' -InstallDir $directory -NoSkill
     Assert-NoSkillRun '-NoSkill still ran the skill step'
     Assert-Cleanup
     # A failing skill step (the real executable exits 3) only warns: the
     # install still succeeds, and the warning names the recovery command.
     $env:CB_PROBE_SKILL_EXIT = '3'
     [IO.File]::WriteAllText($destination, 'OLD')
-    $records = @(Install-ClawBridge -Version 'v1.2.3' -InstallDir $directory 3>&1)
+    $records = @(Install-ClawBridge -NoModifyPath -Version 'v1.2.3' -InstallDir $directory 3>&1)
     $env:CB_PROBE_SKILL_EXIT = '0'
     $warnings = @($records | Where-Object { $_ -is [Management.Automation.WarningRecord] })
     Assert-Probe ($warnings.Count -eq 1) 'Skill failure did not warn exactly once'
@@ -158,7 +170,7 @@ try {
     Clear-SkillRuns
     try {
         $failed = $false
-        try { $null = Install-ClawBridge -Version 'v1.2.3' -InstallDir $directory } catch { $failed = $true }
+        try { $null = Install-ClawBridge -NoModifyPath -Version 'v1.2.3' -InstallDir $directory } catch { $failed = $true }
         Assert-Probe $failed 'Locked existing executable replacement succeeded'
     } finally { $locked.Dispose() }
     Assert-Probe ([IO.File]::ReadAllText($destination) -eq 'OLD') 'Locked binary changed'
@@ -172,11 +184,94 @@ try {
         Expect-Failure -Target $junction
         Assert-Probe ($script:Calls.Count -eq 0) 'Reparse destination reached network'
     } finally { [IO.Directory]::Delete($junction) }
+    # The default PATH step, against a throwaway key standing in for
+    # HKCU\Environment, then a fresh shell whose PATH is built the way Windows
+    # builds a new terminal's (machine Path, then the expanded user Path).
+    $pathKey = $testRoot + '\Environment'
+    $pathDir = Join-Path $fixture 'path bin'
+    $pathExe = Join-Path $pathDir 'clawbridge.exe'
+    $null = [IO.Directory]::CreateDirectory($pathDir)
+    $seed = '%SystemRoot%\cb-probe-existing;C:\cb-probe-other'
+    # $Value is untyped: a [string] parameter would turn $null into ''.
+    function Set-TestPath($Value, [Microsoft.Win32.RegistryValueKind]$Kind) {
+        $key = [Microsoft.Win32.Registry]::CurrentUser.CreateSubKey($pathKey)
+        try {
+            if ($null -eq $Value) { if ($key.GetValueNames() -contains 'Path') { $key.DeleteValue('Path') } }
+            else { $key.SetValue('Path', $Value, $Kind) }
+        } finally { $key.Dispose() }
+    }
+    function Get-TestPath {
+        $key = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey($pathKey)
+        try {
+            return @{ Kind = $key.GetValueKind('Path'); Raw = [string]$key.GetValue('Path', '', [Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames) }
+        } finally { $key.Dispose() }
+    }
+    function Install-PathCase([string]$Target, [switch]$NoModifyPath) {
+        $sessionPath = $env:PATH
+        try {
+            return @(Install-ClawBridge -Version 'v1.2.3' -InstallDir $Target -NoSkill -NoModifyPath:$NoModifyPath -PathRegistryKey $pathKey)
+        } finally { $env:PATH = $sessionPath }
+    }
+    # Runs `clawbridge path-lookup` in a new shell; returns its exit code. The
+    # fake logs the executable that PATH resolution actually started.
+    function Invoke-FreshShell {
+        $machine = [Environment]::GetEnvironmentVariable('Path', 'Machine')
+        $user = [Environment]::ExpandEnvironmentVariables((Get-TestPath).Raw)
+        $start = New-Object Diagnostics.ProcessStartInfo
+        $start.FileName = (Get-Process -Id $PID).Path
+        $start.Arguments = '-NoProfile -NonInteractive -Command "& clawbridge path-lookup; exit $LASTEXITCODE"'
+        $start.UseShellExecute = $false
+        $start.RedirectStandardOutput = $true
+        $start.RedirectStandardError = $true
+        $start.EnvironmentVariables['PATH'] = $machine + ';' + $user
+        $process = [Diagnostics.Process]::Start($start)
+        $null = $process.StandardOutput.ReadToEnd()
+        $null = $process.StandardError.ReadToEnd()
+        $process.WaitForExit()
+        return $process.ExitCode
+    }
+    Set-TestPath $seed ([Microsoft.Win32.RegistryValueKind]::ExpandString)
+    # Control: before the install, a fresh shell finds no clawbridge to run.
+    Clear-SkillRuns
+    Assert-Probe ((Invoke-FreshShell) -ne 0) 'A clawbridge was already resolvable before the install; the lookup check would prove nothing'
+    Assert-NoSkillRun 'The control shell ran a clawbridge'
+    $out = Install-PathCase $pathDir
+    Assert-Probe (@($out | Where-Object { $_ -like 'Added *to your user PATH*' }).Count -eq 1) 'Install did not report adding the PATH entry'
+    $state = Get-TestPath
+    Assert-Probe ($state.Kind -eq [Microsoft.Win32.RegistryValueKind]::ExpandString) 'The user Path lost its REG_EXPAND_SZ kind'
+    Assert-Probe ($state.Raw -ceq ($seed + ';' + $pathDir)) ('The user Path was not the seed plus the install directory, unexpanded: ' + $state.Raw)
+    Assert-Probe ((Invoke-FreshShell) -eq 0) 'A fresh shell could not run clawbridge from the persisted PATH'
+    $runs = @(Get-SkillRuns)
+    Assert-Probe ($runs.Count -eq 1) 'The fresh shell did not run clawbridge exactly once'
+    $fields = $runs[0].Split("`t")
+    Assert-Probe ([IO.Path]::GetFullPath($fields[0]) -eq [IO.Path]::GetFullPath($pathExe)) ('The fresh shell resolved another clawbridge: ' + $fields[0])
+    Assert-Probe ($fields[1] -ceq 'path-lookup') 'The fresh shell passed unexpected arguments'
+    Clear-SkillRuns
+    # Idempotent, including a trailing separator and different case.
+    $out = Install-PathCase ($pathDir.ToUpperInvariant() + '\')
+    Assert-Probe ((Get-TestPath).Raw -ceq ($seed + ';' + $pathDir)) 'A reinstall duplicated the PATH entry'
+    Assert-Probe (@($out | Where-Object { $_ -like '*already on your user PATH*' }).Count -eq 1) 'A reinstall did not report the existing PATH entry'
+    # -NoModifyPath leaves the value byte-identical.
+    $other = Join-Path $fixture 'other bin'
+    $null = [IO.Directory]::CreateDirectory($other)
+    $null = Install-PathCase $other -NoModifyPath
+    Assert-Probe ((Get-TestPath).Raw -ceq ($seed + ';' + $pathDir)) '-NoModifyPath changed the user Path'
+    # A REG_SZ value stays REG_SZ; an absent value is created as REG_EXPAND_SZ.
+    Set-TestPath 'C:\cb-probe-other' ([Microsoft.Win32.RegistryValueKind]::String)
+    $null = Install-PathCase $pathDir
+    $state = Get-TestPath
+    Assert-Probe ($state.Kind -eq [Microsoft.Win32.RegistryValueKind]::String -and $state.Raw -ceq ('C:\cb-probe-other;' + $pathDir)) 'A REG_SZ user Path changed kind or content unexpectedly'
+    Set-TestPath $null ([Microsoft.Win32.RegistryValueKind]::String)
+    $null = Install-PathCase $pathDir
+    $state = Get-TestPath
+    Assert-Probe ($state.Kind -eq [Microsoft.Win32.RegistryValueKind]::ExpandString -and $state.Raw -ceq $pathDir) 'An absent user Path was not created as the install directory'
+    Assert-NoSkillRun 'A -NoSkill PATH install ran the skill step'
     # Architecture mapping test uses original production function, then restores env.
     $env:PROCESSOR_ARCHITECTURE = 'x86'
     $env:PROCESSOR_ARCHITEW6432 = 'AMD64'
     Assert-Probe ((& $nativePlatform) -eq 'windows_amd64') '32-bit process x64 mapping failed'
-    Write-Output 'PASS independent native Windows installer fixtures; platform mapping, latest pinning, preservation, skill step once/never/warn-only, locked file and junction checks'
+    Assert-Probe ((Get-UserPathState) -ceq $realUserPath) 'The real per-user Path changed'
+    Write-Output 'PASS independent native Windows installer fixtures; platform mapping, latest pinning, preservation, real skill step once/never/warn-only, locked file and junction checks, persisted user PATH (kind, unexpanded, idempotent, opt-out) found by a fresh shell'
 } finally {
     $env:LOCALAPPDATA = $oldLocal
     $env:TEMP = $oldTemp
@@ -186,5 +281,12 @@ try {
     $env:PATH = $oldPath
     $env:CB_PROBE_SKILL_LOG = $oldSkillLog
     $env:CB_PROBE_SKILL_EXIT = $oldSkillExit
+    [Microsoft.Win32.Registry]::CurrentUser.DeleteSubKeyTree($testRoot, $false)
+    $parent = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey('Software\ClawBridgeTest')
+    if ($null -ne $parent) {
+        $empty = $parent.SubKeyCount -eq 0 -and $parent.ValueCount -eq 0
+        $parent.Dispose()
+        if ($empty) { [Microsoft.Win32.Registry]::CurrentUser.DeleteSubKey('Software\ClawBridgeTest', $false) }
+    }
     if (Test-Path -LiteralPath $fixture) { [IO.Directory]::Delete($fixture, $true) }
 }

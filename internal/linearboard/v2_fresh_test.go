@@ -138,3 +138,15 @@ func TestLinearV2KnownEdgeReceiptSurvivesSaveFaultAndMappingChange(t *testing.T)
 		t.Fatal("save-uncertain operation replayed")
 	}
 }
+func TestLinearV2UnknownRelationCompletenessCannotProveAbsence(t *testing.T) {
+	s, _, p, scope := testV2(t)
+	p.caps.RelationRemove = false
+	from := p.issues[issueID]
+	from.RelationsKnown = false // e.g. an unsupported relation type was skipped
+	p.issues[issueID] = from
+	p.issues[parentA] = linearprovider.IssueV2{Issue: linearprovider.Issue{ID: parentA, TeamID: otherTeamID, ProjectID: projectB}, ProjectKnown: true, RelationsKnown: true}
+	r, e := s.RelationV2(context.Background(), scope, RelationInputV2{OperationID: "unknown-absence", Action: "remove", Type: "blocks", FromID: issueID, ToID: parentA})
+	if e == nil || r != nil || len(p.edges) != 0 {
+		t.Fatal("incomplete relation list proved absence", r, e)
+	}
+}

@@ -518,19 +518,29 @@ func (p *Provider) parseIssueV2(ctx context.Context, m map[string]any) (IssueV2,
 		if !ok || len(rows) > 250 {
 			return IssueV2{}, fail("invalid_response")
 		}
+		skipped := false
 		for _, row := range rows {
 			node, ok := row.(map[string]any)
 			if !ok {
 				return IssueV2{}, fail("invalid_response")
 			}
 			relation := Relation{Type: str(node, "type"), FromID: str(node, "fromId"), ToID: str(node, "toId"), ID: str(node, "id")}
-			if !validRelation(relation.Type, relation.FromID, relation.ToID) || (relation.ID != "" && !ValidID(relation.ID)) {
+			if relation.ID != "" && !ValidID(relation.ID) {
+				return IssueV2{}, fail("invalid_response")
+			}
+			if relation.Type != "" && relation.Type != "blocks" && relation.Type != "related" && validRelation("related", relation.FromID, relation.ToID) {
+				// A well-formed edge of an unsupported type (e.g. duplicate)
+				// is not presented, so the list can no longer prove absence.
+				skipped = true
+				continue
+			}
+			if !validRelation(relation.Type, relation.FromID, relation.ToID) {
 				return IssueV2{}, fail("invalid_response")
 			}
 			x.Relations = append(x.Relations, relation)
 		}
 		complete, ok := m["relationsComplete"].(bool)
-		x.RelationsKnown = ok && complete
+		x.RelationsKnown = ok && complete && !skipped
 	}
 	return x, nil
 }

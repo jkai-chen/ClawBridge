@@ -77,6 +77,24 @@ func TestV2KnownnessAndCanonicalContext(t *testing.T) {
 		t.Fatal("conflicting parent exposed body", x, e)
 	}
 }
+func TestV2UnsupportedRelationTypeIsSkippedAsIncomplete(t *testing.T) {
+	result := issueResult()
+	result["issueRelations"] = []any{
+		map[string]any{"type": "duplicate", "fromId": iid, "toId": uid},
+		map[string]any{"type": "blocks", "fromId": iid, "toId": uid},
+	}
+	result["relationsComplete"] = true
+	f := &fake{tools: []*mcp.Tool{tool("get_issue", map[string]string{"id": "string"})}, result: result}
+	p, _ := NewWithCaller(context.Background(), f)
+	x, e := p.IssueV2(context.Background(), iid)
+	if e != nil || x.Description == "" || x.RelationsKnown || len(x.Relations) != 1 || x.Relations[0].Type != "blocks" {
+		t.Fatal("unsupported relation type made the issue unreadable or looked complete", x, e)
+	}
+	result["issueRelations"] = []any{map[string]any{"type": "duplicate", "fromId": iid, "toId": "not-a-uuid"}}
+	if _, e = p.IssueV2(context.Background(), iid); e == nil {
+		t.Fatal("malformed unsupported relation accepted")
+	}
+}
 func TestV2PresenceNullAndNoUnknownFieldMutation(t *testing.T) {
 	f := &fake{tools: []*mcp.Tool{v2MutationTool("update_issue", true)}, result: issueResult()}
 	p, _ := NewWithCaller(context.Background(), f)

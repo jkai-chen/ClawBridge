@@ -456,3 +456,19 @@ func TestCloudInstallerRequiresExplicitSourceAndNeverForwardsSecret(t *testing.T
 		}
 	}
 }
+func TestCLIProjectRoleRevokeReachesHostedOperation(t *testing.T) {
+	isolated(t)
+	invoke(t, "setup", "--local", "--workspace", "w")
+	invoke(t, "project", "create", "p")
+	t.Setenv("CLAWBRIDGE_PROJECT", "p")
+	for _, args := range [][]string{{"project", "role-revoke", "bob@example.com"}, {"project", "role", "revoke", "bob@example.com"}} {
+		var out, errOut bytes.Buffer
+		e := Run(context.Background(), args, &out, &errOut)
+		if e == nil || !strings.Contains(e.Error(), "hosted authority") || out.Len() != 0 {
+			t.Fatalf("%v did not reach project_role_revoke: %v", args, e)
+		}
+	}
+	rejectCLI(t, "project", "role-revoke")
+	rejectCLI(t, "project", "role", "revoke", "bob@example.com", "member")
+	rejectCLI(t, "project", "role", "drop", "bob@example.com")
+}

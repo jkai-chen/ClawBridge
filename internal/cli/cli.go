@@ -342,7 +342,7 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		f.Int("retention-days", 90, "message retention days (proposed default 90)")
 	case "project":
 		if len(rest) == 0 {
-			return errors.New("usage: project create SLUG, or project role-set EMAIL ROLE")
+			return errors.New("usage: project create SLUG, project role-set EMAIL ROLE, or project role-revoke EMAIL")
 		}
 		switch rest[0] {
 		case "create":
@@ -355,13 +355,21 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 			rest = rest[1:]
 			op = "project_role_set"
 			arityMin, arityMax = 2, 2
+		case "role-revoke":
+			rest = rest[1:]
+			op = "project_role_revoke"
+			arityMin, arityMax = 1, 1
 		case "role":
-			if len(rest) < 2 || rest[1] != "set" {
-				return errors.New("usage: project role set EMAIL ROLE")
+			if len(rest) < 2 || (rest[1] != "set" && rest[1] != "revoke") {
+				return errors.New("usage: project role set EMAIL ROLE, or project role revoke EMAIL")
 			}
-			rest = rest[2:]
 			op = "project_role_set"
 			arityMin, arityMax = 2, 2
+			if rest[1] == "revoke" {
+				op = "project_role_revoke"
+				arityMin, arityMax = 1, 1
+			}
+			rest = rest[2:]
 		default:
 			return errors.New("unknown project command")
 		}
@@ -503,6 +511,8 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 			if v := f.Lookup("name").Value.String(); v != "" {
 				a["name"] = v
 			}
+		} else if op == "project_role_revoke" {
+			a["principal"] = pos[0]
 		} else {
 			a["principal"], a["role"] = pos[0], pos[1]
 		}
@@ -609,7 +619,7 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	}
 	if config.Instance != "" {
 		switch op {
-		case "register_session", "list_sessions", "history", "send", "reply", "inbox", "inbox_status", "notification_status", "set_notification_policy", "mark_read", "update_session", "retire_session", "whoami", "message_status", "project_role_set", "purge_expired":
+		case "register_session", "list_sessions", "history", "send", "reply", "inbox", "inbox_status", "notification_status", "set_notification_policy", "mark_read", "update_session", "retire_session", "whoami", "message_status", "project_role_set", "project_role_revoke", "purge_expired":
 			a["instance"] = config.Instance
 		}
 	}

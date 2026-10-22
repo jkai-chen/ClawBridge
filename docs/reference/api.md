@@ -74,6 +74,7 @@ requires its matching instance. Routing role is distinct from project permission
 | `taskboard_set_v2` | expected_revision, mode, linear_team_ids, linear_default_team_id, linear_project_ids; optional nullable linear_workspace_id |
 | `taskboard_clear_v2` | expected_revision; authorized owner/lead |
 | `project_role_set` | Hosted owner: principal, role |
+| `project_role_revoke` | Hosted owner: principal. Deletes the project role, retires that principal's active sessions in the project and removes workspace membership when no project role remains; refuses the workspace owner and self-revoke |
 | `snapshot` | Hosted current actor/instance; explicit scoped sync |
 | `purge_expired` | Hosted owner: current project |
 

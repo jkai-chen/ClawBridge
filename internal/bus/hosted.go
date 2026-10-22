@@ -51,6 +51,61 @@ func (s *Store) setProjectRole(ctx context.Context, tx *transaction, wid, pid st
 	return one(ctx, tx, `SELECT * FROM project_roles WHERE project_id=? AND principal=?`, pid, principal)
 }
 
+// revokeProjectRole removes a principal's access to one project: its role row,
+// its active sessions there (retired, so messages to them fail), and its
+// workspace membership once it holds no role in any project of the workspace.
+func (s *Store) revokeProjectRole(ctx context.Context, tx *transaction, w map[string]any, wid, pid string, a map[string]any) (any, error) {
+	principal := normalPrincipal(str(a, "principal"))
+	if !validPrincipal(principal) {
+		return nil, errors.New("principal must be an email")
+	}
+	if principal == w["owner_principal"] {
+		return nil, errors.New("the workspace owner's access cannot be revoked")
+	}
+	if principal == s.principal {
+		return nil, errors.New("owners cannot revoke their own access")
+	}
+	old, err := query(ctx, tx, `SELECT role FROM project_roles WHERE project_id=? AND principal=?`, pid, principal)
+	if err != nil {
+		return nil, err
+	}
+	if len(old) == 0 {
+		return nil, errors.New("principal has no role in this project")
+	}
+	if _, err = tx.ExecContext(ctx, `DELETE FROM project_roles WHERE project_id=? AND principal=?`, pid, principal); err != nil {
+		return nil, err
+	}
+	sessions, err := query(ctx, tx, `SELECT id FROM sessions WHERE project_id=? AND owner_principal=? AND status='active' ORDER BY id`, pid, principal)
+	if err != nil {
+		return nil, err
+	}
+	retired := []string{}
+	for _, row := range sessions {
+		sid := row["id"].(string)
+		if _, err = tx.ExecContext(ctx, `UPDATE sessions SET status='retired',updated_at=? WHERE id=? AND project_id=?`, stamp(), sid, pid); err != nil {
+			return nil, err
+		}
+		if err = s.audit(ctx, tx, wid, pid, "", "session", sid, "retired", map[string]any{"reason": "access_revoked"}); err != nil {
+			return nil, err
+		}
+		retired = append(retired, sid)
+	}
+	var remaining int
+	if err = tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM project_roles pr JOIN projects p ON p.id=pr.project_id WHERE p.workspace_id=? AND pr.principal=?`, wid, principal).Scan(&remaining); err != nil {
+		return nil, err
+	}
+	if remaining == 0 {
+		if _, err = tx.ExecContext(ctx, `DELETE FROM members WHERE workspace_id=? AND principal=?`, wid, principal); err != nil {
+			return nil, err
+		}
+	}
+	result := map[string]any{"principal": principal, "revoked_role": old[0]["role"], "retired_sessions": retired, "membership_removed": remaining == 0}
+	if err = s.audit(ctx, tx, wid, pid, "", "project_role", principal, "revoked", result); err != nil {
+		return nil, err
+	}
+	return result, nil
+}
+
 // listProjects returns only projects visible to the verified caller. Hosted
 // workspace owners see the whole workspace; other principals see explicit roles.
 func (s *Store) listProjects(ctx context.Context, tx *transaction, w map[string]any) (any, error) {

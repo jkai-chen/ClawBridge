@@ -20,7 +20,12 @@ on headless machines. The client stores only a refresh
 credential in the native OS keychain and mints a short-lived, audience-bound ID
 token. The server verifies signature, issuer, audience, expiry and verified email,
 then independently enforces ClawBridge membership and project roles. Agents do
-not receive the refresh credential or minted token. Joining an existing workspace
+not receive the refresh credential or minted token. A project owner grants
+access with `clawbridge project role-set EMAIL ROLE` and withdraws it with
+`clawbridge project role-revoke EMAIL`: revocation retires that person's active
+sessions in the project, and removes workspace membership once they hold no
+project role. The workspace owner cannot be revoked, and owners cannot revoke
+themselves. Joining an existing workspace
 does not require gcloud.
 
 Explicit gcloud or authorized-user ADC with service-account impersonation are

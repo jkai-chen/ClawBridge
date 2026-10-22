@@ -276,7 +276,7 @@ func validateArgs(op string, a map[string]any) error {
 		"inbox_status":            "instance after",
 		"notification_status":     "instance after",
 		"set_notification_policy": "instance policy",
-		"workspace_init":          "mode name retention_days", "project_create": "slug name git_remote", "list_projects": "", "list_members": "", "register_session": "instance resume role agent_kind model host account notes transport", "list_sessions": "instance status role limit after", "send": "instance to body kind thread_id operation_id coordination", "reply": "instance message_id body kind operation_id coordination", "inbox": "instance unread_only limit after", "mark_read": "instance ids", "update_session": "instance target_session role model host account notes transport", "retire_session": "instance target_session successor status", "history": "instance entity key limit after", "whoami": "instance", "message_status": "instance message_id", "resolve_project": "git_remote instance", "snapshot": "instance", "project_role_set": "instance principal role", "purge_expired": "instance",
+		"workspace_init":          "mode name retention_days", "project_create": "slug name git_remote", "list_projects": "", "list_members": "", "register_session": "instance resume role agent_kind model host account notes transport", "list_sessions": "instance status role limit after", "send": "instance to body kind thread_id operation_id coordination", "reply": "instance message_id body kind operation_id coordination", "inbox": "instance unread_only limit after", "mark_read": "instance ids", "update_session": "instance target_session role model host account notes transport", "retire_session": "instance target_session successor status", "history": "instance entity key limit after", "whoami": "instance", "message_status": "instance message_id", "resolve_project": "git_remote instance", "snapshot": "instance", "project_role_set": "instance principal role", "project_role_revoke": "instance principal", "purge_expired": "instance",
 	}
 	keys, ok := allowed[op]
 	if !ok {
@@ -455,7 +455,7 @@ func (s *Store) execute(ctx context.Context, tx *transaction, r Request) (any, e
 	if r.Operation == "resolve_project" {
 		return s.resolveInTransaction(ctx, tx, r)
 	}
-	if !s.postgres && (r.Operation == "snapshot" || r.Operation == "project_role_set" || r.Operation == "purge_expired") {
+	if !s.postgres && (r.Operation == "snapshot" || r.Operation == "project_role_set" || r.Operation == "project_role_revoke" || r.Operation == "purge_expired") {
 		return nil, errors.New("operation requires hosted authority")
 	}
 	if r.Workspace == "" {
@@ -513,7 +513,7 @@ func (s *Store) execute(ctx context.Context, tx *transaction, r Request) (any, e
 			if projectRole == "reader" {
 				return nil, errors.New("project member permission required")
 			}
-		case "project_role_set", "purge_expired":
+		case "project_role_set", "project_role_revoke", "purge_expired":
 			if projectRole != "owner" {
 				return nil, errors.New("project owner permission required")
 			}
@@ -523,6 +523,12 @@ func (s *Store) execute(ctx context.Context, tx *transaction, r Request) (any, e
 				return nil, err
 			}
 			return s.setProjectRole(ctx, tx, wid, pid, a)
+		}
+		if r.Operation == "project_role_revoke" {
+			if err = s.touchReadActor(ctx, tx, pid, r); err != nil {
+				return nil, err
+			}
+			return s.revokeProjectRole(ctx, tx, w, wid, pid, a)
 		}
 		if r.Operation == "list_members" {
 			return s.listMembers(ctx, tx, pid)

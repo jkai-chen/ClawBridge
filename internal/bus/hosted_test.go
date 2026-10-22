@@ -194,3 +194,76 @@ func TestPostgresMixedCaseGrantMatchesTokenPrincipal(t *testing.T) {
 	call(owner, "project_role_set", "", map[string]any{"principal": "Bob@Bus-Test.example", "role": "member"})
 	call(bob, "register_session", "bob", map[string]any{"instance": "bob-inst"})
 }
+func TestPostgresProjectRoleRevokeRemovesAccess(t *testing.T) {
+	dsn := os.Getenv("CLAWBRIDGE_TEST_POSTGRES_DSN")
+	if dsn == "" {
+		t.Skip("reviewer supplies disposable Postgres DSN")
+	}
+	ctx := context.Background()
+	owner, deputy := "owner@bus-test.example", "deputy@bus-test.example"
+	bob, carol := "bob@bus-test.example", "carol@bus-test.example"
+	s, err := OpenPostgres(ctx, dsn, owner)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	w := newID("unit_")
+	exec := func(principal, project, op, session string, a map[string]any) (Result, error) {
+		return s.ExecuteAs(ctx, principal, Request{Operation: op, Workspace: w, Project: project, Session: session, Args: a})
+	}
+	call := func(principal, project, op, session string, a map[string]any) map[string]any {
+		t.Helper()
+		r, e := exec(principal, project, op, session, a)
+		if e != nil {
+			t.Fatalf("%s as %s: %v", op, principal, e)
+		}
+		data, _ := r.Data.(map[string]any)
+		return data
+	}
+	forbidden := func(e error) bool {
+		var coded interface{ Code() string }
+		return errors.As(e, &coded) && coded.Code() == "forbidden"
+	}
+	call(owner, "", "workspace_init", "", map[string]any{"mode": "server"})
+	call(owner, "", "project_create", "", map[string]any{"slug": "p"})
+	call(owner, "", "project_create", "", map[string]any{"slug": "q"})
+	call(owner, "p", "project_role_set", "", map[string]any{"principal": deputy, "role": "owner"})
+	call(owner, "p", "project_role_set", "", map[string]any{"principal": bob, "role": "member"})
+	call(owner, "p", "project_role_set", "", map[string]any{"principal": carol, "role": "member"})
+	call(owner, "q", "project_role_set", "", map[string]any{"principal": carol, "role": "member"})
+	call(owner, "p", "register_session", "lead", map[string]any{"instance": "lead-inst"})
+	bobSession := call(bob, "p", "register_session", "bob", map[string]any{"instance": "bob-inst"})["id"].(string)
+	call(carol, "p", "register_session", "carol", map[string]any{"instance": "carol-inst"})
+
+	for _, tc := range []struct{ principal, target string }{{owner, owner}, {deputy, owner}, {deputy, deputy}, {bob, carol}} {
+		if _, e := exec(tc.principal, "p", "project_role_revoke", "", map[string]any{"principal": tc.target}); e == nil {
+			t.Fatalf("%s revoked %s", tc.principal, tc.target)
+		}
+	}
+	revoked := call(owner, "p", "project_role_revoke", "", map[string]any{"principal": "Bob@Bus-Test.example"})
+	if retired, _ := revoked["retired_sessions"].([]string); len(retired) != 1 || retired[0] != bobSession || revoked["membership_removed"] != true {
+		t.Fatal("revoke did not retire sessions or remove the last membership", revoked)
+	}
+	for _, op := range []string{"history", "list_sessions", "inbox"} {
+		if _, e := exec(bob, "p", op, "bob", map[string]any{"instance": "bob-inst"}); !forbidden(e) {
+			t.Fatalf("revoked principal %s: %v", op, e)
+		}
+	}
+	for _, to := range []string{bobSession, "bob"} {
+		if _, e := exec(owner, "p", "send", "lead", map[string]any{"instance": "lead-inst", "to": to, "body": "after revoke", "operation_id": "after-revoke-" + to}); e == nil {
+			t.Fatalf("message to revoked session %s was accepted", to)
+		}
+	}
+	if _, e := exec(owner, "p", "project_role_revoke", "", map[string]any{"principal": bob}); e == nil {
+		t.Fatal("repeated revoke succeeded")
+	}
+	// A principal with a role elsewhere keeps workspace membership.
+	revoked = call(owner, "p", "project_role_revoke", "", map[string]any{"principal": carol})
+	if revoked["membership_removed"] != false {
+		t.Fatal("membership removed while another project role remains", revoked)
+	}
+	if _, e := exec(carol, "p", "history", "", nil); !forbidden(e) {
+		t.Fatal("revoked project still readable", e)
+	}
+	call(carol, "q", "list_sessions", "", nil)
+}

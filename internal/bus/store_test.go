@@ -256,3 +256,9 @@ func TestSessionNameCannotImpersonateSessionID(t *testing.T) {
 		t.Fatal("retired session ID address was forwarded to an impostor name")
 	}
 }
+func TestProjectRoleRevokeRequiresHostedAuthority(t *testing.T) {
+	h := newHarness(t)
+	if _, e := h.s.Execute(context.Background(), h.request("project_role_revoke", "", map[string]any{"principal": "bob@example.com"})); e == nil || !strings.Contains(e.Error(), "hosted authority") {
+		t.Fatal("local workspace accepted role revocation", e)
+	}
+}

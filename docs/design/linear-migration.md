@@ -153,10 +153,10 @@ mutation. A cleared tombstone remains representable.
 
 New binaries use V2 authority for native board commands; old wire operations and
 legacy service/MCP entry points remain available. Do not add an L2 installation
-opt-in. `linear link` accepts repeated `--linear-project UUID` (up to50), mutually
+opt-in. `linear link` accepts repeated `--linear-project UUID` (up to 50), mutually
 exclusive with --team-board. Preview and confirm retain the original revision.
 
-Create/update add --linear-project, repeated --label (up to100), --parent and
+Create/update add --linear-project, repeated --label (up to 100), --parent and
 --assignee. Update adds explicit --clear-project, --clear-labels, --clear-parent,
 --clear-assignee; set/clear conflicts reject before I/O. A label replace or clear
 on update also requires repeated --expect-label UUID or --expect-no-labels. Create alone accepts
@@ -174,7 +174,7 @@ refuse it before dispatch. Omitted values stay absent from provider mutations.
 
 Add `linear labels --profile ID --team UUID`, `linear members --profile ID --team
 UUID` and `linear relation add|remove FROM TO --type blocks|blocked-by|related
---profile ID --operation-id ID`. Reads use limit1–100/cursor; membership discovery
+--profile ID --operation-id ID`. Reads use limit 1–100/cursor; membership discovery
 must be scoped to a verified allowed team, never a global name search.
 
 Keep all seven L1 taskboard tools unchanged. A V2-capable configured service adds

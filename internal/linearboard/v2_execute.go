@@ -112,7 +112,7 @@ func pageLimitV2(v any) (int, error) {
 		return 0, errors.New("page limit requires an integer")
 	}
 	if n < 1 || n > 100 {
-		return 0, errors.New("page limit requires1–100")
+		return 0, errors.New("page limit requires 1–100")
 	}
 	return n, nil
 }

@@ -101,7 +101,7 @@ func parseLinear(command string, args []string, stderr io.Writer) (linearFlags, 
 		f.StringVar(&v.descriptionFile, "description-file", "", "bounded UTF-8 description file")
 		f.StringVar(&v.state, "state", "", "workflow state UUID")
 		f.StringVar(&v.project, "linear-project", "", "explicit allowed Linear destination UUID")
-		f.Var((*repeatedIDs)(&v.labels), "label", "team label UUID; explicit replacement (repeat up to100)")
+		f.Var((*repeatedIDs)(&v.labels), "label", "team label UUID; explicit replacement (repeat up to 100)")
 		f.StringVar(&v.parent, "parent", "", "in-scope parent issue UUID")
 		f.StringVar(&v.assignee, "assignee", "", "canonical active member UUID of the effective team")
 	}
@@ -132,9 +132,9 @@ func parseLinear(command string, args []string, stderr io.Writer) (linearFlags, 
 		min, max = 1, 1
 	case "link":
 		profile()
-		f.Var((*repeatedIDs)(&v.teams), "team", "allowed team UUID (repeat up to20)")
+		f.Var((*repeatedIDs)(&v.teams), "team", "allowed team UUID (repeat up to 20)")
 		f.StringVar(&v.defaultTeam, "default-team", "", "default selected team UUID")
-		f.Var((*repeatedIDs)(&v.projects), "linear-project", "allowed Linear project UUID (repeat up to50)")
+		f.Var((*repeatedIDs)(&v.projects), "linear-project", "allowed Linear project UUID (repeat up to 50)")
 		f.BoolVar(&v.teamBoard, "team-board", false, "explicit team board without a Linear project")
 		f.Int64Var(&v.revision, "expected-revision", -1, "required current mapping revision")
 		f.BoolVar(&v.confirm, "confirm", false, "commit the displayed binding preview")
@@ -268,7 +268,7 @@ func parseLinear(command string, args []string, stderr io.Writer) (linearFlags, 
 		}
 		seenLabels := map[string]bool{}
 		if len(v.labels) > 100 {
-			return v, nil, errors.New("at most100 labels")
+			return v, nil, errors.New("at most 100 labels")
 		}
 		for _, id := range v.labels {
 			if !linearprovider.ValidID(id) || seenLabels[id] {
@@ -290,7 +290,7 @@ func parseLinear(command string, args []string, stderr io.Writer) (linearFlags, 
 		}
 		seenExpected := map[string]bool{}
 		if len(v.expectedLabels) > 100 {
-			return v, nil, errors.New("at most100 expected labels")
+			return v, nil, errors.New("at most 100 expected labels")
 		}
 		for _, id := range v.expectedLabels {
 			if !linearprovider.ValidID(id) || seenExpected[id] {

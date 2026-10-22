@@ -142,7 +142,7 @@ func findMemberV2(ctx context.Context, p ProviderV2, team, id string) error {
 }
 func metadataOptionsV2(team string, limit int, cursor string) error {
 	if !linearprovider.ValidID(team) || limit < 1 || limit > 100 || len(cursor) > 8192 {
-		return errors.New("metadata requires team UUID, limit1–100 and bounded cursor")
+		return errors.New("metadata requires team UUID, limit 1–100 and bounded cursor")
 	}
 	return nil
 }

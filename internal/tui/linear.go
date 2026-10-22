@@ -386,7 +386,7 @@ func (m Model) linearKey(key string) (Model, tea.Cmd) {
 			ids = next
 		} else {
 			if len(ids) >= 20 {
-				m.actionErr = "Select at most20 teams."
+				m.actionErr = "Select at most 20 teams."
 				return m, nil
 			}
 			ids = append(ids, id)
@@ -416,7 +416,7 @@ func (m Model) linearKey(key string) (Model, tea.Cmd) {
 			m.linear.selectedProjects = ids
 		} else {
 			if len(m.linear.selectedProjects) >= 50 {
-				m.actionErr = "Select at most50 projects."
+				m.actionErr = "Select at most 50 projects."
 				return m, nil
 			}
 			m.linear.selectedProjects = append(append([]string{}, m.linear.selectedProjects...), id)
@@ -583,7 +583,7 @@ func renderLinear(m Model) string {
 		b.WriteString("\nSpace toggles a team; Enter chooses default. Selected: " + strings.Join(m.linear.chosen, ", ") + "\n")
 	}
 	if m.linear.step == "projects" && m.linear.bindingV2 != nil {
-		b.WriteString("\nSpace toggles up to50 projects, or explicitly selects Team board. Enter previews. Selected project IDs: " + strings.Join(m.linear.selectedProjects, ", ") + "\n")
+		b.WriteString("\nSpace toggles up to 50 projects, or explicitly selects Team board. Enter previews. Selected project IDs: " + strings.Join(m.linear.selectedProjects, ", ") + "\n")
 	}
 	if m.linear.step == "profiles" {
 		b.WriteString("\nx logs out only the selected personal connection; shared binding is retained.\n")

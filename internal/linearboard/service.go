@@ -337,7 +337,7 @@ func cursorKey(profile string, b bus.TaskboardBinding) string {
 func (s *Service) Issues(ctx context.Context, scope bus.Request, limit int, opaque string) (linearprovider.Page[linearprovider.Issue], error) {
 	empty := linearprovider.Page[linearprovider.Issue]{}
 	if limit < 1 || limit > 100 || len(opaque) > 8192 {
-		return empty, errors.New("issue page requires limit1–100 and bounded cursor")
+		return empty, errors.New("issue page requires limit 1–100 and bounded cursor")
 	}
 	b, err := s.binding(ctx, scope)
 	if err != nil {

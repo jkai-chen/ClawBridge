@@ -1240,7 +1240,7 @@ func (m Model) updateEditor(key string, runes []rune) (Model, tea.Cmd) {
 		if m.inputMode == inputLinearName {
 			name := strings.TrimSpace(m.draft)
 			if name == "" || len(name) > 128 {
-				m.actionErr = "Connection label requires1–128 characters"
+				m.actionErr = "Connection label requires 1–128 characters"
 				return m, nil
 			}
 			m.inputMode = inputNone

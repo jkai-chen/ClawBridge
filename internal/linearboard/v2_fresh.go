@@ -37,6 +37,9 @@ func refreshWriteProofV2(ctx context.Context, p Provider, p2 ProviderV2, b bus.T
 		if e = checkIssueV2(current, b, v); e != nil {
 			return e
 		}
+		if e = textGuardV2(in, current.Issue); e != nil {
+			return e
+		}
 		if in.Labels.Present {
 			// The fresh in-lock read must equal the set the caller last read,
 			// not merely the set this call read moments earlier.

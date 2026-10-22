@@ -11,7 +11,7 @@ import (
 // ExecuteV2 is the closed native adapter used by additive, scope-pinned MCP tools.
 func (s *Service) ExecuteV2(ctx context.Context, scope bus.Request, operation string, args map[string]any) (_ any, err error) {
 	defer func() { s.settle(err) }()
-	allowed := map[string][]string{"binding": {}, "context": {}, "issues": {"limit", "cursor", "label_id"}, "issue": {"id", "resolve_labels"}, "labels": {"team_id", "limit", "cursor"}, "members": {"team_id", "limit", "cursor"}, "create": {"title", "description", "state_id", "operation_id", "team_id", "project_id", "label_ids", "parent_id", "assignee_id"}, "update": {"id", "title", "description", "state_id", "operation_id", "project_id", "label_ids", "expected_label_ids", "parent_id", "assignee_id"}, "comment": {"id", "body", "operation_id"}, "relation_add": {"from_id", "to_id", "type", "operation_id"}, "relation_remove": {"from_id", "to_id", "type", "operation_id"}}
+	allowed := map[string][]string{"binding": {}, "context": {}, "issues": {"limit", "cursor", "label_id"}, "issue": {"id", "resolve_labels"}, "labels": {"team_id", "limit", "cursor"}, "members": {"team_id", "limit", "cursor"}, "create": {"title", "description", "state_id", "operation_id", "team_id", "project_id", "label_ids", "parent_id", "assignee_id"}, "update": {"id", "title", "description", "state_id", "operation_id", "project_id", "label_ids", "expected_label_ids", "expected_title", "expected_description_sha256", "parent_id", "assignee_id"}, "comment": {"id", "body", "operation_id"}, "relation_add": {"from_id", "to_id", "type", "operation_id"}, "relation_remove": {"from_id", "to_id", "type", "operation_id"}}
 	keys, ok := allowed[operation]
 	if !ok {
 		return nil, errors.New("unsupported task-board V2 operation")
@@ -76,7 +76,7 @@ func (s *Service) ExecuteV2(ctx context.Context, scope bus.Request, operation st
 		return s.RelationV2(ctx, scope, RelationInputV2{OperationID: text("operation_id"), Action: action, Type: text("type"), FromID: text("from_id"), ToID: text("to_id")})
 	default:
 		in := WriteInputV2{WriteInput: WriteInput{Operation: operation, OperationID: text("operation_id"), IssueID: text("id"), Body: text("body")}, TeamID: text("team_id")}
-		for key, target := range map[string]**string{"title": &in.Title, "description": &in.Description, "state_id": &in.StateID} {
+		for key, target := range map[string]**string{"title": &in.Title, "description": &in.Description, "state_id": &in.StateID, "expected_title": &in.ExpectedTitle, "expected_description_sha256": &in.ExpectedDescriptionSHA256} {
 			if _, ok := args[key]; ok {
 				v := text(key)
 				*target = &v

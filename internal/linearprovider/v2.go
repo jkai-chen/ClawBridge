@@ -37,6 +37,9 @@ type IssueV2 struct {
 	AssigneeKnown    bool       `json:"assignee_known"`
 	Relations        []Relation `json:"relations,omitempty"`
 	RelationsKnown   bool       `json:"relations_known"`
+	// DescriptionSHA256 is set only by a single-issue board read; a caller
+	// sends it back as expected_description_sha256.
+	DescriptionSHA256 string `json:"description_sha256,omitempty"`
 }
 type Label struct {
 	ID       string `json:"id"`

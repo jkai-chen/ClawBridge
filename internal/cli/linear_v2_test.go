@@ -84,3 +84,20 @@ func TestLinearV2HelpAndInvalidInputBeforeManager(t *testing.T) {
 		rejectCLI(t, args...)
 	}
 }
+
+func TestLinearV2TextGuardFlagsReachTheWriteInput(t *testing.T) {
+	const a = "11111111-1111-4111-8111-111111111111"
+	sum := "0000000000000000000000000000000000000000000000000000000000000000"
+	v, pos, err := parseLinear("update", []string{a, "--profile", "native", "--operation-id", "guard", "--title", "new", "--expect-title", "", "--description", "body", "--expect-description-sha256", sum}, &bytes.Buffer{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	input, err := linearWriteInput("update", v, pos)
+	if err != nil || input.ExpectedTitle == nil || *input.ExpectedTitle != "" || input.ExpectedDescriptionSHA256 == nil || *input.ExpectedDescriptionSHA256 != sum {
+		t.Fatalf("text guards lost (an empty expected title is still a guard): %+v %v", input, err)
+	}
+	v, pos, _ = parseLinear("update", []string{a, "--profile", "native", "--operation-id", "plain", "--title", "new"}, &bytes.Buffer{})
+	if input, err = linearWriteInput("update", v, pos); err != nil || input.ExpectedTitle != nil || input.ExpectedDescriptionSHA256 != nil {
+		t.Fatal("unguarded update gained guards", input, err)
+	}
+}

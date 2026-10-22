@@ -60,6 +60,12 @@ type WriteInputV2 struct {
 	ExpectedLabels linearprovider.Field[[]string]
 	Parent         linearprovider.Field[*string]
 	Assignee       linearprovider.Field[*string]
+	// ExpectedTitle and ExpectedDescriptionSHA256 are optional guards on an
+	// update that replaces the title or description: the title, or the
+	// description_sha256, the caller last read. omitempty keeps the ledger
+	// digest of unguarded writes identical to v0.2.0.
+	ExpectedTitle             *string `json:",omitempty"`
+	ExpectedDescriptionSHA256 *string `json:",omitempty"`
 }
 type RelationInputV2 struct{ OperationID, Action, Type, FromID, ToID string }
 type ReceiptV2 struct {

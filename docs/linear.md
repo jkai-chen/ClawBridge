@@ -236,6 +236,8 @@ rows keep `labels_known: false`.
 | `--linear-project UUID` | Create destination or requested project move; update preserves the issue's team |
 | Repeated `--label UUID` | Complete replacement label set, including removal of existing omitted labels |
 | Update `--expect-label UUID` (repeat) or `--expect-no-labels` | Required with `--label` or `--clear-labels`: the complete label set the issue had when you last read it. A mismatch refuses the update; nothing is sent |
+| Update `--expect-title TEXT` | Optional with `--title`: the title you last read. A different current title refuses the update; nothing is sent |
+| Update `--expect-description-sha256 HEX` | Optional with `--description`: the `description_sha256` from your last `linear issue` read. A different current description refuses the update; nothing is sent. Planned to become required in v0.2.2 |
 | `--parent UUID` | Scoped, acyclic parent in the child's own team and project; a parent in another team or project is refused |
 | `--assignee UUID` | Explicit eligible team member; no agent claim or permission change |
 | Update `--clear-project`, `--clear-labels`, `--clear-parent`, `--clear-assignee` | Explicit clearing; project clear is limited to team-board mode |

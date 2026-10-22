@@ -88,6 +88,7 @@ type linearFlags struct {
 	teams                                                                                                                []string
 	projects, labels, expectedLabels                                                                                     []string
 	team, parent, assignee, relationType, relationAction, labelFilter                                                    string
+	expectTitle, expectDescriptionSHA256                                                                                 string
 	clearProject, clearLabels, clearParent, clearAssignee, expectNoLabels                                                bool
 	limit                                                                                                                int
 	revision                                                                                                             int64
@@ -176,6 +177,8 @@ func parseLinear(command string, args []string, stderr io.Writer) (linearFlags, 
 		f.BoolVar(&v.clearLabels, "clear-labels", false, "explicitly replace labels with an empty set")
 		f.Var((*repeatedIDs)(&v.expectedLabels), "expect-label", "label UUID the issue has now; required with --label/--clear-labels (repeat for the complete set)")
 		f.BoolVar(&v.expectNoLabels, "expect-no-labels", false, "the issue has no labels now; required instead of --expect-label when it has none")
+		f.StringVar(&v.expectTitle, "expect-title", "", "the title you last read; with --title, a different current title refuses the update")
+		f.StringVar(&v.expectDescriptionSHA256, "expect-description-sha256", "", "description_sha256 from your last issue read; with --description, a different current description refuses the update")
 		f.BoolVar(&v.clearParent, "clear-parent", false, "explicitly clear parent")
 		f.BoolVar(&v.clearAssignee, "clear-assignee", false, "explicitly clear assignee")
 		min, max = 1, 1
@@ -468,6 +471,12 @@ func linearWriteInput(command string, v linearFlags, pos []string) (linearboard.
 	}
 	if v.expectNoLabels {
 		writeInput.ExpectedLabels = linearprovider.Field[[]string]{Present: true, Value: []string{}}
+	}
+	if v.supplied["expect-title"] {
+		writeInput.ExpectedTitle = &v.expectTitle
+	}
+	if v.supplied["expect-description-sha256"] {
+		writeInput.ExpectedDescriptionSHA256 = &v.expectDescriptionSHA256
 	}
 	if v.supplied["parent"] {
 		writeInput.Parent = linearprovider.Field[*string]{Present: true, Value: &v.parent}

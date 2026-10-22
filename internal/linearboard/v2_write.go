@@ -2,15 +2,39 @@ package linearboard
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
+	"regexp"
 
 	"clawbridge/internal/bus"
 	"clawbridge/internal/linearconn"
 	"clawbridge/internal/linearprovider"
 )
 
+var sha256Pattern = regexp.MustCompile(`\A[0-9a-f]{64}\z`)
+
 func legacyOnlyV2(in WriteInputV2) bool {
-	return in.TeamID == "" && !in.Project.Present && !in.Labels.Present && !in.ExpectedLabels.Present && !in.Parent.Present && !in.Assignee.Present
+	return in.TeamID == "" && !in.Project.Present && !in.Labels.Present && !in.ExpectedLabels.Present && !in.Parent.Present && !in.Assignee.Present && in.ExpectedTitle == nil && in.ExpectedDescriptionSHA256 == nil
+}
+
+// descriptionSHA256 is the hex SHA-256 of the exact description bytes a read
+// returned; callers echo it back as expected_description_sha256.
+func descriptionSHA256(description string) string {
+	h := sha256.Sum256([]byte(description))
+	return hex.EncodeToString(h[:])
+}
+
+// textGuardV2 compares the optional title and description guards with a
+// fresh read of the issue.
+func textGuardV2(in WriteInputV2, current linearprovider.Issue) error {
+	if in.ExpectedTitle != nil && current.Title != *in.ExpectedTitle {
+		return errors.New("issue title differs from expected_title; inspect the current issue")
+	}
+	if in.ExpectedDescriptionSHA256 != nil && descriptionSHA256(current.Description) != *in.ExpectedDescriptionSHA256 {
+		return errors.New("issue description differs from expected_description_sha256; inspect the current issue")
+	}
+	return nil
 }
 func ValidateWriteV2(in WriteInputV2) error {
 	if !operationPattern.MatchString(in.OperationID) {
@@ -48,6 +72,12 @@ func ValidateWriteV2(in WriteInputV2) error {
 		return errors.New("expected label values require explicit presence")
 	} else if in.Operation == "update" && in.Labels.Present {
 		return errors.New("label replacement requires expected_label_ids: the complete label set you last read")
+	}
+	if in.ExpectedTitle != nil && (in.Operation != "update" || in.Title == nil) {
+		return errors.New("expected_title applies only to an update that replaces the title")
+	}
+	if in.ExpectedDescriptionSHA256 != nil && (in.Operation != "update" || in.Description == nil || !sha256Pattern.MatchString(*in.ExpectedDescriptionSHA256)) {
+		return errors.New("expected_description_sha256 applies only to an update that replaces the description, as 64 lowercase hex characters")
 	}
 	if in.TeamID != "" && !linearprovider.ValidID(in.TeamID) {
 		return errors.New("team requires UUID")
@@ -213,6 +243,9 @@ func (s *Service) WriteV2(ctx context.Context, scope bus.Request, in WriteInputV
 			return nil, errors.New("issue identity changed")
 		}
 		if e = checkIssueV2(current, b, v); e != nil {
+			return nil, e
+		}
+		if e = textGuardV2(in, current.Issue); e != nil {
 			return nil, e
 		}
 		if !legacy && in.Labels.Present {

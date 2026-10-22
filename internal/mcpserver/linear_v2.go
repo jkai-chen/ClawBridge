@@ -63,6 +63,8 @@ func boardSchemaV2(operation string) map[string]any {
 		} else {
 			props["id"] = uuid(false)
 			props["expected_label_ids"] = map[string]any{"type": "array", "maxItems": 100, "uniqueItems": true, "items": uuid(false)}
+			props["expected_title"] = map[string]any{"type": "string", "maxLength": 512, "description": "Optional guard with title: the title you last read; a different current title refuses the update"}
+			props["expected_description_sha256"] = map[string]any{"type": "string", "pattern": "^[0-9a-f]{64}$", "description": "Optional guard with description: description_sha256 from your last issue read; a different current description refuses the update"}
 			required = append(required, "id")
 		}
 	case "comment":
@@ -85,7 +87,7 @@ func addTaskboardToolsV2(s *mcp.Server, b *binding, p TaskboardToolsV2) {
 		closed := false
 		mcp.AddTool(s, &mcp.Tool{
 			Name: "taskboard_" + operation + "_v2", InputSchema: boardSchemaV2(operation),
-			Description: "Use the native scoped Linear board. Explicit labels replace the label set; an update that sets label_ids must also send expected_label_ids, the complete label set you last read, and a mismatch is refused. Null clears only project, parent or assignee. Relation changes affect one edge. Missing native capabilities fail explicitly. Assignment is not a claim or human approval.",
+			Description: "Use the native scoped Linear board. Explicit labels replace the label set; an update that sets label_ids must also send expected_label_ids, the complete label set you last read, and a mismatch is refused. When replacing a title or description, send expected_title or expected_description_sha256 (from the issue read) so a concurrent edit is refused instead of overwritten. Null clears only project, parent or assignee. Relation changes affect one edge. Missing native capabilities fail explicitly. Assignment is not a claim or human approval.",
 			Annotations: &mcp.ToolAnnotations{ReadOnlyHint: readOnly, IdempotentHint: readOnly, OpenWorldHint: &closed},
 		}, func(ctx context.Context, _ *mcp.CallToolRequest, args map[string]any) (*mcp.CallToolResult, bus.Result, error) {
 			b.mu.Lock()

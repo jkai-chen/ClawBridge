@@ -172,6 +172,10 @@ you read as `expected_label_ids` (`[]` if there were none). Native reads show
 label names only; read the issue with `resolve_labels` to get proven label IDs
 before replacing or clearing labels. If they changed, the
 update is refused and nothing is sent; re-read and use a new `operation_id`.
+Title and description replace the whole text, so a concurrent human edit would
+be lost. When you replace them, send the title you read as `expected_title` and
+the issue read's `description_sha256` as `expected_description_sha256`; on a
+refusal, re-read, merge the human's change and retry with a new `operation_id`.
 Use only label IDs returned by scoped label discovery for the issue's own team,
 team or workspace; both need eligibility proof before they apply. On native
 Linear that proof comes from Linear's documented list filters, so a label

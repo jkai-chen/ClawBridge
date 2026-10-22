@@ -111,7 +111,7 @@ func TestNotificationJSONCoalescesPinsAndNeverRegressesAcrossRestart(t *testing.
 func TestNotificationCodexRetriesWithSameFixedHintAndOnlyAdvancesAfterAcceptance(t *testing.T) {
 	c := config(t)
 	c.Binding.Adapter = "codex"
-	c.Binding.Thread = "01a15f5e-6ded-7be2-9912-14eb4c0ec476"
+	c.Binding.Thread = "00000000-0000-4000-8000-0000000000a1"
 	c.CodexCommand = fakeCodex(t)
 	c.Once = false
 	var attempts [][]string
@@ -205,7 +205,7 @@ func TestNotificationCheckpointFailureStopsAfterAcceptedHint(t *testing.T) {
 	c := config(t)
 	c.Once = false
 	c.Binding.Adapter = "codex"
-	c.Binding.Thread = "01a15f5e-6ded-7be2-9912-14eb4c0ec476"
+	c.Binding.Thread = "00000000-0000-4000-8000-0000000000a1"
 	c.CodexCommand = fakeCodex(t)
 	c.Executor = executorFunc(func(context.Context, bus.Request) (bus.Result, error) { return result(1, 5, 1), nil })
 	attempts := 0

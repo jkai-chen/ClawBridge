@@ -13,7 +13,8 @@ Google-authenticated cloud mode. Cloud clients may use a project-scoped read-onl
 mirror during a transport or service outage.
 
 For a Linear-backed task, read [references/task-board.md](references/task-board.md)
-when starting a slice, finding its owner or collaborator, or handing it over.
+when starting a slice, finding its owner or collaborator, changing issue
+structure, or handing it over.
 Use ClawBridge's native task-board tools when configured, otherwise the installed
 official Linear MCP/skill. Follow the explicit issue-to-session assignment and
 use ClawBridge for peer messages.

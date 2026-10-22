@@ -4,6 +4,9 @@ Use this workflow for an assigned Linear task with multiple agent sessions.
 Use ClawBridge's native task-board tools when configured; otherwise use the
 official Linear MCP/skill already available in your host. Discover the installed
 tool schemas and respect their capability/scope limits. Orca is not required.
+When both native tool families are advertised, use the V2 family for new board
+calls so project-set mappings remain representable. Retain the exact operation
+ID and payload when retrying an earlier write.
 Linear holds issue context and durable task updates; ClawBridge supplies scoped
 sessions and peer messages. Coordinator assignment remains the ownership boundary.
 

@@ -1,39 +1,55 @@
 # ClawBridge v0.2.0
 
-Adds authoritative inbox notifications and an optional foreground Codex queue adapter.
+Adds native Linear task boards, structured coordination and controlled inbox
+notifications while keeping normal messaging independent of those integrations.
 
-- `inbox-status [--after N]` reports unread counts and sequence metadata without
-  changing presence, delivery/read stamps or audit history. Status is available
-  from the authority only; an offline mirror cannot trigger a notification.
-- MCP clients can explicitly subscribe to `clawbridge://inbox/status`. Polling
-  starts with a subscription and stops when its lifetime or actor binding ends.
-  The MCP host controls whether a resource notice starts an agent turn.
-- `notify --adapter json|codex --state ABSOLUTE_PATH` watches the selected existing
-  recipient. The Codex adapter queues a fixed inbox-check hint into an explicitly
-  selected existing thread; it does not forward message bodies as instructions.
-- Private, locked checkpoints preserve progress across restarts and bind the
-  authority, recipient, instance, adapter and selected host/thread. Failed or
-  uncertain hints do not advance progress; a crash after acceptance can produce
-  a duplicate hint. Queue acceptance is separate from processing or read receipts.
-- The ClawBridge skill documents how agents use an existing Linear MCP/skill to
-  resolve slice ownership, request cooperation and record decisions or handoffs.
-  No new Linear connector, webhook service or automatic task claim is included.
-- Current guides live under `docs/`; design contracts and historical review
-  evidence have dedicated directories. README remains the short entry point.
+- Connect Linear through native public-client OAuth/PKCE or explicit token import
+  from stdin. Personal credentials stay in the native keyring; no Orca or Node
+  runtime is required. Read access is the default and write access is explicit.
+- Link a ClawBridge project to verified Linear teams and an optional Linear
+  project. Team boards work without creating a project. Each teammate connects
+  their own account; switching accounts does not change the shared mapping.
+- Browse setup and issues in the Linear TUI view. Native CLI and pinned local MCP
+  tools list/get issues and explicitly create, update or comment within the
+  selected board. Inspection never claims a task or changes its assignment.
+  Local operation records prevent blind replay of uncertain external writes.
+- Optional issue/revision/intent message metadata links requests, acknowledgements
+  and progress while preserving legacy retry identity. Coordinator assignments
+  remain authoritative; a peer receipt does not confer human approval or close work.
+- Recipient notification policy supports accept, hold and refuse. Suppression
+  retains unread mail and pending notification progress for a later accept.
+- Authority-only inbox metadata leaves delivery/read/presence/audit unchanged.
+  Explicit MCP resource subscriptions receive invalidations; the host decides
+  whether to start an agent turn.
+- The foreground JSON/Codex watcher queues only a fixed inbox-check hint to an
+  explicitly selected existing thread. Private checkpoints bind authority,
+  recipient, instance, executable, host home and thread. Queue acceptance remains
+  separate from processing; crashes or ambiguous outcomes can duplicate hints.
+- Bounded `host-status` and `host-wait` observe an explicitly selected existing
+  Codex Unix WebSocket endpoint without starting or resuming a thread. Idle and
+  unloaded are distinct from task completion, drained queues or process exit.
+- Current guides, design contracts and dated review evidence have separate homes
+  under `docs/`. The agent skill covers paged ownership discovery, cooperation,
+  repository-qualified slices and explicit handoffs.
 
-Upgrade hosted clients and the service together. A v0.1.0 service rejects the new
-`inbox_status` operation; installing a new client does not upgrade that service.
-Watchers are explicitly started foreground processes, with a five-second default
-poll interval. No daemon, agent configuration, credentials or PATH is installed
-by this feature.
+Schema 3 adds shared board settings after the schema-2 coordination migration.
+Back up the existing store before upgrade and deploy matching clients/service.
+An older service rejects the new operations; installing a client does not upgrade
+that service. Older binaries refuse newer schemas; rollback restores a verified
+pre-upgrade backup rather than editing the version marker.
 
-Assets retain the five supported release targets, selected checksums and full
-source marker. Binaries are unsigned and macOS binaries are not notarized.
-Checksums verify integrity against the manifest, not an independent signature.
-Native Windows notification ACL/replacement/runtime validation remains separate
-from cross-build and installer-fixture results. Cloud deployment, Google consent
-and native MCP-host wake behavior require their own environment-specific checks.
+OAuth consent, keyring availability and native host behavior depend on the user's
+environment. Automated providers and authenticated test relays establish their
+stated test boundaries; they do not substitute for first-login consent or prove
+all real provider schemas. No webhook service, background model launcher,
+automatic task claim or production deployment is included.
 
-See docs/notifications.md for setup and recovery, docs/reference/api.md for the
-API, and docs/archive/reviews/NOTIFICATION-REVIEW.md for acceptance evidence and
-its platform/host limits.
+Assets retain five CGO-disabled targets, installers, selected checksums and a full
+source marker. Binaries are unsigned; macOS binaries are not notarized. Checksums
+verify integrity against the manifest rather than an independent signature.
+Native Windows notification/Linear runtime and host transport need their own
+platform checks; cross-build and installer-fixture results have narrower scope.
+
+See docs/linear.md, docs/notifications.md and docs/reference/api.md for setup and
+behavior. Dated acceptance records and their exact limits live under
+docs/archive/reviews/.

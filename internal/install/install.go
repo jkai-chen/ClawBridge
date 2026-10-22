@@ -19,6 +19,7 @@ import (
 )
 
 type Options struct {
+	LinearProfile                                                                string
 	ClientConfig                                                                 string
 	Agent, Config, Command, Name                                                 string
 	DB, Workspace, Project, Session, Instance                                    string
@@ -46,6 +47,7 @@ func RunWithIO(args []string, stdout, stderr io.Writer) error {
 	f := flag.NewFlagSet("mcp install", flag.ContinueOnError)
 	f.SetOutput(stderr)
 	o := Options{}
+	f.StringVar(&o.LinearProfile, "linear-profile", "", "explicit personal native Linear profile ID (optional)")
 	f.StringVar(&o.ClientConfig, "client-config", "", "absolute trusted client config path")
 	f.StringVar(&o.Agent, "agent", "", "codex or claude-code")
 	f.StringVar(&o.Config, "config", "", "explicit target configuration path")
@@ -90,6 +92,9 @@ func RunWithIO(args []string, stdout, stderr io.Writer) error {
 // existing bytes, and atomically replaces the target. A repeat is a byte-level no-op.
 func Install(o Options) (Result, error) {
 	r := Result{DryRun: o.DryRun}
+	if o.LinearProfile != "" && !regexp.MustCompile(`^[A-Za-z0-9._-]{1,128}$`).MatchString(o.LinearProfile) {
+		return r, errors.New("invalid explicit Linear profile ID")
+	}
 	if o.ClientConfig != "" && !filepath.IsAbs(o.ClientConfig) {
 		return r, errors.New("client config must be absolute")
 	}
@@ -219,6 +224,9 @@ func Install(o Options) (Result, error) {
 		argv = append(argv, "--principal", route.Principal, "--cache", route.CachePath)
 	default:
 		return r, errors.New("MCP installation mode must be local or cloud")
+	}
+	if o.LinearProfile != "" {
+		argv = append(argv, "--linear-profile", o.LinearProfile)
 	}
 	if o.Instance != "" {
 		argv = append(argv, "--instance", o.Instance)

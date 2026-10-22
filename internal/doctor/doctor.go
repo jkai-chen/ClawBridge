@@ -11,6 +11,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 	"time"
@@ -69,6 +70,7 @@ type Config struct {
 // MCPConfig identifies one installed-client configuration and the expected
 // ClawBridge entry. Doctor reads these paths and never repairs them.
 type MCPConfig struct {
+	LinearProfile             string `json:"linear_profile,omitempty"`
 	ClientConfig              string `json:"client_config,omitempty"`
 	Agent                     string `json:"agent"`
 	Name                      string `json:"name"`
@@ -544,6 +546,9 @@ func parseMCPEntry(agent, name string, raw []byte) (map[string]any, bool, error)
 }
 
 func expectedMCPEntry(mcp MCPConfig) (map[string]any, error) {
+	if mcp.LinearProfile != "" && !regexp.MustCompile(`^[A-Za-z0-9._-]{1,128}$`).MatchString(mcp.LinearProfile) {
+		return nil, errors.New("invalid personal Linear profile ID")
+	}
 	if mcp.Workspace == "" || mcp.Project == "" || mcp.Session == "" {
 		return nil, errors.New("scope required")
 	}
@@ -594,6 +599,9 @@ func expectedMCPEntry(mcp MCPConfig) (map[string]any, error) {
 		args = append(args, "--principal", route.Principal, "--cache", route.CachePath)
 	default:
 		return nil, errors.New("mode required")
+	}
+	if mcp.LinearProfile != "" {
+		args = append(args, "--linear-profile", mcp.LinearProfile)
 	}
 	if mcp.Instance != "" {
 		args = append(args, "--instance", mcp.Instance)

@@ -7,9 +7,10 @@ existing deployment; preserve its private environment and volume bindings.
 
 ## Coordination schema upgrade
 
-The [coordination source increment](../design/coordination.md) introduces schema
-version 2; it is separate from the prepared v0.2.0 candidate. Before operating
-that upgrade, stop API/client writers and save a verified version-1 recovery copy.
+The [coordination increment](../design/coordination.md) introduces schema version
+2; [native Linear settings](../design/linear.md) add version 3. Before an upgrade,
+stop API/client writers and save a verified recovery copy of the existing version.
+
 For PostgreSQL, use the dump/checksum pair and disposable restore drill below.
 For local SQLite, use a consistent SQLite backup, keeping the original store
 untouched; copying only the main file while WAL writes continue is insufficient.
@@ -17,13 +18,20 @@ untouched; copying only the main file while WAL writes continue is insufficient.
 The matching binary migrates on opening the store. Coordinate the client/service
 upgrade: policy-aware clients need the new notification_status operation, and
 older watchers do not honor recipient wake policy. An older binary refuses the
-version-2 store. A failed migration must leave the prior schema intact.
+newer store. Native Linear board settings additionally require a service supporting
+schema 3 and the taskboard operations. A failed migration must leave the prior
+schema intact.
 
 Rollback restores the pre-upgrade backup into a separate target and selects the
 matching older binary/service. It does not downgrade the version marker in place.
 Keep the upgraded store for reconciliation: writes accepted after the recovery
 copy are not included in that copy. Source acceptance alone performs no deployment
 or production migration.
+
+The shared backup contains board UUIDs and mapping revisions, not personal Linear
+credentials. Each teammate reconnects or restores their own native secure store
+separately. A restored board mapping still requires that connection to verify
+access to its teams/project; a display label cannot establish access.
 
 ## Backup format and schedule
 

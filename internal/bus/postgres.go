@@ -54,7 +54,7 @@ func (s *Store) migratePostgres(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	if version > 2 {
+	if version > 3 {
 		return errors.New("Postgres schema is newer than this binary")
 	}
 	if version == 0 {
@@ -64,6 +64,11 @@ func (s *Store) migratePostgres(ctx context.Context) error {
 	}
 	if version < 2 {
 		if _, err = tx.ExecContext(ctx, `ALTER TABLE messages ADD COLUMN coordination TEXT; ALTER TABLE sessions ADD COLUMN notification_policy TEXT NOT NULL DEFAULT 'accept' CHECK(notification_policy IN ('accept','hold','refuse')); INSERT INTO clawbridge_schema(version) VALUES(2)`); err != nil {
+			return err
+		}
+	}
+	if version < 3 {
+		if _, err = tx.ExecContext(ctx, taskboardSchema+`INSERT INTO clawbridge_schema(version) VALUES(3)`); err != nil {
 			return err
 		}
 	}

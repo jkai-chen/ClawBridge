@@ -87,6 +87,8 @@ func sourceLine(m Model) string {
 
 func renderBody(m Model) string {
 	switch m.screen {
+	case ScreenLinear:
+		return renderLinear(m)
 	case ScreenOverview:
 		return renderOverview(m)
 	case ScreenProjects:
@@ -132,6 +134,9 @@ func renderOverview(m Model) string {
 	b.WriteString("\n")
 	b.WriteString(kv("Sessions", fmt.Sprintf("%d in pinned project", len(m.sessions))))
 	b.WriteString(kv("Unread", fmt.Sprintf("%d in current session", len(m.messages))))
+	if m.cfg.Linear != nil {
+		b.WriteString("\nOptional integration: 7 Linear → Connect Linear / Later. Joining does not depend on Linear.\n")
+	}
 	if len(m.sessions) > 0 {
 		b.WriteString("\n")
 		b.WriteString(mutedStyle.Render("Pinned project sessions"))
@@ -415,6 +420,9 @@ func renderDoctor(m Model) string {
 }
 
 func renderInput(m Model) string {
+	if m.inputMode == inputLinearName {
+		return "Connection label: " + terminalText(m.draft)
+	}
 	if m.confirming {
 		label := "Confirmation"
 		if m.plan != nil {
@@ -448,6 +456,8 @@ func clip(text string, limit int) string {
 
 func title(s Screen) string {
 	switch s {
+	case ScreenLinear:
+		return "Linear"
 	case ScreenOverview:
 		return "Overview"
 	case ScreenProjects:

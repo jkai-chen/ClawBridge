@@ -41,13 +41,15 @@ connecting. See [MCP setup](docs/usage.md#mcp) for profiles and resumption.
 - [Install and update](docs/installation.md)
 - [Messaging, hosted login, MCP and TUI](docs/usage.md)
 - [Inbox notifications and Codex wake-up](docs/notifications.md)
+- [Native Linear connections and task boards](docs/linear.md)
 - [Architecture](docs/architecture.md) and [API reference](docs/reference/api.md)
 - [Development and verification](docs/development.md)
 - [Deploy](docs/operations/deployment.md) and [back up or recover](docs/operations/backup-and-recovery.md)
 
 Published binaries are at [GitHub Releases](https://github.com/jkai-chen/ClawBridge/releases).
-Notification support is a source-checkout addition after v0.1.0; use the matching
-client and service build described in its guide.
+Notifications, structured coordination and native Linear support are additions
+after v0.1.0. Use matching client/service builds and the current guides; installing
+a published client does not upgrade your hosted service.
 
 ## Linux credential storage
 

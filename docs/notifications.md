@@ -7,7 +7,8 @@ upgrade your hosted service.
 
 Recipient wake policy and local host observation are implemented source additions
 described by the [coordination contract](design/coordination.md).
-They are separate from the prepared v0.2.0 candidate.
+Use matching policy-aware client and service builds; earlier notification-only
+candidate evidence remains dated in the archive.
 
 ## Choose the delivery path
 

@@ -1,0 +1,236 @@
+package bus
+
+import (
+	"context"
+	"database/sql"
+	"encoding/json"
+	"path/filepath"
+	"sync"
+	"testing"
+)
+
+const teamOne = "440a5670-8981-49b1-9b3c-f9773dc63052"
+
+func taskboardArgs(rev int) map[string]any {
+	return map[string]any{"expected_revision": rev, "linear_project_id": nil, "linear_team_ids": []string{teamOne}, "linear_default_team_id": teamOne}
+}
+func TestTaskboardCASAndNoStamp(t *testing.T) {
+	h := newHarness(t)
+	if _, e := h.s.db.Exec(`CREATE TRIGGER taskboard_no_touch BEFORE UPDATE ON sessions BEGIN SELECT RAISE(ABORT,'no actor touch'); END`); e != nil {
+		t.Fatal(e)
+	}
+	get := func() TaskboardBinding {
+		v := h.call("taskboard_get", "a", nil)
+		b, e := ParseTaskboardBinding(v)
+		if e != nil {
+			t.Fatal(e)
+		}
+		return b
+	}
+	if b := get(); b.Configured || b.Revision != 0 {
+		t.Fatal(b)
+	}
+	before := count(t, h.s.db, "history")
+	b, e := ParseTaskboardBinding(h.call("taskboard_set", "a", taskboardArgs(0)))
+	if e != nil || !b.Configured || b.Revision != 1 {
+		t.Fatal(b, e)
+	}
+	if b = get(); b.Revision != 1 || b.WorkspaceID == "" || b.ProjectID == "" || b.LinearTeamIDs[0] != teamOne {
+		t.Fatal(b)
+	}
+	h.fail("taskboard_clear", "", map[string]any{"expected_revision": 0})
+	if count(t, h.s.db, "history") != before+1 {
+		t.Fatal("stale write audited")
+	}
+	h.call("taskboard_clear", "", map[string]any{"expected_revision": 1})
+	if b = get(); b.Configured || b.Revision != 2 || b.Provider != "" {
+		t.Fatal(b)
+	}
+	for _, a := range []map[string]any{nil, {"expected_revision": nil}, {"expected_revision": -1}, {"expected_revision": 1.5}, {"expected_revision": 2, "profile": "bad"}} {
+		h.fail("taskboard_clear", "", a)
+	}
+	for _, key := range []string{"provider", "linear_team_ids", "linear_default_team_id", "linear_workspace_provenance"} {
+		a := taskboardArgs(2)
+		a[key] = nil
+		h.fail("taskboard_set", "", a)
+	}
+
+}
+func TestTaskboardConcurrentCAS(t *testing.T) {
+	h := newHarness(t)
+	var wg sync.WaitGroup
+	var mu sync.Mutex
+	success := 0
+	for i := 0; i < 8; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			_, e := h.s.Execute(context.Background(), h.request("taskboard_set", "", taskboardArgs(0)))
+			if e == nil {
+				mu.Lock()
+				success++
+				mu.Unlock()
+			}
+		}()
+	}
+	wg.Wait()
+	if success != 1 {
+		t.Fatal(success)
+	}
+}
+func TestTaskboardSchemaThreeAndMigration(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "migrate.db")
+	s, e := Open(path)
+	if e != nil {
+		t.Fatal(e)
+	}
+	var v int
+	if e = s.db.QueryRow("PRAGMA user_version").Scan(&v); e != nil || v != 3 {
+		t.Fatal(v, e)
+	}
+	if _, e = s.db.Exec("DROP TABLE taskboard_bindings; PRAGMA user_version=2"); e != nil {
+		t.Fatal(e)
+	}
+	s.Close()
+	s, e = Open(path)
+	if e != nil {
+		t.Fatal(e)
+	}
+	s.Close()
+	s, e = Open(path)
+	if e != nil {
+		t.Fatal(e)
+	}
+	if _, e = s.db.Exec("PRAGMA user_version=4"); e != nil {
+		t.Fatal(e)
+	}
+	s.Close()
+	if s, e = Open(path); e == nil {
+		s.Close()
+		t.Fatal("newer schema accepted")
+	}
+}
+
+func TestTaskboardActorFenceAndTombstone(t *testing.T) {
+	h := newHarness(t)
+	h.fail("taskboard_get", "a", map[string]any{"instance": "other"})
+	h.fail("taskboard_get", "", map[string]any{"instance": "a-instance"})
+	if _, e := h.s.db.Exec(`UPDATE sessions SET status='retired' WHERE name='a'`); e != nil {
+		t.Fatal(e)
+	}
+	h.call("taskboard_get", "a", nil)
+	h.fail("taskboard_set", "a", taskboardArgs(0))
+	h.call("taskboard_clear", "", map[string]any{"expected_revision": 0})
+	b, e := ParseTaskboardBinding(h.call("taskboard_get", "", nil))
+	if e != nil || b.Configured || b.Revision != 1 {
+		t.Fatal(b, e)
+	}
+	h.call("taskboard_set", "", taskboardArgs(1))
+}
+func TestTaskboardMigrationRollback(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "rollback.db")
+	s, e := Open(path)
+	if e != nil {
+		t.Fatal(e)
+	}
+	if _, e = s.db.Exec(`PRAGMA user_version=2`); e != nil {
+		t.Fatal(e)
+	}
+	s.Close()
+	if s, e = Open(path); e == nil {
+		s.Close()
+		t.Fatal("conflicting table should not partially migrate")
+	}
+	db, e := sql.Open("sqlite", path)
+	if e != nil {
+		t.Fatal(e)
+	}
+	defer db.Close()
+	var v int
+	if e = db.QueryRow("PRAGMA user_version").Scan(&v); e != nil || v != 2 {
+		t.Fatal(v, e)
+	}
+}
+
+func TestTaskboardExactNestedShapeAndAccess(t *testing.T) {
+	h := newHarness(t)
+	initial := h.call("taskboard_get", "", nil).(map[string]any)
+	if len(initial) != 6 || initial["binding"] != nil || initial["updated_at"] != nil {
+		t.Fatal(initial)
+	}
+	data := h.call("taskboard_set", "", taskboardArgs(0)).(map[string]any)
+	mapping := data["binding"].(map[string]any)
+	if len(data) != 6 || len(mapping) != 5 || mapping["provider"] != "linear" || mapping["linear_project_id"] != nil || mapping["linear_workspace_id"] != nil {
+		t.Fatal(data)
+	}
+	b, e := ParseTaskboardBinding(data)
+	if e != nil {
+		t.Fatal(e)
+	}
+	raw, e := json.Marshal(b)
+	if e != nil {
+		t.Fatal(e)
+	}
+	var round TaskboardBinding
+	if e = json.Unmarshal(raw, &round); e != nil || round.LinearTeamIDs[0] != teamOne {
+		t.Fatal(round, e)
+	}
+	missing := taskboardArgs(1)
+	delete(missing, "linear_project_id")
+	h.fail("taskboard_set", "", missing)
+	forbidden := taskboardArgs(1)
+	forbidden["provider"] = "linear"
+	h.fail("taskboard_set", "", forbidden)
+	if _, e = h.s.db.Exec(`CREATE TRIGGER access_no_touch BEFORE UPDATE ON sessions BEGIN SELECT RAISE(ABORT,'no actor touch'); END`); e != nil {
+		t.Fatal(e)
+	}
+	for _, session := range []string{"", "a"} {
+		v := h.call("taskboard_access", session, nil).(map[string]any)
+		if len(v) != 5 {
+			t.Fatal(v)
+		}
+		a, e := ParseTaskboardAccess(v)
+		if e != nil || !a.CanWrite || a.ProjectRole != "owner" {
+			t.Fatal(a, e)
+		}
+		if session == "" && v["session_id"] != nil {
+			t.Fatal(v)
+		}
+	}
+	h.fail("taskboard_access", "a", map[string]any{"instance": "wrong"})
+	if _, e = h.s.db.Exec(`DROP TRIGGER access_no_touch; UPDATE sessions SET status='retired' WHERE name='a'`); e != nil {
+		t.Fatal(e)
+	}
+	a, e := ParseTaskboardAccess(h.call("taskboard_access", "a", nil))
+	if e != nil || a.CanWrite || a.SessionID == "" {
+		t.Fatal(a, e)
+	}
+}
+
+func TestTaskboardStrictWireParser(t *testing.T) {
+	h := newHarness(t)
+	valid := h.call("taskboard_set", "", taskboardArgs(0))
+	for _, key := range []string{"workspace_id", "project_id", "configured", "revision", "binding", "updated_at"} {
+		raw, _ := json.Marshal(valid)
+		var m map[string]any
+		json.Unmarshal(raw, &m)
+		delete(m, key)
+		if _, e := ParseTaskboardBinding(m); e == nil {
+			t.Fatal("missing", key)
+		}
+	}
+	for _, key := range []string{"provider", "linear_team_ids", "linear_default_team_id", "linear_project_id", "linear_workspace_id"} {
+		raw, _ := json.Marshal(valid)
+		var m map[string]any
+		json.Unmarshal(raw, &m)
+		delete(m["binding"].(map[string]any), key)
+		if _, e := ParseTaskboardBinding(m); e == nil {
+			t.Fatal("missing mapping", key)
+		}
+	}
+	for _, v := range []any{nil, map[string]any{"can_write": true}, map[string]any{"workspace_id": "w", "project_id": "p", "session_id": nil, "can_write": true, "project_role": "reader"}} {
+		if _, e := ParseTaskboardAccess(v); e == nil {
+			t.Fatal(v)
+		}
+	}
+}

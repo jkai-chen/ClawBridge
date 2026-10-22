@@ -222,7 +222,7 @@ func runWizard(ctx context.Context, flags Config, args []string, stdout, stderr 
 	if err = wizardJoin(isolated, candidate, joinArgs, io.Discard, stderr); err != nil {
 		return err
 	}
-	fmt.Fprintln(stdout, "Join completed and trusted route saved. Opening TUI…")
+	fmt.Fprintln(stdout, "Join completed and trusted route saved. Opening TUI… Optional: 7 Linear → Connect Linear, or Later by staying in the current view.")
 	if err = wizardTUI(isolated, Config{ClientConfig: path}, stdout, stderr); err != nil {
 		return fmt.Errorf("join completed; saved route preserved, but TUI startup failed: %w", err)
 	}

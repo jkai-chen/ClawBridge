@@ -13,6 +13,7 @@ import (
 )
 
 type Config struct {
+	LinearProfile             string `toml:"-"`
 	ClientConfig              string `toml:"-"`
 	DB                        string `toml:"db"`
 	Workspace                 string `toml:"workspace"`
@@ -82,6 +83,9 @@ func readConfig(path string, required bool) (Config, error) {
 	return c, nil
 }
 func overlay(base, top Config) Config {
+	if top.LinearProfile != "" {
+		base.LinearProfile = top.LinearProfile
+	}
 	if top.DB != "" {
 		base.DB = top.DB
 	}

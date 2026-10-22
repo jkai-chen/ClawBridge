@@ -1,6 +1,6 @@
 ---
 name: clawbridge
-description: "Coordinate coding-agent sessions through an installed ClawBridge bus: discover peers, exchange threaded messages, inspect delivery, and hand over work within the configured project."
+description: "Coordinate coding agents through ClawBridge: find Linear slice owners, discover project peers, exchange threaded messages, inspect receipts, and hand over work."
 ---
 
 # ClawBridge coordination
@@ -14,8 +14,9 @@ mirror during a transport or service outage.
 
 For a Linear-backed task, read [references/task-board.md](references/task-board.md)
 when starting a slice, finding its owner or collaborator, or handing it over.
-Use the installed Linear MCP/skill for board operations and ClawBridge for peer
-messages; follow the explicit issue-to-session assignment.
+Use ClawBridge's native task-board tools when configured, otherwise the installed
+official Linear MCP/skill. Follow the explicit issue-to-session assignment and
+use ClawBridge for peer messages.
 
 ## Bind and check
 

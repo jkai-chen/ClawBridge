@@ -5,9 +5,10 @@ Use `clawbridge --help` and command help for the current CLI flags. Setup and
 examples are in [usage](../usage.md); notification lifecycle is in
 [notifications](../notifications.md).
 
-The [coordination contract](../design/coordination.md) defines the accepted source
-increment for message metadata, recipient wake policy and local host observation.
-Its acceptance is separate from the prepared v0.2.0 candidate.
+Current source adds [coordination](../design/coordination.md) message metadata,
+recipient wake policy, local host observation and [native Linear](../linear.md)
+task-board actions after v0.1.0. Dated acceptance evidence is indexed in
+[the archive](../archive/README.md); a source build does not upgrade a hosted service.
 
 ## Request and result
 
@@ -65,6 +66,10 @@ requires its matching instance. Routing role is distinct from project permission
 | `whoami` | No extra arguments |
 | `message_status` | message_id; sender-only receipt metadata |
 | `resolve_project` | Explicit project or optional git_remote fallback |
+| `taskboard_get` | Shared Linear mapping; optional current actor/instance |
+| `taskboard_access` | Own effective project-write capability; optional actor/instance |
+| `taskboard_set` | expected_revision, linear_team_ids, linear_default_team_id, linear_project_id (UUID/null); optional linear_workspace_id (UUID/null) |
+| `taskboard_clear` | expected_revision; authorized owner/lead |
 | `project_role_set` | Hosted owner: principal, role |
 | `snapshot` | Hosted current actor/instance; explicit scoped sync |
 | `purge_expired` | Hosted owner: current project |
@@ -74,6 +79,13 @@ notification_status, set_notification_policy, mark_read, reply, update_session,
 retire_session, history, whoami and message_status. Their
 schemas restrict caller routing/instance overrides. Administrative operations
 remain outside the MCP tool list.
+
+With an explicitly selected native Linear profile, seven additional local tools
+expose scoped `taskboard_binding`, `taskboard_context`, `taskboard_issues`,
+`taskboard_issue`, `taskboard_create`, `taskboard_update` and `taskboard_comment`.
+These call Linear through the native adapter; their source is `linear`. They
+cannot choose another profile/authority/project through tool arguments. Board
+administration remains in CLI/TUI. See [Linear setup](../linear.md).
 
 ## Identity and lifecycle
 
@@ -181,6 +193,32 @@ Unloaded means notLoaded, not exited. Disconnect, stale presence and retirement
 cannot establish a match. Native Windows transport and an exit predicate are
 unsupported. See [notifications](../notifications.md) for invocation and limits.
 
+## Shared Linear mapping
+
+Schema 3 adds project task-board settings independently of personal credentials.
+`taskboard_get` returns exactly workspace_id, project_id, configured, revision,
+binding and updated_at. The initial revision is zero, with null binding/time.
+Configured binding contains provider="linear", linear_team_ids,
+linear_default_team_id, nullable linear_project_id and nullable
+linear_workspace_id. Workspace metadata is used only when the provider actually
+supplies it; stable team/project UUIDs enforce the external scope.
+
+Set replaces the complete mapping using an expected revision; teams are 1–20
+unique canonical UUIDs and the default must be in that set. Project is explicitly
+a UUID or null for a team board. Clear retains a revision/time tombstone. An
+owner/lead may mutate; members/readers may inspect. A supplied actor must be
+owned/current, and active for mutation. Reads do not stamp presence/audit and
+never fall back to a mirror.
+
+`taskboard_access` returns workspace_id, project_id, nullable session_id,
+can_write and project_role without stamps. Native issue writes require both an
+allowed ClawBridge role and personal Linear write capability. A supplied actor
+must also be current/active. Writes verify this immediately before dispatch.
+The private local operation ledger retains accepted/uncertain outcomes against
+their original profile, scope and mapping revision; an uncertain external write
+is not automatically replayed. The mapping is an administrator selection, not a
+claim that the authority itself authenticated to Linear or assigned an agent.
+
 ## Hosted routes and failures
 
 `POST /v1/execute` accepts the request envelope and verifies the configured Google
@@ -195,8 +233,9 @@ from an explicitly synchronized, bound mirror. Offline writes are never queued.
 New cloud notification clients require a service supporting inbox_status; an
 older service must fail explicitly instead of falling back to inbox fetching.
 Policy-aware clients additionally require notification_status; they do not fall
-back to the older policy-free response. Coordination storage uses schema version
-2; upgrade/rollback procedure is in [recovery](../operations/backup-and-recovery.md#coordination-schema-upgrade).
+back to the older policy-free response. Shared task-board operations require the
+matching schema-3 service. The version-2 coordination and version-3 settings
+upgrades are described in [recovery](../operations/backup-and-recovery.md#coordination-schema-upgrade).
 
 ## Version output
 

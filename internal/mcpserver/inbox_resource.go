@@ -15,6 +15,7 @@ import (
 const InboxStatusURI = "clawbridge://inbox/status"
 
 type Options struct {
+	Taskboard    TaskboardTools
 	Context      context.Context
 	PollInterval time.Duration
 	PollTimeout  time.Duration

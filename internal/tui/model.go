@@ -25,7 +25,7 @@ const (
 	ModeCloud Mode = "cloud"
 )
 
-// Screen identifies one of the six operator views.
+// Screen identifies an operator view.
 type Screen string
 
 const (
@@ -145,6 +145,7 @@ func (f SetupFuncs) Apply(ctx context.Context, confirmation string) (ApplyResult
 // already-opened local executor; TUI never creates one. Cloud mode expects an
 // authenticated remote executor or compatible adapter.
 type Config struct {
+	Linear        LinearSource
 	InitialScreen Screen
 	CloudInfo     string
 	Executor      Executor
@@ -280,7 +281,9 @@ type Snapshot struct {
 
 // Model implements tea.Model and can be tested directly with UpdateModel.
 type Model struct {
-	cfg Config
+	linear       linearState
+	linearCancel context.CancelFunc
+	cfg          Config
 
 	screen Screen
 	width  int
@@ -333,6 +336,7 @@ const (
 	inputNone inputMode = iota
 	inputReply
 	inputSend
+	inputLinearName
 )
 
 // New validates the trusted mode and immutable boundary.
@@ -401,6 +405,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 // UpdateModel is the concrete counterpart to Update for tests and embedders.
 func (m Model) UpdateModel(msg tea.Msg) (Model, tea.Cmd) {
 	switch x := msg.(type) {
+	case linearLoadedMsg:
+		return m.applyLinear(x), nil
 	case ArchiveTickMsg:
 		m = m.reclassify(x.Now)
 		return m, archiveTick()
@@ -484,6 +490,11 @@ func (m Model) SetSize(width, height int) Model {
 // Show selects a screen and starts its read-only refresh. Screen selection never
 // changes trusted workspace, project, session or instance.
 func (m Model) Show(screen Screen) (Model, tea.Cmd) {
+	if m.linearCancel != nil {
+		m.linearCancel()
+		m.linearCancel = nil
+	}
+	m.loading = false
 	if _, ok := screenOrder[screen]; !ok {
 		m.actionErr = "unknown screen"
 		return m, nil
@@ -763,6 +774,8 @@ func (m Model) refreshView() (Model, tea.Cmd) {
 	m.confirm = ""
 	screen, requestID := m.screen, m.request
 	switch screen {
+	case ScreenLinear:
+		return m.linearRefresh()
 	case ScreenOverview:
 		if m.cfg.Executor == nil {
 			target := ScreenCloud
@@ -1074,6 +1087,8 @@ func (m Model) writesBlocked() bool {
 
 func (m Model) currentRows() []string {
 	switch m.screen {
+	case ScreenLinear:
+		return m.linearRows()
 	case ScreenProjects:
 		out := make([]string, len(m.projects))
 		for i := range m.projects {
@@ -1105,16 +1120,28 @@ func (m Model) currentRows() []string {
 func (m Model) updateKey(msg tea.KeyMsg) (Model, tea.Cmd) {
 	key := msg.String()
 	if key == "ctrl+c" {
+		if m.linearCancel != nil {
+			m.linearCancel()
+		}
 		return m, tea.Quit
 	}
 	if key == "esc" {
+		if m.screen == ScreenLinear {
+			return m.linearKey(key)
+		}
 		return m.CancelInput(), nil
 	}
 	if m.inputMode != inputNone || m.confirming {
 		return m.updateEditor(key, msg.Runes)
 	}
+	if m.screen == ScreenLinear && (key == "enter" || key == " " || key == "c" || key == "w" || key == "l" || key == "u" || key == "x") {
+		return m.linearKey(key)
+	}
 	switch key {
 	case "q":
+		if m.linearCancel != nil {
+			m.linearCancel()
+		}
 		return m, tea.Quit
 	case "1":
 		return m.Show(ScreenOverview)
@@ -1128,6 +1155,8 @@ func (m Model) updateKey(msg tea.KeyMsg) (Model, tea.Cmd) {
 		return m.Show(ScreenCloud)
 	case "6":
 		return m.Show(ScreenDoctor)
+	case "7":
+		return m.Show(ScreenLinear)
 	case "tab", "right":
 		return m.Show(screenAt(indexOf(m.screen) + 1))
 	case "shift+tab", "left":
@@ -1135,8 +1164,14 @@ func (m Model) updateKey(msg tea.KeyMsg) (Model, tea.Cmd) {
 	case "v":
 		return m.CycleFilter(), nil
 	case "]":
+		if m.screen == ScreenLinear {
+			return m.linearPage(true)
+		}
 		return m.NextPage()
 	case "[":
+		if m.screen == ScreenLinear {
+			return m.linearPage(false)
+		}
 		return m.PreviousPage()
 	case "pgdown":
 		return m.Scroll(max(1, m.height/2)), nil
@@ -1202,6 +1237,16 @@ func (m Model) updateEditor(key string, runes []rune) (Model, tea.Cmd) {
 		return m, nil
 	}
 	if key == "enter" {
+		if m.inputMode == inputLinearName {
+			name := strings.TrimSpace(m.draft)
+			if name == "" || len(name) > 128 {
+				m.actionErr = "Connection label requires1–128 characters"
+				return m, nil
+			}
+			m.inputMode = inputNone
+			m.draft = ""
+			return m.linearCommand(LinearRequest{Operation: "connect", Name: name, Access: m.linear.connectAccess})
+		}
 		if m.confirming {
 			return m.ApplySetup(m.confirm)
 		}
@@ -1247,9 +1292,9 @@ func containsControl(runes []rune) bool {
 
 var screenOrder = map[Screen]int{
 	ScreenOverview: 0, ScreenProjects: 1, ScreenSessions: 2,
-	ScreenInbox: 3, ScreenCloud: 4, ScreenDoctor: 5,
+	ScreenInbox: 3, ScreenCloud: 4, ScreenDoctor: 5, ScreenLinear: 6,
 }
-var orderedScreens = []Screen{ScreenOverview, ScreenProjects, ScreenSessions, ScreenInbox, ScreenCloud, ScreenDoctor}
+var orderedScreens = []Screen{ScreenOverview, ScreenProjects, ScreenSessions, ScreenInbox, ScreenCloud, ScreenDoctor, ScreenLinear}
 
 func indexOf(s Screen) int {
 	if i, ok := screenOrder[s]; ok {

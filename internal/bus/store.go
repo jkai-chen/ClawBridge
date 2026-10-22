@@ -98,7 +98,7 @@ func (s *Store) migrate() error {
 	if err = tx.QueryRow("PRAGMA user_version").Scan(&version); err != nil {
 		return err
 	}
-	if version > 2 {
+	if version > 3 {
 		return errors.New("database schema is newer than this ClawBridge binary")
 	}
 	if version == 0 {
@@ -115,6 +115,11 @@ func (s *Store) migrate() error {
 	}
 	if version < 2 {
 		if _, err = tx.Exec(`ALTER TABLE messages ADD COLUMN coordination TEXT; ALTER TABLE sessions ADD COLUMN notification_policy TEXT NOT NULL DEFAULT 'accept' CHECK(notification_policy IN ('accept','hold','refuse')); PRAGMA user_version=2;`); err != nil {
+			return err
+		}
+	}
+	if version < 3 {
+		if _, err = tx.Exec(taskboardSchema + `PRAGMA user_version=3;`); err != nil {
 			return err
 		}
 	}
@@ -232,6 +237,10 @@ func nameOK(v string) error {
 }
 func validateArgs(op string, a map[string]any) error {
 	allowed := map[string]string{
+		"taskboard_get":           "instance",
+		"taskboard_access":        "instance",
+		"taskboard_set":           "instance expected_revision linear_team_ids linear_default_team_id linear_project_id linear_workspace_id",
+		"taskboard_clear":         "instance expected_revision",
 		"inbox_status":            "instance after",
 		"notification_status":     "instance after",
 		"set_notification_policy": "instance policy",
@@ -246,9 +255,15 @@ func validateArgs(op string, a map[string]any) error {
 			return fmt.Errorf("unsupported argument %q for %s", k, op)
 		}
 		switch k {
-		case "retention_days", "limit", "after":
+		case "retention_days", "limit", "after", "expected_revision":
 			if _, err := integer(v); err != nil {
 				return fmt.Errorf("%s: %w", k, err)
+			}
+		case "linear_project_id", "linear_workspace_id":
+			if v != nil {
+				if _, ok := v.(string); !ok {
+					return fmt.Errorf("%s must be UUID or null", k)
+				}
 			}
 		case "coordination":
 			if _, err := ParseCoordination(v); err != nil {
@@ -258,7 +273,7 @@ func validateArgs(op string, a map[string]any) error {
 			if _, ok := v.(map[string]any); !ok {
 				return errors.New("transport must be an object")
 			}
-		case "ids":
+		case "ids", "linear_team_ids":
 			switch v.(type) {
 			case []string, []any:
 			default:
@@ -271,6 +286,16 @@ func validateArgs(op string, a map[string]any) error {
 		default:
 			if _, ok := v.(string); !ok {
 				return fmt.Errorf("%s must be a string", k)
+			}
+		}
+	}
+	if op == "taskboard_set" || op == "taskboard_clear" {
+		if _, err := taskboardExpected(a); err != nil {
+			return err
+		}
+		if op == "taskboard_set" {
+			if _, err := parseTaskboardMapping(a); err != nil {
+				return err
 			}
 		}
 	}
@@ -318,7 +343,7 @@ func (s *Store) Execute(ctx context.Context, r Request) (Result, error) {
 		return Result{}, errors.New("Postgres requires trusted ExecuteAs identity")
 	}
 	result, err := s.executeRequest(ctx, r)
-	if r.Operation == "inbox_status" || r.Operation == "notification_status" {
+	if r.Operation == "inbox_status" || r.Operation == "notification_status" || strings.HasPrefix(r.Operation, "taskboard_") {
 		err = classify(err)
 	}
 	return result, err
@@ -340,7 +365,7 @@ func (s *Store) executeRequest(ctx context.Context, r Request) (Result, error) {
 		return Result{}, err
 	}
 	options := &sql.TxOptions{}
-	if s.postgres && (r.Operation == "snapshot" || r.Operation == "inbox_status" || r.Operation == "notification_status") {
+	if s.postgres && (r.Operation == "snapshot" || r.Operation == "inbox_status" || r.Operation == "notification_status" || r.Operation == "taskboard_get" || r.Operation == "taskboard_access") {
 		options.Isolation = sql.LevelRepeatableRead
 		options.ReadOnly = true
 	}
@@ -358,7 +383,7 @@ func (s *Store) executeRequest(ctx context.Context, r Request) (Result, error) {
 			return Result{}, err
 		}
 	}
-	if s.postgres && r.Operation != "snapshot" && r.Operation != "inbox_status" && r.Operation != "notification_status" {
+	if s.postgres && r.Operation != "snapshot" && r.Operation != "inbox_status" && r.Operation != "notification_status" && r.Operation != "taskboard_get" && r.Operation != "taskboard_access" {
 		// Serialize a principal's rate-limit accounting across its workspaces.
 		if _, err = tx.ExecContext(ctx, `SELECT pg_advisory_xact_lock(hashtextextended(?,0))`, "principal:"+s.principal); err != nil {
 			return Result{}, err
@@ -415,7 +440,7 @@ func (s *Store) execute(ctx context.Context, tx *transaction, r Request) (any, e
 		if _, err = one(ctx, tx, `SELECT principal FROM members WHERE workspace_id=? AND principal=?`, wid, s.principal); err != nil {
 			return nil, scopedError(err, "workspace membership required", "forbidden")
 		}
-		if r.Operation != "snapshot" && r.Operation != "inbox_status" && r.Operation != "notification_status" {
+		if r.Operation != "snapshot" && r.Operation != "inbox_status" && r.Operation != "notification_status" && r.Operation != "taskboard_get" && r.Operation != "taskboard_access" {
 			if _, err = tx.ExecContext(ctx, `SELECT pg_advisory_xact_lock(hashtextextended(?,0))`, "workspace:"+wid); err != nil {
 				return nil, err
 			}
@@ -528,6 +553,31 @@ func (s *Store) execute(ctx context.Context, tx *transaction, r Request) (any, e
 		if actor["owner_principal"] != s.principal || str(a, "instance") == "" || actor["instance"] != str(a, "instance") {
 			return nil, errors.New("session instance mismatch; pass the instance returned by register")
 		}
+	}
+	if r.Operation == "taskboard_access" || r.Operation == "taskboard_get" || r.Operation == "taskboard_set" || r.Operation == "taskboard_clear" {
+		if r.Session == "" && str(a, "instance") != "" {
+			return nil, errors.New("instance requires session")
+		}
+		if r.Operation == "taskboard_access" {
+			access := TaskboardAccess{WorkspaceID: wid, ProjectID: pid, ProjectRole: projectRole, CanWrite: projectRole != "reader"}
+			if actor != nil {
+				access.SessionID = actor["id"].(string)
+				access.CanWrite = access.CanWrite && actor["status"] == "active"
+			}
+			return accessMap(access), nil
+		}
+		if r.Operation != "taskboard_get" && r.Operation != "taskboard_access" {
+			if projectRole != "owner" && projectRole != "lead" {
+				return nil, errors.New("project lead or owner permission required")
+			}
+			if actor != nil && actor["status"] != "active" {
+				return nil, errors.New("active actor permission required")
+			}
+		}
+		if actor != nil {
+			tx.actorID = actor["id"].(string)
+		}
+		return s.taskboard(ctx, tx, wid, pid, r.Operation, a)
 	}
 	// Metadata polling authorizes the actor above, but must never heartbeat it.
 	if r.Operation == "inbox_status" || r.Operation == "notification_status" {

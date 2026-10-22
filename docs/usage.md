@@ -139,6 +139,10 @@ retired. Stale presence after 15 minutes does not establish that a process died.
 
 Provider-neutral coordination instructions are in the [ClawBridge skill](../skills/clawbridge/SKILL.md).
 For Linear-backed tasks, use its [task-board workflow](../skills/clawbridge/references/task-board.md).
+To enable native task-board tools, connect a personal profile as described in the
+[Linear guide](linear.md), then pass its opaque ID with `--linear-profile ID`
+when starting the MCP process or running `mcp install`. This pins the connection
+without putting a credential in the agent configuration.
 Automatic inbox hints require the separately configured [notification feature](notifications.md).
 
 ## Terminal interface

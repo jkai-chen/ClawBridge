@@ -19,6 +19,7 @@ import (
 	"clawbridge/internal/mcpserver"
 	"clawbridge/internal/remote"
 	"clawbridge/internal/server"
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
 const Usage = `clawbridge: local and authenticated hosted agent messaging
@@ -28,14 +29,16 @@ Commands: setup --local, project create SLUG, register [NAME], sessions, send TO
           notification-status [--after N], notification-policy --policy accept|hold|refuse,
           host-status|host-wait --adapter codex --endpoint unix:///absolute/socket --thread UUID,
           notify --adapter json|codex --state ABSOLUTE_PATH [--thread UUID] [--interval 5s] [--once],
-          mcp, mcp install ..., serve, sync, purge-expired, doctor, tui [--screen SCREEN], version
+          linear COMMAND --help (native connection, scoped task board and task actions),
+          mcp [--linear-profile ID], mcp install ... [--linear-profile ID] (opt-in native Linear tools),
+          serve, sync, purge-expired, doctor, tui [--screen SCREEN], version
 Interactive: bare clawbridge opens the selected profile or guided join; setup wizard starts guided join.
 Onboarding: setup join --server URL --workspace TEAM --project CODEBASE [--login|--device]
 setup --cloud initializes an existing service only; no infrastructure is created.
 Global: --client-config /absolute/path/config.toml (trusted route; not agent --config)
 Commands: login [--device|--use-gcloud], logout
 Cloud flags: --mode cloud --server URL --audience AUDIENCE [--credential-source oauth|gcloud|adc] [--oauth-client-id ID --oauth-client-secret CREDENTIAL --oauth-device-client-id ID --oauth-device-client-secret CREDENTIAL] [--principal EMAIL] [--cache PATH]
-All normal results are JSON with source. See CORE-API.md for command flags and isolated test environment variables.
+All normal results are JSON with source. See docs/reference/api.md for command flags and isolated test environment variables.
 `
 
 var (
@@ -54,7 +57,7 @@ func extractGlobals(args []string) (Config, []string, error) {
 	var c Config
 	rest := []string{}
 	targets := map[string]*string{
-		"client-config": &c.ClientConfig, "db": &c.DB, "workspace": &c.Workspace, "project": &c.Project,
+		"linear-profile": &c.LinearProfile, "client-config": &c.ClientConfig, "db": &c.DB, "workspace": &c.Workspace, "project": &c.Project,
 		"session": &c.Session, "instance": &c.Instance, "server": &c.Server,
 		"audience": &c.Audience, "account": &c.Account,
 		"impersonate-service-account": &c.ImpersonateServiceAccount,
@@ -101,6 +104,9 @@ func extractGlobals(args []string) (Config, []string, error) {
 		}
 		if val == "" {
 			return c, nil, fmt.Errorf("--%s requires a nonempty value", name)
+		}
+		if name == "linear-profile" && !validLinearProfile(val) {
+			return c, nil, errors.New("invalid personal Linear profile ID")
 		}
 		if name == "client-config" {
 			if c.ClientConfig != "" {
@@ -188,6 +194,9 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	}
 	if rest[0] == "tui" {
 		return runTUI(ctx, flags, rest[1:], stdout, stderr)
+	}
+	if rest[0] == "linear" {
+		return runLinear(ctx, flags, rest[1:], stdout, stderr)
 	}
 	if rest[0] == "host-status" || rest[0] == "host-wait" {
 		return runHost(ctx, rest[0], rest[1:], stdout, stderr)
@@ -569,6 +578,19 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	if command == "mcp" {
 		if config.Session == "" {
 			return errors.New("mcp requires an explicit --session or configured session")
+		}
+		if flags.LinearProfile != "" {
+			if !validLinearProfile(flags.LinearProfile) {
+				return errors.New("invalid explicit Linear profile")
+			}
+			directory, e := linearDirectory()
+			if e != nil {
+				return e
+			}
+			manager := newLinearManager(directory)
+			board := newLinearService(directory, flags.LinearProfile, manager, executor, linearAuthority(config))
+			native := mcpserver.NewServerWithOptions(executor, config.Workspace, config.Project, config.Session, config.Instance, mcpserver.Options{Context: ctx, Taskboard: board})
+			return native.Run(ctx, &mcp.StdioTransport{})
 		}
 		if cloudClient != nil {
 			return mcpserver.RunExecutor(ctx, cloudClient, config.Workspace, config.Project, config.Session, config.Instance)

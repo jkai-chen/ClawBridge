@@ -38,7 +38,8 @@ MAC addresses, local usernames, home paths or IP addresses automatically.
 
 Before implementing inventory, publish exact registration/resume/move behavior,
 cloned-state collision recovery, key rotation/reinstallation behavior and
-workspace-member visibility rules in CORE-API.md. A host identifier alone must
+workspace-member visibility rules in the [API reference](../reference/api.md).
+A host identifier alone must
 never grant permission, resume an actor, fence an instance or change the
 verified session owner. Historical messages must retain their action-time
 attribution if mutable labels or current session placement change.

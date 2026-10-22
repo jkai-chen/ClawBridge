@@ -61,7 +61,11 @@ contain the trusted config path and safe routing values, rather than credentials
 
 ## Task ownership
 
-Linear's existing MCP/skills provide the task graph and durable decisions. The
+The [native Linear connection](linear.md) provides scoped task-board actions
+through CLI, TUI and the local MCP adapter; a separate official Linear MCP remains
+optional for additional operations. Personal keyring profiles are separate from
+the shared project-to-team/project mapping. Linear provides the task graph and
+durable decisions. The
 [agent task-board workflow](../skills/clawbridge/references/task-board.md) binds
 an assigned slice to a ClawBridge session, resolves its dependency owners and
 uses peer messages for cooperation. Coordinator assignments resolve overlapping

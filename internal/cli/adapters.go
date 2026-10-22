@@ -32,7 +32,7 @@ func runInstall(ctx context.Context, flags Config, args []string, stdout, stderr
 	c.Instance = flags.Instance
 	inherited := []string{}
 	for _, item := range []struct{ name, value string }{
-		{"db", c.DB}, {"workspace", c.Workspace}, {"project", c.Project}, {"session", c.Session}, {"instance", c.Instance}, {"mode", c.Mode},
+		{"linear-profile", flags.LinearProfile}, {"db", c.DB}, {"workspace", c.Workspace}, {"project", c.Project}, {"session", c.Session}, {"instance", c.Instance}, {"mode", c.Mode},
 		{"server", c.Server}, {"audience", c.Audience}, {"account", c.Account}, {"impersonate-service-account", c.ImpersonateServiceAccount},
 		{"principal", c.Principal}, {"cache", c.Cache}, {"credential-source", c.CredentialSource}, {"credentials-file", c.CredentialsFile},
 		{"oauth-client-id", c.OAuthClientID}, {"oauth-device-client-id", c.OAuthDeviceClientID}, {"oauth-keyring-service", c.OAuthKeyringService},
@@ -48,7 +48,7 @@ func runInstall(ctx context.Context, flags Config, args []string, stdout, stderr
 }
 
 func mcpSelection(c Config, path, agent, target, name, session, instance string) doctor.MCPConfig {
-	return doctor.MCPConfig{ClientConfig: func() string {
+	return doctor.MCPConfig{LinearProfile: c.LinearProfile, ClientConfig: func() string {
 		if c.Mode == "cloud" {
 			return path
 		}
@@ -101,7 +101,7 @@ var runTUIProgram = tui.RunProgram
 func runTUI(ctx context.Context, flags Config, args []string, stdout, stderr io.Writer) error {
 	screen := "overview"
 	_, err := commandFlags("tui", args, stderr, func(f *flag.FlagSet) {
-		f.StringVar(&screen, "screen", "overview", "overview, projects, sessions, inbox, cloud or doctor")
+		f.StringVar(&screen, "screen", "overview", "overview, projects, sessions, inbox, cloud, doctor or linear")
 	})
 	if errors.Is(err, flag.ErrHelp) {
 		return nil
@@ -110,7 +110,7 @@ func runTUI(ctx context.Context, flags Config, args []string, stdout, stderr io.
 		return err
 	}
 	switch tui.Screen(screen) {
-	case tui.Overview, tui.Projects, tui.Sessions, tui.Inbox, tui.Cloud, tui.Doctor:
+	case tui.Overview, tui.Projects, tui.Sessions, tui.Inbox, tui.Cloud, tui.Doctor, tui.Linear:
 	default:
 		return errors.New("invalid TUI screen")
 	}
@@ -147,7 +147,11 @@ func runTUI(ctx context.Context, flags Config, args []string, stdout, stderr io.
 	} else {
 		info = "Local authority.\n" + info
 	}
-	model, err := tui.New(tui.Config{Executor: executor, Mode: tui.Mode(c.Mode), Workspace: c.Workspace, Project: c.Project, Session: c.Session, Instance: c.Instance, Server: c.Server, Audience: c.Audience, Principal: c.Principal, Context: bounded, InitialScreen: tui.Screen(screen), CloudInfo: info,
+	linearSource, e := newLinearTUISource(c, executor)
+	if e != nil {
+		return e
+	}
+	model, err := tui.New(tui.Config{Linear: linearSource, Executor: executor, Mode: tui.Mode(c.Mode), Workspace: c.Workspace, Project: c.Project, Session: c.Session, Instance: c.Instance, Server: c.Server, Audience: c.Audience, Principal: c.Principal, Context: bounded, InitialScreen: tui.Screen(screen), CloudInfo: info,
 		Doctor: tui.DoctorFunc(func(ctx context.Context) ([]tui.Check, error) {
 			report, e := collectDoctor(ctx, c, path, executor)
 			if e != nil {

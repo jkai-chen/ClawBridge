@@ -94,6 +94,11 @@ function Move-ClawBridgeFile([string]$Source, [string]$Destination) {
     if (($script:mode -eq 'move-in-failure' -and $staged) -or ($script:mode -eq 'restore-failure' -and ($staged -or $restoring))) { throw 'synthetic move failure' }
     [IO.File]::Move($Source, $Destination)
 }
+function Format-TestUserPath {
+    $state = Get-TestUserPath
+    if ($null -eq $state) { return '<none>' }
+    return [string]$state.Kind + '|' + [string]$state.Value
+}
 $script:skillRuns = New-Object 'Collections.Generic.List[string]'
 function Invoke-ClawBridgeSkillInstall([string]$Binary) {
     $script:skillRuns.Add($Binary)
@@ -107,7 +112,10 @@ function ConvertTo-RecordText {
     })
     return ($messages -join "`n")
 }
-function Assert-True([bool]$Value, [string]$Message) { if (-not $Value) { throw $Message } }
+# Failures are collected, not thrown, so one run reports every problem; the
+# script fails once at the end with the full list.
+$script:failures = New-Object 'Collections.Generic.List[string]'
+function Assert-True([bool]$Value, [string]$Message) { if (-not $Value) { $script:failures.Add($Message) } }
 function Expect-Failure([scriptblock]$Body) {
     $failed = $false
     try { & $Body | Out-Null } catch { $failed = $true }
@@ -116,6 +124,21 @@ function Expect-Failure([scriptblock]$Body) {
 function Assert-Cleanup {
     foreach ($path in $script:privateDirectories) { Assert-True (-not (Test-Path -LiteralPath $path)) ('temporary leaked: ' + $path) }
     foreach ($path in $script:backups) { Assert-True (-not (Test-Path -LiteralPath $path)) ('backup leaked: ' + $path) }
+}
+function Reset-TestSession {
+    $script:mode = 'ok'
+    $env:Path = $savedPath
+    [Net.ServicePointManager]::SecurityProtocol = $savedProtocols
+    Remove-Item Env:CLAWBRIDGE_TEST_ROOT -ErrorAction SilentlyContinue
+    Clear-TestUserPath
+}
+# Runs one self-contained case from a reset session. An unexpected error ends
+# only that case; its failures are prefixed with the case name.
+function Invoke-Case([string]$Name, [scriptblock]$Body) {
+    Reset-TestSession
+    $failuresBefore = $script:failures.Count
+    try { & $Body } catch { $script:failures.Add('stopped by an unexpected error: ' + $_.Exception.Message) } finally { Reset-TestSession }
+    for ($i = $failuresBefore; $i -lt $script:failures.Count; $i++) { $script:failures[$i] = $Name + ': ' + $script:failures[$i] }
 }
 try {
     $destination = Join-Path $fixtureRoot 'bin with spaces'
@@ -239,109 +262,141 @@ try {
     }
     foreach ($path in $script:backups) { if ([IO.File]::Exists($path)) { [IO.File]::Delete($path) } }
     Assert-Cleanup
-    # User Path persistence: %VARIABLES% and the value kind survive, entries
-    # match case-insensitively and with trailing slashes, and failures only warn.
-    $env:CLAWBRIDGE_TEST_ROOT = $fixtureRoot
-    $broadcastsBefore = $script:broadcasts
-    Set-TestUserPath '%SystemRoot%\tools;C:\Other'
-    Install-ClawBridge -Version v0.1.0 -InstallDir $destination -NoSkill | Out-Null
-    $userPath = Get-TestUserPath
-    Assert-True ($userPath.Value -ceq ('%SystemRoot%\tools;C:\Other;' + $destination)) ('variables not preserved: ' + $userPath.Value)
-    Assert-True ($userPath.Kind -eq [Microsoft.Win32.RegistryValueKind]::ExpandString) 'REG_EXPAND_SZ not kept'
-    Assert-True ($script:broadcasts -eq $broadcastsBefore + 1) 'appending did not broadcast'
-    Set-TestUserPath 'C:\Other;' ([Microsoft.Win32.RegistryValueKind]::String)
-    Install-ClawBridge -Version v0.1.0 -InstallDir $destination -NoSkill | Out-Null
-    $userPath = Get-TestUserPath
-    Assert-True ($userPath.Value -ceq ('C:\Other;' + $destination)) ('trailing separator mishandled: ' + $userPath.Value)
-    Assert-True ($userPath.Kind -eq [Microsoft.Win32.RegistryValueKind]::String) 'REG_SZ kind not kept'
-    $broadcastsBefore = $script:broadcasts
-    foreach ($present in @(
-        ('C:\Other;' + $destination.ToUpperInvariant() + '\'),
-        ($destination.ToLowerInvariant() + '/;C:\Other'),
-        '%CLAWBRIDGE_TEST_ROOT%\bin with spaces\',
-        ('"' + $destination + '"'))) {
-        Set-TestUserPath $present
+    # The cases below are self-contained: each takes its own baselines right
+    # before the action it measures, and Invoke-Case restores the session.
+    Invoke-Case 'user Path keeps %VARIABLES% and REG_EXPAND_SZ' {
+        Set-TestUserPath '%SystemRoot%\tools;C:\Other'
+        $broadcastsBefore = $script:broadcasts
         Install-ClawBridge -Version v0.1.0 -InstallDir $destination -NoSkill | Out-Null
-        Assert-True ((Get-TestUserPath).Value -ceq $present) ('duplicate added to: ' + $present)
-    }
-    Assert-True ($script:broadcasts -eq $broadcastsBefore) 'an existing entry must not broadcast'
-    # A directory with ';' cannot be a PATH entry: warn, never append, every time.
-    $semicolon = Join-Path $fixtureRoot 'bin;semicolon'
-    Set-TestUserPath 'C:\Other'
-    $env:Path = $savedPath
-    foreach ($attempt in 1..2) {
-        $refused = Install-ClawBridge -Version v0.1.0 -InstallDir $semicolon -NoSkill 3>&1 | ConvertTo-RecordText
-        Assert-True ($refused -like '*PATH was not changed*contains ; or "*') ('a ; directory must warn: ' + $refused)
-        Assert-True ((Get-TestUserPath).Value -ceq 'C:\Other') ('a ; directory reached the user Path: ' + (Get-TestUserPath).Value)
-        Assert-True ($env:Path -ceq $savedPath) 'a ; directory reached the session Path'
-        Assert-True ($script:broadcasts -eq $broadcastsBefore) 'a refused directory broadcast'
-    }
-    Assert-True ([IO.File]::Exists((Join-Path $semicolon 'clawbridge.exe'))) 'a ; directory must still install the binary'
-    Assert-Cleanup
-    # An older clawbridge earlier on PATH: warn with both paths, put the new one
-    # first in this session, and still only append to the persisted Path.
-    $older = Join-Path $fixtureRoot 'older install'
-    $null = [IO.Directory]::CreateDirectory($older)
-    $olderBinary = Join-Path $older 'clawbridge.exe'
-    [IO.File]::WriteAllText($olderBinary, 'older binary')
-    $env:Path = $older + ';' + $savedPath
-    $shadowOutput = Install-ClawBridge -Version v0.1.0 -InstallDir $destination -NoSkill 3>&1 | ConvertTo-RecordText
-    Assert-True ($shadowOutput -like ('*' + $olderBinary + '*not the binary just installed at ' + $binary + '*')) ('shadowing must warn with both paths: ' + $shadowOutput)
-    Assert-True ($env:Path -ceq ($destination + ';' + $older + ';' + $savedPath)) ('the session must put the new binary first: ' + $env:Path)
-    Assert-True ((Get-Command -Name clawbridge -CommandType Application | Select-Object -First 1).Path -ieq $binary) 'this session does not resolve the new binary'
-    Assert-True ((Get-TestUserPath).Value -ceq ('C:\Other;' + $destination)) 'the persisted Path must append'
-    $rerun = Install-ClawBridge -Version v0.1.0 -InstallDir $destination -NoSkill 3>&1 | ConvertTo-RecordText
-    Assert-True (-not ($rerun -like '*not the binary just installed*')) 'a resolved install still warned about shadowing'
-    Assert-True ($env:Path -ceq ($destination + ';' + $older + ';' + $savedPath)) 'a rerun changed the session Path again'
-    Assert-Cleanup
-    Clear-TestUserPath
-    $env:Path = $savedPath
-    $noModifyOutput = Install-ClawBridge -Version v0.1.0 -InstallDir $destination -NoSkill -NoModifyPath | ConvertTo-RecordText
-    Assert-True ($null -eq (Get-TestUserPath)) '-NoModifyPath wrote the user Path'
-    Assert-True ($env:Path -ceq $savedPath) '-NoModifyPath changed the session Path'
-    Assert-True ($script:broadcasts -eq $broadcastsBefore) '-NoModifyPath broadcast'
-    Assert-True ($noModifyOutput -like '*PATH was not changed*') '-NoModifyPath must print the manual step'
-    $key = [Microsoft.Win32.Registry]::CurrentUser.CreateSubKey($script:registryKey)
-    try { $key.SetValue('Path', 7, [Microsoft.Win32.RegistryValueKind]::DWord) } finally { $key.Dispose() }
-    [IO.File]::WriteAllText($binary, 'old binary')
-    $warned = Install-ClawBridge -Version v0.1.0 -InstallDir $destination -NoSkill 3>&1 | ConvertTo-RecordText
-    Assert-True ($warned -like '*user PATH was not updated*') 'a registry failure must warn'
-    Assert-True ((Get-FileHash -LiteralPath $binary).Hash.ToLowerInvariant() -ceq $script:digest) 'a registry failure undid the install'
-    Assert-True ((Get-TestUserPath).Kind -eq [Microsoft.Win32.RegistryValueKind]::DWord) 'an unexpected Path value was overwritten'
-    Assert-Cleanup
-    $env:Path = $savedPath
-    # TLS 1.2 (and 1.3 where supported) is added to, never replaces, the enabled protocols.
-    [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls11
-    Install-ClawBridge -Version v0.1.0 -InstallDir $destination -NoSkill -NoModifyPath | Out-Null
-    $protocols = [Net.ServicePointManager]::SecurityProtocol
-    Assert-True (($protocols -band [Net.SecurityProtocolType]::Tls12) -eq [Net.SecurityProtocolType]::Tls12) 'TLS 1.2 not enabled'
-    Assert-True (($protocols -band [Net.SecurityProtocolType]::Tls11) -eq [Net.SecurityProtocolType]::Tls11) 'an enabled protocol was removed'
-    if ([Enum]::GetNames([Net.SecurityProtocolType]) -contains 'Tls13' -and [Environment]::OSVersion.Version.Build -ge 20348) {
-        Assert-True (($protocols -band [Net.SecurityProtocolType]::Tls13) -eq [Net.SecurityProtocolType]::Tls13) 'TLS 1.3 not enabled where supported'
-    }
-    [Net.ServicePointManager]::SecurityProtocol = $savedProtocols
-    Assert-Cleanup
-    $savedLocalAppData = $env:LOCALAPPDATA
-    try {
-        $env:LOCALAPPDATA = Join-Path $fixtureRoot 'isolated local app data'
-        Install-ClawBridge -Version v0.1.0 | Out-Null
-        Assert-True ([IO.File]::Exists((Join-Path $env:LOCALAPPDATA 'Programs\ClawBridge\clawbridge.exe'))) 'default per-user destination missing'
+        $state = Format-TestUserPath
+        Assert-True ($state -ceq ('ExpandString|%SystemRoot%\tools;C:\Other;' + $destination)) ('variables or kind not preserved: ' + $state)
+        Assert-True ($script:broadcasts -eq $broadcastsBefore + 1) 'appending did not broadcast once'
         Assert-Cleanup
-    } finally { $env:LOCALAPPDATA = $savedLocalAppData }
+    }
+    Invoke-Case 'user Path keeps REG_SZ and a trailing separator' {
+        Set-TestUserPath 'C:\Other;' ([Microsoft.Win32.RegistryValueKind]::String)
+        Install-ClawBridge -Version v0.1.0 -InstallDir $destination -NoSkill | Out-Null
+        $state = Format-TestUserPath
+        Assert-True ($state -ceq ('String|C:\Other;' + $destination)) ('REG_SZ or trailing separator mishandled: ' + $state)
+        Assert-Cleanup
+    }
+    Invoke-Case 'an existing entry in another spelling is not duplicated' {
+        $env:CLAWBRIDGE_TEST_ROOT = $fixtureRoot
+        foreach ($present in @(
+            ('C:\Other;' + $destination.ToUpperInvariant() + '\'),
+            ($destination.ToLowerInvariant() + '/;C:\Other'),
+            '%CLAWBRIDGE_TEST_ROOT%\bin with spaces\',
+            ('"' + $destination + '"'))) {
+            Set-TestUserPath $present
+            $broadcastsBefore = $script:broadcasts
+            Install-ClawBridge -Version v0.1.0 -InstallDir $destination -NoSkill | Out-Null
+            $state = Format-TestUserPath
+            Assert-True ($state -ceq ('ExpandString|' + $present)) ('duplicate added to ' + $present + ': ' + $state)
+            Assert-True ($script:broadcasts -eq $broadcastsBefore) ('an existing entry broadcast: ' + $present)
+        }
+        Assert-Cleanup
+    }
+    Invoke-Case 'a directory with ; is never added to PATH' {
+        $semicolon = Join-Path $fixtureRoot 'bin;semicolon'
+        Set-TestUserPath 'C:\Other'
+        foreach ($attempt in 1..2) {
+            $sessionBefore = $env:Path
+            $broadcastsBefore = $script:broadcasts
+            $refused = Install-ClawBridge -Version v0.1.0 -InstallDir $semicolon -NoSkill 3>&1 | ConvertTo-RecordText
+            Assert-True ($refused -like '*PATH was not changed*contains ; or "*') ('a ; directory must warn: ' + $refused)
+            $state = Format-TestUserPath
+            Assert-True ($state -ceq 'ExpandString|C:\Other') ('a ; directory reached the user Path: ' + $state)
+            Assert-True ($env:Path -ceq $sessionBefore) 'a ; directory reached the session Path'
+            Assert-True ($script:broadcasts -eq $broadcastsBefore) 'a refused directory broadcast'
+        }
+        Assert-True ([IO.File]::Exists((Join-Path $semicolon 'clawbridge.exe'))) 'a ; directory must still install the binary'
+        Assert-Cleanup
+    }
+    Invoke-Case 'an older clawbridge earlier on PATH is reported and outranked in this session' {
+        $older = Join-Path $fixtureRoot 'older install'
+        $null = [IO.Directory]::CreateDirectory($older)
+        $olderBinary = Join-Path $older 'clawbridge.exe'
+        [IO.File]::WriteAllText($olderBinary, 'older binary')
+        Set-TestUserPath 'C:\Other'
+        $env:Path = $older + ';' + $savedPath
+        $shadowOutput = Install-ClawBridge -Version v0.1.0 -InstallDir $destination -NoSkill 3>&1 | ConvertTo-RecordText
+        Assert-True ($shadowOutput.Contains($olderBinary + ', not the binary just installed at ' + $binary)) ('shadowing must warn with both paths: ' + $shadowOutput)
+        Assert-True ($env:Path -ceq ($destination + ';' + $older + ';' + $savedPath)) ('the session must put the new binary first: ' + $env:Path)
+        $resolved = @(Get-Command -Name clawbridge -CommandType Application -ErrorAction SilentlyContinue)
+        Assert-True ($resolved.Count -gt 0 -and $resolved[0].Path -ieq $binary) 'this session does not resolve the new binary'
+        $state = Format-TestUserPath
+        Assert-True ($state -ceq ('ExpandString|C:\Other;' + $destination)) ('the persisted Path must append: ' + $state)
+        $sessionBefore = $env:Path
+        $rerun = Install-ClawBridge -Version v0.1.0 -InstallDir $destination -NoSkill 3>&1 | ConvertTo-RecordText
+        Assert-True (-not $rerun.Contains('not the binary just installed')) 'a resolved install still warned about shadowing'
+        Assert-True ($env:Path -ceq $sessionBefore) 'a rerun changed the session Path again'
+        Assert-Cleanup
+    }
+    Invoke-Case '-NoModifyPath changes no PATH' {
+        $sessionBefore = $env:Path
+        $broadcastsBefore = $script:broadcasts
+        $noModifyOutput = Install-ClawBridge -Version v0.1.0 -InstallDir $destination -NoSkill -NoModifyPath | ConvertTo-RecordText
+        $state = Format-TestUserPath
+        Assert-True ($state -ceq '<none>') ('-NoModifyPath wrote the user Path: ' + $state)
+        Assert-True ($env:Path -ceq $sessionBefore) '-NoModifyPath changed the session Path'
+        Assert-True ($script:broadcasts -eq $broadcastsBefore) '-NoModifyPath broadcast'
+        Assert-True ($noModifyOutput -like '*PATH was not changed*') '-NoModifyPath must print the manual step'
+        Assert-Cleanup
+    }
+    Invoke-Case 'an unexpected user Path value only warns' {
+        $key = [Microsoft.Win32.Registry]::CurrentUser.CreateSubKey($script:registryKey)
+        try { $key.SetValue('Path', 7, [Microsoft.Win32.RegistryValueKind]::DWord) } finally { $key.Dispose() }
+        [IO.File]::WriteAllText($binary, 'old binary')
+        $broadcastsBefore = $script:broadcasts
+        $warned = Install-ClawBridge -Version v0.1.0 -InstallDir $destination -NoSkill 3>&1 | ConvertTo-RecordText
+        Assert-True ($warned -like '*user PATH was not updated*') ('a registry failure must warn: ' + $warned)
+        Assert-True ((Get-FileHash -LiteralPath $binary).Hash.ToLowerInvariant() -ceq $script:digest) 'a registry failure undid the install'
+        $state = Format-TestUserPath
+        Assert-True ($state -ceq 'DWord|7') ('an unexpected Path value was overwritten: ' + $state)
+        Assert-True ($script:broadcasts -eq $broadcastsBefore) 'a failed Path update broadcast'
+        Assert-Cleanup
+    }
+    Invoke-Case 'TLS 1.2 is added to the enabled protocols' {
+        [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls11
+        Install-ClawBridge -Version v0.1.0 -InstallDir $destination -NoSkill -NoModifyPath | Out-Null
+        $protocols = [Net.ServicePointManager]::SecurityProtocol
+        Assert-True (($protocols -band [Net.SecurityProtocolType]::Tls12) -eq [Net.SecurityProtocolType]::Tls12) ('TLS 1.2 not enabled: ' + $protocols)
+        Assert-True (($protocols -band [Net.SecurityProtocolType]::Tls11) -eq [Net.SecurityProtocolType]::Tls11) ('an enabled protocol was removed: ' + $protocols)
+        if ([Enum]::GetNames([Net.SecurityProtocolType]) -contains 'Tls13' -and [Environment]::OSVersion.Version.Build -ge 20348) {
+            Assert-True (($protocols -band [Net.SecurityProtocolType]::Tls13) -eq [Net.SecurityProtocolType]::Tls13) ('TLS 1.3 not enabled where supported: ' + $protocols)
+        }
+        Assert-Cleanup
+    }
+    Invoke-Case 'the default destination is per-user' {
+        $savedLocalAppData = $env:LOCALAPPDATA
+        try {
+            $env:LOCALAPPDATA = Join-Path $fixtureRoot 'isolated local app data'
+            Install-ClawBridge -Version v0.1.0 -NoModifyPath | Out-Null
+            Assert-True ([IO.File]::Exists((Join-Path $env:LOCALAPPDATA 'Programs\ClawBridge\clawbridge.exe'))) 'default per-user destination missing'
+            Assert-Cleanup
+        } finally { $env:LOCALAPPDATA = $savedLocalAppData }
+    }
     # Directory junctions work without developer-mode symlink privileges.
-    $junction = Join-Path $fixtureRoot 'junction'
-    $null = New-Item -ItemType Junction -Path $junction -Target $destination
-    $script:requests.Clear()
-    Expect-Failure { Install-ClawBridge -Version v0.1.0 -InstallDir $junction }
-    Assert-True ($script:requests.Count -eq 0) 'junction accessed transport'
-    [IO.Directory]::Delete($junction)
-    $script:requests.Clear()
-    [IO.File]::Delete($binary)
-    $null = [IO.Directory]::CreateDirectory($binary)
-    Expect-Failure { Install-ClawBridge -Version v0.1.0 -InstallDir $destination }
-    Assert-True ($script:requests.Count -eq 0) 'directory destination accessed transport'
-    Assert-Cleanup
-    Write-Output 'PASS: native Windows installer latest/pinning/rename replacement/locked refusal/running upgrade/preservation/validation/reparse/cleanup/skill/user PATH/TLS fixtures'
+    Invoke-Case 'a junction destination is refused before transport' {
+        $junction = Join-Path $fixtureRoot 'junction'
+        $null = New-Item -ItemType Junction -Path $junction -Target $destination
+        try {
+            $script:requests.Clear()
+            Expect-Failure { Install-ClawBridge -Version v0.1.0 -InstallDir $junction }
+            Assert-True ($script:requests.Count -eq 0) 'junction accessed transport'
+        } finally { [IO.Directory]::Delete($junction) }
+        Assert-Cleanup
+    }
+    Invoke-Case 'a directory at the binary path is refused before transport' {
+        $script:requests.Clear()
+        [IO.File]::Delete($binary)
+        $null = [IO.Directory]::CreateDirectory($binary)
+        Expect-Failure { Install-ClawBridge -Version v0.1.0 -InstallDir $destination }
+        Assert-True ($script:requests.Count -eq 0) 'directory destination accessed transport'
+        Assert-Cleanup
+    }
+} catch {
+    $script:failures.Add('stopped by an unexpected error: ' + $_.Exception.Message)
 } finally {
     $env:Path = $savedPath
     Remove-Item Env:CLAWBRIDGE_TEST_ROOT -ErrorAction SilentlyContinue
@@ -357,3 +412,7 @@ try {
     if (Test-Path -LiteralPath (Join-Path $fixtureRoot 'junction')) { [IO.Directory]::Delete((Join-Path $fixtureRoot 'junction')) }
     [IO.Directory]::Delete($fixtureRoot, $true)
 }
+if ($script:failures.Count -gt 0) {
+    throw ([string]$script:failures.Count + ' installer fixture failure(s):' + "`n- " + ($script:failures -join "`n- "))
+}
+Write-Output 'PASS: native Windows installer latest/pinning/rename replacement/locked refusal/running upgrade/preservation/validation/reparse/cleanup/skill/user PATH/TLS fixtures'

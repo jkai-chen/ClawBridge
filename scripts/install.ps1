@@ -176,7 +176,7 @@ public static extern IntPtr SendMessageTimeout(IntPtr hWnd, uint Msg, UIntPtr wP
     $null = [ClawBridgeInstaller.NativeMethods]::SendMessageTimeout([IntPtr]0xffff, 0x1A, [UIntPtr]::Zero, 'Environment', 2, 5000, [ref]$result)
 }
 
-# The replaced binary is renamed to this path. A running `clawbridge mcp` keeps
+# The previous binary is renamed to this path. A running `clawbridge mcp` keeps
 # it mapped, so it may outlive the install: it goes to %TEMP% where possible
 # (renames need the same volume) and otherwise beside the binary, never as .exe.
 function Get-ClawBridgeBackupPath([string]$InstallDir) {
@@ -267,13 +267,24 @@ function Install-ClawBridge([string]$Version = '', [string]$InstallDir = '', [sw
         $backup = $null
         if ([IO.File]::Exists($destination)) {
             $backup = Get-ClawBridgeBackupPath $InstallDir
+            $inUse = 'Could not replace ' + $destination + ', which is in use. Close the agents running `clawbridge mcp` and any other clawbridge process, then run the installer again.'
+            # File.Replace refuses a running image, but Windows allows renaming
+            # it, so move the old binary aside, then move the new one in.
             try {
-                # Replace is atomic on the same volume.
-                [IO.File]::Replace($stagedBinary, $destination, $backup)
+                [IO.File]::Move($destination, $backup)
             } catch {
-                # Replace can fail after renaming the old binary to the backup.
-                if (-not [IO.File]::Exists($destination) -and [IO.File]::Exists($backup)) { [IO.File]::Move($backup, $destination) }
-                throw ('Could not replace ' + $destination + ', which is in use. Close the agents running `clawbridge mcp` and any other clawbridge process, then run the installer again. (' + $_.Exception.Message + ')')
+                throw ($inUse + ' (' + $_.Exception.Message + ')')
+            }
+            try {
+                [IO.File]::Move($stagedBinary, $destination)
+            } catch {
+                $reason = $_.Exception.Message
+                try {
+                    [IO.File]::Move($backup, $destination)
+                } catch {
+                    throw ('Could not install ' + $destination + ' or restore the previous binary, which is now at ' + $backup + '; move it back to ' + $destination + '. (' + $reason + ')')
+                }
+                throw ($inUse + ' (' + $reason + ')')
             }
         } else {
             [IO.File]::Move($stagedBinary, $destination)

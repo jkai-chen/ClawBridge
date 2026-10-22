@@ -165,8 +165,8 @@ try {
     Assert-True ($script:requests.Count -eq 1) 'bad latest downloaded a payload'
     $script:mode = 'ok'
     $script:requests.Clear()
-    # A locked existing executable must survive atomic replacement failure,
-    # with a clear instruction and no success message.
+    # A file held open without sharing cannot even be renamed: it must survive
+    # the refused upgrade, with a clear instruction and no success message.
     $lockedOutput = New-Object 'Collections.Generic.List[string]'
     $lockedError = ''
     $locked = [IO.File]::Open($binary, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::None)
@@ -298,7 +298,7 @@ try {
     Expect-Failure { Install-ClawBridge -Version v0.1.0 -InstallDir $destination }
     Assert-True ($script:requests.Count -eq 0) 'directory destination accessed transport'
     Assert-Cleanup
-    Write-Output 'PASS: native Windows installer latest/pinning/atomic replacement/running upgrade/preservation/validation/reparse/cleanup/skill/user PATH/TLS fixtures'
+    Write-Output 'PASS: native Windows installer latest/pinning/rename replacement/locked refusal/running upgrade/preservation/validation/reparse/cleanup/skill/user PATH/TLS fixtures'
 } finally {
     $env:Path = $savedPath
     Remove-Item Env:CLAWBRIDGE_TEST_ROOT -ErrorAction SilentlyContinue

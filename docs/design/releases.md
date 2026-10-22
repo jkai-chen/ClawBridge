@@ -142,7 +142,7 @@ Detect native x64 even under a 32-bit PowerShell process; do not claim ARM suppo
 
 The same latest-once/exact-tag, fixed HTTPS repository, bounded download, strict
 single checksum entry, no remote code execution, private staging, same-volume
-atomic replacement, existing-binary preservation, cleanup and no-auto-launch
+rename replacement, existing-binary preservation, cleanup and no-auto-launch
 rules apply. Use Get-FileHash SHA256 and .NET/native file primitives compatible
 with both shells. Refuse destination reparse points/symlinks/directories. A file
 whose replacement Windows refuses must stay intact, failing before success is

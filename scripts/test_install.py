@@ -14,6 +14,8 @@ import unittest
 INSTALLER = Path(__file__).resolve().with_name("install.sh")
 STUB = r'''#!PYTHON
 import hashlib,json,os,pathlib,sys
+# The checks below are asserts; PYTHONOPTIMIZE would strip them silently.
+if sys.flags.optimize: sys.exit('fixture stub needs asserts enabled (unset PYTHONOPTIMIZE)')
 name=pathlib.Path(sys.argv[0]).name
 args=sys.argv[1:]
 root=pathlib.Path(os.environ['FIXTURE'])

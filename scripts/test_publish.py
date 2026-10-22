@@ -13,6 +13,8 @@ import unittest
 ROOT = Path(__file__).resolve().parent.parent
 GH = r'''#!PYTHON
 import json,os,pathlib,shutil,sys
+# The checks below are asserts; PYTHONOPTIMIZE would strip them silently.
+if sys.flags.optimize: sys.exit('fixture stub needs asserts enabled (unset PYTHONOPTIMIZE)')
 p=pathlib.Path(os.environ['PUBLISH_FIXTURE']);args=sys.argv[1:];mode=os.environ.get('PUBLISH_MODE','ok')
 with (p/'calls').open('a') as f:f.write(json.dumps(args)+'\n')
 if args[0]=='api':

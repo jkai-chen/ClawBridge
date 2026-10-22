@@ -61,7 +61,13 @@ func (p *l1ProviderPeer) CallTool(ctx context.Context, in *mcp.CallToolParams) (
 	if err != nil {
 		return nil, err
 	}
-	return &mcp.CallToolResult{StructuredContent: v}, nil
+	// Native Linear answers with one JSON text block and no structuredContent,
+	// so the peer does too and every test decodes the shape Linear sends.
+	text, err := json.Marshal(v)
+	if err != nil {
+		return nil, err
+	}
+	return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: string(text)}}}, nil
 }
 func l1PeerResult(name string, args map[string]any) (any, error) {
 	switch name {

@@ -99,10 +99,32 @@ function Format-TestUserPath {
     if ($null -eq $state) { return '<none>' }
     return [string]$state.Kind + '|' + [string]$state.Value
 }
+# The installed payload is not an executable, so the installer's skill step is
+# wrapped: it records which binary the installer chose, then runs the REAL
+# Invoke-ClawBridgeSkillInstall against a fake clawbridge.exe that logs its
+# arguments and exits with CB_PROBE_SKILL_EXIT. Built before any test changes
+# the environment, since the Go toolchain needs the runner's caches.
+$script:fakeSkill = Join-Path $fixtureRoot 'fake-clawbridge.exe'
+Push-Location (Split-Path -Parent $PSScriptRoot)
+try {
+    & go build -o $script:fakeSkill ./integration/release_fixtures/fakeskill
+    if ($LASTEXITCODE -ne 0) { throw 'Building the fake skill executable failed' }
+} finally { Pop-Location }
+$script:skillLog = Join-Path $fixtureRoot 'skill-runs.log'
+$savedSkillLog = $env:CB_PROBE_SKILL_LOG
+$savedSkillExit = $env:CB_PROBE_SKILL_EXIT
+$env:CB_PROBE_SKILL_LOG = $script:skillLog
+$env:CB_PROBE_SKILL_EXIT = '0'
+function Get-SkillLog {
+    if (-not (Test-Path -LiteralPath $script:skillLog)) { return @() }
+    return @([IO.File]::ReadAllLines($script:skillLog) | Where-Object { $_ -ne '' })
+}
 $script:skillRuns = New-Object 'Collections.Generic.List[string]'
+$originalSkillInstall = ${function:Invoke-ClawBridgeSkillInstall}
 function Invoke-ClawBridgeSkillInstall([string]$Binary) {
     $script:skillRuns.Add($Binary)
-    if ($script:mode -eq 'skill-failure') { throw 'synthetic skill failure' }
+    if ($script:mode -eq 'skill-failure') { $env:CB_PROBE_SKILL_EXIT = '3' } else { $env:CB_PROBE_SKILL_EXIT = '0' }
+    & $originalSkillInstall $script:fakeSkill
 }
 # Joins output and warning records by their messages. Out-String would render
 # them at the console width and break long paths across lines.
@@ -141,6 +163,20 @@ function Invoke-Case([string]$Name, [scriptblock]$Body) {
     for ($i = $failuresBefore; $i -lt $script:failures.Count; $i++) { $script:failures[$i] = $Name + ': ' + $script:failures[$i] }
 }
 try {
+    # The real skill step on its own: it runs the binary with exactly
+    # "skill install", succeeds on exit 0 and throws with the code otherwise.
+    $env:CB_PROBE_SKILL_EXIT = '0'
+    & $originalSkillInstall $script:fakeSkill
+    $runs = Get-SkillLog
+    # The log holds the path the OS reports, which may be the 8.3 form of TEMP, so
+    # only the file name and the arguments are compared.
+    Assert-True ($runs.Count -eq 1 -and $runs[0].EndsWith("\fake-clawbridge.exe`tskill install", [StringComparison]::OrdinalIgnoreCase)) ('skill step ran with the wrong binary or arguments: ' + ($runs -join ' | '))
+    $env:CB_PROBE_SKILL_EXIT = '7'
+    $skillError = $null
+    try { & $originalSkillInstall $script:fakeSkill } catch { $skillError = $_.Exception.Message }
+    Assert-True ($skillError -ceq 'skill install exited 7') ('a failing skill step must throw its exit code, got: ' + [string]$skillError)
+    $env:CB_PROBE_SKILL_EXIT = '0'
+    [IO.File]::Delete($script:skillLog)
     $destination = Join-Path $fixtureRoot 'bin with spaces'
     Install-ClawBridge -InstallDir $destination | Out-Null
     Assert-True ($script:requests.Count -eq 3) 'latest must be discovered exactly once'
@@ -149,6 +185,7 @@ try {
     Assert-True ((Get-FileHash -LiteralPath $binary).Hash.ToLowerInvariant() -ceq $script:digest) 'installed digest mismatch'
     Assert-Cleanup
     Assert-True ($script:skillRuns.Count -eq 1 -and $script:skillRuns[0] -ceq $binary) 'the installed binary must install the skill once'
+    Assert-True (@(Get-SkillLog).Count -eq 1 -and (Get-SkillLog)[0].EndsWith("`tskill install")) 'the real skill step must run "skill install" once'
     $userPath = Get-TestUserPath
     Assert-True ($null -ne $userPath -and $userPath.Value -ceq $destination) 'install directory not added to the user Path'
     Assert-True ($userPath.Kind -eq [Microsoft.Win32.RegistryValueKind]::ExpandString) 'a new user Path must be REG_EXPAND_SZ'
@@ -165,7 +202,9 @@ try {
     $script:mode = 'skill-failure'
     $output = Install-ClawBridge -Version v0.1.0 -InstallDir $destination 3>&1 | ConvertTo-RecordText
     Assert-True ($script:skillRuns.Count -eq 2) 'skill step not attempted'
-    Assert-True ($output -like '*agent skill was not installed*') 'skill failure must warn'
+    Assert-True (@(Get-SkillLog).Count -eq 2) 'the real skill step did not run the failing binary'
+    Assert-True ($output.Contains('The agent skill was not installed; run `clawbridge skill install --agent claude-code|codex|all` later.')) ('skill failure must warn with the recovery command, got: ' + $output)
+    Assert-True ($output -notlike '*Installed the ClawBridge agent skill*') 'a failed skill step must not claim success'
     Assert-True ((Get-FileHash -LiteralPath $binary).Hash.ToLowerInvariant() -ceq $script:digest) 'skill failure undid the install'
     $script:mode = 'ok'
     $script:skillRuns.Clear()
@@ -400,6 +439,8 @@ try {
 } finally {
     $env:Path = $savedPath
     Remove-Item Env:CLAWBRIDGE_TEST_ROOT -ErrorAction SilentlyContinue
+    $env:CB_PROBE_SKILL_LOG = $savedSkillLog
+    $env:CB_PROBE_SKILL_EXIT = $savedSkillExit
     [Net.ServicePointManager]::SecurityProtocol = $savedProtocols
     [Microsoft.Win32.Registry]::CurrentUser.DeleteSubKeyTree($testRegistryRoot, $false)
     $parent = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey('Software\ClawBridgeTest')

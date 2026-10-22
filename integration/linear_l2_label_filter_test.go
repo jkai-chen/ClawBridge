@@ -44,10 +44,19 @@ func TestL2NativeFilterScopedLabelAppliesThroughPublicWrite(t *testing.T) {
 			f.setup("w", "p")
 			f.call("taskboard_set_v2", "w", "p", "", l2MappingArgs(0))
 			peer := newL1ProviderPeer()
-			peer.tools = []*mcp.Tool{peer.tools[0], peer.tools[1], peer.tools[2], l2NativeLabelListTool(), l2ActualSaveIssueTool(t)}
+			peer.tools = []*mcp.Tool{peer.tools[0], peer.tools[1], peer.tools[2], l2NativeLabelListTool(), l2NativeIssueListTool(), l2ActualSaveIssueTool(t)}
 			cfg := l1ServiceConfig(t, f.store, &l1SyntheticProvider{})
 			cfg.Open = func(ctx context.Context, _ *http.Client, _ bool) (linearboard.Provider, error) {
 				return linearprovider.NewWithCaller(ctx, peer)
+			}
+			target := l2NativeLabelRow(l2LabelB)
+			target["name"] = "Synthetic label B"
+			switch mode {
+			case "retired":
+				target["retiredAt"] = "2026-01-01T00:00:00Z"
+			case "group":
+				target["isGroup"] = true
+				target["groupType"] = "singleSelect"
 			}
 			saves := []map[string]any{}
 			peer.result = func(name string, args map[string]any) (any, error) {
@@ -55,25 +64,28 @@ func TestL2NativeFilterScopedLabelAppliesThroughPublicWrite(t *testing.T) {
 				case "get_team", "get_project":
 					return l1PeerResult(name, args)
 				case "get_issue":
-					return map[string]any{"id": l1IssueID, "teamId": l1TeamA, "projectId": l1Project, "title": "Synthetic scoped issue", "labelIds": []any{l2LabelA}}, nil
+					// Native get_issue: display id, canonical uuid, labels by name.
+					return map[string]any{"id": "SYN-1", "uuid": l1IssueID, "teamId": l1TeamA, "projectId": l1Project, "title": "Synthetic scoped issue", "labels": []any{"Synthetic label"}}, nil
 				case "list_issue_labels":
-					// Eligibility is only proven when both filters are sent as false
-					// for the issue's own team.
-					if args["team"] != l1TeamA || args["includeArchived"] != false || args["includeGroups"] != false {
-						t.Fatalf("label list did not pin the issue team and filters: %+v", args)
+					if args["team"] != l1TeamA {
+						t.Fatalf("label list was not pinned to the issue team: %+v", args)
 					}
-					target := l2NativeLabelRow(l2LabelB)
-					switch mode {
-					case "retired":
-						target["retiredAt"] = "2026-01-01T00:00:00Z"
-					case "group":
-						target["isGroup"] = true
-						target["groupType"] = "singleSelect"
+					// The full catalog (both filters true) proves the current label
+					// names; eligibility is only proven when both are sent as false.
+					full := args["includeArchived"] == true && args["includeGroups"] == true
+					if !full && (args["includeArchived"] != false || args["includeGroups"] != false) {
+						t.Fatalf("label list did not pin the eligibility filters: %+v", args)
 					}
 					return map[string]any{"labels": []any{l2NativeLabelRow(l2LabelA), target}, "hasNextPage": false}, nil
+				case "list_issues":
+					// Membership proof for the issue's current label, by UUID.
+					if args["label"] != l2LabelA || args["team"] != l1TeamA || args["project"] != l1Project {
+						t.Fatalf("membership query was not scoped to the issue and label: %+v", args)
+					}
+					return map[string]any{"issues": []any{map[string]any{"id": "SYN-1", "uuid": l1IssueID, "teamId": l1TeamA, "projectId": l1Project, "title": "Synthetic scoped issue", "labels": []any{"Synthetic label"}}}, "hasNextPage": false}, nil
 				case "save_issue":
 					saves = append(saves, args)
-					return map[string]any{"id": l1IssueID, "teamId": l1TeamA, "projectId": l1Project, "title": "Synthetic scoped issue", "labelIds": []any{l2LabelA, l2LabelB}}, nil
+					return map[string]any{"id": "SYN-1", "uuid": l1IssueID, "teamId": l1TeamA, "projectId": l1Project, "title": "Synthetic scoped issue", "labels": []any{"Synthetic label", "Synthetic label B"}}, nil
 				default:
 					t.Fatalf("unexpected native tool: %s", name)
 					return nil, nil
@@ -90,8 +102,15 @@ func TestL2NativeFilterScopedLabelAppliesThroughPublicWrite(t *testing.T) {
 			}
 			result, err := linearboard.New(cfg).WriteV2(context.Background(), f.request("", "w", "p", "worker", actor("worker", nil)), in)
 			if mode != "active" {
-				if err == nil || result != nil || len(saves) != 0 {
-					t.Fatal("retired/group/stale native label reached mutation", err, saves)
+				// Each refusal names its own reason, so a refusal for an unrelated
+				// cause cannot stand in for the one under test.
+				want := map[string]string{
+					"retired":           "label is not proven eligible for application",
+					"group":             "Linear provider: scope_mismatch",
+					"stale_expectation": "issue labels differ from expected_label_ids",
+				}[mode]
+				if err == nil || !strings.Contains(err.Error(), want) || result != nil || len(saves) != 0 {
+					t.Fatal("retired/group/stale native label reached mutation or was refused for another reason", want, err, saves)
 				}
 				return
 			}
@@ -140,7 +159,7 @@ func TestL2NativeLabelNamesProvenBeforePublicClear(t *testing.T) {
 			}
 			labels := []any{labelName}
 			issue := func() map[string]any {
-				return map[string]any{"id": "SYN-1", "uuid": l1IssueID, "identifier": "SYN-1", "teamId": l1TeamA, "projectId": l1Project, "title": "Synthetic scoped issue", "labels": labels}
+				return map[string]any{"id": "SYN-1", "uuid": l1IssueID, "teamId": l1TeamA, "projectId": l1Project, "title": "Synthetic scoped issue", "labels": labels}
 			}
 			saves := []map[string]any{}
 			peer.result = func(name string, args map[string]any) (any, error) {
@@ -198,8 +217,8 @@ func TestL2NativeLabelNamesProvenBeforePublicClear(t *testing.T) {
 			}
 			result, err := linearboard.New(cfg).WriteV2(context.Background(), scope, in)
 			if mode != "proven" {
-				if err == nil || result != nil || len(saves) != 0 {
-					t.Fatal("unproven native label set was replaced", err, saves)
+				if err == nil || !strings.Contains(err.Error(), "existing canonical label context is unavailable; replacement refused") || result != nil || len(saves) != 0 {
+					t.Fatal("unproven native label set was replaced or refused for another reason", err, saves)
 				}
 				return
 			}
@@ -242,9 +261,9 @@ func TestL2NativeLabelFilteredIssueListProvesNames(t *testing.T) {
 					if args["label"] != l2LabelA {
 						t.Fatalf("label filter was not sent as the UUID: %+v", args)
 					}
-					rows := []any{map[string]any{"id": "SYN-1", "uuid": l1IssueID, "identifier": "SYN-1", "teamId": l1TeamA, "projectId": l1Project, "title": "Synthetic labelled issue", "labels": []any{labelName}}}
+					rows := []any{map[string]any{"id": "SYN-1", "uuid": l1IssueID, "teamId": l1TeamA, "projectId": l1Project, "title": "Synthetic labelled issue", "labels": []any{labelName}}}
 					if mode == "filter_ignored" {
-						rows = append(rows, map[string]any{"id": "SYN-2", "uuid": "dddddddd-dddd-4ddd-8ddd-dddddddddddd", "identifier": "SYN-2", "teamId": l1TeamA, "projectId": l1Project, "title": "Synthetic other issue", "labels": []any{"Synthetic other"}})
+						rows = append(rows, map[string]any{"id": "SYN-2", "uuid": "dddddddd-dddd-4ddd-8ddd-dddddddddddd", "teamId": l1TeamA, "projectId": l1Project, "title": "Synthetic other issue", "labels": []any{"Synthetic other"}})
 					}
 					return map[string]any{"issues": rows, "hasNextPage": false}, nil
 				default:

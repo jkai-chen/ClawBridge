@@ -115,7 +115,8 @@ func TestL2OfficialSaveIssueUnsafeSemanticsRefusedBeforeDispatch(t *testing.T) {
 
 func TestL2OfficialSchemaParentSetNeedsProofAndClearUsesExactNull(t *testing.T) {
 	peer := &l1ProviderPeer{tools: []*mcp.Tool{l2ActualSaveIssueTool(t)}, result: func(string, map[string]any) (any, error) {
-		return map[string]any{"id": l1IssueID, "teamId": l1TeamA, "projectId": l1Project, "parentId": nil}, nil
+		// A native save_issue receipt: id is the display identifier, uuid the canonical ID.
+		return map[string]any{"id": "SYN-1", "uuid": l1IssueID, "teamId": l1TeamA, "projectId": l1Project, "parentId": nil}, nil
 	}}
 	p, err := linearprovider.NewWithCaller(context.Background(), peer)
 	if err != nil {
@@ -230,7 +231,7 @@ func TestL2NativeIdentifierParentSetClearAndRead(t *testing.T) {
 	identifiers := map[string]string{l1IssueID: "SYN-1", parentUUID: "SYN-2"}
 	parents := map[string]any{l1IssueID: nil, parentUUID: nil}
 	native := func(id string) map[string]any {
-		return map[string]any{"id": identifiers[id], "uuid": id, "identifier": identifiers[id], "teamId": l1TeamA, "projectId": l1Project, "title": "Synthetic scoped issue", "parentId": parents[id]}
+		return map[string]any{"id": identifiers[id], "uuid": id, "teamId": l1TeamA, "projectId": l1Project, "title": "Synthetic scoped issue", "parentId": parents[id]}
 	}
 	lookup := func(ref string) string {
 		for id, identifier := range identifiers {

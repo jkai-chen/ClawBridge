@@ -10,7 +10,7 @@ import (
 // nativeIssue mirrors a native get_issue/save_issue receipt: id is the display
 // identifier, uuid the canonical ID, and parentId the parent's identifier.
 func nativeIssue(identifier, uuid string, parent any) map[string]any {
-	return map[string]any{"id": identifier, "uuid": uuid, "identifier": identifier, "teamId": tid, "projectId": nil, "parentId": parent}
+	return map[string]any{"id": identifier, "uuid": uuid, "teamId": tid, "projectId": nil, "parentId": parent}
 }
 
 func TestV2ParentIdentifierIsKnownWithoutInventingAUUID(t *testing.T) {

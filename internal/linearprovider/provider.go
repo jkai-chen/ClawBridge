@@ -13,6 +13,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/modelcontextprotocol/go-sdk/jsonrpc"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
@@ -227,11 +228,22 @@ func (p *Provider) Alive(ctx context.Context) bool {
 	}
 	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
-	if pinger.Ping(ctx, nil) != nil {
+	if e := pinger.Ping(ctx, nil); e != nil && !statelessPingRejected(e) {
 		p.broken.Store(true)
 		return false
 	}
 	return true
+}
+
+// statelessPingRejected matches the one ping failure that is not a dead
+// session. go-sdk v1.8.0's ClientSession.Ping omits the protocolVersion _meta
+// that a sessionless (2026-07-28) server requires, so that server answers
+// -32602 naming the field; it has no session to lose. Every other error,
+// including any other -32602, still counts as dead. Remove this once upstream
+// sends _meta on ping.
+func statelessPingRejected(err error) bool {
+	var rpc *jsonrpc.Error
+	return errors.As(err, &rpc) && rpc.Code == jsonrpc.CodeInvalidParams && strings.Contains(rpc.Message, `_meta field "io.modelcontextprotocol/protocolVersion"`)
 }
 
 // Verify retains the read-only connection verification contract.

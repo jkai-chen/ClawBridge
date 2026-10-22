@@ -16,6 +16,18 @@ $oldArch = $env:PROCESSOR_ARCHITECTURE
 $oldArch64 = $env:PROCESSOR_ARCHITEW6432
 $oldPath = $env:PATH
 $null = [IO.Directory]::CreateDirectory($fixture)
+# The installed payload is a real executable, so the installer's own skill step
+# (Invoke-ClawBridgeSkillInstall) runs it. Build it before the environment is
+# isolated: the Go toolchain needs the runner's caches.
+$fake = Join-Path $fixture 'fake-clawbridge.exe'
+Push-Location $repository
+try {
+    & go build -o $fake ./integration/release_fixtures/fakeskill
+    if ($LASTEXITCODE -ne 0) { throw 'Building the fake skill executable failed' }
+} finally { Pop-Location }
+$skillLog = Join-Path $fixture 'skill-runs.log'
+$oldSkillLog = $env:CB_PROBE_SKILL_LOG
+$oldSkillExit = $env:CB_PROBE_SKILL_EXIT
 try {
     $env:LOCALAPPDATA = Join-Path $fixture 'isolated local'
     $env:TEMP = Join-Path $fixture 'temporary'
@@ -29,7 +41,10 @@ try {
     [IO.File]::WriteAllText($sentinel, 'UNCHANGED')
     $script:Calls = New-Object Collections.ArrayList
     $script:Mode = 'ok'
-    $script:Payload = [Text.Encoding]::ASCII.GetBytes('MZ-FAKE-BINARY-NOT-EXECUTABLE')
+    $script:Payload = [IO.File]::ReadAllBytes($fake)
+    [IO.File]::Delete($fake)
+    $env:CB_PROBE_SKILL_LOG = $skillLog
+    $env:CB_PROBE_SKILL_EXIT = '0'
     $hash = [Security.Cryptography.SHA256]::Create()
     try { $script:Digest = ([BitConverter]::ToString($hash.ComputeHash($script:Payload))).Replace('-', '').ToLowerInvariant() } finally { $hash.Dispose() }
     function Get-ClawBridgePlatform { return 'windows_amd64' }
@@ -63,19 +78,24 @@ try {
         return $url
     }
     # The installer's one post-install step is `clawbridge skill install` on the
-    # installed binary. Record which binary it would run instead of starting the
-    # fake payload; the rule under test is exactly one run, of the destination.
-    $script:SkillRuns = New-Object Collections.ArrayList
-    $script:SkillFails = $false
-    function Invoke-ClawBridgeSkillInstall([string]$Binary) {
-        $null = $script:SkillRuns.Add($Binary)
-        if ($script:SkillFails) { throw 'Injected skill failure' }
+    # installed binary, run by the production Invoke-ClawBridgeSkillInstall.
+    # The installed fake logs each run; the rule under test is exactly one run,
+    # of the destination, with exactly those arguments.
+    function Get-SkillRuns {
+        if (-not [IO.File]::Exists($skillLog)) { return @() }
+        return @([IO.File]::ReadAllLines($skillLog) | Where-Object { $_ -ne '' })
     }
+    function Clear-SkillRuns { if ([IO.File]::Exists($skillLog)) { [IO.File]::Delete($skillLog) } }
     function Assert-SkillRan {
-        Assert-Probe ($script:SkillRuns.Count -eq 1) 'Successful install did not run the skill step exactly once'
-        Assert-Probe ([IO.Path]::GetFullPath($script:SkillRuns[0]) -eq [IO.Path]::GetFullPath($destination)) 'Skill step ran something other than the installed binary'
-        $script:SkillRuns.Clear()
+        $runs = @(Get-SkillRuns)
+        Assert-Probe ($runs.Count -eq 1) 'Successful install did not run the skill step exactly once'
+        $fields = $runs[0].Split("`t")
+        Assert-Probe ($fields.Count -eq 2) 'Malformed skill run record'
+        Assert-Probe ([IO.Path]::GetFullPath($fields[0]) -eq [IO.Path]::GetFullPath($destination)) 'Skill step ran something other than the installed binary'
+        Assert-Probe ($fields[1] -ceq 'skill install') ('Skill step passed unexpected arguments: ' + $fields[1])
+        Clear-SkillRuns
     }
+    function Assert-NoSkillRun([string]$Message) { Assert-Probe (@(Get-SkillRuns).Count -eq 0) $Message }
     function Assert-Cleanup {
         Assert-Probe (@(Get-ChildItem -LiteralPath $env:TEMP -Force).Count -eq 0) 'Private temporary directory leaked'
         Assert-Probe (@(Get-ChildItem -LiteralPath $directory -Force).Count -eq 1) 'Destination stage leaked'
@@ -84,12 +104,12 @@ try {
         Assert-Probe (-not (Test-Path -LiteralPath (Join-Path $fixture 'INJECTED'))) 'Hostile text executed'
     }
     function Expect-Failure([string]$Version = 'v1.2.3', [string]$Target = $directory) {
-        $script:SkillRuns.Clear()
+        Clear-SkillRuns
         $failed = $false
         try { $null = Install-ClawBridge -Version $Version -InstallDir $Target } catch { $failed = $true }
         Assert-Probe $failed 'Expected installer rejection'
         Assert-Probe ([IO.File]::ReadAllText($destination) -eq 'OLD') 'Failure replaced existing binary'
-        Assert-Probe ($script:SkillRuns.Count -eq 0) 'Failed install ran the skill step'
+        Assert-NoSkillRun 'Failed install ran the skill step'
         Assert-Cleanup
     }
     [IO.File]::WriteAllText($destination, 'OLD')
@@ -105,13 +125,17 @@ try {
     Assert-SkillRan
     Assert-Cleanup
     $null = Install-ClawBridge -Version 'v1.2.3' -InstallDir $directory -NoSkill
-    Assert-Probe ($script:SkillRuns.Count -eq 0) '-NoSkill still ran the skill step'
+    Assert-NoSkillRun '-NoSkill still ran the skill step'
     Assert-Cleanup
-    # A failing skill step only warns: the install still succeeds.
-    $script:SkillFails = $true
+    # A failing skill step (the real executable exits 3) only warns: the
+    # install still succeeds, and the warning names the recovery command.
+    $env:CB_PROBE_SKILL_EXIT = '3'
     [IO.File]::WriteAllText($destination, 'OLD')
-    $null = Install-ClawBridge -Version 'v1.2.3' -InstallDir $directory 3>$null
-    $script:SkillFails = $false
+    $records = @(Install-ClawBridge -Version 'v1.2.3' -InstallDir $directory 3>&1)
+    $env:CB_PROBE_SKILL_EXIT = '0'
+    $warnings = @($records | Where-Object { $_ -is [Management.Automation.WarningRecord] })
+    Assert-Probe ($warnings.Count -eq 1) 'Skill failure did not warn exactly once'
+    Assert-Probe ($warnings[0].Message -like '*agent skill was not installed*clawbridge skill install*') ('Skill failure warning lacks the recovery command: ' + $warnings[0].Message)
     Assert-Probe ((Get-FileHash -LiteralPath $destination -Algorithm SHA256).Hash.ToLowerInvariant() -eq $script:Digest) 'Skill failure undid the install'
     Assert-SkillRan
     Assert-Cleanup
@@ -131,14 +155,14 @@ try {
     Assert-Probe ($script:Calls.Count -eq 0) 'Invalid path reached network'
     # Actual native file-in-use behavior, not a mocked Replace implementation.
     $locked = [IO.File]::Open($destination, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::None)
-    $script:SkillRuns.Clear()
+    Clear-SkillRuns
     try {
         $failed = $false
         try { $null = Install-ClawBridge -Version 'v1.2.3' -InstallDir $directory } catch { $failed = $true }
         Assert-Probe $failed 'Locked existing executable replacement succeeded'
     } finally { $locked.Dispose() }
     Assert-Probe ([IO.File]::ReadAllText($destination) -eq 'OLD') 'Locked binary changed'
-    Assert-Probe ($script:SkillRuns.Count -eq 0) 'Failed locked install ran the skill step'
+    Assert-NoSkillRun 'Failed locked install ran the skill step'
     Assert-Cleanup
     # Junction refusal exercises native reparse-point handling without symlink privilege.
     $junction = Join-Path $fixture 'junction'
@@ -160,5 +184,7 @@ try {
     $env:PROCESSOR_ARCHITECTURE = $oldArch
     $env:PROCESSOR_ARCHITEW6432 = $oldArch64
     $env:PATH = $oldPath
+    $env:CB_PROBE_SKILL_LOG = $oldSkillLog
+    $env:CB_PROBE_SKILL_EXIT = $oldSkillExit
     if (Test-Path -LiteralPath $fixture) { [IO.Directory]::Delete($fixture, $true) }
 }

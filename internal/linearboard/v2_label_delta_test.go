@@ -96,11 +96,17 @@ func TestLinearV2NamesOnlyDeltasUseServerMembership(t *testing.T) {
 	_, a, _, scope := testV2(t)
 	p.caps.LabelDeltas = true
 	p.labels = []linearprovider.Label{{ID: labelA, TeamID: teamID, EligibilityKnown: true}, {ID: memberA, TeamID: teamID, EligibilityKnown: true}}
-	// Proven present: the removal is sent, with one membership check before
-	// and one inside the lock, and no catalog walk.
-	if _, e := s.WriteV2(ctx, scope, deltaV2("clear-needs-agent", nil, []string{labelA})); e != nil || p.writes != 1 || !reflect.DeepEqual(p.updated[0].RemoveLabels, []string{labelA}) || *m.checks != 2 || *m.catalogs != 0 {
+	// Proven present: the removal is sent, with one membership check before,
+	// one inside the lock and one confirming it afterwards, and no catalog walk.
+	p.after = func() { m.member[labelA] = false }
+	r, e := s.WriteV2(ctx, scope, deltaV2("clear-needs-agent", nil, []string{labelA}))
+	if e != nil || p.writes != 1 || !reflect.DeepEqual(p.updated[0].RemoveLabels, []string{labelA}) || *m.checks != 3 || *m.catalogs != 0 {
 		t.Fatalf("proven removal not sent cheaply: %v writes=%d checks=%d catalogs=%d", e, p.writes, *m.checks, *m.catalogs)
 	}
+	if r.(ReceiptV2).Unverified != nil {
+		t.Fatal("removal confirmed by the label filter still reported unverified", r)
+	}
+	p.after = nil
 	// Proven absent: nothing to remove.
 	if r, e := s.WriteV2(ctx, scope, deltaV2("absent", nil, []string{memberA})); e != nil || p.writes != 1 || r.(ReceiptV2).Outcome != "observed_unchanged" {
 		t.Fatal("proven-absent removal not observed_unchanged", r, e)
@@ -242,5 +248,59 @@ func TestLinearV2DeltaReceiptsCheckReportedLabels(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// Native receipts name labels only, so a delta is confirmed afterwards with
+// Linear's list filtered by each label's UUID.
+func TestLinearV2NamesOnlyDeltaReceiptsAreConfirmedByTheLabelFilter(t *testing.T) {
+	ctx := context.Background()
+	catalog := []linearprovider.LabelName{{ID: labelA, Name: "needs-agent"}}
+	for name, c := range map[string]struct {
+		after   func(m *membershipV2)
+		outcome string
+	}{
+		"took effect":       {func(m *membershipV2) { m.member[labelA] = false; m.member[memberA] = true }, "verified"},
+		"removal not taken": {func(m *membershipV2) { m.member[memberA] = true }, "receipt_mismatch"},
+		"add not taken":     {func(m *membershipV2) { m.member[labelA] = false }, "receipt_mismatch"},
+		"filter cannot say": {func(m *membershipV2) { m.providerV2.caps.LabelMembershipProof = false }, "unverified"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			s, p, m, _ := resolvingV2(t, []string{"needs-agent"}, catalog, map[string]bool{labelA: true})
+			_, a, _, scope := testV2(t)
+			p.caps.LabelDeltas = true
+			p.labels = []linearprovider.Label{{ID: labelA, TeamID: teamID, EligibilityKnown: true}, {ID: memberA, TeamID: teamID, EligibilityKnown: true}}
+			p.after = func() { c.after(m) }
+			in := deltaV2("swap", []string{memberA}, []string{labelA})
+			r, e := s.WriteV2(ctx, scope, in)
+			switch c.outcome {
+			case "verified":
+				if e != nil || r.(ReceiptV2).Unverified != nil {
+					t.Fatal("confirmed deltas reported unverified", r, e)
+				}
+			case "unverified":
+				if e != nil || !reflect.DeepEqual(r.(ReceiptV2).Unverified, []string{"labels"}) {
+					t.Fatal("inconclusive check not reported unverified", r, e)
+				}
+			default:
+				if e == nil || !strings.Contains(e.Error(), "receipt_mismatch") || ledgerStateV2(t, s, a, in.OperationID) != "pending" {
+					t.Fatal("contradicting label filter accepted", r, e)
+				}
+			}
+		})
+	}
+}
+
+// When the label filter reaches no answer, the delta stays unverified.
+func TestLinearV2InconclusiveLabelFilterLeavesDeltaUnverified(t *testing.T) {
+	catalog := []linearprovider.LabelName{{ID: labelA, Name: "needs-agent"}}
+	s, p, m, _ := resolvingV2(t, []string{"needs-agent"}, catalog, map[string]bool{labelA: true})
+	_, _, _, scope := testV2(t)
+	p.caps.LabelDeltas = true
+	p.labels = []linearprovider.Label{{ID: labelA, TeamID: teamID, EligibilityKnown: true}, {ID: memberA, TeamID: teamID, EligibilityKnown: true}}
+	m.bounded = true // an append-only add is still sent; the check after it is inconclusive
+	r, e := s.WriteV2(context.Background(), scope, deltaV2("bounded-add", []string{memberA}, nil))
+	if e != nil || p.writes != 1 || !reflect.DeepEqual(r.(ReceiptV2).Unverified, []string{"labels"}) {
+		t.Fatal("inconclusive label filter treated as confirmation", r, e)
 	}
 }

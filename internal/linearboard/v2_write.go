@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"regexp"
+	"slices"
 
 	"clawbridge/internal/bus"
 	"clawbridge/internal/linearconn"
@@ -618,6 +619,20 @@ func (s *Service) WriteV2(ctx context.Context, scope bus.Request, in WriteInputV
 			if unverified, e = receiptFieldsV2(issue, in, legacy); e != nil {
 				return nil, post(e)
 			}
+			// Native receipts name labels only; Linear's list filtered by
+			// each delta label's UUID then shows whether it took effect.
+			if (in.AddLabels != nil || in.RemoveLabels != nil) && contains(unverified, "labels") {
+				confirmed, e := deltaReadBackV2(ctx, p2, in, issue.ID, team, project)
+				if e != nil {
+					return nil, post(e)
+				}
+				if confirmed {
+					unverified = slices.DeleteFunc(unverified, func(f string) bool { return f == "labels" })
+					if len(unverified) == 0 {
+						unverified = nil
+					}
+				}
+			}
 			if legacy {
 				receipt = map[string]any{"id": issue.ID, "identifier": issue.Identifier, "team_id": issue.TeamID, "project_id": issue.ProjectID}
 			} else {
@@ -785,6 +800,34 @@ func receiptFieldsV2(issue linearprovider.IssueV2, in WriteInputV2, legacy bool)
 		}
 	}
 	return unverified, nil
+}
+
+// deltaReadBackV2 asks Linear's label-filtered issue list, for each requested
+// delta label, whether the issue now carries it: an added label must be found
+// and a removed one proven absent. A contradiction is a receipt_mismatch
+// error; a check that cannot run or reach an answer leaves the labels
+// unconfirmed (false) rather than assumed.
+func deltaReadBackV2(ctx context.Context, p ProviderV2, in WriteInputV2, issue, team, project string) (bool, error) {
+	m, ok := p.(labelMembershipV2)
+	if !ok {
+		return false, nil
+	}
+	if caps, e := p.Capabilities(ctx); e != nil || !caps.LabelMembershipProof {
+		return false, nil
+	}
+	confirmed := true
+	for want, labels := range map[bool][]string{true: in.AddLabels, false: in.RemoveLabels} {
+		for _, label := range labels {
+			found, complete, e := m.IssueHasLabel(ctx, issue, team, project, label)
+			switch {
+			case e != nil || (!found && !complete):
+				confirmed = false
+			case found != want:
+				return false, &linearprovider.Error{Kind: "receipt_mismatch"}
+			}
+		}
+	}
+	return confirmed, nil
 }
 
 func receiptParentV2(issue linearprovider.IssueV2, parent linearprovider.Field[*string], verified linearprovider.IssueV2) error {

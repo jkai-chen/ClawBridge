@@ -48,7 +48,7 @@ func TestMirrorReadOnlyBindingAndAtomicPublication(t *testing.T) {
 	if object(t, messages[0])["delivered_at"] != nil || object(t, messages[0])["read_at"] != nil {
 		t.Fatal("mirror stamps changed")
 	}
-	for _, op := range []string{"send", "reply", "mark_read", "register_session", "update_session", "retire_session", "workspace_init", "project_role_set"} {
+	for _, op := range []string{"send", "reply", "mark_read", "register_session", "update_session", "retire_session", "workspace_init", "project_role_set", "project_role_revoke"} {
 		r := request
 		r.Operation = op
 		if _, err := mirror.Offline(ctx, path, snapshot.Binding, r); err == nil {

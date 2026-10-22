@@ -116,7 +116,10 @@ func TestL2ExplicitLabelsReplaceClearAndOmissionPreserve(t *testing.T) {
 				issue.LabelsKnown = false
 				p.issues[l1IssueID] = issue
 			case "unsafe_label":
+				// A real workspace label (explicit null team) without eligibility proof.
 				p.labels[1].Global = true
+				p.labels[1].TeamID = ""
+				p.labels[1].EligibilityKnown = false
 			case "unknown_eligibility":
 				p.labels[1].EligibilityKnown = false
 			}

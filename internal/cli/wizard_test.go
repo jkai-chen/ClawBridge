@@ -14,6 +14,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -211,12 +212,23 @@ func TestGuidedCancelReleasesBlockedInput(t *testing.T) {
 		t.Fatal("read never started")
 	}
 	cancel()
+	// On Windows, a pipe (like the console wizard input) gets cancelreader's
+	// fallback, which cannot interrupt a blocked read: the contract there is
+	// that ask gives up after its own second and says cleanup is unconfirmed.
+	bound := time.Second
+	if runtime.GOOS == "windows" {
+		bound = 3 * time.Second
+	}
 	select {
 	case err := <-done:
-		if !errors.Is(err, context.Canceled) {
+		if runtime.GOOS == "windows" {
+			if err == nil || !strings.Contains(err.Error(), "terminal input cleanup could not be confirmed") {
+				t.Fatal(err)
+			}
+		} else if !errors.Is(err, context.Canceled) {
 			t.Fatal(err)
 		}
-	case <-time.After(time.Second):
+	case <-time.After(bound):
 		t.Fatal("input reader prevented cancellation")
 	}
 }

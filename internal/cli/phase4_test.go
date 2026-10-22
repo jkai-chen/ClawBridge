@@ -3,12 +3,14 @@ package cli
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -147,8 +149,17 @@ func TestPhase4InstallerInheritsCloudRouteAndPinsConfig(t *testing.T) {
 		t.Fatal(err)
 	}
 	value := out.String()
+	// Compare decoded arguments: JSON escapes a Windows path's backslashes.
+	var preview struct {
+		Entry struct {
+			Args []string `json:"args"`
+		} `json:"entry"`
+	}
+	if err := json.Unmarshal(out.Bytes(), &preview); err != nil {
+		t.Fatal(err)
+	}
 	for _, want := range []string{"--client-config", path, "--credential-source", "oauth", "--session", "agent"} {
-		if !strings.Contains(value, want) {
+		if !slices.Contains(preview.Entry.Args, want) {
 			t.Fatalf("missing safe route field %s", want)
 		}
 	}

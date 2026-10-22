@@ -63,10 +63,19 @@ your **user** PATH (`HKCU\Environment\Path`), so new terminals find
 `clawbridge`. It appends the directory once and never adds a duplicate: an
 existing entry matches regardless of case, a trailing backslash or `%VARIABLES%`.
 Other entries and their `%VARIABLES%` are kept unexpanded, and the system PATH is
-never touched. Terminals that were already open still need
-`$env:Path += ';<install directory>'`, which the installer prints. If the PATH
-update fails, the installer warns and the install still succeeds. Pass
-`-NoModifyPath` to leave PATH alone; the installer then prints the manual step.
+never touched. When you run the script in your current PowerShell session (with
+`&`), it puts the directory first in that session's PATH. Other terminals that
+were already open need `$env:Path = '<install directory>;' + $env:Path`, which
+the installer prints. If the PATH update fails, the installer warns and the
+install still succeeds. Pass `-NoModifyPath` to leave PATH alone; the installer
+then prints the manual step. A directory containing `;` cannot be a PATH entry,
+so the installer warns and leaves PATH unchanged; run the binary by its full
+path or choose another `-InstallDir`.
+
+If `clawbridge` on your PATH is another copy, such as an older install or a
+package manager's shim, the installer warns with both paths. New terminals keep
+running that copy until you remove it or move the ClawBridge directory ahead of
+it in PATH.
 To remove the entry later, open *Edit environment variables for your account*
 (Start menu, or `rundll32 sysdm.cpl,EditEnvironmentVariables`), select `Path`
 under your user variables, then delete the ClawBridge directory.

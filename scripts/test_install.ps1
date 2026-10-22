@@ -222,6 +222,35 @@ try {
         Assert-True ((Get-TestUserPath).Value -ceq $present) ('duplicate added to: ' + $present)
     }
     Assert-True ($script:broadcasts -eq $broadcastsBefore) 'an existing entry must not broadcast'
+    # A directory with ';' cannot be a PATH entry: warn, never append, every time.
+    $semicolon = Join-Path $fixtureRoot 'bin;semicolon'
+    Set-TestUserPath 'C:\Other'
+    $env:Path = $savedPath
+    foreach ($attempt in 1..2) {
+        $refused = Install-ClawBridge -Version v0.1.0 -InstallDir $semicolon -NoSkill 3>&1 | Out-String
+        Assert-True ($refused -like '*PATH was not changed*contains ; or "*') ('a ; directory must warn: ' + $refused)
+        Assert-True ((Get-TestUserPath).Value -ceq 'C:\Other') ('a ; directory reached the user Path: ' + (Get-TestUserPath).Value)
+        Assert-True ($env:Path -ceq $savedPath) 'a ; directory reached the session Path'
+        Assert-True ($script:broadcasts -eq $broadcastsBefore) 'a refused directory broadcast'
+    }
+    Assert-True ([IO.File]::Exists((Join-Path $semicolon 'clawbridge.exe'))) 'a ; directory must still install the binary'
+    Assert-Cleanup
+    # An older clawbridge earlier on PATH: warn with both paths, put the new one
+    # first in this session, and still only append to the persisted Path.
+    $older = Join-Path $fixtureRoot 'older install'
+    $null = [IO.Directory]::CreateDirectory($older)
+    $olderBinary = Join-Path $older 'clawbridge.exe'
+    [IO.File]::WriteAllText($olderBinary, 'older binary')
+    $env:Path = $older + ';' + $savedPath
+    $shadowOutput = Install-ClawBridge -Version v0.1.0 -InstallDir $destination -NoSkill 3>&1 | Out-String
+    Assert-True ($shadowOutput -like ('*' + $olderBinary + '*not the binary just installed at ' + $binary + '*')) ('shadowing must warn with both paths: ' + $shadowOutput)
+    Assert-True ($env:Path -ceq ($destination + ';' + $older + ';' + $savedPath)) ('the session must put the new binary first: ' + $env:Path)
+    Assert-True ((Get-Command -Name clawbridge -CommandType Application | Select-Object -First 1).Path -ieq $binary) 'this session does not resolve the new binary'
+    Assert-True ((Get-TestUserPath).Value -ceq ('C:\Other;' + $destination)) 'the persisted Path must append'
+    $rerun = Install-ClawBridge -Version v0.1.0 -InstallDir $destination -NoSkill 3>&1 | Out-String
+    Assert-True (-not ($rerun -like '*not the binary just installed*')) 'a resolved install still warned about shadowing'
+    Assert-True ($env:Path -ceq ($destination + ';' + $older + ';' + $savedPath)) 'a rerun changed the session Path again'
+    Assert-Cleanup
     Clear-TestUserPath
     $env:Path = $savedPath
     $noModifyOutput = Install-ClawBridge -Version v0.1.0 -InstallDir $destination -NoSkill -NoModifyPath | Out-String

@@ -199,6 +199,12 @@ function Remove-ClawBridgeLeftover([string]$Path) {
     }
 }
 
+function Get-ClawBridgeResolvedCommand {
+    $command = Get-Command -Name 'clawbridge' -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
+    if ($null -eq $command) { return $null }
+    return $command.Path
+}
+
 function Install-ClawBridge([string]$Version = '', [string]$InstallDir = '', [switch]$NoSkill, [switch]$NoModifyPath, [string]$PathRegistryKey = 'Environment') {
     if ($Version -ne '' -and -not (Test-ClawBridgeVersion $Version)) { throw 'Invalid canonical release version' }
     $platform = Get-ClawBridgePlatform
@@ -285,7 +291,20 @@ function Install-ClawBridge([string]$Version = '', [string]$InstallDir = '', [sw
                 Write-Warning 'The agent skill was not installed; run `clawbridge skill install --agent claude-code|codex|all` later.'
             }
         }
-        $sessionStep = '$env:Path += ' + "';" + $InstallDir.Replace("'", "''") + "'"
+        $sessionStep = '$env:Path = ' + "'" + $InstallDir.Replace("'", "''") + ";' + " + '$env:Path'
+        # Looked up before this session's Path changes, so it shows what PATH
+        # already resolves: an older install or a package manager's shim.
+        $resolved = Get-ClawBridgeResolvedCommand
+        $shadowed = $null -ne $resolved -and -not [string]::Equals([IO.Path]::GetFullPath($resolved), $destination, [StringComparison]::OrdinalIgnoreCase)
+        if ($shadowed) {
+            Write-Warning ('`clawbridge` on your PATH is ' + $resolved + ', not the binary just installed at ' + $destination + '. New terminals will keep running the other one until you remove it or move ' + $InstallDir + ' ahead of it in PATH.')
+        }
+        # PATH separates entries with ';' and Windows does not reliably honour
+        # quoting, so such a directory would be broken and re-added every time.
+        if ($InstallDir.IndexOfAny([char[]]';"') -ge 0) {
+            Write-Warning ('PATH was not changed: ' + $InstallDir + ' contains ; or ", which PATH cannot hold. Run ' + $destination + ' by its full path, or reinstall with another -InstallDir.')
+            return
+        }
         if ($NoModifyPath) {
             Write-Output ('PATH was not changed. For this terminal: ' + $sessionStep)
             Write-Output 'For future terminals, add that directory through your per-user Environment Variables settings.'
@@ -302,8 +321,9 @@ function Install-ClawBridge([string]$Version = '', [string]$InstallDir = '', [sw
         } catch {
             Write-Warning ('Your user PATH was not updated (' + $_.Exception.Message + '); add ' + $InstallDir + ' through your per-user Environment Variables settings.')
         }
-        if (-not (Test-ClawBridgePathContains ([string]$env:Path) $InstallDir)) {
-            $env:Path = Join-ClawBridgePath ([string]$env:Path) $InstallDir
+        # This session puts the new binary first; the persisted Path only appends.
+        if ($shadowed -or -not (Test-ClawBridgePathContains ([string]$env:Path) $InstallDir)) {
+            $env:Path = $InstallDir + ';' + [string]$env:Path
         }
         Write-Output ('Terminals that were already open need: ' + $sessionStep)
     } finally {

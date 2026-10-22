@@ -21,7 +21,7 @@ class ReleaseTests(unittest.TestCase):
         cls.base = Path(cls.temporary.name)
         cls.repo = cls.base / "source"
         cls.repo.mkdir()
-        for name in ["scripts/build-release.sh", "scripts/install.sh", "scripts/install.ps1", "internal/buildinfo/buildinfo.go"]:
+        for name in ["LICENSE", "scripts/build-release.sh", "scripts/install.sh", "scripts/install.ps1", "internal/buildinfo/buildinfo.go"]:
             target = cls.repo / name
             target.parent.mkdir(parents=True, exist_ok=True)
             shutil.copyfile(ROOT / name, target)
@@ -58,7 +58,7 @@ class ReleaseTests(unittest.TestCase):
         destination = self.base / "release output"
         self.build("v0.1.0", destination, True)
         targets = ["darwin_amd64", "darwin_arm64", "linux_amd64", "linux_arm64", "windows_amd64.exe"]
-        names = {"clawbridge_v0.1.0_" + t for t in targets} | {"install.sh", "install.ps1", "SOURCE-COMMIT.txt", "SHA256SUMS"}
+        names = {"clawbridge_v0.1.0_" + t for t in targets} | {"LICENSE", "install.sh", "install.ps1", "SOURCE-COMMIT.txt", "SHA256SUMS"}
         self.assertEqual({p.name for p in destination.iterdir()}, names)
         self.assertEqual((destination / "SOURCE-COMMIT.txt").read_text(), self.commit + "\n")
         manifest = (destination / "SHA256SUMS").read_text().splitlines()
@@ -92,6 +92,7 @@ class ReleaseTests(unittest.TestCase):
                 offset = struct.unpack("<I", data[60:64])[0]
                 self.assertEqual(data[offset:offset + 6], b"PE\0\0\x64\x86")
         self.assertEqual((destination / "install.sh").read_bytes(), (ROOT / "scripts/install.sh").read_bytes())
+        self.assertEqual((destination / "LICENSE").read_bytes(), (ROOT / "LICENSE").read_bytes())
         self.build("v0.1.0", destination, False)
         self.assertEqual((destination / "SHA256SUMS").read_text().splitlines(), manifest)
         self.assertEqual(self.git("status", "--porcelain"), "")

@@ -44,7 +44,7 @@ Publish raw executables rather than extracting downloaded archives:
 - clawbridge_v0.1.0_linux_amd64
 - clawbridge_v0.1.0_linux_arm64
 - clawbridge_v0.1.0_windows_amd64.exe
-- install.sh, install.ps1, SOURCE-COMMIT.txt, SHA256SUMS
+- LICENSE (the MIT licence), install.sh, install.ps1, SOURCE-COMMIT.txt, SHA256SUMS
 
 Replace v0.1.0 with the exact release tag for later versions. SHA256SUMS contains
 one lowercase SHA256 and two spaces plus the exact basename for every other

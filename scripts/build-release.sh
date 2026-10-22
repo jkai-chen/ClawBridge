@@ -36,13 +36,13 @@ for release_target in darwin/amd64 darwin/arm64 linux/amd64 linux/arm64 windows/
   CGO_ENABLED=0 GOOS="$release_os" GOARCH="$release_arch" GOAMD64=v1 GOARM64=v8.0 \
     go build -trimpath -ldflags "$release_flags" -o "$release_output/$release_name" ./cmd/clawbridge
 done
-cp scripts/install.sh scripts/install.ps1 "$release_output/"
+cp LICENSE scripts/install.sh scripts/install.ps1 "$release_output/"
 printf '%s\n' "$release_commit" > "$release_output/SOURCE-COMMIT.txt"
 python3 - "$release_output" <<'PY'
 import hashlib,pathlib,sys
 p=pathlib.Path(sys.argv[1])
 files=sorted(p.iterdir(),key=lambda f:f.name)
-assert len(files)==8 and all(f.is_file() for f in files)
+assert len(files)==9 and all(f.is_file() for f in files)
 (p/'SHA256SUMS').write_text(''.join(hashlib.sha256(f.read_bytes()).hexdigest()+'  '+f.name+'\n' for f in files),encoding='ascii')
 PY
 printf 'Built %s at %s into %s\n' "$release_version" "$release_commit" "$release_output"

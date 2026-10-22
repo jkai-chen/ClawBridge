@@ -58,8 +58,8 @@ needed for browser/device OAuth. Binaries are unsigned; macOS notarization and
 Windows installer packages are separate future distribution options.
 
 You can also download the matching raw binary from the release and verify it
-against `SHA256SUMS`. The manifest covers five executables, both installers and
-the full `SOURCE-COMMIT.txt`. Checksums verify integrity against that release
+against `SHA256SUMS`. The manifest covers five executables, both installers, the
+MIT `LICENSE` and the full `SOURCE-COMMIT.txt`. Checksums verify integrity against that release
 manifest; they are not a separate publisher signature.
 
 `clawbridge version` and `clawbridge --version` print JSON with version, commit and

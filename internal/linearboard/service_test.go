@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 
 	"clawbridge/internal/bus"
@@ -158,6 +159,23 @@ func TestLinearUncertainWriteAndRevisionChangeNeverReplay(t *testing.T) {
 		if _, err := service.Write(context.Background(), scope, in); err == nil || p.writes != before {
 			t.Fatal("uncertain write replayed", err, p.writes)
 		}
+	}
+}
+func TestLinearProviderErrorStaysUncertainWhenBindingChanges(t *testing.T) {
+	service, a, p, scope := testService(t)
+	p.failure = true
+	p.afterWrite = func() { a.binding.Revision++ }
+	title := "task"
+	in := WriteInput{Operation: "create", OperationID: "lost-response", Title: &title}
+	receipt, err := service.Write(context.Background(), scope, in)
+	var coded *ReceiptError
+	if receipt != nil || err == nil || errors.As(err, &coded) || !strings.Contains(err.Error(), "outcome uncertain") || !strings.Contains(err.Error(), "binding also changed") {
+		t.Fatal("binding change hid an uncertain provider outcome", receipt, err)
+	}
+	p.afterWrite = nil
+	a.binding.Revision--
+	if _, err = service.Write(context.Background(), scope, in); err == nil || !strings.Contains(err.Error(), "uncertain") || p.writes != 1 {
+		t.Fatal("uncertain operation was not left pending", err, p.writes)
 	}
 }
 func TestLinearScopeAndCursorRevisionFence(t *testing.T) {

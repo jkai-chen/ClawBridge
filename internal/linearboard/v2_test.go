@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"clawbridge/internal/bus"
@@ -66,6 +67,7 @@ type providerV2 struct {
 	edges        []linearprovider.RelationInput
 	after        func()
 	preflightErr error
+	writeErr     error
 }
 
 func (p *providerV2) GetProject(_ context.Context, id string) (linearprovider.Project, error) {
@@ -118,7 +120,7 @@ func (p *providerV2) CreateV2(_ context.Context, in linearprovider.CreateInputV2
 	if p.after != nil {
 		p.after()
 	}
-	return i, nil
+	return i, p.writeErr
 }
 func (p *providerV2) UpdateV2(_ context.Context, in linearprovider.UpdateInputV2) (linearprovider.IssueV2, error) {
 	p.updated = append(p.updated, in)
@@ -133,7 +135,7 @@ func (p *providerV2) UpdateV2(_ context.Context, in linearprovider.UpdateInputV2
 	if p.after != nil {
 		p.after()
 	}
-	return i, nil
+	return i, p.writeErr
 }
 func (p *providerV2) Relation(_ context.Context, in linearprovider.RelationInput) (linearprovider.RelationReceipt, error) {
 	p.edges = append(p.edges, in)
@@ -141,7 +143,7 @@ func (p *providerV2) Relation(_ context.Context, in linearprovider.RelationInput
 	if p.after != nil {
 		p.after()
 	}
-	return linearprovider.RelationReceipt{Action: in.Action, Type: in.Type, FromID: in.FromID, ToID: in.ToID}, nil
+	return linearprovider.RelationReceipt{Action: in.Action, Type: in.Type, FromID: in.FromID, ToID: in.ToID}, p.writeErr
 }
 func testV2(t *testing.T) (*Service, *authorityV2, *providerV2, bus.Request) {
 	t.Helper()
@@ -340,5 +342,38 @@ func TestLinearV2LinkPreviewKeepsOriginalRevisionAndVerifiesPairs(t *testing.T) 
 	p.projects[projectB] = []string{teamID}
 	if _, e = s.LinkV2(context.Background(), scope, in); e == nil {
 		t.Fatal("unrepresented allowed team accepted")
+	}
+}
+
+func TestLinearV2ProviderErrorStaysUncertainWhenBindingChanges(t *testing.T) {
+	for _, op := range []string{"update", "relation"} {
+		t.Run(op, func(t *testing.T) {
+			s, a, p, scope := testV2(t)
+			p.issues[parentA] = linearprovider.IssueV2{Issue: linearprovider.Issue{ID: parentA, TeamID: otherTeamID, ProjectID: projectB}, ProjectKnown: true, RelationsKnown: true}
+			i := p.issues[issueID]
+			i.RelationsKnown = true
+			p.issues[issueID] = i
+			p.writeErr = errors.New("lost provider response")
+			p.after = func() { a.b.Revision++ }
+			title := "task"
+			write := func() (any, error) {
+				if op == "update" {
+					return s.WriteV2(context.Background(), scope, WriteInputV2{WriteInput: WriteInput{Operation: "update", OperationID: "lost-" + op, IssueID: issueID, Title: &title}})
+				}
+				return s.RelationV2(context.Background(), scope, RelationInputV2{OperationID: "lost-" + op, Action: "add", Type: "blocks", FromID: issueID, ToID: parentA})
+			}
+			r, e := write()
+			var coded *ReceiptError
+			if r != nil || e == nil || errors.As(e, &coded) || !strings.Contains(e.Error(), "outcome uncertain") || !strings.Contains(e.Error(), "binding also changed") {
+				t.Fatal("binding change hid an uncertain provider outcome", r, e)
+			}
+			// The original binding retry must find the operation still pending.
+			p.after = nil
+			a.b.Revision--
+			before := p.writes
+			if _, e = write(); e == nil || !strings.Contains(e.Error(), "uncertain") || p.writes != before {
+				t.Fatal("uncertain operation was not left pending", e, p.writes)
+			}
+		})
 	}
 }

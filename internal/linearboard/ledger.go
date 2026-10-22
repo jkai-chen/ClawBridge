@@ -16,6 +16,11 @@ import (
 
 var operationPattern = regexp.MustCompile(`\A[A-Za-z0-9._-]{1,128}\z`)
 
+// errBindingChangedAfterProviderError is context for an uncertain provider
+// outcome. It is deliberately not a ReceiptError: a binding change observed
+// after a provider error must never replace the uncertain result.
+var errBindingChangedAfterProviderError = errors.New("task-board binding changed after the provider error")
+
 type ledgerRecord struct {
 	Outcome   string          `json:"outcome,omitempty"`
 	Version   int             `json:"version"`
@@ -89,7 +94,11 @@ func (l ledger) write(profile, operationID string, payload any, dispatch func() 
 		return nil, receiptError
 	}
 	if err != nil && (receipt == nil || !errors.As(err, &receiptError)) {
-		return nil, errors.New("Linear operation may have been dispatched; outcome uncertain, inspect Linear before retrying")
+		message := "Linear operation may have been dispatched; outcome uncertain, inspect Linear before retrying"
+		if errors.Is(err, errBindingChangedAfterProviderError) {
+			message += "; the task-board binding also changed"
+		}
+		return nil, errors.New(message)
 	}
 	if receiptError != nil {
 		record.Outcome = receiptError.Outcome

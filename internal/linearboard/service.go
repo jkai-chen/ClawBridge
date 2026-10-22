@@ -605,7 +605,7 @@ func (s *Service) Write(ctx context.Context, scope bus.Request, in WriteInput) (
 func (s *Service) postFailure(ctx context.Context, scope bus.Request, b bus.TaskboardBinding, providerError error) error {
 	var changed *ReceiptError
 	if err := s.unchanged(ctx, scope, b); errors.As(err, &changed) {
-		return changed
+		return errors.Join(providerError, errBindingChangedAfterProviderError)
 	}
 	return providerError
 }

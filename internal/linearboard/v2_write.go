@@ -96,7 +96,7 @@ func (s *Service) writeAccessV2(ctx context.Context, scope bus.Request, b bus.Ta
 func (s *Service) postFailureV2(ctx context.Context, scope bus.Request, b bus.TaskboardBindingV2, providerError error) error {
 	var changed *ReceiptError
 	if e := s.unchangedV2(ctx, scope, b); errors.As(e, &changed) {
-		return changed
+		return errors.Join(providerError, errBindingChangedAfterProviderError)
 	}
 	return providerError
 }

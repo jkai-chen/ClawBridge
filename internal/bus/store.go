@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"net/url"
 	"os"
 	"os/user"
@@ -459,6 +460,41 @@ func (s *Store) ExecuteAs(ctx context.Context, principal string, r Request) (Res
 	result, err := scoped.executeRequest(ctx, r)
 	return result, classify(err)
 }
+
+// pureRead reports whether a hosted request only reads. Such a request runs in
+// a read-only REPEATABLE READ transaction without the principal and workspace
+// locks, so reads never queue behind writes; Postgres refuses any write it
+// attempts. Reads that name a session heartbeat it (sessions.last_seen), and
+// inbox stamps deliveries, so those keep the locks.
+func pureRead(r Request) bool {
+	switch r.Operation {
+	case "snapshot", "inbox_status", "notification_status", "taskboard_get", "taskboard_get_v2", "taskboard_access", "list_projects", "list_members":
+		return true
+	case "list_sessions", "history", "whoami", "resolve_project":
+		return r.Session == "" && str(r.Args, "instance") == ""
+	}
+	return false
+}
+
+// logMisclassifiedRead reports a pure read that tried to write; tests
+// replace it. Only the operation name is logged, never arguments.
+var logMisclassifiedRead = func(operation string) {
+	log.Printf("clawbridge: %s ran as a pure read but attempted a write (SQLSTATE 25006); its pureRead classification is wrong", operation)
+}
+
+// misclassifiedRead turns a write refused inside a pure read's read-only
+// transaction (SQLSTATE 25006) into invalid, and logs it: the classification
+// is a bug to surface, not an outage that would send clients to a mirror.
+// Anywhere else 25006 means the database itself is read-only (failover, hot
+// standby, maintenance), which classify reports as unavailable.
+func misclassifiedRead(tx *transaction, r Request, err error) error {
+	var state interface{ SQLState() string }
+	if tx.pure && errors.As(err, &state) && state.SQLState() == "25006" {
+		logMisclassifiedRead(r.Operation)
+		return &serviceError{code: "invalid", cause: err}
+	}
+	return err
+}
 func (s *Store) executeRequest(ctx context.Context, r Request) (Result, error) {
 	if err := rejectNUL(r); err != nil {
 		return Result{}, err
@@ -466,8 +502,9 @@ func (s *Store) executeRequest(ctx context.Context, r Request) (Result, error) {
 	if err := validateArgs(r.Operation, r.Args); err != nil {
 		return Result{}, err
 	}
+	pure := s.postgres && pureRead(r)
 	options := &sql.TxOptions{}
-	if s.postgres && (r.Operation == "snapshot" || r.Operation == "inbox_status" || r.Operation == "notification_status" || r.Operation == "taskboard_get" || r.Operation == "taskboard_get_v2" || r.Operation == "taskboard_access") {
+	if pure {
 		options.Isolation = sql.LevelRepeatableRead
 		options.ReadOnly = true
 	}
@@ -475,7 +512,7 @@ func (s *Store) executeRequest(ctx context.Context, r Request) (Result, error) {
 	if err != nil {
 		return Result{}, errors.New("authority unavailable; no write queued")
 	}
-	tx := &transaction{Tx: raw, postgres: s.postgres}
+	tx := &transaction{Tx: raw, postgres: s.postgres, pure: pure}
 	defer tx.Rollback()
 	if s.postgres {
 		if _, err = tx.ExecContext(ctx, `SET LOCAL statement_timeout='12s'`); err != nil {
@@ -485,7 +522,7 @@ func (s *Store) executeRequest(ctx context.Context, r Request) (Result, error) {
 			return Result{}, err
 		}
 	}
-	if s.postgres && r.Operation != "snapshot" && r.Operation != "inbox_status" && r.Operation != "notification_status" && r.Operation != "taskboard_get" && r.Operation != "taskboard_get_v2" && r.Operation != "taskboard_access" {
+	if s.postgres && !tx.pure {
 		// Serialize a principal's rate-limit accounting across its workspaces.
 		if _, err = tx.ExecContext(ctx, `SELECT pg_advisory_xact_lock(hashtextextended(?,0))`, "principal:"+s.principal); err != nil {
 			return Result{}, err
@@ -493,7 +530,7 @@ func (s *Store) executeRequest(ctx context.Context, r Request) (Result, error) {
 	}
 	data, err := s.execute(ctx, tx, r)
 	if err != nil {
-		return Result{}, err
+		return Result{}, misclassifiedRead(tx, r, err)
 	}
 	if err = tx.Commit(); err != nil {
 		return Result{}, errors.New("authority commit failed; no write queued")
@@ -542,7 +579,7 @@ func (s *Store) execute(ctx context.Context, tx *transaction, r Request) (any, e
 		if _, err = one(ctx, tx, `SELECT principal FROM members WHERE workspace_id=? AND principal=?`, wid, s.principal); err != nil {
 			return nil, scopedError(err, "workspace membership required", "forbidden")
 		}
-		if r.Operation != "snapshot" && r.Operation != "inbox_status" && r.Operation != "notification_status" && r.Operation != "taskboard_get" && r.Operation != "taskboard_get_v2" && r.Operation != "taskboard_access" {
+		if !tx.pure {
 			if _, err = tx.ExecContext(ctx, `SELECT pg_advisory_xact_lock(hashtextextended(?,0))`, "workspace:"+wid); err != nil {
 				return nil, err
 			}

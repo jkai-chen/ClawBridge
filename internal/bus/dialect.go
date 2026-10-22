@@ -12,7 +12,10 @@ import (
 type transaction struct {
 	*sql.Tx
 	postgres bool
-	actorID  string
+	// pure is set when the request is a pure read, so the transaction was
+	// opened read-only and takes neither advisory lock.
+	pure    bool
+	actorID string
 }
 
 func (t *transaction) bind(q string) string {

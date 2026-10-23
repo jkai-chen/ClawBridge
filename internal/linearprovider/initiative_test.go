@@ -69,6 +69,27 @@ func TestInitiativeWalkAndMembership(t *testing.T) {
 	if _, e := p.InitiativeHasProject(context.Background(), initiativeA, projectX); e == nil {
 		t.Fatal("an initiative without a projects field answered no")
 	}
+	// Linear lists the projects inline without paging fields: that is the
+	// whole list, so a project not in it is not a member.
+	p, _ = initiativeProvider(t, map[string][]any{"get_initiative": {map[string]any{"id": initiativeA, "projects": []any{}}}})
+	if in, e := p.InitiativeHasProject(context.Background(), initiativeA, projectX); e != nil || in {
+		t.Fatal("an inline empty list did not answer no", in, e)
+	}
+	p, _ = initiativeProvider(t, map[string][]any{"get_initiative": {map[string]any{"id": initiativeA, "projects": []any{map[string]any{"id": "e8000000-0000-4000-8000-000000000009"}}}}})
+	if in, e := p.InitiativeHasProject(context.Background(), initiativeA, projectX); e != nil || in {
+		t.Fatal("an inline list of other projects did not answer no", in, e)
+	}
+	// A list that says it continues cannot answer no.
+	for _, paged := range []map[string]any{
+		{"id": initiativeA, "projects": []any{}, "hasNextPage": true, "cursor": "c1"},
+		{"id": initiativeA, "projects": []any{}, "pageInfo": map[string]any{"hasNextPage": true, "endCursor": "c1"}},
+	} {
+		p, _ = initiativeProvider(t, map[string][]any{"get_initiative": {paged}})
+		var pe *Error
+		if _, e := p.InitiativeHasProject(context.Background(), initiativeA, projectX); !errors.As(e, &pe) || pe.Kind != "pagination_unavailable" {
+			t.Fatal("a continued list answered", paged, e)
+		}
+	}
 }
 
 func TestInitiativeAddProjectIsVerifiedByReadback(t *testing.T) {

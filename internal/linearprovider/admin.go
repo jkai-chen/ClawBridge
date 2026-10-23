@@ -373,7 +373,9 @@ func (p *Provider) CreateInitiative(ctx context.Context, name, description strin
 
 // InitiativeHasProject reads initiative with its projects and reports
 // whether project is one of them. An initiative that lists no projects
-// field cannot answer.
+// field cannot answer. Linear returns the projects inline, with no paging
+// fields (seen 2026-10-23), so such a list is the whole list; one that says
+// it has a next page cannot answer no.
 func (p *Provider) InitiativeHasProject(ctx context.Context, initiative, project string) (bool, error) {
 	if !ValidID(initiative) || !ValidID(project) {
 		return false, fail("invalid")
@@ -399,6 +401,9 @@ func (p *Provider) InitiativeHasProject(ctx context.Context, initiative, project
 		if i, e := entityID(row, "projectId"); e == nil && i == project {
 			return true, nil
 		}
+	}
+	if _, paged := m["hasNextPage"]; !paged && obj(m, "pageInfo") == nil {
+		complete = true
 	}
 	if !complete {
 		return false, fail("pagination_unavailable")

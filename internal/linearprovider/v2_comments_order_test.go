@@ -148,7 +148,9 @@ func TestV2CommentsSinceWithoutUpdateOrderReadsEveryPage(t *testing.T) {
 // the first page of the readback, however many comments the issue has.
 func TestCommentReadbackFindsTheNewCommentOnPageOne(t *testing.T) {
 	rows := minuteRows(300)
-	rows = append(rows, commentRow(commentID, "2026-10-23T11:59:59.990Z", "2026-10-23T11:59:59.970Z"))
+	posted := commentRow(commentID, "2026-10-23T11:59:59.990Z", "2026-10-23T11:59:59.970Z")
+	posted["body"] = "body"
+	rows = append(rows, posted)
 	list := newestFirst(rows...)
 	f := &pagedComments{tools: []*mcp.Tool{commentTools()[0], nativeCommentList()}, gen: func(n int, args map[string]any) any {
 		if _, write := args["body"]; write {

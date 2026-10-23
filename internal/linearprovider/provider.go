@@ -139,6 +139,11 @@ type UpdateInput struct {
 type Receipt struct {
 	ID      string `json:"id"`
 	IssueID string `json:"issue_id"`
+	// ParentID is the comment a reply answers; empty for any other write.
+	ParentID string `json:"parent_id,omitempty"`
+	// BodySHA256 is the SHA-256 of the exact comment body posted, the agent
+	// marker included.
+	BodySHA256 string `json:"body_sha256,omitempty"`
 }
 
 func New(ctx context.Context, h *http.Client, readonly bool) (*Provider, error) {
@@ -1517,14 +1522,21 @@ func (p *Provider) CommentOnIssue(ctx context.Context, issue, identifier, body s
 	if known && parent != issue {
 		return Receipt{}, fail("scope_mismatch")
 	}
+	if !commentBodyMatches(m, body) {
+		return Receipt{}, fail("receipt_mismatch")
+	}
 	// A receipt that does not name its issue is confirmed by reading the
 	// issue's comments; without that evidence the comment stays uncertain.
 	if !known {
-		if found, e := p.commentOnIssue(ctx, issue, identifier, i); e != nil || !found {
+		row, e := p.findComment(ctx, issue, identifier, i)
+		if e != nil || row == nil {
 			return Receipt{}, fail("receipt_unverified")
 		}
+		if !commentBodyMatches(row, body) {
+			return Receipt{}, fail("receipt_mismatch")
+		}
 	}
-	return Receipt{i, issue}, nil
+	return Receipt{ID: i, IssueID: issue, BodySHA256: bodySHA256(body)}, nil
 }
 
 // commentParent reads the issue UUID a comment receipt names, flat or nested.
@@ -1561,6 +1573,14 @@ func commentParent(m map[string]any) (string, bool, error) {
 const commentPages = 4
 
 func (p *Provider) commentOnIssue(ctx context.Context, issue, identifier, comment string) (bool, error) {
+	row, e := p.findComment(ctx, issue, identifier, comment)
+	return row != nil, e
+}
+
+// findComment returns the row of comment found by the commentPages read of
+// issue, or nil. A row found on a page is returned even when that page's
+// continuation is unusable.
+func (p *Provider) findComment(ctx context.Context, issue, identifier, comment string) (map[string]any, error) {
 	cursor, size, calls := "", commentPageSizeV2, 0
 	for page := 0; page < commentPages; page++ {
 		m, e := p.pageShrinking(ctx, &size, &calls, commentCallsV2, func(limit int) (map[string]any, int, error) {
@@ -1572,7 +1592,7 @@ func (p *Provider) commentOnIssue(ctx context.Context, issue, identifier, commen
 			return m, limit, e
 		})
 		if e != nil {
-			return false, e
+			return nil, e
 		}
 		// The page's rows are searched before an unusable continuation fails
 		// the read, so a comment on this page is still found. A row that names
@@ -1580,16 +1600,121 @@ func (p *Provider) commentOnIssue(ctx context.Context, issue, identifier, commen
 		rows, next, done, e := listRows(m, "comments")
 		for _, row := range rows {
 			if i, e := id(row); e == nil && i == comment && commentIssueRef(row, issue, identifier) == nil {
-				return true, nil
+				return row, nil
 			}
 		}
 		if e != nil {
-			return false, e
+			return nil, e
 		}
 		if done || next == "" || next == cursor {
-			return false, nil
+			return nil, nil
 		}
 		cursor = next
 	}
-	return false, nil
+	return nil, nil
+}
+
+// commentReplyReason is why a threaded reply cannot be written: the comment
+// write must accept and document parentId, and the comment read that proves
+// the parent and confirms the receipt must be pinned.
+func (p *Provider) commentReplyReason() string {
+	sample := "00000000-0000-4000-8000-000000000001"
+	name, _, e := p.v2Negotiation([]string{"create_comment", "save_comment"}, []arg{a("body", "body"), a(sample, "parentId")})
+	if e != nil {
+		return "no comment write tool accepts parentId"
+	}
+	if !strings.Contains(p.tools[name].Description, "parentId") {
+		return name + " no longer documents replies by parentId"
+	}
+	if reason := p.commentsReason(); reason != "" {
+		return "comment read unavailable: " + reason
+	}
+	return ""
+}
+
+// IssueHasComment reports whether comment is one of issue's comments, by the
+// same bounded read that confirms a comment receipt (commentPages pages,
+// newest first). A comment beyond that read is reported absent. When the
+// comment is itself a reply, repliesTo is the comment it answers ("?" when
+// the row names a parent that is not a UUID).
+func (p *Provider) IssueHasComment(ctx context.Context, issue, identifier, comment string) (found bool, repliesTo string, err error) {
+	if !ValidID(issue) || !ValidID(comment) || (identifier != "" && !ValidIssueIdentifier(identifier)) {
+		return false, "", fail("invalid")
+	}
+	if p.commentReplyReason() != "" {
+		return false, "", fail("capability_unavailable")
+	}
+	row, e := p.findComment(ctx, issue, identifier, comment)
+	if row == nil {
+		return false, "", e
+	}
+	if parent, named := commentReplyTo(row); named && parent != "" {
+		if !ValidID(parent) {
+			parent = "?"
+		}
+		return true, parent, nil
+	}
+	return true, "", nil
+}
+
+// ReplyOnIssue posts body as a reply to parent, which the caller has proven
+// is a comment on issue (IssueHasComment). Linear ignores the issue when a
+// parent is given, so only the parent and body are sent, and that proof is
+// the only link to the issue. The receipt is accepted only when
+// it names this issue and this parent; when it leaves either out, a read of
+// the issue's comments must find the new comment with this parent. A receipt
+// or row naming another parent, or none, is a receipt_mismatch.
+func (p *Provider) ReplyOnIssue(ctx context.Context, issue, identifier, parent, body string) (Receipt, error) {
+	if !ValidID(issue) || !ValidID(parent) || body == "" || !textOK(body, MaxBodyBytes) || (identifier != "" && !ValidIssueIdentifier(identifier)) {
+		return Receipt{}, fail("invalid")
+	}
+	if p.commentReplyReason() != "" {
+		return Receipt{}, fail("capability_unavailable")
+	}
+	m, e := p.call(ctx, []string{"create_comment", "save_comment"}, a(body, "body"), a(parent, "parentId"))
+	if e != nil {
+		return Receipt{}, e
+	}
+	m = unwrap(m, "comment")
+	i, e := id(m)
+	if e != nil {
+		return Receipt{}, e
+	}
+	owner, known, e := commentParent(m)
+	if e != nil {
+		return Receipt{}, e
+	}
+	if known && owner != issue {
+		return Receipt{}, fail("scope_mismatch")
+	}
+	replyTo, named := commentReplyTo(m)
+	if (named && replyTo != parent) || !commentBodyMatches(m, body) {
+		return Receipt{}, fail("receipt_mismatch")
+	}
+	if !known || !named {
+		row, e := p.findComment(ctx, issue, identifier, i)
+		if e != nil || row == nil {
+			return Receipt{}, fail("receipt_unverified")
+		}
+		if replyTo, named = commentReplyTo(row); !named || replyTo != parent || !commentBodyMatches(row, body) {
+			return Receipt{}, fail("receipt_mismatch")
+		}
+	}
+	return Receipt{ID: i, IssueID: issue, ParentID: parent, BodySHA256: bodySHA256(body)}, nil
+}
+
+// commentReplyTo reads the parent comment a comment row or receipt names,
+// flat (parentId) or nested (parent.id). named is true whenever either key
+// is present, so an explicit null names no parent and reads as "".
+func commentReplyTo(m map[string]any) (string, bool) {
+	if raw, present := m["parentId"]; present {
+		v, _ := raw.(string)
+		return v, true
+	}
+	if raw, present := m["parent"]; present {
+		nested, _ := raw.(map[string]any)
+		v, _ := nested["id"].(string)
+		return v, true
+	}
+	return "", false
 }

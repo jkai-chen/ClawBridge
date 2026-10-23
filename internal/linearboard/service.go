@@ -621,7 +621,7 @@ func (s *Service) Write(ctx context.Context, scope bus.Request, in WriteInput) (
 			}
 			return s.postReceipt(ctx, scope, b, map[string]any{"id": issue.ID, "identifier": issue.Identifier, "team_id": issue.TeamID, "project_id": issue.ProjectID})
 		default:
-			receipt, e := p.Comment(ctx, in.IssueID, in.Body)
+			receipt, e := p.Comment(ctx, in.IssueID, linearprovider.MarkComment(in.Body, markerSession(scope, access)))
 			if e != nil {
 				return nil, writeFailure(p, sent, known, e, post)
 			}
@@ -744,7 +744,7 @@ func ValidateWrite(in WriteInput) error {
 			return errors.New("update requires issue UUID and explicit changed fields")
 		}
 	case "comment":
-		if !linearprovider.ValidID(in.IssueID) || !validText(in.Body, 65536, false) || in.Title != nil || in.Description != nil || in.StateID != nil {
+		if !linearprovider.ValidID(in.IssueID) || !validText(in.Body, linearprovider.MaxBodyBytes-linearprovider.CommentMarkerReserve, false) || in.Title != nil || in.Description != nil || in.StateID != nil {
 			return errors.New("comment requires scoped issue UUID and bounded body")
 		}
 	default:

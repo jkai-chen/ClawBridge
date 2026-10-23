@@ -58,7 +58,9 @@ func (fakeConnections) HTTPClient(context.Context, string) (*http.Client, error)
 }
 
 type fakeProvider struct {
-	writes, reads      int
+	writes, reads int
+	// bodies are the comment bodies posted, in order.
+	bodies             []string
 	foreign            bool
 	incomplete         bool
 	nextCursor         string
@@ -109,8 +111,9 @@ func (p *fakeProvider) Create(context.Context, linearprovider.CreateInput) (line
 func (p *fakeProvider) Update(context.Context, linearprovider.UpdateInput) (linearprovider.Issue, error) {
 	return p.Create(context.Background(), linearprovider.CreateInput{})
 }
-func (p *fakeProvider) Comment(context.Context, string, string) (linearprovider.Receipt, error) {
+func (p *fakeProvider) Comment(_ context.Context, _ string, body string) (linearprovider.Receipt, error) {
 	p.writes++
+	p.bodies = append(p.bodies, body)
 	return linearprovider.Receipt{ID: issueID, IssueID: issueID}, nil
 }
 func testService(t *testing.T) (*Service, *fakeAuthority, *fakeProvider, bus.Request) {

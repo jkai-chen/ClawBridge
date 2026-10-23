@@ -141,3 +141,28 @@ func TestUnlinkRepairRequiresConfirm(t *testing.T) {
 		t.Fatal("repair ran without --confirm", err)
 	}
 }
+
+func TestLinearCommentReplyToIsTheCommentParent(t *testing.T) {
+	const issue = "11111111-1111-4111-8111-111111111111"
+	const parent = "c5000000-0000-4000-8000-000000000005"
+	v, pos, err := parseLinear("comment", []string{issue, "an answer", "--profile", "native", "--operation-id", "reply-1", "--reply-to", parent}, &bytes.Buffer{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	in, err := linearWriteInput("comment", v, pos)
+	if err != nil || in.Operation != "comment" || in.Body != "an answer" || !in.Parent.Present || in.Parent.Value == nil || *in.Parent.Value != parent {
+		t.Fatal("--reply-to not mapped to the comment parent", in, err)
+	}
+	v, pos, _ = parseLinear("comment", []string{issue, "plain", "--profile", "native", "--operation-id", "plain-1"}, &bytes.Buffer{})
+	if in, err = linearWriteInput("comment", v, pos); err != nil || in.Parent.Present {
+		t.Fatal("plain comment sent a parent", in, err)
+	}
+	for _, bad := range []string{"SYN-6", ""} {
+		if _, _, err = parseLinear("comment", []string{issue, "x", "--profile", "native", "--operation-id", "reply-2", "--reply-to", bad}, &bytes.Buffer{}); err == nil {
+			t.Fatalf("--reply-to %q accepted", bad)
+		}
+	}
+	if _, _, err = parseLinear("update", []string{issue, "--profile", "native", "--operation-id", "u", "--title", "t", "--reply-to", parent}, &bytes.Buffer{}); err == nil {
+		t.Fatal("--reply-to accepted on update")
+	}
+}

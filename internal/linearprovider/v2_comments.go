@@ -34,6 +34,10 @@ type Comment struct {
 	Inline        bool   `json:"inline,omitempty"`
 	UntrustedBody string `json:"untrusted_body"`
 	BodyTruncated bool   `json:"body_truncated,omitempty"`
+	// MarkerSession is the session named by a ClawBridge agent marker ending
+	// the body. Anyone can type the marker: it is untrusted and never proof
+	// of who posted the comment.
+	MarkerSession string `json:"marker_session,omitempty"`
 }
 
 // Comments is a bounded read of one issue's comments, filtered client-side by
@@ -501,6 +505,7 @@ func parseComment(row map[string]any) (Comment, time.Time, bool) {
 	if _, ok := row["quotedText"].(string); ok {
 		c.Inline = true
 	}
+	c.MarkerSession = commentMarkerSession(body)
 	if len(body) > commentBodyBytes {
 		cut := commentBodyBytes
 		for cut > 0 && !utf8.RuneStart(body[cut]) {

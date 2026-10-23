@@ -100,7 +100,7 @@ type linearFlags struct {
 	teams                                                                                                                []string
 	projects, labels, expectedLabels, addLabels, removeLabels                                                            []string
 	team, parent, assignee, relationType, relationAction, labelFilter                                                    string
-	expectTitle, expectDescriptionSHA256, updatedAfter, commentsSince                                                    string
+	expectTitle, expectDescriptionSHA256, updatedAfter, commentsSince, replyTo                                           string
 	clearProject, clearLabels, clearParent, clearAssignee, expectNoLabels                                                bool
 	limit                                                                                                                int
 	revision                                                                                                             int64
@@ -207,6 +207,7 @@ func parseLinear(command string, args []string, stderr io.Writer) (linearFlags, 
 	case "comment":
 		write()
 		f.StringVar(&v.bodyFile, "body-file", "", "bounded UTF-8 comment file")
+		f.StringVar(&v.replyTo, "reply-to", "", "reply in the thread of this comment UUID, which must be on the same issue")
 		min, max = 1, 2
 	default:
 		return v, nil, errors.New("unknown Linear command; use linear --help")
@@ -312,7 +313,7 @@ func parseLinear(command string, args []string, stderr io.Writer) (linearFlags, 
 				return v, nil, errors.New("set and clear flags conflict")
 			}
 		}
-		for _, value := range []struct{ key, id string }{{"linear-project", v.project}, {"parent", v.parent}, {"assignee", v.assignee}, {"team", v.team}, {"state", v.state}} {
+		for _, value := range []struct{ key, id string }{{"linear-project", v.project}, {"parent", v.parent}, {"assignee", v.assignee}, {"team", v.team}, {"state", v.state}, {"reply-to", v.replyTo}} {
 			if v.supplied[value.key] && !linearprovider.ValidID(value.id) {
 				return v, nil, errors.New("explicit destination/member/parent/team requires UUID")
 			}
@@ -510,6 +511,10 @@ func linearWriteInput(command string, v linearFlags, pos []string) (linearboard.
 	}
 	if v.supplied["parent"] {
 		writeInput.Parent = linearprovider.Field[*string]{Present: true, Value: &v.parent}
+	}
+	if v.supplied["reply-to"] {
+		// A comment's parent is the comment it replies to.
+		writeInput.Parent = linearprovider.Field[*string]{Present: true, Value: &v.replyTo}
 	}
 	if v.clearParent {
 		writeInput.Parent = linearprovider.Field[*string]{Present: true}

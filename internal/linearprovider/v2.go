@@ -116,6 +116,9 @@ type Capabilities struct {
 	// CommentsRead: list_comments pins the issue parent, page size,
 	// creation-time order and cursor, and documents onBehalfOf.
 	CommentsRead bool `json:"comments_read"`
+	// CommentReply: the comment write accepts parentId, and comments can be
+	// read to prove the parent is on the same issue and to confirm a reply.
+	CommentReply bool `json:"comment_reply"`
 	// MemberTeamFilter and StatusTeamFilter: the member and workflow-state
 	// listings document their team filter, so rows that carry no team of
 	// their own belong to the team asked for.
@@ -537,6 +540,11 @@ func (p *Provider) Capabilities(context.Context) (Capabilities, error) {
 	capabilities.CommentsRead = comments == ""
 	if comments != "" {
 		capabilities.Reasons["comments_read"] = comments
+	}
+	reply := p.commentReplyReason()
+	capabilities.CommentReply = reply == ""
+	if reply != "" {
+		capabilities.Reasons["comment_reply"] = reply
 	}
 	switch {
 	case !shape:

@@ -172,8 +172,14 @@ func ValidateWriteV2(in WriteInputV2) error {
 			return errors.New("update requires issue UUID and explicit changed fields; team moves are unsupported")
 		}
 	case "comment":
-		if !legacyOnlyV2(in) || !linearprovider.ValidID(in.IssueID) || !validText(in.Body, 65536, false) || in.Title != nil || in.Description != nil || in.StateID != nil {
+		// On a comment, Parent is the comment being answered (reply_to).
+		reply := in.Parent
+		in.Parent = linearprovider.Field[*string]{}
+		if !legacyOnlyV2(in) || !linearprovider.ValidID(in.IssueID) || !validText(in.Body, linearprovider.MaxBodyBytes-linearprovider.CommentMarkerReserve, false) || in.Title != nil || in.Description != nil || in.StateID != nil {
 			return errors.New("comment requires scoped issue UUID and bounded body")
+		}
+		if reply.Present && reply.Value == nil {
+			return errors.New("a reply requires the parent comment UUID")
 		}
 	default:
 		return errors.New("unsupported task-board V2 mutation")
@@ -450,7 +456,36 @@ func (s *Service) WriteV2(ctx context.Context, scope bus.Request, in WriteInputV
 		}
 	}
 	var parentIssue linearprovider.IssueV2
-	if in.Parent.Present {
+	reply := in.Operation == "comment" && in.Parent.Present
+	// replyTo is the comment the reply is sent to: the requested parent, or
+	// the root of its thread when the parent is itself a reply.
+	replyTo := ""
+	if reply {
+		// The parent must be a comment on this issue, proven by a bounded
+		// read before anything is sent.
+		replier, ok := p2.(commentReplierV2)
+		if !ok || !caps.CommentReply {
+			return nil, errors.New("provider cannot express a threaded reply; nothing was sent")
+		}
+		found, repliesTo, e := replier.IssueHasComment(ctx, in.IssueID, provenIdentifierV2(current), *in.Parent.Value)
+		if e != nil {
+			return nil, e
+		}
+		if !found {
+			return nil, errors.New("the reply's parent is not a comment on this issue (searched its 200 most recently updated comments); nothing was sent")
+		}
+		// Linear threads are one level deep and Linear re-parents a reply to
+		// a reply onto the thread's root (live probe, 2026-10-23), so the
+		// reply is sent to that root and verified against it.
+		replyTo = *in.Parent.Value
+		if repliesTo == "?" {
+			return nil, errors.New("the reply's parent names a thread root that is not a UUID; nothing was sent")
+		}
+		if repliesTo != "" {
+			replyTo = repliesTo
+		}
+	}
+	if in.Parent.Present && !reply {
 		if !caps.Parent || !caps.ParentSameDestination {
 			return nil, errors.New("provider cannot express a verified same-destination parent")
 		}
@@ -641,17 +676,33 @@ func (s *Service) WriteV2(ctx context.Context, scope bus.Request, in WriteInputV
 		default:
 			// The proven identifier lets the readback accept a row that names
 			// the issue by it.
-			r, err := commentV2(ctx, p, in.IssueID, current.Identifier, in.Body)
+			// Every posted comment ends with the agent marker; the ledger
+			// keeps the caller's body, so a retry matches as before.
+			posted := linearprovider.MarkComment(in.Body, markerSession(scope, access))
+			var r linearprovider.Receipt
+			var err error
+			if reply {
+				r, err = p2.(commentReplierV2).ReplyOnIssue(ctx, in.IssueID, provenIdentifierV2(current), replyTo, posted)
+			} else {
+				r, err = commentV2(ctx, p, in.IssueID, current.Identifier, posted)
+			}
 			if err != nil {
 				return nil, writeFailure(p, sent, known, err, post)
 			}
 			if r.IssueID != in.IssueID || !linearprovider.ValidID(r.ID) {
 				return nil, errors.New("comment receipt scope mismatch")
 			}
+			if reply && r.ParentID != replyTo {
+				return nil, errors.New("comment receipt parent mismatch")
+			}
 			if legacy {
 				receipt = r
 			} else {
-				receipt = ReceiptV2{Kind: "comment", Outcome: "accepted", ID: r.ID, IssueID: r.IssueID}
+				written := ReceiptV2{Kind: "comment", Outcome: "accepted", ID: r.ID, IssueID: r.IssueID, ParentID: r.ParentID, BodySHA256: r.BodySHA256}
+				if reply && replyTo != *in.Parent.Value {
+					written.RequestedParentID = *in.Parent.Value
+				}
+				receipt = written
 			}
 		}
 		return s.postReceiptV2(ctx, scope, b, receipt)
@@ -846,6 +897,32 @@ func receiptParentV2(issue linearprovider.IssueV2, parent linearprovider.Field[*
 		return nil
 	}
 	return errors.New("receipt parent does not match the requested parent")
+}
+
+// markerSession is the session name the agent marker shows: the address the
+// caller's session used, which access resolved, unless that address is the
+// session's ID; IDs never go to Linear.
+func markerSession(scope bus.Request, access bus.TaskboardAccess) string {
+	if scope.Session == access.SessionID {
+		return ""
+	}
+	return scope.Session
+}
+
+// commentReplierV2 is a provider that can prove a reply's parent and post
+// the reply in its thread.
+type commentReplierV2 interface {
+	IssueHasComment(ctx context.Context, issue, identifier, comment string) (found bool, repliesTo string, err error)
+	ReplyOnIssue(ctx context.Context, issue, identifier, parent, body string) (linearprovider.Receipt, error)
+}
+
+// provenIdentifierV2 is the display identifier the issue read proved, or
+// empty when it is not a valid identifier.
+func provenIdentifierV2(issue linearprovider.IssueV2) string {
+	if linearprovider.ValidIssueIdentifier(issue.Identifier) {
+		return issue.Identifier
+	}
+	return ""
 }
 
 // commentV2 comments through CommentOnIssue when the provider has it and the

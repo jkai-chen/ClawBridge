@@ -95,10 +95,16 @@ type ReceiptV2 struct {
 	TeamID     string  `json:"team_id,omitempty"`
 	ProjectID  *string `json:"project_id,omitempty"`
 	IssueID    string  `json:"issue_id,omitempty"`
-	Action     string  `json:"action,omitempty"`
-	Type       string  `json:"type,omitempty"`
-	FromID     string  `json:"from_id,omitempty"`
-	ToID       string  `json:"to_id,omitempty"`
+	// ParentID is the comment a reply answers: the thread root when the
+	// requested parent, RequestedParentID, was itself a reply.
+	ParentID          string `json:"parent_id,omitempty"`
+	RequestedParentID string `json:"requested_parent_id,omitempty"`
+	// BodySHA256 is the SHA-256 of the comment body posted, marker included.
+	BodySHA256 string `json:"body_sha256,omitempty"`
+	Action     string `json:"action,omitempty"`
+	Type       string `json:"type,omitempty"`
+	FromID     string `json:"from_id,omitempty"`
+	ToID       string `json:"to_id,omitempty"`
 	// Unverified names the requested fields (labels, assignee, parent,
 	// state) that Linear's response did not report, so the write could not
 	// confirm them.

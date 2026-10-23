@@ -75,7 +75,7 @@ func refreshWriteProofV2(ctx context.Context, p Provider, p2 ProviderV2, b bus.T
 				return errors.New("issue labels differ from expected_label_ids before replacement; inspect current labels")
 			}
 		}
-		if in.Parent.Present && !in.Project.Present && !current.ProjectKnown {
+		if in.Parent.Present && in.Operation != "comment" && !in.Project.Present && !current.ProjectKnown {
 			return errors.New("effective destination is unavailable before parent change")
 		}
 	}
@@ -99,7 +99,9 @@ func refreshWriteProofV2(ctx context.Context, p Provider, p2 ProviderV2, b bus.T
 			return e
 		}
 	}
-	if in.Parent.Present && in.Parent.Value != nil {
+	// A reply's parent is a comment, proven once before the ledger write: a
+	// comment never moves to another issue.
+	if in.Parent.Present && in.Parent.Value != nil && in.Operation != "comment" {
 		parent, e := verifyParentV2(ctx, p2, b, v, in.IssueID, *in.Parent.Value)
 		if e != nil {
 			return e

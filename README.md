@@ -16,6 +16,10 @@ clawbridge --version
 clawbridge
 ```
 
+The `export` line lasts for this shell only; add it to `~/.zshrc` or `~/.bashrc`
+so new terminals find `clawbridge`. `clawbridge --version` prints JSON like
+`{"source":"build","data":{"version":"v0.2.2",...}}`.
+
 For Windows PowerShell, pinned versions and source builds, see the
 [installation guide](docs/installation.md). Installers verify release checksums
 and preserve application state. Binaries are unsigned.

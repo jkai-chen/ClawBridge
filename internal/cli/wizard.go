@@ -190,7 +190,7 @@ func runWizard(ctx context.Context, flags Config, args []string, stdout, stderr 
 	if err = wizardKeyring(ctx); err != nil {
 		return err
 	}
-	fmt.Fprintln(stdout, "Native credential storage is required; availability, unlock, and write readiness are not guaranteed.")
+	fmt.Fprintln(stdout, credentialStoreNote(runtime.GOOS))
 	candidate := Config{ClientConfig: path, Mode: "cloud", CredentialSource: "oauth", Server: url, Workspace: workspace, Project: project}
 	joinArgs := []string{"--login"}
 	if flow == "device" {
@@ -298,4 +298,13 @@ func readWizardLine(r io.Reader) (string, error) {
 		}
 	}
 	return "", errors.New("guided input exceeds 4096 bytes")
+}
+
+// credentialStoreNote says, in plain words, where the sign-in is kept and that
+// the system may ask first.
+func credentialStoreNote(goos string) string {
+	if goos == "darwin" {
+		return "ClawBridge keeps your sign-in in the macOS Keychain. macOS may ask you to allow access; choose Allow or Always Allow."
+	}
+	return "ClawBridge keeps your sign-in in your system's credential store. You may be asked to unlock it or allow access."
 }

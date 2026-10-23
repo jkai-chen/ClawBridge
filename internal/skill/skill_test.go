@@ -247,8 +247,8 @@ func TestTargetsUseEachAgentsConfigurationHome(t *testing.T) {
 	t.Setenv("CLAUDE_CONFIG_DIR", "")
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("USERPROFILE", os.Getenv("HOME"))
-	if _, err = Targets("", ""); err == nil || !strings.Contains(err.Error(), "--agent") {
-		t.Fatal("no configured agent must ask for --agent or --dir", err)
+	if _, err = Targets("", ""); err == nil || err.Error() != "No Claude Code or Codex installation found; install one, then run `clawbridge skill install` (or pass --dir PATH for a custom agent folder)" || strings.Contains(err.Error(), "--agent") {
+		t.Fatal("no configured agent must say to install one first, without --agent advice", err)
 	}
 	t.Setenv("CODEX_HOME", "relative")
 	if _, err = Targets("codex", ""); err == nil {

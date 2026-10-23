@@ -7,8 +7,33 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/url"
 	"time"
 )
+
+// launchLoginBrowser opens the Google sign-in page; a variable so tests never
+// start a real browser.
+var launchLoginBrowser = auth.LaunchBrowser
+
+// loginBrowserWait matches the wait the auth package uses for its own opener.
+const loginBrowserWait = 5 * time.Second
+
+// showAndOpenBrowser always prints the sign-in URL, then asks the system to
+// open it. A browser opening is no proof it is the right browser or Google
+// account, so the URL is there to copy into another browser profile on this
+// computer. It carries the client ID, the PKCE challenge (never the verifier),
+// state and the loopback address, and no secret. The loopback callback keeps
+// waiting whether or not the launch worked.
+func showAndOpenBrowser(stderr io.Writer) func(context.Context, string) error {
+	return func(ctx context.Context, target string) error {
+		if parsed, err := url.Parse(target); err != nil || parsed.Scheme != "https" {
+			return errors.New("invalid browser sign-in URL")
+		}
+		_, _ = fmt.Fprintf(stderr, "To sign in with another browser or Google account, open this URL on this computer instead:\n%s\n", target)
+		_, _ = launchLoginBrowser(ctx, target, loginBrowserWait)
+		return nil
+	}
+}
 
 // acquireOAuth stages credentials but never publishes routing or commits them.
 func acquireOAuth(ctx context.Context, config Config, device bool, stderr io.Writer) (Config, *auth.CredentialTransaction, error) {
@@ -74,9 +99,7 @@ func acquireOAuth(ctx context.Context, config Config, device bool, stderr io.Wri
 		ClientSecret:      applicableSecret,
 		ExpectedPrincipal: config.Principal,
 		Store:             keyring,
-		ShowURL: func(target string) {
-			_, _ = fmt.Fprintf(stderr, "If no browser opened, open this URL on this computer:\n%s\n", target)
-		},
+		OpenBrowser:       showAndOpenBrowser(stderr),
 	}
 	var credential auth.Credential
 	var transaction *auth.CredentialTransaction

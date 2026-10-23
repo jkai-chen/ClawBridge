@@ -28,7 +28,10 @@ the installer runs the new binary once as `clawbridge skill install`, which
 installs the [agent skill](#agent-skill) for the agents configured on this machine;
 `--no-skill` skips that. A skill failure is a warning; the binary stays installed.
 On macOS and Linux the installer prints the PATH step; it does not change shell
-profiles or PATH itself. If a download or
+profiles or PATH itself. The `export` above lasts for the current shell only; to
+keep it, add `export PATH="$HOME/.local/bin:$PATH"` to `~/.zshrc` (macOS default
+shell) or `~/.bashrc`. `clawbridge --version` prints JSON:
+`{"source":"build","data":{"version":"…","commit":"…","build_time":"…"}}`. If a download or
 checksum fails, the existing binary stays in place. An update replaces the binary
 while preserving your saved route, database/cache and native credentials.
 
@@ -119,9 +122,18 @@ agent configured on this machine:
 | Claude Code | `$CLAUDE_CONFIG_DIR/skills/clawbridge`, default `~/.claude/skills/clawbridge` |
 | Codex | `$CODEX_HOME/skills/clawbridge`, default `~/.codex/skills/clawbridge` |
 
-An agent counts as configured when its configuration directory exists. Use
+An agent counts as configured when its configuration directory exists. With
+neither present, the install says "No Claude Code or Codex installation found";
+install Claude Code or Codex, then run `clawbridge skill install` again, or pass
+`--dir PATH` for a custom agent folder. Use
 `--agent claude-code`, `--agent codex` or `--agent all` to choose explicitly, or
 `--dir SKILLS_DIR` to install into `SKILLS_DIR/clawbridge` for another agent.
+
+`CLAUDE_CONFIG_DIR` and `CODEX_HOME` decide where the skill goes. A terminal
+opened inside an agent or a multi-account tool (for example an Orca agent shell)
+often sets them to that account's profile, so a skill install or guided setup
+run there targets that profile, not `~/.claude` or `~/.codex`. Run it from a
+plain terminal to install for your default agent setup.
 
 Repeating the install changes nothing. After an update, it swaps in a fully
 written copy, so an agent never reads a half-written skill (the folder is absent

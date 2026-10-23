@@ -135,7 +135,9 @@ func TestGuidedHandoffClosesReaderAndPreservesPublishedRouteOnTUIFailure(t *test
 	}
 	var out bytes.Buffer
 	err := Run(context.Background(), []string{"--client-config", path, "setup", "wizard"}, &out, io.Discard)
-	if strings.Contains(out.String(), "availability checked") || !strings.Contains(out.String(), "availability, unlock, and write readiness are not guaranteed") {
+	// The note says where the sign-in is kept; it must never claim the store
+	// was checked or is ready.
+	if strings.Contains(out.String(), "availability checked") || strings.Contains(out.String(), "ready") || !strings.Contains(out.String(), credentialStoreNote(runtime.GOOS)) {
 		t.Fatalf("misleading credential-store status: %q", out.String())
 	}
 	if err == nil || !strings.Contains(err.Error(), "join completed; saved route preserved") {

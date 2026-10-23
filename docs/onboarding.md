@@ -33,7 +33,35 @@ cannot be revoked, and owners cannot revoke themselves.
 
 Send the colleague three values: the service URL, the workspace and the project.
 
+Before the colleague starts, also make sure that:
+
+- **Google can sign them in.** If the service's Google OAuth consent screen is
+  in *Testing* (Google Cloud console, OAuth consent screen, publishing status),
+  only listed test users can sign in: add the colleague's Google account as a
+  test user. A consent screen *In production* needs no list.
+- **They hold a ClawBridge role** (`project role-set`, above) for the exact
+  Google email they will sign in with.
+- **They can see the Linear board**, if the project uses one: invite them to
+  the Linear workspace and to every team the project's board is bound to
+  (`clawbridge linear binding` shows them). Their own Linear connection can
+  only see what their Linear account can.
+
 ## For the colleague
+
+### Before you start
+
+Get these from the project owner first:
+
+- the service URL, workspace and project;
+- confirmation that your Google account has a project role (and, if the
+  owner's Google sign-in is still in testing, that you were added as a test
+  user);
+- for the Linear board: an invitation to the Linear workspace and its bound
+  teams.
+
+Sign in with the Google account the owner granted, from the start. Newer
+servers tie your email to the first Google account that signs in with it; a
+different account later is refused until the owner rebinds it.
 
 ### 1. Install
 
@@ -51,10 +79,23 @@ clawbridge
 ```
 
 On first launch this opens the guided setup (`clawbridge setup wizard` opens it
-again later). It asks for the service URL, workspace and project, signs you in
-with Google (browser, or device sign-in for SSH and headless machines), verifies
-your membership, and saves the trusted route. Your Google account must already
-have the role from the owner; joining does not grant it.
+again later). It asks for the service URL, workspace and project and how to sign
+in (browser, or device sign-in for SSH and headless machines), shows your
+answers, and asks `Continue with sign-in and save after verified join? [y/N]`;
+anything but `y` cancels without changing anything. It then signs you in with
+Google, verifies your membership, and saves the trusted route. Your Google
+account must already have the role from the owner; joining does not grant it.
+
+Browser sign-in opens your default browser and also prints the sign-in URL. If
+that browser is signed in to a different Google account, open the URL in another
+browser profile on the same computer instead (it must be this computer: the
+sign-in returns to a local address). On macOS the sign-in is kept in the
+Keychain, and macOS may ask you to allow access.
+
+Run the setup from a plain terminal. Inside an agent or multi-account tool (for
+example an Orca agent shell), `CLAUDE_CONFIG_DIR` and `CODEX_HOME` may point at
+that tool's profile, and the skill and MCP steps then write there instead of
+`~/.claude` and `~/.codex`.
 
 After the join, the setup offers each remaining step in turn. Every step can be
 skipped, nothing is written until you answer yes, and a failed step is reported
@@ -65,8 +106,9 @@ without undoing the earlier ones:
 2. **Your own Linear account (optional).** Connects your personal Linear account
    in the browser, with read access unless you choose write (write lets your
    agents create and update issues), then checks it with
-   `clawbridge doctor --linear-profile`. The connection and its credentials are
-   yours; nobody else's account is used.
+   `clawbridge doctor --linear-profile`. As with Google, the sign-in URL is
+   printed too, for another browser profile on this computer. The connection and
+   its credentials are yours; nobody else's account is used.
 3. **MCP for each agent.** Asks for a session name, shows the entry it would
    write as a dry run, and writes it after you confirm. With a Linear profile from
    step 2, the entry also enables the native task-board tools.

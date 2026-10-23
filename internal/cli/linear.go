@@ -69,6 +69,31 @@ var openLinearBrowser = func(ctx context.Context, url string) (bool, error) {
 	return opened, nil
 }
 
+// presentLinearURL shows the Linear authorization URL. With --no-browser it
+// prints only the URL. Otherwise it always prints the URL first, so it can be
+// opened in another browser profile when the default one is signed in to the
+// wrong Linear account, then asks the system to open it. The URL carries the
+// registered public client ID (there is no client secret), the PKCE challenge
+// (never the verifier), state, scopes, resource and the loopback address. A
+// launch failure no longer ends the connection: the URL is on screen and the
+// loopback callback keeps waiting.
+func presentLinearURL(ctx context.Context, stderr io.Writer, noBrowser bool) func(string) error {
+	return func(target string) error {
+		if noBrowser {
+			_, e := fmt.Fprintln(stderr, target)
+			return e
+		}
+		if parsed, err := url.Parse(target); err != nil || parsed.Scheme != "https" {
+			return errors.New("invalid Linear sign-in URL")
+		}
+		if _, e := fmt.Fprintf(stderr, "To sign in with another browser or Linear account, open this URL on this computer instead:\n%s\n", target); e != nil {
+			return e
+		}
+		_, _ = openLinearBrowser(ctx, target)
+		return nil
+	}
+}
+
 type linearFlags struct {
 	supplied                                                                                                             map[string]bool
 	profile, name, access, cursor, project, defaultTeam, title, description, descriptionFile, state, operation, bodyFile string
@@ -536,17 +561,7 @@ func runLinear(ctx context.Context, flags Config, args []string, stdout, stderr 
 	emit := func(data any) error { return json.NewEncoder(stdout).Encode(bus.Result{Source: "linear", Data: data}) }
 	switch command {
 	case "connect", "login":
-		profile, e := manager.Connect(bounded, linearconn.ConnectOptions{Name: v.name, ProfileID: v.profile, Access: linearconn.Access(v.access), NoBrowser: v.noBrowser, PresentURL: func(url string) error {
-			if v.noBrowser {
-				_, e := fmt.Fprintln(stderr, url)
-				return e
-			}
-			opened, e := openLinearBrowser(bounded, url)
-			if e == nil && !opened {
-				_, e = fmt.Fprintf(stderr, "If no browser opened, open this URL on this computer:\n%s\n", url)
-			}
-			return e
-		}})
+		profile, e := manager.Connect(bounded, linearconn.ConnectOptions{Name: v.name, ProfileID: v.profile, Access: linearconn.Access(v.access), NoBrowser: v.noBrowser, PresentURL: presentLinearURL(bounded, stderr, v.noBrowser)})
 		if e != nil {
 			return e
 		}

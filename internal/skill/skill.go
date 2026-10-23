@@ -69,6 +69,9 @@ type Result struct {
 	Backup string `json:"backup,omitempty"`
 }
 
+// NoAgentFound is the default install's answer when neither agent is set up.
+const NoAgentFound = "No Claude Code or Codex installation found; install one, then run `clawbridge skill install` (or pass --dir PATH for a custom agent folder)"
+
 // agentHome is the agent's own configuration home, which also holds its
 // user skills: Claude Code reads $CLAUDE_CONFIG_DIR/skills (default
 // ~/.claude/skills) and Codex reads $CODEX_HOME/skills (default
@@ -125,7 +128,9 @@ func Targets(agent, dir string) ([]Target, error) {
 		out = append(out, Target{Agent: name, Dir: filepath.Join(config, "skills", Name)})
 	}
 	if len(out) == 0 {
-		return nil, errors.New("no Claude Code or Codex configuration found; pass --agent claude-code|codex|all or --dir PATH")
+		// Naming an agent here would create its folder for an agent that is not
+		// installed, so the advice is to install one first.
+		return nil, errors.New(NoAgentFound)
 	}
 	return out, nil
 }

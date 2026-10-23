@@ -66,7 +66,7 @@ func TestWindowsGuidedSetupConsoleInput(t *testing.T) {
 	if code := c.wait(15 * time.Second); code == 0 {
 		t.Fatal("Ctrl+C at the confirmation prompt did not cancel the guided setup")
 	}
-	if strings.Contains(c.text(), squash("Native credential storage")) {
+	if strings.Contains(c.text(), squash("ClawBridge keeps your sign-in")) {
 		t.Fatal("Ctrl+C was ignored: the guided setup continued to sign-in")
 	}
 	if _, err := os.Lstat(config); !os.IsNotExist(err) {

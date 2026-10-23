@@ -2,6 +2,7 @@ package bus
 
 import (
 	"context"
+	"fmt"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -78,9 +79,17 @@ func TestLabelPolicySetGetAndAudit(t *testing.T) {
 	}
 	audit := map[string]any{"kind": "label_create", "outcome": "accepted", "operation_id": "op-1", "linear_team_id": policyTeam, "linear_id": policyLabel, "name": "Bug", "policy_revision": 1}
 	h.call("linear_admin_audit", "a", audit)
-	audit["policy_revision"] = 2
-	if e := h.errorOf("linear_admin_audit", "a", audit); !strings.Contains(e, "policy changed") {
-		t.Fatal("audit against another revision accepted", e)
+	// Recording is idempotent by operation ID.
+	if again := h.call("linear_admin_audit", "a", audit).(map[string]any); again["already"] != true {
+		t.Fatal("a repeated audit was recorded twice", again)
+	}
+	// A write checked under an older revision already happened in Linear: it
+	// is recorded with both revisions, never refused.
+	h.call("label_policy_set", "a", map[string]any{"expected_revision": 1, "label_policy": policy})
+	late := map[string]any{"kind": "label_create", "outcome": "accepted", "operation_id": "op-late", "linear_team_id": policyTeam, "linear_id": policyLabel, "name": "Agent", "policy_revision": 1}
+	h.call("linear_admin_audit", "a", late)
+	if e := h.errorOf("linear_admin_audit", "a", map[string]any{"kind": "label_create", "outcome": "accepted", "operation_id": "op-x", "linear_team_id": policyTeam}); e == "" {
+		t.Fatal("a label audit without its revision accepted")
 	}
 	project := map[string]any{"kind": "project_create", "outcome": "observed_unchanged", "operation_id": "op-2", "linear_team_id": policyTeam, "name": "Q4"}
 	h.call("linear_admin_audit", "a", project)
@@ -94,18 +103,26 @@ func TestLabelPolicySetGetAndAudit(t *testing.T) {
 			t.Fatal(name, "accepted")
 		}
 	}
-	if acts := h.actions("linear_label_policy"); len(acts) != 1 || acts[0] != "set" {
+	if acts := h.actions("linear_label_policy"); len(acts) != 2 || acts[0] != "set" {
 		t.Fatal("policy history", acts)
 	}
-	if acts := h.actions("linear_label"); len(acts) != 1 || acts[0] != "label_create" {
+	if acts := h.actions("linear_label"); len(acts) != 2 || acts[0] != "label_create" {
 		t.Fatal("label history", acts)
 	}
 	if acts := h.actions("linear_project"); len(acts) != 1 || acts[0] != "project_create" {
 		t.Fatal("project history", acts)
 	}
 	events := h.call("history", "a", map[string]any{"entity": "linear_label", "limit": 10}).(map[string]any)["events"].([]map[string]any)
-	if d := events[0]["details"].(map[string]any); d["policy_revision"] == nil || d["name"] != "Bug" {
+	byOp := map[string]map[string]any{}
+	for _, e := range events {
+		d := e["details"].(map[string]any)
+		byOp[d["operation_id"].(string)] = d
+	}
+	if d := byOp["op-1"]; d["policy_revision"] == nil || d["name"] != "Bug" || d["policy_revision_now"] != nil {
 		t.Fatal("audit details", d)
+	}
+	if d := byOp["op-late"]; fmt.Sprint(d["policy_revision"]) != "1" || fmt.Sprint(d["policy_revision_now"]) != "2" {
+		t.Fatal("late audit details", d)
 	}
 }
 

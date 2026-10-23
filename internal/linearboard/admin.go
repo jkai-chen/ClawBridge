@@ -192,7 +192,17 @@ func (s *Service) Admin(ctx context.Context, scope bus.Request, in AdminInput) (
 		if e != nil {
 			return AdminResult{}, e
 		}
-		return adminResult(r)
+		result, e := adminResult(r)
+		if e != nil {
+			return AdminResult{}, e
+		}
+		// A retry records an audit an earlier run failed to; the authority
+		// keeps one row per operation.
+		result.Audit = "recorded"
+		if e = s.auditAdmin(ctx, scope, in, result); e != nil {
+			result.Audit = "failed: " + e.Error()
+		}
+		return result, nil
 	}
 	profile, p, done, e := s.openForWrite(ctx)
 	if e != nil {
@@ -231,6 +241,13 @@ func (s *Service) Admin(ctx context.Context, scope bus.Request, in AdminInput) (
 		}
 		if fresh.SessionID != access.SessionID || fresh.ProjectRole != "owner" {
 			return nil, refusedBeforeDispatch(errAdminOwnerOnly)
+		}
+		// The approved list is read again: a change since the check, even
+		// one that keeps this name, refuses the write before it is sent.
+		if in.Kind != "project_create" {
+			if _, now, e := s.labelPolicy(ctx, scope); e != nil || now != revision {
+				return nil, refusedBeforeDispatch(errors.New("the approved label list changed before the write; read it again and use a new operation_id"))
+			}
 		}
 		again, e := adminPlan(ctx, admin, in)
 		if e != nil {
@@ -275,6 +292,12 @@ func (s *Service) Admin(ctx context.Context, scope bus.Request, in AdminInput) (
 				result.Outcome = "accepted_duplicate_observed"
 				for _, l := range after {
 					result.DuplicateIDs = append(result.DuplicateIDs, l.ID)
+				}
+			}
+			// The re-list can prove the team a receipt left out.
+			for _, l := range after {
+				if l.ID == r.ID && l.TeamKnown && l.TeamID == in.TeamID {
+					result.Unverified = nil
 				}
 			}
 		}
@@ -499,6 +522,9 @@ func (s *Service) LabelPolicyV2(ctx context.Context, scope bus.Request) (any, er
 // revision the owner last read. The file is decoded strictly here and again
 // by the authority.
 func (s *Service) SetLabelPolicyV2(ctx context.Context, scope bus.Request, raw []byte, expected int64) (any, error) {
+	if e := uniqueKeys(raw); e != nil {
+		return nil, e
+	}
 	var v any
 	dec := json.NewDecoder(bytes.NewReader(raw))
 	if dec.Decode(&v) != nil || dec.Decode(new(any)) != io.EOF {
@@ -514,4 +540,53 @@ func (s *Service) SetLabelPolicyV2(ctx context.Context, scope bus.Request, raw [
 	scope.Args["label_policy"] = map[string]any{"labels": policy.Labels, "renames": policy.Renames}
 	r, e := s.cfg.Executor.Execute(ctx, scope)
 	return r.Data, e
+}
+
+// uniqueKeys refuses JSON in which an object repeats a key: a decoder would
+// silently keep the last one.
+func uniqueKeys(raw []byte) error {
+	dec := json.NewDecoder(bytes.NewReader(raw))
+	var walk func() error
+	walk = func() error {
+		t, e := dec.Token()
+		if e != nil {
+			return e
+		}
+		switch t {
+		case json.Delim('{'):
+			seen := map[string]bool{}
+			for dec.More() {
+				k, e := dec.Token()
+				if e != nil {
+					return e
+				}
+				key, _ := k.(string)
+				if seen[key] {
+					return fmt.Errorf("the label policy file repeats the key %q", key)
+				}
+				seen[key] = true
+				if e = walk(); e != nil {
+					return e
+				}
+			}
+			_, e = dec.Token()
+			return e
+		case json.Delim('['):
+			for dec.More() {
+				if e := walk(); e != nil {
+					return e
+				}
+			}
+			_, e = dec.Token()
+			return e
+		}
+		return nil
+	}
+	if e := walk(); e != nil {
+		if strings.Contains(e.Error(), "repeats the key") {
+			return e
+		}
+		return errors.New("the label policy file must hold one JSON object")
+	}
+	return nil
 }

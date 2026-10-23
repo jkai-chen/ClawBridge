@@ -641,7 +641,10 @@ clawbridge linear project create NAME --team TEAM_UUID --operation-id ID
 
 Every command takes an `--operation-id`: a retry with the same ID returns the
 saved result and sends nothing. Each write is recorded in the project's history
-with its IDs and names.
+with its IDs and names, once per operation ID; a retry records it if an earlier
+run could not (`audit` in the result says which). A label write is refused
+before it is sent if the approved list changed since it was checked; the history
+row keeps the revision it was checked against.
 
 ## Accounts and recovery
 

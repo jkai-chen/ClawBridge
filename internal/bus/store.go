@@ -18,6 +18,7 @@ import (
 	"regexp"
 	"runtime"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	_ "modernc.org/sqlite"
@@ -539,12 +540,13 @@ var logHeartbeatSkipped = func(operation string, err error) {
 // silently, and any failure (a serialization error, a timeout) is logged and
 // skipped. The session's next read records it.
 // beforeBeat, when set by a test, runs after a heartbeat read commits and
-// before its beat, where another request's change can land.
-var beforeBeat func()
+// before its beat, where another request's change can land. It is atomic
+// because concurrent requests read it.
+var beforeBeat atomic.Pointer[func()]
 
 func (s *Store) beat(ctx context.Context, r Request, b *heartbeat) (string, bool) {
-	if beforeBeat != nil {
-		beforeBeat()
+	if hook := beforeBeat.Load(); hook != nil {
+		(*hook)()
 	}
 	ctx, cancel := context.WithTimeout(ctx, 3*time.Second)
 	defer cancel()
@@ -561,21 +563,17 @@ func (s *Store) beat(ctx context.Context, r Request, b *heartbeat) (string, bool
 		err = tx.QueryRowContext(ctx, `SELECT pg_try_advisory_xact_lock(hashtextextended(?,0))`, "workspace:"+b.workspace).Scan(&acquired)
 	}
 	if err == nil && acquired {
-		// Like any write, the beat re-checks access under the workspace lock:
-		// a session retired, a membership revoked or an allow-list narrowed
+		// Like any write, the beat re-checks access under the workspace lock,
+		// in the same statement: it updates only an active session of a
+		// current member, and returns the allow-list to check before commit.
+		// A session retired, a membership revoked or an allow-list narrowed
 		// while the read ran skips the beat silently.
-		if e := s.admittedUnderLock(ctx, tx, b.workspace); e != nil {
-			var refused *serviceError
-			if !errors.As(e, &refused) {
-				logHeartbeatSkipped(r.Operation, e)
-			}
+		var domains string
+		err = tx.QueryRowContext(ctx, `UPDATE sessions SET last_seen=? FROM workspaces w WHERE sessions.project_id=? AND sessions.id=? AND sessions.status='active' AND w.id=? AND EXISTS(SELECT 1 FROM members m WHERE m.workspace_id=w.id AND m.principal=?) RETURNING w.allowed_domains`, now, b.project, b.session, b.workspace, s.principal).Scan(&domains)
+		if errors.Is(err, sql.ErrNoRows) || (err == nil && s.domainGate(domains) != nil) {
 			return now, false
 		}
-		var res sql.Result
-		if res, err = tx.ExecContext(ctx, `UPDATE sessions SET last_seen=? WHERE project_id=? AND id=? AND status='active'`, now, b.project, b.session); err == nil {
-			if n, _ := res.RowsAffected(); n != 1 {
-				return now, false
-			}
+		if err == nil {
 			err = tx.Commit()
 		}
 	}
@@ -714,17 +712,20 @@ func (s *Store) execute(ctx context.Context, tx *transaction, r Request) (any, e
 			if _, err = tx.ExecContext(ctx, `SELECT pg_advisory_xact_lock(hashtextextended(?,0))`, "workspace:"+wid); err != nil {
 				return nil, err
 			}
-			// Read the allow-list again under the workspace lock its setter
-			// holds, so a write never commits after a restriction it predates.
-			var domains string
-			if err = tx.QueryRowContext(ctx, `SELECT allowed_domains FROM workspaces WHERE id=?`, wid).Scan(&domains); err != nil {
+		}
+		switch {
+		case r.Operation == "workspace_set_domains" && w["owner_principal"] == s.principal:
+			// The workspace owner may always repair or clear the allow-list.
+		case tx.pure:
+			if err = s.domainGate(w["allowed_domains"]); err != nil {
 				return nil, err
 			}
-			w["allowed_domains"] = domains
-		}
-		// The workspace owner may always repair or clear the allow-list.
-		if r.Operation != "workspace_set_domains" || w["owner_principal"] != s.principal {
-			if err = s.domainGate(w["allowed_domains"]); err != nil {
+		default:
+			// One rule for every write (here, resolve and the heartbeat):
+			// membership and the allow-list are read again under the
+			// workspace lock the setter holds, so a write never commits after
+			// a restriction it predates.
+			if err = s.admittedUnderLock(ctx, tx, wid); err != nil {
 				return nil, err
 			}
 		}
@@ -1156,6 +1157,7 @@ func (s *Store) touchReadActor(ctx context.Context, tx *transaction, pid string,
 		tx.beat = &heartbeat{tx.workspace, pid, tx.actorID}
 		return nil
 	}
-	_, err = tx.ExecContext(ctx, `UPDATE sessions SET last_seen=? WHERE project_id=? AND id=?`, stamp(), pid, actor["id"])
+	// Like a heartbeat, only an active session's last_seen moves.
+	_, err = tx.ExecContext(ctx, `UPDATE sessions SET last_seen=? WHERE project_id=? AND id=? AND status='active'`, stamp(), pid, actor["id"])
 	return err
 }

@@ -3,6 +3,8 @@ package server
 import (
 	"bytes"
 	"context"
+	"database/sql"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -90,5 +92,34 @@ func TestVerifiedIdentityCarriesTheNormalHostedDomain(t *testing.T) {
 	delete(payload.Claims, "hd")
 	if id, err := verifiedIdentity(payload, "aud", now); err != nil || id.HostedDomain != "" {
 		t.Fatal("consumer account given a domain", id, err)
+	}
+}
+
+// The operator command passes the authority's own reason through, so a
+// database without the ClawBridge schema is named as such.
+func TestOperatorCommandShowsWhyTheDatabaseWasRefused(t *testing.T) {
+	dsn := os.Getenv("CLAWBRIDGE_TEST_POSTGRES_DSN")
+	if dsn == "" || !strings.Contains(dsn, "://") {
+		t.Skip("reviewer supplies disposable Postgres URL DSN")
+	}
+	admin, err := sql.Open("pgx", dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer admin.Close()
+	schema := fmt.Sprintf("opempty_%d", time.Now().UnixNano())
+	if _, err = admin.Exec(`CREATE SCHEMA ` + schema); err != nil {
+		t.Fatal(err)
+	}
+	defer admin.Exec(`DROP SCHEMA ` + schema + ` CASCADE`)
+	sep := "?"
+	if strings.Contains(dsn, "?") {
+		sep = "&"
+	}
+	t.Setenv("CLAWBRIDGE_TEST_EMPTY_SCHEMA_DSN", dsn+sep+"search_path="+schema)
+	var out bytes.Buffer
+	err = RunOperator(context.Background(), []string{"principal-unbind", "a@example.test", "--confirm", "--database-url-env", "CLAWBRIDGE_TEST_EMPTY_SCHEMA_DSN"}, &out)
+	if err == nil || !strings.Contains(err.Error(), "cannot read the ClawBridge schema version") {
+		t.Fatal(err)
 	}
 }

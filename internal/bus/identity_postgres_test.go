@@ -397,9 +397,16 @@ func TestPostgresOperatorRefusesAnyOtherSchemaVersion(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer admin.Close()
-	sep := "?"
-	if strings.Contains(dsn, "?") {
-		sep = "&"
+	// A URL DSN takes search_path as a query parameter; a key=value DSN
+	// takes it as one more pair.
+	withSchema := func(schema string) string {
+		switch {
+		case !strings.Contains(dsn, "://"):
+			return dsn + " search_path=" + schema
+		case strings.Contains(dsn, "?"):
+			return dsn + "&search_path=" + schema
+		}
+		return dsn + "?search_path=" + schema
 	}
 	for _, c := range []struct {
 		version int // 0: no clawbridge_schema table at all
@@ -418,7 +425,7 @@ func TestPostgresOperatorRefusesAnyOtherSchemaVersion(t *testing.T) {
 				t.Fatal(err)
 			}
 		}
-		s, err := OpenPostgresOperator(ctx, dsn+sep+"search_path="+schema)
+		s, err := OpenPostgresOperator(ctx, withSchema(schema))
 		if c.want == "" {
 			if err != nil {
 				t.Fatal("current schema refused", err)
@@ -429,7 +436,7 @@ func TestPostgresOperatorRefusesAnyOtherSchemaVersion(t *testing.T) {
 		}
 		// Nothing was migrated into the schema.
 		var tables int
-		if err = admin.QueryRowContext(ctx, `SELECT COUNT(*) FROM information_schema.tables WHERE table_schema=$1`, schema).Scan(&tables); err != nil || tables > 1 {
+		if err = admin.QueryRowContext(ctx, `SELECT COUNT(*) FROM information_schema.tables WHERE table_schema=$1`, schema).Scan(&tables); err != nil || (c.version == 0 && tables != 0) || (c.version > 0 && tables != 1) {
 			t.Fatalf("version %d: operator open created tables: %d %v", c.version, tables, err)
 		}
 	}
@@ -492,8 +499,12 @@ func TestPostgresOperatorClearDomainsIsBoundedAndPrecise(t *testing.T) {
 	if _, err = holder.ExecContext(ctx, `SELECT pg_advisory_xact_lock(hashtextextended($1,0))`, "workspace:"+wid); err != nil {
 		t.Fatal(err)
 	}
+	// The test bounds its own wait, so a clear that would hang fails here
+	// instead of at the package timeout.
+	bounded, cancel := context.WithTimeout(ctx, 12*time.Second)
+	defer cancel()
 	start := time.Now()
-	_, err = operator.OperatorClearWorkspaceDomains(ctx, f.workspace)
+	_, err = operator.OperatorClearWorkspaceDomains(bounded, f.workspace)
 	if err == nil || !strings.Contains(err.Error(), "busy") || time.Since(start) > 10*time.Second {
 		t.Fatal("operator clear behind a held lock:", err, time.Since(start))
 	}
@@ -597,7 +608,7 @@ func TestPostgresHeartbeatRechecksAccessBeforeItWrites(t *testing.T) {
 		t.Skip("reviewer supplies disposable Postgres DSN")
 	}
 	ctx := context.Background()
-	t.Cleanup(func() { beforeBeat = nil })
+	t.Cleanup(func() { beforeBeat.Store(nil) })
 	for name, change := range map[string]string{
 		"none":               "",
 		"domain narrowed":    `UPDATE workspaces SET allowed_domains='["other.example"]' WHERE name=$1`,
@@ -617,15 +628,16 @@ func TestPostgresHeartbeatRechecksAccessBeforeItWrites(t *testing.T) {
 				return at
 			}
 			before := lastSeen()
-			beforeBeat = func() {
+			hook := func() {
 				if change != "" {
 					if _, err := g.s.db.ExecContext(ctx, change, g.workspace); err != nil {
 						t.Error(err)
 					}
 				}
 			}
+			beforeBeat.Store(&hook)
 			_, err := g.asHD(member, "corp.example", Request{Operation: "whoami", Workspace: g.workspace, Project: "p", Session: "hb", Args: map[string]any{"instance": instance}})
-			beforeBeat = nil
+			beforeBeat.Store(nil)
 			if err != nil {
 				t.Fatal("the read itself was admitted and must succeed", err)
 			}
@@ -633,5 +645,71 @@ func TestPostgresHeartbeatRechecksAccessBeforeItWrites(t *testing.T) {
 				t.Fatalf("beat wrote=%v after %s", moved, name)
 			}
 		})
+	}
+}
+
+// An unreachable Postgres is "unavailable", never "not the server's
+// database": only a missing schema table means that. Needs no DSN.
+func TestOperatorOpenTellsUnreachableFromNotTheServersDatabase(t *testing.T) {
+	_, err := OpenPostgresOperator(context.Background(), "postgres://nobody@127.0.0.1:1/none?sslmode=disable&connect_timeout=2")
+	if err == nil || !strings.Contains(err.Error(), "Postgres unavailable") || strings.Contains(err.Error(), "server's database") {
+		t.Fatal(err)
+	}
+}
+
+// resolve_project with a retired session's instance does not move its
+// last_seen, like the heartbeat.
+func TestPostgresResolveDoesNotTouchARetiredSession(t *testing.T) {
+	f := newPGIdentityFixture(t)
+	ctx := context.Background()
+	member := newID("m") + "@corp.example"
+	f.member(member)
+	instance := f.session(member, "corp.example", "gone")
+	if _, err := f.s.db.ExecContext(ctx, `UPDATE sessions SET status='retired',last_seen='2000-01-01T00:00:00.000000000Z' WHERE owner_principal=$1`, member); err != nil {
+		t.Fatal(err)
+	}
+	_, _ = f.asHD(member, "corp.example", Request{Operation: "resolve_project", Workspace: f.workspace, Project: "p", Session: "gone", Args: map[string]any{"instance": instance}})
+	var at string
+	if err := f.s.db.QueryRowContext(ctx, `SELECT last_seen FROM sessions WHERE owner_principal=$1`, member).Scan(&at); err != nil || at != "2000-01-01T00:00:00.000000000Z" {
+		t.Fatal("a retired session was touched", at, err)
+	}
+}
+
+// Every write re-checks membership, not only the allow-list, under the
+// workspace lock: a member removed while the write waited is refused.
+func TestPostgresWriteWaitingOnTheLockSeesARevokedMembership(t *testing.T) {
+	f := newPGIdentityFixture(t)
+	ctx := context.Background()
+	member := newID("m") + "@corp.example"
+	f.member(member)
+	if _, err := f.asHD(member, "corp.example", f.list()); err != nil {
+		t.Fatal(err)
+	}
+	var wid string
+	if err := f.s.db.QueryRowContext(ctx, `SELECT id FROM workspaces WHERE name=$1`, f.workspace).Scan(&wid); err != nil {
+		t.Fatal(err)
+	}
+	remover, err := f.s.db.BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer remover.Rollback()
+	if _, err = remover.ExecContext(ctx, `SELECT pg_advisory_xact_lock(hashtextextended($1,0))`, "workspace:"+wid); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = remover.ExecContext(ctx, `DELETE FROM members WHERE workspace_id=$1 AND principal=$2`, wid, member); err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan error, 1)
+	go func() {
+		_, err := f.asHD(member, "corp.example", Request{Operation: "register_session", Workspace: f.workspace, Project: "p", Session: "late", Args: map[string]any{}})
+		done <- err
+	}()
+	waitForLockWaiter(t, f.s, wid)
+	if err = remover.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	if err = <-done; !refusedWith(err, "membership") {
+		t.Fatal("a write that waited on the lock committed for a removed member", err)
 	}
 }

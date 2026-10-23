@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"strings"
 )
 
 func (s *Store) projectRole(ctx context.Context, tx *transaction, w map[string]any, pid string) (string, error) {
@@ -172,10 +171,13 @@ func (s *Store) listMembers(ctx context.Context, tx *transaction, pid string) (a
 }
 
 func (s *Store) resolveInTransaction(ctx context.Context, tx *transaction, r Request) (any, error) {
-	q := `SELECT w.id AS workspace_id,p.id AS project_id FROM projects p JOIN workspaces w ON w.id=p.workspace_id WHERE `
+	columns := `w.id AS workspace_id,p.id AS project_id`
+	if s.postgres {
+		columns += `,w.allowed_domains AS allowed_domains`
+	}
+	q := `SELECT ` + columns + ` FROM projects p JOIN workspaces w ON w.id=p.workspace_id WHERE `
 	args := []any{}
 	if s.postgres {
-		q = strings.Replace(q, `SELECT w.id AS workspace_id,p.id AS project_id`, `SELECT w.id AS workspace_id,p.id AS project_id,w.allowed_domains AS allowed_domains`, 1)
 		q += `w.mode='server' AND EXISTS(SELECT 1 FROM members m WHERE m.workspace_id=w.id AND m.principal=?) AND (w.owner_principal=? OR EXISTS(SELECT 1 FROM project_roles pr WHERE pr.project_id=p.id AND pr.principal=?))`
 		args = append(args, s.principal, s.principal, s.principal)
 	} else {

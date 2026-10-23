@@ -535,7 +535,7 @@ func RunOperator(ctx context.Context, args []string, stdout io.Writer) error {
 	}
 	store, err := bus.OpenPostgresOperator(ctx, dsn)
 	if err != nil {
-		return errors.New("cannot open Postgres; check the configured connection and schema version")
+		return fmt.Errorf("cannot open Postgres: %w", err)
 	}
 	defer store.Close()
 	var out map[string]any

@@ -49,7 +49,14 @@ func OpenPostgresOperator(ctx context.Context, dsn string) (*Store, error) {
 	var version int
 	if err = db.QueryRowContext(check, `SELECT COALESCE(MAX(version),0) FROM clawbridge_schema`).Scan(&version); err != nil {
 		db.Close()
-		return nil, errors.New("cannot read the ClawBridge schema version; is this the server's database?")
+		// Only a missing schema table means this is not the server's
+		// database; authentication, TLS and network failures are an
+		// unreachable Postgres, whatever the schema.
+		var state interface{ SQLState() string }
+		if errors.As(err, &state) && state.SQLState() == "42P01" {
+			return nil, errors.New("cannot read the ClawBridge schema version; is this the server's database?")
+		}
+		return nil, errors.New("Postgres unavailable; check the connection URL, credentials and network")
 	}
 	if version != postgresSchemaVersion {
 		db.Close()

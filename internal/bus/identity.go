@@ -135,18 +135,21 @@ func (s *Store) bindSubject(ctx context.Context, id Identity) error {
 	if err = lockSubject(ctx, tx, id.Principal); err != nil {
 		return err
 	}
+	now, err := dbStamp(ctx, tx)
+	if err != nil {
+		return err
+	}
 	var issuer, boundAt string
 	var subject, previous sql.NullString
 	var allowPrevious bool
 	err = tx.QueryRowContext(ctx, `SELECT issuer,subject,previous_subject,allow_previous<>0,bound_at FROM principal_subjects WHERE principal=?`, id.Principal).Scan(&issuer, &subject, &previous, &allowPrevious, &boundAt)
 	hash := subjectHash(id.Issuer, id.Subject)
-	now := stamp()
 	switch {
 	case errors.Is(err, sql.ErrNoRows):
 		if _, err = tx.ExecContext(ctx, `INSERT INTO principal_subjects(principal,issuer,subject,bound_at,bound_by) VALUES(?,?,?,?,'first_sight')`, id.Principal, id.Issuer, id.Subject, now); err != nil {
 			return err
 		}
-		err = principalEvent(ctx, tx, id.Principal, "principal_bound", hash, id.Principal)
+		err = principalEvent(ctx, tx, id.Principal, "principal_bound", hash, now, id.Principal)
 	case err != nil:
 		return err
 	case !subject.Valid && issuer == id.Issuer && previous.Valid && previous.String == id.Subject && !allowPrevious:
@@ -157,7 +160,7 @@ func (s *Store) bindSubject(ctx context.Context, id Identity) error {
 		if _, err = tx.ExecContext(ctx, `UPDATE principal_subjects SET issuer=?,subject=?,bound_at=?,bound_by='first_sight',allow_previous=0 WHERE principal=?`, id.Issuer, id.Subject, now, id.Principal); err != nil {
 			return err
 		}
-		err = principalEvent(ctx, tx, id.Principal, "principal_bound", hash, id.Principal)
+		err = principalEvent(ctx, tx, id.Principal, "principal_bound", hash, now, id.Principal)
 	case issuer == id.Issuer && subject.String == id.Subject:
 		return nil
 	default:
@@ -192,7 +195,12 @@ func lockSubject(ctx context.Context, tx *transaction, principal string) error {
 // incident), commits, and returns the public refusal.
 func refuse(ctx context.Context, tx *transaction, principal, action, hash, boundAt, message string) error {
 	var recent int
-	since := time.Now().UTC().Add(-refusalAuditInterval).Format(timestampLayout)
+	now, err := dbStamp(ctx, tx)
+	if err != nil {
+		return err
+	}
+	at, _ := time.Parse(timestampLayout, now)
+	since := at.Add(-refusalAuditInterval).Format(timestampLayout)
 	if boundAt > since {
 		since = boundAt
 	}
@@ -200,7 +208,7 @@ func refuse(ctx context.Context, tx *transaction, principal, action, hash, bound
 		return err
 	}
 	if recent == 0 {
-		if err := principalEvent(ctx, tx, principal, action, hash, principal); err != nil {
+		if err := principalEvent(ctx, tx, principal, action, hash, now, principal); err != nil {
 			return err
 		}
 	}
@@ -210,9 +218,24 @@ func refuse(ctx context.Context, tx *transaction, principal, action, hash, bound
 	return &serviceError{code: "forbidden", cause: errors.New(message), public: true}
 }
 
-func principalEvent(ctx context.Context, tx *transaction, principal, action, hash, by string) error {
-	_, err := tx.ExecContext(ctx, `INSERT INTO principal_events(id,principal,action,subject_hash,changed_at,changed_by) VALUES(?,?,?,?,?,?)`, newID("pev_"), principal, action, hash, stamp(), by)
+func principalEvent(ctx context.Context, tx *transaction, principal, action, hash, at, by string) error {
+	_, err := tx.ExecContext(ctx, `INSERT INTO principal_events(id,principal,action,subject_hash,changed_at,changed_by) VALUES(?,?,?,?,?,?)`, newID("pev_"), principal, action, hash, at, by)
 	return err
+}
+
+// dbStamp is the database's clock in timestampLayout. Hosted binding times
+// and their audit events use it, so the refusal window compares times from
+// one clock even when several servers share the database. An embedded SQLite
+// store shares the host's clock, which stamp keeps at full precision.
+func dbStamp(ctx context.Context, tx *transaction) (string, error) {
+	if !tx.postgres {
+		return stamp(), nil
+	}
+	var now time.Time
+	if err := tx.QueryRowContext(ctx, `SELECT now()`).Scan(&now); err != nil {
+		return "", err
+	}
+	return now.UTC().Format(timestampLayout), nil
 }
 
 // unbindPrincipal lets the server's bootstrap owner release a principal from
@@ -298,10 +321,14 @@ func unbindSubject(ctx context.Context, tx *transaction, principal string, allow
 	if allowPrevious {
 		flag = 1
 	}
-	if _, err = tx.ExecContext(ctx, `UPDATE principal_subjects SET previous_subject=?,subject=NULL,allow_previous=?,bound_at=?,bound_by=? WHERE principal=?`, released.String, flag, stamp(), by, principal); err != nil {
+	now, err := dbStamp(ctx, tx)
+	if err != nil {
 		return nil, err
 	}
-	if err = principalEvent(ctx, tx, principal, action, subjectHash(issuer, released.String), by); err != nil {
+	if _, err = tx.ExecContext(ctx, `UPDATE principal_subjects SET previous_subject=?,subject=NULL,allow_previous=?,bound_at=?,bound_by=? WHERE principal=?`, released.String, flag, now, by, principal); err != nil {
+		return nil, err
+	}
+	if err = principalEvent(ctx, tx, principal, action, subjectHash(issuer, released.String), now, by); err != nil {
 		return nil, err
 	}
 	next := "the next sign-in with this address binds its account, except the released one; have the user sign in now"

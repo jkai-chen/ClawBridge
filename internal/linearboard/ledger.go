@@ -212,7 +212,7 @@ func (l ledger) write(profile, operationID string, payload any, dispatch func() 
 	}
 	hash := digest(payload)
 	record := ledgerRecord{Version: 1, Digest: hash, State: "pending", UpdatedAt: l.now().UTC().Format(time.RFC3339Nano)}
-	if receipt, exists, e := readLedger(path, hash); exists || e != nil {
+	if receipt, exists, e := readLedger(path, hash, true); exists || e != nil {
 		return receipt, e
 	}
 	if err = saveLedger(path, record); err != nil {
@@ -313,7 +313,9 @@ func saveLedger(path string, r ledgerRecord) error {
 	return syncDirectory(filepath.Dir(path))
 }
 
-func readLedger(path, hash string) (any, bool, error) {
+// readLedger reads one record. matchPayload compares its payload digest with
+// hash; only a replay (lookupAny) reads without it.
+func readLedger(path, hash string, matchPayload bool) (any, bool, error) {
 	info, err := os.Lstat(path)
 	if os.IsNotExist(err) {
 		return nil, false, nil
@@ -357,7 +359,7 @@ func readLedger(path, hash string) (any, bool, error) {
 	if _, e := time.Parse(time.RFC3339Nano, previous.UpdatedAt); e != nil {
 		return nil, true, errors.New("corrupt operation timestamp")
 	}
-	if hash != anyPayload && previous.Digest != hash {
+	if matchPayload && previous.Digest != hash {
 		return nil, true, errors.New("operation_id already used with a different scoped payload")
 	}
 	return recordOutcome(previous)
@@ -410,16 +412,16 @@ func recordOutcome(previous ledgerRecord) (any, bool, error) {
 	return receipt, true, nil
 }
 func (l ledger) lookup(profile, id string, payload any) (any, bool, error) {
-	return l.lookupDigest(profile, id, digest(payload))
+	return l.find(profile, id, digest(payload), true)
 }
 
-// anyPayload is the payload digest of a replay lookup: it matches the
-// recorded digest, whatever it is. Every other check still applies.
-const anyPayload = ""
+// lookupAny is lookup whatever payload the record was written for: it skips
+// only the payload-digest comparison, for a replay of a recorded result.
+func (l ledger) lookupAny(profile, id string) (any, bool, error) {
+	return l.find(profile, id, "", false)
+}
 
-// lookupDigest is lookup by payload digest; anyPayload skips only the
-// digest comparison.
-func (l ledger) lookupDigest(profile, id, hash string) (any, bool, error) {
+func (l ledger) find(profile, id, hash string, matchPayload bool) (any, bool, error) {
 	if !operationPattern.MatchString(id) || !filepath.IsAbs(l.dir) {
 		return nil, false, errors.New("invalid operation ledger selection")
 	}
@@ -438,5 +440,5 @@ func (l ledger) lookupDigest(profile, id, hash string) (any, bool, error) {
 	if err := privatePath(directory, true); err != nil {
 		return nil, true, err
 	}
-	return readLedger(path, hash)
+	return readLedger(path, hash, matchPayload)
 }

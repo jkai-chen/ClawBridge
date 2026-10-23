@@ -171,11 +171,11 @@ type seenComment struct {
 }
 
 // pageShrinking calls one page. call reports the limit it actually sent.
-// While the response cap cuts the page, it reopens the session the cut closed
-// and retries the same page at half that limit, down to commentMinPageV2; then
-// it returns result_limit. Every call, retries included, is charged to calls,
-// and no call is made once calls reaches budget. A cancelled context is
-// returned as is.
+// While the response cap cuts the page, it retries the same page at half that
+// limit, down to commentMinPageV2 (invoke first reopens the session the cut
+// closed); then it returns result_limit. Every call, retries included, is
+// charged to calls, and no call is made once calls reaches budget. A
+// cancelled context is returned as is.
 func (p *Provider) pageShrinking(ctx context.Context, size, calls *int, budget int, call func(limit int) (map[string]any, int, error)) (map[string]any, error) {
 	for {
 		*calls++
@@ -188,12 +188,6 @@ func (p *Provider) pageShrinking(ctx context.Context, size, calls *int, budget i
 			return nil, e
 		}
 		*size = max(sent/2, commentMinPageV2)
-		if e := p.reopenSession(ctx); e != nil {
-			if ctx.Err() != nil {
-				return nil, ctx.Err()
-			}
-			return nil, fail("result_limit")
-		}
 	}
 }
 

@@ -83,6 +83,10 @@ type Provider struct {
 	// reopen opens a fresh session on the same transport, replacing one a
 	// cut response closed. It is nil for an injected caller.
 	reopen func(context.Context) (ToolCaller, interface{ Close() error }, error)
+	// stale is set when a call ended at the response cap: go-sdk closes the
+	// session then, so the next call reopens it first. The cut call itself
+	// is never sent again.
+	stale atomic.Bool
 }
 type PageOptions struct {
 	Limit  int
@@ -625,6 +629,16 @@ func (p *Provider) call(ctx context.Context, names []string, args ...arg) (map[s
 	return p.invoke(ctx, chosen, values)
 }
 func (p *Provider) invoke(ctx context.Context, chosen string, values map[string]any) (map[string]any, error) {
+	if p.stale.Load() {
+		// Reopen before sending; a failed reopen sent nothing.
+		if e := p.reopenSession(ctx); e != nil {
+			if ctx.Err() != nil {
+				return nil, ctx.Err()
+			}
+			return nil, &Error{Kind: "unavailable", NotSent: true}
+		}
+		p.stale.Store(false)
+	}
 	var before uint64
 	if p.capHits != nil {
 		before = p.capHits.Load()
@@ -632,6 +646,10 @@ func (p *Provider) invoke(ctx context.Context, chosen string, values map[string]
 	out, e := p.invokeOnce(ctx, chosen, values)
 	if e != nil && p.capHits != nil && p.capHits.Load() != before {
 		e = fail("result_limit")
+	}
+	var cut *Error
+	if p.reopen != nil && errors.As(e, &cut) && cut.Kind == "result_limit" {
+		p.stale.Store(true)
 	}
 	var unsent *Error
 	if !errors.As(e, &unsent) || !unsent.NotSent {

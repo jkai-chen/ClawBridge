@@ -1,9 +1,11 @@
 package linearprovider
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -18,10 +20,14 @@ const projectB = "33333333-3333-4333-8333-333333333333"
 
 // cutServer is a real go-sdk MCP server, reached through New(): get_project
 // answers project uid with a response larger than MaxResultBytes and any
-// other project normally; save_comment always answers too large.
+// other project normally; save_comment always answers too large. It answers
+// in JSON, where go-sdk closes the client session when a body is cut (an SSE
+// stream can survive a cut), and it counts initialize requests, so a test
+// can tell that the provider opened a new session.
 type cutServer struct {
-	mu    sync.Mutex
-	calls map[string]int
+	mu          sync.Mutex
+	calls       map[string]int
+	initialized int
 }
 
 func newCutServer(t *testing.T) (*Provider, *cutServer) {
@@ -53,7 +59,17 @@ func newCutServer(t *testing.T) (*Provider, *cutServer) {
 		count("save_comment", "")
 		return text(map[string]any{"id": commentID, "issueId": iid, "body": huge}), nil
 	})
-	h := httptest.NewTLSServer(mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server { return srv }, nil))
+	handler := mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server { return srv }, &mcp.StreamableHTTPOptions{JSONResponse: true})
+	h := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		r.Body = io.NopCloser(bytes.NewReader(body))
+		if bytes.Contains(body, []byte(`"method":"initialize"`)) {
+			cs.mu.Lock()
+			cs.initialized++
+			cs.mu.Unlock()
+		}
+		handler.ServeHTTP(w, r)
+	}))
 	t.Cleanup(h.Close)
 	u, _ := url.Parse(h.URL)
 	p, e := New(context.Background(), &http.Client{Transport: toLocal{u, h.Client().Transport}}, false)
@@ -62,6 +78,12 @@ func newCutServer(t *testing.T) (*Provider, *cutServer) {
 	}
 	t.Cleanup(func() { p.Close() })
 	return p, cs
+}
+
+func (cs *cutServer) sessions() int {
+	cs.mu.Lock()
+	defer cs.mu.Unlock()
+	return cs.initialized
 }
 
 func (cs *cutServer) count(key string) int {
@@ -82,7 +104,13 @@ func TestReopenOnCutServesTheNextRead(t *testing.T) {
 	if _, e := p.GetProject(context.Background(), uid); !isKind(e, "result_limit") {
 		t.Fatal("cut read", e)
 	}
+	if cs.sessions() != 1 {
+		t.Fatal("a session opened before the next call", cs.sessions())
+	}
 	project, e := p.GetProject(context.Background(), projectB)
+	if cs.sessions() != 2 {
+		t.Fatal("the next call did not open a new session", cs.sessions())
+	}
 	if e != nil || project.ID != projectB {
 		t.Fatal("the read after a cut ran on the closed session", e)
 	}
@@ -101,8 +129,8 @@ func TestReopenOnCutNeverResendsAWrite(t *testing.T) {
 	if _, e := p.Comment(context.Background(), iid, "body"); e == nil {
 		t.Fatal("cut write receipt accepted")
 	}
-	if project, e := p.GetProject(context.Background(), projectB); e != nil || project.ID != projectB {
-		t.Fatal("the call after a cut write ran on the closed session", e)
+	if project, e := p.GetProject(context.Background(), projectB); e != nil || project.ID != projectB || cs.sessions() != 2 {
+		t.Fatal("the call after a cut write ran on the closed session", e, cs.sessions())
 	}
 	if n := cs.count("save_comment:"); n != 1 {
 		t.Fatal("the cut write was sent", n, "times")
@@ -122,16 +150,21 @@ func TestReopenFailureSendsNothing(t *testing.T) {
 		}
 		return f, nil, nil
 	}
-	p.stale.Store(true)
+	// A call that ends at the cap leaves the session to be reopened.
+	f.err = &Error{Kind: "result_limit"}
+	if _, e := p.GetProject(context.Background(), projectB); !isKind(e, "result_limit") || opened != 0 {
+		t.Fatal("cut call", e, opened)
+	}
+	f.err = nil
 	_, e := p.GetProject(context.Background(), projectB)
 	var pe *Error
-	if !errors.As(e, &pe) || pe.Kind != "unavailable" || !pe.NotSent || len(f.calls) != 0 {
-		t.Fatal("failed reopen", e, f.calls)
+	if !errors.As(e, &pe) || pe.Kind != "unavailable" || !pe.NotSent || opened != 1 || len(f.calls) != 1 {
+		t.Fatal("failed reopen", e, opened, f.calls)
 	}
-	if project, e := p.GetProject(context.Background(), projectB); e != nil || project.ID != projectB || opened != 2 || len(f.calls) != 1 {
+	if project, e := p.GetProject(context.Background(), projectB); e != nil || project.ID != projectB || opened != 2 || len(f.calls) != 2 {
 		t.Fatal("reopen not retried on the next call", e, opened, f.calls)
 	}
-	if _, e := p.GetProject(context.Background(), projectB); e != nil || opened != 2 {
+	if _, e := p.GetProject(context.Background(), projectB); e != nil || opened != 2 || len(f.calls) != 3 {
 		t.Fatal("a healthy session reopened again", e, opened)
 	}
 }

@@ -22,7 +22,7 @@ import (
 	"google.golang.org/api/idtoken"
 )
 
-type Identity struct{ Principal, Subject string }
+type Identity struct{ Principal, Subject, HostedDomain string }
 type Verifier interface {
 	Verify(context.Context, string) (Identity, error)
 }
@@ -178,7 +178,11 @@ func verifiedIdentity(p *idtoken.Payload, audience string, now time.Time) (Ident
 	if !verified || !principal.Valid(email) {
 		return Identity{}, errors.New("verified Google email is required")
 	}
-	return Identity{Principal: email, Subject: p.Subject}, nil
+	// An hd claim that is not a domain name counts as none: any allow-list
+	// refuses the account.
+	hostedDomain, _ := p.Claims["hd"].(string)
+	hostedDomain, _ = principal.NormalDomain(hostedDomain)
+	return Identity{Principal: email, Subject: p.Subject, HostedDomain: hostedDomain}, nil
 }
 
 type errorBody struct {
@@ -328,7 +332,7 @@ func NewHandlerWithOAuthMetadata(store Executor, verifier Verifier, metadata OAu
 		}
 		var result bus.Result
 		if bound, ok := store.(IdentityExecutor); ok {
-			result, err = bound.ExecuteAsIdentity(ctx, bus.Identity{Principal: identity.Principal, Issuer: bus.GoogleIssuer, Subject: identity.Subject}, request)
+			result, err = bound.ExecuteAsIdentity(ctx, bus.Identity{Principal: identity.Principal, Issuer: bus.GoogleIssuer, Subject: identity.Subject, HostedDomain: identity.HostedDomain}, request)
 		} else {
 			result, err = store.ExecuteAs(ctx, identity.Principal, request)
 		}
@@ -487,16 +491,21 @@ func openServingStore(ctx context.Context, dsn, owner string) (*bus.Store, error
 
 // RunOperator runs a host operator's maintenance command against the
 // database directly, without a signed-in principal: access to the database
-// connection is the authority. Today it only unbinds a principal, the way out
-// when the server owner's own address moved to a new Google account.
+// connection is the authority. These are the ways out when the server owner
+// cannot sign in: their own address moved to a new Google account, or a
+// workspace allow-list refuses every account.
 func RunOperator(ctx context.Context, args []string, stdout io.Writer) error {
-	const usage = "usage: clawbridge operator principal-unbind EMAIL --confirm [--allow-previous] [--database-url-env NAME]"
-	if len(args) == 0 || args[0] != "principal-unbind" {
+	const usage = "usage: clawbridge operator principal-unbind EMAIL --confirm [--allow-previous] | workspace-clear-domains WORKSPACE --confirm [--database-url-env NAME]"
+	if len(args) == 0 || (args[0] != "principal-unbind" && args[0] != "workspace-clear-domains") {
 		return errors.New(usage)
 	}
-	f := flag.NewFlagSet("operator principal-unbind", flag.ContinueOnError)
-	confirm := f.Bool("confirm", false, "confirm releasing this address from its bound Google account")
-	allowPrevious := f.Bool("allow-previous", false, "let the released account bind again, for an unbind made by mistake")
+	command := args[0]
+	f := flag.NewFlagSet("operator "+command, flag.ContinueOnError)
+	confirm := f.Bool("confirm", false, "confirm the change")
+	allowPrevious := false
+	if command == "principal-unbind" {
+		f.BoolVar(&allowPrevious, "allow-previous", false, "let the released account bind again, for an unbind made by mistake")
+	}
 	dsnEnv := f.String("database-url-env", "CLAWBRIDGE_DATABASE_URL", "environment variable holding the Postgres connection URL")
 	var positional []string
 	rest := args[1:]
@@ -513,6 +522,9 @@ func RunOperator(ctx context.Context, args []string, stdout io.Writer) error {
 		return errors.New(usage)
 	}
 	if !*confirm {
+		if command == "workspace-clear-domains" {
+			return errors.New("workspace-clear-domains lets any Google account that is a member in; repeat with --confirm")
+		}
 		return errors.New("principal-unbind releases an address from its Google account; repeat with --confirm")
 	}
 	dsn := os.Getenv(*dsnEnv)
@@ -524,7 +536,12 @@ func RunOperator(ctx context.Context, args []string, stdout io.Writer) error {
 		return errors.New("cannot open Postgres; check the configured connection and schema version")
 	}
 	defer store.Close()
-	out, err := store.OperatorUnbindPrincipal(ctx, positional[0], *allowPrevious)
+	var out map[string]any
+	if command == "workspace-clear-domains" {
+		out, err = store.OperatorClearWorkspaceDomains(ctx, positional[0])
+	} else {
+		out, err = store.OperatorUnbindPrincipal(ctx, positional[0], allowPrevious)
+	}
 	if err != nil {
 		return err
 	}

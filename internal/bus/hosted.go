@@ -176,6 +176,16 @@ func (s *Store) resolveInTransaction(ctx context.Context, tx *transaction, r Req
 	if s.postgres {
 		q += `w.mode='server' AND EXISTS(SELECT 1 FROM members m WHERE m.workspace_id=w.id AND m.principal=?) AND (w.owner_principal=? OR EXISTS(SELECT 1 FROM project_roles pr WHERE pr.project_id=p.id AND pr.principal=?))`
 		args = append(args, s.principal, s.principal, s.principal)
+		// A workspace whose allow-list refuses the caller neither resolves
+		// nor makes another match ambiguous.
+		refused, err := s.domainRefusedWorkspaces(ctx, tx)
+		if err != nil {
+			return nil, err
+		}
+		for _, id := range refused {
+			q += ` AND w.id<>?`
+			args = append(args, id)
+		}
 	} else {
 		q += `w.mode='local' AND w.owner_principal=?`
 		args = append(args, s.principal)

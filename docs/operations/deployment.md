@@ -58,6 +58,36 @@ sudo docker compose --env-file /etc/clawbridge/clawbridge.env \
   run --rm --no-deps api operator principal-unbind EMAIL --confirm
 ```
 
+### Workspace domain allow-list
+
+A workspace owner can accept only accounts managed by named Google Workspace
+domains (the token's `hd` claim):
+
+```sh
+clawbridge workspace-domains example.com corp.example --workspace TEAM
+clawbridge workspace-domains --clear --workspace TEAM
+```
+
+The list holds at most 20 domains and must include the owner's own domain.
+With a list set, a member whose account has another domain, or none (a
+consumer Google account), is refused with `forbidden` and writes no binding.
+Two exceptions:
+
+- The workspace owner may always change or clear the list, even when the list
+  no longer admits the owner's own account.
+- A Google service account (`…@….iam.gserviceaccount.com`) never carries `hd`,
+  so a service account that is an explicit workspace member is admitted. It
+  still needs membership like any other principal.
+
+If a list is damaged and admits no one, the host operator clears it:
+
+```sh
+sudo docker compose --env-file /etc/clawbridge/clawbridge.env \
+  --project-name clawbridge-phase3 \
+  -f /opt/clawbridge/repo/deploy/compose.yaml \
+  run --rm --no-deps api operator workspace-clear-domains TEAM --confirm
+```
+
 Explicit gcloud or authorized-user ADC with service-account impersonation are
 operator alternatives. Their audited principal is the service account in the
 verified token; sharing that account shares its application identity. Configure

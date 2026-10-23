@@ -8,8 +8,10 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
 
 	"clawbridge/internal/bus"
+	"google.golang.org/api/idtoken"
 )
 
 type boundExecutor struct{ got *bus.Identity }
@@ -26,13 +28,13 @@ func (b boundExecutor) ExecuteAsIdentity(_ context.Context, id bus.Identity, _ b
 func TestServerPassesTheVerifiedAccountToTheAuthority(t *testing.T) {
 	var got bus.Identity
 	handler := NewHandler(boundExecutor{&got}, VerifierFunc(func(context.Context, string) (Identity, error) {
-		return Identity{Principal: "alice@example.test", Subject: "sub-alice"}, nil
+		return Identity{Principal: "alice@example.test", Subject: "sub-alice", HostedDomain: "example.test"}, nil
 	}))
 	request := httptest.NewRequest(http.MethodPost, "/v1/execute", bytes.NewBufferString(`{"operation":"list_projects","workspace":"w"}`))
 	request.Header.Set("Authorization", "Bearer token")
 	recorder := httptest.NewRecorder()
 	handler.ServeHTTP(recorder, request)
-	if recorder.Code != http.StatusOK || got != (bus.Identity{Principal: "alice@example.test", Issuer: bus.GoogleIssuer, Subject: "sub-alice"}) {
+	if recorder.Code != http.StatusOK || got != (bus.Identity{Principal: "alice@example.test", Issuer: bus.GoogleIssuer, Subject: "sub-alice", HostedDomain: "example.test"}) {
 		t.Fatalf("status=%d identity=%+v body=%s", recorder.Code, got, recorder.Body.String())
 	}
 }
@@ -49,6 +51,9 @@ func TestOperatorUnbindNeedsConfirmOneAddressAndADatabase(t *testing.T) {
 		{[]string{"principal-unbind", "a@example.test", "b@example.test", "--confirm"}, "usage"},
 		{[]string{"principal-unbind", "a@example.test"}, "--confirm"},
 		{[]string{"principal-unbind", "a@example.test", "--confirm", "--database-url-env", "CLAWBRIDGE_TEST_EMPTY_DSN"}, "environment variable is empty"},
+		{[]string{"workspace-clear-domains", "w"}, "--confirm"},
+		{[]string{"workspace-clear-domains", "w", "--allow-previous", "--confirm"}, "allow-previous"},
+		{[]string{"workspace-clear-domains", "w", "--confirm", "--database-url-env", "CLAWBRIDGE_TEST_EMPTY_DSN"}, "environment variable is empty"},
 	} {
 		var out bytes.Buffer
 		if err := RunOperator(context.Background(), c.args, &out); err == nil || !strings.Contains(err.Error(), c.want) || out.Len() != 0 {
@@ -69,5 +74,21 @@ func TestServingStoreRunsRequestsOnlyWithTheVerifiedAccount(t *testing.T) {
 	defer store.Close()
 	if _, err = store.ExecuteAs(context.Background(), "owner@serving-test.example", bus.Request{Operation: "list_projects", Workspace: "w"}); err == nil || !strings.Contains(err.Error(), "ExecuteAsIdentity") {
 		t.Fatal("served store ran a request without the account binding", err)
+	}
+}
+
+func TestVerifiedIdentityCarriesTheNormalHostedDomain(t *testing.T) {
+	now := time.Now()
+	payload := &idtoken.Payload{Issuer: "accounts.google.com", Audience: "aud", Subject: "sub", Expires: now.Add(time.Hour).Unix(), Claims: map[string]any{"email": "a@corp.example", "email_verified": true, "hd": " Corp.Example. "}}
+	for hd, want := range map[any]string{" Corp.Example. ": "corp.example", "not a domain": "", 42: ""} {
+		payload.Claims["hd"] = hd
+		id, err := verifiedIdentity(payload, "aud", now)
+		if err != nil || id.HostedDomain != want {
+			t.Fatal(hd, id, err)
+		}
+	}
+	delete(payload.Claims, "hd")
+	if id, err := verifiedIdentity(payload, "aud", now); err != nil || id.HostedDomain != "" {
+		t.Fatal("consumer account given a domain", id, err)
 	}
 }

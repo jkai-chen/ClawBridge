@@ -27,3 +27,24 @@ func TestValidIsOneRuleForEveryLayer(t *testing.T) {
 		t.Fatal("principal not normalised")
 	}
 }
+
+func TestNormalDomainIsOneRuleForEveryLayer(t *testing.T) {
+	for in, want := range map[string]string{
+		" Corp.Example. ":                     "corp.example",
+		"corp.example":                        "corp.example",
+		"localhost":                           "",
+		"not a domain":                        "",
+		"-corp.example":                       "",
+		"corp..example":                       "",
+		"":                                    "",
+		strings.Repeat("a.", 127) + "example": "",
+	} {
+		got, ok := NormalDomain(in)
+		if got != want || ok != (want != "") {
+			t.Errorf("%q: %q %v, want %q", in, got, ok, want)
+		}
+	}
+	if !ServiceAccount("bot@project.iam.gserviceaccount.com") || ServiceAccount("bot@iam.gserviceaccount.com.example") {
+		t.Fatal("service account rule wrong")
+	}
+}

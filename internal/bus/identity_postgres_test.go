@@ -7,6 +7,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 )
 
 type pgIdentityFixture struct {
@@ -181,4 +182,181 @@ func TestPostgresHostedStoreRefusesRequestsWithoutAnAccount(t *testing.T) {
 		t.Fatal("hosted store ran a request without its account binding", err)
 	}
 	f.must(f.owner, "sub-owner", f.list())
+}
+
+func (f *pgIdentityFixture) asHD(principal, hd string, r Request) (Result, error) {
+	return f.s.ExecuteAsIdentity(context.Background(), Identity{Principal: principal, Issuer: GoogleIssuer, Subject: "sub-" + principal, HostedDomain: hd}, r)
+}
+
+func TestPostgresWorkspaceDomainAllowList(t *testing.T) {
+	f := newPGIdentityFixture(t)
+	ctx := context.Background()
+	owner := func(r Request) (Result, error) {
+		if r.Workspace == "" {
+			r.Workspace = f.workspace
+		}
+		return f.s.ExecuteAsIdentity(ctx, Identity{Principal: f.owner, Issuer: GoogleIssuer, Subject: "sub-owner", HostedDomain: "Corp.Example."}, r)
+	}
+	setDomains := func(domains ...any) (Result, error) {
+		return owner(Request{Operation: "workspace_set_domains", Args: map[string]any{"domains": append([]any{}, domains...)}})
+	}
+	member := newID("m") + "@corp.example"
+	stranger := newID("s") + "@corp.example"
+	robot := newID("bot") + "@proj.iam.gserviceaccount.com"
+	outsideRobot := newID("bot") + "@proj.iam.gserviceaccount.com"
+	f.member(member)
+	f.member(stranger)
+	f.member(robot)
+	if _, err := setDomains("corp.example"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.asHD(member, "corp.example", f.list()); err != nil {
+		t.Fatal("listed domain refused", err)
+	}
+	for _, hd := range []string{"other.example", ""} {
+		if _, err := f.asHD(member, hd, f.list()); !refusedWith(err, "allowed Google Workspace domains") {
+			t.Fatalf("account from %q admitted: %v", hd, err)
+		}
+	}
+	// A member refused by the allow-list writes no binding or event.
+	if _, err := f.asHD(stranger, "other.example", f.list()); !refusedWith(err, "allowed Google Workspace domains") {
+		t.Fatal(err)
+	}
+	if n := f.count(`SELECT COUNT(*) FROM principal_subjects WHERE principal=$1`, stranger) + f.count(`SELECT COUNT(*) FROM principal_events WHERE principal=$1`, stranger); n != 0 {
+		t.Fatal("a domain-refused member wrote binding rows or events:", n)
+	}
+	if _, err := f.asHD(member, "corp.example", Request{Operation: "workspace_set_domains", Workspace: f.workspace, Args: map[string]any{"domains": []any{}}}); !refusedWith(err, "only the workspace owner") {
+		t.Fatal("a member changed the allow-list", err)
+	}
+	// A service account never carries hd: a member one is admitted, one that
+	// is not a member is still refused by membership.
+	if _, err := f.asHD(robot, "", f.list()); err != nil {
+		t.Fatal("member service account refused", err)
+	}
+	if _, err := f.asHD(outsideRobot, "", f.list()); !refusedWith(err, "membership") {
+		t.Fatal("non-member service account admitted", err)
+	}
+
+	// resolve_project leaves out a workspace that refuses the caller: it
+	// neither resolves nor makes another match ambiguous.
+	open := newID("idws")
+	remote := "https://git.example.test/" + newID("r") + ".git"
+	if _, err := owner(Request{Operation: "workspace_init", Workspace: open, Args: map[string]any{"mode": "server"}}); err != nil {
+		t.Fatal(err)
+	}
+	for _, w := range []string{f.workspace, open} {
+		if _, err := owner(Request{Operation: "project_create", Workspace: w, Args: map[string]any{"slug": "shared", "git_remote": remote}}); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := owner(Request{Operation: "project_role_set", Workspace: w, Project: "shared", Args: map[string]any{"principal": member, "role": "member"}}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	resolve := func(hd, workspace string) (map[string]any, error) {
+		out, err := f.asHD(member, hd, Request{Operation: "resolve_project", Workspace: workspace, Args: map[string]any{"git_remote": remote}})
+		m, _ := out.Data.(map[string]any)
+		return m, err
+	}
+	if _, err := resolve("corp.example", ""); err == nil || !strings.Contains(err.Error(), "ambiguous") {
+		t.Fatal("an admitted member should see both matches", err)
+	}
+	if _, err := resolve("other.example", f.workspace); err == nil || !strings.Contains(err.Error(), "not found") {
+		t.Fatal("a refused workspace resolved", err)
+	}
+	got, err := resolve("other.example", "")
+	if err != nil || got["workspace_id"] == nil {
+		t.Fatal("the refused workspace made the open one ambiguous", got, err)
+	}
+
+	// Break-glass: the owner's account moved to another domain, so the list
+	// refuses the owner; setting domains is still allowed to repair it.
+	moved := func(r Request) (Result, error) {
+		r.Workspace = f.workspace
+		return f.s.ExecuteAsIdentity(ctx, Identity{Principal: f.owner, Issuer: GoogleIssuer, Subject: "sub-owner", HostedDomain: "new.example"}, r)
+	}
+	if _, err = moved(f.list()); !refusedWith(err, "allowed Google Workspace domains") {
+		t.Fatal("owner from another domain admitted", err)
+	}
+	if _, err = moved(Request{Operation: "workspace_set_domains", Args: map[string]any{"domains": []any{"new.example"}}}); err != nil {
+		t.Fatal("owner could not repair the allow-list", err)
+	}
+	if _, err = moved(f.list()); err != nil {
+		t.Fatal(err)
+	}
+
+	// A stored null is not "off": it admits no one.
+	if _, err = f.s.db.ExecContext(ctx, `UPDATE workspaces SET allowed_domains='null' WHERE name=$1`, f.workspace); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = f.asHD(member, "corp.example", f.list()); !refusedWith(err, "allowed Google Workspace domains") {
+		t.Fatal("a null allow-list admitted a member", err)
+	}
+	operator, err := OpenPostgresOperator(ctx, os.Getenv("CLAWBRIDGE_TEST_POSTGRES_DSN"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer operator.Close()
+	if _, err = operator.OperatorClearWorkspaceDomains(ctx, f.workspace); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = f.asHD(member, "", f.list()); err != nil {
+		t.Fatal("operator clear did not reopen the workspace", err)
+	}
+}
+
+// A write that waited on the workspace lock while the allow-list was
+// narrowed sees the new list, not the one it read before the lock.
+func TestPostgresDomainRestrictionAppliesToWritesWaitingOnTheLock(t *testing.T) {
+	f := newPGIdentityFixture(t)
+	ctx := context.Background()
+	member := newID("m") + "@corp.example"
+	f.member(member)
+	if _, err := f.asHD(member, "corp.example", f.list()); err != nil {
+		t.Fatal(err)
+	}
+	var wid string
+	if err := f.s.db.QueryRowContext(ctx, `SELECT id FROM workspaces WHERE name=$1`, f.workspace).Scan(&wid); err != nil {
+		t.Fatal(err)
+	}
+	setter, err := f.s.db.BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer setter.Rollback()
+	if _, err = setter.ExecContext(ctx, `SELECT pg_advisory_xact_lock(hashtextextended($1,0))`, "workspace:"+wid); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = setter.ExecContext(ctx, `UPDATE workspaces SET allowed_domains='["other.example"]' WHERE id=$1`, wid); err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan error, 1)
+	go func() {
+		_, err := f.asHD(member, "corp.example", Request{Operation: "register_session", Workspace: f.workspace, Project: "p", Args: map[string]any{}, Session: "late"})
+		done <- err
+	}()
+	// Let the write reach the lock, then record the restriction.
+	waitForLockWaiter(t, f.s, wid)
+	if err = setter.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	if err = <-done; !refusedWith(err, "allowed Google Workspace domains") {
+		t.Fatal("a write that waited on the lock committed under the old allow-list", err)
+	}
+}
+
+// waitForLockWaiter returns once a session waits on this workspace's
+// advisory lock, so the test orders the write after the setter's lock.
+func waitForLockWaiter(t *testing.T, s *Store, wid string) {
+	t.Helper()
+	for range 200 {
+		var waiting int
+		if err := s.db.QueryRow(`WITH k AS (SELECT hashtextextended($1,0) AS key) SELECT COUNT(*) FROM pg_locks l, k WHERE l.locktype='advisory' AND NOT l.granted AND l.database=(SELECT oid FROM pg_database WHERE datname=current_database()) AND l.classid::bigint=((k.key>>32)&4294967295) AND l.objid::bigint=(k.key&4294967295) AND l.objsubid=1`, "workspace:"+wid).Scan(&waiting); err != nil {
+			t.Fatal(err)
+		}
+		if waiting > 0 {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatal("the write never waited on the workspace lock")
 }

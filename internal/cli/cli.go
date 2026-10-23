@@ -40,8 +40,9 @@ Commands: setup --local, project create SLUG, register [NAME], sessions, send TO
           linear COMMAND --help (native connection, scoped task board and task actions),
           mcp [--linear-profile ID], mcp install ... [--linear-profile ID] (opt-in native Linear tools),
           skill install|status|uninstall [--agent claude-code|codex|all] [--dir SKILLS_DIR] [--force],
-          serve, operator principal-unbind EMAIL --confirm [--allow-previous] (on the server host),
-          sync, purge-expired, principal-unbind EMAIL --confirm [--allow-previous], doctor, tui [--screen SCREEN], version
+          serve, operator principal-unbind|workspace-clear-domains ... --confirm (on the server host),
+          sync, purge-expired, principal-unbind EMAIL --confirm [--allow-previous],
+          workspace-domains DOMAIN...|--clear, doctor, tui [--screen SCREEN], version
 Interactive: bare clawbridge opens the selected profile or guided join; setup wizard starts guided join.
 Onboarding: setup join --server URL --workspace TEAM --project CODEBASE [--login|--device]
 setup --cloud initializes an existing service only; no infrastructure is created.
@@ -501,6 +502,12 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		}
 	case "purge-expired":
 		op = "purge_expired"
+	case "workspace-domains":
+		// Workspace owner only: accept only accounts managed by these Google
+		// Workspace domains, or clear the list to accept any member's account.
+		op = "workspace_set_domains"
+		arityMax = 20
+		f.Bool("clear", false, "clear the list, so any member's Google account is accepted")
 	case "principal-unbind":
 		// Server owner only: release an address from its Google account so
 		// the next sign-in with it binds the account that now holds it.
@@ -537,7 +544,7 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	f.Visit(func(fl *flag.Flag) {
 		key := strings.ReplaceAll(fl.Name, "-", "_")
 		switch fl.Name {
-		case "local", "cloud", "name", "retention-days", "confirm":
+		case "local", "cloud", "name", "retention-days", "confirm", "clear":
 			return
 		}
 		if getter, ok := fl.Value.(flag.Getter); ok {
@@ -600,6 +607,12 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 			}
 			config.Session = pos[0]
 		}
+	case "workspace-domains":
+		clear := f.Lookup("clear").Value.(flag.Getter).Get().(bool)
+		if clear == (len(pos) > 0) {
+			return errors.New("workspace-domains takes the allowed domains, or --clear to accept any account")
+		}
+		a["domains"] = append([]string{}, pos...)
 	case "principal-unbind":
 		if confirm := f.Lookup("confirm").Value.(flag.Getter).Get().(bool); !confirm {
 			return errors.New("principal-unbind releases an address from its Google account; repeat with --confirm")
@@ -668,7 +681,12 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		defer localStore.Close()
 		executor = localStore
 	}
-	if command != "setup" && op != "project_create" {
+	// A server-wide unbind needs no project, and the allow-list belongs to
+	// the configured workspace: neither resolves a project first.
+	if op == "workspace_set_domains" && config.Workspace == "" {
+		return errors.New("workspace-domains needs --workspace or a configured workspace")
+	}
+	if command != "setup" && op != "project_create" && op != "workspace_set_domains" && op != "principal_unbind" {
 		workspace, project, e := executor.ResolveProject(ctx, config.Workspace, config.Project, gitRemote(ctx))
 		if e != nil {
 			return e

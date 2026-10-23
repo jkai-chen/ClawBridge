@@ -5,6 +5,7 @@ package principal
 
 import (
 	"net/mail"
+	"regexp"
 	"strings"
 )
 
@@ -22,3 +23,20 @@ func Valid(p string) bool {
 // Normal is the stored form of a principal: trimmed and lowercased, matching
 // what the token verifier produces.
 func Normal(p string) string { return strings.ToLower(strings.TrimSpace(p)) }
+
+var domainPattern = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)+$`)
+
+// NormalDomain is the one form of a Google Workspace domain (a token's hd
+// claim or an allow-list entry): trimmed, lowercased and without a trailing
+// dot. ok is false unless the result is a dotted DNS name of at most 253 bytes.
+func NormalDomain(d string) (normal string, ok bool) {
+	d = strings.TrimSuffix(strings.ToLower(strings.TrimSpace(d)), ".")
+	if len(d) > 253 || !domainPattern.MatchString(d) {
+		return "", false
+	}
+	return d, true
+}
+
+// ServiceAccount reports whether p is a Google service account principal.
+// Such accounts never carry an hd claim.
+func ServiceAccount(p string) bool { return strings.HasSuffix(p, ".iam.gserviceaccount.com") }

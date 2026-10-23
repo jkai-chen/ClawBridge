@@ -68,3 +68,30 @@ func TestPrincipalUnbindRequiresConfirmation(t *testing.T) {
 		t.Fatal("unbind ran without --confirm", err)
 	}
 }
+
+func TestWorkspaceDomainsTakesDomainsOrClear(t *testing.T) {
+	isolated(t)
+	for _, args := range [][]string{{"workspace-domains"}, {"workspace-domains", "example.com", "--clear"}} {
+		var out, errs bytes.Buffer
+		if err := Run(context.Background(), args, &out, &errs); err == nil || !strings.Contains(err.Error(), "--clear") {
+			t.Fatal("ambiguous workspace-domains accepted", args, err)
+		}
+	}
+}
+
+// The allow-list belongs to the workspace and an unbind to the server:
+// neither needs a project, so neither resolves one first.
+func TestWorkspaceDomainsAndUnbindDoNotResolveAProject(t *testing.T) {
+	isolated(t)
+	var out, errs bytes.Buffer
+	if err := Run(context.Background(), []string{"workspace-domains", "--clear"}, &out, &errs); err == nil || !strings.Contains(err.Error(), "--workspace") {
+		t.Fatal("workspace-domains ran without a workspace", err)
+	}
+	invoke(t, "setup", "--local", "--workspace", "w")
+	for args, want := range map[string]string{"workspace-domains example.com --workspace w": "hosted authority", "principal-unbind alice@example.test --confirm": "only the server owner"} {
+		err := Run(context.Background(), strings.Fields(args), &out, &errs)
+		if err == nil || strings.Contains(err.Error(), "project") || !strings.Contains(err.Error(), want) {
+			t.Fatal(args, "did not reach the authority without a project:", err)
+		}
+	}
+}

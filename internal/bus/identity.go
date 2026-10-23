@@ -5,8 +5,11 @@ import (
 	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"time"
+
+	"clawbridge/internal/principal"
 )
 
 // identitySchemaV6 binds each hosted principal (an email) to the Google
@@ -46,6 +49,9 @@ type Identity struct {
 	Principal string
 	Issuer    string
 	Subject   string
+	// HostedDomain is the token's hd claim: the Google Workspace domain that
+	// manages the account, empty for a consumer account.
+	HostedDomain string
 }
 
 // errNeedsBind leaves a request transaction once the request proved the
@@ -83,6 +89,7 @@ func (s *Store) ExecuteAsIdentity(ctx context.Context, id Identity, r Request) (
 	scoped := *s
 	scoped.principal = id.Principal
 	scoped.identity = &id
+	scoped.hostedDomain, _ = principal.NormalDomain(id.HostedDomain)
 	result, err := scoped.executeRequest(ctx, r)
 	if errors.Is(err, errNeedsBind) {
 		if err = s.bindSubject(ctx, id); err == nil {
@@ -291,4 +298,141 @@ func unbindSubject(ctx context.Context, tx *transaction, principal string, allow
 		next = "the next sign-in with this address binds its account, the released one included; have the user sign in now"
 	}
 	return map[string]any{"principal": principal, "unbound": true, "allow_previous": allowPrevious, "next": next}, nil
+}
+
+// maxAllowedDomains bounds a workspace's hosted-domain allow-list.
+const maxAllowedDomains = 20
+
+// allowedDomains reads a workspace's allow-list. on is false only for a
+// stored empty array; a null or unreadable list is on and admits no one.
+func allowedDomains(raw any) (domains []string, on bool) {
+	text, _ := raw.(string)
+	if json.Unmarshal([]byte(text), &domains) != nil || domains == nil {
+		return nil, true
+	}
+	return domains, len(domains) > 0
+}
+
+// domainGate admits a member to a workspace whose allow-list is off, or
+// whose list holds the member's verified Google Workspace domain. A consumer
+// account (no domain) is refused by any list. A Google service account never
+// carries a domain, so a member service account is admitted: the membership
+// check before the gate is what admits it.
+func (s *Store) domainGate(raw any) error {
+	domains, on := allowedDomains(raw)
+	if !on || principal.ServiceAccount(s.principal) {
+		return nil
+	}
+	for _, d := range domains {
+		if s.hostedDomain != "" && d == s.hostedDomain {
+			return nil
+		}
+	}
+	return &serviceError{code: "forbidden", cause: errors.New("this workspace accepts only accounts managed by its allowed Google Workspace domains"), public: true}
+}
+
+// domainRefusedWorkspaces lists the server workspaces the caller is a member
+// of but whose allow-list refuses the caller, so lookups across workspaces
+// can leave them out.
+func (s *Store) domainRefusedWorkspaces(ctx context.Context, tx *transaction) ([]string, error) {
+	if !s.postgres {
+		return nil, nil
+	}
+	rows, err := query(ctx, tx, `SELECT w.id,w.allowed_domains FROM workspaces w JOIN members m ON m.workspace_id=w.id WHERE w.mode='server' AND m.principal=?`, s.principal)
+	if err != nil {
+		return nil, err
+	}
+	var refused []string
+	for _, w := range rows {
+		if s.domainGate(w["allowed_domains"]) != nil {
+			refused = append(refused, w["id"].(string))
+		}
+	}
+	return refused, nil
+}
+
+// setWorkspaceDomains lets the workspace owner set or clear the allow-list,
+// under the workspace lock the caller holds. A non-empty list must include
+// the owner's own domain, so the owner cannot lock themselves out.
+func (s *Store) setWorkspaceDomains(ctx context.Context, tx *transaction, w map[string]any, a map[string]any) (any, error) {
+	if w["owner_principal"] != s.principal {
+		return nil, &serviceError{code: "forbidden", cause: errors.New("only the workspace owner may set its allowed domains"), public: true}
+	}
+	var domains []string
+	switch v := a["domains"].(type) {
+	case []string:
+		domains = v
+	case []any:
+		for _, item := range v {
+			d, ok := item.(string)
+			if !ok {
+				return nil, invalid("domains must be strings")
+			}
+			domains = append(domains, d)
+		}
+	default:
+		return nil, invalid("domains must be an array of strings")
+	}
+	seen := map[string]bool{}
+	clean := []string{}
+	for _, d := range domains {
+		normal, ok := principal.NormalDomain(d)
+		if !ok {
+			return nil, invalid("allowed domains must be domain names such as example.com")
+		}
+		if !seen[normal] {
+			seen[normal] = true
+			clean = append(clean, normal)
+		}
+	}
+	if len(clean) > maxAllowedDomains {
+		return nil, invalid("at most 20 allowed domains")
+	}
+	if len(clean) > 0 && (s.hostedDomain == "" || !seen[s.hostedDomain]) {
+		return nil, invalid("the allowed domains must include your own account's Google Workspace domain")
+	}
+	return s.writeWorkspaceDomains(ctx, tx, w["id"].(string), clean)
+}
+
+func (s *Store) writeWorkspaceDomains(ctx context.Context, tx *transaction, wid string, clean []string) (map[string]any, error) {
+	raw, _ := json.Marshal(clean)
+	if _, err := tx.ExecContext(ctx, `UPDATE workspaces SET allowed_domains=? WHERE id=?`, string(raw), wid); err != nil {
+		return nil, err
+	}
+	if err := s.audit(ctx, tx, wid, "", "", "workspace", wid, "allowed_domains_set", map[string]any{"allowed_domains": clean, "by": s.principal}); err != nil {
+		return nil, err
+	}
+	return map[string]any{"workspace_id": wid, "allowed_domains": clean}, nil
+}
+
+// OperatorClearWorkspaceDomains is the host operator's way out of a
+// workspace allow-list that refuses everyone, its owner included. Like
+// OperatorUnbindPrincipal it needs direct database access.
+func (s *Store) OperatorClearWorkspaceDomains(ctx context.Context, workspace string) (map[string]any, error) {
+	raw, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, errors.New("authority unavailable")
+	}
+	tx := &transaction{Tx: raw, postgres: s.postgres}
+	defer tx.Rollback()
+	w, err := one(ctx, tx, `SELECT id FROM workspaces WHERE id=? OR name=?`, workspace, workspace)
+	if err != nil {
+		return nil, errors.New("workspace not found")
+	}
+	wid := w["id"].(string)
+	if s.postgres {
+		if _, err = tx.ExecContext(ctx, `SELECT pg_advisory_xact_lock(hashtextextended(?,0))`, "workspace:"+wid); err != nil {
+			return nil, err
+		}
+	}
+	scoped := *s
+	scoped.principal = OperatorPrincipal
+	out, err := scoped.writeWorkspaceDomains(ctx, tx, wid, []string{})
+	if err != nil {
+		return nil, err
+	}
+	if err = tx.Commit(); err != nil {
+		return nil, errors.New("authority commit failed")
+	}
+	return out, nil
 }

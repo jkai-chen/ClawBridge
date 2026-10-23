@@ -43,6 +43,9 @@ type Store struct {
 	// ExecuteAsIdentity; requireAccount makes ExecuteAs refuse without one.
 	identity       *Identity
 	requireAccount bool
+	// hostedDomain is the verified Google Workspace domain (hd) of a hosted
+	// caller, empty for a consumer account; workspaces may require one.
+	hostedDomain string
 }
 
 // SQLiteURIPath is the path part of a file: URI that SQLite resolves to path.
@@ -311,7 +314,7 @@ func validateArgs(op string, a map[string]any) error {
 		"assignment_confirm":      "instance target_session revision allow_overlap",
 		"assignment_release":      "instance target_session revision",
 		"coordinator_set":         "instance target_session",
-		"workspace_init":          "mode name retention_days", "project_create": "slug name git_remote", "list_projects": "", "list_members": "", "register_session": "instance resume role agent_kind model host account notes transport", "list_sessions": "instance status role limit after issue scope_path assignment_state", "send": "instance to body kind thread_id operation_id coordination", "reply": "instance message_id body kind operation_id coordination", "inbox": "instance unread_only limit after", "mark_read": "instance ids", "update_session": "instance target_session role model host account notes transport", "retire_session": "instance target_session successor status", "history": "instance entity key limit after", "whoami": "instance", "message_status": "instance message_id", "resolve_project": "git_remote instance", "snapshot": "instance", "project_role_set": "instance principal role", "project_role_revoke": "instance principal", "purge_expired": "instance", "principal_unbind": "principal allow_previous",
+		"workspace_init":          "mode name retention_days", "project_create": "slug name git_remote", "list_projects": "", "list_members": "", "register_session": "instance resume role agent_kind model host account notes transport", "list_sessions": "instance status role limit after issue scope_path assignment_state", "send": "instance to body kind thread_id operation_id coordination", "reply": "instance message_id body kind operation_id coordination", "inbox": "instance unread_only limit after", "mark_read": "instance ids", "update_session": "instance target_session role model host account notes transport", "retire_session": "instance target_session successor status", "history": "instance entity key limit after", "whoami": "instance", "message_status": "instance message_id", "resolve_project": "git_remote instance", "snapshot": "instance", "project_role_set": "instance principal role", "project_role_revoke": "instance principal", "purge_expired": "instance", "principal_unbind": "principal allow_previous", "workspace_set_domains": "domains",
 	}
 	keys, ok := allowed[op]
 	if !ok {
@@ -340,7 +343,7 @@ func validateArgs(op string, a map[string]any) error {
 			if _, ok := v.(map[string]any); !ok {
 				return errors.New("transport must be an object")
 			}
-		case "ids", "linear_team_ids", "linear_project_ids", "scope_paths":
+		case "ids", "linear_team_ids", "linear_project_ids", "scope_paths", "domains":
 			switch v.(type) {
 			case []string, []any:
 			default:
@@ -634,7 +637,7 @@ func (s *Store) execute(ctx context.Context, tx *transaction, r Request) (any, e
 	if r.Operation == "principal_unbind" {
 		return s.unbindPrincipal(ctx, tx, a)
 	}
-	if !s.postgres && (r.Operation == "snapshot" || r.Operation == "project_role_set" || r.Operation == "project_role_revoke" || r.Operation == "purge_expired") {
+	if !s.postgres && (r.Operation == "snapshot" || r.Operation == "project_role_set" || r.Operation == "project_role_revoke" || r.Operation == "purge_expired" || r.Operation == "workspace_set_domains") {
 		return nil, errors.New("operation requires hosted authority")
 	}
 	if r.Workspace == "" {
@@ -657,15 +660,32 @@ func (s *Store) execute(ctx context.Context, tx *transaction, r Request) (any, e
 		if _, err = one(ctx, tx, `SELECT principal FROM members WHERE workspace_id=? AND principal=?`, wid, s.principal); err != nil {
 			return nil, scopedError(err, "workspace membership required", "forbidden")
 		}
-		// A member's account must be the one bound to the principal; a
-		// non-member was refused above and writes no binding.
-		if err = s.requireBound(ctx, tx); err != nil {
-			return nil, err
-		}
 		if !tx.pure {
 			if _, err = tx.ExecContext(ctx, `SELECT pg_advisory_xact_lock(hashtextextended(?,0))`, "workspace:"+wid); err != nil {
 				return nil, err
 			}
+			// Read the allow-list again under the workspace lock its setter
+			// holds, so a write never commits after a restriction it predates.
+			var domains string
+			if err = tx.QueryRowContext(ctx, `SELECT allowed_domains FROM workspaces WHERE id=?`, wid).Scan(&domains); err != nil {
+				return nil, err
+			}
+			w["allowed_domains"] = domains
+		}
+		// The workspace owner may always repair or clear the allow-list.
+		if r.Operation != "workspace_set_domains" || w["owner_principal"] != s.principal {
+			if err = s.domainGate(w["allowed_domains"]); err != nil {
+				return nil, err
+			}
+		}
+		// A member's account must be the one bound to the principal; a
+		// non-member or a refused domain was refused above and writes no
+		// binding.
+		if err = s.requireBound(ctx, tx); err != nil {
+			return nil, err
+		}
+		if r.Operation == "workspace_set_domains" {
+			return s.setWorkspaceDomains(ctx, tx, w, a)
 		}
 		if r.Operation == "project_create" && w["owner_principal"] != s.principal {
 			return nil, errors.New("workspace owner required to create projects")

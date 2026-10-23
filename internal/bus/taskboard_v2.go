@@ -3,8 +3,11 @@ package bus
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"sort"
 	"strings"
 )
@@ -154,45 +157,85 @@ func legacyBinding(b TaskboardBindingV2) (TaskboardBinding, error) {
 	}
 	return old, nil
 }
-func (s *Store) taskboard(ctx context.Context, tx *transaction, wid, pid, op string, a map[string]any) (any, error) {
+
+// bindingUnreadable refuses every use of a stored binding this binary cannot
+// parse. Nothing is guessed from it; only a project owner's explicit repair
+// clear (at the stored revision) replaces it. A well-formed mapping this
+// binary cannot read may come from a newer ClawBridge (after a downgrade), so
+// that refusal says to upgrade rather than repair, which would delete it.
+func bindingUnreadable(revision int64, unknownFormat bool) error {
+	if unknownFormat {
+		return &serviceError{code: "binding_unreadable", cause: fmt.Errorf("this project's task board binding (revision %d) is in a format this ClawBridge cannot read and is not used; after a downgrade, upgrade instead of repairing; else an owner can run: clawbridge linear unlink --expected-revision %d --confirm --repair", revision, revision), public: true}
+	}
+	return &serviceError{code: "binding_unreadable", cause: fmt.Errorf("this project's task board binding (revision %d) is unreadable and is not used; a project owner can clear it with: clawbridge linear unlink --expected-revision %d --confirm --repair", revision, revision), public: true}
+}
+
+// errMappingFormat marks a stored mapping that is a JSON object this binary
+// cannot read, as opposed to one that is not a JSON object at all.
+var errMappingFormat = errors.New("unknown taskboard mapping format")
+
+// readStoredMapping parses a stored binding mapping of either version.
+func readStoredMapping(mapping string, version int) (TaskboardBindingV2, error) {
+	var saved map[string]any
+	if json.Unmarshal([]byte(mapping), &saved) != nil || saved == nil {
+		return TaskboardBindingV2{}, errors.New("corrupt taskboard mapping")
+	}
+	b, err := parseStoredMapping(saved, version)
+	if err != nil {
+		return b, errMappingFormat
+	}
+	return b, nil
+}
+
+func parseStoredMapping(saved map[string]any, version int) (TaskboardBindingV2, error) {
+	switch version {
+	case 1:
+		old, err := parseTaskboardMapping(saved)
+		return convertLegacyBinding(old), err
+	case 2:
+		return parseTaskboardMappingV2(saved)
+	}
+	return TaskboardBindingV2{}, errors.New("unsupported stored mapping version")
+}
+
+func (s *Store) taskboard(ctx context.Context, tx *transaction, wid, pid, role, op string, a map[string]any) (any, error) {
 	rows, e := query(ctx, tx, `SELECT revision,mapping,updated_at,mapping_version FROM taskboard_bindings WHERE project_id=?`, pid)
 	if e != nil {
 		return nil, e
 	}
 	b := TaskboardBindingV2{WorkspaceID: wid, ProjectID: pid, MappingVersion: 2}
-	storedVersion := 1
+	// unreadable is the digest of a stored mapping that does not parse;
+	// unknownFormat says it is a JSON object, possibly from a newer binary.
+	unreadable := ""
+	unknownFormat := false
 	if len(rows) > 0 {
 		b.Revision = rows[0]["revision"].(int64)
 		b.UpdatedAt = rows[0]["updated_at"].(string)
-		storedVersion = int(rows[0]["mapping_version"].(int64))
 		if mapping, ok := rows[0]["mapping"].(string); ok {
-			var saved map[string]any
-			if json.Unmarshal([]byte(mapping), &saved) != nil {
-				return nil, errors.New("corrupt taskboard mapping")
-			}
-			var parsed TaskboardBindingV2
-			if storedVersion == 1 {
-				old, err := parseTaskboardMapping(saved)
-				e = err
-				parsed = convertLegacyBinding(old)
-			} else if storedVersion == 2 {
-				parsed, e = parseTaskboardMappingV2(saved)
+			parsed, err := readStoredMapping(mapping, int(rows[0]["mapping_version"].(int64)))
+			if err != nil {
+				sum := sha256.Sum256([]byte(mapping))
+				unreadable = hex.EncodeToString(sum[:])
+				unknownFormat = errors.Is(err, errMappingFormat)
 			} else {
-				return nil, errors.New("unsupported stored mapping version")
+				parsed.WorkspaceID = wid
+				parsed.ProjectID = pid
+				parsed.Revision = b.Revision
+				parsed.UpdatedAt = b.UpdatedAt
+				parsed.Configured = true
+				b = parsed
 			}
-			if e != nil {
-				return nil, errors.New("corrupt taskboard mapping")
-			}
-			parsed.WorkspaceID = wid
-			parsed.ProjectID = pid
-			parsed.Revision = b.Revision
-			parsed.UpdatedAt = b.UpdatedAt
-			parsed.Configured = true
-			b = parsed
 		}
 	}
+	repair, _ := a["repair"].(bool)
+	if unreadable != "" && (!repair || role != "owner" || (op != "taskboard_clear" && op != "taskboard_clear_v2")) {
+		return nil, bindingUnreadable(b.Revision, unknownFormat)
+	}
+	if repair && unreadable == "" {
+		return nil, invalid("repair clears only an unreadable task board binding; this one is readable, so unlink it normally")
+	}
 	v2 := strings.HasSuffix(op, "_v2")
-	if !v2 {
+	if !v2 && unreadable == "" {
 		if _, e = legacyBinding(b); e != nil {
 			return nil, e
 		}
@@ -260,7 +303,11 @@ func (s *Store) taskboard(ctx context.Context, tx *transaction, wid, pid, op str
 	if affected != 1 {
 		return nil, &serviceError{code: "conflict", cause: errors.New("taskboard revision conflict; refresh binding")}
 	}
-	if e = s.audit(ctx, tx, wid, pid, "", "taskboard", pid, op, map[string]any{"revision": next.Revision, "configured": next.Configured}); e != nil {
+	details := map[string]any{"revision": next.Revision, "configured": next.Configured}
+	if unreadable != "" {
+		details["repaired_unreadable_sha256"] = unreadable
+	}
+	if e = s.audit(ctx, tx, wid, pid, "", "taskboard", pid, op, details); e != nil {
 		return nil, e
 	}
 	return result(next)

@@ -378,12 +378,15 @@ func TestPostgresWorkspaceIsolationAndResume(t *testing.T) {
 		fixture.reject(pgPrincipal("bob"), "reply", "p", "bob", actor("bob", map[string]any{"message_id": id, "body": "foreign", "operation_id": "foreign"}))
 		fixture.reject(pgPrincipal("alice"), "send", "p", "alice", actor("alice", map[string]any{"to": "bob", "body": "foreign", "operation_id": "foreign-thread", "thread_id": id}))
 	}
-	first.role("p", "only-first", "member")
+	// The databases are shared and reused across runs, so the principal that
+	// belongs to the first workspace only must be new to this run.
+	onlyFirst := "only-first-" + first.w
+	first.role("p", onlyFirst, "member")
 	resolve := bus.Request{Operation: "resolve_project", Project: "p"}
 	if _, err := first.store.ExecuteAs(context.Background(), pgPrincipal("alice"), resolve); err == nil {
 		t.Fatal("ambiguous authorized slug silently selected a workspace")
 	}
-	only, err := first.store.ExecuteAs(context.Background(), pgPrincipal("only-first"), resolve)
+	only, err := first.store.ExecuteAs(context.Background(), pgPrincipal(onlyFirst), resolve)
 	if err != nil {
 		t.Fatal(err)
 	}

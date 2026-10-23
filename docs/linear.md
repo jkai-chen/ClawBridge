@@ -414,3 +414,16 @@ manager's pipe; do not paste the credential into a command or save it in a file.
 Imported credentials have no invented refresh flow. `linear logout --profile ID`
 removes that connection only; `linear unlink --expected-revision N` previews a
 separate shared-mapping removal, saved only with `--confirm`.
+
+If the stored binding cannot be read (for example after a damaged row or a
+partial restore), every board call is refused with `binding_unreadable` and the
+binding is never used or guessed at. If you recently downgraded ClawBridge, the
+binding may have been written by the newer version: upgrade instead of
+repairing, because repair deletes it. With a Linear profile selected,
+`clawbridge doctor` reports it as `linear.binding`, naming the revision. A
+project owner clears it with `linear unlink
+--expected-revision N --confirm --repair`, where N is the revision the refusal
+names. Repair is refused for leads and members, for any other revision, and for
+a readable binding. The audit entry records a SHA-256 digest of the cleared
+row. Then link the project again as usual. Repair is available only from the
+CLI; the TUI's unlink does not offer it.

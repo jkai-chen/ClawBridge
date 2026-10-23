@@ -2,6 +2,7 @@ package remote
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -88,5 +89,44 @@ func TestClientKeepsOnlyABoundedOneLineReasonForA400(t *testing.T) {
 		if !errors.As(err, &rejected) || rejected.Message != c.want {
 			t.Errorf("%s: %+v %v", name, rejected, err)
 		}
+	}
+}
+
+// An unreadable task board binding reaches the CLI as its own code with the
+// repair path, not as a generic conflict.
+func TestUnreadableBindingRefusalReachesTheClientWithItsRepairPath(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "bus.db")
+	store, err := bus.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	ctx := context.Background()
+	for _, r := range []bus.Request{{Operation: "workspace_init", Workspace: "w", Args: map[string]any{"mode": "local"}}, {Operation: "project_create", Workspace: "w", Args: map[string]any{"slug": "p"}}, {Operation: "taskboard_set_v2", Workspace: "w", Project: "p", Args: map[string]any{"expected_revision": 0, "mode": "team_board", "linear_team_ids": []string{"33333333-3333-3333-3333-333333333333"}, "linear_default_team_id": "33333333-3333-3333-3333-333333333333", "linear_project_ids": []string{}}}} {
+		if _, err = store.Execute(ctx, r); err != nil {
+			t.Fatal(err)
+		}
+	}
+	raw, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = raw.Exec(`UPDATE taskboard_bindings SET mapping='{not json'`); err != nil {
+		t.Fatal(err)
+	}
+	raw.Close()
+	_, refusal := store.Execute(ctx, bus.Request{Operation: "taskboard_get_v2", Workspace: "w", Project: "p", Args: map[string]any{}})
+	if refusal == nil {
+		t.Fatal("unreadable binding was read")
+	}
+	verifier := server.VerifierFunc(func(context.Context, string) (server.Identity, error) {
+		return server.Identity{Principal: "alice@example.test", Subject: "sub"}, nil
+	})
+	host := httptest.NewServer(server.NewHandler(errorExecutor{refusal}, verifier))
+	defer host.Close()
+	_, err = publicTestClient(t, host.URL).Execute(ctx, bus.Request{Operation: "taskboard_get_v2", Workspace: "w", Project: "p", Args: map[string]any{}})
+	var rejected *HTTPError
+	if !errors.As(err, &rejected) || rejected.Status != 409 || rejected.Code != "binding_unreadable" || !strings.Contains(err.Error(), "--expected-revision 1 --confirm --repair") {
+		t.Fatal(err)
 	}
 }

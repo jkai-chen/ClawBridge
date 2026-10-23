@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"reflect"
+	"strings"
 	"testing"
 
 	"clawbridge/internal/linearconn"
@@ -129,5 +130,14 @@ func TestLinearV2CommentFlagsAreOptIn(t *testing.T) {
 	}
 	if _, _, err = parseLinear("issues", []string{"--profile", "native", "--comments"}, &bytes.Buffer{}); err == nil {
 		t.Fatal("--comments accepted on the issue list")
+	}
+}
+
+func TestUnlinkRepairRequiresConfirm(t *testing.T) {
+	isolated(t)
+	var out, diag bytes.Buffer
+	err := Run(context.Background(), []string{"linear", "unlink", "--expected-revision", "1", "--repair"}, &out, &diag)
+	if err == nil || !strings.Contains(err.Error(), "--confirm") {
+		t.Fatal("repair ran without --confirm", err)
 	}
 }

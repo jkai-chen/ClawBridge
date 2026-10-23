@@ -368,7 +368,7 @@ func serviceError(err error) (string, int) {
 			return c, 403
 		case "not_found":
 			return c, 404
-		case "conflict", "unsupported_mapping":
+		case "conflict", "unsupported_mapping", "binding_unreadable":
 			return c, 409
 		case "rate_limited":
 			return c, 429
@@ -386,11 +386,11 @@ func serviceError(err error) (string, int) {
 	return "invalid", 400
 }
 
-// responseMessage shows a validation refusal's own message when the bus
-// marked it as written for the caller; every other failure, including
+// responseMessage shows a validation refusal's or an unreadable binding's
+// own message when the bus marked it as written for the caller; every other failure, including
 // database and unknown errors, gets only the generic text for its code.
 func responseMessage(code string, err error) string {
-	if code == "invalid" {
+	if code == "invalid" || code == "binding_unreadable" {
 		if message, ok := bus.PublicMessage(err); ok {
 			if safe, ok := bus.SafePublicText(message); ok {
 				return safe
@@ -405,6 +405,8 @@ func publicMessage(code string) string {
 		return "this Google principal is not authorized for the requested project or operation"
 	case "not_found":
 		return "requested scope or entity was not found"
+	case "binding_unreadable":
+		return "this project's task board binding is unreadable and is not used; after a ClawBridge downgrade, upgrade instead of repairing; otherwise a project owner can clear it with linear unlink --repair"
 	case "conflict":
 		return "operation conflicts with existing state; verify session instance and retry identifier"
 	case "rate_limited":

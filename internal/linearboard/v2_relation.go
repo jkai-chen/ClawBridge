@@ -72,7 +72,8 @@ func (s *Service) RelationV2(ctx context.Context, scope bus.Request, in Relation
 	if !ok {
 		return nil, errors.New("native provider lacks safe one-edge relation capability")
 	}
-	_, _, e = relationEvidenceV2(ctx, p2, b, v, in)
+	caps := &commandCapsV2{p: p2}
+	_, _, e = relationEvidenceV2(ctx, p2, b, v, caps, in)
 	if e != nil {
 		return nil, e
 	}
@@ -92,7 +93,7 @@ func (s *Service) RelationV2(ctx context.Context, scope bus.Request, in Relation
 		}
 		// The same command's binding verification is reused; both issues and
 		// their edges are re-read here, and unchangedV2 re-checks the binding.
-		existing, observed, e := relationEvidenceV2(ctx, p2, b, v, in)
+		existing, observed, e := relationEvidenceV2(ctx, p2, b, v, caps, in)
 		if e != nil {
 			return nil, proofFailure(e)
 		}
@@ -130,7 +131,7 @@ func (s *Service) RelationV2(ctx context.Context, scope bus.Request, in Relation
 		// must have been visible before and be gone now (native relation
 		// lists are visible, not complete, so absence alone proves nothing).
 		if !r.Confirmed {
-			after, observedAfter, e := relationEvidenceV2(ctx, p2, b, v, in)
+			after, observedAfter, e := relationEvidenceV2(ctx, p2, b, v, caps, in)
 			if e != nil || !(observedAfter || (in.Action == "remove" && existing != nil && after == nil)) {
 				return nil, s.postFailureV2(ctx, scope, b, &linearprovider.Error{Kind: "receipt_unverified"})
 			}

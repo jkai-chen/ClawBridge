@@ -163,6 +163,11 @@ func Run(ctx context.Context, in Input, executor Executor) Report {
 	checkCredentials(ctx, in, configOK, add)
 	wid, pid, resolutionOK := checkResolution(ctx, in.Config, in.GitRemote, executor, authorityOK, projectsOK, add)
 	checkMirror(ctx, in, wid, pid, resolutionOK, add)
+	// The binding is read only for a Linear user (a selected Linear
+	// profile); otherwise doctor stays list-and-resolve only.
+	if in.LinearCapabilities != nil && resolutionOK && executor != nil {
+		checkTaskboardBinding(ctx, executor, wid, pid, add)
+	}
 	for _, mcp := range in.MCPConfigs {
 		if mcp.Agent == "" {
 			mcp.Agent = "codex"
@@ -479,6 +484,45 @@ func checkResolution(ctx context.Context, config Config, remote string, executor
 	check.Message = "The configured project resolved to immutable workspace and project identifiers."
 	add(check)
 	return wid, pid, true
+}
+
+// bindingRevision finds the stored revision a binding_unreadable refusal names.
+var bindingRevision = regexp.MustCompile(`\(revision (\d+)\)`)
+
+// checkTaskboardBinding reports a project task board binding the authority
+// cannot read. Such a binding is refused for every use rather than guessed at,
+// so the board is down until a project owner repairs it; doctor names the
+// refusal's repair path. It reads only.
+func checkTaskboardBinding(ctx context.Context, executor Executor, wid, pid string, add func(Check)) {
+	check := Check{ID: "linear.binding", Title: "Task board binding"}
+	_, err := executor.Execute(ctx, bus.Request{Operation: "taskboard_get_v2", Workspace: wid, Project: pid, Args: map[string]any{}})
+	unreadable, reason := false, ""
+	var coded interface{ Code() string }
+	var rejected *remote.HTTPError
+	switch {
+	case errors.As(err, &rejected):
+		unreadable, reason = rejected.Code == "binding_unreadable", rejected.Message
+	case errors.As(err, &coded):
+		unreadable, reason = coded.Code() == "binding_unreadable", err.Error()
+	}
+	switch {
+	case err == nil:
+		check.Status = Pass
+		check.Message = "The project's task board binding is readable."
+	case unreadable:
+		revision := "N"
+		if m := bindingRevision.FindStringSubmatch(reason); m != nil {
+			revision = m[1]
+		}
+		check.Status = Fail
+		check.Message = "The project's task board binding is unreadable; every board call is refused and nothing is guessed from it."
+		check.Action = "If ClawBridge was recently downgraded, upgrade instead: the binding may be a newer version's. Otherwise a project owner clears it with `clawbridge linear unlink --expected-revision " + revision + " --confirm --repair`, then links the project again."
+	default:
+		check.Status = Warn
+		check.Message = "The task board binding could not be read (" + safeCode(err) + ")."
+		check.Action = "Check project access; `clawbridge linear binding` shows the binding."
+	}
+	add(check)
 }
 
 func checkMirror(ctx context.Context, in Input, wid, pid string, resolved bool, add func(Check)) {

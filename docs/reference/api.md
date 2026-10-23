@@ -73,10 +73,10 @@ requires its matching instance. Routing role is distinct from project permission
 | `taskboard_get` | Shared Linear mapping; optional current actor/instance |
 | `taskboard_access` | Own effective project-write capability; optional actor/instance |
 | `taskboard_set` | expected_revision, linear_team_ids, linear_default_team_id, linear_project_id (UUID/null); optional linear_workspace_id (UUID/null) |
-| `taskboard_clear` | expected_revision; authorized owner/lead |
+| `taskboard_clear` | expected_revision; authorized owner/lead; optional repair (project owner, unreadable binding only) |
 | `taskboard_get_v2` | Versioned shared mapping; optional current actor/instance |
 | `taskboard_set_v2` | expected_revision, mode, linear_team_ids, linear_default_team_id, linear_project_ids; optional nullable linear_workspace_id |
-| `taskboard_clear_v2` | expected_revision; authorized owner/lead |
+| `taskboard_clear_v2` | expected_revision; authorized owner/lead; optional repair (project owner, unreadable binding only) |
 | `project_role_set` | Hosted owner: principal, role |
 | `project_role_revoke` | Hosted owner: principal. Deletes the project role, retires that principal's active sessions in the project and removes workspace membership when no project role remains; refuses the workspace owner and self-revoke |
 | `snapshot` | Hosted current actor/instance; explicit scoped sync |
@@ -290,6 +290,16 @@ boards and singleton project sets retain the exact L1 wire shape through the
 old operations. An authorized L1 get/set/clear on a multi-project mapping fails
 with `unsupported_mapping` (HTTP 409) before mutation. It never chooses a first
 project. Both versions share the same CAS revision and clear tombstone.
+
+A stored mapping this service cannot read is never used or guessed at: every
+get, set and clear of it fails with `binding_unreadable` (HTTP 409). The
+message names the stored revision. A mapping that is a JSON object but not a
+format this version reads may come from a newer ClawBridge; after a downgrade,
+upgrade instead of repairing. The only way out on this version is a clear with
+`repair: true`, which is accepted only from the project owner, only at the
+stored `expected_revision`, and only while the mapping is unreadable (a repair
+of a readable mapping is `invalid`; `repair` is not accepted on set). Its audit
+entry records `repaired_unreadable_sha256`, the SHA-256 of the cleared row.
 
 ## Hosted routes and failures
 

@@ -126,7 +126,26 @@ func refreshWriteProofV2(ctx context.Context, p Provider, p2 ProviderV2, b bus.T
 	return ctx.Err()
 }
 
-func relationEvidenceV2(ctx context.Context, p ProviderV2, b bus.TaskboardBindingV2, v verifiedV2, in RelationInputV2) (*linearprovider.Relation, bool, error) {
+// commandCapsV2 derives a provider's capabilities at most once per command:
+// the connection and its tool list do not change while the command runs, and
+// each derivation re-reads every tool schema.
+type commandCapsV2 struct {
+	p    ProviderV2
+	caps *linearprovider.Capabilities
+}
+
+func (c *commandCapsV2) get(ctx context.Context) (linearprovider.Capabilities, error) {
+	if c.caps == nil {
+		caps, e := c.p.Capabilities(ctx)
+		if e != nil {
+			return caps, e
+		}
+		c.caps = &caps
+	}
+	return *c.caps, nil
+}
+
+func relationEvidenceV2(ctx context.Context, p ProviderV2, b bus.TaskboardBindingV2, v verifiedV2, caps *commandCapsV2, in RelationInputV2) (*linearprovider.Relation, bool, error) {
 	from, e := p.IssueV2(ctx, in.FromID)
 	if e != nil {
 		return nil, false, e
@@ -190,11 +209,11 @@ func relationEvidenceV2(ctx context.Context, p ProviderV2, b bus.TaskboardBindin
 	}
 	observed := (in.Action == "add" && existing != nil) || (in.Action == "remove" && existing == nil && from.RelationsKnown && to.RelationsKnown)
 	if !observed {
-		caps, e := p.Capabilities(ctx)
+		c, e := caps.get(ctx)
 		if e != nil {
 			return nil, false, e
 		}
-		if (in.Action == "add" && !caps.RelationAdd) || (in.Action == "remove" && !caps.RelationRemove) {
+		if (in.Action == "add" && !c.RelationAdd) || (in.Action == "remove" && !c.RelationRemove) {
 			return nil, false, errors.New("provider lacks a genuine one-edge operation; relation-list replacement is forbidden")
 		}
 	}

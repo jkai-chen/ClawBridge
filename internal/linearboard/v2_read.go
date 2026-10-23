@@ -310,6 +310,22 @@ func (s *Service) UnlinkV2(ctx context.Context, scope bus.Request, revision int6
 	return r.Data, e
 }
 
+// RepairUnlinkV2 clears a binding the authority reports unreadable. It cannot
+// read the binding first, as UnlinkV2 does, because every read of it is
+// refused; the authority accepts it only from a project owner, at the stored
+// revision, and only while the binding is unreadable.
+func (s *Service) RepairUnlinkV2(ctx context.Context, scope bus.Request, revision int64) (any, error) {
+	if revision < 0 || revision >= 9007199254740991 {
+		return nil, errors.New("invalid original expected revision")
+	}
+	scope.Operation = "taskboard_clear_v2"
+	scope.Args = instanceArgs(scope.Args)
+	scope.Args["expected_revision"] = revision
+	scope.Args["repair"] = true
+	r, e := s.cfg.Executor.Execute(ctx, scope)
+	return r.Data, e
+}
+
 type cursorV2 struct {
 	Version  int    `json:"v"`
 	Scope    string `json:"scope"`

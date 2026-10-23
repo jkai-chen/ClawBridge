@@ -330,10 +330,10 @@ var operationArgs = map[string]string{
 	"taskboard_get":           "instance",
 	"taskboard_get_v2":        "instance",
 	"taskboard_set_v2":        "instance expected_revision mode linear_team_ids linear_default_team_id linear_project_ids linear_workspace_id",
-	"taskboard_clear_v2":      "instance expected_revision",
+	"taskboard_clear_v2":      "instance expected_revision repair",
 	"taskboard_access":        "instance",
 	"taskboard_set":           "instance expected_revision linear_team_ids linear_default_team_id linear_project_id linear_workspace_id",
-	"taskboard_clear":         "instance expected_revision",
+	"taskboard_clear":         "instance expected_revision repair",
 	"inbox_status":            "instance after",
 	"notification_status":     "instance after",
 	"set_notification_policy": "instance policy",
@@ -378,7 +378,7 @@ func validateArgs(op string, a map[string]any) error {
 			default:
 				return errors.New("ids must be an array of strings")
 			}
-		case "unread_only", "resume", "allow_overlap", "allow_previous":
+		case "unread_only", "resume", "allow_overlap", "allow_previous", "repair":
 			if _, ok := v.(bool); !ok {
 				return fmt.Errorf("%s must be boolean", k)
 			}
@@ -872,7 +872,7 @@ func (s *Store) execute(ctx context.Context, tx *transaction, r Request) (any, e
 		if actor != nil {
 			tx.actorID = actor["id"].(string)
 		}
-		return s.taskboard(ctx, tx, wid, pid, r.Operation, a)
+		return s.taskboard(ctx, tx, wid, pid, projectRole, r.Operation, a)
 	}
 	// Metadata polling authorizes the actor above, but must never heartbeat it.
 	if r.Operation == "inbox_status" || r.Operation == "notification_status" {

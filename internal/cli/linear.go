@@ -104,7 +104,7 @@ type linearFlags struct {
 	clearProject, clearLabels, clearParent, clearAssignee, expectNoLabels                                                bool
 	limit                                                                                                                int
 	revision                                                                                                             int64
-	teamBoard, confirm, noBrowser, tokenStdin, resolveLabels, comments                                                   bool
+	teamBoard, confirm, noBrowser, tokenStdin, resolveLabels, comments, repair                                           bool
 }
 type repeatedIDs []string
 
@@ -181,6 +181,7 @@ func parseLinear(command string, args []string, stderr io.Writer) (linearFlags, 
 	case "unlink":
 		f.Int64Var(&v.revision, "expected-revision", -1, "required current mapping revision")
 		f.BoolVar(&v.confirm, "confirm", false, "commit project unlink; retains personal profiles")
+		f.BoolVar(&v.repair, "repair", false, "project owner only: clear a binding the authority reports unreadable, at --expected-revision; needs --confirm")
 	case "create":
 		write()
 		fields()
@@ -267,6 +268,9 @@ func parseLinear(command string, args []string, stderr io.Writer) (linearFlags, 
 	}
 	if (command == "link" || command == "unlink") && (v.revision < 0 || v.revision >= 9007199254740991) {
 		return v, nil, errors.New("expected-revision is required")
+	}
+	if v.repair && !v.confirm {
+		return v, nil, errors.New("unlink --repair clears an unreadable binding without previewing it; repeat with --confirm")
 	}
 	if command == "labels" || command == "members" {
 		if !linearprovider.ValidID(v.team) {
@@ -651,7 +655,11 @@ func runLinear(ctx context.Context, flags Config, args []string, stdout, stderr 
 	case "link":
 		data, err = service.LinkV2(bounded, scope, linearboard.LinkInputV2{TeamIDs: v.teams, DefaultTeamID: v.defaultTeam, ProjectIDs: append([]string{}, v.projects...), ExpectedRevision: v.revision, TeamBoard: v.teamBoard, Confirm: v.confirm})
 	case "unlink":
-		data, err = service.UnlinkV2(bounded, scope, v.revision, v.confirm)
+		if v.repair {
+			data, err = service.RepairUnlinkV2(bounded, scope, v.revision)
+		} else {
+			data, err = service.UnlinkV2(bounded, scope, v.revision, v.confirm)
+		}
 	case "context":
 		data, err = service.ContextV2(bounded, scope)
 	case "issues":

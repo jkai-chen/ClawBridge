@@ -387,8 +387,9 @@ func NewWithHTTPClient(c Config, tokens TokenSource, httpClient *http.Client) (*
 type HTTPError struct {
 	Status int
 	Code   string
-	// Message is the server's caller-facing reason for a 400 refusal, kept
-	// only when it is one line of printable text.
+	// Message is the server's caller-facing reason for a 400 refusal or an
+	// unreadable task board binding (409), kept only when it is one line of
+	// printable text.
 	Message string
 }
 
@@ -445,10 +446,10 @@ func (c *Client) call(ctx context.Context, r bus.Request) (bus.Result, bool, err
 		}
 		if json.Unmarshal(encoded, &body) == nil {
 			switch body.Error.Code {
-			case "unauthenticated", "forbidden", "invalid", "conflict", "not_found", "rate_limited", "unavailable":
+			case "unauthenticated", "forbidden", "invalid", "conflict", "not_found", "rate_limited", "unavailable", "binding_unreadable":
 				code = body.Error.Code
 			}
-			if response.StatusCode == http.StatusBadRequest && code == "invalid" {
+			if (response.StatusCode == http.StatusBadRequest && code == "invalid") || (response.StatusCode == http.StatusConflict && code == "binding_unreadable") {
 				message, _ = bus.SafePublicText(body.Error.Message)
 			}
 		}

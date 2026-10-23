@@ -172,3 +172,41 @@ func TestPostgresPurgeDropsExpiredCommentWatchState(t *testing.T) {
 		t.Fatal("purge removed live state:", events, cursors, posted, err)
 	}
 }
+
+// A membership revoke releases the member's assignment on the server, with
+// no client of the member involved: the close marker is still written.
+func TestPostgresAccessRevokedWritesTheCloseMarker(t *testing.T) {
+	f := newPGIdentityFixture(t)
+	f.worker("coord")
+	member := newID("m") + "@identity-test.example"
+	f.member(member)
+	f.must(member, "sub-member", Request{Operation: "register_session", Workspace: f.workspace, Project: "p", Session: "member", Args: map[string]any{"instance": "member-i"}})
+	in := func(op string, a map[string]any) map[string]any {
+		t.Helper()
+		r, err := f.in(op, "coord", a)
+		if err != nil {
+			t.Fatal(op, err)
+		}
+		return r.Data.(map[string]any)
+	}
+	in("coordinator_set", map[string]any{"target_session": "coord"})
+	proposed, err := f.as(member, "sub-member", Request{Operation: "assignment_propose", Workspace: f.workspace, Project: "p", Session: "member", Args: map[string]any{"instance": "member-i", "issue_uuid": watchIssue, "issue_identifier": "FIX-1"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	view := proposed.Data.(map[string]any)["assignment"].(map[string]any)
+	in("assignment_confirm", map[string]any{"target_session": "member", "revision": view["revision"]})
+	g := in("marker_go", map[string]any{"assignment_id": view["id"], "phase": "claim", "part": "label"})
+	if g["action"] != "add" {
+		t.Fatal(g)
+	}
+	in("marker_settle", map[string]any{"assignment_id": view["id"], "phase": "claim", "part": "label", "outcome": "done"})
+	f.must(f.owner, "sub-owner", Request{Operation: "project_role_revoke", Workspace: f.workspace, Project: "p", Args: map[string]any{"principal": member}})
+	var reason, comment, label string
+	if err = f.s.db.QueryRowContext(context.Background(), `SELECT reason,comment_state,label_state FROM assignment_markers WHERE assignment_id=$1 AND phase='close'`, view["id"]).Scan(&reason, &comment, &label); err != nil || reason != "access_revoked" || comment != "waiting_on_claim" || label != "pending" {
+		t.Fatal("no close marker for a revoked member:", reason, comment, label, err)
+	}
+	if g = in("marker_go", map[string]any{"assignment_id": view["id"], "phase": "close", "part": "label"}); g["action"] != "remove" {
+		t.Fatal("the coordinator cannot apply the revoked member's close:", g)
+	}
+}

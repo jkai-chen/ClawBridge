@@ -52,7 +52,7 @@ func (a *authorityV2) Execute(_ context.Context, r bus.Request) (bus.Result, err
 		}
 		return bus.Result{Source: "local-authority", Data: a.b}, nil
 	}
-	if strings.HasPrefix(r.Operation, "linear_comment") {
+	if strings.HasPrefix(r.Operation, "linear_comment") || strings.HasPrefix(r.Operation, "comment_watch") {
 		return a.comments.execute(r)
 	}
 	return bus.Result{}, errors.New("unexpected authority operation")

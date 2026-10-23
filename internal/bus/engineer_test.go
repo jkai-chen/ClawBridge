@@ -6,26 +6,27 @@ import (
 )
 
 // The engineer is the display name stripped of anything that mentions,
-// links or formats in Linear, else the principal, never over 40 runes.
+// links or formats in Linear, never over 40 runes; without one it is no
+// one, never an email.
 func TestEngineerName(t *testing.T) {
-	for _, c := range []struct{ display, principal, want string }{
-		{"Ada Lovelace", "ada@example.test", "Ada Lovelace"},
-		{"", "ada@example.test", "ada@example.test"},
-		{"  \t ", " ada@example.test ", "ada@example.test"},
-		{"@ada", "ada@example.test", "ada"},
-		{"**Ada** [x](https://evil.test) <b>`y`</b>", "p", "Ada x https evil.test b y b"},
-		{"Ada\n\nLovelace\u0007", "p", "Ada Lovelace"},
-		{"Ada · Lovelace", "p", "Ada Lovelace"},
-		{"@*_[]()<>#`~|!\\{}:/·", "ada@example.test", "ada@example.test"},
-		{strings.Repeat("é", 40), "p", strings.Repeat("é", 40)},
-		{strings.Repeat("é", 41), "p", strings.Repeat("é", 39) + "…"},
-		{"", strings.Repeat("a", 45) + "@example.test", strings.Repeat("a", 39) + "…"},
+	for _, c := range []struct{ display, want string }{
+		{"Ada Lovelace", "Ada Lovelace"},
+		{"", ""},
+		{"  \t ", ""},
+		{"@ada", "ada"},
+		{"ada@example.test", "ada example.test"},
+		{"**Ada** [x](https://evil.test) <b>`y`</b>", "Ada x https evil.test b y b"},
+		{"Ada\n\nLovelace\u0007", "Ada Lovelace"},
+		{"Ada · Lovelace", "Ada Lovelace"},
+		{"@*_[]()<>#`~|!\\{}:/·", ""},
+		{strings.Repeat("é", 40), strings.Repeat("é", 40)},
+		{strings.Repeat("é", 41), strings.Repeat("é", 39) + "…"},
 	} {
-		got := EngineerName(c.display, c.principal)
+		got := EngineerName(c.display)
 		if got != c.want {
-			t.Fatalf("%q/%q: got %q want %q", c.display, c.principal, got, c.want)
+			t.Fatalf("%q: got %q want %q", c.display, got, c.want)
 		}
-		if !ValidEngineer(got) {
+		if got != "" && !ValidEngineer(got) {
 			t.Fatalf("%q is not a valid engineer", got)
 		}
 	}

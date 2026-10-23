@@ -7,8 +7,9 @@ import (
 )
 
 // The marker's engineer is the session owner's recorded display name, which
-// only that member sets, falling back to their verified email.
-func TestPostgresEngineerIsTheOwnersDisplayNameOrEmail(t *testing.T) {
+// only that member sets; without one the marker names no one, never their
+// email.
+func TestPostgresEngineerIsTheOwnersRecordedName(t *testing.T) {
 	f := newPGIdentityFixture(t)
 	f.worker("w")
 	engineer := func() any {
@@ -26,8 +27,8 @@ func TestPostgresEngineerIsTheOwnersDisplayNameOrEmail(t *testing.T) {
 		}
 		return f.as(principal, subject, Request{Operation: "member_display_name_set", Workspace: f.workspace, Args: map[string]any{"display_name": name}})
 	}
-	if got := engineer(); got != EngineerName("", f.owner) {
-		t.Fatal("fallback", got)
+	if got := engineer(); got != nil {
+		t.Fatal("an engineer without a recorded name", got)
 	}
 	// Only when asked, and only for a session.
 	for _, r := range []Request{
@@ -71,11 +72,11 @@ func TestPostgresEngineerIsTheOwnersDisplayNameOrEmail(t *testing.T) {
 	if got := engineer(); got != strings.Repeat("a", 39)+"…" {
 		t.Fatal("cap", got)
 	}
-	// Clearing falls back to the email.
+	// Clearing names no one again, never the email.
 	if _, err = setName(f.owner, ""); err != nil {
 		t.Fatal(err)
 	}
-	if got := engineer(); got != EngineerName("", f.owner) {
+	if got := engineer(); got != nil {
 		t.Fatal("cleared", got)
 	}
 	if _, err = f.as(f.owner, "sub-owner", Request{Operation: "member_display_name_set", Workspace: f.workspace, Args: map[string]any{"display_name": "Augusta", "if_unset": 1}}); err != nil || engineer() != "Augusta" {

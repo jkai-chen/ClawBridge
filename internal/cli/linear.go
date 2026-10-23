@@ -129,6 +129,9 @@ func captureEngineerAtConnect(ctx context.Context, flags Config, manager *linear
 	}
 	recorded, _ := data.(map[string]any)
 	engineer, _ := recorded["engineer"].(string)
+	if engineer == "" {
+		return "linear: your Linear name has nothing agent markers can show, so they name no engineer; set one with clawbridge linear display-name set NAME"
+	}
 	return fmt.Sprintf("linear: agent markers name you as %q; change it with clawbridge linear display-name set NAME", engineer)
 }
 

@@ -293,8 +293,9 @@ never fall back to a mirror.
 
 `taskboard_access` returns workspace_id, project_id, nullable session_id,
 can_write and project_role without stamps. With `engineer: 1` and a session, it
-adds `engineer`: the session owner's recorded display name, else their verified
-principal (at most 40 characters). It always comes from the server's records. Native issue writes require both an
+adds `engineer`: the session owner's recorded display name (at most 40
+characters), when one is recorded. It always comes from the server's records,
+and is never an email. Native issue writes require both an
 allowed ClawBridge role and personal Linear write capability. A supplied actor
 must also be current/active. Writes verify this immediately before dispatch.
 The private local operation ledger retains accepted/uncertain outcomes against

@@ -152,3 +152,10 @@ An agent connected through `clawbridge mcp` learns ClawBridge in three layers:
   and recovery. Its [source](../skills/clawbridge/SKILL.md) ships with each
   release, and `clawbridge doctor` warns when the installed skill is not the
   binary's version.
+
+## Product reviewers
+
+People who only review features need no ClawBridge setup at all: they comment in
+Linear. To set up that workflow for your team, see
+[product reviews with ClawBridge and Linear](guides/product-reviewers.md), and
+give reviewers the [reviewer quickstart](guides/reviewer-quickstart.md).

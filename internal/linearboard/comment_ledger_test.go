@@ -31,6 +31,11 @@ type fakeCommentLedger struct {
 	pending    []any
 	unreadable error
 	lookups    []map[string]any
+	// due is what comment_watch_due hands out; the rest record the watch.
+	due                    []any
+	leases                 []map[string]any
+	reports, settleMatches []map[string]any
+	reportErr              error
 }
 
 func (f *fakeCommentLedger) execute(r bus.Request) (bus.Result, error) {
@@ -63,6 +68,29 @@ func (f *fakeCommentLedger) execute(r bus.Request) (bus.Result, error) {
 			pending = []any{}
 		}
 		return bus.Result{Source: "local-authority", Data: map[string]any{"posted": flags, "young_pending": f.young, "pending": pending}}, nil
+	case "comment_watch_lease":
+		f.leases = append(f.leases, r.Args)
+		return bus.Result{Source: "local-authority", Data: map[string]any{"lease_token": "tok", "generation": 1, "budget_limit": 200, "budget_used": 0}}, nil
+	case "comment_watch_due":
+		due := f.due
+		f.due = nil
+		if due == nil {
+			due = []any{}
+		}
+		return bus.Result{Source: "local-authority", Data: map[string]any{"issues": due, "budget_used": 3, "budget_limit": 200, "budget_exhausted": false}}, nil
+	case "comment_watch_report":
+		f.reports = append(f.reports, r.Args)
+		if f.reportErr != nil {
+			return bus.Result{}, f.reportErr
+		}
+		notified := []string{}
+		for _, c := range asList(r.Args["comments"]) {
+			notified = append(notified, c.(map[string]any)["comment_id"].(string))
+		}
+		return bus.Result{Source: "local-authority", Data: map[string]any{"issue_uuid": r.Args["issue_uuid"], "notified": notified}}, nil
+	case "linear_comment_settle_match":
+		f.settleMatches = append(f.settleMatches, r.Args)
+		return bus.Result{Source: "local-authority", Data: map[string]any{"state": "posted"}}, nil
 	case "linear_comment_settle":
 		f.settles = append(f.settles, r.Args)
 		if f.unavailable != nil {

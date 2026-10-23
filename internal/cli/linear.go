@@ -102,9 +102,9 @@ type linearFlags struct {
 	team, parent, assignee, relationType, relationAction, labelFilter                                                    string
 	expectTitle, expectDescriptionSHA256, updatedAfter, commentsSince, replyTo, inResponseTo                             string
 	clearProject, clearLabels, clearParent, clearAssignee, expectNoLabels                                                bool
-	limit                                                                                                                int
+	limit, budget                                                                                                        int
 	revision                                                                                                             int64
-	teamBoard, confirm, noBrowser, tokenStdin, resolveLabels, comments, repair                                           bool
+	teamBoard, confirm, noBrowser, tokenStdin, resolveLabels, comments, repair, once                                     bool
 }
 type repeatedIDs []string
 
@@ -153,6 +153,10 @@ func parseLinear(command string, args []string, stderr io.Writer) (linearFlags, 
 	case "profiles", "binding":
 	case "status", "logout", "context":
 		profile()
+	case "watch":
+		profile()
+		f.IntVar(&v.budget, "budget", 0, "Linear calls per hour this watcher may spend (1–600; default 200)")
+		f.BoolVar(&v.once, "once", false, "run one cycle, report it and exit")
 	case "teams", "projects", "issues":
 		page()
 		if command == "issues" {
@@ -537,7 +541,7 @@ func linearWriteInput(command string, v linearFlags, pos []string) (linearboard.
 
 func runLinear(ctx context.Context, flags Config, args []string, stdout, stderr io.Writer) error {
 	if len(args) == 0 || len(args) == 1 && (args[0] == "--help" || args[0] == "-h" || args[0] == "help") {
-		_, err := io.WriteString(stdout, "clawbridge linear connect|import|profiles|status|logout|teams|projects|binding|link|unlink|context|issues|issue|states|labels|members|create|update|comment|relation\nUse COMMAND --help for explicit flags. Token import accepts --token-stdin only.\n")
+		_, err := io.WriteString(stdout, "clawbridge linear connect|import|profiles|status|logout|teams|projects|binding|link|unlink|context|issues|issue|states|labels|members|create|update|comment|relation|watch\nUse COMMAND --help for explicit flags. Token import accepts --token-stdin only.\n")
 		return err
 	}
 	command := args[0]
@@ -569,6 +573,11 @@ func runLinear(ctx context.Context, flags Config, args []string, stdout, stderr 
 	if command == "connect" || command == "login" {
 		cancel()
 		bounded, cancel = context.WithTimeout(ctx, 5*time.Minute)
+	}
+	if command == "watch" {
+		// The watcher runs until interrupted; each poll bounds itself.
+		cancel()
+		bounded, cancel = context.WithCancel(ctx)
 	}
 	defer cancel()
 	directory, err := linearDirectory()
@@ -683,6 +692,14 @@ func runLinear(ctx context.Context, flags Config, args []string, stdout, stderr 
 		}
 	case "states":
 		data, err = service.StatesV2(bounded, scope, pos[0])
+	case "watch":
+		if v.supplied["budget"] && (v.budget < 1 || v.budget > 600) {
+			return errors.New("--budget must be 1–600 Linear calls per hour")
+		}
+		service.KeepProviderOpen(linearboard.WatchProviderTTL)
+		service.CacheReadBindingProof(linearboard.BindingProofTTL)
+		defer service.Close()
+		return service.Watch(bounded, scope, linearboard.WatchOptions{Budget: v.budget, Once: v.once, Cycle: func(c linearboard.WatchCycle) error { return emit(c) }})
 	case "labels":
 		data, err = service.LabelsV2(bounded, scope, v.team, v.limit, v.cursor)
 	case "members":

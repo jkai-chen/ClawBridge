@@ -177,7 +177,7 @@ var batchFallbackKinds = map[string]bool{"capability_unavailable": true, "invali
 
 func checkIssueV2(issue linearprovider.IssueV2, b bus.TaskboardBindingV2, v verifiedV2) error {
 	if !linearprovider.ValidID(issue.ID) || !contains(b.LinearTeamIDs, issue.TeamID) {
-		return errors.New("issue is outside the selected task-board scope")
+		return outOfScopeError("issue is outside the selected task-board scope")
 	}
 	if b.Mode == "project_set" {
 		if !issue.ProjectKnown {
@@ -188,7 +188,7 @@ func checkIssueV2(issue linearprovider.IssueV2, b bus.TaskboardBindingV2, v veri
 				return nil
 			}
 		}
-		return errors.New("issue project/team pair is outside the verified scope")
+		return outOfScopeError("issue project/team pair is outside the verified scope")
 	}
 	return nil
 }

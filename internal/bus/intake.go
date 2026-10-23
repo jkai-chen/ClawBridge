@@ -368,6 +368,12 @@ func (s *Store) intakeEnqueue(ctx context.Context, tx *transaction, w map[string
 			}
 			return "already_queued", nil
 		}
+		// IN-M1: a dismissal is lifted only by a new signal transition or a
+		// rearm (design §3). A request (S5) is neither, so it leaves the row
+		// dismissed and tells nobody.
+		if str(row, "state") == "dismissed" && asInt(row["rearmed"]) == 0 && ev.Signal == "S5" {
+			return "dismissed", nil
+		}
 		if _, err = tx.ExecContext(ctx, `UPDATE intake_queue SET issue_identifier=?,signals=?,trigger_actor=?,trigger_cap=?,cap_set_by=?,queued_title_sha256=?,queued_description_sha256=?,queued_updated_at=?,state='queued',offered_session=NULL,offered_at=NULL,offers=0,assignment_id=NULL,consumed_label=0,delegate_set=0,rearmed=0,reason='',notified_at=NULL,updated_at=?,closed_at=NULL WHERE project_id=? AND issue_uuid=?`, ev.Issue.Identifier, ev.Signal, ev.Actor, limit, setBy, ev.Issue.TitleSHA256, ev.Issue.DescriptionSHA256, ev.Issue.UpdatedAt, nowRaw, pid, ev.Issue.UUID); err != nil {
 			return "", err
 		}
@@ -585,6 +591,14 @@ func (s *Store) IntakeRequest(ctx context.Context, token, issue string, prove fu
 		if _, e := tx.ExecContext(ctx, `SELECT pg_advisory_xact_lock(hashtextextended(?,0))`, "workspace:"+grant.WorkspaceID); e != nil {
 			return nil, errors.New("authority unavailable")
 		}
+	}
+	// IN-L1: the token is checked again, so one revoked or suspended while
+	// the issue was proven queues nothing.
+	if again, e := intakeGrant(ctx, tx, token); e != nil || again != grant {
+		if e == nil || errors.Is(e, ErrIntakeUnauthorized) {
+			return nil, ErrIntakeUnauthorized
+		}
+		return nil, e
 	}
 	if errors.Is(err, ErrIntakeOutOfBinding) {
 		if e := s.intakeOutOfBinding(ctx, tx, grant, asInt(policy["out_of_binding_limit"])); e != nil {

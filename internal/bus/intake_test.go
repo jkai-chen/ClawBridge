@@ -274,12 +274,26 @@ func TestIntakeDismissAndRearm(t *testing.T) {
 	if out := h.call("intake_dismiss", "c", map[string]any{"issue_uuid": intakeIssue}).(map[string]any); out["state"] != "dismissed" {
 		t.Fatal(out)
 	}
+	notices := len(h.intakeInbox("c"))
+	// IN-M1: a request is not a new transition, so the dismissal stands and
+	// nobody is told again.
+	for i := 0; i < 2; i++ {
+		if out := h.request(intakeIssue); out["result"] != "dismissed" {
+			t.Fatal("a request re-opened a dismissed row", out)
+		}
+	}
+	if r := h.call("intake_list", "a", nil).([]map[string]any)[0]; r["state"] != "dismissed" || len(h.intakeInbox("c")) != notices {
+		t.Fatal("dismissed row changed or notified", r)
+	}
 	if out := h.call("intake_rearm", "c", map[string]any{"issue_uuid": intakeIssue}).(map[string]any); out["rearmed"] != 1 && out["rearmed"] != int64(1) {
 		t.Fatal(out)
 	}
-	// A new request re-opens a dismissed row.
+	// After a rearm, a new request re-opens it.
 	if out := h.request(intakeIssue); out["result"] != "queued" {
 		t.Fatal(out)
+	}
+	if len(h.intakeInbox("c")) != notices+1 {
+		t.Fatal("the re-opened row was not notified")
 	}
 }
 
@@ -317,4 +331,21 @@ func (h *intakeHarness) inTx(fn func(tx *transaction, w map[string]any, pid stri
 		return err
 	}
 	return tx.Commit()
+}
+
+// IN-L1: a token revoked while the issue is proven queues nothing.
+func TestIntakeTokenRevokedDuringTheProofQueuesNothing(t *testing.T) {
+	h := newIntakeHarness(t)
+	tokens := h.call("intake_token_list", "c", nil).([]map[string]any)
+	prove := h.prove
+	h.prove = func(ctx context.Context, wid, pid, issue string) (IntakeIssue, error) {
+		h.call("intake_token_revoke", "c", map[string]any{"token_id": tokens[0]["id"]})
+		return prove(ctx, wid, pid, issue)
+	}
+	if _, err := h.s.IntakeRequest(context.Background(), h.token, intakeIssue, h.prove); !errors.Is(err, ErrIntakeUnauthorized) {
+		t.Fatal("a revoked token's request went on:", err)
+	}
+	if rows := h.call("intake_list", "a", nil).([]map[string]any); len(rows) != 0 || len(h.intakeInbox("c")) != 0 {
+		t.Fatal("queued after revoke", rows)
+	}
 }

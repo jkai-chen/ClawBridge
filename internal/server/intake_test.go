@@ -129,3 +129,26 @@ func TestIntakeEndpointHasOneTypedTool(t *testing.T) {
 		t.Fatal("the request did not reach the store with its token and prover:", store)
 	}
 }
+
+// IN-L2: behind a private proxy the limit is keyed on the client the proxy
+// saw; a public peer cannot choose its bucket with a forwarded header.
+func TestIntakeClientAddress(t *testing.T) {
+	for _, c := range []struct{ peer, forwarded, want string }{
+		{"203.0.113.9:4000", "", "203.0.113.9"},
+		{"203.0.113.9:4000", "198.51.100.1", "203.0.113.9"},
+		{"172.18.0.5:4000", "", "172.18.0.5"},
+		{"172.18.0.5:4000", "198.51.100.1", "198.51.100.1"},
+		{"172.18.0.5:4000", "10.0.0.1, 198.51.100.2", "198.51.100.2"},
+		{"127.0.0.1:4000", "198.51.100.3", "198.51.100.3"},
+		{"172.18.0.5:4000", "not-an-ip", "172.18.0.5"},
+	} {
+		r := httptest.NewRequest("POST", IntakePath, nil)
+		r.RemoteAddr = c.peer
+		if c.forwarded != "" {
+			r.Header.Set("X-Forwarded-For", c.forwarded)
+		}
+		if got := clientAddress(r); got != c.want {
+			t.Errorf("%s via %q: got %s, want %s", c.peer, c.forwarded, got, c.want)
+		}
+	}
+}

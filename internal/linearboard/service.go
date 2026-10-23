@@ -198,6 +198,9 @@ func (s *Service) access(ctx context.Context, scope bus.Request) (bus.TaskboardA
 	// record its comments in the ledger.
 	scope.Args["ledger"] = 1
 	result, err := s.cfg.Executor.Execute(ctx, scope)
+	if err != nil && strings.Contains(err.Error(), `unsupported argument "ledger"`) {
+		return bus.TaskboardAccess{}, errors.New("the ClawBridge server is older than this client and cannot record Linear comments; upgrade the server first (nothing was sent)")
+	}
 	if err != nil {
 		return bus.TaskboardAccess{}, err
 	}

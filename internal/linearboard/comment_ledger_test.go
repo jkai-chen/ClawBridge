@@ -396,3 +396,22 @@ func TestReplyIsReservedAgainstItsThreadRoot(t *testing.T) {
 		t.Fatal("in_response_to without a reply accepted:", err)
 	}
 }
+
+type oldServer struct{ *authorityV2 }
+
+func (o oldServer) Execute(ctx context.Context, r bus.Request) (bus.Result, error) {
+	if r.Operation == "taskboard_access" && r.Args["ledger"] != nil {
+		return bus.Result{}, errors.New(`unsupported argument "ledger" for taskboard_access`)
+	}
+	return o.authorityV2.Execute(ctx, r)
+}
+
+// A new client against an older server says which side to upgrade.
+func TestOlderServerAsksForAServerUpgrade(t *testing.T) {
+	s, a, p, scope := testV2(t)
+	s.cfg.Executor = oldServer{a}
+	_, err := s.WriteV2(context.Background(), scope, WriteInputV2{WriteInput: WriteInput{Operation: "comment", OperationID: "c", IssueID: issueID, Body: "x"}})
+	if err == nil || !strings.Contains(err.Error(), "upgrade the server first") || len(p.bodies) != 0 {
+		t.Fatal(err)
+	}
+}

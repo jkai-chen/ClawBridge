@@ -467,3 +467,53 @@ func (c commentCall) markerDue(ctx context.Context) (any, error) {
 	}
 	return map[string]any{"markers": markers}, nil
 }
+
+// watchStatus is what doctor reports about the project's comment watch and
+// claim markers. It reads only, and names no Linear text.
+func watchStatus(ctx context.Context, tx *transaction, pid string) (any, error) {
+	nowRaw, err := dbStamp(ctx, tx)
+	if err != nil {
+		return nil, err
+	}
+	stale := layout(at(nowRaw).Add(-markerStale))
+	count := func(q string, args ...any) (int, error) {
+		rows, err := query(ctx, tx, `SELECT COUNT(*) AS n FROM `+q, args...)
+		if err != nil || len(rows) == 0 {
+			return 0, err
+		}
+		return asInt(rows[0]["n"]), nil
+	}
+	out := map[string]any{}
+	for key, q := range map[string]string{
+		"watched_issues":         `watch_cursors WHERE project_id=? AND source='comments' AND active_until IS NULL`,
+		"held_issues":            `watch_cursors WHERE project_id=? AND source='comments' AND active_until IS NULL AND last_error<>''`,
+		"no_recipient":           `watch_cursors WHERE project_id=? AND source='comments' AND active_until IS NULL AND last_error='no_recipient'`,
+		"markers_pending":        `assignment_markers WHERE project_id=? AND created_at<? AND (comment_state IN ('pending','waiting_on_claim') OR label_state IN ('pending','in_flight'))`,
+		"markers_no_label":       `assignment_markers WHERE project_id=? AND label_state='no_label'`,
+		"markers_out_of_binding": `assignment_markers WHERE project_id=? AND (comment_state='failed_out_of_binding' OR label_state='failed_out_of_binding')`,
+		// A close whose removal has not landed while nothing confirmed names
+		// the issue: Linear may still show agent-working.
+		"close_label_drift": `assignment_markers m WHERE m.project_id=? AND m.phase='close' AND m.label_state IN ('pending','in_flight','no_label','failed_out_of_binding') AND m.created_at<? AND NOT EXISTS(SELECT 1 FROM session_assignments a WHERE a.project_id=m.project_id AND a.issue_uuid=m.issue_uuid AND a.state='confirmed')`,
+	} {
+		args := []any{pid}
+		if key == "markers_pending" || key == "close_label_drift" {
+			args = append(args, stale)
+		}
+		n, err := count(q, args...)
+		if err != nil {
+			return nil, err
+		}
+		out[key] = n
+	}
+	oldest, err := query(ctx, tx, `SELECT MIN(created_at) AS at FROM assignment_markers WHERE project_id=? AND created_at<? AND (comment_state IN ('pending','waiting_on_claim') OR label_state IN ('pending','in_flight'))`, pid, stale)
+	if err != nil {
+		return nil, err
+	}
+	out["markers_oldest_pending"] = nullable(str(oldest[0], "at"))
+	lease, err := query(ctx, tx, `SELECT expires_at FROM watch_lease WHERE project_id=?`, pid)
+	if err != nil {
+		return nil, err
+	}
+	out["watcher_live"] = len(lease) == 1 && str(lease[0], "expires_at") > nowRaw
+	return out, nil
+}

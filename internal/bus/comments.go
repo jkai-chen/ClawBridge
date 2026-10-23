@@ -799,13 +799,14 @@ func (c commentCall) nextPoll(ctx context.Context, issue, activity string) (stri
 }
 
 // failed records a poll that could not decide: the cursor stays, so nothing
-// is skipped.
+// is skipped. A poll with no one to notify backs off like a read error, up
+// to hourly, until a recipient exists.
 func (c commentCall) failed(ctx context.Context, issue string, cursor map[string]any, failure string) (any, error) {
 	now := layout(c.now)
 	failures := asInt(cursor["failures"])
 	wait := 5 * time.Minute
 	switch failure {
-	case "young_pending", "ownership_unavailable", "no_recipient":
+	case "young_pending", "ownership_unavailable":
 	case "rate_limited", "auth":
 		wait = time.Hour
 		if _, err := c.tx.ExecContext(ctx, `UPDATE watch_cursors SET next_poll_at=?,polled_at=NULL,updated_at=? WHERE project_id=? AND source='comments' AND active_until IS NULL AND next_poll_at<?`, layout(c.now.Add(wait)), now, c.pid, layout(c.now.Add(wait))); err != nil {

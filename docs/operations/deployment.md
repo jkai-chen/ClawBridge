@@ -292,6 +292,13 @@ implications in the cost estimate.
 
 ## Update and rollback
 
+**v0.2.5 (schema 7): upgrade the server before the clients.** A v0.2.5 server
+refuses every Linear write from an older client ("upgrade ClawBridge (v0.2.5 or
+later)"), and a v0.2.5 client gets "unsupported argument" from an older server.
+Schema 7 is one-way: an older binary refuses the upgraded database, so roll back
+only by restoring the pre-update backup. Claim markers post session names into
+Linear, where every member of the team can read them; name sessions by role.
+
 Before every update, run a backup and confirm its checksum and timer/service
 result. Record the current commit, rendered service state and the most recent
 verified backup timestamp. Never delete the only Postgres volume with

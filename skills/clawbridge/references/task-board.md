@@ -14,6 +14,10 @@ Native task-board writes require an operation_id. Keep the ID and exact payload
 for the same operation, retain an accepted receipt, and read back an uncertain
 outcome before proposing another write. A changed mapping/profile or pending
 ledger record requires reconciliation; a fresh ID is not a recovery shortcut.
+`in_progress` means another request is still sending that operation: retry the
+same ID and payload shortly. On a hosted server with the ClawBridge Linear app,
+your writes are made as the app; when one fails, report it and never repeat it
+through another Linear tool or account.
 
 ## Establish the work map
 

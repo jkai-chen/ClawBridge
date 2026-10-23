@@ -40,8 +40,8 @@ func (s *Service) CacheReadBindingProof(ttl time.Duration) {
 // a write path.
 func (s *Service) verifyReadBindingV2(ctx context.Context, p Provider, b bus.TaskboardBindingV2) (verifiedV2, error) {
 	c := s.proofs
-	if c == nil {
-		return verifyBindingV2(ctx, p, b)
+	if c == nil || s.held != nil {
+		return s.proveBinding(ctx, p, b)
 	}
 	key := digest([]any{"binding-proof", s.cfg.ProfileID, b.WorkspaceID, b.ProjectID, b.Revision, digest(b)})
 	now := s.cfg.Now()

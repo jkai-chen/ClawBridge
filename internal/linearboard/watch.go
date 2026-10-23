@@ -153,9 +153,21 @@ func (s *Service) renewWatch(ctx context.Context, scope bus.Request, lease *watc
 	return nil
 }
 
+// watchConnectCalls is what opening a native connection costs: initialize
+// and tools/list. The bus charges it once per cycle up front.
+const watchConnectCalls = 2
+
+// linearCalls counts what this process has sent to Linear: tool calls, and
+// connections opened at watchConnectCalls each. known is false when a
+// provider cannot count its calls.
+type linearCalls struct {
+	tools, opens uint64
+	known        bool
+}
+
 // countCalls makes every provider this Service opens from now on count
-// toward the returned total of Linear tool calls sent.
-func (s *Service) countCalls() func() uint64 {
+// toward the returned totals.
+func (s *Service) countCalls() func() linearCalls {
 	open := s.cfg.Open
 	opened := []Provider{}
 	s.cfg.Open = func(ctx context.Context, h *http.Client, readonly bool) (Provider, error) {
@@ -165,19 +177,36 @@ func (s *Service) countCalls() func() uint64 {
 		}
 		return p, err
 	}
-	return func() uint64 {
-		var n uint64
+	return func() linearCalls {
+		n := linearCalls{opens: uint64(len(opened)), known: true}
 		for _, p := range opened {
-			if sent, ok := sentCount(p); ok {
-				n += sent
-			}
+			sent, ok := sentCount(p)
+			n.tools += sent
+			n.known = n.known && ok
 		}
 		return n
 	}
 }
 
-func (s *Service) watchCycle(ctx context.Context, scope bus.Request, lease *watchLease, calls func() uint64) (WatchCycle, error) {
+// pollCost is what one poll spent, for its report: every tool call and
+// connection between before and after. The cycle's up-front connection
+// charge (credit) pays for the first connection it opened.
+func pollCost(before, after linearCalls, credit *int) int {
+	if !after.known {
+		return 1
+	}
+	spent := int(after.tools-before.tools) + watchConnectCalls*int(after.opens-before.opens)
+	if after.opens > before.opens {
+		paid := min(*credit, spent)
+		spent -= paid
+		*credit -= paid
+	}
+	return spent
+}
+
+func (s *Service) watchCycle(ctx context.Context, scope bus.Request, lease *watchLease, calls func() linearCalls) (WatchCycle, error) {
 	cycle := WatchCycle{Notified: []string{}}
+	credit := watchConnectCalls
 	if err := s.applyDueMarkers(ctx, scope, lease, &cycle); err != nil {
 		return cycle, err
 	}
@@ -201,10 +230,7 @@ func (s *Service) watchCycle(ctx context.Context, scope bus.Request, lease *watc
 		}
 		before := calls()
 		report := s.pollIssue(ctx, scope, lease, issue, since)
-		spent := int(calls() - before)
-		if spent < 1 {
-			spent = 1
-		}
+		spent := pollCost(before, calls(), &credit)
 		report["calls"] = min(spent, 1000)
 		lease.overBudget(s.cfg.Now(), spent, cycle.BudgetLimit)
 		out, err := s.commentLedger(ctx, scope, "comment_watch_report", lease.fence(report))
@@ -217,6 +243,9 @@ func (s *Service) watchCycle(ctx context.Context, scope bus.Request, lease *watc
 			continue
 		}
 		cycle.Polled++
+		if used, ok := out["budget_used"]; ok {
+			cycle.BudgetUsed = number(used)
+		}
 		if notified, ok := out["notified"].([]any); ok {
 			for _, id := range notified {
 				if s, ok := id.(string); ok {

@@ -522,3 +522,17 @@ func TestOldClientCannotWriteToLinear(t *testing.T) {
 		}
 	}
 }
+
+// The hour's budget counts every call: the due charge up front, then each
+// report's reconciliation, which the report returns.
+func TestCommentWatchReportReturnsTheReconciledBudget(t *testing.T) {
+	w := newWatchHarness(t)
+	due := w.call("comment_watch_due", "c", w.fenced(map[string]any{})).(map[string]any)
+	if due["budget_used"] != 3 {
+		t.Fatal("due did not charge one poll and a connection:", due)
+	}
+	out := w.call("comment_watch_report", "c", w.fenced(map[string]any{"issue_uuid": watchIssue, "calls": 4})).(map[string]any)
+	if out["budget_used"] != 6 {
+		t.Fatal("report did not charge its extra calls:", out)
+	}
+}

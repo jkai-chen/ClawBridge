@@ -79,8 +79,8 @@ func TestWatchReportsOnlyCommentsThatMayBeNews(t *testing.T) {
 	if strings.Join(ids, ",") != reply.ID+","+humanComment {
 		t.Fatal("reported comments:", ids)
 	}
-	if cycle.Polled != 1 || len(cycle.Notified) != 2 {
-		t.Fatal(cycle)
+	if cycle.Polled != 1 || len(cycle.Notified) != 2 || cycle.BudgetUsed != 7 {
+		t.Fatal("cycle does not show the reconciled budget:", cycle)
 	}
 }
 
@@ -164,5 +164,31 @@ func TestWatchReportsTheCallsAPollSent(t *testing.T) {
 	}
 	if got := a.comments.reports[0]["calls"]; got != 3 {
 		t.Fatal("report did not carry the calls sent:", got)
+	}
+}
+
+// Every Linear call a poll makes is reported: tool calls and connections.
+// The cycle's up-front connection charge pays for its first connection.
+func TestPollCostCountsConnectionsOnce(t *testing.T) {
+	credit := watchConnectCalls
+	start := linearCalls{known: true}
+	// First poll: a new connection, then get_team, list_projects, get_issue
+	// and list_comments.
+	first := linearCalls{tools: 4, opens: 1, known: true}
+	if got := pollCost(start, first, &credit); got != 4 || credit != 0 {
+		t.Fatal("first poll:", got, credit)
+	}
+	// Second poll on the kept connection: get_issue and list_comments.
+	second := linearCalls{tools: 6, opens: 1, known: true}
+	if got := pollCost(first, second, &credit); got != 2 {
+		t.Fatal("second poll:", got)
+	}
+	// A reconnect after the credit is spent is charged in full.
+	third := linearCalls{tools: 8, opens: 2, known: true}
+	if got := pollCost(second, third, &credit); got != 4 {
+		t.Fatal("reconnect:", got)
+	}
+	if got := pollCost(start, linearCalls{}, &credit); got != 1 {
+		t.Fatal("unknown cost:", got)
 	}
 }

@@ -718,12 +718,21 @@ func (c commentCall) report(ctx context.Context) (any, error) {
 	if err != nil {
 		return nil, scopedError(err, "this issue is not watched in this project", "not_found")
 	}
-	if _, _, err = c.charge(ctx, lease, calls-1); err != nil {
+	used, _, err := c.charge(ctx, lease, calls-1)
+	if err != nil {
 		return nil, err
+	}
+	// Every answer carries the hour's budget after this report reconciled
+	// its calls.
+	withBudget := func(r any, e error) (any, error) {
+		if m, ok := r.(map[string]any); ok {
+			m["budget_used"] = used
+		}
+		return r, e
 	}
 	now := layout(c.now)
 	if failure != "" {
-		return c.failed(ctx, issue, cursor, failure)
+		return withBudget(c.failed(ctx, issue, cursor, failure))
 	}
 	polled := str(cursor, "polled_at")
 	if polled == "" {
@@ -752,7 +761,7 @@ func (c commentCall) report(ctx context.Context) (any, error) {
 			return nil, e
 		}
 		if message == "" {
-			return c.failed(ctx, issue, cursor, "no_recipient")
+			return withBudget(c.failed(ctx, issue, cursor, "no_recipient"))
 		}
 		ids := []string{}
 		for _, cm := range fresh {
@@ -776,7 +785,7 @@ func (c commentCall) report(ctx context.Context) (any, error) {
 		return nil, err
 	}
 	out["next_poll_at"] = next
-	return out, nil
+	return withBudget(out, nil)
 }
 
 // nextPoll backs off a quiet issue: 5 minutes after recent activity (a human

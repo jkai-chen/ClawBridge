@@ -16,7 +16,7 @@ import (
 // the state. It reuses the same command's binding verification v (team and
 // project structure, read moments earlier at preflight); the ClawBridge
 // binding revision itself is re-checked around this call by unchangedV2.
-func refreshWriteProofV2(ctx context.Context, p Provider, p2 ProviderV2, b bus.TaskboardBindingV2, v verifiedV2, in WriteInputV2, team, project string, original linearprovider.IssueV2, legacy bool, plan labelPlanV2) error {
+func (s *Service) refreshWriteProofV2(ctx context.Context, p Provider, p2 ProviderV2, b bus.TaskboardBindingV2, v verifiedV2, in WriteInputV2, team, project string, original linearprovider.IssueV2, legacy bool, plan labelPlanV2) error {
 	var e error
 	if in.Operation != "create" {
 		var current linearprovider.IssueV2
@@ -27,7 +27,7 @@ func refreshWriteProofV2(ctx context.Context, p Provider, p2 ProviderV2, b bus.T
 			}
 			current = linearprovider.IssueV2{Issue: issue, ProjectKnown: true}
 		} else {
-			current, e = p2.IssueV2(ctx, in.IssueID)
+			current, e = s.readIssue(ctx, p2, in.IssueID)
 			if e != nil {
 				return e
 			}
@@ -42,7 +42,7 @@ func refreshWriteProofV2(ctx context.Context, p Provider, p2 ProviderV2, b bus.T
 			return e
 		}
 		if in.AddLabels != nil || in.RemoveLabels != nil {
-			fresh, e := writePlanV2(ctx, p2, current, in)
+			fresh, e := writePlanV2(ctx, s.planProvider(p2), current, in)
 			if e != nil {
 				return e
 			}
@@ -82,8 +82,10 @@ func refreshWriteProofV2(ctx context.Context, p Provider, p2 ProviderV2, b bus.T
 	if e = checkIssueV2(linearprovider.IssueV2{Issue: linearprovider.Issue{ID: "00000000-0000-0000-0000-000000000000", TeamID: team, ProjectID: project}, ProjectKnown: true}, b, v); e != nil {
 		return e
 	}
-	for _, labels := range [][]string{in.Labels.Value, in.AddLabels} {
-		if len(labels) == 0 {
+	for i, labels := range [][]string{in.Labels.Value, in.AddLabels} {
+		// A marker's add was proven eligible by name in this held
+		// operation moments ago (markerLabel).
+		if len(labels) == 0 || i == 1 && in.marker {
 			continue
 		}
 		found, e := findLabelsV2(ctx, p2, team, labels)

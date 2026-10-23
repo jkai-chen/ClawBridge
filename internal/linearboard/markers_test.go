@@ -3,6 +3,7 @@ package linearboard
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"strings"
 	"testing"
@@ -103,7 +104,8 @@ func TestMarkerLabelMissingOrAmbiguousIsNoLabel(t *testing.T) {
 func TestMarkerRetryFindsTheEarlierPost(t *testing.T) {
 	s, a, p, scope := markerTest(t)
 	reserved := time.Now().Add(-20 * time.Minute).UTC()
-	a.comments.gos["comment"] = map[string]any{"action": "post", "issue_uuid": issueID, "body": claimBody, "check_from": reserved.Add(-2 * time.Minute).Format(time.RFC3339Nano), "check_to": reserved.Add(10 * time.Minute).Format(time.RFC3339Nano)}
+	a.comments.gos["comment"] = map[string]any{"action": "check", "issue_uuid": issueID, "body": claimBody, "check_from": reserved.Add(-2 * time.Minute).Format(time.RFC3339Nano), "check_to": reserved.Add(10 * time.Minute).Format(time.RFC3339Nano)}
+	a.comments.gos["absent"] = map[string]any{"action": "post", "issue_uuid": issueID, "body": claimBody}
 	a.comments.gos["label"] = map[string]any{"action": "none"}
 	read, since, deadlines := []string{}, []string{}, []time.Time{}
 	result := linearprovider.Comments{Complete: true, Items: []linearprovider.Comment{
@@ -116,7 +118,7 @@ func TestMarkerRetryFindsTheEarlierPost(t *testing.T) {
 	if out.Comment != "done" || len(p.bodies) != 0 {
 		t.Fatal("re-posted instead of finding the earlier post:", out, p.bodies)
 	}
-	if got := settled(a, "comment"); got["comment_id"] != ourComment || got["via"] != "body_match" {
+	if got := settled(a, "comment"); got["comment_id"] != ourComment || got["via"] != "body_match" || got["created_at"] != reserved.Add(time.Minute).Format(time.RFC3339Nano) {
 		t.Fatal("settled with the wrong comment:", got)
 	}
 	// Outside the window the body is not ours: post again.
@@ -124,6 +126,9 @@ func TestMarkerRetryFindsTheEarlierPost(t *testing.T) {
 	a.comments.markerSettles = nil
 	if out = s.ApplyMarker(context.Background(), scope, "asg_1", "claim", nil); out.Comment != "done" || len(p.bodies) != 1 {
 		t.Fatal("did not post after no match:", out, p.bodies)
+	}
+	if len(a.comments.markerSettles) != 2 || a.comments.markerSettles[0]["outcome"] != "absent" || a.comments.markerSettles[1]["comment_id"] != issueID {
+		t.Fatal("no match did not ask for a new attempt before posting:", a.comments.markerSettles)
 	}
 }
 
@@ -161,5 +166,62 @@ func TestWatchAppliesDueMarkersUnderTheLease(t *testing.T) {
 	}
 	if len(a.comments.markerGoes) != 2 || a.comments.markerGoes[0]["lease_token"] != "tok" || a.comments.markerGoes[0]["assignment_id"] != "asg_9" || a.comments.markerGoes[0]["phase"] != "close" {
 		t.Fatal("due marker not applied under the lease:", a.comments.markerGoes)
+	}
+}
+
+// endlessLabels never finishes its label catalog.
+type endlessLabels struct {
+	*providerV2
+	pages *int
+}
+
+func (e endlessLabels) Labels(ctx context.Context, team string, o linearprovider.PageOptions) (linearprovider.Page[linearprovider.Label], error) {
+	page, err := e.providerV2.Labels(ctx, team, o)
+	*e.pages++
+	page.NextCursor, page.Complete = fmt.Sprintf("more-%d", *e.pages), false
+	return page, err
+}
+
+// PR3-L2: a label walk cut off by the page bound proves nothing unique.
+func TestMarkerLabelWalkCutOffSendsNothing(t *testing.T) {
+	s, a, p, scope := markerTest(t)
+	a.comments.gos["comment"] = map[string]any{"action": "none"}
+	pages := 0
+	s.cfg.Open = func(context.Context, *http.Client, bool) (Provider, error) { return endlessLabels{p, &pages}, nil }
+	out := s.ApplyMarker(context.Background(), scope, "asg_1", "claim", nil)
+	if out.Label != "failed" || len(p.updated) != 0 || settled(a, "label")["outcome"] != "failed" {
+		t.Fatal("a cut-off walk applied the label:", out, p.updated)
+	}
+}
+
+// A held operation reads an issue once, and again after writing it.
+func TestHeldOperationForgetsAnIssueItWrote(t *testing.T) {
+	s, _, p, _ := testV2(t)
+	held, release := s.hold()
+	defer release()
+	for range 2 {
+		if _, err := held.readIssue(context.Background(), p, issueID); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if p.reads != 1 {
+		t.Fatal("held reads not shared:", p.reads)
+	}
+	held.wrote(issueID)
+	if _, err := held.readIssue(context.Background(), p, issueID); err != nil || p.reads != 2 {
+		t.Fatal("a written issue was served from the held read:", p.reads, err)
+	}
+}
+
+// PR3-L3: a marker note Linear provably never received settles as failed,
+// freeing its attempt; only an unknown outcome stays uncertain.
+func TestUnsentMarkerNoteSettlesFailed(t *testing.T) {
+	s, a, p, scope := markerTest(t)
+	a.comments.gos["label"] = map[string]any{"action": "none"}
+	counting := &sentCounting{providerV2: p}
+	s.cfg.Open = func(context.Context, *http.Client, bool) (Provider, error) { return counting, nil }
+	p.commentErr = &linearprovider.Error{Kind: "rate_limited", Status: 429, NotSent: true}
+	if out := s.ApplyMarker(context.Background(), scope, "asg_1", "claim", nil); out.Comment != "failed" || settled(a, "comment")["outcome"] != "failed" {
+		t.Fatal("an unsent note was not settled failed:", out)
 	}
 }

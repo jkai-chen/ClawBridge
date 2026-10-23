@@ -1,7 +1,6 @@
 package bus
 
 import (
-	"clawbridge/internal/linearprovider"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -19,7 +18,10 @@ const (
 	markerStale      = 10 * time.Minute
 	markerMaxOutside = 5
 	markerDueLimit   = 20
-	markerDueCalls   = 3
+	// markerDueCalls is what applying one marker row costs, charged up
+	// front: one connection reused for the row, one binding proof, one issue
+	// read, one label page, the writes and their readbacks.
+	markerDueCalls = 8
 	// MarkerLabel is the label a claim adds; a Linear admin creates it.
 	MarkerLabel = "agent-working"
 )
@@ -54,12 +56,12 @@ func markerKey(assignment, phase string) string {
 }
 
 // markerBody is the exact text a marker comment posts: fixed words, the
-// confirm-time session name, a short ref for humans relating the claim and
-// close notes, and the agent marker.
+// confirm-time session name and a short ref for humans relating the claim
+// and close notes. It names the session itself, so it carries no generic
+// agent marker line; the ledger row is what makes it ClawBridge's.
 func markerBody(row map[string]any) string {
 	ref := sha256.Sum256([]byte(str(row, "assignment_id")))
-	name := str(row, "session_name")
-	shown := name
+	shown := str(row, "session_name")
 	if len(shown) > 32 {
 		shown = shown[:31] + "…"
 	}
@@ -67,8 +69,7 @@ func markerBody(row map[string]any) string {
 	if str(row, "phase") == "close" {
 		text = "🤖 Released by ClawBridge agent session " + shown + " (" + markerReason(str(row, "reason")) + ")"
 	}
-	text += " · ref cb-" + hex.EncodeToString(ref[:4])
-	return linearprovider.MarkComment(text, name)
+	return text + " · ref cb-" + hex.EncodeToString(ref[:4])
 }
 
 // markAssignment writes the claim row when an assignment for an issue is
@@ -214,6 +215,8 @@ func (c commentCall) markerGo(ctx context.Context) (any, error) {
 	default:
 		return out("none"), nil
 	}
+	// The row's one next_attempt_at paces both parts: a backoff or wait on
+	// one delays the other by at most an hour, which converges the same.
 	if str(m.row, "next_attempt_at") > layout(m.now) {
 		return out("wait"), nil
 	}
@@ -342,14 +345,18 @@ func (m markerCall) commentGo(ctx context.Context, out func(string) map[string]a
 	case str(row, "state") == "pending" && str(row, "reserved_at") > layout(m.now.Add(-markerStale)):
 		// An attempt may be posting it now.
 		return wait()
+	case str(row, "state") == "pending":
+		// An attempt that may have landed: look for the exact body in that
+		// attempt's window first. marker_settle re-checks the window, and
+		// only "absent" hands out a new post.
+		reserved := at(str(row, "reserved_at"))
+		o = out("check")
+		o["body"], o["operation_digest"] = body, digest
+		o["check_from"], o["check_to"] = layout(reserved.Add(-2*time.Minute)), layout(reserved.Add(markerStale))
+		return o, nil
 	default:
-		// A failed attempt, or one that may have landed: look for the
-		// exact body from the earlier attempt's window before posting.
-		if str(row, "state") == "pending" {
-			reserved := at(str(row, "reserved_at"))
-			o["check_from"], o["check_to"] = layout(reserved.Add(-2*time.Minute)), layout(reserved.Add(markerStale))
-		}
-		if _, err = m.tx.ExecContext(ctx, `UPDATE linear_comment_ledger SET state='pending',session_id=?,principal=?,reserved_at=?,settled_by=NULL,settled_at=NULL WHERE workspace_id=? AND operation_digest=?`, m.sid, m.s.principal, now, m.wid, digest); err != nil {
+		// A failed attempt is posted again as a new attempt.
+		if err = m.reserveAgain(ctx, digest); err != nil {
 			return nil, err
 		}
 	}
@@ -359,6 +366,12 @@ func (m markerCall) commentGo(ctx context.Context, out func(string) map[string]a
 		}
 	}
 	return o, nil
+}
+
+// reserveAgain makes the caller's session the holder of a new attempt.
+func (m markerCall) reserveAgain(ctx context.Context, digest string) error {
+	_, err := m.tx.ExecContext(ctx, `UPDATE linear_comment_ledger SET state='pending',session_id=?,principal=?,reserved_at=?,settled_by=NULL,settled_at=NULL WHERE workspace_id=? AND operation_digest=?`, m.sid, m.s.principal, layout(m.now), m.wid, digest)
+	return err
 }
 
 // markerSettle records how applying a marker part went: done (a comment
@@ -379,6 +392,15 @@ func (c commentCall) markerSettle(ctx context.Context) (any, error) {
 		return nil, scoped("this marker part was not handed out; ask marker_go first", "conflict")
 	}
 	digest := digestOf("marker", markerKey(m.assignment, m.phase))
+	var ledger map[string]any
+	if m.part == "comment" {
+		if ledger, err = m.ledgerRow(ctx, m.phase); err != nil {
+			return nil, err
+		}
+		if ledger == nil || str(ledger, "state") != "pending" {
+			return nil, scoped("this marker comment has no attempt in progress; ask marker_go first", "conflict")
+		}
+	}
 	state := ""
 	switch outcome {
 	case "done":
@@ -388,17 +410,44 @@ func (c commentCall) markerSettle(ctx context.Context) (any, error) {
 			if e != nil {
 				return nil, e
 			}
+			via := str(c.a, "via")
+			switch via {
+			case "body_match":
+				// MK-M1: a found comment proves itself only by being
+				// created inside the attempt's window; the client found
+				// the exact body there.
+				created, e := time.Parse(time.RFC3339Nano, str(c.a, "created_at"))
+				reserved := at(str(ledger, "reserved_at"))
+				if e != nil || created.Before(reserved.Add(-2*time.Minute)) || created.After(reserved.Add(markerStale)) {
+					return nil, invalid("the comment is outside the marker attempt's window")
+				}
+			case "", "receipt":
+				via = "receipt"
+				// MK-M1: a receipt settles only the attempt this session
+				// was handed.
+				if str(ledger, "session_id") != c.sid {
+					return nil, scoped("this marker attempt was handed to another session", "conflict")
+				}
+			default:
+				return nil, invalid("via must be receipt or body_match")
+			}
 			if e = c.unclaimed(ctx, id); e != nil {
 				return nil, e
-			}
-			via := str(c.a, "via")
-			if via != "body_match" {
-				via = "receipt"
 			}
 			if _, e = c.tx.ExecContext(ctx, `UPDATE linear_comment_ledger SET state='posted',comment_id=?,settled_by=?,settled_at=? WHERE workspace_id=? AND operation_digest=? AND state='pending'`, id, via, now, c.wid, digest); e != nil {
 				return nil, e
 			}
 		}
+	case "absent":
+		// The check found no earlier post: hand this session a new attempt.
+		if m.part != "comment" || str(ledger, "reserved_at") > layout(m.now.Add(-markerStale)) {
+			return nil, invalid("absent applies to a checked marker comment")
+		}
+		if err = m.reserveAgain(ctx, digest); err != nil {
+			return nil, err
+		}
+		o := map[string]any{"action": "post", "assignment_id": m.assignment, "phase": m.phase, "part": m.part, "issue_uuid": m.row["issue_uuid"], "body": markerBody(m.row), "operation_digest": digest}
+		return o, nil
 	case "no_label":
 		if m.part != "label" {
 			return nil, invalid("no_label applies to the label part")
@@ -406,13 +455,19 @@ func (c commentCall) markerSettle(ctx context.Context) (any, error) {
 		state = "no_label"
 	case "failed", "uncertain", "out_of_binding":
 		state = "pending"
+		// PR3-H1: a label write that may have landed keeps counting as
+		// in flight from its attempt, so a close still removes the label and
+		// the claim-add fence keeps holding.
+		if m.part == "label" && outcome == "uncertain" {
+			state = "in_flight"
+		}
 		if m.part == "comment" && outcome == "failed" {
 			if _, err = c.tx.ExecContext(ctx, `UPDATE linear_comment_ledger SET state='failed',settled_by='receipt',settled_at=? WHERE workspace_id=? AND operation_digest=? AND state='pending'`, now, c.wid, digest); err != nil {
 				return nil, err
 			}
 		}
 	default:
-		return nil, invalid("outcome must be done, no_label, failed, uncertain or out_of_binding")
+		return nil, invalid("outcome must be done, absent, no_label, failed, uncertain or out_of_binding")
 	}
 	attempts := asInt(m.row["attempts"])
 	next := now

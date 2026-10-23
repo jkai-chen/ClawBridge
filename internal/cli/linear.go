@@ -78,12 +78,15 @@ func linearViewer(ctx context.Context, manager *linearconn.Manager, profileID st
 }
 
 // viewerName is the name agent markers show for a Linear user: the full
-// name people read, else the @-handle, which the server strips of its "@".
+// name people read, else the handle. Linear fills an unset name with the
+// email; anything with an "@" is skipped, since markers never show one.
 func viewerName(v linearprovider.Viewer) string {
-	if name := strings.TrimSpace(v.Name); name != "" {
-		return name
+	for _, name := range []string{v.Name, v.DisplayName} {
+		if name = strings.TrimSpace(name); name != "" && !strings.Contains(name, "@") {
+			return name
+		}
 	}
-	return strings.TrimSpace(v.DisplayName)
+	return ""
 }
 
 // recordLinearDisplayName records the caller's name for agent markers on
@@ -121,7 +124,7 @@ func captureEngineerAtConnect(ctx context.Context, flags Config, manager *linear
 	}
 	name := viewerName(viewer)
 	if name == "" {
-		return ""
+		return "linear: your Linear user has no name agent markers can show, so they name no engineer; set one with clawbridge linear display-name set NAME"
 	}
 	data, err := recordLinearDisplayName(ctx, flags, name, true)
 	if err != nil {

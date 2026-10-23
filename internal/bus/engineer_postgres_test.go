@@ -39,7 +39,7 @@ func TestPostgresEngineerIsTheOwnersRecordedName(t *testing.T) {
 			t.Fatal("engineer unasked or without a session", r.Args, out.Data)
 		}
 	}
-	out, err := setName(f.owner, "  @Ada **Lovelace**  ")
+	out, err := setName(f.owner, "  Ada **Lovelace**  ")
 	if err != nil || out.Data.(map[string]any)["display_name"] != "Ada Lovelace" {
 		t.Fatal(out, err)
 	}
@@ -65,6 +65,11 @@ func TestPostgresEngineerIsTheOwnersRecordedName(t *testing.T) {
 	}
 	if _, err = setName(f.owner, strings.Repeat("a", 201)); err == nil {
 		t.Fatal("an over-long name was accepted")
+	}
+	for _, email := range []string{"jane.doe@example.com", "@ada", "Ada (ada@example.com)"} {
+		if _, err = setName(f.owner, email); err == nil || engineer() == "jane.doe example.com" {
+			t.Fatal("a name with @ was accepted", email)
+		}
 	}
 	if _, err = setName(f.owner, strings.Repeat("a", 60)); err != nil {
 		t.Fatal(err)

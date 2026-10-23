@@ -441,8 +441,9 @@ confirmed, so a later rename never changes a note):
   instead. A local store, or a server older than v0.2.7, also names no
   engineer. The line carries nothing else.
 - **Recording your name.** On a hosted server, `clawbridge linear connect`
-  records your Linear name (your full name, else your handle without `@`) when
-  you have none recorded yet. Change or remove it at any time:
+  records your Linear name (your full name, else your handle) when you have
+  none recorded yet. Linear fills an unset name with your email; a name with
+  an `@` is never recorded, and `display-name set` refuses one. Change or remove it at any time:
 
   ```bash
   clawbridge linear display-name set "Ada Lovelace"

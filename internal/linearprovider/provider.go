@@ -1172,6 +1172,34 @@ func (p *Provider) teamProjectsSupported() bool {
 	return true
 }
 
+// Workspace is the Linear workspace (organisation) a connection works in.
+type Workspace struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+}
+
+// Workspace reads the connection's workspace with get_workspace, which
+// takes no arguments. It fails with capability_unavailable when the tool is
+// not advertised.
+func (p *Provider) Workspace(ctx context.Context) (Workspace, error) {
+	if p.tools["get_workspace"] == nil {
+		return Workspace{}, fail("capability_unavailable")
+	}
+	m, e := p.call(ctx, []string{"get_workspace"})
+	if e != nil {
+		return Workspace{}, e
+	}
+	if nested := obj(m, "workspace"); nested != nil {
+		m = nested
+	}
+	i, _ := m["id"].(string)
+	i = strings.ToLower(i)
+	if !ValidID(i) {
+		return Workspace{}, fail("invalid_response")
+	}
+	return Workspace{ID: i, Name: str(m, "name")}, nil
+}
+
 // TeamProjects lists one page of a team's projects, trashed ones included and
 // marked, so a caller can verify many projects in one read. Without the
 // advertised inputs it fails with capability_unavailable before any call, and

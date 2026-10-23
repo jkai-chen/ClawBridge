@@ -251,6 +251,29 @@ func (s *Service) LinkV2(ctx context.Context, scope bus.Request, in LinkInputV2)
 	if e != nil {
 		return nil, e
 	}
+	// The binding records the Linear workspace it was linked in, read from
+	// the connection itself, so a later identity (the ClawBridge app) can be
+	// checked against it.
+	workspace := profile.WorkspaceID
+	if r, ok := p.(interface {
+		Workspace(context.Context) (linearprovider.Workspace, error)
+	}); ok {
+		w, e := r.Workspace(ctx)
+		var pe *linearprovider.Error
+		switch {
+		case e == nil:
+			if workspace != "" && workspace != w.ID {
+				return nil, errors.New("the personal profile and Linear disagree about the workspace; reconnect the profile")
+			}
+			workspace = w.ID
+		case errors.As(e, &pe) && pe.Kind == "capability_unavailable":
+		default:
+			return nil, e
+		}
+	}
+	if b.LinearWorkspaceID != "" && workspace != "" && workspace != b.LinearWorkspaceID {
+		return nil, errors.New("this binding belongs to another Linear workspace; unlink it before linking this one")
+	}
 	current, e := s.BindingV2(ctx, scope)
 	if e != nil {
 		return nil, e
@@ -259,7 +282,7 @@ func (s *Service) LinkV2(ctx context.Context, scope bus.Request, in LinkInputV2)
 		return nil, errors.New("task-board binding changed during preview")
 	}
 	if !in.Confirm {
-		return LinkPreviewV2{Binding: b, DefaultTeamID: in.DefaultTeamID, Teams: v.Teams, Projects: v.Projects, TeamBoard: in.TeamBoard}, nil
+		return LinkPreviewV2{Binding: b, DefaultTeamID: in.DefaultTeamID, Teams: v.Teams, Projects: v.Projects, TeamBoard: in.TeamBoard, LinearWorkspaceID: workspace}, nil
 	}
 	scope.Operation = "taskboard_set_v2"
 	scope.Args = instanceArgs(scope.Args)
@@ -268,8 +291,8 @@ func (s *Service) LinkV2(ctx context.Context, scope bus.Request, in LinkInputV2)
 	scope.Args["linear_team_ids"] = mapping.LinearTeamIDs
 	scope.Args["linear_default_team_id"] = mapping.LinearDefaultTeamID
 	scope.Args["linear_project_ids"] = mapping.LinearProjectIDs
-	if profile.WorkspaceID != "" {
-		scope.Args["linear_workspace_id"] = profile.WorkspaceID
+	if workspace != "" {
+		scope.Args["linear_workspace_id"] = workspace
 	}
 	r, e := s.cfg.Executor.Execute(ctx, scope)
 	return r.Data, e

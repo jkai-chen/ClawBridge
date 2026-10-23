@@ -42,6 +42,8 @@ type LinkPreviewV2 struct {
 	Projects      []linearprovider.Project `json:"projects"`
 	TeamBoard     bool                     `json:"team_board"`
 	Confirmed     bool                     `json:"confirmed"`
+	// LinearWorkspaceID is the workspace the link records, read from Linear.
+	LinearWorkspaceID string `json:"linear_workspace_id,omitempty"`
 }
 
 // CommentsInputV2 opts an issue read into its comments. Since is a

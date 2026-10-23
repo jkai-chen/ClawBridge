@@ -55,15 +55,23 @@ func markerKey(assignment, phase string) string {
 	return "marker:" + assignment + ":" + phase + ":comment"
 }
 
+// Schema 11 (v0.2.7): the engineer behind the claimed session, frozen at
+// confirm so every attempt at a note posts the same body. Older rows have
+// none and render as before.
+const markerEngineerSchemaV11 = `ALTER TABLE assignment_markers ADD COLUMN engineer TEXT NOT NULL DEFAULT '';`
+
 // markerBody is the exact text a marker comment posts: fixed words, the
-// confirm-time session name and a short ref for humans relating the claim
-// and close notes. It names the session itself, so it carries no generic
+// confirm-time session name and engineer, and a short ref for humans
+// relating the claim and close notes. It names the session itself, so it carries no generic
 // agent marker line; the ledger row is what makes it ClawBridge's.
 func markerBody(row map[string]any) string {
 	ref := sha256.Sum256([]byte(str(row, "assignment_id")))
 	shown := str(row, "session_name")
 	if len(shown) > 32 {
 		shown = shown[:31] + "…"
+	}
+	if engineer := str(row, "engineer"); engineer != "" {
+		shown += " · " + engineer
 	}
 	text := "🤖 Claimed by ClawBridge agent session " + shown
 	if str(row, "phase") == "close" {
@@ -74,7 +82,7 @@ func markerBody(row map[string]any) string {
 
 // markAssignment writes the claim row when an assignment for an issue is
 // confirmed, in the confirm transaction.
-func markAssignment(ctx context.Context, tx *transaction, pid, assignment, issue, name string) error {
+func markAssignment(ctx context.Context, tx *transaction, pid, assignment, issue, name, engineer string) error {
 	if issue == "" {
 		return nil
 	}
@@ -82,7 +90,7 @@ func markAssignment(ctx context.Context, tx *transaction, pid, assignment, issue
 	if err != nil {
 		return err
 	}
-	_, err = tx.ExecContext(ctx, `INSERT INTO assignment_markers(assignment_id,phase,project_id,issue_uuid,session_name,reason,comment_state,label_state,next_attempt_at,created_at,updated_at) VALUES(?,'claim',?,?,?,'','pending','pending',?,?,?)`, assignment, pid, issue, name, now, now, now)
+	_, err = tx.ExecContext(ctx, `INSERT INTO assignment_markers(assignment_id,phase,project_id,issue_uuid,session_name,engineer,reason,comment_state,label_state,next_attempt_at,created_at,updated_at) VALUES(?,'claim',?,?,?,?,'','pending','pending',?,?,?)`, assignment, pid, issue, name, engineer, now, now, now)
 	return err
 }
 
@@ -97,7 +105,7 @@ func closeAssignment(ctx context.Context, tx *transaction, pid, assignment, reas
 	if err != nil {
 		return err
 	}
-	_, err = tx.ExecContext(ctx, `INSERT INTO assignment_markers(assignment_id,phase,project_id,issue_uuid,session_name,reason,comment_state,label_state,next_attempt_at,created_at,updated_at) VALUES(?,'close',?,?,?,?,'waiting_on_claim','pending',?,?,?)`, assignment, pid, claim[0]["issue_uuid"], claim[0]["session_name"], reason, now, now, now)
+	_, err = tx.ExecContext(ctx, `INSERT INTO assignment_markers(assignment_id,phase,project_id,issue_uuid,session_name,engineer,reason,comment_state,label_state,next_attempt_at,created_at,updated_at) VALUES(?,'close',?,?,?,?,?,'waiting_on_claim','pending',?,?,?)`, assignment, pid, claim[0]["issue_uuid"], claim[0]["session_name"], claim[0]["engineer"], reason, now, now, now)
 	return err
 }
 

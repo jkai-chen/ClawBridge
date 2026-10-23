@@ -446,7 +446,11 @@ func (s *Store) assignment(ctx context.Context, tx *transaction, w, p map[string
 		if err = watchAssignment(ctx, tx, pid, str(live, "issue_uuid")); err != nil {
 			return nil, err
 		}
-		if err = markAssignment(ctx, tx, pid, str(live, "id"), str(live, "issue_uuid"), str(target, "name")); err != nil {
+		engineer, err := s.engineerOf(ctx, tx, wid, target)
+		if err != nil {
+			return nil, err
+		}
+		if err = markAssignment(ctx, tx, pid, str(live, "id"), str(live, "issue_uuid"), str(target, "name"), engineer); err != nil {
 			return nil, err
 		}
 		if err = s.audit(ctx, tx, wid, pid, sid, "assignment", live["id"].(string), "confirmed", map[string]any{"session_id": tid}); err != nil {

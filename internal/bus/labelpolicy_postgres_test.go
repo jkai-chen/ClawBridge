@@ -85,7 +85,7 @@ func TestPostgresLabelPolicySchemaEightMigratesAVersionSevenStore(t *testing.T) 
 		t.Fatal(err)
 	}
 	s.Close()
-	if _, err = admin.ExecContext(ctx, `DROP TABLE `+schema+`.linear_write_unsettled; DROP TABLE `+schema+`.linear_write_ledger; DROP TABLE `+schema+`.linear_app_tokens; DROP TABLE `+schema+`.linear_label_policy; DELETE FROM `+schema+`.clawbridge_schema WHERE version>=8`); err != nil {
+	if _, err = admin.ExecContext(ctx, `ALTER TABLE `+schema+`.assignment_markers DROP COLUMN engineer; DROP TABLE `+schema+`.linear_write_unsettled; DROP TABLE `+schema+`.linear_write_ledger; DROP TABLE `+schema+`.linear_app_tokens; DROP TABLE `+schema+`.linear_label_policy; DELETE FROM `+schema+`.clawbridge_schema WHERE version>=8`); err != nil {
 		t.Fatal(err)
 	}
 	s, err = OpenPostgres(ctx, parsed.String(), owner)
@@ -94,7 +94,7 @@ func TestPostgresLabelPolicySchemaEightMigratesAVersionSevenStore(t *testing.T) 
 	}
 	s.Close()
 	var version, tables int
-	if err = admin.QueryRowContext(ctx, `SELECT MAX(version) FROM `+schema+`.clawbridge_schema`).Scan(&version); err != nil || version != 10 {
+	if err = admin.QueryRowContext(ctx, `SELECT MAX(version) FROM `+schema+`.clawbridge_schema`).Scan(&version); err != nil || version != 11 {
 		t.Fatal(version, err)
 	}
 	if err = admin.QueryRowContext(ctx, `SELECT COUNT(*) FROM information_schema.tables WHERE table_schema=$1 AND table_name='linear_label_policy'`, schema).Scan(&tables); err != nil || tables != 1 {

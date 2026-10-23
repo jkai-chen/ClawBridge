@@ -85,7 +85,7 @@ func TestTaskboardSchemaFourAndMigration(t *testing.T) {
 		t.Fatal(e)
 	}
 	var v int
-	if e = s.db.QueryRow("PRAGMA user_version").Scan(&v); e != nil || v != 10 {
+	if e = s.db.QueryRow("PRAGMA user_version").Scan(&v); e != nil || v != 11 {
 		t.Fatal(v, e)
 	}
 	if _, e = s.db.Exec("DROP TABLE linear_write_unsettled; DROP TABLE linear_write_ledger; DROP TABLE linear_app_tokens; DROP TABLE linear_label_policy; DROP TABLE linear_comment_ledger; DROP TABLE watch_cursors; DROP TABLE watch_events; DROP TABLE watch_lease; DROP TABLE assignment_markers; DROP TABLE principal_subjects; DROP TABLE principal_events; ALTER TABLE workspaces DROP COLUMN allowed_domains; DROP TABLE taskboard_bindings; DROP TABLE session_assignments; ALTER TABLE projects DROP COLUMN coordinator_session; PRAGMA user_version=2"); e != nil {
@@ -101,7 +101,7 @@ func TestTaskboardSchemaFourAndMigration(t *testing.T) {
 	if e != nil {
 		t.Fatal(e)
 	}
-	if _, e = s.db.Exec("PRAGMA user_version=11"); e != nil {
+	if _, e = s.db.Exec("PRAGMA user_version=12"); e != nil {
 		t.Fatal(e)
 	}
 	s.Close()

@@ -123,7 +123,7 @@ func (s *Store) migrate() error {
 	if err = tx.QueryRow("PRAGMA user_version").Scan(&version); err != nil {
 		return err
 	}
-	if version > 10 {
+	if version > 11 {
 		return errors.New("database schema is newer than this ClawBridge binary")
 	}
 	if version == 0 {
@@ -180,6 +180,11 @@ func (s *Store) migrate() error {
 	}
 	if version < 10 {
 		if _, err = tx.Exec(writeLedgerSchemaV10 + `PRAGMA user_version=10;`); err != nil {
+			return err
+		}
+	}
+	if version < 11 {
+		if _, err = tx.Exec(markerEngineerSchemaV11 + `PRAGMA user_version=11;`); err != nil {
 			return err
 		}
 	}
@@ -938,7 +943,9 @@ func (s *Store) execute(ctx context.Context, tx *transaction, r Request) (any, e
 				if e != nil {
 					return nil, e
 				}
-				out["engineer"] = engineer
+				if engineer != "" {
+					out["engineer"] = engineer
+				}
 			}
 			return out, nil
 		}

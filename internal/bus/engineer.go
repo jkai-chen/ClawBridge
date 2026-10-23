@@ -54,11 +54,12 @@ func capRunes(s string) string {
 }
 
 // engineerOf names the engineer behind a session: its owner, as recorded by
-// the authority. The caller never supplies it.
+// the authority. The caller never supplies it. A local store has no
+// verified principal (only the OS user), so it names no one.
 func (s *Store) engineerOf(ctx context.Context, tx *transaction, wid string, actor map[string]any) (string, error) {
 	owner, _ := actor["owner_principal"].(string)
 	if !s.postgres {
-		return EngineerName("", owner), nil
+		return "", nil
 	}
 	display := ""
 	err := tx.QueryRowContext(ctx, `SELECT display_name FROM members WHERE workspace_id=? AND principal=?`, wid, owner).Scan(&display)
@@ -74,7 +75,7 @@ func (s *Store) engineerOf(ctx context.Context, tx *transaction, wid string, act
 // it, so the marker falls back to the principal.
 func (s *Store) setDisplayName(ctx context.Context, tx *transaction, wid string, a map[string]any) (any, error) {
 	if !s.postgres {
-		return nil, invalid("a display name is recorded on a hosted server; a local store names the OS user")
+		return nil, invalid("a display name is recorded on a hosted server; a local store names no engineer")
 	}
 	raw := str(a, "display_name")
 	if utf8.RuneCountInString(raw) > 200 {

@@ -420,8 +420,9 @@ issue's comments; a plain read never reads them.
 
 Every comment ClawBridge posts for an agent, top-level or a reply, from the CLI
 or MCP, ends with a blank line and one attribution line that ClawBridge adds
-itself (claim and release notes name the session in their own single line
-instead):
+itself (claim and release notes name the session and the engineer in their
+own single line instead, with the engineer recorded when the assignment was
+confirmed, so a later rename never changes a note):
 
 ```text
 — 🤖 ClawBridge agent · session SESSION_NAME · ENGINEER
@@ -436,8 +437,9 @@ instead):
   supplies it from its own records; an agent cannot set or change it. Linear
   shows it to everyone who can see the issue, so **without a recorded name your
   email is visible to the whole Linear team**. It loses `@`, links and Markdown,
-  and is cut to 40 characters (39 and `…`). A server older than v0.2.7 names no
-  engineer, and the line ends after the session. The line carries nothing else.
+  and is cut to 40 characters (39 and `…`). A local store, or a server older
+  than v0.2.7, names no engineer, and the line ends after the session. The line
+  carries nothing else.
 - **Recording your name.** On a hosted server, `clawbridge linear connect`
   records your Linear name (your full name, else your handle without `@`) when
   you have none recorded yet. Change or remove it at any time:
@@ -449,8 +451,7 @@ instead):
   ```
 
   The name is per workspace, and members listings show it. A cleared name is
-  captured again at your next `linear connect`. A local store has no names, and
-  its markers show the OS user.
+  captured again at your next `linear connect`.
 - Callers cannot leave it out. It takes up to 256 bytes, so a comment body may
   be at most 65,280 bytes (65,536 minus 256).
 - The operation ledger keeps your body without the marker, so a retry with the

@@ -8,7 +8,7 @@ import (
 	"time"
 )
 
-// Schema 9: the hosted server's Linear app identity (v0.2.7). The server
+// Schema 9: the hosted server's Linear app identity (v0.2.8). The server
 // alone holds the app token, sealed at rest; clients never receive it. The
 // same DDL serves SQLite and PostgreSQL, though only a hosted server uses it.
 const appIdentitySchemaV9 = `

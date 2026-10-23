@@ -20,6 +20,8 @@ first comment) and the command that reads it.
 3. Answer it at most once, in its thread:
    `linear comment ISSUE BODY --reply-to <reply_to> --in-response-to <in_response_to> --operation-id ID`
    (MCP `taskboard_comment_v2` with `parent_id` and `in_response_to`).
+   `--in-response-to` goes only with `--reply-to`; the receipt names the
+   comment it was recorded as answering (`in_response_to`).
 <!-- end v0.2.5 C1 -->
 
 ## Reading
@@ -41,8 +43,11 @@ Read comments only when you need them: `linear issue ISSUE --comments` (MCP
   made on behalf of a user; otherwise it is `unknown`, even for people.
 <!-- v0.2.5 B1: lands with the comment ledger -->
 - **Own comments.** `posted_by_clawbridge: true` means ClawBridge posted the
-  comment (its ledger says so, and `clawbridge_session` names the session).
-  `comments_ownership: "unavailable"` means it could not tell.
+  comment (its ledger says so, and `clawbridge_session` names the session);
+  `false` means it did not. With `comments_ownership: "unavailable"` the field
+  is absent: ClawBridge could not tell. `comments_young_pending: true` means one
+  of ClawBridge's own comments may be posted but not yet recorded, so an
+  unflagged comment may still be ours.
 <!-- end v0.2.5 B1 -->
 - **The marker.** `marker_session` means the body ends with ClawBridge's agent
   line. Anyone can type that line, so it proves nothing about who wrote it.
@@ -56,9 +61,10 @@ Read comments only when you need them: `linear issue ISSUE --comments` (MCP
   receipt shows the thread's first comment as `parent_id` and your choice as
   `requested_parent_id`.
 - **Human comments only.** Answer a comment only when it is
-  `posted_by_clawbridge: false`. <!-- v0.2.5 B1 --> Leave ClawBridge's own
-  comments, comments whose ownership is unavailable, and comments ending with
-  the agent line alone.
+  `posted_by_clawbridge: false` and the read has no `comments_young_pending`.
+  <!-- v0.2.5 B1 --> Leave ClawBridge's own comments, comments without the
+  field (ownership unavailable), and comments ending with the agent line alone;
+  re-read later instead.
 - **Limits.** One answer per human comment, and at most 3 ClawBridge comments
   per issue per rolling hour, counting every session. <!-- v0.2.5 B1 --> The
   server enforces both; a refusal stands for that comment or that hour, so

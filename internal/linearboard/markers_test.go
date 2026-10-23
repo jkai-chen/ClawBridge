@@ -256,3 +256,20 @@ func (m movingIssue) IssueV2(ctx context.Context, id string) (linearprovider.Iss
 	}
 	return m.providerV2.IssueV2(ctx, id)
 }
+
+// A marker note on a binding the legacy path serves (a team board, or a
+// project set of one project) returns the legacy receipt; it settles as
+// done with its comment, not uncertain.
+func TestClaimMarkerSettlesOnALegacyMappedBinding(t *testing.T) {
+	s, a, p, scope := markerTest(t)
+	a.b.Mode, a.b.LinearProjectIDs, a.b.LinearTeamIDs = "team_board", nil, []string{teamID}
+	a.old.LinearProjectID = ""
+	a.comments.gos["label"] = map[string]any{"action": "none"}
+	out := s.ApplyMarker(context.Background(), scope, "asg_1", "claim", nil)
+	if out.Comment != "done" || out.Error != "" || len(p.bodies) != 1 {
+		t.Fatal("legacy-path note not settled done:", out, p.bodies)
+	}
+	if c := settled(a, "comment"); c["outcome"] != "done" || c["comment_id"] != issueID {
+		t.Fatal(c)
+	}
+}

@@ -30,6 +30,8 @@ type authorityV2 struct {
 	gets        int
 	accesses    int
 	afterAccess func(int)
+	name        string
+	comments    fakeCommentLedger
 }
 
 func (a *authorityV2) Execute(_ context.Context, r bus.Request) (bus.Result, error) {
@@ -38,7 +40,7 @@ func (a *authorityV2) Execute(_ context.Context, r bus.Request) (bus.Result, err
 		if a.afterAccess != nil {
 			a.afterAccess(a.accesses)
 		}
-		return bus.Result{Source: "local-authority", Data: bus.TaskboardAccess{WorkspaceID: a.b.WorkspaceID, ProjectID: a.b.ProjectID, SessionID: a.actor, SessionName: a.actor, CanWrite: !a.deny, ProjectRole: "member"}}, nil
+		return bus.Result{Source: "local-authority", Data: bus.TaskboardAccess{WorkspaceID: a.b.WorkspaceID, ProjectID: a.b.ProjectID, SessionID: a.actor, SessionName: a.name, CanWrite: !a.deny, ProjectRole: "member"}}, nil
 	}
 	if r.Operation == "taskboard_get" {
 		return bus.Result{Source: "local-authority", Data: a.old}, nil
@@ -49,6 +51,9 @@ func (a *authorityV2) Execute(_ context.Context, r bus.Request) (bus.Result, err
 			a.afterGet()
 		}
 		return bus.Result{Source: "local-authority", Data: a.b}, nil
+	}
+	if strings.HasPrefix(r.Operation, "linear_comment") {
+		return a.comments.execute(r)
 	}
 	return bus.Result{}, errors.New("unexpected authority operation")
 }
@@ -194,7 +199,7 @@ func (p *providerV2) Relation(_ context.Context, in linearprovider.RelationInput
 }
 func testV2(t *testing.T) (*Service, *authorityV2, *providerV2, bus.Request) {
 	t.Helper()
-	a := &authorityV2{actor: "ses", b: bus.TaskboardBindingV2{WorkspaceID: "ws", ProjectID: "prj", Configured: true, Revision: 1, MappingVersion: 2, UpdatedAt: "2026-10-22T12:00:00Z", Provider: "linear", Mode: "project_set", LinearTeamIDs: []string{teamID, otherTeamID}, LinearDefaultTeamID: teamID, LinearProjectIDs: []string{projectA, projectB}}}
+	a := &authorityV2{actor: "ses", name: "ses", b: bus.TaskboardBindingV2{WorkspaceID: "ws", ProjectID: "prj", Configured: true, Revision: 1, MappingVersion: 2, UpdatedAt: "2026-10-22T12:00:00Z", Provider: "linear", Mode: "project_set", LinearTeamIDs: []string{teamID, otherTeamID}, LinearDefaultTeamID: teamID, LinearProjectIDs: []string{projectA, projectB}}}
 	p := &providerV2{projects: map[string][]string{projectA: {teamID}, projectB: {otherTeamID}}, issues: map[string]linearprovider.IssueV2{issueID: {Issue: linearprovider.Issue{ID: issueID, TeamID: teamID, ProjectID: projectA}, ProjectKnown: true, LabelsKnown: true, ParentKnown: true}}, caps: linearprovider.Capabilities{Labels: true, Members: true, CreateProject: true, UpdateProject: true, ReplaceLabels: true, Parent: true, Assignee: true, ParentSameDestination: true, RelationAdd: true, RelationRemove: true}}
 	a.old = bus.TaskboardBinding{WorkspaceID: a.b.WorkspaceID, ProjectID: a.b.ProjectID, Configured: true, Revision: 1, UpdatedAt: a.b.UpdatedAt, Provider: "linear", LinearTeamIDs: []string{teamID}, LinearDefaultTeamID: teamID, LinearProjectID: projectA}
 	s := New(Config{Authority: "local-v2", Executor: a, Connections: fakeConnections{}, ProfileID: "profile-1", LedgerDirectory: filepath.Join(t.TempDir(), "ledger"), Open: func(context.Context, *http.Client, bool) (Provider, error) { return p, nil }})

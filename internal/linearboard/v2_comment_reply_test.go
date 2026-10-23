@@ -135,11 +135,11 @@ func TestLinearV2ReplyRefusals(t *testing.T) {
 // caller's body, and the receipt's body_sha256 covers the posted body.
 func TestEveryPostedCommentCarriesTheAgentMarker(t *testing.T) {
 	const marked = "hello\n\n— 🤖 ClawBridge agent · session ses"
-	// The V1 fake's session is addressed by its ID, which never reaches
-	// Linear: the marker names no session.
+	// The marker names the session the bus resolved, never the address the
+	// caller used: the V1 fake's caller addresses its session by ID.
 	s, _, p, scope := testService(t)
-	if _, e := s.Write(context.Background(), scope, WriteInput{Operation: "comment", OperationID: "v1-comment", IssueID: issueID, Body: "hello"}); e != nil || len(p.bodies) != 1 || p.bodies[0] != "hello\n\n— 🤖 ClawBridge agent" {
-		t.Fatal("V1 comment not marked, or marked with the session ID", e, p.bodies)
+	if _, e := s.Write(context.Background(), scope, WriteInput{Operation: "comment", OperationID: "v1-comment", IssueID: issueID, Body: "hello"}); e != nil || len(p.bodies) != 1 || p.bodies[0] != "hello\n\n— 🤖 ClawBridge agent · session worker-1" {
+		t.Fatal("V1 comment not marked with the bus session name", e, p.bodies)
 	}
 	sv2, a2, p2, scope2 := testV2(t)
 	a2.actor = "ses_0001"

@@ -38,6 +38,9 @@ func validReceiptV2(raw []byte) bool {
 	if (r.LabelsAdded != nil || r.LabelsRemoved != nil) && (r.Kind != "issue" || r.Outcome != "accepted" || !deltas(r.LabelsAdded) || !deltas(r.LabelsRemoved)) {
 		return false
 	}
+	if r.InResponseTo != "" && (r.Kind != "comment" || !linearprovider.ValidID(r.InResponseTo)) {
+		return false
+	}
 	switch r.Kind {
 	case "issue":
 		return linearprovider.ValidID(r.ID) && linearprovider.ValidID(r.TeamID) && (r.ProjectID == nil || linearprovider.ValidID(*r.ProjectID)) && r.IssueID == "" && r.Action == "" && r.Type == "" && r.FromID == "" && r.ToID == ""

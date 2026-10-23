@@ -390,7 +390,7 @@ func serviceError(err error) (string, int) {
 // own message when the bus marked it as written for the caller; every other failure, including
 // database and unknown errors, gets only the generic text for its code.
 func responseMessage(code string, err error) string {
-	if code == "invalid" || code == "binding_unreadable" || code == "rate_limited" {
+	if code == "invalid" || code == "binding_unreadable" || code == "rate_limited" || code == "conflict" {
 		if message, ok := bus.PublicMessage(err); ok {
 			if safe, ok := bus.SafePublicText(message); ok {
 				return safe

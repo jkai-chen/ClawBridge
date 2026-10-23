@@ -6,10 +6,18 @@ import (
 	"testing"
 )
 
-// systemSession is the system session of session c's project.
+// systemSession is the system session of session c's project, created by
+// the watcher's first call there.
 func (h *harness) systemSession(t *testing.T) map[string]any {
 	t.Helper()
 	c := h.sessionID("c")
+	var pid string
+	if err := h.s.db.QueryRow(`SELECT project_id FROM sessions WHERE id=?`, c).Scan(&pid); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.s.ExecuteSystem(context.Background(), pid, Request{Operation: "taskboard_get_v2"}); err != nil {
+		t.Fatal(err)
+	}
 	tx, err := h.s.db.Begin()
 	if err != nil {
 		t.Fatal(err)
@@ -86,32 +94,29 @@ func anyStrings(v any) []string {
 	return out
 }
 
-// A person's session named clawbridge keeps working under a new name when
-// the system session is introduced.
-func TestSystemSessionMigrationRenamesAPersonsClawbridge(t *testing.T) {
+// A person's session named clawbridge before the name was reserved keeps
+// working under a new name once the watcher first acts for its project.
+func TestSystemSessionRenamesAPersonsClawbridgeOnFirstUse(t *testing.T) {
 	h := newHarness(t)
-	if _, e := h.s.db.Exec(`DELETE FROM sessions WHERE role='system'`); e != nil {
+	a := h.sessionID("a")
+	var pid string
+	if e := h.s.db.QueryRow(`SELECT project_id FROM sessions WHERE id=?`, a).Scan(&pid); e != nil {
 		t.Fatal(e)
 	}
-	a := h.sessionID("a")
+	var n int
+	if e := h.s.db.QueryRow(`SELECT COUNT(*) FROM sessions WHERE role='system'`).Scan(&n); e != nil || n != 0 {
+		t.Fatal("a system session exists before the watcher acted:", n, e)
+	}
 	if _, e := h.s.db.Exec(`UPDATE sessions SET name='clawbridge' WHERE id=?`, a); e != nil {
 		t.Fatal(e)
 	}
-	tx, err := h.s.db.Begin()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err = ensureSystemSessions(context.Background(), &transaction{Tx: tx}); err != nil {
-		t.Fatal(err)
-	}
-	if err = tx.Commit(); err != nil {
+	if _, err := h.s.ExecuteSystem(context.Background(), pid, Request{Operation: "taskboard_get_v2"}); err != nil {
 		t.Fatal(err)
 	}
 	var name string
 	if e := h.s.db.QueryRow(`SELECT name FROM sessions WHERE id=?`, a).Scan(&name); e != nil || name != "clawbridge-user-1" {
 		t.Fatal(name, e)
 	}
-	var n int
 	if e := h.s.db.QueryRow(`SELECT COUNT(*) FROM sessions s WHERE role='system' AND name='clawbridge' AND project_id=(SELECT project_id FROM sessions WHERE id=?)`, a).Scan(&n); e != nil || n != 1 {
 		t.Fatal(n, e)
 	}
@@ -120,7 +125,7 @@ func TestSystemSessionMigrationRenamesAPersonsClawbridge(t *testing.T) {
 func TestExecuteSystemRunsOnlyWatcherOperations(t *testing.T) {
 	h := newHarness(t)
 	var pid string
-	if e := h.s.db.QueryRow(`SELECT project_id FROM sessions WHERE role='system' LIMIT 1`).Scan(&pid); e != nil {
+	if e := h.s.db.QueryRow(`SELECT project_id FROM sessions LIMIT 1`).Scan(&pid); e != nil {
 		t.Fatal(e)
 	}
 	ctx := context.Background()

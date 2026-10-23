@@ -11,7 +11,8 @@ import (
 )
 
 // Each project has one system session, named clawbridge, that the server's
-// own watcher acts as (live/INTAKE-DESIGN.md §2). It holds the watch lease
+// own watcher acts as (live/INTAKE-DESIGN.md §2). It is created when the
+// watcher first acts for the project, so no migration touches sessions. It holds the watch lease
 // and sends the watcher's notices. No request reaches it: its owner
 // principal is empty, which no caller's principal can equal, every session
 // address excludes it, and its name is reserved.
@@ -23,10 +24,21 @@ const (
 )
 
 // ensureSystemSession creates a project's system session if it has none.
+// A session a person named clawbridge before the name was reserved keeps
+// working under a new name.
 func ensureSystemSession(ctx context.Context, tx *transaction, pid string) error {
 	rows, err := query(ctx, tx, `SELECT 1 FROM sessions WHERE project_id=? AND role='system' AND name=?`, pid, SystemSessionName)
 	if err != nil || len(rows) > 0 {
 		return err
+	}
+	taken, err := query(ctx, tx, `SELECT id FROM sessions WHERE project_id=? AND lower(name)=? AND role<>'system'`, pid, SystemSessionName)
+	if err != nil {
+		return err
+	}
+	for i, row := range taken {
+		if _, err = tx.ExecContext(ctx, `UPDATE sessions SET name=?,updated_at=? WHERE id=?`, fmt.Sprintf("clawbridge-user-%d", i+1), stamp(), row["id"]); err != nil {
+			return err
+		}
 	}
 	var b [32]byte
 	if _, err = rand.Read(b[:]); err != nil {
@@ -36,31 +48,6 @@ func ensureSystemSession(ctx context.Context, tx *transaction, pid string) error
 	_, err = tx.ExecContext(ctx, `INSERT INTO sessions(id,project_id,name,instance,owner_principal,role,agent_kind,model,host,account,transport,notes,status,last_seen,created_at,updated_at) VALUES(?,?,?,?,'',?,'system','','','','{}','ClawBridge server watcher','active',?,?,?)`,
 		"sys_"+strings.TrimPrefix(pid, "prj_"), pid, SystemSessionName, hex.EncodeToString(b[:]), systemRole, now, now, now)
 	return err
-}
-
-// ensureSystemSessions gives every project its system session at the
-// schema-11 migration. A session a person already named clawbridge keeps
-// working under a new name.
-func ensureSystemSessions(ctx context.Context, tx *transaction) error {
-	taken, err := query(ctx, tx, `SELECT id,project_id FROM sessions WHERE lower(name)=? AND role<>'system'`, SystemSessionName)
-	if err != nil {
-		return err
-	}
-	for i, row := range taken {
-		if _, err = tx.ExecContext(ctx, `UPDATE sessions SET name=?,updated_at=? WHERE id=?`, fmt.Sprintf("clawbridge-user-%d", i+1), stamp(), row["id"]); err != nil {
-			return err
-		}
-	}
-	projects, err := query(ctx, tx, `SELECT id FROM projects ORDER BY id`)
-	if err != nil {
-		return err
-	}
-	for _, p := range projects {
-		if err = ensureSystemSession(ctx, tx, str(p, "id")); err != nil {
-			return err
-		}
-	}
-	return nil
 }
 
 // systemOperation is what the system session may run: the reads and
@@ -99,6 +86,9 @@ func (s *Store) ExecuteSystem(ctx context.Context, projectID string, r Request) 
 	}
 	w, err := one(ctx, tx, `SELECT * FROM workspaces WHERE id=?`, wid)
 	if err != nil {
+		return Result{}, err
+	}
+	if err = ensureSystemSession(ctx, tx, projectID); err != nil {
 		return Result{}, err
 	}
 	actor, err := one(ctx, tx, `SELECT * FROM sessions WHERE project_id=? AND role='system' AND name=?`, projectID, SystemSessionName)

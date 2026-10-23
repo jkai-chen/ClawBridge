@@ -158,13 +158,7 @@ func (s *Store) migratePostgres(ctx context.Context) error {
 		}
 	}
 	if version < 12 {
-		if _, err = tx.ExecContext(ctx, intakeSchemaV12); err != nil {
-			return err
-		}
-		if err = ensureSystemSessions(ctx, &transaction{Tx: tx, postgres: true}); err != nil {
-			return err
-		}
-		if _, err = tx.ExecContext(ctx, `INSERT INTO clawbridge_schema(version) VALUES(12)`); err != nil {
+		if _, err = tx.ExecContext(ctx, intakeSchemaV12+`INSERT INTO clawbridge_schema(version) VALUES(12)`); err != nil {
 			return err
 		}
 	}

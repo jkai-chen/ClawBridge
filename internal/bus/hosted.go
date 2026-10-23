@@ -259,7 +259,7 @@ func (s *Store) snapshot(ctx context.Context, tx *transaction, w, p map[string]a
 	datasets := map[string][]map[string]any{}
 	// Retired and moved sessions are never deleted, so only the most recent of
 	// them are included; every active session always is.
-	datasets["sessions"], err = query(ctx, tx, `SELECT * FROM sessions WHERE project_id=? AND (status='active' OR id IN (SELECT id FROM sessions WHERE project_id=? AND status<>'active' ORDER BY sequence DESC LIMIT `+fmt.Sprint(snapshotRetiredSessions)+`)) ORDER BY sequence`, pid, pid)
+	datasets["sessions"], err = query(ctx, tx, `SELECT * FROM sessions WHERE project_id=? AND role<>'system' AND (status='active' OR id IN (SELECT id FROM sessions WHERE project_id=? AND status<>'active' ORDER BY sequence DESC LIMIT `+fmt.Sprint(snapshotRetiredSessions)+`)) ORDER BY sequence`, pid, pid)
 	if err != nil {
 		return nil, err
 	}

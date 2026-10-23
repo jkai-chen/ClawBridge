@@ -968,8 +968,17 @@ func (s *Store) execute(ctx context.Context, tx *transaction, r Request) (any, e
 		}
 		return map[string]any{"workspace": shownWorkspace(w, w["owner_principal"] == s.principal), "project": p, "session": actor, "principal": s.principal, "identity_provenance": provenance, "verified": s.postgres, "storage_mode": mode, "online": true}, nil
 	}
+	// The owner's admin commands are CLI-only and may run without a session:
+	// the Linear write is authorized sessionless, so its audit and the
+	// approved list it is checked against must be too.
+	if actor == nil && labelPolicyOperation(r.Operation) {
+		if str(a, "instance") != "" {
+			return nil, invalid("instance requires session")
+		}
+		return s.labelPolicyOp(ctx, tx, w, p, projectRole, nil, r)
+	}
 	if actor == nil {
-		return nil, errors.New("session is required; register and pass --session and --instance")
+		return nil, invalid("session is required; register and pass --session and --instance")
 	}
 	sid := actor["id"].(string)
 	tx.actorID = sid

@@ -182,3 +182,40 @@ func TestAdminAuditRecordsInitiatives(t *testing.T) {
 		}
 	}
 }
+
+// The owner's admin commands run from the CLI with or without a session: a
+// sessionless write records its audit and may set the list; an instance
+// without a session, or a named session that is retired, is refused.
+func TestAdminAuditAndPolicySetWithoutSession(t *testing.T) {
+	h := newHarness(t)
+	project := map[string]any{"kind": "project_create", "outcome": "accepted", "operation_id": "cb-rp-01", "linear_team_id": policyTeam, "linear_id": policyLabel, "name": "Review · One"}
+	if got := h.call("linear_admin_audit", "", project).(map[string]any); got["recorded"] != true || got["already"] == true {
+		t.Fatal("sessionless audit", got)
+	}
+	if again := h.call("linear_admin_audit", "", project).(map[string]any); again["already"] != true {
+		t.Fatal("a repeated sessionless audit was recorded twice", again)
+	}
+	h.call("linear_admin_audit", "", map[string]any{"kind": "initiative_create", "outcome": "accepted", "operation_id": "cb-init-1", "linear_id": policyLabel, "name": "Product Review"})
+	set := h.call("label_policy_set", "", map[string]any{"expected_revision": 0, "label_policy": map[string]any{"labels": []any{"Bug"}}}).(map[string]any)
+	if set["revision"] != 1 {
+		t.Fatal("sessionless policy set", set)
+	}
+	if e := h.errorOf("linear_admin_audit", "", map[string]any{"instance": "a-instance", "kind": "project_create", "outcome": "accepted", "operation_id": "x", "linear_team_id": policyTeam}); !strings.Contains(e, "instance requires session") {
+		t.Fatal("instance without session accepted", e)
+	}
+	h.call("retire_session", "c", nil)
+	if e := h.errorOf("linear_admin_audit", "c", map[string]any{"kind": "project_create", "outcome": "accepted", "operation_id": "y", "linear_team_id": policyTeam}); !strings.Contains(e, "retired") {
+		t.Fatal("retired session recorded an audit", e)
+	}
+	if acts := h.actions("linear_project"); len(acts) != 1 {
+		t.Fatal("project history", acts)
+	}
+	if acts := h.actions("linear_initiative"); len(acts) != 1 {
+		t.Fatal("initiative history", acts)
+	}
+	// Other operations still need a session, and say so to the caller.
+	_, err := h.s.Execute(context.Background(), h.request("assignment_propose", "", map[string]any{"issue_uuid": policyLabel}))
+	if msg, ok := PublicMessage(err); !ok || !strings.Contains(msg, "session is required") {
+		t.Fatal("sessionless refusal is not caller-facing", err)
+	}
+}

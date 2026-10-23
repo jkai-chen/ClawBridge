@@ -25,6 +25,19 @@ func TestPostgresLabelPolicyIsOwnerOnly(t *testing.T) {
 	if _, err := f.as(member, "sub-member", Request{Operation: "linear_admin_audit", Workspace: f.workspace, Project: "p", Session: "mem", Args: audit}); err == nil {
 		t.Fatal("member recorded an admin write")
 	}
+	// Sessionless (the owner's CLI): a member is still refused, the owner
+	// records, and a retry is recorded once.
+	if _, err := f.as(member, "sub-member", Request{Operation: "linear_admin_audit", Workspace: f.workspace, Project: "p", Args: map[string]any{"kind": "project_create", "outcome": "accepted", "operation_id": "op", "linear_team_id": policyTeam}}); err == nil || !strings.Contains(err.Error(), "owner") {
+		t.Fatal("sessionless member recorded an admin write", err)
+	}
+	sessionless := Request{Operation: "linear_admin_audit", Workspace: f.workspace, Project: "p", Args: map[string]any{"kind": "project_create", "outcome": "accepted", "operation_id": "cb-rp-01", "linear_team_id": policyTeam, "name": "Review · One"}}
+	f.must(f.owner, "sub-owner", sessionless)
+	if again := f.must(f.owner, "sub-owner", sessionless); again.Data.(map[string]any)["already"] != true {
+		t.Fatal("sessionless retry recorded twice", again)
+	}
+	if f.count(`SELECT COUNT(*) FROM history WHERE entity='linear_project' AND changed_by_principal=$1`, f.owner) != 1 {
+		t.Fatal("sessionless audit not in history once")
+	}
 	set, err := f.in("label_policy_set", "own", map[string]any{"expected_revision": 0, "label_policy": policy})
 	if err != nil || set.Data.(map[string]any)["revision"] != 1 {
 		t.Fatal(set, err)

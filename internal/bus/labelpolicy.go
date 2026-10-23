@@ -118,14 +118,15 @@ func labelPolicyOperation(op string) bool {
 }
 
 // labelPolicyOp sets the approved list and records admin writes: the
-// project owner only, from an active session. Reading the list
-// (label_policy_get) is open to every member and handled before sessions.
+// project owner only, without a session (the CLI) or from an active one.
+// Reading the list (label_policy_get) is open to every member and handled
+// before sessions.
 func (s *Store) labelPolicyOp(ctx context.Context, tx *transaction, w, p map[string]any, projectRole string, actor map[string]any, r Request) (any, error) {
 	wid, pid := w["id"].(string), p["id"].(string)
 	if projectRole != "owner" {
 		return nil, errors.New("project owner permission required")
 	}
-	if actor["status"] != "active" {
+	if actor != nil && actor["status"] != "active" {
 		return nil, errors.New("session is retired or moved; it cannot perform this operation")
 	}
 	current, err := readLabelPolicy(ctx, tx, pid)

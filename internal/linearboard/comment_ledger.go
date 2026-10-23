@@ -56,6 +56,19 @@ func (s *Service) sendComment(ctx context.Context, scope bus.Request, l ledger, 
 	return r, answers, nil
 }
 
+// precheckComment asks the bus, before any Linear read, whether it would
+// refuse this comment on rules it alone decides: the hourly cap, and an
+// answer already given, to our own comment, or not this session's to give.
+// The reserve decides again before the send.
+func (s *Service) precheckComment(ctx context.Context, scope bus.Request, issue, operationID, inResponseTo string) error {
+	args := map[string]any{"issue_uuid": issue, "operation_id": operationID}
+	if inResponseTo != "" {
+		args["in_response_to"] = inResponseTo
+	}
+	_, err := s.commentLedger(ctx, scope, "linear_comment_precheck", args)
+	return err
+}
+
 func (c commentIntent) reserveArgs() map[string]any {
 	sum := sha256.Sum256([]byte(c.Body))
 	a := map[string]any{"issue_uuid": c.Issue, "operation_id": c.OperationID, "body_sha256": hex.EncodeToString(sum[:])}

@@ -112,3 +112,73 @@ func TestDoctorShowsTheLabelPolicy(t *testing.T) {
 		}
 	}
 }
+
+type appExecutor struct {
+	routeExecutor
+	data map[string]any
+	err  error
+	got  *bus.Request
+}
+
+func (a appExecutor) Execute(_ context.Context, r bus.Request) (bus.Result, error) {
+	*a.got = r
+	return bus.Result{Source: "server", Data: a.data}, a.err
+}
+
+// Doctor shows who makes a hosted project's agent writes in Linear, and
+// fails when the app cannot see a bound team.
+func TestDoctorShowsTheLinearApp(t *testing.T) {
+	const app = "a1000000-0000-4000-8000-000000000001"
+	for name, c := range map[string]struct {
+		exec   appExecutor
+		status string
+		text   string
+	}{
+		"no app":     {appExecutor{err: &remote.HTTPError{Status: 400, Code: "invalid"}}, Pass, "own Linear profile"},
+		"down":       {appExecutor{err: &remote.HTTPError{Status: 503, Code: "unavailable"}}, Warn, "could not be read (unavailable)"},
+		"all teams":  {appExecutor{data: map[string]any{"configured": true, "app_user_id": app, "teams_visible": map[string]any{"t1": true, "t2": true}}}, Pass, "sees all 2 bound teams"},
+		"hidden":     {appExecutor{data: map[string]any{"configured": true, "app_user_id": app, "teams_visible": map[string]any{"t1": true, "t2": false, "t0": false}}}, Fail, "cannot see bound teams t0, t2"},
+		"no binding": {appExecutor{data: map[string]any{"configured": true, "app_user_id": app, "binding": "unpinned"}}, Warn, "binding could not be read: unpinned"},
+		"odd answer": {appExecutor{data: map[string]any{"configured": false}}, Warn, "could not be read"},
+	} {
+		var got bus.Request
+		c.exec.got = &got
+		var checks []Check
+		checkLinearApp(context.Background(), c.exec, "w", "p", func(check Check) { checks = append(checks, check) })
+		if len(checks) != 1 || checks[0].ID != "linear.app" || checks[0].Status != c.status || !strings.Contains(checks[0].Message, c.text) {
+			t.Errorf("%s: %+v", name, checks)
+		}
+		if got.Operation != "linear_app_status" || got.Workspace != "w" || got.Project != "p" {
+			t.Errorf("%s: %+v", name, got)
+		}
+	}
+	// A local authority has no app, and is never asked.
+	var ops []string
+	in := Input{Config: Config{Present: true, Valid: true, Mode: "local", Workspace: "w", Project: "p"}, LinearCapabilities: func(context.Context) (linearprovider.Capabilities, error) { return linearprovider.Capabilities{}, nil }}
+	Run(context.Background(), in, opsExecutor{&ops})
+	if strings.Contains(strings.Join(ops, ","), "linear_app_status") {
+		t.Error("a local doctor asked for the app", ops)
+	}
+}
+
+// A hosted project's doctor run asks for the app.
+func TestDoctorRunAsksAHostedServerForTheApp(t *testing.T) {
+	var ops []string
+	in := Input{Config: Config{Present: true, Valid: true, Mode: "cloud", Workspace: "w", Project: "p"}, LinearCapabilities: func(context.Context) (linearprovider.Capabilities, error) { return linearprovider.Capabilities{}, nil }}
+	report := Run(context.Background(), in, serverOps{opsExecutor{&ops}})
+	found := false
+	for _, check := range report.Checks {
+		found = found || check.ID == "linear.app"
+	}
+	if !found || !strings.Contains(strings.Join(ops, ","), "linear_app_status") {
+		t.Fatal("no linear.app check", ops, report.Checks)
+	}
+}
+
+type serverOps struct{ opsExecutor }
+
+func (s serverOps) Execute(ctx context.Context, r bus.Request) (bus.Result, error) {
+	out, err := s.opsExecutor.Execute(ctx, r)
+	out.Source = "server"
+	return out, err
+}

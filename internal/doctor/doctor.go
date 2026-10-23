@@ -169,6 +169,9 @@ func Run(ctx context.Context, in Input, executor Executor) Report {
 		checkTaskboardBinding(ctx, executor, wid, pid, add)
 		checkCommentWatch(ctx, executor, wid, pid, add)
 		checkLabelPolicy(ctx, executor, wid, pid, add)
+		if in.Config.Mode == "cloud" {
+			checkLinearApp(ctx, executor, wid, pid, add)
+		}
 	}
 	for _, mcp := range in.MCPConfigs {
 		if mcp.Agent == "" {
@@ -595,6 +598,48 @@ func checkCommentWatch(ctx context.Context, executor Executor, wid, pid string, 
 	}
 	add(watch)
 	add(markers)
+}
+
+// checkLinearApp shows who makes a hosted project's agent writes in Linear:
+// the ClawBridge app, with every bound team it must see, or each member's
+// own profile when the server has no app. It reads only.
+func checkLinearApp(ctx context.Context, executor Executor, wid, pid string, add func(Check)) {
+	check := Check{ID: "linear.app", Title: "ClawBridge Linear app", Status: Pass}
+	r, err := executor.Execute(ctx, bus.Request{Operation: "linear_app_status", Workspace: wid, Project: pid, Args: map[string]any{}})
+	m, _ := r.Data.(map[string]any)
+	var refused *remote.HTTPError
+	switch {
+	case errors.As(err, &refused) && refused.Status == 400:
+		check.Message = "This server has no ClawBridge Linear app: agent writes use each member's own Linear profile."
+	case err != nil || m == nil || m["configured"] != true:
+		code := "invalid"
+		if err != nil {
+			code = safeCode(err)
+		}
+		check.Status = Warn
+		check.Message = "The server's Linear app status could not be read (" + code + "), so agent writes are refused until it can."
+		check.Action = "Retry; if it persists, the server operator checks the app's settings and its startup log."
+	case m["binding"] != nil:
+		check.Status = Warn
+		check.Message = fmt.Sprintf("Agent writes go to Linear as the ClawBridge app, but the task-board binding could not be read: %v", m["binding"])
+		check.Action = "Run `clawbridge linear binding`; a binding the app writes to must be pinned with `clawbridge linear link`."
+	default:
+		teams, _ := m["teams_visible"].(map[string]any)
+		hidden := []string{}
+		for team, seen := range teams {
+			if seen != true {
+				hidden = append(hidden, team)
+			}
+		}
+		sort.Strings(hidden)
+		check.Message = fmt.Sprintf("Agent writes go to Linear as the ClawBridge app (Linear user %v), and it sees all %d bound teams.", m["app_user_id"], len(teams))
+		if len(hidden) > 0 {
+			check.Status = Fail
+			check.Message = fmt.Sprintf("Agent writes go to Linear as the ClawBridge app, but it cannot see bound teams %s, so writes there fail.", strings.Join(hidden, ", "))
+			check.Action = "A Linear admin adds the ClawBridge app to each of those teams (private teams need it as a member)."
+		}
+	}
+	add(check)
 }
 
 // checkLabelPolicy shows the project owner's approved label list: its

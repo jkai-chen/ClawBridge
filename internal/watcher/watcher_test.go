@@ -1,0 +1,395 @@
+package watcher
+
+import (
+	"context"
+	"database/sql"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"path/filepath"
+	"strings"
+	"testing"
+	"time"
+
+	"clawbridge/internal/bus"
+	"clawbridge/internal/linearboard"
+	"clawbridge/internal/linearprovider"
+)
+
+const (
+	team        = "11111111-1111-4111-8111-111111111111"
+	otherTeam   = "22222222-2222-4222-8222-222222222222"
+	issueA      = "33333333-3333-4333-8333-333333333333"
+	issueB      = "44444444-4444-4444-8444-444444444444"
+	issueOut    = "55555555-5555-4555-8555-555555555555"
+	labelNeeds  = "66666666-6666-4666-8666-666666666666"
+	appUser     = "77777777-7777-4777-8777-777777777777"
+	trustedUser = "88888888-8888-4888-8888-888888888888"
+	strangerID  = "99999999-9999-4999-8999-999999999999"
+	humanNote   = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+)
+
+// fakeLinear is Linear as the app sees it: two issues in the bound team,
+// one in another team, comments, labels, and GraphQL answers.
+type fakeLinear struct {
+	comments  []linearprovider.Comment
+	labelled  []string
+	delegated []string
+	history   map[string][]map[string]any
+	mentions  []map[string]any
+	queries   []string
+	notes     int
+}
+
+func (f *fakeLinear) issue(id string) (linearprovider.IssueV2, error) {
+	switch id {
+	case issueA, issueB:
+		return linearprovider.IssueV2{Issue: linearprovider.Issue{ID: id, Identifier: "FIX-" + id[:1], Title: "title " + id[:1], TeamID: team}, ProjectKnown: true, DescriptionKnown: true, UpdatedAt: time.Now().UTC().Format(time.RFC3339Nano)}, nil
+	case issueOut:
+		return linearprovider.IssueV2{Issue: linearprovider.Issue{ID: id, Identifier: "OUT-1", TeamID: otherTeam}, ProjectKnown: true}, nil
+	}
+	return linearprovider.IssueV2{}, errors.New("inaccessible issue")
+}
+
+type fakeProvider struct{ f *fakeLinear }
+
+func (p fakeProvider) Close() error { return nil }
+func (p fakeProvider) GetTeam(_ context.Context, id string) (linearprovider.Team, error) {
+	return linearprovider.Team{ID: id, Name: "T"}, nil
+}
+func (p fakeProvider) GetProject(context.Context, string) (linearprovider.Project, error) {
+	return linearprovider.Project{}, errors.New("no projects")
+}
+func (p fakeProvider) Issues(context.Context, linearprovider.IssueQuery) (linearprovider.Page[linearprovider.Issue], error) {
+	return linearprovider.Page[linearprovider.Issue]{Complete: true}, nil
+}
+func (p fakeProvider) GetIssue(_ context.Context, id string) (linearprovider.Issue, error) {
+	i, err := p.f.issue(id)
+	return i.Issue, err
+}
+func (p fakeProvider) Statuses(context.Context, string) ([]linearprovider.Status, error) {
+	return nil, nil
+}
+func (p fakeProvider) Create(context.Context, linearprovider.CreateInput) (linearprovider.Issue, error) {
+	return linearprovider.Issue{}, errors.New("no writes")
+}
+func (p fakeProvider) Update(context.Context, linearprovider.UpdateInput) (linearprovider.Issue, error) {
+	return linearprovider.Issue{}, errors.New("no writes")
+}
+
+// Comment accepts the claim marker's note, as Linear would.
+func (p fakeProvider) Comment(_ context.Context, issue, _ string) (linearprovider.Receipt, error) {
+	p.f.notes++
+	return linearprovider.Receipt{ID: fmt.Sprintf("bbbbbbbb-bbbb-4bbb-8bbb-%012d", p.f.notes), IssueID: issue}, nil
+}
+func (p fakeProvider) IssueV2(_ context.Context, id string) (linearprovider.IssueV2, error) {
+	return p.f.issue(id)
+}
+func (p fakeProvider) IssuesV2(_ context.Context, q linearprovider.IssueQueryV2) (linearprovider.Page[linearprovider.IssueV2], error) {
+	out := linearprovider.Page[linearprovider.IssueV2]{Complete: true}
+	if q.LabelID != labelNeeds {
+		return out, nil
+	}
+	// Like Linear, the list is filtered by the queried team and label.
+	for _, id := range p.f.labelled {
+		i, _ := p.f.issue(id)
+		if i.TeamID != q.TeamID {
+			continue
+		}
+		i.LabelIDs, i.LabelsKnown = []string{labelNeeds}, true
+		out.Items = append(out.Items, i)
+	}
+	return out, nil
+}
+func (p fakeProvider) Labels(_ context.Context, t string, _ linearprovider.PageOptions) (linearprovider.Page[linearprovider.Label], error) {
+	return linearprovider.Page[linearprovider.Label]{Items: []linearprovider.Label{{ID: labelNeeds, Name: needsAgentLabel, TeamID: t, EligibilityKnown: true}}, Complete: true}, nil
+}
+func (p fakeProvider) Members(context.Context, string, linearprovider.PageOptions) (linearprovider.Page[linearprovider.Member], error) {
+	return linearprovider.Page[linearprovider.Member]{Complete: true}, nil
+}
+func (p fakeProvider) Capabilities(context.Context) (linearprovider.Capabilities, error) {
+	return linearprovider.Capabilities{Labels: true}, nil
+}
+func (p fakeProvider) CreateV2(context.Context, linearprovider.CreateInputV2) (linearprovider.IssueV2, error) {
+	return linearprovider.IssueV2{}, errors.New("no writes")
+}
+func (p fakeProvider) UpdateV2(context.Context, linearprovider.UpdateInputV2) (linearprovider.IssueV2, error) {
+	return linearprovider.IssueV2{}, errors.New("no writes")
+}
+func (p fakeProvider) Relation(context.Context, linearprovider.RelationInput) (linearprovider.RelationReceipt, error) {
+	return linearprovider.RelationReceipt{}, errors.New("no writes")
+}
+func (p fakeProvider) IssueComments(context.Context, linearprovider.CommentsQuery) (linearprovider.Comments, error) {
+	return linearprovider.Comments{Items: p.f.comments, Complete: true}, nil
+}
+
+type fakeApp struct{ f *fakeLinear }
+
+func (a fakeApp) Open(context.Context, bool) (linearboard.Provider, error) {
+	return fakeProvider{a.f}, nil
+}
+func (a fakeApp) Identity(context.Context) (AppIdentity, error) {
+	return AppIdentity{AppUserID: appUser, LinearOrgID: "org"}, nil
+}
+func (a fakeApp) GraphQL(_ context.Context, query string, vars map[string]any, out any) error {
+	a.f.queries = append(a.f.queries, query)
+	var data any
+	switch query {
+	case historyQuery:
+		data = map[string]any{"issue": map[string]any{"history": map[string]any{"nodes": a.f.history[vars["id"].(string)], "pageInfo": map[string]any{"hasNextPage": false}}}}
+	case delegatedQuery:
+		nodes := []any{}
+		for _, id := range a.f.delegated {
+			nodes = append(nodes, map[string]any{"id": id})
+		}
+		data = map[string]any{"issues": map[string]any{"nodes": nodes, "pageInfo": map[string]any{"hasNextPage": false}}}
+	case mentionsQuery:
+		data = map[string]any{"notifications": map[string]any{"nodes": a.f.mentions, "pageInfo": map[string]any{"hasNextPage": false}}}
+	default:
+		return errors.New("unexpected query")
+	}
+	raw, _ := json.Marshal(data)
+	return json.Unmarshal(raw, out)
+}
+
+type env struct {
+	t     *testing.T
+	path  string
+	s     *bus.Store
+	f     *fakeLinear
+	w     *Watcher
+	pid   string
+	insts map[string]string
+}
+
+func setup(t *testing.T) *env {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "bus.db")
+	s, err := bus.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { s.Close() })
+	e := &env{t: t, path: path, s: s, f: &fakeLinear{history: map[string][]map[string]any{}}, insts: map[string]string{}}
+	for _, r := range []bus.Request{{Operation: "workspace_init", Workspace: "w", Args: map[string]any{"mode": "local"}}, {Operation: "project_create", Workspace: "w", Args: map[string]any{"slug": "p"}}, {Operation: "taskboard_set_v2", Workspace: "w", Project: "p", Args: map[string]any{"expected_revision": 0, "mode": "team_board", "linear_team_ids": []string{team}, "linear_default_team_id": team, "linear_project_ids": []string{}}}} {
+		if _, err = s.Execute(context.Background(), r); err != nil {
+			t.Fatal(r.Operation, err)
+		}
+	}
+	for _, name := range []string{"eng", "coord"} {
+		out := e.call("register_session", name, map[string]any{"instance": name + "-i"})
+		e.insts[name] = out["instance"].(string)
+	}
+	e.queryRow(`SELECT id FROM projects`, &e.pid)
+	e.call("coordinator_set", "coord", map[string]any{"target_session": "coord"})
+	e.w = &Watcher{Store: s, App: fakeApp{e.f}, LedgerDirectory: filepath.Join(t.TempDir(), "ledger")}
+	return e
+}
+
+func (e *env) call(op, session string, a map[string]any) map[string]any {
+	e.t.Helper()
+	if inst, ok := e.insts[session]; ok {
+		a["instance"] = inst
+	}
+	r, err := e.s.Execute(context.Background(), bus.Request{Operation: op, Workspace: "w", Project: "p", Session: session, Args: a})
+	if err != nil {
+		e.t.Fatal(op, err)
+	}
+	if m, ok := r.Data.(map[string]any); ok {
+		return m
+	}
+	return map[string]any{"data": r.Data}
+}
+
+func (e *env) inbox(session, kind string) []map[string]any {
+	e.t.Helper()
+	out := []map[string]any{}
+	for _, m := range e.call("inbox", session, map[string]any{})["messages"].([]map[string]any) {
+		if m["kind"] == kind {
+			out = append(out, m)
+		}
+	}
+	return out
+}
+
+func (e *env) tick() ProjectTick {
+	e.t.Helper()
+	ticks := e.w.Tick(context.Background())
+	if len(ticks) != 1 {
+		e.t.Fatal("ticks:", ticks)
+	}
+	return ticks[0]
+}
+
+// dueNow makes every watch and intake cursor due.
+func (e *env) dueNow() {
+	e.t.Helper()
+	e.sql(`UPDATE watch_cursors SET next_poll_at='2000-01-01T00:00:00.000000000Z'`)
+}
+
+// sql and queryRow reach the store's file directly, as a fixture.
+func (e *env) sql(q string, args ...any) {
+	e.t.Helper()
+	db, err := sql.Open("sqlite", e.path)
+	if err != nil {
+		e.t.Fatal(err)
+	}
+	defer db.Close()
+	if _, err = db.Exec(q, args...); err != nil {
+		e.t.Fatal(err)
+	}
+}
+
+func (e *env) queryRow(q string, dest ...any) {
+	e.t.Helper()
+	db, err := sql.Open("sqlite", e.path)
+	if err != nil {
+		e.t.Fatal(err)
+	}
+	defer db.Close()
+	if err = db.QueryRow(q).Scan(dest...); err != nil {
+		e.t.Fatal(err)
+	}
+}
+
+// The server watcher runs the comment watch as the system session: the
+// assignee is told, the tick is recorded, and a client watcher is refused.
+func TestTickRunsTheCommentWatchAsTheSystemSession(t *testing.T) {
+	e := setup(t)
+	proposed := e.call("assignment_propose", "eng", map[string]any{"issue_uuid": issueA, "issue_identifier": "FIX-3"})
+	e.call("assignment_confirm", "coord", map[string]any{"target_session": "eng", "revision": proposed["assignment"].(map[string]any)["revision"]})
+	e.tick() // the first poll starts the cursor
+	e.f.comments = []linearprovider.Comment{{ID: humanNote, AuthorKind: "unknown", CreatedAt: time.Now().UTC().Format(time.RFC3339Nano), UpdatedAt: time.Now().UTC().Format(time.RFC3339Nano), UntrustedBody: "a question"}}
+	e.dueNow()
+	tick := e.tick()
+	if tick.Error != "" || tick.Comments == nil || len(tick.Comments.Notified) != 1 {
+		t.Fatalf("tick: %+v %+v", tick, tick.Comments)
+	}
+	notices := e.inbox("eng", "linear-comment")
+	if len(notices) != 1 || !strings.HasPrefix(notices[0]["sender_id"].(string), "sys_") {
+		t.Fatal("the assignee was not told by the system session:", notices)
+	}
+	if _, err := e.s.Execute(context.Background(), bus.Request{Operation: "comment_watch_lease", Workspace: "w", Project: "p", Session: "coord", Args: map[string]any{"instance": e.insts["coord"], "action": "acquire"}}); err == nil || !strings.Contains(err.Error(), "runs on the server") {
+		t.Fatal("a client watcher took the lease while the server watches:", err)
+	}
+	// IN-M2: once the server's ticks are stale, a client watcher may take
+	// over.
+	e.sql(`UPDATE watch_ticks SET last_ok_at=?`, time.Now().Add(-20*time.Minute).UTC().Format("2006-01-02T15:04:05.000000000Z07:00"))
+	if _, err := e.s.Execute(context.Background(), bus.Request{Operation: "comment_watch_lease", Workspace: "w", Project: "p", Session: "coord", Args: map[string]any{"instance": e.insts["coord"], "action": "acquire"}}); err != nil {
+		t.Fatal("no client failover after stale ticks:", err)
+	}
+}
+
+func (e *env) queue() []map[string]any {
+	e.t.Helper()
+	return e.call("intake_list", "coord", map[string]any{})["data"].([]map[string]any)
+}
+
+func entry(at, actor string, fields map[string]any) map[string]any {
+	n := map[string]any{"createdAt": at, "actorId": actor, "botActor": nil}
+	for k, v := range fields {
+		n[k] = v
+	}
+	return n
+}
+
+// S1: a needs-agent issue is proven in the binding and its label add's
+// actor proven from history; a trusted actor may go furthest, a stranger
+// or a bot only to notify. History before the cursor never triggers.
+func TestIntakeS1ProvesTheBindingAndTheActor(t *testing.T) {
+	e := setup(t)
+	e.call("intake_trust_add", "coord", map[string]any{"linear_user_id": trustedUser})
+	e.f.labelled = []string{issueA, issueB, issueOut}
+	first := e.tick()
+	if first.Intake == nil || len(first.Intake.Queued) != 0 {
+		t.Fatal("history triggered on the first poll:", first.Intake)
+	}
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	e.f.history[issueA] = []map[string]any{entry(now, trustedUser, map[string]any{"addedLabelIds": []string{labelNeeds}})}
+	e.f.history[issueB] = []map[string]any{entry(now, trustedUser, map[string]any{"addedLabelIds": []string{labelNeeds}, "botActor": map[string]any{"id": "bot"}})}
+	e.dueNow()
+	tick := e.tick()
+	if tick.Intake == nil || len(tick.Intake.Queued) != 2 {
+		t.Fatalf("intake: %+v", tick.Intake)
+	}
+	caps := map[string]string{}
+	for _, row := range e.queue() {
+		caps[row["issue_uuid"].(string)] = row["trigger_cap"].(string)
+	}
+	if caps[issueA] != "auto" || caps[issueB] != "notify" {
+		t.Fatal("caps:", caps)
+	}
+	if n := len(e.inbox("coord", "intake")); n != 2 {
+		t.Fatal("coordinator notices:", n)
+	}
+	var used int
+	e.queryRow(`SELECT budget_used FROM watch_lease`, &used)
+	if used < tick.Intake.Calls {
+		t.Fatal("intake calls not charged:", used, tick.Intake.Calls)
+	}
+}
+
+// S2 is a delegation to the app, its actor the delegating human; S3 is a
+// mention notification, its actor typed. Other notification types are
+// ignored.
+func TestIntakeS2AndS3(t *testing.T) {
+	e := setup(t)
+	e.tick()
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	e.f.delegated = []string{issueA}
+	e.f.history[issueA] = []map[string]any{entry(now, strangerID, map[string]any{"toDelegate": map[string]any{"id": appUser}})}
+	e.f.mentions = []map[string]any{
+		{"id": "n1", "type": "issueCommentMention", "createdAt": now, "issue": map[string]any{"id": issueB}, "actor": map[string]any{"id": trustedUser}},
+		{"id": "n2", "type": "issueSubscribed", "createdAt": now, "issue": map[string]any{"id": issueA}},
+		{"id": "n3", "type": "issueCommentMention", "createdAt": now, "issue": map[string]any{"id": issueOut}, "actor": map[string]any{"id": trustedUser}},
+	}
+	e.call("intake_trust_add", "coord", map[string]any{"linear_user_id": trustedUser})
+	e.dueNow()
+	tick := e.tick()
+	if tick.Intake == nil || len(tick.Intake.Queued) != 2 || tick.Intake.Skipped["not_in_binding"] != 1 {
+		t.Fatalf("intake: %+v", tick.Intake)
+	}
+	rows := map[string]map[string]any{}
+	for _, row := range e.queue() {
+		rows[row["issue_uuid"].(string)] = row
+	}
+	if rows[issueA]["signals"] != "S2" || rows[issueA]["trigger_cap"] != "notify" || rows[issueB]["signals"] != "S3" || rows[issueB]["trigger_cap"] != "auto" {
+		t.Fatal(rows)
+	}
+}
+
+// A transition at or before its issue's close does not re-queue it
+// (IN-H2, IN2-L2); a rearm lets it.
+func TestIntakeClosedRowIgnoresOldTransitions(t *testing.T) {
+	e := setup(t)
+	e.tick()
+	old := time.Now().Add(-time.Hour).UTC().Format(time.RFC3339Nano)
+	e.f.labelled = []string{issueA}
+	e.f.history[issueA] = []map[string]any{entry(old, strangerID, map[string]any{"addedLabelIds": []string{labelNeeds}})}
+	e.dueNow()
+	if tick := e.tick(); len(tick.Intake.Queued) != 1 {
+		t.Fatalf("%+v", tick.Intake)
+	}
+	e.sql(`UPDATE intake_queue SET state='closed',closed_at=?`, time.Now().UTC().Format("2006-01-02T15:04:05.000000000Z07:00"))
+	e.dueNow()
+	if tick := e.tick(); len(tick.Intake.Queued) != 0 || tick.Intake.Skipped["stale"] != 1 {
+		t.Fatalf("an old transition re-queued a closed issue: %+v", tick.Intake)
+	}
+	e.call("intake_rearm", "coord", map[string]any{"issue_uuid": issueA})
+	e.dueNow()
+	if tick := e.tick(); len(tick.Intake.Queued) != 1 {
+		t.Fatalf("a rearm did not let it re-queue: %+v", tick.Intake)
+	}
+}
+
+// With intake off nothing is read.
+func TestIntakeOffReadsNothing(t *testing.T) {
+	e := setup(t)
+	e.call("intake_policy_set", "coord", map[string]any{"mode": "off"})
+	e.f.labelled = []string{issueA}
+	e.tick()
+	e.dueNow()
+	if tick := e.tick(); tick.Intake == nil || !tick.Intake.Off || tick.Intake.Calls != 0 || len(e.f.queries) != 0 {
+		t.Fatalf("%+v %v", tick.Intake, e.f.queries)
+	}
+}

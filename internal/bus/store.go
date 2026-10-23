@@ -403,6 +403,7 @@ var operationArgs = map[string]string{
 	"label_policy_get":            "instance",
 	"label_policy_set":            "instance expected_revision label_policy",
 	"linear_admin_audit":          "instance kind outcome operation_id linear_team_id linear_id linear_project_id name previous_name policy_revision",
+	"watch_charge":                "instance lease_token generation calls",
 	"intake_policy_get":           "instance",
 	"intake_policy_set":           "instance expected_revision mode signals roles s5_calls_per_hour out_of_binding_limit",
 	"intake_trust_add":            "instance linear_user_id",

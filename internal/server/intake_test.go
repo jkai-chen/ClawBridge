@@ -62,7 +62,7 @@ func intakeServer(t *testing.T) (*fakeIntake, *httptest.Server) {
 	prove := func(context.Context, string, string, string) (bus.IntakeIssue, error) {
 		return bus.IntakeIssue{UUID: "00000000-0000-4000-8000-0000000000b1"}, nil
 	}
-	host := httptest.NewServer(NewHandlerWithIntake(store, verifier, OAuthMetadata{}, nil, prove))
+	host := httptest.NewServer(NewHandlerWithOptions(store, verifier, HandlerOptions{IntakeProver: prove}))
 	t.Cleanup(host.Close)
 	return store, host
 }
@@ -150,5 +150,36 @@ func TestIntakeClientAddress(t *testing.T) {
 		if got := clientAddress(r); got != c.want {
 			t.Errorf("%s via %q: got %s, want %s", c.peer, c.forwarded, got, c.want)
 		}
+	}
+}
+
+// Linear's Loop client tries a GET for SSE (probe I0); the stateless
+// endpoint answers 405 and the handshakes charge nothing.
+func TestIntakeEndpointRefusesGETAndHandshakesAreFree(t *testing.T) {
+	store, host := intakeServer(t)
+	req, _ := http.NewRequest(http.MethodGet, host.URL+IntakePath, nil)
+	req.Header.Set("Authorization", "Bearer "+goodIntakeToken)
+	req.Header.Set("Accept", "text/event-stream")
+	res, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	res.Body.Close()
+	if res.StatusCode != http.StatusMethodNotAllowed {
+		t.Fatal("GET:", res.StatusCode)
+	}
+	client := mcp.NewClient(&mcp.Implementation{Name: "loop", Version: "1"}, nil)
+	for range 2 {
+		session, err := client.Connect(context.Background(), &mcp.StreamableClientTransport{Endpoint: host.URL + IntakePath, HTTPClient: &http.Client{Transport: bearer{goodIntakeToken}}}, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err = session.ListTools(context.Background(), nil); err != nil {
+			t.Fatal(err)
+		}
+		session.Close()
+	}
+	if len(store.requests) != 0 {
+		t.Fatal("handshakes reached the request path:", store.requests)
 	}
 }

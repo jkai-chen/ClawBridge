@@ -258,17 +258,35 @@ func NewHandlerWithOAuthMetadata(store Executor, verifier Verifier, metadata OAu
 // NewHandlerWithApp also serves linear_write and linear_app_status through
 // writer, the server's Linear app identity; nil leaves them off.
 func NewHandlerWithApp(store Executor, verifier Verifier, metadata OAuthMetadata, writer *AppWriter) http.Handler {
-	return NewHandlerWithIntake(store, verifier, metadata, writer, nil)
+	return NewHandlerWithOptions(store, verifier, HandlerOptions{OAuth: metadata, Writer: writer})
 }
 
-// NewHandlerWithIntake also serves the send-only /mcp/intake endpoint when
-// the store has intake, with prove as the Linear app's in-binding proof.
-// Without a prover every intake request is refused (app_unavailable).
-func NewHandlerWithIntake(store Executor, verifier Verifier, metadata OAuthMetadata, writer *AppWriter, prove IssueProver) http.Handler {
+// HandlerOptions are the server's optional endpoints.
+type HandlerOptions struct {
+	OAuth OAuthMetadata
+	// Writer serves linear_write and linear_app_status as the server's
+	// Linear app identity; nil leaves them off.
+	Writer *AppWriter
+	// IntakeProver is the Linear app's in-binding proof for /mcp/intake.
+	// Without one, every intake request is refused (app_unavailable).
+	IntakeProver IssueProver
+	// TickVerifier and Ticker serve the watcher's tick endpoint; it exists
+	// only when both are set.
+	TickVerifier TickVerifier
+	Ticker       Ticker
+}
+
+// NewHandlerWithOptions also serves the send-only /mcp/intake endpoint when
+// the store has intake, and the watcher's tick endpoint when configured.
+func NewHandlerWithOptions(store Executor, verifier Verifier, o HandlerOptions) http.Handler {
+	metadata, writer := o.OAuth, o.Writer
 	l := &limiter{users: map[string]window{}}
-	var intake http.Handler
+	var intake, tick http.Handler
 	if s, ok := store.(IntakeStore); ok {
-		intake = newIntakeHandler(s, prove, l)
+		intake = newIntakeHandler(s, o.IntakeProver, l)
+	}
+	if o.TickVerifier != nil && o.Ticker != nil {
+		tick = newTickHandler(o.TickVerifier, o.Ticker)
 	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Cache-Control", "no-store")
@@ -303,6 +321,10 @@ func NewHandlerWithIntake(store Executor, verifier Verifier, metadata OAuthMetad
 		}
 		if r.URL.Path == IntakePath && intake != nil {
 			intake.ServeHTTP(w, r)
+			return
+		}
+		if r.URL.Path == TickPath && tick != nil {
+			tick.ServeHTTP(w, r)
 			return
 		}
 		if r.URL.Path != "/v1/execute" {

@@ -46,8 +46,9 @@ another teammate's host is required.
 
 `linear link` records the Linear workspace the binding belongs to, read from
 Linear (`get_workspace`) and shown in the preview as `linear_workspace_id`. A
-binding linked in one workspace is never relinked in another (unlink it first),
-and a profile whose recorded workspace differs from Linear's is refused. An
+binding linked in one workspace is never relinked in another or without its
+workspace (unlink it first); the authority enforces this too. A profile whose
+recorded workspace differs from Linear's is refused. An
 existing binding without a workspace is pinned by linking it again with the same
 teams and projects. If Linear does not offer `get_workspace`, the link proceeds
 unpinned; ClawBridge never invents an ID from a display name.

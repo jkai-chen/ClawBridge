@@ -282,6 +282,11 @@ func (s *Store) taskboard(ctx context.Context, tx *transaction, wid, pid, role, 
 		next = convertLegacyBinding(old)
 		next.Configured = true
 	}
+	// A binding pinned to a Linear workspace keeps it: a set may not change
+	// or clear the pin; only unlinking (clear) resets it.
+	if (op == "taskboard_set_v2" || op == "taskboard_set") && b.Configured && b.LinearWorkspaceID != "" && next.LinearWorkspaceID != b.LinearWorkspaceID {
+		return nil, invalid("this binding is pinned to its Linear workspace; a link must name the same workspace, or unlink it first")
+	}
 	next.WorkspaceID = wid
 	next.ProjectID = pid
 	next.Revision = expected + 1

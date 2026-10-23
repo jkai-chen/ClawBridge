@@ -4,7 +4,10 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"os"
+	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -208,5 +211,57 @@ func TestAppAuthoredCommentsReadAsClawBridges(t *testing.T) {
 	}
 	if person.PostedByClawBridge != nil && *person.PostedByClawBridge || person.ClawBridgeMatch != "" {
 		t.Fatal("a person's comment read as ClawBridge's", person)
+	}
+}
+
+// v1App is a hosted server with the app in front of the V1 fake.
+type v1App struct{ *fakeAuthority }
+
+func (v v1App) Execute(ctx context.Context, r bus.Request) (bus.Result, error) {
+	if r.Operation == "linear_app_status" {
+		return appOn()
+	}
+	return v.fakeAuthority.Execute(ctx, r)
+}
+
+// A V1 write, made with the member's profile, is refused when the server
+// writes as the app: nothing is sent.
+func TestV1WritesAreRefusedWhenTheServerWritesAsTheApp(t *testing.T) {
+	s, a, p, scope := testService(t)
+	s.cfg.Executor, s.cfg.AppRoute = v1App{a}, true
+	if _, e := s.Write(context.Background(), scope, WriteInput{Operation: "comment", OperationID: "v1-c", IssueID: issueID, Body: "hello"}); !errors.Is(e, errV1AppWrites) || len(p.bodies) != 0 {
+		t.Fatal(e, p.bodies)
+	}
+}
+
+// An operation_id this client already wrote with the member's profile is
+// refused once the server writes as the app, never sent again; a new one
+// goes through.
+func TestAnOperationFromBeforeTheAppIsNeverResent(t *testing.T) {
+	receipt := map[string]any{"kind": "comment", "outcome": "accepted", "id": "c1000000-0000-4000-8000-000000000009"}
+	server := &appServer{status: appOn, write: func(bus.Request) (bus.Result, error) {
+		return bus.Result{Source: "server", Data: map[string]any{"receipt": receipt}}, nil
+	}}
+	s, p, scope := routedV2(t, server)
+	s.cfg.AppRoute = false
+	if _, e := s.WriteV2(context.Background(), scope, commentIn); e != nil || len(p.bodies) != 1 {
+		t.Fatal("the personal write", e)
+	}
+	s.cfg.AppRoute = true
+	if _, e := s.WriteV2(context.Background(), scope, commentIn); e == nil || !strings.Contains(e.Error(), "start a new operation_id") || len(server.writes) != 0 {
+		t.Fatal("a pre-app operation was sent as the app", e, server.writes)
+	}
+	// An unreadable record is no proof it was never sent: nothing is sent.
+	records, _ := filepath.Glob(filepath.Join(s.cfg.LedgerDirectory, "*", "*.json"))
+	if len(records) != 1 || os.WriteFile(records[0], []byte("{"), 0o600) != nil {
+		t.Fatal("ledger records", records)
+	}
+	if _, e := s.WriteV2(context.Background(), scope, commentIn); e == nil || !strings.Contains(e.Error(), "cannot read") || len(server.writes) != 0 {
+		t.Fatal("an unreadable record", e)
+	}
+	fresh := commentIn
+	fresh.OperationID = "c-2"
+	if _, e := s.WriteV2(context.Background(), scope, fresh); e != nil || len(server.writes) != 1 || len(p.bodies) != 1 {
+		t.Fatal("a new operation", e)
 	}
 }

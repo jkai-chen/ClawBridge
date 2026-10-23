@@ -109,7 +109,11 @@ func addTaskboardToolsV2(s *mcp.Server, b *binding, p TaskboardToolsV2) {
 			if b.instance != "" {
 				scope.Args["instance"] = b.instance
 			}
-			bounded, cancel := context.WithTimeout(ctx, 45*time.Second)
+			limit := 45 * time.Second
+			if !readOnly {
+				limit = linearboard.WriteTimeout
+			}
+			bounded, cancel := context.WithTimeout(ctx, limit)
 			defer cancel()
 			data, err := p.ExecuteV2(bounded, scope, operation, args)
 			if err != nil {

@@ -438,7 +438,7 @@ confirmed, so a later rename never changes a note):
   issue, guests and outside reviewers included. It loses `@`, links and
   Markdown, and is cut to 40 characters (39 and `…`). **Without a recorded
   name, the line ends after the session**: ClawBridge never shows an email
-  instead. A local store, or a server older than v0.2.7, also names no
+  instead. A local store, or a server older than v0.2.8, also names no
   engineer. The line carries nothing else.
 - **Recording your name.** On a hosted server, `clawbridge linear connect`
   records your Linear name (your full name, else your handle) when you have

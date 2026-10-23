@@ -40,7 +40,8 @@ Read comments only when you need them: `linear issue ISSUE --comments` (MCP
 - **Authors.** `author_kind` is `agent` only when Linear reports the comment was
   made on behalf of a user; otherwise it is `unknown`, even for people.
 - **Own comments.** `posted_by_clawbridge: true` means ClawBridge posted the
-  comment (its ledger says so, and `clawbridge_session` names the session);
+  comment (its ledger says so, and `clawbridge_session` names the session, or
+  `clawbridge_match: "app"`: the ClawBridge app wrote it);
   `false` means it did not. With `comments_ownership: "unavailable"` the field
   is absent: ClawBridge could not tell. `comments_young_pending: true` means one
   of ClawBridge's own comments may be posted but not yet recorded, so an

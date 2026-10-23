@@ -469,6 +469,31 @@ confirmed, so a later rename never changes a note):
   the line. The comment stays `author_kind: unknown` and its body stays
   untrusted.
 
+### Writes as the ClawBridge app (hosted servers)
+
+When a hosted server runs the ClawBridge Linear app (see the deployment guide),
+every agent write from the CLI or MCP (create, update, comment, reply and
+relation) goes to the server, which makes it in Linear **as the ClawBridge
+app**. Your personal profile still reads, but never writes:
+
+- **No fallback.** When the server offers the app, a failed write is reported
+  and is never retried with your own Linear account. If the client cannot tell
+  whether the server offers the app, it sends nothing and says so. A server
+  without the app, or older than v0.2.8, keeps writes on your profile.
+- **Retries.** A write can take up to a minute, and the server finishes it even
+  if you disconnect. Answers keep their usual meaning:
+  - `in_progress` means another request is still sending the same
+    `--operation-id`. Retry it shortly.
+  - An uncertain outcome means the write may have reached Linear. Inspect
+    Linear before retrying.
+  - Retrying the same `--operation-id` returns the recorded outcome and never
+    sends twice: the server keeps one shared operation ledger.
+- **Claim markers** are still applied with the applying member's profile.
+- `clawbridge doctor` (with a Linear profile) shows the `linear.app` check:
+  - whether writes go through the app;
+  - which bound teams the app cannot see, where writes would fail. A private
+    team needs the app as a member.
+
 ### ClawBridge's own comments
 
 Every comment ClawBridge posts is recorded on the bus before it is sent, so a
@@ -492,8 +517,9 @@ clients. An older client is refused every Linear write by a v0.2.5 server
   comment that was not notified to you. A reply in a thread with exactly one
   unanswered comment is recorded as its answer; with several, name one.
 - **On a comments read**, every comment carries `posted_by_clawbridge` (with
-  `clawbridge_session`, and `clawbridge_match`: `ledger`, or `pending_body` when
-  an unsettled reservation's exact body matches inside its window), and the
+  `clawbridge_session`, and `clawbridge_match`: `ledger`, `pending_body` when
+  an unsettled reservation's exact body matches inside its window, or `app`
+  when the ClawBridge app wrote it: only the server holds its token), and the
   read reports `comments_ownership` (`available` or `unavailable`) and
   `comments_young_pending` (a ClawBridge comment on the issue may be posted but
   not yet recorded). When the bus cannot answer, the read still succeeds but

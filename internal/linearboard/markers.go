@@ -8,7 +8,6 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
-	"strings"
 	"time"
 )
 
@@ -31,6 +30,10 @@ type MarkerApply struct {
 // carries the watcher's lease, or is empty for the client that made the
 // transition.
 func (s *Service) ApplyMarker(ctx context.Context, scope bus.Request, assignment, phase string, fence map[string]any) MarkerApply {
+	// Both parts share one connection, one binding proof and one issue
+	// read.
+	s, release := s.hold()
+	defer release()
 	out := MarkerApply{AssignmentID: assignment, Phase: phase}
 	for _, part := range []string{"comment", "label"} {
 		args := map[string]any{"assignment_id": assignment, "phase": phase, "part": part}
@@ -73,22 +76,32 @@ func (s *Service) markerPart(ctx context.Context, scope bus.Request, args map[st
 		}
 		return outcome, failure
 	}
-	switch action {
-	case "post":
+	if action == "check" {
+		// An earlier attempt may have landed: its exact body inside its
+		// window settles this one without posting again. Otherwise the bus
+		// hands this session a new attempt.
 		body, _ := g["body"].(string)
 		from, _ := g["check_from"].(string)
 		to, _ := g["check_to"].(string)
-		if from != "" {
-			// An earlier attempt may have landed: its exact body inside its
-			// window settles this one without posting again.
-			found, err := s.findMarkerComment(ctx, scope, issue, body, from, to)
-			if err != nil {
-				return settle("uncertain", nil, err)
-			}
-			if found != "" {
-				return settle("done", map[string]any{"comment_id": found, "via": "body_match"}, nil)
-			}
+		found, created, err := s.findMarkerComment(ctx, scope, issue, body, from, to)
+		if err != nil {
+			return settle("uncertain", nil, err)
 		}
+		if found != "" {
+			return settle("done", map[string]any{"comment_id": found, "created_at": created, "via": "body_match"}, nil)
+		}
+		a := map[string]any{"outcome": "absent"}
+		for k, v := range args {
+			a[k] = v
+		}
+		if g, err = s.commentLedger(ctx, scope, "marker_settle", a); err != nil {
+			return "unavailable", err
+		}
+		action, _ = g["action"].(string)
+	}
+	switch action {
+	case "post":
+		body, _ := g["body"].(string)
 		receipt, err := s.WriteV2(ctx, scope, WriteInputV2{WriteInput: WriteInput{Operation: "comment", OperationID: markerOperation(), IssueID: issue, Body: body}, marker: true})
 		if err != nil {
 			return settle(markerFailure(err), nil, err)
@@ -104,7 +117,12 @@ func (s *Service) markerPart(ctx context.Context, scope bus.Request, args map[st
 			return settle("no_label", nil, err)
 		}
 		if err != nil {
-			return settle(markerFailure(err), nil, err)
+			// Finding the label only reads: nothing was sent.
+			outcome := "failed"
+			if markerFailure(err) == "out_of_binding" {
+				outcome = "out_of_binding"
+			}
+			return settle(outcome, nil, err)
 		}
 		in := WriteInputV2{WriteInput: WriteInput{Operation: "update", OperationID: markerOperation(), IssueID: issue}, marker: true}
 		if action == "add" {
@@ -119,6 +137,8 @@ func (s *Service) markerPart(ctx context.Context, scope bus.Request, args map[st
 	}
 	return action, nil
 }
+
+var errMarkerWalk = errors.New("the team has too many labels to prove agent-working unique; nothing was sent")
 
 var errNoMarkerLabel = errors.New("label " + bus.MarkerLabel + " is missing in the issue's team, or ambiguous; a Linear admin must create exactly one")
 
@@ -143,9 +163,15 @@ func (s *Service) markerLabel(ctx context.Context, scope bus.Request, issue stri
 			}
 		}
 		if labels.NextCursor == "" {
+			cursor = ""
 			break
 		}
 		cursor = labels.NextCursor
+	}
+	// A walk cut off by the page bound could hide a second label: nothing
+	// is guessed from it. Nothing was sent.
+	if cursor != "" {
+		return "", errMarkerWalk
 	}
 	if len(found) != 1 {
 		return "", errNoMarkerLabel
@@ -154,19 +180,20 @@ func (s *Service) markerLabel(ctx context.Context, scope bus.Request, issue stri
 }
 
 // findMarkerComment looks for a comment whose body is exactly the marker's
-// and that was created inside [from, to].
-func (s *Service) findMarkerComment(ctx context.Context, scope bus.Request, issue, body, from, to string) (string, error) {
+// and that was created inside [from, to], and returns it with its creation
+// time, which the bus re-checks.
+func (s *Service) findMarkerComment(ctx context.Context, scope bus.Request, issue, body, from, to string) (string, string, error) {
 	start, err1 := time.Parse(time.RFC3339Nano, from)
 	end, err2 := time.Parse(time.RFC3339Nano, to)
 	if err1 != nil || err2 != nil {
-		return "", errors.New("invalid marker check window")
+		return "", "", errors.New("invalid marker check window")
 	}
 	read, err := s.IssueV2WithComments(ctx, scope, issue, CommentsInputV2{Since: start.UTC().Format(time.RFC3339Nano)})
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
 	if read.Truncated && !read.StoppedEarly {
-		return "", errors.New("marker check read was incomplete")
+		return "", "", errors.New("marker check read was incomplete")
 	}
 	want := sha256.Sum256([]byte(body))
 	for _, c := range read.Items {
@@ -175,10 +202,10 @@ func (s *Service) findMarkerComment(ctx context.Context, scope bus.Request, issu
 			continue
 		}
 		if sha256.Sum256([]byte(c.UntrustedBody)) == want {
-			return c.ID, nil
+			return c.ID, c.CreatedAt, nil
 		}
 	}
-	return "", nil
+	return "", "", nil
 }
 
 // markerOperation is a fresh file-ledger operation for one marker attempt;
@@ -190,13 +217,15 @@ func markerOperation() string {
 }
 
 // markerFailure is how a failed apply settles: out_of_binding, failed when
-// nothing was sent, otherwise uncertain.
+// the write provably sent nothing, otherwise uncertain.
 func markerFailure(err error) string {
 	var outside outOfScopeError
-	if errors.As(err, &outside) {
+	var never notDispatchedError
+	var refused refusedBeforeDispatchError
+	switch {
+	case errors.As(err, &outside):
 		return "out_of_binding"
-	}
-	if strings.Contains(err.Error(), "nothing was sent") {
+	case errors.As(err, &never), errors.As(err, &refused), errors.Is(err, errMarkerWalk):
 		return "failed"
 	}
 	return "uncertain"

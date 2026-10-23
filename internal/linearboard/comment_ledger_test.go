@@ -92,7 +92,7 @@ func (f *fakeCommentLedger) execute(r bus.Request) (bus.Result, error) {
 		for _, c := range asList(r.Args["comments"]) {
 			notified = append(notified, c.(map[string]any)["comment_id"].(string))
 		}
-		return bus.Result{Source: "local-authority", Data: map[string]any{"issue_uuid": r.Args["issue_uuid"], "notified": notified}}, nil
+		return bus.Result{Source: "local-authority", Data: map[string]any{"issue_uuid": r.Args["issue_uuid"], "notified": notified, "budget_used": 7}}, nil
 	case "linear_comment_settle_match":
 		f.settleMatches = append(f.settleMatches, r.Args)
 		return bus.Result{Source: "local-authority", Data: map[string]any{"state": "posted"}}, nil
@@ -105,6 +105,9 @@ func (f *fakeCommentLedger) execute(r bus.Request) (bus.Result, error) {
 		return bus.Result{Source: "local-authority", Data: g}, nil
 	case "marker_settle":
 		f.markerSettles = append(f.markerSettles, r.Args)
+		if r.Args["outcome"] == "absent" {
+			return bus.Result{Source: "local-authority", Data: f.gos["absent"]}, nil
+		}
 		return bus.Result{Source: "local-authority", Data: map[string]any{"state": r.Args["outcome"]}}, nil
 	case "marker_due":
 		due := f.markersDue

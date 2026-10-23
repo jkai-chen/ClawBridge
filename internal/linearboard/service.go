@@ -49,6 +49,7 @@ type Service struct {
 	cfg    Config
 	pool   *providerPool
 	proofs *bindingProofCache
+	held   *heldOperation
 }
 
 func New(c Config) *Service {
@@ -126,6 +127,20 @@ func (s *Service) connect(ctx context.Context, write bool) (linearconn.Profile, 
 			return nil, err
 		}
 		return s.cfg.Open(ctx, client, profile.Access == linearconn.Read)
+	}
+	if h := s.held; h != nil {
+		// A held operation opens one connection and closes it at its end.
+		if h.provider == nil || h.profile.Access != profile.Access {
+			if h.provider != nil {
+				h.provider.Close()
+			}
+			if h.provider, err = fresh(); err != nil {
+				h.provider = nil
+				return profile, nil, nil, err
+			}
+			h.profile = profile
+		}
+		return profile, h.provider, func() {}, nil
 	}
 	if s.pool != nil {
 		provider, done, err := s.pool.open(ctx, profile.Access == linearconn.Read, write, s.cfg.Now(), fresh)

@@ -92,7 +92,7 @@ func TestClaimNoteIsTheServerBodyOutsideTheConversationalCap(t *testing.T) {
 	id := w.assignmentID("a")
 	g := w.markerGo("a", id, "claim", "comment")
 	body, _ := g["body"].(string)
-	if g["action"] != "post" || !strings.HasPrefix(body, "🤖 Claimed by ClawBridge agent session a · ref cb-") || !strings.HasSuffix(body, "\n\n— 🤖 ClawBridge agent · session a") || strings.Contains(body, id) {
+	if g["action"] != "post" || !strings.HasPrefix(body, "🤖 Claimed by ClawBridge agent session a · ref cb-") || strings.Count(body, "🤖") != 1 || strings.Contains(body, "\n") || strings.Contains(body, id) {
 		t.Fatal("claim note:", g)
 	}
 	if again := w.markerGo("c", id, "claim", "comment"); again["action"] != "wait" {
@@ -103,7 +103,7 @@ func TestClaimNoteIsTheServerBodyOutsideTheConversationalCap(t *testing.T) {
 			t.Fatal("the claim note took a conversational slot:", e)
 		}
 	}
-	w.markerSettle("c", id, "claim", "comment", map[string]any{"outcome": "done", "comment_id": markerComment})
+	w.markerSettle("a", id, "claim", "comment", map[string]any{"outcome": "done", "comment_id": markerComment})
 	if c, _ := w.markerState(id, "claim"); c != "done" {
 		t.Fatal(c)
 	}
@@ -337,5 +337,94 @@ func TestWatchStatusReportsWatcherAndMarkerDrift(t *testing.T) {
 	w.assign("b", watchIssue)
 	if s = status(); s["close_label_drift"] != 0 {
 		t.Fatal("an issue another assignment holds counted as drift:", s)
+	}
+}
+
+// PR3-H1: a label write whose outcome is unknown may have landed, so the
+// close still removes the label once the attempt is stale.
+func TestUncertainLabelAddStillGetsRemovedAtClose(t *testing.T) {
+	w := newWatchHarness(t)
+	id := w.assignmentID("a")
+	w.markerGo("a", id, "claim", "label")
+	if out := w.markerSettle("a", id, "claim", "label", map[string]any{"outcome": "uncertain"}); out["state"] != "in_flight" {
+		t.Fatal("an uncertain add lost its may-have-landed state:", out)
+	}
+	w.release("a")
+	w.markersDue()
+	if g := w.markerGo("c", id, "close", "label"); g["action"] != "wait" {
+		t.Fatal("close went ahead while the uncertain add is young:", g)
+	}
+	w.age()
+	if g := w.markerGo("c", id, "close", "label"); g["action"] != "remove" {
+		t.Fatal("an uncertain add was never removed:", g)
+	}
+}
+
+// PR3-H1: an uncertain removal keeps fencing a later claim's add.
+func TestUncertainRemovalKeepsFencingTheNextClaim(t *testing.T) {
+	w := newWatchHarness(t)
+	a := w.assignmentID("a")
+	w.markerGo("a", a, "claim", "label")
+	w.markerSettle("a", a, "claim", "label", map[string]any{"outcome": "done"})
+	w.release("a")
+	w.markerGo("c", a, "close", "label")
+	w.markerSettle("c", a, "close", "label", map[string]any{"outcome": "uncertain"})
+	w.assign("b", watchIssue)
+	b := w.assignmentID("b")
+	if g := w.markerGo("c", b, "claim", "label"); g["action"] != "wait" {
+		t.Fatal("claim add not fenced by an uncertain removal:", g)
+	}
+	w.age()
+	if g := w.markerGo("c", b, "claim", "label"); g["action"] != "add" {
+		t.Fatal("claim add stuck after the removal went stale:", g)
+	}
+}
+
+// PR3-M1: a receipt settles only the attempt this session was handed, and
+// a found comment must sit in the attempt's window.
+func TestMarkerCommentSettleNeedsItsOwnAttemptOrTheWindow(t *testing.T) {
+	w := newWatchHarness(t)
+	id := w.assignmentID("a")
+	w.markerGo("a", id, "claim", "comment")
+	if e := w.errorOf("marker_settle", "c", map[string]any{"assignment_id": id, "phase": "claim", "part": "comment", "outcome": "done", "comment_id": humanOne}); !strings.Contains(e, "handed to another session") {
+		t.Fatal("another session settled the attempt with an arbitrary comment:", e)
+	}
+	if e := w.errorOf("marker_settle", "c", map[string]any{"assignment_id": id, "phase": "claim", "part": "comment", "outcome": "absent"}); !strings.Contains(e, "absent applies to a checked") {
+		t.Fatal("a young attempt was taken over:", e)
+	}
+	w.age()
+	g := w.markerGo("c", id, "claim", "comment")
+	if g["action"] != "check" || g["check_from"] == nil {
+		t.Fatal("an attempt that may have landed was not checked first:", g)
+	}
+	var reserved string
+	if e := w.s.db.QueryRow(`SELECT reserved_at FROM linear_comment_ledger WHERE marker_key<>''`).Scan(&reserved); e != nil {
+		t.Fatal(e)
+	}
+	outside := at(reserved).Add(20 * time.Minute).Format(time.RFC3339Nano)
+	if e := w.errorOf("marker_settle", "c", map[string]any{"assignment_id": id, "phase": "claim", "part": "comment", "outcome": "done", "via": "body_match", "comment_id": humanOne, "created_at": outside}); !strings.Contains(e, "outside the marker attempt's window") {
+		t.Fatal("a comment outside the window settled the marker:", e)
+	}
+	// Nothing found: the checker gets a fresh attempt of its own.
+	post := w.markerSettle("c", id, "claim", "comment", map[string]any{"outcome": "absent"})
+	if post["action"] != "post" || post["body"] == nil {
+		t.Fatal(post)
+	}
+	w.markerSettle("c", id, "claim", "comment", map[string]any{"outcome": "done", "comment_id": markerComment})
+	if c, _ := w.markerState(id, "claim"); c != "done" {
+		t.Fatal(c)
+	}
+	// Inside the window, a found comment settles it.
+	w2 := newWatchHarness(t)
+	id2 := w2.assignmentID("a")
+	w2.markerGo("a", id2, "claim", "comment")
+	w2.age()
+	w2.markerGo("c", id2, "claim", "comment")
+	if e := w2.s.db.QueryRow(`SELECT reserved_at FROM linear_comment_ledger WHERE marker_key<>''`).Scan(&reserved); e != nil {
+		t.Fatal(e)
+	}
+	inside := at(reserved).Add(time.Minute).Format(time.RFC3339Nano)
+	if out := w2.markerSettle("c", id2, "claim", "comment", map[string]any{"outcome": "done", "via": "body_match", "comment_id": markerComment, "created_at": inside}); out["state"] != "done" {
+		t.Fatal(out)
 	}
 }

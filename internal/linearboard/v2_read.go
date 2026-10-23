@@ -573,7 +573,7 @@ func (s *Service) issueV2(ctx context.Context, scope bus.Request, id string, res
 	if !ok {
 		return empty, out, errors.New("native provider lacks V2 issue capability")
 	}
-	issue, e = p2.IssueV2(ctx, id)
+	issue, e = s.readIssue(ctx, p2, id)
 	if e != nil {
 		return empty, out, e
 	}

@@ -211,7 +211,7 @@ func TestLinearLedgerReleasesOnlyNeverDispatchedFailures(t *testing.T) {
 		pendingSeen = e == nil
 		return nil, notDispatched(refused)
 	})
-	if err != refused || !pendingSeen {
+	if !errors.Is(err, refused) || err.Error() != refused.Error() || !pendingSeen {
 		t.Fatal("pre-dispatch refusal lost or not durably pending during dispatch", err, pendingSeen)
 	}
 	if _, e := os.Stat(path); !os.IsNotExist(e) {

@@ -186,7 +186,8 @@ func (l ledger) write(profile, operationID string, payload any, dispatch func() 
 		if os.Remove(path) != nil || syncDirectory(directory) != nil {
 			return nil, errors.New("operation ledger could not release a never-dispatched operation; inspect before retrying")
 		}
-		return nil, never.err
+		// The error keeps its type, so a caller can tell nothing was sent.
+		return nil, never
 	}
 	if refused, ok := err.(refusedBeforeDispatchError); ok && receipt == nil {
 		reason := refused.err.Error()
@@ -199,7 +200,7 @@ func (l ledger) write(profile, operationID string, payload any, dispatch func() 
 		if saveLedger(path, record) != nil {
 			return nil, errors.New("refused before dispatch; nothing was sent, but the refusal could not be recorded and the operation stays pending; inspect before retrying")
 		}
-		return nil, refusalError(reason)
+		return nil, refusedBeforeDispatch(refusalError(reason))
 	}
 	var receiptError *ReceiptError
 	if err != nil && (receipt == nil || !errors.As(err, &receiptError)) {

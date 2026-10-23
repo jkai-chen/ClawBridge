@@ -78,10 +78,11 @@ func labelDeltaPlanV2(ctx context.Context, p ProviderV2, issue linearprovider.Is
 // even when the label reads as present: a removal racing it may still land
 // (R2-H2), and native adds append.
 func writePlanV2(ctx context.Context, p ProviderV2, issue linearprovider.IssueV2, in WriteInputV2) (labelPlanV2, error) {
-	plan, e := labelDeltaPlanV2(ctx, p, issue, in.AddLabels, in.RemoveLabels)
-	if e == nil && in.marker && in.AddLabels != nil {
-		plan.Add = in.AddLabels
+	if !in.marker {
+		return labelDeltaPlanV2(ctx, p, issue, in.AddLabels, in.RemoveLabels)
 	}
+	plan, e := labelDeltaPlanV2(ctx, p, issue, nil, in.RemoveLabels)
+	plan.Add = in.AddLabels
 	return plan, e
 }
 
@@ -318,7 +319,7 @@ func (s *Service) WriteV2(ctx context.Context, scope bus.Request, in WriteInputV
 	if profile.Access != linearconn.Write {
 		return nil, errors.New("personal Linear profile is read-only; reconnect explicitly with write access")
 	}
-	v, e := verifyBindingV2(ctx, p, b)
+	v, e := s.proveBinding(ctx, p, b)
 	if e != nil {
 		return nil, e
 	}
@@ -346,7 +347,7 @@ func (s *Service) WriteV2(ctx context.Context, scope bus.Request, in WriteInputV
 			}
 			current = linearprovider.IssueV2{Issue: issue, ProjectKnown: true}
 		} else {
-			current, e = p2.IssueV2(ctx, in.IssueID)
+			current, e = s.readIssue(ctx, p2, in.IssueID)
 			if e != nil {
 				return nil, e
 			}
@@ -443,7 +444,9 @@ func (s *Service) WriteV2(ctx context.Context, scope bus.Request, in WriteInputV
 		if !caps.LabelDeltas {
 			return nil, errors.New("provider cannot add or remove single labels")
 		}
-		if in.AddLabels != nil {
+		// A marker's label was found by name in this team's eligible
+		// labels (markerLabel), so its eligibility is already proven.
+		if in.AddLabels != nil && !in.marker {
 			if !caps.Labels {
 				return nil, errors.New("provider cannot prove label eligibility")
 			}
@@ -455,7 +458,7 @@ func (s *Service) WriteV2(ctx context.Context, scope bus.Request, in WriteInputV
 				return nil, errors.New("selected label is outside target team")
 			}
 		}
-		if plan, e = writePlanV2(ctx, p2, current, in); e != nil {
+		if plan, e = writePlanV2(ctx, s.planProvider(p2), current, in); e != nil {
 			return nil, e
 		}
 	}
@@ -584,7 +587,7 @@ func (s *Service) WriteV2(ctx context.Context, scope bus.Request, in WriteInputV
 		if fresh.SessionID != access.SessionID {
 			return nil, refusedBeforeDispatch(errActorChanged)
 		}
-		if e = refreshWriteProofV2(ctx, p, p2, b, v, in, team, project, current, legacy, plan); e != nil {
+		if e = s.refreshWriteProofV2(ctx, p, p2, b, v, in, team, project, current, legacy, plan); e != nil {
 			return nil, proofFailure(e)
 		}
 		if e = s.unchangedV2(ctx, scope, b); e != nil {
@@ -662,6 +665,7 @@ func (s *Service) WriteV2(ctx context.Context, scope bus.Request, in WriteInputV
 				}
 				issue, e = p2.UpdateV2(ctx, update)
 			}
+			s.wrote(in.IssueID)
 			if e != nil {
 				return nil, writeFailure(p, sent, known, e, post)
 			}

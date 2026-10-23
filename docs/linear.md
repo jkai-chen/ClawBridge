@@ -410,8 +410,10 @@ issue's comments; a plain read never reads them.
 
 ### The agent marker
 
-Every comment ClawBridge posts, top-level or a reply, from the CLI or MCP, ends
-with a blank line and one attribution line that ClawBridge adds itself:
+Every comment ClawBridge posts for an agent, top-level or a reply, from the CLI
+or MCP, ends with a blank line and one attribution line that ClawBridge adds
+itself (claim and release notes name the session in their own single line
+instead):
 
 ```text
 — 🤖 ClawBridge agent · session SESSION_NAME

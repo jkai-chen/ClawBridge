@@ -55,7 +55,7 @@ func TestLinearWriteErrorsKeepTheBoardMessage(t *testing.T) {
 		t.Fatal(code, status)
 	}
 	busy := writeError(linearboard.InProgressError{Message: "in_progress: retry the same operation_id shortly"})
-	if code, status := serviceError(busy); code != "conflict" || status != 409 || !strings.HasPrefix(responseMessage(code, busy), "in_progress") {
+	if code, status := serviceError(busy); code != "in_progress" || status != 409 || !strings.HasPrefix(responseMessage(code, busy), "in_progress") {
 		t.Fatal(code, status)
 	}
 	// The text alone decides nothing: an untyped error saying "uncertain" is a refusal.

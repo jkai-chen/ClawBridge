@@ -384,6 +384,10 @@ func NewWithHTTPClient(c Config, tokens TokenSource, httpClient *http.Client) (*
 	return &Client{config: c, tokens: tokens, http: &copyClient, selections: map[string][]mirror.Selection{}}, nil
 }
 
+// LinearWriteTimeout bounds a linear_write request: past the server's own
+// 80-second write deadline, so the client hears its answer.
+const LinearWriteTimeout = 90 * time.Second
+
 type HTTPError struct {
 	Status int
 	Code   string
@@ -391,6 +395,12 @@ type HTTPError struct {
 	// conflict or unreadable task board binding (409) or a rate limit (429),
 	// kept only when it is one line of printable text.
 	Message string
+}
+
+// Rejection reports the status, code and kept message, for callers that
+// tell refusals apart without importing this package.
+func (e *HTTPError) Rejection() (status int, code, message string) {
+	return e.Status, e.Code, e.Message
 }
 
 func (e *HTTPError) Error() string {
@@ -427,7 +437,15 @@ func (c *Client) call(ctx context.Context, r bus.Request) (bus.Result, bool, err
 	}
 	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("Content-Type", "application/json")
-	response, err := c.http.Do(req)
+	client := c.http
+	if r.Operation == "linear_write" {
+		// The server may take up to a minute on a write it makes as the
+		// ClawBridge app, and finishes it even if this client goes away.
+		longer := *c.http
+		longer.Timeout = LinearWriteTimeout
+		client = &longer
+	}
+	response, err := client.Do(req)
 	if err != nil {
 		return bus.Result{}, ctx.Err() == nil, errors.New("cloud transport unavailable; operation outcome may be uncertain, no write queued")
 	}
@@ -446,10 +464,10 @@ func (c *Client) call(ctx context.Context, r bus.Request) (bus.Result, bool, err
 		}
 		if json.Unmarshal(encoded, &body) == nil {
 			switch body.Error.Code {
-			case "unauthenticated", "forbidden", "invalid", "conflict", "not_found", "rate_limited", "unavailable", "binding_unreadable":
+			case "unauthenticated", "forbidden", "invalid", "conflict", "not_found", "rate_limited", "unavailable", "binding_unreadable", "in_progress":
 				code = body.Error.Code
 			}
-			if (response.StatusCode == http.StatusBadRequest && code == "invalid") || (response.StatusCode == http.StatusConflict && (code == "binding_unreadable" || code == "conflict")) || (response.StatusCode == http.StatusTooManyRequests && code == "rate_limited") {
+			if (response.StatusCode == http.StatusBadRequest && code == "invalid") || (response.StatusCode == http.StatusConflict && (code == "binding_unreadable" || code == "conflict" || code == "in_progress")) || (response.StatusCode == http.StatusTooManyRequests && code == "rate_limited") {
 				message, _ = bus.SafePublicText(body.Error.Message)
 			}
 		}

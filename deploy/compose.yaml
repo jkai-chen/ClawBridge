@@ -35,6 +35,11 @@ services:
       CLAWBRIDGE_DATABASE_URL: postgres://clawbridge:${POSTGRES_PASSWORD:?Set a private random database password}@db:5432/clawbridge?sslmode=disable
       CLAWBRIDGE_OAUTH_CLIENT_SECRET: ${CLAWBRIDGE_OAUTH_CLIENT_SECRET:?Set the Desktop-app installed client credential}
       CLAWBRIDGE_OAUTH_DEVICE_CLIENT_SECRET: ${CLAWBRIDGE_OAUTH_DEVICE_CLIENT_SECRET:?Set the device-app installed client credential}
+      # Optional: the ClawBridge Linear app (docs/operations/deployment.md).
+      # Left empty, the server starts without app writes.
+      CLAWBRIDGE_LINEAR_APP_CLIENT_ID: ${CLAWBRIDGE_LINEAR_APP_CLIENT_ID:-}
+      CLAWBRIDGE_LINEAR_APP_CLIENT_SECRET: ${CLAWBRIDGE_LINEAR_APP_CLIENT_SECRET:-}
+      CLAWBRIDGE_LINEAR_APP_TOKEN_KEY: ${CLAWBRIDGE_LINEAR_APP_TOKEN_KEY:-}
     depends_on:
       db:
         condition: service_healthy

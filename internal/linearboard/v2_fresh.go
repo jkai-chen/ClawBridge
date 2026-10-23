@@ -27,7 +27,10 @@ func (s *Service) refreshWriteProofV2(ctx context.Context, p Provider, p2 Provid
 			}
 			current = linearprovider.IssueV2{Issue: issue, ProjectKnown: true}
 		} else {
-			current, e = s.readIssue(ctx, p2, in.IssueID)
+			// The in-lock re-read is never served from a held operation's
+			// cache: an issue moved out of the binding meanwhile must stop
+			// the write.
+			current, e = s.rereadIssue(ctx, p2, in.IssueID)
 			if e != nil {
 				return e
 			}

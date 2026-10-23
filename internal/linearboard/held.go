@@ -65,6 +65,16 @@ func (s *Service) readIssue(ctx context.Context, p ProviderV2, id string) (linea
 	return i, e
 }
 
+// rereadIssue always reads the issue from Linear, and refreshes a held
+// operation's cache with it.
+func (s *Service) rereadIssue(ctx context.Context, p ProviderV2, id string) (linearprovider.IssueV2, error) {
+	i, e := p.IssueV2(ctx, id)
+	if e == nil && s.held != nil {
+		s.held.issues[id] = i
+	}
+	return i, e
+}
+
 // wrote forgets a held operation's reads of an issue it just changed.
 func (s *Service) wrote(id string) {
 	if s.held != nil {

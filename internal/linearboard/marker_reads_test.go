@@ -6,11 +6,12 @@ import (
 	"testing"
 )
 
-// A claim marker is one held operation: one connection, one binding proof,
-// one issue read and one label page, whatever its two parts need. On
-// native Linear that is tools/list, get_team and list_projects per bound
-// team, get_issue, list_issue_labels, plus the comment's and the label's
-// readbacks: 7 reads for a one-team binding.
+// A claim marker is one held operation: one connection, one binding proof
+// and one label page, whatever its two parts need. The issue is read once
+// up front and again, from Linear, inside each part's write lock (PR3-L4).
+// On native Linear that is tools/list, get_team and list_projects per bound
+// team, three get_issue, list_issue_labels, plus the comment's and the
+// label's readbacks: 9 reads for a one-team binding.
 func TestMarkerClaimReadCounts(t *testing.T) {
 	s, _, p, scope := markerTest(t)
 	var n readCounts
@@ -21,7 +22,7 @@ func TestMarkerClaimReadCounts(t *testing.T) {
 		t.Fatal(out, p.writes)
 	}
 	t.Logf("opens=%d reads=%+v", opens, n)
-	if want := (readCounts{labelPages: 1, teams: 2, projects: 2, issues: 1, capabilities: 2}); opens != 1 || n != want {
+	if want := (readCounts{labelPages: 1, teams: 2, projects: 2, issues: 3, capabilities: 2}); opens != 1 || n != want {
 		t.Fatalf("opens %d reads %+v, want 1 and %+v", opens, n, want)
 	}
 }

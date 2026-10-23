@@ -175,6 +175,22 @@ Retry-After, and can be retried with the same operation ID. ClawBridge never
 retries a write by itself. This local retry protection does not promise exactly-once writes
 across machines.
 
+Agent-written text never mentions anyone in Linear. A comment or reply body, or
+an issue title or description, sent through the CLI or MCP is refused before
+anything is sent ("mentions are not allowed in agent-written text") when it
+contains, anywhere, code spans and fences included:
+
+- an `@` mention, such as `@Linear` (Linear's agent), `@ann` or `Done.@ann`. An
+  email address, where a letter or digit comes right before the `@`
+  (`a@linear.app`), is not a mention;
+- a link to a Linear profile (`linear.app/…/profiles…`) or a `mention://` link.
+
+Markdown structure is not parsed, because Linear may render code differently,
+so code is no exemption: write scoped packages without the `@` (`types/node`)
+and name people and agents in plain words. There is no override. An update
+that rewrites a description already holding a person's mention is refused as
+well; leave such a description to a person.
+
 A write is accepted only on evidence that it landed where it was asked to:
 
 - A comment's receipt must name its issue, or a read of that issue's comments

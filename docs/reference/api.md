@@ -119,6 +119,10 @@ issue, create, update, comment, labels, members, relation_add and relation_remov
 each named `taskboard_<operation>_v2`. It advertises 35 tools in total; a V1-only
 adapter retains 24 and an unconfigured adapter retains 17. Prefer the advertised
 V2 family for new board calls. Initialization and listing do not access Linear.
+Every write's title, description and comment body is refused before dispatch
+when it mentions anyone in Linear: any `@` mention (email addresses aside), a
+Linear profile link or a `mention://` link, anywhere, code included; see
+[Linear](../linear.md).
 `taskboard_comment_v2` accepts `parent_id`, the UUID of a comment on the same
 issue, to reply in that comment's thread: the parent is proven by a bounded
 comments read before anything is sent, the receipt names `parent_id` (the

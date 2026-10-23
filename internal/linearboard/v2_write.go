@@ -99,6 +99,9 @@ func ValidateWriteV2(in WriteInputV2) error {
 	if !operationPattern.MatchString(in.OperationID) {
 		return errors.New("write requires operation_id")
 	}
+	if e := mentionGuard(in.Title, in.Description, &in.Body); e != nil {
+		return e
+	}
 	if in.Title != nil && !validText(*in.Title, 512, false) {
 		return errors.New("invalid issue title")
 	}

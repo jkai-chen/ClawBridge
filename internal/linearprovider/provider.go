@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math/rand/v2"
 	"net/http"
 	"net/http/httptrace"
 	"regexp"
@@ -162,8 +163,8 @@ func New(ctx context.Context, h *http.Client, readonly bool) (*Provider, error) 
 	if base == nil {
 		base = http.DefaultTransport
 	}
-	hits := new(atomic.Uint64)
-	bounded.Transport = boundedTransport{base, hits}
+	hits, transient := new(atomic.Uint64), new(atomic.Bool)
+	bounded.Transport = boundedTransport{base, hits, transient}
 	previousRedirect := bounded.CheckRedirect
 	bounded.CheckRedirect = func(req *http.Request, via []*http.Request) error {
 		if req.URL.Scheme != "https" || req.URL.Host != "mcp.linear.app" || len(via) > 5 {
@@ -182,13 +183,31 @@ func New(ctx context.Context, h *http.Client, readonly bool) (*Provider, error) 
 		}
 		return s, nil
 	}
-	s, e := connect(ctx)
-	if e != nil {
-		return nil, e
+	open := func(ctx context.Context) (*mcp.ClientSession, *Provider, error) {
+		s, e := connect(ctx)
+		if e != nil {
+			return nil, nil, e
+		}
+		p, e := NewWithCaller(ctx, s)
+		if e != nil {
+			s.Close()
+			return nil, nil, e
+		}
+		return s, p, nil
 	}
-	p, e := NewWithCaller(ctx, s)
+	// Initialize and the first tools/list are retried once after a 5xx or a
+	// broken connection: they change nothing, unlike a tool call, which is
+	// never retried.
+	s, p, e := open(ctx)
+	if e != nil && transient.Load() && ctx.Err() == nil {
+		select {
+		case <-time.After(connectRetryDelay()):
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+		s, p, e = open(ctx)
+	}
 	if e != nil {
-		s.Close()
 		return nil, e
 	}
 	p.closer, p.capHits = s, hits
@@ -234,6 +253,15 @@ func (p *Provider) reopenSession(ctx context.Context) error {
 type boundedTransport struct {
 	base http.RoundTripper
 	hits *atomic.Uint64
+	// transient records a 5xx or a broken connection, which New retries
+	// once while connecting.
+	transient *atomic.Bool
+}
+
+// connectRetryDelay is the pause before New's one retry: 500 ms plus up to
+// 250 ms of jitter. Tests replace it.
+var connectRetryDelay = func() time.Duration {
+	return 500*time.Millisecond + time.Duration(rand.Int64N(int64(250*time.Millisecond)))
 }
 
 // RoundTrip marks the failures that prove a request never reached the
@@ -245,6 +273,12 @@ func (t boundedTransport) RoundTrip(r *http.Request) (*http.Response, error) {
 	trace := &httptrace.ClientTrace{WroteHeaders: func() { wrote.Store(true) }}
 	r = r.WithContext(httptrace.WithClientTrace(r.Context(), trace))
 	response, err := t.base.RoundTrip(r)
+	if err != nil && r.Context().Err() == nil && t.transient != nil {
+		t.transient.Store(true)
+	}
+	if err == nil && response.StatusCode >= 500 && t.transient != nil {
+		t.transient.Store(true)
+	}
 	if err != nil {
 		if !wrote.Load() && r.Context().Err() == nil {
 			return nil, &Error{Kind: "unavailable", NotSent: true}

@@ -11,12 +11,15 @@ type TaskboardAccess struct {
 	WorkspaceID string `json:"workspace_id"`
 	ProjectID   string `json:"project_id"`
 	SessionID   string `json:"session_id"`
+	// SessionName is the actor session's name, so a client that addressed
+	// the session by ID can still show its name (claim markers).
+	SessionName string `json:"session_name"`
 	CanWrite    bool   `json:"can_write"`
 	ProjectRole string `json:"project_role"`
 }
 
 func accessMap(a TaskboardAccess) map[string]any {
-	return map[string]any{"workspace_id": a.WorkspaceID, "project_id": a.ProjectID, "session_id": nullable(a.SessionID), "can_write": a.CanWrite, "project_role": a.ProjectRole}
+	return map[string]any{"workspace_id": a.WorkspaceID, "project_id": a.ProjectID, "session_id": nullable(a.SessionID), "session_name": nullable(a.SessionName), "can_write": a.CanWrite, "project_role": a.ProjectRole}
 }
 func (a TaskboardAccess) MarshalJSON() ([]byte, error) { return json.Marshal(accessMap(a)) }
 func (a *TaskboardAccess) UnmarshalJSON(raw []byte) error {
@@ -34,10 +37,10 @@ func ParseTaskboardAccess(v any) (TaskboardAccess, error) {
 	}
 	var m map[string]any
 	dec := json.NewDecoder(bytes.NewReader(raw))
-	if dec.Decode(&m) != nil || len(m) != 5 {
+	if dec.Decode(&m) != nil || len(m) != 6 {
 		return a, errors.New("invalid taskboard access fields")
 	}
-	for _, k := range []string{"workspace_id", "project_id", "session_id", "can_write", "project_role"} {
+	for _, k := range []string{"workspace_id", "project_id", "session_id", "session_name", "can_write", "project_role"} {
 		if _, ok := m[k]; !ok {
 			return a, errors.New("missing taskboard access field")
 		}
@@ -56,6 +59,14 @@ func ParseTaskboardAccess(v any) (TaskboardAccess, error) {
 		if !ok || !namePattern.MatchString(a.SessionID) {
 			return a, errors.New("invalid access session")
 		}
+	}
+	if m["session_name"] != nil {
+		a.SessionName, ok = m["session_name"].(string)
+		if !ok || !namePattern.MatchString(a.SessionName) || a.SessionID == "" {
+			return a, errors.New("invalid access session name")
+		}
+	} else if a.SessionID != "" {
+		return a, errors.New("access session has no name")
 	}
 	a.CanWrite, ok = m["can_write"].(bool)
 	if !ok {

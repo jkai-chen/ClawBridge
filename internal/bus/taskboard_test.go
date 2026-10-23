@@ -85,10 +85,10 @@ func TestTaskboardSchemaFourAndMigration(t *testing.T) {
 		t.Fatal(e)
 	}
 	var v int
-	if e = s.db.QueryRow("PRAGMA user_version").Scan(&v); e != nil || v != 6 {
+	if e = s.db.QueryRow("PRAGMA user_version").Scan(&v); e != nil || v != 7 {
 		t.Fatal(v, e)
 	}
-	if _, e = s.db.Exec("DROP TABLE principal_subjects; DROP TABLE principal_events; ALTER TABLE workspaces DROP COLUMN allowed_domains; DROP TABLE taskboard_bindings; DROP TABLE session_assignments; ALTER TABLE projects DROP COLUMN coordinator_session; PRAGMA user_version=2"); e != nil {
+	if _, e = s.db.Exec("DROP TABLE linear_comment_ledger; DROP TABLE watch_cursors; DROP TABLE watch_events; DROP TABLE watch_lease; DROP TABLE assignment_markers; DROP TABLE principal_subjects; DROP TABLE principal_events; ALTER TABLE workspaces DROP COLUMN allowed_domains; DROP TABLE taskboard_bindings; DROP TABLE session_assignments; ALTER TABLE projects DROP COLUMN coordinator_session; PRAGMA user_version=2"); e != nil {
 		t.Fatal(e)
 	}
 	s.Close()
@@ -101,7 +101,7 @@ func TestTaskboardSchemaFourAndMigration(t *testing.T) {
 	if e != nil {
 		t.Fatal(e)
 	}
-	if _, e = s.db.Exec("PRAGMA user_version=7"); e != nil {
+	if _, e = s.db.Exec("PRAGMA user_version=8"); e != nil {
 		t.Fatal(e)
 	}
 	s.Close()
@@ -185,8 +185,8 @@ func TestTaskboardExactNestedShapeAndAccess(t *testing.T) {
 		t.Fatal(e)
 	}
 	for _, session := range []string{"", "a"} {
-		v := h.call("taskboard_access", session, nil).(map[string]any)
-		if len(v) != 5 {
+		v := h.call("taskboard_access", session, map[string]any{"ledger": 1}).(map[string]any)
+		if len(v) != 6 || (session == "" && v["session_name"] != nil) || (session != "" && v["session_name"] != session) {
 			t.Fatal(v)
 		}
 		a, e := ParseTaskboardAccess(v)
@@ -197,11 +197,11 @@ func TestTaskboardExactNestedShapeAndAccess(t *testing.T) {
 			t.Fatal(v)
 		}
 	}
-	h.fail("taskboard_access", "a", map[string]any{"instance": "wrong"})
+	h.fail("taskboard_access", "a", map[string]any{"instance": "wrong", "ledger": 1})
 	if _, e = h.s.db.Exec(`DROP TRIGGER access_no_touch; UPDATE sessions SET status='retired' WHERE name='a'`); e != nil {
 		t.Fatal(e)
 	}
-	a, e := ParseTaskboardAccess(h.call("taskboard_access", "a", nil))
+	a, e := ParseTaskboardAccess(h.call("taskboard_access", "a", map[string]any{"ledger": 1}))
 	if e != nil || a.CanWrite || a.SessionID == "" {
 		t.Fatal(a, e)
 	}

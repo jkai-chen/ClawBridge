@@ -194,6 +194,9 @@ func (e *ReceiptError) Code() string { return e.Outcome }
 func (s *Service) access(ctx context.Context, scope bus.Request) (bus.TaskboardAccess, error) {
 	scope.Operation = "taskboard_access"
 	scope.Args = instanceArgs(scope.Args)
+	// The server refuses Linear writes from a client that does not
+	// record its comments in the ledger.
+	scope.Args["ledger"] = 1
 	result, err := s.cfg.Executor.Execute(ctx, scope)
 	if err != nil {
 		return bus.TaskboardAccess{}, err

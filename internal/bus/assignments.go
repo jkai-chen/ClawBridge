@@ -201,6 +201,11 @@ func (s *Store) releaseAssignment(ctx context.Context, tx *transaction, wid, pid
 	if _, err = tx.ExecContext(ctx, `UPDATE session_assignments SET state='released',revision=?,released_at=?,release_reason=? WHERE id=? AND project_id=?`, newID("rev_"), stamp(), reason, live["id"], pid); err != nil {
 		return nil, err
 	}
+	if live["state"] == "confirmed" {
+		if err = unwatchAssignment(ctx, tx, pid, str(live, "issue_uuid")); err != nil {
+			return nil, err
+		}
+	}
 	if err = s.audit(ctx, tx, wid, pid, "", "assignment", live["id"].(string), "released", map[string]any{"session_id": sid, "reason": reason}); err != nil {
 		return nil, err
 	}
@@ -433,6 +438,9 @@ func (s *Store) assignment(ctx context.Context, tx *transaction, w, p map[string
 			return nil, scoped("assignment overlaps the confirmed assignment of "+strings.Join(sessions, ", ")+"; pass allow_overlap to confirm both owners", "conflict")
 		}
 		if _, err = tx.ExecContext(ctx, `UPDATE session_assignments SET state='confirmed',revision=?,confirmed_by_session=?,confirmed_by_principal=?,confirmed_at=? WHERE id=? AND project_id=?`, newID("rev_"), sid, s.principal, stamp(), live["id"], pid); err != nil {
+			return nil, err
+		}
+		if err = watchAssignment(ctx, tx, pid, str(live, "issue_uuid")); err != nil {
 			return nil, err
 		}
 		if err = s.audit(ctx, tx, wid, pid, sid, "assignment", live["id"].(string), "confirmed", map[string]any{"session_id": tid}); err != nil {

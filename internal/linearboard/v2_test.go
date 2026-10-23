@@ -38,7 +38,7 @@ func (a *authorityV2) Execute(_ context.Context, r bus.Request) (bus.Result, err
 		if a.afterAccess != nil {
 			a.afterAccess(a.accesses)
 		}
-		return bus.Result{Source: "local-authority", Data: bus.TaskboardAccess{WorkspaceID: a.b.WorkspaceID, ProjectID: a.b.ProjectID, SessionID: a.actor, CanWrite: !a.deny, ProjectRole: "member"}}, nil
+		return bus.Result{Source: "local-authority", Data: bus.TaskboardAccess{WorkspaceID: a.b.WorkspaceID, ProjectID: a.b.ProjectID, SessionID: a.actor, SessionName: a.actor, CanWrite: !a.deny, ProjectRole: "member"}}, nil
 	}
 	if r.Operation == "taskboard_get" {
 		return bus.Result{Source: "local-authority", Data: a.old}, nil

@@ -85,7 +85,7 @@ func TestPostgresLabelPolicySchemaEightMigratesAVersionSevenStore(t *testing.T) 
 		t.Fatal(err)
 	}
 	s.Close()
-	if _, err = admin.ExecContext(ctx, `DROP TABLE `+schema+`.intake_policies; DROP TABLE `+schema+`.intake_trusted; DROP TABLE `+schema+`.intake_queue; DROP TABLE `+schema+`.intake_tokens; DROP TABLE `+schema+`.intake_counters; ALTER TABLE `+schema+`.assignment_markers DROP COLUMN engineer; DROP TABLE `+schema+`.linear_write_unsettled; DROP TABLE `+schema+`.linear_write_ledger; DROP TABLE `+schema+`.linear_app_tokens; DROP TABLE `+schema+`.linear_label_policy; DELETE FROM `+schema+`.clawbridge_schema WHERE version>=8`); err != nil {
+	if _, err = admin.ExecContext(ctx, `DROP TABLE `+schema+`.intake_policies; DROP TABLE `+schema+`.intake_trusted; DROP TABLE `+schema+`.intake_queue; DROP TABLE `+schema+`.intake_tokens; DROP TABLE `+schema+`.intake_counters; DROP TABLE `+schema+`.watch_ticks; ALTER TABLE `+schema+`.assignment_markers DROP COLUMN engineer; DROP TABLE `+schema+`.linear_write_unsettled; DROP TABLE `+schema+`.linear_write_ledger; DROP TABLE `+schema+`.linear_app_tokens; DROP TABLE `+schema+`.linear_label_policy; DELETE FROM `+schema+`.clawbridge_schema WHERE version>=8`); err != nil {
 		t.Fatal(err)
 	}
 	s, err = OpenPostgres(ctx, parsed.String(), owner)

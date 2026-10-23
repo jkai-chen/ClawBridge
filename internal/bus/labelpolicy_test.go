@@ -133,7 +133,7 @@ func TestLabelPolicySchemaEightMigratesAVersionSevenStore(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err = s.db.Exec(`DROP TABLE intake_policies; DROP TABLE intake_trusted; DROP TABLE intake_queue; DROP TABLE intake_tokens; DROP TABLE intake_counters; ALTER TABLE assignment_markers DROP COLUMN engineer; DROP TABLE linear_write_unsettled; DROP TABLE linear_write_ledger; DROP TABLE linear_app_tokens; DROP TABLE linear_label_policy; PRAGMA user_version=7;`); err != nil {
+	if _, err = s.db.Exec(`DROP TABLE intake_policies; DROP TABLE intake_trusted; DROP TABLE intake_queue; DROP TABLE intake_tokens; DROP TABLE intake_counters; DROP TABLE watch_ticks; ALTER TABLE assignment_markers DROP COLUMN engineer; DROP TABLE linear_write_unsettled; DROP TABLE linear_write_ledger; DROP TABLE linear_app_tokens; DROP TABLE linear_label_policy; PRAGMA user_version=7;`); err != nil {
 		t.Fatal(err)
 	}
 	s.Close()

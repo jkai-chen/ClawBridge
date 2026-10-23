@@ -12,9 +12,10 @@ import (
 )
 
 const (
-	newLabel   = "e1000000-0000-4000-8000-000000000001"
-	dupLabel   = "e2000000-0000-4000-8000-000000000002"
-	newProject = "e3000000-0000-4000-8000-000000000003"
+	newInitiative = "e4000000-0000-4000-8000-000000000004"
+	newLabel      = "e1000000-0000-4000-8000-000000000001"
+	dupLabel      = "e2000000-0000-4000-8000-000000000002"
+	newProject    = "e3000000-0000-4000-8000-000000000003"
 )
 
 // adminAuthority adds a project role, the approved label list and the
@@ -69,17 +70,37 @@ func (a *adminAuthority) Execute(ctx context.Context, r bus.Request) (bus.Result
 // returned by name; each write is recorded.
 type adminFake struct {
 	*providerV2
-	labels     map[string][]linearprovider.AdminLabel
-	projects   map[string][]linearprovider.ProjectListing
-	incomplete bool
-	afterWrite func()
-	writes     []string
-	reason     string
+	labels           map[string][]linearprovider.AdminLabel
+	projects         map[string][]linearprovider.ProjectListing
+	incomplete       bool
+	afterWrite       func()
+	writes           []string
+	reason           string
+	initiativeReason string
+	initiatives      map[string][]linearprovider.Initiative
+	members          map[string]bool
 	// teamless makes label receipts leave the team out.
 	teamless bool
 }
 
-func (p *adminFake) AdminReason() string { return p.reason }
+func (p *adminFake) AdminReason() string      { return p.reason }
+func (p *adminFake) InitiativeReason() string { return p.initiativeReason }
+func (p *adminFake) InitiativesNamed(_ context.Context, name string) ([]linearprovider.Initiative, bool, error) {
+	return p.initiatives[strings.ToLower(name)], !p.incomplete, nil
+}
+func (p *adminFake) CreateInitiative(_ context.Context, name, description string) (linearprovider.AdminReceipt, error) {
+	p.write("initiative " + name + " " + description)
+	p.initiatives[strings.ToLower(name)] = []linearprovider.Initiative{{ID: newInitiative, Name: name}}
+	return linearprovider.AdminReceipt{ID: newInitiative, Name: name}, nil
+}
+func (p *adminFake) InitiativeHasProject(_ context.Context, initiative, project string) (bool, error) {
+	return p.members[initiative+"/"+project], nil
+}
+func (p *adminFake) AddProjectToInitiative(_ context.Context, initiative, project string) (linearprovider.AdminReceipt, error) {
+	p.write("add " + initiative + " " + project)
+	p.members[initiative+"/"+project] = true
+	return linearprovider.AdminReceipt{ID: initiative}, nil
+}
 func (p *adminFake) TeamLabelsNamed(_ context.Context, _, name string) ([]linearprovider.AdminLabel, bool, error) {
 	return p.labels[strings.ToLower(name)], !p.incomplete, nil
 }
@@ -115,7 +136,7 @@ func adminTest(t *testing.T) (*Service, *adminAuthority, *adminFake, bus.Request
 	t.Helper()
 	s, a, p, scope := testV2(t)
 	auth := &adminAuthority{authorityV2: a, role: "owner", revision: 3, policy: bus.LabelPolicy{Labels: []string{"Agent", "Bug"}, Renames: map[string]string{"Bugs": "Bug old"}}}
-	fake := &adminFake{providerV2: p, labels: map[string][]linearprovider.AdminLabel{}, projects: map[string][]linearprovider.ProjectListing{}}
+	fake := &adminFake{providerV2: p, labels: map[string][]linearprovider.AdminLabel{}, projects: map[string][]linearprovider.ProjectListing{}, initiatives: map[string][]linearprovider.Initiative{}, members: map[string]bool{}}
 	s.cfg.Executor = auth
 	s.cfg.Open = func(context.Context, *http.Client, bool) (Provider, error) { return fake, nil }
 	return s, auth, fake, scope
@@ -330,5 +351,61 @@ func TestLabelPolicyFileRefusesRepeatedKeys(t *testing.T) {
 	}
 	if _, e := s.SetLabelPolicyV2(context.Background(), scope, []byte(`{"labels":["A"],"renames":{"x":"y"}}`), 3); e != nil || a.policySets != 1 {
 		t.Fatal("a valid file refused", e)
+	}
+}
+
+// Initiatives: created once by name (an existing one is returned, never
+// updated), no team, no policy; a project joins only when it is in a bound
+// team, verified by the initiative's readback.
+func TestAdminInitiatives(t *testing.T) {
+	s, a, p, scope := adminTest(t)
+	in := AdminInput{Kind: "initiative_create", OperationID: "i-1", Name: "Product Review", Description: "Review projects"}
+	r, e := s.Admin(context.Background(), scope, in)
+	if e != nil || r.Outcome != "accepted" || r.ID != newInitiative || r.TeamID != "" || len(p.writes) != 1 || p.writes[0] != "initiative Product Review Review projects" {
+		t.Fatal(r, e, p.writes)
+	}
+	if again, e := s.Admin(context.Background(), scope, AdminInput{Kind: "initiative_create", OperationID: "i-2", Name: "product review"}); e != nil || again.Outcome != "observed_unchanged" || again.ID != newInitiative || len(p.writes) != 1 {
+		t.Fatal("an existing initiative was created again", again, e)
+	}
+	if a.audits[0]["kind"] != "initiative_create" || a.audits[0]["linear_id"] != newInitiative || a.audits[0]["linear_team_id"] != nil || a.audits[0]["policy_revision"] != nil {
+		t.Fatal("audit", a.audits[0])
+	}
+	// A project of a bound team joins; it is recorded with both IDs.
+	add := AdminInput{Kind: "initiative_add_project", OperationID: "a-1", InitiativeID: newInitiative, ProjectID: projectA}
+	if r, e = s.Admin(context.Background(), scope, add); e != nil || r.Outcome != "accepted" || r.ID != newInitiative || r.ProjectID != projectA || p.writes[1] != "add "+newInitiative+" "+projectA {
+		t.Fatal(r, e, p.writes)
+	}
+	if last := a.audits[len(a.audits)-1]; last["kind"] != "initiative_add_project" || last["linear_project_id"] != projectA {
+		t.Fatal(last)
+	}
+	add.OperationID = "a-2"
+	if r, e = s.Admin(context.Background(), scope, add); e != nil || r.Outcome != "observed_unchanged" || len(p.writes) != 2 {
+		t.Fatal("an existing membership was sent again", r, e)
+	}
+	// A project outside every bound team is refused before Linear.
+	p.providerV2.projects["e5000000-0000-4000-8000-000000000005"] = []string{"99999999-9999-4999-8999-999999999999"}
+	if _, e = s.Admin(context.Background(), scope, AdminInput{Kind: "initiative_add_project", OperationID: "a-3", InitiativeID: newInitiative, ProjectID: "e5000000-0000-4000-8000-000000000005"}); e == nil || !strings.Contains(e.Error(), "not in a team of this project's binding") || len(p.writes) != 2 {
+		t.Fatal("an unbound project joined", e)
+	}
+	// Owner only, and refused when the initiative tools drift.
+	a.role = "member"
+	if _, e = s.Admin(context.Background(), scope, AdminInput{Kind: "initiative_create", OperationID: "i-3", Name: "Other"}); e == nil || !strings.Contains(e.Error(), "owner only") {
+		t.Fatal(e)
+	}
+	a.role = "owner"
+	p.initiativeReason = "save_initiative no longer accepts name and description"
+	if _, e = s.Admin(context.Background(), scope, AdminInput{Kind: "initiative_create", OperationID: "i-4", Name: "Other"}); e == nil || len(p.writes) != 2 {
+		t.Fatal("drifted initiative tools used", e)
+	}
+	for name, bad := range map[string]AdminInput{
+		"team on create":       {Kind: "initiative_create", OperationID: "x", Name: "N", TeamID: teamID},
+		"mention":              {Kind: "initiative_create", OperationID: "x", Name: "N", Description: "ask @ann"},
+		"name on add":          {Kind: "initiative_add_project", OperationID: "x", InitiativeID: newInitiative, ProjectID: projectA, Name: "N"},
+		"non-UUID initiative":  {Kind: "initiative_add_project", OperationID: "x", InitiativeID: "Product Review", ProjectID: projectA},
+		"description on label": {Kind: "label_create", OperationID: "x", TeamID: teamID, Name: "Bug", Description: "d"},
+	} {
+		if ValidateAdmin(bad) == nil {
+			t.Fatal(name, "accepted")
+		}
 	}
 }

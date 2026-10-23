@@ -199,7 +199,7 @@ func conflict(message string) error {
 	return &serviceError{code: "conflict", cause: errors.New(message), public: true}
 }
 
-var adminAuditKinds = map[string]bool{"label_create": true, "label_rename": true, "project_create": true}
+var adminAuditKinds = map[string]bool{"label_create": true, "label_rename": true, "project_create": true, "initiative_create": true, "initiative_add_project": true}
 var adminAuditOutcomes = map[string]bool{"accepted": true, "observed_unchanged": true, "accepted_duplicate_observed": true, "accepted_duplicate_unknown": true, "uncertain": true}
 
 // adminAudit records one coordinator-only Linear write in history: IDs, the
@@ -210,11 +210,18 @@ func (s *Store) adminAudit(ctx context.Context, tx *transaction, wid, pid string
 	if !adminAuditKinds[kind] || !adminAuditOutcomes[outcome] {
 		return nil, invalid("linear_admin_audit requires a known kind and outcome")
 	}
-	team, err := lowerUUID(a, "linear_team_id", true)
+	// Initiatives belong to the workspace, not a team; they name the
+	// initiative, and adding a project names the project too.
+	initiative := strings.HasPrefix(kind, "initiative_")
+	team, err := lowerUUID(a, "linear_team_id", !initiative)
 	if err != nil {
 		return nil, err
 	}
-	id, err := lowerUUID(a, "linear_id", false)
+	id, err := lowerUUID(a, "linear_id", initiative)
+	if err != nil {
+		return nil, err
+	}
+	project, err := lowerUUID(a, "linear_project_id", kind == "initiative_add_project")
 	if err != nil {
 		return nil, err
 	}
@@ -222,6 +229,9 @@ func (s *Store) adminAudit(ctx context.Context, tx *transaction, wid, pid string
 		return nil, invalid("linear_admin_audit requires operation_id")
 	}
 	details := map[string]any{"linear_team_id": team, "linear_id": id, "operation_id": str(a, "operation_id"), "outcome": outcome}
+	if project != "" {
+		details["linear_project_id"] = project
+	}
 	for _, k := range []string{"name", "previous_name"} {
 		if v := str(a, k); v != "" {
 			if err := policyName(v); err != nil {
@@ -231,7 +241,9 @@ func (s *Store) adminAudit(ctx context.Context, tx *transaction, wid, pid string
 		}
 	}
 	entity := "linear_project"
-	if kind != "project_create" {
+	if initiative {
+		entity = "linear_initiative"
+	} else if kind != "project_create" {
 		entity = "linear_label"
 		revision, err := integer(a["policy_revision"])
 		if err != nil || revision < 1 {

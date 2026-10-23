@@ -639,6 +639,19 @@ clawbridge linear project create NAME --team TEAM_UUID --operation-id ID
     preview with the new project added, and the `confirm_command` to run;
   - in a team board the project is already in scope, so there is no proposal.
 
+- **`initiative create NAME [--description TEXT]`** creates a workspace
+  initiative, unless one with that name already exists, in which case it is
+  returned (`observed_unchanged`) and never updated. Only the name and the
+  description are sent, and the description may not mention anyone.
+- **`initiative add-project INITIATIVE_UUID PROJECT_UUID`** adds a project to an
+  initiative. It sends the project's ID and `addInitiatives` only.
+  - The project must belong to a team of the binding: a bound project, or one
+    just made with `project create`.
+  - A project already in the initiative is `observed_unchanged`.
+  - The write is accepted only when the initiative, read back with its projects,
+    lists the project.
+  - There is no removal and no delete.
+
 Every command takes an `--operation-id`: a retry with the same ID returns the
 saved result and sends nothing. Each write is recorded in the project's history
 with its IDs and names, once per operation ID; a retry records it if an earlier

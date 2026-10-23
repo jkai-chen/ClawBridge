@@ -269,3 +269,165 @@ func (p *Provider) CreateTeamProject(ctx context.Context, team, name string) (Ad
 	}
 	return AdminReceipt{}, fail("scope_mismatch")
 }
+
+// Initiative is an initiative as the admin walk reads it.
+type Initiative struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+}
+
+// InitiativeReason is why the initiative writes are unavailable, or "": it
+// pins the fields they send and read.
+func (p *Provider) InitiativeReason() string {
+	sample := "00000000-0000-4000-8000-000000000001"
+	checks := []struct {
+		tool, field string
+		args        []arg
+	}{
+		{"save_initiative", "name and description", []arg{a("x", "name"), a("x", "description")}},
+		{"list_initiatives", "cursor, limit and includeArchived", []arg{a("c", "cursor"), {[]string{"limit"}, 50, "integer"}, {[]string{"includeArchived"}, true, "boolean"}}},
+		{"get_initiative", "query and includeProjects", []arg{a(sample, "query"), {[]string{"includeProjects"}, true, "boolean"}}},
+		{"save_project", "id and addInitiatives", []arg{a(sample, "id"), {[]string{"addInitiatives"}, []string{sample}, "array"}}},
+	}
+	for _, c := range checks {
+		if _, _, e := p.v2Negotiation([]string{c.tool}, c.args); e != nil {
+			return c.tool + " no longer accepts " + c.field
+		}
+	}
+	return ""
+}
+
+// InitiativesNamed walks every initiative, archived ones included, and
+// returns those named name ignoring case.
+func (p *Provider) InitiativesNamed(ctx context.Context, name string) ([]Initiative, bool, error) {
+	if name == "" {
+		return nil, false, fail("invalid")
+	}
+	if p.InitiativeReason() != "" {
+		return nil, false, fail("capability_unavailable")
+	}
+	var found []Initiative
+	cursor := ""
+	for page := 0; page < adminLabelPages; page++ {
+		args := []arg{{[]string{"limit"}, 50, "integer"}, {[]string{"includeArchived"}, true, "boolean"}}
+		if cursor != "" {
+			args = append(args, a(cursor, "cursor"))
+		}
+		m, e := p.v2Call(ctx, []string{"list_initiatives"}, args...)
+		if e != nil {
+			return nil, false, e
+		}
+		rows, next, complete, e := list(m, "initiatives")
+		if e != nil {
+			return nil, false, e
+		}
+		for _, row := range rows {
+			i, e := entityID(row, "initiativeId")
+			if e != nil {
+				return nil, false, e
+			}
+			if strings.EqualFold(str(row, "name"), name) {
+				found = append(found, Initiative{ID: i, Name: str(row, "name")})
+			}
+		}
+		if complete {
+			return found, true, nil
+		}
+		if next == "" || next == cursor {
+			return found, false, nil
+		}
+		cursor = next
+	}
+	return found, false, nil
+}
+
+// CreateInitiative creates an initiative: it sends name and, when given,
+// description only. The receipt must name the initiative.
+func (p *Provider) CreateInitiative(ctx context.Context, name, description string) (AdminReceipt, error) {
+	if name == "" || !textOK(name, 256) || !textOK(description, 4096) {
+		return AdminReceipt{}, fail("invalid")
+	}
+	if p.InitiativeReason() != "" {
+		return AdminReceipt{}, fail("capability_unavailable")
+	}
+	args := []arg{a(name, "name")}
+	if description != "" {
+		args = append(args, a(description, "description"))
+	}
+	m, e := p.v2Call(ctx, []string{"save_initiative"}, args...)
+	if e != nil {
+		return AdminReceipt{}, e
+	}
+	if nested := obj(m, "initiative"); nested != nil {
+		m = nested
+	}
+	i, e := entityID(m, "initiativeId")
+	if e != nil {
+		return AdminReceipt{}, e
+	}
+	if str(m, "name") != name {
+		return AdminReceipt{}, fail("receipt_mismatch")
+	}
+	return AdminReceipt{ID: i, Name: name}, nil
+}
+
+// InitiativeHasProject reads initiative with its projects and reports
+// whether project is one of them. An initiative that lists no projects
+// field cannot answer.
+func (p *Provider) InitiativeHasProject(ctx context.Context, initiative, project string) (bool, error) {
+	if !ValidID(initiative) || !ValidID(project) {
+		return false, fail("invalid")
+	}
+	if p.InitiativeReason() != "" {
+		return false, fail("capability_unavailable")
+	}
+	m, e := p.v2Call(ctx, []string{"get_initiative"}, a(initiative, "query"), arg{[]string{"includeProjects"}, true, "boolean"})
+	if e != nil {
+		return false, e
+	}
+	if nested := obj(m, "initiative"); nested != nil {
+		m = nested
+	}
+	if i, e := entityID(m, "initiativeId"); e != nil || i != initiative {
+		return false, fail("scope_mismatch")
+	}
+	rows, _, complete, e := list(m, "projects")
+	if e != nil {
+		return false, e
+	}
+	for _, row := range rows {
+		if i, e := entityID(row, "projectId"); e == nil && i == project {
+			return true, nil
+		}
+	}
+	if !complete {
+		return false, fail("pagination_unavailable")
+	}
+	return false, nil
+}
+
+// AddProjectToInitiative adds project to initiative: it sends the project's
+// id and addInitiatives only (an update of that one field), then reads the
+// initiative back; a project not listed there is a receipt_unverified.
+func (p *Provider) AddProjectToInitiative(ctx context.Context, initiative, project string) (AdminReceipt, error) {
+	if !ValidID(initiative) || !ValidID(project) {
+		return AdminReceipt{}, fail("invalid")
+	}
+	if p.InitiativeReason() != "" {
+		return AdminReceipt{}, fail("capability_unavailable")
+	}
+	m, e := p.v2Call(ctx, []string{"save_project"}, a(project, "id"), arg{[]string{"addInitiatives"}, []string{initiative}, "array"})
+	if e != nil {
+		return AdminReceipt{}, e
+	}
+	if nested := obj(m, "project"); nested != nil {
+		m = nested
+	}
+	if i, e := entityID(m, "projectId"); e != nil || i != project {
+		return AdminReceipt{}, fail("receipt_mismatch")
+	}
+	if found, e := p.InitiativeHasProject(ctx, initiative, project); e != nil || !found {
+		return AdminReceipt{}, fail("receipt_unverified")
+	}
+	return AdminReceipt{ID: initiative}, nil
+}

@@ -20,12 +20,17 @@ import (
 // and never retire, delete or merge anything.
 
 // AdminInput names one admin write. From is set for a rename only.
+// Initiatives belong to the workspace: initiative_create names no team, and
+// initiative_add_project names the initiative and a bound project.
 type AdminInput struct {
-	Kind        string // label_create, label_rename or project_create
-	OperationID string
-	TeamID      string
-	Name        string
-	From        string
+	Kind         string // label_create, label_rename, project_create, initiative_create or initiative_add_project
+	OperationID  string
+	TeamID       string
+	Name         string
+	From         string
+	Description  string
+	InitiativeID string
+	ProjectID    string
 }
 
 // AdminResult is an admin write's receipt. Proposal is the binding preview
@@ -35,6 +40,7 @@ type AdminResult struct {
 	Kind           string   `json:"kind"`
 	Outcome        string   `json:"outcome"`
 	ID             string   `json:"id,omitempty"`
+	ProjectID      string   `json:"project_id,omitempty"`
 	Name           string   `json:"name"`
 	PreviousName   string   `json:"previous_name,omitempty"`
 	TeamID         string   `json:"team_id"`
@@ -55,6 +61,11 @@ type adminProvider interface {
 	RenameTeamLabel(ctx context.Context, team, id, name string) (linearprovider.AdminReceipt, error)
 	TeamProjectsNamed(ctx context.Context, team, name string) ([]linearprovider.ProjectListing, bool, error)
 	CreateTeamProject(ctx context.Context, team, name string) (linearprovider.AdminReceipt, error)
+	InitiativeReason() string
+	InitiativesNamed(ctx context.Context, name string) ([]linearprovider.Initiative, bool, error)
+	CreateInitiative(ctx context.Context, name, description string) (linearprovider.AdminReceipt, error)
+	InitiativeHasProject(ctx context.Context, initiative, project string) (bool, error)
+	AddProjectToInitiative(ctx context.Context, initiative, project string) (linearprovider.AdminReceipt, error)
 }
 
 var errAdminOwnerOnly = errors.New("Linear label and project creation is for the ClawBridge project owner only; ask the coordinator")
@@ -63,6 +74,27 @@ var errAdminOwnerOnly = errors.New("Linear label and project creation is for the
 func ValidateAdmin(in AdminInput) error {
 	if !operationPattern.MatchString(in.OperationID) {
 		return errors.New("admin write requires operation_id")
+	}
+	switch in.Kind {
+	case "initiative_create":
+		if in.TeamID != "" || in.From != "" || in.InitiativeID != "" || in.ProjectID != "" {
+			return errors.New("initiative create takes a name and an optional description only")
+		}
+		if e := bus.ValidLabelName(in.Name); e != nil {
+			return e
+		}
+		if !validText(in.Description, 2000, true) {
+			return errors.New("an initiative description is up to 2000 bytes of text")
+		}
+		return mentionGuard(&in.Description)
+	case "initiative_add_project":
+		if in.TeamID != "" || in.From != "" || in.Name != "" || in.Description != "" || !linearprovider.ValidID(in.InitiativeID) || !linearprovider.ValidID(in.ProjectID) {
+			return errors.New("initiative add-project takes an initiative UUID and a project UUID only")
+		}
+		return nil
+	}
+	if in.Description != "" || in.InitiativeID != "" || in.ProjectID != "" {
+		return errors.New("only initiative writes take a description, an initiative or a project")
 	}
 	if !linearprovider.ValidID(in.TeamID) {
 		return errors.New("admin write requires a bound team UUID")
@@ -160,11 +192,12 @@ func (s *Service) Admin(ctx context.Context, scope bus.Request, in AdminInput) (
 	if access.ProjectRole != "owner" {
 		return AdminResult{}, errAdminOwnerOnly
 	}
-	if !contains(b.LinearTeamIDs, in.TeamID) {
+	initiative := strings.HasPrefix(in.Kind, "initiative_")
+	if !initiative && !contains(b.LinearTeamIDs, in.TeamID) {
 		return AdminResult{}, errors.New("the team is not in this project's binding; nothing was sent")
 	}
 	revision := 0
-	if in.Kind != "project_create" {
+	if in.Kind == "label_create" || in.Kind == "label_rename" {
 		policy, rev, e := s.labelPolicy(ctx, scope)
 		if e != nil {
 			return AdminResult{}, e
@@ -219,12 +252,15 @@ func (s *Service) Admin(ctx context.Context, scope bus.Request, in AdminInput) (
 	if reason := admin.AdminReason(); reason != "" {
 		return AdminResult{}, errors.New("Linear admin writes are unavailable: " + reason)
 	}
+	if reason := admin.InitiativeReason(); initiative && reason != "" {
+		return AdminResult{}, errors.New("Linear initiative writes are unavailable: " + reason)
+	}
 	if _, e = verifyBindingV2(ctx, p, b); e != nil {
 		return AdminResult{}, e
 	}
 	// The pre-check decides the outcome before the ledger: an existing name
 	// is never written over, and an incomplete walk sends nothing.
-	plan, e := adminPlan(ctx, admin, in)
+	plan, e := adminPlan(ctx, admin, p, b, in)
 	if e != nil {
 		return AdminResult{}, e
 	}
@@ -244,12 +280,12 @@ func (s *Service) Admin(ctx context.Context, scope bus.Request, in AdminInput) (
 		}
 		// The approved list is read again: a change since the check, even
 		// one that keeps this name, refuses the write before it is sent.
-		if in.Kind != "project_create" {
+		if in.Kind == "label_create" || in.Kind == "label_rename" {
 			if _, now, e := s.labelPolicy(ctx, scope); e != nil || now != revision {
 				return nil, refusedBeforeDispatch(errors.New("the approved label list changed before the write; read it again and use a new operation_id"))
 			}
 		}
-		again, e := adminPlan(ctx, admin, in)
+		again, e := adminPlan(ctx, admin, p, b, in)
 		if e != nil {
 			return nil, proofFailure(e)
 		}
@@ -259,12 +295,18 @@ func (s *Service) Admin(ctx context.Context, scope bus.Request, in AdminInput) (
 		if e = ctx.Err(); e != nil {
 			return nil, notDispatched(e)
 		}
-		result := AdminResult{Kind: in.Kind, Name: in.Name, TeamID: in.TeamID, PolicyRevision: revision}
+		result := AdminResult{Kind: in.Kind, Name: in.Name, TeamID: in.TeamID, ProjectID: in.ProjectID, PolicyRevision: revision}
+		if in.Kind == "initiative_add_project" {
+			result.ID = in.InitiativeID
+		}
 		if in.Kind == "label_rename" {
 			result.PreviousName = in.From
 		}
 		if plan.observed {
-			result.Outcome, result.ID = "observed_unchanged", plan.existing
+			result.Outcome = "observed_unchanged"
+			if in.Kind != "initiative_add_project" {
+				result.ID = plan.existing
+			}
 			return result, nil
 		}
 		sent, known := sentCount(p)
@@ -274,13 +316,20 @@ func (s *Service) Admin(ctx context.Context, scope bus.Request, in AdminInput) (
 			r, e = admin.CreateTeamLabel(ctx, in.TeamID, in.Name)
 		case "label_rename":
 			r, e = admin.RenameTeamLabel(ctx, in.TeamID, plan.target, in.Name)
+		case "initiative_create":
+			r, e = admin.CreateInitiative(ctx, in.Name, in.Description)
+		case "initiative_add_project":
+			r, e = admin.AddProjectToInitiative(ctx, in.InitiativeID, in.ProjectID)
 		default:
 			r, e = admin.CreateTeamProject(ctx, in.TeamID, in.Name)
 		}
 		if e != nil {
 			return nil, writeFailure(p, sent, known, e, func(e error) error { return e })
 		}
-		result.Outcome, result.ID, result.Unverified = "accepted", r.ID, r.Unverified
+		result.Outcome, result.Unverified = "accepted", r.Unverified
+		if in.Kind != "initiative_add_project" {
+			result.ID = r.ID
+		}
 		// A concurrent create of the same name can still make a duplicate;
 		// it is reported, never cleaned up.
 		if in.Kind == "label_create" {
@@ -331,9 +380,44 @@ type adminPlanned struct {
 // project already named in.Name is not created again; a workspace label
 // with that name, or one whose own scope is unknown, refuses the create;
 // a rename needs exactly one plain label of the team named in.From.
-func adminPlan(ctx context.Context, p adminProvider, in AdminInput) (adminPlanned, error) {
+func adminPlan(ctx context.Context, p adminProvider, board Provider, b bus.TaskboardBindingV2, in AdminInput) (adminPlanned, error) {
 	incomplete := errors.New("Linear's list could not be read completely; nothing was sent")
 	switch in.Kind {
+	case "initiative_create":
+		// An existing initiative of that name is returned, never updated.
+		found, complete, e := p.InitiativesNamed(ctx, in.Name)
+		if e != nil {
+			return adminPlanned{}, e
+		}
+		if !complete {
+			return adminPlanned{}, incomplete
+		}
+		if len(found) > 0 {
+			return adminPlanned{observed: true, existing: found[0].ID}, nil
+		}
+		return adminPlanned{}, nil
+	case "initiative_add_project":
+		// Only a project of a bound team joins an initiative: one in the
+		// binding, or one just created in a bound team.
+		project, e := board.GetProject(ctx, in.ProjectID)
+		if e != nil {
+			return adminPlanned{}, e
+		}
+		bound := false
+		for _, t := range project.TeamIDs {
+			bound = bound || contains(b.LinearTeamIDs, t)
+		}
+		if project.ID != in.ProjectID || !bound {
+			return adminPlanned{}, errors.New("the project is not in a team of this project's binding; nothing was sent")
+		}
+		in, e := p.InitiativeHasProject(ctx, in.InitiativeID, in.ProjectID)
+		if e != nil {
+			return adminPlanned{}, e
+		}
+		if in {
+			return adminPlanned{observed: true, existing: project.ID}, nil
+		}
+		return adminPlanned{target: project.ID}, nil
 	case "project_create":
 		found, complete, e := p.TeamProjectsNamed(ctx, in.TeamID, in.Name)
 		if e != nil {
@@ -394,7 +478,7 @@ func adminPlan(ctx context.Context, p adminProvider, in AdminInput) (adminPlanne
 	return adminPlanned{target: l.ID}, nil
 }
 
-var adminKinds = map[string]bool{"label_create": true, "label_rename": true, "project_create": true}
+var adminKinds = map[string]bool{"label_create": true, "label_rename": true, "project_create": true, "initiative_create": true, "initiative_add_project": true}
 
 // validAdminReceipt checks an admin receipt recorded in the ledger, strictly.
 func validAdminReceipt(raw []byte) bool {
@@ -409,11 +493,25 @@ func validAdminReceipt(raw []byte) bool {
 	default:
 		return false
 	}
-	if !linearprovider.ValidID(r.ID) || !linearprovider.ValidID(r.TeamID) || bus.ValidLabelName(r.Name) != nil || (r.PreviousName != "") != (r.Kind == "label_rename") {
+	switch r.Kind {
+	case "initiative_create":
+		if r.TeamID != "" || r.ProjectID != "" || bus.ValidLabelName(r.Name) != nil {
+			return false
+		}
+	case "initiative_add_project":
+		if r.TeamID != "" || r.Name != "" || !linearprovider.ValidID(r.ProjectID) {
+			return false
+		}
+	default:
+		if !linearprovider.ValidID(r.TeamID) || r.ProjectID != "" || bus.ValidLabelName(r.Name) != nil {
+			return false
+		}
+	}
+	if !linearprovider.ValidID(r.ID) || (r.PreviousName != "") != (r.Kind == "label_rename") {
 		return false
 	}
 	for _, f := range r.Unverified {
-		if f != "team" && f != "teams" {
+		if f != "team" && f != "teams" && f != "initiative" {
 			return false
 		}
 	}
@@ -437,6 +535,7 @@ func adminResult(v any) (AdminResult, error) {
 	r := AdminResult{Kind: fmt.Sprint(m["kind"]), Outcome: fmt.Sprint(m["outcome"]), Name: fmt.Sprint(m["name"]), TeamID: fmt.Sprint(m["team_id"])}
 	r.ID, _ = m["id"].(string)
 	r.PreviousName, _ = m["previous_name"].(string)
+	r.ProjectID, _ = m["project_id"].(string)
 	if n, ok := policyRevision(m["policy_revision"]); ok {
 		r.PolicyRevision = n
 	}
@@ -464,15 +563,12 @@ func (s *Service) auditAdmin(ctx context.Context, scope bus.Request, in AdminInp
 	scope.Args["kind"] = in.Kind
 	scope.Args["outcome"] = r.Outcome
 	scope.Args["operation_id"] = in.OperationID
-	scope.Args["linear_team_id"] = in.TeamID
-	scope.Args["name"] = in.Name
-	if r.ID != "" {
-		scope.Args["linear_id"] = r.ID
+	for k, v := range map[string]string{"linear_team_id": in.TeamID, "name": in.Name, "linear_id": r.ID, "previous_name": in.From, "linear_project_id": in.ProjectID} {
+		if v != "" {
+			scope.Args[k] = v
+		}
 	}
-	if in.From != "" {
-		scope.Args["previous_name"] = in.From
-	}
-	if in.Kind != "project_create" {
+	if in.Kind == "label_create" || in.Kind == "label_rename" {
 		scope.Args["policy_revision"] = r.PolicyRevision
 	}
 	_, e := s.cfg.Executor.Execute(ctx, scope)

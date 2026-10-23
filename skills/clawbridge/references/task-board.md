@@ -185,8 +185,9 @@ Discover the installed capability before using project sets, labels, parents,
 human assignment or relation mutations. Older adapters expose fewer fields;
 an unavailable capability goes to the coordinator rather than a broader account
 or an arbitrary provider tool. Only the project owner creates labels and
-projects (`linear label create` / `linear project create`, from an approved
-list, CLI only); when you need one, ask the coordinator.
+projects and initiatives (`linear label create`, `linear project create`,
+`linear initiative create|add-project`; labels from an approved list; CLI only);
+when you need one, ask the coordinator.
 
 Write Linear text without mentions: name people and agents in plain words, never
 as `@name`, `@Linear` or a profile link. ClawBridge refuses a title,

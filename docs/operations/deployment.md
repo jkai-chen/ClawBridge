@@ -165,6 +165,14 @@ CLAWBRIDGE_LINEAR_APP_CLIENT_SECRET=<the app's client secret>
 CLAWBRIDGE_LINEAR_APP_TOKEN_KEY=<32 random bytes, base64>
 ```
 
+- **The token key** is 32 random bytes in standard, padded base64 (44
+  characters); `openssl rand -base64 32` makes one. Hex is refused.
+- **All three or none.** The Compose file passes them to the API container and
+  defaults each one to empty. With all three empty the server starts without
+  app writes; with only some set it refuses to start.
+- **No disk.** App writes keep their operation records in Postgres, so the
+  read-only API container needs no extra mount.
+
 - **Where they come from.** Only this environment file; never a flag, the
   database or a log. The startup log says only `linear app: configured`.
 - **The token.** The server mints the app's client-credentials token with a fixed

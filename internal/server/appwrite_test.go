@@ -7,6 +7,7 @@ import (
 
 	"clawbridge/internal/bus"
 	"clawbridge/internal/linearapp"
+	"clawbridge/internal/linearboard"
 )
 
 // linear_write refuses, before any Linear or bus access, every operation
@@ -49,9 +50,17 @@ func TestLinearWriteErrorsKeepTheBoardMessage(t *testing.T) {
 	if code, _ := serviceError(refused); code != "invalid" || responseMessage(code, refused) != "workspace_unpinned: this binding records no Linear workspace" {
 		t.Fatal(responseMessage(code, refused))
 	}
-	uncertain := writeError(errorString("Linear operation may have been dispatched; outcome uncertain (timeout), inspect Linear before retrying"))
+	uncertain := writeError(linearboard.UncertainError{Message: "Linear operation may have been dispatched; outcome uncertain (timeout), inspect Linear before retrying"})
 	if code, status := serviceError(uncertain); code != "conflict" || status != 409 || !strings.Contains(responseMessage(code, uncertain), "outcome uncertain") {
 		t.Fatal(code, status)
+	}
+	busy := writeError(linearboard.InProgressError{Message: "in_progress: retry the same operation_id shortly"})
+	if code, status := serviceError(busy); code != "conflict" || status != 409 || !strings.HasPrefix(responseMessage(code, busy), "in_progress") {
+		t.Fatal(code, status)
+	}
+	// The text alone decides nothing: an untyped error saying "uncertain" is a refusal.
+	if code, _ := serviceError(writeError(errorString("outcome uncertain"))); code != "invalid" {
+		t.Fatal(code)
 	}
 	if m := responseMessage("invalid", writeError(errorString("line\\nbreak\n"))); m != "the Linear write was refused" {
 		t.Fatal("unsafe text shown", m)

@@ -105,24 +105,30 @@ func TestSharedLedgerAnswersLikeThePrivateLedger(t *testing.T) {
 		if _, err := l.write("ns", "op-1", "other", send(receipt, nil)); err == nil || !strings.Contains(err.Error(), "different scoped payload") {
 			t.Fatal(name, "another payload under the same ID", err)
 		}
-		// Not dispatched: the ID stays free.
-		if _, err := l.write("ns", "op-2", "p", send(nil, notDispatched(errors.New("timeout")))); err == nil {
-			t.Fatal(name, "not dispatched")
+		// Not dispatched: the ID stays free, and the error keeps its type.
+		var never notDispatchedError
+		if _, err := l.write("ns", "op-2", "p", send(nil, notDispatched(errors.New("timeout")))); !errors.As(err, &never) {
+			t.Fatal(name, "not dispatched", err)
 		}
 		if _, found, _ := l.lookup("ns", "op-2", "p"); found {
 			t.Fatal(name, "a never-dispatched operation kept its record")
 		}
 		// Refused: recorded, and a retry is refused without sending.
-		l.write("ns", "op-3", "p", send(nil, refusedBeforeDispatch(errors.New("binding changed"))))
+		var refused refusedBeforeDispatchError
+		if _, err := l.write("ns", "op-3", "p", send(nil, refusedBeforeDispatch(errors.New("binding changed")))); !errors.As(err, &refused) {
+			t.Fatal(name, "refusal type", err)
+		}
 		before := sent
 		if _, err := l.write("ns", "op-3", "p", send(receipt, nil)); err == nil || !strings.Contains(err.Error(), "binding changed") || sent != before {
 			t.Fatal(name, "refusal not kept", err)
 		}
 		// Uncertain: stays pending, and a retry sends nothing.
-		l.write("ns", "op-4", "p", send(nil, errors.New("connection reset")))
+		if _, err := l.write("ns", "op-4", "p", send(nil, errors.New("connection reset"))); !IsUncertain(err) {
+			t.Fatal(name, "uncertain type", err)
+		}
 		before = sent
-		if _, err := l.write("ns", "op-4", "p", send(receipt, nil)); err == nil || !strings.Contains(err.Error(), "uncertain") || sent != before {
-			t.Fatal(name, "uncertain operation re-sent", err)
+		if _, err := l.write("ns", "op-4", "p", send(receipt, nil)); !IsUncertain(err) || IsInProgress(err) || sent != before {
+			t.Fatal(name, "uncertain operation re-sent or taken for in progress", err)
 		}
 		// Unsettled comments.
 		if err := l.markUnsettled("ns", "op-1"); err != nil {
@@ -160,8 +166,11 @@ func TestSharedLedgerNeverDispatchesTwice(t *testing.T) {
 	}()
 	<-inside
 	second := 0
-	if _, err := l.write("ns", "op", "p", func() (any, error) { second++; return nil, nil }); err == nil || second != 0 {
-		t.Fatal("a concurrent retry dispatched", err, second)
+	if _, err := l.write("ns", "op", "p", func() (any, error) { second++; return nil, nil }); !IsInProgress(err) || IsUncertain(err) || second != 0 {
+		t.Fatal("a concurrent retry dispatched, or was not told it is in progress", err, second)
+	}
+	if _, _, err := l.lookup("ns", "op", "p"); !IsInProgress(err) {
+		t.Fatal("lookup of a dispatching operation", err)
 	}
 	close(release)
 	if err := <-done; err != nil {
@@ -180,5 +189,24 @@ func TestSharedLedgerUnrecordedSettle(t *testing.T) {
 	var re *ReceiptError
 	if r == nil || !errors.As(err, &re) || re.Outcome != "accepted_ledger_unrecorded" {
 		t.Fatal(r, err)
+	}
+}
+
+// A pending record older than a write can take is uncertain, not in progress.
+func TestSharedLedgerStalePendingIsUncertain(t *testing.T) {
+	now := time.Date(2026, 10, 23, 12, 0, 0, 0, time.UTC)
+	store := newMemLedgerStore()
+	l := SharedLedger(store, func() time.Time { return now })(context.Background())
+	store.LedgerInsert(context.Background(), digest("ns"), "op", encodeRecord(ledgerRecord{Version: 1, Digest: digest("p"), State: "pending", UpdatedAt: now.Format(time.RFC3339Nano)}))
+	if _, _, err := l.lookup("ns", "op", "p"); !IsInProgress(err) {
+		t.Fatal("young pending", err)
+	}
+	now = now.Add(inProgressFor + time.Second)
+	if _, _, err := l.lookup("ns", "op", "p"); !IsUncertain(err) || IsInProgress(err) {
+		t.Fatal("stale pending", err)
+	}
+	sent := 0
+	if _, err := l.write("ns", "op", "p", func() (any, error) { sent++; return nil, nil }); !IsUncertain(err) || sent != 0 {
+		t.Fatal("stale pending re-sent", err)
 	}
 }

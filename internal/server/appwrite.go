@@ -7,7 +7,6 @@ import (
 	"log"
 	"net/http"
 	"os"
-	"strings"
 	"time"
 
 	"clawbridge/internal/bus"
@@ -136,8 +135,8 @@ func (w *AppWriter) Execute(parent context.Context, identity bus.Identity, r bus
 }
 
 // writeError gives the caller the board's own message: ClawBridge's text,
-// never Linear's. An uncertain outcome is a conflict, anything else a
-// refusal.
+// never Linear's. An operation still in progress or with an uncertain
+// outcome is a conflict, anything else a refusal.
 func writeError(err error) error {
 	if _, public := bus.PublicMessage(err); public {
 		return err
@@ -148,7 +147,7 @@ func writeError(err error) error {
 	} else {
 		message = "the Linear write was refused"
 	}
-	if strings.Contains(message, "outcome uncertain") {
+	if linearboard.IsUncertain(err) || linearboard.IsInProgress(err) {
 		return bus.PublicError("conflict", message)
 	}
 	return bus.PublicError("invalid", message)

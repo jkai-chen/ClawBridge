@@ -377,7 +377,7 @@ func serviceError(err error) (string, int) {
 			return c, 403
 		case "not_found":
 			return c, 404
-		case "conflict", "unsupported_mapping", "binding_unreadable":
+		case "conflict", "unsupported_mapping", "binding_unreadable", "in_progress":
 			return c, 409
 		case "rate_limited":
 			return c, 429
@@ -399,7 +399,7 @@ func serviceError(err error) (string, int) {
 // own message when the bus marked it as written for the caller; every other failure, including
 // database and unknown errors, gets only the generic text for its code.
 func responseMessage(code string, err error) string {
-	if code == "invalid" || code == "binding_unreadable" || code == "rate_limited" || code == "conflict" {
+	if code == "invalid" || code == "binding_unreadable" || code == "rate_limited" || code == "conflict" || code == "in_progress" {
 		if message, ok := bus.PublicMessage(err); ok {
 			if safe, ok := bus.SafePublicText(message); ok {
 				return safe
@@ -418,6 +418,8 @@ func publicMessage(code string) string {
 		return "this project's task board binding is unreadable and is not used; after a ClawBridge downgrade, upgrade instead of repairing; otherwise a project owner can clear it with linear unlink --repair"
 	case "conflict":
 		return "operation conflicts with existing state; verify session instance and retry identifier"
+	case "in_progress":
+		return "this operation is being sent to Linear by another request; retry the same operation_id shortly"
 	case "rate_limited":
 		return "request rate limit reached; no write queued"
 	case "unavailable":

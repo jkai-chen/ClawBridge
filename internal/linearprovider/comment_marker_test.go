@@ -39,7 +39,7 @@ func TestCommentMarkerFormat(t *testing.T) {
 	if got := MarkComment("hi", "", "Ada"); got != "hi\n\n— 🤖 ClawBridge agent · Ada" {
 		t.Fatal(got)
 	}
-	long := MarkComment("", strings.Repeat("s", 128), strings.Repeat("é", 40))
+	long := MarkComment("", strings.Repeat("s", 128), strings.Repeat("𝔸", 40))
 	if len(long)-len("") > CommentMarkerReserve {
 		t.Fatal("marker exceeds its reserve", len(long))
 	}

@@ -52,6 +52,13 @@ connecting. See [MCP setup](docs/usage.md#mcp) for profiles and resumption.
 - [Development and verification](docs/development.md)
 - [Deploy](docs/operations/deployment.md) and [back up or recover](docs/operations/backup-and-recovery.md)
 
+## Workflows
+
+- [Product reviews with ClawBridge and Linear](docs/guides/product-reviewers.md):
+  reviewers comment in Linear, and agents answer and turn feedback into work.
+- [Reviewer quickstart](docs/guides/reviewer-quickstart.md): a one-page guide to
+  hand to product reviewers, who never need ClawBridge.
+
 Published binaries are at [GitHub Releases](https://github.com/jkai-chen/ClawBridge/releases).
 Notifications, structured coordination and native Linear support are additions
 after v0.1.0. Use matching client/service builds and the current guides; installing

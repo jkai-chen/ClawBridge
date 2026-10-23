@@ -5,6 +5,8 @@
 - [Messaging, hosted login, profiles, MCP and TUI](usage.md)
 - [Inbox notifications and Codex wake-up](notifications.md)
 - [Native Linear task boards](linear.md)
+- [Product reviews with ClawBridge and Linear](guides/product-reviewers.md) and the
+  [reviewer quickstart](guides/reviewer-quickstart.md)
 - [Architecture](architecture.md)
 - [API reference](reference/api.md)
 - [Agent task ownership and cooperation](../skills/clawbridge/references/task-board.md)

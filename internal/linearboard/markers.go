@@ -106,11 +106,11 @@ func (s *Service) markerPart(ctx context.Context, scope bus.Request, args map[st
 		if err != nil {
 			return settle(markerFailure(err), nil, err)
 		}
-		r, ok := receipt.(ReceiptV2)
-		if !ok || !linearprovider.ValidID(r.ID) {
+		id := receiptCommentID(receipt)
+		if !linearprovider.ValidID(id) {
 			return settle("uncertain", nil, errors.New("marker comment receipt unreadable"))
 		}
-		return settle("done", map[string]any{"comment_id": r.ID}, nil)
+		return settle("done", map[string]any{"comment_id": id}, nil)
 	case "add", "remove":
 		label, err := s.markerLabel(ctx, scope, issue)
 		if errors.Is(err, errNoMarkerLabel) {
@@ -136,6 +136,19 @@ func (s *Service) markerPart(ctx context.Context, scope bus.Request, args map[st
 		return settle("done", nil, nil)
 	}
 	return action, nil
+}
+
+// receiptCommentID is the comment a write's receipt names: a V2 receipt,
+// or the legacy receipt a binding the legacy path serves returns (a team
+// board, or a project set of one project).
+func receiptCommentID(receipt any) string {
+	switch r := receipt.(type) {
+	case ReceiptV2:
+		return r.ID
+	case linearprovider.Receipt:
+		return r.ID
+	}
+	return ""
 }
 
 var errMarkerWalk = errors.New("the team has too many labels to prove agent-working unique; nothing was sent")

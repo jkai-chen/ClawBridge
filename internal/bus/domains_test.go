@@ -24,6 +24,10 @@ func TestDomainGateAdmitsOnlyListedWorkspaceDomains(t *testing.T) {
 		"listed empty value":         {`[""]`, "a@gmail.example", "", false},
 		"member service account":     {`["example.com"]`, "bot@proj.iam.gserviceaccount.com", "", true},
 		"service account look-alike": {`["example.com"]`, "bot@iam.gserviceaccount.com.example", "", false},
+		"compute service account":    {`["example.com"]`, "1-compute@developer.gserviceaccount.com", "", true},
+		"app engine service account": {`["example.com"]`, "proj@appspot.gserviceaccount.com", "", true},
+		"damaged list refuses SA":    {`null`, "bot@proj.iam.gserviceaccount.com", "", false},
+		"unreadable list refuses SA": {`not json`, "bot@proj.iam.gserviceaccount.com", "", false},
 	} {
 		s := &Store{principal: c.principal, hostedDomain: c.hd}
 		err := s.domainGate(c.list)

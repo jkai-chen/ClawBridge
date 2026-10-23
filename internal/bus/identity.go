@@ -135,10 +135,10 @@ func (s *Store) bindSubject(ctx context.Context, id Identity) error {
 	if err = lockSubject(ctx, tx, id.Principal); err != nil {
 		return err
 	}
-	var issuer string
+	var issuer, boundAt string
 	var subject, previous sql.NullString
 	var allowPrevious bool
-	err = tx.QueryRowContext(ctx, `SELECT issuer,subject,previous_subject,allow_previous<>0 FROM principal_subjects WHERE principal=?`, id.Principal).Scan(&issuer, &subject, &previous, &allowPrevious)
+	err = tx.QueryRowContext(ctx, `SELECT issuer,subject,previous_subject,allow_previous<>0,bound_at FROM principal_subjects WHERE principal=?`, id.Principal).Scan(&issuer, &subject, &previous, &allowPrevious, &boundAt)
 	hash := subjectHash(id.Issuer, id.Subject)
 	now := stamp()
 	switch {
@@ -152,7 +152,7 @@ func (s *Store) bindSubject(ctx context.Context, id Identity) error {
 	case !subject.Valid && issuer == id.Issuer && previous.Valid && previous.String == id.Subject && !allowPrevious:
 		// The account the server owner released may still hold a valid
 		// token; it binds again only after an unbind with allow_previous.
-		return refuse(ctx, tx, id.Principal, "principal_previous_refused", hash, "this Google account was released from "+id.Principal+" by the server owner; ask the server owner to rebind it")
+		return refuse(ctx, tx, id.Principal, "principal_previous_refused", hash, boundAt, "this Google account was released from "+id.Principal+" by the server owner; ask the server owner to rebind it")
 	case !subject.Valid:
 		if _, err = tx.ExecContext(ctx, `UPDATE principal_subjects SET issuer=?,subject=?,bound_at=?,bound_by='first_sight',allow_previous=0 WHERE principal=?`, id.Issuer, id.Subject, now, id.Principal); err != nil {
 			return err
@@ -161,7 +161,7 @@ func (s *Store) bindSubject(ctx context.Context, id Identity) error {
 	case issuer == id.Issuer && subject.String == id.Subject:
 		return nil
 	default:
-		return refuse(ctx, tx, id.Principal, "principal_subject_mismatch", hash, "this Google account is not the one bound to "+id.Principal+"; ask the server owner to rebind it")
+		return refuse(ctx, tx, id.Principal, "principal_subject_mismatch", hash, boundAt, "this Google account is not the one bound to "+id.Principal+"; ask the server owner to rebind it")
 	}
 	if err != nil {
 		return err
@@ -188,10 +188,14 @@ func lockSubject(ctx context.Context, tx *transaction, principal string) error {
 }
 
 // refuse audits a refused account, at most once per account and kind each
-// refusalAuditInterval, commits, and returns the public refusal.
-func refuse(ctx context.Context, tx *transaction, principal, action, hash, message string) error {
+// refusalAuditInterval and binding (boundAt: a rebind or unbind starts a new
+// incident), commits, and returns the public refusal.
+func refuse(ctx context.Context, tx *transaction, principal, action, hash, boundAt, message string) error {
 	var recent int
 	since := time.Now().UTC().Add(-refusalAuditInterval).Format(timestampLayout)
+	if boundAt > since {
+		since = boundAt
+	}
 	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM principal_events WHERE principal=? AND action=? AND subject_hash=? AND changed_at>?`, principal, action, hash, since).Scan(&recent); err != nil {
 		return err
 	}
@@ -224,6 +228,11 @@ func (s *Store) unbindPrincipal(ctx context.Context, tx *transaction, a map[stri
 	principal := normalPrincipal(str(a, "principal"))
 	if !validPrincipal(principal) {
 		return nil, invalid("principal must be an email")
+	}
+	if principal == s.principal {
+		// Releasing one's own address would refuse this very account at once;
+		// the owner's own recovery is the host operator's command.
+		return nil, invalid("the server owner cannot unbind their own address here; use the operator command on the host: clawbridge operator principal-unbind EMAIL --confirm")
 	}
 	allowPrevious, _ := a["allow_previous"].(bool)
 	return unbindSubject(ctx, tx, principal, allowPrevious, s.principal)
@@ -278,7 +287,9 @@ func unbindSubject(ctx context.Context, tx *transaction, principal string, allow
 	}
 	released := subject
 	if !subject.Valid {
-		if !allowPrevious || allowed || !previous.Valid {
+		// Already unbound: only the released account's permission changes. A
+		// plain unbind takes back a mistaken --allow-previous.
+		if !previous.Valid || allowPrevious == allowed {
 			return map[string]any{"principal": principal, "unbound": false, "reason": "not bound"}, nil
 		}
 		released = previous
@@ -304,23 +315,25 @@ func unbindSubject(ctx context.Context, tx *transaction, principal string, allow
 const maxAllowedDomains = 20
 
 // allowedDomains reads a workspace's allow-list. on is false only for a
-// stored empty array; a null or unreadable list is on and admits no one.
-func allowedDomains(raw any) (domains []string, on bool) {
+// stored empty array; damaged (a null, empty or unreadable list) is on and
+// admits no one.
+func allowedDomains(raw any) (domains []string, on, damaged bool) {
 	text, _ := raw.(string)
 	if json.Unmarshal([]byte(text), &domains) != nil || domains == nil {
-		return nil, true
+		return nil, true, true
 	}
-	return domains, len(domains) > 0
+	return domains, len(domains) > 0, false
 }
 
 // domainGate admits a member to a workspace whose allow-list is off, or
 // whose list holds the member's verified Google Workspace domain. A consumer
-// account (no domain) is refused by any list. A Google service account never
-// carries a domain, so a member service account is admitted: the membership
-// check before the gate is what admits it.
+// account (no domain) is refused by any list, and a damaged list refuses
+// everyone. A Google service account never carries a domain, so a member
+// service account is admitted by an intact list: the membership check before
+// the gate is what admits it.
 func (s *Store) domainGate(raw any) error {
-	domains, on := allowedDomains(raw)
-	if !on || principal.ServiceAccount(s.principal) {
+	domains, on, damaged := allowedDomains(raw)
+	if !on || (!damaged && principal.ServiceAccount(s.principal)) {
 		return nil
 	}
 	for _, d := range domains {
@@ -328,27 +341,43 @@ func (s *Store) domainGate(raw any) error {
 			return nil
 		}
 	}
+	return errDomainRefused()
+}
+
+func errDomainRefused() error {
 	return &serviceError{code: "forbidden", cause: errors.New("this workspace accepts only accounts managed by its allowed Google Workspace domains"), public: true}
 }
 
-// domainRefusedWorkspaces lists the server workspaces the caller is a member
-// of but whose allow-list refuses the caller, so lookups across workspaces
-// can leave them out.
-func (s *Store) domainRefusedWorkspaces(ctx context.Context, tx *transaction) ([]string, error) {
-	if !s.postgres {
-		return nil, nil
+// admittedUnderLock re-checks, under the workspace lock the caller holds,
+// that the caller is still a member and the allow-list still admits them, so
+// a write never commits after a restriction it predates.
+func (s *Store) admittedUnderLock(ctx context.Context, tx *transaction, wid string) error {
+	var domains string
+	err := tx.QueryRowContext(ctx, `SELECT w.allowed_domains FROM workspaces w JOIN members m ON m.workspace_id=w.id AND m.principal=? WHERE w.id=?`, s.principal, wid).Scan(&domains)
+	if errors.Is(err, sql.ErrNoRows) {
+		return &serviceError{code: "forbidden", cause: errors.New("workspace membership required")}
 	}
-	rows, err := query(ctx, tx, `SELECT w.id,w.allowed_domains FROM workspaces w JOIN members m ON m.workspace_id=w.id WHERE w.mode='server' AND m.principal=?`, s.principal)
 	if err != nil {
-		return nil, err
+		return err
 	}
-	var refused []string
-	for _, w := range rows {
-		if s.domainGate(w["allowed_domains"]) != nil {
-			refused = append(refused, w["id"].(string))
+	return s.domainGate(domains)
+}
+
+// shownWorkspace is a workspace row as a caller sees it. The allow-list is
+// the owner's configuration: only the owner is shown it (whoami), and a
+// snapshot, which other members receive and which feeds the offline mirror,
+// never carries it.
+func shownWorkspace(w map[string]any, owner bool) map[string]any {
+	if _, ok := w["allowed_domains"]; !ok || owner {
+		return w
+	}
+	shown := make(map[string]any, len(w))
+	for k, v := range w {
+		if k != "allowed_domains" {
+			shown[k] = v
 		}
 	}
-	return refused, nil
+	return shown
 }
 
 // setWorkspaceDomains lets the workspace owner set or clear the allow-list,
@@ -358,20 +387,12 @@ func (s *Store) setWorkspaceDomains(ctx context.Context, tx *transaction, w map[
 	if w["owner_principal"] != s.principal {
 		return nil, &serviceError{code: "forbidden", cause: errors.New("only the workspace owner may set its allowed domains"), public: true}
 	}
-	var domains []string
-	switch v := a["domains"].(type) {
-	case []string:
-		domains = v
-	case []any:
-		for _, item := range v {
-			d, ok := item.(string)
-			if !ok {
-				return nil, invalid("domains must be strings")
-			}
-			domains = append(domains, d)
-		}
-	default:
+	domains, isArray, ok := stringList(a["domains"])
+	if !isArray {
 		return nil, invalid("domains must be an array of strings")
+	}
+	if !ok {
+		return nil, invalid("domains must be strings")
 	}
 	seen := map[string]bool{}
 	clean := []string{}
@@ -415,14 +436,24 @@ func (s *Store) OperatorClearWorkspaceDomains(ctx context.Context, workspace str
 	}
 	tx := &transaction{Tx: raw, postgres: s.postgres}
 	defer tx.Rollback()
-	w, err := one(ctx, tx, `SELECT id FROM workspaces WHERE id=? OR name=?`, workspace, workspace)
-	if err != nil {
+	if s.postgres {
+		for _, set := range []string{`SET LOCAL statement_timeout='5s'`, `SET LOCAL lock_timeout='5s'`} {
+			if _, err = tx.ExecContext(ctx, set); err != nil {
+				return nil, errors.New("authority unavailable")
+			}
+		}
+	}
+	var wid string
+	err = tx.QueryRowContext(ctx, `SELECT id FROM workspaces WHERE id=? OR name=?`, workspace, workspace).Scan(&wid)
+	if errors.Is(err, sql.ErrNoRows) {
 		return nil, errors.New("workspace not found")
 	}
-	wid := w["id"].(string)
+	if err != nil {
+		return nil, errors.New("authority unavailable; nothing changed")
+	}
 	if s.postgres {
 		if _, err = tx.ExecContext(ctx, `SELECT pg_advisory_xact_lock(hashtextextended(?,0))`, "workspace:"+wid); err != nil {
-			return nil, err
+			return nil, errors.New("workspace is busy or the authority is unavailable; nothing changed")
 		}
 	}
 	scoped := *s

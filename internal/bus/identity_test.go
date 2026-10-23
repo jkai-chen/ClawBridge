@@ -4,9 +4,11 @@ import (
 	"context"
 	"errors"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
+	"time"
 )
 
 func identityStore(t *testing.T) *Store {
@@ -86,6 +88,12 @@ func TestConcurrentFirstSightBindsOneAccount(t *testing.T) {
 	if (results[0] == nil) == (results[1] == nil) {
 		t.Fatal("concurrent first sight bound both or neither account", results)
 	}
+	// The loser is refused as the other account, not with a storage error.
+	for _, err := range results {
+		if message, public := PublicMessage(err); err != nil && (!public || !strings.Contains(message, "not the one bound to bob@example.test")) {
+			t.Fatal("concurrent first-sight loser got", err)
+		}
+	}
 	var rows int
 	if err := s.db.QueryRow(`SELECT COUNT(*) FROM principal_subjects`).Scan(&rows); err != nil || rows != 1 {
 		t.Fatal(rows, err)
@@ -129,6 +137,10 @@ func TestOnlyTheServerOwnerUnbindsAndTheReleasedAccountStaysRefused(t *testing.T
 		}
 	}
 	refused(fresh, "not the one bound")
+	// The server owner releasing their own address is refused here.
+	if _, err := unbind("carol@example.test", "carol@example.test", false); err == nil || !strings.Contains(err.Error(), "operator") {
+		t.Fatal("server owner unbound their own address", err)
+	}
 	if out, err := unbind("root@example.test", "root@example.test", false); err != nil || out["unbound"] != true {
 		t.Fatal("server owner could not unbind", out, err)
 	}
@@ -166,8 +178,10 @@ func TestOnlyTheServerOwnerUnbindsAndTheReleasedAccountStaysRefused(t *testing.T
 			t.Fatal("missing", want, "in", got)
 		}
 	}
-	if n := strings.Count(got, "principal_previous_refused:"); n != 1 {
-		t.Fatal("previous-account refusals not deduplicated within the hour:", n, got)
+	// Two refusals after the first unbind are one incident; the second unbind
+	// starts a new one, so its refusal is audited again.
+	if n := strings.Count(got, "principal_previous_refused:"); n != 2 {
+		t.Fatal("previous-account refusals not deduplicated per incident:", n, got)
 	}
 }
 
@@ -191,5 +205,90 @@ func TestOperatorUnbindsWithoutASignedInPrincipal(t *testing.T) {
 	var by string
 	if err = s.db.QueryRow(`SELECT changed_by FROM principal_events WHERE principal=? AND action='principal_unbound'`, owner.Principal).Scan(&by); err != nil || by != OperatorPrincipal {
 		t.Fatal("operator unbind not audited as the operator", by, err)
+	}
+}
+
+// A refused account is audited again once refusalAuditInterval has passed,
+// and not before. The binding is backdated too, so only the interval decides.
+func TestRefusalIsAuditedAgainAfterTheInterval(t *testing.T) {
+	s := identityStore(t)
+	ctx := context.Background()
+	alice := Identity{Principal: "alice@example.test", Issuer: GoogleIssuer, Subject: "sub-alice"}
+	intruder := Identity{Principal: alice.Principal, Issuer: GoogleIssuer, Subject: "sub-intruder"}
+	if err := s.bindSubject(ctx, alice); err != nil {
+		t.Fatal(err)
+	}
+	ago := func(d time.Duration) string { return time.Now().UTC().Add(-d).Format(timestampLayout) }
+	if _, err := s.db.Exec(`UPDATE principal_subjects SET bound_at=? WHERE principal=?`, ago(3*time.Hour), alice.Principal); err != nil {
+		t.Fatal(err)
+	}
+	mismatches := func() int {
+		return strings.Count(strings.Join(events(t, s, alice.Principal), ","), "principal_subject_mismatch:")
+	}
+	for _, c := range []struct {
+		age  time.Duration
+		want int
+	}{{0, 1}, {refusalAuditInterval / 2, 1}, {refusalAuditInterval + time.Minute, 2}} {
+		if _, err := s.db.Exec(`UPDATE principal_events SET changed_at=? WHERE action='principal_subject_mismatch'`, ago(c.age)); err != nil {
+			t.Fatal(err)
+		}
+		if err := s.bindSubject(ctx, intruder); err == nil {
+			t.Fatal("intruder accepted")
+		}
+		if got := mismatches(); got != c.want {
+			t.Fatalf("last audit %s ago: %d mismatch events, want %d", c.age, got, c.want)
+		}
+	}
+}
+
+// A plain unbind of an already-unbound principal takes back a mistaken
+// --allow-previous, and is audited.
+func TestPlainUnbindDisarmsAllowPrevious(t *testing.T) {
+	s := identityStore(t)
+	ctx := context.Background()
+	old := Identity{Principal: "erin@example.test", Issuer: GoogleIssuer, Subject: "sub-old"}
+	if err := s.bindSubject(ctx, old); err != nil {
+		t.Fatal(err)
+	}
+	for _, allow := range []bool{false, true, false} {
+		if out, err := s.OperatorUnbindPrincipal(ctx, old.Principal, allow); err != nil || out["unbound"] != true {
+			t.Fatal(allow, out, err)
+		}
+	}
+	if message, _ := PublicMessage(s.bindSubject(ctx, old)); !strings.Contains(message, "released from") {
+		t.Fatal("disarmed previous account accepted:", message)
+	}
+	if n := strings.Count(strings.Join(events(t, s, old.Principal), ","), "principal_unbound:"); n != 2 {
+		t.Fatal("disarm not audited:", n)
+	}
+	if out, _ := s.OperatorUnbindPrincipal(ctx, old.Principal, false); out["unbound"] != false {
+		t.Fatal("a no-op unbind changed something", out)
+	}
+}
+
+func TestStringListReadsOnlyStringArrays(t *testing.T) {
+	for name, c := range map[string]struct {
+		in               any
+		list             []string
+		isArray, ok, nil bool
+	}{
+		"go strings":   {[]string{"a"}, []string{"a"}, true, true, false},
+		"json strings": {[]any{"a", "b"}, []string{"a", "b"}, true, true, false},
+		"empty":        {[]any{}, []string{}, true, true, false},
+		"nil array":    {[]any(nil), nil, true, true, true},
+		"non-string":   {[]any{"a", 1}, nil, true, false, true},
+		"not an array": {"a", nil, false, false, true},
+		"absent":       {nil, nil, false, false, true},
+	} {
+		list, isArray, ok := stringList(c.in)
+		if isArray != c.isArray || ok != c.ok || (list == nil) != c.nil || !reflect.DeepEqual(list, c.list) && len(c.list) > 0 {
+			t.Errorf("%s: %v %v %v", name, list, isArray, ok)
+		}
+	}
+	src := []string{"a"}
+	list, _, _ := stringList(src)
+	list[0] = "changed"
+	if src[0] != "a" {
+		t.Fatal("stringList aliases its input")
 	}
 }

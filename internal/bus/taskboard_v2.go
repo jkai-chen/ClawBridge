@@ -42,27 +42,16 @@ func parseTaskboardMappingV2(a map[string]any) (TaskboardBindingV2, error) {
 	b.LinearDefaultTeamID = old.LinearDefaultTeamID
 	b.LinearWorkspaceID = old.LinearWorkspaceID
 	sort.Strings(b.LinearTeamIDs)
-	switch ids := a["linear_project_ids"].(type) {
-	case []string:
-		if ids == nil {
-			return b, errors.New("project IDs must not be null")
-		}
-		b.LinearProjectIDs = append([]string{}, ids...)
-	case []any:
-		if ids == nil {
-			return b, errors.New("project IDs must not be null")
-		}
-		b.LinearProjectIDs = []string{}
-		for _, v := range ids {
-			id, ok := v.(string)
-			if !ok {
-				return b, errors.New("project IDs must be strings")
-			}
-			b.LinearProjectIDs = append(b.LinearProjectIDs, id)
-		}
-	default:
+	ids, isArray, ok := stringList(a["linear_project_ids"])
+	switch {
+	case !isArray:
 		return b, errors.New("project IDs must be an array")
+	case !ok:
+		return b, errors.New("project IDs must be strings")
+	case ids == nil:
+		return b, errors.New("project IDs must not be null")
 	}
+	b.LinearProjectIDs = ids
 	if b.Mode != "team_board" && b.Mode != "project_set" || b.Mode == "team_board" && len(b.LinearProjectIDs) != 0 || b.Mode == "project_set" && (len(b.LinearProjectIDs) < 1 || len(b.LinearProjectIDs) > 50) {
 		return b, errors.New("invalid mapping mode/project count")
 	}

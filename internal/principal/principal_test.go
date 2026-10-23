@@ -44,7 +44,16 @@ func TestNormalDomainIsOneRuleForEveryLayer(t *testing.T) {
 			t.Errorf("%q: %q %v, want %q", in, got, ok, want)
 		}
 	}
-	if !ServiceAccount("bot@project.iam.gserviceaccount.com") || ServiceAccount("bot@iam.gserviceaccount.com.example") {
-		t.Fatal("service account rule wrong")
+	for p, want := range map[string]bool{
+		"bot@project.iam.gserviceaccount.com":       true,
+		"123-compute@developer.gserviceaccount.com": true,
+		"project@appspot.gserviceaccount.com":       true,
+		"bot@iam.gserviceaccount.com.example":       false,
+		"bot@gserviceaccount.com.example":           false,
+		"bot@example.com":                           false,
+	} {
+		if ServiceAccount(p) != want {
+			t.Errorf("%s: %v, want %v", p, !want, want)
+		}
 	}
 }

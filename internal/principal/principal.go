@@ -37,6 +37,8 @@ func NormalDomain(d string) (normal string, ok bool) {
 	return d, true
 }
 
-// ServiceAccount reports whether p is a Google service account principal.
+// ServiceAccount reports whether p is a Google service account principal:
+// user-managed (….iam.gserviceaccount.com), default compute
+// (…@developer.gserviceaccount.com) or App Engine (…@appspot.gserviceaccount.com).
 // Such accounts never carry an hd claim.
-func ServiceAccount(p string) bool { return strings.HasSuffix(p, ".iam.gserviceaccount.com") }
+func ServiceAccount(p string) bool { return strings.HasSuffix(p, ".gserviceaccount.com") }

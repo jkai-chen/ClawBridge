@@ -40,22 +40,15 @@ func assignmentOperation(op string) bool {
 // the paths it matches and everything beneath them; "**" is allowed only as
 // the whole pattern or as a final "/**".
 func scopePaths(v any) ([]string, error) {
-	var raw []string
-	switch list := v.(type) {
-	case nil:
+	if v == nil {
 		return []string{}, nil
-	case []string:
-		raw = list
-	case []any:
-		for _, item := range list {
-			s, ok := item.(string)
-			if !ok {
-				return nil, invalid("scope_paths must be strings")
-			}
-			raw = append(raw, s)
-		}
-	default:
+	}
+	raw, isArray, ok := stringList(v)
+	if !isArray {
 		return nil, invalid("scope_paths must be an array of strings")
+	}
+	if !ok {
+		return nil, invalid("scope_paths must be strings")
 	}
 	if len(raw) > maxScopePaths {
 		return nil, invalid("scope_paths allows at most 32 patterns")

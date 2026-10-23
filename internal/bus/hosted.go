@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 )
 
 func (s *Store) projectRole(ctx context.Context, tx *transaction, w map[string]any, pid string) (string, error) {
@@ -174,18 +175,9 @@ func (s *Store) resolveInTransaction(ctx context.Context, tx *transaction, r Req
 	q := `SELECT w.id AS workspace_id,p.id AS project_id FROM projects p JOIN workspaces w ON w.id=p.workspace_id WHERE `
 	args := []any{}
 	if s.postgres {
+		q = strings.Replace(q, `SELECT w.id AS workspace_id,p.id AS project_id`, `SELECT w.id AS workspace_id,p.id AS project_id,w.allowed_domains AS allowed_domains`, 1)
 		q += `w.mode='server' AND EXISTS(SELECT 1 FROM members m WHERE m.workspace_id=w.id AND m.principal=?) AND (w.owner_principal=? OR EXISTS(SELECT 1 FROM project_roles pr WHERE pr.project_id=p.id AND pr.principal=?))`
 		args = append(args, s.principal, s.principal, s.principal)
-		// A workspace whose allow-list refuses the caller neither resolves
-		// nor makes another match ambiguous.
-		refused, err := s.domainRefusedWorkspaces(ctx, tx)
-		if err != nil {
-			return nil, err
-		}
-		for _, id := range refused {
-			q += ` AND w.id<>?`
-			args = append(args, id)
-		}
 	} else {
 		q += `w.mode='local' AND w.owner_principal=?`
 		args = append(args, s.principal)
@@ -212,10 +204,35 @@ func (s *Store) resolveInTransaction(ctx context.Context, tx *transaction, r Req
 	if err != nil {
 		return nil, err
 	}
+	// A workspace whose allow-list refuses the caller neither resolves nor
+	// makes another match ambiguous; when it is the only match, the caller is
+	// told it is refused rather than that nothing matched.
+	admitted := rows[:0:0]
+	for _, row := range rows {
+		if !s.postgres || s.domainGate(row["allowed_domains"]) == nil {
+			delete(row, "allowed_domains")
+			admitted = append(admitted, row)
+		}
+	}
+	if len(admitted) == 0 && len(rows) > 0 {
+		return nil, errDomainRefused()
+	}
+	rows = admitted
 	if len(rows) != 1 {
 		return nil, errors.New("project not found, not authorized or ambiguous; select explicit workspace and project")
 	}
 	if r.Session != "" || str(r.Args, "instance") != "" {
+		// Touching the session is a write: like every write, it re-reads the
+		// allow-list under the workspace lock its setter holds.
+		if s.postgres {
+			wid := rows[0]["workspace_id"].(string)
+			if _, err = tx.ExecContext(ctx, `SELECT pg_advisory_xact_lock(hashtextextended(?,0))`, "workspace:"+wid); err != nil {
+				return nil, err
+			}
+			if err = s.admittedUnderLock(ctx, tx, wid); err != nil {
+				return nil, err
+			}
+		}
 		if err = s.touchReadActor(ctx, tx, rows[0]["project_id"].(string), r); err != nil {
 			return nil, err
 		}
@@ -292,7 +309,7 @@ func (s *Store) snapshot(ctx context.Context, tx *transaction, w, p map[string]a
 			delete(row, "instance")
 		}
 	}
-	result := map[string]any{"workspace": w, "project": p, "session": actor, "principal": s.principal, "verified": true, "identity_provenance": "google-id-token", "storage_mode": "cloud", "snapshot_at": now}
+	result := map[string]any{"workspace": shownWorkspace(w, false), "project": p, "session": actor, "principal": s.principal, "verified": true, "identity_provenance": "google-id-token", "storage_mode": "cloud", "snapshot_at": now}
 	for k, v := range datasets {
 		result[k] = v
 	}

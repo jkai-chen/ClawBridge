@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"time"
 
 	_ "github.com/jackc/pgx/v5/stdlib"
@@ -26,14 +27,35 @@ func OpenPostgres(ctx context.Context, dsn, bootstrapOwner string) (*Store, erro
 	return openPostgres(ctx, dsn, bootstrapOwner)
 }
 
+// postgresSchemaVersion is the hosted schema version this binary writes.
+const postgresSchemaVersion = 6
+
 // OpenPostgresOperator opens the hosted authority for a host operator's
 // maintenance command. It has no bootstrap owner, so no request run through
 // it can initialize a workspace or unbind as the server owner.
+// Unlike OpenPostgres it never migrates: it refuses unless the schema is
+// exactly this binary's, so an operator image newer than the running server
+// cannot upgrade the schema under it.
 func OpenPostgresOperator(ctx context.Context, dsn string) (*Store, error) {
 	if dsn == "" {
 		return nil, errors.New("Postgres DSN is required")
 	}
-	return openPostgres(ctx, dsn, "")
+	db, err := sql.Open("pgx", dsn)
+	if err != nil {
+		return nil, errors.New("invalid Postgres configuration")
+	}
+	check, cancel := context.WithTimeout(ctx, 15*time.Second)
+	defer cancel()
+	var version int
+	if err = db.QueryRowContext(check, `SELECT COALESCE(MAX(version),0) FROM clawbridge_schema`).Scan(&version); err != nil {
+		db.Close()
+		return nil, errors.New("cannot read the ClawBridge schema version; is this the server's database?")
+	}
+	if version != postgresSchemaVersion {
+		db.Close()
+		return nil, fmt.Errorf("Postgres schema is version %d but this binary is version %d; run the operator command from the server's own release", version, postgresSchemaVersion)
+	}
+	return &Store{db: db, postgres: true}, nil
 }
 
 func openPostgres(ctx context.Context, dsn, bootstrapOwner string) (*Store, error) {
@@ -69,7 +91,7 @@ func (s *Store) migratePostgres(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	if version > 6 {
+	if version > postgresSchemaVersion {
 		return errors.New("Postgres schema is newer than this binary")
 	}
 	if version == 0 {

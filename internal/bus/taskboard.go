@@ -40,17 +40,11 @@ func taskboardExpected(a map[string]any) (int64, error) {
 }
 func parseTaskboardMapping(a map[string]any) (TaskboardBinding, error) {
 	b := TaskboardBinding{Provider: "linear", LinearDefaultTeamID: str(a, "linear_default_team_id")}
-	switch ids := a["linear_team_ids"].(type) {
-	case []string:
-		b.LinearTeamIDs = append([]string(nil), ids...)
-	case []any:
-		for _, v := range ids {
-			s, ok := v.(string)
-			if !ok {
-				return b, errors.New("linear_team_ids must contain strings")
-			}
-			b.LinearTeamIDs = append(b.LinearTeamIDs, s)
+	if ids, isArray, ok := stringList(a["linear_team_ids"]); isArray {
+		if !ok {
+			return b, errors.New("linear_team_ids must contain strings")
 		}
+		b.LinearTeamIDs = ids
 	}
 	if len(b.LinearTeamIDs) < 1 || len(b.LinearTeamIDs) > 20 {
 		return b, errors.New("1–20 teams are required")

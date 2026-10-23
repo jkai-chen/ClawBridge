@@ -190,6 +190,32 @@ func newID(prefix string) string {
 
 const timestampLayout = "2006-01-02T15:04:05.000000000Z07:00"
 
+// stringList reads a string array as decoded from JSON ([]any) or built in Go
+// ([]string). isArray is false for any other value; ok is false when an
+// element is not a string. A nil array stays nil and an empty one is empty.
+func stringList(v any) (list []string, isArray, ok bool) {
+	switch items := v.(type) {
+	case []string:
+		if items == nil {
+			return nil, true, true
+		}
+		return append([]string{}, items...), true, true
+	case []any:
+		if items == nil {
+			return nil, true, true
+		}
+		list = make([]string, 0, len(items))
+		for _, item := range items {
+			s, isString := item.(string)
+			if !isString {
+				return nil, true, false
+			}
+			list = append(list, s)
+		}
+		return list, true, true
+	}
+	return nil, false, false
+}
 func stamp() string                         { return time.Now().UTC().Format(timestampLayout) }
 func str(a map[string]any, k string) string { v, _ := a[k].(string); return v }
 func asJSON(v any) string                   { b, _ := json.Marshal(v); return string(b) }
@@ -298,25 +324,28 @@ func sessionAddress(v string) (string, []any) {
 	}
 	return "(id=? OR name=?)", []any{v, v}
 }
+
+// operationArgs names every operation and the argument keys it accepts.
+var operationArgs = map[string]string{
+	"taskboard_get":           "instance",
+	"taskboard_get_v2":        "instance",
+	"taskboard_set_v2":        "instance expected_revision mode linear_team_ids linear_default_team_id linear_project_ids linear_workspace_id",
+	"taskboard_clear_v2":      "instance expected_revision",
+	"taskboard_access":        "instance",
+	"taskboard_set":           "instance expected_revision linear_team_ids linear_default_team_id linear_project_id linear_workspace_id",
+	"taskboard_clear":         "instance expected_revision",
+	"inbox_status":            "instance after",
+	"notification_status":     "instance after",
+	"set_notification_policy": "instance policy",
+	"assignment_propose":      "instance issue_uuid issue_identifier task_role scope_repo scope_paths",
+	"assignment_confirm":      "instance target_session revision allow_overlap",
+	"assignment_release":      "instance target_session revision",
+	"coordinator_set":         "instance target_session",
+	"workspace_init":          "mode name retention_days", "project_create": "slug name git_remote", "list_projects": "", "list_members": "", "register_session": "instance resume role agent_kind model host account notes transport", "list_sessions": "instance status role limit after issue scope_path assignment_state", "send": "instance to body kind thread_id operation_id coordination", "reply": "instance message_id body kind operation_id coordination", "inbox": "instance unread_only limit after", "mark_read": "instance ids", "update_session": "instance target_session role model host account notes transport", "retire_session": "instance target_session successor status", "history": "instance entity key limit after", "whoami": "instance", "message_status": "instance message_id", "resolve_project": "git_remote instance", "snapshot": "instance", "project_role_set": "instance principal role", "project_role_revoke": "instance principal", "purge_expired": "instance", "principal_unbind": "principal allow_previous", "workspace_set_domains": "domains",
+}
+
 func validateArgs(op string, a map[string]any) error {
-	allowed := map[string]string{
-		"taskboard_get":           "instance",
-		"taskboard_get_v2":        "instance",
-		"taskboard_set_v2":        "instance expected_revision mode linear_team_ids linear_default_team_id linear_project_ids linear_workspace_id",
-		"taskboard_clear_v2":      "instance expected_revision",
-		"taskboard_access":        "instance",
-		"taskboard_set":           "instance expected_revision linear_team_ids linear_default_team_id linear_project_id linear_workspace_id",
-		"taskboard_clear":         "instance expected_revision",
-		"inbox_status":            "instance after",
-		"notification_status":     "instance after",
-		"set_notification_policy": "instance policy",
-		"assignment_propose":      "instance issue_uuid issue_identifier task_role scope_repo scope_paths",
-		"assignment_confirm":      "instance target_session revision allow_overlap",
-		"assignment_release":      "instance target_session revision",
-		"coordinator_set":         "instance target_session",
-		"workspace_init":          "mode name retention_days", "project_create": "slug name git_remote", "list_projects": "", "list_members": "", "register_session": "instance resume role agent_kind model host account notes transport", "list_sessions": "instance status role limit after issue scope_path assignment_state", "send": "instance to body kind thread_id operation_id coordination", "reply": "instance message_id body kind operation_id coordination", "inbox": "instance unread_only limit after", "mark_read": "instance ids", "update_session": "instance target_session role model host account notes transport", "retire_session": "instance target_session successor status", "history": "instance entity key limit after", "whoami": "instance", "message_status": "instance message_id", "resolve_project": "git_remote instance", "snapshot": "instance", "project_role_set": "instance principal role", "project_role_revoke": "instance principal", "purge_expired": "instance", "principal_unbind": "principal allow_previous", "workspace_set_domains": "domains",
-	}
-	keys, ok := allowed[op]
+	keys, ok := operationArgs[op]
 	if !ok {
 		return fmt.Errorf("unsupported operation %q", op)
 	}
@@ -509,7 +538,14 @@ var logHeartbeatSkipped = func(operation string, err error) {
 // so the read never queues behind a write: a busy lock skips the beat
 // silently, and any failure (a serialization error, a timeout) is logged and
 // skipped. The session's next read records it.
+// beforeBeat, when set by a test, runs after a heartbeat read commits and
+// before its beat, where another request's change can land.
+var beforeBeat func()
+
 func (s *Store) beat(ctx context.Context, r Request, b *heartbeat) (string, bool) {
+	if beforeBeat != nil {
+		beforeBeat()
+	}
 	ctx, cancel := context.WithTimeout(ctx, 3*time.Second)
 	defer cancel()
 	raw, err := s.db.BeginTx(ctx, nil)
@@ -525,7 +561,21 @@ func (s *Store) beat(ctx context.Context, r Request, b *heartbeat) (string, bool
 		err = tx.QueryRowContext(ctx, `SELECT pg_try_advisory_xact_lock(hashtextextended(?,0))`, "workspace:"+b.workspace).Scan(&acquired)
 	}
 	if err == nil && acquired {
-		if _, err = tx.ExecContext(ctx, `UPDATE sessions SET last_seen=? WHERE project_id=? AND id=?`, now, b.project, b.session); err == nil {
+		// Like any write, the beat re-checks access under the workspace lock:
+		// a session retired, a membership revoked or an allow-list narrowed
+		// while the read ran skips the beat silently.
+		if e := s.admittedUnderLock(ctx, tx, b.workspace); e != nil {
+			var refused *serviceError
+			if !errors.As(e, &refused) {
+				logHeartbeatSkipped(r.Operation, e)
+			}
+			return now, false
+		}
+		var res sql.Result
+		if res, err = tx.ExecContext(ctx, `UPDATE sessions SET last_seen=? WHERE project_id=? AND id=? AND status='active'`, now, b.project, b.session); err == nil {
+			if n, _ := res.RowsAffected(); n != 1 {
+				return now, false
+			}
 			err = tx.Commit()
 		}
 	}
@@ -859,7 +909,7 @@ func (s *Store) execute(ctx context.Context, tx *transaction, r Request) (any, e
 			}
 			actor["assignment"] = assignmentView(live, actor)
 		}
-		return map[string]any{"workspace": w, "project": p, "session": actor, "principal": s.principal, "identity_provenance": provenance, "verified": s.postgres, "storage_mode": mode, "online": true}, nil
+		return map[string]any{"workspace": shownWorkspace(w, w["owner_principal"] == s.principal), "project": p, "session": actor, "principal": s.principal, "identity_provenance": provenance, "verified": s.postgres, "storage_mode": mode, "online": true}, nil
 	}
 	if actor == nil {
 		return nil, errors.New("session is required; register and pass --session and --instance")

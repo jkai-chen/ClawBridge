@@ -45,11 +45,15 @@ clawbridge principal-unbind EMAIL --confirm
 The next sign-in with that address binds its account, except the released one:
 an old account may still hold a token valid for up to an hour, so it stays
 refused. If the unbind was a mistake and the same account must bind again, run
-the command again with `--allow-previous`.
+the command again with `--allow-previous`. Only the most recently released
+account stays refused: after a second unbind, the account released by the
+first may bind again.
 
-When the owner's own address is the one that moved, the owner cannot sign in to
-release it. The host operator then runs the same unbind with direct database
-access; it is audited as `operator:local`:
+The server owner cannot release their own address with `principal-unbind`;
+that would refuse the very account making the request. When the owner's own
+address is the one that moved, the owner cannot sign in anyway. In both cases
+the host operator runs the same unbind with direct database access; it is
+audited as `operator:local`:
 
 ```sh
 sudo docker compose --env-file /etc/clawbridge/clawbridge.env \
@@ -75,9 +79,23 @@ Two exceptions:
 
 - The workspace owner may always change or clear the list, even when the list
   no longer admits the owner's own account.
-- A Google service account (`…@….iam.gserviceaccount.com`) never carries `hd`,
-  so a service account that is an explicit workspace member is admitted. It
-  still needs membership like any other principal.
+- A Google service account (any `…gserviceaccount.com` address: `iam.`,
+  `developer.` or `appspot.`) never carries `hd`, so a service account that is
+  an explicit workspace member is admitted. It still needs membership like any
+  other principal.
+
+A damaged list (null or unreadable) admits no one, service accounts included,
+until the owner sets it again or the operator clears it. Only the workspace
+owner sees the list (in `whoami`); other members and snapshots, and so offline
+mirrors, never carry it. A session's heartbeat re-checks the list and the
+membership before it records `last_seen`.
+
+A refused member sees the generic `forbidden` (HTTP 403) for every command,
+including the project lookup most commands start with. When a signed-in member
+is refused with 403, the causes are: no workspace membership or project role,
+an account that is not the one bound to the address, or a sign-in domain the
+workspace's allow-list does not include. The workspace owner can always run
+`workspace-domains`, so an owner whose domain changed repairs the list there.
 
 If a list is damaged and admits no one, the host operator clears it:
 
@@ -87,6 +105,9 @@ sudo docker compose --env-file /etc/clawbridge/clawbridge.env \
   -f /opt/clawbridge/repo/deploy/compose.yaml \
   run --rm --no-deps api operator workspace-clear-domains TEAM --confirm
 ```
+
+Run operator commands from the same release as the server. They never migrate
+the database: they refuse a schema at any other version.
 
 Explicit gcloud or authorized-user ADC with service-account impersonation are
 operator alternatives. Their audited principal is the service account in the

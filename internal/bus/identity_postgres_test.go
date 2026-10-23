@@ -2,8 +2,10 @@ package bus
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"os"
+	"sort"
 	"strings"
 	"sync"
 	"testing"
@@ -185,7 +187,11 @@ func TestPostgresHostedStoreRefusesRequestsWithoutAnAccount(t *testing.T) {
 }
 
 func (f *pgIdentityFixture) asHD(principal, hd string, r Request) (Result, error) {
-	return f.s.ExecuteAsIdentity(context.Background(), Identity{Principal: principal, Issuer: GoogleIssuer, Subject: "sub-" + principal, HostedDomain: hd}, r)
+	subject := "sub-" + principal
+	if principal == f.owner {
+		subject = "sub-owner"
+	}
+	return f.s.ExecuteAsIdentity(context.Background(), Identity{Principal: principal, Issuer: GoogleIssuer, Subject: subject, HostedDomain: hd}, r)
 }
 
 func TestPostgresWorkspaceDomainAllowList(t *testing.T) {
@@ -260,8 +266,13 @@ func TestPostgresWorkspaceDomainAllowList(t *testing.T) {
 	if _, err := resolve("corp.example", ""); err == nil || !strings.Contains(err.Error(), "ambiguous") {
 		t.Fatal("an admitted member should see both matches", err)
 	}
-	if _, err := resolve("other.example", f.workspace); err == nil || !strings.Contains(err.Error(), "not found") {
-		t.Fatal("a refused workspace resolved", err)
+	// The only match is refused by its allow-list: the member learns it is
+	// refused (forbidden), not that nothing matched.
+	if _, err := resolve("other.example", f.workspace); !refusedWith(err, "allowed Google Workspace domains") {
+		t.Fatal("a refused workspace resolved, or its refusal read as not found", err)
+	}
+	if n := f.count(`SELECT COUNT(*) FROM principal_subjects WHERE principal=$1 AND subject='sub-'||$1`, member); n != 1 {
+		t.Fatal("binding changed by a refused resolve", n)
 	}
 	got, err := resolve("other.example", "")
 	if err != nil || got["workspace_id"] == nil {
@@ -359,4 +370,268 @@ func waitForLockWaiter(t *testing.T, s *Store, wid string) {
 		time.Sleep(10 * time.Millisecond)
 	}
 	t.Fatal("the write never waited on the workspace lock")
+}
+
+// The server owner cannot release their own address over the API; their
+// recovery is the operator command on the host.
+func TestPostgresServerOwnerCannotUnbindThemselves(t *testing.T) {
+	f := newPGIdentityFixture(t)
+	_, err := f.as(f.owner, "sub-owner", Request{Operation: "principal_unbind", Args: map[string]any{"principal": strings.ToUpper(f.owner)}})
+	var coded interface{ Code() string }
+	if err == nil || !errors.As(err, &coded) || coded.Code() != "invalid" || !strings.Contains(err.Error(), "clawbridge operator principal-unbind") {
+		t.Fatal("self-unbind not refused with the operator path", err)
+	}
+	f.must(f.owner, "sub-owner", f.list())
+}
+
+// Operator commands never migrate: they open only a schema at exactly this
+// binary's version. Each case uses its own Postgres schema via search_path.
+func TestPostgresOperatorRefusesAnyOtherSchemaVersion(t *testing.T) {
+	dsn := os.Getenv("CLAWBRIDGE_TEST_POSTGRES_DSN")
+	if dsn == "" {
+		t.Skip("reviewer supplies disposable Postgres DSN")
+	}
+	ctx := context.Background()
+	admin, err := sql.Open("pgx", dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer admin.Close()
+	sep := "?"
+	if strings.Contains(dsn, "?") {
+		sep = "&"
+	}
+	for _, c := range []struct {
+		version int // 0: no clawbridge_schema table at all
+		want    string
+	}{{0, "cannot read"}, {postgresSchemaVersion - 1, "run the operator command from the server's own release"}, {postgresSchemaVersion + 1, "run the operator command from the server's own release"}, {postgresSchemaVersion, ""}} {
+		schema := "op_" + strings.ToLower(newID("v"))
+		if _, err = admin.ExecContext(ctx, `CREATE SCHEMA `+schema); err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { admin.Exec(`DROP SCHEMA ` + schema + ` CASCADE`) })
+		if c.version > 0 {
+			if _, err = admin.ExecContext(ctx, `CREATE TABLE `+schema+`.clawbridge_schema(version INTEGER PRIMARY KEY)`); err != nil {
+				t.Fatal(err)
+			}
+			if _, err = admin.ExecContext(ctx, `INSERT INTO `+schema+`.clawbridge_schema VALUES($1)`, c.version); err != nil {
+				t.Fatal(err)
+			}
+		}
+		s, err := OpenPostgresOperator(ctx, dsn+sep+"search_path="+schema)
+		if c.want == "" {
+			if err != nil {
+				t.Fatal("current schema refused", err)
+			}
+			s.Close()
+		} else if err == nil || !strings.Contains(err.Error(), c.want) {
+			t.Fatalf("version %d: %v", c.version, err)
+		}
+		// Nothing was migrated into the schema.
+		var tables int
+		if err = admin.QueryRowContext(ctx, `SELECT COUNT(*) FROM information_schema.tables WHERE table_schema=$1`, schema).Scan(&tables); err != nil || tables > 1 {
+			t.Fatalf("version %d: operator open created tables: %d %v", c.version, tables, err)
+		}
+	}
+}
+
+// Every hosted operation requires the account bound to its principal. The
+// list is operationArgs itself, so an operation added later that is
+// dispatched without the binding check fails here. The caller is the server
+// owner (who passes every access check) signing in with another account; the
+// arguments are the minimum that passes argument validation.
+func TestPostgresEveryHostedOperationRequiresTheBoundAccount(t *testing.T) {
+	f := newPGIdentityFixture(t)
+	minimal := map[string]map[string]any{
+		"workspace_init":     {"mode": "server"},
+		"principal_unbind":   {"principal": "someone@identity-test.example"},
+		"taskboard_set":      taskboardArgs(0),
+		"taskboard_set_v2":   taskboardArgsV2(0, projectOne),
+		"taskboard_clear":    {"expected_revision": 0},
+		"taskboard_clear_v2": {"expected_revision": 0},
+	}
+	ops := make([]string, 0, len(operationArgs))
+	for op := range operationArgs {
+		ops = append(ops, op)
+	}
+	sort.Strings(ops)
+	for _, op := range ops {
+		args := map[string]any{}
+		for k, v := range minimal[op] {
+			args[k] = v
+		}
+		_, err := f.as(f.owner, "sub-intruder", Request{Operation: op, Workspace: f.workspace, Project: "p", Args: args})
+		if !refusedWith(err, "not the one bound") {
+			t.Errorf("%s ran without the bound account: %v", op, err)
+		}
+	}
+}
+
+// The operator's clear gives up behind a held workspace lock with a clear
+// error instead of hanging, and names a workspace that does not exist.
+func TestPostgresOperatorClearDomainsIsBoundedAndPrecise(t *testing.T) {
+	f := newPGIdentityFixture(t)
+	ctx := context.Background()
+	operator, err := OpenPostgresOperator(ctx, os.Getenv("CLAWBRIDGE_TEST_POSTGRES_DSN"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer operator.Close()
+	if _, err = operator.OperatorClearWorkspaceDomains(ctx, newID("absent")); err == nil || err.Error() != "workspace not found" {
+		t.Fatal(err)
+	}
+	var wid string
+	if err = f.s.db.QueryRowContext(ctx, `SELECT id FROM workspaces WHERE name=$1`, f.workspace).Scan(&wid); err != nil {
+		t.Fatal(err)
+	}
+	holder, err := f.s.db.BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer holder.Rollback()
+	if _, err = holder.ExecContext(ctx, `SELECT pg_advisory_xact_lock(hashtextextended($1,0))`, "workspace:"+wid); err != nil {
+		t.Fatal(err)
+	}
+	start := time.Now()
+	_, err = operator.OperatorClearWorkspaceDomains(ctx, f.workspace)
+	if err == nil || !strings.Contains(err.Error(), "busy") || time.Since(start) > 10*time.Second {
+		t.Fatal("operator clear behind a held lock:", err, time.Since(start))
+	}
+}
+
+func (f *pgIdentityFixture) session(principal, hd, name string) string {
+	f.t.Helper()
+	out, err := f.asHD(principal, hd, Request{Operation: "register_session", Workspace: f.workspace, Project: "p", Session: name, Args: map[string]any{}})
+	if err != nil {
+		f.t.Fatal(err)
+	}
+	return out.Data.(map[string]any)["instance"].(string)
+}
+
+// The allow-list is the owner's configuration: only the owner's whoami shows
+// it, and no snapshot (which feeds the offline mirror) carries it.
+func TestPostgresAllowListIsShownOnlyToTheWorkspaceOwner(t *testing.T) {
+	f := newPGIdentityFixture(t)
+	member := newID("m") + "@corp.example"
+	f.member(member)
+	if _, err := f.asHD(f.owner, "corp.example", Request{Operation: "workspace_set_domains", Workspace: f.workspace, Args: map[string]any{"domains": []any{"corp.example"}}}); err != nil {
+		t.Fatal(err)
+	}
+	shows := func(principal, op, session, instance string) bool {
+		t.Helper()
+		args := map[string]any{}
+		if instance != "" {
+			args["instance"] = instance
+		}
+		out, err := f.asHD(principal, "corp.example", Request{Operation: op, Workspace: f.workspace, Project: "p", Session: session, Args: args})
+		if err != nil {
+			t.Fatal(op, err)
+		}
+		_, ok := out.Data.(map[string]any)["workspace"].(map[string]any)["allowed_domains"]
+		return ok
+	}
+	if !shows(f.owner, "whoami", "", "") || shows(member, "whoami", "", "") {
+		t.Fatal("whoami shows the allow-list to the wrong principal")
+	}
+	for _, p := range []string{f.owner, member} {
+		name := newID("s")
+		if shows(p, "snapshot", name, f.session(p, "corp.example", name)) {
+			t.Fatal("a snapshot carried the allow-list for", p)
+		}
+	}
+}
+
+// resolve_project with a session writes (it touches the session), so it reads
+// the allow-list under the workspace lock: narrowed while it waits, it is
+// refused and touches nothing.
+func TestPostgresResolveWithASessionSeesANarrowedAllowList(t *testing.T) {
+	f := newPGIdentityFixture(t)
+	ctx := context.Background()
+	member := newID("m") + "@corp.example"
+	f.member(member)
+	instance := f.session(member, "corp.example", "rs")
+	var wid string
+	if err := f.s.db.QueryRowContext(ctx, `SELECT id FROM workspaces WHERE name=$1`, f.workspace).Scan(&wid); err != nil {
+		t.Fatal(err)
+	}
+	seen := func() string {
+		var at string
+		if err := f.s.db.QueryRowContext(ctx, `SELECT last_seen FROM sessions WHERE owner_principal=$1`, member).Scan(&at); err != nil {
+			t.Fatal(err)
+		}
+		return at
+	}
+	before := seen()
+	setter, err := f.s.db.BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer setter.Rollback()
+	if _, err = setter.ExecContext(ctx, `SELECT pg_advisory_xact_lock(hashtextextended($1,0))`, "workspace:"+wid); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = setter.ExecContext(ctx, `UPDATE workspaces SET allowed_domains='["other.example"]' WHERE id=$1`, wid); err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan error, 1)
+	go func() {
+		_, err := f.asHD(member, "corp.example", Request{Operation: "resolve_project", Workspace: f.workspace, Project: "p", Session: "rs", Args: map[string]any{"instance": instance}})
+		done <- err
+	}()
+	waitForLockWaiter(t, f.s, wid)
+	if err = setter.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	if err = <-done; !refusedWith(err, "allowed Google Workspace domains") {
+		t.Fatal("resolve with a session passed a restriction recorded while it waited", err)
+	}
+	if seen() != before {
+		t.Fatal("a refused resolve touched the session")
+	}
+}
+
+// A heartbeat is a write after the read commits: an allow-list narrowed, or
+// the session retired, while the read was in flight skips the beat.
+func TestPostgresHeartbeatRechecksAccessBeforeItWrites(t *testing.T) {
+	if os.Getenv("CLAWBRIDGE_TEST_POSTGRES_DSN") == "" {
+		t.Skip("reviewer supplies disposable Postgres DSN")
+	}
+	ctx := context.Background()
+	t.Cleanup(func() { beforeBeat = nil })
+	for name, change := range map[string]string{
+		"none":               "",
+		"domain narrowed":    `UPDATE workspaces SET allowed_domains='["other.example"]' WHERE name=$1`,
+		"session retired":    `UPDATE sessions SET status='retired' WHERE project_id=(SELECT p.id FROM projects p JOIN workspaces w ON w.id=p.workspace_id WHERE w.name=$1) AND name='hb'`,
+		"membership revoked": `DELETE FROM members WHERE workspace_id=(SELECT id FROM workspaces WHERE name=$1) AND principal<>(SELECT owner_principal FROM workspaces WHERE name=$1)`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			g := newPGIdentityFixture(t)
+			member := newID("m") + "@corp.example"
+			g.member(member)
+			instance := g.session(member, "corp.example", "hb")
+			lastSeen := func() string {
+				var at string
+				if err := g.s.db.QueryRowContext(ctx, `SELECT last_seen FROM sessions WHERE owner_principal=$1`, member).Scan(&at); err != nil {
+					t.Fatal(err)
+				}
+				return at
+			}
+			before := lastSeen()
+			beforeBeat = func() {
+				if change != "" {
+					if _, err := g.s.db.ExecContext(ctx, change, g.workspace); err != nil {
+						t.Error(err)
+					}
+				}
+			}
+			_, err := g.asHD(member, "corp.example", Request{Operation: "whoami", Workspace: g.workspace, Project: "p", Session: "hb", Args: map[string]any{"instance": instance}})
+			beforeBeat = nil
+			if err != nil {
+				t.Fatal("the read itself was admitted and must succeed", err)
+			}
+			if moved := lastSeen() != before; moved != (change == "") {
+				t.Fatalf("beat wrote=%v after %s", moved, name)
+			}
+		})
+	}
 }

@@ -13,15 +13,12 @@ import (
 const engineerRunes = 40
 
 // EngineerName is the engineer an agent marker names: the session owner's
-// Linear display name when one is recorded, else the owner's verified
-// principal (an email on a hosted server). The display name loses every
-// character that could mention, link or format in Linear; the result is
-// cut to engineerRunes characters with "…".
-func EngineerName(display, principal string) string {
-	if name := cleanDisplayName(display); name != "" {
-		return name
-	}
-	return capRunes(strings.TrimSpace(principal))
+// recorded display name, without every character that could mention, link
+// or format in Linear, cut to engineerRunes characters with "…". Without a
+// recorded name it is "" and markers name no one: an email would reach
+// everyone who can read the issue, guests and outside reviewers included.
+func EngineerName(display string) string {
+	return cleanDisplayName(display)
 }
 
 // ValidEngineer reports whether s could be an EngineerName result: short,
@@ -66,13 +63,13 @@ func (s *Store) engineerOf(ctx context.Context, tx *transaction, wid string, act
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return "", err
 	}
-	return EngineerName(display, owner), nil
+	return EngineerName(display), nil
 }
 
 // setDisplayName records the caller's own Linear display name in the
 // workspace: the member override, and what `linear connect` captures
 // (if_unset: 1, which keeps a name already recorded). An empty name clears
-// it, so the marker falls back to the principal.
+// it, and markers then name no engineer.
 func (s *Store) setDisplayName(ctx context.Context, tx *transaction, wid string, a map[string]any) (any, error) {
 	if !s.postgres {
 		return nil, invalid("a display name is recorded on a hosted server; a local store names no engineer")
@@ -90,7 +87,7 @@ func (s *Store) setDisplayName(ctx context.Context, tx *transaction, wid string,
 		return nil, err
 	}
 	if n, _ := integer(a["if_unset"]); n == 1 && current != "" {
-		return map[string]any{"display_name": current, "engineer": EngineerName(current, s.principal), "kept": true}, nil
+		return map[string]any{"display_name": current, "engineer": EngineerName(current), "kept": true}, nil
 	}
 	name := cleanDisplayName(raw)
 	if _, err = tx.ExecContext(ctx, `UPDATE members SET display_name=? WHERE workspace_id=? AND principal=?`, name, wid, s.principal); err != nil {
@@ -99,5 +96,5 @@ func (s *Store) setDisplayName(ctx context.Context, tx *transaction, wid string,
 	if err = s.audit(ctx, tx, wid, "", "", "member", s.principal, "display_name_set", map[string]any{"set": name != ""}); err != nil {
 		return nil, err
 	}
-	return map[string]any{"display_name": name, "engineer": EngineerName(name, s.principal), "kept": false}, nil
+	return map[string]any{"display_name": name, "engineer": EngineerName(name), "kept": false}, nil
 }

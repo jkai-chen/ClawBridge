@@ -346,8 +346,8 @@ func TestPostgresAppWriteCommentAsTheApp(t *testing.T) {
 	}
 	body := f.mcp.savedBodies()[0]
 	last := body[strings.LastIndex(body, "\n\n")+2:]
-	if !strings.HasPrefix(body, "hello from the app\n\n") || !strings.HasPrefix(last, awMarker) || body != "hello from the app\n\n"+awMarker+" · session "+awSession+" · "+bus.EngineerName("", f.owner) {
-		t.Fatalf("posted body lacks the agent marker naming the session and its engineer: %q", body)
+	if !strings.HasPrefix(body, "hello from the app\n\n") || !strings.HasPrefix(last, awMarker) || body != "hello from the app\n\n"+awMarker+" · session "+awSession || strings.Contains(body, "@") {
+		t.Fatalf("posted body lacks the agent marker, or names an engineer who recorded no name: %q", body)
 	}
 	auths := f.mcp.authorizations()
 	if len(auths) == 0 {

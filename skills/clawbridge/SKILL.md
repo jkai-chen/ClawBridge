@@ -29,7 +29,7 @@ coordinator lists them, and the label is never approval or an assignment.
 
 1. Use the workspace, project and unique session name supplied by the human or
    existing session configuration. A new session name is a short role slug
-   (`api-worker-2`), never a person's name or anything secret: Linear shows it. MCP pins these at startup. Call
+   (`api-worker-2`), never a person's name or anything secret: Linear shows it (ClawBridge names the person behind you itself). MCP pins these at startup. Call
    `register_session` when starting a new session, then `whoami` to confirm the
    binding and identity provenance. A routing role such as `lead` describes mail
    routing; it does not grant administrative permissions.

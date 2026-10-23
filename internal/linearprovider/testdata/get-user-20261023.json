@@ -1,0 +1,30 @@
+{
+  "_meta": {
+    "microsoft/allowedDomains": [
+      "linear.app<https://linear.app/>"
+    ]
+  },
+  "annotations": {
+    "destructiveHint": false,
+    "idempotentHint": true,
+    "openWorldHint": false,
+    "readOnlyHint": true
+  },
+  "description": "Retrieve one user's profile, email, admin, guest, and active flags, plus team IDs, names, and keys. Use list_users to find matching users.",
+  "inputSchema": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": false,
+    "properties": {
+      "query": {
+        "description": "User ID, name, email, or \"me\"",
+        "type": "string"
+      }
+    },
+    "required": [
+      "query"
+    ],
+    "type": "object"
+  },
+  "name": "get_user",
+  "title": "Get user"
+}

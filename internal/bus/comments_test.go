@@ -536,3 +536,44 @@ func TestCommentWatchReportReturnsTheReconciledBudget(t *testing.T) {
 		t.Fatal("report did not charge its extra calls:", out)
 	}
 }
+
+// F2: the precheck refuses what the reserve would, before any Linear read,
+// and writes nothing.
+func TestCommentPrecheckRefusesWhatTheReserveWould(t *testing.T) {
+	w := newWatchHarness(t)
+	w.poll(watchIssue, comment(humanOne, "", time.Now()))
+	pre := func(a map[string]any) error {
+		a["issue_uuid"] = watchIssue
+		_, e := w.s.Execute(context.Background(), w.request("linear_comment_precheck", "a", a))
+		return e
+	}
+	if e := pre(map[string]any{"operation_id": "first", "in_response_to": humanOne}); e != nil {
+		t.Fatal("an unanswered notified comment was refused:", e)
+	}
+	if _, e := w.reserve("a", "first", map[string]any{"parent_id": humanOne, "in_response_to": humanOne}); e != nil {
+		t.Fatal(e)
+	}
+	// A retry of the reserved operation is the reserve's to answer.
+	if e := pre(map[string]any{"operation_id": "first", "in_response_to": humanOne}); e != nil {
+		t.Fatal("the retry of a reserved answer was refused:", e)
+	}
+	if e := pre(map[string]any{"operation_id": "second", "in_response_to": humanOne}); !codeIs(e, "conflict", "already has an answer") {
+		t.Fatal("a second answer passed the precheck:", e)
+	}
+	w.call("linear_comment_settle", "a", map[string]any{"operation_id": "first", "outcome": "posted", "comment_id": ourComment})
+	if e := pre(map[string]any{"operation_id": "own", "in_response_to": ourComment}); !codeIs(e, "invalid", "") {
+		t.Fatal("an answer to our own comment passed:", e)
+	}
+	for _, op := range []string{"two", "three"} {
+		if _, e := w.reserve("a", op, map[string]any{}); e != nil {
+			t.Fatal(e)
+		}
+	}
+	if e := pre(map[string]any{"operation_id": "fourth"}); !codeIs(e, "rate_limited", "next slot at") {
+		t.Fatal("the cap passed the precheck:", e)
+	}
+	var rows int
+	if e := w.s.db.QueryRow(`SELECT COUNT(*) FROM linear_comment_ledger`).Scan(&rows); e != nil || rows != 3 {
+		t.Fatal("the precheck wrote:", rows, e)
+	}
+}

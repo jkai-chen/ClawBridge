@@ -556,6 +556,11 @@ func (s *Service) Write(ctx context.Context, scope bus.Request, in WriteInput) (
 		}
 		return s.postReceipt(ctx, scope, b, receipt)
 	}
+	if in.Operation == "comment" {
+		if err = s.precheckComment(ctx, scope, in.IssueID, in.OperationID, ""); err != nil {
+			return nil, err
+		}
+	}
 	profile, p, done, err := s.openForWrite(ctx)
 	if err != nil {
 		return nil, err

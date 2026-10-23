@@ -53,7 +53,7 @@ const upgradeRequired = "this ClawBridge client is too old to write to Linear on
 
 func commentOperation(op string) bool {
 	switch op {
-	case "linear_comment_reserve", "linear_comment_settle", "linear_comments_posted", "linear_comment_settle_match", "comment_watch_lease", "comment_watch_due", "comment_watch_report", "marker_go", "marker_settle", "marker_due":
+	case "linear_comment_reserve", "linear_comment_precheck", "linear_comment_settle", "linear_comments_posted", "linear_comment_settle_match", "comment_watch_lease", "comment_watch_due", "comment_watch_report", "marker_go", "marker_settle", "marker_due":
 		return true
 	}
 	return false
@@ -123,6 +123,8 @@ func (s *Store) commentOp(ctx context.Context, tx *transaction, w, p map[string]
 	switch r.Operation {
 	case "linear_comment_reserve":
 		return c.reserve(ctx)
+	case "linear_comment_precheck":
+		return c.precheck(ctx)
 	case "linear_comment_settle":
 		return c.settle(ctx)
 	case "linear_comments_posted":
@@ -234,6 +236,9 @@ func (c commentCall) reserve(ctx context.Context) (any, error) {
 	hint := ""
 	switch {
 	case answer != "":
+		if parent == "" {
+			return nil, invalid("an answer goes in the comment's thread: parent_id is required")
+		}
 		if err = c.answerable(ctx, issue, parent, answer); err != nil {
 			return nil, err
 		}
@@ -257,14 +262,8 @@ func (c commentCall) reserve(ctx context.Context) (any, error) {
 			hint = fmt.Sprintf("%d unanswered comments on this issue; answers go in their thread (--reply-to <reply_to> --in-response-to <id>)", len(open))
 		}
 	}
-	since := layout(c.now.Add(-time.Hour))
-	recent, err := query(ctx, c.tx, `SELECT reserved_at FROM linear_comment_ledger WHERE workspace_id=? AND issue_uuid=? AND marker_key='' AND state<>'failed' AND reserved_at>? ORDER BY reserved_at`, c.wid, issue, since)
-	if err != nil {
+	if err = c.underCap(ctx, issue); err != nil {
 		return nil, err
-	}
-	if len(recent) >= commentCapPerHour {
-		next := at(str(recent[0], "reserved_at")).Add(time.Hour)
-		return nil, &serviceError{code: "rate_limited", cause: fmt.Errorf("at most %d ClawBridge comments per issue per hour; next slot at %s; no write queued", commentCapPerHour, next.Format(time.RFC3339)), public: true}
 	}
 	now := layout(c.now)
 	if len(existing) == 1 {
@@ -285,6 +284,9 @@ func (c commentCall) reserve(ctx context.Context) (any, error) {
 // answerable checks an explicit in_response_to: a comment the watcher
 // notified on this issue, addressed to the caller, answered in its own
 // thread, not yet answered and not a ClawBridge comment.
+// answerable checks an explicit answer. The parent is checked against the
+// notified comment's thread root unless it is empty (a pre-check, made
+// before the client has read the thread).
 func (c commentCall) answerable(ctx context.Context, issue, parent, answer string) error {
 	event, err := query(ctx, c.tx, `SELECT reply_to,session_id FROM watch_events WHERE project_id=? AND event_key=? AND source='comments' AND subject=?`, c.pid, "comment:"+answer, issue)
 	if err != nil {
@@ -300,7 +302,7 @@ func (c commentCall) answerable(ctx context.Context, issue, parent, answer strin
 	if !ok {
 		return invalid("in_response_to was not notified to this session")
 	}
-	if parent != str(event[0], "reply_to") {
+	if parent != "" && parent != str(event[0], "reply_to") {
 		return invalid("answer in the comment's thread: parent_id must be " + str(event[0], "reply_to"))
 	}
 	own, err := query(ctx, c.tx, `SELECT 1 FROM linear_comment_ledger WHERE workspace_id=? AND comment_id=?`, c.wid, answer)
@@ -372,6 +374,53 @@ func (c commentCall) settle(ctx context.Context) (any, error) {
 		return map[string]any{"state": "failed"}, nil
 	}
 	return nil, invalid("outcome must be posted or failed")
+}
+
+// precheck answers before any Linear read whether a reserve would refuse
+// this comment on rules the bus alone decides: the cap, and an explicit
+// answer that is already given, our own, or not this session's to give. It
+// writes nothing; the reserve decides again under the lock.
+func (c commentCall) precheck(ctx context.Context) (any, error) {
+	issue, err := lowerUUID(c.a, "issue_uuid", true)
+	if err != nil {
+		return nil, err
+	}
+	answer, err := lowerUUID(c.a, "in_response_to", false)
+	if err != nil {
+		return nil, err
+	}
+	// A retry of a reserved operation is the reserve's to answer.
+	if op := str(c.a, "operation_id"); op != "" {
+		mine, e := query(ctx, c.tx, `SELECT 1 FROM linear_comment_ledger WHERE workspace_id=? AND operation_digest=?`, c.wid, digestOf(c.sid, op))
+		if e != nil {
+			return nil, e
+		}
+		if len(mine) > 0 {
+			return map[string]any{"ok": true}, nil
+		}
+	}
+	if answer != "" {
+		if err = c.answerable(ctx, issue, "", answer); err != nil {
+			return nil, err
+		}
+	}
+	if err = c.underCap(ctx, issue); err != nil {
+		return nil, err
+	}
+	return map[string]any{"ok": true}, nil
+}
+
+// underCap refuses a conversational comment past the per-issue hourly cap.
+func (c commentCall) underCap(ctx context.Context, issue string) error {
+	recent, err := query(ctx, c.tx, `SELECT reserved_at FROM linear_comment_ledger WHERE workspace_id=? AND issue_uuid=? AND marker_key='' AND state<>'failed' AND reserved_at>? ORDER BY reserved_at`, c.wid, issue, layout(c.now.Add(-time.Hour)))
+	if err != nil {
+		return err
+	}
+	if len(recent) >= commentCapPerHour {
+		next := at(str(recent[0], "reserved_at")).Add(time.Hour)
+		return &serviceError{code: "rate_limited", cause: fmt.Errorf("at most %d ClawBridge comments per issue per hour; next slot at %s; no write queued", commentCapPerHour, next.Format(time.RFC3339)), public: true}
+	}
+	return nil
 }
 
 // unclaimed refuses a comment that another reservation already records, as a

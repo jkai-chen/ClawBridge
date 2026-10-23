@@ -304,3 +304,42 @@ func TestLinearV2InconclusiveLabelFilterLeavesDeltaUnverified(t *testing.T) {
 		t.Fatal("inconclusive label filter treated as confirmation", r, e)
 	}
 }
+
+// F5: a removal answered with an empty, "known" label list is checked
+// afterwards with the label filter, as an add is: the empty list alone does
+// not prove the label gone.
+func TestLinearV2RemovalWithAnEmptyReceiptIsCheckedAfterwards(t *testing.T) {
+	ctx := context.Background()
+	for name, c := range map[string]struct {
+		stillThere bool
+		mismatch   bool
+	}{"gone": {false, false}, "still there": {true, true}} {
+		t.Run(name, func(t *testing.T) {
+			s, p, m, _ := resolvingV2(t, nil, nil, map[string]bool{labelA: true})
+			_, a, _, scope := testV2(t)
+			p.caps.LabelDeltas = true
+			issue := p.issues[issueID]
+			issue.LabelsKnown, issue.LabelIDs, issue.LabelNames = true, []string{labelA}, nil
+			p.issues[issueID] = issue
+			checksBefore := 0
+			p.after = func() {
+				checksBefore = *m.checks
+				m.member[labelA] = c.stillThere
+			}
+			in := deltaV2("remove-empty", nil, []string{labelA})
+			r, e := s.WriteV2(ctx, scope, in)
+			if *m.checks <= checksBefore {
+				t.Fatal("no label check after the removal was sent", *m.checks, checksBefore)
+			}
+			if c.mismatch {
+				if e == nil || !strings.Contains(e.Error(), "receipt_mismatch") || ledgerStateV2(t, s, a, in.OperationID) != "pending" {
+					t.Fatal("a removal that did not take was accepted:", r, e)
+				}
+				return
+			}
+			if e != nil || r.(ReceiptV2).Unverified != nil {
+				t.Fatal("a confirmed removal was not verified:", r, e)
+			}
+		})
+	}
+}

@@ -308,8 +308,11 @@ func (s *Service) WriteV2(ctx context.Context, scope bus.Request, in WriteInputV
 		}
 		return s.postReceiptV2(ctx, scope, b, receipt)
 	}
-	if in.Operation == "comment" {
+	if in.Operation == "comment" && !in.marker {
 		s.sweepComments(ctx, scope, l, namespace)
+		if e = s.precheckComment(ctx, scope, in.IssueID, in.OperationID, in.InResponseTo); e != nil {
+			return nil, e
+		}
 	}
 	profile, p, done, e := s.openForWrite(ctx)
 	if e != nil {
@@ -679,17 +682,24 @@ func (s *Service) WriteV2(ctx context.Context, scope bus.Request, in WriteInputV
 				return nil, post(e)
 			}
 			// Native receipts name labels only; Linear's list filtered by
-			// each delta label's UUID then shows whether it took effect.
-			if (in.AddLabels != nil || in.RemoveLabels != nil) && contains(unverified, "labels") {
+			// each delta label's UUID then shows whether it took effect. A
+			// sent removal answered with an empty label list is checked so
+			// too: native reads have reported an empty list as known when it
+			// was not, so it does not prove the label gone.
+			emptyAfterRemove := len(plan.Remove) > 0 && issue.LabelsKnown && len(issue.LabelIDs) == 0
+			if (in.AddLabels != nil || in.RemoveLabels != nil) && (contains(unverified, "labels") || emptyAfterRemove) {
 				confirmed, e := deltaReadBackV2(ctx, p2, in, issue.ID, team, project)
 				if e != nil {
 					return nil, post(e)
 				}
-				if confirmed {
+				switch {
+				case confirmed:
 					unverified = slices.DeleteFunc(unverified, func(f string) bool { return f == "labels" })
 					if len(unverified) == 0 {
 						unverified = nil
 					}
+				case !contains(unverified, "labels"):
+					unverified = append(unverified, "labels")
 				}
 			}
 			if legacy {

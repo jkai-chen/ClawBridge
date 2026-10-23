@@ -36,6 +36,9 @@ type fakeCommentLedger struct {
 	leases                 []map[string]any
 	reports, settleMatches []map[string]any
 	reportErr              error
+	// prechecks records linear_comment_precheck; precheckRefuse fails it.
+	prechecks      []map[string]any
+	precheckRefuse error
 	// gos answers marker_go per part; markerSettles records marker_settle.
 	gos           map[string]map[string]any
 	markerGoes    []map[string]any
@@ -59,6 +62,12 @@ func (f *fakeCommentLedger) execute(r bus.Request) (bus.Result, error) {
 			answers = v
 		}
 		return bus.Result{Source: "local-authority", Data: map[string]any{"state": "pending", "in_response_to": answers}}, nil
+	case "linear_comment_precheck":
+		f.prechecks = append(f.prechecks, r.Args)
+		if f.precheckRefuse != nil {
+			return bus.Result{}, f.precheckRefuse
+		}
+		return bus.Result{Source: "local-authority", Data: map[string]any{"ok": true}}, nil
 	case "linear_comments_posted":
 		f.lookups = append(f.lookups, r.Args)
 		if f.unreadable != nil {
@@ -416,5 +425,29 @@ func TestOlderServerAsksForAServerUpgrade(t *testing.T) {
 	_, err := s.WriteV2(context.Background(), scope, WriteInputV2{WriteInput: WriteInput{Operation: "comment", OperationID: "c", IssueID: issueID, Body: "x"}})
 	if err == nil || !strings.Contains(err.Error(), "upgrade the server first") || len(p.bodies) != 0 {
 		t.Fatal(err)
+	}
+}
+
+// F2: a comment the bus will refuse (a second answer, the cap) is refused
+// before any Linear connection or read.
+func TestBusRefusalComesBeforeAnyLinearRead(t *testing.T) {
+	s, a, p, scope := testV2(t)
+	p.caps.CommentReply = true
+	opens := 0
+	r := &replier{providerV2: p, parents: map[string]bool{replyParent: true}}
+	s.cfg.Open = func(context.Context, *http.Client, bool) (Provider, error) { opens++; return r, nil }
+	a.comments.precheckRefuse = errors.New("this comment already has an answer")
+	_, err := s.ExecuteV2(context.Background(), scope, "comment", map[string]any{"id": issueID, "body": "again", "operation_id": "second", "parent_id": replyParent, "in_response_to": replyParent})
+	if err == nil || !strings.Contains(err.Error(), "already has an answer") || opens != 0 || p.reads != 0 || len(r.proofs) != 0 {
+		t.Fatal("the bus refusal cost Linear reads:", err, opens, p.reads, r.proofs)
+	}
+	if got := a.comments.prechecks; len(got) != 1 || got[0]["in_response_to"] != replyParent || got[0]["issue_uuid"] != issueID || got[0]["operation_id"] != "second" {
+		t.Fatal("precheck did not name the answer:", got)
+	}
+	// The V1 path checks too.
+	s1, a1, p1, scope1 := testService(t)
+	a1.comments.precheckRefuse = errors.New("at most 3 ClawBridge comments per issue per hour; next slot at T")
+	if _, err = s1.Write(context.Background(), scope1, WriteInput{Operation: "comment", OperationID: "v1", IssueID: issueID, Body: "x"}); err == nil || p1.reads != 0 || len(p1.bodies) != 0 {
+		t.Fatal("V1 comment not prechecked:", err, p1.reads)
 	}
 }

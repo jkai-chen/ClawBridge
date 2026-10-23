@@ -354,6 +354,7 @@ var operationArgs = map[string]string{
 	"assignment_release":          "instance target_session revision",
 	"coordinator_set":             "instance target_session",
 	"linear_comment_reserve":      "instance issue_uuid operation_id body_sha256 parent_id in_response_to",
+	"linear_comment_precheck":     "instance issue_uuid operation_id in_response_to",
 	"linear_comment_settle":       "instance operation_id outcome comment_id via",
 	"linear_comments_posted":      "instance issue_uuid comment_ids",
 	"linear_comment_settle_match": "instance lease_token generation operation_digest issue_uuid comment_id created_at",
@@ -540,7 +541,7 @@ func pureRead(r Request) bool {
 	switch r.Operation {
 	case "snapshot", "inbox_status", "notification_status", "taskboard_get", "taskboard_get_v2", "taskboard_access", "list_projects", "list_members", "comment_watch_status":
 		return true
-	case "list_sessions", "history", "whoami", "linear_comments_posted":
+	case "list_sessions", "history", "whoami", "linear_comments_posted", "linear_comment_precheck":
 		// Naming a session with its instance makes it a heartbeat read: the
 		// read itself is pure and the heartbeat follows (see beat).
 		return (r.Session == "") == (str(r.Args, "instance") == "")

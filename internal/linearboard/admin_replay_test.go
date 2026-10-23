@@ -143,3 +143,20 @@ func TestAdminAuditReplayRefusesALockedRecord(t *testing.T) {
 		t.Fatal("a locked record was replayed", e)
 	}
 }
+
+// The write path keeps the payload check that only a replay skips: the same
+// operation ID with another payload is refused before its dispatch runs.
+func TestLedgerWriteRefusesAnotherPayloadForTheSameOperation(t *testing.T) {
+	s, _, _, _ := adminTest(t)
+	l := ledger{s.cfg.LedgerDirectory, s.cfg.Now}
+	if _, e := l.write("ns", "op-1", "payload-a", func() (any, error) { return map[string]any{"id": issueID}, nil }); e != nil {
+		t.Fatal(e)
+	}
+	dispatched := false
+	if _, e := l.write("ns", "op-1", "payload-b", func() (any, error) { dispatched = true; return map[string]any{"id": issueID}, nil }); e == nil || !strings.Contains(e.Error(), "different scoped payload") || dispatched {
+		t.Fatal("another payload reused the operation", e, dispatched)
+	}
+	if r, ok, e := l.lookupAny("ns", "op-1"); e != nil || !ok || r == nil {
+		t.Fatal("lookupAny", r, ok, e)
+	}
+}

@@ -135,12 +135,29 @@ clawbridge linear label create agent-working --team TEAM_UUID --operation-id lab
 
 ### 3. Create the initiative and one project per feature
 
+Each command prints JSON; the new object's UUID is `data.id`. Capture it, for
+example with `jq`, and pass it on:
+
 ```sh
-clawbridge linear initiative create "Product Review" --operation-id initiative-product-review
-clawbridge linear project create "Review · Checkout" --team TEAM_UUID --operation-id project-review-checkout
-clawbridge linear project create "Review · Onboarding" --team TEAM_UUID --operation-id project-review-onboarding
-clawbridge linear initiative add-project "Product Review" REVIEW_PROJECT_UUID --operation-id add-review-checkout
+INITIATIVE_UUID=$(clawbridge linear initiative create "Product Review" \
+  --description "Feature reviews: one project per feature." \
+  --operation-id initiative-product-review | jq -r .data.id)
+
+CHECKOUT_UUID=$(clawbridge linear project create "Review · Checkout" \
+  --team TEAM_UUID --operation-id project-review-checkout | jq -r .data.id)
+ONBOARDING_UUID=$(clawbridge linear project create "Review · Onboarding" \
+  --team TEAM_UUID --operation-id project-review-onboarding | jq -r .data.id)
+
+clawbridge linear initiative add-project "$INITIATIVE_UUID" "$CHECKOUT_UUID" \
+  --operation-id add-review-checkout
+clawbridge linear initiative add-project "$INITIATIVE_UUID" "$ONBOARDING_UUID" \
+  --operation-id add-review-onboarding
 ```
+
+Running `initiative create` or `project create` again with a name that already
+exists returns the existing object (`observed_unchanged`), so the capture also
+works on a rerun. `initiative add-project` only adds a project of a team in the
+binding, and nothing here removes or deletes anything.
 
 `project create` never changes the binding. In a binding with selected
 projects, its result carries a `proposal` (the `linear link` preview with the
@@ -157,7 +174,7 @@ clawbridge linear binding
 clawbridge linear link --profile PROFILE_ID \
   --team TEAM_UUID --default-team TEAM_UUID \
   --linear-project ENGINEERING_PROJECT_UUID \
-  --linear-project REVIEW_CHECKOUT_UUID --linear-project REVIEW_ONBOARDING_UUID \
+  --linear-project "$CHECKOUT_UUID" --linear-project "$ONBOARDING_UUID" \
   --expected-revision CURRENT_REVISION --confirm
 ```
 
@@ -165,7 +182,7 @@ clawbridge linear link --profile PROFILE_ID \
 
 ```sh
 clawbridge linear create --title "Review: Checkout" \
-  --linear-project REVIEW_CHECKOUT_UUID --operation-id issue-review-checkout
+  --linear-project "$CHECKOUT_UUID" --operation-id issue-review-checkout
 clawbridge linear relation add REVIEW_ISSUE_UUID ENGINEERING_ISSUE_UUID \
   --type related --profile PROFILE_ID --operation-id relate-checkout-1
 ```

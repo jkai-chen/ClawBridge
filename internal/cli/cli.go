@@ -415,6 +415,53 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		stringArg("issue", "Linear issue UUID or display identifier of a live assignment")
 		stringArg("scope-path", "repository path covered by a live assignment")
 		stringArg("assignment-state", "proposed or confirmed")
+	case "intake":
+		// The project's issue intake: its policy, trusted Linear users,
+		// /mcp/intake tokens and queue (live/INTAKE-DESIGN.md).
+		usage := errors.New("usage: intake policy [set --intake-mode off|notify --signals S1 ...] | trust add|remove LINEAR_USER_ID | trust list | token create [--expires-days N] | token list | token revoke TOKEN_ID | list [--state S] | dismiss|rearm ISSUE_UUID")
+		if len(rest) == 0 {
+			return usage
+		}
+		sub := rest[0]
+		rest = rest[1:]
+		action := ""
+		if len(rest) > 0 && (sub == "policy" || sub == "trust" || sub == "token") {
+			action, rest = rest[0], rest[1:]
+		}
+		switch sub + " " + action {
+		case "policy ":
+			op = "intake_policy_get"
+		case "policy set":
+			op = "intake_policy_set"
+			// --mode is the global storage mode, so the policy's is --intake-mode.
+			stringArg("intake-mode", "off or notify (offer and auto are not available yet)")
+			f.Var(&repeatedIDs{}, "signals", "enabled signal S1–S5, repeatable; replaces the list")
+			f.Var(&repeatedIDs{}, "roles", "session role eligible for offers, repeatable; replaces the list")
+			f.Int("s5-calls-per-hour", 0, "Linear calls per hour the /mcp/intake proofs may spend")
+			f.Int("out-of-binding-limit", 0, "out-of-binding requests per hour that suspend an intake token")
+			f.Int("expected-revision", 0, "the policy revision you last read")
+		case "trust add", "trust remove":
+			op = "intake_trust_" + action
+			arityMin, arityMax = 1, 1
+		case "trust list":
+			op = "intake_trust_list"
+		case "token create":
+			op = "intake_token_create"
+			f.Int("expires-days", 0, "days until the token expires (default 90, at most 365)")
+		case "token list":
+			op = "intake_token_list"
+		case "token revoke":
+			op = "intake_token_revoke"
+			arityMin, arityMax = 1, 1
+		case "list ":
+			op = "intake_list"
+			stringArg("state", "queued, offered, assigned, parked, dismissed or closed")
+		case "dismiss ", "rearm ":
+			op = "intake_" + sub
+			arityMin, arityMax = 1, 1
+		default:
+			return usage
+		}
 	case "assignment":
 		if len(rest) == 0 {
 			return errors.New("usage: assignment propose|confirm|release ...")
@@ -635,6 +682,19 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		}
 	case "status":
 		a["message_id"] = pos[0]
+	case "intake":
+		if v, ok := a["intake_mode"]; ok {
+			a["mode"] = v
+			delete(a, "intake_mode")
+		}
+		switch op {
+		case "intake_trust_add", "intake_trust_remove":
+			a["linear_user_id"] = pos[0]
+		case "intake_token_revoke":
+			a["token_id"] = pos[0]
+		case "intake_dismiss", "intake_rearm":
+			a["issue_uuid"] = pos[0]
+		}
 	}
 	if raw, ok := a["coordination"]; ok {
 		var object any
@@ -734,7 +794,7 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	}
 	if config.Instance != "" {
 		switch op {
-		case "register_session", "list_sessions", "history", "send", "reply", "inbox", "inbox_status", "notification_status", "set_notification_policy", "mark_read", "update_session", "retire_session", "whoami", "message_status", "project_role_set", "project_role_revoke", "purge_expired", "assignment_propose", "assignment_confirm", "assignment_release", "coordinator_set":
+		case "register_session", "list_sessions", "history", "send", "reply", "inbox", "inbox_status", "notification_status", "set_notification_policy", "mark_read", "update_session", "retire_session", "whoami", "message_status", "project_role_set", "project_role_revoke", "purge_expired", "assignment_propose", "assignment_confirm", "assignment_release", "coordinator_set", "intake_policy_get", "intake_policy_set", "intake_trust_add", "intake_trust_remove", "intake_trust_list", "intake_token_create", "intake_token_list", "intake_token_revoke", "intake_list", "intake_dismiss", "intake_rearm":
 			a["instance"] = config.Instance
 		}
 	}

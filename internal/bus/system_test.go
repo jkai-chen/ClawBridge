@@ -107,15 +107,24 @@ func TestSystemSessionRenamesAPersonsClawbridgeOnFirstUse(t *testing.T) {
 	if e := h.s.db.QueryRow(`SELECT COUNT(*) FROM sessions WHERE role='system'`).Scan(&n); e != nil || n != 0 {
 		t.Fatal("a system session exists before the watcher acted:", n, e)
 	}
+	// W-L3: clawbridge-user-1 is already someone's, so the rename takes
+	// the first free name, and history records it.
 	if _, e := h.s.db.Exec(`UPDATE sessions SET name='clawbridge' WHERE id=?`, a); e != nil {
+		t.Fatal(e)
+	}
+	if _, e := h.s.db.Exec(`UPDATE sessions SET name='clawbridge-user-1' WHERE id=?`, h.sessionID("b")); e != nil {
 		t.Fatal(e)
 	}
 	if _, err := h.s.ExecuteSystem(context.Background(), pid, Request{Operation: "taskboard_get_v2"}); err != nil {
 		t.Fatal(err)
 	}
 	var name string
-	if e := h.s.db.QueryRow(`SELECT name FROM sessions WHERE id=?`, a).Scan(&name); e != nil || name != "clawbridge-user-1" {
+	if e := h.s.db.QueryRow(`SELECT name FROM sessions WHERE id=?`, a).Scan(&name); e != nil || name != "clawbridge-user-2" {
 		t.Fatal(name, e)
+	}
+	var details string
+	if e := h.s.db.QueryRow(`SELECT details FROM history WHERE entity='session' AND entity_key=? AND action='renamed'`, a).Scan(&details); e != nil || !strings.Contains(details, `"to":"clawbridge-user-2"`) || !strings.Contains(details, `"from":"clawbridge"`) {
+		t.Fatal("the rename is not in history:", details, e)
 	}
 	if e := h.s.db.QueryRow(`SELECT COUNT(*) FROM sessions s WHERE role='system' AND name='clawbridge' AND project_id=(SELECT project_id FROM sessions WHERE id=?)`, a).Scan(&n); e != nil || n != 1 {
 		t.Fatal(n, e)

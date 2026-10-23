@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -35,10 +36,12 @@ type fakeLinear struct {
 	comments  []linearprovider.Comment
 	labelled  []string
 	delegated []string
-	history   map[string][]map[string]any
-	mentions  []map[string]any
-	queries   []string
-	notes     int
+	// delegatedMore makes every delegated page say there is another.
+	delegatedMore bool
+	history       map[string][]map[string]any
+	mentions      []map[string]any
+	queries       []string
+	notes         int
 }
 
 func (f *fakeLinear) issue(id string) (linearprovider.IssueV2, error) {
@@ -142,7 +145,7 @@ func (a fakeApp) GraphQL(_ context.Context, query string, vars map[string]any, o
 		for _, id := range a.f.delegated {
 			nodes = append(nodes, map[string]any{"id": id})
 		}
-		data = map[string]any{"issues": map[string]any{"nodes": nodes, "pageInfo": map[string]any{"hasNextPage": false}}}
+		data = map[string]any{"issues": map[string]any{"nodes": nodes, "pageInfo": map[string]any{"hasNextPage": a.f.delegatedMore, "endCursor": "next"}}}
 	case mentionsQuery:
 		data = map[string]any{"notifications": map[string]any{"nodes": a.f.mentions, "pageInfo": map[string]any{"hasNextPage": false}}}
 	default:
@@ -395,5 +398,96 @@ func TestIntakeOffReadsNothing(t *testing.T) {
 	e.dueNow()
 	if tick := e.tick(); tick.Intake == nil || !tick.Intake.Off || tick.Intake.Calls != 0 || len(e.f.queries) != 0 {
 		t.Fatalf("%+v %v", tick.Intake, e.f.queries)
+	}
+}
+
+// ledgerStore is a hosted server's shared ledger in memory.
+type ledgerStore struct {
+	mu      sync.Mutex
+	records map[string]string
+	inserts int
+}
+
+func (m *ledgerStore) LedgerInsert(_ context.Context, ns, op, record string) (string, bool, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if r, ok := m.records[ns+"/"+op]; ok {
+		return r, false, nil
+	}
+	m.records[ns+"/"+op] = record
+	m.inserts++
+	return "", true, nil
+}
+func (m *ledgerStore) LedgerGet(_ context.Context, ns, op string) (string, bool, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	r, ok := m.records[ns+"/"+op]
+	return r, ok, nil
+}
+func (m *ledgerStore) LedgerReplace(_ context.Context, ns, op, from, to string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.records[ns+"/"+op] != from {
+		return errors.New("changed")
+	}
+	m.records[ns+"/"+op] = to
+	return nil
+}
+func (m *ledgerStore) LedgerDelete(_ context.Context, ns, op, record string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.records[ns+"/"+op] == record {
+		delete(m.records, ns+"/"+op)
+	}
+	return nil
+}
+func (m *ledgerStore) LedgerMarkUnsettled(context.Context, string, string, bool) error { return nil }
+func (m *ledgerStore) LedgerUnsettled(context.Context, string, int) ([]string, error) {
+	return nil, nil
+}
+
+// W-M1: with a shared ledger the app's marker writes are recorded there,
+// never in a local directory.
+func TestMarkerWritesUseTheSharedLedger(t *testing.T) {
+	e := setup(t)
+	shared := &ledgerStore{records: map[string]string{}}
+	e.w.Ledger, e.w.LedgerDirectory = linearboard.SharedLedger(shared, nil), ""
+	proposed := e.call("assignment_propose", "eng", map[string]any{"issue_uuid": issueA, "issue_identifier": "FIX-3"})
+	e.call("assignment_confirm", "coord", map[string]any{"target_session": "eng", "revision": proposed["assignment"].(map[string]any)["revision"]})
+	tick := e.tick()
+	if tick.Error != "" || e.f.notes == 0 || shared.inserts == 0 {
+		t.Fatalf("the claim marker was not written through the shared ledger: %+v notes=%d inserts=%d", tick, e.f.notes, shared.inserts)
+	}
+}
+
+// W-L1: a source cut at intakePages keeps its cursor and says so; once a
+// read completes, the cursor moves.
+func TestIntakeTruncatedReadKeepsTheCursor(t *testing.T) {
+	e := setup(t)
+	e.tick()
+	var started string
+	e.queryRow(`SELECT cursor_time FROM watch_cursors WHERE source='intake-s2'`, &started)
+	e.f.delegated, e.f.delegatedMore = []string{issueA}, true
+	e.dueNow()
+	before := len(e.f.queries)
+	tick := e.tick()
+	pages := 0
+	for _, q := range e.f.queries[before:] {
+		if q == delegatedQuery {
+			pages++
+		}
+	}
+	var kept string
+	e.queryRow(`SELECT cursor_time FROM watch_cursors WHERE source='intake-s2'`, &kept)
+	if tick.Intake == nil || !contains(tick.Intake.Truncated, "intake-s2") || kept != started || pages != intakePages {
+		t.Fatalf("truncated read: %+v cursor %s→%s pages %d", tick.Intake, started, kept, pages)
+	}
+	e.f.delegatedMore = false
+	e.dueNow()
+	tick = e.tick()
+	var moved string
+	e.queryRow(`SELECT cursor_time FROM watch_cursors WHERE source='intake-s2'`, &moved)
+	if tick.Intake == nil || len(tick.Intake.Truncated) != 0 || moved <= started {
+		t.Fatalf("complete read: %+v cursor %s→%s", tick.Intake, started, moved)
 	}
 }

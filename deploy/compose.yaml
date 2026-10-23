@@ -44,13 +44,8 @@ services:
       # interval or the scheduler tick settings are set, and the Linear app
       # is configured.
       CLAWBRIDGE_WATCH_INTERVAL: ${CLAWBRIDGE_WATCH_INTERVAL:-}
-      CLAWBRIDGE_WATCH_LEDGER_DIR: /var/lib/clawbridge-watcher
       CLAWBRIDGE_TICK_AUDIENCE: ${CLAWBRIDGE_TICK_AUDIENCE:-}
       CLAWBRIDGE_TICK_SERVICE_ACCOUNT: ${CLAWBRIDGE_TICK_SERVICE_ACCOUNT:-}
-    # The api filesystem is read-only; the watcher's marker writes keep a
-    # small operation ledger here, which may be lost on restart.
-    tmpfs:
-      - /var/lib/clawbridge-watcher:size=16m,mode=0700,uid=65532,gid=65532
     depends_on:
       db:
         condition: service_healthy

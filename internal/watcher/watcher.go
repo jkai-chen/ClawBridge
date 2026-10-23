@@ -55,8 +55,11 @@ type Store interface {
 type Watcher struct {
 	Store Store
 	App   App
-	// LedgerDirectory holds the operation ledger of the app's marker
-	// writes; their idempotency is the bus marker row's.
+	// Ledger is the operation ledger of the app's marker writes: the hosted
+	// server's shared ledger, so an uncertain write survives a restart and
+	// is seen by every instance. Without it (a local test store) the
+	// private ledger in LedgerDirectory is used.
+	Ledger          func(context.Context) linearboard.OperationLedger
 	LedgerDirectory string
 	Now             func() time.Time
 
@@ -135,6 +138,7 @@ func (w *Watcher) service(pid string) *linearboard.Service {
 		Connections:     appConnections{},
 		ProfileID:       appProfile,
 		LedgerDirectory: w.LedgerDirectory,
+		Ledger:          w.Ledger,
 		Open: func(ctx context.Context, _ *http.Client, readonly bool) (linearboard.Provider, error) {
 			return w.App.Open(ctx, readonly)
 		},

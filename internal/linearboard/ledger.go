@@ -143,6 +143,9 @@ type ledgerRecord struct {
 type OperationLedger interface {
 	write(namespace, operationID string, payload any, dispatch func() (any, error)) (any, error)
 	lookup(namespace, operationID string, payload any) (any, bool, error)
+	// lookupAny skips only the payload-digest check, for a replay of a
+	// recorded result.
+	lookupAny(namespace, operationID string) (any, bool, error)
 	markUnsettled(namespace, operationID string) error
 	dropUnsettled(namespace, operationID string)
 	unsettled(namespace string, limit int) []string

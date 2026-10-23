@@ -53,10 +53,20 @@ type CommentsInputV2 struct {
 }
 
 // IssueCommentsV2 is an issue read with its comments. Comment bodies are
-// untrusted data written by others.
+// untrusted data written by others. Items replaces the embedded comments
+// with the same comments flagged from the bus comment ledger.
 type IssueCommentsV2 struct {
 	linearprovider.IssueV2
 	linearprovider.Comments
+	Items []CommentV2 `json:"comments"`
+	// CommentsOwnership is "available" when every comment is flagged
+	// posted_by_clawbridge true or false, or "unavailable" when the bus
+	// could not say: nothing may then be taken as a human comment.
+	CommentsOwnership string `json:"comments_ownership"`
+	// CommentsYoungPending is true while a ClawBridge comment on the issue
+	// may be posted but not yet recorded: an unflagged comment may be ours.
+	CommentsYoungPending bool `json:"comments_young_pending,omitempty"`
+	own                  ownership
 }
 type IssuesInputV2 struct {
 	Limit                         int
@@ -85,6 +95,9 @@ type WriteInputV2 struct {
 	// set; omitempty keeps the ledger digest of other writes unchanged.
 	AddLabels    []string `json:",omitempty"`
 	RemoveLabels []string `json:",omitempty"`
+	// InResponseTo names the notified comment a reply answers; omitempty
+	// keeps the ledger digest of other writes unchanged.
+	InResponseTo string `json:",omitempty"`
 }
 type RelationInputV2 struct{ OperationID, Action, Type, FromID, ToID string }
 type ReceiptV2 struct {
@@ -101,10 +114,13 @@ type ReceiptV2 struct {
 	RequestedParentID string `json:"requested_parent_id,omitempty"`
 	// BodySHA256 is the SHA-256 of the comment body posted, marker included.
 	BodySHA256 string `json:"body_sha256,omitempty"`
-	Action     string `json:"action,omitempty"`
-	Type       string `json:"type,omitempty"`
-	FromID     string `json:"from_id,omitempty"`
-	ToID       string `json:"to_id,omitempty"`
+	// InResponseTo is the notified comment the bus recorded this reply as
+	// answering.
+	InResponseTo string `json:"in_response_to,omitempty"`
+	Action       string `json:"action,omitempty"`
+	Type         string `json:"type,omitempty"`
+	FromID       string `json:"from_id,omitempty"`
+	ToID         string `json:"to_id,omitempty"`
 	// Unverified names the requested fields (labels, assignee, parent,
 	// state) that Linear's response did not report, so the write could not
 	// confirm them.

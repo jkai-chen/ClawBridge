@@ -544,7 +544,12 @@ func (s *Service) IssueV2WithComments(ctx context.Context, scope bus.Request, id
 	if e != nil {
 		return IssueCommentsV2{}, e
 	}
-	return IssueCommentsV2{IssueV2: issue, Comments: comments}, nil
+	out := IssueCommentsV2{IssueV2: issue, Comments: comments, CommentsOwnership: "unavailable"}
+	out.Items, out.own = s.commentOwners(ctx, scope, id, comments.Items)
+	if out.own.available {
+		out.CommentsOwnership, out.CommentsYoungPending = "available", out.own.youngPending
+	}
+	return out, nil
 }
 func (s *Service) issueV2(ctx context.Context, scope bus.Request, id string, resolve bool, comments *linearprovider.CommentsSince) (issue linearprovider.IssueV2, out linearprovider.Comments, e error) {
 	empty := linearprovider.IssueV2{}

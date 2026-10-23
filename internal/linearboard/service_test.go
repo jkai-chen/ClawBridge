@@ -28,6 +28,7 @@ type fakeAuthority struct {
 	accesses   int
 	onAccess   func(int)
 	failAccess int
+	comments   fakeCommentLedger
 }
 
 func (a *fakeAuthority) Execute(_ context.Context, r bus.Request) (bus.Result, error) {
@@ -40,7 +41,10 @@ func (a *fakeAuthority) Execute(_ context.Context, r bus.Request) (bus.Result, e
 		if a.accesses == a.failAccess {
 			return bus.Result{}, errors.New("authority unavailable")
 		}
-		return bus.Result{Source: "local-authority", Data: bus.TaskboardAccess{WorkspaceID: a.binding.WorkspaceID, ProjectID: a.binding.ProjectID, SessionID: "ses", SessionName: "ses", CanWrite: !a.deny, ProjectRole: "member"}}, nil
+		return bus.Result{Source: "local-authority", Data: bus.TaskboardAccess{WorkspaceID: a.binding.WorkspaceID, ProjectID: a.binding.ProjectID, SessionID: "ses", SessionName: "worker-1", CanWrite: !a.deny, ProjectRole: "member"}}, nil
+	}
+	if strings.HasPrefix(r.Operation, "linear_comment") {
+		return a.comments.execute(r)
 	}
 	if r.Operation != "taskboard_get" {
 		return bus.Result{}, errors.New("unexpected authority write")
@@ -60,7 +64,9 @@ func (fakeConnections) HTTPClient(context.Context, string) (*http.Client, error)
 type fakeProvider struct {
 	writes, reads int
 	// bodies are the comment bodies posted, in order.
-	bodies             []string
+	bodies []string
+	// commentErr fails every comment; nothing is recorded as posted.
+	commentErr         error
 	foreign            bool
 	incomplete         bool
 	nextCursor         string
@@ -113,6 +119,9 @@ func (p *fakeProvider) Update(context.Context, linearprovider.UpdateInput) (line
 }
 func (p *fakeProvider) Comment(_ context.Context, _ string, body string) (linearprovider.Receipt, error) {
 	p.writes++
+	if p.commentErr != nil {
+		return linearprovider.Receipt{}, p.commentErr
+	}
 	p.bodies = append(p.bodies, body)
 	return linearprovider.Receipt{ID: issueID, IssueID: issueID}, nil
 }

@@ -582,7 +582,11 @@ func (s *Service) Write(ctx context.Context, scope bus.Request, in WriteInput) (
 		return nil, err
 	}
 
-	return (ledger{s.cfg.LedgerDirectory, s.cfg.Now}).write(namespace, in.OperationID, ledgerPayload, func() (any, error) {
+	l := ledger{s.cfg.LedgerDirectory, s.cfg.Now}
+	if in.Operation == "comment" {
+		s.sweepComments(ctx, scope, l, namespace)
+	}
+	return l.write(namespace, in.OperationID, ledgerPayload, func() (any, error) {
 		// Last revision check occurs after obtaining the private per-operation lock.
 		if e := s.unchanged(ctx, scope, b); e != nil {
 			return nil, authorityFailure(e)
@@ -624,12 +628,19 @@ func (s *Service) Write(ctx context.Context, scope bus.Request, in WriteInput) (
 			}
 			return s.postReceipt(ctx, scope, b, map[string]any{"id": issue.ID, "identifier": issue.Identifier, "team_id": issue.TeamID, "project_id": issue.ProjectID})
 		default:
-			receipt, e := p.Comment(ctx, in.IssueID, linearprovider.MarkComment(in.Body, markerSession(scope, access)))
+			posted := linearprovider.MarkComment(in.Body, markerSession(access))
+			receipt, _, e := s.sendComment(ctx, scope, l, namespace, commentIntent{Issue: in.IssueID, OperationID: in.OperationID, Body: posted}, func() (linearprovider.Receipt, error) {
+				receipt, e := p.Comment(ctx, in.IssueID, posted)
+				if e != nil {
+					return receipt, writeFailure(p, sent, known, e, post)
+				}
+				if receipt.IssueID != in.IssueID || !linearprovider.ValidID(receipt.ID) {
+					return receipt, errors.New("comment receipt scope mismatch")
+				}
+				return receipt, nil
+			})
 			if e != nil {
-				return nil, writeFailure(p, sent, known, e, post)
-			}
-			if receipt.IssueID != in.IssueID || !linearprovider.ValidID(receipt.ID) {
-				return nil, errors.New("comment receipt scope mismatch")
+				return nil, e
 			}
 			return s.postReceipt(ctx, scope, b, receipt)
 		}

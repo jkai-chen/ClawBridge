@@ -16,7 +16,7 @@ import (
 var sha256Pattern = regexp.MustCompile(`\A[0-9a-f]{64}\z`)
 
 func legacyOnlyV2(in WriteInputV2) bool {
-	return in.TeamID == "" && !in.Project.Present && !in.Labels.Present && !in.ExpectedLabels.Present && !in.Parent.Present && !in.Assignee.Present && in.ExpectedTitle == nil && in.ExpectedDescriptionSHA256 == nil && in.AddLabels == nil && in.RemoveLabels == nil
+	return in.TeamID == "" && !in.Project.Present && !in.Labels.Present && !in.ExpectedLabels.Present && !in.Parent.Present && !in.Assignee.Present && in.ExpectedTitle == nil && in.ExpectedDescriptionSHA256 == nil && in.AddLabels == nil && in.RemoveLabels == nil && in.InResponseTo == ""
 }
 
 // labelPlanV2 is the part of the requested label deltas that would change the
@@ -165,6 +165,9 @@ func ValidateWriteV2(in WriteInputV2) error {
 	if in.TeamID != "" && !linearprovider.ValidID(in.TeamID) {
 		return errors.New("team requires UUID")
 	}
+	if in.InResponseTo != "" && (in.Operation != "comment" || !in.Parent.Present || !linearprovider.ValidID(in.InResponseTo)) {
+		return errors.New("in_response_to applies only to a reply (parent_id), as the UUID of the notified comment it answers")
+	}
 	switch in.Operation {
 	case "create":
 		if in.Title == nil || in.IssueID != "" || in.Body != "" {
@@ -177,7 +180,7 @@ func ValidateWriteV2(in WriteInputV2) error {
 	case "comment":
 		// On a comment, Parent is the comment being answered (reply_to).
 		reply := in.Parent
-		in.Parent = linearprovider.Field[*string]{}
+		in.Parent, in.InResponseTo = linearprovider.Field[*string]{}, ""
 		if !legacyOnlyV2(in) || !linearprovider.ValidID(in.IssueID) || !validText(in.Body, linearprovider.MaxBodyBytes-linearprovider.CommentMarkerReserve, false) || in.Title != nil || in.Description != nil || in.StateID != nil {
 			return errors.New("comment requires scoped issue UUID and bounded body")
 		}
@@ -292,6 +295,9 @@ func (s *Service) WriteV2(ctx context.Context, scope bus.Request, in WriteInputV
 			return receipt, e
 		}
 		return s.postReceiptV2(ctx, scope, b, receipt)
+	}
+	if in.Operation == "comment" {
+		s.sweepComments(ctx, scope, l, namespace)
 	}
 	profile, p, done, e := s.openForWrite(ctx)
 	if e != nil {
@@ -681,27 +687,34 @@ func (s *Service) WriteV2(ctx context.Context, scope bus.Request, in WriteInputV
 			// the issue by it.
 			// Every posted comment ends with the agent marker; the ledger
 			// keeps the caller's body, so a retry matches as before.
-			posted := linearprovider.MarkComment(in.Body, markerSession(scope, access))
-			var r linearprovider.Receipt
-			var err error
-			if reply {
-				r, err = p2.(commentReplierV2).ReplyOnIssue(ctx, in.IssueID, provenIdentifierV2(current), replyTo, posted)
-			} else {
-				r, err = commentV2(ctx, p, in.IssueID, current.Identifier, posted)
-			}
+			posted := linearprovider.MarkComment(in.Body, markerSession(access))
+			intent := commentIntent{Issue: in.IssueID, OperationID: in.OperationID, Body: posted, Parent: replyTo, InResponseTo: in.InResponseTo}
+			r, answers, err := s.sendComment(ctx, scope, l, namespace, intent, func() (linearprovider.Receipt, error) {
+				var r linearprovider.Receipt
+				var err error
+				if reply {
+					r, err = p2.(commentReplierV2).ReplyOnIssue(ctx, in.IssueID, provenIdentifierV2(current), replyTo, posted)
+				} else {
+					r, err = commentV2(ctx, p, in.IssueID, current.Identifier, posted)
+				}
+				if err != nil {
+					return r, writeFailure(p, sent, known, err, post)
+				}
+				if r.IssueID != in.IssueID || !linearprovider.ValidID(r.ID) {
+					return r, errors.New("comment receipt scope mismatch")
+				}
+				if reply && r.ParentID != replyTo {
+					return r, errors.New("comment receipt parent mismatch")
+				}
+				return r, nil
+			})
 			if err != nil {
-				return nil, writeFailure(p, sent, known, err, post)
-			}
-			if r.IssueID != in.IssueID || !linearprovider.ValidID(r.ID) {
-				return nil, errors.New("comment receipt scope mismatch")
-			}
-			if reply && r.ParentID != replyTo {
-				return nil, errors.New("comment receipt parent mismatch")
+				return nil, err
 			}
 			if legacy {
 				receipt = r
 			} else {
-				written := ReceiptV2{Kind: "comment", Outcome: "accepted", ID: r.ID, IssueID: r.IssueID, ParentID: r.ParentID, BodySHA256: r.BodySHA256}
+				written := ReceiptV2{Kind: "comment", Outcome: "accepted", ID: r.ID, IssueID: r.IssueID, ParentID: r.ParentID, BodySHA256: r.BodySHA256, InResponseTo: answers}
 				if reply && replyTo != *in.Parent.Value {
 					written.RequestedParentID = *in.Parent.Value
 				}
@@ -902,14 +915,11 @@ func receiptParentV2(issue linearprovider.IssueV2, parent linearprovider.Field[*
 	return errors.New("receipt parent does not match the requested parent")
 }
 
-// markerSession is the session name the agent marker shows: the address the
-// caller's session used, which access resolved, unless that address is the
-// session's ID; IDs never go to Linear.
-func markerSession(scope bus.Request, access bus.TaskboardAccess) string {
-	if scope.Session == access.SessionID {
-		return ""
-	}
-	return scope.Session
+// markerSession is the session name the agent marker shows: the name the
+// bus resolved for the writing session, however the caller addressed it.
+// Session IDs never go to Linear.
+func markerSession(access bus.TaskboardAccess) string {
+	return access.SessionName
 }
 
 // commentReplierV2 is a provider that can prove a reply's parent and post

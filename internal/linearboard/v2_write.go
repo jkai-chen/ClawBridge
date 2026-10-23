@@ -251,6 +251,14 @@ func (s *Service) WriteV2(ctx context.Context, scope bus.Request, in WriteInputV
 	if e := ValidateWriteV2(in); e != nil {
 		return nil, e
 	}
+	if !in.marker {
+		if app, e := s.appWrites(ctx); e != nil || app {
+			if e != nil {
+				return nil, e
+			}
+			return s.appWrite(ctx, scope, in.Operation, writeArgsV2(in))
+		}
+	}
 	if in.Labels.Present {
 		in.Labels.Value, _ = sortedUniqueIDs(in.Labels.Value, 100)
 	}

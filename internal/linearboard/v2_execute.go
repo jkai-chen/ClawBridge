@@ -82,47 +82,58 @@ func (s *Service) ExecuteV2(ctx context.Context, scope bus.Request, operation st
 		}
 		return s.RelationV2(ctx, scope, RelationInputV2{OperationID: text("operation_id"), Action: action, Type: text("type"), FromID: text("from_id"), ToID: text("to_id")})
 	default:
-		in := WriteInputV2{WriteInput: WriteInput{Operation: operation, OperationID: text("operation_id"), IssueID: text("id"), Body: text("body")}, TeamID: text("team_id"), InResponseTo: text("in_response_to")}
-		for key, target := range map[string]**string{"title": &in.Title, "description": &in.Description, "state_id": &in.StateID, "expected_title": &in.ExpectedTitle, "expected_description_sha256": &in.ExpectedDescriptionSHA256} {
-			if _, ok := args[key]; ok {
-				v := text(key)
-				*target = &v
-			}
-		}
-		for key, target := range map[string]*linearprovider.Field[*string]{"project_id": &in.Project, "parent_id": &in.Parent, "assignee_id": &in.Assignee} {
-			if v, ok := args[key]; ok {
-				target.Present = true
-				if v != nil {
-					value := v.(string)
-					target.Value = &value
-				}
-			}
-		}
-		if v, ok := args["label_ids"]; ok {
-			ids, e := labelArgumentV2(v)
-			if e != nil {
-				return nil, e
-			}
-			in.Labels = linearprovider.Field[[]string]{Present: true, Value: ids}
-		}
-		for key, target := range map[string]*[]string{"add_label_ids": &in.AddLabels, "remove_label_ids": &in.RemoveLabels} {
-			if v, ok := args[key]; ok {
-				ids, e := labelArgumentV2(v)
-				if e != nil {
-					return nil, e
-				}
-				*target = ids
-			}
-		}
-		if v, ok := args["expected_label_ids"]; ok {
-			ids, e := labelArgumentV2(v)
-			if e != nil {
-				return nil, e
-			}
-			in.ExpectedLabels = linearprovider.Field[[]string]{Present: true, Value: ids}
+		in, e := parseWriteArgsV2(operation, args)
+		if e != nil {
+			return nil, e
 		}
 		return s.WriteV2(ctx, scope, in)
 	}
+}
+
+// parseWriteArgsV2 reads a create, update or comment's arguments, already
+// checked for their keys and types, into a WriteInputV2.
+func parseWriteArgsV2(operation string, args map[string]any) (WriteInputV2, error) {
+	text := func(key string) string { v, _ := args[key].(string); return v }
+	in := WriteInputV2{WriteInput: WriteInput{Operation: operation, OperationID: text("operation_id"), IssueID: text("id"), Body: text("body")}, TeamID: text("team_id"), InResponseTo: text("in_response_to")}
+	for key, target := range map[string]**string{"title": &in.Title, "description": &in.Description, "state_id": &in.StateID, "expected_title": &in.ExpectedTitle, "expected_description_sha256": &in.ExpectedDescriptionSHA256} {
+		if _, ok := args[key]; ok {
+			v := text(key)
+			*target = &v
+		}
+	}
+	for key, target := range map[string]*linearprovider.Field[*string]{"project_id": &in.Project, "parent_id": &in.Parent, "assignee_id": &in.Assignee} {
+		if v, ok := args[key]; ok {
+			target.Present = true
+			if v != nil {
+				value := v.(string)
+				target.Value = &value
+			}
+		}
+	}
+	if v, ok := args["label_ids"]; ok {
+		ids, e := labelArgumentV2(v)
+		if e != nil {
+			return in, e
+		}
+		in.Labels = linearprovider.Field[[]string]{Present: true, Value: ids}
+	}
+	for key, target := range map[string]*[]string{"add_label_ids": &in.AddLabels, "remove_label_ids": &in.RemoveLabels} {
+		if v, ok := args[key]; ok {
+			ids, e := labelArgumentV2(v)
+			if e != nil {
+				return in, e
+			}
+			*target = ids
+		}
+	}
+	if v, ok := args["expected_label_ids"]; ok {
+		ids, e := labelArgumentV2(v)
+		if e != nil {
+			return in, e
+		}
+		in.ExpectedLabels = linearprovider.Field[[]string]{Present: true, Value: ids}
+	}
+	return in, nil
 }
 func pageLimitV2(v any) (int, error) {
 	var n int

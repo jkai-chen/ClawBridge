@@ -50,9 +50,14 @@ type Config struct {
 	Workspace string
 	Open      func(context.Context, *http.Client, bool) (Provider, error)
 	Now       func() time.Time
+	// AppRoute is set for a client of a hosted server: its agent writes go
+	// to the server as linear_write when the server offers the ClawBridge
+	// Linear app.
+	AppRoute bool
 }
 type Service struct {
 	cfg    Config
+	app    *appRoute
 	pool   *providerPool
 	proofs *bindingProofCache
 	held   *heldOperation
@@ -67,7 +72,7 @@ func New(c Config) *Service {
 			return linearprovider.New(ctx, h, ro)
 		}
 	}
-	return &Service{cfg: c}
+	return &Service{cfg: c, app: &appRoute{}}
 }
 
 type Context struct {

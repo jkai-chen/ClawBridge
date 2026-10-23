@@ -78,6 +78,10 @@ func (s *Store) setDisplayName(ctx context.Context, tx *transaction, wid string,
 	if utf8.RuneCountInString(raw) > 200 {
 		return nil, invalid("a display name is up to 200 characters")
 	}
+	if strings.Contains(raw, "@") {
+		// Stripping the "@" would still show an email, or mention a handle.
+		return nil, invalid("a display name cannot contain @: markers never show an email or a handle")
+	}
 	current := ""
 	err := tx.QueryRowContext(ctx, `SELECT display_name FROM members WHERE workspace_id=? AND principal=?`, wid, s.principal).Scan(&current)
 	if errors.Is(err, sql.ErrNoRows) {

@@ -132,14 +132,26 @@ func TestLinearDisplayNameRecordsTheMembersName(t *testing.T) {
 	if a := last(); a["display_name"] != "Ada Lovelace" || a["if_unset"] != float64(1) || !strings.Contains(note, `"Ada Lovelace"`) {
 		t.Fatal("connect capture", a, note)
 	}
-	// The handle stands in for a missing full name.
-	user["name"] = nil
-	if e := run("capture", "--profile", profile.ID); e != nil || last()["display_name"] != "ada" {
-		t.Fatal("handle fallback", e, last())
+	// The handle stands in for a missing full name, or one that is an
+	// email, as Linear fills an unset name.
+	for _, name := range []any{nil, "jane.doe@example.com"} {
+		user["name"] = name
+		if e := run("capture", "--profile", profile.ID); e != nil || last()["display_name"] != "ada" {
+			t.Fatal("handle fallback", name, e, last())
+		}
+	}
+	// With only an email there is nothing to record, and connect says so.
+	user["displayName"] = "jane@example.com"
+	before := len(sets)
+	if e := run("capture", "--profile", profile.ID); e == nil || len(sets) != before {
+		t.Fatal("captured an email", e)
+	}
+	if note := captureEngineerAtConnect(context.Background(), Config{}, manager, profile.ID); !strings.Contains(note, "name no engineer") || len(sets) != before {
+		t.Fatal("connect recorded an email", note)
 	}
 	// A directory without a hosted project captures nothing.
 	t.Setenv("CLAWBRIDGE_MODE", "local")
-	before := len(sets)
+	before = len(sets)
 	if note := captureEngineerAtConnect(context.Background(), Config{}, manager, profile.ID); note != "" || len(sets) != before {
 		t.Fatal("captured without a hosted project", note)
 	}

@@ -72,7 +72,7 @@ requires its matching instance. Routing role is distinct from project permission
 | `resolve_project` | Explicit project or optional git_remote fallback |
 | `taskboard_get` | Shared Linear mapping; optional current actor/instance |
 | `taskboard_access` | Own effective project-write capability; ledger (must be 1); optional actor/instance; optional engineer (1 returns the engineer agent markers name) |
-| `member_display_name_set` | Hosted only, the caller's own name in the workspace for agent markers: display_name (up to 200 characters, stored stripped of mentions, links and Markdown; empty clears it); optional if_unset (1 keeps a name already recorded). Answers `{display_name, engineer, kept}`. Audited |
+| `member_display_name_set` | Hosted only, the caller's own name in the workspace for agent markers: display_name (up to 200 characters, no `@`, stored stripped of mentions, links and Markdown; empty clears it); optional if_unset (1 keeps a name already recorded). Answers `{display_name, engineer, kept}`. Audited |
 | `taskboard_set` | expected_revision, linear_team_ids, linear_default_team_id, linear_project_id (UUID/null); optional linear_workspace_id (UUID/null) |
 | `taskboard_clear` | expected_revision; authorized owner/lead; optional repair (project owner, unreadable binding only) |
 | `taskboard_get_v2` | Versioned shared mapping; optional current actor/instance |

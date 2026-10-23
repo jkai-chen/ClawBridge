@@ -40,6 +40,9 @@ type WatchOptions struct {
 	Interval time.Duration
 	// Cycle receives each cycle's outcome.
 	Cycle func(WatchCycle) error
+	// Within runs after each cycle while the lease is still held, with
+	// its fence, so other sources (intake) share the lease and budget.
+	Within func(ctx context.Context, fence map[string]any) error
 }
 
 // WatchCycle is what one watch cycle did. Held names the issues whose poll
@@ -90,6 +93,13 @@ type outOfScopeError string
 
 func (e outOfScopeError) Error() string { return string(e) }
 
+// IsOutOfScope reports whether err refused an issue the binding does not
+// cover.
+func IsOutOfScope(err error) bool {
+	var outside outOfScopeError
+	return errors.As(err, &outside)
+}
+
 // Watch runs the project's comment watcher as the caller's session: it holds
 // the bus lease, polls the issues the bus says are due, and reports each
 // poll; the bus composes and delivers the notices. It returns when ctx ends,
@@ -122,6 +132,14 @@ func (s *Service) Watch(ctx context.Context, scope bus.Request, opts WatchOption
 		cycle, err := s.watchCycle(ctx, scope, lease, calls)
 		if err != nil {
 			return err
+		}
+		if opts.Within != nil {
+			if err = s.renewWatch(ctx, scope, lease, false); err != nil {
+				return err
+			}
+			if err = opts.Within(ctx, lease.fence(map[string]any{})); err != nil {
+				return err
+			}
 		}
 		if opts.Cycle != nil {
 			if err = opts.Cycle(cycle); err != nil {

@@ -39,6 +39,9 @@ const (
 	watchMaxBudget      = 600
 	watchConnectCalls   = 2
 	maxReportedComments = 100
+	// serverTickFresh is how long after the server watcher's last good tick
+	// a client watcher stays refused (IN-M2).
+	serverTickFresh = 10 * time.Minute
 )
 
 var (
@@ -53,7 +56,7 @@ const upgradeRequired = "this ClawBridge client is too old to write to Linear on
 
 func commentOperation(op string) bool {
 	switch op {
-	case "linear_comment_reserve", "linear_comment_precheck", "linear_comment_settle", "linear_comments_posted", "linear_comment_settle_match", "comment_watch_lease", "comment_watch_due", "comment_watch_report", "marker_go", "marker_settle", "marker_due":
+	case "linear_comment_reserve", "linear_comment_precheck", "linear_comment_settle", "linear_comments_posted", "linear_comment_settle_match", "comment_watch_lease", "comment_watch_due", "comment_watch_report", "watch_charge", "marker_go", "marker_settle", "marker_due":
 		return true
 	}
 	return false
@@ -137,6 +140,20 @@ func (s *Store) commentOp(ctx context.Context, tx *transaction, w, p map[string]
 		return c.due(ctx)
 	case "comment_watch_report":
 		return c.report(ctx)
+	case "watch_charge":
+		lease, err := c.fence(ctx)
+		if err != nil {
+			return nil, err
+		}
+		calls, err := integer(c.a["calls"])
+		if err != nil || calls < 0 || calls > 1000 {
+			return nil, invalid("calls must be 0–1000")
+		}
+		used, limit, err := c.charge(ctx, lease, calls)
+		if err != nil {
+			return nil, err
+		}
+		return map[string]any{"budget_used": used, "budget_limit": limit}, nil
 	case "marker_go":
 		return c.markerGo(ctx)
 	case "marker_settle":
@@ -574,6 +591,18 @@ func (c commentCall) lease(ctx context.Context) (any, error) {
 	}
 	switch str(c.a, "action") {
 	case "acquire":
+		// IN-M2: while the server's own watcher ticks for this project, a
+		// client watcher may not take the lease; once its ticks are stale,
+		// one may.
+		if c.sid != "" && !strings.HasPrefix(c.sid, "sys_") {
+			fresh, e := query(ctx, c.tx, `SELECT 1 FROM watch_ticks WHERE project_id=? AND last_ok_at>?`, c.pid, layout(c.now.Add(-serverTickFresh)))
+			if e != nil {
+				return nil, e
+			}
+			if len(fresh) > 0 {
+				return nil, scoped("this project's watch runs on the server", "conflict")
+			}
+		}
 		budget := watchDefaultBudget
 		if v, ok := c.a["budget"]; ok {
 			n, e := integer(v)

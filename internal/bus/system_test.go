@@ -139,3 +139,45 @@ func TestExecuteSystemRunsOnlyWatcherOperations(t *testing.T) {
 		t.Fatal(got, err)
 	}
 }
+
+// Ticks rotate over bound projects, the longest since a tick first, and
+// skip projects with no binding (IN-M1).
+func TestWatchProjectsRotateByLastTick(t *testing.T) {
+	h := newHarness(t)
+	projects := []string{}
+	rows, err := h.s.db.Query(`SELECT id FROM projects ORDER BY id`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for rows.Next() {
+		var id string
+		rows.Scan(&id)
+		projects = append(projects, id)
+	}
+	rows.Close()
+	if len(projects) < 2 {
+		t.Fatal(projects)
+	}
+	ctx := context.Background()
+	if got, _ := h.s.WatchProjects(ctx, 10); len(got) != 0 {
+		t.Fatal("unbound projects are watched:", got)
+	}
+	for _, p := range projects {
+		if _, e := h.s.db.Exec(`INSERT INTO taskboard_bindings(project_id,revision,mapping,updated_at) VALUES(?,1,'{}','2026-01-01T00:00:00Z')`, p); e != nil {
+			t.Fatal(e)
+		}
+	}
+	if err = h.s.WatchTicked(ctx, projects[0], true, ""); err != nil {
+		t.Fatal(err)
+	}
+	got, err := h.s.WatchProjects(ctx, 1)
+	if err != nil || len(got) != 1 || got[0] != projects[1] {
+		t.Fatal("the never-ticked project did not come first:", got, err)
+	}
+	if err = h.s.WatchTicked(ctx, projects[1], false, "deadline"); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ = h.s.WatchProjects(ctx, 1); got[0] != projects[0] {
+		t.Fatal("the rotation did not move on:", got)
+	}
+}

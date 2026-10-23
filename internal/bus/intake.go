@@ -320,6 +320,9 @@ type IntakeEvent struct {
 	Issue   IntakeIssue
 	Actor   string
 	Trusted bool
+	// At is when the transition happened (Linear's time), for the closed
+	// row rule; empty for a request (S5).
+	At string
 }
 
 // triggerCap is the furthest an event may take its issue (§1.1): a trusted,

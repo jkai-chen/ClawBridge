@@ -1,0 +1,184 @@
+// Package watcher is the server's own watcher (live/INTAKE-DESIGN.md §2):
+// on each scheduler tick it runs every due project's comment watch, claim
+// markers and issue intake as the project's system session, reading and
+// writing Linear as the ClawBridge Linear app.
+package watcher
+
+import (
+	"context"
+	"errors"
+	"net/http"
+	"sync"
+	"time"
+
+	"clawbridge/internal/bus"
+	"clawbridge/internal/linearboard"
+	"clawbridge/internal/linearconn"
+)
+
+// TickProjects bounds the projects one tick serves, and ProjectDeadline
+// each project's share of a tick, so one slow project cannot starve the
+// rest (IN-M1).
+const (
+	TickProjects    = 10
+	ProjectDeadline = 20 * time.Second
+)
+
+// App is the Linear app connection the watcher uses. The server's app
+// connection (internal/linearapp) is adapted to it.
+type App interface {
+	// Open returns a native provider over the app token; readonly selects
+	// Linear's read-only MCP endpoint.
+	Open(ctx context.Context, readonly bool) (linearboard.Provider, error)
+	// GraphQL runs one read-only GraphQL query with the app token.
+	GraphQL(ctx context.Context, query string, variables map[string]any, out any) error
+	// Identity is the app's Linear user.
+	Identity(ctx context.Context) (AppIdentity, error)
+}
+
+// AppIdentity names the app's Linear user and organisation.
+type AppIdentity struct{ AppUserID, LinearOrgID string }
+
+// Store is what the watcher needs of the bus.
+type Store interface {
+	ExecuteSystem(ctx context.Context, projectID string, r bus.Request) (bus.Result, error)
+	WatchProjects(ctx context.Context, limit int) ([]string, error)
+	WatchTicked(ctx context.Context, projectID string, ok bool, failure string) error
+	IntakeSystemState(ctx context.Context, projectID string) (bus.IntakeState, error)
+	IntakeCursorSet(ctx context.Context, projectID, source, subject, polled string, signal bool) error
+	IntakeEnqueueSystem(ctx context.Context, projectID string, ev bus.IntakeEvent) (string, error)
+}
+
+// Watcher serves ticks. One Watcher lives for its server process: it keeps
+// one board Service per project, so connections and binding proofs are
+// reused across ticks.
+type Watcher struct {
+	Store Store
+	App   App
+	// LedgerDirectory holds the operation ledger of the app's marker
+	// writes; their idempotency is the bus marker row's.
+	LedgerDirectory string
+	Now             func() time.Time
+
+	mu       sync.Mutex
+	services map[string]*linearboard.Service
+	labels   map[string]labelCache
+}
+
+type labelCache struct {
+	id      string
+	checked time.Time
+}
+
+// ProjectTick is what one tick did for one project.
+type ProjectTick struct {
+	ProjectID string                  `json:"project_id"`
+	Comments  *linearboard.WatchCycle `json:"comments,omitempty"`
+	Intake    *IntakePoll             `json:"intake,omitempty"`
+	Error     string                  `json:"error,omitempty"`
+}
+
+// Tick serves up to TickProjects projects, the longest since their last
+// tick first, each within ProjectDeadline.
+func (w *Watcher) Tick(ctx context.Context) []ProjectTick {
+	projects, err := w.Store.WatchProjects(ctx, TickProjects)
+	if err != nil {
+		return []ProjectTick{{Error: "projects_unavailable"}}
+	}
+	out := []ProjectTick{}
+	for _, pid := range projects {
+		pctx, cancel := context.WithTimeout(ctx, ProjectDeadline)
+		tick := w.project(pctx, pid)
+		cancel()
+		_ = w.Store.WatchTicked(ctx, pid, tick.Error == "", tick.Error)
+		out = append(out, tick)
+	}
+	return out
+}
+
+func (w *Watcher) project(ctx context.Context, pid string) ProjectTick {
+	tick := ProjectTick{ProjectID: pid}
+	svc := w.service(pid)
+	scope := bus.Request{Session: bus.SystemSessionName, Args: map[string]any{}}
+	err := svc.Watch(ctx, scope, linearboard.WatchOptions{
+		Once: true,
+		Cycle: func(c linearboard.WatchCycle) error {
+			tick.Comments = &c
+			return nil
+		},
+		Within: func(ctx context.Context, fence map[string]any) error {
+			poll, err := w.intake(ctx, svc, scope, pid, fence)
+			tick.Intake = poll
+			return err
+		},
+	})
+	if err != nil {
+		tick.Error = failureCode(err)
+	}
+	return tick
+}
+
+// service is the project's board Service: the system session's executor,
+// the app's connection, and the server's binding proof cache.
+func (w *Watcher) service(pid string) *linearboard.Service {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if w.services == nil {
+		w.services = map[string]*linearboard.Service{}
+	}
+	if svc, ok := w.services[pid]; ok {
+		return svc
+	}
+	svc := linearboard.New(linearboard.Config{
+		Authority:       "server-watcher",
+		Executor:        systemExecutor{w.Store, pid},
+		Connections:     appConnections{},
+		ProfileID:       appProfile,
+		LedgerDirectory: w.LedgerDirectory,
+		Open: func(ctx context.Context, _ *http.Client, readonly bool) (linearboard.Provider, error) {
+			return w.App.Open(ctx, readonly)
+		},
+		Now: w.Now,
+	})
+	svc.KeepProviderOpen(linearboard.WatchProviderTTL)
+	svc.CacheReadBindingProof(linearboard.BindingProofTTL)
+	w.services[pid] = svc
+	return svc
+}
+
+// appProfile is the profile ID the board Service sees for the app.
+const appProfile = "linear-app"
+
+// systemExecutor runs a board Service's bus calls as the project's system
+// session.
+type systemExecutor struct {
+	store Store
+	pid   string
+}
+
+func (e systemExecutor) Execute(ctx context.Context, r bus.Request) (bus.Result, error) {
+	return e.store.ExecuteSystem(ctx, e.pid, r)
+}
+
+// appConnections presents the app as a write-capable profile; the app
+// connection itself is opened through the Service's Open.
+type appConnections struct{}
+
+func (appConnections) Status(_ context.Context, id string) (linearconn.Profile, error) {
+	return linearconn.Profile{ID: id, Name: "ClawBridge Linear app", Access: linearconn.Write}, nil
+}
+func (appConnections) HTTPClient(context.Context, string) (*http.Client, error) {
+	return &http.Client{}, nil
+}
+
+// failureCode is a tick failure's code: never Linear or bus text.
+func failureCode(err error) string {
+	var coded interface{ Code() string }
+	switch {
+	case errors.As(err, &coded):
+		return coded.Code()
+	case errors.Is(err, context.DeadlineExceeded):
+		return "deadline"
+	}
+	return "failed"
+}

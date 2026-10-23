@@ -12,7 +12,7 @@ import (
 // alone holds the app token, sealed at rest; clients never receive it. The
 // same DDL serves SQLite and PostgreSQL, though only a hosted server uses it.
 const appIdentitySchemaV9 = `
-CREATE TABLE linear_app_tokens(app_client_id TEXT NOT NULL,linear_org_id TEXT NOT NULL,token_sha256 TEXT NOT NULL,scopes_digest TEXT NOT NULL,ciphertext TEXT NOT NULL,nonce TEXT NOT NULL,minted_at TEXT NOT NULL,expires_at TEXT NOT NULL,state TEXT NOT NULL CHECK(state IN ('live','replaced','discarded','revoked')),PRIMARY KEY(app_client_id,token_sha256));
+CREATE TABLE linear_app_tokens(app_client_id TEXT NOT NULL,linear_org_id TEXT NOT NULL,token_sha256 TEXT NOT NULL,scopes_digest TEXT NOT NULL,ciphertext TEXT NOT NULL,nonce TEXT NOT NULL,minted_at TEXT NOT NULL,expires_at TEXT NOT NULL,state TEXT NOT NULL CHECK(state IN ('minted','live','replaced','discarded','revoked')),PRIMARY KEY(app_client_id,token_sha256));
 CREATE UNIQUE INDEX linear_app_token_live ON linear_app_tokens(app_client_id,linear_org_id) WHERE state='live';
 CREATE INDEX linear_app_token_minted ON linear_app_tokens(app_client_id,minted_at);
 `
@@ -123,6 +123,10 @@ func (s *Store) PublishAppToken(ctx context.Context, t AppToken, replaces string
 				return err
 			}
 		}
+		// The token was counted when it was minted; that row becomes this one.
+		if _, err = tx.ExecContext(ctx, `DELETE FROM linear_app_tokens WHERE app_client_id=? AND token_sha256=? AND state='minted'`, t.AppClientID, t.TokenSHA256); err != nil {
+			return err
+		}
 		_, err = tx.ExecContext(ctx, `INSERT INTO linear_app_tokens(app_client_id,linear_org_id,token_sha256,scopes_digest,ciphertext,nonce,minted_at,expires_at,state) VALUES(?,?,?,?,?,?,?,?,?)`, t.AppClientID, t.LinearOrgID, t.TokenSHA256, t.ScopesDigest, t.Ciphertext, t.Nonce, layout(t.MintedAt), layout(t.ExpiresAt), state)
 		published = state == "live"
 		return err
@@ -131,6 +135,20 @@ func (s *Store) PublishAppToken(ctx context.Context, t AppToken, replaces string
 		return AppToken{}, false, err
 	}
 	return current, published, nil
+}
+
+// RecordMintedAppToken counts a token the moment Linear issued it, before
+// anything else can fail: a row in state minted, with no organisation and no
+// ciphertext. Publishing the token later replaces the row; a token that never
+// gets that far still counts toward the mint limit until it expires.
+func (s *Store) RecordMintedAppToken(ctx context.Context, app, sha string, minted, expires time.Time) error {
+	if !appClientPattern.MatchString(app) || !sha256Pattern.MatchString(sha) || minted.IsZero() || !expires.After(minted) {
+		return invalid("invalid minted app token record")
+	}
+	return s.appTx(ctx, app, func(tx *transaction) error {
+		_, err := tx.ExecContext(ctx, `INSERT INTO linear_app_tokens(app_client_id,linear_org_id,token_sha256,scopes_digest,ciphertext,nonce,minted_at,expires_at,state) VALUES(?,'',?,'','','',?,?,'minted')`, app, sha, layout(minted), layout(expires))
+		return err
+	})
 }
 
 // AppTokensMinted counts the app's tokens minted since since and not

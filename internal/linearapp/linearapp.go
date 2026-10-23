@@ -41,6 +41,10 @@ const (
 	mintPace = time.Minute
 	// refreshMargin re-mints a token this long before it expires.
 	refreshMargin = 5 * 24 * time.Hour
+	// failureBackoff stops minting for a while after failuresBeforeBackoff
+	// mints in a row that Linear issued but a later step lost.
+	failureBackoff        = time.Hour
+	failuresBeforeBackoff = 2
 )
 
 // Error is a failure with a stable code and no Linear text or secret.
@@ -52,6 +56,7 @@ func fail(code string) error { return &Error{Code: code} }
 
 // Store keeps the sealed token; *bus.Store implements it on a hosted server.
 type Store interface {
+	RecordMintedAppToken(ctx context.Context, app, sha string, minted, expires time.Time) error
 	LiveAppToken(ctx context.Context, app, org string) (bus.AppToken, bool, error)
 	PublishAppToken(ctx context.Context, t bus.AppToken, replaces string) (bus.AppToken, bool, error)
 	AppTokensMinted(ctx context.Context, app string, since time.Time) (int, error)
@@ -88,6 +93,10 @@ type App struct {
 	minted   time.Time
 	expires  time.Time
 	lastMint time.Time
+	// lost counts consecutive mints lost after Linear issued them;
+	// backoffUntil stops minting after too many.
+	lost         int
+	backoffUntil time.Time
 }
 
 // New checks the configuration. A missing ID, secret or key leaves the app
@@ -238,6 +247,9 @@ func (a *App) mint(ctx context.Context, replaces string) error {
 	if !a.lastMint.IsZero() && now.Sub(a.lastMint) < mintPace {
 		return fail("mint_paced")
 	}
+	if now.Before(a.backoffUntil) {
+		return fail("mint_backoff")
+	}
 	n, err := a.cfg.Store.AppTokensMinted(ctx, a.cfg.ClientID, now.Add(-30*24*time.Hour))
 	if err != nil {
 		return err
@@ -250,6 +262,31 @@ func (a *App) mint(ctx context.Context, replaces string) error {
 	if err != nil {
 		return err
 	}
+	// Count the token before anything else can fail; if it cannot be
+	// counted, it is not used (fail closed).
+	if err = a.cfg.Store.RecordMintedAppToken(ctx, a.cfg.ClientID, digest(token), now.UTC(), expires.UTC()); err != nil {
+		a.lostMint(now)
+		return err
+	}
+	err = a.publish(ctx, token, expires, now, replaces)
+	if err != nil {
+		a.lostMint(now)
+		return err
+	}
+	a.lost = 0
+	return nil
+}
+
+// lostMint notes a token Linear issued that this server could not use.
+func (a *App) lostMint(now time.Time) {
+	a.lost++
+	if a.lost >= failuresBeforeBackoff {
+		a.backoffUntil, a.lost = now.Add(failureBackoff), 0
+	}
+}
+
+// publish reads a counted token's identity, seals it and publishes it.
+func (a *App) publish(ctx context.Context, token string, expires, now time.Time, replaces string) error {
 	id, err := a.viewer(ctx, token)
 	if err != nil {
 		return err
@@ -343,6 +380,9 @@ func (a *App) viewer(ctx context.Context, token string) (Identity, error) {
 		return Identity{}, fail("unavailable")
 	}
 	defer res.Body.Close()
+	if res.StatusCode == http.StatusUnauthorized {
+		return Identity{}, fail("token_rejected")
+	}
 	if res.StatusCode != http.StatusOK {
 		return Identity{}, fail("unavailable")
 	}

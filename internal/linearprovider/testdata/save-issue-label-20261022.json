@@ -1,0 +1,65 @@
+{
+ "_meta": {
+  "microsoft/allowedDomains": [
+   "linear.app<https://linear.app/>"
+  ]
+ },
+ "annotations": {
+  "destructiveHint": true,
+  "idempotentHint": false,
+  "openWorldHint": false,
+  "readOnlyHint": false
+ },
+ "description": "Create or update a Linear issue label. If `id` is provided, updates the existing label; otherwise creates a new one. When creating, `name` is required.",
+ "inputSchema": {
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+   "color": {
+    "description": "Hex color code",
+    "type": "string"
+   },
+   "description": {
+    "description": "Label description. Null to clear it",
+    "type": [
+     "string",
+     "null"
+    ]
+   },
+   "groupType": {
+    "description": "Selection mode for label groups. Defaults to singleSelect when creating; omit to keep it unchanged when updating",
+    "enum": [
+     "singleSelect",
+     "multiSelect"
+    ],
+    "type": "string"
+   },
+   "id": {
+    "description": "Label name or ID. If provided, updates the existing label",
+    "type": "string"
+   },
+   "isGroup": {
+    "description": "Whether the label is a group",
+    "type": "boolean"
+   },
+   "name": {
+    "description": "Label name (required when creating)",
+    "type": "string"
+   },
+   "parent": {
+    "description": "Parent label group name or ID. Null to remove from its group",
+    "type": [
+     "string",
+     "null"
+    ]
+   },
+   "teamId": {
+    "description": "Team UUID (omit for workspace label). When updating, only disambiguates `id` by name; a label's team cannot be changed",
+    "type": "string"
+   }
+  },
+  "type": "object"
+ },
+ "name": "save_issue_label",
+ "title": "Save issue label"
+}

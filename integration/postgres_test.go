@@ -24,6 +24,11 @@ func pgPrincipal(name string) string {
 	return name + "@example.test"
 }
 
+// pgSubject is the one Google subject a fixture principal signs in with. The
+// server binds a principal to its first subject, and the Postgres tests share
+// one database, so every test must present the same subject for a principal.
+func pgSubject(principal string) string { return "subject-" + principal }
+
 type pgFixture struct {
 	t     *testing.T
 	store *bus.Store

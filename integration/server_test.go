@@ -42,7 +42,7 @@ func TestServerAuthenticationAndRequestBoundary(t *testing.T) {
 		if token != "synthetic-valid" {
 			return server.Identity{}, errors.New("synthetic verifier rejection")
 		}
-		return server.Identity{Principal: pgPrincipal("alice"), Subject: "test-subject"}, nil
+		return server.Identity{Principal: pgPrincipal("alice"), Subject: pgSubject(pgPrincipal("alice"))}, nil
 	})
 	executor := executorAsFunc(func(ctx context.Context, principal string, r bus.Request) (bus.Result, error) {
 		executed.Add(1)
@@ -149,7 +149,7 @@ func TestServerGoogleVerifierSyntheticCrypto(t *testing.T) {
 		t.Fatal("empty production audience allowed")
 	}
 	claims := func(tokenAudience string) map[string]any {
-		return map[string]any{"iss": "https://accounts.google.com", "aud": tokenAudience, "sub": "review-subject", "exp": time.Now().Add(time.Hour).Unix(), "iat": time.Now().Unix(), "email": pgPrincipal("alice"), "email_verified": true}
+		return map[string]any{"iss": "https://accounts.google.com", "aud": tokenAudience, "sub": pgSubject(pgPrincipal("alice")), "exp": time.Now().Add(time.Hour).Unix(), "iat": time.Now().Unix(), "email": pgPrincipal("alice"), "email_verified": true}
 	}
 	token := func(c map[string]any, alg string) string {
 		kid := "review-key"
@@ -221,7 +221,7 @@ func TestPostgresHTTPRoundtripAndDenial(t *testing.T) {
 	verifier := server.VerifierFunc(func(ctx context.Context, token string) (server.Identity, error) {
 		for _, name := range []string{"owner", "alice", "bob", "reader", "stranger"} {
 			if token == "synthetic-"+name {
-				return server.Identity{Principal: pgPrincipal(name), Subject: "subject-" + name}, nil
+				return server.Identity{Principal: pgPrincipal(name), Subject: pgSubject(pgPrincipal(name))}, nil
 			}
 		}
 		return server.Identity{}, errors.New("not a synthetic fixture token")

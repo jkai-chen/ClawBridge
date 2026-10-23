@@ -27,7 +27,7 @@ func fixtureVerifier() server.Verifier {
 		if token != "synthetic-bob" {
 			return server.Identity{}, errors.New("test token rejected")
 		}
-		return server.Identity{Principal: pgPrincipal("bob"), Subject: "fixture-subject-bob"}, nil
+		return server.Identity{Principal: pgPrincipal("bob"), Subject: pgSubject(pgPrincipal("bob"))}, nil
 	})
 }
 func mustRemote(t *testing.T, c remote.Config) *remote.Client {

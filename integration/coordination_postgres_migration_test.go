@@ -95,7 +95,7 @@ func TestCoordinationPostgresLegacyMigrationAndRetry(t *testing.T) {
 		db.QueryRow("SELECT MAX(version) FROM clawbridge_schema").Scan(&version)
 		db.QueryRow("SELECT COUNT(*) FROM sessions WHERE notification_policy='accept'").Scan(&defaults)
 		db.QueryRow("SELECT COUNT(*) FROM messages WHERE coordination IS NULL").Scan(&legacy)
-		if version != 5 || defaults != 2 || legacy != 1 {
+		if version != 6 || defaults != 2 || legacy != 1 {
 			t.Fatalf("PG migration/reopen=%d/%d/%d", version, defaults, legacy)
 		}
 		if before != coordinationTableSnapshot(t, db, cols) {
@@ -141,7 +141,7 @@ func TestCoordinationPostgresMigrationRollbackAndNewerRefused(t *testing.T) {
 					t.Fatal(err)
 				}
 			} else {
-				db.Exec("INSERT INTO clawbridge_schema(version) VALUES(6)")
+				db.Exec("INSERT INTO clawbridge_schema(version) VALUES(7)")
 			}
 			cols := coordinationLegacyColumns(t, db)
 			before := coordinationTableSnapshot(t, db, cols)
@@ -157,7 +157,7 @@ func TestCoordinationPostgresMigrationRollbackAndNewerRefused(t *testing.T) {
 			db.QueryRow("SELECT MAX(version) FROM clawbridge_schema").Scan(&version)
 			want := 1
 			if mode == "newer" {
-				want = 6
+				want = 7
 			}
 			if version != want {
 				t.Fatal("failed migration committed version")

@@ -138,8 +138,8 @@ func TestL1VersionTwoMigrationPreservesContextPolicyAndRetries(t *testing.T) {
 					t.Fatal(err)
 				}
 				s.Close()
-				if f.version(t) != 5 || before != coordinationTableSnapshot(t, f.db, cols) {
-					t.Fatal("v2->v5 migration/reopen changed legacy context/policy/digests/receipts/audit")
+				if f.version(t) != 6 || before != coordinationTableSnapshot(t, f.db, cols) {
+					t.Fatal("v2->v6 migration/reopen changed legacy context/policy/digests/receipts/audit")
 				}
 				var count int
 				if err = f.db.QueryRow("SELECT COUNT(*) FROM taskboard_bindings").Scan(&count); err != nil || count != 0 {
@@ -210,9 +210,9 @@ func TestL1VersionTwoMigrationFailureAndNewerRefusal(t *testing.T) {
 							t.Fatal(err)
 						}
 					} else {
-						query := "PRAGMA user_version=6"
+						query := "PRAGMA user_version=7"
 						if pg {
-							query = "INSERT INTO clawbridge_schema(version) VALUES(6)"
+							query = "INSERT INTO clawbridge_schema(version) VALUES(7)"
 						}
 						if _, err := f.db.Exec(query); err != nil {
 							t.Fatal(err)
@@ -227,7 +227,7 @@ func TestL1VersionTwoMigrationFailureAndNewerRefusal(t *testing.T) {
 					}
 					want := 2
 					if mode == "newer" {
-						want = 6
+						want = 7
 					}
 					if f.version(t) != want || before != coordinationTableSnapshot(t, f.db, cols) {
 						t.Fatal("failed migration changed version or legacy state")

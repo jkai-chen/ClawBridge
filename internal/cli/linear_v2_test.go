@@ -166,3 +166,30 @@ func TestLinearCommentReplyToIsTheCommentParent(t *testing.T) {
 		t.Fatal("--reply-to accepted on update")
 	}
 }
+
+func TestLinearAdminCommandsMapToAdminWrites(t *testing.T) {
+	const team = "11111111-1111-4111-8111-111111111111"
+	parse := func(command string, args ...string) (linearFlags, []string) {
+		t.Helper()
+		v, pos, err := parseLinear(command, append(args, "--profile", "native", "--operation-id", "op-1", "--team", team), &bytes.Buffer{})
+		if err != nil {
+			t.Fatal(command, err)
+		}
+		return v, pos
+	}
+	v, pos := parse("label", "Bugs", "Bug old")
+	in, err := linearAdminInput("label", "rename", v, pos)
+	if err != nil || in.Kind != "label_rename" || in.From != "Bugs" || in.Name != "Bug old" || in.TeamID != team || in.OperationID != "op-1" {
+		t.Fatal(in, err)
+	}
+	v, pos = parse("project", "Q4")
+	if in, err = linearAdminInput("project", "create", v, pos); err != nil || in.Kind != "project_create" || in.Name != "Q4" || in.From != "" {
+		t.Fatal(in, err)
+	}
+	if _, err = linearAdminInput("label", "create", v, []string{"A", "B"}); err == nil {
+		t.Fatal("label create with two names accepted")
+	}
+	if _, _, err = parseLinear("label", []string{"Bug", "--profile", "native", "--operation-id", "x"}, &bytes.Buffer{}); err == nil {
+		t.Fatal("label without --team accepted")
+	}
+}

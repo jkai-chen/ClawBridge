@@ -1,0 +1,517 @@
+package linearboard
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"strings"
+
+	"clawbridge/internal/bus"
+	"clawbridge/internal/linearconn"
+	"clawbridge/internal/linearprovider"
+)
+
+// Coordinator-only Linear admin writes: plain team labels from the project
+// owner's approved list, and team projects. They run from the CLI only,
+// for the ClawBridge project owner, through the personal Linear profile,
+// and never retire, delete or merge anything.
+
+// AdminInput names one admin write. From is set for a rename only.
+type AdminInput struct {
+	Kind        string // label_create, label_rename or project_create
+	OperationID string
+	TeamID      string
+	Name        string
+	From        string
+}
+
+// AdminResult is an admin write's receipt. Proposal is the binding preview
+// for a created project in a project-set binding; ProposalNote explains a
+// missing one.
+type AdminResult struct {
+	Kind           string   `json:"kind"`
+	Outcome        string   `json:"outcome"`
+	ID             string   `json:"id,omitempty"`
+	Name           string   `json:"name"`
+	PreviousName   string   `json:"previous_name,omitempty"`
+	TeamID         string   `json:"team_id"`
+	PolicyRevision int      `json:"policy_revision,omitempty"`
+	Unverified     []string `json:"unverified,omitempty"`
+	DuplicateIDs   []string `json:"duplicate_ids,omitempty"`
+	Audit          string   `json:"audit,omitempty"`
+	Proposal       any      `json:"proposal"`
+	ProposalNote   string   `json:"proposal_note,omitempty"`
+	ConfirmCommand string   `json:"confirm_command,omitempty"`
+}
+
+// adminProvider is a provider that can run the admin writes.
+type adminProvider interface {
+	AdminReason() string
+	TeamLabelsNamed(ctx context.Context, team, name string) ([]linearprovider.AdminLabel, bool, error)
+	CreateTeamLabel(ctx context.Context, team, name string) (linearprovider.AdminReceipt, error)
+	RenameTeamLabel(ctx context.Context, team, id, name string) (linearprovider.AdminReceipt, error)
+	TeamProjectsNamed(ctx context.Context, team, name string) ([]linearprovider.ProjectListing, bool, error)
+	CreateTeamProject(ctx context.Context, team, name string) (linearprovider.AdminReceipt, error)
+}
+
+var errAdminOwnerOnly = errors.New("Linear label and project creation is for the ClawBridge project owner only; ask the coordinator")
+
+// ValidateAdmin checks an admin write before any read.
+func ValidateAdmin(in AdminInput) error {
+	if !operationPattern.MatchString(in.OperationID) {
+		return errors.New("admin write requires operation_id")
+	}
+	if !linearprovider.ValidID(in.TeamID) {
+		return errors.New("admin write requires a bound team UUID")
+	}
+	if e := bus.ValidLabelName(in.Name); e != nil {
+		return e
+	}
+	switch in.Kind {
+	case "label_create", "project_create":
+		if in.From != "" {
+			return errors.New("only a rename names the label it renames")
+		}
+	case "label_rename":
+		if e := bus.ValidLabelName(in.From); e != nil {
+			return e
+		}
+		if strings.EqualFold(in.From, in.Name) {
+			return errors.New("a rename needs a different name")
+		}
+	default:
+		return errors.New("unsupported admin write")
+	}
+	return nil
+}
+
+// labelPolicy reads the project's approved label list.
+func (s *Service) labelPolicy(ctx context.Context, scope bus.Request) (bus.LabelPolicy, int, error) {
+	scope.Operation = "label_policy_get"
+	scope.Args = instanceArgs(scope.Args)
+	r, e := s.cfg.Executor.Execute(ctx, scope)
+	if e != nil {
+		return bus.LabelPolicy{}, 0, e
+	}
+	if r.Source != "server" && r.Source != "local-authority" {
+		return bus.LabelPolicy{}, 0, errors.New("the label policy requires authoritative settings")
+	}
+	m, ok := r.Data.(map[string]any)
+	if !ok {
+		return bus.LabelPolicy{}, 0, errors.New("invalid label policy")
+	}
+	policy, e := bus.ParseLabelPolicy(map[string]any{"labels": m["labels"], "renames": m["renames"]})
+	if e != nil {
+		return bus.LabelPolicy{}, 0, e
+	}
+	revision, ok := policyRevision(m["revision"])
+	if !ok {
+		return bus.LabelPolicy{}, 0, errors.New("invalid label policy revision")
+	}
+	return policy, revision, nil
+}
+
+func policyRevision(v any) (int, bool) {
+	switch n := v.(type) {
+	case int:
+		return n, n >= 0
+	case int64:
+		return int(n), n >= 0
+	case float64:
+		return int(n), n >= 0 && n == float64(int(n))
+	}
+	return 0, false
+}
+
+// approved returns the policy's own spelling of name, or "".
+func approved(names []string, name string) string {
+	for _, n := range names {
+		if n == name {
+			return n
+		}
+	}
+	return ""
+}
+
+// Admin runs one admin write. The project owner only; everything is checked
+// before the ledger records anything, and a label write is checked against
+// the policy revision it was approved under.
+func (s *Service) Admin(ctx context.Context, scope bus.Request, in AdminInput) (AdminResult, error) {
+	if e := ValidateAdmin(in); e != nil {
+		return AdminResult{}, e
+	}
+	b, e := s.BindingV2(ctx, scope)
+	if e != nil {
+		return AdminResult{}, e
+	}
+	if !b.Configured {
+		return AdminResult{}, errors.New("task-board is not linked")
+	}
+	if s.cfg.Authority == "" {
+		return AdminResult{}, errors.New("canonical authority identity required for operation ledger")
+	}
+	access, e := s.writeAccessV2(ctx, scope, b)
+	if e != nil {
+		return AdminResult{}, e
+	}
+	if access.ProjectRole != "owner" {
+		return AdminResult{}, errAdminOwnerOnly
+	}
+	if !contains(b.LinearTeamIDs, in.TeamID) {
+		return AdminResult{}, errors.New("the team is not in this project's binding; nothing was sent")
+	}
+	revision := 0
+	if in.Kind != "project_create" {
+		policy, rev, e := s.labelPolicy(ctx, scope)
+		if e != nil {
+			return AdminResult{}, e
+		}
+		revision = rev
+		if in.Kind == "label_create" && approved(policy.Labels, in.Name) == "" {
+			return AdminResult{}, fmt.Errorf("label %q is not in the approved list (revision %d); the project owner sets it with linear label-policy set; nothing was sent", in.Name, rev)
+		}
+		if in.Kind == "label_rename" && policy.Renames[in.From] != in.Name {
+			return AdminResult{}, fmt.Errorf("renaming %q to %q is not in the approved list (revision %d); nothing was sent", in.From, in.Name, rev)
+		}
+	}
+	namespace := digest([]string{s.cfg.Authority, b.WorkspaceID, b.ProjectID, access.SessionID})
+	payload := struct {
+		Version                        int
+		Kind                           string
+		Profile                        string
+		Binding                        bus.TaskboardBindingV2
+		Actor, Authority, InstanceHash string
+		Input                          AdminInput
+		PolicyRevision                 int
+	}{1, "admin", s.cfg.ProfileID, b, access.SessionID, s.cfg.Authority, digest(scope.Args["instance"]), in, revision}
+	l := ledger{s.cfg.LedgerDirectory, s.cfg.Now}
+	if r, exists, e := l.lookup(namespace, in.OperationID, payload); exists || e != nil {
+		if e != nil {
+			return AdminResult{}, e
+		}
+		return adminResult(r)
+	}
+	profile, p, done, e := s.openForWrite(ctx)
+	if e != nil {
+		return AdminResult{}, e
+	}
+	defer done()
+	if profile.Access != linearconn.Write {
+		return AdminResult{}, errors.New("personal Linear profile is read-only; reconnect explicitly with write access")
+	}
+	admin, ok := p.(adminProvider)
+	if !ok {
+		return AdminResult{}, errors.New("native provider lacks the admin writes")
+	}
+	if reason := admin.AdminReason(); reason != "" {
+		return AdminResult{}, errors.New("Linear admin writes are unavailable: " + reason)
+	}
+	if _, e = verifyBindingV2(ctx, p, b); e != nil {
+		return AdminResult{}, e
+	}
+	// The pre-check decides the outcome before the ledger: an existing name
+	// is never written over, and an incomplete walk sends nothing.
+	plan, e := adminPlan(ctx, admin, in)
+	if e != nil {
+		return AdminResult{}, e
+	}
+	if e = s.unchangedV2(ctx, scope, b); e != nil {
+		return AdminResult{}, e
+	}
+	out, e := l.write(namespace, in.OperationID, payload, func() (any, error) {
+		if e := s.unchangedV2(ctx, scope, b); e != nil {
+			return nil, authorityFailure(e)
+		}
+		fresh, e := s.writeAccessV2(ctx, scope, b)
+		if e != nil {
+			return nil, authorityFailure(e)
+		}
+		if fresh.SessionID != access.SessionID || fresh.ProjectRole != "owner" {
+			return nil, refusedBeforeDispatch(errAdminOwnerOnly)
+		}
+		again, e := adminPlan(ctx, admin, in)
+		if e != nil {
+			return nil, proofFailure(e)
+		}
+		if again.observed != plan.observed || again.target != plan.target {
+			return nil, refusedBeforeDispatch(errors.New("Linear changed before the write; read it again and use a new operation_id"))
+		}
+		if e = ctx.Err(); e != nil {
+			return nil, notDispatched(e)
+		}
+		result := AdminResult{Kind: in.Kind, Name: in.Name, TeamID: in.TeamID, PolicyRevision: revision}
+		if in.Kind == "label_rename" {
+			result.PreviousName = in.From
+		}
+		if plan.observed {
+			result.Outcome, result.ID = "observed_unchanged", plan.existing
+			return result, nil
+		}
+		sent, known := sentCount(p)
+		var r linearprovider.AdminReceipt
+		switch in.Kind {
+		case "label_create":
+			r, e = admin.CreateTeamLabel(ctx, in.TeamID, in.Name)
+		case "label_rename":
+			r, e = admin.RenameTeamLabel(ctx, in.TeamID, plan.target, in.Name)
+		default:
+			r, e = admin.CreateTeamProject(ctx, in.TeamID, in.Name)
+		}
+		if e != nil {
+			return nil, writeFailure(p, sent, known, e, func(e error) error { return e })
+		}
+		result.Outcome, result.ID, result.Unverified = "accepted", r.ID, r.Unverified
+		// A concurrent create of the same name can still make a duplicate;
+		// it is reported, never cleaned up.
+		if in.Kind == "label_create" {
+			after, complete, e := admin.TeamLabelsNamed(ctx, in.TeamID, in.Name)
+			switch {
+			case e != nil || !complete:
+				result.Outcome = "accepted_duplicate_unknown"
+			case len(after) > 1:
+				result.Outcome = "accepted_duplicate_observed"
+				for _, l := range after {
+					result.DuplicateIDs = append(result.DuplicateIDs, l.ID)
+				}
+			}
+		}
+		return result, nil
+	})
+	if e != nil {
+		return AdminResult{}, e
+	}
+	result, e := adminResult(out)
+	if e != nil {
+		return AdminResult{}, e
+	}
+	if e = s.auditAdmin(ctx, scope, in, result); e != nil {
+		result.Audit = "failed: " + e.Error()
+	} else {
+		result.Audit = "recorded"
+	}
+	if in.Kind == "project_create" {
+		s.proposeProject(ctx, scope, b, &result)
+	}
+	return result, nil
+}
+
+type adminPlanned struct {
+	observed bool
+	existing string // the label or project already there
+	target   string // the label a rename changes
+}
+
+// adminPlan reads Linear to decide what an admin write would do. A label or
+// project already named in.Name is not created again; a workspace label
+// with that name, or one whose own scope is unknown, refuses the create;
+// a rename needs exactly one plain label of the team named in.From.
+func adminPlan(ctx context.Context, p adminProvider, in AdminInput) (adminPlanned, error) {
+	incomplete := errors.New("Linear's list could not be read completely; nothing was sent")
+	switch in.Kind {
+	case "project_create":
+		found, complete, e := p.TeamProjectsNamed(ctx, in.TeamID, in.Name)
+		if e != nil {
+			return adminPlanned{}, e
+		}
+		if !complete {
+			return adminPlanned{}, incomplete
+		}
+		if len(found) > 0 {
+			return adminPlanned{observed: true, existing: found[0].ID}, nil
+		}
+		return adminPlanned{}, nil
+	case "label_create":
+		found, complete, e := p.TeamLabelsNamed(ctx, in.TeamID, in.Name)
+		if e != nil {
+			return adminPlanned{}, e
+		}
+		if !complete {
+			return adminPlanned{}, incomplete
+		}
+		for _, l := range found {
+			switch {
+			case l.TeamKnown && l.TeamID == "":
+				return adminPlanned{}, fmt.Errorf("exists_at_workspace_level: a workspace label named %q already exists; nothing was sent", l.Name)
+			case !l.TeamKnown:
+				return adminPlanned{}, fmt.Errorf("exists_scope_unknown: a label named %q is already available to this team (team or workspace label); nothing was sent", l.Name)
+			}
+		}
+		if len(found) > 0 {
+			return adminPlanned{observed: true, existing: found[0].ID}, nil
+		}
+		return adminPlanned{}, nil
+	}
+	from, complete, e := p.TeamLabelsNamed(ctx, in.TeamID, in.From)
+	if e != nil {
+		return adminPlanned{}, e
+	}
+	if !complete {
+		return adminPlanned{}, incomplete
+	}
+	if len(from) != 1 {
+		return adminPlanned{}, fmt.Errorf("found %d labels named %q; a rename needs exactly one; nothing was sent", len(from), in.From)
+	}
+	l := from[0]
+	if !l.TeamKnown || l.TeamID != in.TeamID || l.Group || l.Retired {
+		return adminPlanned{}, fmt.Errorf("label %q is not a plain, current label of this team; nothing was sent", in.From)
+	}
+	to, complete, e := p.TeamLabelsNamed(ctx, in.TeamID, in.Name)
+	if e != nil {
+		return adminPlanned{}, e
+	}
+	if !complete {
+		return adminPlanned{}, incomplete
+	}
+	if len(to) > 0 {
+		return adminPlanned{}, fmt.Errorf("a label named %q already exists; nothing was sent", in.Name)
+	}
+	return adminPlanned{target: l.ID}, nil
+}
+
+var adminKinds = map[string]bool{"label_create": true, "label_rename": true, "project_create": true}
+
+// validAdminReceipt checks an admin receipt recorded in the ledger, strictly.
+func validAdminReceipt(raw []byte) bool {
+	var r AdminResult
+	d := json.NewDecoder(bytes.NewReader(raw))
+	d.DisallowUnknownFields()
+	if d.Decode(&r) != nil || d.Decode(new(any)) != io.EOF || !adminKinds[r.Kind] || r.Proposal != nil || r.Audit != "" || r.ConfirmCommand != "" || r.ProposalNote != "" {
+		return false
+	}
+	switch r.Outcome {
+	case "accepted", "observed_unchanged", "accepted_duplicate_observed", "accepted_duplicate_unknown":
+	default:
+		return false
+	}
+	if !linearprovider.ValidID(r.ID) || !linearprovider.ValidID(r.TeamID) || bus.ValidLabelName(r.Name) != nil || (r.PreviousName != "") != (r.Kind == "label_rename") {
+		return false
+	}
+	for _, f := range r.Unverified {
+		if f != "team" && f != "teams" {
+			return false
+		}
+	}
+	for _, id := range r.DuplicateIDs {
+		if !linearprovider.ValidID(id) {
+			return false
+		}
+	}
+	return true
+}
+
+// adminResult reads a receipt back from the ledger, where it is JSON.
+func adminResult(v any) (AdminResult, error) {
+	if r, ok := v.(AdminResult); ok {
+		return r, nil
+	}
+	m, ok := v.(map[string]any)
+	if !ok {
+		return AdminResult{}, errors.New("invalid admin receipt")
+	}
+	r := AdminResult{Kind: fmt.Sprint(m["kind"]), Outcome: fmt.Sprint(m["outcome"]), Name: fmt.Sprint(m["name"]), TeamID: fmt.Sprint(m["team_id"])}
+	r.ID, _ = m["id"].(string)
+	r.PreviousName, _ = m["previous_name"].(string)
+	if n, ok := policyRevision(m["policy_revision"]); ok {
+		r.PolicyRevision = n
+	}
+	for _, k := range []string{"unverified", "duplicate_ids"} {
+		if list, ok := m[k].([]any); ok {
+			for _, x := range list {
+				if s, ok := x.(string); ok {
+					if k == "unverified" {
+						r.Unverified = append(r.Unverified, s)
+					} else {
+						r.DuplicateIDs = append(r.DuplicateIDs, s)
+					}
+				}
+			}
+		}
+	}
+	return r, nil
+}
+
+// auditAdmin records the write in the project's history: IDs and names,
+// and for a label the policy revision it was checked against.
+func (s *Service) auditAdmin(ctx context.Context, scope bus.Request, in AdminInput, r AdminResult) error {
+	scope.Operation = "linear_admin_audit"
+	scope.Args = instanceArgs(scope.Args)
+	scope.Args["kind"] = in.Kind
+	scope.Args["outcome"] = r.Outcome
+	scope.Args["operation_id"] = in.OperationID
+	scope.Args["linear_team_id"] = in.TeamID
+	scope.Args["name"] = in.Name
+	if r.ID != "" {
+		scope.Args["linear_id"] = r.ID
+	}
+	if in.From != "" {
+		scope.Args["previous_name"] = in.From
+	}
+	if in.Kind != "project_create" {
+		scope.Args["policy_revision"] = r.PolicyRevision
+	}
+	_, e := s.cfg.Executor.Execute(ctx, scope)
+	return e
+}
+
+// proposeProject adds the binding proposal for a created project. Only a
+// project-set binding gets one: in a team board a project of a bound team is
+// already in scope, and switching mode would narrow the scope.
+func (s *Service) proposeProject(ctx context.Context, scope bus.Request, b bus.TaskboardBindingV2, r *AdminResult) {
+	if b.Mode != "project_set" {
+		r.ProposalNote = "already in scope: the team board covers every project of its teams"
+		return
+	}
+	if r.ID == "" || contains(b.LinearProjectIDs, r.ID) {
+		r.ProposalNote = "already in scope: the project is in the binding"
+		return
+	}
+	projects := append(append([]string{}, b.LinearProjectIDs...), r.ID)
+	preview, e := s.LinkV2(ctx, scope, LinkInputV2{TeamIDs: b.LinearTeamIDs, DefaultTeamID: b.LinearDefaultTeamID, ProjectIDs: projects, ExpectedRevision: b.Revision})
+	if e != nil {
+		r.ProposalNote = "no proposal: " + e.Error()
+		return
+	}
+	r.Proposal = preview
+	args := []string{"clawbridge linear link"}
+	for _, t := range SortedTeams(b.LinearTeamIDs) {
+		args = append(args, "--team "+t)
+	}
+	args = append(args, "--default-team "+b.LinearDefaultTeamID)
+	for _, p := range SortedTeams(projects) {
+		args = append(args, "--linear-project "+p)
+	}
+	args = append(args, fmt.Sprintf("--expected-revision %d --confirm", b.Revision))
+	r.ConfirmCommand = strings.Join(args, " ")
+}
+
+// LabelPolicyV2 reads the project's approved label list.
+func (s *Service) LabelPolicyV2(ctx context.Context, scope bus.Request) (any, error) {
+	scope.Operation = "label_policy_get"
+	scope.Args = instanceArgs(scope.Args)
+	r, e := s.cfg.Executor.Execute(ctx, scope)
+	return r.Data, e
+}
+
+// SetLabelPolicyV2 replaces the approved label list at expected, the
+// revision the owner last read. The file is decoded strictly here and again
+// by the authority.
+func (s *Service) SetLabelPolicyV2(ctx context.Context, scope bus.Request, raw []byte, expected int64) (any, error) {
+	var v any
+	dec := json.NewDecoder(bytes.NewReader(raw))
+	if dec.Decode(&v) != nil || dec.Decode(new(any)) != io.EOF {
+		return nil, errors.New("the label policy file must hold one JSON object")
+	}
+	policy, e := bus.ParseLabelPolicy(v)
+	if e != nil {
+		return nil, e
+	}
+	scope.Operation = "label_policy_set"
+	scope.Args = instanceArgs(scope.Args)
+	scope.Args["expected_revision"] = expected
+	scope.Args["label_policy"] = map[string]any{"labels": policy.Labels, "renames": policy.Renames}
+	r, e := s.cfg.Executor.Execute(ctx, scope)
+	return r.Data, e
+}

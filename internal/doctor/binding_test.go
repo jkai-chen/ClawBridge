@@ -79,3 +79,36 @@ func (o opsExecutor) Execute(_ context.Context, r bus.Request) (bus.Result, erro
 func (opsExecutor) ResolveProject(context.Context, string, string, string) (string, string, error) {
 	return "w", "p", nil
 }
+
+type policyExecutor struct {
+	routeExecutor
+	data map[string]any
+	err  error
+}
+
+func (p policyExecutor) Execute(_ context.Context, r bus.Request) (bus.Result, error) {
+	if r.Operation != "label_policy_get" {
+		return bus.Result{}, errors.New("unexpected " + r.Operation)
+	}
+	return bus.Result{Source: "server", Data: p.data}, p.err
+}
+
+// Doctor shows the approved label list's revision, who set it and when, or
+// that none is set.
+func TestDoctorShowsTheLabelPolicy(t *testing.T) {
+	for name, c := range map[string]struct {
+		exec   policyExecutor
+		status string
+		text   string
+	}{
+		"set":     {policyExecutor{data: map[string]any{"revision": 4, "labels": []any{"Bug", "Agent"}, "renames": map[string]any{"Bugs": "Bug"}, "updated_by": "owner@example.com", "updated_at": "2026-10-23T09:00:00Z"}}, Pass, "revision 4, set by owner@example.com at 2026-10-23T09:00:00Z: 2 labels, 1 renames"},
+		"unset":   {policyExecutor{data: map[string]any{"revision": 0, "labels": []any{}, "renames": map[string]any{}}}, Pass, "No approved label list"},
+		"refused": {policyExecutor{err: codedError{"forbidden", "refused"}}, Warn, "could not be read"},
+	} {
+		var checks []Check
+		checkLabelPolicy(context.Background(), c.exec, "w", "p", func(check Check) { checks = append(checks, check) })
+		if len(checks) != 1 || checks[0].ID != "linear.label_policy" || checks[0].Status != c.status || !strings.Contains(checks[0].Message, c.text) {
+			t.Errorf("%s: %+v", name, checks)
+		}
+	}
+}

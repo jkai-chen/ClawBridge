@@ -153,7 +153,7 @@ references on the issue, with routine peer conversation in ClawBridge. See the
 [agent workflow](../skills/clawbridge/references/task-board.md).
 
 To ask for agent attention, people add the label `needs-agent` to an issue
-(create the label once as an operator). The coordinator session lists those
+(the project owner creates the label once, from the approved list). The coordinator session lists those
 issues when it runs, with `linear issues --label UUID` (MCP `label_id`) for each
 bound team. The label is a request, never approval or an assignment: the
 coordinator still assigns the work through ClawBridge, and people remove the
@@ -575,6 +575,73 @@ and is gone after; removing an edge that was never shown ends uncertain.
 The versioned MCP family exposes the same scoped operations through the existing
 profile opt-in. Prefer advertised `taskboard_*_v2` tools on L2 builds; original
 tools remain available for representable L1 mappings.
+
+## Labels and projects (project owner only)
+
+The ClawBridge project owner can create team labels and projects in Linear from
+the CLI. These commands are not MCP tools, so agents cannot call them; an agent
+that needs a label or project asks the coordinator.
+
+- **Who.** Only the ClawBridge project owner, checked before any Linear call.
+  They use your personal Linear profile, never the ClawBridge app.
+- **Where.** Only in a team of the project's binding.
+- **Nothing is ever retired, deleted or merged.**
+
+### The approved label list
+
+Labels come only from the project's approved list, which the project owner sets:
+
+```sh
+clawbridge linear label-policy show
+clawbridge linear label-policy set --file policy.json --expected-revision N
+```
+
+`policy.json` holds exactly `{"labels": ["Bug", "agent-working"], "renames": {"Bugs": "Bug"}}`:
+up to 200 names to create and 50 renames, each 1–80 characters, with no
+duplicates ignoring case and no mentions. A set is refused when the list changed
+since revision `N`.
+
+The approved list is a **human-set audit and review gate** (CLI or TUI only,
+never MCP), **not a boundary against the owner's own coordinator session**: the
+coordinator session runs as the owner. Every create and rename records the list
+revision it was checked against, and `clawbridge doctor` shows the revision and
+who set it when.
+
+### Commands
+
+```sh
+clawbridge linear label create NAME --team TEAM_UUID --operation-id ID
+clawbridge linear label rename OLD NEW --team TEAM_UUID --operation-id ID
+clawbridge linear project create NAME --team TEAM_UUID --operation-id ID
+```
+
+- **`label create`** creates a plain team label named exactly as in the list. It
+  first reads every label available to the team, archived ones and groups
+  included:
+  - a team label with that name (ignoring case): `observed_unchanged`, nothing
+    sent;
+  - a workspace label with that name: refused (`exists_at_workspace_level`);
+  - a label whose own scope Linear does not report: refused
+    (`exists_scope_unknown`);
+  - a list that could not be read completely: refused.
+
+  Only the name and team are sent. After the create the list is read again: two
+  labels with the name give `accepted_duplicate_observed` with both IDs (a
+  concurrent create), and an incomplete re-read gives
+  `accepted_duplicate_unknown`. ClawBridge never cleans up a duplicate.
+- **`label rename`** needs `OLD → NEW` in the list's renames, exactly one plain,
+  current label of the team named `OLD`, and no label named `NEW`. It sends the
+  label's UUID and the new name.
+- **`project create`** creates a project in the team, unless the team already has
+  one with that name (`observed_unchanged`, so a second operation ID cannot make
+  a duplicate). It never changes the binding:
+  - in a project-set binding the result carries a `proposal`, the `linear link`
+    preview with the new project added, and the `confirm_command` to run;
+  - in a team board the project is already in scope, so there is no proposal.
+
+Every command takes an `--operation-id`: a retry with the same ID returns the
+saved result and sends nothing. Each write is recorded in the project's history
+with its IDs and names.
 
 ## Accounts and recovery
 

@@ -477,7 +477,7 @@ func (c *Client) Execute(ctx context.Context, r bus.Request) (bus.Result, error)
 	if err == nil {
 		return result, nil
 	}
-	if r.Operation == "inbox_status" || r.Operation == "notification_status" || r.Operation == "taskboard_get" || r.Operation == "taskboard_get_v2" || r.Operation == "taskboard_access" {
+	if r.Operation == "inbox_status" || r.Operation == "notification_status" || r.Operation == "taskboard_get" || r.Operation == "taskboard_get_v2" || r.Operation == "taskboard_access" || r.Operation == "label_policy_get" {
 		// Status and binding metadata require the authority, never a mirror.
 		var credential *credentialError
 		var httpErr *HTTPError

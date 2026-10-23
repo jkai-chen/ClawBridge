@@ -1,0 +1,248 @@
+package linearboard
+
+import (
+	"context"
+	"net/http"
+	"strings"
+	"testing"
+
+	"clawbridge/internal/bus"
+	"clawbridge/internal/linearprovider"
+)
+
+const (
+	newLabel   = "e1000000-0000-4000-8000-000000000001"
+	dupLabel   = "e2000000-0000-4000-8000-000000000002"
+	newProject = "e3000000-0000-4000-8000-000000000003"
+)
+
+// adminAuthority adds a project role, the approved label list and the
+// admin audit to the V2 authority fake.
+type adminAuthority struct {
+	*authorityV2
+	role     string
+	policy   bus.LabelPolicy
+	revision int
+	audits   []map[string]any
+	sets     int
+}
+
+func (a *adminAuthority) Execute(ctx context.Context, r bus.Request) (bus.Result, error) {
+	switch r.Operation {
+	case "taskboard_access":
+		result, e := a.authorityV2.Execute(ctx, r)
+		access := result.Data.(bus.TaskboardAccess)
+		access.ProjectRole = a.role
+		result.Data = access
+		return result, e
+	case "label_policy_get":
+		return bus.Result{Source: "local-authority", Data: map[string]any{"revision": a.revision, "labels": a.policy.Labels, "renames": a.policy.Renames}}, nil
+	case "linear_admin_audit":
+		a.audits = append(a.audits, r.Args)
+		return bus.Result{Source: "local-authority", Data: map[string]any{"recorded": true}}, nil
+	case "taskboard_set_v2":
+		a.sets++
+	}
+	return a.authorityV2.Execute(ctx, r)
+}
+
+// adminFake is a V2 provider with the admin writes. Labels and projects are
+// returned by name; each write is recorded.
+type adminFake struct {
+	*providerV2
+	labels     map[string][]linearprovider.AdminLabel
+	projects   map[string][]linearprovider.ProjectListing
+	incomplete bool
+	afterWrite func()
+	writes     []string
+	reason     string
+}
+
+func (p *adminFake) AdminReason() string { return p.reason }
+func (p *adminFake) TeamLabelsNamed(_ context.Context, _, name string) ([]linearprovider.AdminLabel, bool, error) {
+	return p.labels[strings.ToLower(name)], !p.incomplete, nil
+}
+func (p *adminFake) TeamProjectsNamed(_ context.Context, _, name string) ([]linearprovider.ProjectListing, bool, error) {
+	return p.projects[strings.ToLower(name)], !p.incomplete, nil
+}
+func (p *adminFake) write(what string) {
+	p.writes = append(p.writes, what)
+	if p.afterWrite != nil {
+		p.afterWrite()
+	}
+}
+func (p *adminFake) CreateTeamLabel(_ context.Context, team, name string) (linearprovider.AdminReceipt, error) {
+	p.write("label " + team + " " + name)
+	return linearprovider.AdminReceipt{ID: newLabel, Name: name, TeamID: team}, nil
+}
+func (p *adminFake) RenameTeamLabel(_ context.Context, team, id, name string) (linearprovider.AdminReceipt, error) {
+	p.write("rename " + id + " " + name)
+	return linearprovider.AdminReceipt{ID: id, Name: name, TeamID: team}, nil
+}
+func (p *adminFake) CreateTeamProject(_ context.Context, team, name string) (linearprovider.AdminReceipt, error) {
+	p.write("project " + team + " " + name)
+	p.projects[strings.ToLower(name)] = []linearprovider.ProjectListing{{Project: linearprovider.Project{ID: newProject, Name: name, TeamIDs: []string{team}}}}
+	p.providerV2.projects[newProject] = []string{team}
+	return linearprovider.AdminReceipt{ID: newProject, Name: name, TeamID: team}, nil
+}
+
+func adminTest(t *testing.T) (*Service, *adminAuthority, *adminFake, bus.Request) {
+	t.Helper()
+	s, a, p, scope := testV2(t)
+	auth := &adminAuthority{authorityV2: a, role: "owner", revision: 3, policy: bus.LabelPolicy{Labels: []string{"Agent", "Bug"}, Renames: map[string]string{"Bugs": "Bug old"}}}
+	fake := &adminFake{providerV2: p, labels: map[string][]linearprovider.AdminLabel{}, projects: map[string][]linearprovider.ProjectListing{}}
+	s.cfg.Executor = auth
+	s.cfg.Open = func(context.Context, *http.Client, bool) (Provider, error) { return fake, nil }
+	return s, auth, fake, scope
+}
+
+func label(id, name string, team string, known bool) linearprovider.AdminLabel {
+	return linearprovider.AdminLabel{ID: id, Name: name, TeamID: team, TeamKnown: known}
+}
+
+func TestAdminLabelCreateFromTheApprovedListIsAudited(t *testing.T) {
+	s, a, p, scope := adminTest(t)
+	in := AdminInput{Kind: "label_create", OperationID: "lbl-1", TeamID: teamID, Name: "Bug"}
+	r, e := s.Admin(context.Background(), scope, in)
+	if e != nil || r.Outcome != "accepted" || r.ID != newLabel || r.PolicyRevision != 3 || r.Audit != "recorded" || len(p.writes) != 1 || p.writes[0] != "label "+teamID+" Bug" {
+		t.Fatal(r, e, p.writes)
+	}
+	if len(a.audits) != 1 || a.audits[0]["policy_revision"] != 3 || a.audits[0]["kind"] != "label_create" || a.audits[0]["linear_id"] != newLabel {
+		t.Fatal("audit", a.audits)
+	}
+	// The same operation is answered from the ledger.
+	if again, e := s.Admin(context.Background(), scope, in); e != nil || again.ID != newLabel || len(p.writes) != 1 {
+		t.Fatal("retry", again, e, p.writes)
+	}
+}
+
+func TestAdminWritesAreRefusedBeforeLinear(t *testing.T) {
+	for name, c := range map[string]struct {
+		in    AdminInput
+		setup func(*adminAuthority, *adminFake)
+		want  string
+	}{
+		"a member":        {AdminInput{Kind: "label_create", OperationID: "x", TeamID: teamID, Name: "Bug"}, func(a *adminAuthority, _ *adminFake) { a.role = "member" }, "project owner only"},
+		"a lead":          {AdminInput{Kind: "project_create", OperationID: "x", TeamID: teamID, Name: "Q4"}, func(a *adminAuthority, _ *adminFake) { a.role = "lead" }, "project owner only"},
+		"not approved":    {AdminInput{Kind: "label_create", OperationID: "x", TeamID: teamID, Name: "Feature"}, nil, "not in the approved list"},
+		"case differs":    {AdminInput{Kind: "label_create", OperationID: "x", TeamID: teamID, Name: "bug"}, nil, "not in the approved list"},
+		"unbound team":    {AdminInput{Kind: "label_create", OperationID: "x", TeamID: "99999999-9999-4999-8999-999999999999", Name: "Bug"}, nil, "not in this project's binding"},
+		"rename unlisted": {AdminInput{Kind: "label_rename", OperationID: "x", TeamID: teamID, From: "Bugs", Name: "Bug new"}, nil, "not in the approved list"},
+		"incomplete walk": {AdminInput{Kind: "label_create", OperationID: "x", TeamID: teamID, Name: "Bug"}, func(_ *adminAuthority, p *adminFake) { p.incomplete = true }, "could not be read completely"},
+		"workspace label": {AdminInput{Kind: "label_create", OperationID: "x", TeamID: teamID, Name: "Bug"}, func(_ *adminAuthority, p *adminFake) {
+			p.labels["bug"] = []linearprovider.AdminLabel{label(dupLabel, "bug", "", true)}
+		}, "exists_at_workspace_level"},
+		"scope unknown": {AdminInput{Kind: "label_create", OperationID: "x", TeamID: teamID, Name: "Bug"}, func(_ *adminAuthority, p *adminFake) {
+			p.labels["bug"] = []linearprovider.AdminLabel{label(dupLabel, "BUG", "", false)}
+		}, "exists_scope_unknown"},
+		"schema drift": {AdminInput{Kind: "label_create", OperationID: "x", TeamID: teamID, Name: "Bug"}, func(_ *adminAuthority, p *adminFake) { p.reason = "save_issue_label now requires id" }, "unavailable"},
+		"mention":      {AdminInput{Kind: "project_create", OperationID: "x", TeamID: teamID, Name: "ask @ann"}, nil, "mention"},
+		"rename ambiguous": {AdminInput{Kind: "label_rename", OperationID: "x", TeamID: teamID, From: "Bugs", Name: "Bug old"}, func(_ *adminAuthority, p *adminFake) {
+			p.labels["bugs"] = []linearprovider.AdminLabel{label(newLabel, "Bugs", teamID, true), label(dupLabel, "bugs", teamID, true)}
+		}, "exactly one"},
+		"rename a group": {AdminInput{Kind: "label_rename", OperationID: "x", TeamID: teamID, From: "Bugs", Name: "Bug old"}, func(_ *adminAuthority, p *adminFake) {
+			l := label(newLabel, "Bugs", teamID, true)
+			l.Group = true
+			p.labels["bugs"] = []linearprovider.AdminLabel{l}
+		}, "not a plain"},
+		"rename a workspace label": {AdminInput{Kind: "label_rename", OperationID: "x", TeamID: teamID, From: "Bugs", Name: "Bug old"}, func(_ *adminAuthority, p *adminFake) {
+			p.labels["bugs"] = []linearprovider.AdminLabel{label(newLabel, "Bugs", "", true)}
+		}, "not a plain"},
+		"rename target exists": {AdminInput{Kind: "label_rename", OperationID: "x", TeamID: teamID, From: "Bugs", Name: "Bug old"}, func(_ *adminAuthority, p *adminFake) {
+			p.labels["bugs"] = []linearprovider.AdminLabel{label(newLabel, "Bugs", teamID, true)}
+			p.labels["bug old"] = []linearprovider.AdminLabel{label(dupLabel, "Bug old", teamID, true)}
+		}, "already exists"},
+	} {
+		s, a, p, scope := adminTest(t)
+		if c.setup != nil {
+			c.setup(a, p)
+		}
+		opens := 0
+		open := s.cfg.Open
+		s.cfg.Open = func(ctx context.Context, h *http.Client, ro bool) (Provider, error) { opens++; return open(ctx, h, ro) }
+		if _, e := s.Admin(context.Background(), scope, c.in); e == nil || !strings.Contains(e.Error(), c.want) {
+			t.Fatal(name, e)
+		}
+		if a.role != "owner" && opens != 0 {
+			t.Fatal(name, "a non-owner reached Linear")
+		}
+		if len(p.writes) != 0 || len(a.audits) != 0 {
+			t.Fatal(name, "wrote or audited", p.writes, a.audits)
+		}
+	}
+}
+
+// An existing team label or project is never written over, and a second
+// operation ID cannot make a duplicate.
+func TestAdminExistingNamesAreObservedUnchanged(t *testing.T) {
+	s, _, p, scope := adminTest(t)
+	p.labels["bug"] = []linearprovider.AdminLabel{label(dupLabel, "bug", teamID, true)}
+	if r, e := s.Admin(context.Background(), scope, AdminInput{Kind: "label_create", OperationID: "l", TeamID: teamID, Name: "Bug"}); e != nil || r.Outcome != "observed_unchanged" || r.ID != dupLabel || len(p.writes) != 0 {
+		t.Fatal(r, e, p.writes)
+	}
+	first, e := s.Admin(context.Background(), scope, AdminInput{Kind: "project_create", OperationID: "p-1", TeamID: teamID, Name: "Q4"})
+	if e != nil || first.Outcome != "accepted" || len(p.writes) != 1 {
+		t.Fatal(first, e)
+	}
+	second, e := s.Admin(context.Background(), scope, AdminInput{Kind: "project_create", OperationID: "p-2", TeamID: teamID, Name: "q4"})
+	if e != nil || second.Outcome != "observed_unchanged" || second.ID != newProject || len(p.writes) != 1 {
+		t.Fatal("a second operation ID created a duplicate project", second, e, p.writes)
+	}
+}
+
+func TestAdminLabelDuplicateRaceIsReported(t *testing.T) {
+	s, _, p, scope := adminTest(t)
+	p.afterWrite = func() {
+		p.labels["bug"] = []linearprovider.AdminLabel{label(newLabel, "Bug", teamID, true), label(dupLabel, "Bug", teamID, true)}
+	}
+	r, e := s.Admin(context.Background(), scope, AdminInput{Kind: "label_create", OperationID: "d", TeamID: teamID, Name: "Bug"})
+	if e != nil || r.Outcome != "accepted_duplicate_observed" || len(r.DuplicateIDs) != 2 {
+		t.Fatal(r, e)
+	}
+	s, _, p, scope = adminTest(t)
+	p.afterWrite = func() { p.incomplete = true }
+	if r, e = s.Admin(context.Background(), scope, AdminInput{Kind: "label_create", OperationID: "d", TeamID: teamID, Name: "Bug"}); e != nil || r.Outcome != "accepted_duplicate_unknown" {
+		t.Fatal(r, e)
+	}
+}
+
+func TestAdminRenameSendsTheProvenLabel(t *testing.T) {
+	s, a, p, scope := adminTest(t)
+	p.labels["bugs"] = []linearprovider.AdminLabel{label(newLabel, "Bugs", teamID, true)}
+	r, e := s.Admin(context.Background(), scope, AdminInput{Kind: "label_rename", OperationID: "r", TeamID: teamID, From: "Bugs", Name: "Bug old"})
+	if e != nil || r.Outcome != "accepted" || r.PreviousName != "Bugs" || len(p.writes) != 1 || p.writes[0] != "rename "+newLabel+" Bug old" {
+		t.Fatal(r, e, p.writes)
+	}
+	if a.audits[0]["previous_name"] != "Bugs" || a.audits[0]["policy_revision"] != 3 {
+		t.Fatal(a.audits)
+	}
+}
+
+// A created project gets a binding proposal in a project-set binding and
+// none in a team board; the binding itself is never written.
+func TestAdminProjectProposalNeverBinds(t *testing.T) {
+	s, a, _, scope := adminTest(t)
+	r, e := s.Admin(context.Background(), scope, AdminInput{Kind: "project_create", OperationID: "p", TeamID: teamID, Name: "Q4"})
+	if e != nil || r.Proposal == nil || !strings.Contains(r.ConfirmCommand, "--linear-project "+newProject) || !strings.Contains(r.ConfirmCommand, "--expected-revision 1 --confirm") || a.sets != 0 {
+		t.Fatal(r, e, a.sets)
+	}
+	s, a, _, scope = adminTest(t)
+	a.b.Mode, a.b.LinearProjectIDs = "team_board", []string{}
+	r, e = s.Admin(context.Background(), scope, AdminInput{Kind: "project_create", OperationID: "p", TeamID: teamID, Name: "Q4"})
+	if e != nil || r.Proposal != nil || !strings.Contains(r.ProposalNote, "already in scope") || a.sets != 0 {
+		t.Fatal("team board", r, e)
+	}
+}
+
+// The admin writes are CLI-only: the agent-facing V2 adapter refuses them.
+func TestAdminWritesAreNotAgentOperations(t *testing.T) {
+	s, _, p, scope := adminTest(t)
+	for _, op := range []string{"label_create", "label_rename", "project_create", "label_policy_set"} {
+		if _, e := s.ExecuteV2(context.Background(), scope, op, map[string]any{"name": "Bug", "team_id": teamID, "operation_id": "x"}); e == nil {
+			t.Fatal(op, "accepted by ExecuteV2")
+		}
+	}
+	if len(p.writes) != 0 {
+		t.Fatal(p.writes)
+	}
+}

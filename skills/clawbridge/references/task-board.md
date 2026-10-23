@@ -97,7 +97,8 @@ the required review or decision and continue independent work within your scope.
 ## Find issues waiting for an agent
 
 People ask for agent attention by adding the label `needs-agent` to an issue.
-Creating that label is an operator action; agents do not create it.
+Creating that label is the project owner's action (it must be on the approved
+label list); agents do not create it.
 
 - The coordinator session checks for it when it runs. For each bound team, find
   the label's UUID with `labels`, then list `issues` with that `label_id`
@@ -183,8 +184,9 @@ the durable decision and blocker; routine back-and-forth stays in ClawBridge.
 Discover the installed capability before using project sets, labels, parents,
 human assignment or relation mutations. Older adapters expose fewer fields;
 an unavailable capability goes to the coordinator rather than a broader account
-or an arbitrary provider tool. Administrative project/label creation remains a
-separate operator action.
+or an arbitrary provider tool. Only the project owner creates labels and
+projects (`linear label create` / `linear project create`, from an approved
+list, CLI only); when you need one, ask the coordinator.
 
 Write Linear text without mentions: name people and agents in plain words, never
 as `@name`, `@Linear` or a profile link. ClawBridge refuses a title,

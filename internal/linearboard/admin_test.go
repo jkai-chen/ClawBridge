@@ -2,6 +2,7 @@ package linearboard
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"strings"
 	"testing"
@@ -20,11 +21,16 @@ const (
 // admin audit to the V2 authority fake.
 type adminAuthority struct {
 	*authorityV2
-	role     string
-	policy   bus.LabelPolicy
-	revision int
-	audits   []map[string]any
-	sets     int
+	role       string
+	policy     bus.LabelPolicy
+	revision   int
+	audits     []map[string]any
+	sets       int
+	policySets int
+	// policyReads counts label_policy_get; afterPolicyRead runs after each.
+	policyReads     int
+	afterPolicyRead func(int)
+	auditErr        error
 }
 
 func (a *adminAuthority) Execute(ctx context.Context, r bus.Request) (bus.Result, error) {
@@ -36,10 +42,23 @@ func (a *adminAuthority) Execute(ctx context.Context, r bus.Request) (bus.Result
 		result.Data = access
 		return result, e
 	case "label_policy_get":
-		return bus.Result{Source: "local-authority", Data: map[string]any{"revision": a.revision, "labels": a.policy.Labels, "renames": a.policy.Renames}}, nil
+		data := map[string]any{"revision": a.revision, "labels": a.policy.Labels, "renames": a.policy.Renames}
+		a.policyReads++
+		if a.afterPolicyRead != nil {
+			a.afterPolicyRead(a.policyReads)
+		}
+		return bus.Result{Source: "local-authority", Data: data}, nil
 	case "linear_admin_audit":
+		if a.auditErr != nil {
+			e := a.auditErr
+			a.auditErr = nil
+			return bus.Result{}, e
+		}
 		a.audits = append(a.audits, r.Args)
 		return bus.Result{Source: "local-authority", Data: map[string]any{"recorded": true}}, nil
+	case "label_policy_set":
+		a.policySets++
+		return bus.Result{Source: "local-authority", Data: map[string]any{"revision": a.revision + 1}}, nil
 	case "taskboard_set_v2":
 		a.sets++
 	}
@@ -56,6 +75,8 @@ type adminFake struct {
 	afterWrite func()
 	writes     []string
 	reason     string
+	// teamless makes label receipts leave the team out.
+	teamless bool
 }
 
 func (p *adminFake) AdminReason() string { return p.reason }
@@ -73,7 +94,11 @@ func (p *adminFake) write(what string) {
 }
 func (p *adminFake) CreateTeamLabel(_ context.Context, team, name string) (linearprovider.AdminReceipt, error) {
 	p.write("label " + team + " " + name)
-	return linearprovider.AdminReceipt{ID: newLabel, Name: name, TeamID: team}, nil
+	r := linearprovider.AdminReceipt{ID: newLabel, Name: name, TeamID: team}
+	if p.teamless {
+		r.Unverified = []string{"team"}
+	}
+	return r, nil
 }
 func (p *adminFake) RenameTeamLabel(_ context.Context, team, id, name string) (linearprovider.AdminReceipt, error) {
 	p.write("rename " + id + " " + name)
@@ -244,5 +269,66 @@ func TestAdminWritesAreNotAgentOperations(t *testing.T) {
 	}
 	if len(p.writes) != 0 {
 		t.Fatal(p.writes)
+	}
+}
+
+// AC-M1: the approved list is read again in the lock; a change since the
+// check refuses the write before it is sent.
+func TestAdminLabelWriteRefusedWhenThePolicyChangesBeforeDispatch(t *testing.T) {
+	s, a, p, scope := adminTest(t)
+	a.afterPolicyRead = func(n int) {
+		if n == 1 {
+			a.revision = 4
+		}
+	}
+	_, e := s.Admin(context.Background(), scope, AdminInput{Kind: "label_create", OperationID: "m1", TeamID: teamID, Name: "Bug"})
+	if e == nil || !strings.Contains(e.Error(), "approved label list changed") || len(p.writes) != 0 || len(a.audits) != 0 {
+		t.Fatal("a write checked under an old list was sent", e, p.writes)
+	}
+}
+
+// AC-L1: a retry records the audit an earlier run failed to.
+func TestAdminAuditIsRetriedWithTheOperation(t *testing.T) {
+	s, a, p, scope := adminTest(t)
+	a.auditErr = errors.New("authority unavailable")
+	in := AdminInput{Kind: "label_create", OperationID: "l1", TeamID: teamID, Name: "Bug"}
+	r, e := s.Admin(context.Background(), scope, in)
+	if e != nil || !strings.HasPrefix(r.Audit, "failed") || len(a.audits) != 0 {
+		t.Fatal(r, e)
+	}
+	if r, e = s.Admin(context.Background(), scope, in); e != nil || r.Audit != "recorded" || len(a.audits) != 1 || len(p.writes) != 1 {
+		t.Fatal("retry did not record the audit, or wrote again", r, e, p.writes)
+	}
+}
+
+// AC-L3: the post-create re-list proves a team the receipt left out.
+func TestAdminRelistProvesTheLabelTeam(t *testing.T) {
+	s, _, p, scope := adminTest(t)
+	p.teamless = true
+	p.afterWrite = func() { p.labels["bug"] = []linearprovider.AdminLabel{label(newLabel, "Bug", teamID, true)} }
+	if r, e := s.Admin(context.Background(), scope, AdminInput{Kind: "label_create", OperationID: "t", TeamID: teamID, Name: "Bug"}); e != nil || r.Unverified != nil {
+		t.Fatal(r, e)
+	}
+	s, _, p, scope = adminTest(t)
+	p.teamless = true
+	p.afterWrite = func() { p.labels["bug"] = []linearprovider.AdminLabel{label(newLabel, "Bug", "", false)} }
+	if r, e := s.Admin(context.Background(), scope, AdminInput{Kind: "label_create", OperationID: "t", TeamID: teamID, Name: "Bug"}); e != nil || len(r.Unverified) != 1 {
+		t.Fatal("a teamless row cleared unverified", r, e)
+	}
+}
+
+// AC-L2: a policy file that repeats a key is refused before the authority.
+func TestLabelPolicyFileRefusesRepeatedKeys(t *testing.T) {
+	s, a, _, scope := adminTest(t)
+	for _, raw := range []string{`{"labels":["A"],"labels":["B"]}`, `{"labels":["A"],"renames":{"x":"y","x":"z"}}`, `{"labels":["A"]} {}`, `not json`} {
+		if _, e := s.SetLabelPolicyV2(context.Background(), scope, []byte(raw), 3); e == nil {
+			t.Fatal("accepted", raw)
+		}
+	}
+	if a.policySets != 0 {
+		t.Fatal("authority reached")
+	}
+	if _, e := s.SetLabelPolicyV2(context.Background(), scope, []byte(`{"labels":["A"],"renames":{"x":"y"}}`), 3); e != nil || a.policySets != 1 {
+		t.Fatal("a valid file refused", e)
 	}
 }

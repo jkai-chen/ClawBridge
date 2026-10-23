@@ -234,14 +234,31 @@ func (s *Store) adminAudit(ctx context.Context, tx *transaction, wid, pid string
 	if kind != "project_create" {
 		entity = "linear_label"
 		revision, err := integer(a["policy_revision"])
-		if err != nil || int(revision) != asInt(policy["revision"]) || revision < 1 {
-			return nil, conflict("the label policy changed since this write was checked; read it again")
+		if err != nil || revision < 1 {
+			return nil, invalid("a label write names the policy revision it was checked against")
 		}
+		// The write has already happened in Linear, so it is recorded even
+		// when the list changed since; the current revision is kept beside it.
 		details["policy_revision"] = revision
+		if now := asInt(policy["revision"]); now != revision {
+			details["policy_revision_now"] = now
+		}
 	}
 	key := id
 	if key == "" {
 		key = team
+	}
+	// Recording is idempotent by operation ID, so a retried write's audit is
+	// never doubled.
+	rows, err := query(ctx, tx, `SELECT details FROM history WHERE workspace_id=? AND project_id=? AND entity=? AND entity_key=? AND action=?`, wid, pid, entity, key, kind)
+	if err != nil {
+		return nil, err
+	}
+	for _, row := range rows {
+		// query decodes the details column.
+		if seen, ok := row["details"].(map[string]any); ok && seen["operation_id"] == details["operation_id"] {
+			return map[string]any{"recorded": true, "already": true}, nil
+		}
 	}
 	if err := s.audit(ctx, tx, wid, pid, "", entity, key, kind, details); err != nil {
 		return nil, err

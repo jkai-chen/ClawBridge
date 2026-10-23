@@ -357,7 +357,7 @@ func readLedger(path, hash string) (any, bool, error) {
 	if _, e := time.Parse(time.RFC3339Nano, previous.UpdatedAt); e != nil {
 		return nil, true, errors.New("corrupt operation timestamp")
 	}
-	if previous.Digest != hash {
+	if hash != anyPayload && previous.Digest != hash {
 		return nil, true, errors.New("operation_id already used with a different scoped payload")
 	}
 	return recordOutcome(previous)
@@ -410,6 +410,16 @@ func recordOutcome(previous ledgerRecord) (any, bool, error) {
 	return receipt, true, nil
 }
 func (l ledger) lookup(profile, id string, payload any) (any, bool, error) {
+	return l.lookupDigest(profile, id, digest(payload))
+}
+
+// anyPayload is the payload digest of a replay lookup: it matches the
+// recorded digest, whatever it is. Every other check still applies.
+const anyPayload = ""
+
+// lookupDigest is lookup by payload digest; anyPayload skips only the
+// digest comparison.
+func (l ledger) lookupDigest(profile, id, hash string) (any, bool, error) {
 	if !operationPattern.MatchString(id) || !filepath.IsAbs(l.dir) {
 		return nil, false, errors.New("invalid operation ledger selection")
 	}
@@ -428,5 +438,5 @@ func (l ledger) lookup(profile, id string, payload any) (any, bool, error) {
 	if err := privatePath(directory, true); err != nil {
 		return nil, true, err
 	}
-	return readLedger(path, digest(payload))
+	return readLedger(path, hash)
 }

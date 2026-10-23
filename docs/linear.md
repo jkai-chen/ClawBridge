@@ -725,6 +725,23 @@ run could not (`audit` in the result says which). A label write is refused
 before it is sent if the approved list changed since it was checked; the history
 row keeps the revision it was checked against.
 
+A retry only reaches the saved result while the binding and the approved list
+are as they were: after a binding change (for example confirming a `project
+create` proposal) it is refused, and nothing is sent. To record the history row
+of such a write, the owner replays it from this machine's operation ledger:
+
+```sh
+clawbridge linear admin audit-replay --operation-id ID
+```
+
+- It records the row from the result saved when Linear accepted the write. It
+  sends nothing to Linear, needs no `--profile`, and does not change the ledger.
+- Pass the same `--session` and `--instance` the write ran under, or none for a
+  write run without a session.
+- Only an accepted admin write is replayed. An uncertain or refused operation,
+  a comment or issue write, or one still running is refused.
+- A replay of a write already in history answers `"audit": "already"`.
+
 ## Accounts and recovery
 
 Use a separate connection profile for each Linear workspace/account. Switching a

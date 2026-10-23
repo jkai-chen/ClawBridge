@@ -16,10 +16,17 @@ type TaskboardAccess struct {
 	SessionName string `json:"session_name"`
 	CanWrite    bool   `json:"can_write"`
 	ProjectRole string `json:"project_role"`
+	// Engineer names the person behind the session for agent markers, when
+	// the client asked for it (engineer: 1).
+	Engineer string `json:"engineer,omitempty"`
 }
 
 func accessMap(a TaskboardAccess) map[string]any {
-	return map[string]any{"workspace_id": a.WorkspaceID, "project_id": a.ProjectID, "session_id": nullable(a.SessionID), "session_name": nullable(a.SessionName), "can_write": a.CanWrite, "project_role": a.ProjectRole}
+	m := map[string]any{"workspace_id": a.WorkspaceID, "project_id": a.ProjectID, "session_id": nullable(a.SessionID), "session_name": nullable(a.SessionName), "can_write": a.CanWrite, "project_role": a.ProjectRole}
+	if a.Engineer != "" {
+		m["engineer"] = a.Engineer
+	}
+	return m
 }
 func (a TaskboardAccess) MarshalJSON() ([]byte, error) { return json.Marshal(accessMap(a)) }
 func (a *TaskboardAccess) UnmarshalJSON(raw []byte) error {
@@ -37,8 +44,15 @@ func ParseTaskboardAccess(v any) (TaskboardAccess, error) {
 	}
 	var m map[string]any
 	dec := json.NewDecoder(bytes.NewReader(raw))
-	if dec.Decode(&m) != nil || len(m) != 6 {
+	if dec.Decode(&m) != nil || (len(m) != 6 && !(len(m) == 7 && m["engineer"] != nil)) {
 		return a, errors.New("invalid taskboard access fields")
+	}
+	if v, present := m["engineer"]; present {
+		e, ok := v.(string)
+		if !ok || !ValidEngineer(e) {
+			return a, errors.New("invalid access engineer")
+		}
+		a.Engineer = e
 	}
 	for _, k := range []string{"workspace_id", "project_id", "session_id", "session_name", "can_write", "project_role"} {
 		if _, ok := m[k]; !ok {

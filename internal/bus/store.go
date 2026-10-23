@@ -217,7 +217,12 @@ func stringList(v any) (list []string, isArray, ok bool) {
 	}
 	return nil, false, false
 }
-func stamp() string                         { return time.Now().UTC().Format(timestampLayout) }
+
+// hostClock is this host's clock; a test skews it to prove a hosted binding
+// time comes from the database instead.
+var hostClock = time.Now
+
+func stamp() string                         { return hostClock().UTC().Format(timestampLayout) }
 func str(a map[string]any, k string) string { v, _ := a[k].(string); return v }
 func asJSON(v any) string                   { b, _ := json.Marshal(v); return string(b) }
 func query(ctx context.Context, tx *transaction, q string, args ...any) ([]map[string]any, error) {

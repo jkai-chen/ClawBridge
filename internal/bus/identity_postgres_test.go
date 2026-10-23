@@ -713,3 +713,59 @@ func TestPostgresWriteWaitingOnTheLockSeesARevokedMembership(t *testing.T) {
 		t.Fatal("a write that waited on the lock committed for a removed member", err)
 	}
 }
+
+// Binding times and their audit events come from the database clock, not this
+// host's: with the host clock six hours behind, every stamp a bind, a refusal
+// and an unbind write is still the server's now().
+func TestPostgresBindingTimesUseTheDatabaseClock(t *testing.T) {
+	f := newPGIdentityFixture(t)
+	user := newID("u") + "@identity-test.example"
+	f.member(user)
+	hostClock = func() time.Time { return time.Now().Add(-6 * time.Hour) }
+	t.Cleanup(func() { hostClock = time.Now })
+	f.must(user, "sub-1", f.list())
+	if _, err := f.as(user, "sub-2", f.list()); !refusedWith(err, "not the one bound") {
+		t.Fatal("another account was accepted for a bound principal", err)
+	}
+	f.must(f.owner, "sub-owner", Request{Operation: "principal_unbind", Args: map[string]any{"principal": user}})
+	ctx := context.Background()
+	var dbNow time.Time
+	if err := f.s.db.QueryRowContext(ctx, `SELECT now()`).Scan(&dbNow); err != nil {
+		t.Fatal(err)
+	}
+	stamps := map[string]string{}
+	var boundAt string
+	if err := f.s.db.QueryRowContext(ctx, `SELECT bound_at FROM principal_subjects WHERE principal=$1`, user).Scan(&boundAt); err != nil {
+		t.Fatal(err)
+	}
+	stamps["unbind bound_at"] = boundAt
+	rows, err := f.s.db.QueryContext(ctx, `SELECT action,changed_at FROM principal_events WHERE principal=$1`, user)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var action, at string
+		if err := rows.Scan(&action, &at); err != nil {
+			t.Fatal(err)
+		}
+		stamps[action] = at
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatal(err)
+	}
+	for _, action := range []string{"principal_bound", "principal_subject_mismatch", "principal_unbound"} {
+		if _, ok := stamps[action]; !ok {
+			t.Fatal("missing event", action, stamps)
+		}
+	}
+	for what, raw := range stamps {
+		at, err := time.Parse(timestampLayout, raw)
+		if err != nil {
+			t.Fatal(what, err)
+		}
+		if d := dbNow.Sub(at); d < 0 || d > time.Minute {
+			t.Fatalf("%s stamped %s, %s from the database's now() %s", what, raw, d, dbNow.UTC().Format(timestampLayout))
+		}
+	}
+}

@@ -42,7 +42,7 @@ func refreshWriteProofV2(ctx context.Context, p Provider, p2 ProviderV2, b bus.T
 			return e
 		}
 		if in.AddLabels != nil || in.RemoveLabels != nil {
-			fresh, e := labelDeltaPlanV2(ctx, p2, current, in.AddLabels, in.RemoveLabels)
+			fresh, e := writePlanV2(ctx, p2, current, in)
 			if e != nil {
 				return e
 			}

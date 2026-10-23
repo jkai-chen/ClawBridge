@@ -74,6 +74,17 @@ func labelDeltaPlanV2(ctx context.Context, p ProviderV2, issue linearprovider.Is
 	return plan, nil
 }
 
+// writePlanV2 is the label delta plan for a write. A marker's add is sent
+// even when the label reads as present: a removal racing it may still land
+// (R2-H2), and native adds append.
+func writePlanV2(ctx context.Context, p ProviderV2, issue linearprovider.IssueV2, in WriteInputV2) (labelPlanV2, error) {
+	plan, e := labelDeltaPlanV2(ctx, p, issue, in.AddLabels, in.RemoveLabels)
+	if e == nil && in.marker && in.AddLabels != nil {
+		plan.Add = in.AddLabels
+	}
+	return plan, e
+}
+
 // descriptionSHA256 is the hex SHA-256 of the exact description bytes a read
 // returned; callers echo it back as expected_description_sha256.
 func descriptionSHA256(description string) string {
@@ -441,7 +452,7 @@ func (s *Service) WriteV2(ctx context.Context, scope bus.Request, in WriteInputV
 				return nil, errors.New("selected label is outside target team")
 			}
 		}
-		if plan, e = labelDeltaPlanV2(ctx, p2, current, in.AddLabels, in.RemoveLabels); e != nil {
+		if plan, e = writePlanV2(ctx, p2, current, in); e != nil {
 			return nil, e
 		}
 	}
@@ -685,8 +696,10 @@ func (s *Service) WriteV2(ctx context.Context, scope bus.Request, in WriteInputV
 			// Every posted comment ends with the agent marker; the ledger
 			// keeps the caller's body, so a retry matches as before.
 			posted := linearprovider.MarkComment(in.Body, markerSession(access))
-			intent := commentIntent{Issue: in.IssueID, OperationID: in.OperationID, Body: posted, Parent: replyTo, InResponseTo: in.InResponseTo}
-			r, answers, err := s.sendComment(ctx, scope, l, namespace, intent, func() (linearprovider.Receipt, error) {
+			if in.marker {
+				posted = in.Body
+			}
+			send := func() (linearprovider.Receipt, error) {
 				var r linearprovider.Receipt
 				var err error
 				if reply {
@@ -704,7 +717,16 @@ func (s *Service) WriteV2(ctx context.Context, scope bus.Request, in WriteInputV
 					return r, errors.New("comment receipt parent mismatch")
 				}
 				return r, nil
-			})
+			}
+			var r linearprovider.Receipt
+			var answers string
+			var err error
+			if in.marker {
+				r, err = send()
+			} else {
+				intent := commentIntent{Issue: in.IssueID, OperationID: in.OperationID, Body: posted, Parent: replyTo, InResponseTo: in.InResponseTo}
+				r, answers, err = s.sendComment(ctx, scope, l, namespace, intent, send)
+			}
 			if err != nil {
 				return nil, err
 			}

@@ -2,6 +2,7 @@ package linearboard
 
 import (
 	"clawbridge/internal/bus"
+	"clawbridge/internal/linearconn"
 	"clawbridge/internal/linearprovider"
 	"context"
 	"errors"
@@ -51,6 +52,11 @@ type WatchCycle struct {
 	BudgetUsed      int               `json:"budget_used"`
 	BudgetLimit     int               `json:"budget_limit"`
 	BudgetExhausted bool              `json:"budget_exhausted,omitempty"`
+	// Markers are the claim markers this cycle applied, first.
+	Markers []MarkerApply `json:"markers,omitempty"`
+	// MarkersReadOnly is set when the watcher's Linear profile cannot
+	// write, so claim markers wait for a client that can.
+	MarkersReadOnly bool `json:"markers_read_only,omitempty"`
 }
 
 // watchLease is the fence every watch operation carries.
@@ -172,6 +178,9 @@ func (s *Service) countCalls() func() uint64 {
 
 func (s *Service) watchCycle(ctx context.Context, scope bus.Request, lease *watchLease, calls func() uint64) (WatchCycle, error) {
 	cycle := WatchCycle{Notified: []string{}}
+	if err := s.applyDueMarkers(ctx, scope, lease, &cycle); err != nil {
+		return cycle, err
+	}
 	due, err := s.commentLedger(ctx, scope, "comment_watch_due", lease.fence(map[string]any{}))
 	if err != nil {
 		return cycle, err
@@ -226,6 +235,37 @@ func (s *Service) watchCycle(ctx context.Context, scope bus.Request, lease *watc
 		}
 	}
 	return cycle, nil
+}
+
+// applyDueMarkers applies the claim markers the bus says are due, under
+// the lease; markers come before comment polls.
+func (s *Service) applyDueMarkers(ctx context.Context, scope bus.Request, lease *watchLease, cycle *WatchCycle) error {
+	if s.cfg.Connections == nil {
+		return nil
+	}
+	if profile, err := s.cfg.Connections.Status(ctx, s.cfg.ProfileID); err != nil || profile.Access != linearconn.Write {
+		cycle.MarkersReadOnly = true
+		return nil
+	}
+	due, err := s.commentLedger(ctx, scope, "marker_due", lease.fence(map[string]any{}))
+	if err != nil {
+		var coded interface{ Code() string }
+		if errors.As(err, &coded) && coded.Code() == "conflict" {
+			return err
+		}
+		return nil
+	}
+	markers, _ := due["markers"].([]any)
+	for _, raw := range markers {
+		m, _ := raw.(map[string]any)
+		assignment, _ := m["assignment_id"].(string)
+		phase, _ := m["phase"].(string)
+		if err = s.renewWatch(ctx, scope, lease, false); err != nil {
+			return err
+		}
+		cycle.Markers = append(cycle.Markers, s.ApplyMarker(ctx, scope, assignment, phase, lease.fence(map[string]any{})))
+	}
+	return nil
 }
 
 func (c *WatchCycle) hold(issue, reason string) {

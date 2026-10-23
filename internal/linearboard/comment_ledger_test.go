@@ -36,6 +36,11 @@ type fakeCommentLedger struct {
 	leases                 []map[string]any
 	reports, settleMatches []map[string]any
 	reportErr              error
+	// gos answers marker_go per part; markerSettles records marker_settle.
+	gos           map[string]map[string]any
+	markerGoes    []map[string]any
+	markerSettles []map[string]any
+	markersDue    []any
 }
 
 func (f *fakeCommentLedger) execute(r bus.Request) (bus.Result, error) {
@@ -91,6 +96,23 @@ func (f *fakeCommentLedger) execute(r bus.Request) (bus.Result, error) {
 	case "linear_comment_settle_match":
 		f.settleMatches = append(f.settleMatches, r.Args)
 		return bus.Result{Source: "local-authority", Data: map[string]any{"state": "posted"}}, nil
+	case "marker_go":
+		f.markerGoes = append(f.markerGoes, r.Args)
+		g, ok := f.gos[r.Args["part"].(string)]
+		if !ok {
+			g = map[string]any{"action": "none"}
+		}
+		return bus.Result{Source: "local-authority", Data: g}, nil
+	case "marker_settle":
+		f.markerSettles = append(f.markerSettles, r.Args)
+		return bus.Result{Source: "local-authority", Data: map[string]any{"state": r.Args["outcome"]}}, nil
+	case "marker_due":
+		due := f.markersDue
+		f.markersDue = nil
+		if due == nil {
+			due = []any{}
+		}
+		return bus.Result{Source: "local-authority", Data: map[string]any{"markers": due}}, nil
 	case "linear_comment_settle":
 		f.settles = append(f.settles, r.Args)
 		if f.unavailable != nil {

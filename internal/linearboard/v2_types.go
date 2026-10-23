@@ -98,6 +98,10 @@ type WriteInputV2 struct {
 	// InResponseTo names the notified comment a reply answers; omitempty
 	// keeps the ledger digest of other writes unchanged.
 	InResponseTo string `json:",omitempty"`
+	// marker is set only by a claim marker's apply: the body is the bus's
+	// exact text, already reserved by marker_go, and label adds are always
+	// sent.
+	marker bool
 }
 type RelationInputV2 struct{ OperationID, Action, Type, FromID, ToID string }
 type ReceiptV2 struct {

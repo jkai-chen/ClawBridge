@@ -359,6 +359,9 @@ var operationArgs = map[string]string{
 	"comment_watch_lease":         "instance action lease_token generation budget",
 	"comment_watch_due":           "instance lease_token generation",
 	"comment_watch_report":        "instance lease_token generation issue_uuid calls error comments",
+	"marker_go":                   "instance lease_token generation assignment_id phase part",
+	"marker_settle":               "instance lease_token generation assignment_id phase part outcome comment_id via error",
+	"marker_due":                  "instance lease_token generation",
 	"workspace_init":              "mode name retention_days", "project_create": "slug name git_remote", "list_projects": "", "list_members": "", "register_session": "instance resume role agent_kind model host account notes transport", "list_sessions": "instance status role limit after issue scope_path assignment_state", "send": "instance to body kind thread_id operation_id coordination", "reply": "instance message_id body kind operation_id coordination", "inbox": "instance unread_only limit after", "mark_read": "instance ids", "update_session": "instance target_session role model host account notes transport", "retire_session": "instance target_session successor status", "history": "instance entity key limit after", "whoami": "instance", "message_status": "instance message_id", "resolve_project": "git_remote instance", "snapshot": "instance", "project_role_set": "instance principal role", "project_role_revoke": "instance principal", "purge_expired": "instance", "principal_unbind": "principal allow_previous", "workspace_set_domains": "domains",
 }
 

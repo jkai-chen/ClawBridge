@@ -190,3 +190,16 @@ func TestV2CommentsOrderDirectionIsADeprecatedAlias(t *testing.T) {
 		}
 	}
 }
+
+// A page without hasNextPage never stops a since read early: even when it is
+// wholly older than the mark, the read ends pagination_unknown, incomplete.
+func TestV2CommentsSinceNeverStopsEarlyWithoutHasNextPage(t *testing.T) {
+	withCommentClock(t, "2026-10-23T12:00:00Z")
+	newer := commentRow(commentA, "2026-10-23T04:01:00Z", "2026-10-23T04:01:00Z")
+	old := commentRow(commentB, "2026-10-23T03:00:00Z", "2026-10-23T03:00:00Z")
+	p, f := commentProvider(t, commentPage(commentA, newer), map[string]any{"comments": []any{old}, "cursor": commentB})
+	out, e := readComments(t, p, "2026-10-23T04:00:00Z")
+	if e != nil || len(f.args) != 2 || out.StoppedEarly || out.Complete || !out.Truncated || out.WatermarkReason != "pagination_unknown" || out.Watermark != "" || len(out.Items) != 1 {
+		t.Fatal("a page without hasNextPage stopped the read early", len(f.args), out.StoppedEarly, out.WatermarkReason, e)
+	}
+}

@@ -362,7 +362,9 @@ walk:
 		if known && !more {
 			break
 		}
-		if early && older && out.WalkDirection == "desc" {
+		// Only an announced next page is skipped; a response without
+		// hasNextPage falls to pagination_unknown below.
+		if early && known && older && out.WalkDirection == "desc" {
 			out.StoppedEarly = true
 			break
 		}

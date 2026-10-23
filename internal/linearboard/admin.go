@@ -619,7 +619,7 @@ func (s *Service) AdminAuditReplay(ctx context.Context, scope bus.Request, opera
 	}
 	namespace := digest([]string{s.cfg.Authority, b.WorkspaceID, b.ProjectID, access.SessionID})
 	l := ledger{s.cfg.LedgerDirectory, s.cfg.Now}
-	recorded, exists, e := l.lookupDigest(namespace, operationID, anyPayload)
+	recorded, exists, e := l.lookupAny(namespace, operationID)
 	if e != nil {
 		return AdminReplay{}, fmt.Errorf("no replayable admin write: %w", e)
 	}

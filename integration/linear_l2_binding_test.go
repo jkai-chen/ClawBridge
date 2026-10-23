@@ -144,7 +144,11 @@ func TestL2BindingVersionedWireAndLegacyRefusalWithoutWrites(t *testing.T) {
 				actorName = "alice"
 			}
 			for _, op := range []string{"taskboard_get_v2", "taskboard_access"} {
-				if _, err := a.execute(bus.Request{Operation: op, Workspace: a.workspace, Project: "p", Session: actorName, Args: actor(actorName, nil)}); err != nil {
+				args := actor(actorName, nil)
+				if op == "taskboard_access" {
+					args["ledger"] = 1
+				}
+				if _, err := a.execute(bus.Request{Operation: op, Workspace: a.workspace, Project: "p", Session: actorName, Args: args}); err != nil {
 					t.Fatal(op, err)
 				}
 				if _, err := a.execute(bus.Request{Operation: op, Workspace: a.workspace, Project: "p", Session: actorName, Args: map[string]any{"instance": "stale"}}); err == nil {

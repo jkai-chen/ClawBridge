@@ -16,8 +16,8 @@ func l1CheckAccess(t *testing.T, value any, canWrite bool, role string, sessionI
 		keys = append(keys, key)
 	}
 	sort.Strings(keys)
-	if !reflect.DeepEqual(keys, []string{"can_write", "project_id", "project_role", "session_id", "workspace_id"}) {
-		t.Errorf("taskboard_access not exact five fields: %v", keys)
+	if !reflect.DeepEqual(keys, []string{"can_write", "project_id", "project_role", "session_id", "session_name", "workspace_id"}) {
+		t.Errorf("taskboard_access not exact six fields: %v", keys)
 	}
 	if m["can_write"] != canWrite || m["project_role"] != role || m["session_id"] != sessionID {
 		t.Errorf("wrong access decision: role=%v can_write=%v session=%v", m["project_role"], m["can_write"], m["session_id"])
@@ -50,10 +50,10 @@ func TestL1TaskboardAccessNoStampAndRetirement(t *testing.T) {
 			a.exec("UPDATE sessions SET last_seen=? WHERE project_id IN (SELECT id FROM projects WHERE workspace_id=?)", "2001-01-01T00:00:00.000000000Z", a.workspaceID)
 			before := l1BindingSnapshot(t, a)
 			for _, actorName := range []string{"", session, session} {
-				args := map[string]any{}
+				args := map[string]any{"ledger": 1}
 				var expectedSession any
 				if actorName != "" {
-					args = actor(actorName, nil)
+					args = actor(actorName, map[string]any{"ledger": 1})
 					expectedSession = sid
 				}
 				r, err := get(actorName, args)
@@ -86,7 +86,7 @@ func TestL1TaskboardAccessNoStampAndRetirement(t *testing.T) {
 				t.Fatal(err)
 			}
 			before = l1BindingSnapshot(t, a)
-			r, err := get(session, actor(session, nil))
+			r, err := get(session, actor(session, map[string]any{"ledger": 1}))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -109,16 +109,16 @@ func TestL1TaskboardAccessPostgresReaderAndActorlessRoles(t *testing.T) {
 		}
 		// Reader's descriptive session role is lead, so it cannot serve as the
 		// external mutation permission source.
-		l1CheckAccess(t, f.call(pgPrincipal(name), "taskboard_access", "p", "", nil), canWrite, role, nil)
-		active := object(t, f.call(pgPrincipal(name), "taskboard_access", "p", name, actor(name, nil)))
+		l1CheckAccess(t, f.call(pgPrincipal(name), "taskboard_access", "p", "", map[string]any{"ledger": 1}), canWrite, role, nil)
+		active := object(t, f.call(pgPrincipal(name), "taskboard_access", "p", name, actor(name, map[string]any{"ledger": 1})))
 		id, ok := active["session_id"].(string)
 		if !ok || id == name || id == "" {
 			t.Fatal("access did not resolve canonical actor ID")
 		}
 		l1CheckAccess(t, active, canWrite, role, id)
 	}
-	f.reject(pgOwner, "taskboard_access", "p", "alice", actor("alice", nil))
-	f.reject("stranger@example.test", "taskboard_access", "p", "", nil)
+	f.reject(pgOwner, "taskboard_access", "p", "alice", actor("alice", map[string]any{"ledger": 1}))
+	f.reject("stranger@example.test", "taskboard_access", "p", "", map[string]any{"ledger": 1})
 	f.call(pgOwner, "project_create", "", "", map[string]any{"slug": "restricted"})
 	f.reject(pgPrincipal("reader"), "taskboard_access", "restricted", "", nil)
 }

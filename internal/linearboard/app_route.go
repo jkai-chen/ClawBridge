@@ -92,7 +92,12 @@ func (s *Service) appUserID(ctx context.Context) string {
 // server's ledger has never seen it, so the app could post it twice.
 func (s *Service) appWrite(ctx context.Context, scope bus.Request, operation string, args map[string]any) (any, error) {
 	operationID, _ := args["operation_id"].(string)
-	if b, e := s.BindingV2(ctx, scope); e == nil && b.Configured && s.cfg.Authority != "" {
+	b, e := s.BindingV2(ctx, scope)
+	if e != nil {
+		return nil, e
+	}
+	// An unlinked board has no local records; the server refuses the write.
+	if b.Configured && s.cfg.Authority != "" {
 		access, e := s.access(ctx, scope)
 		if e != nil {
 			return nil, e
@@ -102,7 +107,7 @@ func (s *Service) appWrite(ctx context.Context, scope bus.Request, operation str
 		case !ok:
 			return nil, errors.New("cannot read this client's operation ledger; nothing was sent")
 		case state != "absent":
-			return nil, errors.New("operation_id was used for different content; start a new operation_id (it was used before this server wrote to Linear as the ClawBridge app)")
+			return nil, errors.New("operation_id was already sent with your own Linear profile, before this server wrote to Linear as the ClawBridge app; check Linear for its outcome, and start a new operation_id for a new write; nothing was sent")
 		}
 	}
 	instance, _ := scope.Args["instance"].(string)

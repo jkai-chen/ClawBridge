@@ -489,8 +489,9 @@ app**. Your personal profile still reads, but never writes:
   - Retrying the same `--operation-id` returns the recorded outcome and never
     sends twice: the server keeps one shared operation ledger.
 - **Operation IDs from before the upgrade.** An `--operation-id` this client
-  already used with your own profile is refused ("start a new operation_id")
-  rather than sent again as the app: the server has no record of it.
+  already sent with your own profile is refused rather than sent again as the
+  app, which has no record of it: check Linear for its outcome, and use a new
+  ID for a new write.
 - **V1 task-board tools** (`taskboard_create`, `taskboard_update`,
   `taskboard_comment`) write with your own profile, so they are refused on such a
   server. Use the `taskboard_*_v2` tools or the `clawbridge linear` commands.

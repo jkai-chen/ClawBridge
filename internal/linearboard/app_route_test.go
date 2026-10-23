@@ -26,6 +26,8 @@ type appServer struct {
 	write    func(bus.Request) (bus.Result, error)
 	statuses int
 	writes   []bus.Request
+	// bindingErr fails every binding read.
+	bindingErr error
 }
 
 func (a *appServer) Execute(ctx context.Context, r bus.Request) (bus.Result, error) {
@@ -36,6 +38,10 @@ func (a *appServer) Execute(ctx context.Context, r bus.Request) (bus.Result, err
 	case "linear_write":
 		a.writes = append(a.writes, r)
 		return a.write(r)
+	case "taskboard_get_v2":
+		if a.bindingErr != nil {
+			return bus.Result{}, a.bindingErr
+		}
 	}
 	return a.authorityV2.Execute(ctx, r)
 }
@@ -248,7 +254,7 @@ func TestAnOperationFromBeforeTheAppIsNeverResent(t *testing.T) {
 		t.Fatal("the personal write", e)
 	}
 	s.cfg.AppRoute = true
-	if _, e := s.WriteV2(context.Background(), scope, commentIn); e == nil || !strings.Contains(e.Error(), "start a new operation_id") || len(server.writes) != 0 {
+	if _, e := s.WriteV2(context.Background(), scope, commentIn); e == nil || !strings.Contains(e.Error(), "already sent with your own Linear profile") || len(server.writes) != 0 {
 		t.Fatal("a pre-app operation was sent as the app", e, server.writes)
 	}
 	// An unreadable record is no proof it was never sent: nothing is sent.
@@ -259,8 +265,14 @@ func TestAnOperationFromBeforeTheAppIsNeverResent(t *testing.T) {
 	if _, e := s.WriteV2(context.Background(), scope, commentIn); e == nil || !strings.Contains(e.Error(), "cannot read") || len(server.writes) != 0 {
 		t.Fatal("an unreadable record", e)
 	}
+	// A binding that cannot be read cannot prove the ID is new: nothing is sent.
+	server.bindingErr = errors.New("authority unavailable")
 	fresh := commentIn
 	fresh.OperationID = "c-2"
+	if _, e := s.WriteV2(context.Background(), scope, fresh); e == nil || len(server.writes) != 0 {
+		t.Fatal("routed without reading the binding", e)
+	}
+	server.bindingErr = nil
 	if _, e := s.WriteV2(context.Background(), scope, fresh); e != nil || len(server.writes) != 1 || len(p.bodies) != 1 {
 		t.Fatal("a new operation", e)
 	}

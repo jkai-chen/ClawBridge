@@ -44,9 +44,16 @@ func encodeRecord(r ledgerRecord) string {
 	return string(raw)
 }
 
+// inProgressFor is how long a pending record without a reason is taken to be
+// one another call is still dispatching: the server's write deadline plus a
+// margin. An older one is uncertain.
+const inProgressFor = 75 * time.Second
+
 // decodeRecord reads a stored record and checks it as the private ledger
-// checks its files.
-func decodeRecord(raw, hash string) (any, bool, error) {
+// checks its files. A young pending record without a reason is still being
+// dispatched by another call: in progress, not uncertain, so the caller
+// retries the same operation_id instead of reading back too early.
+func decodeRecord(raw, hash string, now time.Time) (any, bool, error) {
 	var previous ledgerRecord
 	if json.Unmarshal([]byte(raw), &previous) != nil || previous.Version != 1 || len(previous.Digest) != 64 {
 		return nil, true, errors.New("corrupt operation ledger")
@@ -56,6 +63,9 @@ func decodeRecord(raw, hash string) (any, bool, error) {
 	}
 	if previous.Digest != hash {
 		return nil, true, errors.New("operation_id already used with a different scoped payload")
+	}
+	if at, _ := time.Parse(time.RFC3339Nano, previous.UpdatedAt); previous.State == "pending" && previous.Reason == "" && now.Sub(at) < inProgressFor {
+		return nil, true, InProgressError{"in_progress: this operation is being sent to Linear by another request; retry the same operation_id shortly"}
 	}
 	return recordOutcome(previous)
 }
@@ -71,7 +81,7 @@ func (l sharedLedger) lookup(namespace, operationID string, payload any) (any, b
 	if !found {
 		return nil, false, nil
 	}
-	return decodeRecord(raw, digest(payload))
+	return decodeRecord(raw, digest(payload), l.now())
 }
 
 func (l sharedLedger) write(namespace, operationID string, payload any, dispatch func() (any, error)) (any, error) {
@@ -86,7 +96,7 @@ func (l sharedLedger) write(namespace, operationID string, payload any, dispatch
 		return nil, errors.New("cannot record the operation in the shared ledger; nothing was sent")
 	}
 	if !created {
-		receipt, _, e := decodeRecord(existing, hash)
+		receipt, _, e := decodeRecord(existing, hash, l.now())
 		return receipt, e
 	}
 	receipt, err := dispatch()
@@ -98,7 +108,7 @@ func (l sharedLedger) write(namespace, operationID string, payload any, dispatch
 		if l.store.LedgerDelete(l.ctx, ns, operationID, pending) != nil {
 			return nil, errors.New("operation ledger could not release a never-dispatched operation; inspect before retrying")
 		}
-		return nil, never.err
+		return nil, never
 	}
 	if refused, ok := err.(refusedBeforeDispatchError); ok && receipt == nil {
 		reason := refused.err.Error()
@@ -109,7 +119,7 @@ func (l sharedLedger) write(namespace, operationID string, payload any, dispatch
 		if settle(record) != nil {
 			return nil, errors.New("refused before dispatch; nothing was sent, but the refusal could not be recorded and the operation stays pending; inspect before retrying")
 		}
-		return nil, refusalError(reason)
+		return nil, refusedBeforeDispatch(refusalError(reason))
 	}
 	var receiptError *ReceiptError
 	if err != nil && (receipt == nil || !errors.As(err, &receiptError)) {
@@ -122,9 +132,14 @@ func (l sharedLedger) write(namespace, operationID string, payload any, dispatch
 		if errors.Is(err, errBindingChangedAfterProviderError) {
 			message += "; the task-board binding also changed"
 		}
+		// An uncertain record always keeps a reason, so it is never taken
+		// for one still being dispatched.
 		record.Reason = reason
+		if record.Reason == "" {
+			record.Reason = "uncertain"
+		}
 		_ = settle(record)
-		return nil, errors.New(message)
+		return nil, UncertainError{message}
 	}
 	if receiptError != nil {
 		record.Outcome = receiptError.Outcome

@@ -46,6 +46,24 @@ func (e refusedBeforeDispatchError) Error() string { return e.err.Error() }
 func (e refusedBeforeDispatchError) Unwrap() error { return e.err }
 func refusedBeforeDispatch(err error) error        { return refusedBeforeDispatchError{err} }
 
+// UncertainError is an operation that may have reached Linear: a retry
+// with the same operation_id sends nothing, and the caller reads Linear back.
+type UncertainError struct{ Message string }
+
+func (e UncertainError) Error() string { return e.Message }
+
+// InProgressError is an operation another call is dispatching right now:
+// retrying the same operation_id shortly gets its outcome.
+type InProgressError struct{ Message string }
+
+func (e InProgressError) Error() string { return e.Message }
+
+// IsUncertain reports an outcome that may have reached Linear.
+func IsUncertain(err error) bool { var u UncertainError; return errors.As(err, &u) }
+
+// IsInProgress reports an operation still being dispatched elsewhere.
+func IsInProgress(err error) bool { var p InProgressError; return errors.As(err, &p) }
+
 var errActorChanged = errors.New("task-board actor changed before dispatch")
 var errWriteAccessDenied = errors.New("current ClawBridge project role/actor does not permit task-board writes")
 
@@ -239,7 +257,7 @@ func (l ledger) write(profile, operationID string, payload any, dispatch func() 
 		record.Reason = reason
 		record.UpdatedAt = l.now().UTC().Format(time.RFC3339Nano)
 		_ = saveLedger(path, record)
-		return nil, errors.New(message)
+		return nil, UncertainError{message}
 	}
 	if receiptError != nil {
 		record.Outcome = receiptError.Outcome
@@ -365,7 +383,7 @@ func recordOutcome(previous ledgerRecord) (any, bool, error) {
 		if previous.State == "pending" && previous.Reason != "" {
 			message += " (" + previous.Reason + ")"
 		}
-		return nil, true, errors.New(message + "; read back Linear before a new operation_id")
+		return nil, true, UncertainError{message + "; read back Linear before a new operation_id"}
 	}
 	var receipt map[string]any
 	if len(previous.Receipt) > 65536 || json.Unmarshal(previous.Receipt, &receipt) != nil || receipt == nil {

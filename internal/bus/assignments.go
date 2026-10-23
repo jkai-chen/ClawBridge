@@ -205,6 +205,9 @@ func (s *Store) releaseAssignment(ctx context.Context, tx *transaction, wid, pid
 		if err = unwatchAssignment(ctx, tx, pid, str(live, "issue_uuid")); err != nil {
 			return nil, err
 		}
+		if err = closeAssignment(ctx, tx, pid, str(live, "id"), reason); err != nil {
+			return nil, err
+		}
 	}
 	if err = s.audit(ctx, tx, wid, pid, "", "assignment", live["id"].(string), "released", map[string]any{"session_id": sid, "reason": reason}); err != nil {
 		return nil, err
@@ -441,6 +444,9 @@ func (s *Store) assignment(ctx context.Context, tx *transaction, w, p map[string
 			return nil, err
 		}
 		if err = watchAssignment(ctx, tx, pid, str(live, "issue_uuid")); err != nil {
+			return nil, err
+		}
+		if err = markAssignment(ctx, tx, pid, str(live, "id"), str(live, "issue_uuid"), str(target, "name")); err != nil {
 			return nil, err
 		}
 		if err = s.audit(ctx, tx, wid, pid, sid, "assignment", live["id"].(string), "confirmed", map[string]any{"session_id": tid}); err != nil {

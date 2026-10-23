@@ -2,6 +2,7 @@
 package cli
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -741,12 +742,56 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	if err != nil {
 		return err
 	}
+	if op == "assignment_confirm" || op == "assignment_release" {
+		applyLinearMarker(ctx, cmp.Or(flags.LinearProfile, config.LinearProfile), executor, config, op, result)
+	}
 	if command == "setup" {
 		if err = writeSetupConfig(configPath, config); err != nil {
 			return fmt.Errorf("workspace initialized but config write failed: %w", err)
 		}
 	}
 	return json.NewEncoder(stdout).Encode(result)
+}
+
+// applyLinearMarker applies the Linear claim marker of a confirm or release
+// right away when a Linear profile is selected; otherwise, or when it
+// cannot, the comment watcher applies it later. Either way the bus
+// transition stands, and the result says where the marker is.
+func applyLinearMarker(ctx context.Context, profile string, executor linearboard.Executor, config Config, op string, result bus.Result) {
+	data, ok := result.Data.(map[string]any)
+	if !ok {
+		return
+	}
+	assignment, phase := "", "close"
+	if op == "assignment_confirm" {
+		phase = "claim"
+		view, _ := data["assignment"].(map[string]any)
+		assignment, _ = view["id"].(string)
+		if issue, _ := view["issue_uuid"].(string); issue == "" {
+			return
+		}
+	} else {
+		assignment, _ = data["released"].(string)
+	}
+	if assignment == "" {
+		return
+	}
+	if profile == "" || !validLinearProfile(profile) {
+		data["linear_marker"] = map[string]any{"state": "pending", "note": "applied by the comment watcher (clawbridge linear watch), or pass --linear-profile to apply it now"}
+		return
+	}
+	directory, err := linearDirectory()
+	if err != nil {
+		return
+	}
+	bounded, cancel := context.WithTimeout(ctx, 45*time.Second)
+	defer cancel()
+	service := newLinearService(directory, profile, newLinearManager(directory), executor, linearAuthority(config))
+	scope := bus.Request{Workspace: config.Workspace, Project: config.Project, Session: config.Session, Args: map[string]any{}}
+	if config.Instance != "" {
+		scope.Args["instance"] = config.Instance
+	}
+	data["linear_marker"] = service.ApplyMarker(bounded, scope, assignment, phase, nil)
 }
 
 // doctorSkills reads the skill installations of the agents configured here.

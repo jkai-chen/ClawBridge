@@ -53,7 +53,7 @@ const upgradeRequired = "this ClawBridge client is too old to write to Linear on
 
 func commentOperation(op string) bool {
 	switch op {
-	case "linear_comment_reserve", "linear_comment_settle", "linear_comments_posted", "linear_comment_settle_match", "comment_watch_lease", "comment_watch_due", "comment_watch_report":
+	case "linear_comment_reserve", "linear_comment_settle", "linear_comments_posted", "linear_comment_settle_match", "comment_watch_lease", "comment_watch_due", "comment_watch_report", "marker_go", "marker_settle", "marker_due":
 		return true
 	}
 	return false
@@ -135,6 +135,12 @@ func (s *Store) commentOp(ctx context.Context, tx *transaction, w, p map[string]
 		return c.due(ctx)
 	case "comment_watch_report":
 		return c.report(ctx)
+	case "marker_go":
+		return c.markerGo(ctx)
+	case "marker_settle":
+		return c.markerSettle(ctx)
+	case "marker_due":
+		return c.markerDue(ctx)
 	}
 	return nil, fmt.Errorf("unsupported operation %q", r.Operation)
 }

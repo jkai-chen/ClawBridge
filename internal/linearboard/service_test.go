@@ -43,7 +43,7 @@ func (a *fakeAuthority) Execute(_ context.Context, r bus.Request) (bus.Result, e
 		}
 		return bus.Result{Source: "local-authority", Data: bus.TaskboardAccess{WorkspaceID: a.binding.WorkspaceID, ProjectID: a.binding.ProjectID, SessionID: "ses", SessionName: "worker-1", CanWrite: !a.deny, ProjectRole: "member"}}, nil
 	}
-	if strings.HasPrefix(r.Operation, "linear_comment") || strings.HasPrefix(r.Operation, "comment_watch") {
+	if strings.HasPrefix(r.Operation, "linear_comment") || strings.HasPrefix(r.Operation, "comment_watch") || strings.HasPrefix(r.Operation, "marker_") {
 		return a.comments.execute(r)
 	}
 	if r.Operation != "taskboard_get" {

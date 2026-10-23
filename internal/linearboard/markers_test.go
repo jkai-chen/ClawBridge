@@ -225,3 +225,34 @@ func TestUnsentMarkerNoteSettlesFailed(t *testing.T) {
 		t.Fatal("an unsent note was not settled failed:", out)
 	}
 }
+
+// PR3-L4: the in-lock re-read before each marker write reads Linear, so an
+// issue moved out of the binding during the operation stops the write.
+func TestMarkerWriteRereadsTheIssueBeforeDispatch(t *testing.T) {
+	s, a, p, scope := markerTest(t)
+	a.comments.gos["label"] = map[string]any{"action": "none"}
+	reads := 0
+	moved := linearprovider.IssueV2{Issue: linearprovider.Issue{ID: issueID, TeamID: teamID, ProjectID: projectB}, ProjectKnown: true}
+	s.cfg.Open = func(context.Context, *http.Client, bool) (Provider, error) {
+		return movingIssue{providerV2: p, reads: &reads, moved: moved}, nil
+	}
+	out := s.ApplyMarker(context.Background(), scope, "asg_1", "claim", nil)
+	if len(p.bodies) != 0 || out.Comment == "done" {
+		t.Fatal("a note was posted on an issue that left the binding before dispatch:", out, p.bodies)
+	}
+}
+
+// movingIssue moves the issue to another project after its first read.
+type movingIssue struct {
+	*providerV2
+	reads *int
+	moved linearprovider.IssueV2
+}
+
+func (m movingIssue) IssueV2(ctx context.Context, id string) (linearprovider.IssueV2, error) {
+	*m.reads++
+	if *m.reads > 1 {
+		return m.moved, nil
+	}
+	return m.providerV2.IssueV2(ctx, id)
+}

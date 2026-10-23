@@ -133,7 +133,7 @@ func TestLabelPolicySchemaEightMigratesAVersionSevenStore(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err = s.db.Exec(`DROP TABLE linear_label_policy; PRAGMA user_version=7;`); err != nil {
+	if _, err = s.db.Exec(`DROP TABLE linear_app_tokens; DROP TABLE linear_label_policy; PRAGMA user_version=7;`); err != nil {
 		t.Fatal(err)
 	}
 	s.Close()
@@ -143,7 +143,7 @@ func TestLabelPolicySchemaEightMigratesAVersionSevenStore(t *testing.T) {
 	}
 	defer s.Close()
 	var version, tables int
-	if err = s.db.QueryRow(`PRAGMA user_version`).Scan(&version); err != nil || version != 8 {
+	if err = s.db.QueryRow(`PRAGMA user_version`).Scan(&version); err != nil || version != 9 {
 		t.Fatal(version, err)
 	}
 	if err = s.db.QueryRowContext(context.Background(), `SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='linear_label_policy'`).Scan(&tables); err != nil || tables != 1 {

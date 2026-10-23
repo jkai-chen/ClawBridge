@@ -1,0 +1,223 @@
+package linearapp
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"net/http"
+	"strings"
+	"sync"
+	"testing"
+	"time"
+
+	"clawbridge/internal/bus"
+)
+
+const (
+	appUser = "a0000000-0000-4000-8000-0000000000a1"
+	org     = "b0000000-0000-4000-8000-0000000000b1"
+	secret  = "s3cret-value-never-logged"
+)
+
+var key = []byte("0123456789abcdef0123456789abcdef")
+
+// memStore is the bus's sealed-token store in memory: one live row per
+// app and organisation, published by compare-and-swap.
+type memStore struct {
+	mu     sync.Mutex
+	rows   []bus.AppToken
+	live   map[string]int
+	minted int
+}
+
+func (m *memStore) LiveAppToken(_ context.Context, app, o string) (bus.AppToken, bool, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for k, i := range m.live {
+		if i >= 0 && (o == "" || k == app+"/"+o) {
+			return m.rows[i], true, nil
+		}
+	}
+	return bus.AppToken{}, false, nil
+}
+func (m *memStore) PublishAppToken(_ context.Context, t bus.AppToken, replaces string) (bus.AppToken, bool, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.minted++
+	k := t.AppClientID + "/" + t.LinearOrgID
+	if i, ok := m.live[k]; ok && i >= 0 && m.rows[i].TokenSHA256 != replaces {
+		return m.rows[i], false, nil
+	}
+	m.rows = append(m.rows, t)
+	m.live[k] = len(m.rows) - 1
+	return t, true, nil
+}
+func (m *memStore) AppTokensMinted(context.Context, string, time.Time) (int, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.minted, nil
+}
+
+// linear fakes api.linear.app: the token endpoint and GraphQL viewer.
+type linear struct {
+	mu        sync.Mutex
+	mints     int
+	viewers   int
+	tokenFail []int
+	scope     string
+	app       bool
+	forms     []string
+	auths     []string
+}
+
+func (l *linear) RoundTrip(r *http.Request) (*http.Response, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	body, _ := io.ReadAll(r.Body)
+	reply := func(status int, v any) (*http.Response, error) {
+		raw, _ := json.Marshal(v)
+		return &http.Response{StatusCode: status, Body: io.NopCloser(strings.NewReader(string(raw))), Header: http.Header{}}, nil
+	}
+	switch r.URL.String() {
+	case tokenURL:
+		l.mints++
+		l.forms = append(l.forms, string(body))
+		user, pass, _ := r.BasicAuth()
+		l.auths = append(l.auths, user+":"+pass)
+		if len(l.tokenFail) > 0 {
+			status := l.tokenFail[0]
+			l.tokenFail = l.tokenFail[1:]
+			return reply(status, map[string]any{"error": "x"})
+		}
+		scope := l.scope
+		if scope == "" {
+			scope = "app:assignable app:mentionable comments:create issues:create read"
+		}
+		return reply(200, map[string]any{"access_token": fmt.Sprintf("lin_oauth_token_%d", l.mints), "token_type": "Bearer", "expires_in": 2591999, "scope": scope})
+	case graphqlURL:
+		l.viewers++
+		return reply(200, map[string]any{"data": map[string]any{"viewer": map[string]any{"id": appUser, "app": l.app, "organization": map[string]any{"id": org}}}})
+	}
+	return nil, errors.New("unexpected " + r.URL.String())
+}
+
+func newApp(t *testing.T, s Store, l *linear, now *time.Time) *App {
+	t.Helper()
+	a, err := New(Config{ClientID: "client-1", Secret: secret, Key: key, Store: s, HTTP: &http.Client{Transport: l}, Now: func() time.Time { return *now }})
+	if err != nil || a == nil {
+		t.Fatal(a, err)
+	}
+	return a
+}
+
+func TestAppMintsSealsAndSharesOneToken(t *testing.T) {
+	now := time.Date(2026, 10, 23, 12, 0, 0, 0, time.UTC)
+	store := &memStore{live: map[string]int{}}
+	l := &linear{app: true}
+	a := newApp(t, store, l, &now)
+	token, id, err := a.Token(context.Background())
+	if err != nil || token != "lin_oauth_token_1" || id.AppUserID != appUser || id.LinearOrgID != org {
+		t.Fatal(token, id, err)
+	}
+	if l.forms[0] != "grant_type=client_credentials&scope=read%2Ccomments%3Acreate%2Cissues%3Acreate%2Capp%3Aassignable%2Capp%3Amentionable" || l.auths[0] != "client-1:"+secret {
+		t.Fatal("mint request", l.forms[0], l.auths[0])
+	}
+	row := store.rows[0]
+	if strings.Contains(row.Ciphertext, "lin_oauth") || row.TokenSHA256 != digest(token) || row.LinearOrgID != org {
+		t.Fatal("token stored unsealed or misfiled", row)
+	}
+	// The cache answers without Linear; a second instance adopts the row.
+	if again, _, _ := a.Token(context.Background()); again != token || l.mints != 1 {
+		t.Fatal("cached token not reused", l.mints)
+	}
+	b := newApp(t, store, l, &now)
+	if other, id, err := b.Token(context.Background()); err != nil || other != token || id.LinearOrgID != org || l.mints != 1 {
+		t.Fatal("a second instance minted instead of adopting", other, err, l.mints)
+	}
+	// A sealed row moved to another organisation does not open.
+	moved := row
+	moved.LinearOrgID = "b0000000-0000-4000-8000-0000000000b2"
+	if _, err = a.open(moved); err == nil {
+		t.Fatal("a moved ciphertext opened")
+	}
+	// Near expiry, the token is minted again in place of the old one.
+	now = now.Add(26 * 24 * time.Hour)
+	if fresh, _, err := a.Token(context.Background()); err != nil || fresh == token || l.mints != 2 {
+		t.Fatal("token near expiry not replaced", fresh, err, l.mints)
+	}
+}
+
+// A 401 re-mints only the token that failed; a token another instance
+// already replaced is adopted, never handed back dead.
+func TestRemintReplacesOnlyTheDeadToken(t *testing.T) {
+	now := time.Date(2026, 10, 23, 12, 0, 0, 0, time.UTC)
+	store := &memStore{live: map[string]int{}}
+	l := &linear{app: true}
+	a, b := newApp(t, store, l, &now), newApp(t, store, l, &now)
+	first, _, _ := a.Token(context.Background())
+	b.Token(context.Background())
+	now = now.Add(2 * time.Minute)
+	second, _, err := a.Remint(context.Background(), first)
+	if err != nil || second == first || l.mints != 2 {
+		t.Fatal(second, err)
+	}
+	// b still holds the dead token; its re-mint adopts a's, without minting.
+	got, _, err := b.Remint(context.Background(), first)
+	if err != nil || got != second || l.mints != 2 {
+		t.Fatal("re-mint handed back a dead token or minted twice", got, err, l.mints)
+	}
+}
+
+func TestMintRefusals(t *testing.T) {
+	now := time.Date(2026, 10, 23, 12, 0, 0, 0, time.UTC)
+	for name, c := range map[string]struct {
+		l    *linear
+		code string
+	}{
+		"bad secret":   {&linear{app: true, tokenFail: []int{401}}, "app_unavailable"},
+		"two 5xx":      {&linear{app: true, tokenFail: []int{500, 502}}, "unavailable"},
+		"other scopes": {&linear{app: true, scope: "read write"}, "scopes_mismatch"},
+		"not an app":   {&linear{app: false}, "not_an_app"},
+	} {
+		a := newApp(t, &memStore{live: map[string]int{}}, c.l, &now)
+		var e *Error
+		if _, _, err := a.Token(context.Background()); !errors.As(err, &e) || e.Code != c.code {
+			t.Fatal(name, err)
+		}
+	}
+	// One 5xx is retried.
+	l := &linear{app: true, tokenFail: []int{503}}
+	if _, _, err := newApp(t, &memStore{live: map[string]int{}}, l, &now).Token(context.Background()); err != nil || l.mints != 2 {
+		t.Fatal("one 5xx not retried", err, l.mints)
+	}
+	// The mint limit and the pace.
+	store := &memStore{live: map[string]int{}, minted: mintLimit}
+	var e *Error
+	if _, _, err := newApp(t, store, &linear{app: true}, &now).Token(context.Background()); !errors.As(err, &e) || e.Code != "app_token_limit" {
+		t.Fatal("limit", err)
+	}
+	a := newApp(t, &memStore{live: map[string]int{}}, &linear{app: true}, &now)
+	first, _, _ := a.Token(context.Background())
+	if _, _, err := a.Remint(context.Background(), first); !errors.As(err, &e) || e.Code != "mint_paced" {
+		t.Fatal("re-mint within a minute", err)
+	}
+}
+
+// Errors carry codes only: neither the secret nor a token appears.
+func TestErrorsNeverCarryTheSecretOrToken(t *testing.T) {
+	now := time.Date(2026, 10, 23, 12, 0, 0, 0, time.UTC)
+	for _, l := range []*linear{{app: true, tokenFail: []int{400}}, {app: false}, {app: true, scope: "read"}} {
+		_, _, err := newApp(t, &memStore{live: map[string]int{}}, l, &now).Token(context.Background())
+		if err == nil || strings.Contains(err.Error(), secret) || strings.Contains(err.Error(), "lin_oauth") {
+			t.Fatal("leak", err)
+		}
+	}
+	if a, err := New(Config{}); a != nil || err != nil {
+		t.Fatal("an unconfigured app is off, not an error", a, err)
+	}
+	if _, err := New(Config{ClientID: "c", Secret: secret, Key: []byte("short"), Store: &memStore{}}); err == nil || strings.Contains(err.Error(), secret) {
+		t.Fatal("bad key", err)
+	}
+}

@@ -101,3 +101,20 @@ func TestLinkRefusesAProfileFromAnotherWorkspace(t *testing.T) {
 		t.Fatal(e, rec.set)
 	}
 }
+
+// PR7-M1: a pinned binding is never relinked unpinned.
+func TestLinkKeepsAnExistingPin(t *testing.T) {
+	s, rec, scope, in := pinTest(t, workspaceProvider{err: &linearprovider.Error{Kind: "capability_unavailable"}})
+	rec.b.LinearWorkspaceID = linearWorkspace
+	in.Confirm = true
+	if _, e := s.LinkV2(context.Background(), scope, in); e == nil || !strings.Contains(e.Error(), "cannot report its workspace") || rec.set != nil {
+		t.Fatal("a pinned binding was relinked without its workspace", e, rec.set)
+	}
+	// The same workspace relinks and keeps the pin.
+	s, rec, scope, in = pinTest(t, workspaceProvider{workspace: linearWorkspace})
+	rec.b.LinearWorkspaceID = linearWorkspace
+	in.Confirm = true
+	if _, e := s.LinkV2(context.Background(), scope, in); e != nil || rec.set["linear_workspace_id"] != linearWorkspace {
+		t.Fatal(e, rec.set)
+	}
+}

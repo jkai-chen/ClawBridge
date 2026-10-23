@@ -271,7 +271,10 @@ func (s *Service) LinkV2(ctx context.Context, scope bus.Request, in LinkInputV2)
 			return nil, e
 		}
 	}
-	if b.LinearWorkspaceID != "" && workspace != "" && workspace != b.LinearWorkspaceID {
+	if b.LinearWorkspaceID != "" && workspace == "" {
+		return nil, errors.New("this binding is pinned to a Linear workspace, and this connection cannot report its workspace; nothing was changed")
+	}
+	if b.LinearWorkspaceID != "" && workspace != b.LinearWorkspaceID {
 		return nil, errors.New("this binding belongs to another Linear workspace; unlink it before linking this one")
 	}
 	current, e := s.BindingV2(ctx, scope)

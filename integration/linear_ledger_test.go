@@ -74,7 +74,7 @@ func TestL1LedgerCanonicalActorRetryAndContextConflict(t *testing.T) {
 		t.Fatal(err)
 	}
 	before := l1LedgerBytes(t, cfg.LedgerDirectory)
-	r, err := f.store.Execute(context.Background(), f.request("taskboard_access", "w", "p", "worker", actor("worker", nil)))
+	r, err := f.store.Execute(context.Background(), f.request("taskboard_access", "w", "p", "worker", actor("worker", map[string]any{"ledger": 1})))
 	if err != nil {
 		t.Fatal(err)
 	}

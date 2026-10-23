@@ -333,4 +333,9 @@ func TestWatchStatusReportsWatcherAndMarkerDrift(t *testing.T) {
 	if s["close_label_drift"] != 1 || s["markers_pending"] != 2 || s["watcher_live"] != false || s["markers_oldest_pending"] != old {
 		t.Fatal("drift not reported:", s)
 	}
+	// Another confirmed assignment on the issue keeps the label rightly.
+	w.assign("b", watchIssue)
+	if s = status(); s["close_label_drift"] != 0 {
+		t.Fatal("an issue another assignment holds counted as drift:", s)
+	}
 }

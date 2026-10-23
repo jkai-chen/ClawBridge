@@ -134,3 +134,35 @@ func TestWatchStopsWhenTheLeaseIsLost(t *testing.T) {
 		t.Fatal("watcher kept going without its lease:", err)
 	}
 }
+
+// countingReader reports sent calls as the native provider does: each
+// comments read here costs three tool calls (pages).
+type countingReader struct {
+	commentingV2
+	sent *uint64
+}
+
+func (c countingReader) Sent() uint64 { return *c.sent }
+func (c countingReader) IssueComments(ctx context.Context, q linearprovider.CommentsQuery) (linearprovider.Comments, error) {
+	*c.sent += 3
+	return c.commentingV2.IssueComments(ctx, q)
+}
+
+// A report carries the Linear calls the poll actually sent, so the bus
+// reconciles the budget it charged up front.
+func TestWatchReportsTheCallsAPollSent(t *testing.T) {
+	_, a, err := watchOnce(t, func(s *Service, _ *authorityV2) {
+		open := s.cfg.Open
+		var sent uint64
+		s.cfg.Open = func(ctx context.Context, h *http.Client, ro bool) (Provider, error) {
+			p, err := open(ctx, h, ro)
+			return countingReader{commentingV2: p.(commentingV2), sent: &sent}, err
+		}
+	}, commentRow(humanComment, "q", time.Now()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := a.comments.reports[0]["calls"]; got != 3 {
+		t.Fatal("report did not carry the calls sent:", got)
+	}
+}

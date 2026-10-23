@@ -34,6 +34,15 @@ type Executor interface {
 	ExecuteAs(context.Context, string, bus.Request) (bus.Result, error)
 }
 
+// IdentityExecutor also receives the verified account, so the authority can
+// bind the principal to it. The hosted store implements it, and the server
+// always uses it when available.
+type IdentityExecutor interface {
+	ExecuteAsIdentity(context.Context, bus.Identity, bus.Request) (bus.Result, error)
+}
+
+var _ IdentityExecutor = (*bus.Store)(nil)
+
 // OAuthMetadata contains the installed-app OAuth credentials distributed to
 // clients. Google treats native-app client secrets as application identifiers,
 // not confidential server secrets.
@@ -317,7 +326,12 @@ func NewHandlerWithOAuthMetadata(store Executor, verifier Verifier, metadata OAu
 			fail(w, 400, "invalid", "an operation is required")
 			return
 		}
-		result, err := store.ExecuteAs(ctx, identity.Principal, request)
+		var result bus.Result
+		if bound, ok := store.(IdentityExecutor); ok {
+			result, err = bound.ExecuteAsIdentity(ctx, bus.Identity{Principal: identity.Principal, Issuer: bus.GoogleIssuer, Subject: identity.Subject}, request)
+		} else {
+			result, err = store.ExecuteAs(ctx, identity.Principal, request)
+		}
 		if err != nil {
 			code, status := serviceError(err)
 			fail(w, status, code, responseMessage(code, err))
@@ -438,7 +452,7 @@ func Run(ctx context.Context, args []string) error {
 	if err != nil {
 		return err
 	}
-	store, err := bus.OpenPostgres(ctx, dsn, strings.ToLower(*owner))
+	store, err := openServingStore(ctx, dsn, *owner)
 	if err != nil {
 		return errors.New("cannot initialize Postgres; check the configured connection and schema version")
 	}
@@ -457,6 +471,64 @@ func Run(ctx context.Context, args []string) error {
 		defer cancel()
 		return srv.Shutdown(shutdown)
 	}
+}
+
+// openServingStore opens the hosted authority the server serves. Every request
+// must pass the account binding, so the store refuses any path that would
+// reach it without the verified account.
+func openServingStore(ctx context.Context, dsn, owner string) (*bus.Store, error) {
+	store, err := bus.OpenPostgres(ctx, dsn, strings.ToLower(owner))
+	if err != nil {
+		return nil, err
+	}
+	store.RequireVerifiedAccount()
+	return store, nil
+}
+
+// RunOperator runs a host operator's maintenance command against the
+// database directly, without a signed-in principal: access to the database
+// connection is the authority. Today it only unbinds a principal, the way out
+// when the server owner's own address moved to a new Google account.
+func RunOperator(ctx context.Context, args []string, stdout io.Writer) error {
+	const usage = "usage: clawbridge operator principal-unbind EMAIL --confirm [--allow-previous] [--database-url-env NAME]"
+	if len(args) == 0 || args[0] != "principal-unbind" {
+		return errors.New(usage)
+	}
+	f := flag.NewFlagSet("operator principal-unbind", flag.ContinueOnError)
+	confirm := f.Bool("confirm", false, "confirm releasing this address from its bound Google account")
+	allowPrevious := f.Bool("allow-previous", false, "let the released account bind again, for an unbind made by mistake")
+	dsnEnv := f.String("database-url-env", "CLAWBRIDGE_DATABASE_URL", "environment variable holding the Postgres connection URL")
+	var positional []string
+	rest := args[1:]
+	for {
+		if err := f.Parse(rest); err != nil {
+			return err
+		}
+		if f.NArg() == 0 {
+			break
+		}
+		positional, rest = append(positional, f.Arg(0)), f.Args()[1:]
+	}
+	if len(positional) != 1 {
+		return errors.New(usage)
+	}
+	if !*confirm {
+		return errors.New("principal-unbind releases an address from its Google account; repeat with --confirm")
+	}
+	dsn := os.Getenv(*dsnEnv)
+	if dsn == "" {
+		return errors.New("Postgres connection environment variable is empty")
+	}
+	store, err := bus.OpenPostgresOperator(ctx, dsn)
+	if err != nil {
+		return errors.New("cannot open Postgres; check the configured connection and schema version")
+	}
+	defer store.Close()
+	out, err := store.OperatorUnbindPrincipal(ctx, positional[0], *allowPrevious)
+	if err != nil {
+		return err
+	}
+	return json.NewEncoder(stdout).Encode(out)
 }
 
 func validateOAuthMetadata(audiences []string, metadata OAuthMetadata) (OAuthMetadata, error) {

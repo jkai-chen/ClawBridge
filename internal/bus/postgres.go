@@ -23,6 +23,20 @@ func OpenPostgres(ctx context.Context, dsn, bootstrapOwner string) (*Store, erro
 	if dsn == "" || !validPrincipal(bootstrapOwner) {
 		return nil, errors.New("Postgres DSN and bootstrap owner email are required")
 	}
+	return openPostgres(ctx, dsn, bootstrapOwner)
+}
+
+// OpenPostgresOperator opens the hosted authority for a host operator's
+// maintenance command. It has no bootstrap owner, so no request run through
+// it can initialize a workspace or unbind as the server owner.
+func OpenPostgresOperator(ctx context.Context, dsn string) (*Store, error) {
+	if dsn == "" {
+		return nil, errors.New("Postgres DSN is required")
+	}
+	return openPostgres(ctx, dsn, "")
+}
+
+func openPostgres(ctx context.Context, dsn, bootstrapOwner string) (*Store, error) {
 	db, err := sql.Open("pgx", dsn)
 	if err != nil {
 		return nil, errors.New("invalid Postgres configuration")
@@ -55,7 +69,7 @@ func (s *Store) migratePostgres(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	if version > 5 {
+	if version > 6 {
 		return errors.New("Postgres schema is newer than this binary")
 	}
 	if version == 0 {
@@ -80,6 +94,12 @@ func (s *Store) migratePostgres(ctx context.Context) error {
 	}
 	if version < 5 {
 		if _, err = tx.ExecContext(ctx, assignmentSchemaV5+`INSERT INTO clawbridge_schema(version) VALUES(5)`); err != nil {
+			return err
+		}
+	}
+	if version < 6 {
+		// Binding events are append-only, like history.
+		if _, err = tx.ExecContext(ctx, identitySchemaV6+principalEventsAppendOnlyV6+`INSERT INTO clawbridge_schema(version) VALUES(6)`); err != nil {
 			return err
 		}
 	}

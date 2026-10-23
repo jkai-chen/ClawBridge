@@ -40,7 +40,8 @@ Commands: setup --local, project create SLUG, register [NAME], sessions, send TO
           linear COMMAND --help (native connection, scoped task board and task actions),
           mcp [--linear-profile ID], mcp install ... [--linear-profile ID] (opt-in native Linear tools),
           skill install|status|uninstall [--agent claude-code|codex|all] [--dir SKILLS_DIR] [--force],
-          serve, sync, purge-expired, doctor, tui [--screen SCREEN], version
+          serve, operator principal-unbind EMAIL --confirm [--allow-previous] (on the server host),
+          sync, purge-expired, principal-unbind EMAIL --confirm [--allow-previous], doctor, tui [--screen SCREEN], version
 Interactive: bare clawbridge opens the selected profile or guided join; setup wizard starts guided join.
 Onboarding: setup join --server URL --workspace TEAM --project CODEBASE [--login|--device]
 setup --cloud initializes an existing service only; no infrastructure is created.
@@ -192,6 +193,9 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	// A server invocation has its own operator flags and never opens local state.
 	if len(args) > 0 && args[0] == "serve" {
 		return server.Run(ctx, args[1:])
+	}
+	if len(args) > 0 && args[0] == "operator" {
+		return server.RunOperator(ctx, args[1:], stdout)
 	}
 	flags, rest, err := extractGlobals(args)
 	if err != nil {
@@ -497,6 +501,13 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		}
 	case "purge-expired":
 		op = "purge_expired"
+	case "principal-unbind":
+		// Server owner only: release an address from its Google account so
+		// the next sign-in with it binds the account that now holds it.
+		op = "principal_unbind"
+		arityMin, arityMax = 1, 1
+		f.Bool("confirm", false, "confirm releasing this address from its bound Google account")
+		f.Bool("allow-previous", false, "let the released account bind again, for an unbind made by mistake")
 	case "whoami":
 		op = "whoami"
 	case "status":
@@ -526,7 +537,7 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	f.Visit(func(fl *flag.Flag) {
 		key := strings.ReplaceAll(fl.Name, "-", "_")
 		switch fl.Name {
-		case "local", "cloud", "name", "retention-days":
+		case "local", "cloud", "name", "retention-days", "confirm":
 			return
 		}
 		if getter, ok := fl.Value.(flag.Getter); ok {
@@ -589,6 +600,11 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 			}
 			config.Session = pos[0]
 		}
+	case "principal-unbind":
+		if confirm := f.Lookup("confirm").Value.(flag.Getter).Get().(bool); !confirm {
+			return errors.New("principal-unbind releases an address from its Google account; repeat with --confirm")
+		}
+		a["principal"] = pos[0]
 	case "send":
 		a["to"], a["body"] = pos[0], pos[1]
 	case "reply":

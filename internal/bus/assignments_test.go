@@ -312,7 +312,7 @@ func TestAssignmentSchemaFiveMigratesAVersionFourStore(t *testing.T) {
 	if e != nil {
 		t.Fatal(e)
 	}
-	if _, e = s.db.Exec(`DROP TABLE session_assignments; ALTER TABLE projects DROP COLUMN coordinator_session; PRAGMA user_version=4;`); e != nil {
+	if _, e = s.db.Exec(`DROP TABLE principal_subjects; DROP TABLE principal_events; ALTER TABLE workspaces DROP COLUMN allowed_domains; DROP TABLE session_assignments; ALTER TABLE projects DROP COLUMN coordinator_session; PRAGMA user_version=4;`); e != nil {
 		t.Fatal(e)
 	}
 	s.Close()
@@ -322,7 +322,7 @@ func TestAssignmentSchemaFiveMigratesAVersionFourStore(t *testing.T) {
 	}
 	defer s.Close()
 	var version, tables int
-	if e = s.db.QueryRow(`PRAGMA user_version`).Scan(&version); e != nil || version != 5 {
+	if e = s.db.QueryRow(`PRAGMA user_version`).Scan(&version); e != nil || version != 6 {
 		t.Fatal(version, e)
 	}
 	if e = s.db.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE name IN ('session_assignments','live_session_assignment')`).Scan(&tables); e != nil || tables != 2 {
@@ -330,7 +330,7 @@ func TestAssignmentSchemaFiveMigratesAVersionFourStore(t *testing.T) {
 	}
 	// A second live assignment for one session is impossible in storage too.
 	var db *sql.DB = s.db
-	if _, e = db.Exec(`INSERT INTO workspaces VALUES('w','w','local',90,'o','t'); INSERT INTO projects(id,workspace_id,slug,name,created_at) VALUES('p','w','p','p','t'); INSERT INTO sessions(id,project_id,name,instance,owner_principal,role,agent_kind,model,host,account,transport,notes,status,last_seen,created_at,updated_at) VALUES('s','p','s','i','o','','other','','','','{}','','active','t','t','t');`); e != nil {
+	if _, e = db.Exec(`INSERT INTO workspaces(id,name,mode,retention_days,owner_principal,created_at) VALUES('w','w','local',90,'o','t'); INSERT INTO projects(id,workspace_id,slug,name,created_at) VALUES('p','w','p','p','t'); INSERT INTO sessions(id,project_id,name,instance,owner_principal,role,agent_kind,model,host,account,transport,notes,status,last_seen,created_at,updated_at) VALUES('s','p','s','i','o','','other','','','','{}','','active','t','t','t');`); e != nil {
 		t.Fatal(e)
 	}
 	insert := `INSERT INTO session_assignments(id,project_id,session_id,issue_uuid,revision,state,proposed_by_session,proposed_at) VALUES(?,'p','s',?,?,?,'s','t')`

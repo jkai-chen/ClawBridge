@@ -28,6 +28,36 @@ project role. The workspace owner cannot be revoked, and owners cannot revoke
 themselves. Joining an existing workspace
 does not require gcloud.
 
+### Account binding
+
+The server binds each email principal to the Google account (the token's
+`sub`) of its first request that passes the membership check, and refuses any
+other account for that address with `forbidden`. Refusals are audited in
+`principal_events` by a hash of the account, at most once per account and
+kind each hour; a caller who is not a member is refused before binding and
+writes nothing. When an address legitimately moves to a new Google account, the
+server owner releases it:
+
+```sh
+clawbridge principal-unbind EMAIL --confirm
+```
+
+The next sign-in with that address binds its account, except the released one:
+an old account may still hold a token valid for up to an hour, so it stays
+refused. If the unbind was a mistake and the same account must bind again, run
+the command again with `--allow-previous`.
+
+When the owner's own address is the one that moved, the owner cannot sign in to
+release it. The host operator then runs the same unbind with direct database
+access; it is audited as `operator:local`:
+
+```sh
+sudo docker compose --env-file /etc/clawbridge/clawbridge.env \
+  --project-name clawbridge-phase3 \
+  -f /opt/clawbridge/repo/deploy/compose.yaml \
+  run --rm --no-deps api operator principal-unbind EMAIL --confirm
+```
+
 Explicit gcloud or authorized-user ADC with service-account impersonation are
 operator alternatives. Their audited principal is the service account in the
 verified token; sharing that account shares its application identity. Configure

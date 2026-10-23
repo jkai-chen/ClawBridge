@@ -39,6 +39,10 @@ type Store struct {
 	principal      string
 	postgres       bool
 	bootstrapOwner string
+	// identity is the verified account of a hosted request, set only by
+	// ExecuteAsIdentity; requireAccount makes ExecuteAs refuse without one.
+	identity       *Identity
+	requireAccount bool
 }
 
 // SQLiteURIPath is the path part of a file: URI that SQLite resolves to path.
@@ -115,7 +119,7 @@ func (s *Store) migrate() error {
 	if err = tx.QueryRow("PRAGMA user_version").Scan(&version); err != nil {
 		return err
 	}
-	if version > 5 {
+	if version > 6 {
 		return errors.New("database schema is newer than this ClawBridge binary")
 	}
 	if version == 0 {
@@ -147,6 +151,11 @@ func (s *Store) migrate() error {
 	}
 	if version < 5 {
 		if _, err = tx.Exec(assignmentSchemaV5 + `PRAGMA user_version=5;`); err != nil {
+			return err
+		}
+	}
+	if version < 6 {
+		if _, err = tx.Exec(identitySchemaV6 + `PRAGMA user_version=6;`); err != nil {
 			return err
 		}
 	}
@@ -302,7 +311,7 @@ func validateArgs(op string, a map[string]any) error {
 		"assignment_confirm":      "instance target_session revision allow_overlap",
 		"assignment_release":      "instance target_session revision",
 		"coordinator_set":         "instance target_session",
-		"workspace_init":          "mode name retention_days", "project_create": "slug name git_remote", "list_projects": "", "list_members": "", "register_session": "instance resume role agent_kind model host account notes transport", "list_sessions": "instance status role limit after issue scope_path assignment_state", "send": "instance to body kind thread_id operation_id coordination", "reply": "instance message_id body kind operation_id coordination", "inbox": "instance unread_only limit after", "mark_read": "instance ids", "update_session": "instance target_session role model host account notes transport", "retire_session": "instance target_session successor status", "history": "instance entity key limit after", "whoami": "instance", "message_status": "instance message_id", "resolve_project": "git_remote instance", "snapshot": "instance", "project_role_set": "instance principal role", "project_role_revoke": "instance principal", "purge_expired": "instance",
+		"workspace_init":          "mode name retention_days", "project_create": "slug name git_remote", "list_projects": "", "list_members": "", "register_session": "instance resume role agent_kind model host account notes transport", "list_sessions": "instance status role limit after issue scope_path assignment_state", "send": "instance to body kind thread_id operation_id coordination", "reply": "instance message_id body kind operation_id coordination", "inbox": "instance unread_only limit after", "mark_read": "instance ids", "update_session": "instance target_session role model host account notes transport", "retire_session": "instance target_session successor status", "history": "instance entity key limit after", "whoami": "instance", "message_status": "instance message_id", "resolve_project": "git_remote instance", "snapshot": "instance", "project_role_set": "instance principal role", "project_role_revoke": "instance principal", "purge_expired": "instance", "principal_unbind": "principal allow_previous",
 	}
 	keys, ok := allowed[op]
 	if !ok {
@@ -337,7 +346,7 @@ func validateArgs(op string, a map[string]any) error {
 			default:
 				return errors.New("ids must be an array of strings")
 			}
-		case "unread_only", "resume", "allow_overlap":
+		case "unread_only", "resume", "allow_overlap", "allow_previous":
 			if _, ok := v.(bool); !ok {
 				return fmt.Errorf("%s must be boolean", k)
 			}
@@ -451,6 +460,9 @@ func (s *Store) Execute(ctx context.Context, r Request) (Result, error) {
 func (s *Store) ExecuteAs(ctx context.Context, principal string, r Request) (Result, error) {
 	if !s.postgres {
 		return Result{}, errors.New("ExecuteAs is only available on the hosted authority")
+	}
+	if s.requireAccount {
+		return Result{}, errors.New("this authority binds accounts; run hosted requests through ExecuteAsIdentity")
 	}
 	if !validPrincipal(principal) {
 		return Result{}, errors.New("verified email principal is required")
@@ -606,10 +618,21 @@ func (s *Store) execute(ctx context.Context, tx *transaction, r Request) (any, e
 				return nil, err
 			}
 		}
-		return s.initWorkspace(ctx, tx, r)
+		out, err := s.initWorkspace(ctx, tx, r)
+		if err == nil {
+			err = s.requireBound(ctx, tx)
+		}
+		return out, err
 	}
 	if r.Operation == "resolve_project" {
-		return s.resolveInTransaction(ctx, tx, r)
+		out, err := s.resolveInTransaction(ctx, tx, r)
+		if err == nil {
+			err = s.requireBound(ctx, tx)
+		}
+		return out, err
+	}
+	if r.Operation == "principal_unbind" {
+		return s.unbindPrincipal(ctx, tx, a)
 	}
 	if !s.postgres && (r.Operation == "snapshot" || r.Operation == "project_role_set" || r.Operation == "project_role_revoke" || r.Operation == "purge_expired") {
 		return nil, errors.New("operation requires hosted authority")
@@ -633,6 +656,11 @@ func (s *Store) execute(ctx context.Context, tx *transaction, r Request) (any, e
 	if s.postgres {
 		if _, err = one(ctx, tx, `SELECT principal FROM members WHERE workspace_id=? AND principal=?`, wid, s.principal); err != nil {
 			return nil, scopedError(err, "workspace membership required", "forbidden")
+		}
+		// A member's account must be the one bound to the principal; a
+		// non-member was refused above and writes no binding.
+		if err = s.requireBound(ctx, tx); err != nil {
+			return nil, err
 		}
 		if !tx.pure {
 			if _, err = tx.ExecContext(ctx, `SELECT pg_advisory_xact_lock(hashtextextended(?,0))`, "workspace:"+wid); err != nil {
@@ -898,7 +926,7 @@ func (s *Store) initWorkspace(ctx context.Context, tx *transaction, r Request) (
 		return nil, errors.New("only the configured bootstrap owner may initialize a new workspace")
 	}
 	id := newID("ws_")
-	_, err = tx.ExecContext(ctx, `INSERT INTO workspaces VALUES(?,?,?,?,?,?)`, id, name, mode, retention, s.principal, stamp())
+	_, err = tx.ExecContext(ctx, `INSERT INTO workspaces(id,name,mode,retention_days,owner_principal,created_at) VALUES(?,?,?,?,?,?)`, id, name, mode, retention, s.principal, stamp())
 	if err != nil {
 		return nil, err
 	}

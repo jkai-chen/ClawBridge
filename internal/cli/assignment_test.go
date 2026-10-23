@@ -59,3 +59,12 @@ func TestAssignmentHelpNamesTheTargetSession(t *testing.T) {
 		}
 	}
 }
+
+func TestPrincipalUnbindRequiresConfirmation(t *testing.T) {
+	isolated(t)
+	var out, errs bytes.Buffer
+	err := Run(context.Background(), []string{"principal-unbind", "alice@example.test"}, &out, &errs)
+	if err == nil || !strings.Contains(err.Error(), "--confirm") {
+		t.Fatal("unbind ran without --confirm", err)
+	}
+}

@@ -548,6 +548,12 @@ func (s *Service) Write(ctx context.Context, scope bus.Request, in WriteInput) (
 	if err := ValidateWrite(in); err != nil {
 		return nil, err
 	}
+	if app, err := s.appWrites(ctx); err != nil || app {
+		if err == nil {
+			err = errV1AppWrites
+		}
+		return nil, err
+	}
 	b, err := s.binding(ctx, scope)
 	if err != nil {
 		return nil, err

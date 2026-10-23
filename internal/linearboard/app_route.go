@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"sync"
+	"time"
 
 	"clawbridge/internal/bus"
 	"clawbridge/internal/linearprovider"
@@ -15,6 +16,15 @@ import (
 type rejection interface {
 	Rejection() (status int, code, message string)
 }
+
+// WriteTimeout bounds an agent write: a hosted server making it as the app
+// takes up to its 60-second write deadline, plus a margin to hear its answer.
+const WriteTimeout = 75 * time.Second
+
+// errV1AppWrites refuses a V1 write on a server that writes as the app: V1
+// writes are made with the member's profile, which app writes never fall
+// back to.
+var errV1AppWrites = errors.New("this server writes to Linear as the ClawBridge app, and V1 task-board writes cannot; use the taskboard_*_v2 tools or the clawbridge linear commands; nothing was sent")
 
 // appRoute is what a hosted server said about writing to Linear as the
 // ClawBridge app, asked once per service.
@@ -76,8 +86,25 @@ func (s *Service) appUserID(ctx context.Context) string {
 
 // appWrite sends one agent write to the hosted server, which makes it as
 // the ClawBridge app with every check, the marker and its own shared
-// operation ledger. Its answers keep the types a local write returns.
+// operation ledger. Its answers keep the types a local write returns. An
+// operation_id this client already wrote with the member's profile, before
+// the server offered the app, is refused rather than sent again: the
+// server's ledger has never seen it, so the app could post it twice.
 func (s *Service) appWrite(ctx context.Context, scope bus.Request, operation string, args map[string]any) (any, error) {
+	operationID, _ := args["operation_id"].(string)
+	if b, e := s.BindingV2(ctx, scope); e == nil && b.Configured && s.cfg.Authority != "" {
+		access, e := s.access(ctx, scope)
+		if e != nil {
+			return nil, e
+		}
+		namespace := digest([]string{s.cfg.Authority, b.WorkspaceID, b.ProjectID, access.SessionID})
+		switch state, _, ok := s.operations(ctx).peek(namespace, operationID); {
+		case !ok:
+			return nil, errors.New("cannot read this client's operation ledger; nothing was sent")
+		case state != "absent":
+			return nil, errors.New("operation_id was used for different content; start a new operation_id (it was used before this server wrote to Linear as the ClawBridge app)")
+		}
+	}
 	instance, _ := scope.Args["instance"].(string)
 	request := bus.Request{Operation: "linear_write", Workspace: scope.Workspace, Project: scope.Project, Session: scope.Session, Args: map[string]any{"instance": instance, "operation": operation, "args": args}}
 	result, err := s.cfg.Executor.Execute(ctx, request)

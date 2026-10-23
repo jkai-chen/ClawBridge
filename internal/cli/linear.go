@@ -714,6 +714,11 @@ func runLinear(ctx context.Context, flags Config, args []string, stdout, stderr 
 		cancel()
 		bounded, cancel = context.WithTimeout(ctx, 5*time.Minute)
 	}
+	if command == "create" || command == "update" || command == "comment" || command == "relation" {
+		// A hosted server writing as the ClawBridge app may take a minute.
+		cancel()
+		bounded, cancel = context.WithTimeout(ctx, linearboard.WriteTimeout)
+	}
 	if command == "watch" {
 		// The watcher runs until interrupted; each poll bounds itself.
 		cancel()

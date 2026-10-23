@@ -384,9 +384,9 @@ func NewWithHTTPClient(c Config, tokens TokenSource, httpClient *http.Client) (*
 	return &Client{config: c, tokens: tokens, http: &copyClient, selections: map[string][]mirror.Selection{}}, nil
 }
 
-// LinearWriteTimeout bounds a linear_write request: past the server's own
-// 80-second write deadline, so the client hears its answer.
-const LinearWriteTimeout = 90 * time.Second
+// LinearWriteTimeout bounds a linear_write request: past the server's
+// 60-second write deadline, so the client hears its answer.
+const LinearWriteTimeout = 75 * time.Second
 
 type HTTPError struct {
 	Status int
@@ -440,7 +440,8 @@ func (c *Client) call(ctx context.Context, r bus.Request) (bus.Result, bool, err
 	client := c.http
 	if r.Operation == "linear_write" {
 		// The server may take up to a minute on a write it makes as the
-		// ClawBridge app, and finishes it even if this client goes away.
+		// ClawBridge app, and finishes it even if this client goes away;
+		// the caller's context still bounds the wait.
 		longer := *c.http
 		longer.Timeout = LinearWriteTimeout
 		client = &longer

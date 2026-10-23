@@ -480,14 +480,20 @@ app**. Your personal profile still reads, but never writes:
   and is never retried with your own Linear account. If the client cannot tell
   whether the server offers the app, it sends nothing and says so. A server
   without the app, or older than v0.2.8, keeps writes on your profile.
-- **Retries.** A write can take up to a minute, and the server finishes it even
-  if you disconnect. Answers keep their usual meaning:
+- **Retries.** A write can take up to a minute (the CLI and MCP wait 75
+  seconds), and the server finishes it even if you disconnect. Answers keep their usual meaning:
   - `in_progress` means another request is still sending the same
     `--operation-id`. Retry it shortly.
   - An uncertain outcome means the write may have reached Linear. Inspect
     Linear before retrying.
   - Retrying the same `--operation-id` returns the recorded outcome and never
     sends twice: the server keeps one shared operation ledger.
+- **Operation IDs from before the upgrade.** An `--operation-id` this client
+  already used with your own profile is refused ("start a new operation_id")
+  rather than sent again as the app: the server has no record of it.
+- **V1 task-board tools** (`taskboard_create`, `taskboard_update`,
+  `taskboard_comment`) write with your own profile, so they are refused on such a
+  server. Use the `taskboard_*_v2` tools or the `clawbridge linear` commands.
 - **Claim markers** are still applied with the applying member's profile.
 - `clawbridge doctor` (with a Linear profile) shows the `linear.app` check:
   - whether writes go through the app;

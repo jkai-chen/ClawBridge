@@ -82,11 +82,7 @@ func newIntakeHandler(store IntakeStore, prove IssueProver, ips *limiter) http.H
 	})
 	mcpHandler := mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server { return tool }, &mcp.StreamableHTTPOptions{Stateless: true, JSONResponse: true, MaxRequestBodyBytes: intakeBodyBytes})
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		host, _, err := net.SplitHostPort(r.RemoteAddr)
-		if err != nil {
-			host = r.RemoteAddr
-		}
-		if !ips.allow("intake-ip:" + host) {
+		if !ips.allow("intake-ip:" + clientAddress(r)) {
 			fail(w, 429, "rate_limited", "request limit reached")
 			return
 		}
@@ -99,7 +95,7 @@ func newIntakeHandler(store IntakeStore, prove IssueProver, ips *limiter) http.H
 			fail(w, 401, "unauthenticated", "an intake token is required")
 			return
 		}
-		if _, err = store.IntakeToken(r.Context(), fields[1]); err != nil {
+		if _, err := store.IntakeToken(r.Context(), fields[1]); err != nil {
 			if errors.Is(err, bus.ErrIntakeUnauthorized) {
 				fail(w, 401, "unauthenticated", "an intake token is required")
 			} else {
@@ -110,4 +106,29 @@ func newIntakeHandler(store IntakeStore, prove IssueProver, ips *limiter) http.H
 		r.Body = http.MaxBytesReader(w, r.Body, intakeBodyBytes)
 		mcpHandler.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), intakeTokenKey{}, fields[1])))
 	})
+}
+
+// clientAddress is the address the per-IP intake limit is keyed on (IN-L2):
+// the peer, or, when the peer is a proxy on a private or loopback address
+// (Caddy in the compose deployment), the client that proxy saw, the
+// rightmost X-Forwarded-For entry. A public peer's header is ignored, so a
+// client cannot choose its own bucket.
+func clientAddress(r *http.Request) string {
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		host = r.RemoteAddr
+	}
+	peer := net.ParseIP(host)
+	if peer == nil || !(peer.IsLoopback() || peer.IsPrivate()) {
+		return host
+	}
+	values := r.Header.Values("X-Forwarded-For")
+	if len(values) == 0 {
+		return host
+	}
+	entries := strings.Split(values[len(values)-1], ",")
+	if ip := net.ParseIP(strings.TrimSpace(entries[len(entries)-1])); ip != nil {
+		return ip.String()
+	}
+	return host
 }

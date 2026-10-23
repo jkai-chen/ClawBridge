@@ -16,8 +16,9 @@ type CommentV2 struct {
 	linearprovider.Comment
 	PostedByClawBridge *bool              `json:"posted_by_clawbridge,omitempty"`
 	ClawBridgeSession  *ClawBridgeSession `json:"clawbridge_session,omitempty"`
-	// ClawBridgeMatch is "ledger" when the bus recorded the comment, or
-	// "pending_body" when an unsettled reservation's body matched it.
+	// ClawBridgeMatch is "ledger" when the bus recorded the comment,
+	// "pending_body" when an unsettled reservation's body matched it, or
+	// "app" when the ClawBridge Linear app wrote it.
 	ClawBridgeMatch string `json:"clawbridge_match,omitempty"`
 }
 
@@ -41,10 +42,25 @@ type ownership struct {
 	pending                 []pendingReservation
 }
 
-// commentOwners flags which of an issue's comments ClawBridge posted. A bus
-// that cannot answer leaves every comment unflagged and ownership
-// unavailable; the read itself still succeeds.
+// commentOwners flags which of an issue's comments ClawBridge posted: those
+// the bus ledger recorded or a pending reservation's body matched, and any
+// other the ClawBridge Linear app authored, since only the server holds the
+// app's token. A bus that cannot answer leaves ownership unavailable; the
+// read itself still succeeds.
 func (s *Service) commentOwners(ctx context.Context, scope bus.Request, issue string, comments []linearprovider.Comment) ([]CommentV2, ownership) {
+	out, own := s.ledgerOwners(ctx, scope, issue, comments)
+	if app := s.appUserID(ctx); app != "" {
+		yes := true
+		for i := range out {
+			if out[i].AuthorID == app && (out[i].PostedByClawBridge == nil || !*out[i].PostedByClawBridge) {
+				out[i].PostedByClawBridge, out[i].ClawBridgeMatch = &yes, "app"
+			}
+		}
+	}
+	return out, own
+}
+
+func (s *Service) ledgerOwners(ctx context.Context, scope bus.Request, issue string, comments []linearprovider.Comment) ([]CommentV2, ownership) {
 	out := make([]CommentV2, len(comments))
 	ids := make([]any, len(comments))
 	for i, c := range comments {

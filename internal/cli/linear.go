@@ -570,7 +570,10 @@ func newLinearService(directory, profile string, manager *linearconn.Manager, ex
 	if len(authority) > 0 {
 		route = authority[0]
 	}
-	return linearboard.New(linearboard.Config{Authority: route, Executor: executor, Connections: manager, ProfileID: profile, LedgerDirectory: filepath.Join(directory, "ledger"), Open: func(ctx context.Context, h *http.Client, ro bool) (linearboard.Provider, error) {
+	// A hosted server's client sends agent writes to the server when it
+	// offers the ClawBridge Linear app.
+	_, hosted := executor.(*remote.Client)
+	return linearboard.New(linearboard.Config{Authority: route, Executor: executor, Connections: manager, ProfileID: profile, LedgerDirectory: filepath.Join(directory, "ledger"), AppRoute: hosted, Open: func(ctx context.Context, h *http.Client, ro bool) (linearboard.Provider, error) {
 		return openLinearProvider(ctx, h, ro)
 	}})
 }

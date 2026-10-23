@@ -30,6 +30,12 @@ func (s *Service) RelationV2(ctx context.Context, scope bus.Request, in Relation
 	if e != nil {
 		return nil, e
 	}
+	if app, e := s.appWrites(ctx); e != nil || app {
+		if e != nil {
+			return nil, e
+		}
+		return s.appWrite(ctx, scope, "relation_"+in.Action, map[string]any{"operation_id": in.OperationID, "type": in.Type, "from_id": in.FromID, "to_id": in.ToID})
+	}
 	b, e := s.BindingV2(ctx, scope)
 	if e != nil {
 		return nil, e

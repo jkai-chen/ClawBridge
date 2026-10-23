@@ -42,8 +42,15 @@ create it in Linear and then select it here.
 The board mapping is shared by the ClawBridge project. Each teammate connects
 their own Linear account and independently verifies access to the selected teams
 and projects. Credentials stay in that person's native keyring. No Orca, Node or
-another teammate's host is required. A provider that omits its workspace UUID is
-shown honestly; ClawBridge does not invent an ID from its display name.
+another teammate's host is required.
+
+`linear link` records the Linear workspace the binding belongs to, read from
+Linear (`get_workspace`) and shown in the preview as `linear_workspace_id`. A
+binding linked in one workspace is never relinked in another (unlink it first),
+and a profile whose recorded workspace differs from Linear's is refused. An
+existing binding without a workspace is pinned by linking it again with the same
+teams and projects. If Linear does not offer `get_workspace`, the link proceeds
+unpinned; ClawBridge never invents an ID from a display name.
 
 | Setting | Owner and location |
 | --- | --- |

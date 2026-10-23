@@ -605,3 +605,22 @@ func TestIssueReadProjectionRejectsMalformedCapabilitiesBeforeRPC(t *testing.T) 
 		}
 	}
 }
+
+func TestWorkspaceReadsGetWorkspace(t *testing.T) {
+	ws := "F0000000-0000-4000-8000-0000000000F1"
+	f := &fake{tools: []*mcp.Tool{tool("get_workspace", map[string]string{})}, result: map[string]any{"id": ws, "name": "Acme", "url": "https://linear.app/acme"}}
+	p, _ := NewWithCaller(context.Background(), f)
+	w, e := p.Workspace(context.Background())
+	if e != nil || w.ID != strings.ToLower(ws) || w.Name != "Acme" || len(f.args[0]) != 0 {
+		t.Fatal(w, e, f.args)
+	}
+	f.result = map[string]any{"id": "acme", "name": "Acme"}
+	var pe *Error
+	if _, e = p.Workspace(context.Background()); !errors.As(e, &pe) || pe.Kind != "invalid_response" {
+		t.Fatal("a non-UUID workspace accepted", e)
+	}
+	p, _ = NewWithCaller(context.Background(), &fake{})
+	if _, e = p.Workspace(context.Background()); !errors.As(e, &pe) || pe.Kind != "capability_unavailable" {
+		t.Fatal(e)
+	}
+}

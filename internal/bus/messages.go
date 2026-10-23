@@ -130,13 +130,13 @@ func (s *Store) send(ctx context.Context, tx *transaction, wid, pid string, acto
 	switch {
 	case replyToOwn:
 	case to == "@all":
-		recipients, err = query(ctx, tx, `SELECT id FROM sessions WHERE project_id=? AND status='active' AND id<>? ORDER BY id`, pid, sid)
+		recipients, err = query(ctx, tx, `SELECT id FROM sessions WHERE project_id=? AND status='active' AND role<>'system' AND id<>? ORDER BY id`, pid, sid)
 	case strings.HasPrefix(to, "@role:"):
 		role := strings.TrimPrefix(to, "@role:")
 		if role == "" {
 			return nil, errors.New("role address requires a role")
 		}
-		recipients, err = query(ctx, tx, `SELECT id FROM sessions WHERE project_id=? AND status='active' AND role=? AND id<>? ORDER BY id`, pid, role, sid)
+		recipients, err = query(ctx, tx, `SELECT id FROM sessions WHERE project_id=? AND status='active' AND role=? AND role<>'system' AND id<>? ORDER BY id`, pid, role, sid)
 	case to == "" || strings.HasPrefix(to, "@"):
 		return nil, errors.New("invalid recipient address")
 	default:

@@ -9,6 +9,9 @@ import (
 	"testing"
 	"time"
 
+	"clawbridge/internal/bus"
+	"clawbridge/internal/linearapp"
+
 	"google.golang.org/api/idtoken"
 )
 
@@ -165,11 +168,42 @@ func TestWatchLoopTicksUntilStopped(t *testing.T) {
 
 // Without the app wiring the watcher stays off, and the server still serves.
 func TestWatcherStaysOffWithoutTheApp(t *testing.T) {
-	saved := NewWatcher
-	NewWatcher = nil
-	defer func() { NewWatcher = saved }()
 	opts := startWatcher(context.Background(), nil, watchSettings{interval: time.Minute, ledgerDirectory: t.TempDir()}, HandlerOptions{})
 	if opts.Ticker != nil || opts.TickVerifier != nil {
 		t.Fatal("a watcher started without the app")
+	}
+}
+
+// With the app configured, the watcher is built over the writer's app and
+// its ledger directory, and the in-process clock ticks it.
+func TestWatcherStartsOverTheApp(t *testing.T) {
+	saved := NewWatcher
+	defer func() { NewWatcher = saved }()
+	app, dir := &linearapp.App{}, t.TempDir()
+	ticker := &countTicks{ticks: make(chan struct{}, 64)}
+	var gotApp *linearapp.App
+	var gotDir string
+	NewWatcher = func(_ context.Context, _ *bus.Store, a *linearapp.App, d string) (Ticker, error) {
+		gotApp, gotDir = a, d
+		return ticker, nil
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	opts := startWatcher(ctx, nil, watchSettings{interval: 10 * time.Millisecond, ledgerDirectory: dir}, HandlerOptions{Writer: &AppWriter{App: app}})
+	if gotApp != app || gotDir != dir || opts.Writer == nil {
+		t.Fatal("the watcher was not built over the app", gotApp, gotDir)
+	}
+	if n := ticker.count(200 * time.Millisecond); n < 1 {
+		t.Fatal("the in-process clock did not tick the watcher")
+	}
+}
+
+// The default watcher wraps the server's app for the watcher package.
+func TestDefaultWatcherWrapsTheApp(t *testing.T) {
+	app := &linearapp.App{}
+	ticker, err := NewWatcher(context.Background(), nil, app, "/ledger")
+	wt, ok := ticker.(watcherTicker)
+	if err != nil || !ok || wt.w.LedgerDirectory != "/ledger" || wt.w.App.(watcherApp).app != app {
+		t.Fatal(ticker, err)
 	}
 }

@@ -9,15 +9,50 @@ import (
 	"time"
 
 	"clawbridge/internal/bus"
+	"clawbridge/internal/linearapp"
+	"clawbridge/internal/linearboard"
+	"clawbridge/internal/watcher"
 )
 
 // The server's own watcher (live/V03-OPS.md §3). On the hosted VM it ticks
 // in process every CLAWBRIDGE_WATCH_INTERVAL (option A); the scheduler tick
 // endpoint (option B) is for a deployment without a long-lived process.
 
-// NewWatcher builds the server's watcher over the Linear app. The app
-// wiring (v0.2.7) sets it; while it is nil the watcher stays off.
-var NewWatcher func(ctx context.Context, store *bus.Store, ledgerDirectory string) (Ticker, error)
+// NewWatcher builds the server's watcher over the Linear app; tests
+// replace it.
+var NewWatcher = func(_ context.Context, store *bus.Store, app *linearapp.App, ledgerDirectory string) (Ticker, error) {
+	return watcherTicker{&watcher.Watcher{Store: store, App: watcherApp{app}, LedgerDirectory: ledgerDirectory}}, nil
+}
+
+// watcherApp is the server's Linear app as the watcher uses it.
+type watcherApp struct{ app *linearapp.App }
+
+var (
+	_ watcher.App = watcherApp{}
+	_ Ticker      = watcherTicker{}
+)
+
+func (a watcherApp) Open(ctx context.Context, readonly bool) (linearboard.Provider, error) {
+	p, err := a.app.Provider(ctx, readonly)
+	if err != nil {
+		return nil, err
+	}
+	return p, nil
+}
+
+func (a watcherApp) GraphQL(ctx context.Context, query string, variables map[string]any, out any) error {
+	return a.app.GraphQL(ctx, query, variables, out)
+}
+
+func (a watcherApp) Identity(ctx context.Context) (watcher.AppIdentity, error) {
+	id, err := a.app.Identity(ctx)
+	return watcher.AppIdentity{AppUserID: id.AppUserID, LinearOrgID: id.LinearOrgID}, err
+}
+
+// watcherTicker serves the watcher's ticks to the loop and the endpoint.
+type watcherTicker struct{ w *watcher.Watcher }
+
+func (t watcherTicker) Tick(ctx context.Context) any { return t.w.Tick(ctx) }
 
 // watchSettings is the watcher's environment.
 type watchSettings struct {
@@ -60,15 +95,15 @@ func startWatcher(ctx context.Context, store *bus.Store, w watchSettings, opts H
 	if !w.wanted() {
 		return opts
 	}
-	if NewWatcher == nil {
-		log.Print("watcher: off (it needs the Linear app, v0.2.7)")
+	if opts.Writer == nil || opts.Writer.App == nil {
+		log.Print("watcher: off (the Linear app is not configured)")
 		return opts
 	}
 	if err := os.MkdirAll(w.ledgerDirectory, 0o700); err != nil {
 		log.Print("watcher: off (its ledger directory is not writable)")
 		return opts
 	}
-	ticker, err := NewWatcher(ctx, store, w.ledgerDirectory)
+	ticker, err := NewWatcher(ctx, store, opts.Writer.App, w.ledgerDirectory)
 	if err != nil || ticker == nil {
 		log.Print("watcher: off (the Linear app is not configured)")
 		return opts

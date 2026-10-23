@@ -78,6 +78,7 @@ func (p *l2IntentProvider) UpdateV2(_ context.Context, in linearprovider.UpdateI
 	}
 	return issue, nil
 }
+
 // Relation applies the edge to the issues IssueV2 reads, as Linear would, so
 // the board's read-back sees an added edge and no longer sees a removed one.
 // Its receipt does not name the edge, like native save_issue's.

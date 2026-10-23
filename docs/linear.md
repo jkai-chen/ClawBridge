@@ -179,12 +179,12 @@ A write is accepted only on evidence that it landed where it was asked to:
 
 - A comment's receipt must name its issue, or a read of that issue's comments
   must find it. That read covers at most 4 pages of up to 50 comments in
-  Linear's default order; a page too large for ClawBridge's 1 MiB response limit
-  is retried at half the size, down to 5. Linear documents neither that order's
-  direction nor which response field carries the next page's cursor. Each page
-  is searched before an unusable continuation ends the read, and a row that names
-  another issue does not count. On an issue with more comments, a new comment's
-  receipt can end uncertain; read the issue back.
+  Linear's default order (last updated, newest first as observed; Linear does
+  not document the direction), so a new comment is normally on the first page.
+  A page too large for ClawBridge's 1 MiB response limit is retried at half the
+  size, down to 5. Each page is searched before an unusable continuation ends
+  the read, and a row that names another issue does not count. If the comment is
+  not found within those pages, the receipt ends uncertain; read the issue back.
 - An edge must be named by Linear's response or seen on a read afterwards (a
   removed edge must have been visible before and be gone).
 - A created or updated issue's labels, assignee and state must match what was
@@ -272,13 +272,29 @@ issue's comments; a plain read never reads them.
   then read by the proven issue UUID. Linear's comment rows name no issue, so the
   pinned UUID is the only link. A row that does name an issue must name this one,
   by UUID or identifier; any other or unreadable value refuses the whole read.
-- **Paging.** Comments are requested in creation-time order, 50 per page. A page
-  too large for the 1 MiB response limit is retried at half the size, down to 5,
-  on a fresh connection. One read covers at most 500 comments, 25 calls and
-  512 KiB of comment text. Linear does not document the sort direction, so every
-  page up to those bounds is read. Output reports `comments_order: "createdAt"` and
-  `comments_order_direction: "unproven"`. `comments_truncated: true` means pages
-  may remain unread, and which end was cut is unknown.
+- **Paging.** Comments are requested 50 per page, in creation-time order, or in
+  update-time order when `--comments-since` is given. A page too large for the
+  1 MiB response limit is retried at half the size, down to 5, on a fresh
+  connection. One read covers at most 500 comments, 25 calls and 512 KiB of
+  comment text.
+- **Order.** Linear returns pages newest first. This is observed, not
+  documented, so every read checks it.
+  - `comments_order` is the order requested (`createdAt` or `updatedAt`).
+  - `comments_walk_direction` is `desc` when every row came newest first on that
+    key, and `not_desc` when this read saw a row out of order.
+  - `comments_output_order` is `asc`: the returned comments are sorted oldest
+    first, by the later of `created_at` and `updated_at`, then by `id`.
+  - `comments_order_direction` is deprecated: it repeats
+    `comments_walk_direction` for v0.2.3 callers (which saw `unproven`), and
+    will be removed no earlier than v0.3. Read `comments_walk_direction`.
+  - `comments_truncated: true` means pages may remain unread. While the walk is
+    `desc`, a truncated read is missing the oldest comments, never the newest.
+- **Stopping early.** A read with `--comments-since` stops paging after the
+  first page whose comments are all older than the mark less two minutes; every
+  later page is older still. The output then has `comments_stopped_early: true`
+  and is complete. The two minutes absorb Linear reporting `updated_at` a few
+  milliseconds before `created_at`. If the walk is `not_desc`, or Linear stops
+  advertising update-time order, the read walks every page instead.
 - **Fields.** Each comment has:
   - `id`;
   - `author_id`, and `author_kind` with `on_behalf_of_id`;

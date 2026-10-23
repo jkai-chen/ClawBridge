@@ -128,8 +128,11 @@ rows updated earlier refuse the page.
 `taskboard_issue_v2` accepts `resolve_labels: true` to prove label IDs when Linear
 returns label names only, and returns `description_sha256`, the SHA-256 of the
 description it read. With `comments: true` it also returns `comments` (bodies as
-`untrusted_body`), `comments_complete`, `comments_truncated`, `comments_order`
-and `comments_order_direction`. A complete read adds `comments_watermark`; pass
+`untrusted_body`), `comments_complete`, `comments_truncated`, `comments_order`,
+`comments_walk_direction` and `comments_output_order` (the deprecated
+`comments_order_direction` repeats `comments_walk_direction` and will be removed
+no earlier than v0.3), plus
+`comments_stopped_early` when a `comments_since` read stopped at older pages. A complete read adds `comments_watermark`; pass
 it back as `comments_since` for newer or edited comments. An incomplete read
 gives `comments_watermark_reason` instead (see [Linear](../linear.md)). `taskboard_update_v2` accepts the optional guards
 `expected_title` (with `title`) and `expected_description_sha256` (with

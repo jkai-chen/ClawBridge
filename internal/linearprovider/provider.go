@@ -1555,9 +1555,9 @@ func commentParent(m map[string]any) (string, bool, error) {
 
 // commentPages bounds the read that confirms a comment's issue: 4 pages of up
 // to 50 in Linear's default order, each retried smaller when it is larger than
-// the response cap. list_comments documents orderBy fields but not their
-// direction, so no order is requested; on an issue with more comments the
-// receipt can stay unverified (see docs/linear.md).
+// the response cap. That order is last update, newest first (observed, not
+// documented), so the new comment is normally on page 1; if it is not found
+// within the bound, the receipt stays unverified (see docs/linear.md).
 const commentPages = 4
 
 func (p *Provider) commentOnIssue(ctx context.Context, issue, identifier, comment string) (bool, error) {

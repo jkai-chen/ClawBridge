@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -97,6 +98,38 @@ func commentProvider(t *testing.T, pages ...any) (*Provider, *pagedComments) {
 	return p, f
 }
 
+// newestFirst answers list_comments as Linear did in the 2026-10-23 probe:
+// rows newest first on orderBy (updatedAt when none is sent, the schema
+// default), and the cursor is the last row's id, absent on the last page.
+func newestFirst(rows ...map[string]any) func(int, map[string]any) any {
+	return func(_ int, args map[string]any) any {
+		key, _ := args["orderBy"].(string)
+		if key == "" {
+			key = "updatedAt"
+		}
+		sorted := append([]map[string]any{}, rows...)
+		sort.SliceStable(sorted, func(i, j int) bool { return at(sorted[i][key].(string)).After(at(sorted[j][key].(string))) })
+		start := 0
+		if cursor, ok := args["cursor"].(string); ok {
+			for i, r := range sorted {
+				if r["id"] == cursor {
+					start = i + 1
+				}
+			}
+		}
+		end := min(start+args["limit"].(int), len(sorted))
+		page := []any{}
+		for _, r := range sorted[start:end] {
+			page = append(page, r)
+		}
+		next := ""
+		if end < len(sorted) {
+			next = sorted[end-1]["id"].(string)
+		}
+		return commentPage(next, page...)
+	}
+}
+
 func at(s string) time.Time {
 	t, _ := time.Parse(time.RFC3339Nano, s)
 	return t
@@ -135,15 +168,16 @@ func TestV2CommentsNativeShapeIsPinnedPagedAndParsed(t *testing.T) {
 	agent["parentId"] = commentA
 	agent["resolvedAt"] = "2026-10-22T10:30:00.000Z"
 	agent["attachments"] = []any{map[string]any{"title": "log.txt", "url": "https://uploads.linear.app/signed?token=abc"}}
+	// Newest first by createdAt, the cursor naming the last row read.
 	p, f := commentProvider(t,
-		commentPage("page-2", commentRow(commentA, "2026-10-22T09:00:00.000Z", "2026-10-22T11:00:00.500Z")),
-		commentPage("", agent),
+		commentPage(commentB, agent),
+		commentPage("", commentRow(commentA, "2026-10-22T09:00:00.000Z", "2026-10-22T11:00:00.500Z")),
 	)
 	out, e := readComments(t, p, "")
 	if e != nil || !out.Complete || out.Truncated || out.WatermarkReason != "" || len(out.Items) != 2 {
 		t.Fatal("two clean native pages not read completely", out, e)
 	}
-	for n, want := range []map[string]any{{"issueId": iid, "limit": 50, "orderBy": "createdAt"}, {"issueId": iid, "limit": 50, "orderBy": "createdAt", "cursor": "page-2"}} {
+	for n, want := range []map[string]any{{"issueId": iid, "limit": 50, "orderBy": "createdAt"}, {"issueId": iid, "limit": 50, "orderBy": "createdAt", "cursor": commentB}} {
 		got := f.args[n]
 		if len(got) != len(want) {
 			t.Fatal("unexpected list_comments arguments", n, got)
@@ -163,12 +197,12 @@ func TestV2CommentsNativeShapeIsPinnedPagedAndParsed(t *testing.T) {
 		t.Fatal("comment with null onBehalfOf must stay unknown, never person", a)
 	}
 	raw, _ := json.Marshal(out)
-	for _, leaked := range []string{"uploads.linear.app", "log.txt", "attachments", "Someone", "Owner"} {
+	for _, leaked := range []string{"uploads.linear.app", "log.txt", "attachments", "Someone", "Owner", "comments_stopped_early"} {
 		if strings.Contains(string(raw), leaked) {
 			t.Fatal("dropped field returned", leaked, string(raw))
 		}
 	}
-	for _, field := range []string{`"untrusted_body"`, `"parent_id":null`, `"resolved_at":null`, `"comments_order":"createdAt"`, `"comments_order_direction":"unproven"`, `"comments_truncated":false`} {
+	for _, field := range []string{`"untrusted_body"`, `"parent_id":null`, `"resolved_at":null`, `"comments_order":"createdAt"`, `"comments_walk_direction":"desc"`, `"comments_output_order":"asc"`, `"comments_truncated":false`} {
 		if !strings.Contains(string(raw), field) {
 			t.Fatal("output lacks", field, string(raw))
 		}

@@ -53,6 +53,7 @@ func TestComposePublicHTTPSAndPersistenceContract(t *testing.T) {
 	const (
 		browserClientSecret = "synthetic-compose-browser-app-credential"
 		deviceClientSecret  = "synthetic-compose-device-app-credential"
+		linearAppSecret     = "synthetic-compose-linear-app-credential"
 	)
 	if _, err := exec.LookPath("docker"); err != nil {
 		t.Skip("docker CLI is unavailable")
@@ -70,6 +71,7 @@ func TestComposePublicHTTPSAndPersistenceContract(t *testing.T) {
 		"CLAWBRIDGE_OAUTH_DEVICE_CLIENT_SECRET="+deviceClientSecret,
 		"CLAWBRIDGE_DOMAIN=clawbridge.example.test",
 		"CLAWBRIDGE_POSTGRES_DATA_PATH=/srv/clawbridge/postgres-data",
+		"CLAWBRIDGE_LINEAR_APP_CLIENT_SECRET="+linearAppSecret,
 	)
 	cmd := exec.Command("docker", "compose", "-f", composePath, "config", "--format", "json")
 	cmd.Dir = root
@@ -100,15 +102,26 @@ func TestComposePublicHTTPSAndPersistenceContract(t *testing.T) {
 	if got := compose.Services["api"].Environment["CLAWBRIDGE_OAUTH_DEVICE_CLIENT_SECRET"]; got != deviceClientSecret {
 		t.Fatal("API device OAuth app credential was not sourced from its matching environment variable")
 	}
+	// The Linear app is optional: each entry reaches the API, and an unset
+	// one renders empty rather than failing the render.
+	if got := compose.Services["api"].Environment["CLAWBRIDGE_LINEAR_APP_CLIENT_SECRET"]; got != linearAppSecret {
+		t.Fatal("API Linear app credential was not sourced from its matching environment variable")
+	}
+	for _, name := range []string{"CLAWBRIDGE_LINEAR_APP_CLIENT_ID", "CLAWBRIDGE_LINEAR_APP_TOKEN_KEY"} {
+		if got, ok := compose.Services["api"].Environment[name]; !ok || got != "" {
+			t.Fatalf("API %s must be passed through and default to empty: %q %v", name, got, ok)
+		}
+	}
 	for serviceName, service := range compose.Services {
 		joinedCommand := strings.Join(service.Command, "\x00")
-		if strings.Contains(joinedCommand, browserClientSecret) || strings.Contains(joinedCommand, deviceClientSecret) {
+		if strings.Contains(joinedCommand, browserClientSecret) || strings.Contains(joinedCommand, deviceClientSecret) || strings.Contains(joinedCommand, linearAppSecret) {
 			t.Fatalf("%s command or argv contains an installed-app OAuth credential", serviceName)
 		}
 		encodedEnvironment, _ := json.Marshal(service.Environment)
 		if serviceName != "api" &&
 			(strings.Contains(string(encodedEnvironment), browserClientSecret) ||
-				strings.Contains(string(encodedEnvironment), deviceClientSecret)) {
+				strings.Contains(string(encodedEnvironment), deviceClientSecret) ||
+				strings.Contains(string(encodedEnvironment), linearAppSecret)) {
 			t.Fatalf("%s environment contains an unrelated installed-app OAuth credential", serviceName)
 		}
 	}

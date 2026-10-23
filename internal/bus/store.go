@@ -189,13 +189,7 @@ func (s *Store) migrate() error {
 		}
 	}
 	if version < 12 {
-		if _, err = tx.Exec(intakeSchemaV12); err != nil {
-			return err
-		}
-		if err = ensureSystemSessions(context.Background(), &transaction{Tx: tx}); err != nil {
-			return err
-		}
-		if _, err = tx.Exec(`PRAGMA user_version=12;`); err != nil {
+		if _, err = tx.Exec(intakeSchemaV12 + `PRAGMA user_version=12;`); err != nil {
 			return err
 		}
 	}
@@ -1163,9 +1157,6 @@ func (s *Store) createProject(ctx context.Context, tx *transaction, wid string, 
 	_, err = tx.ExecContext(ctx, `INSERT INTO projects(id,workspace_id,slug,name,git_remote,created_at) VALUES(?,?,?,?,?,?)`, id, wid, slug, name, remote, stamp())
 	if err != nil {
 		return nil, fmt.Errorf("create project (slug must be unique in workspace): %w", err)
-	}
-	if err = ensureSystemSession(ctx, tx, id); err != nil {
-		return nil, err
 	}
 	if s.postgres {
 		if _, err = tx.ExecContext(ctx, `INSERT INTO project_roles(project_id,principal,role,granted_by,granted_at) VALUES(?,?,?,?,?)`, id, s.principal, "owner", s.principal, stamp()); err != nil {

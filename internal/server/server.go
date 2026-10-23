@@ -258,7 +258,18 @@ func NewHandlerWithOAuthMetadata(store Executor, verifier Verifier, metadata OAu
 // NewHandlerWithApp also serves linear_write and linear_app_status through
 // writer, the server's Linear app identity; nil leaves them off.
 func NewHandlerWithApp(store Executor, verifier Verifier, metadata OAuthMetadata, writer *AppWriter) http.Handler {
+	return NewHandlerWithIntake(store, verifier, metadata, writer, nil)
+}
+
+// NewHandlerWithIntake also serves the send-only /mcp/intake endpoint when
+// the store has intake, with prove as the Linear app's in-binding proof.
+// Without a prover every intake request is refused (app_unavailable).
+func NewHandlerWithIntake(store Executor, verifier Verifier, metadata OAuthMetadata, writer *AppWriter, prove IssueProver) http.Handler {
 	l := &limiter{users: map[string]window{}}
+	var intake http.Handler
+	if s, ok := store.(IntakeStore); ok {
+		intake = newIntakeHandler(s, prove, l)
+	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Cache-Control", "no-store")
 		if r.URL.Path == "/healthz" {
@@ -288,6 +299,10 @@ func NewHandlerWithApp(store Executor, verifier Verifier, metadata OAuthMetadata
 			}
 			w.Header().Set("Content-Type", "application/json")
 			_ = json.NewEncoder(w).Encode(config)
+			return
+		}
+		if r.URL.Path == IntakePath && intake != nil {
+			intake.ServeHTTP(w, r)
 			return
 		}
 		if r.URL.Path != "/v1/execute" {

@@ -123,7 +123,7 @@ func (s *Store) migrate() error {
 	if err = tx.QueryRow("PRAGMA user_version").Scan(&version); err != nil {
 		return err
 	}
-	if version > 11 {
+	if version > 12 {
 		return errors.New("database schema is newer than this ClawBridge binary")
 	}
 	if version == 0 {
@@ -185,6 +185,11 @@ func (s *Store) migrate() error {
 	}
 	if version < 11 {
 		if _, err = tx.Exec(markerEngineerSchemaV11 + `PRAGMA user_version=11;`); err != nil {
+			return err
+		}
+	}
+	if version < 12 {
+		if _, err = tx.Exec(intakeSchemaV12 + `PRAGMA user_version=12;`); err != nil {
 			return err
 		}
 	}
@@ -388,6 +393,17 @@ var operationArgs = map[string]string{
 	"label_policy_get":            "instance",
 	"label_policy_set":            "instance expected_revision label_policy",
 	"linear_admin_audit":          "instance kind outcome operation_id linear_team_id linear_id linear_project_id name previous_name policy_revision",
+	"intake_policy_get":           "instance",
+	"intake_policy_set":           "instance expected_revision mode signals roles s5_calls_per_hour out_of_binding_limit",
+	"intake_trust_add":            "instance linear_user_id",
+	"intake_trust_remove":         "instance linear_user_id",
+	"intake_trust_list":           "instance",
+	"intake_token_create":         "instance expires_days",
+	"intake_token_list":           "instance",
+	"intake_token_revoke":         "instance token_id",
+	"intake_list":                 "instance state",
+	"intake_dismiss":              "instance issue_uuid",
+	"intake_rearm":                "instance issue_uuid",
 	"workspace_init":              "mode name retention_days", "project_create": "slug name git_remote", "list_projects": "", "list_members": "", "register_session": "instance resume role agent_kind model host account notes transport", "list_sessions": "instance status role limit after issue scope_path assignment_state", "send": "instance to body kind thread_id operation_id coordination", "reply": "instance message_id body kind operation_id coordination", "inbox": "instance unread_only limit after", "mark_read": "instance ids", "update_session": "instance target_session role model host account notes transport", "retire_session": "instance target_session successor status", "history": "instance entity key limit after", "whoami": "instance", "message_status": "instance message_id", "resolve_project": "git_remote instance", "snapshot": "instance", "project_role_set": "instance principal role", "project_role_revoke": "instance principal", "purge_expired": "instance", "principal_unbind": "principal allow_previous", "workspace_set_domains": "domains",
 }
 
@@ -401,7 +417,7 @@ func validateArgs(op string, a map[string]any) error {
 			return fmt.Errorf("unsupported argument %q for %s", k, op)
 		}
 		switch k {
-		case "retention_days", "limit", "after", "expected_revision", "ledger", "generation", "budget", "calls", "policy_revision", "engineer", "if_unset":
+		case "retention_days", "limit", "after", "expected_revision", "ledger", "generation", "budget", "calls", "policy_revision", "engineer", "if_unset", "expires_days", "s5_calls_per_hour", "out_of_binding_limit":
 			if _, err := integer(v); err != nil {
 				return fmt.Errorf("%s: %w", k, err)
 			}
@@ -427,7 +443,7 @@ func validateArgs(op string, a map[string]any) error {
 			if _, ok := v.([]any); !ok {
 				return errors.New("comments must be an array of objects")
 			}
-		case "ids", "linear_team_ids", "linear_project_ids", "scope_paths", "domains", "comment_ids":
+		case "ids", "linear_team_ids", "linear_project_ids", "scope_paths", "domains", "comment_ids", "signals", "roles":
 			switch v.(type) {
 			case []string, []any:
 			default:
@@ -569,7 +585,7 @@ func pureRead(r Request) bool {
 	switch r.Operation {
 	case "snapshot", "inbox_status", "notification_status", "taskboard_get", "taskboard_get_v2", "taskboard_access", "list_projects", "list_members", "comment_watch_status", "label_policy_get":
 		return true
-	case "list_sessions", "history", "whoami", "linear_comments_posted", "linear_comment_precheck":
+	case "list_sessions", "history", "whoami", "linear_comments_posted", "linear_comment_precheck", "intake_policy_get", "intake_trust_list", "intake_list":
 		// Naming a session with its instance makes it a heartbeat read: the
 		// read itself is pure and the heartbeat follows (see beat).
 		return (r.Session == "") == (str(r.Args, "instance") == "")
@@ -1021,6 +1037,9 @@ func (s *Store) execute(ctx context.Context, tx *transaction, r Request) (any, e
 	}
 	if labelPolicyOperation(r.Operation) {
 		return s.labelPolicyOp(ctx, tx, w, p, projectRole, actor, r)
+	}
+	if intakeOperation(r.Operation) {
+		return s.intakeOp(ctx, tx, w, p, projectRole, actor, r)
 	}
 	target := actor
 	if selector := str(a, "target_session"); selector != "" {

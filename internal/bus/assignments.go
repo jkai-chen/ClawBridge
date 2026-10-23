@@ -482,7 +482,8 @@ func (s *Store) listSessions(ctx context.Context, tx *transaction, pid, status, 
 		return nil, invalid("scope_path must be a clean repository-relative path")
 	}
 	filtered := issue != "" || scopePath != "" || state != ""
-	q := `SELECT rowid AS sequence,* FROM sessions WHERE project_id=? AND (?='' OR status=?) AND (?='' OR role=?) AND rowid>?`
+	// The system session is the server's watcher, not a peer.
+	q := `SELECT rowid AS sequence,* FROM sessions WHERE project_id=? AND role<>'system' AND (?='' OR status=?) AND (?='' OR role=?) AND rowid>?`
 	args := []any{pid, status, status, role, role, after}
 	if filtered {
 		q += ` AND EXISTS(SELECT 1 FROM session_assignments g WHERE g.project_id=sessions.project_id AND g.session_id=sessions.id AND g.state<>'released' AND (?='' OR g.state=?) AND (?='' OR g.issue_uuid=? OR g.issue_identifier=?))`

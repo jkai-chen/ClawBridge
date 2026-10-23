@@ -189,7 +189,13 @@ func (s *Store) migrate() error {
 		}
 	}
 	if version < 12 {
-		if _, err = tx.Exec(intakeSchemaV12 + `PRAGMA user_version=12;`); err != nil {
+		if _, err = tx.Exec(intakeSchemaV12); err != nil {
+			return err
+		}
+		if err = ensureSystemSessions(context.Background(), &transaction{Tx: tx}); err != nil {
+			return err
+		}
+		if _, err = tx.Exec(`PRAGMA user_version=12;`); err != nil {
 			return err
 		}
 	}
@@ -349,16 +355,20 @@ func sessionNameOK(v string) error {
 	if sessionIDShaped(v) {
 		return errors.New("session names cannot use the reserved ses_ session-ID prefix")
 	}
+	if strings.EqualFold(v, SystemSessionName) {
+		return errors.New("the session name clawbridge is reserved for the server's watcher")
+	}
 	return nil
 }
 
 // sessionAddress returns the SQL predicate and arguments that resolve a
 // session address: an exact ID for ID-shaped addresses, otherwise ID or name.
+// No address ever resolves the system session.
 func sessionAddress(v string) (string, []any) {
 	if sessionIDShaped(v) {
-		return "id=?", []any{v}
+		return "id=? AND role<>'system'", []any{v}
 	}
-	return "(id=? OR name=?)", []any{v, v}
+	return "(id=? OR name=?) AND role<>'system'", []any{v, v}
 }
 
 // operationArgs names every operation and the argument keys it accepts.
@@ -1152,6 +1162,9 @@ func (s *Store) createProject(ctx context.Context, tx *transaction, wid string, 
 	_, err = tx.ExecContext(ctx, `INSERT INTO projects(id,workspace_id,slug,name,git_remote,created_at) VALUES(?,?,?,?,?,?)`, id, wid, slug, name, remote, stamp())
 	if err != nil {
 		return nil, fmt.Errorf("create project (slug must be unique in workspace): %w", err)
+	}
+	if err = ensureSystemSession(ctx, tx, id); err != nil {
+		return nil, err
 	}
 	if s.postgres {
 		if _, err = tx.ExecContext(ctx, `INSERT INTO project_roles(project_id,principal,role,granted_by,granted_at) VALUES(?,?,?,?,?)`, id, s.principal, "owner", s.principal, stamp()); err != nil {

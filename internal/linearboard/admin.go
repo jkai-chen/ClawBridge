@@ -220,7 +220,7 @@ func (s *Service) Admin(ctx context.Context, scope bus.Request, in AdminInput) (
 		Input                          AdminInput
 		PolicyRevision                 int
 	}{1, "admin", s.cfg.ProfileID, b, access.SessionID, s.cfg.Authority, digest(scope.Args["instance"]), in, revision}
-	l := ledger{s.cfg.LedgerDirectory, s.cfg.Now}
+	l := s.operations(ctx)
 	if r, exists, e := l.lookup(namespace, in.OperationID, payload); exists || e != nil {
 		if e != nil {
 			return AdminResult{}, e

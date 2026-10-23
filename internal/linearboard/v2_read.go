@@ -35,8 +35,26 @@ func (s *Service) BindingV2(ctx context.Context, scope bus.Request) (bus.Taskboa
 	if r.Source != "server" && r.Source != "local-authority" {
 		return bus.TaskboardBindingV2{}, errors.New("task-board V2 requires authoritative settings")
 	}
-	return bus.ParseTaskboardBindingV2(r.Data)
+	b, e := bus.ParseTaskboardBindingV2(r.Data)
+	if e != nil || !b.Configured || s.cfg.Workspace == "" {
+		return b, e
+	}
+	// A service bound to one Linear workspace (the app's organisation)
+	// serves only bindings pinned to it, on every read of the binding.
+	switch b.LinearWorkspaceID {
+	case "":
+		return bus.TaskboardBindingV2{}, errWorkspaceUnpinned
+	case s.cfg.Workspace:
+		return b, nil
+	}
+	return bus.TaskboardBindingV2{}, errWorkspaceMismatch
 }
+
+var (
+	errWorkspaceUnpinned = errors.New("workspace_unpinned: this binding records no Linear workspace; the project owner links it again to pin it; nothing was sent")
+	errWorkspaceMismatch = errors.New("workspace_mismatch: this binding belongs to another Linear workspace than the ClawBridge app's; nothing was sent")
+)
+
 func (s *Service) unchangedV2(ctx context.Context, scope bus.Request, b bus.TaskboardBindingV2) error {
 	current, e := s.BindingV2(ctx, scope)
 	if e != nil {

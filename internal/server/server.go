@@ -252,6 +252,12 @@ func NewHandlerWithOAuthClientIDs(store Executor, verifier Verifier, browserClie
 // NewHandlerWithOAuthMetadata adds the public installed-app OAuth discovery
 // endpoint while retaining the same authenticated execution boundary.
 func NewHandlerWithOAuthMetadata(store Executor, verifier Verifier, metadata OAuthMetadata) http.Handler {
+	return NewHandlerWithApp(store, verifier, metadata, nil)
+}
+
+// NewHandlerWithApp also serves linear_write and linear_app_status through
+// writer, the server's Linear app identity; nil leaves them off.
+func NewHandlerWithApp(store Executor, verifier Verifier, metadata OAuthMetadata, writer *AppWriter) http.Handler {
 	l := &limiter{users: map[string]window{}}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Cache-Control", "no-store")
@@ -331,8 +337,11 @@ func NewHandlerWithOAuthMetadata(store Executor, verifier Verifier, metadata OAu
 			return
 		}
 		var result bus.Result
-		if bound, ok := store.(IdentityExecutor); ok {
-			result, err = bound.ExecuteAsIdentity(ctx, bus.Identity{Principal: identity.Principal, Issuer: bus.GoogleIssuer, Subject: identity.Subject, HostedDomain: identity.HostedDomain}, request)
+		verified := bus.Identity{Principal: identity.Principal, Issuer: bus.GoogleIssuer, Subject: identity.Subject, HostedDomain: identity.HostedDomain}
+		if request.Operation == "linear_write" || request.Operation == "linear_app_status" {
+			result, err = writer.Execute(r.Context(), verified, request)
+		} else if bound, ok := store.(IdentityExecutor); ok {
+			result, err = bound.ExecuteAsIdentity(ctx, verified, request)
 		} else {
 			result, err = store.ExecuteAs(ctx, identity.Principal, request)
 		}
@@ -463,7 +472,12 @@ func Run(ctx context.Context, args []string) error {
 		return errors.New("cannot initialize Postgres; check the configured connection and schema version")
 	}
 	defer store.Close()
-	srv := &http.Server{Addr: *listen, Handler: NewHandlerWithOAuthMetadata(store, verifier, metadata), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 20 * time.Second, WriteTimeout: 25 * time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 24 << 10}
+	writer, err := appWriter(store)
+	if err != nil {
+		return err
+	}
+	// A Linear write the server runs as the app may take up to a minute.
+	srv := &http.Server{Addr: *listen, Handler: NewHandlerWithApp(store, verifier, metadata, writer), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 20 * time.Second, WriteTimeout: 80 * time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 24 << 10}
 	result := make(chan error, 1)
 	go func() { result <- srv.ListenAndServe() }()
 	select {

@@ -154,6 +154,42 @@ credentials are intentionally exposed with the IDs at the public `/v1/config`
 discovery endpoint. They must still not appear in logs, error output,
 MCP/installer arguments or agent configuration.
 
+### The ClawBridge Linear app (optional)
+
+With these three entries, agents' Linear writes are made by the server as the
+ClawBridge Linear app, never by a client:
+
+```text
+CLAWBRIDGE_LINEAR_APP_CLIENT_ID=<the app's client ID>
+CLAWBRIDGE_LINEAR_APP_CLIENT_SECRET=<the app's client secret>
+CLAWBRIDGE_LINEAR_APP_TOKEN_KEY=<32 random bytes, base64>
+```
+
+- **Where they come from.** Only this environment file; never a flag, the
+  database or a log. The startup log says only `linear app: configured`.
+- **The token.** The server mints the app's client-credentials token with a fixed
+  scope set (`read, comments:create, issues:create, app:assignable,
+  app:mentionable`). It seals the token with AES-GCM under the token key and
+  keeps it in Postgres, so every server instance shares one token.
+- **Rotation.**
+  - To rotate the secret, change it here and restart: every token is revoked,
+    and the server mints a new one on its next Linear call.
+  - Changing the token key makes the stored token unreadable, so the server mints
+    another. Mints are counted and limited (50 in 30 days), and paced.
+- **Workspace and teams.**
+  - The app must be a member of every bound private team.
+  - Each binding must be pinned to the app's Linear workspace: link it again once
+    to pin it.
+  - Writes to an unpinned binding refuse with `workspace_unpinned`.
+- **Timeouts.** A write the server makes can take up to a minute, and it
+  finishes even if the client disconnects. Keep the proxy and load-balancer
+  timeouts for `/v1/execute` at 75 seconds or more.
+- **Removing them.** Removing these entries from a server that offered app
+  writes turns hosted agent writes off **by design**. They are refused
+  (`app_unavailable`) rather than made with someone's personal account.
+- **Who may write.** With app writes, a member's ClawBridge role alone
+  authorises their Linear writes. To offboard someone, revoke their role.
+
 The Compose file retains a named-volume default so isolated configuration tests
 can render without host paths. That default is not approved for production.
 Production sets

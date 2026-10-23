@@ -72,7 +72,9 @@ type Config struct {
 	Store Store
 	// HTTP reaches api.linear.app; tests replace it.
 	HTTP *http.Client
-	Now  func() time.Time
+	// MCPTransport carries MCP requests; tests replace it.
+	MCPTransport http.RoundTripper
+	Now          func() time.Time
 }
 
 // Identity is what the server learns about the app at mint time: the app

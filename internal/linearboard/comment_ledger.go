@@ -31,7 +31,7 @@ const sweepLimit = 20
 // by a later sweep. send posts the comment and checks its receipt; it must
 // classify a failure that sent nothing as notDispatched. The result is the
 // comment the bus recorded this one as answering, if any.
-func (s *Service) sendComment(ctx context.Context, scope bus.Request, l ledger, namespace string, c commentIntent, send func() (linearprovider.Receipt, error)) (linearprovider.Receipt, string, error) {
+func (s *Service) sendComment(ctx context.Context, scope bus.Request, l OperationLedger, namespace string, c commentIntent, send func() (linearprovider.Receipt, error)) (linearprovider.Receipt, string, error) {
 	if err := l.markUnsettled(namespace, c.OperationID); err != nil {
 		return linearprovider.Receipt{}, "", notDispatched(err)
 	}
@@ -104,7 +104,7 @@ func (s *Service) commentLedger(ctx context.Context, scope bus.Request, operatio
 // settleComment records a comment's outcome on the bus: posted with its
 // comment ID, or failed when nothing was sent. The sidecar is dropped once
 // the bus has an answer; a bus that cannot be reached leaves it for a sweep.
-func (s *Service) settleComment(ctx context.Context, scope bus.Request, l ledger, namespace, operationID, commentID, via string) {
+func (s *Service) settleComment(ctx context.Context, scope bus.Request, l OperationLedger, namespace, operationID, commentID, via string) {
 	args := map[string]any{"operation_id": operationID, "outcome": "failed", "via": via}
 	if commentID != "" {
 		args["outcome"], args["comment_id"] = "posted", commentID
@@ -120,7 +120,7 @@ func (s *Service) settleComment(ctx context.Context, scope bus.Request, l ledger
 // missed, from the file ledger: an accepted record settles as posted, a
 // refused or released one as failed. A pending record is an uncertain
 // outcome and stays for the bus's body match.
-func (s *Service) sweepComments(ctx context.Context, scope bus.Request, l ledger, namespace string) {
+func (s *Service) sweepComments(ctx context.Context, scope bus.Request, l OperationLedger, namespace string) {
 	for _, op := range l.unsettled(namespace, sweepLimit) {
 		state, id, ok := l.peek(namespace, op)
 		switch {

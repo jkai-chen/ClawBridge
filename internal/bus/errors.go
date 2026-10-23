@@ -113,3 +113,10 @@ func scopedError(err error, message, code string) error {
 	}
 	return err
 }
+
+// PublicError is a refusal whose message, written by ClawBridge for the
+// caller, a server may show: the hosted server uses it for the outcome of a
+// Linear write it ran.
+func PublicError(code, message string) error {
+	return &serviceError{code: code, cause: errors.New(message), public: true}
+}

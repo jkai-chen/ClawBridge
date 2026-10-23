@@ -27,7 +27,7 @@ func TestAppIdentitySchemaNineMigratesAVersionEightStore(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err = s.db.Exec(`DROP TABLE linear_app_tokens; PRAGMA user_version=8;`); err != nil {
+	if _, err = s.db.Exec(`DROP TABLE linear_write_unsettled; DROP TABLE linear_write_ledger; DROP TABLE linear_app_tokens; PRAGMA user_version=8;`); err != nil {
 		t.Fatal(err)
 	}
 	s.Close()
@@ -36,10 +36,17 @@ func TestAppIdentitySchemaNineMigratesAVersionEightStore(t *testing.T) {
 	}
 	defer s.Close()
 	var version, tables int
-	if err = s.db.QueryRow(`PRAGMA user_version`).Scan(&version); err != nil || version != 9 {
+	if err = s.db.QueryRow(`PRAGMA user_version`).Scan(&version); err != nil || version != 10 {
 		t.Fatal(version, err)
 	}
 	if err = s.db.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='linear_app_tokens'`).Scan(&tables); err != nil || tables != 1 {
 		t.Fatal("linear_app_tokens missing", tables, err)
+	}
+}
+
+func TestSharedLedgerNeedsAHostedServer(t *testing.T) {
+	h := newHarness(t)
+	if _, _, err := h.s.LedgerGet(context.Background(), strings.Repeat("a", 64), "op"); err == nil || !strings.Contains(err.Error(), "hosted server") {
+		t.Fatal(err)
 	}
 }

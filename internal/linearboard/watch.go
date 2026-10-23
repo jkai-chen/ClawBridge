@@ -386,7 +386,7 @@ func (s *Service) SweepComments(ctx context.Context, scope bus.Request) {
 		return
 	}
 	namespace := digest([]string{s.cfg.Authority, b.WorkspaceID, b.ProjectID, access.SessionID})
-	s.sweepComments(ctx, scope, ledger{s.cfg.LedgerDirectory, s.cfg.Now}, namespace)
+	s.sweepComments(ctx, scope, s.operations(ctx), namespace)
 }
 
 // number reads a bus integer, local or decoded from JSON.

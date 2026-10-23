@@ -117,6 +117,28 @@ type ledgerRecord struct {
 	Reason    string          `json:"reason,omitempty"`
 	UpdatedAt string          `json:"updated_at"`
 }
+
+// OperationLedger records each write's operation ID before dispatch and its
+// outcome after, so a retry never sends twice. The private ledger directory
+// (ledger) is one; a hosted server's shared ledger is another. It also keeps
+// the comments whose bus settle is still owed.
+type OperationLedger interface {
+	write(namespace, operationID string, payload any, dispatch func() (any, error)) (any, error)
+	lookup(namespace, operationID string, payload any) (any, bool, error)
+	markUnsettled(namespace, operationID string) error
+	dropUnsettled(namespace, operationID string)
+	unsettled(namespace string, limit int) []string
+	peek(namespace, operationID string) (state, id string, ok bool)
+}
+
+// operations is the service's operation ledger.
+func (s *Service) operations(ctx context.Context) OperationLedger {
+	if s.cfg.Ledger != nil {
+		return s.cfg.Ledger(ctx)
+	}
+	return ledger{s.cfg.LedgerDirectory, s.cfg.Now}
+}
+
 type ledger struct {
 	dir string
 	now func() time.Time
@@ -320,6 +342,12 @@ func readLedger(path, hash string) (any, bool, error) {
 	if previous.Digest != hash {
 		return nil, true, errors.New("operation_id already used with a different scoped payload")
 	}
+	return recordOutcome(previous)
+}
+
+// recordOutcome is what a recorded operation answers a retry: its receipt,
+// its refusal, or an uncertain outcome for a pending one.
+func recordOutcome(previous ledgerRecord) (any, bool, error) {
 	// A refusal always has a reason; a pending record may keep the safe code
 	// of its uncertain failure; nothing else has one.
 	if (previous.State == "refused" && previous.Reason == "") || (previous.State != "refused" && previous.State != "pending" && previous.Reason != "") || len(previous.Reason) > 512 {

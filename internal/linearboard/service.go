@@ -42,8 +42,14 @@ type Config struct {
 	Connections     Connections
 	ProfileID       string
 	LedgerDirectory string
-	Open            func(context.Context, *http.Client, bool) (Provider, error)
-	Now             func() time.Time
+	// Ledger, when set, replaces the private ledger directory: a hosted
+	// server's shared operation ledger.
+	Ledger func(context.Context) OperationLedger
+	// Workspace, when set, is the only Linear workspace this service
+	// writes to: a binding must be pinned to it.
+	Workspace string
+	Open      func(context.Context, *http.Client, bool) (Provider, error)
+	Now       func() time.Time
 }
 type Service struct {
 	cfg    Config
@@ -550,7 +556,7 @@ func (s *Service) Write(ctx context.Context, scope bus.Request, in WriteInput) (
 		InstanceHash string
 		Input        WriteInput
 	}{s.cfg.ProfileID, b, access.SessionID, s.cfg.Authority, digest(scope.Args["instance"]), in}
-	if receipt, exists, e := (ledger{s.cfg.LedgerDirectory, s.cfg.Now}).lookup(namespace, in.OperationID, ledgerPayload); exists || e != nil {
+	if receipt, exists, e := s.operations(ctx).lookup(namespace, in.OperationID, ledgerPayload); exists || e != nil {
 		if e != nil {
 			return receipt, e
 		}
@@ -605,7 +611,7 @@ func (s *Service) Write(ctx context.Context, scope bus.Request, in WriteInput) (
 		return nil, err
 	}
 
-	l := ledger{s.cfg.LedgerDirectory, s.cfg.Now}
+	l := s.operations(ctx)
 	if in.Operation == "comment" {
 		s.sweepComments(ctx, scope, l, namespace)
 	}

@@ -49,7 +49,7 @@ func (s *Service) RelationV2(ctx context.Context, scope bus.Request, in Relation
 		Actor, Authority, InstanceHash string
 		Input                          RelationInputV2
 	}{2, s.cfg.ProfileID, b, access.SessionID, s.cfg.Authority, digest(scope.Args["instance"]), in}
-	l := ledger{s.cfg.LedgerDirectory, s.cfg.Now}
+	l := s.operations(ctx)
 	if r, exists, e := l.lookup(namespace, in.OperationID, payload); exists || e != nil {
 		if e != nil {
 			return r, e

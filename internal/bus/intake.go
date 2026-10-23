@@ -25,6 +25,7 @@ CREATE TABLE intake_queue(project_id TEXT NOT NULL REFERENCES projects(id),issue
 CREATE INDEX intake_queue_state ON intake_queue(project_id,state,created_at);
 CREATE TABLE intake_tokens(id TEXT PRIMARY KEY,project_id TEXT NOT NULL REFERENCES projects(id),token_sha256 TEXT NOT NULL UNIQUE,created_by TEXT NOT NULL,created_at TEXT NOT NULL,expires_at TEXT NOT NULL,revoked_at TEXT,suspended_at TEXT,hour TEXT NOT NULL DEFAULT '',hour_calls INTEGER NOT NULL DEFAULT 0,day TEXT NOT NULL DEFAULT '',day_calls INTEGER NOT NULL DEFAULT 0,out_of_binding INTEGER NOT NULL DEFAULT 0);
 CREATE TABLE intake_counters(project_id TEXT PRIMARY KEY REFERENCES projects(id),hour TEXT NOT NULL,requests INTEGER NOT NULL DEFAULT 0,s5_calls INTEGER NOT NULL DEFAULT 0);
+CREATE TABLE watch_ticks(project_id TEXT PRIMARY KEY REFERENCES projects(id),last_tick_at TEXT NOT NULL,last_ok_at TEXT,last_error TEXT NOT NULL DEFAULT '');
 `
 
 const (

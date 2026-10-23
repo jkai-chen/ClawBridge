@@ -77,6 +77,9 @@ requires its matching instance. Routing role is distinct from project permission
 | `taskboard_get_v2` | Versioned shared mapping; optional current actor/instance |
 | `taskboard_set_v2` | expected_revision, mode, linear_team_ids, linear_default_team_id, linear_project_ids; optional nullable linear_workspace_id |
 | `taskboard_clear_v2` | expected_revision; authorized owner/lead; optional repair (project owner, unreadable binding only) |
+| `label_policy_get` | Any project member, session optional: the approved Linear label list (`revision`, `labels`, `renames`, `updated_by`, `updated_at`; revision 0 when unset) |
+| `label_policy_set` | Project owner, active session: expected_revision, label_policy `{"labels": [...], "renames": {...}}` (strict: up to 200 labels and 50 renames, 1–80 characters, unique ignoring case, no mentions); a history row per change |
+| `linear_admin_audit` | Project owner, active session: records one admin Linear write in history (kind label_create/label_rename/project_create, outcome, operation_id, linear_team_id, optional linear_id, name, previous_name; a label write's policy_revision must equal the current list's) |
 | `project_role_set` | Hosted owner: principal, role |
 | `project_role_revoke` | Hosted owner: principal. Deletes the project role, retires that principal's active sessions in the project and removes workspace membership when no project role remains; refuses the workspace owner and self-revoke |
 | `snapshot` | Hosted current actor/instance; explicit scoped sync |

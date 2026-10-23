@@ -168,6 +168,7 @@ func Run(ctx context.Context, in Input, executor Executor) Report {
 	if in.LinearCapabilities != nil && resolutionOK && executor != nil {
 		checkTaskboardBinding(ctx, executor, wid, pid, add)
 		checkCommentWatch(ctx, executor, wid, pid, add)
+		checkLabelPolicy(ctx, executor, wid, pid, add)
 	}
 	for _, mcp := range in.MCPConfigs {
 		if mcp.Agent == "" {
@@ -594,6 +595,34 @@ func checkCommentWatch(ctx context.Context, executor Executor, wid, pid string, 
 	}
 	add(watch)
 	add(markers)
+}
+
+// checkLabelPolicy shows the project owner's approved label list: its
+// revision and who set it when. It is an audit gate set by a person, not a
+// boundary against the owner's own sessions. It reads only.
+func checkLabelPolicy(ctx context.Context, executor Executor, wid, pid string, add func(Check)) {
+	check := Check{ID: "linear.label_policy", Title: "Approved Linear labels", Status: Pass}
+	r, err := executor.Execute(ctx, bus.Request{Operation: "label_policy_get", Workspace: wid, Project: pid, Args: map[string]any{}})
+	m, _ := r.Data.(map[string]any)
+	switch {
+	case err != nil || m == nil:
+		check.Status = Warn
+		check.Message = "The approved label list could not be read (" + safeCode(err) + ")."
+		check.Action = "Check project access; `clawbridge linear label-policy show` shows the list."
+	case fmt.Sprint(m["revision"]) == "0":
+		check.Message = "No approved label list is set, so `clawbridge linear label create` is refused."
+		check.Action = "The project owner sets one with `clawbridge linear label-policy set --file FILE --expected-revision 0` when labels are needed."
+	default:
+		// A local authority returns typed values; a remote one, decoded JSON.
+		size := func(v any) int {
+			if rv := reflect.ValueOf(v); rv.Kind() == reflect.Slice || rv.Kind() == reflect.Map {
+				return rv.Len()
+			}
+			return 0
+		}
+		check.Message = fmt.Sprintf("Approved label list revision %v, set by %v at %v: %d labels, %d renames.", m["revision"], m["updated_by"], m["updated_at"], size(m["labels"]), size(m["renames"]))
+	}
+	add(check)
 }
 
 func checkMirror(ctx context.Context, in Input, wid, pid string, resolved bool, add func(Check)) {

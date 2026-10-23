@@ -100,7 +100,7 @@ type linearFlags struct {
 	teams                                                                                                                []string
 	projects, labels, expectedLabels, addLabels, removeLabels                                                            []string
 	team, parent, assignee, relationType, relationAction, labelFilter                                                    string
-	expectTitle, expectDescriptionSHA256, updatedAfter, commentsSince, replyTo, inResponseTo                             string
+	expectTitle, expectDescriptionSHA256, updatedAfter, commentsSince, replyTo, inResponseTo, policyFile, adminAction    string
 	clearProject, clearLabels, clearParent, clearAssignee, expectNoLabels                                                bool
 	limit, budget                                                                                                        int
 	revision                                                                                                             int64
@@ -208,6 +208,13 @@ func parseLinear(command string, args []string, stderr io.Writer) (linearFlags, 
 		write()
 		f.StringVar(&v.relationType, "type", "", "blocks, blocked-by or related; one edge only")
 		min, max = 2, 2
+	case "label", "project":
+		write()
+		f.StringVar(&v.team, "team", "", "required bound team UUID")
+		min, max = 1, 2
+	case "label-policy":
+		f.StringVar(&v.policyFile, "file", "", "set: JSON file {\"labels\": [names], \"renames\": {old: new}}")
+		f.Int64Var(&v.revision, "expected-revision", -1, "set: the policy revision you last read")
 	case "comment":
 		write()
 		f.StringVar(&v.bodyFile, "body-file", "", "bounded UTF-8 comment file")
@@ -230,7 +237,7 @@ func parseLinear(command string, args []string, stderr io.Writer) (linearFlags, 
 	if len(pos) < min || len(pos) > max {
 		return v, nil, errors.New("invalid Linear positional arguments")
 	}
-	needsProfile := command != "profiles" && command != "connect" && command != "login" && command != "import" && command != "binding" && command != "unlink"
+	needsProfile := command != "profiles" && command != "connect" && command != "login" && command != "import" && command != "binding" && command != "unlink" && command != "label-policy"
 	if needsProfile && !validLinearProfile(v.profile) {
 		return v, nil, errors.New("select --profile with the opaque ID from linear profiles")
 	}
@@ -288,6 +295,11 @@ func parseLinear(command string, args []string, stderr io.Writer) (linearFlags, 
 	}
 	if v.supplied["label"] && command == "issues" && !linearprovider.ValidID(v.labelFilter) {
 		return v, nil, errors.New("label filter requires UUID")
+	}
+	if command == "label" || command == "project" {
+		if !validLinearOperation(v.operation) || !linearprovider.ValidID(v.team) {
+			return v, nil, errors.New(command + " requires --team UUID and --operation-id")
+		}
 	}
 	if command == "relation" {
 		if !validLinearOperation(v.operation) || !linearprovider.ValidID(pos[0]) || !linearprovider.ValidID(pos[1]) || pos[0] == pos[1] || (v.relationType != "blocks" && v.relationType != "blocked-by" && v.relationType != "related") {
@@ -368,7 +380,7 @@ func parseLinear(command string, args []string, stderr io.Writer) (linearFlags, 
 			}
 		}
 	}
-	if min > 0 && !linearprovider.ValidID(pos[0]) {
+	if min > 0 && command != "label" && command != "project" && !linearprovider.ValidID(pos[0]) {
 		return v, nil, errors.New("issue requires its immutable UUID")
 	}
 	return v, pos, nil
@@ -385,6 +397,22 @@ func validLinearProfile(s string) bool {
 	return true
 }
 func validLinearOperation(s string) bool { return validLinearProfile(s) }
+
+// linearAdminInput maps `linear label create|rename` and `linear project
+// create` to an admin write.
+func linearAdminInput(command, action string, v linearFlags, pos []string) (linearboard.AdminInput, error) {
+	in := linearboard.AdminInput{Kind: command + "_" + action, OperationID: v.operation, TeamID: v.team}
+	switch {
+	case action == "rename" && len(pos) == 2:
+		in.From, in.Name = pos[0], pos[1]
+	case action == "create" && len(pos) == 1:
+		in.Name = pos[0]
+	default:
+		return in, errors.New("use linear label create NAME, label rename OLD NEW, or project create NAME")
+	}
+	return in, linearboard.ValidateAdmin(in)
+}
+
 func readLinearFile(path string) (string, error) {
 	info, err := os.Stat(path)
 	if err != nil || !info.Mode().IsRegular() || info.Size() > 65536 {
@@ -541,7 +569,7 @@ func linearWriteInput(command string, v linearFlags, pos []string) (linearboard.
 
 func runLinear(ctx context.Context, flags Config, args []string, stdout, stderr io.Writer) error {
 	if len(args) == 0 || len(args) == 1 && (args[0] == "--help" || args[0] == "-h" || args[0] == "help") {
-		_, err := io.WriteString(stdout, "clawbridge linear connect|import|profiles|status|logout|teams|projects|binding|link|unlink|context|issues|issue|states|labels|members|create|update|comment|relation|watch\nUse COMMAND --help for explicit flags. Token import accepts --token-stdin only.\n")
+		_, err := io.WriteString(stdout, "clawbridge linear connect|import|profiles|status|logout|teams|projects|binding|link|unlink|context|issues|issue|states|labels|members|create|update|comment|relation|watch\nProject owner only: label create|rename, project create, label-policy show|set.\nUse COMMAND --help for explicit flags. Token import accepts --token-stdin only.\n")
 		return err
 	}
 	command := args[0]
@@ -554,8 +582,20 @@ func runLinear(ctx context.Context, flags Config, args []string, stdout, stderr 
 		}
 		parseArgs = parseArgs[1:]
 	}
+	adminAction := ""
+	if (command == "label" || command == "project" || command == "label-policy") && len(parseArgs) > 0 && parseArgs[0] != "--help" && parseArgs[0] != "-h" {
+		adminAction = parseArgs[0]
+		parseArgs = parseArgs[1:]
+	}
+	switch {
+	case command == "label" && adminAction != "create" && adminAction != "rename",
+		command == "project" && adminAction != "create",
+		command == "label-policy" && adminAction != "show" && adminAction != "set":
+		return errors.New("use linear label create|rename, project create, or label-policy show|set")
+	}
 	v, pos, err := parseLinear(command, parseArgs, stderr)
 	v.relationAction = relationAction
+	v.adminAction = adminAction
 	if errors.Is(err, flag.ErrHelp) {
 		return nil
 	}
@@ -704,6 +744,25 @@ func runLinear(ctx context.Context, flags Config, args []string, stdout, stderr 
 		data, err = service.LabelsV2(bounded, scope, v.team, v.limit, v.cursor)
 	case "members":
 		data, err = service.MembersV2(bounded, scope, v.team, v.limit, v.cursor)
+	case "label", "project":
+		in, e := linearAdminInput(command, adminAction, v, pos)
+		if e != nil {
+			return e
+		}
+		data, err = service.Admin(bounded, scope, in)
+	case "label-policy":
+		if adminAction == "show" {
+			data, err = service.LabelPolicyV2(bounded, scope)
+			break
+		}
+		if v.policyFile == "" || v.revision < 0 {
+			return errors.New("label-policy set requires --file and --expected-revision")
+		}
+		raw, e := readLinearFile(v.policyFile)
+		if e != nil {
+			return e
+		}
+		data, err = service.SetLabelPolicyV2(bounded, scope, []byte(raw), v.revision)
 	case "relation":
 		data, err = service.RelationV2(bounded, scope, linearboard.RelationInputV2{OperationID: v.operation, Action: v.relationAction, Type: v.relationType, FromID: pos[0], ToID: pos[1]})
 	default:

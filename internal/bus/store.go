@@ -123,7 +123,7 @@ func (s *Store) migrate() error {
 	if err = tx.QueryRow("PRAGMA user_version").Scan(&version); err != nil {
 		return err
 	}
-	if version > 7 {
+	if version > 8 {
 		return errors.New("database schema is newer than this ClawBridge binary")
 	}
 	if version == 0 {
@@ -165,6 +165,11 @@ func (s *Store) migrate() error {
 	}
 	if version < 7 {
 		if _, err = tx.Exec(commentSchemaV7 + `PRAGMA user_version=7;`); err != nil {
+			return err
+		}
+	}
+	if version < 8 {
+		if _, err = tx.Exec(labelPolicySchemaV8 + `PRAGMA user_version=8;`); err != nil {
 			return err
 		}
 	}
@@ -364,6 +369,9 @@ var operationArgs = map[string]string{
 	"marker_go":                   "instance lease_token generation assignment_id phase part",
 	"marker_settle":               "instance lease_token generation assignment_id phase part outcome comment_id created_at via error",
 	"marker_due":                  "instance lease_token generation",
+	"label_policy_get":            "instance",
+	"label_policy_set":            "instance expected_revision label_policy",
+	"linear_admin_audit":          "instance kind outcome operation_id linear_team_id linear_id name previous_name policy_revision",
 	"workspace_init":              "mode name retention_days", "project_create": "slug name git_remote", "list_projects": "", "list_members": "", "register_session": "instance resume role agent_kind model host account notes transport", "list_sessions": "instance status role limit after issue scope_path assignment_state", "send": "instance to body kind thread_id operation_id coordination", "reply": "instance message_id body kind operation_id coordination", "inbox": "instance unread_only limit after", "mark_read": "instance ids", "update_session": "instance target_session role model host account notes transport", "retire_session": "instance target_session successor status", "history": "instance entity key limit after", "whoami": "instance", "message_status": "instance message_id", "resolve_project": "git_remote instance", "snapshot": "instance", "project_role_set": "instance principal role", "project_role_revoke": "instance principal", "purge_expired": "instance", "principal_unbind": "principal allow_previous", "workspace_set_domains": "domains",
 }
 
@@ -377,7 +385,7 @@ func validateArgs(op string, a map[string]any) error {
 			return fmt.Errorf("unsupported argument %q for %s", k, op)
 		}
 		switch k {
-		case "retention_days", "limit", "after", "expected_revision", "ledger", "generation", "budget", "calls":
+		case "retention_days", "limit", "after", "expected_revision", "ledger", "generation", "budget", "calls", "policy_revision":
 			if _, err := integer(v); err != nil {
 				return fmt.Errorf("%s: %w", k, err)
 			}
@@ -389,6 +397,10 @@ func validateArgs(op string, a map[string]any) error {
 			}
 		case "coordination":
 			if _, err := ParseCoordination(v); err != nil {
+				return err
+			}
+		case "label_policy":
+			if _, err := ParseLabelPolicy(v); err != nil {
 				return err
 			}
 		case "transport":
@@ -539,7 +551,7 @@ func (s *Store) ExecuteAs(ctx context.Context, principal string, r Request) (Res
 // inbox stamps deliveries, so those keep the locks.
 func pureRead(r Request) bool {
 	switch r.Operation {
-	case "snapshot", "inbox_status", "notification_status", "taskboard_get", "taskboard_get_v2", "taskboard_access", "list_projects", "list_members", "comment_watch_status":
+	case "snapshot", "inbox_status", "notification_status", "taskboard_get", "taskboard_get_v2", "taskboard_access", "list_projects", "list_members", "comment_watch_status", "label_policy_get":
 		return true
 	case "list_sessions", "history", "whoami", "linear_comments_posted", "linear_comment_precheck":
 		// Naming a session with its instance makes it a heartbeat read: the
@@ -879,6 +891,14 @@ func (s *Store) execute(ctx context.Context, tx *transaction, r Request) (any, e
 	if r.Operation == "comment_watch_status" {
 		return watchStatus(ctx, tx, pid)
 	}
+	// Any project member may read the approved label list, with or
+	// without a session; setting it is the owner's (labelPolicyOp).
+	if r.Operation == "label_policy_get" {
+		if r.Session == "" && str(a, "instance") != "" {
+			return nil, errors.New("instance requires session")
+		}
+		return readLabelPolicy(ctx, tx, pid)
+	}
 	if r.Operation == "taskboard_access" || r.Operation == "taskboard_get" || r.Operation == "taskboard_set" || r.Operation == "taskboard_clear" || r.Operation == "taskboard_get_v2" || r.Operation == "taskboard_set_v2" || r.Operation == "taskboard_clear_v2" {
 		if r.Session == "" && str(a, "instance") != "" {
 			return nil, errors.New("instance requires session")
@@ -958,6 +978,9 @@ func (s *Store) execute(ctx context.Context, tx *transaction, r Request) (any, e
 	}
 	if commentOperation(r.Operation) {
 		return s.commentOp(ctx, tx, w, p, projectRole, actor, r)
+	}
+	if labelPolicyOperation(r.Operation) {
+		return s.labelPolicyOp(ctx, tx, w, p, projectRole, actor, r)
 	}
 	target := actor
 	if selector := str(a, "target_session"); selector != "" {

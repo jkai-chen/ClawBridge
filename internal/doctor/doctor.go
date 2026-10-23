@@ -167,6 +167,7 @@ func Run(ctx context.Context, in Input, executor Executor) Report {
 	// profile); otherwise doctor stays list-and-resolve only.
 	if in.LinearCapabilities != nil && resolutionOK && executor != nil {
 		checkTaskboardBinding(ctx, executor, wid, pid, add)
+		checkCommentWatch(ctx, executor, wid, pid, add)
 	}
 	for _, mcp := range in.MCPConfigs {
 		if mcp.Agent == "" {
@@ -523,6 +524,76 @@ func checkTaskboardBinding(ctx context.Context, executor Executor, wid, pid stri
 		check.Action = "Check project access; `clawbridge linear binding` shows the binding."
 	}
 	add(check)
+}
+
+// checkCommentWatch reports the project's comment watcher and claim
+// markers. Neither ever fails doctor: the bus claim is authoritative, and a
+// marker or notice only lags.
+func checkCommentWatch(ctx context.Context, executor Executor, wid, pid string, add func(Check)) {
+	watch := Check{ID: "linear.watch", Title: "Linear comment watch"}
+	markers := Check{ID: "linear.markers", Title: "Linear claim markers"}
+	result, err := executor.Execute(ctx, bus.Request{Operation: "comment_watch_status", Workspace: wid, Project: pid, Args: map[string]any{}})
+	status, _ := result.Data.(map[string]any)
+	if err != nil || status == nil {
+		watch.Status, markers.Status = Warn, Warn
+		watch.Message = "The comment watch status could not be read (" + safeCode(err) + ")."
+		watch.Action = "A server older than this client does not have it: upgrade the server first."
+		markers.Message = "The claim marker status could not be read."
+		add(watch)
+		add(markers)
+		return
+	}
+	n := func(key string) int {
+		switch v := status[key].(type) {
+		case int:
+			return v
+		case float64:
+			return int(v)
+		case interface{ Int64() (int64, error) }:
+			i, _ := v.Int64()
+			return int(i)
+		}
+		return 0
+	}
+	live, _ := status["watcher_live"].(bool)
+	watch.Status = Pass
+	watch.Message = fmt.Sprintf("%d assigned issues are watched for new Linear comments.", n("watched_issues"))
+	switch {
+	case n("watched_issues") > 0 && !live:
+		watch.Status = Warn
+		watch.Message = fmt.Sprintf("%d assigned issues are watched, but no comment watcher is running: no one is told of new comments.", n("watched_issues"))
+		watch.Action = "Run `clawbridge linear watch` on one host of this project, normally the coordinator's."
+	case n("no_recipient") > 0:
+		watch.Status = Warn
+		watch.Message = fmt.Sprintf("%d watched issues have new comments but no active assignee or coordinator session to notify; they are held, not dropped.", n("no_recipient"))
+		watch.Action = "Designate an active coordinator session with `clawbridge project coordinator-set SESSION`."
+	case n("held_issues") > 0:
+		watch.Status = Warn
+		watch.Message = fmt.Sprintf("%d watched issues could not be polled last time; their comments are held and retried.", n("held_issues"))
+	}
+	markers.Status = Pass
+	markers.Message = "Claim markers are applied. Session names are shown in Linear claim comments: name sessions by role, never with personal data."
+	problems := []string{}
+	if k := n("markers_pending"); k > 0 {
+		oldest, _ := status["markers_oldest_pending"].(string)
+		problems = append(problems, fmt.Sprintf("%d markers pending for over 10 minutes (oldest from %s)", k, oldest))
+	}
+	if k := n("markers_no_label"); k > 0 {
+		problems = append(problems, fmt.Sprintf("%d markers cannot apply the agent-working label: it is missing or ambiguous in the issue's team", k))
+	}
+	if k := n("markers_out_of_binding"); k > 0 {
+		problems = append(problems, fmt.Sprintf("%d markers stopped because their issue left the task board", k))
+	}
+	if k := n("close_label_drift"); k > 0 {
+		problems = append(problems, fmt.Sprintf("%d released issues may still show agent-working on Linear", k))
+	}
+	if len(problems) > 0 {
+		markers.Status = Warn
+		markers.Message = strings.Join(problems, "; ") + "."
+		markers.Action = "Run `clawbridge linear watch` with a write-access Linear profile; a Linear admin creates exactly one agent-working label per team (or one workspace label)."
+	}
+	add(watch)
+	add(markers)
 }
 
 func checkMirror(ctx context.Context, in Input, wid, pid string, resolved bool, add func(Check)) {

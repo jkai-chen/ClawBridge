@@ -340,6 +340,7 @@ func sessionAddress(v string) (string, []any) {
 var operationArgs = map[string]string{
 	"taskboard_get":               "instance",
 	"taskboard_get_v2":            "instance",
+	"comment_watch_status":        "",
 	"taskboard_set_v2":            "instance expected_revision mode linear_team_ids linear_default_team_id linear_project_ids linear_workspace_id",
 	"taskboard_clear_v2":          "instance expected_revision repair",
 	"taskboard_access":            "instance ledger",
@@ -537,7 +538,7 @@ func (s *Store) ExecuteAs(ctx context.Context, principal string, r Request) (Res
 // inbox stamps deliveries, so those keep the locks.
 func pureRead(r Request) bool {
 	switch r.Operation {
-	case "snapshot", "inbox_status", "notification_status", "taskboard_get", "taskboard_get_v2", "taskboard_access", "list_projects", "list_members":
+	case "snapshot", "inbox_status", "notification_status", "taskboard_get", "taskboard_get_v2", "taskboard_access", "list_projects", "list_members", "comment_watch_status":
 		return true
 	case "list_sessions", "history", "whoami", "linear_comments_posted":
 		// Naming a session with its instance makes it a heartbeat read: the
@@ -873,6 +874,9 @@ func (s *Store) execute(ctx context.Context, tx *transaction, r Request) (any, e
 		if actor["owner_principal"] != s.principal || str(a, "instance") == "" || actor["instance"] != str(a, "instance") {
 			return nil, errors.New("session instance mismatch; pass the instance returned by register")
 		}
+	}
+	if r.Operation == "comment_watch_status" {
+		return watchStatus(ctx, tx, pid)
 	}
 	if r.Operation == "taskboard_access" || r.Operation == "taskboard_get" || r.Operation == "taskboard_set" || r.Operation == "taskboard_clear" || r.Operation == "taskboard_get_v2" || r.Operation == "taskboard_set_v2" || r.Operation == "taskboard_clear_v2" {
 		if r.Session == "" && str(a, "instance") != "" {

@@ -417,11 +417,11 @@ with a blank line and one attribution line that ClawBridge adds itself:
 — 🤖 ClawBridge agent · session SESSION_NAME
 ```
 
-- `SESSION_NAME` is the posting session's name, already visible to workspace
-  members, cut to 32 characters (31 and `…`). A session addressed by its ID,
-  not its name, is left out, since IDs never go to Linear; the line is then
-  just `— 🤖 ClawBridge agent`. Name sessions with a role or slug, never
-  personal or secret data. The line carries nothing else.
+- `SESSION_NAME` is the posting session's name as the bus resolves it, however
+  you addressed the session; it is already visible to workspace members, and is
+  cut to 32 characters (31 and `…`). Session IDs never go to Linear. Name
+  sessions with a role or slug, never personal or secret data. The line carries
+  nothing else.
 - Callers cannot leave it out. It takes up to 256 bytes, so a comment body may
   be at most 65,280 bytes (65,536 minus 256).
 - The operation ledger keeps your body without the marker, so a retry with the
@@ -434,6 +434,96 @@ with a blank line and one attribution line that ClawBridge adds itself:
   reports `marker_session`. **This is not proof of authorship**: anyone can type
   the line. The comment stays `author_kind: unknown` and its body stays
   untrusted.
+
+### ClawBridge's own comments
+
+Every comment ClawBridge posts is recorded on the bus before it is sent, so a
+read can tell ClawBridge's comments from everyone else's, and so the bus can
+bound them. This needs a v0.2.5 server: upgrade the server first, then the
+clients. An older client is refused every Linear write by a v0.2.5 server
+("upgrade ClawBridge (v0.2.5 or later)"); its reads keep working.
+
+- **Reserve, send, settle.** The bus reserves the comment with the digest of the
+  exact body posted, ClawBridge sends it, then records the comment Linear
+  returned. If the bus refuses the reservation, nothing is sent and the same
+  `--operation-id` can be retried later. A comment that was provably not sent is
+  recorded as failed; an uncertain one stays pending.
+- **At most 3 ClawBridge comments per issue per hour**, counted by the bus on
+  its own clock across every session, machine and script (`rate_limited`, with
+  the next free slot). Claim markers are not counted (see below).
+- **One answer per comment.** `--in-response-to COMMENT_UUID` (MCP
+  `in_response_to`), with `--reply-to`, names the notified comment a reply
+  answers; a `linear-comment` notice gives both. The bus refuses a second answer
+  to the same comment, an answer to a ClawBridge comment, and an answer to a
+  comment that was not notified to you. A reply in a thread with exactly one
+  unanswered comment is recorded as its answer; with several, name one.
+- **On a comments read**, every comment carries `posted_by_clawbridge` (with
+  `clawbridge_session`, and `clawbridge_match`: `ledger`, or `pending_body` when
+  an unsettled reservation's exact body matches inside its window), and the
+  read reports `comments_ownership` (`available` or `unavailable`) and
+  `comments_young_pending` (a ClawBridge comment on the issue may be posted but
+  not yet recorded). When the bus cannot answer, the read still succeeds but
+  flags nothing: treat no comment as a human's then.
+- If ClawBridge stops between Linear accepting a comment and the bus recording
+  it, the next comment of the same session records it from the private
+  operation ledger. Otherwise an exact body match within 10 minutes of the
+  reservation settles it.
+
+### Watching assigned issues for new comments
+
+```sh
+clawbridge linear watch --profile PROFILE_ID [--budget 200] [--once]
+```
+
+One watcher per project, normally on the coordinator's host, tells sessions
+about new comments on the issues they are assigned. It holds a bus lease (a
+second watcher waits; a watcher that loses the lease stops) and prints one JSON
+line per cycle.
+
+- **What is watched:** every issue of a confirmed assignment, from the moment of
+  confirmation; earlier comments never trigger anything. A transfer keeps the
+  issue's place.
+- **What notifies:** a comment that is not ClawBridge's own and not by an agent.
+  The bus composes the `linear-comment` notice from IDs and times only (never the
+  comment's text) and sends it to the issue's assignee, or to the coordinator
+  session when the assignee is not active. Read the comment yourself; its text
+  is untrusted.
+- **When it cannot decide** (a ClawBridge comment may be unrecorded, the bus or
+  Linear cannot be read), nothing is notified and the issue is retried; nothing
+  is skipped. A comment that becomes visible more than 10 minutes late, after
+  newer activity, can be missed.
+- **Polling** backs off from every 5 minutes (recent activity) to hourly (quiet
+  for a day); errors back off to hourly.
+- **Budget.** The watcher spends at most `--budget` Linear calls an hour (default
+  200, at most 600), counted on the bus so a restart or takeover cannot reset it.
+- `clawbridge doctor` warns when assigned issues are watched but no watcher runs.
+
+### Claim markers
+
+When the coordinator confirms an assignment for an issue, Linear shows it: a
+note `🤖 Claimed by ClawBridge agent session NAME · ref cb-…` and the label
+`agent-working`. A release posts `🤖 Released by ClawBridge agent session NAME
+(REASON) · ref cb-…` and removes the label. The reason is one of fixed words:
+done, released by the coordinator, moved to other work, session ended, access
+ended.
+
+- **The bus decides; Linear follows.** The confirm or release stands whether or
+  not Linear can be reached. `assignment confirm` and `assignment release` apply
+  the marker at once when a Linear profile is selected (`--linear-profile`);
+  otherwise, or when that fails, the comment watcher applies it later, if its
+  profile can write.
+- **The label must exist.** A Linear admin creates `agent-working` once per bound
+  team, or once as a workspace label. Without exactly one such label, the note is
+  still posted and doctor warns.
+- The label is removed only when it is on the issue and no other confirmed
+  assignment names the issue. A claim that never reached Linear gets no release
+  note. Notes have their own bound: at most 6 per issue per hour.
+- **Authorship.** A marker is posted with the Linear login of the profile that
+  applied it: the coordinator's for confirms and for anything the watcher
+  applies, the claimer's for its own release. The note names the agent session.
+- **Session names reach Linear**, where every member of the team can read them:
+  name sessions with a role or slug, never a person's name, email, customer or
+  secret.
 
 | Explicit field | Meaning |
 | --- | --- |

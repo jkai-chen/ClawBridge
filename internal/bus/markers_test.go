@@ -308,3 +308,29 @@ func TestMarkerDueIsFencedAndCharged(t *testing.T) {
 		t.Fatal(g)
 	}
 }
+
+func TestWatchStatusReportsWatcherAndMarkerDrift(t *testing.T) {
+	w := newWatchHarness(t)
+	status := func() map[string]any {
+		return w.call("comment_watch_status", "", map[string]any{}).(map[string]any)
+	}
+	s := status()
+	if s["watched_issues"] != 1 || s["watcher_live"] != true || s["markers_pending"] != 0 {
+		t.Fatal(s)
+	}
+	id := w.assignmentID("a")
+	w.markerGo("a", id, "claim", "label")
+	w.markerSettle("a", id, "claim", "label", map[string]any{"outcome": "done"})
+	w.release("a")
+	old := layout(time.Now().Add(-time.Hour))
+	if _, e := w.s.db.Exec(`UPDATE assignment_markers SET created_at=?`, old); e != nil {
+		t.Fatal(e)
+	}
+	if _, e := w.s.db.Exec(`UPDATE watch_lease SET expires_at=?`, old); e != nil {
+		t.Fatal(e)
+	}
+	s = status()
+	if s["close_label_drift"] != 1 || s["markers_pending"] != 2 || s["watcher_live"] != false || s["markers_oldest_pending"] != old {
+		t.Fatal("drift not reported:", s)
+	}
+}

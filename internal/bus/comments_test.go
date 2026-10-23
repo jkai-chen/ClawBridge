@@ -491,6 +491,10 @@ func TestCommentWatchHoldsCommentsWithoutARecipient(t *testing.T) {
 	if e := w.s.db.QueryRow(`SELECT cursor_time,last_error,(SELECT COUNT(*) FROM watch_events) FROM watch_cursors`).Scan(&after, &last, &events); e != nil || after != before || last != "no_recipient" || events != 0 {
 		t.Fatal("comments without a recipient were consumed:", after, last, events, e)
 	}
+	w.dueNow()
+	if again := w.poll(watchIssue, comment(humanOne, "", posted)); again["failures"] != 2 {
+		t.Fatal("no recipient does not back off:", again)
+	}
 	if _, e := w.s.db.Exec(`UPDATE sessions SET status='active' WHERE id=?`, w.sessionID("a")); e != nil {
 		t.Fatal(e)
 	}

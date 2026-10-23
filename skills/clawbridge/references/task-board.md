@@ -186,6 +186,11 @@ an unavailable capability goes to the coordinator rather than a broader account
 or an arbitrary provider tool. Administrative project/label creation remains a
 separate operator action.
 
+Write Linear text without mentions: name people and agents in plain words, never
+as `@name`, `@Linear` or a profile link. ClawBridge refuses a title,
+description or comment that does, even inside code: write scoped packages
+without the `@` (`types/node`).
+
 Use canonical IDs from scoped provider discovery. Preserve omitted fields;
 clear or replace them only when the assignment requests that exact change.
 Supplied label IDs replace the complete set: known labels omitted from that set

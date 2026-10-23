@@ -300,12 +300,14 @@ func TestIntakeS1ProvesTheBindingAndTheActor(t *testing.T) {
 	e := setup(t)
 	e.call("intake_trust_add", "coord", map[string]any{"linear_user_id": trustedUser})
 	e.f.labelled = []string{issueA, issueB, issueOut}
-	first := e.tick()
-	if first.Intake == nil || len(first.Intake.Queued) != 0 {
-		t.Fatal("history triggered on the first poll:", first.Intake)
-	}
 	now := time.Now().UTC().Format(time.RFC3339Nano)
-	e.f.history[issueA] = []map[string]any{entry(now, trustedUser, map[string]any{"addedLabelIds": []string{labelNeeds}})}
+	// The newest history entry is a stranger's unrelated label change; the
+	// needs-agent add before it is the trusted user's.
+	e.f.history[issueA] = []map[string]any{entry(now, strangerID, map[string]any{"addedLabelIds": []string{"cccccccc-cccc-4ccc-8ccc-cccccccccccc"}}), entry(now, trustedUser, map[string]any{"addedLabelIds": []string{labelNeeds}})}
+	first := e.tick()
+	if first.Intake == nil || len(first.Intake.Queued) != 0 || len(e.f.queries) != 0 {
+		t.Fatal("history triggered on the first poll:", first.Intake, e.f.queries)
+	}
 	e.f.history[issueB] = []map[string]any{entry(now, trustedUser, map[string]any{"addedLabelIds": []string{labelNeeds}, "botActor": map[string]any{"id": "bot"}})}
 	e.dueNow()
 	tick := e.tick()
@@ -337,7 +339,9 @@ func TestIntakeS2AndS3(t *testing.T) {
 	e.tick()
 	now := time.Now().UTC().Format(time.RFC3339Nano)
 	e.f.delegated = []string{issueA}
-	e.f.history[issueA] = []map[string]any{entry(now, strangerID, map[string]any{"toDelegate": map[string]any{"id": appUser}})}
+	// The newest entry is a trusted user's unrelated change; the delegation
+	// before it is the stranger's.
+	e.f.history[issueA] = []map[string]any{entry(now, trustedUser, map[string]any{"toDelegate": nil}), entry(now, strangerID, map[string]any{"toDelegate": map[string]any{"id": appUser}})}
 	e.f.mentions = []map[string]any{
 		{"id": "n1", "type": "issueCommentMention", "createdAt": now, "issue": map[string]any{"id": issueB}, "actor": map[string]any{"id": trustedUser}},
 		{"id": "n2", "type": "issueSubscribed", "createdAt": now, "issue": map[string]any{"id": issueA}},

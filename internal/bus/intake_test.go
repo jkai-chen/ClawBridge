@@ -28,6 +28,8 @@ func newIntakeHarness(t *testing.T) *intakeHarness {
 	h := &intakeHarness{harness: newHarness(t)}
 	h.call("coordinator_set", "c", map[string]any{"target_session": "c"})
 	h.token = h.call("intake_token_create", "c", map[string]any{}).(map[string]any)["token"].(string)
+	// S5 is an opt-in.
+	h.call("intake_policy_set", "c", map[string]any{"signals": []any{"S1", "S2", "S3", "S5"}})
 	h.prove = func(_ context.Context, _, _, issue string) (IntakeIssue, error) {
 		h.proved = append(h.proved, issue)
 		switch issue {
@@ -60,9 +62,13 @@ func (h *intakeHarness) intakeInbox(session string) []map[string]any {
 }
 
 func TestIntakePolicyDefaultsToNotifyAndOnlyLeadsChangeIt(t *testing.T) {
+	plain := newHarness(t)
+	if p := plain.call("intake_policy_get", "a", nil).(map[string]any); p["mode"] != "notify" || p["default"] != true || strings.Join(p["signals"].([]string), ",") != "S1,S2,S3" {
+		t.Fatal("default policy (S5 is an opt-in):", p)
+	}
 	h := newIntakeHarness(t)
 	p := h.call("intake_policy_get", "a", nil).(map[string]any)
-	if p["mode"] != "notify" || p["default"] != true || strings.Join(p["signals"].([]string), ",") != "S1,S2,S3,S5" {
+	if p["mode"] != "notify" || strings.Join(p["signals"].([]string), ",") != "S1,S2,S3,S5" {
 		t.Fatal("default policy:", p)
 	}
 	for _, mode := range []string{"offer", "auto"} {
@@ -73,11 +79,11 @@ func TestIntakePolicyDefaultsToNotifyAndOnlyLeadsChangeIt(t *testing.T) {
 	if e := h.errorOf("intake_policy_set", "c", map[string]any{"signals": []any{"S9"}}); !strings.Contains(e, "S1, S2") {
 		t.Fatal(e)
 	}
-	set := h.call("intake_policy_set", "c", map[string]any{"mode": "off", "signals": []any{"S1", "S5", "S1"}, "roles": []any{"engineer"}, "expected_revision": 0}).(map[string]any)
-	if set["mode"] != "off" || set["revision"] != 1 || strings.Join(set["signals"].([]string), ",") != "S1,S5" {
+	set := h.call("intake_policy_set", "c", map[string]any{"mode": "off", "signals": []any{"S1", "S5", "S1"}, "roles": []any{"engineer"}, "expected_revision": 1}).(map[string]any)
+	if set["mode"] != "off" || set["revision"] != 2 || strings.Join(set["signals"].([]string), ",") != "S1,S5" {
 		t.Fatal(set)
 	}
-	if e := h.errorOf("intake_policy_set", "c", map[string]any{"mode": "notify", "expected_revision": 0}); !strings.Contains(e, "changed") {
+	if e := h.errorOf("intake_policy_set", "c", map[string]any{"mode": "notify", "expected_revision": 1}); !strings.Contains(e, "changed") {
 		t.Fatal("a stale revision was accepted:", e)
 	}
 	if !strings.Contains(strings.Join(h.actions("intake"), ","), "policy_set") {

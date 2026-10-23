@@ -57,15 +57,17 @@ func lowerMode(a, b string) string {
 	return b
 }
 
-// intakePolicy is a project's policy, or the default: notify, with every
-// signal but S4 (owner decisions G1, G2).
+// intakePolicy is a project's policy, or the default: notify, with S1, S2
+// and S3 (owner decisions G1, G2). S4 is off, and S5 (a Loop through
+// /mcp/intake) is an explicit opt-in: each Loop run costs Linear Agent
+// credit, so the free server watcher is the primary path.
 func intakePolicy(ctx context.Context, tx *transaction, pid string) (map[string]any, error) {
 	rows, err := query(ctx, tx, `SELECT * FROM intake_policies WHERE project_id=?`, pid)
 	if err != nil {
 		return nil, err
 	}
 	if len(rows) == 0 {
-		return map[string]any{"project_id": pid, "mode": "notify", "signals": []string{"S1", "S2", "S3", "S5"}, "roles": []string{}, "max_auto_per_hour": 3, "offer_ttl_seconds": 900, "max_offers": 3, "s5_calls_per_hour": 20, "out_of_binding_limit": 10, "revision": 0, "default": true}, nil
+		return map[string]any{"project_id": pid, "mode": "notify", "signals": []string{"S1", "S2", "S3"}, "roles": []string{}, "max_auto_per_hour": 3, "offer_ttl_seconds": 900, "max_offers": 3, "s5_calls_per_hour": 20, "out_of_binding_limit": 10, "revision": 0, "default": true}, nil
 	}
 	p := rows[0]
 	var signals, roles []string

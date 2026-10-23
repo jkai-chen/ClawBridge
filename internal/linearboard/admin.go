@@ -232,7 +232,7 @@ func (s *Service) Admin(ctx context.Context, scope bus.Request, in AdminInput) (
 		// A retry records an audit an earlier run failed to; the authority
 		// keeps one row per operation.
 		result.Audit = "recorded"
-		if e = s.auditAdmin(ctx, scope, in, result); e != nil {
+		if _, e = s.auditAdmin(ctx, scope, in, result); e != nil {
 			result.Audit = "failed: " + e.Error()
 		}
 		return result, nil
@@ -359,7 +359,7 @@ func (s *Service) Admin(ctx context.Context, scope bus.Request, in AdminInput) (
 	if e != nil {
 		return AdminResult{}, e
 	}
-	if e = s.auditAdmin(ctx, scope, in, result); e != nil {
+	if _, e = s.auditAdmin(ctx, scope, in, result); e != nil {
 		result.Audit = "failed: " + e.Error()
 	} else {
 		result.Audit = "recorded"
@@ -556,8 +556,9 @@ func adminResult(v any) (AdminResult, error) {
 }
 
 // auditAdmin records the write in the project's history: IDs and names,
-// and for a label the policy revision it was checked against.
-func (s *Service) auditAdmin(ctx context.Context, scope bus.Request, in AdminInput, r AdminResult) error {
+// and for a label the policy revision it was checked against. already
+// reports a write the history had recorded before.
+func (s *Service) auditAdmin(ctx context.Context, scope bus.Request, in AdminInput, r AdminResult) (already bool, err error) {
 	scope.Operation = "linear_admin_audit"
 	scope.Args = instanceArgs(scope.Args)
 	scope.Args["kind"] = in.Kind
@@ -571,8 +572,74 @@ func (s *Service) auditAdmin(ctx context.Context, scope bus.Request, in AdminInp
 	if in.Kind == "label_create" || in.Kind == "label_rename" {
 		scope.Args["policy_revision"] = r.PolicyRevision
 	}
-	_, e := s.cfg.Executor.Execute(ctx, scope)
-	return e
+	out, e := s.cfg.Executor.Execute(ctx, scope)
+	if e != nil {
+		return false, e
+	}
+	m, _ := out.Data.(map[string]any)
+	return m["already"] == true, nil
+}
+
+// AdminReplay is the result of AdminAuditReplay: the recorded receipt and
+// what the history answered.
+type AdminReplay struct {
+	OperationID string      `json:"operation_id"`
+	Replayed    bool        `json:"replayed"`
+	Audit       string      `json:"audit"`
+	Receipt     AdminResult `json:"receipt"`
+}
+
+// AdminAuditReplay records the history row of an admin write that Linear
+// accepted but whose audit failed, from this client's operation ledger. It
+// is for writes a retry can no longer reach because the binding or the
+// approved list changed since: the record is found whatever payload it was
+// written for. Only an accepted admin receipt is replayed; nothing is sent
+// to Linear and the ledger is not written. The project owner only, from the
+// session the write ran under (none for a sessionless write).
+func (s *Service) AdminAuditReplay(ctx context.Context, scope bus.Request, operationID string) (AdminReplay, error) {
+	if !operationPattern.MatchString(operationID) {
+		return AdminReplay{}, errors.New("audit replay requires operation_id")
+	}
+	b, e := s.BindingV2(ctx, scope)
+	if e != nil {
+		return AdminReplay{}, e
+	}
+	if !b.Configured {
+		return AdminReplay{}, errors.New("task-board is not linked")
+	}
+	if s.cfg.Authority == "" {
+		return AdminReplay{}, errors.New("canonical authority identity required for operation ledger")
+	}
+	access, e := s.writeAccessV2(ctx, scope, b)
+	if e != nil {
+		return AdminReplay{}, e
+	}
+	if access.ProjectRole != "owner" {
+		return AdminReplay{}, errAdminOwnerOnly
+	}
+	namespace := digest([]string{s.cfg.Authority, b.WorkspaceID, b.ProjectID, access.SessionID})
+	l := ledger{s.cfg.LedgerDirectory, s.cfg.Now}
+	recorded, exists, e := l.lookupDigest(namespace, operationID, anyPayload)
+	if e != nil {
+		return AdminReplay{}, fmt.Errorf("no replayable admin write: %w", e)
+	}
+	if !exists {
+		return AdminReplay{}, errors.New("no admin write with this operation_id in this client's ledger for this project and session; pass the --session it ran under, or none")
+	}
+	r, e := adminResult(recorded)
+	if e != nil || !adminKinds[r.Kind] {
+		return AdminReplay{}, errors.New("this operation_id is not an admin write")
+	}
+	in := AdminInput{Kind: r.Kind, OperationID: operationID, TeamID: r.TeamID, Name: r.Name, From: r.PreviousName, ProjectID: r.ProjectID}
+	out := AdminReplay{OperationID: operationID, Replayed: true, Receipt: r, Audit: "recorded"}
+	already, e := s.auditAdmin(ctx, scope, in, r)
+	switch {
+	case e != nil:
+		out.Audit = "failed: " + e.Error()
+	case already:
+		out.Audit = "already"
+	}
+	return out, nil
 }
 
 // proposeProject adds the binding proposal for a created project. Only a

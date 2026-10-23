@@ -55,6 +55,12 @@ func (a *adminAuthority) Execute(ctx context.Context, r bus.Request) (bus.Result
 			a.auditErr = nil
 			return bus.Result{}, e
 		}
+		// Like the bus, recording is idempotent by operation ID.
+		for _, seen := range a.audits {
+			if seen["operation_id"] == r.Args["operation_id"] {
+				return bus.Result{Source: "local-authority", Data: map[string]any{"recorded": true, "already": true}}, nil
+			}
+		}
 		a.audits = append(a.audits, r.Args)
 		return bus.Result{Source: "local-authority", Data: map[string]any{"recorded": true}}, nil
 	case "label_policy_set":

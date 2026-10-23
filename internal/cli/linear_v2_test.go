@@ -222,3 +222,22 @@ func TestLinearInitiativeCommandsMapToAdminWrites(t *testing.T) {
 		t.Fatal("initiative with --team accepted")
 	}
 }
+
+// admin audit-replay needs only the operation ID: it reads no Linear, so it
+// takes no profile, and no positional arguments.
+func TestLinearAdminAuditReplayParses(t *testing.T) {
+	v, pos, err := parseLinear("admin", []string{"--operation-id", "cb-rp-01"}, &bytes.Buffer{})
+	if err != nil || v.operation != "cb-rp-01" || len(pos) != 0 {
+		t.Fatal(v, pos, err)
+	}
+	for name, args := range map[string][]string{"no operation": {}, "positional": {"x", "--operation-id", "y"}, "bad operation": {"--operation-id", "a b"}} {
+		if _, _, err := parseLinear("admin", args, &bytes.Buffer{}); err == nil {
+			t.Fatal(name, "accepted")
+		}
+	}
+	for _, args := range [][]string{{"admin"}, {"admin", "replay", "--operation-id", "x"}} {
+		if err := runLinear(context.Background(), Config{}, args, &bytes.Buffer{}, &bytes.Buffer{}); err == nil || !strings.Contains(err.Error(), "admin audit-replay") {
+			t.Fatal(args, err)
+		}
+	}
+}

@@ -38,7 +38,7 @@ type intakeInput struct {
 }
 
 type intakeOutput struct {
-	Result    string `json:"result" jsonschema:"queued, already_queued, assigned or refused"`
+	Result    string `json:"result" jsonschema:"queued, already_queued, assigned, dismissed or refused"`
 	Code      string `json:"code,omitempty" jsonschema:"why a request was refused: not_in_binding, intake_off, rate_limited, invalid_issue, app_unavailable or unavailable"`
 	RequestID string `json:"request_id,omitempty"`
 }

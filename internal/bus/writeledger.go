@@ -8,7 +8,7 @@ import (
 )
 
 // Schema 10: the hosted server's operation ledger for the writes it sends
-// to Linear as the app (v0.2.7). Records are opaque JSON kept by the
+// to Linear as the app (v0.2.8). Records are opaque JSON kept by the
 // caller; each call is one short transaction, and no Linear call is ever
 // made while one is open.
 const writeLedgerSchemaV10 = `

@@ -193,3 +193,32 @@ func TestLinearAdminCommandsMapToAdminWrites(t *testing.T) {
 		t.Fatal("label without --team accepted")
 	}
 }
+
+func TestLinearInitiativeCommandsMapToAdminWrites(t *testing.T) {
+	const initiative = "e6000000-0000-4000-8000-000000000006"
+	const project = "e7000000-0000-4000-8000-000000000007"
+	v, pos, err := parseLinear("initiative", []string{"Product Review", "--description", "Reviews", "--profile", "native", "--operation-id", "i-1"}, &bytes.Buffer{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	in, err := linearAdminInput("initiative", "create", v, pos)
+	if err != nil || in.Kind != "initiative_create" || in.Name != "Product Review" || in.Description != "Reviews" || in.TeamID != "" {
+		t.Fatal(in, err)
+	}
+	v, pos, err = parseLinear("initiative", []string{initiative, project, "--profile", "native", "--operation-id", "i-2"}, &bytes.Buffer{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if in, err = linearAdminInput("initiative", "add-project", v, pos); err != nil || in.Kind != "initiative_add_project" || in.InitiativeID != initiative || in.ProjectID != project {
+		t.Fatal(in, err)
+	}
+	if _, err = linearAdminInput("initiative", "add-project", v, pos[:1]); err == nil {
+		t.Fatal("add-project with one argument accepted")
+	}
+	if _, _, err = parseLinear("initiative", []string{"X", "--profile", "native"}, &bytes.Buffer{}); err == nil {
+		t.Fatal("initiative without --operation-id accepted")
+	}
+	if _, _, err = parseLinear("initiative", []string{"X", "--profile", "native", "--operation-id", "x", "--team", project}, &bytes.Buffer{}); err == nil {
+		t.Fatal("initiative with --team accepted")
+	}
+}

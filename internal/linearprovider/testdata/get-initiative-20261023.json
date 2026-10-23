@@ -1,0 +1,40 @@
+{
+ "_meta": {
+  "microsoft/allowedDomains": [
+   "linear.app<https://linear.app/>"
+  ]
+ },
+ "annotations": {
+  "destructiveHint": false,
+  "idempotentHint": true,
+  "openWorldHint": false,
+  "readOnlyHint": true
+ },
+ "description": "Retrieve detailed information about a specific initiative in Linear",
+ "inputSchema": {
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+   "includeProjects": {
+    "default": false,
+    "description": "Include projects",
+    "type": "boolean"
+   },
+   "includeSubInitiatives": {
+    "default": false,
+    "description": "Include sub-initiatives",
+    "type": "boolean"
+   },
+   "query": {
+    "description": "Initiative name, ID, identifier (e.g., I-123), or slug",
+    "type": "string"
+   }
+  },
+  "required": [
+   "query"
+  ],
+  "type": "object"
+ },
+ "name": "get_initiative",
+ "title": "Get initiative"
+}

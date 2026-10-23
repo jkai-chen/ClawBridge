@@ -371,7 +371,7 @@ var operationArgs = map[string]string{
 	"marker_due":                  "instance lease_token generation",
 	"label_policy_get":            "instance",
 	"label_policy_set":            "instance expected_revision label_policy",
-	"linear_admin_audit":          "instance kind outcome operation_id linear_team_id linear_id name previous_name policy_revision",
+	"linear_admin_audit":          "instance kind outcome operation_id linear_team_id linear_id linear_project_id name previous_name policy_revision",
 	"workspace_init":              "mode name retention_days", "project_create": "slug name git_remote", "list_projects": "", "list_members": "", "register_session": "instance resume role agent_kind model host account notes transport", "list_sessions": "instance status role limit after issue scope_path assignment_state", "send": "instance to body kind thread_id operation_id coordination", "reply": "instance message_id body kind operation_id coordination", "inbox": "instance unread_only limit after", "mark_read": "instance ids", "update_session": "instance target_session role model host account notes transport", "retire_session": "instance target_session successor status", "history": "instance entity key limit after", "whoami": "instance", "message_status": "instance message_id", "resolve_project": "git_remote instance", "snapshot": "instance", "project_role_set": "instance principal role", "project_role_revoke": "instance principal", "purge_expired": "instance", "principal_unbind": "principal allow_previous", "workspace_set_domains": "domains",
 }
 

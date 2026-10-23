@@ -150,3 +150,35 @@ func TestLabelPolicySchemaEightMigratesAVersionSevenStore(t *testing.T) {
 		t.Fatal("linear_label_policy missing after migration", tables, err)
 	}
 }
+
+// Initiative writes are recorded without a team or a policy revision; adding
+// a project names the project too.
+func TestAdminAuditRecordsInitiatives(t *testing.T) {
+	h := newHarness(t)
+	const initiative = "00000000-0000-4000-8000-0000000000e6"
+	const project = "00000000-0000-4000-8000-0000000000e7"
+	h.call("linear_admin_audit", "a", map[string]any{"kind": "initiative_create", "outcome": "accepted", "operation_id": "i-1", "linear_id": initiative, "name": "Product Review"})
+	h.call("linear_admin_audit", "a", map[string]any{"kind": "initiative_add_project", "outcome": "accepted", "operation_id": "i-2", "linear_id": initiative, "linear_project_id": project})
+	for name, bad := range map[string]map[string]any{
+		"no initiative":   {"kind": "initiative_create", "outcome": "accepted", "operation_id": "x"},
+		"no project":      {"kind": "initiative_add_project", "outcome": "accepted", "operation_id": "x", "linear_id": initiative},
+		"label sans team": {"kind": "label_create", "outcome": "accepted", "operation_id": "x", "policy_revision": 1},
+	} {
+		if e := h.errorOf("linear_admin_audit", "a", bad); e == "" {
+			t.Fatal(name, "accepted")
+		}
+	}
+	events := h.call("history", "a", map[string]any{"entity": "linear_initiative", "limit": 10}).(map[string]any)["events"].([]map[string]any)
+	if len(events) != 2 {
+		t.Fatal(events)
+	}
+	for _, e := range events {
+		d := e["details"].(map[string]any)
+		if e["action"] == "initiative_add_project" && d["linear_project_id"] != project {
+			t.Fatal(d)
+		}
+		if d["policy_revision"] != nil {
+			t.Fatal("an initiative audit carried a policy revision", d)
+		}
+	}
+}

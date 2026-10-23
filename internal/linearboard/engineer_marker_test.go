@@ -32,7 +32,7 @@ func (o preEngineerServer) Execute(ctx context.Context, r bus.Request) (bus.Resu
 	return o.authorityV2.Execute(ctx, r)
 }
 
-// A server older than v0.2.7 names no engineer: the comment is still
+// A server older than v0.2.8 names no engineer: the comment is still
 // posted, with the session-only marker.
 func TestPreEngineerServerPostsTheSessionMarker(t *testing.T) {
 	s, a, p, scope := testV2(t)

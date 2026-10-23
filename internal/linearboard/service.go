@@ -222,7 +222,7 @@ func (s *Service) access(ctx context.Context, scope bus.Request) (bus.TaskboardA
 	scope.Args["engineer"] = 1
 	result, err := s.cfg.Executor.Execute(ctx, scope)
 	if err != nil && strings.Contains(err.Error(), `unsupported argument "engineer"`) {
-		// A server older than v0.2.7 names no engineer; the marker omits it.
+		// A server older than v0.2.8 names no engineer; the marker omits it.
 		delete(scope.Args, "engineer")
 		result, err = s.cfg.Executor.Execute(ctx, scope)
 	}

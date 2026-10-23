@@ -55,7 +55,7 @@ func markerKey(assignment, phase string) string {
 	return "marker:" + assignment + ":" + phase + ":comment"
 }
 
-// Schema 11 (v0.2.7): the engineer behind the claimed session, frozen at
+// Schema 11 (v0.2.8): the engineer behind the claimed session, frozen at
 // confirm so every attempt at a note posts the same body. Older rows have
 // none and render as before.
 const markerEngineerSchemaV11 = `ALTER TABLE assignment_markers ADD COLUMN engineer TEXT NOT NULL DEFAULT '';`

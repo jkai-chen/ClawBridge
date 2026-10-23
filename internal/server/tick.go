@@ -96,12 +96,16 @@ func newTickHandler(verifier TickVerifier, ticker Ticker) http.Handler {
 			fail(w, 401, "unauthenticated", "the scheduler's token is required")
 			return
 		}
-		// The tick survives the scheduler giving up on the request, within
-		// its own deadline: a lease and its reports are fenced anyway.
-		ctx, cancel = context.WithTimeout(context.WithoutCancel(r.Context()), tickDeadline)
-		defer cancel()
-		report := ticker.Tick(ctx)
+		// The tick outlives the request (the server's write timeout is
+		// shorter than a tick), within its own deadline; leases and their
+		// reports are fenced anyway, so an overlapping tick does no harm.
+		go func() {
+			ctx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), tickDeadline)
+			defer cancel()
+			ticker.Tick(ctx)
+		}()
 		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(map[string]any{"ticks": report})
+		w.WriteHeader(http.StatusAccepted)
+		_ = json.NewEncoder(w).Encode(map[string]any{"accepted": true})
 	})
 }

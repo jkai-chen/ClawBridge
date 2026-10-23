@@ -502,6 +502,10 @@ func Run(ctx context.Context, args []string) error {
 	if dsn == "" {
 		return errors.New("Postgres connection environment variable is empty")
 	}
+	watch, err := readWatchSettings(os.Getenv)
+	if err != nil {
+		return err
+	}
 	verifier, err := NewGoogleVerifierForAudiences(ctx, audiences)
 	if err != nil {
 		return err
@@ -515,8 +519,9 @@ func Run(ctx context.Context, args []string) error {
 	if err != nil {
 		return err
 	}
+	options := startWatcher(ctx, store, watch, HandlerOptions{OAuth: metadata, Writer: writer})
 	// A Linear write the server runs as the app may take up to a minute.
-	srv := &http.Server{Addr: *listen, Handler: NewHandlerWithApp(store, verifier, metadata, writer), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 20 * time.Second, WriteTimeout: 80 * time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 24 << 10}
+	srv := &http.Server{Addr: *listen, Handler: NewHandlerWithOptions(store, verifier, options), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 20 * time.Second, WriteTimeout: 80 * time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 24 << 10}
 	result := make(chan error, 1)
 	go func() { result <- srv.ListenAndServe() }()
 	select {

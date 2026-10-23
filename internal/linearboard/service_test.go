@@ -40,7 +40,7 @@ func (a *fakeAuthority) Execute(_ context.Context, r bus.Request) (bus.Result, e
 		if a.accesses == a.failAccess {
 			return bus.Result{}, errors.New("authority unavailable")
 		}
-		return bus.Result{Source: "local-authority", Data: bus.TaskboardAccess{WorkspaceID: a.binding.WorkspaceID, ProjectID: a.binding.ProjectID, SessionID: "ses", CanWrite: !a.deny, ProjectRole: "member"}}, nil
+		return bus.Result{Source: "local-authority", Data: bus.TaskboardAccess{WorkspaceID: a.binding.WorkspaceID, ProjectID: a.binding.ProjectID, SessionID: "ses", SessionName: "ses", CanWrite: !a.deny, ProjectRole: "member"}}, nil
 	}
 	if r.Operation != "taskboard_get" {
 		return bus.Result{}, errors.New("unexpected authority write")

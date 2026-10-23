@@ -26,6 +26,7 @@ func TestPureReadClassification(t *testing.T) {
 		{"taskboard_get_v2", "me", session, true},
 		{"taskboard_access", "me", session, true},
 		{"taskboard_access", "", nil, true},
+		{"linear_comments_posted", "me", session, true},
 		{"list_projects", "", nil, true},
 		{"list_members", "", nil, true},
 		{"list_sessions", "", nil, true},
@@ -228,7 +229,8 @@ var pureReadCases = []readLockCase{
 	{"list_sessions", "", nil}, {"history", "", nil}, {"whoami", "", nil},
 	{"list_projects", "", nil}, {"list_members", "", nil},
 	{"snapshot", "me", nil}, {"inbox_status", "me", nil}, {"notification_status", "me", nil},
-	{"taskboard_get", "me", nil}, {"taskboard_get_v2", "me", nil}, {"taskboard_access", "me", nil},
+	{"taskboard_get", "me", nil}, {"taskboard_get_v2", "me", nil}, {"taskboard_access", "me", map[string]any{"ledger": 1}},
+	{"linear_comments_posted", "me", map[string]any{"issue_uuid": "00000000-0000-4000-8000-000000000001", "comment_ids": []any{}}},
 }
 
 // Reads must not queue behind a held workspace lock (a 5s lock_timeout there

@@ -123,7 +123,7 @@ func (s *Store) migrate() error {
 	if err = tx.QueryRow("PRAGMA user_version").Scan(&version); err != nil {
 		return err
 	}
-	if version > 6 {
+	if version > 7 {
 		return errors.New("database schema is newer than this ClawBridge binary")
 	}
 	if version == 0 {
@@ -160,6 +160,11 @@ func (s *Store) migrate() error {
 	}
 	if version < 6 {
 		if _, err = tx.Exec(identitySchemaV6 + `PRAGMA user_version=6;`); err != nil {
+			return err
+		}
+	}
+	if version < 7 {
+		if _, err = tx.Exec(commentSchemaV7 + `PRAGMA user_version=7;`); err != nil {
 			return err
 		}
 	}
@@ -333,21 +338,28 @@ func sessionAddress(v string) (string, []any) {
 
 // operationArgs names every operation and the argument keys it accepts.
 var operationArgs = map[string]string{
-	"taskboard_get":           "instance",
-	"taskboard_get_v2":        "instance",
-	"taskboard_set_v2":        "instance expected_revision mode linear_team_ids linear_default_team_id linear_project_ids linear_workspace_id",
-	"taskboard_clear_v2":      "instance expected_revision repair",
-	"taskboard_access":        "instance",
-	"taskboard_set":           "instance expected_revision linear_team_ids linear_default_team_id linear_project_id linear_workspace_id",
-	"taskboard_clear":         "instance expected_revision repair",
-	"inbox_status":            "instance after",
-	"notification_status":     "instance after",
-	"set_notification_policy": "instance policy",
-	"assignment_propose":      "instance issue_uuid issue_identifier task_role scope_repo scope_paths",
-	"assignment_confirm":      "instance target_session revision allow_overlap",
-	"assignment_release":      "instance target_session revision",
-	"coordinator_set":         "instance target_session",
-	"workspace_init":          "mode name retention_days", "project_create": "slug name git_remote", "list_projects": "", "list_members": "", "register_session": "instance resume role agent_kind model host account notes transport", "list_sessions": "instance status role limit after issue scope_path assignment_state", "send": "instance to body kind thread_id operation_id coordination", "reply": "instance message_id body kind operation_id coordination", "inbox": "instance unread_only limit after", "mark_read": "instance ids", "update_session": "instance target_session role model host account notes transport", "retire_session": "instance target_session successor status", "history": "instance entity key limit after", "whoami": "instance", "message_status": "instance message_id", "resolve_project": "git_remote instance", "snapshot": "instance", "project_role_set": "instance principal role", "project_role_revoke": "instance principal", "purge_expired": "instance", "principal_unbind": "principal allow_previous", "workspace_set_domains": "domains",
+	"taskboard_get":               "instance",
+	"taskboard_get_v2":            "instance",
+	"taskboard_set_v2":            "instance expected_revision mode linear_team_ids linear_default_team_id linear_project_ids linear_workspace_id",
+	"taskboard_clear_v2":          "instance expected_revision repair",
+	"taskboard_access":            "instance ledger",
+	"taskboard_set":               "instance expected_revision linear_team_ids linear_default_team_id linear_project_id linear_workspace_id",
+	"taskboard_clear":             "instance expected_revision repair",
+	"inbox_status":                "instance after",
+	"notification_status":         "instance after",
+	"set_notification_policy":     "instance policy",
+	"assignment_propose":          "instance issue_uuid issue_identifier task_role scope_repo scope_paths",
+	"assignment_confirm":          "instance target_session revision allow_overlap",
+	"assignment_release":          "instance target_session revision",
+	"coordinator_set":             "instance target_session",
+	"linear_comment_reserve":      "instance issue_uuid operation_id body_sha256 parent_id in_response_to",
+	"linear_comment_settle":       "instance operation_id outcome comment_id via",
+	"linear_comments_posted":      "instance issue_uuid comment_ids",
+	"linear_comment_settle_match": "instance lease_token generation operation_digest issue_uuid comment_id created_at",
+	"comment_watch_lease":         "instance action lease_token generation budget",
+	"comment_watch_due":           "instance lease_token generation",
+	"comment_watch_report":        "instance lease_token generation issue_uuid calls error comments",
+	"workspace_init":              "mode name retention_days", "project_create": "slug name git_remote", "list_projects": "", "list_members": "", "register_session": "instance resume role agent_kind model host account notes transport", "list_sessions": "instance status role limit after issue scope_path assignment_state", "send": "instance to body kind thread_id operation_id coordination", "reply": "instance message_id body kind operation_id coordination", "inbox": "instance unread_only limit after", "mark_read": "instance ids", "update_session": "instance target_session role model host account notes transport", "retire_session": "instance target_session successor status", "history": "instance entity key limit after", "whoami": "instance", "message_status": "instance message_id", "resolve_project": "git_remote instance", "snapshot": "instance", "project_role_set": "instance principal role", "project_role_revoke": "instance principal", "purge_expired": "instance", "principal_unbind": "principal allow_previous", "workspace_set_domains": "domains",
 }
 
 func validateArgs(op string, a map[string]any) error {
@@ -360,7 +372,7 @@ func validateArgs(op string, a map[string]any) error {
 			return fmt.Errorf("unsupported argument %q for %s", k, op)
 		}
 		switch k {
-		case "retention_days", "limit", "after", "expected_revision":
+		case "retention_days", "limit", "after", "expected_revision", "ledger", "generation", "budget", "calls":
 			if _, err := integer(v); err != nil {
 				return fmt.Errorf("%s: %w", k, err)
 			}
@@ -378,7 +390,11 @@ func validateArgs(op string, a map[string]any) error {
 			if _, ok := v.(map[string]any); !ok {
 				return errors.New("transport must be an object")
 			}
-		case "ids", "linear_team_ids", "linear_project_ids", "scope_paths", "domains":
+		case "comments":
+			if _, ok := v.([]any); !ok {
+				return errors.New("comments must be an array of objects")
+			}
+		case "ids", "linear_team_ids", "linear_project_ids", "scope_paths", "domains", "comment_ids":
 			switch v.(type) {
 			case []string, []any:
 			default:
@@ -520,7 +536,7 @@ func pureRead(r Request) bool {
 	switch r.Operation {
 	case "snapshot", "inbox_status", "notification_status", "taskboard_get", "taskboard_get_v2", "taskboard_access", "list_projects", "list_members":
 		return true
-	case "list_sessions", "history", "whoami":
+	case "list_sessions", "history", "whoami", "linear_comments_posted":
 		// Naming a session with its instance makes it a heartbeat read: the
 		// read itself is pure and the heartbeat follows (see beat).
 		return (r.Session == "") == (str(r.Args, "instance") == "")
@@ -860,9 +876,16 @@ func (s *Store) execute(ctx context.Context, tx *transaction, r Request) (any, e
 			return nil, errors.New("instance requires session")
 		}
 		if r.Operation == "taskboard_access" {
+			// Only a client that records its comments in the ledger may
+			// write to Linear: an older one would post comments the
+			// watcher takes for a human's.
+			if n, e := integer(a["ledger"]); e != nil || n != 1 {
+				return nil, invalid(upgradeRequired)
+			}
 			access := TaskboardAccess{WorkspaceID: wid, ProjectID: pid, ProjectRole: projectRole, CanWrite: projectRole != "reader"}
 			if actor != nil {
 				access.SessionID = actor["id"].(string)
+				access.SessionName = actor["name"].(string)
 				access.CanWrite = access.CanWrite && actor["status"] == "active"
 			}
 			return accessMap(access), nil
@@ -924,6 +947,9 @@ func (s *Store) execute(ctx context.Context, tx *transaction, r Request) (any, e
 	tx.actorID = sid
 	if assignmentOperation(r.Operation) {
 		return s.assignment(ctx, tx, w, p, projectRole, actor, r)
+	}
+	if commentOperation(r.Operation) {
+		return s.commentOp(ctx, tx, w, p, projectRole, actor, r)
 	}
 	target := actor
 	if selector := str(a, "target_session"); selector != "" {

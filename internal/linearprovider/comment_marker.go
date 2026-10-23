@@ -4,6 +4,8 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"regexp"
+	"strings"
+	"unicode/utf8"
 )
 
 // CommentMarkerReserve is the room a caller's comment body leaves for the
@@ -19,20 +21,24 @@ var markerSessionName = regexp.MustCompile(`\A[A-Za-z0-9][A-Za-z0-9._-]{0,127}\z
 const markerNameRunes = 32
 
 // commentMarker matches the marker as a body's final paragraph, with or
-// without a (possibly cut) session name.
-var commentMarker = regexp.MustCompile(`(?:\A|\n\n)— 🤖 ClawBridge agent(?: · session ([A-Za-z0-9][A-Za-z0-9._-]{0,31}|[A-Za-z0-9][A-Za-z0-9._-]{30}…))?\z`)
+// without a (possibly cut) session name, and with or without the engineer.
+var commentMarker = regexp.MustCompile(`(?:\A|\n\n)— 🤖 ClawBridge agent(?: · session ([A-Za-z0-9][A-Za-z0-9._-]{0,31}|[A-Za-z0-9][A-Za-z0-9._-]{30}…))?(?: · [^\n·]{1,40})?\z`)
 
 // MarkComment is the body ClawBridge posts for a caller's comment: the body,
 // a blank line, and a fixed attribution line naming the session when its
-// name is a plain session name, cut to markerNameRunes characters. The line
-// holds nothing secret and fits in CommentMarkerReserve.
-func MarkComment(body, session string) string {
+// name is a plain session name, cut to markerNameRunes characters, and the
+// engineer behind it, as the authority named them (bus.EngineerName). The
+// line holds nothing secret beyond those and fits in CommentMarkerReserve.
+func MarkComment(body, session, engineer string) string {
 	line := commentMarkerLead
 	if markerSessionName.MatchString(session) {
 		if len(session) > markerNameRunes {
 			session = session[:markerNameRunes-1] + "…"
 		}
 		line += " · session " + session
+	}
+	if engineer = strings.TrimSpace(engineer); engineer != "" && utf8.RuneCountInString(engineer) <= 40 && !strings.ContainsAny(engineer, "\n\r·") {
+		line += " · " + engineer
 	}
 	return body + "\n\n" + line
 }

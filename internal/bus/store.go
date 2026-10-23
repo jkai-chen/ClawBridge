@@ -358,7 +358,8 @@ var operationArgs = map[string]string{
 	"comment_watch_status":        "",
 	"taskboard_set_v2":            "instance expected_revision mode linear_team_ids linear_default_team_id linear_project_ids linear_workspace_id",
 	"taskboard_clear_v2":          "instance expected_revision repair",
-	"taskboard_access":            "instance ledger",
+	"taskboard_access":            "instance ledger engineer",
+	"member_display_name_set":     "display_name",
 	"taskboard_set":               "instance expected_revision linear_team_ids linear_default_team_id linear_project_id linear_workspace_id",
 	"taskboard_clear":             "instance expected_revision repair",
 	"inbox_status":                "instance after",
@@ -395,7 +396,7 @@ func validateArgs(op string, a map[string]any) error {
 			return fmt.Errorf("unsupported argument %q for %s", k, op)
 		}
 		switch k {
-		case "retention_days", "limit", "after", "expected_revision", "ledger", "generation", "budget", "calls", "policy_revision":
+		case "retention_days", "limit", "after", "expected_revision", "ledger", "generation", "budget", "calls", "policy_revision", "engineer":
 			if _, err := integer(v); err != nil {
 				return fmt.Errorf("%s: %w", k, err)
 			}
@@ -733,7 +734,7 @@ func (s *Store) execute(ctx context.Context, tx *transaction, r Request) (any, e
 	if r.Operation == "principal_unbind" {
 		return s.unbindPrincipal(ctx, tx, a)
 	}
-	if !s.postgres && (r.Operation == "snapshot" || r.Operation == "project_role_set" || r.Operation == "project_role_revoke" || r.Operation == "purge_expired" || r.Operation == "workspace_set_domains") {
+	if !s.postgres && (r.Operation == "snapshot" || r.Operation == "project_role_set" || r.Operation == "project_role_revoke" || r.Operation == "purge_expired" || r.Operation == "workspace_set_domains" || r.Operation == "member_display_name_set") {
 		return nil, errors.New("operation requires hosted authority")
 	}
 	if r.Workspace == "" {
@@ -785,6 +786,9 @@ func (s *Store) execute(ctx context.Context, tx *transaction, r Request) (any, e
 		}
 		if r.Operation == "workspace_set_domains" {
 			return s.setWorkspaceDomains(ctx, tx, w, a)
+		}
+		if r.Operation == "member_display_name_set" {
+			return s.setDisplayName(ctx, tx, wid, a)
 		}
 		if r.Operation == "project_create" && w["owner_principal"] != s.principal {
 			return nil, errors.New("workspace owner required to create projects")
@@ -926,7 +930,17 @@ func (s *Store) execute(ctx context.Context, tx *transaction, r Request) (any, e
 				access.SessionName = actor["name"].(string)
 				access.CanWrite = access.CanWrite && actor["status"] == "active"
 			}
-			return accessMap(access), nil
+			out := accessMap(access)
+			// A client that asks gets the engineer behind the session, from
+			// the authority's records; an older client never sees the field.
+			if n, e := integer(a["engineer"]); e == nil && n == 1 && actor != nil {
+				engineer, e := s.engineerOf(ctx, tx, wid, actor)
+				if e != nil {
+					return nil, e
+				}
+				out["engineer"] = engineer
+			}
+			return out, nil
 		}
 		if r.Operation != "taskboard_get" && r.Operation != "taskboard_get_v2" && r.Operation != "taskboard_access" {
 			if projectRole != "owner" && projectRole != "lead" {

@@ -19,24 +19,42 @@ func TestCommentMarkerFormat(t *testing.T) {
 		strings.Repeat("n", 32): "hi\n\n— 🤖 ClawBridge agent · session " + strings.Repeat("n", 32),
 		strings.Repeat("n", 33): "hi\n\n— 🤖 ClawBridge agent · session " + strings.Repeat("n", 31) + "…",
 	} {
-		if got := MarkComment("hi", session); got != want {
+		if got := MarkComment("hi", session, ""); got != want {
 			t.Fatalf("%q: %q", session, got)
 		}
 	}
-	long := MarkComment("", strings.Repeat("s", 128))
+	// The engineer follows the session, and only a short one-line name.
+	for engineer, want := range map[string]string{
+		"Ada Lovelace":          "hi\n\n— 🤖 ClawBridge agent · session x · Ada Lovelace",
+		" ada@example.test ":    "hi\n\n— 🤖 ClawBridge agent · session x · ada@example.test",
+		strings.Repeat("e", 40): "hi\n\n— 🤖 ClawBridge agent · session x · " + strings.Repeat("e", 40),
+		strings.Repeat("e", 41): "hi\n\n— 🤖 ClawBridge agent · session x",
+		"two\nlines":            "hi\n\n— 🤖 ClawBridge agent · session x",
+		"a · b":                 "hi\n\n— 🤖 ClawBridge agent · session x",
+	} {
+		if got := MarkComment("hi", "x", engineer); got != want {
+			t.Fatalf("%q: %q", engineer, got)
+		}
+	}
+	if got := MarkComment("hi", "", "Ada"); got != "hi\n\n— 🤖 ClawBridge agent · Ada" {
+		t.Fatal(got)
+	}
+	long := MarkComment("", strings.Repeat("s", 128), strings.Repeat("é", 40))
 	if len(long)-len("") > CommentMarkerReserve {
 		t.Fatal("marker exceeds its reserve", len(long))
 	}
 	for body, want := range map[string]string{
-		MarkComment("hi", "sub-engineer"):                                 "sub-engineer",
-		MarkComment("hi", ""):                                             "",
-		MarkComment("hi", strings.Repeat("n", 40)):                        strings.Repeat("n", 31) + "…",
+		MarkComment("hi", "sub-engineer", ""):                             "sub-engineer",
+		MarkComment("hi", "", ""):                                         "",
+		MarkComment("hi", strings.Repeat("n", 40), ""):                    strings.Repeat("n", 31) + "…",
 		"hi\n\n— 🤖 ClawBridge agent · session " + strings.Repeat("n", 33): "",
 		"— 🤖 ClawBridge agent · session solo":                             "solo",
 		"hi\n— 🤖 ClawBridge agent · session x":                            "",
-		MarkComment("hi", "x") + "\nmore":                                 "",
+		MarkComment("hi", "x", "") + "\nmore":                             "",
 		"hi\n\n— 🤖 ClawBridge agent · session x y":                        "",
 		"quoted — 🤖 ClawBridge agent · session x elsewhere":               "",
+		MarkComment("hi", "sub-engineer", "Ada Lovelace"):                 "sub-engineer",
+		MarkComment("hi", "sub-engineer", "ada@example.test"):             "sub-engineer",
 	} {
 		if got := commentMarkerSession(body); got != want {
 			t.Fatalf("%q: got %q want %q", body, got, want)
@@ -72,7 +90,7 @@ func TestCommentMarkerTypedByAHumanIsNotOwnership(t *testing.T) {
 // The top-level comment's receipt and readback must show the exact posted
 // body, marker included, when they show a body at all.
 func TestCommentReceiptAndReadbackMatchThePostedBody(t *testing.T) {
-	posted := MarkComment("status", "sub-engineer")
+	posted := MarkComment("status", "sub-engineer", "")
 	row := commentRow(commentID, "2026-10-23T11:59:59Z", "2026-10-23T11:59:59Z")
 	for name, c := range map[string]struct {
 		receipt map[string]any

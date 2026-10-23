@@ -712,7 +712,7 @@ func (s *Service) WriteV2(ctx context.Context, scope bus.Request, in WriteInputV
 			// the issue by it.
 			// Every posted comment ends with the agent marker; the ledger
 			// keeps the caller's body, so a retry matches as before.
-			posted := linearprovider.MarkComment(in.Body, markerSession(access))
+			posted := linearprovider.MarkComment(in.Body, markerSession(access), access.Engineer)
 			if in.marker {
 				posted = in.Body
 			}

@@ -218,7 +218,14 @@ func (s *Service) access(ctx context.Context, scope bus.Request) (bus.TaskboardA
 	// The server refuses Linear writes from a client that does not
 	// record its comments in the ledger.
 	scope.Args["ledger"] = 1
+	// The marker names the engineer behind the session, from the authority.
+	scope.Args["engineer"] = 1
 	result, err := s.cfg.Executor.Execute(ctx, scope)
+	if err != nil && strings.Contains(err.Error(), `unsupported argument "engineer"`) {
+		// A server older than v0.2.7 names no engineer; the marker omits it.
+		delete(scope.Args, "engineer")
+		result, err = s.cfg.Executor.Execute(ctx, scope)
+	}
 	if err != nil && strings.Contains(err.Error(), `unsupported argument "ledger"`) {
 		return bus.TaskboardAccess{}, errors.New("the ClawBridge server is older than this client and cannot record Linear comments; upgrade the server first (nothing was sent)")
 	}
@@ -657,7 +664,7 @@ func (s *Service) Write(ctx context.Context, scope bus.Request, in WriteInput) (
 			}
 			return s.postReceipt(ctx, scope, b, map[string]any{"id": issue.ID, "identifier": issue.Identifier, "team_id": issue.TeamID, "project_id": issue.ProjectID})
 		default:
-			posted := linearprovider.MarkComment(in.Body, markerSession(access))
+			posted := linearprovider.MarkComment(in.Body, markerSession(access), access.Engineer)
 			receipt, _, e := s.sendComment(ctx, scope, l, namespace, commentIntent{Issue: in.IssueID, OperationID: in.OperationID, Body: posted}, func() (linearprovider.Receipt, error) {
 				receipt, e := p.Comment(ctx, in.IssueID, posted)
 				if e != nil {

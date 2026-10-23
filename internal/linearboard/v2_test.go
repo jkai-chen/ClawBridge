@@ -31,6 +31,8 @@ type authorityV2 struct {
 	accesses    int
 	afterAccess func(int)
 	name        string
+	engineer    string
+	accessArgs  map[string]any
 	comments    fakeCommentLedger
 }
 
@@ -40,7 +42,12 @@ func (a *authorityV2) Execute(_ context.Context, r bus.Request) (bus.Result, err
 		if a.afterAccess != nil {
 			a.afterAccess(a.accesses)
 		}
-		return bus.Result{Source: "local-authority", Data: bus.TaskboardAccess{WorkspaceID: a.b.WorkspaceID, ProjectID: a.b.ProjectID, SessionID: a.actor, SessionName: a.name, CanWrite: !a.deny, ProjectRole: "member"}}, nil
+		a.accessArgs = r.Args
+		access := bus.TaskboardAccess{WorkspaceID: a.b.WorkspaceID, ProjectID: a.b.ProjectID, SessionID: a.actor, SessionName: a.name, CanWrite: !a.deny, ProjectRole: "member"}
+		if r.Args["engineer"] == 1 {
+			access.Engineer = a.engineer
+		}
+		return bus.Result{Source: "local-authority", Data: access}, nil
 	}
 	if r.Operation == "taskboard_get" {
 		return bus.Result{Source: "local-authority", Data: a.old}, nil

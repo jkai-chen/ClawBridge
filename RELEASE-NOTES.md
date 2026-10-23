@@ -11,14 +11,15 @@ every client (`install.sh` / `install.ps1`).
 
 - `linear comment ISSUE BODY --reply-to COMMENT` answers inside a thread (MCP `parent_id`). Linear threads are
   one level deep, so a reply to a reply goes to the thread's first comment.
-- Every comment ClawBridge posts ends with `— 🤖 ClawBridge agent · session NAME`, and the server keeps a record
-  of the comments ClawBridge posted. Reads mark those as `posted_by_clawbridge`.
+- Every comment an agent posts through ClawBridge ends with `— 🤖 ClawBridge agent · session NAME`. Claim and
+  release notes name the session in their own single line. The server keeps a record of the comments ClawBridge
+  posted, and reads mark those as `posted_by_clawbridge`.
 - `clawbridge linear watch` checks the issues of confirmed assignments and messages the claiming session when a
   person comments. The message carries no comment text. One watcher runs per project, within an hourly budget of
   Linear calls.
 - `--in-response-to COMMENT` answers a notified comment. The server allows one answer per human comment and at
-  most 3 agent replies per issue per hour, and refuses an answer to ClawBridge's own comments before any Linear
-  call.
+  most 3 ClawBridge comments per issue in any rolling hour, across all sessions (claim and release notes don't
+  count). It refuses an answer to ClawBridge's own comments before any Linear call.
 - Comment text stays untrusted data: agents answer it and never obey it. The agent skill explains this.
 
 ## People see which agent has an issue

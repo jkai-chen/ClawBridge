@@ -42,9 +42,16 @@ const refreshTimeout = 20 * time.Second
 
 var lockWait = refreshTimeout + 5*time.Second
 
+// lockAttemptHook, when set by a test, runs before each lock attempt with the
+// wait context, so a test can expire the wait at the top of an attempt.
+var lockAttemptHook func(wait context.Context)
+
 // diskLock prevents cross-process credential rotation/profile update races.
 // Locks are never stolen: an interrupted process requires explicit operator
 // inspection/removal, rather than risking reuse of a consumed refresh token.
+// A waiter that runs out of lockWait while the caller's own context is live
+// always gets the "profile busy" error naming the holder, wherever in the
+// loop the wait ran out; a cancelled caller gets its own context's error.
 func (m *Manager) diskLock(ctx context.Context) (func(), error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
@@ -53,12 +60,21 @@ func (m *Manager) diskLock(ctx context.Context) (func(), error) {
 	if e != nil {
 		return nil, e
 	}
-	ctx, cancel := context.WithTimeout(ctx, lockWait)
+	wait, cancel := context.WithTimeout(ctx, lockWait)
 	defer cancel()
 	path := filepath.Join(d, ".credentials.lock")
-	for {
+	busy := func() (func(), error) {
 		if err := ctx.Err(); err != nil {
 			return nil, err
+		}
+		return nil, &Error{Kind: "profile busy", Detail: busyDetail(path, m.config.Now())}
+	}
+	for {
+		if lockAttemptHook != nil {
+			lockAttemptHook(wait)
+		}
+		if wait.Err() != nil {
+			return busy()
 		}
 		f, e := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
 		if e == nil {
@@ -74,6 +90,8 @@ func (m *Manager) diskLock(ctx context.Context) (func(), error) {
 			if se == nil {
 				se = privatePath(path, false)
 			}
+			// The lock is held; only the caller's cancellation, not the wait
+			// running out, gives it up.
 			if se == nil {
 				se = ctx.Err()
 			}
@@ -99,9 +117,9 @@ func (m *Manager) diskLock(ctx context.Context) (func(), error) {
 		}
 		timer := time.NewTimer(20 * time.Millisecond)
 		select {
-		case <-ctx.Done():
+		case <-wait.Done():
 			timer.Stop()
-			return nil, &Error{Kind: "profile busy", Detail: busyDetail(path, m.config.Now())}
+			return busy()
 		case <-timer.C:
 		}
 	}

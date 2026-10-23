@@ -105,6 +105,16 @@ func TestSharedLedgerAnswersLikeThePrivateLedger(t *testing.T) {
 		if _, err := l.write("ns", "op-1", "other", send(receipt, nil)); err == nil || !strings.Contains(err.Error(), "different scoped payload") {
 			t.Fatal(name, "another payload under the same ID", err)
 		}
+		// A replay finds the record whatever its payload; a lookup does not.
+		if _, _, err := l.lookup("ns", "op-1", "other"); err == nil || !strings.Contains(err.Error(), "different scoped payload") {
+			t.Fatal(name, "lookup with another payload", err)
+		}
+		if got, found, err := l.lookupAny("ns", "op-1"); err != nil || !found || got.(map[string]any)["id"] != receipt["id"] {
+			t.Fatal(name, "lookupAny", got, found, err)
+		}
+		if _, found, err := l.lookupAny("ns", "op-missing"); err != nil || found {
+			t.Fatal(name, "lookupAny of a missing operation", found, err)
+		}
 		// Not dispatched: the ID stays free, and the error keeps its type.
 		var never notDispatchedError
 		if _, err := l.write("ns", "op-2", "p", send(nil, notDispatched(errors.New("timeout")))); !errors.As(err, &never) {

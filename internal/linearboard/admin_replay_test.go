@@ -160,3 +160,18 @@ func TestLedgerWriteRefusesAnotherPayloadForTheSameOperation(t *testing.T) {
 		t.Fatal("lookupAny", r, ok, e)
 	}
 }
+
+// A service with a shared ledger (a hosted server) replays from that ledger,
+// the one its admin writes were recorded in.
+func TestAdminAuditReplayUsesTheServiceLedger(t *testing.T) {
+	s, a, p, scope := adminTest(t)
+	s.cfg.Ledger = SharedLedger(newMemLedgerStore(), nil)
+	a.auditErr = errors.New("authority unavailable")
+	if r, e := s.Admin(context.Background(), scope, AdminInput{Kind: "project_create", OperationID: "rp-04", TeamID: teamID, Name: "Q4"}); e != nil || !strings.HasPrefix(r.Audit, "failed") {
+		t.Fatal(r, e)
+	}
+	a.authorityV2.b.Revision = 2
+	if r, e := s.AdminAuditReplay(context.Background(), scope, "rp-04"); e != nil || r.Audit != "recorded" || len(a.audits) != 1 || len(p.writes) != 1 {
+		t.Fatal("replay from the shared ledger", r, e, a.audits)
+	}
+}

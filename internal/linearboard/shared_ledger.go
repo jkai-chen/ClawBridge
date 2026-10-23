@@ -53,7 +53,9 @@ const inProgressFor = 75 * time.Second
 // checks its files. A young pending record without a reason is still being
 // dispatched by another call: in progress, not uncertain, so the caller
 // retries the same operation_id instead of reading back too early.
-func decodeRecord(raw, hash string, now time.Time) (any, bool, error) {
+// matchPayload compares the payload digest; only a replay (lookupAny) reads
+// without it.
+func decodeRecord(raw, hash string, now time.Time, matchPayload bool) (any, bool, error) {
 	var previous ledgerRecord
 	if json.Unmarshal([]byte(raw), &previous) != nil || previous.Version != 1 || len(previous.Digest) != 64 {
 		return nil, true, errors.New("corrupt operation ledger")
@@ -61,7 +63,7 @@ func decodeRecord(raw, hash string, now time.Time) (any, bool, error) {
 	if _, e := time.Parse(time.RFC3339Nano, previous.UpdatedAt); e != nil {
 		return nil, true, errors.New("corrupt operation timestamp")
 	}
-	if previous.Digest != hash {
+	if matchPayload && previous.Digest != hash {
 		return nil, true, errors.New("operation_id already used with a different scoped payload")
 	}
 	if at, _ := time.Parse(time.RFC3339Nano, previous.UpdatedAt); previous.State == "pending" && previous.Reason == "" && now.Sub(at) < inProgressFor {
@@ -71,6 +73,14 @@ func decodeRecord(raw, hash string, now time.Time) (any, bool, error) {
 }
 
 func (l sharedLedger) lookup(namespace, operationID string, payload any) (any, bool, error) {
+	return l.find(namespace, operationID, digest(payload), true)
+}
+
+func (l sharedLedger) lookupAny(namespace, operationID string) (any, bool, error) {
+	return l.find(namespace, operationID, "", false)
+}
+
+func (l sharedLedger) find(namespace, operationID, hash string, matchPayload bool) (any, bool, error) {
 	if !operationPattern.MatchString(operationID) {
 		return nil, false, errors.New("invalid operation ledger selection")
 	}
@@ -81,7 +91,7 @@ func (l sharedLedger) lookup(namespace, operationID string, payload any) (any, b
 	if !found {
 		return nil, false, nil
 	}
-	return decodeRecord(raw, digest(payload), l.now())
+	return decodeRecord(raw, hash, l.now(), matchPayload)
 }
 
 func (l sharedLedger) write(namespace, operationID string, payload any, dispatch func() (any, error)) (any, error) {
@@ -96,7 +106,7 @@ func (l sharedLedger) write(namespace, operationID string, payload any, dispatch
 		return nil, errors.New("cannot record the operation in the shared ledger; nothing was sent")
 	}
 	if !created {
-		receipt, _, e := decodeRecord(existing, hash, l.now())
+		receipt, _, e := decodeRecord(existing, hash, l.now(), true)
 		return receipt, e
 	}
 	receipt, err := dispatch()

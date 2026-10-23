@@ -33,6 +33,9 @@ func TestPostgresIntakeRolesAndRequest(t *testing.T) {
 	if _, err := f.in("coordinator_set", "coord", map[string]any{"target_session": "coord"}); err != nil {
 		t.Fatal(err)
 	}
+	if _, err := f.in("intake_policy_set", "coord", map[string]any{"signals": []any{"S5"}}); err != nil {
+		t.Fatal(err)
+	}
 	created, err := f.in("intake_token_create", "coord", map[string]any{})
 	if err != nil {
 		t.Fatal(err)

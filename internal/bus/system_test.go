@@ -55,9 +55,13 @@ func TestSystemSessionIsUnreachableFromRequests(t *testing.T) {
 		}
 	}
 	// @all never includes it, and list_sessions hides it.
-	sent := h.call("send", "a", map[string]any{"to": "@all", "body": "hello", "operation_id": "all"}).(map[string]any)
-	if strings.Contains(strings.Join(anyStrings(sent["recipients"]), ","), str(sys, "id")) {
-		t.Fatal("@all reached the system session:", sent)
+	h.call("send", "a", map[string]any{"to": "@all", "body": "hello", "operation_id": "all"})
+	if e := h.errorOf("send", "a", map[string]any{"to": "@role:system", "body": "hello", "operation_id": "role"}); !strings.Contains(e, "no active recipients") {
+		t.Fatal("@role:system found a recipient:", e)
+	}
+	var delivered int
+	if e := h.s.db.QueryRow(`SELECT COUNT(*) FROM deliveries WHERE recipient_id=?`, str(sys, "id")).Scan(&delivered); e != nil || delivered != 0 {
+		t.Fatal("@all or @role reached the system session:", delivered, e)
 	}
 	list := h.call("list_sessions", "a", nil).(map[string]any)
 	for _, s := range list["sessions"].([]map[string]any) {

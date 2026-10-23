@@ -742,6 +742,50 @@ clawbridge linear admin audit-replay --operation-id ID
   a comment or issue write, or one still running is refused.
 - A replay of a write already in history answers `"audit": "already"`.
 
+## Issue intake (v0.3)
+
+Linear can tell ClawBridge that an issue needs an agent. ClawBridge queues the issue and, by default, tells the
+project's coordinator session, which then routes it.
+
+**Signals.** Each signal is polled by the server's own watcher, at no Linear Agent cost:
+- **S1:** a person adds the `needs-agent` label (one label of that exact name per team);
+- **S2:** a person **delegates** the issue to the ClawBridge Linear app. The app can be a delegate, never an
+  assignee: Linear accepts an "assign to the app" and silently does nothing;
+- **S3:** a person @-mentions the app in a comment.
+- S4 (every new issue) is off.
+
+**Who asked matters.**
+- Only Linear users on the project's trusted list (`clawbridge intake trust add LINEAR_USER_ID`) can ever let a
+  signal go beyond telling the coordinator. ClawBridge reads who added the label, delegated the issue or wrote
+  the mention from Linear's own history.
+- Anyone else's signal, a bot's, or one whose author can't be proven only notifies the coordinator.
+- An issue's title and description never route anything. They become the agent's task, and the trusted person
+  vouches for them as they stood at that moment.
+
+**Modes:** `clawbridge intake policy set --intake-mode off|notify`. The default is `notify`. Offers and automatic
+assignment come later.
+
+**The queue:** `clawbridge intake list`, `dismiss ISSUE`, `rearm ISSUE`.
+- An issue is queued once.
+- After it is done, the same label or delegation does not queue it again. Re-adding the label, delegating again,
+  or a rearm does.
+- A dismissed issue stays dismissed until a new signal (the label re-added, a new delegation or mention) or a
+  rearm. A Loop's request does not lift a dismissal.
+
+**Linear Loops (S5) are an opt-in, and cost credit.**
+- A Linear Loop can ask for an agent through the send-only endpoint `https://<server>/mcp/intake`.
+- **Each Loop run costs about $0.05 of Linear Agent credit**, so the server watcher above is the primary path. S5
+  is off unless the project turns it on (`clawbridge intake policy set --signals S1 --signals S2 --signals S3
+  --signals S5`).
+- If you use it, give the Loop a narrow trigger.
+- Setup:
+  1. A lead creates a project token with `clawbridge intake token create`. It is shown once.
+  2. A Linear admin adds the server under Settings → AI & Agents → MCP servers → Custom URL, with the header
+     `Authorization: Bearer <token>`.
+- The endpoint takes one typed argument (the issue), returns nothing about the issue, and is rate-limited per
+  token and per project.
+- A Loop's request can at most be offered to a session, never confirmed automatically.
+
 ## Accounts and recovery
 
 Use a separate connection profile for each Linear workspace/account. Switching a

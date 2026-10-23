@@ -59,6 +59,79 @@ func linearCapabilities(ctx context.Context, manager *linearconn.Manager, profil
 	return provider.Capabilities(ctx)
 }
 
+// linearViewer reads the profile's own Linear user.
+func linearViewer(ctx context.Context, manager *linearconn.Manager, profileID string) (linearprovider.Viewer, error) {
+	profile, err := manager.Status(ctx, profileID)
+	if err != nil {
+		return linearprovider.Viewer{}, err
+	}
+	client, err := manager.HTTPClient(ctx, profileID)
+	if err != nil {
+		return linearprovider.Viewer{}, err
+	}
+	provider, err := openLinearProvider(ctx, client, profile.Access == linearconn.Read)
+	if err != nil {
+		return linearprovider.Viewer{}, err
+	}
+	defer provider.Close()
+	return provider.Viewer(ctx)
+}
+
+// viewerName is the name agent markers show for a Linear user: the full
+// name people read, else the @-handle, which the server strips of its "@".
+func viewerName(v linearprovider.Viewer) string {
+	if name := strings.TrimSpace(v.Name); name != "" {
+		return name
+	}
+	return strings.TrimSpace(v.DisplayName)
+}
+
+// recordLinearDisplayName records the caller's name for agent markers on
+// the hosted server of the current ClawBridge project.
+func recordLinearDisplayName(ctx context.Context, flags Config, name string, ifUnset bool) (any, error) {
+	executor, closeExecutor, scope, err := linearExecutor(ctx, flags)
+	if err != nil {
+		return nil, err
+	}
+	defer closeExecutor()
+	args := map[string]any{"display_name": name}
+	if ifUnset {
+		args["if_unset"] = 1
+	}
+	result, err := executor.Execute(ctx, bus.Request{Operation: "member_display_name_set", Workspace: scope.Workspace, Args: args})
+	if err != nil {
+		return nil, err
+	}
+	return result.Data, nil
+}
+
+// captureEngineerAtConnect records the connected Linear user's name as the
+// engineer agent markers show, when this directory uses a hosted server and
+// no name is recorded yet. It never fails the connection: it returns a note
+// for the user, or "" when there is nothing to say.
+func captureEngineerAtConnect(ctx context.Context, flags Config, manager *linearconn.Manager, profileID string) string {
+	c, _, err := resolveConfig(ctx, flags)
+	if err != nil || c.Mode != "cloud" || c.Workspace == "" || c.Project == "" {
+		return ""
+	}
+	retry := "; run clawbridge linear display-name capture --profile " + profileID + " to retry"
+	viewer, err := linearViewer(ctx, manager, profileID)
+	if err != nil {
+		return "linear: could not read your Linear name for agent markers (" + linearCapabilityCode(err) + ")" + retry
+	}
+	name := viewerName(viewer)
+	if name == "" {
+		return ""
+	}
+	data, err := recordLinearDisplayName(ctx, flags, name, true)
+	if err != nil {
+		return "linear: could not record your name for agent markers" + retry
+	}
+	recorded, _ := data.(map[string]any)
+	engineer, _ := recorded["engineer"].(string)
+	return fmt.Sprintf("linear: agent markers name you as %q; change it with clawbridge linear display-name set NAME", engineer)
+}
+
 // openLinearBrowser opens the Linear sign-in URL and reports whether the
 // launch was confirmed; an unconfirmed launch is not an error.
 var openLinearBrowser = func(ctx context.Context, url string) (bool, error) {
@@ -216,6 +289,9 @@ func parseLinear(command string, args []string, stderr io.Writer) (linearFlags, 
 		write()
 		f.StringVar(&v.description, "description", "", "create: the initiative's description")
 		min, max = 1, 2
+	case "display-name":
+		profile()
+		min, max = 0, 1
 	case "label-policy":
 		f.StringVar(&v.policyFile, "file", "", "set: JSON file {\"labels\": [names], \"renames\": {old: new}}")
 		f.Int64Var(&v.revision, "expected-revision", -1, "set: the policy revision you last read")
@@ -241,7 +317,7 @@ func parseLinear(command string, args []string, stderr io.Writer) (linearFlags, 
 	if len(pos) < min || len(pos) > max {
 		return v, nil, errors.New("invalid Linear positional arguments")
 	}
-	needsProfile := command != "profiles" && command != "connect" && command != "login" && command != "import" && command != "binding" && command != "unlink" && command != "label-policy"
+	needsProfile := command != "profiles" && command != "connect" && command != "login" && command != "import" && command != "binding" && command != "unlink" && command != "label-policy" && command != "display-name"
 	if needsProfile && !validLinearProfile(v.profile) {
 		return v, nil, errors.New("select --profile with the opaque ID from linear profiles")
 	}
@@ -582,7 +658,7 @@ func linearWriteInput(command string, v linearFlags, pos []string) (linearboard.
 
 func runLinear(ctx context.Context, flags Config, args []string, stdout, stderr io.Writer) error {
 	if len(args) == 0 || len(args) == 1 && (args[0] == "--help" || args[0] == "-h" || args[0] == "help") {
-		_, err := io.WriteString(stdout, "clawbridge linear connect|import|profiles|status|logout|teams|projects|binding|link|unlink|context|issues|issue|states|labels|members|create|update|comment|relation|watch\nProject owner only: label create|rename, project create, initiative create|add-project, label-policy show|set.\nUse COMMAND --help for explicit flags. Token import accepts --token-stdin only.\n")
+		_, err := io.WriteString(stdout, "clawbridge linear connect|import|profiles|status|logout|teams|projects|binding|link|unlink|context|issues|issue|states|labels|members|create|update|comment|relation|watch\nProject owner only: label create|rename, project create, initiative create|add-project, label-policy show|set.\nYour name in agent markers: display-name set NAME|clear|capture --profile ID.\nUse COMMAND --help for explicit flags. Token import accepts --token-stdin only.\n")
 		return err
 	}
 	command := args[0]
@@ -596,7 +672,7 @@ func runLinear(ctx context.Context, flags Config, args []string, stdout, stderr 
 		parseArgs = parseArgs[1:]
 	}
 	adminAction := ""
-	if (command == "label" || command == "project" || command == "initiative" || command == "label-policy") && len(parseArgs) > 0 && parseArgs[0] != "--help" && parseArgs[0] != "-h" {
+	if (command == "label" || command == "project" || command == "initiative" || command == "label-policy" || command == "display-name") && len(parseArgs) > 0 && parseArgs[0] != "--help" && parseArgs[0] != "-h" {
 		adminAction = parseArgs[0]
 		parseArgs = parseArgs[1:]
 	}
@@ -604,8 +680,9 @@ func runLinear(ctx context.Context, flags Config, args []string, stdout, stderr 
 	case command == "label" && adminAction != "create" && adminAction != "rename",
 		command == "project" && adminAction != "create",
 		command == "initiative" && adminAction != "create" && adminAction != "add-project",
-		command == "label-policy" && adminAction != "show" && adminAction != "set":
-		return errors.New("use linear label create|rename, project create, initiative create|add-project, or label-policy show|set")
+		command == "label-policy" && adminAction != "show" && adminAction != "set",
+		command == "display-name" && adminAction != "set" && adminAction != "clear" && adminAction != "capture":
+		return errors.New("use linear label create|rename, project create, initiative create|add-project, label-policy show|set, or display-name set|clear|capture")
 	}
 	v, pos, err := parseLinear(command, parseArgs, stderr)
 	v.relationAction = relationAction
@@ -646,7 +723,32 @@ func runLinear(ctx context.Context, flags Config, args []string, stdout, stderr 
 		if e != nil {
 			return e
 		}
+		if note := captureEngineerAtConnect(bounded, flags, manager, profile.ID); note != "" {
+			_, _ = fmt.Fprintln(stderr, note)
+		}
 		return emit(profile)
+	case "display-name":
+		name := ""
+		switch {
+		case adminAction == "set" && len(pos) == 1 && strings.TrimSpace(pos[0]) != "":
+			name = pos[0]
+		case adminAction == "clear" && len(pos) == 0:
+		case adminAction == "capture" && len(pos) == 0 && validLinearProfile(v.profile):
+			viewer, e := linearViewer(bounded, manager, v.profile)
+			if e != nil {
+				return e
+			}
+			if name = viewerName(viewer); name == "" {
+				return errors.New("your Linear user has no name to record; use linear display-name set NAME")
+			}
+		default:
+			return errors.New("use linear display-name set NAME, clear, or capture --profile ID")
+		}
+		data, e := recordLinearDisplayName(bounded, flags, name, false)
+		if e != nil {
+			return e
+		}
+		return emit(data)
 	case "import":
 		reader, cleanupInput, e := newLinearImportReader(bounded, os.Stdin)
 		if e != nil {

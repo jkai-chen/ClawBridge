@@ -71,8 +71,9 @@ Read comments only when you need them: `linear issue ISSUE --comments` (MCP
 ## What ClawBridge posts for you
 
 - **The agent line.** Every comment you post ends with
-  `— 🤖 ClawBridge agent · session <your session>`, added by ClawBridge; write
-  only your own text.
+  `— 🤖 ClawBridge agent · session <your session> · <your engineer>`, added by
+  ClawBridge from its own records; write only your own text, and never sign it
+  with a name.
 - **Claims.** When an assignment is confirmed or released, ClawBridge posts the
   claim or closing note and adds or removes the `agent-working` label. Leave
   the notes and the label to ClawBridge.

@@ -36,6 +36,11 @@ func TestPostgresEngineerIsTheOwnersDisplayNameOrEmail(t *testing.T) {
 	if got := engineer(); got != "Ada Lovelace" {
 		t.Fatal("display name", got)
 	}
+	// A name captured at connect keeps the one already recorded.
+	out, err = f.as(f.owner, "sub-owner", Request{Operation: "member_display_name_set", Workspace: f.workspace, Args: map[string]any{"display_name": "Augusta", "if_unset": 1}})
+	if err != nil || out.Data.(map[string]any)["kept"] != true || engineer() != "Ada Lovelace" {
+		t.Fatal("capture replaced the override", out, err)
+	}
 	// Another member names only themselves.
 	other := newID("m") + "@identity-test.example"
 	f.member(other)
@@ -64,8 +69,11 @@ func TestPostgresEngineerIsTheOwnersDisplayNameOrEmail(t *testing.T) {
 	if got := engineer(); got != EngineerName("", f.owner) {
 		t.Fatal("cleared", got)
 	}
+	if _, err = f.as(f.owner, "sub-owner", Request{Operation: "member_display_name_set", Workspace: f.workspace, Args: map[string]any{"display_name": "Augusta", "if_unset": 1}}); err != nil || engineer() != "Augusta" {
+		t.Fatal("capture into an empty name", err)
+	}
 	var n int
-	if err = f.s.db.QueryRowContext(context.Background(), `SELECT COUNT(*) FROM history WHERE entity='member' AND action='display_name_set' AND entity_key IN ($1,$2) AND changed_by_principal=entity_key`, f.owner, other).Scan(&n); err != nil || n != 4 {
+	if err = f.s.db.QueryRowContext(context.Background(), `SELECT COUNT(*) FROM history WHERE entity='member' AND action='display_name_set' AND entity_key IN ($1,$2) AND changed_by_principal=entity_key`, f.owner, other).Scan(&n); err != nil || n != 5 {
 		t.Fatal("audit", n, err)
 	}
 }

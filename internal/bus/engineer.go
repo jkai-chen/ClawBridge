@@ -69,8 +69,9 @@ func (s *Store) engineerOf(ctx context.Context, tx *transaction, wid string, act
 }
 
 // setDisplayName records the caller's own Linear display name in the
-// workspace: the member override, and what `linear connect` captures. An
-// empty name clears it, so the marker falls back to the principal.
+// workspace: the member override, and what `linear connect` captures
+// (if_unset: 1, which keeps a name already recorded). An empty name clears
+// it, so the marker falls back to the principal.
 func (s *Store) setDisplayName(ctx context.Context, tx *transaction, wid string, a map[string]any) (any, error) {
 	if !s.postgres {
 		return nil, invalid("a display name is recorded on a hosted server; a local store names the OS user")
@@ -79,16 +80,23 @@ func (s *Store) setDisplayName(ctx context.Context, tx *transaction, wid string,
 	if utf8.RuneCountInString(raw) > 200 {
 		return nil, invalid("a display name is up to 200 characters")
 	}
-	name := cleanDisplayName(raw)
-	r, err := tx.ExecContext(ctx, `UPDATE members SET display_name=? WHERE workspace_id=? AND principal=?`, name, wid, s.principal)
+	current := ""
+	err := tx.QueryRowContext(ctx, `SELECT display_name FROM members WHERE workspace_id=? AND principal=?`, wid, s.principal).Scan(&current)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, errors.New("workspace membership required")
+	}
 	if err != nil {
 		return nil, err
 	}
-	if n, _ := r.RowsAffected(); n != 1 {
-		return nil, errors.New("workspace membership required")
+	if n, _ := integer(a["if_unset"]); n == 1 && current != "" {
+		return map[string]any{"display_name": current, "engineer": EngineerName(current, s.principal), "kept": true}, nil
+	}
+	name := cleanDisplayName(raw)
+	if _, err = tx.ExecContext(ctx, `UPDATE members SET display_name=? WHERE workspace_id=? AND principal=?`, name, wid, s.principal); err != nil {
+		return nil, err
 	}
 	if err = s.audit(ctx, tx, wid, "", "", "member", s.principal, "display_name_set", map[string]any{"set": name != ""}); err != nil {
 		return nil, err
 	}
-	return map[string]any{"display_name": name, "engineer": EngineerName(name, s.principal)}, nil
+	return map[string]any{"display_name": name, "engineer": EngineerName(name, s.principal), "kept": false}, nil
 }

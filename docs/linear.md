@@ -424,14 +424,33 @@ itself (claim and release notes name the session in their own single line
 instead):
 
 ```text
-— 🤖 ClawBridge agent · session SESSION_NAME
+— 🤖 ClawBridge agent · session SESSION_NAME · ENGINEER
 ```
 
 - `SESSION_NAME` is the posting session's name as the bus resolves it, however
   you addressed the session; it is already visible to workspace members, and is
   cut to 32 characters (31 and `…`). Session IDs never go to Linear. Name
-  sessions with a role or slug, never personal or secret data. The line carries
-  nothing else.
+  sessions with a role or slug, never personal or secret data.
+- `ENGINEER` is the person behind the agent: the session owner's name as
+  recorded on the hosted server, else **their verified email**. The server
+  supplies it from its own records; an agent cannot set or change it. Linear
+  shows it to everyone who can see the issue, so **without a recorded name your
+  email is visible to the whole Linear team**. It loses `@`, links and Markdown,
+  and is cut to 40 characters (39 and `…`). A server older than v0.2.7 names no
+  engineer, and the line ends after the session. The line carries nothing else.
+- **Recording your name.** On a hosted server, `clawbridge linear connect`
+  records your Linear name (your full name, else your handle without `@`) when
+  you have none recorded yet. Change or remove it at any time:
+
+  ```bash
+  clawbridge linear display-name set "Ada Lovelace"
+  clawbridge linear display-name clear        # markers show your email again
+  clawbridge linear display-name capture --profile PROFILE_ID  # take it from Linear again
+  ```
+
+  The name is per workspace, and members listings show it. A cleared name is
+  captured again at your next `linear connect`. A local store has no names, and
+  its markers show the OS user.
 - Callers cannot leave it out. It takes up to 256 bytes, so a comment body may
   be at most 65,280 bytes (65,536 minus 256).
 - The operation ledger keeps your body without the marker, so a retry with the
@@ -533,7 +552,8 @@ ended.
   applies, the claimer's for its own release. The note names the agent session.
 - **Session names reach Linear**, where every member of the team can read them:
   name sessions with a role or slug, never a person's name, email, customer or
-  secret.
+  secret. The person behind the agent is named separately, by the server (see
+  [the agent marker](#the-agent-marker)).
 
 | Explicit field | Meaning |
 | --- | --- |

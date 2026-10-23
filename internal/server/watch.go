@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"log"
-	"os"
 	"strings"
 	"time"
 
@@ -20,8 +19,8 @@ import (
 
 // NewWatcher builds the server's watcher over the Linear app; tests
 // replace it.
-var NewWatcher = func(_ context.Context, store *bus.Store, app *linearapp.App, ledgerDirectory string) (Ticker, error) {
-	return watcherTicker{&watcher.Watcher{Store: store, App: watcherApp{app}, LedgerDirectory: ledgerDirectory}}, nil
+var NewWatcher = func(_ context.Context, store *bus.Store, app *linearapp.App) (Ticker, error) {
+	return watcherTicker{&watcher.Watcher{Store: store, App: watcherApp{app}, Ledger: linearboard.SharedLedger(store, nil)}}, nil
 }
 
 // watcherApp is the server's Linear app as the watcher uses it.
@@ -57,18 +56,16 @@ func (t watcherTicker) Tick(ctx context.Context) any { return t.w.Tick(ctx) }
 // watchSettings is the watcher's environment.
 type watchSettings struct {
 	interval                  time.Duration
-	ledgerDirectory           string
 	tickAudience, tickAccount string
 }
 
 // readWatchSettings reads CLAWBRIDGE_WATCH_INTERVAL (1m–30m, empty for no
-// in-process clock), CLAWBRIDGE_WATCH_LEDGER_DIR (a writable directory for
-// the app's marker writes) and the two tick variables (both or neither).
+// in-process clock) and the two tick variables (both or neither). The
+// app's marker writes use the shared operation ledger in Postgres.
 func readWatchSettings(getenv func(string) string) (watchSettings, error) {
 	w := watchSettings{
-		ledgerDirectory: strings.TrimSpace(getenv("CLAWBRIDGE_WATCH_LEDGER_DIR")),
-		tickAudience:    strings.TrimSpace(getenv("CLAWBRIDGE_TICK_AUDIENCE")),
-		tickAccount:     strings.TrimSpace(getenv("CLAWBRIDGE_TICK_SERVICE_ACCOUNT")),
+		tickAudience: strings.TrimSpace(getenv("CLAWBRIDGE_TICK_AUDIENCE")),
+		tickAccount:  strings.TrimSpace(getenv("CLAWBRIDGE_TICK_SERVICE_ACCOUNT")),
 	}
 	if raw := strings.TrimSpace(getenv("CLAWBRIDGE_WATCH_INTERVAL")); raw != "" {
 		d, err := time.ParseDuration(raw)
@@ -79,9 +76,6 @@ func readWatchSettings(getenv func(string) string) (watchSettings, error) {
 	}
 	if (w.tickAudience == "") != (w.tickAccount == "") {
 		return w, fmt.Errorf("set both CLAWBRIDGE_TICK_AUDIENCE and CLAWBRIDGE_TICK_SERVICE_ACCOUNT, or neither")
-	}
-	if (w.interval > 0 || w.tickAudience != "") && w.ledgerDirectory == "" {
-		return w, fmt.Errorf("the watcher needs CLAWBRIDGE_WATCH_LEDGER_DIR, a writable directory")
 	}
 	return w, nil
 }
@@ -99,15 +93,14 @@ func startWatcher(ctx context.Context, store *bus.Store, w watchSettings, opts H
 		log.Print("watcher: off (the Linear app is not configured)")
 		return opts
 	}
-	if err := os.MkdirAll(w.ledgerDirectory, 0o700); err != nil {
-		log.Print("watcher: off (its ledger directory is not writable)")
-		return opts
-	}
-	ticker, err := NewWatcher(ctx, store, opts.Writer.App, w.ledgerDirectory)
-	if err != nil || ticker == nil {
+	built, err := NewWatcher(ctx, store, opts.Writer.App)
+	if err != nil || built == nil {
 		log.Print("watcher: off (the Linear app is not configured)")
 		return opts
 	}
+	// The clock and the endpoint share one flight, so their ticks never
+	// overlap.
+	ticker := oneAtATime(built)
 	if w.tickAudience != "" {
 		verifier, err := NewGoogleTickVerifier(ctx, w.tickAudience, w.tickAccount)
 		if err != nil {

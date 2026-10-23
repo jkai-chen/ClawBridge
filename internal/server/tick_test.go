@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -133,15 +134,14 @@ func TestWatchSettings(t *testing.T) {
 	if w, err := readWatchSettings(env()); err != nil || w.wanted() {
 		t.Fatal("no settings should leave the watcher off:", w, err)
 	}
-	w, err := readWatchSettings(env("CLAWBRIDGE_WATCH_INTERVAL", "2m", "CLAWBRIDGE_WATCH_LEDGER_DIR", "/var/lib/clawbridge-watcher"))
+	w, err := readWatchSettings(env("CLAWBRIDGE_WATCH_INTERVAL", "2m"))
 	if err != nil || w.interval != 2*time.Minute || !w.wanted() || w.tickAudience != "" {
 		t.Fatal(w, err)
 	}
 	for name, e := range map[string]func(string) string{
-		"interval too short":      env("CLAWBRIDGE_WATCH_INTERVAL", "10s", "CLAWBRIDGE_WATCH_LEDGER_DIR", "/x"),
-		"interval not a duration": env("CLAWBRIDGE_WATCH_INTERVAL", "2", "CLAWBRIDGE_WATCH_LEDGER_DIR", "/x"),
-		"no ledger directory":     env("CLAWBRIDGE_WATCH_INTERVAL", "2m"),
-		"half the tick settings":  env("CLAWBRIDGE_TICK_AUDIENCE", tickURL, "CLAWBRIDGE_WATCH_LEDGER_DIR", "/x"),
+		"interval too short":      env("CLAWBRIDGE_WATCH_INTERVAL", "10s"),
+		"interval not a duration": env("CLAWBRIDGE_WATCH_INTERVAL", "2"),
+		"half the tick settings":  env("CLAWBRIDGE_TICK_AUDIENCE", tickURL),
 	} {
 		if _, err := readWatchSettings(e); err == nil {
 			t.Errorf("%s accepted", name)
@@ -168,7 +168,7 @@ func TestWatchLoopTicksUntilStopped(t *testing.T) {
 
 // Without the app wiring the watcher stays off, and the server still serves.
 func TestWatcherStaysOffWithoutTheApp(t *testing.T) {
-	opts := startWatcher(context.Background(), nil, watchSettings{interval: time.Minute, ledgerDirectory: t.TempDir()}, HandlerOptions{})
+	opts := startWatcher(context.Background(), nil, watchSettings{interval: time.Minute}, HandlerOptions{})
 	if opts.Ticker != nil || opts.TickVerifier != nil {
 		t.Fatal("a watcher started without the app")
 	}
@@ -179,31 +179,97 @@ func TestWatcherStaysOffWithoutTheApp(t *testing.T) {
 func TestWatcherStartsOverTheApp(t *testing.T) {
 	saved := NewWatcher
 	defer func() { NewWatcher = saved }()
-	app, dir := &linearapp.App{}, t.TempDir()
+	app := &linearapp.App{}
 	ticker := &countTicks{ticks: make(chan struct{}, 64)}
 	var gotApp *linearapp.App
-	var gotDir string
-	NewWatcher = func(_ context.Context, _ *bus.Store, a *linearapp.App, d string) (Ticker, error) {
-		gotApp, gotDir = a, d
+	NewWatcher = func(_ context.Context, _ *bus.Store, a *linearapp.App) (Ticker, error) {
+		gotApp = a
 		return ticker, nil
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	opts := startWatcher(ctx, nil, watchSettings{interval: 10 * time.Millisecond, ledgerDirectory: dir}, HandlerOptions{Writer: &AppWriter{App: app}})
-	if gotApp != app || gotDir != dir || opts.Writer == nil {
-		t.Fatal("the watcher was not built over the app", gotApp, gotDir)
+	opts := startWatcher(ctx, nil, watchSettings{interval: 10 * time.Millisecond}, HandlerOptions{Writer: &AppWriter{App: app}})
+	if gotApp != app || opts.Writer == nil {
+		t.Fatal("the watcher was not built over the app", gotApp)
 	}
 	if n := ticker.count(200 * time.Millisecond); n < 1 {
 		t.Fatal("the in-process clock did not tick the watcher")
 	}
 }
 
-// The default watcher wraps the server's app for the watcher package.
+// The default watcher wraps the server's app for the watcher package and
+// keeps its marker writes in the shared ledger, never on local disk (W-M1).
 func TestDefaultWatcherWrapsTheApp(t *testing.T) {
 	app := &linearapp.App{}
-	ticker, err := NewWatcher(context.Background(), nil, app, "/ledger")
+	ticker, err := NewWatcher(context.Background(), nil, app)
 	wt, ok := ticker.(watcherTicker)
-	if err != nil || !ok || wt.w.LedgerDirectory != "/ledger" || wt.w.App.(watcherApp).app != app {
+	if err != nil || !ok || wt.w.App.(watcherApp).app != app || wt.w.Ledger == nil || wt.w.LedgerDirectory != "" {
 		t.Fatal(ticker, err)
+	}
+}
+
+// blockTicks holds each tick until released.
+type blockTicks struct {
+	started chan struct{}
+	release chan struct{}
+}
+
+func (b *blockTicks) Tick(context.Context) any {
+	b.started <- struct{}{}
+	<-b.release
+	return nil
+}
+
+// W-L2: one tick at a time. While one runs the scheduler is told so and
+// nothing starts, and the in-process clock shares the same flight.
+func TestTickEndpointRunsOneTickAtATime(t *testing.T) {
+	ticker := &blockTicks{started: make(chan struct{}, 4), release: make(chan struct{})}
+	flight := oneAtATime(ticker)
+	host := httptest.NewServer(NewHandlerWithOptions(&fakeIntake{}, nil, HandlerOptions{TickVerifier: tickCheck{"scheduler-token"}, Ticker: flight}))
+	defer host.Close()
+	post := func() (int, string) {
+		req, _ := http.NewRequest(http.MethodPost, host.URL+TickPath, nil)
+		req.Header.Set("Authorization", "Bearer scheduler-token")
+		res, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer res.Body.Close()
+		var body strings.Builder
+		_, _ = io.Copy(&body, res.Body)
+		return res.StatusCode, body.String()
+	}
+	if code, _ := post(); code != http.StatusAccepted {
+		t.Fatal("first tick", code)
+	}
+	<-ticker.started
+	if code, body := post(); code != http.StatusOK || !strings.Contains(body, `"running":true`) {
+		t.Fatal("a second tick was started while one ran", code, body)
+	}
+	clock := make(chan any, 1)
+	go func() { clock <- flight.Tick(context.Background()) }()
+	select {
+	case got := <-clock:
+		if got == nil {
+			t.Fatal("the clock started a tick while one ran")
+		}
+	case <-time.After(time.Second):
+		t.Fatal("the clock started a tick while one ran")
+	}
+	close(ticker.release)
+	deadline := time.Now().Add(time.Second)
+	for flight.running.Load() && time.Now().Before(deadline) {
+		time.Sleep(5 * time.Millisecond)
+	}
+	if code, _ := post(); code != http.StatusAccepted {
+		t.Fatal("no tick after the first ended", code)
+	}
+	select {
+	case <-ticker.started:
+	case <-time.After(time.Second):
+		t.Fatal("the next tick did not run")
+	}
+	if len(ticker.started) != 0 {
+		t.Fatal("an extra tick ran")
 	}
 }

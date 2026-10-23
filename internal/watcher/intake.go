@@ -46,6 +46,9 @@ type IntakePoll struct {
 	Off        bool           `json:"off,omitempty"`
 	NoLabel    []string       `json:"no_label_teams,omitempty"`
 	Unreadable []string       `json:"unreadable_sources,omitempty"`
+	// Truncated sources had more than intakePages pages; their cursor
+	// stays, so what was not reached is read again next poll.
+	Truncated []string `json:"truncated_sources,omitempty"`
 }
 
 func (p *IntakePoll) skip(why string) {
@@ -118,9 +121,10 @@ func (w *Watcher) intake(ctx context.Context, svc *linearboard.Service, scope bu
 }
 
 // source polls one intake source when it is due. Its first poll only
-// starts the cursor: history never triggers. A read that fails leaves the
-// cursor, so nothing is skipped.
-func (r *intakeRun) source(ctx context.Context, source, subject string, read func(ctx context.Context, subject string, since time.Time) (bool, error)) {
+// starts the cursor: history never triggers. A read that fails, or that
+// stops at intakePages with more to read (W-L1), leaves the cursor, so
+// nothing is skipped.
+func (r *intakeRun) source(ctx context.Context, source, subject string, read func(ctx context.Context, subject string, since time.Time) (signal, complete bool, err error)) {
 	key := source + "|" + subject
 	cursor, seen := r.state.Cursors[key]
 	if seen && !cursor.Due {
@@ -135,23 +139,27 @@ func (r *intakeRun) source(ctx context.Context, source, subject string, read fun
 	if err != nil {
 		return
 	}
-	signal, err := read(ctx, subject, since.Add(-intakeLag))
+	signal, complete, err := read(ctx, subject, since.Add(-intakeLag))
 	if err != nil {
 		r.poll.Unreadable = append(r.poll.Unreadable, source)
 		return
+	}
+	if !complete {
+		r.poll.Truncated = append(r.poll.Truncated, source)
+		polled = cursor.Time
 	}
 	_ = r.w.Store.IntakeCursorSet(ctx, r.pid, source, subject, polled, signal)
 }
 
 // labelled is S1: the team's issues carrying needs-agent, updated since.
-func (r *intakeRun) labelled(ctx context.Context, team string, since time.Time) (bool, error) {
+func (r *intakeRun) labelled(ctx context.Context, team string, since time.Time) (bool, bool, error) {
 	label, err := r.needsAgent(ctx, team)
 	if err != nil {
-		return false, err
+		return false, false, err
 	}
 	if label == "" {
 		r.poll.NoLabel = append(r.poll.NoLabel, team)
-		return false, nil
+		return false, true, nil
 	}
 	signal := false
 	cursor := ""
@@ -159,7 +167,7 @@ func (r *intakeRun) labelled(ctx context.Context, team string, since time.Time) 
 		r.poll.Calls++
 		issues, err := r.svc.IssuesV2(ctx, r.scope, linearboard.IssuesInputV2{Limit: 50, Cursor: cursor, LabelID: label, UpdatedAfter: since.UTC().Format(time.RFC3339Nano)})
 		if err != nil {
-			return signal, err
+			return signal, false, err
 		}
 		for _, i := range issues.Items {
 			if i.TeamID != team {
@@ -168,11 +176,11 @@ func (r *intakeRun) labelled(ctx context.Context, team string, since time.Time) 
 			signal = r.candidate(ctx, "S1", i.ID, func(n historyEntry) bool { return contains(n.AddedLabelIDs, label) }, "", "") || signal
 		}
 		if issues.NextCursor == "" {
-			break
+			return signal, true, nil
 		}
 		cursor = issues.NextCursor
 	}
-	return signal, nil
+	return signal, false, nil
 }
 
 // needsAgent is the team's needs-agent label, by exact name among its
@@ -219,7 +227,7 @@ func (r *intakeRun) needsAgent(ctx context.Context, team string) (string, error)
 
 // delegated is S2: issues delegated to the app, updated since (probe I1:
 // the app can be a delegate, never an assignee).
-func (r *intakeRun) delegated(ctx context.Context, _ string, since time.Time) (bool, error) {
+func (r *intakeRun) delegated(ctx context.Context, _ string, since time.Time) (bool, bool, error) {
 	signal := false
 	var after any
 	for page := 0; page < intakePages; page++ {
@@ -233,23 +241,23 @@ func (r *intakeRun) delegated(ctx context.Context, _ string, since time.Time) (b
 		}
 		r.poll.Calls++
 		if err := r.w.App.GraphQL(ctx, delegatedQuery, map[string]any{"app": r.app.AppUserID, "since": since.UTC().Format(time.RFC3339Nano), "after": after}, &out); err != nil {
-			return signal, err
+			return signal, false, err
 		}
 		for _, n := range out.Issues.Nodes {
 			signal = r.candidate(ctx, "S2", n.ID, func(e historyEntry) bool { return e.ToDelegate != nil && e.ToDelegate.ID == r.app.AppUserID }, "", "") || signal
 		}
 		if !out.Issues.PageInfo.HasNextPage {
-			break
+			return signal, true, nil
 		}
 		after = out.Issues.PageInfo.EndCursor
 	}
-	return signal, nil
+	return signal, false, nil
 }
 
 // mentioned is S3: the app's issueCommentMention notifications since
 // (probe I2). The actor is the notification's typed actor; its title and
 // subtitle are never read.
-func (r *intakeRun) mentioned(ctx context.Context, _ string, since time.Time) (bool, error) {
+func (r *intakeRun) mentioned(ctx context.Context, _ string, since time.Time) (bool, bool, error) {
 	signal := false
 	var after any
 	for page := 0; page < intakePages; page++ {
@@ -271,7 +279,7 @@ func (r *intakeRun) mentioned(ctx context.Context, _ string, since time.Time) (b
 		}
 		r.poll.Calls++
 		if err := r.w.App.GraphQL(ctx, mentionsQuery, map[string]any{"first": 50, "after": after}, &out); err != nil {
-			return signal, err
+			return signal, false, err
 		}
 		older := false
 		for _, n := range out.Notifications.Nodes {
@@ -292,11 +300,11 @@ func (r *intakeRun) mentioned(ctx context.Context, _ string, since time.Time) (b
 		// Notifications are newest first: a page reaching past since ends
 		// the walk.
 		if older || !out.Notifications.PageInfo.HasNextPage {
-			break
+			return signal, true, nil
 		}
 		after = out.Notifications.PageInfo.EndCursor
 	}
-	return signal, nil
+	return signal, false, nil
 }
 
 // historyEntry is one issue history entry, as the actor proof reads it.

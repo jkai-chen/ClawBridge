@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"google.golang.org/api/idtoken"
@@ -27,6 +28,38 @@ type TickVerifier interface {
 // Ticker runs one watcher tick and reports it.
 type Ticker interface {
 	Tick(ctx context.Context) any
+}
+
+// singleFlight runs one tick at a time, shared by the in-process clock and
+// the tick endpoint (W-L2): a tick asked for while one runs is not started.
+type singleFlight struct {
+	ticker  Ticker
+	running atomic.Bool
+}
+
+// tickRunning is what a tick asked for while another runs reports.
+var tickRunning = map[string]any{"running": true}
+
+func oneAtATime(t Ticker) *singleFlight {
+	if s, ok := t.(*singleFlight); ok {
+		return s
+	}
+	return &singleFlight{ticker: t}
+}
+
+// claim reserves the next tick; run must follow a successful claim.
+func (s *singleFlight) claim() bool { return s.running.CompareAndSwap(false, true) }
+
+func (s *singleFlight) run(ctx context.Context) any {
+	defer s.running.Store(false)
+	return s.ticker.Tick(ctx)
+}
+
+func (s *singleFlight) Tick(ctx context.Context) any {
+	if !s.claim() {
+		return tickRunning
+	}
+	return s.run(ctx)
 }
 
 // GoogleTickVerifier checks a Google-signed ID token minted for the
@@ -75,6 +108,7 @@ func tickClaims(p *idtoken.Payload, audience, serviceAccount string, now time.Ti
 
 // newTickHandler serves TickPath: POST with the scheduler's bearer token.
 func newTickHandler(verifier TickVerifier, ticker Ticker) http.Handler {
+	flight := oneAtATime(ticker)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			fail(w, 405, "method_not_allowed", "POST required")
@@ -96,13 +130,19 @@ func newTickHandler(verifier TickVerifier, ticker Ticker) http.Handler {
 			fail(w, 401, "unauthenticated", "the scheduler's token is required")
 			return
 		}
+		// One tick at a time: while one runs, the scheduler is told so and
+		// nothing starts.
+		if !flight.claim() {
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(tickRunning)
+			return
+		}
 		// The tick outlives the request (the server's write timeout is
-		// shorter than a tick), within its own deadline; leases and their
-		// reports are fenced anyway, so an overlapping tick does no harm.
+		// shorter than a tick), within its own deadline.
 		go func() {
 			ctx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), tickDeadline)
 			defer cancel()
-			ticker.Tick(ctx)
+			flight.run(ctx)
 		}()
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusAccepted)

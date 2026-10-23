@@ -26,17 +26,35 @@ const (
 // ensureSystemSession creates a project's system session if it has none.
 // A session a person named clawbridge before the name was reserved keeps
 // working under a new name.
-func ensureSystemSession(ctx context.Context, tx *transaction, pid string) error {
+func (s *Store) ensureSystemSession(ctx context.Context, tx *transaction, wid, pid string) error {
 	rows, err := query(ctx, tx, `SELECT 1 FROM sessions WHERE project_id=? AND role='system' AND name=?`, pid, SystemSessionName)
 	if err != nil || len(rows) > 0 {
 		return err
 	}
-	taken, err := query(ctx, tx, `SELECT id FROM sessions WHERE project_id=? AND lower(name)=? AND role<>'system'`, pid, SystemSessionName)
+	taken, err := query(ctx, tx, `SELECT id,name FROM sessions WHERE project_id=? AND lower(name)=? AND role<>'system'`, pid, SystemSessionName)
 	if err != nil {
 		return err
 	}
-	for i, row := range taken {
-		if _, err = tx.ExecContext(ctx, `UPDATE sessions SET name=?,updated_at=? WHERE id=?`, fmt.Sprintf("clawbridge-user-%d", i+1), stamp(), row["id"]); err != nil {
+	// W-L3: a person's session holding the reserved name moves to the first
+	// free clawbridge-user-N, and the rename is in history.
+	n := 0
+	for _, row := range taken {
+		name := ""
+		for name == "" {
+			n++
+			candidate := fmt.Sprintf("clawbridge-user-%d", n)
+			used, err := query(ctx, tx, `SELECT 1 FROM sessions WHERE project_id=? AND lower(name)=?`, pid, candidate)
+			if err != nil {
+				return err
+			}
+			if len(used) == 0 {
+				name = candidate
+			}
+		}
+		if _, err = tx.ExecContext(ctx, `UPDATE sessions SET name=?,updated_at=? WHERE id=?`, name, stamp(), row["id"]); err != nil {
+			return err
+		}
+		if err = s.audit(ctx, tx, wid, pid, "", "session", str(row, "id"), "renamed", map[string]any{"from": str(row, "name"), "to": name, "reason": "reserved_name"}); err != nil {
 			return err
 		}
 	}
@@ -88,7 +106,9 @@ func (s *Store) ExecuteSystem(ctx context.Context, projectID string, r Request) 
 	if err != nil {
 		return Result{}, err
 	}
-	if err = ensureSystemSession(ctx, tx, projectID); err != nil {
+	scoped := *s
+	scoped.principal = systemPrincipal
+	if err = scoped.ensureSystemSession(ctx, tx, wid, projectID); err != nil {
 		return Result{}, err
 	}
 	actor, err := one(ctx, tx, `SELECT * FROM sessions WHERE project_id=? AND role='system' AND name=?`, projectID, SystemSessionName)
@@ -96,8 +116,6 @@ func (s *Store) ExecuteSystem(ctx context.Context, projectID string, r Request) 
 		return Result{}, classify(scopedError(err, "the project has no system session", "not_found"))
 	}
 	tx.actorID = str(actor, "id")
-	scoped := *s
-	scoped.principal = systemPrincipal
 	var out any
 	switch r.Operation {
 	case "taskboard_get_v2", "taskboard_get":

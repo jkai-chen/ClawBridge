@@ -124,3 +124,31 @@ func TestPostgresAppTokenPublishTakesTheAppLock(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+// A token is counted when Linear issues it; publishing it replaces that
+// row rather than counting it twice, and a lost one still counts.
+func TestPostgresMintedTokensCountOnce(t *testing.T) {
+	f := newPGIdentityFixture(t)
+	ctx := context.Background()
+	app := newID("app")
+	org := "b0000000-0000-4000-8000-0000000000b1"
+	now := time.Now().UTC().Truncate(time.Second)
+	used, lost := strings.Repeat("7", 64), strings.Repeat("8", 64)
+	for _, sha := range []string{used, lost} {
+		if err := f.s.RecordMintedAppToken(ctx, app, sha, now, now.Add(30*24*time.Hour)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, published, err := f.s.PublishAppToken(ctx, sealed(app, org, used, now), ""); err != nil || !published {
+		t.Fatal(published, err)
+	}
+	if n, err := f.s.AppTokensMinted(ctx, app, now.Add(-time.Hour)); err != nil || n != 2 {
+		t.Fatal("want the used and the lost token counted once each", n, err)
+	}
+	if live, found, err := f.s.LiveAppToken(ctx, app, ""); err != nil || !found || live.TokenSHA256 != used {
+		t.Fatal("a minted-only row was taken as live", live, err)
+	}
+	if err := f.s.RecordMintedAppToken(ctx, app, "short", now, now.Add(time.Hour)); err == nil {
+		t.Fatal("an invalid digest was recorded")
+	}
+}

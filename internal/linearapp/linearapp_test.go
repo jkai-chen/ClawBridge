@@ -26,10 +26,21 @@ var key = []byte("0123456789abcdef0123456789abcdef")
 // memStore is the bus's sealed-token store in memory: one live row per
 // app and organisation, published by compare-and-swap.
 type memStore struct {
-	mu     sync.Mutex
-	rows   []bus.AppToken
-	live   map[string]int
-	minted int
+	mu        sync.Mutex
+	rows      []bus.AppToken
+	live      map[string]int
+	minted    int
+	recordErr error
+}
+
+func (m *memStore) RecordMintedAppToken(context.Context, string, string, time.Time, time.Time) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.recordErr != nil {
+		return m.recordErr
+	}
+	m.minted++
+	return nil
 }
 
 func (m *memStore) LiveAppToken(_ context.Context, app, o string) (bus.AppToken, bool, error) {
@@ -45,7 +56,6 @@ func (m *memStore) LiveAppToken(_ context.Context, app, o string) (bus.AppToken,
 func (m *memStore) PublishAppToken(_ context.Context, t bus.AppToken, replaces string) (bus.AppToken, bool, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	m.minted++
 	k := t.AppClientID + "/" + t.LinearOrgID
 	if i, ok := m.live[k]; ok && i >= 0 && m.rows[i].TokenSHA256 != replaces {
 		return m.rows[i], false, nil
@@ -62,14 +72,15 @@ func (m *memStore) AppTokensMinted(context.Context, string, time.Time) (int, err
 
 // linear fakes api.linear.app: the token endpoint and GraphQL viewer.
 type linear struct {
-	mu        sync.Mutex
-	mints     int
-	viewers   int
-	tokenFail []int
-	scope     string
-	app       bool
-	forms     []string
-	auths     []string
+	mu         sync.Mutex
+	viewerFail int
+	mints      int
+	viewers    int
+	tokenFail  []int
+	scope      string
+	app        bool
+	forms      []string
+	auths      []string
 }
 
 func (l *linear) RoundTrip(r *http.Request) (*http.Response, error) {
@@ -98,6 +109,9 @@ func (l *linear) RoundTrip(r *http.Request) (*http.Response, error) {
 		return reply(200, map[string]any{"access_token": fmt.Sprintf("lin_oauth_token_%d", l.mints), "token_type": "Bearer", "expires_in": 2591999, "scope": scope})
 	case graphqlURL:
 		l.viewers++
+		if l.viewerFail != 0 {
+			return reply(l.viewerFail, map[string]any{})
+		}
 		return reply(200, map[string]any{"data": map[string]any{"viewer": map[string]any{"id": appUser, "app": l.app, "organization": map[string]any{"id": org}}}})
 	}
 	return nil, errors.New("unexpected " + r.URL.String())
@@ -219,5 +233,41 @@ func TestErrorsNeverCarryTheSecretOrToken(t *testing.T) {
 	}
 	if _, err := New(Config{ClientID: "c", Secret: secret, Key: []byte("short"), Store: &memStore{}}); err == nil || strings.Contains(err.Error(), secret) {
 		t.Fatal("bad key", err)
+	}
+}
+
+// A token Linear issued is counted at once, so one lost to a later step
+// still counts toward the limit; two lost in a row stop minting for an
+// hour; a token that cannot be counted is not used.
+func TestMintedTokensAreCountedBeforeAnythingElse(t *testing.T) {
+	now := time.Date(2026, 10, 23, 12, 0, 0, 0, time.UTC)
+	store := &memStore{live: map[string]int{}}
+	l := &linear{app: true, viewerFail: 503}
+	a := newApp(t, store, l, &now)
+	var e *Error
+	if _, _, err := a.Token(context.Background()); err == nil || store.minted != 1 {
+		t.Fatal("a token lost after the mint was not counted", err, store.minted)
+	}
+	now = now.Add(2 * time.Minute)
+	a.Token(context.Background())
+	now = now.Add(2 * time.Minute)
+	if _, _, err := a.Token(context.Background()); !errors.As(err, &e) || e.Code != "mint_backoff" || l.mints != 2 {
+		t.Fatal("no back-off after two lost mints", err, l.mints)
+	}
+	now = now.Add(time.Hour)
+	l.viewerFail = 0
+	if token, _, err := a.Token(context.Background()); err != nil || token == "" || store.minted != 3 {
+		t.Fatal("minting did not resume after the back-off", err, store.minted)
+	}
+	// Uncountable: the token is not used.
+	store = &memStore{live: map[string]int{}, recordErr: errors.New("database down")}
+	l = &linear{app: true}
+	if token, _, err := newApp(t, store, l, &now).Token(context.Background()); err == nil || token != "" || l.viewers != 0 {
+		t.Fatal("an uncounted token was used", token, err)
+	}
+	// A refused token at viewer is reported as such.
+	l = &linear{app: true, viewerFail: 401}
+	if _, _, err := newApp(t, &memStore{live: map[string]int{}}, l, &now).Token(context.Background()); !errors.As(err, &e) || e.Code != "token_rejected" {
+		t.Fatal(err)
 	}
 }

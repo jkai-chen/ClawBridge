@@ -86,6 +86,38 @@ func (p *Provider) saveStatusArgs(project, body, health string) ([]arg, bool) {
 	return []arg{a(project, "project", "projectId"), a(body, "body"), a(h, "health"), a(kind, "type")}, true
 }
 
+// kindArgs is the type argument a tool takes for a project update: none
+// when its schema has no type field, the enum's spelling of project when
+// it has one, and not ok when that enum lacks project. Linear's list and
+// delete require it (P8 dry run, 26 Oct).
+func (p *Provider) kindArgs(tool string) ([]arg, bool) {
+	if p.tools[tool] == nil {
+		return nil, false
+	}
+	props, _, e := schema(p.tools[tool])
+	if e != nil {
+		return nil, false
+	}
+	if _, has := props["type"]; !has {
+		return nil, true
+	}
+	kind := p.enumValue(tool, "type", "project")
+	if kind == "" {
+		return nil, false
+	}
+	return []arg{a(kind, "type")}, true
+}
+
+func (p *Provider) listStatusArgs(project string) ([]arg, bool) {
+	kind, ok := p.kindArgs("get_status_updates")
+	return append([]arg{a(project, "project", "projectId")}, kind...), ok
+}
+
+func (p *Provider) deleteStatusArgs(id string) ([]arg, bool) {
+	kind, ok := p.kindArgs("delete_status_update")
+	return append([]arg{a(id, "id", "statusUpdateId")}, kind...), ok
+}
+
 // StatusUpdatePreflight checks, sending nothing, that all three tools are
 // offered and accept what the probe would send: a project update with
 // health, its listing by project, and its deletion by ID. A probe that
@@ -93,13 +125,15 @@ func (p *Provider) saveStatusArgs(project, body, health string) ([]arg, bool) {
 func (p *Provider) StatusUpdatePreflight(health string) error {
 	sample := "00000000-0000-4000-8000-000000000001"
 	save, ok := p.saveStatusArgs(sample, "probe", health)
-	if !ok {
+	list, listOK := p.listStatusArgs(sample)
+	del, delOK := p.deleteStatusArgs(sample)
+	if !ok || !listOK || !delOK {
 		return fail("capability_unavailable")
 	}
 	for _, c := range []struct {
 		tool string
 		args []arg
-	}{{"save_status_update", save}, {"get_status_updates", []arg{a(sample, "project", "projectId")}}, {"delete_status_update", []arg{a(sample, "id", "statusUpdateId")}}} {
+	}{{"save_status_update", save}, {"get_status_updates", list}, {"delete_status_update", del}} {
 		if _, _, e := p.v2Negotiation([]string{c.tool}, c.args); e != nil {
 			return fail("capability_unavailable")
 		}
@@ -145,7 +179,11 @@ func (p *Provider) StatusUpdates(ctx context.Context, project, marker string) ([
 	if !ValidID(project) || marker == "" {
 		return nil, fail("invalid")
 	}
-	m, e := p.v2Call(ctx, []string{"get_status_updates"}, a(project, "project", "projectId"))
+	args, ok := p.listStatusArgs(project)
+	if !ok {
+		return nil, fail("capability_unavailable")
+	}
+	m, e := p.v2Call(ctx, []string{"get_status_updates"}, args...)
 	if e != nil {
 		return nil, e
 	}
@@ -180,6 +218,10 @@ func (p *Provider) DeleteStatusUpdate(ctx context.Context, id string) error {
 	if !ValidID(id) {
 		return fail("invalid")
 	}
-	_, e := p.v2Call(ctx, []string{"delete_status_update"}, a(id, "id", "statusUpdateId"))
+	args, ok := p.deleteStatusArgs(id)
+	if !ok {
+		return fail("capability_unavailable")
+	}
+	_, e := p.v2Call(ctx, []string{"delete_status_update"}, args...)
 	return e
 }

@@ -118,3 +118,55 @@ func TestStatusUpdateAnswerShapes(t *testing.T) {
 		t.Fatal("a list in an unknown key was read")
 	}
 }
+
+// The three tools exactly as the app's tool list showed them in the P8
+// dry run (26 Oct): every one requires type, list and delete included.
+func liveStatusTools() []*mcp.Tool {
+	s := map[string]any{"type": "string"}
+	kind := map[string]any{"type": "string", "enum": []any{"project", "initiative"}}
+	return []*mcp.Tool{
+		statusUpdateTool("save_status_update", map[string]any{"body": s, "health": map[string]any{"type": "string", "enum": []any{"onTrack", "atRisk", "offTrack"}},
+			"id": s, "initiative": s, "isDiffHidden": map[string]any{"type": "boolean"}, "project": s, "type": kind}, "type"),
+		statusUpdateTool("get_status_updates", map[string]any{"createdAt": s, "cursor": s, "id": s, "includeArchived": map[string]any{"type": "boolean"},
+			"initiative": s, "limit": map[string]any{"type": "number"}, "orderBy": map[string]any{"type": "string", "enum": []any{"createdAt", "updatedAt"}},
+			"project": s, "type": kind, "updatedAt": s, "user": s}, "type"),
+		statusUpdateTool("delete_status_update", map[string]any{"id": s, "type": kind}, "type", "id"),
+	}
+}
+
+// Against the live schemas the preflight passes, and the list and the
+// delete send type project beside the project and the ID.
+func TestStatusUpdateLiveSchemasSendType(t *testing.T) {
+	p, f := statusProvider(t, liveStatusTools(), map[string][]any{
+		"save_status_update":   {map[string]any{"id": suUpdate}},
+		"get_status_updates":   {map[string]any{"statusUpdates": []any{}}},
+		"delete_status_update": {map[string]any{"success": true}},
+	})
+	if e := p.StatusUpdatePreflight("onTrack"); e != nil {
+		t.Fatal(e)
+	}
+	if id, e := p.SaveStatusUpdate(context.Background(), suProject, "probe", "onTrack"); e != nil || id != suUpdate {
+		t.Fatal(id, e)
+	}
+	if _, e := p.StatusUpdates(context.Background(), suProject, "probe"); e != nil {
+		t.Fatal(e)
+	}
+	if e := p.DeleteStatusUpdate(context.Background(), suUpdate); e != nil {
+		t.Fatal(e)
+	}
+	if !reflect.DeepEqual(f.args[1], map[string]any{"project": suProject, "type": "project"}) || !reflect.DeepEqual(f.args[2], map[string]any{"id": suUpdate, "type": "project"}) {
+		t.Fatal("list and delete arguments", f.args[1], f.args[2])
+	}
+	// A list or delete whose type enum lacks project is refused before
+	// anything is sent, even where type is optional.
+	for i := 1; i <= 2; i++ {
+		tools := liveStatusTools()
+		in := tools[i].InputSchema.(map[string]any)
+		in["properties"].(map[string]any)["type"] = map[string]any{"type": "string", "enum": []any{"initiative"}}
+		in["required"] = []string{}
+		p, _ := statusProvider(t, tools, map[string][]any{})
+		if e := p.StatusUpdatePreflight("onTrack"); e == nil {
+			t.Fatal(tools[i].Name, "passed preflight without a project type")
+		}
+	}
+}

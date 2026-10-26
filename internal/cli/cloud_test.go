@@ -154,7 +154,7 @@ func TestCloudCheckLoopbackOnlyOverHTTP(t *testing.T) {
 
 func TestCloudCheckRejectsUnknownChecksAndPrintsATable(t *testing.T) {
 	isolated(t)
-	if err := Run(context.Background(), []string{"cloud", "check", "infra"}, &bytes.Buffer{}, &bytes.Buffer{}); err == nil || !strings.Contains(err.Error(), "unknown check") {
+	if err := Run(context.Background(), []string{"cloud", "check", "oauth"}, &bytes.Buffer{}, &bytes.Buffer{}); err == nil || !strings.Contains(err.Error(), "unknown check") {
 		t.Fatal(err)
 	}
 	withVersion(t, "1.2.3")

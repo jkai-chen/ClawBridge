@@ -73,6 +73,10 @@ echo "service db running Up 2 hours (healthy)"
 	if err := os.WriteFile(filepath.Join(dir, "docker"), []byte(docker), 0700); err != nil {
 		t.Fatal(err)
 	}
+	findmnt := "#!/bin/sh\necho /dev/sdb\n"
+	if err := os.WriteFile(filepath.Join(dir, "findmnt"), []byte(findmnt), 0700); err != nil {
+		t.Fatal(err)
+	}
 	run := func(path string) remoteFacts {
 		cmd := exec.Command("sh", "-c", factsScriptFor(path))
 		cmd.Env = append(os.Environ(), "PATH="+dir+":"+os.Getenv("PATH"))
@@ -111,14 +115,17 @@ echo "service db running Up 2 hours (healthy)"
 	if r := checkServices(run(ok)); r.Status != "pass" {
 		t.Fatalf("%+v", r)
 	}
-	if missing := run(filepath.Join(dir, "absent.env")); !missing.envMissing || len(missing.counts) != 0 {
+	if f.mount != "/dev/sdb" {
+		t.Fatalf("mount %q", f.mount)
+	}
+	if missing := run(filepath.Join(dir, "absent.env")); !missing.envMissing || len(missing.counts) != 0 || missing.mount != "/dev/sdb" {
 		t.Fatalf("missing env: %+v", missing)
 	}
 }
 
 func TestParseFactsIgnoresOtherLines(t *testing.T) {
-	f := parseFacts([]byte("Warning: Permanently added host\ncount A 1\ncount B x\ncount C 1 2\nservice api running Up\nservice\nenv missing now\n"))
-	if !reflect.DeepEqual(f.counts, map[string]int{"A": 1}) || !reflect.DeepEqual(f.services, map[string][]string{"api": {"running Up"}}) || f.envMissing {
+	f := parseFacts([]byte("Warning: Permanently added host\ncount A 1\ncount B x\ncount C 1 2\nservice api running Up\nservice\nenv missing now\nmount /dev/sdb extra\n"))
+	if !reflect.DeepEqual(f.counts, map[string]int{"A": 1}) || !reflect.DeepEqual(f.services, map[string][]string{"api": {"running Up"}}) || f.envMissing || f.mount != "" {
 		t.Fatalf("%+v", f)
 	}
 }

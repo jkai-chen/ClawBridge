@@ -364,8 +364,9 @@ the exact tagged commit. Extra version arguments fail before state access.
 
 ## Cloud check and secret entry
 
-`clawbridge cloud check [server|version|workspace|linear-app|all] [--server URL]
-[--client-config PATH] [--ssh HOST | --vm NAME --project P --zone Z] [--json]`
+`clawbridge cloud check [infra|server|version|workspace|linear-app|backups|all]
+[--server URL] [--client-config PATH] [--ssh HOST | --vm NAME --project P --zone Z]
+[--bucket NAME] [--json]`
 probes an own server during onboarding. Each
 check passes, warns or fails with a fixed reason code and one line of advice;
 `--json` returns source=cloud_check with a list of `{check, status, reason,
@@ -373,9 +374,11 @@ advice}`, otherwise a table. The exit status is non-zero when any check fails.
 
 | Check | Passes when | Reasons |
 |---|---|---|
+| `infra` | Google Cloud, with `--vm`: the VM is running; its external IP is a reserved static address in use; the server's domain resolves to that IP; TCP 443 answers; a non-boot disk is attached and mounted at `/var/lib/clawbridge-postgres` (`findmnt`, over the target) | `needs_vm`, `vm_unreadable`, `vm_not_running`, `no_external_ip`, `ip_not_static`, `no_server`, `dns_mismatch`, `port_closed`, `no_data_disk`, `ssh_failed`, `data_not_mounted` |
 | `server` | `GET /healthz` over HTTPS (plain HTTP only to loopback) answers 200 `{"status":"ok"}`, without following redirects; with a target, also every required setting of `deploy/compose.yaml` is set once in the env file, and the deployment's `api`, `caddy` and `db` containers run (`db` healthy) | `no_server`, `invalid_url`, `dns`, `tls`, `unreachable`, `http_status`, `not_clawbridge`, `ssh_failed`, `env_missing`, `setting_missing`, `setting_duplicate`, `service_down` |
 | `version` | the server's release equals the client's; a dev build on either side warns `dev_build` | `server_too_old`, `version_mismatch` |
 | `workspace` | `whoami` with the configured cloud profile shows the signed-in principal owns the workspace | `no_config`, `not_cloud`, `other_server`, `not_signed_in`, `no_workspace`, `whoami_failed`, `not_owner` |
+| `backups` | with `--bucket` and `--project`: the newest complete dump and checksum pair under `postgres/daily/` is under 26 hours old | `needs_bucket`, `needs_project`, `bucket_unreadable`, `no_backup`, `backup_stale` |
 | `linear-app` | with a target, the app's three entries are set once each; the server reports the app configured, its binding readable, and every bound team visible to it | `ssh_failed`, `app_settings_missing`, `not_configured`, `status_unreadable`, `binding_unreadable`, `teams_hidden`, and the `workspace` sign-in reasons |
 
 The server URL is `--server` or the configured one. The target (`--ssh HOST`, or
@@ -386,8 +389,9 @@ many non-empty lines set each one in the env file (a count, never a value), and
 the state of the service containers (not `compose run` one-offs) in the env
 file's Compose project; every container of a service must be up. `sudo -n`
 needs passwordless sudo for the user's SSH account; with Google Cloud OS Login
-that is the `roles/compute.osAdminLogin` role. No check reads a secret or writes
-anything.
+that is the `roles/compute.osAdminLogin` role. `infra` and `backups` read the
+cloud with the user's own `gcloud` credentials and name the project in every
+command. No check reads a secret or writes anything.
 
 `clawbridge cloud secret set KEY (--ssh HOST | --vm NAME --project P --zone Z)
 [--value-stdin]` writes one server setting the user holds, so it never passes

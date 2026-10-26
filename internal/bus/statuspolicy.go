@@ -241,7 +241,7 @@ func markerStatePart(ctx context.Context, tx *transaction, pid, kind string) (st
 }
 
 // statusSkipReasons are the only words a skipped state part records.
-var statusSkipReasons = map[string]bool{"from_state": true, "team_unbound": true, "team_off": true, "target_unknown": true, "policy_off": true, "policy_changed": true}
+var statusSkipReasons = map[string]bool{"from_state": true, "team_unbound": true, "team_off": true, "target_unknown": true, "policy_off": true, "policy_changed": true, "state_unresolved": true}
 
 // stateGo hands out a state move. The policy must still be enabled and at
 // the revision the row froze (SF-M1); the applier checks the issue's team,

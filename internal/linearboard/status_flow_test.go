@@ -2,6 +2,7 @@ package linearboard
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"strings"
 	"testing"
@@ -319,5 +320,151 @@ func TestSetStatusPolicyResolvesNamesPerTeam(t *testing.T) {
 	a.statusSet = nil
 	if _, err := s.SetStatusPolicyV2(context.Background(), scope, []byte(`{"enabled": true, "claim": "In Progress"}`), 0); err == nil || !strings.Contains(err.Error(), "state types") || a.statusSet != nil {
 		t.Fatal("a policy was set without state types", err)
+	}
+}
+
+// Linear's MCP get_issue names the state without its ID. The state is then
+// resolved: by a hosted server's authoritative read when there is one,
+// else by its name when exactly one state of the team has it; never
+// guessed (state_unresolved).
+func TestStateNamedWithoutItsIDIsResolved(t *testing.T) {
+	// By name, unique in the team.
+	s, a, p, scope := stateTest(t, "claim", sfBacklog, sfPolicy(), false)
+	p.stateByName = true
+	s.ApplyMarker(context.Background(), scope, "asg_1", "claim", nil)
+	if got := settled(a, "state"); got["outcome"] != "done" || got["state_landed"] != sfProgress || len(stateMoves(p)) != 1 {
+		t.Fatal("by name:", got, stateMoves(p))
+	}
+	// A release from exactly the claim state, named only.
+	s, a, p, scope = stateTest(t, "release_done", sfProgress, sfPolicy(), false)
+	p.stateByName = true
+	s.ApplyMarker(context.Background(), scope, "asg_1", "close", nil)
+	if got := settled(a, "state"); got["outcome"] != "done" || len(stateMoves(p)) != 1 || stateMoves(p)[0] != sfReview {
+		t.Fatal("release by name:", got, stateMoves(p))
+	}
+	// An uncertain send is decided by a read-back that names the state.
+	s, a, p, scope = stateTest(t, "claim", sfBacklog, sfPolicy(), false)
+	p.stateByName = true
+	p.writeErr = errors.New("connection reset")
+	p.after = func() {
+		issue := p.issues[issueID]
+		issue.StateID = sfProgress
+		p.issues[issueID] = issue
+	}
+	s.ApplyMarker(context.Background(), scope, "asg_1", "claim", nil)
+	if got := settled(a, "state"); got["outcome"] != "done" || got["state_landed"] != sfProgress {
+		t.Fatal("read-back by name:", got)
+	}
+	// An ambiguous name, or a name no state has, is never guessed.
+	for name, statuses := range map[string][]linearprovider.Status{
+		"ambiguous": append(append([]linearprovider.Status{}, sfStates...), linearprovider.Status{ID: "c1000000-0000-4000-8000-0000000000b1", Name: "Backlog", TeamID: teamID, Type: "backlog"}),
+		"unnamed":   {{ID: sfProgress, Name: "In Progress", TeamID: teamID, Type: "started"}},
+	} {
+		s, a, p, scope = stateTest(t, "claim", sfBacklog, sfPolicy(), false)
+		p.stateByName = true
+		p.statuses = sfStates
+		issue := p.issues[issueID]
+		issue.StateID, issue.State = "", "Backlog"
+		p.issues[issueID] = issue
+		p.statuses = statuses
+		s.ApplyMarker(context.Background(), scope, "asg_1", "claim", nil)
+		if got := settled(a, "state"); got["outcome"] != "skipped" || got["skip_reason"] != "state_unresolved" || len(stateMoves(p)) != 0 {
+			t.Fatal(name, got, stateMoves(p))
+		}
+	}
+	// The authoritative read wins over the name, and must name the issue's
+	// own team.
+	s, a, p, scope = stateTest(t, "claim", sfBacklog, sfPolicy(), false)
+	p.stateByName = true
+	reads := 0
+	s.cfg.IssueState = func(_ context.Context, issue string) (string, string, error) {
+		// What Linear holds now: the last update's state, else the issue's.
+		reads++
+		state := p.issues[issue].StateID
+		if n := len(p.updated); n > 0 && p.updated[n-1].StateID != nil {
+			state = *p.updated[n-1].StateID
+		}
+		return strings.ToUpper(state), teamID, nil
+	}
+	s.ApplyMarker(context.Background(), scope, "asg_1", "claim", nil)
+	if got := settled(a, "state"); got["outcome"] != "done" || reads == 0 || len(stateMoves(p)) != 1 {
+		t.Fatal("authoritative:", got, reads)
+	}
+	s, a, p, scope = stateTest(t, "claim", sfBacklog, sfPolicy(), false)
+	p.stateByName = true
+	s.cfg.IssueState = func(context.Context, string) (string, string, error) { return sfBacklog, otherTeamID, nil }
+	s.ApplyMarker(context.Background(), scope, "asg_1", "claim", nil)
+	if got := settled(a, "state"); got["skip_reason"] != "state_unresolved" || len(stateMoves(p)) != 0 {
+		t.Fatal("another team's state:", got)
+	}
+	// A failed authoritative read is retried later, not a skip.
+	s, a, p, scope = stateTest(t, "claim", sfBacklog, sfPolicy(), false)
+	p.stateByName = true
+	s.cfg.IssueState = func(context.Context, string) (string, string, error) { return "", "", errors.New("connection reset") }
+	s.ApplyMarker(context.Background(), scope, "asg_1", "claim", nil)
+	if got := settled(a, "state"); got["outcome"] == "skipped" || got["outcome"] == "done" || len(stateMoves(p)) != 0 {
+		t.Fatal("a failed read was decided:", got)
+	}
+}
+
+// An update's receipt that names its state without the ID is checked by
+// the resolved ID (P6 saw "unverified"): the same state verifies, another
+// is a mismatch, and one that cannot be resolved stays unverified.
+func TestUpdateReceiptResolvesANamedState(t *testing.T) {
+	for _, c := range []struct {
+		name      string
+		landed    string
+		statuses  []linearprovider.Status
+		wantError bool
+		wantState bool
+	}{
+		{"verified", sfProgress, sfStates, false, false},
+		{"another state landed", sfQA, sfStates, true, false},
+		{"unresolvable", sfProgress, append(append([]linearprovider.Status{}, sfStates...), linearprovider.Status{ID: "c1000000-0000-4000-8000-0000000000b2", Name: "In Progress", TeamID: teamID, Type: "started"}), false, true},
+	} {
+		s, _, p, scope := stateTest(t, "claim", sfBacklog, sfPolicy(), false)
+		p.stateByName = true
+		p.statuses = c.statuses
+		p.landed = c.landed
+		state := sfProgress
+		out, err := s.WriteV2(context.Background(), scope, WriteInputV2{WriteInput: WriteInput{Operation: "update", OperationID: "op-" + strings.ReplaceAll(c.name, " ", "-"), IssueID: issueID, StateID: &state}})
+		if (err != nil) != c.wantError {
+			t.Fatal(c.name, out, err)
+		}
+		if err == nil {
+			r, _ := out.(ReceiptV2)
+			if contains(r.Unverified, "state") != c.wantState {
+				t.Fatal(c.name, "unverified:", r.Unverified)
+			}
+		}
+	}
+}
+
+// The hosted read: the issue's state ID, only when the answer names the
+// asked issue and the state belongs to the issue's own team.
+func TestGraphQLIssueStateChecksItsAnswer(t *testing.T) {
+	answer := func(issue map[string]any) func(context.Context, string, map[string]any, any) error {
+		return func(_ context.Context, q string, vars map[string]any, out any) error {
+			if strings.Contains(q, "mutation") || vars["id"] != issueID {
+				t.Fatal("not a read of the issue:", q, vars)
+			}
+			raw, _ := json.Marshal(map[string]any{"issue": issue})
+			return json.Unmarshal(raw, out)
+		}
+	}
+	team := map[string]any{"id": teamID}
+	good := map[string]any{"id": issueID, "team": team, "state": map[string]any{"id": sfBacklog, "team": team}}
+	if id, tm, e := GraphQLIssueState(answer(good))(context.Background(), issueID); e != nil || id != sfBacklog || tm != teamID {
+		t.Fatal(id, tm, e)
+	}
+	for name, issue := range map[string]map[string]any{
+		"none":         nil,
+		"other issue":  {"id": "c9000000-0000-4000-8000-000000000009", "team": team, "state": map[string]any{"id": sfBacklog, "team": team}},
+		"no state":     {"id": issueID, "team": team},
+		"foreign team": {"id": issueID, "team": team, "state": map[string]any{"id": sfBacklog, "team": map[string]any{"id": otherTeamID}}},
+	} {
+		if _, _, e := GraphQLIssueState(answer(issue))(context.Background(), issueID); e == nil {
+			t.Fatal(name, "accepted")
+		}
 	}
 }

@@ -54,6 +54,11 @@ type Config struct {
 	// to the server as linear_write when the server offers the ClawBridge
 	// Linear app.
 	AppRoute bool
+	// IssueState, when set, reads an issue's current workflow state ID and
+	// team from an authoritative source: on a hosted server, the Linear
+	// app's GraphQL. Linear's MCP issue read names the state without its
+	// ID.
+	IssueState func(ctx context.Context, issue string) (stateID, teamID string, err error)
 }
 type Service struct {
 	cfg    Config

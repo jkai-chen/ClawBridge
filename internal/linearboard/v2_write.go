@@ -668,6 +668,7 @@ func (s *Service) WriteV2(ctx context.Context, scope bus.Request, in WriteInputV
 			if !legacy && receiptParentV2(issue, in.Parent, parentIssue) != nil {
 				return nil, errors.New("created issue receipt parent mismatch")
 			}
+			issue = s.withStateID(ctx, scope, issue, in, legacy)
 			if unverified, e = receiptFieldsV2(issue, in, legacy); e != nil {
 				return nil, post(e)
 			}
@@ -701,6 +702,7 @@ func (s *Service) WriteV2(ctx context.Context, scope bus.Request, in WriteInputV
 			if !legacy && receiptParentV2(issue, in.Parent, parentIssue) != nil {
 				return nil, errors.New("updated issue receipt parent mismatch")
 			}
+			issue = s.withStateID(ctx, scope, issue, in, legacy)
 			if unverified, e = receiptFieldsV2(issue, in, legacy); e != nil {
 				return nil, post(e)
 			}
@@ -868,6 +870,20 @@ func sameDestinationParentV2(parent linearprovider.IssueV2, team, project string
 // that differs makes the write uncertain; a field it does not report is named
 // as unverified rather than assumed. The parent's value is checked by
 // receiptParentV2; here it is only named when the receipt cannot show it.
+// withStateID gives a receipt that names its state without the ID (as
+// Linear's MCP answer does) the ID issueStateID resolves, so a requested
+// state is checked rather than left unverified. A state that cannot be
+// resolved stays unverified; a resolved one that differs is a mismatch.
+func (s *Service) withStateID(ctx context.Context, scope bus.Request, issue linearprovider.IssueV2, in WriteInputV2, legacy bool) linearprovider.IssueV2 {
+	if legacy || in.StateID == nil || issue.StateID != "" {
+		return issue
+	}
+	if id, e := s.issueStateID(ctx, scope, issue); e == nil {
+		issue.StateID = id
+	}
+	return issue
+}
+
 func receiptFieldsV2(issue linearprovider.IssueV2, in WriteInputV2, legacy bool) ([]string, error) {
 	if legacy {
 		return nil, nil

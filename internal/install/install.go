@@ -102,7 +102,7 @@ func Install(o Options) (Result, error) {
 		return r, errors.New("--agent must be codex or claude-code")
 	}
 	if o.Workspace == "" || o.Project == "" || o.Session == "" {
-		return r, errors.New("installation requires --workspace, --project, and a distinct --session")
+		return r, errors.New("installation requires a workspace, a project and a distinct --session; in local mode, set a default project with clawbridge setup --local --project NAME or clawbridge project create NAME, or pass --workspace and --project")
 	}
 	if o.Name == "" {
 		o.Name = "clawbridge"

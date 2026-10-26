@@ -2,13 +2,10 @@
 
 ## Local messaging
 
-Use an explicit database path for an isolated local bus:
+Start a local workspace and create its first project. Both are saved as your defaults,
+so a new terminal needs no flags or environment variables:
 
 ```sh
-export CLAWBRIDGE_DB="$PWD/demo.db"
-export CLAWBRIDGE_WORKSPACE=demo
-export CLAWBRIDGE_PROJECT=clawbridge
-
 clawbridge setup --local --name demo
 clawbridge project create clawbridge
 clawbridge --session engineer --instance engineer-run-1 register --agent-kind codex --role engineer
@@ -24,6 +21,17 @@ clawbridge --session reviewer --instance reviewer-run-1 reply MESSAGE_ID 'Review
 clawbridge --session reviewer --instance reviewer-run-1 mark-read MESSAGE_ID
 clawbridge --session engineer --instance engineer-run-1 status MESSAGE_ID
 ```
+
+Bare `clawbridge` then opens the TUI for this local workspace, and `clawbridge doctor` passes the project
+check. The first project you create (without `--git-remote`) becomes the default; `setup --local --project NAME`
+names it up front. A
+`.clawbridge.toml` selects a project only at the root of a git checkout. Anywhere else it's ignored, with a
+warning. Connect an agent with
+`clawbridge mcp install --agent claude-code|codex --session NAME`: the local workspace and project come from
+your defaults.
+
+For an isolated local bus, for example in tests, set `CLAWBRIDGE_DB`, `CLAWBRIDGE_WORKSPACE` and
+`CLAWBRIDGE_PROJECT` instead.
 
 Results identify `local-authority`. Sending commits a message; inbox fetch stamps
 delivery; mark-read stamps reading. Reuse an operation ID only for an identical

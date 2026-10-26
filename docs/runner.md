@@ -115,7 +115,8 @@ The settings passed with `--settings` take precedence over the repository's own
   tries to read each of those locations that exists on your Mac, inside the real
   sandbox, and reports READ or DENIED for each. It also tries a new random file
   the launch plants directly in your home directory, and one in your checkout's
-  `.git` when that is under your home. No rule names those files, so only the
+  git directory (in a linked worktree, the one its `.git` file names) when that
+  is under your home. No rule names those files, so only the
   sandbox's default deny refuses them. The launch waits for the report (three
   minutes at most). One READ, a malformed report, or none at all closes the
   terminal and retires the session before it does any work. The planted files

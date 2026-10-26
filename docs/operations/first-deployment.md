@@ -14,11 +14,14 @@ clawbridge cloud check server version     # after the server is installed
 clawbridge cloud check workspace          # after setup --cloud
 ```
 
-The exact commands for each cloud (Google Cloud first, then AWS and any VM with
-Docker) arrive with the provisioning playbooks, together with their cost tables
-and checks for the infrastructure, sign-in, the Linear app and backups. Until
-then, this guide names what each step needs and links to the
-[deployment guide](deployment.md) for the server itself. Examples use
+The exact commands for each cloud are in its provisioning playbook, with its
+cost table and the checks for each step:
+- Google Cloud: `clawbridge skill install --playbook gcp`;
+- AWS: `clawbridge skill install --playbook aws`. The server is an EC2 instance
+  reached over SSM, with no SSH, and its backups go to S3.
+
+A playbook for any VM with Docker comes later. This guide names what each step
+needs and links to the [deployment guide](deployment.md) for the server itself. Examples use
 `example.com`, `my-team` and a Google Cloud project named `example-project`.
 
 ## Rules that hold throughout

@@ -120,8 +120,18 @@ func TestPlaybookInstallsBesideTheSkill(t *testing.T) {
 	if states, err := Status(main); err != nil || !states[0].Current {
 		t.Fatalf("the main skill changed: %+v %v", states, err)
 	}
-	if err := RunWithIO([]string{"install", "--playbook", "aws", "--dir", parent}, &out, &errs); err == nil || !strings.Contains(err.Error(), "--playbook must be") {
+	if err := RunWithIO([]string{"install", "--playbook", "azure", "--dir", parent}, &out, &errs); err == nil || !strings.Contains(err.Error(), "--playbook must be gcp or aws") {
 		t.Fatal(err)
+	}
+	// The AWS playbook installs and uninstalls the same way, on its own.
+	if err := RunWithIO([]string{"install", "--playbook", "aws", "--dir", parent}, &out, &errs); err != nil {
+		t.Fatal(err, errs.String())
+	}
+	if _, err := os.Stat(filepath.Join(parent, "clawbridge-provision-aws", "references", "commands.md")); err != nil {
+		t.Fatal(err)
+	}
+	if err := RunWithIO([]string{"uninstall", "--playbook", "aws", "--dir", parent}, &out, &errs); err != nil {
+		t.Fatal(err, errs.String())
 	}
 	if _, err := TargetsFor("unknown", "", parent); err == nil {
 		t.Fatal("an unknown skill resolved")
@@ -552,5 +562,46 @@ func TestRemoveEmptyDirsLeavesALinkedDirectory(t *testing.T) {
 	removeEmptyDirs(dir, []string{"references/cli.md"})
 	if _, err := os.Lstat(filepath.Join(dir, "references")); err != nil {
 		t.Fatal("a linked directory was removed", err)
+	}
+}
+
+// The AWS playbook keeps the six hard rules of every playbook
+// (ONBOARDING-DESIGN §3, §13), and its embedded JSON is exactly what the
+// release ships in deploy/, so the two cannot drift apart.
+func TestAWSPlaybookMatchesTheRulesAndTheDeployFiles(t *testing.T) {
+	read := func(parts ...string) string {
+		raw, err := os.ReadFile(filepath.Join(append([]string{"..", ".."}, parts...)...))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(raw)
+	}
+	titles := func(skill string) []string {
+		var out []string
+		rules := skill[strings.Index(skill, "## Hard rules"):]
+		rules = rules[:strings.Index(rules[3:], "\n## ")+3]
+		for _, line := range strings.Split(rules, "\n") {
+			if len(line) > 3 && line[0] >= '1' && line[0] <= '6' && strings.HasPrefix(line[1:], ". **") {
+				out = append(out, line[:strings.Index(line[4:], "**")+6])
+			}
+		}
+		return out
+	}
+	gcp, aws := titles(read("skills", "clawbridge-provision-gcp", "SKILL.md")), titles(read("skills", "clawbridge-provision-aws", "SKILL.md"))
+	want := []string{"1. **Explicit profile and region.**", "2. **Cost first.**", "3. **Secrets stay out of your hands.**",
+		"4. **Ask before every delete.**", "5. **Stop on mismatch.**", "6. **The check decides.**"}
+	if strings.Join(aws, "|") != strings.Join(want, "|") || strings.Join(gcp[1:], "|") != strings.Join(want[1:], "|") {
+		t.Fatalf("hard rules: aws %q, gcp %q", aws, gcp)
+	}
+	commands := read("skills", "clawbridge-provision-aws", "references", "commands.md")
+	for _, file := range []string{"s3-lifecycle.json", "aws-instance-role-policy.json"} {
+		if !strings.Contains(commands, "```json\n"+read("deploy", file)+"```") {
+			t.Fatalf("commands.md does not carry deploy/%s exactly", file)
+		}
+	}
+	for _, rule := range []string{"--profile PROFILE --region REGION", "AWS-RunShellScript", "never put a secret"} {
+		if !strings.Contains(read("skills", "clawbridge-provision-aws", "SKILL.md")+commands, rule) {
+			t.Fatalf("missing: %s", rule)
+		}
 	}
 }

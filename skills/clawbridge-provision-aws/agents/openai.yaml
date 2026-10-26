@@ -1,0 +1,4 @@
+interface:
+  display_name: "ClawBridge on AWS"
+  short_description: "Provision a ClawBridge server in your AWS account"
+  default_prompt: "Use $clawbridge-provision-aws to set up my ClawBridge server on AWS, following its hard rules."

@@ -101,3 +101,23 @@ func TestInitiativeShowTakesNoOperationID(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+// linearPublish refuses a missing file or an ambiguous parent before the
+// board.
+func TestLinearPublishArguments(t *testing.T) {
+	emit := func(any) error { t.Fatal("emitted"); return nil }
+	for name, c := range map[string]struct {
+		v   linearFlags
+		pos []string
+	}{
+		"no file":       {linearFlags{team: "t"}, nil},
+		"two files":     {linearFlags{team: "t"}, []string{"a.md", "b.md"}},
+		"two parents":   {linearFlags{team: "t", initiative: "i"}, []string{"a.md"}},
+		"with a cursor": {linearFlags{team: "t", cursor: "c"}, []string{"a.md"}},
+	} {
+		if e := linearPublish(context.Background(), nil, bus.Request{}, c.v, c.pos, emit); e == nil {
+			t.Fatal(name, "accepted")
+		}
+	}
+	rejectCLI(t, "linear", "doc", "publish", "plan.md", "--team", "11111111-2222-3333-4444-555555555555", "--operation-id", "op")
+}

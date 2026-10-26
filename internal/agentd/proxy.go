@@ -98,7 +98,17 @@ func (p *Proxy) allow(r *http.Request) error {
 			return fmt.Errorf("container name is not clawbridge-agent-<owner ref> or %s", egressName)
 		}
 		return p.replaceBody(r, func(body []byte) ([]byte, error) {
-			return checkCreate(body, agentSpec(p.spec.AgentImage, p.spec.ServerURL, ref))
+			// The revision label is the one value agentd chooses; it must be a
+			// positive decimal, and the rest is the fixed spec around it.
+			var got createSpec
+			if err := decodeExact(body, &got); err != nil {
+				return nil, err
+			}
+			revision, ok := parseRevision(got.Labels[revisionLabel])
+			if !ok {
+				return nil, fmt.Errorf("Labels must carry %s, a positive number", revisionLabel)
+			}
+			return checkCreate(body, agentSpec(p.spec.AgentImage, p.spec.ServerURL, ref, revision))
 		})
 	case op == "GET networks" && len(parts) == 1:
 		return onlyQuery(query, "filters")

@@ -58,7 +58,9 @@ func (f *fakeDaemon) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case r.Method == http.MethodGet && r.URL.Path == "/containers/json":
 		var out []map[string]any
 		for name, state := range f.containers {
-			out = append(out, map[string]any{"Names": []string{"/" + name}, "State": state})
+			var created struct{ Labels map[string]string }
+			_ = json.Unmarshal(f.bodies[name], &created)
+			out = append(out, map[string]any{"Names": []string{"/" + name}, "State": state, "Labels": created.Labels})
 		}
 		_ = json.NewEncoder(w).Encode(out)
 	case r.URL.Path == "/containers/create":
@@ -287,8 +289,9 @@ func (s *testStack) sendRaw(t *testing.T, raw string) int {
 type fakeServer struct {
 	refs []string
 	// providers overrides an owner's provider host:port; the default is
-	// api.provider.test:443.
+	// api.provider.test:443. revisions overrides its config revision, 1.
 	providers map[string]string
+	revisions map[string]int64
 	max       int
 	mintErr   error
 	minted    []string
@@ -303,7 +306,11 @@ func (s *fakeServer) Wanted(context.Context) ([]Wanted, int, error) {
 		if p, ok := s.providers[ref]; ok {
 			provider = p
 		}
-		out = append(out, Wanted{Ref: ref, Provider: provider})
+		revision := int64(1)
+		if r, ok := s.revisions[ref]; ok {
+			revision = r
+		}
+		out = append(out, Wanted{Ref: ref, Provider: provider, Revision: revision})
 	}
 	return out, s.max, s.wantedErr
 }

@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -56,6 +57,7 @@ func (s *testStack) readPolicy(t *testing.T) EgressPolicy {
 const (
 	subnet0 = "172.30.0.0/28"
 	subnet1 = "172.30.0.16/28"
+	subnet2 = "172.30.0.32/28"
 	egressN = "172.31.255.0/28 "
 )
 
@@ -91,7 +93,7 @@ func TestReconcileStartsAnAgentThroughTheProxy(t *testing.T) {
 	}
 	s.daemon.mu.Unlock()
 	for created, spec := range map[string]any{
-		name:              agentSpec(testImage, testServer, refA),
+		name:              agentSpec(testImage, testServer, refA, 1),
 		egressName:        egressSpec(testEgressImage, s.policyDir),
 		networkName(refA): agentNetwork(refA, netip.MustParsePrefix(subnet0)),
 		egressNetName:     egressNetSpec(),
@@ -151,17 +153,30 @@ func TestReconcileAllocatesSubnetsAndWritesThePolicy(t *testing.T) {
 	if p := s.readPolicy(t); !reflect.DeepEqual(p, want) {
 		t.Fatalf("%v", p)
 	}
-	// A leaves; C takes its subnet.
+	// A leaves. Its subnet is quarantined, so C, starting in the same
+	// round, gets the next one.
+	now := time.Date(2026, 10, 26, 22, 0, 0, 0, time.UTC)
+	r.now = func() time.Time { return now }
 	server.refs = []string{refB, refC}
 	if err := r.Step(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	got = s.daemon.state()
-	if _, ok := got[networkName(refA)]; ok || got[networkName(refC)] != subnet0+" "+egressName {
+	if _, ok := got[networkName(refA)]; ok || got[networkName(refC)] != subnet2+" "+egressName {
 		t.Fatalf("%v", got)
 	}
-	if p := s.readPolicy(t); len(p.Networks) != 2 || p.Networks[1].OwnerRef != refC || p.Networks[1].Source != subnet0 {
+	if p := s.readPolicy(t); len(p.Networks) != 2 || p.Networks[1].OwnerRef != refC || p.Networks[1].Source != subnet2 {
 		t.Fatalf("%v", p)
+	}
+	// A minute later the subnet is free again, and the next owner gets it.
+	now = now.Add(subnetQuarantine)
+	server.refs = []string{refB, refC, "p_dddddddd"}
+	server.max = 4
+	if err := r.Step(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if got := s.daemon.state()[networkName("p_dddddddd")]; got != subnet0+" "+egressName {
+		t.Fatalf("%v", s.daemon.state())
 	}
 	// Unchanged rounds don't rewrite the file.
 	before := strings.Count(s.log.String(), "egress policy written")
@@ -347,7 +362,7 @@ func TestReconcileCleansUpAFailedStart(t *testing.T) {
 // The pool holds 4,096 owner subnets; the first free one is used.
 func TestFreeSubnet(t *testing.T) {
 	used := map[string]netip.Prefix{}
-	if p, ok := freeSubnet(used); !ok || p.String() != subnet0 {
+	if p, ok := freeSubnet(used, nil); !ok || p.String() != subnet0 {
 		t.Fatal(p, ok)
 	}
 	base := subnetPool.Addr().As4()
@@ -358,11 +373,64 @@ func TestFreeSubnet(t *testing.T) {
 		}
 		used[p.String()] = p
 	}
-	if p, ok := freeSubnet(used); ok {
+	if p, ok := freeSubnet(used, nil); ok {
 		t.Fatalf("a 4097th subnet: %s", p)
 	}
 	delete(used, "172.30.200.48/28")
-	if p, ok := freeSubnet(used); !ok || p.String() != "172.30.200.48/28" {
+	if p, ok := freeSubnet(used, nil); !ok || p.String() != "172.30.200.48/28" {
 		t.Fatal(p, ok)
+	}
+	// A quarantined subnet is not handed out.
+	if p, ok := freeSubnet(used, map[netip.Prefix]time.Time{netip.MustParsePrefix("172.30.200.48/28"): {}}); ok {
+		t.Fatalf("a quarantined subnet: %s", p)
+	}
+}
+
+// A new config revision restarts the owner's agent in a fresh instance with
+// a fresh credential (§11.6); its network stays, and a rotation is not a
+// crash. An agentd restart with the same revision restarts nothing.
+func TestReconcileRestartsOnANewRevision(t *testing.T) {
+	s := newStack(t)
+	server := &fakeServer{refs: []string{refA}, max: 2, revisions: map[string]int64{refA: 1}}
+	r := newTestReconciler(s, server)
+	if err := r.Step(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	for revision := int64(2); revision <= 6; revision++ {
+		server.revisions[refA] = revision
+		if err := r.Step(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+		s.daemon.mu.Lock()
+		var created struct{ Labels map[string]string }
+		_ = json.Unmarshal(s.daemon.bodies[containerName(refA)], &created)
+		state := s.daemon.containers[containerName(refA)]
+		s.daemon.mu.Unlock()
+		if state != "running" || created.Labels[revisionLabel] != strconv.FormatInt(revision, 10) {
+			t.Fatalf("revision %d: %s %v", revision, state, created.Labels)
+		}
+	}
+	// Five rotations in a few seconds: five fresh credentials, no crash loop,
+	// and the same network throughout.
+	if len(server.minted) != 6 || len(server.reports) != 0 {
+		t.Fatalf("minted %v reports %v", server.minted, server.reports)
+	}
+	if got := s.daemon.state()[networkName(refA)]; got != subnet0+" "+egressName {
+		t.Fatalf("network %q", got)
+	}
+	again := newTestReconciler(s, server)
+	if err := again.Step(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if len(server.minted) != 6 {
+		t.Fatalf("a restarted agentd restarted the agent: %v", server.minted)
+	}
+	// An owner without a revision is refused.
+	server.revisions[refA] = 0
+	if err := r.Step(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := s.daemon.state()[containerName(refA)]; ok {
+		t.Fatal("an owner without a config revision still runs")
 	}
 }

@@ -28,15 +28,20 @@ type Server interface {
 	Report(ctx context.Context, ref, code string) error
 }
 
-// Wanted is one owner that needs an agent: its ref, and the host:port of
-// its active provider, which its agent may reach besides the server.
+// Wanted is one owner that needs an agent: its ref, the host:port of its
+// provider, which its agent may reach besides the server, and its config
+// revision (the pending_test one when there is one, else the active one).
 type Wanted struct {
 	Ref      string
 	Provider string
+	Revision int64
 }
 
 const (
-	reconcileEvery   = 30 * time.Second
+	reconcileEvery = 30 * time.Second
+	// subnetQuarantine is far longer than the egress proxy's policy reload
+	// (2 s), which closes the old owner's tunnels.
+	subnetQuarantine = time.Minute
 	restartsPerHour  = 3
 	codeCrashloop    = "agent_crashloop"
 	maxAgentsCeiling = 16
@@ -58,13 +63,17 @@ type Reconciler struct {
 	reported map[string]bool
 	// policy is the egress policy last written.
 	policy []byte
+	// freed holds when each owner subnet was given up. It isn't handed to
+	// another owner for subnetQuarantine, so no tunnel or policy line of the
+	// old owner can still match the new owner's agent.
+	freed map[netip.Prefix]time.Time
 }
 
 // NewReconciler returns a Reconciler for cfg, which LoadConfig validated.
 func NewReconciler(cfg Config, server Server, log *slog.Logger) *Reconciler {
 	target, _ := serverTarget(cfg.ServerURL)
 	return &Reconciler{cfg: cfg, server: server, docker: newDocker(cfg.Docker), log: log, now: time.Now,
-		serverTarget: target, restarts: map[string][]time.Time{}, reported: map[string]bool{}}
+		serverTarget: target, restarts: map[string][]time.Time{}, reported: map[string]bool{}, freed: map[netip.Prefix]time.Time{}}
 }
 
 // Run reconciles at once, then every 30 seconds until ctx ends. A failed
@@ -95,9 +104,14 @@ func (r *Reconciler) Step(ctx context.Context) error {
 	}
 	// The server's values are checked, and never echoed.
 	provider := map[string]string{}
+	revision := map[string]int64{}
 	for _, w := range wants {
 		if !validOwnerRef(w.Ref) {
 			r.log.Warn("refused a wanted owner ref that is not p_<8-32 lowercase letters or digits>")
+			continue
+		}
+		if w.Revision < 1 {
+			r.log.Warn("refused an owner without a config revision", "ref", w.Ref)
 			continue
 		}
 		target, err := normalTarget(w.Provider)
@@ -109,6 +123,7 @@ func (r *Reconciler) Step(ctx context.Context) error {
 			continue
 		}
 		provider[w.Ref] = target
+		revision[w.Ref] = w.Revision
 	}
 	// No agent runs without the egress proxy.
 	if err := r.ensureEgress(ctx); err != nil {
@@ -127,6 +142,14 @@ func (r *Reconciler) Step(ctx context.Context) error {
 		switch {
 		case provider[c.ref] == "":
 			r.stopAgent(ctx, c.ref, subnets)
+		case c.revision != revision[c.ref]:
+			// A rotated key or a new model runs in a fresh instance (§11.6),
+			// which fetches the new revision; not a crash. Its network stays.
+			r.log.Info("config revision changed", "ref", c.ref, "from", c.revision, "to", revision[c.ref])
+			name := containerName(c.ref)
+			if r.act("stop for new revision", c.ref, r.docker.stop(ctx, name)) {
+				r.act("remove for new revision", c.ref, r.docker.remove(ctx, name))
+			}
 		case c.running:
 			live[c.ref] = true
 		default:
@@ -176,7 +199,7 @@ func (r *Reconciler) Step(ctx context.Context) error {
 		return err
 	}
 	for _, ref := range starting {
-		r.startAgent(ctx, ref)
+		r.startAgent(ctx, ref, revision[ref])
 	}
 	return nil
 }
@@ -210,7 +233,12 @@ func (r *Reconciler) ensureEgress(ctx context.Context) error {
 // has none yet, with the egress proxy connected.
 func (r *Reconciler) ensureNetwork(ctx context.Context, ref string, subnets map[string]netip.Prefix) bool {
 	if _, ok := subnets[ref]; !ok {
-		subnet, ok := freeSubnet(subnets)
+		for p, at := range r.freed {
+			if r.now().Sub(at) >= subnetQuarantine {
+				delete(r.freed, p)
+			}
+		}
+		subnet, ok := freeSubnet(subnets, r.freed)
 		if !ok {
 			r.log.Warn("no free subnet", "ref", ref, "pool", subnetPool.String())
 			return false
@@ -227,10 +255,14 @@ func (r *Reconciler) ensureNetwork(ctx context.Context, ref string, subnets map[
 	return connected || r.act("connect egress", ref, r.docker.connectEgress(ctx, ref))
 }
 
-// freeSubnet returns the first /28 of the pool that no owner uses.
-func freeSubnet(subnets map[string]netip.Prefix) (netip.Prefix, bool) {
+// freeSubnet returns the first /28 of the pool that no owner uses and that
+// is not quarantined.
+func freeSubnet(subnets map[string]netip.Prefix, quarantined map[netip.Prefix]time.Time) (netip.Prefix, bool) {
 	used := map[netip.Prefix]bool{}
 	for _, s := range subnets {
+		used[s] = true
+	}
+	for s := range quarantined {
 		used[s] = true
 	}
 	base := subnetPool.Addr().As4()
@@ -315,9 +347,9 @@ func (r *Reconciler) crashlooping(ref string) bool {
 // startAgent creates the owner's container, attaches to its stdin, starts
 // it and hands over a fresh credential. On any failure it removes the
 // container, so the next round starts clean.
-func (r *Reconciler) startAgent(ctx context.Context, ref string) bool {
+func (r *Reconciler) startAgent(ctx context.Context, ref string, revision int64) bool {
 	name := containerName(ref)
-	if !r.act("create", ref, r.docker.create(ctx, name, agentSpec(r.cfg.AgentImage, r.cfg.ServerURL, ref))) {
+	if !r.act("create", ref, r.docker.create(ctx, name, agentSpec(r.cfg.AgentImage, r.cfg.ServerURL, ref, revision))) {
 		return false
 	}
 	send, err := r.docker.attach(ctx, ref)
@@ -346,6 +378,9 @@ func (r *Reconciler) stopAgent(ctx context.Context, ref string, subnets map[stri
 	if r.act("stop", ref, r.docker.stop(ctx, name)) && r.act("remove", ref, r.docker.remove(ctx, name)) &&
 		r.act("disconnect egress", ref, r.docker.disconnectEgress(ctx, ref)) &&
 		r.act("remove network", ref, r.docker.removeNetwork(ctx, ref)) {
+		if subnet, ok := subnets[ref]; ok {
+			r.freed[subnet] = r.now()
+		}
 		delete(subnets, ref)
 	}
 }

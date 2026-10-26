@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"net/netip"
 	"regexp"
+	"strconv"
 	"strings"
 )
 
@@ -27,6 +28,21 @@ const (
 	networkPrefix   = "cbnet-"
 	agentMemory     = 160 << 20
 )
+
+// revisionLabel carries the owner's config revision the container was
+// started for, so agentd sees a rotation even after it restarts itself.
+const revisionLabel = "clawbridge.config_revision"
+
+var revisionPattern = regexp.MustCompile(`^[1-9][0-9]{0,17}$`)
+
+// parseRevision reads a revisionLabel value: a positive decimal.
+func parseRevision(s string) (int64, bool) {
+	if !revisionPattern.MatchString(s) {
+		return 0, false
+	}
+	n, err := strconv.ParseInt(s, 10, 64)
+	return n, err == nil
+}
 
 // validOwnerRef reports whether ref is an opaque owner reference.
 func validOwnerRef(ref string) bool { return ownerRefPattern.MatchString(ref) }
@@ -49,6 +65,7 @@ type createSpec struct {
 	Image       string
 	User        string
 	Env         []string
+	Labels      map[string]string
 	AttachStdin bool
 	OpenStdin   bool
 	StdinOnce   bool
@@ -72,13 +89,15 @@ type restartPolicy struct{ Name string }
 // agentSpec is the fixed container spec for one owner (§5.3): read-only root,
 // a small tmpfs, the image's non-root user, no capabilities, no new
 // privileges, 64 pids, 160 MiB with no swap, the owner's own internal
-// network, one env variable, and stdin open once for the agent credential.
+// network, two env variables (the server and the egress proxy), the config
+// revision as its one label, and stdin open once for the agent credential.
 // agentd removes exited containers itself, so Docker never restarts one.
-func agentSpec(image, serverURL, ref string) createSpec {
+func agentSpec(image, serverURL, ref string, revision int64) createSpec {
 	return createSpec{
 		Image:       image,
 		User:        "node",
-		Env:         []string{"CLAWBRIDGE_SERVER_URL=" + serverURL},
+		Env:         []string{"CLAWBRIDGE_SERVER_URL=" + serverURL, "CLAWBRIDGE_EGRESS_PROXY=" + egressProxyURL},
+		Labels:      map[string]string{revisionLabel: strconv.FormatInt(revision, 10)},
 		AttachStdin: true,
 		OpenStdin:   true,
 		StdinOnce:   true,
@@ -136,6 +155,10 @@ func agentNetwork(ref string, subnet netip.Prefix) networkSpec {
 	return networkSpec{Name: networkName(ref), Driver: "bridge", Internal: true,
 		IPAM: ipamSpec{Driver: "default", Config: []ipamConfig{{Subnet: subnet.String()}}}}
 }
+
+// egressProxyURL is how an agent reaches the egress proxy on its own
+// network: Docker's DNS answers the container's name there.
+const egressProxyURL = "http://" + egressName + ":" + egressPort
 
 const (
 	egressName    = "clawbridge-egress"

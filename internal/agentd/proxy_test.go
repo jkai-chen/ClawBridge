@@ -17,7 +17,7 @@ func bufioReader(r io.Reader) *bufio.Reader { return bufio.NewReader(r) }
 // specMap is agentSpec for ref as a generic JSON object, to edit.
 func specMap(t *testing.T, ref string) map[string]any {
 	t.Helper()
-	b, err := json.Marshal(agentSpec(testImage, testServer, ref))
+	b, err := json.Marshal(agentSpec(testImage, testServer, ref, 1))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -62,20 +62,27 @@ func TestProxyRefusesCreatesOutsideTheSpec(t *testing.T) {
 		"seccomp off":      func(m map[string]any) { hostCfg(m)["SecurityOpt"] = []string{"seccomp=unconfined"} },
 		"extra env":        func(m map[string]any) { m["Env"] = append(m["Env"].([]any), "NODE_OPTIONS=--require /tmp/x.js") },
 		"other server":     func(m map[string]any) { m["Env"] = []string{"CLAWBRIDGE_SERVER_URL=https://elsewhere.example.test"} },
-		"other digest":     func(m map[string]any) { m["Image"] = strings.Replace(testImage, "0123", "3210", 1) },
-		"tag only":         func(m map[string]any) { m["Image"] = "ghcr.io/example/clawbridge-dispatcher-agent:latest" },
-		"root user":        func(m map[string]any) { m["User"] = "root" },
-		"command":          func(m map[string]any) { m["Cmd"] = []string{"sh"} },
-		"entrypoint":       func(m map[string]any) { m["Entrypoint"] = []string{"sh"} },
-		"published port":   func(m map[string]any) { hostCfg(m)["PortBindings"] = map[string]any{"80/tcp": []any{}} },
-		"writable root":    func(m map[string]any) { hostCfg(m)["ReadonlyRootfs"] = false },
-		"no memory limit":  func(m map[string]any) { delete(hostCfg(m), "Memory") },
-		"swap":             func(m map[string]any) { hostCfg(m)["MemorySwap"] = -1 },
-		"no pids limit":    func(m map[string]any) { delete(hostCfg(m), "PidsLimit") },
-		"exec tmpfs":       func(m map[string]any) { hostCfg(m)["Tmpfs"] = map[string]any{"/tmp": "rw,exec"} },
-		"restart always":   func(m map[string]any) { hostCfg(m)["RestartPolicy"] = map[string]any{"Name": "always"} },
-		"no stdin":         func(m map[string]any) { m["OpenStdin"] = false },
-		"no host config":   func(m map[string]any) { delete(m, "HostConfig") },
+		"no revision":      func(m map[string]any) { delete(m, "Labels") },
+		"revision zero":    func(m map[string]any) { m["Labels"] = map[string]string{revisionLabel: "0"} },
+		"revision text":    func(m map[string]any) { m["Labels"] = map[string]string{revisionLabel: "latest"} },
+		"revision padded":  func(m map[string]any) { m["Labels"] = map[string]string{revisionLabel: "07"} },
+		"second label": func(m map[string]any) {
+			m["Labels"] = map[string]string{revisionLabel: "7", "com.docker.compose.project": "x"}
+		},
+		"other digest":    func(m map[string]any) { m["Image"] = strings.Replace(testImage, "0123", "3210", 1) },
+		"tag only":        func(m map[string]any) { m["Image"] = "ghcr.io/example/clawbridge-dispatcher-agent:latest" },
+		"root user":       func(m map[string]any) { m["User"] = "root" },
+		"command":         func(m map[string]any) { m["Cmd"] = []string{"sh"} },
+		"entrypoint":      func(m map[string]any) { m["Entrypoint"] = []string{"sh"} },
+		"published port":  func(m map[string]any) { hostCfg(m)["PortBindings"] = map[string]any{"80/tcp": []any{}} },
+		"writable root":   func(m map[string]any) { hostCfg(m)["ReadonlyRootfs"] = false },
+		"no memory limit": func(m map[string]any) { delete(hostCfg(m), "Memory") },
+		"swap":            func(m map[string]any) { hostCfg(m)["MemorySwap"] = -1 },
+		"no pids limit":   func(m map[string]any) { delete(hostCfg(m), "PidsLimit") },
+		"exec tmpfs":      func(m map[string]any) { hostCfg(m)["Tmpfs"] = map[string]any{"/tmp": "rw,exec"} },
+		"restart always":  func(m map[string]any) { hostCfg(m)["RestartPolicy"] = map[string]any{"Name": "always"} },
+		"no stdin":        func(m map[string]any) { m["OpenStdin"] = false },
+		"no host config":  func(m map[string]any) { delete(m, "HostConfig") },
 		"networking config": func(m map[string]any) {
 			m["NetworkingConfig"] = map[string]any{"EndpointsConfig": map[string]any{"host": map[string]any{}}}
 		},
@@ -185,7 +192,7 @@ func TestProxyRefusesOtherEndpoints(t *testing.T) {
 // received.
 func TestProxyForwardsTheCanonicalBody(t *testing.T) {
 	s := newStack(t)
-	good := mustJSON(t, agentSpec(testImage, testServer, refA))
+	good := mustJSON(t, agentSpec(testImage, testServer, refA, 1))
 	// A case variant, and a duplicate key the check resolves as the daemon
 	// would: the daemon still gets only the canonical body.
 	lower := strings.Replace(string(good), `{"Image":`, `{"Image":"busybox","image":`, 1)
@@ -239,7 +246,7 @@ func TestProxyEgressAndNetworks(t *testing.T) {
 		"egress on owner net":      {"POST", createEgress, egress(func(m map[string]any) { hostCfg(m)["NetworkMode"] = networkName(refA) })},
 		"egress agent image":       {"POST", createEgress, egress(func(m map[string]any) { m["Image"] = testImage })},
 		"egress cap add":           {"POST", createEgress, egress(func(m map[string]any) { hostCfg(m)["CapAdd"] = []string{"NET_ADMIN"} })},
-		"agent spec as egress":     {"POST", createEgress, mustJSON(t, agentSpec(testImage, testServer, refA))},
+		"agent spec as egress":     {"POST", createEgress, mustJSON(t, agentSpec(testImage, testServer, refA, 1))},
 		"egress spec as agent":     {"POST", "/containers/create?name=" + containerName(refA), egress(func(map[string]any) {})},
 		"attach egress":            {"POST", "/containers/" + egressName + "/attach?stream=1&stdin=1", nil},
 		"misaligned subnet":        {"POST", "/networks/create", network("172.30.0.8/28", nil)},

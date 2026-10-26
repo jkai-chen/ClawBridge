@@ -51,7 +51,7 @@ func TestMainProxyServesAndRefuses(t *testing.T) {
 	if got := proxied.send(t, http.MethodGet, "/info", nil); got != http.StatusForbidden {
 		t.Fatalf("info: %d", got)
 	}
-	if got := proxied.send(t, http.MethodPost, "/containers/create?name=clawbridge-agent-"+refA, mustJSON(t, agentSpec(testImage, testServer, refA))); got != http.StatusCreated {
+	if got := proxied.send(t, http.MethodPost, "/containers/create?name=clawbridge-agent-"+refA, mustJSON(t, agentSpec(testImage, testServer, refA, 1))); got != http.StatusCreated {
 		t.Fatalf("create: %d", got)
 	}
 	cancel()

@@ -42,6 +42,9 @@ func TestMainProxyServesAndRefuses(t *testing.T) {
 			t.Fatal("the proxy did not listen")
 		}
 	}
+	if info, err := os.Stat(listen); err != nil || info.Mode().Perm() != 0o660 {
+		t.Fatalf("socket mode: %v %v", info.Mode(), err)
+	}
 	if got := proxied.send(t, http.MethodGet, "/info", nil); got != http.StatusForbidden {
 		t.Fatalf("info: %d", got)
 	}

@@ -3,6 +3,7 @@ package agentd
 import (
 	"bufio"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"slices"
@@ -92,7 +93,12 @@ func TestProxyRefusesCreatesOutsideTheSpec(t *testing.T) {
 		path string
 		body []byte
 	}{
-		"versioned":       {"/v1.47" + create, mustJSON(t, privileged)},
+		"versioned": {"/v1.47" + create, mustJSON(t, privileged)},
+		// Prefixes other than /vN.N are not stripped, so they fail closed.
+		"short version":   {"/v1" + create, good},
+		"upper version":   {"/V1.47" + create, good},
+		"two versions":    {"/v1.47/v1.47" + create, good},
+		"version only":    {"/v1.47", good},
 		"other name":      {"/containers/create?name=postgres", good},
 		"ref mismatch":    {"/containers/create?name=clawbridge-agent-" + refB, good},
 		"bad ref":         {"/containers/create?name=clawbridge-agent-P_AAAAAAAA", good},
@@ -105,6 +111,19 @@ func TestProxyRefusesCreatesOutsideTheSpec(t *testing.T) {
 		"duplicate image": {create, []byte(strings.TrimSuffix(string(good), "}") + `,"Image":"busybox"}`)},
 	} {
 		if got := s.send(t, http.MethodPost, c.path, c.body); got != http.StatusForbidden {
+			t.Errorf("%s: status %d", name, got)
+		}
+	}
+	// A chunked body is read and checked the same way, and a form-encoded
+	// body can't add parameters dockerd would merge into the query.
+	chunk := func(body string) string { return fmt.Sprintf("%x\r\n%s\r\n0\r\n\r\n", len(body), body) }
+	agent := "/containers/clawbridge-agent-" + refA
+	for name, raw := range map[string]string{
+		"chunked privileged create": "POST " + create + " HTTP/1.1\r\nHost: docker\r\nContent-Type: application/json\r\nTransfer-Encoding: chunked\r\n\r\n" + chunk(string(mustJSON(t, privileged))),
+		"chunked start body":        "POST " + agent + "/start HTTP/1.1\r\nHost: docker\r\nTransfer-Encoding: chunked\r\n\r\n" + chunk(`{"Binds":["/:/host"]}`),
+		"form-encoded stop":         "POST " + agent + "/stop HTTP/1.1\r\nHost: docker\r\nContent-Type: application/x-www-form-urlencoded\r\nContent-Length: 15\r\n\r\nt=0&signal=KILL",
+	} {
+		if got := s.sendRaw(t, raw); got != http.StatusForbidden {
 			t.Errorf("%s: status %d", name, got)
 		}
 	}

@@ -4,6 +4,7 @@ package agentd
 
 import (
 	"fmt"
+	"net"
 	"os"
 	"syscall"
 )
@@ -34,4 +35,9 @@ func notRoot() error {
 	return nil
 }
 
-var geteuid = os.Geteuid
+// listenSocket creates a unix socket that is never more open than 0660.
+func listenSocket(path string) (net.Listener, error) {
+	old := syscall.Umask(0o117)
+	defer syscall.Umask(old)
+	return net.Listen("unix", path)
+}

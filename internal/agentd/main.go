@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
-	"net"
 	"net/http"
 	"os"
 	"time"
@@ -92,11 +91,12 @@ func runProxy(ctx context.Context, args []string, getenv func(string) string, lo
 			return err
 		}
 	}
-	l, err := net.Listen("unix", *listen)
+	// agentd connects through its group; nobody else can, not even while
+	// the socket is created.
+	l, err := listenSocket(*listen)
 	if err != nil {
 		return err
 	}
-	// agentd connects through its group; nobody else can.
 	if err := os.Chmod(*listen, 0o660); err != nil {
 		l.Close()
 		return err

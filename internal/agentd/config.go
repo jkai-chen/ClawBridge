@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"net/url"
+	"os"
 	"path/filepath"
 	"regexp"
 )
@@ -83,3 +84,6 @@ func validSocketPath(path string) error {
 	}
 	return nil
 }
+
+// geteuid is the process's user; tests set it.
+var geteuid = os.Geteuid

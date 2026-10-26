@@ -181,15 +181,23 @@ func (l *lockedWriter) Write(p []byte) (int, error) {
 	return l.w.Write(p)
 }
 
-// send makes one raw request to the proxy and returns the status.
+// send makes one request to the proxy and returns the status.
 func (s *testStack) send(t *testing.T, method, path string, body []byte) int {
+	t.Helper()
+	return s.sendRaw(t, fmt.Sprintf("%s %s HTTP/1.1\r\nHost: docker\r\nContent-Type: application/json\r\nContent-Length: %d\r\nConnection: close\r\n\r\n%s", method, path, len(body), body))
+}
+
+// sendRaw sends raw as the request and returns the status.
+func (s *testStack) sendRaw(t *testing.T, raw string) int {
 	t.Helper()
 	conn, err := net.Dial("unix", s.proxy)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer conn.Close()
-	fmt.Fprintf(conn, "%s %s HTTP/1.1\r\nHost: docker\r\nContent-Type: application/json\r\nContent-Length: %d\r\nConnection: close\r\n\r\n%s", method, path, len(body), body)
+	if _, err := io.WriteString(conn, raw); err != nil {
+		t.Fatal(err)
+	}
 	resp, err := http.ReadResponse(bufioReader(conn), nil)
 	if err != nil {
 		t.Fatal(err)

@@ -3,9 +3,11 @@ package runner
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -28,13 +30,20 @@ func execGit(dir string, args ...string) (string, error) {
 
 type opened struct{ dir, title, command string }
 
+var selfTestPath = regexp.MustCompile(`sh '\\''([^']+selftest\.sh)'\\''`)
+
 type env struct {
 	t      *testing.T
-	r      *Runner
-	origin string
-	repo   string
-	opens  []opened
-	now    time.Time
+	closed []string
+	// denyBin holds ls and head that always fail, as the sandbox refuses
+	// those reads; leak runs the self-test without them, silent not at all.
+	denyBin      string
+	leak, silent bool
+	r            *Runner
+	origin       string
+	repo         string
+	opens        []opened
+	now          time.Time
 }
 
 // newEnv makes an origin repository with one commit on main, the owner's
@@ -51,10 +60,31 @@ func newEnv(t *testing.T) *env {
 	e.git(e.repo, "push", "origin", "main")
 	e.git(e.repo, "remote", "set-head", "origin", "main")
 	home := filepath.Join(root, "home")
-	e.r = &Runner{StateDir: filepath.Join(home, ".clawbridge", "runner"), Home: home, Git: execGit, Now: func() time.Time { return e.now }, Terminal: func(owner, title, command string) error {
+	e.denyBin = filepath.Join(root, "deny-bin")
+	if err := os.MkdirAll(e.denyBin, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, tool := range []string{"ls", "head"} {
+		if err := os.WriteFile(filepath.Join(e.denyBin, tool), []byte("#!/bin/sh\necho 'Operation not permitted' >&2\nexit 1\n"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	e.r = &Runner{StateDir: filepath.Join(home, ".clawbridge", "runner"), Home: home, Git: execGit, Now: func() time.Time { return e.now }, Terminal: func(owner, title, command string) (string, error) {
 		e.opens = append(e.opens, opened{owner, title, command})
+		// The session's first step: run the self-test the prompt names,
+		// as the sandbox would (every read refused) unless e.leak.
+		if m := selfTestPath.FindStringSubmatch(command); m != nil && !e.silent {
+			cmd := exec.Command("sh", m[1])
+			if !e.leak {
+				cmd.Env = append(os.Environ(), "PATH="+e.denyBin+":/usr/bin:/bin")
+			}
+			_ = cmd.Run()
+		}
+		return "term-" + title, nil
+	}, Close: func(handle string) error {
+		e.closed = append(e.closed, handle)
 		return nil
-	}, ClaudeVersion: func() (string, error) { return TestedClaude + " (Claude Code)", nil }, ManagedSettings: filepath.Join(root, "no-managed-settings.json")}
+	}, SelfTestWait: 5 * time.Second, ClaudeVersion: func() (string, error) { return TestedClaude + " (Claude Code)", nil }, ManagedSettings: filepath.Join(root, "no-managed-settings.json")}
 	return e
 }
 
@@ -145,7 +175,7 @@ func TestLaunchMakesAnUnpushableClone(t *testing.T) {
 		t.Fatal("the owner cannot push:", err)
 	}
 	// The owner brings the work in with the printed fetch.
-	if !strings.HasPrefix(p.Fetch, "git fetch '"+p.Clone+"' agent/fix-12:agent/fix-12") {
+	if p.Fetch != "clawbridge runner fetch checkout-engineer-1" {
 		t.Fatal(p.Fetch)
 	}
 	e.git(e.repo, "fetch", p.Clone, "agent/fix-12:agent/fix-12")
@@ -199,7 +229,7 @@ type agentSettings struct {
 	Env     map[string]string
 	Sandbox struct {
 		Enabled, FailIfUnavailable, AllowUnsandboxedCommands bool
-		Filesystem                                           struct{ DenyRead, AllowWrite []string }
+		Filesystem                                           struct{ DenyRead, AllowRead, AllowWrite []string }
 		Network                                              struct {
 			AllowedDomains  []string
 			StrictAllowlist bool
@@ -247,17 +277,19 @@ func TestLaunchSettingsAndModel(t *testing.T) {
 			t.Fatal("not denied:", want)
 		}
 	}
-	if len(s.Sandbox.Filesystem.DenyRead) == 0 {
-		t.Fatal("no denied paths")
+	// Bash reads nothing in the home directory but the clone and its
+	// cache; the file tools are denied every known credential location.
+	if len(s.Sandbox.Filesystem.DenyRead) != 1 || s.Sandbox.Filesystem.DenyRead[0] != "~/" || !contains(s.Sandbox.Filesystem.AllowRead, p.Clone) || !contains(s.Sandbox.Filesystem.AllowRead, p.Cache) || len(s.Sandbox.Filesystem.AllowRead) != 2 {
+		t.Fatal("filesystem", s.Sandbox.Filesystem)
 	}
-	for _, path := range s.Sandbox.Filesystem.DenyRead {
+	for _, path := range DeniedPaths {
 		if !contains(s.Permissions.Deny, "Read("+path+"/**)") || !contains(s.Permissions.Deny, "Edit("+path+"/**)") {
 			t.Fatal("the file tools can reach", path)
 		}
 	}
-	for _, path := range []string{"~/.ssh", "~/.config/gh", "~/.clawbridge", "~/Library/Keychains"} {
-		if !contains(s.Sandbox.Filesystem.DenyRead, path) {
-			t.Fatal("not denied:", path)
+	for _, path := range []string{"~/.config/gh", "~/.claude", "~/Library/Application Support", "~/.aws", "~/.kube"} {
+		if !contains(DeniedPaths, path) {
+			t.Fatal("not a known credential location:", path)
 		}
 	}
 	if len(s.Sandbox.Network.AllowedDomains) != 1 || s.Sandbox.Network.AllowedDomains[0] != "proxy.golang.org" {
@@ -346,7 +378,7 @@ func TestLaunchRefusalsAndDryRun(t *testing.T) {
 	if _, err := e.r.Launch(e.spec("checkout-engineer-1", "not an id")); err == nil {
 		t.Fatal("a bad identifier accepted")
 	}
-	e.r.Terminal = func(string, string, string) error { return errors.New("orca is not running") }
+	e.r.Terminal = func(string, string, string) (string, error) { return "", errors.New("orca is not running") }
 	p, err := e.r.Launch(e.spec("checkout-engineer-1", issueIdent))
 	if err != nil || p.Opened || !strings.Contains(p.Note, "orca is not running") {
 		t.Fatal(p, err)
@@ -576,5 +608,114 @@ func TestGoModulesComeFromTheOwnersCache(t *testing.T) {
 	raw, _ := os.ReadFile(p.SettingsFile)
 	if err = json.Unmarshal(raw, &s); err != nil || s.Env["GOPROXY"] != "file:///home/owner/go/pkg/mod/cache/download,off" || !strings.HasPrefix(s.Env["GOMODCACHE"], p.Cache) {
 		t.Fatal(s.Env, err)
+	}
+}
+
+// runner fetch brings a clean branch in as agent/<id>; a branch that adds a
+// token anywhere in its history is refused and leaves nothing behind, and
+// the report names the file and pattern, never the text.
+func TestFetchScansForTokens(t *testing.T) {
+	e := newEnv(t)
+	clean := e.launch("checkout-engineer-1", "FIX-1")
+	e.commit(clean.Clone, "work.txt")
+	leaky := e.launch("checkout-engineer-2", "FIX-2")
+	secret := "ghp_" + strings.Repeat("A1b2", 9)
+	if err := os.WriteFile(filepath.Join(leaky.Clone, "notes.txt"), []byte("token: "+secret+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	e.git(leaky.Clone, "add", "notes.txt")
+	e.git(leaky.Clone, "commit", "-m", "notes")
+	// Removed again: it is still in the history a push would carry.
+	e.git(leaky.Clone, "rm", "-q", "notes.txt")
+	e.git(leaky.Clone, "commit", "-m", "tidy")
+	e.guardGit(clean.Clone, leaky.Clone)
+	got, err := e.r.Fetch("checkout-engineer-1")
+	if err != nil || !got.Fetched || got.Commits != 1 {
+		t.Fatal(got, err)
+	}
+	if e.git(e.repo, "log", "-1", "--format=%s", "agent/fix-1") != "work.txt" {
+		t.Fatal("not fetched")
+	}
+	got, err = e.r.Fetch("checkout-engineer-2")
+	if err == nil || got.Fetched || len(got.Hits) != 1 || got.Hits[0].File != "notes.txt" || got.Hits[0].Pattern != "github-token" {
+		t.Fatal("a token-carrying branch was fetched:", got, err)
+	}
+	if strings.Contains(err.Error(), secret) || strings.Contains(fmt.Sprint(got), secret) {
+		t.Fatal("the token was echoed")
+	}
+	for _, ref := range []string{"refs/heads/agent/fix-2", "refs/clawbridge-runner/checkout-engineer-2", "refs/clawbridge-runner/checkout-engineer-1"} {
+		if _, err := execGit(e.repo, "rev-parse", "--verify", "--quiet", ref); err == nil {
+			t.Fatal("left behind:", ref)
+		}
+	}
+	if _, err = e.r.Fetch("nobody"); err == nil {
+		t.Fatal("an unknown session was fetched")
+	}
+}
+
+func TestScanPatchPatterns(t *testing.T) {
+	for _, line := range []string{"ghp_" + strings.Repeat("x", 36), "github_pat_" + strings.Repeat("a", 40), "AKIA" + strings.Repeat("A", 16), "xoxb-" + strings.Repeat("1", 12), "-----BEGIN OPENSSH PRIVATE KEY-----", "sk-ant-" + strings.Repeat("a", 30)} {
+		if hits := ScanPatch("+++ b/f\n+" + line + "\n"); len(hits) != 1 {
+			t.Fatal("missed", line)
+		}
+		if hits := ScanPatch("+++ b/f\n-" + line + "\n " + line + "\n"); len(hits) != 0 {
+			t.Fatal("a removed or context line counted", line)
+		}
+	}
+	if hits := ScanPatch("+++ b/f\n+just some text with gh_ and AKIA in it\n"); len(hits) != 0 {
+		t.Fatal("false positive", hits)
+	}
+}
+
+// The launch waits for the session's sandbox self-test: a readable
+// credential location, or no report in time, closes the terminal and
+// fails the launch; a passing one is recorded.
+func TestLaunchSelfTest(t *testing.T) {
+	e := newEnv(t)
+	if err := os.MkdirAll(filepath.Join(e.r.Home, ".ssh"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	p := e.launch("checkout-engineer-1", "FIX-1")
+	if p.SelfTest != "passed" || len(e.closed) != 0 {
+		t.Fatal(p, e.closed)
+	}
+	script, _ := os.ReadFile(filepath.Join(p.Cache, "selftest.sh"))
+	if !strings.Contains(string(script), "ls '"+filepath.Join(e.r.Home, ".ssh")+"'") || strings.Contains(string(script), ".aws") {
+		t.Fatal("the self-test does not try exactly the locations that exist:\n" + string(script))
+	}
+	e.leak = true
+	if _, err := e.r.Launch(e.spec("checkout-engineer-2", "FIX-2")); err == nil || !strings.Contains(err.Error(), "~/.ssh") || len(e.closed) != 1 || e.closed[0] != "term-checkout-engineer-2" {
+		t.Fatal("a readable credential did not stop the session:", err, e.closed)
+	}
+	e.leak, e.silent = false, true
+	e.r.SelfTestWait = time.Second
+	if _, err := e.r.Launch(e.spec("checkout-engineer-3", "FIX-3")); err == nil || !strings.Contains(err.Error(), "in time") || len(e.closed) != 2 {
+		t.Fatal("a silent session was not stopped:", err, e.closed)
+	}
+}
+
+func TestCheckSelfTestReport(t *testing.T) {
+	for report, ok := range map[string]bool{
+		"DENIED 0\nDENIED 3\nDONE\n":        true,
+		"DENIED 0\nREAD 3\nDONE\n":          false,
+		"DENIED 0\nDONE\n":                  false,
+		"DENIED 0\nDENIED 3\n":              false,
+		"DENIED 0\nDENIED 3\nDONE\nextra\n": false,
+	} {
+		if err := checkSelfTest(report, []string{"0", "3"}); (err == nil) != ok {
+			t.Fatal(report, err)
+		}
+	}
+}
+
+// The clone carries the owner's commit identity, since the sandbox cannot
+// read ~/.gitconfig.
+func TestCloneCarriesTheCommitIdentity(t *testing.T) {
+	e := newEnv(t)
+	e.git(e.repo, "config", "user.name", "Owner Name")
+	e.git(e.repo, "config", "user.email", "owner@example.test")
+	p := e.launch("checkout-engineer-1", issueIdent)
+	if e.git(p.Clone, "config", "--local", "user.name") != "Owner Name" || e.git(p.Clone, "config", "--local", "user.email") != "owner@example.test" {
+		t.Fatal("identity not copied")
 	}
 }

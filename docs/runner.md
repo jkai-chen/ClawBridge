@@ -51,12 +51,20 @@ pushes or opens a pull request; a person does that.
 
 **Never run git inside a runner clone.** Its configuration and attributes are
 the agent's to write, and git there could run commands of its choosing as you.
-When the work is ready, bring it into your own checkout with the command the
-launch prints, review it there, and push it yourself:
+When the work is ready, bring it into your own checkout, **review the diff**, and
+push it yourself:
 
 ```sh
-git fetch ~/clawbridge-runs/<session> agent/<identifier>:agent/<identifier>
+clawbridge runner fetch <session>
 ```
+
+`runner fetch` never runs git inside the clone. The branch first lands under
+`refs/clawbridge-runner/<session>`, and every line its commits add, removed
+again or not, is scanned for token shapes (GitHub, AWS, Slack, Google, Linear
+and Anthropic keys, private keys). If one is found, nothing is fetched and the
+report names the file and pattern, never the text. A clean branch becomes
+`agent/<identifier>`. The scan is a backstop. You still review every agent diff
+before you push it.
 
 If Orca cannot open the terminal, the launch says so and prints the command to
 run in the clone yourself.
@@ -74,9 +82,13 @@ The settings passed with `--settings` take precedence over the repository's own
   - WebFetch;
   - editing anything in your own checkout.
 - **Bash sandbox:** on, and Claude Code refuses to run Bash without it.
-  - Bash cannot read `~/.ssh`, `~/.gnupg`, `~/.config/gh`, `~/.clawbridge`,
-    `~/.config/clawbridge`, `~/Library/Keychains`, `~/.git-credentials`, `~/.netrc`,
-    `~/.aws`, `~/.config/gcloud` or `~/.docker`.
+  - Bash reads **nothing in your home directory** except the agent's clone, its
+    cache and your Go module cache. Everything else under `~`, every
+    credential store included, is denied.
+  - Outside `~`, the system and the toolchains stay readable.
+  - The clone carries your git name and email itself, since `~/.gitconfig` is not
+    readable. Nothing else of that file carries over: includes, aliases and
+    credential helpers are left behind on purpose.
   - Bash writes only in its clone, its temporary directory and its cache
     (`<work>/<session>.cache`). Go, npm and XDG caches point there, never at
     yours, and `gc` removes it with the clone.
@@ -89,7 +101,21 @@ The settings passed with `--settings` take precedence over the repository's own
     offered to you to approve. Your git hosts are also denied in WebFetch's
     domain form, which the sandbox's network proxy honors.
 - **The file tools:** the sandbox covers Bash only, so Read and Edit are denied
-  the same paths.
+  the known credential locations by name: `~/.ssh`, `~/.gnupg`, `~/.config/gh`,
+  `~/.clawbridge`, `~/.config/clawbridge`, `~/Library/Keychains`,
+  `~/.git-credentials`, `~/.netrc`, `~/.aws`, `~/.azure`, `~/.config/gcloud`,
+  `~/.docker`, `~/.kube`, `~/.npmrc`, `~/.pypirc`, `~/.config/op`, `~/.claude`,
+  `~/Library/Application Support` and `~/.cache`. Add more, such as private
+  repositories, with `"denied_extra"`.
+  - Default mode also asks you before a file tool reads outside the clone.
+- **The self-test:** the session's first step is a script the launch wrote. It
+  tries to read each of those locations that exists on your Mac, inside the real
+  sandbox, and reports READ or DENIED for each. The launch waits for the report
+  (three minutes at most). One READ, a malformed report, or none at all closes
+  the terminal and retires the session before it does any work.
+  - This proves the sandbox on this machine at each start. It still depends on
+    the session running its first step as asked; a session that doesn't is
+    stopped by the wait.
 - **What stops a push:** the clone's missing push URL and the `git push` deny
   rule are only a first line. The agent can edit its own clone's config, or name
   a URL. The real barrier is that the agent has no credentials and no route to

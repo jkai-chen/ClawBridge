@@ -27,8 +27,9 @@ import (
 
 // Defaults decided by the owner (RUNNER-DESIGN §8).
 const (
-	DefaultMaxRetained = 10
-	retainNoCommits    = 7 * 24 * time.Hour
+	DefaultMaxRetained  = 10
+	DefaultSelfTestWait = 3 * time.Minute
+	retainNoCommits     = 7 * 24 * time.Hour
 )
 
 // Settings are the runner's own, in StateDir/config.json, mode 0600.
@@ -44,14 +45,24 @@ type Settings struct {
 	// WorkDir holds the agents' clones. The sandbox must be able to read
 	// it, so it may not be under any path the sandbox denies.
 	WorkDir string `json:"work_dir,omitempty"`
+	// DeniedExtra are more paths the file tools are denied, such as the
+	// owner's private repositories; Bash already cannot read them.
+	DeniedExtra []string `json:"denied_extra,omitempty"`
 }
 
 // defaultDomains let an agent fetch the usual package registries.
 var defaultDomains = []string{"proxy.golang.org", "sum.golang.org", "registry.npmjs.org", "pypi.org", "files.pythonhosted.org"}
 
-// DeniedPaths are the owner's credentials and ClawBridge's own state: no
-// agent tool reads or writes them (§2.1.2, RL-M1).
-var DeniedPaths = []string{"~/.ssh", "~/.gnupg", "~/.config/gh", "~/.clawbridge", "~/.config/clawbridge", "~/Library/Keychains", "~/.git-credentials", "~/.netrc", "~/.aws", "~/.config/gcloud", "~/.docker"}
+// DeniedPaths are the known credential stores and ClawBridge's own state.
+// Bash cannot read anything in the home directory except what the session
+// needs (the sandbox denies ~ and re-opens the clone, its cache and the
+// Go module cache); these are also denied to the file tools by name
+// (RL-M1), and the launch self-test proves the sandbox denies them.
+var DeniedPaths = []string{
+	"~/.ssh", "~/.gnupg", "~/.config/gh", "~/.clawbridge", "~/.config/clawbridge", "~/Library/Keychains",
+	"~/.git-credentials", "~/.netrc", "~/.aws", "~/.azure", "~/.config/gcloud", "~/.docker", "~/.kube",
+	"~/.npmrc", "~/.pypirc", "~/.config/op", "~/.claude", "~/Library/Application Support", "~/.cache",
+}
 
 // Launch is one recorded launch, in StateDir/launches.json.
 type Launch struct {
@@ -73,10 +84,13 @@ type Launch struct {
 // starts, in the new clone.
 type Git func(dir string, args ...string) (string, error)
 
-// Terminal opens a visible terminal that runs command. Orca opens it in
-// a checkout it manages, owner (the person's own); the command starts by
-// changing into the agent's clone.
-type Terminal func(owner, title, command string) error
+// Terminal opens a visible terminal that runs command and returns its
+// handle. Orca opens it in a checkout it manages, owner (the person's
+// own); the command starts by changing into the agent's clone.
+type Terminal func(owner, title, command string) (string, error)
+
+// CloseTerminal closes a terminal Terminal opened.
+type CloseTerminal func(handle string) error
 
 // Claude Code versions: the sandbox's strict allow-list needs MinClaude,
 // and the launcher's settings were proven live on TestedClaude.
@@ -96,6 +110,10 @@ type Runner struct {
 	Home     string
 	Git      Git
 	Terminal Terminal
+	Close    CloseTerminal
+	// SelfTestWait is how long a launch waits for the session's self-test;
+	// DefaultSelfTestWait when zero.
+	SelfTestWait time.Duration
 	// ClaudeVersion reports the installed claude's version.
 	ClaudeVersion func() (string, error)
 	// ManagedSettings is the managed settings file; DefaultManagedSettings

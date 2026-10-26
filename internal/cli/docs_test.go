@@ -75,3 +75,29 @@ func TestLinearDocArguments(t *testing.T) {
 		}
 	}
 }
+
+// initiative show is a read: it takes a profile and one UUID, and no
+// operation ID; the initiative writes still require one.
+func TestInitiativeShowTakesNoOperationID(t *testing.T) {
+	isolated(t)
+	const initiative = "1a1a0000-0000-4000-8000-000000000001"
+	v, pos, err := parseLinear("initiative-show", []string{initiative, "--profile", "native"}, &bytes.Buffer{})
+	if err != nil || len(pos) != 1 || pos[0] != initiative || v.profile != "native" {
+		t.Fatal(v, pos, err)
+	}
+	for _, args := range [][]string{{"--profile", "native"}, {initiative, "x", "--profile", "native"}, {initiative}, {initiative, "--profile", "native", "--operation-id", "x"}} {
+		if _, _, err := parseLinear("initiative-show", args, &bytes.Buffer{}); err == nil {
+			t.Fatal("accepted", args)
+		}
+	}
+	if _, _, err := parseLinear("initiative", []string{"X", "--profile", "native"}, &bytes.Buffer{}); err == nil || !strings.Contains(err.Error(), "--operation-id") {
+		t.Fatal("an initiative write without an operation ID:", err)
+	}
+	// Through the command: it gets past parsing to the profile, not the
+	// operation ID.
+	var out, errs bytes.Buffer
+	err = Run(context.Background(), []string{"linear", "initiative", "show", initiative, "--profile", "native"}, &out, &errs)
+	if err != nil && strings.Contains(err.Error(), "operation-id") {
+		t.Fatal(err)
+	}
+}

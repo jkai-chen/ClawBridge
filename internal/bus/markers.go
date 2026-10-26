@@ -22,6 +22,9 @@ const (
 	// front: one connection reused for the row, one binding proof, one issue
 	// read, one label page, the writes and their readbacks.
 	markerDueCalls = 8
+	// markerStateCalls is what a row's state part adds: the issue read
+	// again, the update and its readback.
+	markerStateCalls = 3
 	// MarkerLabel is the label a claim adds; a Linear admin creates it.
 	MarkerLabel = "agent-working"
 )
@@ -90,7 +93,23 @@ func markAssignment(ctx context.Context, tx *transaction, pid, assignment, issue
 	if err != nil {
 		return err
 	}
-	_, err = tx.ExecContext(ctx, `INSERT INTO assignment_markers(assignment_id,phase,project_id,issue_uuid,session_name,engineer,reason,comment_state,label_state,next_attempt_at,created_at,updated_at) VALUES(?,'claim',?,?,?,?,'','pending','pending',?,?,?)`, assignment, pid, issue, name, engineer, now, now, now)
+	state, revision, err := markerStatePart(ctx, tx, pid, "claim")
+	if err != nil {
+		return err
+	}
+	_, err = tx.ExecContext(ctx, `INSERT INTO assignment_markers(assignment_id,phase,project_id,issue_uuid,session_name,engineer,reason,comment_state,label_state,state_state,state_policy_revision,next_attempt_at,created_at,updated_at) VALUES(?,'claim',?,?,?,?,'','pending','pending',?,?,?,?,?)`, assignment, pid, issue, name, engineer, state, revision, now, now, now)
+	return err
+}
+
+// markReleaseDone records that a release finished its work: the close row
+// moves the issue to the policy's release_done state, frozen at the
+// policy's current revision.
+func markReleaseDone(ctx context.Context, tx *transaction, pid, assignment string) error {
+	state, revision, err := markerStatePart(ctx, tx, pid, "release_done")
+	if err != nil {
+		return err
+	}
+	_, err = tx.ExecContext(ctx, `UPDATE assignment_markers SET outcome='done',state_state=?,state_policy_revision=? WHERE assignment_id=? AND phase='close' AND project_id=?`, state, revision, assignment, pid)
 	return err
 }
 
@@ -129,8 +148,8 @@ func (c commentCall) marker(ctx context.Context) (markerCall, error) {
 	if m.phase != "claim" && m.phase != "close" {
 		return m, invalid("phase must be claim or close")
 	}
-	if m.part != "comment" && m.part != "label" {
-		return m, invalid("part must be comment or label")
+	if m.part != "comment" && m.part != "label" && m.part != "state" {
+		return m, invalid("part must be comment, label or state")
 	}
 	rows, err := query(ctx, c.tx, `SELECT * FROM assignment_markers WHERE assignment_id=? AND project_id=?`, m.assignment, c.pid)
 	if err != nil {
@@ -211,8 +230,11 @@ func (c commentCall) markerGo(ctx context.Context) (any, error) {
 		return nil, err
 	}
 	column := "comment_state"
-	if m.part == "label" {
+	switch m.part {
+	case "label":
 		column = "label_state"
+	case "state":
+		column = "state_state"
 	}
 	state := str(m.row, column)
 	out := func(action string) map[string]any {
@@ -232,6 +254,9 @@ func (c commentCall) markerGo(ctx context.Context) (any, error) {
 	wait := func() (any, error) {
 		_, err := m.tx.ExecContext(ctx, `UPDATE assignment_markers SET next_attempt_at=?,updated_at=? WHERE assignment_id=? AND phase=?`, layout(m.now.Add(time.Minute)), layout(m.now), m.assignment, m.phase)
 		return out("wait"), err
+	}
+	if m.part == "state" {
+		return m.stateGo(ctx, out, wait)
 	}
 	if m.phase == "claim" && m.close != nil {
 		// A claim part that never started, or whose attempt failed, cannot
@@ -392,6 +417,9 @@ func (c commentCall) markerSettle(ctx context.Context) (any, error) {
 	}
 	outcome := str(c.a, "outcome")
 	now := layout(m.now)
+	if m.part == "state" {
+		return m.stateSettle(ctx, outcome)
+	}
 	column := "comment_state"
 	if m.part == "label" {
 		column = "label_state"
@@ -511,20 +539,25 @@ func (c commentCall) markerDue(ctx context.Context) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	rows, err := query(ctx, c.tx, `SELECT assignment_id,phase,issue_uuid FROM assignment_markers WHERE project_id=? AND next_attempt_at<=? AND (comment_state IN ('pending','waiting_on_claim') OR label_state IN ('pending','in_flight','no_label')) ORDER BY next_attempt_at,assignment_id,phase LIMIT ?`, c.pid, layout(c.now), markerDueLimit)
+	rows, err := query(ctx, c.tx, `SELECT assignment_id,phase,issue_uuid,state_state FROM assignment_markers WHERE project_id=? AND next_attempt_at<=? AND (comment_state IN ('pending','waiting_on_claim') OR label_state IN ('pending','in_flight','no_label') OR state_state IN ('pending','in_flight')) ORDER BY next_attempt_at,assignment_id,phase LIMIT ?`, c.pid, layout(c.now), markerDueLimit)
 	if err != nil {
 		return nil, err
 	}
-	room := (limit - used) / markerDueCalls
-	if len(rows) > room {
-		rows = rows[:max(room, 0)]
-	}
 	markers := []any{}
+	cost := 0
 	for _, row := range rows {
+		calls := markerDueCalls
+		if s := str(row, "state_state"); s == "pending" || s == "in_flight" {
+			calls += markerStateCalls
+		}
+		if used+cost+calls > limit {
+			break
+		}
+		cost += calls
 		markers = append(markers, map[string]any{"assignment_id": row["assignment_id"], "phase": row["phase"], "issue_uuid": row["issue_uuid"]})
 	}
 	if len(markers) > 0 {
-		if _, _, err = c.charge(ctx, map[string]any{"budget_used": used, "budget_hour": layout(c.now)[:13], "budget_limit": limit}, len(markers)*markerDueCalls); err != nil {
+		if _, _, err = c.charge(ctx, map[string]any{"budget_used": used, "budget_hour": layout(c.now)[:13], "budget_limit": limit}, cost); err != nil {
 			return nil, err
 		}
 	}

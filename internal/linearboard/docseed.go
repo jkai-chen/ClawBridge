@@ -68,8 +68,11 @@ type SeedDoc struct {
 }
 
 type seedRow struct {
-	state, token, document, digest, updatedAt string
-	version                                   int
+	state, token, document, digest string
+	version                        int
+	// age is how long ago the authority recorded the row, by its own
+	// clock, in seconds; negative when it could not tell.
+	age int
 }
 
 // SeedDocs plans the guide documents for the project's binding and, with
@@ -137,10 +140,6 @@ func (s *Service) SeedDocs(ctx context.Context, scope bus.Request, in SeedInput)
 		}
 		return listed, listErr
 	}
-	now := time.Now
-	if s.cfg.Now != nil {
-		now = s.cfg.Now
-	}
 	for _, t := range docseed.Templates {
 		doc := SeedDoc{Template: t.Name, Title: t.Title, TemplateVersion: t.Version}
 		row, seen := rows[t.Name]
@@ -159,11 +158,13 @@ func (s *Service) SeedDocs(ctx context.Context, scope bus.Request, in SeedInput)
 					found = d
 				}
 			}
-			at, _ := time.Parse(time.RFC3339Nano, row.updatedAt)
 			switch {
 			case found.ID != "":
 				doc.Action, doc.DocumentID = "settle", found.ID
-			case now().Sub(at) < seedPendingFor:
+			case row.age < 0:
+				// An age the authority cannot tell never allows a redo.
+				doc.Action, doc.Note = "pending_recent", "could not tell when the earlier create was reserved; nothing written"
+			case time.Duration(row.age)*time.Second < seedPendingFor:
 				doc.Action, doc.Note = "pending_recent", "an earlier create may still appear; run seed-docs again in a few minutes"
 			default:
 				doc.Action, doc.Note = "create", "an earlier create did not appear; it is created again"
@@ -175,7 +176,7 @@ func (s *Service) SeedDocs(ctx context.Context, scope bus.Request, in SeedInput)
 			case e != nil && in.Reseed:
 				doc.Action, doc.Note = "create", "the seeded document could not be read; --reseed creates it again"
 			case e != nil:
-				doc.Action, doc.Note = "unreadable", "could not read the seeded document; nothing written. If it was deleted, run seed-docs --reseed"
+				doc.Action, doc.Note = "unreadable", "could not read the seeded document; nothing written. Only if you know it was deleted, run seed-docs --reseed"
 			case d.Archived && in.Reseed:
 				doc.Action, doc.Note = "create", "the seeded document is archived; --reseed creates it again"
 			case d.Archived:
@@ -286,8 +287,11 @@ func (s *Service) seedRows(ctx context.Context, scope bus.Request, kind, parent 
 		if name == "" || version < 1 {
 			return nil, errors.New("invalid seeded document record")
 		}
-		row := seedRow{version: version}
-		for dst, k := range map[*string]string{&row.state: "state", &row.token: "seed_token", &row.document: "document_id", &row.digest: "seeded_sha256", &row.updatedAt: "updated_at"} {
+		row := seedRow{version: version, age: -1}
+		if _, ok := m["age_seconds"]; ok {
+			row.age = number(m["age_seconds"])
+		}
+		for dst, k := range map[*string]string{&row.state: "state", &row.token: "seed_token", &row.document: "document_id", &row.digest: "seeded_sha256"} {
 			*dst, _ = m[k].(string)
 		}
 		out[name] = row

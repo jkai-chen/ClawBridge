@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"regexp"
+	"time"
 )
 
 // Schema 13: the Linear guide documents ClawBridge seeded (live/DOC-SEED-
@@ -40,7 +41,27 @@ func (s *Store) docSeedOp(ctx context.Context, tx *transaction, w, p map[string]
 		return nil, err
 	}
 	if r.Operation == "doc_seed_get" {
-		return query(ctx, tx, `SELECT template,template_version,state,seed_token,document_id,seeded_sha256,project_id,updated_by,updated_at FROM linear_doc_seeds WHERE workspace_id=? AND parent_kind=? AND parent_id=? ORDER BY template`, wid, kind, parent)
+		rows, err := query(ctx, tx, `SELECT template,template_version,state,seed_token,document_id,seeded_sha256,project_id,updated_by,updated_at FROM linear_doc_seeds WHERE workspace_id=? AND parent_kind=? AND parent_id=? ORDER BY template`, wid, kind, parent)
+		if err != nil {
+			return nil, err
+		}
+		// A row's age by the authority's own clock, so a client's clock
+		// never decides whether an uncertain create may be redone; -1 when
+		// the stamp cannot be read.
+		now, err := dbStamp(ctx, tx)
+		if err != nil {
+			return nil, err
+		}
+		for _, row := range rows {
+			age := -1
+			if updated, e := time.Parse(timestampLayout, str(row, "updated_at")); e == nil {
+				if current, e := time.Parse(timestampLayout, now); e == nil && !current.Before(updated) {
+					age = int(current.Sub(updated) / time.Second)
+				}
+			}
+			row["age_seconds"] = age
+		}
+		return rows, nil
 	}
 	template, state, token := str(a, "template"), str(a, "state"), str(a, "seed_token")
 	version, err := integer(a["template_version"])

@@ -27,7 +27,7 @@ export const PROJECT = "0b9f6c5e-3a4d-4e8b-9c1f-2d3e4f5a6b7c";
 export const ISSUE = "6f1d2c3b-4a5e-4f60-8a7b-9c0d1e2f3a4b";
 export const CREDENTIAL = "cba_Q7x2Lk9PzR4mWv8NcT3jYb";
 export const PROJECT_TOKEN = "cbm_H5tY8uJ2nB6vC9xZ4qWeRd";
-export const BINDING_SECRET = "Xk3Pq9Wm2Zt7Rv5Ln8Hb4Jc6Fd1Sg0Ay3Ue7Io2Ew5Tq9";
+export const BINDING_SECRET = "Xk3Pq9Wm2Zt7Rv5Ln8Hb4Jc6Fd1Sg0Ay3Ue7Io2Ew5T";
 
 export interface Recorded {
 	method: string;
@@ -103,9 +103,11 @@ export class FakeClawBridge {
 	}
 
 	private send(res: ServerResponse, status: number, schema: TSchema, body: unknown, what: string) {
-		this.check(`${what} response`, status < 400 ? schema : ErrorResponse, body);
+		// Responses are open (d4): a field this agent doesn't know must be ignored, so every success carries one.
+		const sent = status < 400 && body && typeof body === "object" ? { ...body, x_future_field: { added: "later" } } : body;
+		this.check(`${what} response`, status < 400 ? schema : ErrorResponse, sent);
 		res.writeHead(status, { "content-type": "application/json" });
-		res.end(JSON.stringify(body));
+		res.end(JSON.stringify(sent));
 	}
 
 	private projects() {

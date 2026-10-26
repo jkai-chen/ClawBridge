@@ -11,6 +11,10 @@ const Id = Type.String({ minLength: 1, maxLength: 128 });
 const Uuid = Type.String({ format: "uuid" });
 const Time = Type.String({ format: "date-time" });
 const Code = Type.String({ pattern: "^[a-z][a-z0-9_]{0,63}$" });
+// 32 random bytes, base64url without padding, as the server generates it.
+const BindingSecret = Type.String({ pattern: "^[A-Za-z0-9_-]{43}$" });
+// HTTPS; plain http only to a loopback host (a model served on the same machine), as for the server URL [A8].
+const ProviderBaseUrl = Type.String({ pattern: "^(https://[^/?#@\\s]+|http://(localhost|127\\.0\\.0\\.1|\\[::1\\])(:[0-9]{1,5})?)(/[^?#\\s]*)?$" });
 
 export const ERROR_CODES = [
 	"unauthorized",
@@ -27,6 +31,7 @@ export const ERROR_CODES = [
 	"guardrail",
 	"server_busy",
 	"conflict",
+	"rate_limited",
 ] as const;
 export type ErrorCode = (typeof ERROR_CODES)[number];
 
@@ -55,7 +60,7 @@ export const AgentConfigResponse = Type.Object({
 	provider: Type.Object({
 		id: Id,
 		api: Id,
-		base_url: Type.String({ format: "uri" }),
+		base_url: ProviderBaseUrl,
 		model: Id,
 		key: Type.String({ minLength: 1 }),
 	}),
@@ -64,12 +69,12 @@ export const AgentConfigResponse = Type.Object({
 		max_input_tokens_per_run: Type.Integer({ minimum: 1 }),
 		max_output_tokens_per_run: Type.Integer({ minimum: 1 }),
 	}),
-	binding_secret: Type.String({ minLength: 43 }),
+	binding_secret: BindingSecret,
 	/** pending_test: run the setup test (design §11.3) and post agent/test-result before any case (d4.1). */
 	status: Type.Enum(["pending_test", "active"]),
 });
 
-export const AgentRenewRequest = Type.Object({ binding_secret: Type.String({ minLength: 43 }) }, Closed);
+export const AgentRenewRequest = Type.Object({ binding_secret: BindingSecret }, Closed);
 export const AgentRenewResponse = Type.Object({ projects: Type.Array(ProjectToken) });
 
 // d4.1: the setup test's result, and the agent's status for doctor. Fixed codes only, never provider text.
@@ -84,7 +89,6 @@ export const SETUP_TEST_FAILURES = [
 	"timeout",
 ] as const;
 export type SetupTestFailure = (typeof SETUP_TEST_FAILURES)[number];
-const BindingSecret = Type.String({ minLength: 43 });
 export const AgentTestResultRequest = Type.Union([
 	Type.Object(
 		{ binding_secret: BindingSecret, config_revision: Type.Integer({ minimum: 1 }), result: Type.Literal("active") },

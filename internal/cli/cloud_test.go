@@ -12,6 +12,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -336,6 +337,9 @@ func TestCloudSecretSetRefusesBadInput(t *testing.T) {
 // The remote script, run here against a temporary file: it replaces only its
 // key's line, keeps the rest, and installs the file 0600.
 func TestRemoteSetScript(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("the script runs on the Linux server; Windows has no POSIX sh for its paths")
+	}
 	path := filepath.Join(t.TempDir(), "conf", "clawbridge.env")
 	key := "CLAWBRIDGE_LINEAR_APP_CLIENT_SECRET"
 	script := remoteSetScript(key, path)
@@ -354,8 +358,8 @@ func TestRemoteSetScript(t *testing.T) {
 	if err := run("first\n"); err != nil {
 		t.Fatal(err)
 	}
-	if info, _ := os.Stat(filepath.Dir(path)); info.Mode().Perm() != 0700 {
-		t.Fatalf("created directory mode %v", info.Mode())
+	if info, err := os.Stat(filepath.Dir(path)); err != nil || info.Mode().Perm() != 0700 {
+		t.Fatalf("created directory: %v %v", info, err)
 	}
 	// A file holding only this key: nothing else survives the filter.
 	if err := run("second"); err != nil {
@@ -374,8 +378,8 @@ func TestRemoteSetScript(t *testing.T) {
 	if string(got) != "A=1\n"+key+"_X=keep\nB=2\n"+key+"=new-value\n" {
 		t.Fatalf("env file: %q", got)
 	}
-	if info, _ := os.Stat(path); info.Mode().Perm() != 0600 {
-		t.Fatalf("mode %v", info.Mode())
+	if info, err := os.Stat(path); err != nil || info.Mode().Perm() != 0600 {
+		t.Fatalf("env file: %v %v", info, err)
 	}
 	for _, empty := range []string{"", "\n"} {
 		if err := run(empty); err == nil {

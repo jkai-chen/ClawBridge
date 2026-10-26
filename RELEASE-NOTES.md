@@ -41,6 +41,8 @@
 - **release_done:** `assignment release --outcome done` moves it to `release_done`, only from exactly the `claim`
   state.
 - **Never:** to a completed or canceled state, or back over a state a person chose. A person's change always wins.
+- A state of a type ClawBridge doesn't know, such as Linear's Duplicate state, is left out: it is never a target, and
+  an issue in it is never moved.
 - Names are resolved exactly in every bound team's workflow when the policy is set. On a hosted server the ClawBridge
   Linear app reads the state types when Linear's own list leaves them out (a project lead or owner only).
 - Moves are applied with the claim and release notes, by the server watcher or a v0.3.1 client, and cost about three

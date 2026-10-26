@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 
 	"clawbridge/internal/bus"
 )
@@ -255,5 +256,32 @@ func TestDispatcherSupersededIsDecidedAgain(t *testing.T) {
 	}
 	if tick := e.tick(); tick.Dispatch == nil || tick.Dispatch.Actions["confirm"] != 1 || e.assignmentState("eng") != "confirmed" {
 		t.Fatal("a superseded claim was not decided again", tick.Dispatch)
+	}
+}
+
+// A case carries the holder's leased presence (§1): a live lease on a quiet
+// session is idle, an expired one asleep, whatever it last claimed.
+func TestDispatcherCaseLiveness(t *testing.T) {
+	e := setup(t)
+	e.dispatcherOn("eng")
+	e.propose("eng", issueA, projPay)
+	liveness := func() any {
+		t.Helper()
+		r, err := e.s.ExecuteDispatcher(context.Background(), e.pid, bus.DispatcherSessionName, bus.Request{Operation: "dispatcher_cases_due"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return r.Data.(map[string]any)["cases"].([]any)[0].(map[string]any)["liveness"]
+	}
+	at := func(d time.Duration) string {
+		return time.Now().UTC().Add(d).Format("2006-01-02T15:04:05.000000000Z07:00")
+	}
+	e.sql(`UPDATE sessions SET last_seen='` + at(-time.Hour) + `',alive_until='` + at(time.Minute) + `',alive_state='idle' WHERE name='eng'`)
+	if got := liveness(); got != "idle" {
+		t.Fatal("live lease, quiet:", got)
+	}
+	e.sql(`UPDATE sessions SET alive_until='` + at(-time.Second) + `',alive_state='working' WHERE name='eng'`)
+	if got := liveness(); got != "asleep" {
+		t.Fatal("expired lease, says working:", got)
 	}
 }

@@ -44,7 +44,7 @@ func (s *Store) dispatcherCasesDue(ctx context.Context, tx *transaction, pid str
 	if meta["enabled"] != true {
 		return out, nil
 	}
-	rows, err := query(ctx, tx, `SELECT a.id,a.revision,a.issue_uuid,a.issue_identifier,a.issue_project_id,a.issue_labels,a.proposed_at,s.id AS session_id,s.name AS session_name,s.owner_principal,s.status,s.last_seen,
+	rows, err := query(ctx, tx, `SELECT a.id,a.revision,a.issue_uuid,a.issue_identifier,a.issue_project_id,a.issue_labels,a.proposed_at,s.id AS session_id,s.name AS session_name,s.owner_principal,s.status,s.last_seen,s.alive_until,s.alive_state,
 		(SELECT COUNT(*) FROM session_assignments h WHERE h.project_id=a.project_id AND h.state='confirmed' AND h.issue_uuid=a.issue_uuid AND h.issue_uuid<>'' AND h.session_id<>a.session_id) AS holders,
 		(SELECT COUNT(*) FROM dispatcher_decisions w WHERE w.project_id=a.project_id AND w.subject_id=a.id AND w.subject_revision=a.revision AND w.action='wait') AS waits
 		FROM session_assignments a JOIN sessions s ON s.id=a.session_id AND s.project_id=a.project_id
@@ -82,7 +82,10 @@ func (s *Store) dispatcherCasesDue(ctx context.Context, tx *transaction, pid str
 			"issue_project_id": str(r, "issue_project_id"), "issue_labels": labels,
 			"session_id": str(r, "session_id"), "session_name": str(r, "session_name"), "principal": str(r, "owner_principal"),
 			"status": str(r, "status"), "presence": presence, "absent_seconds": int(absent / time.Second),
-			"holders": asInt(r["holders"]), "waits": asInt(r["waits"]), "age_seconds": int(age / time.Second),
+			// The lease's presence (§1), gone after the default 24 h until
+			// cases carry their domain's stale_after_hours.
+			"liveness": liveness(r, now, defaultStaleAfterHour),
+			"holders":  asInt(r["holders"]), "waits": asInt(r["waits"]), "age_seconds": int(age / time.Second),
 		})
 	}
 	out["cases"] = cases

@@ -20,6 +20,8 @@ type transaction struct {
 	// beat is the heartbeat a pure read leaves for after its commit.
 	workspace string
 	beat      *heartbeat
+	// lease is the liveness lease a heartbeat leaves for after its commit.
+	lease *lease
 }
 
 func (t *transaction) bind(q string) string {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 )
 
@@ -220,42 +221,9 @@ func (s *Store) dispatcherEscalate(ctx context.Context, tx *transaction, w map[s
 			dom = &domains.Domains[i]
 		}
 	}
-	activeSessions := func(where string, args ...any) ([]map[string]any, error) {
-		rows, err := query(ctx, tx, `SELECT id,name,last_seen FROM sessions WHERE project_id=? AND status='active' AND role<>'system' AND `+where+` ORDER BY name`, append([]any{pid}, args...)...)
-		if err != nil {
-			return nil, err
-		}
-		fresh := []map[string]any{}
-		for _, r := range rows {
-			if seen, e := time.Parse(timestampLayout, str(r, "last_seen")); e == nil && time.Since(seen) <= staleAfter {
-				fresh = append(fresh, r)
-			}
-		}
-		return fresh, nil
-	}
-	var to []map[string]any
-	var err error
-	if dom != nil && dom.CoordinatorSession != nil && dom.CoordinatorSession.ID != "" {
-		if to, err = activeSessions("id=? AND owner_principal=?", dom.CoordinatorSession.ID, dom.CoordinatorSession.Principal); err != nil {
-			return nil, false, err
-		}
-	}
-	if len(to) == 0 && dom != nil {
-		if to, err = activeSessions("owner_principal=? AND id<>?", dom.OwnerPrincipal, str(proposal, "session_id")); err != nil {
-			return nil, false, err
-		}
-	}
-	if len(to) == 0 {
-		owner := str(w, "owner_principal")
-		// Project roles are a hosted store's; a local workspace has its owner.
-		if s.postgres {
-			to, err = activeSessions("(owner_principal=? OR owner_principal IN (SELECT principal FROM project_roles WHERE project_id=? AND role IN ('owner','lead'))) AND id<>?", owner, pid, str(proposal, "session_id"))
-		} else {
-			to, err = activeSessions("owner_principal=? AND id<>?", owner, str(proposal, "session_id"))
-		}
-		if err != nil {
-			return nil, false, err
-		}
+	to, err := s.dispatcherChain(ctx, tx, w, pid, dom, str(proposal, "session_id"))
+	if err != nil {
+		return nil, false, err
 	}
 	nowRaw, err := dbStamp(ctx, tx)
 	if err != nil {
@@ -297,4 +265,106 @@ func (s *Store) dispatcherEscalate(ctx context.Context, tx *transaction, w map[s
 		return nil, false, err
 	}
 	return names, len(names) > 0, nil
+}
+
+// dispatcherChain is who hears a dispatcher escalation or a routed notice,
+// in order (§8): the domain's coordinator session (by ID, active and fresh),
+// else another active session of the domain's owner, else the project
+// owner's and leads' active sessions. exclude leaves out one session (the
+// claimant). Empty means nobody is online: the caller stores it.
+func (s *Store) dispatcherChain(ctx context.Context, tx *transaction, w map[string]any, pid string, dom *DispatcherDomain, exclude string) ([]map[string]any, error) {
+	activeSessions := func(where string, args ...any) ([]map[string]any, error) {
+		rows, err := query(ctx, tx, `SELECT id,name,last_seen FROM sessions WHERE project_id=? AND status='active' AND role<>'system' AND `+where+` ORDER BY name`, append([]any{pid}, args...)...)
+		if err != nil {
+			return nil, err
+		}
+		fresh := []map[string]any{}
+		for _, r := range rows {
+			if seen, e := time.Parse(timestampLayout, str(r, "last_seen")); e == nil && time.Since(seen) <= staleAfter {
+				fresh = append(fresh, r)
+			}
+		}
+		return fresh, nil
+	}
+	var to []map[string]any
+	var err error
+	if dom != nil && dom.CoordinatorSession != nil && dom.CoordinatorSession.ID != "" {
+		if to, err = activeSessions("id=? AND owner_principal=?", dom.CoordinatorSession.ID, dom.CoordinatorSession.Principal); err != nil {
+			return nil, err
+		}
+	}
+	if len(to) == 0 && dom != nil {
+		if to, err = activeSessions("owner_principal=? AND id<>?", dom.OwnerPrincipal, exclude); err != nil {
+			return nil, err
+		}
+	}
+	if len(to) == 0 {
+		owner := str(w, "owner_principal")
+		// Project roles are a hosted store's; a local workspace has its owner.
+		if s.postgres {
+			to, err = activeSessions("(owner_principal=? OR owner_principal IN (SELECT principal FROM project_roles WHERE project_id=? AND role IN ('owner','lead'))) AND id<>?", owner, pid, exclude)
+		} else {
+			to, err = activeSessions("owner_principal=? AND id<>?", owner, exclude)
+		}
+	}
+	return to, err
+}
+
+// coordinatorTargets is who hears a notice meant for the project's
+// coordinator (§6). Without the dispatcher as coordinator, the coordinator
+// session, as before. With it, the notice is routed by its subject: the
+// domain whose Linear projects hold linearProject, else the one domain a
+// label matches, else the fallback (the owner and leads). A label routes;
+// it never grants.
+func (s *Store) coordinatorTargets(ctx context.Context, tx *transaction, pid, linearProject string, labels []string) ([]map[string]any, error) {
+	coordinator, err := query(ctx, tx, `SELECT s.id,s.name,s.role FROM projects p JOIN sessions s ON s.project_id=p.id AND s.id=p.coordinator_session WHERE p.id=? AND s.status='active'`, pid)
+	if err != nil || len(coordinator) == 0 || !isDispatcher(coordinator[0]) {
+		return coordinator, err
+	}
+	domains, _, err := readDispatcher(ctx, tx, pid)
+	if err != nil {
+		return nil, err
+	}
+	var dom *DispatcherDomain
+	// Domain project lists are disjoint, so at most one matches.
+	for i := range domains.Domains {
+		if linearProject != "" && containsString(domains.Domains[i].Match.LinearProjects, linearProject) {
+			dom = &domains.Domains[i]
+		}
+	}
+	if dom == nil {
+		// Each domain counts once, however many of its labels match.
+		var hits []*DispatcherDomain
+		for i := range domains.Domains {
+			hit := false
+			for _, want := range domains.Domains[i].Match.Labels {
+				for _, l := range labels {
+					hit = hit || strings.EqualFold(want, l)
+				}
+			}
+			if hit {
+				hits = append(hits, &domains.Domains[i])
+			}
+		}
+		if len(hits) == 1 {
+			dom = hits[0]
+		}
+	}
+	w, err := one(ctx, tx, `SELECT w.* FROM workspaces w JOIN projects p ON p.workspace_id=w.id WHERE p.id=?`, pid)
+	if err != nil {
+		return nil, err
+	}
+	return s.dispatcherChain(ctx, tx, w, pid, dom, "")
+}
+
+// issueRouting is what the bus knows of an issue's Linear project and
+// labels: from its latest proposal, as the client reported them.
+func issueRouting(ctx context.Context, tx *transaction, pid, issue string) (string, []string) {
+	rows, err := query(ctx, tx, `SELECT issue_project_id,issue_labels FROM session_assignments WHERE project_id=? AND issue_uuid=? AND issue_uuid<>'' ORDER BY proposed_at DESC LIMIT 1`, pid, issue)
+	if err != nil || len(rows) == 0 {
+		return "", nil
+	}
+	var labels []string
+	_ = json.Unmarshal([]byte(str(rows[0], "issue_labels")), &labels)
+	return str(rows[0], "issue_project_id"), labels
 }

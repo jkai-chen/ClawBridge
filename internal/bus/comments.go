@@ -943,7 +943,8 @@ func (c commentCall) notify(ctx context.Context, issue, cursor string, fresh []r
 	offline := false
 	if len(assignees) == 0 {
 		offline = true
-		assignees, err = query(ctx, c.tx, `SELECT s.id,s.name FROM projects p JOIN sessions s ON s.project_id=p.id AND s.id=p.coordinator_session WHERE p.id=? AND s.status='active'`, c.pid)
+		project, labels := issueRouting(ctx, c.tx, c.pid, issue)
+		assignees, err = c.s.coordinatorTargets(ctx, c.tx, c.pid, project, labels)
 		if err != nil {
 			return "", nil, err
 		}

@@ -269,7 +269,7 @@ func parseLinear(command string, args []string, stderr io.Writer) (linearFlags, 
 		profile()
 		f.BoolVar(&v.confirm, "confirm", false, "create, settle or update the guide documents shown")
 		f.BoolVar(&v.update, "update", false, "replace an untouched guide whose template is newer")
-		f.BoolVar(&v.reseed, "reseed", false, "create a guide again when the seeded one is archived or cannot be read")
+		f.BoolVar(&v.reseed, "reseed", false, "create a guide again when the seeded one is archived, or cannot be read and you know it was deleted")
 	case "unlink":
 		f.Int64Var(&v.revision, "expected-revision", -1, "required current mapping revision")
 		f.BoolVar(&v.confirm, "confirm", false, "commit project unlink; retains personal profiles")

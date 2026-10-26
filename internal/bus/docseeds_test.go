@@ -38,6 +38,16 @@ func TestDocSeedReserveSettleAndCAS(t *testing.T) {
 	if len(rows) != 1 || rows[0]["state"] != "seeded" || rows[0]["document_id"] != seedDoc || rows[0]["seeded_sha256"] != digest || rows[0]["template"] != "developer" {
 		t.Fatal(rows)
 	}
+	// The age is the authority's own; an unreadable stamp reads -1.
+	if age, ok := rows[0]["age_seconds"].(int); !ok || age < 0 || age > 60 {
+		t.Fatal("age", rows[0]["age_seconds"])
+	}
+	if _, e := h.s.db.Exec(`UPDATE linear_doc_seeds SET updated_at='not a time'`); e != nil {
+		t.Fatal(e)
+	}
+	if rows = h.call("doc_seed_get", "", get()).([]map[string]any); rows[0]["age_seconds"] != -1 {
+		t.Fatal("unreadable age", rows[0]["age_seconds"])
+	}
 	if acts := h.actions("linear_doc_seed"); len(acts) != 2 || acts[0] != "pending" || acts[1] != "seeded" {
 		t.Fatal("history", acts)
 	}

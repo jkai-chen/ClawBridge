@@ -595,7 +595,7 @@ func (s *Store) ExecuteAs(ctx context.Context, principal string, r Request) (Res
 // inbox stamps deliveries, so those keep the locks.
 func pureRead(r Request) bool {
 	switch r.Operation {
-	case "snapshot", "inbox_status", "notification_status", "taskboard_get", "taskboard_get_v2", "taskboard_access", "list_projects", "list_members", "comment_watch_status", "label_policy_get":
+	case "snapshot", "inbox_status", "notification_status", "taskboard_get", "taskboard_get_v2", "taskboard_access", "list_projects", "list_members", "comment_watch_status", "label_policy_get", "doc_seed_get":
 		return true
 	case "list_sessions", "history", "whoami", "linear_comments_posted", "linear_comment_precheck", "intake_policy_get", "intake_trust_list", "intake_list":
 		// Naming a session with its instance makes it a heartbeat read: the

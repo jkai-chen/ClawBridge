@@ -117,7 +117,9 @@ clawbridge linear seed-docs --profile PROFILE_ID --confirm  # do it
   newer guide.
 - `--reseed` creates a guide again when the seeded one is archived, or when
   ClawBridge cannot read it. Linear answers a deleted document like any other
-  refusal, so ClawBridge never assumes a document is gone.
+  refusal, so ClawBridge never assumes a document is gone, and `--reseed` takes
+  any read failure as gone: use it only for a document you know was deleted or
+  archived, never to get past a passing outage.
 - A create whose answer was lost is found again under the team (each document
   ends with a `seed:` line); ClawBridge never creates a guide twice. Right after
   such a failure it asks you to run `seed-docs` again in a few minutes.

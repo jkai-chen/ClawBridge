@@ -74,7 +74,10 @@ type seedEnv struct {
 	f     *docFake
 	scope bus.Request
 	opens int
-	now   time.Time
+	// aged adds to every row's age as the authority reports it, standing
+	// in for time passing on the server; noAge drops the age instead.
+	aged  time.Duration
+	noAge bool
 	run   func(context.Context, bus.Request) (bus.Result, error)
 }
 
@@ -97,11 +100,22 @@ func seedTest(t *testing.T) *seedEnv {
 		}
 	}
 	s, _, p, _ := testV2(t)
-	env := &seedEnv{s: s, scope: bus.Request{Workspace: "w", Project: "p", Args: map[string]any{}}, now: time.Now(), run: store.Execute}
+	env := &seedEnv{s: s, scope: bus.Request{Workspace: "w", Project: "p", Args: map[string]any{}}, run: store.Execute}
 	env.f = &docFake{providerV2: p, docs: map[string]*linearprovider.Document{}, parents: map[string]string{}}
-	s.cfg.Executor = &storeAuthority{run: store.Execute}
+	s.cfg.Executor = &storeAuthority{run: func(ctx context.Context, r bus.Request) (bus.Result, error) {
+		out, err := store.Execute(ctx, r)
+		if rows, ok := out.Data.([]map[string]any); ok && r.Operation == "doc_seed_get" {
+			for _, row := range rows {
+				if env.noAge {
+					delete(row, "age_seconds")
+				} else {
+					row["age_seconds"] = row["age_seconds"].(int) + int(env.aged/time.Second)
+				}
+			}
+		}
+		return out, err
+	}}
 	s.cfg.Authority = "local-seed"
-	s.cfg.Now = func() time.Time { return env.now }
 	s.cfg.Open = func(context.Context, *http.Client, bool) (Provider, error) { env.opens++; return env.f, nil }
 	return env
 }
@@ -241,12 +255,22 @@ func TestSeedDocsSettlesAnUncertainCreate(t *testing.T) {
 	e2.f.createErr = true
 	e2.seed(t, SeedInput{Confirm: true})
 	e2.f.createErr = false
-	e2.now = time.Now()
 	if r := e2.seed(t, SeedInput{Confirm: true}); actions(r) != "developer=pending_recent reviewer=pending_recent" || len(e2.f.order) != 0 {
 		t.Fatal("a recent uncertain create was redone:", actions(r))
 	}
 	old := e2.rows(t)[0]["seed_token"]
-	e2.now = e2.now.Add(seedPendingFor + time.Minute)
+	// The client's clock plays no part: only the authority's age does.
+	e2.s.cfg.Now = func() time.Time { return time.Now().Add(24 * time.Hour) }
+	if r := e2.seed(t, SeedInput{Confirm: true}); actions(r) != "developer=pending_recent reviewer=pending_recent" {
+		t.Fatal("the client's clock decided:", actions(r))
+	}
+	// A row whose age the authority cannot tell is never redone.
+	e2.noAge = true
+	e2.aged = seedPendingFor + time.Minute
+	if r := e2.seed(t, SeedInput{Confirm: true}); actions(r) != "developer=pending_recent reviewer=pending_recent" || len(e2.f.order) != 0 {
+		t.Fatal("an unknown age allowed a redo:", actions(r))
+	}
+	e2.noAge = false
 	if r := e2.seed(t, SeedInput{Confirm: true}); actions(r) != "developer=create/created reviewer=create/created" || len(e2.f.order) != 2 {
 		t.Fatal(actions(r))
 	}

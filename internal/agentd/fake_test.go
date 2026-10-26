@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -195,12 +196,12 @@ func (s *testStack) sendRaw(t *testing.T, raw string) int {
 		t.Fatal(err)
 	}
 	defer conn.Close()
-	if _, err := io.WriteString(conn, raw); err != nil {
-		t.Fatal(err)
-	}
+	// The proxy may refuse and close before a large body is all written;
+	// its answer is still there to read.
+	_, werr := io.WriteString(conn, raw)
 	resp, err := http.ReadResponse(bufioReader(conn), nil)
 	if err != nil {
-		t.Fatal(err)
+		t.Fatal(errors.Join(err, werr))
 	}
 	resp.Body.Close()
 	return resp.StatusCode

@@ -183,15 +183,20 @@ func TestAScopeChangeReplacesTheStoredToken(t *testing.T) {
 	if _, err = a.open(store.rows[0]); err != nil {
 		t.Fatal("the old-scope row does not open", err)
 	}
+	// A failed mint never falls back to a token of another release's set.
+	l.tokenFail = []int{400}
+	if _, _, err := newApp(t, store, l, &now).Token(context.Background()); err == nil {
+		t.Fatal("a token of the old scopes was kept after a failed mint")
+	}
 	b := newApp(t, store, l, &now)
 	fresh, _, err := b.Token(context.Background())
-	if err != nil || fresh == old || l.mints != 2 || len(store.rows) != 2 || store.rows[1].ScopesDigest != scopesDigest() {
+	if err != nil || fresh == old || l.mints != 3 || len(store.rows) != 2 || store.rows[1].ScopesDigest != scopesDigest() {
 		t.Fatal("a token of the old scopes was adopted", fresh == old, err, l.mints, len(store.rows))
 	}
 	if has, err := b.HasScope(context.Background(), "write"); !has || err != nil {
 		t.Fatal("HasScope", err)
 	}
-	if got, _, _ := newApp(t, store, l, &now).Token(context.Background()); got != fresh || l.mints != 2 {
+	if got, _, _ := newApp(t, store, l, &now).Token(context.Background()); got != fresh || l.mints != 3 {
 		t.Fatal("the new token was not shared", l.mints)
 	}
 }
@@ -235,6 +240,38 @@ func TestWriteDeniedIsUsedAndAskedAgainDaily(t *testing.T) {
 	}
 	if has, _ := a.HasScope(ctx, "write"); !has {
 		t.Fatal("a granted write is not reported")
+	}
+}
+
+// R71-L3: a failed retry for write keeps the token without it in use, on
+// the instance that holds it and on one that adopts it; a near-expiry token
+// is never kept.
+func TestAFailedWriteRetryKeepsTheTokenWithoutIt(t *testing.T) {
+	ctx := context.Background()
+	now := time.Date(2026, 10, 23, 12, 0, 0, 0, time.UTC)
+	store := &memStore{live: map[string]int{}}
+	l := &linear{app: true, scope: "app:assignable app:mentionable comments:create issues:create read"}
+	a := newApp(t, store, l, &now)
+	token, _, err := a.Token(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	now = now.Add(writeRetry + time.Minute)
+	l.tokenFail = []int{400}
+	if got, _, err := a.Token(ctx); err != nil || got != token || l.mints != 2 {
+		t.Fatal("a failed retry stopped the app", err, l.mints)
+	}
+	l.tokenFail = []int{400}
+	if got, _, err := newApp(t, store, l, &now).Token(ctx); err != nil || got != token {
+		t.Fatal("a new instance did not keep the token without write", err)
+	}
+	if has, err := a.HasScope(ctx, "write"); has || err != nil {
+		t.Fatal(has, err)
+	}
+	now = now.Add(26 * 24 * time.Hour)
+	l.tokenFail = []int{400, 400}
+	if _, _, err := a.Token(ctx); err == nil {
+		t.Fatal("a token near expiry was kept")
 	}
 }
 

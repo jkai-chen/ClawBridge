@@ -1,0 +1,77 @@
+package cli
+
+import (
+	"bytes"
+	"context"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+
+	"clawbridge/internal/bus"
+)
+
+// The owner sets the document policy from a file at its revision; it reads
+// back, and the document reads refuse ambiguous arguments before any
+// Linear call.
+func TestCLIDocPolicyAndDocArguments(t *testing.T) {
+	isolated(t)
+	invoke(t, "setup", "--local", "--workspace", "w")
+	invoke(t, "project", "create", "p")
+	t.Setenv("CLAWBRIDGE_PROJECT", "p")
+	show := func() string {
+		t.Helper()
+		var out, errs bytes.Buffer
+		if e := Run(context.Background(), []string{"linear", "doc-policy", "show"}, &out, &errs); e != nil {
+			t.Fatal(e, errs.String())
+		}
+		return out.String()
+	}
+	if got := show(); !strings.Contains(got, `"revision":0`) || !strings.Contains(got, `"initiatives":[]`) {
+		t.Fatal(got)
+	}
+	file := filepath.Join(t.TempDir(), "policy.json")
+	write := func(body string) {
+		if e := os.WriteFile(file, []byte(body), 0o600); e != nil {
+			t.Fatal(e)
+		}
+	}
+	write(`{"source_root": "~/src/example", "deny_patterns": [{"id": "internal-name", "regex": "internal-name-[0-9]+"}], "initiatives": ["1a1a0000-0000-4000-8000-000000000001"]}`)
+	var out, errs bytes.Buffer
+	if e := Run(context.Background(), []string{"linear", "doc-policy", "set", "--file", file, "--expected-revision", "0"}, &out, &errs); e != nil || !strings.Contains(out.String(), `"revision":1`) {
+		t.Fatal(e, out.String(), errs.String())
+	}
+	if got := show(); !strings.Contains(got, "1a1a0000-0000-4000-8000-000000000001") || !strings.Contains(got, `"regex":"internal-name-[0-9]+"`) {
+		t.Fatal(got)
+	}
+	rejectCLI(t, "linear", "doc-policy", "set", "--file", file, "--expected-revision", "0")
+	write(`{"source_root": "~/a", "source_root": "~/b"}`)
+	rejectCLI(t, "linear", "doc-policy", "set", "--file", file, "--expected-revision", "1")
+	write(`{"deny_patterns": [{"id": "x", "regex": "("}]}`)
+	rejectCLI(t, "linear", "doc-policy", "set", "--file", file, "--expected-revision", "1")
+	rejectCLI(t, "linear", "doc-policy", "set", "--file", file)
+	rejectCLI(t, "linear", "doc-policy", "drop")
+	rejectCLI(t, "linear", "doc", "publish")
+	rejectCLI(t, "linear", "doc", "list")
+	rejectCLI(t, "linear", "initiative", "show", "1a1a0000-0000-4000-8000-000000000001")
+}
+
+// linearDoc refuses mixed or missing arguments without reaching the board.
+func TestLinearDocArguments(t *testing.T) {
+	for name, c := range map[string]struct {
+		action string
+		v      linearFlags
+		pos    []string
+	}{
+		"get without an ID":   {"get", linearFlags{}, nil},
+		"get with a parent":   {"get", linearFlags{team: "t"}, []string{"d"}},
+		"get with a cursor":   {"get", linearFlags{cursor: "c"}, []string{"d"}},
+		"list with an ID":     {"list", linearFlags{}, []string{"d"}},
+		"list with max bytes": {"list", linearFlags{maxBytes: 5}, nil},
+		"list two parents":    {"list", linearFlags{team: "t", initiative: "i"}, nil},
+	} {
+		if _, e := linearDoc(context.Background(), nil, bus.Request{}, c.action, c.v, c.pos); e == nil {
+			t.Fatal(name, "accepted")
+		}
+	}
+}

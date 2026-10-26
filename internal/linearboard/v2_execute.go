@@ -11,7 +11,7 @@ import (
 // ExecuteV2 is the closed native adapter used by additive, scope-pinned MCP tools.
 func (s *Service) ExecuteV2(ctx context.Context, scope bus.Request, operation string, args map[string]any) (_ any, err error) {
 	defer func() { s.settle(err) }()
-	allowed := map[string][]string{"binding": {}, "context": {}, "issues": {"limit", "cursor", "label_id", "updated_after"}, "issue": {"id", "resolve_labels", "comments", "comments_since"}, "labels": {"team_id", "limit", "cursor"}, "members": {"team_id", "limit", "cursor"}, "create": {"title", "description", "state_id", "operation_id", "team_id", "project_id", "label_ids", "parent_id", "assignee_id"}, "update": {"id", "title", "description", "state_id", "operation_id", "project_id", "label_ids", "expected_label_ids", "add_label_ids", "remove_label_ids", "expected_title", "expected_description_sha256", "parent_id", "assignee_id"}, "comment": {"id", "body", "operation_id", "parent_id", "in_response_to"}, "relation_add": {"from_id", "to_id", "type", "operation_id"}, "relation_remove": {"from_id", "to_id", "type", "operation_id"}}
+	allowed := map[string][]string{"doc_list": {"parent_kind", "parent_id", "cursor", "limit"}, "doc_get": {"id", "max_bytes"}, "binding": {}, "context": {}, "issues": {"limit", "cursor", "label_id", "updated_after"}, "issue": {"id", "resolve_labels", "comments", "comments_since"}, "labels": {"team_id", "limit", "cursor"}, "members": {"team_id", "limit", "cursor"}, "create": {"title", "description", "state_id", "operation_id", "team_id", "project_id", "label_ids", "parent_id", "assignee_id"}, "update": {"id", "title", "description", "state_id", "operation_id", "project_id", "label_ids", "expected_label_ids", "add_label_ids", "remove_label_ids", "expected_title", "expected_description_sha256", "parent_id", "assignee_id"}, "comment": {"id", "body", "operation_id", "parent_id", "in_response_to"}, "relation_add": {"from_id", "to_id", "type", "operation_id"}, "relation_remove": {"from_id", "to_id", "type", "operation_id"}}
 	keys, ok := allowed[operation]
 	if !ok {
 		return nil, errors.New("unsupported task-board V2 operation")
@@ -27,6 +27,12 @@ func (s *Service) ExecuteV2(ctx context.Context, scope bus.Request, operation st
 		}
 		if key == "limit" {
 			if _, e := pageLimitV2(value); e != nil {
+				return nil, e
+			}
+			continue
+		}
+		if key == "max_bytes" {
+			if _, e := maxBytesV2(value); e != nil {
 				return nil, e
 			}
 			continue
@@ -53,6 +59,14 @@ func (s *Service) ExecuteV2(ctx context.Context, scope bus.Request, operation st
 		limit, _ = pageLimitV2(v)
 	}
 	switch operation {
+	case "doc_list":
+		return s.DocListV2(ctx, scope, DocListInputV2{ParentKind: text("parent_kind"), ParentID: text("parent_id"), Cursor: text("cursor"), Limit: limit})
+	case "doc_get":
+		n := 0
+		if v, ok := args["max_bytes"]; ok {
+			n, _ = maxBytesV2(v)
+		}
+		return s.DocGetV2(ctx, scope, text("id"), n)
 	case "binding":
 		return s.BindingV2(ctx, scope)
 	case "context":
@@ -150,6 +164,19 @@ func pageLimitV2(v any) (int, error) {
 	}
 	if n < 1 || n > 100 {
 		return 0, errors.New("page limit requires 1–100")
+	}
+	return n, nil
+}
+func maxBytesV2(v any) (int, error) {
+	n, ok := 0, false
+	switch v := v.(type) {
+	case int:
+		n, ok = v, true
+	case float64:
+		n, ok = int(v), v == float64(int(v))
+	}
+	if !ok || n < 1 || n > DocMaxBytes {
+		return 0, errors.New("max_bytes requires an integer 1–65536")
 	}
 	return n, nil
 }

@@ -237,7 +237,7 @@ func TestDocList(t *testing.T) {
 }
 
 // initiative show names the bound projects; the unbound ones only when
-// asked for.
+// asked for, by a project owner or lead.
 func TestInitiativeShow(t *testing.T) {
 	s, a, p, scope := testDocsV2(t)
 	a.initiatives = []string{initiativeA}
@@ -247,10 +247,43 @@ func TestInitiativeShow(t *testing.T) {
 	if e != nil || len(got.Projects) != 1 || got.Projects[0].ID != projectA || got.Unbound != nil || len(got.Documents) != 1 {
 		t.Fatal(got, e)
 	}
+	if got, e = s.InitiativeShowV2(context.Background(), scope, initiativeA, true); e != nil || got.Unbound != nil {
+		t.Fatal("a member saw unbound projects", got, e)
+	}
+	a.role = "lead"
 	if got, e = s.InitiativeShowV2(context.Background(), scope, initiativeA, true); e != nil || len(got.Unbound) != 1 || got.Unbound[0].ID != unboundProj {
 		t.Fatal(got, e)
 	}
 	if _, e = s.InitiativeShowV2(context.Background(), scope, initiativeB, true); !outside(e) {
 		t.Fatal("an unlisted initiative was shown:", e)
+	}
+}
+
+// The MCP adapter's document operations take exact arguments.
+func TestDocExecuteV2(t *testing.T) {
+	s, _, p, scope := testDocsV2(t)
+	p.docs[docID] = doc(linearprovider.DocParents{TeamID: teamID}, "line one\nline two\n")
+	got, e := s.ExecuteV2(context.Background(), scope, "doc_get", map[string]any{"id": docID, "max_bytes": float64(9)})
+	if e != nil || got.(DocV2).UntrustedContent != "line one\n" {
+		t.Fatal(got, e)
+	}
+	if got, e = s.ExecuteV2(context.Background(), scope, "doc_list", map[string]any{"parent_kind": "team", "parent_id": teamID, "limit": float64(5)}); e != nil || len(got.(DocListV2).Documents) != 1 {
+		t.Fatal(got, e)
+	}
+	for _, c := range []struct {
+		op   string
+		args map[string]any
+	}{
+		{"doc_get", map[string]any{"id": docID, "max_bytes": 1.5}},
+		{"doc_get", map[string]any{"id": docID, "max_bytes": float64(0)}},
+		{"doc_get", map[string]any{"id": docID, "max_bytes": "9"}},
+		{"doc_list", map[string]any{"query": "x"}},
+		{"doc_list", map[string]any{"parent_id": teamID}},
+		{"doc_list", map[string]any{"parent_kind": "team", "parent_id": teamID, "limit": float64(51)}},
+		{"doc_publish", map[string]any{}},
+	} {
+		if _, e := s.ExecuteV2(context.Background(), scope, c.op, c.args); e == nil {
+			t.Fatal("accepted", c.op, c.args)
+		}
 	}
 }

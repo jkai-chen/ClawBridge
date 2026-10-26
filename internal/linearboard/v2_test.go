@@ -44,6 +44,8 @@ type authorityV2 struct {
 	appStates map[string][]any
 	// initiatives are the document policy's, which doc_policy_get answers.
 	initiatives []string
+	// role is the project role taskboard_access reports; member when empty.
+	role string
 }
 
 func (a *authorityV2) Execute(_ context.Context, r bus.Request) (bus.Result, error) {
@@ -54,6 +56,9 @@ func (a *authorityV2) Execute(_ context.Context, r bus.Request) (bus.Result, err
 		}
 		a.accessArgs = r.Args
 		access := bus.TaskboardAccess{WorkspaceID: a.b.WorkspaceID, ProjectID: a.b.ProjectID, SessionID: a.actor, SessionName: a.name, CanWrite: !a.deny, ProjectRole: "member"}
+		if a.role != "" {
+			access.ProjectRole = a.role
+		}
 		if r.Args["engineer"] == 1 {
 			access.Engineer = a.engineer
 		}

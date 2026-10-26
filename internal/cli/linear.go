@@ -187,6 +187,8 @@ type linearFlags struct {
 	revision                                                                                                             int64
 	teamBoard, confirm, noBrowser, tokenStdin, resolveLabels, comments, repair, once                                     bool
 	noSeedDocs, update, reseed                                                                                           bool
+	initiative                                                                                                           string
+	maxBytes                                                                                                             int
 }
 type repeatedIDs []string
 
@@ -304,6 +306,18 @@ func parseLinear(command string, args []string, stderr io.Writer) (linearFlags, 
 		write()
 		f.StringVar(&v.description, "description", "", "create: the initiative's description")
 		min, max = 1, 2
+	case "doc":
+		profile()
+		f.StringVar(&v.team, "team", "", "list: the bound team UUID whose documents to list")
+		f.StringVar(&v.project, "linear-project", "", "list: the Linear project UUID whose documents to list")
+		f.StringVar(&v.initiative, "initiative", "", "list: the initiative UUID, listed in the document policy, whose documents to list")
+		f.IntVar(&v.limit, "limit", 50, "list: page size (1–50)")
+		f.StringVar(&v.cursor, "cursor", "", "list: the next cursor from the previous page of the same parent")
+		f.IntVar(&v.maxBytes, "max-bytes", 0, "get: return at most this much content (default 32768, at most 65536)")
+		min, max = 0, 1
+	case "doc-policy":
+		f.StringVar(&v.policyFile, "file", "", "set: JSON file {\"source_root\": PATH, \"deny_patterns\": [{\"id\", \"regex\"}], \"initiatives\": [UUID]}")
+		f.Int64Var(&v.revision, "expected-revision", -1, "set: the policy revision you last read (0 for none)")
 	case "display-name":
 		profile()
 		min, max = 0, 1
@@ -342,7 +356,7 @@ func parseLinear(command string, args []string, stderr io.Writer) (linearFlags, 
 	if len(pos) < min || len(pos) > max {
 		return v, nil, errors.New("invalid Linear positional arguments")
 	}
-	needsProfile := command != "profiles" && command != "connect" && command != "login" && command != "import" && command != "binding" && command != "unlink" && command != "label-policy" && command != "status-policy" && command != "health" && command != "display-name" && command != "admin"
+	needsProfile := command != "profiles" && command != "connect" && command != "login" && command != "import" && command != "binding" && command != "unlink" && command != "label-policy" && command != "status-policy" && command != "doc-policy" && command != "health" && command != "display-name" && command != "admin"
 	if needsProfile && !validLinearProfile(v.profile) {
 		return v, nil, errors.New("select --profile with the opaque ID from linear profiles")
 	}
@@ -689,7 +703,7 @@ func linearWriteInput(command string, v linearFlags, pos []string) (linearboard.
 
 func runLinear(ctx context.Context, flags Config, args []string, stdout, stderr io.Writer) error {
 	if len(args) == 0 || len(args) == 1 && (args[0] == "--help" || args[0] == "-h" || args[0] == "help") {
-		_, err := io.WriteString(stdout, "clawbridge linear connect|import|profiles|status|logout|teams|projects|binding|link|seed-docs|unlink|context|issues|issue|states|labels|members|create|update|comment|relation|watch\nProject owner only: label create|rename, project create, initiative create|add-project, label-policy show|set, status-policy show|set, health set|enable|disable, admin audit-replay.\nProject health (any member): health show.\nYour name in agent markers: display-name set NAME|clear|capture --profile ID.\nUse COMMAND --help for explicit flags. Token import accepts --token-stdin only.\n")
+		_, err := io.WriteString(stdout, "clawbridge linear connect|import|profiles|status|logout|teams|projects|binding|link|seed-docs|unlink|context|issues|issue|states|labels|members|create|update|comment|relation|watch\nProject owner only: label create|rename, project create, initiative create|add-project, label-policy show|set, status-policy show|set, doc-policy set, health set|enable|disable, admin audit-replay.\nProject health (any member): health show.\nLinear documents (any member): doc list|get, initiative show, doc-policy show.\nYour name in agent markers: display-name set NAME|clear|capture --profile ID.\nUse COMMAND --help for explicit flags. Token import accepts --token-stdin only.\n")
 		return err
 	}
 	command := args[0]
@@ -703,20 +717,22 @@ func runLinear(ctx context.Context, flags Config, args []string, stdout, stderr 
 		parseArgs = parseArgs[1:]
 	}
 	adminAction := ""
-	if (command == "label" || command == "project" || command == "initiative" || command == "label-policy" || command == "status-policy" || command == "health" || command == "display-name" || command == "admin") && len(parseArgs) > 0 && parseArgs[0] != "--help" && parseArgs[0] != "-h" {
+	if (command == "label" || command == "project" || command == "initiative" || command == "doc" || command == "doc-policy" || command == "label-policy" || command == "status-policy" || command == "health" || command == "display-name" || command == "admin") && len(parseArgs) > 0 && parseArgs[0] != "--help" && parseArgs[0] != "-h" {
 		adminAction = parseArgs[0]
 		parseArgs = parseArgs[1:]
 	}
 	switch {
 	case command == "label" && adminAction != "create" && adminAction != "rename",
 		command == "project" && adminAction != "create",
-		command == "initiative" && adminAction != "create" && adminAction != "add-project",
+		command == "initiative" && adminAction != "create" && adminAction != "add-project" && adminAction != "show",
+		command == "doc" && adminAction != "list" && adminAction != "get",
+		command == "doc-policy" && adminAction != "show" && adminAction != "set",
 		command == "label-policy" && adminAction != "show" && adminAction != "set",
 		command == "status-policy" && adminAction != "show" && adminAction != "set",
 		command == "health" && adminAction != "show" && adminAction != "set" && adminAction != "enable" && adminAction != "disable",
 		command == "display-name" && adminAction != "set" && adminAction != "clear" && adminAction != "capture",
 		command == "admin" && adminAction != "audit-replay":
-		return errors.New("use linear label create|rename, project create, initiative create|add-project, label-policy show|set, status-policy show|set, health show|set|enable|disable, display-name set|clear|capture, or admin audit-replay")
+		return errors.New("use linear doc list|get, initiative show, doc-policy show|set, label create|rename, project create, initiative create|add-project, label-policy show|set, status-policy show|set, health show|set|enable|disable, display-name set|clear|capture, or admin audit-replay")
 	}
 	v, pos, err := parseLinear(command, parseArgs, stderr)
 	v.relationAction = relationAction
@@ -904,7 +920,35 @@ func runLinear(ctx context.Context, flags Config, args []string, stdout, stderr 
 		data, err = service.LabelsV2(bounded, scope, v.team, v.limit, v.cursor)
 	case "members":
 		data, err = service.MembersV2(bounded, scope, v.team, v.limit, v.cursor)
-	case "label", "project", "initiative":
+	case "doc":
+		data, err = linearDoc(bounded, service, scope, adminAction, v, pos)
+	case "doc-policy":
+		if adminAction == "show" {
+			data, err = service.DocPolicyV2(bounded, scope)
+			break
+		}
+		if v.policyFile == "" || v.revision < 0 {
+			return errors.New("doc-policy set requires --file and --expected-revision")
+		}
+		raw, e := readLinearFile(v.policyFile)
+		if e != nil {
+			return e
+		}
+		data, err = service.SetDocPolicyV2(bounded, scope, []byte(raw), v.revision)
+	case "initiative":
+		if adminAction == "show" {
+			if len(pos) != 1 {
+				return errors.New("initiative show takes one initiative UUID")
+			}
+			data, err = service.InitiativeShowV2(bounded, scope, pos[0], true)
+			break
+		}
+		in, e := linearAdminInput(command, adminAction, v, pos)
+		if e != nil {
+			return e
+		}
+		data, err = service.Admin(bounded, scope, in)
+	case "label", "project":
 		in, e := linearAdminInput(command, adminAction, v, pos)
 		if e != nil {
 			return e
@@ -1050,4 +1094,29 @@ func linkWithSeedDocs(ctx context.Context, service *linearboard.Service, scope b
 	}
 	out["seed_docs"] = seeded
 	return out
+}
+
+// linearDoc runs linear doc list|get: a list names at most one parent; a
+// get reads one document by its UUID.
+func linearDoc(ctx context.Context, service *linearboard.Service, scope bus.Request, action string, v linearFlags, pos []string) (any, error) {
+	if action == "get" {
+		if len(pos) != 1 || v.team != "" || v.project != "" || v.initiative != "" || v.cursor != "" {
+			return nil, errors.New("doc get takes one document UUID and --max-bytes only")
+		}
+		return service.DocGetV2(ctx, scope, pos[0], v.maxBytes)
+	}
+	if len(pos) != 0 || v.maxBytes != 0 {
+		return nil, errors.New("doc list takes no positional argument and no --max-bytes")
+	}
+	in := linearboard.DocListInputV2{Cursor: v.cursor, Limit: v.limit}
+	for kind, id := range map[string]string{"team": v.team, "project": v.project, "initiative": v.initiative} {
+		if id == "" {
+			continue
+		}
+		if in.ParentKind != "" {
+			return nil, errors.New("doc list takes one of --team, --linear-project or --initiative")
+		}
+		in.ParentKind, in.ParentID = kind, id
+	}
+	return service.DocListV2(ctx, scope, in)
 }

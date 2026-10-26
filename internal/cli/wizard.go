@@ -79,6 +79,12 @@ func runStartup(ctx context.Context, flags Config, args []string, stdout, stderr
 		return errors.New("without a command only --client-config is accepted; use help")
 	}
 	if wizardTerminal(stdout) != nil {
+		// With no saved profile, Start prints its text and commands.
+		if path, e := selectedClientPath(flags); e == nil {
+			if _, e = os.Lstat(path); errors.Is(e, os.ErrNotExist) {
+				return runStart(ctx, path, stdout, stderr)
+			}
+		}
 		_, e := io.WriteString(stdout, Usage)
 		return e
 	}
@@ -88,7 +94,7 @@ func runStartup(ctx context.Context, flags Config, args []string, stdout, stderr
 	}
 	stat, err := os.Lstat(path)
 	if errors.Is(err, os.ErrNotExist) {
-		return runWizard(ctx, Config{ClientConfig: path}, nil, stdout, stderr)
+		return runStart(ctx, path, stdout, stderr)
 	}
 	if err != nil || !stat.Mode().IsRegular() || stat.Size() > 4<<20 {
 		return errors.New("trusted config is inaccessible or not a regular nonsymlink file; choose a separate --client-config")

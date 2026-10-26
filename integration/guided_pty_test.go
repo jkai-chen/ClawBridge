@@ -48,15 +48,16 @@ func TestGuidedStartupPTYBeforeAcquisition(t *testing.T) {
 			if err := os.WriteFile(filepath.Join(dir, ".clawbridge.toml"), []byte("mode='cloud'\nserver='https://unrequested.invalid'\n"), 0600); err != nil {
 				t.Fatal(err)
 			}
-			input := "https://selected.invalid\nws\nprj\ndevice\n\n"
+			// Start's "2" leads to the guided join.
+			input := "2\nhttps://selected.invalid\nws\nprj\ndevice\n\n"
 			if kind == "invalid-url" {
-				input = "https://user:unsafe-url-sentinel@selected.invalid\nws\nprj\ndevice\ny\n"
+				input = "2\nhttps://user:unsafe-url-sentinel@selected.invalid\nws\nprj\ndevice\ny\n"
 			}
 			if kind == "eof" {
-				input = "\x04"
+				input = "2\n\x04"
 			}
 			if kind == "cancel" {
-				input = ""
+				input = "2\n"
 			}
 			ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
 			defer cancel()

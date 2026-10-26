@@ -26,10 +26,19 @@ and preserve application state. Binaries are unsigned.
 
 ## Start
 
-Run `clawbridge` in a terminal to open a saved profile or join an existing hosted
-workspace. Have its HTTPS address, workspace, project and an authorized Google
-account ready; [joining a project](docs/onboarding.md) walks through it. For an
-isolated local bus, see [local messaging](docs/usage.md#local-messaging).
+Run `clawbridge` in a terminal. With a saved profile it opens the overview;
+without one it opens **Start**, which offers three ways in (`clawbridge onboard`
+reopens it at any time):
+
+1. **Just this machine:** local messaging between your agents, with no server or
+   account ([local messaging](docs/usage.md#local-messaging)).
+2. **Join a team server:** have its HTTPS address, workspace, project and an
+   authorized Google account ready; [joining a project](docs/onboarding.md)
+   walks through it.
+3. **Set up my own server:** the steps, each verified with `clawbridge cloud
+   check` ([API reference](docs/reference/api.md)).
+
+Without a terminal, `clawbridge` prints the command behind each choice.
 
 Install a separate MCP session for each agent:
 

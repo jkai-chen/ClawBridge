@@ -321,6 +321,10 @@ CLAWBRIDGE_LINEAR_APP_TOKEN_KEY=<32 random bytes, base64>
   scope set (`read, write, comments:create, issues:create, app:assignable,
   app:mentionable`). It seals the token with AES-GCM under the token key and
   keeps it in Postgres, so every server instance shares one token.
+  - `write` is optional. If Linear grants the rest without it, the server uses
+    that token for everything except what needs `write` (issue relations and
+    project status updates), and asks for `write` again once a day. Any other answered set is refused, counted
+    and backed off.
 - **Rotation.**
   - To rotate the secret, change it here and restart: every token is revoked,
     and the server mints a new one on its next Linear call.

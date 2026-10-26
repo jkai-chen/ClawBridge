@@ -31,7 +31,8 @@ import (
 // revokes every token of the app, so it changes only in a release that
 // says so. Linear takes it comma-separated and answers space-separated.
 // write (v0.3.4) lets the app post project status updates and create
-// issue relations; Linear drops those quietly without it.
+// issue relations; Linear drops those quietly without it. It is the one
+// optional scope: a token Linear grants without it is used for the rest.
 var Scopes = []string{"read", "write", "comments:create", "issues:create", "app:assignable", "app:mentionable"}
 
 // releasedScopes is Scopes as this release ships it. A mint checks Scopes
@@ -40,11 +41,14 @@ var Scopes = []string{"read", "write", "comments:create", "issues:create", "app:
 // at run time; a release that edits both changes the scopes on purpose.
 const releasedScopes = "read,write,comments:create,issues:create,app:assignable,app:mentionable"
 
-// HasScope reports whether the app's token carries scope. A token in use
-// always carries Scopes: Token adopts a stored token only when its scope
-// digest matches, and otherwise mints, which revokes the old one; a mint
-// whose answered scopes differ from Scopes is refused.
-func HasScope(scope string) bool { return slices.Contains(Scopes, scope) }
+// optionalScope may be missing from a granted token. A token granted
+// without it is used for everything else, and asked again for it once
+// writeRetry has passed since it was minted, so a refusal costs about one
+// mint a day.
+const (
+	optionalScope = "write"
+	writeRetry    = 24 * time.Hour
+)
 
 const (
 	tokenURL   = "https://api.linear.app/oauth/token"
@@ -112,6 +116,9 @@ type App struct {
 	identity Identity
 	minted   time.Time
 	expires  time.Time
+	// granted is the in-use token's scope set: Scopes, or Scopes without
+	// optionalScope.
+	granted  []string
 	lastMint time.Time
 	// lost counts consecutive mints lost after Linear issued them;
 	// backoffUntil stops minting after too many.
@@ -150,7 +157,67 @@ func digest(s string) string {
 	return hex.EncodeToString(h[:])
 }
 
-func scopesDigest() string { return digest(strings.Join(Scopes, " ")) }
+func scopesDigest() string { return scopesDigestOf(Scopes) }
+
+func scopesDigestOf(scopes []string) string { return digest(strings.Join(scopes, " ")) }
+
+// withoutOptional is Scopes without optionalScope, in Scopes' order.
+func withoutOptional() []string {
+	out := []string{}
+	for _, s := range Scopes {
+		if s != optionalScope {
+			out = append(out, s)
+		}
+	}
+	return out
+}
+
+// deniedDigest is the digest of a token asked for Scopes and granted them
+// without optionalScope. It differs from the digest of that smaller set,
+// which is what an older release minted on purpose, so such a token is
+// asked again at once.
+func deniedDigest() string { return scopesDigestOf(append(withoutOptional(), "-"+optionalScope)) }
+
+// grantDigest is the digest a token of the granted set is published under.
+func grantDigest(granted []string) string {
+	switch {
+	case granted == nil:
+		return ""
+	case len(granted) == len(Scopes):
+		return scopesDigest()
+	}
+	return deniedDigest()
+}
+
+// grantFor is the scope set a published digest names: Scopes, Scopes
+// without optionalScope, or nil for any other.
+func grantFor(scopesDigest string) []string {
+	switch scopesDigest {
+	case grantDigest(Scopes):
+		return Scopes
+	case deniedDigest():
+		return withoutOptional()
+	}
+	return nil
+}
+
+// usable reports whether a token of this digest and mint time is used
+// rather than replaced: the full set always, a denied optionalScope until
+// writeRetry has passed.
+func usable(scopesDigest string, minted, now time.Time) bool {
+	return scopesDigest == grantDigest(Scopes) || scopesDigest == deniedDigest() && now.Sub(minted) < writeRetry
+}
+
+// HasScope reports whether the token in use was granted scope, getting a
+// token first if none is held.
+func (a *App) HasScope(ctx context.Context, scope string) (bool, error) {
+	if _, _, err := a.Token(ctx); err != nil {
+		return false, err
+	}
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return slices.Contains(a.granted, scope), nil
+}
 
 // aad binds a sealed token to its row: a ciphertext moved to another row
 // does not open.
@@ -191,7 +258,7 @@ func (a *App) Token(ctx context.Context) (string, Identity, error) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	now := a.cfg.Now()
-	if a.token != "" && now.Add(refreshMargin).Before(a.expires) {
+	if a.token != "" && now.Add(refreshMargin).Before(a.expires) && usable(grantDigest(a.granted), a.minted, now) {
 		return a.token, a.identity, nil
 	}
 	// Another instance may have published a token already; a new instance
@@ -200,7 +267,7 @@ func (a *App) Token(ctx context.Context) (string, Identity, error) {
 	if err != nil {
 		return "", Identity{}, err
 	}
-	if found && now.Add(refreshMargin).Before(live.ExpiresAt) && live.ScopesDigest == scopesDigest() {
+	if found && now.Add(refreshMargin).Before(live.ExpiresAt) && usable(live.ScopesDigest, live.MintedAt, now) {
 		if err = a.adopt(ctx, live); err == nil {
 			return a.token, a.identity, nil
 		}
@@ -255,7 +322,7 @@ func (a *App) adopt(ctx context.Context, t bus.AppToken) error {
 		}
 		a.identity = id
 	}
-	a.token, a.sha, a.minted, a.expires = token, t.TokenSHA256, t.MintedAt, t.ExpiresAt
+	a.token, a.sha, a.minted, a.expires, a.granted = token, t.TokenSHA256, t.MintedAt, t.ExpiresAt, grantFor(t.ScopesDigest)
 	return nil
 }
 
@@ -284,7 +351,7 @@ func (a *App) mint(ctx context.Context, replaces string) error {
 		return fail("app_token_limit")
 	}
 	a.lastMint = now
-	token, expires, err := a.request(ctx)
+	token, expires, granted, err := a.request(ctx)
 	if err != nil {
 		return err
 	}
@@ -294,7 +361,13 @@ func (a *App) mint(ctx context.Context, replaces string) error {
 		a.lostMint(now)
 		return err
 	}
-	err = a.publish(ctx, token, expires, now, replaces)
+	if granted == nil {
+		// Linear issued a token of another scope set: counted above, and
+		// lost like any other.
+		a.lostMint(now)
+		return fail("scopes_mismatch")
+	}
+	err = a.publish(ctx, token, expires, now, replaces, granted)
 	if err != nil {
 		a.lostMint(now)
 		return err
@@ -312,7 +385,7 @@ func (a *App) lostMint(now time.Time) {
 }
 
 // publish reads a counted token's identity, seals it and publishes it.
-func (a *App) publish(ctx context.Context, token string, expires, now time.Time, replaces string) error {
+func (a *App) publish(ctx context.Context, token string, expires, now time.Time, replaces string, granted []string) error {
 	id, err := a.viewer(ctx, token)
 	if err != nil {
 		return err
@@ -320,7 +393,7 @@ func (a *App) publish(ctx context.Context, token string, expires, now time.Time,
 	if a.identity.LinearOrgID != "" && id.LinearOrgID != a.identity.LinearOrgID {
 		return fail("organization_changed")
 	}
-	row := bus.AppToken{AppClientID: a.cfg.ClientID, LinearOrgID: id.LinearOrgID, TokenSHA256: digest(token), ScopesDigest: scopesDigest(), MintedAt: now.UTC(), ExpiresAt: expires.UTC()}
+	row := bus.AppToken{AppClientID: a.cfg.ClientID, LinearOrgID: id.LinearOrgID, TokenSHA256: digest(token), ScopesDigest: grantDigest(granted), MintedAt: now.UTC(), ExpiresAt: expires.UTC()}
 	if err = a.seal(token, &row); err != nil {
 		return err
 	}
@@ -330,15 +403,17 @@ func (a *App) publish(ctx context.Context, token string, expires, now time.Time,
 	}
 	a.identity = id
 	if published {
-		a.token, a.sha, a.minted, a.expires = token, row.TokenSHA256, row.MintedAt, row.ExpiresAt
+		a.token, a.sha, a.minted, a.expires, a.granted = token, row.TokenSHA256, row.MintedAt, row.ExpiresAt, granted
 		return nil
 	}
 	return a.adopt(ctx, current)
 }
 
 // request mints a client-credentials token: HTTP Basic client auth and the
-// fixed scope set. The answered scopes must be exactly that set.
-func (a *App) request(ctx context.Context) (string, time.Time, error) {
+// fixed scope set. granted is the answered set when it is Scopes or Scopes
+// without optionalScope, and nil for any other: Linear issued that token
+// all the same.
+func (a *App) request(ctx context.Context) (string, time.Time, []string, error) {
 	form := url.Values{"grant_type": {"client_credentials"}, "scope": {strings.Join(Scopes, ",")}}
 	var out struct {
 		AccessToken string `json:"access_token"`
@@ -349,16 +424,16 @@ func (a *App) request(ctx context.Context) (string, time.Time, error) {
 	for attempt := 0; ; attempt++ {
 		req, err := http.NewRequestWithContext(ctx, http.MethodPost, tokenURL, strings.NewReader(form.Encode()))
 		if err != nil {
-			return "", time.Time{}, err
+			return "", time.Time{}, nil, err
 		}
 		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 		req.SetBasicAuth(a.cfg.ClientID, a.cfg.Secret)
 		res, err := a.cfg.HTTP.Do(req)
 		if err != nil {
 			if ctx.Err() != nil {
-				return "", time.Time{}, ctx.Err()
+				return "", time.Time{}, nil, ctx.Err()
 			}
-			return "", time.Time{}, fail("unavailable")
+			return "", time.Time{}, nil, fail("unavailable")
 		}
 		body, _ := io.ReadAll(io.LimitReader(res.Body, 64<<10))
 		res.Body.Close()
@@ -368,24 +443,28 @@ func (a *App) request(ctx context.Context) (string, time.Time, error) {
 			case <-time.After(time.Second):
 				continue
 			case <-ctx.Done():
-				return "", time.Time{}, ctx.Err()
+				return "", time.Time{}, nil, ctx.Err()
 			}
 		case res.StatusCode >= 500:
-			return "", time.Time{}, fail("unavailable")
+			return "", time.Time{}, nil, fail("unavailable")
 		case res.StatusCode != http.StatusOK:
-			return "", time.Time{}, fail("app_unavailable")
+			return "", time.Time{}, nil, fail("app_unavailable")
 		}
 		if json.NewDecoder(bytes.NewReader(body)).Decode(&out) != nil || out.AccessToken == "" || !strings.EqualFold(out.TokenType, "Bearer") || out.ExpiresIn <= 0 {
-			return "", time.Time{}, fail("invalid_response")
+			return "", time.Time{}, nil, fail("invalid_response")
 		}
 		got := strings.Fields(out.Scope)
-		want := append([]string{}, Scopes...)
 		sort.Strings(got)
-		sort.Strings(want)
-		if strings.Join(got, " ") != strings.Join(want, " ") {
-			return "", time.Time{}, fail("scopes_mismatch")
+		var granted []string
+		for _, set := range [][]string{Scopes, withoutOptional()} {
+			want := slices.Clone(set)
+			sort.Strings(want)
+			if slices.Equal(got, want) {
+				granted = set
+				break
+			}
 		}
-		return out.AccessToken, a.cfg.Now().Add(time.Duration(out.ExpiresIn) * time.Second), nil
+		return out.AccessToken, a.cfg.Now().Add(time.Duration(out.ExpiresIn) * time.Second), granted, nil
 	}
 }
 

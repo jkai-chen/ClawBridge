@@ -91,8 +91,14 @@ func (f *fakeProbeApp) ProbeProjectShape(_ context.Context, project string) (lin
 	return linearapp.ProjectShape{Fields: map[string]string{"health": "string"}, LastUpdateByApp: "other"}, nil
 }
 func (f *fakeProbeApp) ProbeProjectUpdateScope(context.Context) (linearapp.ScopeProbe, error) {
-	return linearapp.ScopeProbe{Class: f.class, Status: 400, Types: []string{"forbidden"}}, nil
+	r := linearapp.ScopeProbe{Class: f.class, Status: 400, Types: []string{"forbidden"}}
+	if f.class == "created" {
+		r.CreatedID = createdUpdate
+	}
+	return r, nil
 }
+
+const createdUpdate = "e0000000-0000-4000-8000-0000000000e1"
 
 func TestLinearAppProbeReportsClassesAndNames(t *testing.T) {
 	fake := &fakeProbeApp{tools: map[string][]string{"save_issue": {"id*"}, "save_project_update": {"body", "health", "projectId*"}, "list_issues": nil}, class: "scope"}
@@ -104,6 +110,9 @@ func TestLinearAppProbeReportsClassesAndNames(t *testing.T) {
 		t.Fatal(err)
 	}
 	got := out.String()
+	if strings.Contains(got, "created_update_id") {
+		t.Fatal("an ID printed for another class:", got)
+	}
 	if !strings.Contains(got, `"names":["list_issues","save_issue","save_project_update"]`) || !strings.Contains(got, `"project_update_tools":{"save_project_update":["body","health","projectId*"]}`) || !strings.Contains(got, `"class":"scope"`) || strings.Contains(got, `"project"`) || fake.project != "" {
 		t.Fatal(got)
 	}
@@ -114,7 +123,7 @@ func TestLinearAppProbeReportsClassesAndNames(t *testing.T) {
 	// PC-3: anything created is reported at once.
 	fake.class = "created"
 	out.Reset()
-	if err := linearAppProbe(context.Background(), nil, "", &out); err == nil || !strings.Contains(err.Error(), "ALERT") || !strings.Contains(out.String(), `"class":"created"`) {
+	if err := linearAppProbe(context.Background(), nil, "", &out); err == nil || !strings.Contains(err.Error(), "ALERT") || !strings.Contains(err.Error(), createdUpdate) || !strings.Contains(out.String(), `"created_update_id":"`+createdUpdate+`"`) {
 		t.Fatal(err, out.String())
 	}
 }

@@ -94,7 +94,19 @@ func TestProjectUpdateProbeClassifies(t *testing.T) {
 			t.Fatal("message text leaked:", string(raw))
 		}
 	}
-	got := classifyProbe(400, []byte(gqlError("x", "forbidden; DROP")))
+	// PC-3: only a created update's ID is printed, so the owner can delete it.
+	const created = "e0000000-0000-4000-8000-0000000000e1"
+	got := classifyProbe(200, []byte(`{"data":{"projectUpdateCreate":{"success":true,"projectUpdate":{"id":"`+created+`"}}}}`))
+	if got.Class != "created" || got.CreatedID != created {
+		t.Fatal(got)
+	}
+	if got = classifyProbe(200, []byte(`{"data":{"projectUpdateCreate":{"success":true,"projectUpdate":{"id":"not an id"}}}}`)); got.Class != "created" || got.CreatedID != "" {
+		t.Fatal("a malformed ID was kept", got)
+	}
+	if got = classifyProbe(400, []byte(`{"data":{"projectUpdateCreate":{"success":false,"projectUpdate":null}},"errors":[{"message":"Entity not found: `+created+`","extensions":{"type":"invalid input"}}]}`)); got.Class != "not_found" || got.CreatedID != "" {
+		t.Fatal("an ID was kept for another class", got)
+	}
+	got = classifyProbe(400, []byte(gqlError("x", "forbidden; DROP")))
 	if len(got.Types) != 0 {
 		t.Fatal("an unsafe type name is printed", got.Types)
 	}

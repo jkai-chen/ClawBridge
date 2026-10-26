@@ -33,7 +33,8 @@ var Scopes = []string{"read", "comments:create", "issues:create", "app:assignabl
 
 // releasedScopes is Scopes as this release ships it. A mint checks Scopes
 // against it first: a token minted with any other set revokes every token
-// the app holds, production's included.
+// the app holds, production's included. It catches only a change to Scopes
+// at run time; a release that edits both changes the scopes on purpose.
 const releasedScopes = "read,comments:create,issues:create,app:assignable,app:mentionable"
 
 const (

@@ -30,6 +30,10 @@ type ScopeProbe struct {
 	Class  string   `json:"class"`
 	Status int      `json:"http_status"`
 	Types  []string `json:"error_types,omitempty"`
+	// CreatedID names the update Linear reports it created, so the owner
+	// can delete exactly that one. It is the only ID the probe ever prints,
+	// and only for class created.
+	CreatedID string `json:"created_update_id,omitempty"`
 }
 
 // errorType keeps an error type name only when it is a plain word list.
@@ -90,6 +94,9 @@ func classifyProbe(status int, raw []byte) ScopeProbe {
 	}
 	if c := envelope.Data.Create; c != nil && (c.Success || (c.ProjectUpdate != nil && c.ProjectUpdate.ID != "")) {
 		out.Class = "created"
+		if c.ProjectUpdate != nil && validUUID(c.ProjectUpdate.ID) {
+			out.CreatedID = strings.ToLower(c.ProjectUpdate.ID)
+		}
 		return out
 	}
 	words := []string{}

@@ -3,10 +3,13 @@ package cli
 import (
 	"bytes"
 	"context"
+	"errors"
 	"reflect"
 	"strings"
 	"testing"
 
+	"clawbridge/internal/bus"
+	"clawbridge/internal/linearboard"
 	"clawbridge/internal/linearconn"
 )
 
@@ -239,5 +242,65 @@ func TestLinearAdminAuditReplayParses(t *testing.T) {
 		if err := runLinear(context.Background(), Config{}, args, &bytes.Buffer{}, &bytes.Buffer{}); err == nil || !strings.Contains(err.Error(), "admin audit-replay") {
 			t.Fatal(args, err)
 		}
+	}
+}
+
+// seed-docs takes its three switches and no positionals; link may skip the
+// guide documents.
+func TestLinearSeedDocsParses(t *testing.T) {
+	v, pos, err := parseLinear("seed-docs", []string{"--profile", "native", "--confirm", "--update", "--reseed"}, &bytes.Buffer{})
+	if err != nil || !v.confirm || !v.update || !v.reseed || len(pos) != 0 {
+		t.Fatal(v, pos, err)
+	}
+	if _, _, err = parseLinear("seed-docs", []string{"--profile", "native", "extra"}, &bytes.Buffer{}); err == nil {
+		t.Fatal("a positional accepted")
+	}
+	if _, _, err = parseLinear("seed-docs", []string{"--confirm"}, &bytes.Buffer{}); err == nil {
+		t.Fatal("seed-docs without a profile accepted")
+	}
+	const team = "11111111-1111-4111-8111-111111111111"
+	v, _, err = parseLinear("link", []string{"--profile", "native", "--team", team, "--default-team", team, "--team-board", "--expected-revision", "0", "--no-seed-docs"}, &bytes.Buffer{})
+	if err != nil || !v.noSeedDocs {
+		t.Fatal(v, err)
+	}
+}
+
+// The link preview names the guides and where they go, from the binding
+// being previewed: the default team, or a one-project set's project.
+func TestLinkPreviewNamesTheGuideDocuments(t *testing.T) {
+	const team = "11111111-1111-4111-8111-111111111111"
+	const project = "22222222-2222-4222-8222-222222222222"
+	for _, c := range []struct {
+		v          linearFlags
+		kind, want string
+	}{
+		{linearFlags{defaultTeam: team, teamBoard: true}, "team", team},
+		{linearFlags{defaultTeam: team, projects: []string{project}}, "project", project},
+		{linearFlags{defaultTeam: team, projects: []string{project, team}}, "team", team},
+	} {
+		got := linkWithSeedDocs(context.Background(), nil, bus.Request{}, Config{}, c.v, linearboard.LinkPreviewV2{}).(linearboard.LinkPreviewV2)
+		seed, _ := got.SeedDocs.(map[string]any)
+		if seed["parent_kind"] != c.kind || seed["parent_id"] != c.want || len(seed["documents"].([]string)) != 2 {
+			t.Fatal(c.v, got.SeedDocs)
+		}
+	}
+}
+
+type refusingExecutor struct{}
+
+func (refusingExecutor) Execute(context.Context, bus.Request) (bus.Result, error) {
+	return bus.Result{}, errors.New("authority unavailable")
+}
+
+// A confirmed link whose seeding fails still reports the link, with the
+// seeding's error and the command that retries it.
+func TestConfirmedLinkSurvivesASeedingFailure(t *testing.T) {
+	t.Setenv("CLAWBRIDGE_HOME", t.TempDir())
+	service := linearboard.New(linearboard.Config{Executor: refusingExecutor{}})
+	link := map[string]any{"revision": 1}
+	got := linkWithSeedDocs(context.Background(), service, bus.Request{}, Config{}, linearFlags{confirm: true, profile: "lin_x"}, link).(map[string]any)
+	seed, _ := got["seed_docs"].(map[string]any)
+	if got["revision"] != 1 || seed["error"] == nil || seed["retry"] != "clawbridge linear seed-docs --confirm --profile lin_x" {
+		t.Fatal(got)
 	}
 }

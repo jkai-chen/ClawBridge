@@ -128,7 +128,7 @@ func runCloudCheck(ctx context.Context, args []string, stdout, stderr io.Writer)
 	}
 	// --project alone names the bucket's project for backups.
 	if target.set() && (target.remote() || target.zone != "") {
-		if _, err = target.argv(""); err != nil {
+		if _, err = target.transport(); err != nil {
 			return err
 		}
 	}
@@ -407,7 +407,7 @@ func runCloudSecretSet(ctx context.Context, args []string, stdout, stderr io.Wri
 		return errors.New("secret set takes one KEY: " + strings.Join(keys, ", "))
 	}
 	key := f.Arg(0)
-	argv, err := target.argv(`sudo -n sh -c '` + remoteSetScript(key, serverEnvFile) + `'`)
+	tr, err := target.transport()
 	if err != nil {
 		return err
 	}
@@ -432,7 +432,7 @@ func runCloudSecretSet(ctx context.Context, args []string, stdout, stderr io.Wri
 	if err != nil {
 		return err
 	}
-	if err = runRemote(ctx, argv, strings.NewReader(value+"\n"), stderr); err != nil {
+	if err = tr.setSecret(ctx, key, value, stderr); err != nil {
 		return errors.New("the remote write failed; check SSH access and passwordless sudo on the server (nothing was printed)")
 	}
 	return json.NewEncoder(stdout).Encode(map[string]any{"source": "cloud_secret", "data": map[string]any{"key": key, "set": true}})

@@ -93,7 +93,10 @@ clawbridge --project CODEBASE whoami      # identity_provenance: device-key
 ```
 
 Without `--code`, the code is read from stdin, which keeps it out of shell history;
-at a terminal it isn't echoed.
+at a terminal it isn't echoed. In a terminal, bare `clawbridge` (or
+`clawbridge setup wizard`) does the same with prompts: choose "I have an invite
+code" (offered when the server takes device keys), then give the email and a name
+for this device. The code is asked last, unechoed, after you confirm.
 
 - **The key:** `join` makes this device's key, keeps it in the OS key store, and
   writes the profile to sign every request with it. A refused join leaves no key
@@ -124,6 +127,20 @@ Accounts on a hosted workspace (each command takes `--help`):
 - **`user`:** `user list`; `user revoke EMAIL --confirm`.
 - **`owner`:** `owner show`; `owner transfer --to EMAIL`; then the recipient
   runs `owner accept` or `owner decline`, or the owner runs `owner cancel`.
+
+The TUI's Account screen (`8`, or `clawbridge tui --screen account`) does the
+same on a hosted workspace:
+
+- your devices, this one marked: `a` adds a device (a one-time code), `l` labels,
+  `x` revokes;
+- `i` issues an invite (`EMAIL PROJECT=ROLE ...`), and `x` revokes a pending one;
+- for the main owner, every member with their devices: `x` on a member removes
+  them, and `t` offers ownership. The recipient sees a banner and answers with `y`
+  or `n`; the owner cancels with `c`.
+
+A code shows once, in a box that holds the screen until Enter or Esc, and is
+never drawn again. Every revoke, removal and ownership step waits for a typed
+word: `revoke`, the member's email, `transfer`, `accept`, `decline` or `cancel`.
 
 `doctor` reports whether the key is readable, a key file's mode, and any clock
 correction. A clock more than 5 minutes off the server's is corrected once by the
@@ -232,7 +249,7 @@ clawbridge tui
 clawbridge tui --screen doctor
 ```
 
-Run in an interactive terminal. Use 1–6 or Tab to switch screens, `?` for help,
+Run in an interactive terminal. Use 1–8 or Tab to switch screens, `?` for help,
 `r` to reload, and `q` or Ctrl-C to quit. Arrows/j/k select rows. PageUp/PageDown
 scroll details, including complete selected immutable IDs. Below 24 columns or
 9 rows, resize the terminal; quit and Escape remain available.

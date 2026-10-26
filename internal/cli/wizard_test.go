@@ -44,6 +44,19 @@ func wizardHooks(t *testing.T, input string) *wizardReader {
 		return nil
 	}
 	wizardTUI = func(context.Context, Config, io.Writer, io.Writer) error { t.Fatal("unexpected TUI"); return nil }
+	k, l, m, n, o := wizardMethods, wizardKeyStore, wizardInviteCode, wizardDeviceJoin, wizardProjects
+	t.Cleanup(func() {
+		wizardMethods, wizardKeyStore, wizardInviteCode, wizardDeviceJoin, wizardProjects = k, l, m, n, o
+	})
+	// A server that advertises no methods is one before device sign-in.
+	wizardMethods = func(context.Context, string) ([]string, error) { return nil, nil }
+	wizardKeyStore = func(context.Context) error { return nil }
+	wizardInviteCode = func() (string, error) { t.Fatal("unexpected invite code read"); return "", nil }
+	wizardDeviceJoin = func(context.Context, JoinParams) (JoinResult, error) {
+		t.Fatal("unexpected device join")
+		return JoinResult{}, nil
+	}
+	wizardProjects = func(context.Context, string) ([]string, error) { t.Fatal("unexpected project read"); return nil, nil }
 	f, g, h, i, j := wizardSkillTargets, wizardSkillInstall, wizardLinearConnect, wizardMCPInstall, wizardDoctor
 	t.Cleanup(func() {
 		wizardSkillTargets, wizardSkillInstall, wizardLinearConnect, wizardMCPInstall, wizardDoctor = f, g, h, i, j

@@ -165,6 +165,9 @@ type Config struct {
 	Audience   string
 	Principal  string
 	Provenance string
+	// DeviceID is the device key this profile signs with, if any; the
+	// Account screen marks it.
+	DeviceID string
 
 	Context context.Context
 	Now     func() time.Time
@@ -285,6 +288,7 @@ type Snapshot struct {
 type Model struct {
 	linear       linearState
 	linearCancel context.CancelFunc
+	account      accountState
 	cfg          Config
 
 	screen Screen
@@ -339,6 +343,9 @@ const (
 	inputReply
 	inputSend
 	inputLinearName
+	inputAccountInvite
+	inputAccountLabel
+	inputAccountTransfer
 )
 
 // New validates the trusted mode and immutable boundary.
@@ -409,6 +416,10 @@ func (m Model) UpdateModel(msg tea.Msg) (Model, tea.Cmd) {
 	switch x := msg.(type) {
 	case linearLoadedMsg:
 		return m.applyLinear(x), nil
+	case accountLoadedMsg:
+		return m.applyAccount(x), nil
+	case accountActionMsg:
+		return m.applyAccountAction(x)
 	case ArchiveTickMsg:
 		m = m.reclassify(x.Now)
 		return m, archiveTick()
@@ -615,6 +626,7 @@ func (m Model) CancelInput() Model {
 	m.draft = ""
 	m.confirming = false
 	m.confirm = ""
+	m.account.pending = nil
 	return m
 }
 
@@ -775,9 +787,12 @@ func (m Model) refreshView() (Model, tea.Cmd) {
 	m.confirming = false
 	m.confirm = ""
 	screen, requestID := m.screen, m.request
+	m.account.pending = nil
 	switch screen {
 	case ScreenLinear:
 		return m.linearRefresh()
+	case ScreenAccount:
+		return m.accountRefresh()
 	case ScreenOverview:
 		if m.cfg.Executor == nil {
 			target := ScreenCloud
@@ -1091,6 +1106,8 @@ func (m Model) currentRows() []string {
 	switch m.screen {
 	case ScreenLinear:
 		return m.linearRows()
+	case ScreenAccount:
+		return m.accountRowIDs()
 	case ScreenProjects:
 		out := make([]string, len(m.projects))
 		for i := range m.projects {
@@ -1127,6 +1144,10 @@ func (m Model) updateKey(msg tea.KeyMsg) (Model, tea.Cmd) {
 		}
 		return m, tea.Quit
 	}
+	if m.screen == ScreenAccount && m.account.code != "" {
+		// A code just issued holds the screen until it is dismissed.
+		return m.accountKey(key)
+	}
 	if key == "esc" {
 		if m.screen == ScreenLinear {
 			return m.linearKey(key)
@@ -1159,6 +1180,8 @@ func (m Model) updateKey(msg tea.KeyMsg) (Model, tea.Cmd) {
 		return m.Show(ScreenDoctor)
 	case "7":
 		return m.Show(ScreenLinear)
+	case "8":
+		return m.Show(ScreenAccount)
 	case "tab", "right":
 		return m.Show(screenAt(indexOf(m.screen) + 1))
 	case "shift+tab", "left":
@@ -1211,6 +1234,9 @@ func (m Model) updateKey(msg tea.KeyMsg) (Model, tea.Cmd) {
 			}
 		}
 	}
+	if m.screen == ScreenAccount {
+		return m.accountKey(key)
+	}
 	if m.screen == ScreenCloud && key == "a" && m.plan != nil {
 		m.confirming = true
 		m.confirm = ""
@@ -1239,6 +1265,9 @@ func (m Model) updateEditor(key string, runes []rune) (Model, tea.Cmd) {
 		return m, nil
 	}
 	if key == "enter" {
+		if m.screen == ScreenAccount && (m.confirming || m.inputMode == inputAccountInvite || m.inputMode == inputAccountLabel || m.inputMode == inputAccountTransfer) {
+			return m.accountSubmit()
+		}
 		if m.inputMode == inputLinearName {
 			name := strings.TrimSpace(m.draft)
 			if name == "" || len(name) > 128 {
@@ -1294,9 +1323,9 @@ func containsControl(runes []rune) bool {
 
 var screenOrder = map[Screen]int{
 	ScreenOverview: 0, ScreenProjects: 1, ScreenSessions: 2,
-	ScreenInbox: 3, ScreenCloud: 4, ScreenDoctor: 5, ScreenLinear: 6,
+	ScreenInbox: 3, ScreenCloud: 4, ScreenDoctor: 5, ScreenLinear: 6, ScreenAccount: 7,
 }
-var orderedScreens = []Screen{ScreenOverview, ScreenProjects, ScreenSessions, ScreenInbox, ScreenCloud, ScreenDoctor, ScreenLinear}
+var orderedScreens = []Screen{ScreenOverview, ScreenProjects, ScreenSessions, ScreenInbox, ScreenCloud, ScreenDoctor, ScreenLinear, ScreenAccount}
 
 func indexOf(s Screen) int {
 	if i, ok := screenOrder[s]; ok {
@@ -1462,4 +1491,4 @@ func projectError(err error) string {
 	return message
 }
 
-const helpText = "1-6/tab screens · ↑↓ select · r refresh · enter mark read · p reply · n send · a confirm setup · esc cancel · q quit"
+const helpText = "1-8/tab screens · ↑↓ select · r refresh · enter mark read · p reply · n send · a confirm setup · esc cancel · q quit"

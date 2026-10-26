@@ -89,6 +89,8 @@ func renderBody(m Model) string {
 	switch m.screen {
 	case ScreenLinear:
 		return renderLinear(m)
+	case ScreenAccount:
+		return renderAccount(m)
 	case ScreenOverview:
 		return renderOverview(m)
 	case ScreenProjects:
@@ -424,6 +426,17 @@ func renderInput(m Model) string {
 	if m.inputMode == inputLinearName {
 		return "Connection label: " + terminalText(m.draft)
 	}
+	if m.confirming && m.account.pending != nil {
+		return warnStyle.Render("Type "+terminalText(m.account.pending.phrase)+" to confirm; Esc cancels") + "\n> " + terminalText(m.confirm) + "█"
+	}
+	switch m.inputMode {
+	case inputAccountInvite:
+		return mutedStyle.Render("Invite: EMAIL PROJECT=ROLE [PROJECT=ROLE]... (Enter issues, Esc cancels)") + "\n> " + terminalText(m.draft) + "█"
+	case inputAccountLabel:
+		return mutedStyle.Render("Device label (Enter saves, Esc cancels)") + "\n> " + terminalText(m.draft) + "█"
+	case inputAccountTransfer:
+		return mutedStyle.Render("Offer ownership to (a member's email; Enter, then confirm)") + "\n> " + terminalText(m.draft) + "█"
+	}
 	if m.confirming {
 		label := "Confirmation"
 		if m.plan != nil {
@@ -459,6 +472,8 @@ func title(s Screen) string {
 	switch s {
 	case ScreenLinear:
 		return "Linear"
+	case ScreenAccount:
+		return "Account"
 	case ScreenOverview:
 		return "Overview"
 	case ScreenProjects:

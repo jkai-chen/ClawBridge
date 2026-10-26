@@ -757,8 +757,16 @@ func (s *Store) beat(ctx context.Context, r Request, b *heartbeat) (string, bool
 		// current member, and returns the allow-list to check before commit.
 		// A session retired, a membership revoked or an allow-list narrowed
 		// while the read ran skips the beat silently.
+		// A device identity's device must still be live and of this
+		// workspace too.
+		q := `UPDATE sessions SET last_seen=? FROM workspaces w WHERE sessions.project_id=? AND sessions.id=? AND sessions.status='active' AND w.id=? AND EXISTS(SELECT 1 FROM members m WHERE m.workspace_id=w.id AND m.principal=?)`
+		args := []any{now, b.project, b.session, b.workspace, s.principal}
+		if s.identity != nil && s.identity.Issuer == DeviceIssuer {
+			q += ` AND EXISTS(SELECT 1 FROM devices d WHERE d.device_id=? AND d.workspace_id=w.id AND d.principal=? AND d.revoked_at IS NULL AND (d.expires_at IS NULL OR d.expires_at>?))`
+			args = append(args, s.identity.Subject, s.principal, now)
+		}
 		var domains string
-		err = tx.QueryRowContext(ctx, `UPDATE sessions SET last_seen=? FROM workspaces w WHERE sessions.project_id=? AND sessions.id=? AND sessions.status='active' AND w.id=? AND EXISTS(SELECT 1 FROM members m WHERE m.workspace_id=w.id AND m.principal=?) RETURNING w.allowed_domains`, now, b.project, b.session, b.workspace, s.principal).Scan(&domains)
+		err = tx.QueryRowContext(ctx, q+` RETURNING w.allowed_domains`, args...).Scan(&domains)
 		if errors.Is(err, sql.ErrNoRows) || (err == nil && s.domainGate(domains) != nil) {
 			return now, false
 		}
@@ -860,14 +868,15 @@ func (s *Store) execute(ctx context.Context, tx *transaction, r Request) (any, e
 		}
 		out, err := s.initWorkspace(ctx, tx, r)
 		if err == nil {
-			err = s.requireBound(ctx, tx)
+			// A device signs only in its own workspace, so never makes one.
+			err = s.requireBound(ctx, tx, "")
 		}
 		return out, err
 	}
 	if r.Operation == "resolve_project" {
 		out, err := s.resolveInTransaction(ctx, tx, r)
 		if err == nil {
-			err = s.requireBound(ctx, tx)
+			err = s.requireBound(ctx, tx, out.(map[string]any)["workspace_id"].(string))
 		}
 		return out, err
 	}
@@ -921,7 +930,7 @@ func (s *Store) execute(ctx context.Context, tx *transaction, r Request) (any, e
 		// A member's account must be the one bound to the principal; a
 		// non-member or a refused domain was refused above and writes no
 		// binding.
-		if err = s.requireBound(ctx, tx); err != nil {
+		if err = s.requireBound(ctx, tx, wid); err != nil {
 			return nil, err
 		}
 		if r.Operation == "workspace_set_domains" {

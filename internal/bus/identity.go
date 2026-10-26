@@ -111,16 +111,17 @@ func (s *Store) ExecuteAsIdentity(ctx context.Context, id Identity, r Request) (
 }
 
 // requireBound is called inside a request once it has proved the caller's
-// access. It reads without a lock: a bound account, the common case, costs one
-// primary-key read. Any other state leaves the transaction to bindSubject.
-func (s *Store) requireBound(ctx context.Context, tx *transaction) error {
+// access to workspace ("" for a request outside any workspace). It reads
+// without a lock: a bound account, the common case, costs one primary-key
+// read. Any other state leaves the transaction to bindSubject.
+func (s *Store) requireBound(ctx context.Context, tx *transaction, workspace string) error {
 	if s.identity == nil {
 		return nil
 	}
 	if s.identity.Issuer == DeviceIssuer {
 		// A device identity has no account binding: its device must still
-		// be live, and still the principal's.
-		return liveDevice(ctx, tx, *s.identity)
+		// be live, still the principal's, and of this workspace.
+		return liveDevice(ctx, tx, *s.identity, workspace)
 	}
 	var bound int
 	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM principal_subjects WHERE principal=? AND issuer=? AND subject=?`, s.principal, s.identity.Issuer, s.identity.Subject).Scan(&bound); err != nil {
@@ -258,7 +259,7 @@ func (s *Store) unbindPrincipal(ctx context.Context, tx *transaction, a map[stri
 	if s.bootstrapOwner == "" || s.principal != s.bootstrapOwner {
 		return nil, &serviceError{code: "forbidden", cause: errors.New("only the server owner may unbind a principal"), public: true}
 	}
-	if err := s.requireBound(ctx, tx); err != nil {
+	if err := s.requireBound(ctx, tx, ""); err != nil {
 		return nil, err
 	}
 	principal := normalPrincipal(str(a, "principal"))

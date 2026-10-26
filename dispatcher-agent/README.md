@@ -121,9 +121,10 @@ Every other package must be at least 14 days old (`.npmrc` and `check:lock`).
 
 Done:
 - the agent, its tests and the contract;
-- the hardened container image, with its memory, egress and hardening test.
+- the hardened container image, with its memory, egress and hardening test;
+- `clawbridge-agentd`'s validating Docker proxy, fixed container spec and reconciler (`cmd/clawbridge-agentd`).
 
 Next:
-- the server endpoints;
-- `clawbridge-agentd`, the launcher, with the per-owner network and egress proxy;
+- the server endpoints, which `clawbridge-agentd run` also needs;
+- the per-owner egress proxy, and deploying the launcher under a rootless daemon;
 - guided model setup in the CLI and TUI.

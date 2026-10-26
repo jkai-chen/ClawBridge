@@ -1,0 +1,170 @@
+package agentd
+
+import (
+	"bufio"
+	"bytes"
+	"context"
+	"encoding/json"
+	"fmt"
+	"io"
+	"net"
+	"net/http"
+	"net/url"
+	"strings"
+	"time"
+)
+
+// docker is agentd's Docker client: the few calls it needs, through the
+// proxy's socket. Errors carry the call and the status code, never a body.
+type docker struct {
+	socket string
+	http   *http.Client
+}
+
+func newDocker(socket string) *docker {
+	dial := func(ctx context.Context, _, _ string) (net.Conn, error) {
+		return (&net.Dialer{}).DialContext(ctx, "unix", socket)
+	}
+	return &docker{socket: socket, http: &http.Client{Transport: &http.Transport{DialContext: dial}, Timeout: 30 * time.Second}}
+}
+
+// agentContainer is one clawbridge-agent-* container as Docker lists it.
+type agentContainer struct {
+	ref     string
+	running bool
+}
+
+func (d *docker) call(ctx context.Context, method, path string, body any, ok ...int) ([]byte, error) {
+	var reader io.Reader
+	if body != nil {
+		b, err := json.Marshal(body)
+		if err != nil {
+			return nil, err
+		}
+		reader = bytes.NewReader(b)
+	}
+	req, err := http.NewRequestWithContext(ctx, method, "http://docker"+path, reader)
+	if err != nil {
+		return nil, err
+	}
+	if body != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
+	resp, err := d.http.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("docker %s %s: unreachable", method, strings.SplitN(path, "?", 2)[0])
+	}
+	defer resp.Body.Close()
+	out, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if resp.StatusCode/100 == 2 {
+		return out, nil
+	}
+	for _, code := range ok {
+		if resp.StatusCode == code {
+			return out, nil
+		}
+	}
+	return nil, &dockerError{call: method + " " + strings.SplitN(path, "?", 2)[0], status: resp.StatusCode}
+}
+
+type dockerError struct {
+	call   string
+	status int
+}
+
+func (e *dockerError) Error() string { return fmt.Sprintf("docker %s: status %d", e.call, e.status) }
+
+// list returns the clawbridge-agent-* containers, running or not. Others are
+// never returned, so never touched.
+func (d *docker) list(ctx context.Context) ([]agentContainer, error) {
+	filters := url.QueryEscape(`{"name":["` + containerPrefix + `"]}`)
+	out, err := d.call(ctx, http.MethodGet, "/containers/json?all=1&filters="+filters, nil)
+	if err != nil {
+		return nil, err
+	}
+	var listed []struct {
+		Names []string
+		State string
+	}
+	if err := json.Unmarshal(out, &listed); err != nil {
+		return nil, fmt.Errorf("docker list: unreadable answer")
+	}
+	var agents []agentContainer
+	for _, c := range listed {
+		for _, name := range c.Names {
+			// Docker's name filter matches substrings: keep exact names only.
+			if ref, ok := refFromName(strings.TrimPrefix(name, "/"), containerPrefix); ok {
+				agents = append(agents, agentContainer{ref: ref, running: c.State == "running"})
+			}
+		}
+	}
+	return agents, nil
+}
+
+func (d *docker) createNetwork(ctx context.Context, ref string) error {
+	_, err := d.call(ctx, http.MethodPost, "/networks/create", agentNetwork(ref), http.StatusConflict)
+	return err
+}
+
+func (d *docker) removeNetwork(ctx context.Context, ref string) error {
+	_, err := d.call(ctx, http.MethodDelete, "/networks/"+networkName(ref), nil, http.StatusNotFound)
+	return err
+}
+
+func (d *docker) create(ctx context.Context, spec createSpec, ref string) error {
+	_, err := d.call(ctx, http.MethodPost, "/containers/create?name="+containerName(ref), spec)
+	return err
+}
+
+func (d *docker) start(ctx context.Context, ref string) error {
+	_, err := d.call(ctx, http.MethodPost, "/containers/"+containerName(ref)+"/start", nil, http.StatusNotModified)
+	return err
+}
+
+func (d *docker) stop(ctx context.Context, ref string) error {
+	_, err := d.call(ctx, http.MethodPost, "/containers/"+containerName(ref)+"/stop?t=10", nil, http.StatusNotModified, http.StatusNotFound)
+	return err
+}
+
+func (d *docker) remove(ctx context.Context, ref string) error {
+	_, err := d.call(ctx, http.MethodDelete, "/containers/"+containerName(ref)+"?force=1&v=1", nil, http.StatusNotFound)
+	return err
+}
+
+// attach opens the container's stdin, before it starts. send writes the
+// credential and closes stdin, so the agent reads it once and sees EOF.
+func (d *docker) attach(ctx context.Context, ref string) (send func(string) error, err error) {
+	var dialer net.Dialer
+	conn, err := dialer.DialContext(ctx, "unix", d.socket)
+	if err != nil {
+		return nil, fmt.Errorf("docker attach: unreachable")
+	}
+	fail := func(err error) (func(string) error, error) {
+		conn.Close()
+		return nil, err
+	}
+	_ = conn.SetDeadline(time.Now().Add(30 * time.Second))
+	req := "POST /containers/" + containerName(ref) + "/attach?stream=1&stdin=1 HTTP/1.1\r\n" +
+		"Host: docker\r\nConnection: Upgrade\r\nUpgrade: tcp\r\nContent-Length: 0\r\n\r\n"
+	if _, err := io.WriteString(conn, req); err != nil {
+		return fail(fmt.Errorf("docker attach: unreachable"))
+	}
+	resp, err := http.ReadResponse(bufio.NewReader(conn), nil)
+	if err != nil {
+		return fail(fmt.Errorf("docker attach: unreadable answer"))
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusSwitchingProtocols && resp.StatusCode != http.StatusOK {
+		return fail(&dockerError{call: "POST /containers/" + containerName(ref) + "/attach", status: resp.StatusCode})
+	}
+	return func(credential string) error {
+		defer conn.Close()
+		if _, err := io.WriteString(conn, credential+"\n"); err != nil {
+			return fmt.Errorf("docker attach: the credential could not be written")
+		}
+		if c, ok := conn.(interface{ CloseWrite() error }); ok {
+			_ = c.CloseWrite()
+		}
+		return nil
+	}, nil
+}

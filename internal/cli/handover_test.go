@@ -23,6 +23,7 @@ type handoverStub struct {
 	installed            []string
 	installErr, checkErr error
 	checked              []string
+	checkConfig          string
 }
 
 // stubHandover replaces every outside effect of the hand-over: no real
@@ -61,6 +62,7 @@ func stubHandover(t *testing.T) *handoverStub {
 	}
 	runHandoverChecks = func(_ context.Context, args []string, _, _ io.Writer) error {
 		h.checked = args
+		h.checkConfig = os.Getenv("CLOUDSDK_ACTIVE_CONFIG_NAME")
 		return h.checkErr
 	}
 	return h
@@ -122,6 +124,9 @@ func TestHandoverRunsTheAgentThenTheChecks(t *testing.T) {
 	}
 	if info, _ := os.Stat(dir); info.Mode().Perm() != 0o700 {
 		t.Fatalf("work dir mode %v", info.Mode())
+	}
+	if h.checkConfig != "clawbridge-onboarding" || os.Getenv("CLOUDSDK_ACTIVE_CONFIG_NAME") != "" {
+		t.Fatalf("checks ran under configuration %q; after them it is %q", h.checkConfig, os.Getenv("CLOUDSDK_ACTIVE_CONFIG_NAME"))
 	}
 	if !reflect.DeepEqual(h.checked, []string{"infra", "server", "version", "--server", "https://bridge.example.test", "--vm", "clawbridge-1", "--project", "example-project", "--zone", "europe-west1-b"}) {
 		t.Fatalf("checks: %v", h.checked)
@@ -239,7 +244,7 @@ func TestValidInputs(t *testing.T) {
 // A provisioned server resumes at sign-in: no second hand-over.
 func TestHandoverResumesAtSignin(t *testing.T) {
 	isolated(t)
-	if err := saveOnboarding(&onboardingState{Cloud: "gcp", Step: "signin", Project: "example-project", Domain: "bridge.example.test", Bucket: "example-backups"}); err != nil {
+	if err := saveOnboarding(&onboardingState{Cloud: "gcp", Step: "signin", Account: "a@example.test", Project: "example-project", Region: "europe-west1", Zone: "europe-west1-b", Domain: "bridge.example.test", Owner: "o@example.test", Size: "e2-small", Bucket: "example-backups"}); err != nil {
 		t.Fatal(err)
 	}
 	wizardHooks(t, "3\n\n")
@@ -250,5 +255,18 @@ func TestHandoverResumesAtSignin(t *testing.T) {
 	}
 	if h.ran != nil || h.installed != nil || !strings.Contains(out.String(), "--bucket example-backups --project example-project") {
 		t.Fatalf("%v %s", h.ran, out.String())
+	}
+}
+
+// A saved file is checked again on resume: its values reach argv.
+func TestHandoverRefusesInvalidSavedProgress(t *testing.T) {
+	isolated(t)
+	if err := saveOnboarding(&onboardingState{Cloud: "gcp", Step: "provision", Account: "a@example.test", Project: "example-project", Region: "europe-west1", Zone: "europe-west1-b", Domain: "bridge.example.test --flag", Owner: "o@example.test", Size: "e2-small", Bucket: "example-backups"}); err != nil {
+		t.Fatal(err)
+	}
+	wizardHooks(t, "3\n\n")
+	h := stubHandover(t)
+	if err := Run(context.Background(), []string{"onboard"}, io.Discard, io.Discard); err == nil || !strings.Contains(err.Error(), "start over") || h.ran != nil || h.gcloud != nil {
+		t.Fatalf("%v %v %v", err, h.ran, h.gcloud)
 	}
 }

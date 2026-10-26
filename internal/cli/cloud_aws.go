@@ -55,6 +55,8 @@ var awsCLI = func(ctx context.Context, argv []string, stdin []byte) ([]byte, err
 	return out.Bytes(), err
 }
 
+var errAWSOnWindows = errors.New("the AWS route needs macOS, Linux or WSL: the aws CLI reads its request from /dev/stdin")
+
 // awsGOOS is the client's OS; tests set it.
 var awsGOOS = runtime.GOOS
 
@@ -74,7 +76,7 @@ func (t cloudTarget) aws(args ...string) []string {
 // requests go on the CLI's stdin as file:///dev/stdin, which Windows lacks.
 func (t cloudTarget) awsInputs() error {
 	if awsGOOS == "windows" {
-		return errors.New("the AWS route needs macOS, Linux or WSL: the aws CLI reads its request from /dev/stdin")
+		return errAWSOnWindows
 	}
 	if !awsRegionPattern.MatchString(t.region) {
 		return errors.New("--region must be an AWS region, such as us-east-1")

@@ -27,8 +27,8 @@ func askAWSInputs(ctx context.Context, prompt *wizardPrompt, stdout io.Writer) (
 		dest            *string
 	}{
 		{"AWS CLI profile", defaultAWSProfile, &s.Profile},
-		{"Account ID", "", &s.Account},
 		{"Region", "eu-west-1", &s.Region},
+		{"Account ID", "", &s.Account},
 		{"Zone", "", &s.Zone},
 		{"Domain for the server", "", &s.Domain},
 		{"Owner's email (becomes workspace owner)", "", &s.Owner},
@@ -39,8 +39,8 @@ func askAWSInputs(ctx context.Context, prompt *wizardPrompt, stdout io.Writer) (
 		switch q.dest {
 		case &s.Account:
 			// The profile's own account, when it can be read.
-			if awsProfilePattern.MatchString(s.Profile) {
-				if out, err := awsCLI(ctx, []string{"aws", "sts", "get-caller-identity", "--query", "Account", "--output", "text", "--profile", s.Profile}, nil); err == nil {
+			if awsProfilePattern.MatchString(s.Profile) && awsRegionPattern.MatchString(s.Region) {
+				if out, err := awsCLI(ctx, []string{"aws", "sts", "get-caller-identity", "--query", "Account", "--output", "text", "--profile", s.Profile, "--region", s.Region}, nil); err == nil {
 					if id := strings.TrimSpace(string(out)); accountPattern.MatchString(id) {
 						fallback = id
 					}

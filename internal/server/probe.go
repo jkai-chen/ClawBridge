@@ -95,3 +95,37 @@ func probeFailure(step string, err error) error {
 	}
 	return errors.New("linear-app-probe " + step + ": failed")
 }
+
+// docProbeApp is what linear-app-doc-probe asks of the app.
+type docProbeApp interface {
+	ProbeDocuments(ctx context.Context) (linearapp.DocumentsProbe, error)
+}
+
+// newDocProbeApp builds the app identity for linear-app-doc-probe; tests
+// replace it. Like newProbeApp, it never mints.
+var newDocProbeApp = func(store linearapp.Store) (docProbeApp, error) {
+	app, err := newProbeApp(store)
+	if err != nil {
+		return nil, err
+	}
+	d, ok := app.(docProbeApp)
+	if !ok {
+		return nil, errors.New("the Linear app cannot list documents")
+	}
+	return d, nil
+}
+
+// linearAppDocProbe answers whether the server's Linear app may list the
+// workspace's documents (LINEAR-DOCS §4): one read, printed as counts,
+// parent kinds and order only, never an ID, title or time.
+func linearAppDocProbe(ctx context.Context, store linearapp.Store, stdout io.Writer) error {
+	app, err := newDocProbeApp(store)
+	if err != nil {
+		return err
+	}
+	result, err := app.ProbeDocuments(ctx)
+	if err != nil {
+		return probeFailure("documents", err)
+	}
+	return json.NewEncoder(stdout).Encode(map[string]any{"list_documents": result})
+}

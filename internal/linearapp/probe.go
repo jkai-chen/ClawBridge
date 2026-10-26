@@ -11,6 +11,8 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+
+	"clawbridge/internal/linearprovider"
 )
 
 // projectUpdateProbe is the only mutation the app ever sends outside the
@@ -210,4 +212,79 @@ func randomUUID() string {
 	b[6] = b[6]&0x0f | 0x40
 	b[8] = b[8]&0x3f | 0x80
 	return fmt.Sprintf("%x-%x-%x-%x-%x", b[0:4], b[4:6], b[6:8], b[8:10], b[10:16])
+}
+
+// DocumentsProbe is what one workspace-wide document list as the app
+// showed (LINEAR-DOCS §4): counts, parent kinds and order only, never an
+// ID, title or time.
+type DocumentsProbe struct {
+	Count    int  `json:"count"`
+	Complete bool `json:"complete"`
+	// Parents counts the documents by parent kind: team, project,
+	// initiative, issue or none.
+	Parents map[string]int `json:"parents"`
+	// Order is newest_first, oldest_first, unordered or too_few.
+	Order string `json:"order"`
+	// WithoutTime counts documents listed without an updatedAt.
+	WithoutTime int `json:"without_updated_at"`
+}
+
+// SummariseDocuments reduces a page of documents to a DocumentsProbe.
+func SummariseDocuments(page linearprovider.Page[linearprovider.DocRef]) DocumentsProbe {
+	out := DocumentsProbe{Count: len(page.Items), Complete: page.Complete, Parents: map[string]int{}}
+	var times []string
+	for _, d := range page.Items {
+		kind := "none"
+		switch {
+		case d.IssueID != "":
+			kind = "issue"
+		case d.ProjectID != "":
+			kind = "project"
+		case d.InitiativeID != "":
+			kind = "initiative"
+		case d.TeamID != "":
+			kind = "team"
+		}
+		out.Parents[kind]++
+		if d.UpdatedAt == "" {
+			out.WithoutTime++
+		} else {
+			times = append(times, d.UpdatedAt)
+		}
+	}
+	desc, asc := true, true
+	for i := 1; i < len(times); i++ {
+		desc = desc && times[i-1] >= times[i]
+		asc = asc && times[i-1] <= times[i]
+	}
+	switch {
+	case len(times) < 2:
+		out.Order = "too_few"
+	case desc:
+		out.Order = "newest_first"
+	case asc:
+		out.Order = "oldest_first"
+	default:
+		out.Order = "unordered"
+	}
+	return out
+}
+
+// ProbeDocuments lists, as the app, the documents of the last 30 days
+// across the workspace: one read, one page.
+func (a *App) ProbeDocuments(ctx context.Context) (DocumentsProbe, error) {
+	// The token first, so a refused or missing one is reported as itself.
+	if _, _, err := a.Token(ctx); err != nil {
+		return DocumentsProbe{}, err
+	}
+	p, err := a.Provider(ctx, false)
+	if err != nil {
+		return DocumentsProbe{}, err
+	}
+	defer p.Close()
+	page, err := p.DocumentsUpdatedSince(ctx, "-P30D", "")
+	if err != nil {
+		return DocumentsProbe{}, err
+	}
+	return SummariseDocuments(page), nil
 }

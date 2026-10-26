@@ -36,6 +36,8 @@ func (p *Provider) DocumentReason() string {
 		{"get_document", "id", []arg{a(sample, "id")}},
 		{"list_documents", "teamId, cursor, limit, fields and includeArchived", []arg{a(sample, "teamId"), a("c", "cursor"), {[]string{"limit"}, 50, "integer"}, {[]string{"fields"}, documentFields, "array"}, {[]string{"includeArchived"}, true, "boolean"}}},
 		{"list_documents", "projectId", []arg{a(sample, "projectId")}},
+		{"list_documents", "updatedAt and parent fields", []arg{a("-P1D", "updatedAt"), {[]string{"fields"}, docRefFields, "array"}}},
+		{"list_documents", "initiativeId", []arg{a(sample, "initiativeId")}},
 	}
 	for _, c := range checks {
 		if _, _, e := p.v2Negotiation([]string{c.tool}, c.args); e != nil {
@@ -189,4 +191,78 @@ func (p *Provider) DocumentsUnder(ctx context.Context, kind, parent string) ([]D
 		cursor = next
 	}
 	return out, false, nil
+}
+
+// DocRef is a document as the watcher sees it in a workspace-wide list:
+// its ID, when it changed, and its parent. It never carries the title or
+// the content.
+type DocRef struct {
+	ID           string `json:"id"`
+	UpdatedAt    string `json:"updated_at"`
+	TeamID       string `json:"team_id,omitempty"`
+	ProjectID    string `json:"project_id,omitempty"`
+	InitiativeID string `json:"initiative_id,omitempty"`
+	IssueID      string `json:"issue_id,omitempty"`
+}
+
+var docRefFields = []string{"id", "updatedAt", "team", "project", "initiative", "issue"}
+
+// DocumentsUpdatedSince lists the documents the connection can see, across
+// the workspace, changed after since (an ISO-8601 time or duration), with
+// their parents and no content: one call per page.
+func (p *Provider) DocumentsUpdatedSince(ctx context.Context, since, cursor string) (Page[DocRef], error) {
+	if since == "" || !textOK(since, 64) || !textOK(cursor, 2048) {
+		return Page[DocRef]{}, fail("invalid")
+	}
+	if p.DocumentReason() != "" {
+		return Page[DocRef]{}, fail("capability_unavailable")
+	}
+	args := []arg{a(since, "updatedAt"), {[]string{"limit"}, 50, "integer"}, {[]string{"fields"}, docRefFields, "array"}, {[]string{"includeArchived"}, true, "boolean"}}
+	if cursor != "" {
+		args = append(args, a(cursor, "cursor"))
+	}
+	m, e := p.v2Call(ctx, []string{"list_documents"}, args...)
+	if e != nil {
+		return Page[DocRef]{}, e
+	}
+	rows, next, complete, e := list(m, "documents")
+	if e != nil {
+		return Page[DocRef]{}, e
+	}
+	out := Page[DocRef]{NextCursor: next, Complete: complete}
+	for _, row := range rows {
+		i, e := entityID(row, "documentId")
+		if e != nil {
+			return Page[DocRef]{}, e
+		}
+		ref := DocRef{ID: i, UpdatedAt: str(row, "updatedAt")}
+		for dst, k := range map[*string]string{&ref.TeamID: "team", &ref.ProjectID: "project", &ref.InitiativeID: "initiative", &ref.IssueID: "issue"} {
+			if *dst, e = parentRef(row[k]); e != nil {
+				return Page[DocRef]{}, e
+			}
+		}
+		out.Items = append(out.Items, ref)
+	}
+	return out, nil
+}
+
+// parentRef reads a parent as Linear lists it: absent or null, an ID, or
+// an object with an id.
+func parentRef(v any) (string, error) {
+	switch t := v.(type) {
+	case nil:
+		return "", nil
+	case string:
+		if t == "" {
+			return "", nil
+		}
+		if ValidID(t) {
+			return t, nil
+		}
+	case map[string]any:
+		if id, _ := t["id"].(string); ValidID(id) {
+			return id, nil
+		}
+	}
+	return "", fail("invalid_response")
 }

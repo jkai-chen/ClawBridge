@@ -11,6 +11,7 @@ import (
 
 	"clawbridge/internal/bus"
 	"clawbridge/internal/linearapp"
+	"clawbridge/internal/linearprovider"
 )
 
 func TestLinearAppProbeArguments(t *testing.T) {
@@ -125,5 +126,70 @@ func TestLinearAppProbeReportsClassesAndNames(t *testing.T) {
 	out.Reset()
 	if err := linearAppProbe(context.Background(), nil, "", &out); err == nil || !strings.Contains(err.Error(), "ALERT") || !strings.Contains(err.Error(), createdUpdate) || !strings.Contains(out.String(), `"created_update_id":"`+createdUpdate+`"`) {
 		t.Fatal(err, out.String())
+	}
+}
+
+// linear-app-doc-probe needs --confirm and takes no positional argument.
+func TestLinearAppDocProbeArguments(t *testing.T) {
+	t.Setenv("CLAWBRIDGE_TEST_EMPTY_DSN", "")
+	for _, c := range []struct {
+		args []string
+		want string
+	}{
+		{[]string{"linear-app-doc-probe"}, "--confirm"},
+		{[]string{"linear-app-doc-probe", "extra", "--confirm"}, "usage"},
+		{[]string{"linear-app-doc-probe", "--confirm", "--project", "x"}, "not defined"},
+		{[]string{"linear-app-doc-probe", "--confirm", "--database-url-env", "CLAWBRIDGE_TEST_EMPTY_DSN"}, "environment variable is empty"},
+	} {
+		var out bytes.Buffer
+		if err := RunOperator(context.Background(), c.args, &out); err == nil || !strings.Contains(err.Error(), c.want) || out.Len() != 0 {
+			t.Errorf("%v: %v", c.args, err)
+		}
+	}
+}
+
+// PC-2: the document probe never mints either, and prints nothing on a
+// refused token.
+func TestDocProbeNeverMints(t *testing.T) {
+	t.Setenv("CLAWBRIDGE_LINEAR_APP_CLIENT_ID", "client-1")
+	t.Setenv("CLAWBRIDGE_LINEAR_APP_CLIENT_SECRET", "s3cret-value-never-logged")
+	t.Setenv("CLAWBRIDGE_LINEAR_APP_TOKEN_KEY", base64.StdEncoding.EncodeToString([]byte("0123456789abcdef0123456789abcdef")))
+	var out bytes.Buffer
+	err := linearAppDocProbe(context.Background(), noTokens{t}, &out)
+	if err == nil || !strings.Contains(err.Error(), "mint_disabled") || strings.Contains(err.Error(), "s3cret") || out.Len() != 0 {
+		t.Fatal(err, out.String())
+	}
+}
+
+type fakeDocProbe struct{ result linearapp.DocumentsProbe }
+
+func (f fakeDocProbe) ProbeDocuments(context.Context) (linearapp.DocumentsProbe, error) {
+	return f.result, nil
+}
+
+// The report is counts, kinds and order: never an ID or a time.
+func TestLinearAppDocProbeReportsCountsOnly(t *testing.T) {
+	saved := newDocProbeApp
+	t.Cleanup(func() { newDocProbeApp = saved })
+	page := linearprovider.Page[linearprovider.DocRef]{Complete: true, Items: []linearprovider.DocRef{
+		{ID: "d0000000-0000-4000-8000-000000000001", UpdatedAt: "2026-10-26T10:00:00.000Z", TeamID: "d0000000-0000-4000-8000-0000000000a1"},
+		{ID: "d0000000-0000-4000-8000-000000000002", UpdatedAt: "2026-10-26T09:00:00.000Z", ProjectID: "d0000000-0000-4000-8000-0000000000a2"},
+		{ID: "d0000000-0000-4000-8000-000000000003"},
+	}}
+	newDocProbeApp = func(linearapp.Store) (docProbeApp, error) {
+		return fakeDocProbe{linearapp.SummariseDocuments(page)}, nil
+	}
+	var out bytes.Buffer
+	if err := linearAppDocProbe(context.Background(), nil, &out); err != nil {
+		t.Fatal(err)
+	}
+	got := out.String()
+	if strings.Contains(got, "d0000000") || strings.Contains(got, "2026-10-26") {
+		t.Fatal("an ID or a time was printed:", got)
+	}
+	for _, want := range []string{`"count":3`, `"complete":true`, `"team":1`, `"project":1`, `"none":1`, `"order":"newest_first"`, `"without_updated_at":1`} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("missing %s in %s", want, got)
+		}
 	}
 }

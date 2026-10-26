@@ -126,7 +126,7 @@ func runCloudCheck(ctx context.Context, args []string, stdout, stderr io.Writer)
 		want["all"] = true
 	}
 	// --project alone names the bucket's project for backups.
-	if target.set() && target != (cloudTarget{project: target.project}) {
+	if target.set() && (target.remote() || target.zone != "") {
 		if _, err = target.argv(""); err != nil {
 			return err
 		}
@@ -242,7 +242,7 @@ func checkServer(ctx context.Context, p *cloudProbe) cloudResult {
 	if r.Status != "pass" {
 		return r
 	}
-	if !p.target.set() {
+	if !p.target.remote() {
 		r.Advice = serverUnchecked
 		return r
 	}

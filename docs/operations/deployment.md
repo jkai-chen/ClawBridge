@@ -489,6 +489,9 @@ path. Do not replace the private environment file or the database/Caddy volumes.
 # Set these again in the VM shell: local operator variables do not cross SSH.
 DEPLOY_SHA=<full-reviewed-pushed-commit>
 EXPECTED_ARCHIVE_SHA256=<checksum-recorded-on-operator-machine>
+# Before the swap, so no command below stops half-way in a fresh shell.
+PROJECT=$(sudo sed -n 's/^COMPOSE_PROJECT_NAME=//p' /etc/clawbridge/clawbridge.env)
+[ -n "$PROJECT" ] || exit 1
 actual=$(sha256sum /tmp/clawbridge-release.tar.gz | cut -d ' ' -f1)
 [ "$actual" = "$EXPECTED_ARCHIVE_SHA256" ] || exit 1
 stamp=$(date -u +%Y%m%dT%H%M%SZ)

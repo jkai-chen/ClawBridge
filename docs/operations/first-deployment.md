@@ -55,8 +55,10 @@ Create, with the names recorded as you go:
 
 - a VM with Docker and the Compose plugin;
 - a static IP attached to it, and a DNS `A` record for the domain pointing at it;
-- a firewall rule opening TCP 80 and 443 to the VM, and an administrative path
-  for SSH (on Google Cloud, IAP);
+- a firewall rule opening only TCP 443 to the VM (Caddy obtains its certificate
+  over TLS on 443 and serves no plain HTTP; see
+  [HTTPS and operator access](deployment.md#https-and-operator-access)), and an
+  administrative path for SSH (on Google Cloud, IAP);
 - a separate persistent data disk for the database, mounted at
   `/var/lib/clawbridge-postgres` (see
   [persistent disk and backup guards](deployment.md#persistent-disk-and-backup-guards));
@@ -113,14 +115,22 @@ Optionally bind it to a Linear team with `clawbridge linear link` (see
 
 With the app, agents' Linear writes are made by the server as the ClawBridge
 app rather than by anyone's personal account. In Linear, create an OAuth
-application with the redirect URL `https://clawbridge.example.com/linear/callback`
-(the page that confirms the install arrives with the Google Cloud playbook; until
-then the browser shows "not found" after the install, which is harmless). Then
-enter its credentials, and generate the token key on the VM:
+application with the redirect URL `https://clawbridge.example.com/linear/callback`,
+a page that only says the app is installed. Then enter its credentials from your
+own terminal:
 
 ```sh
 clawbridge cloud secret set CLAWBRIDGE_LINEAR_APP_CLIENT_ID --vm clawbridge-1 --project example-project --zone europe-west1-b
 clawbridge cloud secret set CLAWBRIDGE_LINEAR_APP_CLIENT_SECRET --vm clawbridge-1 --project example-project --zone europe-west1-b
+```
+
+Generate the token key on the VM, in its shell, so it is never printed. The
+count must be 0 first, so the key is set exactly once:
+
+```sh
+sudo grep -c '^CLAWBRIDGE_LINEAR_APP_TOKEN_KEY=' /etc/clawbridge/clawbridge.env
+openssl rand -base64 32 | sed 's/^/CLAWBRIDGE_LINEAR_APP_TOKEN_KEY=/' |
+  sudo tee -a /etc/clawbridge/clawbridge.env >/dev/null
 ```
 
 On a VM outside Google Cloud, use `--ssh HOST` instead of `--vm`, `--project`

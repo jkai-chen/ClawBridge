@@ -7,6 +7,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -55,6 +56,16 @@ func (w *AppWriter) stateTypes() *linearboard.StateTypeCache {
 }
 
 func appRefusal(message string) error { return bus.PublicError("invalid", message) }
+
+// relationScope refuses a relation write the app's token may not make:
+// Linear answers it with success and drops the edge, so without the write
+// scope nothing is sent.
+func relationScope(operation string) error {
+	if (operation == "relation_add" || operation == "relation_remove") && !slices.Contains(linearapp.Scopes, "write") {
+		return appRefusal("capability_unavailable: this server's ClawBridge Linear app has no write scope, so it cannot add or remove issue relations; nothing was sent to Linear")
+	}
+	return nil
+}
 
 // identityExecutor runs bus operations as the verified caller.
 type identityExecutor struct {
@@ -125,6 +136,9 @@ func (w *AppWriter) Execute(parent context.Context, identity bus.Identity, r bus
 	operation, _ := r.Args["operation"].(string)
 	if !appWriteOperations[operation] {
 		return bus.Result{}, appRefusal("linear_write runs comment, create, update, relation_add or relation_remove only; binding and admin operations never run as the app")
+	}
+	if err := relationScope(operation); err != nil {
+		return bus.Result{}, err
 	}
 	args, ok := r.Args["args"].(map[string]any)
 	if !ok {

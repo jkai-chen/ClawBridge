@@ -565,7 +565,7 @@ const healthLine = "This is an automatic project-health notice computed from Lin
 // or weekly health, from typed fields only. With no active coordinator the
 // run's report records it and `linear health show` shows it.
 func (c commentCall) healthNotice(ctx context.Context, lp, health, was, act string, signals []HealthSignal) error {
-	coordinator, err := query(ctx, c.tx, `SELECT s.id,s.name FROM projects p JOIN sessions s ON s.project_id=p.id AND s.id=p.coordinator_session WHERE p.id=? AND s.status='active'`, c.pid)
+	coordinator, err := c.s.coordinatorTargets(ctx, c.tx, c.pid, lp, nil)
 	if err != nil || len(coordinator) == 0 {
 		return err
 	}

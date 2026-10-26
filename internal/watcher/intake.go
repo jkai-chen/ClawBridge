@@ -352,6 +352,12 @@ func (r *intakeRun) candidate(ctx context.Context, signal, issueID string, match
 	trusted := !bot && actor != "" && actor != r.app.AppUserID && r.state.Trusted[actor]
 	title := sha256.Sum256([]byte(issue.Title))
 	ev := bus.IntakeEvent{Signal: signal, Actor: actor, Trusted: trusted, At: at, Issue: bus.IntakeIssue{UUID: issue.ID, Identifier: issue.Identifier, TitleSHA256: hex.EncodeToString(title[:]), DescriptionSHA256: issue.DescriptionSHA256, UpdatedAt: issue.UpdatedAt}}
+	if issue.ProjectKnown {
+		ev.Issue.ProjectID = issue.ProjectID
+	}
+	if issue.LabelsKnown {
+		ev.Issue.Labels = issue.LabelNames
+	}
 	result, err := r.w.Store.IntakeEnqueueSystem(ctx, r.pid, ev)
 	switch {
 	case err != nil:

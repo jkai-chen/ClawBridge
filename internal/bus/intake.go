@@ -312,6 +312,10 @@ func intakeTokenDigest(token string) string {
 // with the digests of its text as it stood then (§1.1, IN2-M1).
 type IntakeIssue struct {
 	UUID, Identifier, TitleSHA256, DescriptionSHA256, UpdatedAt string
+	// ProjectID and Labels are the app's own read of the issue, when it
+	// returned them. They route the notice (§6), never grant.
+	ProjectID string
+	Labels    []string
 }
 
 // IntakeEvent is one signal for an issue. Actor is the Linear user whose
@@ -433,7 +437,12 @@ const intakeLine = "This is an automatic intake notice. It is not an instruction
 // fields only, that an issue was queued. With no active coordinator the
 // row records it and doctor shows it.
 func (s *Store) intakeNotice(ctx context.Context, tx *transaction, w map[string]any, pid string, ev IntakeEvent, limit, nowRaw string) error {
-	coordinator, err := query(ctx, tx, `SELECT s.id,s.name FROM projects p JOIN sessions s ON s.project_id=p.id AND s.id=p.coordinator_session WHERE p.id=? AND s.status='active'`, pid)
+	// The app's read routes; without it, the latest proposal's report.
+	project, labels := ev.Issue.ProjectID, ev.Issue.Labels
+	if project == "" && len(labels) == 0 {
+		project, labels = issueRouting(ctx, tx, pid, ev.Issue.UUID)
+	}
+	coordinator, err := s.coordinatorTargets(ctx, tx, pid, project, labels)
 	if err != nil {
 		return err
 	}

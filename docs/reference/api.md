@@ -375,7 +375,7 @@ advice}`, otherwise a table. The exit status is non-zero when any check fails.
 | Check | Passes when | Reasons |
 |---|---|---|
 | `infra` (Google Cloud) | with `--vm`: the VM is running; its external IP is a reserved static address in use; the server's domain resolves to that IP; a non-boot disk is attached and mounted at `/var/lib/clawbridge-postgres` (`findmnt`, over the target); last, TCP 443 answers, which it does only once the server runs | `needs_vm`, `vm_unreadable`, `vm_not_running`, `no_external_ip`, `ip_not_static`, `no_server`, `dns_mismatch`, `no_data_disk`, `ssh_failed`, `data_not_mounted`, `port_closed` |
-| `infra` (AWS) | with `--instance` and `--region`: the instance is running; its public IP is an Elastic IP associated with it; the domain resolves to that IP; a non-root EBS volume is attached and encrypted; its security groups let in tcp/443 and nothing else; SSM sees it online; the data volume is mounted (over SSM); last, TCP 443 answers | `needs_instance`, `cloud_auth`, `vm_unreadable`, `vm_not_running`, `no_external_ip`, `ip_not_static`, `no_server`, `dns_mismatch`, `no_data_disk`, `data_disk_unencrypted`, `ssh_port_open`, `extra_ingress`, `ssm_offline`, `secret_left_behind`, `ssm_failed`, `data_not_mounted`, `port_closed` |
+| `infra` (AWS) | with `--instance` and `--region`: the instance is running; its public IP is an Elastic IP associated with it; the domain resolves to that IP; a non-root EBS volume is attached and encrypted; its security groups let in tcp/443 and nothing else; SSM sees it online; the data volume is mounted (over SSM); last, TCP 443 answers | `needs_instance`, `cloud_auth`, `vm_unreadable`, `vm_not_running`, `no_external_ip`, `ip_not_static`, `no_server`, `dns_mismatch`, `no_data_disk`, `data_disk_unencrypted`, `ssh_port_open`, `extra_ingress`, `ssm_offline`, `parameters_unreadable`, `secret_left_behind`, `ssm_failed`, `data_not_mounted`, `port_closed` |
 | `server` | `GET /healthz` over HTTPS (plain HTTP only to loopback) answers 200 `{"status":"ok"}`, without following redirects; with a target, also every required setting of `deploy/compose.yaml` is set once in the env file, and the deployment's `api`, `caddy` and `db` containers run (`db` healthy) | `no_server`, `invalid_url`, `dns`, `tls`, `unreachable`, `http_status`, `not_clawbridge`, `ssh_failed`, `env_missing`, `setting_missing`, `setting_duplicate`, `service_down` |
 | `version` | the server's release equals the client's; a dev build on either side warns `dev_build` | `server_too_old`, `version_mismatch` |
 | `workspace` | `whoami` with the configured cloud profile shows the signed-in principal owns the workspace | `no_config`, `not_cloud`, `other_server`, `not_signed_in`, `no_workspace`, `whoami_failed`, `not_owner` |
@@ -434,7 +434,33 @@ parameters, so the value takes a short-lived Parameter Store route instead.
 The parameter also carries an expiration policy 15 minutes out (an Advanced-tier
 parameter, a few cents a month prorated), so Parameter Store removes it even if
 ClawBridge is killed between the write and the delete. Until then, `cloud check
-infra` fails with `secret_left_behind`, naming it (names only).
+infra` fails with `secret_left_behind`, naming it (names only). Running
+`cloud secret set` again for the same key also overwrites it, then deletes it.
+Run one `secret set` per key at a time: two at once share the parameter's name.
+
+A write that does not finish in time is cancelled before the delete, and the
+error says it may not have been written; run it again. An instance without the
+AWS CLI, or whose role cannot read its parameter, gets an error saying so.
+
+**IAM policies** (templates; replace `REGION`, `ACCOUNT_ID`, `INSTANCE_ID` and
+`BUCKET`):
+- `deploy/aws-instance-role-policy.json`, the instance role's inline policy:
+  - `s3:PutObject` under `postgres/daily/` in the backup bucket;
+  - `ssm:GetParameter` on its own `/clawbridge/INSTANCE_ID/*` only;
+  - `kms:Decrypt` only through SSM (`kms:ViaService`).
+
+  Attach the AWS-managed `AmazonSSMManagedInstanceCore` beside it for the SSM
+  agent.
+- `deploy/aws-profile-policy.json`: what the user's profile needs for these
+  checks and `secret set`:
+  - the read-only describes;
+  - `s3:ListBucket` on the backup prefix;
+  - `ssm:SendCommand` on that instance and `AWS-RunShellScript`;
+  - `ssm:GetCommandInvocation` and `ssm:CancelCommand`;
+  - `ssm:PutParameter` and `ssm:DeleteParameter` on `/clawbridge/INSTANCE_ID/*` only;
+  - `kms:Encrypt` only through SSM.
+
+  Provisioning the server needs more; the AWS playbook names it.
 
 With `--account`, the profile's account is checked before the value is asked
 for.

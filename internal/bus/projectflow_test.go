@@ -24,14 +24,14 @@ var psTypes = map[string]string{psBacklog: "backlog", psPlanned: "planned", psSt
 
 func psCatalog() []any {
 	return []any{
-		map[string]any{"id": psBacklog, "name": "Backlog", "type": "backlog", "position": 0, "archived": false},
-		map[string]any{"id": psPlanned, "name": "Planned", "type": "planned", "position": 1, "archived": false},
-		map[string]any{"id": psStarted, "name": "In Progress", "type": "started", "position": 3, "archived": false},
-		map[string]any{"id": psStarted2, "name": "Kickoff", "type": "started", "position": 2, "archived": false},
-		map[string]any{"id": psDoneOld, "name": "Shipped (old)", "type": "completed", "position": 0, "archived": true},
-		map[string]any{"id": psCompleted, "name": "Completed", "type": "completed", "position": 5, "archived": false},
-		map[string]any{"id": psPaused, "name": "Paused", "type": "paused", "position": 6, "archived": false},
-		map[string]any{"id": psCanceled, "name": "Canceled", "type": "canceled", "position": 7, "archived": false},
+		map[string]any{"id": psBacklog, "type": "backlog", "position": 0, "archived": false},
+		map[string]any{"id": psPlanned, "type": "planned", "position": 1, "archived": false},
+		map[string]any{"id": psStarted, "type": "started", "position": 3, "archived": false},
+		map[string]any{"id": psStarted2, "type": "started", "position": 2, "archived": false},
+		map[string]any{"id": psDoneOld, "type": "completed", "position": 0, "archived": true},
+		map[string]any{"id": psCompleted, "type": "completed", "position": 5, "archived": false},
+		map[string]any{"id": psPaused, "type": "paused", "position": 6, "archived": false},
+		map[string]any{"id": psCanceled, "type": "canceled", "position": 7, "archived": false},
 	}
 }
 
@@ -44,7 +44,7 @@ type issues struct {
 
 func flowFacts(status string, n issues) map[string]any {
 	return map[string]any{
-		"status":     map[string]any{"id": status, "name": "S", "type": psTypes[status], "position": 0, "archived": false},
+		"status":     map[string]any{"id": status, "type": psTypes[status], "position": 0, "archived": false},
 		"created_at": "2026-01-01T00:00:00Z", "statuses": psCatalog(),
 		"total": n.total, "completed": n.completed, "canceled": n.canceled, "started": n.started,
 		"completed_since_created": n.since, "complete": !n.partial,
@@ -282,19 +282,96 @@ func TestProjectFlowSettlesMoves(t *testing.T) {
 	if got := h.moves(); len(got) != 1 || got[0] != "1 R1 started "+psStarted2+" accepted" {
 		t.Fatal("the read didn't settle the uncertain move:", got)
 	}
-	// An hour on, a move the read never shows settles failed, and the next
-	// run reads before it sends again.
+	// An hour on, a move the read never shows settles failed. Linear may
+	// have applied it and a person moved the project back, so it holds with
+	// one notice and sends nothing (R96-M1).
 	h = newFlowHarness(t, "human")
 	m = moveOf(h.run(started))
 	h.settle(m["seq"].(int), "uncertain", "unavailable")
 	if _, e := h.s.db.Exec(`UPDATE project_flow_moves SET sent_at='2000-01-01T00:00:00.000000000Z'`); e != nil {
 		t.Fatal(e)
 	}
-	if again := moveOf(h.run(started)); again == nil || again["seq"] != 2 {
-		t.Fatal(again)
+	for i := 0; i < 2; i++ {
+		if out := h.run(started); moveOf(out) != nil || out["flow"] != "held" {
+			t.Fatal("a lost move was sent again:", out)
+		}
 	}
-	if got := h.moves(); got[0] != "1 R1 started "+psStarted2+" failed" {
+	if got := h.moves(); len(got) != 1 || got[0] != "1 R1 started "+psStarted2+" failed" {
 		t.Fatal(got)
+	}
+	if n := h.messages("project-held"); len(n) != 1 || !strings.Contains(n[0], "was never confirmed") {
+		t.Fatal("held notices:", n)
+	}
+}
+
+// R96-M2: a drop through paused is still seen. Paused is left alone and
+// isn't remembered, so a later move to planned holds, even when a person,
+// not ClawBridge, started the project.
+func TestProjectFlowSeesADropThroughPaused(t *testing.T) {
+	h := newFlowHarness(t, "human")
+	started := issues{total: 2, started: 1}
+	h.run(flowFacts(psStarted2, started))
+	if out := h.run(flowFacts(psPaused, started)); out["flow"] != "left" {
+		t.Fatal(out)
+	}
+	if out := h.run(flowFacts(psPlanned, started)); moveOf(out) != nil || out["flow"] != "held" {
+		t.Fatal("moved again after a drop through paused:", out)
+	}
+}
+
+// R96-L1: a partial read of no issues doesn't end a done episode.
+func TestProjectFlowPartialReadKeepsTheDoneEpisode(t *testing.T) {
+	h := newFlowHarness(t, "human")
+	done := flowFacts(psStarted2, issues{total: 2, completed: 2})
+	h.run(done)
+	h.run(flowFacts(psStarted2, issues{partial: true}))
+	h.run(done)
+	if n := h.messages("project-done"); len(n) != 1 {
+		t.Fatal("done notices:", n)
+	}
+}
+
+// R96-L2 and L3: flow runs only on a proven server, checked at every run,
+// and a stored policy that no longer parses is flow off, never a failed
+// run.
+func TestProjectFlowNeedsProofAndAReadablePolicy(t *testing.T) {
+	h := newFlowHarness(t, "human")
+	h.s.SetProjectFlowProven(false)
+	if runs := h.sys("health_due", map[string]any{"limit": 2})["runs"].([]any); len(runs) != 0 {
+		t.Fatal("ran unproven:", runs)
+	}
+	view := h.call("status_policy_get", "", nil).(map[string]any)
+	if line := fmt.Sprint(view["project_flow_lines"]); !strings.Contains(line, "off (not proven on this server)") {
+		t.Fatal(line)
+	}
+	h.s.SetProjectFlowProven(true)
+	if _, e := h.s.db.Exec(`UPDATE linear_status_policy SET policy='{"enabled":true,"teams":{},"project_flow":true,"newer":1}'`); e != nil {
+		t.Fatal(e)
+	}
+	if runs := h.sys("health_due", map[string]any{"limit": 2})["runs"].([]any); len(runs) != 0 {
+		t.Fatal("ran under an unreadable policy:", runs)
+	}
+}
+
+// R96-H2: a listed status of an unknown type is left out; facts the bus
+// can't use fail the run's flow as flow_facts_invalid, and the run is
+// recorded, never a failed report.
+func TestProjectFlowOddFactsFailOnlyTheFlow(t *testing.T) {
+	h := newFlowHarness(t, "human")
+	f := flowFacts(psBacklog, issues{total: 2, started: 1})
+	f["statuses"] = append(f["statuses"].([]any), map[string]any{"id": "aaaa0009-0000-4000-8000-000000000009", "type": "someday", "position": 0, "archived": false})
+	if moveOf(h.run(f)) == nil {
+		t.Fatal("an unknown listed type stopped the run")
+	}
+	h = newFlowHarness(t, "human")
+	f = flowFacts(psBacklog, issues{total: 2, started: 1})
+	f["status"].(map[string]any)["id"] = "not-a-uuid"
+	if out := h.run(f); out["flow"] != "error" {
+		t.Fatal(out)
+	}
+	var code, next string
+	if e := h.s.db.QueryRow(`SELECT last_error,next_flow_at FROM project_flow_state`).Scan(&code, &next); e != nil || code != "flow_facts_invalid" || next == "" {
+		t.Fatal(code, next, e)
 	}
 }
 
@@ -382,5 +459,41 @@ func TestProjectFlowShow(t *testing.T) {
 	view = h.call("status_policy_get", "", nil).(map[string]any)
 	if view["project_flow_lines"].([]any)[1].(map[string]any)["project_flow"] != "off" {
 		t.Fatal(view)
+	}
+}
+
+// A forced health run (`operator health-run`) is health's alone: it never
+// runs project flow, so it neither moves the project nor touches its slot
+// or error, even with flow facts in hand.
+func TestProjectFlowSkipsAForcedHealthRun(t *testing.T) {
+	h := newFlowHarness(t, "agent")
+	h.enable(projectOne, 0, map[string]any{"enabled": true, "post": true})
+	slot := func() string {
+		var s string
+		if e := h.s.db.QueryRow(`SELECT COALESCE(next_flow_at,'')||'|'||last_error FROM project_flow_state WHERE project_id=? AND linear_project_id=?`, h.pid, projectOne).Scan(&s); e != nil {
+			return "none"
+		}
+		return s
+	}
+	before := slot()
+	h.sys("health_force", map[string]any{"linear_project": projectOne})
+	out := h.sys("health_report", map[string]any{"linear_project": projectOne, "calls": 3, "facts": blockedFacts(5), "forced": true, "flow": flowFacts(psBacklog, issues{total: 3, started: 1})})
+	if _, ran := out["flow"]; ran || moveOf(out) != nil || len(h.moves()) != 0 || slot() != before {
+		t.Fatal("a forced run ran project flow:", out, h.moves(), before, slot())
+	}
+	h.sys("health_force", map[string]any{"linear_project": projectOne})
+	h.sys("health_report", map[string]any{"linear_project": projectOne, "calls": 3, "forced": true, "error": "timeout"})
+	if slot() != before {
+		t.Fatal("a failed forced run moved the flow slot:", before, slot())
+	}
+}
+
+// Setting who closes one project (#89) keeps the policy's project flow.
+func TestProjectFlowSurvivesClosesSet(t *testing.T) {
+	h := newFlowHarness(t, "agent")
+	h.call("status_closes_set", "", map[string]any{"expected_revision": 1, "linear_project": projectOne, "closes": "human", "via": "cli"})
+	var raw string
+	if e := h.s.db.QueryRow(`SELECT policy FROM linear_status_policy WHERE project_id=?`, h.pid).Scan(&raw); e != nil || !strings.Contains(raw, `"project_flow":true`) || strings.Contains(raw, `"agent"`) {
+		t.Fatal("closes set dropped project flow:", raw, e)
 	}
 }

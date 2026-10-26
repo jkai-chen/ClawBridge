@@ -407,7 +407,9 @@ CLAWBRIDGE_LINEAR_APP_TOKEN_KEY=<32 random bytes, base64>
   status follow the work (`project_flow`, see [Linear](../linear.md)). The
   server refuses to turn it on until it runs with `serve --project-flow-proven`
   or `CLAWBRIDGE_PROJECT_FLOW_PROVEN=1`. Set that only after the deploy probe
-  has moved a throwaway project by status ID as the app and read it back.
+  has moved a throwaway project by status ID as the app and read it back. The
+  flag is read at every run, so restarting without it stops all project
+  moves; policies keep `project_flow` on and resume when it returns.
 - **Timeouts.** A write the server makes can take up to a minute, and it
   finishes even if the client disconnects. Keep the proxy and load-balancer
   timeouts for `/v1/execute` at 75 seconds or more.

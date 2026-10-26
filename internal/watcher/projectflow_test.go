@@ -136,3 +136,13 @@ func TestProjectFlowRidesTheHealthRun(t *testing.T) {
 		t.Fatal(tick.Health, tick.Error)
 	}
 }
+
+// R96-H2: a workspace status with an odd name (long, or with "@") never
+// stops the run: names aren't read.
+func TestProjectFlowIgnoresStatusNames(t *testing.T) {
+	e := flowSetup(t, nil)
+	e.f.statuses[0]["name"] = "Waiting @ client " + strings.Repeat("x", 100)
+	if tick := e.tick(); len(tick.Health) != 1 || tick.Health[0].Moved != "accepted" {
+		t.Fatal(tick.Health, tick.Error)
+	}
+}

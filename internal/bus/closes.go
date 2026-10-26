@@ -130,7 +130,7 @@ func (s *Store) statusClosesOp(ctx context.Context, tx *transaction, wid, pid, p
 	if err = s.audit(ctx, tx, wid, pid, "", "linear_status_policy", pid, "closes_set", map[string]any{"revision": revision, "linear_project": project, "closes": closes, "via": via}); err != nil {
 		return nil, err
 	}
-	return statusPolicyView(ctx, tx, pid)
+	return statusPolicyView(ctx, tx, pid, s.projectFlowProven)
 }
 
 // auditVia adds how a person confirmed a change, when the client said.

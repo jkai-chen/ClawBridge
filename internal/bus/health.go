@@ -526,11 +526,11 @@ func (c commentCall) healthDue(ctx context.Context) (any, error) {
 	if limit <= 0 {
 		return map[string]any{"runs": runs, "deferred": room <= 0}, nil
 	}
-	status, _, err := readStatusPolicy(ctx, c.tx, c.pid)
+	status, _, err := readFlowPolicy(ctx, c.tx, c.pid)
 	if err != nil {
 		return nil, err
 	}
-	flow := flowOn(status)
+	flow := flowOn(status, c.s.projectFlowProven)
 	rows, err := query(ctx, c.tx, `SELECT linear_project_id,policy FROM project_health WHERE project_id=? AND enabled=1 AND next_health_at<=? ORDER BY next_health_at,linear_project_id`, c.pid, layout(c.now))
 	if err != nil {
 		return nil, err
@@ -708,12 +708,12 @@ func (c commentCall) healthReport(ctx context.Context) (any, error) {
 	if forced && !healthOn {
 		return nil, scoped("project health is not enabled for that Linear project", "not_found")
 	}
-	status, revision, err := readStatusPolicy(ctx, c.tx, c.pid)
+	status, revision, err := readFlowPolicy(ctx, c.tx, c.pid)
 	if err != nil {
 		return nil, err
 	}
 	// A forced run is health's alone: project flow keeps its own slot.
-	flow := !forced && flowOn(status) && healthBound(ctx, c.tx, c.pid, lp) == nil
+	flow := !forced && flowOn(status, c.s.projectFlowProven) && healthBound(ctx, c.tx, c.pid, lp) == nil
 	if !healthOn && !flow {
 		return nil, scoped("project health and project flow are both off for that Linear project", "not_found")
 	}
@@ -731,14 +731,17 @@ func (c commentCall) healthReport(ctx context.Context) (any, error) {
 	out := map[string]any{}
 	if flow {
 		var facts *FlowFacts
+		flowCode := code
 		if raw, ok := c.a["flow"]; ok && raw != nil {
-			f, e := parseFlowFacts(raw)
-			if e != nil {
-				return nil, e
+			// Facts the bus can't use fail this run's flow alone: health is
+			// still recorded and the slot still advances (R96-H2).
+			if f, e := parseFlowFacts(raw); e != nil {
+				flowCode = "flow_facts_invalid"
+			} else {
+				facts = &f
 			}
-			facts = &f
 		}
-		move, what, e := c.projectFlow(ctx, lp, status, revision, facts, code)
+		move, what, e := c.projectFlow(ctx, lp, status, revision, facts, flowCode)
 		if e != nil {
 			return nil, e
 		}

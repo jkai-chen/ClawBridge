@@ -1113,7 +1113,7 @@ func (s *Store) execute(ctx context.Context, tx *transaction, r Request) (any, e
 		if r.Session == "" && str(a, "instance") != "" {
 			return nil, errors.New("instance requires session")
 		}
-		return statusPolicyView(ctx, tx, pid)
+		return statusPolicyView(ctx, tx, pid, s.projectFlowProven)
 	}
 	// Any project member may read the dispatcher's policy and domains.
 	if r.Operation == "dispatcher_get" {

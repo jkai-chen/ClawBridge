@@ -71,15 +71,15 @@ func TestCloudCheckServerAndVersion(t *testing.T) {
 		server, version      cloudResult
 	}{
 		"same release": {"1.2.3", "", `{"status":"ok","version":"1.2.3"}`, 200,
-			cloudResult{"server", "pass", "", ""}, cloudResult{"version", "pass", "", ""}},
+			cloudResult{"server", "pass", "", serverUnchecked}, cloudResult{"version", "pass", "", ""}},
 		"older server": {"1.2.4", "", `{"status":"ok","version":"1.2.3"}`, 200,
-			cloudResult{"server", "pass", "", ""}, cloudResult{"version", "fail", "version_mismatch", "client 1.2.4, server 1.2.3: update the older one to the same release"}},
+			cloudResult{"server", "pass", "", serverUnchecked}, cloudResult{"version", "fail", "version_mismatch", "client 1.2.4, server 1.2.3: update the older one to the same release"}},
 		"server predates the version": {"1.2.3", "", `{"status":"ok"}`, 200,
-			cloudResult{"server", "pass", "", ""}, cloudResult{"version", "fail", "server_too_old", "the server predates version reporting; update it to 1.2.3"}},
+			cloudResult{"server", "pass", "", serverUnchecked}, cloudResult{"version", "fail", "server_too_old", "the server predates version reporting; update it to 1.2.3"}},
 		"dev client": {"dev", "", `{"status":"ok","version":"1.2.3"}`, 200,
-			cloudResult{"server", "pass", "", ""}, cloudResult{"version", "warn", "dev_build", "a development build: versions not compared (client dev, server 1.2.3)"}},
+			cloudResult{"server", "pass", "", serverUnchecked}, cloudResult{"version", "warn", "dev_build", "a development build: versions not compared (client dev, server 1.2.3)"}},
 		"dev server": {"1.2.3", "", `{"status":"ok","version":"dev"}`, 200,
-			cloudResult{"server", "pass", "", ""}, cloudResult{"version", "warn", "dev_build", "a development build: versions not compared (client 1.2.3, server dev)"}},
+			cloudResult{"server", "pass", "", serverUnchecked}, cloudResult{"version", "warn", "dev_build", "a development build: versions not compared (client 1.2.3, server dev)"}},
 		"not ok": {"1.2.3", "", `{"status":"starting","version":"1.2.3"}`, 200,
 			failed("server", "not_clawbridge", "the URL answers but is not a ClawBridge server"), failed("version", "not_clawbridge", "the URL answers but is not a ClawBridge server")},
 		"another site": {"1.2.3", "", `<html>`, 200,
@@ -207,10 +207,7 @@ func TestCloudCheckWorkspace(t *testing.T) {
 	} {
 		fake := c.fake
 		old := newCloudExecutor
-		newCloudExecutor = func(Config) (interface {
-			Execute(context.Context, bus.Request) (bus.Result, error)
-			ResolveProject(context.Context, string, string, string) (string, string, error)
-		}, error) {
+		newCloudExecutor = func(Config) (cloudExecutor, error) {
 			return &fake, c.newErr
 		}
 		probe := c.probe
@@ -295,8 +292,8 @@ func TestCloudSecretSetRefusesBadInput(t *testing.T) {
 		"no key":             {[]string{"--ssh", "host"}, "v", true, "one KEY"},
 		"unknown key":        {[]string{"DATABASE_URL", "--ssh", "host"}, "v", true, "one KEY"},
 		"two keys":           {[]string{key, key, "--ssh", "host"}, "v", true, "one KEY"},
-		"no transport":       {[]string{key}, "v", true, "needs --ssh"},
-		"both transports":    {[]string{key, "--ssh", "host", "--vm", "vm-1", "--project", "example-project", "--zone", "europe-west1-b"}, "v", true, "needs --ssh"},
+		"no transport":       {[]string{key}, "v", true, "reached with --ssh"},
+		"both transports":    {[]string{key, "--ssh", "host", "--vm", "vm-1", "--project", "example-project", "--zone", "europe-west1-b"}, "v", true, "reached with --ssh"},
 		"ssh option host":    {[]string{key, "--ssh", "-oProxyCommand=x"}, "v", true, "--ssh must"},
 		"ssh spaced host":    {[]string{key, "--ssh", "host x"}, "v", true, "--ssh must"},
 		"bad vm":             {[]string{key, "--vm", "VM;x", "--project", "example-project", "--zone", "europe-west1-b"}, "v", true, "valid Compute Engine"},

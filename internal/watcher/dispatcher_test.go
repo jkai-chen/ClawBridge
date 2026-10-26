@@ -170,7 +170,7 @@ func TestDispatcherBusLayers(t *testing.T) {
 	c := due()["cases"].([]any)[0].(map[string]any)
 	record := func(action string) (map[string]any, error) {
 		r, err := e.s.ExecuteDispatcher(context.Background(), e.pid, bus.DispatcherSessionName, bus.Request{Operation: "dispatcher_decision_record", Args: map[string]any{
-			"subject_id": c["subject_id"], "subject_revision": c["subject_revision"], "policy_revision": 1, "engine": "rules", "proposal": action, "reason_code": "trusted", "action": action, "domain": "payments"}})
+			"subject_id": c["subject_id"], "subject_revision": c["subject_revision"], "policy_revision": 1, "engine": "rules", "proposal": action, "reason_code": "trusted", "action": action, "domain": "payments", "facts_source": "app", "app_project_id": projPay}})
 		if err != nil {
 			return nil, err
 		}
@@ -188,5 +188,72 @@ func TestDispatcherBusLayers(t *testing.T) {
 	e.sql(`UPDATE projects SET coordinator_session=(SELECT id FROM sessions WHERE name='coord')`)
 	if _, err := record("confirm"); err == nil || e.assignmentState("eng") != "proposed" {
 		t.Fatal("the dispatcher confirmed without being the coordinator", err)
+	}
+}
+
+// The bus re-checks a grant itself, whatever engine sent it (D3-M1): a
+// confirm without the app's read, on a project outside the domain, or for a
+// session the domain doesn't trust, and a decline of a session that isn't
+// gone, are all superseded and change nothing.
+func TestDispatcherBusRechecksGrants(t *testing.T) {
+	e := setup(t)
+	e.dispatcherOn("eng")
+	e.propose("eng", issueA, projPay)
+	r, err := e.s.ExecuteDispatcher(context.Background(), e.pid, bus.DispatcherSessionName, bus.Request{Operation: "dispatcher_cases_due"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := r.Data.(map[string]any)["cases"].([]any)[0].(map[string]any)
+	send := func(action, source, project string) string {
+		out, err := e.s.ExecuteDispatcher(context.Background(), e.pid, bus.DispatcherSessionName, bus.Request{Operation: "dispatcher_decision_record", Args: map[string]any{
+			"subject_id": c["subject_id"], "subject_revision": c["subject_revision"], "policy_revision": 1, "engine": "model", "proposal": action, "reason_code": "x", "action": action, "facts_source": source, "app_project_id": project}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		m := out.Data.(map[string]any)
+		return fmt.Sprint(m["action"], ":", m["reason_code"])
+	}
+	for name, got := range map[string]string{
+		"client facts":           send("confirm", "client", projPay),
+		"no app project":         send("confirm", "app", ""),
+		"other project":          send("confirm", "app", projOther),
+		"decline a live session": send("decline", "app", ""),
+	} {
+		if got != "superseded:guardrail" || e.assignmentState("eng") != "proposed" {
+			t.Fatal(name, got, e.assignmentState("eng"))
+		}
+	}
+	// The trusted entry's recorded principal no longer matches the session.
+	var principal string
+	e.queryRow(`SELECT owner_principal FROM sessions WHERE name='eng'`, &principal)
+	e.sql(`UPDATE dispatcher_policies SET domains=REPLACE(domains,'"principal":"` + principal + `"','"principal":"someone@example.com"')`)
+	if got := send("confirm", "app", projPay); got != "superseded:guardrail" {
+		t.Fatal("a session trusted under another principal was confirmed:", got)
+	}
+	e.sql(`UPDATE dispatcher_policies SET domains=REPLACE(domains,'"principal":"someone@example.com"','"principal":"` + principal + `"')`)
+	e.sql(`UPDATE dispatcher_policies SET domains=REPLACE(domains,(SELECT id FROM sessions WHERE name='eng'),'ses_someone_else')`)
+	if got := send("confirm", "app", projPay); got != "superseded:guardrail" {
+		t.Fatal("an untrusted session was confirmed:", got)
+	}
+}
+
+// A superseded decision is not final (D3-M2): the claim is decided again on
+// the next tick, never left to stall.
+func TestDispatcherSupersededIsDecidedAgain(t *testing.T) {
+	e := setup(t)
+	e.dispatcherOn("eng")
+	e.f.dispatchIssues = map[string]any{issueA: appIssue(issueA, projPay, "unstarted")}
+	e.propose("eng", issueA, projPay)
+	// The engine decided under policy revision 1; the owner edits it before
+	// the record lands, so the record is superseded.
+	r, _ := e.s.ExecuteDispatcher(context.Background(), e.pid, bus.DispatcherSessionName, bus.Request{Operation: "dispatcher_cases_due"})
+	c := r.Data.(map[string]any)["cases"].([]any)[0].(map[string]any)
+	out, err := e.s.ExecuteDispatcher(context.Background(), e.pid, bus.DispatcherSessionName, bus.Request{Operation: "dispatcher_decision_record", Args: map[string]any{
+		"subject_id": c["subject_id"], "subject_revision": c["subject_revision"], "policy_revision": 0, "engine": "rules", "proposal": "confirm", "reason_code": "trusted", "action": "confirm", "facts_source": "app", "app_project_id": projPay}})
+	if err != nil || out.Data.(map[string]any)["action"] != "superseded" {
+		t.Fatal(out, err)
+	}
+	if tick := e.tick(); tick.Dispatch == nil || tick.Dispatch.Actions["confirm"] != 1 || e.assignmentState("eng") != "confirmed" {
+		t.Fatal("a superseded claim was not decided again", tick.Dispatch)
 	}
 }

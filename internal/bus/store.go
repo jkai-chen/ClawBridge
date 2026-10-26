@@ -429,7 +429,7 @@ var operationArgs = map[string]string{
 	"doc_policy_get":              "instance",
 	"dispatcher_get":              "instance",
 	"dispatcher_cases_due":        "instance",
-	"dispatcher_decision_record":  "instance subject_id subject_revision policy_revision engine proposal reason_code explanation guardrail action domain facts_source",
+	"dispatcher_decision_record":  "instance subject_id subject_revision policy_revision engine proposal reason_code explanation guardrail action domain facts_source app_project_id",
 	"dispatcher_domains_set":      "instance expected_revision dispatcher_domains",
 	"dispatcher_domain_edit":      "instance expected_revision domain action target_session",
 	"doc_watch_due":               "instance lease_token generation",

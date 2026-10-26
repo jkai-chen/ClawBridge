@@ -466,6 +466,25 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		default:
 			return usage
 		}
+	case "dispatcher":
+		// The dispatcher's policy: any member reads it; the owner sets the
+		// domains; a domain's owner edits its trust list and coordinator.
+		usage := errors.New("usage: dispatcher show; dispatcher domains set --file FILE --expected-revision N; dispatcher domain trust|untrust|coordinator DOMAIN SESSION --expected-revision N")
+		switch {
+		case len(rest) >= 1 && rest[0] == "show":
+			op, rest = "dispatcher_get", rest[1:]
+		case len(rest) >= 2 && rest[0] == "domains" && rest[1] == "set":
+			op, rest = "dispatcher_domains_set", rest[2:]
+			f.String("file", "", "the domains document, JSON: {\"domains\": [...]}")
+			f.Int64("expected-revision", -1, "the dispatcher policy revision you last read (0 for none)")
+		case len(rest) >= 2 && rest[0] == "domain" && (rest[1] == "trust" || rest[1] == "untrust" || rest[1] == "coordinator"):
+			op = "dispatcher_domain_edit"
+			a["action"], rest = rest[1], rest[2:]
+			f.Int64("expected-revision", -1, "the dispatcher policy revision you last read")
+			arityMin, arityMax = 2, 2
+		default:
+			return usage
+		}
 	case "assignment":
 		if len(rest) == 0 {
 			return errors.New("usage: assignment propose|confirm|release ...")
@@ -677,6 +696,31 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		a["message_id"], a["body"] = pos[0], pos[1]
 	case "mark-read":
 		a["ids"] = pos
+	case "dispatcher":
+		if op != "dispatcher_get" {
+			if v, _ := a["expected_revision"].(int64); v < 0 || a["expected_revision"] == nil {
+				return errors.New(op + " requires --expected-revision")
+			}
+		}
+		if op == "dispatcher_domains_set" {
+			path, _ := a["file"].(string)
+			delete(a, "file")
+			if path == "" {
+				return errors.New("dispatcher domains set requires --file")
+			}
+			raw, err := readLinearFile(path)
+			if err != nil {
+				return err
+			}
+			var doc any
+			if err = json.Unmarshal([]byte(raw), &doc); err != nil {
+				return errors.New("the domains file must hold one JSON object")
+			}
+			a["dispatcher_domains"] = doc
+		}
+		if op == "dispatcher_domain_edit" {
+			a["domain"], a["target_session"] = pos[0], pos[1]
+		}
 	case "assignment":
 		if len(pos) > 0 {
 			a["target_session"] = pos[0]

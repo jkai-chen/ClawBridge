@@ -99,17 +99,9 @@ func (p *Provider) ReadDocumentWithParents(ctx context.Context, id string) (Read
 // parent is not the one asked for (a team's filter may also return its
 // projects' documents) is left out and counted in skipped.
 func (p *Provider) DocumentSummaries(ctx context.Context, kind, parent, cursor string, limit int) (_ Page[DocSummary], skipped int, _ error) {
-	var where arg
-	switch {
-	case !ValidID(parent) || limit < 1 || limit > 50 || !textOK(cursor, 2048):
+	where, ok := parentArg(kind, parent, true)
+	if !ok || limit < 1 || limit > 50 || !textOK(cursor, 2048) {
 		return Page[DocSummary]{}, 0, fail("invalid")
-	case kind == "initiative":
-		where = a(parent, "initiativeId")
-	default:
-		var ok bool
-		if where, ok = parentArg(kind, parent, true); !ok {
-			return Page[DocSummary]{}, 0, fail("invalid")
-		}
 	}
 	if p.DocumentReason() != "" {
 		return Page[DocSummary]{}, 0, fail("capability_unavailable")

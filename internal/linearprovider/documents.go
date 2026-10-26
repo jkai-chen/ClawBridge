@@ -32,6 +32,7 @@ func (p *Provider) DocumentReason() string {
 	}{
 		{"save_document", "title, content and team", []arg{a("x", "title"), a("x", "content"), a(sample, "team")}},
 		{"save_document", "title, content and project", []arg{a("x", "title"), a("x", "content"), a(sample, "project")}},
+		{"save_document", "title, content and initiative", []arg{a("x", "title"), a("x", "content"), a(sample, "initiative")}},
 		{"save_document", "id and content", []arg{a(sample, "id"), a("x", "content")}},
 		{"get_document", "id", []arg{a(sample, "id")}},
 		{"list_documents", "teamId, cursor, limit, fields and includeArchived", []arg{a(sample, "teamId"), a("c", "cursor"), {[]string{"limit"}, 50, "integer"}, {[]string{"fields"}, documentFields, "array"}, {[]string{"includeArchived"}, true, "boolean"}}},
@@ -90,12 +91,16 @@ func parentArg(kind, parent string, list bool) (arg, bool) {
 		return a(parent, "projectId"), true
 	case kind == "project":
 		return a(parent, "project"), true
+	case kind == "initiative" && list:
+		return a(parent, "initiativeId"), true
+	case kind == "initiative":
+		return a(parent, "initiative"), true
 	}
 	return arg{}, false
 }
 
-// CreateDocument creates a document under a team or a project. It sends
-// the title, the content and the parent only.
+// CreateDocument creates a document under a team, a project or an
+// initiative. It sends the title, the content and the parent only.
 func (p *Provider) CreateDocument(ctx context.Context, kind, parent, title, content string) (Document, error) {
 	where, ok := parentArg(kind, parent, false)
 	if !ok || title == "" || !textOK(title, 256) || !textOK(content, MaxDocumentContent) || !utf8.ValidString(content) {
@@ -151,10 +156,10 @@ func (p *Provider) GetDocument(ctx context.Context, id string) (Document, error)
 	return d, e
 }
 
-// DocumentsUnder walks the documents of a team or a project, archived ones
-// included, with their content, without a search query: a document created
-// moments ago is found whatever the search index holds. complete is false
-// when the walk stopped at its bound.
+// DocumentsUnder walks the documents of a team, a project or an
+// initiative, archived ones included, with their content, without a search
+// query: a document created moments ago is found whatever the search index
+// holds. complete is false when the walk stopped at its bound.
 func (p *Provider) DocumentsUnder(ctx context.Context, kind, parent string) ([]Document, bool, error) {
 	where, ok := parentArg(kind, parent, true)
 	if !ok {

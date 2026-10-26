@@ -467,6 +467,14 @@ func (p *Provider) v2Negotiation(names []string, args []arg) (string, map[string
 				values["fields"] = projection
 			}
 		}
+		// Native get_issue returns relations only when asked: without
+		// includeRelations no edge is ever read back, so a relation write
+		// can never be verified.
+		if name == "get_issue" {
+			if prop, ok := props["includeRelations"].(map[string]any); ok && prop["type"] == "boolean" {
+				values["includeRelations"] = true
+			}
+		}
 		for key, value := range values {
 			if !constrainedValue(props[key], value) {
 				safe = false

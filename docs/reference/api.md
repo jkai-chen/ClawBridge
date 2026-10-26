@@ -384,8 +384,8 @@ from a pipe with `--value-stdin`; it must be one line of printable ASCII without
 whitespace, quotes, `$`, `#`, backslash or backtick, at most 4096 bytes. It
 travels on stdin over the user's own `ssh -T HOST` or `gcloud compute ssh …
 --tunnel-through-iap`, to a fixed remote script run with `sudo -n` that replaces
-that key's line in `/etc/clawbridge/clawbridge.env` and installs the file 0600,
-root-owned. The value is never in argv, the environment or the output; the
+that key's line in `/etc/clawbridge/clawbridge.env`, or in the regular file it
+links to (the link is kept), and installs the file 0600, root-owned. The value is never in argv, the environment or the output; the
 result is source=cloud_secret with `{key, set: true}`. `--project` here is the
 Google Cloud project.
 

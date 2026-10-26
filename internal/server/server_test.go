@@ -265,8 +265,9 @@ func TestPublicOAuthConfigIsUnauthenticatedAndMinimal(t *testing.T) {
 	if err := json.Unmarshal(recorder.Body.Bytes(), &exact); err != nil {
 		t.Fatal(err)
 	}
-	// The bundle, and the sign-in methods (Google only by default).
-	if len(exact) != 5 || fmt.Sprint(exact["auth_methods"]) != "[google]" {
+	// Exactly the bundle: a Google-only server names no sign-in methods, so
+	// a v0.3.3 client's parser (exactly these four) accepts it.
+	if len(exact) != 4 {
 		t.Fatalf("public config does not contain the exact installed-app bundle: %#v", exact)
 	}
 	if recorder.Header().Get("Cache-Control") != "no-store" {
@@ -280,7 +281,7 @@ func TestPublicOAuthConfigOmissionAndMethod(t *testing.T) {
 	}))
 	recorder := httptest.NewRecorder()
 	handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/v1/config", nil))
-	if recorder.Code != http.StatusOK || strings.TrimSpace(recorder.Body.String()) != `{"browser_client_id":"","browser_client_secret":"","device_client_id":"","device_client_secret":"","auth_methods":["google"]}` {
+	if recorder.Code != http.StatusOK || strings.TrimSpace(recorder.Body.String()) != `{"browser_client_id":"","browser_client_secret":"","device_client_id":"","device_client_secret":""}` {
 		t.Fatalf("legacy config response status=%d body=%q", recorder.Code, recorder.Body.String())
 	}
 	recorder = httptest.NewRecorder()

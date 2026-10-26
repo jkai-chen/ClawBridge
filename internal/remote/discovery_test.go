@@ -2,6 +2,7 @@ package remote
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -11,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"clawbridge/internal/bus"
 	"clawbridge/internal/server"
 )
 
@@ -175,8 +177,8 @@ func TestOAuthDiscoveryReadsTheServersSignInFields(t *testing.T) {
 		want   string
 		origin string
 	}{
-		{"google only", server.AuthOptions{}, "[google]", ""},
-		{"google and device", server.AuthOptions{Methods: []string{server.AuthGoogle, server.AuthDevice}, PublicOrigin: "https://cb.example.test"}, "[google device]", "https://cb.example.test"},
+		{"google only", server.AuthOptions{}, "[]", ""},
+		{"google and device", server.AuthOptions{Methods: []string{server.AuthGoogle, server.AuthDevice}, PublicOrigin: "https://cb.example.test", Devices: noDevices{}}, "[google device]", "https://cb.example.test"},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			handler := server.NewHandlerWithOptions(nil, nil, server.HandlerOptions{OAuth: metadata, Auth: c.auth})
@@ -185,6 +187,15 @@ func TestOAuthDiscoveryReadsTheServersSignInFields(t *testing.T) {
 			got, err := DiscoverOAuthClient(context.Background(), ts.URL, nil)
 			if err != nil {
 				t.Fatal(err)
+			}
+			// A v0.3.3 client's parser takes exactly the four OAuth
+			// strings; a Google-only server must still answer just those.
+			raw, _ := http.Get(ts.URL + "/v1/config")
+			var fields map[string]any
+			_ = json.NewDecoder(raw.Body).Decode(&fields)
+			raw.Body.Close()
+			if old := v033Accepts(fields); old != (c.want == "[]") {
+				t.Fatalf("v0.3.3 parser accepts=%v for %v", old, fields)
 			}
 			if got.BrowserClientID != metadata.BrowserClientID || got.DeviceClientSecret != metadata.DeviceClientSecret || fmt.Sprint(got.AuthMethods) != c.want || got.PublicOrigin != c.origin {
 				t.Fatalf("%#v", got)
@@ -204,4 +215,29 @@ func TestOAuthDiscoveryReadsTheServersSignInFields(t *testing.T) {
 			t.Errorf("%s: accepted", name)
 		}
 	}
+}
+
+// v033Accepts is v0.3.3's discovery contract: exactly the four OAuth
+// fields, each a string.
+func v033Accepts(fields map[string]any) bool {
+	if len(fields) != 4 {
+		return false
+	}
+	for _, k := range []string{"browser_client_id", "browser_client_secret", "device_client_id", "device_client_secret"} {
+		if _, ok := fields[k].(string); !ok {
+			return false
+		}
+	}
+	return true
+}
+
+// noDevices is a device store that holds none.
+type noDevices struct{}
+
+func (noDevices) DeviceByID(context.Context, string) (bus.Device, error) {
+	return bus.Device{}, errors.New("none")
+}
+func (noDevices) UseNonce(context.Context, string, string) error { return nil }
+func (noDevices) Join(context.Context, bus.JoinRequest) (map[string]any, error) {
+	return nil, bus.ErrInvalidInvite
 }

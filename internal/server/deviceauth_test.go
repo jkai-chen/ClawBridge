@@ -347,6 +347,20 @@ func TestAuthMethods(t *testing.T) {
 	if fmt.Sprint(config["auth_methods"]) != "[device]" || config["public_origin"] != testOrigin {
 		t.Fatal(config)
 	}
+	// A Google-only server names no methods and no origin (R78-H1).
+	w = google.send(http.MethodGet, "/v1/config", "", "")
+	config = nil
+	_ = json.Unmarshal(w.Body.Bytes(), &config)
+	if _, ok := config["auth_methods"]; ok || len(config) != 4 {
+		t.Fatal("a Google-only server advertised sign-in methods:", config)
+	}
+	both := newDeviceFixture(t, AuthGoogle, AuthDevice)
+	w = both.send(http.MethodGet, "/v1/config", "", "")
+	config = nil
+	_ = json.Unmarshal(w.Body.Bytes(), &config)
+	if fmt.Sprint(config["auth_methods"]) != "[google device]" || config["public_origin"] != testOrigin {
+		t.Fatal(config)
+	}
 	for in, want := range map[string]string{"": "error", "google": "[google]", "device": "[device]", "google,device": "[google device]", " device , google ": "[device google]", "google,google": "error", "saml": "error"} {
 		methods, err := authMethods(in, false, false)
 		if got := fmt.Sprint(methods); (err != nil && want != "error") || (err == nil && got != want) {

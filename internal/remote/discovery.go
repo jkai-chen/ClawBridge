@@ -23,6 +23,12 @@ type OAuthDiscovery struct {
 	BrowserClientSecret string
 	DeviceClientID      string
 	DeviceClientSecret  string
+	// AuthMethods are the sign-in methods the server accepts (google,
+	// device); nil from a server older than device sign-in.
+	AuthMethods []string
+	// PublicOrigin is the origin device signatures cover; empty when the
+	// server has none configured.
+	PublicOrigin string
 }
 
 // DiscoverOAuthClient retrieves the public OAuth client metadata from the
@@ -104,8 +110,9 @@ func parseOAuthDiscovery(raw []byte) (OAuthDiscovery, error) {
 	if err != nil || first != json.Delim('{') {
 		return OAuthDiscovery{}, errors.New("trusted server OAuth discovery response is not a JSON object")
 	}
-	seen := make(map[string]struct{}, 4)
-	var browserID, browserSecret, deviceID, deviceSecret string
+	seen := make(map[string]struct{}, 6)
+	var browserID, browserSecret, deviceID, deviceSecret, publicOrigin string
+	var methods []string
 	for decoder.More() {
 		keyToken, err := decoder.Token()
 		if err != nil {
@@ -144,6 +151,16 @@ func parseOAuthDiscovery(raw []byte) (OAuthDiscovery, error) {
 			if !ok {
 				return OAuthDiscovery{}, errors.New("trusted server OAuth discovery device_client_secret is missing or invalid")
 			}
+		case "auth_methods":
+			methods, ok = strictJSONStrings(value)
+			if !ok {
+				return OAuthDiscovery{}, errors.New("trusted server OAuth discovery auth_methods is invalid")
+			}
+		case "public_origin":
+			publicOrigin, ok = strictJSONString(value)
+			if !ok {
+				return OAuthDiscovery{}, errors.New("trusted server OAuth discovery public_origin is invalid")
+			}
 		default:
 			return OAuthDiscovery{}, errors.New("trusted server OAuth discovery response contains an unknown field")
 		}
@@ -156,9 +173,6 @@ func parseOAuthDiscovery(raw []byte) (OAuthDiscovery, error) {
 		return OAuthDiscovery{}, errors.New("trusted server OAuth discovery response has trailing content")
 	} else if trailing != nil {
 		return OAuthDiscovery{}, errors.New("trusted server OAuth discovery response has trailing content")
-	}
-	if len(seen) != 4 {
-		return OAuthDiscovery{}, errors.New("trusted server OAuth discovery response must contain exactly four fields")
 	}
 	if _, ok := seen["browser_client_id"]; !ok {
 		return OAuthDiscovery{}, errors.New("trusted server OAuth discovery browser_client_id is missing or invalid")
@@ -177,7 +191,30 @@ func parseOAuthDiscovery(raw []byte) (OAuthDiscovery, error) {
 		BrowserClientSecret: browserSecret,
 		DeviceClientID:      deviceID,
 		DeviceClientSecret:  deviceSecret,
+		AuthMethods:         methods,
+		PublicOrigin:        publicOrigin,
 	}, nil
+}
+
+// strictJSONStrings reads an array of at most 8 short strings.
+func strictJSONStrings(raw json.RawMessage) ([]string, bool) {
+	trimmed := bytes.TrimSpace(raw)
+	if len(trimmed) == 0 || trimmed[0] != '[' {
+		return nil, false
+	}
+	var items []json.RawMessage
+	if json.Unmarshal(trimmed, &items) != nil || len(items) > 8 {
+		return nil, false
+	}
+	out := make([]string, 0, len(items))
+	for _, item := range items {
+		v, ok := strictJSONString(item)
+		if !ok || v == "" || len(v) > 32 {
+			return nil, false
+		}
+		out = append(out, v)
+	}
+	return out, true
 }
 
 func strictJSONString(raw json.RawMessage) (string, bool) {

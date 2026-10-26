@@ -49,7 +49,12 @@ Its Docker access is root-equivalent, so it is kept small, and it is fenced in b
 ## How the agents reach the outside
 
 - **Owner networks.** Each owner's agent sits alone on its internal network `cbnet-<owner ref>`, on a fixed /28 of
-  `172.30.0.0/16` that agentd allocates (the first free one; up to 4,096 owners). The network has no route out.
+  `172.30.0.0/16` that agentd allocates (the first free one; up to 4,096 owners). The network has no route out. A
+  subnet an owner gave up waits a minute before another owner gets it, so none of the old owner's tunnels or policy
+  can match the new agent.
+  - **The pool and your VPC:** `172.30.0.0/16` sits inside common VPC ranges. Under the rootless daemon the networks
+    live in the daemon's own namespace, so they can't clash with the host's routes. A rootful install, which this
+    design doesn't use, would have to check for overlap with the host's networks first.
 - **The egress container.** `clawbridge-egress` runs `clawbridge-agentd egress` from the agentd image, by digest:
   - as `nobody`, read-only, with no capabilities, no env and 32 MiB;
   - on `clawbridge-egress-net` (`172.31.255.0/28`), the one network with a route out;
@@ -70,7 +75,12 @@ The spec is compiled in. The server says which owner refs should run, never how.
 - **Privileges:** the image's non-root `node` user, no capabilities, `no-new-privileges`.
 - **Limits:** 64 pids, 160 MiB of memory with no swap.
 - **Network:** the owner's own internal network `cbnet-<owner ref>`, which has no route out.
-- **Environment and input:** one env variable, `CLAWBRIDGE_SERVER_URL`. stdin is open once, for the credential.
+- **Environment and input:** two env variables, `CLAWBRIDGE_SERVER_URL` and
+  `CLAWBRIDGE_EGRESS_PROXY=http://clawbridge-egress:3128`. stdin is open once, for the credential.
+- **Label:** one, `clawbridge.config_revision`, the owner's config revision it was started for (a positive number,
+  the one value agentd chooses). When the server's revision for that owner changes, after a rotated key or a new
+  model, agentd replaces the container with a fresh one and a fresh credential (§11.6). That is not counted as a
+  crash, and agentd still sees the revision after it restarts itself.
 
 ## Commands
 

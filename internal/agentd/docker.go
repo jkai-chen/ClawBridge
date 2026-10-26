@@ -33,6 +33,8 @@ func newDocker(socket string) *docker {
 type agentContainer struct {
 	ref     string
 	running bool
+	// revision is the config revision it was started for; 0 if unreadable.
+	revision int64
 }
 
 func (d *docker) call(ctx context.Context, method, path string, body any, ok ...int) ([]byte, error) {
@@ -84,8 +86,9 @@ func (d *docker) list(ctx context.Context) ([]agentContainer, error) {
 		return nil, err
 	}
 	var listed []struct {
-		Names []string
-		State string
+		Names  []string
+		State  string
+		Labels map[string]string
 	}
 	if err := json.Unmarshal(out, &listed); err != nil {
 		return nil, fmt.Errorf("docker list: unreadable answer")
@@ -95,7 +98,8 @@ func (d *docker) list(ctx context.Context) ([]agentContainer, error) {
 		for _, name := range c.Names {
 			// Docker's name filter matches substrings: keep exact names only.
 			if ref, ok := refFromName(strings.TrimPrefix(name, "/"), containerPrefix); ok {
-				agents = append(agents, agentContainer{ref: ref, running: c.State == "running"})
+				revision, _ := parseRevision(c.Labels[revisionLabel])
+				agents = append(agents, agentContainer{ref: ref, running: c.State == "running", revision: revision})
 			}
 		}
 	}

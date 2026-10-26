@@ -274,6 +274,10 @@ type HandlerOptions struct {
 	// only when both are set.
 	TickVerifier TickVerifier
 	Ticker       Ticker
+	// Nudge asks the watcher for an early marker pass of a request's
+	// project after its confirm or release commits; nil without a watcher
+	// clock. It never blocks.
+	Nudge func(workspace, project string)
 }
 
 // NewHandlerWithOptions also serves the send-only /mcp/intake endpoint when
@@ -388,6 +392,10 @@ func NewHandlerWithOptions(store Executor, verifier Verifier, o HandlerOptions) 
 			return
 		}
 		result.Source = "server"
+		// The confirm or release has committed: its marker rows are due now.
+		if o.Nudge != nil && (request.Operation == "assignment_confirm" || request.Operation == "assignment_release") {
+			o.Nudge(request.Workspace, request.Project)
+		}
 		if request.Operation == "whoami" {
 			if data, ok := result.Data.(map[string]any); ok {
 				data["principal"] = identity.Principal

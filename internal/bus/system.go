@@ -181,6 +181,22 @@ func (s *Store) WatchProjects(ctx context.Context, limit int) ([]string, error) 
 	return out, nil
 }
 
+// WatchProjectID is the ID of the project a request named, by workspace
+// ID or name and project ID or slug, when it is bound to a Linear board:
+// the project a nudge serves. "" when there is none.
+func (s *Store) WatchProjectID(ctx context.Context, workspace, project string) (string, error) {
+	tx, err := s.beginIntake(ctx)
+	if err != nil {
+		return "", err
+	}
+	defer tx.Rollback()
+	rows, err := query(ctx, tx, `SELECT p.id FROM projects p JOIN workspaces w ON w.id=p.workspace_id JOIN taskboard_bindings b ON b.project_id=p.id WHERE (w.id=? OR w.name=?) AND (p.id=? OR p.slug=?) AND b.mapping IS NOT NULL`, workspace, workspace, project, project)
+	if err != nil || len(rows) != 1 {
+		return "", err
+	}
+	return str(rows[0], "id"), nil
+}
+
 // WatchTicked records a project's tick, and when it succeeded.
 func (s *Store) WatchTicked(ctx context.Context, pid string, ok bool, failure string) error {
 	tx, _, err := s.systemTx(ctx, pid)

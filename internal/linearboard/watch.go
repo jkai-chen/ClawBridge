@@ -43,6 +43,9 @@ type WatchOptions struct {
 	// Within runs after each cycle while the lease is still held, with
 	// its fence, so other sources (intake) share the lease and budget.
 	Within func(ctx context.Context, fence map[string]any) error
+	// MarkersOnly applies the due claim markers and nothing else: no
+	// comment sweep or poll (a nudge, §8.3).
+	MarkersOnly bool
 }
 
 // WatchCycle is what one watch cycle did. Held names the issues whose poll
@@ -123,13 +126,15 @@ func (s *Service) Watch(ctx context.Context, scope bus.Request, opts WatchOption
 		defer cancel()
 		_, _ = s.commentLedger(release, scope, "comment_watch_lease", lease.fence(map[string]any{"action": "release"}))
 	}()
-	s.SweepComments(ctx, scope)
+	if !opts.MarkersOnly {
+		s.SweepComments(ctx, scope)
+	}
 	calls := s.countCalls()
 	for {
 		if err = s.renewWatch(ctx, scope, lease, true); err != nil {
 			return err
 		}
-		cycle, err := s.watchCycle(ctx, scope, lease, calls)
+		cycle, err := s.watchCycle(ctx, scope, lease, calls, opts.MarkersOnly)
 		if err != nil {
 			return err
 		}
@@ -222,10 +227,10 @@ func pollCost(before, after linearCalls, credit *int) int {
 	return spent
 }
 
-func (s *Service) watchCycle(ctx context.Context, scope bus.Request, lease *watchLease, calls func() linearCalls) (WatchCycle, error) {
+func (s *Service) watchCycle(ctx context.Context, scope bus.Request, lease *watchLease, calls func() linearCalls, markersOnly bool) (WatchCycle, error) {
 	cycle := WatchCycle{Notified: []string{}}
 	credit := watchConnectCalls
-	if err := s.applyDueMarkers(ctx, scope, lease, &cycle, calls, &credit); err != nil {
+	if err := s.applyDueMarkers(ctx, scope, lease, &cycle, calls, &credit); err != nil || markersOnly {
 		return cycle, err
 	}
 	due, err := s.commentLedger(ctx, scope, "comment_watch_due", lease.fence(map[string]any{}))

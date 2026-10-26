@@ -845,6 +845,11 @@ issue: see [who closes an issue](#who-closes-an-issue).
   and retried like its note and label (see [claim markers](#claim-markers)). A
   move is applied only while the policy is enabled at the revision it had when
   the claim or release happened. A changed policy skips it.
+- **Soon after a confirm or release.** A hosted server whose watcher runs on its
+  own clock (`CLAWBRIDGE_WATCH_INTERVAL`) applies that project's markers within
+  seconds of a confirm or release, instead of at the next tick: a markers-only
+  pass, at most one a minute per project, never alongside a tick. With the
+  scheduler's tick endpoint alone, markers wait for the next tick.
 - **Cost:** each move costs about three Linear calls: a read, the write, and a
   readback.
 

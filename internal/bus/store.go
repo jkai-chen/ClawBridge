@@ -123,7 +123,7 @@ func (s *Store) migrate() error {
 	if err = tx.QueryRow("PRAGMA user_version").Scan(&version); err != nil {
 		return err
 	}
-	if version > 19 {
+	if version > 20 {
 		return errors.New("database schema is newer than this ClawBridge binary")
 	}
 	if version == 0 {
@@ -225,6 +225,11 @@ func (s *Store) migrate() error {
 	}
 	if version < 19 {
 		if _, err = tx.Exec(healthPostSchemaV19 + `PRAGMA user_version=19;`); err != nil {
+			return err
+		}
+	}
+	if version < 20 {
+		if _, err = tx.Exec(presenceSchemaV20 + `PRAGMA user_version=20;`); err != nil {
 			return err
 		}
 	}
@@ -483,7 +488,7 @@ var operationArgs = map[string]string{
 	"intake_list":                 "instance state",
 	"intake_dismiss":              "instance issue_uuid",
 	"intake_rearm":                "instance issue_uuid",
-	"workspace_init":              "mode name retention_days", "project_create": "slug name git_remote", "list_projects": "", "list_members": "", "register_session": "instance resume role agent_kind model host account notes transport", "list_sessions": "instance status role limit after issue scope_path assignment_state", "send": "instance to body kind thread_id operation_id coordination", "reply": "instance message_id body kind operation_id coordination", "inbox": "instance unread_only limit after", "mark_read": "instance ids", "update_session": "instance target_session role model host account notes transport", "retire_session": "instance target_session successor status", "history": "instance entity key limit after", "whoami": "instance", "message_status": "instance message_id", "resolve_project": "git_remote instance", "snapshot": "instance", "project_role_set": "instance principal role", "project_role_revoke": "instance principal", "purge_expired": "instance", "principal_unbind": "principal allow_previous", "workspace_set_domains": "domains",
+	"workspace_init":              "mode name retention_days", "project_create": "slug name git_remote", "list_projects": "", "list_members": "", "register_session": "instance resume role agent_kind model host account notes transport", "list_sessions": "instance status role limit after issue scope_path assignment_state", "send": "instance to body kind thread_id operation_id coordination", "reply": "instance message_id body kind operation_id coordination", "inbox": "instance unread_only limit after", "mark_read": "instance ids", "update_session": "instance target_session role model host account notes transport", "retire_session": "instance target_session successor status", "history": "instance entity key limit after", "whoami": "instance", "heartbeat": "instance state", "message_status": "instance message_id", "resolve_project": "git_remote instance", "snapshot": "instance", "project_role_set": "instance principal role", "project_role_revoke": "instance principal", "purge_expired": "instance", "principal_unbind": "principal allow_previous", "workspace_set_domains": "domains",
 }
 
 func validateArgs(op string, a map[string]any) error {
@@ -716,6 +721,9 @@ func pureRead(r Request) bool {
 		return (r.Session == "") == (str(r.Args, "instance") == "")
 	case "resolve_project":
 		return r.Session == "" && str(r.Args, "instance") == ""
+	case "heartbeat":
+		// The lease is written after the read, on the beat's light path.
+		return true
 	}
 	return false
 }
@@ -740,6 +748,14 @@ var logHeartbeatSkipped = func(operation string, err error) {
 var beforeBeat atomic.Pointer[func()]
 
 func (s *Store) beat(ctx context.Context, r Request, b *heartbeat) (string, bool) {
+	now := stamp()
+	return now, s.sessionWrite(ctx, r.Operation, b.workspace, `UPDATE sessions SET last_seen=? FROM workspaces w WHERE sessions.project_id=? AND sessions.id=? AND sessions.status='active'`, []any{now, b.project, b.session})
+}
+
+// sessionWrite runs one light session update after a read has committed:
+// a beat or a lease. update is an UPDATE sessions … FROM workspaces w WHERE
+// …; the access checks are appended to it.
+func (s *Store) sessionWrite(ctx context.Context, operation, workspace, update string, args []any) bool {
 	if hook := beforeBeat.Load(); hook != nil {
 		(*hook)()
 	}
@@ -747,26 +763,26 @@ func (s *Store) beat(ctx context.Context, r Request, b *heartbeat) (string, bool
 	defer cancel()
 	raw, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
-		logHeartbeatSkipped(r.Operation, err)
-		return "", false
+		logHeartbeatSkipped(operation, err)
+		return false
 	}
 	tx := &transaction{Tx: raw, postgres: true}
 	defer tx.Rollback()
 	var acquired bool
 	now := stamp()
 	if _, err = tx.ExecContext(ctx, `SET LOCAL lock_timeout='1s'`); err == nil {
-		err = tx.QueryRowContext(ctx, `SELECT pg_try_advisory_xact_lock(hashtextextended(?,0))`, "workspace:"+b.workspace).Scan(&acquired)
+		err = tx.QueryRowContext(ctx, `SELECT pg_try_advisory_xact_lock(hashtextextended(?,0))`, "workspace:"+workspace).Scan(&acquired)
 	}
 	if err == nil && acquired {
-		// Like any write, the beat re-checks access under the workspace lock,
-		// in the same statement: it updates only an active session of a
-		// current member, and returns the allow-list to check before commit.
-		// A session retired, a membership revoked or an allow-list narrowed
-		// while the read ran skips the beat silently.
+		// Like any write, the update re-checks access under the workspace
+		// lock, in the same statement: it updates only an active session
+		// of a current member, and returns the allow-list to check before
+		// commit. A session retired, a membership revoked or an allow-list
+		// narrowed while the read ran skips the update silently.
 		// A device identity's device must still be live and of this
 		// workspace too.
-		q := `UPDATE sessions SET last_seen=? FROM workspaces w WHERE sessions.project_id=? AND sessions.id=? AND sessions.status='active' AND w.id=? AND EXISTS(SELECT 1 FROM members m WHERE m.workspace_id=w.id AND m.principal=?)`
-		args := []any{now, b.project, b.session, b.workspace, s.principal}
+		q := update + ` AND w.id=? AND EXISTS(SELECT 1 FROM members m WHERE m.workspace_id=w.id AND m.principal=?)`
+		args = append(args, workspace, s.principal)
 		if s.identity != nil && s.identity.Issuer == DeviceIssuer {
 			q += ` AND EXISTS(SELECT 1 FROM devices d WHERE d.device_id=? AND d.workspace_id=w.id AND d.principal=? AND d.revoked_at IS NULL AND (d.expires_at IS NULL OR d.expires_at>?))`
 			args = append(args, s.identity.Subject, s.principal, now)
@@ -774,16 +790,16 @@ func (s *Store) beat(ctx context.Context, r Request, b *heartbeat) (string, bool
 		var domains string
 		err = tx.QueryRowContext(ctx, q+` RETURNING w.allowed_domains`, args...).Scan(&domains)
 		if errors.Is(err, sql.ErrNoRows) || (err == nil && s.domainGate(domains) != nil) {
-			return now, false
+			return false
 		}
 		if err == nil {
 			err = tx.Commit()
 		}
 	}
 	if err != nil {
-		logHeartbeatSkipped(r.Operation, err)
+		logHeartbeatSkipped(operation, err)
 	}
-	return now, err == nil && acquired
+	return err == nil && acquired
 }
 
 // logMisclassifiedRead reports a pure read that tried to write; tests
@@ -844,6 +860,9 @@ func (s *Store) executeRequest(ctx context.Context, r Request) (Result, error) {
 	}
 	if err = tx.Commit(); err != nil {
 		return Result{}, errors.New("authority commit failed; no write queued")
+	}
+	if tx.lease != nil {
+		data.(map[string]any)["renewed"] = s.renewLease(ctx, r, tx.lease)
 	}
 	if tx.beat != nil {
 		if now, ok := s.beat(ctx, r, tx.beat); ok && r.Operation == "whoami" {
@@ -1011,6 +1030,9 @@ func (s *Store) execute(ctx context.Context, tx *transaction, r Request) (any, e
 	}
 	if r.Operation == "register_session" {
 		return s.register(ctx, tx, wid, pid, r)
+	}
+	if r.Operation == "heartbeat" {
+		return s.heartbeatOp(ctx, tx, pid, r)
 	}
 	if r.Operation == "list_sessions" {
 		if err = s.touchReadActor(ctx, tx, pid, r); err != nil {
@@ -1481,6 +1503,11 @@ func decorateSession(m map[string]any) {
 	}
 	m["presence"] = presence
 	m["stale"] = stale
+	if _, leased := m["alive_until"]; leased {
+		// The dispatcher's presence (§1); a domain's own stale_after_hours
+		// replaces the default where one applies.
+		m["liveness"] = liveness(m, hostClock().UTC(), defaultStaleAfterHour)
+	}
 }
 func (s *Store) touchReadActor(ctx context.Context, tx *transaction, pid string, r Request) error {
 	instance := str(r.Args, "instance")

@@ -1,0 +1,4 @@
+interface:
+  display_name: "ClawBridge on Google Cloud"
+  short_description: "Provision a ClawBridge server in your Google Cloud project"
+  default_prompt: "Use $clawbridge-provision-gcp to set up my ClawBridge server on Google Cloud, following its hard rules."

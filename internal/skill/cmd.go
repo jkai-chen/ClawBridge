@@ -8,7 +8,7 @@ import (
 	"io"
 )
 
-const usage = "usage: clawbridge skill install|status|uninstall [--agent claude-code|codex|all] [--dir SKILLS_DIR] [--force]"
+const usage = "usage: clawbridge skill install|status|uninstall [--playbook gcp] [--agent claude-code|codex|all] [--dir SKILLS_DIR] [--force]"
 
 // RunWithIO is the `clawbridge skill` command. Results are JSON; a refused
 // target is reported in the JSON and also makes the command fail.
@@ -25,6 +25,7 @@ func RunWithIO(args []string, stdout, stderr io.Writer) error {
 	f.SetOutput(stderr)
 	agent := f.String("agent", "", "claude-code, codex or all (default: each agent whose configuration exists)")
 	dir := f.String("dir", "", "custom skills directory; the skill goes in DIR/clawbridge")
+	playbook := f.String("playbook", "", "a provisioning playbook instead of the main skill: gcp")
 	force := new(bool)
 	if command != "status" {
 		f.BoolVar(force, "force", false, "replace or remove files changed since installation")
@@ -42,7 +43,13 @@ func RunWithIO(args []string, stdout, stderr io.Writer) error {
 	if *agent != "" && *agent != "all" && *agent != "claude-code" && *agent != "codex" && *dir == "" {
 		return errors.New("--agent must be claude-code, codex or all")
 	}
-	targets, err := Targets(*agent, *dir)
+	name := Name
+	if *playbook != "" {
+		if name = Playbooks[*playbook]; name == "" {
+			return errors.New("--playbook must be gcp")
+		}
+	}
+	targets, err := TargetsFor(name, *agent, *dir)
 	if err != nil {
 		return err
 	}

@@ -19,9 +19,7 @@ func TestCoordinatorTargets(t *testing.T) {
 	if err := h.s.db.QueryRow(`SELECT id FROM projects WHERE slug='p'`).Scan(&pid); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := h.s.ExecuteDispatcher(ctx, pid, DispatcherSessionName, Request{Operation: "dispatcher_get"}); err != nil {
-		t.Fatal(err)
-	}
+	h.dispatcherSessions(pid)
 	me := h.principal()
 	platform := paymentsDomain(me)
 	platform["id"], platform["name"] = "platform", "Platform"
@@ -94,9 +92,7 @@ func TestIntakeNoticeRoutesByTheAppsRead(t *testing.T) {
 	if err := h.s.db.QueryRow(`SELECT id FROM projects WHERE slug='p'`).Scan(&pid); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := h.s.ExecuteDispatcher(context.Background(), pid, DispatcherSessionName, Request{Operation: "dispatcher_get"}); err != nil {
-		t.Fatal(err)
-	}
+	h.dispatcherSessions(pid)
 	me := h.principal()
 	platform := paymentsDomain(me)
 	platform["id"], platform["name"] = "platform", "Platform"
@@ -124,9 +120,7 @@ func TestIntakeNoticeRoutesByTheAppsRead(t *testing.T) {
 func TestHealthNoticeRoutesByProject(t *testing.T) {
 	h := newHealthHarness(t)
 	h.call("label_policy_set", "a", map[string]any{"expected_revision": 0, "label_policy": map[string]any{"labels": []any{"payments", "platform"}}})
-	if _, err := h.s.ExecuteDispatcher(context.Background(), h.pid, DispatcherSessionName, Request{Operation: "dispatcher_get"}); err != nil {
-		t.Fatal(err)
-	}
+	h.dispatcherSessions(h.pid)
 	me := h.principal()
 	platform := paymentsDomain(me)
 	platform["id"], platform["name"] = "platform", "Platform"
@@ -167,9 +161,7 @@ func TestCommentAndDocNoticesRoute(t *testing.T) {
 	if err := h.s.db.QueryRow(`SELECT id FROM projects WHERE slug='p'`).Scan(&pid); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := h.s.ExecuteDispatcher(ctx, pid, DispatcherSessionName, Request{Operation: "dispatcher_get"}); err != nil {
-		t.Fatal(err)
-	}
+	h.dispatcherSessions(pid)
 	me := h.principal()
 	platform := paymentsDomain(me)
 	platform["id"], platform["name"] = "platform", "Platform"

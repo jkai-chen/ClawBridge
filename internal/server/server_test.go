@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	"clawbridge/internal/buildinfo"
 	"clawbridge/internal/bus"
 )
 
@@ -300,5 +301,21 @@ func TestServeRequiresInstalledAppCredentialsFromEnvironmentOnly(t *testing.T) {
 	}
 	if strings.Contains(err.Error(), "synthetic-must-not-be-an-argv-credential") {
 		t.Fatal("rejected secret-valued serve flag was echoed")
+	}
+}
+
+// The onboarding check reads the release from /healthz without signing in.
+func TestHealthzReportsVersion(t *testing.T) {
+	verifier := VerifierFunc(func(context.Context, string) (Identity, error) {
+		return Identity{}, errors.New("healthz called verifier")
+	})
+	recorder := httptest.NewRecorder()
+	NewHandlerWithOAuthMetadata(publicConfigExecutor{}, verifier, OAuthMetadata{}).ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/healthz", nil))
+	var body map[string]string
+	if err := json.Unmarshal(recorder.Body.Bytes(), &body); err != nil || recorder.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", recorder.Code, recorder.Body.String())
+	}
+	if !reflect.DeepEqual(body, map[string]string{"status": "ok", "version": buildinfo.Version}) {
+		t.Fatalf("healthz = %v", body)
 	}
 }

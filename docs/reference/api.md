@@ -335,7 +335,8 @@ entry records `repaired_unreadable_sha256`, the SHA-256 of the cleared row.
 ID-token audience, signature, issuer, expiry and verified email. The service
 then enforces its own membership/project policy. `GET /v1/config` exposes only the
 configured installed-app OAuth discovery fields. `GET /healthz` checks process
-health rather than certifying database or user access.
+health rather than certifying database or user access; it answers
+`{"status":"ok","version":"…"}` with the server's release.
 
 Definitive authentication, authorization, validation and fencing failures are
 returned directly. Only transport/service outages may permit supported reads
@@ -357,6 +358,36 @@ covers schema 4.
 commit and build_time without loading configuration, storage or credentials.
 Source builds default to dev/unknown/unknown; release metadata is injected from
 the exact tagged commit. Extra version arguments fail before state access.
+
+## Cloud check and secret entry
+
+`clawbridge cloud check [server|version|workspace|all] [--server URL]
+[--client-config PATH] [--json]` probes an own server during onboarding. Each
+check passes, warns or fails with a fixed reason code and one line of advice;
+`--json` returns source=cloud_check with a list of `{check, status, reason,
+advice}`, otherwise a table. The exit status is non-zero when any check fails.
+
+| Check | Passes when | Reasons |
+|---|---|---|
+| `server` | `GET /healthz` over HTTPS (plain HTTP only to loopback) answers 200 `{"status":"ok"}`, without following redirects | `no_server`, `invalid_url`, `dns`, `tls`, `unreachable`, `http_status`, `not_clawbridge` |
+| `version` | the server's release equals the client's; a dev build on either side warns `dev_build` | `server_too_old`, `version_mismatch` |
+| `workspace` | `whoami` with the configured cloud profile shows the signed-in principal owns the workspace | `no_config`, `not_cloud`, `other_server`, `not_signed_in`, `no_workspace`, `whoami_failed`, `not_owner` |
+
+The server URL is `--server` or the configured one. No check reads a secret or
+writes anything.
+
+`clawbridge cloud secret set KEY (--ssh HOST | --vm NAME --project P --zone Z)
+[--value-stdin]` writes one server setting the user holds, so it never passes
+through an agent. KEY is `CLAWBRIDGE_LINEAR_APP_CLIENT_ID` or
+`CLAWBRIDGE_LINEAR_APP_CLIENT_SECRET`. The value is read from a hidden prompt, or
+from a pipe with `--value-stdin`; it must be one line of printable ASCII without
+whitespace, quotes, `$`, `#`, backslash or backtick, at most 4096 bytes. It
+travels on stdin over the user's own `ssh -T HOST` or `gcloud compute ssh …
+--tunnel-through-iap`, to a fixed remote script run with `sudo -n` that replaces
+that key's line in `/etc/clawbridge/clawbridge.env` and installs the file 0600,
+root-owned. The value is never in argv, the environment or the output; the
+result is source=cloud_secret with `{key, set: true}`. `--project` here is the
+Google Cloud project.
 
 ## Skill output
 

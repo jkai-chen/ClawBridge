@@ -17,6 +17,7 @@ import (
 	"time"
 	"unicode"
 
+	"clawbridge/internal/buildinfo"
 	"clawbridge/internal/bus"
 	"clawbridge/internal/principal"
 	"google.golang.org/api/idtoken"
@@ -300,7 +301,7 @@ func NewHandlerWithOptions(store Executor, verifier Verifier, o HandlerOptions) 
 				return
 			}
 			w.Header().Set("Content-Type", "application/json")
-			_, _ = io.WriteString(w, `{"status":"ok"}`+"\n")
+			_ = json.NewEncoder(w).Encode(map[string]string{"status": "ok", "version": buildinfo.Version})
 			return
 		}
 		if r.URL.Path == "/v1/config" {

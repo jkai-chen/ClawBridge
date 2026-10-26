@@ -76,6 +76,12 @@ See docs/dispatcher.md.
 - On a clean home, `setup --cloud` selects cloud mode instead of failing with "setup mode conflicts", and
   `setup --help` shows the cloud flags.
 
+## Fixes
+
+- `operator linear-app-probe` (the project status-update probe): its preflight, and its list and delete calls, now
+  send the `type` that Linear requires there. Before, the probe refused with `capability_unavailable` before sending
+  anything.
+
 ## Docs
 
 - The installation guide, README and docs/linear.md no longer show stale versions.

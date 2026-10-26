@@ -39,6 +39,7 @@ Commands: setup --local, project create SLUG, register [NAME], sessions, send TO
           host-status|host-wait --adapter codex --endpoint unix:///absolute/socket --thread UUID,
           notify --adapter json|codex --state ABSOLUTE_PATH [--thread UUID] [--interval 5s] [--once],
           linear COMMAND --help (native connection, scoped task board and task actions),
+          runner launch ISSUE_UUID --profile ID [--role ROLE] [--dry-run], runner gc [--confirm] (Claude in an Orca terminal),
           mcp [--linear-profile ID], mcp install ... [--linear-profile ID] (opt-in native Linear tools),
           skill install|status|uninstall [--agent claude-code|codex|all] [--dir SKILLS_DIR] [--force],
           serve, operator principal-unbind|workspace-clear-domains ... --confirm (on the server host),
@@ -217,6 +218,9 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	}
 	if rest[0] == "linear" {
 		return runLinear(ctx, flags, rest[1:], stdout, stderr)
+	}
+	if rest[0] == "runner" {
+		return runRunner(ctx, flags, rest[1:], stdout, stderr)
 	}
 	if rest[0] == "host-status" || rest[0] == "host-wait" {
 		return runHost(ctx, rest[0], rest[1:], stdout, stderr)

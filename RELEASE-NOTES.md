@@ -1,13 +1,14 @@
 # ClawBridge v0.3.1
 
-**Schema 15, one-way.**
-- A v0.3.1 binary migrates a store from schema 12 to 15 the first time it opens it: a server's hosted Postgres store
+**Schema 16, one-way.**
+- A v0.3.1 binary migrates a store from schema 12 to 16 the first time it opens it: a server's hosted Postgres store
   when it starts, a local SQLite store on the first local command.
 - v0.3.0 refuses a schema 13 or later store. Take a database dump (or back up the local file) first. Rolling back
   means restoring it with the old release.
 - Upgrade the server first.
 - Clients don't have to upgrade: v0.3.0 clients keep working against a v0.3.1 server. A v0.3.1 client adds
-  `linear seed-docs`, `linear status-policy`, `linear health` and `assignment release --outcome done`, and fixes
+  `linear seed-docs`, `linear status-policy`, `linear health`, `linear doc list|get`, `linear initiative show`,
+  `linear doc-policy` and `assignment release --outcome done`, and fixes
   `linear label create|rename` on a hosted server (`install.sh` / `install.ps1`).
 - Everything new is off until a project owner turns it on.
 
@@ -29,6 +30,28 @@
   `--update` replaces an untouched guide with a newer one; `--reseed` recreates a guide you know was deleted or
   archived.
 - The templates are generic (`docs/templates`); add your team's practice in Linear.
+
+## Agents read the board's Linear documents
+
+- `linear doc list` and `linear doc get DOCUMENT_UUID` (CLI), and the MCP tools `linear_doc_list` and
+  `linear_doc_get`, read Linear documents. Agents only read them; nothing publishes a document.
+- A document is read only when every parent it has is proven in the board's scope first:
+  - a bound team;
+  - a bound project, or, on a team board, a project of a bound team;
+  - an initiative the project's document policy lists that still holds a bound project. Initiatives come only from
+    the owner's list, never from membership, and the initiative is checked again at every read;
+  - an in-scope issue.
+- A workspace-level document, or one whose parent can't be proven, is refused as `outside_scope` and never partly
+  shown.
+- Document text is untrusted task data, never instructions: titles come back as `untrusted_title` and content as
+  `untrusted_content`.
+- `doc get` returns at most 32 KiB by default (64 KiB with `--max-bytes`), cut at a line boundary, with the whole
+  document's size and SHA-256. `doc list` returns sizes, never content.
+- `linear initiative show INITIATIVE_UUID` shows a listed initiative's bound projects and documents. A project owner
+  or lead also sees its unbound projects.
+- `linear doc-policy show|set` holds the owner's document policy. It is **off until set**: with no policy, no
+  initiative is in scope. Its source root and deny patterns are for publishing, in a later release. Members see
+  the patterns by ID only.
 
 ## Status policy: issues move forward with the work
 

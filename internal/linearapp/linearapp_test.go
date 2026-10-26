@@ -188,11 +188,72 @@ func TestAScopeChangeReplacesTheStoredToken(t *testing.T) {
 	if err != nil || fresh == old || l.mints != 2 || len(store.rows) != 2 || store.rows[1].ScopesDigest != scopesDigest() {
 		t.Fatal("a token of the old scopes was adopted", fresh == old, err, l.mints, len(store.rows))
 	}
-	if !HasScope("write") || HasScope("admin") {
-		t.Fatal("HasScope")
+	if has, err := b.HasScope(context.Background(), "write"); !has || err != nil {
+		t.Fatal("HasScope", err)
 	}
 	if got, _, _ := newApp(t, store, l, &now).Token(context.Background()); got != fresh || l.mints != 2 {
 		t.Fatal("the new token was not shared", l.mints)
+	}
+}
+
+// R71-M1: a token Linear grants without write is counted, used for the
+// rest, shared, and asked again for write only after writeRetry; HasScope
+// says what was granted.
+func TestWriteDeniedIsUsedAndAskedAgainDaily(t *testing.T) {
+	ctx := context.Background()
+	now := time.Date(2026, 10, 23, 12, 0, 0, 0, time.UTC)
+	store := &memStore{live: map[string]int{}}
+	l := &linear{app: true, scope: "app:assignable app:mentionable comments:create issues:create read"}
+	a := newApp(t, store, l, &now)
+	token, _, err := a.Token(ctx)
+	if err != nil || store.minted != 1 || store.rows[0].ScopesDigest != deniedDigest() {
+		t.Fatal("a token without write was not used", err, store.minted)
+	}
+	for _, want := range []struct {
+		scope string
+		has   bool
+	}{{"write", false}, {"comments:create", true}} {
+		if has, err := a.HasScope(ctx, want.scope); has != want.has || err != nil {
+			t.Fatal(want.scope, has, err)
+		}
+	}
+	b := newApp(t, store, l, &now)
+	if got, _, err := b.Token(ctx); got != token || err != nil || l.mints != 1 {
+		t.Fatal("a second instance did not adopt the token without write", err, l.mints)
+	}
+	if has, _ := b.HasScope(ctx, "write"); has {
+		t.Fatal("an adopted token without write claims it")
+	}
+	now = now.Add(writeRetry - time.Minute)
+	if got, _, _ := a.Token(ctx); got != token || l.mints != 1 {
+		t.Fatal("write asked again before writeRetry", l.mints)
+	}
+	now = now.Add(2 * time.Minute)
+	l.scope = ""
+	if got, _, err := a.Token(ctx); err != nil || got == token || l.mints != 2 {
+		t.Fatal("write not asked again after writeRetry", err, l.mints)
+	}
+	if has, _ := a.HasScope(ctx, "write"); !has {
+		t.Fatal("a granted write is not reported")
+	}
+}
+
+// R71-M1: any other answered set is counted like an issued token and
+// backs off after failuresBeforeBackoff, never one mint a minute.
+func TestOtherScopesAreCountedAndBackOff(t *testing.T) {
+	ctx := context.Background()
+	now := time.Date(2026, 10, 23, 12, 0, 0, 0, time.UTC)
+	store := &memStore{live: map[string]int{}}
+	l := &linear{app: true, scope: "read"}
+	a := newApp(t, store, l, &now)
+	for i := 1; i <= failuresBeforeBackoff; i++ {
+		if _, _, err := a.Token(ctx); err == nil || err.Error() != "Linear app: scopes_mismatch" || store.minted != i {
+			t.Fatal(i, err, store.minted)
+		}
+		now = now.Add(2 * mintPace)
+	}
+	if _, _, err := a.Token(ctx); err == nil || err.Error() != "Linear app: mint_backoff" || l.mints != failuresBeforeBackoff {
+		t.Fatal("no backoff", err, l.mints)
 	}
 }
 

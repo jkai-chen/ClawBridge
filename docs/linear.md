@@ -510,6 +510,10 @@ every agent write from the CLI or MCP (create, update, comment, reply and
 relation) goes to the server, which makes it in Linear **as the ClawBridge
 app**. Your personal profile still reads, but never writes:
 
+- **Relations need the app's `write` scope.** Without it, Linear accepts a
+  relation write and silently drops the edge, so the server refuses
+  `relation add` and `relation remove` up front (`capability_unavailable`) and
+  sends nothing.
 - **No fallback.** When the server offers the app, a failed write is reported
   and is never retried with your own Linear account. If the client cannot tell
   whether the server offers the app, it sends nothing and says so. A server

@@ -70,3 +70,31 @@ func TestLinearWriteErrorsKeepTheBoardMessage(t *testing.T) {
 type errorString string
 
 func (e errorString) Error() string { return string(e) }
+
+// Without the write scope, the app refuses relation writes before anything
+// is sent: Linear would answer success and drop the edge. With it, the same
+// write goes on to the board. Other writes never meet this guard.
+func TestRelationWritesNeedTheWriteScope(t *testing.T) {
+	w := &AppWriter{App: &linearapp.App{}}
+	id := bus.Identity{Principal: "a@example.com"}
+	write := func(operation string) error {
+		_, err := w.Execute(context.Background(), id, bus.Request{Operation: "linear_write", Args: map[string]any{"operation": operation, "args": map[string]any{}}})
+		return err
+	}
+	saved := linearapp.Scopes
+	t.Cleanup(func() { linearapp.Scopes = saved })
+	linearapp.Scopes = []string{"read", "comments:create", "issues:create", "app:assignable", "app:mentionable"}
+	for _, operation := range []string{"relation_add", "relation_remove"} {
+		err := write(operation)
+		if code, status := serviceError(err); code != "invalid" || status != 400 || !strings.HasPrefix(responseMessage(code, err), "capability_unavailable:") {
+			t.Fatal(operation, code, status, err)
+		}
+	}
+	if relationScope("comment") != nil || relationScope("update") != nil {
+		t.Fatal("another write met the relation guard")
+	}
+	linearapp.Scopes = append(append([]string{}, linearapp.Scopes...), "write")
+	if relationScope("relation_add") != nil || relationScope("relation_remove") != nil {
+		t.Fatal("refused with the write scope")
+	}
+}

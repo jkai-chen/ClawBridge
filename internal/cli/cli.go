@@ -45,7 +45,7 @@ Commands: setup --local, project create SLUG, register [NAME], sessions, send TO
           serve, operator principal-unbind|workspace-clear-domains ... --confirm (on the server host),
           sync, purge-expired, principal-unbind EMAIL --confirm [--allow-previous],
           workspace-domains DOMAIN...|--clear, doctor, tui [--screen SCREEN], version,
-          cloud check [server|version|workspace|all], cloud secret set KEY (own-server onboarding)
+          cloud check [infra|server|version|workspace|linear-app|backups|all], cloud secret set KEY (own-server onboarding)
 Interactive: bare clawbridge opens the selected profile, or Start without one; onboard reopens Start
 (local, join a team server, or your own server); setup wizard starts guided join.
 Onboarding: setup join --server URL --workspace TEAM --project CODEBASE [--login|--device]

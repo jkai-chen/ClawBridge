@@ -343,6 +343,16 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	if command == "serve" {
 		return errors.New("serve operator flags must follow serve directly")
 	}
+	if command == "setup" && setupWantsCloud(rest) && flags.Mode == "" && envMode() == "" {
+		// On a clean HOME, setup --cloud says which mode it initializes:
+		// the default is local only until something says otherwise. A mode
+		// set anywhere else still conflicts, as before.
+		if path, e := selectedClientPath(flags); e == nil {
+			if c, e := readConfig(path, false); e == nil && c.Mode == "" {
+				flags.Mode = "cloud"
+			}
+		}
+	}
 	config, configPath, err := resolveConfig(ctx, flags)
 	if err != nil {
 		return err
@@ -364,6 +374,19 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		f.Bool("cloud", false, "initialize hosted workspace as verified bootstrap owner")
 		f.String("name", "", "workspace name")
 		f.Int("retention-days", 90, "message retention days (proposed default 90)")
+		f.Usage = func() {
+			fmt.Fprintln(f.Output(), `usage:
+  clawbridge setup --local [--name WORKSPACE] [--project PROJECT]
+      Starts a local workspace on this machine. --project saves PROJECT as the
+      default; create it with clawbridge project create PROJECT. Without it,
+      the first project you create becomes the default.
+  clawbridge --server URL --audience AUDIENCE [--oauth-client-id ID --oauth-client-secret SECRET
+             --oauth-device-client-id ID --oauth-device-client-secret SECRET] setup --cloud --name WORKSPACE
+      Initializes a workspace on your own hosted server, as its bootstrap owner.
+      The routing flags come before "setup"; they are saved for later commands.
+flags:`)
+			f.PrintDefaults()
+		}
 	case "project":
 		if len(rest) == 0 {
 			return errors.New("usage: project create SLUG, project role-set EMAIL ROLE, or project role-revoke EMAIL")
@@ -814,6 +837,23 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		if err = writeSetupConfig(configPath, config); err != nil {
 			return fmt.Errorf("workspace initialized but config write failed: %w", err)
 		}
+		// The global --project, given to setup --local, is saved as the
+		// default project; project create makes it.
+		if p := flags.Project; p != "" && config.Mode == "local" {
+			if err = writeDefaultProject(configPath, p, true); err != nil {
+				return fmt.Errorf("workspace initialized but config write failed: %w", err)
+			}
+		}
+	}
+	// A local workspace's first project becomes its default, so a new
+	// terminal needs no --project. One tied to a git remote resolves by the
+	// remote instead, in its checkout.
+	if op == "project_create" && config.Mode == "local" && a["git_remote"] == nil {
+		if slug, _ := a["slug"].(string); slug != "" {
+			if err = writeDefaultProject(configPath, slug, false); err != nil {
+				return fmt.Errorf("project created but config write failed: %w", err)
+			}
+		}
 	}
 	return json.NewEncoder(stdout).Encode(result)
 }
@@ -939,4 +979,14 @@ func runDoctor(ctx context.Context, config Config, configPath string, stdout io.
 		return errors.New("doctor found required failures")
 	}
 	return nil
+}
+
+// setupWantsCloud reports whether setup's arguments ask for --cloud.
+func setupWantsCloud(args []string) bool {
+	for _, arg := range args {
+		if arg == "--cloud" || arg == "-cloud" || arg == "--cloud=true" {
+			return true
+		}
+	}
+	return false
 }

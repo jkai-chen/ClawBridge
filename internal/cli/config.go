@@ -46,6 +46,28 @@ func stateHome() (string, error) {
 	}
 	return filepath.Join(home, ".clawbridge"), nil
 }
+
+// warnIgnoredRepoConfig warns, on stderr, about a .clawbridge.toml in the
+// working directory that is not read: one is read only at a git checkout's
+// root.
+func warnIgnoredRepoConfig(root string) {
+	wd, err := os.Getwd()
+	if err != nil {
+		return
+	}
+	if _, err = os.Stat(filepath.Join(wd, ".clawbridge.toml")); err != nil {
+		return
+	}
+	switch {
+	case root == "":
+		fmt.Fprintln(os.Stderr, "warning: ./.clawbridge.toml is ignored: it is read only at the root of a git checkout, and this directory is not in one. Pass --project, or set a default project with clawbridge project create.")
+	case filepath.Clean(root) != filepath.Clean(wd):
+		if real, e := filepath.EvalSymlinks(wd); e != nil || filepath.Clean(real) != filepath.Clean(root) {
+			fmt.Fprintf(os.Stderr, "warning: ./.clawbridge.toml is ignored: it is read only at the checkout root (%s).\n", root)
+		}
+	}
+}
+
 func checkoutRoot(ctx context.Context) string {
 	cmd := exec.CommandContext(ctx, "git", "rev-parse", "--show-toplevel")
 	out, err := cmd.Output()
@@ -183,7 +205,9 @@ func resolveConfigVariantMode(ctx context.Context, flags Config, variant func(Co
 		if err != nil {
 			return Config{}, "", err
 		}
-		if root := checkoutRoot(ctx); root != "" {
+		root := checkoutRoot(ctx)
+		warnIgnoredRepoConfig(root)
+		if root != "" {
 			repo, e := readConfig(filepath.Join(root, ".clawbridge.toml"), false)
 			if e != nil {
 				return Config{}, "", e
@@ -296,6 +320,49 @@ func resolveConfigVariantMode(ctx context.Context, flags Config, variant func(Co
 	}
 	base.ClientConfig = path
 	return base, path, nil
+}
+
+// writeDefaultProject saves project as the local profile's default: always
+// when replace, otherwise only when it has none. It keeps every other key.
+func writeDefaultProject(path, project string, replace bool) error {
+	values := map[string]any{}
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return err
+	}
+	if err = toml.Unmarshal(b, &values); err != nil {
+		return fmt.Errorf("invalid config: %w", err)
+	}
+	if mode, _ := values["mode"].(string); mode != "" && mode != "local" {
+		return nil
+	}
+	if current, _ := values["project"].(string); current != "" && !replace {
+		return nil
+	}
+	values["project"] = project
+	return writeConfigValues(path, values)
+}
+
+// writeConfigValues writes a config file atomically, readable by its owner.
+func writeConfigValues(path string, values map[string]any) error {
+	b, err := toml.Marshal(values)
+	if err != nil {
+		return err
+	}
+	f, err := os.CreateTemp(filepath.Dir(path), ".clawbridge-config-*")
+	if err != nil {
+		return err
+	}
+	tmp := f.Name()
+	defer os.Remove(tmp)
+	if _, err = f.Write(b); err != nil {
+		f.Close()
+		return err
+	}
+	if err = f.Close(); err != nil {
+		return err
+	}
+	return os.Rename(tmp, path)
 }
 
 // writeSetupConfig preserves unrelated TOML keys and uses a same-directory rename.
@@ -442,3 +509,6 @@ func firstConfigPath(explicit, environment string) string {
 	}
 	return environment
 }
+
+// envMode is the storage mode the environment selects, if any.
+func envMode() string { return os.Getenv("CLAWBRIDGE_MODE") }

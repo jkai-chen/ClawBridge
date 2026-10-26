@@ -97,6 +97,9 @@ func runStartup(ctx context.Context, flags Config, args []string, stdout, stderr
 	if err != nil {
 		return errors.New("trusted config is malformed; repair it or choose a separate --client-config")
 	}
+	if c.Mode == "local" && c.Workspace != "" && c.Project == "" {
+		return errors.New("this local workspace has no default project yet: run clawbridge project create NAME (the first project becomes the default), then clawbridge again")
+	}
 	if c.Mode == "" || c.Workspace == "" || c.Project == "" {
 		return errors.New("trusted config is incomplete; use explicit setup join or repair the selected profile")
 	}

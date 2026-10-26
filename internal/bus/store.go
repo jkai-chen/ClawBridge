@@ -407,7 +407,7 @@ var operationArgs = map[string]string{
 	"inbox_status":                "instance after",
 	"notification_status":         "instance after",
 	"set_notification_policy":     "instance policy",
-	"assignment_propose":          "instance issue_uuid issue_identifier task_role scope_repo scope_paths",
+	"assignment_propose":          "instance issue_uuid issue_identifier task_role scope_repo scope_paths issue_project_id issue_labels",
 	"assignment_confirm":          "instance target_session revision allow_overlap",
 	"assignment_release":          "instance target_session revision outcome",
 	"coordinator_set":             "instance target_session",
@@ -428,6 +428,8 @@ var operationArgs = map[string]string{
 	"status_policy_set":           "instance expected_revision status_policy",
 	"doc_policy_get":              "instance",
 	"dispatcher_get":              "instance",
+	"dispatcher_cases_due":        "instance",
+	"dispatcher_decision_record":  "instance subject_id subject_revision policy_revision engine proposal reason_code explanation guardrail action domain facts_source",
 	"dispatcher_domains_set":      "instance expected_revision dispatcher_domains",
 	"dispatcher_domain_edit":      "instance expected_revision domain action target_session",
 	"doc_watch_due":               "instance lease_token generation",
@@ -534,7 +536,7 @@ func validateArgs(op string, a map[string]any) error {
 			if _, ok := intList(v, 1000); !ok {
 				return errors.New("lines must be an array of line numbers")
 			}
-		case "ids", "linear_team_ids", "linear_project_ids", "scope_paths", "domains", "comment_ids", "signals", "roles", "pattern_ids":
+		case "ids", "linear_team_ids", "linear_project_ids", "scope_paths", "domains", "comment_ids", "signals", "roles", "pattern_ids", "issue_labels":
 			switch v.(type) {
 			case []string, []any:
 			default:

@@ -283,6 +283,14 @@ func scoped(message, code string) error {
 // coordinatorMay authorizes the designated coordinator session to
 // confirm or release another session's assignment.
 func (s *Store) coordinatorMay(ctx context.Context, tx *transaction, w map[string]any, p map[string]any, projectRole string, actor, target map[string]any) error {
+	// The dispatcher confirms and releases as the project's designated
+	// coordinator only; its own decisions are guarded in internal/dispatch.
+	if isDispatcher(actor) {
+		if str(p, "coordinator_session") == "" || p["coordinator_session"] != actor["id"] {
+			return scoped("only the project's designated coordinator session may do this", "forbidden")
+		}
+		return nil
+	}
 	if projectRole != "owner" && projectRole != "lead" {
 		return scoped("project lead or owner permission required", "forbidden")
 	}
@@ -376,11 +384,24 @@ func (s *Store) assignment(ctx context.Context, tx *transaction, w, p map[string
 		if issue == "" && len(paths) == 0 {
 			return nil, invalid("an assignment needs issue_uuid or scope_paths")
 		}
+		// The issue's project and labels as the client read them: they route
+		// the dispatcher's escalations, and never grant (DP-H1).
+		issueProject := str(a, "issue_project_id")
+		if issueProject != "" && (issue == "" || !lowerUUIDPattern.MatchString(issueProject)) {
+			return nil, invalid("issue_project_id needs issue_uuid and is a canonical project UUID")
+		}
+		issueLabels, isList, ok := stringList(a["issue_labels"])
+		if a["issue_labels"] != nil && (!isList || !ok || len(issueLabels) > 50) {
+			return nil, invalid("issue_labels is a list of at most 50 label names")
+		}
+		if issueLabels == nil {
+			issueLabels = []string{}
+		}
 		if _, err = s.releaseAssignment(ctx, tx, wid, pid, sid, "replaced"); err != nil {
 			return nil, err
 		}
 		id := newID("asg_")
-		if _, err = tx.ExecContext(ctx, `INSERT INTO session_assignments(id,project_id,session_id,issue_uuid,issue_identifier,task_role,scope_repo,scope_paths,revision,state,proposed_by_session,proposed_at) VALUES(?,?,?,?,?,?,?,?,?,'proposed',?,?)`, id, pid, sid, issue, identifier, role, repo, asJSON(paths), newID("rev_"), sid, stamp()); err != nil {
+		if _, err = tx.ExecContext(ctx, `INSERT INTO session_assignments(id,project_id,session_id,issue_uuid,issue_identifier,task_role,scope_repo,scope_paths,revision,state,proposed_by_session,proposed_at,issue_project_id,issue_labels) VALUES(?,?,?,?,?,?,?,?,?,'proposed',?,?,?,?)`, id, pid, sid, issue, identifier, role, repo, asJSON(paths), newID("rev_"), sid, stamp(), issueProject, asJSON(issueLabels)); err != nil {
 			return nil, err
 		}
 		if err = s.audit(ctx, tx, wid, pid, sid, "assignment", id, "proposed", map[string]any{"session_id": sid, "issue_uuid": issue, "task_role": role, "scope_repo": repo, "scope_paths": paths}); err != nil {

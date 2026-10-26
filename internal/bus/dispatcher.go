@@ -59,7 +59,7 @@ const (
 // proposes. Neither ever touches a policy, the binding, labels, roles,
 // intake or Linear administration.
 var dispatcherAllowed = map[string]map[string]bool{
-	DispatcherSessionName:      set("dispatcher_get", "list_sessions", "taskboard_get_v2", "assignment_confirm", "assignment_release", "dispatcher_decision_record", "dispatcher_escalate", "dispatcher_route", "dispatcher_release_notice"),
+	DispatcherSessionName:      set("dispatcher_get", "list_sessions", "taskboard_get_v2", "assignment_confirm", "assignment_release", "dispatcher_cases_due", "dispatcher_decision_record", "dispatcher_escalate", "dispatcher_route", "dispatcher_release_notice"),
 	DispatcherModelSessionName: set("dispatcher_get", "list_sessions", "dispatcher_case_read", "dispatcher_case_outcome", "dispatcher_route", "dispatcher_ask_session"),
 }
 
@@ -218,6 +218,10 @@ func dispatcherOperation(op string) bool {
 func (s *Store) principalRole(ctx context.Context, tx *transaction, w map[string]any, pid, principal string) (string, error) {
 	if w["owner_principal"] == principal {
 		return "owner", nil
+	}
+	if !s.postgres {
+		// A local workspace has no project roles: only its owner.
+		return "", nil
 	}
 	rows, err := query(ctx, tx, `SELECT role FROM project_roles WHERE project_id=? AND principal=?`, pid, principal)
 	if err != nil || len(rows) == 0 {
@@ -545,6 +549,10 @@ func (s *Store) ExecuteDispatcher(ctx context.Context, projectID, session string
 			return Result{}, errors.New("authority unavailable")
 		}
 	}
+	w, err := one(ctx, tx, `SELECT * FROM workspaces WHERE id=?`, wid)
+	if err != nil {
+		return Result{}, err
+	}
 	scopedStore := *s
 	scopedStore.principal = dispatcherPrincipal
 	if session == DispatcherModelSessionName {
@@ -564,6 +572,10 @@ func (s *Store) ExecuteDispatcher(ctx context.Context, projectID, session string
 		out, err = dispatcherView(ctx, tx, projectID)
 	case "taskboard_get_v2":
 		out, err = scopedStore.taskboard(ctx, tx, wid, projectID, "owner", r.Operation, r.Args)
+	case "dispatcher_cases_due":
+		out, err = scopedStore.dispatcherCasesDue(ctx, tx, projectID)
+	case "dispatcher_decision_record":
+		out, err = scopedStore.dispatcherRecord(ctx, tx, w, p, actor, r.Args)
 	default:
 		// Allowed, and built in a later step of the dispatcher.
 		err = scoped(fmt.Sprintf("operation %s is not available in this release", r.Operation), "unsupported")

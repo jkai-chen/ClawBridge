@@ -36,12 +36,15 @@ type Egress struct {
 	// resolve and dial are the network; tests replace them.
 	resolve func(ctx context.Context, host string) ([]netip.Addr, error)
 	dial    func(ctx context.Context, addr netip.AddrPort) (net.Conn, error)
-	// maxTunnels caps the open tunnels per source network.
-	maxTunnels int
+	// maxTunnels caps one source network's connections, from accept to close:
+	// waiting for the request, dialling, or tunnelling. maxConns caps them all.
+	maxTunnels, maxConns int
 
 	mu      sync.Mutex
 	policy  []egressNetwork
 	tunnels map[*tunnel]struct{}
+	active  map[string]int
+	total   int
 }
 
 // EgressPolicy is the file agentd writes for the egress proxy.
@@ -65,6 +68,7 @@ type egressNetwork struct {
 
 type tunnel struct {
 	ref, target      string
+	src              netip.Addr
 	client, upstream net.Conn
 }
 
@@ -76,6 +80,7 @@ const (
 	egressIdle       = 10 * time.Minute
 	maxConnectHeader = 4 << 10
 	maxTunnelsPerNet = 32
+	maxEgressConns   = 256
 )
 
 var hostPattern = regexp.MustCompile(`^([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]([a-z0-9-]{0,61}[a-z0-9])?$`)
@@ -92,7 +97,9 @@ func NewEgress(log *slog.Logger) *Egress {
 			return (&net.Dialer{}).DialContext(ctx, "tcp", addr.String())
 		},
 		maxTunnels: maxTunnelsPerNet,
+		maxConns:   maxEgressConns,
 		tunnels:    map[*tunnel]struct{}{},
+		active:     map[string]int{},
 	}
 }
 
@@ -111,7 +118,8 @@ func ParseEgressPolicy(data []byte) (EgressPolicy, error) {
 }
 
 // SetPolicy validates and installs p, and closes every open tunnel that p
-// no longer allows: a changed provider takes effect at once.
+// no longer allows, by target or by source: a changed provider, or a subnet
+// given to another owner, takes effect at once.
 func (e *Egress) SetPolicy(p EgressPolicy) error {
 	compiled, err := compileEgress(p)
 	if err != nil {
@@ -121,7 +129,7 @@ func (e *Egress) SetPolicy(p EgressPolicy) error {
 	e.policy = compiled
 	var closing []*tunnel
 	for t := range e.tunnels {
-		if n := e.networkByRef(t.ref); n == nil || !n.allow[t.target] {
+		if n := e.networkByRef(t.ref); n == nil || !n.allow[t.target] || !n.source.Contains(t.src) {
 			closing = append(closing, t)
 		}
 	}
@@ -199,14 +207,37 @@ func hostOf(target string) string {
 	return host
 }
 
-// cgnat is RFC 6598 shared address space, which netip doesn't call private.
-var cgnat = netip.MustParsePrefix("100.64.0.0/10")
+// notPublic are ranges netip doesn't call private but that never reach a
+// public host directly: shared CGNAT space, "this network", IETF protocol
+// assignments, benchmarking, reserved, and the IPv6 translation and
+// tunnelling prefixes that can carry a private IPv4 address.
+var notPublic = []netip.Prefix{
+	netip.MustParsePrefix("100.64.0.0/10"),
+	netip.MustParsePrefix("0.0.0.0/8"),
+	netip.MustParsePrefix("192.0.0.0/24"),
+	netip.MustParsePrefix("198.18.0.0/15"),
+	netip.MustParsePrefix("240.0.0.0/4"),
+	netip.MustParsePrefix("64:ff9b::/96"),
+	netip.MustParsePrefix("64:ff9b:1::/48"),
+	netip.MustParsePrefix("2002::/16"),
+	netip.MustParsePrefix("2001::/32"),
+	netip.MustParsePrefix("100::/64"),
+}
 
 // publicAddr reports whether ip is a public unicast address: not loopback,
-// private, link-local (cloud metadata), CGNAT, multicast or unspecified.
+// private, link-local (cloud metadata), multicast, unspecified or one of
+// notPublic.
 func publicAddr(ip netip.Addr) bool {
 	ip = ip.Unmap()
-	return ip.IsGlobalUnicast() && !ip.IsPrivate() && !cgnat.Contains(ip)
+	if !ip.IsGlobalUnicast() || ip.IsPrivate() {
+		return false
+	}
+	for _, p := range notPublic {
+		if p.Contains(ip) {
+			return false
+		}
+	}
+	return true
 }
 
 func (e *Egress) networkByRef(ref string) *egressNetwork {
@@ -228,24 +259,36 @@ func (e *Egress) networkFor(src netip.Addr) *egressNetwork {
 	return nil
 }
 
-// Serve accepts connections on l until it is closed.
+// Serve accepts connections on l until it is closed. Any other Accept
+// error, such as running out of file descriptors, is waited out, as
+// net/http does, rather than taking the proxy down for every owner.
 func (e *Egress) Serve(l net.Listener) error {
+	var wait time.Duration
 	for {
 		conn, err := l.Accept()
 		if err != nil {
 			if errors.Is(err, net.ErrClosed) {
 				return nil
 			}
-			return err
+			wait = min(max(2*wait, 5*time.Millisecond), time.Second)
+			e.log.Warn("egress accept failed; retrying", "error", err.Error(), "wait_ms", wait.Milliseconds())
+			time.Sleep(wait)
+			continue
 		}
+		wait = 0
 		go e.handle(conn)
 	}
 }
 
-// handle serves one client connection: one CONNECT, then the tunnel.
+// handle serves one client connection: one CONNECT, then the tunnel. The
+// connection counts against its network's cap, and the proxy's, from the
+// start: one owner can't hold every slot with half-sent requests.
 func (e *Egress) handle(conn net.Conn) {
 	start := time.Now()
 	t, refusal := e.open(conn)
+	if t != nil || (refusal != nil && refusal.counted) {
+		defer e.release(refusal, t)
+	}
 	if refusal != nil {
 		e.log.Warn("egress refused", "ref", refusal.ref, "target", refusal.target, "status", refusal.status, "reason", refusal.reason)
 		fmt.Fprintf(conn, "HTTP/1.1 %d %s\r\nContent-Length: 0\r\nConnection: close\r\n\r\n", refusal.status, http.StatusText(refusal.status))
@@ -262,6 +305,35 @@ func (e *Egress) handle(conn net.Conn) {
 type egressRefusal struct {
 	ref, target, reason string
 	status              int
+	// counted: the connection held a slot, released when it ends.
+	counted bool
+}
+
+// reserve takes a slot for one connection from ref's network.
+func (e *Egress) reserve(ref string) bool {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if e.total >= e.maxConns || e.active[ref] >= e.maxTunnels {
+		return false
+	}
+	e.total++
+	e.active[ref]++
+	return true
+}
+
+func (e *Egress) release(refusal *egressRefusal, t *tunnel) {
+	ref := ""
+	if t != nil {
+		ref = t.ref
+	} else {
+		ref = refusal.ref
+	}
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.total--
+	if e.active[ref]--; e.active[ref] <= 0 {
+		delete(e.active, ref)
+	}
 }
 
 // open reads the CONNECT, checks it, dials the checked address and
@@ -289,6 +361,15 @@ func (e *Egress) open(conn net.Conn) (*tunnel, *egressRefusal) {
 	if n == nil {
 		return refuse("", "", http.StatusForbidden, "the source is on no owner's network")
 	}
+	if !e.reserve(ref) {
+		return refuse(ref, "", http.StatusServiceUnavailable, "too many connections")
+	}
+	counted := refuse
+	refuse = func(ref, target string, status int, reason string) (*tunnel, *egressRefusal) {
+		t, r := counted(ref, target, status, reason)
+		r.counted = true
+		return t, r
+	}
 	br := bufio.NewReaderSize(io.LimitReader(conn, maxConnectHeader), maxConnectHeader)
 	req, err := http.ReadRequest(br)
 	if err != nil {
@@ -301,6 +382,8 @@ func (e *Egress) open(conn net.Conn) (*tunnel, *egressRefusal) {
 	if err != nil || !allow[target] {
 		return refuse(ref, req.RequestURI, http.StatusForbidden, "not on this owner's allow-list")
 	}
+	// The request's deadline ends here; the dial has its own.
+	_ = conn.SetDeadline(time.Time{})
 	host, portText, _ := net.SplitHostPort(target)
 	port, _ := strconv.Atoi(portText)
 	ctx, cancel := context.WithTimeout(context.Background(), egressDialWait)
@@ -318,15 +401,7 @@ func (e *Egress) open(conn net.Conn) (*tunnel, *egressRefusal) {
 	if upstream == nil {
 		return refuse(ref, target, http.StatusBadGateway, "unreachable")
 	}
-	// Bytes the client sent after the request (a TLS hello) go first.
-	early, _ := br.Peek(br.Buffered())
-	if len(early) > 0 {
-		if _, err := upstream.Write(early); err != nil {
-			upstream.Close()
-			return refuse(ref, target, http.StatusBadGateway, "unreachable")
-		}
-	}
-	t := &tunnel{ref: ref, target: target, client: conn, upstream: upstream}
+	t := &tunnel{ref: ref, target: target, src: src.Addr().Unmap(), client: conn, upstream: upstream}
 	e.mu.Lock()
 	// The policy may have changed while dialling.
 	n = e.networkByRef(ref)
@@ -335,25 +410,25 @@ func (e *Egress) open(conn net.Conn) (*tunnel, *egressRefusal) {
 		upstream.Close()
 		return refuse(ref, target, http.StatusForbidden, "not on this owner's allow-list")
 	}
-	open := 0
-	for other := range e.tunnels {
-		if other.ref == ref {
-			open++
-		}
-	}
-	if open >= e.maxTunnels {
-		e.mu.Unlock()
-		upstream.Close()
-		return refuse(ref, target, http.StatusServiceUnavailable, "too many open tunnels")
-	}
 	e.tunnels[t] = struct{}{}
 	e.mu.Unlock()
-	if _, err := io.WriteString(conn, "HTTP/1.1 200 Connection Established\r\n\r\n"); err != nil {
+	fail := func(reason string) (*tunnel, *egressRefusal) {
 		e.mu.Lock()
 		delete(e.tunnels, t)
 		e.mu.Unlock()
 		upstream.Close()
-		return refuse(ref, target, http.StatusBadGateway, "client gone")
+		return refuse(ref, target, http.StatusBadGateway, reason)
+	}
+	// Bytes the client sent after the request (a TLS hello) go up only once
+	// the tunnel is allowed and registered.
+	if early, _ := br.Peek(br.Buffered()); len(early) > 0 {
+		if _, err := upstream.Write(early); err != nil {
+			return fail("unreachable")
+		}
+	}
+	_ = conn.SetWriteDeadline(time.Now().Add(egressHeaderWait))
+	if _, err := io.WriteString(conn, "HTTP/1.1 200 Connection Established\r\n\r\n"); err != nil {
+		return fail("client gone")
 	}
 	return t, nil
 }

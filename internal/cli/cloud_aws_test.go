@@ -120,7 +120,10 @@ func TestSSMRunsTheFixedScriptFromStdin(t *testing.T) {
 	a := healthyAWS()
 	a.polls = []string{`{"Status":"Pending"}`, `{"Status":"InProgress"}`, mountedFacts}
 	stubAWS(t, a, nil, nil)
-	tr, _ := cloudTarget{instance: ec2ID, region: "us-east-1"}.transport()
+	tr, err := cloudTarget{instance: ec2ID, region: "us-east-1"}.transport()
+	if err != nil {
+		t.Fatal(err)
+	}
 	out, err := tr.run(context.Background(), factsScript(), nil)
 	if err != nil || string(out) != "mount /dev/nvme1n1\n" {
 		t.Fatalf("run = %q, %v", out, err)
@@ -328,18 +331,32 @@ func TestSSMChecksTheAccountOnce(t *testing.T) {
 		t.Fatalf("%d account checks", sts)
 	}
 	a.out["sts get-caller-identity"] = `{"Account":"999999999999"}`
-	other, _ := cloudTarget{instance: ec2ID, region: "us-east-1", account: "123456789012"}.transport()
+	other, err := cloudTarget{instance: ec2ID, region: "us-east-1", account: "123456789012"}.transport()
+	if err != nil {
+		t.Fatal(err)
+	}
 	if _, err := other.run(context.Background(), factsScript(), nil); !errors.Is(err, errCloudAuth) {
 		t.Fatalf("another account: %v", err)
 	}
 }
 
+// The AWS tests run against a fake aws CLI, so they hold on every OS,
+// Windows CI included; only TestAWSRouteIsRefusedOnWindows plays Windows.
+func init() { awsGOOS = "linux" }
+
 // Windows has no /dev/stdin for the aws CLI's request: the route says so up
-// front instead of failing later as ssm_failed.
+// front, before any aws call, instead of failing later as ssm_failed.
 func TestAWSRouteIsRefusedOnWindows(t *testing.T) {
+	a := healthyAWS()
+	stubAWS(t, a, nil, nil)
 	old := awsGOOS
 	awsGOOS = "windows"
 	t.Cleanup(func() { awsGOOS = old })
+	t.Cleanup(func() {
+		if len(a.calls) != 0 {
+			t.Errorf("aws ran on Windows: %v", a.calls)
+		}
+	})
 	if _, err := (cloudTarget{instance: ec2ID, region: "us-east-1"}).transport(); err == nil || !strings.Contains(err.Error(), "macOS, Linux or WSL") {
 		t.Fatalf("%v", err)
 	}

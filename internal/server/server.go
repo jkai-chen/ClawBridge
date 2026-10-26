@@ -645,11 +645,11 @@ func openServingStore(ctx context.Context, dsn, owner string) (*bus.Store, error
 // cannot sign in: their own address moved to a new Google account, or a
 // workspace allow-list refuses every account.
 func RunOperator(ctx context.Context, args []string, stdout io.Writer) error {
-	const usage = "usage: clawbridge operator principal-unbind EMAIL --confirm [--allow-previous] | workspace-clear-domains WORKSPACE --confirm | linear-app-probe --confirm [--project UUID] [--p8 [--dry-run] | --health-order] | linear-app-doc-probe --confirm | bootstrap-invite --workspace NAME [--force-stdout] [--database-url-env NAME]"
+	const usage = "usage: clawbridge operator principal-unbind EMAIL --confirm [--allow-previous] | workspace-clear-domains WORKSPACE --confirm | linear-app-probe --confirm [--project UUID] [--p8 [--dry-run] | --health-order] | linear-app-doc-probe --confirm | health-run --project UUID --confirm [--force-new | --delete UPDATE_ID] | bootstrap-invite --workspace NAME [--force-stdout] [--database-url-env NAME]"
 	if len(args) > 0 && args[0] == "bootstrap-invite" {
 		return runBootstrapInvite(ctx, args[1:], stdout)
 	}
-	if len(args) == 0 || (args[0] != "principal-unbind" && args[0] != "workspace-clear-domains" && args[0] != "linear-app-probe" && args[0] != "linear-app-doc-probe") {
+	if len(args) == 0 || (args[0] != "principal-unbind" && args[0] != "workspace-clear-domains" && args[0] != "linear-app-probe" && args[0] != "linear-app-doc-probe" && args[0] != "health-run") {
 		return errors.New(usage)
 	}
 	command := args[0]
@@ -667,6 +667,12 @@ func RunOperator(ctx context.Context, args []string, stdout io.Writer) error {
 		f.BoolVar(&dryRun, "dry-run", false, "with --p8: check the project and the app's tools, and send nothing")
 		f.BoolVar(&healthOrder, "health-order", false, "read --project's updates as the health judgement does and with last:, two reads, and print their order")
 	}
+	forceNew, deleteID := false, ""
+	if command == "health-run" {
+		f.StringVar(&project, "project", "", "the bound Linear project UUID whose health runs now")
+		f.BoolVar(&forceNew, "force-new", false, "act and post on this one run, without the two-run confirmation and over the day's settled post; audited")
+		f.StringVar(&deleteID, "delete", "", "delete this project update from Linear, only if a forced health run made it on --project")
+	}
 	dsnEnv := f.String("database-url-env", "CLAWBRIDGE_DATABASE_URL", "environment variable holding the Postgres connection URL")
 	var positional []string
 	rest := args[1:]
@@ -679,7 +685,7 @@ func RunOperator(ctx context.Context, args []string, stdout io.Writer) error {
 		}
 		positional, rest = append(positional, f.Arg(0)), f.Args()[1:]
 	}
-	probe := command == "linear-app-probe" || command == "linear-app-doc-probe"
+	probe := command == "linear-app-probe" || command == "linear-app-doc-probe" || command == "health-run"
 	if probe != (len(positional) == 0) || len(positional) > 1 {
 		return errors.New(usage)
 	}
@@ -688,6 +694,9 @@ func RunOperator(ctx context.Context, args []string, stdout io.Writer) error {
 	}
 	if healthOrder && (project == "" || p8) {
 		return errors.New("--health-order needs --project, and not --p8")
+	}
+	if command == "health-run" && (project == "" || forceNew && deleteID != "") {
+		return errors.New("health-run needs --project, and takes --force-new or --delete, not both")
 	}
 	if !*confirm {
 		if command == "linear-app-probe" && healthOrder {
@@ -698,6 +707,12 @@ func RunOperator(ctx context.Context, args []string, stdout io.Writer) error {
 		}
 		if command == "linear-app-probe" {
 			return errors.New("linear-app-probe sends one project update for a project that does not exist, as the Linear app; repeat with --confirm")
+		}
+		if command == "health-run" && deleteID != "" {
+			return errors.New("health-run --delete deletes that project update from Linear as the Linear app, only if a forced health run made it; repeat with --confirm")
+		}
+		if command == "health-run" {
+			return errors.New("health-run runs the Linear project's health now, as the Linear app, and may post one project update to it; repeat with --confirm")
 		}
 		if command == "linear-app-doc-probe" {
 			return errors.New("linear-app-doc-probe lists the workspace's documents of the last 30 days as the Linear app, one read, and prints counts only; repeat with --confirm")
@@ -727,6 +742,16 @@ func RunOperator(ctx context.Context, args []string, stdout io.Writer) error {
 	}
 	if command == "linear-app-doc-probe" {
 		return linearAppDocProbe(ctx, store, stdout)
+	}
+	if command == "health-run" && deleteID != "" {
+		return healthRunDelete(ctx, store, project, deleteID, stdout)
+	}
+	if command == "health-run" {
+		forcer, err := newHealthForcer(store)
+		if err != nil {
+			return err
+		}
+		return healthRun(ctx, store, forcer, project, forceNew, stdout)
 	}
 	var out map[string]any
 	if command == "workspace-clear-domains" {

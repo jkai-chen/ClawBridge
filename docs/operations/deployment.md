@@ -209,6 +209,51 @@ server watcher's document notices need), run `operator linear-app-doc-probe
   issue, none), and whether the list is newest first. It never prints an ID,
   title or time, and it never mints a token.
 
+To see a health post now, rather than at the project's daily slot, `operator
+health-run` forces one health run of a bound Linear project, and can delete the
+post it made:
+
+```sh
+... run --rm --no-deps api operator health-run --project UUID                  # says what it would do
+... run --rm --no-deps api operator health-run --project UUID --confirm
+... run --rm --no-deps api operator health-run --project UUID --confirm --force-new
+... run --rm --no-deps api operator health-run --project UUID --confirm --delete UPDATE_ID
+```
+
+- **When it runs:** only where the project's health is enabled with `post` on
+  (enable it with `linear health set`), and the Linear project is still in the
+  binding. It runs under the project's watch lease, so while the server's
+  watcher holds that lease it is refused; try again a minute later.
+- **The run** is the scheduled run's own path: the same reads as the app, the
+  same health and the same post rules (never over a person's update from the
+  last 7 days, nor over a pending post). It never moves the project's daily
+  slot, even when it fails. It is charged a whole run to the hour's Linear
+  budget, and refused when the hour cannot pay it. The comment watch and
+  markers do not run.
+- **Without `--force-new`,** it records no observation, so it never counts as one
+  of the two daily runs. It acts only on a health already pending since an
+  earlier day, as that day's scheduled run would, and posts under the scheduled
+  run's own wording. Otherwise its note says why nothing was posted.
+- **With `--force-new`,** it acts on this run alone, even when the health is new
+  or unchanged, and the post is marked as forced. It takes the day (one post a
+  day) only from a post that is no longer on Linear: a refused one, or a forced
+  one deleted with `--delete`. A pending, accepted or failed post holds it back.
+  The run (`run_forced`), the skipped confirmation (`hysteresis_bypassed`) and a
+  replaced day (`post_replaced`, with the old update's ID) are audited as the
+  operator.
+- **What it prints:** the run, with the health, whether it acted, a note on why
+  or why not, the post's state and its `update_id`. It ends in an error when
+  the run failed in Linear or the post's answer was unreadable; the post then
+  stays pending until a later run finds it.
+- **`--delete UPDATE_ID`** deletes that update from Linear only if a forced run
+  made it on this project and Linear accepted it. Any other update, including a
+  scheduled run's post, is refused before a call. It then reads that update by
+  its ID, and records the delete (audited `post_deleted`, two calls charged)
+  only when the delete succeeded and the read finds no such update. Otherwise
+  it ends with an `ALERT` naming the ID and records nothing; the owner checks
+  the update on Linear and deletes it.
+- It never mints; the token rules are as above.
+
 Explicit gcloud or authorized-user ADC with service-account impersonation are
 operator alternatives. Their audited principal is the service account in the
 verified token; sharing that account shares its application identity. Configure

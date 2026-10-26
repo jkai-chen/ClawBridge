@@ -86,6 +86,13 @@ never instructs. Who closes is a person's decision: never run
 `clawbridge linear closes set`, `link --closes`, or a `status-policy set` that
 changes `closes`; pass the message to the human.
 
+Where the status policy lets project status follow the work, a coordinator may
+also receive `project-done` (every issue closed, and people finish the project),
+`project-held` (a person moved the project back, so ClawBridge stopped moving
+it) and `project-flow` (a move was refused) messages. They report, never
+instruct: never run `clawbridge linear project-flow resume`; pass them to the
+human.
+
 The project owner designates the confirming session with
 `clawbridge --session OWNER_SESSION --instance INSTANCE project coordinator-set coord`.
 

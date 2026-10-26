@@ -975,6 +975,54 @@ rule set while it wasn't bound, such as one kept from before it left) gets one
 notice too, saying so. There's no notice with no policy or a disabled one, nor
 for a project the same link sets with `--closes`.
 
+### Project status follows the work (hosted servers)
+
+With `"project_flow": true` in an enabled status policy, a hosted server moves
+each bound Linear project's status as its issues move. It is off unless the
+owner sets it: an existing policy reads it as off.
+
+- **Start.** A project in a backlog or planned status moves to a started
+  status once one of its issues is started, or completed after the project
+  was created. A project made for work already finished doesn't start; it
+  waits to finish.
+- **Finish.** When every issue is completed or canceled, with at least one
+  completed, it depends on who closes the project's issues (`closes`):
+  - **agents:** the project moves to a completed status;
+  - **people** (the default): the coordinator session gets one `project-done`
+    message, and the project stays as it is. A new issue, or any change of the
+    project's status, starts a new episode.
+
+  When every issue is canceled, the coordinator is told once and nothing
+  moves.
+- **Never backwards.** ClawBridge never moves a project to backlog, planned,
+  paused or canceled, and never reopens one. A paused, completed or canceled
+  project is left alone.
+- **A person's move back wins.** When a project's status is lower than the
+  last one ClawBridge saw or set (backlog, then planned, started, completed),
+  a person moved it back. ClawBridge then holds it, tells the coordinator once
+  (`project-held`), and moves it no more until the project owner or a lead
+  runs, without a session:
+
+  ```sh
+  clawbridge linear project-flow resume --linear-project UUID
+  ```
+- **Which status.** By default, the lowest-position status of the type that
+  isn't archived, read from Linear on each run. `"project_targets":
+  {"started": "STATUS_UUID", "completed": "STATUS_UUID"}` in the policy file
+  chooses others; a target that isn't a live status of that type moves
+  nothing. ClawBridge sends Linear the status ID only, never a name.
+- **How.** It runs in each Linear project's daily health slot, whether or not
+  health is on, as the ClawBridge app, which needs Linear's `write` scope.
+  Each move is read back: confirmed only when the project shows the status;
+  an unconfirmed one is settled by the next run's read and never sent twice.
+  Without the scope, the coordinator is told once a day and nothing is sent.
+- **Proven first.** The server refuses to turn project flow on until its
+  operator runs it with `serve --project-flow-proven` (or
+  `CLAWBRIDGE_PROJECT_FLOW_PROVEN=1`), after the deploy probe.
+- **`status-policy show`** gives each bound project's `project_flow`:
+  `follows the work`, `off`, or `held (moved back by a person since DATE)`,
+  with its last move and the rule it followed.
+
 ## Project health (project owner only)
 
 A hosted server's watcher can judge each bound Linear project's health once a

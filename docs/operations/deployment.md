@@ -393,8 +393,8 @@ CLAWBRIDGE_LINEAR_APP_TOKEN_KEY=<32 random bytes, base64>
   app:mentionable`). It seals the token with AES-GCM under the token key and
   keeps it in Postgres, so every server instance shares one token.
   - `write` is optional. If Linear grants the rest without it, the server uses
-    that token for everything except what needs `write` (issue relations and
-    project status updates), and asks for `write` again once a week. Any other answered set is refused, counted
+    that token for everything except what needs `write` (issue relations,
+    project status updates and project status moves), and asks for `write` again once a week. Any other answered set is refused, counted
     and backed off.
 - **Rotation.**
   - To rotate the secret, change it here and restart: every token is revoked,
@@ -406,6 +406,11 @@ CLAWBRIDGE_LINEAR_APP_TOKEN_KEY=<32 random bytes, base64>
   - Each binding must be pinned to the app's Linear workspace: link it again once
     to pin it.
   - Writes to an unpinned binding refuse with `workspace_unpinned`.
+- **Project flow is off until proven.** A status policy can let project
+  status follow the work (`project_flow`, see [Linear](../linear.md)). The
+  server refuses to turn it on until it runs with `serve --project-flow-proven`
+  or `CLAWBRIDGE_PROJECT_FLOW_PROVEN=1`. Set that only after the deploy probe
+  has moved a throwaway project by status ID as the app and read it back.
 - **Timeouts.** A write the server makes can take up to a minute, and it
   finishes even if the client disconnects. Keep the proxy and load-balancer
   timeouts for `/v1/execute` at 75 seconds or more.

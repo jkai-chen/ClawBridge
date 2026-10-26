@@ -424,3 +424,15 @@ func TestRemoteSetScript(t *testing.T) {
 		t.Fatal("wrote through a link to a directory")
 	}
 }
+
+// The keys secret set writes. The two OAuth secrets go with Google sign-in
+// (v0.5): their removal is deleting their two lines here and in secretKeys.
+func TestSecretKeysArePinned(t *testing.T) {
+	want := map[string]bool{
+		"CLAWBRIDGE_LINEAR_APP_CLIENT_ID": true, "CLAWBRIDGE_LINEAR_APP_CLIENT_SECRET": true,
+		"CLAWBRIDGE_OAUTH_CLIENT_SECRET": true, "CLAWBRIDGE_OAUTH_DEVICE_CLIENT_SECRET": true,
+	}
+	if !reflect.DeepEqual(secretKeys, want) {
+		t.Fatalf("secret set keys: %v", secretKeys)
+	}
+}

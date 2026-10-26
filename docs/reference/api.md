@@ -396,7 +396,10 @@ command. No check reads a secret or writes anything.
 `clawbridge cloud secret set KEY (--ssh HOST | --vm NAME --project P --zone Z)
 [--value-stdin]` writes one server setting the user holds, so it never passes
 through an agent. KEY is `CLAWBRIDGE_LINEAR_APP_CLIENT_ID` or
-`CLAWBRIDGE_LINEAR_APP_CLIENT_SECRET`. The value is read from a hidden prompt, or
+`CLAWBRIDGE_LINEAR_APP_CLIENT_SECRET`, or, for a deployment that still signs in
+with Google, `CLAWBRIDGE_OAUTH_CLIENT_SECRET` or
+`CLAWBRIDGE_OAUTH_DEVICE_CLIENT_SECRET` (these two are removed with Google sign-in
+in v0.5). The value is read from a hidden prompt, or
 from a pipe with `--value-stdin`; it must be one line of printable ASCII without
 whitespace, quotes, `$`, `#`, backslash or backtick, at most 4096 bytes. It
 travels on stdin over the user's own `ssh -T HOST` or `gcloud compute ssh …

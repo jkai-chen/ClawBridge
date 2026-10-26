@@ -16,6 +16,7 @@ import (
 	"os"
 	"os/exec"
 	"regexp"
+	"sort"
 	"strings"
 	"text/tabwriter"
 	"time"
@@ -311,6 +312,10 @@ var newCloudExecutor = func(c Config) (cloudExecutor, error) {
 var secretKeys = map[string]bool{
 	"CLAWBRIDGE_LINEAR_APP_CLIENT_ID":     true,
 	"CLAWBRIDGE_LINEAR_APP_CLIENT_SECRET": true,
+	// Removed with Google sign-in (v0.5): until then a deployment that
+	// still signs in with Google needs its two OAuth client secrets.
+	"CLAWBRIDGE_OAUTH_CLIENT_SECRET":        true,
+	"CLAWBRIDGE_OAUTH_DEVICE_CLIENT_SECRET": true,
 }
 
 const serverEnvFile = "/etc/clawbridge/clawbridge.env"
@@ -394,7 +399,12 @@ func runCloudSecretSet(ctx context.Context, args []string, stdout, stderr io.Wri
 		return err
 	}
 	if f.NArg() != 1 || !secretKeys[f.Arg(0)] {
-		return errors.New("secret set takes one KEY: CLAWBRIDGE_LINEAR_APP_CLIENT_ID or CLAWBRIDGE_LINEAR_APP_CLIENT_SECRET")
+		keys := make([]string, 0, len(secretKeys))
+		for k := range secretKeys {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+		return errors.New("secret set takes one KEY: " + strings.Join(keys, ", "))
 	}
 	key := f.Arg(0)
 	argv, err := target.argv(`sudo -n sh -c '` + remoteSetScript(key, serverEnvFile) + `'`)

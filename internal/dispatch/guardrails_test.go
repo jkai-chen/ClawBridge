@@ -48,6 +48,8 @@ func TestConfirmGuardrail(t *testing.T) {
 		"retired session":     {func(c *Case) { c.Session.Status = "retired" }, "session_not_active"},
 		"completed issue":     {func(c *Case) { c.Issue.StateType = "completed" }, "issue_closed"},
 		"canceled issue":      {func(c *Case) { c.Issue.StateType = "canceled" }, "issue_closed"},
+		"duplicate issue":     {func(c *Case) { c.Issue.StateType = "duplicate" }, "issue_closed"},
+		"unknown state type":  {func(c *Case) { c.Issue.StateType = "archived_someday" }, "issue_closed"},
 		"held":                {func(c *Case) { c.Holders = 1 }, "overlap"},
 		"overlap asked":       {func(c *Case) { c.NeedsOverlap = true }, "overlap"},
 		"label-only match":    {func(c *Case) { c.Issue.ProjectID = ""; c.Issue.Labels = []string{"payments"} }, "not_one_project_domain"},

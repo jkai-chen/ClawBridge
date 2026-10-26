@@ -509,3 +509,28 @@ func TestGraphQLIssueStateChecksItsAnswer(t *testing.T) {
 		}
 	}
 }
+
+// A4: the policy file turns project flow on and names its targets by
+// project status ID; leaving it out leaves it off.
+func TestSetStatusPolicyCarriesProjectFlow(t *testing.T) {
+	const started = "abab0003-0000-4000-8000-000000000003"
+	s, a, p, scope := testV2(t)
+	other := append([]linearprovider.Status{}, sfStates...)
+	for i := range other {
+		other[i].TeamID, other[i].ID = otherTeamID, strings.Replace(other[i].ID, "c1", "c2", 1)
+	}
+	p.statuses = append(append([]linearprovider.Status{}, sfStates...), other...)
+	if _, err := s.SetStatusPolicyV2(context.Background(), scope, []byte(`{"enabled": true, "project_flow": true, "project_targets": {"started": "`+strings.ToUpper(started)+`"}}`), 0, nil); err != nil {
+		t.Fatal(err)
+	}
+	policy, err := bus.ParseStatusPolicy(a.statusSet["status_policy"])
+	if err != nil || !policy.ProjectFlow || policy.ProjectTargets == nil || policy.ProjectTargets.Started != started {
+		t.Fatal(err, a.statusSet)
+	}
+	if _, err = s.SetStatusPolicyV2(context.Background(), scope, []byte(`{"enabled": true}`), 1, nil); err != nil {
+		t.Fatal(err)
+	}
+	if policy, _ = bus.ParseStatusPolicy(a.statusSet["status_policy"]); policy.ProjectFlow {
+		t.Fatal("project flow on without asking")
+	}
+}

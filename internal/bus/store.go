@@ -47,6 +47,9 @@ type Store struct {
 	// hostedDomain is the verified Google Workspace domain (hd) of a hosted
 	// caller, empty for a consumer account; workspaces may require one.
 	hostedDomain string
+	// projectFlowProven is serve --project-flow-proven: the operator ran
+	// the deploy probe, so a status policy may turn project flow on.
+	projectFlowProven bool
 }
 
 // SQLiteURIPath is the path part of a file: URI that SQLite resolves to path.
@@ -123,7 +126,7 @@ func (s *Store) migrate() error {
 	if err = tx.QueryRow("PRAGMA user_version").Scan(&version); err != nil {
 		return err
 	}
-	if version > 20 {
+	if version > 21 {
 		return errors.New("database schema is newer than this ClawBridge binary")
 	}
 	if version == 0 {
@@ -230,6 +233,11 @@ func (s *Store) migrate() error {
 	}
 	if version < 20 {
 		if _, err = tx.Exec(presenceSchemaV20 + `PRAGMA user_version=20;`); err != nil {
+			return err
+		}
+	}
+	if version < 21 {
+		if _, err = tx.Exec(projectFlowSchemaV21 + `PRAGMA user_version=21;`); err != nil {
 			return err
 		}
 	}
@@ -474,8 +482,10 @@ var operationArgs = map[string]string{
 	"health_set":                  "instance linear_project expected_revision health_policy",
 	"health_due":                  "instance lease_token generation limit",
 	"health_force":                "instance lease_token generation linear_project force_new",
-	"health_report":               "instance lease_token generation linear_project calls error facts forced force_new",
+	"health_report":               "instance lease_token generation linear_project calls error facts forced force_new flow",
 	"health_post_settle":          "instance lease_token generation linear_project day outcome update_id error",
+	"project_flow_settle":         "instance lease_token generation linear_project seq outcome error calls",
+	"project_flow_resume":         "instance linear_project",
 	"doc_seed_get":                "instance parent_kind parent_id",
 	"doc_seed_put":                "instance parent_kind parent_id template template_version state seed_token expect_token document_id seeded_sha256",
 	"label_policy_set":            "instance expected_revision label_policy",
@@ -505,7 +515,7 @@ func validateArgs(op string, a map[string]any) error {
 			return fmt.Errorf("unsupported argument %q for %s", k, op)
 		}
 		switch k {
-		case "retention_days", "limit", "after", "expected_revision", "ledger", "generation", "budget", "calls", "charged", "policy_revision", "engineer", "if_unset", "expires_days", "expires_hours", "s5_calls_per_hour", "out_of_binding_limit", "template_version", "part_number", "part_count":
+		case "retention_days", "limit", "after", "expected_revision", "ledger", "generation", "budget", "calls", "charged", "policy_revision", "engineer", "if_unset", "expires_days", "expires_hours", "s5_calls_per_hour", "out_of_binding_limit", "template_version", "part_number", "part_count", "seq":
 			if _, err := integer(v); err != nil {
 				return fmt.Errorf("%s: %w", k, err)
 			}
@@ -539,9 +549,9 @@ func validateArgs(op string, a map[string]any) error {
 			if _, err := ParseHealthPolicy(v); err != nil {
 				return err
 			}
-		case "facts":
+		case "facts", "flow":
 			if _, ok := v.(map[string]any); !ok {
-				return errors.New("facts must be an object")
+				return fmt.Errorf("%s must be an object", k)
 			}
 		case "grants":
 			if _, ok := v.(map[string]any); !ok {
@@ -1262,6 +1272,13 @@ func (s *Store) execute(ctx context.Context, tx *transaction, r Request) (any, e
 			return nil, invalid("instance requires session")
 		}
 		return s.healthOp(ctx, tx, w, p, projectRole, nil, r)
+	}
+	// Resuming project flow is an owner's or lead's, never a session's.
+	if projectFlowOperation(r.Operation) {
+		if actor == nil && str(a, "instance") != "" {
+			return nil, invalid("instance requires session")
+		}
+		return s.projectFlowResumeOp(ctx, tx, w["id"].(string), p["id"].(string), projectRole, actor, r)
 	}
 	// Publishing documents is a lead's or owner's CLI command, as seeding.
 	if docPublicationOperation(r.Operation) {

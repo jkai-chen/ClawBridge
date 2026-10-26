@@ -604,6 +604,7 @@ func Run(ctx context.Context, args []string) error {
 		return errors.New("cannot initialize Postgres; check the configured connection and schema version")
 	}
 	defer store.Close()
+	store.SetProjectFlowProven(settings.ProjectFlowProven)
 	writer, err := appWriter(store)
 	if err != nil {
 		return err
@@ -851,6 +852,10 @@ type ServeSettings struct {
 	Auth      AuthOptions
 	Audiences []string
 	OAuth     OAuthMetadata
+	// ProjectFlowProven lets a status policy turn project flow on (A4 L5):
+	// serve --project-flow-proven or CLAWBRIDGE_PROJECT_FLOW_PROVEN=1, set
+	// by the operator after the deploy probe.
+	ProjectFlowProven bool
 }
 
 // ParseServe reads serve's flags and the OAuth secrets from getenv. The
@@ -867,6 +872,7 @@ func ParseServe(args []string, getenv func(string) string) (ServeSettings, error
 	dsnEnv := f.String("database-url-env", "CLAWBRIDGE_DATABASE_URL", "environment variable holding the Postgres connection URL")
 	authFlag := f.String("auth", "", "sign-in methods: google, device or google,device; without it, google with --audience and device with --public-origin")
 	publicOrigin := f.String("public-origin", "", "this server's public origin, https://HOST[:PORT]; device signatures and join proofs cover it, so device sign-in requires it")
+	flowProven := f.Bool("project-flow-proven", false, "let status policies turn project flow on; set only after the deploy probe proves it (also CLAWBRIDGE_PROJECT_FLOW_PROVEN=1)")
 	if err := f.Parse(args); err != nil {
 		return ServeSettings{}, err
 	}
@@ -880,7 +886,15 @@ func ParseServe(args []string, getenv func(string) string) (ServeSettings, error
 	if err != nil {
 		return ServeSettings{}, err
 	}
-	out := ServeSettings{Listen: *listen, BootstrapOwner: *owner, DatabaseURLEnv: *dsnEnv, Auth: AuthOptions{Methods: methods}}
+	out := ServeSettings{Listen: *listen, BootstrapOwner: *owner, DatabaseURLEnv: *dsnEnv, Auth: AuthOptions{Methods: methods}, ProjectFlowProven: *flowProven}
+	switch v := getenv("CLAWBRIDGE_PROJECT_FLOW_PROVEN"); v {
+	case "":
+	case "1", "true":
+		out.ProjectFlowProven = true
+	case "0", "false":
+	default:
+		return ServeSettings{}, errors.New("CLAWBRIDGE_PROJECT_FLOW_PROVEN is 1 or 0")
+	}
 	if out.Auth.accepts(AuthDevice) {
 		if out.Auth.PublicOrigin, err = ParsePublicOrigin(*publicOrigin); err != nil {
 			return ServeSettings{}, err

@@ -71,3 +71,16 @@ func (s *Service) setHealth(ctx context.Context, scope bus.Request, linearProjec
 	r, e := s.cfg.Executor.Execute(ctx, scope)
 	return r.Data, e
 }
+
+// ProjectFlowResumeV2 clears a bound Linear project's project-flow hold
+// (A4 R4): the project owner or a lead, never a session; the server checks.
+func (s *Service) ProjectFlowResumeV2(ctx context.Context, scope bus.Request, linearProject string) (any, error) {
+	scope.Operation = "project_flow_resume"
+	scope.Args = instanceArgs(scope.Args)
+	scope.Args["linear_project"] = strings.ToLower(linearProject)
+	r, e := s.cfg.Executor.Execute(ctx, scope)
+	if e != nil && strings.Contains(e.Error(), `unsupported operation "project_flow_resume"`) {
+		e = errors.New("this server predates project flow; upgrade it first")
+	}
+	return r.Data, e
+}

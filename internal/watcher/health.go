@@ -2,6 +2,7 @@ package watcher
 
 import (
 	"context"
+	"strings"
 	"time"
 
 	"clawbridge/internal/bus"
@@ -20,8 +21,15 @@ const HealthRunsPerTick = 2
 // The GraphQL reads, constant and read-only. History is newest first
 // (probe I4).
 const (
-	healthProjectQuery  = `query HealthProject($id: String!) { project(id: $id) { id targetDate startDate createdAt projectUpdates(first: 5, orderBy: createdAt) { nodes { id createdAt user { id } } } } }`
-	healthIssuesQuery   = `query HealthIssues($id: ID!, $after: String) { issues(first: 50, after: $after, filter: { project: { id: { eq: $id } } }) { nodes { id identifier updatedAt state { type } inverseRelations(first: 20) { nodes { type issue { state { type } } } } } pageInfo { hasNextPage endCursor } } }`
+	healthProjectQuery = `query HealthProject($id: String!) { project(id: $id) { id targetDate startDate createdAt projectUpdates(first: 5, orderBy: createdAt) { nodes { id createdAt user { id } } } } }`
+	healthIssuesQuery  = `query HealthIssues($id: ID!, $after: String) { issues(first: 50, after: $after, filter: { project: { id: { eq: $id } } }) { nodes { id identifier updatedAt state { type } inverseRelations(first: 20) { nodes { type issue { state { type } } } } } pageInfo { hasNextPage endCursor } } }`
+	// Project flow (A4) reads the project's status and the status list with
+	// the same project read, and each issue's completedAt; a move is read
+	// back. Separate queries keep health's proven reads as they are until
+	// the deploy probe confirms these fields (§11.8).
+	flowProjectQuery    = `query FlowProject($id: String!) { project(id: $id) { id targetDate startDate createdAt projectUpdates(first: 5, orderBy: createdAt) { nodes { id createdAt user { id } } } status { id name type } } projectStatuses(first: 50) { nodes { id name type position archivedAt } } }`
+	flowIssuesQuery     = `query FlowIssues($id: ID!, $after: String) { issues(first: 50, after: $after, filter: { project: { id: { eq: $id } } }) { nodes { id identifier updatedAt completedAt state { type } inverseRelations(first: 20) { nodes { type issue { state { type } } } } } pageInfo { hasNextPage endCursor } } }`
+	flowReadBackQuery   = `query FlowReadBack($id: String!) { project(id: $id) { id status { id type } } }`
 	healthActivityQuery = `query HealthActivity($id: String!, $since: DateTimeOrDuration!) { issue(id: $id) { history(first: 20) { nodes { createdAt actorId botActor { id } } } comments(first: 20, filter: { createdAt: { gt: $since } }) { nodes { createdAt user { id } botActor { id } } } } }`
 )
 
@@ -39,8 +47,12 @@ type HealthRun struct {
 	Posted string `json:"posted,omitempty"`
 	// UpdateID is the accepted post's project update.
 	UpdateID string `json:"update_id,omitempty"`
-	Calls    int    `json:"calls"`
-	Error    string `json:"error,omitempty"`
+	// Flow is what project flow decided; Moved what became of its move:
+	// accepted, refused or pending.
+	Flow  string `json:"flow,omitempty"`
+	Moved string `json:"moved,omitempty"`
+	Calls int    `json:"calls"`
+	Error string `json:"error,omitempty"`
 	// Note and Held say, for a forced run, why it acted or not, and why a
 	// post was held back.
 	Note string `json:"note,omitempty"`
@@ -90,16 +102,26 @@ func (w *Watcher) healthRun(ctx context.Context, svc *linearboard.Service, scope
 	if n, ok := m["stalled_days"].(int); ok && n > 0 {
 		days = n
 	}
+	health, _ := m["health"].(bool)
+	flow, _ := m["flow"].(bool)
+	if _, said := m["health"]; !said {
+		// A forced run, or a bus older than A4, hands out health alone.
+		health = true
+	}
 	run := HealthRun{LinearProject: lp}
 	report := map[string]any{"linear_project": lp}
 	if appErr != nil {
 		run.Error = "app_identity"
 	} else {
-		facts, calls, e := w.healthFacts(ctx, lp, app.AppUserID, days)
+		facts, flowFacts, calls, e := w.healthFacts(ctx, lp, app.AppUserID, days, health, flow)
 		run.Calls = calls
-		if e != "" {
+		if flowFacts != nil {
+			report["flow"] = flowFacts
+		}
+		switch {
+		case e != "" && (health || flowFacts == nil):
 			run.Error = e
-		} else {
+		case health:
 			report["facts"] = facts
 		}
 	}
@@ -122,8 +144,14 @@ func (w *Watcher) healthRun(ctx context.Context, svc *linearboard.Service, scope
 		run.Acted, _ = d["acted"].(string)
 		run.Note, _ = d["note"].(string)
 		run.Held, _ = d["held"].(string)
+		run.Flow, _ = d["flow"].(string)
 		if post, ok := d["post"].(map[string]any); ok {
 			if run.Posted, run.UpdateID, err = w.postHealth(ctx, svc, scope, pid, lp, post, fence); err != nil {
+				return &run, err
+			}
+		}
+		if move, ok := d["move"].(map[string]any); ok {
+			if run.Moved, err = w.moveProject(ctx, svc, scope, pid, lp, move, fence); err != nil {
 				return &run, err
 			}
 		}
@@ -202,6 +230,56 @@ func (w *Watcher) postHealth(ctx context.Context, svc *linearboard.Service, scop
 	return state, updateID, nil
 }
 
+// moveProject sends the move the bus handed out, as the app, reads the
+// project back, and settles it: accepted only when the read shows the
+// status; refused when nothing reached Linear, including without the
+// write scope, checked first; uncertain otherwise, which the next run's
+// read settles. It is never sent twice.
+func (w *Watcher) moveProject(ctx context.Context, svc *linearboard.Service, scope bus.Request, pid, lp string, move, fence map[string]any) (string, error) {
+	to, _ := move["to_status_id"].(string)
+	outcome, code, calls := "refused", "app_scope", 0
+	if granted, err := w.App.HasScope(ctx, "write"); err != nil {
+		code = "app_unavailable"
+	} else if granted {
+		calls = 1
+		outcome, code = "uncertain", ""
+		if err = svc.SetProjectStatusV2(ctx, scope, lp, to); err != nil {
+			outcome, code = linearboard.StatusUpdateOutcome("", err)
+		}
+		if outcome == "uncertain" {
+			calls++
+			var read struct {
+				Project *struct {
+					Status *struct {
+						ID string `json:"id"`
+					} `json:"status"`
+				} `json:"project"`
+			}
+			switch e := w.App.GraphQL(ctx, flowReadBackQuery, map[string]any{"id": lp}, &read); {
+			case e != nil || read.Project == nil || read.Project.Status == nil:
+				code = "read_back_failed"
+			case strings.EqualFold(read.Project.Status.ID, to):
+				outcome, code = "accepted", ""
+			case code == "":
+				code = "read_back_mismatch"
+			}
+		}
+	}
+	settle := map[string]any{"linear_project": lp, "seq": move["seq"], "outcome": outcome, "calls": calls}
+	if code != "" {
+		settle["error"] = code
+	}
+	for k, v := range fence {
+		settle[k] = v
+	}
+	r, err := w.Store.ExecuteSystem(ctx, pid, bus.Request{Operation: "project_flow_settle", Args: settle})
+	if err != nil {
+		return "", err
+	}
+	state, _ := r.Data.(map[string]any)["state"].(string)
+	return state, nil
+}
+
 type healthState struct {
 	Type string `json:"type"`
 }
@@ -211,16 +289,28 @@ type healthState struct {
 // stalled window, whether that activity was human (P9: the app's own
 // writes bump updatedAt, so a human comment or a non-app history entry is
 // required). At most HealthSampled issues are checked; the rest count as
-// active and are reported as unverified. It returns a failure code, never
-// Linear text, and its calls.
-func (w *Watcher) healthFacts(ctx context.Context, lp, appUser string, stalledDays int) (map[string]any, int, string) {
+// active and are reported as unverified. With flow it also reads, for
+// project flow (A4), the project's status, the status list and when each
+// completed issue was completed; a flow-only run (no health) samples no
+// activity. It returns the health facts, the flow facts (also over a
+// partial issue read, marked so), a failure code, never Linear text, and
+// its calls.
+func (w *Watcher) healthFacts(ctx context.Context, lp, appUser string, stalledDays int, health, flow bool) (map[string]any, map[string]any, int, string) {
 	calls := 0
+	type status struct {
+		ID         string  `json:"id"`
+		Name       string  `json:"name"`
+		Type       string  `json:"type"`
+		Position   float64 `json:"position"`
+		ArchivedAt *string `json:"archivedAt"`
+	}
 	var project struct {
 		Project *struct {
 			ID             string  `json:"id"`
 			TargetDate     *string `json:"targetDate"`
 			StartDate      *string `json:"startDate"`
 			CreatedAt      string  `json:"createdAt"`
+			Status         *status `json:"status"`
 			ProjectUpdates *struct {
 				Nodes []struct {
 					ID        string `json:"id"`
@@ -231,18 +321,40 @@ func (w *Watcher) healthFacts(ctx context.Context, lp, appUser string, stalledDa
 				} `json:"nodes"`
 			} `json:"projectUpdates"`
 		} `json:"project"`
+		ProjectStatuses *struct {
+			Nodes []status `json:"nodes"`
+		} `json:"projectStatuses"`
+	}
+	projectQuery, issuesQuery := healthProjectQuery, healthIssuesQuery
+	if flow {
+		projectQuery, issuesQuery = flowProjectQuery, flowIssuesQuery
 	}
 	calls++
-	if err := w.App.GraphQL(ctx, healthProjectQuery, map[string]any{"id": lp}, &project); err != nil || project.Project == nil {
-		return nil, calls, "project_unreadable"
+	if err := w.App.GraphQL(ctx, projectQuery, map[string]any{"id": lp}, &project); err != nil || project.Project == nil {
+		return nil, nil, calls, "project_unreadable"
+	}
+	created, createdErr := time.Parse(time.RFC3339Nano, project.Project.CreatedAt)
+	var flowFacts map[string]any
+	if flow && project.Project.Status != nil && project.ProjectStatuses != nil && createdErr == nil {
+		view := func(st status) map[string]any {
+			return map[string]any{"id": strings.ToLower(st.ID), "name": st.Name, "type": st.Type, "position": st.Position, "archived": st.ArchivedAt != nil}
+		}
+		list := []any{}
+		for _, st := range project.ProjectStatuses.Nodes {
+			list = append(list, view(st))
+		}
+		flowFacts = map[string]any{"status": view(*project.Project.Status), "created_at": project.Project.CreatedAt, "statuses": list}
 	}
 	start, from := "", "startDate"
 	if project.Project.StartDate != nil && *project.Project.StartDate != "" {
 		start = *project.Project.StartDate
-	} else if created, err := time.Parse(time.RFC3339Nano, project.Project.CreatedAt); err == nil {
+	} else if createdErr == nil {
 		start, from = created.UTC().Format(time.DateOnly), "createdAt"
 	} else {
-		return nil, calls, "project_unreadable"
+		return nil, nil, calls, "project_unreadable"
+	}
+	if !health && flowFacts == nil {
+		return nil, nil, calls, "project_unreadable"
 	}
 	target := ""
 	if project.Project.TargetDate != nil {
@@ -250,7 +362,7 @@ func (w *Watcher) healthFacts(ctx context.Context, lp, appUser string, stalledDa
 	}
 	now := w.now()
 	since := now.Add(-time.Duration(stalledDays) * 24 * time.Hour)
-	total, completed, canceled, started := 0, 0, 0, 0
+	total, completed, canceled, started, doneSince := 0, 0, 0, 0, 0
 	stalled, blocked, recent := []string{}, []string{}, []struct{ id, identifier string }{}
 	stalledCount, blockedCount := 0, 0
 	var after any
@@ -262,6 +374,7 @@ func (w *Watcher) healthFacts(ctx context.Context, lp, appUser string, stalledDa
 					ID               string      `json:"id"`
 					Identifier       string      `json:"identifier"`
 					UpdatedAt        string      `json:"updatedAt"`
+					CompletedAt      *string     `json:"completedAt"`
 					State            healthState `json:"state"`
 					InverseRelations struct {
 						Nodes []struct {
@@ -276,14 +389,21 @@ func (w *Watcher) healthFacts(ctx context.Context, lp, appUser string, stalledDa
 			} `json:"issues"`
 		}
 		calls++
-		if err := w.App.GraphQL(ctx, healthIssuesQuery, map[string]any{"id": lp, "after": after}, &out); err != nil {
-			return nil, calls, "issues_unreadable"
+		if err := w.App.GraphQL(ctx, issuesQuery, map[string]any{"id": lp, "after": after}, &out); err != nil {
+			// L1: flow still gets what was read, marked partial.
+			return nil, flowCounts(flowFacts, total, completed, canceled, started, doneSince, false), calls, "issues_unreadable"
 		}
 		for _, n := range out.Issues.Nodes {
 			total++
 			switch n.State.Type {
 			case "completed":
 				completed++
+				if n.CompletedAt != nil {
+					// L2: only work done since the project was created starts it.
+					if done, err := time.Parse(time.RFC3339Nano, *n.CompletedAt); err == nil && done.After(created) {
+						doneSince++
+					}
+				}
 				continue
 			case "canceled":
 				canceled++
@@ -313,9 +433,13 @@ func (w *Watcher) healthFacts(ctx context.Context, lp, appUser string, stalledDa
 		}
 		after = out.Issues.PageInfo.EndCursor
 	}
+	flowFacts = flowCounts(flowFacts, total, completed, canceled, started, doneSince, complete)
 	if !complete {
 		// Counts over part of the project would misjudge it: no health.
-		return nil, calls, "too_many_issues"
+		return nil, flowFacts, calls, "too_many_issues"
+	}
+	if !health {
+		return nil, flowFacts, calls, ""
 	}
 	unverified := 0
 	for i, issue := range recent {
@@ -343,7 +467,17 @@ func (w *Watcher) healthFacts(ctx context.Context, lp, appUser string, stalledDa
 		}
 		facts["updates"] = updates
 	}
-	return facts, calls, ""
+	return facts, flowFacts, calls, ""
+}
+
+// flowCounts adds a run's issue counts to its flow facts, if it has any.
+func flowCounts(facts map[string]any, total, completed, canceled, started, since int, complete bool) map[string]any {
+	if facts == nil {
+		return nil
+	}
+	facts["total"], facts["completed"], facts["canceled"], facts["started"] = total, completed, canceled, started
+	facts["completed_since_created"], facts["complete"] = since, complete
+	return facts
 }
 
 // humanActivity reads one issue's newest history and its comments since:

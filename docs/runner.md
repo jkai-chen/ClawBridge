@@ -31,9 +31,18 @@ Run it inside the repository's checkout, or pass `--repo PATH`.
 4. **Writes the session's Claude Code settings and MCP config** under
    `~/.clawbridge/runner/sessions/<session>/`, readable by you only, never inside
    the clone.
-5. **Opens a visible Orca terminal** in the clone, running
-   `claude --settings … --mcp-config … --strict-mcp-config "<start prompt>"`. The
-   prompt names the issue by its identifier and UUID only, never its text.
+5. **Opens a visible Orca terminal** in your own checkout, which Orca manages,
+   running `cd <clone> && claude --setting-sources '' --permission-mode default
+   --settings … --mcp-config … --strict-mcp-config "<start prompt>"`.
+   - The session loads none of your user, project or local Claude Code settings,
+     only its own (and managed ones), so your own allows never widen it.
+   - The prompt names the issue by its identifier and UUID only, never its text.
+
+Before anything starts, the launch checks that:
+- `claude` is 2.1.219 or newer (the sandbox's strict allow-list) and of the
+  major version the runner was proven on, 2.1.310;
+- managed Claude Code settings, if any, do not allow a host the runner's own
+  list does not.
 
 The agent then reads its inbox, proposes the issue as its assignment, and works
 once the coordinator confirms. It commits to its `agent/*` branch. It never
@@ -54,8 +63,8 @@ run in the clone yourself.
 The settings passed with `--settings` take precedence over the repository's own
 `.claude` settings, and a deny rule wins at every level.
 
-- **Permission mode:** default (you approve edits and commands), and bypass mode
-  is disabled. Git status, diff, log, show, add and commit are pre-approved.
+- **Permission mode:** default (you approve edits and commands). Bypass mode and
+  auto mode are both disabled. Git status, diff, log, show, add and commit are pre-approved.
   Denied:
   - git push, remote, config and credential; `gh`; `ssh`; `security`; the
     `clawbridge` CLI (the agent uses the ClawBridge MCP tools instead);
@@ -65,9 +74,13 @@ The settings passed with `--settings` take precedence over the repository's own
   - Bash cannot read `~/.ssh`, `~/.gnupg`, `~/.config/gh`, `~/.clawbridge`,
     `~/.config/clawbridge`, `~/Library/Keychains`, `~/.git-credentials`, `~/.netrc`,
     `~/.aws`, `~/.config/gcloud` or `~/.docker`.
-  - Bash writes only in its clone and its temporary directory.
+  - Bash writes only in its clone, its temporary directory and its cache
+    (`<work>/<session>.cache`). Go, npm and XDG caches point there, never at
+    yours, and `gc` removes it with the clone.
   - Bash reaches only the allowed domains (by default the Go, npm and PyPI
-    registries).
+    registries). The allow-list is strict: any other host is refused, never
+    offered to you to approve. Your git hosts are also denied in WebFetch's
+    domain form, which the sandbox's network proxy honors.
 - **The file tools:** the sandbox covers Bash only, so Read and Edit are denied
   the same paths.
 - **What stops a push:** the clone's missing push URL and the `git push` deny
@@ -101,6 +114,21 @@ changes. A launch is refused while 10 runner clones are retained.
 are the agent's to write, and would run unsandboxed in your shell. `gc` reads the
 clone's branch from its files and judges the work in your own repository.
 
+## Proven so far
+
+The first live run, on Claude Code 2.1.310, stopped on a failure, and the
+launcher was changed as above:
+- Held: reading `~/.ssh` and listing `~/Library/Keychains` from Bash were
+  refused by the sandbox; a write to the owner's `.git/hooks` was refused; the
+  Read and Write tools were denied `~/.ssh`; a push through `origin` failed; a
+  commit worked.
+- Failed: `curl https://example.com` and an https push to the git host reached
+  the network, because the owner's own Claude Code settings allowed those two
+  domains for WebFetch, and Claude Code pre-allows such domains in the sandbox.
+  The session now loads none of those settings.
+- Also fixed: `go test` could not write Go's build cache; Orca would not open a
+  terminal in a directory it does not manage; auto mode could be turned on.
+
 ## Proving the sandbox on your Mac
 
 The sandbox is a second line behind you, who started the session. Automatic
@@ -112,7 +140,9 @@ git commit -m test --allow-empty
 go test ./...
 ```
 
-Then ask it to run each of these. Every one must fail:
+Then ask it to run each of these, and answer **no** to every permission prompt
+(a barrier that holds only when a person says no is not a barrier). Every one
+must fail:
 
 ```sh
 cat ~/.ssh/known_hosts
@@ -121,4 +151,8 @@ echo x > <your checkout>/.git/hooks/pre-commit
 git push origin HEAD
 git push https://github.com/<owner>/<repo>.git HEAD
 curl -sI https://example.com
+curl -sI https://github.com
 ```
+
+`curl -sI https://proxy.golang.org` should still work, and switching the
+session's permission mode (shift+tab) to auto must be refused.

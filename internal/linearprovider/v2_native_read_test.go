@@ -54,3 +54,25 @@ func TestV2NativeGetIssueShapes(t *testing.T) {
 		t.Fatal("object endpoint identifier lost", x.Relations[1])
 	}
 }
+
+// A get_issue that advertises the boolean includeRelations is asked for the
+// relations; one that does not, or advertises it with another type, is not.
+func TestV2GetIssueAsksForRelations(t *testing.T) {
+	for name, c := range map[string]struct {
+		fields map[string]string
+		want   any
+	}{
+		"advertised":     {map[string]string{"id": "string", "includeRelations": "boolean"}, true},
+		"not advertised": {map[string]string{"id": "string"}, nil},
+		"not a boolean":  {map[string]string{"id": "string", "includeRelations": "string"}, nil},
+	} {
+		f := &fake{tools: []*mcp.Tool{tool("get_issue", c.fields)}, result: nativeGetIssue([]any{}, emptyNativeRelations())}
+		p, _ := NewWithCaller(context.Background(), f)
+		if _, e := p.IssueV2(context.Background(), iid); e != nil {
+			t.Fatal(name, e)
+		}
+		if got := f.args[len(f.args)-1]["includeRelations"]; got != c.want {
+			t.Fatalf("%s: includeRelations = %v, want %v", name, got, c.want)
+		}
+	}
+}

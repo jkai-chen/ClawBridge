@@ -104,7 +104,12 @@ func (w *Watcher) Tick(ctx context.Context) []ProjectTick {
 		tick := w.project(pctx, pid, healthLeft)
 		cancel()
 		logTick(pid, "tick", tick)
-		healthLeft -= len(tick.Health)
+		// Nudged runs have their own allowance in the bus (R101-L2).
+		for _, run := range tick.Health {
+			if run.Nudge == "" {
+				healthLeft--
+			}
+		}
 		_ = w.Store.WatchTicked(ctx, pid, tick.Error == "", tick.Error)
 		out = append(out, tick)
 	}
@@ -159,10 +164,14 @@ func (w *Watcher) Markers(ctx context.Context, pid string) ProjectTick {
 	err := svc.Watch(ctx, scope, linearboard.WatchOptions{
 		Once:        true,
 		MarkersOnly: true,
+		// A failed nudge check never costs the pass its marker output
+		// (R101-L3): the markers are done, and the daily run catches up.
 		Within: func(ctx context.Context, fence map[string]any) error {
 			var err error
-			tick.Health, err = w.health(ctx, svc, scope, pid, fence, HealthRunsPerTick, true)
-			return err
+			if tick.Health, err = w.health(ctx, svc, scope, pid, fence, 0, true); err != nil {
+				tick.Error = failureCode(err)
+			}
+			return nil
 		},
 		Cycle: func(c linearboard.WatchCycle) error {
 			tick.Comments = &c

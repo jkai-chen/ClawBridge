@@ -66,10 +66,8 @@ type HealthRun struct {
 // returns the runs it made. nudgesOnly asks for project flow's nudged runs
 // alone, as a nudge's marker pass does.
 func (w *Watcher) health(ctx context.Context, svc *linearboard.Service, scope bus.Request, pid string, fence map[string]any, left int, nudgesOnly bool) ([]HealthRun, error) {
-	if left <= 0 {
-		return nil, nil
-	}
-	due := map[string]any{"limit": left}
+	// With no daily runs left, nudged runs still have their own allowance.
+	due := map[string]any{"limit": max(left, 0)}
 	if nudgesOnly {
 		due["nudges_only"] = true
 	}

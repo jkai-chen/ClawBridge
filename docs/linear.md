@@ -1026,6 +1026,9 @@ owner sets it: an existing policy reads it as off.
   - A release that lands in a started or canceled state checks nothing. Each
     Linear project gets at most one such check every 10 minutes, and a
     workspace at most 20 an hour; past that, the daily run catches up.
+  - A start check is dropped if its issue is then released to a state that is
+    neither started nor completed. When a project's daily run is due anyway,
+    the early check waits for it, and never moves the daily slot.
   Each move is read back: confirmed only when the project shows the status;
   an unconfirmed one is settled by the next run's read and never sent twice.
   Without the scope, the coordinator is told once a day and nothing is sent.

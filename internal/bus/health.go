@@ -523,8 +523,8 @@ func (c commentCall) healthDue(ctx context.Context) (any, error) {
 		limit = room
 	}
 	runs := []any{}
-	if limit <= 0 {
-		return map[string]any{"runs": runs, "deferred": room <= 0}, nil
+	if room <= 0 {
+		return map[string]any{"runs": runs, "deferred": true}, nil
 	}
 	// A nudge's pass asks only for nudged runs: the daily ones wait for the
 	// tick.
@@ -538,7 +538,22 @@ func (c commentCall) healthDue(ctx context.Context) (any, error) {
 	if err != nil {
 		return nil, err
 	}
+	// In a nudge's pass, a Linear project whose daily run is due is left
+	// to the tick, and its ask waits for it (R101-M1).
+	wait := map[string]bool{}
 	if nudgesOnly {
+		for _, r := range rows {
+			wait[str(r, "linear_project_id")] = true
+		}
+		if flow {
+			due, err := c.flowDue(ctx)
+			if err != nil {
+				return nil, err
+			}
+			for _, lp := range due {
+				wait[lp] = true
+			}
+		}
 		rows = nil
 	}
 	cost := 0
@@ -572,13 +587,14 @@ func (c commentCall) healthDue(ctx context.Context) (any, error) {
 			cost += FlowReadCalls
 		}
 	}
-	// Nudged runs come after the daily ones, which read the same and more.
-	if flow && len(runs) < limit {
+	// Nudged runs come after the daily ones, which read the same and more,
+	// with their own allowance (R101-L2).
+	if nudgeRoom := min(flowNudgeRunsPerPass, room-len(runs)); flow && nudgeRoom > 0 {
 		have := map[string]bool{}
 		for _, r := range runs {
 			have[str(r.(map[string]any), "linear_project")] = true
 		}
-		nudged, more, err := c.flowNudgeRuns(ctx, have, limit-len(runs))
+		nudged, more, err := c.flowNudgeRuns(ctx, have, wait, nudgeRoom)
 		if err != nil {
 			return nil, err
 		}
@@ -785,7 +801,7 @@ func (c commentCall) healthReport(ctx context.Context) (any, error) {
 				facts = &f
 			}
 		}
-		move, what, e := c.projectFlow(ctx, lp, status, revision, facts, flowCode)
+		move, what, e := c.projectFlow(ctx, lp, status, revision, facts, flowCode, nudge != "")
 		if e != nil {
 			return nil, e
 		}

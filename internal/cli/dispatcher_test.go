@@ -39,3 +39,24 @@ func TestCLIDispatcherPolicy(t *testing.T) {
 		t.Fatal(e)
 	}
 }
+
+// dispatcher enable and disable reach the bus with their arguments: --engine
+// is the mode, --confirm a boolean, and the refusals are the bus's own.
+func TestCLIDispatcherEnable(t *testing.T) {
+	isolated(t)
+	invoke(t, "setup", "--local", "--workspace", "w")
+	invoke(t, "project", "create", "p")
+	t.Setenv("CLAWBRIDGE_PROJECT", "p")
+	refused := func(want string, args ...string) {
+		t.Helper()
+		var out, errs bytes.Buffer
+		if e := Run(context.Background(), args, &out, &errs); e == nil || !strings.Contains(e.Error(), want) {
+			t.Fatal(args, e)
+		}
+	}
+	refused("model setup", "dispatcher", "enable", "--engine", "model", "--expected-revision", "0", "--confirm")
+	refused("link the task board", "dispatcher", "enable", "--engine", "rules", "--expected-revision", "0")
+	refused("mode is rules or model", "dispatcher", "enable", "--engine", "fast", "--expected-revision", "0")
+	refused("already off", "dispatcher", "disable", "--expected-revision", "0")
+	refused("requires --expected-revision", "dispatcher", "disable")
+}

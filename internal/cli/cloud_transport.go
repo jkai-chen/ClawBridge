@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"io"
 	"strings"
 )
@@ -16,6 +17,8 @@ type cloudTransport interface {
 	// setSecret writes one allowed key's value into the server's env file.
 	// The value is never in argv, an environment variable or a log.
 	setSecret(ctx context.Context, key, value string, stderr io.Writer) error
+	// describe is the advice when a write fails: what access to check.
+	describe() string
 }
 
 // shellTransport reaches a shell that takes the remote command as its last
@@ -39,9 +42,32 @@ func (s shellTransport) setSecret(ctx context.Context, key, value string, stderr
 	return runRemote(ctx, argv, strings.NewReader(value+"\n"), stderr)
 }
 
+func (shellTransport) describe() string {
+	return "check SSH access and passwordless sudo on the server"
+}
+
 // transport is the target's route to the server's shell, its inputs
-// validated: cloudTarget.argv checks the SSH host or the VM's names.
+// validated: one route only; an instance's ID here (the AWS inputs when it
+// runs); otherwise cloudTarget.argv checks the SSH host or the VM's names.
 func (t cloudTarget) transport() (cloudTransport, error) {
+	routes := 0
+	for _, r := range []string{t.host, t.vm, t.instance} {
+		if r != "" {
+			routes++
+		}
+	}
+	if routes > 1 {
+		return nil, errors.New("pass one route to the server: --ssh HOST, --vm NAME or --instance ID")
+	}
+	if t.instance != "" {
+		if !instancePattern.MatchString(t.instance) || t.project != "" || t.zone != "" {
+			return nil, errors.New("--instance must be an EC2 instance ID (i-…), with --region and without --project or --zone")
+		}
+		return ssmTransport{target: t}, nil
+	}
+	if t.region != "" || t.profile != "" || t.account != "" {
+		return nil, errors.New("--region, --profile and --account go with --instance")
+	}
 	if _, err := t.argv(""); err != nil {
 		return nil, err
 	}

@@ -365,8 +365,8 @@ the exact tagged commit. Extra version arguments fail before state access.
 ## Cloud check and secret entry
 
 `clawbridge cloud check [infra|server|version|workspace|linear-app|backups|all]
-[--server URL] [--client-config PATH] [--ssh HOST | --vm NAME --project P --zone Z]
-[--bucket NAME] [--json]`
+[--server URL] [--client-config PATH] [--ssh HOST | --vm NAME --project P --zone Z |
+--instance ID --region R [--profile P] [--account N]] [--bucket NAME] [--json]`
 probes an own server during onboarding. Each
 check passes, warns or fails with a fixed reason code and one line of advice;
 `--json` returns source=cloud_check with a list of `{check, status, reason,
@@ -374,11 +374,12 @@ advice}`, otherwise a table. The exit status is non-zero when any check fails.
 
 | Check | Passes when | Reasons |
 |---|---|---|
-| `infra` | Google Cloud, with `--vm`: the VM is running; its external IP is a reserved static address in use; the server's domain resolves to that IP; a non-boot disk is attached and mounted at `/var/lib/clawbridge-postgres` (`findmnt`, over the target); last, TCP 443 answers, which it does only once the server runs | `needs_vm`, `vm_unreadable`, `vm_not_running`, `no_external_ip`, `ip_not_static`, `no_server`, `dns_mismatch`, `no_data_disk`, `ssh_failed`, `data_not_mounted`, `port_closed` |
+| `infra` (Google Cloud) | with `--vm`: the VM is running; its external IP is a reserved static address in use; the server's domain resolves to that IP; a non-boot disk is attached and mounted at `/var/lib/clawbridge-postgres` (`findmnt`, over the target); last, TCP 443 answers, which it does only once the server runs | `needs_vm`, `vm_unreadable`, `vm_not_running`, `no_external_ip`, `ip_not_static`, `no_server`, `dns_mismatch`, `no_data_disk`, `ssh_failed`, `data_not_mounted`, `port_closed` |
+| `infra` (AWS) | with `--instance` and `--region`: the instance is running; its public IP is an Elastic IP associated with it; the domain resolves to that IP; a non-root EBS volume is attached and encrypted; its security groups let in tcp/443 and nothing else; SSM sees it online; the data volume is mounted (over SSM); last, TCP 443 answers | `needs_instance`, `cloud_auth`, `vm_unreadable`, `vm_not_running`, `no_external_ip`, `ip_not_static`, `no_server`, `dns_mismatch`, `no_data_disk`, `data_disk_unencrypted`, `ssh_port_open`, `extra_ingress`, `ssm_offline`, `ssm_failed`, `data_not_mounted`, `port_closed` |
 | `server` | `GET /healthz` over HTTPS (plain HTTP only to loopback) answers 200 `{"status":"ok"}`, without following redirects; with a target, also every required setting of `deploy/compose.yaml` is set once in the env file, and the deployment's `api`, `caddy` and `db` containers run (`db` healthy) | `no_server`, `invalid_url`, `dns`, `tls`, `unreachable`, `http_status`, `not_clawbridge`, `ssh_failed`, `env_missing`, `setting_missing`, `setting_duplicate`, `service_down` |
 | `version` | the server's release equals the client's; a dev build on either side warns `dev_build` | `server_too_old`, `version_mismatch` |
 | `workspace` | `whoami` with the configured cloud profile shows the signed-in principal owns the workspace | `no_config`, `not_cloud`, `other_server`, `not_signed_in`, `no_workspace`, `whoami_failed`, `not_owner` |
-| `backups` | with `--bucket` and `--project`: the newest complete dump and checksum pair under `postgres/daily/` is under 26 hours old | `needs_bucket`, `needs_project`, `bucket_unreadable`, `no_backup`, `backup_stale` |
+| `backups` | with `--bucket` and `--project` (Google Cloud Storage), or `--bucket` and `--region` (S3): the newest complete dump and checksum pair under `postgres/daily/` is under 26 hours old | `needs_bucket`, `needs_project`, `needs_region`, `cloud_auth`, `bucket_unreadable`, `no_backup`, `backup_stale` |
 | `linear-app` | with a target, the app's three entries are set once each; the server reports the app configured, its binding readable, and every bound team visible to it | `ssh_failed`, `app_settings_missing`, `not_configured`, `status_unreadable`, `binding_unreadable`, `teams_hidden`, and the `workspace` sign-in reasons |
 
 The server URL is `--server` or the configured one. The target (`--ssh HOST`, or
@@ -391,7 +392,17 @@ file's Compose project; every container of a service must be up. `sudo -n`
 needs passwordless sudo for the user's SSH account; with Google Cloud OS Login
 that is the `roles/compute.osAdminLogin` role. `infra` and `backups` read the
 cloud with the user's own `gcloud` credentials and name the project in every
-command. No check reads a secret or writes anything.
+command.
+
+On AWS the target is `--instance ID --region R`: the same fixed script runs as
+root through SSM (`aws ssm send-command` with `AWS-RunShellScript`; the request
+goes on the CLI's stdin, and the result is read back with
+`get-command-invocation`), so the instance needs no open SSH port. Every `aws`
+command names `--profile` (default `clawbridge-onboarding`, a profile the user
+creates; ClawBridge never reads `~/.aws`) and `--region`. With `--account`,
+each check first confirms the profile is signed in to that account, and fails
+with `cloud_auth` otherwise. `--ssh`, `--vm` and `--instance` are one route each;
+pass one. No check reads a secret or writes anything.
 
 `clawbridge cloud secret set KEY (--ssh HOST | --vm NAME --project P --zone Z)
 [--value-stdin]` writes one server setting the user holds, so it never passes

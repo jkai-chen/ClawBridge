@@ -29,7 +29,8 @@ func withVersion(t *testing.T, v string) {
 
 func healthServer(t *testing.T, status int, body string) string {
 	t.Helper()
-	return configServer(t, status, body, `{"auth_methods":["google"]}`)
+	// A Google-only server leaves auth_methods out.
+	return configServer(t, status, body, `{"browser_client_id":"id"}`)
 }
 
 // configServer is healthServer that also answers /v1/config with config.

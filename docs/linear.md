@@ -860,9 +860,11 @@ assignment come later.
 - A dismissed issue stays dismissed until a new signal (the label re-added, a new delegation or mention) or a
   rearm. A Loop's request does not lift a dismissal.
 
-**Linear Loops (S5) are not available in v0.3.0.** The `/mcp/intake` endpoint
-refuses every request (`app_unavailable`) until a later release wires its
-in-binding check. The setup below describes that release.
+**Linear Loops (S5) are not available yet (v0.3.1).** The `/mcp/intake` endpoint
+refuses every request until a later release wires its in-binding check: an
+unknown, revoked or expired token is `unauthorized`; a project whose policy is
+off or leaves out S5 (the default) answers `intake_off`; one with S5 turned on
+answers `app_unavailable`. The setup below describes that later release.
 
 **Linear Loops (S5) are an opt-in, and cost credit.**
 - A Linear Loop can ask for an agent through the send-only endpoint `https://<server>/mcp/intake`.

@@ -34,7 +34,10 @@ var errNotWanted = errors.New("the server no longer wants an agent for this owne
 var credentialPattern = regexp.MustCompile(`^cba_[A-Za-z0-9_-]{16,256}$`)
 
 const (
-	launcherTimeout = 15 * time.Second
+	// launcherTimeout is longer than the server's 15 s request deadline, so
+	// an answer the server sends, a minted credential included, arrives
+	// before the client gives up on it.
+	launcherTimeout = 20 * time.Second
 	maxLauncherBody = 1 << 20
 )
 
@@ -42,8 +45,13 @@ const (
 // validated, with the launcher token.
 func NewLauncherClient(serverURL, token string) Server {
 	base, _ := url.Parse(strings.TrimSuffix(serverURL, "/") + "/")
+	// The token goes straight to the server, never through a proxy named
+	// in the environment.
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	transport.Proxy = nil
 	return &launcherClient{base: base, token: token, http: &http.Client{
-		Timeout: launcherTimeout,
+		Transport: transport,
+		Timeout:   launcherTimeout,
 		// The token goes to the configured server only, never where a
 		// redirect points.
 		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
@@ -83,6 +91,9 @@ func (c *launcherClient) call(ctx context.Context, method, path string, body, ou
 		return resp.StatusCode, fmt.Errorf("launcher %s: unreadable answer", name)
 	case resp.StatusCode == http.StatusUnauthorized:
 		return resp.StatusCode, errLauncherRefused
+	case resp.StatusCode == http.StatusTooManyRequests:
+		// The server limits refused tokens; the next round tries again.
+		return resp.StatusCode, fmt.Errorf("launcher %s: rate limited", name)
 	case resp.StatusCode/100 != 2:
 		return resp.StatusCode, fmt.Errorf("launcher %s: status %d", name, resp.StatusCode)
 	case json.Unmarshal(data, out) != nil:

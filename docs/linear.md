@@ -907,6 +907,65 @@ without a session is never refused here.
   process on someone's own machine; the runner's sandbox, which denies agents
   the CLI, is that boundary.
 
+### Setting who closes
+
+The project owner or a lead sets who closes one bound project at a time. Any
+member can read it.
+
+```sh
+clawbridge linear closes show
+clawbridge linear closes set --linear-project UUID --human --expected-revision N
+clawbridge linear closes set --linear-project UUID --agent --expected-revision N --profile PROFILE_ID
+```
+
+`N` is the status policy revision from `closes show`. `show` marks a project
+the policy still names but the board no longer binds "(not bound)"; the next
+`closes set` drops those keys.
+
+- **Letting agents close (`--agent`) is typed by a person.** It asks you to
+  type the Linear project's name at a terminal. It is refused when stdin isn't
+  a terminal, with `--session`, or when the environment says an agent runs it
+  (`CLAUDECODE`, any `CODEX_*`, `CLAWBRIDGE_SESSION`, `CLAWBRIDGE_INSTANCE`).
+  The audit records how it was confirmed (`via`). `--human` asks nothing.
+- **Never a session.** The server refuses `closes set` from any session,
+  whoever its owner is. The rest of the status policy stays the owner's.
+- **It needs a status policy.** With none, `closes set` is refused; the owner
+  creates one with `status-policy set`, or with the minimal policy below.
+
+**At link time.** `clawbridge linear link` shows, per project, `closes: people
+(default)`, `closes: agents` or `closes: not enforced (no status policy)`. On the
+confirming run, `--closes UUID=agent|human` (repeatable, one of the link's
+projects) sets who closes those projects, after the binding:
+
+```sh
+clawbridge linear link --team T --default-team T --linear-project P \
+  --closes P=agent --expected-revision N --confirm
+```
+
+- Without `--closes`, a link changes no one's rule.
+- If setting who closes fails after the binding, the binding stays, the project
+  is closed by people, and the command to re-run is printed.
+- `clawbridge linear project create NAME --closes agent` puts `--closes NEWID=agent`
+  into the proposed link's `confirm_command`. A team board has no per-project
+  rule, so `--closes` is refused there before anything is sent.
+
+**The minimal status policy.** With no status policy, an `agent` answer needs
+one. The preview states what it changes, and `--minimal-status-policy` on the
+confirming run creates `{"enabled": true, "closes": {P: "agent"}}` with no team
+targets. Only the project owner can create it. From then on:
+- markers still move no issues;
+- close protection turns on for every bound project, so completing an issue in
+  a project people close is refused to agents, and the hop rule applies;
+- an agent's write to a state whose type can't be told is refused. So in local
+  mode, the minimal policy is offered only when Linear's status list reports
+  state types; otherwise use a hosted server or a full status policy.
+
+**A project that joins unlisted.** When a link adds a Linear project the
+enabled policy doesn't name, the project's coordinator gets one `close-policy`
+notice: its issues are closed by people, and the owner or a lead can change
+that. There's no notice with no policy or a disabled one, nor for a project the
+same link sets with `--closes`.
+
 ## Project health (project owner only)
 
 A hosted server's watcher can judge each bound Linear project's health once a

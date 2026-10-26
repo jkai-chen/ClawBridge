@@ -111,9 +111,12 @@ export class FakeClawBridge {
 		res.end(JSON.stringify(sent));
 	}
 
+	/** Whether the owner has the project enabled: config and renew list it only then. */
+	projectEnabled = true;
+
 	private projects() {
 		const expires_at = new Date(Date.now() + this.tokenLifetimeMs).toISOString();
-		return [{ project_id: PROJECT, token: PROJECT_TOKEN, expires_at }];
+		return this.projectEnabled ? [{ project_id: PROJECT, token: PROJECT_TOKEN, expires_at }] : [];
 	}
 
 	private async handle(req: IncomingMessage, res: ServerResponse) {

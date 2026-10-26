@@ -224,3 +224,65 @@ test("a chat case is answered end to end with reply, from read-tool facts", asyn
 		["list_decisions", "reply"],
 	);
 });
+
+test("with no project yet, the agent stays up and renews, and serves a project enabled later", async () => {
+	// An owner who has only just passed the setup test (§11.1): the server lists them before any project is enabled.
+	cb.projectEnabled = false;
+	cb.cases.push(sampleCase());
+	const renewals = () => cb.requests.filter((r) => r.path.endsWith("/agent/renew")).length;
+	let enabledAt = 0;
+	const { stopped } = await runUntil(
+		() => {
+			if (!enabledAt && renewals() >= 2) {
+				// Still up after two empty renewals, and it has asked nothing of any project.
+				assert.ok(!cb.requests.some((r) => r.path.endsWith("/hello")));
+				cb.projectEnabled = true;
+				enabledAt = Date.now();
+			}
+			return cb.outcomes.length > 0;
+		},
+		{ renewFloorMs: 10, idleRenewMs: 50 },
+	);
+	assert.equal(stopped, "signal", "it ran until shut down");
+	assert.ok(enabledAt > 0, "it renewed while idle");
+	assert.equal(cb.outcomes.length, 1, "the newly enabled project's case was served");
+	assert.ok(lines.some((l) => l.includes('"event":"no_projects_yet"')));
+});
+
+test("a project dropped at renew stops its loop; the agent stays up", async () => {
+	cb.cases.push(sampleCase());
+	let droppedAt = 0;
+	let nextAtDrop = 0;
+	const nexts = () => cb.requests.filter((r) => r.path.endsWith("/cases/next")).length;
+	const { stopped } = await runUntil(
+		() => {
+			if (!droppedAt && cb.outcomes.length > 0) {
+				cb.projectEnabled = false;
+				droppedAt = Date.now();
+			}
+			if (droppedAt && !nextAtDrop && lines.some((l) => l.includes('"event":"project_dropped"'))) nextAtDrop = nexts();
+			return nextAtDrop > 0 && Date.now() - droppedAt > 400;
+		},
+		{ renewFloorMs: 10, renewMaxMs: 50 },
+	);
+	assert.equal(stopped, "signal");
+	assert.ok(nextAtDrop > 0, "the drop was logged");
+	// At most the one long-poll already in flight when the loop was told to stop.
+	assert.ok(nexts() - nextAtDrop <= 1, `${nexts() - nextAtDrop} polls after the drop`);
+	// The loop was stopped, not left to fail: no project call ever went out without the project's token.
+	const projectCalls = cb.requests.filter((r) => r.path.endsWith("/hello") || r.path.endsWith("/cases/next"));
+	assert.deepEqual(projectCalls.filter((r) => r.auth !== PROJECT_TOKEN).map((r) => r.path), []);
+});
+
+test("a pending_test config with no project yet runs the setup test, reports it, and stays up", async () => {
+	// The listing rule agreed with the server: an owner with a pending_test key is listed before any project is
+	// enabled, so the setup test can run (§11.1).
+	cb.configStatus = "pending_test";
+	cb.projectEnabled = false;
+	provider.plan = [["ping", {}]];
+	const renewals = () => cb.requests.filter((r) => r.path.endsWith("/agent/renew")).length;
+	const { stopped } = await runUntil(() => cb.testResults.length > 0 && renewals() >= 1, { renewFloorMs: 10, idleRenewMs: 50 });
+	assert.equal(stopped, "signal", "it did not exit for lack of a project");
+	assert.deepEqual(cb.testResults, [{ binding_secret: BINDING_SECRET, config_revision: 7, result: "active" }]);
+	assert.ok(!cb.requests.some((r) => r.path.endsWith("/hello")));
+});

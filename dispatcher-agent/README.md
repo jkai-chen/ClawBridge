@@ -40,7 +40,10 @@ come in later steps (see "Status").
 
    A provider `401`/`403` stops all case polling. The agent then reports `provider_auth` to `agent/status` every
    5 minutes until it is shut down.
-6. **Renews** its project tokens with the binding secret, and never fetches the key again.
+6. **Renews** its project tokens with the binding secret, and never fetches the key again. The projects it serves
+   follow each renewal, which lists the owner's enabled projects. A newly enabled one gets a loop (renewal is at most
+   5 minutes apart), and a disabled one loses its loop. With none yet, as right after an owner's setup test, it stays
+   up and renews every minute.
 
 ## What it never does
 

@@ -28,6 +28,10 @@ export interface AgentOptions {
 	marginMs?: number;
 	/** The shortest wait between renewals (tests shorten it). */
 	renewFloorMs?: number;
+	/** The longest wait between renewals, which is how soon a newly enabled project is picked up (5 min). */
+	renewMaxMs?: number;
+	/** With no project to serve yet, how often to renew to find one (1 min). */
+	idleRenewMs?: number;
 	/** While stopped on provider_auth, how often to repeat that status (d4.1: at most every 5 min). */
 	statusEveryMs?: number;
 	setupTestTimeoutMs?: number;
@@ -91,11 +95,7 @@ export async function runAgent(o: AgentOptions): Promise<{ stopped: string }> {
 	await postStatus("ok");
 
 	const tokens = new Map<string, string>();
-	const setTokens = (list: ProjectTokens) => {
-		for (const p of list) tokens.set(p.project_id, p.token);
-	};
-	setTokens(config.projects);
-	let expiries = config.projects.map((p) => Date.parse(p.expires_at));
+	let expiries: number[] = [];
 
 	const stop = new AbortController();
 	const signal = AbortSignal.any([o.signal, stop.signal]);
@@ -108,9 +108,14 @@ export async function runAgent(o: AgentOptions): Promise<{ stopped: string }> {
 	const renewLoop = async () => {
 		let failures = 0;
 		while (!signal.aborted) {
-			// Renew at half the remaining life of the soonest token (1 h tokens: about every 30 min).
+			// Renew at half the remaining life of the soonest token, but at least every renewMaxMs, so a project
+			// enabled meanwhile is picked up; with nothing to serve yet, every idleRenewMs.
 			const soonest = Math.min(...expiries, Date.now() + 3_600_000);
-			const wait = failures > 0 ? Math.min(60_000 * failures, 300_000) : Math.max(o.renewFloorMs ?? 10_000, (soonest - Date.now()) / 2);
+			const ceiling = loops.size === 0 ? (o.idleRenewMs ?? 60_000) : (o.renewMaxMs ?? 300_000);
+			const wait =
+				failures > 0
+					? Math.min(60_000 * failures, 300_000)
+					: Math.max(o.renewFloorMs ?? 10_000, Math.min(ceiling, (soonest - Date.now()) / 2));
 			await sleep(wait, signal);
 			if (signal.aborted) return;
 			const r = await o.client.call("POST", "/v1/dispatcher-model/agent/renew", o.credential, AgentRenewResponse, {
@@ -118,8 +123,7 @@ export async function runAgent(o: AgentOptions): Promise<{ stopped: string }> {
 			});
 			if (r.ok) {
 				failures = 0;
-				setTokens(r.body.projects);
-				expiries = r.body.projects.map((p) => Date.parse(p.expires_at));
+				sync(r.body.projects);
 				o.logger.log("renewed", { projects: r.body.projects.length });
 			} else {
 				failures++;
@@ -129,7 +133,7 @@ export async function runAgent(o: AgentOptions): Promise<{ stopped: string }> {
 		}
 	};
 
-	const projectLoop = async (projectId: string) => {
+	const projectLoop = async (projectId: string, signal: AbortSignal) => {
 		const token = () => tokens.get(projectId) ?? "";
 		const log = (event: string, fields: Parameters<Logger["log"]>[1] = {}) =>
 			o.logger.log(event, { project_id: projectId, ...fields });
@@ -192,15 +196,52 @@ export async function runAgent(o: AgentOptions): Promise<{ stopped: string }> {
 		}
 	};
 
+	// The projects to serve follow the server: each renew lists the owner's enabled projects, so a project enabled
+	// after start gets a loop and a disabled one loses it. With none yet (an owner who has only just passed the
+	// setup test), the agent stays up and keeps renewing.
+	const loops = new Map<string, { stop: AbortController; done: Promise<void> }>();
+	// Loops that ended on their own (a provider mismatch): not restarted for this config.
+	const finished = new Set<string>();
+	function sync(list: ProjectTokens) {
+		const listed = new Set(list.map((p) => p.project_id));
+		for (const [projectId, loop] of loops) {
+			if (!listed.has(projectId)) {
+				loop.stop.abort();
+				loops.delete(projectId);
+				tokens.delete(projectId);
+				o.logger.log("project_dropped", { project_id: projectId });
+			}
+		}
+		for (const p of list) {
+			tokens.set(p.project_id, p.token);
+			if (!loops.has(p.project_id) && !finished.has(p.project_id)) startLoop(p.project_id);
+		}
+		expiries = list.map((p) => Date.parse(p.expires_at));
+	}
+	function startLoop(projectId: string) {
+		const own = new AbortController();
+		const loopSignal = AbortSignal.any([signal, own.signal]);
+		const done = projectLoop(projectId, loopSignal)
+			.catch(() => o.logger.log("project_loop_failed", { project_id: projectId }))
+			.then(() => {
+				if (loopSignal.aborted) return;
+				finished.add(projectId);
+				loops.delete(projectId);
+				// Every project it served ended without a shutdown: nothing left to serve (e.g. all mismatched).
+				if (loops.size === 0) stopAll("no_projects");
+			});
+		loops.set(projectId, { stop: own, done });
+	}
+	sync(config.projects);
+	if (config.projects.length === 0) o.logger.log("no_projects_yet");
+
 	const renewing = renewLoop();
-	await Promise.all(
-		config.projects.map((p) =>
-			projectLoop(p.project_id).catch(() => o.logger.log("project_loop_failed", { project_id: p.project_id })),
-		),
-	);
-	// Every project loop ended without a shutdown: nothing left to serve (e.g. all mismatched).
-	if (stopped === "signal" && !o.signal.aborted) stopped = "no_projects";
+	await new Promise<void>((resolve) => {
+		if (signal.aborted) return resolve();
+		signal.addEventListener("abort", () => resolve(), { once: true });
+	});
 	stop.abort();
+	await Promise.all([...loops.values()].map((l) => l.done));
 	await renewing;
 	if (stopped === "provider_auth") {
 		// Polling has stopped; doctor still needs to see why (d4.1): now, then every 5 min until shut down.

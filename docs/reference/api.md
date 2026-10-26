@@ -465,6 +465,43 @@ AWS CLI, or whose role cannot read its parameter, gets an error saying so.
 With `--account`, the profile's account is checked before the value is asked
 for.
 
+## Context reading
+
+`clawbridge context show [--session NAME | --agent claude-code|codex --transcript PATH] [--json]`
+reads how much context a coding-agent session is using, from the agent's own
+local transcript. It needs no configuration and calls no server. This is the
+first step of context watching: binding, reporting and notices come in later
+releases.
+
+- **Which transcript:**
+  - with `--session` (default `CLAWBRIDGE_SESSION`), the one in that session's
+    binding record, `<state home>/context/<session>.json`. That record is private
+    (0600, owned by the user, not a link), and a session without one shows
+    "not bound";
+  - with `--agent` and `--transcript`, the one named.
+- **What is read:** a regular file owned by the user, never through a link, and
+  only its last 4 MiB. A line over 1 MiB is skipped.
+- **What comes out:** counts and times only, never content:
+  - `tokens`, the context in use at the last model call. For Claude Code it is
+    the last main-thread assistant line's input, cache-read and cache-creation
+    tokens; sidechains and synthetic lines don't count. For Codex it is the last
+    `token_count`'s `last_token_usage.input_tokens`. It is 0, with an empty
+    `usage_at`, when unknown: before the first call, and after a compaction
+    until the next call, since the usage before it no longer applies;
+  - `window`, when the transcript states it (Codex);
+  - `compactions` and `last_compaction_at`, within the part read, with
+    `partial` true when only the tail was read: the session then had at least
+    that many compactions;
+  - `usage_at` and `written_at`.
+- **Unknown formats:** a transcript the reader doesn't recognise, or whose
+  usage isn't in a known form, reads as `status: unsupported` with a fixed
+  `reason`, never as a guess.
+
+`clawbridge doctor` adds a `context` check for the configured session. It
+passes with the counts, or with "not bound". It warns when the bound transcript
+is unreadable or unsupported, or is past a warn or handover level the session
+has cached. It never fails.
+
 ## Skill output
 
 `clawbridge skill install|status|uninstall` needs no configuration and returns

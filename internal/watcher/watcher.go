@@ -152,7 +152,8 @@ func (w *Watcher) service(pid string) *linearboard.Service {
 		Open: func(ctx context.Context, _ *http.Client, readonly bool) (linearboard.Provider, error) {
 			return w.App.Open(ctx, readonly)
 		},
-		Now: w.Now,
+		Now:        w.Now,
+		IssueState: linearboard.GraphQLIssueState(w.App.GraphQL),
 	})
 	svc.KeepProviderOpen(linearboard.WatchProviderTTL)
 	svc.CacheReadBindingProof(linearboard.BindingProofTTL)

@@ -223,3 +223,17 @@ func TestMarkerDueChargesTheStatePart(t *testing.T) {
 		t.Fatal(len(due), before, after)
 	}
 }
+
+// A state the applier could not resolve to its ID is its own skip reason.
+func TestStateSettleRecordsAnUnresolvedState(t *testing.T) {
+	w := newWatchHarness(t)
+	w.setStatusPolicy(0, sfPolicy(true))
+	w.assign("b", sfIssueNext)
+	id := w.assignmentID("b")
+	w.markersDue()
+	w.markerGo("c", id, "claim", "state")
+	w.markerSettle("c", id, "claim", "state", map[string]any{"outcome": "skipped", "skip_reason": "state_unresolved"})
+	if s, reason, _ := w.stateRow(id, "claim"); s != "skipped" || reason != "state_unresolved" {
+		t.Fatal(s, reason)
+	}
+}

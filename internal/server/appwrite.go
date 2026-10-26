@@ -82,6 +82,7 @@ func (w *AppWriter) service(ctx context.Context, identity bus.Identity) (*linear
 		Open: func(ctx context.Context, _ *http.Client, readonly bool) (linearboard.Provider, error) {
 			return w.App.Provider(ctx, readonly)
 		},
+		IssueState: linearboard.GraphQLIssueState(w.App.GraphQL),
 	}), id, nil
 }
 

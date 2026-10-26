@@ -123,6 +123,25 @@ type providerV2 struct {
 	writeErr         error
 	// statuses, when set, are the workflow states Statuses answers.
 	statuses []linearprovider.Status
+	// stateByName answers an issue's state as Linear's MCP get_issue does:
+	// by its name, without the ID.
+	stateByName bool
+	// landed, when set, is the state an update's answer reports, whatever
+	// was asked.
+	landed string
+}
+
+func (p *providerV2) named(i linearprovider.IssueV2) linearprovider.IssueV2 {
+	if !p.stateByName || i.StateID == "" {
+		return i
+	}
+	for _, s := range p.statuses {
+		if s.ID == i.StateID {
+			i.State = s.Name
+		}
+	}
+	i.StateID = ""
+	return i
 }
 
 func (p *providerV2) Statuses(ctx context.Context, team string) ([]linearprovider.Status, error) {
@@ -148,12 +167,12 @@ func (p *providerV2) IssueV2(_ context.Context, id string) (linearprovider.Issue
 		// Like native get_issue, also resolve a display identifier.
 		for _, candidate := range p.issues {
 			if candidate.Identifier != "" && candidate.Identifier == id {
-				return candidate, nil
+				return p.named(candidate), nil
 			}
 		}
 		return i, errors.New("inaccessible issue")
 	}
-	return i, nil
+	return p.named(i), nil
 }
 func (p *providerV2) IssuesV2(_ context.Context, q linearprovider.IssueQueryV2) (linearprovider.Page[linearprovider.IssueV2], error) {
 	p.queries = append(p.queries, q)
@@ -232,6 +251,9 @@ func (p *providerV2) UpdateV2(_ context.Context, in linearprovider.UpdateInputV2
 	}
 	if in.StateID != nil {
 		i.StateID = *in.StateID
+		if p.landed != "" {
+			i.StateID = p.landed
+		}
 	}
 	if in.Parent.Present {
 		// Native Linear reports the parent by its display identifier.
@@ -247,7 +269,7 @@ func (p *providerV2) UpdateV2(_ context.Context, in linearprovider.UpdateInputV2
 	if p.after != nil {
 		p.after()
 	}
-	return i, p.writeErr
+	return p.named(i), p.writeErr
 }
 func (p *providerV2) Relation(_ context.Context, in linearprovider.RelationInput) (linearprovider.RelationReceipt, error) {
 	p.edges = append(p.edges, in)

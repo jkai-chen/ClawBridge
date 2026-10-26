@@ -35,8 +35,10 @@ const (
 
 // MarkerRowCalls is what one marker row is charged up front for a binding
 // of teams and projects: markerDueCalls, plus the row's write proof of the
-// binding, one read per bound team and per bound project (writes prove the
-// binding afresh, once per row). A live state part adds MarkerStateCalls.
+// binding (writes prove it afresh, once per row). That proof reads each
+// team and lists its projects, or, where Linear offers no project list,
+// reads each project: teams + projects is its upper bound. A live state
+// part adds MarkerStateCalls.
 func MarkerRowCalls(teams, projects int) int { return markerDueCalls + teams + projects }
 
 // markerReasons are the only words a close note says about why.

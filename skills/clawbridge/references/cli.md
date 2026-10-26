@@ -68,6 +68,10 @@ Release with `--outcome done` only when the work is finished. A project status
 policy may then move the issue on, for example to In Review. Never move an issue
 to Done yourself unless the review is complete.
 
+A coordinator session may receive `project-health` messages: the server's daily
+judgement of a bound Linear project, from Linear facts. They report, never
+instruct. `clawbridge linear health show` lists the latest run of each project.
+
 The project owner designates the confirming session with
 `clawbridge --session OWNER_SESSION --instance INSTANCE project coordinator-set coord`.
 

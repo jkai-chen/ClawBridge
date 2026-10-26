@@ -50,6 +50,25 @@ test("the agent refuses to start with a provider key in env, and never prints it
 	assert.ok(!(r.stdout + r.stderr).includes(decoy.slice(0, 8)));
 });
 
+test("Node's TLS, CA and preload variables are refused too", () => {
+	for (const [name, value] of [
+		["NODE_TLS_REJECT_UNAUTHORIZED", "0"],
+		["NODE_EXTRA_CA_CERTS", "/tmp/evil-ca.pem"],
+		["NODE_OPTIONS", "--import=/tmp/evil.mjs"],
+	]) {
+		assert.deepEqual(forbiddenEnv({ [name as string]: value }), [name]);
+		const r = spawnSync(process.execPath, [join(root, "src/main.ts")], {
+			// NODE_OPTIONS is set to a harmless flag here, so the child still starts and the guard is what refuses it.
+			env: { PATH: process.env.PATH, CLAWBRIDGE_SERVER_URL: "https://cb.example", [name as string]: name === "NODE_OPTIONS" ? "--no-warnings" : value },
+			input: "",
+			encoding: "utf8",
+			timeout: 20_000,
+		});
+		assert.equal(r.status, 2, name);
+		assert.match(r.stderr, new RegExp(`refusing to start: .*${name}`));
+	}
+});
+
 test("the agent refuses a plain-http server URL other than localhost [A8]", () => {
 	const r = spawnSync(process.execPath, [join(root, "src/main.ts")], {
 		env: { PATH: process.env.PATH, CLAWBRIDGE_SERVER_URL: "http://cb.example" },

@@ -1,6 +1,7 @@
 // pi-ai falls back to environment variables for provider keys, ambient cloud credentials, endpoints and proxies.
 // The agent's key, endpoint and egress come only from the server's config (agent/config), so it refuses to start
-// while any variable pi-ai would read is set: a stray OPENAI_API_KEY must never be what a request sends.
+// while any variable pi-ai would read is set: a stray OPENAI_API_KEY must never be what a request sends. It also
+// refuses Node's own TLS, CA and preload variables, which would weaken every connection it makes.
 // test/env-guard.test.ts fails when the pinned pi-ai reads a variable missing from this list.
 export const PI_ENV_VARS: readonly string[] = [
 	// env-api-keys.ts: provider keys
@@ -25,6 +26,8 @@ export const PI_ENV_VARS: readonly string[] = [
 	"PI_CACHE_RETENTION",
 	// proxies: egress goes through the proxy the launcher configures, never an ambient one (either case)
 	"HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "NO_PROXY", "http_proxy", "https_proxy", "all_proxy", "no_proxy",
+	// Node itself: these would turn off TLS checks, trust another CA, or load code before the agent starts
+	"NODE_TLS_REJECT_UNAUTHORIZED", "NODE_EXTRA_CA_CERTS", "NODE_OPTIONS",
 ];
 
 /** The names of the forbidden variables that are set (non-empty), sorted. Values are never read out. */

@@ -155,6 +155,12 @@ func TestPostgresPurgeDropsExpiredCommentWatchState(t *testing.T) {
 		{`INSERT INTO watch_cursors(project_id,source,subject,cursor_time,watch_started_at,next_poll_at,active_until,updated_at) VALUES($1,'comments',$2,$3,$3,$3,$4,$3)`, []any{pid, otherIssue, day(-1), day(1)}},
 		{`INSERT INTO watch_cursors(project_id,source,subject,cursor_time,watch_started_at,next_poll_at,updated_at) VALUES($1,'comments',$2,$3,$3,$3,$3)`, []any{pid, "00000000-0000-4000-8000-0000000000a3", day(-90)}},
 		{`INSERT INTO linear_comment_ledger(workspace_id,project_id,operation_digest,issue_uuid,body_sha256,session_id,principal,state,reserved_at,settled_at) VALUES($1,$2,$3,$4,$5,'s','p','failed',$6,$6)`, []any{wid, pid, digestOf("old-failed"), watchIssue, bodyDigest, day(-40)}},
+		// Document watch: an old seen record and an old read-back go; a
+		// recent seen record and the workspace cursor, however old, stay.
+		{`INSERT INTO watch_cursors(project_id,source,subject,cursor_time,watch_started_at,next_poll_at,updated_at) VALUES($1,'doc',$2,$3,$3,$3,$3)`, []any{pid, "d0c00000-0000-4000-8000-0000000000d1", day(-40)}},
+		{`INSERT INTO watch_cursors(project_id,source,subject,cursor_time,watch_started_at,next_poll_at,updated_at) VALUES($1,'doc',$2,$3,$3,$3,$3)`, []any{pid, "d0c00000-0000-4000-8000-0000000000d2", day(-2)}},
+		{`INSERT INTO watch_cursors(project_id,source,subject,cursor_time,watch_started_at,next_poll_at,updated_at) VALUES($1,'doc-verify',$2,$3,$3,$3,$3)`, []any{pid, "d0c00000-0000-4000-8000-0000000000d3", day(-40)}},
+		{`INSERT INTO watch_cursors(project_id,source,subject,cursor_time,watch_started_at,next_poll_at,updated_at) VALUES($1,'doc-workspace','',$2,$2,$2,$2)`, []any{pid, day(-90)}},
 		{`INSERT INTO linear_comment_ledger(workspace_id,project_id,operation_digest,issue_uuid,comment_id,body_sha256,session_id,principal,state,reserved_at,settled_at) VALUES($1,$2,$3,$4,$5,$6,'s','p','posted',$7,$7)`, []any{wid, pid, digestOf("old-posted"), watchIssue, ourComment, bodyDigest, day(-40)}},
 	} {
 		if _, err := f.s.db.ExecContext(ctx, q.sql, q.args...); err != nil {
@@ -162,13 +168,13 @@ func TestPostgresPurgeDropsExpiredCommentWatchState(t *testing.T) {
 		}
 	}
 	out := f.must(f.owner, "sub-owner", Request{Operation: "purge_expired", Workspace: f.workspace, Project: "p", Args: map[string]any{}}).Data.(map[string]any)
-	for k, want := range map[string]int64{"deleted_watch_events": 1, "deleted_watch_cursors": 1, "deleted_failed_reservations": 1} {
+	for k, want := range map[string]int64{"deleted_watch_events": 1, "deleted_watch_cursors": 1, "deleted_failed_reservations": 1, "deleted_doc_seen": 1, "deleted_doc_verify": 1} {
 		if out[k] != want {
 			t.Fatalf("%s = %v, want %d: %v", k, out[k], want, out)
 		}
 	}
 	var events, cursors, posted int
-	if err := f.s.db.QueryRowContext(ctx, `SELECT (SELECT COUNT(*) FROM watch_events WHERE project_id=$1),(SELECT COUNT(*) FROM watch_cursors WHERE project_id=$1),(SELECT COUNT(*) FROM linear_comment_ledger WHERE project_id=$1 AND state='posted')`, pid).Scan(&events, &cursors, &posted); err != nil || events != 1 || cursors != 2 || posted != 1 {
+	if err := f.s.db.QueryRowContext(ctx, `SELECT (SELECT COUNT(*) FROM watch_events WHERE project_id=$1),(SELECT COUNT(*) FROM watch_cursors WHERE project_id=$1),(SELECT COUNT(*) FROM linear_comment_ledger WHERE project_id=$1 AND state='posted')`, pid).Scan(&events, &cursors, &posted); err != nil || events != 1 || cursors != 4 || posted != 1 {
 		t.Fatal("purge removed live state:", events, cursors, posted, err)
 	}
 }

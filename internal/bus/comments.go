@@ -997,7 +997,10 @@ func (c commentCall) notify(ctx context.Context, issue, cursor string, fresh []r
 // purgeCommentWatch drops a project's comment-watch state past retention,
 // never sooner than 30 days: notified-comment records, watches that can no
 // longer resume, and failed reservations. Posted reservations stay; they are
-// how a read tells ClawBridge's own comments from a human's.
+// how a read tells ClawBridge's own comments from a human's. The document
+// watch's per-document records go too: a document not seen changing for that
+// long is told again only if it is listed again at the same time, and a
+// read-back still failing after it is given up. The workspace cursor stays.
 func (s *Store) purgeCommentWatch(ctx context.Context, tx *transaction, wid, pid string) (map[string]int64, error) {
 	nowRaw, err := dbStamp(ctx, tx)
 	if err != nil {
@@ -1013,6 +1016,8 @@ func (s *Store) purgeCommentWatch(ctx context.Context, tx *transaction, wid, pid
 		{"deleted_watch_events", `DELETE FROM watch_events WHERE project_id=? AND created_at<?`, horizon},
 		{"deleted_watch_cursors", `DELETE FROM watch_cursors WHERE project_id=? AND active_until IS NOT NULL AND active_until<?`, nowRaw},
 		{"deleted_failed_reservations", `DELETE FROM linear_comment_ledger WHERE project_id=? AND state='failed' AND settled_at<?`, horizon},
+		{"deleted_doc_seen", `DELETE FROM watch_cursors WHERE project_id=? AND source='doc' AND updated_at<?`, horizon},
+		{"deleted_doc_verify", `DELETE FROM watch_cursors WHERE project_id=? AND source='doc-verify' AND updated_at<?`, horizon},
 	} {
 		res, err := tx.ExecContext(ctx, d.sql, pid, d.before)
 		if err != nil {

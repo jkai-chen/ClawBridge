@@ -970,6 +970,9 @@ tells the project when a Linear document in its scope changes.
 - **History is never replayed.** The first poll only starts the cursor. A list
   with more changes than one page leaves the cursor and tells nothing twice.
   Everything outside the project's scope is dropped without being stored.
+- **Retention.** The per-document records that keep a change from being told
+  twice, and read-backs still failing, are dropped with the comment watch's
+  state, after the workspace's retention (at least 30 days).
 
 ### Publishing from git
 

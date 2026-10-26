@@ -136,6 +136,27 @@ func (w *Watcher) project(ctx context.Context, pid string, healthLeft int) Proje
 	return tick
 }
 
+// Markers applies one project's due claim markers, and nothing else, under
+// the project's lease and budget like a tick's: a nudge after a confirm or
+// a release (live/STATUS-FLOW-DESIGN.md §8.3). It doesn't count as the
+// project's tick.
+func (w *Watcher) Markers(ctx context.Context, pid string) ProjectTick {
+	tick := ProjectTick{ProjectID: pid}
+	scope := bus.Request{Session: bus.SystemSessionName, Args: map[string]any{}}
+	err := w.service(pid).Watch(ctx, scope, linearboard.WatchOptions{
+		Once:        true,
+		MarkersOnly: true,
+		Cycle: func(c linearboard.WatchCycle) error {
+			tick.Comments = &c
+			return nil
+		},
+	})
+	if err != nil {
+		tick.Error = failureCode(err)
+	}
+	return tick
+}
+
 // service is the project's board Service: the system session's executor,
 // the app's connection, and the server's binding proof cache.
 func (w *Watcher) service(pid string) *linearboard.Service {

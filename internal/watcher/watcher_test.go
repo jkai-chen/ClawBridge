@@ -508,3 +508,30 @@ func TestIntakeTruncatedReadKeepsTheCursor(t *testing.T) {
 		t.Fatalf("complete read: %+v cursor %s→%s", tick.Intake, started, moved)
 	}
 }
+
+// A nudge's pass applies the due claim markers and nothing else: no
+// comment poll, intake, health or document read, and it isn't the
+// project's tick.
+func TestMarkersPassAppliesOnlyMarkers(t *testing.T) {
+	e := setup(t)
+	e.tick()
+	var ticked string
+	e.queryRow(`SELECT last_tick_at FROM watch_ticks`, &ticked)
+	proposed := e.call("assignment_propose", "eng", map[string]any{"issue_uuid": issueA, "issue_identifier": "FIX-3"})
+	e.call("assignment_confirm", "coord", map[string]any{"target_session": "eng", "revision": proposed["assignment"].(map[string]any)["revision"]})
+	// Every comment watch and intake cursor is due: a tick would read them.
+	e.dueNow()
+	e.f.events, e.f.queries = nil, nil
+	pass := e.w.Markers(context.Background(), e.pid)
+	if pass.Error != "" || pass.Comments == nil || len(pass.Comments.Markers) != 1 || e.f.notes == 0 {
+		t.Fatalf("the claim marker was not applied: %+v notes=%d", pass, e.f.notes)
+	}
+	if len(e.f.events) != 0 || len(e.f.queries) != 0 || pass.Intake != nil || pass.Health != nil || pass.Docs != nil || pass.Comments.Polled != 0 {
+		t.Fatalf("a markers pass read more than markers: events=%v queries=%v %+v", e.f.events, e.f.queries, pass)
+	}
+	var after string
+	e.queryRow(`SELECT last_tick_at FROM watch_ticks`, &after)
+	if after != ticked {
+		t.Fatal("a markers pass counted as the project's tick")
+	}
+}

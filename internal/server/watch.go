@@ -53,6 +53,9 @@ type watcherTicker struct{ w *watcher.Watcher }
 
 func (t watcherTicker) Tick(ctx context.Context) any { return t.w.Tick(ctx) }
 
+// Markers is a nudge's marker pass of one project.
+func (t watcherTicker) Markers(ctx context.Context, pid string) any { return t.w.Markers(ctx, pid) }
+
 // watchSettings is the watcher's environment.
 type watchSettings struct {
 	interval                  time.Duration
@@ -112,6 +115,13 @@ func startWatcher(ctx context.Context, store *bus.Store, w watchSettings, opts H
 	if w.interval > 0 {
 		go runWatchLoop(ctx, ticker, w.interval)
 		log.Printf("watcher: ticking every %s", w.interval)
+		// Nudges ride beside the in-process clock only: with the scheduler's
+		// endpoint alone there is no process to run them.
+		if markers, ok := built.(markerPasser); ok && store != nil {
+			n := newNudger(ticker, markers, store.WatchProjectID)
+			go n.run(ctx)
+			opts.Nudge = n.Nudge
+		}
 	}
 	return opts
 }

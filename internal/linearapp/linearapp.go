@@ -277,6 +277,11 @@ func (a *App) Token(ctx context.Context) (string, Identity, error) {
 		replaces = live.TokenSHA256
 	}
 	if err := a.mint(ctx, replaces); err != nil {
+		// When the only reason to mint was asking for optionalScope again,
+		// the token without it stays in use until a mint succeeds.
+		if found && live.ScopesDigest == deniedDigest() && now.Add(refreshMargin).Before(live.ExpiresAt) && a.adopt(ctx, live) == nil {
+			return a.token, a.identity, nil
+		}
 		return "", Identity{}, err
 	}
 	return a.token, a.identity, nil

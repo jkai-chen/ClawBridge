@@ -29,6 +29,8 @@ type fakeAuthority struct {
 	onAccess   func(int)
 	failAccess int
 	comments   fakeCommentLedger
+	// statusPolicy, when set, is what status_policy_get answers.
+	statusPolicy map[string]any
 }
 
 func (a *fakeAuthority) Execute(_ context.Context, r bus.Request) (bus.Result, error) {
@@ -45,6 +47,9 @@ func (a *fakeAuthority) Execute(_ context.Context, r bus.Request) (bus.Result, e
 	}
 	if strings.HasPrefix(r.Operation, "linear_comment") || strings.HasPrefix(r.Operation, "comment_watch") || strings.HasPrefix(r.Operation, "marker_") {
 		return a.comments.execute(r)
+	}
+	if r.Operation == "status_policy_get" && a.statusPolicy != nil {
+		return bus.Result{Source: "local-authority", Data: a.statusPolicy}, nil
 	}
 	if r.Operation != "taskboard_get" {
 		return bus.Result{}, errors.New("unexpected authority write")

@@ -130,6 +130,9 @@ type Status struct {
 	// Type is the workflow state type (triage, backlog, unstarted,
 	// started, completed or canceled) when Linear reports one, else "".
 	Type string `json:"type,omitempty"`
+	// Raw is Linear's own type, lower-cased, whatever it is: an agent
+	// write is classified by it (GuardType), never sent on.
+	Raw string `json:"-"`
 }
 
 // statusTypes are the workflow state types Linear defines.
@@ -144,6 +147,16 @@ func StatusType(raw string) string {
 		return ""
 	}
 	return kind
+}
+
+// GuardType is a state's type for deciding an agent's write: Linear's
+// duplicate type closes an issue as canceled does, so it is canceled here;
+// any other type is StatusType's.
+func GuardType(raw string) string {
+	if strings.EqualFold(raw, "duplicate") {
+		return "canceled"
+	}
+	return StatusType(raw)
 }
 
 type IssueQuery struct {
@@ -1551,7 +1564,7 @@ func (p *Provider) Statuses(ctx context.Context, team string) ([]Status, error) 
 		if tid != team {
 			return nil, fail("scope_mismatch")
 		}
-		out = append(out, Status{ID: i, Name: str(v, "name"), TeamID: team, Type: StatusType(str(v, "type"))})
+		out = append(out, Status{ID: i, Name: str(v, "name"), TeamID: team, Type: StatusType(str(v, "type")), Raw: strings.ToLower(str(v, "type"))})
 	}
 	return out, nil
 }

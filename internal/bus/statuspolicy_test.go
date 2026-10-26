@@ -81,6 +81,43 @@ func TestStatusPolicyRulesAndRevisions(t *testing.T) {
 	}
 }
 
+// A2: done is a completed state and needs a claim; closes maps canonical
+// project UUIDs to agent or human; the view shows closes; a policy whose
+// teams move to done only still gives a release a state part.
+func TestStatusPolicyDoneAndCloses(t *testing.T) {
+	const project = "3333aaaa-3333-4333-8333-333333333333"
+	with := func(edit func(p, team map[string]any)) map[string]any {
+		p := sfPolicy(true)
+		team := p["teams"].(map[string]any)[sfTeam].(map[string]any)
+		team["done"] = map[string]any{"id": sfDone, "name": "Done", "type": "completed"}
+		p["closes"] = map[string]any{project: "agent"}
+		edit(p, team)
+		return p
+	}
+	for name, p := range map[string]map[string]any{
+		"done started":     with(func(_, t map[string]any) { t["done"] = t["release_done"] }),
+		"done no claim":    with(func(_, t map[string]any) { delete(t, "claim"); delete(t, "release_done") }),
+		"closes bad value": with(func(p, _ map[string]any) { p["closes"] = map[string]any{project: "bot"} }),
+		"closes not uuid":  with(func(p, _ map[string]any) { p["closes"] = map[string]any{"FIX": "agent"} }),
+		"closes upper":     with(func(p, _ map[string]any) { p["closes"] = map[string]any{strings.ToUpper(project): "agent"} }),
+	} {
+		if _, err := ParseStatusPolicy(p); err == nil {
+			t.Fatal(name, "accepted")
+		}
+	}
+	w := newWatchHarness(t)
+	set := w.setStatusPolicy(0, with(func(_, t map[string]any) { delete(t, "release_done") }))
+	if set["closes"].(map[string]string)[project] != "agent" {
+		t.Fatal(set)
+	}
+	w.assign("b", sfIssueNext)
+	id := w.assignmentID("b")
+	w.call("assignment_release", "b", map[string]any{"revision": w.live("b")["revision"], "outcome": "done"})
+	if s, _, _ := w.stateRow(id, "close"); s != "pending" {
+		t.Fatal("a done-only policy gave the release no state part:", s)
+	}
+}
+
 // The claim row freezes the policy revision; the state part is handed out
 // only while the policy is enabled at that revision (SF-M1).
 func TestStateMoveFreezesThePolicyRevision(t *testing.T) {

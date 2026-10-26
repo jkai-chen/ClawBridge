@@ -794,8 +794,9 @@ clawbridge linear status-policy set --file status.json --expected-revision N --p
 ```
 
 `status.json` names states, for example
-`{"enabled": true, "create": "Todo", "claim": "In Progress", "release_done": "In Review"}`.
-Each field is optional except `enabled`.
+`{"enabled": true, "create": "Todo", "claim": "In Progress", "release_done": "In Review", "done": "Done", "closes": {"<Linear project UUID>": "agent"}}`.
+Each field is optional except `enabled`. `done` and `closes` say who closes an
+issue: see [who closes an issue](#who-closes-an-issue).
 
 - **Setting it** reads each bound team's workflow and resolves every name
   exactly. A name missing, or not unique, in any bound team refuses the policy,
@@ -815,8 +816,11 @@ Each field is optional except `enabled`.
 - **Rules, checked when it is set:**
   - `create` is a backlog or unstarted state;
   - `claim` and `release_done` are started states, and differ;
-  - nothing is ever moved to a completed or canceled state. Done stays a
-    person's decision after review.
+  - `done` is a completed state and needs a `claim`. A team without a state of
+    that name has no `done`: its done-releases stop at `release_done`, and the
+    answer to `set` names each such team when any project is closed by agents;
+  - `closes` names projects of this board's binding, each `agent` or `human`;
+  - nothing is ever moved to a canceled state.
 - **Create:** an agent's create without `--state` lands in `create` for its
   team, whichever route it takes. An explicit `--state` is kept.
 - **Claim:** a confirmed claim moves the issue to `claim`, only from a backlog
@@ -846,6 +850,54 @@ Each field is optional except `enabled`.
   the claim or release happened. A changed policy skips it.
 - **Cost:** each move costs about three Linear calls: a read, the write, and a
   readback.
+
+### Who closes an issue
+
+Each bound Linear project is closed by people (`human`, the default for every
+project the policy doesn't name) or by agents (`agent`, listed in `closes`).
+"An agent" is any write made through a session (the MCP tools, or the CLI with
+`--session`) and all of ClawBridge's own automation. A person's CLI write
+without a session is never refused here.
+
+| | A project agents close | A project people close (default) |
+| --- | --- | --- |
+| A release with `--outcome done` | moves on to the team's `done` | stops at `release_done`, as before |
+| An agent's `--state` to a completed state | allowed, if every project the write touches is closed by agents | refused before anything is sent, naming the project |
+| An agent's `--state` to a canceled or duplicate state | refused | refused |
+| An agent moving an issue under way into a project agents close | (n/a) | refused before anything is sent, naming the project |
+
+- **When it applies.** The completed-state and project-move rules apply only
+  when the project's status policy exists and has `"enabled": true`. With no
+  policy, or `"enabled": false`, agents may set completed states and move issues
+  between projects as before: close protection requires a status policy.
+- **Canceled is the exception.** From v0.3.3, agents and automation never set a
+  canceled state, or Linear's Duplicate state, which closes an issue the same
+  way, wherever ClawBridge can tell the state's type, with a policy or without.
+  On a hosted server it always can (the ClawBridge Linear app reads it), so on
+  a hosted server agents can't cancel any issue. The one gap: a local setup
+  whose Linear status list doesn't report types, with no enabled policy, can't
+  tell, and lets the write through. A person cancels issues as before.
+- **Both projects count.** An agent's update that sets a completed state needs
+  both the issue's current project and its destination to be closed by agents.
+  An issue in no project is a person's to close.
+- **No hopping.** An agent may not move an issue that is started (or later)
+  out of a project people close into one agents close. Moving an issue that
+  hasn't started yet is unaffected.
+- **Done only forward.** A done-release reaches `done` only from exactly the
+  `claim` state, or from where the claim would have moved it when the release
+  overtook its claim under an unchanged policy. It never moves an issue from
+  `release_done`, or from any other state a person chose.
+- **Knowing a state's type.** In order: Linear's status list (its own type,
+  so Duplicate counts as canceled), the policy's stored workflow, then on a
+  hosted server the ClawBridge Linear app's read, kept per team for 60 seconds.
+  A state the kept read doesn't list is read once more, so a new state is never
+  refused for being new. Under an enabled policy a state whose type nothing can
+  tell is refused: set the policy again.
+- **What this is not.** It governs cooperative agents and ClawBridge's
+  automation. An agent running the `clawbridge` CLI without `--session` from a
+  plain shell counts as a person. It is not a defence against a hostile
+  process on someone's own machine; the runner's sandbox, which denies agents
+  the CLI, is that boundary.
 
 ## Project health (project owner only)
 

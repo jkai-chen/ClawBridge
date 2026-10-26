@@ -27,23 +27,35 @@ ALTER TABLE assignment_markers ADD COLUMN outcome TEXT NOT NULL DEFAULT '' CHECK
 const (
 	maxStatusTeams    = 20
 	maxStatusWorkflow = 200
+	maxStatusCloses   = 50
 )
 
 // StatusPolicy is a project's status policy, resolved per bound team when
 // it is set: each target's state ID, name and type, and the team's whole
 // workflow as state ID → type, so a state added later is unknown and moves
-// nothing.
+// nothing. Closes says who closes each bound Linear project's issues
+// (A2): agent, or human, the default for every project not listed.
 type StatusPolicy struct {
 	Enabled         bool                  `json:"enabled"`
 	ClaimFromTriage bool                  `json:"claim_from_triage"`
 	Teams           map[string]StatusTeam `json:"teams"`
+	Closes          map[string]string     `json:"closes,omitempty"`
 }
 
-// StatusTeam is one team's targets and workflow snapshot.
+// AgentCloses reports whether agents close the issues of a Linear project:
+// only one the policy names agent. An issue in no project is a person's to
+// close.
+func (p StatusPolicy) AgentCloses(project string) bool {
+	return project != "" && p.Closes[project] == "agent"
+}
+
+// StatusTeam is one team's targets and workflow snapshot. Done is the
+// completed state a done-release moves to in a project agents close.
 type StatusTeam struct {
 	Create      *StatusState      `json:"create,omitempty"`
 	Claim       *StatusState      `json:"claim,omitempty"`
 	ReleaseDone *StatusState      `json:"release_done,omitempty"`
+	Done        *StatusState      `json:"done,omitempty"`
 	Workflow    map[string]string `json:"workflow"`
 }
 
@@ -60,8 +72,9 @@ var lowerUUIDPattern = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-
 
 // ParseStatusPolicy decodes a policy strictly and checks its rules: create
 // is a backlog or unstarted state, claim and release_done are started
-// states, nothing is ever completed or canceled, and release_done needs a
-// claim, since it moves only from exactly the claim state.
+// states, done alone is a completed state, nothing is ever canceled, and
+// release_done and done need a claim, since a release moves only from the
+// claim state. Closes names canonical project UUIDs, agent or human.
 func ParseStatusPolicy(v any) (StatusPolicy, error) {
 	raw, err := json.Marshal(v)
 	if err != nil || len(raw) > 256<<10 {
@@ -71,7 +84,7 @@ func ParseStatusPolicy(v any) (StatusPolicy, error) {
 	dec := json.NewDecoder(bytes.NewReader(raw))
 	dec.DisallowUnknownFields()
 	if dec.Decode(&p) != nil || dec.Decode(new(any)) != io.EOF {
-		return StatusPolicy{}, invalid("status policy must be {\"enabled\", \"claim_from_triage\", \"teams\": {team: {create, claim, release_done, workflow}}}")
+		return StatusPolicy{}, invalid("status policy must be {\"enabled\", \"claim_from_triage\", \"teams\": {team: {create, claim, release_done, done, workflow}}, \"closes\": {project: agent|human}}")
 	}
 	if p.Teams == nil {
 		p.Teams = map[string]StatusTeam{}
@@ -95,7 +108,7 @@ func ParseStatusPolicy(v any) (StatusPolicy, error) {
 			field string
 			state *StatusState
 			types []string
-		}{{"create", t.Create, []string{"backlog", "unstarted"}}, {"claim", t.Claim, []string{"started"}}, {"release_done", t.ReleaseDone, []string{"started"}}} {
+		}{{"create", t.Create, []string{"backlog", "unstarted"}}, {"claim", t.Claim, []string{"started"}}, {"release_done", t.ReleaseDone, []string{"started"}}, {"done", t.Done, []string{"completed"}}} {
 			if target.state == nil {
 				continue
 			}
@@ -107,11 +120,22 @@ func ParseStatusPolicy(v any) (StatusPolicy, error) {
 				return StatusPolicy{}, invalid(err.Error())
 			}
 			if !containsString(target.types, s.Type) {
-				return StatusPolicy{}, invalid(fmt.Sprintf("%s must be a %v state, never completed or canceled", target.field, target.types))
+				return StatusPolicy{}, invalid(fmt.Sprintf("%s must be a %v state, never canceled", target.field, target.types))
 			}
 		}
 		if t.ReleaseDone != nil && (t.Claim == nil || t.Claim.ID == t.ReleaseDone.ID) {
 			return StatusPolicy{}, invalid("release_done moves only from the claim state: set a different claim state too")
+		}
+		if t.Done != nil && t.Claim == nil {
+			return StatusPolicy{}, invalid("done moves only from the claim state: set a claim state too")
+		}
+	}
+	if len(p.Closes) > maxStatusCloses {
+		return StatusPolicy{}, invalid(fmt.Sprintf("closes names at most %d projects", maxStatusCloses))
+	}
+	for project, who := range p.Closes {
+		if !lowerUUIDPattern.MatchString(project) || (who != "agent" && who != "human") {
+			return StatusPolicy{}, invalid("closes maps canonical project UUIDs to agent or human")
 		}
 	}
 	return p, nil
@@ -202,6 +226,9 @@ func statusPolicyView(ctx context.Context, tx *transaction, pid string) (map[str
 		return nil, err
 	}
 	out := map[string]any{"revision": revision, "enabled": policy.Enabled, "claim_from_triage": policy.ClaimFromTriage, "teams": policy.Teams, "updated_at": nil, "updated_by": nil}
+	if len(policy.Closes) > 0 {
+		out["closes"] = policy.Closes
+	}
 	if revision > 0 {
 		row, err := one(ctx, tx, `SELECT updated_at,updated_by_principal FROM linear_status_policy WHERE project_id=?`, pid)
 		if err != nil {
@@ -213,13 +240,13 @@ func statusPolicyView(ctx context.Context, tx *transaction, pid string) (map[str
 }
 
 // statusMoves reports whether an enabled policy has a target of the given
-// kind (claim or release_done) for any team.
+// kind (claim, or release_done: its release_done or done) for any team.
 func (p StatusPolicy) statusMoves(kind string) bool {
 	if !p.Enabled {
 		return false
 	}
 	for _, t := range p.Teams {
-		if kind == "claim" && t.Claim != nil || kind == "release_done" && t.ReleaseDone != nil {
+		if kind == "claim" && t.Claim != nil || kind == "release_done" && (t.ReleaseDone != nil || t.Done != nil) {
 			return true
 		}
 	}

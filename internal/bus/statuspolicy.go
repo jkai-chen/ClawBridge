@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"regexp"
+	"strings"
 )
 
 // Schema 14: the project owner's status policy, which moves an agent's
@@ -154,7 +155,7 @@ func (s *Store) statusPolicyOp(ctx context.Context, tx *transaction, w, p map[st
 	if actor != nil && actor["status"] != "active" {
 		return nil, errors.New("session is retired or moved; it cannot perform this operation")
 	}
-	_, current, err := readStatusPolicy(ctx, tx, pid)
+	stored, current, err := readStatusPolicy(ctx, tx, pid)
 	if err != nil {
 		return nil, err
 	}
@@ -171,7 +172,17 @@ func (s *Store) statusPolicyOp(ctx context.Context, tx *transaction, w, p map[st
 	}
 	via := str(r.Args, "via")
 	if via != "" && !closesVia[via] {
-		return nil, invalid("via is cli, cli-tty or tui")
+		return nil, invalid("via is cli or cli-tty")
+	}
+	// R89-H1: who closes is never a session's to change, even the owner's
+	// own session's: an agent could grant itself the right to close.
+	if actor != nil && !closesEqual(stored, policy) {
+		return nil, errors.New("a session can never change who closes issues; the project owner runs status-policy set without --session")
+	}
+	// R89-M1: letting agents close a project is confirmed at a terminal,
+	// whichever command writes it.
+	if loosened := closesLoosened(stored, policy); len(loosened) > 0 && via != "cli-tty" {
+		return nil, invalid("letting agents close issues is confirmed at a terminal, by typing each project's name (" + strings.Join(loosened, ", ") + ")")
 	}
 	encoded, _ := json.Marshal(policy)
 	now, err := dbStamp(ctx, tx)

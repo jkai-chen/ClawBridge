@@ -323,7 +323,7 @@ func (s *Service) LinkV2(ctx context.Context, scope bus.Request, in LinkInputV2)
 		if in.Closes[project] != ClosesAgent {
 			continue
 		}
-		if in.Via != ClosesViaTTY && in.Via != ClosesViaTUI {
+		if in.Via != ClosesViaTTY {
 			return nil, errors.New("letting agents close issues is confirmed at a terminal, by typing the project's name; nothing was changed")
 		}
 		if policy.Revision == 0 && !in.MinimalPolicy {
@@ -331,6 +331,15 @@ func (s *Service) LinkV2(ctx context.Context, scope bus.Request, in LinkInputV2)
 		}
 	}
 	if policy.Revision == 0 && in.MinimalPolicy {
+		// §10.8 L1 (R89-L2): the minimal policy is the owner's to create,
+		// so a lead is told before the binding is written.
+		access, e := s.access(ctx, scope)
+		if e != nil {
+			return nil, e
+		}
+		if access.ProjectRole != "owner" {
+			return nil, errors.New(minimalOwnerOnly + "; nothing was changed")
+		}
 		if e = s.minimalPolicyTyped(ctx, scope, mapping.LinearTeamIDs); e != nil {
 			return nil, e
 		}

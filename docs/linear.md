@@ -927,8 +927,15 @@ the policy still names but the board no longer binds "(not bound)"; the next
   a terminal, with `--session`, or when the environment says an agent runs it
   (`CLAUDECODE`, any `CODEX_*`, `CLAWBRIDGE_SESSION`, `CLAWBRIDGE_INSTANCE`).
   The audit records how it was confirmed (`via`). `--human` asks nothing.
+- **The same for a policy file.** When `status-policy set --file` lets agents
+  close a project they didn't close before, it asks for that project's name in
+  the same way, before anything is sent. The server refuses such a write
+  unless it says it was typed at a terminal (`via: cli-tty`). That is the
+  client's claim: the server can't see the terminal, but a client that skips
+  the check has to claim it, and the audit records the claim.
 - **Never a session.** The server refuses `closes set` from any session,
-  whoever its owner is. The rest of the status policy stays the owner's.
+  whoever its owner is, and refuses a `status-policy set` from a session that
+  changes who closes. The rest of the status policy stays the owner's.
 - **It needs a status policy.** With none, `closes set` is refused; the owner
   creates one with `status-policy set`, or with the minimal policy below.
 
@@ -963,8 +970,10 @@ targets. Only the project owner can create it. From then on:
 **A project that joins unlisted.** When a link adds a Linear project the
 enabled policy doesn't name, the project's coordinator gets one `close-policy`
 notice: its issues are closed by people, and the owner or a lead can change
-that. There's no notice with no policy or a disabled one, nor for a project the
-same link sets with `--closes`.
+that. A project that joins while the policy already says agents close it (a
+rule set while it wasn't bound, such as one kept from before it left) gets one
+notice too, saying so. There's no notice with no policy or a disabled one, nor
+for a project the same link sets with `--closes`.
 
 ## Project health (project owner only)
 

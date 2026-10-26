@@ -68,7 +68,7 @@ func TestClosesSetChangesOneProject(t *testing.T) {
 	policy := sfPolicy(true)
 	policy["claim_from_triage"] = true
 	policy["closes"] = map[string]any{cpThree: "agent"} // not bound
-	h.call("status_policy_set", "", map[string]any{"expected_revision": 0, "status_policy": policy})
+	h.call("status_policy_set", "", map[string]any{"expected_revision": 0, "status_policy": policy, "via": "cli-tty"})
 	before := h.storedPolicy()
 	got, err := h.closesSet(1, cpOne, "agent", "cli-tty")
 	if err != nil || got["revision"] != int64(2) {
@@ -100,12 +100,13 @@ func TestClosesSetChangesOneProject(t *testing.T) {
 		project, closes, via string
 		want                 string
 	}{
-		"stale":           {2, cpTwo, "agent", "tui", "revision"},
-		"unbound":         {3, cpThree, "agent", "tui", "not in this project's board"},
-		"agent untyped":   {3, cpTwo, "agent", "cli", "typing the project's name"},
-		"bad value":       {3, cpTwo, "bot", "tui", "agent or human"},
-		"bad via":         {3, cpTwo, "human", "mcp", "via"},
-		"upper-case uuid": {3, strings.ToUpper(cpTwo), "human", "cli", ""},
+		"stale":            {2, cpTwo, "agent", "cli-tty", "revision"},
+		"unbound":          {3, cpThree, "agent", "cli-tty", "not in this project's board"},
+		"agent untyped":    {3, cpTwo, "agent", "cli", "typing the project's name"},
+		"tui before a TUI": {3, cpTwo, "agent", "tui", "via is cli or cli-tty"},
+		"bad value":        {3, cpTwo, "bot", "cli-tty", "agent or human"},
+		"bad via":          {3, cpTwo, "human", "mcp", "via"},
+		"upper-case uuid":  {3, strings.ToUpper(cpTwo), "human", "cli", ""},
 	} {
 		_, err := h.closesSet(c.rev, c.project, c.closes, c.via)
 		if name == "upper-case uuid" {
@@ -127,7 +128,7 @@ func TestClosesSetRefusesSessionsAndTeamBoards(t *testing.T) {
 	h := newHarness(t)
 	h.link(0, []string{cpOne})
 	h.call("status_policy_set", "", map[string]any{"expected_revision": 0, "status_policy": sfPolicy(true)})
-	if _, err := h.s.Execute(context.Background(), h.request("status_closes_set", "a", map[string]any{"expected_revision": 1, "linear_project": cpOne, "closes": "agent", "via": "tui"})); err == nil || !strings.Contains(err.Error(), "session can never") {
+	if _, err := h.s.Execute(context.Background(), h.request("status_closes_set", "a", map[string]any{"expected_revision": 1, "linear_project": cpOne, "closes": "agent", "via": "cli-tty"})); err == nil || !strings.Contains(err.Error(), "session can never") {
 		t.Fatal("a session set who closes:", err)
 	}
 	h.call("taskboard_set_v2", "", map[string]any{"expected_revision": 1, "mode": "team_board", "linear_team_ids": []string{sfTeam}, "linear_default_team_id": sfTeam, "linear_project_ids": []string{}})
@@ -148,32 +149,34 @@ func TestClosePolicyNoticeForAnUnlistedProject(t *testing.T) {
 	}
 	policy := sfPolicy(false)
 	policy["closes"] = map[string]any{cpTwo: "agent"}
-	h.call("status_policy_set", "", map[string]any{"expected_revision": 0, "status_policy": policy})
+	h.call("status_policy_set", "", map[string]any{"expected_revision": 0, "status_policy": policy, "via": "cli-tty"})
 	h.link(1, []string{cpOne, cpThree})
 	if n := h.closePolicyNotices(); len(n) != 0 {
 		t.Fatal("a notice under a disabled policy:", n)
 	}
 	policy["enabled"] = true
 	h.call("status_policy_set", "", map[string]any{"expected_revision": 1, "status_policy": policy})
-	// cpTwo is listed, cpThree was already bound: nothing to say.
+	// cpThree was already bound: nothing to say. cpTwo joins with an agent
+	// key set while it wasn't bound (R89-L3): said once.
 	h.link(2, []string{cpOne, cpTwo, cpThree})
-	if n := h.closePolicyNotices(); len(n) != 0 {
-		t.Fatal("a notice for a listed or already bound project:", n)
+	n := h.closePolicyNotices()
+	if len(n) != 1 || !strings.Contains(n[0], "Linear project "+cpTwo+" joined") || !strings.Contains(n[0], "already says agents close") || !strings.Contains(n[0], "--human") {
+		t.Fatal("a stale agent key joined unsaid, or an already bound project noticed:", n)
 	}
 	h.link(3, []string{cpOne, cpTwo})
 	h.link(4, []string{cpOne, cpTwo, cpThree})
-	n := h.closePolicyNotices()
+	n = h.closePolicyNotices()[1:]
 	if len(n) != 1 || !strings.Contains(n[0], "Linear project "+cpThree+" joined") || !strings.Contains(n[0], "closed by people (the default)") || !strings.Contains(n[0], closePolicyLine) || strings.Contains(n[0], "@") {
 		t.Fatal("notice after remove and add:", n)
 	}
 	var to string
-	if err := h.s.db.QueryRow(`SELECT d.recipient_id FROM deliveries d JOIN messages m ON m.id=d.message_id WHERE m.kind='close-policy'`).Scan(&to); err != nil || to != h.sessionID("c") {
+	if err := h.s.db.QueryRow(`SELECT d.recipient_id FROM deliveries d JOIN messages m ON m.id=d.message_id WHERE m.kind='close-policy' AND m.body LIKE '%'||?||' joined%'`, cpThree).Scan(&to); err != nil || to != h.sessionID("c") {
 		t.Fatal("notice not delivered to the coordinator:", to, err)
 	}
 	// A project the same link is about to set is skipped, and audited.
 	h.link(5, []string{cpOne, cpTwo})
 	h.link(6, []string{cpOne, cpTwo, cpThree}, cpThree)
-	if n := h.closePolicyNotices(); len(n) != 1 {
+	if n := h.closePolicyNotices(); len(n) != 2 {
 		t.Fatal("closes_pending ignored:", n)
 	}
 	var details string
@@ -182,5 +185,48 @@ func TestClosePolicyNoticeForAnUnlistedProject(t *testing.T) {
 	}
 	if _, err := h.s.Execute(context.Background(), h.request("taskboard_set_v2", "", map[string]any{"expected_revision": 7, "mode": "project_set", "linear_team_ids": []string{sfTeam}, "linear_default_team_id": sfTeam, "linear_project_ids": []string{cpOne}, "closes_pending": []string{cpTwo}})); err == nil {
 		t.Fatal("closes_pending outside the link accepted")
+	}
+}
+
+// R89-H1: the older status_policy_set never lets a session change who
+// closes, even the owner's own session; it still edits the rest.
+// R89-M1: whatever writes it, a key turned to agent needs via cli-tty;
+// turning one back to human needs nothing.
+func TestStatusPolicySetGuardsWhoCloses(t *testing.T) {
+	h := newHarness(t)
+	h.link(0, []string{cpOne, cpTwo})
+	h.call("status_policy_set", "", map[string]any{"expected_revision": 0, "status_policy": sfPolicy(true)})
+	loosen := sfPolicy(true)
+	loosen["closes"] = map[string]any{cpOne: "agent"}
+	set := func(session string, rev int, policy map[string]any, via string) error {
+		a := map[string]any{"expected_revision": rev, "status_policy": policy}
+		if via != "" {
+			a["via"] = via
+		}
+		_, err := h.s.Execute(context.Background(), h.request("status_policy_set", session, a))
+		return err
+	}
+	if err := set("a", 1, loosen, "cli-tty"); err == nil || !strings.Contains(err.Error(), "session can never change who closes") {
+		t.Fatal("the owner's session loosened closes:", err)
+	}
+	for _, via := range []string{"", "cli"} {
+		if err := set("", 1, loosen, via); err == nil || !strings.Contains(err.Error(), "confirmed at a terminal") || !strings.Contains(err.Error(), cpOne) {
+			t.Fatal("loosened without a terminal, via", via, err)
+		}
+	}
+	if err := set("", 1, loosen, "cli-tty"); err != nil {
+		t.Fatal(err)
+	}
+	// The session may still change the rest, with closes as stored.
+	edit := sfPolicy(false)
+	edit["closes"] = map[string]any{cpOne: "agent"}
+	if err := set("a", 2, edit, ""); err != nil {
+		t.Fatal("a session edited the rest:", err)
+	}
+	if err := set("a", 3, sfPolicy(false), ""); err == nil || !strings.Contains(err.Error(), "session can never change who closes") {
+		t.Fatal("the owner's session tightened closes:", err)
+	}
+	if err := set("", 3, sfPolicy(false), ""); err != nil {
+		t.Fatal("tightening asked for a terminal:", err)
 	}
 }

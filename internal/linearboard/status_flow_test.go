@@ -295,7 +295,7 @@ func TestSetStatusPolicyResolvesNamesPerTeam(t *testing.T) {
 		other[i].TeamID, other[i].ID = otherTeamID, strings.Replace(other[i].ID, "c1", "c2", 1)
 	}
 	p.statuses = append(append([]linearprovider.Status{}, sfStates...), other...)
-	if _, err := s.SetStatusPolicyV2(context.Background(), scope, []byte(`{"enabled": true, "create": "Todo", "claim": "In Progress", "release_done": "In Review"}`), 0); err != nil {
+	if _, err := s.SetStatusPolicyV2(context.Background(), scope, []byte(`{"enabled": true, "create": "Todo", "claim": "In Progress", "release_done": "In Review"}`), 0, nil); err != nil {
 		t.Fatal(err)
 	}
 	sent := a.statusSet
@@ -309,7 +309,7 @@ func TestSetStatusPolicyResolvesNamesPerTeam(t *testing.T) {
 		"unknown key":     `{"enabled": true, "claim": "In Progress", "extra": 1}`,
 		"completed claim": `{"enabled": true, "claim": "Done"}`,
 	} {
-		if _, err := s.SetStatusPolicyV2(context.Background(), scope, []byte(file), 0); err == nil {
+		if _, err := s.SetStatusPolicyV2(context.Background(), scope, []byte(file), 0, nil); err == nil {
 			t.Fatal(name, "accepted")
 		}
 	}
@@ -324,7 +324,7 @@ func TestSetStatusPolicyResolvesNamesPerTeam(t *testing.T) {
 	}
 	p.statuses = untyped
 	a.statusSet = nil
-	if _, err := s.SetStatusPolicyV2(context.Background(), scope, []byte(`{"enabled": true, "claim": "In Progress"}`), 1); err != nil || a.statusSet == nil {
+	if _, err := s.SetStatusPolicyV2(context.Background(), scope, []byte(`{"enabled": true, "claim": "In Progress"}`), 1, nil); err != nil || a.statusSet == nil {
 		t.Fatal("the app's states were not used", err)
 	}
 	if got, _ := bus.ParseStatusPolicy(a.statusSet["status_policy"]); got.Teams[teamID].Claim == nil || got.Teams[teamID].Claim.Type != "started" {
@@ -343,7 +343,7 @@ func TestSetStatusPolicyResolvesNamesPerTeam(t *testing.T) {
 	}
 	a.appStates[teamID] = append(a.appStates[teamID], map[string]any{"id": duplicate, "name": "Duplicate", "type": "duplicate", "team_id": teamID})
 	a.statusSet = nil
-	if _, err := s.SetStatusPolicyV2(context.Background(), scope, []byte(`{"enabled": true, "claim": "In Progress"}`), 2); err != nil || a.statusSet == nil {
+	if _, err := s.SetStatusPolicyV2(context.Background(), scope, []byte(`{"enabled": true, "claim": "In Progress"}`), 2, nil); err != nil || a.statusSet == nil {
 		t.Fatal("an unknown state type refused the policy:", err)
 	}
 	got, err := bus.ParseStatusPolicy(a.statusSet["status_policy"])
@@ -351,7 +351,7 @@ func TestSetStatusPolicyResolvesNamesPerTeam(t *testing.T) {
 		t.Fatal(err, a.statusSet)
 	}
 	a.statusSet = nil
-	if _, err := s.SetStatusPolicyV2(context.Background(), scope, []byte(`{"enabled": true, "create": "Duplicate"}`), 3); err == nil || a.statusSet != nil {
+	if _, err := s.SetStatusPolicyV2(context.Background(), scope, []byte(`{"enabled": true, "create": "Duplicate"}`), 3, nil); err == nil || a.statusSet != nil {
 		t.Fatal("a state of an unknown type was targeted")
 	}
 	// Without state types from either, nothing is set.
@@ -359,7 +359,7 @@ func TestSetStatusPolicyResolvesNamesPerTeam(t *testing.T) {
 	p.statuses = append(append([]linearprovider.Status{}, sfStates...), other...)
 	p.statuses[0].Type = ""
 	a.statusSet = nil
-	if _, err := s.SetStatusPolicyV2(context.Background(), scope, []byte(`{"enabled": true, "claim": "In Progress"}`), 0); err == nil || !strings.Contains(err.Error(), "state types") || a.statusSet != nil {
+	if _, err := s.SetStatusPolicyV2(context.Background(), scope, []byte(`{"enabled": true, "claim": "In Progress"}`), 0, nil); err == nil || !strings.Contains(err.Error(), "state types") || a.statusSet != nil {
 		t.Fatal("a policy was set without state types", err)
 	}
 }

@@ -276,7 +276,7 @@ func (s *Service) applyLinkCloses(ctx context.Context, scope bus.Request, in Lin
 	}
 	if e != nil && strings.Contains(e.Error(), "owner permission required") {
 		// §10.8 L1: the minimal policy is the owner's to create.
-		e = errors.New("only the project owner can create the status policy who closes needs; ask them to run this link again with --minimal-status-policy")
+		e = errors.New(minimalOwnerOnly)
 	}
 	for _, project := range minimal {
 		if e != nil {
@@ -288,9 +288,47 @@ func (s *Service) applyLinkCloses(ctx context.Context, scope bus.Request, in Lin
 	return out
 }
 
-// Ways a person confirmed a closes change (the audit's via).
+// minimalOwnerOnly answers a lead who asks for the minimal policy.
+const minimalOwnerOnly = "only the project owner can create the status policy who closes needs; ask them to run this link again with --minimal-status-policy"
+
+// ConfirmAgentCloses has a person confirm, at a terminal, that agents
+// will close the issues of each project, named by Linear ID → name.
+type ConfirmAgentCloses func(names map[string]string) error
+
+// confirmLoosened is the via a status policy write carries: cli-tty when
+// closes lets agents close a project the stored policy doesn't and confirm
+// accepted it, cli when nothing is loosened.
+func (s *Service) confirmLoosened(ctx context.Context, scope bus.Request, closes map[string]any, confirm ConfirmAgentCloses) (string, error) {
+	current, e := s.closesPolicy(ctx, scope)
+	if e != nil {
+		return "", e
+	}
+	names := map[string]string{}
+	for project, who := range closes {
+		if who != ClosesAgent || current.Closes[project] == ClosesAgent {
+			continue
+		}
+		if confirm == nil {
+			return "", errors.New("letting agents close issues is confirmed at a terminal, by typing each project's name; nothing was set")
+		}
+		if names[project], e = s.ProjectNameV2(ctx, scope, project); e != nil {
+			return "", e
+		}
+	}
+	if len(names) == 0 {
+		return ClosesViaCLI, nil
+	}
+	if e = confirm(names); e != nil {
+		return "", e
+	}
+	return ClosesViaTTY, nil
+}
+
+// Ways a person confirmed a closes change (the audit's via). It is the
+// client's claim: the server records it and can't check it. The TUI's
+// own value comes with the TUI (auth PR 4); until then the server refuses
+// tui.
 const (
 	ClosesViaCLI = "cli"
 	ClosesViaTTY = "cli-tty"
-	ClosesViaTUI = "tui"
 )

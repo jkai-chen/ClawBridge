@@ -55,7 +55,7 @@ func TestPostgresClosesSetIsTheOwnersOrALeads(t *testing.T) {
 	if e := set(lead, 2, "human", "cli"); e != nil {
 		t.Fatal("a lead tightening:", e)
 	}
-	if e := set(owner, 3, "agent", "tui"); e != nil {
+	if e := set(owner, 3, "agent", "cli-tty"); e != nil {
 		t.Fatal("the owner:", e)
 	}
 	// L1: the whole policy, and so the minimal one, stays the owner's.

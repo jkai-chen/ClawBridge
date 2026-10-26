@@ -1,0 +1,201 @@
+{
+ "name": "save_document",
+ "description": "Create or update a Linear document. If `id` is provided, edits the existing document; otherwise creates a new one. When creating, `title` is required and exactly one parent (`project`, `issue`, `initiative`, `cycle`, or `team`) must be specified. On update, passing a parent reparents the document. To change parts of the content without resending all of it, pass `patch` instead of `content`.",
+ "inputSchema": {
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+   "color": {
+    "description": "Hex color",
+    "type": "string"
+   },
+   "content": {
+    "description": "Content as Markdown. Do not escape the string \u2014 use literal newlines and special characters, not escape sequences. To mention a user, use @displayName (e.g., @johndoe)",
+    "type": "string"
+   },
+   "cycle": {
+    "description": "Cycle name, number, or ID. When passing a name or number, also pass `team` to disambiguate.",
+    "type": "string"
+   },
+   "icon": {
+    "description": "Icon name or emoji code (e.g. \"Rocket\" or \":eagle:\"), not a raw Unicode emoji",
+    "type": "string"
+   },
+   "id": {
+    "description": "Document ID or slug to update. Omit to create a new document.",
+    "type": "string"
+   },
+   "initiative": {
+    "description": "Initiative name, ID, identifier (e.g., I-123), or slug",
+    "type": "string"
+   },
+   "issue": {
+    "description": "Issue ID or identifier (e.g., LIN-123). P-prefixed identifiers (e.g., P-ENG-123) are projects, not issues",
+    "type": "string"
+   },
+   "patch": {
+    "description": "Partial edits applied to the current content, in order and atomically (one failing operation aborts the whole save). Every anchor string must match the current content exactly once. Only valid on update, in place of the full content/description field",
+    "items": {
+     "oneOf": [
+      {
+       "properties": {
+        "new_string": {
+         "description": "Replacement text. Empty string deletes the match",
+         "type": "string"
+        },
+        "old_string": {
+         "description": "Exact text to replace. Must match the current content exactly once",
+         "minLength": 1,
+         "type": "string"
+        },
+        "op": {
+         "const": "replace",
+         "type": "string"
+        },
+        "replace_all": {
+         "description": "Replace every occurrence instead of requiring a unique match",
+         "type": "boolean"
+        }
+       },
+       "required": [
+        "op",
+        "old_string",
+        "new_string"
+       ],
+       "type": "object"
+      },
+      {
+       "properties": {
+        "anchor": {
+         "description": "Exact text to insert before. Must match the current content exactly once",
+         "minLength": 1,
+         "type": "string"
+        },
+        "op": {
+         "const": "insert_before",
+         "type": "string"
+        },
+        "text": {
+         "description": "Text to insert directly before the anchor. Include separators (e.g. \"\\n\\n\")",
+         "minLength": 1,
+         "type": "string"
+        }
+       },
+       "required": [
+        "op",
+        "anchor",
+        "text"
+       ],
+       "type": "object"
+      },
+      {
+       "properties": {
+        "anchor": {
+         "description": "Exact text to insert after. Must match the current content exactly once",
+         "minLength": 1,
+         "type": "string"
+        },
+        "op": {
+         "const": "insert_after",
+         "type": "string"
+        },
+        "text": {
+         "description": "Text to insert directly after the anchor. Include separators (e.g. \"\\n\\n\")",
+         "minLength": 1,
+         "type": "string"
+        }
+       },
+       "required": [
+        "op",
+        "anchor",
+        "text"
+       ],
+       "type": "object"
+      },
+      {
+       "properties": {
+        "op": {
+         "const": "prepend",
+         "type": "string"
+        },
+        "text": {
+         "description": "Text to insert at the very start of the content",
+         "minLength": 1,
+         "type": "string"
+        }
+       },
+       "required": [
+        "op",
+        "text"
+       ],
+       "type": "object"
+      },
+      {
+       "properties": {
+        "op": {
+         "const": "append",
+         "type": "string"
+        },
+        "text": {
+         "description": "Text to insert at the very end of the content",
+         "minLength": 1,
+         "type": "string"
+        }
+       },
+       "required": [
+        "op",
+        "text"
+       ],
+       "type": "object"
+      },
+      {
+       "properties": {
+        "from": {
+         "description": "Exact text where the range starts (inclusive). Must match exactly once",
+         "minLength": 1,
+         "type": "string"
+        },
+        "new_string": {
+         "description": "Text replacing the range. Empty string deletes it",
+         "type": "string"
+        },
+        "op": {
+         "const": "replace_range",
+         "type": "string"
+        },
+        "to": {
+         "description": "Exact text where the range ends (exclusive, stays in place). Must match exactly once after `from`",
+         "minLength": 1,
+         "type": "string"
+        }
+       },
+       "required": [
+        "op",
+        "from",
+        "to",
+        "new_string"
+       ],
+       "type": "object"
+      }
+     ]
+    },
+    "maxItems": 50,
+    "minItems": 1,
+    "type": "array"
+   },
+   "project": {
+    "description": "Project name, ID, identifier (e.g., P-ENG-123), or slug",
+    "type": "string"
+   },
+   "team": {
+    "description": "Team name or ID. Attaches the document to the team, unless `cycle` is also passed, in which case it disambiguates the cycle.",
+    "type": "string"
+   },
+   "title": {
+    "description": "Document title (required when creating)",
+    "type": "string"
+   }
+  },
+  "type": "object"
+ }
+}

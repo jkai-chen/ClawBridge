@@ -10,6 +10,7 @@ import (
 	"unicode/utf8"
 
 	"clawbridge/internal/bus"
+	"clawbridge/internal/linearconn"
 	"clawbridge/internal/linearprovider"
 )
 
@@ -146,6 +147,10 @@ func (s *Service) docPolicyInitiatives(ctx context.Context, scope bus.Request) (
 
 // openDocScope proves the binding and opens the provider; done closes it.
 func (s *Service) openDocScope(ctx context.Context, scope bus.Request) (*docScope, func(), error) {
+	return s.openDocScopeWith(ctx, scope, s.open)
+}
+
+func (s *Service) openDocScopeWith(ctx context.Context, scope bus.Request, open func(context.Context) (linearconn.Profile, Provider, func(), error)) (*docScope, func(), error) {
 	b, e := s.BindingV2(ctx, scope)
 	if e != nil {
 		return nil, nil, e
@@ -154,7 +159,7 @@ func (s *Service) openDocScope(ctx context.Context, scope bus.Request) (*docScop
 	if e != nil {
 		return nil, nil, e
 	}
-	_, p, done, e := s.open(ctx)
+	_, p, done, e := open(ctx)
 	if e != nil {
 		return nil, nil, e
 	}

@@ -188,3 +188,24 @@ test("a chat question is untrusted data; only who asked is typed", async () => {
 	const { SYSTEM_PROMPT } = await import("../src/prompt.ts");
 	assert.match(SYSTEM_PROMPT, /in a chat case, `untrusted\.question` is the question you are asked\. Answer it with reply/);
 });
+
+test("a read answered case_leased ends the run with no outcome: the case is another agent's now [d5 Q9]", async () => {
+	server.onTool = () => ({ status: 409, body: { error: "case_leased" } });
+	const { deps } = setup([
+		fauxAssistantMessage(fauxToolCall("read_issue_facts", { issue_id: ISSUE })),
+		fauxAssistantMessage(fauxToolCall("decide", { action: "wait", reason_code: "overlap", explanation: "x" })),
+	]);
+	const r = await run(sampleCase(), deps);
+	assert.deepEqual([r.outcome, r.code], ["none", "case_leased"]);
+	assert.deepEqual(toolCalls(), ["read_issue_facts"]);
+});
+
+test("a case without issue text says so: no_excerpt [d5 Q8]", async () => {
+	const { renderCase } = await import("../src/prompt.ts");
+	const without = JSON.parse(renderCase(sampleCase({ untrusted: undefined })));
+	assert.equal(without.no_excerpt, true);
+	assert.equal(without.untrusted, undefined);
+	const withText = JSON.parse(renderCase(sampleCase()));
+	assert.equal(withText.no_excerpt, undefined);
+	assert.equal(withText.untrusted.title, "Fix the ledger");
+});

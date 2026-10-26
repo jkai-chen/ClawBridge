@@ -115,6 +115,13 @@ export async function runCase(c: CaseT, optIn: readonly OptInTool[], deps: RunCa
 				timeoutMs: Math.max(1, Math.min(remaining, 10_000)),
 			});
 			log("tool", { tool: t.name, status: r.status, code: r.ok ? undefined : r.code });
+			if (!r.ok && CLOSED.has(r.code ?? "")) {
+				// The case is no longer this agent's (a restarted agent took its lease over, d5 Q9) or is over: stop
+				// without an outcome.
+				stopCode = r.code;
+				done = { outcome: "none", code: r.code, providerAuth: false };
+				return { content: [{ type: "text", text: JSON.stringify({ error: r.code }) }], details: undefined, terminate: true };
+			}
 			if (!r.ok) return { content: [{ type: "text", text: JSON.stringify({ error: r.code }) }], details: undefined, isError: true };
 			return { content: [{ type: "text", text: JSON.stringify(r.body.result) }], details: undefined };
 		},

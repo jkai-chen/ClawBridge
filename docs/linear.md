@@ -808,6 +808,10 @@ Each field is optional except `enabled`.
 - **What is stored.** The policy keeps each state's ID and type, and the team's
   whole workflow at that moment. Renaming a state changes nothing. A state added
   later moves nothing until the policy is set again.
+- **States of other types.** A state whose type is not triage, backlog,
+  unstarted, started, completed or canceled (Linear's Duplicate state, for
+  example) is left out of the stored workflow: it can't be a target, and an
+  issue in it is never moved.
 - **Rules, checked when it is set:**
   - `create` is a backlog or unstarted state;
   - `claim` and `release_done` are started states, and differ;

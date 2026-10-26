@@ -36,7 +36,8 @@ const cloudUsage = `clawbridge cloud check [infra|server|version|workspace|linea
                        [--client-config PATH] [--bucket NAME] [--json]
                        [--ssh HOST | --vm NAME --project P --zone Z |
                         --instance ID --region R [--profile P] [--account N]]
-clawbridge cloud secret set KEY (--ssh HOST | --vm NAME --project P --zone Z) [--value-stdin]
+clawbridge cloud secret set KEY (--ssh HOST | --vm NAME --project P --zone Z |
+                            --instance ID --region R [--profile P] [--account N]) [--value-stdin]
 
 On AWS, the server is an EC2 instance reached over SSM with your own AWS CLI
 profile (default ` + defaultAWSProfile + `); backups are read from S3 with --bucket and --region.`
@@ -416,10 +417,11 @@ func runCloudSecretSet(ctx context.Context, args []string, stdout, stderr io.Wri
 	if err != nil {
 		return err
 	}
-	if _, overSSM := tr.(ssmTransport); overSSM {
-		// Refused before the value is asked for: SSM has no stdin path, and its
-		// own write (through a short-lived SecureString) is not built yet.
-		return errors.New("cloud secret set does not reach an EC2 instance yet; nothing was asked or sent")
+	if ssm, ok := tr.(ssmTransport); ok {
+		// The profile's account is checked before the value is asked for.
+		if err = ssm.ready(ctx); err != nil {
+			return err
+		}
 	}
 	var raw []byte
 	switch {
@@ -443,7 +445,12 @@ func runCloudSecretSet(ctx context.Context, args []string, stdout, stderr io.Wri
 		return err
 	}
 	if err = tr.setSecret(ctx, key, value, stderr); err != nil {
-		return errors.New("the remote write failed; " + tr.describe() + " (nothing was printed)")
+		msg := "the remote write failed; " + tr.describe() + " (nothing was printed)"
+		// The one detail kept: a short-lived parameter that could not be deleted.
+		if i := strings.Index(err.Error(), "parameter left behind: "); i >= 0 {
+			msg += "\n" + err.Error()[i:]
+		}
+		return errors.New(msg)
 	}
 	return json.NewEncoder(stdout).Encode(map[string]any{"source": "cloud_secret", "data": map[string]any{"key": key, "set": true}})
 }

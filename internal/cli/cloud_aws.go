@@ -172,8 +172,50 @@ func (s ssmTransport) run(ctx context.Context, script string, _ io.Writer) ([]by
 	}
 }
 
-func (s ssmTransport) setSecret(context.Context, string, string, io.Writer) error {
-	return errors.New("cloud secret set does not yet reach an EC2 instance")
+// setSecret writes one key through a short-lived Parameter Store
+// SecureString (§13, ON-M3): SSM has no stdin path, and send-command records
+// its parameters. The value goes to put-parameter on the CLI's stdin; a fixed
+// script on the instance reads it with the instance's own role and pipes it
+// into remoteSetScript; the parameter is deleted on every path.
+func (s ssmTransport) setSecret(ctx context.Context, key, value string, stderr io.Writer) (err error) {
+	t := s.target
+	if err = s.ready(ctx); err != nil {
+		return err
+	}
+	name := secretParameter(t.instance, key)
+	request, err := json.Marshal(map[string]any{
+		"Name": name, "Type": "SecureString", "Overwrite": true, "Value": value,
+		"Description": "clawbridge cloud secret set: deleted once written",
+	})
+	if err != nil {
+		return err
+	}
+	defer func() {
+		// Even after a failed or cancelled write, with its own deadline.
+		cleanup, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
+		defer cancel()
+		if _, derr := awsCLI(cleanup, t.aws("ssm", "delete-parameter", "--name", name), nil); derr != nil {
+			left := errors.New("parameter left behind: " + name + "; delete it with aws ssm delete-parameter --name " + name)
+			err = errors.Join(err, left)
+		}
+	}()
+	if _, err = awsCLI(ctx, t.aws("ssm", "put-parameter", "--cli-input-json", "file:///dev/stdin"), request); err != nil {
+		return errors.New("Parameter Store did not take the value")
+	}
+	_, err = s.run(ctx, ssmSetScript(name, t.region, key), stderr)
+	return err
+}
+
+// secretParameter is the short-lived parameter for one key: scoped to the
+// instance, whose role may read only its own (the workspace may not exist yet).
+func secretParameter(instance, key string) string { return "/clawbridge/" + instance + "/" + key }
+
+// ssmSetScript reads the parameter with the instance's role and pipes the
+// value straight into remoteSetScript, which refuses an empty one. Every input
+// is pattern-checked (the instance and region) or from the fixed key list.
+func ssmSetScript(name, region, key string) string {
+	return "aws ssm get-parameter --with-decryption --name " + name + " --region " + region +
+		" --query Parameter.Value --output text | (\n" + remoteSetScript(key, serverEnvFile) + "\n)"
 }
 
 func (ssmTransport) describe() string {

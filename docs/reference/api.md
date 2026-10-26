@@ -404,8 +404,8 @@ each check first confirms the profile is signed in to that account, and fails
 with `cloud_auth` otherwise. `--ssh`, `--vm` and `--instance` are one route each;
 pass one. No check reads a secret or writes anything.
 
-`clawbridge cloud secret set KEY (--ssh HOST | --vm NAME --project P --zone Z)
-[--value-stdin]` writes one server setting the user holds, so it never passes
+`clawbridge cloud secret set KEY (--ssh HOST | --vm NAME --project P --zone Z |
+--instance ID --region R [--profile P] [--account N]) [--value-stdin]` writes one server setting the user holds, so it never passes
 through an agent. KEY is `CLAWBRIDGE_LINEAR_APP_CLIENT_ID` or
 `CLAWBRIDGE_LINEAR_APP_CLIENT_SECRET`, or, for a deployment that still signs in
 with Google, `CLAWBRIDGE_OAUTH_CLIENT_SECRET` or
@@ -419,6 +419,20 @@ that key's line in `/etc/clawbridge/clawbridge.env`, or in the regular file it
 links to (the link is kept), and installs the file 0600, root-owned. The value is never in argv, the environment or the output; the
 result is source=cloud_secret with `{key, set: true}`. `--project` here is the
 Google Cloud project.
+
+On AWS (`--instance`), SSM has no stdin path and records a command's
+parameters, so the value takes a short-lived Parameter Store route instead.
+1. ClawBridge writes it as a `SecureString` named
+   `/clawbridge/<instance ID>/<KEY>`, with the request on the AWS CLI's stdin.
+2. A fixed `send-command` script on the instance reads that one parameter with
+   the instance's own role, which may read only its own
+   `/clawbridge/<instance ID>/*`, and pipes it into the same remote script.
+3. ClawBridge deletes the parameter whatever happened, even after a failed or
+   cancelled write. If the delete fails, the error names the parameter left
+   behind, never its value.
+
+With `--account`, the profile's account is checked before the value is asked
+for.
 
 ## Skill output
 

@@ -118,7 +118,7 @@ echo "service db running Up 2 hours (healthy)"
 		t.Fatalf("%+v", r)
 	}
 	device := filepath.Join(dir, "device.env")
-	if err := os.WriteFile(device, []byte("CLAWBRIDGE_AUTH=device,google \r\n"), 0600); err != nil {
+	if err := os.WriteFile(device, []byte("CLAWBRIDGE_AUTH=\"device, google\" \r\n"), 0600); err != nil {
 		t.Fatal(err)
 	}
 	if got := run(device).auth; got != "device,google" {
@@ -367,7 +367,8 @@ func TestCloudCheckAuthMode(t *testing.T) {
 		"env device, server google": {device, `{"auth_methods":["google"]}`, "auth_mismatch"},
 		"env google, server both":   {allSet(), `{"auth_methods":["google","device"]}`, "auth_mismatch"},
 		"order does not matter":     {both, `{"auth_methods":["device","google"]}`, ""},
-		"older server":              {device, `{"browser_client_id":"x"}`, ""},
+		"google-only server":        {allSet(), `{"browser_client_id":"x"}`, ""},
+		"env device, google-only":   {device, `{"browser_client_id":"x"}`, "auth_mismatch"},
 		"config unavailable":        {allSet(), "", "config_unreadable"},
 	} {
 		stubRemote(t, factsOutput(c.facts), nil)

@@ -111,8 +111,9 @@ var composeServices = []string{"api", "caddy", "db"}
 
 // factsScript is the one fixed remote command the checks run (§4, ON-L3).
 // It prints, per key, how many non-empty lines set it (a count, never a
-// value), the sign-in mode (CLAWBRIDGE_AUTH's last value when it is one
-// of the four valid ones, else "invalid": never anything else), then each
+// value), the sign-in mode (CLAWBRIDGE_AUTH's last value, without spaces
+// or quotes as compose reads it, when it is one of the four valid ones,
+// else "invalid": never anything else), then each
 // of the deployment's compose service containers (not `compose run`
 // one-offs) as "service state status". It reads the env file's project name on the server and
 // prints nothing else from it.
@@ -125,7 +126,7 @@ func factsScriptFor(path string) string {
 		`echo "mount $(findmnt -n -o SOURCE ` + dataMount + ` || echo none)"`,
 		`if [ ! -r "$f" ]; then echo "env missing"; exit 0; fi`,
 		`for k in ` + strings.Join(keys, " ") + `; do echo "count $k $(grep -c "^$k=." "$f")"; done`,
-		`a=$(sed -n "s/^` + authSetting + `=//p" "$f" | tail -n 1 | tr -d " \r")`,
+		`a=$(sed -n "s/^` + authSetting + `=//p" "$f" | tail -n 1 | tr -d " \r\042\047")`,
 		`case "$a" in "") echo "auth";; google|device|google,device|device,google) echo "auth $a";; *) echo "auth invalid";; esac`,
 		`p=$(sed -n "s/^COMPOSE_PROJECT_NAME=//p" "$f" | tail -n 1)`,
 		`[ -n "$p" ] && docker ps --all --filter "label=com.docker.compose.project=$p" --filter "label=com.docker.compose.oneoff=False" --format "service {{.Label \"com.docker.compose.service\"}} {{.State}} {{.Status}}"`,

@@ -288,11 +288,12 @@ func (p *cloudProbe) checkAuthMode(ctx context.Context, mode string) cloudResult
 	if resp.StatusCode != http.StatusOK || json.NewDecoder(io.LimitReader(resp.Body, 64<<10)).Decode(&body) != nil {
 		return failed("server", "config_unreadable", "GET /v1/config did not answer; check the server's logs")
 	}
-	if body.AuthMethods == nil {
-		// A server from before sign-in methods were reported.
-		return cloudResult{Check: "server", Status: "pass"}
+	// A Google-only server leaves auth_methods out; a server too old to
+	// report them fails the version check.
+	got := []string{"google"}
+	if body.AuthMethods != nil {
+		got = slices.Sorted(slices.Values(*body.AuthMethods))
 	}
-	got := slices.Sorted(slices.Values(*body.AuthMethods))
 	if !slices.Equal(got, want) {
 		return failed("server", "auth_mismatch", "the env file signs in with "+strings.Join(want, ",")+" but the running server with "+strings.Join(got, ",")+"; recreate the api container so it reads the env file (docker compose … up -d --no-deps api, see the deployment guide)")
 	}

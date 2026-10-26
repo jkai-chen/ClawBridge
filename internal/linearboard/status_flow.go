@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"sort"
 	"strings"
 
 	"clawbridge/internal/bus"
@@ -21,6 +22,12 @@ type StatusPolicyFile struct {
 	Create          string `json:"create"`
 	Claim           string `json:"claim"`
 	ReleaseDone     string `json:"release_done"`
+	// Done is the completed state a done-release reaches in a project
+	// agents close; a team without it stops at release_done.
+	Done string `json:"done"`
+	// Closes says who closes each bound Linear project's issues: agent or
+	// human, the default.
+	Closes map[string]string `json:"closes"`
 }
 
 // StatusPolicyV2 reads the project's status policy.
@@ -34,7 +41,9 @@ func (s *Service) StatusPolicyV2(ctx context.Context, scope bus.Request) (any, e
 // SetStatusPolicyV2 resolves the owner's state names in every bound team's
 // workflow, exactly and uniquely, and sets the policy at expected, the
 // revision the owner last read. Each team keeps a snapshot of its whole
-// workflow (state ID → type), so a state added later moves nothing.
+// workflow (state ID → type), so a state added later moves nothing. done
+// may be missing from a team, which then stops at release_done: the answer
+// names each such team when any project is closed by agents.
 func (s *Service) SetStatusPolicyV2(ctx context.Context, scope bus.Request, raw []byte, expected int64) (any, error) {
 	if e := uniqueKeys(raw); e != nil {
 		return nil, e
@@ -43,7 +52,7 @@ func (s *Service) SetStatusPolicyV2(ctx context.Context, scope bus.Request, raw 
 	dec := json.NewDecoder(bytes.NewReader(raw))
 	dec.DisallowUnknownFields()
 	if dec.Decode(&file) != nil || dec.Decode(new(any)) != io.EOF || file.Enabled == nil {
-		return nil, errors.New(`the status policy file must be {"enabled": true|false, "claim_from_triage", "create", "claim", "release_done"} with state names`)
+		return nil, errors.New(`the status policy file must be {"enabled": true|false, "claim_from_triage", "create", "claim", "release_done", "done"} with state names, and "closes": {"<Linear project UUID>": "agent"|"human"}`)
 	}
 	b, e := s.BindingV2(ctx, scope)
 	if e != nil {
@@ -52,6 +61,24 @@ func (s *Service) SetStatusPolicyV2(ctx context.Context, scope bus.Request, raw 
 	if !b.Configured || len(b.LinearTeamIDs) == 0 {
 		return nil, errors.New("link the task board before setting a status policy")
 	}
+	closes := map[string]any{}
+	agents := false
+	for project, who := range file.Closes {
+		project = strings.ToLower(project)
+		bound := false
+		for _, p := range b.LinearProjectIDs {
+			bound = bound || strings.EqualFold(p, project)
+		}
+		if !bound {
+			return nil, fmt.Errorf("closes names Linear project %q, which is not in this board's binding; nothing was set", project)
+		}
+		if who != "agent" && who != "human" {
+			return nil, fmt.Errorf("closes for Linear project %s must be agent or human; nothing was set", project)
+		}
+		closes[project] = who
+		agents = agents || who == "agent"
+	}
+	stops := []string{}
 	teams := map[string]any{}
 	for _, team := range b.LinearTeamIDs {
 		states, e := s.StatesV2(ctx, scope, team)
@@ -75,19 +102,29 @@ func (s *Service) SetStatusPolicyV2(ctx context.Context, scope bus.Request, raw 
 			byName[st.Name] = append(byName[st.Name], st)
 		}
 		entry := map[string]any{"workflow": workflow}
-		for field, name := range map[string]string{"create": file.Create, "claim": file.Claim, "release_done": file.ReleaseDone} {
+		for field, name := range map[string]string{"create": file.Create, "claim": file.Claim, "release_done": file.ReleaseDone, "done": file.Done} {
 			if name == "" {
 				continue
 			}
 			found := byName[name]
+			if field == "done" && len(found) == 0 {
+				stops = append(stops, team)
+				continue
+			}
 			if len(found) != 1 {
 				return nil, fmt.Errorf("%s state %q is missing or not unique in team %s; nothing was set", field, name, team)
 			}
 			entry[field] = map[string]any{"id": strings.ToLower(found[0].ID), "name": found[0].Name, "type": found[0].Type}
 		}
+		if file.Done == "" {
+			stops = append(stops, team)
+		}
 		teams[strings.ToLower(team)] = entry
 	}
 	policy := map[string]any{"enabled": *file.Enabled, "claim_from_triage": file.ClaimFromTriage, "teams": teams}
+	if len(closes) > 0 {
+		policy["closes"] = closes
+	}
 	if _, e = bus.ParseStatusPolicy(policy); e != nil {
 		return nil, e
 	}
@@ -96,7 +133,19 @@ func (s *Service) SetStatusPolicyV2(ctx context.Context, scope bus.Request, raw 
 	scope.Args["expected_revision"] = expected
 	scope.Args["status_policy"] = policy
 	r, e := s.cfg.Executor.Execute(ctx, scope)
-	return r.Data, e
+	if e != nil || !agents || len(stops) == 0 {
+		return r.Data, e
+	}
+	// A2-L3: say where a project agents close will stop short of done.
+	out := map[string]any{}
+	if m, ok := r.Data.(map[string]any); ok {
+		for k, v := range m {
+			out[k] = v
+		}
+	}
+	sort.Strings(stops)
+	out["notes"] = []string{fmt.Sprintf("closes names projects agents close, but team(s) %s have no done state: their done-releases stop at release_done", strings.Join(stops, ", "))}
+	return out, nil
 }
 
 func typed(states []linearprovider.Status) bool {
@@ -169,11 +218,12 @@ func decodeStatusPolicy(v any) (bus.StatusPolicy, error) {
 		Enabled         bool                      `json:"enabled"`
 		ClaimFromTriage bool                      `json:"claim_from_triage"`
 		Teams           map[string]bus.StatusTeam `json:"teams"`
+		Closes          map[string]string         `json:"closes"`
 	}
 	if json.Unmarshal(raw, &view) != nil {
 		return bus.StatusPolicy{}, errors.New("the status policy is unreadable")
 	}
-	return bus.StatusPolicy{Enabled: view.Enabled, ClaimFromTriage: view.ClaimFromTriage, Teams: view.Teams}, nil
+	return bus.StatusPolicy{Enabled: view.Enabled, ClaimFromTriage: view.ClaimFromTriage, Teams: view.Teams, Closes: view.Closes}, nil
 }
 
 // createState is the policy's create state for team, or "" when the policy
@@ -282,7 +332,12 @@ func (s *Service) stateMove(ctx context.Context, scope bus.Request, issue, kind 
 	t, ok := policy.Teams[team]
 	target := t.Claim
 	if kind == "release_done" {
+		// In a project agents close (A2), a done-release goes on to the
+		// team's done state; elsewhere it stops at release_done.
 		target = t.ReleaseDone
+		if t.Done != nil && current.ProjectKnown && policy.AgentCloses(strings.ToLower(current.ProjectID)) {
+			target = t.Done
+		}
 	}
 	if !ok || target == nil {
 		return skip("team_off")

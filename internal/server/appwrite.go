@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
 	"clawbridge/internal/bus"
@@ -36,6 +37,21 @@ type AppWriter struct {
 	App   *linearapp.App
 	Store *bus.Store
 	Now   func() time.Time
+
+	typesOnce sync.Once
+	types     *linearboard.StateTypeCache
+}
+
+// stateTypeTTL is how long a team's workflow state types read as the app
+// are kept: the binding proof's.
+const stateTypeTTL = 60 * time.Second
+
+// stateTypes is the app's per-team state type cache, shared by requests.
+func (w *AppWriter) stateTypes() *linearboard.StateTypeCache {
+	w.typesOnce.Do(func() {
+		w.types = linearboard.NewStateTypeCache(linearboard.GraphQLStateTypes(w.App.GraphQL), stateTypeTTL, w.Now)
+	})
+	return w.types
 }
 
 func appRefusal(message string) error { return bus.PublicError("invalid", message) }
@@ -83,6 +99,7 @@ func (w *AppWriter) service(ctx context.Context, identity bus.Identity) (*linear
 			return w.App.Provider(ctx, readonly)
 		},
 		IssueState: linearboard.GraphQLIssueState(w.App.GraphQL),
+		StateType:  w.stateTypes().Type,
 	}), id, nil
 }
 
@@ -128,6 +145,10 @@ func (w *AppWriter) Execute(parent context.Context, identity bus.Identity, r bus
 	instance, _ := r.Args["instance"].(string)
 	scope := bus.Request{Workspace: r.Workspace, Project: r.Project, Session: r.Session, Args: map[string]any{"instance": instance}}
 	data, err := service.ExecuteV2(ctx, scope, operation, args)
+	if err != nil {
+		// A failed write may mean the workflow changed: read types afresh.
+		w.stateTypes().Drop()
+	}
 	var receipt *linearboard.ReceiptError
 	switch {
 	case err == nil:

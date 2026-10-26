@@ -554,9 +554,9 @@ func (s *Service) WriteV2(ctx context.Context, scope bus.Request, in WriteInputV
 		}
 	}
 	verifiedParent := in.Parent.Present && in.Parent.Value != nil
+	var states []linearprovider.Status
 	if in.StateID != nil {
-		states, e := p.Statuses(ctx, team)
-		if e != nil {
+		if states, e = p.Statuses(ctx, team); e != nil {
 			return nil, e
 		}
 		found := false
@@ -567,6 +567,13 @@ func (s *Service) WriteV2(ctx context.Context, scope bus.Request, in WriteInputV
 		}
 		if !found {
 			return nil, errors.New("state is not verified for target team")
+		}
+	}
+	// Who closes (A2): an agent's write, a session's; a marker's moves are
+	// the status policy's own (stateMove).
+	if !in.marker && access.SessionID != "" {
+		if e = s.closeGuard(ctx, scope, in, states, team, current, project); e != nil {
+			return nil, e
 		}
 	}
 	if !legacy {

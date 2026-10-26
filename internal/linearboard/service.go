@@ -60,6 +60,11 @@ type Config struct {
 	// app's GraphQL. Linear's MCP issue read names the state without its
 	// ID.
 	IssueState func(ctx context.Context, issue string) (stateID, teamID string, err error)
+	// StateType, when set, reads a workflow state's type as Linear reports
+	// it, or "" when the team has no such state: on a hosted server, the
+	// Linear app's GraphQL behind a StateTypeCache. An agent's state write
+	// is decided by it when neither the policy nor the status list knows.
+	StateType func(ctx context.Context, team, state string) (string, error)
 }
 type Service struct {
 	cfg Config
@@ -606,6 +611,8 @@ func (s *Service) Write(ctx context.Context, scope bus.Request, in WriteInput) (
 		return nil, err
 	}
 	team := b.LinearDefaultTeamID
+	current := linearprovider.IssueV2{ProjectKnown: true}
+	project := b.LinearProjectID
 	if in.Operation != "create" {
 		issue, e := p.GetIssue(ctx, in.IssueID)
 		if e != nil {
@@ -618,11 +625,12 @@ func (s *Service) Write(ctx context.Context, scope bus.Request, in WriteInput) (
 			return nil, err
 		}
 		team = issue.TeamID
+		current.Issue, project = issue, issue.ProjectID
 	}
+	var states []linearprovider.Status
 	if in.StateID != nil {
-		states, e := p.Statuses(ctx, team)
-		if e != nil {
-			return nil, e
+		if states, err = p.Statuses(ctx, team); err != nil {
+			return nil, err
 		}
 		found := false
 		for _, state := range states {
@@ -632,6 +640,12 @@ func (s *Service) Write(ctx context.Context, scope bus.Request, in WriteInput) (
 		}
 		if !found {
 			return nil, errors.New("state is not verified for the issue team")
+		}
+		// Who closes (A2) holds on this older route too.
+		if access.SessionID != "" {
+			if err = s.closeGuard(ctx, scope, WriteInputV2{WriteInput: in}, states, team, current, project); err != nil {
+				return nil, err
+			}
 		}
 	}
 	if err = s.unchanged(ctx, scope, b); err != nil {

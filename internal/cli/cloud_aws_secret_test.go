@@ -154,8 +154,12 @@ func TestCloudSecretSetOverSSMDeletesTheParameterOnEveryPath(t *testing.T) {
 				return inner(ctx, argv, stdin)
 			}
 		}
-		tr, _ := cloudTarget{instance: ec2ID, region: "us-east-1"}.transport()
-		err := tr.setSecret(ctx, ssmSecretKey, "synthetic-value", nil)
+		tr, err := cloudTarget{instance: ec2ID, region: "us-east-1"}.transport()
+		if err != nil {
+			cancel()
+			t.Fatal(err)
+		}
+		err = tr.setSecret(ctx, ssmSecretKey, "synthetic-value", nil)
 		cancel()
 		if (name == "written") != (err == nil) {
 			t.Fatalf("%s: %v", name, err)

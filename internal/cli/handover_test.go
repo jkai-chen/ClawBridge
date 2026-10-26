@@ -222,7 +222,7 @@ func TestHandoverOffersCodex(t *testing.T) {
 }
 
 func TestValidInputs(t *testing.T) {
-	ok := onboardingState{Account: "a@example.test", Project: "example-project", Region: "europe-west1", Zone: "europe-west1-b", Domain: "bridge.example.test", Owner: "o@example.test", Size: "e2-small", Bucket: "example-project-clawbridge-backups"}
+	ok := onboardingState{Cloud: "gcp", Account: "a@example.test", Project: "example-project", Region: "europe-west1", Zone: "europe-west1-b", Domain: "bridge.example.test", Owner: "o@example.test", Size: "e2-small", Bucket: "example-project-clawbridge-backups"}
 	if err := validInputs(&ok); err != nil {
 		t.Fatal(err)
 	}

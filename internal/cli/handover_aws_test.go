@@ -152,11 +152,42 @@ func TestValidAWSInputs(t *testing.T) {
 		"size":           func(s *onboardingState) { s.Size = "e2-small" },
 		"bucket":         func(s *onboardingState) { s.Bucket = "Bad_Bucket" },
 		"saved instance": func(s *onboardingState) { s.Instance = "i-XYZ" },
+		"profile flag":   func(s *onboardingState) { s.Profile = "--debug" },
+		"unknown cloud":  func(s *onboardingState) { s.Cloud = "azure" },
+		"no cloud":       func(s *onboardingState) { s.Cloud = "" },
 	} {
 		s := ok
 		edit(&s)
 		if validInputs(&s) == nil {
 			t.Fatalf("%s accepted", name)
+		}
+	}
+}
+
+// The cloud answer picks a path by number or name, and refuses anything else
+// rather than falling back to Google Cloud.
+func TestHandoverCloudAnswer(t *testing.T) {
+	for answer, want := range map[string]string{"aws": "Your AWS choices", "AWS": "Your AWS choices", "gcp": "Your Google Cloud choices", "1": "Your Google Cloud choices"} {
+		isolated(t)
+		// Blank answers after the choice: the inputs are then refused.
+		wizardHooks(t, "3\n"+answer+"\n"+strings.Repeat("\n", 10))
+		awsHandoverStub(t)
+		var out bytes.Buffer
+		if err := Run(context.Background(), []string{"onboard"}, &out, io.Discard); err == nil || !strings.Contains(out.String(), want) {
+			t.Fatalf("%s: %v %s", answer, err, out.String())
+		}
+	}
+	for _, answer := range []string{"3", "azure", "2x"} {
+		home := isolated(t)
+		wizardHooks(t, "3\n"+answer+"\n")
+		h, _ := awsHandoverStub(t)
+		var out bytes.Buffer
+		err := Run(context.Background(), []string{"onboard"}, &out, io.Discard)
+		if err == nil || !strings.Contains(err.Error(), "answer 1 or 2") || h.ran != nil || strings.Contains(out.String(), "choices") {
+			t.Fatalf("%s: %v %s", answer, err, out.String())
+		}
+		if _, err := os.Stat(filepath.Join(home, "state", "onboarding")); !os.IsNotExist(err) {
+			t.Fatalf("%s: progress saved", answer)
 		}
 	}
 }

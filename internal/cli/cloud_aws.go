@@ -22,7 +22,7 @@ import (
 var (
 	instancePattern   = regexp.MustCompile(`^i-[0-9a-f]{8,17}$`)
 	awsRegionPattern  = regexp.MustCompile(`^[a-z]{2}(-gov)?-[a-z]+-[0-9]$`)
-	awsProfilePattern = regexp.MustCompile(`^[A-Za-z0-9_.-]{1,64}$`)
+	awsProfilePattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$`)
 	accountPattern    = regexp.MustCompile(`^[0-9]{12}$`)
 	s3BucketPattern   = regexp.MustCompile(`^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$`)
 )

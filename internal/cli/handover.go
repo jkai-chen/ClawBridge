@@ -135,8 +135,12 @@ func saveOnboarding(s *onboardingState) error {
 
 // validInputs reports the first input that is not well formed.
 func validInputs(s *onboardingState) error {
-	if s.Cloud == "aws" {
+	switch s.Cloud {
+	case "aws":
 		return validAWSInputs(s)
+	case "gcp":
+	default:
+		return errors.New("the saved progress names an unknown cloud; remove it to start over")
 	}
 	switch {
 	case !emailPattern.MatchString(s.Account):
@@ -257,10 +261,13 @@ func startOwnServer(ctx context.Context, prompt *wizardPrompt, stdout, stderr io
 		if err != nil {
 			return err
 		}
-		if strings.TrimSpace(answer) == "2" {
-			state, err = askAWSInputs(ctx, prompt, stdout)
-		} else {
+		switch strings.ToLower(strings.TrimSpace(answer)) {
+		case "", "1", "gcp":
 			state, err = askInputs(ctx, prompt, stdout)
+		case "2", "aws":
+			state, err = askAWSInputs(ctx, prompt, stdout)
+		default:
+			return errors.New("answer 1 or 2 to the cloud question; run clawbridge onboard to start again")
 		}
 		if err != nil {
 			return err

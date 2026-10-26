@@ -207,15 +207,21 @@ and adds the `/etc/fstab` line only once, so running it again is safe. Its
 device name is the volume ID without the dash, for example `vol0123456789abcdef0`
 for `vol-0123456789abcdef0`.
 - **After a format:** append `formatted clawbridge-data` to `created.txt`.
-- **If it prints STOP** and `created.txt` doesn't record that format, the volume
-  holds data you didn't create: stop and ask (rule 5).
+- **`REUSE=1`** only when `created.txt` already records `formatted
+  clawbridge-data`, that is, when you formatted it on an earlier run. Otherwise
+  leave `REUSE=0`.
+- **If it prints STOP … already has a filesystem**, it exited without touching
+  `/etc/fstab` or mounting anything: the volume holds data you didn't create.
+  Stop and ask (rule 5).
 
 ```sh
 set -e
+REUSE=0
 DISK=/dev/disk/by-id/nvme-Amazon_Elastic_Block_Store_VOLUME_ID_WITHOUT_DASH
 test -b "$DISK" || { echo "STOP: $DISK is not attached"; exit 1; }
 if blkid "$DISK" >/dev/null; then
-  echo "STOP: $DISK already has a filesystem; not formatting"
+  [ "$REUSE" = 1 ] || { echo "STOP: $DISK already has a filesystem; not formatting or mounting it"; exit 2; }
+  echo "reusing the filesystem formatted on an earlier run"
 else
   mkfs.ext4 -m 0 -E lazy_itable_init=0,lazy_journal_init=0,discard "$DISK"
 fi

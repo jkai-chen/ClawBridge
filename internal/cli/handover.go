@@ -160,6 +160,9 @@ showing you the cost and getting your yes, then installs the server.
 The real controls: the playbook's rules guide the agent, but what protects you is that you approve
 each of its commands, and that ClawBridge's checks, not the agent, decide when a step is done. Keep the
 agent in its normal approval mode; avoid bypass or auto-approve modes for this hand-over.
+
+The agent holds this terminal. When it asks you to enter a secret (clawbridge cloud secret set KEY), run that
+in a second terminal: secrets never go through the agent.
 `
 
 // startOwnServer is Start's third choice.
@@ -189,6 +192,9 @@ func startOwnServer(ctx context.Context, prompt *wizardPrompt, stdout, stderr io
 		}
 		if a := strings.ToLower(strings.TrimSpace(answer)); a == "n" || a == "no" {
 			state = nil
+		} else if err = validInputs(state); err != nil {
+			// Saved values reach gcloud's argv and TASK.md: check them again.
+			return fmt.Errorf("the saved progress is not valid (%w); run clawbridge onboard and start over", err)
 		}
 	}
 	if state == nil {
@@ -342,7 +348,11 @@ func handOver(ctx context.Context, s *onboardingState, bin, skillAgent string, s
 	// Whatever the agent said or how it exited, the checks decide.
 	fmt.Fprintln(stdout, "\nChecking the server…")
 	args := []string{"infra", "server", "version", "--server", "https://" + s.Domain, "--vm", "clawbridge-1", "--project", s.Project, "--zone", s.Zone}
-	if err = runHandoverChecks(ctx, args, stdout, stderr); err != nil {
+	// The checks' gcloud calls use the same configuration as the agent's.
+	restore := setEnv("CLOUDSDK_ACTIVE_CONFIG_NAME", gcloudConfiguration)
+	err = runHandoverChecks(ctx, args, stdout, stderr)
+	restore()
+	if err != nil {
 		fmt.Fprintln(stdout, "\nNot done yet. Run clawbridge onboard to hand over again (your agent resumes from created.txt),")
 		fmt.Fprintln(stdout, "or follow docs/operations/first-deployment.md yourself.")
 		return nil
@@ -352,6 +362,20 @@ func handOver(ctx context.Context, s *onboardingState, bin, skillAgent string, s
 		return err
 	}
 	return finishSignin(s, stdout)
+}
+
+// setEnv sets one variable for this process and its children, and returns
+// how to put it back.
+func setEnv(key, value string) func() {
+	old, had := os.LookupEnv(key)
+	os.Setenv(key, value)
+	return func() {
+		if had {
+			os.Setenv(key, old)
+		} else {
+			os.Unsetenv(key)
+		}
+	}
 }
 
 // finishSignin names the sign-in step the user runs in their own terminal.

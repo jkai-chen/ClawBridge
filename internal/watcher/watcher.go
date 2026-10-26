@@ -1,7 +1,8 @@
 // Package watcher is the server's own watcher (live/INTAKE-DESIGN.md §2):
 // on each scheduler tick it runs every due project's comment watch, claim
-// markers, issue intake and project health as the project's system
-// session, reading and writing Linear as the ClawBridge Linear app.
+// markers, issue intake, project health and document notices as the
+// project's system session, reading and writing Linear as the ClawBridge
+// Linear app.
 package watcher
 
 import (
@@ -79,6 +80,7 @@ type ProjectTick struct {
 	Comments  *linearboard.WatchCycle `json:"comments,omitempty"`
 	Intake    *IntakePoll             `json:"intake,omitempty"`
 	Health    []HealthRun             `json:"health,omitempty"`
+	Docs      *DocPoll                `json:"docs,omitempty"`
 	Error     string                  `json:"error,omitempty"`
 }
 
@@ -113,15 +115,18 @@ func (w *Watcher) project(ctx context.Context, pid string, healthLeft int) Proje
 			tick.Comments = &c
 			return nil
 		},
-		// Intake, then health, run after the comment watch and markers,
-		// within what the hour's budget leaves.
+		// Intake, then health, then documents run after the comment
+		// watch and markers, within what the hour's budget leaves.
 		Within: func(ctx context.Context, fence map[string]any) error {
 			poll, err := w.intake(ctx, svc, scope, pid, fence)
 			tick.Intake = poll
 			if err != nil {
 				return err
 			}
-			tick.Health, err = w.health(ctx, pid, fence, healthLeft)
+			if tick.Health, err = w.health(ctx, pid, fence, healthLeft); err != nil {
+				return err
+			}
+			tick.Docs, err = w.docs(ctx, svc, pid, fence)
 			return err
 		},
 	})

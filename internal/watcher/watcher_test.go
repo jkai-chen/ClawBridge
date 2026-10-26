@@ -46,6 +46,12 @@ type fakeLinear struct {
 	healthIssues []map[string]any
 	activity     map[string]map[string]any
 	healthMore   bool
+	// docRefs, docMore and docContent answer the document watch; events
+	// records the order of comment and document reads.
+	docRefs    []linearprovider.DocRef
+	docMore    bool
+	docContent map[string]string
+	events     []string
 }
 
 func (f *fakeLinear) issue(id string) (linearprovider.IssueV2, error) {
@@ -127,6 +133,7 @@ func (p fakeProvider) Relation(context.Context, linearprovider.RelationInput) (l
 	return linearprovider.RelationReceipt{}, errors.New("no writes")
 }
 func (p fakeProvider) IssueComments(context.Context, linearprovider.CommentsQuery) (linearprovider.Comments, error) {
+	p.f.events = append(p.f.events, "comments")
 	return linearprovider.Comments{Items: p.f.comments, Complete: true}, nil
 }
 

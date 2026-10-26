@@ -489,3 +489,49 @@ func projectsV2(projects []linearprovider.Project) []InitiativeProj {
 	}
 	return out
 }
+
+// docWatcherV2 is the provider support the server's document watch needs.
+type docWatcherV2 interface {
+	DocumentsUpdatedSince(ctx context.Context, since, cursor string) (linearprovider.Page[linearprovider.DocRef], error)
+	GetDocument(ctx context.Context, id string) (linearprovider.Document, error)
+}
+
+// DocumentsChangedSince is the server watcher's one list call: the
+// documents the connection can see, workspace-wide, changed since, with
+// their parents and never their content. It reuses the Service's open
+// connection; the bus filters the list to the project's scope.
+func (s *Service) DocumentsChangedSince(ctx context.Context, since string) (linearprovider.Page[linearprovider.DocRef], error) {
+	_, p, done, e := s.open(ctx)
+	if e != nil {
+		return linearprovider.Page[linearprovider.DocRef]{}, e
+	}
+	defer done()
+	d, ok := p.(docWatcherV2)
+	if !ok {
+		return linearprovider.Page[linearprovider.DocRef]{}, errors.New("native provider lacks Linear document reads")
+	}
+	return d.DocumentsUpdatedSince(ctx, since, "")
+}
+
+// PublishedDocumentDigest is the server watcher's read-back of a document
+// ClawBridge published: the digest of its content, never the content.
+func (s *Service) PublishedDocumentDigest(ctx context.Context, id string) (string, error) {
+	if !linearprovider.ValidID(id) {
+		return "", errors.New("a document read requires its UUID")
+	}
+	_, p, done, e := s.open(ctx)
+	if e != nil {
+		return "", e
+	}
+	defer done()
+	d, ok := p.(docWatcherV2)
+	if !ok {
+		return "", errors.New("native provider lacks Linear document reads")
+	}
+	doc, e := d.GetDocument(ctx, id)
+	if e != nil {
+		return "", e
+	}
+	sum := sha256.Sum256([]byte(doc.Content))
+	return hex.EncodeToString(sum[:]), nil
+}

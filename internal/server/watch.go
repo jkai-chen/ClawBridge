@@ -126,8 +126,17 @@ func startWatcher(ctx context.Context, store *bus.Store, w watchSettings, opts H
 	return opts
 }
 
+// watchRetry and watchRetries bound how a clock tick that finds the
+// flight held (a nudge's pass) waits for it: a few seconds at a time, so
+// the interval's comments, intake, health and documents aren't skipped.
+var (
+	watchRetry   = 5 * time.Second
+	watchRetries = 12
+)
+
 // runWatchLoop ticks every interval until ctx ends, each tick within
-// tickDeadline. Ticks never overlap; a slow tick delays the next.
+// tickDeadline. Ticks never overlap; a slow tick delays the next. A tick
+// that finds the flight held tries again shortly, up to watchRetries.
 func runWatchLoop(ctx context.Context, ticker Ticker, interval time.Duration) {
 	clock := time.NewTicker(interval)
 	defer clock.Stop()
@@ -136,9 +145,25 @@ func runWatchLoop(ctx context.Context, ticker Ticker, interval time.Duration) {
 		case <-ctx.Done():
 			return
 		case <-clock.C:
-			tick, cancel := context.WithTimeout(ctx, tickDeadline)
-			ticker.Tick(tick)
-			cancel()
+			for try := 0; ; try++ {
+				tick, cancel := context.WithTimeout(ctx, tickDeadline)
+				got := ticker.Tick(tick)
+				cancel()
+				if !heldFlight(got) || try >= watchRetries {
+					break
+				}
+				select {
+				case <-ctx.Done():
+					return
+				case <-time.After(watchRetry):
+				}
+			}
 		}
 	}
+}
+
+// heldFlight reports a tick the single flight didn't start.
+func heldFlight(got any) bool {
+	m, ok := got.(map[string]any)
+	return ok && m["running"] == true
 }

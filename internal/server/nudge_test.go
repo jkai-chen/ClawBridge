@@ -226,3 +226,28 @@ func TestNudgeRidesBesideTheWatcherClock(t *testing.T) {
 		t.Fatal("a nudge with the scheduler's endpoint alone")
 	}
 }
+
+// A clock tick that lands while a nudge holds the flight runs once the
+// pass ends, not an interval later.
+func TestClockTickWaitsOutANudge(t *testing.T) {
+	savedRetry := watchRetry
+	watchRetry = 10 * time.Millisecond
+	defer func() { watchRetry = savedRetry }()
+	ticks := &countTicks{ticks: make(chan struct{}, 8)}
+	flight := oneAtATime(ticks)
+	if !flight.claim() {
+		t.Fatal("flight busy")
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	// The clock fires at 300ms, finds the nudge and retries every 10ms;
+	// the next clock fire would be at 600ms.
+	go runWatchLoop(ctx, flight, 300*time.Millisecond)
+	if n := ticks.count(350 * time.Millisecond); n != 0 {
+		t.Fatal("a tick ran beside the nudge")
+	}
+	flight.running.Store(false)
+	if n := ticks.count(150 * time.Millisecond); n != 1 {
+		t.Fatal("the held tick did not run soon after the nudge:", n)
+	}
+}

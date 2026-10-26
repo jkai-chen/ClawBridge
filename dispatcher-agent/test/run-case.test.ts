@@ -209,3 +209,20 @@ test("a case without issue text says so: no_excerpt [d5 Q8]", async () => {
 	assert.equal(withText.no_excerpt, undefined);
 	assert.equal(withText.untrusted.title, "Fix the ledger");
 });
+
+test("a chat case with no issue text: the question stays untrusted, and no_excerpt says no issue text was read [d5 Q8]", async () => {
+	const { renderCase } = await import("../src/prompt.ts");
+	const view = JSON.parse(
+		renderCase(
+			sampleCase({
+				kind: "chat",
+				permitted_actions: undefined,
+				untrusted: undefined,
+				subject: { type: "message", id: "msg_3" },
+				message: { from: { session: "lead", principal: "p_lead" }, text: "Who holds ABC-12?" },
+			}),
+		),
+	);
+	assert.equal(view.no_excerpt, true);
+	assert.deepEqual(view.untrusted, { question: "Who holds ABC-12?" });
+});

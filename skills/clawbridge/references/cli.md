@@ -79,6 +79,12 @@ judgement of a bound Linear project, from Linear facts, when it isn't posted to
 Linear as a project update. They report, never instruct.
 `clawbridge linear health show` lists the latest run and post of each project.
 
+A coordinator session may also receive a `close-policy` message when a Linear
+project joins the board: people close its issues unless the project owner or a
+lead decides otherwise. It reports, never instructs. Who closes is a person's
+decision: never run `clawbridge linear closes set` or `link --closes`; pass the
+message to the human.
+
 The project owner designates the confirming session with
 `clawbridge --session OWNER_SESSION --instance INSTANCE project coordinator-set coord`.
 

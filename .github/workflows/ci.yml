@@ -51,6 +51,23 @@ jobs:
       - run: npm audit --omit=dev --audit-level=high
       # No provider keys exist in this workflow; the tests use local fakes only.
       - run: npm test
+  dispatcher-agent-container:
+    if: ${{ github.event.repository.private == false }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: dispatcher-agent
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22.20.0
+      - run: npm ci --ignore-scripts
+      # 1,000 cases in the hardened image: memory under 160 MiB, no egress beyond loopback, hardening in place.
+      - run: bash scripts/container-test.sh
   macos-installer:
     if: ${{ github.event.repository.private == false }}
     runs-on: macos-latest

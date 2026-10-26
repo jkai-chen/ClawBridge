@@ -1,13 +1,16 @@
 package agentd
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"flag"
 	"fmt"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
+	"net/netip"
 	"os"
 	"time"
 )
@@ -16,6 +19,9 @@ const usage = `usage:
   clawbridge-agentd proxy --listen SOCKET --upstream SOCKET
       the validating socket proxy, run as the agents' own user (cbagent),
       in front of its rootless dockerd
+  clawbridge-agentd egress --listen HOST:PORT --policy FILE
+      the per-owner egress proxy on the agents' networks; it reloads the
+      policy agentd writes, and refuses everything while it is invalid
   clawbridge-agentd check
       validate agentd's configuration and its proxy socket
   clawbridge-agentd run
@@ -37,6 +43,8 @@ func Main(ctx context.Context, args []string, getenv func(string) string, stdout
 	switch args[0] {
 	case "proxy":
 		return runProxy(ctx, args[1:], getenv, log)
+	case "egress":
+		return runEgress(ctx, args[1:], getenv, log)
 	case "check", "run":
 		cfg, err := LoadConfig(getenv)
 		if err != nil {
@@ -113,4 +121,73 @@ func runProxy(ctx context.Context, args []string, getenv func(string) string, lo
 		return err
 	}
 	return nil
+}
+
+// egressPoll is how often the egress proxy rereads its policy file.
+var egressPoll = 2 * time.Second
+
+func runEgress(ctx context.Context, args []string, getenv func(string) string, log *slog.Logger) error {
+	fs := flag.NewFlagSet("egress", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	listen := fs.String("listen", "", "")
+	policyPath := fs.String("policy", "", "")
+	if err := fs.Parse(args); err != nil || fs.NArg() != 0 || *listen == "" || *policyPath == "" {
+		return errors.New(usage)
+	}
+	// Like the socket proxy, it is on every agent's side: no secrets.
+	if getenv("CLAWBRIDGE_LAUNCHER_TOKEN") != "" {
+		return errors.New("the egress proxy holds no secrets: remove CLAWBRIDGE_LAUNCHER_TOKEN from its environment")
+	}
+	if _, err := netip.ParseAddrPort(*listen); err != nil {
+		return fmt.Errorf("--listen must be IP:PORT, not %q", *listen)
+	}
+	e := NewEgress(log)
+	last, err := os.ReadFile(*policyPath)
+	if err != nil {
+		return fmt.Errorf("the egress policy could not be read: %w", err)
+	}
+	p, err := ParseEgressPolicy(last)
+	if err == nil {
+		err = e.SetPolicy(p)
+	}
+	if err != nil {
+		return err
+	}
+	l, err := net.Listen("tcp", *listen)
+	if err != nil {
+		return err
+	}
+	log.Info("egress proxy listening", "listen", *listen, "networks", len(p.Networks))
+	go func() {
+		ticker := time.NewTicker(egressPoll)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				l.Close()
+				_ = e.SetPolicy(EgressPolicy{})
+				return
+			case <-ticker.C:
+			}
+			data, err := os.ReadFile(*policyPath)
+			if err == nil && bytes.Equal(data, last) {
+				continue
+			}
+			last = data
+			var p EgressPolicy
+			if err == nil {
+				if p, err = ParseEgressPolicy(data); err == nil {
+					err = e.SetPolicy(p)
+				}
+			}
+			if err != nil {
+				// Fail closed: an unreadable or invalid policy allows nothing.
+				_ = e.SetPolicy(EgressPolicy{})
+				log.Warn("egress policy refused; refusing all egress until it is valid", "error", err.Error())
+				continue
+			}
+			log.Info("egress policy reloaded", "networks", len(p.Networks))
+		}
+	}()
+	return e.Serve(l)
 }

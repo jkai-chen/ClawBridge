@@ -30,6 +30,7 @@ case "$1 $2" in
 "ssm send-command") echo '{"Command":{"CommandId":"cmd-1"}}' ;;
 "ssm get-command-invocation") echo '{"Status":"Success","StandardOutputContent":""}' ;;
 "ssm delete-parameter") [ -z "$CB_FAKE_AWS_FAIL_DELETE" ] || exit 254 ;;
+"ssm describe-parameters") if [ -n "$CB_FAKE_AWS_FAIL_DELETE" ]; then echo '{"Parameters":[{"Name":"left"}]}'; else echo '{"Parameters":[]}'; fi ;;
 *) exit 2 ;;
 esac
 `
@@ -122,8 +123,11 @@ func TestCloudSecretSetOverSSMDeletesTheParameterOnEveryPath(t *testing.T) {
 		edit   func(*awsStub)
 		cancel bool
 	}{
-		"written":          {},
-		"put refused":      {edit: func(a *awsStub) { a.err = map[string]error{"ssm put-parameter": errors.New("x")} }},
+		"written": {},
+		"put refused": {edit: func(a *awsStub) {
+			// The parameter was never created: its delete fails, and that is no "left behind".
+			a.err = map[string]error{"ssm put-parameter": errors.New("x"), "ssm delete-parameter": errors.New("ParameterNotFound")}
+		}},
 		"command refused":  {edit: func(a *awsStub) { a.out["ssm send-command"] = `{}` }},
 		"command failed":   {edit: func(a *awsStub) { a.out["ssm get-command-invocation"] = `{"Status":"Failed"}` }},
 		"command too slow": {edit: func(a *awsStub) { a.out["ssm get-command-invocation"] = `{"Status":"InProgress"}`; ssmWait = 0 }},
@@ -133,6 +137,7 @@ func TestCloudSecretSetOverSSMDeletesTheParameterOnEveryPath(t *testing.T) {
 		a.out["ssm put-parameter"] = `{"Version":1}`
 		a.out["ssm delete-parameter"] = `{}`
 		a.out["ssm get-command-invocation"] = `{"Status":"Success","StandardOutputContent":""}`
+		a.out["ssm cancel-command"] = `{}`
 		stubAWS(t, a, nil, nil)
 		if c.edit != nil {
 			c.edit(a)
@@ -161,8 +166,36 @@ func TestCloudSecretSetOverSSMDeletesTheParameterOnEveryPath(t *testing.T) {
 				deletes++
 			}
 		}
-		if deletes != 1 || a.calls[len(a.calls)-1][2] != "delete-parameter" {
+		last := a.calls[len(a.calls)-1][2]
+		if name == "put refused" {
+			last = a.calls[len(a.calls)-2][2] // then the existence check
+		}
+		if deletes != 1 || last != "delete-parameter" {
 			t.Fatalf("%s: %d deletes, last %v", name, deletes, a.calls[len(a.calls)-1])
+		}
+		if err != nil && strings.Contains(err.Error(), "left behind") {
+			t.Fatalf("%s: a false alarm: %v", name, err)
+		}
+		if name == "command too slow" {
+			if a.calls[len(a.calls)-2][2] != "cancel-command" || !strings.Contains(err.Error(), "may not have been written") {
+				t.Fatalf("an unfinished write is stopped before the delete, and said so: %v, %v", a.calls[len(a.calls)-2], err)
+			}
+		}
+	}
+}
+
+// The instance's own failures read as what to fix there.
+func TestCloudSecretSetOverSSMSaysWhatTheInstanceLacks(t *testing.T) {
+	for code, want := range map[string]string{"3": "has no AWS CLI", "5": "aws-instance-role-policy.json"} {
+		a := healthyAWS()
+		a.out["ssm put-parameter"] = `{"Version":1}`
+		a.out["ssm delete-parameter"] = `{}`
+		a.out["ssm get-command-invocation"] = `{"Status":"Failed","ResponseCode":` + code + `}`
+		stubAWS(t, a, nil, nil)
+		stubSecretIO(t, "synthetic-value", false, nil)
+		_, err := secretSet(ssmSecretKey, "--instance", ec2ID, "--region", "us-east-1", "--value-stdin")
+		if err == nil || !strings.Contains(err.Error(), want) || !strings.Contains(err.Error(), "nothing was printed") {
+			t.Fatalf("exit %s: %v", code, err)
 		}
 	}
 }
@@ -215,7 +248,12 @@ func TestSSMSetScriptRunsOnTheInstance(t *testing.T) {
 		cmd.Env = append(os.Environ(), "PATH="+bin+string(os.PathListSeparator)+os.Getenv("PATH"))
 		return cmd.Run()
 	}
-	if err := run(`[ "$*" = "ssm get-parameter --with-decryption --name ` + name + ` --region us-east-1 --query Parameter.Value --output text" ] && echo fromstore`); err != nil {
+	read := `case "$*" in
+"ssm get-parameter --name ` + name + ` --region us-east-1 --query Parameter.Name --output text") echo ` + name + ` ;;
+"ssm get-parameter --with-decryption --name ` + name + ` --region us-east-1 --query Parameter.Value --output text") echo fromstore ;;
+*) exit 9 ;;
+esac`
+	if err := run(read); err != nil {
 		t.Fatal(err)
 	}
 	if got, _ := os.ReadFile(path); string(got) != ssmSecretKey+"=fromstore\n" {
@@ -224,8 +262,23 @@ func TestSSMSetScriptRunsOnTheInstance(t *testing.T) {
 	if info, _ := os.Stat(path); info.Mode().Perm() != 0o600 {
 		t.Fatalf("mode %v", info.Mode())
 	}
-	if err := run(`exit 255`); err == nil {
-		t.Fatal("a failed read was accepted")
+	exitCode := func(err error) int {
+		var exit *exec.ExitError
+		if errors.As(err, &exit) {
+			return exit.ExitCode()
+		}
+		return -1
+	}
+	if err := run(`exit 255`); exitCode(err) != 5 {
+		t.Fatalf("a role that cannot read the parameter: %v", err)
+	}
+	if err := run(`[ "$3" = "--with-decryption" ] && exit 255; echo ok`); exitCode(err) == 0 {
+		t.Fatal("a failed decrypt was accepted")
+	}
+	noCLI := exec.Command("sh", "-c", local)
+	noCLI.Env = append(os.Environ(), "PATH="+t.TempDir())
+	if err := noCLI.Run(); exitCode(err) != 3 {
+		t.Fatalf("no aws CLI on the instance: %v", err)
 	}
 	if got, _ := os.ReadFile(path); string(got) != ssmSecretKey+"=fromstore\n" {
 		t.Fatalf("a failed read changed the file: %q", got)

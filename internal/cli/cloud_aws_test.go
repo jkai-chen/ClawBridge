@@ -206,6 +206,9 @@ func TestCloudCheckInfraOnAWS(t *testing.T) {
 		"secret left": {edit: func(a *awsStub) {
 			a.out["ssm describe-parameters"] = `{"Parameters":[{"Name":"/clawbridge/` + ec2ID + `/CLAWBRIDGE_OAUTH_CLIENT_SECRET"}]}`
 		}, want: "secret_left_behind"},
+		"params denied": {edit: func(a *awsStub) {
+			a.err = map[string]error{"ssm describe-parameters": errors.New("AccessDenied")}
+		}, want: "parameters_unreadable"},
 		"ssm offline": {edit: func(a *awsStub) {
 			a.out["ssm describe-instance-information"] = `{"InstanceInformationList":[{"PingStatus":"ConnectionLost"}]}`
 		}, want: "ssm_offline"},
@@ -385,5 +388,55 @@ func TestS3LifecycleTemplate(t *testing.T) {
 	if json.Unmarshal(raw, &lc) != nil || len(lc.Rules) != 1 || lc.Rules[0].Status != "Enabled" ||
 		lc.Rules[0].Filter.Prefix != "postgres/daily/" || lc.Rules[0].Expiration.Days != 30 {
 		t.Fatalf("%s", raw)
+	}
+}
+
+// The policies the docs promise: the instance reads only its own secret
+// parameters, decrypting only through SSM; the profile writes only those.
+func TestAWSPolicyTemplates(t *testing.T) {
+	type statement struct {
+		Action    any
+		Resource  any
+		Condition map[string]map[string]string
+	}
+	load := func(name string) []statement {
+		raw, err := os.ReadFile(filepath.Join("..", "..", "deploy", name))
+		if err != nil {
+			t.Fatal(err)
+		}
+		var p struct{ Statement []statement }
+		if err := json.Unmarshal(raw, &p); err != nil {
+			t.Fatal(err)
+		}
+		return p.Statement
+	}
+	find := func(st []statement, action string) statement {
+		for _, s := range st {
+			if b, _ := json.Marshal(s.Action); strings.Contains(string(b), `"`+action+`"`) {
+				return s
+			}
+		}
+		t.Fatalf("no statement allows %s", action)
+		return statement{}
+	}
+	own := "arn:aws:ssm:REGION:ACCOUNT_ID:parameter/clawbridge/INSTANCE_ID/*"
+	role := load("aws-instance-role-policy.json")
+	if find(role, "ssm:GetParameter").Resource != own {
+		t.Fatal("the instance role reads more than its own parameters")
+	}
+	if c := find(role, "kms:Decrypt").Condition; c["StringEquals"]["kms:ViaService"] != "ssm.REGION.amazonaws.com" {
+		t.Fatalf("decrypt is not limited to SSM: %v", c)
+	}
+	for _, s := range role {
+		if b, _ := json.Marshal(s.Action); strings.Contains(string(b), "*") {
+			t.Fatalf("a wildcard action: %s", b)
+		}
+	}
+	profile := load("aws-profile-policy.json")
+	if find(profile, "ssm:PutParameter").Resource != own || find(profile, "ssm:DeleteParameter").Resource != own {
+		t.Fatal("the profile writes more than the instance's secret parameters")
+	}
+	if c := find(profile, "kms:Encrypt").Condition; c["StringEquals"]["kms:ViaService"] != "ssm.REGION.amazonaws.com" {
+		t.Fatalf("encrypt is not limited to SSM: %v", c)
 	}
 }

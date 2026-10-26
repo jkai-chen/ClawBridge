@@ -148,29 +148,54 @@ func (s ssmTransport) run(ctx context.Context, script string, _ io.Writer) ([]by
 	if err != nil || json.Unmarshal(out, &sent) != nil || sent.Command.CommandId == "" {
 		return nil, errors.New("SSM did not accept the command")
 	}
+	id := sent.Command.CommandId
 	deadline := time.Now().Add(ssmWait)
 	for {
-		out, err = awsCLI(ctx, t.aws("ssm", "get-command-invocation", "--command-id", sent.Command.CommandId, "--instance-id", t.instance), nil)
-		var inv struct{ Status, StandardOutputContent string }
+		out, err = awsCLI(ctx, t.aws("ssm", "get-command-invocation", "--command-id", id, "--instance-id", t.instance), nil)
+		var inv struct {
+			Status, StandardOutputContent string
+			ResponseCode                  int
+		}
 		// Right after send-command the invocation may not exist yet: poll on.
 		if err == nil && json.Unmarshal(out, &inv) == nil {
 			switch inv.Status {
 			case "Success":
 				return []byte(inv.StandardOutputContent), nil
 			case "Failed", "Cancelled", "TimedOut", "Cancelling":
-				return nil, errors.New("the script did not succeed over SSM")
+				return nil, &ssmRunError{commandID: id, code: inv.ResponseCode}
 			}
 		}
 		if time.Now().After(deadline) {
-			return nil, errors.New("SSM did not finish the script in time")
+			return nil, &ssmRunError{commandID: id, unfinished: true}
 		}
 		select {
 		case <-ctx.Done():
-			return nil, ctx.Err()
+			return nil, &ssmRunError{commandID: id, unfinished: true}
 		case <-time.After(ssmPollEvery):
 		}
 	}
 }
+
+// ssmRunError is a script SSM ran without success: it failed with the
+// script's exit code, or it had not finished when the wait ended.
+type ssmRunError struct {
+	commandID  string
+	code       int
+	unfinished bool
+}
+
+func (e *ssmRunError) Error() string {
+	if e.unfinished {
+		return "SSM did not finish the script in time"
+	}
+	return "the script did not succeed over SSM"
+}
+
+// secretAdvice is a secret write's failure that is safe to show as is: fixed
+// text, never anything the value or the provider wrote.
+type secretAdvice string
+
+func (a secretAdvice) Error() string { return string(a) }
 
 // setSecret writes one key through a short-lived Parameter Store
 // SecureString (§13, ON-M3): SSM has no stdin path, and send-command records
@@ -201,19 +226,46 @@ func (s ssmTransport) setSecret(ctx context.Context, key, value string, stderr i
 		return err
 	}
 	defer func() {
-		// Even after a failed or cancelled write, with its own deadline.
+		// Even after a failed or cancelled write (a lost response may still
+		// have created it), with its own deadline.
 		cleanup, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
 		defer cancel()
-		if _, derr := awsCLI(cleanup, t.aws("ssm", "delete-parameter", "--name", name), nil); derr != nil {
-			left := errors.New("parameter left behind: " + name + "; delete it with aws ssm delete-parameter --name " + name)
+		if _, derr := awsCLI(cleanup, t.aws("ssm", "delete-parameter", "--name", name), nil); derr != nil && s.parameterExists(cleanup, name) {
+			left := errors.New("parameter left behind: " + name + "; delete it with aws ssm delete-parameters --names " + name)
 			err = errors.Join(err, left)
 		}
 	}()
 	if _, err = awsCLI(ctx, t.aws("ssm", "put-parameter", "--cli-input-json", "file:///dev/stdin"), request); err != nil {
-		return errors.New("Parameter Store did not take the value")
+		return secretAdvice("Parameter Store did not take the value; check the profile may put Advanced-tier parameters, and this machine's clock (the parameter's expiry is set from it)")
 	}
 	_, err = s.run(ctx, ssmSetScript(name, t.region, key), stderr)
+	var failed *ssmRunError
+	switch {
+	case !errors.As(err, &failed):
+		return err
+	case failed.unfinished:
+		// Stop it before the delete, so it can't read the parameter after.
+		cleanup, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
+		defer cancel()
+		_, _ = awsCLI(cleanup, t.aws("ssm", "cancel-command", "--command-id", failed.commandID, "--instance-ids", t.instance), nil)
+		return secretAdvice("the write did not finish in time, so it may not have been written; run cloud secret set again")
+	case failed.code == 3:
+		return secretAdvice("the instance has no AWS CLI; install it there (Amazon Linux 2023 has it)")
+	case failed.code == 5:
+		return secretAdvice("the instance's role cannot read its parameter; attach the policy in deploy/aws-instance-role-policy.json")
+	}
 	return err
+}
+
+// parameterExists says the parameter is still there, or that this can't be
+// confirmed (then it may be).
+func (s ssmTransport) parameterExists(ctx context.Context, name string) bool {
+	out, err := awsCLI(ctx, s.target.aws("ssm", "describe-parameters", "--parameter-filters", "Key=Name,Option=Equals,Values="+name), nil)
+	var found struct{ Parameters []struct{ Name string } }
+	if err != nil || json.Unmarshal(out, &found) != nil {
+		return true
+	}
+	return len(found.Parameters) > 0
 }
 
 // secretParameterLife is the longest a secret's parameter can live: the
@@ -228,8 +280,12 @@ func secretParameter(instance, key string) string { return "/clawbridge/" + inst
 // ssmSetScript reads the parameter with the instance's role and pipes the
 // value straight into remoteSetScript, which refuses an empty one. Every input
 // is pattern-checked (the instance and region) or from the fixed key list.
+// It exits 3 without the AWS CLI, and 5 when the role cannot read the
+// parameter (checked without decrypting it).
 func ssmSetScript(name, region, key string) string {
-	return "aws ssm get-parameter --with-decryption --name " + name + " --region " + region +
+	return "command -v aws >/dev/null || exit 3\n" +
+		"aws ssm get-parameter --name " + name + " --region " + region + " --query Parameter.Name --output text >/dev/null || exit 5\n" +
+		"aws ssm get-parameter --with-decryption --name " + name + " --region " + region +
 		" --query Parameter.Value --output text | (\n" + remoteSetScript(key, serverEnvFile) + "\n)"
 }
 
@@ -363,14 +419,14 @@ func awsInfra(ctx context.Context, p *cloudProbe) cloudResult {
 	out, err = awsCLI(ctx, t.aws("ssm", "describe-parameters", "--parameter-filters", "Key=Name,Option=BeginsWith,Values="+prefix), nil)
 	var params struct{ Parameters []struct{ Name string } }
 	if err != nil || json.Unmarshal(out, &params) != nil {
-		return failed("infra", "vm_unreadable", awsAdvice)
+		return failed("infra", "parameters_unreadable", "the profile cannot list its secret parameters; it needs ssm:DescribeParameters (deploy/aws-profile-policy.json)")
 	}
 	if len(params.Parameters) > 0 {
 		var names []string
 		for _, prm := range params.Parameters {
 			names = append(names, prm.Name)
 		}
-		return failed("infra", "secret_left_behind", "a secret's parameter outlived its write: delete it with aws ssm delete-parameter --name "+strings.Join(names, ", "))
+		return failed("infra", "secret_left_behind", "a secret's parameter outlived its write: delete it with aws ssm delete-parameters --names "+strings.Join(names, " "))
 	}
 	f, err := p.facts(ctx)
 	if err != nil {

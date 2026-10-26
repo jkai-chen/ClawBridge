@@ -445,7 +445,12 @@ func runCloudSecretSet(ctx context.Context, args []string, stdout, stderr io.Wri
 		return err
 	}
 	if err = tr.setSecret(ctx, key, value, stderr); err != nil {
-		msg := "the remote write failed; " + tr.describe() + " (nothing was printed)"
+		advice := tr.describe()
+		var specific secretAdvice
+		if errors.As(err, &specific) {
+			advice = string(specific)
+		}
+		msg := "the remote write failed; " + advice + " (nothing was printed)"
 		// The one detail kept: a short-lived parameter that could not be deleted.
 		if i := strings.Index(err.Error(), "parameter left behind: "); i >= 0 {
 			msg += "\n" + err.Error()[i:]

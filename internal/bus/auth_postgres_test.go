@@ -821,3 +821,46 @@ func TestPostgresHeartbeatRechecksTheDevice(t *testing.T) {
 		}
 	}
 }
+
+// The host operator's bootstrap invite lets the bootstrap owner in with no
+// device and no Google: it creates the workspace, and its code joins only
+// the workspace's owner.
+func TestPostgresOperatorBootstrapInvite(t *testing.T) {
+	f := newPGIdentityFixture(t)
+	owner := newID("boot") + "@identity-test.example"
+	ws := newID("bootws")
+	out, err := f.s.OperatorBootstrapInvite(context.Background(), ws, owner)
+	if err != nil || out["workspace_created"] != true || out["purpose"] != "recovery" {
+		t.Fatal(out, err)
+	}
+	id := out["invite_id"].(string)
+	if row := f.inviteRow(id); row["created_by"] != OperatorPrincipal || row["email"] != owner || f.audited("invite_created", id) != 1 {
+		t.Fatal(row)
+	}
+	key := newKey(t)
+	if _, err = f.join(owner, out["code"].(string), key); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = f.asDevice(owner, keyID(t, key), Request{Operation: "project_create", Workspace: ws, Args: map[string]any{"slug": "p"}}); err != nil {
+		t.Fatal("the owner's device can't act as the owner:", err)
+	}
+	// Run again for an owner who lost every device: the workspace stays.
+	again, err := f.s.OperatorBootstrapInvite(context.Background(), ws, owner)
+	if err != nil || again["workspace_created"] != false {
+		t.Fatal(again, err)
+	}
+	// It never serves a workspace someone else owns...
+	if _, err = f.s.OperatorBootstrapInvite(context.Background(), f.workspace, owner); err == nil {
+		t.Fatal("a bootstrap invite for another owner's workspace")
+	}
+	// ...and its code joins only while its email owns the workspace.
+	bob := newID("bob") + "@identity-test.example"
+	f.exec(`INSERT INTO members(workspace_id,principal,added_by,added_at) SELECT id,?,?,? FROM workspaces WHERE name=?`, bob, owner, "2026-01-01T00:00:00.000000000Z", ws)
+	f.exec(`UPDATE workspaces SET owner_principal=? WHERE name=?`, bob, ws)
+	if _, err = f.join(owner, again["code"].(string), newKey(t)); err != ErrInvalidInvite || f.failReason(again["invite_id"].(string)) != "issuer_lost_authority" {
+		t.Fatal("an operator invite joined a former owner:", err)
+	}
+	if _, err = f.s.OperatorBootstrapInvite(context.Background(), ws, "ci:x@"+ws); err == nil {
+		t.Fatal("a CI principal as the bootstrap owner")
+	}
+}

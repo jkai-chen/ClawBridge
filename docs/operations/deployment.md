@@ -196,6 +196,61 @@ sign-in. Provisioning the VM, database, OAuth clients and IAM grants is an opera
 workflow outside client onboarding. The service validates Google ID tokens;
 IAP-signed HTTP assertions are outside its implemented identity path.
 
+## Sign-in methods
+
+The server accepts Google ID tokens, ClawBridge device keys, or both. The
+mode is `CLAWBRIDGE_AUTH` in the environment file, passed to `serve --auth`:
+
+| `CLAWBRIDGE_AUTH` | Accepts | Needs |
+| --- | --- | --- |
+| unset or `google` | Google sign-in only | `CLAWBRIDGE_AUDIENCE` and all four OAuth settings |
+| `google,device` | Google and device keys | the Google settings, and `CLAWBRIDGE_DOMAIN` |
+| `device` | device keys only | `CLAWBRIDGE_DOMAIN`; no Google setting |
+
+- **An existing deployment keeps Google sign-in unchanged.** The default is
+  `google` when `CLAWBRIDGE_AUTH` is unset. The Google settings may now be empty in
+  Compose, but whenever Google sign-in is on, `serve` refuses to start unless the
+  audience and all four OAuth settings are present. A Google deployment missing one
+  stops; it never falls back to device keys.
+- **Device keys sign requests against the public origin**, `https://` plus
+  `CLAWBRIDGE_DOMAIN`. The origin is configuration, never read from `Host` or
+  `X-Forwarded-*`. Changing the domain invalidates nothing stored, but every client
+  must then use the new origin.
+- `GET /v1/config` shows the effective mode as `auth_methods` and the origin as
+  `public_origin`.
+- A device's key is cached for 30 seconds per server process. The database re-checks
+  the device in every request, so a revocation takes effect at once on every
+  replica.
+- **Rate limits** (in memory, per process): `POST /v1/join` allows 10 attempts an
+  hour per client address and 5 per email; failed sign-ins are limited to 60 a minute
+  per address. A refused sign-in is logged at most once an hour per address and
+  kind, never with the request's credentials.
+
+### Letting the owner in without Google: `operator bootstrap-invite`
+
+On a device-only deployment no one can sign in until the owner has a device. The
+host operator lets the bootstrap owner in with a one-time code. The same command
+recovers an owner who has lost every device.
+
+```sh
+sudo docker compose --env-file /etc/clawbridge/clawbridge.env --project-name "$PROJECT" \
+  -f /opt/clawbridge/repo/deploy/compose.yaml \
+  run --rm --no-deps api operator bootstrap-invite --workspace WORKSPACE
+```
+
+- It creates `WORKSPACE`, owned by `CLAWBRIDGE_BOOTSTRAP_OWNER`, if it doesn't
+  exist. For an existing workspace it refuses unless the bootstrap owner owns it.
+- It prints a single-use code, valid for 24 hours, for the owner's email only. The
+  owner then runs, on their own computer:
+  `clawbridge join --server https://DOMAIN --email OWNER --code CODE`.
+  (`clawbridge join` ships with the client in the same release.)
+- **The code is a secret.** Run the command in your own terminal session, not
+  through an agent, and type the code yourself. The command refuses to print to
+  anything but a terminal unless given `--force-stdout`, which prints the code alone
+  on one line for a program that keeps it in memory (`clawbridge cloud bootstrap`).
+  The code is never logged; the audit records the invite, not the code.
+- Accepting an ownership transfer revokes any pending bootstrap code.
+
 ## Private configuration
 
 Set these in a private, access-restricted environment file outside version control:
@@ -209,6 +264,8 @@ CLAWBRIDGE_OAUTH_DEVICE_CLIENT_ID=DEVICE_CLIENT_ID.apps.googleusercontent.com
 CLAWBRIDGE_OAUTH_CLIENT_SECRET=DESKTOP_CLIENT_INSTALLED_APP_CREDENTIAL
 CLAWBRIDGE_OAUTH_DEVICE_CLIENT_SECRET=DEVICE_CLIENT_INSTALLED_APP_CREDENTIAL
 CLAWBRIDGE_BOOTSTRAP_OWNER=you@example.com
+# Optional: google (the default), device, or google,device; see "Sign-in methods".
+# CLAWBRIDGE_AUTH=google
 CLAWBRIDGE_POSTGRES_DATA_PATH=/var/lib/clawbridge-postgres/data
 CLAWBRIDGE_BACKUP_BUCKET=private-clawbridge-backup-bucket
 COMPOSE_PROJECT_NAME=clawbridge

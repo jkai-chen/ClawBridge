@@ -489,8 +489,9 @@ func (s *Store) Join(ctx context.Context, in JoinRequest) (map[string]any, error
 		}
 	case "recovery":
 		// Only whoever owns the workspace now may recover a member, so a
-		// recovery invite dies with its issuer's ownership.
-		if !mainOwner(&issuer, w) {
+		// recovery invite dies with its issuer's ownership. The host
+		// operator's bootstrap invite recovers only the owner themselves.
+		if !mainOwner(&issuer, w) && (issuer.principal != OperatorPrincipal || w["owner_principal"] != email) {
 			return fail(charged, "issuer_lost_authority")
 		}
 	}
@@ -1078,4 +1079,85 @@ func liveDevice(ctx context.Context, tx *transaction, id Identity, workspace str
 		return refused("this device belongs to another workspace; join this one with its own invite")
 	}
 	return nil
+}
+
+// OperatorBootstrapInvite is the host operator's way in when no device can
+// sign in yet: a fresh server with device sign-in only, or an owner who has
+// lost every device. It creates the workspace for owner if it doesn't exist
+// (as workspace_init would for the bootstrap owner), then issues a 24 h
+// recovery invite for owner alone, from operator:local. Its code is shown
+// once, to the caller.
+func (s *Store) OperatorBootstrapInvite(ctx context.Context, workspace, owner string) (map[string]any, error) {
+	if !s.postgres {
+		return nil, errors.New("bootstrap-invite needs the hosted authority")
+	}
+	owner = normalPrincipal(owner)
+	if !validPrincipal(owner) {
+		return nil, errors.New("the bootstrap owner must be an email address")
+	}
+	raw, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, errors.New("authority unavailable")
+	}
+	tx := &transaction{Tx: raw, postgres: true}
+	defer tx.Rollback()
+	for _, q := range []string{`SET LOCAL statement_timeout='12s'`, `SET LOCAL lock_timeout='5s'`, `SELECT pg_advisory_xact_lock(882712311)`} {
+		if _, err = tx.ExecContext(ctx, q); err != nil {
+			return nil, errors.New("authority unavailable; nothing changed")
+		}
+	}
+	existing, err := query(ctx, tx, `SELECT * FROM workspaces WHERE name=?`, workspace)
+	if err != nil {
+		return nil, err
+	}
+	var w map[string]any
+	created := false
+	if len(existing) == 1 {
+		w = existing[0]
+		if w["owner_principal"] != owner || w["mode"] != "server" {
+			return nil, errors.New("that workspace's owner is not the bootstrap owner; the owner recovers with their own device, or by ownership transfer")
+		}
+	} else {
+		init := *s
+		init.principal, init.bootstrapOwner = owner, owner
+		if _, err = init.initWorkspace(ctx, tx, Request{Operation: "workspace_init", Workspace: workspace, Args: map[string]any{"mode": "server"}}); err != nil {
+			return nil, err
+		}
+		if w, err = one(ctx, tx, `SELECT * FROM workspaces WHERE name=?`, workspace); err != nil {
+			return nil, err
+		}
+		created = true
+	}
+	wid := w["id"].(string)
+	if _, err = tx.ExecContext(ctx, `SELECT pg_advisory_xact_lock(hashtextextended(?,0))`, "workspace:"+wid); err != nil {
+		return nil, errors.New("workspace is busy or the authority is unavailable; nothing changed")
+	}
+	var mine int
+	if err = tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM invites WHERE workspace_id=? AND email=? AND used_at IS NULL AND revoked_at IS NULL AND expires_at>?`, wid, owner, stamp()).Scan(&mine); err != nil {
+		return nil, err
+	}
+	if mine >= invitePendingPerEmail {
+		return nil, errors.New("the owner has 3 pending invites; revoke one first")
+	}
+	id := devicekey.NewInviteID()
+	code := devicekey.NewCode()
+	normal, _ := devicekey.NormalCode(code)
+	expires := future(inviteDeviceHours * time.Hour)
+	if _, err = tx.ExecContext(ctx, `INSERT INTO invites(invite_id,workspace_id,email,code_sha256,purpose,grants,revoke_others,created_by,created_at,expires_at) VALUES(?,?,?,?,'recovery','{}',0,?,?,?)`, id, wid, owner, devicekey.CodeHash(id, normal), OperatorPrincipal, stamp(), expires); err != nil {
+		return nil, err
+	}
+	op := *s
+	op.principal = OperatorPrincipal
+	shown := map[string]any{"invite_id": id, "email": owner, "purpose": "recovery", "expires_at": expires, "workspace": w["name"], "workspace_created": created, "via": "operator bootstrap-invite"}
+	if err = op.audit(ctx, tx, wid, "", "", "invite", id, "invite_created", shown); err != nil {
+		return nil, err
+	}
+	if err = tx.Commit(); err != nil {
+		return nil, errors.New("authority commit failed")
+	}
+	out := map[string]any{"code": code}
+	for k, v := range shown {
+		out[k] = v
+	}
+	return out, nil
 }

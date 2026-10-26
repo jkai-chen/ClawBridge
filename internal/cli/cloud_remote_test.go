@@ -96,7 +96,7 @@ echo "service db running Up 2 hours (healthy)"
 			t.Fatalf("%s: %d (%v), want %d", k, got, ok, n)
 		}
 	}
-	if len(f.counts) != len(requiredSettings)+len(appSettings) || f.envMissing {
+	if len(f.counts) != len(requiredSettings)+len(googleSettings)+len(appSettings) || f.envMissing {
 		t.Fatalf("facts: %+v", f)
 	}
 	// Only the service containers count, and the crashed api fails the check
@@ -134,7 +134,7 @@ func allSet() remoteFacts {
 	f := remoteFacts{counts: map[string]int{}, services: map[string][]string{
 		"db": {"running Up 1 hour (healthy)"}, "api": {"running Up 1 hour"}, "caddy": {"running Up 1 hour"},
 	}}
-	for _, k := range append(append([]string{}, requiredSettings...), appSettings...) {
+	for _, k := range append(append(append([]string{}, requiredSettings...), googleSettings...), appSettings...) {
 		f.counts[k] = 1
 	}
 	return f
@@ -145,11 +145,17 @@ func TestSettingsAndServices(t *testing.T) {
 		edit   func(*remoteFacts)
 		reason string
 	}{
-		"healthy":       {func(*remoteFacts) {}, ""},
-		"no env file":   {func(f *remoteFacts) { f.envMissing = true }, "env_missing"},
-		"missing":       {func(f *remoteFacts) { f.counts["CLAWBRIDGE_DOMAIN"] = 0 }, "setting_missing"},
-		"never counted": {func(f *remoteFacts) { delete(f.counts, "POSTGRES_PASSWORD") }, "setting_missing"},
-		"twice":         {func(f *remoteFacts) { f.counts["CLAWBRIDGE_AUDIENCE"] = 2 }, "setting_duplicate"},
+		"healthy":        {func(*remoteFacts) {}, ""},
+		"no env file":    {func(f *remoteFacts) { f.envMissing = true }, "env_missing"},
+		"missing":        {func(f *remoteFacts) { f.counts["CLAWBRIDGE_DOMAIN"] = 0 }, "setting_missing"},
+		"never counted":  {func(f *remoteFacts) { delete(f.counts, "POSTGRES_PASSWORD") }, "setting_missing"},
+		"twice":          {func(f *remoteFacts) { f.counts["CLAWBRIDGE_AUDIENCE"] = 2 }, "setting_duplicate"},
+		"google partial": {func(f *remoteFacts) { f.counts["CLAWBRIDGE_OAUTH_CLIENT_SECRET"] = 0 }, "setting_missing"},
+		"device only": {func(f *remoteFacts) {
+			for _, k := range googleSettings {
+				f.counts[k] = 0
+			}
+		}, ""},
 		"api absent":    {func(f *remoteFacts) { delete(f.services, "api") }, "service_down"},
 		"caddy exited":  {func(f *remoteFacts) { f.services["caddy"] = []string{"exited Exited (1) 2 minutes ago"} }, "service_down"},
 		"db no health":  {func(f *remoteFacts) { f.services["db"] = []string{"running Up 1 hour"} }, "service_down"},

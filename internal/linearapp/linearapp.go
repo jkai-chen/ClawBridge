@@ -33,13 +33,17 @@ import (
 // write (v0.3.4) lets the app post project status updates and create
 // issue relations; Linear drops those quietly without it. It is the one
 // optional scope: a token Linear grants without it is used for the rest.
-var Scopes = []string{"read", "write", "comments:create", "issues:create", "app:assignable", "app:mentionable"}
+//
+// FALLBACK BUILD (fallback/v034-noscope): the five scopes v0.3.3 minted,
+// without write. Relation writes then refuse with capability_unavailable
+// and health posts with app_scope; nothing asks Linear for write.
+var Scopes = []string{"read", "comments:create", "issues:create", "app:assignable", "app:mentionable"}
 
 // releasedScopes is Scopes as this release ships it. A mint checks Scopes
 // against it first: a token minted with any other set revokes every token
 // the app holds, production's included. It catches only a change to Scopes
 // at run time; a release that edits both changes the scopes on purpose.
-const releasedScopes = "read,write,comments:create,issues:create,app:assignable,app:mentionable"
+const releasedScopes = "read,comments:create,issues:create,app:assignable,app:mentionable"
 
 // optionalScope may be missing from a granted token. A token granted
 // without it is used for everything else, and asked again for it once
@@ -205,7 +209,10 @@ func grantFor(scopesDigest string) []string {
 // rather than replaced: the full set always, a denied optionalScope until
 // writeRetry has passed.
 func usable(scopesDigest string, minted, now time.Time) bool {
-	return scopesDigest == grantDigest(Scopes) || scopesDigest == deniedDigest() && now.Sub(minted) < writeRetry
+	// Without optionalScope in Scopes nothing asks for it again: a token
+	// granted without it is the set this build wants.
+	retry := slices.Contains(Scopes, optionalScope) && now.Sub(minted) >= writeRetry
+	return scopesDigest == grantDigest(Scopes) || scopesDigest == deniedDigest() && !retry
 }
 
 // HasScope reports whether the token in use was granted scope, getting a

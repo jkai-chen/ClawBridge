@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -104,7 +106,8 @@ func (l *linear) RoundTrip(r *http.Request) (*http.Response, error) {
 		}
 		scope := l.scope
 		if scope == "" {
-			scope = "app:assignable app:mentionable comments:create issues:create read write"
+			// Linear answers the granted set sorted, space-separated.
+			scope = strings.Join(slices.Sorted(slices.Values(Scopes)), " ")
 		}
 		return reply(200, map[string]any{"access_token": fmt.Sprintf("lin_oauth_token_%d", l.mints), "token_type": "Bearer", "expires_in": 2591999, "scope": scope})
 	case graphqlURL:
@@ -135,7 +138,7 @@ func TestAppMintsSealsAndSharesOneToken(t *testing.T) {
 	if err != nil || token != "lin_oauth_token_1" || id.AppUserID != appUser || id.LinearOrgID != org {
 		t.Fatal(token, id, err)
 	}
-	if l.forms[0] != "grant_type=client_credentials&scope=read%2Cwrite%2Ccomments%3Acreate%2Cissues%3Acreate%2Capp%3Aassignable%2Capp%3Amentionable" || l.auths[0] != "client-1:"+secret {
+	if l.forms[0] != "grant_type=client_credentials&scope=read%2Ccomments%3Acreate%2Cissues%3Acreate%2Capp%3Aassignable%2Capp%3Amentionable" || l.auths[0] != "client-1:"+secret {
 		t.Fatal("mint request", l.forms[0], l.auths[0])
 	}
 	row := store.rows[0]
@@ -167,6 +170,9 @@ func TestAppMintsSealsAndSharesOneToken(t *testing.T) {
 // old set, is never adopted. The first call mints under the new set in its
 // place (Linear revokes the old token), and every instance adopts that.
 func TestAScopeChangeReplacesTheStoredToken(t *testing.T) {
+	if !slices.Contains(Scopes, optionalScope) {
+		t.Skip("fallback build: no write scope")
+	}
 	now := time.Date(2026, 10, 23, 12, 0, 0, 0, time.UTC)
 	store := &memStore{live: map[string]int{}}
 	l := &linear{app: true}
@@ -205,6 +211,9 @@ func TestAScopeChangeReplacesTheStoredToken(t *testing.T) {
 // rest, shared, and asked again for write only after writeRetry; HasScope
 // says what was granted.
 func TestWriteDeniedIsUsedAndAskedAgainDaily(t *testing.T) {
+	if !slices.Contains(Scopes, optionalScope) {
+		t.Skip("fallback build: no write scope; see TestFallbackNeverAsksForWrite")
+	}
 	ctx := context.Background()
 	now := time.Date(2026, 10, 23, 12, 0, 0, 0, time.UTC)
 	store := &memStore{live: map[string]int{}}
@@ -247,6 +256,9 @@ func TestWriteDeniedIsUsedAndAskedAgainDaily(t *testing.T) {
 // the instance that holds it and on one that adopts it; a near-expiry token
 // is never kept.
 func TestAFailedWriteRetryKeepsTheTokenWithoutIt(t *testing.T) {
+	if !slices.Contains(Scopes, optionalScope) {
+		t.Skip("fallback build: no write retry; see TestFallbackNeverAsksForWrite")
+	}
 	ctx := context.Background()
 	now := time.Date(2026, 10, 23, 12, 0, 0, 0, time.UTC)
 	store := &memStore{live: map[string]int{}}
@@ -401,4 +413,59 @@ func TestMintedTokensAreCountedBeforeAnythingElse(t *testing.T) {
 	if _, _, err := newApp(t, &memStore{live: map[string]int{}}, l, &now).Token(context.Background()); !errors.As(err, &e) || e.Code != "token_rejected" {
 		t.Fatal(err)
 	}
+}
+
+// The fallback build mints exactly v0.3.3's five scopes and never asks for
+// write: not on its first mint, and not after writeRetry for a token
+// granted without write (one a 6-scope build left live). Each would be a
+// mint of another set, which revokes every token the app holds.
+func TestFallbackNeverAsksForWrite(t *testing.T) {
+	five := []string{"read", "comments:create", "issues:create", "app:assignable", "app:mentionable"}
+	if !slices.Equal(Scopes, five) || releasedScopes != strings.Join(five, ",") {
+		t.Fatal("the fallback's scopes are not the five:", Scopes, releasedScopes)
+	}
+	ctx := context.Background()
+	now := time.Date(2026, 10, 27, 12, 0, 0, 0, time.UTC)
+	store := &memStore{live: map[string]int{}}
+	l := &linear{app: true}
+	a := newApp(t, store, l, &now)
+	if _, _, err := a.Token(ctx); err != nil || l.mints != 1 {
+		t.Fatal(err, l.mints)
+	}
+	if want := "scope=" + url.QueryEscape(strings.Join(five, ",")); !strings.Contains(l.forms[0], want) || strings.Contains(l.forms[0], "write") {
+		t.Fatal("mint asked for", l.forms[0])
+	}
+	if has, err := a.HasScope(ctx, "write"); has || err != nil {
+		t.Fatal("write reported", has, err)
+	}
+	// A live token granted the five under a 6-scope ask is adopted and kept
+	// past writeRetry: no mint.
+	denied := &memStore{live: map[string]int{}}
+	l = &linear{app: true}
+	b := newApp(t, denied, l, &now)
+	if _, _, err := b.Token(ctx); err != nil {
+		t.Fatal(err)
+	}
+	token := must(b.open(denied.rows[0]))
+	denied.rows[0].ScopesDigest = deniedDigest()
+	if err := b.seal(token, &denied.rows[0]); err != nil {
+		t.Fatal(err)
+	}
+	now = now.Add(writeRetry + time.Hour)
+	c := newApp(t, denied, l, &now)
+	if _, _, err := c.Token(ctx); err != nil || l.mints != 1 {
+		t.Fatal("a token without write was re-minted on the fallback", err, l.mints)
+	}
+	for _, f := range l.forms {
+		if strings.Contains(f, "write") {
+			t.Fatal("a mint asked for write:", f)
+		}
+	}
+}
+
+func must(s string, err error) string {
+	if err != nil {
+		panic(err)
+	}
+	return s
 }

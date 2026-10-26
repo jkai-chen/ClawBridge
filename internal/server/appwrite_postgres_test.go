@@ -76,7 +76,7 @@ func (l *awLinearAPI) RoundTrip(r *http.Request) (*http.Response, error) {
 	switch r.URL.String() {
 	case "https://api.linear.app/oauth/token":
 		l.mints++
-		return reply(200, map[string]any{"access_token": awToken, "token_type": "Bearer", "expires_in": 2591999, "scope": "read write comments:create issues:create app:assignable app:mentionable"})
+		return reply(200, map[string]any{"access_token": awToken, "token_type": "Bearer", "expires_in": 2591999, "scope": strings.Join(linearapp.Scopes, " ")})
 	case "https://api.linear.app/graphql":
 		if r.Header.Get("Authorization") != "Bearer "+awToken {
 			return reply(401, map[string]any{})

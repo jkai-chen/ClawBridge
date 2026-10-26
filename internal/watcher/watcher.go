@@ -48,6 +48,7 @@ type Store interface {
 	IntakeSystemState(ctx context.Context, projectID string) (bus.IntakeState, error)
 	IntakeCursorSet(ctx context.Context, projectID, source, subject, polled string, signal bool) error
 	IntakeEnqueueSystem(ctx context.Context, projectID string, ev bus.IntakeEvent) (string, error)
+	ExecuteDispatcher(ctx context.Context, projectID, session string, r bus.Request) (bus.Result, error)
 }
 
 // Watcher serves ticks. One Watcher lives for its server process: it keeps
@@ -81,6 +82,7 @@ type ProjectTick struct {
 	Intake    *IntakePoll             `json:"intake,omitempty"`
 	Health    []HealthRun             `json:"health,omitempty"`
 	Docs      *DocPoll                `json:"docs,omitempty"`
+	Dispatch  *DispatchRun            `json:"dispatch,omitempty"`
 	Error     string                  `json:"error,omitempty"`
 }
 
@@ -126,7 +128,10 @@ func (w *Watcher) project(ctx context.Context, pid string, healthLeft int) Proje
 			if tick.Health, err = w.health(ctx, pid, fence, healthLeft); err != nil {
 				return err
 			}
-			tick.Docs, err = w.docs(ctx, svc, pid, fence)
+			if tick.Docs, err = w.docs(ctx, svc, pid, fence); err != nil {
+				return err
+			}
+			tick.Dispatch, err = w.dispatcher(ctx, pid, fence)
 			return err
 		},
 	})

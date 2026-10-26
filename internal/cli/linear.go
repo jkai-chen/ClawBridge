@@ -306,6 +306,10 @@ func parseLinear(command string, args []string, stderr io.Writer) (linearFlags, 
 		write()
 		f.StringVar(&v.description, "description", "", "create: the initiative's description")
 		min, max = 1, 2
+	case "initiative-show":
+		// The read-only initiative show takes no operation ID.
+		profile()
+		min, max = 1, 1
 	case "doc":
 		profile()
 		f.StringVar(&v.team, "team", "", "list: the bound team UUID whose documents to list")
@@ -734,7 +738,11 @@ func runLinear(ctx context.Context, flags Config, args []string, stdout, stderr 
 		command == "admin" && adminAction != "audit-replay":
 		return errors.New("use linear doc list|get, initiative show, doc-policy show|set, label create|rename, project create, initiative create|add-project, label-policy show|set, status-policy show|set, health show|set|enable|disable, display-name set|clear|capture, or admin audit-replay")
 	}
-	v, pos, err := parseLinear(command, parseArgs, stderr)
+	parseAs := command
+	if command == "initiative" && adminAction == "show" {
+		parseAs = "initiative-show"
+	}
+	v, pos, err := parseLinear(parseAs, parseArgs, stderr)
 	v.relationAction = relationAction
 	v.adminAction = adminAction
 	if errors.Is(err, flag.ErrHelp) {

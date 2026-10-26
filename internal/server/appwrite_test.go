@@ -2,8 +2,10 @@ package server
 
 import (
 	"context"
+	"net/http"
 	"strings"
 	"testing"
+	"time"
 
 	"clawbridge/internal/bus"
 	"clawbridge/internal/linearapp"
@@ -71,30 +73,87 @@ type errorString string
 
 func (e errorString) Error() string { return string(e) }
 
-// Without the write scope, the app refuses relation writes before anything
-// is sent: Linear would answer success and drop the edge. With it, the same
-// write goes on to the board. Other writes never meet this guard.
+// Without the write scope in the token's grant, the app refuses relation
+// writes before anything is sent: Linear would answer success and drop the
+// edge. With it, the write goes on. A grant that cannot be read refuses the
+// write with that error. Other writes never meet this guard.
 func TestRelationWritesNeedTheWriteScope(t *testing.T) {
-	w := &AppWriter{App: &linearapp.App{}}
-	id := bus.Identity{Principal: "a@example.com"}
-	write := func(operation string) error {
-		_, err := w.Execute(context.Background(), id, bus.Request{Operation: "linear_write", Args: map[string]any{"operation": operation, "args": map[string]any{}}})
-		return err
+	ctx := context.Background()
+	granted := func(ok bool, err error) func(context.Context, string) (bool, error) {
+		return func(_ context.Context, scope string) (bool, error) {
+			if scope != "write" {
+				t.Fatalf("asked for scope %q", scope)
+			}
+			return ok, err
+		}
 	}
-	saved := linearapp.Scopes
-	t.Cleanup(func() { linearapp.Scopes = saved })
-	linearapp.Scopes = []string{"read", "comments:create", "issues:create", "app:assignable", "app:mentionable"}
 	for _, operation := range []string{"relation_add", "relation_remove"} {
-		err := write(operation)
+		err := relationScope(ctx, operation, granted(false, nil))
 		if code, status := serviceError(err); code != "invalid" || status != 400 || !strings.HasPrefix(responseMessage(code, err), "capability_unavailable:") {
 			t.Fatal(operation, code, status, err)
 		}
+		if err := relationScope(ctx, operation, granted(true, nil)); err != nil {
+			t.Fatal(operation, "refused with the write scope:", err)
+		}
+		unread := errorString("token store unavailable")
+		if err := relationScope(ctx, operation, granted(true, unread)); err != unread {
+			t.Fatal(operation, "an unread grant let the write through:", err)
+		}
 	}
-	if relationScope("comment") != nil || relationScope("update") != nil {
+	never := func(context.Context, string) (bool, error) {
 		t.Fatal("another write met the relation guard")
+		return false, nil
 	}
-	linearapp.Scopes = append(append([]string{}, linearapp.Scopes...), "write")
-	if relationScope("relation_add") != nil || relationScope("relation_remove") != nil {
-		t.Fatal("refused with the write scope")
+	for _, operation := range []string{"comment", "create", "update"} {
+		if err := relationScope(ctx, operation, never); err != nil {
+			t.Fatal(operation, err)
+		}
 	}
+}
+
+// Through linear_write, an app that cannot get a token refuses a relation
+// write with that error, and nothing reaches Linear.
+func TestRelationWriteRefusedWhenTheTokenFails(t *testing.T) {
+	app, err := linearapp.New(linearapp.Config{
+		ClientID: "client", Secret: "secret", Key: make([]byte, 32),
+		Store:        failingTokenStore{},
+		HTTP:         &http.Client{Transport: noLinear{t}},
+		MCPTransport: noLinear{t},
+		Now:          time.Now,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	w := &AppWriter{App: app}
+	_, err = w.Execute(context.Background(), bus.Identity{Principal: "a@example.com"}, bus.Request{Operation: "linear_write", Args: map[string]any{"operation": "relation_add", "args": map[string]any{}}})
+	if err == nil || !strings.Contains(err.Error(), "token store unavailable") {
+		t.Fatal(err)
+	}
+}
+
+// failingTokenStore cannot read the app's tokens.
+type failingTokenStore struct{}
+
+func (failingTokenStore) RecordMintedAppToken(context.Context, string, string, time.Time, time.Time) error {
+	return errorString("token store unavailable")
+}
+
+func (failingTokenStore) LiveAppToken(context.Context, string, string) (bus.AppToken, bool, error) {
+	return bus.AppToken{}, false, errorString("token store unavailable")
+}
+
+func (failingTokenStore) PublishAppToken(context.Context, bus.AppToken, string) (bus.AppToken, bool, error) {
+	return bus.AppToken{}, false, errorString("token store unavailable")
+}
+
+func (failingTokenStore) AppTokensMinted(context.Context, string, time.Time) (int, error) {
+	return 0, errorString("token store unavailable")
+}
+
+// noLinear fails the test on any request to Linear.
+type noLinear struct{ t *testing.T }
+
+func (n noLinear) RoundTrip(r *http.Request) (*http.Response, error) {
+	n.t.Fatalf("a request reached Linear: %s %s", r.Method, r.URL)
+	return nil, errorString("unreachable")
 }

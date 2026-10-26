@@ -512,8 +512,10 @@ app**. Your personal profile still reads, but never writes:
 
 - **Relations need the app's `write` scope.** Without it, a relation write
   appears to be accepted but the edge is not created (seen in practice; a
-  controlled probe will confirm), so the server refuses `relation add` and
-  `relation remove` up front (`capability_unavailable`) and sends nothing.
+  controlled probe will confirm), so when the app's current token was not
+  granted `write` the server refuses `relation add` and `relation remove` up
+  front (`capability_unavailable`) and sends nothing. If it cannot get a token
+  to check, it refuses with that error.
 - **No fallback.** When the server offers the app, a failed write is reported
   and is never retried with your own Linear account. If the client cannot tell
   whether the server offers the app, it sends nothing and says so. A server

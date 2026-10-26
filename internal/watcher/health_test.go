@@ -3,6 +3,7 @@ package watcher
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -238,5 +239,13 @@ func TestHealthUncertainPostIsSettledByTheNextRun(t *testing.T) {
 	e.queryRow(`SELECT state,update_id FROM health_posts`, &state, &update)
 	if state != "accepted" || update != "dddddddd-dddd-4ddd-8ddd-dddddddddddd" || len(e.f.statusPosts) != 1 {
 		t.Fatal(state, update, len(e.f.statusPosts))
+	}
+}
+
+// The run asks for the updates by creation date explicitly, and as many
+// as the bus reads (R75-M1); which end first:5 takes is the deploy probe's.
+func TestHealthReadsUpdatesByCreationDate(t *testing.T) {
+	if !strings.Contains(healthProjectQuery, "projectUpdates(first: "+strconv.Itoa(bus.HealthUpdatesRead)+", orderBy: createdAt)") {
+		t.Fatal(healthProjectQuery)
 	}
 }

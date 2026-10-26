@@ -924,6 +924,12 @@ clawbridge linear health set --linear-project UUID --file health.json --expected
 `N` is the project's health revision from `show` (0 the first time). Any member
 can run `show`.
 
+- **Keep `post` off for now.** Posting relies on Linear answering a project's
+  newest five updates. Until a one-read probe on a project with more than five
+  updates confirms that it does, leave `"post"` off (the default). Otherwise a
+  person's recent update could be missed, and a lost post never confirmed.
+  The run already holds a post back when it reads a full five that are all
+  older than 7 days.
 - **Posting to Linear** (`"post": true`, v0.3.4). A confirmed health is posted
   as a project update by the ClawBridge Linear app, with Linear's health and a
   body that starts `— 🤖 ClawBridge project health` and names issues by
@@ -931,7 +937,8 @@ can run `show`.
   deletes one, a person's or its own.
   - **At most one a day** per Linear project.
   - **Never over a person.** When the project's newest update is a person's
-    from the last 7 days, nothing is posted.
+    from the last 7 days, nothing is posted. Nor when the five updates read
+    are all older than 7 days, since newer ones may exist.
   - **Never twice.** When a post's answer is lost, nothing is sent again: a
     later run looks for the app's update among the project's newest five. One
     still not found a full day later is reported as unconfirmed.

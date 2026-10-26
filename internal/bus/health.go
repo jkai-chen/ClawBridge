@@ -401,7 +401,7 @@ func healthRows(ctx context.Context, tx *transaction, pid string) (map[string]an
 		}
 		out = append(out, r)
 	}
-	return map[string]any{"projects": out, "posting": "a confirmed health is posted to Linear as a project update where the policy's post is true: at most once a day, never over a person's update from the last 7 days. Otherwise, and when a post is refused, the coordinator session is told"}, nil
+	return map[string]any{"projects": out, "posting": "a confirmed health is posted to Linear as a project update where the policy's post is true: at most once a day, never over a person's update from the last 7 days, nor when the five updates read are all older than 7 days. Otherwise, and when a post is refused, the coordinator session is told. Keep post off until the deploy probe confirms Linear answers a project's newest five updates"}, nil
 }
 
 // healthOp sets one bound Linear project's health policy: the project owner
@@ -642,6 +642,11 @@ func (c commentCall) healthPostGo(ctx context.Context, lp, health, was, act stri
 	}
 	if u, ok := newestUpdate(facts.Updates); ok && !u.ByApp && c.now.Sub(u.created()) < healthHumanQuiet {
 		return nil, "A person posted a project update in the last 7 days, so nothing was posted to Linear.", nil
+	} else if ok && len(facts.Updates) == HealthUpdatesRead && c.now.Sub(u.created()) >= healthHumanQuiet {
+		// A full read whose newest is old may not hold the newest at all
+		// (if Linear answered the oldest first), so a person's recent
+		// update could be missing from it (R75-M1).
+		return nil, "The project's updates read were all older than 7 days although more may exist, so nothing was posted to Linear.", nil
 	}
 	open, err := query(ctx, c.tx, `SELECT day FROM health_posts WHERE project_id=? AND linear_project_id=? AND state='pending'`, c.pid, lp)
 	if err != nil {

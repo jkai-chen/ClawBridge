@@ -20,7 +20,7 @@ const HealthRunsPerTick = 2
 // The GraphQL reads, constant and read-only. History is newest first
 // (probe I4).
 const (
-	healthProjectQuery  = `query HealthProject($id: String!) { project(id: $id) { id targetDate startDate createdAt projectUpdates(first: 5) { nodes { id createdAt user { id } } } } }`
+	healthProjectQuery  = `query HealthProject($id: String!) { project(id: $id) { id targetDate startDate createdAt projectUpdates(first: 5, orderBy: createdAt) { nodes { id createdAt user { id } } } } }`
 	healthIssuesQuery   = `query HealthIssues($id: ID!, $after: String) { issues(first: 50, after: $after, filter: { project: { id: { eq: $id } } }) { nodes { id identifier updatedAt state { type } inverseRelations(first: 20) { nodes { type issue { state { type } } } } } pageInfo { hasNextPage endCursor } } }`
 	healthActivityQuery = `query HealthActivity($id: String!, $since: DateTimeOrDuration!) { issue(id: $id) { history(first: 20) { nodes { createdAt actorId botActor { id } } } comments(first: 20, filter: { createdAt: { gt: $since } }) { nodes { createdAt user { id } botActor { id } } } } }`
 )

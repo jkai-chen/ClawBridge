@@ -253,3 +253,80 @@ func TestMarkerDueChargesEachRowByTheBinding(t *testing.T) {
 		t.Fatal(len(due), before, after)
 	}
 }
+
+// The server watcher reconciles each applied row with what it spent: the
+// unused charge comes back, an overspend is charged, a charge above the
+// row's most is capped, and only the system session may report.
+func TestMarkerSpentReconcilesTheRowsCharge(t *testing.T) {
+	h := newHarness(t)
+	h.call("coordinator_set", "c", map[string]any{"target_session": "c"})
+	h.call("taskboard_set_v2", "a", taskboardArgsV2(0, projectOne, projectTwo))
+	w := &watchHarness{harness: h}
+	w.assign("b", sfIssueNext)
+	id := w.assignmentID("b")
+	var pid string
+	if e := h.s.db.QueryRow(`SELECT id FROM projects WHERE slug='p'`).Scan(&pid); e != nil {
+		t.Fatal(e)
+	}
+	sys := func(op string, a map[string]any) (map[string]any, error) {
+		r, e := h.s.ExecuteSystem(context.Background(), pid, Request{Operation: op, Args: a})
+		m, _ := r.Data.(map[string]any)
+		return m, e
+	}
+	l, _ := sys("comment_watch_lease", map[string]any{"action": "acquire"})
+	fence := func(a map[string]any) map[string]any {
+		a["lease_token"], a["generation"] = l["lease_token"], l["generation"]
+		return a
+	}
+	w.markersDue()
+	due, err := sys("marker_due", fence(map[string]any{}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	row := due["markers"].([]any)[0].(map[string]any)
+	charged := row["charged"].(int)
+	if charged != MarkerRowCalls(1, 2) {
+		t.Fatal("charge", charged)
+	}
+	used := func() int {
+		r, _ := sys("watch_charge", fence(map[string]any{"calls": 0}))
+		return r["budget_used"].(int)
+	}
+	before := used()
+	spend := func(calls, charged int) error {
+		_, e := sys("marker_spent", fence(map[string]any{"assignment_id": id, "phase": "claim", "calls": calls, "charged": charged}))
+		return e
+	}
+	if err = spend(4, charged); err != nil || used() != before-(charged-4) {
+		t.Fatal("refund", err, before, used())
+	}
+	before = used()
+	if err = spend(charged+5, charged); err != nil || used() != before+5 {
+		t.Fatal("overspend", err, before, used())
+	}
+	// A claimed charge above the row's most refunds no more than the most.
+	if _, err = sys("watch_charge", fence(map[string]any{"calls": 100})); err != nil {
+		t.Fatal(err)
+	}
+	before = used()
+	if err = spend(0, 999); err != nil || used() != before-(MarkerRowCalls(1, 2)+MarkerStateCalls) {
+		t.Fatal("cap", err, before, used())
+	}
+	if _, err = sys("marker_spent", fence(map[string]any{"assignment_id": "asg_nope", "phase": "claim", "calls": 1, "charged": 1})); err == nil {
+		t.Fatal("an unknown row was reconciled")
+	}
+	// A member's session cannot report: it would refund the app's budget.
+	if _, err = h.s.Execute(context.Background(), h.request("marker_spent", "c", fence(map[string]any{"assignment_id": id, "phase": "claim", "calls": 0, "charged": charged}))); err == nil {
+		t.Fatal("a member reconciled a marker")
+	}
+}
+
+// A member's client watcher holds its own lease; it still cannot report a
+// row's spend, so it can never refund the budget.
+func TestMarkerSpentIsRefusedToALeaseHoldingMember(t *testing.T) {
+	w := newWatchHarness(t)
+	id := w.assignmentID("a")
+	if _, err := w.s.Execute(context.Background(), w.request("marker_spent", "c", w.fenced(map[string]any{"assignment_id": id, "phase": "claim", "calls": 0, "charged": 8}))); err == nil {
+		t.Fatal("a member's watcher reconciled a marker")
+	}
+}

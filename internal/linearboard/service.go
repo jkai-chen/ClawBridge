@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"sort"
 	"strings"
+	"sync/atomic"
 	"time"
 	"unicode"
 	"unicode/utf8"
@@ -61,11 +62,14 @@ type Config struct {
 	IssueState func(ctx context.Context, issue string) (stateID, teamID string, err error)
 }
 type Service struct {
-	cfg    Config
-	app    *appRoute
-	pool   *providerPool
-	proofs *bindingProofCache
-	held   *heldOperation
+	cfg Config
+	// stateReads counts IssueState reads, which no provider counts: a
+	// marker row's spend includes them. Shared by held copies.
+	stateReads *atomic.Int64
+	app        *appRoute
+	pool       *providerPool
+	proofs     *bindingProofCache
+	held       *heldOperation
 }
 
 func New(c Config) *Service {
@@ -77,7 +81,7 @@ func New(c Config) *Service {
 			return linearprovider.New(ctx, h, ro)
 		}
 	}
-	return &Service{cfg: c, app: &appRoute{}}
+	return &Service{cfg: c, app: &appRoute{}, stateReads: &atomic.Int64{}}
 }
 
 type Context struct {

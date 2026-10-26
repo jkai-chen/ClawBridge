@@ -163,7 +163,7 @@ func (s *Store) listMembers(ctx context.Context, tx *transaction, pid string) (a
 	if !s.postgres {
 		return map[string]any{"project_id": pid, "members": []map[string]any{}}, nil
 	}
-	rows, err := query(ctx, tx, `SELECT c.principal,c.display_name,c.role,c.granted_by,c.granted_at FROM (SELECT pr.principal,COALESCE(m.display_name,'') AS display_name,pr.role,pr.granted_by,pr.granted_at FROM project_roles pr LEFT JOIN members m ON m.workspace_id=(SELECT workspace_id FROM projects WHERE id=?) AND m.principal=pr.principal WHERE pr.project_id=? UNION ALL SELECT w.owner_principal AS principal,COALESCE(m.display_name,'') AS display_name,'owner' AS role,w.owner_principal AS granted_by,w.created_at AS granted_at FROM workspaces w JOIN projects p ON p.workspace_id=w.id LEFT JOIN members m ON m.workspace_id=w.id AND m.principal=w.owner_principal WHERE p.id=? AND NOT EXISTS(SELECT 1 FROM project_roles pr WHERE pr.project_id=p.id AND pr.principal=w.owner_principal)) c ORDER BY c.principal`, pid, pid, pid)
+	rows, err := query(ctx, tx, `SELECT c.principal,c.display_name,c.role,c.granted_by,c.granted_at,c.invited_by FROM (SELECT pr.principal,COALESCE(m.display_name,'') AS display_name,pr.role,pr.granted_by,pr.granted_at,m.added_by AS invited_by FROM project_roles pr LEFT JOIN members m ON m.workspace_id=(SELECT workspace_id FROM projects WHERE id=?) AND m.principal=pr.principal WHERE pr.project_id=? UNION ALL SELECT w.owner_principal AS principal,COALESCE(m.display_name,'') AS display_name,'owner' AS role,w.owner_principal AS granted_by,w.created_at AS granted_at,m.added_by AS invited_by FROM workspaces w JOIN projects p ON p.workspace_id=w.id LEFT JOIN members m ON m.workspace_id=w.id AND m.principal=w.owner_principal WHERE p.id=? AND NOT EXISTS(SELECT 1 FROM project_roles pr WHERE pr.project_id=p.id AND pr.principal=w.owner_principal)) c ORDER BY c.principal`, pid, pid, pid)
 	if err != nil {
 		return nil, err
 	}
@@ -180,6 +180,12 @@ func (s *Store) resolveInTransaction(ctx context.Context, tx *transaction, r Req
 	if s.postgres {
 		q += `w.mode='server' AND EXISTS(SELECT 1 FROM members m WHERE m.workspace_id=w.id AND m.principal=?) AND (w.owner_principal=? OR EXISTS(SELECT 1 FROM project_roles pr WHERE pr.project_id=p.id AND pr.principal=?))`
 		args = append(args, s.principal, s.principal, s.principal)
+		if s.identity != nil && s.identity.Issuer == DeviceIssuer {
+			// A device sees only its own workspace, so another workspace's
+			// projects never make a match ambiguous or refused.
+			q += ` AND w.id=(SELECT workspace_id FROM devices WHERE device_id=?)`
+			args = append(args, s.identity.Subject)
+		}
 	} else {
 		q += `w.mode='local' AND w.owner_principal=?`
 		args = append(args, s.principal)

@@ -385,8 +385,8 @@ func TestPostgresCIDevice(t *testing.T) {
 	if _, err = f.as(f.owner, "sub-owner", Request{Operation: "project_role_set", Workspace: f.workspace, Project: "p", Args: map[string]any{"principal": ci, "role": "member"}}); err == nil {
 		t.Fatal("a role was granted to a CI principal")
 	}
-	if _, err = f.auth(f.owner, "invite_create", map[string]any{"email": ci, "grants": map[string]any{"p": "member"}}); err == nil {
-		t.Fatal("a CI principal was invited")
+	if _, err = f.auth(f.owner, "invite_create", map[string]any{"email": "ci:other@" + strings.ToLower(f.workspace), "grants": map[string]any{"p": "member"}}); err == nil || !strings.Contains(err.Error(), "CI principal") {
+		t.Fatal("a CI principal was invited:", err)
 	}
 	if _, err = f.auth(sub, "device_ci_create", map[string]any{"name": "deploy", "grants": map[string]any{"p": "reader"}, "expires_days": 1, "public_key": newKey(t)}); err == nil {
 		t.Fatal("two live CI devices share a name")
@@ -410,7 +410,10 @@ func TestPostgresUserRevoke(t *testing.T) {
 		t.Fatal(err)
 	}
 	f.must(ada, "sub-ada", Request{Operation: "register_session", Workspace: f.workspace, Project: "p", Session: "ada-s", Args: map[string]any{"instance": "ada-i"}})
-	pending := f.invite(f.owner, ada, "reader")["invite_id"].(string)
+	pending, err := f.auth(f.owner, "invite_create", map[string]any{"email": ada, "purpose": "recovery"})
+	if err != nil {
+		t.Fatal(err)
+	}
 	if _, err := f.auth(f.owner, "user_revoke", map[string]any{"principal": f.owner}); err == nil {
 		t.Fatal("the owner revoked themselves")
 	}
@@ -418,7 +421,7 @@ func TestPostgresUserRevoke(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(out["revoked_devices"].([]string)) != 1 || out["revoked_invites"] != int64(1) || f.inviteRow(pending)["revoked_at"] == nil || f.audited("user_revoked", ada) != 1 {
+	if len(out["revoked_devices"].([]string)) != 1 || out["revoked_invites"] != int64(1) || f.inviteRow(pending["invite_id"].(string))["revoked_at"] == nil || f.audited("user_revoked", ada) != 1 {
 		t.Fatal(out)
 	}
 	if f.count(`SELECT COUNT(*) FROM members WHERE principal=$1`, ada) != 0 || f.count(`SELECT COUNT(*) FROM sessions WHERE owner_principal=$1 AND status='active'`, ada) != 0 {
@@ -467,11 +470,27 @@ func TestPostgresOwnerTransfer(t *testing.T) {
 	// The main owner holds no explicit project role; accepting gives the
 	// old owner one on every project.
 	f.exec(`DELETE FROM project_roles WHERE principal=?`, f.owner)
-	if _, err := f.auth(bob, "owner_transfer_respond", map[string]any{"action": "accept"}); err != nil {
+	// The old owner's pending recovery invites go with the role; other
+	// invites stay.
+	cara := newID("cara") + "@identity-test.example"
+	f.member(cara)
+	recovery, err := f.auth(f.owner, "invite_create", map[string]any{"email": cara, "purpose": "recovery"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	user := f.invite(f.owner, newID("dora")+"@identity-test.example", "member")
+	accepted, err := f.auth(bob, "owner_transfer_respond", map[string]any{"action": "accept"})
+	if err != nil {
 		t.Fatal(err)
 	}
 	if owner() != bob || f.count(`SELECT COUNT(*) FROM project_roles WHERE principal=$1 AND role='owner'`, f.owner) != 1 {
 		t.Fatal("not transferred")
+	}
+	if accepted["revoked_recovery_invites"] != int64(1) || f.inviteRow(recovery["invite_id"].(string))["revoke_reason"] != "owner_transferred" || f.inviteRow(user["invite_id"].(string))["revoked_at"] != nil {
+		t.Fatal("recovery invites after the transfer", accepted)
+	}
+	if _, err = f.join(cara, recovery["code"].(string), newKey(t)); err != ErrInvalidInvite {
+		t.Fatal("the old owner's recovery invite joined:", err)
 	}
 	// Decline, cancel and expiry leave ownership where it is.
 	old := f.owner
@@ -491,8 +510,9 @@ func TestPostgresOwnerTransfer(t *testing.T) {
 		t.Fatal(err)
 	}
 	f.exec(`UPDATE owner_transfers SET expires_at=? WHERE to_principal=?`, "2000-01-01T00:00:00.000000000Z", old)
-	if _, err := f.auth(old, "owner_transfer_respond", map[string]any{"action": "accept"}); err == nil {
-		t.Fatal("an expired offer was accepted")
+	var coded interface{ Code() string }
+	if _, err := f.auth(old, "owner_transfer_respond", map[string]any{"action": "accept"}); !errors.As(err, &coded) || coded.Code() != "not_found" || !strings.Contains(err.Error(), "no ownership offer is pending") {
+		t.Fatal("an expired offer was accepted:", err)
 	}
 	if owner() != bob {
 		t.Fatal("ownership moved")
@@ -523,5 +543,281 @@ func TestPostgresDeviceNonces(t *testing.T) {
 	}
 	if f.count(`SELECT COUNT(*) FROM device_nonces WHERE device_id=$1`, dev) != 1 {
 		t.Fatal("the expired nonce was not swept")
+	}
+}
+
+// other makes a second workspace on the same server, owned by f.owner, with
+// its own project p.
+func (f *pgIdentityFixture) other() string {
+	f.t.Helper()
+	ws := newID("idws")
+	f.must(f.owner, "sub-owner", Request{Operation: "workspace_init", Workspace: ws, Args: map[string]any{"mode": "server"}})
+	f.must(f.owner, "sub-owner", Request{Operation: "project_create", Workspace: ws, Args: map[string]any{"slug": "p"}})
+	return ws
+}
+
+func (f *pgIdentityFixture) workspaceID(name string) string {
+	f.t.Helper()
+	var id string
+	if err := f.s.db.QueryRow(`SELECT id FROM workspaces WHERE name=$1`, name).Scan(&id); err != nil {
+		f.t.Fatal(err)
+	}
+	return id
+}
+
+// failReason is the reason the latest failed join of an invite recorded.
+func (f *pgIdentityFixture) failReason(id string) string {
+	f.t.Helper()
+	var reason string
+	if err := f.s.db.QueryRow(`SELECT details::jsonb->>'reason' FROM history WHERE action='invite_join_failed' AND entity_key=$1 ORDER BY id DESC LIMIT 1`, id).Scan(&reason); err != nil {
+		f.t.Fatal(err)
+	}
+	return reason
+}
+
+// A device signs only in the workspace that admitted it, even for a person
+// who is a member of another; every request outside a workspace refuses
+// it, and an owner's revocations reach only their own workspace's devices.
+func TestPostgresDeviceSignsOnlyInItsWorkspace(t *testing.T) {
+	f := newPGIdentityFixture(t)
+	b := f.other()
+	inB := func(op string, a map[string]any) Request {
+		return Request{Operation: op, Workspace: b, Project: "p", Args: a}
+	}
+	ada := newID("ada") + "@identity-test.example"
+	key := newKey(t)
+	if _, err := f.join(ada, f.invite(f.owner, ada, "member")["code"].(string), key); err != nil {
+		t.Fatal(err)
+	}
+	dev := keyID(t, key)
+	f.must(f.owner, "sub-owner", inB("project_role_set", map[string]any{"principal": ada, "role": "member"}))
+	if _, err := f.asDevice(ada, dev, f.list()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.asDevice(ada, dev, Request{Operation: "list_projects", Workspace: b}); !refusedWith(err, "another workspace") {
+		t.Fatal("a device signed in to another workspace:", err)
+	}
+
+	// resolve_project with no workspace: a Google account sees both p's; a
+	// device sees only its own workspace's, so B's projects make it neither
+	// ambiguous nor refused.
+	resolve := Request{Operation: "resolve_project", Project: "p"}
+	if _, err := f.as(ada, "sub-"+ada, resolve); err == nil || !strings.Contains(err.Error(), "ambiguous") {
+		t.Fatal("the fixture should be ambiguous for a Google account:", err)
+	}
+	f.must(f.owner, "sub-owner", Request{Operation: "project_create", Workspace: b, Args: map[string]any{"slug": "q"}})
+	f.must(f.owner, "sub-owner", Request{Operation: "project_role_set", Workspace: b, Project: "q", Args: map[string]any{"principal": ada, "role": "member"}})
+	f.exec(`UPDATE workspaces SET allowed_domains=? WHERE name=?`, `["elsewhere.example"]`, b)
+	out, err := f.asDevice(ada, dev, resolve)
+	if err != nil || out.Data.(map[string]any)["workspace_id"] != f.workspaceID(f.workspace) {
+		t.Fatal(out, err)
+	}
+	if _, err = f.asDevice(ada, dev, Request{Operation: "resolve_project", Project: "q"}); err == nil || !strings.Contains(err.Error(), "not found") || refusedWith(err, "domain") {
+		t.Fatal("a device resolved, or learned of, another workspace's project:", err)
+	}
+	f.exec(`UPDATE workspaces SET allowed_domains='[]' WHERE name=?`, b)
+
+	// workspace_init and principal_unbind run outside any workspace, so a
+	// device, even the server owner's, never runs them.
+	enrolled := f.must(f.owner, "sub-owner", Request{Operation: "device_enroll", Workspace: f.workspace, Args: map[string]any{"public_key": newKey(t), "label": "owner", "key_store": "keyring"}})
+	ownerDev := enrolled.Data.(map[string]any)["device_id"].(string)
+	if _, err = f.asDevice(f.owner, ownerDev, Request{Operation: "workspace_init", Workspace: newID("idws"), Args: map[string]any{"mode": "server"}}); !refusedWith(err, "within its workspace") {
+		t.Fatal("a device made a workspace:", err)
+	}
+	f.must(ada, "sub-"+ada, f.list())
+	if _, err = f.asDevice(f.owner, ownerDev, Request{Operation: "principal_unbind", Args: map[string]any{"principal": ada}}); !refusedWith(err, "within its workspace") {
+		t.Fatal("a device unbound a principal:", err)
+	}
+	if f.count(`SELECT COUNT(*) FROM principal_subjects WHERE principal=$1`, ada) != 1 {
+		t.Fatal("the refused unbind unbound")
+	}
+
+	// A device invite in B makes a device of B: the join takes the
+	// workspace from the invite.
+	add := f.must(ada, "sub-"+ada, inB("invite_create", map[string]any{"email": ada, "purpose": "device"}))
+	keyB := newKey(t)
+	if _, err = f.join(ada, add.Data.(map[string]any)["code"].(string), keyB); err != nil {
+		t.Fatal(err)
+	}
+	devB := keyID(t, keyB)
+	if f.count(`SELECT COUNT(*) FROM devices WHERE device_id=$1 AND workspace_id=(SELECT id FROM workspaces WHERE name='`+b+`')`, devB) != 1 {
+		t.Fatal("the device isn't B's")
+	}
+	if _, err = f.asDevice(ada, devB, Request{Operation: "list_projects", Workspace: b}); err != nil {
+		t.Fatal(err)
+	}
+	listed, err := f.asDevice(ada, dev, Request{Operation: "device_list", Workspace: f.workspace, Args: map[string]any{}})
+	if err != nil || len(listed.Data.(map[string]any)["devices"].([]any)) != 1 {
+		t.Fatal("A's list shows B's device", listed, err)
+	}
+	users, _ := f.auth(f.owner, "user_list", nil)
+	for _, u := range users["users"].([]any) {
+		if u := u.(map[string]any); u["principal"] == ada && len(u["devices"].([]any)) != 1 {
+			t.Fatal("A's user list shows B's device", u)
+		}
+	}
+	// A's owner manages only A's devices.
+	var coded interface{ Code() string }
+	if _, err = f.auth(f.owner, "device_revoke", map[string]any{"device_id": devB}); !errors.As(err, &coded) || coded.Code() != "not_found" {
+		t.Fatal("A's owner revoked B's device:", err)
+	}
+	if _, err = f.auth(f.owner, "device_label", map[string]any{"device_id": devB, "label": "x"}); err == nil {
+		t.Fatal("A's owner relabelled B's device")
+	}
+
+	// Recovery in A replaces A's devices only.
+	rec, err := f.auth(f.owner, "invite_create", map[string]any{"email": ada, "purpose": "recovery", "revoke_others": true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	fresh := newKey(t)
+	joined, err := f.join(ada, rec["code"].(string), fresh)
+	if err != nil || len(joined["revoked_devices"].([]string)) != 1 || joined["revoked_devices"].([]string)[0] != dev {
+		t.Fatal(joined, err)
+	}
+	if _, err = f.asDevice(ada, devB, Request{Operation: "list_projects", Workspace: b}); err != nil {
+		t.Fatal("recovery in A revoked B's device:", err)
+	}
+
+	// CI devices are their workspace's too, and revoking their creator in
+	// one workspace revokes only that workspace's.
+	sub := newID("sub") + "@identity-test.example"
+	f.role(sub, "owner")
+	f.must(f.owner, "sub-owner", inB("project_role_set", map[string]any{"principal": sub, "role": "owner"}))
+	ciKeyA, ciKeyB := newKey(t), newKey(t)
+	ciA, err := f.auth(sub, "device_ci_create", map[string]any{"name": "deploy", "grants": map[string]any{"p": "reader"}, "expires_days": 30, "public_key": ciKeyA})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ciB := f.must(sub, "sub-"+sub, inB("device_ci_create", map[string]any{"name": "deploy", "grants": map[string]any{"p": "reader"}, "expires_days": 30, "public_key": ciKeyB})).Data.(map[string]any)
+	if _, err = f.asDevice(ciA["principal"].(string), keyID(t, ciKeyA), Request{Operation: "list_projects", Workspace: b}); err == nil {
+		t.Fatal("A's CI device signed in to B")
+	}
+
+	// user_revoke in A takes A's devices and A's CI devices, and leaves B's.
+	gone, err := f.auth(f.owner, "user_revoke", map[string]any{"principal": ada})
+	if err != nil || len(gone["revoked_devices"].([]string)) != 1 || gone["revoked_devices"].([]string)[0] != keyID(t, fresh) {
+		t.Fatal(gone, err)
+	}
+	if _, err = f.asDevice(ada, devB, Request{Operation: "list_projects", Workspace: b}); err != nil {
+		t.Fatal("revoking the user in A revoked their device in B:", err)
+	}
+	gone, err = f.auth(f.owner, "user_revoke", map[string]any{"principal": sub})
+	if err != nil || len(gone["revoked_devices"].([]string)) != 1 || gone["revoked_devices"].([]string)[0] != keyID(t, ciKeyA) {
+		t.Fatal(gone, err)
+	}
+	if _, err = f.asDevice(ciB["principal"].(string), keyID(t, ciKeyB), Request{Operation: "list_projects", Workspace: b}); err != nil {
+		t.Fatal("revoking the creator in A revoked their CI device in B:", err)
+	}
+}
+
+// An invite's code is seen by its issuer, so it carries only the issuer's
+// word: a user invite never names a member (at create or at join), a device
+// invite works only for its issuer's own email, a recovery invite only
+// while its issuer owns the workspace, and every member records who
+// invited them.
+func TestPostgresInviteCarriesOnlyItsIssuersWord(t *testing.T) {
+	f := newPGIdentityFixture(t)
+	ada := newID("ada") + "@identity-test.example"
+	f.member(ada)
+	if _, err := f.auth(f.owner, "invite_create", map[string]any{"email": ada, "grants": map[string]any{"p": "member"}}); err == nil || !strings.Contains(err.Error(), "already a member") {
+		t.Fatal("a user invite named a member:", err)
+	}
+	carl := newID("carl") + "@identity-test.example"
+	late := f.invite(f.owner, carl, "member")
+	f.member(carl)
+	if _, err := f.join(carl, late["code"].(string), newKey(t)); err != ErrInvalidInvite || f.failReason(late["invite_id"].(string)) != "already_member" {
+		t.Fatal("a user invite joined as a member:", err)
+	}
+
+	// A device invite whose issuer isn't the email.
+	add, err := f.auth(ada, "invite_create", map[string]any{"email": ada, "purpose": "device"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.exec(`UPDATE invites SET created_by=? WHERE invite_id=?`, f.owner, add["invite_id"])
+	if _, err = f.join(ada, add["code"].(string), newKey(t)); err != ErrInvalidInvite || f.failReason(add["invite_id"].(string)) != "issuer_lost_authority" {
+		t.Fatal("a device invite from someone else joined:", err)
+	}
+
+	// A recovery invite from an owner who no longer owns the workspace.
+	rec, err := f.auth(f.owner, "invite_create", map[string]any{"email": ada, "purpose": "recovery"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.exec(`UPDATE workspaces SET owner_principal=? WHERE name=?`, carl, f.workspace)
+	if _, err = f.join(ada, rec["code"].(string), newKey(t)); err != ErrInvalidInvite || f.failReason(rec["invite_id"].(string)) != "issuer_lost_authority" {
+		t.Fatal("a former owner's recovery invite joined:", err)
+	}
+	f.exec(`UPDATE workspaces SET owner_principal=? WHERE name=?`, f.owner, f.workspace)
+
+	// invited_by: in the user list, the project's members and the audit.
+	sub := newID("sub") + "@identity-test.example"
+	f.role(sub, "owner")
+	dan := newID("dan") + "@identity-test.example"
+	invite := f.invite(sub, dan, "member")
+	if _, err = f.join(dan, invite["code"].(string), newKey(t)); err != nil {
+		t.Fatal(err)
+	}
+	users, _ := f.auth(f.owner, "user_list", nil)
+	found := false
+	for _, u := range users["users"].([]any) {
+		if u := u.(map[string]any); u["principal"] == dan {
+			found = u["invited_by"] == sub
+		}
+	}
+	members := f.must(f.owner, "sub-owner", Request{Operation: "list_members", Workspace: f.workspace, Project: "p"}).Data.(map[string]any)["members"].([]map[string]any)
+	for _, m := range members {
+		if m["principal"] == dan && m["invited_by"] != sub {
+			found = false
+		}
+	}
+	var by string
+	if err = f.s.db.QueryRow(`SELECT details::jsonb->>'invited_by' FROM history WHERE action='invite_used' AND entity_key=$1`, invite["invite_id"]).Scan(&by); err != nil || by != sub || !found {
+		t.Fatal("invited_by", users, members, by, err)
+	}
+}
+
+// The heartbeat after a device's read re-checks the device: one revoked
+// while the read ran skips the beat.
+func TestPostgresHeartbeatRechecksTheDevice(t *testing.T) {
+	ctx := context.Background()
+	t.Cleanup(func() { beforeBeat.Store(nil) })
+	for _, revoke := range []bool{false, true} {
+		f := newPGIdentityFixture(t)
+		ada := newID("ada") + "@identity-test.example"
+		key := newKey(t)
+		if _, err := f.join(ada, f.invite(f.owner, ada, "member")["code"].(string), key); err != nil {
+			t.Fatal(err)
+		}
+		dev := keyID(t, key)
+		reg, err := f.asDevice(ada, dev, Request{Operation: "register_session", Workspace: f.workspace, Project: "p", Session: "hb", Args: map[string]any{}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		lastSeen := func() string {
+			var at string
+			if err := f.s.db.QueryRowContext(ctx, `SELECT last_seen FROM sessions WHERE owner_principal=$1`, ada).Scan(&at); err != nil {
+				t.Fatal(err)
+			}
+			return at
+		}
+		before := lastSeen()
+		hook := func() {
+			if revoke {
+				if _, err := f.s.db.ExecContext(ctx, `UPDATE devices SET revoked_at='2000-01-01T00:00:00.000000000Z' WHERE device_id=$1`, dev); err != nil {
+					t.Error(err)
+				}
+			}
+		}
+		beforeBeat.Store(&hook)
+		_, err = f.asDevice(ada, dev, Request{Operation: "whoami", Workspace: f.workspace, Project: "p", Session: "hb", Args: map[string]any{"instance": reg.Data.(map[string]any)["instance"]}})
+		beforeBeat.Store(nil)
+		if err != nil {
+			t.Fatal("the read itself was admitted and must succeed", err)
+		}
+		if moved := lastSeen() != before; moved == revoke {
+			t.Fatalf("beat wrote=%v with the device revoked=%v", moved, revoke)
+		}
 	}
 }

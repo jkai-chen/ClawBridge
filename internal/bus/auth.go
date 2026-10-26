@@ -18,11 +18,14 @@ import (
 // keeps them; a local store creates the tables for the same schema number
 // and never uses them.
 
-// Schema 18. A device's public key is stored in its wire form (unpadded
+// Schema 18. A device belongs to the one workspace that admitted it, and
+// signs only there: an invite's issuer sees its code, so a device carries
+// no more than its issuer's word, which reaches no further than the
+// issuer's workspace. A device's public key is stored in its wire form (unpadded
 // base64url), so the same DDL serves SQLite and PostgreSQL.
 const authSchemaV18 = `
-CREATE TABLE devices(device_id TEXT PRIMARY KEY,principal TEXT NOT NULL,kind TEXT NOT NULL CHECK(kind IN ('device','ci')),public_key TEXT NOT NULL UNIQUE,label TEXT NOT NULL,key_store TEXT NOT NULL,via TEXT NOT NULL,created_by TEXT NOT NULL,created_at TEXT NOT NULL,expires_at TEXT,last_used_at TEXT,revoked_at TEXT,revoked_by TEXT,revoke_reason TEXT);
-CREATE INDEX devices_principal ON devices(principal);
+CREATE TABLE devices(device_id TEXT PRIMARY KEY,workspace_id TEXT NOT NULL REFERENCES workspaces(id),principal TEXT NOT NULL,kind TEXT NOT NULL CHECK(kind IN ('device','ci')),public_key TEXT NOT NULL UNIQUE,label TEXT NOT NULL,key_store TEXT NOT NULL,via TEXT NOT NULL,created_by TEXT NOT NULL,created_at TEXT NOT NULL,expires_at TEXT,last_used_at TEXT,revoked_at TEXT,revoked_by TEXT,revoke_reason TEXT);
+CREATE INDEX devices_principal ON devices(workspace_id,principal);
 CREATE TABLE invites(invite_id TEXT PRIMARY KEY,workspace_id TEXT NOT NULL REFERENCES workspaces(id),email TEXT NOT NULL,code_sha256 TEXT NOT NULL,purpose TEXT NOT NULL CHECK(purpose IN ('user','device','recovery')),grants TEXT NOT NULL,revoke_others INTEGER NOT NULL DEFAULT 0,created_by TEXT NOT NULL,created_at TEXT NOT NULL,expires_at TEXT NOT NULL,used_at TEXT,used_device TEXT,revoked_at TEXT,revoke_reason TEXT,failed_attempts INTEGER NOT NULL DEFAULT 0);
 CREATE INDEX invites_email ON invites(email) WHERE used_at IS NULL AND revoked_at IS NULL;
 CREATE TABLE owner_transfers(workspace_id TEXT PRIMARY KEY REFERENCES workspaces(id),from_principal TEXT NOT NULL,to_principal TEXT NOT NULL,created_at TEXT NOT NULL,expires_at TEXT NOT NULL);
@@ -210,6 +213,13 @@ func (s *Store) createInvite(ctx context.Context, tx *transaction, w map[string]
 		}
 		if err = s.mayGrant(ctx, tx, w, grants); err != nil {
 			return nil, err
+		}
+		member, err := query(ctx, tx, `SELECT principal FROM members WHERE workspace_id=? AND principal=?`, wid, email)
+		if err != nil {
+			return nil, err
+		}
+		if len(member) > 0 {
+			return nil, invalid("that email is already a member; they add a device with a device invite, or the workspace owner issues a recovery invite")
 		}
 	case "device":
 		// Another device for oneself: no grants, and only one's own email.
@@ -453,6 +463,12 @@ func (s *Store) Join(ctx context.Context, in JoinRequest) (map[string]any, error
 	if purpose != "user" && len(member) == 0 {
 		return fail(charged, "not_a_member")
 	}
+	if purpose == "user" && len(member) > 0 {
+		// An existing member adds a device with a device invite, or the
+		// owner recovers them; a user invite would let its issuer, who
+		// knows the code, act as them.
+		return fail(charged, "already_member")
+	}
 	var grants map[string]string
 	if err = json.Unmarshal([]byte(match["grants"].(string)), &grants); err != nil {
 		return nil, err
@@ -461,8 +477,20 @@ func (s *Store) Join(ctx context.Context, in JoinRequest) (map[string]any, error
 	// owner who has since lost the role grants nothing.
 	issuer := *s
 	issuer.principal = match["created_by"].(string)
-	if purpose == "user" {
+	switch purpose {
+	case "user":
 		if err = issuer.mayGrant(ctx, tx, w, grants); err != nil {
+			return fail(charged, "issuer_lost_authority")
+		}
+	case "device":
+		// Only the person themselves may add a device to their email.
+		if issuer.principal != email {
+			return fail(charged, "issuer_lost_authority")
+		}
+	case "recovery":
+		// Only whoever owns the workspace now may recover a member, so a
+		// recovery invite dies with its issuer's ownership.
+		if !mainOwner(&issuer, w) {
 			return fail(charged, "issuer_lost_authority")
 		}
 	}
@@ -473,7 +501,7 @@ func (s *Store) Join(ctx context.Context, in JoinRequest) (map[string]any, error
 	if n, _ := res.RowsAffected(); n != 1 {
 		return fail(nil, "")
 	}
-	if _, err = tx.ExecContext(ctx, `INSERT INTO devices(device_id,principal,kind,public_key,label,key_store,via,created_by,created_at) VALUES(?,?,'device',?,?,?,?,?,?)`, deviceID, email, devicekey.EncodePublicKey(pub), label, in.KeyStore, match["invite_id"], match["created_by"], now); err != nil {
+	if _, err = tx.ExecContext(ctx, `INSERT INTO devices(device_id,workspace_id,principal,kind,public_key,label,key_store,via,created_by,created_at) VALUES(?,?,?,'device',?,?,?,?,?,?)`, deviceID, wid, email, devicekey.EncodePublicKey(pub), label, in.KeyStore, match["invite_id"], match["created_by"], now); err != nil {
 		return nil, err
 	}
 	if _, err = tx.ExecContext(ctx, `INSERT INTO members(workspace_id,principal,added_by,added_at) VALUES(?,?,?,?) ON CONFLICT(workspace_id,principal) DO NOTHING`, wid, email, match["created_by"], now); err != nil {
@@ -489,11 +517,11 @@ func (s *Store) Join(ctx context.Context, in JoinRequest) (map[string]any, error
 	}
 	revoked := []string{}
 	if purpose == "recovery" && match["revoke_others"] != int64(0) {
-		if revoked, err = revokePrincipalDevices(ctx, tx, email, deviceID, match["created_by"].(string), "recovery"); err != nil {
+		if revoked, err = revokePrincipalDevices(ctx, tx, wid, email, deviceID, match["created_by"].(string), "recovery"); err != nil {
 			return nil, err
 		}
 	}
-	if err = js.audit(ctx, tx, wid, "", "", "invite", match["invite_id"].(string), "invite_used", map[string]any{"invite_id": match["invite_id"], "device_id": deviceID, "purpose": purpose}); err != nil {
+	if err = js.audit(ctx, tx, wid, "", "", "invite", match["invite_id"].(string), "invite_used", map[string]any{"invite_id": match["invite_id"], "device_id": deviceID, "purpose": purpose, "invited_by": match["created_by"]}); err != nil {
 		return nil, err
 	}
 	if err = js.audit(ctx, tx, wid, "", "", "device", deviceID, "device_added", map[string]any{"device_id": deviceID, "principal": email, "kind": "device", "via": match["invite_id"], "key_store": in.KeyStore, "revoked_devices": revoked}); err != nil {
@@ -526,10 +554,10 @@ func (s *Store) chargeInvite(ctx context.Context, tx *transaction, row map[strin
 	return s.audit(ctx, tx, wid, "", "", "invite", id, "invite_burnt", map[string]any{"invite_id": id, "failed_attempts": attempts})
 }
 
-// revokePrincipalDevices revokes every live device of principal except
-// keep, and returns their IDs.
-func revokePrincipalDevices(ctx context.Context, tx *transaction, principal, keep, by, reason string) ([]string, error) {
-	rows, err := query(ctx, tx, `SELECT device_id FROM devices WHERE principal=? AND device_id<>? AND revoked_at IS NULL ORDER BY device_id`, principal, keep)
+// revokePrincipalDevices revokes every live device of principal in the
+// workspace except keep, and returns their IDs.
+func revokePrincipalDevices(ctx context.Context, tx *transaction, wid, principal, keep, by, reason string) ([]string, error) {
+	rows, err := query(ctx, tx, `SELECT device_id FROM devices WHERE workspace_id=? AND principal=? AND device_id<>? AND revoked_at IS NULL ORDER BY device_id`, wid, principal, keep)
 	if err != nil {
 		return nil, err
 	}
@@ -559,20 +587,20 @@ func deviceView(row map[string]any, now string) map[string]any {
 	return out
 }
 
-// listDevices shows a caller their own devices and the CI devices they
-// created; the workspace owner may name any member.
+// listDevices shows a caller their own devices in the workspace and the CI
+// devices they created there; the workspace owner may name any member.
 func (s *Store) listDevices(ctx context.Context, tx *transaction, w map[string]any, who string) (any, error) {
 	who = normalPrincipal(who)
 	var rows []map[string]any
 	var err error
 	switch {
 	case who == "" || who == s.principal:
-		rows, err = query(ctx, tx, `SELECT * FROM devices WHERE principal=? OR (kind='ci' AND created_by=?) ORDER BY created_at`, s.principal, s.principal)
+		rows, err = query(ctx, tx, `SELECT * FROM devices WHERE workspace_id=? AND (principal=? OR (kind='ci' AND created_by=?)) ORDER BY created_at`, w["id"], s.principal, s.principal)
 	case mainOwner(s, w):
 		if _, err = one(ctx, tx, `SELECT principal FROM members WHERE workspace_id=? AND principal=?`, w["id"], who); err != nil {
 			return nil, scopedError(err, "not a member of this workspace", "not_found")
 		}
-		rows, err = query(ctx, tx, `SELECT * FROM devices WHERE principal=? ORDER BY created_at`, who)
+		rows, err = query(ctx, tx, `SELECT * FROM devices WHERE workspace_id=? AND principal=? ORDER BY created_at`, w["id"], who)
 	default:
 		return nil, refused("only the workspace owner may list another member's devices")
 	}
@@ -587,20 +615,15 @@ func (s *Store) listDevices(ctx context.Context, tx *transaction, w map[string]a
 	return map[string]any{"devices": out}, nil
 }
 
-// deviceInWorkspace reads a device the caller may manage: their own, a CI
-// device they created, or, for the workspace owner, any member's.
+// deviceInWorkspace reads a device of this workspace the caller may manage:
+// their own, a CI device they created, or, for the workspace owner, any.
 func (s *Store) deviceInWorkspace(ctx context.Context, tx *transaction, w map[string]any, id string, ownerMay bool) (map[string]any, error) {
-	row, err := one(ctx, tx, `SELECT * FROM devices WHERE device_id=?`, id)
+	row, err := one(ctx, tx, `SELECT * FROM devices WHERE device_id=? AND workspace_id=?`, id, w["id"])
 	if err != nil {
 		return nil, scopedError(err, "device not found", "not_found")
 	}
-	if row["principal"] == s.principal || (row["kind"] == "ci" && row["created_by"] == s.principal) {
+	if row["principal"] == s.principal || (row["kind"] == "ci" && row["created_by"] == s.principal) || (ownerMay && mainOwner(s, w)) {
 		return row, nil
-	}
-	if ownerMay && mainOwner(s, w) {
-		if _, err = one(ctx, tx, `SELECT principal FROM members WHERE workspace_id=? AND principal=?`, w["id"], row["principal"]); err == nil {
-			return row, nil
-		}
 	}
 	return nil, &serviceError{code: "not_found", cause: errors.New("device not found"), public: true}
 }
@@ -679,7 +702,7 @@ func (s *Store) addDevice(ctx context.Context, tx *transaction, w map[string]any
 		exp = expires
 	}
 	now := stamp()
-	if _, err := tx.ExecContext(ctx, `INSERT INTO devices(device_id,principal,kind,public_key,label,key_store,via,created_by,created_at,expires_at) VALUES(?,?,?,?,?,?,?,?,?,?)`, id, owner, kind, devicekey.EncodePublicKey(pub), label, store, via, s.principal, now, exp); err != nil {
+	if _, err := tx.ExecContext(ctx, `INSERT INTO devices(device_id,workspace_id,principal,kind,public_key,label,key_store,via,created_by,created_at,expires_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)`, id, w["id"], owner, kind, devicekey.EncodePublicKey(pub), label, store, via, s.principal, now, exp); err != nil {
 		return nil, err
 	}
 	out := map[string]any{"device_id": id, "principal": owner, "kind": kind, "label": label, "key_store": store, "via": via, "expires_at": exp}
@@ -756,12 +779,13 @@ func (s *Store) createCIDevice(ctx context.Context, tx *transaction, w map[strin
 	return out, nil
 }
 
-// listUsers shows the workspace owner every member with their devices.
+// listUsers shows the workspace owner every member, who added them, and
+// their devices here.
 func (s *Store) listUsers(ctx context.Context, tx *transaction, w map[string]any) (any, error) {
 	if !mainOwner(s, w) {
 		return nil, refused("only the workspace owner may list users")
 	}
-	members, err := query(ctx, tx, `SELECT principal,added_at FROM members WHERE workspace_id=? ORDER BY principal`, w["id"])
+	members, err := query(ctx, tx, `SELECT principal,added_by,added_at FROM members WHERE workspace_id=? ORDER BY principal`, w["id"])
 	if err != nil {
 		return nil, err
 	}
@@ -773,7 +797,7 @@ func (s *Store) listUsers(ctx context.Context, tx *transaction, w map[string]any
 		if err != nil {
 			return nil, err
 		}
-		devices, err := query(ctx, tx, `SELECT * FROM devices WHERE principal=? ORDER BY created_at`, p)
+		devices, err := query(ctx, tx, `SELECT * FROM devices WHERE workspace_id=? AND principal=? ORDER BY created_at`, w["id"], p)
 		if err != nil {
 			return nil, err
 		}
@@ -781,15 +805,14 @@ func (s *Store) listUsers(ctx context.Context, tx *transaction, w map[string]any
 		for _, d := range devices {
 			shown = append(shown, deviceView(d, now))
 		}
-		out = append(out, map[string]any{"principal": p, "added_at": m["added_at"], "owner": p == w["owner_principal"], "roles": roles, "devices": shown})
+		out = append(out, map[string]any{"principal": p, "invited_by": m["added_by"], "added_at": m["added_at"], "owner": p == w["owner_principal"], "roles": roles, "devices": shown})
 	}
 	return map[string]any{"users": out}, nil
 }
 
 // revokeUser removes a member from the workspace (§6): every project role
-// (retiring their sessions), the membership, pending invites, the CI
-// devices they created here, and their devices unless they are a member of
-// another workspace on this server, whose access is not this owner's call.
+// (retiring their sessions), the membership, pending invites, their devices
+// here and the CI devices they created here.
 func (s *Store) revokeUser(ctx context.Context, tx *transaction, w map[string]any, who string) (any, error) {
 	wid := w["id"].(string)
 	if !mainOwner(s, w) {
@@ -821,17 +844,11 @@ func (s *Store) revokeUser(ctx context.Context, tx *transaction, w map[string]an
 		return nil, err
 	}
 	revokedInvites, _ := invites.RowsAffected()
-	var elsewhere int
-	if err = tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM members WHERE principal=? AND workspace_id<>?`, who, wid).Scan(&elsewhere); err != nil {
+	devices, err := revokePrincipalDevices(ctx, tx, wid, who, "", s.principal, "user_revoked")
+	if err != nil {
 		return nil, err
 	}
-	devices := []string{}
-	if elsewhere == 0 {
-		if devices, err = revokePrincipalDevices(ctx, tx, who, "", s.principal, "user_revoked"); err != nil {
-			return nil, err
-		}
-	}
-	ci, err := query(ctx, tx, `SELECT device_id FROM devices WHERE kind='ci' AND created_by=? AND principal LIKE ? AND revoked_at IS NULL ORDER BY device_id`, who, "%@"+strings.ToLower(w["name"].(string)))
+	ci, err := query(ctx, tx, `SELECT device_id FROM devices WHERE workspace_id=? AND kind='ci' AND created_by=? AND revoked_at IS NULL ORDER BY device_id`, wid, who)
 	if err != nil {
 		return nil, err
 	}
@@ -842,7 +859,7 @@ func (s *Store) revokeUser(ctx context.Context, tx *transaction, w map[string]an
 		}
 		devices = append(devices, id)
 	}
-	result := map[string]any{"principal": who, "retired_sessions": retired, "revoked_devices": devices, "revoked_invites": revokedInvites, "devices_kept": elsewhere > 0}
+	result := map[string]any{"principal": who, "retired_sessions": retired, "revoked_devices": devices, "revoked_invites": revokedInvites}
 	if err = s.audit(ctx, tx, wid, "", "", "user", who, "user_revoked", result); err != nil {
 		return nil, err
 	}
@@ -939,6 +956,14 @@ func (s *Store) respondOwnerTransfer(ctx context.Context, tx *transaction, w map
 		if _, err = tx.ExecContext(ctx, `UPDATE workspaces SET owner_principal=? WHERE id=? AND owner_principal=?`, to, wid, from); err != nil {
 			return nil, err
 		}
+		// Recovery is the owner's alone, so the old owner's pending
+		// recovery invites go with the role.
+		res, err := tx.ExecContext(ctx, `UPDATE invites SET revoked_at=?,revoke_reason='owner_transferred' WHERE workspace_id=? AND purpose='recovery' AND used_at IS NULL AND revoked_at IS NULL`, now, wid)
+		if err != nil {
+			return nil, err
+		}
+		n, _ := res.RowsAffected()
+		view["revoked_recovery_invites"] = n
 	}
 	verb := map[string]string{"accept": "accepted", "decline": "declined", "cancel": "cancelled"}[action]
 	if err = s.audit(ctx, tx, wid, "", "", "owner_transfer", wid, "owner_transfer_"+verb, view); err != nil {
@@ -962,10 +987,12 @@ func (s *Store) ownerTransferView(ctx context.Context, tx *transaction, w map[st
 
 // Device is what the server needs to verify a device's signature.
 type Device struct {
-	ID        string
-	Principal string
-	Kind      string
-	PublicKey ed25519.PublicKey
+	ID string
+	// WorkspaceID is the one workspace the device signs in.
+	WorkspaceID string
+	Principal   string
+	Kind        string
+	PublicKey   ed25519.PublicKey
 	// Live is false for a revoked or expired device.
 	Live bool
 }
@@ -975,7 +1002,7 @@ func (s *Store) DeviceByID(ctx context.Context, id string) (Device, error) {
 	var d Device
 	var key string
 	var expires, revoked sql.NullString
-	err := s.db.QueryRowContext(ctx, (&transaction{postgres: s.postgres}).bind(`SELECT device_id,principal,kind,public_key,expires_at,revoked_at FROM devices WHERE device_id=?`), id).Scan(&d.ID, &d.Principal, &d.Kind, &key, &expires, &revoked)
+	err := s.db.QueryRowContext(ctx, (&transaction{postgres: s.postgres}).bind(`SELECT device_id,workspace_id,principal,kind,public_key,expires_at,revoked_at FROM devices WHERE device_id=?`), id).Scan(&d.ID, &d.WorkspaceID, &d.Principal, &d.Kind, &key, &expires, &revoked)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Device{}, errNotFound
 	}
@@ -1033,13 +1060,22 @@ func purgeNonces(ctx context.Context, tx *transaction) (int64, error) {
 
 // liveDevice checks, inside a request, that a device identity's device is
 // still live and still the principal's.
-func liveDevice(ctx context.Context, tx *transaction, id Identity) error {
+func liveDevice(ctx context.Context, tx *transaction, id Identity, workspace string) error {
+	if workspace == "" {
+		return refused("a device key signs only within its workspace")
+	}
 	var n int
 	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM devices WHERE device_id=? AND principal=? AND revoked_at IS NULL AND (expires_at IS NULL OR expires_at>?)`, id.Subject, id.Principal, stamp()).Scan(&n); err != nil {
 		return err
 	}
 	if n != 1 {
 		return refused("this device was revoked or has expired; ask an owner for an invite")
+	}
+	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM devices WHERE device_id=? AND workspace_id=?`, id.Subject, workspace).Scan(&n); err != nil {
+		return err
+	}
+	if n != 1 {
+		return refused("this device belongs to another workspace; join this one with its own invite")
 	}
 	return nil
 }

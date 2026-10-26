@@ -11,6 +11,8 @@ const Id = Type.String({ minLength: 1, maxLength: 128 });
 const Uuid = Type.String({ format: "uuid" });
 const Time = Type.String({ format: "date-time" });
 const Code = Type.String({ pattern: "^[a-z][a-z0-9_]{0,63}$" });
+// A ClawBridge project's own ID, as the server sends it; Linear's IDs (issues, Linear projects) are UUIDs.
+const ProjectId = Type.String({ pattern: "^prj_[0-9a-f]{32}$" });
 // 32 random bytes, base64url without padding, as the server generates it.
 const BindingSecret = Type.String({ pattern: "^[A-Za-z0-9_-]{43}$" });
 // HTTPS; plain http only to a loopback host (a model served on the same machine), as for the server URL [A8].
@@ -52,7 +54,7 @@ export type OptInTool = (typeof OPT_IN_TOOLS)[number];
 
 // --- §1b agent configuration ---
 
-const ProjectToken = Type.Object({ project_id: Uuid, token: Type.String({ minLength: 1 }), expires_at: Time });
+const ProjectToken = Type.Object({ project_id: ProjectId, token: Type.String({ minLength: 1 }), expires_at: Time });
 
 export const AgentConfigRequest = Type.Object({ instance_id: Id }, Closed);
 export const AgentConfigResponse = Type.Object({
@@ -113,7 +115,7 @@ export const OkResponse = Type.Object({ ok: Type.Literal(true) });
 // --- §2 hello and cases ---
 
 export const HelloResponse = Type.Object({
-	project_id: Uuid,
+	project_id: ProjectId,
 	enabled: Type.Boolean(),
 	provider: Id,
 	model: Id,

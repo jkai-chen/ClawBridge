@@ -1,0 +1,8 @@
+{
+  "ok": true,
+  "result": {
+    "guardrail": "permitted",
+    "action_taken": "confirm",
+    "reason_code": "trusted"
+  }
+}

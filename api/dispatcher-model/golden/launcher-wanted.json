@@ -1,0 +1,10 @@
+{
+  "agents": [
+    {
+      "owner_ref": "p_dddddddddddddddd",
+      "provider": "api.openai.com:443",
+      "config_revision": 3
+    }
+  ],
+  "max_agents": 2
+}

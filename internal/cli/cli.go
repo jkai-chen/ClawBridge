@@ -44,7 +44,8 @@ Commands: setup --local, project create SLUG, register [NAME], sessions, send TO
           skill install|status|uninstall [--agent claude-code|codex|all] [--dir SKILLS_DIR] [--force],
           serve, operator principal-unbind|workspace-clear-domains ... --confirm (on the server host),
           sync, purge-expired, principal-unbind EMAIL --confirm [--allow-previous],
-          workspace-domains DOMAIN...|--clear, doctor, tui [--screen SCREEN], version
+          workspace-domains DOMAIN...|--clear, doctor, tui [--screen SCREEN], version,
+          cloud check [server|version|workspace|all], cloud secret set KEY (own-server onboarding)
 Interactive: bare clawbridge opens the selected profile or guided join; setup wizard starts guided join.
 Onboarding: setup join --server URL --workspace TEAM --project CODEBASE [--login|--device]
 setup --cloud initializes an existing service only; no infrastructure is created.
@@ -199,6 +200,11 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	}
 	if len(args) > 0 && args[0] == "operator" {
 		return server.RunOperator(ctx, args[1:], stdout)
+	}
+	// The onboarding probes take cloud flags (--project is a cloud project
+	// here) and resolve trusted configuration only for the workspace check.
+	if len(args) > 0 && args[0] == "cloud" {
+		return runCloud(ctx, args[1:], stdout, stderr)
 	}
 	flags, rest, err := extractGlobals(args)
 	if err != nil {

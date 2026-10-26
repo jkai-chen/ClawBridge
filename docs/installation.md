@@ -157,6 +157,24 @@ file refuses the uninstall; `--force` moves it to such a backup instead of
 deleting it. It refuses, even with `--force`, when the marker is untrusted or the
 folder holds links.
 
+## Setting up your own server
+
+`clawbridge onboard` (Start's "Set up my own server") and the
+[first-deployment guide](operations/first-deployment.md) cover Google Cloud and
+AWS. `clawbridge skill install --playbook gcp` or `--playbook aws` installs that
+cloud's provisioning playbook for your agent. Each route uses that cloud's own
+CLI, which ClawBridge doesn't install, configure or sign in for you:
+
+| Cloud | CLI | Sign-in | Runs on |
+| --- | --- | --- | --- |
+| Google Cloud | `gcloud` | a named gcloud configuration | wherever `gcloud` runs |
+| AWS | AWS CLI v2; the Session Manager plugin for a shell on the instance | a named profile, for example `aws configure sso --profile clawbridge-onboarding` | macOS, Linux or WSL (not native Windows) |
+
+ClawBridge never reads `~/.aws` or the gcloud credential store. It checks that
+the named profile or configuration exists and is signed in to the account you
+chose. The AWS profile's permissions for the checks and `cloud secret set` are
+in [`deploy/aws-profile-policy.json`](../deploy/aws-profile-policy.json).
+
 ## Build from source
 
 Requires Go 1.26 or newer. Local mode needs no database server and neither mode

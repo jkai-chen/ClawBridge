@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"net/http/httptrace"
 	"regexp"
+	"sort"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -369,6 +370,35 @@ func (p *Provider) Close() error {
 		return p.closer.Close()
 	}
 	return nil
+}
+
+// Tools lists the advertised tools by name, each with its input schema's
+// property names (required ones marked *), sorted. It reads only the tool
+// list the connection already negotiated.
+func (p *Provider) Tools() map[string][]string {
+	out := map[string][]string{}
+	for name, t := range p.tools {
+		raw, _ := json.Marshal(t.InputSchema)
+		var schema struct {
+			Properties map[string]any `json:"properties"`
+			Required   []string       `json:"required"`
+		}
+		_ = json.Unmarshal(raw, &schema)
+		required := map[string]bool{}
+		for _, r := range schema.Required {
+			required[r] = true
+		}
+		fields := []string{}
+		for field := range schema.Properties {
+			if required[field] {
+				field += "*"
+			}
+			fields = append(fields, field)
+		}
+		sort.Strings(fields)
+		out[name] = fields
+	}
+	return out
 }
 
 // Alive reports whether a kept-open connection may serve another command: no

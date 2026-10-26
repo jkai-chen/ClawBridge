@@ -194,20 +194,30 @@ func (w *AppWriter) status(parent context.Context, identity bus.Identity, r bus.
 	return bus.Result{Data: out}, nil
 }
 
+// appConfig reads the app's settings from the environment only. set is
+// false when all three are empty: the app is off.
+func appConfig(store linearapp.Store) (config linearapp.Config, set bool, err error) {
+	id, secret, rawKey := os.Getenv("CLAWBRIDGE_LINEAR_APP_CLIENT_ID"), os.Getenv("CLAWBRIDGE_LINEAR_APP_CLIENT_SECRET"), os.Getenv("CLAWBRIDGE_LINEAR_APP_TOKEN_KEY")
+	if id == "" && secret == "" && rawKey == "" {
+		return linearapp.Config{}, false, nil
+	}
+	key, err := base64.StdEncoding.DecodeString(rawKey)
+	if err != nil {
+		return linearapp.Config{}, true, errors.New("CLAWBRIDGE_LINEAR_APP_TOKEN_KEY must be 32 bytes, base64-encoded")
+	}
+	return linearapp.Config{ClientID: id, Secret: secret, Key: key, Store: store}, true, nil
+}
+
 // appWriter configures the ClawBridge Linear app from the environment only:
 // CLAWBRIDGE_LINEAR_APP_CLIENT_ID, CLAWBRIDGE_LINEAR_APP_CLIENT_SECRET and
 // CLAWBRIDGE_LINEAR_APP_TOKEN_KEY (32 bytes, base64). Without them the app
 // is off and agent writes stay with each client's own profile.
 func appWriter(store *bus.Store) (*AppWriter, error) {
-	id, secret, rawKey := os.Getenv("CLAWBRIDGE_LINEAR_APP_CLIENT_ID"), os.Getenv("CLAWBRIDGE_LINEAR_APP_CLIENT_SECRET"), os.Getenv("CLAWBRIDGE_LINEAR_APP_TOKEN_KEY")
-	if id == "" && secret == "" && rawKey == "" {
-		return nil, nil
+	config, set, err := appConfig(store)
+	if err != nil || !set {
+		return nil, err
 	}
-	key, err := base64.StdEncoding.DecodeString(rawKey)
-	if err != nil {
-		return nil, errors.New("CLAWBRIDGE_LINEAR_APP_TOKEN_KEY must be 32 bytes, base64-encoded")
-	}
-	app, err := linearapp.New(linearapp.Config{ClientID: id, Secret: secret, Key: key, Store: store})
+	app, err := linearapp.New(config)
 	if err != nil {
 		return nil, err
 	}

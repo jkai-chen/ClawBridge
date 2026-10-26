@@ -109,6 +109,27 @@ sudo docker compose --env-file /etc/clawbridge/clawbridge.env \
 Run operator commands from the same release as the server. They never migrate
 the database: they refuse a schema at any other version.
 
+To check what the ClawBridge Linear app may do, the operator runs a probe as the
+app:
+
+```sh
+sudo docker compose --env-file /etc/clawbridge/clawbridge.env \
+  --project-name clawbridge-phase3 \
+  -f /opt/clawbridge/repo/deploy/compose.yaml \
+  run --rm --no-deps api operator linear-app-probe --confirm [--project UUID]
+```
+
+- **What it reads:** the MCP tools Linear offers the app, and, with
+  `--project`, which health fields that project has.
+- **What it sends:** one project update for a random project that does not
+  exist, so Linear's answer says whether the app's scopes allow project updates.
+  Nothing is created. If Linear ever reports one was, the probe says so at once.
+- **What it prints:** classes, tool and field names, and value kinds. It never
+  prints a token, secret, ID, error message or field value.
+- **Tokens:** it uses only the token the server published, and never mints one.
+  With none, or one close to expiry, it stops at `mint_disabled`: let the server
+  refresh it first.
+
 Explicit gcloud or authorized-user ADC with service-account impersonation are
 operator alternatives. Their audited principal is the service account in the
 verified token; sharing that account shares its application identity. Configure

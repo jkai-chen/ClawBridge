@@ -624,3 +624,15 @@ func TestWorkspaceReadsGetWorkspace(t *testing.T) {
 		t.Fatal(e)
 	}
 }
+
+func TestToolsListsNamesAndInputFieldsOnly(t *testing.T) {
+	f := &fake{tools: []*mcp.Tool{tool("save_project_update", map[string]string{"projectId": "string", "health": "string", "body": "string"}, "projectId"), {Name: "list_teams"}}}
+	p, e := NewWithCaller(context.Background(), f)
+	if e != nil {
+		t.Fatal(e)
+	}
+	got := p.Tools()
+	if len(got) != 2 || strings.Join(got["save_project_update"], " ") != "body health projectId*" || len(got["list_teams"]) != 0 || len(f.calls) != 0 {
+		t.Fatal(got, f.calls)
+	}
+}

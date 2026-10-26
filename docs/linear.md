@@ -800,6 +800,10 @@ Each field is optional except `enabled`.
 - **Setting it** reads each bound team's workflow and resolves every name
   exactly. A name missing, or not unique, in any bound team refuses the policy,
   and nothing is set.
+- **State types.** Linear's status list through MCP may leave out each state's
+  type. Then a hosted server's ClawBridge Linear app reads the team's workflow
+  instead (`linear_app_states`, a read, only for a bound team). Without either,
+  nothing is set.
 - **What is stored.** The policy keeps each state's ID and type, and the team's
   whole workflow at that moment. Renaming a state changes nothing. A state added
   later moves nothing until the policy is set again.

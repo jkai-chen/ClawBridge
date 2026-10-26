@@ -375,7 +375,7 @@ func NewHandlerWithOptions(store Executor, verifier Verifier, o HandlerOptions) 
 		}
 		var result bus.Result
 		verified := bus.Identity{Principal: identity.Principal, Issuer: bus.GoogleIssuer, Subject: identity.Subject, HostedDomain: identity.HostedDomain}
-		if request.Operation == "linear_write" || request.Operation == "linear_app_status" {
+		if request.Operation == "linear_write" || request.Operation == "linear_app_status" || request.Operation == "linear_app_states" {
 			result, err = writer.Execute(r.Context(), verified, request)
 		} else if bound, ok := store.(IdentityExecutor); ok {
 			result, err = bound.ExecuteAsIdentity(ctx, verified, request)

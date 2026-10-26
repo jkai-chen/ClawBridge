@@ -7,6 +7,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 
 	"clawbridge/internal/bus"
@@ -92,6 +93,8 @@ func (w *AppWriter) Execute(parent context.Context, identity bus.Identity, r bus
 	switch r.Operation {
 	case "linear_app_status":
 		return w.status(parent, identity, r)
+	case "linear_app_states":
+		return w.states(parent, identity, r)
 	case "linear_write":
 	default:
 		return bus.Result{}, appRefusal("unsupported operation")
@@ -192,6 +195,62 @@ func (w *AppWriter) status(parent context.Context, identity bus.Identity, r bus.
 	}
 	out["teams_visible"] = teams
 	return bus.Result{Data: out}, nil
+}
+
+// workflowStatesQuery reads one team's workflow states with their types,
+// which Linear's MCP status list may leave out.
+const workflowStatesQuery = `query WorkflowStates($team: ID!) { workflowStates(first: 100, filter: { team: { id: { eq: $team } } }) { nodes { id name type team { id } } pageInfo { hasNextPage } } }`
+
+// states reads a bound team's workflow states and types as the app, for a
+// status policy. It reads only, and only a team the caller's binding names.
+func (w *AppWriter) states(parent context.Context, identity bus.Identity, r bus.Request) (bus.Result, error) {
+	team, _ := r.Args["team"].(string)
+	for k := range r.Args {
+		if k != "instance" && k != "team" {
+			return bus.Result{}, appRefusal("linear_app_states takes instance and team only")
+		}
+	}
+	if !linearprovider.ValidID(team) {
+		return bus.Result{}, appRefusal("linear_app_states requires a canonical team UUID")
+	}
+	ctx, cancel := context.WithTimeout(parent, 20*time.Second)
+	defer cancel()
+	service, _, err := w.service(ctx, identity)
+	if err != nil {
+		return bus.Result{}, err
+	}
+	instance, _ := r.Args["instance"].(string)
+	b, err := service.BindingV2(ctx, bus.Request{Workspace: r.Workspace, Project: r.Project, Session: r.Session, Args: map[string]any{"instance": instance}})
+	if err != nil {
+		return bus.Result{}, err
+	}
+	bound := false
+	for _, t := range b.LinearTeamIDs {
+		bound = bound || strings.EqualFold(t, team)
+	}
+	if !bound {
+		return bus.Result{}, appRefusal("the team is not in this project's binding")
+	}
+	var out struct {
+		WorkflowStates struct {
+			Nodes []struct {
+				ID, Name, Type string
+				Team           struct{ ID string }
+			}
+			PageInfo struct{ HasNextPage bool }
+		}
+	}
+	if err = w.App.GraphQL(ctx, workflowStatesQuery, map[string]any{"team": team}, &out); err != nil || out.WorkflowStates.PageInfo.HasNextPage {
+		return bus.Result{}, bus.PublicError("unavailable", "the ClawBridge Linear app could not read the team's workflow states")
+	}
+	states := []any{}
+	for _, s := range out.WorkflowStates.Nodes {
+		if !linearprovider.ValidID(strings.ToLower(s.ID)) || !strings.EqualFold(s.Team.ID, team) {
+			return bus.Result{}, bus.PublicError("unavailable", "the ClawBridge Linear app read an unverified workflow state")
+		}
+		states = append(states, map[string]any{"id": strings.ToLower(s.ID), "name": s.Name, "type": s.Type, "team_id": strings.ToLower(team)})
+	}
+	return bus.Result{Data: map[string]any{"states": states}}, nil
 }
 
 // appConfig reads the app's settings from the environment only. set is

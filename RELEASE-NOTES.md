@@ -6,9 +6,10 @@
 - **Rollback:** v0.3.2 and older refuse to start on a schema 17 database. Take a dump before upgrading. To go back,
   restore that dump with the older image; never run the older binary against the migrated database
   (docs/operations/deployment.md).
-- Upgrade the server first, then clients. v0.3.2 clients keep working against a v0.3.3 server. The rules on who
-  closes an issue run in the binary that makes the write, so agents' sessions get them once their client is
-  v0.3.3 (`install.sh` / `install.ps1`).
+- Upgrade the server first, then clients. v0.3.2 clients keep working against a v0.3.3 server.
+- On a hosted server with the ClawBridge Linear app, the server applies the rules on who closes an issue (below) to
+  every agent write as soon as it runs v0.3.3. Where clients write to Linear with their own profiles (no app, or
+  local mode), agents get them once their client is v0.3.3 (`install.sh` / `install.ps1`).
 - No new environment variable, and the Compose file is unchanged.
 
 ## On a hosted server, agents can't cancel issues

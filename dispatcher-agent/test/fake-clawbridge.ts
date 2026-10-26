@@ -9,11 +9,14 @@ import {
 	AgentConfigResponse,
 	AgentRenewRequest,
 	AgentRenewResponse,
+	AgentStatusRequest,
+	AgentTestResultRequest,
 	type CaseT,
 	CasesNextRequest,
 	CasesNextResponse,
 	ErrorResponse,
 	HelloResponse,
+	OkResponse,
 	type ToolName,
 	ToolRequests,
 	ToolResponse,
@@ -71,6 +74,9 @@ export class FakeClawBridge {
 	providerApi = "openai-completions";
 	hello: Partial<Static<typeof HelloResponse>> = {};
 	tokenLifetimeMs = 3_600_000;
+	configStatus: "pending_test" | "active" = "active";
+	readonly testResults: Record<string, unknown>[] = [];
+	readonly statuses: string[] = [];
 	/** Overrides a tool's response; return undefined for the default. */
 	onTool: ToolHandler = () => undefined;
 	private server: Server | undefined;
@@ -126,12 +132,21 @@ export class FakeClawBridge {
 				projects: this.projects(),
 				limits: { max_input_tokens_per_run: 20_000, max_output_tokens_per_run: 2_000 },
 				binding_secret: BINDING_SECRET,
+				status: this.configStatus,
 			}, "agent_config");
 		}
 		if (path === "/v1/dispatcher-model/agent/renew") {
 			this.check("agent_renew request", AgentRenewRequest, body);
 			if (auth !== CREDENTIAL || body?.binding_secret !== BINDING_SECRET) return unauthorized("agent_renew");
 			return this.send(res, 200, AgentRenewResponse, { projects: this.projects() }, "agent_renew");
+		}
+		if (path === "/v1/dispatcher-model/agent/test-result" || path === "/v1/dispatcher-model/agent/status") {
+			const test = path.endsWith("/test-result");
+			this.check(`${test ? "agent_test_result" : "agent_status"} request`, test ? AgentTestResultRequest : AgentStatusRequest, body);
+			if (auth !== CREDENTIAL || body?.binding_secret !== BINDING_SECRET) return unauthorized(path);
+			if (test) this.testResults.push(body);
+			else this.statuses.push(body.status);
+			return this.send(res, 200, OkResponse, { ok: true }, path);
 		}
 		if (auth !== PROJECT_TOKEN) return unauthorized(path);
 		if (path === "/v1/dispatcher-model/hello") {

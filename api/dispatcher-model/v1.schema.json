@@ -18,6 +18,20 @@
 			"request": "#/$defs/AgentRenewRequest",
 			"response": "#/$defs/AgentRenewResponse"
 		},
+		"agent_test_result": {
+			"method": "POST",
+			"path": "/v1/dispatcher-model/agent/test-result",
+			"auth": "agent_credential",
+			"request": "#/$defs/AgentTestResultRequest",
+			"response": "#/$defs/OkResponse"
+		},
+		"agent_status": {
+			"method": "POST",
+			"path": "/v1/dispatcher-model/agent/status",
+			"auth": "agent_credential",
+			"request": "#/$defs/AgentStatusRequest",
+			"response": "#/$defs/OkResponse"
+		},
 		"hello": {
 			"method": "GET",
 			"path": "/v1/dispatcher-model/hello",
@@ -130,7 +144,8 @@
 						"not_in_case",
 						"cap_reached",
 						"guardrail",
-						"server_busy"
+						"server_busy",
+						"conflict"
 					]
 				},
 				"tool": {
@@ -171,7 +186,8 @@
 				"provider",
 				"projects",
 				"limits",
-				"binding_secret"
+				"binding_secret",
+				"status"
 			],
 			"properties": {
 				"config_revision": {
@@ -258,6 +274,12 @@
 				"binding_secret": {
 					"type": "string",
 					"minLength": 43
+				},
+				"status": {
+					"enum": [
+						"pending_test",
+						"active"
+					]
 				}
 			}
 		},
@@ -304,6 +326,101 @@
 							}
 						}
 					}
+				}
+			}
+		},
+		"AgentTestResultRequest": {
+			"anyOf": [
+				{
+					"type": "object",
+					"required": [
+						"binding_secret",
+						"config_revision",
+						"result"
+					],
+					"properties": {
+						"binding_secret": {
+							"type": "string",
+							"minLength": 43
+						},
+						"config_revision": {
+							"type": "integer",
+							"minimum": 1
+						},
+						"result": {
+							"type": "string",
+							"const": "active"
+						}
+					},
+					"additionalProperties": false
+				},
+				{
+					"type": "object",
+					"required": [
+						"binding_secret",
+						"config_revision",
+						"result",
+						"reason"
+					],
+					"properties": {
+						"binding_secret": {
+							"type": "string",
+							"minLength": 43
+						},
+						"config_revision": {
+							"type": "integer",
+							"minimum": 1
+						},
+						"result": {
+							"type": "string",
+							"const": "failed"
+						},
+						"reason": {
+							"enum": [
+								"invalid_key",
+								"no_model_access",
+								"quota",
+								"rate_limited",
+								"no_tool_use",
+								"egress_blocked",
+								"provider_error",
+								"timeout"
+							]
+						}
+					},
+					"additionalProperties": false
+				}
+			]
+		},
+		"AgentStatusRequest": {
+			"type": "object",
+			"required": [
+				"binding_secret",
+				"status"
+			],
+			"properties": {
+				"binding_secret": {
+					"type": "string",
+					"minLength": 43
+				},
+				"status": {
+					"enum": [
+						"ok",
+						"provider_auth"
+					]
+				}
+			},
+			"additionalProperties": false
+		},
+		"OkResponse": {
+			"type": "object",
+			"required": [
+				"ok"
+			],
+			"properties": {
+				"ok": {
+					"type": "boolean",
+					"const": true
 				}
 			}
 		},

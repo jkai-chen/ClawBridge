@@ -59,6 +59,7 @@ export function providerFailure(
 	if (status === 429) return { status, error_type: /quota|billing|credit/i.test(text) ? "quota" : "rate_limited" };
 	if (status !== null && status >= 500) return { status, error_type: "server" };
 	if (/timed? ?out|timeout/i.test(text)) return { status, error_type: "timeout" };
-	if (/ECONNREFUSED|ENOTFOUND|ECONNRESET|fetch failed|network/i.test(text)) return { status, error_type: "network" };
+	// The provider SDKs report a failed connection as "Connection error." (no status).
+	if (/connection error|ECONNREFUSED|ENOTFOUND|ECONNRESET|fetch failed|network/i.test(text)) return { status, error_type: "network" };
 	return { status, error_type: "other" };
 }

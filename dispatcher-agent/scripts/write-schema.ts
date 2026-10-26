@@ -12,6 +12,8 @@ export function schemaDocument(): string {
 	const operations: Record<string, object> = {
 		agent_config: { method: "POST", path: "/v1/dispatcher-model/agent/config", auth: "agent_credential", request: ref("AgentConfigRequest"), response: ref("AgentConfigResponse") },
 		agent_renew: { method: "POST", path: "/v1/dispatcher-model/agent/renew", auth: "agent_credential", request: ref("AgentRenewRequest"), response: ref("AgentRenewResponse") },
+		agent_test_result: { method: "POST", path: "/v1/dispatcher-model/agent/test-result", auth: "agent_credential", request: ref("AgentTestResultRequest"), response: ref("OkResponse") },
+		agent_status: { method: "POST", path: "/v1/dispatcher-model/agent/status", auth: "agent_credential", request: ref("AgentStatusRequest"), response: ref("OkResponse") },
 		hello: { method: "GET", path: "/v1/dispatcher-model/hello", auth: "project_token", response: ref("HelloResponse") },
 		cases_next: { method: "POST", path: "/v1/dispatcher-model/cases/next", auth: "project_token", request: ref("CasesNextRequest"), response: ref("CasesNextResponse") },
 	};

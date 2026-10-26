@@ -19,6 +19,11 @@ come in later steps (see "Status").
    - a one-time agent credential (`cba_…`) on **stdin**, read once.
 2. **Fetches its configuration** from the server (`agent/config`): provider, model, key, project tokens and per-run
    limits. The key lives only in memory.
+   - **New config:** for a config that is still `pending_test`, it first runs the **setup test**: one request with
+     one no-op `ping` tool. It reports the result to `agent/test-result` as a fixed code (`invalid_key`,
+     `no_model_access`, `quota`, `rate_limited`, `no_tool_use`, `egress_blocked`, `provider_error` or `timeout`),
+     and exits if the test failed.
+   - **Status:** it reports `ok` to `agent/status`, so that `doctor` can tell a working agent from an offline one.
 3. **For each project**, checks `hello`. It refuses to serve a project whose provider or model differs from its own.
    It then pulls cases one at a time (`cases/next`).
 4. **Decides each case** with a fresh agent and the case's typed tools only:
@@ -33,7 +38,8 @@ come in later steps (see "Status").
    - the provider fails;
    - the model stops without an outcome.
 
-   A provider `401`/`403` stops the agent.
+   A provider `401`/`403` stops all case polling. The agent then reports `provider_auth` to `agent/status` every
+   5 minutes until it is shut down.
 6. **Renews** its project tokens with the binding secret, and never fetches the key again.
 
 ## What it never does

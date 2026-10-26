@@ -1,6 +1,7 @@
-// The agent's life: redeem the one-time credential for the key-holder's config (§11.4), keep the project tokens
-// renewed, and for each project check hello and pull cases one at a time. Projects are independent: a failure in
-// one doesn't stop the others. A provider auth failure stops them all, since they share the one key (design §7).
+// The agent's life: redeem the one-time credential for the key-holder's config (§11.4), run the setup test when the
+// config is new (§11.3), keep the project tokens renewed, and for each project check hello and pull cases one at a
+// time. Projects are independent: a failure in one doesn't stop the others. A provider auth failure stops them all,
+// since they share the one key (design §7); the agent then only reports provider_auth until it is shut down.
 import type { StreamFn } from "@earendil-works/pi-agent-core";
 import { createModels } from "@earendil-works/pi-ai";
 import type { Static } from "typebox";
@@ -8,12 +9,8 @@ import type { ClawBridgeClient } from "./client.ts";
 import type { Logger } from "./log.ts";
 import { buildProvider, type BuiltProvider } from "./provider.ts";
 import { runCase } from "./run-case.ts";
-import {
-	AgentConfigResponse,
-	AgentRenewResponse,
-	CasesNextResponse,
-	HelloResponse,
-} from "./schema.ts";
+import { AgentConfigResponse, AgentRenewResponse, CasesNextResponse, HelloResponse, OkResponse } from "./schema.ts";
+import { runSetupTest } from "./setup-test.ts";
 
 type Config = Static<typeof AgentConfigResponse>;
 type ProjectTokens = Config["projects"];
@@ -31,6 +28,9 @@ export interface AgentOptions {
 	marginMs?: number;
 	/** The shortest wait between renewals (tests shorten it). */
 	renewFloorMs?: number;
+	/** While stopped on provider_auth, how often to repeat that status (d4.1: at most every 5 min). */
+	statusEveryMs?: number;
+	setupTestTimeoutMs?: number;
 }
 
 export class ConfigError extends Error {
@@ -60,6 +60,35 @@ export async function runAgent(o: AgentOptions): Promise<{ stopped: string }> {
 		model: config.provider.model,
 		projects: config.projects.length,
 	});
+
+	const postStatus = async (status: "ok" | "provider_auth") => {
+		const r = await o.client.call("POST", "/v1/dispatcher-model/agent/status", o.credential, OkResponse, {
+			binding_secret: config.binding_secret,
+			status,
+		});
+		o.logger.log(r.ok ? "status_sent" : "status_failed", { code: r.ok ? status : r.code, status: r.status });
+	};
+
+	if (config.status === "pending_test") {
+		const t = await runSetupTest(streamFn, built.model, o.setupTestTimeoutMs);
+		const base = { binding_secret: config.binding_secret, config_revision: config.config_revision };
+		const r = await o.client.call(
+			"POST",
+			"/v1/dispatcher-model/agent/test-result",
+			o.credential,
+			OkResponse,
+			t.result === "active" ? { ...base, result: "active" } : { ...base, result: "failed", reason: t.reason },
+		);
+		o.logger.log("setup_test", {
+			outcome: t.result,
+			reason_code: t.result === "failed" ? t.reason : undefined,
+			code: r.ok ? undefined : r.code,
+			status: r.status,
+		});
+		// A failed test leaves no usable config (the server deletes it); a result the server didn't take is a stop too.
+		if (t.result === "failed" || !r.ok) return { stopped: "setup_test_failed" };
+	}
+	await postStatus("ok");
 
 	const tokens = new Map<string, string>();
 	const setTokens = (list: ProjectTokens) => {
@@ -157,7 +186,7 @@ export async function runAgent(o: AgentOptions): Promise<{ stopped: string }> {
 				});
 				if (result.providerAuth) {
 					log("provider_auth", { code: "provider_auth" });
-					return stopAll("provider_auth");
+					return stopAll("provider_auth"); // no more cases for this key, in any project
 				}
 			}
 		}
@@ -173,6 +202,14 @@ export async function runAgent(o: AgentOptions): Promise<{ stopped: string }> {
 	if (stopped === "signal" && !o.signal.aborted) stopped = "no_projects";
 	stop.abort();
 	await renewing;
+	if (stopped === "provider_auth") {
+		// Polling has stopped; doctor still needs to see why (d4.1): now, then every 5 min until shut down.
+		await postStatus("provider_auth");
+		while (!o.signal.aborted) {
+			await sleep(o.statusEveryMs ?? 300_000, o.signal);
+			if (!o.signal.aborted) await postStatus("provider_auth");
+		}
+	}
 	o.logger.log("stopped", { code: stopped });
 	return { stopped };
 }

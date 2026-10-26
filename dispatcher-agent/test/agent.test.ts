@@ -73,9 +73,10 @@ for (const [api, path] of [["openai-completions", "/v1/chat/completions"], ["ant
 		await runUntil(() => cb.outcomes.length > 0);
 		assert.equal(cb.outcomes[0]?.tool, "decide");
 		assert.deepEqual(
-			cb.requests.map((r) => r.path.replace(/cases\/(?!next)[^/]+/, "cases/:id")).slice(0, 5),
+			cb.requests.map((r) => r.path.replace(/cases\/(?!next)[^/]+/, "cases/:id")).slice(0, 6),
 			[
 				"/v1/dispatcher-model/agent/config",
+				"/v1/dispatcher-model/agent/status",
 				"/v1/dispatcher-model/hello",
 				"/v1/dispatcher-model/cases/next",
 				"/v1/dispatcher-model/cases/:id/tools/read_issue_facts",
@@ -118,11 +119,14 @@ test("a provider 401 that echoes the key: no 8-character run of a secret in logs
 	process.stderr.write = ((chunk: string | Uint8Array) => (out.push(String(chunk)), true)) as typeof process.stderr.write;
 	let stopped: string;
 	try {
-		({ stopped } = await runUntil(() => false));
+		({ stopped } = await runUntil(() => cb.statuses.includes("provider_auth")));
 	} finally {
 		process.stderr.write = write;
 	}
 	assert.equal(stopped, "provider_auth", "a rejected key stops the key-holder's agent");
+	assert.deepEqual(cb.statuses, ["ok", "provider_auth"], "doctor hears why it stopped");
+	const nextCalls = cb.requests.filter((r) => r.path.endsWith("/cases/next")).length;
+	assert.equal(nextCalls, 1, "no more cases after provider_auth");
 	assert.equal(cb.outcomes[0]?.tool, "abstain");
 	assert.ok(lines.some((l) => l.includes('"error_type":"auth"') && l.includes('"status":401')));
 	const sentToClawBridge = cb.requests
@@ -153,4 +157,48 @@ test("project tokens are renewed with the binding secret, never the key", async 
 	assert.equal(renew?.auth, CREDENTIAL);
 	assert.deepEqual(renew?.body, { binding_secret: BINDING_SECRET });
 	assert.equal(cb.requests.filter((r) => r.path.endsWith("/agent/config")).length, 1, "config is redeemed once");
+});
+
+test("a pending_test config runs the setup test and reports active before any case", async () => {
+	cb.configStatus = "pending_test";
+	provider.plan = [["ping", {}]];
+	await runUntil(() => cb.requests.some((r) => r.path.endsWith("/cases/next")));
+	assert.deepEqual(cb.testResults, [{ binding_secret: BINDING_SECRET, config_revision: 7, result: "active" }]);
+	const paths = cb.requests.map((r) => r.path);
+	assert.ok(paths.indexOf("/v1/dispatcher-model/agent/test-result") < paths.indexOf("/v1/dispatcher-model/cases/next"));
+	assert.equal(provider.requests.length, 1, "one request to the provider");
+});
+
+for (const [status, reason] of [
+	[401, "invalid_key"],
+	[403, "no_model_access"],
+	[404, "no_model_access"],
+	[402, "quota"],
+	[429, "rate_limited"],
+	[500, "provider_error"],
+] as const) {
+	test(`a setup test that gets ${status} reports ${reason}, and the agent takes no case`, async () => {
+		cb.configStatus = "pending_test";
+		provider.fail = status;
+		const { stopped } = await runUntil(() => false);
+		assert.equal(stopped, "setup_test_failed");
+		assert.deepEqual(cb.testResults, [{ binding_secret: BINDING_SECRET, config_revision: 7, result: "failed", reason }]);
+		assert.ok(!cb.requests.some((r) => r.path.endsWith("/hello") || r.path.endsWith("/cases/next")));
+		assert.ok(!leaks(KEY, lines.join("\n")), "the echoed key is not logged");
+	});
+}
+
+test("a model that answers without calling the tool fails the setup test with no_tool_use", async () => {
+	cb.configStatus = "pending_test";
+	provider.plan = [];
+	const { stopped } = await runUntil(() => false);
+	assert.equal(stopped, "setup_test_failed");
+	assert.equal((cb.testResults[0] as { reason?: string }).reason, "no_tool_use");
+});
+
+test("an unreachable provider host fails the setup test with egress_blocked", async () => {
+	cb.configStatus = "pending_test";
+	cb.providerBaseUrl = "http://127.0.0.1:9/v1";
+	await runUntil(() => false);
+	assert.equal((cb.testResults[0] as { reason?: string }).reason, "egress_blocked");
 });

@@ -57,8 +57,10 @@ type awLinearAPI struct {
 func (l *awLinearAPI) RoundTrip(r *http.Request) (*http.Response, error) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
+	body := ""
 	if r.Body != nil {
-		_, _ = io.Copy(io.Discard, r.Body)
+		raw, _ := io.ReadAll(r.Body)
+		body = string(raw)
 	}
 	reply := func(status int, v any) (*http.Response, error) {
 		raw, _ := json.Marshal(v)
@@ -71,6 +73,12 @@ func (l *awLinearAPI) RoundTrip(r *http.Request) (*http.Response, error) {
 	case "https://api.linear.app/graphql":
 		if r.Header.Get("Authorization") != "Bearer "+awToken {
 			return reply(401, map[string]any{})
+		}
+		if strings.Contains(body, "workflowStates") {
+			return reply(200, map[string]any{"data": map[string]any{"workflowStates": map[string]any{"nodes": []any{
+				map[string]any{"id": "c1000000-0000-4000-8000-0000000000a1", "name": "Backlog", "type": "backlog", "team": map[string]any{"id": awTeam}},
+				map[string]any{"id": "C1000000-0000-4000-8000-0000000000A3", "name": "In Progress", "type": "started", "team": map[string]any{"id": awTeam}},
+			}, "pageInfo": map[string]any{"hasNextPage": false}}}})
 		}
 		return reply(200, map[string]any{"data": map[string]any{"viewer": map[string]any{"id": awAppUser, "app": true, "organization": map[string]any{"id": awOrg}}}})
 	}
@@ -442,5 +450,29 @@ func TestPostgresAppStatusReportsTheBoundTeams(t *testing.T) {
 	}
 	if n := f.mcp.count("save_comment"); n != 0 {
 		t.Fatal("status wrote", n)
+	}
+}
+
+// linear_app_states reads a bound team's workflow states with their types
+// as the app, for a status policy; another team, or another argument, is
+// refused.
+func TestPostgresAppStatesReadsABoundTeamsWorkflow(t *testing.T) {
+	f := newAWFixture(t, awOrg)
+	states := func(args map[string]any) (bus.Result, error) {
+		args["instance"] = awSession + "-i"
+		return f.writer.Execute(context.Background(), f.identity(), bus.Request{Operation: "linear_app_states", Workspace: f.workspace, Project: "p", Session: awSession, Args: args})
+	}
+	out, err := states(map[string]any{"team": awTeam})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := awJSON(t, out.Data)["states"].([]any)
+	if len(got) != 2 || got[1].(map[string]any)["type"] != "started" || got[1].(map[string]any)["id"] != "c1000000-0000-4000-8000-0000000000a3" {
+		t.Fatal(got)
+	}
+	for _, args := range []map[string]any{{"team": "dddddddd-0000-4000-8000-000000000001"}, {"team": "not-a-team"}, {"team": awTeam, "query": "{ viewer { id } }"}} {
+		if _, err = states(args); err == nil {
+			t.Fatal("accepted", args)
+		}
 	}
 }

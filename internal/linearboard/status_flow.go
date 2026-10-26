@@ -58,6 +58,13 @@ func (s *Service) SetStatusPolicyV2(ctx context.Context, scope bus.Request, raw 
 		if e != nil {
 			return nil, e
 		}
+		if !typed(states) {
+			// Linear's MCP status list may leave the type out: a hosted
+			// server's Linear app reads it.
+			if states, e = s.appStates(ctx, scope, team); e != nil {
+				return nil, e
+			}
+		}
 		workflow := map[string]any{}
 		byName := map[string][]linearprovider.Status{}
 		for _, st := range states {
@@ -90,6 +97,40 @@ func (s *Service) SetStatusPolicyV2(ctx context.Context, scope bus.Request, raw 
 	scope.Args["status_policy"] = policy
 	r, e := s.cfg.Executor.Execute(ctx, scope)
 	return r.Data, e
+}
+
+func typed(states []linearprovider.Status) bool {
+	for _, st := range states {
+		if st.Type == "" {
+			return false
+		}
+	}
+	return true
+}
+
+// appStates reads a bound team's workflow states with their types through
+// a hosted server's Linear app (linear_app_states).
+func (s *Service) appStates(ctx context.Context, scope bus.Request, team string) ([]linearprovider.Status, error) {
+	scope.Operation = "linear_app_states"
+	scope.Args = instanceArgs(scope.Args)
+	scope.Args["team"] = team
+	r, e := s.cfg.Executor.Execute(ctx, scope)
+	if e != nil {
+		return nil, errors.New("the Linear connection did not report workflow state types, and the server's Linear app could not read them; nothing was set")
+	}
+	raw, _ := json.Marshal(r.Data)
+	var out struct {
+		States []linearprovider.Status `json:"states"`
+	}
+	if json.Unmarshal(raw, &out) != nil || len(out.States) == 0 {
+		return nil, errors.New("the server's Linear app answered no workflow states; nothing was set")
+	}
+	for _, st := range out.States {
+		if !linearprovider.ValidID(st.ID) || !strings.EqualFold(st.TeamID, team) {
+			return nil, errors.New("the server's Linear app answered an unverified workflow state; nothing was set")
+		}
+	}
+	return out.States, nil
 }
 
 // statusPolicy reads the policy for a create. An authority older than the

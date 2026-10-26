@@ -271,7 +271,26 @@ func TestSetStatusPolicyResolvesNamesPerTeam(t *testing.T) {
 			t.Fatal(name, "accepted")
 		}
 	}
-	// Without state types nothing is set.
+	// Without state types from Linear's status list, a hosted server's app
+	// reads them.
+	untyped := []linearprovider.Status{}
+	a.appStates = map[string][]any{}
+	for _, st := range append(append([]linearprovider.Status{}, sfStates...), other...) {
+		a.appStates[st.TeamID] = append(a.appStates[st.TeamID], map[string]any{"id": st.ID, "name": st.Name, "type": st.Type, "team_id": st.TeamID})
+		st.Type = ""
+		untyped = append(untyped, st)
+	}
+	p.statuses = untyped
+	a.statusSet = nil
+	if _, err := s.SetStatusPolicyV2(context.Background(), scope, []byte(`{"enabled": true, "claim": "In Progress"}`), 1); err != nil || a.statusSet == nil {
+		t.Fatal("the app's states were not used", err)
+	}
+	if got, _ := bus.ParseStatusPolicy(a.statusSet["status_policy"]); got.Teams[teamID].Claim == nil || got.Teams[teamID].Claim.Type != "started" {
+		t.Fatal(a.statusSet)
+	}
+	// Without state types from either, nothing is set.
+	a.appStates = nil
+	p.statuses = append(append([]linearprovider.Status{}, sfStates...), other...)
 	p.statuses[0].Type = ""
 	a.statusSet = nil
 	if _, err := s.SetStatusPolicyV2(context.Background(), scope, []byte(`{"enabled": true, "claim": "In Progress"}`), 0); err == nil || !strings.Contains(err.Error(), "state types") || a.statusSet != nil {

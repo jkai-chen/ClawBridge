@@ -39,6 +39,9 @@ type authorityV2 struct {
 	status    map[string]any
 	statusErr error
 	statusSet map[string]any
+	// appStates answers linear_app_states per team; without it the
+	// operation is refused.
+	appStates map[string][]any
 }
 
 func (a *authorityV2) Execute(_ context.Context, r bus.Request) (bus.Result, error) {
@@ -66,6 +69,13 @@ func (a *authorityV2) Execute(_ context.Context, r bus.Request) (bus.Result, err
 	}
 	if strings.HasPrefix(r.Operation, "linear_comment") || strings.HasPrefix(r.Operation, "comment_watch") || strings.HasPrefix(r.Operation, "marker_") {
 		return a.comments.execute(r)
+	}
+	if r.Operation == "linear_app_states" {
+		states, ok := a.appStates[r.Args["team"].(string)]
+		if !ok {
+			return bus.Result{}, errors.New("unsupported operation")
+		}
+		return bus.Result{Source: "server", Data: map[string]any{"states": states}}, nil
 	}
 	if r.Operation == "status_policy_set" {
 		a.statusSet = r.Args

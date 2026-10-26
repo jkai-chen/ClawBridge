@@ -20,7 +20,13 @@ export function renderCase(c: CaseT): string {
 		reason_codes: c.reason_codes,
 		facts: c.facts,
 	};
-	if (c.kind === "chat" && c.message) view.question = { from: c.message.from, text: c.message.text };
-	if (c.untrusted) view.untrusted = c.untrusted;
+	// The asker is an owner or lead, but their words may quote others (an issue title, a comment), so the question's
+	// text is untrusted data like any other text; only who asked is typed.
+	const untrusted: Record<string, unknown> = { ...c.untrusted };
+	if (c.kind === "chat" && c.message) {
+		view.asked_by = c.message.from;
+		untrusted.question = c.message.text;
+	}
+	if (Object.keys(untrusted).length > 0) view.untrusted = untrusted;
 	return JSON.stringify(view);
 }

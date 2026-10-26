@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 )
 
 const ssmSecretKey = "CLAWBRIDGE_LINEAR_APP_CLIENT_SECRET"
@@ -83,8 +84,20 @@ func TestCloudSecretSetOverSSMSendsTheValueOnlyToParameterStore(t *testing.T) {
 		switch op {
 		case "ssm put-parameter":
 			var req map[string]any
-			if json.Unmarshal(stdin, &req) != nil || req["Name"] != "/clawbridge/"+ec2ID+"/"+ssmSecretKey || req["Type"] != "SecureString" {
+			if json.Unmarshal(stdin, &req) != nil || req["Name"] != "/clawbridge/"+ec2ID+"/"+ssmSecretKey || req["Type"] != "SecureString" || req["Tier"] != "Advanced" {
 				t.Fatalf("put-parameter request: %s", stdin)
+			}
+			var policies []struct {
+				Type       string
+				Attributes struct{ Timestamp string }
+			}
+			policy, _ := req["Policies"].(string)
+			if json.Unmarshal([]byte(policy), &policies) != nil || len(policies) != 1 || policies[0].Type != "Expiration" {
+				t.Fatalf("expiration policy: %q", policy)
+			}
+			expires, err := time.Parse(time.RFC3339, policies[0].Attributes.Timestamp)
+			if err != nil || time.Until(expires) <= 0 || time.Until(expires) > secretParameterLife {
+				t.Fatalf("expires at %v", policies[0].Attributes.Timestamp)
 			}
 		case "ssm send-command":
 			if !strings.Contains(string(stdin), "get-parameter --with-decryption --name /clawbridge/"+ec2ID+"/"+ssmSecretKey) {

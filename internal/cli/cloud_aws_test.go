@@ -71,6 +71,7 @@ func healthyAWS() *awsStub {
 		"ec2 describe-volumes":              dataVolume,
 		"ec2 describe-security-groups":      httpsOnly,
 		"ssm describe-instance-information": ssmOnline,
+		"ssm describe-parameters":           `{"Parameters":[]}`,
 		"ssm send-command":                  commandSent,
 		"ssm get-command-invocation":        mountedFacts,
 		"sts get-caller-identity":           `{"Account":"123456789012"}`,
@@ -202,6 +203,9 @@ func TestCloudCheckInfraOnAWS(t *testing.T) {
 		"ssh from a /32": {edit: func(a *awsStub) {
 			a.out["ec2 describe-security-groups"] = strings.NewReplacer(`"FromPort":443,"ToPort":443`, `"FromPort":22,"ToPort":22`, "0.0.0.0/0", "192.0.2.10/32", "::/0", "2001:db8::1/128").Replace(httpsOnly)
 		}, want: "extra_ingress"},
+		"secret left": {edit: func(a *awsStub) {
+			a.out["ssm describe-parameters"] = `{"Parameters":[{"Name":"/clawbridge/` + ec2ID + `/CLAWBRIDGE_OAUTH_CLIENT_SECRET"}]}`
+		}, want: "secret_left_behind"},
 		"ssm offline": {edit: func(a *awsStub) {
 			a.out["ssm describe-instance-information"] = `{"InstanceInformationList":[{"PingStatus":"ConnectionLost"}]}`
 		}, want: "ssm_offline"},

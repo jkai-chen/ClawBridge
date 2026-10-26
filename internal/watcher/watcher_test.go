@@ -46,6 +46,13 @@ type fakeLinear struct {
 	healthIssues []map[string]any
 	activity     map[string]map[string]any
 	healthMore   bool
+	// updates are the project's newest updates; noWrite withholds the
+	// write scope; statusPosts records each status update sent, and
+	// statusErr fails them.
+	updates     []map[string]any
+	noWrite     bool
+	statusPosts []string
+	statusErr   error
 	// docRefs, docMore and docContent answer the document watch; events
 	// records the order of comment and document reads.
 	docRefs    []linearprovider.DocRef
@@ -97,6 +104,13 @@ func (p fakeProvider) Comment(_ context.Context, issue, _ string) (linearprovide
 	p.f.notes++
 	return linearprovider.Receipt{ID: fmt.Sprintf("bbbbbbbb-bbbb-4bbb-8bbb-%012d", p.f.notes), IssueID: issue}, nil
 }
+func (p fakeProvider) SaveStatusUpdate(_ context.Context, project, body, health string) (string, error) {
+	p.f.statusPosts = append(p.f.statusPosts, project+" "+health+" "+body)
+	if p.f.statusErr != nil {
+		return "", p.f.statusErr
+	}
+	return fmt.Sprintf("cccccccc-cccc-4ccc-8ccc-%012d", len(p.f.statusPosts)), nil
+}
 func (p fakeProvider) IssueV2(_ context.Context, id string) (linearprovider.IssueV2, error) {
 	return p.f.issue(id)
 }
@@ -144,6 +158,9 @@ type fakeApp struct{ f *fakeLinear }
 func (a fakeApp) Open(context.Context, bool) (linearboard.Provider, error) {
 	return fakeProvider{a.f}, nil
 }
+func (a fakeApp) HasScope(_ context.Context, scope string) (bool, error) {
+	return scope != "write" || !a.f.noWrite, nil
+}
 func (a fakeApp) Identity(context.Context) (AppIdentity, error) {
 	return AppIdentity{AppUserID: appUser, LinearOrgID: "org"}, nil
 }
@@ -162,7 +179,11 @@ func (a fakeApp) GraphQL(_ context.Context, query string, vars map[string]any, o
 	case mentionsQuery:
 		data = map[string]any{"notifications": map[string]any{"nodes": a.f.mentions, "pageInfo": map[string]any{"hasNextPage": false}}}
 	case healthProjectQuery:
-		data = map[string]any{"project": map[string]any{"id": vars["id"], "targetDate": nil, "startDate": nil, "createdAt": "2026-01-01T00:00:00.000Z"}}
+		updates := []any{}
+		for _, u := range a.f.updates {
+			updates = append(updates, u)
+		}
+		data = map[string]any{"project": map[string]any{"id": vars["id"], "targetDate": nil, "startDate": nil, "createdAt": "2026-01-01T00:00:00.000Z", "projectUpdates": map[string]any{"nodes": updates}}}
 	case healthIssuesQuery:
 		data = map[string]any{"issues": map[string]any{"nodes": a.f.healthIssues, "pageInfo": map[string]any{"hasNextPage": a.f.healthMore, "endCursor": "next"}}}
 	case healthActivityQuery:

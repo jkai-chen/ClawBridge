@@ -910,8 +910,9 @@ without a session is never refused here.
 ## Project health (project owner only)
 
 A hosted server's watcher can judge each bound Linear project's health once a
-day, from Linear facts, and tell the project's coordinator session. It is off
-until the owner enables it, per Linear project, in a project-set binding.
+day, from Linear facts, and post it to Linear as a project update or tell the
+project's coordinator session. It is off until the owner enables it, per Linear
+project, in a project-set binding.
 
 ```sh
 clawbridge linear health show
@@ -923,10 +924,23 @@ clawbridge linear health set --linear-project UUID --file health.json --expected
 `N` is the project's health revision from `show` (0 the first time). Any member
 can run `show`.
 
-- **Nothing is posted to Linear.** A confirmed health goes to the coordinator
-  session as a `project-health` message, and `show` lists every run's report.
-  Posting it as a Linear project update waits on proof that the ClawBridge
-  Linear app may do so; until then `"post": true` is refused.
+- **Posting to Linear** (`"post": true`, v0.3.4). A confirmed health is posted
+  as a project update by the ClawBridge Linear app, with Linear's health and a
+  body that starts `— 🤖 ClawBridge project health` and names issues by
+  identifier only. ClawBridge only ever creates updates: it never edits or
+  deletes one, a person's or its own.
+  - **At most one a day** per Linear project.
+  - **Never over a person.** When the project's newest update is a person's
+    from the last 7 days, nothing is posted.
+  - **Never twice.** When a post's answer is lost, nothing is sent again: a
+    later run looks for the app's update among the project's newest five. One
+    still not found a full day later is reported as unconfirmed.
+  - It needs the app's `write` scope. Without it, or when Linear refuses, the
+    coordinator session is told instead, with the reason.
+- **Without posting** (the default), or whenever a post is held back or
+  refused, a confirmed health goes to the coordinator session as a
+  `project-health` message. `show` lists every run's report and each Linear
+  project's latest post.
 - **Signals.** The health is the worst of:
   - **schedule**, when the project has a target date: the share of time used
     since its start date (or its creation date, when it has none) against the
@@ -942,7 +956,7 @@ can run `show`.
     at 5. One blocked issue never changes the health.
 - **Confirmed only.** A new health is acted on when two daily runs in a row
   agree. With `"weekly": true`, an unchanged health is also sent once a week.
-- **Settings** (`health.json`): `enabled`, `weekly`, `stalled_days` and every
+- **Settings** (`health.json`): `enabled`, `post`, `weekly`, `stalled_days` and every
   threshold (`stalled_risk`, `stalled_off`, `stalled_risk_pct`,
   `stalled_off_pct`, `blocked_risk`, `blocked_off`, `schedule_risk_pct`,
   `schedule_off_pct`). Fields left out keep the defaults above.
@@ -952,8 +966,9 @@ can run `show`.
   (up to 25 Linear calls, usually under 10). Otherwise it waits for the next
   tick. A run that fails is tried again an hour later.
 - **What it reads.** Issue identifiers, states, update times, blocking
-  relations, and who changed or commented on an issue. Never titles,
-  descriptions or comment text.
+  relations, who changed or commented on an issue, and who posted the
+  project's newest five updates and when. Never titles, descriptions, comment
+  text or update text.
 
 ## Linear documents (v0.3.2)
 

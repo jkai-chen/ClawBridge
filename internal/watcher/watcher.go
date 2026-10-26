@@ -35,6 +35,8 @@ type App interface {
 	GraphQL(ctx context.Context, query string, variables map[string]any, out any) error
 	// Identity is the app's Linear user.
 	Identity(ctx context.Context) (AppIdentity, error)
+	// HasScope is whether the app's token in use was granted scope.
+	HasScope(ctx context.Context, scope string) (bool, error)
 }
 
 // AppIdentity names the app's Linear user and organisation.
@@ -125,7 +127,7 @@ func (w *Watcher) project(ctx context.Context, pid string, healthLeft int) Proje
 			if err != nil {
 				return err
 			}
-			if tick.Health, err = w.health(ctx, pid, fence, healthLeft); err != nil {
+			if tick.Health, err = w.health(ctx, svc, scope, pid, fence, healthLeft); err != nil {
 				return err
 			}
 			if tick.Docs, err = w.docs(ctx, svc, pid, fence); err != nil {

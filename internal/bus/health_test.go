@@ -100,7 +100,6 @@ func TestHealthPolicyRules(t *testing.T) {
 	}
 	for name, v := range map[string]map[string]any{
 		"no enabled":       {"weekly": true},
-		"post":             {"enabled": true, "post": true},
 		"unknown":          {"enabled": true, "claims": 2},
 		"risk not below":   {"enabled": true, "blocked_risk": 5, "blocked_off": 5},
 		"pct over 100":     {"enabled": true, "stalled_off_pct": 101},
@@ -111,8 +110,8 @@ func TestHealthPolicyRules(t *testing.T) {
 			t.Fatal(name, "accepted")
 		}
 	}
-	if _, err := ParseHealthPolicy(map[string]any{"enabled": true, "post": true}); err == nil || !strings.Contains(err.Error(), "not available yet") {
-		t.Fatal(err)
+	if p, err := ParseHealthPolicy(map[string]any{"enabled": true, "post": true}); err != nil || !p.Post {
+		t.Fatal("post", p, err)
 	}
 }
 
@@ -182,12 +181,11 @@ func f2(f *HealthFacts) *HealthFacts { return f }
 func TestHealthSetIsPerBoundProject(t *testing.T) {
 	h := newHealthHarness(t)
 	got := h.call("health_get", "b", map[string]any{}).(map[string]any)
-	if len(got["projects"].([]any)) != 0 || !strings.Contains(got["posting"].(string), "nothing is written to Linear") {
+	if len(got["projects"].([]any)) != 0 || !strings.Contains(got["posting"].(string), "coordinator session is told") {
 		t.Fatal(got)
 	}
 	unbound := "33333333-3333-4333-8333-333333333333"
 	h.fail("health_set", "a", map[string]any{"linear_project": unbound, "expected_revision": 0, "health_policy": map[string]any{"enabled": true}})
-	h.fail("health_set", "a", map[string]any{"linear_project": projectOne, "expected_revision": 0, "health_policy": map[string]any{"enabled": true, "post": true}})
 	set := h.enable(projectOne, 0, nil)["projects"].([]any)[0].(map[string]any)
 	if set["revision"] != 1 || set["enabled"] != true {
 		t.Fatal(set)
@@ -352,5 +350,203 @@ func TestHealthOperationIDsAreReserved(t *testing.T) {
 	w := newWatchHarness(t)
 	if _, err := w.reserve("a", "health:2026-10-26", map[string]any{}); err == nil || !strings.Contains(err.Error(), "reserved") {
 		t.Fatal(err)
+	}
+}
+
+// withUpdates is facts with the project's newest updates.
+func withUpdates(f map[string]any, updates ...map[string]any) map[string]any {
+	list := []any{}
+	for _, u := range updates {
+		list = append(list, u)
+	}
+	f["updates"] = list
+	return f
+}
+
+func update(id string, created time.Time, byApp bool) map[string]any {
+	return map[string]any{"id": id, "created_at": created.UTC().Format(time.RFC3339Nano), "by_app": byApp}
+}
+
+const (
+	updateOne = "e1000000-0000-4000-8000-000000000001"
+	updateTwo = "e1000000-0000-4000-8000-000000000002"
+)
+
+func (h *healthHarness) postRow(project string) map[string]any {
+	h.t.Helper()
+	row := map[string]any{}
+	var day, state, updateID, code string
+	if e := h.s.db.QueryRow(`SELECT day,state,update_id,error FROM health_posts WHERE linear_project_id=? ORDER BY day DESC LIMIT 1`, project).Scan(&day, &state, &updateID, &code); e != nil {
+		h.t.Fatal(e)
+	}
+	row["day"], row["state"], row["update_id"], row["error"] = day, state, updateID, code
+	return row
+}
+
+func (h *healthHarness) lastNotice() string {
+	h.t.Helper()
+	var body string
+	if e := h.s.db.QueryRow(`SELECT body FROM messages WHERE kind='project-health' ORDER BY sequence DESC LIMIT 1`).Scan(&body); e != nil {
+		h.t.Fatal(e)
+	}
+	return body
+}
+
+// Path A: a confirmed health with post on is handed to the watcher as one
+// post, its pending row inserted first; the coordinator is not told. The
+// body is typed text with the marker and no @. A settled post settles
+// once, and only a pending row can be settled.
+func TestHealthPostIsHandedOutAndSettled(t *testing.T) {
+	h := newHealthHarness(t)
+	h.enable(projectOne, 0, map[string]any{"enabled": true, "post": true})
+	if r := h.run(projectOne, withUpdates(blockedFacts(5))); r["post"] != nil {
+		t.Fatal("a single run posted:", r)
+	}
+	r := h.run(projectOne, withUpdates(blockedFacts(5)))
+	post, _ := r["post"].(map[string]any)
+	body, _ := post["body"].(string)
+	if r["acted"] != "changed" || post["health"] != "offTrack" || !strings.HasPrefix(body, HealthPostMarker) || !strings.Contains(body, "FJA-1") || strings.Contains(body, "@") || h.notices() != 0 {
+		t.Fatal(r, h.notices())
+	}
+	if row := h.postRow(projectOne); row["state"] != "pending" || row["day"] != post["day"] {
+		t.Fatal(row)
+	}
+	if _, e := h.sysErr("health_post_settle", map[string]any{"linear_project": projectOne, "day": post["day"], "outcome": "accepted", "update_id": "not-a-uuid"}); e == nil {
+		t.Fatal("an unreadable update ID settled")
+	}
+	before := h.sys("watch_charge", map[string]any{"calls": 0})["budget_used"].(int)
+	if s := h.sys("health_post_settle", map[string]any{"linear_project": projectOne, "day": post["day"], "outcome": "accepted", "update_id": strings.ToUpper(updateOne)}); s["state"] != "accepted" {
+		t.Fatal(s)
+	}
+	if used := h.sys("watch_charge", map[string]any{"calls": 0})["budget_used"].(int); used != before+1 {
+		t.Fatal("the send was not charged", before, used)
+	}
+	if row := h.postRow(projectOne); row["state"] != "accepted" || row["update_id"] != updateOne {
+		t.Fatal(row)
+	}
+	if s := h.sys("health_post_settle", map[string]any{"linear_project": projectOne, "day": post["day"], "outcome": "refused", "error": "x"}); s["state"] != "accepted" || h.notices() != 0 {
+		t.Fatal("a settled post settled again:", s)
+	}
+	if _, e := h.sysErr("health_post_settle", map[string]any{"linear_project": projectOne, "day": "2020-01-01", "outcome": "accepted", "update_id": updateOne}); e == nil {
+		t.Fatal("a post that was never handed out settled")
+	}
+	row := h.call("health_get", "b", map[string]any{}).(map[string]any)["projects"].([]any)[0].(map[string]any)
+	if last, _ := row["last_post"].(map[string]any); last["state"] != "accepted" {
+		t.Fatal("health show lacks the post:", row)
+	}
+}
+
+// One post a day: a second change the same day goes to the coordinator.
+func TestHealthPostsAtMostOnceADay(t *testing.T) {
+	h := newHealthHarness(t)
+	h.enable(projectOne, 0, map[string]any{"enabled": true, "post": true})
+	h.run(projectOne, withUpdates(blockedFacts(5)))
+	post := h.run(projectOne, withUpdates(blockedFacts(5)))["post"].(map[string]any)
+	h.sys("health_post_settle", map[string]any{"linear_project": projectOne, "day": post["day"], "outcome": "accepted", "update_id": updateOne})
+	h.run(projectOne, withUpdates(blockedFacts(0)))
+	if r := h.run(projectOne, withUpdates(blockedFacts(0))); r["acted"] != "changed" || r["post"] != nil || h.notices() != 1 || !strings.Contains(h.lastNotice(), "already posted this project's health today") {
+		t.Fatal(r, h.notices())
+	}
+}
+
+// SF-H4: never over a person's update from the last 7 days; the app's
+// own update, or a person's older one, doesn't hold it back.
+func TestHealthNeverPostsOverAPersonsRecentUpdate(t *testing.T) {
+	now := time.Now()
+	for name, c := range map[string]struct {
+		updates []map[string]any
+		posts   bool
+	}{
+		"a person's, yesterday":               {[]map[string]any{update(updateOne, now.Add(-24*time.Hour), false)}, false},
+		"a person's, newest of two":           {[]map[string]any{update(updateTwo, now.Add(-48*time.Hour), true), update(updateOne, now.Add(-24*time.Hour), false)}, false},
+		"a person's, 8 days ago":              {[]map[string]any{update(updateOne, now.Add(-8*24*time.Hour), false)}, true},
+		"the app's, yesterday":                {[]map[string]any{update(updateOne, now.Add(-24*time.Hour), true)}, true},
+		"a person's, then the app's after it": {[]map[string]any{update(updateOne, now.Add(-48*time.Hour), false), update(updateTwo, now.Add(-24*time.Hour), true)}, true},
+	} {
+		h := newHealthHarness(t)
+		h.enable(projectOne, 0, map[string]any{"enabled": true, "post": true})
+		h.run(projectOne, withUpdates(blockedFacts(5), c.updates...))
+		r := h.run(projectOne, withUpdates(blockedFacts(5), c.updates...))
+		if (r["post"] != nil) != c.posts {
+			t.Fatal(name, r)
+		}
+		if !c.posts && (h.notices() != 1 || !strings.Contains(h.lastNotice(), "A person posted a project update")) {
+			t.Fatal(name, "held back without telling the coordinator")
+		}
+	}
+	// Updates that were not read: nothing is posted.
+	h := newHealthHarness(t)
+	h.enable(projectOne, 0, map[string]any{"enabled": true, "post": true})
+	h.run(projectOne, blockedFacts(5))
+	if r := h.run(projectOne, blockedFacts(5)); r["post"] != nil || !strings.Contains(h.lastNotice(), "could not be read") {
+		t.Fatal("posted without reading the updates", r)
+	}
+}
+
+// A refusal tells the coordinator, naming the code; post off keeps the
+// old notice.
+func TestHealthRefusedPostTellsTheCoordinator(t *testing.T) {
+	h := newHealthHarness(t)
+	h.enable(projectOne, 0, map[string]any{"enabled": true, "post": true})
+	h.run(projectOne, withUpdates(blockedFacts(5)))
+	post := h.run(projectOne, withUpdates(blockedFacts(5)))["post"].(map[string]any)
+	if s := h.sys("health_post_settle", map[string]any{"linear_project": projectOne, "day": post["day"], "outcome": "refused", "error": "app_scope"}); s["state"] != "refused" {
+		t.Fatal(s)
+	}
+	body := h.lastNotice()
+	if h.notices() != 1 || !strings.Contains(body, "refused (app_scope)") || !strings.Contains(body, "Off track") || !strings.Contains(body, "FJA-1") {
+		t.Fatal(h.notices(), body)
+	}
+}
+
+// An uncertain send stays pending and is never sent again: a later run
+// finds it among the app's updates, a pending post holds back the next,
+// and one unfound after a full extra day settles failed and is reported.
+func TestHealthUncertainPostIsFoundNeverResent(t *testing.T) {
+	h := newHealthHarness(t)
+	h.enable(projectOne, 0, map[string]any{"enabled": true, "post": true})
+	h.run(projectOne, withUpdates(blockedFacts(5)))
+	post := h.run(projectOne, withUpdates(blockedFacts(5)))["post"].(map[string]any)
+	if s := h.sys("health_post_settle", map[string]any{"linear_project": projectOne, "day": post["day"], "outcome": "uncertain", "error": "unavailable"}); s["state"] != "pending" {
+		t.Fatal(s)
+	}
+	// A person's update and the app's from before the send are not it.
+	h.run(projectOne, withUpdates(blockedFacts(0), update(updateOne, time.Now().Add(-time.Hour), true), update(updateTwo, time.Now(), false)))
+	if row := h.postRow(projectOne); row["state"] != "pending" {
+		t.Fatal("settled from the wrong update:", row)
+	}
+	// Still pending: a confirmed change is held back, not posted.
+	if r := h.run(projectOne, withUpdates(blockedFacts(0))); r["acted"] != "changed" || r["post"] != nil || !strings.Contains(h.lastNotice(), "not confirmed yet") {
+		t.Fatal(r)
+	}
+	h.run(projectOne, withUpdates(blockedFacts(0), update(updateOne, time.Now(), true)))
+	if row := h.postRow(projectOne); row["state"] != "accepted" || row["update_id"] != updateOne {
+		t.Fatal("not found among the app's updates:", row)
+	}
+	// Another pending post, never found: failed after a full extra day.
+	if _, e := h.s.db.Exec(`UPDATE health_posts SET state='pending',update_id='',day='2026-01-01',sent_at=?`, layout(time.Now().Add(-healthPostSettle-time.Minute))); e != nil {
+		t.Fatal(e)
+	}
+	before := h.notices()
+	h.run(projectOne, withUpdates(blockedFacts(0)))
+	if row := h.postRow(projectOne); row["state"] != "failed" || h.notices() != before+1 || !strings.Contains(h.lastNotice(), "could not be confirmed") {
+		t.Fatal(row, h.notices())
+	}
+}
+
+func TestHealthFactsUpdatesAreTyped(t *testing.T) {
+	h := newHealthHarness(t)
+	h.enable(projectOne, 0, nil)
+	h.due()
+	h.sys("health_due", map[string]any{"limit": 2})
+	for name, f := range map[string]map[string]any{
+		"a body":     withUpdates(blockedFacts(0), map[string]any{"id": updateOne, "created_at": "2026-01-01T00:00:00Z", "by_app": false, "body": "x"}),
+		"a bad id":   withUpdates(blockedFacts(0), update("ABC-1", time.Now(), false)),
+		"a bad time": withUpdates(blockedFacts(0), map[string]any{"id": updateOne, "created_at": "yesterday", "by_app": false}),
+		"six":        withUpdates(blockedFacts(0), update(updateOne, time.Now(), false), update(updateOne, time.Now(), false), update(updateOne, time.Now(), false), update(updateOne, time.Now(), false), update(updateOne, time.Now(), false), update(updateOne, time.Now(), false)),
+	} {
+		if _, e := h.sysErr("health_report", map[string]any{"linear_project": projectOne, "calls": 2, "facts": f}); e == nil {
+			t.Fatal(name, "accepted")
+		}
 	}
 }

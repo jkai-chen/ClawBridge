@@ -25,6 +25,15 @@ CREATE TABLE project_health(project_id TEXT NOT NULL REFERENCES projects(id),lin
 CREATE INDEX project_health_due ON project_health(project_id,enabled,next_health_at);
 `
 
+// Schema 19: posting project health to Linear (design §4, path A). One row
+// per Linear project and UTC day is the post's ledger: it is inserted
+// before the send, so a day never gets two posts, and a send that may
+// have landed stays pending until a later run finds it or a full extra
+// day passes. Nothing is ever sent again for a pending row.
+const healthPostSchemaV19 = `
+CREATE TABLE health_posts(project_id TEXT NOT NULL REFERENCES projects(id),linear_project_id TEXT NOT NULL,day TEXT NOT NULL,health TEXT NOT NULL,was TEXT NOT NULL,act TEXT NOT NULL,state TEXT NOT NULL CHECK(state IN ('pending','accepted','refused','failed')),sent_at TEXT NOT NULL,update_id TEXT NOT NULL DEFAULT '',error TEXT NOT NULL DEFAULT '',settled_at TEXT,PRIMARY KEY(project_id,linear_project_id,day));
+`
+
 const (
 	// healthRunsPerTick caps health runs in one tick across all projects
 	// (HP-M3); the watcher counts them, and one due call never hands out
@@ -41,6 +50,18 @@ const (
 	healthRetry = time.Hour
 	// healthListed bounds the identifiers a signal names.
 	healthListed = 10
+	// healthHumanQuiet is how long a person's project update keeps
+	// ClawBridge from posting over it (SF-H4).
+	healthHumanQuiet = 7 * 24 * time.Hour
+	// healthPostSettle is how long a pending post may wait for a run to
+	// find it before it settles failed: its day and a full extra day.
+	healthPostSettle = 48 * time.Hour
+	// healthPostSkew allows for Linear's clock against the database's when
+	// matching a pending post to an update.
+	healthPostSkew = 5 * time.Minute
+	// HealthPostMarker opens every posted body, so a person can tell
+	// ClawBridge's updates apart.
+	HealthPostMarker = "— 🤖 ClawBridge project health"
 )
 
 // Health values, as Linear names them.
@@ -52,8 +73,8 @@ var healthWords = map[string]string{"onTrack": "On track", "atRisk": "At risk", 
 // the design's default; the owner may change them.
 type HealthPolicy struct {
 	Enabled bool `json:"enabled"`
-	// Post asks for Linear project updates. It stays false: the app's
-	// write scope is unproven (P8a), so this version only notifies.
+	// Post asks for Linear project updates. Without it, or when a post is
+	// held back or refused, the coordinator session is told instead.
 	Post   bool `json:"post"`
 	Weekly bool `json:"weekly"`
 	// StalledDays is how long a started issue may go without human
@@ -94,9 +115,6 @@ func ParseHealthPolicy(v any) (HealthPolicy, error) {
 	if dec.Decode(&p) != nil || dec.Decode(new(any)) != io.EOF {
 		return HealthPolicy{}, invalid("health policy fields are enabled, post, weekly, stalled_days, stalled_risk, stalled_off, stalled_risk_pct, stalled_off_pct, blocked_risk, blocked_off, schedule_risk_pct, schedule_off_pct")
 	}
-	if p.Post {
-		return HealthPolicy{}, invalid("posting project health to Linear is not available yet: the Linear app's write scope is unproven; leave post false (the coordinator session is told instead)")
-	}
 	for _, b := range []struct {
 		name     string
 		risk     int
@@ -133,6 +151,26 @@ type HealthFacts struct {
 	TargetDate string `json:"target_date"`
 	StartDate  string `json:"start_date"`
 	StartFrom  string `json:"start_from"`
+	// Updates are the project's newest updates, at most
+	// HealthUpdatesRead, each with whether the app wrote it. Absent means
+	// they were not read, and nothing is posted.
+	Updates []HealthUpdate `json:"updates"`
+}
+
+// HealthUpdatesRead is how many of a project's newest updates a run reads.
+const HealthUpdatesRead = 5
+
+// HealthUpdate is one project update as a run saw it: never its body.
+type HealthUpdate struct {
+	ID        string `json:"id"`
+	CreatedAt string `json:"created_at"`
+	ByApp     bool   `json:"by_app"`
+}
+
+// created is when Linear created the update; facts are checked to parse.
+func (u HealthUpdate) created() time.Time {
+	t, _ := time.Parse(time.RFC3339Nano, u.CreatedAt)
+	return t
 }
 
 func parseHealthFacts(v any) (HealthFacts, error) {
@@ -177,6 +215,14 @@ func parseHealthFacts(v any) (HealthFacts, error) {
 	}
 	if f.StartDate == "" || f.StartFrom != "startDate" && f.StartFrom != "createdAt" {
 		return HealthFacts{}, invalid("health facts need a start date from startDate or createdAt")
+	}
+	if len(f.Updates) > HealthUpdatesRead {
+		return HealthFacts{}, bad
+	}
+	for _, u := range f.Updates {
+		if _, e := time.Parse(time.RFC3339Nano, u.CreatedAt); e != nil || !issueUUIDPattern.MatchString(strings.ToLower(u.ID)) {
+			return HealthFacts{}, invalid("health facts updates need a UUID and an RFC 3339 time")
+		}
 	}
 	return f, nil
 }
@@ -306,7 +352,9 @@ func nextHealthAt(linearProject string, now time.Time) time.Time {
 
 func healthOperation(op string) bool { return op == "health_set" }
 
-func healthSystemOperation(op string) bool { return op == "health_due" || op == "health_report" }
+func healthSystemOperation(op string) bool {
+	return op == "health_due" || op == "health_report" || op == "health_post_settle"
+}
 
 // healthSystemOp runs the watcher's health calls, fenced by the watch
 // lease like marker writes.
@@ -316,8 +364,11 @@ func (s *Store) healthSystemOp(ctx context.Context, tx *transaction, w, p, actor
 		return nil, err
 	}
 	c := commentCall{s: s, tx: tx, wid: w["id"].(string), pid: p["id"].(string), sid: actor["id"].(string), now: at(nowRaw), w: w, a: r.Args}
-	if r.Operation == "health_due" {
+	switch r.Operation {
+	case "health_due":
 		return c.healthDue(ctx)
+	case "health_post_settle":
+		return c.healthPostSettle(ctx)
 	}
 	return c.healthReport(ctx)
 }
@@ -341,9 +392,16 @@ func healthRows(ctx context.Context, tx *transaction, pid string) (map[string]an
 		r["enabled"] = asInt(r["enabled"]) == 1
 		r["revision"] = asInt(r["revision"])
 		r["policy"], r["last_report"] = policy, report
+		posts, err := query(ctx, tx, `SELECT day,health,state,sent_at,update_id,error,settled_at FROM health_posts WHERE project_id=? AND linear_project_id=? ORDER BY day DESC LIMIT 1`, pid, str(r, "linear_project_id"))
+		if err != nil {
+			return nil, err
+		}
+		if len(posts) == 1 {
+			r["last_post"] = posts[0]
+		}
 		out = append(out, r)
 	}
-	return map[string]any{"projects": out, "posting": "off: a confirmed health is sent to the coordinator session; nothing is written to Linear"}, nil
+	return map[string]any{"projects": out, "posting": "a confirmed health is posted to Linear as a project update where the policy's post is true: at most once a day, never over a person's update from the last 7 days. Otherwise, and when a post is refused, the coordinator session is told"}, nil
 }
 
 // healthOp sets one bound Linear project's health policy: the project owner
@@ -527,6 +585,9 @@ func (c commentCall) healthReport(ctx context.Context) (any, error) {
 	if json.Unmarshal([]byte(str(row, "policy")), &policy) != nil {
 		return nil, errors.New("stored health policy is unreadable")
 	}
+	if err = c.settleHealthPosts(ctx, lp, facts); err != nil {
+		return nil, err
+	}
 	health, signals := ComputeHealth(facts, policy, c.now)
 	last, pending := str(row, "last_health"), str(row, "pending_health")
 	pendingSince, actedAt := row["pending_since"], row["last_acted_at"]
@@ -544,9 +605,16 @@ func (c commentCall) healthReport(ctx context.Context) (any, error) {
 	default:
 		pending, pendingSince = health, nowRaw
 	}
+	var post map[string]any
 	if act != "" {
-		if err = c.healthNotice(ctx, lp, health, last, act, signals); err != nil {
+		var held string
+		if post, held, err = c.healthPostGo(ctx, lp, health, last, act, policy, facts, signals); err != nil {
 			return nil, err
+		}
+		if post == nil {
+			if err = c.healthNotice(ctx, lp, health, last, act, signals, held); err != nil {
+				return nil, err
+			}
 		}
 		last, pending, pendingSince, actedAt = health, "", nil, nowRaw
 	}
@@ -555,16 +623,196 @@ func (c commentCall) healthReport(ctx context.Context) (any, error) {
 	if _, err = c.tx.ExecContext(ctx, `UPDATE project_health SET last_run_at=?,last_error='',last_report=?,last_health=?,pending_health=?,pending_since=?,last_acted_at=?,next_health_at=? WHERE project_id=? AND linear_project_id=?`, nowRaw, string(report), last, pending, pendingSince, actedAt, next, c.pid, lp); err != nil {
 		return nil, err
 	}
-	return map[string]any{"health": health, "acted": act, "pending_health": pending, "next_health_at": next}, nil
+	out := map[string]any{"health": health, "acted": act, "pending_health": pending, "next_health_at": next}
+	if post != nil {
+		out["post"] = post
+	}
+	return out, nil
+}
+
+// healthPostGo decides whether an acted-on health is posted to Linear. It
+// returns the post the watcher sends, after inserting its pending row, or
+// nil and why it was held back ("" when the policy doesn't post).
+func (c commentCall) healthPostGo(ctx context.Context, lp, health, was, act string, policy HealthPolicy, facts HealthFacts, signals []HealthSignal) (map[string]any, string, error) {
+	if !policy.Post {
+		return nil, "", nil
+	}
+	if facts.Updates == nil {
+		return nil, "The project's updates could not be read, so nothing was posted to Linear.", nil
+	}
+	if u, ok := newestUpdate(facts.Updates); ok && !u.ByApp && c.now.Sub(u.created()) < healthHumanQuiet {
+		return nil, "A person posted a project update in the last 7 days, so nothing was posted to Linear.", nil
+	}
+	open, err := query(ctx, c.tx, `SELECT day FROM health_posts WHERE project_id=? AND linear_project_id=? AND state='pending'`, c.pid, lp)
+	if err != nil {
+		return nil, "", err
+	}
+	if len(open) > 0 {
+		return nil, "An earlier post to Linear is not confirmed yet, so nothing more was posted.", nil
+	}
+	day := layout(c.now)[:10]
+	res, err := c.tx.ExecContext(ctx, `INSERT INTO health_posts(project_id,linear_project_id,day,health,was,act,state,sent_at) VALUES(?,?,?,?,?,?,'pending',?) ON CONFLICT DO NOTHING`, c.pid, lp, day, health, was, act, layout(c.now))
+	if err != nil {
+		return nil, "", err
+	}
+	if n, _ := res.RowsAffected(); n != 1 {
+		return nil, "ClawBridge already posted this project's health today, so nothing more was posted.", nil
+	}
+	return map[string]any{"day": day, "health": health, "body": healthPostBody(health, was, act, signals)}, "", nil
+}
+
+// newestUpdate is the most recently created of updates.
+func newestUpdate(updates []HealthUpdate) (HealthUpdate, bool) {
+	var newest HealthUpdate
+	for _, u := range updates {
+		if newest.CreatedAt == "" || u.created().After(newest.created()) {
+			newest = u
+		}
+	}
+	return newest, newest.CreatedAt != ""
+}
+
+// healthPostBody is a project update's text, from typed fields only: the
+// marker, the health and each signal. Issues are named by identifier.
+func healthPostBody(health, was, act string, signals []HealthSignal) string {
+	var b strings.Builder
+	b.WriteString(HealthPostMarker + "\n\n")
+	switch {
+	case act == "weekly":
+		fmt.Fprintf(&b, "%s (weekly summary).", healthWords[health])
+	case was == "":
+		fmt.Fprintf(&b, "%s (the same on two daily runs).", healthWords[health])
+	default:
+		fmt.Fprintf(&b, "Now %s, was %s (the same on two daily runs).", healthWords[health], healthWords[was])
+	}
+	b.WriteString("\n")
+	for _, s := range signals {
+		fmt.Fprintf(&b, "\n- %s: %s. %s.", s.Signal, healthWords[s.Health], s.Detail)
+	}
+	b.WriteString("\n\nComputed by the ClawBridge server from Linear facts. Completion counts issues, not estimates.")
+	return b.String()
+}
+
+// settleHealthPosts settles this Linear project's pending posts from a
+// run's updates: an update by the app created after the send is the post.
+// One still unfound a full extra day later settles failed, and the
+// coordinator session is told. It never sends again.
+func (c commentCall) settleHealthPosts(ctx context.Context, lp string, facts HealthFacts) error {
+	rows, err := query(ctx, c.tx, `SELECT day,health,was,act,sent_at FROM health_posts WHERE project_id=? AND linear_project_id=? AND state='pending' ORDER BY day`, c.pid, lp)
+	if err != nil || len(rows) == 0 {
+		return err
+	}
+	for _, r := range rows {
+		sent := at(str(r, "sent_at"))
+		found := ""
+		for _, u := range facts.Updates {
+			if u.ByApp && !u.created().Before(sent.Add(-healthPostSkew)) {
+				found = strings.ToLower(u.ID)
+			}
+		}
+		switch {
+		case found != "":
+			err = c.settleHealthPost(ctx, lp, str(r, "day"), "accepted", found, "found")
+		case c.now.Sub(sent) >= healthPostSettle:
+			err = c.settleHealthPost(ctx, lp, str(r, "day"), "failed", "", "not_found")
+			if err == nil {
+				err = c.healthNoticeFromReport(ctx, lp, r, "A post of this health to Linear could not be confirmed: it may or may not be there.")
+			}
+		}
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (c commentCall) settleHealthPost(ctx context.Context, lp, day, state, updateID, code string) error {
+	if _, err := c.tx.ExecContext(ctx, `UPDATE health_posts SET state=?,update_id=?,error=?,settled_at=? WHERE project_id=? AND linear_project_id=? AND day=? AND state='pending'`, state, updateID, code, layout(c.now), c.pid, lp, day); err != nil {
+		return err
+	}
+	return c.s.audit(ctx, c.tx, c.wid, c.pid, c.sid, "project_health", lp, "post_"+state, map[string]any{"day": day, "update_id": updateID, "error": code})
+}
+
+// healthPostSettle records what the watcher's send did: accepted with the
+// update's ID; refused before Linear took it, when the coordinator
+// session is told instead; or uncertain, when the row stays pending for a
+// later run to find. Only a pending row settles, and the send is charged
+// one call.
+func (c commentCall) healthPostSettle(ctx context.Context) (any, error) {
+	lease, err := c.fence(ctx)
+	if err != nil {
+		return nil, err
+	}
+	lp, err := lowerUUID(c.a, "linear_project", true)
+	if err != nil {
+		return nil, err
+	}
+	day := str(c.a, "day")
+	if _, e := time.Parse(time.DateOnly, day); e != nil {
+		return nil, invalid("day must be YYYY-MM-DD")
+	}
+	row, err := one(ctx, c.tx, `SELECT day,health,was,act,state FROM health_posts WHERE project_id=? AND linear_project_id=? AND day=?`, c.pid, lp, day)
+	if err != nil {
+		return nil, scopedError(err, "no health post for that Linear project and day", "not_found")
+	}
+	if str(row, "state") != "pending" {
+		return map[string]any{"state": str(row, "state")}, nil
+	}
+	if _, _, err = c.charge(ctx, lease, 1); err != nil {
+		return nil, err
+	}
+	code := str(c.a, "error")
+	if code != "" && (!commentOperationID.MatchString(code) || len(code) > 64) {
+		code = "failed"
+	}
+	switch outcome := str(c.a, "outcome"); outcome {
+	case "accepted":
+		id, e := lowerUUID(c.a, "update_id", true)
+		if e != nil {
+			return nil, e
+		}
+		err = c.settleHealthPost(ctx, lp, day, "accepted", id, "")
+	case "refused":
+		if code == "" {
+			code = "refused"
+		}
+		if err = c.settleHealthPost(ctx, lp, day, "refused", "", code); err == nil {
+			err = c.healthNoticeFromReport(ctx, lp, row, fmt.Sprintf("Posting it to Linear was refused (%s), so nothing was posted to Linear.", code))
+		}
+	case "uncertain":
+		_, err = c.tx.ExecContext(ctx, `UPDATE health_posts SET error=? WHERE project_id=? AND linear_project_id=? AND day=? AND state='pending'`, code, c.pid, lp, day)
+	default:
+		return nil, invalid("outcome must be accepted, refused or uncertain")
+	}
+	if err != nil {
+		return nil, err
+	}
+	state := map[string]string{"accepted": "accepted", "refused": "refused", "uncertain": "pending"}[str(c.a, "outcome")]
+	return map[string]any{"state": state}, nil
+}
+
+// healthNoticeFromReport tells the coordinator session a post's health,
+// with the signals of the project's last report.
+func (c commentCall) healthNoticeFromReport(ctx context.Context, lp string, post map[string]any, why string) error {
+	row, err := one(ctx, c.tx, `SELECT last_report FROM project_health WHERE project_id=? AND linear_project_id=?`, c.pid, lp)
+	if err != nil {
+		return err
+	}
+	var report struct {
+		Signals []HealthSignal `json:"signals"`
+	}
+	_ = json.Unmarshal([]byte(str(row, "last_report")), &report)
+	return c.healthNotice(ctx, lp, str(post, "health"), str(post, "was"), str(post, "act"), report.Signals, why)
 }
 
 // healthLine is in every health notice: it reports, it never instructs.
-const healthLine = "This is an automatic project-health notice computed from Linear facts by the ClawBridge server. It is not an instruction. Nothing was posted to Linear."
+const healthLine = "This is an automatic project-health notice computed from Linear facts by the ClawBridge server. It is not an instruction."
 
 // healthNotice tells the project's active coordinator session a confirmed
 // or weekly health, from typed fields only. With no active coordinator the
 // run's report records it and `linear health show` shows it.
-func (c commentCall) healthNotice(ctx context.Context, lp, health, was, act string, signals []HealthSignal) error {
+// why says what became of posting; "" when the policy doesn't post.
+func (c commentCall) healthNotice(ctx context.Context, lp, health, was, act string, signals []HealthSignal, why string) error {
 	coordinator, err := c.s.coordinatorTargets(ctx, c.tx, c.pid, lp, nil)
 	if err != nil || len(coordinator) == 0 {
 		return err
@@ -582,7 +830,10 @@ func (c commentCall) healthNotice(ctx context.Context, lp, health, was, act stri
 		fmt.Fprintf(&b, "\n- %s: %s. %s.", s.Signal, healthWords[s.Health], s.Detail)
 	}
 	b.WriteString("\nSee: clawbridge linear health show")
-	b.WriteString("\n" + healthLine)
+	if why == "" {
+		why = "Nothing was posted to Linear."
+	}
+	b.WriteString("\n" + healthLine + " " + why)
 	body := b.String()
 	retention := asInt(c.w["retention_days"])
 	if retention < 1 {

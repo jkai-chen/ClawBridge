@@ -1,15 +1,12 @@
 # Linear task boards
 
-The L1 increment passed [independent automated acceptance](archive/reviews/LINEAR-REVIEW.md)
-after the coordination increment. It is not in published v0.1.0; v0.2.0 candidate
-builds remain unpublished. The [design contract](design/linear.md) and review
-record distinguish synthetic, native-platform and live-provider evidence.
-
-The [L2 extension](design/linear-migration.md) adds project sets, labels,
-dependencies, parents and explicit assignment in current source. Its
-[independent automated acceptance](archive/reviews/LINEAR-L2-REVIEW.md) passed;
-these additions are not in the installed L1 build or a published release. Native
-reads were exercised separately. Native label eligibility is a supported capability
+Native Linear connections and task boards ship in every published release from
+v0.2.0 on, including the [L2 extension](design/linear-migration.md): project sets,
+labels, dependencies, parents and explicit assignment. The
+[design contract](design/linear.md) and the acceptance records for
+[L1](archive/reviews/LINEAR-REVIEW.md) and [L2](archive/reviews/LINEAR-L2-REVIEW.md)
+distinguish synthetic, native-platform and live-provider evidence. Native reads
+were exercised separately. Native label eligibility is a supported capability
 (below), and so is a same-destination parent.
 
 ## Connect and choose a board
@@ -31,8 +28,8 @@ opens. If it expires, start Connect again when ready; no new connection is saved
 The OAuth session selects your Linear workspace. Choose the allowed team(s), a
 default team for new issues, then a Linear project (or several on L2) or
 **Team board — no project**.
-Preview and confirm linking the current ClawBridge project. A team such as
-FJ-AgentTaskBoard is distinct from a Linear project. Projects can include several
+Preview and confirm linking the current ClawBridge project. A Linear team (for
+example "Engineering") is distinct from a Linear project. Projects can include several
 teams; stable IDs keep the selection unambiguous.
 
 A Linear project is optional. The curated ClawBridge tools create issues and

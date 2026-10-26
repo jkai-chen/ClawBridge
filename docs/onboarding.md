@@ -8,8 +8,9 @@ installs ClawBridge and runs one guided setup. Examples use placeholders such as
 ## For the project owner
 
 The service must already be deployed ([deployment](operations/deployment.md)) and
-initialized once with `clawbridge setup --cloud`, which makes the signed-in
-Google account the workspace owner. Then create the project and grant access:
+initialized once with `clawbridge setup --cloud`, run by the identity named in the
+server's `CLAWBRIDGE_BOOTSTRAP_OWNER` (normally the owner's own Google account);
+it becomes the workspace owner. Then create the project and grant access:
 
 ```sh
 clawbridge project create checkout --name "Checkout"

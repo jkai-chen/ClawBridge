@@ -49,10 +49,10 @@ var projectRank = map[string]int{"backlog": 0, "planned": 1, "started": 2, "comp
 
 var projectStatusTypes = map[string]bool{"backlog": true, "planned": true, "started": true, "paused": true, "completed": true, "canceled": true}
 
-// FlowStatus is one project status as Linear lists it.
+// FlowStatus is one project status as Linear lists it. Its name is never
+// read: a workspace's status names are free text the rules don't need.
 type FlowStatus struct {
 	ID       string  `json:"id"`
-	Name     string  `json:"name"`
 	Type     string  `json:"type"`
 	Position float64 `json:"position"`
 	Archived bool    `json:"archived"`
@@ -101,20 +101,31 @@ func parseFlowFacts(v any) (FlowFacts, error) {
 	if len(f.Statuses) > flowListedStatuses {
 		return FlowFacts{}, bad
 	}
-	for _, st := range append([]FlowStatus{f.Status}, f.Statuses...) {
-		if !lowerUUIDPattern.MatchString(st.ID) || !projectStatusTypes[st.Type] {
-			return FlowFacts{}, invalid("project statuses are canonical UUIDs with a project status type")
+	if !lowerUUIDPattern.MatchString(f.Status.ID) || !projectStatusTypes[f.Status.Type] {
+		return FlowFacts{}, invalid("the project's status is a canonical UUID with a project status type")
+	}
+	// A listed status of a type the rules don't know can never be a target:
+	// it is left out, not a reason to refuse the run.
+	listed := f.Statuses[:0]
+	for _, st := range f.Statuses {
+		if !lowerUUIDPattern.MatchString(st.ID) {
+			return FlowFacts{}, invalid("project statuses are canonical UUIDs")
 		}
-		if policyName(st.Name) != nil {
-			return FlowFacts{}, invalid("project status names are short, plain text")
+		if projectStatusTypes[st.Type] {
+			listed = append(listed, st)
 		}
 	}
+	f.Statuses = listed
 	return f, nil
 }
 
 // flowOn reports whether project flow runs for a bound Linear project:
-// under an enabled status policy whose project_flow is on.
-func flowOn(policy StatusPolicy) bool { return policy.Enabled && policy.ProjectFlow }
+// under an enabled status policy whose project_flow is on, on a server
+// whose operator has proven it (L5, checked at every run, not only when
+// it is turned on).
+func flowOn(policy StatusPolicy, proven bool) bool {
+	return policy.Enabled && policy.ProjectFlow && proven
+}
 
 // flowTarget is the status a move to typ goes to: the policy's override
 // when it is an unarchived status of that type, else the lowest-position
@@ -182,17 +193,24 @@ func (c commentCall) projectFlow(ctx context.Context, lp string, policy StatusPo
 	}
 	cur := f.Status.Type
 	// An uncertain move is settled by this read: never sent twice blindly.
-	pending, err := query(ctx, c.tx, `SELECT seq,to_status_id,sent_at FROM project_flow_moves WHERE project_id=? AND linear_project_id=? AND state='pending' ORDER BY seq`, c.pid, lp)
+	pending, err := query(ctx, c.tx, `SELECT seq,to_type,to_status_id,sent_at FROM project_flow_moves WHERE project_id=? AND linear_project_id=? AND state='pending' ORDER BY seq`, c.pid, lp)
 	if err != nil {
 		return nil, "", err
 	}
 	open := false
+	// lost is the type of an uncertain move no read ever showed: Linear may
+	// have applied it and a person moved the project back since, which
+	// can't be told apart from a send that never landed (R96-M1).
+	lost := ""
 	for _, m := range pending {
 		switch {
 		case str(m, "to_status_id") == f.Status.ID:
 			err = c.settleFlowMove(ctx, lp, asInt(m["seq"]), "accepted", "found")
 		case c.now.Sub(at(str(m, "sent_at"))) >= flowSettleAfter:
 			err = c.settleFlowMove(ctx, lp, asInt(m["seq"]), "failed", "not_found")
+			if below(lost, str(m, "to_type")) || lost == "" {
+				lost = str(m, "to_type")
+			}
 		default:
 			open = true
 		}
@@ -201,9 +219,10 @@ func (c commentCall) projectFlow(ctx context.Context, lp string, policy StatusPo
 		}
 	}
 	// R4 and SF4-M1: a type below the last one seen, or below ClawBridge's
-	// last move since any resume, means a person moved it back.
+	// last move since any resume, means a person moved it back; so may one
+	// below a lost move.
 	lastMoved := ""
-	moves, err := query(ctx, c.tx, `SELECT to_type FROM project_flow_moves WHERE project_id=? AND linear_project_id=? AND state='accepted' AND (? IS NULL OR settled_at>?) ORDER BY seq DESC LIMIT 1`, c.pid, lp, state["resumed_at"], state["resumed_at"])
+	moves, err := query(ctx, c.tx, `SELECT to_type FROM project_flow_moves WHERE project_id=? AND linear_project_id=? AND state='accepted' AND settled_at>COALESCE(?,'') ORDER BY seq DESC LIMIT 1`, c.pid, lp, state["resumed_at"])
 	if err != nil {
 		return nil, "", err
 	}
@@ -212,10 +231,13 @@ func (c commentCall) projectFlow(ctx context.Context, lp string, policy StatusPo
 	}
 	held := state["held_since"] != nil
 	seen := str(state, "last_seen_type")
-	if !held && (below(cur, seen) || below(cur, lastMoved)) {
+	if !held && (below(cur, seen) || below(cur, lastMoved) || below(cur, lost)) {
 		was := seen
-		if below(seen, lastMoved) || seen == "" {
+		if below(was, lastMoved) || was == "" {
 			was = lastMoved
+		}
+		if below(was, lost) || was == "" {
+			was = lost
 		}
 		if _, err = c.tx.ExecContext(ctx, `UPDATE project_flow_state SET held_since=?,held_type=? WHERE project_id=? AND linear_project_id=?`, now, cur, c.pid, lp); err != nil {
 			return nil, "", err
@@ -224,12 +246,20 @@ func (c commentCall) projectFlow(ctx context.Context, lp string, policy StatusPo
 			return nil, "", err
 		}
 		body := fmt.Sprintf("Linear project %s was moved back by a person, to %s (ClawBridge had seen or moved it to %s). ClawBridge now holds its status and won't move it again until the project owner or a lead runs: clawbridge linear project-flow resume --linear-project %s", lp, cur, was, lp)
+		if was == lost && !below(cur, seen) && !below(cur, lastMoved) {
+			body = fmt.Sprintf("Linear project %s is %s, but ClawBridge's move of it to %s was never confirmed: Linear may have applied it and a person moved it back. ClawBridge now holds its status and won't move it again until the project owner or a lead runs: clawbridge linear project-flow resume --linear-project %s", lp, cur, lost, lp)
+		}
 		if err = c.flowNotice(ctx, lp, "project-held", body); err != nil {
 			return nil, "", err
 		}
 		held = true
 	}
-	if _, err = c.tx.ExecContext(ctx, `UPDATE project_flow_state SET last_seen_type=?,last_seen_at=?,last_error='',next_flow_at=? WHERE project_id=? AND linear_project_id=?`, cur, now, layout(nextHealthAt(lp, c.now)), c.pid, lp); err != nil {
+	// Only a ranked type is remembered: paused or canceled in between must
+	// not hide a later drop (R96-M2).
+	if _, ranked := projectRank[cur]; ranked {
+		seen = cur
+	}
+	if _, err = c.tx.ExecContext(ctx, `UPDATE project_flow_state SET last_seen_type=?,last_seen_at=?,last_error='',next_flow_at=? WHERE project_id=? AND linear_project_id=?`, seen, now, layout(nextHealthAt(lp, c.now)), c.pid, lp); err != nil {
 		return nil, "", err
 	}
 	switch {
@@ -238,8 +268,9 @@ func (c commentCall) projectFlow(ctx context.Context, lp string, policy StatusPo
 	case open:
 		return nil, "pending", nil
 	}
-	if f.Completed+f.Canceled < f.Total || f.Total == 0 {
-		// An open issue, or none: not a done episode.
+	if f.Completed+f.Canceled < f.Total || f.Complete && f.Total == 0 {
+		// An open issue, or none on a full read: not a done episode. A
+		// partial read proves no end (R96-L1).
 		if err = c.flowDoneKey(ctx, lp, ""); err != nil {
 			return nil, "", err
 		}
@@ -483,13 +514,13 @@ func (s *Store) projectFlowResumeOp(ctx context.Context, tx *transaction, wid, p
 	if err = s.audit(ctx, tx, wid, pid, "", "project_flow", lp, "resumed", map[string]any{}); err != nil {
 		return nil, err
 	}
-	return statusPolicyView(ctx, tx, pid)
+	return statusPolicyView(ctx, tx, pid, s.projectFlowProven)
 }
 
 // projectFlowView is the project flow line of each bound Linear project,
 // for status-policy show: follows the work, off, or held, with the last
 // move and why.
-func projectFlowView(ctx context.Context, tx *transaction, pid string, policy StatusPolicy) ([]any, error) {
+func projectFlowView(ctx context.Context, tx *transaction, pid string, policy StatusPolicy, proven bool) ([]any, error) {
 	rows, err := query(ctx, tx, `SELECT mapping,mapping_version FROM taskboard_bindings WHERE project_id=? AND mapping IS NOT NULL`, pid)
 	if err != nil || len(rows) == 0 {
 		return nil, err
@@ -503,8 +534,11 @@ func projectFlowView(ctx context.Context, tx *transaction, pid string, policy St
 	out := []any{}
 	for _, lp := range projects {
 		line := map[string]any{"linear_project": lp, "project_flow": "off"}
-		if flowOn(policy) {
+		switch {
+		case flowOn(policy, proven):
 			line["project_flow"] = "follows the work"
+		case flowOn(policy, true):
+			line["project_flow"] = "off (not proven on this server)"
 		}
 		state, err := one(ctx, tx, `SELECT held_since,last_seen_type,last_error FROM project_flow_state WHERE project_id=? AND linear_project_id=?`, pid, lp)
 		if err != nil && !errors.Is(err, errNotFound) {

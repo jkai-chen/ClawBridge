@@ -122,7 +122,7 @@ func (s *Store) ExecuteSystem(ctx context.Context, projectID string, r Request) 
 	case "taskboard_get_v2", "taskboard_get":
 		out, err = scoped.taskboard(ctx, tx, wid, projectID, "owner", r.Operation, r.Args)
 	case "status_policy_get":
-		out, err = statusPolicyView(ctx, tx, projectID)
+		out, err = statusPolicyView(ctx, tx, projectID, s.projectFlowProven)
 	case "taskboard_access":
 		out = accessMap(TaskboardAccess{WorkspaceID: wid, ProjectID: projectID, SessionID: str(actor, "id"), SessionName: SystemSessionName, CanWrite: true, ProjectRole: "owner"})
 	case "health_due", "health_force", "health_report", "health_post_settle", "project_flow_settle":

@@ -27,7 +27,7 @@ const (
 	// the same project read, and each issue's completedAt; a move is read
 	// back. Separate queries keep health's proven reads as they are until
 	// the deploy probe confirms these fields (§11.8).
-	flowProjectQuery    = `query FlowProject($id: String!) { project(id: $id) { id targetDate startDate createdAt projectUpdates(first: 5, orderBy: createdAt) { nodes { id createdAt user { id } } } status { id name type } } projectStatuses(first: 50) { nodes { id name type position archivedAt } } }`
+	flowProjectQuery    = `query FlowProject($id: String!) { project(id: $id) { id targetDate startDate createdAt projectUpdates(first: 5, orderBy: createdAt) { nodes { id createdAt user { id } } } status { id type } } projectStatuses(first: 50) { nodes { id type position archivedAt } } }`
 	flowIssuesQuery     = `query FlowIssues($id: ID!, $after: String) { issues(first: 50, after: $after, filter: { project: { id: { eq: $id } } }) { nodes { id identifier updatedAt completedAt state { type } inverseRelations(first: 20) { nodes { type issue { state { type } } } } } pageInfo { hasNextPage endCursor } } }`
 	flowReadBackQuery   = `query FlowReadBack($id: String!) { project(id: $id) { id status { id type } } }`
 	healthActivityQuery = `query HealthActivity($id: String!, $since: DateTimeOrDuration!) { issue(id: $id) { history(first: 20) { nodes { createdAt actorId botActor { id } } } comments(first: 20, filter: { createdAt: { gt: $since } }) { nodes { createdAt user { id } botActor { id } } } } }`
@@ -299,7 +299,6 @@ func (w *Watcher) healthFacts(ctx context.Context, lp, appUser string, stalledDa
 	calls := 0
 	type status struct {
 		ID         string  `json:"id"`
-		Name       string  `json:"name"`
 		Type       string  `json:"type"`
 		Position   float64 `json:"position"`
 		ArchivedAt *string `json:"archivedAt"`
@@ -337,7 +336,7 @@ func (w *Watcher) healthFacts(ctx context.Context, lp, appUser string, stalledDa
 	var flowFacts map[string]any
 	if flow && project.Project.Status != nil && project.ProjectStatuses != nil && createdErr == nil {
 		view := func(st status) map[string]any {
-			return map[string]any{"id": strings.ToLower(st.ID), "name": st.Name, "type": st.Type, "position": st.Position, "archived": st.ArchivedAt != nil}
+			return map[string]any{"id": strings.ToLower(st.ID), "type": st.Type, "position": st.Position, "archived": st.ArchivedAt != nil}
 		}
 		list := []any{}
 		for _, st := range project.ProjectStatuses.Nodes {

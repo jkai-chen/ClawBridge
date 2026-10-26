@@ -999,9 +999,12 @@ owner sets it: an existing policy reads it as off.
   project is left alone.
 - **A person's move back wins.** When a project's status is lower than the
   last one ClawBridge saw or set (backlog, then planned, started, completed),
-  a person moved it back. ClawBridge then holds it, tells the coordinator once
-  (`project-held`), and moves it no more until the project owner or a lead
-  runs, without a session:
+  a person moved it back. A move through paused or canceled counts too: only
+  the last of backlog, planned, started and completed is remembered. A move
+  ClawBridge sent that no read ever showed counts the same way, since Linear
+  may have applied it before a person moved the project back. ClawBridge then
+  holds it, tells the coordinator once (`project-held`), and moves it no more
+  until the project owner or a lead runs, without a session:
 
   ```sh
   clawbridge linear project-flow resume --linear-project UUID
@@ -1016,11 +1019,17 @@ owner sets it: an existing policy reads it as off.
   Each move is read back: confirmed only when the project shows the status;
   an unconfirmed one is settled by the next run's read and never sent twice.
   Without the scope, the coordinator is told once a day and nothing is sent.
+  While project flow is on, the health run reads the project with the same
+  status fields, so health uses those reads too.
 - **Proven first.** The server refuses to turn project flow on until its
   operator runs it with `serve --project-flow-proven` (or
-  `CLAWBRIDGE_PROJECT_FLOW_PROVEN=1`), after the deploy probe.
+  `CLAWBRIDGE_PROJECT_FLOW_PROVEN=1`), after the deploy probe. The flag is
+  checked at every run: a server started without it moves nothing, and show
+  says `off (not proven on this server)`. A stored policy this server can't
+  read is treated as project flow off.
 - **`status-policy show`** gives each bound project's `project_flow`:
-  `follows the work`, `off`, or `held (moved back by a person since DATE)`,
+  `follows the work`, `off`, `off (not proven on this server)`, or
+  `held (moved back by a person since DATE)`,
   with its last move and the rule it followed.
 
 ## Project health (project owner only)

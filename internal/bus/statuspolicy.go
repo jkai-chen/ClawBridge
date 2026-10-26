@@ -237,11 +237,25 @@ func (s *Store) statusPolicyOp(ctx context.Context, tx *transaction, w, p map[st
 	if err = s.audit(ctx, tx, wid, pid, "", "linear_status_policy", pid, "set", auditVia(map[string]any{"revision": revision, "enabled": policy.Enabled, "teams": len(policy.Teams), "project_flow": policy.ProjectFlow}, via)); err != nil {
 		return nil, err
 	}
-	return statusPolicyView(ctx, tx, pid)
+	return statusPolicyView(ctx, tx, pid, s.projectFlowProven)
 }
 
 // readStatusPolicy is the project's policy and its revision; with none,
 // an empty, disabled policy at revision 0.
+// errStatusPolicyUnreadable is a stored policy that no longer parses, as
+// after a rollback past a newer policy field.
+var errStatusPolicyUnreadable = errors.New("stored status policy is unreadable")
+
+// readFlowPolicy is the status policy as project flow sees it: one that no
+// longer parses means flow off, never a failed health run (R96-L3).
+func readFlowPolicy(ctx context.Context, tx *transaction, pid string) (StatusPolicy, int64, error) {
+	policy, revision, err := readStatusPolicy(ctx, tx, pid)
+	if errors.Is(err, errStatusPolicyUnreadable) {
+		return StatusPolicy{}, 0, nil
+	}
+	return policy, revision, err
+}
+
 func readStatusPolicy(ctx context.Context, tx *transaction, pid string) (StatusPolicy, int64, error) {
 	row, err := one(ctx, tx, `SELECT revision,policy FROM linear_status_policy WHERE project_id=?`, pid)
 	if errors.Is(err, errNotFound) {
@@ -252,16 +266,16 @@ func readStatusPolicy(ctx context.Context, tx *transaction, pid string) (StatusP
 	}
 	var stored any
 	if json.Unmarshal([]byte(fmt.Sprint(row["policy"])), &stored) != nil {
-		return StatusPolicy{}, 0, errors.New("stored status policy is unreadable")
+		return StatusPolicy{}, 0, errStatusPolicyUnreadable
 	}
 	policy, err := ParseStatusPolicy(stored)
 	if err != nil {
-		return StatusPolicy{}, 0, errors.New("stored status policy is unreadable")
+		return StatusPolicy{}, 0, errStatusPolicyUnreadable
 	}
 	return policy, int64(asInt(row["revision"])), nil
 }
 
-func statusPolicyView(ctx context.Context, tx *transaction, pid string) (map[string]any, error) {
+func statusPolicyView(ctx context.Context, tx *transaction, pid string, proven bool) (map[string]any, error) {
 	policy, revision, err := readStatusPolicy(ctx, tx, pid)
 	if err != nil {
 		return nil, err
@@ -276,7 +290,7 @@ func statusPolicyView(ctx context.Context, tx *transaction, pid string) (map[str
 	if policy.ProjectTargets != nil {
 		out["project_targets"] = policy.ProjectTargets
 	}
-	flow, err := projectFlowView(ctx, tx, pid, policy)
+	flow, err := projectFlowView(ctx, tx, pid, policy, proven)
 	if err != nil {
 		return nil, err
 	}

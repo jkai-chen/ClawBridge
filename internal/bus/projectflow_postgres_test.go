@@ -8,7 +8,8 @@ import (
 )
 
 // A4: resuming project flow is the owner's or a lead's; a member's is
-// refused; turning it on stays the owner's (the whole policy).
+// refused; turning it on stays the owner's (the whole policy). A flow
+// report runs on Postgres before and after a resume.
 func TestPostgresProjectFlowResumeIsTheOwnersOrALeads(t *testing.T) {
 	dsn := os.Getenv("CLAWBRIDGE_TEST_POSTGRES_DSN")
 	if dsn == "" {
@@ -51,6 +52,33 @@ func TestPostgresProjectFlowResumeIsTheOwnersOrALeads(t *testing.T) {
 	if e := s.db.QueryRowContext(ctx, `SELECT id FROM projects WHERE workspace_id=(SELECT id FROM workspaces WHERE name=$1) AND slug='p'`, w).Scan(&pid); e != nil {
 		t.Fatal(e)
 	}
+	// R96-H1: a flow report runs on Postgres, with resumed_at unset and set.
+	l, e := s.ExecuteSystem(ctx, pid, Request{Operation: "comment_watch_lease", Args: map[string]any{"action": "acquire"}})
+	if e != nil {
+		t.Fatal(e)
+	}
+	lease := l.Data.(map[string]any)
+	flowRun := func(facts map[string]any) map[string]any {
+		t.Helper()
+		if _, e := s.db.ExecContext(ctx, `UPDATE project_flow_state SET next_flow_at=NULL WHERE project_id=$1`, pid); e != nil {
+			t.Fatal(e)
+		}
+		fence := func(a map[string]any) map[string]any {
+			a["lease_token"], a["generation"] = lease["lease_token"], lease["generation"]
+			return a
+		}
+		if _, e := s.ExecuteSystem(ctx, pid, Request{Operation: "health_due", Args: fence(map[string]any{"limit": 2})}); e != nil {
+			t.Fatal(e)
+		}
+		r, e := s.ExecuteSystem(ctx, pid, Request{Operation: "health_report", Args: fence(map[string]any{"linear_project": projectOne, "calls": 2, "flow": facts})})
+		if e != nil {
+			t.Fatal("a flow report failed on Postgres:", e)
+		}
+		return r.Data.(map[string]any)
+	}
+	if out := flowRun(flowFacts(psBacklog, issues{total: 2, started: 1})); out["move"] == nil {
+		t.Fatal("no move:", out)
+	}
 	hold := func() {
 		t.Helper()
 		if _, e := s.db.ExecContext(ctx, `INSERT INTO project_flow_state(project_id,linear_project_id,held_since,held_type) VALUES($1,$2,'2026-10-26T00:00:00Z','backlog') ON CONFLICT (project_id,linear_project_id) DO UPDATE SET held_since=EXCLUDED.held_since`, pid, projectOne); e != nil {
@@ -64,4 +92,7 @@ func TestPostgresProjectFlowResumeIsTheOwnersOrALeads(t *testing.T) {
 	must(lead, "project_flow_resume", map[string]any{"linear_project": projectOne})
 	hold()
 	must(owner, "project_flow_resume", map[string]any{"linear_project": projectOne})
+	if out := flowRun(flowFacts(psBacklog, issues{total: 2, started: 1})); out["flow"] != "pending" {
+		t.Fatal("after a resume:", out)
+	}
 }

@@ -88,6 +88,11 @@ func AgentSettings(s Settings, ownerRepo, clone, cache, goModCache string, pushH
 		"GOTOOLCHAIN":      "local",
 		"npm_config_cache": filepath.Join(cache, "npm"),
 		"XDG_CACHE_HOME":   filepath.Join(cache, "xdg"),
+		// Git stops when it cannot read its global config, and the sandbox
+		// denies ~/.gitconfig and ~/.config/git; the clone carries the
+		// owner's name and email in its own config.
+		"GIT_CONFIG_GLOBAL": "/dev/null",
+		"XDG_CONFIG_HOME":   filepath.Join(cache, "xdg-config"),
 	}
 	// Go verifies TLS through the system's trust service, which the
 	// sandbox does not reach, so modules come read-only from the owner's

@@ -11,6 +11,8 @@ import (
 // The shell transport runs exactly the target's own argv: the fixed script
 // in argv, a secret's value on stdin only.
 func TestShellTransportUsesTheTargetsArgv(t *testing.T) {
+	oldOut, oldRun := remoteOutput, runRemote
+	t.Cleanup(func() { remoteOutput, runRemote = oldOut, oldRun })
 	for _, target := range []cloudTarget{
 		{host: "admin@bridge.example.test"},
 		{vm: "clawbridge-1", project: "example-project", zone: "europe-west1-b"},
@@ -21,7 +23,6 @@ func TestShellTransportUsesTheTargetsArgv(t *testing.T) {
 		}
 		var ran []string
 		var stdin string
-		oldOut, oldRun := remoteOutput, runRemote
 		remoteOutput = func(_ context.Context, argv []string, _ io.Writer) ([]byte, error) {
 			ran = argv
 			return []byte("ok"), nil
@@ -47,7 +48,6 @@ func TestShellTransportUsesTheTargetsArgv(t *testing.T) {
 		if !reflect.DeepEqual(ran, want) || stdin != value+"\n" || strings.Contains(strings.Join(ran, " "), value) {
 			t.Fatalf("setSecret argv = %v stdin = %q", ran, stdin)
 		}
-		remoteOutput, runRemote = oldOut, oldRun
 	}
 }
 

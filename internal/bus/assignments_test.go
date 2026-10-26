@@ -312,7 +312,7 @@ func TestAssignmentSchemaFiveMigratesAVersionFourStore(t *testing.T) {
 	if e != nil {
 		t.Fatal(e)
 	}
-	if _, e = s.db.Exec(`DROP TABLE linear_status_policy; ALTER TABLE assignment_markers DROP COLUMN state_state; ALTER TABLE assignment_markers DROP COLUMN state_policy_revision; ALTER TABLE assignment_markers DROP COLUMN state_target; ALTER TABLE assignment_markers DROP COLUMN state_landed; ALTER TABLE assignment_markers DROP COLUMN state_skip_reason; ALTER TABLE assignment_markers DROP COLUMN outcome; DROP TABLE linear_doc_seeds; DROP TABLE intake_policies; DROP TABLE intake_trusted; DROP TABLE intake_queue; DROP TABLE intake_tokens; DROP TABLE intake_counters; DROP TABLE watch_ticks; DROP TABLE linear_write_unsettled; DROP TABLE linear_write_ledger; DROP TABLE linear_app_tokens; DROP TABLE linear_label_policy; DROP TABLE linear_comment_ledger; DROP TABLE watch_cursors; DROP TABLE watch_events; DROP TABLE watch_lease; DROP TABLE assignment_markers; DROP TABLE principal_subjects; DROP TABLE principal_events; ALTER TABLE workspaces DROP COLUMN allowed_domains; DROP TABLE session_assignments; ALTER TABLE projects DROP COLUMN coordinator_session; PRAGMA user_version=4;`); e != nil {
+	if _, e = s.db.Exec(`DROP TABLE project_health; DROP TABLE linear_status_policy; ALTER TABLE assignment_markers DROP COLUMN state_state; ALTER TABLE assignment_markers DROP COLUMN state_policy_revision; ALTER TABLE assignment_markers DROP COLUMN state_target; ALTER TABLE assignment_markers DROP COLUMN state_landed; ALTER TABLE assignment_markers DROP COLUMN state_skip_reason; ALTER TABLE assignment_markers DROP COLUMN outcome; DROP TABLE linear_doc_seeds; DROP TABLE intake_policies; DROP TABLE intake_trusted; DROP TABLE intake_queue; DROP TABLE intake_tokens; DROP TABLE intake_counters; DROP TABLE watch_ticks; DROP TABLE linear_write_unsettled; DROP TABLE linear_write_ledger; DROP TABLE linear_app_tokens; DROP TABLE linear_label_policy; DROP TABLE linear_comment_ledger; DROP TABLE watch_cursors; DROP TABLE watch_events; DROP TABLE watch_lease; DROP TABLE assignment_markers; DROP TABLE principal_subjects; DROP TABLE principal_events; ALTER TABLE workspaces DROP COLUMN allowed_domains; DROP TABLE session_assignments; ALTER TABLE projects DROP COLUMN coordinator_session; PRAGMA user_version=4;`); e != nil {
 		t.Fatal(e)
 	}
 	s.Close()
@@ -322,7 +322,7 @@ func TestAssignmentSchemaFiveMigratesAVersionFourStore(t *testing.T) {
 	}
 	defer s.Close()
 	var version, tables int
-	if e = s.db.QueryRow(`PRAGMA user_version`).Scan(&version); e != nil || version != 14 {
+	if e = s.db.QueryRow(`PRAGMA user_version`).Scan(&version); e != nil || version != 15 {
 		t.Fatal(version, e)
 	}
 	if e = s.db.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE name IN ('session_assignments','live_session_assignment')`).Scan(&tables); e != nil || tables != 2 {

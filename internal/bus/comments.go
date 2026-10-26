@@ -218,6 +218,9 @@ func (c commentCall) reserve(ctx context.Context) (any, error) {
 	if strings.HasPrefix(op, "marker:") {
 		return nil, invalid("marker: operation IDs are reserved for assignment claim markers")
 	}
+	if strings.HasPrefix(op, "health:") {
+		return nil, invalid("health: operation IDs are reserved for project health")
+	}
 	body := str(c.a, "body_sha256")
 	if !sha256Pattern.MatchString(body) {
 		return nil, invalid("body_sha256 must be a lower-case SHA-256 hex digest")

@@ -419,6 +419,9 @@ var operationArgs = map[string]string{
 	"status_policy_get":           "instance",
 	"status_policy_set":           "instance expected_revision status_policy",
 	"doc_policy_get":              "instance",
+	"doc_publication_get":         "instance parent_kind parent_id source_path",
+	"doc_publication_put":         "instance parent_kind parent_id source_path part_number part_count generation state publish_token expect_token document_id published_sha256 source_commit source_sha256",
+	"doc_publish_override":        "instance parent_kind parent_id source_path operation_id pattern_ids lines source_commit",
 	"doc_policy_set":              "instance expected_revision doc_policy",
 	"health_get":                  "instance",
 	"health_set":                  "instance linear_project expected_revision health_policy",
@@ -453,7 +456,7 @@ func validateArgs(op string, a map[string]any) error {
 			return fmt.Errorf("unsupported argument %q for %s", k, op)
 		}
 		switch k {
-		case "retention_days", "limit", "after", "expected_revision", "ledger", "generation", "budget", "calls", "charged", "policy_revision", "engineer", "if_unset", "expires_days", "s5_calls_per_hour", "out_of_binding_limit", "template_version":
+		case "retention_days", "limit", "after", "expected_revision", "ledger", "generation", "budget", "calls", "charged", "policy_revision", "engineer", "if_unset", "expires_days", "s5_calls_per_hour", "out_of_binding_limit", "template_version", "part_number", "part_count":
 			if _, err := integer(v); err != nil {
 				return fmt.Errorf("%s: %w", k, err)
 			}
@@ -495,7 +498,11 @@ func validateArgs(op string, a map[string]any) error {
 			if _, ok := v.([]any); !ok {
 				return errors.New("comments must be an array of objects")
 			}
-		case "ids", "linear_team_ids", "linear_project_ids", "scope_paths", "domains", "comment_ids", "signals", "roles":
+		case "lines":
+			if _, ok := intList(v, 1000); !ok {
+				return errors.New("lines must be an array of line numbers")
+			}
+		case "ids", "linear_team_ids", "linear_project_ids", "scope_paths", "domains", "comment_ids", "signals", "roles", "pattern_ids":
 			switch v.(type) {
 			case []string, []any:
 			default:
@@ -635,7 +642,7 @@ func (s *Store) ExecuteAs(ctx context.Context, principal string, r Request) (Res
 // inbox stamps deliveries, so those keep the locks.
 func pureRead(r Request) bool {
 	switch r.Operation {
-	case "snapshot", "inbox_status", "notification_status", "taskboard_get", "taskboard_get_v2", "taskboard_access", "list_projects", "list_members", "comment_watch_status", "label_policy_get", "status_policy_get", "doc_policy_get", "health_get", "doc_seed_get":
+	case "snapshot", "inbox_status", "notification_status", "taskboard_get", "taskboard_get_v2", "taskboard_access", "list_projects", "list_members", "comment_watch_status", "label_policy_get", "status_policy_get", "doc_policy_get", "health_get", "doc_seed_get", "doc_publication_get":
 		return true
 	case "list_sessions", "history", "whoami", "linear_comments_posted", "linear_comment_precheck", "intake_policy_get", "intake_trust_list", "intake_list":
 		// Naming a session with its instance makes it a heartbeat read: the
@@ -1117,6 +1124,16 @@ func (s *Store) execute(ctx context.Context, tx *transaction, r Request) (any, e
 			return nil, invalid("instance requires session")
 		}
 		return s.healthOp(ctx, tx, w, p, projectRole, nil, r)
+	}
+	// Publishing documents is a lead's or owner's CLI command, as seeding.
+	if docPublicationOperation(r.Operation) {
+		if actor == nil && str(a, "instance") != "" {
+			return nil, invalid("instance requires session")
+		}
+		if actor != nil {
+			tx.actorID = actor["id"].(string)
+		}
+		return s.docPublicationOp(ctx, tx, w, p, projectRole, actor, r)
 	}
 	// Seeding guide documents is a lead's or owner's CLI command too.
 	if docSeedOperation(r.Operation) {

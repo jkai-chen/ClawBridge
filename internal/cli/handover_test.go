@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -122,7 +123,8 @@ func TestHandoverRunsTheAgentThenTheChecks(t *testing.T) {
 	if err != nil || !strings.Contains(string(task), "clawbridge-provision-gcp") || !strings.Contains(string(task), "Backup bucket: example-project-clawbridge-backups") {
 		t.Fatalf("TASK.md: %s %v", task, err)
 	}
-	if info, _ := os.Stat(dir); info.Mode().Perm() != 0o700 {
+	// Windows has no POSIX modes.
+	if info, _ := os.Stat(dir); runtime.GOOS != "windows" && info.Mode().Perm() != 0o700 {
 		t.Fatalf("work dir mode %v", info.Mode())
 	}
 	if h.checkConfig != "clawbridge-onboarding" || os.Getenv("CLOUDSDK_ACTIVE_CONFIG_NAME") != "" {
@@ -135,7 +137,7 @@ func TestHandoverRunsTheAgentThenTheChecks(t *testing.T) {
 	if s.Step != "signin" || s.Owner != "person@example.test" || s.Size != "e2-small" {
 		t.Fatalf("state: %+v", s)
 	}
-	if info, _ := os.Stat(filepath.Join(home, "state", "onboarding", "onboarding.json")); info.Mode().Perm() != 0o600 {
+	if info, _ := os.Stat(filepath.Join(home, "state", "onboarding", "onboarding.json")); runtime.GOOS != "windows" && info.Mode().Perm() != 0o600 {
 		t.Fatalf("state mode %v", info.Mode())
 	}
 	if !strings.Contains(out.String(), "real controls") || !strings.Contains(out.String(), "cloud check workspace") {

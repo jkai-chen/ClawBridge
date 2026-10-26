@@ -68,6 +68,7 @@ func TestBackupStoreConfigurationFailsClosed(t *testing.T) {
 		"s3 without a region": {[]string{"CLAWBRIDGE_BACKUP_URL=s3://backups"}, "CLAWBRIDGE_BACKUP_REGION exactly once"},
 		"s3, bad region":      {[]string{"CLAWBRIDGE_BACKUP_URL=s3://backups", "CLAWBRIDGE_BACKUP_REGION=us east 1"}, "not an AWS region"},
 		"s3, odd region":      {[]string{"CLAWBRIDGE_BACKUP_URL=s3://backups", "CLAWBRIDGE_BACKUP_REGION=us-east-1;x"}, "not an AWS region"},
+		"s3, empty name part": {[]string{"CLAWBRIDGE_BACKUP_URL=s3://backups", "CLAWBRIDGE_BACKUP_REGION=us--1"}, "not an AWS region"},
 	} {
 		out, ran := runBackupWith(t, c.env...)
 		if !strings.Contains(out, c.want) || ran != "" {
@@ -97,5 +98,30 @@ func TestBackupStoreConfigurationAccepted(t *testing.T) {
 		if !later || strings.Contains(out, "unavailable: "+other) {
 			t.Fatalf("%s: %q", name, out)
 		}
+	}
+}
+
+// The script fixes its own PATH, so no test can run its uploads against fakes;
+// this pins the exact upload commands and their order instead.
+func TestBackupUploadCommands(t *testing.T) {
+	raw, err := os.ReadFile(deploymentBackupRunner(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	script := string(raw)
+	for _, want := range []string{
+		`upload() { gcloud storage cp --quiet "$1" "$2" >/dev/null; }`,
+		`upload() { aws s3 cp --only-show-errors --region "$region" "$1" "$2" >/dev/null; }`,
+		`object_base=s3://$bucket/postgres/daily/$timestamp`,
+		`object_base=gs://$bucket/postgres/daily/$timestamp`,
+	} {
+		if !strings.Contains(script, want) {
+			t.Fatalf("missing: %s", want)
+		}
+	}
+	dump := strings.Index(script, `upload "$dump_file" "$object_base.dump"`)
+	sum := strings.Index(script, `upload "$checksum_file" "$object_base.sha256"`)
+	if dump < 0 || sum < 0 || dump > sum {
+		t.Fatal("the dump must upload before its checksum")
 	}
 }

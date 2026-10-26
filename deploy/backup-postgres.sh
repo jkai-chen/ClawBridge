@@ -92,11 +92,11 @@ if [ "$store" = s3 ]; then
 	region=$(read_env_value CLAWBRIDGE_BACKUP_REGION) ||
 		fail "private environment must define CLAWBRIDGE_BACKUP_REGION exactly once for an s3:// backup"
 	case "$region" in
-		[a-z][a-z]-*-[0-9] | [a-z][a-z]-gov-*-[0-9]) ;;
+		[a-z][a-z]-*-[0-9]) ;; # us-east-1, eu-west-3, us-gov-west-1
 		*) fail "CLAWBRIDGE_BACKUP_REGION is not an AWS region" ;;
 	esac
 	case "$region" in
-		*[!a-z0-9-]*) fail "CLAWBRIDGE_BACKUP_REGION is not an AWS region" ;;
+		*[!a-z0-9-]* | *--*) fail "CLAWBRIDGE_BACKUP_REGION is not an AWS region" ;;
 	esac
 fi
 data_path=$(read_env_value CLAWBRIDGE_POSTGRES_DATA_PATH) ||
@@ -106,7 +106,7 @@ compose_project=$(read_env_value COMPOSE_PROJECT_NAME) ||
 
 case "$bucket" in
 	"" | *[!A-Za-z0-9._-]* | .* | -*)
-		fail "CLAWBRIDGE_BACKUP_BUCKET is not a valid bucket name"
+		fail "the backup bucket (from CLAWBRIDGE_BACKUP_URL or CLAWBRIDGE_BACKUP_BUCKET) is not a valid bucket name"
 		;;
 esac
 case "$compose_project" in

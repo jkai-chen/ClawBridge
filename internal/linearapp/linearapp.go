@@ -31,6 +31,11 @@ import (
 // says so. Linear takes it comma-separated and answers space-separated.
 var Scopes = []string{"read", "comments:create", "issues:create", "app:assignable", "app:mentionable"}
 
+// releasedScopes is Scopes as this release ships it. A mint checks Scopes
+// against it first: a token minted with any other set revokes every token
+// the app holds, production's included.
+const releasedScopes = "read,comments:create,issues:create,app:assignable,app:mentionable"
+
 const (
 	tokenURL   = "https://api.linear.app/oauth/token"
 	graphqlURL = "https://api.linear.app/graphql"
@@ -75,6 +80,9 @@ type Config struct {
 	// MCPTransport carries MCP requests; tests replace it.
 	MCPTransport http.RoundTripper
 	Now          func() time.Time
+	// NoMint uses only the live token the server published: a missing,
+	// expiring or refused one is an error, never a new mint.
+	NoMint bool
 }
 
 // Identity is what the server learns about the app at mint time: the app
@@ -245,6 +253,12 @@ func (a *App) adopt(ctx context.Context, t bus.AppToken) error {
 // identity with it, and publishes it in place of replaces. If another
 // instance published first, its token is used instead.
 func (a *App) mint(ctx context.Context, replaces string) error {
+	if a.cfg.NoMint {
+		return fail("mint_disabled")
+	}
+	if strings.Join(Scopes, ",") != releasedScopes {
+		return fail("scopes_changed")
+	}
 	now := a.cfg.Now()
 	if !a.lastMint.IsZero() && now.Sub(a.lastMint) < mintPace {
 		return fail("mint_paced")

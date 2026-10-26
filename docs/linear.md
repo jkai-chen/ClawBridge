@@ -935,8 +935,9 @@ The document policy (`docs-policy.json`) is the project owner's:
 
 - `initiatives` are the initiatives agents may read (at most 20).
 - `source_root` and `deny_patterns` (RE2, at most 50) are for publishing. Any
-  member can read the policy, but only an owner or lead sees the patterns'
-  regexes; others see their IDs.
+  member can read the policy, but only an owner or lead sees the source root
+  and the patterns' regexes; others see `source_root_set` and the patterns'
+  IDs.
 - With no policy, no initiative is in scope.
 
 ## Issue intake (v0.3)

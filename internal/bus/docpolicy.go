@@ -182,23 +182,27 @@ func readDocPolicy(ctx context.Context, tx *transaction, pid string) (DocPolicy,
 	return policy, int64(asInt(row["revision"])), nil
 }
 
-// docPolicyView is the policy as a member reads it. The deny patterns may
-// name what must stay private, so only a project owner or lead, who may
-// publish, sees their regexes; everyone else sees their IDs.
+// docPolicyView is the policy as a member reads it. Only a project owner or
+// lead, who may publish, sees the source root (a local path) and the deny
+// patterns' regexes, which may name what must stay private; everyone else
+// sees whether a source root is set, and the patterns' IDs.
 func docPolicyView(ctx context.Context, tx *transaction, pid string, full bool) (map[string]any, error) {
 	policy, revision, err := readDocPolicy(ctx, tx, pid)
 	if err != nil {
 		return nil, err
 	}
 	var patterns any = policy.DenyPatterns
+	var root any = policy.SourceRoot
+	key := "source_root"
 	if !full {
+		root, key = policy.SourceRoot != "", "source_root_set"
 		ids := []string{}
 		for _, d := range policy.DenyPatterns {
 			ids = append(ids, d.ID)
 		}
 		patterns = ids
 	}
-	out := map[string]any{"revision": revision, "source_root": policy.SourceRoot, "deny_patterns": patterns, "initiatives": policy.Initiatives, "updated_at": nil, "updated_by": nil}
+	out := map[string]any{"revision": revision, key: root, "deny_patterns": patterns, "initiatives": policy.Initiatives, "updated_at": nil, "updated_by": nil}
 	if revision > 0 {
 		row, err := one(ctx, tx, `SELECT updated_at,updated_by_principal FROM linear_doc_policies WHERE project_id=?`, pid)
 		if err != nil {

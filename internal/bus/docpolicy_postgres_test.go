@@ -25,6 +25,9 @@ func TestPostgresDocPolicyRoles(t *testing.T) {
 		if isFull != full || got["revision"] != int64(1) || len(got["initiatives"].([]string)) != 1 {
 			t.Fatal(role, got)
 		}
+		if _, shown := got["source_root"]; shown != full || (!full && got["source_root_set"] != true) {
+			t.Fatal(role, "source root", got)
+		}
 		if !full && (len(got["deny_patterns"].([]string)) != 1 || got["deny_patterns"].([]string)[0] != "internal-name") {
 			t.Fatal(role, "pattern IDs", got)
 		}

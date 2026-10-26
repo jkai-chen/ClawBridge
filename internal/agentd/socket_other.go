@@ -2,9 +2,13 @@
 
 package agentd
 
-import "errors"
+import (
+	"errors"
+	"net"
+)
 
 var errUnsupported = errors.New("clawbridge-agentd runs on Linux only")
 
-func checkSocket(string) error { return errUnsupported }
-func notRoot() error           { return errUnsupported }
+func checkSocket(string) error                  { return errUnsupported }
+func notRoot() error                            { return errUnsupported }
+func listenSocket(string) (net.Listener, error) { return nil, errUnsupported }

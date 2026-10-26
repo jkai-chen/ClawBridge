@@ -84,6 +84,9 @@
   containers under a rootless Docker. Every Docker call goes through its own validating socket proxy, which allows only
   the exact container shapes it creates. Each agent reaches only its own model provider, through a per-owner egress
   proxy that allows only that provider's host and port, and an agent restarts when its owner's configuration changes.
+- **The dispatcher agent follows its owner's projects as they change.** Each token renewal starts serving newly listed
+  projects and stops the ones no longer listed, and an agent with no project yet stays up and waits for one
+  (`no_projects_yet`) instead of exiting.
 
 ## Running your own server on AWS
 

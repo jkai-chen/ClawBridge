@@ -945,6 +945,32 @@ The document policy (`docs-policy.json`) is the project owner's:
   IDs.
 - With no policy, no initiative is in scope.
 
+### Document change notices (hosted servers)
+
+Once the project owner has set a document policy, a hosted server's watcher
+tells the project when a Linear document in its scope changes.
+
+- **What is heard.** A changed document under a bound team, a bound project, an
+  initiative the policy lists, or an issue a session holds. On a team board,
+  project documents are left out: proving their team would cost a call. The
+  same scope as reads applies: every parent must be in scope.
+- **Who hears it.** The coordinator session gets a `linear-doc` message. So does
+  the session holding the issue, for that issue's documents. The message names
+  the document, its parent and when it changed, and whether ClawBridge
+  published it; never its title or text. Read it with `linear_doc_get`.
+- **Published documents.** When a document ClawBridge published from git
+  changes, a later tick reads it back and compares it with what was published.
+  An edit sends the coordinator `published_doc_edited`; the next publish of
+  that file is refused until the edit is in git, or the document is recreated.
+- **Cost, capped.** A tick makes at most one document call, and at most one
+  every five minutes (12 an hour). It is either one workspace-wide list of
+  the documents changed since the last poll, without their content, or one
+  read-back. It runs after the comment watch, claim markers, intake and project
+  health, and only when the hour's budget keeps the comment watch's reserve.
+- **History is never replayed.** The first poll only starts the cursor. A list
+  with more changes than one page leaves the cursor and tells nothing twice.
+  Everything outside the project's scope is dropped without being stored.
+
 ### Publishing from git
 
 A project owner or lead publishes a committed file to a bound team, a bound

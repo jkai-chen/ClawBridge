@@ -50,8 +50,15 @@ func awUnique(prefix string) string {
 // awLinearAPI fakes api.linear.app: the client-credentials token endpoint
 // and the GraphQL viewer, which answers only for the minted token.
 type awLinearAPI struct {
-	mu    sync.Mutex
-	mints int
+	mu             sync.Mutex
+	mints          int
+	workflowStates int
+}
+
+func (l *awLinearAPI) workflowReads() int {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.workflowStates
 }
 
 func (l *awLinearAPI) RoundTrip(r *http.Request) (*http.Response, error) {
@@ -75,6 +82,7 @@ func (l *awLinearAPI) RoundTrip(r *http.Request) (*http.Response, error) {
 			return reply(401, map[string]any{})
 		}
 		if strings.Contains(body, "workflowStates") {
+			l.workflowStates++
 			return reply(200, map[string]any{"data": map[string]any{"workflowStates": map[string]any{"nodes": []any{
 				map[string]any{"id": "c1000000-0000-4000-8000-0000000000a1", "name": "Backlog", "type": "backlog", "team": map[string]any{"id": awTeam}},
 				map[string]any{"id": "C1000000-0000-4000-8000-0000000000A3", "name": "In Progress", "type": "started", "team": map[string]any{"id": awTeam}},
@@ -474,5 +482,21 @@ func TestPostgresAppStatesReadsABoundTeamsWorkflow(t *testing.T) {
 		if _, err = states(args); err == nil {
 			t.Fatal("accepted", args)
 		}
+	}
+	// A member may not spend the app's rate limit on it.
+	member := awUnique("member") + "@appwrite-test.example"
+	f.must(bus.Request{Operation: "project_role_set", Workspace: f.workspace, Project: "p", Args: map[string]any{"principal": member, "role": "member"}})
+	as := bus.Identity{Principal: member, Issuer: bus.GoogleIssuer, Subject: "sub-member"}
+	reg, err := f.store.ExecuteAsIdentity(context.Background(), as, bus.Request{Operation: "register_session", Workspace: f.workspace, Project: "p", Session: "mw", Args: map[string]any{}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	instance := reg.Data.(map[string]any)["instance"].(string)
+	before := f.api.workflowReads()
+	if _, err = f.writer.Execute(context.Background(), as, bus.Request{Operation: "linear_app_states", Workspace: f.workspace, Project: "p", Session: "mw", Args: map[string]any{"instance": instance, "team": awTeam}}); err == nil || !strings.Contains(err.Error(), "lead or owner") {
+		t.Fatal("a member read the workflow as the app:", err)
+	}
+	if f.api.workflowReads() != before {
+		t.Fatal("a refused member reached Linear")
 	}
 }

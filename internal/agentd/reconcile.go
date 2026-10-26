@@ -65,7 +65,10 @@ type Reconciler struct {
 	policy []byte
 	// freed holds when each owner subnet was given up. It isn't handed to
 	// another owner for subnetQuarantine, so no tunnel or policy line of the
-	// old owner can still match the new owner's agent.
+	// old owner can still match the new owner's agent. It is kept in
+	// memory only: a subnet freed in the minute before agentd restarts can
+	// be handed out again at once, guarded then only by the egress proxy's
+	// policy reload.
 	freed map[netip.Prefix]time.Time
 }
 

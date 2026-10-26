@@ -128,6 +128,9 @@ type Input struct {
 	LinearCapabilities func(context.Context) (linearprovider.Capabilities, error)
 	// Skills reports the agent skill installations. Nil skips the check.
 	Skills func() ([]skill.State, error)
+	// Context reads this session's context watching state, locally. Nil
+	// skips the check.
+	Context func() ContextState
 }
 
 // Check is one stable machine-readable diagnostic.
@@ -202,6 +205,9 @@ func Run(ctx context.Context, in Input, executor Executor) Report {
 	}
 	if in.Skills != nil {
 		checkSkills(in.Skills, add)
+	}
+	if in.Context != nil {
+		checkContext(in.Context(), add)
 	}
 	if len(in.MCPConfigs) == 0 {
 		add(Check{

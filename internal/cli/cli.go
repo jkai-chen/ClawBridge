@@ -47,7 +47,8 @@ Commands: setup --local, project create SLUG, register [NAME], sessions, send TO
           serve, operator principal-unbind|workspace-clear-domains ... --confirm (on the server host),
           sync, purge-expired, principal-unbind EMAIL --confirm [--allow-previous],
           workspace-domains DOMAIN...|--clear, doctor, tui [--screen SCREEN], version,
-          cloud check [infra|server|version|workspace|linear-app|backups|all], cloud secret set KEY (own-server onboarding)
+          cloud check [infra|server|version|workspace|linear-app|backups|all], cloud secret set KEY (own-server onboarding),
+          context show [--session NAME | --agent claude-code|codex --transcript PATH] [--json]
 Interactive: bare clawbridge opens the selected profile, or Start without one; onboard reopens Start
 (local, join a team server, or your own server); setup wizard starts guided join.
 Onboarding: setup join --server URL --workspace TEAM --project CODEBASE [--login|--device]
@@ -206,6 +207,10 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	}
 	if len(args) > 0 && args[0] == "operator" {
 		return server.RunOperator(ctx, args[1:], stdout)
+	}
+	// Context watching reads local files only.
+	if len(args) > 0 && args[0] == "context" {
+		return runContext(ctx, args[1:], stdout, stderr)
 	}
 	// The onboarding probes take cloud flags (--project is a cloud project
 	// here) and resolve trusted configuration only for the workspace check.
@@ -995,6 +1000,9 @@ func collectDoctor(ctx context.Context, config Config, configPath string, existi
 			DeviceID:            config.DeviceID, KeyStore: config.KeyStore,
 		},
 		Skills: doctorSkills,
+	}
+	if config.Session != "" {
+		in.Context = func() doctor.ContextState { return doctorContext(config.Session) }
 	}
 	var executor doctor.Executor = existing
 	if config.Mode == "cloud" && config.CredentialSource == remote.CredentialSourceDevice {

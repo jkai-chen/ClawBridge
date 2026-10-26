@@ -334,7 +334,7 @@ func parseLinear(command string, args []string, stderr io.Writer) (linearFlags, 
 		f.StringVar(&v.initiative, "initiative", "", "list: the initiative UUID, listed in the document policy, whose documents to list")
 		f.IntVar(&v.limit, "limit", 50, "list: page size (1–50)")
 		f.StringVar(&v.cursor, "cursor", "", "list: the next cursor from the previous page of the same parent")
-		f.IntVar(&v.maxBytes, "max-bytes", 0, "get: return at most this much content (default 32768, at most 65536)")
+		f.IntVar(&v.maxBytes, "max-bytes", 0, "get: return at most this much content (default and most 65536); a cut read says partial read")
 		f.StringVar(&v.operation, "operation-id", "", "publish: required durable publish identifier")
 		f.StringVar(&v.title, "title", "", "publish: the document's title (default: the file's first # heading)")
 		f.StringVar(&v.commit, "commit", "", "publish: publish the file at this commit, HEAD or an ancestor (default HEAD)")

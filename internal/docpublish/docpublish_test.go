@@ -1,6 +1,7 @@
 package docpublish
 
 import (
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -148,5 +149,25 @@ func TestSplitByHeadingOnly(t *testing.T) {
 	}
 	if _, err = Split("Doc", strings.Repeat("x", 5000), 1200, 100); err == nil {
 		t.Fatal("content without headings was split")
+	}
+}
+
+// An ordered list that restarts right after another is reported by line; a
+// separating paragraph or heading, a continuing list, and code are not.
+func TestMergedLists(t *testing.T) {
+	for content, want := range map[string]string{
+		"1. a\n2. b\n\n1. c\n2. d\n":            "[4]",
+		"1. a\n2. b\n1. c\n":                    "[3]",
+		"1. a\n   more\n\n1) b\n":               "[4]",
+		"1. a\n2. b\n\nText between.\n\n1. c\n": "[]",
+		"1. a\n2. b\n\n## Next\n\n1. c\n":       "[]",
+		"1. a\n2. b\n3. c\n":                    "[]",
+		"1. a\n- bullet\n1. b\n":                "[]",
+		"```\n1. a\n1. b\n```\n":                "[]",
+		"3. a\n\n1. b\n\n1. c\n":                "[3 5]",
+	} {
+		if got := fmt.Sprint(MergedLists(content)); got != want && !(want == "[]" && got == "[]") {
+			t.Fatalf("%q: got %s, want %s", content, got, want)
+		}
 	}
 }

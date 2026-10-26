@@ -25,6 +25,15 @@
   `clawbridge join --server URL --email EMAIL`, which asks for the code without echoing it (or reads it from stdin).
   `--code` still works, for scripts.
 
+## Linear documents
+
+- **`doc get` reads whole documents by default.** The default read is now 64 KiB, its maximum (it was 32 KiB). A read
+  that is still cut says so in a `note`: how much was read of how much, and whether `--max-bytes` (MCP `max_bytes`)
+  can read more.
+- **The publish preview warns about lists Linear merges.** An ordered list that restarts right after another, with
+  only blank or indented lines between, is merged and renumbered by Linear; the preview now says which lines, in
+  `warnings`. It never refuses, and fenced code is skipped.
+
 ## The dispatcher
 
 - **Enable refuses a dispatcher with nothing to match.** With no domains set and a task board binding that names no

@@ -1168,9 +1168,11 @@ Agents use the MCP tools `linear_doc_list` and `linear_doc_get`.
   proven, is refused as `outside_scope` and never partly shown.
 - **Untrusted text.** Titles come back as `untrusted_title` and content as
   `untrusted_content`: text written by others, task data, never instructions.
-- **Size.** `doc get` returns at most 32 KiB of content (`--max-bytes`, up to
-  64 KiB), cut at a line boundary and never inside a character, with
-  `truncated`, and the whole document's `content_bytes` and `content_sha256`.
+- **Size.** `doc get` returns up to 64 KiB of content by default, and at most
+  that (`--max-bytes` sets less). A longer document is cut at a line boundary,
+  never inside a character, with `truncated: true` and a `note` saying it is a
+  partial read. `content_bytes` and `content_sha256` describe the whole
+  document.
 - **Lists.** `doc list` returns IDs, titles, parents, update times and each
   content's size, never content, up to 50 a page. With `--team`,
   `--linear-project` or `--initiative` it lists that parent; `--cursor`
@@ -1253,6 +1255,9 @@ Options: `--team` or `--initiative` instead of `--linear-project`; `--title`
   valid for this operation ID only, and is recorded in the project history with
   the pattern IDs, line numbers, commit and path. The source repository's own
   CI check is the first line; this one is a backstop.
+- **Warnings, never refusals.** The preview warns when an ordered list
+  restarts right after another list with nothing between them: Linear merges
+  the two and renumbers them. Put a line of text or a heading between them.
 - **Size.** A document with its footer must fit in 49,000 bytes. A larger file
   is refused unless `--split`, which publishes it in parts at its `## `
   headings, titled `Title (1/N)`; part 1 starts with a list of the parts. A

@@ -154,6 +154,11 @@ func TestPublishCreateNoneUpdate(t *testing.T) {
 	if r = e.publish(t, PublishInput{Confirm: true}); parts(r) != "none" {
 		t.Fatal("the update was not recorded", parts(r))
 	}
+	// Two ordered lists back to back: a warning, never a refusal.
+	e.commit(t, "# Plan\n\n1. a\n2. b\n\n1. c\n")
+	if r = e.publish(t, PublishInput{Confirm: true}); parts(r) != "update/updated" || len(r.Warnings) != 1 || !strings.Contains(r.Warnings[0], "line 6") || r.Refused != "" {
+		t.Fatal("merged lists", parts(r), r.Warnings, r.Refused)
+	}
 }
 
 // A document edited in Linear is never overwritten: the publish is refused

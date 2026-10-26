@@ -69,19 +69,22 @@ type PublishPartResult struct {
 // PublishResult is what a publish found and, with Confirm, did. Refused,
 // when set, says why nothing was written.
 type PublishResult struct {
-	ParentKind     string              `json:"parent_kind"`
-	ParentID       string              `json:"parent_id"`
-	SourcePath     string              `json:"source_path"`
-	SourceCommit   string              `json:"source_commit"`
-	SourceSHA256   string              `json:"source_sha256"`
-	WorkingDiffers string              `json:"warning,omitempty"`
-	Limit          int                 `json:"limit"`
-	Parts          []PublishPartResult `json:"parts"`
-	Mixed          bool                `json:"mixed_set,omitempty"`
-	Hits           []PublishHit        `json:"deny_hits,omitempty"`
-	Overridden     []string            `json:"overridden_patterns,omitempty"`
-	Refused        string              `json:"refused,omitempty"`
-	Confirmed      bool                `json:"confirmed"`
+	ParentKind     string `json:"parent_kind"`
+	ParentID       string `json:"parent_id"`
+	SourcePath     string `json:"source_path"`
+	SourceCommit   string `json:"source_commit"`
+	SourceSHA256   string `json:"source_sha256"`
+	WorkingDiffers string `json:"warning,omitempty"`
+	// Warnings never stop a publish: they name what Linear will show
+	// differently from the file.
+	Warnings   []string            `json:"warnings,omitempty"`
+	Limit      int                 `json:"limit"`
+	Parts      []PublishPartResult `json:"parts"`
+	Mixed      bool                `json:"mixed_set,omitempty"`
+	Hits       []PublishHit        `json:"deny_hits,omitempty"`
+	Overridden []string            `json:"overridden_patterns,omitempty"`
+	Refused    string              `json:"refused,omitempty"`
+	Confirmed  bool                `json:"confirmed"`
 }
 
 type publishRow struct {
@@ -141,6 +144,9 @@ func (s *Service) PublishV2(ctx context.Context, scope bus.Request, in PublishIn
 	}
 	if e = docpublish.CheckContent(src.Content); e != nil {
 		return out, e
+	}
+	for _, line := range docpublish.MergedLists(src.Content) {
+		out.Warnings = append(out.Warnings, fmt.Sprintf("line %d: an ordered list restarts right after another list, with nothing between them; Linear merges the two into one list and renumbers it. Put a line of text or a heading between them.", line))
 	}
 	title := docpublish.Title(in.Title, src.Content, src.Path)
 	if title == "" || len(title) > 200 {

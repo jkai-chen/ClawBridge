@@ -278,3 +278,41 @@ func Title(given, content, path string) string {
 	}
 	return strings.TrimSuffix(filepath.Base(path), filepath.Ext(path))
 }
+
+var orderedItem = regexp.MustCompile(`^(\d{1,9})[.)][ \t]`)
+
+// MergedLists returns the 1-based lines where an ordered list restarts its
+// numbering right after another ordered list, with only blank or indented
+// lines between. Markdown, and Linear with it, merges the two into one list
+// and renumbers it, which a document's author rarely means. Fenced code is
+// skipped.
+func MergedLists(content string) []int {
+	var lines []int
+	inList, fenced := false, false
+	last := 0
+	for n, line := range strings.Split(content, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "```") || strings.HasPrefix(trimmed, "~~~") {
+			fenced = !fenced
+			inList = false
+			continue
+		}
+		if fenced {
+			continue
+		}
+		if m := orderedItem.FindStringSubmatch(line); m != nil {
+			num := 0
+			fmt.Sscan(m[1], &num)
+			if inList && num <= last {
+				lines = append(lines, n+1)
+			}
+			inList, last = true, num
+			continue
+		}
+		// Blank and indented lines continue a list; anything else ends it.
+		if trimmed != "" && line[0] != ' ' && line[0] != '\t' {
+			inList = false
+		}
+	}
+	return lines
+}

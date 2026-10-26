@@ -37,22 +37,21 @@ type env struct {
 	now    time.Time
 }
 
-// newEnv makes an origin repository with one commit on main and a clone
-// of it, the owner's checkout.
+// newEnv makes an origin repository with one commit on main, the owner's
+// clone of it, and a home directory for the runner's work.
 func newEnv(t *testing.T) *env {
 	t.Helper()
 	root := t.TempDir()
 	e := &env{t: t, origin: filepath.Join(root, "origin.git"), repo: filepath.Join(root, "checkout"), now: time.Date(2026, 10, 26, 12, 0, 0, 0, time.UTC)}
 	e.git(root, "init", "--bare", "-b", "main", e.origin)
 	e.git(root, "clone", e.origin, e.repo)
-	if err := os.WriteFile(filepath.Join(e.repo, "README.md"), []byte("hello\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	e.write(e.repo, "README.md")
 	e.git(e.repo, "add", "README.md")
 	e.git(e.repo, "commit", "-m", "first")
 	e.git(e.repo, "push", "origin", "main")
 	e.git(e.repo, "remote", "set-head", "origin", "main")
-	e.r = &Runner{StateDir: filepath.Join(root, "state"), Git: execGit, Now: func() time.Time { return e.now }, Terminal: func(dir, title, command string) error {
+	home := filepath.Join(root, "home")
+	e.r = &Runner{StateDir: filepath.Join(home, ".clawbridge", "runner"), Home: home, Git: execGit, Now: func() time.Time { return e.now }, Terminal: func(dir, title, command string) error {
 		e.opens = append(e.opens, opened{dir, title, command})
 		return nil
 	}}
@@ -68,54 +67,97 @@ func (e *env) git(dir string, args ...string) string {
 	return out
 }
 
+func (e *env) write(dir, name string) {
+	e.t.Helper()
+	if err := os.WriteFile(filepath.Join(dir, name), []byte(name+"\n"), 0o644); err != nil {
+		e.t.Fatal(err)
+	}
+}
+
+func (e *env) commit(dir, name string) {
+	e.t.Helper()
+	e.write(dir, name)
+	e.git(dir, "add", name)
+	e.git(dir, "commit", "-m", name)
+}
+
 func (e *env) spec(session, ident string) Spec {
-	s, _ := e.r.LoadSettings()
+	e.t.Helper()
+	s, err := e.r.LoadSettings()
+	if err != nil {
+		e.t.Fatal(err)
+	}
 	return Spec{Session: session, Instance: "inst-" + session, Repo: e.repo, IssueID: issueUUID, Identifier: ident, MCPEntry: map[string]any{"command": "/usr/local/bin/clawbridge", "args": []string{"mcp"}, "type": "stdio"}, Settings: s}
 }
 
-// A launch makes an agent/* worktree that cannot push, writes the
-// session's files outside it, privately, and opens the terminal with the
-// IDs-only prompt; the owner's checkout keeps pushing.
-func TestLaunchPreparesAnUnpushableWorktree(t *testing.T) {
-	e := newEnv(t)
-	p, err := e.r.Launch(e.spec("checkout-engineer-1", issueIdent))
-	if err != nil || !p.Opened || p.Branch != "agent/fix-12" || p.Base != "origin/main" {
-		t.Fatal(p, err)
+func (e *env) launch(session, ident string) Prepared {
+	e.t.Helper()
+	p, err := e.r.Launch(e.spec(session, ident))
+	if err != nil {
+		e.t.Fatal(err)
 	}
-	if got := e.git(p.Worktree, "rev-parse", "--abbrev-ref", "HEAD"); got != "agent/fix-12" {
+	return p
+}
+
+// A launch makes a separate clone on agent/<id> that fetches from the
+// owner's upstream but cannot push, writes the session's files privately
+// outside it, and opens the terminal with the IDs-only prompt. The agent's
+// commits stay in its clone: the owner's .git is never written.
+func TestLaunchMakesAnUnpushableClone(t *testing.T) {
+	e := newEnv(t)
+	ownerConfig, _ := os.ReadFile(filepath.Join(e.repo, ".git", "config"))
+	p := e.launch("checkout-engineer-1", issueIdent)
+	if !p.Opened || p.Branch != "agent/fix-12" || p.Base != "refs/remotes/origin/main" || p.Clone != filepath.Join(e.r.Home, "clawbridge-runs", "checkout-engineer-1") {
+		t.Fatal(p)
+	}
+	if got := e.git(p.Clone, "rev-parse", "--abbrev-ref", "HEAD"); got != "agent/fix-12" {
 		t.Fatal(got)
 	}
-	// The agent's checkout has no push URL and no credential helper; the
-	// owner's has its own.
-	if got := e.git(p.Worktree, "config", "--get", "remote.origin.pushurl"); got != "DISABLED" {
+	if _, err := os.Stat(filepath.Join(p.Clone, ".git", "objects")); err != nil {
+		t.Fatal("the clone has no object store of its own:", err)
+	}
+	// Not a shared clone: it never reads the owner's object store.
+	if _, err := os.Stat(filepath.Join(p.Clone, ".git", "objects", "info", "alternates")); err == nil {
+		t.Fatal("the clone borrows the owner's objects")
+	}
+	if got := e.git(p.Clone, "remote", "get-url", "origin"); got != e.origin {
+		t.Fatal("origin", got)
+	}
+	if got := e.git(p.Clone, "config", "--get", "remote.origin.pushurl"); got != "DISABLED" {
 		t.Fatal("push URL", got)
 	}
-	if _, err = execGit(e.repo, "config", "--get", "remote.origin.pushurl"); err == nil {
-		t.Fatal("the owner's checkout lost its push URL")
+	if got, err := execGit(p.Clone, "config", "--local", "--get", "credential.helper"); err != nil || got != "" {
+		t.Fatal("credential helper", got, err)
 	}
-	if got, err := execGit(p.Worktree, "config", "--worktree", "--get", "credential.helper"); err != nil || got != "" {
-		t.Fatal("the worktree does not reset the credential helpers", got, err)
+	e.commit(p.Clone, "work.txt")
+	if _, err := execGit(p.Clone, "push", "origin", "agent/fix-12"); err == nil {
+		t.Fatal("the clone pushed through origin")
 	}
-	if err = os.WriteFile(filepath.Join(p.Worktree, "work.txt"), []byte("x\n"), 0o644); err != nil {
-		t.Fatal(err)
+	// The owner's repository is untouched: same config, no agent branch,
+	// and it still pushes.
+	if after, _ := os.ReadFile(filepath.Join(e.repo, ".git", "config")); string(after) != string(ownerConfig) {
+		t.Fatal("the owner's git config changed:\n" + string(after))
 	}
-	e.git(p.Worktree, "add", "work.txt")
-	e.git(p.Worktree, "commit", "-m", "agent work")
-	if _, err = execGit(p.Worktree, "push", "origin", "agent/fix-12"); err == nil {
-		t.Fatal("the agent's worktree pushed")
+	if _, err := execGit(e.repo, "rev-parse", "--verify", "--quiet", "refs/heads/agent/fix-12"); err == nil {
+		t.Fatal("the agent's branch appeared in the owner's repository")
 	}
-	if _, err = execGit(e.repo, "push", "--dry-run", "origin", "main"); err != nil {
-		t.Fatal("the owner's checkout cannot push:", err)
+	if _, err := execGit(e.repo, "push", "--dry-run", "origin", "main"); err != nil {
+		t.Fatal("the owner cannot push:", err)
 	}
-	// The session's files are outside the worktree, readable by the owner
-	// only.
+	// The owner brings the work in with the printed fetch.
+	if !strings.HasPrefix(p.Fetch, "git fetch '"+p.Clone+"' agent/fix-12:agent/fix-12") {
+		t.Fatal(p.Fetch)
+	}
+	e.git(e.repo, "fetch", p.Clone, "agent/fix-12:agent/fix-12")
+	if got := e.git(e.repo, "log", "-1", "--format=%s", "agent/fix-12"); got != "work.txt" {
+		t.Fatal(got)
+	}
 	for _, f := range []string{p.SettingsFile, p.MCPFile} {
 		info, err := os.Stat(f)
-		if err != nil || info.Mode().Perm() != 0o600 || strings.HasPrefix(f, p.Worktree) {
+		if err != nil || info.Mode().Perm() != 0o600 || strings.HasPrefix(f, p.Clone) {
 			t.Fatal(f, info, err)
 		}
-		dir, _ := os.Stat(filepath.Dir(f))
-		if dir.Mode().Perm() != 0o700 {
+		if dir, _ := os.Stat(filepath.Dir(f)); dir.Mode().Perm() != 0o700 {
 			t.Fatal("session directory", dir.Mode())
 		}
 	}
@@ -124,7 +166,7 @@ func TestLaunchPreparesAnUnpushableWorktree(t *testing.T) {
 	if json.Unmarshal(raw, &mcp) != nil || mcp["mcpServers"]["clawbridge"]["command"] != "/usr/local/bin/clawbridge" {
 		t.Fatal(string(raw))
 	}
-	if len(e.opens) != 1 || e.opens[0].dir != p.Worktree || e.opens[0].title != "checkout-engineer-1" {
+	if len(e.opens) != 1 || e.opens[0].dir != p.Clone || e.opens[0].title != "checkout-engineer-1" {
 		t.Fatal(e.opens)
 	}
 	cmd := e.opens[0].command
@@ -137,42 +179,59 @@ func TestLaunchPreparesAnUnpushableWorktree(t *testing.T) {
 		t.Fatal("command:", cmd)
 	}
 	launches, _ := e.r.Launches()
-	if len(launches) != 1 || launches[0].Instance != "inst-checkout-engineer-1" || launches[0].Repo == "" {
+	if len(launches) != 1 || launches[0].Instance != "inst-checkout-engineer-1" || launches[0].BaseCommit == "" {
 		t.Fatal(launches)
 	}
 }
 
-// The model is a setting; the settings never allow bypass, and the Bash
-// sandbox denies the owner's credentials and limits the network.
+type agentSettings struct {
+	Permissions struct {
+		DefaultMode, DisableBypassPermissionsMode string
+		Deny                                      []string
+	}
+	Sandbox struct {
+		Enabled, FailIfUnavailable, AllowUnsandboxedCommands bool
+		Filesystem                                           struct{ DenyRead []string }
+		Network                                              struct{ AllowedDomains []string }
+	}
+}
+
+// The model is a setting; the settings never allow bypass; the Bash
+// sandbox and the file tools deny the same credential paths (RL-M1); the
+// owner's checkout cannot be edited and WebFetch is off.
 func TestLaunchSettingsAndModel(t *testing.T) {
 	e := newEnv(t)
 	if err := writePrivate(filepath.Join(e.r.StateDir, "config.json"), []byte(`{"model":"claude-opus-5-5","allowed_domains":["proxy.golang.org"]}`)); err != nil {
 		t.Fatal(err)
 	}
-	p, err := e.r.Launch(e.spec("checkout-engineer-1", issueIdent))
-	if err != nil || !strings.Contains(p.Command, "--model 'claude-opus-5-5'") {
-		t.Fatal(p, err)
+	p := e.launch("checkout-engineer-1", issueIdent)
+	if !strings.Contains(p.Command, "--model 'claude-opus-5-5'") {
+		t.Fatal(p.Command)
 	}
-	var s struct {
-		Permissions struct {
-			DefaultMode, DisableBypassPermissionsMode string
-			Deny                                      []string
-		}
-		Sandbox struct {
-			Enabled, FailIfUnavailable, AllowUnsandboxedCommands bool
-			Filesystem                                           struct{ DenyRead []string }
-			Network                                              struct{ AllowedDomains []string }
-		}
-	}
+	var s agentSettings
 	raw, _ := os.ReadFile(p.SettingsFile)
-	if err = json.Unmarshal(raw, &s); err != nil {
+	if err := json.Unmarshal(raw, &s); err != nil {
 		t.Fatal(err)
 	}
-	if s.Permissions.DefaultMode != "default" || s.Permissions.DisableBypassPermissionsMode != "disable" || !contains(s.Permissions.Deny, "Bash(git push *)") || !contains(s.Permissions.Deny, "Bash(gh *)") {
+	if s.Permissions.DefaultMode != "default" || s.Permissions.DisableBypassPermissionsMode != "disable" {
 		t.Fatal("permissions", s.Permissions)
 	}
 	if !s.Sandbox.Enabled || !s.Sandbox.FailIfUnavailable || s.Sandbox.AllowUnsandboxedCommands {
 		t.Fatal("sandbox", s.Sandbox)
+	}
+	repo, _ := filepath.EvalSymlinks(e.repo)
+	for _, want := range []string{"Bash(git push *)", "Bash(gh *)", "WebFetch", "Edit(/" + repo + "/**)"} {
+		if !contains(s.Permissions.Deny, want) {
+			t.Fatal("not denied:", want)
+		}
+	}
+	if len(s.Sandbox.Filesystem.DenyRead) == 0 {
+		t.Fatal("no denied paths")
+	}
+	for _, path := range s.Sandbox.Filesystem.DenyRead {
+		if !contains(s.Permissions.Deny, "Read("+path+"/**)") || !contains(s.Permissions.Deny, "Edit("+path+"/**)") {
+			t.Fatal("the file tools can reach", path)
+		}
 	}
 	for _, path := range []string{"~/.ssh", "~/.config/gh", "~/.clawbridge", "~/Library/Keychains"} {
 		if !contains(s.Sandbox.Filesystem.DenyRead, path) {
@@ -182,10 +241,10 @@ func TestLaunchSettingsAndModel(t *testing.T) {
 	if len(s.Sandbox.Network.AllowedDomains) != 1 || s.Sandbox.Network.AllowedDomains[0] != "proxy.golang.org" {
 		t.Fatal(s.Sandbox.Network)
 	}
-	if err = writePrivate(filepath.Join(e.r.StateDir, "config.json"), []byte(`{"modle":"x"}`)); err != nil {
+	if err := writePrivate(filepath.Join(e.r.StateDir, "config.json"), []byte(`{"modle":"x"}`)); err != nil {
 		t.Fatal(err)
 	}
-	if _, err = e.r.LoadSettings(); err == nil {
+	if _, err := e.r.LoadSettings(); err == nil {
 		t.Fatal("a misspelt setting was accepted")
 	}
 }
@@ -199,9 +258,59 @@ func contains(list []string, s string) bool {
 	return false
 }
 
-// A dry run changes nothing; a taken branch, the retained cap and a bad
+// RL-H1: a work directory the sandbox cannot read, or one holding a denied
+// path, is refused.
+func TestWorkDirOutsideDeniedPaths(t *testing.T) {
+	e := newEnv(t)
+	for _, bad := range []string{"~/.clawbridge/runs", "~", "~/.ssh", "relative/dir"} {
+		if err := writePrivate(filepath.Join(e.r.StateDir, "config.json"), []byte(`{"work_dir":"`+bad+`"}`)); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := e.r.LoadSettings(); err == nil {
+			t.Fatal("work_dir accepted:", bad)
+		}
+	}
+	other := filepath.Join(t.TempDir(), "runs")
+	if err := writePrivate(filepath.Join(e.r.StateDir, "config.json"), []byte(`{"work_dir":"`+other+`"}`)); err != nil {
+		t.Fatal(err)
+	}
+	if s, err := e.r.LoadSettings(); err != nil || s.WorkDir != other {
+		t.Fatal(s, err)
+	}
+}
+
+// RL-M2: the network allow-list may not reach the host the repository
+// pushes to; the barrier is no route and no credentials, not a push URL.
+func TestAllowListMayNotReachThePushHost(t *testing.T) {
+	for _, c := range []struct {
+		domains []string
+		urls    []string
+		ok      bool
+	}{
+		{[]string{"github.com"}, []string{"git@github.com:o/r.git"}, false},
+		{[]string{"*.github.com"}, []string{"https://github.com/o/r.git"}, false},
+		{[]string{"*"}, []string{"https://gitlab.example.test/o/r"}, false},
+		{[]string{"*.example.test"}, []string{"https://git.example.test/o/r"}, false},
+		{[]string{"proxy.golang.org", "api.github.com"}, []string{"https://github.com/o/r.git"}, true},
+		{[]string{"github.com"}, []string{"ssh://git@code.example.test:2222/o/r.git"}, true},
+		{[]string{"code.example.test"}, []string{"ssh://git@code.example.test:2222/o/r.git"}, false},
+	} {
+		if err := CheckDomains(c.domains, c.urls); (err == nil) != c.ok {
+			t.Fatal(c, err)
+		}
+	}
+	e := newEnv(t)
+	e.git(e.repo, "remote", "set-url", "--push", "origin", "https://github.com/o/r.git")
+	spec := e.spec("checkout-engineer-1", issueIdent)
+	spec.Settings.AllowedDomains = []string{"github.com"}
+	if _, err := e.r.Launch(spec); err == nil || !strings.Contains(err.Error(), "github.com") {
+		t.Fatal("a launch reached the push host:", err)
+	}
+}
+
+// A dry run changes nothing; a taken clone, the retained cap and a bad
 // identifier refuse; a terminal Orca cannot open is reported with the
-// command, and the launch stays recorded.
+// command; a clone that turns out dirty is never started on.
 func TestLaunchRefusalsAndDryRun(t *testing.T) {
 	e := newEnv(t)
 	dry := e.spec("checkout-engineer-1", issueIdent)
@@ -209,8 +318,8 @@ func TestLaunchRefusalsAndDryRun(t *testing.T) {
 	if p, err := e.r.Launch(dry); err != nil || !p.DryRun || p.Command == "" {
 		t.Fatal(p, err)
 	}
-	if _, err := os.Stat(filepath.Join(e.r.StateDir, "worktrees")); err == nil || len(e.opens) != 0 {
-		t.Fatal("a dry run made a worktree or opened a terminal")
+	if _, err := os.Stat(dry.Settings.WorkDir); err == nil || len(e.opens) != 0 {
+		t.Fatal("a dry run made a clone or opened a terminal")
 	}
 	if _, err := e.r.Launch(e.spec("checkout-engineer-1", "not an id")); err == nil {
 		t.Fatal("a bad identifier accepted")
@@ -220,95 +329,136 @@ func TestLaunchRefusalsAndDryRun(t *testing.T) {
 	if err != nil || p.Opened || !strings.Contains(p.Note, "orca is not running") {
 		t.Fatal(p, err)
 	}
-	if _, err = e.r.Launch(e.spec("checkout-engineer-2", issueIdent)); err == nil || !strings.Contains(err.Error(), "already exists") {
-		t.Fatal("a taken branch accepted:", err)
+	if _, err = e.r.Launch(e.spec("checkout-engineer-1", issueIdent)); err == nil || !strings.Contains(err.Error(), "already exists") {
+		t.Fatal("a taken clone accepted:", err)
 	}
 	capped := e.spec("checkout-engineer-3", "FIX-13")
 	capped.Settings.MaxRetained = 1
 	if _, err = e.r.Launch(capped); err == nil || !strings.Contains(err.Error(), "runner gc") {
 		t.Fatal("the cap did not hold:", err)
 	}
+	plain := e.r.Git
+	e.r.Git = func(dir string, args ...string) (string, error) {
+		out, err := plain(dir, args...)
+		if len(args) > 0 && args[0] == "checkout" {
+			_ = os.WriteFile(filepath.Join(dir, "stray.txt"), []byte("x"), 0o644)
+		}
+		return out, err
+	}
+	if _, err = e.r.Launch(e.spec("checkout-engineer-4", "FIX-14")); err == nil || !strings.Contains(err.Error(), "not clean") {
+		t.Fatal("a dirty clone was started on:", err)
+	}
 }
 
-// gc keeps work in progress and removes what is finished: a branch merged
-// by rebase, or one a week old with no commits. It previews first.
-func TestGCRemovesOnlyFinishedWorktrees(t *testing.T) {
+// guardGit fails the test if git runs inside a clone: its config and hooks
+// are the agent's.
+func (e *env) guardGit(clones ...string) {
+	plain := e.r.Git
+	e.r.Git = func(dir string, args ...string) (string, error) {
+		for _, c := range clones {
+			if within(dir, c) {
+				e.t.Fatalf("git %v ran inside the agent's clone %s", args, c)
+			}
+		}
+		return plain(dir, args...)
+	}
+}
+
+func byBranch(cs []Collected) map[string]Collected {
+	m := map[string]Collected{}
+	for _, c := range cs {
+		m[c.Branch] = c
+	}
+	return m
+}
+
+// gc judges the work in the owner's repository and never runs git in a
+// clone: merged work (rebase or fast-forward) is removed with its fetched
+// branch; unfetched, unmerged or newer work is kept; an untouched clone
+// goes after a week without changes; a preview removes nothing.
+func TestGCRemovesOnlyFinishedClones(t *testing.T) {
 	e := newEnv(t)
-	launch := func(session, ident string) Prepared {
-		p, err := e.r.Launch(e.spec(session, ident))
-		if err != nil {
-			t.Fatal(err)
-		}
-		return p
+	rebased := e.launch("checkout-engineer-1", "FIX-1")
+	e.commit(rebased.Clone, "rebased.txt")
+	unfetched := e.launch("checkout-engineer-2", "FIX-2")
+	e.commit(unfetched.Clone, "unfetched.txt")
+	review := e.launch("checkout-engineer-3", "FIX-3")
+	e.commit(review.Clone, "review.txt")
+	newer := e.launch("checkout-engineer-4", "FIX-4")
+	e.commit(newer.Clone, "newer.txt")
+	idle := e.launch("checkout-engineer-5", "FIX-5")
+	touched := e.launch("checkout-engineer-6", "FIX-6")
+	ff := e.launch("checkout-engineer-7", "FIX-7")
+	e.commit(ff.Clone, "ff.txt")
+	for _, p := range []Prepared{rebased, review, newer, ff} {
+		e.git(e.repo, "fetch", p.Clone, p.Branch+":"+p.Branch)
 	}
-	commit := func(p Prepared, file string) {
-		if err := os.WriteFile(filepath.Join(p.Worktree, file), []byte(file+"\n"), 0o644); err != nil {
-			t.Fatal(err)
-		}
-		e.git(p.Worktree, "add", file)
-		e.git(p.Worktree, "commit", "-m", file)
-	}
-	merged := launch("checkout-engineer-1", "FIX-1")
-	commit(merged, "merged.txt")
-	pending := launch("checkout-engineer-2", "FIX-2")
-	commit(pending, "pending.txt")
-	dirty := launch("checkout-engineer-3", "FIX-3")
-	if err := os.WriteFile(filepath.Join(dirty.Worktree, "draft.txt"), []byte("x"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	idle := launch("checkout-engineer-4", "FIX-4")
-	// The reviewer merges by rebase: the same patch lands under a new ID.
-	e.git(e.repo, "cherry-pick", merged.Branch)
-	e.git(e.repo, "commit", "--amend", "-m", "merged.txt (#1)")
+	e.commit(newer.Clone, "newer-2.txt")
+	// The reviewer merges one by rebase (a new ID, the same patch) and
+	// one by fast-forward.
+	e.git(e.repo, "merge", "--ff-only", ff.Branch)
+	e.git(e.repo, "cherry-pick", rebased.Branch)
+	e.git(e.repo, "commit", "--amend", "-m", "rebased.txt (#1)")
 	e.git(e.repo, "push", "origin", "main")
 	e.git(e.repo, "fetch", "origin")
-	byBranch := func(cs []Collected) map[string]Collected {
-		m := map[string]Collected{}
-		for _, c := range cs {
-			m[c.Branch] = c
-		}
-		return m
+	// The idle clone's files are a week old; the touched one changed.
+	old := e.now.Add(-8 * 24 * time.Hour)
+	for _, p := range []Prepared{idle, touched} {
+		_ = filepath.WalkDir(p.Clone, func(path string, d os.DirEntry, err error) error {
+			return os.Chtimes(path, old, old)
+		})
 	}
+	e.write(touched.Clone, "draft.txt")
+	recent := e.now.Add(time.Hour)
+	if err := os.Chtimes(filepath.Join(touched.Clone, "draft.txt"), recent, recent); err != nil {
+		t.Fatal(err)
+	}
+	e.git(rebased.Clone, "pack-refs", "--all")
+	e.guardGit(rebased.Clone, unfetched.Clone, review.Clone, newer.Clone, idle.Clone, touched.Clone, ff.Clone)
 	preview, err := e.r.GC(false)
 	got := byBranch(preview)
-	if err != nil || got["agent/fix-1"].Action != "remove" || got["agent/fix-2"].Action != "keep" || got["agent/fix-3"].Action != "keep" || got["agent/fix-4"].Action != "keep" {
+	if err != nil || got["agent/fix-1"].Action != "remove" || got["agent/fix-7"].Action != "remove" || got["agent/fix-5"].Action != "keep" {
 		t.Fatal(preview, err)
 	}
-	if got["agent/fix-3"].Reason != "has uncommitted changes" {
-		t.Fatal("dirty", got["agent/fix-3"])
+	if !strings.Contains(got["agent/fix-2"].Reason, "not fetched") || !strings.Contains(got["agent/fix-3"].Reason, "waiting for review") || !strings.Contains(got["agent/fix-4"].Reason, "not fetched") {
+		t.Fatal(got)
 	}
-	if _, err = os.Stat(merged.Worktree); err != nil {
-		t.Fatal("a preview removed a worktree")
+	if _, err = os.Stat(rebased.Clone); err != nil {
+		t.Fatal("a preview removed a clone")
 	}
 	e.now = e.now.Add(retainNoCommits)
 	done, err := e.r.GC(true)
-	got = byBranch(done)
-	if err != nil || !got["agent/fix-1"].Removed || !got["agent/fix-4"].Removed || got["agent/fix-2"].Removed || got["agent/fix-3"].Removed {
-		t.Fatal(done, err)
-	}
-	if got["agent/fix-3"].Action != "keep" || got["agent/fix-3"].Reason != "has uncommitted changes" {
-		t.Fatal("a dirty worktree was taken for finished", got["agent/fix-3"])
-	}
-	for _, p := range []Prepared{merged, idle} {
-		if _, err = os.Stat(p.Worktree); err == nil {
-			t.Fatal("not removed:", p.Worktree)
+	removed := map[string]bool{"agent/fix-1": true, "agent/fix-5": true, "agent/fix-7": true}
+	for _, c := range done {
+		if c.Removed != removed[c.Branch] || c.Error != "" {
+			t.Fatal(c)
 		}
-		if _, err = execGit(e.repo, "rev-parse", "--verify", "--quiet", "refs/heads/"+p.Branch); err == nil {
-			t.Fatal("branch kept:", p.Branch)
+	}
+	for _, p := range []Prepared{rebased, idle, ff} {
+		if _, err = os.Stat(p.Clone); err == nil {
+			t.Fatal("not removed:", p.Clone)
 		}
 		if _, err = os.Stat(filepath.Dir(p.SettingsFile)); err == nil {
 			t.Fatal("session files kept:", p.Session)
 		}
 	}
-	for _, p := range []Prepared{pending, dirty} {
-		if _, err = os.Stat(p.Worktree); err != nil {
-			t.Fatal("removed work in progress:", p.Worktree)
+	for _, branch := range []string{"agent/fix-1", "agent/fix-7"} {
+		if _, err = execGit(e.repo, "rev-parse", "--verify", "--quiet", "refs/heads/"+branch); err == nil {
+			t.Fatal("the merged branch was kept:", branch)
 		}
 	}
-	if n, _ := e.r.Retained(); n != 2 {
+	if _, err = execGit(e.repo, "rev-parse", "--verify", "--quiet", "refs/heads/agent/fix-3"); err != nil {
+		t.Fatal("an unmerged branch was deleted")
+	}
+	for _, p := range []Prepared{unfetched, review, newer, touched} {
+		if _, err = os.Stat(p.Clone); err != nil {
+			t.Fatal("removed work in progress:", p.Clone)
+		}
+	}
+	if n, _ := e.r.Retained(); n != 4 {
 		t.Fatal("retained", n)
 	}
-	if left, _ := e.r.Launches(); len(left) != 2 {
+	if left, _ := e.r.Launches(); len(left) != 4 {
 		t.Fatal("records", left)
 	}
 }
@@ -327,48 +477,5 @@ func TestSessionNameAndBranch(t *testing.T) {
 		if _, err := Branch(bad); err == nil {
 			t.Fatal(bad, "accepted")
 		}
-	}
-}
-
-// A branch merged by fast-forward has nothing ahead of the base, but its
-// tip moved since the launch: it is merged, not idle.
-func TestGCSeesAFastForwardMerge(t *testing.T) {
-	e := newEnv(t)
-	p, err := e.r.Launch(e.spec("checkout-engineer-1", "FIX-1"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err = os.WriteFile(filepath.Join(p.Worktree, "ff.txt"), []byte("ff\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	e.git(p.Worktree, "add", "ff.txt")
-	e.git(p.Worktree, "commit", "-m", "ff")
-	e.git(e.repo, "merge", "--ff-only", p.Branch)
-	e.git(e.repo, "push", "origin", "main")
-	e.git(e.repo, "fetch", "origin")
-	got, err := e.r.GC(true)
-	if err != nil || len(got) != 1 || !got[0].Removed || got[0].Reason != "merged into origin/main" {
-		t.Fatal(got, err)
-	}
-}
-
-// A worktree that turns out dirty after the launch's own check is never
-// started on; a removal is never forced.
-func TestLaunchRefusesADirtyWorktreeAndRemovalIsNotForced(t *testing.T) {
-	e := newEnv(t)
-	plain := e.r.Git
-	e.r.Git = func(dir string, args ...string) (string, error) {
-		out, err := plain(dir, args...)
-		if len(args) > 1 && args[0] == "worktree" && args[1] == "add" {
-			_ = os.WriteFile(filepath.Join(args[len(args)-2], "stray.txt"), []byte("x"), 0o644)
-		}
-		return out, err
-	}
-	if _, err := e.r.Launch(e.spec("checkout-engineer-1", issueIdent)); err == nil || !strings.Contains(err.Error(), "not clean") || len(e.opens) != 0 {
-		t.Fatal("a dirty worktree was started on:", err)
-	}
-	launches, _ := e.r.Launches()
-	if ok, msg := e.r.remove(launches[0], false, true); ok || msg == "" {
-		t.Fatal("a dirty worktree was removed")
 	}
 }

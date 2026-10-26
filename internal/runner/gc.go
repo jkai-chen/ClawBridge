@@ -1,16 +1,20 @@
 package runner
 
 import (
+	"bufio"
+	"io/fs"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
+	"time"
 )
 
 // Collected is one recorded launch and what gc does with it.
 type Collected struct {
-	Session  string `json:"session"`
-	Worktree string `json:"worktree"`
-	Branch   string `json:"branch"`
+	Session string `json:"session"`
+	Clone   string `json:"clone"`
+	Branch  string `json:"branch"`
 	// Action is remove or keep; Reason says why.
 	Action  string `json:"action"`
 	Reason  string `json:"reason"`
@@ -18,11 +22,20 @@ type Collected struct {
 	Error   string `json:"error,omitempty"`
 }
 
-// GC reviews the runner's own recorded worktrees (RN-M4) and, with
-// confirm, removes those that are finished: the branch is merged into its
-// base, or it is a week old with no commits. It touches only worktrees the
-// runner recorded, never forces a removal, and keeps anything with
-// uncommitted changes.
+var objectID = regexp.MustCompile(`^[0-9a-f]{40}([0-9a-f]{24})?$`)
+
+// GC reviews the runner's own recorded clones (RN-M4) and, with confirm,
+// removes the finished ones. It never runs git inside a clone: the agent
+// could have written its configuration and hooks, and they would run
+// unsandboxed here. It reads the clone's branch from its files and judges
+// the work in the owner's repository, after the owner fetched it:
+//   - merged: the owner's copy of the branch is the clone's, and every
+//     commit of it is in the base by its patch (rebase merges count);
+//   - idle: the branch is still at the launch's base, a week on, and no
+//     file in the clone changed in that week.
+//
+// Anything else is kept: commits not yet fetched or merged, recent
+// changes, or a clone it cannot read.
 func (r *Runner) GC(confirm bool) ([]Collected, error) {
 	all, err := r.Launches()
 	if err != nil {
@@ -31,42 +44,45 @@ func (r *Runner) GC(confirm bool) ([]Collected, error) {
 	var out []Collected
 	var keep []Launch
 	for _, l := range all {
-		c := Collected{Session: l.Session, Worktree: l.Worktree, Branch: l.Branch, Action: "keep"}
-		_, missing := os.Stat(l.Worktree)
-		switch {
-		case missing != nil:
-			c.Action, c.Reason = "remove", "the worktree is already gone"
-		default:
-			status, e := r.Git(l.Worktree, "status", "--porcelain")
-			ahead, e2 := r.Git(l.Repo, "rev-list", "--count", l.Base+".."+l.Branch)
-			// Merges here rebase, so a merged commit has a new ID: git
-			// cherry matches it by its patch instead.
-			cherry, e3 := r.Git(l.Repo, "cherry", l.Base, l.Branch)
-			tip, e4 := r.Git(l.Repo, "rev-parse", "--verify", l.Branch+"^{commit}")
+		c := Collected{Session: l.Session, Clone: l.Clone, Branch: l.Branch, Action: "keep"}
+		proven := false
+		if _, missing := os.Stat(l.Clone); missing != nil {
+			c.Action, c.Reason = "remove", "the clone is already gone"
+		} else {
+			tip, readErr := cloneRef(l.Clone, l.Branch)
+			fetched, fetchErr := r.Git(l.Repo, "rev-parse", "--verify", "--quiet", "refs/heads/"+l.Branch)
 			switch {
-			case e != nil || e2 != nil || e3 != nil || e4 != nil:
-				c.Reason = "could not be read; left as is"
-			case status != "":
-				c.Reason = "has uncommitted changes"
-			case ahead != "0" && allUpstream(cherry):
-				c.Action, c.Reason = "remove", "merged into "+l.Base
-			case ahead == "0" && tip != l.BaseCommit:
-				// Its commits are in the base already (a fast-forward).
-				c.Action, c.Reason = "remove", "merged into "+l.Base
-			case ahead == "0" && r.now().Sub(l.CreatedAt) >= retainNoCommits:
-				c.Action, c.Reason = "remove", "no commits in a week"
-			case ahead == "0":
-				c.Reason = "no commits yet"
+			case readErr != nil:
+				c.Reason = "its branch could not be read; left as is"
+			case tip == l.BaseCommit:
+				changed, walkErr := changedSince(l.Clone, r.now().Add(-retainNoCommits))
+				switch {
+				case walkErr != nil:
+					c.Reason = "its files could not be read; left as is"
+				case r.now().Sub(l.CreatedAt) >= retainNoCommits && !changed:
+					c.Action, c.Reason, proven = "remove", "no commits and no changes in a week", true
+				default:
+					c.Reason = "no commits yet"
+				}
+			case fetchErr != nil || fetched != tip:
+				c.Reason = "has commits the owner has not fetched; fetch them with: git fetch " + quote(l.Clone) + " " + l.Branch + ":" + l.Branch
 			default:
-				c.Reason = "has commits not in " + l.Base + "; waiting for review"
+				cherry, e := r.Git(l.Repo, "cherry", l.Base, l.Branch)
+				_, ancestor := r.Git(l.Repo, "merge-base", "--is-ancestor", l.Branch, l.Base)
+				switch {
+				case e != nil:
+					c.Reason = "could not be compared with " + l.Base + "; left as is"
+				case allUpstream(cherry) || ancestor == nil:
+					c.Action, c.Reason, proven = "remove", "merged into "+l.Base, true
+				default:
+					c.Reason = "has commits not in " + l.Base + "; waiting for review"
+				}
 			}
 		}
 		if confirm && c.Action == "remove" {
-			// A branch whose every commit is upstream, or that has none,
-			// loses nothing when deleted; any other goes only if git agrees.
-			c.Removed, c.Error = r.remove(l, missing != nil, missing == nil)
+			c.Removed, c.Error = r.remove(l, proven)
 		}
-		if !c.Removed || c.Error != "" {
+		if !c.Removed {
 			keep = append(keep, l)
 		}
 		out = append(out, c)
@@ -79,23 +95,69 @@ func (r *Runner) GC(confirm bool) ([]Collected, error) {
 	return out, nil
 }
 
-// remove takes a finished launch away: its worktree (never forced), its
-// branch, and its session files. proven says the branch holds nothing
-// that is not upstream.
-func (r *Runner) remove(l Launch, gone, proven bool) (bool, string) {
-	if !gone {
-		if _, err := r.Git(l.Repo, "worktree", "remove", l.Worktree); err != nil {
-			return false, "git worktree remove: " + err.Error()
-		}
-	}
-	_, _ = r.Git(l.Repo, "worktree", "prune")
-	if proven {
-		_, _ = r.Git(l.Repo, "branch", "-D", l.Branch)
-	} else {
-		_, _ = r.Git(l.Repo, "branch", "-d", l.Branch)
+// remove deletes a finished clone and its session files, and the owner's
+// fetched copy of its branch when the work is proven merged or was never
+// begun.
+func (r *Runner) remove(l Launch, proven bool) (bool, string) {
+	if err := os.RemoveAll(l.Clone); err != nil {
+		return false, err.Error()
 	}
 	_ = os.RemoveAll(filepath.Join(r.StateDir, "sessions", l.Session))
+	if proven {
+		if _, err := r.Git(l.Repo, "rev-parse", "--verify", "--quiet", "refs/heads/"+l.Branch); err == nil {
+			_, _ = r.Git(l.Repo, "branch", "-D", l.Branch)
+		}
+	}
 	return true, ""
+}
+
+// cloneRef reads a branch's commit from the clone's files, without git.
+func cloneRef(clone, branch string) (string, error) {
+	gitDir := filepath.Join(clone, ".git")
+	if raw, err := os.ReadFile(filepath.Join(gitDir, "refs", "heads", filepath.FromSlash(branch))); err == nil {
+		id := strings.TrimSpace(string(raw))
+		if objectID.MatchString(id) {
+			return id, nil
+		}
+		return "", fs.ErrInvalid
+	}
+	f, err := os.Open(filepath.Join(gitDir, "packed-refs"))
+	if err != nil {
+		return "", err
+	}
+	defer f.Close()
+	scan := bufio.NewScanner(f)
+	for scan.Scan() {
+		fields := strings.Fields(scan.Text())
+		if len(fields) == 2 && fields[1] == "refs/heads/"+branch && objectID.MatchString(fields[0]) {
+			return fields[0], nil
+		}
+	}
+	return "", fs.ErrNotExist
+}
+
+// changedSince reports whether any file of the clone, outside its .git,
+// was modified after since. Symbolic links are not followed.
+func changedSince(clone string, since time.Time) (bool, error) {
+	changed := false
+	err := filepath.WalkDir(clone, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() && d.Name() == ".git" && filepath.Dir(path) == clone {
+			return filepath.SkipDir
+		}
+		info, err := d.Info()
+		if err != nil {
+			return err
+		}
+		if info.ModTime().After(since) {
+			changed = true
+			return filepath.SkipAll
+		}
+		return nil
+	})
+	return changed, err
 }
 
 // allUpstream says every commit git cherry lists is already in the base.

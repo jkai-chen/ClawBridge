@@ -23,10 +23,11 @@ import (
 
 const runnerUsage = `clawbridge runner launch ISSUE_UUID --profile ID [--role ROLE] [--repo PATH] [--base REF] [--model MODEL] [--dry-run]
 clawbridge runner gc [--confirm]
-launch starts a Claude Code session for one Linear issue in a visible Orca terminal: an agent/* worktree that cannot
-push, a registered ClawBridge session, and settings that never allow bypass mode and sandbox Bash. gc removes the
-runner's finished worktrees (merged, or a week old without commits); without --confirm it only shows them.
-Settings: <state>/runner/config.json {"model": "", "allowed_domains": [...], "max_retained": 10}.`
+launch starts a Claude Code session for one Linear issue in a visible Orca terminal: its own clone of the repository
+on an agent/* branch that cannot push, a registered ClawBridge session, and settings that never allow bypass mode and
+sandbox Bash. Bring the work in with the git fetch the launch prints. gc removes the runner's finished clones (merged,
+or a week old without commits or changes); without --confirm it only shows them.
+Settings: <state>/runner/config.json {"model": "", "allowed_domains": [...], "max_retained": 10, "work_dir": "~/clawbridge-runs"}.`
 
 // runnerState is the runner's own directory.
 func runnerState() (string, error) {
@@ -77,7 +78,7 @@ func runRunner(ctx context.Context, flags Config, args []string, stdout, stderr 
 	case "gc":
 		f := flag.NewFlagSet("runner gc", flag.ContinueOnError)
 		f.SetOutput(stderr)
-		confirm := f.Bool("confirm", false, "remove the finished worktrees shown")
+		confirm := f.Bool("confirm", false, "remove the finished clones shown")
 		if err = f.Parse(args[1:]); err != nil || f.NArg() != 0 {
 			return errors.Join(err, errors.New(runnerUsage))
 		}
@@ -85,7 +86,7 @@ func runRunner(ctx context.Context, flags Config, args []string, stdout, stderr 
 		if err != nil {
 			return err
 		}
-		return emit(map[string]any{"confirmed": *confirm, "worktrees": out})
+		return emit(map[string]any{"confirmed": *confirm, "clones": out})
 	case "launch":
 		return runnerLaunch(ctx, flags, r, args[1:], stderr, emit)
 	}
@@ -200,7 +201,7 @@ func runnerLaunch(ctx context.Context, flags Config, r *runner.Runner, args []st
 	}
 	prepared, err := r.Launch(spec)
 	if err != nil {
-		if !v.dryRun && prepared.Worktree == "" {
+		if !v.dryRun && prepared.Clone == "" {
 			retireRunnerSession(bounded, executor, scope, spec)
 		}
 		return err

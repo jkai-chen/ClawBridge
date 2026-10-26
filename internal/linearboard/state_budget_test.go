@@ -7,13 +7,22 @@ import (
 	"clawbridge/internal/bus"
 )
 
-// A state move as a hosted server applies it, measured: every Linear tool
-// call and every authoritative state read, on a board whose binding proof
-// is cached as the watcher's is.
-func measureStateMove(t *testing.T, kind, current, phase string, hosted bool) int {
+// measureRow applies one claim marker row with the given parts as a server
+// watcher does (the read binding proof cached, an authoritative state read
+// when hosted) and counts what it spent: every call that would be a Linear
+// tool call, plus each authoritative state read.
+func measureRow(t *testing.T, parts []string, hosted bool) (spent, reserved int) {
 	t.Helper()
-	s, a, p, scope := stateTest(t, kind, current, sfPolicy(), false)
-	a.comments.gos = map[string]map[string]any{"state": a.comments.gos["state"]}
+	s, a, p, scope := stateTest(t, "claim", sfBacklog, sfPolicy(), false)
+	gos := map[string]map[string]any{
+		"comment": {"action": "post", "issue_uuid": issueID, "body": claimBody},
+		"label":   {"action": "add", "issue_uuid": issueID, "label": bus.MarkerLabel},
+		"state":   a.comments.gos["state"],
+	}
+	a.comments.gos = map[string]map[string]any{}
+	for _, k := range parts {
+		a.comments.gos[k] = gos[k]
+	}
 	s.CacheReadBindingProof(BindingProofTTL)
 	p.stateByName = true
 	reads := 0
@@ -27,30 +36,42 @@ func measureStateMove(t *testing.T, kind, current, phase string, hosted bool) in
 			return state, teamID, nil
 		}
 	}
-	// Warm the binding proof, as the row's other parts already did.
+	// The cycle's read proof is already cached when its rows apply.
 	if _, e := s.BindingV2(context.Background(), scope); e != nil {
 		t.Fatal(e)
 	}
 	before := p.tools
-	s.ApplyMarker(context.Background(), scope, "asg_1", phase, nil)
-	if got := settled(a, "state"); got["outcome"] != "done" || len(stateMoves(p)) != 1 {
-		t.Fatal("the move did not run:", got)
+	s.ApplyMarker(context.Background(), scope, "asg_1", "claim", nil)
+	reserved = bus.MarkerRowCalls(len(a.b.LinearTeamIDs), len(a.b.LinearProjectIDs))
+	for _, k := range parts {
+		if got := settled(a, k); got["outcome"] != "done" {
+			t.Fatal(parts, k, "did not apply:", got)
+		}
+		if k == "state" {
+			reserved += bus.MarkerStateCalls
+		}
 	}
-	return p.tools - before + reads
+	return p.tools - before + reads, reserved
 }
 
-// The bus charges a state part MarkerStateCalls up front, and markers are
-// never charged again after: what a move spends, hosted or not, must fit.
-func TestStateMoveCostFitsItsReservation(t *testing.T) {
-	_, a, _, _ := stateTest(t, "claim", sfBacklog, sfPolicy(), false)
-	reserved := bus.MarkerStateCalls(len(a.b.LinearTeamIDs), len(a.b.LinearProjectIDs))
-	for name, spent := range map[string]int{
-		"hosted claim":   measureStateMove(t, "claim", sfBacklog, "claim", true),
-		"hosted release": measureStateMove(t, "release_done", sfProgress, "close", true),
-		"client claim":   measureStateMove(t, "claim", sfBacklog, "claim", false),
+// The bus charges each marker row MarkerRowCalls up front (the row's
+// binding proof included), and MarkerStateCalls more for a live state
+// part; markers are never charged again after. What a row spends must fit.
+func TestMarkerRowCostFitsItsReservation(t *testing.T) {
+	for _, c := range []struct {
+		name   string
+		parts  []string
+		hosted bool
+	}{
+		{"note and label", []string{"comment", "label"}, true},
+		{"state only, hosted", []string{"state"}, true},
+		{"state only, client", []string{"state"}, false},
+		{"all three, hosted", []string{"comment", "label", "state"}, true},
+		{"all three, client", []string{"comment", "label", "state"}, false},
 	} {
+		spent, reserved := measureRow(t, c.parts, c.hosted)
 		if spent > reserved {
-			t.Errorf("%s spends %d Linear calls; the bus reserves %d", name, spent, reserved)
+			t.Errorf("%s spends %d Linear calls; the bus reserves %d", c.name, spent, reserved)
 		}
 	}
 }

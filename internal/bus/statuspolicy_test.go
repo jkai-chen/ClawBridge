@@ -219,7 +219,7 @@ func TestMarkerDueChargesTheStatePart(t *testing.T) {
 	before := w.call("comment_watch_lease", "c", w.fenced(map[string]any{"action": "renew"})).(map[string]any)["budget_used"].(int)
 	due := w.call("marker_due", "c", w.fenced(map[string]any{})).(map[string]any)["markers"].([]any)
 	after := w.call("comment_watch_lease", "c", w.fenced(map[string]any{"action": "renew"})).(map[string]any)["budget_used"].(int)
-	if len(due) != 2 || after-before != markerDueCalls*2+markerStateCalls {
+	if len(due) != 2 || after-before != MarkerRowCalls(0, 0)*2+MarkerStateCalls {
 		t.Fatal(len(due), before, after)
 	}
 }
@@ -238,9 +238,9 @@ func TestStateSettleRecordsAnUnresolvedState(t *testing.T) {
 	}
 }
 
-// A state part is charged by the binding it must prove: one team and two
-// projects add three.
-func TestMarkerDueChargesTheStatePartByTheBinding(t *testing.T) {
+// A marker row is charged by the binding it must prove: one team and two
+// projects add three to each row.
+func TestMarkerDueChargesEachRowByTheBinding(t *testing.T) {
 	w := newWatchHarness(t)
 	w.call("taskboard_set_v2", "a", taskboardArgsV2(0, projectOne, projectTwo))
 	w.setStatusPolicy(0, sfPolicy(true))
@@ -249,7 +249,7 @@ func TestMarkerDueChargesTheStatePartByTheBinding(t *testing.T) {
 	before := w.call("comment_watch_lease", "c", w.fenced(map[string]any{"action": "renew"})).(map[string]any)["budget_used"].(int)
 	due := w.call("marker_due", "c", w.fenced(map[string]any{})).(map[string]any)["markers"].([]any)
 	after := w.call("comment_watch_lease", "c", w.fenced(map[string]any{"action": "renew"})).(map[string]any)["budget_used"].(int)
-	if len(due) != 2 || after-before != markerDueCalls*2+MarkerStateCalls(1, 2) || MarkerStateCalls(1, 2) != markerStateCalls+3 {
+	if len(due) != 2 || after-before != MarkerRowCalls(1, 2)*2+MarkerStateCalls || MarkerRowCalls(1, 2) != markerDueCalls+3 {
 		t.Fatal(len(due), before, after)
 	}
 }

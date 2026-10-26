@@ -123,7 +123,7 @@ func (s *Store) migrate() error {
 	if err = tx.QueryRow("PRAGMA user_version").Scan(&version); err != nil {
 		return err
 	}
-	if version > 14 {
+	if version > 15 {
 		return errors.New("database schema is newer than this ClawBridge binary")
 	}
 	if version == 0 {
@@ -200,6 +200,11 @@ func (s *Store) migrate() error {
 	}
 	if version < 14 {
 		if _, err = tx.Exec(statusPolicySchemaV14 + `PRAGMA user_version=14;`); err != nil {
+			return err
+		}
+	}
+	if version < 15 {
+		if _, err = tx.Exec(healthSchemaV15 + `PRAGMA user_version=15;`); err != nil {
 			return err
 		}
 	}
@@ -407,6 +412,10 @@ var operationArgs = map[string]string{
 	"label_policy_get":            "instance",
 	"status_policy_get":           "instance",
 	"status_policy_set":           "instance expected_revision status_policy",
+	"health_get":                  "instance",
+	"health_set":                  "instance linear_project expected_revision health_policy",
+	"health_due":                  "instance lease_token generation limit",
+	"health_report":               "instance lease_token generation linear_project calls error facts",
 	"doc_seed_get":                "instance parent_kind parent_id",
 	"doc_seed_put":                "instance parent_kind parent_id template template_version state seed_token expect_token document_id seeded_sha256",
 	"label_policy_set":            "instance expected_revision label_policy",
@@ -457,6 +466,14 @@ func validateArgs(op string, a map[string]any) error {
 		case "status_policy":
 			if _, err := ParseStatusPolicy(v); err != nil {
 				return err
+			}
+		case "health_policy":
+			if _, err := ParseHealthPolicy(v); err != nil {
+				return err
+			}
+		case "facts":
+			if _, ok := v.(map[string]any); !ok {
+				return errors.New("facts must be an object")
 			}
 		case "transport":
 			if _, ok := v.(map[string]any); !ok {
@@ -606,7 +623,7 @@ func (s *Store) ExecuteAs(ctx context.Context, principal string, r Request) (Res
 // inbox stamps deliveries, so those keep the locks.
 func pureRead(r Request) bool {
 	switch r.Operation {
-	case "snapshot", "inbox_status", "notification_status", "taskboard_get", "taskboard_get_v2", "taskboard_access", "list_projects", "list_members", "comment_watch_status", "label_policy_get", "status_policy_get", "doc_seed_get":
+	case "snapshot", "inbox_status", "notification_status", "taskboard_get", "taskboard_get_v2", "taskboard_access", "list_projects", "list_members", "comment_watch_status", "label_policy_get", "status_policy_get", "health_get", "doc_seed_get":
 		return true
 	case "list_sessions", "history", "whoami", "linear_comments_posted", "linear_comment_precheck", "intake_policy_get", "intake_trust_list", "intake_list":
 		// Naming a session with its instance makes it a heartbeat read: the
@@ -965,6 +982,14 @@ func (s *Store) execute(ctx context.Context, tx *transaction, r Request) (any, e
 		}
 		return statusPolicyView(ctx, tx, pid)
 	}
+	// Any project member may read project health: it is the fallback's
+	// view (design §6).
+	if r.Operation == "health_get" {
+		if r.Session == "" && str(a, "instance") != "" {
+			return nil, errors.New("instance requires session")
+		}
+		return healthRows(ctx, tx, pid)
+	}
 	if r.Operation == "taskboard_access" || r.Operation == "taskboard_get" || r.Operation == "taskboard_set" || r.Operation == "taskboard_clear" || r.Operation == "taskboard_get_v2" || r.Operation == "taskboard_set_v2" || r.Operation == "taskboard_clear_v2" {
 		if r.Session == "" && str(a, "instance") != "" {
 			return nil, errors.New("instance requires session")
@@ -1061,6 +1086,12 @@ func (s *Store) execute(ctx context.Context, tx *transaction, r Request) (any, e
 		}
 		return s.statusPolicyOp(ctx, tx, w, p, projectRole, nil, r)
 	}
+	if actor == nil && healthOperation(r.Operation) {
+		if str(a, "instance") != "" {
+			return nil, invalid("instance requires session")
+		}
+		return s.healthOp(ctx, tx, w, p, projectRole, nil, r)
+	}
 	// Seeding guide documents is a lead's or owner's CLI command too.
 	if docSeedOperation(r.Operation) {
 		if actor == nil && str(a, "instance") != "" {
@@ -1087,6 +1118,9 @@ func (s *Store) execute(ctx context.Context, tx *transaction, r Request) (any, e
 	}
 	if statusPolicyOperation(r.Operation) {
 		return s.statusPolicyOp(ctx, tx, w, p, projectRole, actor, r)
+	}
+	if healthOperation(r.Operation) {
+		return s.healthOp(ctx, tx, w, p, projectRole, actor, r)
 	}
 	if intakeOperation(r.Operation) {
 		return s.intakeOp(ctx, tx, w, p, projectRole, actor, r)

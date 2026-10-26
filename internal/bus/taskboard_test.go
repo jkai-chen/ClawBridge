@@ -85,10 +85,10 @@ func TestTaskboardSchemaFourAndMigration(t *testing.T) {
 		t.Fatal(e)
 	}
 	var v int
-	if e = s.db.QueryRow("PRAGMA user_version").Scan(&v); e != nil || v != 14 {
+	if e = s.db.QueryRow("PRAGMA user_version").Scan(&v); e != nil || v != 15 {
 		t.Fatal(v, e)
 	}
-	if _, e = s.db.Exec("DROP TABLE linear_status_policy; ALTER TABLE assignment_markers DROP COLUMN state_state; ALTER TABLE assignment_markers DROP COLUMN state_policy_revision; ALTER TABLE assignment_markers DROP COLUMN state_target; ALTER TABLE assignment_markers DROP COLUMN state_landed; ALTER TABLE assignment_markers DROP COLUMN state_skip_reason; ALTER TABLE assignment_markers DROP COLUMN outcome; DROP TABLE linear_doc_seeds; DROP TABLE intake_policies; DROP TABLE intake_trusted; DROP TABLE intake_queue; DROP TABLE intake_tokens; DROP TABLE intake_counters; DROP TABLE watch_ticks; DROP TABLE linear_write_unsettled; DROP TABLE linear_write_ledger; DROP TABLE linear_app_tokens; DROP TABLE linear_label_policy; DROP TABLE linear_comment_ledger; DROP TABLE watch_cursors; DROP TABLE watch_events; DROP TABLE watch_lease; DROP TABLE assignment_markers; DROP TABLE principal_subjects; DROP TABLE principal_events; ALTER TABLE workspaces DROP COLUMN allowed_domains; DROP TABLE taskboard_bindings; DROP TABLE session_assignments; ALTER TABLE projects DROP COLUMN coordinator_session; PRAGMA user_version=2"); e != nil {
+	if _, e = s.db.Exec("DROP TABLE project_health; DROP TABLE linear_status_policy; ALTER TABLE assignment_markers DROP COLUMN state_state; ALTER TABLE assignment_markers DROP COLUMN state_policy_revision; ALTER TABLE assignment_markers DROP COLUMN state_target; ALTER TABLE assignment_markers DROP COLUMN state_landed; ALTER TABLE assignment_markers DROP COLUMN state_skip_reason; ALTER TABLE assignment_markers DROP COLUMN outcome; DROP TABLE linear_doc_seeds; DROP TABLE intake_policies; DROP TABLE intake_trusted; DROP TABLE intake_queue; DROP TABLE intake_tokens; DROP TABLE intake_counters; DROP TABLE watch_ticks; DROP TABLE linear_write_unsettled; DROP TABLE linear_write_ledger; DROP TABLE linear_app_tokens; DROP TABLE linear_label_policy; DROP TABLE linear_comment_ledger; DROP TABLE watch_cursors; DROP TABLE watch_events; DROP TABLE watch_lease; DROP TABLE assignment_markers; DROP TABLE principal_subjects; DROP TABLE principal_events; ALTER TABLE workspaces DROP COLUMN allowed_domains; DROP TABLE taskboard_bindings; DROP TABLE session_assignments; ALTER TABLE projects DROP COLUMN coordinator_session; PRAGMA user_version=2"); e != nil {
 		t.Fatal(e)
 	}
 	s.Close()
@@ -101,7 +101,7 @@ func TestTaskboardSchemaFourAndMigration(t *testing.T) {
 	if e != nil {
 		t.Fatal(e)
 	}
-	if _, e = s.db.Exec("PRAGMA user_version=15"); e != nil {
+	if _, e = s.db.Exec("PRAGMA user_version=16"); e != nil {
 		t.Fatal(e)
 	}
 	s.Close()

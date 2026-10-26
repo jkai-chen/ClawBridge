@@ -34,6 +34,13 @@ A domain is a slice of your bound Linear work with a person responsible for it:
   dispatcher releases it.
 - **Limits:** at most 20 domains, 50 trusted sessions each, and 100 match entries each.
 
+## Presence
+
+The dispatcher judges a claim's session by its `liveness` (see [usage](usage.md)): `working`, `idle`, `asleep` or
+`gone`, from the lease the session's MCP server or `notify` renews. An `asleep` session whose lease expired while it
+said `working` is not working. The client's `working`/`idle` claim only orders candidates; it never grants
+anything.
+
 ## Commands
 
 ```sh

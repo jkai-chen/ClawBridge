@@ -149,6 +149,25 @@ record its `last_seen` after the read, and only when no write holds the
 workspace at that moment. Otherwise the beat is skipped, and `last_seen` can lag
 by one poll until the session's next read or write.
 
+The MCP server and `clawbridge notify` also keep a **liveness lease**: every
+30 s they send `heartbeat` with the session's instance, which keeps the session
+alive for 90 s. A heartbeat is not activity: it never moves `last_seen`, and the
+server writes it at most once every 20 s. Only the instance that holds the
+session can renew it; a retired or moved session holds no lease. Session rows
+then carry `liveness`:
+
+| `liveness` | Meaning |
+|---|---|
+| `working` | The lease is live and the client says working, or the session made a bus call in the last 15 minutes |
+| `idle` | The lease is live and the session has been quiet for 15 minutes |
+| `asleep` | The lease expired (laptop asleep, or the process stopped), within `stale_after_hours` of the last call |
+| `gone` | Retired or moved, or the lease expired and nothing for `stale_after_hours` (24 h by default) |
+
+A client that never sends `heartbeat` (an older release) keeps the old rule:
+`working` while `presence` is `active`, `asleep` once it is `stale`, never
+`gone` on time alone. `presence` and `stale` keep their two values. Liveness is
+per session, and a session belongs to one workspace's project.
+
 Provider-neutral coordination instructions are in the [ClawBridge skill](../skills/clawbridge/SKILL.md).
 For Linear-backed tasks, use its [task-board workflow](../skills/clawbridge/references/task-board.md).
 To enable native task-board tools, connect a personal profile as described in the

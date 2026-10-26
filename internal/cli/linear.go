@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -187,8 +188,10 @@ type linearFlags struct {
 	revision                                                                                                             int64
 	teamBoard, confirm, noBrowser, tokenStdin, resolveLabels, comments, repair, once                                     bool
 	noSeedDocs, update, reseed                                                                                           bool
-	initiative                                                                                                           string
+	initiative, commit                                                                                                   string
 	maxBytes                                                                                                             int
+	allowPatterns                                                                                                        []string
+	split, recreate                                                                                                      bool
 }
 type repeatedIDs []string
 
@@ -318,6 +321,13 @@ func parseLinear(command string, args []string, stderr io.Writer) (linearFlags, 
 		f.IntVar(&v.limit, "limit", 50, "list: page size (1–50)")
 		f.StringVar(&v.cursor, "cursor", "", "list: the next cursor from the previous page of the same parent")
 		f.IntVar(&v.maxBytes, "max-bytes", 0, "get: return at most this much content (default 32768, at most 65536)")
+		f.StringVar(&v.operation, "operation-id", "", "publish: required durable publish identifier")
+		f.StringVar(&v.title, "title", "", "publish: the document's title (default: the file's first # heading)")
+		f.StringVar(&v.commit, "commit", "", "publish: publish the file at this commit, HEAD or an ancestor (default HEAD)")
+		f.BoolVar(&v.split, "split", false, "publish: split a file over the size limit at its ## headings")
+		f.BoolVar(&v.recreate, "recreate", false, "publish: create the documents again, over an edited, archived or unreadable one, or to change the number of parts")
+		f.Var((*repeatedIDs)(&v.allowPatterns), "allow-pattern", "publish, project owner only: publish over this deny pattern ID for this operation (repeat; needs --confirm)")
+		f.BoolVar(&v.confirm, "confirm", false, "publish: create or update the documents shown in the preview")
 		min, max = 0, 1
 	case "doc-policy":
 		f.StringVar(&v.policyFile, "file", "", "set: JSON file {\"source_root\": PATH, \"deny_patterns\": [{\"id\", \"regex\"}], \"initiatives\": [UUID]}")
@@ -707,7 +717,7 @@ func linearWriteInput(command string, v linearFlags, pos []string) (linearboard.
 
 func runLinear(ctx context.Context, flags Config, args []string, stdout, stderr io.Writer) error {
 	if len(args) == 0 || len(args) == 1 && (args[0] == "--help" || args[0] == "-h" || args[0] == "help") {
-		_, err := io.WriteString(stdout, "clawbridge linear connect|import|profiles|status|logout|teams|projects|binding|link|seed-docs|unlink|context|issues|issue|states|labels|members|create|update|comment|relation|watch\nProject owner only: label create|rename, project create, initiative create|add-project, label-policy show|set, status-policy show|set, doc-policy set, health set|enable|disable, admin audit-replay.\nProject health (any member): health show.\nLinear documents (any member): doc list|get, initiative show, doc-policy show.\nYour name in agent markers: display-name set NAME|clear|capture --profile ID.\nUse COMMAND --help for explicit flags. Token import accepts --token-stdin only.\n")
+		_, err := io.WriteString(stdout, "clawbridge linear connect|import|profiles|status|logout|teams|projects|binding|link|seed-docs|unlink|context|issues|issue|states|labels|members|create|update|comment|relation|watch\nProject owner only: label create|rename, project create, initiative create|add-project, label-policy show|set, status-policy show|set, doc-policy set, health set|enable|disable, admin audit-replay.\nProject health (any member): health show.\nLinear documents (any member): doc list|get, initiative show, doc-policy show. Project owner or lead: doc publish FILE.\nYour name in agent markers: display-name set NAME|clear|capture --profile ID.\nUse COMMAND --help for explicit flags. Token import accepts --token-stdin only.\n")
 		return err
 	}
 	command := args[0]
@@ -729,14 +739,14 @@ func runLinear(ctx context.Context, flags Config, args []string, stdout, stderr 
 	case command == "label" && adminAction != "create" && adminAction != "rename",
 		command == "project" && adminAction != "create",
 		command == "initiative" && adminAction != "create" && adminAction != "add-project" && adminAction != "show",
-		command == "doc" && adminAction != "list" && adminAction != "get",
+		command == "doc" && adminAction != "list" && adminAction != "get" && adminAction != "publish",
 		command == "doc-policy" && adminAction != "show" && adminAction != "set",
 		command == "label-policy" && adminAction != "show" && adminAction != "set",
 		command == "status-policy" && adminAction != "show" && adminAction != "set",
 		command == "health" && adminAction != "show" && adminAction != "set" && adminAction != "enable" && adminAction != "disable",
 		command == "display-name" && adminAction != "set" && adminAction != "clear" && adminAction != "capture",
 		command == "admin" && adminAction != "audit-replay":
-		return errors.New("use linear doc list|get, initiative show, doc-policy show|set, label create|rename, project create, initiative create|add-project, label-policy show|set, status-policy show|set, health show|set|enable|disable, display-name set|clear|capture, or admin audit-replay")
+		return errors.New("use linear doc list|get|publish, initiative show, doc-policy show|set, label create|rename, project create, initiative create|add-project, label-policy show|set, status-policy show|set, health show|set|enable|disable, display-name set|clear|capture, or admin audit-replay")
 	}
 	parseAs := command
 	if command == "initiative" && adminAction == "show" {
@@ -929,6 +939,9 @@ func runLinear(ctx context.Context, flags Config, args []string, stdout, stderr 
 	case "members":
 		data, err = service.MembersV2(bounded, scope, v.team, v.limit, v.cursor)
 	case "doc":
+		if adminAction == "publish" {
+			return linearPublish(bounded, service, scope, v, pos, emit)
+		}
 		data, err = linearDoc(bounded, service, scope, adminAction, v, pos)
 	case "doc-policy":
 		if adminAction == "show" {
@@ -1127,4 +1140,50 @@ func linearDoc(ctx context.Context, service *linearboard.Service, scope bus.Requ
 		in.ParentKind, in.ParentID = kind, id
 	}
 	return service.DocListV2(ctx, scope, in)
+}
+
+// linearPublish runs linear doc publish FILE: a preview, or with --confirm
+// the publish, written out even when it is refused, which then fails.
+func linearPublish(ctx context.Context, service *linearboard.Service, scope bus.Request, v linearFlags, pos []string, emit func(any) error) error {
+	if len(pos) != 1 || v.maxBytes != 0 || v.cursor != "" {
+		return errors.New("doc publish takes one FILE, one of --team, --linear-project or --initiative, and --operation-id")
+	}
+	in := linearboard.PublishInput{File: pos[0], Commit: v.commit, Title: v.title, OperationID: v.operation, AllowPatterns: v.allowPatterns, Split: v.split, Recreate: v.recreate, Confirm: v.confirm, Git: sourceGit}
+	for kind, id := range map[string]string{"team": v.team, "project": v.project, "initiative": v.initiative} {
+		if id == "" {
+			continue
+		}
+		if in.ParentKind != "" {
+			return errors.New("doc publish takes one of --team, --linear-project or --initiative")
+		}
+		in.ParentKind, in.ParentID = kind, id
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return err
+	}
+	in.Home = home
+	result, err := service.PublishV2(ctx, scope, in)
+	if err != nil {
+		return err
+	}
+	if err = emit(result); err != nil {
+		return err
+	}
+	if result.Refused != "" {
+		return errors.New("nothing was published: " + result.Refused)
+	}
+	return nil
+}
+
+// sourceGit runs git in the owner's own source repository for a publish;
+// git show's output is kept byte for byte.
+func sourceGit(dir string, trimmed bool, args ...string) (string, error) {
+	cmd := exec.Command("git", args...)
+	cmd.Dir = dir
+	out, err := cmd.Output()
+	if trimmed {
+		return strings.TrimSpace(string(out)), err
+	}
+	return string(out), err
 }

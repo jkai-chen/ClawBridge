@@ -82,7 +82,7 @@ func TestRunnerMCPEntryIsMCPInstalls(t *testing.T) {
 // launch after the session is registered (found in the live re-spike).
 func TestNewRunnerIsComplete(t *testing.T) {
 	r := newRunner(t.TempDir())
-	if r.Git == nil || r.Terminal == nil || r.ClaudeVersion == nil {
+	if r.Git == nil || r.Terminal == nil || r.Close == nil || r.ClaudeVersion == nil {
 		t.Fatal("the runner lacks a hook", r)
 	}
 }

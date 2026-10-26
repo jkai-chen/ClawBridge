@@ -23,10 +23,11 @@ import (
 )
 
 const runnerUsage = `clawbridge runner launch ISSUE_UUID --profile ID [--role ROLE] [--repo PATH] [--base REF] [--model MODEL] [--dry-run]
+clawbridge runner fetch SESSION
 clawbridge runner gc [--confirm]
 launch starts a Claude Code session for one Linear issue in a visible Orca terminal: its own clone of the repository
 on an agent/* branch that cannot push, a registered ClawBridge session, and settings that never allow bypass mode and
-sandbox Bash. Bring the work in with the git fetch the launch prints. gc removes the runner's finished clones (merged,
+sandbox Bash. fetch brings a session's branch into your checkout as agent/<id>, refusing one that adds token-shaped text. gc removes the runner's finished clones (merged,
 or a week old without commits or changes); without --confirm it only shows them.
 Settings: <state>/runner/config.json {"model": "", "allowed_domains": [...], "max_retained": 10, "work_dir": "~/clawbridge-runs"}.`
 
@@ -53,7 +54,7 @@ func gitIn(dir string, args ...string) (string, error) {
 
 // newRunner is the runner with this machine's git, Orca and claude.
 func newRunner(state string) *runner.Runner {
-	return &runner.Runner{StateDir: state, Git: gitIn, Terminal: orcaTerminal, ClaudeVersion: claudeVersion}
+	return &runner.Runner{StateDir: state, Git: gitIn, Terminal: orcaTerminal, Close: orcaClose, ClaudeVersion: claudeVersion}
 }
 
 // claudeVersion is the installed claude's version line.
@@ -67,16 +68,31 @@ var claudeVersion = func() (string, error) {
 
 // orcaTerminal opens a visible Orca terminal tab in the owner's checkout,
 // which Orca manages; the command changes into the clone itself.
-var orcaTerminal = func(owner, title, command string) error {
+var orcaTerminal = func(owner, title, command string) (string, error) {
 	out, err := exec.Command("orca", "terminal", "create", "--worktree", "path:"+owner, "--title", title, "--command", command, "--json").CombinedOutput()
 	if err != nil {
 		text := strings.TrimSpace(string(out))
 		if len(text) > 300 {
 			text = text[:300]
 		}
-		return fmt.Errorf("%v: %s", err, text)
+		return "", fmt.Errorf("%v: %s", err, text)
 	}
-	return nil
+	var created struct {
+		Result struct {
+			Terminal struct {
+				Handle string `json:"handle"`
+			} `json:"terminal"`
+		} `json:"result"`
+	}
+	if json.Unmarshal(out, &created) != nil || created.Result.Terminal.Handle == "" {
+		return "", errors.New("orca did not name the terminal it opened")
+	}
+	return created.Result.Terminal.Handle, nil
+}
+
+// orcaClose closes a terminal the launch opened.
+var orcaClose = func(handle string) error {
+	return exec.Command("orca", "terminal", "close", "--terminal", handle, "--json").Run()
 }
 
 func runRunner(ctx context.Context, flags Config, args []string, stdout, stderr io.Writer) error {
@@ -105,6 +121,16 @@ func runRunner(ctx context.Context, flags Config, args []string, stdout, stderr 
 		return emit(map[string]any{"confirmed": *confirm, "clones": out})
 	case "launch":
 		return runnerLaunch(ctx, flags, r, args[1:], stderr, emit)
+	case "fetch":
+		if len(args) != 2 || strings.HasPrefix(args[1], "-") {
+			return errors.New("runner fetch takes one session name")
+		}
+		out, err := r.Fetch(args[1])
+		if err != nil {
+			_ = emit(out)
+			return err
+		}
+		return emit(out)
 	}
 	return errors.New(runnerUsage)
 }
@@ -217,8 +243,16 @@ func runnerLaunch(ctx context.Context, flags Config, r *runner.Runner, args []st
 	}
 	prepared, err := r.Launch(spec)
 	if err != nil {
-		if !v.dryRun && prepared.Clone == "" {
-			retireRunnerSession(bounded, executor, scope, spec)
+		// A launch that did not start, or whose sandbox self-test failed,
+		// leaves no live session: it is retired, with its own deadline
+		// since the self-test wait outlasts the launch's.
+		if !v.dryRun {
+			retire, cancel := context.WithTimeout(context.WithoutCancel(ctx), 20*time.Second)
+			retireRunnerSession(retire, executor, scope, spec)
+			cancel()
+		}
+		if prepared.Clone != "" {
+			return fmt.Errorf("%w; the clone %s stays for clawbridge runner gc", err, prepared.Clone)
 		}
 		return err
 	}

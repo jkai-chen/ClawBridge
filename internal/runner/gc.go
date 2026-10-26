@@ -65,7 +65,7 @@ func (r *Runner) GC(confirm bool) ([]Collected, error) {
 					c.Reason = "no commits yet"
 				}
 			case fetchErr != nil || fetched != tip:
-				c.Reason = "has commits the owner has not fetched; fetch them with: git fetch " + quote(l.Clone) + " " + l.Branch + ":" + l.Branch
+				c.Reason = "has commits the owner has not fetched; fetch them with: clawbridge runner fetch " + l.Session
 			default:
 				cherry, e := r.Git(l.Repo, "cherry", l.Base, l.Branch)
 				_, ancestor := r.Git(l.Repo, "merge-base", "--is-ancestor", l.Branch, l.Base)

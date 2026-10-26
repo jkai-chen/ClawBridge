@@ -42,6 +42,8 @@ type authorityV2 struct {
 	// appStates answers linear_app_states per team; without it the
 	// operation is refused.
 	appStates map[string][]any
+	// initiatives are the document policy's, which doc_policy_get answers.
+	initiatives []string
 }
 
 func (a *authorityV2) Execute(_ context.Context, r bus.Request) (bus.Result, error) {
@@ -80,6 +82,9 @@ func (a *authorityV2) Execute(_ context.Context, r bus.Request) (bus.Result, err
 	if r.Operation == "status_policy_set" {
 		a.statusSet = r.Args
 		return bus.Result{Source: "local-authority", Data: map[string]any{"revision": 1}}, nil
+	}
+	if r.Operation == "doc_policy_get" {
+		return bus.Result{Source: "local-authority", Data: map[string]any{"revision": 1, "initiatives": append([]string{}, a.initiatives...)}}, nil
 	}
 	if r.Operation == "status_policy_get" {
 		if a.statusErr != nil {

@@ -195,3 +195,21 @@ func TestDispatcherAllowLists(t *testing.T) {
 		t.Fatal("a person messaged the dispatcher session")
 	}
 }
+
+// Schema 17 has every table the dispatcher's later steps use, including
+// the agent credential's binding secret (AG-M2a).
+func TestDispatcherSchemaColumns(t *testing.T) {
+	h := newHarness(t)
+	for _, q := range []string{
+		`SELECT binding_secret_sha256,bound_instance,used_at FROM dispatcher_agent_credentials LIMIT 0`,
+		`SELECT state,ciphertext,nonce,config_revision FROM dispatcher_model_keys LIMIT 0`,
+		`SELECT token_sha256 FROM dispatcher_launcher_tokens LIMIT 0`,
+		`SELECT issue_project_id,issue_labels FROM session_assignments LIMIT 0`,
+	} {
+		rows, err := h.s.db.Query(q)
+		if err != nil {
+			t.Fatal(q, err)
+		}
+		rows.Close()
+	}
+}

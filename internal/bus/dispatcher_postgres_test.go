@@ -50,3 +50,20 @@ func TestPostgresDispatcherRoles(t *testing.T) {
 		t.Fatal(out)
 	}
 }
+
+// The same columns on Postgres.
+func TestPostgresDispatcherSchemaColumns(t *testing.T) {
+	f := newPGIdentityFixture(t)
+	for _, q := range []string{
+		`SELECT binding_secret_sha256,bound_instance,used_at FROM dispatcher_agent_credentials LIMIT 0`,
+		`SELECT state,ciphertext,nonce,config_revision FROM dispatcher_model_keys LIMIT 0`,
+		`SELECT token_sha256 FROM dispatcher_launcher_tokens LIMIT 0`,
+		`SELECT issue_project_id,issue_labels FROM session_assignments LIMIT 0`,
+	} {
+		rows, err := f.s.db.Query(q)
+		if err != nil {
+			t.Fatal(q, err)
+		}
+		rows.Close()
+	}
+}

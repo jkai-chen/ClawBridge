@@ -187,6 +187,19 @@ func TestDocGetCutsLongContent(t *testing.T) {
 			t.Fatalf("CutContent(%q, %d) = %q", c.in, c.max, got)
 		}
 	}
+	if !strings.Contains(got.Note, "partial read: 11 of") || !strings.Contains(got.Note, "--max-bytes") {
+		t.Fatal("note", got.Note)
+	}
+	// The default reads 64 KiB; a longer document says it can't be read whole.
+	long := strings.Repeat(strings.Repeat("x", 99)+"\n", 700)
+	p.docs[docID] = doc(linearprovider.DocParents{TeamID: teamID}, long)
+	if got, e = s.DocGetV2(context.Background(), scope, docID, 0); e != nil || !got.Truncated || len(got.UntrustedContent) > DocMaxBytes || len(got.UntrustedContent) < DocMaxBytes-100 || !strings.Contains(got.Note, "at most 65536") {
+		t.Fatal("default read", len(got.UntrustedContent), got.Note, e)
+	}
+	p.docs[docID] = doc(linearprovider.DocParents{TeamID: teamID}, "short\n")
+	if got, e = s.DocGetV2(context.Background(), scope, docID, 0); e != nil || got.Truncated || got.Note != "" {
+		t.Fatal("whole read has a note", got.Note, e)
+	}
 	if _, e = s.DocGetV2(context.Background(), scope, docID, DocMaxBytes+1); e == nil {
 		t.Fatal("max_bytes over the cap")
 	}

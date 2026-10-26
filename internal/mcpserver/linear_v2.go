@@ -147,7 +147,7 @@ func addDocToolsV2(s *mcp.Server, b *binding, p TaskboardToolsV2) {
 		}, "required": []string{}},
 		"doc_get": {"type": "object", "additionalProperties": false, "properties": map[string]any{
 			"id":        uuid,
-			"max_bytes": map[string]any{"type": "integer", "minimum": 1, "maximum": 65536, "description": "Return at most this much content, cut at a line boundary (default 32768); content_bytes and content_sha256 describe the whole document"},
+			"max_bytes": map[string]any{"type": "integer", "minimum": 1, "maximum": 65536, "description": "Return at most this much content, cut at a line boundary (default and most 65536; a cut read has truncated: true and a note); content_bytes and content_sha256 describe the whole document"},
 		}, "required": []string{"id"}},
 	}
 	for _, operation := range []string{"doc_list", "doc_get"} {

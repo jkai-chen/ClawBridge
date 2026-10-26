@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 	"unicode/utf8"
 
@@ -21,7 +22,7 @@ import (
 
 const (
 	// DocDefaultBytes and DocMaxBytes bound the content a read returns.
-	DocDefaultBytes = 32 << 10
+	DocDefaultBytes = 64 << 10
 	DocMaxBytes     = 64 << 10
 	// docListCalls bounds a list without a parent: its list calls, one
 	// page per in-scope parent.
@@ -55,6 +56,9 @@ type DocV2 struct {
 	ContentBytes     int           `json:"content_bytes"`
 	ContentSHA256    string        `json:"content_sha256"`
 	Truncated        bool          `json:"truncated"`
+	// Note says, when the content is cut, that this is a partial read and
+	// how to read more, so a cut is never mistaken for missing content.
+	Note string `json:"note,omitempty"`
 }
 
 // DocSummaryV2 is a document in a list: never its content.
@@ -331,7 +335,21 @@ func (s *Service) DocGetV2(ctx context.Context, scope bus.Request, id string, ma
 	}
 	sum := sha256.Sum256([]byte(doc.Content))
 	content, truncated := CutContent(doc.Content, maxBytes)
-	return DocV2{ID: doc.ID, Parents: parents, UpdatedAt: doc.UpdatedAt, Archived: doc.Archived, UntrustedTitle: doc.Title, UntrustedContent: content, ContentBytes: len(doc.Content), ContentSHA256: hex.EncodeToString(sum[:]), Truncated: truncated}, nil
+	out := DocV2{ID: doc.ID, Parents: parents, UpdatedAt: doc.UpdatedAt, Archived: doc.Archived, UntrustedTitle: doc.Title, UntrustedContent: content, ContentBytes: len(doc.Content), ContentSHA256: hex.EncodeToString(sum[:]), Truncated: truncated}
+	if truncated {
+		out.Note = partialReadNote(len(content), len(doc.Content), maxBytes)
+	}
+	return out, nil
+}
+
+// partialReadNote says a read is partial, and how to read more where more
+// can be read.
+func partialReadNote(got, whole, max int) string {
+	note := fmt.Sprintf("partial read: %d of %d bytes; the document was cut at a line boundary, nothing is missing from it.", got, whole)
+	if max < DocMaxBytes {
+		return note + fmt.Sprintf(" Read more with --max-bytes (MCP max_bytes) up to %d.", DocMaxBytes)
+	}
+	return note + fmt.Sprintf(" A read returns at most %d bytes; the rest is not readable here.", DocMaxBytes)
 }
 
 // CutContent keeps at most max bytes of s, ending at a line boundary when

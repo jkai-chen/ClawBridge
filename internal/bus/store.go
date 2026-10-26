@@ -419,6 +419,9 @@ var operationArgs = map[string]string{
 	"status_policy_get":           "instance",
 	"status_policy_set":           "instance expected_revision status_policy",
 	"doc_policy_get":              "instance",
+	"doc_watch_due":               "instance lease_token generation",
+	"doc_watch_report":            "instance lease_token generation polled_at documents complete error",
+	"doc_verify_report":           "instance lease_token generation document_id content_sha256 error",
 	"doc_publication_get":         "instance parent_kind parent_id source_path",
 	"doc_publication_put":         "instance parent_kind parent_id source_path part_number part_count generation state publish_token expect_token document_id published_sha256 source_commit source_sha256",
 	"doc_publish_override":        "instance parent_kind parent_id source_path operation_id pattern_ids lines source_commit",
@@ -493,6 +496,20 @@ func validateArgs(op string, a map[string]any) error {
 		case "transport":
 			if _, ok := v.(map[string]any); !ok {
 				return errors.New("transport must be an object")
+			}
+		case "documents":
+			list, ok := v.([]any)
+			if !ok {
+				return errors.New("documents must be an array of objects")
+			}
+			for _, item := range list {
+				if _, ok := item.(map[string]any); !ok {
+					return errors.New("documents must be an array of objects")
+				}
+			}
+		case "complete":
+			if _, ok := v.(bool); !ok {
+				return errors.New("complete must be boolean")
 			}
 		case "comments":
 			if _, ok := v.([]any); !ok {

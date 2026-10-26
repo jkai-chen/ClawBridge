@@ -72,7 +72,7 @@ func (s *Store) ensureSystemSession(ctx context.Context, tx *transaction, wid, p
 // writes of the comment watch, claim markers, project health and the task
 // board binding.
 func systemOperation(op string) bool {
-	return commentOperation(op) || op == "taskboard_get_v2" || op == "taskboard_get" || op == "taskboard_access" || op == "status_policy_get" || healthSystemOperation(op) || op == "marker_spent"
+	return commentOperation(op) || op == "taskboard_get_v2" || op == "taskboard_get" || op == "taskboard_access" || op == "status_policy_get" || healthSystemOperation(op) || op == "marker_spent" || docWatchOperation(op)
 }
 
 // ExecuteSystem runs one bus operation as a project's system session. It
@@ -127,6 +127,8 @@ func (s *Store) ExecuteSystem(ctx context.Context, projectID string, r Request) 
 		out = accessMap(TaskboardAccess{WorkspaceID: wid, ProjectID: projectID, SessionID: str(actor, "id"), SessionName: SystemSessionName, CanWrite: true, ProjectRole: "owner"})
 	case "health_due", "health_report":
 		out, err = scoped.healthSystemOp(ctx, tx, w, p, actor, r)
+	case "doc_watch_due", "doc_watch_report", "doc_verify_report":
+		out, err = scoped.docWatchOp(ctx, tx, w, p, actor, r)
 	default:
 		out, err = scoped.commentOp(ctx, tx, w, p, "owner", actor, r)
 	}

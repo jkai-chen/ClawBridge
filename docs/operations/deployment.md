@@ -8,8 +8,22 @@ and Caddy also need egress for Google signing certificates and TLS operations.
 Choose the deployment project, VM/zone, DNS, persistent data disk, private
 configuration, backup bucket and administrative access path for your environment.
 Keep database data on a separately mounted disk and maintain an off-VM recovery
-copy. The runbook examples retain the existing Compose project name
-`clawbridge-phase3`; keep your initialized project/volumes consistent on updates.
+copy.
+
+The examples use the reference deployment's names: the Compose project
+`clawbridge-phase3` and, later, a private environment file kept at
+`/opt/clawbridge/.env.phase3`. A new deployment may choose its own names. Use one
+`COMPOSE_PROJECT_NAME` and the same `--project-name` everywhere, and never change
+it on an existing deployment: Compose finds the running containers by it, and the
+Caddy volumes (and the database volume, when `CLAWBRIDGE_POSTGRES_DATA_PATH` is not
+set) are named after it.
+
+This guide runs and updates a deployment. It does not yet walk through a first
+deployment from nothing: creating the VM, disk, static IP, firewall and bucket,
+installing Docker with the Compose plugin, creating the Google OAuth consent
+screen and the two OAuth clients, the first `docker compose up`, and initializing
+the workspace with `clawbridge setup --cloud`. Those steps happen in your cloud and
+Google consoles; a first-deployment guide is planned.
 Historical pilot resource names and observations are in the
 [deployment archive](../archive/reviews/deployment-pilot.md).
 
@@ -194,14 +208,17 @@ CLAWBRIDGE_OAUTH_CLIENT_ID=DESKTOP_CLIENT_ID.apps.googleusercontent.com
 CLAWBRIDGE_OAUTH_DEVICE_CLIENT_ID=DEVICE_CLIENT_ID.apps.googleusercontent.com
 CLAWBRIDGE_OAUTH_CLIENT_SECRET=DESKTOP_CLIENT_INSTALLED_APP_CREDENTIAL
 CLAWBRIDGE_OAUTH_DEVICE_CLIENT_SECRET=DEVICE_CLIENT_INSTALLED_APP_CREDENTIAL
-CLAWBRIDGE_BOOTSTRAP_OWNER=owner-identity@your-project.iam.gserviceaccount.com
+CLAWBRIDGE_BOOTSTRAP_OWNER=you@example.com
 CLAWBRIDGE_POSTGRES_DATA_PATH=/var/lib/clawbridge-postgres/data
 CLAWBRIDGE_BACKUP_BUCKET=private-clawbridge-backup-bucket
 COMPOSE_PROJECT_NAME=clawbridge-phase3
 ```
 
 Use a random hexadecimal password so it can be interpolated safely into the
-Postgres URL. Install the environment file as
+Postgres URL; `openssl rand -hex 32` makes one. `CLAWBRIDGE_BOOTSTRAP_OWNER` is
+the verified identity that will run `clawbridge setup --cloud` once and become
+the workspace owner: normally your own Google account's email, the one you sign
+in with. Install the environment file as
 `/etc/clawbridge/clawbridge.env`, owned by `root:root` with mode `0600`. This file
 is a deployment secret, not a ClawBridge message. Docker configuration rendering
 may include its value; keep rendered config and logs private.
@@ -220,7 +237,10 @@ MCP/installer arguments or agent configuration.
 ### The ClawBridge Linear app (optional)
 
 With these three entries, agents' Linear writes are made by the server as the
-ClawBridge Linear app, never by a client:
+ClawBridge Linear app, never by a client. Creating that app in Linear (an OAuth
+application with client credentials and the scopes below), installing it in the
+Linear workspace and adding it to private teams are not yet documented step by
+step here; they need a Linear workspace admin.
 
 ```text
 CLAWBRIDGE_LINEAR_APP_CLIENT_ID=<the app's client ID>
@@ -380,9 +400,11 @@ The guard protects the whole Docker daemon on this host, so restarting Docker
 affects every container on the VM; inspect `docker ps -a` before installing or
 testing it.
 
-An existing deployment may keep the private environment at
-`/opt/clawbridge/.env.phase3` and exposes the stable systemd path as a symlink.
-Verify the target and link it before installing the units:
+The reference deployment keeps the private environment at
+`/opt/clawbridge/.env.phase3` and exposes the stable systemd path as a symlink. A
+new deployment can install the file directly at `/etc/clawbridge/clawbridge.env`
+and skip the `test -f` and `ln` lines below. Otherwise, verify the target and link
+it before installing the units:
 
 ```sh
 sudo install -d -o root -g root -m 0755 /etc/clawbridge /usr/local/libexec/clawbridge

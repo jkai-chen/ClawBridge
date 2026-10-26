@@ -1,8 +1,8 @@
 # Install and update
 
-**[v0.1.0 is available](https://github.com/jkai-chen/ClawBridge/releases/tag/v0.1.0)**
-with versioned binaries, installers and SHA256 checksums. Source builds remain
-available below.
+Every published release on [GitHub Releases](https://github.com/jkai-chen/ClawBridge/releases)
+carries versioned binaries, installers and SHA256 checksums. Source builds remain
+available below. In the pinned examples, replace `vX.Y.Z` with a release tag.
 
 For macOS or Linux, the installer selects Intel/AMD64 or ARM64, verifies the
 release checksum and installs into `~/.local/bin`:
@@ -19,8 +19,8 @@ To pin the installer and binary version:
 
 ```sh
 curl --fail --silent --show-error --location --proto '=https' --proto-redir '=https' \
-  https://github.com/jkai-chen/ClawBridge/releases/download/v0.1.0/install.sh \
-  | sh -s -- --version v0.1.0
+  https://github.com/jkai-chen/ClawBridge/releases/download/vX.Y.Z/install.sh \
+  | sh -s -- --version vX.Y.Z
 ```
 
 Use `--bin-dir /absolute/path` to choose another destination. After installing,
@@ -56,7 +56,7 @@ clawbridge --version
 clawbridge
 ```
 
-Use `-Version v0.1.0` for an explicit binary version or `-InstallDir 'C:\absolute\path'`
+Use `-Version vX.Y.Z` for an explicit binary version or `-InstallDir 'C:\absolute\path'`
 for a different directory; add them after the script path. Default is
 `%LOCALAPPDATA%\Programs\ClawBridge`. As on macOS and Linux, the installer then runs
 `clawbridge skill install` once, a failure only warns, and `-NoSkill` skips it.

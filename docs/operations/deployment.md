@@ -10,20 +10,20 @@ configuration, backup bucket and administrative access path for your environment
 Keep database data on a separately mounted disk and maintain an off-VM recovery
 copy.
 
-The examples use the reference deployment's names: the Compose project
-`clawbridge-phase3` and, later, a private environment file kept at
-`/opt/clawbridge/.env.phase3`. A new deployment may choose its own names. Use one
-`COMPOSE_PROJECT_NAME` and the same `--project-name` everywhere, and never change
-it on an existing deployment: Compose finds the running containers by it, and the
-Caddy volumes (and the database volume, when `CLAWBRIDGE_POSTGRES_DATA_PATH` is not
-set) are named after it.
+The private environment file is `/etc/clawbridge/clawbridge.env` (it may be a
+symlink to a file kept elsewhere). Its `COMPOSE_PROJECT_NAME` names the Compose
+project. Use the same `--project-name` everywhere, and never change it on an
+existing deployment: Compose finds the running containers by it, and the Caddy
+volumes (and the database volume, when `CLAWBRIDGE_POSTGRES_DATA_PATH` is not set)
+are named after it. The commands below read it from a shell variable, so a
+command copied without it stops instead of starting a second, empty stack:
 
-This guide runs and updates a deployment. It does not yet walk through a first
-deployment from nothing: creating the VM, disk, static IP, firewall and bucket,
-installing Docker with the Compose plugin, creating the Google OAuth consent
-screen and the two OAuth clients, the first `docker compose up`, and initializing
-the workspace with `clawbridge setup --cloud`. Those steps happen in your cloud and
-Google consoles; a first-deployment guide is planned.
+```sh
+PROJECT=$(sudo sed -n 's/^COMPOSE_PROJECT_NAME=//p' /etc/clawbridge/clawbridge.env)
+```
+
+This guide runs and updates a deployment. For a first deployment from nothing,
+see the [first-deployment guide](first-deployment.md).
 Historical pilot resource names and observations are in the
 [deployment archive](../archive/reviews/deployment-pilot.md).
 
@@ -71,7 +71,7 @@ audited as `operator:local`:
 
 ```sh
 sudo docker compose --env-file /etc/clawbridge/clawbridge.env \
-  --project-name clawbridge-phase3 \
+  --project-name "${PROJECT:?set PROJECT first}" \
   -f /opt/clawbridge/repo/deploy/compose.yaml \
   run --rm --no-deps api operator principal-unbind EMAIL --confirm
 ```
@@ -115,7 +115,7 @@ If a list is damaged and admits no one, the host operator clears it:
 
 ```sh
 sudo docker compose --env-file /etc/clawbridge/clawbridge.env \
-  --project-name clawbridge-phase3 \
+  --project-name "${PROJECT:?set PROJECT first}" \
   -f /opt/clawbridge/repo/deploy/compose.yaml \
   run --rm --no-deps api operator workspace-clear-domains TEAM --confirm
 ```
@@ -128,7 +128,7 @@ app:
 
 ```sh
 sudo docker compose --env-file /etc/clawbridge/clawbridge.env \
-  --project-name clawbridge-phase3 \
+  --project-name "${PROJECT:?set PROJECT first}" \
   -f /opt/clawbridge/repo/deploy/compose.yaml \
   run --rm --no-deps api operator linear-app-probe --confirm [--project UUID]
 ```
@@ -211,7 +211,7 @@ CLAWBRIDGE_OAUTH_DEVICE_CLIENT_SECRET=DEVICE_CLIENT_INSTALLED_APP_CREDENTIAL
 CLAWBRIDGE_BOOTSTRAP_OWNER=you@example.com
 CLAWBRIDGE_POSTGRES_DATA_PATH=/var/lib/clawbridge-postgres/data
 CLAWBRIDGE_BACKUP_BUCKET=private-clawbridge-backup-bucket
-COMPOSE_PROJECT_NAME=clawbridge-phase3
+COMPOSE_PROJECT_NAME=clawbridge
 ```
 
 Use a random hexadecimal password so it can be interpolated safely into the
@@ -389,7 +389,7 @@ sudo systemctl daemon-reload
 sudo systemctl restart docker
 sudo systemctl is-active docker
 sudo docker compose --env-file /etc/clawbridge/clawbridge.env \
-  --project-name clawbridge-phase3 \
+  --project-name "${PROJECT:?set PROJECT first}" \
   -f /opt/clawbridge/repo/deploy/compose.yaml up -d
 ```
 
@@ -402,16 +402,16 @@ The guard protects the whole Docker daemon on this host, so restarting Docker
 affects every container on the VM; inspect `docker ps -a` before installing or
 testing it.
 
-The reference deployment keeps the private environment at
-`/opt/clawbridge/.env.phase3` and exposes the stable systemd path as a symlink. A
-new deployment can install the file directly at `/etc/clawbridge/clawbridge.env`
-and skip the `test -f` and `ln` lines below. Otherwise, verify the target and link
-it before installing the units:
+A deployment may keep the private environment elsewhere, for example at
+`/opt/clawbridge/clawbridge.env`, and expose the stable systemd path as a symlink.
+A deployment that installs the file directly at `/etc/clawbridge/clawbridge.env`
+skips the `test -f` and `ln` lines below. Otherwise, verify the target and link it
+before installing the units:
 
 ```sh
 sudo install -d -o root -g root -m 0755 /etc/clawbridge /usr/local/libexec/clawbridge
-test -f /opt/clawbridge/.env.phase3
-sudo ln -sfn /opt/clawbridge/.env.phase3 /etc/clawbridge/clawbridge.env
+test -f /opt/clawbridge/clawbridge.env
+sudo ln -sfn /opt/clawbridge/clawbridge.env /etc/clawbridge/clawbridge.env
 sudo test -r /etc/clawbridge/clawbridge.env
 sudo install -o root -g root -m 0755 \
   /opt/clawbridge/repo/deploy/backup-postgres.sh \
@@ -485,7 +485,7 @@ and require a successful result and uploaded checksum. Confirm the persistent
 mount, existing containers, stable private env symlink, and sufficient disk space.
 Extract into a new empty directory; retain the previous source directory under a
 unique timestamped recovery name before moving the new directory to the stable
-path. Do not replace `/opt/clawbridge/.env.phase3` or database/Caddy volumes.
+path. Do not replace the private environment file or the database/Caddy volumes.
 
 ```sh
 # Set these again in the VM shell: local operator variables do not cross SSH.
@@ -500,13 +500,13 @@ sudo mv /opt/clawbridge/repo "/opt/clawbridge/repo-recovery-$stamp"
 sudo mv "/opt/clawbridge/repo-next-$stamp" /opt/clawbridge/repo
 printf '%s\n' "$DEPLOY_SHA" | sudo tee /opt/clawbridge/repo/DEPLOYED_SHA
 sudo docker compose --env-file /etc/clawbridge/clawbridge.env \
-  --project-name clawbridge-phase3 \
+  --project-name "${PROJECT:?set PROJECT first}" \
   -f /opt/clawbridge/repo/deploy/compose.yaml config --quiet
 sudo docker compose --env-file /etc/clawbridge/clawbridge.env \
-  --project-name clawbridge-phase3 \
+  --project-name "${PROJECT:?set PROJECT first}" \
   -f /opt/clawbridge/repo/deploy/compose.yaml build api
 sudo docker compose --env-file /etc/clawbridge/clawbridge.env \
-  --project-name clawbridge-phase3 \
+  --project-name "${PROJECT:?set PROJECT first}" \
   -f /opt/clawbridge/repo/deploy/compose.yaml up -d --no-deps api
 ```
 

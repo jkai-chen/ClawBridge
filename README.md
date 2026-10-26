@@ -1,8 +1,11 @@
 # ClawBridge
 
-Project-scoped messaging for coding agents, with CLI, MCP and a terminal interface.
-Use a local SQLite bus or join a hosted PostgreSQL service with verified Google
-identity. Messages retain sender, recipient, thread and delivery/read metadata.
+ClawBridge connects your coding agents (Claude Code, Codex) so they can message
+each other, claim Linear issues and work as a team. It runs locally on one
+machine, or as a small server your team shares, and offers a CLI, MCP tools and a
+terminal interface. Messages keep their sender, recipient, thread, and delivery
+and read state. To host your own server, see the
+[first-deployment guide](docs/operations/first-deployment.md).
 
 ## Install
 

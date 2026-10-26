@@ -19,6 +19,29 @@ Its Docker access is root-equivalent, so it is kept small, and it is fenced in b
    of it. Privileged mode, binds, mounts, volumes, devices, added capabilities, another network, extra env, another
    image digest or a missing limit are all refused. So is any other endpoint, query parameter or path shape.
 
+## The egress proxy
+
+`clawbridge-agentd egress --listen IP:PORT --policy FILE` is the one process on every owner's internal network
+(design §5.3). It holds no secrets and does no TLS interception.
+
+- **CONNECT only.** Plain proxying gets 405, and anything else gets 400.
+- **Per source network.** Each owner's subnet may reach exactly its own `host:port` entries: the ClawBridge server and
+  that owner's provider, two at most. Another owner's provider, another host and another port are all refused.
+- **No rebinding.** The proxy resolves a name itself and refuses the CONNECT if any address in the answer is not
+  public (loopback, private, link-local such as cloud metadata, CGNAT). It then dials the address it checked. An IP
+  literal passes only when it is listed itself, and must be public.
+- **The policy** is a JSON file agentd writes from the server's per-owner config:
+
+  ```json
+  {"networks": [{"owner_ref": "p_…", "source": "172.30.1.0/24",
+                 "allow": ["bridge.example.com:443", "api.anthropic.com:443"]}]}
+  ```
+
+  It is reread every 2 seconds. A change closes the open tunnels it no longer allows. An unreadable or invalid file
+  refuses all egress until it is valid again.
+- **Limits:** 32 tunnels per network, 10 minutes idle, 10 seconds for the request and the dial.
+- **Logs:** the owner ref, the target, the outcome and the byte counts. Never the tunnel's bytes.
+
 ## The fixed spec
 
 The spec is compiled in. The server says which owner refs should run, never how.
@@ -61,13 +84,14 @@ clawbridge-agentd run
 Done:
 - the proxy and its boundary tests;
 - the reconciler and the Docker calls, tested through the real proxy against a fake daemon;
-- the configuration checks.
+- the configuration checks;
+- the egress proxy and its tests (fake DNS and upstream).
 
 Next:
 - **The server's launcher endpoints:** the wanted set, minting the one-time credential, and the report. Until they
   exist, `run` exits saying so.
-- **The egress proxy** on each `cbnet-*` network, so an owner's agent reaches only the server and that owner's
-  provider.
+- **Running the egress proxy:** as a container on every `cbnet-*` network plus one outbound network. That needs a
+  second fixed spec in the socket proxy, a fixed subnet per `cbnet-*` network, and agentd writing the policy.
 - **Deploy:** the `cbagent` user, the rootless daemon and the systemd units. The deploy also loads the pinned
   image into that daemon, because the proxy allows no pull.
 - **Real-daemon tests:** in CI, against a real rootless daemon. A create through the proxy is refused. With the

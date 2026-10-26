@@ -176,6 +176,13 @@ type lockedWriter struct {
 	w  io.Writer
 }
 
+// String returns what was written so far.
+func (l *lockedWriter) String() string {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return fmt.Sprint(l.w)
+}
+
 func (l *lockedWriter) Write(p []byte) (int, error) {
 	l.mu.Lock()
 	defer l.mu.Unlock()

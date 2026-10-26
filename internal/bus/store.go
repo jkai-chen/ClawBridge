@@ -1194,7 +1194,7 @@ func (s *Store) execute(ctx context.Context, tx *transaction, r Request) (any, e
 	if r.Operation == "whoami" {
 		provenance, mode := "local-os-user-unverified", "local"
 		if s.postgres {
-			provenance, mode = "google-id-token", "cloud"
+			provenance, mode = s.provenance(), "cloud"
 		}
 		if actor != nil {
 			live, e := liveAssignment(ctx, tx, pid, actor["id"].(string))
@@ -1203,7 +1203,16 @@ func (s *Store) execute(ctx context.Context, tx *transaction, r Request) (any, e
 			}
 			actor["assignment"] = assignmentView(live, actor)
 		}
-		return map[string]any{"workspace": shownWorkspace(w, w["owner_principal"] == s.principal), "project": p, "session": actor, "principal": s.principal, "identity_provenance": provenance, "verified": s.postgres, "storage_mode": mode, "online": true}, nil
+		out := map[string]any{"workspace": shownWorkspace(w, w["owner_principal"] == s.principal), "project": p, "session": actor, "principal": s.principal, "identity_provenance": provenance, "verified": s.postgres, "storage_mode": mode, "online": true}
+		if s.postgres && s.identity != nil && s.identity.Issuer == DeviceIssuer {
+			device, e := one(ctx, tx, `SELECT * FROM devices WHERE device_id=?`, s.identity.Subject)
+			if e != nil {
+				return nil, e
+			}
+			view := deviceView(device, stamp())
+			out["device"] = map[string]any{"device_id": view["device_id"], "label": view["label"], "kind": view["kind"], "key_store": view["key_store"], "expires_at": view["expires_at"], "status": view["status"]}
+		}
+		return out, nil
 	}
 	// The owner's admin commands are CLI-only and may run without a session:
 	// the Linear write is authorized sessionless, so its audit and the

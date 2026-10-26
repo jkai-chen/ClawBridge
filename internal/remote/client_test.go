@@ -189,7 +189,7 @@ func TestCredentialSourceSelectionAndConstraints(t *testing.T) {
 
 	invalid := base
 	invalid.CredentialSource = "metadata"
-	if _, err = credentialTokenSource(ctx, invalid); err == nil || !strings.Contains(err.Error(), "oauth, gcloud or adc") {
+	if _, err = credentialTokenSource(ctx, invalid); err == nil || !strings.Contains(err.Error(), "oauth, gcloud, adc or device") {
 		t.Fatalf("unknown source accepted: %v", err)
 	}
 	invalid = base

@@ -317,7 +317,7 @@ func (s *Store) snapshot(ctx context.Context, tx *transaction, w, p map[string]a
 			delete(row, "instance")
 		}
 	}
-	result := map[string]any{"workspace": shownWorkspace(w, false), "project": p, "session": actor, "principal": s.principal, "verified": true, "identity_provenance": "google-id-token", "storage_mode": "cloud", "snapshot_at": now}
+	result := map[string]any{"workspace": shownWorkspace(w, false), "project": p, "session": actor, "principal": s.principal, "verified": true, "identity_provenance": s.provenance(), "storage_mode": "cloud", "snapshot_at": now}
 	for k, v := range datasets {
 		result[k] = v
 	}

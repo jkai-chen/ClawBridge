@@ -36,6 +36,7 @@ func runInstall(ctx context.Context, flags Config, args []string, stdout, stderr
 		{"server", c.Server}, {"audience", c.Audience}, {"account", c.Account}, {"impersonate-service-account", c.ImpersonateServiceAccount},
 		{"principal", c.Principal}, {"cache", c.Cache}, {"credential-source", c.CredentialSource}, {"credentials-file", c.CredentialsFile},
 		{"oauth-client-id", c.OAuthClientID}, {"oauth-device-client-id", c.OAuthDeviceClientID}, {"oauth-keyring-service", c.OAuthKeyringService},
+		{"device-id", c.DeviceID}, {"key-store", c.KeyStore},
 	} {
 		if item.value != "" {
 			inherited = append(inherited, "--"+item.name, item.value)
@@ -53,7 +54,7 @@ func mcpSelection(c Config, path, agent, target, name, session, instance string)
 			return path
 		}
 		return ""
-	}(), Agent: agent, Name: name, Path: target, DB: c.DB, Workspace: c.Workspace, Project: c.Project, Session: session, Instance: instance, Mode: c.Mode, Server: c.Server, Audience: c.Audience, Account: c.Account, ImpersonateServiceAccount: c.ImpersonateServiceAccount, Principal: c.Principal, Cache: c.Cache, CredentialSource: c.CredentialSource, CredentialsFile: c.CredentialsFile, OAuthClientID: c.OAuthClientID, OAuthDeviceClientID: c.OAuthDeviceClientID, OAuthKeyringService: c.OAuthKeyringService}
+	}(), Agent: agent, Name: name, Path: target, DB: c.DB, Workspace: c.Workspace, Project: c.Project, Session: session, Instance: instance, Mode: c.Mode, Server: c.Server, Audience: c.Audience, Account: c.Account, ImpersonateServiceAccount: c.ImpersonateServiceAccount, Principal: c.Principal, Cache: c.Cache, CredentialSource: c.CredentialSource, CredentialsFile: c.CredentialsFile, OAuthClientID: c.OAuthClientID, OAuthDeviceClientID: c.OAuthDeviceClientID, OAuthKeyringService: c.OAuthKeyringService, DeviceID: c.DeviceID, KeyStore: c.KeyStore}
 }
 
 func runDoctorCommand(ctx context.Context, flags Config, args []string, stdout, stderr io.Writer) error {

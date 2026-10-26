@@ -26,6 +26,7 @@ type Options struct {
 	Mode, Server, Audience, Account, ImpersonateServiceAccount, Principal, Cache string
 	CredentialSource, CredentialsFile, OAuthClientID                             string
 	OAuthDeviceClientID, OAuthKeyringService                                     string
+	DeviceID, KeyStore                                                           string
 	DryRun                                                                       bool
 }
 
@@ -70,6 +71,8 @@ func RunWithIO(args []string, stdout, stderr io.Writer) error {
 	f.StringVar(&o.OAuthClientID, "oauth-client-id", "", "active OAuth Desktop client ID")
 	f.StringVar(&o.OAuthDeviceClientID, "oauth-device-client-id", "", "separate device-flow OAuth client ID")
 	f.StringVar(&o.OAuthKeyringService, "oauth-keyring-service", "", "OS keychain service name")
+	f.StringVar(&o.DeviceID, "device-id", "", "this device's ID, for the device credential source")
+	f.StringVar(&o.KeyStore, "key-store", "", "where the device key is kept: keyring, file or env")
 	f.BoolVar(&o.DryRun, "dry-run", false, "preview the entry without writing files")
 	f.Bool("json", true, "return JSON (the default output format)")
 	if err := f.Parse(args); err != nil {
@@ -169,7 +172,7 @@ func Install(o Options) (Result, error) {
 	switch o.Mode {
 	case "local":
 		if o.Server != "" || o.Audience != "" || o.Account != "" || o.ImpersonateServiceAccount != "" || o.Principal != "" || o.Cache != "" ||
-			o.CredentialSource != "" || o.CredentialsFile != "" || o.OAuthClientID != "" || o.OAuthDeviceClientID != "" || o.OAuthKeyringService != "" {
+			o.CredentialSource != "" || o.CredentialsFile != "" || o.OAuthClientID != "" || o.OAuthDeviceClientID != "" || o.OAuthKeyringService != "" || o.DeviceID != "" || o.KeyStore != "" {
 			return r, errors.New("cloud credential routing cannot be supplied for a local MCP entry")
 		}
 		argv = append(argv, "--db", db)
@@ -199,12 +202,19 @@ func Install(o Options) (Result, error) {
 			CredentialSource: o.CredentialSource, CredentialsFile: o.CredentialsFile,
 			OAuthClientID: o.OAuthClientID, OAuthDeviceClientID: o.OAuthDeviceClientID,
 			OAuthKeyringService: o.OAuthKeyringService,
+			DeviceID:            o.DeviceID, KeyStore: o.KeyStore,
 		})
 		if e != nil {
 			return r, e
 		}
-		argv = append(argv, "--server", route.URL, "--audience", route.Audience, "--credential-source", route.CredentialSource)
+		if route.CredentialSource == remote.CredentialSourceDevice {
+			argv = append(argv, "--server", route.URL, "--credential-source", route.CredentialSource)
+		} else {
+			argv = append(argv, "--server", route.URL, "--audience", route.Audience, "--credential-source", route.CredentialSource)
+		}
 		switch route.CredentialSource {
+		case remote.CredentialSourceDevice:
+			argv = append(argv, "--device-id", route.DeviceID, "--key-store", route.KeyStore)
 		case remote.CredentialSourceGcloud:
 			argv = append(argv, "--account", route.Account, "--impersonate-service-account", route.ImpersonateServiceAccount)
 		case remote.CredentialSourceADC:

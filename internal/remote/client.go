@@ -20,6 +20,8 @@ import (
 
 	"clawbridge/internal/auth"
 	"clawbridge/internal/bus"
+	"clawbridge/internal/devicekey"
+	"clawbridge/internal/devicesign"
 	"clawbridge/internal/mirror"
 	"golang.org/x/oauth2"
 	"google.golang.org/api/impersonate"
@@ -30,6 +32,9 @@ const (
 	CredentialSourceGcloud = "gcloud"
 	CredentialSourceADC    = "adc"
 	CredentialSourceOAuth  = "oauth"
+	// CredentialSourceDevice signs each request with this device's key
+	// (live/AUTH-INVITE-DESIGN.md §5): there is no bearer token.
+	CredentialSourceDevice = "device"
 )
 
 type Config struct {
@@ -46,6 +51,16 @@ type Config struct {
 	OAuthClientSecret         string
 	OAuthDeviceClientSecret   string
 	OAuthKeyringService       string
+	// DeviceID and KeyStore select a device route's key; KeyHome is the
+	// state directory a file key lives under.
+	DeviceID string
+	KeyStore string
+	KeyHome  string
+	// ClockOffset is a device route's stored clock correction, measured at
+	// ClockOffsetAt; SaveClockOffset, when set, keeps a new one.
+	ClockOffset     time.Duration
+	ClockOffsetAt   time.Time
+	SaveClockOffset func(time.Duration, time.Time)
 }
 
 // Route is the safe, non-secret routing metadata needed to restart a cloud
@@ -63,6 +78,8 @@ type Route struct {
 	OAuthClientID             string
 	OAuthDeviceClientID       string
 	OAuthKeyringService       string
+	DeviceID                  string
+	KeyStore                  string
 }
 
 func (c Config) PublicRoute() Route {
@@ -78,6 +95,8 @@ func (c Config) PublicRoute() Route {
 		OAuthClientID:             c.OAuthClientID,
 		OAuthDeviceClientID:       c.OAuthDeviceClientID,
 		OAuthKeyringService:       c.OAuthKeyringService,
+		DeviceID:                  c.DeviceID,
+		KeyStore:                  c.KeyStore,
 	}
 }
 
@@ -198,12 +217,20 @@ func (s *ADCTokenSource) Token(ctx context.Context) (string, error) {
 type Client struct {
 	config     Config
 	tokens     TokenSource
+	signer     *devicesign.Signer
 	http       *http.Client
 	mu         sync.Mutex
 	selections map[string][]mirror.Selection
 }
 
 func New(c Config) (*Client, error) {
+	if c.CredentialSource == CredentialSourceDevice {
+		signer, err := NewDeviceSigner(c)
+		if err != nil {
+			return nil, err
+		}
+		return NewWithSigner(c, signer, &http.Client{Timeout: 20 * time.Second})
+	}
 	tokens, err := credentialTokenSource(context.Background(), c)
 	if err != nil {
 		return nil, err
@@ -228,6 +255,8 @@ func credentialTokenSource(ctx context.Context, c Config) (TokenSource, error) {
 		return &GcloudTokenSource{Account: source.Account, Audience: source.Audience, ImpersonateServiceAccount: source.ImpersonateServiceAccount}, nil
 	case CredentialSourceADC:
 		return newADCTokenSource(ctx, source)
+	case CredentialSourceDevice:
+		return nil, &credentialError{errors.New("a device route signs each request; it has no token source")}
 	case CredentialSourceOAuth:
 		if c.Audience != source.OAuthClientID {
 			return nil, &credentialError{errors.New("OAuth audience must equal the active OAuth client ID; run login again")}
@@ -243,8 +272,32 @@ func credentialTokenSource(ctx context.Context, c Config) (TokenSource, error) {
 		}
 		return &wrappedOAuthTokenSource{source: tokens}, nil
 	}
-	return nil, errors.New("credential source must be oauth, gcloud or adc")
+	return nil, errors.New("credential source must be oauth, gcloud, adc or device")
 }
+
+// NewDeviceSigner loads a device route's key from its store and signs for
+// the server's origin.
+func NewDeviceSigner(c Config) (*devicesign.Signer, error) {
+	route, err := ValidateRoute(c)
+	if err != nil {
+		return nil, &credentialError{err}
+	}
+	if route.CredentialSource != CredentialSourceDevice {
+		return nil, &credentialError{errors.New("not a device route")}
+	}
+	u, _ := url.Parse(route.URL)
+	if route.KeyStore == devicesign.StoreFile && !filepath.IsAbs(route.KeyHome) {
+		return nil, &credentialError{errors.New("a file device key needs the absolute ClawBridge state directory")}
+	}
+	key, err := devicesign.Load(devicesign.Location{Store: route.KeyStore, Host: u.Host, Home: route.KeyHome, DeviceID: route.DeviceID})
+	if err != nil {
+		return nil, &credentialError{err}
+	}
+	return devicesign.NewSigner(key, Origin(u), c.ClockOffset, c.ClockOffsetAt), nil
+}
+
+// Origin is a server URL's origin, as device signatures cover it.
+func Origin(u *url.URL) string { return strings.ToLower(u.Scheme + "://" + u.Host) }
 
 func newADCTokenSource(ctx context.Context, c Config) (TokenSource, error) {
 	if ctx == nil {
@@ -325,6 +378,24 @@ func ValidateRoute(c Config) (Config, error) {
 			c.OAuthDeviceClientSecret != "" || c.OAuthKeyringService != "" {
 			return Config{}, errors.New("ADC credential source cannot be combined with OAuth client settings")
 		}
+	case CredentialSourceDevice:
+		// Google settings left in the profile are inert here: they let
+		// logout find the old credential, and a switch back.
+		if !devicekey.ValidID(c.DeviceID) {
+			return Config{}, errors.New("device credential source requires this device's ID")
+		}
+		if !devicesign.ValidStore(c.KeyStore) {
+			return Config{}, errors.New("device credential source requires key_store keyring, file or env")
+		}
+		u, err := url.Parse(c.URL)
+		if err != nil || u.Host == "" || (u.Path != "" && u.Path != "/") || u.RawQuery != "" || u.Fragment != "" || u.User != nil {
+			return Config{}, errors.New("a device route's server URL must be the server's origin, with no path")
+		}
+		if c.URL == "" || c.Principal == "" || c.CachePath == "" {
+			return Config{}, errors.New("cloud credential routing requires server URL, expected principal and an explicit cache path")
+		}
+		c.URL = strings.TrimRight(c.URL, "/")
+		return c, nil
 	case CredentialSourceOAuth:
 		if c.OAuthClientID == "" {
 			return Config{}, errors.New("OAuth credential source requires an explicit client ID")
@@ -336,7 +407,7 @@ func ValidateRoute(c Config) (Config, error) {
 			return Config{}, errors.New("OAuth credential source cannot be combined with gcloud account, impersonation or credentials-file settings")
 		}
 	default:
-		return Config{}, errors.New("explicit credential source must be oauth, gcloud or adc; no fallback is available")
+		return Config{}, errors.New("explicit credential source must be oauth, gcloud, adc or device; no fallback is available")
 	}
 	if c.URL == "" || c.Audience == "" || c.Principal == "" {
 		return Config{}, errors.New("cloud credential routing requires server URL, audience and expected principal")
@@ -354,7 +425,31 @@ func NewWithTokenSource(c Config, tokens TokenSource) (*Client, error) {
 	return NewWithHTTPClient(c, tokens, &http.Client{Timeout: 20 * time.Second})
 }
 func NewWithHTTPClient(c Config, tokens TokenSource, httpClient *http.Client) (*Client, error) {
-	if c.CredentialSource != "" {
+	if tokens == nil {
+		return nil, errors.New("cloud client requires an audience, token source and HTTP client")
+	}
+	return newClient(c, tokens, nil, httpClient)
+}
+
+// NewWithSigner is a client that signs every request with a device key.
+func NewWithSigner(c Config, signer *devicesign.Signer, httpClient *http.Client) (*Client, error) {
+	if signer == nil {
+		return nil, errors.New("a device client requires a signer")
+	}
+	if c.DeviceID != "" && c.DeviceID != signer.DeviceID() {
+		return nil, errors.New("the device signer's key is not this route's device")
+	}
+	if c.Principal == "" {
+		return nil, errors.New("a device client requires its expected principal")
+	}
+	c.CredentialSource, c.DeviceID = CredentialSourceDevice, signer.DeviceID()
+	return newClient(c, nil, signer, httpClient)
+}
+
+func newClient(c Config, tokens TokenSource, signer *devicesign.Signer, httpClient *http.Client) (*Client, error) {
+	// A signer was built from a validated route, or given by a caller that
+	// holds the key; the origin check below binds it to this server.
+	if c.CredentialSource != "" && signer == nil {
 		var err error
 		c, err = ValidateRoute(c)
 		if err != nil {
@@ -371,8 +466,11 @@ func NewWithHTTPClient(c Config, tokens TokenSource, httpClient *http.Client) (*
 	if u.Scheme != "https" && !(u.Scheme == "http" && loopback) {
 		return nil, errors.New("cloud server requires HTTPS; HTTP is permitted only on loopback")
 	}
-	if c.Audience == "" || tokens == nil || httpClient == nil {
+	if (signer == nil && c.Audience == "") || httpClient == nil {
 		return nil, errors.New("cloud client requires an audience, token source and HTTP client")
+	}
+	if signer != nil && (signer.Origin() != Origin(u) || (u.Path != "" && u.Path != "/")) {
+		return nil, errors.New("the device signer's origin is not this server's, or the server URL has a path")
 	}
 	c.URL = strings.TrimRight(u.String(), "/")
 	c.Principal = strings.ToLower(c.Principal)
@@ -381,7 +479,7 @@ func NewWithHTTPClient(c Config, tokens TokenSource, httpClient *http.Client) (*
 	if copyClient.Timeout == 0 {
 		copyClient.Timeout = 20 * time.Second
 	}
-	return &Client{config: c, tokens: tokens, http: &copyClient, selections: map[string][]mirror.Selection{}}, nil
+	return &Client{config: c, tokens: tokens, signer: signer, http: &copyClient, selections: map[string][]mirror.Selection{}}, nil
 }
 
 // LinearWriteTimeout bounds a linear_write request: past the server's
@@ -410,33 +508,31 @@ func (e *HTTPError) Error() string {
 	return fmt.Sprintf("cloud request rejected (%d, %s); no write queued", e.Status, e.Code)
 }
 func (c *Client) call(ctx context.Context, r bus.Request) (bus.Result, bool, error) {
-	token, err := c.tokens.Token(ctx)
-	if err != nil {
-		// Token acquisition happens entirely before transport. Cancellation remains
-		// distinct, while every callback/source error is definitive and therefore
-		// cannot authorize a mirror read.
-		if ctx != nil && ctx.Err() != nil {
-			return bus.Result{}, false, ctx.Err()
+	token := ""
+	if c.signer == nil {
+		var err error
+		token, err = c.tokens.Token(ctx)
+		if err != nil {
+			// Token acquisition happens entirely before transport. Cancellation remains
+			// distinct, while every callback/source error is definitive and therefore
+			// cannot authorize a mirror read.
+			if ctx != nil && ctx.Err() != nil {
+				return bus.Result{}, false, ctx.Err()
+			}
+			var credential *credentialError
+			if errors.As(err, &credential) {
+				return bus.Result{}, false, err
+			}
+			return bus.Result{}, false, asCredentialError(err, "cannot acquire the configured ClawBridge credential; run login again")
 		}
-		var credential *credentialError
-		if errors.As(err, &credential) {
-			return bus.Result{}, false, err
+		if len(token) == 0 || len(token) > 16384 || strings.ContainsAny(token, " \r\n\t") {
+			return bus.Result{}, false, errors.New("invalid identity token from credential source")
 		}
-		return bus.Result{}, false, asCredentialError(err, "cannot acquire the configured ClawBridge credential; run login again")
-	}
-	if len(token) == 0 || len(token) > 16384 || strings.ContainsAny(token, " \r\n\t") {
-		return bus.Result{}, false, errors.New("invalid identity token from credential source")
 	}
 	raw, err := json.Marshal(r)
 	if err != nil || len(raw) > 128<<10 {
 		return bus.Result{}, false, errors.New("invalid or oversized cloud request")
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.config.URL+"/v1/execute", bytes.NewReader(raw))
-	if err != nil {
-		return bus.Result{}, false, errors.New("invalid cloud request URL")
-	}
-	req.Header.Set("Authorization", "Bearer "+token)
-	req.Header.Set("Content-Type", "application/json")
 	client := c.http
 	if r.Operation == "linear_write" {
 		// The server may take up to a minute on a write it makes as the
@@ -446,16 +542,11 @@ func (c *Client) call(ctx context.Context, r bus.Request) (bus.Result, bool, err
 		longer.Timeout = LinearWriteTimeout
 		client = &longer
 	}
-	response, err := client.Do(req)
+	status, encoded, err := c.send(ctx, client, http.MethodPost, "/v1/execute", raw, token)
 	if err != nil {
-		return bus.Result{}, ctx.Err() == nil, errors.New("cloud transport unavailable; operation outcome may be uncertain, no write queued")
+		return bus.Result{}, status == 0 && ctx.Err() == nil, err
 	}
-	defer response.Body.Close()
-	encoded, err := io.ReadAll(io.LimitReader(response.Body, (16<<20)+1))
-	if err != nil || len(encoded) > 16<<20 {
-		return bus.Result{}, false, errors.New("invalid or oversized cloud response")
-	}
-	if response.StatusCode != http.StatusOK {
+	if status != http.StatusOK {
 		code, message := "rejected", ""
 		var body struct {
 			Error struct {
@@ -465,14 +556,14 @@ func (c *Client) call(ctx context.Context, r bus.Request) (bus.Result, bool, err
 		}
 		if json.Unmarshal(encoded, &body) == nil {
 			switch body.Error.Code {
-			case "unauthenticated", "forbidden", "invalid", "conflict", "not_found", "rate_limited", "unavailable", "binding_unreadable", "in_progress":
+			case "unauthenticated", "forbidden", "invalid", "conflict", "not_found", "rate_limited", "unavailable", "binding_unreadable", "in_progress", "clock_skew":
 				code = body.Error.Code
 			}
-			if (response.StatusCode == http.StatusBadRequest && code == "invalid") || (response.StatusCode == http.StatusConflict && (code == "binding_unreadable" || code == "conflict" || code == "in_progress")) || (response.StatusCode == http.StatusTooManyRequests && code == "rate_limited") {
+			if (status == http.StatusBadRequest && code == "invalid") || (status == http.StatusConflict && (code == "binding_unreadable" || code == "conflict" || code == "in_progress")) || (status == http.StatusTooManyRequests && code == "rate_limited") || (status == http.StatusUnauthorized && c.signer != nil) {
 				message, _ = bus.SafePublicText(body.Error.Message)
 			}
 		}
-		return bus.Result{}, response.StatusCode == 502 || response.StatusCode == 503 || response.StatusCode == 504, &HTTPError{Status: response.StatusCode, Code: code, Message: message}
+		return bus.Result{}, status == 502 || status == 503 || status == 504, &HTTPError{Status: status, Code: code, Message: message}
 	}
 	var result bus.Result
 	decoder := json.NewDecoder(bytes.NewReader(encoded))
@@ -486,6 +577,75 @@ func (c *Client) call(ctx context.Context, r bus.Request) (bus.Result, bool, err
 	}
 	return result, false, nil
 }
+
+// send makes one authenticated request for target (path and query, in the
+// one form the server accepts) and reads the answer. A device route signs
+// target and sends exactly it; a clock_skew refusal is corrected by the
+// server's time and retried once, with a new nonce and signature. status
+// is 0 when nothing came back.
+func (c *Client) send(ctx context.Context, client *http.Client, method, target string, body []byte, token string) (int, []byte, error) {
+	for attempt := 0; ; attempt++ {
+		req, err := http.NewRequestWithContext(ctx, method, c.config.URL, bytes.NewReader(body))
+		if err != nil {
+			return 0, nil, errors.New("invalid cloud request URL")
+		}
+		// Opaque is sent verbatim as the request target, so nothing
+		// re-encodes what was signed.
+		path, query, _ := strings.Cut(target, "?")
+		req.URL.Opaque, req.URL.RawQuery = path, query
+		if c.signer != nil {
+			header, e := c.signer.Authorization(method, target, body)
+			if e != nil {
+				return -1, nil, &credentialError{e}
+			}
+			req.Header.Set("Authorization", header)
+		} else {
+			req.Header.Set("Authorization", "Bearer "+token)
+		}
+		req.Header.Set("Content-Type", "application/json")
+		response, err := client.Do(req)
+		if err != nil {
+			return 0, nil, errors.New("cloud transport unavailable; operation outcome may be uncertain, no write queued")
+		}
+		encoded, err := io.ReadAll(io.LimitReader(response.Body, (16<<20)+1))
+		response.Body.Close()
+		if err != nil || len(encoded) > 16<<20 {
+			return -1, nil, errors.New("invalid or oversized cloud response")
+		}
+		if c.signer == nil || attempt > 0 || response.StatusCode != http.StatusUnauthorized {
+			return response.StatusCode, encoded, nil
+		}
+		serverTime, skewed := clockSkewTime(encoded)
+		if !skewed {
+			return response.StatusCode, encoded, nil
+		}
+		offset, err := c.signer.Correct(serverTime)
+		if err != nil {
+			return -1, nil, &credentialError{err}
+		}
+		if c.config.SaveClockOffset != nil {
+			_, at := c.signer.Offset()
+			c.config.SaveClockOffset(offset, at)
+		}
+	}
+}
+
+// clockSkewTime reads a clock_skew refusal's server_time.
+func clockSkewTime(encoded []byte) (int64, bool) {
+	var body struct {
+		Error struct {
+			Code       string `json:"code"`
+			ServerTime int64  `json:"server_time"`
+		} `json:"error"`
+	}
+	if json.Unmarshal(encoded, &body) != nil || body.Error.Code != "clock_skew" || body.Error.ServerTime <= 0 {
+		return 0, false
+	}
+	return body.Error.ServerTime, true
+}
+
+// Signer is the device signer of a device route, or nil.
+func (c *Client) Signer() *devicesign.Signer { return c.signer }
 
 func (c *Client) binding(r bus.Request) mirror.Binding {
 	i, _ := r.Args["instance"].(string)

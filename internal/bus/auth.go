@@ -110,6 +110,14 @@ func (s *Store) authOp(ctx context.Context, tx *transaction, w map[string]any, r
 	return nil, invalid("unsupported operation")
 }
 
+// provenance names how a hosted request's caller was proven.
+func (s *Store) provenance() string {
+	if s.identity != nil && s.identity.Issuer == DeviceIssuer {
+		return "device-key"
+	}
+	return "google-id-token"
+}
+
 func mainOwner(s *Store, w map[string]any) bool { return w["owner_principal"] == s.principal }
 
 // grantsArg reads grants, project (ID or slug) to role, resolved to this

@@ -95,3 +95,27 @@ func TestWorkspaceDomainsAndUnbindDoNotResolveAProject(t *testing.T) {
 		}
 	}
 }
+
+// A release says whether the work is done; the status policy reads as off
+// until the owner sets one.
+func TestCLIReleaseOutcomeAndStatusPolicyShow(t *testing.T) {
+	isolated(t)
+	invoke(t, "setup", "--local", "--workspace", "w")
+	invoke(t, "project", "create", "p")
+	t.Setenv("CLAWBRIDGE_PROJECT", "p")
+	invoke(t, "register", "eng", "--instance", "eng-i")
+	propose := func() string {
+		return invoke(t, "--session", "eng", "--instance", "eng-i", "assignment", "propose", "--issue-uuid", "0d0d0d0d-0d0d-4d0d-8d0d-0d0d0d0d0d0d", "--task-role", "engineer")["assignment"].(map[string]any)["revision"].(string)
+	}
+	rejectCLI(t, "--session", "eng", "--instance", "eng-i", "assignment", "release", "--revision", propose(), "--outcome", "finished")
+	released := invoke(t, "--session", "eng", "--instance", "eng-i", "assignment", "release", "--revision", propose(), "--outcome", "done")
+	if released["outcome"] != "done" {
+		t.Fatal(released)
+	}
+	var out, errs bytes.Buffer
+	if e := Run(context.Background(), []string{"linear", "status-policy", "show"}, &out, &errs); e != nil || !strings.Contains(out.String(), `"enabled":false`) || !strings.Contains(out.String(), `"revision":0`) {
+		t.Fatal(e, out.String(), errs.String())
+	}
+	rejectCLI(t, "linear", "status-policy", "set", "--file", "x.json", "--expected-revision", "0")
+	rejectCLI(t, "linear", "status-policy", "drop")
+}

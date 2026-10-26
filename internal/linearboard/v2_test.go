@@ -34,6 +34,11 @@ type authorityV2 struct {
 	engineer    string
 	accessArgs  map[string]any
 	comments    fakeCommentLedger
+	// status is the status policy status_policy_get answers; statusErr
+	// fails that read.
+	status    map[string]any
+	statusErr error
+	statusSet map[string]any
 }
 
 func (a *authorityV2) Execute(_ context.Context, r bus.Request) (bus.Result, error) {
@@ -62,6 +67,19 @@ func (a *authorityV2) Execute(_ context.Context, r bus.Request) (bus.Result, err
 	if strings.HasPrefix(r.Operation, "linear_comment") || strings.HasPrefix(r.Operation, "comment_watch") || strings.HasPrefix(r.Operation, "marker_") {
 		return a.comments.execute(r)
 	}
+	if r.Operation == "status_policy_set" {
+		a.statusSet = r.Args
+		return bus.Result{Source: "local-authority", Data: map[string]any{"revision": 1}}, nil
+	}
+	if r.Operation == "status_policy_get" {
+		if a.statusErr != nil {
+			return bus.Result{}, a.statusErr
+		}
+		if a.status == nil {
+			return bus.Result{Source: "local-authority", Data: map[string]any{"revision": 0, "enabled": false, "teams": map[string]any{}}}, nil
+		}
+		return bus.Result{Source: "local-authority", Data: a.status}, nil
+	}
 	return bus.Result{}, errors.New("unexpected authority operation")
 }
 
@@ -83,6 +101,21 @@ type providerV2 struct {
 	unconfirmedEdges bool
 	preflightErr     error
 	writeErr         error
+	// statuses, when set, are the workflow states Statuses answers.
+	statuses []linearprovider.Status
+}
+
+func (p *providerV2) Statuses(ctx context.Context, team string) ([]linearprovider.Status, error) {
+	if p.statuses == nil {
+		return p.fakeProvider.Statuses(ctx, team)
+	}
+	out := []linearprovider.Status{}
+	for _, s := range p.statuses {
+		if s.TeamID == team {
+			out = append(out, s)
+		}
+	}
+	return out, nil
 }
 
 func (p *providerV2) GetProject(_ context.Context, id string) (linearprovider.Project, error) {

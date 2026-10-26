@@ -40,7 +40,9 @@ type fakeCommentLedger struct {
 	prechecks      []map[string]any
 	precheckRefuse error
 	// gos answers marker_go per part; markerSettles records marker_settle.
-	gos           map[string]map[string]any
+	gos map[string]map[string]any
+	// goErr fails marker_go for a part.
+	goErr         map[string]error
 	markerGoes    []map[string]any
 	markerSettles []map[string]any
 	markersDue    []any
@@ -107,6 +109,9 @@ func (f *fakeCommentLedger) execute(r bus.Request) (bus.Result, error) {
 		return bus.Result{Source: "local-authority", Data: map[string]any{"state": "posted"}}, nil
 	case "marker_go":
 		f.markerGoes = append(f.markerGoes, r.Args)
+		if e := f.goErr[r.Args["part"].(string)]; e != nil {
+			return bus.Result{}, e
+		}
 		g, ok := f.gos[r.Args["part"].(string)]
 		if !ok {
 			g = map[string]any{"action": "none"}

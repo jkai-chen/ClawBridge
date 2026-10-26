@@ -61,7 +61,12 @@ clawbridge --session coord --instance INSTANCE assignment confirm reviewer --rev
 clawbridge sessions --issue ABC-12
 clawbridge sessions --scope-path internal/notify/watch.go --assignment-state confirmed
 clawbridge --session reviewer --instance INSTANCE assignment release --revision REVISION
+clawbridge --session reviewer --instance INSTANCE assignment release --revision REVISION --outcome done
 ```
+
+Release with `--outcome done` only when the work is finished. A project status
+policy may then move the issue on, for example to In Review. Never move an issue
+to Done yourself unless the review is complete.
 
 The project owner designates the confirming session with
 `clawbridge --session OWNER_SESSION --instance INSTANCE project coordinator-set coord`.

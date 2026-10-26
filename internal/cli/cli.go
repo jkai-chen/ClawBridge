@@ -470,7 +470,7 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		synopsis := map[string]string{
 			"propose": "usage: clawbridge assignment propose [flags]\n  Proposes an assignment for your own session.",
 			"confirm": "usage: clawbridge assignment confirm TARGET_SESSION --revision REV [--allow-overlap]\n  TARGET_SESSION is the name or ID of the session whose proposed assignment\n  you confirm, not an assignment ID; only the coordinator session confirms.",
-			"release": "usage: clawbridge assignment release [TARGET_SESSION] --revision REV\n  TARGET_SESSION is the name or ID of the session whose assignment you\n  release, not an assignment ID; omit it to release your own.",
+			"release": "usage: clawbridge assignment release [TARGET_SESSION] --revision REV [--outcome done]\n  TARGET_SESSION is the name or ID of the session whose assignment you\n  release, not an assignment ID; omit it to release your own. --outcome done\n  says the work is finished: a project status policy may then move the issue on.",
 		}
 		if text, ok := synopsis[rest[0]]; ok {
 			f.Usage = func() {
@@ -495,6 +495,7 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 			op = "assignment_release"
 			arityMax = 1
 			stringArg("revision", "the assignment's current revision")
+			stringArg("outcome", "done when the work is finished; omit otherwise")
 		default:
 			return errors.New("usage: assignment propose|confirm|release ...")
 		}

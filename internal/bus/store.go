@@ -123,7 +123,7 @@ func (s *Store) migrate() error {
 	if err = tx.QueryRow("PRAGMA user_version").Scan(&version); err != nil {
 		return err
 	}
-	if version > 16 {
+	if version > 17 {
 		return errors.New("database schema is newer than this ClawBridge binary")
 	}
 	if version == 0 {
@@ -210,6 +210,11 @@ func (s *Store) migrate() error {
 	}
 	if version < 16 {
 		if _, err = tx.Exec(docPolicySchemaV16 + `PRAGMA user_version=16;`); err != nil {
+			return err
+		}
+	}
+	if version < 17 {
+		if _, err = tx.Exec(dispatcherSchemaV17 + `PRAGMA user_version=17;`); err != nil {
 			return err
 		}
 	}
@@ -369,6 +374,9 @@ func sessionNameOK(v string) error {
 	if sessionIDShaped(v) {
 		return errors.New("session names cannot use the reserved ses_ session-ID prefix")
 	}
+	if reservedDispatcherName(v) {
+		return errors.New("the session names clawbridge-dispatcher and clawbridge-dispatcher-model are reserved for the dispatcher")
+	}
 	if strings.EqualFold(v, SystemSessionName) {
 		return errors.New("the session name clawbridge is reserved for the server's watcher")
 	}
@@ -419,6 +427,9 @@ var operationArgs = map[string]string{
 	"status_policy_get":           "instance",
 	"status_policy_set":           "instance expected_revision status_policy",
 	"doc_policy_get":              "instance",
+	"dispatcher_get":              "instance",
+	"dispatcher_domains_set":      "instance expected_revision dispatcher_domains",
+	"dispatcher_domain_edit":      "instance expected_revision domain action target_session",
 	"doc_watch_due":               "instance lease_token generation",
 	"doc_watch_report":            "instance lease_token generation polled_at documents complete error",
 	"doc_verify_report":           "instance lease_token generation document_id content_sha256 error",
@@ -483,6 +494,10 @@ func validateArgs(op string, a map[string]any) error {
 			}
 		case "doc_policy":
 			if _, err := ParseDocPolicy(v); err != nil {
+				return err
+			}
+		case "dispatcher_domains":
+			if _, err := ParseDispatcherDomains(v); err != nil {
 				return err
 			}
 		case "health_policy":
@@ -659,7 +674,7 @@ func (s *Store) ExecuteAs(ctx context.Context, principal string, r Request) (Res
 // inbox stamps deliveries, so those keep the locks.
 func pureRead(r Request) bool {
 	switch r.Operation {
-	case "snapshot", "inbox_status", "notification_status", "taskboard_get", "taskboard_get_v2", "taskboard_access", "list_projects", "list_members", "comment_watch_status", "label_policy_get", "status_policy_get", "doc_policy_get", "health_get", "doc_seed_get", "doc_publication_get":
+	case "snapshot", "inbox_status", "notification_status", "taskboard_get", "taskboard_get_v2", "taskboard_access", "list_projects", "list_members", "comment_watch_status", "label_policy_get", "status_policy_get", "doc_policy_get", "dispatcher_get", "health_get", "doc_seed_get", "doc_publication_get":
 		return true
 	case "list_sessions", "history", "whoami", "linear_comments_posted", "linear_comment_precheck", "intake_policy_get", "intake_trust_list", "intake_list":
 		// Naming a session with its instance makes it a heartbeat read: the
@@ -1018,6 +1033,13 @@ func (s *Store) execute(ctx context.Context, tx *transaction, r Request) (any, e
 		}
 		return statusPolicyView(ctx, tx, pid)
 	}
+	// Any project member may read the dispatcher's policy and domains.
+	if r.Operation == "dispatcher_get" {
+		if r.Session == "" && str(a, "instance") != "" {
+			return nil, errors.New("instance requires session")
+		}
+		return dispatcherView(ctx, tx, pid)
+	}
 	// Any project member may read the document policy, its deny patterns
 	// by ID only unless they may publish (docPolicyView).
 	if r.Operation == "doc_policy_get" {
@@ -1130,6 +1152,12 @@ func (s *Store) execute(ctx context.Context, tx *transaction, r Request) (any, e
 		}
 		return s.statusPolicyOp(ctx, tx, w, p, projectRole, nil, r)
 	}
+	if actor == nil && dispatcherOperation(r.Operation) {
+		if str(a, "instance") != "" {
+			return nil, invalid("instance requires session")
+		}
+		return s.dispatcherOp(ctx, tx, w, p, projectRole, nil, r)
+	}
 	if actor == nil && docPolicyOperation(r.Operation) {
 		if str(a, "instance") != "" {
 			return nil, invalid("instance requires session")
@@ -1181,6 +1209,9 @@ func (s *Store) execute(ctx context.Context, tx *transaction, r Request) (any, e
 	}
 	if docPolicyOperation(r.Operation) {
 		return s.docPolicyOp(ctx, tx, w, p, projectRole, actor, r)
+	}
+	if dispatcherOperation(r.Operation) {
+		return s.dispatcherOp(ctx, tx, w, p, projectRole, actor, r)
 	}
 	if healthOperation(r.Operation) {
 		return s.healthOp(ctx, tx, w, p, projectRole, actor, r)

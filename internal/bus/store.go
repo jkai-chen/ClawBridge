@@ -123,7 +123,7 @@ func (s *Store) migrate() error {
 	if err = tx.QueryRow("PRAGMA user_version").Scan(&version); err != nil {
 		return err
 	}
-	if version > 13 {
+	if version > 14 {
 		return errors.New("database schema is newer than this ClawBridge binary")
 	}
 	if version == 0 {
@@ -195,6 +195,11 @@ func (s *Store) migrate() error {
 	}
 	if version < 13 {
 		if _, err = tx.Exec(docSeedSchemaV13 + `PRAGMA user_version=13;`); err != nil {
+			return err
+		}
+	}
+	if version < 14 {
+		if _, err = tx.Exec(statusPolicySchemaV14 + `PRAGMA user_version=14;`); err != nil {
 			return err
 		}
 	}
@@ -386,7 +391,7 @@ var operationArgs = map[string]string{
 	"set_notification_policy":     "instance policy",
 	"assignment_propose":          "instance issue_uuid issue_identifier task_role scope_repo scope_paths",
 	"assignment_confirm":          "instance target_session revision allow_overlap",
-	"assignment_release":          "instance target_session revision",
+	"assignment_release":          "instance target_session revision outcome",
 	"coordinator_set":             "instance target_session",
 	"linear_comment_reserve":      "instance issue_uuid operation_id body_sha256 parent_id in_response_to",
 	"linear_comment_precheck":     "instance issue_uuid operation_id in_response_to",
@@ -397,9 +402,11 @@ var operationArgs = map[string]string{
 	"comment_watch_due":           "instance lease_token generation",
 	"comment_watch_report":        "instance lease_token generation issue_uuid calls error comments",
 	"marker_go":                   "instance lease_token generation assignment_id phase part",
-	"marker_settle":               "instance lease_token generation assignment_id phase part outcome comment_id created_at via error",
+	"marker_settle":               "instance lease_token generation assignment_id phase part outcome comment_id created_at via error state_target state_landed skip_reason",
 	"marker_due":                  "instance lease_token generation",
 	"label_policy_get":            "instance",
+	"status_policy_get":           "instance",
+	"status_policy_set":           "instance expected_revision status_policy",
 	"doc_seed_get":                "instance parent_kind parent_id",
 	"doc_seed_put":                "instance parent_kind parent_id template template_version state seed_token expect_token document_id seeded_sha256",
 	"label_policy_set":            "instance expected_revision label_policy",
@@ -445,6 +452,10 @@ func validateArgs(op string, a map[string]any) error {
 			}
 		case "label_policy":
 			if _, err := ParseLabelPolicy(v); err != nil {
+				return err
+			}
+		case "status_policy":
+			if _, err := ParseStatusPolicy(v); err != nil {
 				return err
 			}
 		case "transport":
@@ -595,7 +606,7 @@ func (s *Store) ExecuteAs(ctx context.Context, principal string, r Request) (Res
 // inbox stamps deliveries, so those keep the locks.
 func pureRead(r Request) bool {
 	switch r.Operation {
-	case "snapshot", "inbox_status", "notification_status", "taskboard_get", "taskboard_get_v2", "taskboard_access", "list_projects", "list_members", "comment_watch_status", "label_policy_get", "doc_seed_get":
+	case "snapshot", "inbox_status", "notification_status", "taskboard_get", "taskboard_get_v2", "taskboard_access", "list_projects", "list_members", "comment_watch_status", "label_policy_get", "status_policy_get", "doc_seed_get":
 		return true
 	case "list_sessions", "history", "whoami", "linear_comments_posted", "linear_comment_precheck", "intake_policy_get", "intake_trust_list", "intake_list":
 		// Naming a session with its instance makes it a heartbeat read: the
@@ -946,6 +957,14 @@ func (s *Store) execute(ctx context.Context, tx *transaction, r Request) (any, e
 		}
 		return readLabelPolicy(ctx, tx, pid)
 	}
+	// Any project member may read the status policy too; every create path
+	// reads it, so an issue lands in the same state whichever route it takes.
+	if r.Operation == "status_policy_get" {
+		if r.Session == "" && str(a, "instance") != "" {
+			return nil, errors.New("instance requires session")
+		}
+		return statusPolicyView(ctx, tx, pid)
+	}
 	if r.Operation == "taskboard_access" || r.Operation == "taskboard_get" || r.Operation == "taskboard_set" || r.Operation == "taskboard_clear" || r.Operation == "taskboard_get_v2" || r.Operation == "taskboard_set_v2" || r.Operation == "taskboard_clear_v2" {
 		if r.Session == "" && str(a, "instance") != "" {
 			return nil, errors.New("instance requires session")
@@ -1036,6 +1055,12 @@ func (s *Store) execute(ctx context.Context, tx *transaction, r Request) (any, e
 		}
 		return s.labelPolicyOp(ctx, tx, w, p, projectRole, nil, r)
 	}
+	if actor == nil && statusPolicyOperation(r.Operation) {
+		if str(a, "instance") != "" {
+			return nil, invalid("instance requires session")
+		}
+		return s.statusPolicyOp(ctx, tx, w, p, projectRole, nil, r)
+	}
 	// Seeding guide documents is a lead's or owner's CLI command too.
 	if docSeedOperation(r.Operation) {
 		if actor == nil && str(a, "instance") != "" {
@@ -1059,6 +1084,9 @@ func (s *Store) execute(ctx context.Context, tx *transaction, r Request) (any, e
 	}
 	if labelPolicyOperation(r.Operation) {
 		return s.labelPolicyOp(ctx, tx, w, p, projectRole, actor, r)
+	}
+	if statusPolicyOperation(r.Operation) {
+		return s.statusPolicyOp(ctx, tx, w, p, projectRole, actor, r)
 	}
 	if intakeOperation(r.Operation) {
 		return s.intakeOp(ctx, tx, w, p, projectRole, actor, r)

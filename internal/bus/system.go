@@ -71,7 +71,7 @@ func (s *Store) ensureSystemSession(ctx context.Context, tx *transaction, wid, p
 // systemOperation is what the system session may run: the reads and
 // writes of the comment watch, claim markers and the task board binding.
 func systemOperation(op string) bool {
-	return commentOperation(op) || op == "taskboard_get_v2" || op == "taskboard_get" || op == "taskboard_access"
+	return commentOperation(op) || op == "taskboard_get_v2" || op == "taskboard_get" || op == "taskboard_access" || op == "status_policy_get"
 }
 
 // ExecuteSystem runs one bus operation as a project's system session. It
@@ -120,6 +120,8 @@ func (s *Store) ExecuteSystem(ctx context.Context, projectID string, r Request) 
 	switch r.Operation {
 	case "taskboard_get_v2", "taskboard_get":
 		out, err = scoped.taskboard(ctx, tx, wid, projectID, "owner", r.Operation, r.Args)
+	case "status_policy_get":
+		out, err = statusPolicyView(ctx, tx, projectID)
 	case "taskboard_access":
 		out = accessMap(TaskboardAccess{WorkspaceID: wid, ProjectID: projectID, SessionID: str(actor, "id"), SessionName: SystemSessionName, CanWrite: true, ProjectRole: "owner"})
 	default:

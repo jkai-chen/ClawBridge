@@ -420,10 +420,25 @@ func (s *Store) assignment(ctx context.Context, tx *transaction, w, p map[string
 			if tid != sid {
 				reason = "coordinator"
 			}
+			// SF-L2: done says the work is finished, from the session itself
+			// or from the coordinator; only then may the issue move on.
+			outcome := str(a, "outcome")
+			if outcome != "" && outcome != "done" {
+				return nil, invalid("outcome must be done, or left out")
+			}
 			if _, err = s.releaseAssignment(ctx, tx, wid, pid, tid, reason); err != nil {
 				return nil, err
 			}
-			return map[string]any{"released": live["id"], "session_id": tid, "reason": reason}, nil
+			out := map[string]any{"released": live["id"], "session_id": tid, "reason": reason}
+			if outcome == "done" {
+				if live["state"] == "confirmed" {
+					if err = markReleaseDone(ctx, tx, pid, str(live, "id")); err != nil {
+						return nil, err
+					}
+				}
+				out["outcome"] = outcome
+			}
+			return out, nil
 		}
 		if live["state"] == "confirmed" {
 			return nil, errors.New("assignment is already confirmed")

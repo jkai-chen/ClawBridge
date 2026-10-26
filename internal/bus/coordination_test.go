@@ -85,7 +85,7 @@ func TestCoordinationVersionOneMigrationPreservesLegacyRetry(t *testing.T) {
 		t.Fatal(err)
 	}
 	var version int
-	if err = s.db.QueryRow(`PRAGMA user_version`).Scan(&version); err != nil || version != 13 {
+	if err = s.db.QueryRow(`PRAGMA user_version`).Scan(&version); err != nil || version != 14 {
 		t.Fatal(version, err)
 	}
 	// Local identity is assigned on open; keep fixture ownership aligned.

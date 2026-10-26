@@ -65,20 +65,24 @@ func (t cloudTarget) aws(args ...string) []string {
 	return append(append([]string{"aws"}, args...), "--profile", profile, "--region", t.region, "--output", "json")
 }
 
-// awsReady validates the AWS inputs and, with --account, that the profile is
-// signed in to that account.
-func (t cloudTarget) awsReady(ctx context.Context) error {
+// awsInputs validates the AWS flags; nothing runs before they pass.
+func (t cloudTarget) awsInputs() error {
 	if !awsRegionPattern.MatchString(t.region) {
 		return errors.New("--region must be an AWS region, such as us-east-1")
 	}
 	if t.profile != "" && !awsProfilePattern.MatchString(t.profile) {
 		return errors.New("--profile must be a named AWS CLI profile")
 	}
+	if t.account != "" && !accountPattern.MatchString(t.account) {
+		return errors.New("--account must be a 12-digit AWS account ID")
+	}
+	return nil
+}
+
+// awsAccount: with --account, the profile is signed in to that account.
+func (t cloudTarget) awsAccount(ctx context.Context) error {
 	if t.account == "" {
 		return nil
-	}
-	if !accountPattern.MatchString(t.account) {
-		return errors.New("--account must be a 12-digit AWS account ID")
 	}
 	out, err := awsCLI(ctx, t.aws("sts", "get-caller-identity"), nil)
 	var id struct{ Account string }
@@ -93,12 +97,27 @@ func (t cloudTarget) awsReady(ctx context.Context) error {
 
 // ssmTransport runs a fixed script on an EC2 instance with SSM's
 // AWS-RunShellScript, as root, and reads its output back. The request goes on
-// the aws CLI's stdin, so nothing is assembled into argv from the script.
-type ssmTransport struct{ target cloudTarget }
+// the aws CLI's stdin, so nothing is assembled into argv from the script. Its
+// inputs were validated by transport(); the account is checked once.
+type ssmTransport struct {
+	target  cloudTarget
+	account *bool // the account check passed
+}
+
+func (s ssmTransport) ready(ctx context.Context) error {
+	if *s.account {
+		return nil
+	}
+	if err := s.target.awsAccount(ctx); err != nil {
+		return err
+	}
+	*s.account = true
+	return nil
+}
 
 func (s ssmTransport) run(ctx context.Context, script string, _ io.Writer) ([]byte, error) {
 	t := s.target
-	if err := t.awsReady(ctx); err != nil {
+	if err := s.ready(ctx); err != nil {
 		return nil, err
 	}
 	request, err := json.Marshal(map[string]any{
@@ -189,11 +208,11 @@ func awsInfra(ctx context.Context, p *cloudProbe) cloudResult {
 	if !instancePattern.MatchString(t.instance) {
 		return failed("infra", "needs_instance", "pass --instance i-… --region R")
 	}
-	if err := t.awsReady(ctx); err != nil {
-		if errors.Is(err, errCloudAuth) {
-			return failed("infra", "cloud_auth", accountMsg)
-		}
+	if err := t.awsInputs(); err != nil {
 		return failed("infra", "needs_instance", err.Error())
+	}
+	if err := t.awsAccount(ctx); err != nil {
+		return failed("infra", "cloud_auth", accountMsg)
 	}
 	out, err := awsCLI(ctx, t.aws("ec2", "describe-instances", "--instance-ids", t.instance), nil)
 	var described struct {
@@ -321,7 +340,7 @@ func awsIngress(ctx context.Context, t cloudTarget, vm ec2Instance) *cloudResult
 		}
 	}
 	if extra {
-		r := failed("infra", "extra_ingress", "the security groups allow more than tcp/443 in; remove the other inbound rules")
+		r := failed("infra", "extra_ingress", "the security groups allow more than tcp/443 in (a default group's own rules count too); use a dedicated security group with only tcp/443")
 		return &r
 	}
 	return nil
@@ -334,11 +353,11 @@ func awsBackups(ctx context.Context, p *cloudProbe) cloudResult {
 	if !s3BucketPattern.MatchString(p.bucket) {
 		return failed("backups", "needs_bucket", "pass --bucket NAME (the bucket in CLAWBRIDGE_BACKUP_URL)")
 	}
-	if err := t.awsReady(ctx); err != nil {
-		if errors.Is(err, errCloudAuth) {
-			return failed("backups", "cloud_auth", accountMsg)
-		}
-		return failed("backups", "needs_region", "pass --region R, the bucket's AWS region")
+	if err := t.awsInputs(); err != nil {
+		return failed("backups", "needs_region", err.Error())
+	}
+	if err := t.awsAccount(ctx); err != nil {
+		return failed("backups", "cloud_auth", accountMsg)
 	}
 	out, err := awsCLI(ctx, t.aws("s3api", "list-objects-v2", "--bucket", p.bucket, "--prefix", "postgres/daily/"), nil)
 	var listed struct{ Contents []struct{ Key string } }

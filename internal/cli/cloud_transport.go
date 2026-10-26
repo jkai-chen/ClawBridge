@@ -63,7 +63,10 @@ func (t cloudTarget) transport() (cloudTransport, error) {
 		if !instancePattern.MatchString(t.instance) || t.project != "" || t.zone != "" {
 			return nil, errors.New("--instance must be an EC2 instance ID (i-…), with --region and without --project or --zone")
 		}
-		return ssmTransport{target: t}, nil
+		if err := t.awsInputs(); err != nil {
+			return nil, err
+		}
+		return ssmTransport{target: t, account: new(bool)}, nil
 	}
 	if t.region != "" || t.profile != "" || t.account != "" {
 		return nil, errors.New("--region, --profile and --account go with --instance")

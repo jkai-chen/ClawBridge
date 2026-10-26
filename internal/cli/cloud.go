@@ -306,8 +306,8 @@ var (
 	}
 )
 
-// remoteSetScript replaces KEY's line in the env file and installs it 0600,
-// root-owned. KEY comes from secretKeys only; the value arrives on stdin and
+// remoteSetScript replaces KEY's line in the env file, or in the regular file
+// it links to, and installs it 0600, root-owned. KEY comes from secretKeys only; the value arrives on stdin and
 // is never in argv, the environment or the output. It has no single quote,
 // so it travels inside one.
 func remoteSetScript(key, path string) string {
@@ -315,6 +315,9 @@ func remoteSetScript(key, path string) string {
 		`set -eu`,
 		`umask 077`,
 		`f=` + path,
+		// A deployment may link the env file elsewhere: write the target.
+		`if [ -L "$f" ]; then f=$(readlink -f "$f"); fi`,
+		`if [ -e "$f" ] && [ ! -f "$f" ]; then exit 4; fi`,
 		`IFS= read -r v || [ -n "$v" ]`,
 		`[ -n "$v" ]`,
 		`mkdir -p "$(dirname "$f")"`,

@@ -388,4 +388,38 @@ func TestRemoteSetScript(t *testing.T) {
 	if left, _ := filepath.Glob(path + ".*"); len(left) != 0 {
 		t.Fatalf("temporary files left: %v", left)
 	}
+
+	// A linked env file keeps its link; the target gets the line.
+	target := filepath.Join(t.TempDir(), "real.env")
+	if err := os.WriteFile(target, []byte("A=1\n"+key+"=old\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(path); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(target, path); err != nil {
+		t.Fatal(err)
+	}
+	if err := run("linked"); err != nil {
+		t.Fatal(err)
+	}
+	if info, err := os.Lstat(path); err != nil || info.Mode()&os.ModeSymlink == 0 {
+		t.Fatalf("the link was replaced: %v %v", info, err)
+	}
+	if got, _ := os.ReadFile(target); string(got) != "A=1\n"+key+"=linked\n" {
+		t.Fatalf("target: %q", got)
+	}
+	if left, _ := filepath.Glob(target + ".*"); len(left) != 0 {
+		t.Fatalf("temporary files left: %v", left)
+	}
+	// A link to something other than a regular file is refused.
+	if err := os.Remove(path); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(t.TempDir(), path); err != nil {
+		t.Fatal(err)
+	}
+	if err := run("refused"); err == nil {
+		t.Fatal("wrote through a link to a directory")
+	}
 }

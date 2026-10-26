@@ -159,7 +159,9 @@ func TestPostgresPurgeDropsExpiredCommentWatchState(t *testing.T) {
 		// recent seen record and the workspace cursor, however old, stay.
 		{`INSERT INTO watch_cursors(project_id,source,subject,cursor_time,watch_started_at,next_poll_at,updated_at) VALUES($1,'doc',$2,$3,$3,$3,$3)`, []any{pid, "d0c00000-0000-4000-8000-0000000000d1", day(-40)}},
 		{`INSERT INTO watch_cursors(project_id,source,subject,cursor_time,watch_started_at,next_poll_at,updated_at) VALUES($1,'doc',$2,$3,$3,$3,$3)`, []any{pid, "d0c00000-0000-4000-8000-0000000000d2", day(-2)}},
-		{`INSERT INTO watch_cursors(project_id,source,subject,cursor_time,watch_started_at,next_poll_at,updated_at) VALUES($1,'doc-verify',$2,$3,$3,$3,$3)`, []any{pid, "d0c00000-0000-4000-8000-0000000000d3", day(-40)}},
+		// A read-back queued 40 days ago and still failing: its last retry
+		// was yesterday.
+		{`INSERT INTO watch_cursors(project_id,source,subject,cursor_time,watch_started_at,next_poll_at,updated_at,failures) VALUES($1,'doc-verify',$2,$3,$3,$4,$4,30)`, []any{pid, "d0c00000-0000-4000-8000-0000000000d3", day(-40), day(-1)}},
 		{`INSERT INTO watch_cursors(project_id,source,subject,cursor_time,watch_started_at,next_poll_at,updated_at) VALUES($1,'doc-workspace','',$2,$2,$2,$2)`, []any{pid, day(-90)}},
 		{`INSERT INTO linear_comment_ledger(workspace_id,project_id,operation_digest,issue_uuid,comment_id,body_sha256,session_id,principal,state,reserved_at,settled_at) VALUES($1,$2,$3,$4,$5,$6,'s','p','posted',$7,$7)`, []any{wid, pid, digestOf("old-posted"), watchIssue, ourComment, bodyDigest, day(-40)}},
 	} {

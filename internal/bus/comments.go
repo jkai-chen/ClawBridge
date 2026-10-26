@@ -1017,7 +1017,9 @@ func (s *Store) purgeCommentWatch(ctx context.Context, tx *transaction, wid, pid
 		{"deleted_watch_cursors", `DELETE FROM watch_cursors WHERE project_id=? AND active_until IS NOT NULL AND active_until<?`, nowRaw},
 		{"deleted_failed_reservations", `DELETE FROM linear_comment_ledger WHERE project_id=? AND state='failed' AND settled_at<?`, horizon},
 		{"deleted_doc_seen", `DELETE FROM watch_cursors WHERE project_id=? AND source='doc' AND updated_at<?`, horizon},
-		{"deleted_doc_verify", `DELETE FROM watch_cursors WHERE project_id=? AND source='doc-verify' AND updated_at<?`, horizon},
+		// A failing read-back refreshes updated_at on every retry, so it
+		// goes by when it was queued.
+		{"deleted_doc_verify", `DELETE FROM watch_cursors WHERE project_id=? AND source='doc-verify' AND watch_started_at<?`, horizon},
 	} {
 		res, err := tx.ExecContext(ctx, d.sql, pid, d.before)
 		if err != nil {

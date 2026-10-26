@@ -53,7 +53,10 @@ func TestWindowsGuidedSetupConsoleInput(t *testing.T) {
 	c.send("https://example.invalid")
 	c.expect("https://example.invalid", "typed text was not echoed")
 	c.send("\r")
-	c.expect("Workspace:", "Enter did not complete the prompt")
+	// The service can't be reached, so both ways in are offered: "2" is Google.
+	c.expect("Choose 1 or 2", "Enter did not complete the prompt")
+	c.send("2\r")
+	c.expect("Workspace:", "the sign-in choice did not lead to the Google prompts")
 	// "wq", Backspace, "s-alpha" must answer "ws-alpha".
 	c.send("wq\x7fs-alpha\r")
 	c.expect("Project:", "Enter did not complete the workspace prompt")

@@ -825,6 +825,11 @@ Each field is optional except `enabled`.
 - **Done:** a release with `--outcome done` (MCP `outcome: "done"`) moves the
   issue to `release_done`, only from exactly the `claim` state. The session
   itself or the coordinator may say done. Any other release only posts its note.
+- **Knowing where an issue stands.** Linear's issue read through MCP names the
+  state without its ID. A hosted server reads the ID as the ClawBridge Linear
+  app; otherwise ClawBridge looks the name up in the team's workflow, and only a
+  name exactly one state has counts. An issue whose state can't be told is left
+  alone (skipped as `state_unresolved`), never guessed.
 - **Forward only.** An issue a person has already moved anywhere else is left
   alone, and recorded as skipped. A person's change between the check and the
   write wins: whatever landed is recorded and never sent again.

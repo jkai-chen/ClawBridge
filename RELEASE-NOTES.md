@@ -43,6 +43,9 @@
 - **Never:** to a completed or canceled state, or back over a state a person chose. A person's change always wins.
 - A state of a type ClawBridge doesn't know, such as Linear's Duplicate state, is left out: it is never a target, and
   an issue in it is never moved.
+- An issue's current state is read by its ID (as the app on a hosted server, else by a name only one state has); a
+  state that can't be told is never guessed, and the move is skipped. The same lookup checks the state an update
+  asked for, so `linear update --state` receipts now confirm the state instead of reporting it unverified.
 - Names are resolved exactly in every bound team's workflow when the policy is set. On a hosted server the ClawBridge
   Linear app reads the state types when Linear's own list leaves them out (a project lead or owner only).
 - Moves are applied with the claim and release notes, by the server watcher or a v0.3.1 client, and cost about three

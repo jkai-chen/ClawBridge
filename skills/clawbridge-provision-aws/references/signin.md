@@ -30,10 +30,10 @@ clawbridge cloud bootstrap --help
   clawbridge cloud bootstrap --instance INSTANCE_ID --region REGION --profile PROFILE --workspace my-team --email OWNER_EMAIL
   ```
 
-  It runs the server's one-time owner invite and joins with it directly, so the
-  invite code is never printed. Bootstrap delivers the invite through the same
-  short-lived encrypted parameter as `cloud secret set`; the code never appears
-  in SSM command history. When the onboarding TUI resumes after your
+  It makes the one-time owner invite on the user's machine, hands it to the
+  server through the same short-lived encrypted parameter as `cloud secret
+  set`, and joins with it, so the code never appears in SSM command history or
+  on screen. When the onboarding TUI resumes after your
   hand-over, it runs this for the user. **Never run the invite yourself, in any
   form:** its code is a credential. If it fails, the user runs it again; a code
   that was issued expires in 24 hours.

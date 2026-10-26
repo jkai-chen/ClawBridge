@@ -20,6 +20,10 @@ var tokenPatterns = []struct {
 	{"google-api-key", regexp.MustCompile(`\bAIza[0-9A-Za-z_-]{35}\b`)},
 	{"linear-api-key", regexp.MustCompile(`\blin_(api|oauth)_[A-Za-z0-9]{20,}`)},
 	{"anthropic-key", regexp.MustCompile(`\bsk-ant-[A-Za-z0-9_-]{20,}`)},
+	{"npm-token", regexp.MustCompile(`\bnpm_[A-Za-z0-9]{36}\b`)},
+	{"npmrc-auth-token", regexp.MustCompile(`_authToken\s*=\s*[^\s$]\S{8,}`)},
+	{"google-refresh-token", regexp.MustCompile(`\b1//0[A-Za-z0-9_-]{30,}`)},
+	{"bearer-token", regexp.MustCompile(`(?i)\bauthorization:\s*bearer\s+[A-Za-z0-9._~+/=-]{20,}`)},
 }
 
 // Hit is one token-shaped match: the file and the pattern, never the text.

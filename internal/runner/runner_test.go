@@ -39,11 +39,14 @@ type env struct {
 	// those reads; leak runs the self-test without them, silent not at all.
 	denyBin      string
 	leak, silent bool
-	r            *Runner
-	origin       string
-	repo         string
-	opens        []opened
-	now          time.Time
+	// namedOnly refuses every read but of the planted files, as a sandbox
+	// that denies only the paths its rules name would.
+	namedOnly bool
+	r         *Runner
+	origin    string
+	repo      string
+	opens     []opened
+	now       time.Time
 }
 
 // newEnv makes an origin repository with one commit on main, the owner's
@@ -64,8 +67,20 @@ func newEnv(t *testing.T) *env {
 	if err := os.MkdirAll(e.denyBin, 0o755); err != nil {
 		t.Fatal(err)
 	}
+	named := filepath.Join(root, "named-bin")
+	if err := os.MkdirAll(named, 0o755); err != nil {
+		t.Fatal(err)
+	}
 	for _, tool := range []string{"ls", "head"} {
 		if err := os.WriteFile(filepath.Join(e.denyBin, tool), []byte("#!/bin/sh\necho 'Operation not permitted' >&2\nexit 1\n"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		real, err := exec.LookPath(tool)
+		if err != nil {
+			t.Fatal(err)
+		}
+		script := "#!/bin/sh\ncase \"$*\" in *clawbridge-selftest-*) exec " + real + " \"$@\";; esac\necho 'Operation not permitted' >&2\nexit 1\n"
+		if err := os.WriteFile(filepath.Join(named, tool), []byte(script), 0o755); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -75,7 +90,10 @@ func newEnv(t *testing.T) *env {
 		// as the sandbox would (every read refused) unless e.leak.
 		if m := selfTestPath.FindStringSubmatch(command); m != nil && !e.silent {
 			cmd := exec.Command("sh", m[1])
-			if !e.leak {
+			switch {
+			case e.namedOnly:
+				cmd.Env = append(os.Environ(), "PATH="+filepath.Join(filepath.Dir(e.denyBin), "named-bin")+":/usr/bin:/bin")
+			case !e.leak:
 				cmd.Env = append(os.Environ(), "PATH="+e.denyBin+":/usr/bin:/bin")
 			}
 			_ = cmd.Run()
@@ -657,7 +675,8 @@ func TestFetchScansForTokens(t *testing.T) {
 }
 
 func TestScanPatchPatterns(t *testing.T) {
-	for _, line := range []string{"ghp_" + strings.Repeat("x", 36), "github_pat_" + strings.Repeat("a", 40), "AKIA" + strings.Repeat("A", 16), "xoxb-" + strings.Repeat("1", 12), "-----BEGIN OPENSSH PRIVATE KEY-----", "sk-ant-" + strings.Repeat("a", 30)} {
+	for _, line := range []string{"ghp_" + strings.Repeat("x", 36), "github_pat_" + strings.Repeat("a", 40), "AKIA" + strings.Repeat("A", 16), "xoxb-" + strings.Repeat("1", 12), "-----BEGIN OPENSSH PRIVATE KEY-----", "sk-ant-" + strings.Repeat("a", 30),
+		"npm_" + strings.Repeat("b", 36), "//registry.npmjs.org/:_authToken=" + strings.Repeat("c", 36), "1//0" + strings.Repeat("d", 40), "Authorization: Bearer " + strings.Repeat("e", 40)} {
 		if hits := ScanPatch("+++ b/f\n+" + line + "\n"); len(hits) != 1 {
 			t.Fatal("missed", line)
 		}
@@ -665,7 +684,7 @@ func TestScanPatchPatterns(t *testing.T) {
 			t.Fatal("a removed or context line counted", line)
 		}
 	}
-	if hits := ScanPatch("+++ b/f\n+just some text with gh_ and AKIA in it\n"); len(hits) != 0 {
+	if hits := ScanPatch("+++ b/f\n+just some text with gh_ and AKIA in it\n+_authToken=${NPM_TOKEN}\n+see Authorization: Bearer <token>\n+npm_install_it\n"); len(hits) != 0 {
 		t.Fatal("false positive", hits)
 	}
 }
@@ -697,6 +716,33 @@ func TestLaunchSelfTest(t *testing.T) {
 	}
 }
 
+// The self-test also reads files the launch plants where no rule names
+// them, so a sandbox that only denies the named paths fails it; the
+// planted files are gone afterwards, pass or fail.
+func TestSelfTestProvesTheDefaultDeny(t *testing.T) {
+	e := newEnv(t)
+	// The checkout is under this home, so a file is planted in its .git too.
+	e.r.Home = filepath.Dir(e.repo)
+	planted := func() []string {
+		var all []string
+		for _, dir := range []string{e.r.Home, filepath.Join(e.repo, ".git")} {
+			m, _ := filepath.Glob(filepath.Join(dir, ".clawbridge-selftest-*"))
+			all = append(all, m...)
+		}
+		return all
+	}
+	p := e.launch("checkout-engineer-1", "FIX-1")
+	script, _ := os.ReadFile(filepath.Join(p.Cache, "selftest.sh"))
+	if p.SelfTest != "passed" || strings.Count(string(script), ".clawbridge-selftest-checkout-engineer-1-") != 2 || len(planted()) != 0 {
+		t.Fatal("planted files", p.SelfTest, planted(), string(script))
+	}
+	e.namedOnly = true
+	_, err := e.r.Launch(e.spec("checkout-engineer-2", "FIX-2"))
+	if err == nil || !strings.Contains(err.Error(), "planted") || len(e.closed) != 1 || len(planted()) != 0 {
+		t.Fatal("a sandbox denying only the named paths passed:", err, e.closed, planted())
+	}
+}
+
 func TestCheckSelfTestReport(t *testing.T) {
 	for report, ok := range map[string]bool{
 		"DENIED 0\nDENIED 3\nDONE\n":        true,
@@ -705,7 +751,7 @@ func TestCheckSelfTestReport(t *testing.T) {
 		"DENIED 0\nDENIED 3\n":              false,
 		"DENIED 0\nDENIED 3\nDONE\nextra\n": false,
 	} {
-		if err := checkSelfTest(report, []string{"0", "3"}); (err == nil) != ok {
+		if err := checkSelfTest(report, map[string]string{"0": "~/.ssh", "3": "~/.clawbridge"}); (err == nil) != ok {
 			t.Fatal(report, err)
 		}
 	}

@@ -1,6 +1,8 @@
 package runner
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -347,20 +349,25 @@ func (r *Runner) Launch(spec Spec) (Prepared, error) {
 			return p, err
 		}
 	}
-	sentinels, err := r.selfTest(p.Cache)
+	sentinels, planted, err := r.selfTest(p.Cache, repo, spec.Session)
 	if err != nil {
+		removeAll(planted)
 		return p, err
 	}
 	handle, err := r.Terminal(repo, spec.Session, p.Command)
 	if err != nil {
+		// The planted files stay for the self-test the owner runs by hand;
+		// gc removes them with the session.
 		p.Note = strings.TrimSpace(p.Note + " Orca could not open the terminal (" + err.Error() + "); run the command yourself. Its first step is the sandbox self-test: if it reports any READ line in " + filepath.Join(p.Cache, "selftest.result") + ", stop the session")
 		return p, nil
 	}
 	p.Opened = true
 	// The launch waits for the self-test the session runs first: one
-	// readable credential path, or no report in time, ends the session
-	// before it does anything else.
-	if err = r.awaitSelfTest(p.Cache, sentinels); err != nil {
+	// readable credential path or planted file, or no report in time, ends
+	// the session before it does anything else.
+	err = r.awaitSelfTest(p.Cache, sentinels)
+	removeAll(planted)
+	if err != nil {
 		if r.Close != nil {
 			_ = r.Close(handle)
 		}
@@ -371,40 +378,78 @@ func (r *Runner) Launch(spec Spec) (Prepared, error) {
 	return p, nil
 }
 
+// sentinelPrefix names the files a self-test plants for one session.
+func sentinelPrefix(session string) string { return ".clawbridge-selftest-" + session + "-" }
+
 // selfTest writes the session's sandbox self-test into its cache: for each
 // credential location that exists on this machine, it tries to read it and
-// reports READ or DENIED by number, never the path's content.
-func (r *Runner) selfTest(cache string) ([]string, error) {
-	var lines []string
-	var sentinels []string
+// reports READ or DENIED by ID, never the path's content. It also plants
+// a new random file directly in the home directory, and one in the owner's
+// checkout when that is under it: no rule names them, so only the
+// sandbox's default deny refuses them. It returns the IDs with what each
+// stands for, and the planted files.
+func (r *Runner) selfTest(cache, repo, session string) (map[string]string, []string, error) {
+	var lines, planted []string
+	sentinels := map[string]string{}
+	try := func(id, label, path string, dir bool) {
+		read := "head -c 1 " + quote(path)
+		if dir {
+			read = "ls " + quote(path)
+		}
+		sentinels[id] = label
+		lines = append(lines, "if "+read+" >/dev/null 2>&1; then echo READ "+id+"; else echo DENIED "+id+"; fi")
+	}
 	for i, d := range DeniedPaths {
 		path, err := r.expand(d)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
-		info, err := os.Stat(path)
-		if err != nil {
-			continue
+		if info, err := os.Stat(path); err == nil {
+			try(strconv.Itoa(i), d, path, info.IsDir())
 		}
-		read := "head -c 1 " + quote(path)
-		if info.IsDir() {
-			read = "ls " + quote(path)
+	}
+	home, err := r.home()
+	if err != nil {
+		return nil, nil, err
+	}
+	dirs := map[string]string{"home": home}
+	// git reports the checkout with symbolic links resolved.
+	if resolved, err := filepath.EvalSymlinks(home); err == nil && within(repo, resolved) || within(repo, home) {
+		dirs["checkout"] = filepath.Join(repo, ".git")
+	}
+	for id, dir := range dirs {
+		random := make([]byte, 16)
+		if _, err = rand.Read(random); err != nil {
+			return nil, planted, err
 		}
-		id := strconv.Itoa(i)
-		sentinels = append(sentinels, id)
-		lines = append(lines, "if "+read+" >/dev/null 2>&1; then echo READ "+id+"; else echo DENIED "+id+"; fi")
+		path := filepath.Join(dir, sentinelPrefix(session)+hex.EncodeToString(random))
+		if err = os.WriteFile(path, []byte(hex.EncodeToString(random)+"\n"), 0o600); err != nil {
+			return nil, planted, err
+		}
+		planted = append(planted, path)
+		label := "a file planted in the home directory"
+		if id == "checkout" {
+			label = "a file planted in the checkout's .git"
+		}
+		try(id, label, path, false)
 	}
 	result := filepath.Join(cache, "selftest.result")
-	script := "#!/bin/sh\n# ClawBridge runner sandbox self-test: each line tries to read one credential location.\n{\n" + strings.Join(lines, "\n") + "\necho DONE\n} > " + quote(result+".tmp") + " && mv " + quote(result+".tmp") + " " + quote(result) + "\necho 'Self-test done.'\n"
+	script := "#!/bin/sh\n# ClawBridge runner sandbox self-test: each line tries to read one credential location or planted file.\n{\n" + strings.Join(lines, "\n") + "\necho DONE\n} > " + quote(result+".tmp") + " && mv " + quote(result+".tmp") + " " + quote(result) + "\necho 'Self-test done.'\n"
 	if err := os.WriteFile(filepath.Join(cache, "selftest.sh"), []byte(script), 0o600); err != nil {
-		return nil, err
+		return nil, planted, err
 	}
-	return sentinels, nil
+	return sentinels, planted, nil
+}
+
+func removeAll(paths []string) {
+	for _, p := range paths {
+		_ = os.Remove(p)
+	}
 }
 
 // awaitSelfTest waits for the self-test's report: every sentinel DENIED,
 // then DONE.
-func (r *Runner) awaitSelfTest(cache string, sentinels []string) error {
+func (r *Runner) awaitSelfTest(cache string, sentinels map[string]string) error {
 	wait := r.SelfTestWait
 	if wait == 0 {
 		wait = DefaultSelfTestWait
@@ -423,7 +468,7 @@ func (r *Runner) awaitSelfTest(cache string, sentinels []string) error {
 }
 
 // checkSelfTest accepts only a complete report with every sentinel denied.
-func checkSelfTest(report string, sentinels []string) error {
+func checkSelfTest(report string, sentinels map[string]string) error {
 	got := map[string]string{}
 	done := false
 	for _, line := range strings.Split(strings.TrimSpace(report), "\n") {
@@ -440,19 +485,17 @@ func checkSelfTest(report string, sentinels []string) error {
 	if !done {
 		return errors.New("the self-test report is incomplete")
 	}
-	for _, id := range sentinels {
+	for id, label := range sentinels {
 		switch got[id] {
 		case "DENIED":
 		case "READ":
-			return fmt.Errorf("the sandbox let the session read %s", DeniedPaths[mustAtoi(id)])
+			return fmt.Errorf("the sandbox let the session read %s", label)
 		default:
 			return errors.New("the self-test report is incomplete")
 		}
 	}
 	return nil
 }
-
-func mustAtoi(s string) int { n, _ := strconv.Atoi(s); return n }
 
 // remoteURLs are every fetch and push URL of the owner's checkout.
 func (r *Runner) remoteURLs(repo string) ([]string, error) {

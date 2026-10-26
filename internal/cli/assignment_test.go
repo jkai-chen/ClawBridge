@@ -119,3 +119,20 @@ func TestCLIReleaseOutcomeAndStatusPolicyShow(t *testing.T) {
 	rejectCLI(t, "linear", "status-policy", "set", "--file", "x.json", "--expected-revision", "0")
 	rejectCLI(t, "linear", "status-policy", "drop")
 }
+
+// Project health reads as empty until the owner enables it on a bound
+// Linear project; posting to Linear stays off.
+func TestCLIHealthShowAndSetRefusals(t *testing.T) {
+	isolated(t)
+	invoke(t, "setup", "--local", "--workspace", "w")
+	invoke(t, "project", "create", "p")
+	t.Setenv("CLAWBRIDGE_PROJECT", "p")
+	var out, errs bytes.Buffer
+	if e := Run(context.Background(), []string{"linear", "health", "show"}, &out, &errs); e != nil || !strings.Contains(out.String(), `"projects":[]`) || !strings.Contains(out.String(), "nothing is written to Linear") {
+		t.Fatal(e, out.String(), errs.String())
+	}
+	rejectCLI(t, "linear", "health", "enable")
+	rejectCLI(t, "linear", "health", "enable", "--linear-project", "0d0d0d0d-0d0d-4d0d-8d0d-0d0d0d0d0d0d", "--expected-revision", "0")
+	rejectCLI(t, "linear", "health", "set", "--linear-project", "0d0d0d0d-0d0d-4d0d-8d0d-0d0d0d0d0d0d", "--expected-revision", "0")
+	rejectCLI(t, "linear", "health", "post")
+}

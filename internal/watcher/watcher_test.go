@@ -42,6 +42,10 @@ type fakeLinear struct {
 	mentions      []map[string]any
 	queries       []string
 	notes         int
+	// healthIssues and activity answer project health's reads.
+	healthIssues []map[string]any
+	activity     map[string]map[string]any
+	healthMore   bool
 }
 
 func (f *fakeLinear) issue(id string) (linearprovider.IssueV2, error) {
@@ -148,6 +152,12 @@ func (a fakeApp) GraphQL(_ context.Context, query string, vars map[string]any, o
 		data = map[string]any{"issues": map[string]any{"nodes": nodes, "pageInfo": map[string]any{"hasNextPage": a.f.delegatedMore, "endCursor": "next"}}}
 	case mentionsQuery:
 		data = map[string]any{"notifications": map[string]any{"nodes": a.f.mentions, "pageInfo": map[string]any{"hasNextPage": false}}}
+	case healthProjectQuery:
+		data = map[string]any{"project": map[string]any{"id": vars["id"], "targetDate": nil, "startDate": nil, "createdAt": "2026-01-01T00:00:00.000Z"}}
+	case healthIssuesQuery:
+		data = map[string]any{"issues": map[string]any{"nodes": a.f.healthIssues, "pageInfo": map[string]any{"hasNextPage": a.f.healthMore, "endCursor": "next"}}}
+	case healthActivityQuery:
+		data = map[string]any{"issue": a.f.activity[vars["id"].(string)]}
 	default:
 		return errors.New("unexpected query")
 	}

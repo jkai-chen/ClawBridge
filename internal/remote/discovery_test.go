@@ -3,12 +3,15 @@ package remote
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"clawbridge/internal/server"
 )
 
 func TestOAuthDiscoveryStrictContract(t *testing.T) {
@@ -156,5 +159,49 @@ func TestOAuthDiscoveryTimeoutIsBounded(t *testing.T) {
 	}
 	if client.CheckRedirect == nil || !errors.Is(client.CheckRedirect(nil, nil), http.ErrUseLastResponse) {
 		t.Fatal("discovery redirect policy is not fail-closed")
+	}
+}
+
+// The server's own /v1/config answer, with the sign-in fields it adds,
+// passes the strict parser (a v-next server broke login when it didn't).
+func TestOAuthDiscoveryReadsTheServersSignInFields(t *testing.T) {
+	metadata := server.OAuthMetadata{
+		BrowserClientID: "browser-client.apps.googleusercontent.com", BrowserClientSecret: "synthetic-browser-client-credential",
+		DeviceClientID: "device-client.apps.googleusercontent.com", DeviceClientSecret: "synthetic-device-client-credential",
+	}
+	for _, c := range []struct {
+		name   string
+		auth   server.AuthOptions
+		want   string
+		origin string
+	}{
+		{"google only", server.AuthOptions{}, "[google]", ""},
+		{"google and device", server.AuthOptions{Methods: []string{server.AuthGoogle, server.AuthDevice}, PublicOrigin: "https://cb.example.test"}, "[google device]", "https://cb.example.test"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			handler := server.NewHandlerWithOptions(nil, nil, server.HandlerOptions{OAuth: metadata, Auth: c.auth})
+			ts := httptest.NewServer(handler)
+			defer ts.Close()
+			got, err := DiscoverOAuthClient(context.Background(), ts.URL, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got.BrowserClientID != metadata.BrowserClientID || got.DeviceClientSecret != metadata.DeviceClientSecret || fmt.Sprint(got.AuthMethods) != c.want || got.PublicOrigin != c.origin {
+				t.Fatalf("%#v", got)
+			}
+		})
+	}
+	base := `{"browser_client_id":"b","browser_client_secret":"bs","device_client_id":"d","device_client_secret":"ds"`
+	for name, body := range map[string]string{
+		"methods not an array":   base + `,"auth_methods":"google"}`,
+		"a method not a string":  base + `,"auth_methods":[1]}`,
+		"an empty method":        base + `,"auth_methods":[""]}`,
+		"origin not a string":    base + `,"public_origin":1}`,
+		"methods twice":          base + `,"auth_methods":["google"],"auth_methods":["device"]}`,
+		"an OAuth field missing": `{"browser_client_id":"b","browser_client_secret":"bs","device_client_id":"d","auth_methods":["google"],"public_origin":"x"}`,
+	} {
+		if _, err := parseOAuthDiscovery([]byte(body)); err == nil {
+			t.Errorf("%s: accepted", name)
+		}
 	}
 }

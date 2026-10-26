@@ -77,11 +77,15 @@ func (l *limitedWriter) Write(p []byte) (int, error) {
 
 // requiredSettings are the compose file's required (`:?`) entries; a test
 // keeps the list equal to deploy/compose.yaml.
-var requiredSettings = []string{
-	"CLAWBRIDGE_AUDIENCE", "CLAWBRIDGE_BOOTSTRAP_OWNER", "CLAWBRIDGE_DOMAIN",
-	"CLAWBRIDGE_OAUTH_CLIENT_ID", "CLAWBRIDGE_OAUTH_CLIENT_SECRET",
+var requiredSettings = []string{"CLAWBRIDGE_BOOTSTRAP_OWNER", "CLAWBRIDGE_DOMAIN", "POSTGRES_PASSWORD"}
+
+// googleSettings are Google sign-in's five entries: all or none. A
+// deployment with Google sign-in on (CLAWBRIDGE_AUTH unset, google or
+// google,device) needs all five, and serve refuses to start without them;
+// a device-only one (CLAWBRIDGE_AUTH=device) needs none.
+var googleSettings = []string{
+	"CLAWBRIDGE_AUDIENCE", "CLAWBRIDGE_OAUTH_CLIENT_ID", "CLAWBRIDGE_OAUTH_CLIENT_SECRET",
 	"CLAWBRIDGE_OAUTH_DEVICE_CLIENT_ID", "CLAWBRIDGE_OAUTH_DEVICE_CLIENT_SECRET",
-	"POSTGRES_PASSWORD",
 }
 
 // appSettings are the Linear app's three entries: all or none.
@@ -98,7 +102,7 @@ var composeServices = []string{"api", "caddy", "db"}
 func factsScript() string { return factsScriptFor(serverEnvFile) }
 
 func factsScriptFor(path string) string {
-	keys := append(append([]string{}, requiredSettings...), appSettings...)
+	keys := append(append(append([]string{}, requiredSettings...), googleSettings...), appSettings...)
 	return strings.Join([]string{
 		`f=` + path,
 		`echo "mount $(findmnt -n -o SOURCE ` + dataMount + ` || echo none)"`,
@@ -166,7 +170,7 @@ func checkSettings(f remoteFacts) cloudResult {
 	if f.envMissing {
 		return failed("server", "env_missing", serverEnvFile+" is missing; write the private configuration")
 	}
-	var missing, twice []string
+	var missing, twice, google, noGoogle []string
 	for _, k := range requiredSettings {
 		switch n := f.counts[k]; {
 		case n == 0:
@@ -174,6 +178,19 @@ func checkSettings(f remoteFacts) cloudResult {
 		case n > 1:
 			twice = append(twice, k)
 		}
+	}
+	for _, k := range googleSettings {
+		switch n := f.counts[k]; {
+		case n == 0:
+			noGoogle = append(noGoogle, k)
+		case n > 1:
+			twice = append(twice, k)
+		default:
+			google = append(google, k)
+		}
+	}
+	if len(google) > 0 && len(noGoogle) > 0 {
+		return failed("server", "setting_missing", "Google sign-in needs all five settings; set in the env file: "+strings.Join(noGoogle, ", ")+" (or remove them all and set CLAWBRIDGE_AUTH=device)")
 	}
 	if len(missing) > 0 {
 		return failed("server", "setting_missing", "set in the env file: "+strings.Join(missing, ", "))

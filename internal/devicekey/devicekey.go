@@ -107,3 +107,20 @@ func ParsePublicKey(s string) (ed25519.PublicKey, error) {
 	}
 	return ed25519.PublicKey(b), nil
 }
+
+// RequestBase is the bytes a device signs for a request (§5): the method,
+// the server's public origin, the request target exactly as sent (path and
+// query), the timestamp and nonce as written in the header, and the body's
+// SHA-256.
+func RequestBase(method, origin, target, ts, nonce string, body []byte) []byte {
+	sum := sha256.Sum256(body)
+	return []byte("clawbridge-request-v1\n" + method + "\n" + origin + "\n" + target + "\n" + ts + "\n" + nonce + "\n" + hex.EncodeToString(sum[:]))
+}
+
+// JoinProofBase is the bytes a joining device signs to prove it holds the
+// key it binds (§4). code is the normal form (NormalCode), so any typed
+// spelling of a code gives one proof.
+func JoinProofBase(origin, email, code, ts string) []byte {
+	sum := sha256.Sum256([]byte(code))
+	return []byte("clawbridge-join-v1\n" + origin + "\n" + email + "\n" + hex.EncodeToString(sum[:]) + "\n" + ts)
+}

@@ -61,3 +61,16 @@ func TestDeviceID(t *testing.T) {
 		}
 	}
 }
+
+// The signed bases are fixed byte strings both sides build the same way.
+func TestSignedBases(t *testing.T) {
+	got := string(RequestBase("POST", "https://cb.example.com", "/v1/execute?a=%20", "1761498000", "bm9uY2U", []byte("{}")))
+	want := "clawbridge-request-v1\nPOST\nhttps://cb.example.com\n/v1/execute?a=%20\n1761498000\nbm9uY2U\n44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a"
+	if got != want {
+		t.Fatalf("%q", got)
+	}
+	got = string(JoinProofBase("https://cb.example.com", "ada@example.com", "0000000000000000", "1761498000"))
+	if !strings.HasPrefix(got, "clawbridge-join-v1\nhttps://cb.example.com\nada@example.com\n") || strings.Contains(got, "0000000000000000") || !strings.HasSuffix(got, "\n1761498000") {
+		t.Fatalf("%q", got)
+	}
+}

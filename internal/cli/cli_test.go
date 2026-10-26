@@ -308,8 +308,10 @@ func TestServeDoesNotReadConfigOrOpenLocalDatabase(t *testing.T) {
 	}
 	t.Setenv("CLAWBRIDGE_CONFIG", path)
 	t.Setenv("CLAWBRIDGE_DATABASE_URL", "")
+	t.Setenv("CLAWBRIDGE_OAUTH_CLIENT_SECRET", "synthetic-browser")
+	t.Setenv("CLAWBRIDGE_OAUTH_DEVICE_CLIENT_SECRET", "synthetic-device")
 	var out, diagnostics bytes.Buffer
-	e := Run(context.Background(), []string{"serve", "--audience", "desktop-client.apps.googleusercontent.com,device-client.apps.googleusercontent.com", "--bootstrap-owner", "owner@example.test"}, &out, &diagnostics)
+	e := Run(context.Background(), []string{"serve", "--audience", "desktop-client.apps.googleusercontent.com,device-client.apps.googleusercontent.com", "--oauth-client-id", "desktop-client.apps.googleusercontent.com", "--oauth-device-client-id", "device-client.apps.googleusercontent.com", "--bootstrap-owner", "owner@example.test"}, &out, &diagnostics)
 	if e == nil || !strings.Contains(e.Error(), "Postgres connection") {
 		t.Fatal("serve did not delegate before config resolution", e)
 	}

@@ -2,6 +2,7 @@
 package server
 
 import (
+	"bytes"
 	"context"
 	"encoding/base64"
 	"encoding/json"
@@ -277,8 +278,12 @@ type HandlerOptions struct {
 	Ticker       Ticker
 	// Nudge asks the watcher for an early marker pass of a request's
 	// project after its confirm or release commits; nil without a watcher
-	// clock. It never blocks.
+	// clock; it never blocks.
 	Nudge func(workspace, project string)
+	// Auth chooses the sign-in methods; the zero value is Google only.
+	Auth AuthOptions
+	// Now is the clock device sign-in reads; nil is time.Now.
+	Now func() time.Time
 }
 
 // NewHandlerWithOptions also serves the send-only /mcp/intake endpoint when
@@ -292,6 +297,33 @@ func NewHandlerWithOptions(store Executor, verifier Verifier, o HandlerOptions) 
 	}
 	if o.TickVerifier != nil && o.Ticker != nil {
 		tick = newTickHandler(o.TickVerifier, o.Ticker)
+	}
+	now := o.Now
+	if now == nil {
+		now = time.Now
+	}
+	methods := []string{AuthGoogle}
+	if len(o.Auth.Methods) > 0 {
+		methods = o.Auth.Methods
+	}
+	failures := &failureLog{now: now, last: map[string]time.Time{}}
+	failedAuth := newCounter(failedAuthPerMin, time.Minute, now)
+	cache := newDeviceCache(now)
+	var authenticators []Authenticator
+	var join http.Handler
+	if o.Auth.accepts(AuthGoogle) {
+		authenticators = append(authenticators, googleAuthenticator{verifier: verifier})
+	}
+	if o.Auth.accepts(AuthDevice) && o.Auth.Devices != nil && o.Auth.PublicOrigin != "" {
+		authenticators = append(authenticators, deviceAuthenticator{origin: o.Auth.PublicOrigin, store: o.Auth.Devices, cache: cache, now: now})
+		join = &joinHandler{origin: o.Auth.PublicOrigin, store: o.Auth.Devices, byAddress: newCounter(joinPerAddress, time.Hour, now), byEmail: newCounter(joinPerEmail, time.Hour, now), failures: failures, now: now, invalidMsg: bus.ErrInvalidInvite.Error()}
+	}
+	required := "a Google ID token is required"
+	if join != nil {
+		required = "a Google ID token or a ClawBridge-Device signature is required"
+		if !o.Auth.accepts(AuthGoogle) {
+			required = "a ClawBridge-Device signature is required; this server accepts device keys only"
+		}
 	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Cache-Control", "no-store")
@@ -314,15 +346,19 @@ func NewHandlerWithOptions(store Executor, verifier Verifier, o HandlerOptions) 
 				return
 			}
 			config := struct {
-				BrowserClientID     string `json:"browser_client_id"`
-				BrowserClientSecret string `json:"browser_client_secret"`
-				DeviceClientID      string `json:"device_client_id"`
-				DeviceClientSecret  string `json:"device_client_secret"`
+				BrowserClientID     string   `json:"browser_client_id"`
+				BrowserClientSecret string   `json:"browser_client_secret"`
+				DeviceClientID      string   `json:"device_client_id"`
+				DeviceClientSecret  string   `json:"device_client_secret"`
+				AuthMethods         []string `json:"auth_methods"`
+				PublicOrigin        string   `json:"public_origin,omitempty"`
 			}{
 				BrowserClientID:     metadata.BrowserClientID,
 				BrowserClientSecret: metadata.BrowserClientSecret,
 				DeviceClientID:      metadata.DeviceClientID,
 				DeviceClientSecret:  metadata.DeviceClientSecret,
+				AuthMethods:         methods,
+				PublicOrigin:        o.Auth.PublicOrigin,
 			}
 			w.Header().Set("Content-Type", "application/json")
 			_ = json.NewEncoder(w).Encode(config)
@@ -336,6 +372,10 @@ func NewHandlerWithOptions(store Executor, verifier Verifier, o HandlerOptions) 
 			tick.ServeHTTP(w, r)
 			return
 		}
+		if r.URL.Path == "/v1/join" && join != nil {
+			join.ServeHTTP(w, r)
+			return
+		}
 		if r.URL.Path != "/v1/execute" {
 			fail(w, 404, "not_found", "endpoint not found")
 			return
@@ -344,29 +384,54 @@ func NewHandlerWithOptions(store Executor, verifier Verifier, o HandlerOptions) 
 			fail(w, 405, "method_not_allowed", "POST required")
 			return
 		}
-		headers := r.Header.Values("Authorization")
-		if len(headers) != 1 {
-			fail(w, 401, "unauthenticated", "a Google ID token is required")
+		address := clientAddress(r)
+		if failedAuth.full(address) {
+			fail(w, 429, "rate_limited", "too many failed sign-ins from this address; try again later")
 			return
 		}
-		fields := strings.Fields(headers[0])
-		if len(fields) != 2 || !strings.EqualFold(fields[0], "Bearer") || len(fields[1]) > 16384 || verifier == nil {
-			fail(w, 401, "unauthenticated", "a valid Google ID token is required")
+		headers := r.Header.Values("Authorization")
+		if len(headers) != 1 {
+			fail(w, 401, "unauthenticated", required)
+			return
+		}
+		scheme, credentials, _ := strings.Cut(strings.TrimSpace(headers[0]), " ")
+		var authenticator Authenticator
+		for _, a := range authenticators {
+			if strings.EqualFold(scheme, a.Scheme()) {
+				authenticator = a
+			}
+		}
+		if authenticator == nil {
+			fail(w, 401, "unauthenticated", required)
+			return
+		}
+		// The body is read raw before authentication: a device signs its
+		// hash.
+		body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 128<<10))
+		if err != nil {
+			fail(w, 400, "invalid", "invalid or oversized request JSON")
 			return
 		}
 		ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
 		defer cancel()
-		identity, err := verifier.Verify(ctx, fields[1])
-		if err != nil || !principal.Valid(identity.Principal) || identity.Subject == "" {
-			fail(w, 401, "unauthenticated", "Google identity verification failed")
+		verified, refused := authenticator.Authenticate(ctx, r, strings.TrimSpace(credentials), body)
+		if refused != nil {
+			if refused.status == 401 {
+				failedAuth.add(address)
+				failures.record(address, refused.kind)
+			}
+			if refused.serverTime {
+				failWithTime(w, refused.status, refused.code, refused.message, now())
+			} else {
+				fail(w, refused.status, refused.code, refused.message)
+			}
 			return
 		}
-		if !l.allow(identity.Principal) {
+		if !l.allow(verified.Principal) {
 			fail(w, 429, "rate_limited", "principal request limit reached")
 			return
 		}
-		r.Body = http.MaxBytesReader(w, r.Body, 128<<10)
-		decoder := json.NewDecoder(r.Body)
+		decoder := json.NewDecoder(bytes.NewReader(body))
 		decoder.DisallowUnknownFields()
 		var request bus.Request
 		if err = decoder.Decode(&request); err != nil {
@@ -383,13 +448,14 @@ func NewHandlerWithOptions(store Executor, verifier Verifier, o HandlerOptions) 
 			return
 		}
 		var result bus.Result
-		verified := bus.Identity{Principal: identity.Principal, Issuer: bus.GoogleIssuer, Subject: identity.Subject, HostedDomain: identity.HostedDomain}
 		if request.Operation == "linear_write" || request.Operation == "linear_app_status" || request.Operation == "linear_app_states" {
 			result, err = writer.Execute(r.Context(), verified, request)
 		} else if bound, ok := store.(IdentityExecutor); ok {
 			result, err = bound.ExecuteAsIdentity(ctx, verified, request)
+		} else if verified.Issuer == bus.GoogleIssuer {
+			result, err = store.ExecuteAs(ctx, verified.Principal, request)
 		} else {
-			result, err = store.ExecuteAs(ctx, identity.Principal, request)
+			err = errors.New("device sign-in needs the hosted authority")
 		}
 		if err != nil {
 			code, status := serviceError(err)
@@ -397,16 +463,23 @@ func NewHandlerWithOptions(store Executor, verifier Verifier, o HandlerOptions) 
 			return
 		}
 		result.Source = "server"
+		if revokesDevices(request.Operation) {
+			cache.clear()
+		}
 		// The confirm or release has committed: its marker rows are due now.
 		if o.Nudge != nil && (request.Operation == "assignment_confirm" || request.Operation == "assignment_release") {
 			o.Nudge(request.Workspace, request.Project)
 		}
 		if request.Operation == "whoami" {
 			if data, ok := result.Data.(map[string]any); ok {
-				data["principal"] = identity.Principal
-				data["subject"] = identity.Subject
+				data["principal"] = verified.Principal
+				data["subject"] = verified.Subject
 				data["verified"] = true
 				data["identity_provenance"] = "google-id-token"
+				if verified.Issuer == bus.DeviceIssuer {
+					data["identity_provenance"] = "device-key"
+					data["device_id"] = verified.Subject
+				}
 			}
 		}
 		encoded, err := json.Marshal(result)
@@ -482,36 +555,21 @@ func publicMessage(code string) string {
 // Run starts a production-authenticated service. Database credentials come only
 // from the explicitly named environment variable and are never logged.
 func Run(ctx context.Context, args []string) error {
-	f := flag.NewFlagSet("serve", flag.ContinueOnError)
-	listen := f.String("listen", "127.0.0.1:8080", "listen address; use a private/IAP path or TLS proxy for remote access")
-	audience := f.String("audience", "", "required comma-separated Google ID-token audience set")
-	browserClientID := f.String("oauth-client-id", "", "optional Desktop-app OAuth client ID; must be in --audience")
-	deviceClientID := f.String("oauth-device-client-id", "", "optional TVs and Limited Input devices OAuth client ID; must be in --audience")
-	owner := f.String("bootstrap-owner", "", "verified principal allowed to initialize a new workspace")
-	dsnEnv := f.String("database-url-env", "CLAWBRIDGE_DATABASE_URL", "environment variable holding the Postgres connection URL")
-	if err := f.Parse(args); err != nil {
-		if errors.Is(err, flag.ErrHelp) {
-			return nil
-		}
-		return err
+	settings, err := ParseServe(args, os.Getenv)
+	if errors.Is(err, flag.ErrHelp) {
+		return nil
 	}
-	if f.NArg() != 0 {
-		return errors.New("serve accepts flags only")
-	}
-	audiences, err := parseAudiences(*audience)
-	if err != nil || !principal.Valid(*owner) {
-		return errors.New("serve requires --audience and --bootstrap-owner")
-	}
-	metadata, err := validateOAuthMetadata(audiences, OAuthMetadata{
-		BrowserClientID:     strings.TrimSpace(*browserClientID),
-		BrowserClientSecret: os.Getenv("CLAWBRIDGE_OAUTH_CLIENT_SECRET"),
-		DeviceClientID:      strings.TrimSpace(*deviceClientID),
-		DeviceClientSecret:  os.Getenv("CLAWBRIDGE_OAUTH_DEVICE_CLIENT_SECRET"),
-	})
 	if err != nil {
 		return err
 	}
-	dsn := os.Getenv(*dsnEnv)
+	auth, metadata := settings.Auth, settings.OAuth
+	var verifier Verifier
+	if auth.accepts(AuthGoogle) {
+		if verifier, err = NewGoogleVerifierForAudiences(ctx, settings.Audiences); err != nil {
+			return err
+		}
+	}
+	dsn := os.Getenv(settings.DatabaseURLEnv)
 	if dsn == "" {
 		return errors.New("Postgres connection environment variable is empty")
 	}
@@ -519,11 +577,7 @@ func Run(ctx context.Context, args []string) error {
 	if err != nil {
 		return err
 	}
-	verifier, err := NewGoogleVerifierForAudiences(ctx, audiences)
-	if err != nil {
-		return err
-	}
-	store, err := openServingStore(ctx, dsn, *owner)
+	store, err := openServingStore(ctx, dsn, settings.BootstrapOwner)
 	if err != nil {
 		return errors.New("cannot initialize Postgres; check the configured connection and schema version")
 	}
@@ -532,9 +586,10 @@ func Run(ctx context.Context, args []string) error {
 	if err != nil {
 		return err
 	}
-	options := startWatcher(ctx, store, watch, HandlerOptions{OAuth: metadata, Writer: writer})
+	auth.Devices = store
+	options := startWatcher(ctx, store, watch, HandlerOptions{OAuth: metadata, Writer: writer, Auth: auth})
 	// A Linear write the server runs as the app may take up to a minute.
-	srv := &http.Server{Addr: *listen, Handler: NewHandlerWithOptions(store, verifier, options), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 20 * time.Second, WriteTimeout: 80 * time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 24 << 10}
+	srv := &http.Server{Addr: settings.Listen, Handler: NewHandlerWithOptions(store, verifier, options), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 20 * time.Second, WriteTimeout: 80 * time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 24 << 10}
 	result := make(chan error, 1)
 	go func() { result <- srv.ListenAndServe() }()
 	select {
@@ -568,7 +623,10 @@ func openServingStore(ctx context.Context, dsn, owner string) (*bus.Store, error
 // cannot sign in: their own address moved to a new Google account, or a
 // workspace allow-list refuses every account.
 func RunOperator(ctx context.Context, args []string, stdout io.Writer) error {
-	const usage = "usage: clawbridge operator principal-unbind EMAIL --confirm [--allow-previous] | workspace-clear-domains WORKSPACE --confirm | linear-app-probe --confirm [--project UUID] [--p8 [--dry-run]] | linear-app-doc-probe --confirm [--database-url-env NAME]"
+	const usage = "usage: clawbridge operator principal-unbind EMAIL --confirm [--allow-previous] | workspace-clear-domains WORKSPACE --confirm | linear-app-probe --confirm [--project UUID] [--p8 [--dry-run]] | linear-app-doc-probe --confirm | bootstrap-invite --workspace NAME [--force-stdout] [--database-url-env NAME]"
+	if len(args) > 0 && args[0] == "bootstrap-invite" {
+		return runBootstrapInvite(ctx, args[1:], stdout)
+	}
 	if len(args) == 0 || (args[0] != "principal-unbind" && args[0] != "workspace-clear-domains" && args[0] != "linear-app-probe" && args[0] != "linear-app-doc-probe") {
 		return errors.New(usage)
 	}
@@ -696,4 +754,104 @@ func validateOAuthMetadata(audiences []string, metadata OAuthMetadata) (OAuthMet
 		return OAuthMetadata{}, errors.New("OAuth browser and device client IDs must be distinct")
 	}
 	return metadata, nil
+}
+
+// authMethods reads serve --auth (§10). Without it, Google is on when an
+// audience is configured and device keys when a public origin is, so an
+// upgrade keeps today's Google sign-in and adds device keys only once the
+// operator names the origin.
+func authMethods(flagValue string, haveAudience, haveOrigin bool) ([]string, error) {
+	if flagValue == "" {
+		var methods []string
+		if haveAudience {
+			methods = append(methods, AuthGoogle)
+		}
+		if haveOrigin {
+			methods = append(methods, AuthDevice)
+		}
+		if len(methods) == 0 {
+			return nil, errors.New("serve needs --audience for Google sign-in or --public-origin for device sign-in")
+		}
+		return methods, nil
+	}
+	seen := map[string]bool{}
+	var methods []string
+	for _, m := range strings.Split(flagValue, ",") {
+		m = strings.TrimSpace(m)
+		if (m != AuthGoogle && m != AuthDevice) || seen[m] {
+			return nil, errors.New("--auth must be google, device or google,device")
+		}
+		seen[m] = true
+		methods = append(methods, m)
+	}
+	return methods, nil
+}
+
+// ServeSettings are serve's flags, checked.
+type ServeSettings struct {
+	Listen, BootstrapOwner, DatabaseURLEnv string
+	// Auth holds the effective sign-in methods and the public origin.
+	Auth      AuthOptions
+	Audiences []string
+	OAuth     OAuthMetadata
+}
+
+// ParseServe reads serve's flags and the OAuth secrets from getenv. The
+// sign-in mode is never inferred down: wherever Google sign-in is on, its
+// audience and all four OAuth settings must be present, so a Google
+// deployment missing one fails at startup instead of serving devices only.
+func ParseServe(args []string, getenv func(string) string) (ServeSettings, error) {
+	f := flag.NewFlagSet("serve", flag.ContinueOnError)
+	listen := f.String("listen", "127.0.0.1:8080", "listen address; use a private/IAP path or TLS proxy for remote access")
+	audience := f.String("audience", "", "comma-separated Google ID-token audience set; required for Google sign-in")
+	browserClientID := f.String("oauth-client-id", "", "Desktop-app OAuth client ID, in --audience; required for Google sign-in")
+	deviceClientID := f.String("oauth-device-client-id", "", "TVs and Limited Input devices OAuth client ID, in --audience; required for Google sign-in")
+	owner := f.String("bootstrap-owner", "", "verified principal allowed to initialize a new workspace")
+	dsnEnv := f.String("database-url-env", "CLAWBRIDGE_DATABASE_URL", "environment variable holding the Postgres connection URL")
+	authFlag := f.String("auth", "", "sign-in methods: google, device or google,device; without it, google with --audience and device with --public-origin")
+	publicOrigin := f.String("public-origin", "", "this server's public origin, https://HOST[:PORT]; device signatures and join proofs cover it, so device sign-in requires it")
+	if err := f.Parse(args); err != nil {
+		return ServeSettings{}, err
+	}
+	if f.NArg() != 0 {
+		return ServeSettings{}, errors.New("serve accepts flags only")
+	}
+	if !principal.Valid(*owner) {
+		return ServeSettings{}, errors.New("serve requires --bootstrap-owner")
+	}
+	methods, err := authMethods(*authFlag, *audience != "", *publicOrigin != "")
+	if err != nil {
+		return ServeSettings{}, err
+	}
+	out := ServeSettings{Listen: *listen, BootstrapOwner: *owner, DatabaseURLEnv: *dsnEnv, Auth: AuthOptions{Methods: methods}}
+	if out.Auth.accepts(AuthDevice) {
+		if out.Auth.PublicOrigin, err = ParsePublicOrigin(*publicOrigin); err != nil {
+			return ServeSettings{}, err
+		}
+	}
+	if out.Auth.accepts(AuthGoogle) {
+		if out.Audiences, err = parseAudiences(*audience); err != nil {
+			return ServeSettings{}, errors.New("Google sign-in requires --audience")
+		}
+		metadata := OAuthMetadata{
+			BrowserClientID:     strings.TrimSpace(*browserClientID),
+			BrowserClientSecret: getenv("CLAWBRIDGE_OAUTH_CLIENT_SECRET"),
+			DeviceClientID:      strings.TrimSpace(*deviceClientID),
+			DeviceClientSecret:  getenv("CLAWBRIDGE_OAUTH_DEVICE_CLIENT_SECRET"),
+		}
+		if out.OAuth, err = validateOAuthMetadata(out.Audiences, metadata); err != nil {
+			return ServeSettings{}, err
+		}
+		for _, setting := range []struct{ name, value string }{
+			{"--oauth-client-id", metadata.BrowserClientID},
+			{"CLAWBRIDGE_OAUTH_CLIENT_SECRET", metadata.BrowserClientSecret},
+			{"--oauth-device-client-id", metadata.DeviceClientID},
+			{"CLAWBRIDGE_OAUTH_DEVICE_CLIENT_SECRET", metadata.DeviceClientSecret},
+		} {
+			if setting.value == "" {
+				return ServeSettings{}, fmt.Errorf("Google sign-in is on (--auth %s) but %s is empty; set it, or choose --auth device", strings.Join(methods, ","), setting.name)
+			}
+		}
+	}
+	return out, nil
 }

@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log"
 	"net/http"
 	"net/http/httptest"
@@ -101,12 +102,63 @@ func TestServeRejectsInvalidAudienceSetBeforeDatabase(t *testing.T) {
 
 func TestServeAcceptsOrderedAudienceSetBeforeDatabase(t *testing.T) {
 	t.Setenv("CLAWBRIDGE_DATABASE_URL", "")
+	t.Setenv("CLAWBRIDGE_OAUTH_CLIENT_SECRET", "synthetic-browser")
+	t.Setenv("CLAWBRIDGE_OAUTH_DEVICE_CLIENT_SECRET", "synthetic-device")
 	err := Run(context.Background(), []string{
 		"--audience", "desktop.apps.googleusercontent.com,device.apps.googleusercontent.com",
+		"--oauth-client-id", "desktop.apps.googleusercontent.com",
+		"--oauth-device-client-id", "device.apps.googleusercontent.com",
 		"--bootstrap-owner", "owner@example.test",
 	})
 	if err == nil || !strings.Contains(err.Error(), "Postgres connection") {
 		t.Fatalf("valid audience set was not accepted before database setup: %v", err)
+	}
+}
+
+// Wherever Google sign-in is on, explicitly or by its audience, all four
+// OAuth settings are required: a Google deployment missing one fails at
+// startup rather than serving devices only.
+func TestServeGoogleNeedsEveryOAuthSetting(t *testing.T) {
+	env := map[string]string{"CLAWBRIDGE_OAUTH_CLIENT_SECRET": "synthetic-browser", "CLAWBRIDGE_OAUTH_DEVICE_CLIENT_SECRET": "synthetic-device"}
+	full := []string{"--audience", "desktop.apps.googleusercontent.com,device.apps.googleusercontent.com", "--oauth-client-id", "desktop.apps.googleusercontent.com", "--oauth-device-client-id", "device.apps.googleusercontent.com", "--bootstrap-owner", "owner@example.test"}
+	origin := []string{"--public-origin", "https://cb.example.com"}
+	for name, c := range map[string]struct {
+		args    []string
+		drop    string
+		want    string
+		methods string
+	}{
+		"inferred google":         {full, "", "", "[google]"},
+		"audience and origin":     {append(append([]string{}, full...), origin...), "", "", "[google device]"},
+		"explicit device":         {append([]string{"--auth", "device", "--bootstrap-owner", "owner@example.test"}, origin...), "", "", "[device]"},
+		"device without origin":   {[]string{"--auth", "device", "--bootstrap-owner", "owner@example.test"}, "", "--public-origin", ""},
+		"no browser client":       {full, "--oauth-client-id", "browser client credential has a secret but no client ID", ""},
+		"no device client":        {full, "--oauth-device-client-id", "device client credential has a secret but no client ID", ""},
+		"no browser secret":       {full, "CLAWBRIDGE_OAUTH_CLIENT_SECRET", "CLAWBRIDGE_OAUTH_CLIENT_SECRET", ""},
+		"no device secret":        {full, "CLAWBRIDGE_OAUTH_DEVICE_CLIENT_SECRET", "CLAWBRIDGE_OAUTH_DEVICE_CLIENT_SECRET", ""},
+		"explicit google, no aud": {[]string{"--auth", "google", "--bootstrap-owner", "owner@example.test"}, "", "--audience", ""},
+	} {
+		args := []string{}
+		for i := 0; i < len(c.args); i++ {
+			if c.args[i] == c.drop {
+				i++
+				continue
+			}
+			args = append(args, c.args[i])
+		}
+		settings, err := ParseServe(args, func(k string) string {
+			if k == c.drop {
+				return ""
+			}
+			return env[k]
+		})
+		if c.want == "" {
+			if err != nil || fmt.Sprint(settings.Auth.Methods) != c.methods {
+				t.Errorf("%s: %v %v", name, settings.Auth.Methods, err)
+			}
+		} else if err == nil || !strings.Contains(err.Error(), c.want) {
+			t.Errorf("%s: want an error naming %s, got %v", name, c.want, err)
+		}
 	}
 }
 
@@ -213,7 +265,8 @@ func TestPublicOAuthConfigIsUnauthenticatedAndMinimal(t *testing.T) {
 	if err := json.Unmarshal(recorder.Body.Bytes(), &exact); err != nil {
 		t.Fatal(err)
 	}
-	if len(exact) != 4 {
+	// The bundle, and the sign-in methods (Google only by default).
+	if len(exact) != 5 || fmt.Sprint(exact["auth_methods"]) != "[google]" {
 		t.Fatalf("public config does not contain the exact installed-app bundle: %#v", exact)
 	}
 	if recorder.Header().Get("Cache-Control") != "no-store" {
@@ -227,7 +280,7 @@ func TestPublicOAuthConfigOmissionAndMethod(t *testing.T) {
 	}))
 	recorder := httptest.NewRecorder()
 	handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/v1/config", nil))
-	if recorder.Code != http.StatusOK || strings.TrimSpace(recorder.Body.String()) != `{"browser_client_id":"","browser_client_secret":"","device_client_id":"","device_client_secret":""}` {
+	if recorder.Code != http.StatusOK || strings.TrimSpace(recorder.Body.String()) != `{"browser_client_id":"","browser_client_secret":"","device_client_id":"","device_client_secret":"","auth_methods":["google"]}` {
 		t.Fatalf("legacy config response status=%d body=%q", recorder.Code, recorder.Body.String())
 	}
 	recorder = httptest.NewRecorder()

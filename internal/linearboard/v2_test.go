@@ -160,6 +160,10 @@ func (p *providerV2) Statuses(ctx context.Context, team string) ([]linearprovide
 	return out, nil
 }
 
+func (p *providerV2) Comment(ctx context.Context, issue, body string) (linearprovider.Receipt, error) {
+	p.tools++
+	return p.fakeProvider.Comment(ctx, issue, body)
+}
 func (p *providerV2) GetTeam(ctx context.Context, id string) (linearprovider.Team, error) {
 	p.tools++
 	return p.fakeProvider.GetTeam(ctx, id)

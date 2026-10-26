@@ -11,6 +11,7 @@ package agentd
 
 import (
 	"fmt"
+	"net/netip"
 	"regexp"
 	"strings"
 )
@@ -95,17 +96,112 @@ func agentSpec(image, serverURL, ref string) createSpec {
 	}
 }
 
-// networkSpec is the body of POST /networks/create: an internal bridge, with
-// no route out. The egress proxy is the only other member (§5.3).
+// networkSpec is the body of POST /networks/create.
 type networkSpec struct {
 	Name     string
 	Driver   string
 	Internal bool
+	IPAM     ipamSpec
 }
 
-func agentNetwork(ref string) networkSpec {
-	return networkSpec{Name: networkName(ref), Driver: "bridge", Internal: true}
+type ipamSpec struct {
+	Driver string
+	Config []ipamConfig
 }
+
+type ipamConfig struct{ Subnet string }
+
+// Each owner's network has a fixed subnet from this pool, so the egress
+// proxy can tell owners apart by source address (§5.3). agentd allocates
+// them; the proxy only checks the shape, and the daemon refuses overlaps.
+var (
+	subnetPool = netip.MustParsePrefix("172.30.0.0/16")
+	// egressSubnet is the egress proxy's own outbound network, outside the
+	// pool.
+	egressSubnet = netip.MustParsePrefix("172.31.255.0/28")
+)
+
+const subnetBits = 28
+
+// validAgentSubnet reports whether subnet is a /28 of the pool.
+func validAgentSubnet(subnet string) (netip.Prefix, bool) {
+	p, err := netip.ParsePrefix(subnet)
+	ok := err == nil && p.Bits() == subnetBits && p == p.Masked() && subnetPool.Contains(p.Addr())
+	return p, ok
+}
+
+// agentNetwork is an owner's network: an internal bridge, with no route
+// out, on its fixed subnet. The egress proxy is its only other member.
+func agentNetwork(ref string, subnet netip.Prefix) networkSpec {
+	return networkSpec{Name: networkName(ref), Driver: "bridge", Internal: true,
+		IPAM: ipamSpec{Driver: "default", Config: []ipamConfig{{Subnet: subnet.String()}}}}
+}
+
+const (
+	egressName    = "clawbridge-egress"
+	egressNetName = "clawbridge-egress-net"
+	egressPort    = "3128"
+	// policyMount is where the egress container reads the policy.
+	policyMount = "/policy"
+	policyFile  = "egress.json"
+)
+
+// egressNetwork is the one network with a route out: the egress proxy's.
+func egressNetSpec() networkSpec {
+	return networkSpec{Name: egressNetName, Driver: "bridge", Internal: false,
+		IPAM: ipamSpec{Driver: "default", Config: []ipamConfig{{Subnet: egressSubnet.String()}}}}
+}
+
+// egressCreate is the body of POST /containers/create for the egress proxy.
+// Like createSpec it has a field for everything set and nothing else.
+type egressCreate struct {
+	Image      string
+	User       string
+	Cmd        []string
+	HostConfig egressHostConfig
+}
+
+type egressHostConfig struct {
+	ReadonlyRootfs bool
+	Binds          []string
+	CapDrop        []string
+	SecurityOpt    []string
+	PidsLimit      int64
+	Memory         int64
+	MemorySwap     int64
+	NetworkMode    string
+	RestartPolicy  restartPolicy
+}
+
+const egressMemory = 32 << 20
+
+// egressSpec is the egress proxy's fixed spec: the clawbridge-agentd image
+// by digest running "egress", as nobody, read-only, with no capabilities,
+// on its outbound network. Its one host path is the policy directory,
+// read-only; it has no env and no secrets. agentd connects it to each
+// owner's network, where the agents reach it as clawbridge-egress:3128.
+func egressSpec(image, policyDir string) egressCreate {
+	return egressCreate{
+		Image: image,
+		User:  "65534:65534",
+		Cmd:   []string{"egress", "--listen", "0.0.0.0:" + egressPort, "--policy", policyMount + "/" + policyFile},
+		HostConfig: egressHostConfig{
+			ReadonlyRootfs: true,
+			Binds:          []string{policyDir + ":" + policyMount + ":ro"},
+			CapDrop:        []string{"ALL"},
+			SecurityOpt:    []string{"no-new-privileges"},
+			PidsLimit:      64,
+			Memory:         egressMemory,
+			MemorySwap:     egressMemory,
+			NetworkMode:    egressNetName,
+			RestartPolicy:  restartPolicy{Name: "no"},
+		},
+	}
+}
+
+// connectSpec is the body of POST /networks/{id}/connect and disconnect:
+// only the egress proxy ever joins an owner's network.
+type connectSpec struct{ Container string }
 
 // validImage reports an error unless image is pinned by digest.
 func validImage(image string) error {

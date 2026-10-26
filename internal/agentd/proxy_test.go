@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/netip"
 	"slices"
 	"strings"
 	"testing"
@@ -139,8 +140,8 @@ func TestProxyRefusesCreatesOutsideTheSpec(t *testing.T) {
 func TestProxyRefusesOtherEndpoints(t *testing.T) {
 	s := newStack(t)
 	agent := "/containers/clawbridge-agent-" + refA
-	internal := mustJSON(t, agentNetwork(refA))
-	open := agentNetwork(refA)
+	internal := mustJSON(t, agentNetwork(refA, netip.MustParsePrefix("172.30.0.0/28")))
+	open := agentNetwork(refA, netip.MustParsePrefix("172.30.0.0/28"))
 	open.Internal = false
 	for name, c := range map[string]struct {
 		method, path string
@@ -196,5 +197,90 @@ func TestProxyForwardsTheCanonicalBody(t *testing.T) {
 	}
 	if seen := s.daemon.seen(); !slices.Equal(seen, []string{"POST /v1.47/containers/create?name=clawbridge-agent-" + refA}) {
 		t.Fatalf("%v", seen)
+	}
+}
+
+// The egress container, the networks and the connects have fixed specs too:
+// only exact bodies pass, and the egress proxy is never attached to.
+func TestProxyEgressAndNetworks(t *testing.T) {
+	s := newStack(t)
+	egress := func(edit func(m map[string]any)) []byte {
+		var m map[string]any
+		if err := json.Unmarshal(mustJSON(t, egressSpec(testEgressImage, s.policyDir)), &m); err != nil {
+			t.Fatal(err)
+		}
+		edit(m)
+		return mustJSON(t, m)
+	}
+	network := func(subnet string, edit func(n *networkSpec)) []byte {
+		n := agentNetwork(refA, netip.MustParsePrefix("172.30.0.0/28"))
+		n.IPAM.Config[0].Subnet = subnet
+		if edit != nil {
+			edit(&n)
+		}
+		return mustJSON(t, n)
+	}
+	createEgress := "/containers/create?name=" + egressName
+	for name, c := range map[string]struct {
+		method, path string
+		body         []byte
+	}{
+		"egress bind rw":     {"POST", createEgress, egress(func(m map[string]any) { hostCfg(m)["Binds"] = []string{s.policyDir + ":/policy"} })},
+		"egress other bind":  {"POST", createEgress, egress(func(m map[string]any) { hostCfg(m)["Binds"] = []string{"/:/policy:ro"} })},
+		"egress second bind": {"POST", createEgress, egress(func(m map[string]any) { hostCfg(m)["Binds"] = []string{s.policyDir + ":/policy:ro", "/etc:/etc:ro"} })},
+		"egress shell":       {"POST", createEgress, egress(func(m map[string]any) { m["Cmd"] = []string{"sh"} })},
+		"egress open policy": {"POST", createEgress, egress(func(m map[string]any) {
+			m["Cmd"] = []string{"egress", "--listen", "0.0.0.0:3128", "--policy", "/tmp/x"}
+		})},
+		"egress root":              {"POST", createEgress, egress(func(m map[string]any) { m["User"] = "0" })},
+		"egress env":               {"POST", createEgress, egress(func(m map[string]any) { m["Env"] = []string{"CLAWBRIDGE_LAUNCHER_TOKEN=x"} })},
+		"egress privileged":        {"POST", createEgress, egress(func(m map[string]any) { hostCfg(m)["Privileged"] = true })},
+		"egress host network":      {"POST", createEgress, egress(func(m map[string]any) { hostCfg(m)["NetworkMode"] = "host" })},
+		"egress on owner net":      {"POST", createEgress, egress(func(m map[string]any) { hostCfg(m)["NetworkMode"] = networkName(refA) })},
+		"egress agent image":       {"POST", createEgress, egress(func(m map[string]any) { m["Image"] = testImage })},
+		"egress cap add":           {"POST", createEgress, egress(func(m map[string]any) { hostCfg(m)["CapAdd"] = []string{"NET_ADMIN"} })},
+		"agent spec as egress":     {"POST", createEgress, mustJSON(t, agentSpec(testImage, testServer, refA))},
+		"egress spec as agent":     {"POST", "/containers/create?name=" + containerName(refA), egress(func(map[string]any) {})},
+		"attach egress":            {"POST", "/containers/" + egressName + "/attach?stream=1&stdin=1", nil},
+		"misaligned subnet":        {"POST", "/networks/create", network("172.30.0.8/28", nil)},
+		"wide subnet":              {"POST", "/networks/create", network("172.30.0.0/24", nil)},
+		"subnet outside pool":      {"POST", "/networks/create", network("10.0.0.0/28", nil)},
+		"egress subnet":            {"POST", "/networks/create", network("172.31.255.0/28", nil)},
+		"unnormal subnet":          {"POST", "/networks/create", network("172.30.000.0/28", nil)},
+		"two subnets":              {"POST", "/networks/create", network("172.30.0.0/28", func(n *networkSpec) { n.IPAM.Config = append(n.IPAM.Config, ipamConfig{Subnet: "172.30.0.16/28"}) })},
+		"other IPAM driver":        {"POST", "/networks/create", network("172.30.0.0/28", func(n *networkSpec) { n.IPAM.Driver = "macvlan" })},
+		"open owner network":       {"POST", "/networks/create", network("172.30.0.0/28", func(n *networkSpec) { n.Internal = false })},
+		"internal egress net":      {"POST", "/networks/create", mustJSON(t, networkSpec{Name: egressNetName, Driver: "bridge", Internal: true, IPAM: egressNetSpec().IPAM})},
+		"egress net, other subnet": {"POST", "/networks/create", mustJSON(t, networkSpec{Name: egressNetName, Driver: "bridge", IPAM: ipamSpec{Driver: "default", Config: []ipamConfig{{Subnet: "172.30.0.0/28"}}}})},
+		"connect postgres":         {"POST", "/networks/" + networkName(refA) + "/connect", []byte(`{"Container":"postgres"}`)},
+		"connect another agent":    {"POST", "/networks/" + networkName(refA) + "/connect", []byte(`{"Container":"` + containerName(refB) + `"}`)},
+		"connect with config":      {"POST", "/networks/" + networkName(refA) + "/connect", []byte(`{"Container":"clawbridge-egress","EndpointConfig":{"IPAddress":"172.30.0.20"}}`)},
+		"connect egress net":       {"POST", "/networks/" + egressNetName + "/connect", []byte(`{"Container":"clawbridge-agent-p_aaaaaaaa"}`)},
+		"remove egress net":        {"DELETE", "/networks/" + egressNetName, nil},
+		"inspect egress net":       {"GET", "/networks/" + egressNetName, nil},
+		"network list verbose":     {"GET", "/networks?verbose=1", nil},
+		"network prune":            {"POST", "/networks/prune", nil},
+	} {
+		if got := s.send(t, c.method, c.path, c.body); got != http.StatusForbidden {
+			t.Errorf("%s: status %d", name, got)
+		}
+	}
+	if seen := s.daemon.seen(); len(seen) != 0 {
+		t.Fatalf("the daemon saw refused requests: %v", seen)
+	}
+	// The exact bodies pass, in the order agentd sends them.
+	for _, c := range []struct {
+		name, path string
+		body       []byte
+		want       int
+	}{
+		{"egress net", "/networks/create", mustJSON(t, egressNetSpec()), http.StatusCreated},
+		{"egress", createEgress, egress(func(map[string]any) {}), http.StatusCreated},
+		{"owner net", "/networks/create", network("172.30.255.240/28", nil), http.StatusCreated},
+		{"connect", "/networks/" + networkName(refA) + "/connect", []byte(`{"Container":"clawbridge-egress"}`), http.StatusOK},
+	} {
+		if got := s.send(t, http.MethodPost, c.path, c.body); got != c.want {
+			t.Errorf("%s: status %d", c.name, got)
+		}
 	}
 }

@@ -10,14 +10,18 @@ Its Docker access is root-equivalent, so it is kept small, and it is fenced in b
    refuses `/var/run/docker.sock`, `/run/docker.sock` and any root-owned socket.
 2. **A validating socket proxy** (`clawbridge-agentd proxy`), run as `cbagent` in front of that daemon. It forwards
    only these calls:
-   - **Containers:** create, attach to stdin, start, stop, remove and inspect, on containers named
+   - **Agent containers:** create, attach to stdin, start, stop, remove and inspect, on containers named
      `clawbridge-agent-<owner ref>`.
-   - **Networks:** create and remove, on networks named `cbnet-<owner ref>`.
-   - **List:** the container list.
+   - **The egress container:** the same on `clawbridge-egress`, except attach.
+   - **Networks:** create, inspect and remove on `cbnet-<owner ref>`, and connect or disconnect `clawbridge-egress`
+     there. The egress network `clawbridge-egress-net` can only be created.
+   - **Lists:** containers and networks.
 
-   A container create passes only when its body is exactly the fixed spec, and the proxy forwards its own encoding
-   of it. Privileged mode, binds, mounts, volumes, devices, added capabilities, another network, extra env, another
-   image digest or a missing limit are all refused. So is any other endpoint, query parameter or path shape.
+   A create passes only when its body is exactly that container's or network's fixed spec, and the proxy forwards
+   its own encoding of it. An owner network must sit on a /28 of `172.30.0.0/16`. Privileged mode, binds (other
+   than the egress container's read-only policy directory), mounts, volumes, devices, added capabilities, another
+   network, extra env, another image digest or a missing limit are all refused. So is any other endpoint, query
+   parameter or path shape.
 
 ## The egress proxy
 
@@ -42,6 +46,22 @@ Its Docker access is root-equivalent, so it is kept small, and it is fenced in b
 - **Limits:** 32 tunnels per network, 10 minutes idle, 10 seconds for the request and the dial.
 - **Logs:** the owner ref, the target, the outcome and the byte counts. Never the tunnel's bytes.
 
+## How the agents reach the outside
+
+- **Owner networks.** Each owner's agent sits alone on its internal network `cbnet-<owner ref>`, on a fixed /28 of
+  `172.30.0.0/16` that agentd allocates (the first free one; up to 4,096 owners). The network has no route out.
+- **The egress container.** `clawbridge-egress` runs `clawbridge-agentd egress` from the agentd image, by digest:
+  - as `nobody`, read-only, with no capabilities, no env and 32 MiB;
+  - on `clawbridge-egress-net` (`172.31.255.0/28`), the one network with a route out;
+  - its only host path is the policy directory, read-only.
+
+  agentd connects it to every owner network, where agents reach it as `clawbridge-egress:3128`. It reconnects it
+  when the container was recreated.
+- **The policy.** agentd writes the policy from each owner's subnet, the server's `host:port` and that owner's
+  provider `host:port` from the server. It writes it before an owner's agent starts, and only when it changed. The
+  egress proxy picks it up within 2 seconds.
+- **No egress, no agents.** If the egress container can't be kept running, no agent starts that round.
+
 ## The fixed spec
 
 The spec is compiled in. The server says which owner refs should run, never how.
@@ -60,12 +80,14 @@ clawbridge-agentd check
 clawbridge-agentd run
 ```
 
-- **`proxy`:** reads `CLAWBRIDGE_AGENT_IMAGE` and `CLAWBRIDGE_SERVER_URL`. It holds no secrets, and refuses to
+- **`proxy`:** reads `CLAWBRIDGE_SERVER_URL`, `CLAWBRIDGE_AGENT_IMAGE`, `CLAWBRIDGE_EGRESS_IMAGE` and
+  `CLAWBRIDGE_EGRESS_POLICY_DIR`, which make up the fixed specs. It holds no secrets, and refuses to
   start with `CLAWBRIDGE_LAUNCHER_TOKEN` in its environment. Its socket is mode 0660, so agentd connects through
   the socket's group.
 - **`check` and `run`:** read agentd's root-only (0600) env file:
   - `CLAWBRIDGE_SERVER_URL`;
-  - `CLAWBRIDGE_AGENT_IMAGE`;
+  - `CLAWBRIDGE_AGENT_IMAGE` and `CLAWBRIDGE_EGRESS_IMAGE`;
+  - `CLAWBRIDGE_EGRESS_POLICY_DIR`, a directory agentd writes and the egress container reads;
   - `CLAWBRIDGE_LAUNCHER_TOKEN` (`cbl_…`), which is never logged;
   - `CLAWBRIDGE_AGENTD_DOCKER`, the proxy's socket.
 - **No root:** neither process runs as root.
@@ -90,8 +112,9 @@ Done:
 Next:
 - **The server's launcher endpoints:** the wanted set, minting the one-time credential, and the report. Until they
   exist, `run` exits saying so.
-- **Running the egress proxy:** as a container on every `cbnet-*` network plus one outbound network. That needs a
-  second fixed spec in the socket proxy, a fixed subnet per `cbnet-*` network, and agentd writing the policy.
+- **The agent's proxy setting:** the agent must send its requests through `http://clawbridge-egress:3128`, set from
+  config rather than ambient env. That change is on the agent's side.
+- **An agentd image** that ships the binary for the egress container.
 - **Deploy:** the `cbagent` user, the rootless daemon and the systemd units. The deploy also loads the pinned
   image into that daemon, because the proxy allows no pull.
 - **Real-daemon tests:** in CI, against a real rootless daemon. A create through the proxy is refused. With the

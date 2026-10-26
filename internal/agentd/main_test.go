@@ -29,7 +29,8 @@ func TestMainProxyServesAndRefuses(t *testing.T) {
 	upstream := filepath.Join(dir, "docker.sock")
 	serveUnix(t, upstream, s.daemon)
 	listen := filepath.Join(dir, "proxy.sock")
-	env := map[string]string{"CLAWBRIDGE_SERVER_URL": testServer, "CLAWBRIDGE_AGENT_IMAGE": testImage}
+	env := map[string]string{"CLAWBRIDGE_SERVER_URL": testServer, "CLAWBRIDGE_AGENT_IMAGE": testImage,
+		"CLAWBRIDGE_EGRESS_IMAGE": testEgressImage, "CLAWBRIDGE_EGRESS_POLICY_DIR": "/var/lib/clawbridge-agentd/egress"}
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
 	go func() {
@@ -63,10 +64,12 @@ func TestMainRefuses(t *testing.T) {
 	skipAsRoot(t)
 	dir := socketDir(t)
 	good := map[string]string{
-		"CLAWBRIDGE_SERVER_URL":     testServer,
-		"CLAWBRIDGE_AGENT_IMAGE":    testImage,
-		"CLAWBRIDGE_LAUNCHER_TOKEN": "cbl_" + strings.Repeat("x", 24),
-		"CLAWBRIDGE_AGENTD_DOCKER":  "/dev/null",
+		"CLAWBRIDGE_SERVER_URL":        testServer,
+		"CLAWBRIDGE_AGENT_IMAGE":       testImage,
+		"CLAWBRIDGE_EGRESS_IMAGE":      testEgressImage,
+		"CLAWBRIDGE_EGRESS_POLICY_DIR": "/var/lib/clawbridge-agentd/egress",
+		"CLAWBRIDGE_LAUNCHER_TOKEN":    "cbl_" + strings.Repeat("x", 24),
+		"CLAWBRIDGE_AGENTD_DOCKER":     "/dev/null",
 	}
 	run := func(env map[string]string, args ...string) error {
 		return Main(context.Background(), args, func(k string) string { return env[k] }, io.Discard, io.Discard)
@@ -92,6 +95,10 @@ func TestMainRefuses(t *testing.T) {
 	sock := filepath.Join(dir, "agentd.sock")
 	serveUnix(t, sock, http.NotFoundHandler())
 	good["CLAWBRIDGE_AGENTD_DOCKER"] = sock
+	if err := run(good, "check"); err == nil || !strings.Contains(err.Error(), "not a directory") {
+		t.Fatal(err)
+	}
+	good["CLAWBRIDGE_EGRESS_POLICY_DIR"] = t.TempDir()
 	var out bytes.Buffer
 	if err := Main(context.Background(), []string{"check"}, func(k string) string { return good[k] }, &out, io.Discard); err != nil || !strings.Contains(out.String(), "ok") {
 		t.Fatal(err, out.String())

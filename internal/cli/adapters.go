@@ -102,7 +102,7 @@ var runTUIProgram = tui.RunProgram
 func runTUI(ctx context.Context, flags Config, args []string, stdout, stderr io.Writer) error {
 	screen := "overview"
 	_, err := commandFlags("tui", args, stderr, func(f *flag.FlagSet) {
-		f.StringVar(&screen, "screen", "overview", "overview, projects, sessions, inbox, cloud, doctor or linear")
+		f.StringVar(&screen, "screen", "overview", "overview, projects, sessions, inbox, cloud, doctor, linear or account")
 	})
 	if errors.Is(err, flag.ErrHelp) {
 		return nil
@@ -152,7 +152,7 @@ func runTUI(ctx context.Context, flags Config, args []string, stdout, stderr io.
 	if e != nil {
 		return e
 	}
-	model, err := tui.New(tui.Config{Linear: linearSource, Executor: executor, Mode: tui.Mode(c.Mode), Workspace: c.Workspace, Project: c.Project, Session: c.Session, Instance: c.Instance, Server: c.Server, Audience: c.Audience, Principal: c.Principal, Context: bounded, InitialScreen: tui.Screen(screen), CloudInfo: info,
+	model, err := tui.New(tui.Config{Linear: linearSource, Executor: executor, Mode: tui.Mode(c.Mode), Workspace: c.Workspace, Project: c.Project, Session: c.Session, Instance: c.Instance, Server: c.Server, Audience: c.Audience, Principal: c.Principal, DeviceID: c.DeviceID, Context: bounded, InitialScreen: tui.Screen(screen), CloudInfo: info,
 		Doctor: tui.DoctorFunc(func(ctx context.Context) ([]tui.Check, error) {
 			report, e := collectDoctor(ctx, c, path, executor)
 			if e != nil {

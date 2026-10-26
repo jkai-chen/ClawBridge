@@ -152,10 +152,29 @@ func runWizard(ctx context.Context, flags Config, args []string, stdout, stderr 
 		}
 	}()
 	ask := prompt.ask
-	fmt.Fprintln(stdout, "Join an existing ClawBridge service (OAuth). No infrastructure or membership is created.")
+	fmt.Fprintln(stdout, "Join an existing ClawBridge service. No infrastructure is created.")
 	url, err := ask("Service HTTPS URL: ")
 	if err != nil {
 		return err
+	}
+	if url != "" {
+		if err = setup.ValidateJoinTarget(path, url, ""); err != nil {
+			return errors.New("invalid service URL or incompatible trusted target; use a valid service and separate profile when needed")
+		}
+		methods, e := wizardMethods(ctx, url)
+		if e != nil {
+			// Each way in reports its own failure once chosen; nothing is
+			// written before the confirmation.
+			fmt.Fprintf(stdout, "Couldn't read the service's sign-in settings (%s); both ways in are offered.\n", wizardSafe(e.Error()))
+			methods = []string{"device", "google"}
+		}
+		invite, e := wizardSignIn(ask, methods, stdout)
+		if e != nil {
+			return e
+		}
+		if invite {
+			return wizardInvite(ctx, prompt, path, url, stdout, stderr)
+		}
 	}
 	workspace, err := ask("Workspace: ")
 	if err != nil {

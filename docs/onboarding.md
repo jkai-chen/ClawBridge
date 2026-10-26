@@ -87,6 +87,15 @@ anything but `y` cancels without changing anything. It then signs you in with
 Google, verifies your membership, and saves the trusted route. Your Google
 account must already have the role from the owner; joining does not grant it.
 
+When the server takes device keys, the guided setup asks first how you sign in:
+**I have an invite code** or, when the server still offers it, **Sign in with
+Google**. With a code it asks for the email the invite was issued for and a name
+for this device, shows your answers, and asks to continue; only then does it ask
+for the code, which isn't echoed. It makes this device's key, joins, and saves the
+profile, then picks your project (or asks, if you have several). On a machine with
+no system key store, such as headless Linux, it explains that the key would be a
+plain file only you can read, and asks before using one.
+
 Browser sign-in opens your default browser and also prints the sign-in URL. If
 that browser is signed in to a different Google account, open the URL in another
 browser profile on the same computer instead (it must be this computer: the

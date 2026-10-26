@@ -129,7 +129,7 @@ func (w *Watcher) project(ctx context.Context, pid string, healthLeft int) Proje
 			if err != nil {
 				return err
 			}
-			if tick.Health, err = w.health(ctx, svc, scope, pid, fence, healthLeft); err != nil {
+			if tick.Health, err = w.health(ctx, svc, scope, pid, fence, healthLeft, false); err != nil {
 				return err
 			}
 			if tick.Docs, err = w.docs(ctx, svc, pid, fence); err != nil {
@@ -145,18 +145,25 @@ func (w *Watcher) project(ctx context.Context, pid string, healthLeft int) Proje
 	return tick
 }
 
-// Markers applies one project's due claim markers, and nothing else, under
-// the project's lease and budget like a tick's: a nudge after a confirm or
-// a release (live/STATUS-FLOW-DESIGN.md §8.3). It doesn't count as the
-// project's tick.
+// Markers applies one project's due claim markers under the project's
+// lease and budget like a tick's: a nudge after a confirm or a release
+// (live/STATUS-FLOW-DESIGN.md §8.3). The project flow checks those moves
+// asked for run after them (§11.2), and nothing else. It doesn't count as
+// the project's tick.
 func (w *Watcher) Markers(ctx context.Context, pid string) ProjectTick {
 	ctx, cancel := context.WithTimeout(ctx, nudgeDeadline)
 	defer cancel()
 	tick := ProjectTick{ProjectID: pid}
 	scope := bus.Request{Session: bus.SystemSessionName, Args: map[string]any{}}
-	err := w.service(pid).Watch(ctx, scope, linearboard.WatchOptions{
+	svc := w.service(pid)
+	err := svc.Watch(ctx, scope, linearboard.WatchOptions{
 		Once:        true,
 		MarkersOnly: true,
+		Within: func(ctx context.Context, fence map[string]any) error {
+			var err error
+			tick.Health, err = w.health(ctx, svc, scope, pid, fence, HealthRunsPerTick, true)
+			return err
+		},
 		Cycle: func(c linearboard.WatchCycle) error {
 			tick.Comments = &c
 			return nil

@@ -146,3 +146,30 @@ func TestProjectFlowIgnoresStatusNames(t *testing.T) {
 		t.Fatal(tick.Health, tick.Error)
 	}
 }
+
+// SF4-M2: a nudge's pass runs the R1 check a claim asked for after its
+// markers. It reads the project alone (one call, no issue page), moves the
+// project, and reads it back.
+func TestProjectFlowNudgeReadsTheProjectOnce(t *testing.T) {
+	e := flowSetup(t, nil)
+	e.sql(`UPDATE project_flow_state SET next_flow_at='2999-01-01T00:00:00.000000000Z'`)
+	e.sql(`INSERT INTO project_flow_state(project_id,linear_project_id,next_flow_at) VALUES(?,?,'2999-01-01T00:00:00.000000000Z') ON CONFLICT DO NOTHING`, e.pid, linearProjectID(1))
+	e.sql(`INSERT INTO project_flow_nudges(id,project_id,linear_project_id,kind,asked_at,state) VALUES('fn_1',?,?,'r1',?,'asked')`, e.pid, linearProjectID(1), time.Now().UTC().Format("2006-01-02T15:04:05.000000000Z"))
+	e.f.queries = nil
+	pass := e.w.Markers(context.Background(), e.pid)
+	if pass.Error != "" || len(pass.Health) != 1 || pass.Health[0].Nudge != "r1" || pass.Health[0].Calls != 1 || pass.Health[0].Moved != "accepted" {
+		t.Fatalf("%+v", pass)
+	}
+	reads := strings.Join(e.f.queries, "\n")
+	if strings.Count(reads, flowProjectQuery) != 1 || strings.Contains(reads, flowIssuesQuery) || strings.Contains(reads, healthActivityQuery) {
+		t.Fatal("an R1 nudge read more than the project:", e.f.queries)
+	}
+	if len(e.f.saves) != 1 {
+		t.Fatal(e.f.saves)
+	}
+	// Nothing more is asked: the next pass reads nothing.
+	e.f.queries = nil
+	if pass = e.w.Markers(context.Background(), e.pid); len(pass.Health) != 0 || len(e.f.queries) != 0 {
+		t.Fatalf("%+v %v", pass, e.f.queries)
+	}
+}

@@ -126,7 +126,7 @@ func (s *Store) migrate() error {
 	if err = tx.QueryRow("PRAGMA user_version").Scan(&version); err != nil {
 		return err
 	}
-	if version > 21 {
+	if version > 22 {
 		return errors.New("database schema is newer than this ClawBridge binary")
 	}
 	if version == 0 {
@@ -238,6 +238,11 @@ func (s *Store) migrate() error {
 	}
 	if version < 21 {
 		if _, err = tx.Exec(projectFlowSchemaV21 + `PRAGMA user_version=21;`); err != nil {
+			return err
+		}
+	}
+	if version < 22 {
+		if _, err = tx.Exec(projectFlowSchemaV22 + `PRAGMA user_version=22;`); err != nil {
 			return err
 		}
 	}
@@ -480,9 +485,9 @@ var operationArgs = map[string]string{
 	"doc_policy_set":              "instance expected_revision doc_policy",
 	"health_get":                  "instance",
 	"health_set":                  "instance linear_project expected_revision health_policy",
-	"health_due":                  "instance lease_token generation limit",
+	"health_due":                  "instance lease_token generation limit nudges_only",
 	"health_force":                "instance lease_token generation linear_project force_new",
-	"health_report":               "instance lease_token generation linear_project calls error facts forced force_new flow",
+	"health_report":               "instance lease_token generation linear_project calls error facts forced force_new flow nudge",
 	"health_post_settle":          "instance lease_token generation linear_project day outcome update_id error",
 	"project_flow_settle":         "instance lease_token generation linear_project seq outcome error calls",
 	"project_flow_resume":         "instance linear_project",
@@ -593,7 +598,7 @@ func validateArgs(op string, a map[string]any) error {
 			default:
 				return errors.New("ids must be an array of strings")
 			}
-		case "unread_only", "resume", "allow_overlap", "allow_previous", "repair", "confirm", "forced", "force_new":
+		case "unread_only", "resume", "allow_overlap", "allow_previous", "repair", "confirm", "forced", "force_new", "nudges_only":
 			if _, ok := v.(bool); !ok {
 				return fmt.Errorf("%s must be boolean", k)
 			}

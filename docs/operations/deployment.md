@@ -198,6 +198,36 @@ CLAWBRIDGE_LINEAR_APP_TOKEN_KEY=<32 random bytes, base64>
 - **Who may write.** With app writes, a member's ClawBridge role alone
   authorises their Linear writes. To offboard someone, revoke their role.
 
+### The server watcher (optional, v0.3)
+
+With the Linear app configured, the server can run the comment watch, claim
+markers and issue intake itself, for every bound project:
+
+```text
+CLAWBRIDGE_WATCH_INTERVAL=15m
+```
+
+- **The clock.** The API ticks the watcher in process at this interval, from 1m
+  to 30m. Anything else refuses to start. Empty or unset means no watcher. Ticks
+  never overlap, and each runs within 50 seconds. The startup log says `watcher:
+  ticking every 15m0s`, or `watcher: off (…)` with the reason. Without the Linear
+  app, the watcher stays off and the server serves as before.
+- **Calls.** Each project's watch spends at most 200 Linear calls an hour on the
+  bus budget. The interval sets latency more than cost: each issue and intake
+  source keeps its own polling schedule, and a tick with nothing due calls
+  nothing.
+- **Clients.** While the server's ticks for a project are fresh, a client
+  `clawbridge linear watch` is refused. Stop client watchers before turning this
+  on. A client may take over again once the server has not ticked for 10
+  minutes.
+- **Intake** follows each project's intake policy (docs/linear.md). Set
+  `clawbridge intake policy set --intake-mode off` first on any project that
+  should not run it.
+- **To stop it,** remove the entry and recreate the API container.
+- The scheduler variables `CLAWBRIDGE_TICK_AUDIENCE` and
+  `CLAWBRIDGE_TICK_SERVICE_ACCOUNT` serve a scheduler-driven tick endpoint, meant
+  for a deployment without a long-lived process. Leave them unset on a VM.
+
 The Compose file retains a named-volume default so isolated configuration tests
 can render without host paths. That default is not approved for production.
 Production sets

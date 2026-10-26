@@ -564,6 +564,10 @@ line per cycle.
 - **Budget.** The watcher spends at most `--budget` Linear calls an hour (default
   200, at most 600), counted on the bus so a restart or takeover cannot reset it.
 - `clawbridge doctor` warns when assigned issues are watched but no watcher runs.
+- **On a hosted server with its own watcher** (`CLAWBRIDGE_WATCH_INTERVAL`,
+  docs/operations/deployment.md), the server watches every bound project as the
+  ClawBridge app, and also applies pending claim markers. A client `linear watch`
+  is then refused until the server has not ticked for 10 minutes.
 
 ### Claim markers
 
@@ -771,6 +775,10 @@ assignment come later.
   or a rearm does.
 - A dismissed issue stays dismissed until a new signal (the label re-added, a new delegation or mention) or a
   rearm. A Loop's request does not lift a dismissal.
+
+**Linear Loops (S5) are not available in v0.3.0.** The `/mcp/intake` endpoint
+refuses every request (`app_unavailable`) until a later release wires its
+in-binding check. The setup below describes that release.
 
 **Linear Loops (S5) are an opt-in, and cost credit.**
 - A Linear Loop can ask for an agent through the send-only endpoint `https://<server>/mcp/intake`.

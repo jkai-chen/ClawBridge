@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -413,9 +414,15 @@ func (r *Runner) selfTest(cache, repo, session string) (map[string]string, []str
 		return nil, nil, err
 	}
 	dirs := map[string]string{"home": home}
-	// git reports the checkout with symbolic links resolved.
-	if resolved, err := filepath.EvalSymlinks(home); err == nil && within(repo, resolved) || within(repo, home) {
-		dirs["checkout"] = filepath.Join(repo, ".git")
+	// The checkout's own git directory (in a linked worktree, .git is a
+	// file naming it), when it is under the home the sandbox denies. git
+	// reports paths with symbolic links resolved.
+	gitDir, err := r.Git(repo, "rev-parse", "--absolute-git-dir")
+	if err != nil {
+		return nil, nil, fmt.Errorf("the checkout's git directory: %w", err)
+	}
+	if resolved, err := filepath.EvalSymlinks(home); err == nil && within(gitDir, resolved) || within(gitDir, home) {
+		dirs["checkout"] = gitDir
 	}
 	for id, dir := range dirs {
 		random := make([]byte, 16)
@@ -429,7 +436,7 @@ func (r *Runner) selfTest(cache, repo, session string) (map[string]string, []str
 		planted = append(planted, path)
 		label := "a file planted in the home directory"
 		if id == "checkout" {
-			label = "a file planted in the checkout's .git"
+			label = "a file planted in the checkout's git directory"
 		}
 		try(id, label, path, false)
 	}
@@ -485,14 +492,20 @@ func checkSelfTest(report string, sentinels map[string]string) error {
 	if !done {
 		return errors.New("the self-test report is incomplete")
 	}
+	// Every location read is named, in a stable order.
+	var read []string
 	for id, label := range sentinels {
 		switch got[id] {
 		case "DENIED":
 		case "READ":
-			return fmt.Errorf("the sandbox let the session read %s", label)
+			read = append(read, label)
 		default:
 			return errors.New("the self-test report is incomplete")
 		}
+	}
+	if len(read) > 0 {
+		sort.Strings(read)
+		return fmt.Errorf("the sandbox let the session read %s", strings.Join(read, ", "))
 	}
 	return nil
 }

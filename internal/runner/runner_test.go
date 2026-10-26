@@ -743,6 +743,31 @@ func TestSelfTestProvesTheDefaultDeny(t *testing.T) {
 	}
 }
 
+// In a linked worktree, .git is a file: the checkout's sentinel goes in
+// the worktree's own git directory.
+func TestSelfTestPlantsInALinkedWorktreesGitDir(t *testing.T) {
+	e := newEnv(t)
+	e.r.Home = filepath.Dir(e.repo)
+	linked := filepath.Join(e.r.Home, "linked")
+	e.git(e.repo, "worktree", "add", "-q", "-b", "side", linked)
+	spec := e.spec("linked-engineer-1", "FIX-1")
+	spec.Repo = linked
+	p, err := e.r.Launch(spec)
+	if err != nil || p.SelfTest != "passed" {
+		t.Fatal(p, err)
+	}
+	script, _ := os.ReadFile(filepath.Join(p.Cache, "selftest.sh"))
+	if !strings.Contains(string(script), filepath.Join(".git", "worktrees", "linked", ".clawbridge-selftest-")) {
+		t.Fatal("no sentinel in the worktree's git directory:\n" + string(script))
+	}
+	e.namedOnly = true
+	spec = e.spec("linked-engineer-2", "FIX-2")
+	spec.Repo = linked
+	if _, err = e.r.Launch(spec); err == nil || !strings.Contains(err.Error(), "planted") {
+		t.Fatal("a sandbox denying only the named paths passed:", err)
+	}
+}
+
 func TestCheckSelfTestReport(t *testing.T) {
 	for report, ok := range map[string]bool{
 		"DENIED 0\nDENIED 3\nDONE\n":        true,
@@ -782,6 +807,17 @@ func TestNoDefaultModel(t *testing.T) {
 		}
 		if _, err := e.r.LoadSettings(); err == nil {
 			t.Fatal("accepted", raw)
+		}
+	}
+}
+
+// Every location read is named, sorted, whatever the map's order.
+func TestCheckSelfTestNamesEveryRead(t *testing.T) {
+	sentinels := map[string]string{"0": "~/.ssh", "3": "~/.clawbridge", "home": "a file planted in the home directory"}
+	for i := 0; i < 20; i++ {
+		err := checkSelfTest("READ 0\nREAD 3\nREAD home\nDONE\n", sentinels)
+		if err == nil || err.Error() != "the sandbox let the session read a file planted in the home directory, ~/.clawbridge, ~/.ssh" {
+			t.Fatal(err)
 		}
 	}
 }

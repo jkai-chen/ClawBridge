@@ -147,7 +147,18 @@ func TestStateMoveSkipsADisabledPolicyAndWaitsForTheClaim(t *testing.T) {
 // release without done never moves.
 func TestStateMoveSupersededAndOnlyOnDone(t *testing.T) {
 	w := newWatchHarness(t)
-	w.setStatusPolicy(0, sfPolicy(true))
+	// An enabled policy without a claim target moves nothing at a claim.
+	createOnly := sfPolicy(true)
+	team := createOnly["teams"].(map[string]any)[sfTeam].(map[string]any)
+	delete(team, "claim")
+	delete(team, "release_done")
+	w.setStatusPolicy(0, createOnly)
+	w.assign("b", sfIssueNext)
+	if s, _, _ := w.stateRow(w.assignmentID("b"), "claim"); s != "off" {
+		t.Fatal("a claim without a claim target has a state part:", s)
+	}
+	w.release("b")
+	w.setStatusPolicy(1, sfPolicy(true))
 	w.assign("b", sfIssueNext)
 	id := w.assignmentID("b")
 	w.release("b")

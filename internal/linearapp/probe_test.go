@@ -223,3 +223,61 @@ func TestSummariseDocumentsOrder(t *testing.T) {
 		t.Fatal(got)
 	}
 }
+
+// p8Linear answers P8's project read after the viewer.
+type p8Linear struct {
+	*linear
+	project map[string]any
+	queries []string
+}
+
+func (s *p8Linear) RoundTrip(r *http.Request) (*http.Response, error) {
+	body, _ := io.ReadAll(r.Body)
+	r.Body = io.NopCloser(strings.NewReader(string(body)))
+	if r.URL.String() != graphqlURL || strings.Contains(string(body), "viewer") {
+		return s.linear.RoundTrip(r)
+	}
+	s.queries = append(s.queries, string(body))
+	raw, _ := json.Marshal(map[string]any{"data": map[string]any{"project": s.project}})
+	return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader(string(raw))), Header: http.Header{}}, nil
+}
+
+// P8's precheck reads, as a query, whether the project is empty: no
+// issue (archived included), member or lead.
+func TestP8ProjectPrecheck(t *testing.T) {
+	now := time.Date(2026, 10, 26, 12, 0, 0, 0, time.UTC)
+	store := &memStore{live: map[string]int{}}
+	const project = "c0000000-0000-4000-8000-0000000000c1"
+	none := map[string]any{"nodes": []any{}}
+	one := map[string]any{"nodes": []any{map[string]any{"id": "c0000000-0000-4000-8000-0000000000c2"}}}
+	s := &p8Linear{linear: &linear{app: true}}
+	if _, _, err := newApp(t, store, s.linear, &now).Token(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	probe, _ := New(Config{ClientID: "client-1", Secret: secret, Key: key, Store: store, HTTP: &http.Client{Transport: s}, Now: func() time.Time { return now }, NoMint: true})
+	for name, c := range map[string]struct {
+		project map[string]any
+		empty   bool
+	}{
+		"empty":   {map[string]any{"id": project, "lead": nil, "members": none, "issues": none}, true},
+		"issue":   {map[string]any{"id": project, "lead": nil, "members": none, "issues": one}, false},
+		"member":  {map[string]any{"id": project, "lead": nil, "members": one, "issues": none}, false},
+		"lead":    {map[string]any{"id": project, "lead": map[string]any{"id": appUser}, "members": none, "issues": none}, false},
+		"missing": {nil, false},
+		"other":   {map[string]any{"id": "c0000000-0000-4000-8000-0000000000c9", "lead": nil, "members": none, "issues": none}, false},
+	} {
+		s.project = c.project
+		got, err := probe.ProbeP8Project(context.Background(), project)
+		if err != nil || got.Empty() != c.empty {
+			t.Fatal(name, got, err)
+		}
+	}
+	for _, q := range s.queries {
+		if strings.Contains(q, "mutation") || !strings.Contains(q, "includeArchived: true") {
+			t.Fatal("the precheck is not a read of every issue:", q)
+		}
+	}
+	if _, err := probe.ProbeP8Project(context.Background(), "not-a-uuid"); err == nil {
+		t.Fatal("an invalid project ID was sent")
+	}
+}

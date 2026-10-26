@@ -288,3 +288,49 @@ func (a *App) ProbeDocuments(ctx context.Context) (DocumentsProbe, error) {
 	}
 	return SummariseDocuments(page), nil
 }
+
+// p8ProjectProbe reads whether a project is empty and unattended: P8 posts
+// a real update only to a project with no issues, members or lead, so
+// nobody is notified.
+const p8ProjectProbe = `query P8Project($id: String!) { project(id: $id) { id lead { id } members(first: 1) { nodes { id } } issues(first: 1, includeArchived: true) { nodes { id } } } }`
+
+// P8Project is what P8's precheck found, as booleans only.
+type P8Project struct {
+	Found   bool `json:"found"`
+	Issues  bool `json:"has_issues"`
+	Members bool `json:"has_members"`
+	Lead    bool `json:"has_lead"`
+}
+
+// Empty reports whether P8 may post to the project.
+func (p P8Project) Empty() bool { return p.Found && !p.Issues && !p.Members && !p.Lead }
+
+// ProbeP8Project reads, as the app, whether project is empty: no issue
+// (archived included), no member and no lead.
+func (a *App) ProbeP8Project(ctx context.Context, project string) (P8Project, error) {
+	if !validUUID(project) {
+		return P8Project{}, fail("invalid")
+	}
+	type nodes struct {
+		Nodes []struct {
+			ID string `json:"id"`
+		} `json:"nodes"`
+	}
+	var out struct {
+		Project *struct {
+			ID   string `json:"id"`
+			Lead *struct {
+				ID string `json:"id"`
+			} `json:"lead"`
+			Members nodes `json:"members"`
+			Issues  nodes `json:"issues"`
+		} `json:"project"`
+	}
+	if err := a.GraphQL(ctx, p8ProjectProbe, map[string]any{"id": project}, &out); err != nil {
+		return P8Project{}, err
+	}
+	if out.Project == nil || !strings.EqualFold(out.Project.ID, project) {
+		return P8Project{}, nil
+	}
+	return P8Project{Found: true, Issues: len(out.Project.Issues.Nodes) > 0, Members: len(out.Project.Members.Nodes) > 0, Lead: out.Project.Lead != nil}, nil
+}

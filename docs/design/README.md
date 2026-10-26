@@ -9,6 +9,7 @@ Maintained contracts behind the current implementation:
 - [TUI sizing and derived archive views](tui-archive.md)
 - [Host attribution](host-attribution.md)
 - [Release distribution](releases.md)
+- [No vector database for now](vector-db.md)
 
 Approved next increment: [Linear migration workflow](linear-migration.md), with
 the versioned L2 contract for project sets, labels, relations, parents and assignment.

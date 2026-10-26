@@ -22,12 +22,22 @@ const (
 	// front: one connection reused for the row, one binding proof, one issue
 	// read, one label page, the writes and their readbacks.
 	markerDueCalls = 8
-	// markerStateCalls is what a row's state part adds: the issue read
-	// again, the update and its readback.
-	markerStateCalls = 3
+	// markerStateCalls is what a row's state part adds before its binding
+	// proof, as measured (linearboard TestStateMoveCostFitsItsReservation):
+	// the issue read twice (the move's, then the write's), its state ID read
+	// twice (the hosted app's GraphQL, or the team's statuses), the target
+	// state checked twice (before the write and again before it is sent),
+	// and the update. See MarkerStateCalls.
+	markerStateCalls = 7
 	// MarkerLabel is the label a claim adds; a Linear admin creates it.
 	MarkerLabel = "agent-working"
 )
+
+// MarkerStateCalls is what a state part is charged up front for a binding
+// of teams and projects: markerStateCalls, plus the write's binding proof,
+// one read per bound team and per bound project (a write always proves the
+// binding afresh).
+func MarkerStateCalls(teams, projects int) int { return markerStateCalls + teams + projects }
 
 // markerReasons are the only words a close note says about why.
 var markerReasons = map[string]string{"self": "done", "coordinator": "released by the coordinator", "replaced": "moved to other work", "access_revoked": "access ended"}
@@ -545,10 +555,16 @@ func (c commentCall) markerDue(ctx context.Context) (any, error) {
 	}
 	markers := []any{}
 	cost := 0
+	stateCalls := -1
 	for _, row := range rows {
 		calls := markerDueCalls
 		if s := str(row, "state_state"); s == "pending" || s == "in_flight" {
-			calls += markerStateCalls
+			if stateCalls < 0 {
+				if stateCalls, err = c.markerStateCost(ctx); err != nil {
+					return nil, err
+				}
+			}
+			calls += stateCalls
 		}
 		if used+cost+calls > limit {
 			break
@@ -562,6 +578,24 @@ func (c commentCall) markerDue(ctx context.Context) (any, error) {
 		}
 	}
 	return map[string]any{"markers": markers}, nil
+}
+
+// markerStateCost is MarkerStateCalls for the project's binding as stored.
+// A binding that is missing or unreadable adds nothing: the move cannot
+// prove it, and stops before any write.
+func (c commentCall) markerStateCost(ctx context.Context) (int, error) {
+	rows, err := query(ctx, c.tx, `SELECT mapping,mapping_version FROM taskboard_bindings WHERE project_id=? AND mapping IS NOT NULL`, c.pid)
+	if err != nil {
+		return 0, err
+	}
+	if len(rows) == 0 {
+		return MarkerStateCalls(0, 0), nil
+	}
+	b, err := readStoredMapping(str(rows[0], "mapping"), asInt(rows[0]["mapping_version"]))
+	if err != nil {
+		return MarkerStateCalls(0, 0), nil
+	}
+	return MarkerStateCalls(len(b.LinearTeamIDs), len(b.LinearProjectIDs)), nil
 }
 
 // watchStatus is what doctor reports about the project's comment watch and

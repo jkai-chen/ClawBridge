@@ -43,11 +43,11 @@ const releasedScopes = "read,write,comments:create,issues:create,app:assignable,
 
 // optionalScope may be missing from a granted token. A token granted
 // without it is used for everything else, and asked again for it once
-// writeRetry has passed since it was minted, so a refusal costs about one
-// mint a day.
+// writeRetry has passed since it was minted, so a refusal costs about four
+// mints a month of mintLimit's 50.
 const (
 	optionalScope = "write"
-	writeRetry    = 24 * time.Hour
+	writeRetry    = 7 * 24 * time.Hour
 )
 
 const (

@@ -29,7 +29,8 @@ launch starts a Claude Code session for one Linear issue in a visible Orca termi
 on an agent/* branch that cannot push, a registered ClawBridge session, and settings that never allow bypass mode and
 sandbox Bash. fetch brings a session's branch into your checkout as agent/<id>, refusing one that adds token-shaped text. gc removes the runner's finished clones (merged,
 or a week old without commits or changes); without --confirm it only shows them.
-Settings: <state>/runner/config.json {"model": "", "allowed_domains": [...], "max_retained": 10, "work_dir": "~/clawbridge-runs"}.`
+Settings: <state>/runner/config.json {"agents": {"claude": {"model": ""}}, "allowed_domains": [...], "max_retained": 10, "work_dir": "~/clawbridge-runs"}.
+No model is passed unless agents.claude.model or --model sets one; claude then uses your own default.`
 
 // runnerState is the runner's own directory.
 func runnerState() (string, error) {

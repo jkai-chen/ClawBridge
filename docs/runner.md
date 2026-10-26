@@ -88,7 +88,9 @@ The settings passed with `--settings` take precedence over the repository's own
   - Outside `~`, the system and the toolchains stay readable.
   - The clone carries your git name and email itself, since `~/.gitconfig` is not
     readable. Nothing else of that file carries over: includes, aliases and
-    credential helpers are left behind on purpose.
+    credential helpers are left behind on purpose. Git is pointed away from
+    its global config (`GIT_CONFIG_GLOBAL=/dev/null`, `XDG_CONFIG_HOME` in the
+    cache), since it stops when it cannot read it.
   - Bash writes only in its clone, its temporary directory and its cache
     (`<work>/<session>.cache`). Go, npm and XDG caches point there, never at
     yours, and `gc` removes it with the clone.
@@ -161,6 +163,20 @@ launcher was changed as above:
   The session now loads none of those settings.
 - Also fixed: `go test` could not write Go's build cache; Orca would not open a
   terminal in a directory it does not manage; auto mode could be turned on.
+
+The second and third runs held on every check above: with no prompt answered
+yes, the network to the git host and to other hosts was refused, and
+settings planted in the clone were ignored. Then Bash was denied the whole home
+directory, and the third run checked reads beyond the known stores. The
+following were all refused by the sandbox:
+- `~/.gitconfig`, `ls ~/Dev`, and a `.env` in another checkout;
+- `~/.claude.json`, `~/.npmrc` and `~/.kube`;
+- the Chrome profile, and other applications' support files.
+
+The launch self-test passed on its own. The clone and the module cache stayed
+readable, and `go test` worked. `runner fetch` took a clean branch and refused
+one carrying a fake GitHub token, naming only the file and the pattern. A plain
+`git commit` failed on the denied `~/.gitconfig`, hence the git variables above.
 
 ## Proving the sandbox on your Mac
 

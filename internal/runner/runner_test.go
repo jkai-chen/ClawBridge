@@ -266,7 +266,10 @@ func TestLaunchSettingsAndModel(t *testing.T) {
 	if s.Env["GOTOOLCHAIN"] != "local" || s.Env["GOPROXY"] != "" {
 		t.Fatal("go network settings without an owner cache", s.Env)
 	}
-	for _, k := range []string{"GOCACHE", "GOMODCACHE", "GOPATH", "npm_config_cache", "XDG_CACHE_HOME"} {
+	if s.Env["GIT_CONFIG_GLOBAL"] != "/dev/null" {
+		t.Fatal("git would read the denied global config", s.Env)
+	}
+	for _, k := range []string{"GOCACHE", "GOMODCACHE", "GOPATH", "npm_config_cache", "XDG_CACHE_HOME", "XDG_CONFIG_HOME"} {
 		if !strings.HasPrefix(s.Env[k], p.Cache+string(filepath.Separator)) {
 			t.Fatal("cache variable", k, s.Env[k])
 		}

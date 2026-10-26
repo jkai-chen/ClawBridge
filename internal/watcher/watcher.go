@@ -1,7 +1,7 @@
 // Package watcher is the server's own watcher (live/INTAKE-DESIGN.md §2):
 // on each scheduler tick it runs every due project's comment watch, claim
-// markers and issue intake as the project's system session, reading and
-// writing Linear as the ClawBridge Linear app.
+// markers, issue intake and project health as the project's system
+// session, reading and writing Linear as the ClawBridge Linear app.
 package watcher
 
 import (
@@ -78,6 +78,7 @@ type ProjectTick struct {
 	ProjectID string                  `json:"project_id"`
 	Comments  *linearboard.WatchCycle `json:"comments,omitempty"`
 	Intake    *IntakePoll             `json:"intake,omitempty"`
+	Health    []HealthRun             `json:"health,omitempty"`
 	Error     string                  `json:"error,omitempty"`
 }
 
@@ -89,17 +90,20 @@ func (w *Watcher) Tick(ctx context.Context) []ProjectTick {
 		return []ProjectTick{{Error: "projects_unavailable"}}
 	}
 	out := []ProjectTick{}
+	// Health runs are capped per tick across all projects (HP-M3).
+	healthLeft := HealthRunsPerTick
 	for _, pid := range projects {
 		pctx, cancel := context.WithTimeout(ctx, ProjectDeadline)
-		tick := w.project(pctx, pid)
+		tick := w.project(pctx, pid, healthLeft)
 		cancel()
+		healthLeft -= len(tick.Health)
 		_ = w.Store.WatchTicked(ctx, pid, tick.Error == "", tick.Error)
 		out = append(out, tick)
 	}
 	return out
 }
 
-func (w *Watcher) project(ctx context.Context, pid string) ProjectTick {
+func (w *Watcher) project(ctx context.Context, pid string, healthLeft int) ProjectTick {
 	tick := ProjectTick{ProjectID: pid}
 	svc := w.service(pid)
 	scope := bus.Request{Session: bus.SystemSessionName, Args: map[string]any{}}
@@ -109,9 +113,15 @@ func (w *Watcher) project(ctx context.Context, pid string) ProjectTick {
 			tick.Comments = &c
 			return nil
 		},
+		// Intake, then health, run after the comment watch and markers,
+		// within what the hour's budget leaves.
 		Within: func(ctx context.Context, fence map[string]any) error {
 			poll, err := w.intake(ctx, svc, scope, pid, fence)
 			tick.Intake = poll
+			if err != nil {
+				return err
+			}
+			tick.Health, err = w.health(ctx, pid, fence, healthLeft)
 			return err
 		},
 	})

@@ -127,7 +127,14 @@ type Status struct {
 	ID     string `json:"id"`
 	Name   string `json:"name"`
 	TeamID string `json:"team_id"`
+	// Type is the workflow state type (triage, backlog, unstarted,
+	// started, completed or canceled) when Linear reports one, else "".
+	Type string `json:"type,omitempty"`
 }
+
+// statusTypes are the workflow state types Linear defines.
+var statusTypes = map[string]bool{"triage": true, "backlog": true, "unstarted": true, "started": true, "completed": true, "canceled": true}
+
 type IssueQuery struct {
 	TeamID, ProjectID string
 	Limit             int
@@ -1533,7 +1540,11 @@ func (p *Provider) Statuses(ctx context.Context, team string) ([]Status, error) 
 		if tid != team {
 			return nil, fail("scope_mismatch")
 		}
-		out = append(out, Status{i, str(v, "name"), team})
+		kind := strings.ToLower(str(v, "type"))
+		if !statusTypes[kind] {
+			kind = ""
+		}
+		out = append(out, Status{ID: i, Name: str(v, "name"), TeamID: team, Type: kind})
 	}
 	return out, nil
 }

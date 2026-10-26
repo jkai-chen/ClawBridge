@@ -285,6 +285,21 @@ func (s *Service) WriteV2(ctx context.Context, scope bus.Request, in WriteInputV
 	if e != nil {
 		return nil, e
 	}
+	// A create without a state lands in the status policy's create state
+	// for its team, on every route (SF-L4).
+	if in.Operation == "create" && in.StateID == nil {
+		team := b.LinearDefaultTeamID
+		if in.TeamID != "" {
+			team = in.TeamID
+		}
+		state, e := s.createState(ctx, scope, team)
+		if e != nil {
+			return nil, e
+		}
+		if state != "" {
+			in.StateID = &state
+		}
+	}
 	namespace := digest([]string{s.cfg.Authority, b.WorkspaceID, b.ProjectID, access.SessionID})
 	legacy := legacyOnlyV2(in) && legacyMappingV2(b)
 	var payload any

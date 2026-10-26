@@ -783,6 +783,49 @@ clawbridge linear admin audit-replay --operation-id ID
   a comment or issue write, or one still running is refused.
 - A replay of a write already in history answers `"audit": "already"`.
 
+## Status policy (project owner only)
+
+A project owner can let an agent's work move its issue forward through the
+team's workflow. It is off until the owner sets it.
+
+```sh
+clawbridge linear status-policy show
+clawbridge linear status-policy set --file status.json --expected-revision N --profile PROFILE_ID
+```
+
+`status.json` names states, for example
+`{"enabled": true, "create": "Todo", "claim": "In Progress", "release_done": "In Review"}`.
+Each field is optional except `enabled`.
+
+- **Setting it** reads each bound team's workflow and resolves every name
+  exactly. A name missing, or not unique, in any bound team refuses the policy,
+  and nothing is set.
+- **What is stored.** The policy keeps each state's ID and type, and the team's
+  whole workflow at that moment. Renaming a state changes nothing. A state added
+  later moves nothing until the policy is set again.
+- **Rules, checked when it is set:**
+  - `create` is a backlog or unstarted state;
+  - `claim` and `release_done` are started states, and differ;
+  - nothing is ever moved to a completed or canceled state. Done stays a
+    person's decision after review.
+- **Create:** an agent's create without `--state` lands in `create` for its
+  team, whichever route it takes. An explicit `--state` is kept.
+- **Claim:** a confirmed claim moves the issue to `claim`, only from a backlog
+  or unstarted state. Triage is a human gate: add `"claim_from_triage": true` to
+  move from it too.
+- **Done:** a release with `--outcome done` (MCP `outcome: "done"`) moves the
+  issue to `release_done`, only from exactly the `claim` state. The session
+  itself or the coordinator may say done. Any other release only posts its note.
+- **Forward only.** An issue a person has already moved anywhere else is left
+  alone, and recorded as skipped. A person's change between the check and the
+  write wins: whatever landed is recorded and never sent again.
+- **How moves are applied.** Moves are the claim marker's third part, applied
+  and retried like its note and label (see [claim markers](#claim-markers)). A
+  move is applied only while the policy is enabled at the revision it had when
+  the claim or release happened. A changed policy skips it.
+- **Cost:** each move costs about three Linear calls: a read, the write, and a
+  readback.
+
 ## Issue intake (v0.3)
 
 Linear can tell ClawBridge that an issue needs an agent. ClawBridge queues the issue and, by default, tells the

@@ -210,6 +210,7 @@ type confirmInput struct {
 type releaseInput struct {
 	TargetSession string `json:"target_session,omitempty" jsonschema:"Designated coordinator only: another session; omit for this session."`
 	Revision      string `json:"revision" jsonschema:"The assignment's current revision."`
+	Outcome       string `json:"outcome,omitempty" jsonschema:"done when the work is finished, so a project status policy may move the issue on (e.g. to In Review); omit otherwise."`
 }
 type sendInput struct {
 	Coordination *bus.Coordination `json:"coordination,omitempty"`

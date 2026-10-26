@@ -164,7 +164,7 @@ func TestWatchAppliesDueMarkersUnderTheLease(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(a.comments.markerGoes) != 2 || a.comments.markerGoes[0]["lease_token"] != "tok" || a.comments.markerGoes[0]["assignment_id"] != "asg_9" || a.comments.markerGoes[0]["phase"] != "close" {
+	if len(a.comments.markerGoes) != 3 || a.comments.markerGoes[2]["part"] != "state" || a.comments.markerGoes[0]["lease_token"] != "tok" || a.comments.markerGoes[0]["assignment_id"] != "asg_9" || a.comments.markerGoes[0]["phase"] != "close" {
 		t.Fatal("due marker not applied under the lease:", a.comments.markerGoes)
 	}
 }

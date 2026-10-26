@@ -8,6 +8,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"strings"
 	"time"
 )
 
@@ -21,6 +22,7 @@ type MarkerApply struct {
 	Phase        string `json:"phase"`
 	Comment      string `json:"comment"`
 	Label        string `json:"label"`
+	State        string `json:"state,omitempty"`
 	Error        string `json:"error,omitempty"`
 }
 
@@ -35,19 +37,26 @@ func (s *Service) ApplyMarker(ctx context.Context, scope bus.Request, assignment
 	s, release := s.hold()
 	defer release()
 	out := MarkerApply{AssignmentID: assignment, Phase: phase}
-	for _, part := range []string{"comment", "label"} {
+	for _, part := range []string{"comment", "label", "state"} {
 		args := map[string]any{"assignment_id": assignment, "phase": phase, "part": part}
 		for k, v := range fence {
 			args[k] = v
 		}
 		result, err := s.markerPart(ctx, scope, args)
+		if part == "state" && err != nil && strings.Contains(err.Error(), "part must be comment or label") {
+			// An authority older than the status policy has no state part.
+			result, err = "off", nil
+		}
 		if err != nil && out.Error == "" {
 			out.Error = err.Error()
 		}
-		if part == "comment" {
+		switch part {
+		case "comment":
 			out.Comment = result
-		} else {
+		case "label":
 			out.Label = result
+		default:
+			out.State = result
 		}
 	}
 	return out
@@ -100,6 +109,15 @@ func (s *Service) markerPart(ctx context.Context, scope bus.Request, args map[st
 		action, _ = g["action"].(string)
 	}
 	switch action {
+	case "move":
+		policy, err := decodeStatusPolicy(g["policy"])
+		kind, _ := g["kind"].(string)
+		if err != nil || (kind != "claim" && kind != "release_done") {
+			return settle("failed", nil, errors.New("the state move is unreadable; nothing was sent"))
+		}
+		retry, _ := g["state"].(string)
+		outcome, extra, err := s.stateMove(ctx, scope, issue, kind, policy, retry == "in_flight")
+		return settle(outcome, extra, err)
 	case "post":
 		body, _ := g["body"].(string)
 		receipt, err := s.WriteV2(ctx, scope, WriteInputV2{WriteInput: WriteInput{Operation: "comment", OperationID: markerOperation(), IssueID: issue, Body: body}, marker: true})

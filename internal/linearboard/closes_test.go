@@ -157,11 +157,18 @@ func TestLinkMinimalPolicy(t *testing.T) {
 		t.Fatal("the minimal policy was created unasked:", e, rec.ops)
 	}
 	in.MinimalPolicy = true
+	// R89-L2: a lead is told before the binding is written.
+	rec.role = "lead"
+	if _, e := s.LinkV2(context.Background(), scope, in); e == nil || !strings.Contains(e.Error(), "only the project owner") || len(rec.ops) != 0 {
+		t.Fatal("a lead's minimal policy reached the binding:", e, rec.ops)
+	}
+	rec.role = "owner"
 	if _, e := s.LinkV2(context.Background(), scope, in); e == nil || !strings.Contains(e.Error(), "state types") || len(rec.ops) != 0 {
 		t.Fatal("the minimal policy offered with an untyped list:", e, rec.ops)
 	}
 	s, rec, p, scope, in := closesTest(t, nil)
 	p.statuses = typedStates
+	rec.role = "owner"
 	in.Confirm, in.Via, in.MinimalPolicy = true, ClosesViaTTY, true
 	in.Closes = map[string]string{projectB: ClosesAgent, projectA: ClosesHuman}
 	if _, e := s.LinkV2(context.Background(), scope, in); e != nil || strings.Join(rec.ops, ",") != "taskboard_set_v2,status_policy_set" {
@@ -214,4 +221,41 @@ func TestClosesShowMarksUnboundProjects(t *testing.T) {
 	if last := v.Projects[2]; last.Bound || last.Closes != "agents (not bound)" {
 		t.Fatal(v.Projects)
 	}
+}
+
+// R89-M1: a policy file that lets agents close a project is confirmed by
+// name before anything is sent, and the write says via cli-tty; without a
+// confirm it is refused, and a file that loosens nothing asks nothing.
+func TestStatusPolicySetConfirmsAgentCloses(t *testing.T) {
+	file := `{"enabled": true, "closes": {"` + projectA + `": "agent"}}`
+	s, rec, p, scope, _ := closesTest(t, nil)
+	p.statuses = bothTeams()
+	if _, e := s.SetStatusPolicyV2(context.Background(), scope, []byte(file), 0, nil); e == nil || !strings.Contains(e.Error(), "confirmed at a terminal") || rec.statusSet != nil {
+		t.Fatal("loosened without a confirm:", e, rec.statusSet)
+	}
+	// The fake's projects have no names; the CLI's confirm refuses a
+	// blank one (TestAgentClosesIsConfirmedByAPerson).
+	var asked map[string]string
+	refuse := func(names map[string]string) error { asked = names; return errors.New("the name typed is not it") }
+	if _, e := s.SetStatusPolicyV2(context.Background(), scope, []byte(file), 0, refuse); e == nil || rec.statusSet != nil || len(asked) != 1 {
+		t.Fatal("a refused confirm still wrote, or asked wrongly:", e, asked, rec.statusSet)
+	}
+	if _, e := s.SetStatusPolicyV2(context.Background(), scope, []byte(file), 0, func(map[string]string) error { return nil }); e != nil || rec.statusSet["via"] != ClosesViaTTY {
+		t.Fatal(e, rec.statusSet)
+	}
+	s, rec, p, scope, _ = closesTest(t, enabledPolicy(map[string]any{projectA: "agent"}))
+	p.statuses = bothTeams()
+	if _, e := s.SetStatusPolicyV2(context.Background(), scope, []byte(file), 4, nil); e != nil || rec.statusSet["via"] != ClosesViaCLI {
+		t.Fatal("an unchanged agent key asked for a terminal:", e, rec.statusSet)
+	}
+}
+
+// bothTeams is sfStates for the bound team and a copy for the other.
+func bothTeams() []linearprovider.Status {
+	out := append([]linearprovider.Status{}, sfStates...)
+	for _, st := range sfStates {
+		st.TeamID, st.ID = otherTeamID, strings.Replace(st.ID, "c1", "c2", 1)
+		out = append(out, st)
+	}
+	return out
 }

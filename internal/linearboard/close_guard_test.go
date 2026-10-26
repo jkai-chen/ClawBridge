@@ -361,7 +361,7 @@ func TestSetStatusPolicyResolvesDoneAndCloses(t *testing.T) {
 	}
 	set := func(file string) (any, error) {
 		a.statusSet = nil
-		return s.SetStatusPolicyV2(context.Background(), scope, []byte(file), 0)
+		return s.SetStatusPolicyV2(context.Background(), scope, []byte(file), 0, func(map[string]string) error { return nil })
 	}
 	out, err := set(`{"enabled": true, "claim": "In Progress", "release_done": "In Review", "done": "Done", "closes": {"` + strings.ToUpper(projectA) + `": "agent"}}`)
 	if err != nil {

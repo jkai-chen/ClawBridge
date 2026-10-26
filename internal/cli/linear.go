@@ -1038,7 +1038,9 @@ func runLinear(ctx context.Context, flags Config, args []string, stdout, stderr 
 		if e != nil {
 			return e
 		}
-		data, err = service.SetStatusPolicyV2(bounded, scope, []byte(raw), v.revision)
+		data, err = service.SetStatusPolicyV2(bounded, scope, []byte(raw), v.revision, func(names map[string]string) error {
+			return confirmAgentCloses(flags, names, stderr)
+		})
 	case "health":
 		if adminAction == "show" {
 			data, err = service.HealthV2(bounded, scope)

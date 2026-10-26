@@ -27,7 +27,9 @@ func sfPolicy(enabled bool) map[string]any {
 
 func (w *watchHarness) setStatusPolicy(rev int, policy map[string]any) map[string]any {
 	w.t.Helper()
-	return w.call("status_policy_set", "c", map[string]any{"expected_revision": rev, "status_policy": policy}).(map[string]any)
+	// The owner's terminal, as the CLI sends it: closes is never a
+	// session's to change (R89-H1).
+	return w.call("status_policy_set", "", map[string]any{"expected_revision": rev, "status_policy": policy, "via": "cli-tty"}).(map[string]any)
 }
 
 func (w *watchHarness) stateRow(id, phase string) (state, reason string, revision int) {

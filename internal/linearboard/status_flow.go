@@ -44,7 +44,12 @@ func (s *Service) StatusPolicyV2(ctx context.Context, scope bus.Request) (any, e
 // workflow (state ID → type), so a state added later moves nothing. done
 // may be missing from a team, which then stops at release_done: the answer
 // names each such team when any project is closed by agents.
-func (s *Service) SetStatusPolicyV2(ctx context.Context, scope bus.Request, raw []byte, expected int64) (any, error) {
+//
+// A file that lets agents close a project they didn't close before
+// (R89-M1) is confirmed by confirm with each such project's Linear name,
+// before anything is sent, and the write says via cli-tty. Without confirm
+// it is refused.
+func (s *Service) SetStatusPolicyV2(ctx context.Context, scope bus.Request, raw []byte, expected int64, confirm ConfirmAgentCloses) (any, error) {
 	if e := uniqueKeys(raw); e != nil {
 		return nil, e
 	}
@@ -77,6 +82,10 @@ func (s *Service) SetStatusPolicyV2(ctx context.Context, scope bus.Request, raw 
 		}
 		closes[project] = who
 		agents = agents || who == "agent"
+	}
+	via, e := s.confirmLoosened(ctx, scope, closes, confirm)
+	if e != nil {
+		return nil, e
 	}
 	stops := []string{}
 	teams := map[string]any{}
@@ -132,7 +141,13 @@ func (s *Service) SetStatusPolicyV2(ctx context.Context, scope bus.Request, raw 
 	scope.Args = instanceArgs(scope.Args)
 	scope.Args["expected_revision"] = expected
 	scope.Args["status_policy"] = policy
+	scope.Args["via"] = via
 	r, e := s.cfg.Executor.Execute(ctx, scope)
+	if e != nil && strings.Contains(e.Error(), `unsupported argument "via"`) {
+		// A server older than A3 takes no via, and checks nothing of it.
+		delete(scope.Args, "via")
+		r, e = s.cfg.Executor.Execute(ctx, scope)
+	}
 	if e != nil || !agents || len(stops) == 0 {
 		return r.Data, e
 	}

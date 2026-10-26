@@ -31,6 +31,9 @@ type AdminInput struct {
 	Description  string
 	InitiativeID string
 	ProjectID    string
+	// Closes is project create's --closes (A3): agent puts the new project's
+	// rule into the proposed link; human is the default and adds nothing.
+	Closes string
 }
 
 // AdminResult is an admin write's receipt. Proposal is the binding preview
@@ -74,6 +77,9 @@ var errAdminOwnerOnly = errors.New("Linear label and project creation is for the
 func ValidateAdmin(in AdminInput) error {
 	if !operationPattern.MatchString(in.OperationID) {
 		return errors.New("admin write requires operation_id")
+	}
+	if in.Closes != "" && (in.Kind != "project_create" || in.Closes != ClosesAgent && in.Closes != ClosesHuman) {
+		return errors.New("--closes is agent or human, on project create only")
 	}
 	switch in.Kind {
 	case "initiative_create":
@@ -185,6 +191,9 @@ func (s *Service) Admin(ctx context.Context, scope bus.Request, in AdminInput) (
 	}
 	if !b.Configured {
 		return AdminResult{}, errors.New("task-board is not linked")
+	}
+	if in.Closes != "" && b.Mode != "project_set" {
+		return AdminResult{}, errors.New("a team board has no per-project close rule; nothing was sent")
 	}
 	if s.cfg.Authority == "" {
 		return AdminResult{}, errors.New("canonical authority identity required for operation ledger")
@@ -369,7 +378,7 @@ func (s *Service) Admin(ctx context.Context, scope bus.Request, in AdminInput) (
 		result.Audit = "recorded"
 	}
 	if in.Kind == "project_create" {
-		s.proposeProject(ctx, scope, b, &result)
+		s.proposeProject(ctx, scope, b, &result, in.Closes)
 	}
 	return result, nil
 }
@@ -648,7 +657,7 @@ func (s *Service) AdminAuditReplay(ctx context.Context, scope bus.Request, opera
 // proposeProject adds the binding proposal for a created project. Only a
 // project-set binding gets one: in a team board a project of a bound team is
 // already in scope, and switching mode would narrow the scope.
-func (s *Service) proposeProject(ctx context.Context, scope bus.Request, b bus.TaskboardBindingV2, r *AdminResult) {
+func (s *Service) proposeProject(ctx context.Context, scope bus.Request, b bus.TaskboardBindingV2, r *AdminResult, closes string) {
 	if b.Mode != "project_set" {
 		r.ProposalNote = "already in scope: the team board covers every project of its teams"
 		return
@@ -658,7 +667,11 @@ func (s *Service) proposeProject(ctx context.Context, scope bus.Request, b bus.T
 		return
 	}
 	projects := append(append([]string{}, b.LinearProjectIDs...), r.ID)
-	preview, e := s.LinkV2(ctx, scope, LinkInputV2{TeamIDs: b.LinearTeamIDs, DefaultTeamID: b.LinearDefaultTeamID, ProjectIDs: projects, ExpectedRevision: b.Revision})
+	in := LinkInputV2{TeamIDs: b.LinearTeamIDs, DefaultTeamID: b.LinearDefaultTeamID, ProjectIDs: projects, ExpectedRevision: b.Revision}
+	if closes == ClosesAgent {
+		in.Closes = map[string]string{r.ID: ClosesAgent}
+	}
+	preview, e := s.LinkV2(ctx, scope, in)
 	if e != nil {
 		r.ProposalNote = "no proposal: " + e.Error()
 		return
@@ -671,6 +684,9 @@ func (s *Service) proposeProject(ctx context.Context, scope bus.Request, b bus.T
 	args = append(args, "--default-team "+b.LinearDefaultTeamID)
 	for _, p := range SortedTeams(projects) {
 		args = append(args, "--linear-project "+p)
+	}
+	if closes == ClosesAgent {
+		args = append(args, "--closes "+r.ID+"=agent")
 	}
 	args = append(args, fmt.Sprintf("--expected-revision %d --confirm", b.Revision))
 	r.ConfirmCommand = strings.Join(args, " ")

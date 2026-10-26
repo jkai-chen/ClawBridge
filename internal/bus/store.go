@@ -413,7 +413,7 @@ var operationArgs = map[string]string{
 	"taskboard_get":               "instance",
 	"taskboard_get_v2":            "instance",
 	"comment_watch_status":        "",
-	"taskboard_set_v2":            "instance expected_revision mode linear_team_ids linear_default_team_id linear_project_ids linear_workspace_id",
+	"taskboard_set_v2":            "instance expected_revision mode linear_team_ids linear_default_team_id linear_project_ids linear_workspace_id closes_pending",
 	"taskboard_clear_v2":          "instance expected_revision repair",
 	"taskboard_access":            "instance ledger engineer",
 	"member_display_name_set":     "display_name if_unset",
@@ -440,7 +440,8 @@ var operationArgs = map[string]string{
 	"marker_spent":                "instance lease_token generation assignment_id phase calls charged",
 	"label_policy_get":            "instance",
 	"status_policy_get":           "instance",
-	"status_policy_set":           "instance expected_revision status_policy",
+	"status_policy_set":           "instance expected_revision status_policy via",
+	"status_closes_set":           "instance expected_revision linear_project closes via",
 	"doc_policy_get":              "instance",
 	"dispatcher_get":              "instance",
 	"dispatcher_cases_due":        "instance",
@@ -575,7 +576,7 @@ func validateArgs(op string, a map[string]any) error {
 			if _, ok := intList(v, 1000); !ok {
 				return errors.New("lines must be an array of line numbers")
 			}
-		case "ids", "linear_team_ids", "linear_project_ids", "scope_paths", "domains", "comment_ids", "signals", "roles", "pattern_ids", "issue_labels":
+		case "ids", "linear_team_ids", "linear_project_ids", "closes_pending", "scope_paths", "domains", "comment_ids", "signals", "roles", "pattern_ids", "issue_labels":
 			switch v.(type) {
 			case []string, []any:
 			default:
@@ -1236,6 +1237,12 @@ func (s *Store) execute(ctx context.Context, tx *transaction, r Request) (any, e
 			return nil, errSwitchFromSession
 		}
 		return s.dispatcherSwitch(ctx, tx, w, p, projectRole, r)
+	}
+	if statusClosesOperation(r.Operation) {
+		if actor == nil && str(a, "instance") != "" {
+			return nil, invalid("instance requires session")
+		}
+		return s.statusClosesOp(ctx, tx, wid, pid, projectRole, actor, r)
 	}
 	if actor == nil && dispatcherOperation(r.Operation) {
 		if str(a, "instance") != "" {

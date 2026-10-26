@@ -34,6 +34,12 @@ type LinkInputV2 struct {
 	ProjectIDs         []string
 	ExpectedRevision   int64
 	TeamBoard, Confirm bool
+	// Closes sets who closes some of the link's projects (A3): agent or
+	// human. Via is how the person confirmed an agent answer (cli-tty or
+	// tui); MinimalPolicy agrees to create the minimal status policy.
+	Closes        map[string]string
+	Via           string
+	MinimalPolicy bool
 }
 type LinkPreviewV2 struct {
 	Binding       bus.TaskboardBindingV2   `json:"current"`
@@ -42,6 +48,10 @@ type LinkPreviewV2 struct {
 	Projects      []linearprovider.Project `json:"projects"`
 	TeamBoard     bool                     `json:"team_board"`
 	Confirmed     bool                     `json:"confirmed"`
+	// Closes is who closes each project's issues, and what this link sets.
+	Closes []ClosesLine `json:"closes,omitempty"`
+	// MinimalPolicy states what creating the minimal status policy changes.
+	MinimalPolicy string `json:"minimal_status_policy,omitempty"`
 	// LinearWorkspaceID is the workspace the link records, read from Linear.
 	LinearWorkspaceID string `json:"linear_workspace_id,omitempty"`
 	// SeedDocs names the guide documents a confirmed link creates.

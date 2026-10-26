@@ -169,6 +169,10 @@ func (s *Store) statusPolicyOp(ctx context.Context, tx *transaction, w, p map[st
 	if err != nil {
 		return nil, err
 	}
+	via := str(r.Args, "via")
+	if via != "" && !closesVia[via] {
+		return nil, invalid("via is cli, cli-tty or tui")
+	}
 	encoded, _ := json.Marshal(policy)
 	now, err := dbStamp(ctx, tx)
 	if err != nil {
@@ -193,7 +197,7 @@ func (s *Store) statusPolicyOp(ctx context.Context, tx *transaction, w, p map[st
 	if err != nil {
 		return nil, err
 	}
-	if err = s.audit(ctx, tx, wid, pid, "", "linear_status_policy", pid, "set", map[string]any{"revision": revision, "enabled": policy.Enabled, "teams": len(policy.Teams)}); err != nil {
+	if err = s.audit(ctx, tx, wid, pid, "", "linear_status_policy", pid, "set", auditVia(map[string]any{"revision": revision, "enabled": policy.Enabled, "teams": len(policy.Teams)}, via)); err != nil {
 		return nil, err
 	}
 	return statusPolicyView(ctx, tx, pid)

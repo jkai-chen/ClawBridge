@@ -202,3 +202,25 @@ test("an unreachable provider host fails the setup test with egress_blocked", as
 	await runUntil(() => false);
 	assert.equal((cb.testResults[0] as { reason?: string }).reason, "egress_blocked");
 });
+
+test("a chat case is answered end to end with reply, from read-tool facts", async () => {
+	provider.plan = [
+		["list_decisions", { since_hours: 24, limit: 10 }],
+		["reply", { text: "ABC-12 matched its domain by label only, so it was escalated." }],
+	];
+	cb.cases.push(
+		sampleCase({
+			case_id: "case_chat",
+			kind: "chat",
+			permitted_actions: undefined,
+			subject: { type: "message", id: "msg_1" },
+			message: { from: { session: "lead", principal: "p_lead" }, text: "Why was ABC-12 escalated?" },
+		}),
+	);
+	await runUntil(() => cb.outcomes.length > 0);
+	assert.equal(cb.outcomes[0]?.tool, "reply");
+	assert.deepEqual(
+		cb.requests.filter((r) => r.path.includes("/tools/")).map((r) => r.path.split("/").pop()),
+		["list_decisions", "reply"],
+	);
+});

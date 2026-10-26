@@ -206,6 +206,40 @@ func TestARefusedJoinLeavesNoKeyAndNoProfile(t *testing.T) {
 	}
 }
 
+// loseJoinAnswer delivers the join to the server and then loses its answer.
+type loseJoinAnswer struct{}
+
+func (loseJoinAnswer) RoundTrip(r *http.Request) (*http.Response, error) {
+	response, err := http.DefaultTransport.RoundTrip(r)
+	if err == nil && r.URL.Path == "/v1/join" {
+		response.Body.Close()
+		return nil, errors.New("connection reset")
+	}
+	return response, err
+}
+
+func TestALostJoinAnswerKeepsTheKeyAndSaysWhere(t *testing.T) {
+	f := newJoinFixture(t)
+	_, err := JoinDevice(context.Background(), JoinParams{Server: f.url, Email: "Ada@Example.com", Code: "CBJ-4K7P-WQ9D-2MXH-T6RB", HTTPClient: &http.Client{Transport: loseJoinAnswer{}}})
+	var lost *JoinUncertainError
+	if !errors.As(err, &lost) || !errors.Is(err, remote.ErrJoinUncertain) || len(f.keys) != 1 {
+		t.Fatal(err)
+	}
+	home, _ := stateHome()
+	want := JoinUncertainError{DeviceID: f.keys[0], KeyStore: devicesign.StoreKeyring, KeyHome: home, Server: f.url, Principal: "ada@example.com"}
+	if *lost != want || !strings.Contains(err.Error(), "revoke "+f.keys[0]) {
+		t.Fatalf("%+v: %v", *lost, err)
+	}
+	// The key is where the error says, and it derives the device.
+	u := strings.TrimPrefix(f.url, "http://")
+	if _, e := devicesign.Load(devicesign.Location{Store: lost.KeyStore, Host: u, Home: lost.KeyHome, DeviceID: lost.DeviceID}); e != nil {
+		t.Fatal("a lost join answer lost the key:", e)
+	}
+	if _, e := os.Stat(filepath.Join(home, "config.toml")); !errors.Is(e, os.ErrNotExist) {
+		t.Fatal("a lost join answer wrote a profile")
+	}
+}
+
 func TestJoinWithAFileKey(t *testing.T) {
 	f := newJoinFixture(t)
 	var out, errOut bytes.Buffer

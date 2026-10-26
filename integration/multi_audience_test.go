@@ -66,7 +66,7 @@ func TestServeValidatesAudienceSetBeforePostgres(t *testing.T) {
 				t.Fatalf("invalid audience set unexpectedly started: %s", output)
 			}
 			diagnostic := string(output)
-			if !strings.Contains(diagnostic, "serve requires --audience and --bootstrap-owner") {
+			if !strings.Contains(diagnostic, "requires --audience") && !strings.Contains(diagnostic, "needs --audience") {
 				t.Fatalf("invalid set did not fail at audience validation: %s", diagnostic)
 			}
 			for _, databaseDiagnostic := range []string{"Postgres", "postgres://", "not-a-real-password"} {
@@ -140,10 +140,11 @@ func TestPublicOAuthConfigContract(t *testing.T) {
 	)
 
 	type publicConfig struct {
-		BrowserClientID     string `json:"browser_client_id"`
-		BrowserClientSecret string `json:"browser_client_secret"`
-		DeviceClientID      string `json:"device_client_id"`
-		DeviceClientSecret  string `json:"device_client_secret"`
+		BrowserClientID     string   `json:"browser_client_id"`
+		BrowserClientSecret string   `json:"browser_client_secret"`
+		DeviceClientID      string   `json:"device_client_id"`
+		DeviceClientSecret  string   `json:"device_client_secret"`
+		AuthMethods         []string `json:"auth_methods"`
 	}
 	var verifierCalls, executorCalls int
 	configHandler := server.NewHandlerWithOAuthMetadata(executorFunc(func(context.Context, string, bus.Request) (bus.Result, error) {

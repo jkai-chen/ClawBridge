@@ -123,7 +123,7 @@ func (s *Store) migrate() error {
 	if err = tx.QueryRow("PRAGMA user_version").Scan(&version); err != nil {
 		return err
 	}
-	if version > 12 {
+	if version > 13 {
 		return errors.New("database schema is newer than this ClawBridge binary")
 	}
 	if version == 0 {
@@ -190,6 +190,11 @@ func (s *Store) migrate() error {
 	}
 	if version < 12 {
 		if _, err = tx.Exec(intakeSchemaV12 + `PRAGMA user_version=12;`); err != nil {
+			return err
+		}
+	}
+	if version < 13 {
+		if _, err = tx.Exec(docSeedSchemaV13 + `PRAGMA user_version=13;`); err != nil {
 			return err
 		}
 	}
@@ -395,6 +400,8 @@ var operationArgs = map[string]string{
 	"marker_settle":               "instance lease_token generation assignment_id phase part outcome comment_id created_at via error",
 	"marker_due":                  "instance lease_token generation",
 	"label_policy_get":            "instance",
+	"doc_seed_get":                "instance parent_kind parent_id",
+	"doc_seed_put":                "instance parent_kind parent_id template template_version state seed_token expect_token document_id seeded_sha256",
 	"label_policy_set":            "instance expected_revision label_policy",
 	"linear_admin_audit":          "instance kind outcome operation_id linear_team_id linear_id linear_project_id name previous_name policy_revision",
 	"watch_charge":                "instance lease_token generation calls",
@@ -422,7 +429,7 @@ func validateArgs(op string, a map[string]any) error {
 			return fmt.Errorf("unsupported argument %q for %s", k, op)
 		}
 		switch k {
-		case "retention_days", "limit", "after", "expected_revision", "ledger", "generation", "budget", "calls", "policy_revision", "engineer", "if_unset", "expires_days", "s5_calls_per_hour", "out_of_binding_limit":
+		case "retention_days", "limit", "after", "expected_revision", "ledger", "generation", "budget", "calls", "policy_revision", "engineer", "if_unset", "expires_days", "s5_calls_per_hour", "out_of_binding_limit", "template_version":
 			if _, err := integer(v); err != nil {
 				return fmt.Errorf("%s: %w", k, err)
 			}
@@ -1028,6 +1035,16 @@ func (s *Store) execute(ctx context.Context, tx *transaction, r Request) (any, e
 			return nil, invalid("instance requires session")
 		}
 		return s.labelPolicyOp(ctx, tx, w, p, projectRole, nil, r)
+	}
+	// Seeding guide documents is a lead's or owner's CLI command too.
+	if docSeedOperation(r.Operation) {
+		if actor == nil && str(a, "instance") != "" {
+			return nil, invalid("instance requires session")
+		}
+		if actor != nil {
+			tx.actorID = actor["id"].(string)
+		}
+		return s.docSeedOp(ctx, tx, w, p, projectRole, actor, r)
 	}
 	if actor == nil {
 		return nil, invalid("session is required; register and pass --session and --instance")

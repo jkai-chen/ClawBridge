@@ -75,15 +75,17 @@ The database recovery copy is a Postgres custom-format archive, not a copy of th
 attached block device. Each run produces a same-timestamp pair:
 
 ```text
-gs://CLAWBRIDGE_BACKUP_BUCKET/postgres/daily/YYYYMMDDTHHMMSSZ.dump
-gs://CLAWBRIDGE_BACKUP_BUCKET/postgres/daily/YYYYMMDDTHHMMSSZ.sha256
+gs://BUCKET/postgres/daily/YYYYMMDDTHHMMSSZ.dump      (or s3://BUCKET/…)
+gs://BUCKET/postgres/daily/YYYYMMDDTHHMMSSZ.sha256
 ```
 
 The env file names the store in one of two ways, never both:
 
 - `CLAWBRIDGE_BACKUP_URL`: `gs://BUCKET` (Google Cloud Storage) or `s3://BUCKET` (Amazon S3), a bucket name and
   nothing else. With `s3://`, `CLAWBRIDGE_BACKUP_REGION` names the bucket's AWS region, and the upload uses
-  `aws s3 cp` with the instance's role (`deploy/aws-instance-role-policy.json`).
+  `aws s3 cp` with the instance's role (`deploy/aws-instance-role-policy.json`). A bucket encrypted with a
+  customer-managed KMS key (SSE-KMS) also needs `kms:GenerateDataKey` on that key for the role (and
+  `kms:Decrypt` for whoever restores); the default S3-managed encryption needs neither.
 - `CLAWBRIDGE_BACKUP_BUCKET`: a Google Cloud Storage bucket, as before.
 
 A missing, duplicated or malformed setting stops the runner before it dumps anything.
@@ -121,7 +123,12 @@ sudo systemctl start clawbridge-postgres-backup.service
 sudo systemctl status clawbridge-postgres-backup.service --no-pager
 sudo journalctl -u clawbridge-postgres-backup.service --since today --no-pager
 gcloud storage ls "gs://${CLAWBRIDGE_BACKUP_BUCKET}/postgres/daily/" --limit 10
+# on S3: aws s3 ls "s3://BUCKET/postgres/daily/" --region REGION
 ```
+
+`clawbridge cloud check backups` checks the same from the user's machine:
+`--bucket BUCKET --project PROJECT` for Google Cloud Storage, or `--bucket BUCKET
+--region REGION` for S3.
 
 Keep at least **30 complete daily dump/checksum pairs** off the VM. The checked-in
 `deploy/gcs-lifecycle.json` deletes only objects under `postgres/daily/` after 30
@@ -140,7 +147,8 @@ file:///opt/clawbridge/repo/deploy/s3-lifecycle.json`.
 
 If the bucket lifecycle already differs, reconcile it to retain no fewer than 30
 daily pairs. The backup run's IAM needs object-create permission on this prefix;
-the restore operator needs object-view permission. Do not grant bucket-wide delete
+the restore operator needs object-view permission (on S3, `s3:GetObject` on
+`arn:aws:s3:::BUCKET/postgres/daily/*`). Do not grant bucket-wide delete
 permission to the backup runner.
 
 The separate Compute Engine disk snapshot schedule remains enabled. Inspect it
@@ -173,12 +181,16 @@ DRILL_DIR=$(mktemp -d)
 CONTAINER=clawbridge-restore-drill-$$
 trap 'docker rm -f "$CONTAINER" >/dev/null 2>&1 || true; rm -rf "$DRILL_DIR"' 0 1 2 3 15
 
+# Google Cloud Storage:
 gcloud storage cp \
   "gs://${CLAWBRIDGE_BACKUP_BUCKET}/postgres/daily/${STAMP}.dump" \
   "$DRILL_DIR/${STAMP}.dump"
 gcloud storage cp \
   "gs://${CLAWBRIDGE_BACKUP_BUCKET}/postgres/daily/${STAMP}.sha256" \
   "$DRILL_DIR/${STAMP}.sha256"
+# or Amazon S3 (BUCKET from CLAWBRIDGE_BACKUP_URL=s3://BUCKET, REGION from CLAWBRIDGE_BACKUP_REGION):
+#   aws s3 cp --region "$REGION" "s3://${BUCKET}/postgres/daily/${STAMP}.dump" "$DRILL_DIR/${STAMP}.dump"
+#   aws s3 cp --region "$REGION" "s3://${BUCKET}/postgres/daily/${STAMP}.sha256" "$DRILL_DIR/${STAMP}.sha256"
 (cd "$DRILL_DIR" && sha256sum -c "${STAMP}.sha256")
 
 docker run -d --rm --name "$CONTAINER" --network none \

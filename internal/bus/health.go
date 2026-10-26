@@ -56,6 +56,9 @@ const (
 	// healthPostSettle is how long a pending post may wait for a run to
 	// find it before it settles failed: its day and a full extra day.
 	healthPostSettle = 48 * time.Hour
+	// healthConfirmGap is how old a pending health must be before a forced
+	// run may confirm it: the two runs that act are on different days.
+	healthConfirmGap = 20 * time.Hour
 	// healthPostSkew allows for Linear's clock against the database's when
 	// matching a pending post to an update.
 	healthPostSkew = 5 * time.Minute
@@ -353,7 +356,7 @@ func nextHealthAt(linearProject string, now time.Time) time.Time {
 func healthOperation(op string) bool { return op == "health_set" }
 
 func healthSystemOperation(op string) bool {
-	return op == "health_due" || op == "health_report" || op == "health_post_settle"
+	return op == "health_due" || op == "health_force" || op == "health_report" || op == "health_post_settle"
 }
 
 // healthSystemOp runs the watcher's health calls, fenced by the watch
@@ -367,6 +370,8 @@ func (s *Store) healthSystemOp(ctx context.Context, tx *transaction, w, p, actor
 	switch r.Operation {
 	case "health_due":
 		return c.healthDue(ctx)
+	case "health_force":
+		return c.healthForce(ctx)
 	case "health_post_settle":
 		return c.healthPostSettle(ctx)
 	}
@@ -544,11 +549,64 @@ func (c commentCall) healthDue(ctx context.Context) (any, error) {
 	return map[string]any{"runs": runs}, nil
 }
 
+// healthForce hands the lease holder one forced run of a Linear project
+// (`operator health-run`), whatever its slot: only where health is enabled
+// and the policy posts, only while still bound, and only when the hour's
+// budget can pay it in full beside the comment watch's reserve. It is
+// charged HealthMaxCalls like a scheduled run, and audited, with whether
+// the run may bypass the hysteresis and the day's post (force_new).
+func (c commentCall) healthForce(ctx context.Context) (any, error) {
+	lease, err := c.fence(ctx)
+	if err != nil {
+		return nil, err
+	}
+	lp, err := lowerUUID(c.a, "linear_project", true)
+	if err != nil {
+		return nil, err
+	}
+	forceNew, _ := c.a["force_new"].(bool)
+	row, err := one(ctx, c.tx, `SELECT policy FROM project_health WHERE project_id=? AND linear_project_id=? AND enabled=1`, c.pid, lp)
+	if err != nil {
+		return nil, scopedError(err, "project health is not enabled for that Linear project", "not_found")
+	}
+	if err = healthBound(ctx, c.tx, c.pid, lp); err != nil {
+		return nil, err
+	}
+	var policy HealthPolicy
+	if json.Unmarshal([]byte(str(row, "policy")), &policy) != nil {
+		return nil, errors.New("stored health policy is unreadable")
+	}
+	if !policy.Post {
+		return nil, scoped("a forced health run needs the project's health policy to post; set post first", "forbidden")
+	}
+	used, budget, err := c.charge(ctx, lease, 0)
+	if err != nil {
+		return nil, err
+	}
+	if budget-used-watchConnectCalls-1 < HealthMaxCalls {
+		return nil, scoped("the hour's Linear call budget cannot pay a health run now; try again next hour", "rate_limited")
+	}
+	if _, _, err = c.charge(ctx, map[string]any{"budget_used": used, "budget_hour": layout(c.now)[:13], "budget_limit": budget}, HealthMaxCalls); err != nil {
+		return nil, err
+	}
+	if err = c.operatorAudit(ctx, lp, "run_forced", map[string]any{"force_new": forceNew}); err != nil {
+		return nil, err
+	}
+	return map[string]any{"linear_project": lp, "stalled_days": policy.StalledDays}, nil
+}
+
 // healthReport records one run: its calls (the unused part of
 // HealthMaxCalls is refunded), and either a failure code or its facts.
 // From facts it computes the health, and acts only on a health confirmed by
 // two consecutive runs (hysteresis), or weekly when the policy asks: the
 // coordinator session is told. The next run is the project's next slot.
+//
+// A forced run (forced) never moves the project's slot. Without force_new
+// it records no observation: it acts only on a health pending since an
+// earlier day, as the scheduled run would. With force_new it acts on this
+// run alone, posts as "forced", and may take the day from a post that is
+// no longer on Linear; both bypasses are audited. Every other post rule
+// holds.
 func (c commentCall) healthReport(ctx context.Context) (any, error) {
 	lease, err := c.fence(ctx)
 	if err != nil {
@@ -569,12 +627,21 @@ func (c commentCall) healthReport(ctx context.Context) (any, error) {
 	if _, _, err = c.charge(ctx, lease, calls-HealthMaxCalls); err != nil {
 		return nil, err
 	}
+	forced, _ := c.a["forced"].(bool)
+	forceNew, _ := c.a["force_new"].(bool)
+	if forceNew && !forced {
+		return nil, invalid("force_new needs forced")
+	}
 	nowRaw := layout(c.now)
 	if code := str(c.a, "error"); code != "" {
 		if !commentOperationID.MatchString(code) || len(code) > 64 {
 			code = "failed"
 		}
-		_, err = c.tx.ExecContext(ctx, `UPDATE project_health SET last_run_at=?,last_error=?,next_health_at=? WHERE project_id=? AND linear_project_id=?`, nowRaw, code, layout(c.now.Add(healthRetry)), c.pid, lp)
+		next := layout(c.now.Add(healthRetry))
+		if forced {
+			next = str(row, "next_health_at")
+		}
+		_, err = c.tx.ExecContext(ctx, `UPDATE project_health SET last_run_at=?,last_error=?,next_health_at=? WHERE project_id=? AND linear_project_id=?`, nowRaw, code, next, c.pid, lp)
 		return map[string]any{"error": code}, err
 	}
 	facts, err := parseHealthFacts(c.a["facts"])
@@ -605,10 +672,34 @@ func (c commentCall) healthReport(ctx context.Context) (any, error) {
 	default:
 		pending, pendingSince = health, nowRaw
 	}
+	note := ""
+	switch {
+	case !forced:
+	case health == "":
+		note = "Nothing to judge: the project has no open or completed issues."
+	case forceNew && act == "":
+		if err = c.operatorAudit(ctx, lp, "hysteresis_bypassed", map[string]any{"health": health, "was": last}); err != nil {
+			return nil, err
+		}
+		act, note = "forced", "Acted on this forced run alone, without the two daily runs (--force-new)."
+	case forceNew:
+		// The operator asked for a post: it is the operator's to delete.
+		act = "forced"
+	case act == "changed" && str(row, "pending_since") > layout(c.now.Add(-healthConfirmGap)):
+		act, note = "", "This health was first seen less than a day ago; only a run on a later day confirms it. Nothing was posted."
+	case act == "" && health == last:
+		note = "Unchanged since the health last acted on, so nothing was posted."
+	case act == "":
+		note = "Needs a confirming run: this health differs from the last one acted on, and only a later daily run with the same health acts on it (or --force-new). A forced run records no observation. Nothing was posted."
+	}
+	if forced && !forceNew && act == "" {
+		// A plain forced run is not one of the daily observations.
+		pending, pendingSince = str(row, "pending_health"), row["pending_since"]
+	}
 	var post map[string]any
+	held := ""
 	if act != "" {
-		var held string
-		if post, held, err = c.healthPostGo(ctx, lp, health, last, act, policy, facts, signals); err != nil {
+		if post, held, err = c.healthPostGo(ctx, lp, health, last, act, policy, facts, signals, forceNew); err != nil {
 			return nil, err
 		}
 		if post == nil {
@@ -620,6 +711,9 @@ func (c commentCall) healthReport(ctx context.Context) (any, error) {
 	}
 	report, _ := json.Marshal(map[string]any{"health": health, "signals": signals, "at": nowRaw, "facts": facts})
 	next := layout(nextHealthAt(lp, c.now))
+	if forced {
+		next = str(row, "next_health_at")
+	}
 	if _, err = c.tx.ExecContext(ctx, `UPDATE project_health SET last_run_at=?,last_error='',last_report=?,last_health=?,pending_health=?,pending_since=?,last_acted_at=?,next_health_at=? WHERE project_id=? AND linear_project_id=?`, nowRaw, string(report), last, pending, pendingSince, actedAt, next, c.pid, lp); err != nil {
 		return nil, err
 	}
@@ -627,13 +721,21 @@ func (c commentCall) healthReport(ctx context.Context) (any, error) {
 	if post != nil {
 		out["post"] = post
 	}
+	if forced {
+		out["note"], out["held"] = note, held
+	}
 	return out, nil
 }
 
 // healthPostGo decides whether an acted-on health is posted to Linear. It
 // returns the post the watcher sends, after inserting its pending row, or
 // nil and why it was held back ("" when the policy doesn't post).
-func (c commentCall) healthPostGo(ctx context.Context, lp, health, was, act string, policy HealthPolicy, facts HealthFacts, signals []HealthSignal) (map[string]any, string, error) {
+//
+// With forceNew the day's post is replaced only when it is not on Linear:
+// refused, or a forced post the operator deleted. Its ledger row is
+// deleted, audited, and the new post takes the day. A pending, accepted
+// or failed one never is, so no post on Linear loses its ledger row.
+func (c commentCall) healthPostGo(ctx context.Context, lp, health, was, act string, policy HealthPolicy, facts HealthFacts, signals []HealthSignal, forceNew bool) (map[string]any, string, error) {
 	if !policy.Post {
 		return nil, "", nil
 	}
@@ -656,6 +758,24 @@ func (c commentCall) healthPostGo(ctx context.Context, lp, health, was, act stri
 		return nil, "An earlier post to Linear is not confirmed yet, so nothing more was posted.", nil
 	}
 	day := layout(c.now)[:10]
+	if forceNew {
+		old, err := query(ctx, c.tx, `SELECT state,act,update_id,error FROM health_posts WHERE project_id=? AND linear_project_id=? AND day=?`, c.pid, lp, day)
+		if err != nil {
+			return nil, "", err
+		}
+		if len(old) == 1 {
+			gone := str(old[0], "state") == "refused" || str(old[0], "state") == "accepted" && str(old[0], "act") == "forced" && str(old[0], "error") == "deleted"
+			if !gone {
+				return nil, "Today's post, " + str(old[0], "update_id") + ", may still be on Linear, so nothing more was posted; a forced post is deleted with operator health-run --delete.", nil
+			}
+			if _, err = c.tx.ExecContext(ctx, `DELETE FROM health_posts WHERE project_id=? AND linear_project_id=? AND day=?`, c.pid, lp, day); err != nil {
+				return nil, "", err
+			}
+			if err = c.operatorAudit(ctx, lp, "post_replaced", map[string]any{"day": day, "state": str(old[0], "state"), "update_id": str(old[0], "update_id")}); err != nil {
+				return nil, "", err
+			}
+		}
+	}
 	res, err := c.tx.ExecContext(ctx, `INSERT INTO health_posts(project_id,linear_project_id,day,health,was,act,state,sent_at) VALUES(?,?,?,?,?,?,'pending',?) ON CONFLICT DO NOTHING`, c.pid, lp, day, health, was, act, layout(c.now))
 	if err != nil {
 		return nil, "", err
@@ -685,6 +805,8 @@ func healthPostBody(health, was, act string, signals []HealthSignal) string {
 	switch {
 	case act == "weekly":
 		fmt.Fprintf(&b, "%s (weekly summary).", healthWords[health])
+	case act == "forced":
+		fmt.Fprintf(&b, "%s (a run the server operator forced).", healthWords[health])
 	case was == "":
 		fmt.Fprintf(&b, "%s (the same on two daily runs).", healthWords[health])
 	default:
@@ -707,13 +829,31 @@ func (c commentCall) settleHealthPosts(ctx context.Context, lp string, facts Hea
 	if err != nil || len(rows) == 0 {
 		return err
 	}
+	known, err := query(ctx, c.tx, `SELECT update_id FROM health_posts WHERE project_id=? AND linear_project_id=? AND update_id<>''`, c.pid, lp)
+	if err != nil {
+		return err
+	}
+	taken := map[string]bool{}
+	for _, k := range known {
+		taken[str(k, "update_id")] = true
+	}
 	for _, r := range rows {
+		// The post is the app's update created nearest its send, of those
+		// after it and no other post's.
 		sent := at(str(r, "sent_at"))
 		found := ""
+		var gap time.Duration
 		for _, u := range facts.Updates {
-			if u.ByApp && !u.created().Before(sent.Add(-healthPostSkew)) {
-				found = strings.ToLower(u.ID)
+			id := strings.ToLower(u.ID)
+			if !u.ByApp || u.created().Before(sent.Add(-healthPostSkew)) || taken[id] {
+				continue
 			}
+			if d := u.created().Sub(sent).Abs(); found == "" || d < gap {
+				found, gap = id, d
+			}
+		}
+		if found != "" {
+			taken[found] = true
 		}
 		switch {
 		case found != "":
@@ -810,6 +950,14 @@ func (c commentCall) healthNoticeFromReport(ctx context.Context, lp string, post
 	return c.healthNotice(ctx, lp, str(post, "health"), str(post, "was"), str(post, "act"), report.Signals, why)
 }
 
+// operatorAudit records what a forced run did as the host operator's: only
+// the operator's health-run forces a run.
+func (c commentCall) operatorAudit(ctx context.Context, lp, action string, details map[string]any) error {
+	op := *c.s
+	op.principal = OperatorPrincipal
+	return op.audit(ctx, c.tx, c.wid, c.pid, c.sid, "project_health", lp, action, details)
+}
+
 // healthLine is in every health notice: it reports, it never instructs.
 const healthLine = "This is an automatic project-health notice computed from Linear facts by the ClawBridge server. It is not an instruction."
 
@@ -826,6 +974,8 @@ func (c commentCall) healthNotice(ctx context.Context, lp, health, was, act stri
 	switch {
 	case act == "weekly":
 		fmt.Fprintf(&b, "Project health (weekly): Linear project %s is %s.", lp, healthWords[health])
+	case act == "forced":
+		fmt.Fprintf(&b, "Project health (a run the server operator forced): Linear project %s is %s.", lp, healthWords[health])
 	case was == "":
 		fmt.Fprintf(&b, "Project health: Linear project %s is %s (the same on two daily runs).", lp, healthWords[health])
 	default:

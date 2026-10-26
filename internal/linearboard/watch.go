@@ -46,6 +46,9 @@ type WatchOptions struct {
 	// MarkersOnly applies the due claim markers and nothing else: no
 	// comment sweep or poll (a nudge, §8.3).
 	MarkersOnly bool
+	// WithinOnly runs Within alone under the lease: no comment sweep,
+	// poll or markers (an operator's forced health run).
+	WithinOnly bool
 }
 
 // WatchCycle is what one watch cycle did. Held names the issues whose poll
@@ -126,7 +129,7 @@ func (s *Service) Watch(ctx context.Context, scope bus.Request, opts WatchOption
 		defer cancel()
 		_, _ = s.commentLedger(release, scope, "comment_watch_lease", lease.fence(map[string]any{"action": "release"}))
 	}()
-	if !opts.MarkersOnly {
+	if !opts.MarkersOnly && !opts.WithinOnly {
 		s.SweepComments(ctx, scope)
 	}
 	calls := s.countCalls()
@@ -134,9 +137,11 @@ func (s *Service) Watch(ctx context.Context, scope bus.Request, opts WatchOption
 		if err = s.renewWatch(ctx, scope, lease, true); err != nil {
 			return err
 		}
-		cycle, err := s.watchCycle(ctx, scope, lease, calls, opts.MarkersOnly)
-		if err != nil {
-			return err
+		var cycle WatchCycle
+		if !opts.WithinOnly {
+			if cycle, err = s.watchCycle(ctx, scope, lease, calls, opts.MarkersOnly); err != nil {
+				return err
+			}
 		}
 		if opts.Within != nil {
 			if err = s.renewWatch(ctx, scope, lease, false); err != nil {

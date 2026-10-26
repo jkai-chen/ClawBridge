@@ -249,3 +249,49 @@ func TestHealthReadsUpdatesByCreationDate(t *testing.T) {
 		t.Fatal(healthProjectQuery)
 	}
 }
+
+// operator health-run: a forced run reads and reports like a scheduled
+// one, at once and whatever the slot (which it leaves as it is), without
+// the comment watch or markers: the watch budget is charged its own calls
+// only. With force_new
+// a single run posts; without it a run is one observation. The bus
+// refuses it, before any Linear call, unless the policy posts.
+func TestForceHealthRunsNowThroughTheScheduledPath(t *testing.T) {
+	e := setup(t)
+	e.bindProjects("p", 1, 1)
+	e.sql(`UPDATE project_health SET next_health_at='2999-01-01T00:00:00.000000000Z'`)
+	// A watched issue whose comments are due: a tick polls it.
+	proposed := e.call("assignment_propose", "eng", map[string]any{"issue_uuid": issueA, "issue_identifier": "FIX-3"})
+	e.call("assignment_confirm", "coord", map[string]any{"target_session": "eng", "revision": proposed["assignment"].(map[string]any)["revision"]})
+	e.tick() // the first poll starts the cursor
+	e.dueNow()
+	now := time.Now()
+	e.f.healthIssues = []map[string]any{healthIssue(issueA, "FIX-1", "unstarted", now, "started"), healthIssue(issueB, "FIX-2", "unstarted", now, "started")}
+	if _, err := e.w.ForceHealth(context.Background(), e.pid, linearProjectID(1), true); err == nil || !strings.Contains(err.Error(), "post") || len(e.f.queries) != 0 {
+		t.Fatal("forced without post:", err, e.f.queries)
+	}
+	e.postHealth()
+	e.sql(`UPDATE project_health SET next_health_at='2999-01-01T00:00:00.000000000Z'`)
+	var before, after int
+	e.queryRow(`SELECT budget_used FROM watch_lease`, &before)
+	run, err := e.w.ForceHealth(context.Background(), e.pid, linearProjectID(1), true)
+	if err != nil || run.Health != "atRisk" || run.Acted != "forced" || run.Posted != "accepted" || run.UpdateID != "cccccccc-cccc-4ccc-8ccc-000000000001" || run.Calls == 0 || len(e.f.statusPosts) != 1 || !strings.Contains(e.f.statusPosts[0], "a run the server operator forced") {
+		t.Fatal(run, err, e.f.statusPosts)
+	}
+	again, err := e.w.ForceHealth(context.Background(), e.pid, linearProjectID(1), false)
+	if err != nil || again.Acted != "" || !strings.Contains(again.Note, "Unchanged") || len(e.f.statusPosts) != 1 {
+		t.Fatal(again, err)
+	}
+	e.queryRow(`SELECT budget_used FROM watch_lease`, &after)
+	if after != before+run.Calls+1+again.Calls {
+		t.Fatal("charged other than the runs and the post:", before, after, run.Calls, again.Calls)
+	}
+	var next string
+	e.queryRow(`SELECT next_health_at FROM project_health`, &next)
+	if !strings.HasPrefix(next, "2999") {
+		t.Fatal("a forced run moved the slot:", next)
+	}
+	if tick := e.tick(); tick.Comments == nil || tick.Comments.Polled != 1 {
+		t.Fatal("the fixture's comments were never due:", tick.Comments)
+	}
+}

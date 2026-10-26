@@ -472,7 +472,8 @@ var operationArgs = map[string]string{
 	"health_get":                  "instance",
 	"health_set":                  "instance linear_project expected_revision health_policy",
 	"health_due":                  "instance lease_token generation limit",
-	"health_report":               "instance lease_token generation linear_project calls error facts",
+	"health_force":                "instance lease_token generation linear_project force_new",
+	"health_report":               "instance lease_token generation linear_project calls error facts forced force_new",
 	"health_post_settle":          "instance lease_token generation linear_project day outcome update_id error",
 	"doc_seed_get":                "instance parent_kind parent_id",
 	"doc_seed_put":                "instance parent_kind parent_id template template_version state seed_token expect_token document_id seeded_sha256",
@@ -581,7 +582,7 @@ func validateArgs(op string, a map[string]any) error {
 			default:
 				return errors.New("ids must be an array of strings")
 			}
-		case "unread_only", "resume", "allow_overlap", "allow_previous", "repair", "confirm":
+		case "unread_only", "resume", "allow_overlap", "allow_previous", "repair", "confirm", "forced", "force_new":
 			if _, ok := v.(bool); !ok {
 				return fmt.Errorf("%s must be boolean", k)
 			}

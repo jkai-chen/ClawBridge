@@ -37,8 +37,14 @@ type HealthRun struct {
 	// Posted is what became of a post to Linear: accepted, refused or
 	// pending (uncertain, settled by a later run).
 	Posted string `json:"posted,omitempty"`
-	Calls  int    `json:"calls"`
-	Error  string `json:"error,omitempty"`
+	// UpdateID is the accepted post's project update.
+	UpdateID string `json:"update_id,omitempty"`
+	Calls    int    `json:"calls"`
+	Error    string `json:"error,omitempty"`
+	// Note and Held say, for a forced run, why it acted or not, and why a
+	// post was held back.
+	Note string `json:"note,omitempty"`
+	Held string `json:"held,omitempty"`
 }
 
 // health runs the project's due health runs, at most left of them; it
@@ -64,53 +70,106 @@ func (w *Watcher) health(ctx context.Context, svc *linearboard.Service, scope bu
 	runs := []HealthRun{}
 	for _, item := range list {
 		m, _ := item.(map[string]any)
-		lp, _ := m["linear_project"].(string)
-		days := 5
-		if n, ok := m["stalled_days"].(int); ok && n > 0 {
-			days = n
+		run, e := w.healthRun(ctx, svc, scope, pid, m, app, err, fence, nil)
+		if run != nil {
+			runs = append(runs, *run)
 		}
-		run := HealthRun{LinearProject: lp}
-		report := map[string]any{"linear_project": lp}
-		if err != nil {
-			run.Error = "app_identity"
-		} else {
-			facts, calls, e := w.healthFacts(ctx, lp, app.AppUserID, days)
-			run.Calls = calls
-			if e != "" {
-				run.Error = e
-			} else {
-				report["facts"] = facts
-			}
-		}
-		report["calls"] = run.Calls
-		if run.Error != "" {
-			report["error"] = run.Error
-		}
-		for k, v := range fence {
-			report[k] = v
-		}
-		out, e := w.Store.ExecuteSystem(ctx, pid, bus.Request{Operation: "health_report", Args: report})
 		if e != nil {
 			return runs, e
 		}
-		if d, ok := out.Data.(map[string]any); ok {
-			run.Health, _ = d["health"].(string)
-			run.Acted, _ = d["acted"].(string)
-			if post, ok := d["post"].(map[string]any); ok {
-				if run.Posted, e = w.postHealth(ctx, svc, scope, pid, lp, post, fence); e != nil {
-					return append(runs, run), e
-				}
-			}
-		}
-		runs = append(runs, run)
 	}
 	return runs, nil
+}
+
+// healthRun makes one run the bus handed out (m): it reads the facts,
+// reports them with extra, and sends any post the bus decides on. A
+// report the bus refused returns no run.
+func (w *Watcher) healthRun(ctx context.Context, svc *linearboard.Service, scope bus.Request, pid string, m map[string]any, app AppIdentity, appErr error, fence, extra map[string]any) (*HealthRun, error) {
+	lp, _ := m["linear_project"].(string)
+	days := 5
+	if n, ok := m["stalled_days"].(int); ok && n > 0 {
+		days = n
+	}
+	run := HealthRun{LinearProject: lp}
+	report := map[string]any{"linear_project": lp}
+	if appErr != nil {
+		run.Error = "app_identity"
+	} else {
+		facts, calls, e := w.healthFacts(ctx, lp, app.AppUserID, days)
+		run.Calls = calls
+		if e != "" {
+			run.Error = e
+		} else {
+			report["facts"] = facts
+		}
+	}
+	report["calls"] = run.Calls
+	if run.Error != "" {
+		report["error"] = run.Error
+	}
+	for k, v := range extra {
+		report[k] = v
+	}
+	for k, v := range fence {
+		report[k] = v
+	}
+	out, err := w.Store.ExecuteSystem(ctx, pid, bus.Request{Operation: "health_report", Args: report})
+	if err != nil {
+		return nil, err
+	}
+	if d, ok := out.Data.(map[string]any); ok {
+		run.Health, _ = d["health"].(string)
+		run.Acted, _ = d["acted"].(string)
+		run.Note, _ = d["note"].(string)
+		run.Held, _ = d["held"].(string)
+		if post, ok := d["post"].(map[string]any); ok {
+			if run.Posted, run.UpdateID, err = w.postHealth(ctx, svc, scope, pid, lp, post, fence); err != nil {
+				return &run, err
+			}
+		}
+	}
+	return &run, nil
+}
+
+// ForceHealth makes one forced health run of the bound Linear project lp
+// now, whatever its slot (`operator health-run`): under the project's
+// watch lease and budget like a tick, with no comment watch or markers,
+// and through the same facts, report and post as a scheduled run. The bus
+// refuses it unless health is enabled and the policy posts. With forceNew
+// the run may act and post without the two-run confirmation and over the
+// day's settled post.
+func (w *Watcher) ForceHealth(ctx context.Context, pid, lp string, forceNew bool) (HealthRun, error) {
+	svc := w.service(pid)
+	scope := bus.Request{Session: bus.SystemSessionName, Args: map[string]any{}}
+	var run HealthRun
+	err := svc.Watch(ctx, scope, linearboard.WatchOptions{
+		Once:       true,
+		WithinOnly: true,
+		Within: func(ctx context.Context, fence map[string]any) error {
+			force := map[string]any{"linear_project": lp, "force_new": forceNew}
+			for k, v := range fence {
+				force[k] = v
+			}
+			r, err := w.Store.ExecuteSystem(ctx, pid, bus.Request{Operation: "health_force", Args: force})
+			if err != nil {
+				return err
+			}
+			m, _ := r.Data.(map[string]any)
+			app, appErr := w.App.Identity(ctx)
+			got, err := w.healthRun(ctx, svc, scope, pid, m, app, appErr, fence, map[string]any{"forced": true, "force_new": forceNew})
+			if got != nil {
+				run = *got
+			}
+			return err
+		},
+	})
+	return run, err
 }
 
 // postHealth sends the post the bus handed out, as one project status
 // update, and settles it. Without a write grant it is refused before
 // anything is sent, and the bus tells the coordinator session instead.
-func (w *Watcher) postHealth(ctx context.Context, svc *linearboard.Service, scope bus.Request, pid, lp string, post, fence map[string]any) (string, error) {
+func (w *Watcher) postHealth(ctx context.Context, svc *linearboard.Service, scope bus.Request, pid, lp string, post, fence map[string]any) (state, updateID string, err error) {
 	day, _ := post["day"].(string)
 	body, _ := post["body"].(string)
 	health, _ := post["health"].(string)
@@ -134,10 +193,13 @@ func (w *Watcher) postHealth(ctx context.Context, svc *linearboard.Service, scop
 	}
 	r, err := w.Store.ExecuteSystem(ctx, pid, bus.Request{Operation: "health_post_settle", Args: settle})
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
-	state, _ := r.Data.(map[string]any)["state"].(string)
-	return state, nil
+	state, _ = r.Data.(map[string]any)["state"].(string)
+	if state == "accepted" {
+		updateID = id
+	}
+	return state, updateID, nil
 }
 
 type healthState struct {

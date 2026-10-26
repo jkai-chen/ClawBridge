@@ -555,8 +555,8 @@ func openServingStore(ctx context.Context, dsn, owner string) (*bus.Store, error
 // cannot sign in: their own address moved to a new Google account, or a
 // workspace allow-list refuses every account.
 func RunOperator(ctx context.Context, args []string, stdout io.Writer) error {
-	const usage = "usage: clawbridge operator principal-unbind EMAIL --confirm [--allow-previous] | workspace-clear-domains WORKSPACE --confirm [--database-url-env NAME]"
-	if len(args) == 0 || (args[0] != "principal-unbind" && args[0] != "workspace-clear-domains") {
+	const usage = "usage: clawbridge operator principal-unbind EMAIL --confirm [--allow-previous] | workspace-clear-domains WORKSPACE --confirm | linear-app-probe --confirm [--project UUID] [--database-url-env NAME]"
+	if len(args) == 0 || (args[0] != "principal-unbind" && args[0] != "workspace-clear-domains" && args[0] != "linear-app-probe") {
 		return errors.New(usage)
 	}
 	command := args[0]
@@ -565,6 +565,10 @@ func RunOperator(ctx context.Context, args []string, stdout io.Writer) error {
 	allowPrevious := false
 	if command == "principal-unbind" {
 		f.BoolVar(&allowPrevious, "allow-previous", false, "let the released account bind again, for an unbind made by mistake")
+	}
+	project := ""
+	if command == "linear-app-probe" {
+		f.StringVar(&project, "project", "", "a bound Linear project UUID whose health inputs are read")
 	}
 	dsnEnv := f.String("database-url-env", "CLAWBRIDGE_DATABASE_URL", "environment variable holding the Postgres connection URL")
 	var positional []string
@@ -578,10 +582,13 @@ func RunOperator(ctx context.Context, args []string, stdout io.Writer) error {
 		}
 		positional, rest = append(positional, f.Arg(0)), f.Args()[1:]
 	}
-	if len(positional) != 1 {
+	if (command == "linear-app-probe") != (len(positional) == 0) || len(positional) > 1 {
 		return errors.New(usage)
 	}
 	if !*confirm {
+		if command == "linear-app-probe" {
+			return errors.New("linear-app-probe sends one project update for a project that does not exist, as the Linear app; repeat with --confirm")
+		}
 		if command == "workspace-clear-domains" {
 			return errors.New("workspace-clear-domains lets any Google account that is a member in; repeat with --confirm")
 		}
@@ -596,6 +603,9 @@ func RunOperator(ctx context.Context, args []string, stdout io.Writer) error {
 		return fmt.Errorf("cannot open Postgres: %w", err)
 	}
 	defer store.Close()
+	if command == "linear-app-probe" {
+		return linearAppProbe(ctx, store, project, stdout)
+	}
 	var out map[string]any
 	if command == "workspace-clear-domains" {
 		out, err = store.OperatorClearWorkspaceDomains(ctx, positional[0])

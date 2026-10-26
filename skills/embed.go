@@ -13,3 +13,8 @@ var ClawBridge embed.FS
 //
 //go:embed clawbridge-provision-gcp
 var ProvisionGCP embed.FS
+
+// ProvisionAWS holds the AWS provisioning playbook.
+//
+//go:embed clawbridge-provision-aws
+var ProvisionAWS embed.FS

@@ -252,7 +252,7 @@ func (s ssmTransport) setSecret(ctx context.Context, key, value string, stderr i
 	case failed.code == 3:
 		return secretAdvice("the instance has no AWS CLI; install it there (Amazon Linux 2023 has it)")
 	case failed.code == 5:
-		return secretAdvice("the instance's role cannot read its parameter; attach the policy in deploy/aws-instance-role-policy.json")
+		return secretAdvice("the instance cannot read its parameter (no role, a missing policy, or no route to SSM); see deploy/aws-instance-role-policy.json")
 	}
 	return err
 }

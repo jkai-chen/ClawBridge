@@ -492,18 +492,24 @@ func (s *Store) dispatcherOp(ctx context.Context, tx *transaction, w, p map[stri
 }
 
 // ensureDispatcherSessions creates the project's two reserved dispatcher
-// sessions if they are missing: role system, an owner principal no caller
-// can hold, and a reserved name.
+// sessions if they are missing, or makes retired ones active again: role
+// system, an owner principal no caller can hold, and a reserved name. Only
+// an enabled dispatcher has them.
 func (s *Store) ensureDispatcherSessions(ctx context.Context, tx *transaction, pid string) error {
 	for _, d := range []struct{ name, prefix, notes string }{
 		{DispatcherSessionName, "dsp_", "ClawBridge dispatcher (rules)"},
 		{DispatcherModelSessionName, "dsm_", "ClawBridge dispatcher model agent"},
 	} {
-		rows, err := query(ctx, tx, `SELECT 1 FROM sessions WHERE project_id=? AND role='system' AND name=?`, pid, d.name)
+		rows, err := query(ctx, tx, `SELECT status FROM sessions WHERE project_id=? AND role='system' AND name=?`, pid, d.name)
 		if err != nil {
 			return err
 		}
 		if len(rows) > 0 {
+			if str(rows[0], "status") != "active" {
+				if _, err = tx.ExecContext(ctx, `UPDATE sessions SET status='active',updated_at=? WHERE project_id=? AND role='system' AND name=?`, stamp(), pid, d.name); err != nil {
+					return err
+				}
+			}
 			continue
 		}
 		now := stamp()
@@ -558,8 +564,32 @@ func (s *Store) ExecuteDispatcher(ctx context.Context, projectID, session string
 	if session == DispatcherModelSessionName {
 		scopedStore.principal = dispatcherModelPrincipal
 	}
-	if err = scopedStore.ensureDispatcherSessions(ctx, tx, projectID); err != nil {
+	// A dispatcher that is off has no sessions: none is created, and any
+	// left from an earlier enable, or from v0.3.4's every-tick creation, is
+	// retired so it leaves session lists. The due read then answers with
+	// nothing due; a decision recorded after a disable still runs, on the
+	// retired session, and is superseded.
+	_, meta, err := readDispatcher(ctx, tx, projectID)
+	if err != nil {
 		return Result{}, err
+	}
+	if meta["enabled"] == true {
+		err = scopedStore.ensureDispatcherSessions(ctx, tx, projectID)
+	} else {
+		_, err = tx.ExecContext(ctx, `UPDATE sessions SET status='retired',updated_at=? WHERE project_id=? AND role='system' AND name IN (?,?) AND status='active'`, stamp(), projectID, DispatcherSessionName, DispatcherModelSessionName)
+	}
+	if err != nil {
+		return Result{}, err
+	}
+	if meta["enabled"] != true && r.Operation == "dispatcher_cases_due" {
+		out, err := scopedStore.dispatcherCasesDue(ctx, tx, projectID)
+		if err != nil {
+			return Result{}, classify(err)
+		}
+		if err = tx.Commit(); err != nil {
+			return Result{}, errors.New("authority commit failed")
+		}
+		return Result{Source: "server", Data: out}, nil
 	}
 	actor, err := one(ctx, tx, `SELECT * FROM sessions WHERE project_id=? AND role='system' AND name=?`, projectID, session)
 	if err != nil {

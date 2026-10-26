@@ -24,6 +24,34 @@ func paymentsDomain(owner string, trusted ...any) map[string]any {
 	return map[string]any{"id": "payments", "name": "Payments", "match": map[string]any{"linear_projects": []any{projectOne}, "labels": []any{"payments"}}, "owner_principal": owner, "coordinator_session": map[string]any{"name": "c"}, "trusted_sessions": trusted}
 }
 
+// dispatcherSessions creates the project's reserved dispatcher sessions,
+// as its first call after an enable does, and leaves the policy as it was.
+func (h *harness) dispatcherSessions(pid string) {
+	h.t.Helper()
+	var revision, enabled int
+	err := h.s.db.QueryRow(`SELECT revision,enabled FROM dispatcher_policies WHERE project_id=?`, pid).Scan(&revision, &enabled)
+	fresh := err != nil
+	if fresh {
+		_, err = h.s.db.Exec(`INSERT INTO dispatcher_policies(project_id,revision,enabled,domains,updated_at,updated_by_principal) VALUES(?,0,1,'{"domains":[]}','2026-01-01T00:00:00Z','x')`, pid)
+	} else {
+		_, err = h.s.db.Exec(`UPDATE dispatcher_policies SET enabled=1 WHERE project_id=?`, pid)
+	}
+	if err != nil {
+		h.t.Fatal(err)
+	}
+	if _, err = h.s.ExecuteDispatcher(context.Background(), pid, DispatcherSessionName, Request{Operation: "dispatcher_get"}); err != nil {
+		h.t.Fatal(err)
+	}
+	if fresh {
+		_, err = h.s.db.Exec(`DELETE FROM dispatcher_policies WHERE project_id=?`, pid)
+	} else {
+		_, err = h.s.db.Exec(`UPDATE dispatcher_policies SET enabled=? WHERE project_id=?`, enabled, pid)
+	}
+	if err != nil {
+		h.t.Fatal(err)
+	}
+}
+
 func (h *harness) principal() string {
 	h.t.Helper()
 	return h.call("whoami", "a", nil).(map[string]any)["principal"].(string)
@@ -177,8 +205,9 @@ func TestDispatcherAllowLists(t *testing.T) {
 	if _, err := h.s.ExecuteDispatcher(context.Background(), pid, "clawbridge", Request{Operation: "dispatcher_get"}); err == nil {
 		t.Fatal("the watcher's session ran through the dispatcher gate")
 	}
-	// Allowed reads work, and the sessions they create are hidden from
-	// people's listings.
+	// Allowed reads work, and the sessions an enable creates are hidden
+	// from people's listings.
+	h.dispatcherSessions(pid)
 	for _, session := range []string{DispatcherSessionName, DispatcherModelSessionName} {
 		out, err := h.s.ExecuteDispatcher(context.Background(), pid, session, Request{Operation: "dispatcher_get"})
 		if err != nil || out.Data.(map[string]any)["revision"] != int64(0) {

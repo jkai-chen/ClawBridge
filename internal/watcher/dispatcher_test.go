@@ -23,9 +23,6 @@ func (e *env) dispatcherOn(trusted ...string) {
 	if _, err := e.s.Execute(context.Background(), bus.Request{Operation: "taskboard_set_v2", Workspace: "w", Project: "p", Args: map[string]any{"expected_revision": 1, "mode": "project_set", "linear_team_ids": []string{team}, "linear_default_team_id": team, "linear_project_ids": []string{projPay, projOther}}}); err != nil {
 		e.t.Fatal(err)
 	}
-	if _, err := e.s.ExecuteDispatcher(context.Background(), e.pid, bus.DispatcherSessionName, bus.Request{Operation: "dispatcher_get"}); err != nil {
-		e.t.Fatal(err)
-	}
 	trust := []any{}
 	for _, name := range trusted {
 		trust = append(trust, map[string]any{"name": name})
@@ -35,6 +32,10 @@ func (e *env) dispatcherOn(trusted ...string) {
 		map[string]any{"id": "payments", "name": "Payments", "match": map[string]any{"linear_projects": []any{projPay}}, "owner_principal": owner, "coordinator_session": map[string]any{"name": "coord"}, "trusted_sessions": trust},
 	}}})
 	e.sql(`UPDATE dispatcher_policies SET enabled=1`)
+	// Enabled, the dispatcher's sessions exist from its first call.
+	if _, err := e.s.ExecuteDispatcher(context.Background(), e.pid, bus.DispatcherSessionName, bus.Request{Operation: "dispatcher_get"}); err != nil {
+		e.t.Fatal(err)
+	}
 	e.sql(`UPDATE projects SET coordinator_session=(SELECT id FROM sessions WHERE name='clawbridge-dispatcher')`)
 }
 
@@ -283,5 +284,44 @@ func TestDispatcherCaseLiveness(t *testing.T) {
 	e.sql(`UPDATE sessions SET alive_until='` + at(-time.Second) + `',alive_state='working' WHERE name='eng'`)
 	if got := liveness(); got != "asleep" {
 		t.Fatal("expired lease, says working:", got)
+	}
+}
+
+// v0.3.5: a tick with the dispatcher off creates no dispatcher session, and
+// retires (never deletes) any left from an earlier enable or from v0.3.4,
+// which created them on every tick; enabling makes the same ones active.
+func TestDispatcherOffHasNoSessions(t *testing.T) {
+	e := setup(t)
+	count := func(status string) int {
+		t.Helper()
+		var n int
+		e.queryRow(`SELECT COUNT(*) FROM sessions WHERE role='system' AND name LIKE 'clawbridge-dispatcher%' AND status='`+status+`'`, &n)
+		return n
+	}
+	for range 2 {
+		if tick := e.tick(); tick.Error != "" || tick.Dispatch != nil || count("active")+count("retired") != 0 {
+			t.Fatal("a tick with the dispatcher off created its sessions:", tick.Error, count("active"), count("retired"))
+		}
+	}
+	// As v0.3.4 left them: two active sessions, with the dispatcher off.
+	e.sql(`INSERT INTO dispatcher_policies(project_id,revision,enabled,domains,updated_at,updated_by_principal) VALUES(?,1,1,'{"domains":[]}','2026-01-01T00:00:00Z','x')`, e.pid)
+	e.tick()
+	var ids string
+	e.queryRow(`SELECT GROUP_CONCAT(id) FROM sessions WHERE name LIKE 'clawbridge-dispatcher%'`, &ids)
+	if count("active") != 2 {
+		t.Fatal("an enabled tick has no sessions:", count("active"))
+	}
+	e.sql(`UPDATE dispatcher_policies SET enabled=0`)
+	for range 2 {
+		if tick := e.tick(); tick.Error != "" || count("active") != 0 || count("retired") != 2 {
+			t.Fatal("the leftovers were not retired:", tick.Error, count("active"), count("retired"))
+		}
+	}
+	e.sql(`UPDATE dispatcher_policies SET enabled=1`)
+	e.tick()
+	var again string
+	e.queryRow(`SELECT GROUP_CONCAT(id) FROM sessions WHERE name LIKE 'clawbridge-dispatcher%'`, &again)
+	if count("active") != 2 || count("retired") != 0 || again != ids {
+		t.Fatal("enabling did not bring back the same sessions:", count("active"), ids, again)
 	}
 }

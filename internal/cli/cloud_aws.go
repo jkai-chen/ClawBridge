@@ -183,9 +183,19 @@ func (s ssmTransport) setSecret(ctx context.Context, key, value string, stderr i
 		return err
 	}
 	name := secretParameter(t.instance, key)
+	// An expiration policy bounds its life even if this process dies before
+	// the delete (policies need the Advanced tier: cents a month, prorated).
+	expiry, err := json.Marshal([]map[string]any{{
+		"Type": "Expiration", "Version": "1.0",
+		"Attributes": map[string]string{"Timestamp": cloudNow().UTC().Add(secretParameterLife).Format(time.RFC3339)},
+	}})
+	if err != nil {
+		return err
+	}
 	request, err := json.Marshal(map[string]any{
-		"Name": name, "Type": "SecureString", "Overwrite": true, "Value": value,
-		"Description": "clawbridge cloud secret set: deleted once written",
+		"Name": name, "Type": "SecureString", "Overwrite": true, "Value": value, "Tier": "Advanced",
+		"Policies":    string(expiry),
+		"Description": "clawbridge cloud secret set: deleted once written, expires within 15 minutes",
 	})
 	if err != nil {
 		return err
@@ -205,6 +215,11 @@ func (s ssmTransport) setSecret(ctx context.Context, key, value string, stderr i
 	_, err = s.run(ctx, ssmSetScript(name, t.region, key), stderr)
 	return err
 }
+
+// secretParameterLife is the longest a secret's parameter can live: the
+// write takes seconds, and the expiration policy removes it even if the
+// delete never runs.
+const secretParameterLife = 15 * time.Minute
 
 // secretParameter is the short-lived parameter for one key: scoped to the
 // instance, whose role may read only its own (the workspace may not exist yet).
@@ -341,6 +356,21 @@ func awsInfra(ctx context.Context, p *cloudProbe) cloudResult {
 	}
 	if len(info.InstanceInformationList) != 1 || info.InstanceInformationList[0].PingStatus != "Online" {
 		return failed("infra", "ssm_offline", "SSM does not see the instance online; give it a role with AmazonSSMManagedInstanceCore and check the SSM agent")
+	}
+	// A secret's parameter outlives its write only if the write's process
+	// died; its policy expires it, and this says so in the meantime.
+	prefix := secretParameter(t.instance, "")
+	out, err = awsCLI(ctx, t.aws("ssm", "describe-parameters", "--parameter-filters", "Key=Name,Option=BeginsWith,Values="+prefix), nil)
+	var params struct{ Parameters []struct{ Name string } }
+	if err != nil || json.Unmarshal(out, &params) != nil {
+		return failed("infra", "vm_unreadable", awsAdvice)
+	}
+	if len(params.Parameters) > 0 {
+		var names []string
+		for _, prm := range params.Parameters {
+			names = append(names, prm.Name)
+		}
+		return failed("infra", "secret_left_behind", "a secret's parameter outlived its write: delete it with aws ssm delete-parameter --name "+strings.Join(names, ", "))
 	}
 	f, err := p.facts(ctx)
 	if err != nil {

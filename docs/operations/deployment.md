@@ -137,6 +137,31 @@ sudo docker compose --env-file /etc/clawbridge/clawbridge.env \
   With none, or one close to expiry, it stops at `mint_disabled`: let the server
   refresh it first.
 
+To settle whether the app may post project health, `--p8` posts **one real**
+project status update as the app and removes it again:
+
+```sh
+... run --rm --no-deps api operator linear-app-probe --confirm --p8 --project UUID --dry-run   # checks only
+... run --rm --no-deps api operator linear-app-probe --confirm --p8 --project UUID
+```
+
+- **The project** must be an empty throwaway: no issues (archived ones
+  included), no members and no lead. Anything else is refused before a write,
+  so nobody is notified.
+- **Before sending,** it checks that the app's MCP tools can create, list and
+  delete a project status update (`save_status_update`, `get_status_updates`,
+  `delete_status_update`), with `project` as the update's type and `onTrack` as
+  its health. Otherwise nothing is sent. `--dry-run` stops there and prints the
+  three tools' fields and allowed values.
+- **The run:** one update with health `onTrack` and the body "ClawBridge probe,
+  will be deleted"; a read-back; its deletion; and a second read that must no
+  longer list it. An answer lost on the save is found by its body and deleted
+  all the same.
+- **What it prints:** classes, the tools' fields, and the update's ID, nothing
+  else. If it cannot prove the update deleted, it ends with an `ALERT` naming
+  the ID (or saying to check the project), and the owner deletes it.
+- It never mints; the token rules are as above.
+
 To check whether the app may list the workspace's Linear documents (which the
 server watcher's document notices need), run `operator linear-app-doc-probe
 --confirm` the same way.

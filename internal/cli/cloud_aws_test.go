@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -132,7 +134,8 @@ func TestSSMRunsTheFixedScriptFromStdin(t *testing.T) {
 		t.Fatal(err)
 	}
 	if request.DocumentName != "AWS-RunShellScript" || len(request.InstanceIds) != 1 || request.InstanceIds[0] != ec2ID ||
-		len(request.Parameters["commands"]) != 1 || request.Parameters["commands"][0] != `sh -c '`+factsScript()+`'` {
+		len(request.Parameters["commands"]) != 1 || request.Parameters["commands"][0] != `sh -c '`+factsScript()+`'` ||
+		len(request.Parameters["executionTimeout"]) != 1 || request.Parameters["executionTimeout"][0] != "3" {
 		t.Fatalf("send-command request: %+v", request)
 	}
 	for _, argv := range a.calls {
@@ -228,11 +231,8 @@ func TestCloudCheckInfraOnAWS(t *testing.T) {
 
 func TestCloudCheckBackupsOnS3(t *testing.T) {
 	listing := func(keys ...string) string {
-		var parts []string
-		for _, k := range keys {
-			parts = append(parts, `{"Key":"`+k+`"}`)
-		}
-		return `{"Contents":[` + strings.Join(parts, ",") + `]}`
+		b, _ := json.Marshal(keys)
+		return string(b)
 	}
 	for name, c := range map[string]struct {
 		bucket, objects string
@@ -243,7 +243,7 @@ func TestCloudCheckBackupsOnS3(t *testing.T) {
 		"fresh":       {"clawbridge-backups-123456789012-us-east-1", listing("postgres/daily/20261026T023000Z.dump", "postgres/daily/20261026T023000Z.sha256"), "us-east-1", nil, ""},
 		"half a pair": {"clawbridge-backups", listing("postgres/daily/20261026T023000Z.dump"), "us-east-1", nil, "no_backup"},
 		"stale":       {"clawbridge-backups", listing("postgres/daily/20261024T023000Z.dump", "postgres/daily/20261024T023000Z.sha256"), "us-east-1", nil, "backup_stale"},
-		"empty":       {"clawbridge-backups", `{}`, "us-east-1", nil, "no_backup"},
+		"empty":       {"clawbridge-backups", `null`, "us-east-1", nil, "no_backup"},
 		"unreadable":  {"clawbridge-backups", "", "us-east-1", errors.New("AccessDenied"), "bucket_unreadable"},
 		"bad bucket":  {"Bad_Bucket", "", "us-east-1", nil, "needs_bucket"},
 		"no region":   {"clawbridge-backups", "", "", nil, "needs_region"},
@@ -260,7 +260,7 @@ func TestCloudCheckBackupsOnS3(t *testing.T) {
 		}
 		if c.want == "" {
 			got := strings.Join(a.calls[0], " ")
-			if !strings.Contains(got, "--bucket "+c.bucket+" --prefix postgres/daily/") || !strings.Contains(got, "--profile my-profile --region us-east-1") {
+			if !strings.Contains(got, "--bucket "+c.bucket+" --prefix postgres/daily/ --query Contents[].Key") || !strings.Contains(got, "--profile my-profile --region us-east-1") {
 				t.Fatalf("argv %v", a.calls[0])
 			}
 		}
@@ -331,5 +331,38 @@ func TestSSMChecksTheAccountOnce(t *testing.T) {
 	other, _ := cloudTarget{instance: ec2ID, region: "us-east-1", account: "123456789012"}.transport()
 	if _, err := other.run(context.Background(), factsScript(), nil); !errors.Is(err, errCloudAuth) {
 		t.Fatalf("another account: %v", err)
+	}
+}
+
+// Windows has no /dev/stdin for the aws CLI's request: the route says so up
+// front instead of failing later as ssm_failed.
+func TestAWSRouteIsRefusedOnWindows(t *testing.T) {
+	old := awsGOOS
+	awsGOOS = "windows"
+	t.Cleanup(func() { awsGOOS = old })
+	if _, err := (cloudTarget{instance: ec2ID, region: "us-east-1"}).transport(); err == nil || !strings.Contains(err.Error(), "macOS, Linux or WSL") {
+		t.Fatalf("%v", err)
+	}
+	if r := awsBackups(context.Background(), &cloudProbe{bucket: "clawbridge-backups", target: cloudTarget{region: "us-east-1"}}); r.Reason != "needs_region" || !strings.Contains(r.Advice, "WSL") {
+		t.Fatalf("%+v", r)
+	}
+}
+
+// The S3 lifecycle template keeps 30 days of daily backups, as the GCS one does.
+func TestS3LifecycleTemplate(t *testing.T) {
+	raw, err := os.ReadFile(filepath.Join("..", "..", "deploy", "s3-lifecycle.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var lc struct {
+		Rules []struct {
+			Status     string
+			Filter     struct{ Prefix string }
+			Expiration struct{ Days int }
+		}
+	}
+	if json.Unmarshal(raw, &lc) != nil || len(lc.Rules) != 1 || lc.Rules[0].Status != "Enabled" ||
+		lc.Rules[0].Filter.Prefix != "postgres/daily/" || lc.Rules[0].Expiration.Days != 30 {
+		t.Fatalf("%s", raw)
 	}
 }

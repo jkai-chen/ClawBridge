@@ -1,0 +1,12 @@
+{
+  "Rules": [
+    {
+      "ID": "clawbridge-postgres-daily",
+      "Filter": {"Prefix": "postgres/daily/"},
+      "Status": "Enabled",
+      "Expiration": {"Days": 30},
+      "NoncurrentVersionExpiration": {"NoncurrentDays": 7},
+      "AbortIncompleteMultipartUpload": {"DaysAfterInitiation": 1}
+    }
+  ]
+}

@@ -9,6 +9,8 @@ import (
 	"net"
 	"os/exec"
 	"regexp"
+	"runtime"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -53,6 +55,9 @@ var awsCLI = func(ctx context.Context, argv []string, stdin []byte) ([]byte, err
 	return out.Bytes(), err
 }
 
+// awsGOOS is the client's OS; tests set it.
+var awsGOOS = runtime.GOOS
+
 var errCloudAuth = errors.New("the AWS profile is signed in to another account")
 
 // aws is one aws command for the target: the profile, region and JSON output
@@ -65,8 +70,12 @@ func (t cloudTarget) aws(args ...string) []string {
 	return append(append([]string{"aws"}, args...), "--profile", profile, "--region", t.region, "--output", "json")
 }
 
-// awsInputs validates the AWS flags; nothing runs before they pass.
+// awsInputs validates the AWS flags; nothing runs before they pass. The aws
+// requests go on the CLI's stdin as file:///dev/stdin, which Windows lacks.
 func (t cloudTarget) awsInputs() error {
+	if awsGOOS == "windows" {
+		return errors.New("the AWS route needs macOS, Linux or WSL: the aws CLI reads its request from /dev/stdin")
+	}
 	if !awsRegionPattern.MatchString(t.region) {
 		return errors.New("--region must be an AWS region, such as us-east-1")
 	}
@@ -123,9 +132,13 @@ func (s ssmTransport) run(ctx context.Context, script string, _ io.Writer) ([]by
 	request, err := json.Marshal(map[string]any{
 		"InstanceIds":    []string{t.instance},
 		"DocumentName":   "AWS-RunShellScript",
-		"Comment":        "clawbridge cloud check",
+		"Comment":        "clawbridge",
 		"TimeoutSeconds": int(ssmWait / time.Second),
-		"Parameters":     map[string][]string{"commands": {`sh -c '` + script + `'`}},
+		// executionTimeout stops the script on the instance too, not only the wait here.
+		"Parameters": map[string][]string{
+			"commands":         {`sh -c '` + script + `'`},
+			"executionTimeout": {strconv.Itoa(int(ssmWait / time.Second))},
+		},
 	})
 	if err != nil {
 		return nil, err
@@ -359,14 +372,16 @@ func awsBackups(ctx context.Context, p *cloudProbe) cloudResult {
 	if err := t.awsAccount(ctx); err != nil {
 		return failed("backups", "cloud_auth", accountMsg)
 	}
-	out, err := awsCLI(ctx, t.aws("s3api", "list-objects-v2", "--bucket", p.bucket, "--prefix", "postgres/daily/"), nil)
-	var listed struct{ Contents []struct{ Key string } }
-	if err != nil || json.Unmarshal(out, &listed) != nil {
+	// Keys only, so a bucket kept to 30 days (deploy/s3-lifecycle.json) stays
+	// far under the output cap.
+	out, err := awsCLI(ctx, t.aws("s3api", "list-objects-v2", "--bucket", p.bucket, "--prefix", "postgres/daily/", "--query", "Contents[].Key"), nil)
+	var keys []string
+	if err != nil || json.Unmarshal(out, &keys) != nil {
 		return failed("backups", "bucket_unreadable", awsAdvice)
 	}
 	var names []string
-	for _, o := range listed.Contents {
-		names = append(names, "/"+strings.TrimPrefix(o.Key, "/"))
+	for _, k := range keys {
+		names = append(names, "/"+strings.TrimPrefix(k, "/"))
 	}
 	return newestBackup(names)
 }

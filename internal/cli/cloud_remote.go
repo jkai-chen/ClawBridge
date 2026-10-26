@@ -150,10 +150,10 @@ func (p *cloudProbe) facts(ctx context.Context) (remoteFacts, error) {
 		return p.remote, p.remoteErr
 	}
 	p.factsDone = true
-	argv, err := p.target.argv(`sudo -n sh -c '` + factsScript() + `'`)
+	tr, err := p.target.transport()
 	if err == nil {
 		var out []byte
-		if out, err = remoteOutput(ctx, argv, p.stderr); err == nil {
+		if out, err = tr.run(ctx, factsScript(), p.stderr); err == nil {
 			p.remote = parseFacts(out)
 		}
 	}

@@ -59,7 +59,7 @@ func checkInfra(ctx context.Context, p *cloudProbe) cloudResult {
 	if t.vm == "" {
 		return failed("infra", "needs_vm", "pass --vm NAME --project P --zone Z")
 	}
-	if _, err := t.argv(""); err != nil {
+	if _, err := t.transport(); err != nil {
 		return failed("infra", "needs_vm", "pass --vm NAME --project P --zone Z")
 	}
 	out, err := cloudCLI(ctx, []string{"gcloud", "compute", "instances", "describe", t.vm, "--project", t.project, "--zone", t.zone, "--format=json"})

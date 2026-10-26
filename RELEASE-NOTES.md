@@ -67,11 +67,18 @@ a project owner or lead, on the CLI only (never MCP), under the owner's document
 
 ## Document-change notices
 
-- The server watcher lists changed Linear documents in the board's scope once a tick, with at most 12 calls an hour
-  per project, after the comment watch and markers.
-- The project's coordinator session (and a session whose assigned issue is the document's parent) gets a `linear-doc`
-  message: the document's ID, parent and update time, never its title or text.
-- **An edit to a published document** also flags `published_doc_edited`.
+Once the project owner has set a document policy, a hosted server's watcher tells the project when a Linear document
+in its scope changes.
+- **What is heard:** a document under a bound team, a bound project, a listed initiative, or an issue a session holds.
+  Every parent must be in scope, as for reads. On a team board, project documents are left out.
+- **Who hears it:** the coordinator session gets a `linear-doc` message, and so does the session holding the issue,
+  for that issue's documents. It names the document, its parent and when it changed, and whether ClawBridge published
+  it; never its title or text.
+- **An edit to a published document** is read back and compared with what was published, then flagged to the
+  coordinator as `published_doc_edited`. The next publish of that file is refused until the edit is in git.
+- **Cost:** at most one document call a tick, and at most 12 an hour per project. It runs after the comment watch,
+  markers, intake and project health, and only while the hour keeps the comment watch's reserve. The first poll only
+  starts the cursor: history is never replayed.
 
 ## The watcher's Linear budget is honest about markers
 

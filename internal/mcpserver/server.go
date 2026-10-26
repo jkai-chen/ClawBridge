@@ -100,6 +100,15 @@ func NewServerWithOptions(store Executor, workspace, project, session, instance 
 	add[emptyInput](s, b, "whoami", "Show pinned scope, session identity, principal provenance, and storage mode.", true, false)
 	add[statusInput](s, b, "message_status", "Inspect delivery/read metadata for a message sent by this session.", true, false)
 	addTaskboardTools(s, b, options.Taskboard)
+	if options.Context != nil {
+		// The MCP process holds the session: it keeps its lease once
+		// registered, renewing whichever instance it is bound to.
+		go notify.KeepAlive(options.Context, store, notify.HeartbeatInterval, func() (bus.Request, bool) {
+			b.mu.Lock()
+			defer b.mu.Unlock()
+			return bus.Request{Workspace: b.workspace, Project: b.project, Session: b.session, Args: map[string]any{"instance": b.instance}}, b.instance != ""
+		})
+	}
 	return s
 }
 

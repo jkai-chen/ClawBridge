@@ -25,10 +25,7 @@ const usage = `usage:
   clawbridge-agentd check
       validate agentd's configuration and its proxy socket
   clawbridge-agentd run
-      the launcher (needs the server's launcher endpoints)`
-
-// errNoLauncherEndpoints: the server side of §11.4 is not in this release.
-var errNoLauncherEndpoints = errors.New("this server release has no launcher endpoints yet; clawbridge-agentd run waits for them (check and proxy work)")
+      the launcher: every 30 s, matches the agents to the server's wanted set`
 
 // Main runs clawbridge-agentd with args, reading its configuration from
 // getenv. Logs are JSON lines on stderr.
@@ -60,7 +57,8 @@ func Main(ctx context.Context, args []string, getenv func(string) string, stdout
 			_, err := fmt.Fprintln(stdout, "clawbridge-agentd: configuration ok")
 			return err
 		}
-		return errNoLauncherEndpoints
+		log.Info("agentd running", "server", cfg.ServerURL, "docker", cfg.Docker)
+		return NewReconciler(cfg, NewLauncherClient(cfg.ServerURL, cfg.LauncherToken), log).Run(ctx)
 	}
 	return errors.New(usage)
 }

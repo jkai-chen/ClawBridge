@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"maps"
 	"net/netip"
@@ -100,7 +101,8 @@ func (r *Reconciler) Run(ctx context.Context) error {
 func (r *Reconciler) Step(ctx context.Context) error {
 	wants, maxAgents, err := r.server.Wanted(ctx)
 	if err != nil {
-		return errors.New("the server's wanted set could not be read")
+		// Server errors name the call and a status or fixed reason only.
+		return fmt.Errorf("the server's wanted set could not be read: %w", err)
 	}
 	if maxAgents < 1 || maxAgents > maxAgentsCeiling {
 		return errors.New("the server's agent cap is out of range")
@@ -360,7 +362,7 @@ func (r *Reconciler) startAgent(ctx context.Context, ref string, revision int64)
 	if ok {
 		credential, err := r.server.Credential(ctx, ref)
 		if err != nil {
-			err = errors.New("the server did not mint an agent credential")
+			err = fmt.Errorf("the server did not mint an agent credential: %w", err)
 		} else {
 			err = send(credential)
 		}

@@ -102,6 +102,20 @@ clawbridge-agentd run
   - `CLAWBRIDGE_AGENTD_DOCKER`, the proxy's socket.
 - **No root:** neither process runs as root.
 
+**The server's side.** `run` talks to three launcher endpoints with the launcher token (`Authorization: Bearer
+cbl_…`, `ClawBridge-Model-API: 1`; any auth failure is one 401):
+
+| Call | Answer |
+|---|---|
+| `GET /v1/dispatcher/launcher/wanted` | `{"agents":[{"owner_ref","provider":"host:port","config_revision"}],"max_agents"}` |
+| `POST /v1/dispatcher/launcher/credential {"owner_ref"}` | `{"credential":"cba_…","expires_at"}`, or 404 for an owner no longer wanted |
+| `POST /v1/dispatcher/launcher/report {"owner_ref","code"}` | `{"ok":true}` |
+
+- **Answers are open:** unknown fields are ignored.
+- **Bodies are bounded:** at most 1 MiB.
+- **No redirects:** the token never goes anywhere else.
+- **Safe errors:** an error names the call and a status, never a body, a credential or the token.
+
 **What `run` does:** every 30 seconds it compares the server's wanted owner refs with the running
 `clawbridge-agent-*` containers:
 - It starts the missing ones: network, create, attach, start, then a fresh credential on stdin.
@@ -120,10 +134,8 @@ Done:
 - the egress proxy and its tests (fake DNS and upstream).
 
 Next:
-- **The server's launcher endpoints:** the wanted set, minting the one-time credential, and the report. Until they
-  exist, `run` exits saying so.
-- **The agent's proxy setting:** the agent must send its requests through `http://clawbridge-egress:3128`, set from
-  config rather than ambient env. That change is on the agent's side.
+- **The server's launcher endpoints**, being built server-side. Until they exist, `run` logs a failed round every 30
+  seconds and starts nothing.
 - **An agentd image** that ships the binary for the egress container.
 - **Deploy:** the `cbagent` user, the rootless daemon and the systemd units. The deploy also loads the pinned
   image into that daemon, because the proxy allows no pull.

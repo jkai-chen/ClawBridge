@@ -4,7 +4,6 @@ import (
 	"bufio"
 	"bytes"
 	"context"
-	"errors"
 	"io"
 	"net"
 	"net/http"
@@ -103,7 +102,10 @@ func TestMainRefuses(t *testing.T) {
 	if err := Main(context.Background(), []string{"check"}, func(k string) string { return good[k] }, &out, io.Discard); err != nil || !strings.Contains(out.String(), "ok") {
 		t.Fatal(err, out.String())
 	}
-	if err := run(good, "run"); !errors.Is(err, errNoLauncherEndpoints) {
+	// run reconciles until its context ends.
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if err := Main(ctx, []string{"run"}, func(k string) string { return good[k] }, io.Discard, io.Discard); err != nil {
 		t.Fatal(err)
 	}
 }

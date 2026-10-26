@@ -825,6 +825,13 @@ Each field is optional except `enabled`.
 - **Done:** a release with `--outcome done` (MCP `outcome: "done"`) moves the
   issue to `release_done`, only from exactly the `claim` state. The session
   itself or the coordinator may say done. Any other release only posts its note.
+- **A release that overtakes its claim.** When a done-release comes before the
+  claim's move was applied (both within one watcher interval), the claim's move
+  is dropped and never lands. The release then also moves the issue from where
+  the claim would have moved it from (backlog or unstarted, or triage with
+  `claim_from_triage`), so the issue still ends in `release_done`. This holds
+  only when the policy is unchanged since the claim. An issue a person moved
+  anywhere else is left alone, as always.
 - **Knowing where an issue stands.** Linear's issue read through MCP names the
   state without its ID. A hosted server reads the ID as the ClawBridge Linear
   app; otherwise ClawBridge looks the name up in the team's workflow, and only a

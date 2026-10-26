@@ -50,4 +50,20 @@ func TestPostgresStatusPolicyMovesAClaimAndADoneRelease(t *testing.T) {
 	if err := f.s.db.QueryRowContext(context.Background(), `SELECT state_state,outcome FROM assignment_markers WHERE assignment_id=$1 AND phase='close'`, id).Scan(&state, &outcome); err != nil || state != "pending" || outcome != "done" {
 		t.Fatal(state, outcome, err)
 	}
+	// A1: a done-release before the claim's move supersedes it, and the
+	// close's move carries that and the claim's frozen revision.
+	view = in("assignment_propose", "w", map[string]any{"issue_uuid": watchIssue, "issue_identifier": "FIX-1"})["assignment"].(map[string]any)
+	in("assignment_confirm", "coord", map[string]any{"target_session": "w", "revision": view["revision"]})
+	live = in("whoami", "w", map[string]any{})["session"].(map[string]any)["assignment"].(map[string]any)
+	race := view["id"].(string)
+	in("assignment_release", "w", map[string]any{"revision": live["revision"], "outcome": "done"})
+	if _, err := f.s.db.ExecContext(context.Background(), `UPDATE assignment_markers SET next_attempt_at='2000-01-01T00:00:00.000000000Z' WHERE assignment_id=$1`, race); err != nil {
+		t.Fatal(err)
+	}
+	if g = in("marker_go", "coord", map[string]any{"assignment_id": race, "phase": "claim", "part": "state"}); g["state"] != "superseded" {
+		t.Fatal(g)
+	}
+	if g = in("marker_go", "coord", map[string]any{"assignment_id": race, "phase": "close", "part": "state"}); g["action"] != "move" || g["claim_state"] != "superseded" || g["claim_policy_revision"] != int64(1) || g["policy_revision"] != int64(1) {
+		t.Fatal(g)
+	}
 }

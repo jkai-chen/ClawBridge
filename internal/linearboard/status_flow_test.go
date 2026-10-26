@@ -118,6 +118,47 @@ func TestReleaseDoneMovesOnlyFromTheClaimState(t *testing.T) {
 	}
 }
 
+// A1: a release that overtook its claim (the bus superseded the claim's
+// move) finds the issue where the claim would have moved it from, and moves
+// from there; only under the policy revision the claim froze (A1-L1). Any
+// other claim outcome, or an older bus, keeps the exact rule.
+func TestReleaseAfterAnOvertakenClaimMovesFromTheClaimsFromSet(t *testing.T) {
+	for _, c := range []struct {
+		name, current, claimState string
+		claimRevision             any
+		triage, moved             bool
+	}{
+		{"the race: backlog", sfBacklog, "superseded", 1, false, true},
+		{"todo", sfTodo, "superseded", 1, false, true},
+		{"the claim state still moves", sfProgress, "superseded", 1, false, true},
+		{"a hosted answer's number", sfBacklog, "superseded", json.Number("1"), false, true},
+		{"triage is a human gate", sfTriage, "superseded", 1, false, false},
+		{"triage when allowed", sfTriage, "superseded", 1, true, true},
+		{"the policy changed since the claim", sfBacklog, "superseded", 2, false, false},
+		{"the claim landed, a person moved it back", sfBacklog, "done", 1, false, false},
+		{"the claim skipped", sfBacklog, "skipped", 1, false, false},
+		{"an older bus", sfBacklog, "", nil, false, false},
+		{"another started state", sfQA, "superseded", 1, false, false},
+		{"completed", sfDone, "superseded", 1, false, false},
+	} {
+		policy := sfPolicy()
+		policy.ClaimFromTriage = c.triage
+		s, a, p, scope := stateTest(t, "release_done", c.current, policy, false)
+		if c.claimState != "" {
+			a.comments.gos["state"]["claim_state"] = c.claimState
+			a.comments.gos["state"]["claim_policy_revision"] = c.claimRevision
+		}
+		s.ApplyMarker(context.Background(), scope, "asg_1", "close", nil)
+		got := settled(a, "state")
+		if m := stateMoves(p); (len(m) == 1) != c.moved || (c.moved && (m[0] != sfReview || got["outcome"] != "done" || got["state_landed"] != sfReview)) {
+			t.Fatal(c.name, m, got)
+		}
+		if !c.moved && got["skip_reason"] != "from_state" {
+			t.Fatal(c.name, got)
+		}
+	}
+}
+
 // SF-L5: a move already in place is done without a write.
 func TestStateAlreadyInPlaceIsDone(t *testing.T) {
 	s, a, p, scope := stateTest(t, "claim", sfProgress, sfPolicy(), false)

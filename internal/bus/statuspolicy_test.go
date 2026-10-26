@@ -175,6 +175,45 @@ func TestStateMoveSupersededAndOnlyOnDone(t *testing.T) {
 	}
 }
 
+// A1: a release that overtakes its claim's move supersedes it, and the
+// close's move carries how the claim settled and the revision it froze, so
+// the applier may move from the claim's from-set under the same policy only.
+func TestCloseMoveCarriesTheClaimsOutcome(t *testing.T) {
+	w := newWatchHarness(t)
+	w.setStatusPolicy(0, sfPolicy(true))
+	race := func(bump bool) map[string]any {
+		w.assign("b", sfIssueNext)
+		id := w.assignmentID("b")
+		if bump {
+			w.setStatusPolicy(int(w.call("status_policy_get", "a", map[string]any{}).(map[string]any)["revision"].(int64)), sfPolicy(true))
+		}
+		w.call("assignment_release", "b", map[string]any{"revision": w.live("b")["revision"], "outcome": "done"})
+		w.markersDue()
+		if g := w.markerGo("c", id, "claim", "state"); g["state"] != "superseded" {
+			t.Fatal("claim not superseded", g)
+		}
+		return w.markerGo("c", id, "close", "state")
+	}
+	if g := race(false); g["action"] != "move" || g["claim_state"] != "superseded" || g["claim_policy_revision"] != int64(1) || g["policy_revision"] != int64(1) {
+		t.Fatal("the race", g)
+	}
+	// A1-L1: the policy changed between the confirm and the release.
+	if g := race(true); g["action"] != "move" || g["claim_state"] != "superseded" || g["claim_policy_revision"] != int64(1) || g["policy_revision"] != int64(2) {
+		t.Fatal("policy changed", g)
+	}
+	// A claim that landed hands its close "done".
+	w.assign("b", sfIssueNext)
+	id := w.assignmentID("b")
+	w.markersDue()
+	w.markerGo("c", id, "claim", "state")
+	w.markerSettle("c", id, "claim", "state", map[string]any{"outcome": "done", "state_target": sfProgress, "state_landed": sfProgress})
+	w.call("assignment_release", "b", map[string]any{"revision": w.live("b")["revision"], "outcome": "done"})
+	w.markersDue()
+	if g := w.markerGo("c", id, "close", "state"); g["action"] != "move" || g["claim_state"] != "done" {
+		t.Fatal("claim landed", g)
+	}
+}
+
 func TestStateSettleRules(t *testing.T) {
 	w := newWatchHarness(t)
 	w.setStatusPolicy(0, sfPolicy(true))

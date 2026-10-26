@@ -238,15 +238,32 @@ func (s *Service) issueStateID(ctx context.Context, scope bus.Request, issue lin
 	return found, nil
 }
 
+// claimOvertaken reports a release move whose claim move never ran: the bus
+// superseded it because the release came first (A1), and the claim froze
+// the same policy revision as this move (A1-L1). A bus that predates A1
+// sends neither, so the release keeps the exact rule.
+func claimOvertaken(g map[string]any) bool {
+	state, _ := g["claim_state"].(string)
+	claim, ok := policyRevision(g["claim_policy_revision"])
+	move, same := policyRevision(g["policy_revision"])
+	return state == "superseded" && ok && same && claim == move
+}
+
+// inClaimFromSet is a state a claim moves from: backlog or unstarted, or
+// triage when the policy allows it.
+func inClaimFromSet(kindOf string, policy bus.StatusPolicy) bool {
+	return kindOf == "backlog" || kindOf == "unstarted" || (kindOf == "triage" && policy.ClaimFromTriage)
+}
+
 // stateMove decides and makes one state move for a marker row: the issue is
 // read again, its team must be bound and in the policy, the target in that
 // team's workflow, and the current state in the move's "from" set (a claim
-// from backlog or unstarted, or triage when the policy allows it; a release
-// only from exactly the claim state). A move already in place is done
-// (SF-L5). After a failed send the issue is read once more: the target is
-// done, an unchanged state is retried, and any other state is what landed,
-// never sent again (SF-L3).
-func (s *Service) stateMove(ctx context.Context, scope bus.Request, issue, kind string, policy bus.StatusPolicy, retry bool) (string, map[string]any, error) {
+// from the claim's from-set; a release only from exactly the claim state,
+// or from the claim's from-set too when its claim was overtaken). A move
+// already in place is done (SF-L5). After a failed send the issue is read
+// once more: the target is done, an unchanged state is retried, and any
+// other state is what landed, never sent again (SF-L3).
+func (s *Service) stateMove(ctx context.Context, scope bus.Request, issue, kind string, policy bus.StatusPolicy, overtaken, retry bool) (string, map[string]any, error) {
 	b, e := s.BindingV2(ctx, scope)
 	if e != nil {
 		return markerFailure(e), nil, e
@@ -289,10 +306,11 @@ func (s *Service) stateMove(ctx context.Context, scope bus.Request, issue, kind 
 	allowed := false
 	switch kind {
 	case "claim":
-		kindOf := t.Workflow[before]
-		allowed = kindOf == "backlog" || kindOf == "unstarted" || (kindOf == "triage" && policy.ClaimFromTriage)
+		allowed = inClaimFromSet(t.Workflow[before], policy)
 	case "release_done":
-		allowed = t.Claim != nil && before == t.Claim.ID
+		// A release that overtook its claim finds the issue where the claim
+		// would have moved it from.
+		allowed = t.Claim != nil && (before == t.Claim.ID || (overtaken && inClaimFromSet(t.Workflow[before], policy)))
 	}
 	if !allowed {
 		if retry && before != "" {

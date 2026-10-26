@@ -52,6 +52,8 @@ type fakeLinear struct {
 	docMore    bool
 	docContent map[string]string
 	events     []string
+	// dispatchIssues answers the dispatcher's issue facts read.
+	dispatchIssues map[string]any
 }
 
 func (f *fakeLinear) issue(id string) (linearprovider.IssueV2, error) {
@@ -165,6 +167,12 @@ func (a fakeApp) GraphQL(_ context.Context, query string, vars map[string]any, o
 		data = map[string]any{"issues": map[string]any{"nodes": a.f.healthIssues, "pageInfo": map[string]any{"hasNextPage": a.f.healthMore, "endCursor": "next"}}}
 	case healthActivityQuery:
 		data = map[string]any{"issue": a.f.activity[vars["id"].(string)]}
+	case dispatchIssueQuery:
+		issue, ok := a.f.dispatchIssues[vars["id"].(string)]
+		if !ok {
+			return errors.New("inaccessible issue")
+		}
+		data = map[string]any{"issue": issue}
 	default:
 		return errors.New("unexpected query")
 	}

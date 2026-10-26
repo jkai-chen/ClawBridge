@@ -10,6 +10,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -185,7 +186,7 @@ func runnerLaunch(ctx context.Context, flags Config, r *runner.Runner, args []st
 	if _, err = runner.Branch(issue.Identifier); err != nil {
 		return fmt.Errorf("the issue has no usable identifier: %w", err)
 	}
-	spec := runner.Spec{Repo: repo, Base: v.base, IssueID: issue.ID, Identifier: issue.Identifier, Settings: settings, DryRun: v.dryRun}
+	spec := runner.Spec{Repo: repo, Base: v.base, IssueID: issue.ID, Identifier: issue.Identifier, Settings: settings, GoModCache: goModCache(repo), DryRun: v.dryRun}
 	name := filepath.Base(repo)
 	if v.dryRun {
 		spec.Session, spec.Instance, spec.MCPEntry = runner.SessionName(name, v.role, 1), "dry-run", map[string]any{}
@@ -281,4 +282,20 @@ func sessionNames(ctx context.Context, executor interface {
 		after = data["next_cursor"]
 	}
 	return nil, errors.New("too many sessions to list")
+}
+
+// goModCache is the owner's Go module cache, when Go is installed and the
+// cache exists.
+func goModCache(repo string) string {
+	cmd := exec.Command("go", "env", "GOMODCACHE")
+	cmd.Dir = repo
+	out, err := cmd.Output()
+	dir := strings.TrimSpace(string(out))
+	if err != nil || !filepath.IsAbs(dir) {
+		return ""
+	}
+	if info, err := os.Stat(filepath.Join(dir, "cache", "download")); err != nil || !info.IsDir() {
+		return ""
+	}
+	return dir
 }

@@ -20,7 +20,11 @@ type Spec struct {
 	// one `clawbridge mcp install` writes.
 	MCPEntry map[string]any
 	Settings Settings
-	DryRun   bool
+	// GoModCache is the owner's Go module cache, read-only to the agent:
+	// Go cannot verify TLS inside the sandbox on macOS, so modules come
+	// from it rather than the network. Empty when there is none.
+	GoModCache string
+	DryRun     bool
 }
 
 // Prepared is what a launch did, or with DryRun would do.
@@ -53,7 +57,7 @@ func StartPrompt(identifier, uuid, branch string) string {
 // own allows never widen them, and the clone's .claude settings cannot
 // loosen them. The Bash sandbox covers Bash only, so the file tools get
 // the same denies (RL-M1), and the owner's own checkout is out of reach.
-func AgentSettings(s Settings, ownerRepo, cache string, pushHosts []string) map[string]any {
+func AgentSettings(s Settings, ownerRepo, cache, goModCache string, pushHosts []string) map[string]any {
 	deny := []string{
 		"Bash(git push *)", "Bash(git remote *)", "Bash(git config *)", "Bash(git credential *)",
 		"Bash(gh *)", "Bash(clawbridge *)", "Bash(ssh *)", "Bash(security *)",
@@ -69,6 +73,20 @@ func AgentSettings(s Settings, ownerRepo, cache string, pushHosts []string) map[
 	}
 	// An absolute path takes a leading // in permission rules.
 	deny = append(deny, "Edit(/"+filepath.ToSlash(ownerRepo)+"/**)")
+	env := map[string]any{
+		"GOCACHE":          filepath.Join(cache, "go-build"),
+		"GOMODCACHE":       filepath.Join(cache, "gomod"),
+		"GOPATH":           filepath.Join(cache, "gopath"),
+		"GOTOOLCHAIN":      "local",
+		"npm_config_cache": filepath.Join(cache, "npm"),
+		"XDG_CACHE_HOME":   filepath.Join(cache, "xdg"),
+	}
+	// Go verifies TLS through the system's trust service, which the
+	// sandbox does not reach, so modules come read-only from the owner's
+	// cache, and never from the network.
+	if goModCache != "" {
+		env["GOPROXY"] = "file://" + filepath.ToSlash(filepath.Join(goModCache, "cache", "download")) + ",off"
+	}
 	return map[string]any{
 		"permissions": map[string]any{
 			"defaultMode":                  "default",
@@ -82,13 +100,7 @@ func AgentSettings(s Settings, ownerRepo, cache string, pushHosts []string) map[
 		},
 		// Build and package caches live beside the clone, writable in the
 		// sandbox, never in the owner's caches.
-		"env": map[string]any{
-			"GOCACHE":          filepath.Join(cache, "go-build"),
-			"GOMODCACHE":       filepath.Join(cache, "gomod"),
-			"GOPATH":           filepath.Join(cache, "gopath"),
-			"npm_config_cache": filepath.Join(cache, "npm"),
-			"XDG_CACHE_HOME":   filepath.Join(cache, "xdg"),
-		},
+		"env": env,
 		"sandbox": map[string]any{
 			"enabled":                  true,
 			"failIfUnavailable":        true,
@@ -313,7 +325,7 @@ func (r *Runner) Launch(spec Spec) (Prepared, error) {
 	if err = os.MkdirAll(p.Cache, 0o700); err != nil {
 		return p, err
 	}
-	settings, _ := json.MarshalIndent(AgentSettings(spec.Settings, repo, p.Cache, pushHosts(urls)), "", " ")
+	settings, _ := json.MarshalIndent(AgentSettings(spec.Settings, repo, p.Cache, spec.GoModCache, pushHosts(urls)), "", " ")
 	mcp, _ := json.MarshalIndent(map[string]any{"mcpServers": map[string]any{"clawbridge": spec.MCPEntry}}, "", " ")
 	for path, data := range map[string][]byte{p.SettingsFile: settings, p.MCPFile: mcp} {
 		if err = writePrivate(path, append(data, '\n')); err != nil {

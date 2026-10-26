@@ -233,6 +233,9 @@ func TestLaunchSettingsAndModel(t *testing.T) {
 	if len(s.Sandbox.Filesystem.AllowWrite) != 1 || s.Sandbox.Filesystem.AllowWrite[0] != p.Cache {
 		t.Fatal("writable", s.Sandbox.Filesystem.AllowWrite)
 	}
+	if s.Env["GOTOOLCHAIN"] != "local" || s.Env["GOPROXY"] != "" {
+		t.Fatal("go network settings without an owner cache", s.Env)
+	}
 	for _, k := range []string{"GOCACHE", "GOMODCACHE", "GOPATH", "npm_config_cache", "XDG_CACHE_HOME"} {
 		if !strings.HasPrefix(s.Env[k], p.Cache+string(filepath.Separator)) {
 			t.Fatal("cache variable", k, s.Env[k])
@@ -556,5 +559,22 @@ func TestManagedSettingsMayNotWidenTheNetwork(t *testing.T) {
 	}
 	if _, err := e.r.Launch(e.spec("checkout-engineer-1", issueIdent)); err == nil || !strings.Contains(err.Error(), "example.com") {
 		t.Fatal("widening managed settings were accepted:", err)
+	}
+}
+
+// Go modules come read-only from the owner's module cache, never the
+// network: Go cannot verify TLS inside the sandbox on macOS (re-spike).
+func TestGoModulesComeFromTheOwnersCache(t *testing.T) {
+	e := newEnv(t)
+	spec := e.spec("checkout-engineer-1", issueIdent)
+	spec.GoModCache = "/home/owner/go/pkg/mod"
+	p, err := e.r.Launch(spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var s agentSettings
+	raw, _ := os.ReadFile(p.SettingsFile)
+	if err = json.Unmarshal(raw, &s); err != nil || s.Env["GOPROXY"] != "file:///home/owner/go/pkg/mod/cache/download,off" || !strings.HasPrefix(s.Env["GOMODCACHE"], p.Cache) {
+		t.Fatal(s.Env, err)
 	}
 }

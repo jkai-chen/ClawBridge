@@ -1,59 +1,75 @@
-# ClawBridge v0.3.0
+# ClawBridge v0.3.1
 
-**Schema 12, one-way.**
-- A v0.3.0 binary migrates a store from schema 11 to 12 the first time it opens it: a server's hosted Postgres
-  store when it starts, a local SQLite store on the first local command.
-- v0.2.8 refuses a schema 12 store. Take a database dump (or back up the local file) first. Rolling back means
-  restoring it with the old release.
+**Schema 15, one-way.**
+- A v0.3.1 binary migrates a store from schema 12 to 15 the first time it opens it: a server's hosted Postgres store
+  when it starts, a local SQLite store on the first local command.
+- v0.3.0 refuses a schema 13 or later store. Take a database dump (or back up the local file) first. Rolling back
+  means restoring it with the old release.
 - Upgrade the server first.
-- Clients don't have to upgrade: v0.2.8 clients keep working against a v0.3.0 server. A v0.3.0 client adds the
-  `clawbridge intake` commands (`install.sh` / `install.ps1`).
+- Clients don't have to upgrade: v0.3.0 clients keep working against a v0.3.1 server. A v0.3.1 client adds
+  `linear seed-docs`, `linear status-policy`, `linear health` and `assignment release --outcome done`, and fixes
+  `linear label create|rename` on a hosted server (`install.sh` / `install.ps1`).
+- Everything new is off until a project owner turns it on.
 
-## The server watches Linear itself
+## Fixes
 
-- **Setup.** A hosted server with the ClawBridge Linear app can now run the comment watch and claim markers itself,
-  for every bound project, as the app.
-  - Turn it on with `CLAWBRIDGE_WATCH_INTERVAL` (1m–30m) in the server's environment file.
-  - Unset, there is no server watcher, and nothing changes.
-  - Without the Linear app, it stays off.
-- **What it does.** People's comments on assigned issues reach the claiming session as `linear-comment` notices, as
-  they did from `clawbridge linear watch`. Pending claim and release markers are posted as the app.
-- **No more client watcher.** While the server ticks, a client `clawbridge linear watch` for that project is refused.
-  A client can take over again once the server hasn't ticked for 10 minutes.
-- **Budget.** Each project's watch spends at most 200 Linear calls an hour, on the same bus budget as before.
-  - Issues and sources keep their own polling schedules.
-  - A tick with nothing due calls nothing.
-- **Status.** The startup log says `watcher: ticking every …`, or `watcher: off (…)` with the reason.
-- **Turning it off:** remove the variable and recreate the API container.
+- `linear label create` and `label rename` on a hosted server failed with "invalid label policy revision" before
+  anything was sent: the client misread the server's answer. Fixed in the client.
 
-## Issue intake
+## Guide documents for the team
 
-- **The signals.** Linear can tell ClawBridge that an issue needs an agent, and ClawBridge queues it for the
-  project's coordinator session. The server watcher polls three signals:
-  - **S1:** the `needs-agent` label;
-  - **S2:** delegating the issue to the ClawBridge app;
-  - **S3:** @-mentioning the app.
-- **Only trusted people's signals count.** Who raised a signal is proven from Linear's own history.
-  - Only people on the project's trusted list (`clawbridge intake trust add LINEAR_USER_ID`) can ever let a signal go
-    further than notifying the coordinator.
-  - An issue's title and description never route anything.
-- **Modes:** `clawbridge intake policy set --intake-mode off|notify`. Without a stored policy, a project uses
-  `notify` with S1–S3. Offers and automatic assignment come later.
-  - **Set `--intake-mode off` before turning the watcher on, for any project that shouldn't run intake yet.**
-- **The queue:** `clawbridge intake list`, `dismiss ISSUE` and `rearm ISSUE`.
-  - The first poll only starts the cursors: issues already labelled, delegated or mentioned are not swept in.
-  - Without an active coordinator session, queued issues are held as `no_recipient`.
-- **Who may change it.** A project lead or owner sets the policy, the trusted list and tokens. The coordinator session
-  may also dismiss and rearm.
-- **Linear Loops (S5) are not available in v0.3.0.** The send-only `/mcp/intake` endpoint is served, but refuses
-  every request (`app_unavailable`). The intake token commands exist for the release that enables it.
+- A confirmed `linear link` also creates two Linear documents, a developer guide and a reviewer guide, under the
+  binding's default team (or its project, when the binding selects exactly one), as the linking person.
+- `--no-seed-docs` skips them. `linear seed-docs` (preview) and `linear seed-docs --confirm` seed a board linked
+  before.
+- ClawBridge never overwrites a document whose content changed since it created it, and never creates a guide twice.
+  `--update` replaces an untouched guide with a newer one; `--reseed` recreates a guide you know was deleted or
+  archived.
+- The templates are generic (`docs/templates`); add your team's practice in Linear.
 
-## Other changes
+## Status policy: issues move forward with the work
 
-- The server's Compose file passes `CLAWBRIDGE_WATCH_INTERVAL`, plus `CLAWBRIDGE_TICK_AUDIENCE` and
-  `CLAWBRIDGE_TICK_SERVICE_ACCOUNT` for a scheduler-driven tick endpoint. That endpoint is meant for a deployment
-  without a long-lived process; leave both unset on a VM.
-- The watcher's marker writes keep their records in Postgres, so the read-only container needs no new mount.
+- A project owner can let an agent's work move its issue through the team's workflow. It is off until set:
+  `linear status-policy show`, and `linear status-policy set --file status.json --expected-revision N --profile ID`
+  with state names, e.g. `{"enabled": true, "create": "Todo", "claim": "In Progress", "release_done": "In Review"}`.
+- **create:** an agent's new issue without a state lands in `create`.
+- **claim:** a confirmed claim moves the issue to `claim`, only from a backlog or unstarted state (triage only with
+  `"claim_from_triage": true`).
+- **release_done:** `assignment release --outcome done` moves it to `release_done`, only from exactly the `claim`
+  state.
+- **Never:** to a completed or canceled state, or back over a state a person chose. A person's change always wins.
+- Names are resolved exactly in every bound team's workflow when the policy is set. On a hosted server the ClawBridge
+  Linear app reads the state types when Linear's own list leaves them out (a project lead or owner only).
+- Moves are applied with the claim and release notes, by the server watcher or a v0.3.1 client, and cost about three
+  Linear calls each.
+
+## Project health, told to the coordinator
+
+- A hosted server's watcher can judge a bound Linear project's health (On track, At risk, Off track) once a day, from
+  Linear facts: schedule against the target date, started issues with no human activity, and blocked issues.
+- It is **off** until a project owner enables it per Linear project:
+  `linear health enable --linear-project UUID --expected-revision N`, or `linear health set` with thresholds.
+  `linear health show` is open to every member.
+- **Nothing is posted to Linear.** A health that two daily runs in a row agree on is sent to the project's
+  coordinator session as a `project-health` message (weekly too, with `"weekly": true`). Posting it as a Linear
+  project update waits on proof that the Linear app may.
+- Runs spread over the day per project, at most two per watcher tick, after the comment watch, and only when the
+  hour's budget pays a whole run (up to 25 Linear calls, usually under 10).
+- It reads identifiers, states, dates, relations, and who changed or commented on an issue: never titles,
+  descriptions or comment text.
+
+## For the host operator
+
+- `clawbridge operator linear-app-probe --confirm [--project UUID]` reports what the ClawBridge Linear app may do:
+  its MCP tools, whether its scopes allow project updates (one update for a project that does not exist, so nothing
+  is created), and one project's health fields as value kinds.
+- `clawbridge operator linear-app-doc-probe --confirm` lists the workspace's documents of the last 30 days as the
+  app, one read, and prints counts only.
+- Both use the token the server already published and never mint one; they print classes, names and counts, never a
+  token, ID, message or value. Run them from the same release as the server.
+- The app refuses to mint a token for any scope set other than the released one (a different set would revoke every
+  token of the app).
+- No new environment variable, and the Compose file is unchanged.
 
 Assets retain five CGO-disabled targets, installers, the MIT licence, selected checksums and a full source
 marker. Binaries are unsigned; macOS binaries are not notarized.

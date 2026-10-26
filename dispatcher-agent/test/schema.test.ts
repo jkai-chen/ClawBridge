@@ -22,3 +22,18 @@ test("every operation names $defs that exist, and every d4 tool has an operation
 		"recommend", "reply", "route_notice", "session_activity",
 	]);
 });
+
+test("responses are open: an unknown field, top-level or nested, still validates (requests stay closed)", async () => {
+	const { Value } = await import("typebox/value");
+	const { AgentRenewResponse, CasesNextResponse, HelloResponse, ToolRequests } = await import("../src/schema.ts");
+	const later = { x_future_field: 1 };
+	const hello = {
+		project_id: "0b9f6c5e-3a4d-4e8b-9c1f-2d3e4f5a6b7c", enabled: true, provider: "openai", model: "m",
+		caps: { runs_per_hour: 1, runs_per_day: 1, ...later }, opt_in_tools: [], deadline_seconds: 90,
+		server_time: "2026-10-26T00:00:00Z", ...later,
+	};
+	assert.ok(Value.Check(HelloResponse, hello));
+	assert.ok(Value.Check(AgentRenewResponse, { projects: [], ...later }));
+	assert.ok(Value.Check(CasesNextResponse, { case: null, ...later }));
+	assert.ok(!Value.Check(ToolRequests.list_sessions, { active_only: true, ...later }), "requests are closed");
+});

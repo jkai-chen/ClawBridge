@@ -145,7 +145,8 @@
 						"cap_reached",
 						"guardrail",
 						"server_busy",
-						"conflict"
+						"conflict",
+						"rate_limited"
 					]
 				},
 				"tool": {
@@ -216,7 +217,7 @@
 						},
 						"base_url": {
 							"type": "string",
-							"format": "uri"
+							"pattern": "^(https://[^/?#@\\s]+|http://(localhost|127\\.0\\.0\\.1|\\[::1\\])(:[0-9]{1,5})?)(/[^?#\\s]*)?$"
 						},
 						"model": {
 							"type": "string",
@@ -273,7 +274,7 @@
 				},
 				"binding_secret": {
 					"type": "string",
-					"minLength": 43
+					"pattern": "^[A-Za-z0-9_-]{43}$"
 				},
 				"status": {
 					"enum": [
@@ -291,7 +292,7 @@
 			"properties": {
 				"binding_secret": {
 					"type": "string",
-					"minLength": 43
+					"pattern": "^[A-Za-z0-9_-]{43}$"
 				}
 			},
 			"additionalProperties": false
@@ -341,7 +342,7 @@
 					"properties": {
 						"binding_secret": {
 							"type": "string",
-							"minLength": 43
+							"pattern": "^[A-Za-z0-9_-]{43}$"
 						},
 						"config_revision": {
 							"type": "integer",
@@ -365,7 +366,7 @@
 					"properties": {
 						"binding_secret": {
 							"type": "string",
-							"minLength": 43
+							"pattern": "^[A-Za-z0-9_-]{43}$"
 						},
 						"config_revision": {
 							"type": "integer",
@@ -401,7 +402,7 @@
 			"properties": {
 				"binding_secret": {
 					"type": "string",
-					"minLength": 43
+					"pattern": "^[A-Za-z0-9_-]{43}$"
 				},
 				"status": {
 					"enum": [

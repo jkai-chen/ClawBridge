@@ -3,6 +3,7 @@ package server
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"encoding/base64"
 	"encoding/json"
@@ -211,6 +212,8 @@ type window struct {
 type limiter struct {
 	mu    sync.Mutex
 	users map[string]window
+	// perMinute is each principal's limit; zero is 1200.
+	perMinute int
 }
 
 func (l *limiter) allow(principal string) bool {
@@ -221,7 +224,7 @@ func (l *limiter) allow(principal string) bool {
 	if now.Sub(v.start) >= time.Minute {
 		v = window{start: now}
 	}
-	if v.count >= 1200 {
+	if v.count >= cmp.Or(l.perMinute, 1200) {
 		return false
 	}
 	if len(l.users) >= 10000 {
@@ -291,6 +294,10 @@ type HandlerOptions struct {
 func NewHandlerWithOptions(store Executor, verifier Verifier, o HandlerOptions) http.Handler {
 	metadata, writer := o.OAuth, o.Writer
 	l := &limiter{users: map[string]window{}}
+	// Heartbeats have their own budget: liveness never spends, or waits on,
+	// the principal's request limit. 240 a minute is 120 sessions renewing
+	// every 30 s.
+	beats := &limiter{users: map[string]window{}, perMinute: 240}
 	var intake, tick http.Handler
 	if s, ok := store.(IntakeStore); ok {
 		intake = newIntakeHandler(s, o.IntakeProver, l)
@@ -435,14 +442,21 @@ func NewHandlerWithOptions(store Executor, verifier Verifier, o HandlerOptions) 
 			}
 			return
 		}
-		if !l.allow(verified.Principal) {
-			fail(w, 429, "rate_limited", "principal request limit reached")
-			return
-		}
 		decoder := json.NewDecoder(bytes.NewReader(body))
 		decoder.DisallowUnknownFields()
 		var request bus.Request
-		if err = decoder.Decode(&request); err != nil {
+		decoded := decoder.Decode(&request)
+		// A heartbeat spends its own budget; anything else, a malformed
+		// request included, the principal's.
+		limit := l
+		if decoded == nil && request.Operation == "heartbeat" {
+			limit = beats
+		}
+		if !limit.allow(verified.Principal) {
+			fail(w, 429, "rate_limited", "principal request limit reached")
+			return
+		}
+		if decoded != nil {
 			fail(w, 400, "invalid", "invalid or oversized request JSON")
 			return
 		}

@@ -1,11 +1,14 @@
 package server
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
+	"log"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"reflect"
 	"strings"
 	"testing"
@@ -317,5 +320,54 @@ func TestHealthzReportsVersion(t *testing.T) {
 	}
 	if !reflect.DeepEqual(body, map[string]string{"status": "ok", "version": buildinfo.Version}) {
 		t.Fatalf("healthz = %v", body)
+	}
+}
+
+// The Linear app's redirect page is static: whatever the query carries, the
+// page is the same, it never echoes or logs it, and it needs no sign-in.
+func TestLinearCallbackIsStatic(t *testing.T) {
+	verifier := VerifierFunc(func(context.Context, string) (Identity, error) {
+		return Identity{}, errors.New("callback called verifier")
+	})
+	handler := NewHandlerWithOAuthMetadata(publicConfigExecutor{}, verifier, OAuthMetadata{})
+	var logged bytes.Buffer
+	log.SetOutput(&logged)
+	defer log.SetOutput(os.Stderr)
+	var first string
+	for _, target := range []string{"/linear/callback", "/linear/callback?code=synthetic-code-sentinel&state=synthetic-state-sentinel", "/linear/callback?error=access_denied&error_description=%3Cscript%3E"} {
+		recorder := httptest.NewRecorder()
+		handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, target, nil))
+		body := recorder.Body.String()
+		if recorder.Code != http.StatusOK || !strings.Contains(body, "ClawBridge app installed") || recorder.Header().Get("Content-Type") != "text/html; charset=utf-8" {
+			t.Fatalf("%s: %d %q", target, recorder.Code, body)
+		}
+		for header, want := range map[string]string{"Cache-Control": "no-store", "Referrer-Policy": "no-referrer", "X-Content-Type-Options": "nosniff", "X-Frame-Options": "DENY"} {
+			if recorder.Header().Get(header) != want {
+				t.Fatalf("%s: %s = %q", target, header, recorder.Header().Get(header))
+			}
+		}
+		if !strings.HasPrefix(recorder.Header().Get("Content-Security-Policy"), "default-src 'none'") {
+			t.Fatal("no content security policy")
+		}
+		if first == "" {
+			first = body
+		} else if body != first {
+			t.Fatalf("%s: the page depends on the query", target)
+		}
+	}
+	if strings.Contains(first, "sentinel") || strings.Contains(first, "access_denied") || strings.Contains(first, "<script") || logged.Len() != 0 {
+		t.Fatalf("query reflected or logged: %q %q", first, logged.String())
+	}
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodHead, "/linear/callback?code=x", nil))
+	if recorder.Code != http.StatusOK || recorder.Body.Len() != 0 {
+		t.Fatalf("HEAD: %d %q", recorder.Code, recorder.Body.String())
+	}
+	for _, method := range []string{http.MethodPost, http.MethodPut, http.MethodDelete} {
+		recorder := httptest.NewRecorder()
+		handler.ServeHTTP(recorder, httptest.NewRequest(method, "/linear/callback?code=x", strings.NewReader("code=x")))
+		if recorder.Code != http.StatusMethodNotAllowed {
+			t.Fatalf("%s: %d", method, recorder.Code)
+		}
 	}
 }

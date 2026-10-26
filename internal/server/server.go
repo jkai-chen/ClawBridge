@@ -304,6 +304,10 @@ func NewHandlerWithOptions(store Executor, verifier Verifier, o HandlerOptions) 
 			_ = json.NewEncoder(w).Encode(map[string]string{"status": "ok", "version": buildinfo.Version})
 			return
 		}
+		if r.URL.Path == LinearCallbackPath {
+			linearCallback(w, r)
+			return
+		}
 		if r.URL.Path == "/v1/config" {
 			if r.Method != http.MethodGet {
 				fail(w, 405, "method_not_allowed", "GET required")

@@ -79,6 +79,15 @@ gs://CLAWBRIDGE_BACKUP_BUCKET/postgres/daily/YYYYMMDDTHHMMSSZ.dump
 gs://CLAWBRIDGE_BACKUP_BUCKET/postgres/daily/YYYYMMDDTHHMMSSZ.sha256
 ```
 
+The env file names the store in one of two ways, never both:
+
+- `CLAWBRIDGE_BACKUP_URL`: `gs://BUCKET` (Google Cloud Storage) or `s3://BUCKET` (Amazon S3), a bucket name and
+  nothing else. With `s3://`, `CLAWBRIDGE_BACKUP_REGION` names the bucket's AWS region, and the upload uses
+  `aws s3 cp` with the instance's role (`deploy/aws-instance-role-policy.json`).
+- `CLAWBRIDGE_BACKUP_BUCKET`: a Google Cloud Storage bucket, as before.
+
+A missing, duplicated or malformed setting stops the runner before it dumps anything.
+
 The runner executes:
 
 ```text
@@ -93,7 +102,7 @@ docker compose ... exec -T db pg_dump \
 
 It validates that the result is a non-empty custom archive by asking the Postgres
 container's `pg_restore --list` to read it. It then computes SHA-256 and uploads
-the dump followed by its checksum with `gcloud storage`. Keeping the checksum
+the dump followed by its checksum with `gcloud storage` (or `aws s3 cp` for an `s3://` store). Keeping the checksum
 upload last makes the presence of a complete pair the success marker. Temporary
 files are mode-restricted and removed on success, error or signal. The runner
 waits up to two minutes for `pg_isready` after boot, then fails without uploading
@@ -124,6 +133,10 @@ gcloud storage buckets update "gs://${CLAWBRIDGE_BACKUP_BUCKET}" \
   --lifecycle-file=/opt/clawbridge/repo/deploy/gcs-lifecycle.json
 gcloud storage buckets describe "gs://${CLAWBRIDGE_BACKUP_BUCKET}" --format=json
 ```
+
+On S3, `deploy/s3-lifecycle.json` does the same (30 days under `postgres/daily/`, and old versions after 7):
+`aws s3api put-bucket-lifecycle-configuration --bucket BUCKET --lifecycle-configuration
+file:///opt/clawbridge/repo/deploy/s3-lifecycle.json`.
 
 If the bucket lifecycle already differs, reconcile it to retain no fewer than 30
 daily pairs. The backup run's IAM needs object-create permission on this prefix;

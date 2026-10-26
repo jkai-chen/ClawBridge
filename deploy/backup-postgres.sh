@@ -53,8 +53,52 @@ read_env_value() {
 	' "$env_file"
 }
 
-bucket=$(read_env_value CLAWBRIDGE_BACKUP_BUCKET) ||
-	fail "private environment must define CLAWBRIDGE_BACKUP_BUCKET exactly once"
+count_env_key() {
+	awk -v wanted="$1" '
+		{
+			line = $0
+			sub(/^[[:space:]]+/, "", line)
+			if (line == "" || line ~ /^#/ || index(line, "=") == 0) {
+				next
+			}
+			name = substr(line, 1, index(line, "=") - 1)
+			sub(/[[:space:]]+$/, "", name)
+			if (name == wanted) {
+				found++
+			}
+		}
+		END { print found + 0 }
+	' "$env_file"
+}
+
+# The backup store: CLAWBRIDGE_BACKUP_URL (gs://BUCKET or s3://BUCKET), or,
+# as before, CLAWBRIDGE_BACKUP_BUCKET for Google Cloud Storage. Never both.
+if [ "$(count_env_key CLAWBRIDGE_BACKUP_URL)" -gt 0 ]; then
+	[ "$(count_env_key CLAWBRIDGE_BACKUP_BUCKET)" -eq 0 ] ||
+		fail "private environment must set CLAWBRIDGE_BACKUP_URL or CLAWBRIDGE_BACKUP_BUCKET, not both"
+	backup_url=$(read_env_value CLAWBRIDGE_BACKUP_URL) ||
+		fail "private environment must define CLAWBRIDGE_BACKUP_URL exactly once"
+	case "$backup_url" in
+		gs://*) store=gcs bucket=${backup_url#gs://} ;;
+		s3://*) store=s3 bucket=${backup_url#s3://} ;;
+		*) fail "CLAWBRIDGE_BACKUP_URL must be gs://BUCKET or s3://BUCKET" ;;
+	esac
+else
+	bucket=$(read_env_value CLAWBRIDGE_BACKUP_BUCKET) ||
+		fail "private environment must define CLAWBRIDGE_BACKUP_URL or CLAWBRIDGE_BACKUP_BUCKET exactly once"
+	store=gcs
+fi
+if [ "$store" = s3 ]; then
+	region=$(read_env_value CLAWBRIDGE_BACKUP_REGION) ||
+		fail "private environment must define CLAWBRIDGE_BACKUP_REGION exactly once for an s3:// backup"
+	case "$region" in
+		[a-z][a-z]-*-[0-9] | [a-z][a-z]-gov-*-[0-9]) ;;
+		*) fail "CLAWBRIDGE_BACKUP_REGION is not an AWS region" ;;
+	esac
+	case "$region" in
+		*[!a-z0-9-]*) fail "CLAWBRIDGE_BACKUP_REGION is not an AWS region" ;;
+	esac
+fi
 data_path=$(read_env_value CLAWBRIDGE_POSTGRES_DATA_PATH) ||
 	fail "private environment must define CLAWBRIDGE_POSTGRES_DATA_PATH exactly once"
 compose_project=$(read_env_value COMPOSE_PROJECT_NAME) ||
@@ -73,7 +117,11 @@ esac
 [ "$data_path" = "$postgres_data" ] ||
 	fail "CLAWBRIDGE_POSTGRES_DATA_PATH must be $postgres_data in production"
 
-for command_name in docker gcloud mountpoint mktemp date awk sha256sum sleep; do
+case "$store" in
+	gcs) store_command=gcloud ;;
+	s3) store_command=aws ;;
+esac
+for command_name in docker "$store_command" mountpoint mktemp date awk sha256sum sleep; do
 	command -v "$command_name" >/dev/null 2>&1 ||
 		fail "required command is unavailable: $command_name"
 done
@@ -155,10 +203,21 @@ checksum=$(sha256sum "$dump_file" | awk '{print $1}') ||
 	fail "SHA-256 calculation produced an invalid digest"
 printf '%s  %s\n' "$checksum" "$dump_name" >"$checksum_file"
 
-object_base=gs://$bucket/postgres/daily/$timestamp
-gcloud storage cp --quiet "$dump_file" "$object_base.dump" >/dev/null ||
+# The dump first and the checksum last: a backup without its checksum is
+# incomplete, and the backup check ignores it.
+case "$store" in
+	gcs)
+		object_base=gs://$bucket/postgres/daily/$timestamp
+		upload() { gcloud storage cp --quiet "$1" "$2" >/dev/null; }
+		;;
+	s3)
+		object_base=s3://$bucket/postgres/daily/$timestamp
+		upload() { aws s3 cp --only-show-errors --region "$region" "$1" "$2" >/dev/null; }
+		;;
+esac
+upload "$dump_file" "$object_base.dump" ||
 	fail "dump upload failed"
-gcloud storage cp --quiet "$checksum_file" "$object_base.sha256" >/dev/null ||
+upload "$checksum_file" "$object_base.sha256" ||
 	fail "checksum upload failed"
 
 printf 'backup=%s.dump\n' "$object_base"

@@ -1,97 +1,79 @@
-# ClawBridge v0.3.3
+# ClawBridge v0.3.4
 
-**Schema 16 → 17.**
-- The server migrates to schema 17 on its first start. The new tables are the dispatcher's, and nothing in this
-  release acts on them (see below).
-- **Rollback:** v0.3.2 and older refuse to start on a schema 17 database. Take a dump before upgrading. To go back,
-  restore that dump with the older image; never run the older binary against the migrated database
-  (docs/operations/deployment.md).
-- Upgrade the server first, then clients. v0.3.2 clients keep working against a v0.3.3 server.
-- On a hosted server with the ClawBridge Linear app, the server applies the rules on who closes an issue (below) to
-  every agent write as soon as it runs v0.3.3. Where clients write to Linear with their own profiles (no app, or
-  local mode), agents get them once their client is v0.3.3 (`install.sh` / `install.ps1`).
-- No new environment variable, and the Compose file is unchanged.
+**Schema 17 → 19.**
+- The server migrates to schema 19 on its first start: schema 18 holds the sign-in groundwork (invites and device
+  keys), and schema 19 is the ledger of project-health posts.
+- **One-way:** v0.3.3 and older refuse a schema 18 or 19 database.
+- **Rollback:** take a dump before upgrading. To go back, restore that schema 17 dump with the v0.3.3 image. Never
+  run an older binary against the migrated database (docs/operations/deployment.md).
+- **Compose:** `CLAWBRIDGE_DOMAIN` is now required. It sets the server's `--public-origin`, and Compose refuses to
+  start without it.
+- Upgrade the server first, then clients. A server that keeps Google sign-in (the default) works with v0.3.3 clients
+  as before. **Upgrade clients before turning device sign-in on** (below).
+- The dispatcher stays off: nothing in this release dispatches anything.
 
-## On a hosted server, agents can't cancel issues
+## The Linear app asks for the `write` scope
 
-From v0.3.3, agents and ClawBridge's own automation never move an issue to a canceled state, or to Linear's
-Duplicate state, which closes an issue the same way. **This holds with or without a status policy.**
-- "An agent" is any write made through a session (the MCP tools, or the CLI with `--session`). A person's CLI write
-  without a session is never refused. People cancel issues as before.
-- On a hosted server the ClawBridge Linear app reads each state's type, so the rule always applies there.
-- The one gap: a local setup whose Linear status list doesn't report types, with no enabled policy, can't tell a
-  state's type, and lets the write through.
+- On upgrade the server mints a new app token with the `write` scope, which revokes the old one.
+- If Linear grants the rest without `write`, the server keeps working with that token. Issue relations and project
+  status updates, the two writes that need it, are refused as `capability_unavailable`, and the server asks for
+  `write` again every 7 days.
+- **Relation guard:** before a relation write, the server checks the token's actual grant. Without `write` the
+  write is refused as `capability_unavailable` before anything is sent.
+- **Relation writes are read back:** `get_issue` now asks for relations, and a relation add reports `accepted` only
+  when the edge is visible. Linear's issue read lists relations without saying the list is complete, so a removal is
+  not confirmed from an absence.
 
-## Who closes an issue, per project
+## Project health can be posted to Linear (off)
 
-The status policy can now say, per bound Linear project, whether people or agents close its issues. People is the
-default for every project the policy doesn't name.
+Project health is judged once a day per enabled Linear project, as before. A health confirmed by two daily runs can
+now also go to Linear as a project status update, by the app, at most once a day.
+- **Off by default:** a project's health policy posts only with `"post": true`. Keep it off: a later release adds
+  the check that Linear answers a project's newest updates first, which posting relies on.
+- When it is on, a post is never made over a person's update from the last 7 days, nor when the five updates read
+  are all older than 7 days. Each post is recorded before it is sent, and one whose answer was lost is found later,
+  never sent again. A refused or held post goes to the coordinator session as a notice instead.
+- `linear health show` shows the last post.
 
-`{"enabled": true, ..., "done": "Done", "closes": {"<Linear project UUID>": "agent"}}`
-- **In a project agents close,** a release with `--outcome done` moves on to the team's `done` state, and an agent
-  may set a completed state when every project the write touches is closed by agents.
-- **In a project people close,** a done-release stops at `release_done` as before. An agent's write to a completed
-  state is refused before anything is sent, naming the project.
-- **No hopping:** an agent may not move a started issue out of a project people close into one agents close.
-- These rules need a status policy with `"enabled": true`. Without one, agents set completed states as before.
-- It governs cooperative agents and the automation. It is not a defence against a hostile process on someone's
-  machine; the runner's sandbox is that boundary.
+See "Project health" in docs/linear.md.
 
-See "Who closes an issue" in docs/linear.md.
+## Sign-in groundwork (inert)
 
-## Status moves keep up with fast releases
+- Device keys, invites, `/v1/join` and an operator bootstrap invite ship, but a server keeps Google sign-in until
+  it is told otherwise (`CLAWBRIDGE_AUTH`, Compose's `--auth`, default `google`).
+- In google mode `/v1/config` is unchanged: the sign-in fields appear only with device sign-in on.
+- **Upgrade clients before turning device sign-in on** (`device` or `google,device`). The client releases that use
+  it come later.
 
-- **A release that overtakes its claim.** When a done-release lands before the claim's move was applied (both within
-  one watcher interval), the release now also moves the issue from where the claim would have moved it from, so it
-  still ends in `release_done`. This holds only under the same policy revision as the claim. An issue a person moved
-  elsewhere is left alone, as always.
-- **Markers soon after a confirm or release.** A hosted server whose watcher runs on its own clock
-  (`CLAWBRIDGE_WATCH_INTERVAL`) applies the project's markers within seconds of a confirm or release, instead of at
-  the next tick. It is a markers-only pass, at most one a minute per project, never alongside a tick; a clock tick
-  that meets one runs as soon as it ends. With the scheduler's tick endpoint alone, markers still wait for the next
-  tick.
+## Running your own server: Start and `clawbridge onboard`
 
-## The dispatcher's groundwork (inert)
+- **Start:** on first run, `clawbridge` opens Start, and `clawbridge onboard` opens it again. It can hand the Google
+  Cloud setup to your own coding agent.
+- **The Google Cloud playbook** ships as a second skill, `clawbridge-provision-gcp`, which that agent follows. It
+  guards the disk format and the env file, and uses a dedicated network.
+- **`clawbridge cloud check`** checks a server's settings, its containers, the Linear app, and its infrastructure
+  and backups on Google Cloud. It runs its SSH checks only with a host or a VM, and probes TCP 443 last.
+- **`clawbridge cloud secret set KEY`** writes one of the server's secrets (the Linear app's client ID and secret,
+  and the two Google OAuth client secrets) into its env file over your own SSH session, following a linked env file
+  to its target. The value never passes through an agent.
+- The server serves a static page at the Linear app's redirect URL.
+- docs/operations/first-deployment.md is a first-deployment guide from nothing.
 
-**Nothing in this release dispatches anything.** No dispatcher runs, and nothing confirms, releases or routes work
-on its own. Enabling it comes with a later release.
-- Schema 17 holds all the dispatcher's tables, so later steps need no migration.
-- The project owner can already set a domains policy (`dispatcher domains set`) and a domain's owner can edit its
-  trusted sessions and coordinator (`dispatcher domain trust|untrust|coordinator`). `dispatcher show` reads it.
-  Setting it changes nothing yet.
-- The names `clawbridge-dispatcher` and `clawbridge-dispatcher-model` are reserved for its sessions.
-- The guardrails that will bound every dispatcher decision are in, and are not yet called.
+## The dispatcher's next steps (inert)
+
+**Nothing in this release dispatches anything.** No dispatcher runs; enabling it comes with a later release.
+- **The rules engine** that will decide pending claims within the guardrails is in, and is not called. The bus
+  re-checks every grant, and a superseded claim is decided again.
+- **Routing by domain (step 4a):** when the dispatcher is the project's coordinator, a coordinator notice (comments
+  on an unheld issue, intake events, health and document notices) goes to its Linear project's domain, else the one
+  domain its labels match, else the fallback chain. Labels route; they never grant. Without the dispatcher, notices
+  go to the coordinator session as before.
+- **dispatcher-agent:** the model engine, a ClawBridge client, and its hardened container image. It is not in the
+  server image, and nothing starts it.
 
 See docs/dispatcher.md.
-
-## Local mode and setup fixes
-
-- `setup --local --project NAME` saves the default project, and the first project you create (without
-  `--git-remote`) becomes the default. A new terminal, `doctor` and `mcp install`
-  then work without `--workspace/--project`.
-- Bare `clawbridge` with a local profile that has no project says `run clawbridge project create NAME`, instead of
-  pointing at the hosted join.
-- A `.clawbridge.toml` outside a git checkout, or not at its root, now warns on stderr instead of being silently
-  ignored.
-- On a clean home, `setup --cloud` selects cloud mode instead of failing with "setup mode conflicts", and
-  `setup --help` shows the cloud flags.
-
-## Fixes
-
-- `operator linear-app-probe` (the project status-update probe): its preflight, and its list and delete calls, now
-  send the `type` that Linear requires there. Before, the probe refused with `capability_unavailable` before sending
-  anything.
-
-## Docs
-
-- The installation guide, README and docs/linear.md no longer show stale versions.
-- docs/operations/deployment.md explains that its Compose project and env file names are the reference deployment's,
-  which a new deployment may change. It also says what it doesn't yet cover: a first deployment from nothing, and
-  setting up the Linear app step by step.
-- The env example's bootstrap owner is now `you@example.com`, and says what it is: the identity that runs
-  `setup --cloud` once and becomes owner.
 
 Assets retain five CGO-disabled targets, installers, the MIT licence, selected checksums and a full source
 marker. Binaries are unsigned; macOS binaries are not notarized.
 
-See docs/linear.md, docs/dispatcher.md and docs/operations/deployment.md.
+See docs/linear.md, docs/dispatcher.md, docs/operations/first-deployment.md and docs/operations/deployment.md.

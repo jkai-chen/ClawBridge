@@ -1,0 +1,30 @@
+{
+	"name": "clawbridge-dispatcher-agent",
+	"private": true,
+	"description": "The model engine for the ClawBridge dispatcher: a ClawBridge client built on the clawbridge-pi fork.",
+	"license": "MIT",
+	"type": "module",
+	"engines": {
+		"node": ">=22.19.0"
+	},
+	"scripts": {
+		"start": "node src/main.ts",
+		"check": "tsc --noEmit -p .",
+		"check:lock": "node scripts/check-lock.ts",
+		"check:schema": "node scripts/write-schema.ts --check",
+		"schema": "node scripts/write-schema.ts",
+		"test": "node --test --test-concurrency=1 --test-timeout=60000 'test/*.test.ts'"
+	},
+	"dependencies": {
+		"@earendil-works/pi-agent-core": "https://github.com/jkai-chen/clawbridge-pi/releases/download/cb-v1.1.0-1/earendil-works-pi-agent-core-1.1.0.tgz",
+		"@earendil-works/pi-ai": "https://github.com/jkai-chen/clawbridge-pi/releases/download/cb-v1.1.0-1/earendil-works-pi-ai-1.1.0.tgz",
+		"typebox": "1.3.27"
+	},
+	"devDependencies": {
+		"@types/node": "22.19.19",
+		"typescript": "7.0.2"
+	},
+	"overrides": {
+		"@earendil-works/pi-ai": "$@earendil-works/pi-ai"
+	}
+}

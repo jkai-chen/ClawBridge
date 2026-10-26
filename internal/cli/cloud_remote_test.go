@@ -50,7 +50,9 @@ func TestFactsScript(t *testing.T) {
 	}
 	dir := t.TempDir()
 	env := filepath.Join(dir, "clawbridge.env")
-	body := "POSTGRES_PASSWORD=value-sentinel\nCLAWBRIDGE_DOMAIN=\nCLAWBRIDGE_AUDIENCE=a\nCLAWBRIDGE_AUDIENCE=b\n# CLAWBRIDGE_BOOTSTRAP_OWNER=x\nCOMPOSE_PROJECT_NAME=my-stack\n"
+	// The last CLAWBRIDGE_AUTH counts, and only its letters and commas
+	// are printed.
+	body := "POSTGRES_PASSWORD=value-sentinel\nCLAWBRIDGE_DOMAIN=\nCLAWBRIDGE_AUDIENCE=a\nCLAWBRIDGE_AUDIENCE=b\n# CLAWBRIDGE_BOOTSTRAP_OWNER=x\nCOMPOSE_PROJECT_NAME=my-stack\nCLAWBRIDGE_AUTH=google\nCLAWBRIDGE_AUTH=Device;sentinel=1\n"
 	if err := os.WriteFile(env, []byte(body), 0600); err != nil {
 		t.Fatal(err)
 	}
@@ -90,13 +92,13 @@ echo "service db running Up 2 hours (healthy)"
 		return parseFacts(out)
 	}
 	f := run(env)
-	want := map[string]int{"POSTGRES_PASSWORD": 1, "CLAWBRIDGE_DOMAIN": 0, "CLAWBRIDGE_AUDIENCE": 2, "CLAWBRIDGE_BOOTSTRAP_OWNER": 0, "CLAWBRIDGE_LINEAR_APP_TOKEN_KEY": 0}
+	want := map[string]int{"POSTGRES_PASSWORD": 1, "CLAWBRIDGE_DOMAIN": 0, "CLAWBRIDGE_AUDIENCE": 2, "CLAWBRIDGE_BOOTSTRAP_OWNER": 0, "CLAWBRIDGE_LINEAR_APP_TOKEN_KEY": 0, "CLAWBRIDGE_AUTH": 2}
 	for k, n := range want {
 		if got, ok := f.counts[k]; !ok || got != n {
 			t.Fatalf("%s: %d (%v), want %d", k, got, ok, n)
 		}
 	}
-	if len(f.counts) != len(requiredSettings)+len(googleSettings)+len(appSettings) || f.envMissing {
+	if len(f.counts) != len(requiredSettings)+len(googleSettings)+len(appSettings)+1 || f.envMissing || f.auth != "invalid" {
 		t.Fatalf("facts: %+v", f)
 	}
 	// Only the service containers count, and the crashed api fails the check
@@ -114,6 +116,13 @@ echo "service db running Up 2 hours (healthy)"
 	}
 	if r := checkServices(run(ok)); r.Status != "pass" {
 		t.Fatalf("%+v", r)
+	}
+	device := filepath.Join(dir, "device.env")
+	if err := os.WriteFile(device, []byte("CLAWBRIDGE_AUTH=device,google \r\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if got := run(device).auth; got != "device,google" {
+		t.Fatalf("auth %q", got)
 	}
 	if f.mount != "/dev/sdb" {
 		t.Fatalf("mount %q", f.mount)
@@ -152,16 +161,32 @@ func TestSettingsAndServices(t *testing.T) {
 		"twice":          {func(f *remoteFacts) { f.counts["CLAWBRIDGE_AUDIENCE"] = 2 }, "setting_duplicate"},
 		"google partial": {func(f *remoteFacts) { f.counts["CLAWBRIDGE_OAUTH_CLIENT_SECRET"] = 0 }, "setting_missing"},
 		"device only": {func(f *remoteFacts) {
+			f.auth = "device"
 			for _, k := range googleSettings {
 				f.counts[k] = 0
 			}
 		}, ""},
-		"api absent":    {func(f *remoteFacts) { delete(f.services, "api") }, "service_down"},
-		"caddy exited":  {func(f *remoteFacts) { f.services["caddy"] = []string{"exited Exited (1) 2 minutes ago"} }, "service_down"},
-		"db no health":  {func(f *remoteFacts) { f.services["db"] = []string{"running Up 1 hour"} }, "service_down"},
-		"db starting":   {func(f *remoteFacts) { f.services["db"] = []string{"running Up 3 seconds (health: starting)"} }, "service_down"},
-		"api starting":  {func(f *remoteFacts) { f.services["api"] = []string{"running Up 2 seconds (health: starting)"} }, "service_down"},
-		"api unhealthy": {func(f *remoteFacts) { f.services["api"] = []string{"running Up 1 hour (unhealthy)"} }, "service_down"},
+		// R67-L1: no Google settings, but Google sign-in still on.
+		"no google, auth unset": {func(f *remoteFacts) {
+			for _, k := range googleSettings {
+				f.counts[k] = 0
+			}
+		}, "setting_missing"},
+		"no google, auth both": {func(f *remoteFacts) {
+			f.auth = "google,device"
+			for _, k := range googleSettings {
+				f.counts[k] = 0
+			}
+		}, "setting_missing"},
+		"device with google set": {func(f *remoteFacts) { f.auth = "device" }, ""},
+		"auth invalid":           {func(f *remoteFacts) { f.auth = "invalid" }, "setting_invalid"},
+		"auth twice":             {func(f *remoteFacts) { f.counts["CLAWBRIDGE_AUTH"] = 2 }, "setting_duplicate"},
+		"api absent":             {func(f *remoteFacts) { delete(f.services, "api") }, "service_down"},
+		"caddy exited":           {func(f *remoteFacts) { f.services["caddy"] = []string{"exited Exited (1) 2 minutes ago"} }, "service_down"},
+		"db no health":           {func(f *remoteFacts) { f.services["db"] = []string{"running Up 1 hour"} }, "service_down"},
+		"db starting":            {func(f *remoteFacts) { f.services["db"] = []string{"running Up 3 seconds (health: starting)"} }, "service_down"},
+		"api starting":           {func(f *remoteFacts) { f.services["api"] = []string{"running Up 2 seconds (health: starting)"} }, "service_down"},
+		"api unhealthy":          {func(f *remoteFacts) { f.services["api"] = []string{"running Up 1 hour (unhealthy)"} }, "service_down"},
 		"a crashed replica": {func(f *remoteFacts) {
 			f.services["api"] = append([]string{"exited Exited (2) 1 minute ago"}, f.services["api"]...)
 		}, "service_down"},
@@ -202,6 +227,7 @@ func stubRemote(t *testing.T, out string, err error) *[]remoteRun {
 
 func factsOutput(f remoteFacts) string {
 	var b strings.Builder
+	b.WriteString("auth " + f.auth + "\n")
 	for k, n := range f.counts {
 		b.WriteString("count " + k + " " + string(rune('0'+n)) + "\n")
 	}
@@ -319,4 +345,35 @@ func TestCloudCheckRunsTheScriptOnce(t *testing.T) {
 		t.Fatalf("%d remote runs", len(*runs))
 	}
 	_ = bus.Request{}
+}
+
+// The server check compares the env file's sign-in methods with the running
+// server's /v1/config: an env file changed without recreating the api does
+// not take effect.
+func TestCloudCheckAuthMode(t *testing.T) {
+	isolated(t)
+	withVersion(t, "1.2.3")
+	health := `{"status":"ok","version":"1.2.3"}`
+	device := allSet()
+	device.auth = "device"
+	both := allSet()
+	both.auth = "google,device"
+	for name, c := range map[string]struct {
+		facts  remoteFacts
+		config string
+		reason string
+	}{
+		"unset is google":           {allSet(), `{"auth_methods":["google"]}`, ""},
+		"env device, server google": {device, `{"auth_methods":["google"]}`, "auth_mismatch"},
+		"env google, server both":   {allSet(), `{"auth_methods":["google","device"]}`, "auth_mismatch"},
+		"order does not matter":     {both, `{"auth_methods":["device","google"]}`, ""},
+		"older server":              {device, `{"browser_client_id":"x"}`, ""},
+		"config unavailable":        {allSet(), "", "config_unreadable"},
+	} {
+		stubRemote(t, factsOutput(c.facts), nil)
+		got, _ := cloudCheck(t, "server", "--server", configServer(t, 200, health, c.config), "--ssh", "admin@bridge.example.test")
+		if len(got) != 1 || got[0].Reason != c.reason || (c.reason == "") != (got[0].Status == "pass") {
+			t.Fatalf("%s: %+v", name, got)
+		}
+	}
 }

@@ -29,7 +29,21 @@ func withVersion(t *testing.T, v string) {
 
 func healthServer(t *testing.T, status int, body string) string {
 	t.Helper()
+	return configServer(t, status, body, `{"auth_methods":["google"]}`)
+}
+
+// configServer is healthServer that also answers /v1/config with config.
+func configServer(t *testing.T, status int, body, config string) string {
+	t.Helper()
 	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/v1/config" && r.Method == http.MethodGet {
+			if config == "" {
+				http.Error(w, "unavailable", http.StatusServiceUnavailable)
+				return
+			}
+			_, _ = io.WriteString(w, config)
+			return
+		}
 		// A redirect leads somewhere healthy: the check must not follow it.
 		if r.URL.Path == "/elsewhere" {
 			_, _ = io.WriteString(w, `{"status":"ok","version":"1.2.3"}`)

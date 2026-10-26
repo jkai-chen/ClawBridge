@@ -287,3 +287,49 @@ func TestRemoteFailureFollowsTheRoute(t *testing.T) {
 		t.Fatalf("%+v", r)
 	}
 }
+
+// A missing or bad AWS flag is the flag's own error, before anything runs.
+func TestCloudCheckAWSFlagsFailBeforeAnythingRuns(t *testing.T) {
+	a := &awsStub{out: map[string]string{}}
+	stubAWS(t, a, nil, nil)
+	for flagErr, args := range map[string][]string{
+		"--region must":  {"--instance", ec2ID},
+		"--region must ": {"--instance", ec2ID, "--region", "useast1"},
+		"--profile must": {"--instance", ec2ID, "--region", "us-east-1", "--profile", "a profile"},
+		"--account must": {"--instance", ec2ID, "--region", "us-east-1", "--account", "12345"},
+	} {
+		err := Run(context.Background(), append([]string{"cloud", "check", "server", "--server", "https://bridge.example.test"}, args...), &strings.Builder{}, &strings.Builder{})
+		if err == nil || !strings.Contains(err.Error(), strings.TrimSpace(flagErr)) || len(a.calls) != 0 {
+			t.Fatalf("%v: %v, %d aws calls", args, err, len(a.calls))
+		}
+	}
+}
+
+// The account is checked once per transport, not per command.
+func TestSSMChecksTheAccountOnce(t *testing.T) {
+	a := healthyAWS()
+	stubAWS(t, a, nil, nil)
+	tr, err := cloudTarget{instance: ec2ID, region: "us-east-1", account: "123456789012"}.transport()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 3; i++ {
+		if _, err := tr.run(context.Background(), factsScript(), nil); err != nil {
+			t.Fatal(err)
+		}
+	}
+	sts := 0
+	for _, argv := range a.calls {
+		if argv[1] == "sts" {
+			sts++
+		}
+	}
+	if sts != 1 {
+		t.Fatalf("%d account checks", sts)
+	}
+	a.out["sts get-caller-identity"] = `{"Account":"999999999999"}`
+	other, _ := cloudTarget{instance: ec2ID, region: "us-east-1", account: "123456789012"}.transport()
+	if _, err := other.run(context.Background(), factsScript(), nil); !errors.Is(err, errCloudAuth) {
+		t.Fatalf("another account: %v", err)
+	}
+}

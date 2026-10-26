@@ -74,6 +74,38 @@ npm test               # node:test against a fake ClawBridge and a fake provider
 - **Node:** Node 22.19 or later runs the TypeScript directly, with no build step.
 - **Tests:** they never call a real provider. They run in CI with no keys present.
 
+## The container
+
+`Dockerfile` builds the image from `node:22.20.0-slim` (pinned by digest).
+- **Contents:** production dependencies (`npm ci --omit=dev --ignore-scripts`), the agent's source and a generated
+  `THIRD-PARTY-NOTICES`.
+- **Removed:** npm, npx and corepack.
+- **User:** it runs as the non-root `node` user.
+
+Run it only with these flags. `clawbridge-agentd` sets them; until it exists, so does whoever runs the agent by hand:
+
+```sh
+printf '%s\n' "$AGENT_CREDENTIAL" | docker run -i --rm --name clawbridge-agent-OWNER_REF \
+  --read-only --tmpfs /tmp:rw,noexec,nosuid,size=8m \
+  --cap-drop ALL --security-opt no-new-privileges --pids-limit 64 \
+  --memory 160m --memory-swap 160m --user node \
+  -e CLAWBRIDGE_SERVER_URL=https://clawbridge.example.com \
+  clawbridge-dispatcher-agent
+```
+
+- **Environment:** exactly one variable, the server URL. The credential goes on stdin, never in env or argv. The agent
+  refuses to start if a provider-key, proxy or Node TLS/preload variable is set.
+- **Memory:** 160 MiB with no swap. The heap is capped at 96 MiB by the image's entry point.
+- **Network:** no inbound port. The per-owner network and the egress proxy, which allows only the ClawBridge host and
+  that owner's provider host, come with `clawbridge-agentd`.
+
+`scripts/container-test.sh` (run in CI) builds the image and runs 1,000 cases through it under exactly these flags. The
+fakes it runs against share only a loopback network with it. It checks:
+- every outcome, against the schema;
+- no OOM, reporting the cgroup's memory peak (94 MiB on the last run);
+- no connection or DNS lookup beyond loopback, with a negative control;
+- the hardening itself: non-root, read-only root, no capabilities, no npm.
+
 ## Moving the pin
 
 The two pi packages are pinned to the fork's release tarballs by URL and `integrity` in `package-lock.json`. An
@@ -87,11 +119,11 @@ Every other package must be at least 14 days old (`.npmrc` and `check:lock`).
 
 ## Status
 
-Done in this release:
-- the agent, its tests and the contract.
+Done:
+- the agent, its tests and the contract;
+- the hardened container image, with its memory, egress and hardening test.
 
 Next:
 - the server endpoints;
-- the hardened container (memory and egress CI jobs);
-- `clawbridge-agentd`, the launcher;
+- `clawbridge-agentd`, the launcher, with the per-owner network and egress proxy;
 - guided model setup in the CLI and TUI.

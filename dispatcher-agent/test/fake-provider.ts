@@ -18,7 +18,8 @@ export class FakeProvider {
 	private server: Server | undefined;
 	url = "";
 
-	async start(): Promise<this> {
+	/** Listens on 127.0.0.1, on `port` or any free one. */
+	async start(port = 0): Promise<this> {
 		this.server = createServer((req, res) => {
 			let raw = "";
 			req.on("data", (d) => (raw += d));
@@ -39,7 +40,7 @@ export class FakeProvider {
 				res.end();
 			});
 		});
-		await new Promise<void>((r) => this.server?.listen(0, "127.0.0.1", r));
+		await new Promise<void>((r) => this.server?.listen(port, "127.0.0.1", r));
 		this.url = `http://127.0.0.1:${(this.server.address() as AddressInfo).port}`;
 		return this;
 	}

@@ -460,6 +460,8 @@ var operationArgs = map[string]string{
 	"owner_transfer_get":          "",
 	"dispatcher_domains_set":      "instance expected_revision dispatcher_domains",
 	"dispatcher_domain_edit":      "instance expected_revision domain action target_session",
+	"dispatcher_enable":           "instance expected_revision mode confirm",
+	"dispatcher_disable":          "instance expected_revision",
 	"doc_watch_due":               "instance lease_token generation",
 	"doc_watch_report":            "instance lease_token generation polled_at documents complete error",
 	"doc_verify_report":           "instance lease_token generation document_id content_sha256 error",
@@ -579,7 +581,7 @@ func validateArgs(op string, a map[string]any) error {
 			default:
 				return errors.New("ids must be an array of strings")
 			}
-		case "unread_only", "resume", "allow_overlap", "allow_previous", "repair":
+		case "unread_only", "resume", "allow_overlap", "allow_previous", "repair", "confirm":
 			if _, ok := v.(bool); !ok {
 				return fmt.Errorf("%s must be boolean", k)
 			}
@@ -1219,6 +1221,12 @@ func (s *Store) execute(ctx context.Context, tx *transaction, r Request) (any, e
 			return nil, invalid("instance requires session")
 		}
 		return s.statusPolicyOp(ctx, tx, w, p, projectRole, nil, r)
+	}
+	if dispatcherSwitchOperation(r.Operation) {
+		if actor != nil || str(a, "instance") != "" {
+			return nil, errSwitchFromSession
+		}
+		return s.dispatcherSwitch(ctx, tx, w, p, projectRole, r)
 	}
 	if actor == nil && dispatcherOperation(r.Operation) {
 		if str(a, "instance") != "" {

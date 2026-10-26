@@ -502,10 +502,20 @@ flags:`)
 	case "dispatcher":
 		// The dispatcher's policy: any member reads it; the owner sets the
 		// domains; a domain's owner edits its trust list and coordinator.
-		usage := errors.New("usage: dispatcher show; dispatcher domains set --file FILE --expected-revision N; dispatcher domain trust|untrust|coordinator DOMAIN SESSION --expected-revision N")
+		usage := errors.New("usage: dispatcher show; dispatcher enable [--engine rules|model] --expected-revision N [--confirm]; dispatcher disable --expected-revision N; dispatcher domains set --file FILE --expected-revision N; dispatcher domain trust|untrust|coordinator DOMAIN SESSION --expected-revision N")
 		switch {
 		case len(rest) >= 1 && rest[0] == "show":
 			op, rest = "dispatcher_get", rest[1:]
+		case len(rest) >= 1 && rest[0] == "enable":
+			// The project owner turns it on, in their own terminal: a preview
+			// first, then --confirm.
+			op, rest = "dispatcher_enable", rest[1:]
+			stringArg("engine", "rules (default) or model; model needs your model setup to have passed its test")
+			f.Bool("confirm", false, "turn it on; without it, show what would change")
+			f.Int64("expected-revision", -1, "the dispatcher policy revision you last read (0 for none)")
+		case len(rest) >= 1 && rest[0] == "disable":
+			op, rest = "dispatcher_disable", rest[1:]
+			f.Int64("expected-revision", -1, "the dispatcher policy revision you last read")
 		case len(rest) >= 2 && rest[0] == "domains" && rest[1] == "set":
 			op, rest = "dispatcher_domains_set", rest[2:]
 			f.String("file", "", "the domains document, JSON: {\"domains\": [...]}")
@@ -753,6 +763,10 @@ flags:`)
 		}
 		if op == "dispatcher_domain_edit" {
 			a["domain"], a["target_session"] = pos[0], pos[1]
+		}
+		if v, ok := a["engine"]; ok {
+			a["mode"] = v
+			delete(a, "engine")
 		}
 	case "assignment":
 		if len(pos) > 0 {

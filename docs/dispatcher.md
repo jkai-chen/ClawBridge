@@ -2,10 +2,10 @@
 
 The dispatcher is an optional coordinator for projects on a hosted ClawBridge server. It confirms claims from
 sessions you trust, routes notices to the right person, and releases claims abandoned for a long time. Everything else
-it escalates to a person. It is built in steps, and **it is off**: nothing it does runs until a later release adds
-`clawbridge dispatcher enable --confirm`.
+it escalates to a person. It is built in steps. **It is off** until the project owner turns it on (see
+[Turning it on and off](#turning-it-on-and-off)).
 
-This release adds its policy: the **domains** you define, and who may edit them.
+Its policy is the **domains** you define, and who may edit them.
 
 ## Domains
 
@@ -55,6 +55,38 @@ clawbridge dispatcher domain coordinator DOMAIN SESSION --expected-revision N
 - **Domain owners:** a lead who owns a domain may trust their own sessions in it, which lets the dispatcher confirm
   their claims there once it is enabled. That is intended, and audited. A lead cannot create domains or change what a
   domain matches.
+
+## Turning it on and off
+
+```sh
+clawbridge dispatcher enable --expected-revision N                 # preview: nothing changes
+clawbridge dispatcher enable --expected-revision N --confirm       # project owner
+clawbridge dispatcher enable --engine model --expected-revision N  # model mode, after your model setup passed its test
+clawbridge dispatcher disable --expected-revision N
+```
+
+- **Who:** only the project owner, in their own terminal. A request from a session is refused, so no agent can turn it
+  on or off. Both commands take the revision from `show`, and both are recorded in the project's history with the new
+  revision.
+- **Linking first:** the task board must be linked before enable.
+- **The preview** shows:
+  - the coordinator the dispatcher replaces;
+  - the two reserved sessions it creates;
+  - its domains;
+  - which domains could confirm a claim on their own: none until you trust a session in one.
+
+  With `--engine model` it adds the provider, the model and your caps. It also says that issue text goes to the model
+  provider, and that your dispatcher agent must be running.
+- **`--confirm`, in one step:**
+  - The policy turns on, in mode `rules` unless you pass `--engine model`.
+  - The reserved sessions are created, or come back with the same IDs.
+  - The dispatcher becomes the project's coordinator.
+  - With no domains set, an **All work** domain (`all-work`) is created. It matches every bound Linear project, you
+    own it, its coordinator is your most recently seen session, and it trusts no session. So nothing is confirmed on its
+    own until you trust one.
+- **Disable** needs no preview. It turns the dispatcher off, retires its two sessions (they are never deleted), and
+  makes your most recently seen session in the project the coordinator again. Domains and trust are kept for the next
+  enable.
 
 ## The dispatcher's sessions
 

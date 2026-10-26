@@ -419,5 +419,11 @@ non-regular entries) and corrupt (why the marker is not trusted). Install and
 uninstall add changed and refused, and install adds backup when `--force` moved
 a folder aside; any refused target also makes the command exit nonzero.
 
+`--playbook gcp` acts on the Google Cloud provisioning playbook
+(`clawbridge-provision-gcp`) instead of the main skill. It installs beside the
+main skill, in the same agent folders, and is managed on its own. A coding agent
+loads it to provision a server in the user's Google Cloud project, step by step,
+under its hard rules, with `clawbridge cloud check` deciding each step.
+
 Historical per-increment Go adapter contracts, reviewed hashes and evidence are
 preserved under [the archive](../archive/README.md).

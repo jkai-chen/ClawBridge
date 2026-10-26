@@ -3,7 +3,9 @@ package skill
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -49,26 +51,80 @@ func leftovers(t *testing.T, parent string) []string {
 }
 
 func TestEmbeddedSkillMatchesTheRepositoryFolder(t *testing.T) {
-	files, _, err := embedded()
-	if err != nil {
-		t.Fatal(err)
-	}
-	root := filepath.Join("..", "..", "skills", Name)
-	disk, err := tree(root)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(disk) != len(files) {
-		t.Fatalf("embedded %d files, folder has %v", len(files), disk)
-	}
-	for _, p := range disk {
-		b, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(p)))
-		if err != nil || !bytes.Equal(b, files[p]) {
-			t.Fatalf("%s differs from the embedded copy", p)
+	for name := range bundled {
+		files, _, err := embedded(name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		root := filepath.Join("..", "..", "skills", name)
+		disk, err := tree(root)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(disk) != len(files) {
+			t.Fatalf("%s: embedded %d files, folder has %v", name, len(files), disk)
+		}
+		for _, p := range disk {
+			b, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(p)))
+			if err != nil || !bytes.Equal(b, files[p]) {
+				t.Fatalf("%s/%s differs from the embedded copy", name, p)
+			}
+		}
+		// The agent finds a skill by its frontmatter name, which must be its
+		// directory name.
+		if !bytes.HasPrefix(files["SKILL.md"], []byte("---\nname: "+name+"\n")) {
+			t.Fatalf("%s: SKILL.md does not start with its name", name)
 		}
 	}
-	if _, ok := files["SKILL.md"]; !ok {
-		t.Fatal("SKILL.md not embedded at the skill root")
+	// Every playbook is bundled.
+	for _, name := range Playbooks {
+		if _, ok := bundled[name]; !ok {
+			t.Fatalf("playbook %s is not bundled", name)
+		}
+	}
+}
+
+// A playbook installs beside the main skill, under its own name, and is
+// managed on its own: its status, upgrade and uninstall leave the main
+// skill alone.
+func TestPlaybookInstallsBesideTheSkill(t *testing.T) {
+	parent := t.TempDir()
+	var out, errs bytes.Buffer
+	if err := RunWithIO([]string{"install", "--dir", parent}, &out, &errs); err != nil {
+		t.Fatal(err, errs.String())
+	}
+	if err := RunWithIO([]string{"install", "--playbook", "gcp", "--dir", parent}, &out, &errs); err != nil {
+		t.Fatal(err, errs.String())
+	}
+	for _, name := range []string{Name, "clawbridge-provision-gcp"} {
+		if _, err := os.Stat(filepath.Join(parent, name, "SKILL.md")); err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+	}
+	gcp, err := TargetsFor("clawbridge-provision-gcp", "", parent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	states, err := Status(gcp)
+	if err != nil || len(states) != 1 || !states[0].Current || states[0].Corrupt != "" {
+		t.Fatalf("%+v %v", states, err)
+	}
+	out.Reset()
+	if err := RunWithIO([]string{"uninstall", "--playbook", "gcp", "--dir", parent}, &out, &errs); err != nil {
+		t.Fatal(err, errs.String())
+	}
+	if _, err := os.Stat(filepath.Join(parent, "clawbridge-provision-gcp")); !errors.Is(err, fs.ErrNotExist) {
+		t.Fatal("the playbook was not removed")
+	}
+	main, _ := Targets("", parent)
+	if states, err := Status(main); err != nil || !states[0].Current {
+		t.Fatalf("the main skill changed: %+v %v", states, err)
+	}
+	if err := RunWithIO([]string{"install", "--playbook", "aws", "--dir", parent}, &out, &errs); err == nil || !strings.Contains(err.Error(), "--playbook must be") {
+		t.Fatal(err)
+	}
+	if _, err := TargetsFor("unknown", "", parent); err == nil {
+		t.Fatal("an unknown skill resolved")
 	}
 }
 
@@ -84,7 +140,7 @@ func TestInstallIsIdempotentAndUpgradesAnOlderVersion(t *testing.T) {
 	if !r.Changed || !r.Current || r.InstalledVersion != "v1.0.0" {
 		t.Fatal("first install", r)
 	}
-	files, want, _ := embedded()
+	files, want, _ := embedded(Name)
 	for p, b := range files {
 		got, err := os.ReadFile(filepath.Join(parent, Name, filepath.FromSlash(p)))
 		if err != nil || !bytes.Equal(got, b) {

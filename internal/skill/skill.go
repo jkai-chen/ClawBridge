@@ -24,6 +24,14 @@ import (
 // Name is the skill's directory name inside an agent's skills directory.
 const Name = "clawbridge"
 
+// Playbooks are the provisioning playbooks (live/ONBOARDING-DESIGN.md §3),
+// each its own skill, installed with --playbook and versioned with the
+// binary like the main skill.
+var Playbooks = map[string]string{"gcp": "clawbridge-provision-gcp"}
+
+// bundled are the skills this binary carries, by directory name.
+var bundled = map[string]fs.FS{Name: skills.ClawBridge, "clawbridge-provision-gcp": skills.ProvisionGCP}
+
 // Marker records what an installation wrote. It lives inside the skill
 // directory, so an uninstall can tell our files from the user's.
 const Marker = ".clawbridge-skill.json"
@@ -99,7 +107,13 @@ func agentHome(agent string) (string, error) {
 // directory chosen by the user and the skill goes in dir/clawbridge. Agent
 // "" picks every supported agent whose configuration home exists; "all"
 // picks every supported agent.
-func Targets(agent, dir string) ([]Target, error) {
+func Targets(agent, dir string) ([]Target, error) { return TargetsFor(Name, agent, dir) }
+
+// TargetsFor resolves the directories for the named bundled skill.
+func TargetsFor(name, agent, dir string) ([]Target, error) {
+	if _, ok := bundled[name]; !ok {
+		return nil, fmt.Errorf("no bundled skill %q", name)
+	}
 	if dir != "" {
 		if agent == "" || agent == "all" {
 			agent = "custom"
@@ -108,15 +122,15 @@ func Targets(agent, dir string) ([]Target, error) {
 		if err != nil {
 			return nil, err
 		}
-		return []Target{{Agent: agent, Dir: filepath.Join(abs, Name)}}, nil
+		return []Target{{Agent: agent, Dir: filepath.Join(abs, name)}}, nil
 	}
 	names := []string{agent}
 	if agent == "" || agent == "all" {
 		names = Agents
 	}
 	out := []Target{}
-	for _, name := range names {
-		config, err := agentHome(name)
+	for _, agentName := range names {
+		config, err := agentHome(agentName)
 		if err != nil {
 			return nil, err
 		}
@@ -125,7 +139,7 @@ func Targets(agent, dir string) ([]Target, error) {
 				continue
 			}
 		}
-		out = append(out, Target{Agent: name, Dir: filepath.Join(config, "skills", Name)})
+		out = append(out, Target{Agent: agentName, Dir: filepath.Join(config, "skills", name)})
 	}
 	if len(out) == 0 {
 		// Naming an agent here would create its folder for an agent that is not
@@ -135,15 +149,19 @@ func Targets(agent, dir string) ([]Target, error) {
 	return out, nil
 }
 
-// embedded returns the skill's files by slash path, and their digest.
-func embedded() (map[string][]byte, string, error) {
+// embedded returns the named skill's files by slash path, and their digest.
+func embedded(name string) (map[string][]byte, string, error) {
+	fsys, ok := bundled[name]
+	if !ok {
+		return nil, "", fmt.Errorf("no bundled skill %q", name)
+	}
 	files := map[string][]byte{}
-	err := fs.WalkDir(skills.ClawBridge, Name, func(p string, d fs.DirEntry, err error) error {
+	err := fs.WalkDir(fsys, name, func(p string, d fs.DirEntry, err error) error {
 		if err != nil || d.IsDir() {
 			return err
 		}
-		b, err := skills.ClawBridge.ReadFile(p)
-		files[strings.TrimPrefix(p, Name+"/")] = b
+		b, err := fs.ReadFile(fsys, p)
+		files[strings.TrimPrefix(p, name+"/")] = b
 		return err
 	})
 	if err != nil {
@@ -212,7 +230,7 @@ func validMarkerPath(p string) bool {
 
 // inspect reads a target without changing it and without following links.
 func inspect(t Target) (State, *marker, error) {
-	_, want, err := embedded()
+	_, want, err := embedded(filepath.Base(t.Dir))
 	if err != nil {
 		return State{}, nil, err
 	}
@@ -329,12 +347,12 @@ func (s State) foreign() bool {
 // did not install is refused. With force, a folder holding changed files or
 // anything else is moved to a backup, never deleted.
 func Install(targets []Target, force bool) ([]Result, error) {
-	files, want, err := embedded()
-	if err != nil {
-		return nil, err
-	}
 	out := []Result{}
 	for _, t := range targets {
+		files, want, err := embedded(filepath.Base(t.Dir))
+		if err != nil {
+			return out, err
+		}
 		s, _, err := inspect(t)
 		if err != nil {
 			return out, err
@@ -364,7 +382,7 @@ func Install(targets []Target, force bool) ([]Result, error) {
 // backupPath names a backup beside the agent's skills directory, where the
 // agent does not load it as a second skill.
 func backupPath(dir string) (string, error) {
-	p := filepath.Join(filepath.Dir(filepath.Dir(dir)), Name+"-skill-backup-"+time.Now().UTC().Format("20060102T150405.000000000Z"))
+	p := filepath.Join(filepath.Dir(filepath.Dir(dir)), filepath.Base(dir)+"-skill-backup-"+time.Now().UTC().Format("20060102T150405.000000000Z"))
 	if _, err := os.Lstat(p); !errors.Is(err, fs.ErrNotExist) {
 		return "", fmt.Errorf("backup path %s already exists", p)
 	}
@@ -429,7 +447,7 @@ func replace(dir string, files map[string][]byte, want string, keep bool) (strin
 	if err != nil {
 		return "", err
 	}
-	retired := filepath.Join(old, Name)
+	retired := filepath.Join(old, filepath.Base(dir))
 	if err = os.Rename(dir, retired); err != nil {
 		os.Remove(old)
 		return "", err

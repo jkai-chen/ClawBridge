@@ -77,3 +77,12 @@ func TestRunnerMCPEntryIsMCPInstalls(t *testing.T) {
 		t.Fatal(entry, want)
 	}
 }
+
+// The launch's runner has every hook it needs: a missing one refuses the
+// launch after the session is registered (found in the live re-spike).
+func TestNewRunnerIsComplete(t *testing.T) {
+	r := newRunner(t.TempDir())
+	if r.Git == nil || r.Terminal == nil || r.ClaudeVersion == nil {
+		t.Fatal("the runner lacks a hook", r)
+	}
+}

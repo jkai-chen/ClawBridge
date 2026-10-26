@@ -50,9 +50,24 @@ func gitIn(dir string, args ...string) (string, error) {
 	return text, nil
 }
 
-// orcaTerminal opens a visible Orca terminal tab in dir.
-var orcaTerminal = func(dir, title, command string) error {
-	out, err := exec.Command("orca", "terminal", "create", "--worktree", "path:"+dir, "--title", title, "--command", command, "--json").CombinedOutput()
+// newRunner is the runner with this machine's git, Orca and claude.
+func newRunner(state string) *runner.Runner {
+	return &runner.Runner{StateDir: state, Git: gitIn, Terminal: orcaTerminal, ClaudeVersion: claudeVersion}
+}
+
+// claudeVersion is the installed claude's version line.
+var claudeVersion = func() (string, error) {
+	out, err := exec.Command("claude", "--version").Output()
+	if err != nil {
+		return "", errors.New("claude is not installed or did not report its version")
+	}
+	return strings.TrimSpace(string(out)), nil
+}
+
+// orcaTerminal opens a visible Orca terminal tab in the owner's checkout,
+// which Orca manages; the command changes into the clone itself.
+var orcaTerminal = func(owner, title, command string) error {
+	out, err := exec.Command("orca", "terminal", "create", "--worktree", "path:"+owner, "--title", title, "--command", command, "--json").CombinedOutput()
 	if err != nil {
 		text := strings.TrimSpace(string(out))
 		if len(text) > 300 {
@@ -72,7 +87,7 @@ func runRunner(ctx context.Context, flags Config, args []string, stdout, stderr 
 	if err != nil {
 		return err
 	}
-	r := &runner.Runner{StateDir: state, Git: gitIn, Terminal: orcaTerminal}
+	r := newRunner(state)
 	emit := func(v any) error { return json.NewEncoder(stdout).Encode(bus.Result{Source: "runner", Data: v}) }
 	switch args[0] {
 	case "gc":

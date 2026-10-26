@@ -114,6 +114,17 @@ type credentialError struct{ error }
 func (e *credentialError) Unwrap() error { return e.error }
 func (e *credentialError) Code() string  { return "unauthenticated" }
 
+// CredentialFailure marks err as the route's own credential failing
+// before anything was sent, as a token source's error is.
+func CredentialFailure(err error) error { return &credentialError{err} }
+
+// IsCredentialFailure reports whether err is this route's own credential
+// failing before anything was sent.
+func IsCredentialFailure(err error) bool {
+	var c *credentialError
+	return errors.As(err, &c)
+}
+
 type metadataError struct{ error }
 
 func (e *metadataError) Code() string { return "invalid" }
@@ -590,8 +601,13 @@ func (c *Client) send(ctx context.Context, client *http.Client, method, target s
 			return 0, nil, errors.New("invalid cloud request URL")
 		}
 		// Opaque is sent verbatim as the request target, so nothing
-		// re-encodes what was signed.
+		// re-encodes what was signed. A bearer route keeps its server
+		// URL's path in front, as before (R85-L1); a device route has
+		// none, since the signature covers the target alone.
 		path, query, _ := strings.Cut(target, "?")
+		if c.signer == nil {
+			path = strings.TrimSuffix(req.URL.EscapedPath(), "/") + path
+		}
 		req.URL.Opaque, req.URL.RawQuery = path, query
 		if c.signer != nil {
 			header, e := c.signer.Authorization(method, target, body)
@@ -649,7 +665,7 @@ func (c *Client) Signer() *devicesign.Signer { return c.signer }
 
 func (c *Client) binding(r bus.Request) mirror.Binding {
 	i, _ := r.Args["instance"].(string)
-	return mirror.Binding{Server: c.config.URL, Audience: c.config.Audience, Principal: c.config.Principal, Workspace: r.Workspace, Project: r.Project, Session: r.Session, Instance: i}
+	return mirror.Binding{Server: c.config.URL, Audience: MirrorAudience(c.config.Audience, c.config.CredentialSource, c.config.DeviceID), Principal: c.config.Principal, Workspace: r.Workspace, Project: r.Project, Session: r.Session, Instance: i}
 }
 func (c *Client) Execute(ctx context.Context, r bus.Request) (bus.Result, error) {
 	result, unavailable, err := c.call(ctx, r)
@@ -692,7 +708,7 @@ func (c *Client) ResolveProject(ctx context.Context, w, p, gitRemote string) (st
 	result, unavailable, err := c.call(ctx, bus.Request{Operation: "resolve_project", Workspace: w, Project: p, Args: args})
 	if err != nil {
 		if unavailable && c.config.CachePath != "" && c.config.Principal != "" {
-			return mirror.Resolve(ctx, c.config.CachePath, mirror.Binding{Server: c.config.URL, Audience: c.config.Audience, Principal: c.config.Principal}, selection)
+			return mirror.Resolve(ctx, c.config.CachePath, mirror.Binding{Server: c.config.URL, Audience: MirrorAudience(c.config.Audience, c.config.CredentialSource, c.config.DeviceID), Principal: c.config.Principal}, selection)
 		}
 		return "", "", err
 	}
@@ -768,4 +784,15 @@ func (c *Client) Sync(ctx context.Context, w, p, session, instance string) (bus.
 		return bus.Result{}, fmt.Errorf("snapshot was not published: %w", err)
 	}
 	return bus.Result{Source: "server", Data: map[string]any{"workspace_id": wid, "project_id": pid, "session": session, "principal": c.config.Principal, "snapshot_at": updated, "cached_messages": len(data["messages"].([]any)), "cache_updated": true}}, nil
+}
+
+// MirrorAudience is the audience part of a route's mirror binding. A Google
+// route's is its token audience; a device route has none, so its key is
+// the device (R85-M2): a snapshot synced under one device key is never
+// read under another.
+func MirrorAudience(audience, credentialSource, deviceID string) string {
+	if credentialSource == CredentialSourceDevice && deviceID != "" {
+		return "device:" + deviceID
+	}
+	return audience
 }

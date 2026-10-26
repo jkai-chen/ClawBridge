@@ -446,3 +446,21 @@ func TestPlainTokenSourceFailureCannotReadMatchingMirror(t *testing.T) {
 		t.Fatalf("cancellation was not preserved: %v", err)
 	}
 }
+
+// R85-L1: a bearer route behind a path prefix keeps it, as before device
+// signing changed how the request target is built.
+func TestBearerRouteKeepsTheServerPath(t *testing.T) {
+	var got string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		got = r.RequestURI
+		_ = json.NewEncoder(w).Encode(bus.Result{Source: "server", Data: map[string]any{}})
+	}))
+	defer server.Close()
+	client, err := NewWithTokenSource(Config{URL: server.URL + "/bus", Audience: "audience", Principal: "alice@example.test"}, TokenSourceFunc(func(context.Context) (string, error) { return "synthetic-token", nil }))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = client.Execute(context.Background(), bus.Request{Operation: "list_projects", Workspace: "w"}); err != nil || got != "/bus/v1/execute" {
+		t.Fatalf("sent %q: %v", got, err)
+	}
+}

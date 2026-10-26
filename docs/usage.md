@@ -92,19 +92,25 @@ clawbridge --server https://SERVICE join --email ada@example.com --code CBJ-4K7P
 clawbridge --project CODEBASE whoami      # identity_provenance: device-key
 ```
 
-Without `--code`, the code is read from stdin, which keeps it out of shell history.
+Without `--code`, the code is read from stdin, which keeps it out of shell history;
+at a terminal it isn't echoed.
 
 - **The key:** `join` makes this device's key, keeps it in the OS key store, and
   writes the profile to sign every request with it. A refused join leaves no key
-  and no profile.
+  and no profile. When the answer is lost, or names another device, the key is
+  kept and the error says where; if the invite then shows used, ask an owner to
+  revoke that device. If the profile can't be written, the error lists its
+  values to set by hand.
 - **No OS key store** (a headless Linux machine, a container): add
   `--key-store file`. The key is then a plain 0600 file under
   `~/.clawbridge/device/`, and anyone who can read it as you can act as you.
 - **One workspace per device:** a device belongs to the workspace that admitted
   it. To join a second workspace, use another profile (`--client-config`).
 - **Already signed in with Google?** `clawbridge device enroll` adds a key to
-  this machine, with no invite. The profile then signs with the key; the Google
-  credential stays until `logout`.
+  this machine, with no invite. It first checks that the server takes device
+  keys at the profile's server URL (its public origin), and makes one request
+  signed with the new key before the profile switches to it. The profile then
+  signs with the key; the Google credential stays until `logout`.
 
 Accounts on a hosted workspace (each command takes `--help`):
 

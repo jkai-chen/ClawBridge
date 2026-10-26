@@ -33,6 +33,8 @@ type joinDevices struct {
 	devices map[string]bus.Device
 	nonces  map[string]bool
 	joinErr error
+	// answerID, when set, is the device the join's answer names.
+	answerID string
 }
 
 func (m *joinDevices) DeviceByID(_ context.Context, id string) (bus.Device, error) {
@@ -64,6 +66,9 @@ func (m *joinDevices) Join(_ context.Context, in bus.JoinRequest) (map[string]an
 	pub, _ := devicekey.ParsePublicKey(in.PublicKey)
 	id := devicekey.ID(pub)
 	m.devices[id] = bus.Device{ID: id, Principal: in.Email, Kind: "device", PublicKey: pub, Live: true}
+	if m.answerID != "" {
+		id = m.answerID
+	}
 	return map[string]any{"device_id": id, "principal": in.Email, "workspace": map[string]any{"id": "w1", "name": "acme"}, "purpose": "user", "grants": map[string]any{"p1": "member"}}, nil
 }
 
@@ -242,10 +247,10 @@ func TestALostJoinAnswerKeepsTheKeyAndSaysWhere(t *testing.T) {
 
 func TestJoinWithAFileKey(t *testing.T) {
 	f := newJoinFixture(t)
-	var out, errOut bytes.Buffer
-	err := runDeviceJoin(context.Background(), Config{Server: f.url}, []string{"--email", "ada@example.com", "--code", "CBJ-4K7P-WQ9D-2MXH-T6RB", "--key-store", "file"}, nil, &out, &errOut)
-	if err != nil || !strings.Contains(errOut.String(), devicesign.FileWarning) || !strings.Contains(out.String(), devicesign.FileWarning) {
-		t.Fatal(err, errOut.String())
+	// Through Run, where --key-store is also a global flag (R85-H1).
+	out, err := run("--server", f.url, "join", "--email", "ada@example.com", "--code", "CBJ-4K7P-WQ9D-2MXH-T6RB", "--key-store", "file")
+	if err != nil || !strings.Contains(out, devicesign.FileWarning) || !strings.Contains(out, `"key_store":"file"`) {
+		t.Fatal(err, out)
 	}
 	home, _ := stateHome()
 	key := filepath.Join(home, "device", f.keys[0]+".key")
@@ -294,12 +299,17 @@ type accountRecorder struct {
 	requests []bus.Request
 	data     map[string]any
 	err      error
+	// failOp fails only that operation.
+	failOp string
 }
 
 func (r *accountRecorder) Execute(_ context.Context, req bus.Request) (bus.Result, error) {
 	r.requests = append(r.requests, req)
 	if r.err != nil {
 		return bus.Result{}, r.err
+	}
+	if req.Operation == r.failOp {
+		return bus.Result{}, &remote.HTTPError{Status: 401, Code: "unauthenticated", Message: "unknown device"}
 	}
 	data := map[string]any{}
 	for k, v := range r.data {
@@ -428,6 +438,7 @@ func TestEnrollSwitchesTheProfileToTheKey(t *testing.T) {
 		return k, id, err
 	}
 	t.Cleanup(func() { newDeviceKey = old })
+	serverOK(t)
 	refused := &accountRecorder{err: &remote.HTTPError{Status: 403, Code: "forbidden", Message: "enrolling a device needs a Google sign-in"}}
 	withAccountRecorder(t, refused)
 	if _, err := run("device", "enroll", "--label", "laptop"); err == nil {
@@ -448,6 +459,10 @@ func TestEnrollSwitchesTheProfileToTheKey(t *testing.T) {
 	a := r.requests[0].Args
 	if r.requests[0].Operation != "device_enroll" || a["label"] != "laptop" || a["key_store"] != "keyring" || !strings.Contains(out, made[1]) {
 		t.Fatal(a, out)
+	}
+	// R85-M1: one signed read with the new key before the profile uses it.
+	if len(r.requests) != 2 || r.requests[1].Operation != "device_list" {
+		t.Fatal("the profile switched without a signed request:", r.requests)
 	}
 	p := profile(t, path)
 	if p["credential_source"] != "device" || p["device_id"] != made[1] || p["key_store"] != "keyring" || p["oauth_client_id"] != "c.apps" {
@@ -533,5 +548,87 @@ func TestDoctorChecksTheDeviceKey(t *testing.T) {
 	_ = devicesign.Delete(devicesign.Location{Store: devicesign.StoreKeyring, Host: u, DeviceID: f.keys[0]})
 	if c := status()["auth.device"]; c.Status != doctor.Fail || !strings.Contains(c.Message, "not in its store") {
 		t.Fatalf("a missing key: %+v", c)
+	}
+}
+
+// serverOK answers enroll's server check as a server taking device keys at
+// the profile's origin.
+func serverOK(t *testing.T) {
+	t.Helper()
+	old := enrollServer
+	enrollServer = func(context.Context, string, *http.Client) (string, error) { return "https://cb.example.test", nil }
+	t.Cleanup(func() { enrollServer = old })
+}
+
+// R85-M1, R85-H1, R85-L2: enroll checks the server before making a key,
+// keeps the Google route when a signed request fails, takes --key-store
+// through Run, and drops a key a failed Google credential never sent.
+func TestEnrollChecksTheServerAndTheKeyFirst(t *testing.T) {
+	path := googleProfile(t)
+	keyring.MockInit()
+	var made []string
+	old := newDeviceKey
+	newDeviceKey = func() (ed25519.PrivateKey, string, error) {
+		k, id, err := old()
+		made = append(made, id)
+		return k, id, err
+	}
+	t.Cleanup(func() { newDeviceKey = old })
+	oldServer := enrollServer
+	enrollServer = func(context.Context, string, *http.Client) (string, error) {
+		return "", errors.New("this server doesn't accept device keys; ask its owner, or sign in with clawbridge login")
+	}
+	r := &accountRecorder{}
+	withAccountRecorder(t, r)
+	if _, err := run("device", "enroll"); err == nil || !strings.Contains(err.Error(), "doesn't accept device keys") || len(made) != 0 || len(r.requests) != 0 {
+		t.Fatal("enrolled on a server without device keys:", err, made, r.requests)
+	}
+	enrollServer = oldServer
+	serverOK(t)
+	r.failOp = "device_list"
+	if _, err := run("device", "enroll"); err == nil || !strings.Contains(err.Error(), "still signs with Google") || profile(t, path)["credential_source"] != "oauth" {
+		t.Fatal("the profile switched to a key whose request failed:", err)
+	}
+	google := &accountRecorder{err: remote.CredentialFailure(errors.New("token expired"))}
+	withAccountRecorder(t, google)
+	if _, err := run("device", "enroll"); err == nil {
+		t.Fatal("enrolled without a Google credential")
+	}
+	if _, err := devicesign.Load(devicesign.Location{Store: devicesign.StoreKeyring, Host: "cb.example.test", DeviceID: made[len(made)-1]}); !errors.Is(err, devicesign.ErrNoKey) {
+		t.Fatal("a key never sent was kept:", err)
+	}
+	ok := &accountRecorder{}
+	withAccountRecorder(t, ok)
+	if out, err := run("device", "enroll", "--key-store", "file"); err != nil || !strings.Contains(out, `"key_store":"file"`) || ok.requests[0].Args["key_store"] != "file" || profile(t, path)["key_store"] != "file" {
+		t.Fatal("--key-store file through Run:", err, out)
+	}
+}
+
+// R85-L3: an answer naming another device is uncertain: the key stays.
+func TestAJoinAnswerForAnotherDeviceKeepsTheKey(t *testing.T) {
+	f := newJoinFixture(t)
+	f.store.answerID = "dev_someoneelse"
+	_, err := run("--server", f.url, "join", "--email", "ada@example.com", "--code", "CBJ-4K7P-WQ9D-2MXH-T6RB")
+	var lost *JoinUncertainError
+	if !errors.As(err, &lost) || lost.DeviceID != f.keys[0] {
+		t.Fatal(err)
+	}
+	u := strings.TrimPrefix(f.url, "http://")
+	if _, e := devicesign.Load(devicesign.Location{Store: devicesign.StoreKeyring, Host: u, DeviceID: f.keys[0]}); e != nil {
+		t.Fatal("an answer for another device deleted the key:", e)
+	}
+}
+
+// R85-L4: at a terminal the invite code is read without echo.
+func TestJoinReadsTheCodeHiddenAtATerminal(t *testing.T) {
+	f := newJoinFixture(t)
+	oldTerm, oldHidden := stdinTerminal, readHidden
+	stdinTerminal = func() bool { return true }
+	hidden := false
+	readHidden = func() ([]byte, error) { hidden = true; return []byte("CBJ-4K7P-WQ9D-2MXH-T6RB"), nil }
+	t.Cleanup(func() { stdinTerminal, readHidden = oldTerm, oldHidden })
+	var out, errOut bytes.Buffer
+	if err := runDeviceJoin(context.Background(), Config{Server: f.url}, []string{"--email", "ada@example.com"}, os.Stdin, &out, &errOut); err != nil || !hidden || !strings.Contains(out.String(), f.keys[0]) {
+		t.Fatal(err, hidden, out.String())
 	}
 }

@@ -260,7 +260,7 @@ type agentSettings struct {
 // owner's checkout cannot be edited and WebFetch is off.
 func TestLaunchSettingsAndModel(t *testing.T) {
 	e := newEnv(t)
-	if err := writePrivate(filepath.Join(e.r.StateDir, "config.json"), []byte(`{"model":"claude-opus-5-5","allowed_domains":["proxy.golang.org"]}`)); err != nil {
+	if err := writePrivate(filepath.Join(e.r.StateDir, "config.json"), []byte(`{"agents":{"claude":{"model":"claude-opus-5-5"},"codex":{"model":"other"}},"allowed_domains":["proxy.golang.org"]}`)); err != nil {
 		t.Fatal(err)
 	}
 	p := e.launch("checkout-engineer-1", issueIdent)
@@ -766,5 +766,22 @@ func TestCloneCarriesTheCommitIdentity(t *testing.T) {
 	p := e.launch("checkout-engineer-1", issueIdent)
 	if e.git(p.Clone, "config", "--local", "user.name") != "Owner Name" || e.git(p.Clone, "config", "--local", "user.email") != "owner@example.test" {
 		t.Fatal("identity not copied")
+	}
+}
+
+// No model is passed unless one is set (owner decision); a top-level model
+// key is refused, and agents are keyed by name.
+func TestNoDefaultModel(t *testing.T) {
+	e := newEnv(t)
+	if p := e.launch("checkout-engineer-1", issueIdent); strings.Contains(p.Command, "--model") {
+		t.Fatal("a default model was passed:", p.Command)
+	}
+	for _, raw := range []string{`{"model":"x"}`, `{"agents":{"Claude Code":{"model":"x"}}}`, `{"agents":{"claude":{"model":"x","effort":"max"}}}`} {
+		if err := writePrivate(filepath.Join(e.r.StateDir, "config.json"), []byte(raw)); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := e.r.LoadSettings(); err == nil {
+			t.Fatal("accepted", raw)
+		}
 	}
 }

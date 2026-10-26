@@ -131,11 +131,14 @@ The settings passed with `--settings` take precedence over the repository's own
   a URL. The real barrier is that the agent has no credentials and no route to
   your git host. The runner refuses an `allowed_domains` entry that reaches a host
   any of your remotes fetches from or pushes to.
-- **Model:** set `"model"` in `~/.clawbridge/runner/config.json`, or pass
-  `--model`. Unset, the session uses your own default model.
+- **Model:** none by default. The runner passes `--model` only when
+  `agents.claude.model` in `~/.clawbridge/runner/config.json`, or the launch's
+  `--model`, sets one; otherwise claude uses your own default model. Settings
+  are per agent CLI (`agents.claude`), so another agent's launcher reads its
+  own section.
 
 ```json
-{"model": "", "allowed_domains": ["proxy.golang.org", "sum.golang.org"], "max_retained": 10, "work_dir": "~/clawbridge-runs"}
+{"agents": {"claude": {"model": ""}}, "allowed_domains": ["proxy.golang.org", "sum.golang.org"], "max_retained": 10, "work_dir": "~/clawbridge-runs"}
 ```
 
 The work directory must be outside every denied path: the sandbox has to be able

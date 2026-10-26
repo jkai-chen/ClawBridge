@@ -34,9 +34,13 @@ const (
 
 // Settings are the runner's own, in StateDir/config.json, mode 0600.
 type Settings struct {
-	// Model is the Claude model for launched sessions; empty uses the
-	// owner's own default (the owner has not chosen one yet).
-	Model string `json:"model,omitempty"`
+	// Agents are per-agent settings, keyed by the agent CLI (claude), so
+	// another launcher reads its own section.
+	Agents map[string]AgentConfig `json:"agents,omitempty"`
+	// Model is the model this launch passes to claude: agents.claude.model,
+	// or the launch's --model. Empty passes none, and the agent CLI uses
+	// the owner's own default (owner decision: no default model).
+	Model string `json:"-"`
 	// AllowedDomains is the Bash sandbox's network allow-list. It may not
 	// cover the git host the agent's work would be pushed to.
 	AllowedDomains []string `json:"allowed_domains,omitempty"`
@@ -49,6 +53,14 @@ type Settings struct {
 	// owner's private repositories; Bash already cannot read them.
 	DeniedExtra []string `json:"denied_extra,omitempty"`
 }
+
+// AgentConfig is one agent CLI's settings.
+type AgentConfig struct {
+	// Model is passed as the agent's --model only when set.
+	Model string `json:"model,omitempty"`
+}
+
+var agentName = regexp.MustCompile(`^[a-z][a-z0-9-]{0,31}$`)
 
 // defaultDomains let an agent fetch the usual package registries.
 var defaultDomains = []string{"proxy.golang.org", "sum.golang.org", "registry.npmjs.org", "pypi.org", "files.pythonhosted.org"}
@@ -175,6 +187,12 @@ func (r *Runner) LoadSettings() (Settings, error) {
 			return s, fmt.Errorf("runner config.json: %w", err)
 		}
 	}
+	for name := range s.Agents {
+		if !agentName.MatchString(name) {
+			return s, fmt.Errorf("runner config.json: agents are keyed by the agent CLI's name, such as claude")
+		}
+	}
+	s.Model = s.Agents["claude"].Model
 	if s.MaxRetained <= 0 {
 		s.MaxRetained = DefaultMaxRetained
 	}

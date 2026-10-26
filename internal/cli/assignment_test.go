@@ -121,14 +121,14 @@ func TestCLIReleaseOutcomeAndStatusPolicyShow(t *testing.T) {
 }
 
 // Project health reads as empty until the owner enables it on a bound
-// Linear project; posting to Linear stays off.
+// Linear project.
 func TestCLIHealthShowAndSetRefusals(t *testing.T) {
 	isolated(t)
 	invoke(t, "setup", "--local", "--workspace", "w")
 	invoke(t, "project", "create", "p")
 	t.Setenv("CLAWBRIDGE_PROJECT", "p")
 	var out, errs bytes.Buffer
-	if e := Run(context.Background(), []string{"linear", "health", "show"}, &out, &errs); e != nil || !strings.Contains(out.String(), `"projects":[]`) || !strings.Contains(out.String(), "nothing is written to Linear") {
+	if e := Run(context.Background(), []string{"linear", "health", "show"}, &out, &errs); e != nil || !strings.Contains(out.String(), `"projects":[]`) || !strings.Contains(out.String(), "coordinator session is told") {
 		t.Fatal(e, out.String(), errs.String())
 	}
 	rejectCLI(t, "linear", "health", "enable")

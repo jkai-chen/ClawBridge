@@ -43,6 +43,10 @@ func (a watcherApp) GraphQL(ctx context.Context, query string, variables map[str
 	return a.app.GraphQL(ctx, query, variables, out)
 }
 
+func (a watcherApp) HasScope(ctx context.Context, scope string) (bool, error) {
+	return a.app.HasScope(ctx, scope)
+}
+
 func (a watcherApp) Identity(ctx context.Context) (watcher.AppIdentity, error) {
 	id, err := a.app.Identity(ctx)
 	return watcher.AppIdentity{AppUserID: id.AppUserID, LinearOrgID: id.LinearOrgID}, err

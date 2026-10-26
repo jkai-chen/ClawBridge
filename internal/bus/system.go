@@ -125,7 +125,7 @@ func (s *Store) ExecuteSystem(ctx context.Context, projectID string, r Request) 
 		out, err = statusPolicyView(ctx, tx, projectID)
 	case "taskboard_access":
 		out = accessMap(TaskboardAccess{WorkspaceID: wid, ProjectID: projectID, SessionID: str(actor, "id"), SessionName: SystemSessionName, CanWrite: true, ProjectRole: "owner"})
-	case "health_due", "health_report":
+	case "health_due", "health_report", "health_post_settle":
 		out, err = scoped.healthSystemOp(ctx, tx, w, p, actor, r)
 	case "doc_watch_due", "doc_watch_report", "doc_verify_report":
 		out, err = scoped.docWatchOp(ctx, tx, w, p, actor, r)

@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"clawbridge/internal/bus"
+	"clawbridge/internal/linearprovider"
 )
 
 func linearProjectID(n int) string { return fmt.Sprintf("00000000-0000-4000-8000-%012d", n) }
@@ -139,5 +140,103 @@ func TestHealthTooManyIssuesIsAFailureNotAPartialHealth(t *testing.T) {
 	}
 	if len(e.inbox("coord", "project-health")) != 0 {
 		t.Fatal("a partial read notified")
+	}
+}
+
+func projectUpdate(id, user string, at time.Time) map[string]any {
+	return map[string]any{"id": id, "createdAt": at.UTC().Format(time.RFC3339Nano), "user": map[string]any{"id": user}}
+}
+
+// postHealth enables posting on the bound Linear project 1.
+func (e *env) postHealth() {
+	e.t.Helper()
+	if _, err := e.s.Execute(context.Background(), bus.Request{Operation: "health_set", Workspace: "w", Project: "p", Args: map[string]any{"linear_project": linearProjectID(1), "expected_revision": 1, "health_policy": map[string]any{"enabled": true, "post": true}}}); err != nil {
+		e.t.Fatal(err)
+	}
+	e.healthDue()
+}
+
+// Path A end to end: the second run posts one project status update as
+// the app, with the marker and identifiers only, and settles it; the
+// coordinator is not told. The send is the only write.
+func TestHealthPostsOneStatusUpdate(t *testing.T) {
+	e := setup(t)
+	e.bindProjects("p", 1, 1)
+	e.postHealth()
+	now := time.Now()
+	e.f.healthIssues = []map[string]any{healthIssue(issueA, "FIX-1", "unstarted", now, "started"), healthIssue(issueB, "FIX-2", "unstarted", now, "started")}
+	e.f.updates = []map[string]any{projectUpdate(humanNote, trustedUser, now.Add(-10*24*time.Hour))}
+	e.tick()
+	e.healthDue()
+	tick := e.tick()
+	if len(tick.Health) != 1 || tick.Health[0].Acted != "changed" || tick.Health[0].Posted != "accepted" || len(e.f.statusPosts) != 1 {
+		t.Fatal(tick.Health, e.f.statusPosts)
+	}
+	sent := e.f.statusPosts[0]
+	if !strings.HasPrefix(sent, linearProjectID(1)+" atRisk "+bus.HealthPostMarker) || !strings.Contains(sent, "FIX-1, FIX-2") {
+		t.Fatal(sent)
+	}
+	if len(e.inbox("coord", "project-health")) != 0 {
+		t.Fatal("a posted health also notified")
+	}
+	var state, update string
+	e.queryRow(`SELECT state,update_id FROM health_posts`, &state, &update)
+	if state != "accepted" || update != "cccccccc-cccc-4ccc-8ccc-000000000001" {
+		t.Fatal(state, update)
+	}
+}
+
+// Without the write grant nothing is sent, and the coordinator hears why;
+// a person's recent update holds the post back the same way.
+func TestHealthPostFallsBackToTheNotice(t *testing.T) {
+	for name, c := range map[string]struct {
+		noWrite bool
+		person  bool
+		want    string
+	}{
+		"no write":          {noWrite: true, want: "refused (app_scope)"},
+		"a person's update": {person: true, want: "A person posted a project update"},
+	} {
+		e := setup(t)
+		e.bindProjects("p", 1, 1)
+		e.postHealth()
+		e.f.noWrite = c.noWrite
+		now := time.Now()
+		if c.person {
+			e.f.updates = []map[string]any{projectUpdate(humanNote, trustedUser, now.Add(-time.Hour))}
+		}
+		e.f.healthIssues = []map[string]any{healthIssue(issueA, "FIX-1", "unstarted", now, "started"), healthIssue(issueB, "FIX-2", "unstarted", now, "started")}
+		e.tick()
+		e.healthDue()
+		e.tick()
+		notes := e.inbox("coord", "project-health")
+		if len(e.f.statusPosts) != 0 || len(notes) != 1 || !strings.Contains(fmt.Sprint(notes[0]["body"]), c.want) {
+			t.Fatal(name, e.f.statusPosts, notes)
+		}
+	}
+}
+
+// An uncertain send is never repeated: the next run finds the app's
+// update and settles it.
+func TestHealthUncertainPostIsSettledByTheNextRun(t *testing.T) {
+	e := setup(t)
+	e.bindProjects("p", 1, 1)
+	e.postHealth()
+	now := time.Now()
+	e.f.healthIssues = []map[string]any{healthIssue(issueA, "FIX-1", "unstarted", now, "started"), healthIssue(issueB, "FIX-2", "unstarted", now, "started")}
+	e.f.statusErr = &linearprovider.Error{Kind: "unavailable"}
+	e.tick()
+	e.healthDue()
+	if tick := e.tick(); tick.Health[0].Posted != "pending" {
+		t.Fatal(tick.Health)
+	}
+	e.f.statusErr = nil
+	e.f.updates = []map[string]any{projectUpdate("dddddddd-dddd-4ddd-8ddd-dddddddddddd", appUser, time.Now())}
+	e.healthDue()
+	e.tick()
+	var state, update string
+	e.queryRow(`SELECT state,update_id FROM health_posts`, &state, &update)
+	if state != "accepted" || update != "dddddddd-dddd-4ddd-8ddd-dddddddddddd" || len(e.f.statusPosts) != 1 {
+		t.Fatal(state, update, len(e.f.statusPosts))
 	}
 }

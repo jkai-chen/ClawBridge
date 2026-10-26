@@ -5,20 +5,22 @@ import (
 	"time"
 
 	"clawbridge/internal/bus"
+	"clawbridge/internal/linearboard"
 )
 
 // Project health (live/PROJECT-HEALTH-DESIGN.md r2): after the comment
 // watch, markers and intake, under the same lease, a tick runs the due
 // health of at most HealthRunsPerTick Linear projects across all projects
-// (HP-M3). A run only reads Linear, as the app; the bus computes the
-// health from its typed facts and tells the coordinator session. Nothing
-// is written to Linear (HP-M2).
+// (HP-M3). A run reads Linear as the app; the bus computes the health from
+// its typed facts. A health the bus decides to post is sent as one project
+// status update and settled in the bus's ledger; anything else, and any
+// refusal, goes to the coordinator session (HP-M2).
 const HealthRunsPerTick = 2
 
 // The GraphQL reads, constant and read-only. History is newest first
 // (probe I4).
 const (
-	healthProjectQuery  = `query HealthProject($id: String!) { project(id: $id) { id targetDate startDate createdAt } }`
+	healthProjectQuery  = `query HealthProject($id: String!) { project(id: $id) { id targetDate startDate createdAt projectUpdates(first: 5) { nodes { id createdAt user { id } } } } }`
 	healthIssuesQuery   = `query HealthIssues($id: ID!, $after: String) { issues(first: 50, after: $after, filter: { project: { id: { eq: $id } } }) { nodes { id identifier updatedAt state { type } inverseRelations(first: 20) { nodes { type issue { state { type } } } } } pageInfo { hasNextPage endCursor } } }`
 	healthActivityQuery = `query HealthActivity($id: String!, $since: DateTimeOrDuration!) { issue(id: $id) { history(first: 20) { nodes { createdAt actorId botActor { id } } } comments(first: 20, filter: { createdAt: { gt: $since } }) { nodes { createdAt user { id } botActor { id } } } } }`
 )
@@ -28,13 +30,16 @@ type HealthRun struct {
 	LinearProject string `json:"linear_project"`
 	Health        string `json:"health,omitempty"`
 	Acted         string `json:"acted,omitempty"`
-	Calls         int    `json:"calls"`
-	Error         string `json:"error,omitempty"`
+	// Posted is what became of a post to Linear: accepted, refused or
+	// pending (uncertain, settled by a later run).
+	Posted string `json:"posted,omitempty"`
+	Calls  int    `json:"calls"`
+	Error  string `json:"error,omitempty"`
 }
 
 // health runs the project's due health runs, at most left of them; it
 // returns the runs it made.
-func (w *Watcher) health(ctx context.Context, pid string, fence map[string]any, left int) ([]HealthRun, error) {
+func (w *Watcher) health(ctx context.Context, svc *linearboard.Service, scope bus.Request, pid string, fence map[string]any, left int) ([]HealthRun, error) {
 	if left <= 0 {
 		return nil, nil
 	}
@@ -87,10 +92,48 @@ func (w *Watcher) health(ctx context.Context, pid string, fence map[string]any, 
 		if d, ok := out.Data.(map[string]any); ok {
 			run.Health, _ = d["health"].(string)
 			run.Acted, _ = d["acted"].(string)
+			if post, ok := d["post"].(map[string]any); ok {
+				if run.Posted, e = w.postHealth(ctx, svc, scope, pid, lp, post, fence); e != nil {
+					return append(runs, run), e
+				}
+			}
 		}
 		runs = append(runs, run)
 	}
 	return runs, nil
+}
+
+// postHealth sends the post the bus handed out, as one project status
+// update, and settles it. Without a write grant it is refused before
+// anything is sent, and the bus tells the coordinator session instead.
+func (w *Watcher) postHealth(ctx context.Context, svc *linearboard.Service, scope bus.Request, pid, lp string, post, fence map[string]any) (string, error) {
+	day, _ := post["day"].(string)
+	body, _ := post["body"].(string)
+	health, _ := post["health"].(string)
+	outcome, code, id := "refused", "app_scope", ""
+	if granted, err := w.App.HasScope(ctx, "write"); err != nil {
+		code = "app_unavailable"
+	} else if granted {
+		var err error
+		id, err = svc.PostStatusUpdateV2(ctx, scope, lp, body, health)
+		outcome, code = linearboard.StatusUpdateOutcome(id, err)
+	}
+	settle := map[string]any{"linear_project": lp, "day": day, "outcome": outcome}
+	if outcome == "accepted" {
+		settle["update_id"] = id
+	}
+	if code != "" {
+		settle["error"] = code
+	}
+	for k, v := range fence {
+		settle[k] = v
+	}
+	r, err := w.Store.ExecuteSystem(ctx, pid, bus.Request{Operation: "health_post_settle", Args: settle})
+	if err != nil {
+		return "", err
+	}
+	state, _ := r.Data.(map[string]any)["state"].(string)
+	return state, nil
 }
 
 type healthState struct {
@@ -108,10 +151,19 @@ func (w *Watcher) healthFacts(ctx context.Context, lp, appUser string, stalledDa
 	calls := 0
 	var project struct {
 		Project *struct {
-			ID         string  `json:"id"`
-			TargetDate *string `json:"targetDate"`
-			StartDate  *string `json:"startDate"`
-			CreatedAt  string  `json:"createdAt"`
+			ID             string  `json:"id"`
+			TargetDate     *string `json:"targetDate"`
+			StartDate      *string `json:"startDate"`
+			CreatedAt      string  `json:"createdAt"`
+			ProjectUpdates *struct {
+				Nodes []struct {
+					ID        string `json:"id"`
+					CreatedAt string `json:"createdAt"`
+					User      *struct {
+						ID string `json:"id"`
+					} `json:"user"`
+				} `json:"nodes"`
+			} `json:"projectUpdates"`
 		} `json:"project"`
 	}
 	calls++
@@ -215,7 +267,17 @@ func (w *Watcher) healthFacts(ctx context.Context, lp, appUser string, stalledDa
 			stalled = appendListed(stalled, issue.identifier)
 		}
 	}
-	return map[string]any{"total": total, "completed": completed, "canceled": canceled, "started": started, "stalled": stalled, "stalled_count": stalledCount, "unverified": unverified, "blocked": blocked, "blocked_count": blockedCount, "target_date": target, "start_date": start, "start_from": from}, calls, ""
+	facts := map[string]any{"total": total, "completed": completed, "canceled": canceled, "started": started, "stalled": stalled, "stalled_count": stalledCount, "unverified": unverified, "blocked": blocked, "blocked_count": blockedCount, "target_date": target, "start_date": start, "start_from": from}
+	// The newest updates and whether the app wrote each: the bus never
+	// posts over a person's, and finds an uncertain post among them.
+	if u := project.Project.ProjectUpdates; u != nil && len(u.Nodes) <= bus.HealthUpdatesRead {
+		updates := []any{}
+		for _, n := range u.Nodes {
+			updates = append(updates, map[string]any{"id": n.ID, "created_at": n.CreatedAt, "by_app": n.User != nil && n.User.ID == appUser})
+		}
+		facts["updates"] = updates
+	}
+	return facts, calls, ""
 }
 
 // humanActivity reads one issue's newest history and its comments since:

@@ -2,7 +2,9 @@ package linearboard
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"strings"
 	"testing"
@@ -414,4 +416,27 @@ func TestAdminInitiatives(t *testing.T) {
 			t.Fatal(name, "accepted")
 		}
 	}
+}
+
+// A hosted server's answer arrives with json.Number values (the remote
+// client decodes with UseNumber): a label create must still read the
+// policy revision it is checked against.
+func TestLabelCreateReadsAHostedPolicyRevision(t *testing.T) {
+	s, a, p, scope := adminTest(t)
+	s.cfg.Executor = numberAuthority{a}
+	r, e := s.Admin(context.Background(), scope, AdminInput{Kind: "label_create", OperationID: "lbl-hosted", TeamID: teamID, Name: "Bug"})
+	if e != nil || r.Outcome != "accepted" || r.PolicyRevision != 3 || len(p.writes) != 1 {
+		t.Fatal("a hosted label create failed:", r, e)
+	}
+}
+
+// numberAuthority answers label_policy_get as a remote client decodes it.
+type numberAuthority struct{ *adminAuthority }
+
+func (n numberAuthority) Execute(ctx context.Context, r bus.Request) (bus.Result, error) {
+	out, e := n.adminAuthority.Execute(ctx, r)
+	if m, ok := out.Data.(map[string]any); ok && r.Operation == "label_policy_get" {
+		m["revision"] = json.Number(fmt.Sprint(m["revision"]))
+	}
+	return out, e
 }

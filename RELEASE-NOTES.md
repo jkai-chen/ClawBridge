@@ -1,75 +1,61 @@
-# ClawBridge v0.2.8
+# ClawBridge v0.3.0
 
-**Schema 11, one-way, and a client upgrade.**
-- A v0.2.8 binary migrates a store from schema 8 to 11 the first time it opens it: a server's hosted Postgres
+**Schema 12, one-way.**
+- A v0.3.0 binary migrates a store from schema 11 to 12 the first time it opens it: a server's hosted Postgres
   store when it starts, a local SQLite store on the first local command.
-- v0.2.7 refuses a schema 11 store. Take a database dump (or back up the local file) first. Rolling back means
+- v0.2.8 refuses a schema 12 store. Take a database dump (or back up the local file) first. Rolling back means
   restoring it with the old release.
-- Upgrade the server first, then every client (`install.sh` / `install.ps1`).
-- Older clients keep working against a v0.2.8 server, but write with their member's own Linear account and name no
-  engineer.
+- Upgrade the server first.
+- Clients don't have to upgrade: v0.2.8 clients keep working against a v0.3.0 server. A v0.3.0 client adds the
+  `clawbridge intake` commands (`install.sh` / `install.ps1`).
 
-## Agents write to Linear as the ClawBridge app
+## The server watches Linear itself
 
-- **Server setup.** A hosted server can now make agents' Linear writes itself, as the ClawBridge Linear app. Set
-  `CLAWBRIDGE_LINEAR_APP_CLIENT_ID`, `CLAWBRIDGE_LINEAR_APP_CLIENT_SECRET` and `CLAWBRIDGE_LINEAR_APP_TOKEN_KEY`
-  (32 random bytes, standard base64: `openssl rand -base64 32`). Set all three, or none; a partial set refuses to
-  start.
-  - The server mints the app's token, seals it in Postgres, and shares it across instances.
-  - No client ever holds it.
-- **What clients write.** With the app configured, every agent create, update, comment, reply and relation from a
-  v0.2.8 CLI or MCP client goes to the server. Linear shows the ClawBridge app as the author.
-  - Without the app, writes stay with each member's profile, as before.
-- **No fallback.** A write the app can't make is reported, and never retried with your own Linear account.
-  - `in_progress`: another request is still sending the same `--operation-id`. Retry it shortly.
-  - An uncertain outcome: check Linear first.
-  - A retry of the same ID returns the recorded outcome and never sends twice.
-  - Writes can take up to a minute. The CLI and MCP wait 75 seconds.
-- **Refused on an app server:**
-  - an `--operation-id` this client already sent with your own profile before the upgrade. Check Linear for its
-    outcome, and use a new ID;
-  - the V1 task-board tools (`taskboard_create`, `taskboard_update`, `taskboard_comment`). Use the
-    `taskboard_*_v2` tools.
-- **Bindings are pinned to their Linear workspace.** `linear link` records it (`linear_workspace_id` in the
-  preview).
-  - An existing binding is pinned by its project owner linking it again, once, with exactly the same teams, default
-    team and projects. Every binding made before this release needs this.
-  - App writes to an unpinned binding refuse with `workspace_unpinned`.
-  - A pinned binding is never relinked in another workspace, or without one. Only `linear unlink` resets the pin.
-- **The app must be a member of every bound private team.** `clawbridge doctor` (with a Linear profile) shows the
-  new `linear.app` check: whether writes go through the app, and any bound team it can't see.
-- **Reading comments.** A comment the app wrote reads as `posted_by_clawbridge` with `clawbridge_match: "app"`.
-- Claim and release notes are still posted with the applying member's profile.
+- **Setup.** A hosted server with the ClawBridge Linear app can now run the comment watch and claim markers itself,
+  for every bound project, as the app.
+  - Turn it on with `CLAWBRIDGE_WATCH_INTERVAL` (1m–30m) in the server's environment file.
+  - Unset, there is no server watcher, and nothing changes.
+  - Without the Linear app, it stays off.
+- **What it does.** People's comments on assigned issues reach the claiming session as `linear-comment` notices, as
+  they did from `clawbridge linear watch`. Pending claim and release markers are posted as the app.
+- **No more client watcher.** While the server ticks, a client `clawbridge linear watch` for that project is refused.
+  A client can take over again once the server hasn't ticked for 10 minutes.
+- **Budget.** Each project's watch spends at most 200 Linear calls an hour, on the same bus budget as before.
+  - Issues and sources keep their own polling schedules.
+  - A tick with nothing due calls nothing.
+- **Status.** The startup log says `watcher: ticking every …`, or `watcher: off (…)` with the reason.
+- **Turning it off:** remove the variable and recreate the API container.
 
-## Markers name the engineer
+## Issue intake
 
-- Every agent comment now ends with `— 🤖 ClawBridge agent · session NAME · ENGINEER`.
-- Claim and release notes carry the same name. It is fixed when the assignment is confirmed.
-- `ENGINEER` is the session owner's name as recorded on the server. Agents can't set it.
-- **Email is never shown.** Without a recorded name, the line ends after the session. A local store names no
-  engineer.
-- `clawbridge linear connect` records your Linear name (full name, else handle) when none is recorded. Change it
-  with:
-  - `clawbridge linear display-name set "Name"`;
-  - `clawbridge linear display-name clear`;
-  - `clawbridge linear display-name capture --profile ID`.
-- The name is self-declared, refuses `@`, is cut to 40 characters, and is shown to everyone who can see the
-  issue.
+- **The signals.** Linear can tell ClawBridge that an issue needs an agent, and ClawBridge queues it for the
+  project's coordinator session. The server watcher polls three signals:
+  - **S1:** the `needs-agent` label;
+  - **S2:** delegating the issue to the ClawBridge app;
+  - **S3:** @-mentioning the app.
+- **Only trusted people's signals count.** Who raised a signal is proven from Linear's own history.
+  - Only people on the project's trusted list (`clawbridge intake trust add LINEAR_USER_ID`) can ever let a signal go
+    further than notifying the coordinator.
+  - An issue's title and description never route anything.
+- **Modes:** `clawbridge intake policy set --intake-mode off|notify`. Without a stored policy, a project uses
+  `notify` with S1–S3. Offers and automatic assignment come later.
+  - **Set `--intake-mode off` before turning the watcher on, for any project that shouldn't run intake yet.**
+- **The queue:** `clawbridge intake list`, `dismiss ISSUE` and `rearm ISSUE`.
+  - The first poll only starts the cursors: issues already labelled, delegated or mentioned are not swept in.
+  - Without an active coordinator session, queued issues are held as `no_recipient`.
+- **Who may change it.** A project lead or owner sets the policy, the trusted list and tokens. The coordinator session
+  may also dismiss and rearm.
+- **Linear Loops (S5) are not available in v0.3.0.** The send-only `/mcp/intake` endpoint is served, but refuses
+  every request (`app_unavailable`). The intake token commands exist for the release that enables it.
 
 ## Other changes
 
-- **Replay a missed admin history row.** When an admin write (a label, project or initiative change) stood in Linear
-  but its history row failed, and the binding or approved label list has changed since, a retry is refused. The
-  project owner can now record the row from this machine's operation ledger:
-  `clawbridge linear admin audit-replay --operation-id ID [--session S --instance I]`.
-  - It sends nothing to Linear, needs no profile, and doesn't change the ledger.
-  - Only an accepted admin write is replayed. A second replay answers `"audit": "already"`.
-  - It is CLI only, and a sessionless replay needs a v0.2.7 or later server.
-
-- The server's Compose file passes the three app settings to the API container. App writes keep their records in
-  Postgres, so the read-only container needs no new mount.
+- The server's Compose file passes `CLAWBRIDGE_WATCH_INTERVAL`, plus `CLAWBRIDGE_TICK_AUDIENCE` and
+  `CLAWBRIDGE_TICK_SERVICE_ACCOUNT` for a scheduler-driven tick endpoint. That endpoint is meant for a deployment
+  without a long-lived process; leave both unset on a VM.
+- The watcher's marker writes keep their records in Postgres, so the read-only container needs no new mount.
 
 Assets retain five CGO-disabled targets, installers, the MIT licence, selected checksums and a full source
 marker. Binaries are unsigned; macOS binaries are not notarized.
 
-See docs/linear.md, docs/operations/deployment.md and docs/reference/api.md.
+See docs/linear.md and docs/operations/deployment.md.

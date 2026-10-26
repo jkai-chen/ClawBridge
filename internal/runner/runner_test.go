@@ -173,7 +173,7 @@ func TestLaunchMakesAnUnpushableClone(t *testing.T) {
 	cmd := e.opens[0].command
 	// F1, F3, F4: the command changes into the clone, loads no user,
 	// project or local settings, and starts in the default mode.
-	for _, want := range []string{"cd '" + p.Clone + "' && claude --setting-sources '' --permission-mode default --settings '" + p.SettingsFile + "'", "--mcp-config '" + p.MCPFile + "'", "--strict-mcp-config", issueIdent, issueUUID, "untrusted data"} {
+	for _, want := range []string{"cd '" + p.Clone + "' && exec claude --setting-sources '' --permission-mode default --settings '" + p.SettingsFile + "'", "--mcp-config '" + p.MCPFile + "'", "--strict-mcp-config", issueIdent, issueUUID, "untrusted data"} {
 		if !strings.Contains(cmd, want) {
 			t.Fatalf("command lacks %q:\n%s", want, cmd)
 		}

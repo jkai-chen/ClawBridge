@@ -32,8 +32,9 @@ Run it inside the repository's checkout, or pass `--repo PATH`.
    `~/.clawbridge/runner/sessions/<session>/`, readable by you only, never inside
    the clone.
 5. **Opens a visible Orca terminal** in your own checkout, which Orca manages,
-   running `cd <clone> && claude --setting-sources '' --permission-mode default
-   --settings … --mcp-config … --strict-mcp-config "<start prompt>"`.
+   running `cd <clone> && exec claude --setting-sources '' --permission-mode default
+   --settings … --mcp-config … --strict-mcp-config "<start prompt>"`. When the
+   session ends, the tab closes: your own shell never stays in the clone.
    - The session loads none of your user, project or local Claude Code settings,
      only its own (and managed ones), so your own allows never widen it.
    - The prompt names the issue by its identifier and UUID only, never its text.
@@ -48,8 +49,10 @@ The agent then reads its inbox, proposes the issue as its assignment, and works
 once the coordinator confirms. It commits to its `agent/*` branch. It never
 pushes or opens a pull request; a person does that.
 
-When the work is ready, bring it into your checkout with the command the launch
-prints, review it there, and push it yourself:
+**Never run git inside a runner clone.** Its configuration and attributes are
+the agent's to write, and git there could run commands of its choosing as you.
+When the work is ready, bring it into your own checkout with the command the
+launch prints, review it there, and push it yourself:
 
 ```sh
 git fetch ~/clawbridge-runs/<session> agent/<identifier>:agent/<identifier>

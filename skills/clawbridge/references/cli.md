@@ -21,6 +21,12 @@ audience, account, impersonating service account, principal, or cache path. Do
 not infer or alter these routing values; ask the human to correct trusted
 configuration.
 
+A cloud profile may sign with a device key (`credential_source = "device"`) instead
+of Google: it has no audience, and the key stays in the human's key store, never
+in agent configuration. `join`, `device`, `invite`, `user` and `owner` manage the
+human's account and devices; run them only when the human asks. They show an
+invite code or a CI key once, and both are secrets.
+
 `sync` is the only operation that publishes a new mirror. It requires an online
 authorized snapshot and preserves the previous complete snapshot if it fails.
 Run it when the human asks and the transport is healthy; then report the returned

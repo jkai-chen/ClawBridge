@@ -93,7 +93,7 @@ func (w *Watcher) dispatcher(ctx context.Context, pid string, fence map[string]a
 		out, err := w.Store.ExecuteDispatcher(ctx, pid, bus.DispatcherSessionName, bus.Request{Operation: "dispatcher_decision_record", Args: map[string]any{
 			"subject_id": dc.SubjectID, "subject_revision": dc.SubjectRevision, "policy_revision": due.PolicyRevision,
 			"engine": "rules", "proposal": string(proposal.Action), "reason_code": reason, "guardrail": guardrail,
-			"action": string(action), "domain": proposal.Domain, "facts_source": source,
+			"action": string(action), "domain": proposal.Domain, "facts_source": source, "app_project_id": appProject(c, source),
 		}})
 		if err != nil {
 			return run, err
@@ -105,6 +105,14 @@ func (w *Watcher) dispatcher(ctx context.Context, pid string, fence map[string]a
 		}
 	}
 	return run, nil
+}
+
+// appProject is the issue's project as the app read it, or "".
+func appProject(c dispatch.Case, source string) string {
+	if source != "app" {
+		return ""
+	}
+	return c.Issue.ProjectID
 }
 
 // dispatchCharge pays one authoritative read from the hour's budget, only

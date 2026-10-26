@@ -30,7 +30,10 @@ func isDispatcher(actor map[string]any) bool {
 
 // dispatcherCasesDue hands out at most dispatcherCasesPerTick pending
 // proposals, oldest first, that have no final decision at their revision,
-// with the facts the bus holds. With the dispatcher off, none.
+// with the facts the bus holds. A wait or a superseded decision is not
+// final: the claim is decided again next tick, so a transient change (a
+// sleeping laptop, a policy edited mid-tick) never stalls it silently. With
+// the dispatcher off, none.
 func (s *Store) dispatcherCasesDue(ctx context.Context, tx *transaction, pid string) (any, error) {
 	d, meta, err := readDispatcher(ctx, tx, pid)
 	if err != nil {
@@ -45,7 +48,7 @@ func (s *Store) dispatcherCasesDue(ctx context.Context, tx *transaction, pid str
 		(SELECT COUNT(*) FROM dispatcher_decisions w WHERE w.project_id=a.project_id AND w.subject_id=a.id AND w.subject_revision=a.revision AND w.action='wait') AS waits
 		FROM session_assignments a JOIN sessions s ON s.id=a.session_id AND s.project_id=a.project_id
 		WHERE a.project_id=? AND a.state='proposed' AND s.role<>'system'
-		AND NOT EXISTS (SELECT 1 FROM dispatcher_decisions f WHERE f.project_id=a.project_id AND f.subject_id=a.id AND f.subject_revision=a.revision AND f.action<>'wait')
+		AND NOT EXISTS (SELECT 1 FROM dispatcher_decisions f WHERE f.project_id=a.project_id AND f.subject_id=a.id AND f.subject_revision=a.revision AND f.action NOT IN ('wait','superseded'))
 		ORDER BY a.proposed_at,a.id LIMIT ?`, pid, dispatcherCasesPerTick)
 	if err != nil {
 		return nil, err
@@ -119,6 +122,34 @@ func (s *Store) dispatcherRecord(ctx context.Context, tx *transaction, w, p, act
 		superseded("proposal_changed")
 	case meta["revision"].(int64) != int64(policyRevision):
 		superseded("policy_changed")
+	}
+	// The bus checks the grant itself (D3-M1): whatever engine decided, a
+	// confirm stands only on the app's own read of the issue's project, in
+	// exactly one domain that trusts this session's ID and principal; a
+	// decline only for a session that is gone.
+	if taken == "confirm" {
+		appProject := str(a, "app_project_id")
+		var dom *DispatcherDomain
+		matches := 0
+		for i := range domains.Domains {
+			if appProject != "" && containsString(domains.Domains[i].Match.LinearProjects, appProject) {
+				dom, matches = &domains.Domains[i], matches+1
+			}
+		}
+		trusted := false
+		if dom != nil {
+			for _, t := range dom.TrustedSessions {
+				if t.ID == str(live[0], "session_id") && t.Principal == str(live[0], "owner_principal") {
+					trusted = true
+				}
+			}
+		}
+		if str(a, "facts_source") != "app" || matches != 1 || !trusted {
+			superseded("guardrail")
+		}
+	}
+	if taken == "decline" && str(live[0], "session_status") != "retired" && str(live[0], "session_status") != "moved" {
+		superseded("guardrail")
 	}
 	if taken == "confirm" {
 		holders, err := query(ctx, tx, `SELECT 1 FROM session_assignments WHERE project_id=? AND state='confirmed' AND issue_uuid=? AND issue_uuid<>'' AND session_id<>?`, pid, str(live[0], "issue_uuid"), str(live[0], "session_id"))

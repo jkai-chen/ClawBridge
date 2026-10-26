@@ -22,6 +22,7 @@ type handoverStub struct {
 	ran                  []string // bin, dir, prompt
 	env                  []string
 	installed            []string
+	installedCloud       []string
 	installErr, checkErr error
 	checked              []string
 	checkConfig          string
@@ -57,8 +58,9 @@ func stubHandover(t *testing.T) *handoverStub {
 		}
 		return nil, nil
 	}
-	installPlaybook = func(agent string) error {
+	installPlaybook = func(cloud, agent string) error {
 		h.installed = append(h.installed, agent)
+		h.installedCloud = append(h.installedCloud, cloud)
 		return h.installErr
 	}
 	runHandoverChecks = func(_ context.Context, args []string, _, _ io.Writer) error {
@@ -71,7 +73,7 @@ func stubHandover(t *testing.T) *handoverStub {
 
 // Defaults: account from gcloud, zone REGION-b, owner = account, bucket
 // PROJECT-clawbridge-backups.
-const handoverInputs = "3\n\nexample-project\neurope-west1\n\nbridge.example.test\n\n\n\n"
+const handoverInputs = "3\n\n\nexample-project\neurope-west1\n\nbridge.example.test\n\n\n\n"
 
 func readState(t *testing.T, home string) onboardingState {
 	t.Helper()
@@ -182,7 +184,7 @@ func TestHandoverDeclinedOrRefused(t *testing.T) {
 	}
 	// A bad input is refused before anything is saved or run.
 	home := isolated(t)
-	wizardHooks(t, "3\n\nexample-project\neurope-west1\nus-east1-b\nbridge.example.test\n\n\n\n")
+	wizardHooks(t, "3\n\n\nexample-project\neurope-west1\nus-east1-b\nbridge.example.test\n\n\n\n")
 	h = stubHandover(t)
 	if err := Run(context.Background(), []string{"onboard"}, io.Discard, io.Discard); err == nil || !strings.Contains(err.Error(), "zone must be in the region") || h.ran != nil {
 		t.Fatal(err)

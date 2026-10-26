@@ -34,6 +34,9 @@ type onboardingState struct {
 	Owner   string `json:"owner"`
 	Size    string `json:"size"`
 	Bucket  string `json:"bucket"`
+	// AWS only: the named profile, and the instance the checks found.
+	Profile  string `json:"profile,omitempty"`
+	Instance string `json:"instance,omitempty"`
 }
 
 const gcloudConfiguration = "clawbridge-onboarding"
@@ -43,6 +46,7 @@ var (
 	domainPattern = regexp.MustCompile(`^([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$`)
 	emailPattern  = regexp.MustCompile(`^[A-Za-z0-9._%+-]+@([A-Za-z0-9-]+\.)+[A-Za-z]{2,63}$`)
 	vmSizes       = map[string]bool{"e2-small": true, "e2-medium": true}
+	awsSizes      = map[string]bool{"t4g.small": true, "t4g.medium": true}
 )
 
 // handoverAgents are the agent CLIs a hand-over can start, with the skill
@@ -64,8 +68,8 @@ var (
 	runGcloud = func(ctx context.Context, args ...string) ([]byte, error) {
 		return exec.CommandContext(ctx, "gcloud", args...).Output()
 	}
-	installPlaybook = func(agent string) error {
-		targets, err := skill.TargetsFor(skill.Playbooks["gcp"], agent, "")
+	installPlaybook = func(cloud, agent string) error {
+		targets, err := skill.TargetsFor(skill.Playbooks[cloud], agent, "")
 		if err != nil {
 			return err
 		}
@@ -131,6 +135,9 @@ func saveOnboarding(s *onboardingState) error {
 
 // validInputs reports the first input that is not well formed.
 func validInputs(s *onboardingState) error {
+	if s.Cloud == "aws" {
+		return validAWSInputs(s)
+	}
 	switch {
 	case !emailPattern.MatchString(s.Account):
 		return errors.New("the Google account must be an email address")
@@ -152,11 +159,51 @@ func validInputs(s *onboardingState) error {
 	return nil
 }
 
-const handoverControls = `
+// validAWSInputs is validInputs for AWS. The instance is set only after the
+// checks found it.
+func validAWSInputs(s *onboardingState) error {
+	switch {
+	case !awsProfilePattern.MatchString(s.Profile):
+		return errors.New("the profile must be a named AWS CLI profile")
+	case !accountPattern.MatchString(s.Account):
+		return errors.New("the account must be a 12-digit AWS account ID")
+	case !awsRegionPattern.MatchString(s.Region):
+		return errors.New("the region must look like eu-west-1")
+	case len(s.Zone) != len(s.Region)+1 || !strings.HasPrefix(s.Zone, s.Region) || s.Zone[len(s.Region)] < 'a' || s.Zone[len(s.Region)] > 'z':
+		return errors.New("the zone must be in the region, like eu-west-1a")
+	case !domainPattern.MatchString(s.Domain):
+		return errors.New("the domain must be a DNS name you control, like clawbridge.example.com")
+	case !emailPattern.MatchString(s.Owner):
+		return errors.New("the owner must be an email address")
+	case !awsSizes[s.Size]:
+		return errors.New("the instance size must be t4g.small or t4g.medium")
+	case !s3BucketPattern.MatchString(s.Bucket):
+		return errors.New("the bucket must be a valid, globally unique bucket name")
+	case s.Instance != "" && !instancePattern.MatchString(s.Instance):
+		return errors.New("the saved instance is not an EC2 instance ID")
+	}
+	return nil
+}
+
+// handoverControls is what the user reads before the agent takes over.
+func handoverControls(cloud string) string {
+	what := `
 What your agent will do: load the clawbridge-provision-gcp playbook and follow it in your project. It
 creates a VM, a static IP, a data disk, firewall rules, a backup bucket and a service account, after
 showing you the cost and getting your yes, then installs the server.
+`
+	if cloud == "aws" {
+		what = `
+What your agent will do: load the clawbridge-provision-aws playbook and follow it in your account. It
+creates a network, an HTTPS-only security group, a backup bucket, a role, a data volume, an instance
+reached over SSM (no SSH) and an Elastic IP, after showing you the cost and getting your yes, then
+installs the server.
+`
+	}
+	return what + handoverRules
+}
 
+const handoverRules = `
 The real controls: the playbook's rules guide the agent, but what protects you is that you approve
 each of its commands, and that ClawBridge's checks, not the agent, decide when a step is done. Keep the
 agent in its normal approval mode; avoid bypass or auto-approve modes for this hand-over.
@@ -164,6 +211,14 @@ agent in its normal approval mode; avoid bypass or auto-approve modes for this h
 The agent holds this terminal. When it asks you to enter a secret (clawbridge cloud secret set KEY), run that
 in a second terminal: secrets never go through the agent.
 `
+
+// summary names the saved progress in one line.
+func (s *onboardingState) summary() string {
+	if s.Cloud == "aws" {
+		return "AWS account " + wizardSafe(s.Account) + ", domain " + wizardSafe(s.Domain) + ", step " + wizardSafe(s.Step)
+	}
+	return "project " + wizardSafe(s.Project) + ", domain " + wizardSafe(s.Domain) + ", step " + wizardSafe(s.Step)
+}
 
 // startOwnServer is Start's third choice.
 func startOwnServer(ctx context.Context, prompt *wizardPrompt, stdout, stderr io.Writer) error {
@@ -182,7 +237,7 @@ func startOwnServer(ctx context.Context, prompt *wizardPrompt, stdout, stderr io
 		return err
 	}
 	if state != nil {
-		fmt.Fprintf(stdout, "\nSaved progress: project %s, domain %s, step %s.\n", wizardSafe(state.Project), wizardSafe(state.Domain), wizardSafe(state.Step))
+		fmt.Fprintf(stdout, "\nSaved progress: %s.\n", state.summary())
 		if state.Version != buildinfo.Version {
 			fmt.Fprintln(stdout, "It was saved by another ClawBridge version, so the step starts again.")
 		}
@@ -198,10 +253,19 @@ func startOwnServer(ctx context.Context, prompt *wizardPrompt, stdout, stderr io
 		}
 	}
 	if state == nil {
-		if state, err = askInputs(ctx, prompt, stdout); err != nil {
+		answer, err := prompt.ask("Which cloud? 1. Google Cloud or 2. AWS [1]: ")
+		if err != nil {
 			return err
 		}
-		state.Cloud, state.Step = "gcp", "provision"
+		if strings.TrimSpace(answer) == "2" {
+			state, err = askAWSInputs(ctx, prompt, stdout)
+		} else {
+			state, err = askInputs(ctx, prompt, stdout)
+		}
+		if err != nil {
+			return err
+		}
+		state.Step = "provision"
 		if err = saveOnboarding(state); err != nil {
 			return err
 		}
@@ -219,7 +283,7 @@ func startOwnServer(ctx context.Context, prompt *wizardPrompt, stdout, stderr io
 			agent = handoverAgents[agents[1]]
 		}
 	}
-	fmt.Fprint(stdout, handoverControls)
+	fmt.Fprint(stdout, handoverControls(state.Cloud))
 	answer, err := prompt.ask("Hand over to " + agent.name + " now? [y/N] (n shows the written steps): ")
 	if err != nil {
 		return err
@@ -275,6 +339,7 @@ func askInputs(ctx context.Context, prompt *wizardPrompt, stdout io.Writer) (*on
 			*q.dest = fallback
 		}
 	}
+	s.Cloud = "gcp"
 	if err := validInputs(s); err != nil {
 		return nil, fmt.Errorf("%w; run clawbridge onboard to start again", err)
 	}
@@ -316,7 +381,10 @@ after you exit.
 // dedicated gcloud configuration, runs the agent in this terminal, then runs
 // the step's checks itself.
 func handOver(ctx context.Context, s *onboardingState, bin, skillAgent string, stdout, stderr io.Writer) error {
-	if err := installPlaybook(skillAgent); err != nil {
+	if s.Cloud == "aws" {
+		return handOverAWS(ctx, s, bin, skillAgent, stdout, stderr)
+	}
+	if err := installPlaybook("gcp", skillAgent); err != nil {
 		return fmt.Errorf("the playbook could not be installed for the agent: %w", err)
 	}
 	if _, err := runGcloud(ctx, "config", "configurations", "describe", gcloudConfiguration); err != nil {
@@ -380,6 +448,16 @@ func setEnv(key, value string) func() {
 
 // finishSignin names the sign-in step the user runs in their own terminal.
 func finishSignin(s *onboardingState, stdout io.Writer) error {
+	if s.Cloud == "aws" {
+		_, err := fmt.Fprintf(stdout, `
+The server is up. Last step, in your own terminal (not your agent's): create the workspace as its owner,
+following the sign-in section of the clawbridge-provision-aws skill (references/signin.md). Then check:
+
+  clawbridge cloud check workspace
+  clawbridge cloud check backups --bucket %s --region %s --profile %s
+`, s.Bucket, s.Region, s.Profile)
+		return err
+	}
 	_, err := fmt.Fprintf(stdout, `
 The server is up. Last step, in your own terminal (not your agent's): create the workspace as its owner,
 following the sign-in section of the clawbridge-provision-gcp skill (references/signin.md). Then check:

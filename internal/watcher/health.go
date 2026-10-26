@@ -25,6 +25,10 @@ const (
 	healthActivityQuery = `query HealthActivity($id: String!, $since: DateTimeOrDuration!) { issue(id: $id) { history(first: 20) { nodes { createdAt actorId botActor { id } } } comments(first: 20, filter: { createdAt: { gt: $since } }) { nodes { createdAt user { id } botActor { id } } } } }`
 )
 
+// HealthProjectQuery is the judgement's project read, exported unchanged
+// for the operator's order probe (linear-app-probe --health-order).
+const HealthProjectQuery = healthProjectQuery
+
 // HealthRun is what one tick's health run did for a Linear project.
 type HealthRun struct {
 	LinearProject string `json:"linear_project"`

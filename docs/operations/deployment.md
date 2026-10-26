@@ -176,6 +176,29 @@ project status update as the app and removes it again:
   the ID (or saying to check the project), and the owner deletes it.
 - It never mints; the token rules are as above.
 
+Before the server posts health for a project, `--health-order` settles that the
+health judgement's read holds that project's newest update, the one it acts on:
+
+```sh
+... run --rm --no-deps api operator linear-app-probe --confirm --health-order --project UUID
+```
+
+- **The reads:** the judgement's own project read, unchanged (`first: 5`,
+  ordered by `createdAt`), and the same read with `last: 5`. Two reads as the
+  app, no write.
+- **What it prints:** each read's update IDs and creation times in the order
+  Linear returned them, and each read's order (`newest_first`, `oldest_first`,
+  `same_time`, `mixed` or `single`); `distinct`, how many different updates
+  the two reads saw; `window_has_newest`, whether the judgement's read holds
+  the newest of them; `conclusive`, true with more than five distinct updates;
+  and `agree`, both. Never an update's body or author.
+- **Reading the answer:** only `agree: true` (conclusive, and the read holds the
+  newest) lets a project's post setting go on. With five updates or fewer both
+  reads return them all and prove nothing: run it on a project with more.
+  `window_has_newest: false` means the judgement could miss the latest update:
+  keep post off and tell the coordinator.
+- It never mints; the token rules are as above.
+
 To check whether the app may list the workspace's Linear documents (which the
 server watcher's document notices need), run `operator linear-app-doc-probe
 --confirm` the same way.

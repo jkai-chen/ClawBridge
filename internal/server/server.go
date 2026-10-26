@@ -645,7 +645,7 @@ func openServingStore(ctx context.Context, dsn, owner string) (*bus.Store, error
 // cannot sign in: their own address moved to a new Google account, or a
 // workspace allow-list refuses every account.
 func RunOperator(ctx context.Context, args []string, stdout io.Writer) error {
-	const usage = "usage: clawbridge operator principal-unbind EMAIL --confirm [--allow-previous] | workspace-clear-domains WORKSPACE --confirm | linear-app-probe --confirm [--project UUID] [--p8 [--dry-run]] | linear-app-doc-probe --confirm | bootstrap-invite --workspace NAME [--force-stdout] [--database-url-env NAME]"
+	const usage = "usage: clawbridge operator principal-unbind EMAIL --confirm [--allow-previous] | workspace-clear-domains WORKSPACE --confirm | linear-app-probe --confirm [--project UUID] [--p8 [--dry-run] | --health-order] | linear-app-doc-probe --confirm | bootstrap-invite --workspace NAME [--force-stdout] [--database-url-env NAME]"
 	if len(args) > 0 && args[0] == "bootstrap-invite" {
 		return runBootstrapInvite(ctx, args[1:], stdout)
 	}
@@ -660,11 +660,12 @@ func RunOperator(ctx context.Context, args []string, stdout io.Writer) error {
 		f.BoolVar(&allowPrevious, "allow-previous", false, "let the released account bind again, for an unbind made by mistake")
 	}
 	project := ""
-	p8, dryRun := false, false
+	p8, dryRun, healthOrder := false, false, false
 	if command == "linear-app-probe" {
 		f.StringVar(&project, "project", "", "a bound Linear project UUID whose health inputs are read; with --p8, the empty throwaway project")
 		f.BoolVar(&p8, "p8", false, "post one real status update to the empty --project as the app, read it back, delete it and read again (P8)")
 		f.BoolVar(&dryRun, "dry-run", false, "with --p8: check the project and the app's tools, and send nothing")
+		f.BoolVar(&healthOrder, "health-order", false, "read --project's updates as the health judgement does and with last:, two reads, and print their order")
 	}
 	dsnEnv := f.String("database-url-env", "CLAWBRIDGE_DATABASE_URL", "environment variable holding the Postgres connection URL")
 	var positional []string
@@ -685,7 +686,13 @@ func RunOperator(ctx context.Context, args []string, stdout io.Writer) error {
 	if p8 && project == "" || dryRun && !p8 {
 		return errors.New("--p8 needs --project, and --dry-run needs --p8")
 	}
+	if healthOrder && (project == "" || p8) {
+		return errors.New("--health-order needs --project, and not --p8")
+	}
 	if !*confirm {
+		if command == "linear-app-probe" && healthOrder {
+			return errors.New("linear-app-probe --health-order reads the project's latest updates twice as the Linear app and prints their IDs and times; it writes nothing; repeat with --confirm")
+		}
 		if command == "linear-app-probe" && p8 {
 			return errors.New("linear-app-probe --p8 posts one real status update to the empty project as the Linear app, then deletes it; repeat with --confirm")
 		}
@@ -709,6 +716,9 @@ func RunOperator(ctx context.Context, args []string, stdout io.Writer) error {
 		return fmt.Errorf("cannot open Postgres: %w", err)
 	}
 	defer store.Close()
+	if command == "linear-app-probe" && healthOrder {
+		return linearAppHealthOrder(ctx, store, project, stdout)
+	}
 	if command == "linear-app-probe" && p8 {
 		return linearAppP8(ctx, store, project, dryRun, stdout)
 	}

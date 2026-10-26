@@ -29,6 +29,10 @@ func bindTarget(f *flag.FlagSet, t *cloudTarget) {
 
 func (t cloudTarget) set() bool { return t != cloudTarget{} }
 
+// remote says the server's shell is reachable: a host or a VM. --project
+// alone only names the backup bucket's project.
+func (t cloudTarget) remote() bool { return t.host != "" || t.vm != "" }
+
 // argv is the command that runs remoteCommand on the server. Every input is
 // validated first; remoteCommand is always one of the fixed scripts.
 func (t cloudTarget) argv(remoteCommand string) ([]string, error) {
@@ -235,7 +239,7 @@ func (p *cloudProbe) cloudSession(ctx context.Context, check string) (cloudExecu
 // target is given), and the server reports the app configured and seeing
 // every bound team.
 func checkLinearApp(ctx context.Context, p *cloudProbe) cloudResult {
-	if p.target.set() {
+	if p.target.remote() {
 		f, err := p.facts(ctx)
 		if err != nil {
 			return failed("linear-app", "ssh_failed", remoteAdvice)
@@ -278,7 +282,7 @@ func checkLinearApp(ctx context.Context, p *cloudProbe) cloudResult {
 		return failed("linear-app", "teams_hidden", fmt.Sprintf("a Linear admin adds the app to %d bound team(s): %s", len(hidden), strings.Join(hidden, ", ")))
 	}
 	result := cloudResult{Check: "linear-app", Status: "pass"}
-	if !p.target.set() {
+	if !p.target.remote() {
 		result.Advice = "entries not counted: pass --ssh or --vm to check them too"
 	}
 	return result

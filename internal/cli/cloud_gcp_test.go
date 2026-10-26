@@ -149,6 +149,16 @@ func TestCloudCheckBackupsFlags(t *testing.T) {
 	if len(got) != 1 || got[0].Reason != "no_backup" {
 		t.Fatalf("%+v", got)
 	}
+	// With --project alone, server and linear-app run nothing over SSH.
+	runs := stubRemote(t, "", errors.New("no ssh"))
+	withVersion(t, "1.2.3")
+	got, _ = cloudCheck(t, "server", "backups", "--server", healthServer(t, 200, `{"status":"ok","version":"1.2.3"}`), "--bucket", "example-backups", "--project", "example-project")
+	if len(*runs) != 0 || got[0].Status != "pass" || got[0].Advice != serverUnchecked {
+		t.Fatalf("%+v %+v", got, *runs)
+	}
+	if r := checkLinearApp(context.Background(), &cloudProbe{configErr: errors.New("x"), target: cloudTarget{project: "example-project"}}); r.Reason != "no_config" || len(*runs) != 0 {
+		t.Fatalf("%+v", r)
+	}
 	if err := Run(context.Background(), []string{"cloud", "check", "backups", "--zone", "europe-west1-b"}, io.Discard, io.Discard); err == nil || !strings.Contains(err.Error(), "reached with") {
 		t.Fatal("a zone alone was accepted")
 	}

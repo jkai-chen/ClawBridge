@@ -383,8 +383,11 @@ The server URL is `--server` or the configured one. The target (`--ssh HOST`, or
 shell; without one, the remote parts are skipped and the result says so. Over it,
 one fixed script runs with `sudo -n`: it prints, for a fixed list of keys, how
 many non-empty lines set each one in the env file (a count, never a value), and
-the state of the containers in the env file's Compose project. No check reads a
-secret or writes anything.
+the state of the service containers (not `compose run` one-offs) in the env
+file's Compose project; every container of a service must be up. `sudo -n`
+needs passwordless sudo for the user's SSH account; with Google Cloud OS Login
+that is the `roles/compute.osAdminLogin` role. No check reads a secret or writes
+anything.
 
 `clawbridge cloud secret set KEY (--ssh HOST | --vm NAME --project P --zone Z)
 [--value-stdin]` writes one server setting the user holds, so it never passes

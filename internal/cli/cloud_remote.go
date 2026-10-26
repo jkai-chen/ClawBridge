@@ -88,8 +88,8 @@ var composeServices = []string{"api", "caddy", "db"}
 
 // factsScript is the one fixed remote command the checks run (§4, ON-L3).
 // It prints, per key, how many non-empty lines set it (a count, never a
-// value), then each of the deployment's compose containers as "service
-// state status". It reads the env file's project name on the server and
+// value), then each of the deployment's compose service containers (not
+// `compose run` one-offs) as "service state status". It reads the env file's project name on the server and
 // prints nothing else from it.
 func factsScript() string { return factsScriptFor(serverEnvFile) }
 
@@ -100,7 +100,7 @@ func factsScriptFor(path string) string {
 		`if [ ! -r "$f" ]; then echo "env missing"; exit 0; fi`,
 		`for k in ` + strings.Join(keys, " ") + `; do echo "count $k $(grep -c "^$k=." "$f")"; done`,
 		`p=$(sed -n "s/^COMPOSE_PROJECT_NAME=//p" "$f" | tail -n 1)`,
-		`[ -n "$p" ] && docker ps --all --filter "label=com.docker.compose.project=$p" --format "service {{.Label \"com.docker.compose.service\"}} {{.State}} {{.Status}}"`,
+		`[ -n "$p" ] && docker ps --all --filter "label=com.docker.compose.project=$p" --filter "label=com.docker.compose.oneoff=False" --format "service {{.Label \"com.docker.compose.service\"}} {{.State}} {{.Status}}"`,
 		`exit 0`,
 	}, "\n")
 }
@@ -108,11 +108,11 @@ func factsScriptFor(path string) string {
 type remoteFacts struct {
 	envMissing bool
 	counts     map[string]int
-	services   map[string]string // service: "state status"
+	services   map[string][]string // service: each container's "state status"
 }
 
 func parseFacts(out []byte) remoteFacts {
-	f := remoteFacts{counts: map[string]int{}, services: map[string]string{}}
+	f := remoteFacts{counts: map[string]int{}, services: map[string][]string{}}
 	for _, line := range strings.Split(string(out), "\n") {
 		fields := strings.Fields(line)
 		switch {
@@ -123,7 +123,7 @@ func parseFacts(out []byte) remoteFacts {
 				f.counts[fields[1]] = n
 			}
 		case len(fields) >= 3 && fields[0] == "service":
-			f.services[fields[1]] = strings.Join(fields[2:], " ")
+			f.services[fields[1]] = append(f.services[fields[1]], strings.Join(fields[2:], " "))
 		}
 	}
 	return f
@@ -176,12 +176,18 @@ func checkSettings(f remoteFacts) cloudResult {
 func checkServices(f remoteFacts) cloudResult {
 	var down []string
 	for _, s := range composeServices {
-		state, ok := f.services[s]
-		healthy := strings.HasPrefix(state, "running ") && !strings.Contains(state, "(unhealthy)") && !strings.Contains(state, "(health: starting)")
-		if s == "db" {
-			healthy = healthy && strings.Contains(state, "(healthy)")
+		// Every container of the service must be up: a crashed replica
+		// is not hidden by a healthy one.
+		states := f.services[s]
+		healthy := len(states) > 0
+		for _, state := range states {
+			up := strings.HasPrefix(state, "running ") && !strings.Contains(state, "(unhealthy)") && !strings.Contains(state, "(health: starting)")
+			if s == "db" {
+				up = up && strings.Contains(state, "(healthy)")
+			}
+			healthy = healthy && up
 		}
-		if !ok || !healthy {
+		if !healthy {
 			down = append(down, s)
 		}
 	}

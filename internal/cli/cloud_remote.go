@@ -2,12 +2,14 @@ package cli
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"errors"
 	"flag"
 	"fmt"
 	"io"
 	"os/exec"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -98,6 +100,9 @@ var googleSettings = []string{
 	"CLAWBRIDGE_OAUTH_DEVICE_CLIENT_ID", "CLAWBRIDGE_OAUTH_DEVICE_CLIENT_SECRET",
 }
 
+// authSetting chooses the sign-in methods. Unset, compose passes google.
+const authSetting = "CLAWBRIDGE_AUTH"
+
 // appSettings are the Linear app's three entries: all or none.
 var appSettings = []string{"CLAWBRIDGE_LINEAR_APP_CLIENT_ID", "CLAWBRIDGE_LINEAR_APP_CLIENT_SECRET", "CLAWBRIDGE_LINEAR_APP_TOKEN_KEY"}
 
@@ -106,18 +111,22 @@ var composeServices = []string{"api", "caddy", "db"}
 
 // factsScript is the one fixed remote command the checks run (§4, ON-L3).
 // It prints, per key, how many non-empty lines set it (a count, never a
-// value), then each of the deployment's compose service containers (not
-// `compose run` one-offs) as "service state status". It reads the env file's project name on the server and
+// value), the sign-in mode (CLAWBRIDGE_AUTH's last value when it is one
+// of the four valid ones, else "invalid": never anything else), then each
+// of the deployment's compose service containers (not `compose run`
+// one-offs) as "service state status". It reads the env file's project name on the server and
 // prints nothing else from it.
 func factsScript() string { return factsScriptFor(serverEnvFile) }
 
 func factsScriptFor(path string) string {
-	keys := append(append(append([]string{}, requiredSettings...), googleSettings...), appSettings...)
+	keys := append(append(append(append([]string{}, requiredSettings...), googleSettings...), appSettings...), authSetting)
 	return strings.Join([]string{
 		`f=` + path,
 		`echo "mount $(findmnt -n -o SOURCE ` + dataMount + ` || echo none)"`,
 		`if [ ! -r "$f" ]; then echo "env missing"; exit 0; fi`,
 		`for k in ` + strings.Join(keys, " ") + `; do echo "count $k $(grep -c "^$k=." "$f")"; done`,
+		`a=$(sed -n "s/^` + authSetting + `=//p" "$f" | tail -n 1 | tr -d " \r")`,
+		`case "$a" in "") echo "auth";; google|device|google,device|device,google) echo "auth $a";; *) echo "auth invalid";; esac`,
 		`p=$(sed -n "s/^COMPOSE_PROJECT_NAME=//p" "$f" | tail -n 1)`,
 		`[ -n "$p" ] && docker ps --all --filter "label=com.docker.compose.project=$p" --filter "label=com.docker.compose.oneoff=False" --format "service {{.Label \"com.docker.compose.service\"}} {{.State}} {{.Status}}"`,
 		`exit 0`,
@@ -131,6 +140,7 @@ type remoteFacts struct {
 	mount      string // the data mount's source device, or "none"
 	envMissing bool
 	counts     map[string]int
+	auth       string              // CLAWBRIDGE_AUTH, or "" when unset
 	services   map[string][]string // service: each container's "state status"
 }
 
@@ -141,6 +151,8 @@ func parseFacts(out []byte) remoteFacts {
 		switch {
 		case len(fields) == 2 && fields[0] == "env" && fields[1] == "missing":
 			f.envMissing = true
+		case len(fields) == 2 && fields[0] == "auth":
+			f.auth = fields[1]
 		case len(fields) == 3 && fields[0] == "count":
 			if n, err := strconv.Atoi(fields[2]); err == nil {
 				f.counts[fields[1]] = n
@@ -181,6 +193,9 @@ func checkSettings(f remoteFacts) cloudResult {
 		return failed("server", "env_missing", serverEnvFile+" is missing; write the private configuration")
 	}
 	var missing, twice, google, noGoogle []string
+	if f.counts[authSetting] > 1 {
+		twice = append(twice, authSetting)
+	}
 	for _, k := range requiredSettings {
 		switch n := f.counts[k]; {
 		case n == 0:
@@ -201,6 +216,13 @@ func checkSettings(f remoteFacts) cloudResult {
 	}
 	if len(google) > 0 && len(noGoogle) > 0 {
 		return failed("server", "setting_missing", "Google sign-in needs all five settings; set in the env file: "+strings.Join(noGoogle, ", ")+" (or remove them all and set CLAWBRIDGE_AUTH=device)")
+	}
+	methods, ok := authModeMethods(f.auth)
+	if !ok {
+		return failed("server", "setting_invalid", authSetting+" must be google, device or google,device")
+	}
+	if len(google) == 0 && slices.Contains(methods, "google") {
+		return failed("server", "setting_missing", "Google sign-in is on ("+authSetting+" is "+cmp.Or(f.auth, "unset, so google")+") but none of its five settings is set; set them all, or set "+authSetting+"=device for device sign-in only")
 	}
 	if len(missing) > 0 {
 		return failed("server", "setting_missing", "set in the env file: "+strings.Join(missing, ", "))
@@ -313,4 +335,18 @@ func checkLinearApp(ctx context.Context, p *cloudProbe) cloudResult {
 		result.Advice = "entries not counted: pass --ssh, --vm or --instance to check them too"
 	}
 	return result
+}
+
+// authModeMethods reads CLAWBRIDGE_AUTH as serve does: its sign-in methods,
+// sorted; unset is compose's google.
+func authModeMethods(mode string) ([]string, bool) {
+	var methods []string
+	for _, m := range strings.Split(cmp.Or(mode, "google"), ",") {
+		if (m != "google" && m != "device") || slices.Contains(methods, m) {
+			return nil, false
+		}
+		methods = append(methods, m)
+	}
+	slices.Sort(methods)
+	return methods, true
 }

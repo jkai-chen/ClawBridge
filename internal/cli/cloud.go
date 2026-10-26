@@ -16,6 +16,7 @@ import (
 	"os"
 	"os/exec"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 	"text/tabwriter"
@@ -260,7 +261,42 @@ func checkServer(ctx context.Context, p *cloudProbe) cloudResult {
 	if r = checkSettings(f); r.Status != "pass" {
 		return r
 	}
-	return checkServices(f)
+	if r = checkServices(f); r.Status != "pass" {
+		return r
+	}
+	return p.checkAuthMode(ctx, f.auth)
+}
+
+// checkAuthMode compares the env file's sign-in methods with the running
+// server's: an env file changed without recreating the api container does
+// not take effect.
+func (p *cloudProbe) checkAuthMode(ctx context.Context, mode string) cloudResult {
+	want, _ := authModeMethods(mode)
+	u, _ := serverURL(p.server)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, strings.TrimSuffix(u.String(), "/")+"/v1/config", nil)
+	if err != nil {
+		return failed("server", "invalid_url", "use https://YOUR-DOMAIN (plain http only for localhost)")
+	}
+	resp, err := cloudHTTP.Do(req)
+	if err != nil {
+		return failed("server", transportReason(err), transportAdvice[transportReason(err)])
+	}
+	defer resp.Body.Close()
+	var body struct {
+		AuthMethods *[]string `json:"auth_methods"`
+	}
+	if resp.StatusCode != http.StatusOK || json.NewDecoder(io.LimitReader(resp.Body, 64<<10)).Decode(&body) != nil {
+		return failed("server", "config_unreadable", "GET /v1/config did not answer; check the server's logs")
+	}
+	if body.AuthMethods == nil {
+		// A server from before sign-in methods were reported.
+		return cloudResult{Check: "server", Status: "pass"}
+	}
+	got := slices.Sorted(slices.Values(*body.AuthMethods))
+	if !slices.Equal(got, want) {
+		return failed("server", "auth_mismatch", "the env file signs in with "+strings.Join(want, ",")+" but the running server with "+strings.Join(got, ",")+"; recreate the api container so it reads the env file (docker compose … up -d --no-deps api, see the deployment guide)")
+	}
+	return cloudResult{Check: "server", Status: "pass"}
 }
 
 func checkVersion(ctx context.Context, p *cloudProbe) cloudResult {

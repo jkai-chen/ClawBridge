@@ -101,7 +101,7 @@ func TestTaskboardSchemaFourAndMigration(t *testing.T) {
 	if e != nil {
 		t.Fatal(e)
 	}
-	if _, e = s.db.Exec("PRAGMA user_version=20"); e != nil {
+	if _, e = s.db.Exec("PRAGMA user_version=21"); e != nil {
 		t.Fatal(e)
 	}
 	s.Close()

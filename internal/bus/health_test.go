@@ -2,6 +2,7 @@ package bus
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -363,6 +364,16 @@ func withUpdates(f map[string]any, updates ...map[string]any) map[string]any {
 	return f
 }
 
+// fiveUpdates are a full read of the app's own updates, the newest at
+// newest and each older one a day before it.
+func fiveUpdates(newest time.Time) []map[string]any {
+	out := []map[string]any{}
+	for i := 0; i < HealthUpdatesRead; i++ {
+		out = append(out, update(fmt.Sprintf("e1000000-0000-4000-8000-00000000001%d", i), newest.Add(-time.Duration(i)*24*time.Hour), true))
+	}
+	return out
+}
+
 func update(id string, created time.Time, byApp bool) map[string]any {
 	return map[string]any{"id": id, "created_at": created.UTC().Format(time.RFC3339Nano), "by_app": byApp}
 }
@@ -462,6 +473,9 @@ func TestHealthNeverPostsOverAPersonsRecentUpdate(t *testing.T) {
 		"a person's, 8 days ago":              {[]map[string]any{update(updateOne, now.Add(-8*24*time.Hour), false)}, true},
 		"the app's, yesterday":                {[]map[string]any{update(updateOne, now.Add(-24*time.Hour), true)}, true},
 		"a person's, then the app's after it": {[]map[string]any{update(updateOne, now.Add(-48*time.Hour), false), update(updateTwo, now.Add(-24*time.Hour), true)}, true},
+		"five read, all over 7 days old":      {fiveUpdates(now.Add(-8 * 24 * time.Hour)), false},
+		"five read, the newest recent":        {fiveUpdates(now.Add(-24 * time.Hour)), true},
+		"four read, all over 7 days old":      {fiveUpdates(now.Add(-8 * 24 * time.Hour))[:4], true},
 	} {
 		h := newHealthHarness(t)
 		h.enable(projectOne, 0, map[string]any{"enabled": true, "post": true})
@@ -470,7 +484,7 @@ func TestHealthNeverPostsOverAPersonsRecentUpdate(t *testing.T) {
 		if (r["post"] != nil) != c.posts {
 			t.Fatal(name, r)
 		}
-		if !c.posts && (h.notices() != 1 || !strings.Contains(h.lastNotice(), "A person posted a project update")) {
+		if !c.posts && (h.notices() != 1 || !(strings.Contains(h.lastNotice(), "A person posted a project update") || strings.Contains(h.lastNotice(), "although more may exist"))) {
 			t.Fatal(name, "held back without telling the coordinator")
 		}
 	}

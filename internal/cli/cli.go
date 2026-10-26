@@ -46,7 +46,8 @@ Commands: setup --local, project create SLUG, register [NAME], sessions, send TO
           sync, purge-expired, principal-unbind EMAIL --confirm [--allow-previous],
           workspace-domains DOMAIN...|--clear, doctor, tui [--screen SCREEN], version,
           cloud check [server|version|workspace|all], cloud secret set KEY (own-server onboarding)
-Interactive: bare clawbridge opens the selected profile or guided join; setup wizard starts guided join.
+Interactive: bare clawbridge opens the selected profile, or Start without one; onboard reopens Start
+(local, join a team server, or your own server); setup wizard starts guided join.
 Onboarding: setup join --server URL --workspace TEAM --project CODEBASE [--login|--device]
 setup --cloud initializes an existing service only; no infrastructure is created.
 Global: --client-config /absolute/path/config.toml (trusted route; not agent --config)
@@ -218,6 +219,9 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	}
 	if len(rest) >= 2 && rest[0] == "setup" && rest[1] == "join" {
 		return runJoin(ctx, flags, rest[2:], stdout, stderr)
+	}
+	if rest[0] == "onboard" {
+		return runOnboard(ctx, flags, rest[1:], stdout, stderr)
 	}
 	if rest[0] == "tui" {
 		return runTUI(ctx, flags, rest[1:], stdout, stderr)

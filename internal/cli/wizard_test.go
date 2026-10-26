@@ -70,11 +70,16 @@ func TestGuidedNonTTYAndHelpHaveNoEffects(t *testing.T) {
 	isolated(t)
 	wizardHooks(t, "")
 	wizardTerminal = func(io.Writer) error { return errors.New("not terminal") }
-	for _, args := range [][]string{nil, {"--help"}, {"help"}, {"-h"}} {
+	for _, args := range [][]string{{"--help"}, {"help"}, {"-h"}} {
 		var out bytes.Buffer
 		if err := Run(context.Background(), args, &out, io.Discard); err != nil || !strings.Contains(out.String(), "clawbridge:") {
 			t.Fatalf("usage: %v %s", err, &out)
 		}
+	}
+	// With no profile, bare clawbridge prints Start and its commands.
+	var out bytes.Buffer
+	if err := Run(context.Background(), nil, &out, io.Discard); err != nil || out.String() != startText+startCommands {
+		t.Fatalf("start: %v %s", err, &out)
 	}
 	for _, args := range [][]string{{"--json"}, {"--mode", "cloud"}, {"--workspace", "x"}} {
 		if err := Run(context.Background(), args, io.Discard, io.Discard); err == nil {

@@ -802,7 +802,8 @@ Each field is optional except `enabled`.
   and nothing is set.
 - **State types.** Linear's status list through MCP may leave out each state's
   type. Then a hosted server's ClawBridge Linear app reads the team's workflow
-  instead (`linear_app_states`, a read, only for a bound team). Without either,
+  instead (`linear_app_states`, a read, only for a bound team, and only for a
+  project lead or owner). Without either,
   nothing is set.
 - **What is stored.** The policy keeps each state's ID and type, and the team's
   whole workflow at that moment. Renaming a state changes nothing. A state added
@@ -829,6 +830,54 @@ Each field is optional except `enabled`.
   the claim or release happened. A changed policy skips it.
 - **Cost:** each move costs about three Linear calls: a read, the write, and a
   readback.
+
+## Project health (project owner only)
+
+A hosted server's watcher can judge each bound Linear project's health once a
+day, from Linear facts, and tell the project's coordinator session. It is off
+until the owner enables it, per Linear project, in a project-set binding.
+
+```sh
+clawbridge linear health show
+clawbridge linear health enable --linear-project UUID --expected-revision N
+clawbridge linear health disable --linear-project UUID --expected-revision N
+clawbridge linear health set --linear-project UUID --file health.json --expected-revision N
+```
+
+`N` is the project's health revision from `show` (0 the first time). Any member
+can run `show`.
+
+- **Nothing is posted to Linear.** A confirmed health goes to the coordinator
+  session as a `project-health` message, and `show` lists every run's report.
+  Posting it as a Linear project update waits on proof that the ClawBridge
+  Linear app may do so; until then `"post": true` is refused.
+- **Signals.** The health is the worst of:
+  - **schedule**, when the project has a target date: the share of time used
+    since its start date (or its creation date, when it has none) against the
+    share of issues completed, counting issues, not estimates. At risk past a
+    25-point gap, off track past 50, or when the target date has passed with
+    work open;
+  - **stalled**: started issues with no human activity for 5 days. At risk at
+    2 issues or 20% of started ones, off track at 5 or 40%. The app's own notes,
+    labels and moves are not human activity; a person's comment or change is.
+    Up to 20 recently updated issues are checked a run; the rest count as active,
+    and the report says how many;
+  - **blocked**: open issues blocked by an open issue. At risk at 2, off track
+    at 5. One blocked issue never changes the health.
+- **Confirmed only.** A new health is acted on when two daily runs in a row
+  agree. With `"weekly": true`, an unchanged health is also sent once a week.
+- **Settings** (`health.json`): `enabled`, `weekly`, `stalled_days` and every
+  threshold (`stalled_risk`, `stalled_off`, `stalled_risk_pct`,
+  `stalled_off_pct`, `blocked_risk`, `blocked_off`, `schedule_risk_pct`,
+  `schedule_off_pct`). Fields left out keep the defaults above.
+- **When it runs.** Each Linear project has its own minute of the day, so a
+  binding's projects spread out. A tick runs at most two, after the comment
+  watch and claim markers, and only when the hour's budget can pay a whole run
+  (up to 25 Linear calls, usually under 10). Otherwise it waits for the next
+  tick. A run that fails is tried again an hour later.
+- **What it reads.** Issue identifiers, states, update times, blocking
+  relations, and who changed or commented on an issue. Never titles,
+  descriptions or comment text.
 
 ## Issue intake (v0.3)
 

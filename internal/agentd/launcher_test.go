@@ -11,6 +11,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 )
 
 const testToken = "cbl_s3cr3tlaunchertoken0123456789"
@@ -208,5 +209,29 @@ func TestReconcileWithTheLauncherClient(t *testing.T) {
 	f.revoked = true
 	if err := r.Step(context.Background()); err == nil || !strings.Contains(err.Error(), "refused the launcher token") {
 		t.Fatal(err)
+	}
+}
+
+// The client never sends the token through an environment proxy, and
+// waits longer than the server's 15 s request deadline.
+func TestLauncherClientTransport(t *testing.T) {
+	t.Setenv("HTTPS_PROXY", "http://127.0.0.1:9")
+	c := NewLauncherClient("https://server.example.invalid", testToken).(*launcherClient)
+	transport, ok := c.http.Transport.(*http.Transport)
+	if !ok || transport.Proxy != nil || c.http.Timeout <= 15*time.Second {
+		t.Fatalf("%#v %v", c.http.Transport, c.http.Timeout)
+	}
+}
+
+func TestLauncherClientRateLimited(t *testing.T) {
+	f, c := newFakeLauncher(t)
+	f.override = func(w http.ResponseWriter, r *http.Request) bool {
+		w.WriteHeader(http.StatusTooManyRequests)
+		io.WriteString(w, `{"error":"rate_limited"}`)
+		return true
+	}
+	_, _, err := c.Wanted(context.Background())
+	if err == nil || errors.Is(err, errLauncherRefused) || !strings.Contains(err.Error(), "rate limited") {
+		t.Fatalf("%v", err)
 	}
 }

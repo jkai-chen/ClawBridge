@@ -26,6 +26,7 @@ export const ERROR_CODES = [
 	"cap_reached",
 	"guardrail",
 	"server_busy",
+	"conflict",
 ] as const;
 export type ErrorCode = (typeof ERROR_CODES)[number];
 
@@ -64,10 +65,46 @@ export const AgentConfigResponse = Type.Object({
 		max_output_tokens_per_run: Type.Integer({ minimum: 1 }),
 	}),
 	binding_secret: Type.String({ minLength: 43 }),
+	/** pending_test: run the setup test (design §11.3) and post agent/test-result before any case (d4.1). */
+	status: Type.Enum(["pending_test", "active"]),
 });
 
 export const AgentRenewRequest = Type.Object({ binding_secret: Type.String({ minLength: 43 }) }, Closed);
 export const AgentRenewResponse = Type.Object({ projects: Type.Array(ProjectToken) });
+
+// d4.1: the setup test's result, and the agent's status for doctor. Fixed codes only, never provider text.
+export const SETUP_TEST_FAILURES = [
+	"invalid_key",
+	"no_model_access",
+	"quota",
+	"rate_limited",
+	"no_tool_use",
+	"egress_blocked",
+	"provider_error",
+	"timeout",
+] as const;
+export type SetupTestFailure = (typeof SETUP_TEST_FAILURES)[number];
+const BindingSecret = Type.String({ minLength: 43 });
+export const AgentTestResultRequest = Type.Union([
+	Type.Object(
+		{ binding_secret: BindingSecret, config_revision: Type.Integer({ minimum: 1 }), result: Type.Literal("active") },
+		Closed,
+	),
+	Type.Object(
+		{
+			binding_secret: BindingSecret,
+			config_revision: Type.Integer({ minimum: 1 }),
+			result: Type.Literal("failed"),
+			reason: Type.Enum(SETUP_TEST_FAILURES),
+		},
+		Closed,
+	),
+]);
+export const AgentStatusRequest = Type.Object(
+	{ binding_secret: BindingSecret, status: Type.Enum(["ok", "provider_auth"]) },
+	Closed,
+);
+export const OkResponse = Type.Object({ ok: Type.Literal(true) });
 
 // --- §2 hello and cases ---
 
@@ -234,6 +271,9 @@ export function definitions(): Record<string, TSchema> {
 		AgentConfigResponse,
 		AgentRenewRequest,
 		AgentRenewResponse,
+		AgentTestResultRequest,
+		AgentStatusRequest,
+		OkResponse,
 		HelloResponse,
 		Case,
 		CasesNextRequest,

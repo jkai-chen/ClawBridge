@@ -173,3 +173,41 @@ func TestProjectFlowNudgeReadsTheProjectOnce(t *testing.T) {
 		t.Fatalf("%+v %v", pass, e.f.queries)
 	}
 }
+
+// R101-L3: a failed nudge check never costs the pass its marker output.
+func TestProjectFlowNudgeFailureKeepsTheMarkerPass(t *testing.T) {
+	e := flowSetup(t, nil)
+	e.sql(`DROP TABLE project_flow_nudges`)
+	pass := e.w.Markers(context.Background(), e.pid)
+	if pass.Comments == nil || pass.Error == "" || len(pass.Health) != 0 {
+		t.Fatalf("%+v", pass)
+	}
+}
+
+// R101-L2: a tick's nudged runs don't use up the daily runs' allowance, so
+// the next project still gets its full share.
+func TestProjectFlowNudgeLeavesTheTickItsDailyRuns(t *testing.T) {
+	e := flowSetup(t, nil)
+	if _, err := e.s.Execute(context.Background(), bus.Request{Operation: "project_create", Workspace: "w", Args: map[string]any{"slug": "q"}}); err != nil {
+		t.Fatal(err)
+	}
+	e.bindProjects("q", 0, 4)
+	e.sql(`UPDATE project_flow_state SET next_flow_at='2999-01-01T00:00:00.000000000Z'`)
+	e.sql(`INSERT INTO project_flow_state(project_id,linear_project_id,next_flow_at) VALUES(?,?,'2999-01-01T00:00:00.000000000Z') ON CONFLICT DO NOTHING`, e.pid, linearProjectID(1))
+	e.sql(`INSERT INTO project_flow_nudges(id,project_id,linear_project_id,kind,asked_at,state) VALUES('fn_1',?,?,'r1',?,'asked')`, e.pid, linearProjectID(1), time.Now().UTC().Format("2006-01-02T15:04:05.000000000Z"))
+	// Project p ticks first.
+	e.sql(`INSERT INTO watch_ticks(project_id,last_tick_at) SELECT id,'2999-01-01T00:00:00.000000000Z' FROM projects WHERE id<>?`, e.pid)
+	nudged, daily := 0, 0
+	for _, tick := range e.w.Tick(context.Background()) {
+		for _, run := range tick.Health {
+			if run.Nudge != "" {
+				nudged++
+			} else {
+				daily++
+			}
+		}
+	}
+	if nudged != 1 || daily != HealthRunsPerTick {
+		t.Fatal("nudged", nudged, "daily", daily)
+	}
+}

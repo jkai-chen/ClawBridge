@@ -178,7 +178,8 @@ func (c commentCall) flowState(ctx context.Context, lp string) (map[string]any, 
 // back, and returns at most one move for the watcher to send, after
 // inserting its pending row. what says what the run decided, for show
 // and the tick. A run whose read failed (f nil) is tried again in an hour.
-func (c commentCall) projectFlow(ctx context.Context, lp string, policy StatusPolicy, revision int64, f *FlowFacts, code string) (move map[string]any, what string, err error) {
+// A nudged run leaves the daily slot and its error alone (R101-M1).
+func (c commentCall) projectFlow(ctx context.Context, lp string, policy StatusPolicy, revision int64, f *FlowFacts, code string, nudged bool) (move map[string]any, what string, err error) {
 	state, err := c.flowState(ctx, lp)
 	if err != nil {
 		return nil, "", err
@@ -187,6 +188,9 @@ func (c commentCall) projectFlow(ctx context.Context, lp string, policy StatusPo
 	if f == nil {
 		if code == "" {
 			code = "failed"
+		}
+		if nudged {
+			return nil, "error", nil
 		}
 		_, err = c.tx.ExecContext(ctx, `UPDATE project_flow_state SET last_error=?,next_flow_at=? WHERE project_id=? AND linear_project_id=?`, code, layout(c.now.Add(healthRetry)), c.pid, lp)
 		return nil, "error", err
@@ -259,7 +263,12 @@ func (c commentCall) projectFlow(ctx context.Context, lp string, policy StatusPo
 	if _, ranked := projectRank[cur]; ranked {
 		seen = cur
 	}
-	if _, err = c.tx.ExecContext(ctx, `UPDATE project_flow_state SET last_seen_type=?,last_seen_at=?,last_error='',next_flow_at=? WHERE project_id=? AND linear_project_id=?`, seen, now, layout(nextHealthAt(lp, c.now)), c.pid, lp); err != nil {
+	if nudged {
+		_, err = c.tx.ExecContext(ctx, `UPDATE project_flow_state SET last_seen_type=?,last_seen_at=? WHERE project_id=? AND linear_project_id=?`, seen, now, c.pid, lp)
+	} else {
+		_, err = c.tx.ExecContext(ctx, `UPDATE project_flow_state SET last_seen_type=?,last_seen_at=?,last_error='',next_flow_at=? WHERE project_id=? AND linear_project_id=?`, seen, now, layout(nextHealthAt(lp, c.now)), c.pid, lp)
+	}
+	if err != nil {
 		return nil, "", err
 	}
 	switch {

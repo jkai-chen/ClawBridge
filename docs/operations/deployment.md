@@ -123,7 +123,14 @@ sudo docker compose --env-file /etc/clawbridge/clawbridge.env \
   `--project`, which health fields that project has.
 - **What it sends:** one project update for a random project that does not
   exist, so Linear's answer says whether the app's scopes allow project updates.
-  Nothing is created. If Linear ever reports one was, the probe says so at once.
+  Nothing is created. If Linear ever reports one was, the probe says so at once
+  and prints that update's ID, the only ID it ever prints, so the owner can
+  delete exactly that update.
+- **Reading the answer:** only class `scope`, with an error type that names the
+  scope or `write`, is conclusive: the app may not post project updates.
+  `not_found` and `validation` suggest the scope check passed, but Linear may
+  check scopes after looking up the project, so they and every other class are
+  provisional.
 - **What it prints:** classes, tool and field names, and value kinds. It never
   prints a token, secret, ID, error message or field value.
 - **Tokens:** it uses only the token the server published, and never mints one.

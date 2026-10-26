@@ -78,7 +78,11 @@ func linearAppProbe(ctx context.Context, store linearapp.Store, project string, 
 		return err
 	}
 	if result.Class == "created" {
-		return errors.New("ALERT: Linear reports a project update was created for a project that should not exist; tell the coordinator now")
+		id := result.CreatedID
+		if id == "" {
+			id = "(no ID returned)"
+		}
+		return errors.New("ALERT: Linear reports project update " + id + " was created for a project that should not exist; tell the coordinator now, and have the owner delete it")
 	}
 	return nil
 }

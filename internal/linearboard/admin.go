@@ -154,6 +154,10 @@ func policyRevision(v any) (int, bool) {
 		return int(n), n >= 0
 	case float64:
 		return int(n), n >= 0 && n == float64(int(n))
+	case json.Number:
+		// A hosted server's answer, decoded with UseNumber.
+		i, err := n.Int64()
+		return int(i), err == nil && i >= 0
 	}
 	return 0, false
 }

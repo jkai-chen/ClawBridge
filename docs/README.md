@@ -11,6 +11,7 @@
 - [API reference](reference/api.md)
 - [Agent task ownership and cooperation](../skills/clawbridge/references/task-board.md)
 - [Development and verification](development.md)
+- [First deployment](operations/first-deployment.md)
 - [Deployment](operations/deployment.md)
 - [Backups and recovery](operations/backup-and-recovery.md)
 - [Historical plans and acceptance evidence](archive/README.md)

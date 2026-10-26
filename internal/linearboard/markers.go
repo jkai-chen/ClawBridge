@@ -116,7 +116,7 @@ func (s *Service) markerPart(ctx context.Context, scope bus.Request, args map[st
 			return settle("failed", nil, errors.New("the state move is unreadable; nothing was sent"))
 		}
 		retry, _ := g["state"].(string)
-		outcome, extra, err := s.stateMove(ctx, scope, issue, kind, policy, retry == "in_flight")
+		outcome, extra, err := s.stateMove(ctx, scope, issue, kind, policy, claimOvertaken(g), retry == "in_flight")
 		return settle(outcome, extra, err)
 	case "post":
 		body, _ := g["body"].(string)

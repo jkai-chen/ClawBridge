@@ -247,7 +247,7 @@ var statusSkipReasons = map[string]bool{"from_state": true, "team_unbound": true
 // the revision the row froze (SF-M1); the applier checks the issue's team,
 // the target and the current state against it. A claim move never started
 // is superseded once a close exists, and a close move waits until the
-// claim's has settled.
+// claim's has settled, then carries how it settled.
 func (m markerCall) stateGo(ctx context.Context, out func(string) map[string]any, wait func() (any, error)) (any, error) {
 	if m.phase == "claim" && m.close != nil && str(m.row, "state_state") == "pending" {
 		o := out("none")
@@ -285,6 +285,13 @@ func (m markerCall) stateGo(ctx context.Context, out func(string) map[string]any
 	o["kind"] = "claim"
 	if m.phase == "close" {
 		o["kind"] = "release_done"
+		// A1: the claim's settled state part and the revision it froze, so
+		// a release that overtook its claim may move from the claim's
+		// from-set, under the same policy only.
+		if m.claim != nil {
+			o["claim_state"] = str(m.claim, "state_state")
+			o["claim_policy_revision"] = int64(asInt(m.claim["state_policy_revision"]))
+		}
 	}
 	o["policy"], o["policy_revision"] = policy, revision
 	return o, nil

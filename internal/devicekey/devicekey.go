@@ -93,6 +93,19 @@ func ID(pub ed25519.PublicKey) string {
 	return "dev_" + strings.ToLower(encoding.EncodeToString(sum[:]))[:26]
 }
 
+// ValidID reports whether s has a device ID's form.
+func ValidID(s string) bool {
+	if len(s) != len("dev_")+26 || !strings.HasPrefix(s, "dev_") {
+		return false
+	}
+	for _, c := range s[len("dev_"):] {
+		if !strings.ContainsRune(strings.ToLower(crockford), c) {
+			return false
+		}
+	}
+	return true
+}
+
 // EncodePublicKey is a public key's wire and stored form: unpadded
 // base64url.
 func EncodePublicKey(pub ed25519.PublicKey) string {

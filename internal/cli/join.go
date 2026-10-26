@@ -20,7 +20,18 @@ import (
 var newJoinExecutor = func(c Config) (setup.Executor, error) { return remote.New(remoteConfig(c)) }
 
 func remoteConfig(c Config) remote.Config {
-	return remote.Config{URL: c.Server, Audience: c.Audience, Account: c.Account, ImpersonateServiceAccount: c.ImpersonateServiceAccount, Principal: c.Principal, CachePath: c.Cache, CredentialSource: c.CredentialSource, CredentialsFile: c.CredentialsFile, OAuthClientID: c.OAuthClientID, OAuthClientSecret: c.OAuthClientSecret, OAuthDeviceClientID: c.OAuthDeviceClientID, OAuthDeviceClientSecret: c.OAuthDeviceClientSecret, OAuthKeyringService: c.OAuthKeyringService}
+	r := remote.Config{URL: c.Server, Audience: c.Audience, Account: c.Account, ImpersonateServiceAccount: c.ImpersonateServiceAccount, Principal: c.Principal, CachePath: c.Cache, CredentialSource: c.CredentialSource, CredentialsFile: c.CredentialsFile, OAuthClientID: c.OAuthClientID, OAuthClientSecret: c.OAuthClientSecret, OAuthDeviceClientID: c.OAuthDeviceClientID, OAuthDeviceClientSecret: c.OAuthDeviceClientSecret, OAuthKeyringService: c.OAuthKeyringService}
+	if c.CredentialSource == remote.CredentialSourceDevice {
+		r.DeviceID, r.KeyStore = c.DeviceID, c.KeyStore
+		r.KeyHome, _ = stateHome()
+		if at, err := time.Parse(time.RFC3339, c.ClockOffsetAt); err == nil {
+			r.ClockOffset, r.ClockOffsetAt = time.Duration(c.ClockOffsetSeconds)*time.Second, at
+		}
+		if path := c.ClientConfig; path != "" {
+			r.SaveClockOffset = func(offset time.Duration, at time.Time) { _ = saveClockOffset(path, offset, at) }
+		}
+	}
+	return r
 }
 
 func commandFlags(name string, args []string, stderr io.Writer, bind func(*flag.FlagSet)) (*flag.FlagSet, error) {

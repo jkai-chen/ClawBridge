@@ -185,3 +185,34 @@ func TestOAuthInstallRequiresSelectedAudienceAndSafeArgv(t *testing.T) {
 		}
 	}
 }
+
+// A device route's MCP entry names the device and its key store, never an
+// audience or a key.
+func TestDeviceInstallArgv(t *testing.T) {
+	o := options(t, "claude-code")
+	o.Mode = "cloud"
+	o.Server = "https://server.example.test"
+	o.Principal = "alice@example.test"
+	o.Cache = filepath.Join(filepath.Dir(o.Config), "cache.db")
+	o.CredentialSource = "device"
+	o.DeviceID = "dev_abcdefghjkmnpqrstvwxyz0123"
+	o.KeyStore = "keyring"
+	result, err := Install(o)
+	if err != nil {
+		t.Fatal(err)
+	}
+	args := result.Entry["args"].([]string)
+	joined := strings.Join(args, "\x00")
+	for _, want := range []string{"--credential-source\x00device", "--device-id\x00dev_abcdefghjkmnpqrstvwxyz0123", "--key-store\x00keyring", "--principal\x00alice@example.test"} {
+		if !strings.Contains(joined, want) {
+			t.Fatalf("device argv omitted %q: %#v", want, args)
+		}
+	}
+	if strings.Contains(joined, "--audience") || strings.Contains(joined, "CLAWBRIDGE_DEVICE_KEY") {
+		t.Fatalf("device argv: %#v", args)
+	}
+	o.DeviceID = "not-a-device"
+	if _, err = Install(o); err == nil {
+		t.Fatal("installed a device route without a device ID")
+	}
+}

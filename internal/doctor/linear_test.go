@@ -217,3 +217,32 @@ func TestEveryDoctorCapabilityFlagIsOnAgainstTheNativeCatalog(t *testing.T) {
 		t.Errorf("off reasons on a healthy catalog: %v", caps.Reasons)
 	}
 }
+
+// A device route's installed entry is the one doctor expects, and a changed
+// device or key store is caught.
+func TestDeviceInstalledEntryMatchesDoctor(t *testing.T) {
+	dir := t.TempDir()
+	command := filepath.Join(dir, "clawbridge")
+	if err := os.WriteFile(command, []byte("fixture"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, "agent-config")
+	cache := filepath.Join(dir, "cache.db")
+	o := install.Options{Agent: "claude-code", Config: path, Command: command, Mode: "cloud", Server: "https://cb.example.test", Principal: "ada@example.test", Cache: cache, CredentialSource: "device", DeviceID: "dev_abcdefghjkmnpqrstvwxyz0123", KeyStore: "keyring", Workspace: "w", Project: "p", Session: "actor"}
+	if _, err := install.Install(o); err != nil {
+		t.Fatal(err)
+	}
+	expected := MCPConfig{Agent: "claude-code", Name: "clawbridge", Path: path, Mode: "cloud", Server: o.Server, Principal: o.Principal, Cache: cache, CredentialSource: "device", DeviceID: o.DeviceID, KeyStore: o.KeyStore, Workspace: "w", Project: "p", Session: "actor"}
+	checkMCP(expected, func(check Check) {
+		if check.Status != Pass {
+			t.Fatal("the installed device entry rejected:", check)
+		}
+	})
+	for _, wrong := range []MCPConfig{func() MCPConfig { e := expected; e.DeviceID = "dev_bbbbbbbbbbbbbbbbbbbbbbbbbb"; return e }(), func() MCPConfig { e := expected; e.KeyStore = "file"; return e }()} {
+		checkMCP(wrong, func(check Check) {
+			if check.Status != Fail {
+				t.Fatal("a changed device route accepted:", check)
+			}
+		})
+	}
+}

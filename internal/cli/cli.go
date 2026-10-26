@@ -9,6 +9,8 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"net/http"
+	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -51,8 +53,10 @@ Interactive: bare clawbridge opens the selected profile, or Start without one; o
 Onboarding: setup join --server URL --workspace TEAM --project CODEBASE [--login|--device]
 setup --cloud initializes an existing service only; no infrastructure is created.
 Global: --client-config /absolute/path/config.toml (trusted route; not agent --config)
-Commands: login [--device|--use-gcloud], logout
-Cloud flags: --mode cloud --server URL --audience AUDIENCE [--credential-source oauth|gcloud|adc] [--oauth-client-id ID --oauth-client-secret CREDENTIAL --oauth-device-client-id ID --oauth-device-client-secret CREDENTIAL] [--principal EMAIL] [--cache PATH]
+Commands: login [--device|--use-gcloud], logout,
+          join --email EMAIL [--code CODE] (with --server URL: join a hosted workspace with an invite),
+          invite, device, user, owner (accounts on a hosted workspace; each takes --help)
+Cloud flags: --mode cloud --server URL --audience AUDIENCE [--credential-source oauth|gcloud|adc|device] [--oauth-client-id ID --oauth-client-secret CREDENTIAL --oauth-device-client-id ID --oauth-device-client-secret CREDENTIAL] [--principal EMAIL] [--cache PATH]
 All normal results are JSON with source. See docs/reference/api.md for command flags and isolated test environment variables.
 `
 
@@ -81,6 +85,7 @@ func extractGlobals(args []string) (Config, []string, error) {
 		"oauth-client-id": &c.OAuthClientID, "oauth-client-secret": &c.OAuthClientSecret,
 		"oauth-device-client-id": &c.OAuthDeviceClientID, "oauth-device-client-secret": &c.OAuthDeviceClientSecret,
 		"oauth-keyring-service": &c.OAuthKeyringService,
+		"device-id":             &c.DeviceID, "key-store": &c.KeyStore,
 	}
 	for i := 0; i < len(args); i++ {
 		arg := args[i]
@@ -240,6 +245,13 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	}
 	if rest[0] == "doctor" {
 		return runDoctorCommand(ctx, flags, rest[1:], stdout, stderr)
+	}
+	if rest[0] == "join" {
+		return runDeviceJoin(ctx, flags, rest[1:], os.Stdin, stdout, stderr)
+	}
+	switch rest[0] {
+	case "invite", "device", "user", "owner":
+		return runAccount(ctx, flags, rest[0], rest[1:], stdout, stderr)
 	}
 	if rest[0] == "login" || rest[0] == "logout" {
 		command := rest[0]
@@ -817,15 +829,7 @@ flags:`)
 	var localStore *bus.Store
 	var cloudClient *remote.Client
 	if config.Mode == "cloud" {
-		cloudClient, err = remote.New(remote.Config{
-			URL: config.Server, Audience: config.Audience, Account: config.Account,
-			ImpersonateServiceAccount: config.ImpersonateServiceAccount,
-			Principal:                 config.Principal, CachePath: config.Cache,
-			CredentialSource: config.CredentialSource, CredentialsFile: config.CredentialsFile,
-			OAuthClientID: config.OAuthClientID, OAuthClientSecret: config.OAuthClientSecret,
-			OAuthDeviceClientID: config.OAuthDeviceClientID, OAuthDeviceClientSecret: config.OAuthDeviceClientSecret,
-			OAuthKeyringService: config.OAuthKeyringService,
-		})
+		cloudClient, err = remote.New(remoteConfig(config))
 		if err != nil {
 			return err
 		}
@@ -988,20 +992,27 @@ func collectDoctor(ctx context.Context, config Config, configPath string, existi
 			CredentialSource: config.CredentialSource, CredentialsFile: config.CredentialsFile,
 			OAuthClientID: config.OAuthClientID, OAuthDeviceClientID: config.OAuthDeviceClientID,
 			OAuthKeyringService: config.OAuthKeyringService,
+			DeviceID:            config.DeviceID, KeyStore: config.KeyStore,
 		},
 		Skills: doctorSkills,
 	}
 	var executor doctor.Executor = existing
-	if config.Mode == "cloud" {
-		routeConfig := remote.Config{
-			URL: config.Server, Audience: config.Audience, Account: config.Account,
-			ImpersonateServiceAccount: config.ImpersonateServiceAccount,
-			Principal:                 config.Principal, CachePath: config.Cache,
-			CredentialSource: config.CredentialSource, CredentialsFile: config.CredentialsFile,
-			OAuthClientID: config.OAuthClientID, OAuthClientSecret: config.OAuthClientSecret,
-			OAuthDeviceClientID: config.OAuthDeviceClientID, OAuthDeviceClientSecret: config.OAuthDeviceClientSecret,
-			OAuthKeyringService: config.OAuthKeyringService,
+	if config.Mode == "cloud" && config.CredentialSource == remote.CredentialSourceDevice {
+		routeConfig := remoteConfig(config)
+		signer, err := remote.NewDeviceSigner(routeConfig)
+		in.Device = &doctor.Device{Err: errors.Unwrap(err)}
+		if err == nil {
+			in.Device.ClockOffset, in.Device.OffsetAt = signer.Offset()
+			if executor == nil {
+				if client, e := remote.NewWithSigner(routeConfig, signer, &http.Client{Timeout: 20 * time.Second}); e == nil {
+					executor = client
+				}
+			}
+		} else if in.Device.Err == nil {
+			in.Device.Err = err
 		}
+	} else if config.Mode == "cloud" {
+		routeConfig := remoteConfig(config)
 		tokens, err := remote.NewTokenSource(ctx, routeConfig)
 		if err == nil {
 			in.TokenSource = tokens

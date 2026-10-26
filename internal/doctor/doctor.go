@@ -69,6 +69,17 @@ type Config struct {
 	OAuthClientID             string `json:"oauth_client_id,omitempty"`
 	OAuthDeviceClientID       string `json:"oauth_device_client_id,omitempty"`
 	OAuthKeyringService       string `json:"oauth_keyring_service,omitempty"`
+	DeviceID                  string `json:"device_id,omitempty"`
+	KeyStore                  string `json:"key_store,omitempty"`
+}
+
+// Device is what the client found of a device route's key: Err is why it
+// could not be read (a file key's mode included), and the clock correction
+// in use.
+type Device struct {
+	Err         error
+	ClockOffset time.Duration
+	OffsetAt    time.Time
 }
 
 // MCPConfig identifies one installed-client configuration and the expected
@@ -96,6 +107,8 @@ type MCPConfig struct {
 	OAuthClientID             string `json:"oauth_client_id,omitempty"`
 	OAuthDeviceClientID       string `json:"oauth_device_client_id,omitempty"`
 	OAuthKeyringService       string `json:"oauth_keyring_service,omitempty"`
+	DeviceID                  string `json:"device_id,omitempty"`
+	KeyStore                  string `json:"key_store,omitempty"`
 }
 
 // Input controls deterministic diagnostics. Now and MirrorStaleAfter are
@@ -106,7 +119,9 @@ type Input struct {
 	Now              time.Time
 	MirrorStaleAfter time.Duration
 	TokenSource      TokenSource
-	MCPConfigs       []MCPConfig
+	// Device describes a device route's key; nil for any other route.
+	Device     *Device
+	MCPConfigs []MCPConfig
 	// LinearCapabilities, when a personal Linear profile is configured, reads
 	// the provider's negotiated capabilities from its advertised tool list.
 	// It performs no Linear write. Nil skips the Linear section.
@@ -337,9 +352,10 @@ func checkConfig(config Config, add func(Check)) bool {
 			CredentialSource: config.CredentialSource, CredentialsFile: config.CredentialsFile,
 			OAuthClientID: config.OAuthClientID, OAuthDeviceClientID: config.OAuthDeviceClientID,
 			OAuthKeyringService: config.OAuthKeyringService,
+			DeviceID:            config.DeviceID, KeyStore: config.KeyStore,
 		}); err != nil {
 			check.Message = "Cloud credential routing is incomplete or inconsistent."
-			check.Action = "Rerun authenticated cloud join or select one complete explicit oauth, gcloud or ADC route."
+			check.Action = "Rerun authenticated cloud join or select one complete explicit oauth, gcloud, ADC or device route."
 			add(check)
 			return false
 		}
@@ -421,6 +437,10 @@ func checkAuthority(ctx context.Context, config Config, executor Executor, add f
 }
 
 func checkCredentials(ctx context.Context, in Input, configOK bool, add func(Check)) {
+	if in.Config.Mode == "cloud" && in.Config.CredentialSource == "device" {
+		checkDevice(in, add)
+		return
+	}
 	check := Check{ID: "auth.token-selection", Title: "Google token selection", Status: Fail}
 	if in.Config.Mode == "local" {
 		check.Status = Pass
@@ -456,6 +476,37 @@ func checkCredentials(ctx context.Context, in Input, configOK bool, add func(Che
 	check.Status = Pass
 	check.Message = "The explicit " + in.Config.CredentialSource + " credential route produced a token."
 	add(check)
+}
+
+// checkDevice reports a device route's key and its clock correction (§11).
+// Whether the server still takes the device shows in authority.health.
+func checkDevice(in Input, add func(Check)) {
+	check := Check{ID: "auth.device", Title: "Device key", Status: Fail}
+	store := in.Config.KeyStore
+	switch {
+	case in.Device == nil:
+		check.Message = "The device key was not checked."
+		check.Action = "Join with an invite, or enrol this device."
+	case in.Device.Err != nil:
+		check.Message = "The device key " + in.Config.DeviceID + " (" + store + ") can't be used: " + in.Device.Err.Error()
+		check.Action = "Unlock the key store or fix the key file's mode; if the key is gone, ask an owner for an invite."
+	default:
+		check.Status = Pass
+		check.Message = "The device key " + in.Config.DeviceID + " is readable from its " + store + " store."
+		if store == "file" {
+			check.Message += " It is a plain file, 0600: anyone who can read it as you can act as you."
+		}
+	}
+	add(check)
+	clock := Check{ID: "auth.clock", Title: "Clock offset", Status: Pass, Message: "No clock correction is in use."}
+	if in.Device != nil && !in.Device.OffsetAt.IsZero() {
+		clock.Message = fmt.Sprintf("Requests are corrected by %s to the server's clock, measured %s; it lapses after 24 h.", in.Device.ClockOffset, in.Device.OffsetAt.UTC().Format(time.RFC3339))
+		if in.Device.ClockOffset > 2*time.Minute || in.Device.ClockOffset < -2*time.Minute {
+			clock.Status = Warn
+			clock.Action = "Fix this machine's clock (enable network time)."
+		}
+	}
+	add(clock)
 }
 
 func checkResolution(ctx context.Context, config Config, remote string, executor Executor, authorityOK, projectsOK bool, add func(Check)) (string, string, bool) {
@@ -884,12 +935,19 @@ func expectedMCPEntry(mcp MCPConfig) (map[string]any, error) {
 			CredentialSource: mcp.CredentialSource, CredentialsFile: mcp.CredentialsFile,
 			OAuthClientID: mcp.OAuthClientID, OAuthDeviceClientID: mcp.OAuthDeviceClientID,
 			OAuthKeyringService: mcp.OAuthKeyringService,
+			DeviceID:            mcp.DeviceID, KeyStore: mcp.KeyStore,
 		})
 		if err != nil {
 			return nil, err
 		}
-		args = append(args, "--server", route.URL, "--audience", route.Audience, "--credential-source", route.CredentialSource)
+		if route.CredentialSource == remote.CredentialSourceDevice {
+			args = append(args, "--server", route.URL, "--credential-source", route.CredentialSource)
+		} else {
+			args = append(args, "--server", route.URL, "--audience", route.Audience, "--credential-source", route.CredentialSource)
+		}
 		switch route.CredentialSource {
+		case remote.CredentialSourceDevice:
+			args = append(args, "--device-id", route.DeviceID, "--key-store", route.KeyStore)
 		case remote.CredentialSourceGcloud:
 			args = append(args, "--account", route.Account, "--impersonate-service-account", route.ImpersonateServiceAccount)
 		case remote.CredentialSourceADC:

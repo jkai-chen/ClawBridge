@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/pelletier/go-toml/v2"
 )
@@ -34,6 +35,13 @@ type Config struct {
 	OAuthDeviceClientID       string `toml:"oauth_device_client_id"`
 	OAuthDeviceClientSecret   string `toml:"oauth_device_client_secret"`
 	OAuthKeyringService       string `toml:"oauth_keyring_service"`
+	// A device route (credential_source = "device"): this device's ID and
+	// where its key is kept, and the clock correction measured against the
+	// server (live/AUTH-INVITE-DESIGN.md §4, §7).
+	DeviceID           string `toml:"device_id"`
+	KeyStore           string `toml:"key_store"`
+	ClockOffsetSeconds int64  `toml:"clock_offset_seconds"`
+	ClockOffsetAt      string `toml:"clock_offset_at"`
 }
 
 func stateHome() (string, error) {
@@ -165,6 +173,15 @@ func overlay(base, top Config) Config {
 	if top.OAuthKeyringService != "" {
 		base.OAuthKeyringService = top.OAuthKeyringService
 	}
+	if top.DeviceID != "" {
+		base.DeviceID = top.DeviceID
+	}
+	if top.KeyStore != "" {
+		base.KeyStore = top.KeyStore
+	}
+	if top.ClockOffsetAt != "" {
+		base.ClockOffsetSeconds, base.ClockOffsetAt = top.ClockOffsetSeconds, top.ClockOffsetAt
+	}
 	return base
 }
 func resolveConfig(ctx context.Context, flags Config) (Config, string, error) {
@@ -229,6 +246,9 @@ func resolveConfigVariantMode(ctx context.Context, flags Config, variant func(Co
 			repo.OAuthDeviceClientID = ""
 			repo.OAuthDeviceClientSecret = ""
 			repo.OAuthKeyringService = ""
+			repo.DeviceID = ""
+			repo.KeyStore = ""
+			repo.ClockOffsetSeconds, repo.ClockOffsetAt = 0, ""
 			base = overlay(base, repo)
 		}
 	}
@@ -244,6 +264,8 @@ func resolveConfigVariantMode(ctx context.Context, flags Config, variant func(Co
 		OAuthDeviceClientID:     os.Getenv("CLAWBRIDGE_OAUTH_DEVICE_CLIENT_ID"),
 		OAuthDeviceClientSecret: os.Getenv("CLAWBRIDGE_OAUTH_DEVICE_CLIENT_SECRET"),
 		OAuthKeyringService:     os.Getenv("CLAWBRIDGE_OAUTH_KEYRING_SERVICE"),
+		DeviceID:                os.Getenv("CLAWBRIDGE_DEVICE_ID"),
+		KeyStore:                os.Getenv("CLAWBRIDGE_KEY_STORE"),
 	}
 	if guided, _ := ctx.Value(guidedRouteKey{}).(bool); guided {
 		env = Config{}
@@ -267,12 +289,13 @@ func resolveConfigVariantMode(ctx context.Context, flags Config, variant func(Co
 		if base.Server != "" || base.Audience != "" || base.Principal != "" || base.ImpersonateServiceAccount != "" || base.Cache != "" ||
 			base.CredentialSource != "" || base.CredentialsFile != "" || base.OAuthClientID != "" ||
 			base.OAuthClientSecret != "" || base.OAuthDeviceClientID != "" || base.OAuthDeviceClientSecret != "" ||
-			base.OAuthKeyringService != "" {
+			base.OAuthKeyringService != "" || base.DeviceID != "" || base.KeyStore != "" {
 			return Config{}, "", errors.New("cloud routing requires explicit mode=cloud; no local fallback")
 		}
 		base.Mode = "local"
 	}
-	if base.Mode == "cloud" && (base.Server == "" || (base.Audience == "" && !login)) {
+	deviceRoute := base.CredentialSource == "device"
+	if base.Mode == "cloud" && (base.Server == "" || (base.Audience == "" && !login && !deviceRoute)) {
 		return Config{}, "", errors.New("cloud mode requires trusted server and audience configuration")
 	}
 	if base.Cache != "" && !filepath.IsAbs(base.Cache) {
@@ -281,9 +304,26 @@ func resolveConfigVariantMode(ctx context.Context, flags Config, variant func(Co
 	if base.CredentialsFile != "" && !filepath.IsAbs(base.CredentialsFile) {
 		base.CredentialsFile = filepath.Join(home, base.CredentialsFile)
 	}
-	if base.CredentialSource != "" && base.CredentialSource != "gcloud" && base.CredentialSource != "adc" && base.CredentialSource != "oauth" {
-		return Config{}, "", errors.New("unsupported credential source; select oauth, gcloud or adc")
+	if deviceRoute {
+		if login {
+			return Config{}, "", errors.New("this profile signs in with a device key; to sign in with Google instead, pass --credential-source oauth")
+		}
+		if base.DeviceID == "" || base.KeyStore == "" {
+			return Config{}, "", errors.New("the device credential source needs device_id and key_store in trusted configuration; join with an invite")
+		}
+		// Google settings kept from before enrolment are inert here; they
+		// let logout find the old credential, and a switch back.
+		path, err = filepath.Abs(path)
+		if err != nil {
+			return Config{}, "", err
+		}
+		base.ClientConfig = path
+		return base, path, nil
 	}
+	if base.CredentialSource != "" && base.CredentialSource != "gcloud" && base.CredentialSource != "adc" && base.CredentialSource != "oauth" && !deviceRoute {
+		return Config{}, "", errors.New("unsupported credential source; select oauth, gcloud, adc or device")
+	}
+
 	if base.CredentialSource == "oauth" {
 		if !login && base.OAuthClientID == "" && base.OAuthDeviceClientID == "" {
 			return Config{}, "", errors.New("OAuth credential source requires oauth_client_id or oauth_device_client_id in trusted configuration")
@@ -512,3 +552,22 @@ func firstConfigPath(explicit, environment string) string {
 
 // envMode is the storage mode the environment selects, if any.
 func envMode() string { return os.Getenv("CLAWBRIDGE_MODE") }
+
+// saveClockOffset keeps a device route's measured clock correction in its
+// profile (§7), changing no other key.
+func saveClockOffset(path string, offset time.Duration, at time.Time) error {
+	values := map[string]any{}
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return err
+	}
+	if err = toml.Unmarshal(b, &values); err != nil {
+		return fmt.Errorf("invalid config: %w", err)
+	}
+	if values["credential_source"] != "device" {
+		return nil
+	}
+	values["clock_offset_seconds"] = int64(offset / time.Second)
+	values["clock_offset_at"] = at.UTC().Format(time.RFC3339)
+	return writeConfigValues(path, values)
+}

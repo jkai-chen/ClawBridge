@@ -85,7 +85,13 @@ func runNotify(ctx context.Context, flags Config, args []string, stdout, stderr 
 		if principal == "" {
 			principal = "oauth:" + c.OAuthClientID
 		}
-		route = []string{"cloud", c.Server, c.Audience, c.CredentialSource, c.Principal, c.Account, c.ImpersonateServiceAccount, c.OAuthClientID, c.OAuthKeyringService, c.CredentialsFile}
+		cloud := []string{"cloud", c.Server, c.Audience, c.CredentialSource, c.Principal, c.Account, c.ImpersonateServiceAccount, c.OAuthClientID, c.OAuthKeyringService, c.CredentialsFile}
+		if c.CredentialSource == "device" {
+			// Appended only for a device route, so every other route's
+			// state binding is unchanged.
+			cloud = append(cloud, c.DeviceID)
+		}
+		route = cloud
 	} else {
 		u, err := user.Current()
 		if err != nil {

@@ -1,21 +1,23 @@
 // Package runner is slice 1 of the session runner (live/RUNNER-DESIGN.md r2
 // §6): a manual launcher. A person runs `clawbridge runner launch ISSUE`,
-// and the runner prepares what they would by hand: a git worktree on an
-// agent/* branch that cannot push, the agent's Claude Code settings and
-// MCP config outside the worktree, and a visible Orca terminal running
-// Claude with an IDs-only start prompt.
+// and the runner prepares what they would by hand: a separate clone of the
+// repository on an agent/* branch that cannot push, the agent's Claude
+// Code settings and MCP config outside it, and a visible Orca terminal
+// running Claude with an IDs-only start prompt.
 //
 // The isolation layers of §2.1 are in place from the first launch: the
 // permission mode is never bypass, the Bash sandbox denies the owner's
-// credentials and restricts the network, and the worktree's remote has no
-// push URL and no credential helper. They are a second line behind the
-// person who started the session; slice 3 (auto) requires them proven.
+// credentials and limits the network to hosts that are not the git host,
+// and the clone has no push URL and no credential helper. The agent's
+// clone is untrusted from then on: the runner never runs git inside it
+// again, since its configuration and hooks are the agent's to write.
 package runner
 
 import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -34,21 +36,29 @@ type Settings struct {
 	// Model is the Claude model for launched sessions; empty uses the
 	// owner's own default (the owner has not chosen one yet).
 	Model string `json:"model,omitempty"`
-	// AllowedDomains is the Bash sandbox's network allow-list.
+	// AllowedDomains is the Bash sandbox's network allow-list. It may not
+	// cover the git host the agent's work would be pushed to.
 	AllowedDomains []string `json:"allowed_domains,omitempty"`
-	// MaxRetained caps the runner's retained worktrees.
+	// MaxRetained caps the runner's retained clones.
 	MaxRetained int `json:"max_retained,omitempty"`
+	// WorkDir holds the agents' clones. The sandbox must be able to read
+	// it, so it may not be under any path the sandbox denies.
+	WorkDir string `json:"work_dir,omitempty"`
 }
 
 // defaultDomains let an agent fetch the usual package registries.
 var defaultDomains = []string{"proxy.golang.org", "sum.golang.org", "registry.npmjs.org", "pypi.org", "files.pythonhosted.org"}
+
+// DeniedPaths are the owner's credentials and ClawBridge's own state: no
+// agent tool reads or writes them (§2.1.2, RL-M1).
+var DeniedPaths = []string{"~/.ssh", "~/.gnupg", "~/.config/gh", "~/.clawbridge", "~/.config/clawbridge", "~/Library/Keychains", "~/.git-credentials", "~/.netrc", "~/.aws", "~/.config/gcloud", "~/.docker"}
 
 // Launch is one recorded launch, in StateDir/launches.json.
 type Launch struct {
 	Session    string    `json:"session"`
 	Instance   string    `json:"instance"`
 	Repo       string    `json:"repo"`
-	Worktree   string    `json:"worktree"`
+	Clone      string    `json:"clone"`
 	Branch     string    `json:"branch"`
 	Base       string    `json:"base"`
 	BaseCommit string    `json:"base_commit"`
@@ -57,7 +67,9 @@ type Launch struct {
 	CreatedAt  time.Time `json:"created_at"`
 }
 
-// Git runs git in a directory and returns its trimmed output.
+// Git runs git in a directory and returns its trimmed output. The runner
+// calls it only in the owner's own repository and, before the agent
+// starts, in the new clone.
 type Git func(dir string, args ...string) (string, error)
 
 // Terminal opens a visible terminal in dir that runs command.
@@ -66,6 +78,8 @@ type Terminal func(dir, title, command string) error
 // Runner prepares and records launches under StateDir.
 type Runner struct {
 	StateDir string
+	// Home expands ~ in paths; the user's home directory when empty.
+	Home     string
 	Git      Git
 	Terminal Terminal
 	Now      func() time.Time
@@ -83,7 +97,34 @@ func (r *Runner) now() time.Time {
 	return time.Now()
 }
 
+func (r *Runner) home() (string, error) {
+	if r.Home != "" {
+		return r.Home, nil
+	}
+	return os.UserHomeDir()
+}
+
+// expand resolves a leading ~ to the home directory.
+func (r *Runner) expand(p string) (string, error) {
+	if p != "~" && !strings.HasPrefix(p, "~/") {
+		return filepath.Clean(p), nil
+	}
+	home, err := r.home()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(home, strings.TrimPrefix(p, "~")), nil
+}
+
+// within reports whether p is base or inside it.
+func within(p, base string) bool {
+	rel, err := filepath.Rel(base, p)
+	return err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
+}
+
 // LoadSettings reads the runner's settings; a missing file is the defaults.
+// A work directory under a denied path is refused: the sandbox could not
+// read the agent's own clone.
 func (r *Runner) LoadSettings() (Settings, error) {
 	var s Settings
 	raw, err := os.ReadFile(filepath.Join(r.StateDir, "config.json"))
@@ -103,7 +144,76 @@ func (r *Runner) LoadSettings() (Settings, error) {
 	if s.AllowedDomains == nil {
 		s.AllowedDomains = defaultDomains
 	}
+	if s.WorkDir == "" {
+		s.WorkDir = "~/clawbridge-runs"
+	}
+	work, err := r.expand(s.WorkDir)
+	if err != nil {
+		return s, err
+	}
+	if !filepath.IsAbs(work) {
+		return s, errors.New("runner work_dir must be absolute or start with ~/")
+	}
+	for _, d := range DeniedPaths {
+		denied, err := r.expand(d)
+		if err != nil {
+			return s, err
+		}
+		if within(work, denied) || within(denied, work) {
+			return s, fmt.Errorf("runner work_dir %s overlaps %s, which the sandbox denies; choose another directory", work, d)
+		}
+	}
+	s.WorkDir = work
 	return s, nil
+}
+
+// pushHosts are the hosts the repository's remotes push to.
+func pushHosts(urls []string) []string {
+	var hosts []string
+	for _, raw := range urls {
+		host := ""
+		if u, err := url.Parse(raw); err == nil && u.Host != "" {
+			host = u.Hostname()
+		} else if at := strings.Index(raw, "@"); at >= 0 {
+			// scp-like: git@github.com:owner/repo.git
+			rest := raw[at+1:]
+			if colon := strings.Index(rest, ":"); colon > 0 {
+				host = rest[:colon]
+			}
+		}
+		if host != "" {
+			hosts = append(hosts, strings.ToLower(host))
+		}
+	}
+	return hosts
+}
+
+// coversHost reports whether a sandbox domain pattern lets traffic reach
+// host: an exact name, a *. wildcard over it or a parent, or *.
+func coversHost(pattern, host string) bool {
+	p := strings.ToLower(strings.TrimSpace(pattern))
+	switch {
+	case p == "*" || p == host:
+		return true
+	case strings.HasPrefix(p, "*."):
+		suffix := p[1:]
+		return strings.HasSuffix(host, suffix) || host == p[2:]
+	}
+	return false
+}
+
+// CheckDomains refuses an allow-list that reaches a push host (RL-M2): a
+// push URL and a deny rule can be talked around, so the barrier is that
+// the agent has no credentials and no route to the git host.
+func CheckDomains(domains, remoteURLs []string) error {
+	for _, host := range pushHosts(remoteURLs) {
+		for _, d := range domains {
+			if coversHost(d, host) {
+				return fmt.Errorf("the sandbox's allowed domain %q reaches %s, where this repository pushes; remove it", d, host)
+			}
+		}
+	}
+	return nil
 }
 
 // SessionName is <repo>-<role>-<n>: no personal data, since it shows in
@@ -142,12 +252,12 @@ func (r *Runner) saveLaunches(all []Launch) error {
 	return writePrivate(filepath.Join(r.StateDir, "launches.json"), append(raw, '\n'))
 }
 
-// Retained is the number of recorded launches whose worktree still exists.
+// Retained is the number of recorded launches whose clone still exists.
 func (r *Runner) Retained() (int, error) {
 	all, err := r.Launches()
 	n := 0
 	for _, l := range all {
-		if _, e := os.Stat(l.Worktree); e == nil {
+		if _, e := os.Stat(l.Clone); e == nil {
 			n++
 		}
 	}

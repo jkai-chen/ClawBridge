@@ -38,8 +38,12 @@ reopens it at any time):
 2. **Join a team server:** have its HTTPS address, workspace, project and an
    authorized Google account ready; [joining a project](docs/onboarding.md)
    walks through it.
-3. **Set up my own server:** the steps, each verified with `clawbridge cloud
-   check` ([API reference](docs/reference/api.md)).
+3. **Set up my own server:** on Google Cloud, with Claude Code or Codex
+   installed, ClawBridge hands the provisioning to your own agent with the
+   `clawbridge-provision-gcp` playbook, in this terminal; you approve each of
+   its commands, and `clawbridge cloud check` decides when each step is done.
+   Progress is saved, so `clawbridge onboard` resumes it. Without an agent,
+   follow the [first-deployment guide](docs/operations/first-deployment.md).
 
 Without a terminal, `clawbridge` prints the command behind each choice.
 

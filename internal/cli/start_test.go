@@ -78,12 +78,15 @@ func TestStartJoin(t *testing.T) {
 	}
 }
 
-// Own server shows the steps and their checks, and changes nothing.
+// Own server without an agent CLI shows the written steps and their checks,
+// and changes nothing.
 func TestStartOwnServer(t *testing.T) {
 	home := isolated(t)
 	wizardHooks(t, "3\n")
+	h := stubHandover(t)
+	h.agents = nil
 	var out bytes.Buffer
-	if err := Run(context.Background(), nil, &out, io.Discard); err != nil || !strings.HasSuffix(out.String(), ownServerText) {
+	if err := Run(context.Background(), nil, &out, io.Discard); err != nil || !strings.Contains(out.String(), ownServerText) || !strings.Contains(out.String(), "No Claude Code or Codex") {
 		t.Fatal(err, out.String())
 	}
 	if _, err := os.Stat(filepath.Join(home, "state")); !errors.Is(err, os.ErrNotExist) {

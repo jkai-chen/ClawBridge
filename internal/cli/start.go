@@ -40,8 +40,8 @@ Your own server, in order. Each step is done when its check passes:
   4. Install the server (env file, secrets generated on the VM, TLS).   clawbridge cloud check server version
   5. Sign in and create the workspace: clawbridge setup --cloud.         clawbridge cloud check workspace
   6. The first project, the Linear app, invites, and the dispatcher offer.
-The guided path, which hands each step to your coding agent with a playbook, arrives with the provisioning
-playbooks. Until then, follow docs/operations/first-deployment.md and run the check after each step.
+To do it yourself, follow docs/operations/first-deployment.md and run the check after each step. With
+Claude Code or Codex installed, clawbridge onboard can hand the Google Cloud steps to your agent instead.
 Secrets you hold are entered with clawbridge cloud secret set KEY, never through an agent.
 `
 
@@ -105,8 +105,7 @@ func runStart(ctx context.Context, path string, stdout, stderr io.Writer) (retEr
 		}
 		return runWizard(ctx, Config{ClientConfig: path}, nil, stdout, stderr)
 	case "3":
-		_, err = io.WriteString(stdout, ownServerText)
-		return err
+		return startOwnServer(ctx, prompt, stdout, stderr)
 	}
 	return errors.New("choose 1, 2 or 3; run clawbridge onboard to start again")
 }

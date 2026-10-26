@@ -56,6 +56,9 @@ type gcpInstance struct {
 // the data path, and TCP 443 answers.
 func checkInfra(ctx context.Context, p *cloudProbe) cloudResult {
 	t := p.target
+	if t.onAWS() {
+		return awsInfra(ctx, p)
+	}
 	if t.vm == "" {
 		return failed("infra", "needs_vm", "pass --vm NAME --project P --zone Z")
 	}
@@ -113,7 +116,7 @@ func checkInfra(ctx context.Context, p *cloudProbe) cloudResult {
 	}
 	f, err := p.facts(ctx)
 	if err != nil {
-		return failed("infra", "ssh_failed", remoteAdvice)
+		return p.remoteFailure("infra", err)
 	}
 	if f.mount == "" || f.mount == "none" {
 		return failed("infra", "data_not_mounted", "mount the data disk at "+dataMount+" (and in /etc/fstab)")
@@ -129,6 +132,9 @@ func checkInfra(ctx context.Context, p *cloudProbe) cloudResult {
 // checkBackups: the newest complete dump and checksum pair in the bucket is
 // under 26 hours old.
 func checkBackups(ctx context.Context, p *cloudProbe) cloudResult {
+	if p.target.onAWS() {
+		return awsBackups(ctx, p)
+	}
 	if p.bucket == "" || !bucketPattern.MatchString(p.bucket) {
 		return failed("backups", "needs_bucket", "pass --bucket NAME (the CLAWBRIDGE_BACKUP_BUCKET)")
 	}
@@ -139,9 +145,21 @@ func checkBackups(ctx context.Context, p *cloudProbe) cloudResult {
 	if err != nil {
 		return failed("backups", "bucket_unreadable", gcloudAdvice)
 	}
-	kinds := map[string]map[string]bool{}
+	var names []string
 	for _, line := range strings.Split(string(out), "\n") {
-		if m := backupObject.FindStringSubmatch(strings.TrimSpace(line)); m != nil && strings.HasPrefix(strings.TrimSpace(line), "gs://"+p.bucket+"/") {
+		if line = strings.TrimSpace(line); strings.HasPrefix(line, "gs://"+p.bucket+"/") {
+			names = append(names, line)
+		}
+	}
+	return newestBackup(names)
+}
+
+// newestBackup: of the objects named, the newest complete dump and checksum
+// pair is under 26 hours old. Each name ends in /postgres/daily/STAMP.KIND.
+func newestBackup(names []string) cloudResult {
+	kinds := map[string]map[string]bool{}
+	for _, name := range names {
+		if m := backupObject.FindStringSubmatch(name); m != nil {
 			if kinds[m[1]] == nil {
 				kinds[m[1]] = map[string]bool{}
 			}

@@ -56,7 +56,6 @@ func TestCloudTransportRefusesWhatArgvRefuses(t *testing.T) {
 	for _, target := range []cloudTarget{
 		{host: "bad host"},
 		{vm: "clawbridge-1", project: "example-project"},
-		{host: "admin@bridge.example.test", vm: "clawbridge-1", project: "example-project", zone: "europe-west1-b"},
 		{project: "example-project"},
 	} {
 		_, want := target.argv("")

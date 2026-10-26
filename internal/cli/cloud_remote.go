@@ -16,22 +16,32 @@ import (
 	"clawbridge/internal/remote"
 )
 
-// cloudTarget is the user's own route to the server's shell: their SSH, or
-// gcloud over IAP. ClawBridge holds no credential of its own.
-type cloudTarget struct{ host, vm, project, zone string }
+// cloudTarget is the user's own route to the server's shell: their SSH,
+// gcloud over IAP, or an EC2 instance over SSM with their AWS CLI profile.
+// ClawBridge holds no credential of its own.
+type cloudTarget struct{ host, vm, project, zone, instance, region, profile, account string }
 
 func bindTarget(f *flag.FlagSet, t *cloudTarget) {
 	f.StringVar(&t.host, "ssh", "", "SSH host of the server (any VM)")
 	f.StringVar(&t.vm, "vm", "", "Compute Engine VM name (with --project and --zone, over IAP)")
 	f.StringVar(&t.project, "project", "", "Google Cloud project")
 	f.StringVar(&t.zone, "zone", "", "Compute Engine zone")
+	f.StringVar(&t.instance, "instance", "", "EC2 instance ID (with --region, over SSM)")
+	f.StringVar(&t.region, "region", "", "AWS region")
+	f.StringVar(&t.profile, "profile", "", "AWS CLI profile (default "+defaultAWSProfile+")")
+	f.StringVar(&t.account, "account", "", "AWS account ID the profile must be signed in to")
 }
 
 func (t cloudTarget) set() bool { return t != cloudTarget{} }
 
-// remote says the server's shell is reachable: a host or a VM. --project
-// alone only names the backup bucket's project.
-func (t cloudTarget) remote() bool { return t.host != "" || t.vm != "" }
+// remote says the server's shell is reachable: a host, a VM or an instance.
+// --project (or --region) alone only names the backup bucket's project.
+func (t cloudTarget) remote() bool { return t.host != "" || t.vm != "" || t.instance != "" }
+
+// onAWS says the target is AWS: any of the AWS flags is set.
+func (t cloudTarget) onAWS() bool {
+	return t.instance != "" || t.region != "" || t.profile != "" || t.account != ""
+}
 
 // argv is the command that runs remoteCommand on the server. Every input is
 // validated first; remoteCommand is always one of the fixed scripts.
@@ -259,7 +269,7 @@ func checkLinearApp(ctx context.Context, p *cloudProbe) cloudResult {
 	if p.target.remote() {
 		f, err := p.facts(ctx)
 		if err != nil {
-			return failed("linear-app", "ssh_failed", remoteAdvice)
+			return p.remoteFailure("linear-app", err)
 		}
 		var unset []string
 		for _, k := range appSettings {
@@ -300,7 +310,7 @@ func checkLinearApp(ctx context.Context, p *cloudProbe) cloudResult {
 	}
 	result := cloudResult{Check: "linear-app", Status: "pass"}
 	if !p.target.remote() {
-		result.Advice = "entries not counted: pass --ssh or --vm to check them too"
+		result.Advice = "entries not counted: pass --ssh, --vm or --instance to check them too"
 	}
 	return result
 }

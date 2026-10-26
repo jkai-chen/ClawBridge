@@ -33,8 +33,13 @@ import (
 // never reads a secret's value and never writes.
 
 const cloudUsage = `clawbridge cloud check [infra|server|version|workspace|linear-app|backups|all] [--server URL]
-                       [--client-config PATH] [--ssh HOST | --vm NAME --project P --zone Z] [--bucket NAME] [--json]
-clawbridge cloud secret set KEY (--ssh HOST | --vm NAME --project P --zone Z) [--value-stdin]`
+                       [--client-config PATH] [--bucket NAME] [--json]
+                       [--ssh HOST | --vm NAME --project P --zone Z |
+                        --instance ID --region R [--profile P] [--account N]]
+clawbridge cloud secret set KEY (--ssh HOST | --vm NAME --project P --zone Z) [--value-stdin]
+
+On AWS, the server is an EC2 instance reached over SSM with your own AWS CLI
+profile (default ` + defaultAWSProfile + `); backups are read from S3 with --bucket and --region.`
 
 type cloudResult struct {
 	Check  string `json:"check"`
@@ -249,7 +254,7 @@ func checkServer(ctx context.Context, p *cloudProbe) cloudResult {
 	}
 	f, err := p.facts(ctx)
 	if err != nil {
-		return failed("server", "ssh_failed", remoteAdvice)
+		return p.remoteFailure("server", err)
 	}
 	if r = checkSettings(f); r.Status != "pass" {
 		return r
@@ -411,6 +416,11 @@ func runCloudSecretSet(ctx context.Context, args []string, stdout, stderr io.Wri
 	if err != nil {
 		return err
 	}
+	if _, overSSM := tr.(ssmTransport); overSSM {
+		// Refused before the value is asked for: SSM has no stdin path, and its
+		// own write (through a short-lived SecureString) is not built yet.
+		return errors.New("cloud secret set does not reach an EC2 instance yet; nothing was asked or sent")
+	}
 	var raw []byte
 	switch {
 	case fromStdin:
@@ -433,7 +443,7 @@ func runCloudSecretSet(ctx context.Context, args []string, stdout, stderr io.Wri
 		return err
 	}
 	if err = tr.setSecret(ctx, key, value, stderr); err != nil {
-		return errors.New("the remote write failed; check SSH access and passwordless sudo on the server (nothing was printed)")
+		return errors.New("the remote write failed; " + tr.describe() + " (nothing was printed)")
 	}
 	return json.NewEncoder(stdout).Encode(map[string]any{"source": "cloud_secret", "data": map[string]any{"key": key, "set": true}})
 }

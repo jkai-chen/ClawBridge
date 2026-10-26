@@ -135,6 +135,17 @@ type Status struct {
 // statusTypes are the workflow state types Linear defines.
 var statusTypes = map[string]bool{"triage": true, "backlog": true, "unstarted": true, "started": true, "completed": true, "canceled": true}
 
+// StatusType is a workflow state's type as ClawBridge knows it: one of
+// statusTypes, lower-cased, or "" for any other (such as Linear's
+// duplicate type), which no status policy may target or move from.
+func StatusType(raw string) string {
+	kind := strings.ToLower(raw)
+	if !statusTypes[kind] {
+		return ""
+	}
+	return kind
+}
+
 type IssueQuery struct {
 	TeamID, ProjectID string
 	Limit             int
@@ -1540,11 +1551,7 @@ func (p *Provider) Statuses(ctx context.Context, team string) ([]Status, error) 
 		if tid != team {
 			return nil, fail("scope_mismatch")
 		}
-		kind := strings.ToLower(str(v, "type"))
-		if !statusTypes[kind] {
-			kind = ""
-		}
-		out = append(out, Status{ID: i, Name: str(v, "name"), TeamID: team, Type: kind})
+		out = append(out, Status{ID: i, Name: str(v, "name"), TeamID: team, Type: StatusType(str(v, "type"))})
 	}
 	return out, nil
 }

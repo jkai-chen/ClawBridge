@@ -257,7 +257,14 @@ func (w *AppWriter) states(parent context.Context, identity bus.Identity, r bus.
 		if !linearprovider.ValidID(strings.ToLower(s.ID)) || !strings.EqualFold(s.Team.ID, team) {
 			return bus.Result{}, bus.PublicError("unavailable", "the ClawBridge Linear app read an unverified workflow state")
 		}
-		states = append(states, map[string]any{"id": strings.ToLower(s.ID), "name": s.Name, "type": s.Type, "team_id": strings.ToLower(team)})
+		// A state of a type ClawBridge does not know (Linear's duplicate
+		// type, say) is left out: no policy may target it or move from it,
+		// and the bus refuses a workflow that names it.
+		kind := linearprovider.StatusType(s.Type)
+		if kind == "" {
+			continue
+		}
+		states = append(states, map[string]any{"id": strings.ToLower(s.ID), "name": s.Name, "type": kind, "team_id": strings.ToLower(team)})
 	}
 	return bus.Result{Data: map[string]any{"states": states}}, nil
 }

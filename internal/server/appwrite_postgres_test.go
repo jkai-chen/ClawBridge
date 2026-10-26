@@ -85,7 +85,9 @@ func (l *awLinearAPI) RoundTrip(r *http.Request) (*http.Response, error) {
 			l.workflowStates++
 			return reply(200, map[string]any{"data": map[string]any{"workflowStates": map[string]any{"nodes": []any{
 				map[string]any{"id": "c1000000-0000-4000-8000-0000000000a1", "name": "Backlog", "type": "backlog", "team": map[string]any{"id": awTeam}},
-				map[string]any{"id": "C1000000-0000-4000-8000-0000000000A3", "name": "In Progress", "type": "started", "team": map[string]any{"id": awTeam}},
+				map[string]any{"id": "C1000000-0000-4000-8000-0000000000A3", "name": "In Progress", "type": "Started", "team": map[string]any{"id": awTeam}},
+				// Linear's Duplicate state has a type ClawBridge does not know.
+				map[string]any{"id": "c1000000-0000-4000-8000-0000000000d1", "name": "Duplicate", "type": "duplicate", "team": map[string]any{"id": awTeam}},
 			}, "pageInfo": map[string]any{"hasNextPage": false}}}})
 		}
 		return reply(200, map[string]any{"data": map[string]any{"viewer": map[string]any{"id": awAppUser, "app": true, "organization": map[string]any{"id": awOrg}}}})

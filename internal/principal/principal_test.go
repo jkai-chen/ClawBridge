@@ -57,3 +57,19 @@ func TestNormalDomainIsOneRuleForEveryLayer(t *testing.T) {
 		}
 	}
 }
+
+// A CI principal is never an email, and an email never a CI principal.
+func TestCIPrincipalIsNotAnEmail(t *testing.T) {
+	p := CIPrincipal("deploy", "Acme")
+	if p != "ci:deploy@acme" || !CI(p) || Valid(p) {
+		t.Fatal(p, CI(p), Valid(p))
+	}
+	for _, bad := range []string{"alice@example.test", "ci:@acme", "ci:Deploy@acme", "ci:de ploy@acme", "ci:deploy", "xci:deploy@acme", "ci:" + strings.Repeat("a", 41) + "@acme"} {
+		if CI(bad) {
+			t.Fatalf("%q accepted as CI", bad)
+		}
+	}
+	if CIPrincipal("Deploy", "acme") != "" || CIPrincipal("-x", "acme") != "" {
+		t.Fatal("bad CI name accepted")
+	}
+}

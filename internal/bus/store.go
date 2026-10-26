@@ -123,7 +123,7 @@ func (s *Store) migrate() error {
 	if err = tx.QueryRow("PRAGMA user_version").Scan(&version); err != nil {
 		return err
 	}
-	if version > 17 {
+	if version > 18 {
 		return errors.New("database schema is newer than this ClawBridge binary")
 	}
 	if version == 0 {
@@ -215,6 +215,11 @@ func (s *Store) migrate() error {
 	}
 	if version < 17 {
 		if _, err = tx.Exec(dispatcherSchemaV17 + `PRAGMA user_version=17;`); err != nil {
+			return err
+		}
+	}
+	if version < 18 {
+		if _, err = tx.Exec(authSchemaV18 + `PRAGMA user_version=18;`); err != nil {
 			return err
 		}
 	}
@@ -430,6 +435,19 @@ var operationArgs = map[string]string{
 	"dispatcher_get":              "instance",
 	"dispatcher_cases_due":        "instance",
 	"dispatcher_decision_record":  "instance subject_id subject_revision policy_revision engine proposal reason_code explanation guardrail action domain facts_source app_project_id",
+	"invite_create":               "email grants purpose expires_hours revoke_others",
+	"invite_list":                 "",
+	"invite_revoke":               "invite_id",
+	"device_list":                 "principal",
+	"device_revoke":               "device_id reason",
+	"device_label":                "device_id label",
+	"device_enroll":               "public_key label key_store",
+	"device_ci_create":            "name grants expires_days public_key label",
+	"user_list":                   "",
+	"user_revoke":                 "principal",
+	"owner_transfer_offer":        "to",
+	"owner_transfer_respond":      "action",
+	"owner_transfer_get":          "",
 	"dispatcher_domains_set":      "instance expected_revision dispatcher_domains",
 	"dispatcher_domain_edit":      "instance expected_revision domain action target_session",
 	"doc_watch_due":               "instance lease_token generation",
@@ -472,7 +490,7 @@ func validateArgs(op string, a map[string]any) error {
 			return fmt.Errorf("unsupported argument %q for %s", k, op)
 		}
 		switch k {
-		case "retention_days", "limit", "after", "expected_revision", "ledger", "generation", "budget", "calls", "charged", "policy_revision", "engineer", "if_unset", "expires_days", "s5_calls_per_hour", "out_of_binding_limit", "template_version", "part_number", "part_count":
+		case "retention_days", "limit", "after", "expected_revision", "ledger", "generation", "budget", "calls", "charged", "policy_revision", "engineer", "if_unset", "expires_days", "expires_hours", "s5_calls_per_hour", "out_of_binding_limit", "template_version", "part_number", "part_count":
 			if _, err := integer(v); err != nil {
 				return fmt.Errorf("%s: %w", k, err)
 			}
@@ -509,6 +527,14 @@ func validateArgs(op string, a map[string]any) error {
 		case "facts":
 			if _, ok := v.(map[string]any); !ok {
 				return errors.New("facts must be an object")
+			}
+		case "grants":
+			if _, ok := v.(map[string]any); !ok {
+				return errors.New("grants must be an object of project to role")
+			}
+		case "revoke_others":
+			if _, ok := v.(bool); !ok {
+				return errors.New("revoke_others must be boolean")
 			}
 		case "transport":
 			if _, ok := v.(map[string]any); !ok {
@@ -676,7 +702,7 @@ func (s *Store) ExecuteAs(ctx context.Context, principal string, r Request) (Res
 // inbox stamps deliveries, so those keep the locks.
 func pureRead(r Request) bool {
 	switch r.Operation {
-	case "snapshot", "inbox_status", "notification_status", "taskboard_get", "taskboard_get_v2", "taskboard_access", "list_projects", "list_members", "comment_watch_status", "label_policy_get", "status_policy_get", "doc_policy_get", "dispatcher_get", "health_get", "doc_seed_get", "doc_publication_get":
+	case "snapshot", "inbox_status", "notification_status", "taskboard_get", "taskboard_get_v2", "taskboard_access", "list_projects", "list_members", "comment_watch_status", "label_policy_get", "status_policy_get", "doc_policy_get", "dispatcher_get", "health_get", "doc_seed_get", "doc_publication_get", "invite_list", "device_list", "user_list", "owner_transfer_get":
 		return true
 	case "list_sessions", "history", "whoami", "linear_comments_posted", "linear_comment_precheck", "intake_policy_get", "intake_trust_list", "intake_list":
 		// Naming a session with its instance makes it a heartbeat read: the
@@ -848,7 +874,7 @@ func (s *Store) execute(ctx context.Context, tx *transaction, r Request) (any, e
 	if r.Operation == "principal_unbind" {
 		return s.unbindPrincipal(ctx, tx, a)
 	}
-	if !s.postgres && (r.Operation == "snapshot" || r.Operation == "project_role_set" || r.Operation == "project_role_revoke" || r.Operation == "purge_expired" || r.Operation == "workspace_set_domains" || r.Operation == "member_display_name_set") {
+	if !s.postgres && (r.Operation == "snapshot" || r.Operation == "project_role_set" || r.Operation == "project_role_revoke" || r.Operation == "purge_expired" || r.Operation == "workspace_set_domains" || r.Operation == "member_display_name_set" || authOperation(r.Operation)) {
 		return nil, errors.New("operation requires hosted authority")
 	}
 	if r.Workspace == "" {
@@ -903,6 +929,9 @@ func (s *Store) execute(ctx context.Context, tx *transaction, r Request) (any, e
 		}
 		if r.Operation == "member_display_name_set" {
 			return s.setDisplayName(ctx, tx, wid, a)
+		}
+		if authOperation(r.Operation) {
+			return s.authOp(ctx, tx, w, r)
 		}
 		if r.Operation == "project_create" && w["owner_principal"] != s.principal {
 			return nil, errors.New("workspace owner required to create projects")

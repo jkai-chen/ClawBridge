@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"strings"
 	"time"
 
 	"clawbridge/internal/principal"
@@ -80,7 +81,9 @@ func (s *Store) ExecuteAsIdentity(ctx context.Context, id Identity, r Request) (
 		return Result{}, errors.New("ExecuteAsIdentity is only available on the hosted authority")
 	}
 	id.Principal = normalPrincipal(id.Principal)
-	if !validPrincipal(id.Principal) {
+	// Only a device key may sign in as a CI principal (AU-M2); a Google
+	// account is always an email.
+	if !validPrincipal(id.Principal) && (id.Issuer != DeviceIssuer || !principal.CI(id.Principal)) {
 		return Result{}, errors.New("verified email principal is required")
 	}
 	if id.Issuer == "" || id.Subject == "" {
@@ -90,6 +93,11 @@ func (s *Store) ExecuteAsIdentity(ctx context.Context, id Identity, r Request) (
 	scoped.principal = id.Principal
 	scoped.identity = &id
 	scoped.hostedDomain, _ = principal.NormalDomain(id.HostedDomain)
+	if id.Issuer == DeviceIssuer {
+		// A device's email was checked against the allow-list when it was
+		// invited and when it joined; the gate reads its domain.
+		scoped.hostedDomain, _ = principal.NormalDomain(id.Principal[strings.LastIndex(id.Principal, "@")+1:])
+	}
 	result, err := scoped.executeRequest(ctx, r)
 	if errors.Is(err, errNeedsBind) {
 		if err = s.bindSubject(ctx, id); err == nil {
@@ -108,6 +116,11 @@ func (s *Store) ExecuteAsIdentity(ctx context.Context, id Identity, r Request) (
 func (s *Store) requireBound(ctx context.Context, tx *transaction) error {
 	if s.identity == nil {
 		return nil
+	}
+	if s.identity.Issuer == DeviceIssuer {
+		// A device identity has no account binding: its device must still
+		// be live, and still the principal's.
+		return liveDevice(ctx, tx, *s.identity)
 	}
 	var bound int
 	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM principal_subjects WHERE principal=? AND issuer=? AND subject=?`, s.principal, s.identity.Issuer, s.identity.Subject).Scan(&bound); err != nil {
@@ -360,7 +373,7 @@ func allowedDomains(raw any) (domains []string, on, damaged bool) {
 // the gate is what admits it.
 func (s *Store) domainGate(raw any) error {
 	domains, on, damaged := allowedDomains(raw)
-	if !on || (!damaged && principal.ServiceAccount(s.principal)) {
+	if !on || (!damaged && (principal.ServiceAccount(s.principal) || principal.CI(s.principal))) {
 		return nil
 	}
 	for _, d := range domains {

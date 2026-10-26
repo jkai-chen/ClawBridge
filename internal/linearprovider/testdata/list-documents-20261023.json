@@ -1,0 +1,85 @@
+{
+ "name": "list_documents",
+ "description": "List documents in the user's Linear workspace",
+ "inputSchema": {
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+   "createdAt": {
+    "description": "Created after: ISO-8601 date/duration (e.g., -P1D)",
+    "type": "string"
+   },
+   "creatorId": {
+    "description": "Filter by creator ID",
+    "type": "string"
+   },
+   "cursor": {
+    "description": "Omit for the first page. To continue, pass the previous response's cursor when hasNextPage is true",
+    "type": "string"
+   },
+   "fields": {
+    "description": "Fields to include in each result. Explicitly requested fields with no value return null. `id` is always included. Omit or pass an empty array for the default response.",
+    "items": {
+     "enum": [
+      "id",
+      "title",
+      "content",
+      "url",
+      "createdAt",
+      "updatedAt",
+      "archivedAt",
+      "creator",
+      "updatedBy",
+      "project",
+      "initiative",
+      "team",
+      "issue"
+     ],
+     "type": "string"
+    },
+    "type": "array"
+   },
+   "includeArchived": {
+    "default": false,
+    "description": "Include archived items",
+    "type": "boolean"
+   },
+   "initiativeId": {
+    "description": "Filter by initiative ID, identifier (e.g., 'I-123'), or slug",
+    "type": "string"
+   },
+   "limit": {
+    "default": 50,
+    "description": "Maximum number of results to return per page",
+    "maximum": 250,
+    "type": "number"
+   },
+   "orderBy": {
+    "default": "updatedAt",
+    "description": "Timestamp to sort results by: creation time or last update time",
+    "enum": [
+     "createdAt",
+     "updatedAt"
+    ],
+    "type": "string"
+   },
+   "projectId": {
+    "description": "Filter by project ID, identifier (e.g., 'P-ENG-123'), or slug",
+    "type": "string"
+   },
+   "query": {
+    "description": "Search query",
+    "type": "string"
+   },
+   "teamId": {
+    "description": "Filter by team ID",
+    "type": "string"
+   },
+   "updatedAt": {
+    "description": "Updated after: ISO-8601 date/duration (e.g., -P1D)",
+    "type": "string"
+   }
+  },
+  "type": "object"
+ }
+}

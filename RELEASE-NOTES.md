@@ -15,6 +15,9 @@
 
 - `linear label create` and `label rename` on a hosted server failed with "invalid label policy revision" before
   anything was sent: the client misread the server's answer. Fixed in the client.
+- Docs: `/mcp/intake` (Linear Loops, S5) still refuses every request in v0.3.1. With the default policy the answer is
+  `intake_off` (or `unauthorized` for a bad token), not `app_unavailable` as the v0.3.0 docs said; only a project
+  that turned S5 on gets `app_unavailable`.
 
 ## Guide documents for the team
 

@@ -13,7 +13,7 @@ import (
 // bytes, exactly one @ with text on both sides, no whitespace or NUL, and
 // exactly what net/mail parses back, so no display name or angle brackets.
 func Valid(p string) bool {
-	if len(p) > 320 || strings.Count(p, "@") != 1 || strings.ContainsAny(p, " \t\r\n\x00") || strings.HasPrefix(p, "@") || strings.HasSuffix(p, "@") {
+	if len(p) > 320 || strings.HasPrefix(p, CIPrefix) || strings.Count(p, "@") != 1 || strings.ContainsAny(p, " \t\r\n\x00") || strings.HasPrefix(p, "@") || strings.HasSuffix(p, "@") {
 		return false
 	}
 	address, err := mail.ParseAddress(p)
@@ -42,3 +42,23 @@ func NormalDomain(d string) (normal string, ok bool) {
 // (…@developer.gserviceaccount.com) or App Engine (…@appspot.gserviceaccount.com).
 // Such accounts never carry an hd claim.
 func ServiceAccount(p string) bool { return strings.HasSuffix(p, ".gserviceaccount.com") }
+
+// CIPrefix starts a CI device's principal.
+const CIPrefix = "ci:"
+
+var ciPattern = regexp.MustCompile(`^ci:[a-z0-9][a-z0-9-]{0,39}@[a-z0-9][a-z0-9._-]{0,127}$`)
+
+// CI reports whether p is a CI device's principal, ci:NAME@WORKSPACE. It is
+// never an email (Valid refuses it), so no invite, role grant or Google
+// account can take it; only creating a CI device admits it.
+func CI(p string) bool { return ciPattern.MatchString(p) }
+
+// CIPrincipal is the principal of the CI device name in workspace, or ""
+// when name is not 1-40 lowercase letters, digits or hyphens.
+func CIPrincipal(name, workspace string) string {
+	p := CIPrefix + name + "@" + Normal(workspace)
+	if !CI(p) {
+		return ""
+	}
+	return p
+}

@@ -99,6 +99,15 @@ func Run(ctx context.Context, c Config) error {
 			return Permanent(errors.New("Codex queue capability unavailable; use a CLI supporting queue --thread --message"))
 		}
 	}
+	if !c.Once {
+		// The watcher holds the session's process: it keeps its lease.
+		beat, stop := context.WithCancel(ctx)
+		defer stop()
+		b := c.Binding
+		go KeepAlive(beat, c.Executor, HeartbeatInterval, func() (bus.Request, bool) {
+			return bus.Request{Workspace: b.Workspace, Project: b.Project, Session: b.Session, Args: map[string]any{"instance": b.Instance}}, true
+		})
+	}
 	backoff := time.Second
 	for {
 		if ctx.Err() != nil {

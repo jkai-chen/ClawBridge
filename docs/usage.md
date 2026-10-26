@@ -81,6 +81,49 @@ trusted route. Logout removes that route's OAuth keychain entry. It does not
 revoke unrelated Google credentials or change MCP configuration. Linux/WSL
 requires the [existing D-Bus/keyring session](installation.md#linux-and-wsl-credentials).
 
+## Join with an invite
+
+A server that takes device keys (`serve --auth device` or `google,device`) needs
+no Google account. An owner invites you, gives you the code and the server's URL,
+and you join:
+
+```sh
+clawbridge --server https://SERVICE join --email ada@example.com --code CBJ-4K7P-WQ9D-2MXH-T6RB
+clawbridge --project CODEBASE whoami      # identity_provenance: device-key
+```
+
+Without `--code`, the code is read from stdin, which keeps it out of shell history.
+
+- **The key:** `join` makes this device's key, keeps it in the OS key store, and
+  writes the profile to sign every request with it. A refused join leaves no key
+  and no profile.
+- **No OS key store** (a headless Linux machine, a container): add
+  `--key-store file`. The key is then a plain 0600 file under
+  `~/.clawbridge/device/`, and anyone who can read it as you can act as you.
+- **One workspace per device:** a device belongs to the workspace that admitted
+  it. To join a second workspace, use another profile (`--client-config`).
+- **Already signed in with Google?** `clawbridge device enroll` adds a key to
+  this machine, with no invite. The profile then signs with the key; the Google
+  credential stays until `logout`.
+
+Accounts on a hosted workspace (each command takes `--help`):
+
+- **`invite`:** `invite --email EMAIL --grant PROJECT=ROLE`; `invite list`;
+  `invite revoke ID`. The main owner may also issue
+  `invite --email EMAIL --recovery`. The code is shown once.
+- **`device`:** `device list`, `device revoke ID`, `device label ID LABEL`.
+  - `device add` is an invite for another device of yours.
+  - `device add --ci NAME --grant PROJECT=member --expires 30d` makes a CI
+    device. It prints `CLAWBRIDGE_DEVICE_KEY` once, for the CI secret store.
+- **`user`:** `user list`; `user revoke EMAIL --confirm`.
+- **`owner`:** `owner show`; `owner transfer --to EMAIL`; then the recipient
+  runs `owner accept` or `owner decline`, or the owner runs `owner cancel`.
+
+`doctor` reports whether the key is readable, a key file's mode, and any clock
+correction. A clock more than 5 minutes off the server's is corrected once by the
+server's time, and the correction lapses after 24 hours. One more than an hour off
+is refused: fix the system clock.
+
 ## Profiles and project scope
 
 Use `--client-config /absolute/path/config.toml` to select a separate trusted

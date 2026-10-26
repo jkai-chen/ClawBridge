@@ -31,7 +31,9 @@ clawbridge cloud bootstrap --help
   ```
 
   It runs the server's one-time owner invite and joins with it directly, so the
-  invite code is never printed. When the onboarding TUI resumes after your
+  invite code is never printed. Bootstrap delivers the invite through the same
+  short-lived encrypted parameter as `cloud secret set`; the code never appears
+  in SSM command history. When the onboarding TUI resumes after your
   hand-over, it runs this for the user. **Never run the invite yourself, in any
   form:** its code is a credential. If it fails, the user runs it again; a code
   that was issued expires in 24 hours.

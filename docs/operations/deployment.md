@@ -240,7 +240,9 @@ With these three entries, agents' Linear writes are made by the server as the
 ClawBridge Linear app, never by a client. Creating that app in Linear (an OAuth
 application with client credentials and the scopes below), installing it in the
 Linear workspace and adding it to private teams are not yet documented step by
-step here; they need a Linear workspace admin.
+step here; they need a Linear workspace admin. Its redirect URL is
+`https://CLAWBRIDGE_DOMAIN/linear/callback`, a static page that only says the app
+is installed.
 
 ```text
 CLAWBRIDGE_LINEAR_APP_CLIENT_ID=<the app's client ID>

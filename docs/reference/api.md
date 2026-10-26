@@ -337,6 +337,9 @@ then enforces its own membership/project policy. `GET /v1/config` exposes only t
 configured installed-app OAuth discovery fields. `GET /healthz` checks process
 health rather than certifying database or user access; it answers
 `{"status":"ok","version":"…"}` with the server's release.
+`GET /linear/callback` is the ClawBridge Linear app's redirect URL: a static
+page saying the app is installed. The server uses client credentials, so the page
+exchanges nothing, ignores its query string and never logs it.
 
 Definitive authentication, authorization, validation and fencing failures are
 returned directly. Only transport/service outages may permit supported reads

@@ -261,7 +261,7 @@ CLAWBRIDGE_LINEAR_APP_TOKEN_KEY=<32 random bytes, base64>
 - **Where they come from.** Only this environment file; never a flag, the
   database or a log. The startup log says only `linear app: configured`.
 - **The token.** The server mints the app's client-credentials token with a fixed
-  scope set (`read, comments:create, issues:create, app:assignable,
+  scope set (`read, write, comments:create, issues:create, app:assignable,
   app:mentionable`). It seals the token with AES-GCM under the token key and
   keeps it in Postgres, so every server instance shares one token.
 - **Rotation.**

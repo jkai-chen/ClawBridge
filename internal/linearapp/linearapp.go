@@ -18,6 +18,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -29,13 +30,21 @@ import (
 // Scopes is the one scope set every mint requests. Minting another set
 // revokes every token of the app, so it changes only in a release that
 // says so. Linear takes it comma-separated and answers space-separated.
-var Scopes = []string{"read", "comments:create", "issues:create", "app:assignable", "app:mentionable"}
+// write (v0.3.4) lets the app post project status updates and create
+// issue relations; Linear drops those quietly without it.
+var Scopes = []string{"read", "write", "comments:create", "issues:create", "app:assignable", "app:mentionable"}
 
 // releasedScopes is Scopes as this release ships it. A mint checks Scopes
 // against it first: a token minted with any other set revokes every token
 // the app holds, production's included. It catches only a change to Scopes
 // at run time; a release that edits both changes the scopes on purpose.
-const releasedScopes = "read,comments:create,issues:create,app:assignable,app:mentionable"
+const releasedScopes = "read,write,comments:create,issues:create,app:assignable,app:mentionable"
+
+// HasScope reports whether the app's token carries scope. A token in use
+// always carries Scopes: Token adopts a stored token only when its scope
+// digest matches, and otherwise mints, which revokes the old one; a mint
+// whose answered scopes differ from Scopes is refused.
+func HasScope(scope string) bool { return slices.Contains(Scopes, scope) }
 
 const (
 	tokenURL   = "https://api.linear.app/oauth/token"

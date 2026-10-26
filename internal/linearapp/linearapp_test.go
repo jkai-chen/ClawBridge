@@ -104,7 +104,7 @@ func (l *linear) RoundTrip(r *http.Request) (*http.Response, error) {
 		}
 		scope := l.scope
 		if scope == "" {
-			scope = "app:assignable app:mentionable comments:create issues:create read"
+			scope = "app:assignable app:mentionable comments:create issues:create read write"
 		}
 		return reply(200, map[string]any{"access_token": fmt.Sprintf("lin_oauth_token_%d", l.mints), "token_type": "Bearer", "expires_in": 2591999, "scope": scope})
 	case graphqlURL:
@@ -135,7 +135,7 @@ func TestAppMintsSealsAndSharesOneToken(t *testing.T) {
 	if err != nil || token != "lin_oauth_token_1" || id.AppUserID != appUser || id.LinearOrgID != org {
 		t.Fatal(token, id, err)
 	}
-	if l.forms[0] != "grant_type=client_credentials&scope=read%2Ccomments%3Acreate%2Cissues%3Acreate%2Capp%3Aassignable%2Capp%3Amentionable" || l.auths[0] != "client-1:"+secret {
+	if l.forms[0] != "grant_type=client_credentials&scope=read%2Cwrite%2Ccomments%3Acreate%2Cissues%3Acreate%2Capp%3Aassignable%2Capp%3Amentionable" || l.auths[0] != "client-1:"+secret {
 		t.Fatal("mint request", l.forms[0], l.auths[0])
 	}
 	row := store.rows[0]
@@ -160,6 +160,39 @@ func TestAppMintsSealsAndSharesOneToken(t *testing.T) {
 	now = now.Add(26 * 24 * time.Hour)
 	if fresh, _, err := a.Token(context.Background()); err != nil || fresh == token || l.mints != 2 {
 		t.Fatal("token near expiry not replaced", fresh, err, l.mints)
+	}
+}
+
+// An upgrade that changes the scopes: the stored token, minted under the
+// old set, is never adopted. The first call mints under the new set in its
+// place (Linear revokes the old token), and every instance adopts that.
+func TestAScopeChangeReplacesTheStoredToken(t *testing.T) {
+	now := time.Date(2026, 10, 23, 12, 0, 0, 0, time.UTC)
+	store := &memStore{live: map[string]int{}}
+	l := &linear{app: true}
+	a := newApp(t, store, l, &now)
+	old, _, err := a.Token(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The row as v0.3.3 sealed it: a live token of the old scope set.
+	store.rows[0].ScopesDigest = digest("read comments:create issues:create app:assignable app:mentionable")
+	if err = a.seal(old, &store.rows[0]); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = a.open(store.rows[0]); err != nil {
+		t.Fatal("the old-scope row does not open", err)
+	}
+	b := newApp(t, store, l, &now)
+	fresh, _, err := b.Token(context.Background())
+	if err != nil || fresh == old || l.mints != 2 || len(store.rows) != 2 || store.rows[1].ScopesDigest != scopesDigest() {
+		t.Fatal("a token of the old scopes was adopted", fresh == old, err, l.mints, len(store.rows))
+	}
+	if !HasScope("write") || HasScope("admin") {
+		t.Fatal("HasScope")
+	}
+	if got, _, _ := newApp(t, store, l, &now).Token(context.Background()); got != fresh || l.mints != 2 {
+		t.Fatal("the new token was not shared", l.mints)
 	}
 }
 

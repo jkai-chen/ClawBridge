@@ -160,7 +160,9 @@ func Join(ctx context.Context, origin string, key ed25519.PrivateKey, in JoinReq
 		return Joined{}, &JoinError{Status: response.StatusCode, Code: refusal.Error.Code, Message: message}
 	}
 	if joined.DeviceID != devicekey.ID(key.Public().(ed25519.PublicKey)) || joined.Principal != email || joined.Workspace.ID == "" {
-		return Joined{}, errors.New("the server's join answer names another device or email; nothing was configured")
+		// The server answered, but not about this key: whether the key was
+		// added is unknown, so the caller keeps it (R85-L3).
+		return Joined{}, fmt.Errorf("%w: its answer named another device or email, so nothing was configured", ErrJoinUncertain)
 	}
 	joined.ClockOffset, joined.ClockOffsetAt = signer.Offset()
 	return joined, nil

@@ -13,6 +13,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -297,15 +298,17 @@ func runAccount(ctx context.Context, flags Config, command string, args []string
 // then signs with the key; the Google credential stays until logout.
 func runEnroll(ctx context.Context, config Config, f *flag.FlagSet, args []string, stdout io.Writer) error {
 	label := f.String("label", "", "the device's label (default: this machine's name)")
-	store := f.String("key-store", devicesign.StoreKeyring, "where the key is kept: keyring, or file")
-	if _, err := parseAccountFlags(f, args, 0, 0); err != nil {
+	store := f.String("key-store", "", "where the key is kept: keyring (the default), or file")
+	_, err := parseAccountFlags(f, args, 0, 0)
+	if err != nil {
 		return err
 	}
 	if config.CredentialSource == remote.CredentialSourceDevice {
 		return errors.New("this profile already signs with device " + config.DeviceID)
 	}
-	if *store != devicesign.StoreKeyring && *store != devicesign.StoreFile {
-		return errors.New("--key-store is keyring or file")
+	// R85-H1: Run reads --key-store as the global flag.
+	if *store, err = newKeyStore(*store, config.KeyStore); err != nil {
+		return err
 	}
 	name, err := deviceLabel(*label)
 	if err != nil {
@@ -315,10 +318,13 @@ func runEnroll(ctx context.Context, config Config, f *flag.FlagSet, args []strin
 	if err != nil {
 		return err
 	}
-	u, err := url.Parse(config.Server)
-	if err != nil || u.Host == "" {
-		return errors.New("invalid configured server URL")
+	// R85-M1: the server must take device keys at this very origin, or the
+	// profile would switch to a route every request then fails on.
+	origin, err := enrollServer(ctx, config.Server, nil)
+	if err != nil {
+		return err
 	}
+	u, _ := url.Parse(origin)
 	executor, err := newAccountExecutor(config)
 	if err != nil {
 		return err
@@ -336,7 +342,9 @@ func runEnroll(ctx context.Context, config Config, f *flag.FlagSet, args []strin
 	}})
 	if err != nil {
 		var refused *remote.HTTPError
-		if errors.As(err, &refused) {
+		// Refused, or never sent because the Google credential failed
+		// first (R85-L2): the key is no device's, so it goes.
+		if errors.As(err, &refused) || remote.IsCredentialFailure(err) {
 			_ = devicesign.Delete(where)
 			return err
 		}
@@ -344,10 +352,21 @@ func runEnroll(ctx context.Context, config Config, f *flag.FlagSet, args []strin
 	}
 	data, _ := result.Data.(map[string]any)
 	if data == nil || data["device_id"] != id {
-		return errors.New("the server's answer names another device; the profile was not changed")
+		return fmt.Errorf("the server's answer names another device; the key for %s was kept in its store and the profile was not changed", id)
 	}
-	if err = writeDeviceRoute(config.ClientConfig, map[string]any{"credential_source": remote.CredentialSourceDevice, "device_id": id, "key_store": *store}); err != nil {
-		return fmt.Errorf("device %s was enrolled but the profile could not be updated: %w", id, err)
+	route := map[string]any{"credential_source": remote.CredentialSourceDevice, "device_id": id, "key_store": *store}
+	// R85-M1: one signed read with the new key before the profile uses it.
+	signed := config
+	signed.CredentialSource, signed.DeviceID, signed.KeyStore = remote.CredentialSourceDevice, id, *store
+	check, err := newAccountExecutor(signed)
+	if err == nil {
+		_, err = check.Execute(ctx, bus.Request{Operation: "device_list", Workspace: config.Workspace, Args: map[string]any{}})
+	}
+	if err != nil {
+		return fmt.Errorf("device %s was enrolled, but a request signed with it failed, so the profile still signs with Google (revoke the device with clawbridge device revoke %s): %w", id, id, err)
+	}
+	if err = writeDeviceRoute(config.ClientConfig, route); err != nil {
+		return fmt.Errorf("device %s was enrolled but the profile could not be updated; set %s in it by hand: %w", id, routeValues(route), err)
 	}
 	out := map[string]any{"enrolled": true, "device_id": id, "label": name, "key_store": *store, "principal": config.Principal,
 		"note": "This profile now signs with the device key. The Google credential stays until clawbridge logout."}
@@ -355,6 +374,41 @@ func runEnroll(ctx context.Context, config Config, f *flag.FlagSet, args []strin
 		out["warning"] = devicesign.FileWarning
 	}
 	return json.NewEncoder(stdout).Encode(map[string]any{"source": "client", "data": out})
+}
+
+// enrollServer checks, sending nothing signed, that the server takes device
+// keys at its public origin; a test replaces it.
+var enrollServer = remote.JoinServer
+
+// newKeyStore is where a new key is kept: the command's --key-store, or
+// the global one Run takes it as, or keyring.
+func newKeyStore(local, global string) (string, error) {
+	store := local
+	if store == "" {
+		store = global
+	}
+	if store == "" {
+		store = devicesign.StoreKeyring
+	}
+	if store != devicesign.StoreKeyring && store != devicesign.StoreFile {
+		return "", errors.New("--key-store is keyring or file")
+	}
+	return store, nil
+}
+
+// routeValues lists a device route's profile values, for a person to set
+// by hand when the profile can't be written. None is a secret.
+func routeValues(values map[string]any) string {
+	keys := make([]string, 0, len(values))
+	for k := range values {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	parts := make([]string, 0, len(keys))
+	for _, k := range keys {
+		parts = append(parts, fmt.Sprintf("%s = %q", k, fmt.Sprint(values[k])))
+	}
+	return strings.Join(parts, ", ")
 }
 
 // deviceLabel is a label as given, or this machine's name.
@@ -488,7 +542,7 @@ func JoinDevice(ctx context.Context, p JoinParams) (JoinResult, error) {
 		values["clock_offset_at"] = joined.ClockOffsetAt.UTC().Format(time.RFC3339)
 	}
 	if err = writeDeviceRoute(path, values); err != nil {
-		return JoinResult{}, fmt.Errorf("joined as device %s, but the profile could not be written: %w", id, err)
+		return JoinResult{}, fmt.Errorf("joined as device %s, but the profile %s could not be written; set %s in it by hand: %w", id, path, routeValues(values), err)
 	}
 	out := JoinResult{DeviceID: id, Principal: joined.Principal, Workspace: joined.Workspace.Name, Grants: joined.Grants, Label: label, KeyStore: p.KeyStore, ConfigPath: path}
 	if p.KeyStore == devicesign.StoreFile {
@@ -561,7 +615,7 @@ func runDeviceJoin(ctx context.Context, flags Config, args []string, stdin io.Re
 	email := f.String("email", "", "the email the invite was issued for")
 	code := f.String("code", "", "the invite code (read from stdin when absent)")
 	label := f.String("label", "", "this device's label (default: this machine's name)")
-	store := f.String("key-store", devicesign.StoreKeyring, "where the key is kept: keyring, or file where there is no OS key store")
+	store := f.String("key-store", "", "where the key is kept: keyring (the default), or file where there is no OS key store")
 	if _, err := parseAccountFlags(f, args, 0, 0); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			return nil
@@ -571,13 +625,28 @@ func runDeviceJoin(ctx context.Context, flags Config, args []string, stdin io.Re
 	if flags.Server == "" {
 		return errors.New("join needs --server URL, the server the invite is for")
 	}
+	// R85-H1: Run reads --key-store as the global flag.
+	var err error
+	if *store, err = newKeyStore(*store, flags.KeyStore); err != nil {
+		return err
+	}
 	if *code == "" {
 		fmt.Fprint(stderr, "Invite code: ")
-		line, err := bufio.NewReader(stdin).ReadString('\n')
-		if err != nil && line == "" {
-			return errors.New("join needs the invite code, with --code or on stdin")
+		if stdin == os.Stdin && stdinTerminal() {
+			// R85-L4: the code is a secret; a terminal doesn't echo it.
+			raw, e := readHidden()
+			fmt.Fprintln(stderr)
+			if e != nil {
+				return errors.New("join needs the invite code, with --code or on stdin")
+			}
+			*code = strings.TrimSpace(string(raw))
+		} else {
+			line, e := bufio.NewReader(stdin).ReadString('\n')
+			if e != nil && line == "" {
+				return errors.New("join needs the invite code, with --code or on stdin")
+			}
+			*code = strings.TrimSpace(line)
 		}
-		*code = strings.TrimSpace(line)
 	}
 	if *store == devicesign.StoreFile {
 		fmt.Fprintln(stderr, "warning: "+devicesign.FileWarning+".")

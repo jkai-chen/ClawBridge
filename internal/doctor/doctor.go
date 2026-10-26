@@ -742,7 +742,7 @@ func checkMirror(ctx context.Context, in Input, wid, pid string, resolved bool, 
 		return
 	}
 	snapshot, err := mirror.Load(ctx, in.Config.Cache, mirror.Binding{
-		Server: in.Config.Server, Audience: in.Config.Audience, Principal: in.Config.Principal,
+		Server: in.Config.Server, Audience: remote.MirrorAudience(in.Config.Audience, in.Config.CredentialSource, in.Config.DeviceID), Principal: in.Config.Principal,
 		Workspace: wid, Project: pid, Session: in.Config.Session, Instance: in.Config.Instance,
 	})
 	if err != nil {

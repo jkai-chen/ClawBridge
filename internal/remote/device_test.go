@@ -4,13 +4,16 @@ import (
 	"context"
 	"crypto/ed25519"
 	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -358,5 +361,52 @@ func TestDeviceSignerIsBoundToItsServer(t *testing.T) {
 	}
 	if _, err := NewWithSigner(Config{URL: "https://cb.example.test", Principal: "ada@example.com"}, signer, http.DefaultClient); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// R85-M2: a device route has no audience, so its mirror is keyed by the
+// device: sync publishes a snapshot, an outage reads it, and another
+// device's route never does.
+func TestDeviceRouteSyncsAndReadsItsMirror(t *testing.T) {
+	ctx := context.Background()
+	var down atomic.Bool
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if down.Load() {
+			w.WriteHeader(503)
+			return
+		}
+		var request bus.Request
+		_ = json.NewDecoder(r.Body).Decode(&request)
+		data := map[string]any{}
+		switch request.Operation {
+		case "resolve_project":
+			data = map[string]any{"workspace_id": "ws_1", "project_id": "prj_1"}
+		case "snapshot":
+			data = map[string]any{"workspace": map[string]any{"id": "ws_1"}, "project": map[string]any{"id": "prj_1"}, "session": map[string]any{"id": "ses_1", "name": "worker", "instance": "instance-1"}, "principal": "ada@example.com", "verified": true, "snapshot_at": time.Now().UTC().Format(time.RFC3339Nano), "sessions": []any{}, "messages": []any{map[string]any{"sequence": 1, "id": "msg_1", "body": "cached", "expires_at": time.Now().Add(time.Hour).UTC().Format(time.RFC3339Nano), "delivered_at": nil, "read_at": nil}}, "sent_messages": []any{}, "events": []any{}}
+		}
+		_ = json.NewEncoder(w).Encode(bus.Result{Source: "server", Data: data})
+	}))
+	defer ts.Close()
+	u, _ := url.Parse(ts.URL)
+	cache := filepath.Join(t.TempDir(), "cache.db")
+	device := func() *Client {
+		key, _, _ := devicesign.NewKey()
+		c, err := NewWithSigner(Config{URL: ts.URL, Principal: "ada@example.com", CachePath: cache}, devicesign.NewSigner(key, Origin(u), 0, time.Time{}), ts.Client())
+		if err != nil {
+			t.Fatal(err)
+		}
+		return c
+	}
+	c := device()
+	if _, err := c.Sync(ctx, "team", "app", "worker", "instance-1"); err != nil {
+		t.Fatal("a device route could not sync:", err)
+	}
+	down.Store(true)
+	inbox := bus.Request{Operation: "inbox", Workspace: "ws_1", Project: "prj_1", Session: "worker", Args: map[string]any{"instance": "instance-1"}}
+	if r, err := c.Execute(ctx, inbox); err != nil || r.Source != "offline-mirror" {
+		t.Fatalf("offline read on a device route: %+v %v", r, err)
+	}
+	if r, err := device().Execute(ctx, inbox); err == nil {
+		t.Fatalf("another device read this device's mirror: %+v", r)
 	}
 }

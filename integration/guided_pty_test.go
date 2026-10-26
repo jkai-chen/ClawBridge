@@ -48,8 +48,9 @@ func TestGuidedStartupPTYBeforeAcquisition(t *testing.T) {
 			if err := os.WriteFile(filepath.Join(dir, ".clawbridge.toml"), []byte("mode='cloud'\nserver='https://unrequested.invalid'\n"), 0600); err != nil {
 				t.Fatal(err)
 			}
-			// Start's "2" leads to the guided join.
-			input := "2\nhttps://selected.invalid\nws\nprj\ndevice\n\n"
+			// Start's "2" leads to the guided join. The service can't be
+			// reached, so both ways in are offered: "2" is Google.
+			input := "2\nhttps://selected.invalid\n2\nws\nprj\ndevice\n\n"
 			if kind == "invalid-url" {
 				input = "2\nhttps://user:unsafe-url-sentinel@selected.invalid\nws\nprj\ndevice\ny\n"
 			}

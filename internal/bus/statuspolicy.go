@@ -41,6 +41,20 @@ type StatusPolicy struct {
 	ClaimFromTriage bool                  `json:"claim_from_triage"`
 	Teams           map[string]StatusTeam `json:"teams"`
 	Closes          map[string]string     `json:"closes,omitempty"`
+	// ProjectFlow lets a bound Linear project's status follow its issues
+	// (A4, STATUS-FLOW §11): off unless set, so an upgrade moves nothing.
+	ProjectFlow bool `json:"project_flow,omitempty"`
+	// ProjectTargets overrides the project status a move goes to, by
+	// type; without one it is the lowest-position unarchived status of
+	// that type, read each run.
+	ProjectTargets *ProjectTargets `json:"project_targets,omitempty"`
+}
+
+// ProjectTargets are project status IDs, checked against Linear's status
+// list at every move.
+type ProjectTargets struct {
+	Started   string `json:"started,omitempty"`
+	Completed string `json:"completed,omitempty"`
 }
 
 // AgentCloses reports whether agents close the issues of a Linear project:
@@ -85,7 +99,7 @@ func ParseStatusPolicy(v any) (StatusPolicy, error) {
 	dec := json.NewDecoder(bytes.NewReader(raw))
 	dec.DisallowUnknownFields()
 	if dec.Decode(&p) != nil || dec.Decode(new(any)) != io.EOF {
-		return StatusPolicy{}, invalid("status policy must be {\"enabled\", \"claim_from_triage\", \"teams\": {team: {create, claim, release_done, done, workflow}}, \"closes\": {project: agent|human}}")
+		return StatusPolicy{}, invalid("status policy must be {\"enabled\", \"claim_from_triage\", \"teams\": {team: {create, claim, release_done, done, workflow}}, \"closes\": {project: agent|human}, \"project_flow\", \"project_targets\": {started, completed}}")
 	}
 	if p.Teams == nil {
 		p.Teams = map[string]StatusTeam{}
@@ -139,6 +153,13 @@ func ParseStatusPolicy(v any) (StatusPolicy, error) {
 			return StatusPolicy{}, invalid("closes maps canonical project UUIDs to agent or human")
 		}
 	}
+	if t := p.ProjectTargets; t != nil {
+		for _, id := range []string{t.Started, t.Completed} {
+			if id != "" && !lowerUUIDPattern.MatchString(id) {
+				return StatusPolicy{}, invalid("project_targets map started and completed to canonical project status UUIDs")
+			}
+		}
+	}
 	return p, nil
 }
 
@@ -184,6 +205,11 @@ func (s *Store) statusPolicyOp(ctx context.Context, tx *transaction, w, p map[st
 	if loosened := closesLoosened(stored, policy); len(loosened) > 0 && via != "cli-tty" {
 		return nil, invalid("letting agents close issues is confirmed at a terminal, by typing each project's name (" + strings.Join(loosened, ", ") + ")")
 	}
+	// A4 L5: project flow is turned on only where the operator has proven
+	// it; a policy that already has it on may still be edited.
+	if policy.ProjectFlow && !stored.ProjectFlow && !s.projectFlowProven {
+		return nil, invalid(ProjectFlowUnproven)
+	}
 	encoded, _ := json.Marshal(policy)
 	now, err := dbStamp(ctx, tx)
 	if err != nil {
@@ -208,7 +234,7 @@ func (s *Store) statusPolicyOp(ctx context.Context, tx *transaction, w, p map[st
 	if err != nil {
 		return nil, err
 	}
-	if err = s.audit(ctx, tx, wid, pid, "", "linear_status_policy", pid, "set", auditVia(map[string]any{"revision": revision, "enabled": policy.Enabled, "teams": len(policy.Teams)}, via)); err != nil {
+	if err = s.audit(ctx, tx, wid, pid, "", "linear_status_policy", pid, "set", auditVia(map[string]any{"revision": revision, "enabled": policy.Enabled, "teams": len(policy.Teams), "project_flow": policy.ProjectFlow}, via)); err != nil {
 		return nil, err
 	}
 	return statusPolicyView(ctx, tx, pid)
@@ -243,6 +269,19 @@ func statusPolicyView(ctx context.Context, tx *transaction, pid string) (map[str
 	out := map[string]any{"revision": revision, "enabled": policy.Enabled, "claim_from_triage": policy.ClaimFromTriage, "teams": policy.Teams, "updated_at": nil, "updated_by": nil}
 	if len(policy.Closes) > 0 {
 		out["closes"] = policy.Closes
+	}
+	if policy.ProjectFlow {
+		out["project_flow"] = true
+	}
+	if policy.ProjectTargets != nil {
+		out["project_targets"] = policy.ProjectTargets
+	}
+	flow, err := projectFlowView(ctx, tx, pid, policy)
+	if err != nil {
+		return nil, err
+	}
+	if len(flow) > 0 {
+		out["project_flow_lines"] = flow
 	}
 	if revision > 0 {
 		row, err := one(ctx, tx, `SELECT updated_at,updated_by_principal FROM linear_status_policy WHERE project_id=?`, pid)

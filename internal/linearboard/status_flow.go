@@ -28,6 +28,11 @@ type StatusPolicyFile struct {
 	// Closes says who closes each bound Linear project's issues: agent or
 	// human, the default.
 	Closes map[string]string `json:"closes"`
+	// ProjectFlow lets each bound Linear project's status follow its
+	// issues (A4); ProjectTargets overrides the statuses it moves to, by
+	// project status ID.
+	ProjectFlow    bool                `json:"project_flow"`
+	ProjectTargets *bus.ProjectTargets `json:"project_targets"`
 }
 
 // StatusPolicyV2 reads the project's status policy.
@@ -57,7 +62,7 @@ func (s *Service) SetStatusPolicyV2(ctx context.Context, scope bus.Request, raw 
 	dec := json.NewDecoder(bytes.NewReader(raw))
 	dec.DisallowUnknownFields()
 	if dec.Decode(&file) != nil || dec.Decode(new(any)) != io.EOF || file.Enabled == nil {
-		return nil, errors.New(`the status policy file must be {"enabled": true|false, "claim_from_triage", "create", "claim", "release_done", "done"} with state names, and "closes": {"<Linear project UUID>": "agent"|"human"}`)
+		return nil, errors.New(`the status policy file must be {"enabled": true|false, "claim_from_triage", "create", "claim", "release_done", "done"} with state names, "closes": {"<Linear project UUID>": "agent"|"human"}, "project_flow": true|false, and "project_targets": {"started": "<project status UUID>", "completed": "<project status UUID>"}`)
 	}
 	b, e := s.BindingV2(ctx, scope)
 	if e != nil {
@@ -133,6 +138,12 @@ func (s *Service) SetStatusPolicyV2(ctx context.Context, scope bus.Request, raw 
 	policy := map[string]any{"enabled": *file.Enabled, "claim_from_triage": file.ClaimFromTriage, "teams": teams}
 	if len(closes) > 0 {
 		policy["closes"] = closes
+	}
+	if file.ProjectFlow {
+		policy["project_flow"] = true
+	}
+	if t := file.ProjectTargets; t != nil {
+		policy["project_targets"] = map[string]any{"started": strings.ToLower(t.Started), "completed": strings.ToLower(t.Completed)}
 	}
 	if _, e = bus.ParseStatusPolicy(policy); e != nil {
 		return nil, e

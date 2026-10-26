@@ -136,3 +136,19 @@ func TestCLIHealthShowAndSetRefusals(t *testing.T) {
 	rejectCLI(t, "linear", "health", "set", "--linear-project", "0d0d0d0d-0d0d-4d0d-8d0d-0d0d0d0d0d0d", "--expected-revision", "0")
 	rejectCLI(t, "linear", "health", "post")
 }
+
+// A4: project-flow resume reaches the bus by its own command and needs the
+// Linear project; with nothing held, the server says so.
+func TestCLIProjectFlowResume(t *testing.T) {
+	isolated(t)
+	invoke(t, "setup", "--local", "--workspace", "w")
+	invoke(t, "project", "create", "p")
+	t.Setenv("CLAWBRIDGE_PROJECT", "p")
+	rejectCLI(t, "linear", "project-flow", "resume")
+	rejectCLI(t, "linear", "project-flow", "hold", "--linear-project", "0d0d0d0d-0d0d-4d0d-8d0d-0d0d0d0d0d0d")
+	var out, errs bytes.Buffer
+	e := Run(context.Background(), []string{"linear", "project-flow", "resume", "--linear-project", "0d0d0d0d-0d0d-4d0d-8d0d-0d0d0d0d0d0d"}, &out, &errs)
+	if e == nil || !strings.Contains(e.Error(), "task board") && !strings.Contains(e.Error(), "binding") {
+		t.Fatal("resume on an unbound project:", e, out.String())
+	}
+}

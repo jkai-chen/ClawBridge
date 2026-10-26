@@ -61,6 +61,13 @@ type fakeLinear struct {
 	events     []string
 	// dispatchIssues answers the dispatcher's issue facts read.
 	dispatchIssues map[string]any
+	// Project flow: projectStatus is the project's status ID, statuses the
+	// status list; saves records each save_project {project, status}, and
+	// saveLands applies it so a read-back shows it.
+	projectStatus string
+	statuses      []map[string]any
+	saves         []string
+	saveLands     bool
 }
 
 func (f *fakeLinear) issue(id string) (linearprovider.IssueV2, error) {
@@ -71,6 +78,16 @@ func (f *fakeLinear) issue(id string) (linearprovider.IssueV2, error) {
 		return linearprovider.IssueV2{Issue: linearprovider.Issue{ID: id, Identifier: "OUT-1", TeamID: otherTeam}, ProjectKnown: true}, nil
 	}
 	return linearprovider.IssueV2{}, errors.New("inaccessible issue")
+}
+
+// status is the listed project status with that ID.
+func (f *fakeLinear) status(id string) map[string]any {
+	for _, st := range f.statuses {
+		if st["id"] == id {
+			return map[string]any{"id": id, "name": st["name"], "type": st["type"]}
+		}
+	}
+	return nil
 }
 
 type fakeProvider struct{ f *fakeLinear }
@@ -110,6 +127,13 @@ func (p fakeProvider) SaveStatusUpdate(_ context.Context, project, body, health 
 		return "", p.f.statusErr
 	}
 	return fmt.Sprintf("cccccccc-cccc-4ccc-8ccc-%012d", len(p.f.statusPosts)), nil
+}
+func (p fakeProvider) SetProjectStatus(_ context.Context, project, status string) error {
+	p.f.saves = append(p.f.saves, project+" "+status)
+	if p.f.saveLands {
+		p.f.projectStatus = status
+	}
+	return nil
 }
 func (p fakeProvider) IssueV2(_ context.Context, id string) (linearprovider.IssueV2, error) {
 	return p.f.issue(id)
@@ -184,8 +208,16 @@ func (a fakeApp) GraphQL(_ context.Context, query string, vars map[string]any, o
 			updates = append(updates, u)
 		}
 		data = map[string]any{"project": map[string]any{"id": vars["id"], "targetDate": nil, "startDate": nil, "createdAt": "2026-01-01T00:00:00.000Z", "projectUpdates": map[string]any{"nodes": updates}}}
-	case healthIssuesQuery:
+	case healthIssuesQuery, flowIssuesQuery:
 		data = map[string]any{"issues": map[string]any{"nodes": a.f.healthIssues, "pageInfo": map[string]any{"hasNextPage": a.f.healthMore, "endCursor": "next"}}}
+	case flowProjectQuery:
+		updates := []any{}
+		for _, u := range a.f.updates {
+			updates = append(updates, u)
+		}
+		data = map[string]any{"project": map[string]any{"id": vars["id"], "targetDate": nil, "startDate": nil, "createdAt": "2026-01-01T00:00:00.000Z", "projectUpdates": map[string]any{"nodes": updates}, "status": a.f.status(a.f.projectStatus)}, "projectStatuses": map[string]any{"nodes": a.f.statuses}}
+	case flowReadBackQuery:
+		data = map[string]any{"project": map[string]any{"id": vars["id"], "status": a.f.status(a.f.projectStatus)}}
 	case healthActivityQuery:
 		data = map[string]any{"issue": a.f.activity[vars["id"].(string)]}
 	case dispatchIssueQuery:

@@ -425,3 +425,31 @@ func TestLinearCallbackIsStatic(t *testing.T) {
 		}
 	}
 }
+
+// A4 L5: project flow is proven by the flag or the environment, off by
+// default.
+func TestServeProjectFlowProven(t *testing.T) {
+	base := []string{"--bootstrap-owner", "owner@example.test", "--auth", "device", "--public-origin", "https://cb.example.test"}
+	for name, c := range map[string]struct {
+		flag bool
+		env  string
+		want bool
+		err  bool
+	}{
+		"default": {}, "flag": {flag: true, want: true}, "env": {env: "1", want: true}, "env off": {env: "0"}, "env bad": {env: "yes", err: true},
+	} {
+		args := append([]string{}, base...)
+		if c.flag {
+			args = append(args, "--project-flow-proven")
+		}
+		settings, err := ParseServe(args, func(k string) string {
+			if k == "CLAWBRIDGE_PROJECT_FLOW_PROVEN" {
+				return c.env
+			}
+			return ""
+		})
+		if (err != nil) != c.err || err == nil && settings.ProjectFlowProven != c.want {
+			t.Errorf("%s: %v %v", name, settings.ProjectFlowProven, err)
+		}
+	}
+}

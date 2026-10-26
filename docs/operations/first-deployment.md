@@ -124,12 +124,12 @@ clawbridge cloud secret set CLAWBRIDGE_LINEAR_APP_CLIENT_ID --vm clawbridge-1 --
 clawbridge cloud secret set CLAWBRIDGE_LINEAR_APP_CLIENT_SECRET --vm clawbridge-1 --project example-project --zone europe-west1-b
 ```
 
-Generate the token key on the VM, in its shell, so it is never printed. The
-count must be 0 first, so the key is set exactly once:
+Generate the token key on the VM, in its shell, so it is never printed. It is
+added only when the file has no token key yet, so it is set exactly once:
 
 ```sh
-sudo grep -c '^CLAWBRIDGE_LINEAR_APP_TOKEN_KEY=' /etc/clawbridge/clawbridge.env
-openssl rand -base64 32 | sed 's/^/CLAWBRIDGE_LINEAR_APP_TOKEN_KEY=/' |
+[ "$(sudo grep -c '^CLAWBRIDGE_LINEAR_APP_TOKEN_KEY=' /etc/clawbridge/clawbridge.env)" = 0 ] &&
+  openssl rand -base64 32 | sed 's/^/CLAWBRIDGE_LINEAR_APP_TOKEN_KEY=/' |
   sudo tee -a /etc/clawbridge/clawbridge.env >/dev/null
 ```
 

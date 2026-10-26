@@ -55,7 +55,21 @@ func TestFactsScript(t *testing.T) {
 		t.Fatal(err)
 	}
 	// A docker that answers only for this project's label.
-	docker := "#!/bin/sh\ncase \"$*\" in *label=com.docker.compose.project=my-stack*) printf 'service db running Up 2 hours (healthy)\\nservice api running Up 2 hours\\n';; esac\n"
+	// A docker that answers only for this project's label, newest first, and
+	// lists `compose run` one-offs unless they are filtered out: an exited
+	// one-off api, and a running one-off api older than a crashed service
+	// api.
+	docker := `#!/bin/sh
+case "$*" in *label=com.docker.compose.project=ok-stack*)
+  echo "service caddy running Up 3 hours"; echo "service api running Up 1 minute"
+  case "$*" in *label=com.docker.compose.oneoff=False*) ;; *) echo "service api exited Exited (1) 2 hours ago";; esac
+  echo "service db running Up 3 hours (healthy)"; exit 0;;
+esac
+case "$*" in *label=com.docker.compose.project=my-stack*) ;; *) exit 0;; esac
+echo "service api exited Exited (1) 1 minute ago"
+case "$*" in *label=com.docker.compose.oneoff=False*) ;; *) echo "service api exited Exited (0) 2 hours ago"; echo "service api running Up 3 hours";; esac
+echo "service db running Up 2 hours (healthy)"
+`
 	if err := os.WriteFile(filepath.Join(dir, "docker"), []byte(docker), 0700); err != nil {
 		t.Fatal(err)
 	}
@@ -81,8 +95,21 @@ func TestFactsScript(t *testing.T) {
 	if len(f.counts) != len(requiredSettings)+len(appSettings) || f.envMissing {
 		t.Fatalf("facts: %+v", f)
 	}
-	if !reflect.DeepEqual(f.services, map[string]string{"db": "running Up 2 hours (healthy)", "api": "running Up 2 hours"}) {
+	// Only the service containers count, and the crashed api fails the check
+	// although an older one-off api still runs.
+	if !reflect.DeepEqual(f.services, map[string][]string{"db": {"running Up 2 hours (healthy)"}, "api": {"exited Exited (1) 1 minute ago"}}) {
 		t.Fatalf("services: %v", f.services)
+	}
+	if r := checkServices(f); r.Reason != "service_down" || !strings.Contains(r.Advice, "api, caddy") {
+		t.Fatalf("%+v", r)
+	}
+	// A stale, exited one-off beside a healthy service api does not fail it.
+	ok := filepath.Join(dir, "ok.env")
+	if err := os.WriteFile(ok, []byte("COMPOSE_PROJECT_NAME=ok-stack\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if r := checkServices(run(ok)); r.Status != "pass" {
+		t.Fatalf("%+v", r)
 	}
 	if missing := run(filepath.Join(dir, "absent.env")); !missing.envMissing || len(missing.counts) != 0 {
 		t.Fatalf("missing env: %+v", missing)
@@ -91,14 +118,14 @@ func TestFactsScript(t *testing.T) {
 
 func TestParseFactsIgnoresOtherLines(t *testing.T) {
 	f := parseFacts([]byte("Warning: Permanently added host\ncount A 1\ncount B x\ncount C 1 2\nservice api running Up\nservice\nenv missing now\n"))
-	if !reflect.DeepEqual(f.counts, map[string]int{"A": 1}) || !reflect.DeepEqual(f.services, map[string]string{"api": "running Up"}) || f.envMissing {
+	if !reflect.DeepEqual(f.counts, map[string]int{"A": 1}) || !reflect.DeepEqual(f.services, map[string][]string{"api": {"running Up"}}) || f.envMissing {
 		t.Fatalf("%+v", f)
 	}
 }
 
 func allSet() remoteFacts {
-	f := remoteFacts{counts: map[string]int{}, services: map[string]string{
-		"db": "running Up 1 hour (healthy)", "api": "running Up 1 hour", "caddy": "running Up 1 hour",
+	f := remoteFacts{counts: map[string]int{}, services: map[string][]string{
+		"db": {"running Up 1 hour (healthy)"}, "api": {"running Up 1 hour"}, "caddy": {"running Up 1 hour"},
 	}}
 	for _, k := range append(append([]string{}, requiredSettings...), appSettings...) {
 		f.counts[k] = 1
@@ -111,18 +138,22 @@ func TestSettingsAndServices(t *testing.T) {
 		edit   func(*remoteFacts)
 		reason string
 	}{
-		"healthy":        {func(*remoteFacts) {}, ""},
-		"no env file":    {func(f *remoteFacts) { f.envMissing = true }, "env_missing"},
-		"missing":        {func(f *remoteFacts) { f.counts["CLAWBRIDGE_DOMAIN"] = 0 }, "setting_missing"},
-		"never counted":  {func(f *remoteFacts) { delete(f.counts, "POSTGRES_PASSWORD") }, "setting_missing"},
-		"twice":          {func(f *remoteFacts) { f.counts["CLAWBRIDGE_AUDIENCE"] = 2 }, "setting_duplicate"},
-		"api absent":     {func(f *remoteFacts) { delete(f.services, "api") }, "service_down"},
-		"caddy exited":   {func(f *remoteFacts) { f.services["caddy"] = "exited Exited (1) 2 minutes ago" }, "service_down"},
-		"db no health":   {func(f *remoteFacts) { f.services["db"] = "running Up 1 hour" }, "service_down"},
-		"db starting":    {func(f *remoteFacts) { f.services["db"] = "running Up 3 seconds (health: starting)" }, "service_down"},
-		"api starting":   {func(f *remoteFacts) { f.services["api"] = "running Up 2 seconds (health: starting)" }, "service_down"},
-		"api unhealthy":  {func(f *remoteFacts) { f.services["api"] = "running Up 1 hour (unhealthy)" }, "service_down"},
-		"restarting api": {func(f *remoteFacts) { f.services["api"] = "restarting Restarting (1) 3 seconds ago" }, "service_down"},
+		"healthy":       {func(*remoteFacts) {}, ""},
+		"no env file":   {func(f *remoteFacts) { f.envMissing = true }, "env_missing"},
+		"missing":       {func(f *remoteFacts) { f.counts["CLAWBRIDGE_DOMAIN"] = 0 }, "setting_missing"},
+		"never counted": {func(f *remoteFacts) { delete(f.counts, "POSTGRES_PASSWORD") }, "setting_missing"},
+		"twice":         {func(f *remoteFacts) { f.counts["CLAWBRIDGE_AUDIENCE"] = 2 }, "setting_duplicate"},
+		"api absent":    {func(f *remoteFacts) { delete(f.services, "api") }, "service_down"},
+		"caddy exited":  {func(f *remoteFacts) { f.services["caddy"] = []string{"exited Exited (1) 2 minutes ago"} }, "service_down"},
+		"db no health":  {func(f *remoteFacts) { f.services["db"] = []string{"running Up 1 hour"} }, "service_down"},
+		"db starting":   {func(f *remoteFacts) { f.services["db"] = []string{"running Up 3 seconds (health: starting)"} }, "service_down"},
+		"api starting":  {func(f *remoteFacts) { f.services["api"] = []string{"running Up 2 seconds (health: starting)"} }, "service_down"},
+		"api unhealthy": {func(f *remoteFacts) { f.services["api"] = []string{"running Up 1 hour (unhealthy)"} }, "service_down"},
+		"a crashed replica": {func(f *remoteFacts) {
+			f.services["api"] = append([]string{"exited Exited (2) 1 minute ago"}, f.services["api"]...)
+		}, "service_down"},
+		"two healthy":    {func(f *remoteFacts) { f.services["caddy"] = append(f.services["caddy"], "running Up 2 hours") }, ""},
+		"restarting api": {func(f *remoteFacts) { f.services["api"] = []string{"restarting Restarting (1) 3 seconds ago"} }, "service_down"},
 	} {
 		f := allSet()
 		c.edit(&f)
@@ -161,8 +192,10 @@ func factsOutput(f remoteFacts) string {
 	for k, n := range f.counts {
 		b.WriteString("count " + k + " " + string(rune('0'+n)) + "\n")
 	}
-	for s, state := range f.services {
-		b.WriteString("service " + s + " " + state + "\n")
+	for s, states := range f.services {
+		for _, state := range states {
+			b.WriteString("service " + s + " " + state + "\n")
+		}
 	}
 	return b.String()
 }

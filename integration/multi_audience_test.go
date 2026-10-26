@@ -140,11 +140,10 @@ func TestPublicOAuthConfigContract(t *testing.T) {
 	)
 
 	type publicConfig struct {
-		BrowserClientID     string   `json:"browser_client_id"`
-		BrowserClientSecret string   `json:"browser_client_secret"`
-		DeviceClientID      string   `json:"device_client_id"`
-		DeviceClientSecret  string   `json:"device_client_secret"`
-		AuthMethods         []string `json:"auth_methods"`
+		BrowserClientID     string `json:"browser_client_id"`
+		BrowserClientSecret string `json:"browser_client_secret"`
+		DeviceClientID      string `json:"device_client_id"`
+		DeviceClientSecret  string `json:"device_client_secret"`
 	}
 	var verifierCalls, executorCalls int
 	configHandler := server.NewHandlerWithOAuthMetadata(executorFunc(func(context.Context, string, bus.Request) (bus.Result, error) {

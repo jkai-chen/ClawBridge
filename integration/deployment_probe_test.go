@@ -127,8 +127,9 @@ func assertDeploymentHTTPContractWithExpected(
 	if trailing, err := decoder.Token(); err != io.EOF || trailing != nil {
 		t.Fatalf("GET /v1/config has trailing content")
 	}
-	// The four installed-app fields, and the sign-in methods.
-	if len(fields) != 5 || string(fields["auth_methods"]) != `["google"]` {
+	// Exactly the four installed-app fields: a Google-only server names no
+	// sign-in methods, so a v0.3.3 client's parser accepts it.
+	if len(fields) != 4 {
 		t.Fatal("GET /v1/config field count is not exactly four")
 	}
 	values := make(map[string]string, len(fields))

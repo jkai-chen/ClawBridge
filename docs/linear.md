@@ -892,7 +892,7 @@ can run `show`.
 
 Agents can read the Linear documents of the board they work on. They never
 write them; publishing a document from git is a project owner's or lead's CLI
-command, which comes in a later release.
+command (see [Publishing from git](#publishing-from-git)).
 
 ```sh
 clawbridge linear doc list --profile PROFILE_ID
@@ -944,6 +944,64 @@ The document policy (`docs-policy.json`) is the project owner's:
   and the patterns' regexes; others see `source_root_set` and the patterns'
   IDs.
 - With no policy, no initiative is in scope.
+
+### Publishing from git
+
+A project owner or lead publishes a committed file to a bound team, a bound
+project or a listed initiative. It goes one way: git is the source, and
+ClawBridge never overwrites a document someone edited in Linear.
+
+```sh
+clawbridge linear doc publish docs/plan.md --linear-project UUID --operation-id plan-1 --profile PROFILE_ID            # preview
+clawbridge linear doc publish docs/plan.md --linear-project UUID --operation-id plan-1 --profile PROFILE_ID --confirm
+```
+
+Options: `--team` or `--initiative` instead of `--linear-project`; `--title`
+(default: the file's first `# ` heading); `--commit SHA` (HEAD or an ancestor);
+`--split`; `--recreate`; `--allow-pattern ID` (owner only).
+
+**Before any Linear call:**
+- **Where the file is.** The file must be inside the document policy's
+  `source_root`, which must be the top level of a git repository, and in that
+  repository itself (not a submodule or a nested repository). A symbolic link
+  is judged by its target.
+- **What is published.** The bytes are read with `git show` at one commit,
+  never from the working tree. The preview warns when your working copy differs.
+- **Content.** It must be valid UTF-8 with no NUL, and must not @-mention anyone.
+- **Deny scan.** Every line of the content, every title and the footer are
+  checked against the policy's deny patterns. A match refuses the publish,
+  naming the pattern ID and the line only, never the matched text. The project
+  owner may publish over a pattern with `--allow-pattern ID --confirm`. That is
+  valid for this operation ID only, and is recorded in the project history with
+  the pattern IDs, line numbers, commit and path. The source repository's own
+  CI check is the first line; this one is a backstop.
+- **Size.** A document with its footer must fit in 49,000 bytes. A larger file
+  is refused unless `--split`, which publishes it in parts at its `## `
+  headings, titled `Title (1/N)`; part 1 starts with a list of the parts. A
+  single section over the limit is refused.
+
+**In Linear:**
+- **The parent** is proven as for reads: a bound team, a bound project, or a
+  listed initiative that still holds a bound project.
+- **A first publish** reserves a ledger row, creates the document, reads it
+  back and records the digest of the content as Linear returned it. A create
+  whose answer was lost is found again by its token, never sent twice blindly.
+- **A re-publish** of the same source does nothing. A changed source updates an
+  untouched document: it is read again right before the write, and a change
+  since then refuses it. An edit landing in the moment between that read and
+  the write is overwritten: Linear has no compare-and-swap for documents.
+- **An edited document** (its content differs from what was published) refuses
+  the whole publish, and is never overwritten. Bring the edit into git, or
+  publish with `--recreate --confirm` to create new documents; the edited one
+  stays as it is. An archived or unreadable document is reported the same way.
+- **Parts:** every part of one publish carries the same generation; a set
+  whose parts differ is reported as a mixed set, which a re-publish finishes. A
+  change in the number of parts needs `--recreate`.
+- **The footer** reads `Published by ClawBridge from <repo>@<commit>:<path>.
+  Edit it in git: an edit here blocks the next publish.` with a `publish:`
+  token line. `<repo>` is the repository's directory name and the path is
+  repository-relative: a local path never appears.
+- Relative links stay as written. A CSV the document links to stays in git.
 
 ## Issue intake (v0.3)
 

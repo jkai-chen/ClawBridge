@@ -80,6 +80,10 @@ The settings passed with `--settings` take precedence over the repository's own
   - Bash writes only in its clone, its temporary directory and its cache
     (`<work>/<session>.cache`). Go, npm and XDG caches point there, never at
     yours, and `gc` removes it with the clone.
+  - Go modules come read-only from your own module cache
+    (`GOPROXY=file://…/cache/download,off`, `GOTOOLCHAIN=local`): inside the
+    sandbox, Go cannot verify TLS on macOS. A module you do not have yet is
+    reported missing; download it in your own checkout.
   - Bash reaches only the allowed domains (by default the Go, npm and PyPI
     registries). The allow-list is strict: any other host is refused, never
     offered to you to approve. Your git hosts are also denied in WebFetch's

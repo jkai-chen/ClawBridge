@@ -64,7 +64,7 @@ func TestL2MCPDefaultLegacyAndV2ExactSurfaceWithoutIO(t *testing.T) {
 			}
 			if mode == "v2_native" {
 				options.Taskboard = v2
-				want = 35
+				want = 37
 			}
 			server := mcpserver.NewServerWithOptions(f.store, "w", "p", "worker", "worker-instance", options)
 			client := notificationMCPConnect(t, ctx, server, make(chan string, 1))

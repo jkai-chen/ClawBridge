@@ -51,10 +51,10 @@ func newEnv(t *testing.T) *env {
 	e.git(e.repo, "push", "origin", "main")
 	e.git(e.repo, "remote", "set-head", "origin", "main")
 	home := filepath.Join(root, "home")
-	e.r = &Runner{StateDir: filepath.Join(home, ".clawbridge", "runner"), Home: home, Git: execGit, Now: func() time.Time { return e.now }, Terminal: func(dir, title, command string) error {
-		e.opens = append(e.opens, opened{dir, title, command})
+	e.r = &Runner{StateDir: filepath.Join(home, ".clawbridge", "runner"), Home: home, Git: execGit, Now: func() time.Time { return e.now }, Terminal: func(owner, title, command string) error {
+		e.opens = append(e.opens, opened{owner, title, command})
 		return nil
-	}}
+	}, ClaudeVersion: func() (string, error) { return TestedClaude + " (Claude Code)", nil }, ManagedSettings: filepath.Join(root, "no-managed-settings.json")}
 	return e
 }
 
@@ -166,11 +166,14 @@ func TestLaunchMakesAnUnpushableClone(t *testing.T) {
 	if json.Unmarshal(raw, &mcp) != nil || mcp["mcpServers"]["clawbridge"]["command"] != "/usr/local/bin/clawbridge" {
 		t.Fatal(string(raw))
 	}
-	if len(e.opens) != 1 || e.opens[0].dir != p.Clone || e.opens[0].title != "checkout-engineer-1" {
+	owner, _ := filepath.EvalSymlinks(e.repo)
+	if len(e.opens) != 1 || e.opens[0].dir != owner || e.opens[0].title != "checkout-engineer-1" {
 		t.Fatal(e.opens)
 	}
 	cmd := e.opens[0].command
-	for _, want := range []string{"claude --settings '" + p.SettingsFile + "'", "--mcp-config '" + p.MCPFile + "'", "--strict-mcp-config", issueIdent, issueUUID, "untrusted data"} {
+	// F1, F3, F4: the command changes into the clone, loads no user,
+	// project or local settings, and starts in the default mode.
+	for _, want := range []string{"cd '" + p.Clone + "' && claude --setting-sources '' --permission-mode default --settings '" + p.SettingsFile + "'", "--mcp-config '" + p.MCPFile + "'", "--strict-mcp-config", issueIdent, issueUUID, "untrusted data"} {
 		if !strings.Contains(cmd, want) {
 			t.Fatalf("command lacks %q:\n%s", want, cmd)
 		}
@@ -179,20 +182,28 @@ func TestLaunchMakesAnUnpushableClone(t *testing.T) {
 		t.Fatal("command:", cmd)
 	}
 	launches, _ := e.r.Launches()
-	if len(launches) != 1 || launches[0].Instance != "inst-checkout-engineer-1" || launches[0].BaseCommit == "" {
+	if len(launches) != 1 || launches[0].Instance != "inst-checkout-engineer-1" || launches[0].BaseCommit == "" || launches[0].Cache != p.Cache {
 		t.Fatal(launches)
+	}
+	// F2: the session's caches live beside the clone, privately.
+	if info, err := os.Stat(p.Cache); err != nil || info.Mode().Perm() != 0o700 || p.Cache != p.Clone+".cache" || p.ClaudeVersion != TestedClaude {
+		t.Fatal("cache", info, err, p)
 	}
 }
 
 type agentSettings struct {
 	Permissions struct {
-		DefaultMode, DisableBypassPermissionsMode string
-		Deny                                      []string
+		DefaultMode, DisableBypassPermissionsMode, DisableAutoMode string
+		Deny                                                       []string
 	}
+	Env     map[string]string
 	Sandbox struct {
 		Enabled, FailIfUnavailable, AllowUnsandboxedCommands bool
-		Filesystem                                           struct{ DenyRead []string }
-		Network                                              struct{ AllowedDomains []string }
+		Filesystem                                           struct{ DenyRead, AllowWrite []string }
+		Network                                              struct {
+			AllowedDomains  []string
+			StrictAllowlist bool
+		}
 	}
 }
 
@@ -213,11 +224,19 @@ func TestLaunchSettingsAndModel(t *testing.T) {
 	if err := json.Unmarshal(raw, &s); err != nil {
 		t.Fatal(err)
 	}
-	if s.Permissions.DefaultMode != "default" || s.Permissions.DisableBypassPermissionsMode != "disable" {
+	if s.Permissions.DefaultMode != "default" || s.Permissions.DisableBypassPermissionsMode != "disable" || s.Permissions.DisableAutoMode != "disable" {
 		t.Fatal("permissions", s.Permissions)
 	}
-	if !s.Sandbox.Enabled || !s.Sandbox.FailIfUnavailable || s.Sandbox.AllowUnsandboxedCommands {
+	if !s.Sandbox.Enabled || !s.Sandbox.FailIfUnavailable || s.Sandbox.AllowUnsandboxedCommands || !s.Sandbox.Network.StrictAllowlist {
 		t.Fatal("sandbox", s.Sandbox)
+	}
+	if len(s.Sandbox.Filesystem.AllowWrite) != 1 || s.Sandbox.Filesystem.AllowWrite[0] != p.Cache {
+		t.Fatal("writable", s.Sandbox.Filesystem.AllowWrite)
+	}
+	for _, k := range []string{"GOCACHE", "GOMODCACHE", "GOPATH", "npm_config_cache", "XDG_CACHE_HOME"} {
+		if !strings.HasPrefix(s.Env[k], p.Cache+string(filepath.Separator)) {
+			t.Fatal("cache variable", k, s.Env[k])
+		}
 	}
 	repo, _ := filepath.EvalSymlinks(e.repo)
 	for _, want := range []string{"Bash(git push *)", "Bash(gh *)", "WebFetch", "Edit(/" + repo + "/**)"} {
@@ -477,5 +496,65 @@ func TestSessionNameAndBranch(t *testing.T) {
 		if _, err := Branch(bad); err == nil {
 			t.Fatal(bad, "accepted")
 		}
+	}
+}
+
+// The push host is denied in WebFetch's domain form too, which reaches the
+// sandbox's proxy.
+func TestPushHostDeniedForFetches(t *testing.T) {
+	e := newEnv(t)
+	e.git(e.repo, "remote", "set-url", "--push", "origin", "https://github.com/o/r.git")
+	p := e.launch("checkout-engineer-1", issueIdent)
+	var s agentSettings
+	raw, _ := os.ReadFile(p.SettingsFile)
+	if err := json.Unmarshal(raw, &s); err != nil || !contains(s.Permissions.Deny, "WebFetch(domain:github.com)") {
+		t.Fatal(s.Permissions.Deny, err)
+	}
+}
+
+// F1: claude must be new enough for the strict allow-list and of the major
+// version the launcher was proven on.
+func TestCheckClaude(t *testing.T) {
+	for line, ok := range map[string]bool{TestedClaude + " (Claude Code)": true, "2.1.219": true, "2.9.0 (Claude Code)": true, "2.1.218": false, "3.0.0": false, "1.9.9": false, "garbage": false} {
+		if _, err := CheckClaude(line); (err == nil) != ok {
+			t.Fatal(line, err)
+		}
+	}
+	if note, _ := CheckClaude("2.9.0"); !strings.Contains(note, "newer") {
+		t.Fatal("no note for a newer claude", note)
+	}
+	e := newEnv(t)
+	e.r.ClaudeVersion = func() (string, error) { return "2.1.100 (Claude Code)", nil }
+	if _, err := e.r.Launch(e.spec("checkout-engineer-1", issueIdent)); err == nil || !strings.Contains(err.Error(), MinClaude) {
+		t.Fatal("an old claude was started:", err)
+	}
+}
+
+// F1: managed settings load whatever --setting-sources says, so one that
+// widens the network is refused before anything starts.
+func TestManagedSettingsMayNotWidenTheNetwork(t *testing.T) {
+	urls := []string{"https://github.com/o/r.git"}
+	for name, c := range map[string]struct {
+		raw string
+		ok  bool
+	}{
+		"none":            {`{}`, true},
+		"same domain":     {`{"sandbox":{"network":{"allowedDomains":["proxy.golang.org"]}}}`, true},
+		"extra domain":    {`{"sandbox":{"network":{"allowedDomains":["example.com"]}}}`, false},
+		"webfetch allow":  {`{"permissions":{"allow":["WebFetch(domain:example.com)"]}}`, false},
+		"push host":       {`{"permissions":{"allow":["WebFetch(domain:github.com)"]}}`, false},
+		"other allow":     {`{"permissions":{"allow":["Bash(ls *)"]}}`, true},
+		"unreadable json": {`{`, false},
+	} {
+		if err := CheckManaged([]byte(c.raw), []string{"proxy.golang.org"}, urls); (err == nil) != c.ok {
+			t.Fatal(name, err)
+		}
+	}
+	e := newEnv(t)
+	if err := os.WriteFile(e.r.ManagedSettings, []byte(`{"permissions":{"allow":["WebFetch(domain:example.com)"]}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.r.Launch(e.spec("checkout-engineer-1", issueIdent)); err == nil || !strings.Contains(err.Error(), "example.com") {
+		t.Fatal("widening managed settings were accepted:", err)
 	}
 }

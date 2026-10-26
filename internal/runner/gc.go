@@ -102,6 +102,16 @@ func (r *Runner) remove(l Launch, proven bool) (bool, string) {
 	if err := os.RemoveAll(l.Clone); err != nil {
 		return false, err.Error()
 	}
+	if l.Cache != "" {
+		// The module cache is read-only on disk; make it removable.
+		_ = filepath.WalkDir(l.Cache, func(path string, d fs.DirEntry, err error) error {
+			if err == nil && d.IsDir() {
+				_ = os.Chmod(path, 0o700)
+			}
+			return nil
+		})
+		_ = os.RemoveAll(l.Cache)
+	}
 	_ = os.RemoveAll(filepath.Join(r.StateDir, "sessions", l.Session))
 	if proven {
 		if _, err := r.Git(l.Repo, "rev-parse", "--verify", "--quiet", "refs/heads/"+l.Branch); err == nil {

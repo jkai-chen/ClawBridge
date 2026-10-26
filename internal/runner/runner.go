@@ -59,6 +59,7 @@ type Launch struct {
 	Instance   string    `json:"instance"`
 	Repo       string    `json:"repo"`
 	Clone      string    `json:"clone"`
+	Cache      string    `json:"cache"`
 	Branch     string    `json:"branch"`
 	Base       string    `json:"base"`
 	BaseCommit string    `json:"base_commit"`
@@ -72,8 +73,21 @@ type Launch struct {
 // starts, in the new clone.
 type Git func(dir string, args ...string) (string, error)
 
-// Terminal opens a visible terminal in dir that runs command.
-type Terminal func(dir, title, command string) error
+// Terminal opens a visible terminal that runs command. Orca opens it in
+// a checkout it manages, owner (the person's own); the command starts by
+// changing into the agent's clone.
+type Terminal func(owner, title, command string) error
+
+// Claude Code versions: the sandbox's strict allow-list needs MinClaude,
+// and the launcher's settings were proven live on TestedClaude.
+const (
+	MinClaude    = "2.1.219"
+	TestedClaude = "2.1.310"
+)
+
+// DefaultManagedSettings is Claude Code's managed settings file on macOS,
+// which loads whatever --setting-sources says.
+const DefaultManagedSettings = "/Library/Application Support/ClaudeCode/managed-settings.json"
 
 // Runner prepares and records launches under StateDir.
 type Runner struct {
@@ -82,7 +96,12 @@ type Runner struct {
 	Home     string
 	Git      Git
 	Terminal Terminal
-	Now      func() time.Time
+	// ClaudeVersion reports the installed claude's version.
+	ClaudeVersion func() (string, error)
+	// ManagedSettings is the managed settings file; DefaultManagedSettings
+	// when empty.
+	ManagedSettings string
+	Now             func() time.Time
 }
 
 var (

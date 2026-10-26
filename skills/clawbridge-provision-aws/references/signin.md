@@ -1,6 +1,10 @@
 # Sign-in: device sign-in, or the Google fallback
 
-Pick the path by the user's ClawBridge release, on their machine:
+Pick the path by the user's ClawBridge release. v0.3.4 brings device sign-in to
+the server, but no release up to and including v0.3.4 has `cloud bootstrap
+--instance`, the EC2 bootstrap over SSM. It is planned for a later release
+(v0.3.5 at the earliest), so with v0.3.4 or older use the Google fallback. Check
+the release on the user's machine:
 
 ```sh
 clawbridge cloud bootstrap --help

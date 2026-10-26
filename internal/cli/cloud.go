@@ -31,7 +31,8 @@ import (
 // passes, warns, or fails with a fixed reason code and one line of advice; it
 // never reads a secret's value and never writes.
 
-const cloudUsage = `clawbridge cloud check [server|version|workspace|all] [--server URL] [--client-config PATH] [--json]
+const cloudUsage = `clawbridge cloud check [server|version|workspace|linear-app|all] [--server URL] [--client-config PATH]
+                       [--ssh HOST | --vm NAME --project P --zone Z] [--json]
 clawbridge cloud secret set KEY (--ssh HOST | --vm NAME --project P --zone Z) [--value-stdin]`
 
 type cloudResult struct {
@@ -45,10 +46,17 @@ type cloudProbe struct {
 	server, version string
 	config          Config
 	configErr       error
+	target          cloudTarget
+	stderr          io.Writer
+	factsDone       bool
+	remote          remoteFacts
+	remoteErr       error
 }
 
 // cloudChecks is the fixed list, in the order "all" runs it. The cloud-API
 // checks (infra, backups) and the sign-in check join it with their releases.
+// With --ssh or --vm, server also counts the required settings and checks
+// the containers, and linear-app counts the app's entries.
 var cloudChecks = []struct {
 	name string
 	run  func(context.Context, *cloudProbe) cloudResult
@@ -56,6 +64,7 @@ var cloudChecks = []struct {
 	{"server", checkServer},
 	{"version", checkVersion},
 	{"workspace", checkWorkspace},
+	{"linear-app", checkLinearApp},
 }
 
 var cloudHTTP = &http.Client{
@@ -80,8 +89,10 @@ func runCloud(ctx context.Context, args []string, stdout, stderr io.Writer) erro
 func runCloudCheck(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	var server, clientConfig string
 	var asJSON bool
+	var target cloudTarget
 	f := flag.NewFlagSet("cloud check", flag.ContinueOnError)
 	f.SetOutput(stderr)
+	bindTarget(f, &target)
 	f.StringVar(&server, "server", "", "server URL (default: the configured server)")
 	f.StringVar(&clientConfig, "client-config", "", "trusted client configuration")
 	f.BoolVar(&asJSON, "json", false, "print JSON")
@@ -102,14 +113,19 @@ func runCloudCheck(ctx context.Context, args []string, stdout, stderr io.Writer)
 			known = known || c.name == name
 		}
 		if !known {
-			return fmt.Errorf("unknown check %q; checks: server, version, workspace, all", name)
+			return fmt.Errorf("unknown check %q; checks: server, version, workspace, linear-app, all", name)
 		}
 		want[name] = true
 	}
 	if len(want) == 0 {
 		want["all"] = true
 	}
-	probe := &cloudProbe{}
+	if target.set() {
+		if _, err = target.argv(""); err != nil {
+			return err
+		}
+	}
+	probe := &cloudProbe{target: target, stderr: stderr}
 	probe.config, _, probe.configErr = resolveConfig(ctx, Config{ClientConfig: clientConfig, Server: server})
 	probe.server = server
 	if probe.server == "" && probe.configErr == nil {
@@ -212,10 +228,26 @@ func transportReason(err error) string {
 	return "unreachable"
 }
 
+const serverUnchecked = "settings and services not checked: pass --ssh or --vm to check them too"
+
 func checkServer(ctx context.Context, p *cloudProbe) cloudResult {
 	version, r := p.health(ctx)
 	p.version = version
-	return r
+	if r.Status != "pass" {
+		return r
+	}
+	if !p.target.set() {
+		r.Advice = serverUnchecked
+		return r
+	}
+	f, err := p.facts(ctx)
+	if err != nil {
+		return failed("server", "ssh_failed", remoteAdvice)
+	}
+	if r = checkSettings(f); r.Status != "pass" {
+		return r
+	}
+	return checkServices(f)
 }
 
 func checkVersion(ctx context.Context, p *cloudProbe) cloudResult {
@@ -242,22 +274,9 @@ func checkVersion(ctx context.Context, p *cloudProbe) cloudResult {
 // checkWorkspace signs in with the configured cloud route and asks whoami:
 // the user must own the workspace.
 func checkWorkspace(ctx context.Context, p *cloudProbe) cloudResult {
-	if p.configErr != nil {
-		return failed("workspace", "no_config", "run clawbridge setup --cloud first")
-	}
-	if p.config.Mode != "cloud" {
-		return failed("workspace", "not_cloud", "this profile is local; run clawbridge setup --cloud")
-	}
-	if p.server != "" && strings.TrimSuffix(p.server, "/") != strings.TrimSuffix(p.config.Server, "/") {
-		return failed("workspace", "other_server", "--server differs from the configured server; check the configured one")
-	}
-	client, err := newCloudExecutor(p.config)
-	if err != nil {
-		return failed("workspace", "not_signed_in", "run clawbridge login")
-	}
-	workspace, project, err := client.ResolveProject(ctx, p.config.Workspace, p.config.Project, "")
-	if err != nil {
-		return failed("workspace", "no_workspace", "run clawbridge setup --cloud to create the workspace and its first project")
+	client, workspace, project, fail := p.cloudSession(ctx, "workspace")
+	if fail != nil {
+		return *fail
 	}
 	result, err := client.Execute(ctx, bus.Request{Operation: "whoami", Workspace: workspace, Project: project, Args: map[string]any{}})
 	if err != nil {
@@ -271,10 +290,12 @@ func checkWorkspace(ctx context.Context, p *cloudProbe) cloudResult {
 	return cloudResult{Check: "workspace", Status: "pass"}
 }
 
-var newCloudExecutor = func(c Config) (interface {
+type cloudExecutor interface {
 	Execute(context.Context, bus.Request) (bus.Result, error)
 	ResolveProject(context.Context, string, string, string) (string, string, error)
-}, error) {
+}
+
+var newCloudExecutor = func(c Config) (cloudExecutor, error) {
 	return remote.New(remoteConfig(c))
 }
 
@@ -350,14 +371,11 @@ func secretValue(raw []byte) (string, error) {
 }
 
 func runCloudSecretSet(ctx context.Context, args []string, stdout, stderr io.Writer) error {
-	var host, vm, project, zone string
+	var target cloudTarget
 	var fromStdin bool
 	f := flag.NewFlagSet("cloud secret set", flag.ContinueOnError)
 	f.SetOutput(stderr)
-	f.StringVar(&host, "ssh", "", "SSH host of the server (any VM)")
-	f.StringVar(&vm, "vm", "", "Compute Engine VM name (with --project and --zone, over IAP)")
-	f.StringVar(&project, "project", "", "Google Cloud project")
-	f.StringVar(&zone, "zone", "", "Compute Engine zone")
+	bindTarget(f, &target)
 	f.BoolVar(&fromStdin, "value-stdin", false, "read the value from a pipe instead of a hidden prompt")
 	ordered, err := interspersedFlags(f, args)
 	if err == nil {
@@ -373,21 +391,9 @@ func runCloudSecretSet(ctx context.Context, args []string, stdout, stderr io.Wri
 		return errors.New("secret set takes one KEY: CLAWBRIDGE_LINEAR_APP_CLIENT_ID or CLAWBRIDGE_LINEAR_APP_CLIENT_SECRET")
 	}
 	key := f.Arg(0)
-	remoteCommand := `sudo -n sh -c '` + remoteSetScript(key, serverEnvFile) + `'`
-	var argv []string
-	switch {
-	case host != "" && vm == "" && project == "" && zone == "":
-		if !sshHostPattern.MatchString(host) {
-			return errors.New("--ssh must be a host name or user@host")
-		}
-		argv = []string{"ssh", "-T", host, remoteCommand}
-	case host == "" && vm != "":
-		if !vmPattern.MatchString(vm) || !projectPattern.MatchString(project) || !zonePattern.MatchString(zone) {
-			return errors.New("--vm, --project and --zone must all be valid Compute Engine names")
-		}
-		argv = []string{"gcloud", "compute", "ssh", vm, "--project", project, "--zone", zone, "--tunnel-through-iap", "--command", remoteCommand}
-	default:
-		return errors.New("secret set needs --ssh HOST, or --vm NAME --project P --zone Z")
+	argv, err := target.argv(`sudo -n sh -c '` + remoteSetScript(key, serverEnvFile) + `'`)
+	if err != nil {
+		return err
 	}
 	var raw []byte
 	switch {

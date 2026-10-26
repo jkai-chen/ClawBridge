@@ -237,3 +237,19 @@ func TestStateSettleRecordsAnUnresolvedState(t *testing.T) {
 		t.Fatal(s, reason)
 	}
 }
+
+// A state part is charged by the binding it must prove: one team and two
+// projects add three.
+func TestMarkerDueChargesTheStatePartByTheBinding(t *testing.T) {
+	w := newWatchHarness(t)
+	w.call("taskboard_set_v2", "a", taskboardArgsV2(0, projectOne, projectTwo))
+	w.setStatusPolicy(0, sfPolicy(true))
+	w.assign("b", sfIssueNext)
+	w.markersDue()
+	before := w.call("comment_watch_lease", "c", w.fenced(map[string]any{"action": "renew"})).(map[string]any)["budget_used"].(int)
+	due := w.call("marker_due", "c", w.fenced(map[string]any{})).(map[string]any)["markers"].([]any)
+	after := w.call("comment_watch_lease", "c", w.fenced(map[string]any{"action": "renew"})).(map[string]any)["budget_used"].(int)
+	if len(due) != 2 || after-before != markerDueCalls*2+MarkerStateCalls(1, 2) || MarkerStateCalls(1, 2) != markerStateCalls+3 {
+		t.Fatal(len(due), before, after)
+	}
+}

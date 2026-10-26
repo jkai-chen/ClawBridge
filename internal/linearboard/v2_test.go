@@ -123,6 +123,8 @@ type providerV2 struct {
 	writeErr         error
 	// statuses, when set, are the workflow states Statuses answers.
 	statuses []linearprovider.Status
+	// tools counts every call that would be a Linear tool call.
+	tools int
 	// stateByName answers an issue's state as Linear's MCP get_issue does:
 	// by its name, without the ID.
 	stateByName bool
@@ -145,6 +147,7 @@ func (p *providerV2) named(i linearprovider.IssueV2) linearprovider.IssueV2 {
 }
 
 func (p *providerV2) Statuses(ctx context.Context, team string) ([]linearprovider.Status, error) {
+	p.tools++
 	if p.statuses == nil {
 		return p.fakeProvider.Statuses(ctx, team)
 	}
@@ -157,10 +160,16 @@ func (p *providerV2) Statuses(ctx context.Context, team string) ([]linearprovide
 	return out, nil
 }
 
+func (p *providerV2) GetTeam(ctx context.Context, id string) (linearprovider.Team, error) {
+	p.tools++
+	return p.fakeProvider.GetTeam(ctx, id)
+}
 func (p *providerV2) GetProject(_ context.Context, id string) (linearprovider.Project, error) {
+	p.tools++
 	return linearprovider.Project{ID: id, TeamIDs: p.projects[id]}, nil
 }
 func (p *providerV2) IssueV2(_ context.Context, id string) (linearprovider.IssueV2, error) {
+	p.tools++
 	p.reads++
 	i, ok := p.issues[id]
 	if !ok {
@@ -175,6 +184,7 @@ func (p *providerV2) IssueV2(_ context.Context, id string) (linearprovider.Issue
 	return p.named(i), nil
 }
 func (p *providerV2) IssuesV2(_ context.Context, q linearprovider.IssueQueryV2) (linearprovider.Page[linearprovider.IssueV2], error) {
+	p.tools++
 	p.queries = append(p.queries, q)
 	if len(p.pages) == 0 {
 		return linearprovider.Page[linearprovider.IssueV2]{Complete: true}, nil
@@ -184,6 +194,7 @@ func (p *providerV2) IssuesV2(_ context.Context, q linearprovider.IssueQueryV2) 
 	return out, nil
 }
 func (p *providerV2) Labels(_ context.Context, team string, _ linearprovider.PageOptions) (linearprovider.Page[linearprovider.Label], error) {
+	p.tools++
 	var items []linearprovider.Label
 	for _, l := range p.labels {
 		if l.TeamID == team {
@@ -193,6 +204,7 @@ func (p *providerV2) Labels(_ context.Context, team string, _ linearprovider.Pag
 	return linearprovider.Page[linearprovider.Label]{Items: items, Complete: true}, nil
 }
 func (p *providerV2) Members(_ context.Context, team string, _ linearprovider.PageOptions) (linearprovider.Page[linearprovider.Member], error) {
+	p.tools++
 	var items []linearprovider.Member
 	for _, m := range p.members {
 		if m.TeamID == team {
@@ -207,6 +219,7 @@ func (p *providerV2) Capabilities(context.Context) (linearprovider.Capabilities,
 func (p *providerV2) ValidateCreateV2(linearprovider.CreateInputV2) error { return p.preflightErr }
 func (p *providerV2) ValidateUpdateV2(linearprovider.UpdateInputV2) error { return p.preflightErr }
 func (p *providerV2) CreateV2(_ context.Context, in linearprovider.CreateInputV2) (linearprovider.IssueV2, error) {
+	p.tools++
 	p.created = append(p.created, in)
 	p.writes++
 	i := linearprovider.IssueV2{Issue: linearprovider.Issue{ID: issueID, TeamID: in.TeamID, ProjectID: in.ProjectID}, ProjectKnown: true}
@@ -216,6 +229,7 @@ func (p *providerV2) CreateV2(_ context.Context, in linearprovider.CreateInputV2
 	return i, p.writeErr
 }
 func (p *providerV2) UpdateV2(_ context.Context, in linearprovider.UpdateInputV2) (linearprovider.IssueV2, error) {
+	p.tools++
 	p.updated = append(p.updated, in)
 	p.writes++
 	i := p.issues[in.ID]
@@ -272,6 +286,7 @@ func (p *providerV2) UpdateV2(_ context.Context, in linearprovider.UpdateInputV2
 	return p.named(i), p.writeErr
 }
 func (p *providerV2) Relation(_ context.Context, in linearprovider.RelationInput) (linearprovider.RelationReceipt, error) {
+	p.tools++
 	p.edges = append(p.edges, in)
 	p.writes++
 	if p.after != nil {

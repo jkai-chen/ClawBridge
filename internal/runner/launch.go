@@ -106,10 +106,13 @@ func AgentSettings(s Settings, ownerRepo, cache string, pushHosts []string) map[
 func quote(s string) string { return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'" }
 
 // Command is the terminal's command line. It changes into the clone and
-// starts claude with only the session's settings: no user, project or
-// local settings load, and the permission mode is the default one.
+// replaces the shell with claude (RL-M3): when claude exits, the tab ends,
+// so the owner's own shell never sits in the clone, where the agent's git
+// config and attributes could run commands through any git it starts.
+// claude loads only the session's settings, none of user, project or
+// local, in the default permission mode.
 func Command(clone, settingsFile, mcpFile, model, prompt string) string {
-	parts := []string{"cd", quote(clone), "&&", "claude", "--setting-sources", "''", "--permission-mode", "default", "--settings", quote(settingsFile), "--mcp-config", quote(mcpFile), "--strict-mcp-config"}
+	parts := []string{"cd", quote(clone), "&&", "exec", "claude", "--setting-sources", "''", "--permission-mode", "default", "--settings", quote(settingsFile), "--mcp-config", quote(mcpFile), "--strict-mcp-config"}
 	if model != "" {
 		parts = append(parts, "--model", quote(model))
 	}

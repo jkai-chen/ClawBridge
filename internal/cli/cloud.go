@@ -31,8 +31,8 @@ import (
 // passes, warns, or fails with a fixed reason code and one line of advice; it
 // never reads a secret's value and never writes.
 
-const cloudUsage = `clawbridge cloud check [server|version|workspace|linear-app|all] [--server URL] [--client-config PATH]
-                       [--ssh HOST | --vm NAME --project P --zone Z] [--json]
+const cloudUsage = `clawbridge cloud check [infra|server|version|workspace|linear-app|backups|all] [--server URL]
+                       [--client-config PATH] [--ssh HOST | --vm NAME --project P --zone Z] [--bucket NAME] [--json]
 clawbridge cloud secret set KEY (--ssh HOST | --vm NAME --project P --zone Z) [--value-stdin]`
 
 type cloudResult struct {
@@ -47,24 +47,27 @@ type cloudProbe struct {
 	config          Config
 	configErr       error
 	target          cloudTarget
+	bucket          string
 	stderr          io.Writer
 	factsDone       bool
 	remote          remoteFacts
 	remoteErr       error
 }
 
-// cloudChecks is the fixed list, in the order "all" runs it. The cloud-API
-// checks (infra, backups) and the sign-in check join it with their releases.
+// cloudChecks is the fixed list, in the order "all" runs it. The sign-in
+// check joins it with the device sign-in release.
 // With --ssh or --vm, server also counts the required settings and checks
 // the containers, and linear-app counts the app's entries.
 var cloudChecks = []struct {
 	name string
 	run  func(context.Context, *cloudProbe) cloudResult
 }{
+	{"infra", checkInfra},
 	{"server", checkServer},
 	{"version", checkVersion},
 	{"workspace", checkWorkspace},
 	{"linear-app", checkLinearApp},
+	{"backups", checkBackups},
 }
 
 var cloudHTTP = &http.Client{
@@ -90,9 +93,11 @@ func runCloudCheck(ctx context.Context, args []string, stdout, stderr io.Writer)
 	var server, clientConfig string
 	var asJSON bool
 	var target cloudTarget
+	var bucket string
 	f := flag.NewFlagSet("cloud check", flag.ContinueOnError)
 	f.SetOutput(stderr)
 	bindTarget(f, &target)
+	f.StringVar(&bucket, "bucket", "", "backup bucket (for backups)")
 	f.StringVar(&server, "server", "", "server URL (default: the configured server)")
 	f.StringVar(&clientConfig, "client-config", "", "trusted client configuration")
 	f.BoolVar(&asJSON, "json", false, "print JSON")
@@ -113,19 +118,20 @@ func runCloudCheck(ctx context.Context, args []string, stdout, stderr io.Writer)
 			known = known || c.name == name
 		}
 		if !known {
-			return fmt.Errorf("unknown check %q; checks: server, version, workspace, linear-app, all", name)
+			return fmt.Errorf("unknown check %q; checks: infra, server, version, workspace, linear-app, backups, all", name)
 		}
 		want[name] = true
 	}
 	if len(want) == 0 {
 		want["all"] = true
 	}
-	if target.set() {
+	// --project alone names the bucket's project for backups.
+	if target.set() && target != (cloudTarget{project: target.project}) {
 		if _, err = target.argv(""); err != nil {
 			return err
 		}
 	}
-	probe := &cloudProbe{target: target, stderr: stderr}
+	probe := &cloudProbe{target: target, bucket: bucket, stderr: stderr}
 	probe.config, _, probe.configErr = resolveConfig(ctx, Config{ClientConfig: clientConfig, Server: server})
 	probe.server = server
 	if probe.server == "" && probe.configErr == nil {

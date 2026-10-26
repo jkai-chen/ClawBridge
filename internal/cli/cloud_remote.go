@@ -97,6 +97,7 @@ func factsScriptFor(path string) string {
 	keys := append(append([]string{}, requiredSettings...), appSettings...)
 	return strings.Join([]string{
 		`f=` + path,
+		`echo "mount $(findmnt -n -o SOURCE ` + dataMount + ` || echo none)"`,
 		`if [ ! -r "$f" ]; then echo "env missing"; exit 0; fi`,
 		`for k in ` + strings.Join(keys, " ") + `; do echo "count $k $(grep -c "^$k=." "$f")"; done`,
 		`p=$(sed -n "s/^COMPOSE_PROJECT_NAME=//p" "$f" | tail -n 1)`,
@@ -105,7 +106,11 @@ func factsScriptFor(path string) string {
 	}, "\n")
 }
 
+// dataMount is where the database's data disk is mounted.
+const dataMount = "/var/lib/clawbridge-postgres"
+
 type remoteFacts struct {
+	mount      string // the data mount's source device, or "none"
 	envMissing bool
 	counts     map[string]int
 	services   map[string][]string // service: each container's "state status"
@@ -122,6 +127,8 @@ func parseFacts(out []byte) remoteFacts {
 			if n, err := strconv.Atoi(fields[2]); err == nil {
 				f.counts[fields[1]] = n
 			}
+		case len(fields) == 2 && fields[0] == "mount":
+			f.mount = fields[1]
 		case len(fields) >= 3 && fields[0] == "service":
 			f.services[fields[1]] = append(f.services[fields[1]], strings.Join(fields[2:], " "))
 		}

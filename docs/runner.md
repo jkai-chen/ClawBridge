@@ -60,8 +60,9 @@ clawbridge runner fetch <session>
 
 `runner fetch` never runs git inside the clone. The branch first lands under
 `refs/clawbridge-runner/<session>`, and every line its commits add, removed
-again or not, is scanned for token shapes (GitHub, AWS, Slack, Google, Linear
-and Anthropic keys, private keys). If one is found, nothing is fetched and the
+again or not, is scanned for token shapes: GitHub, AWS, Slack, Google, Linear,
+Anthropic and npm keys, Google refresh tokens, `_authToken=` lines,
+`Authorization: Bearer` headers and private keys. If one is found, nothing is fetched and the
 report names the file and pattern, never the text. A clean branch becomes
 `agent/<identifier>`. The scan is a backstop. You still review every agent diff
 before you push it.
@@ -112,12 +113,19 @@ The settings passed with `--settings` take precedence over the repository's own
   - Default mode also asks you before a file tool reads outside the clone.
 - **The self-test:** the session's first step is a script the launch wrote. It
   tries to read each of those locations that exists on your Mac, inside the real
-  sandbox, and reports READ or DENIED for each. The launch waits for the report
-  (three minutes at most). One READ, a malformed report, or none at all closes
-  the terminal and retires the session before it does any work.
+  sandbox, and reports READ or DENIED for each. It also tries a new random file
+  the launch plants directly in your home directory, and one in your checkout's
+  `.git` when that is under your home. No rule names those files, so only the
+  sandbox's default deny refuses them. The launch waits for the report (three
+  minutes at most). One READ, a malformed report, or none at all closes the
+  terminal and retires the session before it does any work. The planted files
+  are removed once the report is in.
   - This proves the sandbox on this machine at each start. It still depends on
     the session running its first step as asked; a session that doesn't is
     stopped by the wait.
+  - The self-test catches a misconfigured sandbox. It is not a boundary
+    against a hostile agent, which could write its own report: the report is
+    in a directory the agent can write. The sandbox itself is the boundary.
 - **What stops a push:** the clone's missing push URL and the `git push` deny
   rule are only a first line. The agent can edit its own clone's config, or name
   a URL. The real barrier is that the agent has no credentials and no route to

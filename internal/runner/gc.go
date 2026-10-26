@@ -113,6 +113,13 @@ func (r *Runner) remove(l Launch, proven bool) (bool, string) {
 		_ = os.RemoveAll(l.Cache)
 	}
 	_ = os.RemoveAll(filepath.Join(r.StateDir, "sessions", l.Session))
+	// A self-test the owner ran by hand leaves its planted files behind.
+	if home, err := r.home(); err == nil {
+		for _, dir := range []string{home, filepath.Join(l.Repo, ".git")} {
+			planted, _ := filepath.Glob(filepath.Join(dir, sentinelPrefix(l.Session)+"*"))
+			removeAll(planted)
+		}
+	}
 	if proven {
 		if _, err := r.Git(l.Repo, "rev-parse", "--verify", "--quiet", "refs/heads/"+l.Branch); err == nil {
 			_, _ = r.Git(l.Repo, "branch", "-D", l.Branch)

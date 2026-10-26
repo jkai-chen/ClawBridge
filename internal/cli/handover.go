@@ -167,6 +167,8 @@ func validInputs(s *onboardingState) error {
 // checks found it.
 func validAWSInputs(s *onboardingState) error {
 	switch {
+	case awsGOOS == "windows":
+		return errAWSOnWindows
 	case !awsProfilePattern.MatchString(s.Profile):
 		return errors.New("the profile must be a named AWS CLI profile")
 	case !accountPattern.MatchString(s.Account):
@@ -265,6 +267,10 @@ func startOwnServer(ctx context.Context, prompt *wizardPrompt, stdout, stderr io
 		case "", "1", "gcp":
 			state, err = askInputs(ctx, prompt, stdout)
 		case "2", "aws":
+			// Before any question, and long before the agent creates anything.
+			if awsGOOS == "windows" {
+				return errAWSOnWindows
+			}
 			state, err = askAWSInputs(ctx, prompt, stdout)
 		default:
 			return errors.New("answer 1 or 2 to the cloud question; run clawbridge onboard to start again")

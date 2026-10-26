@@ -11,8 +11,8 @@ import (
 	"testing"
 )
 
-// AWS: Start's third choice, then 2, then the defaults: the profile, the
-// profile's own account, eu-west-1, its zone a, t4g.small and the
+// AWS: Start's third choice, then 2, then the defaults: the profile,
+// eu-west-1, the profile's own account, its zone a, t4g.small and the
 // account-and-region bucket; the domain and owner typed.
 const awsHandoverInputs = "3\n2\n\n\n\n\nbridge.example.test\nowner@example.test\n\n\n"
 
@@ -33,10 +33,11 @@ func TestHandoverOnAWSRunsTheAgentThenTheChecks(t *testing.T) {
 	wizardHooks(t, awsHandoverInputs+"y\n")
 	h, a := awsHandoverStub(t)
 	a.out["sts get-caller-identity"] = `{"Account":"123456789012"}`
-	// The default account is read as text, the account check as JSON.
+	// The default account is read as text, in the chosen region; the
+	// account check as JSON.
 	inner := awsCLI
 	awsCLI = func(ctx context.Context, argv []string, stdin []byte) ([]byte, error) {
-		if argv[1] == "sts" && strings.Contains(strings.Join(argv, " "), "--output text") {
+		if argv[1] == "sts" && strings.Contains(strings.Join(argv, " "), "--output text --profile clawbridge-onboarding --region eu-west-1") {
 			return []byte("123456789012\n"), nil
 		}
 		return inner(ctx, argv, stdin)
@@ -88,7 +89,7 @@ func TestHandoverOnAWSNeedsTheUsersProfile(t *testing.T) {
 		"other account": {func(a *awsStub) { a.out["sts get-caller-identity"] = `{"Account":"999999999999"}` }, "another account than 123456789012"},
 	} {
 		isolated(t)
-		wizardHooks(t, "3\n2\n\n123456789012\n\n\nbridge.example.test\nowner@example.test\n\n\ny\n")
+		wizardHooks(t, "3\n2\n\n\n123456789012\n\nbridge.example.test\nowner@example.test\n\n\ny\n")
 		h, a := awsHandoverStub(t)
 		c.edit(a)
 		err := Run(context.Background(), []string{"onboard"}, io.Discard, io.Discard)
@@ -102,7 +103,7 @@ func TestHandoverOnAWSNeedsTheUsersProfile(t *testing.T) {
 func TestHandoverOnAWSFindsTheInstanceItself(t *testing.T) {
 	for name, listed := range map[string]string{"none": `[]`, "two": `["` + ec2ID + `","i-0fedcba9876543210"]`} {
 		home := isolated(t)
-		wizardHooks(t, "3\n2\n\n123456789012\n\n\nbridge.example.test\nowner@example.test\n\n\ny\n")
+		wizardHooks(t, "3\n2\n\n\n123456789012\n\nbridge.example.test\nowner@example.test\n\n\ny\n")
 		h, a := awsHandoverStub(t)
 		a.out["sts get-caller-identity"] = `{"Account":"123456789012"}`
 		a.out["ec2 describe-instances"] = listed
@@ -189,5 +190,32 @@ func TestHandoverCloudAnswer(t *testing.T) {
 		if _, err := os.Stat(filepath.Join(home, "state", "onboarding")); !os.IsNotExist(err) {
 			t.Fatalf("%s: progress saved", answer)
 		}
+	}
+}
+
+// On Windows the AWS choice is refused before any AWS question, and a saved
+// AWS progress before the agent starts.
+func TestHandoverOnAWSRefusesWindows(t *testing.T) {
+	old := awsGOOS
+	awsGOOS = "windows"
+	t.Cleanup(func() { awsGOOS = old })
+	isolated(t)
+	wizardHooks(t, "3\n2\n")
+	h, _ := awsHandoverStub(t)
+	var out bytes.Buffer
+	if err := Run(context.Background(), []string{"onboard"}, &out, io.Discard); err == nil || !strings.Contains(err.Error(), "WSL") ||
+		strings.Contains(out.String(), "choices") || h.ran != nil {
+		t.Fatalf("%v %s", err, out.String())
+	}
+	isolated(t)
+	s := onboardingState{Cloud: "aws", Step: "provision", Profile: "clawbridge-onboarding", Account: "123456789012", Region: "eu-west-1",
+		Zone: "eu-west-1a", Domain: "bridge.example.test", Owner: "o@example.test", Size: "t4g.small", Bucket: "clawbridge-backups"}
+	if err := saveOnboarding(&s); err != nil {
+		t.Fatal(err)
+	}
+	wizardHooks(t, "3\n\ny\n")
+	h, _ = awsHandoverStub(t)
+	if err := Run(context.Background(), []string{"onboard"}, io.Discard, io.Discard); err == nil || !strings.Contains(err.Error(), "WSL") || h.ran != nil {
+		t.Fatal(err)
 	}
 }

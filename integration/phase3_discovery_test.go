@@ -757,7 +757,8 @@ func TestPhase3DiscoveryPublicConfigContainsExactlyFourCredentials(t *testing.T)
 		"device_client_id",
 		"device_client_secret",
 	}
-	if len(fields) != len(required) {
+	// The four credentials, and the sign-in methods.
+	if len(fields) != len(required)+1 || fmt.Sprint(fields["auth_methods"]) != "[google]" {
 		t.Fatal("public config field count is not exactly four")
 	}
 	want := map[string]string{

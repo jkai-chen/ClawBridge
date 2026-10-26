@@ -414,6 +414,7 @@ var operationArgs = map[string]string{
 	"marker_go":                   "instance lease_token generation assignment_id phase part",
 	"marker_settle":               "instance lease_token generation assignment_id phase part outcome comment_id created_at via error state_target state_landed skip_reason",
 	"marker_due":                  "instance lease_token generation",
+	"marker_spent":                "instance lease_token generation assignment_id phase calls charged",
 	"label_policy_get":            "instance",
 	"status_policy_get":           "instance",
 	"status_policy_set":           "instance expected_revision status_policy",
@@ -452,7 +453,7 @@ func validateArgs(op string, a map[string]any) error {
 			return fmt.Errorf("unsupported argument %q for %s", k, op)
 		}
 		switch k {
-		case "retention_days", "limit", "after", "expected_revision", "ledger", "generation", "budget", "calls", "policy_revision", "engineer", "if_unset", "expires_days", "s5_calls_per_hour", "out_of_binding_limit", "template_version":
+		case "retention_days", "limit", "after", "expected_revision", "ledger", "generation", "budget", "calls", "charged", "policy_revision", "engineer", "if_unset", "expires_days", "s5_calls_per_hour", "out_of_binding_limit", "template_version":
 			if _, err := integer(v); err != nil {
 				return fmt.Errorf("%s: %w", k, err)
 			}

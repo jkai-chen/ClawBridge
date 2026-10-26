@@ -203,6 +203,9 @@ func (s *Service) issueStateID(ctx context.Context, scope bus.Request, issue lin
 		return strings.ToLower(issue.StateID), nil
 	}
 	if s.cfg.IssueState != nil {
+		if s.stateReads != nil {
+			s.stateReads.Add(1)
+		}
 		id, team, e := s.cfg.IssueState(ctx, issue.ID)
 		if e != nil {
 			return "", e

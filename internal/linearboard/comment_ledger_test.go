@@ -46,6 +46,7 @@ type fakeCommentLedger struct {
 	markerGoes    []map[string]any
 	markerSettles []map[string]any
 	markersDue    []any
+	markerSpents  []map[string]any
 }
 
 func (f *fakeCommentLedger) execute(r bus.Request) (bus.Result, error) {
@@ -123,6 +124,9 @@ func (f *fakeCommentLedger) execute(r bus.Request) (bus.Result, error) {
 			return bus.Result{Source: "local-authority", Data: f.gos["absent"]}, nil
 		}
 		return bus.Result{Source: "local-authority", Data: map[string]any{"state": r.Args["outcome"]}}, nil
+	case "marker_spent":
+		f.markerSpents = append(f.markerSpents, r.Args)
+		return bus.Result{Source: "local-authority", Data: map[string]any{"budget_used": 1, "budget_limit": 200}}, nil
 	case "marker_due":
 		due := f.markersDue
 		f.markersDue = nil

@@ -225,7 +225,7 @@ func pollCost(before, after linearCalls, credit *int) int {
 func (s *Service) watchCycle(ctx context.Context, scope bus.Request, lease *watchLease, calls func() linearCalls) (WatchCycle, error) {
 	cycle := WatchCycle{Notified: []string{}}
 	credit := watchConnectCalls
-	if err := s.applyDueMarkers(ctx, scope, lease, &cycle); err != nil {
+	if err := s.applyDueMarkers(ctx, scope, lease, &cycle, calls, &credit); err != nil {
 		return cycle, err
 	}
 	due, err := s.commentLedger(ctx, scope, "comment_watch_due", lease.fence(map[string]any{}))
@@ -286,7 +286,7 @@ func (s *Service) watchCycle(ctx context.Context, scope bus.Request, lease *watc
 
 // applyDueMarkers applies the claim markers the bus says are due, under
 // the lease; markers come before comment polls.
-func (s *Service) applyDueMarkers(ctx context.Context, scope bus.Request, lease *watchLease, cycle *WatchCycle) error {
+func (s *Service) applyDueMarkers(ctx context.Context, scope bus.Request, lease *watchLease, cycle *WatchCycle, calls func() linearCalls, credit *int) error {
 	if s.cfg.Connections == nil {
 		return nil
 	}
@@ -310,7 +310,32 @@ func (s *Service) applyDueMarkers(ctx context.Context, scope bus.Request, lease 
 		if err = s.renewWatch(ctx, scope, lease, false); err != nil {
 			return err
 		}
+		before, reads := calls(), s.stateReads.Load()
 		cycle.Markers = append(cycle.Markers, s.ApplyMarker(ctx, scope, assignment, phase, lease.fence(map[string]any{})))
+		if err = s.markerSpent(ctx, scope, lease, m, before, calls(), s.stateReads.Load()-reads, credit); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// markerSpent reconciles a row's up-front charge with what it spent: every
+// counted tool call and connection, and the authoritative state reads. A
+// provider that cannot count reports nothing, so its charge stands. Only a
+// lost lease stops the cycle; an authority without marker_spent (older,
+// or a member's client watcher) keeps the charge.
+func (s *Service) markerSpent(ctx context.Context, scope bus.Request, lease *watchLease, row map[string]any, before, after linearCalls, reads int64, credit *int) error {
+	charged, ok := row["charged"]
+	if !ok || !after.known {
+		return nil
+	}
+	spent := pollCost(before, after, credit) + int(reads)
+	report := map[string]any{"assignment_id": row["assignment_id"], "phase": row["phase"], "calls": min(spent, 1000), "charged": charged}
+	if _, err := s.commentLedger(ctx, scope, "marker_spent", lease.fence(report)); err != nil {
+		var coded interface{ Code() string }
+		if errors.As(err, &coded) && coded.Code() == "conflict" {
+			return err
+		}
 	}
 	return nil
 }

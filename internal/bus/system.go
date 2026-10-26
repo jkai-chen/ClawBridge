@@ -72,7 +72,7 @@ func (s *Store) ensureSystemSession(ctx context.Context, tx *transaction, wid, p
 // writes of the comment watch, claim markers, project health and the task
 // board binding.
 func systemOperation(op string) bool {
-	return commentOperation(op) || op == "taskboard_get_v2" || op == "taskboard_get" || op == "taskboard_access" || op == "status_policy_get" || healthSystemOperation(op)
+	return commentOperation(op) || op == "taskboard_get_v2" || op == "taskboard_get" || op == "taskboard_access" || op == "status_policy_get" || healthSystemOperation(op) || op == "marker_spent"
 }
 
 // ExecuteSystem runs one bus operation as a project's system session. It

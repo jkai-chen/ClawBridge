@@ -572,7 +572,7 @@ func (c commentCall) markerDue(ctx context.Context) (any, error) {
 			break
 		}
 		cost += calls
-		markers = append(markers, map[string]any{"assignment_id": row["assignment_id"], "phase": row["phase"], "issue_uuid": row["issue_uuid"]})
+		markers = append(markers, map[string]any{"assignment_id": row["assignment_id"], "phase": row["phase"], "issue_uuid": row["issue_uuid"], "charged": calls})
 	}
 	if len(markers) > 0 {
 		if _, _, err = c.charge(ctx, map[string]any{"budget_used": used, "budget_hour": layout(c.now)[:13], "budget_limit": limit}, cost); err != nil {
@@ -580,6 +580,46 @@ func (c commentCall) markerDue(ctx context.Context) (any, error) {
 		}
 	}
 	return map[string]any{"markers": markers}, nil
+}
+
+// markerSpent reconciles one applied row with what it really spent, as a
+// comment poll's report does: the server watcher reports the calls it
+// counted and the charge marker_due handed out, and the difference is
+// charged (an overspend) or refunded. Only the system session may report
+// (a member's refund would spend the app's budget), and the charge it names
+// is capped at the most a row of this binding is charged.
+func (c commentCall) markerSpent(ctx context.Context) (any, error) {
+	lease, err := c.fence(ctx)
+	if err != nil {
+		return nil, err
+	}
+	calls, err := integer(c.a["calls"])
+	if err != nil || calls < 0 || calls > 1000 {
+		return nil, invalid("calls must be 0–1000")
+	}
+	charged, err := integer(c.a["charged"])
+	if err != nil || charged < 0 {
+		return nil, invalid("charged must be the row's charge from marker_due")
+	}
+	rows, err := query(ctx, c.tx, `SELECT 1 FROM assignment_markers WHERE project_id=? AND assignment_id=? AND phase=?`, c.pid, str(c.a, "assignment_id"), str(c.a, "phase"))
+	if err != nil {
+		return nil, err
+	}
+	if len(rows) == 0 {
+		return nil, scoped("no such marker row", "not_found")
+	}
+	most, err := c.markerRowCost(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if most += MarkerStateCalls; charged > most {
+		charged = most
+	}
+	used, limit, err := c.charge(ctx, lease, calls-charged)
+	if err != nil {
+		return nil, err
+	}
+	return map[string]any{"budget_used": used, "budget_limit": limit}, nil
 }
 
 // markerRowCost is MarkerRowCalls for the project's binding as stored. A

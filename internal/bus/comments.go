@@ -160,6 +160,9 @@ func (s *Store) commentOp(ctx context.Context, tx *transaction, w, p map[string]
 		return c.markerSettle(ctx)
 	case "marker_due":
 		return c.markerDue(ctx)
+	case "marker_spent":
+		// Not a commentOperation: only ExecuteSystem reaches it.
+		return c.markerSpent(ctx)
 	}
 	return nil, fmt.Errorf("unsupported operation %q", r.Operation)
 }

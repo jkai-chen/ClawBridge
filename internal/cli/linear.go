@@ -18,7 +18,9 @@ import (
 	"time"
 
 	"clawbridge/internal/auth"
+	"clawbridge/internal/buildinfo"
 	"clawbridge/internal/bus"
+	"clawbridge/internal/docseed"
 	"clawbridge/internal/linearboard"
 	"clawbridge/internal/linearconn"
 	"clawbridge/internal/linearprovider"
@@ -184,6 +186,7 @@ type linearFlags struct {
 	limit, budget                                                                                                        int
 	revision                                                                                                             int64
 	teamBoard, confirm, noBrowser, tokenStdin, resolveLabels, comments, repair, once                                     bool
+	noSeedDocs, update, reseed                                                                                           bool
 }
 type repeatedIDs []string
 
@@ -261,6 +264,12 @@ func parseLinear(command string, args []string, stderr io.Writer) (linearFlags, 
 		f.BoolVar(&v.teamBoard, "team-board", false, "explicit team board without a Linear project")
 		f.Int64Var(&v.revision, "expected-revision", -1, "required current mapping revision")
 		f.BoolVar(&v.confirm, "confirm", false, "commit the displayed binding preview")
+		f.BoolVar(&v.noSeedDocs, "no-seed-docs", false, "do not create the Linear guide documents on --confirm")
+	case "seed-docs":
+		profile()
+		f.BoolVar(&v.confirm, "confirm", false, "create, settle or update the guide documents shown")
+		f.BoolVar(&v.update, "update", false, "replace an untouched guide whose template is newer")
+		f.BoolVar(&v.reseed, "reseed", false, "create a guide again when the seeded one is archived or cannot be read")
 	case "unlink":
 		f.Int64Var(&v.revision, "expected-revision", -1, "required current mapping revision")
 		f.BoolVar(&v.confirm, "confirm", false, "commit project unlink; retains personal profiles")
@@ -672,7 +681,7 @@ func linearWriteInput(command string, v linearFlags, pos []string) (linearboard.
 
 func runLinear(ctx context.Context, flags Config, args []string, stdout, stderr io.Writer) error {
 	if len(args) == 0 || len(args) == 1 && (args[0] == "--help" || args[0] == "-h" || args[0] == "help") {
-		_, err := io.WriteString(stdout, "clawbridge linear connect|import|profiles|status|logout|teams|projects|binding|link|unlink|context|issues|issue|states|labels|members|create|update|comment|relation|watch\nProject owner only: label create|rename, project create, initiative create|add-project, label-policy show|set, admin audit-replay.\nYour name in agent markers: display-name set NAME|clear|capture --profile ID.\nUse COMMAND --help for explicit flags. Token import accepts --token-stdin only.\n")
+		_, err := io.WriteString(stdout, "clawbridge linear connect|import|profiles|status|logout|teams|projects|binding|link|seed-docs|unlink|context|issues|issue|states|labels|members|create|update|comment|relation|watch\nProject owner only: label create|rename, project create, initiative create|add-project, label-policy show|set, admin audit-replay.\nYour name in agent markers: display-name set NAME|clear|capture --profile ID.\nUse COMMAND --help for explicit flags. Token import accepts --token-stdin only.\n")
 		return err
 	}
 	command := args[0]
@@ -848,6 +857,11 @@ func runLinear(ctx context.Context, flags Config, args []string, stdout, stderr 
 		data, err = service.BindingV2(bounded, scope)
 	case "link":
 		data, err = service.LinkV2(bounded, scope, linearboard.LinkInputV2{TeamIDs: v.teams, DefaultTeamID: v.defaultTeam, ProjectIDs: append([]string{}, v.projects...), ExpectedRevision: v.revision, TeamBoard: v.teamBoard, Confirm: v.confirm})
+		if err == nil && !v.noSeedDocs {
+			data = linkWithSeedDocs(bounded, service, scope, flags, v, data)
+		}
+	case "seed-docs":
+		data, err = service.SeedDocs(bounded, scope, seedInput(bounded, flags, v))
 	case "unlink":
 		if v.repair {
 			data, err = service.RepairUnlinkV2(bounded, scope, v.revision)
@@ -947,4 +961,49 @@ func linearCapabilityCode(err error) string {
 		return coded.Code()
 	}
 	return "unavailable"
+}
+
+// seedInput fills the guide documents from this client: the hosted
+// server's URL, when there is one, and the release.
+func seedInput(ctx context.Context, flags Config, v linearFlags) linearboard.SeedInput {
+	in := linearboard.SeedInput{Confirm: v.confirm, Update: v.update, Reseed: v.reseed, Version: buildinfo.Current().Version}
+	if c, _, err := resolveConfig(ctx, flags); err == nil && c.Mode == "cloud" {
+		in.ServiceURL = strings.TrimRight(c.Server, "/")
+	}
+	return in
+}
+
+// linkWithSeedDocs adds the guide documents to linear link. The preview
+// names them and where they go, reading nothing more from Linear; a
+// confirmed link then seeds them. A seeding failure never fails the link:
+// it is reported with the command that retries it.
+func linkWithSeedDocs(ctx context.Context, service *linearboard.Service, scope bus.Request, flags Config, v linearFlags, data any) any {
+	if !v.confirm {
+		preview, ok := data.(linearboard.LinkPreviewV2)
+		if !ok {
+			return data
+		}
+		mode := "project_set"
+		if v.teamBoard {
+			mode = "team_board"
+		}
+		kind, parent := bus.DocSeedParent(bus.TaskboardBindingV2{Mode: mode, LinearDefaultTeamID: v.defaultTeam, LinearProjectIDs: v.projects})
+		titles := []string{}
+		for _, t := range docseed.Templates {
+			titles = append(titles, t.Title)
+		}
+		preview.SeedDocs = map[string]any{"parent_kind": kind, "parent_id": parent, "documents": titles, "note": "--confirm also creates these Linear documents as your account, unless they were seeded before; --no-seed-docs skips them"}
+		return preview
+	}
+	out, ok := data.(map[string]any)
+	if !ok {
+		return data
+	}
+	seeded, err := service.SeedDocs(ctx, scope, seedInput(ctx, flags, v))
+	if err != nil {
+		out["seed_docs"] = map[string]any{"error": err.Error(), "retry": "clawbridge linear seed-docs --confirm --profile " + v.profile}
+		return out
+	}
+	out["seed_docs"] = seeded
+	return out
 }

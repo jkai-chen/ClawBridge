@@ -90,6 +90,41 @@ for each allowed team. Only a project owner/lead can save the shared mapping.
 Explicit `--workspace` and `--project` flags select a different existing
 ClawBridge scope; those flags never create it.
 
+### Guide documents for the team
+
+A confirmed `linear link` also creates two Linear documents: a developer guide
+(how the team works with Linear through ClawBridge) and a reviewer guide (how to
+give feedback in Linear). The preview names them and where they go.
+- **Where:** under the binding's default team, or under its project when the
+  binding selects exactly one project. ClawBridge projects bound to the same team
+  share one set.
+- **As whom:** your own Linear account, the one `link` uses. A read-only profile
+  cannot create them.
+- **Opting out:** `--no-seed-docs` skips them. A seeding failure never fails the
+  link; the output names the command that retries it.
+
+For a board linked before, or to check on the documents later:
+
+```sh
+clawbridge linear seed-docs --profile PROFILE_ID            # what it would do
+clawbridge linear seed-docs --profile PROFILE_ID --confirm  # do it
+```
+
+- **Edited documents are left as they are.** ClawBridge records the content
+  Linear returned when it created a document, and never writes a document whose
+  content changed since.
+- `--update` replaces an untouched document when a newer ClawBridge ships a
+  newer guide.
+- `--reseed` creates a guide again when the seeded one is archived, or when
+  ClawBridge cannot read it. Linear answers a deleted document like any other
+  refusal, so ClawBridge never assumes a document is gone.
+- A create whose answer was lost is found again under the team (each document
+  ends with a `seed:` line); ClawBridge never creates a guide twice. Right after
+  such a failure it asks you to run `seed-docs` again in a few minutes.
+
+The templates are generic and live in `docs/templates`. Add your team's own
+practice by editing the documents in Linear.
+
 ## Work with agents
 
 The local ClawBridge MCP adapter uses the same native connection for scoped

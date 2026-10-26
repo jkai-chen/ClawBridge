@@ -225,17 +225,23 @@ func TestSeedDocsSettlesAnUncertainCreate(t *testing.T) {
 	if r := e.seed(t, SeedInput{Confirm: true}); actions(r) != "developer=create/uncertain reviewer=create/uncertain" || len(e.f.order) != 2 {
 		t.Fatal(actions(r))
 	}
+	// A person's own document under the team is never taken for a seed.
+	const theirs = "dc000000-0000-4000-8000-0000000000ff"
+	e.f.docs[theirs] = &linearprovider.Document{ID: theirs, Title: "Team notes", Content: "seed: not ours\n"}
+	e.f.parents[theirs] = "team:" + teamID
+	e.f.order = append(e.f.order, theirs)
 	e.f.createLost = false
-	if r := e.seed(t, SeedInput{Confirm: true}); actions(r) != "developer=settle/settled reviewer=settle/settled" || len(e.f.order) != 2 {
+	if r := e.seed(t, SeedInput{Confirm: true}); actions(r) != "developer=settle/settled reviewer=settle/settled" || len(e.f.order) != 3 {
 		t.Fatal(actions(r))
 	}
-	if rows := e.rows(t); rows[0]["state"] != "seeded" || rows[1]["state"] != "seeded" {
-		t.Fatal(rows)
+	if rows := e.rows(t); rows[0]["state"] != "seeded" || rows[1]["state"] != "seeded" || rows[0]["document_id"] != e.f.order[0] || rows[1]["document_id"] != e.f.order[1] {
+		t.Fatal("settled on the wrong documents", rows, e.f.order)
 	}
 	e2 := seedTest(t)
 	e2.f.createErr = true
 	e2.seed(t, SeedInput{Confirm: true})
 	e2.f.createErr = false
+	e2.now = time.Now()
 	if r := e2.seed(t, SeedInput{Confirm: true}); actions(r) != "developer=pending_recent reviewer=pending_recent" || len(e2.f.order) != 0 {
 		t.Fatal("a recent uncertain create was redone:", actions(r))
 	}

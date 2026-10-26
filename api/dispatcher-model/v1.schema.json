@@ -242,7 +242,7 @@
 						"properties": {
 							"project_id": {
 								"type": "string",
-								"format": "uuid"
+								"pattern": "^prj_[0-9a-f]{32}$"
 							},
 							"token": {
 								"type": "string",
@@ -315,7 +315,7 @@
 						"properties": {
 							"project_id": {
 								"type": "string",
-								"format": "uuid"
+								"pattern": "^prj_[0-9a-f]{32}$"
 							},
 							"token": {
 								"type": "string",
@@ -440,7 +440,7 @@
 			"properties": {
 				"project_id": {
 					"type": "string",
-					"format": "uuid"
+					"pattern": "^prj_[0-9a-f]{32}$"
 				},
 				"enabled": {
 					"type": "boolean"

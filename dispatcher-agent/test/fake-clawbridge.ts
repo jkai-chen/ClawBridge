@@ -23,7 +23,7 @@ import {
 	toolWireRequest,
 } from "../src/schema.ts";
 
-export const PROJECT = "0b9f6c5e-3a4d-4e8b-9c1f-2d3e4f5a6b7c";
+export const PROJECT = "prj_0b9f6c5e3a4d4e8b9c1f2d3e4f5a6b7c";
 export const ISSUE = "6f1d2c3b-4a5e-4f60-8a7b-9c0d1e2f3a4b";
 export const CREDENTIAL = "cba_Q7x2Lk9PzR4mWv8NcT3jYb";
 export const PROJECT_TOKEN = "cbm_H5tY8uJ2nB6vC9xZ4qWeRd";

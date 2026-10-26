@@ -1,0 +1,8 @@
+{
+  "ok": true,
+  "result": {
+    "guardrail": "overridden",
+    "action_taken": "wait",
+    "reason_code": "overlap"
+  }
+}

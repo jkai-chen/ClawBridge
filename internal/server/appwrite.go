@@ -7,7 +7,6 @@ import (
 	"log"
 	"net/http"
 	"os"
-	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -59,9 +58,17 @@ func appRefusal(message string) error { return bus.PublicError("invalid", messag
 
 // relationScope refuses a relation write the app's token may not make:
 // Linear answers it with success and drops the edge, so without the write
-// scope nothing is sent.
-func relationScope(operation string) error {
-	if (operation == "relation_add" || operation == "relation_remove") && !slices.Contains(linearapp.Scopes, "write") {
+// scope nothing is sent. has reads the token's actual grant; when it cannot,
+// the write is refused with its error.
+func relationScope(ctx context.Context, operation string, has func(context.Context, string) (bool, error)) error {
+	if operation != "relation_add" && operation != "relation_remove" {
+		return nil
+	}
+	ok, err := has(ctx, "write")
+	if err != nil {
+		return err
+	}
+	if !ok {
 		return appRefusal("capability_unavailable: this server's ClawBridge Linear app has no write scope, so it cannot add or remove issue relations; nothing was sent to Linear")
 	}
 	return nil
@@ -137,9 +144,6 @@ func (w *AppWriter) Execute(parent context.Context, identity bus.Identity, r bus
 	if !appWriteOperations[operation] {
 		return bus.Result{}, appRefusal("linear_write runs comment, create, update, relation_add or relation_remove only; binding and admin operations never run as the app")
 	}
-	if err := relationScope(operation); err != nil {
-		return bus.Result{}, err
-	}
 	args, ok := r.Args["args"].(map[string]any)
 	if !ok {
 		return bus.Result{}, appRefusal("linear_write requires args")
@@ -148,6 +152,9 @@ func (w *AppWriter) Execute(parent context.Context, identity bus.Identity, r bus
 		if _, present := args[k]; present {
 			return bus.Result{}, appRefusal("linear_write cannot choose an identity; the server writes as the ClawBridge app")
 		}
+	}
+	if err := relationScope(parent, operation, w.App.HasScope); err != nil {
+		return bus.Result{}, err
 	}
 	// The write finishes once started, even if the client goes away.
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(parent), appWriteTimeout)

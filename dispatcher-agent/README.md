@@ -1,0 +1,91 @@
+# The dispatcher agent (model engine)
+
+The dispatcher's optional **model engine**: a small Node service that decides dispatcher cases with a language model.
+It is a ClawBridge **client** and nothing more. It connects as the project's restricted `dispatcher-model` session,
+and the server decides every grant: the guardrails, the role's allow-list, the caps and the audit stay in ClawBridge.
+Any program that speaks the same API can replace it.
+
+It is built on two packages from [clawbridge-pi](https://github.com/jkai-chen/clawbridge-pi), a stripped-down fork
+of [pi](https://github.com/earendil-works/pi) (MIT): `pi-ai` (model providers) and `pi-agent-core` (the tool loop).
+The fork removes everything else, including pi's coding tools, CLI, logins and telemetry.
+
+This release adds the agent and its tests. Nothing runs it yet: the server endpoints, the container and the launcher
+come in later steps (see "Status").
+
+## What it does
+
+1. **Starts** with two inputs only:
+   - the server URL, in `CLAWBRIDGE_SERVER_URL` (HTTPS; plain HTTP only for localhost);
+   - a one-time agent credential (`cba_…`) on **stdin**, read once.
+2. **Fetches its configuration** from the server (`agent/config`): provider, model, key, project tokens and per-run
+   limits. The key lives only in memory.
+3. **For each project**, checks `hello`. It refuses to serve a project whose provider or model differs from its own.
+   It then pulls cases one at a time (`cases/next`).
+4. **Decides each case** with a fresh agent and the case's typed tools only:
+   - reads for every kind;
+   - one outcome (`recommend`, `decide`, `reply` or `abstain`);
+   - opt-in tools only when `hello` lists them, and never in chat.
+5. **Falls back to `abstain(uncertain)`**, so the server's rules decide instead, when:
+   - the deadline nears (5 s before it);
+   - the per-run token cap is reached;
+   - the model calls an unknown tool;
+   - an outcome is refused;
+   - the provider fails;
+   - the model stops without an outcome.
+
+   A provider `401`/`403` stops the agent.
+6. **Renews** its project tokens with the binding secret, and never fetches the key again.
+
+## What it never does
+
+- **Environment variables:** it doesn't read provider keys from the environment. It **refuses to start** if any
+  variable that pi-ai would read is set (`src/env-guard.ts`; a test fails when the pinned pi-ai reads a new one).
+- **Logs:** it logs no prompt, model text, issue text, key, token or header. Log lines are JSON with IDs, tool names,
+  codes, counts and durations only. Provider errors are reduced to a status and a fixed type.
+- **Outside access:** it has no database, Linear, filesystem or shell access, and makes no call except to the
+  ClawBridge server and the one provider host.
+- **Memory between cases:** none.
+
+## The contract
+
+`api/dispatcher-model/v1.schema.json` is the dispatcher-model API, v1. It holds every request, response and error
+code, as JSON Schema 2020-12, with one `$defs` entry per operation and an `x-operations` table.
+- **Source:** it is **generated** from `src/schema.ts`, so to change the contract, edit that file and run
+  `npm run schema`. CI fails when the two differ.
+- **The server:** it embeds the same file and validates against it.
+
+## Development
+
+```sh
+cd dispatcher-agent
+npm ci --ignore-scripts
+npm run check          # tsc
+npm run check:schema   # v1.schema.json matches src/schema.ts
+npm run check:lock     # pi from the fork release, 14-day package age, allowed licences
+npm test               # node:test against a fake ClawBridge and a fake provider; no network, no keys
+```
+
+- **Node:** Node 22.19 or later runs the TypeScript directly, with no build step.
+- **Tests:** they never call a real provider. They run in CI with no keys present.
+
+## Moving the pin
+
+The two pi packages are pinned to the fork's release tarballs by URL and `integrity` in `package-lock.json`. An
+`overrides` entry keeps a single `pi-ai`. To move the pin:
+1. **The fork:** a new `cb-v…` tag is released on the fork.
+2. **The URLs:** change both URLs in `package.json`, run `npm install --ignore-scripts`, and check that the lockfile's
+   integrity matches the release's `SHA256SUMS` build.
+3. **The PR:** the PR is labelled as a pin move.
+
+Every other package must be at least 14 days old (`.npmrc` and `check:lock`).
+
+## Status
+
+Done in this release:
+- the agent, its tests and the contract.
+
+Next:
+- the server endpoints;
+- the hardened container (memory and egress CI jobs);
+- `clawbridge-agentd`, the launcher;
+- guided model setup in the CLI and TUI.

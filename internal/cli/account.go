@@ -402,10 +402,23 @@ type JoinResult struct {
 	Warning    string            `json:"warning,omitempty"`
 }
 
+// JoinUncertainError is a join whose answer was lost: the device may or
+// may not have been added, and its key was kept so that a caller can find
+// out by signing with it (whoami). It unwraps to remote.ErrJoinUncertain.
+type JoinUncertainError struct {
+	DeviceID, KeyStore, KeyHome, Server, Principal string
+}
+
+func (e *JoinUncertainError) Error() string {
+	return fmt.Sprintf("%v; the key for %s was kept in its store. If the invite now shows used, ask an owner to revoke %s and issue another", remote.ErrJoinUncertain, e.DeviceID, e.DeviceID)
+}
+
+func (e *JoinUncertainError) Unwrap() error { return remote.ErrJoinUncertain }
+
 // JoinDevice joins a hosted workspace with an invite (§4): it makes this
 // device's key, stores it and reads it back, binds it with the invite, and
 // writes the profile to sign with it. A refused join removes the key; a
-// lost answer keeps it and says so.
+// lost answer keeps it and returns a *JoinUncertainError.
 func JoinDevice(ctx context.Context, p JoinParams) (JoinResult, error) {
 	email := strings.ToLower(strings.TrimSpace(p.Email))
 	if !strings.Contains(email, "@") {
@@ -458,7 +471,7 @@ func JoinDevice(ctx context.Context, p JoinParams) (JoinResult, error) {
 	joined, err := remote.Join(ctx, origin, key, remote.JoinRequest{Email: email, Code: p.Code, Label: label, KeyStore: p.KeyStore}, p.HTTPClient)
 	if err != nil {
 		if errors.Is(err, remote.ErrJoinUncertain) {
-			return JoinResult{}, fmt.Errorf("%w; the key for %s was kept in its store. If the invite now shows used, ask an owner to revoke %s and issue another", err, id, id)
+			return JoinResult{}, &JoinUncertainError{DeviceID: id, KeyStore: p.KeyStore, KeyHome: home, Server: origin, Principal: email}
 		}
 		_ = devicesign.Delete(where)
 		return JoinResult{}, err

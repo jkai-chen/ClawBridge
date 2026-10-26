@@ -202,7 +202,9 @@ func (w *AppWriter) status(parent context.Context, identity bus.Identity, r bus.
 const workflowStatesQuery = `query WorkflowStates($team: ID!) { workflowStates(first: 100, filter: { team: { id: { eq: $team } } }) { nodes { id name type team { id } } pageInfo { hasNextPage } } }`
 
 // states reads a bound team's workflow states and types as the app, for a
-// status policy. It reads only, and only a team the caller's binding names.
+// status policy. It reads only, only a team the caller's binding names, and
+// only for a project lead or owner: setting the policy is the owner's, and
+// every read spends the app's shared Linear rate limit.
 func (w *AppWriter) states(parent context.Context, identity bus.Identity, r bus.Request) (bus.Result, error) {
 	team, _ := r.Args["team"].(string)
 	for k := range r.Args {
@@ -220,6 +222,13 @@ func (w *AppWriter) states(parent context.Context, identity bus.Identity, r bus.
 		return bus.Result{}, err
 	}
 	instance, _ := r.Args["instance"].(string)
+	access, err := identityExecutor{w.Store, identity}.Execute(ctx, bus.Request{Operation: "taskboard_access", Workspace: r.Workspace, Project: r.Project, Session: r.Session, Args: map[string]any{"instance": instance, "ledger": 1}})
+	if err != nil {
+		return bus.Result{}, err
+	}
+	if role, _ := access.Data.(map[string]any)["project_role"].(string); role != "owner" && role != "lead" {
+		return bus.Result{}, bus.PublicError("forbidden", "reading workflow states as the ClawBridge Linear app needs a project lead or owner")
+	}
 	b, err := service.BindingV2(ctx, bus.Request{Workspace: r.Workspace, Project: r.Project, Session: r.Session, Args: map[string]any{"instance": instance}})
 	if err != nil {
 		return bus.Result{}, err

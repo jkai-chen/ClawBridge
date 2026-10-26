@@ -123,7 +123,7 @@ func (s *Store) migrate() error {
 	if err = tx.QueryRow("PRAGMA user_version").Scan(&version); err != nil {
 		return err
 	}
-	if version > 15 {
+	if version > 16 {
 		return errors.New("database schema is newer than this ClawBridge binary")
 	}
 	if version == 0 {
@@ -205,6 +205,11 @@ func (s *Store) migrate() error {
 	}
 	if version < 15 {
 		if _, err = tx.Exec(healthSchemaV15 + `PRAGMA user_version=15;`); err != nil {
+			return err
+		}
+	}
+	if version < 16 {
+		if _, err = tx.Exec(docPolicySchemaV16 + `PRAGMA user_version=16;`); err != nil {
 			return err
 		}
 	}
@@ -412,6 +417,8 @@ var operationArgs = map[string]string{
 	"label_policy_get":            "instance",
 	"status_policy_get":           "instance",
 	"status_policy_set":           "instance expected_revision status_policy",
+	"doc_policy_get":              "instance",
+	"doc_policy_set":              "instance expected_revision doc_policy",
 	"health_get":                  "instance",
 	"health_set":                  "instance linear_project expected_revision health_policy",
 	"health_due":                  "instance lease_token generation limit",
@@ -465,6 +472,10 @@ func validateArgs(op string, a map[string]any) error {
 			}
 		case "status_policy":
 			if _, err := ParseStatusPolicy(v); err != nil {
+				return err
+			}
+		case "doc_policy":
+			if _, err := ParseDocPolicy(v); err != nil {
 				return err
 			}
 		case "health_policy":
@@ -623,7 +634,7 @@ func (s *Store) ExecuteAs(ctx context.Context, principal string, r Request) (Res
 // inbox stamps deliveries, so those keep the locks.
 func pureRead(r Request) bool {
 	switch r.Operation {
-	case "snapshot", "inbox_status", "notification_status", "taskboard_get", "taskboard_get_v2", "taskboard_access", "list_projects", "list_members", "comment_watch_status", "label_policy_get", "status_policy_get", "health_get", "doc_seed_get":
+	case "snapshot", "inbox_status", "notification_status", "taskboard_get", "taskboard_get_v2", "taskboard_access", "list_projects", "list_members", "comment_watch_status", "label_policy_get", "status_policy_get", "doc_policy_get", "health_get", "doc_seed_get":
 		return true
 	case "list_sessions", "history", "whoami", "linear_comments_posted", "linear_comment_precheck", "intake_policy_get", "intake_trust_list", "intake_list":
 		// Naming a session with its instance makes it a heartbeat read: the
@@ -982,6 +993,14 @@ func (s *Store) execute(ctx context.Context, tx *transaction, r Request) (any, e
 		}
 		return statusPolicyView(ctx, tx, pid)
 	}
+	// Any project member may read the document policy, its deny patterns
+	// by ID only unless they may publish (docPolicyView).
+	if r.Operation == "doc_policy_get" {
+		if r.Session == "" && str(a, "instance") != "" {
+			return nil, errors.New("instance requires session")
+		}
+		return docPolicyView(ctx, tx, pid, projectRole == "owner" || projectRole == "lead")
+	}
 	// Any project member may read project health: it is the fallback's
 	// view (design §6).
 	if r.Operation == "health_get" {
@@ -1086,6 +1105,12 @@ func (s *Store) execute(ctx context.Context, tx *transaction, r Request) (any, e
 		}
 		return s.statusPolicyOp(ctx, tx, w, p, projectRole, nil, r)
 	}
+	if actor == nil && docPolicyOperation(r.Operation) {
+		if str(a, "instance") != "" {
+			return nil, invalid("instance requires session")
+		}
+		return s.docPolicyOp(ctx, tx, w, p, projectRole, nil, r)
+	}
 	if actor == nil && healthOperation(r.Operation) {
 		if str(a, "instance") != "" {
 			return nil, invalid("instance requires session")
@@ -1118,6 +1143,9 @@ func (s *Store) execute(ctx context.Context, tx *transaction, r Request) (any, e
 	}
 	if statusPolicyOperation(r.Operation) {
 		return s.statusPolicyOp(ctx, tx, w, p, projectRole, actor, r)
+	}
+	if docPolicyOperation(r.Operation) {
+		return s.docPolicyOp(ctx, tx, w, p, projectRole, actor, r)
 	}
 	if healthOperation(r.Operation) {
 		return s.healthOp(ctx, tx, w, p, projectRole, actor, r)

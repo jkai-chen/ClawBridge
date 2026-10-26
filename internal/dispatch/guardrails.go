@@ -29,13 +29,16 @@ const (
 	MaxReleasesPerDay   = 5
 	minReleaseNotice    = 2 * time.Hour
 	defaultStaleAfter   = 24 * time.Hour
-	stateTypeCompleted  = "completed"
-	stateTypeCanceled   = "canceled"
 	sessionActive       = "active"
 	presenceStale       = "stale"
 	sessionStatusMoved  = "moved"
 	sessionStatusRetire = "retired"
 )
+
+// openStates are the only Linear state types a claim may be confirmed in:
+// anything else (completed, canceled, duplicate, or a type Linear adds
+// later) is closed.
+var openStates = map[string]bool{"triage": true, "backlog": true, "unstarted": true, "started": true}
 
 // Session is the proposing or holding session, from the bus.
 type Session struct {
@@ -144,7 +147,7 @@ func Check(c Case, action Action) (bool, string) {
 			return false, "policy_changed"
 		case c.Session.Status != sessionActive || c.Session.Presence == presenceStale:
 			return false, "session_not_active"
-		case c.Issue.StateType == stateTypeCompleted || c.Issue.StateType == stateTypeCanceled:
+		case !openStates[c.Issue.StateType]:
 			return false, "issue_closed"
 		case c.Holders > 0 || c.NeedsOverlap:
 			return false, "overlap"

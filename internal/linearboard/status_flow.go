@@ -122,15 +122,24 @@ func (s *Service) appStates(ctx context.Context, scope bus.Request, team string)
 	var out struct {
 		States []linearprovider.Status `json:"states"`
 	}
-	if json.Unmarshal(raw, &out) != nil || len(out.States) == 0 {
+	if json.Unmarshal(raw, &out) != nil {
 		return nil, errors.New("the server's Linear app answered no workflow states; nothing was set")
 	}
+	known := []linearprovider.Status{}
 	for _, st := range out.States {
 		if !linearprovider.ValidID(st.ID) || !strings.EqualFold(st.TeamID, team) {
 			return nil, errors.New("the server's Linear app answered an unverified workflow state; nothing was set")
 		}
+		// A v0.3.1 server before this fix passes Linear's type through:
+		// a state of a type ClawBridge does not know is left out here too.
+		if st.Type = linearprovider.StatusType(st.Type); st.Type != "" {
+			known = append(known, st)
+		}
 	}
-	return out.States, nil
+	if len(known) == 0 {
+		return nil, errors.New("the server's Linear app answered no workflow states; nothing was set")
+	}
+	return known, nil
 }
 
 // statusPolicy reads the policy for a create. An authority older than the

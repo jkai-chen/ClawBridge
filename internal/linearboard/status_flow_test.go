@@ -288,6 +288,30 @@ func TestSetStatusPolicyResolvesNamesPerTeam(t *testing.T) {
 	if got, _ := bus.ParseStatusPolicy(a.statusSet["status_policy"]); got.Teams[teamID].Claim == nil || got.Teams[teamID].Claim.Type != "started" {
 		t.Fatal(a.statusSet)
 	}
+	// A server that passes Linear's raw types through (v0.3.1 before the
+	// fix): types are lower-cased, and a state of a type ClawBridge does not
+	// know, such as Linear's duplicate, is left out of the workflow and
+	// cannot be targeted.
+	duplicate := "c1000000-0000-4000-8000-0000000000d1"
+	for i, st := range a.appStates[teamID] {
+		if m := st.(map[string]any); m["type"] == "started" {
+			m["type"] = "Started"
+			a.appStates[teamID][i] = m
+		}
+	}
+	a.appStates[teamID] = append(a.appStates[teamID], map[string]any{"id": duplicate, "name": "Duplicate", "type": "duplicate", "team_id": teamID})
+	a.statusSet = nil
+	if _, err := s.SetStatusPolicyV2(context.Background(), scope, []byte(`{"enabled": true, "claim": "In Progress"}`), 2); err != nil || a.statusSet == nil {
+		t.Fatal("an unknown state type refused the policy:", err)
+	}
+	got, err := bus.ParseStatusPolicy(a.statusSet["status_policy"])
+	if err != nil || got.Teams[teamID].Claim.Type != "started" || got.Teams[teamID].Workflow[duplicate] != "" || len(got.Teams[teamID].Workflow) != len(sfStates) {
+		t.Fatal(err, a.statusSet)
+	}
+	a.statusSet = nil
+	if _, err := s.SetStatusPolicyV2(context.Background(), scope, []byte(`{"enabled": true, "create": "Duplicate"}`), 3); err == nil || a.statusSet != nil {
+		t.Fatal("a state of an unknown type was targeted")
+	}
 	// Without state types from either, nothing is set.
 	a.appStates = nil
 	p.statuses = append(append([]linearprovider.Status{}, sfStates...), other...)

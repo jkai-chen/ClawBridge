@@ -28,8 +28,11 @@ aws ec2 describe-availability-zones --zone-names AZ --query 'AvailabilityZones[]
 ```
 
 The account must be `ACCOUNT_ID`, and the zone `available`. Then confirm that
-none of the names exist yet. Each command must print nothing, or for the last
-two, fail with `NoSuchEntity` and `404`:
+none of the names exist yet. Each `describe` must print nothing. `get-role` must
+fail with `NoSuchEntity`. `head-bucket` tells three cases apart:
+- **404:** the name is free.
+- **403:** another account owns it; choose another name (rule 5).
+- **Success:** it already exists in this account; stop (rule 5).
 
 ```sh
 aws ec2 describe-instances --filters Name=tag:Name,Values=clawbridge-1 Name=instance-state-name,Values=pending,running,stopping,stopped --query 'Reservations[].Instances[].InstanceId' --output text --profile PROFILE --region REGION
@@ -208,7 +211,9 @@ for `vol-0123456789abcdef0`.
   holds data you didn't create: stop and ask (rule 5).
 
 ```sh
+set -e
 DISK=/dev/disk/by-id/nvme-Amazon_Elastic_Block_Store_VOLUME_ID_WITHOUT_DASH
+test -b "$DISK" || { echo "STOP: $DISK is not attached"; exit 1; }
 if blkid "$DISK" >/dev/null; then
   echo "STOP: $DISK already has a filesystem; not formatting"
 else
@@ -216,7 +221,9 @@ else
 fi
 mkdir -p /var/lib/clawbridge-postgres
 if ! grep -q ' /var/lib/clawbridge-postgres ' /etc/fstab; then
-  echo "UUID=$(blkid -s UUID -o value "$DISK") /var/lib/clawbridge-postgres ext4 discard,defaults,nofail 0 2" >> /etc/fstab
+  u=$(blkid -s UUID -o value "$DISK")
+  [ -n "$u" ]
+  echo "UUID=$u /var/lib/clawbridge-postgres ext4 discard,defaults,nofail 0 2" >> /etc/fstab
 fi
 mount -a
 findmnt -n -o SOURCE /var/lib/clawbridge-postgres
@@ -224,6 +231,9 @@ readlink -f "$DISK"
 ```
 
 The last two lines must print the same device: the mount is the data volume.
+`STOP: … is not attached` means the volume isn't attached yet, or its ID is
+mistyped. Nothing was written, so check `attach-volume` and run the block
+again.
 
 **Docker.** Docker comes from Amazon Linux's own package. The Compose and Buildx
 plugins come from their projects' releases, pinned by version and checked

@@ -74,8 +74,9 @@ PROFILE --account ACCOUNT_ID`, where `INSTANCE_ID` is the ID step 3 records.
    instance, Elastic IP; then the user creates the DNS `A` record. Done when
    `clawbridge cloud check infra TARGET --server https://DOMAIN` fails only
    with `data_not_mounted` (step 4 mounts the volume). Right after the
-   instance starts, `ssm_offline` is normal for a few minutes: wait and run the
-   check again before counting it as a failure.
+   instance starts, `ssm_offline` is normal for a few minutes: the instance has
+   no public IP, so it can't reach SSM until the Elastic IP is associated. Wait
+   and run the check again before counting it as a failure.
 4. **Prepare the instance.** Format and mount the data volume (new volume
    only), install Docker, check out the release. Done when the same infra check
    fails only with `port_closed` (nothing listens on 443 until step 6).

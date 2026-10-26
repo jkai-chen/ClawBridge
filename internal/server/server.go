@@ -555,8 +555,8 @@ func openServingStore(ctx context.Context, dsn, owner string) (*bus.Store, error
 // cannot sign in: their own address moved to a new Google account, or a
 // workspace allow-list refuses every account.
 func RunOperator(ctx context.Context, args []string, stdout io.Writer) error {
-	const usage = "usage: clawbridge operator principal-unbind EMAIL --confirm [--allow-previous] | workspace-clear-domains WORKSPACE --confirm | linear-app-probe --confirm [--project UUID] [--database-url-env NAME]"
-	if len(args) == 0 || (args[0] != "principal-unbind" && args[0] != "workspace-clear-domains" && args[0] != "linear-app-probe") {
+	const usage = "usage: clawbridge operator principal-unbind EMAIL --confirm [--allow-previous] | workspace-clear-domains WORKSPACE --confirm | linear-app-probe --confirm [--project UUID] | linear-app-doc-probe --confirm [--database-url-env NAME]"
+	if len(args) == 0 || (args[0] != "principal-unbind" && args[0] != "workspace-clear-domains" && args[0] != "linear-app-probe" && args[0] != "linear-app-doc-probe") {
 		return errors.New(usage)
 	}
 	command := args[0]
@@ -582,12 +582,16 @@ func RunOperator(ctx context.Context, args []string, stdout io.Writer) error {
 		}
 		positional, rest = append(positional, f.Arg(0)), f.Args()[1:]
 	}
-	if (command == "linear-app-probe") != (len(positional) == 0) || len(positional) > 1 {
+	probe := command == "linear-app-probe" || command == "linear-app-doc-probe"
+	if probe != (len(positional) == 0) || len(positional) > 1 {
 		return errors.New(usage)
 	}
 	if !*confirm {
 		if command == "linear-app-probe" {
 			return errors.New("linear-app-probe sends one project update for a project that does not exist, as the Linear app; repeat with --confirm")
+		}
+		if command == "linear-app-doc-probe" {
+			return errors.New("linear-app-doc-probe lists the workspace's documents of the last 30 days as the Linear app, one read, and prints counts only; repeat with --confirm")
 		}
 		if command == "workspace-clear-domains" {
 			return errors.New("workspace-clear-domains lets any Google account that is a member in; repeat with --confirm")
@@ -605,6 +609,9 @@ func RunOperator(ctx context.Context, args []string, stdout io.Writer) error {
 	defer store.Close()
 	if command == "linear-app-probe" {
 		return linearAppProbe(ctx, store, project, stdout)
+	}
+	if command == "linear-app-doc-probe" {
+		return linearAppDocProbe(ctx, store, stdout)
 	}
 	var out map[string]any
 	if command == "workspace-clear-domains" {

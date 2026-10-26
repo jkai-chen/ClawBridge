@@ -137,6 +137,16 @@ sudo docker compose --env-file /etc/clawbridge/clawbridge.env \
   With none, or one close to expiry, it stops at `mint_disabled`: let the server
   refresh it first.
 
+To check whether the app may list the workspace's Linear documents (which the
+server watcher's document notices need), run `operator linear-app-doc-probe
+--confirm` the same way.
+- **What it does:** one read, `list_documents` for the last 30 days, with no
+  content or titles, and nothing sent or created.
+- **What it prints:** how many documents came back, whether the page was
+  complete, how many there are by parent kind (team, project, initiative,
+  issue, none), and whether the list is newest first. It never prints an ID,
+  title or time, and it never mints a token.
+
 Explicit gcloud or authorized-user ADC with service-account impersonation are
 operator alternatives. Their audited principal is the service account in the
 verified token; sharing that account shares its application identity. Configure

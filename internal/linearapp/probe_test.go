@@ -10,6 +10,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"clawbridge/internal/linearprovider"
 )
 
 // PC-2: an app that may not mint never reaches the token endpoint, and
@@ -201,5 +203,23 @@ func TestProjectShapeIsKindsOnly(t *testing.T) {
 	s.user = "d0000000-0000-4000-8000-0000000000d1"
 	if shape, err = probe.ProbeProjectShape(context.Background(), project); err != nil || shape.LastUpdateByApp != "other" {
 		t.Fatal(shape, err)
+	}
+}
+
+func TestSummariseDocumentsOrder(t *testing.T) {
+	ref := func(at string) linearprovider.DocRef { return linearprovider.DocRef{UpdatedAt: at} }
+	for want, items := range map[string][]linearprovider.DocRef{
+		"newest_first": {ref("2026-10-26T10:00:00Z"), ref("2026-10-26T09:00:00Z")},
+		"oldest_first": {ref("2026-10-26T09:00:00Z"), ref("2026-10-26T10:00:00Z")},
+		"unordered":    {ref("2026-10-26T09:00:00Z"), ref("2026-10-26T10:00:00Z"), ref("2026-10-26T08:00:00Z")},
+		"too_few":      {ref("2026-10-26T09:00:00Z")},
+	} {
+		if got := SummariseDocuments(linearprovider.Page[linearprovider.DocRef]{Items: items}); got.Order != want {
+			t.Fatal(want, got)
+		}
+	}
+	got := SummariseDocuments(linearprovider.Page[linearprovider.DocRef]{Items: []linearprovider.DocRef{{IssueID: "x", ProjectID: "y"}, {InitiativeID: "z"}}})
+	if got.Parents["issue"] != 1 || got.Parents["initiative"] != 1 || got.WithoutTime != 2 {
+		t.Fatal(got)
 	}
 }

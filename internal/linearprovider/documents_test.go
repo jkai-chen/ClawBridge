@@ -113,3 +113,26 @@ func TestDocumentsUnderWalksTheParent(t *testing.T) {
 		t.Fatal(f.args, e)
 	}
 }
+
+// The workspace-wide list asks for IDs, times and parents only, with no
+// query and no content, and reads a parent as an ID or an object.
+func TestDocumentsUpdatedSinceReadsParentsOnly(t *testing.T) {
+	p, f := documentProvider(t, map[string][]any{"list_documents": {
+		map[string]any{"documents": []any{
+			map[string]any{"id": docA, "updatedAt": "2026-10-26T10:00:00.000Z", "team": map[string]any{"id": docTeam, "name": "x"}},
+			map[string]any{"id": docB, "updatedAt": "2026-10-26T09:00:00.000Z", "project": docTeam, "team": nil},
+		}, "hasNextPage": true, "cursor": "c1"},
+		map[string]any{"documents": []any{map[string]any{"id": docA, "team": "FJA"}}, "hasNextPage": false},
+	}})
+	page, e := p.DocumentsUpdatedSince(context.Background(), "-P1D", "")
+	if e != nil || page.Complete || page.NextCursor != "c1" || len(page.Items) != 2 || page.Items[0].TeamID != docTeam || page.Items[1].ProjectID != docTeam || page.Items[1].TeamID != "" {
+		t.Fatal(page, e)
+	}
+	want := map[string]any{"updatedAt": "-P1D", "limit": 50, "fields": docRefFields, "includeArchived": true}
+	if !reflect.DeepEqual(f.args[0], want) {
+		t.Fatal("arguments", f.args[0])
+	}
+	if _, e = p.DocumentsUpdatedSince(context.Background(), "-P1D", "c1"); e == nil {
+		t.Fatal("a parent that is not an ID was accepted")
+	}
+}

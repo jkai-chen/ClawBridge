@@ -526,6 +526,9 @@ func (c commentCall) healthDue(ctx context.Context) (any, error) {
 	if limit <= 0 {
 		return map[string]any{"runs": runs, "deferred": room <= 0}, nil
 	}
+	// A nudge's pass asks only for nudged runs: the daily ones wait for the
+	// tick.
+	nudgesOnly, _ := c.a["nudges_only"].(bool)
 	status, _, err := readFlowPolicy(ctx, c.tx, c.pid)
 	if err != nil {
 		return nil, err
@@ -534,6 +537,9 @@ func (c commentCall) healthDue(ctx context.Context) (any, error) {
 	rows, err := query(ctx, c.tx, `SELECT linear_project_id,policy FROM project_health WHERE project_id=? AND enabled=1 AND next_health_at<=? ORDER BY next_health_at,linear_project_id`, c.pid, layout(c.now))
 	if err != nil {
 		return nil, err
+	}
+	if nudgesOnly {
+		rows = nil
 	}
 	cost := 0
 	for _, r := range rows {
@@ -553,7 +559,7 @@ func (c commentCall) healthDue(ctx context.Context) (any, error) {
 	}
 	// A4: with health off, project flow has its own daily run, in the same
 	// slot, that reads only what the rules need (§11.2).
-	if flow && len(runs) < limit {
+	if flow && len(runs) < limit && !nudgesOnly {
 		due, err := c.flowDue(ctx)
 		if err != nil {
 			return nil, err
@@ -565,6 +571,18 @@ func (c commentCall) healthDue(ctx context.Context) (any, error) {
 			runs = append(runs, map[string]any{"linear_project": lp, "health": false, "flow": true})
 			cost += FlowReadCalls
 		}
+	}
+	// Nudged runs come after the daily ones, which read the same and more.
+	if flow && len(runs) < limit {
+		have := map[string]bool{}
+		for _, r := range runs {
+			have[str(r.(map[string]any), "linear_project")] = true
+		}
+		nudged, more, err := c.flowNudgeRuns(ctx, have, limit-len(runs))
+		if err != nil {
+			return nil, err
+		}
+		runs, cost = append(runs, nudged...), cost+more
 	}
 	if len(runs) > 0 {
 		if _, _, err = c.charge(ctx, map[string]any{"budget_used": used, "budget_hour": layout(c.now)[:13], "budget_limit": budget}, cost); err != nil {
@@ -708,17 +726,37 @@ func (c commentCall) healthReport(ctx context.Context) (any, error) {
 	if forced && !healthOn {
 		return nil, scoped("project health is not enabled for that Linear project", "not_found")
 	}
+	// A nudged run reads for project flow only, whatever health does, and
+	// is never forced: a forced run is health's alone.
+	nudge := str(c.a, "nudge")
+	if nudge != "" {
+		if forced {
+			return nil, invalid("a nudged run is never forced")
+		}
+		if err = c.takeFlowNudge(ctx, lp, nudge); err != nil {
+			return nil, err
+		}
+		healthOn = false
+	}
 	status, revision, err := readFlowPolicy(ctx, c.tx, c.pid)
 	if err != nil {
 		return nil, err
 	}
 	// A forced run is health's alone: project flow keeps its own slot.
 	flow := !forced && flowOn(status, c.s.projectFlowProven) && healthBound(ctx, c.tx, c.pid, lp) == nil
-	if !healthOn && !flow {
+	switch {
+	case !flow && nudge != "":
+		// Flow was turned off after the nudge was handed out.
+		_, _, err = c.charge(ctx, lease, calls-flowNudgeCalls(nudge))
+		return map[string]any{"flow": "off"}, err
+	case !healthOn && !flow:
 		return nil, scoped("project health and project flow are both off for that Linear project", "not_found")
 	}
 	charged := FlowReadCalls
-	if healthOn {
+	switch {
+	case nudge != "":
+		charged = flowNudgeCalls(nudge)
+	case healthOn:
 		charged = HealthMaxCalls
 	}
 	if _, _, err = c.charge(ctx, lease, calls-charged); err != nil {
@@ -738,6 +776,12 @@ func (c commentCall) healthReport(ctx context.Context) (any, error) {
 			if f, e := parseFlowFacts(raw); e != nil {
 				flowCode = "flow_facts_invalid"
 			} else {
+				if nudge == "r1" {
+					// An R1 nudge reads the project only (SF4-M2 a): the
+					// issue ClawBridge just started is the one started
+					// issue, and no read of every issue is claimed.
+					f.Total, f.Started, f.Completed, f.Canceled, f.CompletedSinceCreated, f.Complete = 1, 1, 0, 0, 0, false
+				}
 				facts = &f
 			}
 		}

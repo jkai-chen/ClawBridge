@@ -1031,6 +1031,16 @@ owner sets it: an existing policy reads it as off.
   nothing. ClawBridge sends Linear the status ID only, never a name.
 - **How.** It runs in each Linear project's daily health slot, whether or not
   health is on, as the ClawBridge app, which needs Linear's `write` scope.
+  It also runs soon after ClawBridge itself moves an issue, in the watcher's
+  next pass, so the common case doesn't wait a day:
+  - a claim that lands in a started state checks the issue's project for a
+    start. That check reads the project alone; the issue just started is the
+    evidence.
+  - a done release that lands in a completed state checks the project for a
+    finish, reading every issue as the daily run does.
+  - A release that lands in a started or canceled state checks nothing. Each
+    Linear project gets at most one such check every 10 minutes, and a
+    workspace at most 20 an hour; past that, the daily run catches up.
   Each move is read back: confirmed only when the project shows the status;
   an unconfirmed one is settled by the next run's read and never sent twice.
   Without the scope, the coordinator is told once a day and nothing is sent.

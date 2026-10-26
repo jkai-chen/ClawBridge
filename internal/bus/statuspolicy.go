@@ -441,5 +441,11 @@ func (m markerCall) stateSettle(ctx context.Context, outcome string) (any, error
 	if _, err := m.tx.ExecContext(ctx, `UPDATE assignment_markers SET state_state=?,state_target=?,state_landed=?,state_skip_reason=?,attempts=?,next_attempt_at=?,last_error=?,updated_at=? WHERE assignment_id=? AND phase=?`, state, target, landed, reason, attempts, next, failure, now, m.assignment, m.phase); err != nil {
 		return nil, err
 	}
+	if state == "done" {
+		// A4: the move ClawBridge just made may move its project (SF4-M2).
+		if err := m.askFlowNudge(ctx, landed); err != nil {
+			return nil, err
+		}
+	}
 	return map[string]any{"assignment_id": m.assignment, "phase": m.phase, "part": m.part, "state": state, "next_attempt_at": next}, nil
 }

@@ -51,6 +51,9 @@ type HealthRun struct {
 	// accepted, refused or pending.
 	Flow  string `json:"flow,omitempty"`
 	Moved string `json:"moved,omitempty"`
+	// Nudge is the early check this run was, after ClawBridge moved one of
+	// the project's issues: r1 (a claim) or r2 (a done release).
+	Nudge string `json:"nudge,omitempty"`
 	Calls int    `json:"calls"`
 	Error string `json:"error,omitempty"`
 	// Note and Held say, for a forced run, why it acted or not, and why a
@@ -60,12 +63,16 @@ type HealthRun struct {
 }
 
 // health runs the project's due health runs, at most left of them; it
-// returns the runs it made.
-func (w *Watcher) health(ctx context.Context, svc *linearboard.Service, scope bus.Request, pid string, fence map[string]any, left int) ([]HealthRun, error) {
+// returns the runs it made. nudgesOnly asks for project flow's nudged runs
+// alone, as a nudge's marker pass does.
+func (w *Watcher) health(ctx context.Context, svc *linearboard.Service, scope bus.Request, pid string, fence map[string]any, left int, nudgesOnly bool) ([]HealthRun, error) {
 	if left <= 0 {
 		return nil, nil
 	}
 	due := map[string]any{"limit": left}
+	if nudgesOnly {
+		due["nudges_only"] = true
+	}
 	for k, v := range fence {
 		due[k] = v
 	}
@@ -108,12 +115,17 @@ func (w *Watcher) healthRun(ctx context.Context, svc *linearboard.Service, scope
 		// A forced run, or a bus older than A4, hands out health alone.
 		health = true
 	}
-	run := HealthRun{LinearProject: lp}
+	nudge, _ := m["nudge"].(string)
+	run := HealthRun{LinearProject: lp, Nudge: nudge}
 	report := map[string]any{"linear_project": lp}
+	if nudge != "" {
+		report["nudge"] = nudge
+	}
 	if appErr != nil {
 		run.Error = "app_identity"
 	} else {
-		facts, flowFacts, calls, e := w.healthFacts(ctx, lp, app.AppUserID, days, health, flow)
+		// An R1 nudge reads the project alone (SF4-M2 a).
+		facts, flowFacts, calls, e := w.healthFacts(ctx, lp, app.AppUserID, days, health, flow, nudge != "r1")
 		run.Calls = calls
 		if flowFacts != nil {
 			report["flow"] = flowFacts
@@ -295,7 +307,7 @@ type healthState struct {
 // activity. It returns the health facts, the flow facts (also over a
 // partial issue read, marked so), a failure code, never Linear text, and
 // its calls.
-func (w *Watcher) healthFacts(ctx context.Context, lp, appUser string, stalledDays int, health, flow bool) (map[string]any, map[string]any, int, string) {
+func (w *Watcher) healthFacts(ctx context.Context, lp, appUser string, stalledDays int, health, flow, issues bool) (map[string]any, map[string]any, int, string) {
 	calls := 0
 	type status struct {
 		ID         string  `json:"id"`
@@ -354,6 +366,9 @@ func (w *Watcher) healthFacts(ctx context.Context, lp, appUser string, stalledDa
 	}
 	if !health && flowFacts == nil {
 		return nil, nil, calls, "project_unreadable"
+	}
+	if !issues {
+		return nil, flowCounts(flowFacts, 0, 0, 0, 0, 0, false), calls, ""
 	}
 	target := ""
 	if project.Project.TargetDate != nil {

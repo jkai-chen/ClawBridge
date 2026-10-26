@@ -52,8 +52,8 @@ type gcpInstance struct {
 }
 
 // checkInfra: the VM runs, its external IP is a reserved static address,
-// the server's domain resolves to it, TCP 443 answers, a data disk is
-// attached and mounted at the data path.
+// the server's domain resolves to it, a data disk is attached and mounted at
+// the data path, and TCP 443 answers.
 func checkInfra(ctx context.Context, p *cloudProbe) cloudResult {
 	t := p.target
 	if t.vm == "" {
@@ -102,9 +102,6 @@ func checkInfra(ctx context.Context, p *cloudProbe) cloudResult {
 	if !resolves {
 		return failed("infra", "dns_mismatch", domain+" must have an A record for "+ip)
 	}
-	if dialTCP(ctx, net.JoinHostPort(domain, "443")) != nil {
-		return failed("infra", "port_closed", "TCP 443 does not answer; open it in the firewall (443 only)")
-	}
 	data := 0
 	for _, d := range vm.Disks {
 		if !d.Boot {
@@ -120,6 +117,11 @@ func checkInfra(ctx context.Context, p *cloudProbe) cloudResult {
 	}
 	if f.mount == "" || f.mount == "none" {
 		return failed("infra", "data_not_mounted", "mount the data disk at "+dataMount+" (and in /etc/fstab)")
+	}
+	// Last: nothing answers on 443 until the server is installed, so a
+	// fresh VM fails here and nowhere earlier.
+	if dialTCP(ctx, net.JoinHostPort(domain, "443")) != nil {
+		return failed("infra", "port_closed", "TCP 443 does not answer; open it in the firewall (443 only) and start the server")
 	}
 	return cloudResult{Check: "infra", Status: "pass"}
 }

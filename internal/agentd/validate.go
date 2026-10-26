@@ -32,8 +32,8 @@ func decodeExact(body []byte, v any) error {
 // agentd's own encoding of the decoded spec, not the bytes received, means the
 // daemon never parses anything the check did not see (duplicate keys, case
 // variants).
-func checkCreate(body []byte, want createSpec) ([]byte, error) {
-	var got createSpec
+func checkCreate[T any](body []byte, want T) ([]byte, error) {
+	var got T
 	if err := decodeExact(body, &got); err != nil {
 		return nil, err
 	}
@@ -43,21 +43,32 @@ func checkCreate(body []byte, want createSpec) ([]byte, error) {
 	return json.Marshal(got)
 }
 
-// checkNetwork is checkCreate for a network create body.
-func checkNetwork(body []byte) ([]byte, string, error) {
+// checkNetwork is checkCreate for a network create body: the egress
+// network exactly, or an owner's internal network on a /28 of the pool.
+func checkNetwork(body []byte) ([]byte, error) {
 	var got networkSpec
 	if err := decodeExact(body, &got); err != nil {
-		return nil, "", err
+		return nil, err
 	}
-	ref, ok := refFromName(got.Name, networkPrefix)
-	if !ok {
-		return nil, "", fmt.Errorf("network name is not cbnet-<owner ref>")
+	want := egressNetSpec()
+	if got.Name != egressNetName {
+		ref, ok := refFromName(got.Name, networkPrefix)
+		if !ok {
+			return nil, fmt.Errorf("network name is not cbnet-<owner ref>")
+		}
+		if len(got.IPAM.Config) != 1 {
+			return nil, fmt.Errorf("IPAM.Config must name one subnet")
+		}
+		subnet, ok := validAgentSubnet(got.IPAM.Config[0].Subnet)
+		if !ok {
+			return nil, fmt.Errorf("the subnet is not a /28 of %s", subnetPool)
+		}
+		want = agentNetwork(ref, subnet)
 	}
-	if field := differs(reflect.ValueOf(got), reflect.ValueOf(agentNetwork(ref)), ""); field != "" {
-		return nil, "", fmt.Errorf("%s differs from the fixed spec", field)
+	if field := differs(reflect.ValueOf(got), reflect.ValueOf(want), ""); field != "" {
+		return nil, fmt.Errorf("%s differs from the fixed spec", field)
 	}
-	out, err := json.Marshal(got)
-	return out, ref, err
+	return json.Marshal(got)
 }
 
 // differs names the first field where got and want differ ("" when equal),

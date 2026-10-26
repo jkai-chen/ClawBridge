@@ -9,6 +9,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/netip"
 	"net/url"
 	"strings"
 	"time"
@@ -101,8 +102,32 @@ func (d *docker) list(ctx context.Context) ([]agentContainer, error) {
 	return agents, nil
 }
 
-func (d *docker) createNetwork(ctx context.Context, ref string) error {
-	_, err := d.call(ctx, http.MethodPost, "/networks/create", agentNetwork(ref), http.StatusConflict)
+// listNetworks returns each owner network's subnet, by owner ref.
+func (d *docker) listNetworks(ctx context.Context) (map[string]netip.Prefix, error) {
+	filters := url.QueryEscape(`{"name":["` + networkPrefix + `"]}`)
+	out, err := d.call(ctx, http.MethodGet, "/networks?filters="+filters, nil)
+	if err != nil {
+		return nil, err
+	}
+	var listed []networkSpec
+	if err := json.Unmarshal(out, &listed); err != nil {
+		return nil, fmt.Errorf("docker network list: unreadable answer")
+	}
+	subnets := map[string]netip.Prefix{}
+	for _, n := range listed {
+		ref, ok := refFromName(n.Name, networkPrefix)
+		if !ok || len(n.IPAM.Config) != 1 {
+			continue
+		}
+		if subnet, ok := validAgentSubnet(n.IPAM.Config[0].Subnet); ok {
+			subnets[ref] = subnet
+		}
+	}
+	return subnets, nil
+}
+
+func (d *docker) createNetwork(ctx context.Context, spec networkSpec) error {
+	_, err := d.call(ctx, http.MethodPost, "/networks/create", spec, http.StatusConflict)
 	return err
 }
 
@@ -111,23 +136,67 @@ func (d *docker) removeNetwork(ctx context.Context, ref string) error {
 	return err
 }
 
-func (d *docker) create(ctx context.Context, spec createSpec, ref string) error {
-	_, err := d.call(ctx, http.MethodPost, "/containers/create?name="+containerName(ref), spec)
+// egressConnected reports whether the egress proxy is on ref's network.
+func (d *docker) egressConnected(ctx context.Context, ref string) (bool, error) {
+	out, err := d.call(ctx, http.MethodGet, "/networks/"+networkName(ref), nil)
+	if err != nil {
+		return false, err
+	}
+	var n struct {
+		Containers map[string]struct{ Name string }
+	}
+	if err := json.Unmarshal(out, &n); err != nil {
+		return false, fmt.Errorf("docker network inspect: unreadable answer")
+	}
+	for _, c := range n.Containers {
+		if c.Name == egressName {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+func (d *docker) connectEgress(ctx context.Context, ref string) error {
+	_, err := d.call(ctx, http.MethodPost, "/networks/"+networkName(ref)+"/connect", connectSpec{Container: egressName})
 	return err
 }
 
-func (d *docker) start(ctx context.Context, ref string) error {
-	_, err := d.call(ctx, http.MethodPost, "/containers/"+containerName(ref)+"/start", nil, http.StatusNotModified)
+func (d *docker) disconnectEgress(ctx context.Context, ref string) error {
+	_, err := d.call(ctx, http.MethodPost, "/networks/"+networkName(ref)+"/disconnect", connectSpec{Container: egressName}, http.StatusNotFound)
 	return err
 }
 
-func (d *docker) stop(ctx context.Context, ref string) error {
-	_, err := d.call(ctx, http.MethodPost, "/containers/"+containerName(ref)+"/stop?t=10", nil, http.StatusNotModified, http.StatusNotFound)
+// create creates the container name from spec.
+func (d *docker) create(ctx context.Context, name string, spec any) error {
+	_, err := d.call(ctx, http.MethodPost, "/containers/create?name="+name, spec)
 	return err
 }
 
-func (d *docker) remove(ctx context.Context, ref string) error {
-	_, err := d.call(ctx, http.MethodDelete, "/containers/"+containerName(ref)+"?force=1&v=1", nil, http.StatusNotFound)
+// running reports whether the container exists and whether it runs.
+func (d *docker) running(ctx context.Context, name string) (exists, running bool, err error) {
+	out, err := d.call(ctx, http.MethodGet, "/containers/"+name+"/json", nil, http.StatusNotFound)
+	if err != nil {
+		return false, false, err
+	}
+	var c struct{ State *struct{ Running bool } }
+	if json.Unmarshal(out, &c) != nil || c.State == nil {
+		return false, false, nil
+	}
+	return true, c.State.Running, nil
+}
+
+func (d *docker) start(ctx context.Context, name string) error {
+	_, err := d.call(ctx, http.MethodPost, "/containers/"+name+"/start", nil, http.StatusNotModified)
+	return err
+}
+
+func (d *docker) stop(ctx context.Context, name string) error {
+	_, err := d.call(ctx, http.MethodPost, "/containers/"+name+"/stop?t=10", nil, http.StatusNotModified, http.StatusNotFound)
+	return err
+}
+
+func (d *docker) remove(ctx context.Context, name string) error {
+	_, err := d.call(ctx, http.MethodDelete, "/containers/"+name+"?force=1&v=1", nil, http.StatusNotFound)
 	return err
 }
 

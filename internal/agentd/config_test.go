@@ -11,10 +11,12 @@ import (
 func TestLoadConfig(t *testing.T) {
 	token := "cbl_" + strings.Repeat("s3cr3t", 5)
 	env := map[string]string{
-		"CLAWBRIDGE_SERVER_URL":     testServer,
-		"CLAWBRIDGE_AGENT_IMAGE":    testImage,
-		"CLAWBRIDGE_LAUNCHER_TOKEN": token,
-		"CLAWBRIDGE_AGENTD_DOCKER":  "/run/clawbridge-agentd/docker.sock",
+		"CLAWBRIDGE_SERVER_URL":        testServer,
+		"CLAWBRIDGE_AGENT_IMAGE":       testImage,
+		"CLAWBRIDGE_EGRESS_IMAGE":      testEgressImage,
+		"CLAWBRIDGE_EGRESS_POLICY_DIR": "/var/lib/clawbridge-agentd/egress",
+		"CLAWBRIDGE_LAUNCHER_TOKEN":    token,
+		"CLAWBRIDGE_AGENTD_DOCKER":     "/run/clawbridge-agentd/docker.sock",
 	}
 	c, err := LoadConfig(func(k string) string { return env[k] })
 	if err != nil || c.LauncherToken != token || c.Docker != env["CLAWBRIDGE_AGENTD_DOCKER"] {
@@ -28,6 +30,12 @@ func TestLoadConfig(t *testing.T) {
 		"tag only":          {"CLAWBRIDGE_AGENT_IMAGE", "ghcr.io/example/agent:latest"},
 		"short digest":      {"CLAWBRIDGE_AGENT_IMAGE", "ghcr.io/example/agent@sha256:0123"},
 		"no image":          {"CLAWBRIDGE_AGENT_IMAGE", ""},
+		"egress tag only":   {"CLAWBRIDGE_EGRESS_IMAGE", "ghcr.io/example/agentd:latest"},
+		"no egress image":   {"CLAWBRIDGE_EGRESS_IMAGE", ""},
+		"relative policy":   {"CLAWBRIDGE_EGRESS_POLICY_DIR", "egress"},
+		"policy with colon": {"CLAWBRIDGE_EGRESS_POLICY_DIR", "/var/lib/x:/etc"},
+		"no policy dir":     {"CLAWBRIDGE_EGRESS_POLICY_DIR", ""},
+		"localhost server":  {"CLAWBRIDGE_SERVER_URL", "http://localhost:8080"},
 		"owner token":       {"CLAWBRIDGE_LAUNCHER_TOKEN", "cbo_" + strings.Repeat("s3cr3t", 5)},
 		"short token":       {"CLAWBRIDGE_LAUNCHER_TOKEN", "cbl_s3cr3t"},
 		"root daemon":       {"CLAWBRIDGE_AGENTD_DOCKER", "/var/run/docker.sock"},

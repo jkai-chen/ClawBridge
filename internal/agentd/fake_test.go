@@ -18,11 +18,12 @@ import (
 )
 
 const (
-	testImage  = "ghcr.io/example/clawbridge-dispatcher-agent@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
-	testServer = "https://bridge.example.test"
-	refA       = "p_aaaaaaaa"
-	refB       = "p_bbbbbbbb"
-	refC       = "p_cccccccc"
+	testImage       = "ghcr.io/example/clawbridge-dispatcher-agent@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+	testEgressImage = "ghcr.io/example/clawbridge-agentd@sha256:fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210"
+	testServer      = "https://bridge.example.test"
+	refA            = "p_aaaaaaaa"
+	refB            = "p_bbbbbbbb"
+	refC            = "p_cccccccc"
 )
 
 // fakeDaemon is a Docker daemon on a unix socket that keeps containers and
@@ -30,10 +31,18 @@ const (
 type fakeDaemon struct {
 	mu         sync.Mutex
 	containers map[string]string // name → state
-	networks   map[string]bool
+	networks   map[string]*fakeNet
 	stdin      map[string]string // name → what attach received
 	bodies     map[string][]byte // name → create body
 	requests   []string
+	// onCreate, when set, runs as a container is created; refuse makes
+	// that create fail.
+	onCreate func(name string) (refuse bool)
+}
+
+type fakeNet struct {
+	subnet  string
+	members map[string]bool
 }
 
 func (f *fakeDaemon) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -58,25 +67,75 @@ func (f *fakeDaemon) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			w.WriteHeader(http.StatusConflict)
 			return
 		}
+		if f.onCreate != nil && f.onCreate(name) {
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
 		f.containers[name], f.bodies[name] = "created", body
 		w.WriteHeader(http.StatusCreated)
 		fmt.Fprint(w, `{"Id":"0123"}`)
+	case r.Method == http.MethodGet && r.URL.Path == "/networks":
+		out := []networkSpec{}
+		for name, n := range f.networks {
+			out = append(out, networkSpec{Name: name, IPAM: ipamSpec{Config: []ipamConfig{{Subnet: n.subnet}}}})
+		}
+		_ = json.NewEncoder(w).Encode(out)
 	case r.URL.Path == "/networks/create":
 		var n networkSpec
 		_ = json.Unmarshal(body, &n)
-		if f.networks[n.Name] {
+		if f.networks[n.Name] != nil {
 			w.WriteHeader(http.StatusConflict)
 			return
 		}
-		f.networks[n.Name] = true
+		// Like dockerd: an overlapping pool is refused.
+		for _, other := range f.networks {
+			if other.subnet == n.IPAM.Config[0].Subnet {
+				w.WriteHeader(http.StatusForbidden)
+				return
+			}
+		}
+		f.networks[n.Name] = &fakeNet{subnet: n.IPAM.Config[0].Subnet, members: map[string]bool{}}
 		w.WriteHeader(http.StatusCreated)
-	case parts[0] == "networks" && r.Method == http.MethodDelete:
-		if !f.networks[parts[1]] {
+		f.bodies[n.Name] = body
+	case parts[0] == "networks" && len(parts) >= 2:
+		n := f.networks[parts[1]]
+		if n == nil {
 			w.WriteHeader(http.StatusNotFound)
 			return
 		}
-		delete(f.networks, parts[1])
-		w.WriteHeader(http.StatusNoContent)
+		var c connectSpec
+		_ = json.Unmarshal(body, &c)
+		switch r.Method + " " + strings.Join(parts[2:], "/") {
+		case "DELETE ":
+			if len(n.members) > 0 {
+				w.WriteHeader(http.StatusForbidden) // "has active endpoints"
+				return
+			}
+			delete(f.networks, parts[1])
+			w.WriteHeader(http.StatusNoContent)
+		case "GET ":
+			members := map[string]any{}
+			for name := range n.members {
+				members["id-"+name] = map[string]string{"Name": name}
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{"Name": parts[1], "Containers": members})
+		case "POST connect":
+			if _, ok := f.containers[c.Container]; !ok || n.members[c.Container] {
+				w.WriteHeader(http.StatusForbidden)
+				return
+			}
+			n.members[c.Container] = true
+			w.WriteHeader(http.StatusOK)
+		case "POST disconnect":
+			if !n.members[c.Container] {
+				w.WriteHeader(http.StatusNotFound)
+				return
+			}
+			delete(n.members, c.Container)
+			w.WriteHeader(http.StatusOK)
+		default:
+			w.WriteHeader(http.StatusNotImplemented)
+		}
 	case parts[0] == "containers" && len(parts) >= 2:
 		name := parts[1]
 		state, ok := f.containers[name]
@@ -93,9 +152,13 @@ func (f *fakeDaemon) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			w.WriteHeader(http.StatusNoContent)
 		case "DELETE ":
 			delete(f.containers, name)
+			// A removed container leaves every network.
+			for _, n := range f.networks {
+				delete(n.members, name)
+			}
 			w.WriteHeader(http.StatusNoContent)
 		case "GET json":
-			_ = json.NewEncoder(w).Encode(map[string]any{"State": map[string]any{"Status": state}})
+			_ = json.NewEncoder(w).Encode(map[string]any{"State": map[string]any{"Running": state == "running"}})
 		case "POST attach":
 			conn, buf, err := http.NewResponseController(w).Hijack()
 			if err != nil {
@@ -147,28 +210,34 @@ func serveUnix(t *testing.T, path string, h http.Handler) {
 // testStack is a fake daemon behind the real proxy, and the log of both
 // the proxy and agentd.
 type testStack struct {
-	daemon *fakeDaemon
-	proxy  string // the proxy's socket
-	log    *bytes.Buffer
-	logger *slog.Logger
+	daemon    *fakeDaemon
+	proxy     string // the proxy's socket
+	policyDir string
+	log       *lockedWriter
+	logger    *slog.Logger
 }
 
 func newStack(t *testing.T) *testStack {
 	t.Helper()
 	dir := socketDir(t)
 	s := &testStack{
-		daemon: &fakeDaemon{containers: map[string]string{}, networks: map[string]bool{}, stdin: map[string]string{}, bodies: map[string][]byte{}},
-		proxy:  filepath.Join(dir, "proxy.sock"),
-		log:    &bytes.Buffer{},
+		daemon:    &fakeDaemon{containers: map[string]string{}, networks: map[string]*fakeNet{}, stdin: map[string]string{}, bodies: map[string][]byte{}},
+		proxy:     filepath.Join(dir, "proxy.sock"),
+		policyDir: t.TempDir(),
+		log:       &lockedWriter{w: &bytes.Buffer{}},
 	}
-	s.logger = slog.New(slog.NewJSONHandler(&lockedWriter{w: s.log}, nil))
+	s.logger = slog.New(slog.NewJSONHandler(s.log, nil))
 	serveUnix(t, filepath.Join(dir, "docker.sock"), s.daemon)
-	p, err := NewProxy(testImage, testServer, filepath.Join(dir, "docker.sock"), s.logger)
+	p, err := NewProxy(testSpec(s.policyDir), filepath.Join(dir, "docker.sock"), s.logger)
 	if err != nil {
 		t.Fatal(err)
 	}
 	serveUnix(t, s.proxy, p)
 	return s
+}
+
+func testSpec(policyDir string) Spec {
+	return Spec{ServerURL: testServer, AgentImage: testImage, EgressImage: testEgressImage, PolicyDir: policyDir}
 }
 
 type lockedWriter struct {
@@ -216,7 +285,10 @@ func (s *testStack) sendRaw(t *testing.T, raw string) int {
 
 // fakeServer is the ClawBridge server's launcher endpoints.
 type fakeServer struct {
-	refs      []string
+	refs []string
+	// providers overrides an owner's provider host:port; the default is
+	// api.provider.test:443.
+	providers map[string]string
 	max       int
 	mintErr   error
 	minted    []string
@@ -224,8 +296,16 @@ type fakeServer struct {
 	wantedErr error
 }
 
-func (s *fakeServer) Wanted(context.Context) ([]string, int, error) {
-	return s.refs, s.max, s.wantedErr
+func (s *fakeServer) Wanted(context.Context) ([]Wanted, int, error) {
+	var out []Wanted
+	for _, ref := range s.refs {
+		provider := "api.provider.test:443"
+		if p, ok := s.providers[ref]; ok {
+			provider = p
+		}
+		out = append(out, Wanted{Ref: ref, Provider: provider})
+	}
+	return out, s.max, s.wantedErr
 }
 func (s *fakeServer) Credential(_ context.Context, ref string) (string, error) {
 	if s.mintErr != nil {

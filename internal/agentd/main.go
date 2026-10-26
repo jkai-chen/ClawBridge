@@ -53,6 +53,9 @@ func Main(ctx context.Context, args []string, getenv func(string) string, stdout
 		if err := checkSocket(cfg.Docker); err != nil {
 			return err
 		}
+		if info, err := os.Stat(cfg.PolicyDir); err != nil || !info.IsDir() {
+			return fmt.Errorf("CLAWBRIDGE_EGRESS_POLICY_DIR %s is not a directory", cfg.PolicyDir)
+		}
 		if args[0] == "check" {
 			_, err := fmt.Fprintln(stdout, "clawbridge-agentd: configuration ok")
 			return err
@@ -86,7 +89,11 @@ func runProxy(ctx context.Context, args []string, getenv func(string) string, lo
 	if err := checkSocket(*upstream); err != nil {
 		return err
 	}
-	p, err := NewProxy(getenv("CLAWBRIDGE_AGENT_IMAGE"), getenv("CLAWBRIDGE_SERVER_URL"), *upstream, log)
+	spec, err := loadSpec(getenv)
+	if err != nil {
+		return err
+	}
+	p, err := NewProxy(spec, *upstream, log)
 	if err != nil {
 		return err
 	}

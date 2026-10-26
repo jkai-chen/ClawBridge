@@ -3,19 +3,69 @@ package agentd
 import (
 	"errors"
 	"fmt"
+	"net"
 	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
+	"strings"
 )
 
-// Config is agentd's own configuration, from its root-only (0600) env file.
-type Config struct {
+// Spec is what the fixed container specs are built from, shared by agentd
+// and its socket proxy.
+type Spec struct {
 	// ServerURL is the ClawBridge server, given to the agents as their only
 	// env variable.
 	ServerURL string
-	// Image is the agent image, pinned by digest.
-	Image string
+	// AgentImage and EgressImage are pinned by digest.
+	AgentImage, EgressImage string
+	// PolicyDir holds the egress policy agentd writes; the egress container
+	// mounts it read-only.
+	PolicyDir string
+}
+
+func loadSpec(getenv func(string) string) (Spec, error) {
+	s := Spec{
+		ServerURL:   getenv("CLAWBRIDGE_SERVER_URL"),
+		AgentImage:  getenv("CLAWBRIDGE_AGENT_IMAGE"),
+		EgressImage: getenv("CLAWBRIDGE_EGRESS_IMAGE"),
+		PolicyDir:   getenv("CLAWBRIDGE_EGRESS_POLICY_DIR"),
+	}
+	if err := validServerURL(s.ServerURL); err != nil {
+		return Spec{}, err
+	}
+	if _, err := serverTarget(s.ServerURL); err != nil {
+		return Spec{}, err
+	}
+	for _, image := range []string{s.AgentImage, s.EgressImage} {
+		if err := validImage(image); err != nil {
+			return Spec{}, err
+		}
+	}
+	if !filepath.IsAbs(s.PolicyDir) || filepath.Clean(s.PolicyDir) != s.PolicyDir || strings.ContainsAny(s.PolicyDir, ":,") {
+		return Spec{}, fmt.Errorf("CLAWBRIDGE_EGRESS_POLICY_DIR must be an absolute, clean directory, not %q", s.PolicyDir)
+	}
+	return s, nil
+}
+
+// serverTarget is the server's host:port for the egress policy. The server
+// must be public to the agents: a private address is refused by the
+// egress proxy (open question Q2).
+func serverTarget(serverURL string) (string, error) {
+	u, err := url.Parse(serverURL)
+	if err != nil || u.Scheme != "https" {
+		return "", fmt.Errorf("the agents reach the server only over https, not %q", serverURL)
+	}
+	port := u.Port()
+	if port == "" {
+		port = "443"
+	}
+	return normalTarget(net.JoinHostPort(u.Hostname(), port))
+}
+
+// Config is agentd's own configuration, from its root-only (0600) env file.
+type Config struct {
+	Spec
 	// LauncherToken (cbl_…) opens only the launcher endpoints. Never logged.
 	LauncherToken string
 	// Docker is the validating proxy's socket, never a daemon's.
@@ -26,18 +76,11 @@ var launcherTokenPattern = regexp.MustCompile(`^cbl_[A-Za-z0-9_-]{20,128}$`)
 
 // LoadConfig reads the configuration from getenv.
 func LoadConfig(getenv func(string) string) (Config, error) {
-	c := Config{
-		ServerURL:     getenv("CLAWBRIDGE_SERVER_URL"),
-		Image:         getenv("CLAWBRIDGE_AGENT_IMAGE"),
-		LauncherToken: getenv("CLAWBRIDGE_LAUNCHER_TOKEN"),
-		Docker:        getenv("CLAWBRIDGE_AGENTD_DOCKER"),
-	}
-	if err := validServerURL(c.ServerURL); err != nil {
+	spec, err := loadSpec(getenv)
+	if err != nil {
 		return Config{}, err
 	}
-	if err := validImage(c.Image); err != nil {
-		return Config{}, err
-	}
+	c := Config{Spec: spec, LauncherToken: getenv("CLAWBRIDGE_LAUNCHER_TOKEN"), Docker: getenv("CLAWBRIDGE_AGENTD_DOCKER")}
 	if !launcherTokenPattern.MatchString(c.LauncherToken) {
 		// The value is never echoed.
 		return Config{}, errors.New("CLAWBRIDGE_LAUNCHER_TOKEN must be a launcher token (cbl_…)")

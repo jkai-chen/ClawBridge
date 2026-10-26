@@ -17,12 +17,13 @@ import (
 
 // Proxy is the validating socket proxy in front of the rootless dockerd
 // [AG-M1 layer 2]. It forwards only the operations agentd needs, on
-// clawbridge-agent-<ref> containers and cbnet-<ref> networks, and a container
-// create only when its body is exactly agentSpec. Everything else gets 403.
+// clawbridge-agent-<ref> containers, the clawbridge-egress container and
+// their networks, and a create only when its body is exactly that
+// container's or network's fixed spec. Everything else gets 403.
 type Proxy struct {
-	image, serverURL string
-	forward          *httputil.ReverseProxy
-	log              *slog.Logger
+	spec    Spec
+	forward *httputil.ReverseProxy
+	log     *slog.Logger
 }
 
 const maxBody = 64 << 10
@@ -30,13 +31,7 @@ const maxBody = 64 << 10
 var apiVersion = regexp.MustCompile(`^/v[0-9]+\.[0-9]+(/.*)$`)
 
 // NewProxy returns a Proxy forwarding to the Docker socket at upstream.
-func NewProxy(image, serverURL, upstream string, log *slog.Logger) (*Proxy, error) {
-	if err := validImage(image); err != nil {
-		return nil, err
-	}
-	if err := validServerURL(serverURL); err != nil {
-		return nil, err
-	}
+func NewProxy(spec Spec, upstream string, log *slog.Logger) (*Proxy, error) {
 	transport := &http.Transport{DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
 		return (&net.Dialer{}).DialContext(ctx, "unix", upstream)
 	}}
@@ -50,7 +45,7 @@ func NewProxy(image, serverURL, upstream string, log *slog.Logger) (*Proxy, erro
 			http.Error(w, `{"message":"the agents' docker daemon is unreachable"}`, http.StatusBadGateway)
 		},
 	}
-	return &Proxy{image: image, serverURL: serverURL, forward: forward, log: log}, nil
+	return &Proxy{spec: spec, forward: forward, log: log}, nil
 }
 
 func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -93,29 +88,45 @@ func (p *Proxy) allow(r *http.Request) error {
 		if err := onlyQuery(query, "name"); err != nil {
 			return err
 		}
+		if query.Get("name") == egressName {
+			return p.replaceBody(r, func(body []byte) ([]byte, error) {
+				return checkCreate(body, egressSpec(p.spec.EgressImage, p.spec.PolicyDir))
+			})
+		}
 		ref, ok := refFromName(query.Get("name"), containerPrefix)
 		if !ok {
-			return fmt.Errorf("container name is not clawbridge-agent-<owner ref>")
+			return fmt.Errorf("container name is not clawbridge-agent-<owner ref> or %s", egressName)
 		}
 		return p.replaceBody(r, func(body []byte) ([]byte, error) {
-			return checkCreate(body, agentSpec(p.image, p.serverURL, ref))
+			return checkCreate(body, agentSpec(p.spec.AgentImage, p.spec.ServerURL, ref))
 		})
+	case op == "GET networks" && len(parts) == 1:
+		return onlyQuery(query, "filters")
 	case op == "POST networks" && len(parts) == 2 && parts[1] == "create":
 		if err := onlyQuery(query); err != nil {
 			return err
 		}
-		return p.replaceBody(r, func(body []byte) ([]byte, error) {
-			out, _, err := checkNetwork(body)
-			return out, err
-		})
-	case op == "DELETE networks" && len(parts) == 2:
+		return p.replaceBody(r, checkNetwork)
+	case parts[0] == "networks" && len(parts) >= 2:
+		// Owner networks only: the egress network is created, never changed.
 		if _, ok := refFromName(parts[1], networkPrefix); !ok {
 			return fmt.Errorf("network name is not cbnet-<owner ref>")
 		}
-		return emptyRequest(r, query)
+		switch r.Method + " " + strings.Join(parts[2:], "/") {
+		case "DELETE ", "GET ":
+			return emptyRequest(r, query)
+		case "POST connect", "POST disconnect":
+			if err := onlyQuery(query); err != nil {
+				return err
+			}
+			return p.replaceBody(r, func(body []byte) ([]byte, error) {
+				return checkCreate(body, connectSpec{Container: egressName})
+			})
+		}
 	case parts[0] == "containers" && len(parts) >= 2:
-		if _, ok := refFromName(parts[1], containerPrefix); !ok {
-			return fmt.Errorf("container name is not clawbridge-agent-<owner ref>")
+		_, agent := refFromName(parts[1], containerPrefix)
+		if !agent && parts[1] != egressName {
+			return fmt.Errorf("container name is not clawbridge-agent-<owner ref> or %s", egressName)
 		}
 		action := r.Method
 		if len(parts) == 3 {
@@ -133,8 +144,11 @@ func (p *Proxy) allow(r *http.Request) error {
 		case "GET json":
 			return emptyRequest(r, query)
 		case "POST attach":
-			// stdin only, to hand over the one-time credential: never the
-			// container's output or logs.
+			// An agent's stdin only, to hand over the one-time credential:
+			// never output or logs, and never the egress proxy.
+			if !agent {
+				return fmt.Errorf("endpoint not allowed")
+			}
 			if query.Get("stream") != "1" || query.Get("stdin") != "1" {
 				return fmt.Errorf("attach must be stream=1&stdin=1")
 			}

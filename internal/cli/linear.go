@@ -192,6 +192,9 @@ type linearFlags struct {
 	maxBytes                                                                                                             int
 	allowPatterns                                                                                                        []string
 	split, recreate                                                                                                      bool
+	closesPairs                                                                                                          []string
+	closesWho                                                                                                            string
+	closesAgent, closesHuman, minimalPolicy                                                                              bool
 }
 type repeatedIDs []string
 
@@ -270,6 +273,8 @@ func parseLinear(command string, args []string, stderr io.Writer) (linearFlags, 
 		f.Int64Var(&v.revision, "expected-revision", -1, "required current mapping revision")
 		f.BoolVar(&v.confirm, "confirm", false, "commit the displayed binding preview")
 		f.BoolVar(&v.noSeedDocs, "no-seed-docs", false, "do not create the Linear guide documents on --confirm")
+		f.Var((*repeatedIDs)(&v.closesPairs), "closes", "on --confirm, who closes a linked project's issues: UUID=agent or UUID=human (repeat); agent asks you to type the project's name")
+		f.BoolVar(&v.minimalPolicy, "minimal-status-policy", false, "project owner only: with --closes UUID=agent and no status policy, create the minimal one the preview describes")
 	case "seed-docs":
 		profile()
 		f.BoolVar(&v.confirm, "confirm", false, "create, settle or update the guide documents shown")
@@ -304,7 +309,16 @@ func parseLinear(command string, args []string, stderr io.Writer) (linearFlags, 
 	case "label", "project":
 		write()
 		f.StringVar(&v.team, "team", "", "required bound team UUID")
+		if command == "project" {
+			f.StringVar(&v.closesWho, "closes", "", "create: agent puts who closes the new project's issues into the proposed link; human is the default")
+		}
 		min, max = 1, 2
+	case "closes":
+		profile()
+		f.StringVar(&v.project, "linear-project", "", "set: the bound Linear project UUID")
+		f.BoolVar(&v.closesAgent, "agent", false, "set: agents close its issues (asks you to type the project's name; needs --profile)")
+		f.BoolVar(&v.closesHuman, "human", false, "set: people close its issues (the default)")
+		f.Int64Var(&v.revision, "expected-revision", -1, "set: the status policy revision from closes show")
 	case "initiative":
 		write()
 		f.StringVar(&v.description, "description", "", "create: the initiative's description")
@@ -370,7 +384,7 @@ func parseLinear(command string, args []string, stderr io.Writer) (linearFlags, 
 	if len(pos) < min || len(pos) > max {
 		return v, nil, errors.New("invalid Linear positional arguments")
 	}
-	needsProfile := command != "profiles" && command != "connect" && command != "login" && command != "import" && command != "binding" && command != "unlink" && command != "label-policy" && command != "status-policy" && command != "doc-policy" && command != "health" && command != "display-name" && command != "admin"
+	needsProfile := command != "profiles" && command != "connect" && command != "login" && command != "import" && command != "binding" && command != "unlink" && command != "label-policy" && command != "status-policy" && command != "closes" && command != "doc-policy" && command != "health" && command != "display-name" && command != "admin"
 	if needsProfile && !validLinearProfile(v.profile) {
 		return v, nil, errors.New("select --profile with the opaque ID from linear profiles")
 	}
@@ -540,7 +554,7 @@ func validLinearOperation(s string) bool { return validLinearProfile(s) }
 // linearAdminInput maps `linear label create|rename` and `linear project
 // create` to an admin write.
 func linearAdminInput(command, action string, v linearFlags, pos []string) (linearboard.AdminInput, error) {
-	in := linearboard.AdminInput{Kind: command + "_" + strings.ReplaceAll(action, "-", "_"), OperationID: v.operation, TeamID: v.team}
+	in := linearboard.AdminInput{Kind: command + "_" + strings.ReplaceAll(action, "-", "_"), OperationID: v.operation, TeamID: v.team, Closes: v.closesWho}
 	switch {
 	case command == "initiative" && action == "create" && len(pos) == 1:
 		in.Name, in.Description = pos[0], v.description
@@ -717,7 +731,7 @@ func linearWriteInput(command string, v linearFlags, pos []string) (linearboard.
 
 func runLinear(ctx context.Context, flags Config, args []string, stdout, stderr io.Writer) error {
 	if len(args) == 0 || len(args) == 1 && (args[0] == "--help" || args[0] == "-h" || args[0] == "help") {
-		_, err := io.WriteString(stdout, "clawbridge linear connect|import|profiles|status|logout|teams|projects|binding|link|seed-docs|unlink|context|issues|issue|states|labels|members|create|update|comment|relation|watch\nProject owner only: label create|rename, project create, initiative create|add-project, label-policy show|set, status-policy show|set, doc-policy set, health set|enable|disable, admin audit-replay.\nProject health (any member): health show.\nLinear documents (any member): doc list|get, initiative show, doc-policy show. Project owner or lead: doc publish FILE.\nYour name in agent markers: display-name set NAME|clear|capture --profile ID.\nUse COMMAND --help for explicit flags. Token import accepts --token-stdin only.\n")
+		_, err := io.WriteString(stdout, "clawbridge linear connect|import|profiles|status|logout|teams|projects|binding|link|seed-docs|unlink|context|issues|issue|states|labels|members|create|update|comment|relation|watch\nProject owner only: label create|rename, project create, initiative create|add-project, label-policy show|set, status-policy show|set, doc-policy set, health set|enable|disable, admin audit-replay.\nWho closes issues: closes show (any member); closes set (project owner or lead, never a session).\nProject health (any member): health show.\nLinear documents (any member): doc list|get, initiative show, doc-policy show. Project owner or lead: doc publish FILE.\nYour name in agent markers: display-name set NAME|clear|capture --profile ID.\nUse COMMAND --help for explicit flags. Token import accepts --token-stdin only.\n")
 		return err
 	}
 	command := args[0]
@@ -731,7 +745,7 @@ func runLinear(ctx context.Context, flags Config, args []string, stdout, stderr 
 		parseArgs = parseArgs[1:]
 	}
 	adminAction := ""
-	if (command == "label" || command == "project" || command == "initiative" || command == "doc" || command == "doc-policy" || command == "label-policy" || command == "status-policy" || command == "health" || command == "display-name" || command == "admin") && len(parseArgs) > 0 && parseArgs[0] != "--help" && parseArgs[0] != "-h" {
+	if (command == "label" || command == "project" || command == "initiative" || command == "doc" || command == "doc-policy" || command == "label-policy" || command == "status-policy" || command == "closes" || command == "health" || command == "display-name" || command == "admin") && len(parseArgs) > 0 && parseArgs[0] != "--help" && parseArgs[0] != "-h" {
 		adminAction = parseArgs[0]
 		parseArgs = parseArgs[1:]
 	}
@@ -743,10 +757,11 @@ func runLinear(ctx context.Context, flags Config, args []string, stdout, stderr 
 		command == "doc-policy" && adminAction != "show" && adminAction != "set",
 		command == "label-policy" && adminAction != "show" && adminAction != "set",
 		command == "status-policy" && adminAction != "show" && adminAction != "set",
+		command == "closes" && adminAction != "show" && adminAction != "set",
 		command == "health" && adminAction != "show" && adminAction != "set" && adminAction != "enable" && adminAction != "disable",
 		command == "display-name" && adminAction != "set" && adminAction != "clear" && adminAction != "capture",
 		command == "admin" && adminAction != "audit-replay":
-		return errors.New("use linear doc list|get|publish, initiative show, doc-policy show|set, label create|rename, project create, initiative create|add-project, label-policy show|set, status-policy show|set, health show|set|enable|disable, display-name set|clear|capture, or admin audit-replay")
+		return errors.New("use linear doc list|get|publish, initiative show, doc-policy show|set, label create|rename, project create, initiative create|add-project, label-policy show|set, status-policy show|set, closes show|set, health show|set|enable|disable, display-name set|clear|capture, or admin audit-replay")
 	}
 	parseAs := command
 	if command == "initiative" && adminAction == "show" {
@@ -760,6 +775,9 @@ func runLinear(ctx context.Context, flags Config, args []string, stdout, stderr 
 	}
 	if err != nil {
 		return err
+	}
+	if command == "closes" && adminAction == "set" && (!linearprovider.ValidID(v.project) || v.closesAgent == v.closesHuman || v.revision < 0) {
+		return errors.New("closes set requires --linear-project UUID, one of --agent or --human, and --expected-revision from closes show")
 	}
 	var writeInput linearboard.WriteInputV2
 	if command == "create" || command == "update" || command == "comment" {
@@ -900,7 +918,22 @@ func runLinear(ctx context.Context, flags Config, args []string, stdout, stderr 
 	case "binding":
 		data, err = service.BindingV2(bounded, scope)
 	case "link":
-		data, err = service.LinkV2(bounded, scope, linearboard.LinkInputV2{TeamIDs: v.teams, DefaultTeamID: v.defaultTeam, ProjectIDs: append([]string{}, v.projects...), ExpectedRevision: v.revision, TeamBoard: v.teamBoard, Confirm: v.confirm})
+		in := linearboard.LinkInputV2{TeamIDs: v.teams, DefaultTeamID: v.defaultTeam, ProjectIDs: append([]string{}, v.projects...), ExpectedRevision: v.revision, TeamBoard: v.teamBoard, Confirm: v.confirm, MinimalPolicy: v.minimalPolicy}
+		if in.Closes, err = linkCloses(v.closesPairs); err != nil {
+			return err
+		}
+		if err = confirmLinkCloses(bounded, service, scope, flags, &in, stderr); err != nil {
+			return err
+		}
+		data, err = service.LinkV2(bounded, scope, in)
+		if m, ok := data.(map[string]any); ok {
+			outcomes, _ := m["closes"].([]linearboard.ClosesOutcome)
+			for _, o := range outcomes {
+				if o.Outcome == "failed" {
+					_, _ = fmt.Fprintf(stderr, "Who closes %s was not set (%s). Re-run: %s\n", o.LinearProject, o.Error, o.Rerun)
+				}
+			}
+		}
 		if err == nil && !v.noSeedDocs {
 			data = linkWithSeedDocs(bounded, service, scope, flags, v, data)
 		}
@@ -990,6 +1023,8 @@ func runLinear(ctx context.Context, flags Config, args []string, stdout, stderr 
 			return e
 		}
 		data, err = service.SetLabelPolicyV2(bounded, scope, []byte(raw), v.revision)
+	case "closes":
+		data, err = runCloses(bounded, service, scope, flags, v, stderr)
 	case "status-policy":
 		if adminAction == "show" {
 			data, err = service.StatusPolicyV2(bounded, scope)

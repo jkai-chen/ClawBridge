@@ -9,6 +9,7 @@ import (
 	"io"
 	"slices"
 	"sort"
+	"strings"
 	"time"
 
 	"clawbridge/internal/bus"
@@ -239,6 +240,9 @@ func (s *Service) LinkV2(ctx context.Context, scope bus.Request, in LinkInputV2)
 	if e := ValidateLinkV2(in); e != nil {
 		return nil, e
 	}
+	if e := validateLinkCloses(in); e != nil {
+		return nil, e
+	}
 	b, e := s.BindingV2(ctx, scope)
 	if e != nil {
 		return nil, e
@@ -302,8 +306,34 @@ func (s *Service) LinkV2(ctx context.Context, scope bus.Request, in LinkInputV2)
 	if digest(current) != digest(b) {
 		return nil, errors.New("task-board binding changed during preview")
 	}
+	var policy closesPolicy
+	if !in.TeamBoard {
+		if policy, e = s.closesPolicy(ctx, scope); e != nil {
+			return nil, e
+		}
+	}
 	if !in.Confirm {
-		return LinkPreviewV2{Binding: b, DefaultTeamID: in.DefaultTeamID, Teams: v.Teams, Projects: v.Projects, TeamBoard: in.TeamBoard, LinearWorkspaceID: workspace}, nil
+		preview := LinkPreviewV2{Binding: b, DefaultTeamID: in.DefaultTeamID, Teams: v.Teams, Projects: v.Projects, TeamBoard: in.TeamBoard, LinearWorkspaceID: workspace}
+		linkClosesPreview(policy, in, &preview)
+		return preview, nil
+	}
+	// A3: every check on who closes runs before the binding is written.
+	changes := closesChanges(policy, in.Closes)
+	for _, project := range changes {
+		if in.Closes[project] != ClosesAgent {
+			continue
+		}
+		if in.Via != ClosesViaTTY && in.Via != ClosesViaTUI {
+			return nil, errors.New("letting agents close issues is confirmed at a terminal, by typing the project's name; nothing was changed")
+		}
+		if policy.Revision == 0 && !in.MinimalPolicy {
+			return nil, errors.New(MinimalPolicyConsequences + " Run the link again with --minimal-status-policy to create it; nothing was changed.")
+		}
+	}
+	if policy.Revision == 0 && in.MinimalPolicy {
+		if e = s.minimalPolicyTyped(ctx, scope, mapping.LinearTeamIDs); e != nil {
+			return nil, e
+		}
 	}
 	scope.Operation = "taskboard_set_v2"
 	scope.Args = instanceArgs(scope.Args)
@@ -315,8 +345,26 @@ func (s *Service) LinkV2(ctx context.Context, scope bus.Request, in LinkInputV2)
 	if workspace != "" {
 		scope.Args["linear_workspace_id"] = workspace
 	}
+	if len(changes) > 0 {
+		scope.Args["closes_pending"] = changes
+	}
 	r, e := s.cfg.Executor.Execute(ctx, scope)
-	return r.Data, e
+	if e != nil && len(changes) > 0 && strings.Contains(e.Error(), `unsupported argument "closes_pending"`) {
+		// An older server: bind without it; closes set then says so.
+		delete(scope.Args, "closes_pending")
+		r, e = s.cfg.Executor.Execute(ctx, scope)
+	}
+	if e != nil || len(changes) == 0 {
+		return r.Data, e
+	}
+	out := map[string]any{}
+	if m, ok := r.Data.(map[string]any); ok {
+		for k, v := range m {
+			out[k] = v
+		}
+	}
+	out["closes"] = s.applyLinkCloses(ctx, scope, in, changes)
+	return out, nil
 }
 func ValidateLinkV2(in LinkInputV2) error {
 	if in.ExpectedRevision < 0 || in.ExpectedRevision >= 9007199254740991 || len(in.TeamIDs) < 1 || len(in.TeamIDs) > 20 || !contains(in.TeamIDs, in.DefaultTeamID) || in.TeamBoard != (len(in.ProjectIDs) == 0) || len(in.ProjectIDs) > 50 {

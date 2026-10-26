@@ -312,8 +312,34 @@ func (s *Store) taskboard(ctx context.Context, tx *transaction, wid, pid, role, 
 	if unreadable != "" {
 		details["repaired_unreadable_sha256"] = unreadable
 	}
+	// A3: projects the same link is about to set who closes (closes_pending)
+	// get no people-default notice; the audit records them (§10.8 L2).
+	var pending []string
+	if op == "taskboard_set_v2" {
+		list, _, _ := stringList(a["closes_pending"])
+		for _, id := range list {
+			if !lowerUUIDPattern.MatchString(id) || !containsString(next.LinearProjectIDs, id) {
+				return nil, invalid("closes_pending names Linear projects of this link")
+			}
+		}
+		pending = list
+		if len(pending) > 0 {
+			details["closes_pending"] = pending
+		}
+	}
 	if e = s.audit(ctx, tx, wid, pid, "", "taskboard", pid, op, details); e != nil {
 		return nil, e
+	}
+	if op == "taskboard_set_v2" && next.Mode == "project_set" {
+		var added []string
+		for _, id := range next.LinearProjectIDs {
+			if !(b.Configured && b.Mode == "project_set" && containsString(b.LinearProjectIDs, id)) {
+				added = append(added, id)
+			}
+		}
+		if e = s.closePolicyNotices(ctx, tx, wid, pid, added, pending, next.UpdatedAt); e != nil {
+			return nil, e
+		}
 	}
 	return result(next)
 }

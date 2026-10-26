@@ -441,11 +441,18 @@ func summariesV2(kind, parent string, items []linearprovider.DocSummary) []DocSu
 }
 
 // InitiativeShowV2 shows a listed initiative: its name, its bound projects
-// and one page of its documents. Its unbound projects are shown only when
-// unbound is asked for, which the CLI does for a project owner or lead.
+// and one page of its documents. With unbound, which only the CLI asks
+// for, a project owner or lead also sees its unbound projects.
 func (s *Service) InitiativeShowV2(ctx context.Context, scope bus.Request, id string, unbound bool) (InitiativeV2, error) {
 	if !linearprovider.ValidID(id) {
 		return InitiativeV2{}, errors.New("an initiative read requires its UUID")
+	}
+	if unbound {
+		access, e := s.access(ctx, scope)
+		if e != nil {
+			return InitiativeV2{}, e
+		}
+		unbound = access.ProjectRole == "owner" || access.ProjectRole == "lead"
 	}
 	d, done, e := s.openDocScope(ctx, scope)
 	if e != nil {

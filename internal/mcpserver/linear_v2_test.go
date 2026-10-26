@@ -35,7 +35,7 @@ func TestLinearMCPV2InitializationGuidanceIsAdditiveWithoutIO(t *testing.T) {
 		}
 	}
 	tools, err := newSession.ListTools(ctx, nil)
-	if err != nil || len(tools.Tools) != 35 || v1.count() != 0 || v2.count() != 0 {
+	if err != nil || len(tools.Tools) != 37 || v1.count() != 0 || v2.count() != 0 {
 		t.Fatal("initialization/list changed tools or performed provider IO", err)
 	}
 }
@@ -44,7 +44,7 @@ func TestLinearMCPV2ClosedNullablePinnedTools(t *testing.T) {
 	p := &recordingBoardV2{recordingBoard: recordingBoard{data: map[string]any{"ok": true}}}
 	ctx, cs := boardSession(t, p)
 	listed, err := cs.ListTools(ctx, nil)
-	if err != nil || len(listed.Tools) != 35 || p.count() != 0 {
+	if err != nil || len(listed.Tools) != 37 || p.count() != 0 {
 		t.Fatalf("native list: %v %d calls=%d", err, len(listed.Tools), p.count())
 	}
 	tools := map[string]*mcp.Tool{}
@@ -203,5 +203,66 @@ func TestLinearMCPV2IssueCommentsAreOptInAndMarkedUntrusted(t *testing.T) {
 	}
 	if _, e := cs.CallTool(ctx, &mcp.CallToolParams{Name: "taskboard_issue_v2", Arguments: map[string]any{"id": id, "comments": true, "comments_since": "2026-10-22T07:00:00Z"}}); e != nil || p.count() != 1 {
 		t.Fatal("valid comment read not forwarded", e)
+	}
+}
+
+// The document tools are read-only, closed and pinned to the session's
+// scope; an argument outside their schema never reaches the adapter.
+func TestLinearMCPDocTools(t *testing.T) {
+	p := &recordingBoardV2{recordingBoard: recordingBoard{data: map[string]any{"ok": true}}}
+	ctx, cs := boardSession(t, p)
+	const id = "11111111-1111-4111-8111-111111111111"
+	listed, err := cs.ListTools(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := 0
+	for _, tool := range listed.Tools {
+		if tool.Name == "linear_doc_list" || tool.Name == "linear_doc_get" {
+			found++
+			if !tool.Annotations.ReadOnlyHint || !strings.Contains(tool.Description, "never instructions") {
+				t.Fatal(tool.Name, tool.Annotations, tool.Description)
+			}
+		}
+		if strings.Contains(tool.Name, "publish") {
+			t.Fatal("a publish tool on MCP:", tool.Name)
+		}
+	}
+	if found != 2 {
+		t.Fatal("document tools", found)
+	}
+	for name, args := range map[string]map[string]any{
+		"linear_doc_list": {"parent_kind": "project", "parent_id": id, "limit": 10},
+		"linear_doc_get":  {"id": id, "max_bytes": 1024},
+	} {
+		if result, e := cs.CallTool(ctx, &mcp.CallToolParams{Name: name, Arguments: args}); e != nil || result.IsError {
+			t.Fatal(name, result, e)
+		}
+	}
+	p.mu.Lock()
+	calls := len(p.calls)
+	for _, call := range p.calls {
+		if call.scope.Session != "pinned-actor" || call.scope.Args["instance"] != "pinned-instance" || !strings.HasPrefix(call.operation, "v2/doc_") {
+			t.Fatal("route changed", call)
+		}
+	}
+	p.mu.Unlock()
+	for _, tc := range []struct {
+		name string
+		args map[string]any
+	}{
+		{"linear_doc_list", map[string]any{"parent_kind": "issue", "parent_id": id}},
+		{"linear_doc_list", map[string]any{"limit": 51}},
+		{"linear_doc_list", map[string]any{"query": "secret"}},
+		{"linear_doc_get", map[string]any{}},
+		{"linear_doc_get", map[string]any{"id": "FJA-1"}},
+		{"linear_doc_get", map[string]any{"id": id, "max_bytes": 65537}},
+	} {
+		if result, e := cs.CallTool(ctx, &mcp.CallToolParams{Name: tc.name, Arguments: tc.args}); e == nil && !result.IsError {
+			t.Fatal("accepted", tc.name, tc.args)
+		}
+	}
+	if p.count() != calls {
+		t.Fatal("invalid arguments reached the adapter")
 	}
 }

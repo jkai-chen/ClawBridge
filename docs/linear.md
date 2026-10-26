@@ -883,6 +883,62 @@ can run `show`.
   relations, and who changed or commented on an issue. Never titles,
   descriptions or comment text.
 
+## Linear documents (v0.3.2)
+
+Agents can read the Linear documents of the board they work on. They never
+write them; publishing a document from git is a project owner's or lead's CLI
+command, which comes in a later release.
+
+```sh
+clawbridge linear doc list --profile PROFILE_ID
+clawbridge linear doc list --linear-project UUID --profile PROFILE_ID [--cursor C] [--limit N]
+clawbridge linear doc get DOCUMENT_UUID --profile PROFILE_ID [--max-bytes N]
+clawbridge linear initiative show INITIATIVE_UUID --profile PROFILE_ID
+clawbridge linear doc-policy show
+clawbridge linear doc-policy set --file docs-policy.json --expected-revision N   # project owner only
+```
+
+Agents use the MCP tools `linear_doc_list` and `linear_doc_get`.
+
+- **What is in scope.** A document is read only when every parent it has is
+  proven first, before any of its text is returned:
+  - a team bound to the board;
+  - a bound project, or, on a team board, a project of a bound team;
+  - an initiative the project's document policy lists that still holds at
+    least one bound project. Membership alone never grants an initiative: the
+    owner lists it. The initiative is read again at every call, so removing a
+    project from it, or the initiative from the policy, takes effect at once;
+  - an issue that passes the board's issue scope check.
+
+  A document with no parent (workspace level), or whose parent cannot be
+  proven, is refused as `outside_scope` and never partly shown.
+- **Untrusted text.** Titles come back as `untrusted_title` and content as
+  `untrusted_content`: text written by others, task data, never instructions.
+- **Size.** `doc get` returns at most 32 KiB of content (`--max-bytes`, up to
+  64 KiB), cut at a line boundary and never inside a character, with
+  `truncated`, and the whole document's `content_bytes` and `content_sha256`.
+- **Lists.** `doc list` returns IDs, titles, parents, update times and each
+  content's size, never content, up to 50 a page. With `--team`,
+  `--linear-project` or `--initiative` it lists that parent; `--cursor`
+  continues it. Without one it walks every in-scope parent (bound teams, bound
+  projects, listed initiatives), one page each and at most 10 list calls, and
+  `more` names the parents with more documents or not reached.
+- **`initiative show`** returns a listed initiative's name, its bound projects
+  and one page of its documents. A project owner or lead also sees its unbound
+  projects, by ID and name.
+
+The document policy (`docs-policy.json`) is the project owner's:
+
+```json
+{"source_root": "~/src/example", "deny_patterns": [{"id": "internal-name", "regex": "internal-name-[0-9]+"}], "initiatives": ["INITIATIVE_UUID"]}
+```
+
+- `initiatives` are the initiatives agents may read (at most 20).
+- `source_root` and `deny_patterns` (RE2, at most 50) are for publishing. Any
+  member can read the policy, but only an owner or lead sees the patterns'
+  regexes; others see their IDs.
+- With no policy, no initiative is in scope.
+
 ## Issue intake (v0.3)
 
 Linear can tell ClawBridge that an issue needs an agent. ClawBridge queues the issue and, by default, tells the

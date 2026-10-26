@@ -318,6 +318,14 @@ func NewHandlerWithOptions(store Executor, verifier Verifier, o HandlerOptions) 
 		authenticators = append(authenticators, deviceAuthenticator{origin: o.Auth.PublicOrigin, store: o.Auth.Devices, cache: cache, now: now})
 		join = &joinHandler{origin: o.Auth.PublicOrigin, store: o.Auth.Devices, byAddress: newCounter(joinPerAddress, time.Hour, now), byEmail: newCounter(joinPerEmail, time.Hour, now), failures: failures, now: now, invalidMsg: bus.ErrInvalidInvite.Error()}
 	}
+	// /v1/config names the sign-in methods only when device sign-in is on:
+	// a Google-only server answers exactly the four OAuth fields, which is
+	// all a v0.3.3 client's strict parser accepts.
+	var advertised []string
+	advertisedOrigin := ""
+	if join != nil {
+		advertised, advertisedOrigin = methods, o.Auth.PublicOrigin
+	}
 	required := "a Google ID token is required"
 	if join != nil {
 		required = "a Google ID token or a ClawBridge-Device signature is required"
@@ -350,15 +358,15 @@ func NewHandlerWithOptions(store Executor, verifier Verifier, o HandlerOptions) 
 				BrowserClientSecret string   `json:"browser_client_secret"`
 				DeviceClientID      string   `json:"device_client_id"`
 				DeviceClientSecret  string   `json:"device_client_secret"`
-				AuthMethods         []string `json:"auth_methods"`
+				AuthMethods         []string `json:"auth_methods,omitempty"`
 				PublicOrigin        string   `json:"public_origin,omitempty"`
 			}{
 				BrowserClientID:     metadata.BrowserClientID,
 				BrowserClientSecret: metadata.BrowserClientSecret,
 				DeviceClientID:      metadata.DeviceClientID,
 				DeviceClientSecret:  metadata.DeviceClientSecret,
-				AuthMethods:         methods,
-				PublicOrigin:        o.Auth.PublicOrigin,
+				AuthMethods:         advertised,
+				PublicOrigin:        advertisedOrigin,
 			}
 			w.Header().Set("Content-Type", "application/json")
 			_ = json.NewEncoder(w).Encode(config)

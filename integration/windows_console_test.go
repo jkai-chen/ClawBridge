@@ -46,6 +46,9 @@ func TestWindowsGuidedSetupConsoleInput(t *testing.T) {
 	}
 	c := startConsole(t, []string{binary, "--client-config", config}, env)
 
+	// Start comes first; its "2" leads to the guided join.
+	c.expect("Choose 1, 2 or 3:", "Start did not prompt in a console")
+	c.send("2\r")
 	c.expect("Service HTTPS URL:", "the guided setup did not prompt in a console")
 	c.send("https://example.invalid")
 	c.expect("https://example.invalid", "typed text was not echoed")

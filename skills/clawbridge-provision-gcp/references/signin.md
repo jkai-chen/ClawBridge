@@ -6,8 +6,9 @@ Pick the path by the user's ClawBridge release, on their machine:
 clawbridge cloud bootstrap --help
 ```
 
-- It succeeds: the release has **device sign-in**. Use the device path. The
-  server needs no Google OAuth client.
+- It succeeds: the release has **device sign-in**, and its compose file no
+  longer requires the Google entries. Use the device path. The server needs no
+  Google OAuth client.
 - It fails with an unknown command: the release predates device sign-in. Use
   the Google fallback.
 

@@ -3,7 +3,8 @@
 Replace the capitalised placeholders with the user's inputs: `PROJECT`, `REGION`,
 `ZONE`, `DOMAIN`, `OWNER_EMAIL`, `SIZE`, `BUCKET`. The resource names
 (`clawbridge-1`, `clawbridge-ip`, `clawbridge-data`, `clawbridge-vm`,
-`clawbridge-https`, `clawbridge-iap-ssh`) are fixed: the checks and the guide
+`clawbridge-net`, `clawbridge-subnet`, `clawbridge-https`, `clawbridge-iap-ssh`)
+are fixed: the checks and the guide
 expect them. Append each name to `created.txt` right after its create succeeds.
 
 ## 1. Preflight
@@ -27,6 +28,7 @@ gcloud compute instances list --project=PROJECT --filter='name=clawbridge-1' --f
 gcloud compute addresses list --project=PROJECT --filter='name=clawbridge-ip' --format='value(name)'
 gcloud compute disks list --project=PROJECT --filter='name=clawbridge-data' --format='value(name)'
 gcloud compute firewall-rules list --project=PROJECT --filter='name~^clawbridge-' --format='value(name)'
+gcloud compute networks list --project=PROJECT --filter='name=clawbridge-net' --format='value(name)'
 gcloud iam service-accounts list --project=PROJECT --filter='email~^clawbridge-vm@' --format='value(email)'
 gcloud storage buckets list --project=PROJECT --filter='name=BUCKET' --format='value(name)'
 ```
@@ -54,16 +56,33 @@ Keep 30 days of backups. Write `lifecycle.json` in your working directory:
 gcloud storage buckets update gs://BUCKET --lifecycle-file=lifecycle.json
 ```
 
-The static IP, the data disk and the firewall. Only TCP 443 is public; SSH
-comes only from Google's IAP range:
+A dedicated network, so no project-wide rule (such as the `default` network's
+SSH, RDP and ICMP from anywhere) reaches the VM. Its only ingress: TCP 443 from
+anywhere, and SSH from Google's IAP range. Outbound traffic is allowed, as on
+any VPC:
+
+```sh
+gcloud compute networks create clawbridge-net --project=PROJECT --subnet-mode=custom
+gcloud compute networks subnets create clawbridge-subnet --project=PROJECT --network=clawbridge-net \
+  --region=REGION --range=10.20.0.0/24
+gcloud compute firewall-rules create clawbridge-https --project=PROJECT --network=clawbridge-net \
+  --direction=INGRESS --allow=tcp:443 --source-ranges=0.0.0.0/0 --target-tags=clawbridge
+gcloud compute firewall-rules create clawbridge-iap-ssh --project=PROJECT --network=clawbridge-net \
+  --direction=INGRESS --allow=tcp:22 --source-ranges=35.235.240.0/20 --target-tags=clawbridge
+```
+
+Check: the network's rules must be exactly these two.
+
+```sh
+gcloud compute firewall-rules list --project=PROJECT --filter='network~/clawbridge-net$' \
+  --format='value(name,sourceRanges.list(),allowed[].map().firewall_rule().list())'
+```
+
+The static IP and the data disk:
 
 ```sh
 gcloud compute addresses create clawbridge-ip --project=PROJECT --region=REGION
 gcloud compute disks create clawbridge-data --project=PROJECT --zone=ZONE --size=20GB --type=pd-balanced
-gcloud compute firewall-rules create clawbridge-https --project=PROJECT --network=default \
-  --direction=INGRESS --allow=tcp:443 --source-ranges=0.0.0.0/0 --target-tags=clawbridge
-gcloud compute firewall-rules create clawbridge-iap-ssh --project=PROJECT --network=default \
-  --direction=INGRESS --allow=tcp:22 --source-ranges=35.235.240.0/20 --target-tags=clawbridge
 ```
 
 The VM, with the data disk attached and kept if the VM is ever deleted:
@@ -72,6 +91,7 @@ The VM, with the data disk attached and kept if the VM is ever deleted:
 gcloud compute instances create clawbridge-1 --project=PROJECT --zone=ZONE \
   --machine-type=SIZE --image-family=debian-12 --image-project=debian-cloud \
   --boot-disk-size=20GB --boot-disk-type=pd-balanced --address=clawbridge-ip \
+  --network=clawbridge-net --subnet=clawbridge-subnet \
   --disk=name=clawbridge-data,device-name=clawbridge-data,mode=rw,auto-delete=no \
   --tags=clawbridge --service-account=clawbridge-vm@PROJECT.iam.gserviceaccount.com \
   --scopes=cloud-platform --shielded-secure-boot --metadata=enable-oslogin=TRUE
@@ -93,16 +113,24 @@ there:
 gcloud compute ssh clawbridge-1 --project=PROJECT --zone=ZONE --tunnel-through-iap
 ```
 
-**The data disk.** Format it only when it is new and empty: `blkid` must print
-nothing. If it prints a filesystem, stop and ask (rule 5).
+**The data disk.** The block formats the disk only when it has no filesystem,
+and adds the `/etc/fstab` line only once, so running it again is safe. After a
+format, append `formatted clawbridge-data` to `created.txt`. If it prints STOP
+and `created.txt` does not record that format, the disk holds data you did not
+create: stop and ask (rule 5).
 
 ```sh
 DISK=/dev/disk/by-id/google-clawbridge-data
-sudo blkid "$DISK"
-sudo mkfs.ext4 -m 0 -E lazy_itable_init=0,lazy_journal_init=0,discard "$DISK"
+if sudo blkid "$DISK" >/dev/null; then
+  echo "STOP: $DISK already has a filesystem; not formatting"
+else
+  sudo mkfs.ext4 -m 0 -E lazy_itable_init=0,lazy_journal_init=0,discard "$DISK"
+fi
 sudo mkdir -p /var/lib/clawbridge-postgres
-echo "UUID=$(sudo blkid -s UUID -o value "$DISK") /var/lib/clawbridge-postgres ext4 discard,defaults,nofail 0 2" |
-  sudo tee -a /etc/fstab >/dev/null
+if ! grep -q ' /var/lib/clawbridge-postgres ' /etc/fstab; then
+  echo "UUID=$(sudo blkid -s UUID -o value "$DISK") /var/lib/clawbridge-postgres ext4 discard,defaults,nofail 0 2" |
+    sudo tee -a /etc/fstab >/dev/null
+fi
 sudo mount -a
 findmnt -n -o SOURCE /var/lib/clawbridge-postgres
 readlink -f "$DISK"
@@ -124,15 +152,18 @@ sudo apt-get update
 sudo apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
 ```
 
-**The release.** Check out the tag of the user's own ClawBridge release (the
-`version` that `clawbridge version` prints on their machine), never a branch,
-and record its commit:
+**The release.** Check out the tag of the user's own ClawBridge release, never
+a branch. On the user's machine, `clawbridge version` prints its `version` (the
+tag) and `commit`:
 
 ```sh
 TAG=vX.Y.Z
 sudo git clone --branch "$TAG" --depth 1 https://github.com/jkai-chen/ClawBridge.git /opt/clawbridge/repo
 sudo git -C /opt/clawbridge/repo rev-parse HEAD
 ```
+
+The printed commit must equal the `commit` from `clawbridge version`. If it
+differs, stop and ask (rule 5).
 
 ## 6. Install the server
 
@@ -143,8 +174,10 @@ here and never printed. Add the sign-in lines from
 
 ```sh
 sudo install -d -o root -g root -m 0755 /etc/clawbridge
-sudo test ! -e /etc/clawbridge/clawbridge.env
-sudo sh -c 'umask 077; {
+if sudo test -e /etc/clawbridge/clawbridge.env; then
+  echo "STOP: /etc/clawbridge/clawbridge.env already exists; not replacing it"
+else
+  sudo sh -c 'umask 077; {
   printf "POSTGRES_PASSWORD=%s\n" "$(openssl rand -hex 32)"
   printf "CLAWBRIDGE_DOMAIN=%s\n" DOMAIN
   printf "CLAWBRIDGE_BOOTSTRAP_OWNER=%s\n" OWNER_EMAIL
@@ -152,9 +185,11 @@ sudo sh -c 'umask 077; {
   printf "CLAWBRIDGE_BACKUP_BUCKET=%s\n" BUCKET
   printf "COMPOSE_PROJECT_NAME=clawbridge\n"
 } > /etc/clawbridge/clawbridge.env'
+fi
 ```
 
-If `test ! -e` fails, an env file already exists: stop and ask (rule 5).
+If it prints STOP, an env file already exists: stop and ask (rule 5). Add
+further lines with `sudo tee -a`, never by rewriting the file.
 
 **The disk guard and backups.** Follow "Persistent disk and backup guards" in
 `/opt/clawbridge/repo/docs/operations/deployment.md`, skipping its `/etc/fstab`

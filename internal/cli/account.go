@@ -29,8 +29,10 @@ import (
 // commands.
 
 const accountUsage = `usage:
-  clawbridge --server URL join --email EMAIL [--code CODE] [--label LABEL] [--key-store keyring|file]
-      Joins a hosted workspace with an invite. Without --code, the code is read from stdin.
+  clawbridge --server URL join --email EMAIL [--label LABEL] [--key-store keyring|file]
+      Joins a hosted workspace with an invite. It asks for the code without echoing it, or reads it
+      from stdin when that isn't a terminal. (--code CODE exists for scripts, but a command line is kept
+      in shell history and shown to other users' process lists.)
   clawbridge invite --email EMAIL --grant PROJECT=ROLE [--grant PROJECT=ROLE]... [--expires 72h]
   clawbridge invite --email EMAIL --recovery [--revoke-others]     (workspace owner)
   clawbridge invite list | invite revoke INVITE_ID
@@ -613,7 +615,7 @@ func runDeviceJoin(ctx context.Context, flags Config, args []string, stdin io.Re
 	f := flag.NewFlagSet("join", flag.ContinueOnError)
 	f.SetOutput(stderr)
 	email := f.String("email", "", "the email the invite was issued for")
-	code := f.String("code", "", "the invite code (read from stdin when absent)")
+	code := f.String("code", "", "the invite code; leave it out to be asked for it unechoed (or pipe it on stdin): a command line is kept in shell history and visible to other users")
 	label := f.String("label", "", "this device's label (default: this machine's name)")
 	store := f.String("key-store", "", "where the key is kept: keyring (the default), or file where there is no OS key store")
 	if _, err := parseAccountFlags(f, args, 0, 0); err != nil {
@@ -637,13 +639,13 @@ func runDeviceJoin(ctx context.Context, flags Config, args []string, stdin io.Re
 			raw, e := readHidden()
 			fmt.Fprintln(stderr)
 			if e != nil {
-				return errors.New("join needs the invite code, with --code or on stdin")
+				return errors.New("join needs the invite code: type it at the prompt, or pipe it on stdin")
 			}
 			*code = strings.TrimSpace(string(raw))
 		} else {
 			line, e := bufio.NewReader(stdin).ReadString('\n')
 			if e != nil && line == "" {
-				return errors.New("join needs the invite code, with --code or on stdin")
+				return errors.New("join needs the invite code: type it at the prompt, or pipe it on stdin")
 			}
 			*code = strings.TrimSpace(line)
 		}

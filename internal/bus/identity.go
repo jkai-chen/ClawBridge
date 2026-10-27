@@ -508,3 +508,25 @@ func (s *Store) OperatorClearWorkspaceDomains(ctx context.Context, workspace str
 	}
 	return out, nil
 }
+
+// MemberWorkspaces are the server workspaces principal is a member of, for
+// a caller that must prove membership before it names a workspace (G9 F1).
+// Only membership is read here; the caller still runs a request in one of
+// them, which applies the domain gate and the account binding.
+func (s *Store) MemberWorkspaces(ctx context.Context, principal string) ([]string, error) {
+	raw, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	if err != nil {
+		return nil, errors.New("authority unavailable")
+	}
+	tx := &transaction{Tx: raw, postgres: s.postgres}
+	defer tx.Rollback()
+	rows, err := query(ctx, tx, `SELECT m.workspace_id FROM members m JOIN workspaces w ON w.id=m.workspace_id WHERE m.principal=? AND w.mode='server' ORDER BY m.workspace_id`, normalPrincipal(principal))
+	if err != nil {
+		return nil, err
+	}
+	out := []string{}
+	for _, r := range rows {
+		out = append(out, str(r, "workspace_id"))
+	}
+	return out, nil
+}

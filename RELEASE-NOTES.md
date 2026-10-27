@@ -7,6 +7,16 @@
   neither, `clawbridge retire` (and MCP `retire_session`) is refused, naming the issue, and nothing changes. A move to
   a successor isn't asked.
 
+## Security (G9 prep)
+
+- **The ClawBridge Linear app answers members only (F1).** `linear_app_status`, `linear_app_states` and `linear_write`
+  now prove the caller's workspace membership before anything reaches the app. Before, any Google account could read
+  the app's Linear user and organisation IDs, since the sign-in client IDs are public. Clients that ask with no
+  workspace are found by their membership, so existing clients need no change.
+- **Invite codes stay off the command line (F4).** The bootstrap invite's hint, the CLI help and the docs now say
+  `clawbridge join --server URL --email EMAIL`, which asks for the code without echoing it (or reads it from stdin).
+  `--code` still works, for scripts.
+
 ## The dispatcher
 
 - **Enable refuses a dispatcher with nothing to match.** With no domains set and a task board binding that names no

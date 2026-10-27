@@ -91,12 +91,14 @@ no Google account. An owner invites you, gives you the code and the server's URL
 and you join:
 
 ```sh
-clawbridge --server https://SERVICE join --email ada@example.com --code CBJ-4K7P-WQ9D-2MXH-T6RB
+clawbridge --server https://SERVICE join --email ada@example.com
+Invite code:            # typed, not shown
 clawbridge --project CODEBASE whoami      # identity_provenance: device-key
 ```
 
-Without `--code`, the code is read from stdin, which keeps it out of shell history;
-at a terminal it isn't echoed. In a terminal, bare `clawbridge` (or
+`join` asks for the code at a terminal without echoing it, or reads it from stdin
+when piped. Don't pass it as `--code`: a command line is kept in shell history and
+shown in other users' process lists. In a terminal, bare `clawbridge` (or
 `clawbridge setup wizard`) does the same with prompts: choose "I have an invite
 code" (offered when the server takes device keys), then give the email and a name
 for this device. The code is asked last, unechoed, after you confirm.

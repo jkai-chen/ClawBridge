@@ -67,6 +67,6 @@ func runBootstrapInvite(ctx context.Context, args []string, stdout io.Writer) er
 	if out["workspace_created"] == true {
 		verb = "Created workspace %s"
 	}
-	_, err = fmt.Fprintf(stdout, verb+"; its owner is %s.\n\nOne-time sign-in code (single use, expires %s):\n\n    %s\n\nOn your own computer, run:\n\n    clawbridge join --server https://YOUR-DOMAIN --email %s --code <the code>\n\nThe code is a secret: type it yourself, and never paste it into a chat or an agent.\n", out["workspace"], out["email"], out["expires_at"], code, out["email"])
+	_, err = fmt.Fprintf(stdout, verb+"; its owner is %s.\n\nOne-time sign-in code (single use, expires %s):\n\n    %s\n\nOn your own computer, run:\n\n    clawbridge join --server https://YOUR-DOMAIN --email %s\n\nIt asks for the code without showing it. The code is a secret: type it yourself at that prompt, never on a command line (where shell history and other users' process lists keep it), and never paste it into a chat or an agent.\n", out["workspace"], out["email"], out["expires_at"], code, out["email"])
 	return err
 }

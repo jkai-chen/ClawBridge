@@ -336,9 +336,11 @@ func tooLate(ctx context.Context, room time.Duration) bool {
 	return ok && time.Until(deadline) < room
 }
 
-func isConflict(err error) bool {
+func isConflict(err error) bool { return hasCode(err, "conflict") }
+
+func hasCode(err error, code string) bool {
 	var coded interface{ Code() string }
-	return errors.As(err, &coded) && coded.Code() == "conflict"
+	return errors.As(err, &coded) && coded.Code() == code
 }
 
 // applyDueMarkers is the marker pass: a few due rows, under one held
@@ -354,6 +356,11 @@ func (s *Service) applyDueMarkers(ctx context.Context, scope bus.Request, lease 
 		return nil
 	}
 	due, err := s.commentLedger(ctx, scope, "marker_due", lease.fence(map[string]any{"limit": markerPassRows}))
+	if hasCode(err, "invalid") {
+		// A server older than limit (v0.3.4) refuses the arg: ask without
+		// it, and give back below the rows past a pass's.
+		due, err = s.commentLedger(ctx, scope, "marker_due", lease.fence(map[string]any{}))
+	}
 	if err != nil {
 		if isConflict(err) {
 			return err
@@ -392,6 +399,10 @@ func (s *Service) applyDueMarkers(ctx context.Context, scope bus.Request, lease 
 		}
 		cycle.MarkersLeft += len(markers) - i
 		stopped(why)
+	}
+	if len(markers) > markerPassRows {
+		stop(markerPassRows, "limit")
+		markers = markers[:markerPassRows]
 	}
 	for i, raw := range markers {
 		switch {

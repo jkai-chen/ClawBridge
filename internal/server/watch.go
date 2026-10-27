@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"strconv"
 	"strings"
 	"time"
 
@@ -67,16 +68,24 @@ func (t watcherTicker) Fallback(ctx context.Context, pid string) any { return t.
 type watchSettings struct {
 	interval                  time.Duration
 	tickAudience, tickAccount string
+	// budget is CLAWBRIDGE_WATCH_BUDGET; 0 when unset (the bus's 200).
+	budget int
 }
 
 // readWatchSettings reads CLAWBRIDGE_WATCH_INTERVAL (1m–30m, empty for no
-// in-process clock) and the two tick variables (both or neither). The
-// app's marker writes use the shared operation ledger in Postgres.
+// in-process clock), the two tick variables (both or neither) and
+// CLAWBRIDGE_WATCH_BUDGET. The app's marker writes use the shared
+// operation ledger in Postgres.
 func readWatchSettings(getenv func(string) string) (watchSettings, error) {
 	w := watchSettings{
 		tickAudience: strings.TrimSpace(getenv("CLAWBRIDGE_TICK_AUDIENCE")),
 		tickAccount:  strings.TrimSpace(getenv("CLAWBRIDGE_TICK_SERVICE_ACCOUNT")),
 	}
+	budget, err := readWatchBudget(getenv)
+	if err != nil {
+		return w, err
+	}
+	w.budget = budget
 	if raw := strings.TrimSpace(getenv("CLAWBRIDGE_WATCH_INTERVAL")); raw != "" {
 		d, err := time.ParseDuration(raw)
 		if err != nil || d < time.Minute || d > 30*time.Minute {
@@ -89,6 +98,29 @@ func readWatchSettings(getenv func(string) string) (watchSettings, error) {
 	}
 	return w, nil
 }
+
+// readWatchBudget reads CLAWBRIDGE_WATCH_BUDGET: the Linear calls per hour
+// every project's server watch may make, 1–600; empty is 0, the bus's
+// default of 200.
+func readWatchBudget(getenv func(string) string) (int, error) {
+	raw := strings.TrimSpace(getenv("CLAWBRIDGE_WATCH_BUDGET"))
+	if raw == "" {
+		return 0, nil
+	}
+	n, err := strconv.Atoi(raw)
+	if err != nil || n < 1 || n > 600 {
+		return 0, fmt.Errorf("CLAWBRIDGE_WATCH_BUDGET must be a whole number from 1 to 600 (Linear calls per hour)")
+	}
+	return n, nil
+}
+
+// budgeted is a watcher whose lease budget the server sets.
+type budgeted interface{ SetBudget(int) }
+
+var _ budgeted = watcherTicker{}
+
+// SetBudget sets the Linear calls per hour of every tick and nudge.
+func (t watcherTicker) SetBudget(n int) { t.w.Budget = n }
 
 func (w watchSettings) wanted() bool { return w.interval > 0 || w.tickAudience != "" }
 
@@ -107,6 +139,9 @@ func startWatcher(ctx context.Context, store *bus.Store, w watchSettings, opts H
 	if err != nil || built == nil {
 		log.Print("watcher: off (the Linear app is not configured)")
 		return opts
+	}
+	if b, ok := built.(budgeted); ok {
+		b.SetBudget(w.budget)
 	}
 	// The clock and the endpoint share one flight, so their ticks never
 	// overlap.

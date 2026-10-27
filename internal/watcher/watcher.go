@@ -67,6 +67,9 @@ type Watcher struct {
 	Ledger          func(context.Context) linearboard.OperationLedger
 	LedgerDirectory string
 	Now             func() time.Time
+	// Budget is the Linear calls per hour each tick's and nudge's lease
+	// allows (CLAWBRIDGE_WATCH_BUDGET); 0 takes the bus default, 200.
+	Budget int
 
 	mu       sync.Mutex
 	services map[string]*linearboard.Service
@@ -121,7 +124,8 @@ func (w *Watcher) project(ctx context.Context, pid string, healthLeft int) Proje
 	svc := w.service(pid)
 	scope := bus.Request{Session: bus.SystemSessionName, Args: map[string]any{}}
 	err := svc.Watch(ctx, scope, linearboard.WatchOptions{
-		Once: true,
+		Budget: w.Budget,
+		Once:   true,
 		Cycle: func(c linearboard.WatchCycle) error {
 			tick.Comments = &c
 			return nil
@@ -175,6 +179,7 @@ func (w *Watcher) nudged(ctx context.Context, pid string, dispatch bool) Project
 	scope := bus.Request{Session: bus.SystemSessionName, Args: map[string]any{}}
 	svc := w.service(pid)
 	err := svc.Watch(ctx, scope, linearboard.WatchOptions{
+		Budget:      w.Budget,
 		Once:        true,
 		MarkersOnly: true,
 		// A failed nudge check never costs the pass its marker output

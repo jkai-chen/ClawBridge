@@ -119,3 +119,41 @@ func settleTUI(m tui.Model, cmd tea.Cmd) tui.Model {
 
 func runes(s string) tea.KeyMsg { return tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(s)} }
 func enter() tea.KeyMsg         { return tea.KeyMsg{Type: tea.KeyEnter} }
+
+// A rotation through the CLI and through the TUI's c sends the same request
+// from the same stored setup.
+func TestModelRotateCLIAndTUIAgree(t *testing.T) {
+	config := Config{Workspace: "w", Project: "p", Session: "s"}
+	modelTerminal(t, "", modelTestKey, true)
+	cliServer := &rotateServer{fakeModelServer: fakeModelServer{outcomes: []string{"active"}}, active: storedSetup(dispatchermodel.DisclosureVersion)}
+	if err := runModelRotate(context.Background(), cliServer, config, map[string]any{}, &bytes.Buffer{}); err != nil {
+		t.Fatal(err)
+	}
+	tuiServer := &rotateServer{fakeModelServer: fakeModelServer{outcomes: []string{"active"}}, active: storedSetup(dispatchermodel.DisclosureVersion)}
+	m, err := tui.New(tui.Config{Executor: rotateDoctorServer{tuiServer}, Mode: tui.ModeLocal, Workspace: config.Workspace, Project: config.Project, Session: config.Session})
+	if err != nil {
+		t.Fatal(err)
+	}
+	m, cmd := m.Show(tui.DispatcherModel)
+	m = settleTUI(m, cmd)
+	for _, k := range []tea.KeyMsg{runes("c"), runes(modelTestKey), enter()} {
+		m, cmd = m.UpdateModel(k)
+		m = settleTUI(m, cmd)
+	}
+	if cli, tuiReq := setupRequest(t, cliServer.requests), setupRequest(t, tuiServer.requests); !reflect.DeepEqual(cli, tuiReq) {
+		t.Fatalf("the CLI sent\n%#v\nthe TUI sent\n%#v", cli, tuiReq)
+	}
+}
+
+// rotateDoctorServer adds the TUI's status read to rotateServer.
+type rotateDoctorServer struct{ *rotateServer }
+
+func (s rotateDoctorServer) Execute(ctx context.Context, r bus.Request) (bus.Result, error) {
+	if r.Operation == "dispatcher_model_doctor" {
+		// The server lists the caller's own key; the TUI offers c only then.
+		return bus.Result{Data: map[string]any{"seal_configured": true, "holders": []any{
+			map[string]any{"principal": "owner@example.com", "you": true, "key": "active", "config_revision": int64(1)},
+		}}}, nil
+	}
+	return s.rotateServer.Execute(ctx, r)
+}

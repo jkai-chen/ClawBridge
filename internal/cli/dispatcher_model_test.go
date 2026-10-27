@@ -250,3 +250,129 @@ func TestModelSetupReviewFixes(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+// rotateServer answers dispatcher_model_config with the owner's stored
+// setup, and the setup and status calls like fakeModelServer.
+type rotateServer struct {
+	fakeModelServer
+	active, pending map[string]any
+}
+
+func (r *rotateServer) Execute(ctx context.Context, req bus.Request) (bus.Result, error) {
+	if req.Operation == "dispatcher_model_config" {
+		r.requests = append(r.requests, req)
+		var active, pending any
+		if r.active != nil {
+			active = r.active
+		}
+		if r.pending != nil {
+			pending = r.pending
+		}
+		return bus.Result{Data: map[string]any{"active": active, "pending": pending}}, nil
+	}
+	return r.fakeModelServer.Execute(ctx, req)
+}
+
+func storedSetup(version string) map[string]any {
+	caps := dispatchermodel.DefaultCaps()
+	caps.RunsPerHour, caps.DailyTokens = 4, 500000
+	return map[string]any{"provider_id": "anthropic", "api": "anthropic-messages", "base_url": "https://api.anthropic.com", "model": "claude-sonnet-4-5",
+		"caps": caps.Args(), "egress_text_version": version, "config_revision": int64(5), "created_at": "2026-10-27T10:00:00Z"}
+}
+
+// A rotation sends the stored setup unchanged, with only the key new, and
+// asks nothing else while the disclosure is the current one.
+func TestModelRotate(t *testing.T) {
+	const newKey = "sk-ant-api03-NEWNEWNEWNEWNEWNEW5678"
+	modelTerminal(t, "", newKey, true)
+	server := &rotateServer{fakeModelServer: fakeModelServer{outcomes: []string{"active"}}, active: storedSetup(dispatchermodel.DisclosureVersion)}
+	var out bytes.Buffer
+	if err := runModelRotate(context.Background(), server, Config{Workspace: "w", Project: "p"}, map[string]any{}, &out); err != nil {
+		t.Fatal(err, out.String())
+	}
+	got := setupRequest(t, server.requests)
+	caps := dispatchermodel.DefaultCaps()
+	caps.RunsPerHour, caps.DailyTokens = 4, 500000
+	want := map[string]any{"provider_id": "anthropic", "api": "anthropic-messages", "base_url": "https://api.anthropic.com", "model": "claude-sonnet-4-5",
+		"key": newKey, "caps": caps.Args(), "egress_text_version": dispatchermodel.DisclosureVersion, "egress_confirmed": true}
+	if !reflect.DeepEqual(got.Args, want) || got.Project != "p" {
+		t.Fatalf("%v", got.Args)
+	}
+	text := out.String()
+	for _, want := range []string{"Rotating the key of your active setup: Anthropic, model claude-sonnet-4-5 (revision 5)", "(hidden)", "the model is set up", "The new key is active"} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("no %q in %s", want, text)
+		}
+	}
+	if strings.Contains(text, "NEWNEW") || strings.Contains(text, "never sends emails") {
+		t.Fatal(text)
+	}
+	// Only a pending setup: that one is rotated.
+	modelTerminal(t, "", newKey, true)
+	server = &rotateServer{fakeModelServer: fakeModelServer{outcomes: []string{"active"}}, pending: storedSetup(dispatchermodel.DisclosureVersion)}
+	out.Reset()
+	if err := runModelRotate(context.Background(), server, Config{}, map[string]any{}, &out); err != nil || !strings.Contains(out.String(), "your setup whose test is pending") {
+		t.Fatal(err, out.String())
+	}
+}
+
+// An older disclosure is confirmed again, by "yes" or --confirm-egress;
+// without it, or with no setup, or a provider no longer offered, nothing is
+// sent.
+func TestModelRotateRefusals(t *testing.T) {
+	const newKey = "sk-ant-api03-NEWNEWNEWNEWNEWNEW5678"
+	old := storedSetup("v0")
+	run := func(t *testing.T, server *rotateServer, a map[string]any, answers string, terminal bool) (string, error) {
+		t.Helper()
+		hidden := newKey
+		if !terminal {
+			answers, hidden = newKey+"\n", ""
+		}
+		modelTerminal(t, answers, hidden, terminal)
+		var out bytes.Buffer
+		err := runModelRotate(context.Background(), server, Config{}, a, &out)
+		if err != nil && strings.Contains(err.Error(), "NEWNEW") || strings.Contains(out.String(), "NEWNEW") {
+			t.Fatal("the key was printed")
+		}
+		return out.String(), err
+	}
+	sent := func(s *rotateServer) bool {
+		for _, r := range s.requests {
+			if r.Operation == "dispatcher_model_setup" {
+				return true
+			}
+		}
+		return false
+	}
+	s := &rotateServer{fakeModelServer: fakeModelServer{outcomes: []string{"active"}}, active: old}
+	if out, err := run(t, s, map[string]any{}, "yes\n", true); err != nil || !sent(s) || !strings.Contains(out, "never sends emails") {
+		t.Fatal(err, out)
+	}
+	s = &rotateServer{fakeModelServer: fakeModelServer{outcomes: []string{"active"}}, active: old}
+	if _, err := run(t, s, map[string]any{}, "no\n", true); err == nil || !strings.Contains(err.Error(), "not confirmed") || sent(s) {
+		t.Fatal(err)
+	}
+	s = &rotateServer{fakeModelServer: fakeModelServer{outcomes: []string{"active"}}, active: old}
+	if _, err := run(t, s, map[string]any{"key_stdin": true}, "", false); err == nil || !strings.Contains(err.Error(), "--confirm-egress is required") || sent(s) {
+		t.Fatal(err)
+	}
+	s = &rotateServer{fakeModelServer: fakeModelServer{outcomes: []string{"active"}}, active: old}
+	if _, err := run(t, s, map[string]any{"key_stdin": true, "confirm_egress": true}, "", false); err != nil || !sent(s) {
+		t.Fatal(err)
+	}
+	s = &rotateServer{}
+	if _, err := run(t, s, map[string]any{}, "", true); err == nil || !strings.Contains(err.Error(), "dispatcher model setup") || sent(s) {
+		t.Fatal(err)
+	}
+	gone := storedSetup(dispatchermodel.DisclosureVersion)
+	gone["provider_id"] = "retired"
+	s = &rotateServer{active: gone}
+	if _, err := run(t, s, map[string]any{}, "", true); err == nil || !strings.Contains(err.Error(), "no longer offered") || sent(s) {
+		t.Fatal(err)
+	}
+	// Through the command line: a key-looking argument stops it first.
+	var outb, errs bytes.Buffer
+	if err := Run(context.Background(), []string{"dispatcher", "model", "key", "rotate", newKey}, &outb, &errs); !errors.Is(err, errKeyInArgs) {
+		t.Fatal(err)
+	}
+}

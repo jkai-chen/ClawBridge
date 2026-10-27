@@ -3,22 +3,12 @@ ClawBridge · ws_1 › prj_1 › engineer › Dispatcher › Help  cloud
 
 ╭──────────────────────────────────────────────────────────────────────────────╮
 │ Help · Dispatcher                                                            │
-│ The dispatcher's model: the provider, model and key it uses, and its caps.   │
-│                                                                              │
 │ This screen                                                                  │
 │   s          set up the model                                                │
+│   c          rotate your key                                                 │
 │                                                                              │
 │ Everywhere                                                                   │
-│   Tab        next screen                                                     │
-│   S-Tab      previous screen                                                 │
-│   ↑↓         select                                                          │
-│   PgUp/PgDn  scroll                                                          │
-│   Esc        back                                                            │
-│   r          reload                                                          │
-│   ?          help                                                            │
-│   q          quit                                                            │
-│   1-8        switch screen                                                   │
-│   1 Overview · 2 Projects · 3 Sessions · 4 Inbox · 5 Linear · 6 Dispatcher · │
-│ 7 Account · 8 Doctor                                                         │
+│   Tab next screen · S-Tab previous screen · ↑↓ select · PgUp/PgDn scroll ·   │
+│ Esc back · r reload · ? help · q quit · 1-8 switch screen                    │
 ╰──────────────────────────────────────────────────────────────────────────────╯
 Esc or ? closes help

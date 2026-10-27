@@ -563,6 +563,8 @@ func (m Model) UpdateModel(msg tea.Msg) (Model, tea.Cmd) {
 		return m.applyAccountAction(x)
 	case modelLoadedMsg:
 		return m.applyModelLoaded(x), nil
+	case modelConfigMsg:
+		return m.applyModelConfig(x), nil
 	case modelSentMsg:
 		return m.applyModelSent(x)
 	case modelTestedMsg:

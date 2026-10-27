@@ -1,0 +1,22 @@
+{
+  "case": {
+    "case_id": "case_0123456789abcdef0123456789abcdef",
+    "deadline": "2026-01-01T00:00:00Z",
+    "deadline_ms": 90000,
+    "facts": {},
+    "kind": "chat",
+    "message": {
+      "from": {
+        "principal": "p_bbbbbbbbbbbbbbbb",
+        "session": ""
+      },
+      "text": "Why did worker-1 wait?"
+    },
+    "permitted_actions": [],
+    "reason_codes": [],
+    "subject": {
+      "id": "msg_ffffffffffffffffffffffffffffffff",
+      "type": "message"
+    }
+  }
+}

@@ -343,3 +343,92 @@ func TestPostgresDeviceInviteLifeAndIssuer(t *testing.T) {
 		}
 	}
 }
+
+// securityNotices is the security messages addressed to session name in
+// project p.
+func (f *pgIdentityFixture) securityNotices(name string) []string {
+	f.t.Helper()
+	rows, err := f.s.db.Query(`SELECT m.body FROM messages m JOIN projects p ON p.id=m.project_id JOIN workspaces w ON w.id=p.workspace_id WHERE w.name=$1 AND p.slug='p' AND m.kind='security' AND m.address=$2 ORDER BY m.sequence`, f.workspace, name)
+	if err != nil {
+		f.t.Fatal(err)
+	}
+	defer rows.Close()
+	out := []string{}
+	for rows.Next() {
+		var body string
+		if err = rows.Scan(&body); err != nil {
+			f.t.Fatal(err)
+		}
+		out = append(out, body)
+	}
+	return out
+}
+
+// A1-D4: a device event is also one security notice to each project's
+// coordinator session, when the main owner registered it; never to one run
+// by anyone else; once per event; with the user, label, device and what
+// happened, nothing more.
+func TestPostgresOwnerCoordinatorHearsOfDevices(t *testing.T) {
+	f := newPGIdentityFixture(t)
+	f.must(f.owner, "sub-owner", Request{Operation: "register_session", Workspace: f.workspace, Project: "p", Session: "coord", Args: map[string]any{"instance": "coord-i"}})
+	f.exec(`UPDATE projects SET coordinator_session=(SELECT id FROM sessions WHERE name='coord' AND project_id=projects.id) WHERE slug='p' AND workspace_id=$1`, f.workspaceID(f.workspace))
+	ada := newID("ada") + "@identity-test.example"
+	key := newKey(t)
+	if _, err := f.join(ada, f.invite(f.owner, ada, "member")["code"].(string), key); err != nil {
+		t.Fatal(err)
+	}
+	got := f.securityNotices("coord")
+	if len(got) != 1 || !strings.Contains(got[0], `new device "laptop" (`+keyID(t, key)+`) added to `+ada) || !strings.Contains(got[0], "via invite") || strings.Contains(got[0], key) {
+		t.Fatal(got)
+	}
+	// Once per event, however often it's sent.
+	var event string
+	if err := f.s.db.QueryRow(`SELECT event_id FROM device_events WHERE device_id=$1`, keyID(t, key)).Scan(&event); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := f.s.db.BeginTx(context.Background(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tx := &transaction{Tx: raw, postgres: true}
+	if err = f.s.ownerDeviceNotices(context.Background(), tx, f.workspaceID(f.workspace), event, ada, keyID(t, key), "added", "laptop", "invite", f.owner, stamp()); err != nil {
+		t.Fatal(err)
+	}
+	if err = raw.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	if got = f.securityNotices("coord"); len(got) != 1 {
+		t.Fatal("sent twice:", got)
+	}
+	// A revoke too.
+	if _, err = f.auth(f.owner, "device_revoke", map[string]any{"device_id": keyID(t, key)}); err != nil {
+		t.Fatal(err)
+	}
+	if got = f.securityNotices("coord"); len(got) != 2 || !strings.Contains(got[1], "revoked") || !strings.Contains(got[1], "by "+f.owner) {
+		t.Fatal(got)
+	}
+	// A coordinator someone else registered hears nothing.
+	f.role(ada, "lead")
+	f.must(ada, "sub-ada", Request{Operation: "register_session", Workspace: f.workspace, Project: "p", Session: "ada-coord", Args: map[string]any{"instance": "ada-coord-i"}})
+	f.exec(`UPDATE projects SET coordinator_session=(SELECT id FROM sessions WHERE name='ada-coord' AND project_id=projects.id) WHERE slug='p' AND workspace_id=$1`, f.workspaceID(f.workspace))
+	bob := newID("bob") + "@identity-test.example"
+	if _, err = f.join(bob, f.invite(f.owner, bob, "member")["code"].(string), newKey(t)); err != nil {
+		t.Fatal(err)
+	}
+	if got = f.securityNotices("ada-coord"); len(got) != 0 {
+		t.Fatal("a coordinator another principal runs was told:", got)
+	}
+	if got = f.securityNotices("coord"); len(got) != 2 {
+		t.Fatal("the old coordinator was told:", got)
+	}
+	// Nor does the owner's coordinator once it's retired.
+	f.exec(`UPDATE projects SET coordinator_session=(SELECT id FROM sessions WHERE name='coord' AND project_id=projects.id) WHERE slug='p' AND workspace_id=$1`, f.workspaceID(f.workspace))
+	f.exec(`UPDATE sessions SET status='retired' WHERE name='coord'`)
+	cy := newID("cy") + "@identity-test.example"
+	if _, err = f.join(cy, f.invite(f.owner, cy, "member")["code"].(string), newKey(t)); err != nil {
+		t.Fatal(err)
+	}
+	if got = f.securityNotices("coord"); len(got) != 2 {
+		t.Fatal("a retired coordinator was told:", got)
+	}
+}

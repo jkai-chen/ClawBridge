@@ -41,12 +41,16 @@ func TestReadsTheFixtures(t *testing.T) {
 
 // The fixtures stay synthetic: no tool-call IDs, addresses or home paths.
 func TestFixturesAreSynthetic(t *testing.T) {
-	for _, name := range []string{"testdata/claude-code.jsonl", "testdata/codex.jsonl"} {
+	hooks, _ := filepath.Glob("testdata/hooks/*.json")
+	if len(hooks) != 4 {
+		t.Fatalf("%d hook fixtures", len(hooks))
+	}
+	for _, name := range append([]string{"testdata/claude-code.jsonl", "testdata/codex.jsonl", "testdata/README.md"}, hooks...) {
 		data, err := os.ReadFile(name)
 		if err != nil {
 			t.Fatal(err)
 		}
-		for _, bad := range []string{"toolu_", "call_", "msg_", "req_", "@", "/Users/", "/home/"} {
+		for _, bad := range []string{"toolu_", "call_", "msg_", "req_", "@", "/Users/", "/home/", "rate_limit"} {
 			if strings.Contains(string(data), bad) {
 				t.Fatalf("%s contains %q", name, bad)
 			}

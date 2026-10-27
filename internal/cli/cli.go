@@ -49,7 +49,8 @@ Commands: setup --local, project create SLUG, register [NAME], sessions, send TO
           sync, purge-expired, principal-unbind EMAIL --confirm [--allow-previous],
           workspace-domains DOMAIN...|--clear, doctor, tui [--screen SCREEN], version,
           cloud check [infra|server|version|workspace|linear-app|backups|all], cloud secret set KEY (own-server onboarding),
-          context show [--session NAME | --agent claude-code|codex --transcript PATH] [--json]
+          context show [--session NAME | --agent claude-code|codex --transcript PATH] [--json],
+          context bind [--session NAME] --codex-thread UUID|--agent K --transcript PATH, context hooks install|uninstall [--scope local|user|project-shared]
 Interactive: bare clawbridge opens the selected profile, or Start without one; onboard reopens Start
 (local, join a team server, or your own server); setup wizard starts guided join.
 Onboarding: setup join --server URL --workspace TEAM --project CODEBASE [--login|--device]

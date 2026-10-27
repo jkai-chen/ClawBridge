@@ -13,7 +13,7 @@ import (
 
 // Binding is a session's local record of its transcript (§4.1), at
 // <state home>/context/<session>.json. It is private to the user and never
-// sent anywhere. Step 2's binding commands write it; the reader only reads.
+// sent anywhere. The binding commands write it (SaveBinding).
 type Binding struct {
 	Version    int    `json:"version"`
 	Agent      string `json:"agent"`
@@ -23,6 +23,15 @@ type Binding struct {
 	// context report (§4.4, CW-L5), so nothing local makes a network call.
 	Levels       *Levels `json:"levels,omitempty"`
 	HandoverHint string  `json:"handover_hint,omitempty"`
+	// CompactingAt and CompactTrigger are the last compaction the agent
+	// announced (Claude Code's PreCompact hook), for the reporter (§4.4).
+	// ClaudeSessionID and AgentPID are the Claude Code session and process
+	// a hook bound, so a nested agent in the same project can't take the
+	// binding over while that process lives.
+	ClaudeSessionID string `json:"claude_session_id,omitempty"`
+	AgentPID        int    `json:"agent_pid,omitempty"`
+	CompactingAt    string `json:"compacting_at,omitempty"`
+	CompactTrigger  string `json:"compact_trigger,omitempty"`
 }
 
 // Levels are a session's effective thresholds, in tokens.

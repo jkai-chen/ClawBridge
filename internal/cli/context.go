@@ -21,6 +21,20 @@ const contextUsage = `usage:
       CLAWBRIDGE_SESSION).
   clawbridge context show --agent claude-code|codex --transcript PATH [--json]
       The same for one transcript, named explicitly.
+  clawbridge context bind [--session NAME] --codex-thread UUID
+  clawbridge context bind [--session NAME] --agent claude-code|codex --transcript PATH
+      Bind the session to its transcript: a Codex thread's rollout under
+      CODEX_HOME, or the file named.
+  clawbridge context hooks install|uninstall [--scope local|user|project-shared]
+      [--confirm-shared] [--dry-run]
+      Claude Code hooks that bind the session when it starts and note each
+      compaction. local (the default) is the project's
+      .claude/settings.local.json, refused when git tracks it; user is your
+      own settings.json; project-shared is the committed .claude/settings.json
+      and needs --confirm-shared. The change is shown before it is written,
+      and uninstall removes only ClawBridge's own entries.
+  clawbridge context bind|compacting --from-hook
+      Run by those hooks, with the hook's JSON on stdin. They always exit 0.
 Counts and times only: nothing from the transcript's content is shown.`
 
 // contextDir is where binding records live.
@@ -35,7 +49,18 @@ func contextDir() (string, error) {
 // runContext runs `clawbridge context …`. It reads local files only, so it
 // needs no configuration or route.
 func runContext(_ context.Context, args []string, stdout, stderr io.Writer) error {
-	if len(args) == 0 || args[0] != "show" {
+	if len(args) == 0 {
+		return errors.New(contextUsage)
+	}
+	switch args[0] {
+	case "show":
+	case "bind":
+		return runContextBind(args[1:], stdout, stderr)
+	case "compacting":
+		return runContextCompacting(args[1:], stderr)
+	case "hooks":
+		return runContextHooks(args[1:], stdout, stderr)
+	default:
 		return errors.New(contextUsage)
 	}
 	f := flag.NewFlagSet("context show", flag.ContinueOnError)

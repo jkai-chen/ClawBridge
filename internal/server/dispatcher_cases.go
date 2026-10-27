@@ -197,6 +197,27 @@ func toolArgs(tool string, body map[string]json.RawMessage) (map[string]any, err
 			return nil, errModelArgument
 		}
 		return map[string]any{"session_id": session, "since_hours": hours}, nil
+	case "list_decisions":
+		f, err := fields(body, "since_hours", "limit")
+		if err != nil {
+			return nil, err
+		}
+		var hours, limit int
+		if json.Unmarshal(f["since_hours"], &hours) != nil || hours < 1 || hours > 168 || json.Unmarshal(f["limit"], &limit) != nil || limit < 1 || limit > 50 {
+			return nil, errModelArgument
+		}
+		return map[string]any{"since_hours": hours, "limit": limit}, nil
+	case "reply":
+		f, err := fields(body, "text", "usage")
+		if err != nil {
+			return nil, err
+		}
+		text, err1 := stringField(f["text"])
+		usage, err2 := usageField(f["usage"])
+		if err1 != nil || err2 != nil || strings.TrimSpace(text) == "" || utf8.RuneCountInString(text) > 2000 {
+			return nil, errModelArgument
+		}
+		return map[string]any{"text": text, "usage": usage}, nil
 	case "decide":
 		f, err := fields(body, "action", "reason_code", "explanation", "usage")
 		if err != nil {
@@ -222,8 +243,7 @@ func toolArgs(tool string, body map[string]json.RawMessage) (map[string]any, err
 		}
 		return map[string]any{"reason_code": reason, "usage": usage}, nil
 	}
-	// recommend, reply, list_decisions and the opt-in tools come with
-	// advise and chat (PRs B and C).
+	// recommend and the opt-in tools come with advise (PR C).
 	return nil, refused
 }
 

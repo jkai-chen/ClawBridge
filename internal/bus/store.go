@@ -128,7 +128,7 @@ func (s *Store) migrate() error {
 	if err = tx.QueryRow("PRAGMA user_version").Scan(&version); err != nil {
 		return err
 	}
-	if version > 24 {
+	if version > 25 {
 		return errors.New("database schema is newer than this ClawBridge binary")
 	}
 	if version == 0 {
@@ -255,6 +255,11 @@ func (s *Store) migrate() error {
 	}
 	if version < 24 {
 		if _, err = tx.Exec(dispatcherCasesSchemaV24 + `PRAGMA user_version=24;`); err != nil {
+			return err
+		}
+	}
+	if version < 25 {
+		if _, err = tx.Exec(dispatcherChatSchemaV25 + `PRAGMA user_version=25;`); err != nil {
 			return err
 		}
 	}
@@ -500,6 +505,10 @@ var operationArgs = map[string]string{
 	"dispatcher_model_setup":      "instance provider_id api base_url model key caps egress_text_version egress_confirmed",
 	"dispatcher_model_status":     "instance config_revision",
 	"dispatcher_model_key_delete": "instance",
+	"dispatcher_chat_ask":         "instance text",
+	"dispatcher_chat_show":        "instance case_id",
+	"dispatcher_chat_leads":       "instance allow expected_revision",
+	"dispatcher_decisions_list":   "instance since_hours limit",
 	"health_due":                  "instance lease_token generation limit nudges_only",
 	"health_force":                "instance lease_token generation linear_project force_new",
 	"health_report":               "instance lease_token generation linear_project calls error facts forced force_new flow nudge",
@@ -535,7 +544,7 @@ func validateArgs(op string, a map[string]any) error {
 			return fmt.Errorf("unsupported argument %q for %s", k, op)
 		}
 		switch k {
-		case "retention_days", "limit", "after", "expected_revision", "ledger", "generation", "budget", "calls", "charged", "policy_revision", "engineer", "if_unset", "expires_days", "expires_hours", "s5_calls_per_hour", "out_of_binding_limit", "template_version", "part_number", "part_count", "seq", "config_revision":
+		case "retention_days", "limit", "since_hours", "after", "expected_revision", "ledger", "generation", "budget", "calls", "charged", "policy_revision", "engineer", "if_unset", "expires_days", "expires_hours", "s5_calls_per_hour", "out_of_binding_limit", "template_version", "part_number", "part_count", "seq", "config_revision":
 			if _, err := integer(v); err != nil {
 				return fmt.Errorf("%s: %w", k, err)
 			}
@@ -599,9 +608,9 @@ func validateArgs(op string, a map[string]any) error {
 					return errors.New("documents must be an array of objects")
 				}
 			}
-		case "complete":
+		case "complete", "allow":
 			if _, ok := v.(bool); !ok {
-				return errors.New("complete must be boolean")
+				return fmt.Errorf("%s must be boolean", k)
 			}
 		case "comments":
 			if _, ok := v.([]any); !ok {
@@ -751,7 +760,7 @@ func (s *Store) ExecuteAs(ctx context.Context, principal string, r Request) (Res
 // inbox stamps deliveries, so those keep the locks.
 func pureRead(r Request) bool {
 	switch r.Operation {
-	case "snapshot", "inbox_status", "notification_status", "taskboard_get", "taskboard_get_v2", "taskboard_access", "list_projects", "list_members", "comment_watch_status", "label_policy_get", "status_policy_get", "doc_policy_get", "dispatcher_get", "health_get", "doc_seed_get", "doc_publication_get", "invite_list", "device_list", "user_list", "owner_transfer_get":
+	case "snapshot", "inbox_status", "notification_status", "taskboard_get", "taskboard_get_v2", "taskboard_access", "list_projects", "list_members", "comment_watch_status", "label_policy_get", "status_policy_get", "doc_policy_get", "dispatcher_get", "health_get", "doc_seed_get", "doc_publication_get", "invite_list", "device_list", "user_list", "owner_transfer_get", "dispatcher_chat_show", "dispatcher_decisions_list":
 		return true
 	case "list_sessions", "history", "whoami", "linear_comments_posted", "linear_comment_precheck", "intake_policy_get", "intake_trust_list", "intake_list":
 		// Naming a session with its instance makes it a heartbeat read: the
@@ -1303,6 +1312,14 @@ func (s *Store) execute(ctx context.Context, tx *transaction, r Request) (any, e
 			return nil, invalid("instance requires session")
 		}
 		return s.projectFlowResumeOp(ctx, tx, w["id"].(string), p["id"].(string), projectRole, actor, r)
+	}
+	// Chat and the decision log are a person's CLI commands, never a
+	// session's: no model output reaches an agent [DM-M1].
+	if dispatcherChatOperation(r.Operation) {
+		if actor != nil || str(a, "instance") != "" {
+			return nil, scoped("chat with the dispatcher runs in your own terminal with no session (no --session or CLAWBRIDGE_SESSION)", "forbidden")
+		}
+		return s.dispatcherChatOp(ctx, tx, w, p, projectRole, r)
 	}
 	// Model setup is the owner's own CLI command, never a session's: the
 	// key is the owner's.

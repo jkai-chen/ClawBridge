@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"regexp"
+	"strings"
 	"time"
 	"unicode/utf8"
 )
@@ -259,15 +260,12 @@ func overCaps(ctx context.Context, tx *transaction, holder, nowRaw string) (bool
 // "available" when a key-holder's agent called within modelSeenWindow and
 // is under its caps, else "no_agent" or "caps".
 func modelAvailability(ctx context.Context, tx *transaction, pid, nowRaw string) (string, error) {
-	live, err := query(ctx, tx, `SELECT DISTINCT created_by_principal FROM dispatcher_model_tokens WHERE project_id=? AND revoked_at IS NULL AND expires_at>? AND last_used_at>=?`, pid, nowRaw, layout(at(nowRaw).Add(-modelSeenWindow)))
-	if err != nil {
-		return "", err
+	holders, err := liveHolders(ctx, tx, pid, nowRaw)
+	if err != nil || len(holders) == 0 {
+		return "no_agent", err
 	}
-	if len(live) == 0 {
-		return "no_agent", nil
-	}
-	for _, r := range live {
-		over, err := overCaps(ctx, tx, str(r, "created_by_principal"), nowRaw)
+	for _, h := range holders {
+		over, err := overCaps(ctx, tx, h, nowRaw)
 		if errors.Is(err, ErrModelUnauthorized) {
 			continue
 		}
@@ -281,6 +279,17 @@ func modelAvailability(ctx context.Context, tx *transaction, pid, nowRaw string)
 	return "caps", nil
 }
 
+// liveHolders are the key-holders whose agents called pid within
+// modelSeenWindow.
+func liveHolders(ctx context.Context, tx *transaction, pid, nowRaw string) ([]string, error) {
+	rows, err := query(ctx, tx, `SELECT DISTINCT created_by_principal FROM dispatcher_model_tokens WHERE project_id=? AND revoked_at IS NULL AND expires_at>? AND last_used_at>=? ORDER BY created_by_principal`, pid, nowRaw, layout(at(nowRaw).Add(-modelSeenWindow)))
+	holders := []string{}
+	for _, r := range rows {
+		holders = append(holders, str(r, "created_by_principal"))
+	}
+	return holders, err
+}
+
 // closeModelCases closes pid's open cases, leased or not, once the
 // dispatcher is off or in rules mode (R106-L7): no agent acts on them.
 func closeModelCases(ctx context.Context, tx *transaction, pid, nowRaw string) error {
@@ -289,14 +298,16 @@ func closeModelCases(ctx context.Context, tx *transaction, pid, nowRaw string) e
 }
 
 // expireCases closes pid's open cases past their deadline, and reports
-// whether it closed any: their subjects fall back to the rules.
+// whether it closed a decide case: its subject falls back to the rules. A
+// chat has no fallback.
 func expireCases(ctx context.Context, tx *transaction, pid, nowRaw string) (bool, error) {
-	res, err := tx.ExecContext(ctx, `UPDATE dispatcher_cases SET closed_at=?,outcome='expired' WHERE project_id=? AND closed_at IS NULL AND deadline<=?`, nowRaw, pid, nowRaw)
+	res, err := tx.ExecContext(ctx, `UPDATE dispatcher_cases SET closed_at=?,outcome='expired' WHERE project_id=? AND kind='decide' AND closed_at IS NULL AND deadline<=?`, nowRaw, pid, nowRaw)
 	if err != nil {
 		return false, err
 	}
 	n, _ := res.RowsAffected()
-	return n > 0, nil
+	_, err = tx.ExecContext(ctx, `UPDATE dispatcher_cases SET closed_at=?,outcome='expired' WHERE project_id=? AND kind<>'decide' AND closed_at IS NULL AND deadline<=?`, nowRaw, pid, nowRaw)
+	return n > 0, err
 }
 
 // randomRef is p_ and 16 random lower-case letters and digits.
@@ -374,7 +385,7 @@ func (s *Store) ModelNextCase(ctx context.Context, token string, maxAgents int) 
 		}
 		return out, tx.Commit()
 	}
-	own, err := query(ctx, tx, `SELECT * FROM dispatcher_cases WHERE project_id=? AND kind='decide' AND closed_at IS NULL AND lease_key=? ORDER BY created_at,id LIMIT 1`, c.ProjectID, c.Holder)
+	own, err := query(ctx, tx, `SELECT * FROM dispatcher_cases WHERE project_id=? AND closed_at IS NULL AND lease_key=? ORDER BY created_at,id LIMIT 1`, c.ProjectID, c.Holder)
 	if err != nil {
 		return out, err
 	}
@@ -409,9 +420,16 @@ func (s *Store) ModelNextCase(ctx context.Context, token string, maxAgents int) 
 		}
 		return out, err
 	}
-	// Only a case whose claim is still pending at its revision: any other
-	// could only end superseded.
+	// Only a decide case whose claim is still pending at its revision: any
+	// other could only end superseded. Decide cases come before chats, and
+	// a chat only within the key-holder's chat share (D6-M1).
 	open, err := query(ctx, tx, `SELECT c.* FROM dispatcher_cases c WHERE c.project_id=? AND c.kind='decide' AND c.closed_at IS NULL AND c.lease_key IS NULL AND c.deadline>? AND EXISTS(SELECT 1 FROM session_assignments a WHERE a.project_id=c.project_id AND a.id=c.subject_id AND a.state='proposed' AND a.revision=c.subject_revision) ORDER BY c.created_at,c.id LIMIT 1`, c.ProjectID, nowRaw)
+	if err == nil && len(open) == 0 {
+		var chatOver bool
+		if chatOver, err = chatOverCaps(ctx, tx, c.Holder, nowRaw); err == nil && !chatOver {
+			open, err = query(ctx, tx, `SELECT * FROM dispatcher_cases WHERE project_id=? AND kind='chat' AND closed_at IS NULL AND lease_key IS NULL AND deadline>? ORDER BY created_at,id LIMIT 1`, c.ProjectID, nowRaw)
+		}
+	}
 	if err != nil || len(open) == 0 {
 		if err == nil {
 			err = tx.Commit()
@@ -471,6 +489,13 @@ func caseView(row map[string]any, nowRaw string) (map[string]any, error) {
 			return nil, errors.New("a stored case is unreadable")
 		}
 		view["untrusted"] = untrusted
+	}
+	if raw := str(row, "message"); raw != "" {
+		var message map[string]any
+		if json.Unmarshal([]byte(raw), &message) != nil {
+			return nil, errors.New("a stored case is unreadable")
+		}
+		view["message"] = message
 	}
 	return view, nil
 }
@@ -630,6 +655,10 @@ func (s *Store) dispatcherCaseRead(ctx context.Context, tx *transaction, pid str
 	if err != nil || refusal != "" {
 		return caseRefusal(refusal), err
 	}
+	// list_decisions is chat's own read [DM-M1].
+	if str(a, "tool") == "list_decisions" && str(c, "kind") != "chat" {
+		return caseRefusal("tool_refused"), nil
+	}
 	// Counted in one statement, so concurrent reads can't pass the cap.
 	res, err := tx.ExecContext(ctx, `UPDATE dispatcher_cases SET tool_calls=tool_calls+1 WHERE id=? AND tool_calls<?`, str(c, "id"), modelCaseReads)
 	if err != nil {
@@ -732,6 +761,16 @@ func (s *Store) dispatcherCaseRead(ctx context.Context, tx *transaction, pid str
 			lastActivity = at(lastActivity.(string)).Format(time.RFC3339)
 		}
 		return caseResult(map[string]any{"last_heartbeat": at(str(rows[0], "last_seen")).Format(time.RFC3339), "last_issue_activity": lastActivity, "counts": map[string]any{"comments": comments, "markers": markers, "releases": releases}}), nil
+	case "list_decisions":
+		hours, limit := asInt(a["since_hours"]), asInt(a["limit"])
+		if hours < 1 || hours > 168 || limit < 1 || limit > maxDecisionsListed {
+			return caseRefusal("invalid_argument"), nil
+		}
+		log, err := decisionLog(ctx, tx, pid, nowRaw, hours, limit)
+		if err != nil {
+			return nil, err
+		}
+		return caseResult(log), nil
 	}
 	return caseRefusal("tool_refused"), nil
 }
@@ -758,6 +797,9 @@ func (s *Store) dispatcherCaseOutcome(ctx context.Context, tx *transaction, w, p
 	}
 	tool := str(a, "tool")
 	body := map[string]any{"tool": tool, "action": str(a, "action"), "reason_code": str(a, "reason_code"), "explanation": str(a, "explanation")}
+	if tool == "reply" {
+		body = map[string]any{"tool": tool, "text": str(a, "text")}
+	}
 	bodyJSON, _ := json.Marshal(body)
 	c, refusal, err := caseFence(ctx, tx, pid, str(a, "case_id"), str(a, "instance"), nowRaw)
 	if err != nil {
@@ -774,8 +816,19 @@ func (s *Store) dispatcherCaseOutcome(ctx context.Context, tx *transaction, w, p
 	usage, _ := a["usage"].(map[string]any)
 	usageJSON, _ := json.Marshal(usage)
 	tokens := asInt(usage["input_tokens"]) + asInt(usage["output_tokens"])
+	// decide is a decide case's outcome, reply a chat's; abstain ends
+	// either [DM-M1].
+	chat := str(c, "kind") == "chat"
+	if tool == "decide" && chat || tool == "reply" && !chat {
+		return caseRefusal("tool_refused"), nil
+	}
 	var result map[string]any
 	switch tool {
+	case "reply":
+		if text := str(a, "text"); strings.TrimSpace(text) == "" || utf8.RuneCountInString(text) > maxChatReply {
+			return caseRefusal("invalid_argument"), nil
+		}
+		result = map[string]any{}
 	case "decide":
 		var permitted, reasons []string
 		_ = json.Unmarshal([]byte(str(c, "permitted")), &permitted)
@@ -817,7 +870,10 @@ func (s *Store) dispatcherCaseOutcome(ctx context.Context, tx *transaction, w, p
 		if !containsString(AbstainReasonCodes, str(a, "reason_code")) {
 			return caseRefusal("invalid_argument"), nil
 		}
-		result = map[string]any{"fallback": "rules"}
+		result = map[string]any{}
+		if !chat {
+			result["fallback"] = "rules"
+		}
 	default:
 		return caseRefusal("tool_refused"), nil
 	}
@@ -857,7 +913,7 @@ func (s *Store) ModelTool(ctx context.Context, token, caseID, tool string, args 
 	}
 	out.ProjectID = c.ProjectID
 	op := "dispatcher_case_read"
-	if tool == "decide" || tool == "abstain" {
+	if tool == "decide" || tool == "abstain" || tool == "reply" {
 		op = "dispatcher_case_outcome"
 	}
 	a := map[string]any{"case_id": caseID, "instance": c.Instance, "tool": tool}
@@ -875,6 +931,7 @@ func (s *Store) ModelTool(ctx context.Context, token, caseID, tool string, args 
 	}
 	m, _ := r.Data.(map[string]any)
 	out.Result, out.Error = m["result"], str(m, "error")
-	out.Fallback = out.Error == "deadline_passed" || out.Error == "" && tool == "abstain"
+	result, _ := out.Result.(map[string]any)
+	out.Fallback = out.Error == "deadline_passed" || out.Error == "" && tool == "abstain" && result["fallback"] == "rules"
 	return out, nil
 }

@@ -103,8 +103,17 @@ func (s *Store) dispatcherSwitch(ctx context.Context, tx *transaction, w, p map[
 		var caps any
 		_ = json.Unmarshal([]byte(str(keys[0], "caps")), &caps)
 		// What turning the model on means, in the preview (§12.4).
+		settings, _, err := readModelSettings(ctx, tx, pid)
+		if err != nil {
+			return nil, err
+		}
+		// Who can ask it questions (dispatcher chat) goes to the provider too.
+		chat := "owners"
+		if settings.ChatLeads {
+			chat = "owners and leads"
+		}
 		model = map[string]any{"provider": str(keys[0], "provider_id"), "model": str(keys[0], "model"), "caps": caps,
-			"issue_text_to_provider": true, "agent_required": true}
+			"issue_text_to_provider": true, "agent_required": true, "chat": chat}
 	}
 	raw, err := s.taskboard(ctx, tx, wid, pid, "", "taskboard_get_v2", map[string]any{})
 	if err != nil {

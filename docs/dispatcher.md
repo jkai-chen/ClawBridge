@@ -51,6 +51,10 @@ clawbridge dispatcher domain untrust DOMAIN SESSION --expected-revision N
 clawbridge dispatcher domain coordinator DOMAIN SESSION --expected-revision N
 clawbridge dispatcher enable [--engine rules|model] --expected-revision N [--confirm]   # project owner
 clawbridge dispatcher disable --expected-revision N                                     # project owner
+clawbridge dispatcher decisions [--since-hours 24] [--limit 50]               # project owner or lead
+clawbridge dispatcher chat "QUESTION"                                          # model mode; see Chat
+clawbridge dispatcher chat show [CASE]
+clawbridge dispatcher chat leads on|off --expected-revision N                 # project owner
 ```
 
 - **The revision** is `show`'s `revision` (0 the first time). Every change is recorded in the project's history.
@@ -80,7 +84,8 @@ clawbridge dispatcher disable --expected-revision N
   - which domains could confirm a claim on their own: none until you trust a session in one.
 
   With `--engine model` it adds the provider, the model and your caps. It also says that issue text goes to the model
-  provider, and that your dispatcher agent must be running.
+  provider, who can ask the model questions (`chat`: `owners`, or `owners and leads`), and that your dispatcher agent
+  must be running.
 - **`--confirm`, in one step:**
   - The policy turns on, in mode `rules` unless you pass `--engine model`.
   - The reserved sessions are created, or come back with the same IDs.
@@ -123,7 +128,7 @@ Status, on the current main branch:
 | `dispatcher enable --engine model` | on main; refused until a model setup has passed its test |
 | Model key setup and test, the launcher's and the agent's endpoints | on main |
 | Cases: `cases/next`, the read tools, `decide` and `abstain`, the rules fallback | on main |
-| Chat (`dispatcher chat`) | built, not yet in review |
+| Chat (`dispatcher chat`) | in review |
 | `clawbridge-agentd` (the launcher) with its per-owner network and egress proxy | in review |
 | Deployment, and CI against a real Docker daemon, for the launcher | planned |
 | A guided `dispatcher model setup` in the CLI and TUI | planned |
@@ -183,15 +188,31 @@ main yet. The design is in this section so that owners can judge it before it sh
 - **Latency.** An abstain or a missed deadline asks the watcher for an early pass, so the rules decide within about a
   minute. Without the in-process watcher clock, or when an agent stops mid-case, the worst case is the deadline plus
   the watch interval.
+- **Timeouts.** An agent's `cases/next` waits at most 30 s for a case. The server's write timeout (80 s) outlasts it,
+  and so does the bundled Caddy, which sets no response timeout on the proxy.
 - **Turning it off.** Disabling the dispatcher, or switching it to rules, closes every open case at once.
 
 ### Chat
 
-- **Who and how:** a project owner asks the model a question from their own terminal, with no session:
-  `clawbridge dispatcher chat "Why did FIX-1 wait?"`. Leads can ask only after an owner allows it.
-- **What the model uses:** it answers from the read tools and the decision log, which owners and leads read with
-  `dispatcher decisions`.
-- **Where the reply goes:** it is printed only to the asker's terminal, with terminal control characters removed. It
-  never reaches an inbox or a session, and nothing in it is acted on.
-- **Budget:** chats use at most a quarter of the model's runs, and claims are always served first.
-- **Retention:** questions and replies are kept with the case. A retention policy is planned before v1.0.
+A project owner can ask the model a question from their own terminal, with no session:
+`clawbridge dispatcher chat "Why did FIX-1 wait?"`.
+- **Who can ask:** project owners. Leads can ask only after an owner runs `dispatcher chat leads on`, which is off by
+  default.
+- **When:**
+  - The dispatcher must be on in model mode, with an agent running.
+  - An asker has at most one chat open; a second ask names the open one.
+- **Waiting:** the command waits for the reply, up to the case deadline: the owner's, else 120 s, and never over
+  300 s. A late reply is read with `dispatcher chat show [CASE]`, which shows only your own chats.
+- **What the model sees:**
+  - your question, sent to the **model provider** set up for the dispatcher;
+  - the read tools;
+  - the decision log (`dispatcher decisions` shows the same records).
+  It answers with a reply of at most 2,000 characters, or abstains.
+- **The budget:** chats use at most a quarter of the model's runs per hour and per day. Past that, an ask is refused
+  until the window moves, and claims are always served before chats.
+- **The reply is model output, not checked.**
+  - It is printed only to the asker's terminal, with terminal control characters and bidirectional overrides removed.
+  - It never reaches an inbox or a session, and nothing in it is acted on.
+  - To act, use the CLI's own commands.
+- **Retention:** questions and replies are kept with the case, like other cases. There is no purge yet; a retention
+  policy is planned before v1.0.

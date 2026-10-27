@@ -83,7 +83,15 @@ func TestDispatcherEnableDisable(t *testing.T) {
 		t.Fatal(err)
 	}
 	preview, err = h.switchCall("dispatcher_enable", map[string]any{"expected_revision": 3, "mode": "model"})
-	if model, _ := preview["model"].(map[string]any); err != nil || model["issue_text_to_provider"] != true || model["agent_required"] != true || preview["default_domain_created"] != false {
+	if model, _ := preview["model"].(map[string]any); err != nil || model["issue_text_to_provider"] != true || model["agent_required"] != true || model["chat"] != "owners" || preview["default_domain_created"] != false {
+		t.Fatal(preview, err)
+	}
+	// The preview says who can ask the model (dispatcher chat).
+	if _, err = h.s.db.Exec(`UPDATE dispatcher_policies SET model='{"chat_leads":true}' WHERE project_id=?`, pid); err != nil {
+		t.Fatal(err)
+	}
+	preview, err = h.switchCall("dispatcher_enable", map[string]any{"expected_revision": 3, "mode": "model"})
+	if model, _ := preview["model"].(map[string]any); err != nil || model["chat"] != "owners and leads" {
 		t.Fatal(preview, err)
 	}
 	if on, err = h.switchCall("dispatcher_enable", map[string]any{"expected_revision": 3, "mode": "model", "confirm": true}); err != nil || on["mode"] != "model" || on["revision"] != int64(4) {

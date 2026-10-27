@@ -521,7 +521,7 @@ flags:`)
 	case "dispatcher":
 		// The dispatcher's policy: any member reads it; the owner sets the
 		// domains; a domain's owner edits its trust list and coordinator.
-		usage := errors.New("usage: dispatcher show; dispatcher enable [--engine rules|model] --expected-revision N [--confirm]; dispatcher disable --expected-revision N; dispatcher domains set --file FILE --expected-revision N; dispatcher domain trust|untrust|coordinator DOMAIN SESSION --expected-revision N")
+		usage := errors.New("usage: dispatcher show; dispatcher enable [--engine rules|model] --expected-revision N [--confirm]; dispatcher disable --expected-revision N; dispatcher domains set --file FILE --expected-revision N; dispatcher domain trust|untrust|coordinator DOMAIN SESSION --expected-revision N; dispatcher decisions [--since-hours N] [--limit N]; dispatcher chat \"QUESTION\"; dispatcher chat show [CASE]; dispatcher chat leads on|off --expected-revision N")
 		switch {
 		case len(rest) >= 1 && rest[0] == "show":
 			op, rest = "dispatcher_get", rest[1:]
@@ -535,6 +535,22 @@ flags:`)
 		case len(rest) >= 1 && rest[0] == "disable":
 			op, rest = "dispatcher_disable", rest[1:]
 			f.Int64("expected-revision", -1, "the dispatcher policy revision you last read")
+		case len(rest) >= 1 && rest[0] == "decisions":
+			// The decision log, as the model reads it in a chat (D6-L4).
+			op, rest = "dispatcher_decisions_list", rest[1:]
+			f.Int("since-hours", 24, "how far back to read, 1 to 168 hours")
+			f.Int("limit", 50, "at most this many decisions, 1 to 50")
+		case len(rest) >= 2 && rest[0] == "chat" && rest[1] == "show":
+			op, rest = "dispatcher_chat_show", rest[2:]
+			arityMax = 1
+		case len(rest) >= 2 && rest[0] == "chat" && rest[1] == "leads":
+			op, rest = "dispatcher_chat_leads", rest[2:]
+			f.Int64("expected-revision", -1, "the dispatcher policy revision you last read")
+			arityMin, arityMax = 1, 1
+		case len(rest) >= 1 && rest[0] == "chat":
+			// A question to the model, from a person's terminal only [DM-M1].
+			op, rest = "dispatcher_chat_ask", rest[1:]
+			arityMin, arityMax = 1, 1
 		case len(rest) >= 2 && rest[0] == "domains" && rest[1] == "set":
 			op, rest = "dispatcher_domains_set", rest[2:]
 			f.String("file", "", "the domains document, JSON: {\"domains\": [...]}")
@@ -765,7 +781,26 @@ flags:`)
 	case "mark-read":
 		a["ids"] = pos
 	case "dispatcher":
-		if op != "dispatcher_get" {
+		switch op {
+		case "dispatcher_chat_ask":
+			a["text"] = pos[0]
+		case "dispatcher_chat_show":
+			if len(pos) == 1 {
+				a["case_id"] = pos[0]
+			}
+		case "dispatcher_chat_leads":
+			if pos[0] != "on" && pos[0] != "off" {
+				return errors.New("usage: dispatcher chat leads on|off --expected-revision N")
+			}
+			a["allow"] = pos[0] == "on"
+		case "dispatcher_decisions_list":
+			for k, v := range map[string]int{"since_hours": 24, "limit": 50} {
+				if a[k] == nil {
+					a[k] = v
+				}
+			}
+		}
+		if op != "dispatcher_get" && op != "dispatcher_decisions_list" && op != "dispatcher_chat_ask" && op != "dispatcher_chat_show" {
 			if v, _ := a["expected_revision"].(int64); v < 0 || a["expected_revision"] == nil {
 				return errors.New(op + " requires --expected-revision")
 			}
@@ -910,6 +945,9 @@ flags:`)
 		case "register_session", "list_sessions", "history", "send", "reply", "inbox", "inbox_status", "notification_status", "set_notification_policy", "mark_read", "update_session", "retire_session", "whoami", "message_status", "project_role_set", "project_role_revoke", "purge_expired", "assignment_propose", "assignment_confirm", "assignment_release", "coordinator_set", "intake_policy_get", "intake_policy_set", "intake_trust_add", "intake_trust_remove", "intake_trust_list", "intake_token_create", "intake_token_list", "intake_token_revoke", "intake_list", "intake_dismiss", "intake_rearm":
 			a["instance"] = config.Instance
 		}
+	}
+	if op == "dispatcher_chat_ask" || op == "dispatcher_chat_show" {
+		return runDispatcherChat(ctx, executor, config, op, a, stdout)
 	}
 	// G9 F2: an intake token goes to this terminal or a new file, decided
 	// before it exists.

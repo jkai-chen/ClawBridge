@@ -34,6 +34,9 @@ type Request struct {
 type Result struct {
 	Source string `json:"source"`
 	Data   any    `json:"data"`
+	// PendingDeviceEvents is set by the server on every response a device
+	// key signed: the device's unacknowledged device events (§17.3).
+	PendingDeviceEvents *int `json:"pending_device_events,omitempty"`
 }
 type Store struct {
 	db             *sql.DB
@@ -132,7 +135,7 @@ func (s *Store) migrate() error {
 	if err = tx.QueryRow("PRAGMA user_version").Scan(&version); err != nil {
 		return err
 	}
-	if version > 28 {
+	if version > 29 {
 		return errors.New("database schema is newer than this ClawBridge binary")
 	}
 	if version == 0 {
@@ -279,6 +282,11 @@ func (s *Store) migrate() error {
 	}
 	if version < 28 {
 		if _, err = tx.Exec(dispatcherAdviseSchemaV28 + `PRAGMA user_version=28;`); err != nil {
+			return err
+		}
+	}
+	if version < 29 {
+		if _, err = tx.Exec(deviceEventsSchemaV29 + `PRAGMA user_version=29;`); err != nil {
 			return err
 		}
 	}
@@ -512,6 +520,8 @@ var operationArgs = map[string]string{
 	"owner_transfer_offer":        "to",
 	"owner_transfer_respond":      "action",
 	"owner_transfer_get":          "",
+	"device_events":               "all",
+	"device_ack":                  "event_ids all",
 	"dispatcher_domains_set":      "instance expected_revision dispatcher_domains",
 	"dispatcher_domain_edit":      "instance expected_revision domain action target_session",
 	"dispatcher_enable":           "instance expected_revision mode confirm",
@@ -657,7 +667,7 @@ func validateArgs(op string, a map[string]any) error {
 			if _, ok := intList(v, 1000); !ok {
 				return errors.New("lines must be an array of line numbers")
 			}
-		case "ids", "linear_team_ids", "linear_project_ids", "closes_pending", "scope_paths", "domains", "comment_ids", "signals", "roles", "pattern_ids", "issue_labels", "tools":
+		case "ids", "event_ids", "linear_team_ids", "linear_project_ids", "closes_pending", "scope_paths", "domains", "comment_ids", "signals", "roles", "pattern_ids", "issue_labels", "tools":
 			switch v.(type) {
 			case []string, []any:
 			default:
@@ -797,7 +807,7 @@ func (s *Store) ExecuteAs(ctx context.Context, principal string, r Request) (Res
 // inbox stamps deliveries, so those keep the locks.
 func pureRead(r Request) bool {
 	switch r.Operation {
-	case "snapshot", "inbox_status", "notification_status", "taskboard_get", "taskboard_get_v2", "taskboard_access", "list_projects", "list_members", "comment_watch_status", "label_policy_get", "status_policy_get", "doc_policy_get", "dispatcher_get", "context_watch_get", "health_get", "doc_seed_get", "doc_publication_get", "invite_list", "device_list", "user_list", "owner_transfer_get", "dispatcher_chat_show", "dispatcher_decisions_list", "dispatcher_escalations_list", "dispatcher_model_doctor":
+	case "snapshot", "inbox_status", "notification_status", "taskboard_get", "taskboard_get_v2", "taskboard_access", "list_projects", "list_members", "comment_watch_status", "label_policy_get", "status_policy_get", "doc_policy_get", "dispatcher_get", "context_watch_get", "health_get", "doc_seed_get", "doc_publication_get", "invite_list", "device_list", "device_events", "user_list", "owner_transfer_get", "dispatcher_chat_show", "dispatcher_decisions_list", "dispatcher_escalations_list", "dispatcher_model_doctor":
 		return true
 	case "list_sessions", "history", "whoami", "linear_comments_posted", "linear_comment_precheck", "intake_policy_get", "intake_trust_list", "intake_list":
 		// Naming a session with its instance makes it a heartbeat read: the

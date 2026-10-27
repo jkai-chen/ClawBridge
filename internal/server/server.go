@@ -501,6 +501,14 @@ func NewHandlerWithOptions(store Executor, verifier Verifier, o HandlerOptions) 
 			return
 		}
 		result.Source = "server"
+		// Every response a device signed says how many device events it
+		// hasn't acknowledged, so a stolen device's additions and revokes
+		// reach the user's other devices with no extra request (§17.3).
+		if counter, ok := store.(deviceEventCounter); ok && verified.Issuer == bus.DeviceIssuer {
+			if n, e := counter.PendingDeviceEvents(ctx, verified.Subject); e == nil {
+				result.PendingDeviceEvents = &n
+			}
+		}
 		if revokesDevices(request.Operation) {
 			cache.clear()
 		}
@@ -528,6 +536,12 @@ func NewHandlerWithOptions(store Executor, verifier Verifier, o HandlerOptions) 
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write(append(encoded, '\n'))
 	})
+}
+
+// deviceEventCounter is the hosted store's count of a device's pending
+// device events.
+type deviceEventCounter interface {
+	PendingDeviceEvents(context.Context, string) (int, error)
 }
 
 func serviceError(err error) (string, int) {

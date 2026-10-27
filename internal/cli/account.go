@@ -16,6 +16,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+	"unicode"
+	"unicode/utf8"
 
 	"clawbridge/internal/bus"
 	"clawbridge/internal/devicekey"
@@ -40,6 +42,9 @@ const accountUsage = `usage:
   clawbridge device add [--expires 24h]       (an invite for another device of yours; join with it there)
   clawbridge device add --ci NAME --grant PROJECT=reader|member [--grant ...]... --expires 30d [--label LABEL]
   clawbridge device enroll [--label LABEL] [--key-store keyring|file]   (signed in with Google: no invite)
+  clawbridge device events [--all] | device ack EVENT_ID... | device ack --all
+      Devices added to or revoked from your account (every member's, for the workspace owner), shown on
+      this device until it acknowledges them. Any command run here prints them on stderr too.
   clawbridge user list | user revoke EMAIL --confirm
   clawbridge owner show | owner transfer --to EMAIL | owner accept | owner decline | owner cancel
   invite and device add print their code, or a CI device's key, only to a terminal; --out FILE writes
@@ -242,6 +247,31 @@ func runAccount(ctx context.Context, flags Config, command string, args []string
 		op = "device_ci_create"
 		a["name"], a["grants"], a["expires_days"], a["label"] = *ci, grants, hours/24, *label
 		a["public_key"] = devicekey.EncodePublicKey(key.Public().(ed25519.PublicKey))
+	case "device events":
+		all := f.Bool("all", false, "include the events this device has acknowledged")
+		if _, err = parseAccountFlags(f, args, 0, 0); err != nil {
+			return err
+		}
+		op, a["all"] = "device_events", *all
+	case "device ack":
+		all := f.Bool("all", false, "acknowledge every event shown on this device")
+		pos, e := parseAccountFlags(f, args, 0, 100)
+		if e != nil {
+			return e
+		}
+		if *all == (len(pos) > 0) {
+			return errors.New("name the event IDs to acknowledge, or --all")
+		}
+		op = "device_ack"
+		if *all {
+			a["all"] = true
+		} else {
+			ids := []any{}
+			for _, id := range pos {
+				ids = append(ids, id)
+			}
+			a["event_ids"] = ids
+		}
 	case "device enroll":
 		return runEnroll(ctx, config, f, args, stdout)
 	case "user list":
@@ -333,7 +363,67 @@ func runAccount(ctx context.Context, flags Config, command string, args []string
 		data["code_file"] = secret.path
 		data["note"] = "Wrote the code to " + secret.path + " (0600). Give it to the invitee privately, then delete the file; `clawbridge join` reads it from stdin."
 	}
+	safeLabels(result.Data)
 	return json.NewEncoder(stdout).Encode(result)
+}
+
+// safeLabels escapes terminal controls in every device label of an answer
+// before it is printed: whoever adds a device chooses its label (§17.3, R1),
+// and a label written before the server checked them could hold any.
+func safeLabels(v any) {
+	switch t := v.(type) {
+	case map[string]any:
+		for k, x := range t {
+			if s, ok := x.(string); ok && k == "label" {
+				t[k] = wizardSafe(s)
+			} else {
+				safeLabels(x)
+			}
+		}
+	case []any:
+		for _, x := range t {
+			safeLabels(x)
+		}
+	}
+}
+
+// deviceEventLine is one device event as the line printed on stderr.
+func deviceEventLine(e map[string]any) string {
+	s := func(k string) string { v, _ := e[k].(string); return wizardSafe(v) }
+	at := s("created_at")
+	if t, err := time.Parse(time.RFC3339Nano, at); err == nil {
+		at = t.Local().Format("2006-01-02 15:04")
+	}
+	route := strings.ReplaceAll(s("route"), "_", " ")
+	switch s("kind") {
+	case "added":
+	case "revoked":
+		return fmt.Sprintf("Device \"%s\" (%s) of %s was revoked at %s by %s. Not expected? Check `clawbridge device list` and tell the workspace owner. [%s]", s("label"), s("device_id"), s("principal"), at, s("actor"), s("event_id"))
+	default:
+		// A kind this client doesn't know is shown as it is, never as a
+		// new device.
+		return fmt.Sprintf("Device \"%s\" (%s) of %s: %s at %s [%s]", s("label"), s("device_id"), s("principal"), strings.ReplaceAll(s("kind"), "_", " "), at, s("event_id"))
+	}
+	return fmt.Sprintf("New device \"%s\" (%s) joined %s at %s via %s. Not you? clawbridge device revoke %s [%s]", s("label"), s("device_id"), s("principal"), at, route, s("device_id"), s("event_id"))
+}
+
+// shownDeviceEvents is how many device events a command prints: the
+// newest, so a flood of events can't scroll the one that matters away.
+const shownDeviceEvents = 5
+
+// printDeviceEvents prints this device's newest unacknowledged device
+// events, one line each, and how to acknowledge them.
+func printDeviceEvents(stderr io.Writer) func([]map[string]any) {
+	return func(events []map[string]any) {
+		for i, e := range events {
+			if i == shownDeviceEvents {
+				fmt.Fprintf(stderr, "…and %d more: clawbridge device events\n", len(events)-i)
+				break
+			}
+			fmt.Fprintln(stderr, deviceEventLine(e))
+		}
+		fmt.Fprintln(stderr, "Seen them? clawbridge device ack --all (or device ack EVENT_ID); clawbridge device events lists them.")
+	}
 }
 
 // runEnroll adds a device key to this machine while signed in with Google:
@@ -464,8 +554,8 @@ func deviceLabel(label string) (string, error) {
 		}
 		label = strings.TrimSpace(host)
 	}
-	if len(label) > 64 || strings.ContainsAny(label, "\r\n\x00") {
-		return "", errors.New("a device label is 1-64 characters on one line")
+	if !utf8.ValidString(label) || utf8.RuneCountInString(label) > 64 || strings.IndexFunc(label, func(r rune) bool { return !unicode.IsPrint(r) }) >= 0 {
+		return "", errors.New("a device label is 1-64 printable characters on one line")
 	}
 	return label, nil
 }

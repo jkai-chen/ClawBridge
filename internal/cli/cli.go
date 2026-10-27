@@ -243,6 +243,12 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	if rest[0] == "tui" {
 		return runTUI(ctx, flags, rest[1:], stdout, stderr)
 	}
+	// A device's unacknowledged device events print on stderr after any
+	// command it signs (§17.3); the TUI shows them on its Account screen.
+	if rest[0] != "mcp" {
+		remote.SetDeviceEventsNotice(printDeviceEvents(stderr))
+		defer remote.SetDeviceEventsNotice(nil)
+	}
 	if rest[0] == "linear" {
 		return runLinear(ctx, flags, rest[1:], stdout, stderr)
 	}

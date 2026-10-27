@@ -21,6 +21,7 @@ type accountAuthority struct {
 	owner     string
 	transfer  map[string]any
 	newDevice bool
+	events    []any
 	calls     []bus.Request
 }
 
@@ -43,6 +44,12 @@ func (a *accountAuthority) Execute(_ context.Context, r bus.Request) (bus.Result
 		}
 	case "owner_transfer_get":
 		data = map[string]any{"pending": a.transfer}
+	case "device_events":
+		data = map[string]any{"events": a.events}
+	case "device_ack":
+		a.events = nil
+		data = map[string]any{"acknowledged": len(a.events)}
+		a.events = nil
 	case "invite_list":
 		data = map[string]any{"invites": []any{
 			map[string]any{"invite_id": "inv_1", "email": "ada@example.com", "purpose": "user", "status": "pending", "grants": map[string]any{"prj_1": "member"}, "expires_at": "2026-10-29"},
@@ -84,7 +91,7 @@ func (a *accountAuthority) writes() []bus.Request {
 	out := []bus.Request{}
 	for _, r := range a.calls {
 		switch r.Operation {
-		case "whoami", "device_list", "owner_transfer_get", "invite_list", "user_list":
+		case "whoami", "device_list", "owner_transfer_get", "invite_list", "user_list", "device_events":
 		default:
 			out = append(out, r)
 		}
@@ -475,5 +482,52 @@ func TestAccountConfirmationWaitsForTheLoad(t *testing.T) {
 	m = press(t, m, "enter")
 	if !a.did("invite_revoke") {
 		t.Fatal(a.writes())
+	}
+}
+
+// A device added to or revoked from this user shows as a banner until it
+// is marked seen with e, which acknowledges exactly the events shown
+// (§17.3); the label's escapes are shown, not run (R1).
+func TestAccountShowsDeviceEvents(t *testing.T) {
+	a := &accountAuthority{principal: "ada@example.com", owner: "owner@example.com", events: []any{
+		map[string]any{"event_id": "dve_1", "kind": "added", "label": "evil\x1b[2K", "device_id": "dev_new", "principal": "ada@example.com", "route": "device_add", "created_at": "2026-10-27T14:02"},
+		map[string]any{"event_id": "dve_2", "kind": "revoked", "label": "desk", "device_id": "dev_desk", "principal": "ada@example.com", "actor": "ada@example.com", "created_at": "2026-10-27T14:05"},
+		map[string]any{"event_id": "dve_3", "kind": "dormant_soon", "label": "old\x1b[2K", "device_id": "dev_old", "principal": "ada@example.com", "created_at": "2026-10-27T14:06"},
+	}}
+	m := accountModel(t, a)
+	view := m.View()
+	if strings.Count(view, "New device") != 1 || !strings.Contains(view, `Device "old\x1b[2K" (dev_old) of ada@example.com: dormant soon`) || !strings.Contains(view, `New device "evil\x1b[2K" (dev_new) joined ada@example.com`) || !strings.Contains(view, `Device "desk" (dev_desk) of ada@example.com was revoked`) || strings.Contains(view, "\x1b[2K") {
+		t.Fatal(view)
+	}
+	m = press(t, m, "e")
+	writes := a.writes()
+	if len(writes) != 1 || writes[0].Operation != "device_ack" || writes[0].Args["all"] != true {
+		t.Fatal(writes)
+	}
+	if strings.Contains(m.View(), "New device") {
+		t.Fatal("the banner stayed after the ack")
+	}
+	// A flood shows the newest five and a count (M2); dates are minutes.
+	for i := 0; i < 7; i++ {
+		a.events = append(a.events, map[string]any{"event_id": fmt.Sprintf("dve_%d", i), "kind": "added", "label": fmt.Sprintf("d%d", i), "device_id": "dev_x", "principal": "ada@example.com", "route": "invite", "created_at": "2026-10-27T14:02:00.123456789Z"})
+	}
+	m = press(t, m, "r")
+	view = m.View()
+	if strings.Count(view, "New device") != 5 || !strings.Contains(view, "…and 2 more") || strings.Contains(view, ".123456789") {
+		t.Fatal(view)
+	}
+	// A Google sign-in has no device events to read.
+	g := &accountAuthority{principal: "ada@example.com", owner: "owner@example.com"}
+	cfg := testConfig(g)
+	gm, err := New(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	gm, cmd := gm.SetSize(140, 60).Show(ScreenAccount)
+	settle(t, gm, cmd)
+	for _, r := range g.calls {
+		if r.Operation == "device_events" {
+			t.Fatal("a Google sign-in read device events")
+		}
 	}
 }

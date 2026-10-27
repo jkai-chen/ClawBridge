@@ -17,6 +17,8 @@ type pgIdentityFixture struct {
 	s         *Store
 	owner     string
 	workspace string
+	// lastJoined is the key of a device a test joined, when it needs it later.
+	lastJoined string
 }
 
 // newPGIdentityFixture opens the reviewer's disposable Postgres with a fresh

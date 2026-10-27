@@ -531,3 +531,30 @@ func newPGDeviceClient(t *testing.T, store *bus.Store) *deviceFixture {
 	f.handler = NewHandlerWithOptions(store, nil, HandlerOptions{Auth: AuthOptions{Methods: []string{AuthDevice}, PublicOrigin: testOrigin, Devices: store}, Now: time.Now})
 	return f
 }
+
+// countingRecorder is a hosted store with pending device events.
+type countingRecorder struct{ identityRecorder }
+
+func (e *countingRecorder) PendingDeviceEvents(_ context.Context, device string) (int, error) {
+	return len(device) % 7, nil
+}
+
+// Every answer to a device-signed request carries the device's pending
+// device events (§17.3, R7); a Google sign-in's carries none.
+func TestDeviceAnswerCarriesPendingEvents(t *testing.T) {
+	f := newDeviceFixture(t)
+	exec := &countingRecorder{}
+	f.handler = NewHandlerWithOptions(exec, VerifierFunc(func(_ context.Context, token string) (Identity, error) {
+		return Identity{Principal: "bob@example.com", Subject: "g-bob"}, nil
+	}), HandlerOptions{Auth: AuthOptions{Methods: []string{AuthGoogle, AuthDevice}, PublicOrigin: testOrigin, Devices: f.store}, Now: func() time.Time { return f.now }})
+	w := f.do("/v1/execute", whoami)
+	var out struct {
+		Pending *int `json:"pending_device_events"`
+	}
+	if w.Code != 200 || json.Unmarshal(w.Body.Bytes(), &out) != nil || out.Pending == nil || *out.Pending != len(f.id)%7 {
+		t.Fatal(w.Code, w.Body.String())
+	}
+	if w = f.send(http.MethodPost, "/v1/execute", whoami, "Bearer good-google-token"); w.Code != 200 || strings.Contains(w.Body.String(), "pending_device_events") {
+		t.Fatal(w.Code, w.Body.String())
+	}
+}

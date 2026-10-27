@@ -3,7 +3,9 @@ package tui
 import (
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
+	"time"
 
 	"clawbridge/internal/bus"
 	tea "github.com/charmbracelet/bubbletea"
@@ -35,6 +37,10 @@ type accountState struct {
 	members   []accountRow // the main owner's view: members, each followed by their devices
 	invites   []accountRow
 	transfer  map[string]any
+	// events are this device's unacknowledged device events (§17.3): a
+	// device added to or revoked from this user, or, for the main owner, any
+	// member. Only a device-key sign-in has them.
+	events []map[string]any
 	// code is an invite code just issued. It is shown once, in a modal,
 	// and dropped when the modal closes; nothing redraws it.
 	code     string
@@ -160,6 +166,13 @@ func (m Model) accountRefresh() (Model, tea.Cmd) {
 			return accountLoadedMsg{request: requestID, err: err}
 		}
 		s.transfer = mapData(transfer["pending"])
+		if m.cfg.DeviceID != "" {
+			events, err := read("device_events", map[string]any{})
+			if err != nil {
+				return accountLoadedMsg{request: requestID, err: err}
+			}
+			s.events = records(events["events"])
+		}
 		invites, err := read("invite_list", map[string]any{})
 		if err != nil {
 			return accountLoadedMsg{request: requestID, err: err}
@@ -302,6 +315,8 @@ func (m Model) applyAccountAction(x accountActionMsg) (Model, tea.Cmd) {
 		m.actionErr = "Device " + text(data, "device_id") + " revoked."
 	case "device_label":
 		m.actionErr = "Device " + text(data, "device_id") + " relabelled."
+	case "device_ack":
+		m.actionErr = "Device events marked seen on this device."
 	case "invite_revoke":
 		m.actionErr = "Invite " + text(data, "invite_id") + " revoked."
 	case "user_revoke":
@@ -351,7 +366,7 @@ func (m Model) accountKey(key string) (Model, tea.Cmd) {
 	if m.cfg.Mode != ModeCloud || m.account.principal == "" {
 		return m, nil
 	}
-	if m.loading && strings.Contains("ailxtync", key) && len(key) == 1 {
+	if m.loading && strings.Contains("ailxtynce", key) && len(key) == 1 {
 		m.actionErr = "wait for the screen to finish loading"
 		return m, nil
 	}
@@ -405,6 +420,14 @@ func (m Model) accountKey(key string) (Model, tea.Cmd) {
 			prompt = "Become this workspace's owner, offered by " + text(m.account.transfer, "from") + "? Type accept"
 		}
 		return m.confirmAccount(accountAction{op: "owner_transfer_respond", args: map[string]any{"action": verb}, prompt: prompt, phrase: verb}), nil
+	case "e":
+		if len(m.account.events) == 0 {
+			return m, nil
+		}
+		// Acknowledging changes nothing but this device's alert, so it
+		// takes no typed word. It acknowledges every pending event, however
+		// many: the banner shows only the newest.
+		return m.accountDo(accountAction{op: "device_ack", args: map[string]any{"all": true}})
 	case "c":
 		if text(m.account.transfer, "from") != m.account.principal {
 			return m, nil
@@ -508,6 +531,31 @@ func renderAccount(m Model) string {
 	b.WriteString(kv("Signed in as", terminalText(m.account.principal)+" ("+role+")"))
 	if p := m.account.pending; p != nil {
 		b.WriteString(warnStyle.Render(terminalText(p.prompt)) + "\n")
+	}
+	for i, e := range m.account.events {
+		if i == 5 {
+			b.WriteString(warnStyle.Render(fmt.Sprintf("…and %d more (clawbridge device events)", len(m.account.events)-i)) + "\n")
+			break
+		}
+		at := text(e, "created_at")
+		if t, err := time.Parse(time.RFC3339Nano, at); err == nil {
+			at = t.Local().Format("2006-01-02 15:04")
+		}
+		var what string
+		switch text(e, "kind") {
+		case "added":
+			what = "New device " + strconv.Quote(text(e, "label")) + " (" + text(e, "device_id") + ") joined " + text(e, "principal") + " at " + at + " via " + strings.ReplaceAll(text(e, "route"), "_", " ")
+		case "revoked":
+			what = "Device " + strconv.Quote(text(e, "label")) + " (" + text(e, "device_id") + ") of " + text(e, "principal") + " was revoked at " + at + " by " + text(e, "actor")
+		default:
+			// A kind this client doesn't know is shown as it is, never as
+			// a new device.
+			what = "Device " + strconv.Quote(text(e, "label")) + " (" + text(e, "device_id") + ") of " + text(e, "principal") + ": " + strings.ReplaceAll(text(e, "kind"), "_", " ") + " at " + at
+		}
+		b.WriteString(warnStyle.Render(terminalText(what)) + "\n")
+	}
+	if len(m.account.events) > 0 {
+		b.WriteString(mutedStyle.Render("Not you? Select the device and x revokes it · e marks these seen") + "\n")
 	}
 	if t := m.account.transfer; t != nil {
 		switch m.account.principal {

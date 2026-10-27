@@ -34,9 +34,10 @@
   abstains. The dispatcher carries a decision out after the same checks a rules decision gets. Any case that ends
   without a decision (abstained, expired, no agent, or the model chose to wait) falls back to the rules, within about a
   minute when the in-process watcher runs. People appear to the model only as random per-project refs, never emails.
-- **Seal-key rotation and launcher-token expiry.** `clawbridge operator model-seal-key rotate` re-seals every stored
-  model provider key under the new `CLAWBRIDGE_MODEL_KEY_SEAL_KEY` in one transaction, with the old key set as
-  `…_PREVIOUS` while it runs; a key that opens under neither stops it unless `--delete-unreadable`. Launcher tokens now
+- **Seal-key rotation and launcher-token expiry.** `clawbridge operator model-seal-key rotate` counts, and with
+  `--confirm` re-seals, every stored model provider key under the new `CLAWBRIDGE_MODEL_KEY_SEAL_KEY` in one
+  transaction, with the old key set as `…_PREVIOUS` while it runs; a key that opens under neither stops it unless
+  `--delete-unreadable`, and it says when the previous key can go. Launcher tokens now
   expire 90 days after creation; `launcher-token create` prints the date. The reference Caddy is pinned to log no
   requests (docs/operations/deployment.md).
 

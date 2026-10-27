@@ -409,13 +409,16 @@ func TestOperatorLauncherToken(t *testing.T) {
 
 // fakeModelSeal records the operator's rotation.
 type fakeModelSeal struct {
-	seal             *bus.ModelSeal
-	deleteUnreadable bool
+	seal                      *bus.ModelSeal
+	confirm, deleteUnreadable bool
 }
 
-func (f *fakeModelSeal) OperatorModelSealRotate(_ context.Context, seal *bus.ModelSeal, deleteUnreadable bool) (int, int, error) {
-	f.seal, f.deleteUnreadable = seal, deleteUnreadable
-	return 3, 1, nil
+func (f *fakeModelSeal) OperatorModelSealRotate(_ context.Context, seal *bus.ModelSeal, confirm, deleteUnreadable bool) (bus.SealRotation, error) {
+	f.seal, f.confirm, f.deleteUnreadable = seal, confirm, deleteUnreadable
+	if !confirm {
+		return bus.SealRotation{Keys: 4, UnderCurrent: 1, UnderPrevious: 2, Unreadable: 1, NeedPrevious: 2}, nil
+	}
+	return bus.SealRotation{Keys: 4, Resealed: 3, Deleted: 1}, nil
 }
 func (f *fakeModelSeal) Close() error { return nil }
 
@@ -438,6 +441,7 @@ func TestOperatorModelSealKeyRotate(t *testing.T) {
 		{[]string{"model-seal-key"}, "usage"},
 		{[]string{"model-seal-key", "rotate", current}, "usage"},
 		{[]string{"model-seal-key", "rotate"}, "CLAWBRIDGE_MODEL_KEY_SEAL_KEY is not set"},
+		{[]string{"model-seal-key", "rotate", "--delete-unreadable"}, "usage"},
 	} {
 		if err := RunOperator(context.Background(), c.args, &out); err == nil || !strings.Contains(err.Error(), c.want) {
 			t.Errorf("%v: %v", c.args, err)
@@ -448,10 +452,14 @@ func TestOperatorModelSealKeyRotate(t *testing.T) {
 	}
 	t.Setenv("CLAWBRIDGE_MODEL_KEY_SEAL_KEY", current)
 	t.Setenv("CLAWBRIDGE_MODEL_KEY_SEAL_KEY_PREVIOUS", previous)
-	if err := RunOperator(context.Background(), []string{"model-seal-key", "rotate", "--delete-unreadable"}, &out); err != nil || f.seal == nil || !f.deleteUnreadable {
+	if err := RunOperator(context.Background(), []string{"model-seal-key", "rotate"}, &out); err != nil || f.seal == nil || f.confirm || !strings.Contains(out.String(), "Dry run: 4 stored model keys; 1 under") || !strings.Contains(out.String(), "--confirm") {
+		t.Fatal("the dry run:", err, out.String())
+	}
+	out.Reset()
+	if err := RunOperator(context.Background(), []string{"model-seal-key", "rotate", "--confirm", "--delete-unreadable"}, &out); err != nil || !f.confirm || !f.deleteUnreadable {
 		t.Fatal(err, f)
 	}
-	if s := out.String(); !strings.Contains(s, "Re-sealed 3") || !strings.Contains(s, "deleted 1") || strings.Contains(s, current) || strings.Contains(s, previous) {
+	if s := out.String(); !strings.Contains(s, "Re-sealed 3") || !strings.Contains(s, "deleted 1") || !strings.Contains(s, "None needs") || strings.Contains(s, current) || strings.Contains(s, previous) {
 		t.Fatal(s)
 	}
 }

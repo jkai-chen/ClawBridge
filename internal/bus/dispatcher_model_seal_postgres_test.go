@@ -66,12 +66,15 @@ func TestPostgresOperatorModelSealRotate(t *testing.T) {
 	defer op.Close()
 	newKey := bytes.Repeat([]byte{9}, 32)
 	rotating, _ := NewModelSeal(newKey, testSealKey)
-	if _, _, err = op.OperatorModelSealRotate(ctx, rotating, false); err == nil || !strings.Contains(err.Error(), "1 stored model keys") {
+	if dry, err := op.OperatorModelSealRotate(ctx, rotating, false, false); err != nil || dry.UnderPrevious != 1 || dry.Unreadable != 1 {
+		t.Fatal(dry, err)
+	}
+	if _, err = op.OperatorModelSealRotate(ctx, rotating, true, false); err == nil || !strings.Contains(err.Error(), "1 stored model keys") {
 		t.Fatal(err)
 	}
-	resealed, deleted, err := op.OperatorModelSealRotate(ctx, rotating, true)
-	if err != nil || resealed != 1 || deleted != 1 {
-		t.Fatal(resealed, deleted, err)
+	r, err := op.OperatorModelSealRotate(ctx, rotating, true, true)
+	if err != nil || r.Resealed != 1 || r.Deleted != 1 || r.NeedPrevious != 0 {
+		t.Fatal(r, err)
 	}
 	var c, n string
 	if err = admin.QueryRowContext(ctx, `SELECT ciphertext,nonce FROM `+schema+`.dispatcher_model_keys WHERE owner_principal=$1`, owner).Scan(&c, &n); err != nil {

@@ -509,18 +509,22 @@ CLAWBRIDGE_DISPATCHER_MODEL_MAX_AGENTS=2                  # optional, 1-20
   1. Set the new key as `CLAWBRIDGE_MODEL_KEY_SEAL_KEY`, and the old one as
      `CLAWBRIDGE_MODEL_KEY_SEAL_KEY_PREVIOUS`, and recreate the API. The server
      opens keys under either, and seals new ones under the new key.
-  2. Re-seal every stored key under the new key, in one transaction:
+  2. Count, then re-seal every stored key under the new key, in one
+     transaction:
 
      ```sh
-     ... run --rm --no-deps api operator model-seal-key rotate
+     ... run --rm --no-deps api operator model-seal-key rotate             # counts only
+     ... run --rm --no-deps api operator model-seal-key rotate --confirm
      ```
 
      It reads both keys from the same environment, never the command line, and
-     prints only a count; each workspace's history records it. If a stored key
-     opens under neither, it changes nothing and says how many.
-     `--delete-unreadable` deletes those keys instead, and their owners run
-     `dispatcher model setup` again.
-  3. Remove `CLAWBRIDGE_MODEL_KEY_SEAL_KEY_PREVIOUS` and recreate the API.
+     prints only counts; each workspace's history records a confirmed run. If a
+     stored key opens under neither, it changes nothing and says how many.
+     `--confirm --delete-unreadable` deletes those keys instead, and their
+     owners run `dispatcher model setup` again. It ends by saying whether any
+     key still needs the previous key.
+  3. Once none does, remove `CLAWBRIDGE_MODEL_KEY_SEAL_KEY_PREVIOUS` and
+     recreate the API.
 - **The agent cap.** It is what the server reports to agentd: agentd never runs
   more agent containers than this. The default is 2.
 - **The launcher token.** agentd's credential opens only its three calls: which

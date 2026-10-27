@@ -219,6 +219,10 @@
   client's `linear watch --budget`, from the watcher's next call. `project watch-budget clear` goes back to them, and
   `project watch-budget show` and `doctor` show the budget in force and where it comes from. Each change is recorded in
   the project's history. Schema 30.
+- **A Linear refusal says why, when it's a name clash.** A write Linear refuses used to report only
+  `provider_rejected` and its code. When Linear's message says the name is taken, the error now adds a fixed
+  reason: `exists_in_workspace` (a team label can't take the name of a workspace label) or `already_exists`. Linear's
+  own text is still never shown or kept: it can carry other people's names.
 
 ## Linear views
 

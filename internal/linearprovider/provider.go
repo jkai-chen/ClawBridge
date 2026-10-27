@@ -32,6 +32,9 @@ type Error struct {
 	Status     int
 	RetryAfter string
 	LinearCode string
+	// Reason is a refusal's cause from a closed set (rejectionReasons),
+	// matched in Linear's message; the message itself is never kept.
+	Reason string
 	// NotSent means the request provably never reached Linear's MCP server
 	// tool: it failed before its headers were written, or the server's HTTP
 	// layer refused it (429, 401, 403) before parsing it.
@@ -52,6 +55,9 @@ func (e *Error) Detail() string {
 	}
 	if e.LinearCode != "" {
 		s += ", Linear code " + e.LinearCode
+	}
+	if e.Reason != "" {
+		s += ", reason " + e.Reason
 	}
 	return s
 }
@@ -767,6 +773,38 @@ func (p *Provider) Sent() uint64 { return p.sent.Load() }
 
 // rejectionCode returns Linear's error code from a rejected tool result, only
 // when its JSON carries one in the expected place and shape.
+// rejectionReasons maps a known phrase of Linear's refusal to a fixed
+// reason. Order matters: the more specific phrase first. Linear's text is
+// only matched, never passed on: it can carry other people's names.
+var rejectionReasons = []struct {
+	phrase *regexp.Regexp
+	reason string
+}{
+	// "Label \"Type\" already exists in the workspace": a team label can't
+	// take the name of a workspace label.
+	{regexp.MustCompile(`(?i)\balready exists in the workspace\b`), "exists_in_workspace"},
+	{regexp.MustCompile(`(?i)\balready exists\b`), "already_exists"},
+}
+
+// rejectionReason is the fixed reason of a refusal whose text names one.
+func rejectionReason(r *mcp.CallToolResult) string {
+	if r == nil {
+		return ""
+	}
+	for _, c := range r.Content {
+		t, ok := c.(*mcp.TextContent)
+		if !ok || len(t.Text) > MaxBodyBytes {
+			continue
+		}
+		for _, known := range rejectionReasons {
+			if known.phrase.MatchString(t.Text) {
+				return known.reason
+			}
+		}
+	}
+	return ""
+}
+
 func rejectionCode(r *mcp.CallToolResult) string {
 	if r == nil {
 		return ""
@@ -819,7 +857,7 @@ func (p *Provider) invokeOnce(ctx context.Context, chosen string, values map[str
 		return nil, fail("unavailable")
 	}
 	if r == nil || r.IsError {
-		return nil, &Error{Kind: "provider_rejected", LinearCode: rejectionCode(r)}
+		return nil, &Error{Kind: "provider_rejected", LinearCode: rejectionCode(r), Reason: rejectionReason(r)}
 	}
 	var b []byte
 	if r.StructuredContent != nil {

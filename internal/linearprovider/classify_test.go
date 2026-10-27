@@ -70,16 +70,18 @@ func TestProviderFailuresCarryOnlySafeDetailAndProveUnsentRequests(t *testing.T)
 		kill     bool
 		want     Error
 	}{
-		"rate limited":      {refuse: status(429, "Retry-After", "30"), want: Error{Kind: "rate_limited", Status: 429, RetryAfter: "30", NotSent: true}},
-		"hostile retry":     {refuse: status(429, "Retry-After", "30; rm -rf /tmp/x"), want: Error{Kind: "rate_limited", Status: 429, NotSent: true}},
-		"unauthorized":      {refuse: status(401), want: Error{Kind: "unauthorized", Status: 401, NotSent: true}},
-		"forbidden":         {refuse: status(403), want: Error{Kind: "unauthorized", Status: 403, NotSent: true}},
-		"server error":      {refuse: status(500), want: Error{Kind: "unavailable"}},
-		"server killed":     {kill: true, want: Error{Kind: "unavailable", NotSent: true}},
-		"reset after write": {refuse: reset, want: Error{Kind: "unavailable"}},
-		"rejected, code":    {rejected: `{"errors":[{"message":"secret title","extensions":{"code":"RATELIMITED"}}]}`, want: Error{Kind: "provider_rejected", LinearCode: "RATELIMITED"}},
-		"rejected, no code": {rejected: `{"code":"not a code; secret"}`, want: Error{Kind: "provider_rejected"}},
-		"rejected, text":    {rejected: "Rate limited: secret title", want: Error{Kind: "provider_rejected"}},
+		"rate limited":              {refuse: status(429, "Retry-After", "30"), want: Error{Kind: "rate_limited", Status: 429, RetryAfter: "30", NotSent: true}},
+		"hostile retry":             {refuse: status(429, "Retry-After", "30; rm -rf /tmp/x"), want: Error{Kind: "rate_limited", Status: 429, NotSent: true}},
+		"unauthorized":              {refuse: status(401), want: Error{Kind: "unauthorized", Status: 401, NotSent: true}},
+		"forbidden":                 {refuse: status(403), want: Error{Kind: "unauthorized", Status: 403, NotSent: true}},
+		"server error":              {refuse: status(500), want: Error{Kind: "unavailable"}},
+		"server killed":             {kill: true, want: Error{Kind: "unavailable", NotSent: true}},
+		"reset after write":         {refuse: reset, want: Error{Kind: "unavailable"}},
+		"rejected, code":            {rejected: `{"errors":[{"message":"secret title","extensions":{"code":"RATELIMITED"}}]}`, want: Error{Kind: "provider_rejected", LinearCode: "RATELIMITED"}},
+		"rejected, no code":         {rejected: `{"code":"not a code; secret"}`, want: Error{Kind: "provider_rejected"}},
+		"rejected, text":            {rejected: "Rate limited: secret title", want: Error{Kind: "provider_rejected"}},
+		"rejected, workspace label": {rejected: `{"errors":[{"message":"Label \"secret\" already exists in the workspace","extensions":{"code":"INVALID_INPUT"}}]}`, want: Error{Kind: "provider_rejected", LinearCode: "INVALID_INPUT", Reason: "exists_in_workspace"}},
+		"rejected, exists":          {rejected: "Label secret already exists", want: Error{Kind: "provider_rejected", Reason: "already_exists"}},
 	} {
 		t.Run(name, func(t *testing.T) {
 			p, h := classifyServer(t, c.refuse, c.rejected)

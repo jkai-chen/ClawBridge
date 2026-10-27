@@ -55,8 +55,21 @@ $script:registryKey = $testRegistryRoot + '\Environment'
 $savedPath = $env:Path
 $savedProtocols = [Net.ServicePointManager]::SecurityProtocol
 $originalInstall = ${function:Install-ClawBridge}
-function Install-ClawBridge([string]$Version = '', [string]$InstallDir = '', [switch]$NoSkill, [switch]$NoModifyPath) {
-    & $originalInstall -Version $Version -InstallDir $InstallDir -NoSkill:$NoSkill -NoModifyPath:$NoModifyPath -PathRegistryKey $script:registryKey
+function Install-ClawBridge([string]$Version = '', [string]$InstallDir = '', [switch]$NoSkill, [switch]$NoModifyPath, [switch]$AllowDowngrade) {
+    & $originalInstall -Version $Version -InstallDir $InstallDir -NoSkill:$NoSkill -NoModifyPath:$NoModifyPath -AllowDowngrade:$AllowDowngrade -PathRegistryKey $script:registryKey
+}
+# The downgrade guard's view of the installed binary, and the provenance
+# check, are fixtures: the fixture payload is never run, and gh never called.
+$script:installedVersion = $null
+$originalInstalledVersion = ${function:Get-ClawBridgeInstalledVersion}
+function Get-ClawBridgeInstalledVersion([string]$Path) { return $script:installedVersion }
+$script:gh = 'C:\fixture\gh.exe'
+function Get-ClawBridgeGh { return $script:gh }
+$script:provenance = New-Object 'Collections.Generic.List[string]'
+$script:provenanceOk = $true
+function Test-ClawBridgeProvenance([string]$Gh, [string]$Binary, [string]$Version) {
+    $script:provenance.Add($Gh + ' ' + $Version)
+    return $script:provenanceOk
 }
 $script:broadcasts = 0
 function Send-ClawBridgeEnvironmentChange { $script:broadcasts++ }
@@ -148,6 +161,11 @@ function Assert-Cleanup {
     foreach ($path in $script:backups) { Assert-True (-not (Test-Path -LiteralPath $path)) ('backup leaked: ' + $path) }
 }
 function Reset-TestSession {
+    $script:installedVersion = $null
+    $script:gh = 'C:\fixture\gh.exe'
+    $script:provenanceOk = $true
+    $script:provenance.Clear()
+    Remove-Item Env:CLAWBRIDGE_VERIFY -ErrorAction SilentlyContinue
     $script:mode = 'ok'
     $env:Path = $savedPath
     [Net.ServicePointManager]::SecurityProtocol = $savedProtocols
@@ -432,6 +450,56 @@ try {
         $null = [IO.Directory]::CreateDirectory($binary)
         Expect-Failure { Install-ClawBridge -Version v0.1.0 -InstallDir $destination }
         Assert-True ($script:requests.Count -eq 0) 'directory destination accessed transport'
+        Assert-Cleanup
+    }
+    Invoke-Case 'downgrade guard' {
+        $guarded = Join-Path $fixtureRoot 'downgrade'
+        Install-ClawBridge -Version v0.1.0 -InstallDir $guarded -NoSkill -NoModifyPath | Out-Null
+        $guardedBinary = Join-Path $guarded 'clawbridge.exe'
+        [IO.File]::WriteAllText($guardedBinary, 'installed')
+        $script:requests.Clear()
+        $script:installedVersion = 'v0.10.0'
+        Expect-Failure { Install-ClawBridge -Version v0.1.0 -InstallDir $guarded -NoSkill -NoModifyPath }
+        Assert-True ([IO.File]::ReadAllText($guardedBinary) -ceq 'installed') 'a refused downgrade changed the binary'
+        Assert-True (@($script:requests | Where-Object { $_ -like '*/download/*' }).Count -eq 0) 'a refused downgrade downloaded'
+        Install-ClawBridge -Version v0.1.0 -InstallDir $guarded -NoSkill -NoModifyPath -AllowDowngrade | Out-Null
+        Assert-True ((Get-FileHash -LiteralPath $guardedBinary).Hash.ToLowerInvariant() -ceq $script:digest) '-AllowDowngrade did not install'
+        foreach ($installed in @($null, 'v0.1.0', 'v0.0.9')) {
+            $script:installedVersion = $installed
+            Install-ClawBridge -Version v0.1.0 -InstallDir $guarded -NoSkill -NoModifyPath | Out-Null
+        }
+        Assert-Cleanup
+        # The real lookup: nothing it can't run reports a version.
+        Assert-True ($null -eq (& $originalInstalledVersion (Join-Path $guarded 'absent.exe'))) 'an absent binary reported a version'
+        Assert-True ($null -eq (& $originalInstalledVersion $guardedBinary)) 'a non-executable reported a version'
+        Assert-True ($null -eq (& $originalInstalledVersion $script:fakeSkill)) 'a binary without version output reported one'
+        foreach ($pair in @(@('v0.1.0', 'v0.2.0', $true), @('v0.9.9', 'v0.10.0', $true), @('v0.10.0', 'v0.9.9', $false), @('v1.0.0', 'v1.0.0', $false))) {
+            Assert-True ((Test-ClawBridgeOlder $pair[0] $pair[1]) -eq $pair[2]) ('Test-ClawBridgeOlder ' + $pair[0] + ' ' + $pair[1])
+        }
+    }
+    Invoke-Case 'required provenance' {
+        $verified = Join-Path $fixtureRoot 'verified'
+        $env:CLAWBRIDGE_VERIFY = 'required'
+        $output = Install-ClawBridge -Version v0.1.0 -InstallDir $verified -NoSkill -NoModifyPath | ConvertTo-RecordText
+        Assert-True ($script:provenance.Count -eq 1 -and $script:provenance[0] -ceq 'C:\fixture\gh.exe v0.1.0') ('provenance not checked once: ' + ($script:provenance -join ' | '))
+        Assert-True ($output.Contains('Verified the build provenance of v0.1.0')) 'no verification message'
+        $verifiedBinary = Join-Path $verified 'clawbridge.exe'
+        [IO.File]::WriteAllText($verifiedBinary, 'old binary')
+        $script:provenanceOk = $false
+        Expect-Failure { Install-ClawBridge -Version v0.1.0 -InstallDir $verified -NoSkill -NoModifyPath }
+        Assert-True ([IO.File]::ReadAllText($verifiedBinary) -ceq 'old binary') 'a failed provenance check installed'
+        $script:provenanceOk = $true
+        $script:gh = $null
+        $script:requests.Clear()
+        Expect-Failure { Install-ClawBridge -Version v0.1.0 -InstallDir $verified -NoSkill -NoModifyPath }
+        Assert-True ($script:requests.Count -eq 0) 'required provenance without gh accessed transport'
+        $env:CLAWBRIDGE_VERIFY = 'yes'
+        Expect-Failure { Install-ClawBridge -Version v0.1.0 -InstallDir $verified -NoSkill -NoModifyPath }
+        Assert-True ($script:requests.Count -eq 0) 'an invalid CLAWBRIDGE_VERIFY accessed transport'
+        Remove-Item Env:CLAWBRIDGE_VERIFY
+        $script:provenance.Clear()
+        Install-ClawBridge -Version v0.1.0 -InstallDir $verified -NoSkill -NoModifyPath | Out-Null
+        Assert-True ($script:provenance.Count -eq 0) 'provenance was checked without being asked for'
         Assert-Cleanup
     }
 } catch {

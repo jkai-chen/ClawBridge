@@ -93,6 +93,11 @@
 
 ## Security (G9 prep)
 
+- **Releases carry build provenance, and installs refuse downgrades (G9-10).** Every release file is attested by the
+  release workflow (`gh attestation verify FILE --repo jkai-chen/ClawBridge`). `CLAWBRIDGE_VERIFY=required` makes the
+  installers check it, with the GitHub CLI, before installing. The installers no longer install an older version over
+  a newer one unless you pass `--allow-downgrade` (Windows: `-AllowDowngrade`).
+
 - **The ClawBridge Linear app answers members only (F1).** `linear_app_status`, `linear_app_states` and `linear_write`
   now prove the caller's workspace membership before anything reaches the app. Before, any Google account could read
   the app's Linear user and organisation IDs, since the sign-in client IDs are public. Clients that ask with no

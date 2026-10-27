@@ -33,7 +33,11 @@ keep it, add `export PATH="$HOME/.local/bin:$PATH"` to `~/.zshrc` (macOS default
 shell) or `~/.bashrc`. `clawbridge --version` prints JSON:
 `{"source":"build","data":{"version":"…","commit":"…","build_time":"…"}}`. If a download or
 checksum fails, the existing binary stays in place. An update replaces the binary
-while preserving your saved route, database/cache and native credentials.
+while preserving your saved route, database/cache and native credentials. The
+installer never installs an older version over a newer one: it asks the installed
+binary its version first, and refuses unless you pass `--allow-downgrade` (Windows:
+`-AllowDowngrade`). A binary that doesn't report a release version, such as a source
+build, doesn't stop it.
 
 On Windows x64, download and run the PowerShell installer:
 
@@ -96,17 +100,51 @@ Installer support is Windows PowerShell 5.1 and PowerShell 7 on Windows x64. Nat
 platform runtime acceptance is recorded in the
 [release review](archive/reviews/RELEASE-REVIEW.md).
 
-Apart from `skill install`, installation does not run ClawBridge, and it never
+Apart from `skill install`, and asking an already installed binary for its version,
+installation does not run ClawBridge, and it never
 signs in or changes a ClawBridge configuration. Running `clawbridge` opens your saved
 profile or first-run guided setup. Linux/WSL still requires an existing working
 Secret Service session for OAuth, as described under Linux and WSL credentials below. No gcloud installation is
-needed for browser/device OAuth. Binaries are unsigned; macOS notarization and
-Windows installer packages are separate future distribution options.
+needed for browser/device OAuth. Binaries carry build provenance (below) but are not
+code-signed; macOS notarization and Windows installer packages are separate future
+distribution options.
 
 You can also download the matching raw binary from the release and verify it
 against `SHA256SUMS`. The manifest covers five executables, both installers, the
 MIT `LICENSE` and the full `SOURCE-COMMIT.txt`. Checksums verify integrity against that release
 manifest; they are not a separate publisher signature.
+
+### Verify a download
+
+The release workflow attests the build provenance of every release file (releases
+published before it did have no attestation, so the check fails for them): a statement, signed with a short-lived Sigstore certificate for that workflow
+run and recorded in a public transparency log, that this repository's
+`release.yml` built the file from the tagged commit. A file replaced in the release
+afterwards has none. With the [GitHub CLI](https://cli.github.com/):
+
+```sh
+gh attestation verify clawbridge_vX.Y.Z_linux_amd64 --repo jkai-chen/ClawBridge \
+  --signer-workflow jkai-chen/ClawBridge/.github/workflows/release.yml --source-ref refs/tags/vX.Y.Z
+```
+
+The installer is a release file too, so it can be checked before it runs, rather
+than piped straight into `sh`:
+
+```sh
+curl --fail --silent --show-error --location --proto '=https' --proto-redir '=https' -o install.sh \
+  https://github.com/jkai-chen/ClawBridge/releases/download/vX.Y.Z/install.sh
+gh attestation verify install.sh --repo jkai-chen/ClawBridge \
+  --signer-workflow jkai-chen/ClawBridge/.github/workflows/release.yml --source-ref refs/tags/vX.Y.Z
+sh install.sh --version vX.Y.Z
+```
+
+The installers run the same check when you ask for it: set
+`CLAWBRIDGE_VERIFY=required` (`curl … | CLAWBRIDGE_VERIFY=required sh`, or
+`$env:CLAWBRIDGE_VERIFY = 'required'` on Windows). Then `gh` must be on PATH and
+signed in, and a binary that fails the check is not installed. Without it the
+installers check the checksum only. Provenance proves which workflow built a file
+from which commit; it does not make that commit safe, which is what review and the
+release approval are for.
 
 `clawbridge version` and `clawbridge --version` print JSON with version, commit and
 build timestamp without loading app state. Source builds use dev/unknown defaults.

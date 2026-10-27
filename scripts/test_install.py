@@ -22,6 +22,9 @@ root=pathlib.Path(os.environ['FIXTURE'])
 if name=='uname':
  print(os.environ.get('TEST_OS','Linux') if args==['-s'] else os.environ.get('TEST_ARCH','x86_64'))
  sys.exit(0)
+if name=='gh':
+ with (root/'gh').open('a') as f: f.write(json.dumps(args)+'\n')
+ sys.exit(int(os.environ.get('GH_EXIT','0')))
 if name in ('cp','chmod','mv'):
  if os.environ.get('FAIL_WRITE')==name: sys.exit(1)
  os.execv(os.environ['REAL_'+name.upper()], [name]+args)
@@ -36,9 +39,10 @@ if url==base+'/latest':
  sys.exit(0)
 assert url.startswith(base+'/download/v0.1.0/'),url
 asset='clawbridge_v0.1.0_'+os.environ.get('ASSET_OS','linux')+'_'+os.environ.get('ASSET_ARCH','amd64')
-# Run only as the installed binary, for `skill install`: record that, then
-# exit with SKILL_EXIT.
-payload=b'#!/bin/sh\nprintf "%s %s\\n" "$0" "$*" >> "$FIXTURE/ran"\nexit "${SKILL_EXIT:-0}"\n'
+# Run only as the installed binary: `version` answers INSTALLED_VERSION (the
+# downgrade guard asks it), and `skill install` is recorded, then exits with
+# SKILL_EXIT.
+payload=b'#!/bin/sh\nif [ "$1" = version ]; then printf \'{"source":"build","data":{"version":"%s"}}\\n\' "${INSTALLED_VERSION:-dev}"; exit 0; fi\nprintf "%s %s\\n" "$0" "$*" >> "$FIXTURE/ran"\nexit "${SKILL_EXIT:-0}"\n'
 digest=hashlib.sha256(payload).hexdigest()
 entry=digest+'  '+asset+'\n'
 output=pathlib.Path(args[args.index('--output')+1])
@@ -72,7 +76,7 @@ class InstallerTests(unittest.TestCase):
         self.destination = self.root / "bin with ' spaces"
         self.env = os.environ.copy()
         self.env.update(FIXTURE=str(self.root), HOME=str(self.state), TMPDIR=str(self.scratch))
-        for name in ("curl", "uname", "cp", "chmod", "mv"):
+        for name in ("curl", "uname", "cp", "chmod", "mv", "gh"):
             self.env["REAL_" + name.upper()] = shutil.which(name) or ""
             stub = self.stubs / name
             stub.write_text(STUB.replace("#!PYTHON", "#!" + sys.executable))
@@ -151,6 +155,62 @@ class InstallerTests(unittest.TestCase):
                 self.run_installer("--version", "v0.1.0", "--bin-dir", str(self.destination), ok=False, FAIL_WRITE=operation)
                 self.assertEqual(target.read_bytes(), b"previous")
                 self.assertEqual(self.ran(), [], "a failed install ran a binary")
+
+    def gh_calls(self):
+        p = self.root / "gh"
+        return [json.loads(line) for line in p.read_text().splitlines()] if p.exists() else []
+
+    def test_downgrade_needs_its_flag(self):
+        self.run_installer("--version", "v0.1.0", "--bin-dir", str(self.destination), "--no-skill")
+        installed = (self.destination / "clawbridge").read_bytes()
+        # The installed binary says v0.2.0: installing v0.1.0 over it is refused
+        # before any download, and leaves it in place.
+        before = len(self.requests())
+        result = self.run_installer("--version", "v0.1.0", "--bin-dir", str(self.destination), "--no-skill", ok=False, INSTALLED_VERSION="v0.2.0")
+        self.assertIn("v0.1.0 is older than the installed v0.2.0; pass --allow-downgrade", result.stderr)
+        self.assertEqual(len(self.requests()), before)
+        self.assertEqual((self.destination / "clawbridge").read_bytes(), installed)
+        # So is latest, when it resolves older than what is installed.
+        self.run_installer("--bin-dir", str(self.destination), "--no-skill", ok=False, INSTALLED_VERSION="v0.10.0")
+        self.run_installer("--version", "v0.1.0", "--bin-dir", str(self.destination), "--no-skill", "--allow-downgrade", INSTALLED_VERSION="v0.2.0")
+        # The same version, a newer one, a dev build or an unreadable binary don't stop it.
+        for version in ["v0.1.0", "v0.0.9", "dev", "v0.2.0;x"]:
+            with self.subTest(installed=version):
+                self.run_installer("--version", "v0.1.0", "--bin-dir", str(self.destination), "--no-skill", INSTALLED_VERSION=version)
+        (self.destination / "clawbridge").write_bytes(b"previous")
+        self.run_installer("--version", "v0.1.0", "--bin-dir", str(self.destination), "--no-skill")
+
+    def test_required_provenance_is_checked_with_gh(self):
+        result = self.run_installer("--version", "v0.1.0", "--bin-dir", str(self.destination), "--no-skill", CLAWBRIDGE_VERIFY="required")
+        calls = self.gh_calls()
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(calls[0][:2], ["attestation", "verify"])
+        for flag, value in [("--repo", "jkai-chen/ClawBridge"), ("--signer-workflow", "jkai-chen/ClawBridge/.github/workflows/release.yml"), ("--source-ref", "refs/tags/v0.1.0")]:
+            self.assertEqual(calls[0][calls[0].index(flag) + 1], value)
+        self.assertIn("Verified the build provenance of v0.1.0", result.stdout)
+        # A failed check installs nothing.
+        target = self.destination / "clawbridge"
+        target.write_bytes(b"previous")
+        self.run_installer("--version", "v0.1.0", "--bin-dir", str(self.destination), "--no-skill", ok=False, CLAWBRIDGE_VERIFY="required", GH_EXIT="1")
+        self.assertEqual(target.read_bytes(), b"previous")
+        # Unset, gh is never asked; another value is refused before the network.
+        self.run_installer("--version", "v0.1.0", "--bin-dir", str(self.destination), "--no-skill")
+        self.assertEqual(len(self.gh_calls()), 2)
+        before = len(self.requests())
+        self.run_installer("--version", "v0.1.0", "--bin-dir", str(self.destination), ok=False, CLAWBRIDGE_VERIFY="yes")
+        self.assertEqual(len(self.requests()), before)
+
+    def test_required_provenance_without_gh_fails_before_network(self):
+        tools = self.root / "tools"
+        tools.mkdir()
+        for name in ["mktemp", "rm", "mkdir", "sed", "awk", "grep", "head", "cat", "tr", "sha256sum", "shasum", "perl", "env"]:
+            found = shutil.which(name)
+            if found:
+                (tools / name).symlink_to(found)
+        (self.stubs / "gh").unlink()
+        result = self.run_installer("--version", "v0.1.0", "--bin-dir", str(self.destination), ok=False, CLAWBRIDGE_VERIFY="required", PATH=str(self.stubs) + os.pathsep + str(tools))
+        self.assertIn("needs the GitHub CLI", result.stderr)
+        self.assertEqual(self.requests(), [])
 
     def test_symlink_and_directory_refused_before_network(self):
         self.destination.mkdir()

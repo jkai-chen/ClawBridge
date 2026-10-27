@@ -1,23 +1,23 @@
 {
-  "config_revision": 3,
-  "provider": {
-    "id": "openai",
-    "api": "openai-responses",
-    "base_url": "https://api.openai.com/v1",
-    "model": "test-model",
-    "key": "sk-test-not-a-real-key"
-  },
-  "projects": [
-    {
-      "project_id": "prj_0b9f6c5e3a4d4e8b9c1f2d3e4f5a6b7c",
-      "token": "cbm_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
-      "expires_at": "2026-01-01T00:00:00Z"
-    }
-  ],
+  "binding_secret": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+  "config_revision": 1,
   "limits": {
     "max_input_tokens_per_run": 20000,
     "max_output_tokens_per_run": 2000
   },
-  "binding_secret": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
-  "status": "active"
+  "projects": [
+    {
+      "expires_at": "2026-01-01T00:00:00Z",
+      "project_id": "prj_0b9f6c5e3a4d4e8b9c1f2d3e4f5a6b7c",
+      "token": "cbm_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+    }
+  ],
+  "provider": {
+    "api": "anthropic-messages",
+    "base_url": "https://api.anthropic.com",
+    "id": "anthropic",
+    "key": "sk-test-not-a-real-key",
+    "model": "claude-test"
+  },
+  "status": "pending_test"
 }

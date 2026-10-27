@@ -1,7 +1,12 @@
 {
   "ok": true,
   "result": {
-    "session_id": "ses_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-    "events": []
+    "counts": {
+      "comments": 0,
+      "markers": 0,
+      "releases": 0
+    },
+    "last_heartbeat": "2026-01-01T00:00:00Z",
+    "last_issue_activity": "2026-01-01T00:00:00Z"
   }
 }

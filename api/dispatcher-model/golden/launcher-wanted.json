@@ -1,10 +1,10 @@
 {
   "agents": [
     {
+      "config_revision": 1,
       "owner_ref": "p_dddddddddddddddd",
-      "provider": "api.openai.com:443",
-      "config_revision": 3
+      "provider": "api.anthropic.com:443"
     }
   ],
-  "max_agents": 2
+  "max_agents": 3
 }

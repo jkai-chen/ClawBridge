@@ -1,9 +1,9 @@
 {
   "projects": [
     {
+      "expires_at": "2026-01-01T00:00:00Z",
       "project_id": "prj_0b9f6c5e3a4d4e8b9c1f2d3e4f5a6b7c",
-      "token": "cbm_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
-      "expires_at": "2026-01-01T00:00:00Z"
+      "token": "cbm_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
     }
   ]
 }

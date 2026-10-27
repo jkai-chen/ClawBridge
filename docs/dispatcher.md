@@ -129,8 +129,8 @@ Status, on the current main branch:
 | A guided `dispatcher model setup` in the CLI and TUI | planned |
 | Advice in rules mode (`recommend`), and the opt-in tools | planned |
 
-Nothing below the first two rows is in a release yet. The design is in this section so that owners can judge it before
-it ships.
+Only the agent is in a release so far (v0.3.4). `--engine` is on main, but not yet released, and the rest is not on
+main yet. The design is in this section so that owners can judge it before it ships.
 
 ### The model's key: setup and test
 

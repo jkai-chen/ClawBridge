@@ -135,7 +135,7 @@ func (s *Store) migrate() error {
 	if err = tx.QueryRow("PRAGMA user_version").Scan(&version); err != nil {
 		return err
 	}
-	if version > 32 {
+	if version > 33 {
 		return errors.New("database schema is newer than this ClawBridge binary")
 	}
 	if version == 0 {
@@ -302,6 +302,11 @@ func (s *Store) migrate() error {
 	}
 	if version < 32 {
 		if _, err = tx.Exec(deviceDormancySchemaV32 + `PRAGMA user_version=32;`); err != nil {
+			return err
+		}
+	}
+	if version < 33 {
+		if _, err = tx.Exec(linearNamesSchemaV33 + `PRAGMA user_version=33;`); err != nil {
 			return err
 		}
 	}
@@ -485,7 +490,8 @@ var operationArgs = map[string]string{
 	"taskboard_get":               "instance",
 	"taskboard_get_v2":            "instance",
 	"comment_watch_status":        "",
-	"taskboard_set_v2":            "instance expected_revision mode linear_team_ids linear_default_team_id linear_project_ids linear_workspace_id closes_pending",
+	"taskboard_set_v2":            "instance expected_revision mode linear_team_ids linear_default_team_id linear_project_ids linear_workspace_id closes_pending linear_team_names linear_project_names",
+	"taskboard_names_set":         "instance expected_revision linear_team_names linear_project_names",
 	"taskboard_clear_v2":          "instance expected_revision repair",
 	"taskboard_access":            "instance ledger engineer",
 	"member_display_name_set":     "display_name if_unset",
@@ -552,6 +558,7 @@ var operationArgs = map[string]string{
 	"doc_publish_override":        "instance parent_kind parent_id source_path operation_id pattern_ids lines source_commit",
 	"doc_policy_set":              "instance expected_revision doc_policy",
 	"health_get":                  "instance",
+	"project_overview":            "instance",
 	"health_set":                  "instance linear_project expected_revision health_policy",
 	"dispatcher_model_setup":      "instance provider_id api base_url model key caps egress_text_version egress_confirmed",
 	"dispatcher_model_status":     "instance config_revision",
@@ -614,6 +621,10 @@ func validateArgs(op string, a map[string]any) error {
 				if _, ok := v.(string); !ok {
 					return fmt.Errorf("%s must be UUID or null", k)
 				}
+			}
+		case "linear_team_names", "linear_project_names":
+			if _, ok := v.(map[string]any); !ok {
+				return fmt.Errorf("%s must be an object of IDs to names", k)
 			}
 		case "coordination":
 			if _, err := ParseCoordination(v); err != nil {
@@ -701,7 +712,7 @@ func validateArgs(op string, a map[string]any) error {
 			}
 		}
 	}
-	if op == "taskboard_set" || op == "taskboard_clear" || op == "taskboard_set_v2" || op == "taskboard_clear_v2" {
+	if op == "taskboard_set" || op == "taskboard_clear" || op == "taskboard_set_v2" || op == "taskboard_clear_v2" || op == "taskboard_names_set" {
 		if _, err := taskboardExpected(a); err != nil {
 			return err
 		}
@@ -825,7 +836,7 @@ func (s *Store) ExecuteAs(ctx context.Context, principal string, r Request) (Res
 // inbox stamps deliveries, so those keep the locks.
 func pureRead(r Request) bool {
 	switch r.Operation {
-	case "snapshot", "inbox_status", "notification_status", "taskboard_get", "taskboard_get_v2", "taskboard_access", "list_projects", "list_members", "comment_watch_status", "label_policy_get", "status_policy_get", "doc_policy_get", "dispatcher_get", "context_watch_get", "health_get", "doc_seed_get", "doc_publication_get", "invite_list", "device_list", "device_events", "user_list", "owner_transfer_get", "dispatcher_chat_show", "dispatcher_decisions_list", "dispatcher_escalations_list", "dispatcher_model_doctor":
+	case "snapshot", "inbox_status", "notification_status", "taskboard_get", "taskboard_get_v2", "taskboard_access", "list_projects", "list_members", "comment_watch_status", "label_policy_get", "status_policy_get", "doc_policy_get", "dispatcher_get", "context_watch_get", "health_get", "doc_seed_get", "doc_publication_get", "invite_list", "device_list", "device_events", "user_list", "owner_transfer_get", "dispatcher_chat_show", "dispatcher_decisions_list", "dispatcher_escalations_list", "dispatcher_model_doctor", "project_overview":
 		return true
 	case "list_sessions", "history", "whoami", "linear_comments_posted", "linear_comment_precheck", "intake_policy_get", "intake_trust_list", "intake_list":
 		// Naming a session with its instance makes it a heartbeat read: the
@@ -1205,6 +1216,14 @@ func (s *Store) execute(ctx context.Context, tx *transaction, r Request) (any, e
 	if r.Operation == "comment_watch_status" {
 		return watchStatus(ctx, tx, pid)
 	}
+	// Any project member may read the project's overview, with or without
+	// a session (PROJECT-OVERVIEW-PLAN §1).
+	if r.Operation == "project_overview" {
+		if r.Session == "" && str(a, "instance") != "" {
+			return nil, errors.New("instance requires session")
+		}
+		return s.projectOverview(ctx, tx, w, p, projectRole)
+	}
 	// Any project member may read the approved label list, with or
 	// without a session; setting it is the owner's (labelPolicyOp).
 	if r.Operation == "label_policy_get" {
@@ -1251,7 +1270,7 @@ func (s *Store) execute(ctx context.Context, tx *transaction, r Request) (any, e
 		}
 		return healthRows(ctx, tx, pid)
 	}
-	if r.Operation == "taskboard_access" || r.Operation == "taskboard_get" || r.Operation == "taskboard_set" || r.Operation == "taskboard_clear" || r.Operation == "taskboard_get_v2" || r.Operation == "taskboard_set_v2" || r.Operation == "taskboard_clear_v2" {
+	if r.Operation == "taskboard_access" || r.Operation == "taskboard_get" || r.Operation == "taskboard_set" || r.Operation == "taskboard_clear" || r.Operation == "taskboard_get_v2" || r.Operation == "taskboard_set_v2" || r.Operation == "taskboard_clear_v2" || r.Operation == "taskboard_names_set" {
 		if r.Session == "" && str(a, "instance") != "" {
 			return nil, errors.New("instance requires session")
 		}

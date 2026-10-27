@@ -84,6 +84,7 @@ func NewServerWithOptions(store Executor, workspace, project, session, instance 
 	s.AddResource(&mcp.Resource{URI: InboxStatusURI, Name: "Inbox status", MIMEType: "application/json", Description: "Authoritative unread metadata; does not mark delivered or read."}, inbox.read)
 	add[registerInput](s, b, "register_session", "Register this configured session; routing roles do not grant permissions. Use resume only for explicit takeover; record the new instance before another resume.", false, false)
 	add[listInput](s, b, "list_sessions", "List sessions in the pinned project with their live assignments; filter by issue, scope_path or assignment_state to find slice owners.", true, false)
+	add[emptyInput](s, b, "project_overview", "Overview of the pinned project: its sessions (active first, at most 200) with the coordinator and each live assignment's issue identifier, counts over every session, and its Linear board's teams, projects and who closes each. No issue titles; read those with the taskboard tools.", true, true)
 	add[sendInput](s, b, "send", "Send to a session, @all, or @role:ROLE. Reuse operation_id only for an identical retry.", false, true)
 	add[inboxInput](s, b, "inbox", "Read this session's inbox; fetching marks delivered, not read. unread_only defaults to true.", false, true)
 	add[inboxStatusInput](s, b, "inbox_status", "Inspect authoritative unread metadata without heartbeat, delivery, read or history writes.", true, true)

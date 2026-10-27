@@ -1,0 +1,31 @@
+{
+  "ok": true,
+  "result": [
+    {
+      "action": "superseded",
+      "case_id": "case_0123456789abcdef0123456789abcdef",
+      "created_at": "2026-01-01T00:00:00Z",
+      "engine": "model",
+      "explanation": "",
+      "guardrail": "permitted",
+      "reason_code": "proposal_changed",
+      "subject": {
+        "id": "asg_cccccccccccccccccccccccccccccccc",
+        "type": "proposal"
+      }
+    },
+    {
+      "action": "wait",
+      "case_id": "case_0123456789abcdef0123456789abcdef",
+      "created_at": "2026-01-01T00:00:00Z",
+      "engine": "model",
+      "explanation": "The session was just seen.",
+      "guardrail": "permitted",
+      "reason_code": "uncertain",
+      "subject": {
+        "id": "asg_cccccccccccccccccccccccccccccccc",
+        "type": "proposal"
+      }
+    }
+  ]
+}

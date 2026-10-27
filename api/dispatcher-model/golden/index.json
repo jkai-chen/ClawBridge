@@ -3,6 +3,7 @@
   "agent-renew.json": "AgentRenewResponse",
   "cases-next-case-no-text.json": "CasesNextResponse",
   "cases-next-case.json": "CasesNextResponse",
+  "cases-next-chat.json": "CasesNextResponse",
   "cases-next-null.json": "CasesNextResponse",
   "error-agent_cap.json": "ErrorResponse",
   "error-cap_reached.json": "ErrorResponse",
@@ -25,8 +26,10 @@
   "tool-abstain.json": "ToolResponse",
   "tool-decide-superseded.json": "ToolResponse:DecideResult",
   "tool-decide.json": "ToolResponse:DecideResult",
+  "tool-list_decisions.json": "ToolResponse",
   "tool-list_domain.json": "ToolResponse",
   "tool-list_sessions.json": "ToolResponse",
   "tool-read_issue_facts.json": "ToolResponse",
+  "tool-reply.json": "ToolResponse",
   "tool-session_activity.json": "ToolResponse"
 }

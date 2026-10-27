@@ -116,6 +116,13 @@
   tells agents to pass `--json`. Commands get their own layouts in the next releases; until then they show every
   field.
 
+- **`whoami`, `doctor`, `status ID` and the account lists read as answers (O2).** `whoami` says who you are, how that
+  was proven, and your workspace, project and session. `doctor` leads with its counts, lists failures first, then
+  warnings, then passes, with each action indented under its check. `status ID` shows when a message was sent and who has
+  read it. `invite list`, `device list`, `user list` and `owner show` are tables, with a device going dormant marked
+  "dormant in N days". Times are relative ("4 min ago", "in 2 days"), with UTC where the exact time matters, through one
+  formatter that the TUI uses too. `--json` is unchanged.
+
 # ClawBridge v0.3.5 (unreleased)
 
 **Schema 19 → 28.**

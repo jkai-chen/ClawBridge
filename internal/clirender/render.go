@@ -93,6 +93,8 @@ func Render(d Doc, w int, st style) string {
 			b.WriteString(pad + st.muted.Render(ansi.Wordwrap(bl.text, w-len(pad), " ")) + "\n")
 		case bText:
 			writeWrapped(&b, pad, bl.text, w)
+		case bDetail:
+			writeWrapped(&b, pad+strings.Repeat(" ", 5), bl.text, w)
 		case bSecret:
 			// Alone on its line and whole, whatever the width.
 			if bl.label != "" {

@@ -160,9 +160,13 @@ func clearModelOptIns(ctx context.Context, tx *transaction, pid string) error {
 	return err
 }
 
+// errModelProjectsCap refuses turning the model on in one project more
+// than an owner's agent serves.
+var errModelProjectsCap = invalid(fmt.Sprintf("you have the model on in %d projects, the most one dispatcher agent serves: turn it off in one of them first (dispatcher disable, or dispatcher model advise off)", maxModelProjects))
+
 // modelCapPreview is what a preview adds when turning the model on for pid
-// would take owner past maxModelProjects, or nil: the first
-// maxModelProjects by project ID are served, the rest are not.
+// would take owner past maxModelProjects, or nil. Enable and advise on
+// refuse it at --confirm.
 func modelCapPreview(ctx context.Context, tx *transaction, owner, pid string) (map[string]any, error) {
 	all, err := allModelProjects(ctx, tx, owner)
 	if err != nil || slices.Contains(all, pid) || len(all) < maxModelProjects {
@@ -236,7 +240,10 @@ func (s *Store) dispatcherAdviseOp(ctx context.Context, tx *transaction, w, p ma
 				return nil, err
 			}
 			if over != nil {
-				preview["model_projects_over_cap"] = over
+				preview["model_projects_over_cap"], preview["blocked"] = over, "model_projects_over_cap"
+				if a["confirm"] == true {
+					return nil, errModelProjectsCap
+				}
 			}
 		}
 		preview["advise"] = on

@@ -178,12 +178,19 @@ func (s *Store) dispatcherSwitch(ctx context.Context, tx *transaction, w, p map[
 	if noDomains {
 		preview["blocked"] = "no_domains"
 	}
+	overCap := model != nil && model["model_projects_over_cap"] != nil
+	if overCap && !noDomains {
+		preview["blocked"] = "model_projects_over_cap"
+	}
 	if a["confirm"] != true {
 		preview["preview"] = true
 		return preview, nil
 	}
 	if noDomains {
 		return nil, invalid("the dispatcher has no domains and the task board binding names no Linear projects, so every claim would be escalated: set domains first (dispatcher domains set)")
+	}
+	if overCap {
+		return nil, errModelProjectsCap
 	}
 	if err = clearModelOptIns(ctx, tx, pid); err != nil {
 		return nil, err

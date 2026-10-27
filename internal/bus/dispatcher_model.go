@@ -455,8 +455,10 @@ func revokeOwnerCredentials(ctx context.Context, tx *transaction, owner, nowRaw 
 }
 
 // maxModelProjects is how many projects one owner's agent serves: the
-// agent's schema caps its project list at 100. Past it, the first 100 by
-// project ID are served, and doctor and the previews say so.
+// agent's schema caps its project list at 100. Enable and advise on refuse
+// one more; an owner can still pass it by gaining projects (a role or a
+// workspace), and then the first 100 by project ID are served and doctor
+// says so.
 const maxModelProjects = 100
 
 // modelProjects are the projects owner's agent gets tokens for [Q5, d7

@@ -347,3 +347,38 @@ func refusesSlowRequests(t *testing.T, socket string) {
 		t.Fatal("the proxy waited for the body")
 	}
 }
+
+// A deploy loads its images with `docker load`, which keeps no repo digest,
+// and pins them by image ID. The proxy then takes exactly those IDs: the
+// agent and egress creates, and the egress image's inspect; another ID, or
+// the same image by a name and digest, is refused.
+func TestProxyImagesPinnedByID(t *testing.T) {
+	agentID, egressID := "sha256:"+strings.Repeat("a1", 32), "sha256:"+strings.Repeat("e2", 32)
+	s := newStackWith(t, func(policyDir string) Spec {
+		return Spec{ServerURL: testServer, AgentImage: agentID, EgressImage: egressID, PolicyDir: policyDir}
+	})
+	if err := validImage(agentID); err != nil {
+		t.Fatal(err)
+	}
+	if got := s.send(t, http.MethodPost, "/containers/create?name=clawbridge-agent-"+refA, mustJSON(t, agentSpec(agentID, testServer, refA, 1))); got != http.StatusCreated {
+		t.Fatalf("agent by ID: %d %s", got, s.log.String())
+	}
+	if got := s.send(t, http.MethodPost, "/containers/create?name="+egressName, mustJSON(t, egressSpec(egressID, s.policyDir))); got != http.StatusCreated {
+		t.Fatalf("egress by ID: %d %s", got, s.log.String())
+	}
+	if got := s.send(t, http.MethodGet, "/images/"+egressID+"/json", nil); got != http.StatusOK {
+		t.Fatalf("egress image inspect: %d", got)
+	}
+	for name, image := range map[string]string{
+		"another ID":      "sha256:" + strings.Repeat("b1", 32),
+		"name and digest": "ghcr.io/example/agent@" + agentID,
+		"the egress ID":   egressID,
+	} {
+		if got := s.send(t, http.MethodPost, "/containers/create?name=clawbridge-agent-"+refB, mustJSON(t, agentSpec(image, testServer, refB, 1))); got != http.StatusForbidden {
+			t.Fatalf("%s: %d", name, got)
+		}
+	}
+	if got := s.send(t, http.MethodGet, "/images/"+agentID+"/json", nil); got != http.StatusForbidden {
+		t.Fatalf("agent image inspect: %d", got)
+	}
+}

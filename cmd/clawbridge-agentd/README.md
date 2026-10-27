@@ -115,7 +115,8 @@ Its Docker access is root-equivalent, so it is kept small, and it is fenced in b
 ## The fixed spec
 
 The spec is compiled in. The server says which owner refs should run, never how.
-- **Image:** pinned by digest (`CLAWBRIDGE_AGENT_IMAGE=name@sha256:…`).
+- **Image:** pinned by digest (`CLAWBRIDGE_AGENT_IMAGE=name@sha256:…`), or by image ID (`sha256:…`). A deploy loads
+  the images with `docker load`, which keeps no repo digest, so it pins them by ID. A tag alone is refused.
 - **Filesystem:** read-only root, with a tmpfs `/tmp` (`noexec,nosuid`, 8 MiB).
 - **Privileges:** the image's non-root `node` user, no capabilities, `no-new-privileges`.
 - **Limits:** 64 pids, 160 MiB of memory with no swap, half a CPU.
@@ -188,12 +189,14 @@ Done:
 - the proxy and its boundary tests;
 - the reconciler and the Docker calls, tested through the real proxy against a fake daemon;
 - the configuration checks;
-- the egress proxy and its tests (fake DNS and upstream).
+- the egress proxy and its tests (fake DNS and upstream);
+- **the agentd image** (`Dockerfile` here, built from the repository root): the static binary on distroless, user
+  65534, about 15 MiB. CI builds it and runs its egress proxy with the fixed spec's hardening
+  (`scripts/image-test.sh`).
 
 Next:
 - **The server's launcher endpoints**, being built server-side. Until they exist, `run` logs a failed round every 30
   seconds and starts nothing.
-- **An agentd image** that ships the binary for the egress container.
 - **Deploy:** the `cbagent` user, the rootless daemon and the systemd units. The deploy also loads the pinned
   image into that daemon, because the proxy allows no pull.
 - **Real-daemon tests:** in CI, against a real rootless daemon. A create through the proxy is refused. With the

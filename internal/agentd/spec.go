@@ -19,8 +19,10 @@ import (
 
 var (
 	ownerRefPattern = regexp.MustCompile(`^p_[a-z0-9]{8,32}$`)
-	// imagePattern is an image pinned by digest; a tag alone is refused.
-	imagePattern = regexp.MustCompile(`^[a-z0-9][a-z0-9._/-]*(:[A-Za-z0-9._-]+)?@sha256:[0-9a-f]{64}$`)
+	// imagePattern is an image pinned by its repo digest, or by its image
+	// ID (sha256:…, the config digest): a deploy loads the images with
+	// `docker load`, which keeps no repo digest. A tag alone is refused.
+	imagePattern = regexp.MustCompile(`^([a-z0-9][a-z0-9._/-]*(:[A-Za-z0-9._-]+)?@)?sha256:[0-9a-f]{64}$`)
 )
 
 const (
@@ -262,7 +264,7 @@ type connectSpec struct{ Container string }
 // validImage reports an error unless image is pinned by digest.
 func validImage(image string) error {
 	if !imagePattern.MatchString(image) {
-		return fmt.Errorf("the agent image must be pinned by digest (name@sha256:…), not %q", image)
+		return fmt.Errorf("an image must be pinned by digest (name@sha256:…) or by image ID (sha256:…), not %q", image)
 	}
 	return nil
 }

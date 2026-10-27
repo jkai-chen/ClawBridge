@@ -577,3 +577,32 @@ func TestCommentPrecheckRefusesWhatTheReserveWould(t *testing.T) {
 		t.Fatal("the precheck wrote:", rows, e)
 	}
 }
+
+// A claim or close note ClawBridge posted awaits no answer, so it doesn't
+// hold the issue on the 5-minute cadence; a session's own comment, which
+// does await one, still does.
+func TestCommentWatchCadenceIgnoresMarkerNotes(t *testing.T) {
+	w := newWatchHarness(t)
+	next := func() time.Duration {
+		w.t.Helper()
+		w.dueNow()
+		out := w.poll(watchIssue)
+		return at(out["next_poll_at"].(string)).Sub(time.Now())
+	}
+	if d := next(); d < 50*time.Minute {
+		t.Fatal("a quiet issue polls sooner than hourly:", d)
+	}
+	now := layout(time.Now())
+	if _, e := w.s.db.Exec(`INSERT INTO linear_comment_ledger(workspace_id,project_id,operation_digest,marker_key,issue_uuid,body_sha256,session_id,principal,state,reserved_at) SELECT workspace_id,id,'marker-digest','asg_1:claim',?,'x','ses','p','posted',? FROM projects WHERE id=(SELECT project_id FROM watch_cursors WHERE source='comments' AND subject=? LIMIT 1)`, watchIssue, now, watchIssue); e != nil {
+		t.Fatal(e)
+	}
+	if d := next(); d < 50*time.Minute {
+		t.Fatal("a claim note held the issue on the short cadence:", d)
+	}
+	if _, e := w.s.db.Exec(`INSERT INTO linear_comment_ledger(workspace_id,project_id,operation_digest,issue_uuid,body_sha256,session_id,principal,state,reserved_at) SELECT workspace_id,id,'own-digest',?,'x','ses','p','posted',? FROM projects WHERE id=(SELECT project_id FROM watch_cursors WHERE source='comments' AND subject=? LIMIT 1)`, watchIssue, now, watchIssue); e != nil {
+		t.Fatal(e)
+	}
+	if d := next(); d > 6*time.Minute {
+		t.Fatal("a session's own comment didn't keep the issue on the short cadence:", d)
+	}
+}

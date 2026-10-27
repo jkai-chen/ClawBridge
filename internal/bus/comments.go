@@ -873,11 +873,14 @@ func (c commentCall) report(ctx context.Context) (any, error) {
 }
 
 // nextPoll backs off a quiet issue: 5 minutes after recent activity (a human
-// comment, or a ClawBridge comment awaiting its answer), 15 within a day,
-// otherwise hourly.
+// comment, or a session's own comment awaiting its answer), 15 within a day,
+// otherwise hourly. ClawBridge's claim and close notes (marker comments)
+// await no answer, so they never hold an issue on the 5-minute cadence:
+// they did for an hour after every claim and release, most of the
+// watcher's fixed Linear calls.
 func (c commentCall) nextPoll(ctx context.Context, issue, activity string) (string, error) {
 	hourAgo := layout(c.now.Add(-time.Hour))
-	ours, err := query(ctx, c.tx, `SELECT 1 FROM linear_comment_ledger WHERE workspace_id=? AND issue_uuid=? AND state<>'failed' AND reserved_at>?`, c.wid, issue, hourAgo)
+	ours, err := query(ctx, c.tx, `SELECT 1 FROM linear_comment_ledger WHERE workspace_id=? AND issue_uuid=? AND marker_key='' AND state<>'failed' AND reserved_at>?`, c.wid, issue, hourAgo)
 	if err != nil {
 		return "", err
 	}

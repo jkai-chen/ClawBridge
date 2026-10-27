@@ -478,13 +478,18 @@ type LauncherAgent struct {
 	ConfigRevision int    `json:"config_revision"`
 }
 
+// LauncherTokenTTL is a launcher token's life from its creation [F5]: the
+// operator creates the next one and revokes the old one before then.
+const LauncherTokenTTL = 90 * 24 * time.Hour
+
 // launcherAuth checks a launcher token and records its use: the launcher
-// polls, so its last use is its heartbeat for doctor.
+// polls, so its last use is its heartbeat for doctor. An expired token gets
+// the same refusal as an unknown one.
 func launcherAuth(ctx context.Context, tx *transaction, token, nowRaw string) error {
 	if !launcherTokenPattern.MatchString(token) {
 		return ErrModelUnauthorized
 	}
-	res, err := tx.ExecContext(ctx, `UPDATE dispatcher_launcher_tokens SET last_used_at=? WHERE token_sha256=? AND revoked_at IS NULL`, nowRaw, tokenDigest(token))
+	res, err := tx.ExecContext(ctx, `UPDATE dispatcher_launcher_tokens SET last_used_at=? WHERE token_sha256=? AND revoked_at IS NULL AND created_at>?`, nowRaw, tokenDigest(token), layout(at(nowRaw).Add(-LauncherTokenTTL)))
 	if err != nil {
 		return err
 	}

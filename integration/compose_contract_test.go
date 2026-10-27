@@ -166,6 +166,13 @@ func TestComposePublicHTTPSAndPersistenceContract(t *testing.T) {
 	if !containsAll(compose.Services["caddy"].Command, "reverse-proxy", "--disable-redirects") {
 		t.Fatalf("Caddy must disable HTTP redirects for inbound-443-only operation: %#v", compose.Services["caddy"].Command)
 	}
+	// The agent's config answer carries an owner's provider key once: the
+	// proxy logs no requests, so no body or token reaches a log [AG-L1].
+	for _, arg := range compose.Services["caddy"].Command {
+		if arg == "--access-log" || arg == "--debug" {
+			t.Fatalf("Caddy must not log requests: %#v", compose.Services["caddy"].Command)
+		}
+	}
 
 	defaultEnv := append([]string{}, os.Environ()...)
 	defaultEnv = append(defaultEnv,

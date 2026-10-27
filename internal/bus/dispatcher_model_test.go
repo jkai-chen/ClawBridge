@@ -222,6 +222,16 @@ func TestLauncherTokenAuth(t *testing.T) {
 	if err := h.s.db.QueryRow(`SELECT id FROM dispatcher_launcher_tokens`).Scan(&id); err != nil {
 		t.Fatal(err)
 	}
+	// F5: a token lives 90 days from its creation, then gets the same answer.
+	for days, works := range map[int]bool{89: true, 91: false} {
+		created := layout(time.Now().Add(-time.Duration(days) * 24 * time.Hour))
+		if _, err := h.s.db.Exec(`UPDATE dispatcher_launcher_tokens SET created_at=? WHERE id=?`, created, id); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := h.s.LauncherWanted(h.ctx, h.launcher); (err == nil) != works || err != nil && !errors.Is(err, ErrModelUnauthorized) {
+			t.Fatal(days, "days old:", err)
+		}
+	}
 	if err := h.s.OperatorLauncherTokenRevoke(h.ctx, id); err != nil {
 		t.Fatal(err)
 	}

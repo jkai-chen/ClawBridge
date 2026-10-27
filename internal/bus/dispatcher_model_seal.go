@@ -1,0 +1,106 @@
+package bus
+
+import (
+	"context"
+	"errors"
+	"fmt"
+)
+
+// OperatorModelSealRotate re-seals every stored provider key under the
+// current seal key, each with a fresh nonce, in one transaction [AG-L1].
+// A key opens under the current or the previous seal key, as the server
+// opens it. If any key opens under neither, nothing changes unless
+// deleteUnreadable: then those keys are deleted and their owners'
+// credentials revoked, and each owner runs setup again. A key that changed
+// meanwhile (a new setup, sealed by the server under the current key) is
+// left as it is. The counts go to each workspace's history; no key, nonce
+// or owner is recorded.
+func (s *Store) OperatorModelSealRotate(ctx context.Context, seal *ModelSeal, deleteUnreadable bool) (resealed, deleted int, err error) {
+	if seal == nil {
+		return 0, 0, errors.New("the seal keys are required")
+	}
+	raw, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return 0, 0, errors.New("authority unavailable")
+	}
+	tx := &transaction{Tx: raw, postgres: s.postgres}
+	defer tx.Rollback()
+	nowRaw, err := dbStamp(ctx, tx)
+	if err != nil {
+		return 0, 0, err
+	}
+	lock := ""
+	if s.postgres {
+		lock = " FOR UPDATE"
+	}
+	keys, err := query(ctx, tx, `SELECT owner_principal,state,provider_id,api,base_url,model,config_revision,ciphertext,nonce FROM dispatcher_model_keys ORDER BY owner_principal,state`+lock)
+	if err != nil {
+		return 0, 0, errors.New("authority unavailable")
+	}
+	type opened struct {
+		row map[string]any
+		key []byte
+	}
+	readable, unreadable := []opened{}, []map[string]any{}
+	for _, k := range keys {
+		aad := modelAAD(str(k, "owner_principal"), str(k, "provider_id"), str(k, "api"), str(k, "base_url"), str(k, "model"), asInt(k["config_revision"]))
+		key, e := seal.open(str(k, "ciphertext"), str(k, "nonce"), aad)
+		if e != nil {
+			unreadable = append(unreadable, k)
+			continue
+		}
+		readable = append(readable, opened{k, key})
+	}
+	if len(unreadable) > 0 && !deleteUnreadable {
+		return 0, 0, fmt.Errorf("%d stored model keys open under neither seal key, so nothing was re-sealed: set the key they were sealed with as CLAWBRIDGE_MODEL_KEY_SEAL_KEY_PREVIOUS, or pass --delete-unreadable (their owners run setup again)", len(unreadable))
+	}
+	for _, o := range readable {
+		k := o.row
+		ciphertext, nonce, e := seal.seal(o.key, modelAAD(str(k, "owner_principal"), str(k, "provider_id"), str(k, "api"), str(k, "base_url"), str(k, "model"), asInt(k["config_revision"])))
+		clear(o.key)
+		if e != nil {
+			return 0, 0, e
+		}
+		res, e := tx.ExecContext(ctx, `UPDATE dispatcher_model_keys SET ciphertext=?,nonce=? WHERE owner_principal=? AND state=? AND ciphertext=? AND nonce=?`, ciphertext, nonce, str(k, "owner_principal"), str(k, "state"), str(k, "ciphertext"), str(k, "nonce"))
+		if e != nil {
+			return 0, 0, errors.New("authority unavailable")
+		}
+		if n, _ := res.RowsAffected(); n == 1 {
+			resealed++
+		}
+	}
+	for _, k := range unreadable {
+		owner := str(k, "owner_principal")
+		res, e := tx.ExecContext(ctx, `DELETE FROM dispatcher_model_keys WHERE owner_principal=? AND state=? AND ciphertext=? AND nonce=?`, owner, str(k, "state"), str(k, "ciphertext"), str(k, "nonce"))
+		if e != nil {
+			return 0, 0, errors.New("authority unavailable")
+		}
+		if n, _ := res.RowsAffected(); n != 1 {
+			continue
+		}
+		deleted++
+		left, e := query(ctx, tx, `SELECT 1 FROM dispatcher_model_keys WHERE owner_principal=?`, owner)
+		if e != nil {
+			return 0, 0, e
+		}
+		if len(left) == 0 {
+			if e = revokeOwnerCredentials(ctx, tx, owner, nowRaw); e != nil {
+				return 0, 0, e
+			}
+		}
+	}
+	workspaces, err := query(ctx, tx, `SELECT id FROM workspaces`)
+	if err != nil {
+		return 0, 0, errors.New("authority unavailable")
+	}
+	for _, w := range workspaces {
+		if _, err = tx.ExecContext(ctx, `INSERT INTO history(id,workspace_id,project_id,entity,entity_key,action,details,changed_at,changed_by_principal,changed_by_session) VALUES(?,?,NULL,'dispatcher_model_key','seal_key','resealed',?,?,?,NULL)`,
+			newID("evt_"), str(w, "id"), asJSON(map[string]any{"resealed": resealed, "deleted_unreadable": deleted}), stamp(), OperatorPrincipal); err != nil {
+			return 0, 0, errors.New("authority unavailable")
+		}
+	}
+	if err = tx.Commit(); err != nil {
+		return 0, 0, errors.New("authority commit failed")
+	}
+	return resealed, deleted, nil
+}

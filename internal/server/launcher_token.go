@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"time"
 
 	"clawbridge/internal/bus"
 )
@@ -93,8 +94,9 @@ func runLauncherToken(ctx context.Context, args []string, stdout io.Writer) erro
 		discard(file)
 		return err
 	}
+	expires := time.Now().Add(bus.LauncherTokenTTL).UTC().Format("2006-01-02")
 	if print {
-		_, err = fmt.Fprintf(stdout, "Launcher token %s (shown once; put it in agentd's env file as CLAWBRIDGE_LAUNCHER_TOKEN):\n\n    %s\n\nNever paste it into a chat or an agent.\n", id, token)
+		_, err = fmt.Fprintf(stdout, "Launcher token %s, expiring on %s (shown once; put it in agentd's env file as CLAWBRIDGE_LAUNCHER_TOKEN):\n\n    %s\n\nNever paste it into a chat or an agent.\n", id, expires, token)
 		return err
 	}
 	if _, err = fmt.Fprintf(file, "CLAWBRIDGE_LAUNCHER_TOKEN=%s\n", token); err == nil {
@@ -106,7 +108,7 @@ func runLauncherToken(ctx context.Context, args []string, stdout io.Writer) erro
 		_ = store.OperatorLauncherTokenRevoke(ctx, id)
 		return fmt.Errorf("could not write %s; the new token was revoked", out)
 	}
-	_, err = fmt.Fprintf(stdout, "Created launcher token %s and wrote it to %s (0600). Point agentd's EnvironmentFile at it.\n", id, out)
+	_, err = fmt.Fprintf(stdout, "Created launcher token %s, expiring on %s, and wrote it to %s (0600). Point agentd's EnvironmentFile at it; create the next one and revoke this one before then.\n", id, expires, out)
 	return err
 }
 

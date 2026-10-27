@@ -189,7 +189,7 @@ func (s *Store) closePolicyNotices(ctx context.Context, tx *transaction, wid, pi
 		if _, err = tx.ExecContext(ctx, `INSERT INTO messages(id,project_id,source_project_id,sender_id,address,thread_id,reply_to,kind,body,created_at,expires_at,created_by_principal,operation_id,payload_hash,coordination) VALUES(?,?,?,?,?,?,NULL,'close-policy',?,?,?,?,?,?,NULL)`, id, pid, pid, to["id"], str(to, "name"), id, body, now, layout(at(now).AddDate(0, 0, retention)), s.principal, newID("closes_"), digestOf(body)); err != nil {
 			return err
 		}
-		if _, err = tx.ExecContext(ctx, `INSERT INTO deliveries(message_id,project_id,recipient_id) VALUES(?,?,?)`, id, pid, to["id"]); err != nil {
+		if err = insertDeliveries(ctx, tx, pid, id, []string{str(to, "id")}); err != nil {
 			return err
 		}
 	}

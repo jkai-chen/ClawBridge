@@ -509,7 +509,7 @@ func (n *contextNotices) deliver(ctx context.Context, tx *transaction, to []map[
 			id, n.pid, n.pid, system["id"], str(c, "name"), id, body, n.nowRaw, layout(n.now.AddDate(0, 0, retention)), systemPrincipal, newID("context_"), digestOf(body)); err != nil {
 			return err
 		}
-		if _, err := tx.ExecContext(ctx, `INSERT INTO deliveries(message_id,project_id,recipient_id) VALUES(?,?,?)`, id, n.pid, c["id"]); err != nil {
+		if err := insertDeliveries(ctx, tx, n.pid, id, []string{str(c, "id")}); err != nil {
 			return err
 		}
 	}

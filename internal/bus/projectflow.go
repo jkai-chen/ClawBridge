@@ -483,8 +483,7 @@ func (c commentCall) flowNotice(ctx context.Context, lp, kind, text string) erro
 	if _, err = c.tx.ExecContext(ctx, `INSERT INTO messages(id,project_id,source_project_id,sender_id,address,thread_id,reply_to,kind,body,created_at,expires_at,created_by_principal,operation_id,payload_hash,coordination) VALUES(?,?,?,?,?,?,NULL,?,?,?,?,?,?,?,NULL)`, id, c.pid, c.pid, c.sid, str(to, "name"), id, kind, body, layout(c.now), layout(c.now.AddDate(0, 0, retention)), systemPrincipal, newID("flow_"), digestOf(body)); err != nil {
 		return err
 	}
-	_, err = c.tx.ExecContext(ctx, `INSERT INTO deliveries(message_id,project_id,recipient_id) VALUES(?,?,?)`, id, c.pid, to["id"])
-	return err
+	return insertDeliveries(ctx, c.tx, c.pid, id, []string{str(to, "id")})
 }
 
 func projectFlowOperation(op string) bool { return op == "project_flow_resume" }

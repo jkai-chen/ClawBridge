@@ -59,6 +59,8 @@ type Store struct {
 	// doctor (SetModelHost).
 	modelMaxAgents int
 	memAvailable   func() (uint64, bool)
+	// queue bounds the message queue's leases (queue.go).
+	queue QueueLimits
 }
 
 // SQLiteURIPath is the path part of a file: URI that SQLite resolves to path.
@@ -135,7 +137,7 @@ func (s *Store) migrate() error {
 	if err = tx.QueryRow("PRAGMA user_version").Scan(&version); err != nil {
 		return err
 	}
-	if version > 34 {
+	if version > 35 {
 		return errors.New("database schema is newer than this ClawBridge binary")
 	}
 	if version == 0 {
@@ -320,6 +322,11 @@ func (s *Store) migrate() error {
 			return err
 		}
 		if _, err = tx.Exec(`PRAGMA user_version=34;`); err != nil {
+			return err
+		}
+	}
+	if version < 35 {
+		if _, err = tx.Exec(queueSchemaV35 + `PRAGMA user_version=35;`); err != nil {
 			return err
 		}
 	}
@@ -511,7 +518,14 @@ var operationArgs = map[string]string{
 	"taskboard_set":               "instance expected_revision linear_team_ids linear_default_team_id linear_project_id linear_workspace_id",
 	"taskboard_clear":             "instance expected_revision repair",
 	"inbox_status":                "instance after",
-	"notification_status":         "instance after",
+	"lease":                       "instance limit",
+	"ack":                         "instance acks operation_id",
+	"nack":                        "instance message_id lease_id delay_seconds",
+	"extend":                      "instance leases seconds",
+	"deadletters_list":            "instance target_session limit",
+	"deadletters_requeue":         "instance target_session message_id",
+	"deadletters_dismiss":         "instance target_session message_id",
+	"notification_status":         "instance after queue",
 	"set_notification_policy":     "instance policy",
 	"assignment_propose":          "instance issue_uuid issue_identifier task_role scope_repo scope_paths issue_project_id issue_labels",
 	"assignment_confirm":          "instance target_session revision allow_overlap",
@@ -606,7 +620,7 @@ var operationArgs = map[string]string{
 	"intake_list":                 "instance state",
 	"intake_dismiss":              "instance issue_uuid",
 	"intake_rearm":                "instance issue_uuid",
-	"workspace_init":              "mode name retention_days", "project_create": "slug name git_remote", "list_projects": "", "list_members": "", "register_session": "instance resume role agent_kind model host account notes transport", "list_sessions": "instance status role limit after issue scope_path assignment_state", "send": "instance to body kind thread_id operation_id coordination", "reply": "instance message_id body kind operation_id coordination", "inbox": "instance unread_only limit after", "mark_read": "instance ids", "update_session": "instance target_session role model host account notes transport", "retire_session": "instance target_session successor status outcome confirm", "history": "instance entity key limit after", "project_threads": "instance limit before", "project_thread": "instance thread_id limit after", "whoami": "instance", "heartbeat": "instance state", "message_status": "instance message_id", "resolve_project": "git_remote instance", "snapshot": "instance", "project_role_set": "instance principal role", "project_role_revoke": "instance principal", "purge_expired": "instance", "principal_unbind": "principal allow_previous", "workspace_set_domains": "domains",
+	"workspace_init":              "mode name retention_days", "project_create": "slug name git_remote", "list_projects": "", "list_members": "", "register_session": "instance resume role agent_kind model host account notes transport", "list_sessions": "instance status role limit after issue scope_path assignment_state", "send": "instance to body kind thread_id operation_id coordination ack", "reply": "instance message_id body kind operation_id coordination ack", "inbox": "instance unread_only limit after", "mark_read": "instance ids", "update_session": "instance target_session role model host account notes transport", "retire_session": "instance target_session successor status outcome confirm", "history": "instance entity key limit after", "project_threads": "instance limit before", "project_thread": "instance thread_id limit after", "whoami": "instance", "heartbeat": "instance state", "message_status": "instance message_id", "resolve_project": "git_remote instance", "snapshot": "instance", "project_role_set": "instance principal role", "project_role_revoke": "instance principal", "purge_expired": "instance", "principal_unbind": "principal allow_previous", "workspace_set_domains": "domains",
 }
 
 func validateArgs(op string, a map[string]any) error {
@@ -625,7 +639,7 @@ func validateArgs(op string, a map[string]any) error {
 					return invalid(k + " must be an integer")
 				}
 			}
-		case "retention_days", "limit", "since_hours", "after", "expected_revision", "ledger", "generation", "budget", "calls", "charged", "policy_revision", "engineer", "if_unset", "expires_days", "expires_hours", "expires_minutes", "device_idle_days", "s5_calls_per_hour", "out_of_binding_limit", "template_version", "part_number", "part_count", "seq", "config_revision":
+		case "retention_days", "limit", "since_hours", "after", "expected_revision", "ledger", "generation", "budget", "calls", "charged", "policy_revision", "engineer", "if_unset", "expires_days", "expires_hours", "expires_minutes", "device_idle_days", "delay_seconds", "seconds", "s5_calls_per_hour", "out_of_binding_limit", "template_version", "part_number", "part_count", "seq", "config_revision":
 			if _, err := integer(v); err != nil {
 				return fmt.Errorf("%s: %w", k, err)
 			}
@@ -705,17 +719,25 @@ func validateArgs(op string, a map[string]any) error {
 			if _, ok := v.([]any); !ok {
 				return errors.New("comments must be an array of objects")
 			}
+		case "acks":
+			if _, ok := v.([]any); !ok {
+				return errors.New("acks must be an array of {message_id, lease_id}")
+			}
+		case "ack":
+			if _, ok := v.(map[string]any); !ok {
+				return errors.New("ack must be an object {message_id, lease_id}")
+			}
 		case "lines":
 			if _, ok := intList(v, 1000); !ok {
 				return errors.New("lines must be an array of line numbers")
 			}
-		case "ids", "event_ids", "linear_team_ids", "linear_project_ids", "closes_pending", "scope_paths", "domains", "comment_ids", "signals", "roles", "pattern_ids", "issue_labels", "tools":
+		case "ids", "event_ids", "linear_team_ids", "linear_project_ids", "closes_pending", "scope_paths", "domains", "comment_ids", "signals", "roles", "pattern_ids", "issue_labels", "tools", "leases":
 			switch v.(type) {
 			case []string, []any:
 			default:
 				return errors.New("ids must be an array of strings")
 			}
-		case "unread_only", "on", "all", "resume", "allow_overlap", "allow_previous", "repair", "confirm", "forced", "force_new", "nudges_only", "egress_confirmed":
+		case "unread_only", "queue", "on", "all", "resume", "allow_overlap", "allow_previous", "repair", "confirm", "forced", "force_new", "nudges_only", "egress_confirmed":
 			if _, ok := v.(bool); !ok {
 				return fmt.Errorf("%s must be boolean", k)
 			}
@@ -1337,7 +1359,13 @@ func (s *Store) execute(ctx context.Context, tx *transaction, r Request) (any, e
 		}
 		result, e := s.inboxStatus(ctx, tx, wid, pid, actor["id"].(string), a)
 		if e == nil && r.Operation == "notification_status" {
-			result.(map[string]any)["policy"] = actor["notification_policy"]
+			out := result.(map[string]any)
+			out["policy"] = actor["notification_policy"]
+			// Old clients take exactly these seven fields, so the queue's
+			// counts come only when asked for.
+			if a["queue"] == true {
+				out["unacked_count"], out["dead_count"], e = queueCounts(ctx, tx, pid, actor["id"].(string))
+			}
 		}
 		return result, e
 	}
@@ -1524,6 +1552,9 @@ func (s *Store) execute(ctx context.Context, tx *transaction, r Request) (any, e
 	}
 	if intakeOperation(r.Operation) {
 		return s.intakeOp(ctx, tx, w, p, projectRole, actor, r)
+	}
+	if queueOperation(r.Operation) {
+		return s.queueOp(ctx, tx, wid, pid, projectRole, actor, r)
 	}
 	target := actor
 	if selector := str(a, "target_session"); selector != "" {

@@ -1,12 +1,28 @@
 # ClawBridge v0.3.6 (unreleased)
 
-**Schema 28 → 34.**
-- The server migrates to schema 34 on its first start: 29, the new-device alerts' events and acknowledgements; 30, a
+**Schema 28 → 35.**
+- The server migrates to schema 35 on its first start: 29, the new-device alerts' events and acknowledgements; 30, a
   project's own watch budget; 31, the device an invite was made from; 32, the workspace's device idle limit; 33,
   the Linear team and project names stored with a project's task board binding; 34, the date from which a project's
-  threads are readable.
+  threads are readable; 35, the message queue's leases, acks and per-recipient numbering. The upgrade numbers
+  existing deliveries, about 2–4 s per million, and counts what was read as handled.
 - **One-way:** v0.3.5 and older refuse a database newer than schema 28. Take a dump before upgrading; to go back,
   restore it with the v0.3.5 image (docs/operations/deployment.md).
+
+## The message queue: acks and dead letters (slice 1 of 5)
+
+- **A message is done when its recipient acks it, not when it is fetched.** New operations: `lease` takes the
+  session's next deliveries in order, `ack` marks them handled, `nack` gives one back, and `extend` renews them. A lease
+  runs 10 minutes. One that runs out is offered again, and after 5 the delivery is a dead letter. It is kept, and the
+  project's coordinator is told the count (never the content). `deadletters_list`, `deadletters_requeue` and
+  `deadletters_dismiss` settle them, with history. `reply` and `send` take an `ack`, committed in one transaction, and
+  a retried reply still acks. `mark_read` acks. `notification_status` with `queue: true` adds the unacked and dead
+  counts.
+- **Each recipient's deliveries are numbered 1, 2, 3…** in commit order, with no gaps. Every server path that sends a
+  message goes through one writer, which takes the counters in a fixed order so crossing sends can't deadlock.
+- **Nothing changes for today's clients:** `inbox` takes no lease and keeps its shape, and `notification_status`
+  without `queue` keeps its seven fields. Push (the stream), the CLI and the MCP tools come in the next slices
+  (docs/reference/api.md, "The queue").
 
 ## Project overview
 

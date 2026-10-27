@@ -476,7 +476,7 @@ func (s *Store) intakeNotice(ctx context.Context, tx *transaction, w map[string]
 	if _, err = tx.ExecContext(ctx, `INSERT INTO messages(id,project_id,source_project_id,sender_id,address,thread_id,reply_to,kind,body,created_at,expires_at,created_by_principal,operation_id,payload_hash,coordination) VALUES(?,?,?,?,?,?,NULL,'intake',?,?,?,?,?,?,NULL)`, id, pid, pid, c["id"], str(c, "name"), id, body, nowRaw, layout(at(nowRaw).AddDate(0, 0, retention)), s.principal, newID("intake_"), digestOf(body)); err != nil {
 		return err
 	}
-	if _, err = tx.ExecContext(ctx, `INSERT INTO deliveries(message_id,project_id,recipient_id) VALUES(?,?,?)`, id, pid, c["id"]); err != nil {
+	if err = insertDeliveries(ctx, tx, pid, id, []string{str(c, "id")}); err != nil {
 		return err
 	}
 	_, err = tx.ExecContext(ctx, `UPDATE intake_queue SET notified_at=? WHERE project_id=? AND issue_uuid=?`, nowRaw, pid, ev.Issue.UUID)

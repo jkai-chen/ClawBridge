@@ -121,11 +121,20 @@ func (s *Store) ownerDeviceNotices(ctx context.Context, tx *transaction, wid, ev
 			return err
 		}
 		id := newID("msg_")
-		if _, err = tx.ExecContext(ctx, `INSERT INTO messages(id,project_id,source_project_id,sender_id,address,thread_id,reply_to,kind,body,created_at,expires_at,created_by_principal,operation_id,payload_hash,coordination) VALUES(?,?,?,?,?,?,NULL,'security',?,?,?,?,?,?,NULL) ON CONFLICT(sender_id,operation_id) DO NOTHING`,
-			id, pid, pid, system["id"], str(c, "name"), id, body, now, layout(at(now).AddDate(0, 0, retention)), systemPrincipal, event, digestOf(body)); err != nil {
+		res, err := tx.ExecContext(ctx, `INSERT INTO messages(id,project_id,source_project_id,sender_id,address,thread_id,reply_to,kind,body,created_at,expires_at,created_by_principal,operation_id,payload_hash,coordination) VALUES(?,?,?,?,?,?,NULL,'security',?,?,?,?,?,?,NULL) ON CONFLICT(sender_id,operation_id) DO NOTHING`,
+			id, pid, pid, system["id"], str(c, "name"), id, body, now, layout(at(now).AddDate(0, 0, retention)), systemPrincipal, event, digestOf(body))
+		if err != nil {
 			return err
 		}
-		if _, err = tx.ExecContext(ctx, `INSERT INTO deliveries(message_id,project_id,recipient_id) SELECT id,project_id,? FROM messages WHERE id=? AND project_id=?`, c["id"], id, pid); err != nil {
+		// A notice already sent for this event is not delivered again.
+		n, err := res.RowsAffected()
+		if err != nil {
+			return err
+		}
+		if n == 0 {
+			continue
+		}
+		if err = insertDeliveries(ctx, tx, pid, id, []string{str(c, "id")}); err != nil {
 			return err
 		}
 	}

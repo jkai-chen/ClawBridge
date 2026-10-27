@@ -75,6 +75,16 @@ func (s *Store) send(ctx context.Context, tx *transaction, wid, pid string, acto
 		coordination = &c
 		payload["coordination"] = c
 	}
+	// The ack is not in the digest: a redelivered message's replayed reply
+	// comes with a new lease.
+	var ack *ackItem
+	if raw, ok := a["ack"]; ok {
+		item, e := ackItemOf(raw)
+		if e != nil {
+			return nil, e
+		}
+		ack = &item
+	}
 	digest := hashPayload(payload)
 	previous, err := query(ctx, tx, `SELECT id,payload_hash FROM messages WHERE project_id=? AND sender_id=? AND operation_id=?`, pid, sid, op)
 	if err != nil {
@@ -84,7 +94,9 @@ func (s *Store) send(ctx context.Context, tx *transaction, wid, pid string, acto
 		if previous[0]["payload_hash"] != digest {
 			return nil, errors.New("operation_id was already used with a different payload")
 		}
-		return s.message(ctx, tx, pid, previous[0]["id"].(string))
+		// M7: a replay still applies its ack, so a redelivered message
+		// answered once is acked, not offered until it dies.
+		return s.withAck(ctx, tx, wid, pid, sid, ack, op, previous[0]["id"].(string))
 	}
 	if actor["status"] != "active" {
 		return nil, errors.New("session is retired or moved; no new send is permitted")
@@ -188,10 +200,8 @@ func (s *Store) send(ctx context.Context, tx *transaction, wid, pid string, acto
 	if err != nil {
 		return nil, err
 	}
-	for _, recipient := range recipients {
-		if _, err = tx.ExecContext(ctx, `INSERT INTO deliveries(message_id,project_id,recipient_id) VALUES(?,?,?)`, id, pid, recipient["id"]); err != nil {
-			return nil, err
-		}
+	if err = insertDeliveries(ctx, tx, pid, id, recipientIDsOf(recipients)); err != nil {
+		return nil, err
 	}
 	if _, err = tx.ExecContext(ctx, `UPDATE sessions SET last_seen=? WHERE project_id=? AND id=?`, stamp(), pid, sid); err != nil {
 		return nil, err
@@ -199,7 +209,32 @@ func (s *Store) send(ctx context.Context, tx *transaction, wid, pid string, acto
 	if err = s.audit(ctx, tx, wid, pid, sid, "message", id, "sent", map[string]any{"address": to, "recipient_count": len(recipients), "thread_id": thread, "reply_to": parent}); err != nil {
 		return nil, err
 	}
-	return s.message(ctx, tx, pid, id)
+	return s.withAck(ctx, tx, wid, pid, sid, ack, op, id)
+}
+
+// withAck is the sent message id, with the ack the send carried applied in
+// the same transaction: a reply and the ack of what it answers commit
+// together or not at all (§2.4).
+func (s *Store) withAck(ctx context.Context, tx *transaction, wid, pid, sid string, ack *ackItem, op, id string) (any, error) {
+	m, err := s.message(ctx, tx, pid, id)
+	if err != nil || ack == nil {
+		return m, err
+	}
+	outcome, err := ackDelivery(ctx, tx, pid, sid, *ack, op)
+	if err != nil {
+		return nil, err
+	}
+	if outcome == "not_found" {
+		return nil, &serviceError{code: "not_found", cause: errors.New("the message to ack is not in this session's queue"), public: true}
+	}
+	if outcome == "acked" {
+		if err = s.audit(ctx, tx, wid, pid, sid, "delivery", sid, "acked", map[string]any{"ids": []string{ack.messageID}}); err != nil {
+			return nil, err
+		}
+	}
+	out := m.(map[string]any)
+	out["ack"] = map[string]any{"message_id": ack.messageID, "outcome": outcome}
+	return out, nil
 }
 func (s *Store) participatingMessage(ctx context.Context, tx *transaction, pid, sid, id string) (map[string]any, error) {
 	m, err := one(ctx, tx, `SELECT m.* FROM messages m WHERE m.project_id=? AND m.id=? AND m.expires_at>? AND (m.sender_id=? OR EXISTS(SELECT 1 FROM deliveries d WHERE d.project_id=m.project_id AND d.message_id=m.id AND d.recipient_id=?))`, pid, id, stamp(), sid, sid)
@@ -301,7 +336,8 @@ func (s *Store) markRead(ctx context.Context, tx *transaction, wid, pid, sid str
 			return nil, scopedError(err, "message is not in this session's inbox", "forbidden")
 		}
 		if d["read_at"] == nil {
-			_, err = tx.ExecContext(ctx, `UPDATE deliveries SET delivered_at=COALESCE(delivered_at,?),read_at=COALESCE(read_at,?) WHERE project_id=? AND message_id=? AND recipient_id=?`, now, now, pid, id, sid)
+			// Read is what old clients mean by handled, so it also acks.
+			_, err = tx.ExecContext(ctx, `UPDATE deliveries SET delivered_at=COALESCE(delivered_at,?),read_at=COALESCE(read_at,?),acked_at=COALESCE(acked_at,?) WHERE project_id=? AND message_id=? AND recipient_id=?`, now, now, now, pid, id, sid)
 			if err != nil {
 				return nil, err
 			}

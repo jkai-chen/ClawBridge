@@ -281,7 +281,7 @@ func (s *Store) dispatcherEscalate(ctx context.Context, tx *transaction, w map[s
 			id, pid, pid, sender["id"], str(r, "name"), id, body, nowRaw, layout(at(nowRaw).AddDate(0, 0, retention)), dispatcherPrincipal, newID("dsp_"), digestOf(body)); err != nil {
 			return nil, false, err
 		}
-		if _, err = tx.ExecContext(ctx, `INSERT INTO deliveries(message_id,project_id,recipient_id) VALUES(?,?,?)`, id, pid, r["id"]); err != nil {
+		if err = insertDeliveries(ctx, tx, pid, id, []string{str(r, "id")}); err != nil {
 			return nil, false, err
 		}
 		names = append(names, str(r, "name"))

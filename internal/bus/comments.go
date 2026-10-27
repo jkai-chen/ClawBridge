@@ -1000,10 +1000,8 @@ func (c commentCall) notify(ctx context.Context, issue, cursor string, fresh []r
 	if _, err = c.tx.ExecContext(ctx, `INSERT INTO messages(id,project_id,source_project_id,sender_id,address,thread_id,reply_to,kind,body,created_at,expires_at,created_by_principal,operation_id,payload_hash,coordination) VALUES(?,?,?,?,?,?,NULL,'linear-comment',?,?,?,?,?,?,NULL)`, id, c.pid, c.pid, c.sid, strings.Join(names, ","), id, body, now, layout(c.now.AddDate(0, 0, retention)), c.s.principal, newID("watch_"), digestOf(body)); err != nil {
 		return "", nil, err
 	}
-	for _, r := range assignees {
-		if _, err = c.tx.ExecContext(ctx, `INSERT INTO deliveries(message_id,project_id,recipient_id) VALUES(?,?,?)`, id, c.pid, r["id"]); err != nil {
-			return "", nil, err
-		}
+	if err = insertDeliveries(ctx, c.tx, c.pid, id, recipientIDsOf(assignees)); err != nil {
+		return "", nil, err
 	}
 	if err = c.s.audit(ctx, c.tx, c.wid, c.pid, c.sid, "message", id, "sent", map[string]any{"kind": "linear-comment", "recipient_count": len(assignees), "issue_uuid": issue}); err != nil {
 		return "", nil, err

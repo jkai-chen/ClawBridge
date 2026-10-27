@@ -76,13 +76,20 @@ requires its matching instance. Routing role is distinct from project permission
 | `register_session` | Optional resume, role, agent_kind, model, host, account, notes, transport |
 | `list_sessions` | Optional status, role, limit, after; assignment filters issue (UUID or display identifier), scope_path (a repository path a live assignment covers) and assignment_state (proposed/confirmed). Each row carries its live `assignment` or null, and `coordinator` (true for the project's designated coordinator session) |
 | `project_overview` | None; sessionless, or a session with its instance. Any project role. The project, its coordinator, session counts and up to 200 sessions, and its Linear board (see [Project overview](#project-overview)) |
-| `send` | to, body, operation_id; optional kind, thread_id, coordination |
+| `send` | to, body, operation_id; optional kind, thread_id, coordination, ack (see [the queue](#the-queue-leases-acks-and-dead-letters)) |
 | `inbox` | Optional unread_only (default true), limit, after |
 | `inbox_status` | Optional after (default zero); active owned actor required |
-| `notification_status` | Same metadata plus recipient policy; active owned actor required |
+| `notification_status` | Same metadata plus recipient policy; optional queue (true adds unacked_count and dead_count); active owned actor required |
 | `set_notification_policy` | policy accept/hold/refuse; active own actor only |
-| `mark_read` | ids array of 1–1000 message IDs; atomic for own deliveries |
-| `reply` | message_id, body, operation_id; optional kind, coordination |
+| `mark_read` | ids array of 1–1000 message IDs; atomic for own deliveries; also acks them |
+| `reply` | message_id, body, operation_id; optional kind, coordination, ack |
+| `lease` | Optional limit (1–100); takes the session's next deliveries in order (see [the queue](#the-queue-leases-acks-and-dead-letters)) |
+| `ack` | acks, 1–1000 `{message_id, lease_id}`; optional operation_id. Per-ack outcome acked, already_acked, dead or not_found |
+| `nack` | message_id, lease_id; optional delay_seconds (0–3600). Outcome released, stale, already_acked, dead or not_found |
+| `extend` | leases (1–1000 lease IDs), seconds (1–3600). Per-lease outcome extended or not_found |
+| `deadletters_list` | Optional target_session (a session, or `@all` for the project) and limit |
+| `deadletters_requeue` | message_id; optional target_session. Offers a dead letter again from its first attempt |
+| `deadletters_dismiss` | message_id; optional target_session. Acks a dead letter |
 | `update_session` | One or more role/model/host/account/notes/transport fields; hosted owners and leads may target_session (see below) |
 | `retire_session` | Optional successor and status retired/moved; hosted owners and leads may target_session (see below) |
 | `history` | Optional entity, key, limit, after |
@@ -240,7 +247,8 @@ change ownership, close work or supply human approval. Receiver revision checks
 follow the [task-board workflow](../../skills/clawbridge/references/task-board.md).
 
 Sending creates recipient deliveries. Fetching an inbox page stamps only its
-returned rows as delivered. Mark-read stamps explicit own delivery IDs. A receipt
+returned rows as delivered. Mark-read stamps explicit own delivery IDs, and acks
+them. A receipt
 records an observation, not task acceptance or human approval. Message status is
 visible only to its sender and exposes receipt metadata, not another inbox.
 
@@ -273,6 +281,56 @@ The project owner can read the project's messages, agents' included; each read i
 - **Limit:** about 30 calls a minute per principal per project, counted from those rows (so not exact under
   concurrency); over it, `rate_limited`, with no row written.
 - **Offline:** not mirrored; the remote client answers "unavailable offline".
+
+## The queue: leases, acks and dead letters
+
+A delivery is done when its recipient **acks** it, not when it is fetched. Each
+recipient numbers its deliveries with `recipient_seq`: 1, 2, 3… in commit order,
+with no gaps.
+
+- **`lease`** returns the session's next deliveries: unacked, not dead and not
+  leased, in `recipient_seq` order. It returns at most `limit`, and never more
+  than 20 unacked leases held at once. Each row is an inbox row plus
+  `recipient_seq`, `lease_id`, `lease_until` and `attempt`. A lease lasts
+  10 minutes. A session whose notification policy isn't `accept` takes no
+  leases: `{"messages": [], "policy": "hold"}`.
+- **A lease that runs out unacked** is offered again with its attempt counted.
+  After 5 such leases the delivery is a **dead letter**. It is kept, and it
+  leaves the session's queue. The project's coordinator session gets a
+  `dead-letter` message from the `clawbridge` session. The message has the
+  count and the session's name, never a sender, subject or body, and it comes
+  at most once per session every 10 minutes. The coordinator's own dead letters
+  and dead notices make no notice.
+- **`ack`** marks deliveries handled, and read. Acking twice is
+  `already_acked`. `lease_id` is advisory: a stale one, from a lease that ran
+  out and was offered again, is still accepted while the delivery isn't dead,
+  because the work was done. An ack after death is `dead`. Only the recipient session at its current
+  instance acks. Another session's message is `not_found`, and an older
+  instance is refused like any other operation.
+- **`nack`** gives the current lease back early. The delivery is offered again
+  after `delay_seconds`, without counting an attempt; use it before a
+  compaction. **`extend`** renews current leases for long handling.
+- **`send` and `reply` take `ack: {message_id, lease_id}`.** The message and
+  the ack commit in one transaction, and the result gains
+  `"ack": {"message_id", "outcome"}`. The ack is not part of the retry
+  identity. A retry with the same `operation_id`, for example a redelivered
+  message answered again with a new lease, returns the original reply and
+  still applies the ack. The convention is `operation_id = msg:<message_id>:<step>`.
+  An ack of a message that isn't in the session's queue fails the send.
+- **Dead letters** are listed, oldest first, by the session itself, the
+  project's coordinator or a project owner. A row has message_id, recipient,
+  sender, kind, created_at, recipient_seq, attempts and dead_at, and no body.
+  `deadletters_requeue` and `deadletters_dismiss` write history with the
+  session that acted.
+- **`notification_status` with `queue: true`** adds `unacked_count` and
+  `dead_count`. Without it the result keeps its seven fields, which older
+  clients require.
+- **Older clients are unchanged.** `inbox` takes no lease, so their rows are
+  never offered again or dead-lettered, and `mark_read` acks.
+
+Schema 35 adds these columns to deliveries, plus the `delivery_counters` table.
+The upgrade numbers existing deliveries in message order and acks what was
+already read, so nothing old is offered again.
 
 ## Paging and status
 

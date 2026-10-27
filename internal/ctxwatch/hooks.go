@@ -29,32 +29,41 @@ const agentPID = "CLAWBRIDGE_AGENT_PID=$PPID "
 // commands themselves read and write local files only.
 const hookTimeout = 5
 
-// hookEvents are the Claude Code events hooked, with the context
-// subcommand each runs.
+// hookEvents are the Claude Code events hooked, with the subcommand each
+// runs. Stop is the message queue's (MESSAGE-QUEUE-DESIGN §5): it keeps an
+// agent from going idle on unhandled mail.
 var hookEvents = []struct{ event, sub string }{
 	{"SessionStart", "bind"},
 	{"PreCompact", "compacting"},
+	{"Stop", "stop"},
 }
+
+// hookCommandWords are the clawbridge words each subcommand runs.
+var hookCommandWords = map[string]string{"bind": "context bind", "compacting": "context compacting", "stop": "hook stop"}
 
 // HookCommand is the command text for one hook. In the local and user
 // scopes it runs binary, an absolute path, and does nothing when that is
 // gone; in the shared scope it runs whatever clawbridge is on PATH, and
 // does nothing without one. Every form ends with HookMarker.
 func HookCommand(scope, binary, sub string) (string, error) {
+	words, ok := hookCommandWords[sub]
+	if !ok {
+		return "", fmt.Errorf("unknown hook %q", sub)
+	}
 	switch scope {
 	case ScopeProjectShared:
-		return "command -v clawbridge >/dev/null 2>&1 || exit 0; " + agentPID + "clawbridge context " + sub + " --from-hook " + HookMarker, nil
+		return "command -v clawbridge >/dev/null 2>&1 || exit 0; " + agentPID + "clawbridge " + words + " --from-hook " + HookMarker, nil
 	case ScopeLocal, ScopeUser:
 		if !filepath.IsAbs(binary) || strings.ContainsAny(binary, "'\n\r") {
 			return "", fmt.Errorf("the binary path %q can't be written into a hook", binary)
 		}
 		q := "'" + binary + "'"
-		return "[ -x " + q + " ] || exit 0; " + agentPID + q + " context " + sub + " --from-hook " + HookMarker, nil
+		return "[ -x " + q + " ] || exit 0; " + agentPID + q + " " + words + " --from-hook " + HookMarker, nil
 	}
 	return "", fmt.Errorf("unknown scope %q: want %s, %s or %s", scope, ScopeLocal, ScopeUser, ScopeProjectShared)
 }
 
-var ownHookPattern = regexp.MustCompile(`^\[ -x '([^'\n\r]+)' \] \|\| exit 0; ` + regexp.QuoteMeta(agentPID) + `'([^'\n\r]+)' context (bind|compacting) --from-hook ` +
+var ownHookPattern = regexp.MustCompile(`^\[ -x '([^'\n\r]+)' \] \|\| exit 0; ` + regexp.QuoteMeta(agentPID) + `'([^'\n\r]+)' (context bind|context compacting|hook stop) --from-hook ` +
 	regexp.QuoteMeta(HookMarker) + `$`)
 
 // isOwnHook says whether command is exactly a text HookCommand writes, in

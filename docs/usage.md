@@ -28,7 +28,9 @@ names it up front. A
 `.clawbridge.toml` selects a project only at the root of a git checkout. Anywhere else it's ignored, with a
 warning. Connect an agent with
 `clawbridge mcp install --agent claude-code|codex --session NAME`: the local workspace and project come from
-your defaults.
+your defaults. For Claude Code it also installs ClawBridge's hooks in the project's
+`.claude/settings.local.json`, including the Stop hook that keeps the agent from going idle on unacked mail
+(`--hooks none` to leave them out; [notifications](notifications.md#agents-ack-the-stop-hook-and-compaction)).
 
 For an isolated local bus, for example in tests, set `CLAWBRIDGE_DB`, `CLAWBRIDGE_WORKSPACE` and
 `CLAWBRIDGE_PROJECT` instead.

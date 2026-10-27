@@ -1,6 +1,7 @@
 package integration
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"net/http"
@@ -42,19 +43,24 @@ func TestPhase4CLIInstallerPinsTrustedOAuthWithoutSecrets(t *testing.T) {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		cmd := exec.CommandContext(ctx, p.binary, args...)
 		cmd.Dir, cmd.Env = dir, []string{"HOME=" + dir, "PATH=" + dir, "CLAWBRIDGE_HOME=" + filepath.Join(dir, "state"), "CLAWBRIDGE_CONFIG=" + bad}
-		out, err := cmd.CombinedOutput()
+		// Standard output is the result; mcp install reports the hooks it
+		// adds on standard error. Neither shows a secret.
+		var stderr bytes.Buffer
+		cmd.Stderr = &stderr
+		out, err := cmd.Output()
 		cancel()
-		if strings.Contains(string(out), browserSecret) || strings.Contains(string(out), deviceSecret) {
+		all := string(out) + stderr.String()
+		if strings.Contains(all, browserSecret) || strings.Contains(all, deviceSecret) {
 			t.Fatal("installer exposed app credentials (values suppressed)")
 		}
 		if !explicitSession {
-			if err == nil || !strings.Contains(string(out), "explicit") {
+			if err == nil || !strings.Contains(all, "explicit") {
 				t.Fatal("installer inherited operator actor")
 			}
 			continue
 		}
 		if err != nil {
-			t.Fatalf("install inherited OAuth route: %v: %s", err, out)
+			t.Fatalf("install inherited OAuth route: %v: %s", err, all)
 		}
 		var result install.Result
 		if err := json.Unmarshal(out, &result); err != nil {

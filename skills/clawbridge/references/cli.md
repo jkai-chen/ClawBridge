@@ -117,7 +117,10 @@ The project owner designates the confirming session with
 For MCP installation, `clawbridge mcp install --help` explains supported agents,
 pinned scope, explicit config paths and dry-run output. Install each agent session
 under a distinct entry name if configuring several entries in the same file.
-Installation never starts an agent or grants project membership.
+Installation never starts an agent or grants project membership. For Claude Code
+it also installs ClawBridge's hooks (Stop, PreCompact, SessionStart) in the
+project's `.claude/settings.local.json`; `--hooks local|user|project-shared|none`
+chooses where. The Stop hook sends a turn back once when messages wait unacked.
 
 ## Notification and host capabilities
 

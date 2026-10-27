@@ -239,6 +239,10 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	if len(args) > 0 && args[0] == "context" && (len(args) < 2 || args[1] != "levels") {
 		return runContext(ctx, args[1:], stdout, stderr)
 	}
+	// The queue's hooks find their route in the MCP server's record.
+	if len(args) > 0 && args[0] == "hook" {
+		return runHook(ctx, args[1:], stdout, stderr)
+	}
 	// The onboarding probes take cloud flags (--project is a cloud project
 	// here) and resolve trusted configuration only for the workspace check.
 	if len(args) > 0 && args[0] == "cloud" {
@@ -1100,16 +1104,16 @@ flags:`)
 			board.KeepProviderOpen(linearboard.ProviderTTL)
 			board.CacheReadBindingProof(linearboard.BindingProofTTL)
 			defer board.Close()
-			native := mcpserver.NewServerWithOptions(executor, config.Workspace, config.Project, config.Session, config.Instance, mcpserver.Options{Context: ctx, Taskboard: board, ContextDir: contextDirOrEmpty()})
+			native := mcpserver.NewServerWithOptions(executor, config.Workspace, config.Project, config.Session, config.Instance, mcpserver.Options{Context: ctx, Taskboard: board, ContextDir: contextDirOrEmpty(), Server: queueServer(config), DB: queueDB(config)})
 			return native.Run(ctx, &mcp.StdioTransport{})
 		}
 		if cloudClient != nil {
-			return mcpserver.RunExecutor(ctx, cloudClient, config.Workspace, config.Project, config.Session, config.Instance)
+			return mcpserver.RunExecutor(ctx, cloudClient, config.Workspace, config.Project, config.Session, config.Instance, mcpserver.Options{ContextDir: contextDirOrEmpty(), Server: config.Server})
 		}
 		if err = localStore.Close(); err != nil {
 			return err
 		}
-		return mcpserver.Run(ctx, config.DB, config.Workspace, config.Project, config.Session, config.Instance)
+		return mcpserver.RunLocal(ctx, config.DB, config.Workspace, config.Project, config.Session, config.Instance, mcpserver.Options{ContextDir: contextDirOrEmpty()})
 	}
 	if command == "sync" {
 		result, e := cloudClient.Sync(ctx, config.Workspace, config.Project, config.Session, config.Instance)
@@ -1285,6 +1289,7 @@ func collectDoctor(ctx context.Context, config Config, configPath string, existi
 	}
 	if config.Session != "" {
 		in.Context = func() doctor.ContextState { return doctorContext(config.Session) }
+		in.Queue = func() doctor.QueueState { return doctorQueue(config.Session) }
 	}
 	var executor doctor.Executor = existing
 	if config.Mode == "cloud" && config.CredentialSource == remote.CredentialSourceDevice {

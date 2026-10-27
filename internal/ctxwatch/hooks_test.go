@@ -114,8 +114,13 @@ func TestInstallAndUninstallHooks(t *testing.T) {
 	}
 	bindCmd, _ := HookCommand(ScopeLocal, bin, "bind")
 	compactCmd, _ := HookCommand(ScopeLocal, bin, "compacting")
-	ss, pc := got.Hooks["SessionStart"], got.Hooks["PreCompact"]
-	if got.Model != "x" || len(got.Hooks["Stop"]) != 1 || len(ss) != 2 || ss[0].Hooks[0].Command != "~/bin/my-reminder.sh" ||
+	stopCmd, _ := HookCommand(ScopeLocal, bin, "stop")
+	ss, pc, st := got.Hooks["SessionStart"], got.Hooks["PreCompact"], got.Hooks["Stop"]
+	// The user's own Stop hook stays, before the queue's.
+	if len(st) != 2 || st[0].Hooks[0].Command != "say done" || st[1].Hooks[0].Command != stopCmd {
+		t.Fatalf("%s", data)
+	}
+	if got.Model != "x" || len(ss) != 2 || ss[0].Hooks[0].Command != "~/bin/my-reminder.sh" ||
 		ss[1].Matcher != "" || ss[1].Hooks[0].Command != bindCmd || ss[1].Hooks[0].Timeout != hookTimeout ||
 		len(pc) != 1 || pc[0].Hooks[0].Command != compactCmd {
 		t.Fatalf("%s", data)
@@ -140,13 +145,13 @@ func TestInstallAndUninstallHooks(t *testing.T) {
 	// A moved binary replaces the old entries rather than adding to them.
 	apply(t, path, ScopeLocal, "/usr/local/bin/clawbridge", true)
 	data, _ = os.ReadFile(path)
-	if strings.Count(string(data), HookMarker) != 2 || strings.Contains(string(data), bin) {
+	if strings.Count(string(data), HookMarker) != 3 || strings.Contains(string(data), bin) {
 		t.Fatalf("%s", data)
 	}
 	// Uninstall leaves the user's own settings and hooks as they were.
 	apply(t, path, ScopeLocal, "", false)
 	data, _ = os.ReadFile(path)
-	if strings.Contains(string(data), HookMarker) || strings.Contains(string(data), "PreCompact") ||
+	if strings.Contains(string(data), HookMarker) || strings.Contains(string(data), "PreCompact") || !strings.Contains(string(data), "say done") ||
 		!strings.Contains(string(data), "my-reminder.sh") || !strings.Contains(string(data), "later") {
 		t.Fatalf("%s", data)
 	}

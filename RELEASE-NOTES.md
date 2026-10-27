@@ -10,6 +10,30 @@
 - **One-way:** v0.3.5 and older refuse a database newer than schema 28. Take a dump before upgrading; to go back,
   restore it with the v0.3.5 image (docs/operations/deployment.md).
 
+## The message queue: agents ack (slice 4 of 5)
+
+- **An agent's MCP server takes the session's messages from the queue** from the agent's first `inbox`, `ack`,
+  `reply` or `mark_read` call: it holds the consume stream, or polls `lease` every 2 s in local mode and on a server
+  without the stream. `inbox` keeps its shape; a message the server holds shows its `lease`. The new **`ack`** tool
+  acks handled messages (the held lease is filled in), and `reply` takes **`ack: true`**, acked in the reply's own
+  transaction. While the agent called a tool in the last 10 minutes, its held leases are extended every 5 minutes.
+- **`mcp install --agent claude-code` installs Claude Code hooks** in the project's `.claude/settings.local.json` by
+  default (`--hooks local|user|project-shared|none`; the report goes to stderr). `context hooks install` adds the
+  same three:
+  - **Stop** (`clawbridge hook stop`) sends a turn back once per new message while messages wait unacked, with fixed
+    text and a count only. It never blocks while Claude Code says `stop_hook_active`, nor on a `hold` or `refuse`
+    policy, an older server, an error or no answer in 2 s.
+  - **PreCompact** holds the session's notifications and gives back its leases without counting an offer;
+    **SessionStart** after the compaction accepts again. Only a hold the compaction set is lifted; one left by an
+    agent that died mid-compaction is lifted by the next MCP server start, or after 15 minutes.
+  - The hooks act through a private record the MCP server keeps (`<state home>/context/<session>.queue.json`), only
+    for their own agent's MCP server and only against the configured server.
+- **`set_notification_policy` wakes the session's streams**, so `accept` re-offers at once.
+- **`clawbridge doctor` has a `queue` check:** whether the session's MCP server holds the stream, its unacked and dead
+  counts, and a `hold` policy (whose messages wait without attempts or dead letters).
+- The clawbridge skill gains the protocol: handle, then `ack` (or `reply` with `ack`), with
+  `operation_id = msg:<message_id>:<step>`. No Linear configuration is involved.
+
 ## The message queue: clients follow the stream (slice 3 of 5)
 
 - **`clawbridge notify` is woken by the server** as soon as the session's mail changes, instead of polling every 5 s;

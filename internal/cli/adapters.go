@@ -1,12 +1,15 @@
 package cli
 
 import (
+	"clawbridge/internal/ctxwatch"
 	"context"
 	"errors"
 	"flag"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"clawbridge/internal/bus"
 	"clawbridge/internal/doctor"
@@ -30,6 +33,10 @@ func runInstall(ctx context.Context, flags Config, args []string, stdout, stderr
 	}
 	c.Session = flags.Session
 	c.Instance = flags.Instance
+	args, hooks, err := installHookFlags(args)
+	if err != nil {
+		return err
+	}
 	inherited := []string{}
 	for _, item := range []struct{ name, value string }{
 		{"linear-profile", flags.LinearProfile}, {"db", c.DB}, {"workspace", c.Workspace}, {"project", c.Project}, {"session", c.Session}, {"instance", c.Instance}, {"mode", c.Mode},
@@ -45,7 +52,113 @@ func runInstall(ctx context.Context, flags Config, args []string, stdout, stderr
 	if c.Mode == "cloud" {
 		inherited = append(inherited, "--client-config", path)
 	}
-	return install.RunWithIO(append(inherited, args...), stdout, stderr)
+	if err = install.RunWithIO(append(inherited, args...), stdout, stderr); err != nil {
+		return err
+	}
+	return installHooks(hooks, stderr)
+}
+
+// mcpInstallHooks is what mcp install does about Claude Code's hooks: the
+// scope (local, user, project-shared or none) and whether it was chosen.
+type mcpInstallHooks struct {
+	scope, root           string
+	explicit              bool
+	dryRun, confirmShared bool
+}
+
+// installHookFlags takes --hooks and --confirm-shared from mcp install's
+// flags; the rest go to the installer. A Claude Code entry gets the hooks
+// (the queue's Stop hook, and ctxwatch's) in its project's local settings
+// by default, or the user's when the entry is the user's ~/.claude.json.
+func installHookFlags(args []string) ([]string, mcpInstallHooks, error) {
+	h := mcpInstallHooks{scope: "none"}
+	rest := []string{}
+	agent, config := "", ".mcp.json"
+	for i := 0; i < len(args); i++ {
+		name, value, inline := strings.Cut(strings.TrimLeft(args[i], "-"), "=")
+		takeValue := func() (string, error) {
+			if inline {
+				return value, nil
+			}
+			if i+1 >= len(args) {
+				return "", fmt.Errorf("--%s needs a value", name)
+			}
+			i++
+			return args[i], nil
+		}
+		switch {
+		case strings.HasPrefix(args[i], "-") && name == "hooks":
+			v, err := takeValue()
+			if err != nil {
+				return nil, h, err
+			}
+			h.scope, h.explicit = v, true
+			continue
+		case strings.HasPrefix(args[i], "-") && name == "confirm-shared":
+			h.confirmShared = !inline || value == "true"
+			continue
+		case strings.HasPrefix(args[i], "-") && (name == "agent" || name == "config"):
+			rest = append(rest, args[i])
+			v := value
+			if !inline && i+1 < len(args) {
+				i++
+				v = args[i]
+				rest = append(rest, v)
+			}
+			if name == "agent" {
+				agent = v
+			} else {
+				config = v
+			}
+			continue
+		case strings.HasPrefix(args[i], "-") && name == "dry-run":
+			h.dryRun = !inline || value == "true"
+		}
+		rest = append(rest, args[i])
+	}
+	switch h.scope {
+	case "none", ctxwatch.ScopeLocal, ctxwatch.ScopeUser, ctxwatch.ScopeProjectShared:
+	default:
+		return nil, h, fmt.Errorf("--hooks must be local, user, project-shared or none, not %q", h.scope)
+	}
+	if agent != ctxwatch.ClaudeCode {
+		if h.explicit && h.scope != "none" {
+			return nil, h, errors.New("--hooks is for --agent claude-code")
+		}
+		h.scope = "none"
+		return rest, h, nil
+	}
+	path, err := filepath.Abs(config)
+	if err != nil {
+		return nil, h, err
+	}
+	h.root = filepath.Dir(path)
+	if !h.explicit {
+		h.scope = ctxwatch.ScopeLocal
+		if filepath.Base(path) == ".claude.json" {
+			h.scope = ctxwatch.ScopeUser
+		}
+	}
+	return rest, h, nil
+}
+
+// installHooks installs the hooks after the MCP entry, reporting on
+// standard error so the installer's JSON stays alone on standard output.
+// A default install that can't add them says so and leaves the entry.
+func installHooks(h mcpInstallHooks, stderr io.Writer) error {
+	if h.scope == "none" {
+		return nil
+	}
+	if !h.explicit && contextGOOS == "windows" {
+		fmt.Fprintln(stderr, "the Claude Code hooks need a POSIX shell and were not installed on Windows")
+		return nil
+	}
+	err := applyHooks(h.scope, h.root, true, h.dryRun, h.confirmShared, stderr, stderr)
+	if err != nil && !h.explicit {
+		fmt.Fprintf(stderr, "the Claude Code hooks were not installed: %v; install them with clawbridge context hooks install\n", err)
+		return nil
+	}
+	return err
 }
 
 func mcpSelection(c Config, path, agent, target, name, session, instance string) doctor.MCPConfig {

@@ -73,6 +73,9 @@ clawbridge linear binding
 
 Use the returned opaque profile ID and immutable team/project UUIDs. Follow a
 nonempty next cursor; an empty first page does not establish that no board exists.
+`--limit` is a page size: 1–100, but 1–50 for `projects`, because Linear refuses a
+larger projects page. ClawBridge refuses an out-of-range value itself, as it does any
+number outside the bounds a Linear tool's schema declares, so nothing is sent.
 The following uses the saved ClawBridge route and previews a team-board mapping:
 
 ```sh

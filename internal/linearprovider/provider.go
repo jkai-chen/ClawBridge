@@ -694,6 +694,10 @@ func (p *Provider) negotiate(names []string, args ...arg) (string, map[string]an
 				valid = false
 				break
 			}
+			if n, isInt := x.value.(int); isInt && !withinSchemaBounds(props[k], n) {
+				// A number the tool's own schema refuses is never sent.
+				return "", nil, &Error{Kind: "invalid", NotSent: true}
+			}
 			v[k] = x.value
 		}
 		if name == "get_issue" || name == "list_issues" {
@@ -721,6 +725,19 @@ func (p *Provider) negotiate(names []string, args ...arg) (string, map[string]an
 	}
 	return chosen, values, nil
 }
+// withinSchemaBounds reports whether n is inside the minimum and maximum
+// a tool's schema declares for the property, if it declares them.
+func withinSchemaBounds(prop any, n int) bool {
+	m, _ := prop.(map[string]any)
+	if lo, ok := m["minimum"].(float64); ok && float64(n) < lo {
+		return false
+	}
+	if hi, ok := m["maximum"].(float64); ok && float64(n) > hi {
+		return false
+	}
+	return true
+}
+
 func (p *Provider) call(ctx context.Context, names []string, args ...arg) (map[string]any, error) {
 	chosen, values, e := p.negotiate(names, args...)
 	if e != nil {
@@ -1043,11 +1060,20 @@ func listRows(m map[string]any, key string) ([]map[string]any, string, bool, err
 	}
 	return items, next, complete, nil
 }
+// MaxProjectsPage is the largest projects page Linear answers: its
+// list_projects schema says 50 and refuses 51, while teams and issues take
+// 100.
+const MaxProjectsPage = 50
+
 func pageArgs(o PageOptions) ([]arg, error) {
+	return pageArgsUpTo(o, 100)
+}
+
+func pageArgsUpTo(o PageOptions, max int) ([]arg, error) {
 	if o.Limit == 0 {
 		o.Limit = 50
 	}
-	if o.Limit < 1 || o.Limit > 100 || len(o.Cursor) > 2048 {
+	if o.Limit < 1 || o.Limit > max || len(o.Cursor) > 2048 {
 		return nil, fail("invalid")
 	}
 	args := []arg{{[]string{"limit", "first"}, o.Limit, "integer"}}
@@ -1157,7 +1183,7 @@ func parseProject(m map[string]any) (result Project, err error) {
 	return p, nil
 }
 func (p *Provider) Projects(ctx context.Context, o PageOptions) (Page[Project], error) {
-	args, e := pageArgs(o)
+	args, e := pageArgsUpTo(o, MaxProjectsPage)
 	if e != nil {
 		return Page[Project]{}, e
 	}

@@ -218,7 +218,7 @@ func parseLinear(command string, args []string, stderr io.Writer) (linearFlags, 
 	profile := func() { f.StringVar(&v.profile, "profile", "", "explicit personal profile ID") }
 	page := func() {
 		profile()
-		f.IntVar(&v.limit, "limit", 50, "page size (1–100)")
+		f.IntVar(&v.limit, "limit", 50, "page size (1–100; 1–50 for projects)")
 		f.StringVar(&v.cursor, "cursor", "", "opaque next cursor")
 	}
 	write := func() { profile(); f.StringVar(&v.operation, "operation-id", "", "required durable write identifier") }
@@ -449,6 +449,9 @@ func parseLinear(command string, args []string, stderr io.Writer) (linearFlags, 
 	}
 	if v.limit < 1 || v.limit > 100 || len(v.cursor) > 8192 {
 		return v, nil, errors.New("invalid page limit or cursor")
+	}
+	if command == "projects" && v.limit > linearprovider.MaxProjectsPage {
+		return v, nil, fmt.Errorf("--limit for linear projects is at most %d: Linear refuses larger project pages; page on with --cursor", linearprovider.MaxProjectsPage)
 	}
 	if command == "link" {
 		if len(v.teams) < 1 || len(v.teams) > 20 || !linearprovider.ValidID(v.defaultTeam) || v.teamBoard == (len(v.projects) > 0) {

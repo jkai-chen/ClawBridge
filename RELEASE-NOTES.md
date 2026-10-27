@@ -229,6 +229,9 @@
   - **The guided setup:** an "I have an invite code" path.
   - **Cloud check:** an `auth_mismatch` check in `clawbridge cloud check server`.
   - A v0.3.4 client can't join a server that takes device keys.
+  - **On Google Cloud** the owner's first device comes from `operator bootstrap-invite` on the VM and `clawbridge
+    join`; the GCP playbook's sign-in step now says so, instead of naming a `cloud bootstrap` route that doesn't exist
+    there yet.
 - **Upgrade the clients first, then switch** (docs/sign-in.md, "Turning device sign-in on"):
   1. keep `google`, or set `google,device`;
   2. upgrade every member's client;

@@ -3,18 +3,19 @@
 Pick the path by the user's ClawBridge release, on their machine:
 
 ```sh
-clawbridge cloud bootstrap --help
+clawbridge join --help
 ```
 
-- It succeeds and lists `--vm`: the release has **device sign-in** and can
-  bootstrap a Compute Engine VM. Use the device path. The server needs no Google
-  OAuth client.
-- It succeeds without `--vm` (v0.3.5 bootstraps only an EC2 instance), or fails
-  with an unknown command: use the Google fallback. (A host operator can still
-  let the owner in by hand with `operator bootstrap-invite`; see
-  docs/operations/deployment.md.)
+- It succeeds: the release has **device sign-in**. Use the device path. The
+  server needs no Google OAuth client.
+- It fails with an unknown command: use the Google fallback.
 
 ## Device path (default)
+
+On Google Cloud no `cloud bootstrap` route exists yet (it covers an EC2
+instance only), so the owner is let in by hand with the server's
+`operator bootstrap-invite`, as docs/operations/deployment.md describes
+("Letting the owner in without Google").
 
 - **Env file (step 6):** set `CLAWBRIDGE_AUTH=device`, and leave out
   `CLAWBRIDGE_AUDIENCE` and every `CLAWBRIDGE_OAUTH_*` entry. The server then
@@ -22,16 +23,16 @@ clawbridge cloud bootstrap --help
   `CLAWBRIDGE_DOMAIN`.
 - **Step 7:** the user, in their own terminal, creates the workspace and enrols
   their first device:
+  1. On the VM, over their own `gcloud compute ssh clawbridge-1 --project=PROJECT
+     --zone=ZONE --tunnel-through-iap`, they run the `operator bootstrap-invite
+     --workspace my-team` command from deployment.md. It prints a one-time code.
+  2. On their own computer: `clawbridge --server https://DOMAIN join --email
+     OWNER_EMAIL`, which asks for the code without showing it.
 
-  ```sh
-  clawbridge cloud bootstrap VM --workspace my-team --email OWNER_EMAIL
-  ```
-
-  It runs the server's one-time owner invite over the user's own SSH and joins
-  with it directly, so the invite code is never printed. When the onboarding
-  TUI resumes after your hand-over, it runs this for the user. Never run the
-  invite yourself, in any form: its code is a credential. If it fails, the user
-  runs it again; a code that was issued expires in 24 hours.
+  Onboarding doesn't run this step on Google Cloud; it prints these
+  instructions. Never run the invite yourself, in any form, and never ask for
+  the code: it is a credential. If it fails, the user runs it again; a code
+  that was issued expires in 24 hours.
 
 ## Google fallback (releases before device sign-in)
 

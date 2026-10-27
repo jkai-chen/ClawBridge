@@ -49,8 +49,10 @@ const (
 	// modelLockoutKeys bounds the lockout table; past it, failures from
 	// keys it doesn't hold count together under one overflow key.
 	modelLockoutKeys = 10000
-	// defaultMaxAgents is dispatcher_model_max_agents' default (§5.1).
-	defaultMaxAgents = 2
+	// defaultMaxAgents is dispatcher_model_max_agents' default (§5.1): one,
+	// since agentd's measured fixed cost (bus.ModelHostOverhead) and two
+	// agents would leave a host with about 1 GiB available no headroom.
+	defaultMaxAgents = 1
 	maxAgentsCeiling = 20
 )
 

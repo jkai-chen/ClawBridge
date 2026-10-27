@@ -69,7 +69,7 @@ func TestModelDoctor(t *testing.T) {
 	if l["reporting"] != true || l["expiring"] != false || l["expires_in"].(int64) < int64(89*24*3600) {
 		t.Fatal("launcher:", l)
 	}
-	if c["live_agents"] != 1 || c["max_agents"] != 2 || c["mem_available"] != uint64(100<<20) || c["agent_memory"] != ModelAgentMemory {
+	if c["live_agents"] != 1 || c["max_agents"] != 2 || c["mem_available"] != uint64(100<<20) || c["agent_memory"] != ModelAgentMemory+ModelAgentShim || c["host_overhead"] != ModelHostOverhead || c["headroom"] != ModelHeadroom {
 		t.Fatal("capacity:", c)
 	}
 	// The key stopped working; agentd saw a crash loop; the credential

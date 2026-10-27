@@ -135,6 +135,31 @@ func TestDoctorShowsTheDispatcherModel(t *testing.T) {
 			"dispatcher.model.seal": {Pass, ""}, "dispatcher.model.key": {Pass, ""}, "dispatcher.model.agent": {Warn, "No model agent has called"}, "dispatcher.model.launcher": {Pass, ""},
 			"dispatcher.model.capacity": {Warn, "At the cap, 1 owner(s) of this project with an active key have no agent running"},
 		}},
+		// The measured overhead (bus.ModelHostOverhead) counts while agentd
+		// isn't running yet, and the headroom always.
+		"before agentd runs, its own cost counts": {change: func(m map[string]any) {
+			m["launcher"] = map[string]any{"tokens": 1, "reporting": false, "last_used_age": nil, "expires_in": nil, "expiring": false}
+			m["capacity"] = map[string]any{"live_agents": 0, "max_agents": 1, "agent_memory": bus.ModelAgentMemory + bus.ModelAgentShim,
+				"host_overhead": bus.ModelHostOverhead, "headroom": bus.ModelHeadroom, "mem_available": 700 << 20}
+		}, want: map[string]want{
+			"dispatcher.model.seal": {Pass, ""}, "dispatcher.model.key": {Pass, ""}, "dispatcher.model.agent": {Pass, ""},
+			"dispatcher.model.launcher": {Warn, "agentd has never called"},
+			"dispatcher.model.capacity": {Warn, "The 1 agent that may still start needs up to 170 MiB, and agentd itself about 260 MiB once it runs, which would leave less than 300 MiB of the host's 700 MiB available"},
+		}},
+		"agentd running, the default one agent fits": {change: func(m map[string]any) {
+			m["capacity"] = map[string]any{"live_agents": 0, "max_agents": 1, "agent_memory": bus.ModelAgentMemory + bus.ModelAgentShim,
+				"host_overhead": bus.ModelHostOverhead, "headroom": bus.ModelHeadroom, "mem_available": 700 << 20}
+		}, want: map[string]want{
+			"dispatcher.model.seal": {Pass, ""}, "dispatcher.model.key": {Pass, ""}, "dispatcher.model.agent": {Pass, ""}, "dispatcher.model.launcher": {Pass, ""},
+			"dispatcher.model.capacity": {Pass, "One agent is the default, sized for a host with about 1 GiB available"},
+		}},
+		"agentd running, two agents leave too little": {change: func(m map[string]any) {
+			m["capacity"] = map[string]any{"live_agents": 0, "max_agents": 2, "agent_memory": bus.ModelAgentMemory + bus.ModelAgentShim,
+				"host_overhead": bus.ModelHostOverhead, "headroom": bus.ModelHeadroom, "mem_available": 600 << 20}
+		}, want: map[string]want{
+			"dispatcher.model.seal": {Pass, ""}, "dispatcher.model.key": {Pass, ""}, "dispatcher.model.agent": {Pass, ""}, "dispatcher.model.launcher": {Pass, ""},
+			"dispatcher.model.capacity": {Warn, "The 2 agents that may still start need up to 340 MiB, which would leave less than 300 MiB of the host's 600 MiB available"},
+		}},
 		"a local store has no cap": {change: func(m map[string]any) {
 			m["capacity"] = map[string]any{"live_agents": 0, "max_agents": 0, "agent_memory": bus.ModelAgentMemory, "mem_available": nil}
 		}, want: map[string]want{

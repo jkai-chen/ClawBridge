@@ -165,6 +165,11 @@
   the network with a 500, so agentd never removed a leftover owner network, and never freed its subnet, every round.
   It now inspects the network and disconnects the egress proxy only when it is on it. CI also installs and probes
   agentd under a real rootless daemon. No schema change. Linear config scope: none.
+- **One model agent by default, sized from measured numbers.** `CLAWBRIDGE_DISPATCHER_MODEL_MAX_AGENTS` now defaults to
+  1, not 2: agentd's rootless Docker, proxy and egress container take about 260 MiB once, and each agent about 170 MiB,
+  so two agents left a host with about 1 GiB available no room. `clawbridge doctor` counts agentd's own cost while it
+  isn't running yet, warns when the agents that may still start would leave less than 300 MiB for the server and its
+  database, and says how to raise the cap on a bigger host.
 
 # ClawBridge v0.3.9.1 (server hotfix, deployed 29 Oct; no client release or tag)
 

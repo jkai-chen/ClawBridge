@@ -7,9 +7,21 @@ import (
 )
 
 const (
-	// ModelAgentMemory is one agent container's memory limit (§5.1): the
-	// headroom doctor wants per agent slot not yet running.
+	// ModelAgentMemory is one agent container's memory limit (§5.1).
 	ModelAgentMemory = 160 << 20
+	// ModelAgentShim is what each running container adds outside its limit:
+	// its containerd shim, measured under a real rootless daemon (the
+	// agentd-rootless CI job).
+	ModelAgentShim = 10 << 20
+	// ModelHostOverhead is agentd's fixed cost, once per host: the rootless
+	// dockerd, containerd, rootlesskit and slirp4netns, cbagent's user
+	// manager, agentd and its proxy, and the egress container. Measured as
+	// RSS in the agentd-rootless CI job (260 MiB), which errs high: RSS
+	// counts the pages processes share once for each of them.
+	ModelHostOverhead = 260 << 20
+	// ModelHeadroom is what the agents must still leave free for the api,
+	// Postgres and the rest of the host (live/AGENTD-DEPLOY-PLAN.md §5).
+	ModelHeadroom = 300 << 20
 	// launcherReportFresh is how long agentd's report stays news for doctor.
 	launcherReportFresh = time.Hour
 	// credentialFlagFresh is how long a flagged credential stays news.
@@ -152,7 +164,11 @@ func (s *Store) modelDoctor(ctx context.Context, tx *transaction, w, p map[strin
 	if err != nil {
 		return nil, err
 	}
-	capacity := map[string]any{"live_agents": asInt(live[0]["n"]), "max_agents": s.modelMaxAgents, "agent_memory": ModelAgentMemory, "mem_available": nil}
+	// agent_memory is what one more agent takes (its limit and its shim);
+	// host_overhead is counted by doctor only while agentd isn't running,
+	// since a running agentd's daemons are already out of MemAvailable.
+	capacity := map[string]any{"live_agents": asInt(live[0]["n"]), "max_agents": s.modelMaxAgents, "agent_memory": ModelAgentMemory + ModelAgentShim,
+		"host_overhead": ModelHostOverhead, "headroom": ModelHeadroom, "mem_available": nil}
 	if s.memAvailable != nil {
 		if m, ok := s.memAvailable(); ok {
 			capacity["mem_available"] = m

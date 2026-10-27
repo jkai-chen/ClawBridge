@@ -318,10 +318,10 @@ func TestReadModelSettings(t *testing.T) {
 	key := base64.StdEncoding.EncodeToString(bytes.Repeat([]byte{1}, 32))
 	other := base64.StdEncoding.EncodeToString(bytes.Repeat([]byte{2}, 32))
 	env := func(m map[string]string) func(string) string { return func(k string) string { return m[k] } }
-	if seal, n, err := readModelSettings(env(nil)); err != nil || seal != nil || n != defaultMaxAgents {
+	if seal, n, err := readModelSettings(env(nil)); err != nil || seal != nil || n != 1 {
 		t.Fatal(seal, n, err)
 	}
-	if seal, n, err := readModelSettings(env(map[string]string{"CLAWBRIDGE_MODEL_KEY_SEAL_KEY": key, "CLAWBRIDGE_MODEL_KEY_SEAL_KEY_PREVIOUS": other, "CLAWBRIDGE_DISPATCHER_MODEL_MAX_AGENTS": "1"})); err != nil || seal == nil || n != 1 {
+	if seal, n, err := readModelSettings(env(map[string]string{"CLAWBRIDGE_MODEL_KEY_SEAL_KEY": key, "CLAWBRIDGE_MODEL_KEY_SEAL_KEY_PREVIOUS": other, "CLAWBRIDGE_DISPATCHER_MODEL_MAX_AGENTS": "3"})); err != nil || seal == nil || n != 3 {
 		t.Fatal(seal, n, err)
 	}
 	for name, m := range map[string]map[string]string{

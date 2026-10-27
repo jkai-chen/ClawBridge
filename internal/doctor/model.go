@@ -206,8 +206,9 @@ func checkModelLauncher(m map[string]any, add func(Check)) {
 // checkModelCapacity reports the server's live agents against the cap. At
 // the cap, the steady state of a full server, it warns only when an owner
 // of this project with an active key has no agent running (waiting), which
-// the cap may be why. It warns when the slots left could need more memory
-// than the host has.
+// the cap may be why. It warns when the slots left, with agentd's own fixed
+// cost while agentd isn't running yet, would leave the host less than its
+// headroom for the api and Postgres.
 func checkModelCapacity(m map[string]any, waiting int, add func(Check)) {
 	c, _ := m["capacity"].(map[string]any)
 	limit := number(c["max_agents"])
@@ -222,12 +223,32 @@ func checkModelCapacity(m map[string]any, waiting int, add func(Check)) {
 		check.Message += fmt.Sprintf(" At the cap, %d owner(s) of this project with an active key have no agent running, and a new one is refused (agent_cap).", waiting)
 		check.Action = "The server operator raises CLAWBRIDGE_DISPATCHER_MODEL_MAX_AGENTS if the host has the memory."
 	}
+	// Once agentd runs, its daemons are already out of MemAvailable.
+	overhead := 0
+	if l, _ := m["launcher"].(map[string]any); l["reporting"] != true {
+		overhead = number(c["host_overhead"])
+	}
+	headroom := number(c["headroom"])
 	if c["mem_available"] == nil {
 		check.Message += " The host's available memory is unknown."
-	} else if need, have := (limit-live)*per, number(c["mem_available"]); live < limit && need > have {
+	} else if need, have := (limit-live)*per+overhead, number(c["mem_available"]); live < limit && need+headroom > have {
 		check.Status = Warn
-		check.Message += fmt.Sprintf(" The %d agents that may still start need up to %d MiB, but the host has %d MiB available.", limit-live, need>>20, have>>20)
-		check.Action = "The server operator lowers CLAWBRIDGE_DISPATCHER_MODEL_MAX_AGENTS, or gives the host more memory."
+		if n := limit - live; n == 1 {
+			check.Message += fmt.Sprintf(" The 1 agent that may still start needs up to %d MiB", per>>20)
+		} else {
+			check.Message += fmt.Sprintf(" The %d agents that may still start need up to %d MiB", n, n*per>>20)
+		}
+		if overhead > 0 {
+			check.Message += fmt.Sprintf(", and agentd itself about %d MiB once it runs", overhead>>20)
+		}
+		if headroom > 0 {
+			check.Message += fmt.Sprintf(", which would leave less than %d MiB of the host's %d MiB available for the server and its database.", headroom>>20, have>>20)
+		} else { // a server from before the measured overhead
+			check.Message += fmt.Sprintf(", but the host has %d MiB available.", have>>20)
+		}
+		check.Action = "The server operator lowers CLAWBRIDGE_DISPATCHER_MODEL_MAX_AGENTS (1 is the default), or gives the host more memory."
+	} else if live < limit && limit == 1 {
+		check.Message += " One agent is the default, sized for a host with about 1 GiB available: each agent needs about 170 MiB, and agentd about 260 MiB. A host with more memory can run more with CLAWBRIDGE_DISPATCHER_MODEL_MAX_AGENTS."
 	}
 	add(check)
 }

@@ -460,9 +460,11 @@ CLAWBRIDGE_WATCH_INTERVAL=15m
   ticking every 15m0s`, or `watcher: off (…)` with the reason. Without the Linear
   app, the watcher stays off and the server serves as before.
 - **Calls.** Each project's watch spends at most 200 Linear calls an hour on the
-  bus budget. The interval sets latency more than cost: each issue and intake
-  source keeps its own polling schedule, and a tick with nothing due calls
-  nothing.
+  bus budget; `CLAWBRIDGE_WATCH_BUDGET` sets another, from 1 to 600 (anything else
+  refuses to start). It covers every tick, nudge and `operator health-run`, for
+  every project on the server. The interval sets latency more than cost: each
+  issue and intake source keeps its own polling schedule, and a tick with nothing
+  due calls nothing.
 - **Clients.** While the server's ticks for a project are fresh, a client
   `clawbridge linear watch` is refused. Stop client watchers before turning this
   on. A client may take over again once the server has not ticked for 10

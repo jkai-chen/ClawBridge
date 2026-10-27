@@ -181,6 +181,7 @@ func (w *Watcher) ForceHealth(ctx context.Context, pid, lp string, forceNew bool
 	scope := bus.Request{Session: bus.SystemSessionName, Args: map[string]any{}}
 	var run HealthRun
 	err := svc.Watch(ctx, scope, linearboard.WatchOptions{
+		Budget:     w.Budget,
 		Once:       true,
 		WithinOnly: true,
 		Within: func(ctx context.Context, fence map[string]any) error {

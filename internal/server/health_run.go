@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"os"
 	"strings"
 
 	"clawbridge/internal/bus"
@@ -43,7 +44,12 @@ var newHealthForcer = func(store *bus.Store) (healthForcer, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &watcher.Watcher{Store: store, App: watcherApp{app}, Ledger: linearboard.SharedLedger(store, nil)}, nil
+	// A forced run spends the same hour's budget as the server's ticks.
+	budget, err := readWatchBudget(os.Getenv)
+	if err != nil {
+		return nil, err
+	}
+	return &watcher.Watcher{Store: store, App: watcherApp{app}, Ledger: linearboard.SharedLedger(store, nil), Budget: budget}, nil
 }
 
 // healthRun forces one health run of the Linear project now, through the

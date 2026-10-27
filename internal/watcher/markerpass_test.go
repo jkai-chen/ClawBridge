@@ -125,3 +125,25 @@ func TestANudgeRunsUnderTheProjectDeadline(t *testing.T) {
 		t.Fatalf("the nudge outlived its project deadline: %+v", pass)
 	}
 }
+
+// CLAWBRIDGE_WATCH_BUDGET: a tick and a nudge each take the lease at the
+// server's budget, not the bus default of 200.
+func TestTickAndNudgeUseTheServerBudget(t *testing.T) {
+	e := setup(t)
+	e.w.Budget = 300
+	limit := func() int {
+		e.t.Helper()
+		var n int
+		e.queryRow(`SELECT budget_limit FROM watch_lease`, &n)
+		return n
+	}
+	e.w.Tick(context.Background())
+	if limit() != 300 {
+		t.Fatal("tick's budget:", limit())
+	}
+	e.sql(`UPDATE watch_lease SET budget_limit=200, expires_at='2000-01-01T00:00:00.000000000Z'`)
+	e.w.Markers(context.Background(), e.pid)
+	if limit() != 300 {
+		t.Fatal("nudge's budget:", limit())
+	}
+}

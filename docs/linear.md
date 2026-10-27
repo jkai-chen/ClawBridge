@@ -606,7 +606,8 @@ line per cycle.
 - `clawbridge doctor` warns when assigned issues are watched but no watcher runs.
 - **On a hosted server with its own watcher** (`CLAWBRIDGE_WATCH_INTERVAL`,
   docs/operations/deployment.md), the server watches every bound project as the
-  ClawBridge app, and also applies pending claim markers. A client `linear watch`
+  ClawBridge app, and also applies pending claim markers, within the server's
+  budget (`CLAWBRIDGE_WATCH_BUDGET`, default 200). A client `linear watch`
   is then refused until the server has not ticked for 10 minutes.
 
 ### Claim markers

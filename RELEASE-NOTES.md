@@ -52,6 +52,9 @@
     apart until the queue drains. A queue stopped by the hour's budget waits for the next hour.
   - **Logs:** one line per marker pass, and per failed tick or nudge.
   - **Older servers:** a client against a v0.3.4 server falls back when the server refuses `marker_due`'s new `limit`.
+- **The server's watcher budget can be raised.** `CLAWBRIDGE_WATCH_BUDGET` (1 to 600 Linear calls an hour, default
+  200) sets the hour's budget of every tick and nudge of the server's own watcher, and of `operator health-run`, for
+  every project. Before, only a client `linear watch --budget` could change it. An invalid value refuses to start.
 
 ## Project status follows the work (off until proven)
 

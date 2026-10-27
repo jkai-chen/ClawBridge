@@ -53,6 +53,8 @@ services:
       # interval or the scheduler tick settings are set, and the Linear app
       # is configured.
       CLAWBRIDGE_WATCH_INTERVAL: ${CLAWBRIDGE_WATCH_INTERVAL:-}
+      # Linear calls per hour each project's watch may make, 1-600; empty is 200.
+      CLAWBRIDGE_WATCH_BUDGET: ${CLAWBRIDGE_WATCH_BUDGET:-}
       CLAWBRIDGE_TICK_AUDIENCE: ${CLAWBRIDGE_TICK_AUDIENCE:-}
       CLAWBRIDGE_TICK_SERVICE_ACCOUNT: ${CLAWBRIDGE_TICK_SERVICE_ACCOUNT:-}
       # Optional: the dispatcher model's key seal and agent cap

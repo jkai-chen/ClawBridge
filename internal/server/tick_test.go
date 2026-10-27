@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -138,10 +139,21 @@ func TestWatchSettings(t *testing.T) {
 	if err != nil || w.interval != 2*time.Minute || !w.wanted() || w.tickAudience != "" {
 		t.Fatal(w, err)
 	}
+	if w.budget != 0 {
+		t.Fatal("no budget set is the bus's default:", w.budget)
+	}
+	for _, n := range []string{"1", "300", "600"} {
+		if w, err = readWatchSettings(env("CLAWBRIDGE_WATCH_INTERVAL", "2m", "CLAWBRIDGE_WATCH_BUDGET", n)); err != nil || fmt.Sprint(w.budget) != n {
+			t.Fatal("budget", n, w.budget, err)
+		}
+	}
 	for name, e := range map[string]func(string) string{
 		"interval too short":      env("CLAWBRIDGE_WATCH_INTERVAL", "10s"),
 		"interval not a duration": env("CLAWBRIDGE_WATCH_INTERVAL", "2"),
 		"half the tick settings":  env("CLAWBRIDGE_TICK_AUDIENCE", tickURL),
+		"budget zero":             env("CLAWBRIDGE_WATCH_BUDGET", "0"),
+		"budget over 600":         env("CLAWBRIDGE_WATCH_BUDGET", "601"),
+		"budget not a number":     env("CLAWBRIDGE_WATCH_BUDGET", "300/h"),
 	} {
 		if _, err := readWatchSettings(e); err == nil {
 			t.Errorf("%s accepted", name)

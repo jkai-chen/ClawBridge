@@ -193,6 +193,13 @@
   characters, terminal escapes and bidi or other format characters (1–64 printable characters), and the CLI and TUI
   escape any older label when they print it.
 
+## Linear
+
+- **`linear projects --limit` above 50 is refused with a clear message.** Linear refuses a projects page of more
+  than 50, which showed as `Linear provider: provider_rejected`. The CLI now says "at most 50; page on with
+  `--cursor`", and nothing is sent. More generally, a number outside the bounds a Linear tool's own schema declares is
+  refused before the call. Teams, issues, labels and members still take up to 100.
+
 ## Security (G9)
 
 - **The session runner's agent gets less of yours (G9-5, G9-6, G9-9, G9-14).**

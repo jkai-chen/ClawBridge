@@ -497,8 +497,23 @@ Doctor lists failures first and folds the passes (`p` shows them). Enter on a fa
 Linear, Dispatcher or device check opens that screen. Its last results stay on screen
 while the checks run again.
 
+Projects lists the projects you can see: your role, the sessions ("2 of 3 active"),
+the coordinator and the Linear board. `●` marks the project this profile works in.
+Enter opens one, read-only: its coordinator, its sessions, and its Linear teams and
+projects by name. On another project a banner says you're only viewing it; on your
+own, `s` goes to its sessions and `l` to its Linear board. Esc returns to the list.
+
+Sessions shows each session's NAME (`★` marks the project's coordinator), STATE
+(retired, moved, stale, or its presence), ISSUE (its assigned Linear issue), CONTEXT
+and AGENT; OWNER and HOST appear from 140 columns and are always in the selected
+session's details, which end with its ID. `n` writes to the selected session.
+Overview counts the sessions in the same words ("Sessions · 2 active · 1 retired").
+
 Inbox: Enter opens a message with what it answers and the rest of its thread,
-`m` marks it read, `n` composes, `p` replies, and Escape cancels drafts.
+`m` marks it read, `n` composes, `p` replies, and Escape cancels drafts. A new
+message asks To first: type a session's name, or Tab through the project's live
+sessions (Tab also completes what's typed); Enter goes on to the message, Shift-Tab
+back to To, and Enter sends.
 These actor operations need an explicit current session/instance. Opening the UI
 does not register/resume an actor. Without a session the Inbox says so and asks
 the server nothing: inboxes belong to agent sessions, so to read one as a session,

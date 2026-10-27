@@ -1661,7 +1661,11 @@ mapping through an authorized project owner/lead. Those are separate actions. In
 the TUI, `x` asks y/N before logging a connection out, and unlinking takes the
 project's slug typed, since it changes the board for everyone in the project.
 The Linear view names its step ("Link a board · step 2 of 5") and the board in
-words; `d` shows the raw IDs and the binding's revision.
+words, by the team and project names stored when the board was linked ("Board:
+linked · teams Eng · projects Payments"), with how old the names are; `d` shows
+the raw IDs and the binding's revision. A rename in Linear shows once the names are
+refreshed: `r` on the Linear view refreshes them for a project owner or lead, with
+their own Linear connection. Names are display text only; nothing matches on them.
 The binding retains a revision so concurrent changes fail rather than overwriting
 another administrator's selection. An outage leaves the mapping intact.
 

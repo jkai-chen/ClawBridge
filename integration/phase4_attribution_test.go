@@ -72,7 +72,7 @@ func TestPhase4SessionsDisplayExistingAttributionWithoutPeerInstance(t *testing.
 					return r
 				}, output)
 				safeHost := strings.NewReplacer("\x1b", `\x1b`, "\r", `\x0d`, "\u202e", `\u202e`).Replace(host)
-				for _, want := range []string{owner, safeHost, "Hostlabel(self-reported)", "Accountlabel(self-reported,notverifiedidentity)", "local-account-not-google"} {
+				for _, want := range []string{owner, safeHost, "(self-reported)", "(self-reported,notverifiedidentity)", "local-account-not-google"} {
 					if !strings.Contains(flat, want) {
 						t.Errorf("wrapped details lost attribution %q", want)
 					}

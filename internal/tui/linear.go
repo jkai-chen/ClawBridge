@@ -59,7 +59,16 @@ type linearState struct {
 	// logoutAsk is the connection an x is waiting to log out, until y.
 	logoutAsk string
 	// showIDs shows the raw Linear IDs (d).
-	showIDs              bool
+	showIDs bool
+	// stored are the team and project names stored with the board, by
+	// ID, as of namesAt; role is the viewer's project role, and
+	// refreshNames asks the next load to refresh the stored names first
+	// (r, an owner or lead only); namesNote says why that didn't work.
+	stored               map[string]string
+	namesAt              string
+	role                 string
+	refreshNames         bool
+	namesNote            string
 	step                 string
 	profile              string
 	profiles             []linearconn.Profile
@@ -135,6 +144,48 @@ type linearLoadedMsg struct {
 	operation string
 	data      LinearData
 	err       error
+	// names is the board's stored names, read with the load; nil when
+	// not read. namesErr is a names refresh that didn't work.
+	names    *storedNames
+	namesErr string
+}
+
+// storedNames are a board's names as project_overview returns them, and
+// the viewer's role in the project.
+type storedNames struct {
+	byID map[string]string
+	at   string
+	role string
+}
+
+// linearNamesOps are the loads that show the board, so read its names.
+var linearNamesOps = map[string]bool{"profiles": true, "connect": true, "logout": true, "link": true, "unlink": true, "issues": true}
+
+// readStoredNames reads the board's stored names through project_overview,
+// as the person; nil when it can't be read.
+func readStoredNames(ctx context.Context, executor Executor, workspace, project string) *storedNames {
+	if executor == nil || project == "" {
+		return nil
+	}
+	result, err := executor.Execute(ctx, bus.Request{Operation: "project_overview", Workspace: workspace, Project: project, Args: map[string]any{}})
+	if err != nil {
+		return nil
+	}
+	data := mapData(result.Data)
+	o := parseProjectOverview(data)
+	n := &storedNames{byID: map[string]string{}, at: o.Linear.NamesAt, role: text(mapData(data["project"]), "role")}
+	for _, b := range append(append([]boardName{}, o.Linear.Teams...), o.Linear.Projects...) {
+		if b.Name != "" {
+			n.byID[b.ID] = b.Name
+		}
+	}
+	return n
+}
+
+// canRefreshNames: the owner or a lead refreshes the stored names, as
+// they link (PROJECT-OVERVIEW-PLAN §3).
+func (m Model) canRefreshNames() bool {
+	return m.linearConfigured() && m.linear.profile != "" && (m.linear.role == "owner" || m.linear.role == "lead")
 }
 
 func (m Model) linearCommand(request LinearRequest) (Model, tea.Cmd) {
@@ -160,10 +211,24 @@ func (m Model) linearCommand(request LinearRequest) (Model, tea.Cmd) {
 	m.linearCancel = cancel
 	requestID := m.request
 	source := m.cfg.Linear
+	refresh := m.linear.refreshNames && m.canRefreshNames()
+	m.linear.refreshNames = false
+	executor, workspace, project := m.cfg.Executor, m.cfg.Workspace, m.cfg.Project
 	return m, func() tea.Msg {
 		defer cancel()
-		data, err := source.Do(ctx, request)
-		return linearLoadedMsg{requestID, request.Operation, data, err}
+		msg := linearLoadedMsg{request: requestID, operation: request.Operation}
+		if refresh {
+			// Names are display text: a refresh that fails leaves the
+			// stored ones and says so; it never fails the load.
+			if _, e := source.Do(ctx, LinearRequest{Operation: "names-refresh", ProfileID: request.ProfileID}); e != nil {
+				msg.namesErr = displayError(e)
+			}
+		}
+		msg.data, msg.err = source.Do(ctx, request)
+		if msg.err == nil && linearNamesOps[request.Operation] {
+			msg.names = readStoredNames(ctx, executor, workspace, project)
+		}
+		return msg
 	}
 }
 func (m Model) linearRefresh() (Model, tea.Cmd) {
@@ -184,6 +249,7 @@ func (m Model) linearRefresh() (Model, tea.Cmd) {
 			request.IssueID = m.linear.issue.ID
 		}
 	case "intake":
+		m.linear.refreshNames = false
 		return m.intakeLoad()
 	default:
 		request.Operation = "profiles"
@@ -201,6 +267,13 @@ func (m Model) applyLinear(x linearLoadedMsg) Model {
 		return m
 	}
 	m.source = "linear"
+	if x.names != nil {
+		m.linear.stored, m.linear.namesAt, m.linear.role = x.names.byID, x.names.at, x.names.role
+	}
+	m.linear.namesNote = ""
+	if x.namesErr != "" {
+		m.linear.namesNote = "Names not refreshed: " + x.namesErr
+	}
 	switch x.operation {
 	case "profiles", "connect", "logout":
 		m.linear.profiles = append([]linearconn.Profile(nil), x.data.Profiles...)
@@ -751,6 +824,9 @@ func renderLinear(m Model) string {
 		b.WriteString("Optional: connect Linear (" + keyHint(m, ScreenLinear, "connect") + ") to see and link this project's board, or come back later.\n")
 	}
 	b.WriteString(linearBoardLine(m) + "\n")
+	if names := linearNamesLine(m); names != "" {
+		b.WriteString(mutedStyle.Render(names) + "\n")
+	}
 	if conn := m.linearConnectionName(); conn != "" {
 		b.WriteString("Connection: " + terminalText(conn) + "\n")
 	}
@@ -916,10 +992,13 @@ func linearStepTitle(m Model) string {
 	return "Link a board · step 1 of 5: choose a Linear connection"
 }
 
-// linearNames names teams and projects as the loaded lists know them; an
-// ID nothing names stays an ID (the names stored with the board come in E2).
+// linearNames names teams and projects as the loaded lists know them, else
+// by the names stored with the board; an ID nothing names stays an ID.
 func (m Model) linearNames(ids []string) string {
 	known := map[string]string{}
+	for id, name := range m.linear.stored {
+		known[id] = name
+	}
 	for _, t := range m.linear.teams {
 		known[t.ID] = t.Name
 	}
@@ -935,7 +1014,8 @@ func (m Model) linearNames(ids []string) string {
 	return strings.Join(out, ", ")
 }
 
-// linearBoardLine is the board in words; the revision and IDs are behind d.
+// linearBoardLine is the board in words, by name where the names are
+// known; the revision and IDs are behind d.
 func linearBoardLine(m Model) string {
 	if !m.linearConfigured() {
 		return "Board: not linked yet"
@@ -945,11 +1025,49 @@ func linearBoardLine(m Model) string {
 	if v := m.linear.bindingV2; v != nil {
 		teams, projects, teamBoard = v.LinearTeamIDs, v.LinearProjectIDs, v.Mode == "team_board"
 	}
-	line := "Board: linked · " + plural(len(teams), "team", "teams")
+	line := "Board: linked · " + m.namedOrCounted(teams, "team", "teams")
 	if teamBoard {
 		return line + " · the team board"
 	}
-	return line + " · " + plural(len(projects), "project", "projects")
+	return line + " · " + m.namedOrCounted(projects, "project", "projects")
+}
+
+// namedOrCounted lists IDs by name when every one has a name, else counts
+// them, so a board never reads as a run of UUIDs.
+func (m Model) namedOrCounted(ids []string, one, many string) string {
+	known := map[string]bool{}
+	for id := range m.linear.stored {
+		known[id] = true
+	}
+	for _, t := range m.linear.teams {
+		known[t.ID] = true
+	}
+	for _, p := range m.linear.projects {
+		known[p.ID] = true
+	}
+	for _, id := range ids {
+		if !known[id] {
+			return plural(len(ids), one, many)
+		}
+	}
+	return many + " " + m.linearNames(ids)
+}
+
+// linearNamesLine says how old the stored names are, and whether r
+// refreshes them; "" when none are stored.
+func linearNamesLine(m Model) string {
+	if m.linear.namesNote != "" {
+		return m.linear.namesNote
+	}
+	t, err := time.Parse(time.RFC3339Nano, m.linear.namesAt)
+	if err != nil || !m.linearConfigured() {
+		return ""
+	}
+	line := "Names as of " + ago(m.cfg.Now(), t)
+	if m.canRefreshNames() {
+		line += "; r refreshes them from Linear"
+	}
+	return line
 }
 
 // linearIDLines are the board's IDs and revision, shown with d.

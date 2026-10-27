@@ -27,6 +27,8 @@ type fakeAuthority struct {
 	source   string
 	mirror   map[string]any
 	messages []map[string]any
+	// overviews answer project_overview by project; another is offline.
+	overviews map[string]map[string]any
 }
 
 func (f *fakeAuthority) Execute(_ context.Context, request bus.Request) (bus.Result, error) {
@@ -74,6 +76,14 @@ func (f *fakeAuthority) Execute(_ context.Context, request bus.Request) (bus.Res
 		data = map[string]any{"id": "msg_sent"}
 	case "mark_read":
 		data = map[string]any{"marked": 1}
+	case "project_overview":
+		if f.overviews != nil {
+			o, ok := f.overviews[request.Project]
+			if !ok {
+				return bus.Result{}, errOffline
+			}
+			data = o
+		}
 	}
 	if f.mirror != nil {
 		data["mirror"] = f.mirror

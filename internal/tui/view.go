@@ -163,68 +163,6 @@ func renderBody(m Model) string {
 	}
 }
 
-func renderProjects(m Model) string {
-	var b strings.Builder
-	b.WriteString(title(ScreenProjects))
-	b.WriteString("\n\n")
-	if body, ok := bodyState(m, "projects", len(m.projects) > 0); ok {
-		return b.String() + body
-	}
-	if len(m.projects) == 0 {
-		b.WriteString("No projects in this workspace yet. An owner creates one with clawbridge project create SLUG.")
-		return b.String()
-	}
-	rows := make([][]string, len(m.projects))
-	for i, p := range m.projects {
-		rows[i] = []string{p.Slug, firstNonempty(p.Role, "-"), p.Name}
-	}
-	b.WriteString(renderTable(m, []string{"SLUG", "ROLE", "NAME"}, []int{28, 10, 42}, rows))
-	if m.selected >= 0 && m.selected < len(m.projects) {
-		p := m.projects[m.selected]
-		b.WriteString("\n\nSelected project\n" + terminalText("ID: "+p.ID+"\nSlug: "+p.Slug+"\nName: "+p.Name+"\nRole: "+p.Role+"\nGit remote: "+p.GitRepo))
-	}
-	return strings.TrimRight(b.String(), "\n")
-}
-
-func renderSessions(m Model) string {
-	var b strings.Builder
-	b.WriteString(title(ScreenSessions))
-	b.WriteString("\n\n")
-	if body, ok := bodyState(m, "sessions", len(m.sessions) > 0); ok {
-		return b.String() + body
-	}
-	if len(m.sessions) == 0 {
-		b.WriteString("No sessions yet. An agent joins with clawbridge register NAME in its checkout.")
-		return b.String()
-	}
-	rows := make([][]string, len(m.sessions))
-	for i, s := range m.sessions {
-		rows[i] = []string{s.Name, firstNonempty(s.Owner, "Not recorded"), firstNonempty(s.Host, "Not recorded"), s.AgentKind, firstNonempty(s.Presence, s.Status, "-"), firstNonempty(s.Context, "-"), s.Role, s.Status}
-	}
-	b.WriteString(renderTable(m, []string{"NAME", "OWNER", "HOST", "AGENT", "PRESENCE", "CONTEXT", "ROLE", "STATUS"}, []int{22, 28, 22, 12, 12, 18, 10, 10}, rows))
-	if m.selected >= 0 && m.selected < len(m.sessions) {
-		row := m.sessions[m.selected]
-		details := []struct{ label, value string }{
-			{"Session ID", row.ID}, {"Session", row.Name}, {"Owner principal", firstNonempty(row.Owner, "Not recorded")},
-			{"Host label (self-reported)", firstNonempty(row.Host, "Not recorded")},
-			{"Account label (self-reported, not verified identity)", firstNonempty(row.Account, "Not recorded")},
-			{"Agent", row.AgentKind}, {"Role", row.Role}, {"Status", row.Status}, {"Presence", firstNonempty(row.Presence, row.Status, "-")},
-			{"Assignment", firstNonempty(row.Assignment, "None")},
-			{"Context", firstNonempty(row.ContextDetail, "Not reported")},
-		}
-		b.WriteString("\n\nSelected session\n")
-		for _, d := range details {
-			value := strings.NewReplacer("\n", " ", "\t", " ").Replace(terminalText(d.value))
-			b.WriteString(ansi.Hardwrap(d.label+": "+value, tableBudget(m), true) + "\n")
-		}
-		if m.cfg.Mode == ModeLocal {
-			b.WriteString(ansi.Hardwrap("Local OS-user authority; no Google verification claimed.", tableBudget(m), true))
-		}
-	}
-
-	return strings.TrimRight(b.String(), "\n")
-}
-
 func tableBudget(m Model) int {
 	width := m.width
 	if width <= 0 {
@@ -480,7 +418,12 @@ func renderInput(m Model) string {
 	case inputReply:
 		return mutedStyle.Render("Reply (Enter sends, Esc cancels)") + "\n> " + terminalText(m.draft) + "█"
 	case inputSend:
-		return mutedStyle.Render("Send (recipient|message; Enter sends, Esc cancels)") + "\n> " + terminalText(m.draft) + "█"
+		// Two lines, the cursor in the field being edited (U27).
+		to, body := "To: "+terminalText(m.sendTo), "Message: "+terminalText(m.draft)
+		if m.sendBody {
+			return to + "\n" + body + "█  " + mutedStyle.Render("Enter sends · Tab back to To · Esc cancels")
+		}
+		return to + "█  " + mutedStyle.Render("Tab: next session · Enter: the message · Esc cancels") + "\n" + mutedStyle.Render(body)
 	}
 	return ""
 }

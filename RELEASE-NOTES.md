@@ -255,6 +255,20 @@
   `needs-agent` label. A project owner or lead switches the mode or a signal, trusts someone picked from the linked
   teams' active members, stops trusting them, and dismisses or rearms an issue, each after a `y`; anyone else reads.
   Overview shows it in a line ("Intake: notify · 1 trusted · 0 queued") that opens it. Needs a server with E3a.
+- **Projects and Sessions linked (PR C, TUI half).** Projects lists each project with your role, its sessions
+  ("2 of 3 active"), its coordinator and its Linear board, and marks the one this profile works in with `●`; Enter
+  opens a project read-only: its coordinator, sessions, and Linear teams and projects by name, with a banner when it
+  isn't your profile's project, and `s` and `l` going to your own project's sessions and board. Sessions shows NAME
+  (`★` on the coordinator), STATE (retired, moved, stale or presence, in one word), ISSUE, CONTEXT and AGENT, with
+  OWNER and HOST from 140 columns; the details use short labels, say when context was reported ("4 minutes ago") and
+  show the ID last. Overview counts sessions the same way ("Sessions · 2 active · 1 retired"). Needs a server with
+  `project_overview` (PR C server half).
+- **Messages: a To and a Message field (U26, U27).** `n` on Sessions writes to the selected session; `n` on Inbox asks
+  whom, and Tab offers the project's live sessions (or completes what's typed). The `recipient|message` syntax is
+  gone. Sending still needs the TUI opened with a session, and says so otherwise.
+- **The Linear board by name (U31, U32).** The Linear screen names the linked teams and projects with the names stored
+  at link time ("Board: linked · teams Eng · projects Payments"), says how old they are, and `r` refreshes them from
+  Linear for a project owner or lead; a refresh that fails keeps the stored names and says so.
 - **Changed keys:** Inbox Enter opens a message, with what it answers and its thread (`m` marks read, as before).
   Account's decline is `d` (was `n`). Linear connects with `+` (was `c`, which now only switches who closes in the
   link review); Esc on Linear goes back one step and keeps the teams and projects you chose, instead of starting over.

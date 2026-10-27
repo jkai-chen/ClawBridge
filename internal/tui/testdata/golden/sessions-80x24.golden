@@ -5,20 +5,17 @@ Showing: current · page 1
 ╭──────────────────────────────────────────────────────────────────────────────╮
 │ Sessions                                                                     │
 │                                                                              │
-│   NAME     OWNER    HOST     AGENT    PRESENCE CONTEXT   ROLE      STATUS    │
-│ › engineer Not rec… Not rec… codex    active   -         lead      active    │
+│   NAME             STATE      ISSUE            CONTEXT          AGENT        │
+│ › engineer         active     -                -                codex        │
 │                                                                              │
-│ Selected session                                                             │
-│ Session ID: ses_1                                                            │
-│ Session: engineer                                                            │
-│ Owner principal: Not recorded                                                │
-│ Host label (self-reported): Not recorded                                     │
-│ Account label (self-reported, not verified identity): Not recorded           │
-│ Agent: codex                                                                 │
-│ Role: lead                                                                   │
-│ Status: active                                                               │
-│ Presence: active                                                             │
-│ Assignment: None                                                             │
-│ Context: Not reported                                                        │
+│ engineer                                                                     │
+│ State    active                                                              │
+│ Role     lead · agent codex                                                  │
+│ Issue    None                                                                │
+│ Context  Not reported                                                        │
+│ Owner    Not recorded                                                        │
+│ Host     Not recorded                                                        │
+│ Account  Not recorded                                                        │
+│ ID       ses_1                                                               │
 ╰──────────────────────────────────────────────────────────────────────────────╯
-v filter · ] next page · [ previous page · ? help · q quit
+n message it · v filter · ] next page · [ previous page · ? help · q quit

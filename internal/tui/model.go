@@ -239,11 +239,16 @@ type SessionRow struct {
 	Stale     bool   `json:"stale"`
 	// Assignment summarizes the live assignment: state, issue, task role, scope.
 	Assignment string `json:"assignment,omitempty"`
+	// Issue is the assignment's issue, by identifier, with its state when
+	// it isn't confirmed yet; Coordinator marks the project's coordinator.
+	Issue       string `json:"issue,omitempty"`
+	Coordinator bool   `json:"coordinator,omitempty"`
 	// Context is the session's last context report, in short ("612k warn
 	// [1000k]"), and ContextDetail the same in full; both empty without
 	// one.
 	Context       string `json:"context,omitempty"`
 	ContextDetail string `json:"context_detail,omitempty"`
+	ContextAt     string `json:"context_at,omitempty"`
 }
 
 // MessageRow is one inbox item. Delivery and read stamps come from the server.
@@ -352,6 +357,10 @@ type Model struct {
 	help      bool
 	quitAsk   bool
 	inboxOpen bool
+	// projectOpen shows the selected project's detail; overviews are the
+	// listed projects' project_overview reads, by project ID.
+	projectOpen bool
+	overviews   map[string]projectOverview
 
 	// attention is Overview's "Needs attention"; checksAt is when the
 	// doctor's checks ran; doctorPasses shows the folded passes.
@@ -369,9 +378,13 @@ type Model struct {
 	inputMode   inputMode
 	draft       string
 	replyTarget string
-	confirming  bool
-	confirm     string
-	status      status
+	// sendTo is a new message's recipient, and sendBody whether the
+	// cursor is in its message rather than its To field (U27).
+	sendTo     string
+	sendBody   bool
+	confirming bool
+	confirm    string
+	status     status
 	// done is what the write in flight says when it works.
 	done string
 }
@@ -606,7 +619,7 @@ func (m Model) Show(screen Screen) (Model, tea.Cmd) {
 		m.status = noteStatus("unknown screen")
 		return m, nil
 	}
-	m.help, m.quitAsk, m.inboxOpen = false, false, false
+	m.help, m.quitAsk, m.inboxOpen, m.projectOpen = false, false, false, false
 	// Leaving the Model screen ends a setup and wipes its key.
 	m = m.closeModelSetup()
 	m.screen = screen
@@ -627,6 +640,9 @@ func (m Model) Show(screen Screen) (Model, tea.Cmd) {
 // Reload refreshes the selected screen through the configured executor or
 // read-only adapter.
 func (m Model) Reload() (Model, tea.Cmd) {
+	// On Linear, r also refreshes the board's stored names (an owner or
+	// lead; see canRefreshNames).
+	m.linear.refreshNames = m.screen == ScreenLinear
 	m = m.stagePage()
 	m.pages = []int64{0}
 	m.pageIndex = 0
@@ -707,22 +723,65 @@ func (m Model) BeginReply() Model {
 	return m
 }
 
-// BeginSend opens an explicit broadcast-to-peer send draft. The recipient is
-// entered before the body as "session|body" when submitted by the TUI.
-func (m Model) BeginSend() Model {
+// BeginSend opens a new message: To, then Message (U27).
+func (m Model) BeginSend() Model { return m.BeginSendTo("") }
+
+// BeginSendTo opens a new message to the named session, or with To empty.
+func (m Model) BeginSendTo(to string) Model {
 	if m.cfg.Session == "" || m.cfg.Instance == "" {
-		m.status = noteStatus("this action requires a bound session and matching instance; use explicit --session and --instance")
+		m.status = noteStatus("Sending needs a session: messages go from one agent session to another. Open the TUI with --session and --instance to send as that session.")
 		return m
 	}
-
+	if to != "" && to == firstNonempty(m.session.Name, m.cfg.Session) {
+		m.status = noteStatus("That's this session; choose another one to message.")
+		return m
+	}
 	if m.writesBlocked() {
 		m.status = noteStatus("the authority is offline; sends are not queued and remain unavailable until reconnect")
 		return m
 	}
 	m.inputMode = inputSend
 	m.draft = ""
+	m.sendTo, m.sendBody = to, to != ""
 	m.status = status{}
 	return m
+}
+
+// peerNames are the sessions a message can go to: the loaded ones that
+// are neither retired, moved, nor this session.
+func (m Model) peerNames() []string {
+	rows := m.rawSessions
+	if rows == nil {
+		rows = m.sessions
+	}
+	self := firstNonempty(m.session.Name, m.cfg.Session)
+	out := []string{}
+	for _, r := range rows {
+		if r.Name != "" && r.Name != self && r.Status != "retired" && r.Status != "moved" {
+			out = append(out, r.Name)
+		}
+	}
+	return out
+}
+
+// nextPeer is the name after to among the peers, the first when to isn't
+// one, or the first that starts with what's typed.
+func (m Model) nextPeer(to string) string {
+	peers := m.peerNames()
+	if len(peers) == 0 {
+		return to
+	}
+	for i, p := range peers {
+		if p == to {
+			return peers[(i+1)%len(peers)]
+		}
+	}
+	for _, p := range peers {
+		if to != "" && strings.HasPrefix(p, to) {
+			return p
+		}
+	}
+	return peers[0]
 }
 
 // CancelInput abandons a draft without writing.
@@ -730,6 +789,7 @@ func (m Model) CancelInput() Model {
 	m.replyTarget = ""
 	m.inputMode = inputNone
 	m.draft = ""
+	m.sendTo, m.sendBody = "", false
 	m.confirming = false
 	m.confirm = ""
 	m.account.pending = nil
@@ -875,13 +935,14 @@ const (
 )
 
 type loadedMsg struct {
-	request uint64
-	screen  Screen
-	kind    loadKind
-	result  bus.Result
-	plan    *SetupPlan
-	checks  []Check
-	err     error
+	request   uint64
+	screen    Screen
+	kind      loadKind
+	result    bus.Result
+	overviews map[string]projectOverview
+	plan      *SetupPlan
+	checks    []Check
+	err       error
 }
 
 type actionMsg struct {
@@ -942,7 +1003,11 @@ func (m Model) refreshView() (Model, tea.Cmd) {
 				Operation: "list_projects", Workspace: m.cfg.Workspace,
 				Args: map[string]any{},
 			})
-			return loadedMsg{request: requestID, screen: screen, kind: loadProjects, result: result, err: err}
+			msg := loadedMsg{request: requestID, screen: screen, kind: loadProjects, result: result, err: err}
+			if err == nil {
+				msg.overviews = m.readOverviews(projectRows(records(mapData(result.Data)["projects"])))
+			}
+			return msg
 		}
 	case ScreenSessions:
 		if m.cfg.Executor == nil {
@@ -1112,6 +1177,9 @@ func (m *Model) applyLoad(x loadedMsg) {
 	switch x.kind {
 	case loadOverview, loadProjects, loadSessions, loadInbox:
 		m.applyLoaded(x.kind, x.result)
+		if x.kind == loadProjects {
+			m.overviews = x.overviews
+		}
 	case loadCloud:
 		m.plan = x.plan
 		m.source = "setup-plan"
@@ -1332,6 +1400,13 @@ func (m Model) updateEditor(key string, runes []rune) (Model, tea.Cmd) {
 	if key == "esc" {
 		return m.CancelInput(), nil
 	}
+	if m.inputMode == inputSend && !m.sendBody {
+		return m.sendToKey(key, runes)
+	}
+	if m.inputMode == inputSend && (key == "tab" || key == "shift+tab" || key == "up") {
+		m.sendBody = false
+		return m, nil
+	}
 	if key == "backspace" || key == "ctrl+h" {
 		if m.inputMode != inputNone {
 			r := []rune(m.draft)
@@ -1375,12 +1450,11 @@ func (m Model) updateEditor(key string, runes []rune) (Model, tea.Cmd) {
 			return m, nil
 		}
 		if m.inputMode == inputSend {
-			to, body, ok := strings.Cut(m.draft, "|")
-			if !ok || strings.TrimSpace(to) == "" || strings.TrimSpace(body) == "" {
-				m.status = noteStatus("send draft must be `recipient|message`")
+			if strings.TrimSpace(m.draft) == "" {
+				m.status = noteStatus("Write a message first; Esc cancels.")
 				return m, nil
 			}
-			return m.Send(strings.TrimSpace(to), strings.TrimSpace(body), m.operationID("send"))
+			return m.Send(strings.TrimSpace(m.sendTo), strings.TrimSpace(m.draft), m.operationID("send"))
 		}
 	}
 	if len(runes) > 0 && !containsControl(runes) {
@@ -1388,6 +1462,30 @@ func (m Model) updateEditor(key string, runes []rune) (Model, tea.Cmd) {
 			m.draft += string(runes)
 		} else if m.confirming && len(m.confirm) < 512 {
 			m.confirm += string(runes)
+		}
+	}
+	return m, nil
+}
+
+// sendToKey edits a new message's To field: Tab offers the next session,
+// Enter goes on to the message.
+func (m Model) sendToKey(key string, runes []rune) (Model, tea.Cmd) {
+	switch key {
+	case "tab":
+		m.sendTo = m.nextPeer(m.sendTo)
+	case "enter", "down":
+		if strings.TrimSpace(m.sendTo) == "" {
+			m.status = noteStatus("Choose whom to message: type a session's name, or Tab through them.")
+			return m, nil
+		}
+		m.sendTo, m.sendBody, m.status = strings.TrimSpace(m.sendTo), true, status{}
+	case "backspace", "ctrl+h":
+		if r := []rune(m.sendTo); len(r) > 0 {
+			m.sendTo = string(r[:len(r)-1])
+		}
+	default:
+		if len(runes) > 0 && !containsControl(runes) && len(m.sendTo) < 256 {
+			m.sendTo += string(runes)
 		}
 	}
 	return m, nil
@@ -1469,6 +1567,7 @@ func sessionRows(rows []map[string]any) []SessionRow {
 			UpdatedAt: text(r, "updated_at"), ID: text(r, "id"), Name: text(r, "name"), Owner: text(r, "owner_principal"), Host: text(r, "host"), Account: text(r, "account"),
 			Role: text(r, "role"), AgentKind: text(r, "agent_kind"), Status: text(r, "status"),
 			Presence: text(r, "presence"), Stale: boolean(r, "stale"), Assignment: assignmentSummary(r["assignment"]),
+			Issue: assignmentIssue(r["assignment"]), Coordinator: boolean(r, "coordinator"), ContextAt: text(r, "context_at"),
 		})
 		out[len(out)-1].Context, out[len(out)-1].ContextDetail = contextSummary(r)
 	}
@@ -1493,7 +1592,8 @@ func contextSummary(r map[string]any) (short, detail string) {
 		short += " [" + kTokens(window) + "]"
 		detail += ", window " + kTokens(window)
 	}
-	detail += fmt.Sprintf(", %d compaction(s), reported %s", compactions, at)
+	// When it was reported is shown relative to now, beside this.
+	detail += fmt.Sprintf(", %d compaction(s)", compactions)
 	if backstop := text(r, "context_backstop_at"); backstop != "" {
 		detail += ", last compacted before its handover level at " + backstop
 	}
@@ -1532,6 +1632,20 @@ func assignmentSummary(v any) string {
 		parts = append(parts, "[owner stale]")
 	}
 	return strings.Join(parts, " ")
+}
+
+// assignmentIssue is the ISSUE cell: the identifier, and the state when
+// the assignment isn't confirmed.
+func assignmentIssue(v any) string {
+	a, ok := v.(map[string]any)
+	if !ok {
+		return ""
+	}
+	issue := firstNonempty(text(a, "issue_identifier"), text(a, "issue_uuid"))
+	if state := text(a, "state"); issue != "" && state != "" && state != "confirmed" {
+		issue += " (" + state + ")"
+	}
+	return issue
 }
 
 func messageRows(rows []map[string]any) []MessageRow {

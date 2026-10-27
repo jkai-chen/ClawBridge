@@ -172,8 +172,8 @@ func TestTUIArchiveSelectedRowAndDetailsRemainInspectable(t *testing.T) {
 }
 func TestTUIArchiveDraftAndConfirmationKeysStayIsolated(t *testing.T) {
 	m, e := responsiveModel(t, tui.Inbox)
-	m = m.BeginSend()
-	m, _ = m.UpdateModel(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("peer|DRAFT-界é👩‍💻")})
+	m = m.BeginSendTo("peer")
+	m, _ = m.UpdateModel(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("DRAFT-界é👩‍💻")})
 	calls := len(e.calls)
 	for _, key := range []string{"v", "]", "["} {
 		var cmd tea.Cmd
@@ -311,8 +311,8 @@ func TestTUIArchiveSelectedImmutableIDInspectable(t *testing.T) {
 			m, cmd := m.Reload()
 			m, _ = m.UpdateModel(cmd())
 			m = m.Select(35).SetSize(40, 12)
-			if screen == tui.Inbox {
-				// A message shows its ID once opened.
+			if screen == tui.Inbox || screen == tui.Projects {
+				// A message, or a project, shows its ID once opened.
 				m, _ = m.UpdateModel(tea.KeyMsg{Type: tea.KeyEnter})
 			}
 			inspectResponsive(t, m, e.rows[35]["id"].(string))

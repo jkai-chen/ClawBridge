@@ -271,8 +271,8 @@ func TestQAsksWhileWorkIsHeld(t *testing.T) {
 	}
 	in := screenFixtures(t)[ScreenInbox]
 	in = do(in, "n", "q")
-	if in.draft != "q" {
-		t.Fatal("q in an editor:", in.draft)
+	if in.sendTo != "q" || in.quitAsk {
+		t.Fatal("q in an editor:", in.sendTo)
 	}
 }
 

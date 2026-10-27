@@ -69,6 +69,11 @@ jobs:
     timeout-minutes: 10
     permissions:
       contents: write
+      # Build provenance (G9-10): a keyless Sigstore certificate for this
+      # workflow run signs one statement per asset, recorded in GitHub's
+      # attestation store and the public transparency log.
+      id-token: write
+      attestations: write
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
@@ -84,6 +89,14 @@ jobs:
         run: |
           git fetch --no-tags origin +refs/heads/main:refs/remotes/origin/main
           git merge-base --is-ancestor "$GITHUB_SHA" refs/remotes/origin/main || { echo "::error::$GITHUB_SHA is not an ancestor of origin/main"; exit 1; }
+      # Attested before publication, so no published asset is ever without
+      # its provenance. `gh attestation verify ASSET --repo
+      # jkai-chen/ClawBridge` checks one, and the installers do with
+      # CLAWBRIDGE_VERIFY=required.
+      - name: Attest the build provenance of every asset
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: ${{ runner.temp }}/release-assets/*
       - name: Draft, upload, verify downloaded bytes, then publish
         env:
           GH_TOKEN: ${{ github.token }}

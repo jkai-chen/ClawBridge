@@ -93,9 +93,11 @@ try {
     # installed binary, run by the production Invoke-ClawBridgeSkillInstall.
     # The installed fake logs each run; the rule under test is exactly one run,
     # of the destination, with exactly those arguments.
+    # The downgrade guard may ask an already installed binary its version,
+    # and nothing else: those runs are set aside, and only `version`.
     function Get-SkillRuns {
         if (-not [IO.File]::Exists($skillLog)) { return @() }
-        return @([IO.File]::ReadAllLines($skillLog) | Where-Object { $_ -ne '' })
+        return @([IO.File]::ReadAllLines($skillLog) | Where-Object { $_ -ne '' -and -not $_.EndsWith("`tversion") })
     }
     function Clear-SkillRuns { if ([IO.File]::Exists($skillLog)) { [IO.File]::Delete($skillLog) } }
     function Assert-SkillRan {

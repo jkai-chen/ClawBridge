@@ -4,6 +4,7 @@ param(
     [string]$InstallDir = '',
     [switch]$NoSkill,
     [switch]$NoModifyPath,
+    [switch]$AllowDowngrade,
     [switch]$Help
 )
 Set-StrictMode -Version 2.0
@@ -204,14 +205,57 @@ function Remove-ClawBridgeLeftover([string]$Path) {
     }
 }
 
+# The installed binary's release version, or $null when it doesn't say one
+# (a dev build, or no runnable binary): the downgrade guard asks it.
+function Get-ClawBridgeInstalledVersion([string]$Path) {
+    if (-not [IO.File]::Exists($Path)) { return $null }
+    try {
+        $text = (& $Path version 2>$null | Out-String)
+        if ($text -cmatch '"version":"(v(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*))"') { return $Matches[1] }
+    } catch {
+        Write-Verbose ('The installed binary did not report its version: ' + $_.Exception.Message)
+    }
+    return $null
+}
+
+# Whether release version A is older than B; both are canonical.
+function Test-ClawBridgeOlder([string]$A, [string]$B) {
+    return [Version]$A.Substring(1) -lt [Version]$B.Substring(1)
+}
+
+# The GitHub CLI, for CLAWBRIDGE_VERIFY=required, or $null.
+function Get-ClawBridgeGh {
+    $command = Get-Command -Name 'gh' -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
+    if ($null -eq $command) { return $null }
+    return $command.Path
+}
+
+# Checks the binary's build provenance (G9-10): the release workflow of this
+# repository built it, for this tag.
+function Test-ClawBridgeProvenance([string]$Gh, [string]$Binary, [string]$Version) {
+    & $Gh attestation verify $Binary --repo jkai-chen/ClawBridge --signer-workflow jkai-chen/ClawBridge/.github/workflows/release.yml --source-ref ('refs/tags/' + $Version) *> $null
+    return $LASTEXITCODE -eq 0
+}
+
 function Get-ClawBridgeResolvedCommand {
     $command = Get-Command -Name 'clawbridge' -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
     if ($null -eq $command) { return $null }
     return $command.Path
 }
 
-function Install-ClawBridge([string]$Version = '', [string]$InstallDir = '', [switch]$NoSkill, [switch]$NoModifyPath, [string]$PathRegistryKey = 'Environment') {
+function Install-ClawBridge([string]$Version = '', [string]$InstallDir = '', [switch]$NoSkill, [switch]$NoModifyPath, [switch]$AllowDowngrade, [string]$PathRegistryKey = 'Environment') {
     if ($Version -ne '' -and -not (Test-ClawBridgeVersion $Version)) { throw 'Invalid canonical release version' }
+    # Build provenance is optional, and required only when asked for, since it
+    # needs the GitHub CLI. The checksum alone proves the bytes match the
+    # release's manifest, not who built them.
+    $gh = $null
+    $verify = [string]$env:CLAWBRIDGE_VERIFY
+    if ($verify -ceq 'required') {
+        $gh = Get-ClawBridgeGh
+        if ($null -eq $gh) { throw 'CLAWBRIDGE_VERIFY=required needs the GitHub CLI (gh) on PATH' }
+    } elseif ($verify -ne '') {
+        throw 'CLAWBRIDGE_VERIFY must be unset or "required"'
+    }
     $platform = Get-ClawBridgePlatform
     if ($platform -cne 'windows_amd64') { throw 'Unsupported platform' }
     if ($InstallDir -eq '') {
@@ -244,6 +288,14 @@ function Install-ClawBridge([string]$Version = '', [string]$InstallDir = '', [sw
             $Version = $latest.Substring($prefix.Length)
             if (-not (Test-ClawBridgeVersion $Version)) { throw 'Latest release is not a canonical stable version' }
         }
+        # Never silently older than what is installed: a replaced "latest" must
+        # not roll an install back.
+        if (-not $AllowDowngrade) {
+            $current = Get-ClawBridgeInstalledVersion $destination
+            if ($null -ne $current -and (Test-ClawBridgeOlder $Version $current)) {
+                throw ($Version + ' is older than the installed ' + $current + '; pass -AllowDowngrade to install it anyway')
+            }
+        }
         $asset = 'clawbridge_' + $Version + '_windows_amd64.exe'
         $releaseUrl = $releaseBase + '/download/' + $Version
         $manifest = Join-Path $temporary 'SHA256SUMS'
@@ -262,6 +314,10 @@ function Install-ClawBridge([string]$Version = '', [string]$InstallDir = '', [sw
         $null = Invoke-ClawBridgeDownload -Uri ($releaseUrl + '/' + $asset) -OutFile $binary -MaxBytes 536870912
         if ((Get-Item -LiteralPath $binary).Length -eq 0) { throw 'Downloaded binary is empty' }
         if ((Get-FileHash -LiteralPath $binary -Algorithm SHA256).Hash.ToLowerInvariant() -cne $selected) { throw 'Binary checksum mismatch' }
+        if ($null -ne $gh) {
+            if (-not (Test-ClawBridgeProvenance $gh $binary $Version)) { throw ('The build provenance of ' + $Version + ' could not be verified (gh attestation verify); nothing was installed') }
+            Write-Output ('Verified the build provenance of ' + $Version)
+        }
         Assert-ClawBridgePath $destination
         if ([IO.Directory]::Exists($destination)) { throw 'Destination must not be a directory' }
         $null = [IO.Directory]::CreateDirectory($InstallDir)
@@ -351,9 +407,10 @@ function Install-ClawBridge([string]$Version = '', [string]$InstallDir = '', [sw
 # Dot-source to import testable functions without installation or network work.
 if ($MyInvocation.InvocationName -eq '.') { return }
 if ($Help) {
-    Write-Output 'Usage: powershell -NoProfile -ExecutionPolicy Bypass -File install.ps1 [-Version vX.Y.Z] [-InstallDir ABSOLUTE_PATH] [-NoSkill] [-NoModifyPath] [-Help]'
+    Write-Output 'Usage: powershell -NoProfile -ExecutionPolicy Bypass -File install.ps1 [-Version vX.Y.Z] [-InstallDir ABSOLUTE_PATH] [-NoSkill] [-NoModifyPath] [-AllowDowngrade] [-Help]'
+    Write-Output 'An older version than the installed one needs -AllowDowngrade. $env:CLAWBRIDGE_VERIFY = ''required'' also checks the build provenance with the GitHub CLI.'
     Write-Output 'After installing, runs `clawbridge skill install` for the agents configured here unless -NoSkill,'
     Write-Output 'and appends the install directory to your user PATH unless -NoModifyPath.'
     return
 }
-Install-ClawBridge -Version $Version -InstallDir $InstallDir -NoSkill:$NoSkill -NoModifyPath:$NoModifyPath
+Install-ClawBridge -Version $Version -InstallDir $InstallDir -NoSkill:$NoSkill -NoModifyPath:$NoModifyPath -AllowDowngrade:$AllowDowngrade

@@ -89,6 +89,11 @@ class Installer(unittest.TestCase):
         self.assertEqual(result.returncode == 0, success, (result.returncode, result.stdout.decode(errors="replace"), result.stderr.decode(errors="replace")))
         runs = self.executed.read_text().splitlines() if self.executed.exists() else []
         self.executed.unlink(missing_ok=True)
+        # The downgrade guard may ask an already installed binary its version,
+        # once, and nothing else; that run is set aside.
+        query = str(self.bin/"clawbridge")+" version"
+        self.assertLessEqual(runs.count(query), 1, "the installed binary was asked its version more than once")
+        runs = [r for r in runs if r != query]
         if success and skill and "--help" not in args and "-h" not in args:
             self.assertEqual(runs, [str(self.bin/"clawbridge")+" skill install"], "installer must run only the installed binary, once, as skill install")
         else:

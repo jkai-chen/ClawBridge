@@ -358,6 +358,9 @@ func (c commentCall) flowMove(ctx context.Context, lp string, policy StatusPolic
 
 // flowWhy is the rule a move followed, in words (LESSONS #8).
 func flowWhy(rule string, revision int) string {
+	if rule == "manual" {
+		return "set by hand (linear project status set; history names who)"
+	}
 	if rule == "R2" {
 		return fmt.Sprintf("all issues closed; the project's close rule is agents (status policy rev %d)", revision)
 	}

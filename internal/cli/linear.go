@@ -195,6 +195,8 @@ type linearFlags struct {
 	closesPairs                                                                                                          []string
 	closesWho                                                                                                            string
 	closesAgent, closesHuman, minimalPolicy                                                                              bool
+	suggest, allowOpen, statusSet                                                                                        bool
+	statusType, expectedStatus, statusID                                                                                 string
 }
 type repeatedIDs []string
 
@@ -362,6 +364,15 @@ func parseLinear(command string, args []string, stderr io.Writer) (linearFlags, 
 		f.StringVar(&v.project, "linear-project", "", "resume: the bound Linear project UUID whose status is held")
 	case "key":
 		profile()
+	case "project-status":
+		f.BoolVar(&v.suggest, "suggest", false, "status: also propose a status from the issue counts")
+		f.StringVar(&v.statusType, "type", "", "set: backlog, planned, started, completed or canceled")
+		f.StringVar(&v.operation, "operation-id", "", "set: durable identifier of this set; the preview and its confirm use the same one")
+		f.BoolVar(&v.confirm, "confirm", false, "set: send the set the preview showed")
+		f.StringVar(&v.expectedStatus, "expected-status", "", "set --confirm: the current status ID the preview showed")
+		f.StringVar(&v.statusID, "status-id", "", "set: which status of the type, when the workspace has several")
+		f.BoolVar(&v.allowOpen, "allow-open", false, "set --confirm: set completed although issues are open or not all were read")
+		min, max = 1, 1
 	case "health":
 		f.StringVar(&v.project, "linear-project", "", "set|enable|disable: the bound Linear project UUID")
 		f.StringVar(&v.policyFile, "file", "", "set: JSON file {\"enabled\": true, \"weekly\": false, \"stalled_days\": 5, ...}")
@@ -388,7 +399,7 @@ func parseLinear(command string, args []string, stderr io.Writer) (linearFlags, 
 	if len(pos) < min || len(pos) > max {
 		return v, nil, errors.New("invalid Linear positional arguments")
 	}
-	needsProfile := command != "profiles" && command != "connect" && command != "login" && command != "import" && command != "binding" && command != "unlink" && command != "label-policy" && command != "status-policy" && command != "closes" && command != "doc-policy" && command != "health" && command != "project-flow" && command != "display-name" && command != "admin"
+	needsProfile := command != "profiles" && command != "connect" && command != "login" && command != "import" && command != "binding" && command != "unlink" && command != "label-policy" && command != "status-policy" && command != "closes" && command != "doc-policy" && command != "health" && command != "project-flow" && command != "project-status" && command != "display-name" && command != "admin"
 	if needsProfile && !validLinearProfile(v.profile) {
 		return v, nil, errors.New("select --profile with the opaque ID from linear profiles")
 	}
@@ -735,7 +746,7 @@ func linearWriteInput(command string, v linearFlags, pos []string) (linearboard.
 
 func runLinear(ctx context.Context, flags Config, args []string, stdout, stderr io.Writer) error {
 	if len(args) == 0 || len(args) == 1 && (args[0] == "--help" || args[0] == "-h" || args[0] == "help") {
-		_, err := io.WriteString(stdout, "clawbridge linear connect|import|profiles|status|logout|teams|projects|binding|link|seed-docs|unlink|names-refresh|context|issues|issue|states|labels|members|create|update|comment|relation|watch\nProject owner only: label create|rename, project create, initiative create|add-project, label-policy show|set, status-policy show|set, doc-policy set, health set|enable|disable, admin audit-replay.\nShown names: names-refresh (project owner or lead) stores the bound teams' and projects' current names, as Linear gives them to you.\nWho closes issues: closes show (any member); closes set (project owner or lead, never a session).\nProject status follows the work (status policy project_flow): project-flow resume --linear-project UUID (project owner or lead, never a session) clears a hold.\nProject health (any member): health show.\nLinear documents (any member): doc list|get, initiative show, doc-policy show. Project owner or lead: doc publish FILE.\nYour name in agent markers: display-name set NAME|clear|capture --profile ID.\nYour Linear API key, for view writes (project owner, own terminal): key set|status|remove --profile ID.\nUse COMMAND --help for explicit flags. Token import accepts --token-stdin only.\n")
+		_, err := io.WriteString(stdout, "clawbridge linear connect|import|profiles|status|logout|teams|projects|binding|link|seed-docs|unlink|names-refresh|context|issues|issue|states|labels|members|create|update|comment|relation|watch\nProject owner only: label create|rename, project create, initiative create|add-project, label-policy show|set, status-policy show|set, doc-policy set, health set|enable|disable, admin audit-replay.\nShown names: names-refresh (project owner or lead) stores the bound teams' and projects' current names, as Linear gives them to you.\nWho closes issues: closes show (any member); closes set (project owner or lead, never a session).\nProject status follows the work (status policy project_flow): project-flow resume --linear-project UUID (project owner or lead, never a session) clears a hold.\nProject health (any member): health show.\nProject status, as the server's app: project status LINEAR_PROJECT [--suggest] (any member); project status set LINEAR_PROJECT --type T --operation-id ID, then --confirm --expected-status UUID (the coordinator session, or the project owner or a lead without a session).\nLinear documents (any member): doc list|get, initiative show, doc-policy show. Project owner or lead: doc publish FILE.\nYour name in agent markers: display-name set NAME|clear|capture --profile ID.\nYour Linear API key, for view writes (project owner, own terminal): key set|status|remove --profile ID.\nUse COMMAND --help for explicit flags. Token import accepts --token-stdin only.\n")
 		return err
 	}
 	command := args[0]
@@ -755,7 +766,7 @@ func runLinear(ctx context.Context, flags Config, args []string, stdout, stderr 
 	}
 	switch {
 	case command == "label" && adminAction != "create" && adminAction != "rename",
-		command == "project" && adminAction != "create",
+		command == "project" && adminAction != "create" && adminAction != "status",
 		command == "initiative" && adminAction != "create" && adminAction != "add-project" && adminAction != "show",
 		command == "doc" && adminAction != "list" && adminAction != "get" && adminAction != "publish",
 		command == "doc-policy" && adminAction != "show" && adminAction != "set",
@@ -767,15 +778,23 @@ func runLinear(ctx context.Context, flags Config, args []string, stdout, stderr 
 		command == "key" && adminAction != "set" && adminAction != "status" && adminAction != "remove",
 		command == "display-name" && adminAction != "set" && adminAction != "clear" && adminAction != "capture",
 		command == "admin" && adminAction != "audit-replay":
-		return errors.New("use linear doc list|get|publish, initiative show, doc-policy show|set, label create|rename, project create, initiative create|add-project, label-policy show|set, status-policy show|set, closes show|set, project-flow resume, health show|set|enable|disable, display-name set|clear|capture, key set|status|remove, or admin audit-replay")
+		return errors.New("use linear doc list|get|publish, initiative show, doc-policy show|set, label create|rename, project create|status [set], initiative create|add-project, label-policy show|set, status-policy show|set, closes show|set, project-flow resume, health show|set|enable|disable, display-name set|clear|capture, key set|status|remove, or admin audit-replay")
 	}
 	parseAs := command
 	if command == "initiative" && adminAction == "show" {
 		parseAs = "initiative-show"
 	}
+	statusSet := false
+	if command == "project" && adminAction == "status" {
+		parseAs = "project-status"
+		if len(parseArgs) > 0 && parseArgs[0] == "set" {
+			statusSet, parseArgs = true, parseArgs[1:]
+		}
+	}
 	v, pos, err := parseLinear(parseAs, parseArgs, stderr)
 	v.relationAction = relationAction
 	v.adminAction = adminAction
+	v.statusSet = statusSet
 	if errors.Is(err, flag.ErrHelp) {
 		return nil
 	}
@@ -797,7 +816,7 @@ func runLinear(ctx context.Context, flags Config, args []string, stdout, stderr 
 		cancel()
 		bounded, cancel = context.WithTimeout(ctx, 5*time.Minute)
 	}
-	if command == "create" || command == "update" || command == "comment" || command == "relation" {
+	if command == "create" || command == "update" || command == "comment" || command == "relation" || v.statusSet {
 		// A hosted server writing as the ClawBridge app may take a minute.
 		cancel()
 		bounded, cancel = context.WithTimeout(ctx, linearboard.WriteTimeout)
@@ -1023,6 +1042,10 @@ func runLinear(ctx context.Context, flags Config, args []string, stdout, stderr 
 		}
 		data, err = service.Admin(bounded, scope, in)
 	case "label", "project":
+		if adminAction == "status" {
+			data, err = linearProjectStatus(bounded, service, scope, flags, v, pos[0])
+			break
+		}
 		in, e := linearAdminInput(command, adminAction, v, pos)
 		if e != nil {
 			return e

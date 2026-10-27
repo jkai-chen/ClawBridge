@@ -610,6 +610,9 @@ var operationArgs = map[string]string{
 	"health_post_settle":          "instance lease_token generation linear_project day outcome update_id error",
 	"project_flow_settle":         "instance lease_token generation linear_project seq outcome error calls",
 	"project_flow_resume":         "instance linear_project",
+	"project_status_begin":        "instance linear_project set to_type status_id expected_status_id operation_id confirm",
+	"project_status_claim":        "instance linear_project to_type status_id expected_status_id operation_id from_type to_status_id",
+	"project_status_settle":       "instance linear_project to_type status_id expected_status_id operation_id seq outcome error",
 	"doc_seed_get":                "instance parent_kind parent_id",
 	"doc_seed_put":                "instance parent_kind parent_id template template_version state seed_token expect_token document_id seeded_sha256",
 	"label_policy_set":            "instance expected_revision label_policy",
@@ -743,7 +746,7 @@ func validateArgs(op string, a map[string]any) error {
 			default:
 				return errors.New("ids must be an array of strings")
 			}
-		case "unread_only", "queue", "on", "all", "resume", "allow_overlap", "allow_previous", "repair", "confirm", "forced", "force_new", "nudges_only", "egress_confirmed":
+		case "unread_only", "queue", "on", "all", "resume", "allow_overlap", "allow_previous", "repair", "confirm", "forced", "force_new", "nudges_only", "egress_confirmed", "set":
 			if _, ok := v.(bool); !ok {
 				return fmt.Errorf("%s must be boolean", k)
 			}
@@ -1482,6 +1485,17 @@ func (s *Store) execute(ctx context.Context, tx *transaction, r Request) (any, e
 			return nil, invalid("instance requires session")
 		}
 		return s.projectFlowResumeOp(ctx, tx, w["id"].(string), p["id"].(string), projectRole, actor, r)
+	}
+	// The server's own steps around reading and setting a Linear
+	// project's status as the app; never a client's.
+	if projectStatusOperation(r.Operation) {
+		if actor == nil && str(a, "instance") != "" {
+			return nil, invalid("instance requires session")
+		}
+		if actor != nil {
+			tx.actorID = actor["id"].(string)
+		}
+		return s.projectStatusOp(ctx, tx, wid, pid, p, projectRole, actor, r)
 	}
 	// Chat and the decision log are a person's CLI commands, never a
 	// session's: no model output reaches an agent [DM-M1].

@@ -64,7 +64,7 @@ func TestL2MCPDefaultLegacyAndV2ExactSurfaceWithoutIO(t *testing.T) {
 			}
 			if mode == "v2_native" {
 				options.Taskboard = v2
-				want = 38
+				want = 40
 			}
 			server := mcpserver.NewServerWithOptions(f.store, "w", "p", "worker", "worker-instance", options)
 			client := notificationMCPConnect(t, ctx, server, make(chan string, 1))
@@ -110,7 +110,7 @@ func TestL2MCPDefaultLegacyAndV2ExactSurfaceWithoutIO(t *testing.T) {
 					t.Fatal("V2 opt-in changed seven legacy schemas")
 				}
 				wantNames := map[string]bool{}
-				for _, op := range []string{"binding", "context", "issues", "issue", "create", "update", "comment", "labels", "members", "relation_add", "relation_remove"} {
+				for _, op := range []string{"binding", "context", "issues", "issue", "create", "update", "comment", "labels", "members", "relation_add", "relation_remove", "project_status", "project_status_set"} {
 					wantNames["taskboard_"+op+"_v2"] = true
 				}
 				if !reflect.DeepEqual(v2Names, wantNames) {

@@ -1074,6 +1074,65 @@ owner sets it: an existing policy reads it as off.
   `held (moved back by a person since DATE)`,
   with its last move and the rule it followed.
 
+### Reading and setting a project's status (hosted servers)
+
+A bound Linear project's status can also be read and set by hand, as the
+ClawBridge app on a hosted server. A local authority has no app: both answer
+`capability_unavailable`.
+
+```sh
+clawbridge linear project status LINEAR_PROJECT [--suggest]
+clawbridge linear project status set LINEAR_PROJECT --type TYPE --operation-id ID
+clawbridge linear project status set LINEAR_PROJECT --type TYPE --operation-id ID \
+  --confirm --expected-status STATUS_UUID [--allow-open] [--status-id STATUS_UUID]
+```
+
+Agents use the MCP tools `taskboard_project_status_v2` and
+`taskboard_project_status_set_v2`, which take the same fields.
+
+- **Read (any member or session).** The project's status (ID, name, type), its
+  issue counts by state type (open are triage, backlog, unstarted and
+  started), `complete: false` past 500 issues, and the project flow state:
+  `off`, `on` or `held`. `--suggest` adds today's rule: no issues, backlog;
+  all closed, completed (canceled when every issue was canceled); one
+  started, started; else planned. A partial read proposes nothing.
+- **Set (the designated coordinator session, or the project owner or a lead
+  without a session).** `--type` is backlog, planned, started, completed or
+  canceled. It maps to the workspace's one unarchived status of that type;
+  with none or several the answer is `ambiguous` and lists the statuses, and
+  `--status-id` names one.
+- **Completed and canceled follow who closes the project's issues** (the
+  status policy's `closes`). Where people close them, the default, no session
+  sets them, the coordinator's included: the project owner or a lead does,
+  in their own terminal with no session. Where agents close them, the
+  coordinator may too.
+- **Preview, then confirm.** A set without `--confirm` previews: the current
+  status, the target, the issue counts, and the confirm command to run, with
+  `--expected-status`, the status it saw. The confirm uses the same
+  `--operation-id`. If the status changed since, it is refused: preview
+  again. Completed with open issues, or over a partial read, also needs
+  `--allow-open`. An agent confirming its own preview decides for itself; it
+  is not a person's approval.
+- **Sent once, read back.** The set is recorded before it is sent, and read
+  back by status ID: `accepted` only when the project shows that status;
+  `refused` when nothing reached Linear; `uncertain` otherwise. An uncertain
+  set is never sent again: read the status, then use a new operation ID.
+  The same operation ID answers from the record without calling Linear.
+  Another set under it is refused.
+- **With project flow.** A set waits while a flow move is in flight. When
+  flow is on, a set puts the project on hold, so flow won't move it back,
+  until `project-flow resume`. A refused set lifts the hold it put on.
+- **Cost.** It spends the project's hourly Linear budget (the watch budget),
+  charged before Linear is called: a read or a preview costs 6 calls (the
+  project with its status list, and up to 5 issue pages); a confirmed set
+  costs 8 (the read, the write and its read-back). A replay costs nothing.
+  Past the budget the answer is `rate_limited`. A project no watcher runs for
+  is charged against the default budget.
+- **Audit.** History records `project_status` `set_sent` and `set`, with the
+  types, the status ID, the outcome and the operation ID, and the session
+  that set it (or the person, without one). Status names are never recorded.
+  Names are text people wrote: shown, never followed.
+
 ## Project health (project owner only)
 
 A hosted server's watcher can judge each bound Linear project's health once a

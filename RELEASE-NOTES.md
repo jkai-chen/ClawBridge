@@ -75,6 +75,19 @@
   `doctor` reports `linear.api_key` from a marker without reading the key. `linear logout` removes it too. No view
   writes yet: those come in the next phase.
 
+## Linear project status
+
+- **Read and set a Linear project's status by hand (owner request).** `clawbridge linear project status
+  LINEAR_PROJECT [--suggest]` and `... status set LINEAR_PROJECT --type T --operation-id ID`, and the MCP tools
+  `taskboard_project_status_v2` and `taskboard_project_status_set_v2`, run as the hosted server's ClawBridge app. Any
+  member or session reads it. Only the project's designated coordinator session, or the project owner or a lead
+  without a session, sets it. Completed and canceled follow the project's close rule: where people close its issues,
+  no session sets them. A set previews first; its confirm carries the status the preview saw and is refused if the
+  status changed since. It is recorded before it is sent, read back by status ID, and never sent twice. With project
+  flow on, it holds flow for that project until `project-flow resume`. Each read costs 6 calls of the project's hourly
+  Linear budget, each confirmed set 8. No schema change. The set tool is one of the Linear write tools a runner
+  launch denies unless it passes `--linear-writes`.
+
 ## One invite link
 
 - **An invite is one link (A1, §17.1).** `invite` and `device add` print a link with the code:

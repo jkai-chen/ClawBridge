@@ -46,6 +46,16 @@ func contextDir() (string, error) {
 	return filepath.Join(home, "context"), nil
 }
 
+// contextDirOrEmpty is contextDir, or "" when there is no state home, which
+// leaves context reporting off.
+func contextDirOrEmpty() string {
+	dir, err := contextDir()
+	if err != nil {
+		return ""
+	}
+	return dir
+}
+
 // runContext runs `clawbridge context …`. It reads local files only, so it
 // needs no configuration or route.
 func runContext(_ context.Context, args []string, stdout, stderr io.Writer) error {

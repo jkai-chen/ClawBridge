@@ -956,7 +956,7 @@ flags:`)
 			board.KeepProviderOpen(linearboard.ProviderTTL)
 			board.CacheReadBindingProof(linearboard.BindingProofTTL)
 			defer board.Close()
-			native := mcpserver.NewServerWithOptions(executor, config.Workspace, config.Project, config.Session, config.Instance, mcpserver.Options{Context: ctx, Taskboard: board})
+			native := mcpserver.NewServerWithOptions(executor, config.Workspace, config.Project, config.Session, config.Instance, mcpserver.Options{Context: ctx, Taskboard: board, ContextDir: contextDirOrEmpty()})
 			return native.Run(ctx, &mcp.StdioTransport{})
 		}
 		if cloudClient != nil {

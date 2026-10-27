@@ -98,10 +98,13 @@ func runContextBind(args []string, stdout, stderr io.Writer) error {
 }
 
 // saveBinding writes b for session, keeping what the record already caches
-// from the server, and the last compaction while the transcript is the same.
+// from the server and the compactions reported, and the last compaction
+// announced while the transcript is the same.
 func saveBinding(dir, session string, b ctxwatch.Binding) error {
 	if old, bound, err := ctxwatch.LoadBinding(dir, session); err == nil && bound {
 		b.Levels, b.HandoverHint = old.Levels, old.HandoverHint
+		// The server's count is the session's, whatever transcript it reads.
+		b.ReportedCompactions, b.SeenCompactionAt = old.ReportedCompactions, old.SeenCompactionAt
 		if old.Agent == b.Agent && old.Transcript == b.Transcript {
 			b.CompactingAt, b.CompactTrigger = old.CompactingAt, old.CompactTrigger
 		}

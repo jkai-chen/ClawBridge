@@ -103,11 +103,15 @@ func NewServerWithOptions(store Executor, workspace, project, session, instance 
 	if options.Context != nil {
 		// The MCP process holds the session: it keeps its lease once
 		// registered, renewing whichever instance it is bound to.
-		go notify.KeepAlive(options.Context, store, notify.HeartbeatInterval, func() (bus.Request, bool) {
+		session := func() (bus.Request, bool) {
 			b.mu.Lock()
 			defer b.mu.Unlock()
 			return bus.Request{Workspace: b.workspace, Project: b.project, Session: b.session, Args: map[string]any{"instance": b.instance}}, b.instance != ""
-		})
+		}
+		go notify.KeepAlive(options.Context, store, notify.HeartbeatInterval, session)
+		if options.ContextDir != "" {
+			go notify.ReportContext(options.Context, store, options.ContextDir, notify.ContextInterval, session)
+		}
 	}
 	return s
 }

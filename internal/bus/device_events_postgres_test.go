@@ -248,7 +248,7 @@ func TestPostgresDeviceLabelIsPrintableText(t *testing.T) {
 		t.Fatal(err)
 	}
 	a1 := keyID(t, key)
-	bad := []string{"\x1b[1A\x1b[2Kyou", "ok\x9b2K", "tab\there", "del\x7f", "rtl‮exe", "zw​sp", "\xff", strings.Repeat("x", 65)}
+	bad := []string{"\x1b[1A\x1b[2Kyou", "ok\x9b2K", "tab\there", "del\x7f", "rtl\u202eexe", "zw\u200bsp", "\xff", strings.Repeat("x", 65)}
 	for _, label := range bad {
 		out, err := f.asDevice(ada, a1, Request{Operation: "invite_create", Workspace: f.workspace, Args: map[string]any{"email": ada, "purpose": "device"}})
 		if err != nil {

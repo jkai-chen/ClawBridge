@@ -39,15 +39,26 @@ func TestOperatorModelSealRotate(t *testing.T) {
 	}
 	before := sealed()
 	rotating, _ := NewModelSeal(newKey, testSealKey)
-	if _, _, err = h.s.OperatorModelSealRotate(h.ctx, rotating, false); err == nil || !strings.Contains(err.Error(), "1 stored model keys open under neither") {
+	// A dry run counts and changes nothing.
+	dry, err := h.s.OperatorModelSealRotate(h.ctx, rotating, false, false)
+	if err != nil || dry != (SealRotation{Keys: 2, UnderPrevious: 1, Unreadable: 1, NeedPrevious: 1}) {
+		t.Fatal(dry, err)
+	}
+	if after := sealed(); after[h.principal()] != before[h.principal()] || len(after) != 2 {
+		t.Fatal("a dry run changed a key")
+	}
+	if _, err = h.s.OperatorModelSealRotate(h.ctx, rotating, true, false); err == nil || !strings.Contains(err.Error(), "1 stored model keys open under neither") {
 		t.Fatal(err)
 	}
 	if after := sealed(); after[h.principal()] != before[h.principal()] || len(after) != 2 {
 		t.Fatal("a refused rotation changed a key")
 	}
-	resealed, deleted, err := h.s.OperatorModelSealRotate(h.ctx, rotating, true)
-	if err != nil || resealed != 1 || deleted != 1 {
-		t.Fatal(resealed, deleted, err)
+	r, err := h.s.OperatorModelSealRotate(h.ctx, rotating, true, true)
+	if err != nil || r.Resealed != 1 || r.Deleted != 1 || r.NeedPrevious != 0 {
+		t.Fatal(r, err)
+	}
+	if again, err := h.s.OperatorModelSealRotate(h.ctx, rotating, false, false); err != nil || again.UnderCurrent != 1 || again.UnderPrevious != 0 {
+		t.Fatal("after the rotation:", again, err)
 	}
 	after := sealed()
 	if len(after) != 1 || after[h.principal()] == before[h.principal()] {
@@ -60,7 +71,7 @@ func TestOperatorModelSealRotate(t *testing.T) {
 		t.Fatal("the re-sealed key does not open under the new seal key")
 	}
 	var details string
-	if err = h.s.db.QueryRow(`SELECT details FROM history WHERE entity='dispatcher_model_key' AND action='resealed' AND changed_by_principal=?`, OperatorPrincipal).Scan(&details); err != nil || details != `{"deleted_unreadable":1,"resealed":1}` {
+	if err = h.s.db.QueryRow(`SELECT details FROM history WHERE entity='dispatcher_model_key' AND action='resealed' AND changed_by_principal=?`, OperatorPrincipal).Scan(&details); err != nil || details != `{"deleted_unreadable":1,"need_previous":0,"resealed":1}` {
 		t.Fatal(details, err)
 	}
 	if leaks(h.dump()) {

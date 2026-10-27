@@ -158,13 +158,20 @@ only with `port_closed`: nothing listens on 443 until the server is installed.
 
 ## 5. Sign-in
 
-How people sign in depends on the release.
-- **Device sign-in:** the server needs no Google OAuth client.
-- **Until then:** the server verifies Google sign-in. Create the Google OAuth
-  consent screen and two OAuth clients, one Desktop app and one TVs and Limited
-  Input device. They are described under
+Choose how people sign in. `CLAWBRIDGE_AUTH` in the server's env file sets it
+([sign-in methods](deployment.md#sign-in-methods)).
+- **Google sign-in** (the default, `google`): the server verifies Google sign-in.
+  Create the Google OAuth consent screen and two OAuth clients, one Desktop app and
+  one TVs and Limited Input device. They are described under
   [Google identity](deployment.md#google-identity) and
   [private configuration](deployment.md#private-configuration).
+- **Device sign-in** (`device`, or `google,device` for both): people join with an
+  invite code and their computer's own key, and a device-only server needs no Google
+  OAuth client.
+  - **What is released:** the server side shipped in v0.3.4. The client commands
+    that join and invite (`clawbridge join`, `invite`) are **not released yet**; they
+    come with the next client release. Until then, choose Google sign-in.
+  - See [signing in with invites and device keys](../sign-in.md).
 
 **On AWS:** Google sign-in needs those clients in a Google Cloud project you own,
 even though the server runs on AWS. Their two client secrets go to the server
@@ -207,15 +214,23 @@ workspace once:
 clawbridge --server https://clawbridge.example.com --audience AUDIENCE setup --cloud --name my-team
 ```
 
-**On AWS with device sign-in:** a release whose `clawbridge cloud bootstrap
---help` lists `--instance` creates the workspace with `cloud bootstrap
---instance …` instead. No release up to and including v0.3.4 has it.
-- **On your machine:** it makes the one-time owner invite, which is a
-  credential.
-- **To the server:** it hands the invite over through the same short-lived
-  `SecureString` route as `cloud secret set`, so the invite never appears in SSM
-  command history or on screen.
-- **Who runs it:** you, in your own terminal; never a coding agent.
+**With device sign-in** (device-only, so no Google sign-in to run `setup --cloud`
+with): the host operator lets the owner in with a one-time code instead.
+1. On the server host, in your own terminal (never through an agent), run
+   `operator bootstrap-invite --workspace my-team`. It creates the workspace, owned
+   by `CLAWBRIDGE_BOOTSTRAP_OWNER`, and prints a single-use code valid for 24 hours.
+   The command is under
+   [letting the owner in without Google](deployment.md#letting-the-owner-in-without-google-operator-bootstrap-invite).
+2. On your own computer: `clawbridge --server https://clawbridge.example.com join
+   --email OWNER`, which asks for the code without showing it.
+
+`operator bootstrap-invite` shipped in v0.3.4; `clawbridge join` is **not released
+yet** (it comes with the next client release).
+
+**On AWS:** the server host is reached over SSM, not SSH. A `clawbridge cloud
+bootstrap --instance` command that makes the owner's invite and hands it over
+without it appearing in SSM command history is **planned, not built**: no release,
+and not the current main branch, has it. Until it ships, use Google sign-in on AWS.
 
 Done when `clawbridge cloud check workspace` passes: you are signed in, and you
 own the workspace.
@@ -282,6 +297,15 @@ clawbridge project role-set colleague@example.com member
 
 They join with Start's "Join a team server" (see [joining a project](../onboarding.md)).
 
+**With device sign-in**, invite them instead, and give each the code and the
+server's URL yourself (the client commands are not released yet):
+
+```sh
+clawbridge invite --email colleague@example.com --grant my-project=member
+```
+
+See [if your server uses invites](../onboarding.md#if-your-server-uses-invites-device-sign-in).
+
 ## 11. The dispatcher (optional)
 
 The dispatcher is an optional coordinator that confirms routine claims and
@@ -300,4 +324,5 @@ clawbridge cloud check backups --bucket clawbridge-backups-123456789012-eu-west-
 ```
 
 Updates, backups, the restore drill and rollback are in the
-[deployment guide](deployment.md) and [backup and recovery](backup-and-recovery.md).
+[deployment guide](deployment.md) (on AWS, [updating a server on AWS](deployment.md#updating-a-server-on-aws))
+and [backup and recovery](backup-and-recovery.md).

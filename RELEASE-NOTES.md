@@ -58,6 +58,14 @@
 - **Windows users get a WSL walkthrough for the AWS route** (docs/installation.md): install WSL, then the client, the
   AWS CLI and the Session Manager plugin inside it; sign in there; run the agent there; keep work in the WSL home.
 
+## Docs
+
+- **Running a server with invites:** onboarding.md and first deployment (steps 5, 7 and 10) cover the owner's side
+  of device sign-in: choosing it, letting the owner in with `operator bootstrap-invite`, and inviting the team with
+  `invite --email … --grant`, each marked with what is released. `cloud bootstrap --instance` for AWS is marked
+  planned.
+- **Updating a server on AWS:** deployment.md has the Session Manager steps beside the Google Cloud flow.
+
 # ClawBridge v0.3.4
 
 **Schema 17 → 19.**

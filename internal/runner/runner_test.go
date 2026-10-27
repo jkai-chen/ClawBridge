@@ -18,9 +18,15 @@ const (
 	issueIdent = "FIX-12"
 )
 
+// quietGit turns off git's automatic gc and maintenance for one command.
+var quietGit = []string{"GIT_CONFIG_COUNT=3", "GIT_CONFIG_KEY_0=gc.auto", "GIT_CONFIG_VALUE_0=0", "GIT_CONFIG_KEY_1=maintenance.auto", "GIT_CONFIG_VALUE_1=false", "GIT_CONFIG_KEY_2=gc.autoDetach", "GIT_CONFIG_VALUE_2=false"}
+
 func execGit(dir string, args ...string) (string, error) {
 	cmd := exec.Command("git", append([]string{"-C", dir}, args...)...)
 	cmd.Env = append(os.Environ(), "GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_NOSYSTEM=1", "GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@example.test", "GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@example.test")
+	// No background gc or maintenance: a detached one still writing into a
+	// .git when the test ends fails t.TempDir's cleanup.
+	cmd.Env = append(cmd.Env, quietGit...)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return strings.TrimSpace(string(out)), errors.New(strings.TrimSpace(string(out)))
@@ -63,6 +69,12 @@ func newEnv(t *testing.T) *env {
 	e := &env{t: t, origin: filepath.Join(root, "origin.git"), repo: filepath.Join(root, "checkout"), now: time.Date(2026, 10, 26, 12, 0, 0, 0, time.UTC)}
 	e.git(root, "init", "--bare", "-b", "main", e.origin)
 	e.git(root, "clone", e.origin, e.repo)
+	// The runner's own git (fetch) runs in this repository with the
+	// process's environment: keep its gc and maintenance from detaching
+	// too.
+	for _, kv := range [][2]string{{"gc.auto", "0"}, {"maintenance.auto", "false"}, {"gc.autoDetach", "false"}} {
+		e.git(e.repo, "config", kv[0], kv[1])
+	}
 	e.write(e.repo, "README.md")
 	e.git(e.repo, "add", "README.md")
 	e.git(e.repo, "commit", "-m", "first")

@@ -7,6 +7,19 @@
   neither, `clawbridge retire` (and MCP `retire_session`) is refused, naming the issue, and nothing changes. A move to
   a successor isn't asked.
 
+## The dispatcher
+
+- **Enable refuses a dispatcher with nothing to match.** With no domains set and a task board binding that names no
+  Linear projects, `dispatcher enable` now previews `blocked: no_domains` and refuses `--confirm` until domains are set.
+- **docs/dispatcher.md is current:** enable and disable with `--engine`, the reserved sessions existing only while the
+  dispatcher is on, and model mode as designed, with what is built and what isn't.
+- **Model setup groundwork (schema 23).** The server now holds an owner's model provider key, sealed under a separate
+  `CLAWBRIDGE_MODEL_KEY_SEAL_KEY`, and the endpoints the dispatcher agent and its launcher use: the launcher lists the
+  owners that need an agent and mints one-time agent credentials; the agent redeems one once for its configuration and
+  renews its project tokens. `clawbridge operator launcher-token create --out PATH` and `revoke ID` manage the
+  launcher's token. Nothing turns model mode on yet: without a model key that passed its test, `dispatcher enable
+  --engine model` is refused.
+
 # ClawBridge v0.3.4
 
 **Schema 17 → 19.**

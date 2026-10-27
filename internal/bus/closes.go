@@ -19,9 +19,13 @@ func statusClosesOperation(op string) bool { return op == "status_closes_set" }
 // closesVia are the ways a person confirmed a change; loosening to agent
 // needs one typed at a terminal (§10.8 SF3-M1). via is the client's claim:
 // the server can't see the terminal, but a client that skips the check has
-// to claim cli-tty, and the audit records it. tui is refused until the TUI
-// that confirms it exists (auth PR 4).
-var closesVia = map[string]bool{"cli": true, "cli-tty": true}
+// to claim cli-tty or tui, and the audit records it. tui is the TUI's link
+// review, where the person types each project's name.
+var closesVia = map[string]bool{"cli": true, "cli-tty": true, "tui": true}
+
+// closesTyped reports whether via is a confirmation typed by a person:
+// at a terminal (cli-tty) or in the TUI (tui).
+func closesTyped(via string) bool { return via == "cli-tty" || via == "tui" }
 
 // closesLoosened are the projects next lets agents close that current
 // doesn't, sorted.
@@ -64,9 +68,9 @@ func (s *Store) statusClosesOp(ctx context.Context, tx *transaction, wid, pid, p
 		return nil, invalid("closes is agent or human")
 	}
 	if !closesVia[via] {
-		return nil, invalid("via is cli or cli-tty")
+		return nil, invalid("via is cli, cli-tty or tui")
 	}
-	if closes == "agent" && via != "cli-tty" {
+	if closes == "agent" && !closesTyped(via) {
 		return nil, invalid("letting agents close issues is confirmed at a terminal, by typing the project's name")
 	}
 	expected, err := integer(a["expected_revision"])

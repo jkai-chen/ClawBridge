@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 
 	"clawbridge/internal/bus"
 	"clawbridge/internal/linearboard"
@@ -32,6 +33,49 @@ func newLinearTUISource(c Config, executor linearboard.Executor) (tui.LinearSour
 	}
 	return &linearTUISource{directory: directory, manager: newLinearManager(directory), executor: executor, scope: scope, authority: linearAuthority(c)}, nil
 }
+
+// tuiClosesAllowed refuses, before anything is sent, a confirmed link that
+// changes who closes from a TUI bound to a session, or run under an
+// agent's environment: who closes is a person's decision (A3 §10.8).
+func tuiClosesAllowed(scope bus.Request, in linearboard.LinkInputV2) error {
+	if !in.Confirm || len(in.Closes) == 0 {
+		return nil
+	}
+	if scope.Session != "" {
+		return errors.New("who closes is never set with a session; open the TUI without --session to change it. Nothing was changed")
+	}
+	for _, who := range in.Closes {
+		if who != linearboard.ClosesAgent {
+			continue
+		}
+		if marker := agentMarker(closesEnv()); marker != "" {
+			return fmt.Errorf("letting agents close issues is a person's decision, and %s says an agent runs this TUI; nothing was changed", marker)
+		}
+	}
+	return nil
+}
+
+// linkResult reads a confirmed link's answer: the binding, plus what it
+// did about who closes when it set any. The binding is parsed without the
+// outcomes, which aren't binding fields.
+func linkResult(result any) (bus.TaskboardBindingV2, []linearboard.ClosesOutcome, error) {
+	var outcomes []linearboard.ClosesOutcome
+	if m, ok := result.(map[string]any); ok {
+		if o, ok := m["closes"].([]linearboard.ClosesOutcome); ok {
+			outcomes = o
+			binding := map[string]any{}
+			for k, v := range m {
+				if k != "closes" {
+					binding[k] = v
+				}
+			}
+			result = binding
+		}
+	}
+	b, err := bus.ParseTaskboardBindingV2(result)
+	return b, outcomes, err
+}
+
 func (s *linearTUISource) Do(ctx context.Context, r tui.LinearRequest) (tui.LinearData, error) {
 	var data tui.LinearData
 	if s.initErr != nil {
@@ -90,19 +134,23 @@ func (s *linearTUISource) Do(ctx context.Context, r tui.LinearRequest) (tui.Line
 		if r.LinkV2 != nil {
 			input = *r.LinkV2
 		}
+		if err := tuiClosesAllowed(s.scope, input); err != nil {
+			return data, err
+		}
 		result, err := service.LinkV2(ctx, s.scope, input)
 		if err != nil {
 			return data, err
 		}
 		if r.Operation == "link" {
-			binding, e := bus.ParseTaskboardBindingV2(result)
-			data.BindingV2, err = &binding, e
+			binding, outcomes, e := linkResult(result)
+			data.BindingV2, data.ClosesOutcomes, err = &binding, outcomes, e
 		} else {
 			preview, ok := result.(linearboard.LinkPreviewV2)
 			if !ok || preview.Binding.Revision != input.ExpectedRevision {
 				return data, errors.New("task-board preview revision changed; refresh and preview again")
 			}
 			data.BindingV2 = &preview.Binding
+			data.Closes, data.MinimalPolicy = preview.Closes, preview.MinimalPolicy
 			raw, _ := json.MarshalIndent(preview, "", "  ")
 			data.Preview = string(raw)
 		}

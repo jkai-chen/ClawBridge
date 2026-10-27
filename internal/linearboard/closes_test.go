@@ -259,3 +259,14 @@ func bothTeams() []linearprovider.Status {
 	}
 	return out
 }
+
+// A3 in the TUI: a link confirmed in the TUI's review, where the person
+// typed the project's name, may let agents close, and says so as tui.
+func TestLinkClosesConfirmedInTheTUI(t *testing.T) {
+	s, rec, _, scope, in := closesTest(t, enabledPolicy(nil))
+	in.Confirm, in.Via = true, ClosesViaTUI
+	in.Closes = map[string]string{projectB: ClosesAgent}
+	if _, e := s.LinkV2(context.Background(), scope, in); e != nil || strings.Join(rec.ops, ",") != "taskboard_set_v2,status_closes_set" || rec.closes[0]["via"] != ClosesViaTUI {
+		t.Fatal(e, rec.ops, rec.closes)
+	}
+}

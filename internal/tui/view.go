@@ -426,6 +426,9 @@ func renderInput(m Model) string {
 	if m.inputMode == inputLinearName {
 		return "Connection label: " + terminalText(m.draft)
 	}
+	if m.inputMode == inputLinearClosesName && len(m.linear.typing) > 0 {
+		return warnStyle.Render("Type "+terminalText(fmt.Sprintf("%q", m.linear.typing[0].Name))+" to let agents close its issues; Esc cancels") + "\n> " + terminalText(m.draft) + "█"
+	}
 	if m.confirming && m.account.pending != nil {
 		return warnStyle.Render("Type "+terminalText(m.account.pending.phrase)+" to confirm; Esc cancels") + "\n> " + terminalText(m.confirm) + "█"
 	}

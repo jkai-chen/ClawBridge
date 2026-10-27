@@ -55,6 +55,12 @@ services:
       CLAWBRIDGE_WATCH_INTERVAL: ${CLAWBRIDGE_WATCH_INTERVAL:-}
       CLAWBRIDGE_TICK_AUDIENCE: ${CLAWBRIDGE_TICK_AUDIENCE:-}
       CLAWBRIDGE_TICK_SERVICE_ACCOUNT: ${CLAWBRIDGE_TICK_SERVICE_ACCOUNT:-}
+      # Optional: the dispatcher model's key seal and agent cap
+      # (docs/operations/deployment.md). Without the seal key, model setup
+      # is off.
+      CLAWBRIDGE_MODEL_KEY_SEAL_KEY: ${CLAWBRIDGE_MODEL_KEY_SEAL_KEY:-}
+      CLAWBRIDGE_MODEL_KEY_SEAL_KEY_PREVIOUS: ${CLAWBRIDGE_MODEL_KEY_SEAL_KEY_PREVIOUS:-}
+      CLAWBRIDGE_DISPATCHER_MODEL_MAX_AGENTS: ${CLAWBRIDGE_DISPATCHER_MODEL_MAX_AGENTS:-}
     depends_on:
       db:
         condition: service_healthy

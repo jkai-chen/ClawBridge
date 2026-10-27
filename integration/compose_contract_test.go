@@ -107,7 +107,7 @@ func TestComposePublicHTTPSAndPersistenceContract(t *testing.T) {
 	if got := compose.Services["api"].Environment["CLAWBRIDGE_LINEAR_APP_CLIENT_SECRET"]; got != linearAppSecret {
 		t.Fatal("API Linear app credential was not sourced from its matching environment variable")
 	}
-	for _, name := range []string{"CLAWBRIDGE_LINEAR_APP_CLIENT_ID", "CLAWBRIDGE_LINEAR_APP_TOKEN_KEY"} {
+	for _, name := range []string{"CLAWBRIDGE_LINEAR_APP_CLIENT_ID", "CLAWBRIDGE_LINEAR_APP_TOKEN_KEY", "CLAWBRIDGE_MODEL_KEY_SEAL_KEY", "CLAWBRIDGE_MODEL_KEY_SEAL_KEY_PREVIOUS", "CLAWBRIDGE_DISPATCHER_MODEL_MAX_AGENTS"} {
 		if got, ok := compose.Services["api"].Environment[name]; !ok || got != "" {
 			t.Fatalf("API %s must be passed through and default to empty: %q %v", name, got, ok)
 		}

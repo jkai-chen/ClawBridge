@@ -52,7 +52,9 @@ clawbridge invite revoke inv_7Q2M…
 ```
 
 `invite` prints the code once, such as `CBJ-4K7P-WQ9D-2MXH-T6RB`, with the
-invite's expiry. ClawBridge sends no email: **you** give the person the code and
+invite's expiry. It prints it only to a terminal, never to an agent or a pipe:
+`--out FILE` writes it to a new file instead (0600, never over an existing one),
+which the invitee can pipe to `clawbridge join`. ClawBridge sends no email: **you** give the person the code and
 the server's URL.
 
 - **Send it like a password.** The code is bound to the email, but ClawBridge
@@ -133,7 +135,9 @@ clawbridge --server https://clawbridge.example.com join --email ada@example.com 
 
 **CI** gets its own device rather than anyone's key: `clawbridge device add --ci
 NAME --grant PROJECT=member --expires 30d` prints the key once, as
-`CLAWBRIDGE_DEVICE_KEY`, for the CI secret store. See `clawbridge device --help`.
+`CLAWBRIDGE_DEVICE_KEY`, for the CI secret store. It prints only to a terminal;
+`--out FILE` writes `CLAWBRIDGE_DEVICE_KEY=…` to a new file (0600) instead. See
+`clawbridge device --help`.
 
 ## Your devices
 

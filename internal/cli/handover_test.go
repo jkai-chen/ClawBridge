@@ -92,6 +92,7 @@ func TestHandoverRunsTheAgentThenTheChecks(t *testing.T) {
 	home := isolated(t)
 	wizardHooks(t, handoverInputs+"y\n")
 	h := stubHandover(t)
+	scrubbed := secretsInEnv(t)
 	var out bytes.Buffer
 	if err := Run(context.Background(), []string{"onboard"}, &out, io.Discard); err != nil {
 		t.Fatal(err, out.String())
@@ -110,6 +111,7 @@ func TestHandoverRunsTheAgentThenTheChecks(t *testing.T) {
 	if !found {
 		t.Fatal("the agent does not run in the dedicated gcloud configuration")
 	}
+	scrubbed(h.env)
 	wantGcloud := [][]string{
 		{"config", "get", "account"},
 		{"config", "configurations", "describe", "clawbridge-onboarding"},
@@ -272,5 +274,26 @@ func TestHandoverRefusesInvalidSavedProgress(t *testing.T) {
 	h := stubHandover(t)
 	if err := Run(context.Background(), []string{"onboard"}, io.Discard, io.Discard); err == nil || !strings.Contains(err.Error(), "start over") || h.ran != nil || h.gcloud != nil {
 		t.Fatalf("%v %v %v", err, h.ran, h.gcloud)
+	}
+}
+
+// secretsInEnv puts ClawBridge's secrets, and a setting of the user's, in
+// this process's environment, and returns a check that an agent's
+// environment kept the setting and none of the secrets (G9 F3).
+func secretsInEnv(t *testing.T) func(env []string) {
+	t.Helper()
+	t.Setenv("CLAWBRIDGE_DEVICE_KEY", "device-seed-F3")
+	t.Setenv("CLAWBRIDGE_OAUTH_DEVICE_CLIENT_SECRET", "oauth-secret-F3")
+	t.Setenv("CLAWBRIDGE_LAUNCHER_TOKEN", "cbl_F3")
+	t.Setenv("HANDOVER_USER_SETTING", "kept-F3")
+	return func(env []string) {
+		t.Helper()
+		joined := strings.Join(env, "\n")
+		if strings.Contains(joined, "seed-F3") || strings.Contains(joined, "secret-F3") || strings.Contains(joined, "cbl_F3") {
+			t.Fatal("the agent's environment carries ClawBridge's secrets")
+		}
+		if !strings.Contains(joined, "HANDOVER_USER_SETTING=kept-F3") {
+			t.Fatal("the user's setting was dropped")
+		}
 	}
 }

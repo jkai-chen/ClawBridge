@@ -13,6 +13,14 @@
   now prove the caller's workspace membership before anything reaches the app. Before, any Google account could read
   the app's Linear user and organisation IDs, since the sign-in client IDs are public. Clients that ask with no
   workspace are found by their membership, so existing clients need no change.
+- **One-time secrets print only to a terminal (F2).** `invite`, `device add` (its code, or a CI device's key) and
+  `intake token create` refuse to print to anything but a terminal, such as an agent's shell or a pipe, before
+  anything is created. `--out FILE` writes the secret to a new file instead (0600, never over an existing one); if
+  that write fails, the new invite, device or token is revoked.
+- **Agents ClawBridge starts don't get its secrets (F3).** The cloud hand-over's `claude`/`codex` and the notifier's
+  Codex queue command now run without `CLAWBRIDGE_DEVICE_KEY`, the database URL, or any `CLAWBRIDGE_*` secret, token
+  or seal key in their environment. Everything else the user has set, cloud and provider settings included, still
+  reaches them.
 - **Invite codes stay off the command line (F4).** The bootstrap invite's hint, the CLI help and the docs now say
   `clawbridge join --server URL --email EMAIL`, which asks for the code without echoing it (or reads it from stdin).
   `--code` still works, for scripts.

@@ -9,6 +9,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"clawbridge/internal/secretenv"
 )
 
 // The hand-over on AWS (live/AWS-PLAYBOOK-DESIGN.md D9): the same shape as on
@@ -160,7 +162,7 @@ func handOverAWS(ctx context.Context, s *onboardingState, bin, skillAgent string
 		return err
 	}
 	fmt.Fprintf(stdout, "\nStarting %s in %s. Exit it when it is done; ClawBridge then runs the checks.\n\n", bin, dir)
-	env := append(os.Environ(), "AWS_PROFILE="+s.Profile, "AWS_REGION="+s.Region, "AWS_DEFAULT_REGION="+s.Region)
+	env := append(secretenv.Scrub(os.Environ()), "AWS_PROFILE="+s.Profile, "AWS_REGION="+s.Region, "AWS_DEFAULT_REGION="+s.Region)
 	if err = runAgent(ctx, bin, dir, env, "Read TASK.md in this directory and follow it."); err != nil && ctx.Err() != nil {
 		return ctx.Err()
 	}

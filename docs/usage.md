@@ -124,11 +124,13 @@ Accounts on a hosted workspace (each command takes `--help`):
 
 - **`invite`:** `invite --email EMAIL --grant PROJECT=ROLE`; `invite list`;
   `invite revoke ID`. The main owner may also issue
-  `invite --email EMAIL --recovery`. The code is shown once.
+  `invite --email EMAIL --recovery`. The code is shown once, on your terminal
+  only; `--out FILE` writes it to a new file (0600) instead.
 - **`device`:** `device list`, `device revoke ID`, `device label ID LABEL`.
   - `device add` is an invite for another device of yours.
   - `device add --ci NAME --grant PROJECT=member --expires 30d` makes a CI
-    device. It prints `CLAWBRIDGE_DEVICE_KEY` once, for the CI secret store.
+    device. It prints `CLAWBRIDGE_DEVICE_KEY` once, for the CI secret store, on
+    your terminal only; `--out FILE` writes it to a new file (0600) instead.
 - **`user`:** `user list`; `user revoke EMAIL --confirm`.
 - **`owner`:** `owner show`; `owner transfer --to EMAIL`; then the recipient
   runs `owner accept` or `owner decline`, or the owner runs `owner cancel`.

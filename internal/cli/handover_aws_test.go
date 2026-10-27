@@ -32,6 +32,7 @@ func TestHandoverOnAWSRunsTheAgentThenTheChecks(t *testing.T) {
 	home := isolated(t)
 	wizardHooks(t, awsHandoverInputs+"y\n")
 	h, a := awsHandoverStub(t)
+	scrubbed := secretsInEnv(t)
 	a.out["sts get-caller-identity"] = `{"Account":"123456789012"}`
 	// The default account is read as text, in the chosen region; the
 	// account check as JSON.
@@ -53,6 +54,7 @@ func TestHandoverOnAWSRunsTheAgentThenTheChecks(t *testing.T) {
 	if !strings.Contains(env, "AWS_PROFILE=clawbridge-onboarding") || !strings.Contains(env, "AWS_REGION=eu-west-1") {
 		t.Fatal("the agent does not run with the profile and region")
 	}
+	scrubbed(h.env)
 	task, _ := os.ReadFile(filepath.Join(home, "state", "onboarding", "provision", "TASK.md"))
 	for _, want := range []string{"clawbridge-provision-aws", "Account ID: 123456789012", "Zone: eu-west-1a",
 		"Backup bucket: clawbridge-backups-123456789012-eu-west-1", "--region eu-west-1 --profile clawbridge-onboarding --account 123456789012"} {

@@ -41,7 +41,9 @@ const accountUsage = `usage:
   clawbridge device add --ci NAME --grant PROJECT=reader|member [--grant ...]... --expires 30d [--label LABEL]
   clawbridge device enroll [--label LABEL] [--key-store keyring|file]   (signed in with Google: no invite)
   clawbridge user list | user revoke EMAIL --confirm
-  clawbridge owner show | owner transfer --to EMAIL | owner accept | owner decline | owner cancel`
+  clawbridge owner show | owner transfer --to EMAIL | owner accept | owner decline | owner cancel
+  invite and device add print their code, or a CI device's key, only to a terminal; --out FILE writes
+  it to a new file instead (0600, never over an existing one).`
 
 // stringList is a repeatable flag.
 type stringList []string
@@ -137,7 +139,7 @@ func runAccount(ctx context.Context, flags Config, command string, args []string
 		args = args[1:]
 	}
 	var grantFlags stringList
-	op, a := "", map[string]any{}
+	op, a, out := "", map[string]any{}, ""
 	var ciKey ed25519.PrivateKey
 	switch command + " " + sub {
 	case "invite create":
@@ -146,6 +148,7 @@ func runAccount(ctx context.Context, flags Config, command string, args []string
 		expires := f.String("expires", "", "how long the invite lasts (default 72h, at most 168h)")
 		recovery := f.Bool("recovery", false, "a recovery invite for an existing member (workspace owner)")
 		revokeOthers := f.Bool("revoke-others", false, "with --recovery: revoke the member's other devices when it is used")
+		f.StringVar(&out, "out", "", "write the code to this new file (0600, never over an existing one) instead of this terminal")
 		if _, err = parseAccountFlags(f, args, 0, 0); err != nil {
 			return err
 		}
@@ -201,6 +204,7 @@ func runAccount(ctx context.Context, flags Config, command string, args []string
 		f.Var(&grantFlags, "grant", "with --ci: PROJECT=reader|member (repeatable)")
 		expires := f.String("expires", "", "how long the invite (default 24h), or the CI device (required, 1d-90d), lasts")
 		label := f.String("label", "", "with --ci: the device's label")
+		f.StringVar(&out, "out", "", "write the code, or the CI device's key, to this new file (0600, never over an existing one) instead of this terminal")
 		if _, err = parseAccountFlags(f, args, 0, 0); err != nil {
 			return err
 		}
@@ -274,23 +278,60 @@ func runAccount(ctx context.Context, flags Config, command string, args []string
 	default:
 		return fmt.Errorf("unknown %s command %q; see clawbridge %s --help", command, sub, command)
 	}
+	// G9 F2: an invite code or a CI key goes to this terminal or a new
+	// file, decided before it exists.
+	var secret *secretOut
+	if op == "invite_create" || op == "device_ci_create" {
+		if secret, err = openSecretOut("clawbridge "+command+" "+sub, out, stdout); err != nil {
+			return err
+		}
+	}
 	executor, err := newAccountExecutor(config)
 	if err != nil {
+		secret.discard()
 		return err
 	}
 	result, err := executor.Execute(ctx, bus.Request{Operation: op, Workspace: config.Workspace, Args: a})
 	if err != nil {
+		secret.discard()
 		return err
 	}
-	if ciKey != nil {
+	data, _ := result.Data.(map[string]any)
+	switch {
+	case ciKey != nil:
 		// The private key is shown once, here, for the CI secret store; the
 		// server holds only the public key.
-		data, _ := result.Data.(map[string]any)
 		if data == nil {
+			secret.discard()
 			return errors.New("the server's answer for the CI device was unreadable; revoke it and create another")
 		}
-		data[devicesign.EnvKey] = devicesign.EncodeKey(ciKey)
-		data["note"] = "Store " + devicesign.EnvKey + " in the CI secret store now; it is not shown again. CI runs with CLAWBRIDGE_CREDENTIAL_SOURCE=device, CLAWBRIDGE_KEY_STORE=env, CLAWBRIDGE_DEVICE_ID and CLAWBRIDGE_PRINCIPAL set to this device's."
+		note := "Store " + devicesign.EnvKey + " in the CI secret store now; it is not shown again. CI runs with CLAWBRIDGE_CREDENTIAL_SOURCE=device, CLAWBRIDGE_KEY_STORE=env, CLAWBRIDGE_DEVICE_ID and CLAWBRIDGE_PRINCIPAL set to this device's."
+		if secret.toFile() {
+			if err = secret.write(devicesign.EnvKey + "=" + devicesign.EncodeKey(ciKey) + "\n"); err != nil {
+				// The key reached no file: revoke the device rather than
+				// leave it live.
+				_, _ = executor.Execute(ctx, bus.Request{Operation: "device_revoke", Workspace: config.Workspace, Args: map[string]any{"device_id": data["device_id"], "reason": "its key could not be written"}})
+				return fmt.Errorf("%w; the new CI device was revoked", err)
+			}
+			data["key_file"] = secret.path
+			note = "Wrote " + devicesign.EnvKey + " to " + secret.path + " (0600): move it into the CI secret store and delete the file. " + note[strings.Index(note, "CI runs"):]
+		} else {
+			data[devicesign.EnvKey] = devicesign.EncodeKey(ciKey)
+		}
+		data["note"] = note
+	case op == "invite_create" && secret.toFile():
+		code, _ := data["code"].(string)
+		if code == "" {
+			secret.discard()
+			return errors.New("the server's answer had no invite code; revoke the invite and create another")
+		}
+		if err = secret.write(code + "\n"); err != nil {
+			_, _ = executor.Execute(ctx, bus.Request{Operation: "invite_revoke", Workspace: config.Workspace, Args: map[string]any{"invite_id": data["invite_id"]}})
+			return fmt.Errorf("%w; the new invite was revoked", err)
+		}
+		delete(data, "code")
+		data["code_file"] = secret.path
+		data["note"] = "Wrote the code to " + secret.path + " (0600). Give it to the invitee privately, then delete the file; `clawbridge join` reads it from stdin."
 	}
 	return json.NewEncoder(stdout).Encode(result)
 }

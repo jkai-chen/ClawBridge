@@ -15,6 +15,9 @@ func singleLine(s string) string {
 	return strings.NewReplacer("\n", " ", "\r", " ", "\t", " ").Replace(s)
 }
 func footerText(m Model) string {
+	if m.screen == ScreenModel && m.modelSetup.wizard.step >= modelStepProvider && m.modelSetup.wizard.step <= modelStepDisclosure {
+		return "Enter next · Esc cancel setup · Ctrl-C quit"
+	}
 	if m.inputMode != inputNone || m.confirming {
 		if m.width < 40 {
 			return "Esc cancel · Enter send"

@@ -24,6 +24,9 @@
   caps with a required daily token ceiling, and a confirmed disclosure, then waits for the test in your agent and says
   what came of it. `--key-stdin` with flags scripts it. `dispatcher model status` and `dispatcher model key delete
   --confirm` come with it. The server now accepts only providers from that same list.
+- **The TUI has the same model setup, on a new Model screen (`9`).** It shows a project owner their key, their agent
+  and the last test, and `s` walks through the same steps in the same order as the CLI. The key field is never drawn,
+  and the key is wiped from memory once sent, on Esc, and when you leave the screen or quit.
 
 # ClawBridge v0.3.5 (unreleased)
 

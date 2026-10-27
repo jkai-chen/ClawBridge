@@ -294,6 +294,7 @@ type Model struct {
 	linear       linearState
 	linearCancel context.CancelFunc
 	account      accountState
+	modelSetup   modelSetupState
 	cfg          Config
 
 	screen Screen
@@ -426,6 +427,12 @@ func (m Model) UpdateModel(msg tea.Msg) (Model, tea.Cmd) {
 		return m.applyAccount(x), nil
 	case accountActionMsg:
 		return m.applyAccountAction(x)
+	case modelLoadedMsg:
+		return m.applyModelLoaded(x), nil
+	case modelSentMsg:
+		return m.applyModelSent(x)
+	case modelTestedMsg:
+		return m.applyModelTested(x)
 	case ArchiveTickMsg:
 		m = m.reclassify(x.Now)
 		return m, archiveTick()
@@ -518,6 +525,8 @@ func (m Model) Show(screen Screen) (Model, tea.Cmd) {
 		m.actionErr = "unknown screen"
 		return m, nil
 	}
+	// Leaving the Model screen ends a setup and wipes its key.
+	m = m.closeModelSetup()
 	m.screen = screen
 	m.pageRollback = nil
 	m.pages = []int64{0}
@@ -800,6 +809,8 @@ func (m Model) refreshView() (Model, tea.Cmd) {
 		return m.linearRefresh()
 	case ScreenAccount:
 		return m.accountRefresh()
+	case ScreenModel:
+		return m.modelRefresh()
 	case ScreenOverview:
 		if m.cfg.Executor == nil {
 			target := ScreenCloud
@@ -1149,7 +1160,12 @@ func (m Model) updateKey(msg tea.KeyMsg) (Model, tea.Cmd) {
 		if m.linearCancel != nil {
 			m.linearCancel()
 		}
-		return m, tea.Quit
+		return m.closeModelSetup(), tea.Quit
+	}
+	if m.screen == ScreenModel && m.modelSetup.wizard.step >= modelStepProvider && m.modelSetup.wizard.step <= modelStepDisclosure {
+		// A setup takes every key, so a digit or q typed into a field
+		// neither switches screens nor quits.
+		return m.modelKey(msg)
 	}
 	if m.screen == ScreenAccount && m.account.code != "" {
 		// A code just issued holds the screen until it is dismissed.
@@ -1189,6 +1205,8 @@ func (m Model) updateKey(msg tea.KeyMsg) (Model, tea.Cmd) {
 		return m.Show(ScreenLinear)
 	case "8":
 		return m.Show(ScreenAccount)
+	case "9":
+		return m.Show(ScreenModel)
 	case "tab", "right":
 		return m.Show(screenAt(indexOf(m.screen) + 1))
 	case "shift+tab", "left":
@@ -1243,6 +1261,9 @@ func (m Model) updateKey(msg tea.KeyMsg) (Model, tea.Cmd) {
 	}
 	if m.screen == ScreenAccount {
 		return m.accountKey(key)
+	}
+	if m.screen == ScreenModel && key == "s" && m.modelSetup.wizard.step == modelStepNone {
+		return m.modelStart(), nil
 	}
 	if m.screen == ScreenCloud && key == "a" && m.plan != nil {
 		m.confirming = true
@@ -1333,9 +1354,9 @@ func containsControl(runes []rune) bool {
 
 var screenOrder = map[Screen]int{
 	ScreenOverview: 0, ScreenProjects: 1, ScreenSessions: 2,
-	ScreenInbox: 3, ScreenCloud: 4, ScreenDoctor: 5, ScreenLinear: 6, ScreenAccount: 7,
+	ScreenInbox: 3, ScreenCloud: 4, ScreenDoctor: 5, ScreenLinear: 6, ScreenAccount: 7, ScreenModel: 8,
 }
-var orderedScreens = []Screen{ScreenOverview, ScreenProjects, ScreenSessions, ScreenInbox, ScreenCloud, ScreenDoctor, ScreenLinear, ScreenAccount}
+var orderedScreens = []Screen{ScreenOverview, ScreenProjects, ScreenSessions, ScreenInbox, ScreenCloud, ScreenDoctor, ScreenLinear, ScreenAccount, ScreenModel}
 
 func indexOf(s Screen) int {
 	if i, ok := screenOrder[s]; ok {
@@ -1534,4 +1555,4 @@ func projectError(err error) string {
 	return message
 }
 
-const helpText = "1-8/tab screens · ↑↓ select · r refresh · enter mark read · p reply · n send · a confirm setup · esc cancel · q quit"
+const helpText = "1-9/tab screens · ↑↓ select · r refresh · enter mark read · p reply · n send · a confirm setup · esc cancel · q quit"

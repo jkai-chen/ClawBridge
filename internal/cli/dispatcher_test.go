@@ -60,3 +60,31 @@ func TestCLIDispatcherEnable(t *testing.T) {
 	refused("already off", "dispatcher", "disable", "--expected-revision", "0")
 	refused("requires --expected-revision", "dispatcher", "disable")
 }
+
+func TestCLIContextWatchSetting(t *testing.T) {
+	isolated(t)
+	invoke(t, "setup", "--local", "--workspace", "w")
+	invoke(t, "project", "create", "p")
+	t.Setenv("CLAWBRIDGE_PROJECT", "p")
+	got := invoke(t, "project", "context-watch", "show")
+	if got["revision"] != float64(0) || got["context_watch"].(map[string]any)["enabled"] != false {
+		t.Fatal(got)
+	}
+	file := filepath.Join(t.TempDir(), "context-watch.json")
+	doc := `{"enabled": true, "levels": [{"role": "*", "warn_tokens": 700000, "handover_tokens": 750000}], "extra_recipients": [], "handover_hint": "Update RESUME HERE."}`
+	if err := os.WriteFile(file, []byte(doc), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	set := invoke(t, "project", "context-watch", "set", "--file", file, "--expected-revision", "0")
+	if set["revision"] != float64(1) || set["context_watch"].(map[string]any)["handover_hint"] != "Update RESUME HERE." {
+		t.Fatal(set)
+	}
+	rejectCLI(t, "project", "context-watch", "set", "--file", file, "--expected-revision", "0")
+	rejectCLI(t, "project", "context-watch", "set", "--file", file)
+	rejectCLI(t, "project", "context-watch", "set", "--expected-revision", "1")
+	rejectCLI(t, "project", "context-watch", "enable")
+	if err := os.WriteFile(file, []byte(`{"enabled": true}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	rejectCLI(t, "project", "context-watch", "set", "--file", file, "--expected-revision", "1")
+}

@@ -359,11 +359,14 @@ func (s *Store) purgeExpired(ctx context.Context, tx *transaction, wid, pid stri
 		return nil, err
 	}
 	watch["deleted_device_nonces"] = nonces
+	if watch["deleted_context_notices"], err = purgeContextNotices(ctx, tx, wid, pid, now); err != nil {
+		return nil, err
+	}
 	result := map[string]any{"purged_messages": messages, "deleted_deliveries": deliveries}
 	for k, v := range watch {
 		result[k] = v
 	}
-	if messages > 0 || deliveries > 0 || watch["deleted_watch_events"] > 0 || watch["deleted_watch_cursors"] > 0 || watch["deleted_failed_reservations"] > 0 || watch["deleted_doc_seen"] > 0 || watch["deleted_doc_verify"] > 0 || nonces > 0 {
+	if messages > 0 || deliveries > 0 || watch["deleted_watch_events"] > 0 || watch["deleted_watch_cursors"] > 0 || watch["deleted_failed_reservations"] > 0 || watch["deleted_doc_seen"] > 0 || watch["deleted_doc_verify"] > 0 || nonces > 0 || watch["deleted_context_notices"] > 0 {
 		if err = s.audit(ctx, tx, wid, pid, "", "retention", pid, "purged", result); err != nil {
 			return nil, err
 		}

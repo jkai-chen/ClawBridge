@@ -93,6 +93,12 @@
   `--scope project-shared` needs `--confirm-shared`) adds `SessionStart` and `PreCompact` hooks. They keep the binding
   current and print a reminder to re-read the handover note after a compaction. They always exit 0, a nested `claude -p`
   can't take its parent's binding, and `hooks uninstall` removes only ClawBridge's own entries.
+- **Context watching on the server (schema 26), off by default.** A project owner sets levels by role, extra
+  recipients and a handover hint with `clawbridge project context-watch set --file F --expected-revision N`. Sessions
+  report counts only (`report_context`, not an MCP tool, fenced like a heartbeat, about one a minute), shown in
+  `list_sessions`. The server sends `context` notices on transitions only: past warn to the coordinator; past handover to
+  the session itself (with the hint) and the coordinator; an automatic compaction past warn as the backstop. Each is
+  deduplicated, and notices to the coordinator are limited to one per session per 30 minutes.
 
 # ClawBridge v0.3.4
 

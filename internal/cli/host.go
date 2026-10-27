@@ -2,7 +2,6 @@ package cli
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"flag"
 	"io"
@@ -47,7 +46,7 @@ func runHost(ctx context.Context, command string, args []string, stdout, stderr 
 	if err != nil {
 		return err
 	}
-	if err = json.NewEncoder(stdout).Encode(struct {
+	if err = emit(ctx, stdout, "host_status", struct {
 		Source string `json:"source"`
 		Data   any    `json:"data"`
 	}{"host-observation", result}); err != nil {

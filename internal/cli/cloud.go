@@ -155,7 +155,7 @@ func runCloudCheck(ctx context.Context, args []string, stdout, stderr io.Writer)
 		}
 	}
 	if asJSON {
-		err = json.NewEncoder(stdout).Encode(map[string]any{"source": "cloud_check", "data": results})
+		err = emit(ctx, stdout, "cloud_check", map[string]any{"source": "cloud_check", "data": results})
 	} else {
 		tw := tabwriter.NewWriter(stdout, 0, 0, 2, ' ', 0)
 		fmt.Fprintln(tw, "CHECK\tSTATUS\tREASON\tADVICE")
@@ -497,5 +497,5 @@ func runCloudSecretSet(ctx context.Context, args []string, stdout, stderr io.Wri
 		}
 		return errors.New(msg)
 	}
-	return json.NewEncoder(stdout).Encode(map[string]any{"source": "cloud_secret", "data": map[string]any{"key": key, "set": true}})
+	return emit(ctx, stdout, "cloud_secret", map[string]any{"source": "cloud_secret", "data": map[string]any{"key": key, "set": true}})
 }

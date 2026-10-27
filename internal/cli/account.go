@@ -4,7 +4,6 @@ import (
 	"bufio"
 	"context"
 	"crypto/ed25519"
-	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -410,7 +409,7 @@ func runAccount(ctx context.Context, flags Config, command string, args []string
 		}
 	}
 	safeLabels(result.Data)
-	return json.NewEncoder(stdout).Encode(result)
+	return emit(ctx, stdout, op, result)
 }
 
 // safeLabels escapes terminal controls in every device label of an answer
@@ -552,7 +551,7 @@ func runEnroll(ctx context.Context, config Config, f *flag.FlagSet, args []strin
 	if *store == devicesign.StoreFile {
 		out["warning"] = devicesign.FileWarning
 	}
-	return json.NewEncoder(stdout).Encode(map[string]any{"source": "client", "data": out})
+	return emit(ctx, stdout, "device_enroll", map[string]any{"source": "client", "data": out})
 }
 
 // enrollServer checks, sending nothing signed, that the server takes device
@@ -906,5 +905,5 @@ func runDeviceJoin(ctx context.Context, flags Config, args []string, stdin io.Re
 		// The link's name is only shown; the server's answer is the truth.
 		fmt.Fprintf(stderr, "Note: the link said workspace %s, but the server joined you to %s.\n", wizardSafe(linkWorkspace), wizardSafe(joined.Workspace))
 	}
-	return json.NewEncoder(stdout).Encode(map[string]any{"source": "client", "data": joined})
+	return emit(ctx, stdout, "join", map[string]any{"source": "client", "data": joined})
 }

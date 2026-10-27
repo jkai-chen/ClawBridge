@@ -1,7 +1,9 @@
 # CLI binding and resumption
 
-Run `clawbridge --help` for installed command details. Commands return JSON with
-`source` and `data`; failures use stderr and a nonzero exit status.
+Run `clawbridge --help` for installed command details. Always pass `--json`:
+commands then return JSON with `source` and `data`, and failures use stderr and a
+nonzero exit status. Without it, a terminal gets a layout for people, which is not
+a contract and may change.
 
 ## Select local or cloud mode
 

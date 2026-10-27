@@ -2,7 +2,6 @@ package cli
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -61,7 +60,7 @@ func contextDirOrEmpty() string {
 
 // runContext runs `clawbridge context …`. It reads local files only, so it
 // needs no configuration or route.
-func runContext(_ context.Context, args []string, stdout, stderr io.Writer) error {
+func runContext(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	if len(args) == 0 {
 		return errors.New(contextUsage)
 	}
@@ -103,7 +102,7 @@ func runContext(_ context.Context, args []string, stdout, stderr io.Writer) erro
 		}
 		if !bound {
 			if *asJSON {
-				return json.NewEncoder(stdout).Encode(map[string]any{"session": *session, "bound": false})
+				return emit(ctx, stdout, "context_show", map[string]any{"session": *session, "bound": false})
 			}
 			_, err := fmt.Fprintf(stdout, "context: %s is not bound to a transcript\n", *session)
 			return err
@@ -119,7 +118,7 @@ func runContext(_ context.Context, args []string, stdout, stderr io.Writer) erro
 		return err
 	}
 	if *asJSON {
-		return json.NewEncoder(stdout).Encode(struct {
+		return emit(ctx, stdout, "context_show", struct {
 			ctxwatch.Reading
 			Transcript string `json:"transcript"`
 		}{r, path})

@@ -88,6 +88,16 @@
   `project watch-budget show` and `doctor` show the budget in force and where it comes from. Each change is recorded in
   the project's history. Schema 30.
 
+## The command line
+
+- **Results are readable at a terminal; scripts and agents keep the same JSON.** On a terminal, a result is now laid
+  out for people: aligned fields, tables, one block per item when a table would be too wide, and data from outside
+  escaped. On a pipe, in an agent's shell (Claude Code, Codex), or with `--json` or `CLAWBRIDGE_OUTPUT=json`, the output
+  is exactly the JSON it was, which a test now pins. `--json=false` or `CLAWBRIDGE_OUTPUT=human` asks for the layout
+  anywhere. Invite codes and links, CI device keys and intake tokens are printed once, alone on their line. The skill
+  tells agents to pass `--json`. Commands get their own layouts in the next releases; until then they show every
+  field.
+
 # ClawBridge v0.3.5 (unreleased)
 
 **Schema 19 → 28.**

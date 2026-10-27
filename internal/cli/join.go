@@ -2,7 +2,6 @@ package cli
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -172,5 +171,5 @@ func runJoin(ctx context.Context, flags Config, args []string, stdout, stderr io
 	if tx != nil {
 		tx.Commit()
 	}
-	return json.NewEncoder(stdout).Encode(map[string]any{"source": "server", "data": map[string]any{"joined": true, "config_path": result.ConfigPath, "workspace": result.Workspace, "project": result.Project, "principal": result.Principal, "credential_source": config.CredentialSource, "changed": result.Changed}})
+	return emit(ctx, stdout, "join", map[string]any{"source": "server", "data": map[string]any{"joined": true, "config_path": result.ConfigPath, "workspace": result.Workspace, "project": result.Project, "principal": result.Principal, "credential_source": config.CredentialSource, "changed": result.Changed}})
 }

@@ -31,6 +31,8 @@ type fakeDevices struct {
 	lookups int
 	joins   []bus.JoinRequest
 	joinErr error
+	// dormant devices are refused at the nonce, as the bus does (§17.4).
+	dormant map[string]bool
 }
 
 func (f *fakeDevices) DeviceByID(_ context.Context, id string) (bus.Device, error) {
@@ -47,6 +49,9 @@ func (f *fakeDevices) DeviceByID(_ context.Context, id string) (bus.Device, erro
 func (f *fakeDevices) UseNonce(_ context.Context, device, nonce string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if f.dormant[device] {
+		return &bus.DormantError{Device: device, Days: 90}
+	}
 	if f.nonces[device+" "+nonce] {
 		return bus.ErrNonceReused
 	}
@@ -299,6 +304,28 @@ func TestDeviceRequestRefusals(t *testing.T) {
 	f.now = f.now.Add(deviceCacheTTL)
 	if w := f.do("/v1/execute", whoami); w.Code != 401 || !strings.Contains(w.Body.String(), "revoked") {
 		t.Fatal("revoked device:", w.Code, w.Body.String())
+	}
+}
+
+// §17.4: a dormant device is told so, once its key is proven, and how to
+// wake it.
+func TestDormantDeviceIsTold(t *testing.T) {
+	f := newDeviceFixture(t)
+	f.store.dormant = map[string]bool{f.id: true}
+	w := f.do("/v1/execute", whoami)
+	var b struct {
+		Error struct{ Code, Message string } `json:"error"`
+	}
+	_ = json.Unmarshal(w.Body.Bytes(), &b)
+	if w.Code != 401 || b.Error.Code != "unauthenticated" || !strings.HasPrefix(b.Error.Message, "device_dormant: this device hasn't been used for 90 days") || !strings.Contains(b.Error.Message, "clawbridge device confirm "+f.id) {
+		t.Fatal(w.Code, w.Body.String())
+	}
+	other, otherPriv, _ := ed25519.GenerateKey(nil)
+	g := *f
+	g.priv, g.id = otherPriv, devicekey.ID(other)
+	f.store.dormant[g.id] = true
+	if w = g.do("/v1/execute", whoami); strings.Contains(w.Body.String(), "dormant") {
+		t.Fatal("an unproven key learned of dormancy:", w.Body.String())
 	}
 }
 

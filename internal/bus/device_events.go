@@ -16,9 +16,8 @@ import (
 // is about, nor the device that caused it.
 
 // Schema 29. Kinds 'reconfirmed', 'dormant_soon' and 'dormant' are the
-// dormancy rule's (§17.4), allowed here so that rule needs no schema of its
-// own. label is copied when the event is
-// written: a later relabel doesn't rewrite what was shown.
+// dormancy rule's (§17.4; its own schema is 32). label is copied when the
+// event is written: a later relabel doesn't rewrite what was shown.
 const deviceEventsSchemaV29 = `
 CREATE TABLE device_events(event_id TEXT PRIMARY KEY,workspace_id TEXT NOT NULL REFERENCES workspaces(id),principal TEXT NOT NULL,device_id TEXT NOT NULL,kind TEXT NOT NULL CHECK(kind IN ('added','revoked','reconfirmed','dormant_soon','dormant')),label TEXT NOT NULL,route TEXT NOT NULL,actor TEXT NOT NULL,actor_device TEXT,created_at TEXT NOT NULL);
 CREATE INDEX device_events_workspace ON device_events(workspace_id,created_at);
@@ -33,26 +32,39 @@ const deviceEventDays = 90
 const maxDeviceAck = 100
 
 // deviceEvent records an event about device, a device of principal, caused
-// by actor (and actorDevice, when a device key signed the request). It also
+// by actor (and actorDevice, when a device key signed the request).
+func (s *Store) deviceEvent(ctx context.Context, tx *transaction, wid, principal, device, kind, label, route, actor, actorDevice string) error {
+	return s.recordDeviceEvent(ctx, tx, newID("dve_"), wid, principal, device, kind, label, route, actor, actorDevice, "")
+}
+
+// recordDeviceEvent records an event under id, once: an ID already written
+// writes nothing more. due is the date a dormancy event is about. It also
 // drops the workspace's events past their lifetime, with their acks, so
 // the table needs no sweep of its own.
-func (s *Store) deviceEvent(ctx context.Context, tx *transaction, wid, principal, device, kind, label, route, actor, actorDevice string) error {
-	var by any
+func (s *Store) recordDeviceEvent(ctx context.Context, tx *transaction, id, wid, principal, device, kind, label, route, actor, actorDevice, due string) error {
+	var by, dueAt any
 	if actorDevice != "" {
 		by = actorDevice
 	}
-	id, now := newID("dve_"), stamp()
-	if _, err := tx.ExecContext(ctx, `INSERT INTO device_events(event_id,workspace_id,principal,device_id,kind,label,route,actor,actor_device,created_at) VALUES(?,?,?,?,?,?,?,?,?,?)`, id, wid, principal, device, kind, label, route, actor, by, now); err != nil {
+	if due != "" {
+		dueAt = due
+	}
+	now := stamp()
+	res, err := tx.ExecContext(ctx, `INSERT INTO device_events(event_id,workspace_id,principal,device_id,kind,label,route,actor,actor_device,created_at,due_at) VALUES(?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(event_id) DO NOTHING`, id, wid, principal, device, kind, label, route, actor, by, now, dueAt)
+	if err != nil {
 		return err
 	}
-	if err := s.ownerDeviceNotices(ctx, tx, wid, id, principal, device, kind, route, actor, now); err != nil {
+	if n, _ := res.RowsAffected(); n != 1 {
+		return nil
+	}
+	if err := s.ownerDeviceNotices(ctx, tx, wid, id, principal, device, kind, route, actor, now, due); err != nil {
 		return err
 	}
 	cutoff := hostClock().UTC().Add(-deviceEventDays * 24 * time.Hour).Format(timestampLayout)
 	if _, err := tx.ExecContext(ctx, `DELETE FROM device_event_acks WHERE event_id IN (SELECT event_id FROM device_events WHERE workspace_id=? AND created_at<=?)`, wid, cutoff); err != nil {
 		return err
 	}
-	_, err := tx.ExecContext(ctx, `DELETE FROM device_events WHERE workspace_id=? AND created_at<=?`, wid, cutoff)
+	_, err = tx.ExecContext(ctx, `DELETE FROM device_events WHERE workspace_id=? AND created_at<=?`, wid, cutoff)
 	return err
 }
 
@@ -63,21 +75,38 @@ func (s *Store) deviceEvent(ctx context.Context, tx *transaction, wid, principal
 // user, the device's ID, what happened and when, nothing more: never the
 // label, which a member chooses and which would reach an AI coordinator
 // under the system session's name; its operation ID is the event's, so a
-// project gets it once.
-func (s *Store) ownerDeviceNotices(ctx context.Context, tx *transaction, wid, event, principal, device, kind, route, actor, now string) error {
+// project gets it once. A dormancy warning goes there only for the main
+// owner's own devices (§17.4 R2); a member's shows on the owner's devices.
+func (s *Store) ownerDeviceNotices(ctx context.Context, tx *transaction, wid, event, principal, device, kind, route, actor, now, due string) error {
 	w, err := one(ctx, tx, `SELECT * FROM workspaces WHERE id=?`, wid)
 	if err != nil {
 		return err
+	}
+	if (kind == "dormant_soon" || kind == "dormant") && principal != w["owner_principal"] {
+		return nil
 	}
 	to, err := query(ctx, tx, `SELECT p.id AS project_id,c.id,c.name FROM projects p JOIN sessions c ON c.project_id=p.id AND c.id=p.coordinator_session WHERE p.workspace_id=? AND c.status='active' AND c.role<>'system' AND c.owner_principal=? ORDER BY p.id`, wid, w["owner_principal"])
 	if err != nil || len(to) == 0 {
 		return err
 	}
-	body := fmt.Sprintf("Security: new device %s added to %s at %s via %s.", device, principal, now, strings.ReplaceAll(route, "_", " "))
-	if kind == "revoked" {
+	var body string
+	switch kind {
+	case "added":
+		body = fmt.Sprintf("Security: new device %s added to %s at %s via %s.", device, principal, now, strings.ReplaceAll(route, "_", " "))
+	case "revoked":
 		body = fmt.Sprintf("Security: device %s of %s revoked at %s by %s.", device, principal, now, actor)
+	case "reconfirmed":
+		body = fmt.Sprintf("Security: device %s of %s re-confirmed at %s by %s.", device, principal, now, actor)
+	case "dormant_soon":
+		body = fmt.Sprintf("Security: your device %s goes dormant at %s unless used or confirmed (clawbridge device confirm %s).", device, due, device)
+	case "dormant":
+		body = fmt.Sprintf("Security: your device %s went dormant at %s. Confirm it from another device (clawbridge device confirm %s) or revoke it.", device, due, device)
+	default:
+		body = fmt.Sprintf("Security: device %s of %s: %s at %s.", device, principal, strings.ReplaceAll(kind, "_", " "), now)
 	}
-	body += " Not expected? clawbridge user list, then device revoke."
+	if kind != "dormant_soon" && kind != "dormant" {
+		body += " Not expected? clawbridge user list, then device revoke."
+	}
 	retention := asInt(w["retention_days"])
 	if retention < 1 {
 		retention = 30
@@ -133,7 +162,7 @@ func (s *Store) revokedDeviceEvents(ctx context.Context, tx *transaction, wid, p
 // other devices, or, on the main owner's devices, any member's; written
 // since the device was added and within the lifetime; not about itself nor
 // caused by it. A CI device sees none. acked_at is when it acknowledged one.
-const visibleDeviceEvents = `SELECT e.event_id,e.principal,e.device_id,e.kind,e.label,e.route,e.actor,e.actor_device,e.created_at,a.acked_at
+const visibleDeviceEvents = `SELECT e.event_id,e.principal,e.device_id,e.kind,e.label,e.route,e.actor,e.actor_device,e.created_at,e.due_at,a.acked_at
 FROM devices me JOIN workspaces w ON w.id=me.workspace_id JOIN device_events e ON e.workspace_id=me.workspace_id
 LEFT JOIN device_event_acks a ON a.event_id=e.event_id AND a.device_id=me.device_id
 WHERE me.device_id=? AND me.kind='device' AND me.revoked_at IS NULL
@@ -165,6 +194,9 @@ func deviceEventView(row map[string]any) map[string]any {
 	out := map[string]any{}
 	for _, k := range []string{"event_id", "principal", "device_id", "kind", "label", "route", "actor", "actor_device", "created_at"} {
 		out[k] = row[k]
+	}
+	if row["due_at"] != nil {
+		out["due_at"] = row["due_at"]
 	}
 	out["acked"] = row["acked_at"] != nil
 	return out

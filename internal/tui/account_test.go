@@ -21,8 +21,10 @@ type accountAuthority struct {
 	owner     string
 	transfer  map[string]any
 	newDevice bool
-	events    []any
-	calls     []bus.Request
+	// dormant gives cy a dormant device too (§17.4).
+	dormant bool
+	events  []any
+	calls   []bus.Request
 }
 
 func (a *accountAuthority) Execute(_ context.Context, r bus.Request) (bus.Result, error) {
@@ -64,12 +66,18 @@ func (a *accountAuthority) Execute(_ context.Context, r bus.Request) (bus.Result
 			map[string]any{"principal": "cy@example.com", "invited_by": a.owner, "roles": []any{map[string]any{"slug": "api", "role": "member"}},
 				"devices": []any{map[string]any{"device_id": "dev_cy", "principal": "cy@example.com", "kind": "device", "label": "cy's", "status": "active"}}},
 		}}
+		if a.dormant {
+			cy := data["users"].([]any)[1].(map[string]any)
+			cy["devices"] = append(cy["devices"].([]any), map[string]any{"device_id": "dev_cyold", "principal": "cy@example.com", "kind": "device", "label": "cy's old", "status": "dormant", "dormant_at": "2026-10-01"})
+		}
 	case "invite_create":
 		data = map[string]any{"code": testCode, "invite_id": "inv_new", "email": r.Args["email"], "purpose": r.Args["purpose"], "expires_at": "2026-10-28"}
 	case "device_revoke":
 		data = map[string]any{"device_id": r.Args["device_id"], "status": "revoked"}
 	case "device_label":
 		data = map[string]any{"device_id": r.Args["device_id"], "label": r.Args["label"]}
+	case "device_confirm":
+		data = map[string]any{"device_id": r.Args["device_id"], "status": "active", "was_dormant": true}
 	case "invite_revoke":
 		data = map[string]any{"invite_id": r.Args["invite_id"], "status": "revoked"}
 	case "user_revoke":
@@ -287,6 +295,37 @@ func TestAccountRevokeDeviceNeedsTypedConfirmation(t *testing.T) {
 	}
 }
 
+// §17.4: w confirms another device, a member's naming them, after a typed
+// word; never this device, nor a revoked one. A dormant device can still be
+// revoked.
+func TestAccountConfirmsADormantDevice(t *testing.T) {
+	a := &accountAuthority{principal: "owner@example.com", owner: "owner@example.com", dormant: true}
+	m := accountModel(t, a)
+	if !strings.Contains(Render(m), "dormant since 2026-10-01") {
+		t.Fatal(Render(m))
+	}
+	for _, row := range []string{"device:dev_this", "device:dev_old"} {
+		m = selectRow(t, m, row)
+		m = press(t, m, "w")
+		if m.AccountState().Pending != "" {
+			t.Fatal(row, "offered a confirm")
+		}
+	}
+	m = selectRow(t, m, "device:dev_cyold")
+	m = press(t, m, "x")
+	if m.AccountState().Pending != "device_revoke" {
+		t.Fatal("a dormant device can't be revoked")
+	}
+	m = press(t, m, "esc")
+	m = press(t, m, "w")
+	m = typed(t, m, "confirm")
+	m = press(t, m, "enter")
+	w := a.writes()
+	if len(w) != 1 || w[0].Operation != "device_confirm" || w[0].Args["device_id"] != "dev_cyold" || w[0].Args["principal"] != "cy@example.com" {
+		t.Fatal(w)
+	}
+}
+
 // Removing a member takes their email typed out; only the workspace
 // owner is offered it.
 func TestAccountRevokeUserTakesTheEmail(t *testing.T) {
@@ -492,11 +531,12 @@ func TestAccountShowsDeviceEvents(t *testing.T) {
 	a := &accountAuthority{principal: "ada@example.com", owner: "owner@example.com", events: []any{
 		map[string]any{"event_id": "dve_1", "kind": "added", "label": "evil\x1b[2K", "device_id": "dev_new", "principal": "ada@example.com", "route": "device_add", "created_at": "2026-10-27T14:02"},
 		map[string]any{"event_id": "dve_2", "kind": "revoked", "label": "desk", "device_id": "dev_desk", "principal": "ada@example.com", "actor": "ada@example.com", "created_at": "2026-10-27T14:05"},
-		map[string]any{"event_id": "dve_3", "kind": "dormant_soon", "label": "old\x1b[2K", "device_id": "dev_old", "principal": "ada@example.com", "created_at": "2026-10-27T14:06"},
+		map[string]any{"event_id": "dve_3", "kind": "from_a_later_server", "label": "old\x1b[2K", "device_id": "dev_old", "principal": "ada@example.com", "created_at": "2026-10-27T14:06"},
+		map[string]any{"event_id": "dve_4", "kind": "dormant_soon", "label": "idle", "device_id": "dev_idle", "principal": "ada@example.com", "created_at": "2026-10-27T14:07", "due_at": "2026-11-06T14:07"},
 	}}
 	m := accountModel(t, a)
 	view := m.View()
-	if strings.Count(view, "New device") != 1 || !strings.Contains(view, `Device "old\x1b[2K" (dev_old) of ada@example.com: dormant soon`) || !strings.Contains(view, `New device "evil\x1b[2K" (dev_new) joined ada@example.com`) || !strings.Contains(view, `Device "desk" (dev_desk) of ada@example.com was revoked`) || strings.Contains(view, "\x1b[2K") {
+	if strings.Count(view, "New device") != 1 || !strings.Contains(view, `Device "old\x1b[2K" (dev_old) of ada@example.com: from a later server`) || !strings.Contains(view, `Device "idle" (dev_idle) of ada@example.com goes dormant at 2026-11-06T14:07 unless used`) || !strings.Contains(view, `New device "evil\x1b[2K" (dev_new) joined ada@example.com`) || !strings.Contains(view, `Device "desk" (dev_desk) of ada@example.com was revoked`) || strings.Contains(view, "\x1b[2K") {
 		t.Fatal(view)
 	}
 	m = press(t, m, "e")

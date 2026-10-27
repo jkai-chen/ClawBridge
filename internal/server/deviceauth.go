@@ -161,10 +161,16 @@ func (d deviceAuthenticator) Authenticate(ctx context.Context, r *http.Request, 
 	if !device.Live {
 		return bus.Identity{}, deviceRefused("this device was revoked or has expired; ask an owner for an invite", "device_revoked")
 	}
-	// 5. The nonce is unused for this device.
+	// 5. The nonce is unused for this device, and the device isn't dormant.
 	if err = d.store.UseNonce(ctx, device.ID, h.nonce); err != nil {
 		if errors.Is(err, bus.ErrNonceReused) {
 			return bus.Identity{}, deviceRefused("request nonce already used", "device_nonce")
+		}
+		// A dormant device (§17.4) is told how to wake it; it holds
+		// everything it had.
+		var dormant *bus.DormantError
+		if errors.As(err, &dormant) {
+			return bus.Identity{}, deviceRefused(dormant.Error(), "device_dormant")
 		}
 		return bus.Identity{}, &authFailure{status: 503, code: "unavailable", message: publicMessage("unavailable"), kind: "device_store"}
 	}

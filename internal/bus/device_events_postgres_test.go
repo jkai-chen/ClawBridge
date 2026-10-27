@@ -391,7 +391,7 @@ func TestPostgresOwnerCoordinatorHearsOfDevices(t *testing.T) {
 		t.Fatal(err)
 	}
 	tx := &transaction{Tx: raw, postgres: true}
-	if err = f.s.ownerDeviceNotices(context.Background(), tx, f.workspaceID(f.workspace), event, ada, keyID(t, key), "added", "invite", f.owner, stamp()); err != nil {
+	if err = f.s.ownerDeviceNotices(context.Background(), tx, f.workspaceID(f.workspace), event, ada, keyID(t, key), "added", "invite", f.owner, stamp(), ""); err != nil {
 		t.Fatal(err)
 	}
 	if err = raw.Commit(); err != nil {

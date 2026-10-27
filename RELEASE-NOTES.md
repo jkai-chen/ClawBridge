@@ -1,8 +1,8 @@
 # ClawBridge v0.3.6 (unreleased)
 
-**Schema 28 → 31.**
-- The server migrates to schema 31 on its first start: 29, the new-device alerts' events and acknowledgements; 30, a
-  project's own watch budget; 31, the device an invite was made from.
+**Schema 28 → 32.**
+- The server migrates to schema 32 on its first start: 29, the new-device alerts' events and acknowledgements; 30, a
+  project's own watch budget; 31, the device an invite was made from; 32, the workspace's device idle limit.
 - **One-way:** v0.3.5 and older refuse a database newer than schema 28. Take a dump before upgrading; to go back,
   restore it with the v0.3.5 image (docs/operations/deployment.md).
 
@@ -38,6 +38,16 @@
     the member-chosen label.
   - The server answers every device-signed request with `pending_device_events`; the client fetches the events at
     most once a minute. Older clients ignore the field.
+- **Unused devices go dormant (A1, §17.4).** A human device unused for 90 days is refused until another device of
+  its user, or the main owner, confirms it: `clawbridge device confirm dev_…` (`--member EMAIL` for another member's;
+  `w` on the Account screen). Nothing it holds is deleted, and any use restarts the clock. CI devices are exempt.
+  - Confirming is signed by a live human device of the user (or the main owner's); a Google sign-in or CI key can't.
+  - The main owner sets the limit: `clawbridge workspace settings --device-idle-days N` (30–365); a lower limit that
+    makes devices dormant at once says how many and needs `--confirm`.
+  - The user's other devices and the owner's are warned first, from day 80 (day 60 for the owner's own devices,
+    which also reach the owner's coordinator session), and again when it goes dormant. `device list` shows
+    `dormant_at`.
+  - An owner whose devices are all dormant gets back in with the host operator's `operator bootstrap-invite`.
 - **Device labels are printable text.** A label is shown on your other devices, so the server refuses control
   characters, terminal escapes and bidi or other format characters (1–64 printable characters), and the CLI and TUI
   escape any older label when they print it.

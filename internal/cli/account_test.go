@@ -370,6 +370,11 @@ func TestAccountCommandsMapToTheBus(t *testing.T) {
 		{[]string{"device", "events", "--all"}, "device_events", `{"all":true}`},
 		{[]string{"device", "ack", "dve_1", "dve_2"}, "device_ack", `{"event_ids":["dve_1","dve_2"]}`},
 		{[]string{"device", "ack", "--all"}, "device_ack", `{"all":true}`},
+		{[]string{"device", "confirm", "dev_x"}, "device_confirm", `{"device_id":"dev_x"}`},
+		{[]string{"device", "confirm", "dev_x", "--member", "bob@example.com"}, "device_confirm", `{"device_id":"dev_x","principal":"bob@example.com"}`},
+		{[]string{"workspace", "settings"}, "workspace_settings", `{}`},
+		{[]string{"workspace", "settings", "--device-idle-days", "120"}, "workspace_settings", `{"device_idle_days":120}`},
+		{[]string{"workspace", "settings", "--device-idle-days", "30", "--confirm"}, "workspace_settings", `{"confirm":true,"device_idle_days":30}`},
 		{[]string{"user", "list"}, "user_list", `{}`},
 		{[]string{"user", "revoke", "bob@example.com", "--confirm"}, "user_revoke", `{"principal":"bob@example.com"}`},
 		{[]string{"owner", "show"}, "owner_transfer_get", `{}`},
@@ -403,6 +408,8 @@ func TestAccountCommandsMapToTheBus(t *testing.T) {
 		{[]string{"device", "frobnicate"}, "unknown device command"},
 		{[]string{"device", "ack"}, "or --all"},
 		{[]string{"device", "ack", "--all", "dve_1"}, "or --all"},
+		{[]string{"device", "confirm"}, "positional"},
+		{[]string{"workspace", "settings", "--device-idle-days", "many"}, "invalid value"},
 	} {
 		r := &accountRecorder{}
 		withAccountRecorder(t, r)
@@ -660,6 +667,19 @@ func TestDeviceEventLineEscapesTheLabel(t *testing.T) {
 	revoked := deviceEventLine(map[string]any{"event_id": "dve_2", "kind": "revoked", "label": evil, "device_id": "dev_9k2", "principal": "ada@example.com", "actor": "ada@example.com"})
 	if strings.ContainsAny(revoked, "\x1b\u202e\u009b") || !strings.Contains(revoked, "was revoked") {
 		t.Fatalf("%q", revoked)
+	}
+	// §17.4's kinds say what they are, with their date and the way out.
+	due, _ := time.Parse(time.RFC3339Nano, "2026-11-06T14:02:00.000000000Z")
+	shown := due.Local().Format("2006-01-02 15:04")
+	for kind, want := range map[string]string{
+		"reconfirmed":  "was re-confirmed at 2026-10-2",
+		"dormant_soon": "goes dormant at " + shown + " unless it is used or confirmed: clawbridge device confirm dev_9k2",
+		"dormant":      "went dormant at " + shown + ", unused. Still needed? clawbridge device confirm dev_9k2",
+	} {
+		line := deviceEventLine(map[string]any{"event_id": "dve_4", "kind": kind, "label": evil, "device_id": "dev_9k2", "principal": "ada@example.com", "actor": "owner@example.com", "created_at": "2026-10-27T14:02:00.000000000Z", "due_at": "2026-11-06T14:02:00.000000000Z"})
+		if strings.ContainsAny(line, "\x1b\u202e\u009b") || strings.Contains(line, "New device") || !strings.Contains(line, want) {
+			t.Fatalf("%s: %q", kind, line)
+		}
 	}
 	// A kind this client doesn't know is never a "new device".
 	other := deviceEventLine(map[string]any{"event_id": "dve_3", "kind": "dormant_soon\x1b[2K", "label": evil, "device_id": "dev_9k2", "principal": "ada@example.com"})

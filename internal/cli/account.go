@@ -45,8 +45,14 @@ const accountUsage = `usage:
   clawbridge device add --ci NAME --grant PROJECT=reader|member [--grant ...]... --expires 30d [--label LABEL]
   clawbridge device enroll [--label LABEL] [--key-store keyring|file]   (signed in with Google: no invite)
   clawbridge device events [--all] | device ack EVENT_ID... | device ack --all
-      Devices added to or revoked from your account (every member's, for the workspace owner), shown on
-      this device until it acknowledges them. Any command run here prints them on stderr too.
+      Devices added to, revoked from, re-confirmed on or going dormant on your account (every member's,
+      for the workspace owner), shown on this device until it acknowledges them. Any command run here
+      prints them on stderr too.
+  clawbridge device confirm DEVICE_ID [--member EMAIL]
+      A device unused for the workspace's idle limit (90 days unless set) is dormant: it is refused until
+      another of your devices, or the workspace owner (with --member), confirms it. Confirming any device
+      restarts its clock.
+  clawbridge workspace settings [--device-idle-days 30-365 [--confirm]]  (setting it: workspace owner)
   clawbridge user list | user revoke EMAIL --confirm
   clawbridge owner show | owner transfer --to EMAIL | owner accept | owner decline | owner cancel
   invite and device add print their code, or a CI device's key, only to a terminal; --out FILE writes
@@ -137,8 +143,8 @@ type accountExecutor interface {
 // replace it.
 var newAccountExecutor = func(c Config) (accountExecutor, error) { return remote.New(remoteConfig(c)) }
 
-// runAccount runs the invite, device, user and owner commands, which act on
-// the configured workspace as a whole.
+// runAccount runs the invite, device, user, owner and workspace commands,
+// which act on the configured workspace as a whole.
 func runAccount(ctx context.Context, flags Config, command string, args []string, stdout, stderr io.Writer) error {
 	if len(args) == 0 || args[0] == "--help" || args[0] == "-h" || args[0] == "help" {
 		_, err := fmt.Fprintln(stdout, accountUsage)
@@ -217,6 +223,30 @@ func runAccount(ctx context.Context, flags Config, command string, args []string
 			return e
 		}
 		op, a["device_id"], a["reason"] = "device_revoke", pos[0], *reason
+	case "device confirm":
+		// §17.4: wakes a dormant device, or resets an idle one's clock.
+		who := f.String("member", "", "the member whose device it is, when it isn't yours (workspace owner)")
+		pos, e := parseAccountFlags(f, args, 1, 1)
+		if e != nil {
+			return e
+		}
+		op, a["device_id"] = "device_confirm", pos[0]
+		if *who != "" {
+			a["principal"] = *who
+		}
+	case "workspace settings":
+		idle := f.Int("device-idle-days", 0, "days unused before a device goes dormant, 30-365 (workspace owner)")
+		yes := f.Bool("confirm", false, "lower the limit even when it makes devices dormant at once")
+		if _, err = parseAccountFlags(f, args, 0, 0); err != nil {
+			return err
+		}
+		op = "workspace_settings"
+		if *idle != 0 {
+			a["device_idle_days"] = *idle
+		}
+		if *yes {
+			a["confirm"] = true
+		}
 	case "device label":
 		pos, e := parseAccountFlags(f, args, 2, 2)
 		if e != nil {
@@ -440,8 +470,18 @@ func deviceEventLine(e map[string]any) string {
 		at = t.Local().Format("2006-01-02 15:04")
 	}
 	route := strings.ReplaceAll(s("route"), "_", " ")
+	due := s("due_at")
+	if t, err := time.Parse(time.RFC3339Nano, due); err == nil {
+		due = t.Local().Format("2006-01-02 15:04")
+	}
 	switch s("kind") {
 	case "added":
+	case "reconfirmed":
+		return fmt.Sprintf("Device \"%s\" (%s) of %s was re-confirmed at %s by %s. Not expected? Check `clawbridge device list` and tell the workspace owner. [%s]", s("label"), s("device_id"), s("principal"), at, s("actor"), s("event_id"))
+	case "dormant_soon":
+		return fmt.Sprintf("Device \"%s\" (%s) of %s goes dormant at %s unless it is used or confirmed: clawbridge device confirm %s [%s]", s("label"), s("device_id"), s("principal"), due, s("device_id"), s("event_id"))
+	case "dormant":
+		return fmt.Sprintf("Device \"%s\" (%s) of %s went dormant at %s, unused. Still needed? clawbridge device confirm %s; if not, device revoke %s [%s]", s("label"), s("device_id"), s("principal"), due, s("device_id"), s("device_id"), s("event_id"))
 	case "revoked":
 		return fmt.Sprintf("Device \"%s\" (%s) of %s was revoked at %s by %s. Not expected? Check `clawbridge device list` and tell the workspace owner. [%s]", s("label"), s("device_id"), s("principal"), at, s("actor"), s("event_id"))
 	default:

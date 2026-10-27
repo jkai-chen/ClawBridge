@@ -1,3 +1,22 @@
+# ClawBridge v0.3.6 (unreleased)
+
+## Security (G9)
+
+- **The session runner's agent gets less of yours (G9-5, G9-6, G9-9, G9-14).**
+  - **Environment:** `runner launch` starts claude through a launch script that clears the environment and passes on
+    only the terminal's basics, the proxies and claude's own settings, named one by one (its key or sign-in token,
+    endpoint, models, config directory). `GITHUB_TOKEN`, `NPM_TOKEN`, `AWS_*`, `SSH_AUTH_SOCK`, `CLAWBRIDGE_*` and a
+    parent Claude Code session's variables no longer reach the session, and its sandbox self-test now proves that too.
+  - **The clone's origin** is copied without a user or password; a remote helper or unknown transport is refused.
+  - **MCP tools:** the agent's task-board write tools (which act as your Linear profile) are denied unless the launch
+    passes `--linear-writes`, and `assignment_confirm` always is.
+  - **The clone's `.git`** is denied to the file tools and to Bash commands naming it.
+- **`runner fetch` checks the clone before git touches it (G9-7, G9-8, G9-14).**
+  - **Refused:** a `.git` that isn't a plain directory, borrowed objects (alternates, `commondir`), and a config
+    setting `core.hooksPath`, `core.fsmonitor` or an include.
+  - **Checked:** every fetched object (`transfer.fsckObjects`).
+  - **Scanned:** a merge's own changes, for token shapes, like every other commit's.
+
 # ClawBridge v0.3.5 (unreleased)
 
 **Schema 19 → 28.**

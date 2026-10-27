@@ -27,14 +27,30 @@ Run it inside the repository's checkout, or pass `--repo PATH`.
    - The agent's commits stay there. Your repository and its `.git` are never
      written.
    - The clone's `origin` fetches from your upstream. It has no push URL and no
-     credential helper.
-4. **Writes the session's Claude Code settings and MCP config** under
-   `~/.clawbridge/runner/sessions/<session>/`, readable by you only, never inside
-   the clone.
+     credential helper, and never a user or password: they're removed from your
+     origin's URL before it's copied, since the clone's config is the agent's
+     to read. An origin using a remote helper (`ext::`) or an unknown transport
+     is refused.
+4. **Writes the session's Claude Code settings, MCP config and launch script**
+   under `~/.clawbridge/runner/sessions/<session>/`, readable by you only, never
+   inside the clone.
 5. **Opens a visible Orca terminal** in your own checkout, which Orca manages,
-   running `cd <clone> && exec claude --setting-sources '' --permission-mode default
-   --settings … --mcp-config … --strict-mcp-config "<start prompt>"`. When the
-   session ends, the tab closes: your own shell never stays in the clone.
+   running `cd <clone> && exec /bin/sh <launch script>`. The script runs `env -i …
+   claude --setting-sources '' --permission-mode default --settings … --mcp-config
+   … --strict-mcp-config "<start prompt>"`. When the session ends, the tab
+   closes: your own shell never stays in the clone.
+   - **Only an allow-listed environment reaches the session.** claude, its Bash
+     and its MCP server get only:
+     - the terminal's basics (`PATH`, `HOME`, `USER`, `SHELL`, `TERM`, locale, `TMPDIR`, `TZ`);
+     - the network proxies;
+     - claude's own `ANTHROPIC_*` and `CLAUDE_*` settings, which include its API key if
+       you use one.
+
+     Nothing else in your shell gets through: `GITHUB_TOKEN`, `NPM_TOKEN`, `AWS_*`,
+     `SSH_AUTH_SOCK` and `CLAWBRIDGE_*` never reach it. The script names variables,
+     never their values. The MCP server alone also gets your non-secret
+     `CLAWBRIDGE_*` settings, and on Linux your session bus for the key store,
+     through its MCP config.
    - The session loads none of your user, project or local Claude Code settings,
      only its own (and managed ones), so your own allows never widen it.
    - The prompt names the issue by its identifier and UUID only, never its text.
@@ -51,6 +67,8 @@ pushes or opens a pull request; a person does that.
 
 **Never run git inside a runner clone.** Its configuration and attributes are
 the agent's to write, and git there could run commands of its choosing as you.
+The agent can't edit its own `.git` with its file tools, or name it in a Bash
+command (both are denied), but treat the clone as the agent's.
 When the work is ready, bring it into your own checkout, **review the diff**, and
 push it yourself:
 
@@ -58,9 +76,15 @@ push it yourself:
 clawbridge runner fetch <session>
 ```
 
-`runner fetch` never runs git inside the clone. The branch first lands under
-`refs/clawbridge-runner/<session>`, and every line its commits add, removed
-again or not, is scanned for token shapes: GitHub, AWS, Slack, Google, Linear,
+`runner fetch` runs one git in the clone: the fetch's upload-pack, with every
+object checked (`transfer.fsckObjects`).
+- **Before it runs,** the fetch refuses a clone whose `.git` isn't a plain
+  directory, borrows objects (`objects/info/alternates`, `commondir`), or whose
+  config sets `core.hooksPath`, `core.fsmonitor` or any include. git reads the
+  config itself, without following includes.
+- **The branch** first lands under `refs/clawbridge-runner/<session>`. Every line
+  its commits add, removed again or not, is scanned for token shapes, and a
+  merge's own changes count too: GitHub, AWS, Slack, Google, Linear,
 Anthropic and npm keys, Google refresh tokens, `_authToken=` lines,
 `Authorization: Bearer` headers and private keys. If one is found, nothing is fetched and the
 report names the file and pattern, never the text. A clean branch becomes
@@ -81,7 +105,15 @@ The settings passed with `--settings` take precedence over the repository's own
   - git push, remote, config and credential; `gh`; `ssh`; `security`; the
     `clawbridge` CLI (the agent uses the ClawBridge MCP tools instead);
   - WebFetch;
-  - editing anything in your own checkout.
+  - editing anything in your own checkout, or in the clone's `.git`, and any
+    Bash command naming `.git/`;
+  - the ClawBridge MCP tools that act for you or for others:
+    - **Linear writes:** the task-board writes (`create`, `update`, `comment`,
+      relations) run as your Linear profile. Launch with `--linear-writes` to allow
+      them.
+    - **Confirming:** `assignment_confirm` is the coordinator's, and always denied.
+    - **What the agent keeps:** its own session's tools (inbox, messages, proposing
+      and releasing its assignment) and every read.
 - **Bash sandbox:** on, and Claude Code refuses to run Bash without it.
   - Bash reads **nothing in your home directory** except the agent's clone, its
     cache and your Go module cache. Everything else under `~`, every

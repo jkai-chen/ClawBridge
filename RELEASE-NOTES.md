@@ -57,6 +57,11 @@
   go to S3. ClawBridge never reads `~/.aws`. The first-deployment guide covers both clouds.
 - **Windows users get a WSL walkthrough for the AWS route** (docs/installation.md): install WSL, then the client, the
   AWS CLI and the Session Manager plugin inside it; sign in there; run the agent there; keep work in the WSL home.
+- **`clawbridge cloud bootstrap --instance`: the owner's first device on an AWS server with device sign-in.** It makes
+  the one-time owner invite's code on your machine, hands it to the server's new `operator bootstrap-invite
+  --code-stdin` through a short-lived `SecureString` (so it is in no SSM command history), and joins with it; the
+  server keeps only its salted hash, and the code is never shown. `--email` is checked against
+  `CLAWBRIDGE_BOOTSTRAP_OWNER`. Update the server first.
 
 ## Docs
 

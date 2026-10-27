@@ -319,8 +319,23 @@ sudo docker compose --env-file /etc/clawbridge/clawbridge.env --project-name "$P
 - **The code is a secret.** Run the command in your own terminal session, not
   through an agent, and type the code yourself. The command refuses to print to
   anything but a terminal unless given `--force-stdout`, which prints the code alone
-  on one line for a program that keeps it in memory (`clawbridge cloud bootstrap`).
-  The code is never logged; the audit records the invite, not the code.
+  on one line for a program that keeps it in memory. The code is never logged;
+  the audit records the invite, not the code.
+- **`--code-stdin`:** the caller made the code and passes it on stdin; the server
+  stores only its salted hash and prints the invite as one JSON line without it.
+  This is how `clawbridge cloud bootstrap --instance` lets the owner in on AWS from
+  their own machine: it makes the code there, hands it to this command through a
+  short-lived Parameter Store `SecureString` (as `cloud secret set` does), so it is
+  in no SSM command or output, and joins with it in memory:
+
+  ```sh
+  clawbridge cloud bootstrap --instance INSTANCE_ID --region REGION --profile PROFILE \
+    --account ACCOUNT_ID --server https://DOMAIN --workspace WORKSPACE --email OWNER
+  ```
+
+  It needs the server on the same release or newer. If the join's answer is lost,
+  it asks the server with the kept key whether the device joined before you ask
+  for another invite.
 - Accepting an ownership transfer revokes any pending bootstrap code.
 
 ## Private configuration

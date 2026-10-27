@@ -28,6 +28,11 @@ func bindTarget(f *flag.FlagSet, t *cloudTarget) {
 	f.StringVar(&t.vm, "vm", "", "Compute Engine VM name (with --project and --zone, over IAP)")
 	f.StringVar(&t.project, "project", "", "Google Cloud project")
 	f.StringVar(&t.zone, "zone", "", "Compute Engine zone")
+	bindAWSTarget(f, t)
+}
+
+// bindAWSTarget binds the AWS route's flags only.
+func bindAWSTarget(f *flag.FlagSet, t *cloudTarget) {
 	f.StringVar(&t.instance, "instance", "", "EC2 instance ID (with --region, over SSM)")
 	f.StringVar(&t.region, "region", "", "AWS region")
 	f.StringVar(&t.profile, "profile", "", "AWS CLI profile (default "+defaultAWSProfile+")")

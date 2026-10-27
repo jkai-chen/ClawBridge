@@ -174,6 +174,11 @@
   containers under a rootless Docker. Every Docker call goes through its own validating socket proxy, which allows only
   the exact container shapes it creates. Each agent reaches only its own model provider, through a per-owner egress
   proxy that allows only that provider's host and port, and an agent restarts when its owner's configuration changes.
+- **The launcher's egress proxy can reach a server on your LAN or VPN, when you say so.**
+  `CLAWBRIDGE_EGRESS_PRIVATE_SERVER=HOST:PORT` (the server's own) lets agents reach a ClawBridge server on a private or
+  CGNAT address, never loopback or cloud metadata; by default every address must still be public. A compiled-in table
+  also gives the Vertex AI, Bedrock and Azure provider hosts their token endpoint, ready for when the agent offers
+  them.
 - **The dispatcher agent follows its owner's projects as they change.** Each token renewal starts serving newly listed
   projects and stops the ones no longer listed, and an agent with no project yet stays up and waits for one
   (`no_projects_yet`) instead of exiting.

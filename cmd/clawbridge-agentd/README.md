@@ -31,17 +31,33 @@ Its Docker access is root-equivalent, so it is kept small, and it is fenced in b
 (design §5.3). It holds no secrets and does no TLS interception.
 
 - **CONNECT only.** Plain proxying gets 405, and anything else gets 400.
-- **Per source network.** Each owner's subnet may reach exactly its own `host:port` entries: the ClawBridge server and
-  that owner's provider, two at most. Another owner's provider, another host and another port are all refused.
+- **Per source network.** Each owner's subnet may reach exactly its own `host:port` entries: the ClawBridge server,
+  that owner's provider, and that provider's companion host, three at most. Another owner's provider, another host and
+  another port are all refused.
+- **Companion hosts** come from a table compiled into agentd, never from the server. A provider whose API exchanges a
+  cloud credential for a short-lived token also needs that token endpoint:
+
+  | Provider host | Companion |
+  |---|---|
+  | `aiplatform.googleapis.com`, `REGION-aiplatform.googleapis.com` (Vertex AI) | `oauth2.googleapis.com:443` |
+  | `bedrock-runtime[-fips].REGION.amazonaws.com` (Bedrock) | `sts.REGION.amazonaws.com:443` |
+  | `NAME.openai.azure.com`, `NAME.cognitiveservices.azure.com` (Azure) | `login.microsoftonline.com:443` |
+
+  All on port 443. The agent doesn't offer these providers yet (it takes key-based APIs only), so the table takes
+  effect once they gain an explicit-credential path.
 - **No rebinding.** The proxy resolves a name itself and refuses the CONNECT if any address in the answer is not
   public (loopback, private, link-local such as cloud metadata, CGNAT). It then dials the address it checked. An IP
-  literal passes only when it is listed itself, and must be public.
+  literal passes only when it is listed itself, and must be public. The one exception is a server the operator
+  listed as private (below).
 - **The policy** is a JSON file agentd writes from the server's per-owner config:
 
   ```json
   {"networks": [{"owner_ref": "p_…", "source": "172.30.1.0/24",
-                 "allow": ["bridge.example.com:443", "api.anthropic.com:443"]}]}
+                 "allow": ["bridge.example.com:443", "api.anthropic.com:443"]}],
+   "private_server": "bridge.lan.example:443"}
   ```
+
+  `private_server` is there only when the operator listed one.
 
   It is reread every 2 seconds. A change closes the open tunnels it no longer allows. An unreadable or invalid file
   refuses all egress until it is valid again.
@@ -83,8 +99,18 @@ Its Docker access is root-equivalent, so it is kept small, and it is fenced in b
   The agent also retries its first requests, in case a reload is late.
 - **No egress, no agents.** If the egress container can't be kept running, no agent starts that round. Agents that
   are no longer wanted are still stopped.
-- **The server's address** must be public, like a provider's: `check` refuses a server URL whose host is a private,
-  loopback or link-local IP address, which the egress proxy would refuse every round.
+- **The server's address** must be public, like a provider's, by default: `check` refuses a server URL whose host is a
+  private, loopback or link-local IP address, which the egress proxy would refuse every round.
+- **A server on the LAN or a VPN** is allowed only when listed explicitly:
+  `CLAWBRIDGE_EGRESS_PRIVATE_SERVER=HOST:PORT`, which must be the server URL's own host and port.
+  - The proxy then lets that one target be, or resolve to, a private (RFC 1918, IPv6 ULA) or CGNAT address.
+  - Never loopback, link-local (cloud metadata), or agentd's own `172.30.0.0/16` and `172.31.255.0/28`.
+  - A listed host name is trusted as far as its DNS is: whoever answers for it chooses which private address the
+    agents reach. List a name only on DNS you control, or list the server by IP address (`https://10.0.0.5` with
+    `CLAWBRIDGE_EGRESS_PRIVATE_SERVER=10.0.0.5:443`).
+  - Every other target, providers included, must still be public. Listing a public address is refused: leave it
+    unset.
+  - Remove the line and the next policy write closes any tunnel to that address.
 
 ## The fixed spec
 
@@ -110,14 +136,15 @@ clawbridge-agentd check
 clawbridge-agentd run
 ```
 
-- **`proxy`:** reads `CLAWBRIDGE_SERVER_URL`, `CLAWBRIDGE_AGENT_IMAGE`, `CLAWBRIDGE_EGRESS_IMAGE` and
-  `CLAWBRIDGE_EGRESS_POLICY_DIR`, which make up the fixed specs. It holds no secrets, and refuses to
+- **`proxy`:** reads `CLAWBRIDGE_SERVER_URL`, `CLAWBRIDGE_AGENT_IMAGE`, `CLAWBRIDGE_EGRESS_IMAGE`,
+  `CLAWBRIDGE_EGRESS_POLICY_DIR` and the optional `CLAWBRIDGE_EGRESS_PRIVATE_SERVER`, which make up the fixed specs. It holds no secrets, and refuses to
   start with `CLAWBRIDGE_LAUNCHER_TOKEN` in its environment. Its socket is mode 0660, so agentd connects through
   the socket's group.
 - **`check` and `run`:** read agentd's root-only (0600) env file:
   - `CLAWBRIDGE_SERVER_URL`;
   - `CLAWBRIDGE_AGENT_IMAGE` and `CLAWBRIDGE_EGRESS_IMAGE`;
   - `CLAWBRIDGE_EGRESS_POLICY_DIR`, a directory agentd writes and the egress container reads;
+  - optionally `CLAWBRIDGE_EGRESS_PRIVATE_SERVER`, the server's own `host:port`, for a server on a private address;
   - `CLAWBRIDGE_LAUNCHER_TOKEN` (`cbl_…`), which is never logged;
   - `CLAWBRIDGE_AGENTD_DOCKER`, the proxy's socket.
 - **No root:** neither process runs as root.

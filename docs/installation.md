@@ -238,7 +238,7 @@ session. This also applies to WSL and headless SSH: device sign-in changes the
 Google consent flow; it does **not** remove the native credential-store
 prerequisite. Windows Credential Manager is not automatically bridged into WSL.
 
-Device keys, from [signing in with an invite](sign-in.md) (not released yet), use
+Device keys, from [signing in with an invite](sign-in.md) (the client side from v0.3.5), use
 the same Secret Service by default, but a machine without one can keep the key in a
 0600 file instead (`join --key-store file`). Read
 [what that means](sign-in.md#device-keys-the-os-key-store-or-a-file) first.

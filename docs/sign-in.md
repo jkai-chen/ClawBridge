@@ -4,17 +4,17 @@ A hosted ClawBridge server can let people in without a Google account: an owner
 invites them by email, they join with a one-time code, and from then on their
 computer signs every request with its own **device key**.
 
-> **What is released.**
+> **Which release.**
 > - **The server side shipped in v0.3.4:** `serve --auth`, `/v1/join`, signed requests,
 >   invites, devices, members, ownership transfer, and `operator bootstrap-invite`.
-> - **Not released yet; it comes with the next client release:**
+> - **The client side ships in v0.3.5:**
 >   - the client commands: `clawbridge join`, `invite`, `device`, `user`, `owner`,
 >     `device enroll`, and the device checks in `whoami` and `doctor`;
 >   - the TUI's Account screen and the guided setup's "I have an invite code" path;
 >   - the `auth_mismatch` check in `clawbridge cloud check server`.
 >
-> Until then, a v0.3.4 server can run with device keys, but no released client can
-> join it.
+> A v0.3.4 client can't join a server with device keys: install v0.3.5 or later
+> first ([install and update](installation.md)).
 
 - [How it works](#how-it-works)
 - [Invites and the one-time code](#invites-and-the-one-time-code)

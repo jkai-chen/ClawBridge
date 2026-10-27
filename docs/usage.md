@@ -249,6 +249,79 @@ when starting the MCP process or running `mcp install`. This pins the connection
 without putting a credential in the agent configuration.
 Automatic inbox hints require the separately configured [notification feature](notifications.md).
 
+## Your first task: claim and release
+
+An **assignment** says which session works on which issue: proposed by the
+session, confirmed by the project's **coordinator session**, released when the
+work ends. It's a record for the team, not a lock: it doesn't assign the Linear
+issue to anyone and grants no rights. The same steps work in local mode and on a
+hosted workspace; agents connected through MCP do their half with the tools of
+the same names (`assignment_propose`, `assignment_confirm`, `assignment_release`).
+
+**1. Two sessions and a coordinator.** Register a session for yourself (or the
+agent that coordinates) and one for the agent that does the work, then make the
+first the project's coordinator. On a hosted workspace the project owner does
+this, or a lead for their own sessions. An agent installed with `mcp install`
+registers its own session when it connects (see [MCP](#mcp)).
+
+```sh
+clawbridge --session lead --instance lead-1 register --role coordinator
+clawbridge --session eng --instance eng-1 register --role engineer
+clawbridge --session lead --instance lead-1 project coordinator-set lead
+```
+
+**2. The worker proposes.** It names the issue and, optionally, the paths it
+owns:
+
+```sh
+clawbridge --session eng --instance eng-1 assignment propose \
+  --issue-uuid 0d0d0d0d-0d0d-4d0d-8d0d-0d0d0d0d0d0d --issue-identifier SHOP-1 \
+  --task-role engineer --scope-path 'src/**'
+```
+
+- **Without a board:** any UUID and label you choose will do.
+- **With a Linear board:** use the issue's own UUID and identifier, from `clawbridge
+  linear issues --profile PROFILE_ID` (see [Linear](linear.md)).
+
+The answer carries the assignment's `revision`, and any `conflicts` with other
+sessions' assignments. The worker sends that revision to the coordinator, for
+example with `send lead '…' --operation-id …`.
+
+**3. The coordinator confirms** that revision:
+
+```sh
+clawbridge --session lead --instance lead-1 assignment confirm eng --revision REV
+clawbridge sessions --assignment-state confirmed      # eng, confirmed, SHOP-1
+```
+
+- **With a Linear board,** a confirmed claim gets a claim note and label on the
+  issue. Under a status policy, the issue also moves to its `claim` state (see
+  [claim markers](linear.md#claim-markers)).
+- **On a hosted server** the server applies them. **In local mode** they're applied
+  by `clawbridge linear watch`, or straight away when you pass `--linear-profile`.
+
+**4. Release when the work ends.** Read the current revision from `whoami`, then
+release with `--outcome done` if the work is finished:
+
+```sh
+clawbridge --session eng --instance eng-1 whoami          # session.assignment.revision
+clawbridge --session eng --instance eng-1 assignment release --revision REV --outcome done
+```
+
+- **Without `--outcome done`,** the release only records that the session
+  stopped, and the issue stays where it is.
+- **With it,** a status policy may move the issue on, and who closes it follows
+  the project's close rule (see
+  [the status policy](linear.md#status-policy-project-owner-only)).
+- **The coordinator** can release another session's work the same way, naming it:
+  `assignment release eng --revision REV`.
+- **Retiring a session releases its work too.** From v0.3.5, retiring one that
+  holds a confirmed assignment asks first: `retire --outcome done` if the work is
+  finished, or `retire --confirm` to release it as it is.
+
+The [task-board workflow](../skills/clawbridge/references/task-board.md) is what
+agents follow: scopes, dependencies and handing work over.
+
 ## Terminal interface
 
 ```sh

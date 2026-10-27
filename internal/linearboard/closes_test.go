@@ -270,3 +270,41 @@ func TestLinkClosesConfirmedInTheTUI(t *testing.T) {
 		t.Fatal(e, rec.ops, rec.closes)
 	}
 }
+
+// A4 §11.4: on a server where project flow is proven, the minimal policy
+// also lets project status follow the work, and the preview says so; on
+// one where it isn't, or an older server, it doesn't, and says why.
+func TestLinkMinimalPolicyProjectFlow(t *testing.T) {
+	typedStates := []linearprovider.Status{{ID: "22222222-2222-4222-8222-2222222222b5", Name: "Done", Type: "completed"}}
+	for _, proven := range []bool{true, false} {
+		status := map[string]any{"revision": 0, "enabled": false, "teams": map[string]any{}}
+		if proven {
+			status["project_flow_proven"] = true
+		}
+		s, rec, p, scope, in := closesTest(t, status)
+		p.statuses = typedStates
+		rec.role = "owner"
+		in.Closes = map[string]string{projectB: ClosesAgent}
+		r, e := s.LinkV2(context.Background(), scope, in)
+		if e != nil {
+			t.Fatal(e)
+		}
+		text := r.(LinkPreviewV2).MinimalPolicy
+		follows := strings.Contains(text, "Project status: follows the work") && strings.Contains(text, `"project_flow": true`)
+		if follows != proven || (!proven && !strings.Contains(text, "project flow is not yet proven on this server")) {
+			t.Fatal(proven, text)
+		}
+		in.Confirm, in.Via = true, ClosesViaTTY
+		if _, e = s.LinkV2(context.Background(), scope, in); e == nil || strings.Contains(e.Error(), "Project status: follows the work") != proven {
+			t.Fatal("the refusal without --minimal-status-policy and the preview disagree:", proven, e)
+		}
+		in.MinimalPolicy = true
+		if _, e = s.LinkV2(context.Background(), scope, in); e != nil {
+			t.Fatal(e)
+		}
+		policy := rec.statusSet["status_policy"].(map[string]any)
+		if _, on := policy["project_flow"]; on != proven || (proven && policy["project_flow"] != true) {
+			t.Fatal("the minimal policy and its preview disagree on project flow:", proven, policy)
+		}
+	}
+}

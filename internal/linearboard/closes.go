@@ -24,6 +24,16 @@ const (
 // changes (§10.2), stated before the owner says yes.
 const MinimalPolicyConsequences = "No status policy exists, so who closes is not enforced. Letting agents close creates the minimal policy {\"enabled\": true, \"closes\": {PROJECT: \"agent\"}} with no team targets: markers still move no issues; close protection turns on for every bound project, so completing an issue needs agent there and the hop rule applies; and an agent's write to a state of unknown type is refused."
 
+// minimalPolicy is what the minimal status policy is, and what creating
+// it changes: with project flow proven on the server it also lets project
+// status follow the work (A4 §11.4), the same answer's other half.
+func minimalPolicy(proven bool) string {
+	if !proven {
+		return MinimalPolicyConsequences + " Project status: not moved, since project flow is not yet proven on this server."
+	}
+	return strings.Replace(MinimalPolicyConsequences, `"closes": {PROJECT: "agent"}}`, `"closes": {PROJECT: "agent"}, "project_flow": true}`, 1) + " Project status: follows the work. Each bound project moves to started when its work starts. One whose issues agents close also moves to completed when they are all closed; for the others, the coordinator is told to move it."
+}
+
 // ClosesLine is one bound project's close rule.
 type ClosesLine struct {
 	LinearProject string `json:"linear_project"`
@@ -47,6 +57,8 @@ type closesPolicy struct {
 	Revision int64             `json:"revision"`
 	Enabled  bool              `json:"enabled"`
 	Closes   map[string]string `json:"closes"`
+	// FlowProven is false from a server older than project flow.
+	FlowProven bool `json:"project_flow_proven"`
 }
 
 func (s *Service) closesPolicy(ctx context.Context, scope bus.Request) (closesPolicy, error) {
@@ -195,7 +207,7 @@ func linkClosesPreview(p closesPolicy, in LinkInputV2, preview *LinkPreviewV2) {
 		}
 		preview.Closes = append(preview.Closes, line)
 		if line.Set == ClosesAgent && p.Revision == 0 {
-			preview.MinimalPolicy = MinimalPolicyConsequences + " Confirm with --minimal-status-policy; only the project owner can create it."
+			preview.MinimalPolicy = minimalPolicy(p.FlowProven) + " Confirm with --minimal-status-policy; only the project owner can create it."
 		}
 	}
 }
@@ -235,6 +247,7 @@ func (s *Service) applyLinkCloses(ctx context.Context, scope bus.Request, in Lin
 		out = append(out, ClosesOutcome{LinearProject: project, Closes: who, Outcome: "failed", Error: e.Error(), Rerun: fmt.Sprintf("clawbridge linear closes set --linear-project %s --%s --expected-revision N (N from clawbridge linear closes show). Until then its issues are closed by people (the default).", project, who)})
 	}
 	var minimal []string
+	proven := false
 	for _, project := range changes {
 		p, e := s.closesPolicy(ctx, scope)
 		if e != nil {
@@ -242,6 +255,7 @@ func (s *Service) applyLinkCloses(ctx context.Context, scope bus.Request, in Lin
 			continue
 		}
 		if p.Revision == 0 {
+			proven = p.FlowProven
 			if in.Closes[project] == ClosesAgent {
 				minimal = append(minimal, project)
 			}
@@ -267,7 +281,11 @@ func (s *Service) applyLinkCloses(ctx context.Context, scope bus.Request, in Lin
 	scope.Operation = "status_policy_set"
 	scope.Args = instanceArgs(scope.Args)
 	scope.Args["expected_revision"] = int64(0)
-	scope.Args["status_policy"] = map[string]any{"enabled": true, "teams": map[string]any{}, "closes": closes}
+	policy := map[string]any{"enabled": true, "teams": map[string]any{}, "closes": closes}
+	if proven {
+		policy["project_flow"] = true
+	}
+	scope.Args["status_policy"] = policy
 	scope.Args["via"] = in.Via
 	_, e := s.cfg.Executor.Execute(ctx, scope)
 	if e != nil && strings.Contains(e.Error(), `unsupported argument "via"`) {

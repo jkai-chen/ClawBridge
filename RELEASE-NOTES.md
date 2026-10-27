@@ -47,6 +47,23 @@
   - Conversations started before the upgrade stay private, even if they continue (`readable_from`).
   - Every read writes one `threads` row to the project's history (no body or name), about 30 a minute at most.
 
+## Your Linear API key (views, phase 3a)
+
+- **`clawbridge linear key set|status|remove --profile ID` (live/LINEAR-VIEWS-PLAN.md §11.3, §13.1).** The project
+  owner saves their personal Linear API key for writing Linear views, which Linear's MCP can't. It's read at a hidden
+  prompt or from stdin, never argv, and checked before saving: it must read, and belong to the same Linear user as the
+  profile's connection. It's kept in the OS key store like the device key (or a 0600 file with `--key-store file`,
+  after a warning). On every OS any program running as the owner can read it, so the guards are ClawBridge's:
+  - only `linear key` and `linear view` read it; every other run of the binary (`mcp`, `runner`, `serve`, `notify`,
+    ...) marks itself unable to, first thing, and the MCP server, runner and server don't link the code;
+  - it refuses under an agent's environment (best effort);
+  - runner sessions are denied `clawbridge` and `security`;
+  - it's sent only with an allow-list of GraphQL operations, never in argv (on macOS it reaches the keychain on the
+    `security` tool's stdin), logs or errors.
+
+  `doctor` reports `linear.api_key` from a marker without reading the key. `linear logout` removes it too. No view
+  writes yet: those come in the next phase.
+
 ## One invite link
 
 - **An invite is one link (A1, §17.1).** `invite` and `device add` print a link with the code:

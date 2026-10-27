@@ -1352,6 +1352,54 @@ answers `app_unavailable`. The setup below describes that later release.
   token and per project.
 - A Loop's request can at most be offered to a session, never confirmed automatically.
 
+## Your Linear API key (for writing views)
+
+Writing Linear custom views needs your personal Linear API key: Linear's MCP
+connection can't write them. Reading views doesn't need it. The key is yours,
+the project owner's, and nobody else's:
+
+- **It acts as you everywhere in Linear,** not only in the bound teams. Create
+  it in Linear (Settings, Security & access, Personal API keys) with Read and
+  Write, never Admin. Revoke it in Linear when you don't need it.
+- **Save it** at your own terminal:
+
+  ```sh
+  clawbridge linear key set --profile ID
+  ```
+
+  It asks for the key at a hidden prompt (or reads one line piped on stdin),
+  never as an argument. Before saving, ClawBridge checks that the key reads,
+  and that it belongs to the same Linear user as the profile's own
+  connection: someone else's key is refused. Write is checked on the first
+  view write; a refusal for scope says to make a new key with Read and Write.
+  `key set` again replaces the key.
+- **Where it's kept:** in the OS key store (the macOS keychain, Windows
+  Credential Manager, or the Secret Service on Linux), as the device key is.
+  `--key-store file` keeps it in a 0600 file instead, for a machine without
+  one; it warns, and asks at a terminal first. On every OS, **any program
+  running as you can read the key** from either store: on macOS, for one,
+  with the `security` command. What keeps agents from it is below.
+- **Check it:** `clawbridge linear key status --profile ID` says whether a key
+  is saved and where, and that it still reads as you, without printing it.
+  `clawbridge doctor` says only whether one is saved: it never reads it.
+- **Remove it:** `clawbridge linear key remove --profile ID`. `linear logout`
+  of the profile removes its key too.
+
+**What keeps agents and other ClawBridge processes away from it:**
+
+- Only `clawbridge linear key` and `clawbridge linear view` read the key. Any
+  other run of the binary (`mcp`, `runner`, `serve`, `notify`, ...) marks
+  itself unable to read it before doing anything else, and the MCP server, the
+  runner and the server don't contain the code that reads it.
+- Under an agent's environment (Claude Code, Codex, or a ClawBridge session)
+  `linear key` and `linear view` refuse to read it. That check is best effort:
+  an agent in your shell with those variables removed isn't told apart.
+- Runner sessions are denied the `clawbridge` and `security` commands.
+- The key is sent only to Linear's API, only with the GraphQL operations
+  ClawBridge writes views with, and never appears in a command line, the
+  environment, logs, history, or an error. On macOS it goes to the keychain on
+  the `security` tool's standard input, not its arguments.
+
 ## Accounts and recovery
 
 Use a separate connection profile for each Linear workspace/account. Switching a

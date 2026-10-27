@@ -9,6 +9,21 @@
 - **One-way:** v0.3.5 and older refuse a database newer than schema 28. Take a dump before upgrading; to go back,
   restore it with the v0.3.5 image (docs/operations/deployment.md).
 
+## The message queue: clients follow the stream (slice 3 of 5)
+
+- **`clawbridge notify` is woken by the server** as soon as the session's mail changes, instead of polling every 5 s;
+  it still checks once a minute in case a wake was missed. Against an older server, or in local mode, it polls as
+  before and says `stream_unavailable` once on stderr.
+- **`notify --adapter command -- PROGRAM [ARG]...` wakes an idle agent** by running a command you choose, directly and
+  never through a shell. It is only ever given fixed text, `N ClawBridge messages are waiting; call inbox`, in place
+  of each `{text}` argument and in `CLAWBRIDGE_NOTICE_TEXT`, never a sender, subject or body. docs/notifications.md
+  has recipes for Orca (`orca terminal send`) and tmux (`send-keys`).
+- **The TUI's Inbox stays live** on a server with the stream: it reloads when the session's mail changes, while it's
+  on screen and nothing is being typed.
+- The client reconnects with a fresh single-use ticket each time, backs off 1 s doubling to 60 s with jitter, and
+  treats 90 s without a line as a dead connection. A refused ticket (a moved instance, a removed member) ends the
+  stream; a full account (429) or an outage is retried.
+
 ## The message queue: pushed (slice 2 of 5)
 
 - **The server pushes a session's messages** on `GET /v1/stream` (Server-Sent Events), in place of polling every

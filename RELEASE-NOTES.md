@@ -17,6 +17,14 @@
   - **Checked:** every fetched object (`transfer.fsckObjects`).
   - **Scanned:** a merge's own changes, for token shapes, like every other commit's.
 
+## The dispatcher
+
+- **`clawbridge dispatcher model setup` guides an owner through the model's setup.** It asks for the provider (from
+  the list the dispatcher agent can run), the model, the key at a hidden prompt (never an argument or env variable), the
+  caps with a required daily token ceiling, and a confirmed disclosure, then waits for the test in your agent and says
+  what came of it. `--key-stdin` with flags scripts it. `dispatcher model status` and `dispatcher model key delete
+  --confirm` come with it. The server now accepts only providers from that same list.
+
 # ClawBridge v0.3.5 (unreleased)
 
 **Schema 19 → 28.**

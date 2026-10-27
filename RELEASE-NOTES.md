@@ -1,6 +1,87 @@
 # ClawBridge v0.3.5 (unreleased)
 
-## Behaviour changes
+**Schema 19 → 28.**
+- The server migrates to schema 28 on its first start:
+  - 20, the session liveness lease;
+  - 21 and 22, project flow and its early checks;
+  - 23, 24, 25 and 28, the dispatcher's model setup, cases, chat and advice;
+  - 26 and 27, context watching and per-session levels.
+- **One-way:** v0.3.4 and older refuse a database newer than schema 19 ("Postgres schema is newer than this
+  binary").
+- **Rollback:** take a dump before upgrading. To go back, restore that schema 19 dump with the v0.3.4 image. Never run
+  an older binary against the migrated database (docs/operations/deployment.md).
+- Upgrade the server first, then clients. **Upgrade every client before setting `CLAWBRIDGE_AUTH=device`** (below).
+
+## Signing in with invites: the client
+
+- **The client side of device sign-in ships in this release.** The server side shipped in v0.3.4.
+  - **Commands:** `clawbridge join` (the invite code is asked for without echoing it), `invite`, `device` (`add`,
+    `list`, `label`, `revoke`, `enroll`), `user` and `owner`, and the device checks in `whoami` and `doctor`.
+  - **The TUI:** an Account screen (`8`).
+  - **The guided setup:** an "I have an invite code" path.
+  - **Cloud check:** an `auth_mismatch` check in `clawbridge cloud check server`.
+  - A v0.3.4 client can't join a server that takes device keys.
+- **Upgrade the clients first, then switch** (docs/sign-in.md, "Turning device sign-in on"):
+  1. keep `google`, or set `google,device`;
+  2. upgrade every member's client;
+  3. give every member a device (`device enroll`, or an invite);
+  4. only then set `device`.
+
+  Setting `device` early locks out old clients and Google profiles. Setting `google,device` again undoes it, and
+  nothing stored is touched.
+
+## Sessions
+
+- **A liveness lease (schema 20).** `clawbridge mcp` and `clawbridge notify` send a `heartbeat` every 30 s with the
+  session's instance, which keeps it alive for 90 s. Session rows carry `liveness`: `working`, `idle`, `asleep` or
+  `gone` (docs/usage.md).
+  - A heartbeat is not activity and never moves `last_seen`, and the server writes it at most once every 20 s.
+  - Only the instance holding the session can renew it.
+  - Against an older server, a failed heartbeat just waits for the next beat.
+
+## The comment watcher
+
+- **The marker pass can no longer starve or fail a tick** (#117, the fix the v0.3.4 hotfix image carried).
+  - **Markers run last:** in a tick, the claim markers run after the comment watch, intake, health, docs and the
+    dispatcher.
+  - **Each pass is bounded:** at most 3 rows; none started after 8 s, or with under 6 s left; and its own deadline
+    3 s before the tick's.
+  - **One proof per pass:** each pass shares one Linear connection and one binding proof.
+  - **Refunds:** rows not started give their budget back at once.
+  - **Nudges drain what's left:** a tick or nudge that stops with rows left queues a nudge, which repeats a minute
+    apart until the queue drains. A queue stopped by the hour's budget waits for the next hour.
+  - **Logs:** one line per marker pass, and per failed tick or nudge.
+  - **Older servers:** a client against a v0.3.4 server falls back when the server refuses `marker_due`'s new `limit`.
+
+## Project status follows the work (off until proven)
+
+- **Project flow (schemas 21 and 22).**
+  - **What it does:** with `"project_flow": true` in an enabled status policy, a hosted server moves each bound
+    Linear project to started when its first issue starts, and to completed when all its issues are closed. The
+    finish happens only where agents close the project's issues; elsewhere the coordinator is told.
+  - **Early checks:** it runs in the daily health slot, and ClawBridge's own claim and done-release moves trigger
+    an early check.
+  - **Never backwards:** it never moves a project back, and a person's move back holds it until `clawbridge linear
+    project-flow resume`.
+  - **Existing policies:** they read it as off.
+  - **Details:** docs/linear.md, "Project status follows the work".
+- **Off until the operator proves it.** The server refuses to turn project flow on until it runs with `serve
+  --project-flow-proven` (`CLAWBRIDGE_PROJECT_FLOW_PROVEN=1`), after the deploy probe; until then `status-policy show`
+  says `off (not proven on this server)`. The minimal status policy that `link --closes …=agent` offers turns it on
+  only on a proven server, and its preview says which.
+
+## Project health
+
+- **`operator health-run`** forces one health run of a bound Linear project now, instead of at its daily slot. It runs
+  on the scheduled run's own path and post rules, under the project's watch lease, and is charged a whole run.
+  - **Without `--confirm`:** it says what it would do.
+  - **`--force-new`:** acts on this run alone, and marks the post as forced.
+  - **`--delete UPDATE_ID`:** deletes a post that a forced run made, and only that.
+  - Details: docs/operations/deployment.md.
+- **`operator linear-app-probe --health-order --project UUID`** settles, before a project's health posts are turned
+  on, that the health judgement's read holds the project's newest update. It makes two reads as the app and writes
+  nothing. Only `agree: true` lets `post` go on.
+
 
 - **The dispatcher's model is refused in a 101st project.** One owner's dispatcher agent serves at most 100 projects,
   so `dispatcher enable --engine model` and `dispatcher model advise on` past that are refused at `--confirm`. The
@@ -39,6 +120,10 @@
 
 ## The dispatcher
 
+- **The reserved dispatcher sessions exist only while the dispatcher is on** (#99). Since v0.3.4, every watcher tick
+  created `clawbridge-dispatcher` and `clawbridge-dispatcher-model` in every project, even with the dispatcher off.
+  - **Off:** now nothing is created, and active ones are retired (never deleted), including those v0.3.4 left.
+  - **Enable:** brings them back with the same IDs.
 - **Enable refuses a dispatcher with nothing to match.** With no domains set and a task board binding that names no
   Linear projects, `dispatcher enable` now previews `blocked: no_domains` and refuses `--confirm` until domains are set.
 - **docs/dispatcher.md is current:** enable and disable with `--engine`, the reserved sessions existing only while the

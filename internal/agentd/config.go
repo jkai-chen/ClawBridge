@@ -23,6 +23,9 @@ type Spec struct {
 	// PolicyDir holds the egress policy agentd writes; the egress container
 	// mounts it read-only.
 	PolicyDir string
+	// PrivateServer is the server's host:port when the operator listed it as
+	// private (CLAWBRIDGE_EGRESS_PRIVATE_SERVER), else "".
+	PrivateServer string
 }
 
 func loadSpec(getenv func(string) string) (Spec, error) {
@@ -35,9 +38,11 @@ func loadSpec(getenv func(string) string) (Spec, error) {
 	if err := validServerURL(s.ServerURL); err != nil {
 		return Spec{}, err
 	}
-	if _, err := serverTarget(s.ServerURL); err != nil {
+	_, private, err := serverTarget(s.ServerURL, getenv("CLAWBRIDGE_EGRESS_PRIVATE_SERVER"))
+	if err != nil {
 		return Spec{}, err
 	}
+	s.PrivateServer = private
 	for _, image := range []string{s.AgentImage, s.EgressImage} {
 		if err := validImage(image); err != nil {
 			return Spec{}, err
@@ -49,27 +54,44 @@ func loadSpec(getenv func(string) string) (Spec, error) {
 	return s, nil
 }
 
-// serverTarget is the server's host:port for the egress policy. The server
-// must be public to the agents: the egress proxy refuses a private address
-// (open question Q2), so check refuses it up front rather than every round
-// failing.
-func serverTarget(serverURL string) (string, error) {
+// serverTarget is the server's host:port for the egress policy, and private
+// is that same target when the operator listed it in privateServer (Q2).
+// By default the server must be public to the agents, as the egress proxy
+// requires, so check refuses a private address up front rather than every
+// round failing. Listing the server lets it be, or resolve to, a private or
+// CGNAT address (a server on the LAN or a VPN), never loopback, link-local
+// or agentd's own subnets.
+func serverTarget(serverURL, privateServer string) (target, private string, err error) {
 	u, err := url.Parse(serverURL)
 	if err != nil || u.Scheme != "https" {
-		return "", fmt.Errorf("the agents reach the server only over https, not %q", serverURL)
+		return "", "", fmt.Errorf("the agents reach the server only over https, not %q", serverURL)
 	}
 	port := u.Port()
 	if port == "" {
 		port = "443"
 	}
-	target, err := normalTarget(net.JoinHostPort(u.Hostname(), port))
-	if err != nil {
-		return "", err
+	if target, err = normalTarget(net.JoinHostPort(u.Hostname(), port)); err != nil {
+		return "", "", err
 	}
-	if ip, err := netip.ParseAddr(hostOf(target)); err == nil && !publicAddr(ip) {
-		return "", fmt.Errorf("the agents can't reach the server at %s: the egress proxy allows public addresses only", ip)
+	ip, ipErr := netip.ParseAddr(hostOf(target))
+	if privateServer == "" {
+		if ipErr == nil && !publicAddr(ip) {
+			return "", "", fmt.Errorf("the agents can't reach the server at %s: the egress proxy allows public addresses only, "+
+				"unless CLAWBRIDGE_EGRESS_PRIVATE_SERVER lists the server's host:port", ip)
+		}
+		return target, "", nil
 	}
-	return target, nil
+	listed, err := normalTarget(privateServer)
+	if err != nil || listed != target {
+		return "", "", fmt.Errorf("CLAWBRIDGE_EGRESS_PRIVATE_SERVER must be the server's own host:port, %s", target)
+	}
+	if ipErr == nil && publicAddr(ip) {
+		return "", "", errors.New("CLAWBRIDGE_EGRESS_PRIVATE_SERVER lists a public address: leave it unset")
+	}
+	if ipErr == nil && !privateServerAddr(ip) {
+		return "", "", fmt.Errorf("the server at %s can't be reached through the egress proxy: loopback, link-local and agentd's own subnets never are", ip)
+	}
+	return target, target, nil
 }
 
 // Config is agentd's own configuration, from its root-only (0600) env file.

@@ -294,7 +294,7 @@ func TestEgressPolicyValidation(t *testing.T) {
 		"overlap":      {ok, {OwnerRef: refB, Source: "172.30.0.0/16", Allow: ok.Allow}},
 		"twice":        {ok, {OwnerRef: refA, Source: "172.30.2.0/24", Allow: ok.Allow}},
 		"no allow":     {{OwnerRef: refA, Source: ok.Source}},
-		"three hosts":  {{OwnerRef: refA, Source: ok.Source, Allow: []string{"a.test:443", "b.test:443", "c.test:443"}}},
+		"four hosts":   {{OwnerRef: refA, Source: ok.Source, Allow: []string{"a.test:443", "b.test:443", "c.test:443", "d.test:443"}}},
 		"no port":      {{OwnerRef: refA, Source: ok.Source, Allow: []string{"bridge.example.test"}}},
 		"port 0":       {{OwnerRef: refA, Source: ok.Source, Allow: []string{"bridge.example.test:0"}}},
 		"wildcard":     {{OwnerRef: refA, Source: ok.Source, Allow: []string{"*.example.test:443"}}},
@@ -548,5 +548,71 @@ func TestEgressRateLimitsTheRefusalLog(t *testing.T) {
 	h.connect(t, "172.30.1.5", "evil.test:443", "")
 	if n := strings.Count(h.log.String(), `"egress refused"`); n != refusalLogs+2 || !strings.Contains(h.log.String(), `"egress refusals not logged","ref":"`+refA+`","count":20`) {
 		t.Fatalf("%d refusals logged: %s", n, h.log.String())
+	}
+}
+
+// The server listed as private (Q2) may be, or resolve to, a private or
+// CGNAT address; nothing else may, and never loopback, link-local or
+// agentd's own subnets.
+func TestEgressAllowsOnlyTheListedPrivateServer(t *testing.T) {
+	for host, addr := range map[string]string{"lan.test": "10.20.0.5", "vpn.test": "100.100.1.2", "loopy.test": "127.0.0.1",
+		"meta.test": "169.254.169.254", "pool.test": "172.30.9.1"} {
+		egressDNS[host] = []string{addr}
+	}
+	t.Cleanup(func() {
+		for _, host := range []string{"lan.test", "vpn.test", "loopy.test", "meta.test", "pool.test"} {
+			delete(egressDNS, host)
+		}
+	})
+	h := newEgressHarness(t)
+	policy := func(private string, allow ...string) EgressPolicy {
+		return EgressPolicy{PrivateServer: private, Networks: []EgressNetwork{
+			{OwnerRef: refA, Source: "172.30.1.0/24", Allow: allow},
+			{OwnerRef: refB, Source: "172.30.2.0/24", Allow: []string{"rebind.test:443", "lan.test:443"}},
+		}}
+	}
+	if err := h.e.SetPolicy(policy("lan.test:443", "lan.test:443", "api.provider-a.test:443")); err != nil {
+		t.Fatal(err)
+	}
+	server := h.connect(t, "172.30.1.5", "lan.test:443", "")
+	if server.status != 200 {
+		t.Fatalf("the listed private server: %d %s", server.status, h.log.String())
+	}
+	// Another target that resolves privately is still refused, for any owner.
+	if c := h.connect(t, "172.30.2.5", "rebind.test:443", ""); c.status != 403 {
+		t.Fatalf("rebind: %d", c.status)
+	}
+	// Unlisting it closes the tunnel and refuses it from then on.
+	if err := h.e.SetPolicy(policy("", "lan.test:443")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := server.r.ReadByte(); !errors.Is(err, io.EOF) {
+		t.Fatal("the private server's tunnel outlived its listing")
+	}
+	if c := h.connect(t, "172.30.1.5", "lan.test:443", ""); c.status != 403 {
+		t.Fatalf("unlisted: %d", c.status)
+	}
+	// A listed name that resolves to loopback, metadata or the agents' pool
+	// is refused; a CGNAT (VPN) one passes.
+	for target, want := range map[string]int{"loopy.test:443": 403, "meta.test:443": 403, "pool.test:443": 403, "vpn.test:443": 200} {
+		if err := h.e.SetPolicy(policy(target, target)); err != nil {
+			t.Fatal(err)
+		}
+		if c := h.connect(t, "172.30.1.5", target, ""); c.status != want {
+			t.Fatalf("%s: %d, not %d", target, c.status, want)
+		}
+	}
+	// IP literals: a private one passes only as the listed server, and a
+	// loopback, link-local or pool one is never listable.
+	if err := h.e.SetPolicy(policy("10.0.0.9:443", "10.0.0.9:443")); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.e.SetPolicy(policy("", "10.0.0.9:443")); err == nil {
+		t.Fatal("an unlisted private literal was accepted")
+	}
+	for _, bad := range []string{"127.0.0.1:443", "169.254.169.254:443", "172.30.0.5:443", "172.31.255.2:443", "[::1]:443", "[fe80::1]:443"} {
+		if err := h.e.SetPolicy(policy(bad, bad)); err == nil {
+			t.Fatalf("%s listed as the private server", bad)
+		}
 	}
 }

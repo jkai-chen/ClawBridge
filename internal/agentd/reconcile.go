@@ -97,7 +97,7 @@ type startFailures struct {
 
 // NewReconciler returns a Reconciler for cfg, which LoadConfig validated.
 func NewReconciler(cfg Config, server Server, log *slog.Logger) *Reconciler {
-	target, _ := serverTarget(cfg.ServerURL)
+	target, _, _ := serverTarget(cfg.ServerURL, cfg.PrivateServer)
 	return &Reconciler{cfg: cfg, server: server, docker: newDocker(cfg.Docker), log: log, now: time.Now,
 		serverTarget: target, restarts: map[string][]time.Time{}, reported: map[string]bool{}, failed: map[string]*startFailures{},
 		freed: map[netip.Prefix]time.Time{}, sleep: sleep}
@@ -435,20 +435,22 @@ func freeSubnet(subnets map[string]netip.Prefix, quarantined map[netip.Prefix]ti
 // owner's subnet may reach the server and that owner's provider.
 func (r *Reconciler) writePolicy(refs []string, subnets map[string]netip.Prefix, provider map[string]string) (changed bool, err error) {
 	slices.Sort(refs)
-	p := EgressPolicy{Networks: []EgressNetwork{}}
+	p := EgressPolicy{Networks: []EgressNetwork{}, PrivateServer: r.cfg.PrivateServer}
 	for _, ref := range refs {
 		if _, ok := subnets[ref]; !ok {
 			// Its network is missing this round: it gets no egress.
 			continue
 		}
 		allow := []string{r.serverTarget}
-		if provider[ref] != r.serverTarget {
-			allow = append(allow, provider[ref])
+		for _, target := range []string{provider[ref], companionOf(provider[ref])} {
+			if target != "" && !slices.Contains(allow, target) {
+				allow = append(allow, target)
+			}
 		}
 		p.Networks = append(p.Networks, EgressNetwork{OwnerRef: ref, Source: subnets[ref].String(), Allow: allow})
 	}
 	// The proxy would refuse what doesn't compile; so does agentd.
-	if _, err := compileEgress(p); err != nil {
+	if _, _, err := compileEgress(p); err != nil {
 		return false, errors.New("the egress policy is not valid: " + err.Error())
 	}
 	data, err := json.Marshal(p)

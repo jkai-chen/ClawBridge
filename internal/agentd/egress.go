@@ -43,8 +43,10 @@ type Egress struct {
 	// idle ends a tunnel where neither side sent anything for that long.
 	idle time.Duration
 
-	mu      sync.Mutex
-	policy  []egressNetwork
+	mu     sync.Mutex
+	policy []egressNetwork
+	// private is the policy's PrivateServer target, or "".
+	private string
 	tunnels map[*tunnel]struct{}
 	active  map[string]int
 	total   int
@@ -62,6 +64,10 @@ type refusalWindow struct {
 // EgressPolicy is the file agentd writes for the egress proxy.
 type EgressPolicy struct {
 	Networks []EgressNetwork `json:"networks"`
+	// PrivateServer is the ClawBridge server's host:port when the operator
+	// listed it as private (CLAWBRIDGE_EGRESS_PRIVATE_SERVER, Q2): that one
+	// target may be, or resolve to, a private address. Empty: none may.
+	PrivateServer string `json:"private_server,omitempty"`
 }
 
 // EgressNetwork is one owner's network: its source subnet and the host:port
@@ -79,14 +85,17 @@ type egressNetwork struct {
 }
 
 type tunnel struct {
-	ref, target      string
+	ref, target string
+	// private: the target is the private server, dialled on a private address.
+	private          bool
 	src              netip.Addr
 	client, upstream net.Conn
 }
 
 const (
-	// maxAllow: the server and one provider host (§5.3).
-	maxAllow         = 2
+	// maxAllow: the server, the provider host and one companion host from
+	// the compiled-in table (§5.3, Q3).
+	maxAllow         = 3
 	egressHeaderWait = 10 * time.Second
 	egressDialWait   = 10 * time.Second
 	// egressAddrWait is one address's share of the dial: a blackholed
@@ -143,15 +152,15 @@ func ParseEgressPolicy(data []byte) (EgressPolicy, error) {
 // no longer allows, by target or by source: a changed provider, or a subnet
 // given to another owner, takes effect at once.
 func (e *Egress) SetPolicy(p EgressPolicy) error {
-	compiled, err := compileEgress(p)
+	compiled, private, err := compileEgress(p)
 	if err != nil {
 		return err
 	}
 	e.mu.Lock()
-	e.policy = compiled
+	e.policy, e.private = compiled, private
 	var closing []*tunnel
 	for t := range e.tunnels {
-		if n := e.networkByRef(t.ref); n == nil || !n.allow[t.target] || !n.source.Contains(t.src) {
+		if n := e.networkByRef(t.ref); n == nil || !n.allow[t.target] || !n.source.Contains(t.src) || t.private && t.target != private {
 			closing = append(closing, t)
 		}
 	}
@@ -164,41 +173,54 @@ func (e *Egress) SetPolicy(p EgressPolicy) error {
 	return nil
 }
 
-func compileEgress(p EgressPolicy) ([]egressNetwork, error) {
+// compileEgress checks p and returns its networks and its private server
+// target ("" for none).
+func compileEgress(p EgressPolicy) ([]egressNetwork, string, error) {
 	var out []egressNetwork
+	private := ""
+	if p.PrivateServer != "" {
+		target, err := normalTarget(p.PrivateServer)
+		if err != nil {
+			return nil, "", fmt.Errorf("private_server: %w", err)
+		}
+		if ip, err := netip.ParseAddr(hostOf(target)); err == nil && !privateServerAddr(ip) {
+			return nil, "", fmt.Errorf("private_server: %s is not a private address the proxy can allow", ip)
+		}
+		private = target
+	}
 	for _, n := range p.Networks {
 		if !validOwnerRef(n.OwnerRef) {
-			return nil, errors.New("an egress network's owner_ref is not an owner ref")
+			return nil, "", errors.New("an egress network's owner_ref is not an owner ref")
 		}
 		source, err := netip.ParsePrefix(n.Source)
 		if err != nil || source != source.Masked() {
-			return nil, fmt.Errorf("%s: source must be a network prefix such as 172.30.1.0/24", n.OwnerRef)
+			return nil, "", fmt.Errorf("%s: source must be a network prefix such as 172.30.1.0/24", n.OwnerRef)
 		}
 		for _, o := range out {
 			if o.ref == n.OwnerRef {
-				return nil, fmt.Errorf("%s is listed twice", n.OwnerRef)
+				return nil, "", fmt.Errorf("%s is listed twice", n.OwnerRef)
 			}
 			if o.source.Overlaps(source) {
-				return nil, fmt.Errorf("the sources of %s and %s overlap", o.ref, n.OwnerRef)
+				return nil, "", fmt.Errorf("the sources of %s and %s overlap", o.ref, n.OwnerRef)
 			}
 		}
 		if len(n.Allow) == 0 || len(n.Allow) > maxAllow {
-			return nil, fmt.Errorf("%s: allow must list the server and the provider (1 or 2 host:port entries)", n.OwnerRef)
+			return nil, "", fmt.Errorf("%s: allow must list the server, the provider and its companion (1 to 3 host:port entries)", n.OwnerRef)
 		}
 		allow := map[string]bool{}
 		for _, a := range n.Allow {
 			target, err := normalTarget(a)
 			if err != nil {
-				return nil, fmt.Errorf("%s: %w", n.OwnerRef, err)
+				return nil, "", fmt.Errorf("%s: %w", n.OwnerRef, err)
 			}
-			if ip, err := netip.ParseAddr(hostOf(target)); err == nil && !publicAddr(ip) {
-				return nil, fmt.Errorf("%s: %s is not a public address", n.OwnerRef, ip)
+			if ip, err := netip.ParseAddr(hostOf(target)); err == nil && !publicAddr(ip) && target != private {
+				return nil, "", fmt.Errorf("%s: %s is not a public address", n.OwnerRef, ip)
 			}
 			allow[target] = true
 		}
 		out = append(out, egressNetwork{ref: n.OwnerRef, source: source, allow: allow})
 	}
-	return out, nil
+	return out, private, nil
 }
 
 // normalTarget checks a host:port and returns it with the host in lower
@@ -260,6 +282,22 @@ func publicAddr(ip netip.Addr) bool {
 		}
 	}
 	return true
+}
+
+// cgnat is shared address space: a VPN such as Tailscale puts a LAN server
+// there.
+var cgnat = netip.MustParsePrefix("100.64.0.0/10")
+
+// privateServerAddr reports whether ip may be the operator's listed private
+// server: a private (RFC 1918, ULA) or CGNAT unicast address. Never
+// loopback, link-local (cloud metadata), or agentd's own subnets, which are
+// the agents' and the proxy's networks.
+func privateServerAddr(ip netip.Addr) bool {
+	ip = ip.Unmap()
+	if !ip.IsGlobalUnicast() || !ip.IsPrivate() && !cgnat.Contains(ip) {
+		return false
+	}
+	return !subnetPool.Contains(ip) && !egressSubnet.Contains(ip)
 }
 
 func (e *Egress) networkByRef(ref string) *egressNetwork {
@@ -403,10 +441,10 @@ func (e *Egress) open(conn net.Conn) (*tunnel, *egressRefusal) {
 	}
 	e.mu.Lock()
 	n := e.networkFor(src.Addr())
-	var ref string
+	var ref, private string
 	var allow map[string]bool
 	if n != nil {
-		ref, allow = n.ref, n.allow
+		ref, allow, private = n.ref, n.allow, e.private
 	}
 	e.mu.Unlock()
 	if n == nil {
@@ -439,7 +477,8 @@ func (e *Egress) open(conn net.Conn) (*tunnel, *egressRefusal) {
 	port, _ := strconv.Atoi(portText)
 	ctx, cancel := context.WithTimeout(context.Background(), egressDialWait)
 	defer cancel()
-	addrs, err := e.addresses(ctx, host)
+	isPrivate := target == private
+	addrs, err := e.addresses(ctx, host, isPrivate)
 	if err != nil {
 		return refuse(ref, target, http.StatusForbidden, err.Error())
 	}
@@ -455,11 +494,11 @@ func (e *Egress) open(conn net.Conn) (*tunnel, *egressRefusal) {
 	if upstream == nil {
 		return refuse(ref, target, http.StatusBadGateway, "unreachable")
 	}
-	t := &tunnel{ref: ref, target: target, src: src.Addr().Unmap(), client: conn, upstream: upstream}
+	t := &tunnel{ref: ref, target: target, private: isPrivate, src: src.Addr().Unmap(), client: conn, upstream: upstream}
 	e.mu.Lock()
 	// The policy may have changed while dialling.
 	n = e.networkByRef(ref)
-	if n == nil || !n.allow[target] || !n.source.Contains(src.Addr().Unmap()) {
+	if n == nil || !n.allow[target] || !n.source.Contains(src.Addr().Unmap()) || isPrivate && e.private != target {
 		e.mu.Unlock()
 		upstream.Close()
 		return refuse(ref, target, http.StatusForbidden, "not on this owner's allow-list")
@@ -487,11 +526,12 @@ func (e *Egress) open(conn net.Conn) (*tunnel, *egressRefusal) {
 	return t, nil
 }
 
-// addresses resolves host and refuses the lot if any address is not public:
-// a name that answers with a private address is refused, not filtered.
-func (e *Egress) addresses(ctx context.Context, host string) ([]netip.Addr, error) {
+// addresses resolves host and refuses the lot if any address is not public,
+// or, for the listed private server, private: a name that answers with
+// another address is refused, not filtered.
+func (e *Egress) addresses(ctx context.Context, host string, private bool) ([]netip.Addr, error) {
 	if ip, err := netip.ParseAddr(host); err == nil {
-		// Listed itself, and public (checked in compileEgress).
+		// Listed itself, and checked in compileEgress.
 		return []netip.Addr{ip}, nil
 	}
 	addrs, err := e.resolve(ctx, host)
@@ -499,7 +539,7 @@ func (e *Egress) addresses(ctx context.Context, host string) ([]netip.Addr, erro
 		return nil, errors.New("the name does not resolve")
 	}
 	for _, a := range addrs {
-		if !publicAddr(a) {
+		if !publicAddr(a) && !(private && privateServerAddr(a)) {
 			return nil, errors.New("the name resolves to an address that is not public")
 		}
 	}

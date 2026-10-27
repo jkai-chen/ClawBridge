@@ -796,3 +796,56 @@ func TestReconcileKeepsTheEgressWhenTheNewImageIsMissing(t *testing.T) {
 		t.Fatalf("%s %v", body, s.daemon.state())
 	}
 }
+
+// The policy lists a provider's compiled-in companion beside it (Q3), and
+// the private server when the operator listed one (Q2).
+func TestReconcileWritesCompanionsAndThePrivateServer(t *testing.T) {
+	s := newStack(t)
+	server := &fakeServer{refs: []string{refA, refB, refC}, max: 4, providers: map[string]string{
+		refA: "bedrock-runtime.eu-west-1.amazonaws.com:443",
+		refB: "europe-west4-aiplatform.googleapis.com:443",
+		refC: "acme.openai.azure.com:443",
+	}}
+	r := newTestReconciler(s, server)
+	r.cfg.PrivateServer = "bridge.example.test:443"
+	if err := r.Step(context.Background()); err != nil {
+		t.Fatal(err, s.log.String())
+	}
+	p := s.readPolicy(t)
+	want := map[string][]string{
+		refA: {"bridge.example.test:443", "bedrock-runtime.eu-west-1.amazonaws.com:443", "sts.eu-west-1.amazonaws.com:443"},
+		refB: {"bridge.example.test:443", "europe-west4-aiplatform.googleapis.com:443", "oauth2.googleapis.com:443"},
+		refC: {"bridge.example.test:443", "acme.openai.azure.com:443", "login.microsoftonline.com:443"},
+	}
+	if len(p.Networks) != 3 || p.PrivateServer != "bridge.example.test:443" {
+		t.Fatalf("%+v", p)
+	}
+	for _, n := range p.Networks {
+		if !slices.Equal(n.Allow, want[n.OwnerRef]) {
+			t.Fatalf("%s: %v", n.OwnerRef, n.Allow)
+		}
+	}
+}
+
+func TestCompanionOf(t *testing.T) {
+	for provider, want := range map[string]string{
+		"aiplatform.googleapis.com:443":                         "oauth2.googleapis.com:443",
+		"us-central1-aiplatform.googleapis.com:443":             "oauth2.googleapis.com:443",
+		"bedrock-runtime.us-east-1.amazonaws.com:443":           "sts.us-east-1.amazonaws.com:443",
+		"bedrock-runtime-fips.us-gov-west-1.amazonaws.com:443":  "sts.us-gov-west-1.amazonaws.com:443",
+		"acme.cognitiveservices.azure.com:443":                  "login.microsoftonline.com:443",
+		"api.anthropic.com:443":                                 "",
+		"notaiplatform.googleapis.com:443":                      "",
+		"x.acme.openai.azure.com:443":                           "",
+		"generativelanguage.googleapis.com:443":                 "",
+		"aiplatform.googleapis.com.evil.test:443":               "",
+		"aiplatform.googleapis.com:8443":                        "",
+		"bedrock-runtime.evil.amazonaws.com:443":                "",
+		"bedrock-runtime.us-east-1.amazonaws.com.evil.test:443": "",
+		"acme.openai.azure.com.evil.test:443":                   "",
+	} {
+		if got := companionOf(provider); got != want {
+			t.Fatalf("%s: %q, not %q", provider, got, want)
+		}
+	}
+}

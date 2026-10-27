@@ -101,3 +101,52 @@ func TestCheckSocket(t *testing.T) {
 		t.Fatal("root accepted")
 	}
 }
+
+// CLAWBRIDGE_EGRESS_PRIVATE_SERVER lets a private server through, when it
+// names the server's own host:port (Q2).
+func TestLoadConfigPrivateServer(t *testing.T) {
+	base := map[string]string{
+		"CLAWBRIDGE_AGENT_IMAGE":       testImage,
+		"CLAWBRIDGE_EGRESS_IMAGE":      testEgressImage,
+		"CLAWBRIDGE_EGRESS_POLICY_DIR": "/var/lib/clawbridge-agentd/egress",
+		"CLAWBRIDGE_LAUNCHER_TOKEN":    "cbl_" + strings.Repeat("x", 24),
+		"CLAWBRIDGE_AGENTD_DOCKER":     "/run/clawbridge-agentd/docker.sock",
+	}
+	load := func(server, private string) (Config, error) {
+		env := map[string]string{"CLAWBRIDGE_SERVER_URL": server, "CLAWBRIDGE_EGRESS_PRIVATE_SERVER": private}
+		return LoadConfig(func(k string) string {
+			if v, ok := env[k]; ok {
+				return v
+			}
+			return base[k]
+		})
+	}
+	for _, c := range []struct{ server, private, want string }{
+		{"https://10.0.0.5", "10.0.0.5:443", "10.0.0.5:443"},
+		{"https://bridge.lan.test:8443", "Bridge.LAN.test:8443", "bridge.lan.test:8443"},
+		{"https://100.100.1.2", "100.100.1.2:443", "100.100.1.2:443"},
+		{"https://bridge.example.test", "", ""},
+	} {
+		cfg, err := load(c.server, c.private)
+		if err != nil || cfg.PrivateServer != c.want {
+			t.Fatalf("%s %s: %q %v", c.server, c.private, cfg.PrivateServer, err)
+		}
+	}
+	if _, err := load("https://203.0.113.5", "203.0.113.5:443"); err == nil || !strings.Contains(err.Error(), "leave it unset") {
+		t.Fatalf("a listed public server: %v", err)
+	}
+	for _, c := range [][2]string{
+		{"https://10.0.0.5", ""},
+		{"https://10.0.0.5", "10.0.0.6:443"},
+		{"https://10.0.0.5", "10.0.0.5:8443"},
+		{"https://203.0.113.5", "203.0.113.5:443"},
+		{"https://127.0.0.1", "127.0.0.1:443"},
+		{"https://169.254.169.254", "169.254.169.254:443"},
+		{"https://172.30.0.5", "172.30.0.5:443"},
+		{"https://bridge.lan.test", "other.lan.test:443"},
+	} {
+		if _, err := load(c[0], c[1]); err == nil {
+			t.Fatalf("%s with %q accepted", c[0], c[1])
+		}
+	}
+}

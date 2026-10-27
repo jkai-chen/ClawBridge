@@ -707,10 +707,23 @@ func watchStatus(ctx context.Context, tx *transaction, pid string) (any, error) 
 		return nil, err
 	}
 	out["markers_oldest_pending"] = nullable(str(oldest[0], "at"))
-	lease, err := query(ctx, tx, `SELECT expires_at FROM watch_lease WHERE project_id=?`, pid)
+	lease, err := query(ctx, tx, `SELECT expires_at,budget_limit FROM watch_lease WHERE project_id=?`, pid)
 	if err != nil {
 		return nil, err
 	}
 	out["watcher_live"] = len(lease) == 1 && str(lease[0], "expires_at") > nowRaw
+	// The hourly budget: the project's own when its owner set one, else
+	// what the last watcher asked for (the server's or a client's budget).
+	override, set, err := watchBudgetOverride(ctx, tx, pid)
+	if err != nil {
+		return nil, err
+	}
+	out["watch_budget"], out["budget_limit"], out["budget_source"] = nil, nil, nil
+	switch {
+	case set:
+		out["watch_budget"], out["budget_limit"], out["budget_source"] = override, override, "project"
+	case len(lease) == 1:
+		out["budget_limit"], out["budget_source"] = asInt(lease[0]["budget_limit"]), "watcher"
+	}
 	return out, nil
 }

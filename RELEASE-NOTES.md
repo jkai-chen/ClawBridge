@@ -27,6 +27,10 @@
 - **The TUI has the same model setup, on a new Model screen (`9`).** It shows a project owner their key, their agent
   and the last test, and `s` walks through the same steps in the same order as the CLI. The key field is never drawn,
   and the key is wiped from memory once sent, on Esc, and when you leave the screen or quit.
+- **Setup lists the provider's models, with their list prices.** In the CLI and the TUI, the model step shows up to ten
+  of the provider's models from the agent's own catalogue, cheapest first, with their price per million tokens and
+  context window; a number picks one, and any other model ID can still be typed. The list is generated from the pinned
+  agent build, and CI fails if it is out of date.
 
 # ClawBridge v0.3.5 (unreleased)
 

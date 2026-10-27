@@ -11,7 +11,9 @@
 		"start": "node src/main.ts",
 		"check": "tsc --noEmit -p .",
 		"check:lock": "node scripts/check-lock.ts",
+		"check:models": "node scripts/write-models.ts --check",
 		"check:schema": "node scripts/write-schema.ts --check",
+		"models": "node scripts/write-models.ts",
 		"schema": "node scripts/write-schema.ts",
 		"test": "node --test --test-concurrency=1 --test-timeout=60000 'test/*.test.ts'"
 	},

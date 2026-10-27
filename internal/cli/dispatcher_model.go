@@ -112,10 +112,23 @@ func runModelSetup(ctx context.Context, executor interface {
 		return needFlag("--model")
 	}
 	if model == "" {
-		var err error
-		if model, err = ask("Model ID, as " + provider.Name + " names it (no default): "); err != nil {
+		// The agent's own catalogue, cheapest first; any ID can be typed.
+		shown, more := dispatchermodel.ModelHints(provider.ID)
+		prompt := "Model ID, as " + provider.Name + " names it (no default): "
+		if len(shown) > 0 {
+			fmt.Fprintln(stdout, "Models:")
+			for i, m := range shown {
+				// The catalogue's text, escaped like any text from outside.
+				fmt.Fprintf(stdout, "  %d. %s\n", i+1, wizardSafe(dispatchermodel.HintLine(m)))
+			}
+			fmt.Fprintln(stdout, "  "+dispatchermodel.HintsNote(more))
+			prompt = "Model (number or ID, no default): "
+		}
+		answer, err := ask(prompt)
+		if err != nil {
 			return err
 		}
+		model = dispatchermodel.ModelAnswer(answer, shown)
 		if model == "" {
 			return errors.New("setup stopped: no model. Nothing was set up")
 		}

@@ -98,6 +98,18 @@ func TestModelSetupInteractive(t *testing.T) {
 	}
 }
 
+// R152-L1: the catalogue's text is escaped before it reaches the terminal.
+func TestModelSetupHintsEscaped(t *testing.T) {
+	modelTerminal(t, "anthropic\n", modelTestKey, true)
+	restore := dispatchermodel.SetModelHintsForTest(map[string][]dispatchermodel.ModelHint{"anthropic": {{ID: "m1", Name: "Evil\x1b[2J", ContextWindow: 1000, InputPerMTok: 1, OutputPerMTok: 1}}})
+	defer restore()
+	var out bytes.Buffer
+	_ = runModelSetup(context.Background(), &fakeModelServer{}, Config{}, map[string]any{}, &out)
+	if strings.Contains(out.String(), "\x1b[2J") || !strings.Contains(out.String(), "1. Evil") {
+		t.Fatalf("%q", out.String())
+	}
+}
+
 // Scripted: --key-stdin takes every other answer from flags; a missing one
 // stops before the server is asked.
 func TestModelSetupScripted(t *testing.T) {

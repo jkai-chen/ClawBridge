@@ -282,6 +282,8 @@ func (m Model) modelNext() (Model, tea.Cmd) {
 		}
 		w.baseURL, w.step = answer, modelStepModel
 	case modelStepModel:
+		shown, _ := dispatchermodel.ModelHints(w.provider.ID)
+		answer = dispatchermodel.ModelAnswer(answer, shown)
 		if answer == "" {
 			m.actionErr = "type the model ID, as " + w.provider.Name + " names it; there is no default"
 			return m, nil
@@ -496,7 +498,17 @@ func renderModelWizard(b *strings.Builder, w modelWizard) {
 	case modelStepBaseURL:
 		field("1. Base URL (https://…/v1)", w.input)
 	case modelStepModel:
-		field("2. Model ID, as "+w.provider.Name+" names it (no default)", w.input)
+		shown, more := dispatchermodel.ModelHints(w.provider.ID)
+		if len(shown) == 0 {
+			field("2. Model ID, as "+w.provider.Name+" names it (no default)", w.input)
+			break
+		}
+		b.WriteString("2. Model: a number from the agent's catalogue, or any model ID (no default)\n")
+		for i, m := range shown {
+			b.WriteString(fmt.Sprintf("  %d. %s\n", i+1, terminalText(dispatchermodel.HintLine(m))))
+		}
+		b.WriteString(mutedStyle.Render("  "+dispatchermodel.HintsNote(more)) + "\n")
+		field("Model", w.input)
 	case modelStepKey:
 		// Never the key, nor its length.
 		state := "nothing typed yet"

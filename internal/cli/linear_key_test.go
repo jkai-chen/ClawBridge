@@ -207,6 +207,9 @@ func TestLinearKeyRefusesAgents(t *testing.T) {
 	if asked {
 		t.Fatal("the key was asked for under an agent")
 	}
+	if _, err = linearKey(context.Background(), Config{}, nil, t.TempDir(), "remove", "profile-1", &bytes.Buffer{}); err == nil || !strings.Contains(err.Error(), "CLAUDECODE") {
+		t.Fatal("an agent removed the key:", err)
+	}
 }
 
 // L2: a file store is said and confirmed first; anything but yes saves

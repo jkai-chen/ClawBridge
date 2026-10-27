@@ -12,8 +12,9 @@ import (
 
 // The places a key may be kept.
 const (
-	// StoreKeyring is the OS store. On macOS its item trusts no
-	// application, so every read asks the person (K4).
+	// StoreKeyring is the OS store, kept as the device key is (owner's
+	// decision): no prompt, and any program running as the person can
+	// read it there.
 	StoreKeyring = "keyring"
 	// StoreFile is a 0600 file, chosen explicitly with --key-store file.
 	StoreFile = "file"

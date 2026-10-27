@@ -19,6 +19,11 @@
   renews its project tokens. `clawbridge operator launcher-token create --out PATH` and `revoke ID` manage the
   launcher's token. Nothing turns model mode on yet: without a model key that passed its test, `dispatcher enable
   --engine model` is refused.
+- **Model cases (schema 24).** In model mode each pending claim becomes a case the owner's dispatcher agent can take:
+  it reads typed facts through four read tools and decides within the actions the rules' guardrails permit, or
+  abstains. The dispatcher carries a decision out after the same checks a rules decision gets. Any case that ends
+  without a decision (abstained, expired, no agent, or the model chose to wait) falls back to the rules, within about a
+  minute when the in-process watcher runs. People appear to the model only as random per-project refs, never emails.
 
 # ClawBridge v0.3.4
 

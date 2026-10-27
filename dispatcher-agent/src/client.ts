@@ -27,6 +27,29 @@ export function parseServerUrl(raw: string | undefined): URL {
 	return url;
 }
 
+/** The largest answer the agent reads; the server's are a few KiB. */
+export const MAX_RESPONSE_BYTES = 1 << 20;
+const TOO_LARGE = Symbol("too large");
+
+/** The body as JSON, read no further than MAX_RESPONSE_BYTES. */
+async function cappedJson(res: Response): Promise<unknown> {
+	if (!res.body) return undefined;
+	const reader = res.body.getReader();
+	const chunks: Uint8Array[] = [];
+	let size = 0;
+	for (;;) {
+		const { done, value } = await reader.read();
+		if (done) break;
+		size += value.byteLength;
+		if (size > MAX_RESPONSE_BYTES) {
+			await reader.cancel().catch(() => {});
+			return TOO_LARGE;
+		}
+		chunks.push(value);
+	}
+	return JSON.parse(Buffer.concat(chunks).toString("utf8"));
+}
+
 export class ClawBridgeClient {
 	private readonly base: URL;
 	private readonly fetchImpl: typeof fetch;
@@ -66,10 +89,11 @@ export class ClawBridgeClient {
 		}
 		let parsed: unknown;
 		try {
-			parsed = await res.json();
+			parsed = await cappedJson(res);
 		} catch {
 			parsed = undefined;
 		}
+		if (parsed === TOO_LARGE) return { ok: false, status: res.status, code: "response_too_large" };
 		if (res.ok) {
 			if (!Value.Check(responseSchema, parsed)) return { ok: false, status: res.status, code: "bad_response" };
 			return { ok: true, status: res.status, body: parsed as Static<S> };

@@ -253,7 +253,8 @@
 								"format": "date-time"
 							}
 						}
-					}
+					},
+					"maxItems": 100
 				},
 				"limits": {
 					"type": "object",
@@ -326,7 +327,8 @@
 								"format": "date-time"
 							}
 						}
-					}
+					},
+					"maxItems": 100
 				}
 			}
 		},

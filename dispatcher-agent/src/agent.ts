@@ -110,7 +110,8 @@ export async function runAgent(o: AgentOptions): Promise<{ stopped: string }> {
 		while (!signal.aborted) {
 			// Renew at half the remaining life of the soonest token, but at least every renewMaxMs, so a project
 			// enabled meanwhile is picked up; with nothing to serve yet, every idleRenewMs.
-			const soonest = Math.min(...expiries, Date.now() + 3_600_000);
+			// A token already expired can't be renewed sooner by asking again: it doesn't count.
+			const soonest = Math.min(...expiries.filter((t) => t > Date.now()), Date.now() + 3_600_000);
 			const ceiling = loops.size === 0 ? (o.idleRenewMs ?? 60_000) : (o.renewMaxMs ?? 300_000);
 			const wait =
 				failures > 0
@@ -133,7 +134,8 @@ export async function runAgent(o: AgentOptions): Promise<{ stopped: string }> {
 		}
 	};
 
-	const projectLoop = async (projectId: string, signal: AbortSignal) => {
+	// dropped is aborted only when renew stops listing the project; signal also on shutdown.
+	const projectLoop = async (projectId: string, signal: AbortSignal, dropped: AbortSignal) => {
 		const token = () => tokens.get(projectId) ?? "";
 		const log = (event: string, fields: Parameters<Logger["log"]>[1] = {}) =>
 			o.logger.log(event, { project_id: projectId, ...fields });
@@ -183,6 +185,7 @@ export async function runAgent(o: AgentOptions): Promise<{ stopped: string }> {
 					logger: o.logger,
 					projectId,
 					marginMs: o.marginMs,
+					signal: dropped,
 				}).catch(() => {
 					// The server falls back to rules at the deadline; the loop goes on with the next case.
 					log("case_failed", { case_id: c.case_id });
@@ -200,7 +203,9 @@ export async function runAgent(o: AgentOptions): Promise<{ stopped: string }> {
 	// after start gets a loop and a disabled one loses it. With none yet (an owner who has only just passed the
 	// setup test), the agent stays up and keeps renewing.
 	const loops = new Map<string, { stop: AbortController; done: Promise<void> }>();
-	// Loops that ended on their own (a provider mismatch): not restarted for this config.
+	// Dropped loops still winding down: a project listed again starts only once its old loop is done.
+	const stopping = new Map<string, Promise<void>>();
+	// Loops that ended on their own (a provider mismatch): not restarted for this config while listed.
 	const finished = new Set<string>();
 	function sync(list: ProjectTokens) {
 		const listed = new Set(list.map((p) => p.project_id));
@@ -209,9 +214,14 @@ export async function runAgent(o: AgentOptions): Promise<{ stopped: string }> {
 				loop.stop.abort();
 				loops.delete(projectId);
 				tokens.delete(projectId);
+				stopping.set(projectId, loop.done);
+				void loop.done.then(() => {
+					if (stopping.get(projectId) === loop.done) stopping.delete(projectId);
+				});
 				o.logger.log("project_dropped", { project_id: projectId });
 			}
 		}
+		for (const projectId of finished) if (!listed.has(projectId)) finished.delete(projectId);
 		for (const p of list) {
 			tokens.set(p.project_id, p.token);
 			if (!loops.has(p.project_id) && !finished.has(p.project_id)) startLoop(p.project_id);
@@ -221,12 +231,19 @@ export async function runAgent(o: AgentOptions): Promise<{ stopped: string }> {
 	function startLoop(projectId: string) {
 		const own = new AbortController();
 		const loopSignal = AbortSignal.any([signal, own.signal]);
-		const done = projectLoop(projectId, loopSignal)
-			.catch(() => o.logger.log("project_loop_failed", { project_id: projectId }))
+		let crashed = false;
+		const done = (stopping.get(projectId) ?? Promise.resolve())
+			.then(() => (loopSignal.aborted ? undefined : projectLoop(projectId, loopSignal, own.signal)))
+			.catch(() => {
+				crashed = true;
+				o.logger.log("project_loop_failed", { project_id: projectId });
+			})
 			.then(() => {
 				if (loopSignal.aborted) return;
-				finished.add(projectId);
 				loops.delete(projectId);
+				// A loop that crashed is started again by the next renewal.
+				if (crashed) return;
+				finished.add(projectId);
 				// Every project it served ended without a shutdown: nothing left to serve (e.g. all mismatched).
 				if (loops.size === 0) stopAll("no_projects");
 			});

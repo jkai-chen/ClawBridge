@@ -21,6 +21,8 @@ export interface RunCaseDeps {
 	/** Stop the model this long before the deadline, leaving time for the outcome call (d4 §2: about 5 s). */
 	marginMs?: number;
 	now?: () => number;
+	/** Aborted when the project is dropped: the run stops, and no outcome is sent with a token that is gone. */
+	signal?: AbortSignal;
 }
 
 export interface CaseResult {
@@ -93,7 +95,9 @@ export async function runCase(c: CaseT, optIn: readonly OptInTool[], deps: RunCa
 		parameters: t.parameters,
 		execute: async (_id, params) => {
 			const args = params as Record<string, unknown>;
-			if (finished) return { content: [{ type: "text", text: '{"error":"run_ended"}' }], details: undefined, isError: true };
+			if (finished || deps.signal?.aborted) {
+				return { content: [{ type: "text", text: '{"error":"run_ended"}' }], details: undefined, isError: true };
+			}
 			if (t.outcome) {
 				const r = await sendOutcome(t.name, args);
 				if (r.ok) {
@@ -173,6 +177,9 @@ export async function runCase(c: CaseT, optIn: readonly OptInTool[], deps: RunCa
 		graceTimer ??= setTimeout(release, 250);
 	}
 	const timer = setTimeout(() => stopRun("deadline"), Math.max(0, stopModelAt - now()));
+	const onDropped = () => stopRun("project_dropped");
+	if (deps.signal?.aborted) onDropped();
+	else deps.signal?.addEventListener("abort", onDropped, { once: true });
 	const prompting = agent.prompt(renderCase(c)).catch(() => {
 		stopCode ??= "agent_error";
 	});
@@ -180,6 +187,7 @@ export async function runCase(c: CaseT, optIn: readonly OptInTool[], deps: RunCa
 	finished = true;
 	clearTimeout(timer);
 	clearTimeout(graceTimer);
+	deps.signal?.removeEventListener("abort", onDropped);
 
 	let failure: ProviderFailure | undefined;
 	if (!done && lastAssistant?.stopReason === "error" && !stopCode) {
@@ -189,6 +197,11 @@ export async function runCase(c: CaseT, optIn: readonly OptInTool[], deps: RunCa
 	}
 	const providerAuth = failure?.error_type === "auth" || failure?.error_type === "forbidden";
 	if (done) return { ...done, providerAuth };
+	if (deps.signal?.aborted) {
+		// The project's token is gone; the server falls back to rules at the deadline.
+		log("dropped", { code: "project_dropped", ...usageFields(usage()) });
+		return { outcome: "none", code: "project_dropped", providerAuth };
+	}
 
 	const code = stopCode ?? "no_outcome";
 	const r = await sendOutcome("abstain", { reason_code: "uncertain" });

@@ -171,7 +171,7 @@ Accounts on a hosted workspace (each command takes `--help`):
 - **`owner`:** `owner show`; `owner transfer --to EMAIL`; then the recipient
   runs `owner accept` or `owner decline`, or the owner runs `owner cancel`.
 
-The TUI's Account screen (`8`, or `clawbridge tui --screen account`) does the
+The TUI's Account screen (`7`, or `clawbridge tui --screen account`) does the
 same on a hosted workspace:
 
 - your devices, this one marked: `a` adds a device (a one-time code, after you
@@ -179,7 +179,7 @@ same on a hosted workspace:
 - `i` issues an invite (`EMAIL PROJECT=ROLE ...`), and `x` revokes a pending one;
 - for the main owner, every member with their devices: `x` on a member removes
   them, and `t` offers ownership. The recipient sees a banner and answers with `y`
-  or `n`; the owner cancels with `c`.
+  or `d` (decline); the owner cancels with `c`.
 
 A code shows once, in a box that holds the screen until Enter or Esc, and is
 never drawn again. Every revoke, removal and ownership step waits for a typed
@@ -400,12 +400,23 @@ clawbridge tui
 clawbridge tui --screen doctor
 ```
 
-Run in an interactive terminal. Use 1–9 or Tab to switch screens, `?` for help,
-`r` to reload, and `q` or Ctrl-C to quit. Arrows/j/k select rows. PageUp/PageDown
-scroll details, including complete selected immutable IDs. Below 24 columns or
-9 rows, resize the terminal; quit and Escape remain available.
+Run in an interactive terminal.
 
-Inbox `n` composes, `p` replies, `m`/Enter marks read, and Escape cancels drafts.
+- **Screens:** Overview, Projects, Sessions, Inbox, then Linear, Dispatcher,
+  Account (hosted workspaces only) and Doctor. The digits follow that order (1–8;
+  Doctor is 7 in local mode). Tab and Shift-Tab step through them.
+- **Keys:** the footer shows the screen's own keys, and `?` opens help with every
+  key for the screen and everywhere (Esc or `?` closes it). Arrows/j/k select
+  rows, PageUp/PageDown scroll, `r` reloads, and `q` or Ctrl-C quits. `q` asks first
+  while a board link or a model test is under way.
+- **Enter** opens the selected row and never changes anything by itself. **Esc**
+  goes back one level: help, then an editor, then an opened row, then a wizard's
+  previous step.
+- Below 24 columns or 9 rows, resize the terminal; quit and Escape remain
+  available.
+
+Inbox: Enter opens a message with what it answers and the rest of its thread,
+`m` marks it read, `n` composes, `p` replies, and Escape cancels drafts.
 These actor operations need an explicit current session/instance. Opening the UI
 does not register/resume an actor. Cloud is informational; provisioning and new
 project administration use explicit operator workflows.

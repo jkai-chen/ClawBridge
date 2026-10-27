@@ -334,6 +334,12 @@ type Model struct {
 	scrollManual bool
 	request      uint64
 
+	// help is the ? overlay; quitAsk a q waiting for its y; inboxOpen
+	// the selected message opened.
+	help      bool
+	quitAsk   bool
+	inboxOpen bool
+
 	inputMode   inputMode
 	draft       string
 	replyTarget string
@@ -521,10 +527,11 @@ func (m Model) Show(screen Screen) (Model, tea.Cmd) {
 		m.linearCancel = nil
 	}
 	m.loading = false
-	if _, ok := screenOrder[screen]; !ok {
+	if !knownScreen(screen) {
 		m.actionErr = "unknown screen"
 		return m, nil
 	}
+	m.help, m.quitAsk, m.inboxOpen = false, false, false
 	// Leaving the Model screen ends a setup and wipes its key.
 	m = m.closeModelSetup()
 	m.screen = screen
@@ -1171,104 +1178,29 @@ func (m Model) updateKey(msg tea.KeyMsg) (Model, tea.Cmd) {
 		// A code just issued holds the screen until it is dismissed.
 		return m.accountKey(key)
 	}
-	if key == "esc" {
-		if m.screen == ScreenLinear {
-			return m.linearKey(key)
+	if m.quitAsk {
+		if key == "y" {
+			return m.quit()
 		}
-		return m.CancelInput(), nil
-	}
-	if m.inputMode != inputNone || m.confirming {
-		return m.updateEditor(key, msg.Runes)
-	}
-	if m.screen == ScreenLinear && (key == "enter" || key == " " || key == "c" || key == "w" || key == "l" || key == "u" || key == "x") {
-		return m.linearKey(key)
-	}
-	switch key {
-	case "q":
-		if m.linearCancel != nil {
-			m.linearCancel()
-		}
-		return m, tea.Quit
-	case "1":
-		return m.Show(ScreenOverview)
-	case "2":
-		return m.Show(ScreenProjects)
-	case "3":
-		return m.Show(ScreenSessions)
-	case "4":
-		return m.Show(ScreenInbox)
-	case "5":
-		return m.Show(ScreenCloud)
-	case "6":
-		return m.Show(ScreenDoctor)
-	case "7":
-		return m.Show(ScreenLinear)
-	case "8":
-		return m.Show(ScreenAccount)
-	case "9":
-		return m.Show(ScreenModel)
-	case "tab", "right":
-		return m.Show(screenAt(indexOf(m.screen) + 1))
-	case "shift+tab", "left":
-		return m.Show(screenAt(indexOf(m.screen) - 1))
-	case "v":
-		return m.CycleFilter(), nil
-	case "]":
-		if m.screen == ScreenLinear {
-			return m.linearPage(true)
-		}
-		return m.NextPage()
-	case "[":
-		if m.screen == ScreenLinear {
-			return m.linearPage(false)
-		}
-		return m.PreviousPage()
-	case "pgdown":
-		return m.Scroll(max(1, m.height/2)), nil
-	case "pgup":
-		return m.Scroll(-max(1, m.height/2)), nil
-	case "r":
-		return m.Reload()
-	case "up", "k":
-		return m.Move(-1), nil
-	case "down", "j":
-		return m.Move(1), nil
-	case "?":
-		m.actionErr = helpText
+		m.quitAsk, m.actionErr = false, ""
 		return m, nil
 	}
-	if m.screen == ScreenInbox {
-		if key == "enter" {
-			selected, ok := m.SelectedMessage()
-			if ok {
-				return m.MarkRead([]string{selected.ID})
-			}
+	if m.help {
+		// The overlay takes the keys it is closed with; anything else
+		// is ignored, so a key read off it acts only once it's closed.
+		if key == "esc" || key == "?" {
+			m.help = false
 		}
-		if key == "r" {
-			key = ""
-		}
-		if key == "reply" || key == "p" {
-			return m.BeginReply(), nil
-		}
-		if key == "n" {
-			return m.BeginSend(), nil
-		}
-		if key == "m" {
-			if selected, ok := m.SelectedMessage(); ok {
-				return m.MarkRead([]string{selected.ID})
-			}
-		}
+		return m, nil
 	}
-	if m.screen == ScreenAccount {
-		return m.accountKey(key)
+	if m.inputMode != inputNone || m.confirming {
+		if key == "esc" {
+			return m.CancelInput(), nil
+		}
+		return m.updateEditor(key, msg.Runes)
 	}
-	if m.screen == ScreenModel && key == "s" && m.modelSetup.wizard.step == modelStepNone {
-		return m.modelStart(), nil
-	}
-	if m.screen == ScreenCloud && key == "a" && m.plan != nil {
-		m.confirming = true
-		m.confirm = ""
-		m.actionErr = ""
+	if b, ok := m.binding(key); ok {
+		return b.Action(m, key)
 	}
 	return m, nil
 }
@@ -1352,21 +1284,16 @@ func containsControl(runes []rune) bool {
 	return false
 }
 
-var screenOrder = map[Screen]int{
-	ScreenOverview: 0, ScreenProjects: 1, ScreenSessions: 2,
-	ScreenInbox: 3, ScreenCloud: 4, ScreenDoctor: 5, ScreenLinear: 6, ScreenAccount: 7, ScreenModel: 8,
-}
-var orderedScreens = []Screen{ScreenOverview, ScreenProjects, ScreenSessions, ScreenInbox, ScreenCloud, ScreenDoctor, ScreenLinear, ScreenAccount, ScreenModel}
+// orderedScreens is every screen; the tabs a profile shows are tabs().
+var orderedScreens = []Screen{ScreenOverview, ScreenProjects, ScreenSessions, ScreenInbox, ScreenLinear, ScreenModel, ScreenAccount, ScreenDoctor, ScreenCloud}
 
-func indexOf(s Screen) int {
-	if i, ok := screenOrder[s]; ok {
-		return i
+func knownScreen(s Screen) bool {
+	for _, x := range orderedScreens {
+		if x == s {
+			return true
+		}
 	}
-	return 0
-}
-func screenAt(i int) Screen {
-	n := len(orderedScreens)
-	return orderedScreens[(i%n+n)%n]
+	return false
 }
 
 func mapData(v any) map[string]any {
@@ -1554,5 +1481,3 @@ func projectError(err error) string {
 	}
 	return message
 }
-
-const helpText = "1-9/tab screens · ↑↓ select · r refresh · enter mark read · p reply · n send · a confirm setup · esc cancel · q quit"

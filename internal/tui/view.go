@@ -31,61 +31,114 @@ func RenderPlain(m Model) string {
 	return Render(m)
 }
 
-func modeLabel(m Model) string {
+// badge is the mode, and offline when the view is a read-only mirror.
+func badge(m Model) string {
 	label := terminalText(string(m.cfg.Mode))
 	if m.cfg.Mode == ModeCloud && terminalText(m.source) == "offline-mirror" {
-		label += " / read-only mirror"
-	}
-	if m.cfg.Mode == ModeCloud && m.identity.Verified {
-		label += " / verified identity"
+		return warnStyle.Render(label + " · offline, read-only")
 	}
 	return mutedStyle.Render(label)
 }
 
-func scopeLine(m Model) string {
-	workspace := firstNonempty(terminalText(m.workspace.Name), terminalText(m.cfg.Workspace), "unresolved workspace")
-	project := firstNonempty(terminalText(m.project.Slug), terminalText(m.cfg.Project), "unresolved project")
-	session := firstNonempty(terminalText(m.session.Name), terminalText(m.cfg.Session), "no bound session")
-	return fmt.Sprintf("%s / %s / %s", workspace, project, session)
-}
-
-func renderTabs(current Screen) string {
-	var parts []string
-	for _, s := range orderedScreens {
-		label := fmt.Sprintf("%d %s", screenOrder[s]+1, title(s))
-		if s == current {
-			parts = append(parts, accentStyle.Render("["+label+"]"))
-		} else {
-			parts = append(parts, mutedStyle.Render(label))
+// crumbs is where the person is: the workspace, project and session by
+// name, then any detail the screen has open.
+func crumbs(m Model) []string {
+	out := []string{firstNonempty(terminalText(m.workspace.Name), terminalText(m.cfg.Workspace), "no workspace")}
+	if p := firstNonempty(terminalText(m.project.Slug), terminalText(m.cfg.Project)); p != "" {
+		out = append(out, p)
+	}
+	if s := firstNonempty(terminalText(m.session.Name), terminalText(m.cfg.Session)); s != "" {
+		out = append(out, s)
+	}
+	switch {
+	case m.help:
+		out = append(out, title(m.screen), "Help")
+	case m.screen == ScreenInbox && m.inboxOpen:
+		if msg, ok := m.SelectedMessage(); ok {
+			out = append(out, "Inbox", "from "+firstNonempty(terminalText(msg.Sender), "unknown sender"))
 		}
 	}
-	return strings.Join(parts, "  ")
+	return out
 }
 
-func sourceLine(m Model) string {
-	if terminalText(m.source) == "" {
-		return ""
+func headerLine(m Model) string {
+	return accentStyle.Render("ClawBridge") + " · " + strings.Join(crumbs(m), " › ") + "  " + badge(m)
+}
+
+// scopeLine is the scope as a path, for the compact header.
+func scopeLine(m Model) string { return strings.Join(crumbs(m), " › ") }
+
+// shortTitle names a tab in the compact bar.
+var shortTitle = map[Screen]string{
+	ScreenOverview: "Ovw", ScreenProjects: "Prj", ScreenSessions: "Ses", ScreenInbox: "Inb", ScreenLinear: "Lin",
+	ScreenModel: "Dsp", ScreenAccount: "Acc", ScreenDoctor: "Doc", ScreenCloud: "Cld",
+}
+
+// renderTabs is the tab bar: full names when they fit, short ones under
+// 100 columns with the current tab named in full, and at the narrowest
+// only the current tab.
+func renderTabs(m Model) string {
+	bar := func(short bool) string {
+		var parts []string
+		for i, s := range m.tabs() {
+			name := title(s)
+			if short && s != m.screen {
+				name = shortTitle[s]
+			}
+			label := fmt.Sprintf("%d %s", i+1, name)
+			if s == m.screen {
+				parts = append(parts, accentStyle.Render("["+label+"]"))
+			} else {
+				parts = append(parts, mutedStyle.Render(label))
+			}
+		}
+		sep := "  "
+		if short {
+			sep = " "
+		}
+		return strings.Join(parts, sep)
 	}
+	if full := bar(false); m.width >= 100 && ansi.StringWidth(full) <= m.width {
+		return full
+	}
+	if short := bar(true); ansi.StringWidth(short) <= m.width {
+		return short
+	}
+	for i, s := range m.tabs() {
+		if s == m.screen {
+			return fmt.Sprintf("%d %s · Tab screens", i+1, title(s))
+		}
+	}
+	return title(m.screen) + " · Tab screens"
+}
+
+// statusLine is the row under the tabs: an offline copy, the last error,
+// the last note. (TUI-UX-AUDIT PR B gives it levels.)
+func statusLine(m Model) string {
+	parts := []string{}
 	if terminalText(m.source) == "offline-mirror" {
-		fresh := "read-only mirror"
+		fresh := "Offline: cached copy"
 		if terminalText(m.fresh.UpdatedAt) != "" {
-			fresh += " · snapshot " + terminalText(m.fresh.UpdatedAt)
+			fresh += " from " + terminalText(m.fresh.UpdatedAt)
 		}
 		if m.fresh.AgeSeconds > 0 {
-			fresh += fmt.Sprintf(" · %ds old", m.fresh.AgeSeconds)
+			fresh += fmt.Sprintf(" (%ds old)", m.fresh.AgeSeconds)
 		}
-		return warnStyle.Render("Source  ") + fresh + " · writes unavailable"
+		parts = append(parts, warnStyle.Render(fresh+", read-only: writes unavailable"))
 	}
-	if terminalText(m.source) == "setup-plan" {
-		return mutedStyle.Render("Source  setup plan (read-only until confirmed)")
+	if m.errText != "" {
+		parts = append(parts, "Error: "+terminalText(m.errText))
 	}
-	if terminalText(m.source) == "doctor" {
-		return mutedStyle.Render("Source  doctor")
+	if m.actionErr != "" {
+		parts = append(parts, "Notice: "+terminalText(m.actionErr))
 	}
-	return mutedStyle.Render("Source  ") + terminalText(m.source)
+	return strings.Join(parts, " ")
 }
 
 func renderBody(m Model) string {
+	if m.help {
+		return renderHelp(m)
+	}
 	switch m.screen {
 	case ScreenLinear:
 		return renderLinear(m)
@@ -158,8 +211,6 @@ func renderOverview(m Model) string {
 func renderProjects(m Model) string {
 	var b strings.Builder
 	b.WriteString(title(ScreenProjects))
-	b.WriteString("  ")
-	b.WriteString(mutedStyle.Render("workspace-scoped, read-only view"))
 	b.WriteString("\n\n")
 	if len(m.projects) == 0 {
 		b.WriteString("No projects returned for this workspace.")
@@ -180,8 +231,6 @@ func renderProjects(m Model) string {
 func renderSessions(m Model) string {
 	var b strings.Builder
 	b.WriteString(title(ScreenSessions))
-	b.WriteString("  ")
-	b.WriteString(mutedStyle.Render("pinned project routing"))
 	b.WriteString("\n\n")
 	if len(m.sessions) == 0 {
 		b.WriteString("No sessions returned for this project.")
@@ -274,12 +323,59 @@ func renderTable(m Model, headers []string, preferred []int, rows [][]string) st
 	return b.String()
 }
 
+// messageStatus is a message's delivery as a word.
+func messageStatus(message MessageRow) string {
+	switch {
+	case message.ReadAt != "":
+		return "read"
+	case message.DeliveredAt == "":
+		return "pending delivery"
+	}
+	return "delivered"
+}
+
+// renderMessage is one message opened (Enter): all of it, what it answers,
+// and the rest of its thread on this page.
+func renderMessage(m Model, message MessageRow) string {
+	var b strings.Builder
+	b.WriteString(accentStyle.Render(firstNonempty(terminalText(message.Sender), "unknown sender")))
+	b.WriteString(" · " + firstNonempty(terminalText(message.Kind), "message") + " · " + messageStatus(message) + " · " + terminalText(message.CreatedAt) + "\n\n")
+	b.WriteString(terminalText(message.Body) + "\n")
+	if message.ReplyTo != "" {
+		parent := mutedStyle.Render("an earlier message, not on this page")
+		for _, other := range m.messages {
+			if other.ID == message.ReplyTo {
+				first, _, _ := strings.Cut(terminalText(other.Body), "\n")
+				parent = firstNonempty(terminalText(other.Sender), "unknown sender") + ": " + clip(first, 60)
+			}
+		}
+		b.WriteString("\nIn reply to " + parent + "\n")
+	}
+	if message.ThreadID != "" {
+		others := []string{}
+		for _, other := range m.messages {
+			if other.ThreadID == message.ThreadID && other.ID != message.ID {
+				first, _, _ := strings.Cut(terminalText(other.Body), "\n")
+				others = append(others, "  "+firstNonempty(terminalText(other.Sender), "unknown sender")+": "+clip(first, 60))
+			}
+		}
+		if len(others) > 0 {
+			b.WriteString("\nIn this thread\n" + strings.Join(others, "\n") + "\n")
+		}
+	}
+	b.WriteString(mutedStyle.Render("\nMessage " + terminalText(message.ID)))
+	return b.String()
+}
+
 func renderInbox(m Model) string {
 	var b strings.Builder
 	b.WriteString(title(ScreenInbox))
-	b.WriteString("  ")
-	b.WriteString(mutedStyle.Render("server stamps delivery; refresh never marks read"))
 	b.WriteString("\n\n")
+	if m.inboxOpen {
+		if message, ok := m.SelectedMessage(); ok {
+			return b.String() + renderMessage(m, message)
+		}
+	}
 	if len(m.messages) == 0 {
 		b.WriteString("No messages in the current session inbox.")
 		return b.String()
@@ -289,13 +385,7 @@ func renderInbox(m Model) string {
 		if i == m.selected {
 			prefix = accentStyle.Render("› ")
 		}
-		status := "delivered"
-		if message.DeliveredAt == "" {
-			status = "pending delivery"
-		}
-		if message.ReadAt != "" {
-			status = "read"
-		}
+		status := messageStatus(message)
 		b.WriteString(prefix)
 		b.WriteString(accentStyle.Render(firstNonempty(terminalText(message.Sender), "unknown sender")))
 		b.WriteString(" · ")
@@ -308,11 +398,16 @@ func renderInbox(m Model) string {
 		b.WriteString(terminalText(message.Body))
 		b.WriteString("\n")
 		if terminalText(message.ReplyTo) != "" {
-			b.WriteString(mutedStyle.Render("    reply to " + terminalText(message.ReplyTo)))
+			// U28: the parent by who sent it; its ID is in the opened
+			// message.
+			parent := "an earlier message"
+			for _, other := range m.messages {
+				if other.ID == message.ReplyTo {
+					parent = firstNonempty(terminalText(other.Sender), "unknown sender")
+				}
+			}
+			b.WriteString(mutedStyle.Render("    reply to " + parent))
 			b.WriteString("\n")
-		}
-		if i == m.selected {
-			b.WriteString("    Message ID: " + terminalText(message.ID) + "\n")
 		}
 	}
 	return strings.TrimRight(b.String(), "\n")
@@ -383,8 +478,6 @@ func renderCloud(m Model) string {
 func renderDoctor(m Model) string {
 	var b strings.Builder
 	b.WriteString(title(ScreenDoctor))
-	b.WriteString("  ")
-	b.WriteString(mutedStyle.Render("stable checks: pass / warn / fail"))
 	b.WriteString("\n\n")
 	if len(m.checks) == 0 {
 		b.WriteString("No diagnostic results.")
@@ -481,7 +574,7 @@ func title(s Screen) string {
 	case ScreenAccount:
 		return "Account"
 	case ScreenModel:
-		return "Model"
+		return "Dispatcher"
 	case ScreenOverview:
 		return "Overview"
 	case ScreenProjects:

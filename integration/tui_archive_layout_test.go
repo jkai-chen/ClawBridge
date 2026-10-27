@@ -311,6 +311,10 @@ func TestTUIArchiveSelectedImmutableIDInspectable(t *testing.T) {
 			m, cmd := m.Reload()
 			m, _ = m.UpdateModel(cmd())
 			m = m.Select(35).SetSize(40, 12)
+			if screen == tui.Inbox {
+				// A message shows its ID once opened.
+				m, _ = m.UpdateModel(tea.KeyMsg{Type: tea.KeyEnter})
+			}
 			inspectResponsive(t, m, e.rows[35]["id"].(string))
 		})
 	}

@@ -368,24 +368,54 @@ func (m Model) linearLink(confirm bool) (Model, tea.Cmd) {
 	}
 	return m.linearCommand(request)
 }
-func (m Model) linearKey(key string) (Model, tea.Cmd) {
-	if key == "esc" {
-		if m.linearCancel != nil {
-			m.linearCancel()
-			m.linearCancel = nil
-		}
-		m.request++
-		m.loading = false
-		m.inputMode = inputNone
-		m.draft = ""
-		m.linear.step = "profiles"
-		m.selected = 0
+
+// linearStep is the Linear screen's step; it starts at profiles.
+func (m Model) linearStep() string {
+	if m.linear.step == "" {
+		return "profiles"
+	}
+	return m.linear.step
+}
+
+// linearPrevious is the step Esc goes back to from each step.
+var linearPrevious = map[string]string{
+	"teams": "profiles", "default": "teams", "projects": "default", "preview": "projects",
+	"tasks": "profiles", "details": "tasks", "unlink": "tasks",
+}
+
+// linearBack is Esc on the Linear screen: one step back, keeping what was
+// chosen there and the page it showed (§3.1). It reads again only when
+// that step has nothing to show; a request in flight is dropped.
+func (m Model) linearBack() (Model, tea.Cmd) {
+	if m.linearCancel != nil {
+		m.linearCancel()
+		m.linearCancel = nil
+	}
+	m.request++
+	m.loading, m.actionErr = false, ""
+	prev := linearPrevious[m.linearStep()]
+	if prev == "" {
+		return m.CancelInput(), nil
+	}
+	from := m.linearStep()
+	m.linear.step, m.selected = prev, 0
+	if from == "preview" {
+		m.linear.closes, m.linear.lines, m.linear.minimal, m.linear.typing = nil, nil, "", nil
+	}
+	kept := map[string]bool{"profiles": len(m.linear.profiles) > 0, "teams": len(m.linear.teams) > 0, "default": true,
+		"projects": len(m.linear.projects) > 0, "tasks": len(m.linear.issues) > 0}
+	if kept[prev] {
 		return m, nil
 	}
+	m.linear.cursor, m.linear.page, m.linear.visited = "", 0, []string{""}
+	return m.linearRefresh()
+}
+
+func (m Model) linearKey(key string) (Model, tea.Cmd) {
 	if key == "c" && m.linear.step == "preview" {
 		return m.linearToggleCloses()
 	}
-	if key == "c" || key == "w" {
+	if key == "+" || key == "w" {
 		m.inputMode = inputLinearName
 		m.draft = ""
 		m.linear.connectAccess = linearconn.Read
@@ -482,7 +512,7 @@ func (m Model) linearKey(key string) (Model, tea.Cmd) {
 	case "profiles":
 		id := m.linearSelected()
 		if id == "" {
-			m.actionErr = "Connect Linear with c, or use Later by choosing another view."
+			m.actionErr = "Connect Linear with +, or come back later from another screen."
 			return m, nil
 		}
 		m.linear.profile = id
@@ -662,7 +692,7 @@ func (m Model) linearClosesTyped() (Model, tea.Cmd) {
 func renderLinear(m Model) string {
 	var b strings.Builder
 	b.WriteString("Settings / Integrations / Linear\n\n")
-	b.WriteString("Optional native connection. c Connect read · w Connect write · Later: choose another view.\n")
+	b.WriteString("Optional: connect Linear (" + keyHint(m, ScreenLinear, "connect") + ") to see and link this project's board, or come back later.\n")
 	b.WriteString("Task ownership comes from the coordinator's issue assignment; selecting a row never claims or completes work.\n")
 	b.WriteString(fmt.Sprintf("Shared board: configured=%t · revision=%d\n", m.linearConfigured(), m.linearRevision()))
 	if m.linearConfigured() {
@@ -683,7 +713,7 @@ func renderLinear(m Model) string {
 		}
 	}
 	b.WriteString("Personal profile: " + terminalText(m.linear.profile) + " · workspace UUID may be unavailable\n")
-	b.WriteString("Step: " + terminalText(m.linear.step) + " · ↑↓ choose · Enter continue · Esc profiles · l relink · u unlink · [ ] pages\n\n")
+	b.WriteString("Step: " + terminalText(m.linearStep()) + "\n\n")
 	if m.linear.step == "preview" || m.linear.step == "unlink" {
 		projects := m.linear.project
 		if m.linear.bindingV2 != nil {

@@ -153,6 +153,23 @@
   - **Checked:** every fetched object (`transfer.fsckObjects`).
   - **Scanned:** a merge's own changes, for token shapes, like every other commit's.
 
+## The terminal interface
+
+- **One set of keys, shown where you look (TUI-UX-AUDIT PR A).** The footer shows the screen's own keys, and `?`
+  opens help listing every key for the screen and everywhere; the old one-line notice is gone. Keys never mean two
+  things: **Enter opens** the selected row and never changes anything by itself, **Esc goes back one level** (help, an
+  editor, an opened row, a wizard step), and `q` asks first while a board link or a model test is under way. Left and
+  Right no longer switch screens.
+- **New tab order, from the mode.** Overview, Projects, Sessions, Inbox, then Linear (`5`), Dispatcher (`6`, was
+  Model), Account (`7`, hosted workspaces only) and Doctor. Cloud shows only where a setup is wired. Under 100 columns
+  the tab bar is compact instead of collapsing to one tab. `tui --screen dispatcher` opens it; `model` still works.
+- **The header says where you are, once.** One line, `ClawBridge · workspace › project › session`, with the mode and
+  an offline badge; the status line sits under the tabs. The `Scope:` and `Source` lines and each screen's subtitle
+  are gone from the body (the subtitles are in help).
+- **Changed keys:** Inbox Enter opens a message, with what it answers and its thread (`m` marks read, as before).
+  Account's decline is `d` (was `n`). Linear connects with `+` (was `c`, which now only switches who closes in the
+  link review); Esc on Linear goes back one step and keeps the teams and projects you chose, instead of starting over.
+
 ## The dispatcher
 
 - **`clawbridge dispatcher model setup` guides an owner through the model's setup.** It asks for the provider (from
@@ -160,7 +177,7 @@
   caps with a required daily token ceiling, and a confirmed disclosure, then waits for the test in your agent and says
   what came of it. `--key-stdin` with flags scripts it. `dispatcher model status` and `dispatcher model key delete
   --confirm` come with it. The server now accepts only providers from that same list.
-- **The TUI has the same model setup, on a new Model screen (`9`).** It shows a project owner their key, their agent
+- **The TUI has the same model setup, on a new Dispatcher screen (`6`).** It shows a project owner their key, their agent
   and the last test, and `s` walks through the same steps in the same order as the CLI. The key field is never drawn,
   and the key is wiped from memory once sent, on Esc, and when you leave the screen or quit.
 - **Setup lists the provider's models, with their list prices.** In the CLI and the TUI, the model step shows up to ten

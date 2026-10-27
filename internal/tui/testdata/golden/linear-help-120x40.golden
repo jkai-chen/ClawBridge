@@ -1,0 +1,31 @@
+ClawBridge · ws_1 › prj_1 › engineer › Linear › Help  cloud
+1 Overview  2 Projects  3 Sessions  4 Inbox  [5 Linear]  6 Dispatcher  7 Account  8 Doctor
+╭──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ Help · Linear                                                                                                        │
+│ The project's Linear board: your personal Linear connection, and the board this project is linked to.                │
+│                                                                                                                      │
+│ This screen                                                                                                          │
+│   Enter      next                                                                                                    │
+│   Space      select (not now)                                                                                        │
+│   c          who closes (not now)                                                                                    │
+│   +          connect                                                                                                 │
+│   w          connect with write                                                                                      │
+│   l          link a board (not now)                                                                                  │
+│   u          unlink (not now)                                                                                        │
+│   x          log out                                                                                                 │
+│   ]          next page (not now)                                                                                     │
+│   [          previous page (not now)                                                                                 │
+│                                                                                                                      │
+│ Everywhere                                                                                                           │
+│   Tab        next screen                                                                                             │
+│   S-Tab      previous screen                                                                                         │
+│   ↑↓         select                                                                                                  │
+│   PgUp/PgDn  scroll                                                                                                  │
+│   Esc        back                                                                                                    │
+│   r          reload                                                                                                  │
+│   ?          help                                                                                                    │
+│   q          quit                                                                                                    │
+│   1-8        switch screen                                                                                           │
+│   1 Overview · 2 Projects · 3 Sessions · 4 Inbox · 5 Linear · 6 Dispatcher · 7 Account · 8 Doctor                    │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+Esc or ? closes help

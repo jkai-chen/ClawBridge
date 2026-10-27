@@ -83,7 +83,7 @@ the invitee can pipe to `clawbridge join --yes`. ClawBridge sends no email:
 - **An existing member** isn't invited again: they add a device themselves
   ([Your devices](#your-devices)), or the main owner issues a recovery invite.
 
-In the TUI, the Account screen (`8`) issues an invite with `i`, typed as
+In the TUI, the Account screen (`7`) issues an invite with `i`, typed as
 `EMAIL PROJECT=ROLE ...`. The code shows in a box, with the link below it, that
 holds the screen until Enter or Esc, and is never drawn again.
 
@@ -172,7 +172,7 @@ clawbridge device add                        # a 15-minute link for another comp
   computer that made it is still an active device of yours.
 - **Revoking** takes effect at once, on every server replica. Revoking the device
   you're on stops this profile working.
-- **In the TUI:** the Account screen (`8`) lists your devices. `a` makes the code
+- **In the TUI:** the Account screen (`7`) lists your devices. `a` makes the code
   for another device after you type `add`, `l` labels, and `x` revokes after you
   type `revoke`.
 - **Labels** are 1–64 printable characters. The server refuses control characters,
@@ -290,7 +290,7 @@ clawbridge owner decline | owner cancel
   role on every project, which Bob may later remove. Pending recovery invites,
   including a bootstrap code, are revoked.
 - **In the TUI:** the main owner offers with `t` and confirms by typing `transfer`.
-  Bob sees a banner and answers with `y` or `n`, typing `accept` or `decline`; the
+  Bob sees a banner and answers with `y` or `d`, typing `accept` or `decline`; the
   owner can cancel with `c`.
 - **Operators:** after a transfer, set `CLAWBRIDGE_BOOTSTRAP_OWNER` to the new
   owner, so a redeploy doesn't confuse readers. It never re-asserts the old owner

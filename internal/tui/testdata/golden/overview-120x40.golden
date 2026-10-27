@@ -1,0 +1,20 @@
+ClawBridge · pilot › core › engineer  cloud
+[1 Overview]  2 Projects  3 Sessions  4 Inbox  5 Linear  6 Dispatcher  7 Account  8 Doctor
+╭──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ Overview                                                                                                             │
+│                                                                                                                      │
+│ Workspace       pilot                                                                                                │
+│ Project         core                                                                                                 │
+│ Session         engineer                                                                                             │
+│ Identity        human@example.test · google-id-token · verified                                                      │
+│ Authority       server · online                                                                                      │
+│                                                                                                                      │
+│ Sessions        1 in pinned project                                                                                  │
+│ Unread          2 in current session                                                                                 │
+│                                                                                                                      │
+│ Optional integration: 7 Linear → Connect Linear / Later. Joining does not depend on Linear.                          │
+│                                                                                                                      │
+│ Pinned project sessions                                                                                              │
+│   engineer                 active     codex                                                                          │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+↑↓ select · r reload · ? help · q quit

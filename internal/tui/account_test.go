@@ -191,7 +191,7 @@ func TestAccountShowsDevicesMembersAndInvites(t *testing.T) {
 		t.Fatalf("%+v", s)
 	}
 	view := Render(m)
-	for _, want := range []string{"8 Account", "owner@example.com (workspace owner)", "dev_this (this device)", "cy@example.com · api=member", "burnt after failed attempts", "t transfer ownership", `old\x1b[31m`} {
+	for _, want := range []string{"7 Account", "owner@example.com (workspace owner)", "dev_this (this device)", "cy@example.com · api=member", "burnt after failed attempts", "t offer ownership", `old\x1b[31m`} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("view missing %q:\n%s", want, view)
 		}
@@ -420,10 +420,25 @@ func TestAccountOwnershipTransfer(t *testing.T) {
 	if w := a.writes(); len(w) != 1 || w[0].Operation != "owner_transfer_respond" || w[0].Args["action"] != "accept" {
 		t.Fatal(w)
 	}
+	// d declines; n, a global "new message" elsewhere, doesn't here.
+	a = &accountAuthority{principal: "cy@example.com", owner: "owner@example.com", transfer: map[string]any{"from": "owner@example.com", "to": "cy@example.com", "expires_at": "2026-10-29"}}
+	m = accountModel(t, a)
+	if !strings.Contains(Render(m), "y accept ownership · d decline ownership") {
+		t.Fatal(Render(m))
+	}
+	if m = press(t, m, "n"); m.AccountState().Pending != "" {
+		t.Fatal("n answered the offer")
+	}
+	m = press(t, m, "d")
+	m = typed(t, m, "decline")
+	m = press(t, m, "enter")
+	if w := a.writes(); len(w) != 1 || w[0].Args["action"] != "decline" {
+		t.Fatal(w)
+	}
 	// Someone else sees no banner and can't answer.
 	a = &accountAuthority{principal: "dee@example.com", owner: "owner@example.com", transfer: nil}
 	m = accountModel(t, a)
-	m = press(t, m, "y", "n", "c")
+	m = press(t, m, "y", "d", "c")
 	if m.AccountState().Pending != "" {
 		t.Fatal("a bystander answered the offer")
 	}

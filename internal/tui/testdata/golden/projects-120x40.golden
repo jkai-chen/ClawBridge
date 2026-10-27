@@ -1,0 +1,16 @@
+ClawBridge · ws_1 › prj_1 › engineer  cloud
+1 Overview  [2 Projects]  3 Sessions  4 Inbox  5 Linear  6 Dispatcher  7 Account  8 Doctor
+╭──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ Projects                                                                                                             │
+│                                                                                                                      │
+│   SLUG                         ROLE       NAME                                                                       │
+│ › core                         owner      Core                                                                       │
+│                                                                                                                      │
+│ Selected project                                                                                                     │
+│ ID: prj_1                                                                                                            │
+│ Slug: core                                                                                                           │
+│ Name: Core                                                                                                           │
+│ Role: owner                                                                                                          │
+│ Git remote: github.com/acme/core                                                                                     │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+↑↓ select · r reload · ? help · q quit

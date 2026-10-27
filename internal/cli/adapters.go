@@ -102,13 +102,17 @@ var runTUIProgram = tui.RunProgram
 func runTUI(ctx context.Context, flags Config, args []string, stdout, stderr io.Writer) error {
 	screen := "overview"
 	_, err := commandFlags("tui", args, stderr, func(f *flag.FlagSet) {
-		f.StringVar(&screen, "screen", "overview", "overview, projects, sessions, inbox, cloud, doctor, linear, account or model")
+		f.StringVar(&screen, "screen", "overview", "overview, projects, sessions, inbox, linear, dispatcher, account, doctor or cloud")
 	})
 	if errors.Is(err, flag.ErrHelp) {
 		return nil
 	}
 	if err != nil {
 		return err
+	}
+	if screen == "dispatcher" {
+		// The tab was called Model before.
+		screen = string(tui.DispatcherModel)
 	}
 	switch tui.Screen(screen) {
 	case tui.Overview, tui.Projects, tui.Sessions, tui.Inbox, tui.Cloud, tui.Doctor, tui.Linear, tui.Account, tui.DispatcherModel:

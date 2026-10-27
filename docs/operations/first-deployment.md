@@ -238,7 +238,9 @@ clawbridge cloud bootstrap --instance INSTANCE_ID --region REGION --profile PROF
 It makes the one-time code on your computer and hands it to the server's
 `operator bootstrap-invite --code-stdin` through a short-lived encrypted
 parameter, so it is in no SSM command history and never on screen, then joins
-this device with it. Run it yourself, never through an agent. It comes with the
+this device with it. Run it yourself, never through an agent. If you set the server up
+with `clawbridge onboard`'s AWS hand-over, it offers to run this for you once the
+checks pass (or when you run `clawbridge onboard` again and resume). It comes with the
 next release (it is on the main branch, not in v0.3.4), and needs the server on
 that release too; until then, use Google sign-in on AWS.
 

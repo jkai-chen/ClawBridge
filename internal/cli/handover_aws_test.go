@@ -3,10 +3,12 @@ package cli
 import (
 	"bytes"
 	"context"
+	"errors"
 	"io"
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -219,5 +221,102 @@ func TestHandoverOnAWSRefusesWindows(t *testing.T) {
 	h, _ = awsHandoverStub(t)
 	if err := Run(context.Background(), []string{"onboard"}, io.Discard, io.Discard); err == nil || !strings.Contains(err.Error(), "WSL") || h.ran != nil {
 		t.Fatal(err)
+	}
+}
+
+// bootstrapStub replaces cloud bootstrap and the server's sign-in methods.
+func bootstrapStub(t *testing.T, methods []string, fail error) *[][]string {
+	t.Helper()
+	ran := new([][]string)
+	a, b := cloudBootstrap, wizardMethods
+	t.Cleanup(func() { cloudBootstrap, wizardMethods = a, b })
+	wizardMethods = func(_ context.Context, server string) ([]string, error) {
+		if server != "https://bridge.example.test" {
+			t.Fatalf("methods read from %s", server)
+		}
+		return methods, nil
+	}
+	cloudBootstrap = func(_ context.Context, args []string, _, _ io.Writer) error {
+		*ran = append(*ran, args)
+		return fail
+	}
+	return ran
+}
+
+// At sign-in on AWS, a server offering device sign-in gets cloud bootstrap
+// run for the owner on a yes; anything else keeps the written step.
+func TestHandoverOnAWSOffersBootstrap(t *testing.T) {
+	bootstrapArgs := func(workspace string) []string {
+		return []string{"--instance", ec2ID, "--region", "eu-west-1", "--profile", "clawbridge-onboarding", "--account", "123456789012",
+			"--server", "https://bridge.example.test", "--workspace", workspace, "--email", "o@example.test"}
+	}
+	for name, c := range map[string]struct {
+		methods []string
+		fail    error
+		answers string
+		ran     [][]string
+		want    []string
+	}{
+		"yes":             {[]string{"google", "device"}, nil, "\ny\n", [][]string{bootstrapArgs("my-team")}, []string{"The workspace my-team is created"}},
+		"named":           {[]string{"device"}, nil, "acme-dev\nyes\n", [][]string{bootstrapArgs("acme-dev")}, []string{"The workspace acme-dev is created"}},
+		"no":              {[]string{"device"}, nil, "\nn\n", nil, []string{"references/signin.md"}},
+		"default no":      {[]string{"device"}, nil, "\n\n", nil, []string{"references/signin.md"}},
+		"ended input":     {[]string{"device"}, nil, "", nil, []string{"references/signin.md"}},
+		"bad name":        {[]string{"device"}, nil, "-x\ny\n", nil, []string{"not a workspace name", "references/signin.md"}},
+		"google only":     {[]string{"google"}, nil, "y\n", nil, []string{"references/signin.md"}},
+		"bootstrap fails": {[]string{"device"}, errors.New("synthetic refusal"), "\ny\n", [][]string{bootstrapArgs("my-team")}, []string{"was not created: synthetic refusal", "references/signin.md"}},
+	} {
+		isolated(t)
+		s := onboardingState{Cloud: "aws", Step: "signin", Profile: "clawbridge-onboarding", Account: "123456789012", Region: "eu-west-1",
+			Zone: "eu-west-1a", Domain: "bridge.example.test", Owner: "o@example.test", Size: "t4g.small", Bucket: "clawbridge-backups", Instance: ec2ID}
+		if err := saveOnboarding(&s); err != nil {
+			t.Fatal(err)
+		}
+		wizardHooks(t, "3\n\n"+c.answers)
+		awsHandoverStub(t)
+		ran := bootstrapStub(t, c.methods, c.fail)
+		var out bytes.Buffer
+		if err := Run(context.Background(), []string{"onboard"}, &out, io.Discard); err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		if !reflect.DeepEqual(*ran, c.ran) {
+			t.Fatalf("%s: bootstrap ran %v", name, *ran)
+		}
+		offered := strings.Contains(out.String(), "offers device sign-in")
+		if offered != slices.Contains(c.methods, "device") {
+			t.Fatalf("%s: offered %v:\n%s", name, offered, out.String())
+		}
+		for _, want := range append(c.want, "--bucket clawbridge-backups --region eu-west-1 --profile clawbridge-onboarding") {
+			if !strings.Contains(out.String(), want) {
+				t.Fatalf("%s: lacks %q:\n%s", name, want, out.String())
+			}
+		}
+		if c.ran != nil && c.fail == nil && strings.Contains(out.String(), "references/signin.md") {
+			t.Fatalf("%s: the written step after a bootstrap:\n%s", name, out.String())
+		}
+	}
+}
+
+// Right after the hand-over the agent had the terminal; the offer reads the
+// answers from a prompt of its own.
+func TestHandoverOnAWSBootstrapsAfterTheAgent(t *testing.T) {
+	isolated(t)
+	wizardHooks(t, awsHandoverInputs+"y\n\ny\n")
+	_, a := awsHandoverStub(t)
+	a.out["sts get-caller-identity"] = `{"Account":"123456789012"}`
+	inner := awsCLI
+	awsCLI = func(ctx context.Context, argv []string, stdin []byte) ([]byte, error) {
+		if argv[1] == "sts" && strings.Contains(strings.Join(argv, " "), "--output text") {
+			return []byte("123456789012\n"), nil
+		}
+		return inner(ctx, argv, stdin)
+	}
+	ran := bootstrapStub(t, []string{"device"}, nil)
+	var out bytes.Buffer
+	if err := Run(context.Background(), []string{"onboard"}, &out, io.Discard); err != nil {
+		t.Fatal(err, out.String())
+	}
+	if len(*ran) != 1 || !slices.Contains((*ran)[0], ec2ID) || !slices.Contains((*ran)[0], "owner@example.test") {
+		t.Fatalf("bootstrap: %v\n%s", *ran, out.String())
 	}
 }

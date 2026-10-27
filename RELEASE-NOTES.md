@@ -67,6 +67,9 @@
   --code-stdin` through a short-lived `SecureString` (so it is in no SSM command history), and joins with it; the
   server keeps only its salted hash, and the code is never shown. `--email` is checked against
   `CLAWBRIDGE_BOOTSTRAP_OWNER` before anything is created. Update the server first.
+- **`clawbridge onboard` offers to create the workspace after the AWS hand-over.** Once the checks pass, and the
+  server offers device sign-in, it asks for the workspace name and runs `cloud bootstrap --instance` for you on a yes
+  (the default is no, which shows the written step). Resuming at sign-in asks again.
 
 ## Docs
 

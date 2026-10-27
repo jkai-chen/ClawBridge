@@ -40,8 +40,8 @@ clawbridge cloud bootstrap --help
   set`, and joins with it, so the code never appears in SSM command history or
   on screen. The server keeps only a salted hash of it. `--email` is checked
   against the env file's `CLAWBRIDGE_BOOTSTRAP_OWNER`; a mismatch stops before
-  anything is created. When the onboarding TUI resumes after your
-  hand-over, it runs this for the user. **Never run the invite yourself, in any
+  anything is created. When your hand-over ends and its checks pass,
+  `clawbridge onboard` offers to run this for the user. **Never run the invite yourself, in any
   form:** its code is a credential. If it fails, the user runs it again; a code
   that was issued expires in 24 hours.
 

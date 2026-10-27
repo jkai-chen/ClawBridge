@@ -76,6 +76,17 @@
   planned.
 - **Updating a server on AWS:** deployment.md has the Session Manager steps beside the Google Cloud flow.
 
+## Context watching
+
+- **`clawbridge context show` reads how much context a session is using**, from its own agent's local transcript
+  (Claude Code or Codex). It shows tokens, the window when known, and compactions: counts and times only, never content.
+  `doctor` gains a `context` check, which warns and never fails.
+- **`clawbridge context bind` and opt-in Claude Code hooks.** `context bind` binds a session to its Codex thread or a
+  named transcript. `context hooks install` (default `--scope local`, the git-ignored `.claude/settings.local.json`;
+  `--scope project-shared` needs `--confirm-shared`) adds `SessionStart` and `PreCompact` hooks. They keep the binding
+  current and print a reminder to re-read the handover note after a compaction. They always exit 0, a nested `claude -p`
+  can't take its parent's binding, and `hooks uninstall` removes only ClawBridge's own entries.
+
 # ClawBridge v0.3.4
 
 **Schema 17 → 19.**

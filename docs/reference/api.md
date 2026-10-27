@@ -469,9 +469,8 @@ for.
 
 `clawbridge context show [--session NAME | --agent claude-code|codex --transcript PATH] [--json]`
 reads how much context a coding-agent session is using, from the agent's own
-local transcript. It needs no configuration and calls no server. This is the
-first step of context watching: binding, reporting and notices come in later
-releases.
+local transcript. It needs no configuration and calls no server. Reporting and
+notices come in later releases.
 
 - **Which transcript:**
   - with `--session` (default `CLAWBRIDGE_SESSION`), the one in that session's
@@ -496,6 +495,62 @@ releases.
 - **Unknown formats:** a transcript the reader doesn't recognise, or whose
   usage isn't in a known form, reads as `status: unsupported` with a fixed
   `reason`, never as a guess.
+
+### Binding a session to its transcript
+
+The binding record is written by `clawbridge context bind`, locally, and never
+sent anywhere. Rebinding keeps what the record caches for the session.
+
+- `--codex-thread UUID`: the rollout under `CODEX_HOME` (default `~/.codex`)
+  whose file is named for the thread and whose `session_meta` carries it. Links
+  out of its `sessions` directory are not followed.
+- `--agent claude-code|codex --transcript PATH`: the file named, which must be a
+  regular file the user owns. It may be anywhere.
+- `--session NAME` names the session, default `CLAWBRIDGE_SESSION`.
+
+For Claude Code, `clawbridge context hooks install [--scope local|user|project-shared]`
+adds two hooks:
+- `SessionStart` runs `context bind --from-hook`. After a compaction it also
+  prints a fixed reminder to re-read the handover note, followed by the
+  project's handover hint when one is cached;
+- `PreCompact` runs `context compacting --from-hook`, which notes the
+  compaction and its trigger on the binding.
+
+The hooks are opt-in per user:
+- **Scopes:**
+  - `local`, the default, writes the project's `.claude/settings.local.json`.
+    It refuses when git tracks that file, since the file is then not private.
+  - `user` writes `settings.json` in `CLAUDE_CONFIG_DIR` (default
+    `~/.claude`), for every project.
+  - `project-shared` writes the committed `.claude/settings.json`. It warns
+    that the hooks then run for every teammate who pulls, as whatever
+    `clawbridge` is first on their PATH, and writes only with
+    `--confirm-shared`.
+- **What runs:** in `local` and `user` scope each hook runs the installing
+  binary by absolute path and does nothing if that binary is gone. In
+  `project-shared` scope it runs `clawbridge` from PATH and does nothing
+  without one.
+- **The change:** the command shows the change before writing it (`--dry-run`
+  only shows it). It keeps other settings and hooks, writes atomically, and
+  installing twice changes nothing.
+- **Uninstall:** `hooks uninstall` removes only entries whose command is
+  exactly one ClawBridge writes, ending in `# clawbridge-context-hook v1`.
+
+The hook commands always exit 0 and touch only local files.
+- They read the hook's JSON on stdin. Without `session_id` and
+  `transcript_path` as strings, or without `CLAWBRIDGE_SESSION`, they bind
+  nothing and print nothing.
+- The transcript must resolve, links included, to a `.jsonl` file under
+  `<CLAUDE_CONFIG_DIR>/projects/`.
+- The binding remembers the Claude Code session and process that bound it.
+  Another session takes it over only once that process has exited, or when
+  it is the same process under a new session (`/clear`, `/resume`). So a nested `claude -p` in the same
+  project, which inherits `CLAWBRIDGE_SESSION`, never takes its parent's
+  binding. It still gets its own compaction reminder.
+- In `local` scope, the install warns when git doesn't ignore
+  `.claude/settings.local.json`.
+
+### Doctor
 
 `clawbridge doctor` adds a `context` check for the configured session. It
 passes with the counts, or with "not bound". It warns when the bound transcript

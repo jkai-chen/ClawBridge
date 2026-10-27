@@ -30,3 +30,12 @@ func privateToUser(info os.FileInfo) error {
 	}
 	return nil
 }
+
+// ProcessAlive says whether a process with pid exists.
+func ProcessAlive(pid int) bool {
+	if pid <= 0 {
+		return false
+	}
+	err := syscall.Kill(pid, 0)
+	return err == nil || errors.Is(err, syscall.EPERM)
+}

@@ -1,10 +1,24 @@
 # ClawBridge v0.3.6 (unreleased)
 
-**Schema 28 → 32.**
-- The server migrates to schema 32 on its first start: 29, the new-device alerts' events and acknowledgements; 30, a
-  project's own watch budget; 31, the device an invite was made from; 32, the workspace's device idle limit.
+**Schema 28 → 33.**
+- The server migrates to schema 33 on its first start: 29, the new-device alerts' events and acknowledgements; 30, a
+  project's own watch budget; 31, the device an invite was made from; 32, the workspace's device idle limit; 33,
+  the Linear team and project names stored with a project's task board binding.
 - **One-way:** v0.3.5 and older refuse a database newer than schema 28. Take a dump before upgrading; to go back,
   restore it with the v0.3.5 image (docs/operations/deployment.md).
+
+## Project overview
+
+- **One read for a project's summary (TUI-UX-AUDIT PR C, server half).** `clawbridge project overview` (and the MCP
+  tool `project_overview`) shows the project, its coordinator, its sessions with each one's assignment, and its
+  Linear board's teams, projects and who closes each. Any project role may read it, and it shows nothing that role
+  can't already read. Its counts cover every session, so they match the Sessions tab however many there are; the rows
+  stop at 200. Offline it says so instead of failing as a write.
+- **`list_sessions` rows say which session is the coordinator** (`coordinator: true`). Older clients ignore it.
+- **Linear names are stored at link time (owner's Q5).** A link stores the bound teams' and projects' names, so the
+  overview shows names instead of UUIDs. They are display text only: no check reads them, and the audit records
+  counts, not names. `clawbridge linear names-refresh` (project owner or lead) picks up a rename without moving the
+  binding's revision.
 
 ## One invite link
 

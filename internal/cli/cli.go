@@ -443,7 +443,7 @@ flags:`)
 		}
 	case "project":
 		if len(rest) == 0 {
-			return errors.New("usage: project create SLUG, project role-set EMAIL ROLE, or project role-revoke EMAIL")
+			return errors.New("usage: project create SLUG, project overview, project role-set EMAIL ROLE, or project role-revoke EMAIL")
 		}
 		switch rest[0] {
 		case "create":
@@ -452,6 +452,10 @@ flags:`)
 			arityMin, arityMax = 1, 1
 			stringArg("name", "name")
 			stringArg("git-remote", "git_remote")
+		case "overview":
+			// Any member: the project, its sessions and its Linear board.
+			rest = rest[1:]
+			op = "project_overview"
 		case "role-set":
 			rest = rest[1:]
 			op = "project_role_set"
@@ -881,7 +885,7 @@ flags:`)
 				return errors.New("the context-watch file must hold one JSON object")
 			}
 			a["context_watch"] = doc
-		} else if op == "context_watch_get" || op == "comment_watch_status" {
+		} else if op == "context_watch_get" || op == "comment_watch_status" || op == "project_overview" {
 		} else {
 			a["principal"], a["role"] = pos[0], pos[1]
 		}
@@ -1133,9 +1137,10 @@ flags:`)
 		data["token_file"] = secret.path
 		data["note"] = "Wrote the token to " + secret.path + " (0600): put it in Linear's MCP server header Authorization: Bearer <token>, then delete the file."
 	}
-	if op == "dispatcher_decisions_list" || op == "dispatcher_escalations_list" {
+	if op == "dispatcher_decisions_list" || op == "dispatcher_escalations_list" || op == "project_overview" {
 		// The log and the escalations carry the model's explanations: model
-		// output (D6-L1).
+		// output (D6-L1). The overview carries session and Linear names,
+		// which other people chose.
 		result.Data = terminalSafeAll(result.Data)
 	}
 	if op == "assignment_confirm" || op == "assignment_release" {

@@ -74,7 +74,8 @@ requires its matching instance. Routing role is distinct from project permission
 | `list_projects` | No project selector; returns authorized projects |
 | `list_members` | Current project; returns project role assignments |
 | `register_session` | Optional resume, role, agent_kind, model, host, account, notes, transport |
-| `list_sessions` | Optional status, role, limit, after; assignment filters issue (UUID or display identifier), scope_path (a repository path a live assignment covers) and assignment_state (proposed/confirmed). Each row carries its live `assignment` or null |
+| `list_sessions` | Optional status, role, limit, after; assignment filters issue (UUID or display identifier), scope_path (a repository path a live assignment covers) and assignment_state (proposed/confirmed). Each row carries its live `assignment` or null, and `coordinator` (true for the project's designated coordinator session) |
+| `project_overview` | None; sessionless, or a session with its instance. Any project role. The project, its coordinator, session counts and up to 200 sessions, and its Linear board (see [Project overview](#project-overview)) |
 | `send` | to, body, operation_id; optional kind, thread_id, coordination |
 | `inbox` | Optional unread_only (default true), limit, after |
 | `inbox_status` | Optional after (default zero); active owned actor required |
@@ -98,7 +99,8 @@ requires its matching instance. Routing role is distinct from project permission
 | `taskboard_set` | expected_revision, linear_team_ids, linear_default_team_id, linear_project_id (UUID/null); optional linear_workspace_id (UUID/null) |
 | `taskboard_clear` | expected_revision; authorized owner/lead; optional repair (project owner, unreadable binding only) |
 | `taskboard_get_v2` | Versioned shared mapping; optional current actor/instance |
-| `taskboard_set_v2` | expected_revision, mode, linear_team_ids, linear_default_team_id, linear_project_ids; optional nullable linear_workspace_id |
+| `taskboard_set_v2` | expected_revision, mode, linear_team_ids, linear_default_team_id, linear_project_ids; optional nullable linear_workspace_id; optional linear_team_names and linear_project_names (ID→name objects, see [Linear names](#linear-names)) |
+| `taskboard_names_set` | expected_revision (the binding's current one), linear_team_names and/or linear_project_names; authorized owner/lead; the revision doesn't move |
 | `taskboard_clear_v2` | expected_revision; authorized owner/lead; optional repair (project owner, unreadable binding only) |
 | `linear_write` | Hosted server with the ClawBridge Linear app only: instance, operation (comment, create, update, relation_add, relation_remove), args (exactly what the `taskboard_<operation>_v2` tool takes). The server makes the write as the app, with every scope check, the mention guard, the marker and its own shared operation ledger, and answers `{receipt, outcome?}`. Binding and admin operations and identity arguments are refused; a binding not pinned to the app's workspace is refused (`workspace_unpinned`, `workspace_mismatch`). An uncertain outcome is a 409 |
 | `linear_app_status` | Hosted server with the app: `app_user_id`, `linear_org_id` and, for a project, `teams_visible` per bound team (read as the app) |
@@ -131,7 +133,7 @@ mirror does not include assignments.
 MCP exposes register_session, list_sessions, send, inbox, inbox_status,
 notification_status, set_notification_policy, mark_read, reply, update_session,
 retire_session, assignment_propose, assignment_confirm, assignment_release,
-history, whoami and message_status. Their
+history, whoami, message_status and project_overview (read only). Their
 schemas restrict caller routing/instance overrides. Administrative operations
 remain outside the MCP tool list.
 
@@ -350,6 +352,61 @@ upgrade instead of repairing. The only way out on this version is a clear with
 stored `expected_revision`, and only while the mapping is unreadable (a repair
 of a readable mapping is `invalid`; `repair` is not accepted on set). Its audit
 entry records `repaired_unreadable_sha256`, the SHA-256 of the cleared row.
+
+### Linear names
+
+Schema 33 stores the bound teams' and projects' names with the binding, for
+display only: no check, rule or match reads a name, and every decision reads the
+IDs.
+
+- **At link:** `taskboard_set_v2` takes optional `linear_team_names` and
+  `linear_project_names`, objects from the link's own IDs to names. An ID outside
+  the link is refused. Each name is trimmed, then 1–80 characters with no
+  control, format or bidi characters; at most 100 entries per object. The CLI
+  and TUI link send the names Linear gave them.
+- **Re-link:** an object the link gives replaces that object; one it leaves out
+  keeps the names of the IDs still bound and drops the rest.
+- **Unlink** clears them.
+- **Refresh:** `taskboard_names_set` replaces the objects it names at the
+  binding's current revision and leaves the revision as it is, so it never
+  conflicts with a link; a revision that has moved is a conflict. Owner or lead,
+  like a link. `clawbridge linear names-refresh` reads the names from your own
+  Linear connection and sends them. The audit records the counts, never the
+  names.
+- **Staleness:** a rename in Linear shows the old name until the next link or
+  refresh. The overview's `names_updated_at` says when they were set.
+
+## Project overview
+
+`project_overview` (CLI `clawbridge project overview`, MCP `project_overview`)
+is one read for a project's summary. It shows only what the reader's role can
+already read through `list_sessions`, `taskboard_get_v2` and `status_policy_get`:
+
+- **`project`:** id, slug, name, `git_remote` without any user or password in
+  it, and the reader's `role`.
+- **`coordinator`:** the designated coordinator session's `session_id`, `name`
+  and `status`, or null.
+- **`counts`:** over every non-system session, however many: `total`,
+  `active`, `stale` (active, unseen for 15 minutes), `retired`, `moved`,
+  `archived` (retired or moved, unchanged for a day: the TUI's Sessions tab
+  hides these by default), `current` (total less archived), and
+  `assignments_confirmed` and `assignments_proposed`.
+- **`sessions`:** at most 200, active first, then by last seen;
+  `sessions_truncated` says there were more. Each row is a `list_sessions` row
+  without instance, transport, notes or notification settings, with
+  `coordinator` and its live `assignment` (state, issue_identifier, issue_uuid,
+  task_role, scope_repo, scope_paths) or null. No issue title: the bus stores
+  none, and the TUI reads titles through the viewer's own Linear connection.
+- **`linear`:** `{"configured": false}` when unlinked; `{"configured": true,
+  "unreadable": true}` when the binding can't be read (the op still answers).
+  Otherwise `revision`, `mode`, `teams` (id, name, default), `projects` (id,
+  name, `closes` human or agent, and `health` when health posts are on),
+  `names_updated_at`, and `status_policy` (enabled, revision). A name is `""`
+  when none is stored.
+
+It isn't in the offline mirror: when the server can't be reached the remote
+client answers "project overview unavailable offline: the server could not
+be reached".
 
 ## Hosted routes and failures
 

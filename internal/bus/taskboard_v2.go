@@ -199,7 +199,7 @@ func parseStoredMapping(saved map[string]any, version int) (TaskboardBindingV2, 
 }
 
 func (s *Store) taskboard(ctx context.Context, tx *transaction, wid, pid, role, op string, a map[string]any) (any, error) {
-	rows, e := query(ctx, tx, `SELECT revision,mapping,updated_at,mapping_version FROM taskboard_bindings WHERE project_id=?`, pid)
+	rows, e := query(ctx, tx, `SELECT revision,mapping,updated_at,mapping_version,names FROM taskboard_bindings WHERE project_id=?`, pid)
 	if e != nil {
 		return nil, e
 	}
@@ -208,7 +208,9 @@ func (s *Store) taskboard(ctx context.Context, tx *transaction, wid, pid, role, 
 	// unknownFormat says it is a JSON object, possibly from a newer binary.
 	unreadable := ""
 	unknownFormat := false
+	prevNames := storedNames(nil)
 	if len(rows) > 0 {
+		prevNames = storedNames(rows[0]["names"])
 		b.Revision = rows[0]["revision"].(int64)
 		b.UpdatedAt = rows[0]["updated_at"].(string)
 		if mapping, ok := rows[0]["mapping"].(string); ok {
@@ -233,6 +235,16 @@ func (s *Store) taskboard(ctx context.Context, tx *transaction, wid, pid, role, 
 	}
 	if repair && unreadable == "" {
 		return nil, invalid("repair clears only an unreadable task board binding; this one is readable, so unlink it normally")
+	}
+	if op == "taskboard_names_set" {
+		expected, e := taskboardExpected(a)
+		if e != nil {
+			return nil, e
+		}
+		if expected != b.Revision {
+			return nil, &serviceError{code: "conflict", cause: errors.New("taskboard revision conflict; refresh binding")}
+		}
+		return s.setNames(ctx, tx, wid, pid, b, prevNames, a)
 	}
 	v2 := strings.HasSuffix(op, "_v2")
 	if !v2 && unreadable == "" {
@@ -291,15 +303,22 @@ func (s *Store) taskboard(ctx context.Context, tx *transaction, wid, pid, role, 
 	next.ProjectID = pid
 	next.Revision = expected + 1
 	next.UpdatedAt = stamp()
+	// A link keeps or replaces the names; unlinking leaves no ID bound, so
+	// it clears them.
+	n, e := nextNames(a, prevNames, next, next.UpdatedAt)
+	if e != nil {
+		return nil, e
+	}
+	names := namesColumn(n)
 	var affected int64
 	if len(rows) == 0 {
-		r, err := tx.ExecContext(ctx, `INSERT INTO taskboard_bindings(project_id,revision,mapping,updated_at,mapping_version) VALUES(?,?,?,?,?) ON CONFLICT(project_id) DO NOTHING`, pid, next.Revision, mapping, next.UpdatedAt, version)
+		r, err := tx.ExecContext(ctx, `INSERT INTO taskboard_bindings(project_id,revision,mapping,updated_at,mapping_version,names) VALUES(?,?,?,?,?,?) ON CONFLICT(project_id) DO NOTHING`, pid, next.Revision, mapping, next.UpdatedAt, version, names)
 		if err != nil {
 			return nil, err
 		}
 		affected, _ = r.RowsAffected()
 	} else {
-		r, err := tx.ExecContext(ctx, `UPDATE taskboard_bindings SET revision=?,mapping=?,updated_at=?,mapping_version=? WHERE project_id=? AND revision=?`, next.Revision, mapping, next.UpdatedAt, version, pid, expected)
+		r, err := tx.ExecContext(ctx, `UPDATE taskboard_bindings SET revision=?,mapping=?,updated_at=?,mapping_version=?,names=? WHERE project_id=? AND revision=?`, next.Revision, mapping, next.UpdatedAt, version, names, pid, expected)
 		if err != nil {
 			return nil, err
 		}

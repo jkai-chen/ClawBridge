@@ -725,6 +725,11 @@ func (c *Client) binding(r bus.Request) mirror.Binding {
 	i, _ := r.Args["instance"].(string)
 	return mirror.Binding{Server: c.config.URL, Audience: MirrorAudience(c.config.Audience, c.config.CredentialSource, c.config.DeviceID), Principal: c.config.Principal, Workspace: r.Workspace, Project: r.Project, Session: r.Session, Instance: i}
 }
+
+// ErrOverviewOffline is project_overview's answer when the server can't be
+// reached: the overview is read from the authority only.
+var ErrOverviewOffline = errors.New("project overview unavailable offline: the server could not be reached")
+
 func (c *Client) Execute(ctx context.Context, r bus.Request) (bus.Result, error) {
 	result, unavailable, err := c.call(ctx, r)
 	if err == nil {
@@ -738,6 +743,10 @@ func (c *Client) Execute(ctx context.Context, r bus.Request) (bus.Result, error)
 			return bus.Result{}, &metadataError{err}
 		}
 		return bus.Result{}, err
+	}
+	if unavailable && r.Operation == "project_overview" {
+		// A summary read from the authority, never mirrored: say so plainly.
+		return bus.Result{}, ErrOverviewOffline
 	}
 	if unavailable && mirror.Readable(r.Operation) && c.config.CachePath != "" && c.config.Principal != "" {
 		cached, e := mirror.Offline(ctx, c.config.CachePath, c.binding(r), r)

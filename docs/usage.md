@@ -281,6 +281,10 @@ clawbridge --session eng --instance eng-1 register --role engineer
 clawbridge --session lead --instance lead-1 project coordinator-set lead
 ```
 
+`clawbridge project overview` then shows the project at a glance: its sessions,
+which one is the coordinator, each one's assignment, and the Linear board's
+teams and projects ([API reference](reference/api.md#project-overview)).
+
 **2. The worker proposes.** It names the issue and, optionally, the paths it
 owns:
 

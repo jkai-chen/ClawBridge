@@ -95,6 +95,12 @@ func TestScopedSyncOutageAndDefinitiveDenials(t *testing.T) {
 			t.Fatalf("offline %s was queued/succeeded: %v", op, err)
 		}
 	}
+	// The project overview is read from the authority only: offline it says
+	// so, and never reads as a failed write.
+	overview := bus.Request{Operation: "project_overview", Workspace: wid, Project: pid, Args: map[string]any{}}
+	if _, err = client.Execute(ctx, overview); !errors.Is(err, ErrOverviewOffline) {
+		t.Fatalf("offline overview: %v", err)
+	}
 	request.Operation = "inbox"
 	for _, denial := range []int64{400, 401, 403, 404, 409, 429} {
 		status.Store(denial)

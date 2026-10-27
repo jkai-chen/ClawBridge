@@ -46,7 +46,7 @@ func TestPinnedScopeRegistrationAndOverrideRejection(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(tools.Tools) != 17 {
+	if len(tools.Tools) != 18 {
 		t.Fatalf("got %d tools", len(tools.Tools))
 	}
 	call := func(name string, args map[string]any) *mcp.CallToolResult {

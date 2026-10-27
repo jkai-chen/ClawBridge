@@ -23,8 +23,8 @@ func TestCoordinationMCPToolSchemaAndActorPinning(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(tools.Tools) != 17 {
-		t.Fatalf("tool inventory=%d want17", len(tools.Tools))
+	if len(tools.Tools) != 18 {
+		t.Fatalf("tool inventory=%d want18", len(tools.Tools))
 	}
 	for _, tool := range tools.Tools {
 		if tool.Name == "host-status" || tool.Name == "host-wait" {

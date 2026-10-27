@@ -357,10 +357,22 @@ func (s *Service) LinkV2(ctx context.Context, scope bus.Request, in LinkInputV2)
 	if len(changes) > 0 {
 		scope.Args["closes_pending"] = changes
 	}
+	teamNames, projectNames := linkNames(v)
+	scope.Args["linear_team_names"] = teamNames
+	scope.Args["linear_project_names"] = projectNames
 	r, e := s.cfg.Executor.Execute(ctx, scope)
-	if e != nil && len(changes) > 0 && strings.Contains(e.Error(), `unsupported argument "closes_pending"`) {
-		// An older server: bind without it; closes set then says so.
-		delete(scope.Args, "closes_pending")
+	for retry := 0; e != nil && retry < 2; retry++ {
+		msg := e.Error()
+		if strings.Contains(msg, `unsupported argument "linear_team_names"`) || strings.Contains(msg, `unsupported argument "linear_project_names"`) {
+			// An older server keeps no names: bind without them.
+			delete(scope.Args, "linear_team_names")
+			delete(scope.Args, "linear_project_names")
+		} else if len(changes) > 0 && strings.Contains(msg, `unsupported argument "closes_pending"`) {
+			// An older server: bind without it; closes set then says so.
+			delete(scope.Args, "closes_pending")
+		} else {
+			break
+		}
 		r, e = s.cfg.Executor.Execute(ctx, scope)
 	}
 	if e != nil || len(changes) == 0 {
@@ -869,4 +881,58 @@ func sortedUniqueIDs(ids []string, max int) ([]string, error) {
 		}
 	}
 	return out, nil
+}
+
+// linkNames are the names Linear gave for a binding's teams and projects,
+// as the server stores them (display text only, never a decision): each
+// trimmed and cut to 80 characters, and left out when it still breaks the
+// rule.
+func linkNames(v verifiedV2) (teams, projects map[string]any) {
+	teams, projects = map[string]any{}, map[string]any{}
+	for _, t := range v.Teams {
+		if name, ok := storableName(t.Name); ok {
+			teams[t.ID] = name
+		}
+	}
+	for _, p := range v.Projects {
+		if name, ok := storableName(p.Name); ok {
+			projects[p.ID] = name
+		}
+	}
+	return teams, projects
+}
+
+func storableName(name string) (string, bool) {
+	name = strings.TrimSpace(name)
+	if r := []rune(name); len(r) > 80 {
+		name = strings.TrimSpace(string(r[:80]))
+	}
+	return name, bus.LinearNameOK(name)
+}
+
+// RefreshNamesV2 reads the bound teams' and projects' names from the
+// caller's Linear connection and stores them with the binding, at its
+// current revision, which the refresh leaves as it is.
+func (s *Service) RefreshNamesV2(ctx context.Context, scope bus.Request) (any, error) {
+	b, e := s.BindingV2(ctx, scope)
+	if e != nil {
+		return nil, e
+	}
+	_, p, done, e := s.open(ctx)
+	if e != nil {
+		return nil, e
+	}
+	defer done()
+	v, e := verifyBindingV2(ctx, p, b)
+	if e != nil {
+		return nil, e
+	}
+	teams, projects := linkNames(v)
+	scope.Operation = "taskboard_names_set"
+	scope.Args = instanceArgs(scope.Args)
+	scope.Args["expected_revision"] = b.Revision
+	scope.Args["linear_team_names"] = teams
+	scope.Args["linear_project_names"] = projects
+	r, e := s.cfg.Executor.Execute(ctx, scope)
+	return r.Data, e
 }

@@ -155,6 +155,9 @@ func (s *linearTUISource) Do(ctx context.Context, r tui.LinearRequest) (tui.Line
 			data.Preview = string(raw)
 		}
 		return data, err
+	case "names-refresh":
+		_, err := service.RefreshNamesV2(ctx, s.scope)
+		return data, err
 	case "unlink-preview", "unlink":
 		result, err := service.UnlinkV2(ctx, s.scope, r.ExpectedRevision, r.Confirm)
 		if err != nil {

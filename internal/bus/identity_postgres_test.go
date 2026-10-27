@@ -452,12 +452,13 @@ func TestPostgresOperatorRefusesAnyOtherSchemaVersion(t *testing.T) {
 func TestPostgresEveryHostedOperationRequiresTheBoundAccount(t *testing.T) {
 	f := newPGIdentityFixture(t)
 	minimal := map[string]map[string]any{
-		"workspace_init":     {"mode": "server"},
-		"principal_unbind":   {"principal": "someone@identity-test.example"},
-		"taskboard_set":      taskboardArgs(0),
-		"taskboard_set_v2":   taskboardArgsV2(0, projectOne),
-		"taskboard_clear":    {"expected_revision": 0},
-		"taskboard_clear_v2": {"expected_revision": 0},
+		"workspace_init":      {"mode": "server"},
+		"principal_unbind":    {"principal": "someone@identity-test.example"},
+		"taskboard_set":       taskboardArgs(0),
+		"taskboard_set_v2":    taskboardArgsV2(0, projectOne),
+		"taskboard_clear":     {"expected_revision": 0},
+		"taskboard_clear_v2":  {"expected_revision": 0},
+		"taskboard_names_set": {"expected_revision": 0},
 	}
 	ops := make([]string, 0, len(operationArgs))
 	for op := range operationArgs {

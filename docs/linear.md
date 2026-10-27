@@ -1372,6 +1372,12 @@ Imported credentials have no invented refresh flow. `linear logout --profile ID`
 removes that connection only; `linear unlink --expected-revision N` previews a
 separate shared-mapping removal, saved only with `--confirm`.
 
+A link also stores the bound teams' and projects' names, as Linear gives them
+to the account that links, so the project overview can show names instead of
+UUIDs. They are display text only and never decide anything. A rename in Linear
+shows the old name until a project owner or lead runs `linear names-refresh`
+(or links again); refreshing doesn't move the binding's revision.
+
 If the stored binding cannot be read (for example after a damaged row or a
 partial restore), every board call is refused with `binding_unreadable` and the
 binding is never used or guessed at. If you recently downgraded ClawBridge, the

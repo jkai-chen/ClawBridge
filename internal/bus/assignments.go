@@ -548,6 +548,13 @@ func (s *Store) listSessions(ctx context.Context, tx *transaction, pid, status, 
 	if err != nil {
 		return nil, err
 	}
+	// Each row says whether it is the project's coordinator (TUI-UX-AUDIT
+	// U16), from the same transaction as the rows.
+	project, err := one(ctx, tx, `SELECT coordinator_session FROM projects WHERE id=?`, pid)
+	if err != nil {
+		return nil, err
+	}
+	coordinator := str(project, "coordinator_session")
 	bySession := map[string]map[string]any{}
 	for _, l := range live {
 		bySession[l["session_id"].(string)] = l
@@ -565,6 +572,7 @@ func (s *Store) listSessions(ctx context.Context, tx *transaction, pid, status, 
 			}
 		}
 		row["assignment"] = assignmentView(l, row)
+		row["coordinator"] = coordinator != "" && row["id"] == coordinator
 		out = append(out, row)
 	}
 	return page("sessions", out, n, after), nil

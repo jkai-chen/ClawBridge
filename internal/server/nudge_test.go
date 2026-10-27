@@ -13,6 +13,8 @@ import (
 
 	"clawbridge/internal/bus"
 	"clawbridge/internal/linearapp"
+	"clawbridge/internal/linearboard"
+	"clawbridge/internal/watcher"
 )
 
 // passes records each marker pass, and can hold one until released.
@@ -281,5 +283,77 @@ func TestNudgeDrainsALeftQueue(t *testing.T) {
 	}
 	if p.count() != 3 {
 		t.Fatal("passes:", p.pids)
+	}
+}
+
+// projectTicks is a watcher tick of fixed project results.
+type projectTicks []watcher.ProjectTick
+
+func (p projectTicks) Tick(context.Context) any { return []watcher.ProjectTick(p) }
+
+// R116-M1: a tick whose marker pass left rows hands the project to the
+// nudges, so a pass in its own deadline drains them with no confirm or
+// release; a pass stopped by the hour's budget, or one that drained, does
+// not.
+func TestATickThatLeavesRowsNudges(t *testing.T) {
+	cycle := func(left int, stopped string) *linearboard.WatchCycle {
+		return &linearboard.WatchCycle{MarkersLeft: left, MarkersStopped: stopped}
+	}
+	flight := oneAtATime(projectTicks{
+		{ProjectID: "id-p1", Comments: cycle(4, "deadline")},
+		{ProjectID: "id-p2", Comments: cycle(4, "budget")},
+		{ProjectID: "id-p3", Comments: cycle(0, "")},
+		{ProjectID: "id-p4"},
+	})
+	p := &leavingPasses{left: []bool{true, false}}
+	n, clock := testNudger(p, flight)
+	flight.after = n.Ticked
+	flight.Tick(context.Background())
+	select {
+	case <-n.wake:
+	default:
+		t.Fatal("the tick did not wake the nudges")
+	}
+	for i := 0; i < 3; i++ {
+		n.serve(context.Background())
+		*clock = clock.Add(nudgeEvery)
+	}
+	if len(p.pids) != 2 || p.pids[0] != "id-p1" || p.pids[1] != "id-p1" {
+		t.Fatal("passes:", p.pids)
+	}
+}
+
+// leavingTicker's ticks leave rows in project "id-p1"; its marker passes
+// are recorded.
+type leavingTicker struct {
+	passes
+}
+
+func (*leavingTicker) Tick(context.Context) any {
+	return []watcher.ProjectTick{{ProjectID: "id-p1", Comments: &linearboard.WatchCycle{MarkersLeft: 2, MarkersStopped: "time"}}}
+}
+
+// startWatcher hands the clock's ticks to the nudges: a tick that left rows
+// is followed by a nudge pass of that project.
+func TestTheClockHandsLeftRowsToTheNudges(t *testing.T) {
+	saved := NewWatcher
+	defer func() { NewWatcher = saved }()
+	got := &leavingTicker{passes: passes{started: make(chan string, 8)}}
+	NewWatcher = func(context.Context, *bus.Store, *linearapp.App) (Ticker, error) { return got, nil }
+	store, err := bus.Open(filepath.Join(t.TempDir(), "bus.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	startWatcher(ctx, store, watchSettings{interval: 10 * time.Millisecond}, HandlerOptions{Writer: &AppWriter{App: &linearapp.App{}}})
+	select {
+	case pid := <-got.started:
+		if pid != "id-p1" {
+			t.Fatal(pid)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("no nudge pass followed a tick that left rows")
 	}
 }

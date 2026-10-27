@@ -339,14 +339,28 @@ func TestMarkerDueChargesTheBindingProofOncePerPass(t *testing.T) {
 	if first < MarkerRowCalls(1, 2) || budget()-before != first {
 		t.Fatal("the first row did not pay the proof:", first, MarkerRowCalls(1, 2))
 	}
+	// A pass (it sends limit) pays the proof once. marker_due hands rows
+	// out without changing them, so the same two rows price both ways.
 	before = budget()
-	due := w.call("marker_due", "c", w.fenced(map[string]any{})).(map[string]any)
-	rows := due["markers"].([]any)
-	if len(rows) != 2 || due["left"] != 0 || due["stopped"] != "" {
+	due := w.call("marker_due", "c", w.fenced(map[string]any{"limit": 20})).(map[string]any)
+	if rows := due["markers"].([]any); len(rows) != 2 || due["left"] != 0 || due["stopped"] != "" {
 		t.Fatal(due)
 	}
 	if budget()-before != MarkerRowCalls(1, 2)+markerDueCalls+MarkerStateCalls || MarkerRowCalls(1, 2) != markerDueCalls+3 {
 		t.Fatal("the pass paid the proof more than once:", budget()-before)
+	}
+	// R116-M2: a v0.3.4 `linear watch` sends no limit and proves every row,
+	// so every row pays the proof.
+	before = budget()
+	due = w.call("marker_due", "c", w.fenced(map[string]any{})).(map[string]any)
+	rows := due["markers"].([]any)
+	if len(rows) != 2 || budget()-before != 2*MarkerRowCalls(1, 2)+MarkerStateCalls {
+		t.Fatal("a caller without limit paid the proof once:", budget()-before, due)
+	}
+	for _, r := range rows {
+		if c := r.(map[string]any)["charged"].(int); c < MarkerRowCalls(1, 2) {
+			t.Fatal("a row without limit was charged without the proof:", c)
+		}
 	}
 	if _, err := w.s.Execute(context.Background(), w.request("marker_due", "c", w.fenced(map[string]any{"limit": 21}))); err == nil {
 		t.Fatal("a limit above 20 was taken")

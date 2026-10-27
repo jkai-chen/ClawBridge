@@ -273,3 +273,40 @@ func TestWithinOnlyRunsNoMarkerPass(t *testing.T) {
 		t.Fatal(err, within, a.comments.markerDueArgs, len(a.comments.reports))
 	}
 }
+
+// R116-L3: a cut on the pass's last row reports deadline, not the bus's
+// "" or limit.
+func TestMarkerPassCutOnItsLastRowSaysDeadline(t *testing.T) {
+	s, a, _, scope, _, _ := passTest(t)
+	open := s.cfg.Open
+	s.cfg.Open = func(ctx context.Context, h *http.Client, ro bool) (Provider, error) {
+		pv, err := open(ctx, h, ro)
+		return cutCommenter{pv.(commentingV2)}, err
+	}
+	a.comments.markersDue = dueRows(1)
+	room, reserve := markerRowRoom, markerReserve
+	markerRowRoom, markerReserve = 100*time.Millisecond, 300*time.Millisecond
+	defer func() { markerRowRoom, markerReserve = room, reserve }()
+	ctx, cancel := context.WithTimeout(context.Background(), 700*time.Millisecond)
+	defer cancel()
+	cycle, err := watchPass(t, s, scope, ctx)
+	if err != nil || len(cycle.Markers) != 1 || cycle.MarkersStopped != "deadline" {
+		t.Fatalf("%v %+v", err, cycle)
+	}
+}
+
+// R116-L3: a budget stop stands when the pass also stops on its clock, so
+// a nudge doesn't come back every minute to an empty budget.
+func TestMarkerPassKeepsABudgetStop(t *testing.T) {
+	s, a, _, scope, clock, _ := passTest(t)
+	a.comments.markersDue, a.comments.markersLeft, a.comments.markersStopped = dueRows(3), 2, "budget"
+	a.comments.onGo = func(args map[string]any) {
+		if args["part"] == "comment" {
+			*clock = clock.Add(5 * time.Second)
+		}
+	}
+	cycle, err := watchPass(t, s, scope, context.Background())
+	if err != nil || len(cycle.Markers) != 2 || cycle.MarkersStopped != "budget" || cycle.MarkersLeft != 3 {
+		t.Fatalf("%v %d rows, stopped %q, left %d", err, len(cycle.Markers), cycle.MarkersStopped, cycle.MarkersLeft)
+	}
+}

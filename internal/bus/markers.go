@@ -543,16 +543,19 @@ func (c commentCall) markerSettle(ctx context.Context) (any, error) {
 
 // markerDue hands the watcher the marker rows to apply, at most limit
 // (default markerDueLimit), charging their calls to the lease budget first:
-// markers come before comment polls. The binding proof is charged once, on
-// the first row: the watcher's pass shares it. left counts the due rows not
-// handed out, and stopped says why: limit or budget.
+// markers come before comment polls. With limit, which only the server
+// watcher's pass sends, the binding proof is charged once, on the first
+// row: the pass shares it. Without it (a v0.3.4 `linear watch`, which
+// proves per row) every row pays it. left counts the due rows not handed
+// out, and stopped says why: limit or budget.
 func (c commentCall) markerDue(ctx context.Context) (any, error) {
 	lease, err := c.fence(ctx)
 	if err != nil {
 		return nil, err
 	}
 	limit := markerDueLimit
-	if v, ok := c.a["limit"]; ok {
+	v, pass := c.a["limit"]
+	if pass {
 		n, e := integer(v)
 		if e != nil || n < 1 || n > markerDueLimit {
 			return nil, invalid(fmt.Sprintf("limit must be 1–%d", markerDueLimit))
@@ -582,8 +585,8 @@ func (c commentCall) markerDue(ctx context.Context) (any, error) {
 			break
 		}
 		calls := markerDueCalls
-		if len(markers) == 0 {
-			// The pass's one binding proof.
+		if len(markers) == 0 || !pass {
+			// The binding proof: once for a pass, per row otherwise.
 			calls = rowCalls
 		}
 		if s := str(row, "state_state"); s == "pending" || s == "in_flight" {

@@ -54,6 +54,9 @@ export type OptInTool = (typeof OPT_IN_TOOLS)[number];
 
 // --- §1b agent configuration ---
 
+// An owner's projects, as many as the agent serves: each gets its own loop, and the container is small (160 MiB, 64
+// pids), so a longer list is refused rather than served.
+export const MAX_PROJECTS = 100;
 const ProjectToken = Type.Object({ project_id: ProjectId, token: Type.String({ minLength: 1 }), expires_at: Time });
 
 export const AgentConfigRequest = Type.Object({ instance_id: Id }, Closed);
@@ -66,7 +69,7 @@ export const AgentConfigResponse = Type.Object({
 		model: Id,
 		key: Type.String({ minLength: 1 }),
 	}),
-	projects: Type.Array(ProjectToken),
+	projects: Type.Array(ProjectToken, { maxItems: MAX_PROJECTS }),
 	limits: Type.Object({
 		max_input_tokens_per_run: Type.Integer({ minimum: 1 }),
 		max_output_tokens_per_run: Type.Integer({ minimum: 1 }),
@@ -77,7 +80,7 @@ export const AgentConfigResponse = Type.Object({
 });
 
 export const AgentRenewRequest = Type.Object({ binding_secret: BindingSecret }, Closed);
-export const AgentRenewResponse = Type.Object({ projects: Type.Array(ProjectToken) });
+export const AgentRenewResponse = Type.Object({ projects: Type.Array(ProjectToken, { maxItems: MAX_PROJECTS }) });
 
 // d4.1: the setup test's result, and the agent's status for doctor. Fixed codes only, never provider text.
 export const SETUP_TEST_FAILURES = [

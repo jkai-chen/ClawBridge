@@ -44,6 +44,11 @@ come in later steps (see "Status").
    follow each renewal, which lists the owner's enabled projects. A newly enabled one gets a loop (renewal is at most
    5 minutes apart), and a disabled one loses its loop. With none yet, as right after an owner's setup test, it stays
    up and renews every minute.
+   - A dropped project's running case stops at once, and sends no outcome: its token is gone, and the server falls
+     back to rules at the deadline. A project listed again starts only once its old loop has ended.
+   - A list of more than 100 projects, or any answer over 1 MiB, is refused.
+   - A loop that crashed is started again by the next renewal. One that ended on a provider mismatch is not, while
+     the project stays listed.
 
 ## What it never does
 

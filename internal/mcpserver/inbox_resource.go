@@ -20,6 +20,9 @@ type Options struct {
 	PollInterval time.Duration
 	PollTimeout  time.Duration
 	Wait         func(context.Context, time.Duration) error
+	// ContextDir holds the binding records; when set, the server reports
+	// its session's context if no other process does.
+	ContextDir string
 }
 type inboxResource struct {
 	mu             sync.Mutex

@@ -85,3 +85,25 @@ func TestSessionsDetailsShowTheLiveAssignment(t *testing.T) {
 		}
 	}
 }
+
+func TestSessionsShowTheLastContextReport(t *testing.T) {
+	rows := sessionRows([]map[string]any{
+		{"name": "eng", "context_at": "2026-01-01T10:00:00Z", "context_tokens": float64(612345), "context_window": float64(1000000), "context_level": "warn", "context_compactions": float64(2)},
+		{"name": "quiet", "context_at": "2026-01-01T10:00:00Z", "context_tokens": float64(5000), "context_level": "ok", "context_backstop_at": "2026-01-01T09:00:00Z"},
+		{"name": "none"},
+	})
+	if rows[0].Context != "612k warn [1000k]" || rows[1].Context != "5k" || rows[2].Context != "" {
+		t.Fatalf("%q %q %q", rows[0].Context, rows[1].Context, rows[2].Context)
+	}
+	if rows[0].ContextDetail != "612k tokens, level warn, window 1000k, 2 compaction(s), reported 2026-01-01T10:00:00Z" ||
+		!strings.Contains(rows[1].ContextDetail, "last compacted before its handover level at 2026-01-01T09:00:00Z") {
+		t.Fatalf("%q %q", rows[0].ContextDetail, rows[1].ContextDetail)
+	}
+	for selected, want := range []string{"Context: 612k tokens, level warn", "Context: 5k tokens, level ok", "Context: Not reported"} {
+		m := Model{width: 160, sessions: rows, selected: selected}
+		out := ansi.Strip(renderSessions(m))
+		if !strings.Contains(out, want) || !strings.Contains(out, "CONTEXT") {
+			t.Fatalf("missing %q:\n%s", want, out)
+		}
+	}
+}

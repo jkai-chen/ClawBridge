@@ -104,9 +104,13 @@ func Run(ctx context.Context, c Config) error {
 		beat, stop := context.WithCancel(ctx)
 		defer stop()
 		b := c.Binding
-		go KeepAlive(beat, c.Executor, HeartbeatInterval, func() (bus.Request, bool) {
+		session := func() (bus.Request, bool) {
 			return bus.Request{Workspace: b.Workspace, Project: b.Project, Session: b.Session, Args: map[string]any{"instance": b.Instance}}, true
-		})
+		}
+		go KeepAlive(beat, c.Executor, HeartbeatInterval, session)
+		if c.ContextDir != "" {
+			go ReportContext(beat, c.Executor, c.ContextDir, ContextInterval, session)
+		}
 	}
 	backoff := time.Second
 	for {

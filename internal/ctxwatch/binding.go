@@ -32,6 +32,12 @@ type Binding struct {
 	AgentPID        int    `json:"agent_pid,omitempty"`
 	CompactingAt    string `json:"compacting_at,omitempty"`
 	CompactTrigger  string `json:"compact_trigger,omitempty"`
+	// ReportedCompactions is the server's compaction count for the session,
+	// and SeenCompactionAt the last compaction counted into it. The reader
+	// sees only a transcript's tail, so its own count can fall; this one
+	// only moves on a compaction newer than the last seen.
+	ReportedCompactions int64  `json:"reported_compactions,omitempty"`
+	SeenCompactionAt    string `json:"seen_compaction_at,omitempty"`
 }
 
 // Levels are a session's effective thresholds, in tokens.

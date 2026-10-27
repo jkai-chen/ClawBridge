@@ -616,6 +616,33 @@ the project's history.
   - The coordinator gets no notice about its own session. With no recipient,
     the notice is recorded as `no_recipient`.
 
+### Reporting
+
+The client reports on its own; there is nothing to run.
+- **Who reports:** each process that holds a session, `clawbridge mcp` and
+  `clawbridge notify`, tries every minute to take an exclusive lock on
+  `<state home>/context/<session>.lock`. Only the holder reports, so one
+  session's figures come from one reading. The OS releases the lock when its
+  process exits, and another process takes it over at its next try.
+- **What it needs:** the session must be bound, and its transcript readable
+  in a known format.
+- **When:** a report goes when the level changes or a new compaction
+  appears, and otherwise every 10 minutes. With context watching off, the
+  client asks again every 10 minutes.
+- **Compactions:** a compaction counts once, by its time, so a transcript
+  whose readable tail no longer shows an older one never lowers the count.
+  After a compaction, `tokens` is 0 until the next model call. The report
+  carries the compaction's trigger when the `PreCompact` hook noted it
+  shortly before, so the server can tell a manual `/compact` from the
+  auto-compact backstop.
+- **Caching:** the answer's levels and `handover_hint` are kept in the
+  binding record. The hooks and `doctor` read them there, with no network
+  call.
+
+The TUI's Sessions screen shows each session's last report in a CONTEXT
+column (`612k warn [1000k]`: tokens, the level when past ok, and the window
+when known), with the full figures for the selected session.
+
 ### Doctor
 
 `clawbridge doctor` adds a `context` check for the configured session. It

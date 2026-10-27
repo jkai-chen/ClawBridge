@@ -187,9 +187,9 @@ func renderSessions(m Model) string {
 	}
 	rows := make([][]string, len(m.sessions))
 	for i, s := range m.sessions {
-		rows[i] = []string{s.Name, firstNonempty(s.Owner, "Not recorded"), firstNonempty(s.Host, "Not recorded"), s.AgentKind, firstNonempty(s.Presence, s.Status, "-"), s.Role, s.Status}
+		rows[i] = []string{s.Name, firstNonempty(s.Owner, "Not recorded"), firstNonempty(s.Host, "Not recorded"), s.AgentKind, firstNonempty(s.Presence, s.Status, "-"), firstNonempty(s.Context, "-"), s.Role, s.Status}
 	}
-	b.WriteString(renderTable(m, []string{"NAME", "OWNER", "HOST", "AGENT", "PRESENCE", "ROLE", "STATUS"}, []int{22, 28, 22, 12, 12, 10, 10}, rows))
+	b.WriteString(renderTable(m, []string{"NAME", "OWNER", "HOST", "AGENT", "PRESENCE", "CONTEXT", "ROLE", "STATUS"}, []int{22, 28, 22, 12, 12, 18, 10, 10}, rows))
 	if m.selected >= 0 && m.selected < len(m.sessions) {
 		row := m.sessions[m.selected]
 		details := []struct{ label, value string }{
@@ -198,6 +198,7 @@ func renderSessions(m Model) string {
 			{"Account label (self-reported, not verified identity)", firstNonempty(row.Account, "Not recorded")},
 			{"Agent", row.AgentKind}, {"Role", row.Role}, {"Status", row.Status}, {"Presence", firstNonempty(row.Presence, row.Status, "-")},
 			{"Assignment", firstNonempty(row.Assignment, "None")},
+			{"Context", firstNonempty(row.ContextDetail, "Not reported")},
 		}
 		b.WriteString("\n\nSelected session\n")
 		for _, d := range details {

@@ -143,6 +143,9 @@ type Config struct {
 	Wait           func(context.Context, time.Duration) error
 	RequestTimeout time.Duration
 	HostTimeout    time.Duration
+	// ContextDir holds the binding records; when set, the watcher reports
+	// its session's context if no other process does (ReportContext).
+	ContextDir string
 }
 
 func (c Config) validate() error {

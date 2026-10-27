@@ -99,6 +99,10 @@
   `list_sessions`. The server sends `context` notices on transitions only: past warn to the coordinator; past handover to
   the session itself (with the hint) and the coordinator; an automatic compaction past warn as the backstop. Each is
   deduplicated, and notices to the coordinator are limited to one per session per 30 minutes.
+- **Sessions report their context on their own, and the TUI shows it.** `clawbridge mcp` and `clawbridge notify` report
+  a bound session's context when the level changes, a compaction appears, or every 10 minutes. One process per session
+  reports, chosen by a lock file, and the answer's levels and hint are cached for the hooks. The Sessions screen gains a
+  CONTEXT column (`612k warn [1000k]`).
 
 # ClawBridge v0.3.4
 

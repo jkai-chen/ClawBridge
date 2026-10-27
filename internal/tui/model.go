@@ -233,6 +233,11 @@ type SessionRow struct {
 	Stale     bool   `json:"stale"`
 	// Assignment summarizes the live assignment: state, issue, task role, scope.
 	Assignment string `json:"assignment,omitempty"`
+	// Context is the session's last context report, in short ("612k warn
+	// [1000k]"), and ContextDetail the same in full; both empty without
+	// one.
+	Context       string `json:"context,omitempty"`
+	ContextDetail string `json:"context_detail,omitempty"`
 }
 
 // MessageRow is one inbox item. Delivery and read stamps come from the server.
@@ -1394,8 +1399,41 @@ func sessionRows(rows []map[string]any) []SessionRow {
 			Role: text(r, "role"), AgentKind: text(r, "agent_kind"), Status: text(r, "status"),
 			Presence: text(r, "presence"), Stale: boolean(r, "stale"), Assignment: assignmentSummary(r["assignment"]),
 		})
+		out[len(out)-1].Context, out[len(out)-1].ContextDetail = contextSummary(r)
 	}
 	return out
+}
+
+// contextSummary is a session's last context report from list_sessions:
+// counts, a level and a time only.
+func contextSummary(r map[string]any) (short, detail string) {
+	at := text(r, "context_at")
+	if at == "" {
+		return "", ""
+	}
+	tokens, window, compactions := integer(r, "context_tokens"), integer(r, "context_window"), integer(r, "context_compactions")
+	level := text(r, "context_level")
+	short = kTokens(tokens)
+	if level == "warn" || level == "handover" {
+		short += " " + level
+	}
+	detail = fmt.Sprintf("%s tokens, level %s", kTokens(tokens), firstNonempty(level, "ok"))
+	if window > 0 {
+		short += " [" + kTokens(window) + "]"
+		detail += ", window " + kTokens(window)
+	}
+	detail += fmt.Sprintf(", %d compaction(s), reported %s", compactions, at)
+	if backstop := text(r, "context_backstop_at"); backstop != "" {
+		detail += ", last compacted before its handover level at " + backstop
+	}
+	return short, detail
+}
+
+func kTokens(n int64) string {
+	if n < 1000 {
+		return fmt.Sprint(n)
+	}
+	return fmt.Sprintf("%dk", n/1000)
 }
 
 func assignmentSummary(v any) string {

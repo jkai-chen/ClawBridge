@@ -114,5 +114,5 @@ func runNotify(ctx context.Context, flags Config, args []string, stdout, stderr 
 		return err
 	}
 	defer closeExecutor()
-	return runNotifyWatcher(ctx, notify.Config{Binding: notify.Binding{Authority: hex.EncodeToString(digest[:]), Principal: principal, Workspace: c.Workspace, Project: c.Project, Session: c.Session, Instance: c.Instance, Adapter: adapter, Thread: thread}, Executor: executor, StatePath: state, Interval: interval, Once: once, Output: stdout, Diagnostics: stderr, CodexCommand: command})
+	return runNotifyWatcher(ctx, notify.Config{Binding: notify.Binding{Authority: hex.EncodeToString(digest[:]), Principal: principal, Workspace: c.Workspace, Project: c.Project, Session: c.Session, Instance: c.Instance, Adapter: adapter, Thread: thread}, Executor: executor, StatePath: state, Interval: interval, Once: once, Output: stdout, Diagnostics: stderr, CodexCommand: command, ContextDir: contextDirOrEmpty()})
 }

@@ -303,7 +303,9 @@ func MergedLists(content string) []int {
 		if m := orderedItem.FindStringSubmatch(line); m != nil {
 			num := 0
 			fmt.Sscan(m[1], &num)
-			if inList && num <= last {
+			// A number below the last restarts; a repeat is a lazy list
+			// ("1. 1. 1."), which renders as numbered (R52-L1).
+			if inList && num < last {
 				lines = append(lines, n+1)
 			}
 			inList, last = true, num

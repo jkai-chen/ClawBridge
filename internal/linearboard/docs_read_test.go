@@ -187,7 +187,7 @@ func TestDocGetCutsLongContent(t *testing.T) {
 			t.Fatalf("CutContent(%q, %d) = %q", c.in, c.max, got)
 		}
 	}
-	if !strings.Contains(got.Note, "partial read: 11 of") || !strings.Contains(got.Note, "--max-bytes") {
+	if !strings.Contains(got.Note, "partial read: the first 11 of") || !strings.Contains(got.Note, "not returned") || strings.Contains(got.Note, "nothing is missing") || !strings.Contains(got.Note, "--max-bytes") {
 		t.Fatal("note", got.Note)
 	}
 	// The default reads 64 KiB; a longer document says it can't be read whole.

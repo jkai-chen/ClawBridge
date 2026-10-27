@@ -543,7 +543,7 @@ func offerBootstrap(ctx context.Context, s *onboardingState, prompt *wizardPromp
 		return false, ctx.Err()
 	}
 	if err != nil {
-		fmt.Fprintln(stdout, "\nThe workspace was not created: "+err.Error())
+		fmt.Fprintln(stdout, "\nThe workspace was not created: "+wizardSafe(err.Error()))
 		return false, nil
 	}
 	_, err = fmt.Fprintf(stdout, "\nThe workspace %s is created and this device has joined it. Check:\n\n%s", workspace, signinChecks(s))

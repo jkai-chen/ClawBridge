@@ -197,8 +197,9 @@ Done:
 Next:
 - **The server's launcher endpoints**, being built server-side. Until they exist, `run` logs a failed round every 30
   seconds and starts nothing.
-- **Deploy:** the `cbagent` user, the rootless daemon and the systemd units. The deploy also loads the pinned
-  image into that daemon, because the proxy allows no pull.
+- **Deploy:** the units, `delegate.conf` and the install check are in `deploy/systemd/agentd/` and
+  `deploy/agentd-check.sh`, and the steps in `docs/operations/agentd.md`. The deploy also loads the pinned image
+  into the rootless daemon, because the proxy allows no pull. The first deploy on a real host is next.
 - **Real-daemon tests:** in CI, against a real rootless daemon. A create through the proxy is refused. With the
   proxy bypassed, a container still can't read a root-owned file on the host. Also, what the fake daemon can't
   show:

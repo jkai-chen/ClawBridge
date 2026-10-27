@@ -519,9 +519,10 @@ restarting a VM only restarts the existing container image.
 An owner's model provider key is stored sealed, and handed only to that owner's
 agent container, which `clawbridge-agentd` starts on the host. The server side
 ships here; nothing runs an agent until agentd is installed with a launcher token.
+Installing agentd, its rootless Docker and its units is in [agentd.md](agentd.md).
 
 ```sh
-CLAWBRIDGE_MODEL_KEY_SEAL_KEY=<32 random bytes, base64>   # openssl rand -base64 32
+CLAWBRIDGE_MODEL_KEY_SEAL_KEY=<32 random bytes, base64>   # generate it on the host: agentd.md, "The seal key"
 CLAWBRIDGE_DISPATCHER_MODEL_MAX_AGENTS=2                  # optional, 1-20
 ```
 
@@ -562,15 +563,17 @@ CLAWBRIDGE_DISPATCHER_MODEL_MAX_AGENTS=2                  # optional, 1-20
   accepts it only over HTTPS, or from this machine, and mints at most 6
   credentials an hour per owner (429 past that). Each mint replaces the owner's
   running agent, and `clawbridge doctor` warns an owner whose agent got more
-  than 3 in a day. Create it on the host, straight into a new env file for agentd:
+  than 3 in a day. Create it on the host, straight into a new env file for agentd,
+  as [agentd.md](agentd.md#the-launcher-token) shows: the api image runs as
+  `nonroot` (uid 65532), so it writes into a one-run directory it owns, and root
+  moves the file into place.
 
   ```sh
-  ... run --rm --no-deps -v /etc/clawbridge-agentd:/out api operator launcher-token create --out /out/launcher.env
   ... run --rm --no-deps api operator launcher-token revoke lt_...
   ```
 
   The token is written only to that file (0600, and never over an existing
-  one); `chown root:root` it afterwards, since agentd's env file is root's. The command prints only the token's ID, and the database keeps only
+  one). The command prints only the token's ID, and the database keeps only
   its hash. `--print` shows the token instead, on a terminal only.
 
   A launcher token expires 90 days after it is created, and the command prints

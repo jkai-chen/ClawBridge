@@ -58,6 +58,11 @@
   binary alone (`cmd/clawbridge-agentd/Dockerfile`, about 15 MiB, user 65534), and CI runs its egress proxy with the
   same hardening agentd gives it. `CLAWBRIDGE_AGENT_IMAGE` and `CLAWBRIDGE_EGRESS_IMAGE` now also accept an image ID
   (`sha256:…`), since an image loaded with `docker load` has no repo digest to pin.
+- **Installing `clawbridge-agentd` is documented, with its units and a check.** `docs/operations/agentd.md` sets up its
+  two users, the rootless Docker, the launcher token and the seal key without printing either, and the way back out.
+  `deploy/systemd/agentd/` has the hardened units, and `deploy/agentd-check.sh` checks an install without changing it
+  or printing a secret. The launcher token's `--out` steps in deployment.md failed, since the api runs as `nonroot`;
+  they now go through a directory it owns.
 
 ## The comment watcher
 

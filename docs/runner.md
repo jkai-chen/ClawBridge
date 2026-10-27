@@ -51,7 +51,15 @@ Run it inside the repository's checkout, or pass `--repo PATH`.
      Nothing else in your shell gets through: `GITHUB_TOKEN`, `NPM_TOKEN`, `AWS_*`,
      `SSH_AUTH_SOCK` and `CLAWBRIDGE_*` never reach it, and neither do the variables
      of a Claude Code session you launch it from (its messaging socket and token
-     included). Bedrock and Vertex users: their cloud credentials aren't passed. The script names variables,
+     included).
+   - **Bedrock and Vertex:** the switches (`CLAUDE_CODE_USE_BEDROCK`,
+     `CLAUDE_CODE_USE_VERTEX`) are passed, but their cloud credentials (`AWS_*`,
+     `GOOGLE_*`, `CLOUD_ML_REGION`, ...) are not. A Bedrock or Vertex setup won't sign in
+     inside a runner session yet.
+   - **Tuning variables** such as `API_TIMEOUT_MS` or `CLAUDE_CODE_MAX_OUTPUT_TOKENS`
+     aren't passed either. There's no setting for more names: adding one is a
+     reviewed change to the list in `internal/runner/env.go` (`agentEnv`), so that
+     every name the session can see is a deliberate choice. The script names variables,
      never their values. The MCP server alone also gets your non-secret
      `CLAWBRIDGE_*` settings, and on Linux your session bus for the key store,
      through its MCP config.

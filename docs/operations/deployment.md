@@ -709,4 +709,61 @@ the newer schema. Use the production restore procedure with a dump taken before
 the migration. Compose project and Caddy volumes stay in place throughout; never
 use `docker compose down -v`.
 
+### Updating a server on AWS
+
+An AWS server ([first deployment](first-deployment.md)) has no SSH: you work in a
+Session Manager session as root, and the release is a checkout of a release tag,
+not an archive.
+
+1. **Open a session** from your own terminal (it needs AWS's Session Manager
+   plugin), then `sudo -i`:
+
+   ```sh
+   aws ssm start-session --target i-0123456789abcdef0 --profile clawbridge-onboarding --region eu-west-1
+   ```
+
+2. **Back up first:** `systemctl start clawbridge-postgres-backup.service`, and
+   require a successful result and an uploaded checksum, as above.
+3. **Check out the new tag beside the old one,** and compare its commit with
+   `clawbridge version` on your machine, which prints the tag's `commit`:
+
+   ```sh
+   TAG=vX.Y.Z
+   stamp=$(date -u +%Y%m%dT%H%M%SZ)
+   git clone --branch "$TAG" --depth 1 https://github.com/jkai-chen/ClawBridge.git "/opt/clawbridge/repo-next-$stamp"
+   git -C "/opt/clawbridge/repo-next-$stamp" rev-parse HEAD
+   ```
+
+   If the commit differs, stop: remove the new directory and change nothing.
+4. **Swap and rebuild the API,** keeping the old checkout as the recovery copy:
+
+   ```sh
+   PROJECT=$(sed -n 's/^COMPOSE_PROJECT_NAME=//p' /etc/clawbridge/clawbridge.env)
+   [ -n "$PROJECT" ] || exit 1
+   mv /opt/clawbridge/repo "/opt/clawbridge/repo-recovery-$stamp"
+   mv "/opt/clawbridge/repo-next-$stamp" /opt/clawbridge/repo
+   docker compose --env-file /etc/clawbridge/clawbridge.env --project-name "$PROJECT" \
+     -f /opt/clawbridge/repo/deploy/compose.yaml config --quiet
+   docker compose --env-file /etc/clawbridge/clawbridge.env --project-name "$PROJECT" \
+     -f /opt/clawbridge/repo/deploy/compose.yaml build api
+   docker compose --env-file /etc/clawbridge/clawbridge.env --project-name "$PROJECT" \
+     -f /opt/clawbridge/repo/deploy/compose.yaml up -d --no-deps api
+   ```
+
+5. **Check it** from your machine:
+
+   ```sh
+   clawbridge cloud check server version --server https://clawbridge.example.com \
+     --instance i-0123456789abcdef0 --region eu-west-1 --profile clawbridge-onboarding --account 123456789012
+   ```
+
+   Then run the backup service again.
+
+The rules above hold on AWS too: never replace the env file or the volumes, never
+`docker compose down -v`, and recreate Caddy only if its configuration changed.
+**Rollback** within a schema is the recovery directory moved back to
+`/opt/clawbridge/repo` and the same three Compose commands; across a schema
+change, restore the dump taken before the update (see
+[backup and recovery](backup-and-recovery.md)).
+
 See [backup and recovery](backup-and-recovery.md) for dump verification and restore.

@@ -34,6 +34,34 @@ cannot be revoked, and owners cannot revoke themselves.
 
 Send the colleague three values: the service URL, the workspace and the project.
 
+### If your server uses invites (device sign-in)
+
+> **Not released yet:** the client commands below (`invite`, `join`) come with the
+> next client release after v0.3.4. See [what is released](sign-in.md).
+
+On a server whose `CLAWBRIDGE_AUTH` is `device` or `google,device`
+([sign-in methods](operations/deployment.md#sign-in-methods)), you can let people in
+without a Google account. Instead of `project role-set`, invite them by email with
+their roles:
+
+```sh
+clawbridge invite --email colleague@example.test --grant checkout=member
+clawbridge invite list
+clawbridge invite revoke inv_...
+```
+
+- `invite` prints a one-time code once. ClawBridge sends no email: give the colleague
+  the code and the service URL yourself, over a channel you would trust with a
+  password.
+- They join with `clawbridge --server URL join --email colleague@example.test`, which
+  asks for the code without showing it, or with the guided setup's "I have an invite code".
+- The code expires (72 hours by default, `--expires`); `invite list` shows each
+  invite's status, never the code. A lost or burnt code means a new invite.
+- On a device-only server, the Google steps below (test users, a Google email) don't
+  apply.
+
+The details are in [invites and the one-time code](sign-in.md#invites-and-the-one-time-code).
+
 Before the colleague starts, also make sure that:
 
 - **Google can sign them in.** If the service's Google OAuth consent screen is

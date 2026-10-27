@@ -31,15 +31,18 @@ import (
 // commands.
 
 const accountUsage = `usage:
+  clawbridge join [--label LABEL] [--key-store keyring|file] [--yes]
+      Joins a hosted workspace with an invite link (https://SERVER/join#cbj1.…). It asks for the link
+      without echoing it, or reads it from stdin when that isn't a terminal (then --yes confirms). The
+      link is never taken on the command line, which is kept in shell history and process lists.
   clawbridge --server URL join --email EMAIL [--label LABEL] [--key-store keyring|file]
-      Joins a hosted workspace with an invite. It asks for the code without echoing it, or reads it
-      from stdin when that isn't a terminal. (--code CODE exists for scripts, but a command line is kept
-      in shell history and shown to other users' process lists.)
+      The same with the server, email and code given separately. It asks for the code (or the link)
+      without echoing it. (--code CODE exists for scripts.)
   clawbridge invite --email EMAIL --grant PROJECT=ROLE [--grant PROJECT=ROLE]... [--expires 72h]
   clawbridge invite --email EMAIL --recovery [--revoke-others]     (workspace owner)
   clawbridge invite list | invite revoke INVITE_ID
   clawbridge device list [--member EMAIL] | device revoke DEVICE_ID [--reason TEXT] | device label DEVICE_ID LABEL
-  clawbridge device add [--expires 24h]       (an invite for another device of yours; join with it there)
+  clawbridge device add [--expires 15m]       (a link for another device of yours, at most 24h; join with it there)
   clawbridge device add --ci NAME --grant PROJECT=reader|member [--grant ...]... --expires 30d [--label LABEL]
   clawbridge device enroll [--label LABEL] [--key-store keyring|file]   (signed in with Google: no invite)
   clawbridge device events [--all] | device ack EVENT_ID... | device ack --all
@@ -77,6 +80,23 @@ func grantsFrom(grants []string) (map[string]any, error) {
 }
 
 // wholeHours reads a duration given in hours or days ("72h", "3d").
+// wholeMinutes reads a device invite's --expires: minutes, hours or days,
+// such as 15m, 2h or 1d.
+func wholeMinutes(v string) (int64, error) {
+	if n, ok := strings.CutSuffix(v, "d"); ok {
+		var days int64
+		if _, err := fmt.Sscan(n, &days); err != nil || fmt.Sprint(days) != n {
+			return 0, errors.New("--expires takes minutes, hours or days, such as 15m, 2h or 1d")
+		}
+		return days * 24 * 60, nil
+	}
+	d, err := time.ParseDuration(v)
+	if err != nil || d <= 0 || d%time.Minute != 0 {
+		return 0, errors.New("--expires takes whole minutes, hours or days, such as 15m, 2h or 1d")
+	}
+	return int64(d / time.Minute), nil
+}
+
 func wholeHours(v string) (int64, error) {
 	if n, ok := strings.CutSuffix(v, "d"); ok {
 		var days int64
@@ -207,7 +227,7 @@ func runAccount(ctx context.Context, flags Config, command string, args []string
 	case "device add":
 		ci := f.String("ci", "", "make a CI device with this name")
 		f.Var(&grantFlags, "grant", "with --ci: PROJECT=reader|member (repeatable)")
-		expires := f.String("expires", "", "how long the invite (default 24h), or the CI device (required, 1d-90d), lasts")
+		expires := f.String("expires", "", "how long the invite (default 15m, at most 24h), or the CI device (required, 1d-90d), lasts")
 		label := f.String("label", "", "with --ci: the device's label")
 		f.StringVar(&out, "out", "", "write the code, or the CI device's key, to this new file (0600, never over an existing one) instead of this terminal")
 		if _, err = parseAccountFlags(f, args, 0, 0); err != nil {
@@ -223,7 +243,7 @@ func runAccount(ctx context.Context, flags Config, command string, args []string
 			}
 			op, a["email"], a["purpose"] = "invite_create", config.Principal, "device"
 			if *expires != "" {
-				if a["expires_hours"], err = wholeHours(*expires); err != nil {
+				if a["expires_minutes"], err = wholeMinutes(*expires); err != nil {
 					return err
 				}
 			}
@@ -349,19 +369,45 @@ func runAccount(ctx context.Context, flags Config, command string, args []string
 			data[devicesign.EnvKey] = devicesign.EncodeKey(ciKey)
 		}
 		data["note"] = note
-	case op == "invite_create" && secret.toFile():
+	case op == "invite_create":
 		code, _ := data["code"].(string)
+		if code == "" && !secret.toFile() {
+			break
+		}
 		if code == "" {
 			secret.discard()
 			return errors.New("the server's answer had no invite code; revoke the invite and create another")
 		}
-		if err = secret.write(code + "\n"); err != nil {
+		// One thing to hand over: the link carries the server, workspace,
+		// email and code (§17.1). It's as secret as the code.
+		email, _ := data["email"].(string)
+		link, e := devicekey.FormatLink(config.Server, config.Workspace, email, code)
+		if e != nil {
+			link = ""
+			// Say why there's no link, so nobody waits for one.
+			fmt.Fprintf(stderr, "No invite link: %v (the profile's server is %s); give the code and the server's URL instead.\n", e, wizardSafe(config.Server))
+		}
+		if !secret.toFile() {
+			if link != "" {
+				data["link"] = link
+				data["note"] = "Give the link privately (it works once). On the new machine: clawbridge join, then paste it."
+			}
+			break
+		}
+		written := link
+		if written == "" {
+			written = code
+		}
+		if err = secret.write(written + "\n"); err != nil {
 			_, _ = executor.Execute(ctx, bus.Request{Operation: "invite_revoke", Workspace: config.Workspace, Args: map[string]any{"invite_id": data["invite_id"]}})
 			return fmt.Errorf("%w; the new invite was revoked", err)
 		}
 		delete(data, "code")
 		data["code_file"] = secret.path
-		data["note"] = "Wrote the code to " + secret.path + " (0600). Give it to the invitee privately, then delete the file; `clawbridge join` reads it from stdin."
+		data["note"] = "Wrote the invite link to " + secret.path + " (0600). Give it to the invitee privately, then delete the file; `clawbridge join --yes < FILE` reads it from stdin."
+		if link == "" {
+			data["note"] = "Wrote the code to " + secret.path + " (0600). Give it to the invitee privately, then delete the file; `clawbridge join` reads it from stdin."
+		}
 	}
 	safeLabels(result.Data)
 	return json.NewEncoder(stdout).Encode(result)
@@ -755,48 +801,110 @@ func writeDeviceRoute(path string, set map[string]any) error {
 func runDeviceJoin(ctx context.Context, flags Config, args []string, stdin io.Reader, stdout, stderr io.Writer) error {
 	f := flag.NewFlagSet("join", flag.ContinueOnError)
 	f.SetOutput(stderr)
-	email := f.String("email", "", "the email the invite was issued for")
-	code := f.String("code", "", "the invite code; leave it out to be asked for it unechoed (or pipe it on stdin): a command line is kept in shell history and visible to other users")
+	email := f.String("email", "", "with --server: the email the invite was issued for (the code is then asked for); leave out to paste an invite link")
+	code := f.String("code", "", "with --email: the invite code; leave it out to be asked for it unechoed (or pipe it on stdin): a command line is kept in shell history and visible to other users")
 	label := f.String("label", "", "this device's label (default: this machine's name)")
 	store := f.String("key-store", "", "where the key is kept: keyring (the default), or file where there is no OS key store")
-	if _, err := parseAccountFlags(f, args, 0, 0); err != nil {
+	yes := f.Bool("yes", false, "join without asking to confirm (needed when the link is piped on stdin)")
+	ordered, err := interspersedFlags(f, args)
+	if err == nil {
+		err = f.Parse(ordered)
+	}
+	if err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			return nil
 		}
 		return err
 	}
-	if flags.Server == "" {
-		return errors.New("join needs --server URL, the server the invite is for")
+	if f.NArg() > 0 {
+		// A1-D1: a link or code on the command line lands in shell history
+		// and process lists.
+		return errors.New("join takes no link on the command line: run `clawbridge join` and paste the link at the prompt (or pipe it on stdin)")
 	}
 	// R85-H1: Run reads --key-store as the global flag.
-	var err error
 	if *store, err = newKeyStore(*store, flags.KeyStore); err != nil {
 		return err
 	}
-	if *code == "" {
-		fmt.Fprint(stderr, "Invite code: ")
-		if stdin == os.Stdin && stdinTerminal() {
-			// R85-L4: the code is a secret; a terminal doesn't echo it.
+	terminal := stdin == os.Stdin && stdinTerminal()
+	lines := bufio.NewReader(stdin)
+	// secret reads the link or code: unechoed at a terminal, else a line of
+	// stdin.
+	secret := func(prompt, missing string) (string, error) {
+		fmt.Fprint(stderr, prompt)
+		if terminal {
 			raw, e := readHidden()
 			fmt.Fprintln(stderr)
 			if e != nil {
-				return errors.New("join needs the invite code: type it at the prompt, or pipe it on stdin")
+				return "", errors.New(missing)
 			}
-			*code = strings.TrimSpace(string(raw))
-		} else {
-			line, e := bufio.NewReader(stdin).ReadString('\n')
-			if e != nil && line == "" {
-				return errors.New("join needs the invite code: type it at the prompt, or pipe it on stdin")
+			return strings.TrimSpace(string(raw)), nil
+		}
+		line, e := lines.ReadString('\n')
+		if e != nil && line == "" {
+			return "", errors.New(missing)
+		}
+		return strings.TrimSpace(line), nil
+	}
+	server, linkWorkspace := flags.Server, ""
+	if *email == "" {
+		if *code != "" {
+			return errors.New("--code goes with --email; or paste the invite link at the prompt")
+		}
+		raw, e := secret("Paste the invite link (not shown as you type): ", "join needs the invite link: paste it at the prompt, or pipe it on stdin")
+		if e != nil {
+			return e
+		}
+		link, e := devicekey.ParseLink(raw)
+		if e != nil {
+			return e
+		}
+		if server != "" && strings.TrimRight(strings.ToLower(server), "/") != link.Origin {
+			return fmt.Errorf("the link is for %s, not --server %s; leave --server out", link.Origin, wizardSafe(server))
+		}
+		server, *email, *code, linkWorkspace = link.Origin, link.Email, link.Code, link.Workspace
+		host := strings.TrimPrefix(strings.TrimPrefix(link.Origin, "https://"), "http://")
+		question := fmt.Sprintf("Join workspace %s on %s as %s?", wizardSafe(link.Workspace), wizardSafe(host), wizardSafe(link.Email))
+		switch {
+		case *yes:
+		case !terminal:
+			return errors.New(question + " Piped links need --yes to confirm")
+		default:
+			fmt.Fprint(stderr, question+" [y/N]: ")
+			answer, _ := lines.ReadString('\n')
+			if a := strings.ToLower(strings.TrimSpace(answer)); a != "y" && a != "yes" {
+				fmt.Fprintln(stderr, "Canceled; nothing was changed.")
+				return nil
 			}
-			*code = strings.TrimSpace(line)
+		}
+	} else if server == "" {
+		return errors.New("join --email needs --server URL, the server the invite is for; or paste an invite link instead, with no flags")
+	}
+	if *code == "" {
+		if *code, err = secret("Invite code: ", "join needs the invite code: type it at the prompt, or pipe it on stdin"); err != nil {
+			return err
+		}
+		// The code prompt takes the link too, if it's for this invite: its
+		// server and its email, so one server's code never goes to another.
+		if link, e := devicekey.ParseLink(*code); e == nil {
+			if strings.TrimRight(strings.ToLower(server), "/") != link.Origin {
+				return fmt.Errorf("that link is for %s, not --server %s; nothing was sent", link.Origin, wizardSafe(server))
+			}
+			if !strings.EqualFold(link.Email, strings.TrimSpace(*email)) {
+				return fmt.Errorf("that link is for %s, not %s", wizardSafe(link.Email), wizardSafe(*email))
+			}
+			*code = link.Code
 		}
 	}
 	if *store == devicesign.StoreFile {
 		fmt.Fprintln(stderr, "warning: "+devicesign.FileWarning+".")
 	}
-	joined, err := JoinDevice(ctx, JoinParams{Server: flags.Server, Email: *email, Code: *code, Label: *label, KeyStore: *store, ConfigPath: flags.ClientConfig})
+	joined, err := JoinDevice(ctx, JoinParams{Server: server, Email: *email, Code: *code, Label: *label, KeyStore: *store, ConfigPath: flags.ClientConfig})
 	if err != nil {
 		return err
+	}
+	if linkWorkspace != "" && joined.Workspace != linkWorkspace {
+		// The link's name is only shown; the server's answer is the truth.
+		fmt.Fprintf(stderr, "Note: the link said workspace %s, but the server joined you to %s.\n", wizardSafe(linkWorkspace), wizardSafe(joined.Workspace))
 	}
 	return json.NewEncoder(stdout).Encode(map[string]any{"source": "client", "data": joined})
 }

@@ -34,16 +34,25 @@ CREATE TABLE owner_transfers(workspace_id TEXT PRIMARY KEY REFERENCES workspaces
 CREATE TABLE device_nonces(device_id TEXT NOT NULL,nonce TEXT NOT NULL,expires_at TEXT NOT NULL,PRIMARY KEY(device_id,nonce));
 `
 
+// Schema 31: an invite remembers the device that made it, so a device
+// invite dies with its issuing device and a join's alert names it (§17.2).
+const inviteIssuedDeviceSchemaV31 = `ALTER TABLE invites ADD COLUMN issued_device TEXT;
+`
+
 // DeviceIssuer is the issuer of an identity proven by a device key's
 // signature; its subject is the device ID.
 const DeviceIssuer = "clawbridge-device"
 
 const (
-	inviteMaxAttempts       = 5
-	invitePendingPerSpace   = 20
-	invitePendingPerEmail   = 3
-	inviteDefaultHours      = 72
-	inviteDeviceHours       = 24
+	inviteMaxAttempts     = 5
+	invitePendingPerSpace = 20
+	invitePendingPerEmail = 3
+	inviteDefaultHours    = 72
+	inviteDeviceHours     = 24
+	// A device invite is for the machine beside you: 15 minutes unless
+	// asked, at most a day (§17.2).
+	inviteDeviceMinutes     = 15
+	inviteDeviceMaxMinutes  = 24 * 60
 	inviteMaxHours          = 168
 	ownerTransferHours      = 72
 	ciMaxDays               = 90
@@ -205,16 +214,31 @@ func (s *Store) createInvite(ctx context.Context, tx *transaction, w map[string]
 	if purpose == "" {
 		purpose = "user"
 	}
-	hours := inviteDefaultHours
+	life := time.Duration(inviteDefaultHours) * time.Hour
 	if purpose == "device" {
-		hours = inviteDeviceHours
+		life = inviteDeviceMinutes * time.Minute
 	}
-	if v, ok := a["expires_hours"]; ok {
-		n, err := integer(v)
+	_, byHours := a["expires_hours"]
+	_, byMinutes := a["expires_minutes"]
+	if byHours && byMinutes {
+		return nil, invalid("give expires_hours or expires_minutes, not both")
+	}
+	if byHours {
+		n, err := integer(a["expires_hours"])
 		if err != nil || n < 1 || n > inviteMaxHours {
 			return nil, invalid("expires_hours must be 1-168")
 		}
-		hours = n
+		life = time.Duration(n) * time.Hour
+	}
+	if byMinutes {
+		n, err := integer(a["expires_minutes"])
+		if err != nil || n < 1 || n > inviteMaxHours*60 {
+			return nil, invalid("expires_minutes must be 1-10080")
+		}
+		life = time.Duration(n) * time.Minute
+	}
+	if purpose == "device" && life > inviteDeviceMaxMinutes*time.Minute {
+		return nil, invalid("a device invite lasts at most 24 hours")
 	}
 	grants, err := grantsArg(ctx, tx, wid, a["grants"])
 	if err != nil {
@@ -274,8 +298,12 @@ func (s *Store) createInvite(ctx context.Context, tx *transaction, w map[string]
 	id := devicekey.NewInviteID()
 	code := devicekey.NewCode()
 	normal, _ := devicekey.NormalCode(code)
-	expires := future(time.Duration(hours) * time.Hour)
-	if _, err = tx.ExecContext(ctx, `INSERT INTO invites(invite_id,workspace_id,email,code_sha256,purpose,grants,revoke_others,created_by,created_at,expires_at) VALUES(?,?,?,?,?,?,?,?,?,?)`, id, wid, email, devicekey.CodeHash(id, normal), purpose, asJSON(grants), boolInt(revokeOthers), s.principal, now, expires); err != nil {
+	expires := future(life)
+	var issued any
+	if d := s.actorDevice(); d != "" {
+		issued = d
+	}
+	if _, err = tx.ExecContext(ctx, `INSERT INTO invites(invite_id,workspace_id,email,code_sha256,purpose,grants,revoke_others,created_by,created_at,expires_at,issued_device) VALUES(?,?,?,?,?,?,?,?,?,?,?)`, id, wid, email, devicekey.CodeHash(id, normal), purpose, asJSON(grants), boolInt(revokeOthers), s.principal, now, expires, issued); err != nil {
 		return nil, err
 	}
 	shown := map[string]any{"invite_id": id, "email": email, "purpose": purpose, "grants": grants, "expires_at": expires, "revoke_others": revokeOthers}
@@ -506,9 +534,19 @@ func (s *Store) Join(ctx context.Context, in JoinRequest) (map[string]any, error
 			return fail(charged, "issuer_lost_authority")
 		}
 	case "device":
-		// Only the person themselves may add a device to their email.
+		// Only the person themselves may add a device to their email, and
+		// only while the device that made the invite is live (§17.2).
 		if issuer.principal != email {
 			return fail(charged, "issuer_lost_authority")
+		}
+		if by, ok := match["issued_device"].(string); ok {
+			var live int
+			if err = tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM devices WHERE device_id=? AND principal=? AND revoked_at IS NULL AND (expires_at IS NULL OR expires_at>?)`, by, email, now).Scan(&live); err != nil {
+				return nil, err
+			}
+			if live != 1 {
+				return fail(charged, "issuer_device_gone")
+			}
 		}
 	case "recovery":
 		// Only whoever owns the workspace now may recover a member, so a
@@ -551,7 +589,8 @@ func (s *Store) Join(ctx context.Context, in JoinRequest) (map[string]any, error
 		}
 	}
 	route := map[string]string{"user": "invite", "device": "device_add", "recovery": "recovery"}[purpose]
-	if err = deviceEvent(ctx, tx, wid, email, deviceID, "added", label, route, match["created_by"].(string), ""); err != nil {
+	issuedBy, _ := match["issued_device"].(string)
+	if err = deviceEvent(ctx, tx, wid, email, deviceID, "added", label, route, match["created_by"].(string), issuedBy); err != nil {
 		return nil, err
 	}
 	if err = js.audit(ctx, tx, wid, "", "", "invite", match["invite_id"].(string), "invite_used", map[string]any{"invite_id": match["invite_id"], "device_id": deviceID, "purpose": purpose, "invited_by": match["created_by"]}); err != nil {

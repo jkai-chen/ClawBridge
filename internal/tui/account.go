@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"clawbridge/internal/bus"
+	"clawbridge/internal/devicekey"
 	tea "github.com/charmbracelet/bubbletea"
 )
 
@@ -30,6 +31,10 @@ type accountRow struct {
 	detail string
 }
 
+// shownDeviceEvents is how many device events the banner lists: the
+// newest, then a count of the rest.
+const shownDeviceEvents = 5
+
 type accountState struct {
 	principal string
 	mainOwner bool
@@ -45,6 +50,8 @@ type accountState struct {
 	// and dropped when the modal closes; nothing redraws it.
 	code     string
 	codeNote string
+	// link is the invite link for code (§17.1), shown with it, once.
+	link string
 	// pending is the destructive action waiting for its typed phrase.
 	pending *accountAction
 	// labelling is the device a label draft is for, fixed when l is
@@ -255,9 +262,9 @@ func (m Model) applyAccount(x accountLoadedMsg) Model {
 	m.source = "server"
 	// A code on show, an action awaiting its word and a label draft's
 	// device survive the reload (R108-L2).
-	code, note, pending, labelling := m.account.code, m.account.codeNote, m.account.pending, m.account.labelling
+	code, note, link, pending, labelling := m.account.code, m.account.codeNote, m.account.link, m.account.pending, m.account.labelling
 	m.account = x.state
-	m.account.code, m.account.codeNote, m.account.pending, m.account.labelling = code, note, pending, labelling
+	m.account.code, m.account.codeNote, m.account.link, m.account.pending, m.account.labelling = code, note, link, pending, labelling
 	m.selected = min(m.selected, max(0, len(m.accountRows())-1))
 	return m
 }
@@ -305,9 +312,13 @@ func (m Model) applyAccountAction(x accountActionMsg) (Model, tea.Cmd) {
 	case "invite_create":
 		m.account.code = text(data, "code")
 		email, server := text(data, "email"), firstNonempty(m.cfg.Server, "URL")
-		if text(data, "purpose") == "device" {
+		m.account.link, _ = devicekey.FormatLink(m.cfg.Server, m.cfg.Workspace, email, m.account.code)
+		switch {
+		case m.account.link != "":
+			m.account.codeNote = "Give the link below privately; it works once, for " + email + " only, until " + text(data, "expires_at") + ". On the new machine: clawbridge join, then paste it."
+		case text(data, "purpose") == "device":
 			m.account.codeNote = "On the new machine: clawbridge --server " + server + " join --email " + email + ". The code works once, until " + text(data, "expires_at") + "."
-		} else {
+		default:
 			m.account.codeNote = "Give " + email + " the code and this server's URL (" + server + ") over a channel you'd trust with a password. It works once, for " + email + " only, until " + text(data, "expires_at") + "."
 		}
 		m.actionErr = "Invite " + text(data, "invite_id") + " issued."
@@ -359,7 +370,7 @@ func (m Model) accountKey(key string) (Model, tea.Cmd) {
 	if m.account.code != "" {
 		// The code shows until Enter or Esc, and is then gone for good.
 		if key == "enter" || key == "esc" {
-			m.account.code, m.account.codeNote = "", ""
+			m.account.code, m.account.codeNote, m.account.link = "", "", ""
 		}
 		return m, nil
 	}
@@ -514,6 +525,10 @@ func renderAccount(m Model) string {
 		modal := warnStyle.Render("Invite code (shown once, never again)") + "\n\n  " + accentStyle.Render(terminalText(m.account.code)) + "\n\n" +
 			terminalText(m.account.codeNote) + "\nCopy it now. Enter or Esc closes this, and the code is gone."
 		b.WriteString(boxStyle.Width(max(20, min(m.width-8, 80))).Render(modal))
+		if m.account.link != "" {
+			// Outside the box and unwrapped, so it copies as one line.
+			b.WriteString("\n\nInvite link:\n" + terminalText(m.account.link))
+		}
 		return b.String()
 	}
 	if m.cfg.Mode != ModeCloud {
@@ -533,7 +548,7 @@ func renderAccount(m Model) string {
 		b.WriteString(warnStyle.Render(terminalText(p.prompt)) + "\n")
 	}
 	for i, e := range m.account.events {
-		if i == 5 {
+		if i == shownDeviceEvents {
 			b.WriteString(warnStyle.Render(fmt.Sprintf("…and %d more (clawbridge device events)", len(m.account.events)-i)) + "\n")
 			break
 		}

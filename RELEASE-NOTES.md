@@ -1,9 +1,25 @@
 # ClawBridge v0.3.6 (unreleased)
 
-**Schema 28 → 29.**
-- The server migrates to schema 29 on its first start: 29, the new-device alerts' events and acknowledgements.
+**Schema 28 → 31.**
+- The server migrates to schema 31 on its first start: 29, the new-device alerts' events and acknowledgements; 30, a
+  project's own watch budget; 31, the device an invite was made from.
 - **One-way:** v0.3.5 and older refuse a database newer than schema 28. Take a dump before upgrading; to go back,
   restore it with the v0.3.5 image (docs/operations/deployment.md).
+
+## One invite link
+
+- **An invite is one link (A1, §17.1).** `invite` and `device add` print a link with the code:
+  `https://SERVER/join#cbj1.WORKSPACE.EMAIL.CODE`. On the new machine, `clawbridge join` asks for it (unechoed) and
+  confirms "Join workspace … on … as …?". Piped, it needs `--yes`. `--out FILE` writes the link.
+  - The link is never taken on the command line (`clawbridge join LINK` is refused): a command line is kept in shell
+    history and process lists.
+  - The code is after the `#`, which a browser never sends; the server's new `/join` page only says to run
+    `clawbridge join`. Only `https` links are accepted (`http` on a loopback address, for development).
+  - The guided setup's "I have an invite code" step and the `--email` path's code prompt take the link too.
+  - The TUI's one-time box shows the link below the code.
+- **`device add` is quick and short-lived (§17.2).** Its link lasts 15 minutes by default (`--expires` takes `30m`,
+  `2h`, up to `24h`), and works only while the device that made it is still active. That device isn't alerted when
+  the link is used; your other devices and the owner's are.
 
 ## New-device alerts
 

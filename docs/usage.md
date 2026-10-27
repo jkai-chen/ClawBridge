@@ -87,18 +87,21 @@ The [sign-in guide](sign-in.md) covers invites, device keys, members, ownership,
 turning device sign-in on, and troubleshooting in full.
 
 A server that takes device keys (`serve --auth device` or `google,device`) needs
-no Google account. An owner invites you, gives you the code and the server's URL,
-and you join:
+no Google account. An owner invites you and gives you an invite link
+(`https://SERVICE/join#cbj1.…`), and you join:
 
 ```sh
-clawbridge --server https://SERVICE join --email ada@example.com
-Invite code:            # typed, not shown
+clawbridge join
+Paste the invite link (not shown as you type):
+Join workspace TEAM on SERVICE as ada@example.com? [y/N]: y
 clawbridge --project CODEBASE whoami      # identity_provenance: device-key
 ```
 
-`join` asks for the code at a terminal without echoing it, or reads it from stdin
-when piped. Don't pass it as `--code`: a command line is kept in shell history and
-shown in other users' process lists. In a terminal, bare `clawbridge` (or
+`join` asks for the link at a terminal without echoing it, or reads it from stdin
+when piped (with `--yes`). It never takes the link on the command line, which is
+kept in shell history and shown in other users' process lists. With the code and
+the server's URL instead, `clawbridge --server https://SERVICE join --email
+EMAIL` asks for the code. In a terminal, bare `clawbridge` (or
 `clawbridge setup wizard`) does the same with prompts: choose "I have an invite
 code" (offered when the server takes device keys), then give the email and a name
 for this device. The code is asked last, unechoed, after you confirm.
@@ -128,7 +131,8 @@ Accounts on a hosted workspace (each command takes `--help`):
   only; `--out FILE` writes it to a new file (0600) instead.
 - **`device`:** `device list`, `device revoke ID`, `device label ID LABEL`,
   `device events` and `device ack` (new-device alerts, docs/sign-in.md).
-  - `device add` is an invite for another device of yours.
+  - `device add` is an invite link for another device of yours, good for 15
+    minutes (`--expires` up to `24h`).
   - `device add --ci NAME --grant PROJECT=member --expires 30d` makes a CI
     device. It prints `CLAWBRIDGE_DEVICE_KEY` once, for the CI secret store, on
     your terminal only; `--out FILE` writes it to a new file (0600) instead.

@@ -558,3 +558,22 @@ func TestDeviceAnswerCarriesPendingEvents(t *testing.T) {
 		t.Fatal(w.Code, w.Body.String())
 	}
 }
+
+// An invite link opened in a browser gets a static page: no script, a CSP
+// that allows none, no referrer; the fragment never reaches the server.
+func TestJoinPageIsStatic(t *testing.T) {
+	f := newDeviceFixture(t)
+	w := f.send(http.MethodGet, "/join", "", "")
+	if w.Code != 200 || !strings.Contains(w.Body.String(), "clawbridge join") || strings.Contains(strings.ToLower(w.Body.String()), "<script") {
+		t.Fatal(w.Code, w.Body.String())
+	}
+	if csp := w.Header().Get("Content-Security-Policy"); !strings.Contains(csp, "default-src 'none'") || strings.Contains(csp, "script-src") {
+		t.Fatal(csp)
+	}
+	if w.Header().Get("Referrer-Policy") != "no-referrer" || w.Header().Get("Cache-Control") != "no-store" {
+		t.Fatal(w.Header())
+	}
+	if w = f.send(http.MethodPost, "/join", "x", ""); w.Code != 405 {
+		t.Fatal(w.Code)
+	}
+}

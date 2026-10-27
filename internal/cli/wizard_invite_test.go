@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"clawbridge/internal/bus"
+	"clawbridge/internal/devicekey"
 	"clawbridge/internal/devicesign"
 	"clawbridge/internal/remote"
 	"github.com/pelletier/go-toml/v2"
@@ -281,5 +282,34 @@ func TestWizardInviteCodeReadFailureIsShown(t *testing.T) {
 	wizardInviteCode = func() (string, error) { return "", errors.New("inappropriate ioctl for device") }
 	if _, err := w.run(); err == nil || !strings.Contains(err.Error(), "inappropriate ioctl") || len(w.joined) != 0 {
 		t.Fatal(err)
+	}
+}
+
+// The code field takes the whole invite link (§17.1): with no email typed,
+// the link's email is used; a link for another server or email is refused
+// and nothing is joined.
+func TestWizardTakesAnInviteLink(t *testing.T) {
+	link, err := devicekey.FormatLink("https://service.test", "pilot", "ada@example.com", wizardCode)
+	if err != nil {
+		t.Fatal(err)
+	}
+	w := newInviteWizard(t, "https://service.test\n1\n\nAda's laptop\ny\n", "google", "device")
+	wizardInviteCode = func() (string, error) { return link, nil }
+	out, err := w.run()
+	if err != nil || len(w.joined) != 1 || w.joined[0].Email != "ada@example.com" || w.joined[0].Code != "CBJ-"+strings.ReplaceAll(strings.TrimPrefix(wizardCode, "CBJ-"), "-", "") || !strings.Contains(out, "Email: (from the invite link)") || strings.Contains(out, "CBJ-") {
+		t.Fatal(err, out, w.joined)
+	}
+	other, _ := devicekey.FormatLink("https://elsewhere.test", "pilot", "ada@example.com", wizardCode)
+	for _, c := range []struct{ input, link, want string }{
+		{"https://service.test\n1\n\n\ny\n", other, "for https://elsewhere.test"},
+		{"https://service.test\n1\nbob@example.com\n\ny\n", link, "for ada@example.com, not bob@example.com"},
+		{"https://service.test\n1\n\n\ny\n", wizardCode, "paste the whole invite link"},
+	} {
+		w = newInviteWizard(t, c.input, "google", "device")
+		pasted := c.link
+		wizardInviteCode = func() (string, error) { return pasted, nil }
+		if _, err = w.run(); err == nil || !strings.Contains(err.Error(), c.want) || len(w.joined) != 0 {
+			t.Fatal(c.want, err)
+		}
 	}
 }

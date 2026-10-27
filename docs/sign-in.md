@@ -51,11 +51,21 @@ clawbridge invite list
 clawbridge invite revoke inv_7Q2M…
 ```
 
-`invite` prints the code once, such as `CBJ-4K7P-WQ9D-2MXH-T6RB`, with the
-invite's expiry. It prints it only to a terminal, never to an agent or a pipe:
-`--out FILE` writes it to a new file instead (0600, never over an existing one),
-which the invitee can pipe to `clawbridge join`. ClawBridge sends no email: **you** give the person the code and
-the server's URL.
+`invite` prints the code once, such as `CBJ-4K7P-WQ9D-2MXH-T6RB`, and an
+**invite link** that carries the server, the workspace, the email and the code:
+
+```text
+https://clawbridge.example.com/join#cbj1.acme.YWRhQGV4YW1wbGUuY29t.CBJ-4K7P-WQ9D-2MXH-T6RB
+```
+
+It prints them only to a terminal, never to an agent or a pipe: `--out FILE`
+writes the link to a new file instead (0600, never over an existing one), which
+the invitee can pipe to `clawbridge join --yes`. ClawBridge sends no email:
+**you** give the person the link (or the code and the server's URL).
+
+- **The code is after the `#`.** A browser never sends that part, so a link
+  opened by mistake shows the server nothing; the server's `/join` page only says
+  to run `clawbridge join`.
 
 - **Send it like a password.** The code is bound to the email, but ClawBridge
   can't check that the person holds that mailbox. Whoever has the code and knows
@@ -74,29 +84,37 @@ the server's URL.
   ([Your devices](#your-devices)), or the main owner issues a recovery invite.
 
 In the TUI, the Account screen (`8`) issues an invite with `i`, typed as
-`EMAIL PROJECT=ROLE ...`. The code shows in a box that holds the screen until
-Enter or Esc, and is never drawn again.
+`EMAIL PROJECT=ROLE ...`. The code shows in a box, with the link below it, that
+holds the screen until Enter or Esc, and is never drawn again.
 
 ## Joining a device
 
-With the code and the server's URL:
+With the invite link:
 
 ```sh
-clawbridge --server https://clawbridge.example.com join --email ada@example.com --label "Ada's laptop"
-Invite code:            # typed, not shown
+clawbridge join --label "Ada's laptop"
+Paste the invite link (not shown as you type):
+Join workspace acme on clawbridge.example.com as ada@example.com? [y/N]: y
 clawbridge --project api whoami      # identity_provenance: device-key
 ```
 
-- **The code** is typed at the prompt, or piped on stdin. `--code` exists for
-  scripts, but don't use it by hand: a command line is kept in shell history and
-  shown in other users' process lists.
+- **The link** is pasted at the prompt, or piped on stdin with `--yes` (nothing
+  can ask then). It's never taken on the command line: `clawbridge join LINK` is
+  refused, because a command line is kept in shell history and shown in other
+  users' process lists.
+- **Only https.** A link to a plain `http://` server is refused, except a
+  loopback address for development.
+- **With the code instead:** `clawbridge --server URL join --email EMAIL` asks
+  for the code (or the link). `--code` exists for scripts, but don't use it by
+  hand.
 - **Where it goes.** `join` writes the profile (`~/.clawbridge/config.toml`, or
   the one `--client-config` names) to sign with the new key. The label is just a
   name, and defaults to the computer's name.
 - **The guided way.** In a terminal, run bare `clawbridge`, choose **Join a team
   server**, give the URL, and choose **I have an invite code**. It asks for the
-  email and a name for this device, shows your answers, and only after you confirm
-  asks for the code, unechoed. It then picks your project (or asks, if you have
+  email (leave it empty if you have a link) and a name for this device, shows
+  your answers, and only after you confirm asks for the link or the code,
+  unechoed. It then picks your project (or asks, if you have
   several) and opens the TUI.
 - **Already signed in with Google?** `clawbridge device enroll` adds a key to this
   computer with no invite. Your verified Google account is the proof. The profile
@@ -145,11 +163,13 @@ NAME --grant PROJECT=member --expires 30d` prints the key once, as
 clawbridge device list                       # yours; this one marked
 clawbridge device label dev_… "Ada's desktop"
 clawbridge device revoke dev_…
-clawbridge device add                        # a 24-hour code for another computer of yours
+clawbridge device add                        # a 15-minute link for another computer of yours
 ```
 
 - **Another computer:** run `device add` on one you've already joined. It prints a
-  code for your own email; on the new computer, `clawbridge join` with it.
+  link for your own email, good for 15 minutes (`--expires` up to `24h`); on the
+  new computer, run `clawbridge join` and paste it. The link works only while the
+  computer that made it is still an active device of yours.
 - **Revoking** takes effect at once, on every server replica. Revoking the device
   you're on stops this profile working.
 - **In the TUI:** the Account screen (`8`) lists your devices. `a` makes the code

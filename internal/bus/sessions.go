@@ -143,6 +143,13 @@ func (s *Store) retire(ctx context.Context, tx *transaction, wid, pid string, ac
 	if status != "retired" && status != "moved" {
 		return nil, invalid("retirement status must be retired or moved")
 	}
+	// outcome done finishes the assignment the retirement releases, as
+	// assignment_release's does; confirm releases it as it is.
+	outcome := str(a, "outcome")
+	if outcome != "" && outcome != "done" {
+		return nil, invalid("outcome must be done, or left out")
+	}
+	confirm, _ := a["confirm"].(bool)
 	var successor any
 	if name := str(a, "successor"); name != "" {
 		match, args := sessionAddress(name)
@@ -180,6 +187,21 @@ func (s *Store) retire(ctx context.Context, tx *transaction, wid, pid string, ac
 		}
 		return nil, errors.New("session is already retired with different successor or status")
 	}
+	if outcome == "" && !confirm && successor == nil {
+		// A confirmed assignment released with no outcome leaves its issue
+		// where it is, finished or not: the caller says which.
+		live, err := liveAssignment(ctx, tx, pid, sid)
+		if err != nil {
+			return nil, err
+		}
+		if live != nil && live["state"] == "confirmed" {
+			issue := str(live, "issue_identifier")
+			if issue == "" {
+				issue = str(live, "issue_uuid")
+			}
+			return nil, scoped(fmt.Sprintf("session %s holds the confirmed assignment for %s; retiring releases it. If the work is finished, retire with outcome done, and the issue moves on under the project's close rule. To release it as it is, retire with confirm.", str(actor, "name"), issue), "conflict")
+		}
+	}
 	_, err := tx.ExecContext(ctx, `UPDATE sessions SET status=?,successor=?,updated_at=? WHERE id=? AND project_id=?`, status, successor, stamp(), sid, pid)
 	if err != nil {
 		return nil, err
@@ -187,7 +209,7 @@ func (s *Store) retire(ctx context.Context, tx *transaction, wid, pid string, ac
 	if err = s.audit(ctx, tx, wid, pid, sid, "session", sid, status, map[string]any{"successor": successor}); err != nil {
 		return nil, err
 	}
-	ended, err := s.endSessionAssignment(ctx, tx, wid, pid, sid, status, successor)
+	ended, err := s.endSessionAssignment(ctx, tx, wid, pid, sid, status, successor, outcome == "done")
 	if err != nil {
 		return nil, err
 	}

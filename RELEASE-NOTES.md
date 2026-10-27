@@ -1,3 +1,12 @@
+# ClawBridge v0.3.5 (unreleased)
+
+## Behaviour changes
+
+- **Retiring a session with confirmed work now needs `--outcome done` or `--confirm`.** `--outcome done` says the work
+  is finished, and the issue moves on as a release with `--outcome done` does. `--confirm` releases it as it is. With
+  neither, `clawbridge retire` (and MCP `retire_session`) is refused, naming the issue, and nothing changes. A move to
+  a successor isn't asked.
+
 # ClawBridge v0.3.4
 
 **Schema 17 → 19.**

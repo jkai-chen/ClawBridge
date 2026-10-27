@@ -832,6 +832,12 @@ issue: see [who closes an issue](#who-closes-an-issue).
 - **Done:** a release with `--outcome done` (MCP `outcome: "done"`) moves the
   issue to `release_done`, only from exactly the `claim` state. The session
   itself or the coordinator may say done. Any other release only posts its note.
+  Retiring a session releases its assignment too: `clawbridge retire --outcome
+  done` (MCP `retire_session` with `outcome: "done"`) says the work is finished,
+  under the same rules. A retirement that would release a confirmed assignment
+  with neither `--outcome done` nor `--confirm` (release it as it is) is
+  refused, naming the issue and both commands. A move to a successor hands the
+  work on and isn't asked; with `--outcome done` it hands nothing on.
 - **A release that overtakes its claim.** When a done-release comes before the
   claim's move was applied (both within one watcher interval), the claim's move
   is dropped and never lands. The release then also moves the issue from where

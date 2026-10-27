@@ -217,8 +217,10 @@ func (s *Store) releaseAssignment(ctx context.Context, tx *transaction, wid, pid
 
 // endSessionAssignment runs when a session stops being active: it releases the
 // live assignment, hands a moved session's assignment to its successor as a
-// proposal, and clears the session's coordinator designation.
-func (s *Store) endSessionAssignment(ctx context.Context, tx *transaction, wid, pid, sid, reason string, successor any) (map[string]any, error) {
+// proposal, and clears the session's coordinator designation. done says
+// the work is finished: a confirmed assignment's close then moves the issue
+// on, as a release with outcome done does, and nothing is handed on.
+func (s *Store) endSessionAssignment(ctx context.Context, tx *transaction, wid, pid, sid, reason string, successor any, done bool) (map[string]any, error) {
 	result := map[string]any{}
 	released, err := s.releaseAssignment(ctx, tx, wid, pid, sid, reason)
 	if err != nil {
@@ -226,7 +228,15 @@ func (s *Store) endSessionAssignment(ctx context.Context, tx *transaction, wid, 
 	}
 	if released != nil {
 		result["released"] = released["id"]
-		if next, ok := successor.(string); ok && next != "" {
+		if done && released["state"] == "confirmed" {
+			if err = markReleaseDone(ctx, tx, pid, str(released, "id")); err != nil {
+				return nil, err
+			}
+			result["outcome"] = "done"
+		}
+		if next, ok := successor.(string); ok && next != "" && done {
+			result["transfer_skipped"] = "the work is done"
+		} else if ok && next != "" {
 			existing, err := liveAssignment(ctx, tx, pid, next)
 			if err != nil {
 				return nil, err

@@ -212,7 +212,9 @@ The agent calls `register_session` before actor operations; the process retains
 the returned instance. To resume an existing active session, explicitly start
 with its recorded `--instance`, then call registration with `resume: true`.
 Record the new instance: resumption fences the previous one. Retired names stay
-retired. Stale presence after 15 minutes does not establish that a process died.
+retired. Retiring a session that holds a confirmed assignment asks first: say
+`--outcome done` if its work is finished (the issue moves on as a done release
+does), or `--confirm` to release it as it is (see docs/linear.md, Done). Stale presence after 15 minutes does not establish that a process died.
 On a hosted server, `whoami`, `list_sessions` and `history` that name the session
 record its `last_seen` after the read, and only when no write holds the
 workspace at that moment. Otherwise the beat is skipped, and `last_seen` can lag

@@ -92,7 +92,7 @@ func NewServerWithOptions(store Executor, workspace, project, session, instance 
 	add[markReadInput](s, b, "mark_read", "Mark this session's deliveries read, preserving original timestamps on repeated calls.", false, true)
 	add[replyInput](s, b, "reply", "Reply to a received message, preserving its thread and recording the parent message.", false, true)
 	add[updateInput](s, b, "update_session", "Update this session's descriptive fields; role changes do not grant authority.", false, false)
-	add[retireInput](s, b, "retire_session", "Retire this session with an optional successor; messages are not silently forwarded.", false, true)
+	add[retireInput](s, b, "retire_session", "Retire this session with an optional successor; messages are not silently forwarded. A session holding a confirmed assignment needs outcome done (the work is finished) or confirm (release it as it is).", false, true)
 	add[proposeInput](s, b, "assignment_propose", "Propose this session's own assignment (Linear issue, task role, repository path patterns), replacing its previous one. It describes ownership, is not a lock and grants no rights; tell the coordinator with a coordination message.", false, false)
 	add[confirmInput](s, b, "assignment_confirm", "Designated coordinator session only: confirm a session's proposed assignment at the revision you reviewed. Overlap with a confirmed assignment is refused unless allow_overlap.", false, false)
 	add[releaseInput](s, b, "assignment_release", "Release this session's assignment, or as the designated coordinator another session's, at its current revision.", false, false)
@@ -257,6 +257,8 @@ type retireInput struct {
 	TargetSession string `json:"target_session,omitempty" jsonschema:"Hosted lead/owner only: explicitly target another session; audit retains the calling actor."`
 	Successor     string `json:"successor,omitempty"`
 	Status        string `json:"status,omitempty"`
+	Outcome       string `json:"outcome,omitempty" jsonschema:"done when the work of the session's confirmed assignment is finished: the issue then moves on under the project's close rule."`
+	Confirm       bool   `json:"confirm,omitempty" jsonschema:"Release a confirmed assignment as it is, with no outcome. Without outcome or confirm, retiring a session that holds one is refused, naming the issue."`
 }
 type historyInput struct {
 	Entity string `json:"entity,omitempty"`

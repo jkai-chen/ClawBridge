@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 // D6-L1: what could drive a terminal is dropped from model text, and
@@ -69,6 +70,15 @@ func TestCLIDispatcherChat(t *testing.T) {
 		t.Fatal("D6-L3:", shown)
 	}
 	rejectCLI(t, "dispatcher", "chat", "show", "case_2")
+	// #121 M2: the log's explanations are model output, printed stripped.
+	if _, err = raw.Exec(`INSERT INTO dispatcher_decisions(id,project_id,subject_type,subject_id,engine,proposal,reason_code,explanation,guardrail,action,policy_revision,created_at) VALUES('dec_1',?,'proposal','asg_1','model','{}','uncertain',?,'permitted','wait',1,?)`,
+		pid, "It waited.\x1b]52;c;ZXZpbA==\x07 \u202edone\u0085", time.Now().UTC().Format("2006-01-02T15:04:05.000000000Z07:00")); err != nil {
+		t.Fatal(err)
+	}
+	out.Reset()
+	if e := Run(context.Background(), []string{"dispatcher", "decisions"}, &out, &errs); e != nil || !strings.Contains(out.String(), "It waited.]52;c;ZXZpbA== done") || strings.ContainsAny(out.String(), "\x1b\x07\u202e\u0085") || strings.Contains(out.String(), `\u001b`) || strings.Contains(out.String(), `\u0007`) {
+		t.Fatal("D6-L1 in decisions:", e, out.String())
+	}
 	var data struct{ Data []any }
 	out.Reset()
 	if e := Run(context.Background(), []string{"dispatcher", "decisions", "--since-hours", "2", "--limit", "3"}, &out, &errs); e != nil || json.Unmarshal(out.Bytes(), &data) != nil {

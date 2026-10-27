@@ -80,16 +80,35 @@ func chatOverCaps(ctx context.Context, tx *transaction, holder, nowRaw string) (
 	if err = tx.QueryRowContext(ctx, `SELECT COUNT(CASE WHEN served_at>=? THEN 1 END),COUNT(*) FROM dispatcher_cases WHERE lease_key=? AND kind='chat' AND served_at>=?`, layout(now.Add(-time.Hour)), holder, layout(now.Add(-24*time.Hour))).Scan(&hourRuns, &dayRuns); err != nil {
 		return true, err
 	}
-	return hourRuns >= max(1, caps.RunsPerHour/chatShare) || dayRuns >= max(1, caps.RunsPerDay/chatShare), nil
+	hour, day := chatShareOf(caps)
+	return hourRuns >= hour || dayRuns >= day, nil
+}
+
+// chatShareOf is a key's chat runs per hour and per day: a quarter of its
+// runs, rounded down, so caps under 4 leave chat none [#121 M1].
+func chatShareOf(caps ModelCaps) (hour, day int) {
+	return caps.RunsPerHour / chatShare, caps.RunsPerDay / chatShare
 }
 
 // chatAvailability is whether pid's agents can take a chat now:
-// "available", "no_agent", or "caps" when every live key-holder is past
-// its runs or its chat share.
+// "available", "no_agent", "no_share" when no live key-holder's caps leave
+// chat any runs, or "caps" when every live key-holder is past its runs or
+// its chat share.
 func chatAvailability(ctx context.Context, tx *transaction, pid, nowRaw string) (string, error) {
 	holders, err := liveHolders(ctx, tx, pid, nowRaw)
 	if err != nil || len(holders) == 0 {
 		return "no_agent", err
+	}
+	shared := false
+	for _, h := range holders {
+		if _, caps, e := holderKey(ctx, tx, h); e == nil {
+			if hour, day := chatShareOf(caps); hour > 0 && day > 0 {
+				shared = true
+			}
+		}
+	}
+	if !shared {
+		return "no_share", nil
 	}
 	for _, h := range holders {
 		over, err := overCaps(ctx, tx, h, nowRaw)
@@ -177,6 +196,8 @@ func (s *Store) chatAsk(ctx context.Context, tx *transaction, w, p map[string]an
 		return nil, err
 	case availability == "no_agent":
 		return nil, scoped("no model agent is running for this project; try again once it is", "unavailable")
+	case availability == "no_share":
+		return nil, scoped("the model's caps leave no runs for chat: chat gets a quarter of the runs, so the owner's setup needs at least 4 runs an hour and 4 a day", "rate_limited")
 	case availability == "caps":
 		return nil, scoped("the model's run budget for chat is used up for now; try again later", "rate_limited")
 	}
@@ -228,7 +249,20 @@ func chatShow(ctx context.Context, tx *transaction, pid, principal, caseID strin
 	_ = json.Unmarshal([]byte(str(c, "message")), &message)
 	_ = json.Unmarshal([]byte(str(c, "outcome_body")), &body)
 	out := map[string]any{"case_id": str(c, "id"), "asked_at": at(str(c, "created_at")).Format(time.RFC3339), "deadline": at(str(c, "deadline")).Format(time.RFC3339), "question": message.Text}
+	// An open chat in a project whose dispatcher is now off, or in rules
+	// mode, will never be answered: it reads as the model turned off
+	// (#121 L2).
+	modelOn := true
+	if c["closed_at"] == nil {
+		policy, e := query(ctx, tx, `SELECT 1 FROM dispatcher_policies WHERE project_id=? AND enabled<>0 AND mode='model'`, pid)
+		if e != nil {
+			return nil, e
+		}
+		modelOn = len(policy) == 1
+	}
 	switch outcome := str(c, "outcome"); {
+	case !modelOn:
+		out["state"], out["reason_code"] = "closed", "model_off"
 	case c["closed_at"] == nil && str(c, "deadline") > nowRaw:
 		out["state"] = "waiting"
 	case c["closed_at"] == nil || outcome == "expired":

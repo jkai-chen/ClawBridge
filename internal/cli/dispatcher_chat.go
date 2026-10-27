@@ -108,6 +108,33 @@ func terminalSafe(s string) string {
 	}, s)
 }
 
+// terminalSafeAll applies terminalSafe to every string in a decoded value.
+func terminalSafeAll(v any) any {
+	switch x := v.(type) {
+	case string:
+		return terminalSafe(x)
+	case map[string]any:
+		out := make(map[string]any, len(x))
+		for k, item := range x {
+			out[terminalSafe(k)] = terminalSafeAll(item)
+		}
+		return out
+	case []any:
+		out := make([]any, len(x))
+		for i, item := range x {
+			out[i] = terminalSafeAll(item)
+		}
+		return out
+	case []map[string]any:
+		out := make([]any, len(x))
+		for i, item := range x {
+			out[i] = terminalSafeAll(item)
+		}
+		return out
+	}
+	return v
+}
+
 func str(m map[string]any, k string) string {
 	s, _ := m[k].(string)
 	return s

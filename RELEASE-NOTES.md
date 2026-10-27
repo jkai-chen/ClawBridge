@@ -111,6 +111,8 @@
   its user, or the main owner, confirms it: `clawbridge device confirm dev_…` (`--member EMAIL` for another member's;
   `w` on the Account screen). Nothing it holds is deleted, and any use restarts the clock. CI devices are exempt.
   - Confirming is signed by a live human device of the user (or the main owner's); a Google sign-in or CI key can't.
+  - The skill's recovery page says what an agent does on `device_dormant` (tells the human, who confirms it from
+    another device) and with a dormancy notice (passes it on).
   - The main owner sets the limit: `clawbridge workspace settings --device-idle-days N` (30–365); a lower limit that
     makes devices dormant at once says how many and needs `--confirm`.
   - The user's other devices and the owner's are warned first, from day 80 (day 60 for the owner's own devices,

@@ -138,7 +138,7 @@ func runRunner(ctx context.Context, flags Config, args []string, stdout, stderr 
 
 type launchFlags struct {
 	profile, role, repo, base, model string
-	dryRun                           bool
+	dryRun, linearWrites             bool
 }
 
 func parseRunnerLaunch(args []string, stderr io.Writer) (launchFlags, string, error) {
@@ -151,6 +151,7 @@ func parseRunnerLaunch(args []string, stderr io.Writer) (launchFlags, string, er
 	f.StringVar(&v.base, "base", "", "the base ref (default: origin/HEAD)")
 	f.StringVar(&v.model, "model", "", "the Claude model for this launch (default: the runner setting, else your own default)")
 	f.BoolVar(&v.dryRun, "dry-run", false, "show what would be launched; change nothing")
+	f.BoolVar(&v.linearWrites, "linear-writes", false, "let the agent use the task-board write tools (create, update, comment, relations), which act as your Linear profile; off, they are denied")
 	ordered, err := interspersedFlags(f, args)
 	if err != nil {
 		return v, "", err
@@ -213,7 +214,7 @@ func runnerLaunch(ctx context.Context, flags Config, r *runner.Runner, args []st
 	if _, err = runner.Branch(issue.Identifier); err != nil {
 		return fmt.Errorf("the issue has no usable identifier: %w", err)
 	}
-	spec := runner.Spec{Repo: repo, Base: v.base, IssueID: issue.ID, Identifier: issue.Identifier, Settings: settings, GoModCache: goModCache(repo), DryRun: v.dryRun}
+	spec := runner.Spec{Repo: repo, Base: v.base, IssueID: issue.ID, Identifier: issue.Identifier, Settings: settings, GoModCache: goModCache(repo), LinearWrites: v.linearWrites, DryRun: v.dryRun}
 	name := filepath.Base(repo)
 	if v.dryRun {
 		spec.Session, spec.Instance, spec.MCPEntry = runner.SessionName(name, v.role, 1), "dry-run", map[string]any{}

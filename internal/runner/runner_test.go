@@ -30,15 +30,21 @@ func execGit(dir string, args ...string) (string, error) {
 
 type opened struct{ dir, title, command string }
 
-var selfTestPath = regexp.MustCompile(`sh '\\''([^']+selftest\.sh)'\\''`)
+// launchScriptPath is the launch script a session's command runs.
+var launchScriptPath = regexp.MustCompile(`exec /bin/sh '([^']+launch\.sh)'`)
 
 type env struct {
 	t      *testing.T
 	closed []string
 	// denyBin holds ls and head that always fail, as the sandbox refuses
 	// those reads; leak runs the self-test without them, silent not at all.
-	denyBin      string
+	denyBin string
+	// claudeEnv is where the fake claude writes the environment it got.
+	claudeEnv    string
 	leak, silent bool
+	// envLeak runs the launch script with its environment kept, as a
+	// script that failed to clear it would.
+	envLeak bool
 	// namedOnly refuses every read but of the planted files, as a sandbox
 	// that denies only the paths its rules name would.
 	namedOnly bool
@@ -63,6 +69,18 @@ func newEnv(t *testing.T) *env {
 	e.git(e.repo, "push", "origin", "main")
 	e.git(e.repo, "remote", "set-head", "origin", "main")
 	home := filepath.Join(root, "home")
+	// A fake claude: it records the environment the launch script gave it,
+	// then runs the self-test its prompt names, as the session's first step.
+	fake := filepath.Join(root, "fake-claude")
+	if err := os.MkdirAll(fake, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	e.claudeEnv = filepath.Join(root, "claude.env")
+	claude := "#!/bin/sh\nenv > '" + e.claudeEnv + "'\n" +
+		`for a in "$@"; do p=$(printf '%s' "$a" | sed -n "s/.*sh '\([^']*selftest\.sh\)'.*/\1/p"); if [ -n "$p" ]; then exec sh "$p"; fi; done` + "\n"
+	if err := os.WriteFile(filepath.Join(fake, "claude"), []byte(claude), 0o755); err != nil {
+		t.Fatal(err)
+	}
 	e.denyBin = filepath.Join(root, "deny-bin")
 	if err := os.MkdirAll(e.denyBin, 0o755); err != nil {
 		t.Fatal(err)
@@ -86,16 +104,26 @@ func newEnv(t *testing.T) *env {
 	}
 	e.r = &Runner{StateDir: filepath.Join(home, ".clawbridge", "runner"), Home: home, Git: execGit, Now: func() time.Time { return e.now }, Terminal: func(owner, title, command string) (string, error) {
 		e.opens = append(e.opens, opened{owner, title, command})
-		// The session's first step: run the self-test the prompt names,
-		// as the sandbox would (every read refused) unless e.leak.
-		if m := selfTestPath.FindStringSubmatch(command); m != nil && !e.silent {
-			cmd := exec.Command("sh", m[1])
+		// The terminal runs the launch script, whose claude (the fake) runs
+		// the self-test the prompt names, as the sandbox would (every read
+		// refused) unless e.leak. The terminal's own environment carries a
+		// token, as an owner's shell may (G9-5).
+		if m := launchScriptPath.FindStringSubmatch(command); m != nil && !e.silent {
+			script := m[1]
+			if e.envLeak {
+				raw, _ := os.ReadFile(script)
+				script = filepath.Join(t.TempDir(), "leaky.sh")
+				_ = os.WriteFile(script, []byte(strings.Replace(string(raw), "exec env -i ", "exec env ", 1)), 0o600)
+			}
+			cmd := exec.Command("/bin/sh", script)
+			tail := e.denyBin + ":/usr/bin:/bin"
 			switch {
 			case e.namedOnly:
-				cmd.Env = append(os.Environ(), "PATH="+filepath.Join(filepath.Dir(e.denyBin), "named-bin")+":/usr/bin:/bin")
-			case !e.leak:
-				cmd.Env = append(os.Environ(), "PATH="+e.denyBin+":/usr/bin:/bin")
+				tail = filepath.Join(filepath.Dir(e.denyBin), "named-bin") + ":/usr/bin:/bin"
+			case e.leak:
+				tail = "/usr/bin:/bin"
 			}
+			cmd.Env = append(os.Environ(), "PATH="+fake+":"+tail, "GITHUB_TOKEN=ghp_planted-in-the-owners-shell")
 			_ = cmd.Run()
 		}
 		return "term-" + title, nil
@@ -219,15 +247,30 @@ func TestLaunchMakesAnUnpushableClone(t *testing.T) {
 		t.Fatal(e.opens)
 	}
 	cmd := e.opens[0].command
-	// F1, F3, F4: the command changes into the clone, loads no user,
-	// project or local settings, and starts in the default mode.
-	for _, want := range []string{"cd '" + p.Clone + "' && exec claude --setting-sources '' --permission-mode default --settings '" + p.SettingsFile + "'", "--mcp-config '" + p.MCPFile + "'", "--strict-mcp-config", issueIdent, issueUUID, "untrusted data"} {
-		if !strings.Contains(cmd, want) {
-			t.Fatalf("command lacks %q:\n%s", want, cmd)
+	// The command changes into the clone and runs the launch script, kept
+	// beside the settings where the agent can't read or change it.
+	script := filepath.Join(filepath.Dir(p.SettingsFile), "launch.sh")
+	if cmd != "cd '"+p.Clone+"' && exec /bin/sh '"+script+"'" || p.Command != cmd {
+		t.Fatal("command:", cmd)
+	}
+	raw, _ = os.ReadFile(script)
+	launch := string(raw)
+	// F1, F3, F4: claude loads no user, project or local settings, and
+	// starts in the default mode.
+	for _, want := range []string{"exec env -i ", " claude --setting-sources '' --permission-mode default --settings '" + p.SettingsFile + "'", "--mcp-config '" + p.MCPFile + "'", "--strict-mcp-config", issueIdent, issueUUID, "untrusted data"} {
+		if !strings.Contains(launch, want) {
+			t.Fatalf("launch script lacks %q:\n%s", want, launch)
 		}
 	}
-	if strings.Contains(cmd, "--model") || strings.Contains(cmd, "bypass") || strings.Contains(cmd, "dangerously") {
-		t.Fatal("command:", cmd)
+	if strings.Contains(launch, "--model") || strings.Contains(launch, "bypass") || strings.Contains(launch, "dangerously") {
+		t.Fatal("launch script:", launch)
+	}
+	// G9-5: claude got the allow-list only; the token the terminal's
+	// environment carried never reached it, and the self-test (which
+	// passed) found the launch script's canary unset.
+	got, _ := os.ReadFile(e.claudeEnv)
+	if seen := string(got); strings.Contains(seen, "GITHUB_TOKEN") || strings.Contains(seen, "ghp_") || strings.Contains(seen, canaryVar) || !strings.Contains(seen, "PATH=") || !strings.Contains(seen, "HOME=") {
+		t.Fatal("claude's environment:", seen)
 	}
 	launches, _ := e.r.Launches()
 	if len(launches) != 1 || launches[0].Instance != "inst-checkout-engineer-1" || launches[0].BaseCommit == "" || launches[0].Cache != p.Cache {
@@ -264,8 +307,8 @@ func TestLaunchSettingsAndModel(t *testing.T) {
 		t.Fatal(err)
 	}
 	p := e.launch("checkout-engineer-1", issueIdent)
-	if !strings.Contains(p.Command, "--model 'claude-opus-5-5'") {
-		t.Fatal(p.Command)
+	if launch, _ := os.ReadFile(filepath.Join(filepath.Dir(p.SettingsFile), "launch.sh")); !strings.Contains(string(launch), "--model 'claude-opus-5-5'") {
+		t.Fatal(string(launch))
 	}
 	var s agentSettings
 	raw, _ := os.ReadFile(p.SettingsFile)
@@ -819,5 +862,225 @@ func TestCheckSelfTestNamesEveryRead(t *testing.T) {
 		if err == nil || err.Error() != "the sandbox let the session read a file planted in the home directory, ~/.clawbridge, ~/.ssh" {
 			t.Fatal(err)
 		}
+	}
+}
+
+// G9-5: the launch script names the allow-list and claude's own variables,
+// never a value, and nothing else of the launching environment.
+func TestLaunchScriptAllowListsTheEnvironment(t *testing.T) {
+	environ := []string{"PATH=/bin", "ANTHROPIC_API_KEY=sk-ant-value", "CLAUDE_CONFIG_DIR=/x", "GITHUB_TOKEN=ghp_value", "AWS_SECRET_ACCESS_KEY=v", "CLAWBRIDGE_DEVICE_KEY=v", "SSH_AUTH_SOCK=/s", "BAD-NAME=v"}
+	script := LaunchScript(environ, "c0ffee", "/s/settings.json", "/s/mcp.json", "", "go")
+	for _, want := range []string{`${PATH+"PATH=$PATH"}`, `${HOME+"HOME=$HOME"}`, `${ANTHROPIC_API_KEY+"ANTHROPIC_API_KEY=$ANTHROPIC_API_KEY"}`, `${CLAUDE_CONFIG_DIR+"CLAUDE_CONFIG_DIR=$CLAUDE_CONFIG_DIR"}`, canaryVar + "='c0ffee'", "exec env -i "} {
+		if !strings.Contains(script, want) {
+			t.Fatalf("script lacks %q:\n%s", want, script)
+		}
+	}
+	for _, never := range []string{"GITHUB_TOKEN", "AWS_", "SSH_AUTH_SOCK", "CLAWBRIDGE_DEVICE_KEY", "sk-ant-value", "ghp_value", "BAD-NAME"} {
+		if strings.Contains(script, never) {
+			t.Fatalf("script has %q:\n%s", never, script)
+		}
+	}
+	// The MCP child gets the owner's ClawBridge settings and the session
+	// bus, never a secret or the canary.
+	env := mcpEnv([]string{"CLAWBRIDGE_HOME=/h", "CLAWBRIDGE_DEVICE_KEY=k", "CLAWBRIDGE_OAUTH_CLIENT_SECRET=s", canaryVar + "=c", "DBUS_SESSION_BUS_ADDRESS=unix:path=/b", "GITHUB_TOKEN=t"})
+	if len(env) != 2 || env["CLAWBRIDGE_HOME"] != "/h" || env["DBUS_SESSION_BUS_ADDRESS"] != "unix:path=/b" {
+		t.Fatal(env)
+	}
+}
+
+// G9-5: a launch whose session could see the canary fails its self-test.
+func TestSelfTestFailsWhenTheEnvironmentLeaks(t *testing.T) {
+	if err := checkSelfTest("DENIED home\nREAD env\nDONE\n", map[string]string{"home": "a file planted in the home directory", "env": "a variable from the shell that started it"}); err == nil || !strings.Contains(err.Error(), "a variable from the shell that started it") {
+		t.Fatal(err)
+	}
+}
+
+// G9-6: the clone's origin never carries a user or password, and an
+// unknown transport or a remote helper is refused.
+func TestCleanOrigin(t *testing.T) {
+	for in, want := range map[string]string{
+		"https://user:ghp_secret@github.com/acme/app.git": "https://github.com/acme/app.git",
+		"https://x-access-token@github.com/acme/app.git":  "https://github.com/acme/app.git",
+		"ssh://git@github.com/acme/app.git":               "ssh://github.com/acme/app.git",
+		"git@github.com:acme/app.git":                     "github.com:acme/app.git",
+		"user:pass@host.example:repo.git":                 "host.example:repo.git",
+		"github.com:acme/app.git":                         "github.com:acme/app.git",
+		"/srv/git/app.git":                                "/srv/git/app.git",
+		"./relative/app.git":                              "./relative/app.git",
+		"file:///srv/git/app.git":                         "file:///srv/git/app.git",
+	} {
+		if got, err := cleanOrigin(in); err != nil || got != want {
+			t.Errorf("%s: %q %v", in, got, err)
+		}
+	}
+	for _, bad := range []string{"ext::sh -c evil", "persistent-https://host/app.git", "s3://bucket/app.git"} {
+		if _, err := cleanOrigin(bad); err == nil {
+			t.Errorf("%s accepted", bad)
+		}
+	}
+}
+
+// G9-6: through a launch, an origin with a token lands in the clone without
+// it.
+func TestLaunchStripsCredentialsFromTheClonesOrigin(t *testing.T) {
+	e := newEnv(t)
+	e.git(e.repo, "remote", "set-url", "origin", "https://user:ghp_planted0123456789012345678901234@example.invalid/acme/app.git")
+	e.git(e.repo, "config", "remote.origin.pushurl", e.origin)
+	p := e.launch("checkout-engineer-1", issueIdent)
+	if got := e.git(p.Clone, "remote", "get-url", "origin"); got != "https://example.invalid/acme/app.git" {
+		t.Fatal("origin:", got)
+	}
+	config, _ := os.ReadFile(filepath.Join(p.Clone, ".git", "config"))
+	if strings.Contains(string(config), "ghp_") || strings.Contains(string(config), "user:") {
+		t.Fatal("the clone's config carries the credential")
+	}
+}
+
+// G9-9: the agent's MCP tools are its session's own. The task-board writes
+// (as the owner's Linear profile) are denied unless the launch opts in;
+// confirming is never the agent's.
+func TestAgentSettingsDenyTheOwnersWriteTools(t *testing.T) {
+	deny := func(writes bool) string {
+		s := AgentSettings(Settings{}, "/owner", "/clone", "/cache", "", nil, writes)
+		return strings.Join(s["permissions"].(map[string]any)["deny"].([]string), " ")
+	}
+	off, on := deny(false), deny(true)
+	for _, tool := range AgentLinearWriteTools {
+		if !strings.Contains(off, "mcp__clawbridge__"+tool+" ") && !strings.HasSuffix(off, "mcp__clawbridge__"+tool) {
+			t.Fatal("not denied:", tool)
+		}
+		if strings.Contains(on, "mcp__clawbridge__"+tool) {
+			t.Fatal("denied with --linear-writes:", tool)
+		}
+	}
+	for _, d := range []string{off, on} {
+		if !strings.Contains(d, "mcp__clawbridge__assignment_confirm") {
+			t.Fatal("assignment_confirm allowed")
+		}
+	}
+}
+
+// G9-7, G9-14: before the fetch's upload-pack runs in the clone, a clone
+// whose .git the agent made unsafe is refused, with nothing fetched: a
+// hooks path, a file-system monitor or an include in its config (however
+// it's cased), borrowed objects, or a .git that isn't a plain directory.
+func TestFetchRefusesAnUnsafeClone(t *testing.T) {
+	e := newEnv(t)
+	p := e.launch("checkout-engineer-1", "FIX-1")
+	e.commit(p.Clone, "work.txt")
+	gitDir := filepath.Join(p.Clone, ".git")
+	config := filepath.Join(gitDir, "config")
+	clean, _ := os.ReadFile(config)
+	appendConfig := func(text string) func() {
+		return func() {
+			if err := os.WriteFile(config, append(append([]byte{}, clean...), text...), 0o644); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	for name, c := range map[string]struct {
+		break_, restore func()
+		why             string
+	}{
+		"hooks path": {appendConfig("[core]\n\thooksPath = /tmp/evil\n"), appendConfig(""), "core.hookspath"},
+		"fsmonitor":  {appendConfig("[Core]\n\tFSMonitor = /tmp/evil\n"), appendConfig(""), "core.fsmonitor"},
+		"include":    {appendConfig("[include]\n\tpath = /tmp/evil\n"), appendConfig(""), "include.path"},
+		"include if": {appendConfig("[includeIf \"gitdir:/\"]\n\tpath = /tmp/evil\n"), appendConfig(""), "includeif."},
+		"alternates": {func() {
+			_ = os.WriteFile(filepath.Join(gitDir, "objects", "info", "alternates"), []byte(e.repo+"/.git/objects\n"), 0o644)
+		}, func() { _ = os.Remove(filepath.Join(gitDir, "objects", "info", "alternates")) }, "alternates"},
+		"commondir": {func() { _ = os.WriteFile(filepath.Join(gitDir, "commondir"), []byte(e.repo+"/.git\n"), 0o644) }, func() { _ = os.Remove(filepath.Join(gitDir, "commondir")) }, "commondir"},
+		"gitfile": {func() {
+			_ = os.Rename(gitDir, gitDir+"-real")
+			_ = os.WriteFile(gitDir, []byte("gitdir: "+gitDir+"-real\n"), 0o644)
+		}, func() {
+			_ = os.Remove(gitDir)
+			_ = os.Rename(gitDir+"-real", gitDir)
+		}, "not a plain directory"},
+	} {
+		c.break_()
+		got, err := e.r.Fetch("checkout-engineer-1")
+		c.restore()
+		if err == nil || got.Fetched || !strings.Contains(err.Error(), c.why) {
+			t.Fatalf("%s: %v %v", name, got, err)
+		}
+		if _, err := execGit(e.repo, "rev-parse", "--verify", "--quiet", "refs/clawbridge-runner/checkout-engineer-1"); err == nil {
+			t.Fatal(name, "left a quarantine ref")
+		}
+	}
+	// Restored, the same clone fetches.
+	if got, err := e.r.Fetch("checkout-engineer-1"); err != nil || !got.Fetched {
+		t.Fatal(got, err)
+	}
+}
+
+// G9-8: a token that only a merge commit adds, in neither parent, is
+// caught.
+func TestFetchScansAMergesOwnChanges(t *testing.T) {
+	e := newEnv(t)
+	p := e.launch("checkout-engineer-1", "FIX-1")
+	e.commit(p.Clone, "work.txt")
+	e.git(p.Clone, "checkout", "-q", "-b", "side", "HEAD~1")
+	e.commit(p.Clone, "side.txt")
+	e.git(p.Clone, "checkout", "-q", "agent/fix-1")
+	e.git(p.Clone, "merge", "-q", "--no-ff", "--no-commit", "side")
+	secret := "ghp_" + strings.Repeat("M3r6", 9)
+	if err := os.WriteFile(filepath.Join(p.Clone, "merged.txt"), []byte(secret+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	e.git(p.Clone, "add", "merged.txt")
+	e.git(p.Clone, "commit", "-q", "-m", "merge side")
+	got, err := e.r.Fetch("checkout-engineer-1")
+	if err == nil || got.Fetched || len(got.Hits) != 1 || got.Hits[0].File != "merged.txt" {
+		t.Fatal("a token only a merge adds was fetched:", got, err)
+	}
+}
+
+// G9-14: the clone's .git is never offered to the file tools or Bash.
+func TestAgentSettingsDenyTheClonesGitDir(t *testing.T) {
+	deny := AgentSettings(Settings{}, "/owner", "/runs/s", "/runs/s.cache", "", nil, false)["permissions"].(map[string]any)["deny"].([]string)
+	joined := strings.Join(deny, "\n")
+	if !strings.Contains(joined, "Edit(//runs/s/.git/**)") || !strings.Contains(joined, "Bash(* .git/*)") {
+		t.Fatal(deny)
+	}
+}
+
+// G9-5: a launch whose session sees the shell's environment fails its
+// self-test, and is stopped; the MCP child gets the owner's ClawBridge
+// settings through its config.
+func TestLaunchProvesTheEnvironmentIsCleared(t *testing.T) {
+	e := newEnv(t)
+	e.r.Environ = func() []string { return append(os.Environ(), "CLAWBRIDGE_HOME=/owner/home", "CLAWBRIDGE_DEVICE_KEY=k") }
+	p := e.launch("checkout-engineer-1", "FIX-1")
+	var mcp struct {
+		MCPServers map[string]struct{ Env map[string]string } `json:"mcpServers"`
+	}
+	raw, _ := os.ReadFile(p.MCPFile)
+	if err := json.Unmarshal(raw, &mcp); err != nil || mcp.MCPServers["clawbridge"].Env["CLAWBRIDGE_HOME"] != "/owner/home" || mcp.MCPServers["clawbridge"].Env["CLAWBRIDGE_DEVICE_KEY"] != "" {
+		t.Fatal("the MCP child's environment:", string(raw), err)
+	}
+	e.envLeak = true
+	_, err := e.r.Launch(e.spec("checkout-engineer-2", "FIX-2"))
+	if err == nil || !strings.Contains(err.Error(), "a variable from the shell that started it") {
+		t.Fatal("a session that saw the shell's environment was not stopped:", err)
+	}
+}
+
+// G9-7: the fetch checks every object it takes from the clone.
+func TestFetchChecksObjects(t *testing.T) {
+	e := newEnv(t)
+	p := e.launch("checkout-engineer-1", "FIX-1")
+	e.commit(p.Clone, "work.txt")
+	plain, fsck := e.r.Git, false
+	e.r.Git = func(dir string, args ...string) (string, error) {
+		for i, a := range args {
+			if a == "fetch" && i >= 2 && args[i-2] == "-c" && args[i-1] == "transfer.fsckObjects=true" {
+				fsck = true
+			}
+		}
+		return plain(dir, args...)
+	}
+	if got, err := e.r.Fetch("checkout-engineer-1"); err != nil || !got.Fetched || !fsck {
+		t.Fatal(got, err, fsck)
 	}
 }

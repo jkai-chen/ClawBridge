@@ -9,8 +9,9 @@
 // permission mode is never bypass, the Bash sandbox denies the owner's
 // credentials and limits the network to hosts that are not the git host,
 // and the clone has no push URL and no credential helper. The agent's
-// clone is untrusted from then on: the runner never runs git inside it
-// again, since its configuration and hooks are the agent's to write.
+// clone is untrusted from then on, since its configuration and hooks are
+// the agent's to write: the one git that runs in it again is the fetch's
+// upload-pack, after the fetch checks the clone (checkClone).
 package runner
 
 import (
@@ -132,6 +133,8 @@ type Runner struct {
 	// when empty.
 	ManagedSettings string
 	Now             func() time.Time
+	// Environ is the launching process's environment; os.Environ when nil.
+	Environ func() []string
 }
 
 var (

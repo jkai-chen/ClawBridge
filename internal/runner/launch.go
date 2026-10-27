@@ -28,7 +28,11 @@ type Spec struct {
 	// Go cannot verify TLS inside the sandbox on macOS, so modules come
 	// from it rather than the network. Empty when there is none.
 	GoModCache string
-	DryRun     bool
+	// LinearWrites lets the agent use the task-board write tools, which act
+	// as the owner's Linear profile (or the server's app). Off, they are
+	// denied (G9-9).
+	LinearWrites bool
+	DryRun       bool
 }
 
 // Prepared is what a launch did, or with DryRun would do.
@@ -64,11 +68,22 @@ func StartPrompt(identifier, uuid, branch, selftest string) string {
 // own allows never widen them, and the clone's .claude settings cannot
 // loosen them. The Bash sandbox covers Bash only, so the file tools get
 // the same denies (RL-M1), and the owner's own checkout is out of reach.
-func AgentSettings(s Settings, ownerRepo, clone, cache, goModCache string, pushHosts []string) map[string]any {
+func AgentSettings(s Settings, ownerRepo, clone, cache, goModCache string, pushHosts []string, linearWrites bool) map[string]any {
 	deny := []string{
 		"Bash(git push *)", "Bash(git remote *)", "Bash(git config *)", "Bash(git credential *)",
 		"Bash(gh *)", "Bash(clawbridge *)", "Bash(ssh *)", "Bash(security *)",
 		"WebFetch",
+	}
+	// G9-9: the session's own tools only. The task-board writes act as the
+	// owner's Linear profile (or the server's app), and confirming is the
+	// coordinator's.
+	for _, tool := range AgentDeniedTools {
+		deny = append(deny, "mcp__clawbridge__"+tool)
+	}
+	if !linearWrites {
+		for _, tool := range AgentLinearWriteTools {
+			deny = append(deny, "mcp__clawbridge__"+tool)
+		}
 	}
 	// A domain-form WebFetch deny also reaches the sandbox's network proxy;
 	// the git hosts are denied that way too.
@@ -80,6 +95,10 @@ func AgentSettings(s Settings, ownerRepo, clone, cache, goModCache string, pushH
 	}
 	// An absolute path takes a leading // in permission rules.
 	deny = append(deny, "Edit(/"+filepath.ToSlash(ownerRepo)+"/**)")
+	// G9-14: the clone's .git is git's own, never the tools'. The OS
+	// sandbox refuses hooks, but .git/config is otherwise guarded only by
+	// an approval prompt, so neither is offered.
+	deny = append(deny, "Edit(/"+filepath.ToSlash(clone)+"/.git/**)", "Bash(* .git/*)")
 	readable := []string{clone, cache}
 	if goModCache != "" {
 		readable = append(readable, goModCache)
@@ -135,18 +154,28 @@ func AgentSettings(s Settings, ownerRepo, clone, cache, goModCache string, pushH
 // quote is a POSIX shell single-quoted word.
 func quote(s string) string { return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'" }
 
+// AgentLinearWriteTools are the clawbridge MCP tools that write to Linear:
+// denied to the agent unless its launch passes --linear-writes (G9-9).
+var AgentLinearWriteTools = []string{
+	"taskboard_create", "taskboard_update", "taskboard_comment",
+	"taskboard_create_v2", "taskboard_update_v2", "taskboard_comment_v2",
+	"taskboard_relation_add_v2", "taskboard_relation_remove_v2",
+}
+
+// AgentDeniedTools are never the agent's: they act for another session.
+var AgentDeniedTools = []string{"assignment_confirm"}
+
 // Command is the terminal's command line. It changes into the clone and
-// replaces the shell with claude (RL-M3): when claude exits, the tab ends,
-// so the owner's own shell never sits in the clone, where the agent's git
-// config and attributes could run commands through any git it starts.
-// claude loads only the session's settings, none of user, project or
-// local, in the default permission mode.
-func Command(clone, settingsFile, mcpFile, model, prompt string) string {
-	parts := []string{"cd", quote(clone), "&&", "exec", "claude", "--setting-sources", "''", "--permission-mode", "default", "--settings", quote(settingsFile), "--mcp-config", quote(mcpFile), "--strict-mcp-config"}
-	if model != "" {
-		parts = append(parts, "--model", quote(model))
-	}
-	return strings.Join(append(parts, quote(prompt)), " ")
+// replaces the shell with the launch script, which replaces itself with
+// claude (RL-M3): when claude exits, the tab ends, so the owner's own
+// shell never sits in the clone, where the agent's git config and
+// attributes could run commands through any git it starts. The script
+// (LaunchScript) gives claude only the allow-listed environment and loads
+// only the session's settings, none of user, project or local, in the
+// default permission mode. It runs under /bin/sh, whatever the owner's
+// shell is.
+func Command(clone, script string) string {
+	return strings.Join([]string{"cd", quote(clone), "&&", "exec", "/bin/sh", quote(script)}, " ")
 }
 
 // version reads x.y.z from a version line.
@@ -304,7 +333,8 @@ func (r *Runner) Launch(spec Spec) (Prepared, error) {
 	}
 	dir := filepath.Join(r.StateDir, "sessions", spec.Session)
 	p := Prepared{Session: spec.Session, Clone: filepath.Join(spec.Settings.WorkDir, spec.Session), Cache: filepath.Join(spec.Settings.WorkDir, spec.Session+".cache"), Branch: branch, Base: full, SettingsFile: filepath.Join(dir, "settings.json"), MCPFile: filepath.Join(dir, "mcp.json"), DryRun: spec.DryRun, ClaudeVersion: strings.Fields(line)[0], Note: note}
-	p.Command = Command(p.Clone, p.SettingsFile, p.MCPFile, spec.Settings.Model, StartPrompt(spec.Identifier, spec.IssueID, branch, filepath.Join(filepath.Join(spec.Settings.WorkDir, spec.Session+".cache"), "selftest.sh")))
+	script := filepath.Join(dir, "launch.sh")
+	p.Command = Command(p.Clone, script)
 	p.Fetch = "clawbridge runner fetch " + spec.Session
 	if spec.DryRun {
 		return p, nil
@@ -343,10 +373,23 @@ func (r *Runner) Launch(spec Spec) (Prepared, error) {
 	if err = os.MkdirAll(p.Cache, 0o700); err != nil {
 		return p, err
 	}
-	settings, _ := json.MarshalIndent(AgentSettings(spec.Settings, repo, p.Clone, p.Cache, spec.GoModCache, pushHosts(urls)), "", " ")
-	mcp, _ := json.MarshalIndent(map[string]any{"mcpServers": map[string]any{"clawbridge": spec.MCPEntry}}, "", " ")
-	for path, data := range map[string][]byte{p.SettingsFile: settings, p.MCPFile: mcp} {
-		if err = writePrivate(path, append(data, '\n')); err != nil {
+	settings, _ := json.MarshalIndent(AgentSettings(spec.Settings, repo, p.Clone, p.Cache, spec.GoModCache, pushHosts(urls), spec.LinearWrites), "", " ")
+	environ := r.environ()
+	entry := map[string]any{}
+	for k, v := range spec.MCPEntry {
+		entry[k] = v
+	}
+	if env := mcpEnv(environ); len(env) > 0 {
+		entry["env"] = env
+	}
+	mcp, _ := json.MarshalIndent(map[string]any{"mcpServers": map[string]any{"clawbridge": entry}}, "", " ")
+	canary := make([]byte, 16)
+	if _, err = rand.Read(canary); err != nil {
+		return p, err
+	}
+	launch := LaunchScript(environ, hex.EncodeToString(canary), p.SettingsFile, p.MCPFile, spec.Settings.Model, StartPrompt(spec.Identifier, spec.IssueID, branch, filepath.Join(p.Cache, "selftest.sh")))
+	for path, data := range map[string][]byte{p.SettingsFile: append(settings, '\n'), p.MCPFile: append(mcp, '\n'), script: []byte(launch)} {
+		if err = writePrivate(path, data); err != nil {
 			return p, err
 		}
 	}
@@ -440,6 +483,10 @@ func (r *Runner) selfTest(cache, repo, session string) (map[string]string, []str
 		}
 		try(id, label, path, false)
 	}
+	// G9-5: the launch script sets a variable before it clears the
+	// environment; the session must not see it.
+	sentinels["env"] = "a variable from the shell that started it"
+	lines = append(lines, `if [ -n "${`+canaryVar+`+x}" ]; then echo READ env; else echo DENIED env; fi`)
 	result := filepath.Join(cache, "selftest.result")
 	script := "#!/bin/sh\n# ClawBridge runner sandbox self-test: each line tries to read one credential location or planted file.\n{\n" + strings.Join(lines, "\n") + "\necho DONE\n} > " + quote(result+".tmp") + " && mv " + quote(result+".tmp") + " " + quote(result) + "\necho 'Self-test done.'\n"
 	if err := os.WriteFile(filepath.Join(cache, "selftest.sh"), []byte(script), 0o600); err != nil {
@@ -536,6 +583,10 @@ func (r *Runner) remoteURLs(repo string) ([]string, error) {
 // host.
 func (r *Runner) unpushable(repo, clone string) error {
 	if upstream, err := r.Git(repo, "remote", "get-url", "origin"); err == nil && upstream != "" {
+		// G9-6: never a user or password in the agent-readable config.
+		if upstream, err = cleanOrigin(upstream); err != nil {
+			return err
+		}
 		if _, err = r.Git(clone, "remote", "set-url", "origin", upstream); err != nil {
 			return err
 		}

@@ -331,7 +331,9 @@ func (c *counter) full(key string) bool {
 }
 
 // add counts one event for key, and reports false when the limit was
-// already reached. A full table refuses keys it doesn't hold.
+// already reached. A full table makes room by evicting, never by refusing
+// keys it doesn't hold: refusing would let rotating addresses lock
+// everyone out (G9-1).
 func (c *counter) add(key string) bool {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -343,15 +345,8 @@ func (c *counter) add(key string) bool {
 	if v.count >= c.limit {
 		return false
 	}
-	if _, held := c.seen[key]; !held && len(c.seen) >= deviceCacheMax {
-		for k, w := range c.seen {
-			if now.Sub(w.start) >= c.period {
-				delete(c.seen, k)
-			}
-		}
-		if len(c.seen) >= deviceCacheMax {
-			return false
-		}
+	if _, held := c.seen[key]; !held {
+		evictOldest(c.seen, deviceCacheMax, now, c.period)
 	}
 	v.count++
 	c.seen[key] = v
@@ -470,7 +465,7 @@ type joinAnswer struct {
 }
 
 func (j *joinHandler) join(w http.ResponseWriter, r *http.Request) (int, joinAnswer) {
-	address := clientAddress(r)
+	address := addressKey(r)
 	invalid := joinAnswer{err: &authFailure{status: 403, code: "forbidden", message: j.invalidMsg}}
 	if !j.byAddress.add(address) {
 		return 429, joinAnswer{err: &authFailure{status: 429, code: "rate_limited", message: "too many join attempts; try again later"}}

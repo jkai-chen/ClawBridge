@@ -305,16 +305,18 @@ func NewHandlerWithOptions(store Executor, verifier Verifier, o HandlerOptions) 
 	// the principal's request limit. 240 a minute is 120 sessions renewing
 	// every 30 s.
 	beats := &limiter{users: map[string]window{}, perMinute: 240}
-	var intake, tick, model http.Handler
-	if s, ok := store.(IntakeStore); ok {
-		intake = newIntakeHandler(s, o.IntakeProver, l)
-	}
-	if o.TickVerifier != nil && o.Ticker != nil {
-		tick = newTickHandler(o.TickVerifier, o.Ticker)
-	}
 	now := o.Now
 	if now == nil {
 		now = time.Now
+	}
+	// Intake and the tick check their address before any token, each in
+	// its own table: never l, which holds only principals (G9-1).
+	var intake, tick, model http.Handler
+	if s, ok := store.(IntakeStore); ok {
+		intake = newIntakeHandler(s, o.IntakeProver, newPreauthLimiter(1200, now))
+	}
+	if o.TickVerifier != nil && o.Ticker != nil {
+		tick = newTickHandler(o.TickVerifier, o.Ticker, newPreauthLimiter(60, now))
 	}
 	if s, ok := store.(ModelStore); ok {
 		model = newModelHandler(s, cmp.Or(o.ModelMaxAgents, defaultMaxAgents), now, o.NudgeProject)
@@ -413,8 +415,8 @@ func NewHandlerWithOptions(store Executor, verifier Verifier, o HandlerOptions) 
 			fail(w, 405, "method_not_allowed", "POST required")
 			return
 		}
-		address := clientAddress(r)
-		if failedAuth.full(address) {
+		address, key := clientAddress(r), addressKey(r)
+		if failedAuth.full(key) {
 			fail(w, 429, "rate_limited", "too many failed sign-ins from this address; try again later")
 			return
 		}
@@ -446,7 +448,7 @@ func NewHandlerWithOptions(store Executor, verifier Verifier, o HandlerOptions) 
 		verified, refused := authenticator.Authenticate(ctx, r, strings.TrimSpace(credentials), body)
 		if refused != nil {
 			if refused.status == 401 {
-				failedAuth.add(address)
+				failedAuth.add(key)
 				failures.record(address, refused.kind)
 			}
 			if refused.serverTime {

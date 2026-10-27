@@ -47,7 +47,7 @@ type intakeOutput struct {
 // tool. Only an intake token is accepted, checked before any MCP handling;
 // a Google or user token, or none, is refused. The tool returns no issue
 // data, session names or queue position.
-func newIntakeHandler(store IntakeStore, prove IssueProver, ips *limiter) http.Handler {
+func newIntakeHandler(store IntakeStore, prove IssueProver, ips *preauthLimiter) http.Handler {
 	closed, destructive := false, false
 	tool := mcp.NewServer(&mcp.Implementation{Name: "clawbridge-intake", Version: "0.1.0"}, &mcp.ServerOptions{
 		Instructions: "Send-only: ask ClawBridge for an agent on one Linear issue of this project. Nothing is read back; a human decides who takes it.",
@@ -82,7 +82,7 @@ func newIntakeHandler(store IntakeStore, prove IssueProver, ips *limiter) http.H
 	})
 	mcpHandler := mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server { return tool }, &mcp.StreamableHTTPOptions{Stateless: true, JSONResponse: true, MaxRequestBodyBytes: intakeBodyBytes})
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if !ips.allow("intake-ip:" + clientAddress(r)) {
+		if !ips.allow(addressKey(r)) {
 			fail(w, 429, "rate_limited", "request limit reached")
 			return
 		}

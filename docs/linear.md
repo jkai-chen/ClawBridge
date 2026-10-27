@@ -1308,8 +1308,10 @@ project's coordinator session, which then routes it.
 - S4 (every new issue) is off.
 
 **Who asked matters.**
-- Only Linear users on the project's trusted list (`clawbridge intake trust add LINEAR_USER_ID`) can ever let a
-  signal go beyond telling the coordinator. ClawBridge reads who added the label, delegated the issue or wrote
+- Only Linear users on the project's trusted list can ever let a signal go beyond telling the coordinator. A
+  project lead or owner adds them with `clawbridge intake trust add "Ada Lovelace" --confirm` (a name or email,
+  looked up among the linked teams' members through your Linear connection, `--linear-profile` if you have
+  several; without `--confirm` it only shows who that is), or by Linear user ID. `trust remove` works the same way. ClawBridge reads who added the label, delegated the issue or wrote
   the mention from Linear's own history.
 - Anyone else's signal, a bot's, or one whose author can't be proven only notifies the coordinator.
 - An issue's title and description never route anything. They become the agent's task, and the trusted person
@@ -1319,6 +1321,9 @@ project's coordinator session, which then routes it.
 assignment come later.
 
 **The queue:** `clawbridge intake list`, `dismiss ISSUE`, `rearm ISSUE`.
+- None of the `intake` commands need a registered session: a person runs them as themselves, and their project role
+  decides (any member reads; a lead or owner changes the policy and the trusted list; a lead, the owner or the
+  coordinator session dismisses and rearms).
 - An issue is queued once.
 - After it is done, the same label or delegation does not queue it again. Re-adding the label, delegating again,
   or a rearm does.

@@ -170,10 +170,14 @@ func TestV2TeamScopedDiscoveryAndEligibility(t *testing.T) {
 	if f.args[0]["team"] != tid {
 		t.Fatal("global label search")
 	}
-	f.result = map[string]any{"users": []any{map[string]any{"id": uid, "active": true}}, "hasNextPage": false}
+	f.result = map[string]any{"users": []any{map[string]any{"id": uid, "name": "Ada", "email": "ada@example.test", "active": true}}, "hasNextPage": false}
 	members, e := p.Members(context.Background(), tid, PageOptions{})
 	if e != nil || !members.Items[0].EligibilityKnown || !members.Items[0].Active || members.Items[0].TeamID != tid {
 		t.Fatal(members, e)
+	}
+	// The email is read, for finding a person by it, and never output.
+	if raw, _ := json.Marshal(members); members.Items[0].Email != "ada@example.test" || strings.Contains(string(raw), "ada@example.test") {
+		t.Fatal("the email:", members.Items[0].Email, string(raw))
 	}
 	f.result = map[string]any{"users": []any{map[string]any{"id": uid}}, "hasNextPage": false}
 	members, e = p.Members(context.Background(), tid, PageOptions{})

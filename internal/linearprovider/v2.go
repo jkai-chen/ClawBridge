@@ -89,8 +89,12 @@ func (l Label) MarshalJSON() ([]byte, error) {
 }
 
 type Member struct {
-	ID               string `json:"id"`
-	Name             string `json:"name"`
+	ID   string `json:"id"`
+	Name string `json:"name"`
+	// Email is the member's, when the listing gives it: for finding a
+	// person by email (intake trust). It's never stored, and never in any
+	// output, an agent's included.
+	Email            string `json:"-"`
 	TeamID           string `json:"team_id"`
 	Active           bool   `json:"active"`
 	EligibilityKnown bool   `json:"eligibility_known"`
@@ -1171,7 +1175,7 @@ func (p *Provider) Members(ctx context.Context, team string, o PageOptions) (Pag
 		if !teamKnown && p.memberTeamFilterReason() != "" {
 			known = false
 		}
-		out.Items = append(out.Items, Member{ID: i, Name: str(row, "name"), TeamID: team, Active: active, EligibilityKnown: known})
+		out.Items = append(out.Items, Member{ID: i, Name: str(row, "name"), Email: str(row, "email"), TeamID: team, Active: active, EligibilityKnown: known})
 	}
 	return out, nil
 }

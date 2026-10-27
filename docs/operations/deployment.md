@@ -717,7 +717,7 @@ Installing agentd, its rootless Docker and its units is in [agentd.md](agentd.md
 
 ```sh
 CLAWBRIDGE_MODEL_KEY_SEAL_KEY=<32 random bytes, base64>   # generate it on the host: agentd.md, "The seal key"
-CLAWBRIDGE_DISPATCHER_MODEL_MAX_AGENTS=2                  # optional, 1-20
+CLAWBRIDGE_DISPATCHER_MODEL_MAX_AGENTS=1                  # optional, 1-20; 1 is the default
 ```
 
 - **The seal key.** It seals every owner's provider key (AES-GCM, bound to the
@@ -747,9 +747,14 @@ CLAWBRIDGE_DISPATCHER_MODEL_MAX_AGENTS=2                  # optional, 1-20
      recreate the API. Until then, `clawbridge doctor` warns project owners
      that a rotation is not finished.
 - **The agent cap.** It is what the server reports to agentd: agentd never runs
-  more agent containers than this. The default is 2. Each agent container may
-  use up to 160 MiB, and `clawbridge doctor` warns when the agents that may
-  still start need more than the host's available memory (`MemAvailable`).
+  more agent containers than this. The default is 1, sized for a host with about
+  1 GiB available beside the api and Postgres: each agent takes up to about
+  170 MiB (its 160 MiB limit and its container's shim), and agentd itself about
+  260 MiB once, for its rootless Docker, its proxy and the egress container
+  (measured under a real rootless daemon). Raise it on a bigger host.
+  `clawbridge doctor` warns when the agents that may still start, and agentd
+  while it isn't running yet, would leave the host less than 300 MiB of
+  `MemAvailable` for the server and its database.
 - **The launcher token.** agentd's credential opens only its three calls: which
   owners need an agent, a one-time credential for one of them, and a fixed-code
   report. It serves every owner on the server, so **treat it like every owner's

@@ -298,7 +298,7 @@ type HandlerOptions struct {
 	// Now is the clock device sign-in reads; nil is time.Now.
 	Now func() time.Time
 	// ModelMaxAgents is dispatcher_model_max_agents, what launcher/wanted
-	// reports; zero is the default, 2.
+	// reports; zero is defaultMaxAgents.
 	ModelMaxAgents int
 	// Streams serves GET /v1/stream, woken by the hub; nil leaves it off
 	// (404, which a client reads as an older server).

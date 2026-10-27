@@ -260,6 +260,35 @@ when starting the MCP process or running `mcp install`. This pins the connection
 without putting a credential in the agent configuration.
 Automatic inbox hints require the separately configured [notification feature](notifications.md).
 
+## Check your setup: doctor
+
+```sh
+clawbridge doctor
+```
+
+`doctor` checks your settings, your sign-in, the workspace and project, your
+agents' MCP entries and skill, Linear and the dispatcher, and changes nothing.
+At a terminal it starts with its counts, then lists failures, warnings and
+passes in that order. Each check's line says how it came out, in plain words;
+the line under it gives the details (counts, paths, versions), then the file it
+concerns and, after `→`, what to do:
+
+```text
+Doctor: 6 pass · 1 warn · 1 fail
+FAIL Trusted configuration: Your ClawBridge settings can't be used.
+     Trusted storage mode is absent or unsupported.
+     → Select explicit local or cloud mode.
+WARN Installed MCP entry: This agent's ClawBridge connection is missing or can't start.
+     No MCP configuration file exists at the selected path.
+     /home/you/.codex/config.toml
+PASS Authority health: Your workspace answers.
+     The cloud authority is reachable and returned 3 visible project(s).
+```
+
+It exits 1 when a check fails and 0 otherwise, warnings included. With `--json`
+(and on a pipe, or in an agent's shell) the report is the JSON it always was:
+each check's `id`, `title`, `status`, `message`, `path` and `action`.
+
 ## Your first task: claim and release
 
 An **assignment** says which session works on which issue: proposed by the

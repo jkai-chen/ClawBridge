@@ -1,8 +1,8 @@
 {
   "ok": true,
   "result": {
+    "action_taken": "wait",
     "guardrail": "permitted",
-    "action_taken": "confirm",
-    "reason_code": "trusted"
+    "reason_code": "uncertain"
   }
 }

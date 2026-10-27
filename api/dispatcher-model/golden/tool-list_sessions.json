@@ -1,16 +1,23 @@
 {
   "ok": true,
-  "result": {
-    "sessions": [
-      {
-        "id": "ses_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-        "name": "worker-1",
-        "principal": "p_bbbbbbbbbbbbbbbb",
-        "role": "worker",
-        "presence": "active",
-        "status": "active",
-        "assignment": null
-      }
-    ]
-  }
+  "result": [
+    {
+      "assignment": null,
+      "id": "ses_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "name": "eng",
+      "presence": "active",
+      "principal": "p_bbbbbbbbbbbbbbbb",
+      "role": "",
+      "status": "active"
+    },
+    {
+      "assignment": null,
+      "id": "ses_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "name": "worker-1",
+      "presence": "active",
+      "principal": "p_bbbbbbbbbbbbbbbb",
+      "role": "",
+      "status": "active"
+    }
+  ]
 }

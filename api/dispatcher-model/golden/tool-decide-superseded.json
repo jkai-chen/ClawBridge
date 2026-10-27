@@ -1,8 +1,8 @@
 {
   "ok": true,
   "result": {
-    "guardrail": "overridden",
     "action_taken": "wait",
-    "reason_code": "overlap"
+    "guardrail": "overridden",
+    "reason_code": "proposal_changed"
   }
 }

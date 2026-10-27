@@ -1,13 +1,13 @@
 {
-  "project_id": "prj_0b9f6c5e3a4d4e8b9c1f2d3e4f5a6b7c",
-  "enabled": true,
-  "provider": "openai",
-  "model": "test-model",
   "caps": {
-    "runs_per_hour": 10,
-    "runs_per_day": 50
+    "runs_per_day": 50,
+    "runs_per_hour": 10
   },
-  "opt_in_tools": [],
   "deadline_seconds": 90,
+  "enabled": true,
+  "model": "claude-test",
+  "opt_in_tools": [],
+  "project_id": "prj_0b9f6c5e3a4d4e8b9c1f2d3e4f5a6b7c",
+  "provider": "anthropic",
   "server_time": "2026-01-01T00:00:00Z"
 }

@@ -1,7 +1,16 @@
 {
   "ok": true,
   "result": {
-    "domain": "payments",
-    "sessions": []
+    "coordinator_session": null,
+    "id": "payments",
+    "match": {
+      "labels": [
+        "payments"
+      ],
+      "linear_projects": []
+    },
+    "name": "Payments",
+    "owner_principal": "p_bbbbbbbbbbbbbbbb",
+    "trusted_count": 0
   }
 }

@@ -2,17 +2,14 @@
   "ok": true,
   "result": {
     "issue": {
+      "authoritative": true,
       "id": "5f0c2b8e-7a1d-4c3e-9b2a-6d4e8f1a2b3c",
       "identifier": "SYN-12",
-      "state_type": "started",
-      "project_id": "9a8b7c6d-5e4f-4a3b-8c2d-1e0f9a8b7c6d",
       "labels": [
         "payments"
       ],
-      "authoritative": true
-    },
-    "untrusted": {
-      "title": "Fix the ledger"
+      "project_id": null,
+      "state_type": "started"
     }
   }
 }

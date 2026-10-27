@@ -1,16 +1,36 @@
 {
   "case": {
     "case_id": "case_0123456789abcdef0123456789abcdef",
-    "kind": "decide",
     "deadline": "2026-01-01T00:00:00Z",
     "deadline_ms": 90000,
-    "subject": {
-      "type": "proposal",
-      "id": "asg_cccccccccccccccccccccccccccccccc"
+    "facts": {
+      "domain_matches": [
+        {
+          "by": "label",
+          "domain": "payments"
+        }
+      ],
+      "holders": [],
+      "issue": {
+        "authoritative": true,
+        "id": "6a1d2c3b-4e5f-4a6b-8c7d-9e0f1a2b3c4d",
+        "identifier": "SYN-12",
+        "labels": [
+          "payments"
+        ],
+        "project_id": null,
+        "state_type": "started"
+      },
+      "session": {
+        "id": "ses_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "name": "worker-2",
+        "presence": "active",
+        "principal": "p_bbbbbbbbbbbbbbbb",
+        "status": "active"
+      }
     },
+    "kind": "decide",
     "permitted_actions": [
-      "confirm",
-      "decline",
       "wait",
       "escalate"
     ],
@@ -27,35 +47,13 @@
       "facts_unavailable",
       "uncertain"
     ],
-    "facts": {
-      "issue": {
-        "id": "5f0c2b8e-7a1d-4c3e-9b2a-6d4e8f1a2b3c",
-        "identifier": "SYN-12",
-        "state_type": "started",
-        "project_id": "9a8b7c6d-5e4f-4a3b-8c2d-1e0f9a8b7c6d",
-        "labels": [
-          "payments"
-        ],
-        "authoritative": true
-      },
-      "session": {
-        "id": "ses_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-        "name": "worker-1",
-        "principal": "p_bbbbbbbbbbbbbbbb",
-        "presence": "active",
-        "status": "active"
-      },
-      "domain_matches": [
-        {
-          "domain": "payments",
-          "by": "label"
-        }
-      ],
-      "holders": []
+    "subject": {
+      "id": "asg_cccccccccccccccccccccccccccccccc",
+      "type": "proposal"
     },
     "untrusted": {
-      "title": "Fix the ledger",
       "description_excerpt": "Ledger rounding is off.",
+      "title": "Fix the ledger",
       "truncated": false
     }
   }

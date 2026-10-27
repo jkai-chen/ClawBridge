@@ -18,7 +18,7 @@ type Spec struct {
 	// ServerURL is the ClawBridge server, given to the agents as their only
 	// env variable.
 	ServerURL string
-	// AgentImage and EgressImage are pinned by digest.
+	// AgentImage and EgressImage are pinned by repo digest or image ID.
 	AgentImage, EgressImage string
 	// PolicyDir holds the egress policy agentd writes; the egress container
 	// mounts it read-only.

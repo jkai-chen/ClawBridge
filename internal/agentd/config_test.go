@@ -22,6 +22,11 @@ func TestLoadConfig(t *testing.T) {
 	if err != nil || c.LauncherToken != token || c.Docker != env["CLAWBRIDGE_AGENTD_DOCKER"] {
 		t.Fatal(c, err)
 	}
+	// Images loaded with `docker load` are pinned by image ID.
+	ids := map[string]string{"CLAWBRIDGE_AGENT_IMAGE": "sha256:" + strings.Repeat("a1", 32), "CLAWBRIDGE_EGRESS_IMAGE": "sha256:" + strings.Repeat("e2", 32)}
+	if c, err := LoadConfig(func(k string) string { return firstNonEmpty(ids[k], env[k]) }); err != nil || c.AgentImage != ids["CLAWBRIDGE_AGENT_IMAGE"] {
+		t.Fatal(c.AgentImage, err)
+	}
 	for name, edit := range map[string][2]string{
 		"http server":       {"CLAWBRIDGE_SERVER_URL", "http://bridge.example.test"},
 		"server with user":  {"CLAWBRIDGE_SERVER_URL", "https://u:p@bridge.example.test"},
@@ -29,6 +34,11 @@ func TestLoadConfig(t *testing.T) {
 		"no server":         {"CLAWBRIDGE_SERVER_URL", ""},
 		"tag only":          {"CLAWBRIDGE_AGENT_IMAGE", "ghcr.io/example/agent:latest"},
 		"short digest":      {"CLAWBRIDGE_AGENT_IMAGE", "ghcr.io/example/agent@sha256:0123"},
+		"short image ID":    {"CLAWBRIDGE_AGENT_IMAGE", "sha256:0123"},
+		"bare hex ID":       {"CLAWBRIDGE_AGENT_IMAGE", strings.Repeat("ab", 32)},
+		"ID with a tag":     {"CLAWBRIDGE_AGENT_IMAGE", "agent:latest:sha256:" + strings.Repeat("ab", 32)},
+		"upper-case ID":     {"CLAWBRIDGE_AGENT_IMAGE", "sha256:" + strings.Repeat("AB", 32)},
+		"ID with a suffix":  {"CLAWBRIDGE_AGENT_IMAGE", "sha256:" + strings.Repeat("ab", 32) + "ff"},
 		"no image":          {"CLAWBRIDGE_AGENT_IMAGE", ""},
 		"egress tag only":   {"CLAWBRIDGE_EGRESS_IMAGE", "ghcr.io/example/agentd:latest"},
 		"no egress image":   {"CLAWBRIDGE_EGRESS_IMAGE", ""},
@@ -149,4 +159,11 @@ func TestLoadConfigPrivateServer(t *testing.T) {
 			t.Fatalf("%s with %q accepted", c[0], c[1])
 		}
 	}
+}
+
+func firstNonEmpty(a, b string) string {
+	if a != "" {
+		return a
+	}
+	return b
 }

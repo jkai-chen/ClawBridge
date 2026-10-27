@@ -261,6 +261,12 @@ type testStack struct {
 
 func newStack(t *testing.T) *testStack {
 	t.Helper()
+	return newStackWith(t, testSpec)
+}
+
+// newStackWith is newStack with the proxy's spec made by spec.
+func newStackWith(t *testing.T, spec func(policyDir string) Spec) *testStack {
+	t.Helper()
 	dir := socketDir(t)
 	s := &testStack{
 		daemon:    &fakeDaemon{containers: map[string]string{}, networks: map[string]*fakeNet{}, stdin: map[string]string{}, bodies: map[string][]byte{}},
@@ -270,7 +276,7 @@ func newStack(t *testing.T) *testStack {
 	}
 	s.logger = slog.New(slog.NewJSONHandler(s.log, nil))
 	serveUnix(t, filepath.Join(dir, "docker.sock"), s.daemon)
-	p, err := NewProxy(testSpec(s.policyDir), filepath.Join(dir, "docker.sock"), s.logger)
+	p, err := NewProxy(spec(s.policyDir), filepath.Join(dir, "docker.sock"), s.logger)
 	if err != nil {
 		t.Fatal(err)
 	}

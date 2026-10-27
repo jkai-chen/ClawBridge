@@ -31,6 +31,10 @@
   of the provider's models from the agent's own catalogue, cheapest first, with their price per million tokens and
   context window; a number picks one, and any other model ID can still be typed. The list is generated from the pinned
   agent build, and CI fails if it is out of date.
+- **`clawbridge-agentd` has its own image, for the egress proxy, and takes images pinned by ID.** The image is the static
+  binary alone (`cmd/clawbridge-agentd/Dockerfile`, about 15 MiB, user 65534), and CI runs its egress proxy with the
+  same hardening agentd gives it. `CLAWBRIDGE_AGENT_IMAGE` and `CLAWBRIDGE_EGRESS_IMAGE` now also accept an image ID
+  (`sha256:…`), since an image loaded with `docker load` has no repo digest to pin.
 
 # ClawBridge v0.3.5 (unreleased)
 

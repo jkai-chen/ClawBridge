@@ -55,6 +55,16 @@ jobs:
       - run: npm audit --omit=dev --audit-level=high
       # No provider keys exist in this workflow; the tests use local fakes only.
       - run: npm test
+  agentd-image:
+    if: ${{ github.event.repository.private == false }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      # The egress container's image, run with the fixed spec's hardening.
+      - run: bash cmd/clawbridge-agentd/scripts/image-test.sh
   dispatcher-agent-container:
     if: ${{ github.event.repository.private == false }}
     runs-on: ubuntu-latest

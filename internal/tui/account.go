@@ -41,6 +41,9 @@ type accountState struct {
 	codeNote string
 	// pending is the destructive action waiting for its typed phrase.
 	pending *accountAction
+	// labelling is the device a label draft is for, fixed when l is
+	// pressed, so a reload in between can't move it (R108-M2).
+	labelling string
 }
 
 // accountAction is one write, with the phrase a person types to confirm it
@@ -237,9 +240,11 @@ func (m Model) applyAccount(x accountLoadedMsg) Model {
 	}
 	m.errText = ""
 	m.source = "server"
-	code, note := m.account.code, m.account.codeNote
+	// A code on show, an action awaiting its word and a label draft's
+	// device survive the reload (R108-L2).
+	code, note, pending, labelling := m.account.code, m.account.codeNote, m.account.pending, m.account.labelling
 	m.account = x.state
-	m.account.code, m.account.codeNote = code, note
+	m.account.code, m.account.codeNote, m.account.pending, m.account.labelling = code, note, pending, labelling
 	m.selected = min(m.selected, max(0, len(m.accountRows())-1))
 	return m
 }
@@ -247,6 +252,12 @@ func (m Model) applyAccount(x accountLoadedMsg) Model {
 // accountDo sends one write. A write never runs against an offline
 // mirror, and its answer reloads the screen.
 func (m Model) accountDo(action accountAction) (Model, tea.Cmd) {
+	if m.loading {
+		// One write at a time, on a screen that shows its answer (R108-L1);
+		// a confirmation stays, for Enter again once the load lands.
+		m.actionErr = "wait for the screen to finish loading, then press Enter again"
+		return m, nil
+	}
 	m.account.pending = nil
 	m.confirming = false
 	m.confirm = ""
@@ -340,10 +351,15 @@ func (m Model) accountKey(key string) (Model, tea.Cmd) {
 	if m.cfg.Mode != ModeCloud || m.account.principal == "" {
 		return m, nil
 	}
+	if m.loading && strings.Contains("ailxtync", key) && len(key) == 1 {
+		m.actionErr = "wait for the screen to finish loading"
+		return m, nil
+	}
 	row, selected := m.accountSelected()
 	switch key {
 	case "a":
-		return m.accountDo(accountAction{op: "invite_create", args: map[string]any{"email": m.account.principal, "purpose": "device"}})
+		// A live code is minted only on a typed word (R108-L4).
+		return m.confirmAccount(accountAction{op: "invite_create", args: map[string]any{"email": m.account.principal, "purpose": "device"}, prompt: "Make a one-time code to add another device of yours? Type add", phrase: "add"}), nil
 	case "i":
 		m.inputMode, m.draft, m.actionErr = inputAccountInvite, "", ""
 	case "l":
@@ -351,7 +367,7 @@ func (m Model) accountKey(key string) (Model, tea.Cmd) {
 			m.actionErr = "select one of your active devices to label it"
 			return m, nil
 		}
-		m.inputMode, m.draft, m.actionErr = inputAccountLabel, row.label, ""
+		m.inputMode, m.draft, m.actionErr, m.account.labelling = inputAccountLabel, row.label, "", row.id
 	case "x":
 		if !selected {
 			return m, nil
@@ -416,16 +432,17 @@ func (m Model) accountSubmit() (Model, tea.Cmd) {
 	m.inputMode, m.draft = inputNone, ""
 	switch mode {
 	case inputAccountLabel:
-		row, ok := m.accountSelected()
-		if !ok || row.kind != "device" {
-			m.actionErr = "the selected device is no longer listed"
+		id := m.account.labelling
+		m.account.labelling = ""
+		if id == "" {
+			m.actionErr = "select one of your devices to label it"
 			return m, nil
 		}
 		if draft == "" || len(draft) > 64 {
 			m.actionErr = "a device label is 1-64 characters"
 			return m, nil
 		}
-		return m.accountDo(accountAction{op: "device_label", args: map[string]any{"device_id": row.id, "label": draft}})
+		return m.accountDo(accountAction{op: "device_label", args: map[string]any{"device_id": id, "label": draft}})
 	case inputAccountInvite:
 		email, grants, err := parseInviteDraft(draft)
 		if err != nil {

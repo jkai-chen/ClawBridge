@@ -143,7 +143,10 @@ func wizardInvite(ctx context.Context, prompt *wizardPrompt, path, server string
 	fmt.Fprint(stdout, "Invite code (not shown as you type): ")
 	code, err := wizardInviteCode()
 	fmt.Fprintln(stdout)
-	if err != nil || code == "" {
+	if err != nil {
+		return fmt.Errorf("the invite code could not be read; nothing was changed: %w", err)
+	}
+	if code == "" {
 		return errors.New("no invite code was entered; nothing was changed")
 	}
 	joined, err := wizardDeviceJoin(ctx, JoinParams{Server: server, Email: email, Code: code, Label: label, KeyStore: store, ConfigPath: path})

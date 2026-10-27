@@ -131,8 +131,8 @@ Accounts on a hosted workspace (each command takes `--help`):
 The TUI's Account screen (`8`, or `clawbridge tui --screen account`) does the
 same on a hosted workspace:
 
-- your devices, this one marked: `a` adds a device (a one-time code), `l` labels,
-  `x` revokes;
+- your devices, this one marked: `a` adds a device (a one-time code, after you
+  type `add`), `l` labels, `x` revokes;
 - `i` issues an invite (`EMAIL PROJECT=ROLE ...`), and `x` revokes a pending one;
 - for the main owner, every member with their devices: `x` on a member removes
   them, and `t` offers ownership. The recipient sees a banner and answers with `y`

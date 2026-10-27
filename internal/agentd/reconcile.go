@@ -188,15 +188,15 @@ func (r *Reconciler) Step(ctx context.Context) error {
 	running := 0
 	stopFailed := false
 	for _, c := range containers {
-		gone := false
+		gone, stillRunning := false, c.running
 		switch {
 		case provider[c.ref] == "":
-			gone = r.removeAgent(ctx, c.ref, "")
+			gone, stillRunning = r.removeAgent(ctx, c.ref, "")
 		case c.revision != revision[c.ref]:
 			// A rotated key or a new model runs in a fresh instance (§11.6),
 			// which fetches the new revision; not a crash. Its network stays.
 			r.log.Info("config revision changed", "ref", c.ref, "from", c.revision, "to", revision[c.ref])
-			gone = r.removeAgent(ctx, c.ref, " for new revision")
+			gone, stillRunning = r.removeAgent(ctx, c.ref, " for new revision")
 		case c.running:
 			live[c.ref] = true
 		default:
@@ -207,7 +207,7 @@ func (r *Reconciler) Step(ctx context.Context) error {
 		}
 		if !gone {
 			present[c.ref] = true
-			if c.running {
+			if stillRunning {
 				running++
 				stopFailed = stopFailed || !live[c.ref]
 			}
@@ -218,12 +218,15 @@ func (r *Reconciler) Step(ctx context.Context) error {
 	for i := len(sorted) - 1; i >= 0 && running > maxAgents; i-- {
 		ref := sorted[i]
 		r.log.Warn("over the agent cap", "ref", ref, "max_agents", maxAgents)
-		if !r.removeAgent(ctx, ref, " over the cap") {
+		gone, stillRunning := r.removeAgent(ctx, ref, " over the cap")
+		if stillRunning {
 			stopFailed = true
 			continue
 		}
 		delete(live, ref)
-		delete(present, ref)
+		if gone {
+			delete(present, ref)
+		}
 		running--
 	}
 	// A network outlives its container when a stop, a failed start or an
@@ -293,9 +296,9 @@ func (r *Reconciler) Step(ctx context.Context) error {
 	return egressErr
 }
 
-// startFailed counts a failed start of ref's agent, and backs off: 1, 2,
-// 4… rounds are skipped before the next try. After startFailuresReported
-// in a row it reports codeStartFailing, once.
+// startFailed counts a failed start of ref's agent, and backs off: the
+// next try is the next round, then 2, 4, 8… rounds later, at most 64. After
+// startFailuresReported in a row it reports codeStartFailing, once.
 func (r *Reconciler) startFailed(ctx context.Context, ref string) {
 	f := r.failed[ref]
 	if f == nil {
@@ -322,7 +325,16 @@ func (r *Reconciler) ensureEgress(ctx context.Context) error {
 	}
 	if c.running {
 		// A new egress image takes effect at once: the old proxy is replaced,
-		// and agents reconnect through the new one.
+		// and agents reconnect through the new one. Only once the new image
+		// is there: a missing one would leave no egress proxy at all.
+		present, err := r.docker.imageExists(ctx, r.cfg.EgressImage)
+		if err != nil {
+			return err
+		}
+		if !present {
+			r.log.Error("the new egress image is not loaded; the old egress proxy keeps running", "ref", egressName)
+			return nil
+		}
 		r.log.Info("egress image changed", "ref", egressName)
 	}
 	if _, err := os.Stat(filepath.Join(r.cfg.PolicyDir, policyFile)); errors.Is(err, os.ErrNotExist) {
@@ -353,7 +365,14 @@ func (r *Reconciler) ensureNetwork(ctx context.Context, ref string, subnets map[
 	if n.subnet != subnets[ref] {
 		// A cbnet-<ref> was already there on another subnet (made before
 		// fixed subnets, or by hand). The egress proxy would refuse its agent
-		// every round: replace it.
+		// every round: replace it, but never under a container, which would
+		// only fail the removal again every round.
+		if n.agents {
+			r.log.Error("the owner's network is not on its subnet, and a container is on it; its agent has no egress until it is gone", "ref", ref)
+			// The policy must not name a subnet the network isn't on.
+			delete(subnets, ref)
+			return false
+		}
 		r.log.Error("the owner's network is not on its subnet; replacing it", "ref", ref)
 		if n.egress && !r.act("disconnect egress", ref, r.docker.disconnectEgress(ctx, ref)) ||
 			!r.act("remove network", ref, r.docker.removeNetwork(ctx, ref)) {
@@ -523,11 +542,17 @@ func (r *Reconciler) handOver(ctx context.Context, ref string) bool {
 	return r.act("hand over credential", ref, err)
 }
 
-// removeAgent stops and removes ref's container, and reports whether it
-// is gone. why is added to the logged actions.
-func (r *Reconciler) removeAgent(ctx context.Context, ref, why string) bool {
+// removeAgent stops and removes ref's container; the removal is forced, so
+// it ends one whose stop failed too. gone: it was removed; running: it may
+// still run (neither the stop nor the removal worked). why is added to the
+// logged actions.
+func (r *Reconciler) removeAgent(ctx context.Context, ref, why string) (gone, running bool) {
 	name := containerName(ref)
-	return r.act("stop"+why, ref, r.docker.stop(ctx, name)) && r.act("remove"+why, ref, r.docker.remove(ctx, name))
+	stopped := r.act("stop"+why, ref, r.docker.stop(ctx, name))
+	if r.act("remove"+why, ref, r.docker.remove(ctx, name)) {
+		return true, false
+	}
+	return false, !stopped
 }
 
 // removeNetwork takes the egress proxy off ref's network and removes it.

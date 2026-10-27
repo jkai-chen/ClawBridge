@@ -195,6 +195,8 @@ func TestProxyRefusesOtherEndpoints(t *testing.T) {
 		"list other name":  {"GET", "/containers/json?all=1&filters=" + url.QueryEscape(`{"name":["postgres"]}`), nil},
 		"list limit":       {"GET", "/containers/json?all=1&limit=1&filters=" + url.QueryEscape(containerListFilters), nil},
 		"networks all":     {"GET", "/networks", nil},
+		"other image":      {"GET", "/images/busybox/json", nil},
+		"image history":    {"GET", "/images/" + testEgressImage + "/history", nil},
 		"networks other":   {"GET", "/networks?filters=" + url.QueryEscape(`{"driver":["bridge"]}`), nil},
 	} {
 		if got := s.send(t, c.method, c.path, c.body); got != http.StatusForbidden {

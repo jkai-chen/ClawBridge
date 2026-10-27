@@ -12,7 +12,8 @@ Its Docker access is root-equivalent, so it is kept small, and it is fenced in b
    only these calls:
    - **Agent containers:** create, attach to stdin, start, stop, remove and inspect, on containers named
      `clawbridge-agent-<owner ref>`.
-   - **The egress container:** the same on `clawbridge-egress`, except attach.
+   - **The egress container:** the same on `clawbridge-egress`, except attach; and inspecting the configured egress
+     image, to check it is loaded before replacing the running proxy.
    - **Networks:** create, inspect and remove on `cbnet-<owner ref>`, and connect or disconnect `clawbridge-egress`
      there. The egress network `clawbridge-egress-net` can only be created.
    - **Lists:** containers and networks, with agentd's own name filter only.
@@ -61,7 +62,8 @@ Its Docker access is root-equivalent, so it is kept small, and it is fenced in b
   - **Cleanup:** every round, the network of an owner no longer wanted, with no container left, is removed with its
     egress attachment, even when an earlier round removed only the container.
   - **A network on the wrong subnet:** a `cbnet-<owner ref>` already there on another subnet (from before fixed
-    subnets, or made by hand) is logged as an error and replaced, so the policy names the subnet the agent is on.
+    subnets, or made by hand) is logged as an error and replaced, so the policy names the subnet the agent is on. While
+    a container is on it, it is left alone and its agent gets no egress; the error is logged every round.
   - **The pool and your VPC:** `172.30.0.0/16` sits inside common VPC ranges. Under the rootless daemon the networks
     live in the daemon's own namespace, so they can't clash with the host's routes. A rootful install, which this
     design doesn't use, would have to check for overlap with the host's networks first.
@@ -72,7 +74,9 @@ Its Docker access is root-equivalent, so it is kept small, and it is fenced in b
 
   agentd connects it to every owner network, where agents reach it as `clawbridge-egress:3128`. It reconnects it
   when the container was recreated. A new egress image (`CLAWBRIDGE_EGRESS_IMAGE`) replaces the running container
-  in the next round.
+  in the next round, once that image is loaded; until then the old proxy keeps running and an error is logged.
+  Other changes to the fixed specs, from an agentd upgrade, take effect only when a container is next created: an
+  agent at its next start, the egress proxy when its image changes or it exits.
 - **The policy.** agentd writes the policy from each owner's subnet, the server's `host:port` and that owner's
   provider `host:port` from the server. It writes it before an owner's agent starts, and only when it changed. The
   egress proxy picks it up within 2 seconds, so after a change agentd waits 3 seconds before starting a new agent.
@@ -143,8 +147,11 @@ cbl_…`, `ClawBridge-Model-API: 1`; any auth failure is one 401):
   whose stop failed still counts, and nothing starts in a round where a stop failed.
 - It mints an agent's one-time credential only once the agent is up.
 - It restarts a crashed agent at most 3 times an hour, then reports `agent_crashloop`.
-- A start that fails (a missing image, a refused mint, an agent that exits at once) backs off: 1, 2, 4… rounds are
-  skipped, up to about half an hour. After 3 failures in a row it reports `agent_start_failing`, once.
+- A start that fails (a missing image, a refused mint, an agent that exits at once) backs off: the next try is the
+  next round, then 2, 4, 8… rounds later, up to 64 rounds (about half an hour). After 3 failures in a row it reports
+  `agent_start_failing`, once.
+- A container whose stop fails is removed by force. Only one that can be neither stopped nor removed still counts as
+  running.
 - It never touches a container with another name.
 - Logs are JSON lines: owner refs, actions, Docker calls and status codes. Never a credential.
 

@@ -94,6 +94,10 @@ func (p *Proxy) allow(r *http.Request) error {
 	}
 	op := r.Method + " " + parts[0]
 	switch {
+	case r.Method == http.MethodGet && path == "/images/"+p.spec.EgressImage+"/json":
+		// Whether the egress image is loaded, before agentd replaces the
+		// running egress proxy with it: that image only, read-only.
+		return emptyRequest(r, query)
 	case op == "GET containers" && len(parts) == 2 && parts[1] == "json":
 		// The list agentd sends, and no other: its own containers only.
 		if query.Get("all") != "1" || query.Get("filters") != containerListFilters {

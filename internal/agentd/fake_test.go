@@ -42,8 +42,10 @@ type fakeDaemon struct {
 	// failStop and failNetworkDelete name what can't be stopped or
 	// removed; exitOnStart, agents that exit as soon as they start;
 	// attachStatus, when set, is attach's answer instead of 101.
-	failStop, failNetworkDelete, exitOnStart map[string]bool
-	attachStatus                             int
+	failStop, failRemove, failNetworkDelete, exitOnStart map[string]bool
+	// missingImages are images the daemon doesn't have; it has all others.
+	missingImages map[string]bool
+	attachStatus  int
 	// slow delays every answer; set before the daemon serves.
 	slow time.Duration
 }
@@ -85,6 +87,13 @@ func (f *fakeDaemon) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		f.containers[name], f.bodies[name] = "created", body
 		w.WriteHeader(http.StatusCreated)
 		fmt.Fprint(w, `{"Id":"0123"}`)
+	case r.Method == http.MethodGet && parts[0] == "images":
+		image := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/images/"), "/json")
+		if f.missingImages[image] {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		fmt.Fprint(w, `{}`)
 	case r.Method == http.MethodGet && r.URL.Path == "/networks":
 		out := []networkSpec{}
 		for name, n := range f.networks {
@@ -174,6 +183,10 @@ func (f *fakeDaemon) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			f.containers[name] = "exited"
 			w.WriteHeader(http.StatusNoContent)
 		case "DELETE ":
+			if f.failRemove[name] {
+				w.WriteHeader(http.StatusInternalServerError)
+				return
+			}
 			delete(f.containers, name)
 			// A removed container leaves every network.
 			for _, n := range f.networks {

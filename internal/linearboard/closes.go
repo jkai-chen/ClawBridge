@@ -325,10 +325,10 @@ func (s *Service) confirmLoosened(ctx context.Context, scope bus.Request, closes
 }
 
 // Ways a person confirmed a closes change (the audit's via). It is the
-// client's claim: the server records it and can't check it. The TUI's
-// own value comes with the TUI (auth PR 4); until then the server refuses
-// tui.
+// client's claim: the server records it and can't check it. cli-tty is a
+// name typed at a terminal, tui one typed in the TUI's link review.
 const (
 	ClosesViaCLI = "cli"
 	ClosesViaTTY = "cli-tty"
+	ClosesViaTUI = "tui"
 )

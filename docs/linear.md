@@ -930,7 +930,8 @@ the policy still names but the board no longer binds "(not bound)"; the next
 - **The same for a policy file.** When `status-policy set --file` lets agents
   close a project they didn't close before, it asks for that project's name in
   the same way, before anything is sent. The server refuses such a write
-  unless it says it was typed at a terminal (`via: cli-tty`). That is the
+  unless it says it was typed at a terminal (`via: cli-tty`) or in the TUI
+  (`via: tui`). That is the
   client's claim: the server can't see the terminal, but a client that skips
   the check has to claim it, and the audit records the claim.
 - **Never a session.** The server refuses `closes set` from any session,
@@ -952,6 +953,14 @@ clawbridge linear link --team T --default-team T --linear-project P \
 - Without `--closes`, a link changes no one's rule.
 - If setting who closes fails after the binding, the binding stays, the project
   is closed by people, and the command to re-run is printed.
+- **In the TUI** (the Linear view, `7`), the link review lists who closes each
+  project. Enter keeps the rules as they are, so people by default; `c` switches
+  the highlighted project between people and agents, and previews again. Letting
+  agents close then asks for the project's name, typed in the TUI (`via: tui`).
+  The TUI refuses any change of who closes when it's bound to a session, and
+  refuses agents when the environment says an agent runs it. With no status
+  policy, the review shows the minimal policy's consequences, and typing the
+  name agrees to create it.
 - `clawbridge linear project create NAME --closes agent` puts `--closes NEWID=agent`
   into the proposed link's `confirm_command`. A team board has no per-project
   rule, so `--closes` is refused there before anything is sent.

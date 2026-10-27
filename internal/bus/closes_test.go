@@ -100,13 +100,12 @@ func TestClosesSetChangesOneProject(t *testing.T) {
 		project, closes, via string
 		want                 string
 	}{
-		"stale":            {2, cpTwo, "agent", "cli-tty", "revision"},
-		"unbound":          {3, cpThree, "agent", "cli-tty", "not in this project's board"},
-		"agent untyped":    {3, cpTwo, "agent", "cli", "typing the project's name"},
-		"tui before a TUI": {3, cpTwo, "agent", "tui", "via is cli or cli-tty"},
-		"bad value":        {3, cpTwo, "bot", "cli-tty", "agent or human"},
-		"bad via":          {3, cpTwo, "human", "mcp", "via"},
-		"upper-case uuid":  {3, strings.ToUpper(cpTwo), "human", "cli", ""},
+		"stale":           {2, cpTwo, "agent", "cli-tty", "revision"},
+		"unbound":         {3, cpThree, "agent", "cli-tty", "not in this project's board"},
+		"agent untyped":   {3, cpTwo, "agent", "cli", "typing the project's name"},
+		"bad value":       {3, cpTwo, "bot", "cli-tty", "agent or human"},
+		"bad via":         {3, cpTwo, "human", "mcp", "via"},
+		"upper-case uuid": {3, strings.ToUpper(cpTwo), "human", "cli", ""},
 	} {
 		_, err := h.closesSet(c.rev, c.project, c.closes, c.via)
 		if name == "upper-case uuid" {
@@ -119,6 +118,17 @@ func TestClosesSetChangesOneProject(t *testing.T) {
 		if err == nil || !strings.Contains(err.Error(), c.want) {
 			t.Fatal(name, err)
 		}
+	}
+	// The TUI's link review has the person type the name too.
+	var rev int
+	if err = h.s.db.QueryRow(`SELECT revision FROM linear_status_policy`).Scan(&rev); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = h.closesSet(rev, cpTwo, "agent", "tui"); err != nil {
+		t.Fatal("tui:", err)
+	}
+	if err = h.s.db.QueryRow(`SELECT details FROM history WHERE entity='linear_status_policy' AND action='closes_set' AND details LIKE '%"via":"tui"%'`).Scan(&details); err != nil || !strings.Contains(details, cpTwo) {
+		t.Fatal("tui audit", details, err)
 	}
 }
 

@@ -193,7 +193,7 @@ func (s *Store) statusPolicyOp(ctx context.Context, tx *transaction, w, p map[st
 	}
 	via := str(r.Args, "via")
 	if via != "" && !closesVia[via] {
-		return nil, invalid("via is cli or cli-tty")
+		return nil, invalid("via is cli, cli-tty or tui")
 	}
 	// R89-H1: who closes is never a session's to change, even the owner's
 	// own session's: an agent could grant itself the right to close.
@@ -202,7 +202,7 @@ func (s *Store) statusPolicyOp(ctx context.Context, tx *transaction, w, p map[st
 	}
 	// R89-M1: letting agents close a project is confirmed at a terminal,
 	// whichever command writes it.
-	if loosened := closesLoosened(stored, policy); len(loosened) > 0 && via != "cli-tty" {
+	if loosened := closesLoosened(stored, policy); len(loosened) > 0 && !closesTyped(via) {
 		return nil, invalid("letting agents close issues is confirmed at a terminal, by typing each project's name (" + strings.Join(loosened, ", ") + ")")
 	}
 	// A4 L5: project flow is turned on only where the operator has proven

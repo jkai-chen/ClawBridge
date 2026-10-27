@@ -323,7 +323,7 @@ func (s *Service) LinkV2(ctx context.Context, scope bus.Request, in LinkInputV2)
 		if in.Closes[project] != ClosesAgent {
 			continue
 		}
-		if in.Via != ClosesViaTTY {
+		if in.Via != ClosesViaTTY && in.Via != ClosesViaTUI {
 			return nil, errors.New("letting agents close issues is confirmed at a terminal, by typing the project's name; nothing was changed")
 		}
 		if policy.Revision == 0 && !in.MinimalPolicy {

@@ -44,6 +44,12 @@ type LinearData struct {
 	Issues    linearprovider.Page[linearprovider.Issue]
 	Issue     *linearprovider.Issue
 	Preview   any
+	// Closes is who closes each project of a link preview (A3), and
+	// MinimalPolicy what creating the minimal status policy changes.
+	Closes        []linearboard.ClosesLine
+	MinimalPolicy string
+	// ClosesOutcomes is what a confirmed link did about who closes.
+	ClosesOutcomes []linearboard.ClosesOutcome
 }
 type linearState struct {
 	step                 string
@@ -65,6 +71,14 @@ type linearState struct {
 	page                 int
 	connectAccess        linearconn.Access
 	preview              string
+	// A3: who closes. closes is this link's answers by project ID; lines
+	// the preview's per-project rule; minimal the minimal policy's
+	// consequences, when the link would create it; typing the projects
+	// whose names are still to be typed before agents may close them.
+	closes  map[string]string
+	lines   []linearboard.ClosesLine
+	minimal string
+	typing  []linearboard.ClosesLine
 }
 type LinearSnapshot struct {
 	Step, ProfileID          string
@@ -212,6 +226,14 @@ func (m Model) applyLinear(x linearLoadedMsg) Model {
 		m.selected = 0
 	case "preview":
 		m.linear.preview = fmt.Sprint(x.data.Preview)
+		m.linear.lines = append([]linearboard.ClosesLine(nil), x.data.Closes...)
+		m.linear.minimal = x.data.MinimalPolicy
+		// The review opens on its first project; a re-preview after c
+		// keeps the highlighted one.
+		if m.linear.step != "preview" {
+			m.selected = 0
+		}
+		m.selected = min(m.selected, max(0, len(m.linear.lines)-1))
 		m.linear.step = "preview"
 		// Keep the revision submitted for this preview. A later metadata read
 		// must never promote the confirmation's compare-and-swap precondition.
@@ -222,6 +244,14 @@ func (m Model) applyLinear(x linearLoadedMsg) Model {
 		m.linear.visited = []string{""}
 		m.linear.page = 0
 		m.actionErr = "Shared board saved. Press r to read tasks."
+		for _, o := range x.data.ClosesOutcomes {
+			if o.Outcome == "set" {
+				m.actionErr += " " + o.LinearProject + ": closed by " + closesWord(o.Closes) + "."
+			} else {
+				m.actionErr += " " + o.LinearProject + ": who closes was not set (" + o.Error + "); re-run " + o.Rerun
+			}
+		}
+		m.linear.closes, m.linear.lines, m.linear.minimal = nil, nil, ""
 	case "unlink-preview":
 		m.linear.preview = fmt.Sprint(x.data.Preview)
 		m.linear.step = "unlink"
@@ -273,6 +303,10 @@ func (m Model) linearRows() []string {
 		}
 	case "default":
 		rows = append(rows, m.linear.chosen...)
+	case "preview":
+		for _, l := range m.linear.lines {
+			rows = append(rows, l.LinearProject)
+		}
 	case "projects":
 		rows = append(rows, "team-board")
 		for _, p := range m.linear.projects {
@@ -321,6 +355,16 @@ func (m Model) linearLink(confirm bool) (Model, tea.Cmd) {
 	request := LinearRequest{Operation: operation, ProfileID: m.linear.profile, Link: linearboard.LinkInput{TeamIDs: append([]string{}, m.linear.chosen...), DefaultTeamID: m.linear.defaultTeam, ProjectID: m.linear.project, ExpectedRevision: m.linearRevision(), TeamBoard: m.linear.teamBoard, Confirm: confirm}}
 	if m.linear.bindingV2 != nil {
 		request.LinkV2 = &linearboard.LinkInputV2{TeamIDs: append([]string{}, m.linear.chosen...), DefaultTeamID: m.linear.defaultTeam, ProjectIDs: append([]string{}, m.linear.selectedProjects...), ExpectedRevision: m.linearRevision(), TeamBoard: m.linear.teamBoard, Confirm: confirm}
+		if len(m.linear.closes) > 0 && !m.linear.teamBoard {
+			request.LinkV2.Closes = map[string]string{}
+			for id, who := range m.linear.closes {
+				request.LinkV2.Closes[id] = who
+			}
+			// Only linearClosesTyped confirms with agents in it: the
+			// person typed each such project's name here.
+			request.LinkV2.Via = linearboard.ClosesViaTUI
+			request.LinkV2.MinimalPolicy = confirm && m.linear.minimal != ""
+		}
 	}
 	return m.linearCommand(request)
 }
@@ -337,6 +381,9 @@ func (m Model) linearKey(key string) (Model, tea.Cmd) {
 		m.linear.step = "profiles"
 		m.selected = 0
 		return m, nil
+	}
+	if key == "c" && m.linear.step == "preview" {
+		return m.linearToggleCloses()
 	}
 	if key == "c" || key == "w" {
 		m.inputMode = inputLinearName
@@ -360,6 +407,7 @@ func (m Model) linearKey(key string) (Model, tea.Cmd) {
 		m.linear.selectedProjects = nil
 		m.linear.project = ""
 		m.linear.teamBoard = false
+		m.linear.closes, m.linear.lines, m.linear.minimal, m.linear.typing = nil, nil, "", nil
 		return m.linearRefresh()
 	}
 	if key == "x" && m.linear.step == "profiles" {
@@ -491,6 +539,17 @@ func (m Model) linearKey(key string) (Model, tea.Cmd) {
 		}
 		return m.linearLink(false)
 	case "preview":
+		// Agents close a project's issues only once its name is typed.
+		m.linear.typing = nil
+		for _, l := range m.linear.lines {
+			if l.Set == linearboard.ClosesAgent {
+				m.linear.typing = append(m.linear.typing, l)
+			}
+		}
+		if len(m.linear.typing) > 0 {
+			m.inputMode, m.draft, m.actionErr = inputLinearClosesName, "", ""
+			return m, nil
+		}
 		return m.linearLink(true)
 	case "unlink":
 		return m.linearCommand(LinearRequest{Operation: "unlink", ExpectedRevision: m.linearRevision(), Confirm: true})
@@ -505,6 +564,64 @@ func (m Model) linearKey(key string) (Model, tea.Cmd) {
 	}
 	return m, nil
 }
+
+// closesWord names a closes value as people read it.
+func closesWord(who string) string {
+	if who == linearboard.ClosesAgent {
+		return "agents"
+	}
+	return "people"
+}
+
+// linearToggleCloses switches the highlighted project of a link preview
+// between people and agents, and previews again so the line, and the
+// minimal policy's consequences, come from the server.
+func (m Model) linearToggleCloses() (Model, tea.Cmd) {
+	if m.linear.bindingV2 == nil || m.linear.teamBoard || m.selected < 0 || m.selected >= len(m.linear.lines) {
+		return m, nil
+	}
+	l := m.linear.lines[m.selected]
+	now := l.Set
+	if now == "" {
+		now = linearboard.ClosesHuman
+		if l.Closes == "agents" {
+			now = linearboard.ClosesAgent
+		}
+	}
+	next := linearboard.ClosesAgent
+	if now == linearboard.ClosesAgent {
+		next = linearboard.ClosesHuman
+	}
+	closes := map[string]string{}
+	for id, who := range m.linear.closes {
+		closes[id] = who
+	}
+	closes[l.LinearProject] = next
+	m.linear.closes = closes
+	return m.linearLink(false)
+}
+
+// linearClosesTyped checks the name typed for the next project agents
+// would close; once every name matches, the link is confirmed.
+func (m Model) linearClosesTyped() (Model, tea.Cmd) {
+	if len(m.linear.typing) == 0 {
+		m.inputMode = inputNone
+		return m, nil
+	}
+	want := m.linear.typing[0].Name
+	if want == "" || m.draft != want {
+		m.inputMode, m.draft, m.linear.typing = inputNone, "", nil
+		m.actionErr = fmt.Sprintf("the name typed is not %q; nothing was changed", want)
+		return m, nil
+	}
+	m.linear.typing, m.draft = m.linear.typing[1:], ""
+	if len(m.linear.typing) > 0 {
+		return m, nil
+	}
+	m.inputMode = inputNone
+	return m.linearLink(true)
+}
+
 func renderLinear(m Model) string {
 	var b strings.Builder
 	b.WriteString("Settings / Integrations / Linear\n\n")
@@ -535,7 +652,26 @@ func renderLinear(m Model) string {
 		if m.linear.bindingV2 != nil {
 			projects = strings.Join(m.linear.selectedProjects, ", ")
 		}
-		b.WriteString("REVIEW BEFORE SAVE. Enter confirms; Esc cancels.\n" + terminalText(m.linear.preview) + "\nAllowed team IDs: " + strings.Join(m.linear.chosen, ", ") + "\nDefault: " + m.linear.defaultTeam + "\nProject selection: " + projects + fmt.Sprintf(" · team board=%t\n", m.linear.teamBoard))
+		b.WriteString("REVIEW BEFORE SAVE. Enter confirms; Esc cancels.\n")
+		if m.linear.step == "preview" && len(m.linear.lines) > 0 {
+			b.WriteString("\nWho closes each project's issues? Enter keeps people; c switches the highlighted one between people and agents.\n")
+			for i, l := range m.linear.lines {
+				prefix := "  "
+				if i == m.selected {
+					prefix = "› "
+				}
+				line := firstNonempty(l.Name, l.LinearProject) + " · " + l.LinearProject + " · closes: " + l.Closes
+				if l.Set != "" {
+					line += " → " + closesWord(l.Set) + " (this link sets it)"
+				}
+				b.WriteString(prefix + terminalText(line) + "\n")
+			}
+			if m.linear.minimal != "" {
+				b.WriteString(warnStyle.Render(terminalText(m.linear.minimal)) + "\nTyping the project's name to let agents close also creates that policy.\n")
+			}
+			b.WriteString("\n")
+		}
+		b.WriteString(terminalText(m.linear.preview) + "\nAllowed team IDs: " + strings.Join(m.linear.chosen, ", ") + "\nDefault: " + m.linear.defaultTeam + "\nProject selection: " + projects + fmt.Sprintf(" · team board=%t\n", m.linear.teamBoard))
 		return b.String()
 	}
 	rows := m.linearRows()
@@ -619,6 +755,9 @@ func renderLinear(m Model) string {
 	}
 	if m.linear.next != "" {
 		b.WriteString("\nMore provider rows available: ] next page.\n")
+	}
+	if m.inputMode == inputLinearClosesName && len(m.linear.typing) > 0 {
+		b.WriteString("\nAgents will close the issues of Linear project " + terminalText(fmt.Sprintf("%q", m.linear.typing[0].Name)) + ", completing them without a person. Type its name to confirm; Esc cancels.\n")
 	}
 	if m.inputMode == inputLinearName {
 		b.WriteString("\nNew connection label (" + string(m.linear.connectAccess) + "): " + terminalText(m.draft) + "\nEnter starts explicit OAuth consent; Esc cancels.\n")

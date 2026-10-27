@@ -346,6 +346,7 @@ const (
 	inputAccountInvite
 	inputAccountLabel
 	inputAccountTransfer
+	inputLinearClosesName
 )
 
 // New validates the trusted mode and immutable boundary.
@@ -1266,6 +1267,9 @@ func (m Model) updateEditor(key string, runes []rune) (Model, tea.Cmd) {
 		return m, nil
 	}
 	if key == "enter" {
+		if m.inputMode == inputLinearClosesName {
+			return m.linearClosesTyped()
+		}
 		if m.screen == ScreenAccount && (m.confirming || m.inputMode == inputAccountInvite || m.inputMode == inputAccountLabel || m.inputMode == inputAccountTransfer) {
 			return m.accountSubmit()
 		}

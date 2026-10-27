@@ -135,7 +135,7 @@ func (s *Store) migrate() error {
 	if err = tx.QueryRow("PRAGMA user_version").Scan(&version); err != nil {
 		return err
 	}
-	if version > 31 {
+	if version > 32 {
 		return errors.New("database schema is newer than this ClawBridge binary")
 	}
 	if version == 0 {
@@ -297,6 +297,11 @@ func (s *Store) migrate() error {
 	}
 	if version < 31 {
 		if _, err = tx.Exec(inviteIssuedDeviceSchemaV31 + `PRAGMA user_version=31;`); err != nil {
+			return err
+		}
+	}
+	if version < 32 {
+		if _, err = tx.Exec(deviceDormancySchemaV32 + `PRAGMA user_version=32;`); err != nil {
 			return err
 		}
 	}
@@ -533,6 +538,8 @@ var operationArgs = map[string]string{
 	"owner_transfer_get":          "",
 	"device_events":               "all",
 	"device_ack":                  "event_ids all",
+	"device_confirm":              "device_id principal",
+	"workspace_settings":          "device_idle_days confirm",
 	"dispatcher_domains_set":      "instance expected_revision dispatcher_domains",
 	"dispatcher_domain_edit":      "instance expected_revision domain action target_session",
 	"dispatcher_enable":           "instance expected_revision mode confirm",
@@ -598,7 +605,7 @@ func validateArgs(op string, a map[string]any) error {
 					return invalid(k + " must be an integer")
 				}
 			}
-		case "retention_days", "limit", "since_hours", "after", "expected_revision", "ledger", "generation", "budget", "calls", "charged", "policy_revision", "engineer", "if_unset", "expires_days", "expires_hours", "expires_minutes", "s5_calls_per_hour", "out_of_binding_limit", "template_version", "part_number", "part_count", "seq", "config_revision":
+		case "retention_days", "limit", "since_hours", "after", "expected_revision", "ledger", "generation", "budget", "calls", "charged", "policy_revision", "engineer", "if_unset", "expires_days", "expires_hours", "expires_minutes", "device_idle_days", "s5_calls_per_hour", "out_of_binding_limit", "template_version", "part_number", "part_count", "seq", "config_revision":
 			if _, err := integer(v); err != nil {
 				return fmt.Errorf("%s: %w", k, err)
 			}
@@ -1329,7 +1336,7 @@ func (s *Store) execute(ctx context.Context, tx *transaction, r Request) (any, e
 			if e != nil {
 				return nil, e
 			}
-			view := deviceView(device, stamp())
+			view := deviceView(device, w, stamp())
 			out["device"] = map[string]any{"device_id": view["device_id"], "label": view["label"], "kind": view["kind"], "key_store": view["key_store"], "expires_at": view["expires_at"], "status": view["status"]}
 		}
 		return out, nil

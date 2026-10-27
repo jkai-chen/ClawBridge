@@ -63,7 +63,7 @@ setup --cloud initializes an existing service only; no infrastructure is created
 Global: --client-config /absolute/path/config.toml (trusted route; not agent --config)
 Commands: login [--device|--use-gcloud], logout,
           join --email EMAIL (with --server URL: join a hosted workspace with an invite; asks for the code),
-          invite, device, user, owner (accounts on a hosted workspace; each takes --help)
+          invite, device, user, owner, workspace (accounts on a hosted workspace; each takes --help)
 Cloud flags: --mode cloud --server URL --audience AUDIENCE [--credential-source oauth|gcloud|adc|device] [--oauth-client-id ID --oauth-client-secret CREDENTIAL --oauth-device-client-id ID --oauth-device-client-secret CREDENTIAL] [--principal EMAIL] [--cache PATH]
 Results are laid out for people at a terminal and are JSON with source otherwise: on a pipe, in an agent's shell, with --json
 or CLAWBRIDGE_OUTPUT=json (--json=false or CLAWBRIDGE_OUTPUT=human asks for the layout). Scripts and agents: pass --json.
@@ -282,7 +282,7 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		return runDeviceJoin(ctx, flags, rest[1:], os.Stdin, stdout, stderr)
 	}
 	switch rest[0] {
-	case "invite", "device", "user", "owner":
+	case "invite", "device", "user", "owner", "workspace":
 		return runAccount(ctx, flags, rest[0], rest[1:], stdout, stderr)
 	}
 	if rest[0] == "login" || rest[0] == "logout" {

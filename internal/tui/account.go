@@ -221,6 +221,11 @@ func deviceRow(d map[string]any) accountRow {
 	if store := text(d, "key_store"); store != "" {
 		detail += " · key in " + store
 	}
+	if due := text(d, "dormant_at"); due != "" && text(d, "status") == "dormant" {
+		detail += " · dormant since " + due + ": another of its user's devices, or the owner, confirms it (w)"
+	} else if d["dormant_soon"] == true {
+		detail += " · goes dormant " + due + " unless used or confirmed (w)"
+	}
 	return accountRow{kind: "device", id: text(d, "device_id"), owner: text(d, "principal"), label: text(d, "label"), status: text(d, "status"), detail: detail}
 }
 
@@ -399,7 +404,7 @@ func (m Model) accountKey(key string) (Model, tea.Cmd) {
 			return m, nil
 		}
 		switch {
-		case row.kind == "device" && row.status == "active":
+		case row.kind == "device" && (row.status == "active" || row.status == "dormant"):
 			prompt := "Revoke device " + row.id + " (" + row.label + ")"
 			if row.id == m.cfg.DeviceID {
 				prompt += ", THIS device: this profile stops working"
@@ -411,6 +416,18 @@ func (m Model) accountKey(key string) (Model, tea.Cmd) {
 			return m.confirmAccount(accountAction{op: "user_revoke", args: map[string]any{"principal": row.id}, prompt: "Remove " + row.id + " from the workspace: every role, device and pending invite here. Type their email", phrase: row.id}), nil
 		}
 		m.actionErr = "nothing to revoke on this row"
+	case "w":
+		// §17.4: confirm wakes a dormant device, or restarts an idle one's
+		// clock; this device's own clock runs on its use.
+		if !selected || row.kind != "device" || (row.status != "active" && row.status != "dormant") || row.id == m.cfg.DeviceID {
+			m.actionErr = "select another active or dormant device to confirm it"
+			return m, nil
+		}
+		args := map[string]any{"device_id": row.id}
+		if row.owner != m.account.principal {
+			args["principal"] = row.owner
+		}
+		return m.confirmAccount(accountAction{op: "device_confirm", args: args, prompt: "Confirm device " + row.id + " (" + row.label + ") of " + row.owner + ", so it stays usable? Type confirm", phrase: "confirm"}), nil
 	case "t":
 		if !m.account.mainOwner {
 			m.actionErr = "only the workspace owner may offer ownership"
@@ -556,12 +573,22 @@ func renderAccount(m Model) string {
 		if t, err := time.Parse(time.RFC3339Nano, at); err == nil {
 			at = t.Local().Format("2006-01-02 15:04")
 		}
+		due := text(e, "due_at")
+		if t, err := time.Parse(time.RFC3339Nano, due); err == nil {
+			due = t.Local().Format("2006-01-02 15:04")
+		}
 		var what string
 		switch text(e, "kind") {
 		case "added":
 			what = "New device " + strconv.Quote(text(e, "label")) + " (" + text(e, "device_id") + ") joined " + text(e, "principal") + " at " + at + " via " + strings.ReplaceAll(text(e, "route"), "_", " ")
 		case "revoked":
 			what = "Device " + strconv.Quote(text(e, "label")) + " (" + text(e, "device_id") + ") of " + text(e, "principal") + " was revoked at " + at + " by " + text(e, "actor")
+		case "reconfirmed":
+			what = "Device " + strconv.Quote(text(e, "label")) + " (" + text(e, "device_id") + ") of " + text(e, "principal") + " was re-confirmed at " + at + " by " + text(e, "actor")
+		case "dormant_soon":
+			what = "Device " + strconv.Quote(text(e, "label")) + " (" + text(e, "device_id") + ") of " + text(e, "principal") + " goes dormant at " + due + " unless used or confirmed (w)"
+		case "dormant":
+			what = "Device " + strconv.Quote(text(e, "label")) + " (" + text(e, "device_id") + ") of " + text(e, "principal") + " went dormant at " + due + ", unused: w confirms it, x revokes it"
 		default:
 			// A kind this client doesn't know is shown as it is, never as
 			// a new device.
@@ -629,7 +656,7 @@ func renderAccount(m Model) string {
 	for _, r := range m.account.invites {
 		line(r, fmt.Sprintf("%s · %s · %s · %s", r.owner, r.id, r.status, r.detail))
 	}
-	keys := "\na add a device (one-time code) · l label · x revoke · i invite"
+	keys := "\na add a device (one-time code) · l label · x revoke · w confirm · i invite"
 	if m.account.mainOwner {
 		keys += " · t transfer ownership"
 	}

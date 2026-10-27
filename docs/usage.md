@@ -130,12 +130,16 @@ Accounts on a hosted workspace (each command takes `--help`):
   `invite --email EMAIL --recovery`. The code is shown once, on your terminal
   only; `--out FILE` writes it to a new file (0600) instead.
 - **`device`:** `device list`, `device revoke ID`, `device label ID LABEL`,
-  `device events` and `device ack` (new-device alerts, docs/sign-in.md).
+  `device events` and `device ack` (new-device alerts, docs/sign-in.md),
+  `device confirm ID [--member EMAIL]` (a dormant device, docs/sign-in.md).
   - `device add` is an invite link for another device of yours, good for 15
     minutes (`--expires` up to `24h`).
   - `device add --ci NAME --grant PROJECT=member --expires 30d` makes a CI
     device. It prints `CLAWBRIDGE_DEVICE_KEY` once, for the CI secret store, on
     your terminal only; `--out FILE` writes it to a new file (0600) instead.
+- **`workspace`:** `workspace settings` shows the device idle limit;
+  `workspace settings --device-idle-days N` (30–365) sets it (main owner);
+  `--confirm` when the lower limit makes devices dormant at once.
 - **`user`:** `user list`; `user revoke EMAIL --confirm`.
 - **`owner`:** `owner show`; `owner transfer --to EMAIL`; then the recipient
   runs `owner accept` or `owner decline`, or the owner runs `owner cancel`.

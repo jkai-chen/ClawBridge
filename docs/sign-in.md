@@ -212,6 +212,48 @@ New device "Ada's desktop" (dev_9k2…) joined ada@example.com at 2026-10-27 14:
   happened and when; never the label, which the device's adder chose. An owner
   who runs no coordinator session gets only the device alerts above.
 
+### Dormant devices
+
+A computer nobody has used for **90 days** is **dormant**: the server refuses its
+requests until it's confirmed. Nothing it holds is deleted. A forgotten laptop in a
+drawer stops being a live key to the workspace.
+
+```sh
+clawbridge device confirm dev_…                         # one of your devices, from another
+clawbridge device confirm dev_… --member ada@example.com # the main owner, for a member's
+clawbridge workspace settings --device-idle-days 120     # the main owner: 30–365, default 90
+```
+
+Lowering the limit so that devices would go dormant at once (with no warning) says how
+many and needs `--confirm`.
+
+- **Any use** of a device restarts its clock. CI devices never go dormant; they have
+  their own expiry.
+- **A dormant device** is told: `device_dormant: this device hasn't been used for 90
+  days; confirm it from another of your devices (clawbridge device confirm dev_…) or
+  ask the workspace owner`.
+- **Who confirms:** another device of the same user, or the **main owner** only, who
+  names the member with `--member`. A project owner can't. Either way it's signed by a
+  live human device: a Google sign-in or a CI key can't confirm. An owner whose devices
+  are all dormant recovers with a bootstrap invite, as for lost devices. Confirming is an alert to
+  the user's other devices and the owner's ("re-confirmed by …"), and is audited.
+  `w` on the TUI's Account screen does the same; `x` still revokes.
+- **Warnings come first, where someone will see them.** A device's own use would
+  reset its clock, so the warning goes to the user's **other** devices and the
+  owner's, as an alert: "goes dormant at DATE unless it is used or confirmed". It
+  starts 10 days before (day 80 of 90), or 30 days before for the main owner's own
+  devices (day 60), which also reach the owner's coordinator session. Neither is
+  more than half the limit. Another alert follows when it goes dormant.
+  `device list` shows each device's `dormant_at`, and `dormant_soon` within the
+  warning.
+- **Warnings are written when any device of the workspace is used**, at most once a
+  minute per device in use. A workspace nobody uses writes none, and has nobody to
+  warn.
+- **All your devices dormant?** The main owner confirms one, or sends you a recovery
+  invite. **All the main owner's devices dormant?** The host operator's
+  [bootstrap invite](#the-operators-bootstrap-invite) lets the owner join a new
+  device, which then confirms or revokes the old ones.
+
 ## Members and ownership
 
 The main owner sees and manages every member:
@@ -267,7 +309,8 @@ clawbridge operator bootstrap-invite --workspace WORKSPACE
 - It creates the workspace for `CLAWBRIDGE_BOOTSTRAP_OWNER` if needed, and prints
   a code for that email, valid for 24 hours. The owner then runs `clawbridge join`
   with it on their own computer.
-- The same command recovers an owner who has lost every device.
+- The same command recovers an owner who has lost every device, or whose devices
+  are all [dormant](#dormant-devices).
 - The code is a secret. The command refuses to print it anywhere but a terminal
   unless given `--force-stdout`.
 

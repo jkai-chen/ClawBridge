@@ -76,7 +76,7 @@ func refused(message string) error {
 
 func authOperation(op string) bool {
 	switch op {
-	case "invite_create", "invite_list", "invite_revoke", "device_list", "device_revoke", "device_label", "device_enroll", "device_ci_create", "user_list", "user_revoke", "owner_transfer_offer", "owner_transfer_respond", "owner_transfer_get", "device_events", "device_ack":
+	case "invite_create", "invite_list", "invite_revoke", "device_list", "device_revoke", "device_label", "device_enroll", "device_ci_create", "user_list", "user_revoke", "owner_transfer_offer", "owner_transfer_respond", "owner_transfer_get", "device_events", "device_ack", "device_confirm", "workspace_settings":
 		return true
 	}
 	return false
@@ -122,6 +122,10 @@ func (s *Store) authOp(ctx context.Context, tx *transaction, w map[string]any, r
 		return s.listDeviceEvents(ctx, tx, all)
 	case "device_ack":
 		return s.ackDeviceEvents(ctx, tx, a)
+	case "device_confirm":
+		return s.confirmDevice(ctx, tx, w, a)
+	case "workspace_settings":
+		return s.workspaceSettings(ctx, tx, w, a)
 	}
 	return nil, invalid("unsupported operation")
 }
@@ -644,7 +648,7 @@ func revokePrincipalDevices(ctx context.Context, tx *transaction, wid, principal
 	return out, nil
 }
 
-func deviceView(row map[string]any, now string) map[string]any {
+func deviceView(row, w map[string]any, now string) map[string]any {
 	out := map[string]any{}
 	for _, k := range []string{"device_id", "principal", "kind", "label", "key_store", "via", "created_by", "created_at", "expires_at", "last_used_at", "revoked_at", "revoked_by", "revoke_reason"} {
 		out[k] = row[k]
@@ -656,6 +660,7 @@ func deviceView(row map[string]any, now string) map[string]any {
 		status = "expired"
 	}
 	out["status"] = status
+	dormancyView(out, row, w, now)
 	return out
 }
 
@@ -682,7 +687,7 @@ func (s *Store) listDevices(ctx context.Context, tx *transaction, w map[string]a
 	now := stamp()
 	out := []any{}
 	for _, row := range rows {
-		out = append(out, deviceView(row, now))
+		out = append(out, deviceView(row, w, now))
 	}
 	return map[string]any{"devices": out}, nil
 }
@@ -743,7 +748,7 @@ func (s *Store) labelDevice(ctx context.Context, tx *transaction, w map[string]a
 		return nil, err
 	}
 	row["label"] = label
-	return deviceView(row, stamp()), nil
+	return deviceView(row, w, stamp()), nil
 }
 
 // enrollDevice adds a device key for a caller signed in with Google, with no
@@ -887,7 +892,7 @@ func (s *Store) listUsers(ctx context.Context, tx *transaction, w map[string]any
 		}
 		shown := []any{}
 		for _, d := range devices {
-			shown = append(shown, deviceView(d, now))
+			shown = append(shown, deviceView(d, w, now))
 		}
 		out = append(out, map[string]any{"principal": p, "invited_by": m["added_by"], "added_at": m["added_at"], "owner": p == w["owner_principal"], "roles": roles, "devices": shown})
 	}
@@ -1105,8 +1110,10 @@ func (s *Store) DeviceByID(ctx context.Context, id string) (Device, error) {
 }
 
 // UseNonce records a verified request's nonce for its device, refusing one
-// already used (ErrNonceReused), and stamps the device's last use at most
-// once a minute. The nonce must already be checked (16-64 bytes, AU-L4).
+// already used (ErrNonceReused) or a dormant device (*DormantError, before
+// its use is stamped, so it stays dormant), and stamps the device's last
+// use at most once a minute, then writes its workspace's due dormancy
+// warnings. The nonce must already be checked (16-64 bytes, AU-L4).
 func (s *Store) UseNonce(ctx context.Context, deviceID, nonce string) error {
 	raw, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -1114,6 +1121,10 @@ func (s *Store) UseNonce(ctx context.Context, deviceID, nonce string) error {
 	}
 	tx := &transaction{Tx: raw, postgres: s.postgres}
 	defer tx.Rollback()
+	now := hostClock().UTC()
+	if err = checkDormant(ctx, tx, deviceID, now); err != nil {
+		return err
+	}
 	res, err := tx.ExecContext(ctx, `INSERT INTO device_nonces(device_id,nonce,expires_at) VALUES(?,?,?) ON CONFLICT(device_id,nonce) DO NOTHING`, deviceID, nonce, future(NonceLifetime))
 	if err != nil {
 		return err
@@ -1121,15 +1132,23 @@ func (s *Store) UseNonce(ctx context.Context, deviceID, nonce string) error {
 	if n, _ := res.RowsAffected(); n != 1 {
 		return ErrNonceReused
 	}
-	now := hostClock().UTC()
 	// purge_expired runs only on request, so each insert also sweeps its
 	// own device's expired nonces: a device keeps at most its last ten
 	// minutes' worth.
 	if _, err = tx.ExecContext(ctx, `DELETE FROM device_nonces WHERE device_id=? AND expires_at<=?`, deviceID, now.Format(timestampLayout)); err != nil {
 		return err
 	}
-	if _, err = tx.ExecContext(ctx, `UPDATE devices SET last_used_at=? WHERE device_id=? AND (last_used_at IS NULL OR last_used_at<?)`, now.Format(timestampLayout), deviceID, now.Add(-deviceLastUsedPrecision).Format(timestampLayout)); err != nil {
+	if res, err = tx.ExecContext(ctx, `UPDATE devices SET last_used_at=? WHERE device_id=? AND (last_used_at IS NULL OR last_used_at<?)`, now.Format(timestampLayout), deviceID, now.Add(-deviceLastUsedPrecision).Format(timestampLayout)); err != nil {
 		return err
+	}
+	if n, _ := res.RowsAffected(); n == 1 {
+		var wid string
+		if err = tx.QueryRowContext(ctx, `SELECT workspace_id FROM devices WHERE device_id=?`, deviceID).Scan(&wid); err != nil {
+			return err
+		}
+		if err = s.warnDormancy(ctx, tx, wid, now); err != nil {
+			return err
+		}
 	}
 	if err = tx.Commit(); err != nil {
 		return errors.New("authority commit failed")

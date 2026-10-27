@@ -251,8 +251,14 @@ func TestWizardInviteJoinsARealServer(t *testing.T) {
 	if len(f.keys) != 1 || p["device_id"] != f.keys[0] || p["workspace"] != "acme" || p["project"] != "api" || p["credential_source"] != "device" || !opened {
 		t.Fatal(p, out.String())
 	}
-	if len(f.exec.requests) != 1 || f.exec.requests[0].Operation != "list_projects" || f.exec.ids[0].Issuer != bus.DeviceIssuer || f.exec.ids[0].Subject != f.keys[0] {
+	if len(f.exec.requests) < 1 || f.exec.requests[0].Operation != "list_projects" || f.exec.ids[0].Issuer != bus.DeviceIssuer || f.exec.ids[0].Subject != f.keys[0] {
 		t.Fatalf("%+v %+v", f.exec.ids, f.exec.requests)
+	}
+	// After it, only the dispatcher offer's reads (G5): nothing is written.
+	for _, r := range f.exec.requests[1:] {
+		if r.Operation != "resolve_project" && r.Operation != "dispatcher_get" {
+			t.Fatalf("onboarding asked for %s", r.Operation)
+		}
 	}
 }
 

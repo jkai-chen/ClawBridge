@@ -59,6 +59,27 @@ var wizardDoctor = func(ctx context.Context, path, profile string, args []string
 	return r, nil // A report with failures is still a report to show.
 }
 
+// wizardDispatcher runs `clawbridge dispatcher ARGS` on the profile; tests
+// replace it. It is set in init: Run reaches onboarding, which uses it.
+var wizardDispatcher func(ctx context.Context, path string, args []string) (map[string]any, error)
+
+func init() { wizardDispatcher = runWizardDispatcher }
+
+// runWizardDispatcher returns the command's data.
+func runWizardDispatcher(ctx context.Context, path string, args []string) (map[string]any, error) {
+	var out bytes.Buffer
+	if err := Run(ctx, append([]string{"--client-config", path, "dispatcher"}, args...), &out, io.Discard); err != nil {
+		return nil, err
+	}
+	var r struct {
+		Data map[string]any `json:"data"`
+	}
+	if json.Unmarshal(out.Bytes(), &r) != nil || r.Data == nil {
+		return nil, errors.New("the dispatcher returned no answer")
+	}
+	return r.Data, nil
+}
+
 var wizardAgentNames = map[string]string{"claude-code": "Claude Code", "codex": "Codex"}
 
 type onboardingStep struct{ name, outcome, later string }
@@ -277,6 +298,11 @@ func runOnboarding(ctx context.Context, path string, stdout, stderr io.Writer) (
 			record(run.name, doctorSummary(report), "clawbridge doctor")
 		}
 	}
+	// 5. The dispatcher, offered to a hosted project's owner (G5,
+	// ONBOARDING-DESIGN step 10): off unless they say yes, rules engine.
+	if err := offerDispatcher(ctx, path, stdout, yes, record, failed); err != nil {
+		return err
+	}
 	fmt.Fprintln(stdout, "\nSummary:")
 	for _, s := range steps {
 		fmt.Fprintf(stdout, "- %s: %s\n", s.name, s.outcome)
@@ -287,6 +313,66 @@ func runOnboarding(ctx context.Context, path string, stdout, stderr io.Writer) (
 	if ended {
 		fmt.Fprintln(stdout, "Input ended; the remaining steps were skipped.")
 	}
+	return nil
+}
+
+// dispatcherSkips are the enable preview's refusals that mean "not for
+// this run", each with what to tell the user.
+var dispatcherSkips = []struct{ text, outcome string }{
+	{"project owner permission required", "skipped: only a project owner turns it on"},
+	{"link the task board", "skipped: link the task board first (clawbridge linear link)"},
+	{"not from a session", "skipped: turn it on in your own terminal with no session"},
+}
+
+// offerDispatcher is onboarding's last step: it shows a hosted project's
+// owner what the dispatcher does and the enable preview, and turns it on
+// in the rules engine only on a yes. It runs the explicit commands.
+func offerDispatcher(ctx context.Context, path string, stdout io.Writer, yes func(string) (bool, error), record func(name, outcome, later string), failed func(error) string) error {
+	const name = "Dispatcher"
+	later := "clawbridge dispatcher show, then clawbridge dispatcher enable --expected-revision N --confirm"
+	const model = "model mode: after model setup, see docs/dispatcher.md (Model mode)"
+	if c, err := readConfig(path, false); err != nil || c.Mode != "cloud" {
+		record(name, "skipped: the dispatcher runs on a hosted server", "")
+		return nil
+	}
+	shown, err := wizardDispatcher(ctx, path, []string{"show"})
+	if err != nil {
+		record(name, failed(err), later)
+		return nil
+	}
+	if shown["enabled"] == true {
+		record(name, "already on", "")
+		return nil
+	}
+	revision := fmt.Sprint(shown["revision"])
+	later = "clawbridge dispatcher show, then clawbridge dispatcher enable --expected-revision " + wizardSafe(revision) + " --confirm"
+	preview, err := wizardDispatcher(ctx, path, []string{"enable", "--engine", "rules", "--expected-revision", revision})
+	if err != nil {
+		for _, s := range dispatcherSkips {
+			if strings.Contains(err.Error(), s.text) {
+				record(name, s.outcome, later)
+				return nil
+			}
+		}
+		record(name, failed(err), later)
+		return nil
+	}
+	fmt.Fprintln(stdout, "\nThe dispatcher coordinates this project for you: it confirms claims from sessions you trust, routes notices and releases abandoned claims. It stays off unless you say yes, and clawbridge dispatcher disable turns it off any time.")
+	shownPreview, _ := json.MarshalIndent(preview, "  ", "  ")
+	fmt.Fprintf(stdout, "  Preview: %s\n", wizardSafe(string(shownPreview)))
+	ok, err := yes("Turn the dispatcher on now (rules engine)?")
+	switch {
+	case err != nil:
+		return err
+	case !ok:
+		record(name, "offered, left off", later)
+		return nil
+	}
+	if _, err = wizardDispatcher(ctx, path, []string{"enable", "--engine", "rules", "--expected-revision", revision, "--confirm"}); err != nil {
+		record(name, failed(err), later)
+		return nil
+	}
+	record(name, "on (rules engine); turn it off with clawbridge dispatcher disable", model)
 	return nil
 }
 

@@ -150,9 +150,17 @@ without undoing the earlier ones:
 3. **MCP for each agent.** Asks for a session name, shows the entry it would
    write as a dry run, and writes it after you confirm. With a Linear profile from
    step 2, the entry also enables the native task-board tools.
-4. **Doctor.** Runs `clawbridge doctor` once for each MCP entry it configured
-   and prints a summary of what was set up, what was skipped, and the exact command for each
-   skipped step.
+4. **Doctor.** Runs `clawbridge doctor` once for each MCP entry it configured.
+5. **The dispatcher (owners of a hosted project).** If you own the project, its
+   task board is linked and the dispatcher is off, it says in one line what the
+   dispatcher does, shows the `dispatcher enable` preview, and asks whether to turn
+   it on in the rules engine. The default is no. `clawbridge dispatcher disable`
+   turns it off any time. Model mode is set up separately (see
+   [the dispatcher](dispatcher.md#model-mode-designed-partly-built)). For anyone
+   else the step is skipped, with the reason.
+
+It then prints a summary of what was set up, what was skipped, and the exact
+command for each skipped step.
 
 The terminal view opens afterwards. Next, take a first issue from proposal to
 release: [your first task](usage.md#your-first-task-claim-and-release). Ask the
@@ -170,6 +178,9 @@ clawbridge doctor --linear-profile PROFILE_ID
 clawbridge mcp install --agent codex --session codex-engineer --linear-profile PROFILE_ID --dry-run
 clawbridge mcp install --agent codex --session codex-engineer --linear-profile PROFILE_ID
 clawbridge doctor --mcp-agent codex --mcp-config /absolute/path/to/codex/config.toml --mcp-session codex-engineer
+clawbridge dispatcher show
+clawbridge dispatcher enable --expected-revision N             # the preview
+clawbridge dispatcher enable --expected-revision N --confirm
 ```
 
 Use `--agent claude-code` for Claude Code, a distinct `--session` per agent, and

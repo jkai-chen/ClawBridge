@@ -84,8 +84,8 @@ clawbridge dispatcher disable --expected-revision N
   - which domains could confirm a claim on their own: none until you trust a session in one.
 
   With `--engine model` it adds the provider, the model and your caps. It also says that issue text goes to the model
-  provider, who can ask the model questions (`chat`: `owners`, or `owners and leads`), and that your dispatcher agent
-  must be running.
+  provider, who can ask the model questions (`chat`: `owners`, or `owners and leads`), that their questions go to
+  the provider too, and that your dispatcher agent must be running.
 - **`--confirm`, in one step:**
   - The policy turns on, in mode `rules` unless you pass `--engine model`.
   - The reserved sessions are created, or come back with the same IDs.
@@ -208,8 +208,10 @@ A project owner can ask the model a question from their own terminal, with no se
   - the read tools;
   - the decision log (`dispatcher decisions` shows the same records).
   It answers with a reply of at most 2,000 characters, or abstains.
-- **The budget:** chats use at most a quarter of the model's runs per hour and per day. Past that, an ask is refused
-  until the window moves, and claims are always served before chats.
+- **The budget:** chats use at most a quarter of the model's runs per hour and per day, rounded down, so caps under 4
+  runs an hour or a day leave no runs for chat. Past the share, an ask is refused until the window moves, and claims
+  are always served before chats.
+- **Model output in `dispatcher decisions`:** the log's explanations are printed stripped the same way as replies.
 - **The reply is model output, not checked.**
   - It is printed only to the asker's terminal, with terminal control characters and bidirectional overrides removed.
   - It never reaches an inbox or a session, and nothing in it is acted on.

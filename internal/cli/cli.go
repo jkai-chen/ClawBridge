@@ -980,6 +980,10 @@ flags:`)
 		data["token_file"] = secret.path
 		data["note"] = "Wrote the token to " + secret.path + " (0600): put it in Linear's MCP server header Authorization: Bearer <token>, then delete the file."
 	}
+	if op == "dispatcher_decisions_list" {
+		// The log carries the model's explanations: model output (D6-L1).
+		result.Data = terminalSafeAll(result.Data)
+	}
 	if op == "assignment_confirm" || op == "assignment_release" {
 		applyLinearMarker(ctx, cmp.Or(flags.LinearProfile, config.LinearProfile), executor, config, op, result)
 	}

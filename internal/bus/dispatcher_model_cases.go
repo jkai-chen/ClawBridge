@@ -923,7 +923,8 @@ func (s *Store) ModelTool(ctx context.Context, token, caseID, tool string, args 
 	r, err := s.ExecuteDispatcher(ctx, c.ProjectID, DispatcherModelSessionName, Request{Operation: op, Args: a})
 	var coded interface{ Code() string }
 	if errors.As(err, &coded) && coded.Code() == "deadline_passed" {
-		out.Error, out.Fallback = "deadline_passed", true
+		// Only a decide case has a rules fallback to nudge (#121 L3).
+		out.Error, out.Fallback = "deadline_passed", s.decideCase(ctx, c.ProjectID, caseID)
 		return out, nil
 	}
 	if err != nil {
@@ -932,6 +933,13 @@ func (s *Store) ModelTool(ctx context.Context, token, caseID, tool string, args 
 	m, _ := r.Data.(map[string]any)
 	out.Result, out.Error = m["result"], str(m, "error")
 	result, _ := out.Result.(map[string]any)
-	out.Fallback = out.Error == "deadline_passed" || out.Error == "" && tool == "abstain" && result["fallback"] == "rules"
+	out.Fallback = out.Error == "deadline_passed" && s.decideCase(ctx, c.ProjectID, caseID) || out.Error == "" && tool == "abstain" && result["fallback"] == "rules"
 	return out, nil
+}
+
+// decideCase reports whether caseID is one of pid's decide cases.
+func (s *Store) decideCase(ctx context.Context, pid, caseID string) bool {
+	var kind string
+	_ = s.db.QueryRowContext(ctx, `SELECT kind FROM dispatcher_cases WHERE id=? AND project_id=?`, caseID, pid).Scan(&kind)
+	return kind == "decide"
 }

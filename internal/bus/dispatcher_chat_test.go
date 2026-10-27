@@ -3,6 +3,7 @@ package bus
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 )
@@ -195,6 +196,37 @@ func TestChatShareAndDecideFirst(t *testing.T) {
 	}
 }
 
+// #121 M1: the share is a quarter, rounded down: caps under 4 runs an hour
+// (or a day) leave chat none, refused as such, and no chat is served; at 4
+// it gets one.
+func TestChatShareNeedsFourRuns(t *testing.T) {
+	for _, runs := range []int{1, 3, 4} {
+		c := newChatHarness(t)
+		if _, err := c.s.db.Exec(`UPDATE dispatcher_model_keys SET caps=?`, fmt.Sprintf(`{"daily_tokens":500000,"runs_per_hour":%d,"runs_per_day":%d}`, runs, 8)); err != nil {
+			t.Fatal(err)
+		}
+		_, err := c.as("", "dispatcher_chat_ask", map[string]any{"text": "why?"})
+		if runs == 4 {
+			if err != nil {
+				t.Fatal(runs, err)
+			}
+			if next, err := c.s.ModelNextCase(c.ctx, c.token, 0); err != nil || next.Case == nil {
+				t.Fatal("at 4 runs the chat is served:", next, err)
+			}
+			continue
+		}
+		if code(err) != "rate_limited" || !strings.Contains(err.Error(), "no runs for chat") {
+			t.Fatal(runs, "runs an hour:", err)
+		}
+		if _, err = c.s.db.Exec(`INSERT INTO dispatcher_cases(id,project_id,kind,subject_type,subject_id,deadline,created_at,asked_by,message) VALUES('case_c',?,'chat','message','msg_x','2999-01-01T00:00:00.000000000Z','2026-01-01T00:00:00.000000000Z','someone','{}')`, c.pid); err != nil {
+			t.Fatal(err)
+		}
+		if next, err := c.s.ModelNextCase(c.ctx, c.token, 0); err != nil || next.Case != nil {
+			t.Fatal(runs, "runs an hour served a chat:", next, err)
+		}
+	}
+}
+
 // D6-M1(c): leads ask only once the owner allows it; show is the asker's
 // own; the decision log reads the same for owners and leads, and no
 // further.
@@ -284,6 +316,48 @@ func TestChatShowStates(t *testing.T) {
 		shown, err := c.as("", "dispatcher_chat_show", map[string]any{"case_id": id})
 		if err != nil || shown["state"] != s.state || s.field != "" && shown[s.field] != s.want {
 			t.Fatal(s.state, shown, err)
+		}
+	}
+	// #121 L2: an open chat, waiting or past its deadline, in a project now
+	// in rules mode or off reads as the model turned off.
+	for _, policy := range []string{`mode='rules'`, `mode='model',enabled=0`} {
+		for _, deadline := range []string{"2999-01-01T00:00:00.000000000Z", "2000-01-01T00:00:00.000000000Z"} {
+			if _, err = c.s.db.Exec(`UPDATE dispatcher_cases SET closed_at=NULL,outcome='',deadline=? WHERE id=?`, deadline, id); err != nil {
+				t.Fatal(err)
+			}
+			if _, err = c.s.db.Exec(`UPDATE dispatcher_policies SET ` + policy); err != nil {
+				t.Fatal(err)
+			}
+			shown, err := c.as("", "dispatcher_chat_show", map[string]any{"case_id": id})
+			if err != nil || shown["state"] != "closed" || shown["reason_code"] != "model_off" {
+				t.Fatal(policy, deadline, shown, err)
+			}
+		}
+	}
+}
+
+// #121 L3: a chat past its deadline answers deadline_passed but nudges no
+// rules fallback; a decide case past its deadline does.
+func TestChatDeadlineNudgesNoFallback(t *testing.T) {
+	c := newChatHarness(t)
+	asked, err := c.as("", "dispatcher_chat_ask", map[string]any{"text": "why?"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if next, err := c.s.ModelNextCase(c.ctx, c.token, 0); err != nil || next.Case == nil {
+		t.Fatal(next, err)
+	}
+	subject, revision := c.propose("cccc1111-1111-4111-8111-111111111111")
+	if _, err = c.s.db.Exec(`INSERT INTO dispatcher_cases(id,project_id,kind,subject_type,subject_id,subject_revision,deadline,created_at,lease_key,lease_instance,served_at) SELECT 'case_d',project_id,'decide','proposal',?,?,deadline,created_at,lease_key,lease_instance,served_at FROM dispatcher_cases WHERE id=?`, subject, revision, asked["case_id"]); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = c.s.db.Exec(`UPDATE dispatcher_cases SET deadline='2000-01-01T00:00:00.000000000Z'`); err != nil {
+		t.Fatal(err)
+	}
+	for id, fallback := range map[string]bool{asked["case_id"].(string): false, "case_d": true} {
+		out, err := c.s.ModelTool(c.ctx, c.token, id, "list_sessions", map[string]any{"active_only": true})
+		if err != nil || out.Error != "deadline_passed" || out.Fallback != fallback {
+			t.Fatal(id, out, err)
 		}
 	}
 }

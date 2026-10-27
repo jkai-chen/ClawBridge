@@ -83,7 +83,7 @@ func TestDispatcherEnableDisable(t *testing.T) {
 		t.Fatal(err)
 	}
 	preview, err = h.switchCall("dispatcher_enable", map[string]any{"expected_revision": 3, "mode": "model"})
-	if model, _ := preview["model"].(map[string]any); err != nil || model["issue_text_to_provider"] != true || model["agent_required"] != true || model["chat"] != "owners" || preview["default_domain_created"] != false {
+	if model, _ := preview["model"].(map[string]any); err != nil || model["issue_text_to_provider"] != true || model["agent_required"] != true || model["chat"] != "owners" || model["chat_questions_to_provider"] != true || preview["default_domain_created"] != false {
 		t.Fatal(preview, err)
 	}
 	// The preview says who can ask the model (dispatcher chat).

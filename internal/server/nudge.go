@@ -11,8 +11,11 @@ import (
 
 // A nudge applies one project's due claim markers soon after a confirm or
 // a release commits, instead of at the next clock tick
-// (live/STATUS-FLOW-DESIGN.md §8.3). It is a marker pass only, through the
-// ticks' single flight, under the project's lease and budget. At most one
+// (live/STATUS-FLOW-DESIGN.md §8.3). A model case that ended without a
+// decision asks for a fallback nudge instead, which also runs the
+// dispatcher so its rules decide (d5, D5-M3); no other nudge does
+// (R106-M1). It is a marker pass, or a marker and dispatcher pass, through
+// the ticks' single flight, under the project's lease and budget. At most one
 // pass a minute per project: signals in between collapse into one, which
 // runs when the minute is up. It runs only beside the in-process clock,
 // never in a request.
@@ -23,9 +26,11 @@ const nudgeEvery = time.Minute
 // nudgeRetry is how soon a nudge that found a tick running tries again.
 const nudgeRetry = 5 * time.Second
 
-// markerPasser applies one project's due markers.
+// markerPasser applies one project's due markers, and for a fallback nudge
+// also runs its dispatcher.
 type markerPasser interface {
 	Markers(ctx context.Context, pid string) any
+	Fallback(ctx context.Context, pid string) any
 }
 
 type nudger struct {
@@ -36,8 +41,10 @@ type nudger struct {
 	project func(ctx context.Context, workspace, project string) (string, error)
 	now     func() time.Time
 
-	mu      sync.Mutex
-	last    map[string]time.Time
+	mu   sync.Mutex
+	last map[string]time.Time
+	// pending is each project waiting for a pass; true asks for the
+	// dispatcher too.
 	pending map[string]bool
 	asked   []target
 	wake    chan struct{}
@@ -62,6 +69,28 @@ func (n *nudger) Nudge(workspace, project string) {
 	}
 }
 
+// NudgeProject asks for a fallback pass of a project by its ID, markers
+// then dispatcher: the dispatcher-model API's, after a model case ended
+// without a decision. It never blocks.
+func (n *nudger) NudgeProject(pid string) {
+	n.mu.Lock()
+	n.pending[pid] = true
+	n.mu.Unlock()
+	select {
+	case n.wake <- struct{}{}:
+	default:
+	}
+}
+
+// markersPending adds pid for a marker pass, keeping a fallback already
+// asked for: a marker signal never runs the dispatcher, and never cancels
+// a fallback (R106-M1). Called with n.mu held.
+func (n *nudger) markersPending(pid string) {
+	if _, ok := n.pending[pid]; !ok {
+		n.pending[pid] = false
+	}
+}
+
 // Ticked marks pending each project whose tick's marker pass stopped with
 // rows left, so a nudge pass with its own deadline drains them without
 // waiting for a confirm or a release. It never blocks.
@@ -71,7 +100,8 @@ func (n *nudger) Ticked(got any) {
 	n.mu.Lock()
 	for _, t := range ticks {
 		if t.MarkersPending() {
-			n.pending[t.ProjectID], left = true, true
+			n.markersPending(t.ProjectID)
+			left = true
 		}
 	}
 	n.mu.Unlock()
@@ -119,13 +149,13 @@ func (n *nudger) serve(ctx context.Context) time.Duration {
 		}
 		if pid != "" {
 			n.mu.Lock()
-			n.pending[pid] = true
+			n.markersPending(pid)
 			n.mu.Unlock()
 		}
 	}
 	wait := time.Hour
 	for {
-		pid, due := n.next()
+		pid, due, fallback := n.next()
 		if pid == "" {
 			if due > 0 && due < wait {
 				wait = due
@@ -134,12 +164,24 @@ func (n *nudger) serve(ctx context.Context) time.Duration {
 		}
 		ran, more := false, false
 		ok := n.flight.claim()
+		if ok && fallback {
+			// The pass takes the fallback: one asked for again while it
+			// runs sets it anew.
+			n.mu.Lock()
+			n.pending[pid] = false
+			n.mu.Unlock()
+		}
 		if ok {
 			func() {
 				defer n.flight.running.Store(false)
 				pass, cancel := context.WithTimeout(ctx, tickDeadline)
 				defer cancel()
-				out := n.markers.Markers(pass, pid)
+				var out any
+				if fallback {
+					out = n.markers.Fallback(pass, pid)
+				} else {
+					out = n.markers.Markers(pass, pid)
+				}
 				ran = true
 				left, _ := out.(interface{ MarkersPending() bool })
 				more = left != nil && left.MarkersPending()
@@ -149,8 +191,9 @@ func (n *nudger) serve(ctx context.Context) time.Duration {
 		if ran {
 			// A pass that stopped with rows left (its row limit or its
 			// clock) comes again in a minute, in its own budget, until
-			// the queue drains.
-			if !more {
+			// the queue drains: as a marker pass, unless a fallback was
+			// asked for while this one ran.
+			if !more && !n.pending[pid] {
 				delete(n.pending, pid)
 			}
 			n.last[pid] = n.now()
@@ -163,21 +206,21 @@ func (n *nudger) serve(ctx context.Context) time.Duration {
 	}
 }
 
-// next is a pending project whose minute is up, or, with none, how long
-// until the soonest pending one is.
-func (n *nudger) next() (string, time.Duration) {
+// next is a pending project whose minute is up, and whether it wants the
+// dispatcher, or, with none, how long until the soonest pending one is.
+func (n *nudger) next() (string, time.Duration, bool) {
 	n.mu.Lock()
 	defer n.mu.Unlock()
 	now := n.now()
 	soonest := time.Duration(0)
-	for pid := range n.pending {
+	for pid, fallback := range n.pending {
 		left := nudgeEvery - now.Sub(n.last[pid])
 		if left <= 0 {
-			return pid, 0
+			return pid, 0, fallback
 		}
 		if soonest == 0 || left < soonest {
 			soonest = left
 		}
 	}
-	return "", soonest
+	return "", soonest, false
 }

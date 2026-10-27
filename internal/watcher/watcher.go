@@ -153,9 +153,22 @@ func (w *Watcher) project(ctx context.Context, pid string, healthLeft int) Proje
 // Markers applies one project's due claim markers under the project's
 // lease and budget like a tick's: a nudge after a confirm or a release
 // (live/STATUS-FLOW-DESIGN.md §8.3). The project flow checks those moves
-// asked for run after them (§11.2), and nothing else. It doesn't count as
-// the project's tick.
+// asked for run after them (§11.2), and nothing else: never the
+// dispatcher (R106-M1). It doesn't count as the project's tick.
 func (w *Watcher) Markers(ctx context.Context, pid string) ProjectTick {
+	return w.nudged(ctx, pid, false)
+}
+
+// Fallback is Markers followed by the project's dispatcher: a nudge after
+// a model case ended without a decision, so its rules fallback runs within
+// about a minute (DISPATCHER-MODEL-API d5, D5-M3). Only this nudge runs the
+// dispatcher, so the rules' fact-waits still count ticks, not marker
+// nudges.
+func (w *Watcher) Fallback(ctx context.Context, pid string) ProjectTick {
+	return w.nudged(ctx, pid, true)
+}
+
+func (w *Watcher) nudged(ctx context.Context, pid string, dispatch bool) ProjectTick {
 	ctx, cancel := context.WithTimeout(ctx, nudgeDeadline)
 	defer cancel()
 	tick := ProjectTick{ProjectID: pid}
@@ -171,7 +184,11 @@ func (w *Watcher) Markers(ctx context.Context, pid string) ProjectTick {
 			if tick.Health, err = w.health(ctx, svc, scope, pid, fence, 0, true); err != nil {
 				tick.Error = failureCode(err)
 			}
-			return nil
+			if !dispatch {
+				return nil
+			}
+			tick.Dispatch, err = w.dispatcher(ctx, pid, fence)
+			return err
 		},
 		Cycle: func(c linearboard.WatchCycle) error {
 			tick.Comments = &c
@@ -181,7 +198,11 @@ func (w *Watcher) Markers(ctx context.Context, pid string) ProjectTick {
 	if err != nil {
 		tick.Error = failureCode(err)
 	}
-	logTick(pid, "nudge", tick)
+	kind := "nudge"
+	if dispatch {
+		kind = "fallback"
+	}
+	logTick(pid, kind, tick)
 	return tick
 }
 

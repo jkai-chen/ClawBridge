@@ -121,15 +121,15 @@ Status, on the current main branch:
 |---|---|
 | The dispatcher agent (`dispatcher-agent/`) and its hardened container image | on main |
 | `dispatcher enable --engine model` | on main; refused until a model setup has passed its test |
-| Model key setup and test, the launcher's and the agent's endpoints | in review |
-| Cases: `cases/next`, the read tools, `decide` and `abstain`, the rules fallback | in review |
+| Model key setup and test, the launcher's and the agent's endpoints | on main |
+| Cases: `cases/next`, the read tools, `decide` and `abstain`, the rules fallback | on main |
 | Chat (`dispatcher chat`) | built, not yet in review |
 | `clawbridge-agentd` (the launcher) with its per-owner network and egress proxy | in review |
 | Deployment, and CI against a real Docker daemon, for the launcher | planned |
 | A guided `dispatcher model setup` in the CLI and TUI | planned |
 | Advice in rules mode (`recommend`), and the opt-in tools | planned |
 
-Only the agent is in a release so far (v0.3.4). `--engine` is on main, but not yet released, and the rest is not on
+Only the agent is in a release so far (v0.3.4). The rows marked on main are not released yet, and the rest is not on
 main yet. The design is in this section so that owners can judge it before it ships.
 
 ### The model's key: setup and test

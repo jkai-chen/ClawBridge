@@ -60,6 +60,9 @@ func (t watcherTicker) Tick(ctx context.Context) any { return t.w.Tick(ctx) }
 // Markers is a nudge's marker pass of one project.
 func (t watcherTicker) Markers(ctx context.Context, pid string) any { return t.w.Markers(ctx, pid) }
 
+// Fallback is a fallback nudge's pass: markers, then the dispatcher.
+func (t watcherTicker) Fallback(ctx context.Context, pid string) any { return t.w.Fallback(ctx, pid) }
+
 // watchSettings is the watcher's environment.
 type watchSettings struct {
 	interval                  time.Duration
@@ -124,7 +127,7 @@ func startWatcher(ctx context.Context, store *bus.Store, w watchSettings, opts H
 			n := newNudger(ticker, markers, store.WatchProjectID)
 			ticker.after = n.Ticked
 			go n.run(ctx)
-			opts.Nudge = n.Nudge
+			opts.Nudge, opts.NudgeProject = n.Nudge, n.NudgeProject
 		}
 		go runWatchLoop(ctx, ticker, w.interval)
 		log.Printf("watcher: ticking every %s", w.interval)

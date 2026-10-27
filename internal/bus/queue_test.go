@@ -499,8 +499,11 @@ func TestCrossingDeliveriesSQLite(t *testing.T) {
 	assertGapFree(t, h.s.db, h.projectID(), false)
 }
 
-// queueDowngradeSQLite returns a schema-35 database to schema 34's shape.
-const queueDowngradeSQLite = `DROP INDEX deliveries_recipient_seq;
+// queueDowngradeSQLite returns a schema-36 database to schema 34's shape:
+// the stream's schema, then the queue's.
+const queueDowngradeSQLite = `DROP TABLE stream_tickets;
+ALTER TABLE deliveries DROP COLUMN lease_consumer;
+DROP INDEX deliveries_recipient_seq;
 DROP INDEX deliveries_lease_due;
 ALTER TABLE deliveries DROP COLUMN recipient_seq;
 ALTER TABLE deliveries DROP COLUMN lease_id;
@@ -513,10 +516,10 @@ ALTER TABLE deliveries DROP COLUMN ack_operation_id;
 DROP TABLE delivery_counters;
 `
 
-// queueDowngradePostgres returns a schema-35 database in schema to schema
+// queueDowngradePostgres returns a schema-36 database in schema to schema
 // 34's shape; dropping the columns drops their indexes.
 func queueDowngradePostgres(schema string) string {
-	return `ALTER TABLE ` + schema + `.deliveries DROP COLUMN recipient_seq, DROP COLUMN lease_id, DROP COLUMN lease_until, DROP COLUMN lease_instance, DROP COLUMN attempts, DROP COLUMN acked_at, DROP COLUMN dead_at, DROP COLUMN ack_operation_id; DROP TABLE ` + schema + `.delivery_counters; `
+	return `DROP TABLE ` + schema + `.stream_tickets; ALTER TABLE ` + schema + `.deliveries DROP COLUMN lease_consumer, DROP COLUMN recipient_seq, DROP COLUMN lease_id, DROP COLUMN lease_until, DROP COLUMN lease_instance, DROP COLUMN attempts, DROP COLUMN acked_at, DROP COLUMN dead_at, DROP COLUMN ack_operation_id; DROP TABLE ` + schema + `.delivery_counters; `
 }
 
 // N3: a schema-34 store with read and unread rows upgrades: deliveries are

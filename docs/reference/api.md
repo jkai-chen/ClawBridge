@@ -79,14 +79,15 @@ requires its matching instance. Routing role is distinct from project permission
 | `send` | to, body, operation_id; optional kind, thread_id, coordination, ack (see [the queue](#the-queue-leases-acks-and-dead-letters)) |
 | `inbox` | Optional unread_only (default true), limit, after |
 | `inbox_status` | Optional after (default zero); active owned actor required |
-| `notification_status` | Same metadata plus recipient policy; optional queue (true adds unacked_count and dead_count); active owned actor required |
+| `notification_status` | Same metadata plus recipient policy; optional queue (true adds unacked_count, dead_count and latest_seq); active owned actor required |
 | `set_notification_policy` | policy accept/hold/refuse; active own actor only |
 | `mark_read` | ids array of 1–1000 message IDs; atomic for own deliveries; also acks them |
 | `reply` | message_id, body, operation_id; optional kind, coordination, ack |
-| `lease` | Optional limit (1–100); takes the session's next deliveries in order (see [the queue](#the-queue-leases-acks-and-dead-letters)) |
+| `lease` | Optional limit (1–100), consumer; takes the session's next deliveries in order (see [the queue](#the-queue-leases-acks-and-dead-letters)) |
 | `ack` | acks, 1–1000 `{message_id, lease_id}`; optional operation_id. Per-ack outcome acked, already_acked, dead or not_found |
 | `nack` | message_id, lease_id; optional delay_seconds (0–3600). Outcome released, stale, already_acked, dead or not_found |
 | `extend` | leases (1–1000 lease IDs), seconds (1–3600). Per-lease outcome extended or not_found |
+| `stream_ticket` | mode (consume or observe). A single-use ticket for [the stream](#the-stream-get-v1stream), valid 60 s; server only |
 | `deadletters_list` | Optional target_session (a session, or `@all` for the project) and limit |
 | `deadletters_requeue` | message_id; optional target_session. Offers a dead letter again from its first attempt |
 | `deadletters_dismiss` | message_id; optional target_session. Acks a dead letter |
@@ -293,7 +294,10 @@ with no gaps.
   than 20 unacked leases held at once. Each row is an inbox row plus
   `recipient_seq`, `lease_id`, `lease_until` and `attempt`. A lease lasts
   10 minutes. A session whose notification policy isn't `accept` takes no
-  leases: `{"messages": [], "policy": "hold"}`.
+  leases: `{"messages": [], "policy": "hold"}`. With `consumer` (any name up
+  to 64 characters; the server's stream uses one per stream), `lease` also
+  takes over the leases the session holds under any other consumer, or none:
+  under new lease IDs, with the same `lease_until` and attempt.
 - **A lease that runs out unacked** is offered again with its attempt counted.
   After 5 such leases the delivery is a **dead letter**. It is kept, and it
   leaves the session's queue. The project's coordinator session gets a
@@ -322,8 +326,9 @@ with no gaps.
   sender, kind, created_at, recipient_seq, attempts and dead_at, and no body.
   `deadletters_requeue` and `deadletters_dismiss` write history with the
   session that acted.
-- **`notification_status` with `queue: true`** adds `unacked_count` and
-  `dead_count`. Without it the result keeps its seven fields, which older
+- **`notification_status` with `queue: true`** adds `unacked_count`,
+  `dead_count` and `latest_seq` (the newest `recipient_seq`, 0 before the first
+  delivery). Without it the result keeps its seven fields, which older
   clients require.
 - **Older clients are unchanged.** `inbox` takes no lease, so their rows are
   never offered again or dead-lettered, and `mark_read` acks.
@@ -331,6 +336,71 @@ with no gaps.
 Schema 35 adds these columns to deliveries, plus the `delivery_counters` table.
 The upgrade numbers existing deliveries in message order and acks what was
 already read, so nothing old is offered again.
+
+## The stream: GET /v1/stream
+
+The server pushes a session's queue as Server-Sent Events. Acks, nacks and
+extends stay ordinary `/v1/execute` operations. Local mode has no stream;
+local clients poll.
+
+1. Ask for a ticket on `/v1/execute`: `stream_ticket {instance, mode}`. It
+   returns `{"ticket": "stk_…", "expires_at": …, "mode": …}`. The ticket works
+   once, within 60 s, for the same account (and device), workspace, project,
+   session, instance and mode.
+2. Open `GET /v1/stream?workspace=W&project=P&session=S&mode=consume|observe`,
+   signed or with the ID token like any request, with the ticket in the
+   `ClawBridge-Stream-Ticket` header. The response is `text/event-stream`.
+
+The URL never carries a secret, because access logs keep it. A URL with
+`instance` or `ticket`, or any other parameter, is refused (400). A ticket
+that is unknown, used, expired or not for this stream is refused (403), and
+a refused ticket is used up too. A server without the stream answers 404;
+clients then keep polling.
+
+- **`mode=consume`** (one per session; the agent's MCP server) leases and
+  pushes the session's deliveries. At connect it offers everything unacked, in
+  order. Then it pushes new deliveries as they commit, at most 20 unacked at
+  once; more follow as acks arrive. A second consume stream for the session
+  replaces the first (`event: replaced`) and takes its leases over, with
+  their `lease_until` kept.
+- **`mode=observe`** (any number; `notify`, the TUI) takes no leases. It sends
+  `event: status` with `{unacked, latest_seq, dead}` at connect and whenever
+  they change: counts only.
+
+```
+id: 42
+event: message
+data: {"message": {…an inbox row…}, "recipient_seq": 42, "lease_id": "lse_…", "lease_until": "…", "attempt": 1}
+
+event: status
+data: {"unacked": 3, "latest_seq": 42, "dead": 0}
+
+event: replaced | revoked | bye      (then the server closes)
+: ping                               (every 25 s)
+```
+
+- **Every read is authorized again** as the request it is: the session active
+  at the ticket's instance, the principal still a project member, the device
+  live, the account bound. A stream reads when its queue changes and every
+  30 s besides. A refused read closes the stream with `revoked` before
+  anything more is leased; a revoke, a member's removal or a retired session
+  wakes every stream at once. A re-registered session's old stream closes the
+  same way.
+- **A stream lives at most 30 minutes**, and no longer than a Google ID
+  token's expiry. Then it sends `bye`, as it does when the server shuts down
+  or the database is unavailable, and the client reconnects, which signs in
+  again.
+- **One account holds at most 8 streams** of any mode on a server; the next
+  is refused with 429, and its ticket stays usable once one closes. A client
+  that stops reading for 30 s while an event waits loses its stream; its
+  leases run out and are offered again.
+- **Behind Caddy** the events arrive unbuffered with no configuration; the
+  pings keep the connection open.
+- **The server's sweeper** runs every 15 s, offers run-out leases again and
+  makes dead letters. With several replicas one sweeps and the others skip.
+
+Schema 36 adds the `stream_tickets` table and the consumer each lease was
+taken under.
 
 ## Paging and status
 

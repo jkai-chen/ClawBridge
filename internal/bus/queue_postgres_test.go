@@ -133,7 +133,9 @@ func TestPostgresQueue(t *testing.T) {
 		t.Fatal(res, err)
 	}
 	holder.Rollback()
-	if res, err := q.s.SweepDeliveries(context.Background()); err != nil || res.Dead != 1 {
+	// The sweep is global: other tests' run-out leases in the same database
+	// may die with this one.
+	if res, err := q.s.SweepDeliveries(context.Background()); err != nil || res.Dead < 1 {
 		t.Fatal(res, err)
 	}
 	notice := q.do("inbox", "c", nil).(map[string]any)["messages"].([]map[string]any)
@@ -215,7 +217,7 @@ func TestPostgresQueueBackfillFromSchema34(t *testing.T) {
 	q.do("send", "a", map[string]any{"to": "@all", "body": "everyone", "operation_id": "all"})
 	q.do("mark_read", "b", map[string]any{"ids": []any{ids[1]}})
 	q.s.Close()
-	if _, err = admin.ExecContext(ctx, queueDowngradePostgres(schema)+`DELETE FROM `+schema+`.clawbridge_schema WHERE version=35`); err != nil {
+	if _, err = admin.ExecContext(ctx, queueDowngradePostgres(schema)+`DELETE FROM `+schema+`.clawbridge_schema WHERE version>=35`); err != nil {
 		t.Fatal(err)
 	}
 	if q.s, err = OpenPostgres(ctx, parsed.String(), q.owner); err != nil {

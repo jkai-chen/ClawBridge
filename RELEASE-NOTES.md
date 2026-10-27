@@ -1,13 +1,24 @@
 # ClawBridge v0.3.6 (unreleased)
 
-**Schema 28 → 35.**
-- The server migrates to schema 35 on its first start: 29, the new-device alerts' events and acknowledgements; 30, a
+**Schema 28 → 36.**
+- The server migrates to schema 36 on its first start: 29, the new-device alerts' events and acknowledgements; 30, a
   project's own watch budget; 31, the device an invite was made from; 32, the workspace's device idle limit; 33,
   the Linear team and project names stored with a project's task board binding; 34, the date from which a project's
-  threads are readable; 35, the message queue's leases, acks and per-recipient numbering. The upgrade numbers
-  existing deliveries, about 2–4 s per million, and counts what was read as handled.
+  threads are readable; 35, the message queue's leases, acks and per-recipient numbering; 36, the message stream's
+  tickets. The upgrade numbers existing deliveries, about 2–4 s per million, and counts what was read as handled.
 - **One-way:** v0.3.5 and older refuse a database newer than schema 28. Take a dump before upgrading; to go back,
   restore it with the v0.3.5 image (docs/operations/deployment.md).
+
+## The message queue: pushed (slice 2 of 5)
+
+- **The server pushes a session's messages** on `GET /v1/stream` (Server-Sent Events), in place of polling every
+  5 s. A consume stream leases and pushes deliveries within a second of their commit, holds 20 unacked at most, and
+  is taken over by the session's next consume stream. An observe stream sends only the counts when they change. The
+  URL never holds a secret: a single-use `stream_ticket` goes in a header. Every read is authorized again, so a
+  revoke, a member's removal or a retired session closes the stream at once. Streams live 30 minutes, an account holds at most 8, and they go through
+  Caddy unchanged (docs/reference/api.md, "The stream").
+- **The server sweeps** every 15 s: run-out leases are offered again and dead letters made, by one replica at a time.
+- Clients use the stream from slice 3; until then nothing changes for them.
 
 ## The message queue: acks and dead letters (slice 1 of 5)
 

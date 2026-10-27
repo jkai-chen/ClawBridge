@@ -116,7 +116,7 @@ func (g googleAuthenticator) Authenticate(ctx context.Context, _ *http.Request, 
 	if err != nil || !principal.Valid(identity.Principal) || identity.Subject == "" {
 		return bus.Identity{}, &authFailure{status: 401, code: "unauthenticated", message: "Google identity verification failed", kind: "google_token"}
 	}
-	return bus.Identity{Principal: identity.Principal, Issuer: bus.GoogleIssuer, Subject: identity.Subject, HostedDomain: identity.HostedDomain}, nil
+	return bus.Identity{Principal: identity.Principal, Issuer: bus.GoogleIssuer, Subject: identity.Subject, HostedDomain: identity.HostedDomain, Expires: identity.Expires}, nil
 }
 
 // deviceAuthenticator verifies a request signed by a device key (§5).

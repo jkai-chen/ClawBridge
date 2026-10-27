@@ -137,7 +137,7 @@ func (s *Store) migrate() error {
 	if err = tx.QueryRow("PRAGMA user_version").Scan(&version); err != nil {
 		return err
 	}
-	if version > 35 {
+	if version > 36 {
 		return errors.New("database schema is newer than this ClawBridge binary")
 	}
 	if version == 0 {
@@ -330,6 +330,11 @@ func (s *Store) migrate() error {
 			return err
 		}
 	}
+	if version < 36 {
+		if _, err = tx.Exec(streamSchemaV36 + `PRAGMA user_version=36;`); err != nil {
+			return err
+		}
+	}
 	return tx.Commit()
 }
 
@@ -518,7 +523,8 @@ var operationArgs = map[string]string{
 	"taskboard_set":               "instance expected_revision linear_team_ids linear_default_team_id linear_project_id linear_workspace_id",
 	"taskboard_clear":             "instance expected_revision repair",
 	"inbox_status":                "instance after",
-	"lease":                       "instance limit",
+	"lease":                       "instance limit consumer",
+	"stream_ticket":               "instance mode",
 	"ack":                         "instance acks operation_id",
 	"nack":                        "instance message_id lease_id delay_seconds",
 	"extend":                      "instance leases seconds",
@@ -1365,6 +1371,9 @@ func (s *Store) execute(ctx context.Context, tx *transaction, r Request) (any, e
 			// counts come only when asked for.
 			if a["queue"] == true {
 				out["unacked_count"], out["dead_count"], e = queueCounts(ctx, tx, pid, actor["id"].(string))
+				if e == nil {
+					out["latest_seq"], e = latestSeq(ctx, tx, pid, actor["id"].(string))
+				}
 			}
 		}
 		return result, e

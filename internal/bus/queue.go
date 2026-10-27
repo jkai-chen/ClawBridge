@@ -48,6 +48,9 @@ type QueueLimits struct {
 	Prefetch int           // unacked leases a session holds at once (20)
 }
 
+// SetQueueLimits sets the queue's bounds; zero fields keep the defaults.
+func (s *Store) SetQueueLimits(l QueueLimits) { s.queue = l }
+
 func (s *Store) queueLimits() QueueLimits {
 	l := s.queue
 	if l.Lease <= 0 {
@@ -102,8 +105,28 @@ func insertDeliveries(ctx context.Context, tx *transaction, pid, messageID strin
 		if _, err = tx.ExecContext(ctx, `INSERT INTO deliveries(message_id,project_id,recipient_id,recipient_seq) VALUES(?,?,?,?)`, messageID, pid, id, seq[id]); err != nil {
 			return err
 		}
+		if err = queueNotify(ctx, tx, pid, id); err != nil {
+			return err
+		}
 	}
 	return nil
+}
+
+// DeliveryChannel is the Postgres channel a queue change notifies, with the
+// payload "<project_id>:<recipient_id>". It says only "look": a woken stream
+// reads its queue from the table.
+const DeliveryChannel = "cb_delivery"
+
+// queueNotify tells the server's streams that a recipient's queue changed.
+// NOTIFY is transactional: a rolled-back change notifies no one, and a
+// committed one only after its commit; Postgres folds a transaction's
+// repeats into one. SQLite has no streams.
+func queueNotify(ctx context.Context, tx *transaction, pid, rid string) error {
+	if !tx.postgres {
+		return nil
+	}
+	_, err := tx.ExecContext(ctx, `SELECT pg_notify(?,?)`, DeliveryChannel, pid+":"+rid)
+	return err
 }
 
 // recipientIDsOf is the id of each session row.
@@ -117,7 +140,7 @@ func recipientIDsOf(rows []map[string]any) []string {
 
 func queueOperation(op string) bool {
 	switch op {
-	case "lease", "ack", "nack", "extend", "deadletters_list", "deadletters_requeue", "deadletters_dismiss":
+	case "lease", "ack", "nack", "extend", "deadletters_list", "deadletters_requeue", "deadletters_dismiss", "stream_ticket":
 		return true
 	}
 	return false
@@ -143,6 +166,8 @@ func (s *Store) queueOp(ctx context.Context, tx *transaction, wid, pid, projectR
 		return s.deadLetters(ctx, tx, pid, projectRole, actor, a)
 	case "deadletters_requeue", "deadletters_dismiss":
 		return s.settleDeadLetter(ctx, tx, wid, pid, projectRole, actor, r.Operation, a)
+	case "stream_ticket":
+		return s.streamTicket(ctx, tx, pid, actor, r)
 	}
 	return nil, errors.New("unsupported operation")
 }
@@ -151,6 +176,12 @@ func (s *Store) queueOp(ctx context.Context, tx *transaction, wid, pid, projectR
 // leased and due, in recipient_seq order, up to the prefetch less what it
 // already holds. A session whose policy isn't accept takes none, so a
 // lease never exists that nobody can handle (§5).
+//
+// A consumer (the server's stream) also takes over the leases the session
+// holds under any other consumer, or none: a stream that replaced another
+// is offered what the old one held, under new lease IDs. They keep their
+// lease_until (L6), so a takeover loop can't hold a delivery forever
+// without an attempt being counted.
 func (s *Store) lease(ctx context.Context, tx *transaction, wid, pid string, actor map[string]any, a map[string]any) (any, error) {
 	limits := s.queueLimits()
 	n := limits.Prefetch
@@ -161,6 +192,13 @@ func (s *Store) lease(ctx context.Context, tx *transaction, wid, pid string, act
 		}
 		n = min(n, l)
 	}
+	var consumer any
+	if c := str(a, "consumer"); c != "" {
+		if len(c) > 64 {
+			return nil, invalid("consumer must be at most 64 characters")
+		}
+		consumer = c
+	}
 	sid := str(actor, "id")
 	now := hostClock().UTC()
 	if _, err := s.sweep(ctx, tx, pid, sid, now); err != nil {
@@ -170,22 +208,34 @@ func (s *Store) lease(ctx context.Context, tx *transaction, wid, pid string, act
 	if actor["notification_policy"] != "accept" {
 		return out, nil
 	}
+	nowRaw := layout(now)
+	const offered = `SELECT m.sequence,m.id,m.project_id,m.source_project_id,m.sender_id,s.name AS sender,m.address,m.thread_id,m.reply_to,m.kind,m.body,m.coordination,m.created_at,m.expires_at,m.created_by_principal,d.delivered_at,d.read_at,d.recipient_seq,d.attempts,d.lease_until FROM deliveries d JOIN messages m ON m.project_id=d.project_id AND m.id=d.message_id JOIN sessions s ON s.id=m.sender_id AND s.project_id=m.source_project_id WHERE d.project_id=? AND d.recipient_id=? AND d.acked_at IS NULL AND d.dead_at IS NULL AND m.expires_at>? AND `
+	var rows []map[string]any
+	if consumer != nil {
+		taken, err := query(ctx, tx, offered+`d.lease_id IS NOT NULL AND (d.lease_consumer IS NULL OR d.lease_consumer<>?) ORDER BY d.recipient_seq`, pid, sid, nowRaw, consumer)
+		if err != nil {
+			return nil, err
+		}
+		rows = taken
+	}
 	var held int
 	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM deliveries WHERE project_id=? AND recipient_id=? AND lease_id IS NOT NULL AND acked_at IS NULL AND dead_at IS NULL`, pid, sid).Scan(&held); err != nil {
 		return nil, err
 	}
-	if n -= held; n <= 0 {
-		return out, nil
+	if n -= held; n > 0 {
+		fresh, err := query(ctx, tx, offered+`d.lease_id IS NULL AND (d.lease_until IS NULL OR d.lease_until<=?) ORDER BY d.recipient_seq LIMIT ?`, pid, sid, nowRaw, nowRaw, n)
+		if err != nil {
+			return nil, err
+		}
+		until := layout(now.Add(limits.Lease))
+		for _, m := range fresh {
+			m["lease_until"] = until
+		}
+		rows = append(rows, fresh...)
 	}
-	nowRaw := layout(now)
-	rows, err := query(ctx, tx, `SELECT m.sequence,m.id,m.project_id,m.source_project_id,m.sender_id,s.name AS sender,m.address,m.thread_id,m.reply_to,m.kind,m.body,m.coordination,m.created_at,m.expires_at,m.created_by_principal,d.delivered_at,d.read_at,d.recipient_seq,d.attempts FROM deliveries d JOIN messages m ON m.project_id=d.project_id AND m.id=d.message_id JOIN sessions s ON s.id=m.sender_id AND s.project_id=m.source_project_id WHERE d.project_id=? AND d.recipient_id=? AND d.acked_at IS NULL AND d.dead_at IS NULL AND d.lease_id IS NULL AND (d.lease_until IS NULL OR d.lease_until<=?) AND m.expires_at>? ORDER BY d.recipient_seq LIMIT ?`, pid, sid, nowRaw, nowRaw, n)
-	if err != nil {
-		return nil, err
-	}
-	until := layout(now.Add(limits.Lease))
 	for _, m := range rows {
 		id := newID("lse_")
-		if _, err = tx.ExecContext(ctx, `UPDATE deliveries SET lease_id=?,lease_until=?,lease_instance=?,delivered_at=COALESCE(delivered_at,?) WHERE project_id=? AND message_id=? AND recipient_id=?`, id, until, actor["instance"], nowRaw, pid, m["id"], sid); err != nil {
+		if _, err := tx.ExecContext(ctx, `UPDATE deliveries SET lease_id=?,lease_until=?,lease_instance=?,lease_consumer=?,delivered_at=COALESCE(delivered_at,?) WHERE project_id=? AND message_id=? AND recipient_id=?`, id, m["lease_until"], actor["instance"], consumer, nowRaw, pid, m["id"], sid); err != nil {
 			return nil, err
 		}
 		if m["delivered_at"] == nil {
@@ -193,14 +243,14 @@ func (s *Store) lease(ctx context.Context, tx *transaction, wid, pid string, act
 		}
 		m["attempt"] = m["attempts"].(int64) + 1
 		delete(m, "attempts")
-		m["lease_id"], m["lease_until"] = id, until
+		m["lease_id"] = id
 	}
 	if len(rows) > 0 {
 		ids := make([]string, 0, len(rows))
 		for _, m := range rows {
 			ids = append(ids, str(m, "id"))
 		}
-		if err = s.audit(ctx, tx, wid, pid, sid, "delivery", sid, "leased", map[string]any{"ids": ids}); err != nil {
+		if err := s.audit(ctx, tx, wid, pid, sid, "delivery", sid, "leased", map[string]any{"ids": ids}); err != nil {
 			return nil, err
 		}
 	}
@@ -318,7 +368,8 @@ func ackDelivery(ctx context.Context, tx *transaction, pid, sid string, item ack
 	if _, err = tx.ExecContext(ctx, `UPDATE deliveries SET acked_at=?,ack_operation_id=?,delivered_at=COALESCE(delivered_at,?),read_at=COALESCE(read_at,?) WHERE project_id=? AND message_id=? AND recipient_id=?`, now, opValue, now, now, pid, item.messageID, sid); err != nil {
 		return "", err
 	}
-	return "acked", nil
+	// An ack frees a prefetch slot and changes the counts.
+	return "acked", queueNotify(ctx, tx, pid, sid)
 }
 
 // nack gives a lease back early, offered again after delay_seconds, without
@@ -361,7 +412,11 @@ func (s *Store) nack(ctx context.Context, tx *transaction, wid, pid string, acto
 		if delay > 0 {
 			after = layout(now.Add(time.Duration(delay) * time.Second))
 		}
-		if _, err = tx.ExecContext(ctx, `UPDATE deliveries SET lease_id=NULL,lease_instance=NULL,lease_until=? WHERE project_id=? AND message_id=? AND recipient_id=?`, after, pid, id, sid); err != nil {
+		if _, err = tx.ExecContext(ctx, `UPDATE deliveries SET lease_id=NULL,lease_instance=NULL,lease_consumer=NULL,lease_until=? WHERE project_id=? AND message_id=? AND recipient_id=?`, after, pid, id, sid); err != nil {
+			return nil, err
+		}
+		// A delayed release is found by the stream's periodic re-read.
+		if err = queueNotify(ctx, tx, pid, sid); err != nil {
 			return nil, err
 		}
 		if err = s.audit(ctx, tx, wid, pid, sid, "delivery", sid, "released", map[string]any{"ids": []string{id}, "delay_seconds": delay}); err != nil {
@@ -466,12 +521,15 @@ func (s *Store) sweep(ctx context.Context, tx *transaction, pid, sid string, now
 		if attempts >= limit {
 			deadAt = nowRaw
 		}
-		r, err := tx.ExecContext(ctx, `UPDATE deliveries SET lease_id=NULL,lease_instance=NULL,lease_until=NULL,attempts=?,dead_at=? WHERE project_id=? AND message_id=? AND recipient_id=? AND lease_id=? AND acked_at IS NULL AND dead_at IS NULL`, attempts, deadAt, d["project_id"], d["message_id"], d["recipient_id"], d["lease_id"])
+		r, err := tx.ExecContext(ctx, `UPDATE deliveries SET lease_id=NULL,lease_instance=NULL,lease_consumer=NULL,lease_until=NULL,attempts=?,dead_at=? WHERE project_id=? AND message_id=? AND recipient_id=? AND lease_id=? AND acked_at IS NULL AND dead_at IS NULL`, attempts, deadAt, d["project_id"], d["message_id"], d["recipient_id"], d["lease_id"])
 		if err != nil {
 			return res, err
 		}
 		if n, _ := r.RowsAffected(); n != 1 {
 			continue
+		}
+		if err = queueNotify(ctx, tx, str(d, "project_id"), str(d, "recipient_id")); err != nil {
+			return res, err
 		}
 		if deadAt == nil {
 			res.Reoffered++
@@ -655,7 +713,7 @@ func (s *Store) settleDeadLetter(ctx context.Context, tx *transaction, wid, pid,
 		return nil, &serviceError{code: "not_found", cause: errors.New("no such dead letter in this session's queue"), public: true}
 	}
 	action, outcome := "requeued", "requeued"
-	q := `UPDATE deliveries SET dead_at=NULL,attempts=0,lease_id=NULL,lease_instance=NULL,lease_until=NULL WHERE project_id=? AND message_id=? AND recipient_id=?`
+	q := `UPDATE deliveries SET dead_at=NULL,attempts=0,lease_id=NULL,lease_instance=NULL,lease_consumer=NULL,lease_until=NULL WHERE project_id=? AND message_id=? AND recipient_id=?`
 	args := []any{pid, id, sid}
 	if op == "deadletters_dismiss" {
 		action, outcome = "dismissed", "dismissed"
@@ -663,6 +721,9 @@ func (s *Store) settleDeadLetter(ctx context.Context, tx *transaction, wid, pid,
 		args = []any{now, now, pid, id, sid}
 	}
 	if _, err = tx.ExecContext(ctx, q, args...); err != nil {
+		return nil, err
+	}
+	if err = queueNotify(ctx, tx, pid, sid); err != nil {
 		return nil, err
 	}
 	if err = s.audit(ctx, tx, wid, pid, str(actor, "id"), "delivery", sid, action, map[string]any{"ids": []string{id}}); err != nil {

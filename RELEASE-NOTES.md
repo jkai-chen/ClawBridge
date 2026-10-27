@@ -1,5 +1,28 @@
 # ClawBridge v0.3.6 (unreleased)
 
+**Schema 28 → 29.**
+- The server migrates to schema 29 on its first start: 29, the new-device alerts' events and acknowledgements.
+- **One-way:** v0.3.5 and older refuse a database newer than schema 28. Take a dump before upgrading; to go back,
+  restore it with the v0.3.5 image (docs/operations/deployment.md).
+
+## New-device alerts
+
+- **Your other devices hear of a new one (A1, §17.3).** When a device is added to your account (an invite, `device
+  add`, recovery or `device enroll`) or one of yours is revoked, every other device of yours, and the workspace
+  owner's, prints a line on stderr after its next command, and the TUI's Account screen shows a banner:
+  `New device "Ada's desktop" (dev_9k2…) joined … via device add. Not you? clawbridge device revoke dev_9k2…`
+  - It repeats until that device acknowledges it: `clawbridge device ack --all`, or `e` on the Account screen.
+    `clawbridge device events` lists them. A command and the banner show the newest five, then "…and N more";
+    events older than 90 days aren't shown.
+  - A revoke is an alert too, including the owner's `user revoke`, so a stolen device can't quietly revoke your
+    others.
+  - Not alerted: the device itself, the device that revoked a device, and CI devices.
+  - The server answers every device-signed request with `pending_device_events`; the client fetches the events at
+    most once a minute. Older clients ignore the field.
+- **Device labels are printable text.** A label is shown on your other devices, so the server refuses control
+  characters, terminal escapes and bidi or other format characters (1–64 printable characters), and the CLI and TUI
+  escape any older label when they print it.
+
 ## Security (G9)
 
 - **The session runner's agent gets less of yours (G9-5, G9-6, G9-9, G9-14).**

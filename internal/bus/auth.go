@@ -8,6 +8,8 @@ import (
 	"errors"
 	"strings"
 	"time"
+	"unicode"
+	"unicode/utf8"
 
 	"clawbridge/internal/devicekey"
 	"clawbridge/internal/principal"
@@ -65,7 +67,7 @@ func refused(message string) error {
 
 func authOperation(op string) bool {
 	switch op {
-	case "invite_create", "invite_list", "invite_revoke", "device_list", "device_revoke", "device_label", "device_enroll", "device_ci_create", "user_list", "user_revoke", "owner_transfer_offer", "owner_transfer_respond", "owner_transfer_get":
+	case "invite_create", "invite_list", "invite_revoke", "device_list", "device_revoke", "device_label", "device_enroll", "device_ci_create", "user_list", "user_revoke", "owner_transfer_offer", "owner_transfer_respond", "owner_transfer_get", "device_events", "device_ack":
 		return true
 	}
 	return false
@@ -106,6 +108,11 @@ func (s *Store) authOp(ctx context.Context, tx *transaction, w map[string]any, r
 		return s.respondOwnerTransfer(ctx, tx, w, str(a, "action"))
 	case "owner_transfer_get":
 		return s.ownerTransferView(ctx, tx, w)
+	case "device_events":
+		all, _ := a["all"].(bool)
+		return s.listDeviceEvents(ctx, tx, all)
+	case "device_ack":
+		return s.ackDeviceEvents(ctx, tx, a)
 	}
 	return nil, invalid("unsupported operation")
 }
@@ -367,11 +374,19 @@ type JoinRequest struct {
 	KeyStore  string
 }
 
-// cleanLabel trims a device label; a label is display only.
+// cleanLabel trims a device label. A label is display only, but whoever
+// adds a device chooses it, possibly a thief, and the alert prints it on
+// the victim's other devices (§17.3, R1): it must be printable text, with
+// no controls, escapes or bidi or other format characters.
 func cleanLabel(label string) (string, error) {
 	label = strings.TrimSpace(label)
-	if label == "" || len(label) > maxDeviceLabel || strings.ContainsAny(label, "\r\n\x00") {
-		return "", invalid("a device label must be 1-64 characters on one line")
+	if label == "" || !utf8.ValidString(label) || utf8.RuneCountInString(label) > maxDeviceLabel || len(label) > 4*maxDeviceLabel {
+		return "", invalid("a device label must be 1-64 printable characters on one line")
+	}
+	for _, r := range label {
+		if !unicode.IsPrint(r) {
+			return "", invalid("a device label must be 1-64 printable characters on one line")
+		}
 	}
 	return label, nil
 }
@@ -529,6 +544,15 @@ func (s *Store) Join(ctx context.Context, in JoinRequest) (map[string]any, error
 		if revoked, err = revokePrincipalDevices(ctx, tx, wid, email, deviceID, match["created_by"].(string), "recovery"); err != nil {
 			return nil, err
 		}
+		// The joining device caused these revokes, so it isn't alerted to
+		// them on its first command.
+		if err = revokedDeviceEvents(ctx, tx, wid, email, revoked, "recovery", match["created_by"].(string), deviceID); err != nil {
+			return nil, err
+		}
+	}
+	route := map[string]string{"user": "invite", "device": "device_add", "recovery": "recovery"}[purpose]
+	if err = deviceEvent(ctx, tx, wid, email, deviceID, "added", label, route, match["created_by"].(string), ""); err != nil {
+		return nil, err
 	}
 	if err = js.audit(ctx, tx, wid, "", "", "invite", match["invite_id"].(string), "invite_used", map[string]any{"invite_id": match["invite_id"], "device_id": deviceID, "purpose": purpose, "invited_by": match["created_by"]}); err != nil {
 		return nil, err
@@ -657,6 +681,13 @@ func (s *Store) revokeDevice(ctx context.Context, tx *transaction, w map[string]
 	if err = s.audit(ctx, tx, w["id"].(string), "", "", "device", id, "device_revoked", map[string]any{"device_id": id, "principal": row["principal"], "reason": reason}); err != nil {
 		return nil, err
 	}
+	// A stolen device could revoke the very devices that would show its
+	// alert, so a revoke is an event too (R6).
+	if row["kind"] == "device" {
+		if err = deviceEvent(ctx, tx, w["id"].(string), row["principal"].(string), id, "revoked", row["label"].(string), "revoke", s.principal, s.actorDevice()); err != nil {
+			return nil, err
+		}
+	}
 	return map[string]any{"device_id": id, "status": "revoked"}, nil
 }
 
@@ -717,6 +748,11 @@ func (s *Store) addDevice(ctx context.Context, tx *transaction, w map[string]any
 	out := map[string]any{"device_id": id, "principal": owner, "kind": kind, "label": label, "key_store": store, "via": via, "expires_at": exp}
 	if err := s.audit(ctx, tx, w["id"].(string), "", "", "device", id, "device_added", out); err != nil {
 		return nil, err
+	}
+	if kind == "device" {
+		if err := deviceEvent(ctx, tx, w["id"].(string), owner, id, "added", label, "enroll", s.principal, s.actorDevice()); err != nil {
+			return nil, err
+		}
 	}
 	return out, nil
 }
@@ -855,6 +891,10 @@ func (s *Store) revokeUser(ctx context.Context, tx *transaction, w map[string]an
 	revokedInvites, _ := invites.RowsAffected()
 	devices, err := revokePrincipalDevices(ctx, tx, wid, who, "", s.principal, "user_revoked")
 	if err != nil {
+		return nil, err
+	}
+	// A stolen owner device could remove members silently otherwise (R6).
+	if err = revokedDeviceEvents(ctx, tx, wid, who, devices, "user_revoked", s.principal, s.actorDevice()); err != nil {
 		return nil, err
 	}
 	ci, err := query(ctx, tx, `SELECT device_id FROM devices WHERE workspace_id=? AND kind='ci' AND created_by=? AND revoked_at IS NULL ORDER BY device_id`, wid, who)

@@ -155,6 +155,37 @@ clawbridge device add                        # a 24-hour code for another comput
 - **In the TUI:** the Account screen (`8`) lists your devices. `a` makes the code
   for another device after you type `add`, `l` labels, and `x` revokes after you
   type `revoke`.
+- **Labels** are 1–64 printable characters. The server refuses control characters,
+  terminal escapes and bidi or other format characters, because a label is shown on
+  your other devices.
+
+### New-device alerts
+
+When a device is added to your account (by an invite, `device add`, recovery or
+`device enroll`) or one of your devices is revoked, your **other** devices hear of
+it, and so do the workspace owner's:
+
+```text
+New device "Ada's desktop" (dev_9k2…) joined ada@example.com at 2026-10-27 14:02 via device add. Not you? clawbridge device revoke dev_9k2… [dve_…]
+```
+
+- **Where:** after any command you run on one of those devices (on stderr), and as
+  a banner on the TUI's Account screen. The line repeats until that device
+  acknowledges it.
+- **Acknowledging:** `clawbridge device ack --all`, or `device ack dve_…` for one;
+  `e` on the Account screen. It's per device: acknowledging on your laptop leaves the
+  alert on your desktop.
+- **Listing:** `clawbridge device events` (`--all` includes acknowledged ones).
+  Events older than 90 days aren't shown, and are deleted.
+- **How many:** a command prints the newest five, then "…and N more"; so does the
+  banner. Acknowledging clears them all.
+- **Not alerted:** the device the event is about, the device that revoked a device
+  itself, and CI devices. A device hears only of events since it was added. (The
+  device that made an invite or `device add` code is still told when it's used.)
+- **Not you?** Revoke the device from any other one of yours, then tell the
+  workspace owner. A revoke is an alert too, so a stolen device can't quietly revoke
+  your others.
+- Alerts need a device-key sign-in; a Google sign-in has no device to alert.
 
 ## Members and ownership
 

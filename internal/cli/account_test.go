@@ -365,6 +365,10 @@ func TestAccountCommandsMapToTheBus(t *testing.T) {
 		{[]string{"device", "label", "dev_x", "Ada's desktop"}, "device_label", `{"device_id":"dev_x","label":"Ada's desktop"}`},
 		{[]string{"device", "add"}, "invite_create", `{"email":"ada@example.com","purpose":"device"}`},
 		{[]string{"device", "add", "--expires", "12h"}, "invite_create", `{"email":"ada@example.com","expires_hours":12,"purpose":"device"}`},
+		{[]string{"device", "events"}, "device_events", `{"all":false}`},
+		{[]string{"device", "events", "--all"}, "device_events", `{"all":true}`},
+		{[]string{"device", "ack", "dve_1", "dve_2"}, "device_ack", `{"event_ids":["dve_1","dve_2"]}`},
+		{[]string{"device", "ack", "--all"}, "device_ack", `{"all":true}`},
 		{[]string{"user", "list"}, "user_list", `{}`},
 		{[]string{"user", "revoke", "bob@example.com", "--confirm"}, "user_revoke", `{"principal":"bob@example.com"}`},
 		{[]string{"owner", "show"}, "owner_transfer_get", `{}`},
@@ -396,6 +400,8 @@ func TestAccountCommandsMapToTheBus(t *testing.T) {
 		{[]string{"device", "add", "--ci", "deploy", "--grant", "api=member"}, "needs --expires"},
 		{[]string{"device", "add", "--ci", "deploy", "--grant", "api=member", "--expires", "36h"}, "in days"},
 		{[]string{"device", "frobnicate"}, "unknown device command"},
+		{[]string{"device", "ack"}, "or --all"},
+		{[]string{"device", "ack", "--all", "dve_1"}, "or --all"},
 	} {
 		r := &accountRecorder{}
 		withAccountRecorder(t, r)
@@ -638,5 +644,55 @@ func TestJoinReadsTheCodeHiddenAtATerminal(t *testing.T) {
 	var out, errOut bytes.Buffer
 	if err := runDeviceJoin(context.Background(), Config{Server: f.url}, []string{"--email", "ada@example.com"}, os.Stdin, &out, &errOut); err != nil || !hidden || !strings.Contains(out.String(), f.keys[0]) {
 		t.Fatal(err, hidden, out.String())
+	}
+}
+
+// A device label is chosen by whoever adds the device (R1): the alert line
+// and every printed answer escape its terminal controls, so it can't erase
+// or rewrite the line.
+func TestDeviceEventLineEscapesTheLabel(t *testing.T) {
+	evil := "\x1b[1A\x1b[2KAll good\u202e\x9b"
+	line := deviceEventLine(map[string]any{"event_id": "dve_1", "kind": "added", "label": evil, "device_id": "dev_9k2", "principal": "ada@example.com", "route": "device_add\x1b[2K", "created_at": "2026-10-27T14:02:00.000000000Z"})
+	if strings.ContainsAny(line, "\x1b\u202e\u009b") || !strings.Contains(line, "via device add") || !strings.Contains(line, "clawbridge device revoke dev_9k2") || !strings.Contains(line, "[dve_1]") {
+		t.Fatalf("%q", line)
+	}
+	revoked := deviceEventLine(map[string]any{"event_id": "dve_2", "kind": "revoked", "label": evil, "device_id": "dev_9k2", "principal": "ada@example.com", "actor": "ada@example.com"})
+	if strings.ContainsAny(revoked, "\x1b\u202e\u009b") || !strings.Contains(revoked, "was revoked") {
+		t.Fatalf("%q", revoked)
+	}
+	// A kind this client doesn't know is never a "new device".
+	other := deviceEventLine(map[string]any{"event_id": "dve_3", "kind": "dormant_soon\x1b[2K", "label": evil, "device_id": "dev_9k2", "principal": "ada@example.com"})
+	if strings.Contains(other, "New device") || !strings.Contains(other, `of ada@example.com: dormant soon`) || strings.ContainsAny(other, "\x1b\u202e\u009b") || !strings.Contains(other, "[dve_3]") {
+		t.Fatalf("%q", other)
+	}
+	googleProfile(t)
+	r := &accountRecorder{data: map[string]any{"devices": []any{map[string]any{"label": evil}}}}
+	withAccountRecorder(t, r)
+	out, err := run("device", "list")
+	if err != nil || strings.Contains(out, "\\u001b[1A") == false {
+		t.Fatalf("%v %q", err, out)
+	}
+	if strings.ContainsAny(out, "\x1b\u202e\u009b") {
+		t.Fatalf("%q", out)
+	}
+	var b bytes.Buffer
+	printDeviceEvents(&b)([]map[string]any{{"event_id": "dve_1", "kind": "added", "label": evil}})
+	if strings.ContainsAny(b.String(), "\x1b\u202e\u009b") || !strings.Contains(b.String(), "device ack --all") || !strings.Contains(b.String(), `"\u001b[1A`) {
+		t.Fatalf("%q", b.String())
+	}
+	// A flood prints the newest five and a count (M2).
+	b.Reset()
+	flood := []map[string]any{}
+	for i := 0; i < 8; i++ {
+		flood = append(flood, map[string]any{"event_id": fmt.Sprintf("dve_%d", i), "kind": "added", "label": "x"})
+	}
+	printDeviceEvents(&b)(flood)
+	if strings.Count(b.String(), "New device") != 5 || !strings.Contains(b.String(), "…and 3 more: clawbridge device events") {
+		t.Fatalf("%q", b.String())
+	}
+	for _, bad := range []string{"tab\there", "rtl\u202e", "c1\u009b", "\xff"} {
+		if _, err := deviceLabel(bad); err == nil {
+			t.Fatalf("accepted %q", bad)
+		}
 	}
 }

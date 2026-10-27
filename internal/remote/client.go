@@ -586,7 +586,65 @@ func (c *Client) call(ctx context.Context, r bus.Request) (bus.Result, bool, err
 	if decoder.Decode(&extra) != io.EOF {
 		return bus.Result{}, false, errors.New("invalid trailing cloud response")
 	}
+	if result.PendingDeviceEvents != nil && *result.PendingDeviceEvents > 0 && c.signer != nil {
+		c.noticeDeviceEvents(ctx, r)
+	}
 	return result, false, nil
+}
+
+// deviceEventsNotice receives this device's unacknowledged device events
+// (live/AUTH-INVITE-DESIGN.md §17.3) when a signed answer reports some.
+// The CLI sets it to print one line each on stderr; nothing else does, so
+// a TUI or MCP server never writes over its own output.
+var (
+	deviceEventsMu     sync.Mutex
+	deviceEventsNotice func([]map[string]any)
+	deviceEventsAt     time.Time
+)
+
+// deviceEventsEvery bounds how often one process fetches the events.
+const deviceEventsEvery = time.Minute
+
+// SetDeviceEventsNotice sets (or, with nil, clears) the receiver of this
+// process's device events.
+func SetDeviceEventsNotice(f func([]map[string]any)) {
+	deviceEventsMu.Lock()
+	defer deviceEventsMu.Unlock()
+	deviceEventsNotice, deviceEventsAt = f, time.Time{}
+}
+
+// noticeDeviceEvents fetches the events after r's answer reported some, at
+// most once a minute, and hands them to the receiver. A failure is
+// silent: the next answer reports them again.
+func (c *Client) noticeDeviceEvents(ctx context.Context, r bus.Request) {
+	if r.Operation == "device_events" || r.Operation == "device_ack" || r.Workspace == "" {
+		return
+	}
+	deviceEventsMu.Lock()
+	notice := deviceEventsNotice
+	due := notice != nil && time.Since(deviceEventsAt) >= deviceEventsEvery
+	if due {
+		deviceEventsAt = time.Now()
+	}
+	deviceEventsMu.Unlock()
+	if !due {
+		return
+	}
+	result, _, err := c.call(ctx, bus.Request{Operation: "device_events", Workspace: r.Workspace, Args: map[string]any{}})
+	if err != nil {
+		return
+	}
+	data, _ := result.Data.(map[string]any)
+	raw, _ := data["events"].([]any)
+	events := []map[string]any{}
+	for _, v := range raw {
+		if e, ok := v.(map[string]any); ok {
+			events = append(events, e)
+		}
+	}
+	if len(events) > 0 {
+		notice(events)
+	}
 }
 
 // send makes one authenticated request for target (path and query, in the

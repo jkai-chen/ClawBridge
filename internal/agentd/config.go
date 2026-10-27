@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"net/netip"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -49,8 +50,9 @@ func loadSpec(getenv func(string) string) (Spec, error) {
 }
 
 // serverTarget is the server's host:port for the egress policy. The server
-// must be public to the agents: a private address is refused by the
-// egress proxy (open question Q2).
+// must be public to the agents: the egress proxy refuses a private address
+// (open question Q2), so check refuses it up front rather than every round
+// failing.
 func serverTarget(serverURL string) (string, error) {
 	u, err := url.Parse(serverURL)
 	if err != nil || u.Scheme != "https" {
@@ -60,7 +62,14 @@ func serverTarget(serverURL string) (string, error) {
 	if port == "" {
 		port = "443"
 	}
-	return normalTarget(net.JoinHostPort(u.Hostname(), port))
+	target, err := normalTarget(net.JoinHostPort(u.Hostname(), port))
+	if err != nil {
+		return "", err
+	}
+	if ip, err := netip.ParseAddr(hostOf(target)); err == nil && !publicAddr(ip) {
+		return "", fmt.Errorf("the agents can't reach the server at %s: the egress proxy allows public addresses only", ip)
+	}
+	return target, nil
 }
 
 // Config is agentd's own configuration, from its root-only (0600) env file.

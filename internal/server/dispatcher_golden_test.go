@@ -36,7 +36,7 @@ var goldenIndex = map[string]string{
 	"tool-read_issue_facts.json": "ToolResponse", "tool-list_domain.json": "ToolResponse", "tool-list_sessions.json": "ToolResponse", "tool-session_activity.json": "ToolResponse",
 	"tool-decide.json": "ToolResponse:DecideResult", "tool-decide-superseded.json": "ToolResponse:DecideResult", "tool-abstain.json": "ToolResponse",
 	"cases-next-chat.json": "CasesNextResponse", "tool-list_decisions.json": "ToolResponse", "tool-reply.json": "ToolResponse",
-	"launcher-wanted.json": "agentd", "launcher-credential.json": "agentd", "launcher-report.json": "agentd",
+	"launcher-wanted.json": "agentd", "launcher-wanted-empty.json": "agentd", "launcher-credential.json": "agentd", "launcher-report.json": "agentd",
 }
 
 func init() {
@@ -266,6 +266,14 @@ func TestModelGolden(t *testing.T) {
 	modelFail(rec, 503, "agent_cap")
 	keep("error-agent_cap.json", rec.Body.Bytes())
 
+	// The wanted set of a server where no owner turned the model on: an
+	// empty list, never a missing one.
+	empty := newLauncherOnlyEnv(t)
+	if status, _ := empty.do("GET", LauncherWantedPath, empty.launcher, nil); status != 200 {
+		t.Fatal("empty wanted set:", status)
+	}
+	keep("launcher-wanted-empty.json", empty.last(LauncherWantedPath))
+
 	index, _ := json.MarshalIndent(goldenIndex, "", "  ")
 	got["index.json"] = append(index, '\n')
 	if *updateGolden {
@@ -303,4 +311,26 @@ func TestModelGolden(t *testing.T) {
 			t.Errorf("%s drifted from the server's answer (run go test ./internal/server -run TestModelGolden -update):\n%s", name, raw)
 		}
 	}
+}
+
+// newLauncherOnlyEnv is a server with a launcher token and no owner who
+// turned the model on.
+func newLauncherOnlyEnv(t *testing.T) *modelEnv {
+	t.Helper()
+	store, err := bus.Open(filepath.Join(t.TempDir(), "bus.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { store.Close() })
+	ctx := context.Background()
+	if _, err = store.Execute(ctx, bus.Request{Operation: "workspace_init", Workspace: "w", Args: map[string]any{"mode": "local"}}); err != nil {
+		t.Fatal(err)
+	}
+	e := &modelEnv{t: t, store: store}
+	if _, e.launcher, err = store.OperatorLauncherTokenCreate(ctx); err != nil {
+		t.Fatal(err)
+	}
+	e.host = httptest.NewServer(NewHandlerWithOptions(store, nil, HandlerOptions{ModelMaxAgents: 3}))
+	t.Cleanup(e.host.Close)
+	return e
 }

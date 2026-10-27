@@ -16,6 +16,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -39,12 +40,23 @@ type Egress struct {
 	// maxTunnels caps one source network's connections, from accept to close:
 	// waiting for the request, dialling, or tunnelling. maxConns caps them all.
 	maxTunnels, maxConns int
+	// idle ends a tunnel where neither side sent anything for that long.
+	idle time.Duration
 
 	mu      sync.Mutex
 	policy  []egressNetwork
 	tunnels map[*tunnel]struct{}
 	active  map[string]int
 	total   int
+	// refusals rate-limits the refusal log, per owner ref ("" for an
+	// unknown source).
+	refusals map[string]*refusalWindow
+}
+
+// refusalWindow counts one ref's refusals in the current minute.
+type refusalWindow struct {
+	start           time.Time
+	logged, dropped int
 }
 
 // EgressPolicy is the file agentd writes for the egress proxy.
@@ -77,7 +89,15 @@ const (
 	maxAllow         = 2
 	egressHeaderWait = 10 * time.Second
 	egressDialWait   = 10 * time.Second
-	egressIdle       = 10 * time.Minute
+	// egressAddrWait is one address's share of the dial: a blackholed
+	// address can't use up the whole wait.
+	egressAddrWait = 3 * time.Second
+	egressIdle     = 10 * time.Minute
+	// egressWriteWait bounds one write to a side that stopped reading.
+	egressWriteWait = time.Minute
+	// refusalLogs is how many refusals a minute one owner's network gets
+	// logged; the rest are counted, and the count logged.
+	refusalLogs      = 10
 	maxConnectHeader = 4 << 10
 	maxTunnelsPerNet = 32
 	maxEgressConns   = 256
@@ -98,8 +118,10 @@ func NewEgress(log *slog.Logger) *Egress {
 		},
 		maxTunnels: maxTunnelsPerNet,
 		maxConns:   maxEgressConns,
+		idle:       egressIdle,
 		tunnels:    map[*tunnel]struct{}{},
 		active:     map[string]int{},
+		refusals:   map[string]*refusalWindow{},
 	}
 }
 
@@ -290,7 +312,7 @@ func (e *Egress) handle(conn net.Conn) {
 		defer e.release(refusal, t)
 	}
 	if refusal != nil {
-		e.log.Warn("egress refused", "ref", refusal.ref, "target", refusal.target, "status", refusal.status, "reason", refusal.reason)
+		e.logRefusal(refusal)
 		fmt.Fprintf(conn, "HTTP/1.1 %d %s\r\nContent-Length: 0\r\nConnection: close\r\n\r\n", refusal.status, http.StatusText(refusal.status))
 		conn.Close()
 		return
@@ -300,6 +322,35 @@ func (e *Egress) handle(conn net.Conn) {
 	delete(e.tunnels, t)
 	e.mu.Unlock()
 	e.log.Info("egress tunnel", "ref", t.ref, "target", t.target, "bytes_up", up, "bytes_down", down, "ms", time.Since(start).Milliseconds())
+}
+
+// logRefusal logs a refusal, at most refusalLogs a minute per owner's
+// network, so a hostile agent can't flood the log.
+func (e *Egress) logRefusal(r *egressRefusal) {
+	now := time.Now()
+	e.mu.Lock()
+	w := e.refusals[r.ref]
+	dropped := 0
+	if w == nil || now.Sub(w.start) >= time.Minute {
+		if w != nil {
+			dropped = w.dropped
+		}
+		w = &refusalWindow{start: now}
+		e.refusals[r.ref] = w
+	}
+	log := w.logged < refusalLogs
+	if log {
+		w.logged++
+	} else {
+		w.dropped++
+	}
+	e.mu.Unlock()
+	if dropped > 0 {
+		e.log.Warn("egress refusals not logged", "ref", r.ref, "count", dropped)
+	}
+	if log {
+		e.log.Warn("egress refused", "ref", r.ref, "target", r.target, "status", r.status, "reason", r.reason)
+	}
 }
 
 type egressRefusal struct {
@@ -394,7 +445,10 @@ func (e *Egress) open(conn net.Conn) (*tunnel, *egressRefusal) {
 	}
 	var upstream net.Conn
 	for _, addr := range addrs {
-		if upstream, err = e.dial(ctx, netip.AddrPortFrom(addr, uint16(port))); err == nil {
+		dial, cancel := context.WithTimeout(ctx, egressAddrWait)
+		upstream, err = e.dial(dial, netip.AddrPortFrom(addr, uint16(port)))
+		cancel()
+		if err == nil {
 			break
 		}
 	}
@@ -452,25 +506,37 @@ func (e *Egress) addresses(ctx context.Context, host string) ([]netip.Addr, erro
 	return addrs, nil
 }
 
-// splice copies both ways until either side ends or stays idle for
-// egressIdle, and returns the bytes sent up and down.
+// splice copies both ways until either side ends, or neither side sent
+// anything for the idle time, and returns the bytes sent up and down. A
+// long answer to a silent client is not idle. A write to a side that
+// stopped reading fails after egressWriteWait.
 func (e *Egress) splice(t *tunnel) (up, down int64) {
 	_ = t.client.SetDeadline(time.Time{})
+	var last atomic.Int64
+	last.Store(time.Now().UnixNano())
 	var wg sync.WaitGroup
 	copyIdle := func(dst, src net.Conn, n *int64) {
 		defer wg.Done()
 		buf := make([]byte, 32<<10)
 		for {
-			_ = src.SetReadDeadline(time.Now().Add(egressIdle))
+			_ = src.SetReadDeadline(time.Now().Add(e.idle))
 			r, err := src.Read(buf)
 			if r > 0 {
+				last.Store(time.Now().UnixNano())
+				_ = dst.SetWriteDeadline(time.Now().Add(egressWriteWait))
 				w, werr := dst.Write(buf[:r])
 				*n += int64(w)
 				if werr != nil {
 					break
 				}
+				last.Store(time.Now().UnixNano())
 			}
 			if err != nil {
+				// This side was quiet; the tunnel lives while the other wasn't.
+				var ne net.Error
+				if errors.As(err, &ne) && ne.Timeout() && time.Since(time.Unix(0, last.Load())) < e.idle {
+					continue
+				}
 				break
 			}
 		}

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"net/http"
 	"net/netip"
 	"os"
 	"path/filepath"
@@ -17,7 +18,9 @@ import (
 
 func newTestReconciler(s *testStack, server *fakeServer) *Reconciler {
 	cfg := Config{Spec: testSpec(s.policyDir), LauncherToken: "cbl_" + strings.Repeat("x", 24), Docker: s.proxy}
-	return NewReconciler(cfg, server, s.logger)
+	r := NewReconciler(cfg, server, s.logger)
+	r.sleep = func(context.Context, time.Duration) error { return nil }
+	return r
 }
 
 // state is every container's state and every network's subnet and
@@ -432,5 +435,290 @@ func TestReconcileRestartsOnANewRevision(t *testing.T) {
 	}
 	if _, ok := s.daemon.state()[containerName(refA)]; ok {
 		t.Fatal("an owner without a config revision still runs")
+	}
+}
+
+// running is how many agent containers Docker runs.
+func (f *fakeDaemon) running() int {
+	n := 0
+	for name, state := range f.state() {
+		if strings.HasPrefix(name, containerPrefix) && state == "running" {
+			n++
+		}
+	}
+	return n
+}
+
+// An agent whose stop failed still runs, so it counts toward the cap, and
+// nothing starts in that round [R86-M1].
+func TestReconcileCountsAFailedStopTowardTheCap(t *testing.T) {
+	s := newStack(t)
+	server := &fakeServer{refs: []string{refA, refB}, max: 2}
+	r := newTestReconciler(s, server)
+	if err := r.Step(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	s.daemon.mu.Lock()
+	s.daemon.failStop = map[string]bool{containerName(refB): true}
+	s.daemon.mu.Unlock()
+	server.refs = []string{refA, refC}
+	if err := r.Step(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if got := s.daemon.state(); got[containerName(refB)] != "running" || got[containerName(refC)] != "" || s.daemon.running() != 2 {
+		t.Fatalf("%v", got)
+	}
+	if !strings.Contains(s.log.String(), "starting none this round") {
+		t.Fatal(s.log.String())
+	}
+	// A lowered cap with a stop that fails: the next agent in line is
+	// stopped instead, never one more started.
+	server.refs, server.max = []string{refA, refB, refC}, 1
+	s.daemon.mu.Lock()
+	s.daemon.failStop = map[string]bool{containerName(refB): true}
+	s.daemon.mu.Unlock()
+	if err := r.Step(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if got := s.daemon.state(); got[containerName(refA)] != "" || got[containerName(refC)] != "" || s.daemon.running() != 1 {
+		t.Fatalf("%v", got)
+	}
+	// Once it stops, the round starts again.
+	s.daemon.mu.Lock()
+	s.daemon.failStop = nil
+	s.daemon.mu.Unlock()
+	server.refs, server.max = []string{refA, refC}, 2
+	if err := r.Step(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if got := s.daemon.state(); got[containerName(refA)] != "running" || got[containerName(refC)] != "running" || got[containerName(refB)] != "" {
+		t.Fatalf("%v", got)
+	}
+}
+
+// Failed starts back off, 1, 2, 4… rounds, and are reported once as
+// agent_start_failing after three in a row; a start that works resets the
+// count [R86-M2].
+func TestReconcileBacksOffFailedStarts(t *testing.T) {
+	s := newStack(t)
+	failing := true
+	s.daemon.onCreate = func(name string) bool { return failing && name == containerName(refA) }
+	server := &fakeServer{refs: []string{refA}, max: 2}
+	r := newTestReconciler(s, server)
+	var tried []int
+	for round := 1; round <= 16; round++ {
+		if reported := len(server.reports) > 0; reported != (round > 4) { // the third failure is in round 4
+			t.Fatalf("round %d: reports %v", round, server.reports)
+		}
+		before := strings.Count(strings.Join(s.daemon.seen(), "\n"), "/containers/create?name="+containerName(refA))
+		if err := r.Step(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+		if strings.Count(strings.Join(s.daemon.seen(), "\n"), "/containers/create?name="+containerName(refA)) > before {
+			tried = append(tried, round)
+		}
+	}
+	if !slices.Equal(tried, []int{1, 2, 4, 8, 16}) || !slices.Equal(server.reports, []string{refA + " " + codeStartFailing}) {
+		t.Fatalf("tried in rounds %v, reports %v", tried, server.reports)
+	}
+	if _, ok := s.daemon.state()[containerName(refA)]; ok || len(server.minted) != 0 {
+		t.Fatal("a failed start left a container or minted a credential")
+	}
+	failing = false
+	for range 16 {
+		if err := r.Step(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if s.daemon.state()[containerName(refA)] != "running" || r.failed[refA] != nil {
+		t.Fatalf("%v %v", s.daemon.state(), r.failed)
+	}
+}
+
+// The one-time credential is minted only for an agent that is up: one that
+// exits at once gets none, and its stdin is closed [R86-M2, R86-L1].
+func TestReconcileMintsOnlyForARunningAgent(t *testing.T) {
+	s := newStack(t)
+	s.daemon.exitOnStart = map[string]bool{containerName(refA): true}
+	server := &fakeServer{refs: []string{refA}, max: 2}
+	if err := newTestReconciler(s, server).Step(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if len(server.minted) != 0 || s.daemon.state()[containerName(refA)] != "" {
+		t.Fatalf("minted %v: %v", server.minted, s.daemon.state())
+	}
+	waitStdin(t, s, containerName(refA), "")
+}
+
+// waitStdin waits for the daemon to see the end of name's stdin, and
+// checks what it read.
+func waitStdin(t *testing.T, s *testStack, name, want string) {
+	t.Helper()
+	for deadline := time.Now().Add(5 * time.Second); time.Now().Before(deadline); time.Sleep(10 * time.Millisecond) {
+		s.daemon.mu.Lock()
+		got, ok := s.daemon.stdin[name]
+		s.daemon.mu.Unlock()
+		if ok {
+			if got != want {
+				t.Fatalf("stdin %q", got)
+			}
+			return
+		}
+	}
+	t.Fatal("the attach stream was never closed")
+}
+
+// A failed mint closes the attach stream too [R86-L1], and only a 101
+// opens it [R86-L2].
+func TestReconcileClosesTheAttachStream(t *testing.T) {
+	s := newStack(t)
+	server := &fakeServer{refs: []string{refA}, max: 2, mintErr: errors.New("no")}
+	if err := newTestReconciler(s, server).Step(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	waitStdin(t, s, containerName(refA), "")
+
+	s = newStack(t)
+	s.daemon.attachStatus = http.StatusOK
+	server = &fakeServer{refs: []string{refA}, max: 2}
+	if err := newTestReconciler(s, server).Step(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := s.daemon.state()[containerName(refA)]; ok || len(server.minted) != 0 || !strings.Contains(s.log.String(), "attach: status 200") {
+		t.Fatalf("%v %v %s", s.daemon.state(), server.minted, s.log.String())
+	}
+}
+
+// The attach stream outlives the proxy's read timeout, while the server
+// mints the credential [R86-L4].
+func TestReconcileHandsOverPastTheProxyReadTimeout(t *testing.T) {
+	old := proxyReadTimeout
+	proxyReadTimeout = 100 * time.Millisecond
+	t.Cleanup(func() { proxyReadTimeout = old })
+	s := newStack(t)
+	server := &fakeServer{refs: []string{refA}, max: 2, mintDelay: 300 * time.Millisecond}
+	if err := newTestReconciler(s, server).Step(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	waitStdin(t, s, containerName(refA), "cba_"+refA+"_secretcredential\n")
+}
+
+// A network whose container is gone, of an owner no longer wanted, is
+// removed, and a failed removal is retried the next round [R86-M4, R90-M2].
+func TestReconcileRemovesLeftoverNetworks(t *testing.T) {
+	s := newStack(t)
+	s.daemon.containers = map[string]string{egressName: "running"}
+	s.daemon.networks = map[string]*fakeNet{
+		egressNetName:     {subnet: "172.31.255.0/28", members: map[string]bool{}},
+		networkName(refA): {subnet: subnet0, members: map[string]bool{egressName: true}},
+		networkName(refB): {subnet: subnet1, members: map[string]bool{egressName: true}},
+	}
+	s.daemon.failNetworkDelete = map[string]bool{networkName(refB): true}
+	r := newTestReconciler(s, &fakeServer{max: 2})
+	if err := r.Step(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	got := s.daemon.state()
+	if _, ok := got[networkName(refA)]; ok || got[networkName(refB)] != subnet1+" " {
+		t.Fatalf("%v", got)
+	}
+	if _, ok := r.freed[netip.MustParsePrefix(subnet0)]; !ok {
+		t.Fatal("the freed subnet is not quarantined")
+	}
+	s.daemon.mu.Lock()
+	s.daemon.failNetworkDelete = nil
+	s.daemon.mu.Unlock()
+	if err := r.Step(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := s.daemon.state()[networkName(refB)]; ok {
+		t.Fatalf("not retried: %v", s.daemon.state())
+	}
+}
+
+// An owner network already there on another subnet is replaced, so the
+// policy names the subnet the agent is really on [R90-M3].
+func TestReconcileReplacesANetworkOnAnotherSubnet(t *testing.T) {
+	s := newStack(t)
+	s.daemon.networks = map[string]*fakeNet{networkName(refA): {subnet: "10.99.0.0/24", members: map[string]bool{}}}
+	if err := newTestReconciler(s, &fakeServer{refs: []string{refA}, max: 2}).Step(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if got := s.daemon.state(); got[networkName(refA)] != subnet0+" "+egressName || got[containerName(refA)] != "running" {
+		t.Fatalf("%v", got)
+	}
+	if p := s.readPolicy(t); len(p.Networks) != 1 || p.Networks[0].Source != subnet0 {
+		t.Fatalf("%v", p)
+	}
+	if !strings.Contains(s.log.String(), "not on its subnet") {
+		t.Fatal(s.log.String())
+	}
+}
+
+// A new egress image replaces the running egress proxy, which is
+// reconnected to the owners' networks [R90-L4].
+func TestReconcileReplacesAnOldEgressImage(t *testing.T) {
+	s := newStack(t)
+	r := newTestReconciler(s, &fakeServer{refs: []string{refA}, max: 2})
+	if err := r.Step(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	s.daemon.mu.Lock()
+	s.daemon.bodies[egressName] = []byte(`{"Image":"ghcr.io/example/clawbridge-agentd@sha256:` + strings.Repeat("0", 64) + `"}`)
+	s.daemon.mu.Unlock()
+	if err := r.Step(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	s.daemon.mu.Lock()
+	body := string(s.daemon.bodies[egressName])
+	s.daemon.mu.Unlock()
+	if body != string(mustJSON(t, egressSpec(testEgressImage, s.policyDir))) {
+		t.Fatalf("not replaced: %s", body)
+	}
+	if got := s.daemon.state(); got[networkName(refA)] != subnet0+" "+egressName || got[containerName(refA)] != "running" {
+		t.Fatalf("%v", got)
+	}
+}
+
+// Without the egress proxy no agent starts, but unwanted agents are still
+// stopped [R90-L4].
+func TestReconcileStopsAgentsWithoutTheEgressProxy(t *testing.T) {
+	s := newStack(t)
+	s.daemon.containers = map[string]string{containerName(refA): "running"}
+	s.daemon.onCreate = func(name string) bool { return name == egressName }
+	if err := newTestReconciler(s, &fakeServer{refs: []string{refB}, max: 2}).Step(context.Background()); err == nil {
+		t.Fatal("a round without the egress proxy succeeded")
+	}
+	if got := s.daemon.state(); got[containerName(refA)] != "" || got[containerName(refB)] != "" {
+		t.Fatalf("%v", got)
+	}
+}
+
+// A new agent starts only after the egress proxy can have reread a changed
+// policy; an unchanged policy needs no wait [R90-M1].
+func TestReconcileWaitsForThePolicyBeforeStarting(t *testing.T) {
+	if policySettle <= egressPoll {
+		t.Fatalf("policySettle %v is not longer than the egress poll %v", policySettle, egressPoll)
+	}
+	s := newStack(t)
+	r := newTestReconciler(s, &fakeServer{refs: []string{refA}, max: 2})
+	var waits []string
+	r.sleep = func(_ context.Context, d time.Duration) error {
+		_, started := s.daemon.state()[containerName(refA)]
+		waits = append(waits, d.String()+" "+strconv.FormatBool(started))
+		return nil
+	}
+	if err := r.Step(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	// It crashes; its restart is on an unchanged policy.
+	s.daemon.mu.Lock()
+	s.daemon.containers[containerName(refA)] = "exited"
+	s.daemon.mu.Unlock()
+	if err := r.Step(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(waits, []string{policySettle.String() + " false"}) || s.daemon.state()[containerName(refA)] != "running" {
+		t.Fatalf("waits %v", waits)
 	}
 }

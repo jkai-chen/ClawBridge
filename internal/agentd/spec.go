@@ -29,6 +29,12 @@ const (
 	agentMemory     = 160 << 20
 )
 
+// The list filters agentd sends, the only ones its proxy forwards.
+const (
+	containerListFilters = `{"name":["` + containerPrefix + `"]}`
+	networkListFilters   = `{"name":["` + networkPrefix + `"]}`
+)
+
 // revisionLabel carries the owner's config revision the container was
 // started for, so agentd sees a rotation even after it restarts itself.
 const revisionLabel = "clawbridge.config_revision"
@@ -80,15 +86,36 @@ type hostConfig struct {
 	PidsLimit      int64
 	Memory         int64
 	MemorySwap     int64
+	NanoCpus       int64
 	NetworkMode    string
 	RestartPolicy  restartPolicy
+	LogConfig      logConfig
 }
 
 type restartPolicy struct{ Name string }
 
+// logConfig is Docker's log driver and its options.
+type logConfig struct {
+	Type   string
+	Config map[string]string
+}
+
+// containerLogs caps what Docker keeps of a container's output, so a
+// chatty or hostile container can't fill the host's disk: two files of
+// 5 MB, rotated.
+func containerLogs() logConfig {
+	return logConfig{Type: "json-file", Config: map[string]string{"max-size": "5m", "max-file": "2"}}
+}
+
+const (
+	agentCPUs  = 500_000_000 // half a CPU, in NanoCpus
+	egressCPUs = 1_000_000_000
+)
+
 // agentSpec is the fixed container spec for one owner (§5.3): read-only root,
 // a small tmpfs, the image's non-root user, no capabilities, no new
-// privileges, 64 pids, 160 MiB with no swap, the owner's own internal
+// privileges, 64 pids, 160 MiB with no swap, half a CPU, rotated logs of
+// 10 MB at most, the owner's own internal
 // network, two env variables (the server and the egress proxy), the config
 // revision as its one label, and stdin open once for the agent credential.
 // agentd removes exited containers itself, so Docker never restarts one.
@@ -109,8 +136,10 @@ func agentSpec(image, serverURL, ref string, revision int64) createSpec {
 			PidsLimit:      64,
 			Memory:         agentMemory,
 			MemorySwap:     agentMemory,
+			NanoCpus:       agentCPUs,
 			NetworkMode:    networkName(ref),
 			RestartPolicy:  restartPolicy{Name: "no"},
+			LogConfig:      containerLogs(),
 		},
 	}
 }
@@ -192,15 +221,17 @@ type egressHostConfig struct {
 	PidsLimit      int64
 	Memory         int64
 	MemorySwap     int64
+	NanoCpus       int64
 	NetworkMode    string
 	RestartPolicy  restartPolicy
+	LogConfig      logConfig
 }
 
 const egressMemory = 32 << 20
 
 // egressSpec is the egress proxy's fixed spec: the clawbridge-agentd image
 // by digest running "egress", as nobody, read-only, with no capabilities,
-// on its outbound network. Its one host path is the policy directory,
+// one CPU and rotated logs, on its outbound network. Its one host path is the policy directory,
 // read-only; it has no env and no secrets. agentd connects it to each
 // owner's network, where the agents reach it as clawbridge-egress:3128.
 func egressSpec(image, policyDir string) egressCreate {
@@ -216,8 +247,10 @@ func egressSpec(image, policyDir string) egressCreate {
 			PidsLimit:      64,
 			Memory:         egressMemory,
 			MemorySwap:     egressMemory,
+			NanoCpus:       egressCPUs,
 			NetworkMode:    egressNetName,
 			RestartPolicy:  restartPolicy{Name: "no"},
+			LogConfig:      containerLogs(),
 		},
 	}
 }

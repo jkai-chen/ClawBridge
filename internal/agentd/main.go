@@ -114,8 +114,11 @@ func runProxy(ctx context.Context, args []string, getenv func(string) string, lo
 		l.Close()
 		return err
 	}
-	srv := &http.Server{Handler: p, ReadHeaderTimeout: 10 * time.Second}
+	srv := proxyServer(p)
+	// Requests in flight finish, for up to 5 s, before the proxy exits.
+	stopped := make(chan struct{})
 	go func() {
+		defer close(stopped)
 		<-ctx.Done()
 		shutdown, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
@@ -125,6 +128,7 @@ func runProxy(ctx context.Context, args []string, getenv func(string) string, lo
 	if err := srv.Serve(l); !errors.Is(err, http.ErrServerClosed) {
 		return err
 	}
+	<-stopped
 	return nil
 }
 

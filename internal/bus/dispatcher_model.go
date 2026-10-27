@@ -91,7 +91,7 @@ var (
 	SetupTestFailures = []string{"invalid_key", "no_model_access", "quota", "rate_limited", "no_tool_use", "egress_blocked", "provider_error", "timeout"}
 	// LauncherReportCodes are what agentd may report for doctor: a fixed
 	// set, open to additions.
-	LauncherReportCodes = []string{"agent_crashloop"}
+	LauncherReportCodes = []string{"agent_crashloop", "agent_start_failing"}
 )
 
 // ModelSeal holds the seal keys for owners' provider keys: the current

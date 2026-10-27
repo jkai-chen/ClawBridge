@@ -21,6 +21,7 @@
   "hello.json": "HelloResponse",
   "launcher-credential.json": "agentd",
   "launcher-report.json": "agentd",
+  "launcher-wanted-empty.json": "agentd",
   "launcher-wanted.json": "agentd",
   "ok.json": "OkResponse",
   "tool-abstain.json": "ToolResponse",

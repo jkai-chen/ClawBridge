@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -80,8 +81,7 @@ func (e *dockerError) Error() string { return fmt.Sprintf("docker %s: status %d"
 // list returns the clawbridge-agent-* containers, running or not. Others are
 // never returned, so never touched.
 func (d *docker) list(ctx context.Context) ([]agentContainer, error) {
-	filters := url.QueryEscape(`{"name":["` + containerPrefix + `"]}`)
-	out, err := d.call(ctx, http.MethodGet, "/containers/json?all=1&filters="+filters, nil)
+	out, err := d.call(ctx, http.MethodGet, "/containers/json?all=1&filters="+url.QueryEscape(containerListFilters), nil)
 	if err != nil {
 		return nil, err
 	}
@@ -108,8 +108,7 @@ func (d *docker) list(ctx context.Context) ([]agentContainer, error) {
 
 // listNetworks returns each owner network's subnet, by owner ref.
 func (d *docker) listNetworks(ctx context.Context) (map[string]netip.Prefix, error) {
-	filters := url.QueryEscape(`{"name":["` + networkPrefix + `"]}`)
-	out, err := d.call(ctx, http.MethodGet, "/networks?filters="+filters, nil)
+	out, err := d.call(ctx, http.MethodGet, "/networks?filters="+url.QueryEscape(networkListFilters), nil)
 	if err != nil {
 		return nil, err
 	}
@@ -130,9 +129,15 @@ func (d *docker) listNetworks(ctx context.Context) (map[string]netip.Prefix, err
 	return subnets, nil
 }
 
-func (d *docker) createNetwork(ctx context.Context, spec networkSpec) error {
-	_, err := d.call(ctx, http.MethodPost, "/networks/create", spec, http.StatusConflict)
-	return err
+// createNetwork creates a network from spec. existed is true when one by
+// that name was already there: its subnet may not be spec's.
+func (d *docker) createNetwork(ctx context.Context, spec networkSpec) (existed bool, err error) {
+	_, err = d.call(ctx, http.MethodPost, "/networks/create", spec)
+	var de *dockerError
+	if errors.As(err, &de) && de.status == http.StatusConflict {
+		return true, nil
+	}
+	return false, err
 }
 
 func (d *docker) removeNetwork(ctx context.Context, ref string) error {
@@ -140,24 +145,36 @@ func (d *docker) removeNetwork(ctx context.Context, ref string) error {
 	return err
 }
 
-// egressConnected reports whether the egress proxy is on ref's network.
-func (d *docker) egressConnected(ctx context.Context, ref string) (bool, error) {
+// ownerNetwork is ref's network as Docker has it: its subnet, valid only
+// when it is one /28 of the pool, and whether the egress proxy is on it.
+type ownerNetwork struct {
+	subnet netip.Prefix
+	egress bool
+}
+
+// inspectNetwork reads ref's network.
+func (d *docker) inspectNetwork(ctx context.Context, ref string) (ownerNetwork, error) {
 	out, err := d.call(ctx, http.MethodGet, "/networks/"+networkName(ref), nil)
 	if err != nil {
-		return false, err
+		return ownerNetwork{}, err
 	}
 	var n struct {
+		IPAM       struct{ Config []ipamConfig }
 		Containers map[string]struct{ Name string }
 	}
 	if err := json.Unmarshal(out, &n); err != nil {
-		return false, fmt.Errorf("docker network inspect: unreadable answer")
+		return ownerNetwork{}, fmt.Errorf("docker network inspect: unreadable answer")
 	}
-	for _, c := range n.Containers {
-		if c.Name == egressName {
-			return true, nil
+	var got ownerNetwork
+	if len(n.IPAM.Config) == 1 {
+		if subnet, ok := validAgentSubnet(n.IPAM.Config[0].Subnet); ok {
+			got.subnet = subnet
 		}
 	}
-	return false, nil
+	for _, c := range n.Containers {
+		got.egress = got.egress || c.Name == egressName
+	}
+	return got, nil
 }
 
 func (d *docker) connectEgress(ctx context.Context, ref string) error {
@@ -176,17 +193,27 @@ func (d *docker) create(ctx context.Context, name string, spec any) error {
 	return err
 }
 
-// running reports whether the container exists and whether it runs.
-func (d *docker) running(ctx context.Context, name string) (exists, running bool, err error) {
+// containerState is a container as Docker inspects it.
+type containerState struct {
+	exists, running bool
+	// image is the image it was created from, as named in its create.
+	image string
+}
+
+// inspect reads the container name.
+func (d *docker) inspect(ctx context.Context, name string) (containerState, error) {
 	out, err := d.call(ctx, http.MethodGet, "/containers/"+name+"/json", nil, http.StatusNotFound)
 	if err != nil {
-		return false, false, err
+		return containerState{}, err
 	}
-	var c struct{ State *struct{ Running bool } }
+	var c struct {
+		State  *struct{ Running bool }
+		Config struct{ Image string }
+	}
 	if json.Unmarshal(out, &c) != nil || c.State == nil {
-		return false, false, nil
+		return containerState{}, nil
 	}
-	return true, c.State.Running, nil
+	return containerState{exists: true, running: c.State.Running, image: c.Config.Image}, nil
 }
 
 func (d *docker) start(ctx context.Context, name string) error {
@@ -204,19 +231,27 @@ func (d *docker) remove(ctx context.Context, name string) error {
 	return err
 }
 
-// attach opens the container's stdin, before it starts. send writes the
-// credential and closes stdin, so the agent reads it once and sees EOF.
-func (d *docker) attach(ctx context.Context, ref string) (send func(string) error, err error) {
+// attachWait bounds the attach handshake and the credential's write. The
+// stream has no deadline in between, while the agent starts and the server
+// mints its credential.
+const attachWait = 30 * time.Second
+
+// attachment is a container's stdin, opened before it starts.
+type attachment struct{ conn net.Conn }
+
+// attach opens the container's stdin, before it starts. Only 101 opens it:
+// a 200 would be a plain answer that ends the stream.
+func (d *docker) attach(ctx context.Context, ref string) (*attachment, error) {
 	var dialer net.Dialer
 	conn, err := dialer.DialContext(ctx, "unix", d.socket)
 	if err != nil {
 		return nil, fmt.Errorf("docker attach: unreachable")
 	}
-	fail := func(err error) (func(string) error, error) {
+	fail := func(err error) (*attachment, error) {
 		conn.Close()
 		return nil, err
 	}
-	_ = conn.SetDeadline(time.Now().Add(30 * time.Second))
+	_ = conn.SetDeadline(time.Now().Add(attachWait))
 	req := "POST /containers/" + containerName(ref) + "/attach?stream=1&stdin=1 HTTP/1.1\r\n" +
 		"Host: docker\r\nConnection: Upgrade\r\nUpgrade: tcp\r\nContent-Length: 0\r\n\r\n"
 	if _, err := io.WriteString(conn, req); err != nil {
@@ -226,18 +261,25 @@ func (d *docker) attach(ctx context.Context, ref string) (send func(string) erro
 	if err != nil {
 		return fail(fmt.Errorf("docker attach: unreadable answer"))
 	}
-	resp.Body.Close()
-	if resp.StatusCode != http.StatusSwitchingProtocols && resp.StatusCode != http.StatusOK {
+	if resp.StatusCode != http.StatusSwitchingProtocols {
 		return fail(&dockerError{call: "POST /containers/" + containerName(ref) + "/attach", status: resp.StatusCode})
 	}
-	return func(credential string) error {
-		defer conn.Close()
-		if _, err := io.WriteString(conn, credential+"\n"); err != nil {
-			return fmt.Errorf("docker attach: the credential could not be written")
-		}
-		if c, ok := conn.(interface{ CloseWrite() error }); ok {
-			_ = c.CloseWrite()
-		}
-		return nil
-	}, nil
+	_ = conn.SetDeadline(time.Time{})
+	return &attachment{conn: conn}, nil
 }
+
+// send writes the credential and closes stdin, so the agent reads it once
+// and sees EOF.
+func (a *attachment) send(credential string) error {
+	_ = a.conn.SetWriteDeadline(time.Now().Add(attachWait))
+	if _, err := io.WriteString(a.conn, credential+"\n"); err != nil {
+		return fmt.Errorf("docker attach: the credential could not be written")
+	}
+	if c, ok := a.conn.(interface{ CloseWrite() error }); ok {
+		_ = c.CloseWrite()
+	}
+	return nil
+}
+
+// close closes the stream; the agent sees EOF if nothing was sent.
+func (a *attachment) close() { a.conn.Close() }

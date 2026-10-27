@@ -481,19 +481,25 @@ func (s *Store) healthOp(ctx context.Context, tx *transaction, w, p map[string]a
 // healthBound refuses a Linear project outside the project's binding, and
 // any team-board binding: health is per bound Linear project.
 func healthBound(ctx context.Context, tx *transaction, pid, lp string) error {
+	return linearProjectBound(ctx, tx, pid, lp, "project health")
+}
+
+// linearProjectBound checks lp is a Linear project of this project's
+// project-set binding; what names the feature in its refusals.
+func linearProjectBound(ctx context.Context, tx *transaction, pid, lp, what string) error {
 	rows, err := query(ctx, tx, `SELECT mapping,mapping_version FROM taskboard_bindings WHERE project_id=? AND mapping IS NOT NULL`, pid)
 	if err != nil {
 		return err
 	}
 	if len(rows) == 0 {
-		return scoped("link the task board before setting project health", "not_found")
+		return scoped("link the task board before setting "+what, "not_found")
 	}
 	b, err := readStoredMapping(str(rows[0], "mapping"), asInt(rows[0]["mapping_version"]))
 	if err != nil {
 		return scoped("this project's task board binding is unreadable", "binding_unreadable")
 	}
 	if b.Mode != "project_set" {
-		return invalid("project health needs a project-set binding; a team board has no Linear projects")
+		return invalid(what + " needs a project-set binding; a team board has no Linear projects")
 	}
 	if !containsString(b.LinearProjectIDs, lp) {
 		return scoped("that Linear project is not in this project's binding", "forbidden")

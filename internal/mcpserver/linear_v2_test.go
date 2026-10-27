@@ -35,7 +35,7 @@ func TestLinearMCPV2InitializationGuidanceIsAdditiveWithoutIO(t *testing.T) {
 		}
 	}
 	tools, err := newSession.ListTools(ctx, nil)
-	if err != nil || len(tools.Tools) != 38 || v1.count() != 0 || v2.count() != 0 {
+	if err != nil || len(tools.Tools) != 40 || v1.count() != 0 || v2.count() != 0 {
 		t.Fatal("initialization/list changed tools or performed provider IO", err)
 	}
 }
@@ -44,7 +44,7 @@ func TestLinearMCPV2ClosedNullablePinnedTools(t *testing.T) {
 	p := &recordingBoardV2{recordingBoard: recordingBoard{data: map[string]any{"ok": true}}}
 	ctx, cs := boardSession(t, p)
 	listed, err := cs.ListTools(ctx, nil)
-	if err != nil || len(listed.Tools) != 38 || p.count() != 0 {
+	if err != nil || len(listed.Tools) != 40 || p.count() != 0 {
 		t.Fatalf("native list: %v %d calls=%d", err, len(listed.Tools), p.count())
 	}
 	tools := map[string]*mcp.Tool{}
@@ -68,6 +68,8 @@ func TestLinearMCPV2ClosedNullablePinnedTools(t *testing.T) {
 		{"members", map[string]any{"team_id": id, "cursor": "opaque"}, true},
 		{"relation_add", map[string]any{"from_id": id, "to_id": to, "type": "blocked-by", "operation_id": "edge-add"}, false},
 		{"relation_remove", map[string]any{"from_id": id, "to_id": to, "type": "related", "operation_id": "edge-remove"}, false},
+		{"project_status", map[string]any{"linear_project": id, "suggest": true}, true},
+		{"project_status_set", map[string]any{"linear_project": id, "type": "started", "operation_id": "status-1", "confirm": true, "expected_status_id": to}, false},
 	}
 	for _, tc := range cases {
 		tool := tools["taskboard_"+tc.op+"_v2"]

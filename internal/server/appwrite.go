@@ -39,6 +39,9 @@ type AppWriter struct {
 	Now   func() time.Time
 	// Member, when set, replaces the membership check (tests).
 	Member func(ctx context.Context, identity bus.Identity, workspace string) error
+	// StatusLinear, when set, replaces the app's project status calls
+	// (tests).
+	StatusLinear projectStatusLinear
 
 	typesOnce sync.Once
 	types     *linearboard.StateTypeCache
@@ -133,6 +136,8 @@ func (w *AppWriter) Execute(parent context.Context, identity bus.Identity, r bus
 		return w.status(parent, identity, r)
 	case "linear_app_states":
 		return w.states(parent, identity, r)
+	case "linear_app_project_status", "linear_app_project_status_set":
+		return w.projectStatus(parent, identity, r)
 	case "linear_write":
 	default:
 		return bus.Result{}, appRefusal("unsupported operation")

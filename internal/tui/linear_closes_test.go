@@ -210,3 +210,37 @@ func TestLinearReviewMinimalPolicy(t *testing.T) {
 		t.Fatal(e)
 	}
 }
+
+// R114-M1: Enter right after c, before the new preview lands, sends
+// nothing; and an agents answer the shown preview doesn't reflect never
+// goes without its name.
+func TestLinearReviewEnterWaitsForThePreview(t *testing.T) {
+	source := &closesLinearSource{agents: map[string]bool{}}
+	m := closesPreview(t, source)
+	m, pending := m.UpdateModel(kC)
+	if pending == nil {
+		t.Fatal("c sent no preview")
+	}
+	m, cmd := m.UpdateModel(kEnter)
+	if cmd != nil || source.last("link") != nil || m.inputMode != inputNone || !strings.Contains(m.State().Error, "then press Enter") {
+		t.Fatal("Enter went through while the preview loaded:", source.last("link"), m.State().Error)
+	}
+	m, again := m.UpdateModel(kC)
+	if again != nil || m.linear.closes[closesP] != "agent" {
+		t.Fatal("c went through while the preview loaded:", m.linear.closes)
+	}
+	// Once the preview lands, Enter asks for the name as usual.
+	m, _ = m.UpdateModel(pending())
+	m = linearKeys(t, m, kEnter)
+	if source.last("link") != nil || m.inputMode != inputLinearClosesName {
+		t.Fatal("agents confirmed without the name")
+	}
+	// An answer the preview doesn't show is refused, not sent.
+	source = &closesLinearSource{agents: map[string]bool{}}
+	m = closesPreview(t, source)
+	m.linear.closes = map[string]string{closesP: "agent"}
+	m = linearKeys(t, m, kEnter)
+	if source.last("link") != nil || m.inputMode != inputNone || !strings.Contains(m.State().Error, "out of date") {
+		t.Fatal("a stale preview confirmed agents:", source.last("link"), m.State().Error)
+	}
+}

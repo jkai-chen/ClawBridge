@@ -283,6 +283,10 @@ type HandlerOptions struct {
 	// project after its confirm or release commits; nil without a watcher
 	// clock; it never blocks.
 	Nudge func(workspace, project string)
+	// NudgeProject asks the watcher for an early pass of a project by its
+	// ID, which runs its dispatcher; nil without a watcher clock; it never
+	// blocks.
+	NudgeProject func(projectID string)
 	// Auth chooses the sign-in methods; the zero value is Google only.
 	Auth AuthOptions
 	// Now is the clock device sign-in reads; nil is time.Now.
@@ -313,7 +317,7 @@ func NewHandlerWithOptions(store Executor, verifier Verifier, o HandlerOptions) 
 		now = time.Now
 	}
 	if s, ok := store.(ModelStore); ok {
-		model = newModelHandler(s, cmp.Or(o.ModelMaxAgents, defaultMaxAgents), now)
+		model = newModelHandler(s, cmp.Or(o.ModelMaxAgents, defaultMaxAgents), now, o.NudgeProject)
 	}
 	methods := []string{AuthGoogle}
 	if len(o.Auth.Methods) > 0 {

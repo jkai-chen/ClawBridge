@@ -40,21 +40,47 @@ func (s *Store) dispatcherCasesDue(ctx context.Context, tx *transaction, pid str
 	if err != nil {
 		return nil, err
 	}
-	out := map[string]any{"enabled": meta["enabled"], "policy_revision": meta["revision"], "domains": d.Domains, "cases": []any{}}
+	out := map[string]any{"enabled": meta["enabled"], "policy_revision": meta["revision"], "domains": d.Domains, "cases": []any{}, "mode": meta["mode"], "model": ""}
+	nowRaw, err := dbStamp(ctx, tx)
+	if err != nil {
+		return nil, err
+	}
+	if meta["enabled"] != true || meta["mode"] != "model" {
+		// Off, or switched to rules: no model case stays open (R106-L7).
+		if err = closeModelCases(ctx, tx, pid, nowRaw); err != nil {
+			return nil, err
+		}
+	}
 	if meta["enabled"] != true {
 		return out, nil
 	}
+	if meta["mode"] == "model" {
+		// In model mode (d5): close the cases past their deadline, and with
+		// no agent to take them, the ones nobody leased; their claims go to
+		// the rules. A leased case stays open to its deadline (D5-M2).
+		if _, err = expireCases(ctx, tx, pid, nowRaw); err != nil {
+			return nil, err
+		}
+		availability, err := modelAvailability(ctx, tx, pid, nowRaw)
+		if err != nil {
+			return nil, err
+		}
+		out["model"] = availability
+		if availability != "available" {
+			if _, err = tx.ExecContext(ctx, `UPDATE dispatcher_cases SET closed_at=?,outcome=? WHERE project_id=? AND closed_at IS NULL AND lease_key IS NULL`, nowRaw, availability, pid); err != nil {
+				return nil, err
+			}
+		}
+	}
 	rows, err := query(ctx, tx, `SELECT a.id,a.revision,a.issue_uuid,a.issue_identifier,a.issue_project_id,a.issue_labels,a.proposed_at,s.id AS session_id,s.name AS session_name,s.owner_principal,s.status,s.last_seen,s.alive_until,s.alive_state,
 		(SELECT COUNT(*) FROM session_assignments h WHERE h.project_id=a.project_id AND h.state='confirmed' AND h.issue_uuid=a.issue_uuid AND h.issue_uuid<>'' AND h.session_id<>a.session_id) AS holders,
-		(SELECT COUNT(*) FROM dispatcher_decisions w WHERE w.project_id=a.project_id AND w.subject_id=a.id AND w.subject_revision=a.revision AND w.action='wait') AS waits
+		(SELECT COUNT(*) FROM dispatcher_decisions w WHERE w.project_id=a.project_id AND w.subject_id=a.id AND w.subject_revision=a.revision AND w.action='wait') AS waits,
+		(SELECT CASE WHEN c.closed_at IS NOT NULL THEN 'closed:'||c.outcome WHEN c.lease_key IS NOT NULL THEN 'leased' ELSE 'open' END FROM dispatcher_cases c WHERE c.project_id=a.project_id AND c.kind='decide' AND c.subject_id=a.id AND c.subject_revision=a.revision) AS model_case,
+		(SELECT c.result FROM dispatcher_cases c WHERE c.project_id=a.project_id AND c.kind='decide' AND c.subject_id=a.id AND c.subject_revision=a.revision) AS model_result
 		FROM session_assignments a JOIN sessions s ON s.id=a.session_id AND s.project_id=a.project_id
 		WHERE a.project_id=? AND a.state='proposed' AND s.role<>'system'
 		AND NOT EXISTS (SELECT 1 FROM dispatcher_decisions f WHERE f.project_id=a.project_id AND f.subject_id=a.id AND f.subject_revision=a.revision AND f.action NOT IN ('wait','superseded'))
 		ORDER BY a.proposed_at,a.id LIMIT ?`, pid, dispatcherCasesPerTick)
-	if err != nil {
-		return nil, err
-	}
-	nowRaw, err := dbStamp(ctx, tx)
 	if err != nil {
 		return nil, err
 	}
@@ -86,6 +112,9 @@ func (s *Store) dispatcherCasesDue(ctx context.Context, tx *transaction, pid str
 			// cases carry their domain's stale_after_hours.
 			"liveness": liveness(r, now, defaultStaleAfterHour),
 			"holders":  asInt(r["holders"]), "waits": asInt(r["waits"]), "age_seconds": int(age / time.Second),
+			// The claim's model case at this revision: "" (none), open,
+			// leased, or closed:<why>.
+			"model_case": modelCaseState(str(r, "model_case"), str(r, "model_result")),
 		})
 	}
 	out["cases"] = cases
@@ -370,4 +399,25 @@ func issueRouting(ctx context.Context, tx *transaction, pid, issue string) (stri
 	var labels []string
 	_ = json.Unmarshal([]byte(str(rows[0], "issue_labels")), &labels)
 	return str(rows[0], "issue_project_id"), labels
+}
+
+// modelCaseState names how a claim's model case stands. A decided case
+// leaves its claim pending only when the model chose wait (model_wait: the
+// rules decide next, d5) or its decision was superseded.
+func modelCaseState(state, result string) string {
+	if state != "closed:decide" {
+		return state
+	}
+	var r struct {
+		Guardrail string `json:"guardrail"`
+		Action    string `json:"action_taken"`
+	}
+	_ = json.Unmarshal([]byte(result), &r)
+	if r.Guardrail == "overridden" {
+		return "closed:superseded"
+	}
+	if r.Action == "wait" {
+		return "closed:model_wait"
+	}
+	return state
 }

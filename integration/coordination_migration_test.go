@@ -113,7 +113,7 @@ func TestCoordinationSQLiteActualLegacyMigrationAndRetry(t *testing.T) {
 		db.QueryRow("PRAGMA user_version").Scan(&version)
 		db.QueryRow("SELECT COUNT(*) FROM sessions WHERE notification_policy='accept'").Scan(&defaults)
 		db.QueryRow("SELECT COUNT(*) FROM messages WHERE coordination IS NULL").Scan(&legacy)
-		if version != 23 || defaults != 2 || legacy != 1 {
+		if version != 24 || defaults != 2 || legacy != 1 {
 			t.Fatalf("migration/reopen version/defaults=%d/%d/%d", version, defaults, legacy)
 		}
 		if before != coordinationTableSnapshot(t, db, columns) {
@@ -156,7 +156,7 @@ func TestCoordinationSQLiteMigrationFailureAtomicAndNewerRefused(t *testing.T) {
 					t.Fatal(err)
 				}
 			} else {
-				db.Exec("PRAGMA user_version=24")
+				db.Exec("PRAGMA user_version=25")
 			}
 			cols := coordinationLegacyColumns(t, db)
 			before := coordinationTableSnapshot(t, db, cols)
@@ -172,7 +172,7 @@ func TestCoordinationSQLiteMigrationFailureAtomicAndNewerRefused(t *testing.T) {
 			db.QueryRow("PRAGMA user_version").Scan(&version)
 			want := 1
 			if mode == "newer-schema" {
-				want = 24
+				want = 25
 			}
 			if version != want {
 				t.Fatal("failed migration committed schema version")

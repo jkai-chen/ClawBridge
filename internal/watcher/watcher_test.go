@@ -222,7 +222,7 @@ func (a fakeApp) GraphQL(_ context.Context, query string, vars map[string]any, o
 		data = map[string]any{"project": map[string]any{"id": vars["id"], "status": a.f.status(a.f.projectStatus)}}
 	case healthActivityQuery:
 		data = map[string]any{"issue": a.f.activity[vars["id"].(string)]}
-	case dispatchIssueQuery:
+	case dispatchIssueQuery, dispatchIssueTextQuery:
 		issue, ok := a.f.dispatchIssues[vars["id"].(string)]
 		if !ok {
 			return errors.New("inaccessible issue")

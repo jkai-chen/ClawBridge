@@ -128,7 +128,7 @@ func (s *Store) migrate() error {
 	if err = tx.QueryRow("PRAGMA user_version").Scan(&version); err != nil {
 		return err
 	}
-	if version > 23 {
+	if version > 24 {
 		return errors.New("database schema is newer than this ClawBridge binary")
 	}
 	if version == 0 {
@@ -250,6 +250,11 @@ func (s *Store) migrate() error {
 	}
 	if version < 23 {
 		if _, err = tx.Exec(dispatcherModelSchemaV23 + `PRAGMA user_version=23;`); err != nil {
+			return err
+		}
+	}
+	if version < 24 {
+		if _, err = tx.Exec(dispatcherCasesSchemaV24 + `PRAGMA user_version=24;`); err != nil {
 			return err
 		}
 	}

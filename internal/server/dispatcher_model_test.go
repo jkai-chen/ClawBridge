@@ -38,6 +38,10 @@ type modelEnv struct {
 	launcher string
 	// bodies is every response body but agent/config's.
 	bodies strings.Builder
+	// seen is each path's last response body, for the golden files.
+	seen map[string][]byte
+	// dbPath is the store's file.
+	dbPath string
 }
 
 // newModelEnv serves a local store with a model key pending its test and
@@ -99,6 +103,10 @@ func (e *modelEnv) do(method, path, token string, body any, header ...string) (i
 	if path != AgentConfigPath {
 		e.bodies.Write(raw)
 	}
+	if e.seen == nil {
+		e.seen = map[string][]byte{}
+	}
+	e.seen[path] = raw
 	var out map[string]any
 	_ = json.Unmarshal(raw, &out)
 	return res.StatusCode, out

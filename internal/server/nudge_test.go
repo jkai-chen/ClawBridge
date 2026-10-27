@@ -38,6 +38,11 @@ func (p *passes) Markers(_ context.Context, pid string) any {
 	return nil
 }
 
+// Fallback records a fallback pass as "fallback:" and the project.
+func (p *passes) Fallback(ctx context.Context, pid string) any {
+	return p.Markers(ctx, "fallback:"+pid)
+}
+
 func (p *passes) count() int {
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -355,5 +360,65 @@ func TestTheClockHandsLeftRowsToTheNudges(t *testing.T) {
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("no nudge pass followed a tick that left rows")
+	}
+}
+
+// R106-M1: a confirm's nudge runs markers only; a model case's fallback
+// nudge runs the dispatcher too, and a marker nudge in the same minute
+// doesn't downgrade it.
+func TestNudgeFallbackRunsTheDispatcher(t *testing.T) {
+	p := &passes{}
+	n, clock := testNudger(p, oneAtATime(&countTicks{ticks: make(chan struct{}, 8)}))
+	n.Nudge("w", "p1")
+	n.serve(context.Background())
+	if p.count() != 1 || p.pids[0] != "id-p1" {
+		t.Fatal(p.pids)
+	}
+	*clock = clock.Add(nudgeEvery)
+	n.NudgeProject("id-p1")
+	n.Nudge("w", "p1")
+	n.serve(context.Background())
+	if p.count() != 2 || p.pids[1] != "fallback:id-p1" {
+		t.Fatal("the fallback nudge didn't run the dispatcher", p.pids)
+	}
+}
+
+// R106-M1 over #117: a tick that left marker rows queues a markers-only
+// pass, never the dispatcher, and never downgrades a fallback already
+// asked for; a fallback asked for while its pass is blocked by a tick is
+// kept for the retry.
+func TestTickLeftoversNeverDispatch(t *testing.T) {
+	left := []watcher.ProjectTick{{ProjectID: "id-p1", Comments: &linearboard.WatchCycle{MarkersLeft: 2, MarkersStopped: "time"}}}
+	p := &passes{}
+	n, clock := testNudger(p, oneAtATime(&countTicks{ticks: make(chan struct{}, 8)}))
+	n.Ticked(left)
+	n.serve(context.Background())
+	if p.count() != 1 || p.pids[0] != "id-p1" {
+		t.Fatal("a tick's leftovers ran:", p.pids)
+	}
+	*clock = clock.Add(nudgeEvery)
+	n.NudgeProject("id-p1")
+	n.Ticked(left)
+	n.serve(context.Background())
+	if p.count() != 2 || p.pids[1] != "fallback:id-p1" {
+		t.Fatal("a tick's leftovers downgraded the fallback:", p.pids)
+	}
+	// A tick holds the flight: the fallback waits for the retry.
+	*clock = clock.Add(nudgeEvery)
+	n.NudgeProject("id-p1")
+	n.flight.running.Store(true)
+	if wait := n.serve(context.Background()); wait != nudgeRetry || p.count() != 2 {
+		t.Fatal("ran beside a tick:", wait, p.pids)
+	}
+	n.flight.running.Store(false)
+	n.serve(context.Background())
+	if p.count() != 3 || p.pids[2] != "fallback:id-p1" {
+		t.Fatal("the blocked fallback was lost:", p.pids)
+	}
+	// It ran once: nothing is pending after it.
+	*clock = clock.Add(nudgeEvery)
+	n.serve(context.Background())
+	if p.count() != 3 {
+		t.Fatal("the fallback ran again:", p.pids)
 	}
 }

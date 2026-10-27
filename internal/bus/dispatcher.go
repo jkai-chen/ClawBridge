@@ -59,7 +59,7 @@ const (
 // proposes. Neither ever touches a policy, the binding, labels, roles,
 // intake or Linear administration.
 var dispatcherAllowed = map[string]map[string]bool{
-	DispatcherSessionName:      set("dispatcher_get", "list_sessions", "taskboard_get_v2", "assignment_confirm", "assignment_release", "dispatcher_cases_due", "dispatcher_decision_record", "dispatcher_escalate", "dispatcher_route", "dispatcher_release_notice"),
+	DispatcherSessionName:      set("dispatcher_get", "list_sessions", "taskboard_get_v2", "assignment_confirm", "assignment_release", "dispatcher_cases_due", "dispatcher_case_open", "dispatcher_decision_record", "dispatcher_escalate", "dispatcher_route", "dispatcher_release_notice"),
 	DispatcherModelSessionName: set("dispatcher_get", "list_sessions", "dispatcher_case_read", "dispatcher_case_outcome", "dispatcher_route", "dispatcher_ask_session"),
 }
 
@@ -606,6 +606,12 @@ func (s *Store) ExecuteDispatcher(ctx context.Context, projectID, session string
 		out, err = scopedStore.dispatcherCasesDue(ctx, tx, projectID)
 	case "dispatcher_decision_record":
 		out, err = scopedStore.dispatcherRecord(ctx, tx, w, p, actor, r.Args)
+	case "dispatcher_case_open":
+		out, err = scopedStore.dispatcherCaseOpen(ctx, tx, projectID, r.Args)
+	case "dispatcher_case_read":
+		out, err = scopedStore.dispatcherCaseRead(ctx, tx, projectID, r.Args)
+	case "dispatcher_case_outcome":
+		out, err = scopedStore.dispatcherCaseOutcome(ctx, tx, w, p, r.Args)
 	default:
 		// Allowed, and built in a later step of the dispatcher.
 		err = scoped(fmt.Sprintf("operation %s is not available in this release", r.Operation), "unsupported")

@@ -3,6 +3,7 @@ package watcher
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"time"
 
 	"clawbridge/internal/bus"
@@ -16,6 +17,15 @@ import (
 // and only while the comment watch keeps its reserve), runs the rules and
 // the guardrails, and records each decision, which the bus re-checks and
 // carries out as the dispatcher session.
+//
+// In mode model (DISPATCHER-MODEL-API d5) a claim with an agent available
+// gets a decide case instead, opened with the facts read here and the
+// guardrails' permitted set; the agent decides it through the
+// dispatcher-model API. A claim whose case is still open is left to it
+// (D5-M2). The rules decide at once when no agent is available, and on the
+// tick after a claim's case closed without a final decision (abstained,
+// expired, or a model wait), since a subject revision gets one model case
+// (D5-M1); each such record says model_fallback and why.
 
 const (
 	dispatchReadsPerTick = 5
@@ -28,6 +38,10 @@ type DispatchRun struct {
 	Cases   int            `json:"cases"`
 	Reads   int            `json:"reads"`
 	Actions map[string]int `json:"actions,omitempty"`
+	// Opened and Waiting count the model cases opened this tick and the
+	// claims left to an open one.
+	Opened  int `json:"model_opened,omitempty"`
+	Waiting int `json:"model_waiting,omitempty"`
 }
 
 type dispatchCase struct {
@@ -44,6 +58,7 @@ type dispatchCase struct {
 	Holders         int      `json:"holders"`
 	Waits           int      `json:"waits"`
 	AgeSeconds      int      `json:"age_seconds"`
+	ModelCase       string   `json:"model_case"`
 }
 
 func (w *Watcher) dispatcher(ctx context.Context, pid string, fence map[string]any) (*DispatchRun, error) {
@@ -57,6 +72,8 @@ func (w *Watcher) dispatcher(ctx context.Context, pid string, fence map[string]a
 		PolicyRevision int64                  `json:"policy_revision"`
 		Domains        []bus.DispatcherDomain `json:"domains"`
 		Cases          []dispatchCase         `json:"cases"`
+		Mode           string                 `json:"mode"`
+		Model          string                 `json:"model"`
 	}
 	if err = json.Unmarshal(raw, &due); err != nil {
 		return nil, err
@@ -75,17 +92,50 @@ func (w *Watcher) dispatcher(ctx context.Context, pid string, fence map[string]a
 			PolicyRevision: due.PolicyRevision, FactsRevision: due.PolicyRevision,
 			Now: now,
 		}
+		fallback := ""
+		if due.Mode == "model" {
+			switch {
+			case dc.ModelCase == "open" || dc.ModelCase == "leased":
+				run.Waiting++
+				continue
+			case dc.ModelCase != "":
+				fallback = strings.TrimPrefix(dc.ModelCase, "closed:")
+			case due.Model != "available":
+				fallback = due.Model
+			}
+		}
 		source, readFailed := "client", false
+		var text *IssueText
 		if dispatch.NeedsRead(c) {
 			readFailed = true
 			if run.Reads < dispatchReadsPerTick && w.dispatchCharge(ctx, pid, fence) {
 				run.Reads++
-				if facts, e := w.IssueFacts(ctx, dc.IssueUUID); e == nil {
+				if due.Mode == "model" && fallback == "" {
+					if facts, t, e := w.IssueFactsText(ctx, dc.IssueUUID); e == nil {
+						c.Issue, source, readFailed, text = facts, "app", false, &t
+					}
+				} else if facts, e := w.IssueFacts(ctx, dc.IssueUUID); e == nil {
 					c.Issue, source, readFailed = facts, "app", false
 				}
 			}
 		}
-		proposal, action, reason := dispatch.Run(c, readFailed, dc.Waits, time.Duration(dc.AgeSeconds)*time.Second)
+		age := time.Duration(dc.AgeSeconds) * time.Second
+		if due.Mode == "model" && fallback == "" {
+			// Without the authoritative read the model couldn't confirm:
+			// the rules wait for it, and the model gets the claim later.
+			if !readFailed {
+				opened, err := w.openModelCase(ctx, pid, due.PolicyRevision, dc, c, source, text, dispatch.Rules(c, false, dc.Waits, age).Domain)
+				if err != nil {
+					return run, err
+				}
+				if opened {
+					run.Opened++
+				}
+				continue
+			}
+			fallback = "facts_unavailable"
+		}
+		proposal, action, reason := dispatch.Run(c, readFailed, dc.Waits, age)
 		guardrail := "permitted"
 		if action != proposal.Action {
 			guardrail = "overridden"
@@ -94,6 +144,7 @@ func (w *Watcher) dispatcher(ctx context.Context, pid string, fence map[string]a
 			"subject_id": dc.SubjectID, "subject_revision": dc.SubjectRevision, "policy_revision": due.PolicyRevision,
 			"engine": "rules", "proposal": string(proposal.Action), "reason_code": reason, "guardrail": guardrail,
 			"action": string(action), "domain": proposal.Domain, "facts_source": source, "app_project_id": appProject(c, source),
+			"explanation": modelFallback(fallback),
 		}})
 		if err != nil {
 			return run, err
@@ -105,6 +156,62 @@ func (w *Watcher) dispatcher(ctx context.Context, pid string, fence map[string]a
 		}
 	}
 	return run, nil
+}
+
+// modelFallback is a rules record's explanation in model mode: why the
+// model didn't decide it.
+func modelFallback(why string) string {
+	if why == "" {
+		return ""
+	}
+	return "model_fallback:" + why
+}
+
+// openModelCase opens the claim's decide case: the issue's facts (state
+// only from the app's read), the domains it matches and how, the
+// guardrails' permitted set, and the issue's text only when this tick read
+// it (Q8).
+func (w *Watcher) openModelCase(ctx context.Context, pid string, policyRevision int64, dc dispatchCase, c dispatch.Case, source string, text *IssueText, domain string) (bool, error) {
+	state := "unknown"
+	if c.Issue.Authoritative {
+		state = c.Issue.StateType
+	}
+	var project any
+	if c.Issue.ProjectID != "" {
+		project = c.Issue.ProjectID
+	}
+	labels := c.Issue.Labels
+	if labels == nil {
+		labels = []string{}
+	}
+	matches := []any{}
+	for _, d := range dispatch.ProjectDomains(c.Issue, c.Domains) {
+		matches = append(matches, map[string]any{"domain": d.ID, "by": "project"})
+	}
+	for _, d := range dispatch.LabelDomains(c.Issue, c.Domains) {
+		matches = append(matches, map[string]any{"domain": d.ID, "by": "label"})
+	}
+	permitted := []any{}
+	for _, a := range dispatch.Permitted(c) {
+		switch a {
+		case dispatch.Confirm, dispatch.Decline, dispatch.Wait, dispatch.Escalate:
+			permitted = append(permitted, string(a))
+		}
+	}
+	args := map[string]any{
+		"subject_id": dc.SubjectID, "subject_revision": dc.SubjectRevision, "policy_revision": policyRevision,
+		"issue":          map[string]any{"id": dc.IssueUUID, "state_type": state, "project_id": project, "labels": labels, "authoritative": c.Issue.Authoritative},
+		"domain_matches": matches, "permitted": permitted, "facts_source": source, "app_project_id": appProject(c, source), "domain": domain,
+	}
+	if text != nil {
+		args["untrusted"] = map[string]any{"title": text.Title, "description_excerpt": text.Description}
+	}
+	out, err := w.Store.ExecuteDispatcher(ctx, pid, bus.DispatcherSessionName, bus.Request{Operation: "dispatcher_case_open", Args: args})
+	if err != nil {
+		return false, err
+	}
+	m, _ := out.Data.(map[string]any)
+	return m["opened"] == true, nil
 }
 
 // appProject is the issue's project as the app read it, or "".

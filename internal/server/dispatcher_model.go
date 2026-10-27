@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"strconv"
 	"strings"
@@ -59,15 +60,20 @@ type ModelStore interface {
 	RenewAgentTokens(ctx context.Context, credential, secret string) ([]bus.ModelProjectToken, error)
 	AgentTestResult(ctx context.Context, credential, secret string, revision int, result, reason string) error
 	AgentStatus(ctx context.Context, credential, secret, status string) error
+	ModelHello(ctx context.Context, token string, maxAgents int) (bus.ModelHello, error)
+	ModelNextCase(ctx context.Context, token string, maxAgents int) (bus.ModelNext, error)
+	ModelTool(ctx context.Context, token, caseID, tool string, args map[string]any) (bus.ModelToolResult, error)
 }
 
-// modelPath reports whether path is one of the launcher or agent endpoints.
+// modelPath reports whether path is one of the launcher, agent or case
+// endpoints.
 func modelPath(path string) bool {
 	switch path {
-	case LauncherWantedPath, LauncherCredentialPath, LauncherReportPath, AgentConfigPath, AgentRenewPath, AgentTestResultPath, AgentStatusPath:
+	case LauncherWantedPath, LauncherCredentialPath, LauncherReportPath, AgentConfigPath, AgentRenewPath, AgentTestResultPath, AgentStatusPath, ModelHelloPath, ModelCasesNextPath:
 		return true
 	}
-	return false
+	_, _, ok := casePath(path)
+	return ok
 }
 
 // modelFail answers in the model API's own error shape.
@@ -81,22 +87,39 @@ func modelFail(w http.ResponseWriter, status int, code string) {
 	_ = json.NewEncoder(w).Encode(body)
 }
 
+// modelRefuse answers a case refusal; tool_refused names the tool.
+func modelRefuse(w http.ResponseWriter, e caseError) {
+	status, known := caseRefusals[e.code]
+	if !known {
+		status, e.code = 503, "server_busy"
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	body := map[string]any{"error": e.code}
+	if e.code == "tool_refused" && codePattern.MatchString(e.tool) {
+		body["tool"] = e.tool
+	}
+	_ = json.NewEncoder(w).Encode(body)
+}
+
 func modelOK(w http.ResponseWriter, v any) {
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(v)
 }
 
-// newModelHandler serves the launcher and agent endpoints for store.
-func newModelHandler(store ModelStore, maxAgents int, now func() time.Time) http.Handler {
+// newModelHandler serves the launcher, agent and case endpoints for store.
+// nudge, when set, asks the watcher for an early pass of a project.
+func newModelHandler(store ModelStore, maxAgents int, now func() time.Time, nudge func(string)) http.Handler {
 	failures := &modelLockouts{now: now, keys: map[string]*lockoutState{}}
 	// Each authenticated token's calls: polls and renewals are well under
 	// these. Only calls that authenticated are counted, so random tokens
 	// can't fill the table.
 	calls := &tokenRate{now: now, perMinute: 60, seen: map[string]window{}}
 	reports := &tokenRate{now: now, perMinute: 6, seen: map[string]window{}}
+	polls := &casePolls{held: map[string]bool{}, limit: modelLockoutKeys}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		want := http.MethodPost
-		if r.URL.Path == LauncherWantedPath {
+		if r.URL.Path == LauncherWantedPath || r.URL.Path == ModelHelloPath {
 			want = http.MethodGet
 		}
 		if r.Method != want {
@@ -107,23 +130,37 @@ func newModelHandler(store ModelStore, maxAgents int, now func() time.Time) http
 			modelFail(w, 400, "unsupported_version")
 			return
 		}
+		// A credential or token for the agent travels only over HTTPS, or
+		// to a client on this machine (§1).
+		if strings.HasPrefix(r.URL.Path, "/v1/dispatcher-model/") && plainRemote(r) {
+			modelFail(w, 403, "unauthorized")
+			return
+		}
 		address := "ip:" + clientAddress(r)
 		token, ok := modelBearer(r)
-		prefix := "token:" + token[:min(len(token), 12)]
+		tokenPrefix := "token:" + token[:min(len(token), 12)]
 		// A failure from a locked-out address or prefix gets 429; it is
 		// counted only while not locked out, so the lockout runs its
 		// fixed 10 minutes.
 		unauthorized := func() {
-			if failures.locked(address) || failures.locked(prefix) {
+			if failures.locked(address) || failures.locked(tokenPrefix) {
 				modelFail(w, 429, "rate_limited")
 				return
 			}
 			failures.fail(address)
-			failures.fail(prefix)
+			failures.fail(tokenPrefix)
 			modelFail(w, 401, "unauthorized")
 		}
-		launcher := strings.HasPrefix(r.URL.Path, "/v1/dispatcher/launcher/")
-		if !ok || launcher != strings.HasPrefix(token, "cbl_") || !launcher && !strings.HasPrefix(token, "cba_") {
+		// Each endpoint takes one kind of token: the launcher's (cbl_), the
+		// agent credential (cba_), or a project token (cbm_).
+		prefix := "cba_"
+		switch {
+		case strings.HasPrefix(r.URL.Path, "/v1/dispatcher/launcher/"):
+			prefix = "cbl_"
+		case !strings.HasPrefix(r.URL.Path, "/v1/dispatcher-model/agent/"):
+			prefix = "cbm_"
+		}
+		if !ok || !strings.HasPrefix(token, prefix) {
 			unauthorized()
 			return
 		}
@@ -143,13 +180,41 @@ func newModelHandler(store ModelStore, maxAgents int, now func() time.Time) http
 				return
 			}
 		}
-		ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
+		// A long-poll may wait casePollLimit before its last check.
+		limitTime := 15 * time.Second
+		if r.URL.Path == ModelCasesNextPath {
+			limitTime += casePollLimit
+		}
+		ctx, cancel := context.WithTimeout(r.Context(), limitTime)
 		defer cancel()
-		out, err := serveModel(ctx, store, r, token, body, maxAgents)
+		var out any
+		var err error
+		switch caseID, tool, isTool := casePath(r.URL.Path); {
+		case r.URL.Path == ModelHelloPath:
+			out, err = store.ModelHello(ctx, token, maxAgents)
+		case r.URL.Path == ModelCasesNextPath:
+			out, err = serveCasesNext(ctx, store, token, body, maxAgents, polls, nudge)
+		case isTool:
+			out, err = serveCaseTool(ctx, store, token, caseID, tool, body, nudge)
+		default:
+			out, err = serveModel(ctx, store, r, token, body, maxAgents)
+		}
 		if err == nil || !errors.Is(err, bus.ErrModelUnauthorized) && !errors.Is(err, bus.ErrModelUnavailable) {
 			limit.record(tokenKey(token))
 		}
+		var refusal caseError
 		switch {
+		case errors.As(err, &refusal):
+			modelRefuse(w, refusal)
+		case errors.Is(err, bus.ErrAgentCap):
+			modelFail(w, 503, "agent_cap")
+		case errors.Is(err, errPollBusy):
+			// The agent reads retry_after from the body; the header is for
+			// anything else.
+			w.Header().Set("Retry-After", "1")
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(503)
+			_ = json.NewEncoder(w).Encode(map[string]any{"error": "server_busy", "retry_after": 1})
 		case errors.Is(err, bus.ErrModelUnavailable):
 			// No seal key on this server: not the caller's failure.
 			modelFail(w, 401, "unauthorized")
@@ -165,7 +230,13 @@ func newModelHandler(store ModelStore, maxAgents int, now func() time.Time) http
 			case "invalid":
 				modelFail(w, 400, "invalid_argument")
 			case "not_found":
-				modelFail(w, 404, "not_found")
+				// The case API's code for it; agentd's launcher keeps
+				// not_found.
+				if strings.HasPrefix(r.URL.Path, "/v1/dispatcher/launcher/") || strings.HasPrefix(r.URL.Path, "/v1/dispatcher-model/agent/") {
+					modelFail(w, 404, "not_found")
+				} else {
+					modelFail(w, 404, "case_not_found")
+				}
 			default:
 				modelFail(w, 503, "server_busy")
 			}
@@ -297,6 +368,29 @@ func serveModel(ctx context.Context, store ModelStore, r *http.Request, token st
 		return map[string]any{"ok": true}, store.AgentStatus(ctx, token, secret, status)
 	}
 	return nil, errModelArgument
+}
+
+// plainRemote reports a request that reached the server over plain HTTP
+// from another machine. Behind the bundled proxy (a loopback or private
+// peer) the scheme is the proxy's X-Forwarded-Proto; otherwise it is the
+// connection's own.
+func plainRemote(r *http.Request) bool {
+	scheme := "http"
+	if r.TLS != nil {
+		scheme = "https"
+	}
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		host = r.RemoteAddr
+	}
+	if peer := net.ParseIP(host); peer != nil && (peer.IsLoopback() || peer.IsPrivate()) {
+		if values := r.Header.Values("X-Forwarded-Proto"); len(values) > 0 {
+			entries := strings.Split(values[len(values)-1], ",")
+			scheme = strings.ToLower(strings.TrimSpace(entries[len(entries)-1]))
+		}
+	}
+	client := net.ParseIP(clientAddress(r))
+	return scheme != "https" && (client == nil || !client.IsLoopback())
 }
 
 // modelBearer is the request's one Bearer credential, at most 256 bytes.

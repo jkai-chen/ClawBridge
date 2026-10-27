@@ -7,6 +7,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 )
 
 // On the hosted authority: only a project owner sets up a model key, which
@@ -183,5 +184,65 @@ func TestPostgresDispatcherModelConcurrency(t *testing.T) {
 		if err = f.s.db.QueryRowContext(ctx, `SELECT flagged FROM dispatcher_agent_credentials WHERE owner_principal=$1 AND revoked_at IS NULL`, f.owner).Scan(&flagged); err != nil || flagged != "second_redemption" {
 			t.Fatal("round", round, "the second redemption was not flagged:", flagged, err)
 		}
+	}
+}
+
+// d5 on the hosted authority: two key-holders' agents polling at once
+// lease an open case exactly once.
+func TestPostgresModelCaseLeaseOnce(t *testing.T) {
+	f := newPGIdentityFixture(t)
+	ctx := context.Background()
+	var pid string
+	if err := f.s.db.QueryRowContext(ctx, `SELECT p.id FROM projects p JOIN workspaces w ON w.id=p.workspace_id WHERE w.name=$1`, f.workspace).Scan(&pid); err != nil {
+		t.Fatal(err)
+	}
+	exec := func(q string, args ...any) {
+		t.Helper()
+		if _, err := f.s.db.ExecContext(ctx, q, args...); err != nil {
+			t.Fatal(err)
+		}
+	}
+	exec(`INSERT INTO dispatcher_policies(project_id,revision,enabled,mode,domains,updated_at,updated_by_principal) VALUES($1,1,1,'model','{"domains":[]}','2026-01-01T00:00:00Z','x')`, pid)
+	now := layout(time.Now())
+	var tokens [2]string
+	for i, holder := range []string{"a-" + newID("h") + "@identity-test.example", "b-" + newID("h") + "@identity-test.example"} {
+		exec(`INSERT INTO dispatcher_model_keys(owner_principal,state,provider_id,api,base_url,model,ciphertext,nonce,key_fingerprint,config_revision,caps,egress_text_version,egress_confirmed_at,created_by,created_at) VALUES($1,'active','anthropic','anthropic-messages','https://api.anthropic.com','claude-test','x','y','-key',1,'{"daily_tokens":500000,"runs_per_hour":100,"runs_per_day":1000}','v2','2026-01-01T00:00:00Z',$1,'2026-01-01T00:00:00Z')`, holder)
+		token, err := randomToken("cbm_")
+		if err != nil {
+			t.Fatal(err)
+		}
+		tokens[i] = token
+		exec(`INSERT INTO dispatcher_model_tokens(id,project_id,token_sha256,created_by_principal,created_at,expires_at,last_used_at) VALUES($1,$2,$3,$4,$5,'2999-01-01T00:00:00.000000000Z',$5)`, newID("mtok_"), pid, tokenDigest(tokens[i]), holder, now)
+	}
+	// Each round's case is for a live claim: next serves no other.
+	registered := f.must(f.owner, "sub-owner", Request{Operation: "register_session", Workspace: f.workspace, Project: "p", Session: "eng", Args: map[string]any{"instance": "eng-i"}})
+	instance := registered.Data.(map[string]any)["instance"].(string)
+	for round := range 10 {
+		id := newID("case_")
+		f.must(f.owner, "sub-owner", Request{Operation: "assignment_propose", Workspace: f.workspace, Project: "p", Session: "eng", Args: map[string]any{"instance": instance, "issue_uuid": "aaaa1111-1111-4111-8111-11111111111" + string(rune('0'+round)), "issue_identifier": "FIX-1"}})
+		var claim, revision string
+		if err := f.s.db.QueryRowContext(ctx, `SELECT id,revision FROM session_assignments WHERE project_id=$1 AND state='proposed' ORDER BY proposed_at DESC,id LIMIT 1`, pid).Scan(&claim, &revision); err != nil {
+			t.Fatal(err)
+		}
+		exec(`INSERT INTO dispatcher_cases(id,project_id,kind,subject_type,subject_id,subject_revision,permitted,facts,deadline,created_at) VALUES($1,$2,'decide','proposal',$3,$4,'["escalate"]','{}','2999-01-01T00:00:00.000000000Z',$5)`, id, pid, claim, revision, now)
+		var served [2]bool
+		var wg sync.WaitGroup
+		start := make(chan struct{})
+		for i := range 2 {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				<-start
+				if n, err := f.s.ModelNextCase(ctx, tokens[i], 10); err == nil && n.Case != nil {
+					served[i] = true
+				}
+			}()
+		}
+		close(start)
+		wg.Wait()
+		if served[0] == served[1] {
+			t.Fatal("round", round, "served:", served)
+		}
+		exec(`UPDATE dispatcher_cases SET closed_at=$1,outcome='abstain' WHERE id=$2`, now, id)
 	}
 }

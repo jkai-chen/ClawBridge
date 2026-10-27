@@ -42,17 +42,18 @@ func checkDispatcherModel(ctx context.Context, executor Executor, wid, pid strin
 	if !inUse {
 		return
 	}
-	checkModelHolders(m, holders, modelOn, add)
+	waiting := checkModelHolders(m, holders, modelOn, add)
 	checkModelLauncher(m, add)
-	checkModelCapacity(m, add)
+	checkModelCapacity(m, waiting, add)
 }
 
 // checkModelHolders reports each owner's key, and the agent that holds it.
-func checkModelHolders(m map[string]any, holders []any, modelOn bool, add func(Check)) {
+// It returns how many owners with an active key have no running agent.
+func checkModelHolders(m map[string]any, holders []any, modelOn bool, add func(Check)) int {
 	key := Check{ID: "dispatcher.model.key", Title: "Model keys", Status: Pass}
 	agent := Check{ID: "dispatcher.model.agent", Title: "Model agents", Status: Pass}
 	var keys, agents, keyProblems, agentProblems []string
-	active, running := 0, 0
+	active, running, waiting := 0, 0, 0
 	for _, raw := range holders {
 		h, _ := raw.(map[string]any)
 		who := text(h["principal"])
@@ -68,6 +69,9 @@ func checkModelHolders(m map[string]any, holders []any, modelOn bool, add func(C
 		}
 		if f := text(h["test_failure"]); f != "" {
 			keyProblems = append(keyProblems, fmt.Sprintf("%s: the setup test of revision %d failed (%s)", who, number(h["test_revision"]), f))
+		}
+		if h["key"] == "active" && h["agent"] != "running" {
+			waiting++
 		}
 		if h["agent"] == "running" {
 			running++
@@ -128,6 +132,7 @@ func checkModelHolders(m map[string]any, holders []any, modelOn bool, add func(C
 		agent.Action = "The server operator checks that agentd runs (see the launcher check)."
 	}
 	add(agent)
+	return waiting
 }
 
 // checkModelLauncher reports agentd's heartbeat (its launcher token's last
@@ -156,9 +161,12 @@ func checkModelLauncher(m map[string]any, add func(Check)) {
 	add(check)
 }
 
-// checkModelCapacity reports the live agents against the cap, and warns
-// when the slots left could need more memory than the host has.
-func checkModelCapacity(m map[string]any, add func(Check)) {
+// checkModelCapacity reports the server's live agents against the cap. At
+// the cap, the steady state of a full server, it warns only when an owner
+// of this project with an active key has no agent running (waiting), which
+// the cap may be why. It warns when the slots left could need more memory
+// than the host has.
+func checkModelCapacity(m map[string]any, waiting int, add func(Check)) {
 	c, _ := m["capacity"].(map[string]any)
 	limit := number(c["max_agents"])
 	if limit == 0 {
@@ -167,9 +175,9 @@ func checkModelCapacity(m map[string]any, add func(Check)) {
 	live, per := number(c["live_agents"]), number(c["agent_memory"])
 	check := Check{ID: "dispatcher.model.capacity", Title: "Model agent capacity", Status: Pass}
 	check.Message = fmt.Sprintf("%d of at most %d model agents are running on the server.", live, limit)
-	if live >= limit {
+	if live >= limit && waiting > 0 {
 		check.Status = Warn
-		check.Message += " At the cap, another owner's agent is refused (agent_cap)."
+		check.Message += fmt.Sprintf(" At the cap, %d owner(s) of this project with an active key have no agent running, and a new one is refused (agent_cap).", waiting)
 		check.Action = "The server operator raises CLAWBRIDGE_DISPATCHER_MODEL_MAX_AGENTS if the host has the memory."
 	}
 	if c["mem_available"] == nil {

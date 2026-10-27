@@ -238,5 +238,10 @@ never the key:
   and no agent has called for 5 minutes.
 - **agentd** (`dispatcher.model.launcher`): whether it called in the last 5 minutes, and when its launcher token
   expires; it warns 14 days ahead.
-- **Capacity** (`dispatcher.model.capacity`): the server's live agents against the cap, warning at the cap, and when
-  the agents that may still start (160 MiB each) need more than the host's available memory.
+- **Capacity** (`dispatcher.model.capacity`): the server's live agents against the cap, warning at the cap only when an
+  owner of this project with an active key has no agent running, and when the agents that may still start (160 MiB
+  each) need more than the host's available memory.
+
+The seal key, agentd and capacity checks are about the whole server, so every project owner sees the same: whether the
+seal keys are set, when agentd last called and when its token expires, how many agents run, and the host's available
+memory. They are counts and times, never a key or another project's names.

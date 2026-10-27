@@ -99,7 +99,22 @@ func TestDoctorShowsTheDispatcherModel(t *testing.T) {
 			"dispatcher.model.key":      {Fail, "no owner of this project has a tested model key"},
 			"dispatcher.model.agent":    {Warn, "lead@example.com: offline, last seen 15 minutes ago. No model agent has called"},
 			"dispatcher.model.launcher": {Warn, "No live launcher token"},
-			"dispatcher.model.capacity": {Warn, "At the cap"},
+			// At the cap, but no owner here has an active key waiting for an agent.
+			"dispatcher.model.capacity": {Pass, "2 of at most 2 model agents"},
+		}},
+		"at the cap, this project's agent running": {change: func(m map[string]any) {
+			m["capacity"] = map[string]any{"live_agents": 2, "max_agents": 2, "agent_memory": bus.ModelAgentMemory, "mem_available": 900 << 20}
+		}, want: map[string]want{
+			"dispatcher.model.seal": {Pass, ""}, "dispatcher.model.key": {Pass, ""}, "dispatcher.model.agent": {Pass, ""}, "dispatcher.model.launcher": {Pass, ""},
+			"dispatcher.model.capacity": {Pass, "2 of at most 2 model agents are running on the server."},
+		}},
+		"at the cap, an active owner waiting": {change: func(m map[string]any) {
+			h := m["holders"].([]any)[0].(map[string]any)
+			h["agent"], h["last_seen_age"] = "offline", 600
+			m["capacity"] = map[string]any{"live_agents": 2, "max_agents": 2, "agent_memory": bus.ModelAgentMemory, "mem_available": 900 << 20}
+		}, want: map[string]want{
+			"dispatcher.model.seal": {Pass, ""}, "dispatcher.model.key": {Pass, ""}, "dispatcher.model.agent": {Warn, "No model agent has called"}, "dispatcher.model.launcher": {Pass, ""},
+			"dispatcher.model.capacity": {Warn, "At the cap, 1 owner(s) of this project with an active key have no agent running"},
 		}},
 		"a local store has no cap": {change: func(m map[string]any) {
 			m["capacity"] = map[string]any{"live_agents": 0, "max_agents": 0, "agent_memory": bus.ModelAgentMemory, "mem_available": nil}

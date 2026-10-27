@@ -301,6 +301,7 @@ type Snapshot struct {
 // Model implements tea.Model and can be tested directly with UpdateModel.
 type Model struct {
 	linear       linearState
+	intake       intakeState
 	linearCancel context.CancelFunc
 	account      accountState
 	modelSetup   modelSetupState
@@ -356,6 +357,9 @@ type Model struct {
 	// doctor's checks ran; doctorPasses shows the folded passes.
 	attention       []attentionItem
 	attentionLoaded bool
+	// intakeLine is Overview's summary of the project's intake, a link
+	// to the Intake view (after the attention lines); "" when unread.
+	intakeLine string
 	// waiting is the no-project mode; waitingOwner whom to ask.
 	waiting      bool
 	waitingOwner string
@@ -465,6 +469,10 @@ func (m Model) UpdateModel(msg tea.Msg) (Model, tea.Cmd) {
 	switch x := msg.(type) {
 	case linearLoadedMsg:
 		return m.applyLinear(x), nil
+	case intakeLoadedMsg:
+		return m.applyIntake(x), nil
+	case intakeDoneMsg:
+		return m.applyIntakeDone(x)
 	case accountLoadedMsg:
 		return m.applyAccount(x), nil
 	case accountActionMsg:
@@ -1254,11 +1262,7 @@ func (m Model) currentRows() []string {
 			}
 			return out
 		}
-		out := make([]string, len(m.attention))
-		for i := range m.attention {
-			out[i] = fmt.Sprint(i)
-		}
-		return out
+		return m.overviewRows()
 	}
 	return nil
 }
@@ -1294,6 +1298,9 @@ func (m Model) updateKey(msg tea.KeyMsg) (Model, tea.Cmd) {
 	}
 	if m.screen == ScreenLinear && m.linear.logoutAsk != "" {
 		return m.linearLogoutAnswer(key)
+	}
+	if m.screen == ScreenLinear && m.linear.step == "intake" && (m.intake.ask != nil || m.intake.picking) {
+		return m.intakeModalKey(key)
 	}
 	if m.screen == ScreenAccount && m.account.invite != nil {
 		return m.inviteKey(key)

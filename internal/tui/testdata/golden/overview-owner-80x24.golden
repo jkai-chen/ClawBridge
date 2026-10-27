@@ -11,14 +11,14 @@ ClawBridge · pilot › core › engineer  cloud
 │   1 invite is waiting to be used                       7 Account             │
 │   The dispatcher's model isn't set up (optional)       6 Dispatcher          │
 │                                                                              │
+│ This project                                                                 │
+│   Intake: notify · 0 trusted · 0 queued  5 Linear · Intake                   │
+│                                                                              │
 │ Signed in       human@example.test (Google, verified)                        │
 │ Server          online                                                       │
 │ Workspace       pilot                                                        │
 │ Project         core                                                         │
 │ Session         engineer                                                     │
 │ Unread          0                                                            │
-│                                                                              │
-│ Sessions                                                                     │
-│   engineer                 active     codex                                  │
 ╰──────────────────────────────────────────────────────────────────────────────╯
 Enter go there · ? help · q quit

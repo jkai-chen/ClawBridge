@@ -1564,6 +1564,11 @@ project's coordinator session, which then routes it.
 **Modes:** `clawbridge intake policy set --intake-mode off|notify`. The default is `notify`. Offers and automatic
 assignment come later.
 
+**In the TUI:** `n` on the Linear screen (or Enter on Overview's "Intake: …" line) opens the project's intake: the
+mode, S1–S3, the trusted users by name (from your own Linear connection), the queue, and a check that each linked
+team has exactly one live `needs-agent` label (missing or duplicated, S1 ignores that team). A project owner or lead
+changes it there, each change after a `y`; anyone else reads it (docs/usage.md).
+
 **The queue:** `clawbridge intake list`, `dismiss ISSUE`, `rearm ISSUE`.
 - None of the `intake` commands need a registered session: a person runs them as themselves, and their project role
   decides (any member reads; a lead or owner changes the policy and the trusted list; a lead, the owner or the

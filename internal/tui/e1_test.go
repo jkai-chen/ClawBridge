@@ -146,3 +146,42 @@ func TestAccountInviteNeedsAnEmail(t *testing.T) {
 		t.Fatal(m.status.text)
 	}
 }
+
+// R183 L1: an owner or lead grant is typed "invite" first; L2: nothing
+// ticked asks once more.
+func TestAccountInviteAsksForPowerAndForNothing(t *testing.T) {
+	a := &accountAuthority{principal: "owner@example.com", owner: "owner@example.com"}
+	m := accountModel(t, a)
+	m = press(t, m, "i")
+	m = typed(t, m, "bob@example.com")
+	m = press(t, m, "enter", " ", " ", " ", " ", "enter")
+	if !m.confirming || m.account.pending == nil || !strings.Contains(m.account.pending.prompt, "as owner of api") || len(a.writes()) != 0 {
+		t.Fatal("an owner grant wasn't typed:", Render(m), a.writes())
+	}
+	m = typed(t, m, "invite")
+	m = press(t, m, "enter")
+	w := a.writes()
+	if len(w) != 1 || w[0].Args["grants"].(map[string]any)["api"] != "owner" {
+		t.Fatal(w)
+	}
+	// Nothing ticked: Enter asks, Enter again sends.
+	m = press(t, m, "esc")
+	m = press(t, m, "i")
+	m = typed(t, m, "carol@example.com")
+	m = press(t, m, "enter", "enter")
+	if !strings.Contains(m.status.text, "No project is ticked") || len(a.writes()) != 1 || m.account.invite == nil {
+		t.Fatal("sent with nothing ticked:", m.status.text, a.writes())
+	}
+	m = press(t, m, "enter")
+	if w = a.writes(); len(w) != 2 || len(w[1].Args["grants"].(map[string]any)) != 0 {
+		t.Fatal(w)
+	}
+	// A lead grant is typed too.
+	m = press(t, m, "esc")
+	m = press(t, m, "i")
+	m = typed(t, m, "dave@example.com")
+	m = press(t, m, "enter", "down", " ", " ", " ", "enter")
+	if !m.confirming || m.account.pending == nil || !strings.Contains(m.account.pending.prompt, "as lead of web") {
+		t.Fatal("a lead grant wasn't typed:", m.account.pending)
+	}
+}

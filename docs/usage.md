@@ -412,13 +412,35 @@ Run in an interactive terminal.
 - **Enter** opens the selected row and never changes anything by itself. **Esc**
   goes back one level: help, then an editor, then an opened row, then a wizard's
   previous step.
+- **The status line**, under the tabs, says what the last action did, with a
+  word first so it reads the same without colour:
+  - `OK`: it worked, for example "OK  Sent to engineer-backend." It stays
+    through the reload the action starts.
+  - `ERROR`: it failed, named in words ("The server can't be reached.", "You're
+    signed out. Run clawbridge login.", "You don't have permission for this.")
+    with the raw error after it.
+  - `NOTE`: something to know, for example why a key did nothing.
+  - `…`: it is working, for example "Loading…".
+- **Each screen's body** shows its rows, or one of three states:
+  - `Loading projects…` while the first answer is on its way;
+  - a failed load: `ERROR  Couldn't load projects.` with the reason in words,
+    the keys that help (`r` reloads, the Doctor tab), and the raw error muted;
+  - an empty state that names the one action that fills it.
+- **Times** are relative ("4 min ago", "2 days ago"). An opened message also
+  shows the time in UTC.
+- **Dispatcher:** while a model setup is sent and tested, the screen keeps every
+  key, so a digit doesn't switch away and lose the answer. Esc stops waiting; the
+  setup was already sent, and `r` reloads to show its test's outcome, marked `OK`
+  or `FAIL`.
 - Below 24 columns or 9 rows, resize the terminal; quit and Escape remain
   available.
 
 Inbox: Enter opens a message with what it answers and the rest of its thread,
 `m` marks it read, `n` composes, `p` replies, and Escape cancels drafts.
 These actor operations need an explicit current session/instance. Opening the UI
-does not register/resume an actor. Cloud is informational; provisioning and new
+does not register/resume an actor. Without a session the Inbox says so and asks
+the server nothing: inboxes belong to agent sessions, so to read one as a session,
+run `clawbridge tui --session NAME` on that session's machine. Cloud is informational; provisioning and new
 project administration use explicit operator workflows.
 
 On Sessions and Inbox, `v` cycles Current/Archive/All. Retired/moved sessions enter

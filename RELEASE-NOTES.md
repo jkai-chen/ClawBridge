@@ -118,6 +118,11 @@
   Docker's apt signing key against its published fingerprint before trusting the repository, and stops if it differs.
 - **The dispatcher agent's model library is pinned to one fork release (G9-11).** The lock check accepts only the
   `cb-v1.1.0-1` tarballs, by version and integrity, and fails if that tag stops pointing at its commit (`96f054a`).
+- **Traffic that never signs in can't lock signed-in users out (G9-1).** `/mcp/intake`'s per-address limit had shared
+  `/v1/execute`'s per-principal table, so a flood from rotating IPv6 addresses could fill it and refuse every user with
+  429. Intake and the watcher's tick endpoint now each limit addresses in their own bounded table, before any token is
+  checked. A full table evicts its oldest entry instead of refusing newcomers, as `/v1/join`'s and failed sign-in
+  counters now do too. An IPv6 client counts as its /64.
 
 ## Linear documents
 

@@ -114,12 +114,17 @@ func tickClaims(p *idtoken.Payload, audience, serviceAccount string, now time.Ti
 	return nil
 }
 
-// newTickHandler serves TickPath: POST with the scheduler's bearer token.
-func newTickHandler(verifier TickVerifier, ticker Ticker) http.Handler {
+// newTickHandler serves TickPath: POST with the scheduler's bearer token,
+// at most ips' rate per address before the token is verified (G9-L7).
+func newTickHandler(verifier TickVerifier, ticker Ticker, ips *preauthLimiter) http.Handler {
 	flight := oneAtATime(ticker)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			fail(w, 405, "method_not_allowed", "POST required")
+			return
+		}
+		if !ips.allow(addressKey(r)) {
+			fail(w, 429, "rate_limited", "request limit reached")
 			return
 		}
 		headers := r.Header.Values("Authorization")

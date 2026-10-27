@@ -294,8 +294,13 @@ device before setting `device`. See
   replica.
 - **Rate limits** (in memory, per process): `POST /v1/join` allows 10 attempts an
   hour per client address and 5 per email; failed sign-ins are limited to 60 a minute
-  per address. A refused sign-in is logged at most once an hour per address and
-  kind, never with the request's credentials.
+  per address. `/mcp/intake` allows 1,200 requests a minute per address, and the
+  watcher's tick endpoint 60, both counted before any token is checked. An IPv6
+  client counts as its /64. These per-address tables are separate from the
+  signed-in users' limits and bounded; when one is full it forgets its oldest entry
+  rather than refuse a new address, so traffic that never signs in can't lock anyone
+  out. A refused sign-in is logged at most once an hour per address and kind, never
+  with the request's credentials.
 
 ### Letting the owner in without Google: `operator bootstrap-invite`
 

@@ -310,3 +310,57 @@ func TestMarkerPassKeepsABudgetStop(t *testing.T) {
 		t.Fatalf("%v %d rows, stopped %q, left %d", err, len(cycle.Markers), cycle.MarkersStopped, cycle.MarkersLeft)
 	}
 }
+
+// limitlessBus is a v0.3.4 bus: marker_due refuses limit, as any unknown arg
+// is refused, and answers without left or stopped.
+type limitlessBus struct{ Executor }
+
+func (o limitlessBus) Execute(ctx context.Context, r bus.Request) (bus.Result, error) {
+	if _, ok := r.Args["limit"]; ok && r.Operation == "marker_due" {
+		return bus.Result{}, bus.PublicError("invalid", "invalid request")
+	}
+	return o.Executor.Execute(ctx, r)
+}
+
+// Against a server older than limit, the pass asks again without it,
+// applies a pass's rows, and refunds the rest at once.
+func TestMarkerPassFallsBackOnAServerWithoutLimit(t *testing.T) {
+	s, a, _, scope, _, _ := passTest(t)
+	s.cfg.Executor = limitlessBus{s.cfg.Executor}
+	a.comments.markersDue = dueRows(5)
+	cycle, err := watchPass(t, s, scope, context.Background())
+	if err != nil || len(a.comments.markerDueArgs) != 1 || a.comments.markerDueArgs[0]["limit"] != nil {
+		t.Fatal(err, a.comments.markerDueArgs)
+	}
+	if len(cycle.Markers) != markerPassRows || cycle.MarkersLeft != 2 || cycle.MarkersStopped != "limit" {
+		t.Fatalf("%d rows, left %d, stopped %q", len(cycle.Markers), cycle.MarkersLeft, cycle.MarkersStopped)
+	}
+	if got := refunds(a); len(got) != 2 || got[0] != "asg_4=13" || got[1] != "asg_5=13" {
+		t.Fatal("the rows past a pass's were not refunded:", got)
+	}
+}
+
+// asks counts one operation's calls.
+type asks struct {
+	Executor
+	op string
+	n  *int
+}
+
+func (a asks) Execute(ctx context.Context, r bus.Request) (bus.Result, error) {
+	if r.Operation == a.op {
+		*a.n++
+	}
+	return a.Executor.Execute(ctx, r)
+}
+
+// Only a refused arg is asked again: a bus that is unavailable is not.
+func TestMarkerPassAsksAnUnavailableBusOnce(t *testing.T) {
+	s, _, _, scope, _, _ := passTest(t)
+	n := 0
+	s.cfg.Executor = asks{failing{s.cfg.Executor, "marker_due"}, "marker_due", &n}
+	cycle, err := watchPass(t, s, scope, context.Background())
+	if err != nil || cycle.MarkersStopped != "error" || n != 1 {
+		t.Fatal(err, cycle.MarkersStopped, n)
+	}
+}

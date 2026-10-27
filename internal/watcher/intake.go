@@ -152,6 +152,10 @@ func (r *intakeRun) source(ctx context.Context, source, subject string, read fun
 }
 
 // labelled is S1: the team's issues carrying needs-agent, updated since.
+// It reads the team once, across all its projects, rather than one bound
+// project at a time: a binding with many projects would otherwise never
+// finish within intakePages. An issue whose project the page shows outside
+// the binding is skipped unread; candidate proves every other one.
 func (r *intakeRun) labelled(ctx context.Context, team string, since time.Time) (bool, bool, error) {
 	label, err := r.needsAgent(ctx, team)
 	if err != nil {
@@ -165,17 +169,18 @@ func (r *intakeRun) labelled(ctx context.Context, team string, since time.Time) 
 	cursor := ""
 	for page := 0; page < intakePages; page++ {
 		r.poll.Calls++
-		issues, err := r.svc.IssuesV2(ctx, r.scope, linearboard.IssuesInputV2{Limit: 50, Cursor: cursor, LabelID: label, UpdatedAfter: since.UTC().Format(time.RFC3339Nano)})
+		issues, err := r.svc.TeamLabelledV2(ctx, r.scope, linearboard.TeamLabelledInputV2{TeamID: team, LabelID: label, UpdatedAfter: since.UTC().Format(time.RFC3339Nano), Cursor: cursor, Limit: 50})
 		if err != nil {
 			return signal, false, err
 		}
 		for _, i := range issues.Items {
-			if i.TeamID != team {
+			if i.OutOfBinding {
+				r.poll.skip("not_in_binding")
 				continue
 			}
 			signal = r.candidate(ctx, "S1", i.ID, func(n historyEntry) bool { return contains(n.AddedLabelIDs, label) }, "", "") || signal
 		}
-		if issues.NextCursor == "" {
+		if issues.Complete {
 			return signal, true, nil
 		}
 		cursor = issues.NextCursor

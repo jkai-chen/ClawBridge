@@ -7,6 +7,8 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"reflect"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -70,9 +72,21 @@ type fakeLinear struct {
 	saveLands     bool
 	// project, when set, is the Linear project issueA and issueB are in.
 	project string
+	// projects are the Linear projects GetProject finds, all in team;
+	// extra are more issues, and unlisted the ones whose list row hides
+	// their project. labelledPage pages the labelled list; issueReads
+	// counts IssueV2 calls.
+	projects     map[string]bool
+	extra        map[string]linearprovider.IssueV2
+	unlisted     map[string]bool
+	labelledPage int
+	issueReads   int
 }
 
 func (f *fakeLinear) issue(id string) (linearprovider.IssueV2, error) {
+	if i, ok := f.extra[id]; ok {
+		return i, nil
+	}
 	switch id {
 	case issueA, issueB:
 		return linearprovider.IssueV2{Issue: linearprovider.Issue{ID: id, Identifier: "FIX-" + id[:1], Title: "title " + id[:1], TeamID: team, ProjectID: f.project}, ProjectKnown: true, DescriptionKnown: true, UpdatedAt: time.Now().UTC().Format(time.RFC3339Nano)}, nil
@@ -98,7 +112,10 @@ func (p fakeProvider) Close() error { return nil }
 func (p fakeProvider) GetTeam(_ context.Context, id string) (linearprovider.Team, error) {
 	return linearprovider.Team{ID: id, Name: "T"}, nil
 }
-func (p fakeProvider) GetProject(context.Context, string) (linearprovider.Project, error) {
+func (p fakeProvider) GetProject(_ context.Context, id string) (linearprovider.Project, error) {
+	if p.f.projects[id] {
+		return linearprovider.Project{ID: id, Name: "P", TeamIDs: []string{team}}, nil
+	}
 	return linearprovider.Project{}, errors.New("no projects")
 }
 func (p fakeProvider) Issues(context.Context, linearprovider.IssueQuery) (linearprovider.Page[linearprovider.Issue], error) {
@@ -138,6 +155,7 @@ func (p fakeProvider) SetProjectStatus(_ context.Context, project, status string
 	return nil
 }
 func (p fakeProvider) IssueV2(_ context.Context, id string) (linearprovider.IssueV2, error) {
+	p.f.issueReads++
 	return p.f.issue(id)
 }
 func (p fakeProvider) IssuesV2(_ context.Context, q linearprovider.IssueQueryV2) (linearprovider.Page[linearprovider.IssueV2], error) {
@@ -145,14 +163,26 @@ func (p fakeProvider) IssuesV2(_ context.Context, q linearprovider.IssueQueryV2)
 	if q.LabelID != labelNeeds {
 		return out, nil
 	}
-	// Like Linear, the list is filtered by the queried team and label.
+	// Like Linear, the list is filtered by the queried team, project and
+	// label.
 	for _, id := range p.f.labelled {
 		i, _ := p.f.issue(id)
-		if i.TeamID != q.TeamID {
+		if i.TeamID != q.TeamID || (q.ProjectID != "" && i.ProjectID != q.ProjectID) {
 			continue
 		}
 		i.LabelIDs, i.LabelsKnown = []string{labelNeeds}, true
+		if p.f.unlisted[id] {
+			i.ProjectID, i.ProjectKnown = "", false
+		}
 		out.Items = append(out.Items, i)
+	}
+	if n := p.f.labelledPage; n > 0 {
+		from, _ := strconv.Atoi(q.Cursor)
+		total := len(out.Items)
+		out.Items = out.Items[from:min(from+n, total)]
+		if from+n < total {
+			out.NextCursor, out.Complete = strconv.Itoa(from+n), false
+		}
 	}
 	return out, nil
 }
@@ -596,5 +626,54 @@ func TestMarkersPassAppliesOnlyMarkers(t *testing.T) {
 	e.queryRow(`SELECT last_tick_at FROM watch_ticks`, &after)
 	if after != ticked {
 		t.Fatal("a markers pass counted as the project's tick")
+	}
+}
+
+// S1 reads each bound team once, across its projects, however many the
+// binding pairs it with: a needs-agent issue in the last of more pairs
+// than intakePages is queued, and the cursor moves. An issue whose list
+// row shows a project outside the binding is skipped unread; one whose row
+// hides its project is read, and its own read rules it out.
+func TestIntakeS1ReadsTheTeamAcrossAllItsProjects(t *testing.T) {
+	e := setup(t)
+	n := intakePages + 2
+	ids := []string{}
+	e.f.projects = map[string]bool{}
+	for i := 1; i <= n+1; i++ {
+		e.f.projects[linearProjectID(i)] = true
+	}
+	for i := 1; i <= n; i++ {
+		ids = append(ids, linearProjectID(i))
+	}
+	if _, err := e.s.Execute(context.Background(), bus.Request{Operation: "taskboard_set_v2", Workspace: "w", Project: "p", Args: map[string]any{"expected_revision": 1, "mode": "project_set", "linear_team_ids": []string{team}, "linear_default_team_id": team, "linear_project_ids": ids}}); err != nil {
+		t.Fatal(err)
+	}
+	e.call("intake_trust_add", "coord", map[string]any{"linear_user_id": trustedUser})
+	issue := func(id string, project int) linearprovider.IssueV2 {
+		return linearprovider.IssueV2{Issue: linearprovider.Issue{ID: id, Identifier: "FIX-" + id[:1], Title: "t", TeamID: team, ProjectID: linearProjectID(project)}, ProjectKnown: true, DescriptionKnown: true, UpdatedAt: time.Now().UTC().Format(time.RFC3339Nano)}
+	}
+	last, outside, hidden := "d0000000-0000-4000-8000-000000000001", "d0000000-0000-4000-8000-000000000002", "d0000000-0000-4000-8000-000000000003"
+	e.f.extra = map[string]linearprovider.IssueV2{last: issue(last, n), outside: issue(outside, n+1), hidden: issue(hidden, n+1)}
+	e.f.unlisted = map[string]bool{hidden: true}
+	e.f.labelled = []string{last, outside, hidden}
+	e.f.labelledPage = 1
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	e.f.history[last] = []map[string]any{entry(now, trustedUser, map[string]any{"addedLabelIds": []string{labelNeeds}})}
+	e.tick()
+	var started string
+	e.queryRow(`SELECT cursor_time FROM watch_cursors WHERE source='intake-s1'`, &started)
+	e.dueNow()
+	e.f.issueReads = 0
+	tick := e.tick()
+	if tick.Intake == nil || !reflect.DeepEqual(tick.Intake.Queued, []string{last}) || len(tick.Intake.Truncated) != 0 {
+		t.Fatalf("intake: %+v", tick.Intake)
+	}
+	if tick.Intake.Skipped["not_in_binding"] != 2 || e.f.issueReads != 2 {
+		t.Fatalf("skipped %v, %d issue reads", tick.Intake.Skipped, e.f.issueReads)
+	}
+	var moved string
+	e.queryRow(`SELECT cursor_time FROM watch_cursors WHERE source='intake-s1'`, &moved)
+	if moved <= started {
+		t.Fatal("the cursor did not move:", started, moved)
 	}
 }

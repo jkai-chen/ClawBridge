@@ -132,7 +132,7 @@ func (s *Store) migrate() error {
 	if err = tx.QueryRow("PRAGMA user_version").Scan(&version); err != nil {
 		return err
 	}
-	if version > 26 {
+	if version > 27 {
 		return errors.New("database schema is newer than this ClawBridge binary")
 	}
 	if version == 0 {
@@ -269,6 +269,11 @@ func (s *Store) migrate() error {
 	}
 	if version < 26 {
 		if _, err = tx.Exec(contextSchemaV26 + `PRAGMA user_version=26;`); err != nil {
+			return err
+		}
+	}
+	if version < 27 {
+		if _, err = tx.Exec(contextLevelsSchemaV27 + `PRAGMA user_version=27;`); err != nil {
 			return err
 		}
 	}
@@ -486,6 +491,7 @@ var operationArgs = map[string]string{
 	"context_watch_get":           "instance",
 	"context_watch_set":           "instance expected_revision context_watch",
 	"report_context":              "instance tokens window level compactions observed_at trigger",
+	"context_levels_set":          "instance warn_tokens handover_tokens clear",
 	"dispatcher_cases_due":        "instance",
 	"dispatcher_decision_record":  "instance subject_id subject_revision policy_revision engine proposal reason_code explanation guardrail action domain facts_source app_project_id",
 	"invite_create":               "email grants purpose expires_hours revoke_others",
@@ -557,7 +563,7 @@ func validateArgs(op string, a map[string]any) error {
 			return fmt.Errorf("unsupported argument %q for %s", k, op)
 		}
 		switch k {
-		case "tokens", "window", "compactions":
+		case "tokens", "window", "compactions", "warn_tokens", "handover_tokens":
 			if v != nil {
 				if _, err := integer(v); err != nil {
 					return invalid(k + " must be an integer")
@@ -631,7 +637,7 @@ func validateArgs(op string, a map[string]any) error {
 					return errors.New("documents must be an array of objects")
 				}
 			}
-		case "complete", "allow":
+		case "complete", "allow", "clear":
 			if _, ok := v.(bool); !ok {
 				return fmt.Errorf("%s must be boolean", k)
 			}
@@ -1108,6 +1114,9 @@ func (s *Store) execute(ctx context.Context, tx *transaction, r Request) (any, e
 	// it doesn't touch last_seen.
 	if r.Operation == "report_context" {
 		return s.reportContextOp(ctx, tx, w, pid, r)
+	}
+	if r.Operation == "context_levels_set" {
+		return s.contextLevelsSetOp(ctx, tx, w, pid, r)
 	}
 	if r.Operation == "list_sessions" {
 		if err = s.touchReadActor(ctx, tx, pid, r); err != nil {

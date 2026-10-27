@@ -33,6 +33,9 @@ const contextUsage = `usage:
       own settings.json; project-shared is the committed .claude/settings.json
       and needs --confirm-shared. The change is shown before it is written,
       and uninstall removes only ClawBridge's own entries.
+  clawbridge context levels set [--warn-tokens N] [--handover-tokens N] | --clear
+      Lower this session's own levels below the project's, or go back to
+      the project's (needs the server and the session).
   clawbridge context bind|compacting --from-hook
       Run by those hooks, with the hook's JSON on stdin. They always exit 0.
 Counts and times only: nothing from the transcript's content is shown.`

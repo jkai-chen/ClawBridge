@@ -115,6 +115,9 @@
   a bound session's context when the level changes, a compaction appears, or every 10 minutes. One process per session
   reports, chosen by a lock file, and the answer's levels and hint are cached for the hooks. The Sessions screen gains a
   CONTEXT column (`612k warn [1000k]`).
+- **A session can lower its own context levels (schema 27).** `clawbridge context levels set --warn-tokens N
+  --handover-tokens N` sets the session's own levels below the project's, for an agent that should hand over earlier;
+  `--clear` goes back to the project's. A level above the project's is refused, and every change is in the history.
 
 # ClawBridge v0.3.4
 

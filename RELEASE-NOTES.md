@@ -49,6 +49,12 @@
   expire 90 days after creation; `launcher-token create` prints the date. The reference Caddy is pinned to log no
   requests (docs/operations/deployment.md).
 
+- **Chat with the dispatcher's model (schema 25).** `clawbridge dispatcher chat "QUESTION"` asks the model from a
+  project owner's own terminal, never a session's; owners let leads ask with `dispatcher chat leads on`. The model
+  answers from the read tools and the decision log, which `dispatcher decisions` shows too. The reply is printed only to
+  the asker's terminal, stripped of terminal controls, and nothing in it is acted on. Chats use at most a quarter of the
+  model's runs, after claims. The `dispatcher enable --engine model` preview says who can ask.
+
 ## Running your own server on AWS
 
 - **AWS joins Google Cloud as a route for your own server.** `clawbridge onboard` (Start's "Set up my own server") asks

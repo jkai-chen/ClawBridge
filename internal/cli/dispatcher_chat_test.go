@@ -86,3 +86,44 @@ func TestCLIDispatcherChat(t *testing.T) {
 	}
 	rejectCLI(t, "dispatcher", "decisions", "--limit", "51")
 }
+
+// dispatcher model advise takes on or off and the revision; tools set takes
+// known tools only; escalations prints the model's note stripped of
+// terminal controls (D6-L1).
+func TestCLIDispatcherAdvise(t *testing.T) {
+	dir := isolated(t)
+	db := filepath.Join(dir, "bus.db")
+	t.Setenv("CLAWBRIDGE_DB", db)
+	invoke(t, "setup", "--local", "--workspace", "w")
+	invoke(t, "project", "create", "p")
+	t.Setenv("CLAWBRIDGE_PROJECT", "p")
+	rejectCLI(t, "dispatcher", "model", "advise", "maybe", "--expected-revision", "1")
+	rejectCLI(t, "dispatcher", "model", "advise", "on")
+	rejectCLI(t, "dispatcher", "model", "tools", "set", "ask_session")
+	rejectCLI(t, "dispatcher", "model", "tools", "set", "ask_session", "route_notice", "shell", "--expected-revision", "1")
+	raw, err := sql.Open("sqlite", db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer raw.Close()
+	var pid string
+	if err = raw.QueryRow(`SELECT id FROM projects`).Scan(&pid); err != nil {
+		t.Fatal(err)
+	}
+	for _, q := range []string{
+		`INSERT INTO dispatcher_policies(project_id,revision,enabled,mode,domains,updated_at,updated_by_principal) VALUES(?,1,1,'rules','{"domains":[]}','2026-01-01T00:00:00Z','x')`,
+		`INSERT INTO dispatcher_escalations(id,project_id,subject_type,subject_id,subject_revision,reason_code,recipients,state,delivered,created_at,updated_at,recommendation) VALUES('esc_1',?,'proposal','asg_1','1','untrusted','[]','open',0,'2026-01-01T00:00:00.000000000Z','2026-01-01T00:00:00.000000000Z','{"action":"decline","reason_code":"untrusted","explanation":"It idles.\u001b]52;c;ZXZpbA==\u0007 \u202edone","case_id":"case_1"}')`,
+	} {
+		if _, err = raw.Exec(q, pid); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var out, errs bytes.Buffer
+	if e := Run(context.Background(), []string{"dispatcher", "model", "tools", "set", "ask_session", "--expected-revision", "1"}, &out, &errs); e != nil || !strings.Contains(out.String(), `"preview":true`) || !strings.Contains(out.String(), `"opt_in_tools":["ask_session"]`) {
+		t.Fatal(e, out.String(), errs.String())
+	}
+	out.Reset()
+	if e := Run(context.Background(), []string{"dispatcher", "escalations", "--all"}, &out, &errs); e != nil || !strings.Contains(out.String(), `It idles.]52;c;ZXZpbA== done`) || strings.Contains(out.String(), `\u001b`) || strings.Contains(out.String(), "\u202e") {
+		t.Fatal(e, out.String(), errs.String())
+	}
+}

@@ -218,7 +218,7 @@ func toolArgs(tool string, body map[string]json.RawMessage) (map[string]any, err
 			return nil, errModelArgument
 		}
 		return map[string]any{"text": text, "usage": usage}, nil
-	case "decide":
+	case "decide", "recommend":
 		f, err := fields(body, "action", "reason_code", "explanation", "usage")
 		if err != nil {
 			return nil, err
@@ -242,8 +242,30 @@ func toolArgs(tool string, body map[string]json.RawMessage) (map[string]any, err
 			return nil, errModelArgument
 		}
 		return map[string]any{"reason_code": reason, "usage": usage}, nil
+	case "route_notice":
+		f, err := fields(body, "notice_id", "domain")
+		if err != nil {
+			return nil, err
+		}
+		notice, err1 := stringField(f["notice_id"])
+		domain, err2 := stringField(f["domain"])
+		if err1 != nil || err2 != nil || notice == "" || len(notice) > 128 || domain == "" || len(domain) > 128 {
+			return nil, errModelArgument
+		}
+		return map[string]any{"notice_id": notice, "domain": domain}, nil
+	case "ask_session":
+		f, err := fields(body, "template", "session_id", "issue_id")
+		if err != nil {
+			return nil, err
+		}
+		template, err1 := stringField(f["template"])
+		session, err2 := stringField(f["session_id"])
+		issue, err3 := stringField(f["issue_id"])
+		if err1 != nil || err2 != nil || err3 != nil || !slices.Contains([]string{"which_domain", "still_working", "scope_unclear"}, template) || session == "" || len(session) > 128 || !uuidPattern.MatchString(issue) {
+			return nil, errModelArgument
+		}
+		return map[string]any{"template": template, "session_id": session, "issue_id": strings.ToLower(issue)}, nil
 	}
-	// recommend and the opt-in tools come with advise (PR C).
 	return nil, refused
 }
 

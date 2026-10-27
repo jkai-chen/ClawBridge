@@ -185,7 +185,7 @@ func (s *Store) ModelHello(ctx context.Context, token string, maxAgents int) (Mo
 	if err != nil {
 		return out, err
 	}
-	_, meta, err := readDispatcher(ctx, tx, c.ProjectID)
+	use, settings, err := projectModelUse(ctx, tx, c.ProjectID)
 	if err != nil {
 		return out, err
 	}
@@ -194,10 +194,10 @@ func (s *Store) ModelHello(ctx context.Context, token string, maxAgents int) (Mo
 		return out, err
 	}
 	out = ModelHello{
-		ProjectID: c.ProjectID, Enabled: meta["enabled"] == true && meta["mode"] == "model",
+		ProjectID: c.ProjectID, Enabled: use != "",
 		Provider: str(key, "provider_id"), Model: str(key, "model"),
 		Caps:       map[string]int{"runs_per_hour": caps.RunsPerHour, "runs_per_day": caps.RunsPerDay},
-		OptInTools: []string{}, DeadlineSeconds: deadline, ServerTime: at(nowRaw).Format(time.RFC3339),
+		OptInTools: enabledOptInTools(settings), DeadlineSeconds: deadline, ServerTime: at(nowRaw).Format(time.RFC3339),
 	}
 	return out, tx.Commit()
 }
@@ -290,13 +290,6 @@ func liveHolders(ctx context.Context, tx *transaction, pid, nowRaw string) ([]st
 	return holders, err
 }
 
-// closeModelCases closes pid's open cases, leased or not, once the
-// dispatcher is off or in rules mode (R106-L7): no agent acts on them.
-func closeModelCases(ctx context.Context, tx *transaction, pid, nowRaw string) error {
-	_, err := tx.ExecContext(ctx, `UPDATE dispatcher_cases SET closed_at=?,outcome='model_off' WHERE project_id=? AND closed_at IS NULL`, nowRaw, pid)
-	return err
-}
-
 // expireCases closes pid's open cases past their deadline, and reports
 // whether it closed a decide case: its subject falls back to the rules. A
 // chat has no fallback.
@@ -375,14 +368,14 @@ func (s *Store) ModelNextCase(ctx context.Context, token string, maxAgents int) 
 	if out.Expired, err = expireCases(ctx, tx, c.ProjectID, nowRaw); err != nil {
 		return out, err
 	}
-	_, meta, err := readDispatcher(ctx, tx, c.ProjectID)
+	use, _, err := projectModelUse(ctx, tx, c.ProjectID)
 	if err != nil {
 		return out, err
 	}
-	if meta["enabled"] != true || meta["mode"] != "model" {
-		if err = closeModelCases(ctx, tx, c.ProjectID, nowRaw); err != nil {
-			return out, err
-		}
+	if err = closeCasesOutside(ctx, tx, c.ProjectID, use, nowRaw); err != nil {
+		return out, err
+	}
+	if use == "" {
 		return out, tx.Commit()
 	}
 	own, err := query(ctx, tx, `SELECT * FROM dispatcher_cases WHERE project_id=? AND closed_at IS NULL AND lease_key=? ORDER BY created_at,id LIMIT 1`, c.ProjectID, c.Holder)
@@ -420,10 +413,12 @@ func (s *Store) ModelNextCase(ctx context.Context, token string, maxAgents int) 
 		}
 		return out, err
 	}
-	// Only a decide case whose claim is still pending at its revision: any
-	// other could only end superseded. Decide cases come before chats, and
-	// a chat only within the key-holder's chat share (D6-M1).
-	open, err := query(ctx, tx, `SELECT c.* FROM dispatcher_cases c WHERE c.project_id=? AND c.kind='decide' AND c.closed_at IS NULL AND c.lease_key IS NULL AND c.deadline>? AND EXISTS(SELECT 1 FROM session_assignments a WHERE a.project_id=c.project_id AND a.id=c.subject_id AND a.state='proposed' AND a.revision=c.subject_revision) ORDER BY c.created_at,c.id LIMIT 1`, c.ProjectID, nowRaw)
+	// Only a decide or advise case whose claim is still pending at its
+	// revision: a decide could only end superseded, and advice would come
+	// after a person decided. Decide cases come first, then advise, then
+	// chats (d7 Q19), a chat only within the key-holder's chat share
+	// (D6-M1). A project has decide and chat cases, or advise ones.
+	open, err := query(ctx, tx, `SELECT c.* FROM dispatcher_cases c WHERE c.project_id=? AND c.kind IN ('decide','advise') AND c.closed_at IS NULL AND c.lease_key IS NULL AND c.deadline>? AND EXISTS(SELECT 1 FROM session_assignments a WHERE a.project_id=c.project_id AND a.id=c.subject_id AND a.state='proposed' AND a.revision=c.subject_revision) ORDER BY CASE c.kind WHEN 'decide' THEN 0 ELSE 1 END,c.created_at,c.id LIMIT 1`, c.ProjectID, nowRaw)
 	if err == nil && len(open) == 0 {
 		var chatOver bool
 		if chatOver, err = chatOverCaps(ctx, tx, c.Holder, nowRaw); err == nil && !chatOver {
@@ -500,7 +495,8 @@ func caseView(row map[string]any, nowRaw string) (map[string]any, error) {
 	return view, nil
 }
 
-// dispatcherCaseOpen opens a decide case for a pending claim, as the
+// dispatcherCaseOpen opens a decide case for a pending claim (or, with
+// kind advise, an advise case for its open escalation, d7), as the
 // dispatcher session (d5): the facts the tick read, the guardrails'
 // permitted set and the policy revision it read them under. The bus adds
 // the session's and holders' facts itself, with principals as refs. It is
@@ -512,6 +508,10 @@ func (s *Store) dispatcherCaseOpen(ctx context.Context, tx *transaction, pid str
 	if err != nil || subject == "" || revision == "" {
 		return nil, invalid("dispatcher_case_open needs a subject, its revision and the policy revision read")
 	}
+	kind := str(a, "kind")
+	if kind == "" {
+		kind = "decide"
+	}
 	permitted := []string{}
 	list, _ := a["permitted"].([]any)
 	for _, v := range list {
@@ -521,7 +521,10 @@ func (s *Store) dispatcherCaseOpen(ctx context.Context, tx *transaction, pid str
 		}
 		permitted = append(permitted, action)
 	}
-	if len(permitted) == 0 {
+	switch {
+	case kind != "decide" && kind != "advise":
+		return nil, invalid("dispatcher_case_open opens a decide or an advise case")
+	case kind == "decide" && len(permitted) == 0:
 		return nil, invalid("a decide case needs its permitted actions")
 	}
 	nowRaw, err := dbStamp(ctx, tx)
@@ -566,6 +569,18 @@ func (s *Store) dispatcherCaseOpen(ctx context.Context, tx *transaction, pid str
 	if facts["domain_matches"] == nil {
 		facts["domain_matches"] = []any{}
 	}
+	reasons := DecideReasonCodes
+	if kind == "advise" {
+		// An advise case is about the claim's open escalation (d7 §3).
+		var escalation map[string]any
+		if permitted, reasons, escalation, err = adviseCaseFacts(ctx, tx, pid, subject, revision); err != nil {
+			return nil, err
+		}
+		if escalation == nil {
+			return map[string]any{"opened": false, "reason": "no_escalation"}, nil
+		}
+		facts["escalation"] = escalation
+	}
 	untrusted := ""
 	if u, ok := a["untrusted"].(map[string]any); ok && len(u) > 0 {
 		title, excerpt := trimRunes(str(u, "title"), maxUntrustedTitle), trimRunes(str(u, "description_excerpt"), maxUntrustedExcerpt)
@@ -579,10 +594,10 @@ func (s *Store) dispatcherCaseOpen(ctx context.Context, tx *transaction, pid str
 	}
 	factsJSON, _ := json.Marshal(facts)
 	permittedJSON, _ := json.Marshal(permitted)
-	reasonsJSON, _ := json.Marshal(DecideReasonCodes)
+	reasonsJSON, _ := json.Marshal(reasons)
 	id := newID("case_")
-	res, err := tx.ExecContext(ctx, `INSERT INTO dispatcher_cases(id,project_id,kind,subject_type,subject_id,subject_revision,policy_revision,permitted,reason_codes,facts,untrusted,facts_source,app_project_id,domain,deadline,created_at) VALUES(?,?,'decide','proposal',?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(project_id,kind,subject_id,subject_revision) DO NOTHING`,
-		id, pid, subject, revision, policyRevision, string(permittedJSON), string(reasonsJSON), string(factsJSON), untrusted, str(a, "facts_source"), str(a, "app_project_id"), str(a, "domain"), layout(at(nowRaw).Add(time.Duration(deadline)*time.Second)), nowRaw)
+	res, err := tx.ExecContext(ctx, `INSERT INTO dispatcher_cases(id,project_id,kind,subject_type,subject_id,subject_revision,policy_revision,permitted,reason_codes,facts,untrusted,facts_source,app_project_id,domain,deadline,created_at) VALUES(?,?,?,'proposal',?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(project_id,kind,subject_id,subject_revision) DO NOTHING`,
+		id, pid, kind, subject, revision, policyRevision, string(permittedJSON), string(reasonsJSON), string(factsJSON), untrusted, str(a, "facts_source"), str(a, "app_project_id"), str(a, "domain"), layout(at(nowRaw).Add(time.Duration(deadline)*time.Second)), nowRaw)
 	if err != nil {
 		return nil, err
 	}
@@ -617,12 +632,12 @@ func caseFence(ctx context.Context, tx *transaction, pid, caseID, instance, nowR
 		return nil, "case_not_found", nil
 	}
 	c := rows[0]
-	_, meta, err := readDispatcher(ctx, tx, pid)
+	use, _, err := projectModelUse(ctx, tx, pid)
 	if err != nil {
 		return nil, "", err
 	}
-	if c["closed_at"] == nil && (meta["enabled"] != true || meta["mode"] != "model") {
-		if err = closeModelCases(ctx, tx, pid, nowRaw); err != nil {
+	if c["closed_at"] == nil && !caseKindAllowed(use, str(c, "kind")) {
+		if err = closeCasesOutside(ctx, tx, pid, use, nowRaw); err != nil {
 			return nil, "", err
 		}
 		return c, "case_closed", nil
@@ -816,14 +831,19 @@ func (s *Store) dispatcherCaseOutcome(ctx context.Context, tx *transaction, w, p
 	usage, _ := a["usage"].(map[string]any)
 	usageJSON, _ := json.Marshal(usage)
 	tokens := asInt(usage["input_tokens"]) + asInt(usage["output_tokens"])
-	// decide is a decide case's outcome, reply a chat's; abstain ends
-	// either [DM-M1].
-	chat := str(c, "kind") == "chat"
-	if tool == "decide" && chat || tool == "reply" && !chat {
+	// decide is a decide case's outcome, reply a chat's, recommend an
+	// advise case's; abstain ends any [DM-M1, d7].
+	kind := str(c, "kind")
+	if owner := map[string]string{"decide": "decide", "reply": "chat", "recommend": "advise"}[tool]; owner != "" && owner != kind {
 		return caseRefusal("tool_refused"), nil
 	}
 	var result map[string]any
 	switch tool {
+	case "recommend":
+		var code string
+		if result, code, err = s.recommendOutcome(ctx, tx, w, c, a, nowRaw); err != nil || code != "" {
+			return caseRefusal(code), err
+		}
 	case "reply":
 		if text := str(a, "text"); strings.TrimSpace(text) == "" || utf8.RuneCountInString(text) > maxChatReply {
 			return caseRefusal("invalid_argument"), nil
@@ -871,7 +891,9 @@ func (s *Store) dispatcherCaseOutcome(ctx context.Context, tx *transaction, w, p
 			return caseRefusal("invalid_argument"), nil
 		}
 		result = map[string]any{}
-		if !chat {
+		// Only a decide case falls back to the rules: a chat has none, and
+		// an advise case's escalation already went out.
+		if kind == "decide" {
 			result["fallback"] = "rules"
 		}
 	default:
@@ -913,8 +935,13 @@ func (s *Store) ModelTool(ctx context.Context, token, caseID, tool string, args 
 	}
 	out.ProjectID = c.ProjectID
 	op := "dispatcher_case_read"
-	if tool == "decide" || tool == "abstain" || tool == "reply" {
+	switch tool {
+	case "decide", "abstain", "reply", "recommend":
 		op = "dispatcher_case_outcome"
+	case "route_notice":
+		op = "dispatcher_route"
+	case "ask_session":
+		op = "dispatcher_ask_session"
 	}
 	a := map[string]any{"case_id": caseID, "instance": c.Instance, "tool": tool}
 	for k, v := range args {

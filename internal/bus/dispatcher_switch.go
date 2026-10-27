@@ -67,6 +67,9 @@ func (s *Store) dispatcherSwitch(ctx context.Context, tx *transaction, w, p map[
 		if _, err = tx.ExecContext(ctx, `UPDATE sessions SET status='retired',updated_at=? WHERE project_id=? AND role='system' AND name IN (?,?) AND status='active'`, nowRaw, pid, DispatcherSessionName, DispatcherModelSessionName); err != nil {
 			return nil, err
 		}
+		if err = clearModelOptIns(ctx, tx, pid); err != nil {
+			return nil, err
+		}
 		var next any
 		after := ""
 		if own != nil {
@@ -91,6 +94,12 @@ func (s *Store) dispatcherSwitch(ctx context.Context, tx *transaction, w, p map[
 	if meta["enabled"] == true && meta["mode"] == mode {
 		return nil, invalid("the dispatcher is already on in mode " + mode)
 	}
+	// Enable turns advice and the opt-in tools off: each comes back only
+	// through its own preview (R132-M1).
+	settings, _, err := readModelSettings(ctx, tx, pid)
+	if err != nil {
+		return nil, err
+	}
 	var model map[string]any
 	if mode == "model" {
 		keys, err := query(ctx, tx, `SELECT provider_id,model,caps FROM dispatcher_model_keys WHERE owner_principal=? AND state='active'`, s.principal)
@@ -103,10 +112,6 @@ func (s *Store) dispatcherSwitch(ctx context.Context, tx *transaction, w, p map[
 		var caps any
 		_ = json.Unmarshal([]byte(str(keys[0], "caps")), &caps)
 		// What turning the model on means, in the preview (§12.4).
-		settings, _, err := readModelSettings(ctx, tx, pid)
-		if err != nil {
-			return nil, err
-		}
 		// Who can ask it questions (dispatcher chat); the questions go to the
 		// provider too (#121 L1).
 		chat := "owners"
@@ -115,6 +120,13 @@ func (s *Store) dispatcherSwitch(ctx context.Context, tx *transaction, w, p map[
 		}
 		model = map[string]any{"provider": str(keys[0], "provider_id"), "model": str(keys[0], "model"), "caps": caps,
 			"issue_text_to_provider": true, "agent_required": true, "chat": chat, "chat_questions_to_provider": true}
+		over, err := modelCapPreview(ctx, tx, s.principal, pid)
+		if err != nil {
+			return nil, err
+		}
+		if over != nil {
+			model["model_projects_over_cap"] = over
+		}
 	}
 	raw, err := s.taskboard(ctx, tx, wid, pid, "", "taskboard_get_v2", map[string]any{})
 	if err != nil {
@@ -157,6 +169,9 @@ func (s *Store) dispatcherSwitch(ctx context.Context, tx *transaction, w, p map[
 	if model != nil {
 		preview["model"] = model
 	}
+	if off := modelOptIns(settings); len(off) > 0 {
+		preview["turns_off"] = off
+	}
 	// With no domain every claim would escalate as no_domain, so enable
 	// refuses it: the preview says why (R107-L1).
 	noDomains := len(next.Domains) == 0
@@ -169,6 +184,9 @@ func (s *Store) dispatcherSwitch(ctx context.Context, tx *transaction, w, p map[
 	}
 	if noDomains {
 		return nil, invalid("the dispatcher has no domains and the task board binding names no Linear projects, so every claim would be escalated: set domains first (dispatcher domains set)")
+	}
+	if err = clearModelOptIns(ctx, tx, pid); err != nil {
+		return nil, err
 	}
 	current := int64(expected)
 	// A new default domain, or a first policy row, is written first.

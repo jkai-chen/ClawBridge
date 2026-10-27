@@ -129,11 +129,11 @@ Status, on the current main branch:
 | Model key setup and test, the launcher's and the agent's endpoints | on main |
 | Cases: `cases/next`, the read tools, `decide` and `abstain`, the rules fallback | on main |
 | `doctor`'s model checks | on main |
-| Chat (`dispatcher chat`) | in review |
+| Chat (`dispatcher chat`) | on main |
 | `clawbridge-agentd` (the launcher) with its per-owner network and egress proxy | in review |
 | Deployment, and CI against a real Docker daemon, for the launcher | planned |
 | A guided `dispatcher model setup` in the CLI and TUI | planned |
-| Advice in rules mode (`recommend`), and the opt-in tools | planned |
+| Advice in rules mode (`recommend`), and the opt-in tools | in review |
 
 Only the agent is in a release so far (v0.3.4). The rows marked on main are not released yet, and the rest is not on
 main yet. The design is in this section so that owners can judge it before it ships.
@@ -211,7 +211,8 @@ A project owner can ask the model a question from their own terminal, with no se
   It answers with a reply of at most 2,000 characters, or abstains.
 - **The budget:** chats use at most a quarter of the model's runs per hour and per day, rounded down, so caps under 4
   runs an hour or a day leave no runs for chat. Past the share, an ask is refused until the window moves, and claims
-  are always served before chats.
+  are always served before chats. So while the board is busy, a chat waits behind each open claim's case, each
+  up to its deadline, and can end with no answer in time: read a late reply with `dispatcher chat show`.
 - **Model output in `dispatcher decisions`:** the log's explanations are printed stripped the same way as replies.
 - **The reply is model output, not checked.**
   - It is printed only to the asker's terminal, with terminal control characters and bidirectional overrides removed.
@@ -219,6 +220,40 @@ A project owner can ask the model a question from their own terminal, with no se
   - To act, use the CLI's own commands.
 - **Retention:** questions and replies are kept with the case, like other cases. There is no purge yet; a retention
   policy is planned before v1.0.
+
+### Advice in rules mode, and the opt-in tools
+
+In rules mode the model can **advise** instead of decide. The rules decide every claim as usual, and the model only
+adds a recommendation to the claims they escalate.
+- **Turning it on** (project owner, in your own terminal, with no session):
+  - `clawbridge dispatcher model advise on --expected-revision N` shows what it means: the model and caps of your
+    tested key, that issue text goes to your model provider, and that a dispatcher agent must run.
+  - Add `--confirm` to make the change. `advise off` turns it off and closes any case still open.
+  - Advice is for rules mode only: in model mode the model already decides.
+  - The preview also lists the opt-in tools already set, since they come back on with advice.
+  - `dispatcher disable` and every `dispatcher enable` turn advice and the opt-in tools off. The enable preview lists
+    what it turns off (`turns_off`). Each comes back only through its own preview.
+- **What happens:**
+  - An escalation goes out at once, exactly as without the model.
+  - With an agent running and within its caps, the claim then gets one advise case. It is opened in the check that
+    escalates, and only then: an escalation that misses it (no agent, caps reached, an error) gets no advice. The model recommends confirm,
+    decline or wait, with a reason code and a note of at most 280 characters.
+  - The people the escalation reached get a follow-up with the **action and reason code only**. A person still decides.
+  - The note is model output, so it never goes to an inbox. Owners and leads read it with
+    `clawbridge dispatcher escalations`, stripped of terminal controls. It lists the escalations whose claim is still
+    pending; `--all` includes the ones a person already decided.
+  - A recommendation that arrives after a person decided is kept but not sent.
+- **The opt-in tools** act without a person, so each is off until the owner turns it on with
+  `clawbridge dispatcher model tools set [route_notice] [ask_session] --expected-revision N [--confirm]` (no tools turns
+  them all off). They work in advise and model-mode cases, never in a chat.
+  - `route_notice` sends an escalation the rules couldn't place (no domain, or more than one) to one domain you
+    configured, in the escalation's own fixed text, once per case. Each route is audited.
+  - `ask_session` sends a session in the case one fixed question about its claim: which domain it belongs to, whether
+    it is still working, or what its scope is. The model writes none of the words. At most one per case, one per
+    session, issue and question a day, and 20 per project a day, and none once a person has decided the claim.
+- **At most 100 projects per owner.** One owner's agent serves at most 100 projects with the model on, in model mode
+  or advising. Past that it serves the first 100 by project ID, and the rest get no model. The enable and `advise on`
+  previews say so (`model_projects_over_cap`) when the change would take you past 100, and doctor warns.
 
 ### What doctor shows
 
@@ -238,6 +273,8 @@ never the key:
   and no agent has called for 5 minutes.
 - **agentd** (`dispatcher.model.launcher`): whether it called in the last 5 minutes, and when its launcher token
   expires; it warns 14 days ahead.
+- **Projects per owner** (`dispatcher.model.projects`): shown only when an owner of this project has the model on in
+  more than 100 projects. It warns with the count, and says whether this project is among the 100 served.
 - **Capacity** (`dispatcher.model.capacity`): the server's live agents against the cap, warning at the cap only when an
   owner of this project with an active key has no agent running, and when the agents that may still start (160 MiB
   each) need more than the host's available memory.

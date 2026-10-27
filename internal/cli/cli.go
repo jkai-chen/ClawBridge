@@ -539,7 +539,7 @@ flags:`)
 	case "dispatcher":
 		// The dispatcher's policy: any member reads it; the owner sets the
 		// domains; a domain's owner edits its trust list and coordinator.
-		usage := errors.New("usage: dispatcher show; dispatcher enable [--engine rules|model] --expected-revision N [--confirm]; dispatcher disable --expected-revision N; dispatcher domains set --file FILE --expected-revision N; dispatcher domain trust|untrust|coordinator DOMAIN SESSION --expected-revision N; dispatcher decisions [--since-hours N] [--limit N]; dispatcher chat \"QUESTION\"; dispatcher chat show [CASE]; dispatcher chat leads on|off --expected-revision N")
+		usage := errors.New("usage: dispatcher show; dispatcher enable [--engine rules|model] --expected-revision N [--confirm]; dispatcher disable --expected-revision N; dispatcher domains set --file FILE --expected-revision N; dispatcher domain trust|untrust|coordinator DOMAIN SESSION --expected-revision N; dispatcher decisions [--since-hours N] [--limit N]; dispatcher chat \"QUESTION\"; dispatcher chat show [CASE]; dispatcher chat leads on|off --expected-revision N; dispatcher model advise on|off --expected-revision N [--confirm]; dispatcher model tools set [route_notice] [ask_session] --expected-revision N [--confirm]; dispatcher escalations [--all] [--limit N]")
 		switch {
 		case len(rest) >= 1 && rest[0] == "show":
 			op, rest = "dispatcher_get", rest[1:]
@@ -569,6 +569,24 @@ flags:`)
 			// A question to the model, from a person's terminal only [DM-M1].
 			op, rest = "dispatcher_chat_ask", rest[1:]
 			arityMin, arityMax = 1, 1
+		case len(rest) >= 2 && rest[0] == "model" && rest[1] == "advise":
+			// The model as the advisor in rules mode (d7): the owner, in
+			// their own terminal, a preview first.
+			op, rest = "dispatcher_model_advise", rest[2:]
+			f.Bool("confirm", false, "make the change; without it, show what it means")
+			f.Int64("expected-revision", -1, "the dispatcher policy revision you last read")
+			arityMin, arityMax = 1, 1
+		case len(rest) >= 3 && rest[0] == "model" && rest[1] == "tools" && rest[2] == "set":
+			op, rest = "dispatcher_model_tools", rest[3:]
+			f.Bool("confirm", false, "make the change; without it, show what it means")
+			f.Int64("expected-revision", -1, "the dispatcher policy revision you last read")
+			arityMax = len(bus.OptInTools)
+		case len(rest) >= 1 && rest[0] == "escalations":
+			// Escalations with the model's recommendations and notes: model
+			// output, so a person's terminal only [DM-M1].
+			op, rest = "dispatcher_escalations_list", rest[1:]
+			f.Bool("all", false, "include escalations whose claim was already decided")
+			f.Int("limit", 50, "at most this many, 1 to 50")
 		case len(rest) >= 2 && rest[0] == "domains" && rest[1] == "set":
 			op, rest = "dispatcher_domains_set", rest[2:]
 			f.String("file", "", "the domains document, JSON: {\"domains\": [...]}")
@@ -842,6 +860,17 @@ flags:`)
 				return errors.New("usage: dispatcher chat leads on|off --expected-revision N")
 			}
 			a["allow"] = pos[0] == "on"
+		case "dispatcher_model_advise":
+			if pos[0] != "on" && pos[0] != "off" {
+				return errors.New("usage: dispatcher model advise on|off --expected-revision N [--confirm]")
+			}
+			a["on"] = pos[0] == "on"
+		case "dispatcher_model_tools":
+			tools := []any{}
+			for _, t := range pos {
+				tools = append(tools, t)
+			}
+			a["tools"] = tools
 		case "dispatcher_decisions_list":
 			for k, v := range map[string]int{"since_hours": 24, "limit": 50} {
 				if a[k] == nil {
@@ -849,7 +878,7 @@ flags:`)
 				}
 			}
 		}
-		if op != "dispatcher_get" && op != "dispatcher_decisions_list" && op != "dispatcher_chat_ask" && op != "dispatcher_chat_show" {
+		if op != "dispatcher_get" && op != "dispatcher_decisions_list" && op != "dispatcher_chat_ask" && op != "dispatcher_chat_show" && op != "dispatcher_escalations_list" {
 			if v, _ := a["expected_revision"].(int64); v < 0 || a["expected_revision"] == nil {
 				return errors.New(op + " requires --expected-revision")
 			}
@@ -1029,8 +1058,9 @@ flags:`)
 		data["token_file"] = secret.path
 		data["note"] = "Wrote the token to " + secret.path + " (0600): put it in Linear's MCP server header Authorization: Bearer <token>, then delete the file."
 	}
-	if op == "dispatcher_decisions_list" {
-		// The log carries the model's explanations: model output (D6-L1).
+	if op == "dispatcher_decisions_list" || op == "dispatcher_escalations_list" {
+		// The log and the escalations carry the model's explanations: model
+		// output (D6-L1).
 		result.Data = terminalSafeAll(result.Data)
 	}
 	if op == "assignment_confirm" || op == "assignment_release" {

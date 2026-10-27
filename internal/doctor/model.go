@@ -43,6 +43,7 @@ func checkDispatcherModel(ctx context.Context, executor Executor, wid, pid strin
 		return
 	}
 	waiting := checkModelHolders(m, holders, modelOn, add)
+	checkModelProjects(holders, add)
 	checkModelLauncher(m, add)
 	checkModelCapacity(m, waiting, add)
 }
@@ -133,6 +134,34 @@ func checkModelHolders(m map[string]any, holders []any, modelOn bool, add func(C
 	}
 	add(agent)
 	return waiting
+}
+
+// checkModelProjects warns when an owner of this project has the model on
+// in more projects than one agent serves: the first ones by project ID are
+// served, the rest are not. It is shown only then.
+func checkModelProjects(holders []any, add func(Check)) {
+	var over []string
+	for _, raw := range holders {
+		h, _ := raw.(map[string]any)
+		if h["model_projects"] == nil {
+			continue
+		}
+		who := text(h["principal"])
+		if h["you"] == true {
+			who = "yours"
+		}
+		served := "this project is among them"
+		if h["project_served"] != true {
+			served = "this project is NOT among them, so the model does not serve it"
+		}
+		over = append(over, fmt.Sprintf("%s: the model is on in %d projects, and the agent serves the first %d by project ID; %s", who, number(h["model_projects"]), number(h["model_projects_cap"]), served))
+	}
+	if len(over) == 0 {
+		return
+	}
+	add(Check{ID: "dispatcher.model.projects", Title: "Model projects per owner", Status: Warn,
+		Message: strings.Join(over, "; ") + ".",
+		Action:  "That owner turns the model off (dispatcher disable, or dispatcher model advise off) in the projects that need it least."})
 }
 
 // checkModelLauncher reports agentd's heartbeat (its launcher token's last

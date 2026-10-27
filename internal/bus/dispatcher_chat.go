@@ -50,10 +50,14 @@ func dispatcherChatOperation(op string) bool {
 }
 
 // modelSettings are the owner's model settings in the policy: the case
-// deadline and whether leads may chat.
+// deadline, whether leads may chat, advice and the opt-in tools.
 type modelSettings struct {
 	Deadline  int  `json:"deadline_seconds"`
 	ChatLeads bool `json:"chat_leads"`
+	// Advise turns the model on as the advisor in rules mode, and
+	// OptInTools are the owner's opt-in tools (d7).
+	Advise     bool     `json:"advise"`
+	OptInTools []string `json:"opt_in_tools"`
 }
 
 func readModelSettings(ctx context.Context, tx *transaction, pid string) (modelSettings, map[string]any, error) {

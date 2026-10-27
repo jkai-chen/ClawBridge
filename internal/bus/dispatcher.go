@@ -612,6 +612,13 @@ func (s *Store) ExecuteDispatcher(ctx context.Context, projectID, session string
 		out, err = scopedStore.dispatcherCaseRead(ctx, tx, projectID, r.Args)
 	case "dispatcher_case_outcome":
 		out, err = scopedStore.dispatcherCaseOutcome(ctx, tx, w, p, r.Args)
+	case "dispatcher_route", "dispatcher_ask_session":
+		// The opt-in tools, for the case's agent only (d7).
+		if str(actor, "name") != DispatcherModelSessionName {
+			err = scoped(fmt.Sprintf("operation %s is not available in this release", r.Operation), "unsupported")
+			break
+		}
+		out, err = scopedStore.dispatcherOptInTool(ctx, tx, w, p, r.Args)
 	default:
 		// Allowed, and built in a later step of the dispatcher.
 		err = scoped(fmt.Sprintf("operation %s is not available in this release", r.Operation), "unsupported")

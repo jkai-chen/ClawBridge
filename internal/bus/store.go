@@ -132,7 +132,7 @@ func (s *Store) migrate() error {
 	if err = tx.QueryRow("PRAGMA user_version").Scan(&version); err != nil {
 		return err
 	}
-	if version > 27 {
+	if version > 28 {
 		return errors.New("database schema is newer than this ClawBridge binary")
 	}
 	if version == 0 {
@@ -274,6 +274,11 @@ func (s *Store) migrate() error {
 	}
 	if version < 27 {
 		if _, err = tx.Exec(contextLevelsSchemaV27 + `PRAGMA user_version=27;`); err != nil {
+			return err
+		}
+	}
+	if version < 28 {
+		if _, err = tx.Exec(dispatcherAdviseSchemaV28 + `PRAGMA user_version=28;`); err != nil {
 			return err
 		}
 	}
@@ -527,6 +532,9 @@ var operationArgs = map[string]string{
 	"dispatcher_chat_show":        "instance case_id",
 	"dispatcher_chat_leads":       "instance allow expected_revision",
 	"dispatcher_decisions_list":   "instance since_hours limit",
+	"dispatcher_model_advise":     "instance on expected_revision confirm",
+	"dispatcher_model_tools":      "instance tools expected_revision confirm",
+	"dispatcher_escalations_list": "instance all limit",
 	"dispatcher_model_doctor":     "instance",
 	"health_due":                  "instance lease_token generation limit nudges_only",
 	"health_force":                "instance lease_token generation linear_project force_new",
@@ -649,13 +657,13 @@ func validateArgs(op string, a map[string]any) error {
 			if _, ok := intList(v, 1000); !ok {
 				return errors.New("lines must be an array of line numbers")
 			}
-		case "ids", "linear_team_ids", "linear_project_ids", "closes_pending", "scope_paths", "domains", "comment_ids", "signals", "roles", "pattern_ids", "issue_labels":
+		case "ids", "linear_team_ids", "linear_project_ids", "closes_pending", "scope_paths", "domains", "comment_ids", "signals", "roles", "pattern_ids", "issue_labels", "tools":
 			switch v.(type) {
 			case []string, []any:
 			default:
 				return errors.New("ids must be an array of strings")
 			}
-		case "unread_only", "resume", "allow_overlap", "allow_previous", "repair", "confirm", "forced", "force_new", "nudges_only", "egress_confirmed":
+		case "unread_only", "on", "all", "resume", "allow_overlap", "allow_previous", "repair", "confirm", "forced", "force_new", "nudges_only", "egress_confirmed":
 			if _, ok := v.(bool); !ok {
 				return fmt.Errorf("%s must be boolean", k)
 			}
@@ -789,7 +797,7 @@ func (s *Store) ExecuteAs(ctx context.Context, principal string, r Request) (Res
 // inbox stamps deliveries, so those keep the locks.
 func pureRead(r Request) bool {
 	switch r.Operation {
-	case "snapshot", "inbox_status", "notification_status", "taskboard_get", "taskboard_get_v2", "taskboard_access", "list_projects", "list_members", "comment_watch_status", "label_policy_get", "status_policy_get", "doc_policy_get", "dispatcher_get", "context_watch_get", "health_get", "doc_seed_get", "doc_publication_get", "invite_list", "device_list", "user_list", "owner_transfer_get", "dispatcher_chat_show", "dispatcher_decisions_list", "dispatcher_model_doctor":
+	case "snapshot", "inbox_status", "notification_status", "taskboard_get", "taskboard_get_v2", "taskboard_access", "list_projects", "list_members", "comment_watch_status", "label_policy_get", "status_policy_get", "doc_policy_get", "dispatcher_get", "context_watch_get", "health_get", "doc_seed_get", "doc_publication_get", "invite_list", "device_list", "user_list", "owner_transfer_get", "dispatcher_chat_show", "dispatcher_decisions_list", "dispatcher_escalations_list", "dispatcher_model_doctor":
 		return true
 	case "list_sessions", "history", "whoami", "linear_comments_posted", "linear_comment_precheck", "intake_policy_get", "intake_trust_list", "intake_list":
 		// Naming a session with its instance makes it a heartbeat read: the
@@ -1365,6 +1373,14 @@ func (s *Store) execute(ctx context.Context, tx *transaction, r Request) (any, e
 	}
 	// Chat and the decision log are a person's CLI commands, never a
 	// session's: no model output reaches an agent [DM-M1].
+	// Advice, the opt-in tools and the escalations (with the model's
+	// notes) are a person's CLI commands too [DM-M1].
+	if dispatcherAdviseOperation(r.Operation) {
+		if actor != nil || str(a, "instance") != "" {
+			return nil, scoped("the dispatcher's model settings and escalations are read and set in your own terminal with no session (no --session or CLAWBRIDGE_SESSION)", "forbidden")
+		}
+		return s.dispatcherAdviseOp(ctx, tx, w, p, projectRole, r)
+	}
 	if dispatcherChatOperation(r.Operation) {
 		if actor != nil || str(a, "instance") != "" {
 			return nil, scoped("chat with the dispatcher runs in your own terminal with no session (no --session or CLAWBRIDGE_SESSION)", "forbidden")

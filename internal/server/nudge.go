@@ -109,20 +109,27 @@ func (n *nudger) serve(ctx context.Context) time.Duration {
 			}
 			return wait
 		}
-		ran := false
+		ran, more := false, false
 		ok := n.flight.claim()
 		if ok {
 			func() {
 				defer n.flight.running.Store(false)
 				pass, cancel := context.WithTimeout(ctx, tickDeadline)
 				defer cancel()
-				n.markers.Markers(pass, pid)
+				out := n.markers.Markers(pass, pid)
 				ran = true
+				left, _ := out.(interface{ MarkersPending() bool })
+				more = left != nil && left.MarkersPending()
 			}()
 		}
 		n.mu.Lock()
 		if ran {
-			delete(n.pending, pid)
+			// A pass that stopped with rows left (its row limit or its
+			// clock) comes again in a minute, in its own budget, until
+			// the queue drains.
+			if !more {
+				delete(n.pending, pid)
+			}
 			n.last[pid] = n.now()
 		}
 		n.mu.Unlock()

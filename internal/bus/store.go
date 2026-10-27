@@ -431,7 +431,7 @@ var operationArgs = map[string]string{
 	"comment_watch_report":        "instance lease_token generation issue_uuid calls error comments",
 	"marker_go":                   "instance lease_token generation assignment_id phase part",
 	"marker_settle":               "instance lease_token generation assignment_id phase part outcome comment_id created_at via error state_target state_landed skip_reason",
-	"marker_due":                  "instance lease_token generation",
+	"marker_due":                  "instance lease_token generation limit",
 	"marker_spent":                "instance lease_token generation assignment_id phase calls charged",
 	"label_policy_get":            "instance",
 	"status_policy_get":           "instance",

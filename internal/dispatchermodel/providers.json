@@ -1,0 +1,14 @@
+{
+  "version": 1,
+  "providers": [
+    {"id": "anthropic", "name": "Anthropic", "api": "anthropic-messages", "base_url": "https://api.anthropic.com", "key_hint": "Anthropic API key (sk-ant-…)"},
+    {"id": "openai", "name": "OpenAI", "api": "openai-responses", "base_url": "https://api.openai.com/v1", "key_hint": "OpenAI API key (sk-…)"},
+    {"id": "google", "name": "Google Gemini", "api": "google-generative-ai", "base_url": "https://generativelanguage.googleapis.com/v1beta", "key_hint": "Gemini API key"},
+    {"id": "mistral", "name": "Mistral", "api": "mistral-conversations", "base_url": "https://api.mistral.ai", "key_hint": "Mistral API key"},
+    {"id": "deepseek", "name": "DeepSeek", "api": "openai-completions", "base_url": "https://api.deepseek.com", "key_hint": "DeepSeek API key"},
+    {"id": "groq", "name": "Groq", "api": "openai-completions", "base_url": "https://api.groq.com/openai/v1", "key_hint": "Groq API key"},
+    {"id": "together", "name": "Together", "api": "openai-completions", "base_url": "https://api.together.ai/v1", "key_hint": "Together API key"},
+    {"id": "openrouter", "name": "OpenRouter", "api": "openai-completions", "base_url": "https://openrouter.ai/api/v1", "key_hint": "OpenRouter API key"},
+    {"id": "openai-compatible", "name": "OpenAI-compatible, your own base URL", "api": "openai-completions", "custom": true, "key_hint": "the endpoint's API key"}
+  ]
+}

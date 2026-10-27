@@ -135,7 +135,13 @@ func TestModelSetupSealsThePendingKey(t *testing.T) {
 		"empty key":         {map[string]any{"key": "  "}, "key must be"},
 		"oversized key":     {map[string]any{"key": strings.Repeat("k", maxModelKey+1)}, "key must be"},
 		"bad provider":      {map[string]any{"provider_id": "Anthropic!"}, "provider_id"},
+		"unlisted provider": {map[string]any{"provider_id": "acme-llm"}, "providers list"},
+		"another api":       {map[string]any{"api": "openai-completions"}, "API kind"},
+		"another endpoint":  {map[string]any{"base_url": "https://evil.example.com"}, "provider's own from the providers list: https://api.anthropic.com"},
+		"plain http custom": {map[string]any{"provider_id": "openai-compatible", "api": "openai-completions", "base_url": "http://llm.example.com"}, "base_url"},
 		"bad model":         {map[string]any{"model": "a b"}, "model"},
+		"a key as model":    {map[string]any{"model": "sk-ant-api03-PASTEDINTHEWRONGPLACE00"}, "looks like a key"},
+		"bad custom url":    {map[string]any{"provider_id": "openai-compatible", "api": "openai-completions", "base_url": "https://u:p@llm.example.com"}, "base_url"},
 		"key in wrong type": {map[string]any{"key": 5}, "key"},
 	} {
 		a := setupArgs()
@@ -248,7 +254,7 @@ func TestLauncherTokenAuth(t *testing.T) {
 // and the ref is stable, opaque and never the principal.
 func TestLauncherWanted(t *testing.T) {
 	h := newModelHarness(t)
-	h.setup(map[string]any{"base_url": "https://API.Example.com/v1"})
+	h.setup(map[string]any{"provider_id": "openai-compatible", "api": "openai-completions", "base_url": "https://API.Example.com/v1"})
 	w := h.wanted()
 	if len(w) != 1 || w[0].Provider != "api.example.com:443" || w[0].ConfigRevision != 1 || !ownerRefPattern.MatchString(w[0].OwnerRef) || strings.Contains(w[0].OwnerRef, "@") {
 		t.Fatal(w)
@@ -269,7 +275,7 @@ func TestLauncherWanted(t *testing.T) {
 		t.Fatal(w)
 	}
 	// A rotation lists the pending key's provider and revision.
-	h.setup(map[string]any{"base_url": "https://[2001:db8::1]:8443"})
+	h.setup(map[string]any{"provider_id": "openai-compatible", "api": "openai-completions", "base_url": "https://[2001:db8::1]:8443"})
 	if w := h.wanted(); len(w) != 1 || w[0].Provider != "[2001:db8::1]:8443" || w[0].ConfigRevision != 2 || w[0].OwnerRef != ref {
 		t.Fatal(w)
 	}

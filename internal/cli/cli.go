@@ -19,6 +19,7 @@ import (
 	"clawbridge/internal/auth"
 	"clawbridge/internal/buildinfo"
 	"clawbridge/internal/bus"
+	"clawbridge/internal/dispatchermodel"
 	"clawbridge/internal/doctor"
 	"clawbridge/internal/linearboard"
 	"clawbridge/internal/linearprovider"
@@ -539,7 +540,7 @@ flags:`)
 	case "dispatcher":
 		// The dispatcher's policy: any member reads it; the owner sets the
 		// domains; a domain's owner edits its trust list and coordinator.
-		usage := errors.New("usage: dispatcher show; dispatcher enable [--engine rules|model] --expected-revision N [--confirm]; dispatcher disable --expected-revision N; dispatcher domains set --file FILE --expected-revision N; dispatcher domain trust|untrust|coordinator DOMAIN SESSION --expected-revision N; dispatcher decisions [--since-hours N] [--limit N]; dispatcher chat \"QUESTION\"; dispatcher chat show [CASE]; dispatcher chat leads on|off --expected-revision N; dispatcher model advise on|off --expected-revision N [--confirm]; dispatcher model tools set [route_notice] [ask_session] --expected-revision N [--confirm]; dispatcher escalations [--all] [--limit N]")
+		usage := errors.New("usage: dispatcher show; dispatcher enable [--engine rules|model] --expected-revision N [--confirm]; dispatcher disable --expected-revision N; dispatcher domains set --file FILE --expected-revision N; dispatcher domain trust|untrust|coordinator DOMAIN SESSION --expected-revision N; dispatcher decisions [--since-hours N] [--limit N]; dispatcher chat \"QUESTION\"; dispatcher chat show [CASE]; dispatcher chat leads on|off --expected-revision N; dispatcher model advise on|off --expected-revision N [--confirm]; dispatcher model tools set [route_notice] [ask_session] --expected-revision N [--confirm]; dispatcher model setup [--provider ID --model M [--base-url URL] --key-stdin --daily-tokens N [--caps K=V,…] --confirm-egress]; dispatcher model status; dispatcher model key delete --confirm; dispatcher escalations [--all] [--limit N]")
 		switch {
 		case len(rest) >= 1 && rest[0] == "show":
 			op, rest = "dispatcher_get", rest[1:]
@@ -576,6 +577,27 @@ flags:`)
 			f.Bool("confirm", false, "make the change; without it, show what it means")
 			f.Int64("expected-revision", -1, "the dispatcher policy revision you last read")
 			arityMin, arityMax = 1, 1
+		case len(rest) >= 2 && rest[0] == "model" && rest[1] == "setup":
+			// The owner's model setup (§11.1). A key is never an argument:
+			// one that looks like it stops everything first.
+			for _, arg := range rest[2:] {
+				if dispatchermodel.LooksLikeCredential(arg) {
+					return errKeyInArgs
+				}
+			}
+			op, rest = "dispatcher_model_setup", rest[2:]
+			stringArg("provider", "the provider's ID (dispatcher model setup lists them)")
+			stringArg("model", "the model ID, as the provider names it")
+			stringArg("base-url", "for openai-compatible only: the endpoint's base URL")
+			f.Bool("key-stdin", false, "read the key from stdin (then every other answer comes from flags); never a flag or env variable")
+			stringArg("caps", "caps as key=number pairs: runs_per_hour, runs_per_day, max_input_tokens_per_run, max_output_tokens_per_run, daily_tokens")
+			f.Int64("daily-tokens", 0, "your daily token ceiling, across your projects (required)")
+			f.Bool("confirm-egress", false, "confirm the egress disclosure setup prints")
+		case len(rest) >= 2 && rest[0] == "model" && rest[1] == "status":
+			op, rest = "dispatcher_model_doctor", rest[2:]
+		case len(rest) >= 3 && rest[0] == "model" && rest[1] == "key" && rest[2] == "delete":
+			op, rest = "dispatcher_model_key_delete", rest[3:]
+			f.Bool("confirm", false, "delete your key; your agent stops and the model goes off in your projects")
 		case len(rest) >= 3 && rest[0] == "model" && rest[1] == "tools" && rest[2] == "set":
 			op, rest = "dispatcher_model_tools", rest[3:]
 			f.Bool("confirm", false, "make the change; without it, show what it means")
@@ -878,7 +900,13 @@ flags:`)
 				}
 			}
 		}
-		if op != "dispatcher_get" && op != "dispatcher_decisions_list" && op != "dispatcher_chat_ask" && op != "dispatcher_chat_show" && op != "dispatcher_escalations_list" {
+		if op == "dispatcher_model_key_delete" && !f.Lookup("confirm").Value.(flag.Getter).Get().(bool) {
+			return errors.New("dispatcher model key delete deletes your model key: your agent stops, and the model goes off in every project of yours. Add --confirm to do it")
+		}
+		switch op {
+		case "dispatcher_get", "dispatcher_decisions_list", "dispatcher_chat_ask", "dispatcher_chat_show", "dispatcher_escalations_list",
+			"dispatcher_model_setup", "dispatcher_model_doctor", "dispatcher_model_key_delete":
+		default:
 			if v, _ := a["expected_revision"].(int64); v < 0 || a["expected_revision"] == nil {
 				return errors.New(op + " requires --expected-revision")
 			}
@@ -1026,6 +1054,9 @@ flags:`)
 	}
 	if op == "dispatcher_chat_ask" || op == "dispatcher_chat_show" {
 		return runDispatcherChat(ctx, executor, config, op, a, stdout)
+	}
+	if op == "dispatcher_model_setup" {
+		return runModelSetup(ctx, executor, config, a, stdout)
 	}
 	// G9 F2: an intake token goes to this terminal or a new file, decided
 	// before it exists.

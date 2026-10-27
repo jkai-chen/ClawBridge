@@ -130,13 +130,53 @@ Status, on the current main branch:
 | Cases: `cases/next`, the read tools, `decide` and `abstain`, the rules fallback | on main |
 | `doctor`'s model checks | on main |
 | Chat (`dispatcher chat`) | on main |
-| `clawbridge-agentd` (the launcher) with its per-owner network and egress proxy | in review |
+| `clawbridge-agentd` (the launcher) with its per-owner network and egress proxy | on main |
 | Deployment, and CI against a real Docker daemon, for the launcher | planned |
-| A guided `dispatcher model setup` in the CLI and TUI | planned |
-| Advice in rules mode (`recommend`), and the opt-in tools | in review |
+| A guided `dispatcher model setup` in the CLI | on main |
+| The same setup in the TUI | planned |
+| Advice in rules mode (`recommend`), and the opt-in tools | on main |
 
 Only the agent is in a release so far (v0.3.4). The rows marked on main are not released yet, and the rest is not on
 main yet. The design is in this section so that owners can judge it before it ships.
+
+### Setting up your model
+
+```sh
+clawbridge dispatcher model setup             # guided, in your own terminal
+clawbridge dispatcher model status            # your key, your agent and the test, as doctor sees them
+clawbridge dispatcher model key delete --confirm
+```
+
+Setup asks, in this order:
+1. **The provider,** from the list the dispatcher agent can run: Anthropic, OpenAI, Google Gemini, Mistral, DeepSeek,
+   Groq, Together, OpenRouter, or an OpenAI-compatible endpoint at a base URL you give.
+2. **The model ID,** as the provider names it. There is no default. A model without tool use fails the test.
+3. **Your key,** at a hidden prompt.
+   - It is never an argument or an environment variable. An argument that looks like a key stops setup before
+     anything is sent.
+   - It is sent once, sealed on the server, and kept by the CLI only in memory.
+4. **Your caps:** runs per hour and per day for each project (10 and 50 by default), input and output tokens per run
+   (20,000 and 2,000), and your daily token ceiling across your projects. The ceiling has no default: it is your bill.
+5. **The disclosure** of what is sent to the provider, which you confirm by typing `yes`.
+
+Then your agent makes one test call with the key, and setup prints the result: either the model is set up, or a fixed
+reason (the key was refused, no access to the model, quota, no tool use, the provider unreachable, …). Nothing is
+enabled by setup. Model mode is turned on per project with `dispatcher enable --engine model`, or the model becomes
+the rules' advisor with `dispatcher model advise on`.
+
+In a script, pass every answer as a flag and the key on stdin:
+
+```sh
+clawbridge dispatcher model setup --provider anthropic --model MODEL --daily-tokens 500000 \
+  [--caps runs_per_hour=10,runs_per_day=50] --confirm-egress --key-stdin < key-file
+```
+
+`--key-stdin` reads a pipe or a file, never a terminal, where the key would show as you type it. Setup exits 0 when
+the model is set up, 3 when the test hasn't finished within a minute (check with `dispatcher model status`), and 1 when
+it failed or stopped. A model ID that looks like a key is refused, since the model is stored and audited in the clear.
+
+To change the key, provider or model, run setup again. The new configuration is tested in a fresh agent, and the old
+one keeps running until the new test passes.
 
 ### The model's key: setup and test
 

@@ -19,6 +19,8 @@ import (
 	"strings"
 	"time"
 	"unicode/utf8"
+
+	"clawbridge/internal/dispatchermodel"
 )
 
 // The dispatcher model's launcher side (DISPATCHER-AGENT-DESIGN r2 §11,
@@ -68,8 +70,7 @@ const (
 	// setupTestLimit ends a pending key even when an agent took it up and
 	// never answered.
 	setupTestLimit = 30 * time.Minute
-	// maxModelKey bounds a provider credential: a key, or a Bedrock or
-	// Vertex credential document.
+	// maxModelKey bounds a provider credential.
 	maxModelKey = 16 << 10
 )
 
@@ -88,7 +89,6 @@ var (
 	agentCredentialPattrn = regexp.MustCompile(`^cba_[A-Za-z0-9_-]{43}$`)
 	bindingSecretPattern  = regexp.MustCompile(`^[A-Za-z0-9_-]{43}$`)
 	instanceIDPattern     = regexp.MustCompile(`^[A-Za-z0-9._:-]{1,128}$`)
-	providerIDPattern     = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,63}$`)
 	modelIDPattern        = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._:/@+-]{0,127}$`)
 	egressVersionPattern  = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]{0,31}$`)
 	// providerBaseURL is the agent's own rule [A8]: HTTPS, or plain HTTP to
@@ -297,11 +297,23 @@ func (s *Store) modelSetup(ctx context.Context, tx *transaction, w, p map[string
 	}
 	provider, api, model, baseURL := str(a, "provider_id"), str(a, "api"), str(a, "model"), str(a, "base_url")
 	key, _ := a["key"].(string)
+	// The provider, its API and (unless custom) its base URL come from the
+	// list the agent's build can run, the one the CLI and TUI offer.
+	if err := dispatchermodel.CheckProvider(provider, api, baseURL); err != nil {
+		return nil, invalid(err.Error())
+	}
+	// A custom endpoint follows the same URL rule as the CLI's, and a model
+	// ID that looks like a key is refused: the model is stored and audited
+	// in the clear.
+	if p, _ := dispatchermodel.LookupProvider(provider); p.Custom {
+		if err := dispatchermodel.ValidateBaseURL(baseURL); err != nil {
+			return nil, invalid("base_url must be https, or http to a loopback host")
+		}
+	}
+	if err := dispatchermodel.ValidateModel(model); err != nil {
+		return nil, invalid(err.Error())
+	}
 	switch {
-	case !providerIDPattern.MatchString(provider):
-		return nil, invalid("provider_id must be a provider ID from the providers list")
-	case !providerIDPattern.MatchString(api):
-		return nil, invalid("api must be the provider's API kind from the providers list")
 	case !modelIDPattern.MatchString(model):
 		return nil, invalid("model must be a model ID")
 	case !providerBaseURL.MatchString(baseURL):

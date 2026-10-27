@@ -647,3 +647,42 @@ func TestNoKeyNoRenewAndFirstFlagKept(t *testing.T) {
 		t.Fatal("renewed with no key:", err)
 	}
 }
+
+// G9-4: a redeemed credential lives agentCredentialMaxAge from its
+// redemption; past it renew and status refuse it, and it isn't flagged.
+func TestAgentCredentialMaxAge(t *testing.T) {
+	h := newModelHarness(t)
+	h.setup(nil)
+	cred, cfg := h.start()
+	age := func(d time.Duration) {
+		h.t.Helper()
+		if _, err := h.s.db.Exec(`UPDATE dispatcher_agent_credentials SET used_at=?`, layout(time.Now().UTC().Add(-d))); err != nil {
+			h.t.Fatal(err)
+		}
+	}
+	age(24*time.Hour - time.Minute)
+	if _, err := h.s.RenewAgentTokens(h.ctx, cred, cfg.BindingSecret); err != nil {
+		t.Fatal("renew before the max age:", err)
+	}
+	age(24*time.Hour + time.Minute)
+	if _, err := h.s.RenewAgentTokens(h.ctx, cred, cfg.BindingSecret); !errors.Is(err, ErrModelUnauthorized) {
+		t.Fatal("renew past the max age:", err)
+	}
+	if err := h.s.AgentTestResult(h.ctx, cred, cfg.BindingSecret, 1, "active", ""); !errors.Is(err, ErrModelUnauthorized) {
+		t.Fatal("test result past the max age:", err)
+	}
+	var flagged string
+	if err := h.s.db.QueryRow(`SELECT flagged FROM dispatcher_agent_credentials`).Scan(&flagged); err != nil || flagged != "" {
+		t.Fatal("an expired credential was flagged:", flagged, err)
+	}
+	// A fresh mint for the same owner works again.
+	cred, cfg = h.start()
+	if _, err := h.s.RenewAgentTokens(h.ctx, cred, cfg.BindingSecret); err != nil {
+		t.Fatal("renew after a fresh mint:", err)
+	}
+	// Doctor counts the owner's mints in the last day (G9-3).
+	doctor := h.call("dispatcher_model_doctor", "", map[string]any{}).(map[string]any)
+	if holder := doctor["holders"].([]any)[0].(map[string]any); holder["mints_24h"] != int64(2) {
+		t.Fatal("doctor's mints:", holder)
+	}
+}

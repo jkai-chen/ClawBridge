@@ -99,6 +99,14 @@ func (s *Store) modelDoctor(ctx context.Context, tx *transaction, w, p map[strin
 				h["agent"] = "running"
 			}
 		}
+		// Each mint replaced the owner's agent: agentd restarting it, the
+		// daily renewal of its credential, or someone else holding the
+		// launcher token (G9-3).
+		var minted int64
+		if err = tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM dispatcher_agent_credentials WHERE owner_principal=? AND created_at>?`, owner, layout(now.Add(-24*time.Hour))).Scan(&minted); err != nil {
+			return nil, err
+		}
+		h["mints_24h"] = minted
 		flags, err := query(ctx, tx, `SELECT flagged FROM dispatcher_agent_credentials WHERE owner_principal=? AND flagged<>'' AND created_at>? ORDER BY created_at DESC`, owner, layout(now.Add(-credentialFlagFresh)))
 		if err != nil {
 			return nil, err

@@ -271,8 +271,9 @@ never the key:
   running).
 - **The agents** (`dispatcher.model.agent`): each owner's agent, running or offline, and when it last called. It fails
   when the provider refuses the key (`provider_auth`) or agentd reported the agent crash-looping in the last hour, and
-  warns when a credential was presented twice or with a wrong binding secret in the last week, or when model mode is on
-  and no agent has called for 5 minutes.
+  warns when a credential was presented twice or with a wrong binding secret in the last week, when the agent was given a
+  new credential more than 3 times in 24 hours (agentd restarting it, or someone else holding the launcher token; one a
+  day is its credential's renewal), or when model mode is on and no agent has called for 5 minutes.
 - **agentd** (`dispatcher.model.launcher`): whether it called in the last 5 minutes, and when its launcher token
   expires; it warns 14 days ahead.
 - **Projects per owner** (`dispatcher.model.projects`): shown only when an owner of this project has the model on in

@@ -82,6 +82,18 @@ func TestDoctorShowsTheDispatcherModel(t *testing.T) {
 			"dispatcher.model.seal": {Pass, ""}, "dispatcher.model.key": {Pass, ""}, "dispatcher.model.agent": {Pass, ""}, "dispatcher.model.launcher": {Pass, ""}, "dispatcher.model.capacity": {Pass, ""},
 			"dispatcher.model.projects": {Warn, "yours: the model is on in 101 projects, and the agent serves the first 100 by project ID; this project is NOT among them"},
 		}},
+		"minted often": {change: func(m map[string]any) {
+			m["holders"].([]any)[0].(map[string]any)["mints_24h"] = 5
+		}, want: map[string]want{
+			"dispatcher.model.seal": {Pass, ""}, "dispatcher.model.key": {Pass, ""}, "dispatcher.model.launcher": {Pass, ""}, "dispatcher.model.capacity": {Pass, ""},
+			"dispatcher.model.agent": {Warn, "yours: its agent was given a new credential 5 times in 24 hours"},
+		}},
+		"minted daily": {change: func(m map[string]any) {
+			m["holders"].([]any)[0].(map[string]any)["mints_24h"] = 3
+		}, want: map[string]want{
+			"dispatcher.model.seal": {Pass, ""}, "dispatcher.model.key": {Pass, ""}, "dispatcher.model.launcher": {Pass, ""}, "dispatcher.model.capacity": {Pass, ""},
+			"dispatcher.model.agent": {Pass, "yours: running"},
+		}},
 		"broken": {change: func(m map[string]any) {
 			m["seal_configured"] = false
 			h := m["holders"].([]any)[0].(map[string]any)

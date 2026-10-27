@@ -102,6 +102,11 @@
   now prove the caller's workspace membership before anything reaches the app. Before, any Google account could read
   the app's Linear user and organisation IDs, since the sign-in client IDs are public. Clients that ask with no
   workspace are found by their membership, so existing clients need no change.
+- **The dispatcher's launcher and agent credentials are tighter (G9-3, G9-4).** The launcher's routes now refuse plain
+  HTTP from another machine, as the agent's already did. The launcher token mints at most 6 agent credentials an hour per
+  owner (429 past that), and doctor warns when an owner's agent got more than 3 in a day. An agent's credential now
+  expires 24 hours after it is redeemed; the agent stops and agentd starts it again with a fresh one. The launcher token
+  serves every owner on the server: treat it like their provider keys.
 - **One-time secrets print only to a terminal (F2).** `invite`, `device add` (its code, or a CI device's key) and
   `intake token create` refuse to print to anything but a terminal, such as an agent's shell or a pipe, before
   anything is created. `--out FILE` writes the secret to a new file instead (0600, never over an existing one); if

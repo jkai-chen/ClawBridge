@@ -48,6 +48,10 @@ func checkDispatcherModel(ctx context.Context, executor Executor, wid, pid strin
 	checkModelCapacity(m, waiting, add)
 }
 
+// mintsExpected is the agent credentials a day doctor expects for one
+// owner: the daily renewal, and a restart.
+const mintsExpected = 3
+
 // checkModelHolders reports each owner's key, and the agent that holds it.
 // It returns how many owners with an active key have no running agent.
 func checkModelHolders(m map[string]any, holders []any, modelOn bool, add func(Check)) int {
@@ -99,6 +103,15 @@ func checkModelHolders(m map[string]any, holders []any, modelOn bool, add func(C
 			agentProblems = append(agentProblems, who+": an agent credential was presented a second time, so someone else may have held it (refused)")
 		case "wrong_binding":
 			agentProblems = append(agentProblems, who+": an agent presented a wrong binding secret (refused)")
+		}
+		// One mint a day is the credential's renewal; more is agentd
+		// restarting the agent, or someone else holding the launcher token.
+		if n := number(h["mints_24h"]); n > mintsExpected {
+			agentProblems = append(agentProblems, fmt.Sprintf("%s: its agent was given a new credential %d times in 24 hours, so it was restarted that often", who, n))
+			if agent.Status == Pass {
+				agent.Status = Warn
+				agent.Action = "The server operator reads agentd's log; if agentd didn't restart it, someone else holds the launcher token: revoke it (operator launcher-token revoke ID) and create a new one."
+			}
 		}
 		if h["credential_flag"] != nil && agent.Status == Pass {
 			agent.Status = Warn

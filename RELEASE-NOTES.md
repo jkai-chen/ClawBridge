@@ -140,6 +140,14 @@
   anywhere. Invite codes and links, CI device keys and intake tokens are printed once, alone on their line. The skill
   tells agents to pass `--json`. Commands get their own layouts in the next releases; until then they show every
   field.
+- **The project owner manages intake without a session (E3a).** `clawbridge intake policy|trust|list|dismiss|rearm`
+  no longer needs a registered session: the project role decides, as before (any member reads; a lead or owner
+  changes; a dismiss without a session needs a lead or owner).
+  - `intake trust add|remove` takes a Linear name or email as well as a user ID. It's looked up among the members
+    of the project's linked teams through your own Linear connection (`--linear-profile`, or your only one), shown
+    ("That is Ada Lovelace <ada@…> (…)"), and changed only with `--confirm`, which says it again. Only active
+    members match; a name that matches several people lists them. Names are escaped; emails are never stored, never
+    shown to an agent, and `linear members` doesn't show them.
 
 - **`whoami`, `doctor`, `status ID` and the account lists read as answers (O2).** `whoami` says who you are, how that
   was proven, and your workspace, project and session. `doctor` leads with its counts, lists failures first, then

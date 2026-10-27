@@ -1427,6 +1427,12 @@ func (s *Store) execute(ctx context.Context, tx *transaction, r Request) (any, e
 		}
 		return s.docPolicyOp(ctx, tx, w, p, projectRole, nil, r)
 	}
+	if actor == nil && intakeOperation(r.Operation) {
+		if str(a, "instance") != "" {
+			return nil, invalid("instance requires session")
+		}
+		return s.intakeOp(ctx, tx, w, p, projectRole, nil, r)
+	}
 	if actor == nil && healthOperation(r.Operation) {
 		if str(a, "instance") != "" {
 			return nil, invalid("instance requires session")

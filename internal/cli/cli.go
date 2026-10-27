@@ -544,7 +544,7 @@ flags:`)
 	case "intake":
 		// The project's issue intake: its policy, trusted Linear users,
 		// /mcp/intake tokens and queue (live/INTAKE-DESIGN.md).
-		usage := errors.New("usage: intake policy [set --intake-mode off|notify --signals S1 ...] | trust add|remove LINEAR_USER_ID | trust list | token create [--expires-days N] | token list | token revoke TOKEN_ID | list [--state S] | dismiss|rearm ISSUE_UUID")
+		usage := errors.New("usage: intake policy [set --intake-mode off|notify --signals S1 ...] | trust add|remove LINEAR_USER_ID|NAME|EMAIL [--confirm] | trust list | token create [--expires-days N] | token list | token revoke TOKEN_ID | list [--state S] | dismiss|rearm ISSUE_UUID")
 		if len(rest) == 0 {
 			return usage
 		}
@@ -569,6 +569,9 @@ flags:`)
 		case "trust add", "trust remove":
 			op = "intake_trust_" + action
 			arityMin, arityMax = 1, 1
+			// A name or email is looked up among the board's members
+			// (--linear-profile) and shown before it changes anything.
+			f.Bool("confirm", false, "with a name or email: make the change after it's resolved")
 		case "trust list":
 			op = "intake_trust_list"
 		case "token create":
@@ -1132,6 +1135,16 @@ flags:`)
 	}
 	if op == "dispatcher_model_setup" {
 		return runModelSetup(ctx, executor, config, a, stdout)
+	}
+	if (op == "intake_trust_add" || op == "intake_trust_remove") && !linearprovider.ValidID(a["linear_user_id"].(string)) {
+		member, e := resolveTrustee(ctx, executor, config, strings.TrimSpace(a["linear_user_id"].(string)))
+		if e != nil {
+			return e
+		}
+		if e = confirmTrustee(stderr, op, member, f.Lookup("confirm").Value.(flag.Getter).Get().(bool)); e != nil {
+			return e
+		}
+		a["linear_user_id"] = member.ID
 	}
 	// G9 F2: an intake token goes to this terminal or a new file, decided
 	// before it exists.

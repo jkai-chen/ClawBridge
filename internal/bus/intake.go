@@ -89,11 +89,13 @@ func intakeOperation(op string) bool {
 	return false
 }
 
-// intakeOp runs the intake operations a session can call. Reads need any
-// project role; policy, trust and token changes need a lead or owner;
-// dismiss and rearm also the designated coordinator session.
+// intakeOp runs the intake operations. Reads need any project role;
+// policy, trust and token changes need a lead or owner; dismiss and rearm
+// also the designated coordinator session. A person runs them without a
+// session too (actor nil, as for the label policy): the role decides, never
+// the session.
 func (s *Store) intakeOp(ctx context.Context, tx *transaction, w, p map[string]any, projectRole string, actor map[string]any, r Request) (any, error) {
-	if actor["status"] != "active" {
+	if actor != nil && actor["status"] != "active" {
 		return nil, errors.New("session is retired or moved; it cannot perform this operation")
 	}
 	pid := p["id"].(string)
@@ -108,7 +110,11 @@ func (s *Store) intakeOp(ctx context.Context, tx *transaction, w, p map[string]a
 	}
 	audit := func(action string, details map[string]any) error {
 		details["by"] = s.principal
-		return s.audit(ctx, tx, w["id"].(string), pid, actor["id"].(string), "intake", pid, action, details)
+		session := ""
+		if actor != nil {
+			session = actor["id"].(string)
+		}
+		return s.audit(ctx, tx, w["id"].(string), pid, session, "intake", pid, action, details)
 	}
 	switch r.Operation {
 	case "intake_policy_get":
@@ -128,7 +134,7 @@ func (s *Store) intakeOp(ctx context.Context, tx *transaction, w, p map[string]a
 		}
 		return query(ctx, tx, q+` ORDER BY created_at,issue_uuid LIMIT 200`, args...)
 	case "intake_dismiss", "intake_rearm":
-		if !lead && p["coordinator_session"] != actor["id"] {
+		if !lead && (actor == nil || p["coordinator_session"] != actor["id"]) {
 			return nil, scoped("project lead or owner, or the coordinator session, required", "forbidden")
 		}
 		issue, e := lowerUUID(a, "issue_uuid", true)

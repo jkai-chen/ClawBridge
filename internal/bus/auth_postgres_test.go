@@ -891,3 +891,26 @@ func TestPostgresOperatorBootstrapInvite(t *testing.T) {
 		t.Fatal("the given code doesn't join:", err)
 	}
 }
+
+// An invite's grants may name a project by slug, as the TUI's checklist
+// does (R183 L3): it's stored by the project's ID; an unknown slug is
+// refused.
+func TestPostgresInviteGrantsBySlug(t *testing.T) {
+	f := newPGIdentityFixture(t)
+	email := newID("slug") + "@identity-test.example"
+	out := f.invite(f.owner, email, "member")
+	var pid string
+	if err := f.s.db.QueryRow(`SELECT p.id FROM projects p JOIN workspaces w ON w.id=p.workspace_id WHERE w.name=$1 AND p.slug='p'`, f.workspace).Scan(&pid); err != nil {
+		t.Fatal(err)
+	}
+	var grants string
+	if err := f.s.db.QueryRow(`SELECT grants FROM invites WHERE invite_id=$1`, out["invite_id"]).Scan(&grants); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(grants, pid) || strings.Contains(grants, `"p"`) {
+		t.Fatal("the grant isn't by project ID:", grants)
+	}
+	if _, err := f.auth(f.owner, "invite_create", map[string]any{"email": "x" + email, "grants": map[string]any{"no-such-project": "member"}}); err == nil || !strings.Contains(err.Error(), "not in this workspace") {
+		t.Fatal("an unknown slug:", err)
+	}
+}

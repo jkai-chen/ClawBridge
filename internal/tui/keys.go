@@ -198,6 +198,25 @@ var inboxBindings = []Binding{
 	}},
 }
 
+// intakeEditable is the Intake view, read, for a project owner or lead.
+func intakeEditable(m Model) bool {
+	return m.linearStep() == "intake" && m.intake.loaded && m.intake.canEdit
+}
+
+// intakeOn says the selected Intake row is one of kinds.
+func intakeOn(m Model, kinds ...string) bool {
+	if m.linearStep() != "intake" {
+		return false
+	}
+	kind, _ := m.intakeRow()
+	for _, k := range kinds {
+		if kind == k {
+			return true
+		}
+	}
+	return false
+}
+
 func linearAt(steps ...string) func(Model) bool {
 	return func(m Model) bool {
 		for _, s := range steps {
@@ -224,15 +243,20 @@ var linearBindings = []Binding{
 			return "unlink"
 		}
 		return "next"
-	}, Action: linearKeyAction},
+	}, When: func(m Model) bool { return m.linearStep() != "intake" }, Action: linearKeyAction},
 	{ID: "select", Keys: []string{" "}, Labeler: func(m Model) string {
-		if m.linearStep() == "preview" {
+		switch m.linearStep() {
+		case "preview":
 			return "people or agents close"
+		case "intake":
+			return "switch"
 		}
 		return "select"
 	}, When: func(m Model) bool {
-		return m.linearStep() == "teams" || m.linearStep() == "preview" || (m.linearStep() == "projects" && m.linear.bindingV2 != nil)
+		return m.linearStep() == "teams" || m.linearStep() == "preview" || (m.linearStep() == "projects" && m.linear.bindingV2 != nil) ||
+			(intakeEditable(m) && intakeOn(m, "mode", "signal"))
 	}, Action: linearKeyAction},
+	{ID: "intake", Keys: []string{"n"}, Label: "Intake", When: func(m Model) bool { return m.linearConfigured() && linearAt("profiles", "tasks", "details")(m) }, Action: func(m Model, _ string) (Model, tea.Cmd) { return m.openIntake() }},
 	{ID: "ids", Keys: []string{"d"}, Labeler: func(m Model) string {
 		if m.linear.showIDs {
 			return "hide IDs"
@@ -246,7 +270,19 @@ var linearBindings = []Binding{
 	{ID: "connect-write", Keys: []string{"w"}, Label: "connect with write", When: linearAt("profiles"), Action: linearKeyAction},
 	{ID: "link", Keys: []string{"l"}, Label: "link a board", When: func(m Model) bool { return m.linear.profile != "" && linearAt("profiles", "tasks")(m) }, Action: linearKeyAction},
 	{ID: "unlink", Keys: []string{"u"}, Label: "unlink", When: func(m Model) bool { return m.linearConfigured() && linearAt("profiles", "tasks", "details")(m) }, Action: linearKeyAction},
-	{ID: "logout", Keys: []string{"x"}, Label: "log out", When: func(m Model) bool { return m.linearStep() == "profiles" && m.linearSelected() != "" }, Action: linearKeyAction},
+	{ID: "logout", Keys: []string{"x"}, Labeler: func(m Model) string {
+		switch {
+		case intakeOn(m, "trusted"):
+			return "stop trusting"
+		case intakeOn(m, "queue"):
+			return "dismiss"
+		}
+		return "log out"
+	}, When: func(m Model) bool {
+		return (m.linearStep() == "profiles" && m.linearSelected() != "") || (intakeEditable(m) && intakeOn(m, "trusted", "queue"))
+	}, Action: linearKeyAction},
+	{ID: "intake-trust", Keys: []string{"a"}, Label: "trust someone", When: intakeEditable, Action: linearKeyAction},
+	{ID: "intake-rearm", Keys: []string{"e"}, Label: "rearm", When: func(m Model) bool { return intakeEditable(m) && intakeOn(m, "queue") }, Action: linearKeyAction},
 	{ID: "next-page", Keys: []string{"]"}, Label: "next page", When: linearAt("teams", "projects", "tasks"), Action: func(m Model, _ string) (Model, tea.Cmd) { return m.linearPage(true) }},
 	{ID: "previous-page", Keys: []string{"["}, Label: "previous page", When: linearAt("teams", "projects", "tasks"), Action: func(m Model, _ string) (Model, tea.Cmd) { return m.linearPage(false) }},
 }
@@ -337,6 +373,12 @@ func footerText(m Model) string {
 	if m.screen == ScreenAccount && m.account.invite != nil {
 		return "↑↓ project · Space role · Enter send the invite · Esc back to the email"
 	}
+	if m.screen == ScreenLinear && m.linear.step == "intake" && m.intake.ask != nil {
+		return "y do it · any other key keeps things as they are"
+	}
+	if m.screen == ScreenLinear && m.linear.step == "intake" && m.intake.picking {
+		return "↑↓ member · Enter trust them · Esc close"
+	}
 	if m.help {
 		return "Esc or ? closes help"
 	}
@@ -373,7 +415,7 @@ var screenAbout = map[Screen]string{
 	ScreenProjects: "The workspace's projects. A workspace-scoped, read-only view.",
 	ScreenSessions: "The project's sessions. v filters this page only; [ goes to the previous page you saw, ] to the server's next page. There is no search across pages.",
 	ScreenInbox:    "The current session's messages. The server stamps delivery; a reload never marks a message read.",
-	ScreenLinear:   "The project's Linear board: your personal Linear connection, and the board this project is linked to. Task ownership comes from the coordinator's issue assignment; selecting a row never claims or completes work.",
+	ScreenLinear:   "The project's Linear board: your personal Linear connection, and the board this project is linked to. Task ownership comes from the coordinator's issue assignment; selecting a row never claims or completes work. In Intake (n), only a needs-agent label, delegation or mention a trusted person makes in Linear itself counts; signals made through ClawBridge run as the app and are never trusted.",
 	ScreenAccount:  "Your devices and the workspace's members and invites. Anything that revokes or mints a code asks you to type a word first.",
 	ScreenModel:    "The dispatcher's model: the provider, model and key it uses, and its caps.",
 	ScreenDoctor:   "Checks of this profile, the server and the project: pass, warn or fail.",

@@ -70,8 +70,9 @@ func TestOverviewNeedsAttention(t *testing.T) {
 		t.Fatalf("a member with nothing due:\n%s", view)
 	}
 	golden(t, "overview-member-80x24", view)
-	if after := do(quiet, "enter"); after.screen != ScreenOverview {
-		t.Fatal("enter with nothing to open moved")
+	// With nothing due, the one row is the project's intake line.
+	if after := do(quiet, "enter"); after.screen != ScreenLinear || after.linear.step != "intake" {
+		t.Fatal("enter on the intake line:", after.screen, after.linear.step)
 	}
 }
 

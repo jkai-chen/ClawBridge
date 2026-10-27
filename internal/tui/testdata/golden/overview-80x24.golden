@@ -9,6 +9,9 @@ ClawBridge · pilot › core › engineer  cloud
 │   This project's Linear board isn't linked (optional)  5 Linear              │
 │   The dispatcher's model isn't set up (optional)       6 Dispatcher          │
 │                                                                              │
+│ This project                                                                 │
+│   Intake: notify · 0 trusted · 0 queued  5 Linear · Intake                   │
+│                                                                              │
 │ Signed in       human@example.test (Google, verified)                        │
 │ Server          online                                                       │
 │ Workspace       pilot                                                        │
@@ -17,6 +20,5 @@ ClawBridge · pilot › core › engineer  cloud
 │ Unread          2                                                            │
 │                                                                              │
 │ Sessions                                                                     │
-│   engineer                 active     codex                                  │
 ╰──────────────────────────────────────────────────────────────────────────────╯
 Enter go there · ? help · q quit

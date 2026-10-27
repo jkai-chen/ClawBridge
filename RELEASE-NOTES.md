@@ -244,7 +244,13 @@
   step 2 of 5") and the board in words, with the IDs and revision behind `d`; unlinking the board takes the project's
   slug typed, and logging a connection out asks y/N first; Space (not `c`) switches who closes in the review. Account
   rows are aligned columns with the ID shown for the selected row only, grants by project slug, and an invite is now
-  an email, then a role per project from a checklist.
+  an email, then a role per project from a checklist. An owner or lead grant is typed `invite` first, and an invite
+  with no project ticked asks once more.
+- **Intake in the TUI (E3b).** `n` on the Linear screen opens the project's intake: the mode and signals (S1 label, S2
+  delegate, S3 mention), the trusted Linear users by name, the queue, and a check that each linked team has exactly one
+  `needs-agent` label. A project owner or lead switches the mode or a signal, trusts someone picked from the linked
+  teams' active members, stops trusting them, and dismisses or rearms an issue, each after a `y`; anyone else reads.
+  Overview shows it in a line ("Intake: notify · 1 trusted · 0 queued") that opens it. Needs a server with E3a.
 - **Changed keys:** Inbox Enter opens a message, with what it answers and its thread (`m` marks read, as before).
   Account's decline is `d` (was `n`). Linear connects with `+` (was `c`, which now only switches who closes in the
   link review); Esc on Linear goes back one step and keeps the teams and projects you chose, instead of starting over.

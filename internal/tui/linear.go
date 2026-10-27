@@ -48,6 +48,10 @@ type LinearData struct {
 	// MinimalPolicy what creating the minimal status policy changes.
 	Closes        []linearboard.ClosesLine
 	MinimalPolicy string
+	// Members and IntakeLabels are the "intake" read: the bound teams'
+	// members and each team's needs-agent check.
+	Members      []linearprovider.Member
+	IntakeLabels []IntakeLabel
 	// ClosesOutcomes is what a confirmed link did about who closes.
 	ClosesOutcomes []linearboard.ClosesOutcome
 }
@@ -179,6 +183,8 @@ func (m Model) linearRefresh() (Model, tea.Cmd) {
 		if m.linear.issue != nil {
 			request.IssueID = m.linear.issue.ID
 		}
+	case "intake":
+		return m.intakeLoad()
 	default:
 		request.Operation = "profiles"
 	}
@@ -325,6 +331,8 @@ func (m Model) linearRows() []string {
 		for _, i := range m.linear.issues {
 			rows = append(rows, i.ID)
 		}
+	case "intake":
+		return m.intakeRows()
 	}
 	return rows
 }
@@ -389,7 +397,7 @@ func (m Model) linearStep() string {
 // linearPrevious is the step Esc goes back to from each step.
 var linearPrevious = map[string]string{
 	"teams": "profiles", "default": "teams", "projects": "default", "preview": "projects",
-	"tasks": "profiles", "details": "tasks", "unlink": "tasks",
+	"tasks": "profiles", "details": "tasks", "unlink": "tasks", "intake": "tasks",
 }
 
 // linearBack is Esc on the Linear screen: one step back, keeping what was
@@ -421,6 +429,9 @@ func (m Model) linearBack() (Model, tea.Cmd) {
 }
 
 func (m Model) linearKey(key string) (Model, tea.Cmd) {
+	if m.linear.step == "intake" {
+		return m.intakeKey(key)
+	}
 	// U35: Space toggles, here as on the teams: who closes the
 	// highlighted project.
 	if key == " " && m.linear.step == "preview" {
@@ -747,6 +758,9 @@ func renderLinear(m Model) string {
 		b.WriteString(mutedStyle.Render(linearIDLines(m)) + "\n")
 	}
 	b.WriteString("\n")
+	if m.linear.step == "intake" {
+		return strings.TrimRight(b.String()+renderIntake(m), "\n")
+	}
 	if m.linear.step == "preview" || m.linear.step == "unlink" {
 		projects := m.linear.project
 		if m.linear.bindingV2 != nil {
@@ -893,6 +907,8 @@ func linearStepTitle(m Model) string {
 		return "An issue"
 	case "unlink":
 		return "Unlink the board"
+	case "intake":
+		return "Intake: which Linear signals ask for an agent, and whose"
 	}
 	if m.linearConfigured() {
 		return "Your Linear connections"

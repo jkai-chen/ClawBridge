@@ -29,6 +29,8 @@ type attentionMsg struct {
 	checks  []Check
 	ran     bool
 	at      time.Time
+	// intake is the project's intake summary, when it could be read.
+	intake string
 }
 
 // checkScreen is the screen where a check's problem is dealt with, if a
@@ -115,6 +117,20 @@ func (m Model) loadAttention(requestID uint64) tea.Cmd {
 			}
 		}
 		if m.cfg.Project != "" {
+			// The project's intake in a line, a link to its view:
+			// what's set and what waits, for any member.
+			read := func(op string, args map[string]any) (any, bool) {
+				r, err := m.cfg.Executor.Execute(ctx, m.intakeRequest(op, args))
+				return r.Data, err == nil && r.Source != "offline-mirror"
+			}
+			policy, ok1 := read("intake_policy_get", map[string]any{})
+			trusted, ok2 := read("intake_trust_list", map[string]any{})
+			queued, ok3 := read("intake_list", map[string]any{"state": "queued"})
+			if ok1 && ok2 && ok3 {
+				out.intake = intakeSummary(mapData(policy), len(records(trusted)), len(records(queued)))
+			}
+		}
+		if m.cfg.Project != "" {
 			// Only a project owner may read it; anyone else is told
 			// nothing here.
 			if s, err := m.modelExec()(ctx, "dispatcher_model_doctor", map[string]any{}); err == nil && s != nil {
@@ -162,8 +178,12 @@ func (m Model) applyAttention(x attentionMsg) Model {
 			m.attention = append(m.attention, a)
 		}
 	}
-	if m.selected >= len(m.attention) {
-		m.selected = max(0, len(m.attention)-1)
+	m.intakeLine = ""
+	if m.hasTab(ScreenLinear) {
+		m.intakeLine = x.intake
+	}
+	if rows := len(m.overviewRows()); m.selected >= rows {
+		m.selected = max(0, rows-1)
 	}
 	return m
 }
@@ -227,6 +247,15 @@ func renderOverview(m Model) string {
 		b.WriteString(mutedStyle.Render("  Nothing needs you.") + "\n")
 	default:
 		b.WriteString(mutedStyle.Render("  Checking…") + "\n")
+	}
+	if m.intakeLine != "" {
+		// The project's settings, linked: Enter opens them.
+		b.WriteString("\nThis project\n")
+		prefix := "  "
+		if m.selected == len(m.attention) {
+			prefix = accentStyle.Render("› ")
+		}
+		b.WriteString(prefix + m.intakeLine + "  " + mutedStyle.Render(keyHint(m, ScreenOverview, "tab:"+string(ScreenLinear))+" · Intake") + "\n")
 	}
 	b.WriteString("\n")
 	identity := firstNonempty(terminalText(m.identity.Principal), terminalText(m.cfg.Principal), "not signed in")
@@ -368,10 +397,16 @@ var overviewBindings = []Binding{
 		if m.waiting {
 			return len(m.projects) > 1 && m.selected < len(m.projects)
 		}
-		return m.selected < len(m.attention)
+		return m.selected < len(m.overviewRows())
 	}, Action: func(m Model, _ string) (Model, tea.Cmd) {
 		if m.waiting {
 			return m.takeProject(m.projects[m.selected].Slug)
+		}
+		if m.selected == len(m.attention) {
+			// The intake line opens the Intake view itself.
+			m.linear.step = "intake"
+			m.intake = intakeState{}
+			return m.Show(ScreenLinear)
 		}
 		return m.Show(m.attention[m.selected].Screen)
 	}},
@@ -395,4 +430,17 @@ var doctorBindings = []Binding{
 		m.selected = 0
 		return m, nil
 	}},
+}
+
+// overviewRows are Overview's selectable rows: the attention lines, then
+// the intake line when there is one.
+func (m Model) overviewRows() []string {
+	out := make([]string, 0, len(m.attention)+1)
+	for i := range m.attention {
+		out = append(out, fmt.Sprint(i))
+	}
+	if m.intakeLine != "" {
+		out = append(out, "intake")
+	}
+	return out
 }

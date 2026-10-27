@@ -5,17 +5,23 @@ ClawBridge · ws_1 › prj_1 › engineer › Linear › Help  cloud
 │ Help · Linear                                                                │
 │ The project's Linear board: your personal Linear connection, and the board   │
 │ this project is linked to. Task ownership comes from the coordinator's issue │
-│ assignment; selecting a row never claims or completes work.                  │
+│ assignment; selecting a row never claims or completes work. In Intake (n),   │
+│ only a needs-agent label, delegation or mention a trusted person makes in    │
+│ Linear itself counts; signals made through ClawBridge run as the app and are │
+│ never trusted.                                                               │
 │                                                                              │
 │ This screen                                                                  │
 │   Enter      next                                                            │
 │   Space      select (not now)                                                │
+│   n          Intake (not now)                                                │
 │   d          show IDs (not now)                                              │
 │   +          connect                                                         │
 │   w          connect with write                                              │
 │   l          link a board (not now)                                          │
 │   u          unlink (not now)                                                │
 │   x          log out                                                         │
+│   a          trust someone (not now)                                         │
+│   e          rearm (not now)                                                 │
 │   ]          next page (not now)                                             │
 │   [          previous page (not now)                                         │
 │                                                                              │
@@ -30,6 +36,5 @@ ClawBridge · ws_1 › prj_1 › engineer › Linear › Help  cloud
 │   q          quit                                                            │
 │   1-8        switch screen                                                   │
 │   1 Overview · 2 Projects · 3 Sessions · 4 Inbox · 5 Linear · 6 Dispatcher · │
-│ 7 Account · 8 Doctor                                                         │
 ╰──────────────────────────────────────────────────────────────────────────────╯
 Esc or ? closes help

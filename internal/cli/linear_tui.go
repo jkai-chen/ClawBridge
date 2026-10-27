@@ -7,6 +7,7 @@ import (
 	"fmt"
 
 	"clawbridge/internal/bus"
+	"clawbridge/internal/docseed"
 	"clawbridge/internal/linearboard"
 	"clawbridge/internal/linearconn"
 	"clawbridge/internal/linearprovider"
@@ -181,7 +182,79 @@ func (s *linearTUISource) Do(ctx context.Context, r tui.LinearRequest) (tui.Line
 			data.IssueV2 = &issue
 		}
 		return data, err
+	case "intake":
+		if r.ProfileID == "" {
+			// Opened from Overview before a connection was chosen: the
+			// only one, as the CLI's lookup does.
+			profiles, err := s.manager.Profiles()
+			if err != nil {
+				return data, err
+			}
+			if len(profiles) != 1 {
+				return data, errors.New("choose your Linear connection on the Linear screen first")
+			}
+			service = newLinearService(s.directory, profiles[0].ID, s.manager, s.executor, s.authority)
+		}
+		return data, s.intake(ctx, service, &data)
 	default:
 		return data, errors.New("unsupported native Linear action")
 	}
+}
+
+// intakePages bounds each team's reads for the Intake view, as the
+// watcher bounds its own.
+const intakePages = 5
+
+// intake reads, through the viewer's own connection, the bound teams'
+// members (names for the trusted list and the picker) and each team's
+// needs-agent labels by the watcher's rule: the exact name, live, not a
+// group, exactly one.
+func (s *linearTUISource) intake(ctx context.Context, service *linearboard.Service, data *tui.LinearData) error {
+	binding, err := service.BindingV2(ctx, s.scope)
+	if err != nil {
+		return err
+	}
+	if !binding.Configured {
+		return errors.New("this project has no Linear board linked")
+	}
+	for _, team := range binding.LinearTeamIDs {
+		cursor := ""
+		for page := 0; page < intakePages; page++ {
+			members, e := service.MembersV2(ctx, s.scope, team, 100, cursor)
+			if e != nil {
+				return e
+			}
+			data.Members = append(data.Members, members.Items...)
+			if cursor = members.NextCursor; members.Complete || cursor == "" {
+				break
+			}
+		}
+		check := tui.IntakeLabel{TeamID: team}
+		cursor = ""
+		for page := 0; page < intakePages; page++ {
+			labels, e := service.LabelsV2(ctx, s.scope, team, 100, cursor)
+			if e != nil {
+				return e
+			}
+			check.Found += needsAgentLabels(labels.Items)
+			if cursor = labels.NextCursor; cursor == "" {
+				check.Complete = true
+				break
+			}
+		}
+		data.IntakeLabels = append(data.IntakeLabels, check)
+	}
+	return nil
+}
+
+// needsAgentLabels counts the labels S1 would take: named exactly
+// needs-agent, live, not a group (the watcher's rule).
+func needsAgentLabels(labels []linearprovider.Label) int {
+	n := 0
+	for _, l := range labels {
+		if l.Name == docseed.NeedsAgentLabel && !l.Archived && !l.Group {
+			n++
+		}
+	}
+	return n
 }

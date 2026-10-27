@@ -205,7 +205,8 @@ same on a hosted workspace:
   type `add`), `l` labels, `x` revokes;
 - `i` issues an invite: type the email, then Space sets each project's role
   (reader, member, lead, owner or none) and Enter sends it (`EMAIL PROJECT=ROLE`
-  typed in one line still works); `x` revokes a pending one;
+  typed in one line still works). An owner or lead grant asks you to type
+  `invite` first; with nothing ticked, Enter asks once more. `x` revokes a pending one;
 - for the main owner, every member with their devices: `x` on a member removes
   them, and `t` offers ownership. The recipient sees a banner and answers with `y`
   or `d` (decline); the owner cancels with `c`.
@@ -467,7 +468,20 @@ Run in an interactive terminal.
 Overview is the home screen: "Needs attention" lists what's waiting for you (failing
 or warning Doctor checks, an unlinked Linear board, an ownership offer, unused
 invites, the dispatcher's model for a project owner), each with its tab; Enter goes
-there. Below it: who you're signed in as, the server, and the workspace and project.
+there. Under "This project", the project's intake in a line ("Intake: notify · 1 trusted
+· 0 queued"); Enter opens its view. Below it: who you're signed in as, the server, and
+the workspace and project.
+
+Intake (`n` on the Linear screen once a board is linked) shows which Linear signals ask
+for an agent (the mode, and S1 the needs-agent label, S2 delegating to the app, S3
+@-mentioning it), the Linear users trusted to ask, by name, the queue, and whether each
+linked team has exactly one `needs-agent` label. A project owner or lead changes it:
+Space switches the mode or a signal, `a` picks someone to trust from the linked teams'
+active members, `x` stops trusting someone or dismisses an issue, `e` rearms one. Each
+change shows what it does and takes `y`. Anyone else reads it. Only a needs-agent label,
+delegation or mention a trusted person makes in Linear itself counts: signals made through
+ClawBridge run as the ClawBridge app and are never trusted. Names come from your own
+Linear connection; without it, trusted users show by ID.
 
 A hosted profile that has joined a workspace but has no project yet (an invite with
 no grants) opens on **Waiting for a project**: it names the workspace owner to ask

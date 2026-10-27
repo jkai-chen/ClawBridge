@@ -732,6 +732,8 @@ type inviteDraft struct {
 	email  string
 	roles  map[string]string // project slug -> role
 	cursor int
+	// emptyAsked is set once Enter was pressed with nothing ticked.
+	emptyAsked bool
 }
 
 // inviteRoles are the roles Space cycles through; "" grants nothing.
@@ -764,11 +766,31 @@ func (m Model) inviteKey(key string) (Model, tea.Cmd) {
 		m.inputMode, m.draft = inputAccountInvite, d.email
 	case "enter":
 		grants := map[string]any{}
-		for slug, role := range d.roles {
-			grants[slug] = role
+		powers := []string{}
+		for _, p := range m.account.projects {
+			if role := d.roles[p.Slug]; role != "" {
+				grants[p.Slug] = role
+				if role == "owner" || role == "lead" {
+					powers = append(powers, role+" of "+terminalText(p.Slug))
+				}
+			}
 		}
+		// Nothing ticked asks once: they'd join and wait for a project.
+		if len(grants) == 0 && len(m.account.projects) > 0 && !d.emptyAsked {
+			d.emptyAsked = true
+			m.status = noteStatus("No project is ticked: they'd join and wait for one. Enter again sends it so; Space sets a role.")
+			return m, nil
+		}
+		action := accountAction{op: "invite_create", args: map[string]any{"email": d.email, "purpose": "user", "grants": grants}}
 		m.account.invite = nil
-		return m.accountDo(accountAction{op: "invite_create", args: map[string]any{"email": d.email, "purpose": "user", "grants": grants}})
+		if len(powers) > 0 {
+			// Owner and lead change who may do what: typed, as minting
+			// promises (R183 L1).
+			action.prompt = "Invite " + terminalText(d.email) + " as " + strings.Join(powers, ", ") + ". Type invite"
+			action.phrase = "invite"
+			return m.confirmAccount(action), nil
+		}
+		return m.accountDo(action)
 	}
 	return m, nil
 }

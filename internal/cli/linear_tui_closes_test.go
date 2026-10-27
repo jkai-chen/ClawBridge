@@ -7,6 +7,7 @@ import (
 
 	"clawbridge/internal/bus"
 	"clawbridge/internal/linearboard"
+	"clawbridge/internal/linearprovider"
 )
 
 const tuiProject = "33333333-3333-4333-8333-333333333333"
@@ -64,5 +65,17 @@ func TestTUILinkResultCarriesClosesOutcomes(t *testing.T) {
 	}
 	if _, err = bus.ParseTaskboardBindingV2(result); err == nil {
 		t.Fatal("the bare parser took the outcomes as a binding field; the test proves nothing")
+	}
+}
+
+// The Intake view's label check counts what S1 takes: the exact name,
+// live, not a group.
+func TestNeedsAgentLabelsByTheWatchersRule(t *testing.T) {
+	labels := []linearprovider.Label{{Name: "needs-agent"}, {Name: "Needs-Agent"}, {Name: "needs-agent", Archived: true}, {Name: "needs-agent", Group: true}, {Name: "needs-agent "}}
+	if n := needsAgentLabels(labels); n != 1 {
+		t.Fatal(n)
+	}
+	if n := needsAgentLabels(append(labels, linearprovider.Label{Name: "needs-agent"})); n != 2 {
+		t.Fatal("a duplicate:", n)
 	}
 }

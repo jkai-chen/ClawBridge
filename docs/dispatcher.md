@@ -124,7 +124,8 @@ Status, on the current main branch:
 | Model key setup and test, the launcher's and the agent's endpoints | in review |
 | Cases: `cases/next`, the read tools, `decide` and `abstain`, the rules fallback | in review |
 | Chat (`dispatcher chat`) | built, not yet in review |
-| `clawbridge-agentd` (the launcher) with its per-owner network and egress proxy | planned |
+| `clawbridge-agentd` (the launcher) with its per-owner network and egress proxy | in review |
+| Deployment, and CI against a real Docker daemon, for the launcher | planned |
 | A guided `dispatcher model setup` in the CLI and TUI | planned |
 | Advice in rules mode (`recommend`), and the opt-in tools | planned |
 

@@ -76,6 +76,11 @@
   (an unplaced escalation to a configured domain) and `ask_session` (one fixed question, capped). Disable and enable
   turn advice and the tools off. One owner's agent serves at most 100 projects with the model on; past that, the
   previews and doctor warn.
+- **The launcher, `clawbridge-agentd`, runs each owner's dispatcher agent in its own container.** On the server host it
+  asks the server which owners need an agent, mints each a one-time credential, and starts, restarts or removes their
+  containers under a rootless Docker. Every Docker call goes through its own validating socket proxy, which allows only
+  the exact container shapes it creates. Each agent reaches only its own model provider, through a per-owner egress
+  proxy that allows only that provider's host and port, and an agent restarts when its owner's configuration changes.
 
 ## Running your own server on AWS
 

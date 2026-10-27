@@ -47,6 +47,16 @@ func TestBootstrapInviteCodeStdinRefuses(t *testing.T) {
 			t.Fatal(args, err, out.String())
 		}
 	}
+	// R128-L1: --expect-owner refuses another owner before the database;
+	// the same email in another case passes on to it.
+	operatorStdin = strings.NewReader("CBJ-ABCD-EFGH-JKMN-PQRS\n")
+	if err := RunOperator(context.Background(), []string{"bootstrap-invite", "--workspace", "acme", "--code-stdin", "--expect-owner", "someone@example.test"}, io.Discard); err == nil || !strings.Contains(err.Error(), "another email than --expect-owner") {
+		t.Fatal(err)
+	}
+	operatorStdin = strings.NewReader("CBJ-ABCD-EFGH-JKMN-PQRS\n")
+	if err := RunOperator(context.Background(), []string{"bootstrap-invite", "--workspace", "acme", "--code-stdin", "--expect-owner", "Owner@Example.test"}, io.Discard); err == nil || !strings.Contains(err.Error(), "Postgres") {
+		t.Fatal("a matching owner did not reach the database:", err)
+	}
 }
 
 // End to end on Postgres, device sign-in only: the operator's code, piped

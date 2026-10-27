@@ -39,6 +39,7 @@ func runBootstrapInvite(ctx context.Context, args []string, stdout io.Writer) er
 	workspace := f.String("workspace", "", "the workspace to create, or whose owner to let in")
 	forceStdout := f.Bool("force-stdout", false, "print the code alone on one line even when stdout is not a terminal")
 	codeStdin := f.Bool("code-stdin", false, "read the code from stdin, made by the caller; print the invite as JSON, without it")
+	expectOwner := f.String("expect-owner", "", "refuse, before anything exists, unless the bootstrap owner is this email")
 	ownerEnv := f.String("owner-env", "CLAWBRIDGE_BOOTSTRAP_OWNER", "environment variable holding the bootstrap owner's email")
 	dsnEnv := f.String("database-url-env", "CLAWBRIDGE_DATABASE_URL", "environment variable holding the Postgres connection URL")
 	if err := f.Parse(args); err != nil {
@@ -70,6 +71,9 @@ func runBootstrapInvite(ctx context.Context, args []string, stdout io.Writer) er
 	owner := os.Getenv(*ownerEnv)
 	if owner == "" {
 		return fmt.Errorf("%s is empty; it names the bootstrap owner", *ownerEnv)
+	}
+	if *expectOwner != "" && !strings.EqualFold(strings.TrimSpace(*expectOwner), strings.TrimSpace(owner)) {
+		return fmt.Errorf("%s names another email than --expect-owner; nothing was created", *ownerEnv)
 	}
 	dsn := os.Getenv(*dsnEnv)
 	if dsn == "" {

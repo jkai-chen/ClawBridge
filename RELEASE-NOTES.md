@@ -2,6 +2,9 @@
 
 ## Behaviour changes
 
+- **The dispatcher's model is refused in a 101st project.** One owner's dispatcher agent serves at most 100 projects,
+  so `dispatcher enable --engine model` and `dispatcher model advise on` past that are refused at `--confirm`. The
+  preview says `blocked: model_projects_over_cap`. Turn the model off in another project first.
 - **Retiring a session with confirmed work now needs `--outcome done` or `--confirm`.** `--outcome done` says the work
   is finished, and the issue moves on as a release with `--outcome done` does. `--confirm` releases it as it is. With
   neither, `clawbridge retire` (and MCP `retire_session`) is refused, naming the issue, and nothing changes. A move to

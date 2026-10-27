@@ -252,8 +252,10 @@ adds a recommendation to the claims they escalate.
     it is still working, or what its scope is. The model writes none of the words. At most one per case, one per
     session, issue and question a day, and 20 per project a day, and none once a person has decided the claim.
 - **At most 100 projects per owner.** One owner's agent serves at most 100 projects with the model on, in model mode
-  or advising. Past that it serves the first 100 by project ID, and the rest get no model. The enable and `advise on`
-  previews say so (`model_projects_over_cap`) when the change would take you past 100, and doctor warns.
+  or advising. `enable --engine model` and `advise on` refuse a 101st: the preview says `blocked:
+  model_projects_over_cap`, and `--confirm` is refused until you turn the model off in another project. You can still
+  pass 100 by gaining projects, for example through a new owner role. Then the first 100 by project ID are served, the
+  rest get no model, and doctor warns.
 
 ### What doctor shows
 

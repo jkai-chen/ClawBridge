@@ -2,6 +2,7 @@ package bus
 
 import (
 	"fmt"
+	"strings"
 	"testing"
 )
 
@@ -138,9 +139,9 @@ func TestAdviseOptInsClearedOnSwitch(t *testing.T) {
 	}
 }
 
-// One agent serves at most maxModelProjects projects, the first by project
-// ID: renew issues no more tokens, doctor says which project is left out,
-// and turning advice on past the cap says so in its preview.
+// One agent serves at most maxModelProjects projects: enable and advise on
+// refuse one more. Past it anyway, the first by project ID are served:
+// renew issues no more tokens, and doctor says which project is left out.
 func TestModelProjectCap(t *testing.T) {
 	h := newModelHarness(t)
 	h.setup(nil)
@@ -165,11 +166,31 @@ func TestModelProjectCap(t *testing.T) {
 	if _, err := h.s.db.Exec(`INSERT INTO dispatcher_policies(project_id,revision,enabled,mode,domains,updated_at,updated_by_principal) VALUES(?,1,1,'rules','{"domains":[]}','2026-01-01T00:00:00Z','x')`, pid); err != nil {
 		t.Fatal(err)
 	}
+	// Advice and model mode both preview the 101st as blocked, and
+	// refuse it at --confirm.
 	preview := h.call("dispatcher_model_advise", "", map[string]any{"on": true, "expected_revision": 1}).(map[string]any)
-	if over, _ := preview["model_projects_over_cap"].(map[string]any); over == nil || over["model_projects"] != maxModelProjects+1 {
+	if over, _ := preview["model_projects_over_cap"].(map[string]any); over == nil || over["model_projects"] != maxModelProjects+1 || preview["blocked"] != "model_projects_over_cap" {
 		t.Fatal("the advise preview:", preview)
 	}
-	h.call("dispatcher_model_advise", "", map[string]any{"on": true, "expected_revision": 1, "confirm": true})
+	if _, err := h.s.Execute(h.ctx, h.request("dispatcher_model_advise", "", map[string]any{"on": true, "expected_revision": 1, "confirm": true})); code(err) != "invalid" || !strings.Contains(err.Error(), "turn it off in one of them first") {
+		t.Fatal("advice past the cap:", err)
+	}
+	h.call("taskboard_set_v2", "a", taskboardArgsV2(0, projectOne))
+	if preview = h.call("dispatcher_enable", "", map[string]any{"mode": "model", "expected_revision": 1}).(map[string]any); preview["blocked"] != "model_projects_over_cap" {
+		t.Fatal("the enable preview:", preview)
+	}
+	if _, err := h.s.Execute(h.ctx, h.request("dispatcher_enable", "", map[string]any{"mode": "model", "expected_revision": 1, "confirm": true})); code(err) != "invalid" || !strings.Contains(err.Error(), "turn it off in one of them first") {
+		t.Fatal("model mode past the cap:", err)
+	}
+	var enabledMode string
+	if err := h.s.db.QueryRow(`SELECT mode||model FROM dispatcher_policies WHERE project_id=?`, pid).Scan(&enabledMode); err != nil || enabledMode != "rules{}" {
+		t.Fatal("a refusal wrote:", enabledMode, err)
+	}
+	// An owner can still pass the cap by gaining projects: the first 100
+	// by project ID are served, and doctor says so.
+	if _, err := h.s.db.Exec(`UPDATE dispatcher_policies SET model='{"advise":true}' WHERE project_id=?`, pid); err != nil {
+		t.Fatal(err)
+	}
 	tokens, err := h.s.RenewAgentTokens(h.ctx, cred, cfg.BindingSecret)
 	if err != nil || len(tokens) != maxModelProjects {
 		t.Fatal(len(tokens), err)

@@ -1,0 +1,21 @@
+ClawBridge · pilot › core › engineer  cloud
+[1 Overview] 2 Prj 3 Ses 4 Inb 5 Lin 6 Dsp 7 Acc 8 Doc
+╭──────────────────────────────────────────────────────────────────────────────╮
+│ Overview                                                                     │
+│                                                                              │
+│ Workspace       pilot                                                        │
+│ Project         core                                                         │
+│ Session         engineer                                                     │
+│ Identity        human@example.test · google-id-token · verified              │
+│ Authority       server · online                                              │
+│                                                                              │
+│ Sessions        1 in pinned project                                          │
+│ Unread          2 in current session                                         │
+│                                                                              │
+│ Optional integration: 7 Linear → Connect Linear / Later. Joining does not de │
+│ pend on Linear.                                                              │
+│                                                                              │
+│ Pinned project sessions                                                      │
+│   engineer                 active     codex                                  │
+╰──────────────────────────────────────────────────────────────────────────────╯
+? help · q quit

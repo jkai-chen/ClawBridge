@@ -17,7 +17,7 @@ commands work separately.
 Follow the [backup and recovery guide](operations/backup-and-recovery.md) before
 upgrading a store; updating the client alone does not upgrade a hosted service.
 
-Open the Linear view (`7`, or `clawbridge tui --screen linear`) after joining
+Open the Linear view (`5`, or `clawbridge tui --screen linear`) after joining
 ClawBridge, or return to it later. Connecting
 Linear is optional; skipping it preserves normal messaging. Choose a personal
 connection and authorize Linear in the browser. Read access is the default; enable
@@ -966,7 +966,7 @@ clawbridge linear link --team T --default-team T --linear-project P \
 - Without `--closes`, a link changes no one's rule.
 - If setting who closes fails after the binding, the binding stays, the project
   is closed by people, and the command to re-run is printed.
-- **In the TUI** (the Linear view, `7`), the link review lists who closes each
+- **In the TUI** (the Linear view, `5`), the link review lists who closes each
   project. Enter keeps the rules as they are, so people by default; `c` switches
   the highlighted project between people and agents, and previews again. Letting
   agents close then asks for the project's name, typed in the TUI (`via: tui`).

@@ -1,0 +1,31 @@
+ClawBridge · ws_1 › prj_1 › engineer › Inbox › Help  cloud
+1 Ovw 2 Prj 3 Ses [4 Inbox] 5 Lin 6 Dsp 7 Acc 8 Doc
+Showing: current · page 1
+╭──────────────────────────────────────────────────────────────────────────────╮
+│ Help · Inbox                                                                 │
+│ The current session's messages. The server stamps delivery; a reload never   │
+│ marks a message read.                                                        │
+│                                                                              │
+│ This screen                                                                  │
+│   Enter      open                                                            │
+│   p          reply                                                           │
+│   n          new message                                                     │
+│   m          mark read                                                       │
+│   v          filter                                                          │
+│   ]          next page                                                       │
+│   [          previous page                                                   │
+│                                                                              │
+│ Everywhere                                                                   │
+│   Tab        next screen                                                     │
+│   S-Tab      previous screen                                                 │
+│   ↑↓         select                                                          │
+│   PgUp/PgDn  scroll                                                          │
+│   Esc        back                                                            │
+│   r          reload                                                          │
+│   ?          help                                                            │
+│   q          quit                                                            │
+│   1-8        switch screen                                                   │
+│   1 Overview · 2 Projects · 3 Sessions · 4 Inbox · 5 Linear · 6 Dispatcher · │
+│ 7 Account · 8 Doctor                                                         │
+╰──────────────────────────────────────────────────────────────────────────────╯
+Esc or ? closes help

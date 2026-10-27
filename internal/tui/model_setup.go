@@ -468,7 +468,7 @@ func renderModelSetup(m Model) string {
 	if n := len(records(s["holders"])); n > 0 {
 		b.WriteString(kv("Owners with a key", strconv.Itoa(n)))
 	}
-	b.WriteString(mutedStyle.Render("\ns set up or change the model (provider, model, key, caps) · r reload · details: clawbridge doctor"))
+	b.WriteString(mutedStyle.Render("\nDetails: clawbridge doctor"))
 	return b.String()
 }
 

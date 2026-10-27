@@ -109,7 +109,7 @@ func TestModelSetupScreen(t *testing.T) {
 	if s := m.ModelSetupState(); !s.Owner || s.Step != "" {
 		t.Fatalf("%+v", s)
 	}
-	for _, want := range []string{"Settings / Dispatcher / Model", "9 Model", "active (revision 2)", "running", "s set up"} {
+	for _, want := range []string{"Settings / Dispatcher / Model", "6 Dispatcher", "active (revision 2)", "running", "s set up the model"} {
 		if !strings.Contains(frames[0], want) {
 			t.Fatalf("no %q in %s", want, frames[0])
 		}

@@ -1,0 +1,32 @@
+ClawBridge · ws_1 › prj_1 › engineer › Account › Help  cloud
+1 Overview  2 Projects  3 Sessions  4 Inbox  5 Linear  6 Dispatcher  [7 Account]  8 Doctor
+╭──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ Help · Account                                                                                                       │
+│ Your devices and the workspace's members and invites. Anything that revokes or mints a code asks you to type a word  │
+│ first.                                                                                                               │
+│                                                                                                                      │
+│ This screen                                                                                                          │
+│   a          add a device                                                                                            │
+│   i          invite                                                                                                  │
+│   l          label                                                                                                   │
+│   x          revoke                                                                                                  │
+│   w          confirm                                                                                                 │
+│   e          mark the alerts seen (not now)                                                                          │
+│   t          offer ownership                                                                                         │
+│   y          accept ownership (not now)                                                                              │
+│   d          decline ownership (not now)                                                                             │
+│   c          cancel the offer (not now)                                                                              │
+│                                                                                                                      │
+│ Everywhere                                                                                                           │
+│   Tab        next screen                                                                                             │
+│   S-Tab      previous screen                                                                                         │
+│   ↑↓         select                                                                                                  │
+│   PgUp/PgDn  scroll                                                                                                  │
+│   Esc        back                                                                                                    │
+│   r          reload                                                                                                  │
+│   ?          help                                                                                                    │
+│   q          quit                                                                                                    │
+│   1-8        switch screen                                                                                           │
+│   1 Overview · 2 Projects · 3 Sessions · 4 Inbox · 5 Linear · 6 Dispatcher · 7 Account · 8 Doctor                    │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+Esc or ? closes help

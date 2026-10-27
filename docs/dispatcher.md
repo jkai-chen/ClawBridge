@@ -178,7 +178,7 @@ clawbridge dispatcher model setup --provider anthropic --model MODEL --daily-tok
 the model is set up, 3 when the test hasn't finished within a minute (check with `dispatcher model status`), and 1 when
 it failed or stopped. A model ID that looks like a key is refused, since the model is stored and audited in the clear.
 
-In the TUI, the Model screen (`9`, or `clawbridge tui --screen model`) shows a project owner their key, their agent and
+In the TUI, the Dispatcher screen (`6`, or `clawbridge tui --screen dispatcher`) shows a project owner their key, their agent and
 the last test, and `s` runs the same setup, step by step, through the same code as the CLI. The key field shows only
 whether something was typed, never the key or its length. Esc cancels at any step before the confirmation, and the key
 is wiped from memory once sent, on Esc, and when you leave the screen or quit. Members who aren't owners see only that

@@ -1,0 +1,17 @@
+ClawBridge · ws_1 › prj_1 › engineer  cloud
+1 Overview  2 Projects  3 Sessions  4 Inbox  [5 Linear]  6 Dispatcher  7 Account  8 Doctor
+╭──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ Settings / Integrations / Linear                                                                                     │
+│                                                                                                                      │
+│ Optional: connect Linear (+ connect) to see and link this project's board, or come back later.                       │
+│ Task ownership comes from the coordinator's issue assignment; selecting a row never claims or completes work.        │
+│ Shared board: configured=false · revision=0                                                                          │
+│ Personal profile:  · workspace UUID may be unavailable                                                               │
+│ Step: profiles                                                                                                       │
+│                                                                                                                      │
+│ › Linear · profile · read                                                                                            │
+│                                                                                                                      │
+│ x logs out only the selected personal connection; shared binding is retained.                                        │
+│                                                                                                                      │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+Enter next · + connect · w connect with write · x log out · ↑↓ select · r reload · ? help · q quit

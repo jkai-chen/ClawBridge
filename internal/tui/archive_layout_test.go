@@ -278,6 +278,8 @@ func TestResponsiveSelectedIDsSanitizedWithoutChangingReplyTarget(t *testing.T) 
 			m.screen = screen
 			m.sessions = []SessionRow{{ID: id, Name: "worker"}}
 			m.messages = []MessageRow{{ID: id, Sender: "peer", Body: "body", CreatedAt: "2026-10-21T12:00:00Z"}}
+			// A message shows its ID once opened (Enter).
+			m.inboxOpen = screen == ScreenInbox
 			m = m.SetSize(40, 12)
 			// Inspect the entire wrapped detail as well as its reachable viewport tail.
 			body := strings.ReplaceAll(ansi.Strip(renderBody(m)), "\n", "")

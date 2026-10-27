@@ -95,11 +95,16 @@ func TestLinearV2TUIUnknownContextAndCancel(t *testing.T) {
 			t.Fatal("unknown inferred absent", field)
 		}
 	}
+	// Esc goes back one step, keeping what was chosen there (§3.1).
 	model.linear.step = "preview"
 	model.linear.selectedProjects = []string{linearTestTeam}
+	model, _ = model.UpdateModel(tea.KeyMsg{Type: tea.KeyEsc})
+	if model.LinearState().Step != "projects" || len(model.linear.selectedProjects) != 1 || model.screen != ScreenLinear {
+		t.Fatal("esc from the preview:", model.LinearState())
+	}
 	model, cmd := model.UpdateModel(tea.KeyMsg{Type: tea.KeyEsc})
-	if cmd != nil || len(source.calls) != 0 || model.LinearState().Step != "profiles" {
-		t.Fatal("cancel dispatched or changed screen", source.calls, model.LinearState())
+	if cmd != nil || len(source.calls) != 0 || model.LinearState().Step != "default" {
+		t.Fatal("esc from projects dispatched or skipped a step", source.calls, model.LinearState())
 	}
 }
 

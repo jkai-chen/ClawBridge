@@ -14,57 +14,28 @@ func screenLines(s string, w int) []string {
 func singleLine(s string) string {
 	return strings.NewReplacer("\n", " ", "\r", " ", "\t", " ").Replace(s)
 }
-func footerText(m Model) string {
-	if m.screen == ScreenModel && m.modelSetup.wizard.step >= modelStepProvider && m.modelSetup.wizard.step <= modelStepDisclosure {
-		return "Enter next · Esc cancel setup · Ctrl-C quit"
-	}
-	if m.inputMode != inputNone || m.confirming {
-		if m.width < 40 {
-			return "Esc cancel · Enter send"
-		}
-		return "Enter submit · Esc cancel · Ctrl-C quit"
-	}
-	if m.screen == ScreenSessions || m.screen == ScreenInbox {
-		if m.width < 65 {
-			return "v filter [ ] pages q quit"
-		}
-		return "↑↓ select · PgUp/PgDn scroll · v filter · [ ] pages · r reload · q quit"
-	}
-	if m.width < 65 {
-		return "↑↓ row Pg↑↓ scroll r reload q quit"
-	}
-	return "↑↓ select · PgUp/PgDn scroll · r reload · Tab views · q quit"
-}
 
-// layoutParts reserves controls first, even when notices and editors compete.
+// layoutParts reserves controls first, even when notices and editors
+// compete. The header is the breadcrumb, the tabs, then the status line.
 func layoutParts(m Model) ([]string, []string, int) {
 	w, h := max(1, m.width), max(1, m.height)
-	header := []string{accentStyle.Render("ClawBridge") + "  " + modeLabel(m), scopeLine(m)}
-	tabs := renderTabs(m.screen)
-	if ansi.StringWidth(tabs) > w {
-		tabs = fmt.Sprintf("%d %s · Tab views", indexOf(m.screen)+1, title(m.screen))
-	}
-	header = append(header, tabs)
+	header := []string{headerLine(m), renderTabs(m)}
+	paging := ""
 	if m.screen == ScreenSessions || m.screen == ScreenInbox {
-		coverage := "end"
-		if m.hasMore {
-			coverage = "more"
+		// U25: what's shown, in words; the caveats are in help.
+		paging = fmt.Sprintf("Showing: %s · page %d", strings.ToLower(m.filter.String()), m.pageIndex+1)
+		switch {
+		case m.source == "offline-mirror":
+			paging += " (cached; incomplete)"
+		case m.hasMore:
+			paging += " (more: ])"
 		}
-		if m.source == "offline-mirror" {
-			coverage = "mirror*"
-		}
-		header = append(header, fmt.Sprintf("%s p%d %s · v[]", m.filter, m.pageIndex+1, coverage))
+		header = append(header, mutedStyle.Render(paging))
 	}
 	if m.loading {
 		header = append(header, "Refreshing…")
 	}
-	status := sourceLine(m)
-	if m.errText != "" {
-		status += " Error: " + terminalText(m.errText)
-	}
-	if m.actionErr != "" {
-		status += " Notice: " + terminalText(m.actionErr)
-	}
+	status := statusLine(m)
 	if status != "" {
 		header = append(header, status)
 	}
@@ -78,27 +49,30 @@ func layoutParts(m Model) ([]string, []string, int) {
 			editor = editor[len(editor)-2:]
 		}
 	}
-	// At least one body row, two borders and a footer remain. Compact header first.
+	// At least one body row, two borders and a footer remain. Compact
+	// header first; the status line is kept over the rest.
 	maxHeader := max(0, h-len(editor)-4)
-	if len(header) > maxHeader { // Scope/status remain inspectable in the content.
-		compact := []string{fmt.Sprintf("ClawBridge · %s", title(m.screen))}
-		if m.screen == ScreenSessions || m.screen == ScreenInbox {
-			compact = append(compact, header[3])
+	if len(header) > maxHeader {
+		compact := []string{fmt.Sprintf("ClawBridge · %s · %s", title(m.screen), scopeLine(m))}
+		if status != "" {
+			compact = append(compact, status)
+		}
+		if paging != "" {
+			compact = append(compact, paging)
 		}
 		header = compact[:min(len(compact), maxHeader)]
 	}
 	for i := range header {
 		header[i] = ansi.Truncate(singleLine(header[i]), w, "…")
 	}
-	body := renderBody(m) + "\n\nScope: " + scopeLine(m)
-	if m.screen == ScreenSessions || m.screen == ScreenInbox {
-		body += "\nPage-local filter only; [ previous visited page, ] next server page. No exhaustive search."
-		if m.source == "offline-mirror" {
-			body += "\nMirror coverage is incomplete; retained snapshot only, read-only."
-		}
+	body := renderBody(m)
+	if m.errText != "" && !m.help {
+		// The header line is cut to the width; the whole error stays
+		// readable here (PR B gives errors their own block).
+		body += "\n\nError: " + terminalText(m.errText)
 	}
-	if status != "" {
-		body += "\n" + status
+	if (m.screen == ScreenSessions || m.screen == ScreenInbox) && m.source == "offline-mirror" && !m.help {
+		body += "\nMirror coverage is incomplete; retained snapshot only, read-only."
 	}
 	content := screenLines(body, w-4)
 	budget := max(1, h-len(header)-len(editor)-3)

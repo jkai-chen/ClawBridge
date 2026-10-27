@@ -274,6 +274,12 @@ func TestTUIOpensTheAccountScreen(t *testing.T) {
 	if err := runTUI(context.Background(), Config{}, []string{"--screen", "accounts"}, io.Discard, io.Discard); err == nil || err.Error() != "invalid TUI screen" {
 		t.Fatal(err)
 	}
+	// The Model screen is Dispatcher now; both names open it.
+	for _, name := range []string{"dispatcher", "model"} {
+		if err := runTUI(context.Background(), Config{}, []string{"--screen", name}, io.Discard, io.Discard); err == nil || err.Error() != "terminal checked" {
+			t.Fatal(name, err)
+		}
+	}
 }
 
 // R108-L3: a failed code read says why.

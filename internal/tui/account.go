@@ -382,7 +382,7 @@ func (m Model) accountKey(key string) (Model, tea.Cmd) {
 	if m.cfg.Mode != ModeCloud || m.account.principal == "" {
 		return m, nil
 	}
-	if m.loading && strings.Contains("ailxtynce", key) && len(key) == 1 {
+	if m.loading && strings.Contains("ailxtydce", key) && len(key) == 1 {
 		m.actionErr = "wait for the screen to finish loading"
 		return m, nil
 	}
@@ -438,11 +438,11 @@ func (m Model) accountKey(key string) (Model, tea.Cmd) {
 			return m, nil
 		}
 		m.inputMode, m.draft, m.actionErr = inputAccountTransfer, "", ""
-	case "y", "n":
+	case "y", "d":
 		if text(m.account.transfer, "to") != m.account.principal {
 			return m, nil
 		}
-		verb := map[string]string{"y": "accept", "n": "decline"}[key]
+		verb := map[string]string{"y": "accept", "d": "decline"}[key]
 		prompt := "Decline the ownership offer from " + text(m.account.transfer, "from") + "? Type decline"
 		if verb == "accept" {
 			prompt = "Become this workspace's owner, offered by " + text(m.account.transfer, "from") + "? Type accept"
@@ -535,8 +535,6 @@ func parseInviteDraft(draft string) (string, map[string]any, error) {
 func renderAccount(m Model) string {
 	var b strings.Builder
 	b.WriteString(title(ScreenAccount))
-	b.WriteString("  ")
-	b.WriteString(mutedStyle.Render("your devices · members and invites for owners"))
 	b.WriteString("\n\n")
 	if m.account.code != "" {
 		modal := warnStyle.Render("Invite code (shown once, never again)") + "\n\n  " + accentStyle.Render(terminalText(m.account.code)) + "\n\n" +
@@ -597,14 +595,14 @@ func renderAccount(m Model) string {
 		b.WriteString(warnStyle.Render(terminalText(what)) + "\n")
 	}
 	if len(m.account.events) > 0 {
-		b.WriteString(mutedStyle.Render("Not you? Select the device and x revokes it · e marks these seen") + "\n")
+		b.WriteString(mutedStyle.Render("Not you? Select the device: "+keyHint(m, ScreenAccount, "revoke")+" · "+keyHint(m, ScreenAccount, "ack")) + "\n")
 	}
 	if t := m.account.transfer; t != nil {
 		switch m.account.principal {
 		case text(t, "to"):
-			b.WriteString(warnStyle.Render("Ownership offered to you by "+terminalText(text(t, "from"))+" until "+terminalText(text(t, "expires_at"))) + " · y accept · n decline\n")
+			b.WriteString(warnStyle.Render("Ownership offered to you by "+terminalText(text(t, "from"))+" until "+terminalText(text(t, "expires_at"))) + " · " + keyHint(m, ScreenAccount, "accept") + " · " + keyHint(m, ScreenAccount, "decline") + "\n")
 		case text(t, "from"):
-			b.WriteString(warnStyle.Render("Your ownership offer to "+terminalText(text(t, "to"))+" is pending until "+terminalText(text(t, "expires_at"))) + " · c cancel\n")
+			b.WriteString(warnStyle.Render("Your ownership offer to "+terminalText(text(t, "to"))+" is pending until "+terminalText(text(t, "expires_at"))) + " · " + keyHint(m, ScreenAccount, "cancel-offer") + "\n")
 		}
 	}
 	index := 0
@@ -656,10 +654,5 @@ func renderAccount(m Model) string {
 	for _, r := range m.account.invites {
 		line(r, fmt.Sprintf("%s · %s · %s · %s", r.owner, r.id, r.status, r.detail))
 	}
-	keys := "\na add a device (one-time code) · l label · x revoke · w confirm · i invite"
-	if m.account.mainOwner {
-		keys += " · t transfer ownership"
-	}
-	b.WriteString(mutedStyle.Render(keys + " · r reload"))
-	return b.String()
+	return strings.TrimRight(b.String(), "\n")
 }

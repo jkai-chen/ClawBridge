@@ -210,7 +210,8 @@ func TestL1TUIExplicitPagedLinkPreviewCancelAndConfirm(t *testing.T) {
 				if links != 1 || m.LinearState().Binding.Revision != 1 {
 					t.Fatal("explicit confirmation did not save exactly once")
 				}
-			} else if links != 0 || m.LinearState().Step != "profiles" {
+			} else if links != 0 || m.LinearState().Step != "projects" {
+				// Esc goes back one step, to the projects (TUI-UX-AUDIT §3.1).
 				t.Fatal("cancel saved or failed to leave preview")
 			}
 		})
@@ -240,7 +241,7 @@ func TestL1TUICancelConnectAndDropLateResponse(t *testing.T) {
 			m := l1TUIModel(t, source)
 			m, cmd := m.Show(tui.Linear)
 			m = l1TUIApply(t, m, cmd)
-			m, _ = l1TUIKey(m, "c")
+			m, _ = l1TUIKey(m, "+")
 			m, _ = l1TUIKey(m, "synthetic label")
 			m, cmd = l1TUIKey(m, "enter")
 			if cmd == nil {

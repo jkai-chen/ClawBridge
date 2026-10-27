@@ -142,7 +142,7 @@ func TestOverviewPinsScopeAndShowsProvenance(t *testing.T) {
 		}
 	}
 	view := Render(model)
-	for _, expected := range []string{"Overview", "verified identity", "google-id-token", "pilot / core / engineer"} {
+	for _, expected := range []string{"Overview", "verified", "google-id-token", "pilot › core › engineer"} {
 		if !strings.Contains(view, expected) {
 			t.Fatalf("view missing %q:\n%s", expected, view)
 		}
@@ -366,14 +366,24 @@ func TestChatKeysAndGeneratedOperationID(t *testing.T) {
 	}
 }
 
-func TestEnterMarksSelectedInboxMessageRead(t *testing.T) {
+// Enter opens a message and writes nothing; Esc closes it; m marks it read
+// (TUI-UX-AUDIT Q4).
+func TestEnterOpensAndMMarksInboxMessageRead(t *testing.T) {
 	a := &fakeAuthority{messages: []map[string]any{{"id": "msg_1", "sender": "reviewer", "body": "hello", "thread_id": "msg_1"}}}
 	model, _ := New(testConfig(a))
 	model, cmd := model.Show(ScreenInbox)
 	model, _ = model.UpdateModel(runCommand(t, cmd))
 	model, cmd = model.UpdateModel(tea.KeyMsg{Type: tea.KeyEnter})
+	if cmd != nil || !model.inboxOpen || !strings.Contains(Render(model), "Inbox › from reviewer") || !strings.Contains(Render(model), "Message msg_1") {
+		t.Fatal("enter did not open the message:", Render(model))
+	}
+	model, _ = model.UpdateModel(tea.KeyMsg{Type: tea.KeyEsc})
+	if model.inboxOpen {
+		t.Fatal("esc left the message open")
+	}
+	model, cmd = model.UpdateModel(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("m")})
 	if cmd == nil {
-		t.Fatal("enter did not issue the explicit mark-read command")
+		t.Fatal("m did not issue the explicit mark-read command")
 	}
 	_ = cmd()
 	if a.callIndex("mark_read") < 0 {

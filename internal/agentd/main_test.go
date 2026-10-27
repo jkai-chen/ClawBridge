@@ -119,8 +119,15 @@ func TestMainEgressReloadsAndFailsClosed(t *testing.T) {
 	t.Cleanup(func() { egressPoll = old })
 	dir := t.TempDir()
 	policy := filepath.Join(dir, "egress.json")
+	// write replaces the policy as agentd does, by a rename: os.WriteFile
+	// truncates first, and a poll that reads the empty file logs a refusal
+	// of its own, which a later waitLog would take for the one it waits for.
 	write := func(s string) {
-		if err := os.WriteFile(policy, []byte(s), 0o600); err != nil {
+		tmp := policy + ".tmp"
+		if err := os.WriteFile(tmp, []byte(s), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Rename(tmp, policy); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -179,22 +186,28 @@ func TestMainEgressReloadsAndFailsClosed(t *testing.T) {
 		lines := strings.Split(strings.TrimSpace(logs.String()), "\n")
 		return lines[len(lines)-1]
 	}
+	// waitLog waits for a new line with s: one logged after the write that
+	// precedes it, not an earlier one.
+	seen := 0
 	waitLog := func(s string) {
 		t.Helper()
-		for deadline := time.Now().Add(5 * time.Second); !strings.Contains(logs.String(), s); time.Sleep(10 * time.Millisecond) {
+		for deadline := time.Now().Add(5 * time.Second); !strings.Contains(logs.String()[seen:], s); time.Sleep(10 * time.Millisecond) {
 			if time.Now().After(deadline) {
-				t.Fatalf("no %q in %s", s, logs.String())
+				t.Fatalf("no new %q in %s", s, logs.String())
 			}
 		}
+		seen = len(logs.String())
 	}
 	if got := connect(); !strings.Contains(got, "no owner's network") {
 		t.Fatal(got)
 	}
+	seen = len(logs.String())
 	write(mine)
 	waitLog("egress policy reloaded")
 	if got := connect(); !strings.Contains(got, "allow-list") {
 		t.Fatal(got)
 	}
+	seen = len(logs.String())
 	write("{not json")
 	waitLog("refusing all egress")
 	if got := connect(); !strings.Contains(got, "no owner's network") {

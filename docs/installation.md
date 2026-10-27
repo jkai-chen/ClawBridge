@@ -168,12 +168,56 @@ CLI, which ClawBridge doesn't install, configure or sign in for you:
 | Cloud | CLI | Sign-in | Runs on |
 | --- | --- | --- | --- |
 | Google Cloud | `gcloud` | a named gcloud configuration | wherever `gcloud` runs |
-| AWS | AWS CLI v2; the Session Manager plugin for a shell on the instance | a named profile, for example `aws configure sso --profile clawbridge-onboarding` | macOS, Linux or WSL (not native Windows) |
+| AWS | AWS CLI v2; the Session Manager plugin for a shell on the instance | a named profile, for example `aws configure sso --profile clawbridge-onboarding` | macOS, Linux or WSL (not native Windows; see [Windows: set up WSL](#windows-set-up-wsl-for-the-aws-route)) |
 
 ClawBridge never reads `~/.aws` or the gcloud credential store. It checks that
 the named profile or configuration exists and is signed in to the account you
 chose. The AWS profile's permissions for the checks and `cloud secret set` are
 in [`deploy/aws-profile-policy.json`](../deploy/aws-profile-policy.json).
+
+## Windows: set up WSL for the AWS route
+
+The AWS route needs a Linux shell, so on Windows it runs in WSL (Windows
+Subsystem for Linux). Everything below happens inside WSL, not in PowerShell,
+and that includes your agent.
+
+1. **Install WSL.** In PowerShell as administrator, run `wsl --install`, then
+   restart. Open "Ubuntu" from the Start menu and create your Linux user.
+2. **Install ClawBridge inside WSL**, with the macOS and Linux installer at the
+   top of this page, not the PowerShell one. The Windows and WSL clients are
+   separate installs, each with its own state.
+3. **Install the AWS CLI v2 and the Session Manager plugin inside WSL:**
+
+   ```sh
+   sudo apt-get update && sudo apt-get install -y unzip
+   curl -fsSL https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip -o awscliv2.zip
+   unzip -q awscliv2.zip && sudo ./aws/install && rm -rf aws awscliv2.zip
+   curl -fsSL https://s3.amazonaws.com/session-manager-downloads/plugin/latest/ubuntu_64bit/session-manager-plugin.deb \
+     -o session-manager-plugin.deb
+   sudo dpkg -i session-manager-plugin.deb && rm session-manager-plugin.deb
+   aws --version && session-manager-plugin --version
+   ```
+
+   On an ARM64 Windows machine, use `awscli-exe-linux-aarch64.zip` and the
+   `ubuntu_arm64` plugin package instead.
+4. **Sign in inside WSL:** `aws configure sso --profile clawbridge-onboarding`.
+   It prints a URL and a code; open the URL in your Windows browser. The
+   profile lives in WSL's own `~/.aws`, apart from any AWS CLI on Windows.
+5. **Run your agent inside WSL too.** The AWS hand-over from `clawbridge onboard`
+   and the `--playbook aws` skill run `aws` and `clawbridge` commands, so your
+   agent (Claude Code, Codex) has to run in the WSL shell where those commands
+   are. Run `clawbridge skill install` in WSL for the agents configured there.
+
+**Where files live.** Your WSL home, `/home/<you>`, holds the binary
+(`~/.local/bin`), ClawBridge's state (`~/.clawbridge`) and `~/.aws`. From Windows
+Explorer it is under `\\wsl$\Ubuntu\home\<you>`. Keep your work in the WSL home,
+not under `/mnt/c`: Windows drives are slow from WSL, and files there can't be
+made private to your user, which ClawBridge's state files must be.
+
+**Credentials.** Windows Credential Manager doesn't reach into WSL. Sign-in needs
+a Secret Service in WSL, as [Linux and WSL credentials](#linux-and-wsl-credentials)
+describes. For device sign-in, a WSL install without one can keep its device
+key in a private file instead (`join --key-store file`).
 
 ## Build from source
 

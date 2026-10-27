@@ -42,7 +42,7 @@ Both run the same server. The table shows what differs.
 | Your admin access | SSH through IAP, as your Google account | SSM, as your named AWS CLI profile, with no SSH port at all |
 | Your CLI | `gcloud`, with a named configuration | AWS CLI v2, with a named profile you set up (`aws configure sso --profile clawbridge-onboarding`) |
 | Backups | a Cloud Storage bucket | an S3 bucket |
-| Where you run it | wherever `gcloud` runs | macOS, Linux or WSL (the AWS route reads its requests from `/dev/stdin`) |
+| Where you run it | wherever `gcloud` runs | macOS, Linux or WSL (the AWS route reads its requests from `/dev/stdin`); on Windows, [set up WSL first](../installation.md#windows-set-up-wsl-for-the-aws-route) |
 | Monthly estimate | about $15–30 | about $19 (`t4g.small`) or $31.50 (`t4g.medium`) |
 
 ClawBridge never creates or edits your CLI profile or configuration, and never

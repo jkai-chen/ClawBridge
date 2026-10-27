@@ -35,6 +35,15 @@
   without a decision (abstained, expired, no agent, or the model chose to wait) falls back to the rules, within about a
   minute when the in-process watcher runs. People appear to the model only as random per-project refs, never emails.
 
+## Running your own server on AWS
+
+- **AWS joins Google Cloud as a route for your own server.** `clawbridge onboard` (Start's "Set up my own server") asks
+  for the cloud and hands AWS over to your agent. `clawbridge skill install --playbook aws` installs the provisioning
+  playbook, `clawbridge cloud check` and `cloud secret set` work over SSM with your named AWS CLI profile, and backups
+  go to S3. ClawBridge never reads `~/.aws`. The first-deployment guide covers both clouds.
+- **Windows users get a WSL walkthrough for the AWS route** (docs/installation.md): install WSL, then the client, the
+  AWS CLI and the Session Manager plugin inside it; sign in there; run the agent there; keep work in the WSL home.
+
 # ClawBridge v0.3.4
 
 **Schema 17 → 19.**

@@ -53,6 +53,10 @@ type Identity struct {
 	// HostedDomain is the token's hd claim: the Google Workspace domain that
 	// manages the account, empty for a consumer account.
 	HostedDomain string
+	// Expires is when the proof runs out: a Google ID token's expiry, zero
+	// for a device key, which proves each request afresh. A stream ends by
+	// it.
+	Expires time.Time
 }
 
 // errNeedsBind leaves a request transaction once the request proved the

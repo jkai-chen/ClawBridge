@@ -26,7 +26,12 @@ import (
 	"google.golang.org/api/idtoken"
 )
 
-type Identity struct{ Principal, Subject, HostedDomain string }
+type Identity struct {
+	Principal, Subject, HostedDomain string
+	// Expires is when the token stops proving the identity; zero when the
+	// verifier doesn't say.
+	Expires time.Time
+}
 type Verifier interface {
 	Verify(context.Context, string) (Identity, error)
 }
@@ -186,7 +191,7 @@ func verifiedIdentity(p *idtoken.Payload, audience string, now time.Time) (Ident
 	// refuses the account.
 	hostedDomain, _ := p.Claims["hd"].(string)
 	hostedDomain, _ = principal.NormalDomain(hostedDomain)
-	return Identity{Principal: email, Subject: p.Subject, HostedDomain: hostedDomain}, nil
+	return Identity{Principal: email, Subject: p.Subject, HostedDomain: hostedDomain, Expires: time.Unix(p.Expires, 0)}, nil
 }
 
 type errorBody struct {
@@ -295,6 +300,12 @@ type HandlerOptions struct {
 	// ModelMaxAgents is dispatcher_model_max_agents, what launcher/wanted
 	// reports; zero is the default, 2.
 	ModelMaxAgents int
+	// Streams serves GET /v1/stream, woken by the hub; nil leaves it off
+	// (404, which a client reads as an older server).
+	Streams *StreamHub
+	// StreamLimits are the stream's intervals and caps; zero fields take
+	// the defaults.
+	StreamLimits StreamLimits
 }
 
 // NewHandlerWithOptions also serves the send-only /mcp/intake endpoint when
@@ -353,8 +364,61 @@ func NewHandlerWithOptions(store Executor, verifier Verifier, o HandlerOptions) 
 			required = "a ClawBridge-Device signature is required; this server accepts device keys only"
 		}
 	}
+	// authenticate proves a request's caller from its one Authorization
+	// header and its raw body, which it reads first: a device signs its
+	// hash. A refusal is answered here.
+	authenticate := func(ctx context.Context, w http.ResponseWriter, r *http.Request) (bus.Identity, []byte, bool) {
+		address, key := clientAddress(r), addressKey(r)
+		if failedAuth.full(key) {
+			fail(w, 429, "rate_limited", "too many failed sign-ins from this address; try again later")
+			return bus.Identity{}, nil, false
+		}
+		headers := r.Header.Values("Authorization")
+		if len(headers) != 1 {
+			fail(w, 401, "unauthenticated", required)
+			return bus.Identity{}, nil, false
+		}
+		scheme, credentials, _ := strings.Cut(strings.TrimSpace(headers[0]), " ")
+		var authenticator Authenticator
+		for _, a := range authenticators {
+			if strings.EqualFold(scheme, a.Scheme()) {
+				authenticator = a
+			}
+		}
+		if authenticator == nil {
+			fail(w, 401, "unauthenticated", required)
+			return bus.Identity{}, nil, false
+		}
+		body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 128<<10))
+		if err != nil {
+			fail(w, 400, "invalid", "invalid or oversized request JSON")
+			return bus.Identity{}, nil, false
+		}
+		verified, refused := authenticator.Authenticate(ctx, r, strings.TrimSpace(credentials), body)
+		if refused != nil {
+			if refused.status == 401 {
+				failedAuth.add(key)
+				failures.record(address, refused.kind)
+			}
+			if refused.serverTime {
+				failWithTime(w, refused.status, refused.code, refused.message, now())
+			} else {
+				fail(w, refused.status, refused.code, refused.message)
+			}
+			return bus.Identity{}, nil, false
+		}
+		return verified, body, true
+	}
+	var stream http.Handler
+	if s, ok := store.(StreamStore); ok && o.Streams != nil {
+		stream = &streamHandler{store: s, hub: o.Streams, authenticate: authenticate, limit: l, limits: o.StreamLimits.orDefaults(), now: now}
+	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Cache-Control", "no-store")
+		if r.URL.Path == StreamPath && stream != nil {
+			stream.ServeHTTP(w, r)
+			return
+		}
 		if r.URL.Path == "/healthz" {
 			if r.Method != http.MethodGet {
 				fail(w, 405, "method_not_allowed", "GET required")
@@ -431,47 +495,10 @@ func NewHandlerWithOptions(store Executor, verifier Verifier, o HandlerOptions) 
 			fail(w, 405, "method_not_allowed", "POST required")
 			return
 		}
-		address, key := clientAddress(r), addressKey(r)
-		if failedAuth.full(key) {
-			fail(w, 429, "rate_limited", "too many failed sign-ins from this address; try again later")
-			return
-		}
-		headers := r.Header.Values("Authorization")
-		if len(headers) != 1 {
-			fail(w, 401, "unauthenticated", required)
-			return
-		}
-		scheme, credentials, _ := strings.Cut(strings.TrimSpace(headers[0]), " ")
-		var authenticator Authenticator
-		for _, a := range authenticators {
-			if strings.EqualFold(scheme, a.Scheme()) {
-				authenticator = a
-			}
-		}
-		if authenticator == nil {
-			fail(w, 401, "unauthenticated", required)
-			return
-		}
-		// The body is read raw before authentication: a device signs its
-		// hash.
-		body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 128<<10))
-		if err != nil {
-			fail(w, 400, "invalid", "invalid or oversized request JSON")
-			return
-		}
 		ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
 		defer cancel()
-		verified, refused := authenticator.Authenticate(ctx, r, strings.TrimSpace(credentials), body)
-		if refused != nil {
-			if refused.status == 401 {
-				failedAuth.add(key)
-				failures.record(address, refused.kind)
-			}
-			if refused.serverTime {
-				failWithTime(w, refused.status, refused.code, refused.message, now())
-			} else {
-				fail(w, refused.status, refused.code, refused.message)
-			}
+		verified, body, ok := authenticate(ctx, w, r)
+		if !ok {
 			return
 		}
 		decoder := json.NewDecoder(bytes.NewReader(body))
@@ -493,7 +520,7 @@ func NewHandlerWithOptions(store Executor, verifier Verifier, o HandlerOptions) 
 			return
 		}
 		var trailing any
-		if err = decoder.Decode(&trailing); err != io.EOF {
+		if err := decoder.Decode(&trailing); err != io.EOF {
 			fail(w, 400, "invalid", "exactly one request object is required")
 			return
 		}
@@ -502,6 +529,7 @@ func NewHandlerWithOptions(store Executor, verifier Verifier, o HandlerOptions) 
 			return
 		}
 		var result bus.Result
+		var err error
 		if request.Operation == "linear_write" || request.Operation == "linear_app_status" || request.Operation == "linear_app_states" {
 			result, err = writer.Execute(r.Context(), verified, request)
 		} else if bound, ok := store.(IdentityExecutor); ok {
@@ -527,6 +555,11 @@ func NewHandlerWithOptions(store Executor, verifier Verifier, o HandlerOptions) 
 		}
 		if revokesDevices(request.Operation) {
 			cache.clear()
+		}
+		// Each woken stream re-authorizes, so the streams this took access
+		// from close now, not at their next re-read.
+		if o.Streams != nil && revokesAccess(request.Operation) {
+			o.Streams.WakeAll()
 		}
 		// The confirm or release has committed: its marker rows are due now.
 		if o.Nudge != nil && (request.Operation == "assignment_confirm" || request.Operation == "assignment_release") {
@@ -677,8 +710,15 @@ func Run(ctx context.Context, args []string) error {
 	store.SetModelSeal(seal)
 	store.SetModelHost(maxAgents, memAvailable)
 	options := startWatcher(ctx, store, watch, HandlerOptions{OAuth: metadata, Writer: writer, Auth: auth, ModelMaxAgents: maxAgents})
-	// A Linear write the server runs as the app may take up to a minute.
+	// The message queue: the hub wakes the streams, the sweeper offers run-out
+	// leases again and makes dead letters.
+	options.Streams = NewStreamHub()
+	go options.Streams.Listen(ctx, dsn)
+	go runSweeper(ctx, store, sweepEvery)
+	// A Linear write the server runs as the app may take up to a minute. A
+	// stream clears its own deadlines.
 	srv := &http.Server{Addr: settings.Listen, Handler: NewHandlerWithOptions(store, verifier, options), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 20 * time.Second, WriteTimeout: 80 * time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 24 << 10}
+	srv.RegisterOnShutdown(options.Streams.Close)
 	result := make(chan error, 1)
 	go func() { result <- srv.ListenAndServe() }()
 	select {

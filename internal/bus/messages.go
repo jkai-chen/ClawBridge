@@ -341,6 +341,9 @@ func (s *Store) markRead(ctx context.Context, tx *transaction, wid, pid, sid str
 			if err != nil {
 				return nil, err
 			}
+			if err = queueNotify(ctx, tx, pid, sid); err != nil {
+				return nil, err
+			}
 			if d["delivered_at"] == nil {
 				d["delivered_at"] = now
 			}

@@ -35,6 +35,7 @@ var goldenIndex = map[string]string{
 	"cases-next-case.json": "CasesNextResponse", "cases-next-case-no-text.json": "CasesNextResponse", "cases-next-null.json": "CasesNextResponse",
 	"tool-read_issue_facts.json": "ToolResponse", "tool-list_domain.json": "ToolResponse", "tool-list_sessions.json": "ToolResponse", "tool-session_activity.json": "ToolResponse",
 	"tool-decide.json": "ToolResponse:DecideResult", "tool-decide-superseded.json": "ToolResponse:DecideResult", "tool-abstain.json": "ToolResponse",
+	"cases-next-chat.json": "CasesNextResponse", "tool-list_decisions.json": "ToolResponse", "tool-reply.json": "ToolResponse",
 	"launcher-wanted.json": "agentd", "launcher-credential.json": "agentd", "launcher-report.json": "agentd",
 }
 
@@ -236,6 +237,14 @@ func TestModelGolden(t *testing.T) {
 	_, tools = next("")
 	exec(`UPDATE session_assignments SET state='released' WHERE id=?`, subject)
 	call("tool-decide-superseded.json", 200, "POST", tools+"decide", token, map[string]any{"action": "wait", "reason_code": "uncertain", "explanation": "", "usage": usage})
+
+	// A chat: the question, the decision log, a reply.
+	if _, err = e.store.Execute(context.Background(), bus.Request{Operation: "dispatcher_chat_ask", Workspace: "w", Project: "p", Args: map[string]any{"text": "Why did worker-1 wait?"}}); err != nil {
+		t.Fatal(err)
+	}
+	_, tools = next("cases-next-chat.json")
+	call("tool-list_decisions.json", 200, "POST", tools+"list_decisions", token, map[string]any{"since_hours": 1, "limit": 5})
+	call("tool-reply.json", 200, "POST", tools+"reply", token, map[string]any{"text": "It waited: the session was just seen.", "usage": usage})
 
 	// A second poll while one waits.
 	var wg sync.WaitGroup

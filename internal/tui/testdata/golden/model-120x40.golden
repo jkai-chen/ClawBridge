@@ -1,7 +1,8 @@
 ClawBridge · ws_1 › prj_1 › engineer  cloud
 1 Overview  2 Projects  3 Sessions  4 Inbox  5 Linear  [6 Dispatcher]  7 Account  8 Doctor
+
 ╭──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
-│ Settings / Dispatcher / Model  the model that decides claims, set up with your own key                               │
+│ Dispatcher model  the model that decides claims, set up with your own key                                            │
 │                                                                                                                      │
 │ Model mode      off (the rules decide)                                                                               │
 │ Your key        active (revision 2)                                                                                  │

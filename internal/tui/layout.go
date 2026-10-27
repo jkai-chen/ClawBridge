@@ -9,7 +9,7 @@ import (
 
 // screenLines measures cells after terminal-safe text and trusted styling.
 func screenLines(s string, w int) []string {
-	return strings.Split(ansi.Hardwrap(s, max(1, w), true), "\n")
+	return strings.Split(ansi.Wrap(s, max(1, w), ""), "\n")
 }
 func singleLine(s string) string {
 	return strings.NewReplacer("\n", " ", "\r", " ", "\t", " ").Replace(s)
@@ -32,13 +32,10 @@ func layoutParts(m Model) ([]string, []string, int) {
 		}
 		header = append(header, mutedStyle.Render(paging))
 	}
-	if m.loading {
-		header = append(header, "Refreshing…")
-	}
+	// The status row is always there, so a load or a message never moves
+	// the body (U8).
 	status := statusLine(m)
-	if status != "" {
-		header = append(header, status)
-	}
+	header = append(header, status)
 	if m.screen == ScreenCloud && m.plan != nil && m.cfg.Setup != nil {
 		header = append(header, "Nothing is applied before Enter; exact confirmation required.")
 	}
@@ -54,9 +51,7 @@ func layoutParts(m Model) ([]string, []string, int) {
 	maxHeader := max(0, h-len(editor)-4)
 	if len(header) > maxHeader {
 		compact := []string{fmt.Sprintf("ClawBridge · %s · %s", title(m.screen), scopeLine(m))}
-		if status != "" {
-			compact = append(compact, status)
-		}
+		compact = append(compact, status)
 		if paging != "" {
 			compact = append(compact, paging)
 		}
@@ -66,11 +61,6 @@ func layoutParts(m Model) ([]string, []string, int) {
 		header[i] = ansi.Truncate(singleLine(header[i]), w, "…")
 	}
 	body := renderBody(m)
-	if m.errText != "" && !m.help {
-		// The header line is cut to the width; the whole error stays
-		// readable here (PR B gives errors their own block).
-		body += "\n\nError: " + terminalText(m.errText)
-	}
 	if (m.screen == ScreenSessions || m.screen == ScreenInbox) && m.source == "offline-mirror" && !m.help {
 		body += "\nMirror coverage is incomplete; retained snapshot only, read-only."
 	}
@@ -81,11 +71,21 @@ func layoutParts(m Model) ([]string, []string, int) {
 func bodyOffset(m Model, lines []string, budget int) int {
 	offset := min(m.scroll, max(0, len(lines)-budget))
 	if !m.scrollManual {
+		// The focus is the field being typed into (its █ cursor), else
+		// the selected row (› ); either is kept in view (U41).
+		focus := -1
 		for i, line := range lines {
-			if strings.HasPrefix(ansi.Strip(line), "› ") {
-				offset = max(0, i-budget+1)
+			plain := strings.TrimRight(ansi.Strip(line), " ")
+			if strings.HasSuffix(plain, "█") {
+				focus = i
 				break
 			}
+			if focus < 0 && strings.HasPrefix(plain, "› ") {
+				focus = i
+			}
+		}
+		if focus >= 0 {
+			offset = max(0, focus-budget+1)
 		}
 	}
 	return min(offset, max(0, len(lines)-budget))

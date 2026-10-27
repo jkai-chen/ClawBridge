@@ -1,8 +1,8 @@
 ClawBridge · ws_1 › prj_1 › engineer  cloud
 1 Ovw 2 Prj 3 Ses 4 Inb 5 Lin [6 Dispatcher] 7 Acc 8 Doc
+
 ╭──────────────────────────────────────────────────────────────────────────────╮
-│ Settings / Dispatcher / Model  the model that decides claims, set up with yo │
-│ ur own key                                                                   │
+│ Dispatcher model  the model that decides claims, set up with your own key    │
 │                                                                              │
 │ Model mode      off (the rules decide)                                       │
 │ Your key        active (revision 2)                                          │

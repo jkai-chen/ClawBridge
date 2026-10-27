@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"clawbridge/internal/bus"
+	"clawbridge/internal/clirender"
 	tea "github.com/charmbracelet/bubbletea"
 )
 
@@ -385,6 +386,10 @@ func TestAccountLabelsOwnDevices(t *testing.T) {
 	w := a.writes()
 	if len(w) != 1 || w[0].Operation != "device_label" || w[0].Args["label"] != "laptop 2" {
 		t.Fatal(w)
+	}
+	// The success line names the device, not its ID (U44).
+	if m.State().Status != clirender.OK || m.status.text != "laptop renamed to laptop 2." {
+		t.Fatalf("%q", m.status.text)
 	}
 }
 

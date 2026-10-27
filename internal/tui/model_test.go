@@ -408,7 +408,7 @@ func TestActorlessMutationsNeverReachExecutor(t *testing.T) {
 				cmd()
 				t.Fatal("actorless action created authority command")
 			}
-			if !strings.Contains(updated.actionErr, "session") || !strings.Contains(updated.actionErr, "instance") {
+			if !strings.Contains(updated.status.text, "session") || !strings.Contains(updated.status.text, "instance") {
 				t.Fatal("missing actor warning")
 			}
 		}

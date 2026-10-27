@@ -247,7 +247,7 @@ var modelBindings = []Binding{
 
 var cloudBindings = []Binding{
 	{ID: "apply", Keys: []string{"a"}, Label: "confirm setup", When: func(m Model) bool { return m.plan != nil && m.cfg.Setup != nil }, Action: func(m Model, _ string) (Model, tea.Cmd) {
-		m.confirming, m.confirm, m.actionErr = true, "", ""
+		m.confirming, m.confirm, m.status = true, "", status{}
 		return m, nil
 	}},
 }
@@ -289,6 +289,12 @@ func keyHint(m Model, s Screen, id string) string {
 func footerText(m Model) string {
 	if m.screen == ScreenModel && m.modelSetup.wizard.step >= modelStepProvider && m.modelSetup.wizard.step <= modelStepDisclosure {
 		return "Enter next · Esc cancel setup · Ctrl-C quit"
+	}
+	if m.screen == ScreenModel && m.modelSetup.wizard.step == modelStepSending {
+		return "Sending… · Ctrl-C quit"
+	}
+	if m.screen == ScreenModel && m.modelSetup.wizard.step == modelStepTesting {
+		return "Esc stops waiting · Ctrl-C quit"
 	}
 	if m.quitAsk {
 		return "y quit · any other key stays"
@@ -416,7 +422,7 @@ func (m Model) holdsWork() string {
 func (m Model) quit() (Model, tea.Cmd) {
 	if what := m.holdsWork(); what != "" && !m.quitAsk {
 		m.quitAsk = true
-		m.actionErr = "Quit and lose " + what + "? y quits; any other key stays."
+		m.status = noteStatus("Quit and lose " + what + "? y quits; any other key stays.")
 		return m, nil
 	}
 	if m.linearCancel != nil {

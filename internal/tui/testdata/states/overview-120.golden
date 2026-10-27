@@ -1,0 +1,55 @@
+### loading
+ClawBridge · ws_1 › prj_1 › engineer  cloud
+[1 Overview]  2 Projects  3 Sessions  4 Inbox  5 Linear  6 Dispatcher  7 Account  8 Doctor
+…  Loading…
+╭──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ Overview                                                                                                             │
+│                                                                                                                      │
+│ Workspace       ws_1                                                                                                 │
+│ Project         prj_1                                                                                                │
+│ Session         engineer                                                                                             │
+│ Identity        human@example.test · google-id-token · unverified                                                    │
+│ Authority       not loaded · unknown                                                                                 │
+│                                                                                                                      │
+│ Sessions        0 in pinned project                                                                                  │
+│ Unread          0 in engineer's inbox                                                                                │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+↑↓ select · r reload · ? help · q quit
+### error
+ClawBridge · ws_1 › prj_1 › engineer  cloud
+[1 Overview]  2 Projects  3 Sessions  4 Inbox  5 Linear  6 Dispatcher  7 Account  8 Doctor
+
+╭──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ Overview                                                                                                             │
+│                                                                                                                      │
+│ ERROR  Couldn't load the overview. The server can't be reached.                                                      │
+│ r reload · 8 Doctor                                                                                                  │
+│ remote: 503 Service Unavailable: upstream connect error or disconnect/reset before headers                           │
+│                                                                                                                      │
+│ Workspace       ws_1                                                                                                 │
+│ Project         prj_1                                                                                                │
+│ Session         engineer                                                                                             │
+│ Identity        human@example.test · google-id-token · unverified                                                    │
+│ Authority       not loaded · unknown                                                                                 │
+│                                                                                                                      │
+│ Sessions        0 in pinned project                                                                                  │
+│ Unread          0 in engineer's inbox                                                                                │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+↑↓ select · r reload · ? help · q quit
+### empty
+ClawBridge · pilot › core › engineer  cloud
+[1 Overview]  2 Projects  3 Sessions  4 Inbox  5 Linear  6 Dispatcher  7 Account  8 Doctor
+
+╭──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ Overview                                                                                                             │
+│                                                                                                                      │
+│ Workspace       pilot                                                                                                │
+│ Project         core                                                                                                 │
+│ Session         engineer                                                                                             │
+│ Identity        human@example.test · google-id-token · verified                                                      │
+│ Authority       server · online                                                                                      │
+│                                                                                                                      │
+│ Sessions        0 in pinned project                                                                                  │
+│ Unread          0 in engineer's inbox                                                                                │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+↑↓ select · r reload · ? help · q quit

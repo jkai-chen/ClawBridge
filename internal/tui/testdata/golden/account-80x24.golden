@@ -1,5 +1,6 @@
 ClawBridge · ws_1 › prj_1 › engineer  cloud
 1 Ovw 2 Prj 3 Ses 4 Inb 5 Lin 6 Dsp [7 Account] 8 Doc
+
 ╭──────────────────────────────────────────────────────────────────────────────╮
 │ Account                                                                      │
 │                                                                              │
@@ -7,7 +8,7 @@ ClawBridge · ws_1 › prj_1 › engineer  cloud
 │                                                                              │
 │ Your devices                                                                 │
 │ › laptop · dev_this (this device) · active · added - · last used never · key │
-│  in keyring                                                                  │
+│ in keyring                                                                   │
 │   old\x1b[31m · dev_old · revoked · added - · last used never                │
 │                                                                              │
 │ Members                                                                      │
@@ -15,9 +16,9 @@ ClawBridge · ws_1 › prj_1 › engineer  cloud
 │       cy's · dev_cy · active · added - · last used never                     │
 │                                                                              │
 │ Invites                                                                      │
-│   ada@example.com · inv_1 · pending · user · expires 2026-10-29 · prj_1=memb │
-│ er                                                                           │
-│   bob@example.com · inv_2 · burnt · user · expires - · burnt after failed at │
-│ tempts at 2026-10-26                                                         │
+│   ada@example.com · inv_1 · pending · user · expires 2026-10-29 ·            │
+│ prj_1=member                                                                 │
+│   bob@example.com · inv_2 · burnt · user · expires - · burnt after failed    │
+│ attempts 2026-10-26                                                          │
 ╰──────────────────────────────────────────────────────────────────────────────╯
 a add a device · i invite · l label · x revoke · w confirm · … · ? help

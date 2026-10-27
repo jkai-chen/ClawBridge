@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"clawbridge/internal/bus"
+	"clawbridge/internal/clirender"
 	"clawbridge/internal/linearboard"
 	"clawbridge/internal/linearconn"
 	"clawbridge/internal/linearprovider"
@@ -206,7 +207,7 @@ func TestLinearReviewMinimalPolicy(t *testing.T) {
 		t.Fatal(link)
 	}
 	// A failed closes set after the binding says so, with the re-run.
-	if e := m.State().Error; !strings.Contains(e, "Shared board saved") || !strings.Contains(e, "who closes was not set (only the project owner") || !strings.Contains(e, "closes set") {
+	if e := m.State().Error; !strings.Contains(e, "Linear board linked") || m.State().Status != clirender.Error || !strings.Contains(e, "who closes was not set (only the project owner") || !strings.Contains(e, "closes set") {
 		t.Fatal(e)
 	}
 }

@@ -1,0 +1,34 @@
+### loading
+ClawBridge · ws_1 › prj_1 › engineer  cloud
+1 Ovw [2 Projects] 3 Ses 4 Inb 5 Lin 6 Dsp 7 Acc 8 Doc
+…  Loading…
+╭──────────────────────────────────────────────────────────────────────────────╮
+│ Projects                                                                     │
+│                                                                              │
+│ Loading projects…                                                            │
+╰──────────────────────────────────────────────────────────────────────────────╯
+? help · q quit
+### error
+ClawBridge · ws_1 › prj_1 › engineer  cloud
+1 Ovw [2 Projects] 3 Ses 4 Inb 5 Lin 6 Dsp 7 Acc 8 Doc
+
+╭──────────────────────────────────────────────────────────────────────────────╮
+│ Projects                                                                     │
+│                                                                              │
+│ ERROR  Couldn't load projects. The server can't be reached.                  │
+│ r reload · 8 Doctor                                                          │
+│ remote: 503 Service Unavailable: upstream connect error or disconnect/reset  │
+│ before headers                                                               │
+╰──────────────────────────────────────────────────────────────────────────────╯
+? help · q quit
+### empty
+ClawBridge · ws_1 › prj_1 › engineer  cloud
+1 Ovw [2 Projects] 3 Ses 4 Inb 5 Lin 6 Dsp 7 Acc 8 Doc
+
+╭──────────────────────────────────────────────────────────────────────────────╮
+│ Projects                                                                     │
+│                                                                              │
+│ No projects in this workspace yet. An owner creates one with clawbridge      │
+│ project create SLUG.                                                         │
+╰──────────────────────────────────────────────────────────────────────────────╯
+? help · q quit

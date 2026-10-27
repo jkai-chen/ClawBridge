@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"clawbridge/internal/bus"
+	"clawbridge/internal/clirender"
 	"clawbridge/internal/devicekey"
 	tea "github.com/charmbracelet/bubbletea"
 )
@@ -34,6 +35,28 @@ type accountRow struct {
 // shownDeviceEvents is how many device events the banner lists: the
 // newest, then a count of the rest.
 const shownDeviceEvents = 5
+
+// name is how a row is named in a success line: a device by its label,
+// anything else by its ID (an email for a member).
+func (r accountRow) name() string {
+	if r.kind == "device" && r.label != "" {
+		return r.label
+	}
+	return firstNonempty(r.id, "it")
+}
+
+// find is the row of that kind and ID as last loaded; a bare row with the
+// ID when it is gone.
+func (s accountState) find(kind, id string) accountRow {
+	for _, list := range [][]accountRow{s.devices, s.members, s.invites} {
+		for _, r := range list {
+			if r.kind == kind && r.id == id {
+				return r
+			}
+		}
+	}
+	return accountRow{kind: kind, id: id}
+}
 
 type accountState struct {
 	principal string
@@ -142,7 +165,7 @@ func (m Model) accountRefresh() (Model, tea.Cmd) {
 			return accountLoadedMsg{request: requestID, err: errors.New("no workspace authority is configured; complete join setup first")}
 		}
 	}
-	executor, ctx := m.cfg.Executor, m.cfg.Context
+	executor, ctx, now := m.cfg.Executor, m.cfg.Context, m.now()
 	read := func(op string, args map[string]any) (map[string]any, error) {
 		result, err := executor.Execute(ctx, m.accountRequest(op, args))
 		if err != nil {
@@ -166,7 +189,7 @@ func (m Model) accountRefresh() (Model, tea.Cmd) {
 			return accountLoadedMsg{request: requestID, err: err}
 		}
 		for _, d := range records(devices["devices"]) {
-			s.devices = append(s.devices, deviceRow(d))
+			s.devices = append(s.devices, deviceRow(now, d))
 		}
 		transfer, err := read("owner_transfer_get", map[string]any{})
 		if err != nil {
@@ -185,7 +208,7 @@ func (m Model) accountRefresh() (Model, tea.Cmd) {
 			return accountLoadedMsg{request: requestID, err: err}
 		}
 		for _, i := range records(invites["invites"]) {
-			s.invites = append(s.invites, inviteRow(i))
+			s.invites = append(s.invites, inviteRow(now, i))
 		}
 		if s.mainOwner {
 			users, err := read("user_list", map[string]any{})
@@ -204,7 +227,7 @@ func (m Model) accountRefresh() (Model, tea.Cmd) {
 				devices := records(u["devices"])
 				s.members = append(s.members, accountRow{kind: "user", id: email, detail: fmt.Sprintf("%s · %d devices · invited by %s", firstNonempty(strings.Join(roles, ", "), "no roles"), len(devices), firstNonempty(text(u, "invited_by"), "-"))})
 				for _, d := range devices {
-					s.members = append(s.members, deviceRow(d))
+					s.members = append(s.members, deviceRow(now, d))
 				}
 			}
 		}
@@ -212,11 +235,11 @@ func (m Model) accountRefresh() (Model, tea.Cmd) {
 	}
 }
 
-func deviceRow(d map[string]any) accountRow {
+func deviceRow(now time.Time, d map[string]any) accountRow {
 	kind := text(d, "kind")
-	detail := "added " + firstNonempty(text(d, "created_at"), "-") + " · last used " + firstNonempty(text(d, "last_used_at"), "never")
+	detail := "added " + firstNonempty(clirender.When(now, text(d, "created_at")), "-") + " · last used " + firstNonempty(clirender.When(now, text(d, "last_used_at")), "never")
 	if kind == "ci" {
-		detail = "CI · " + detail + " · expires " + firstNonempty(text(d, "expires_at"), "-")
+		detail = "CI · " + detail + " · expires " + firstNonempty(clirender.When(now, text(d, "expires_at")), "-")
 	}
 	if store := text(d, "key_store"); store != "" {
 		detail += " · key in " + store
@@ -229,17 +252,17 @@ func deviceRow(d map[string]any) accountRow {
 	return accountRow{kind: "device", id: text(d, "device_id"), owner: text(d, "principal"), label: text(d, "label"), status: text(d, "status"), detail: detail}
 }
 
-func inviteRow(i map[string]any) accountRow {
+func inviteRow(now time.Time, i map[string]any) accountRow {
 	grants := []string{}
 	for project, role := range mapData(i["grants"]) {
 		grants = append(grants, fmt.Sprintf("%s=%v", project, role))
 	}
-	detail := text(i, "purpose") + " · expires " + firstNonempty(text(i, "expires_at"), "-")
+	detail := text(i, "purpose") + " · expires " + firstNonempty(clirender.When(now, text(i, "expires_at")), "-")
 	if len(grants) > 0 {
 		detail += " · " + strings.Join(sortedStrings(grants), ", ")
 	}
 	if text(i, "status") == "burnt" {
-		detail += " · burnt after failed attempts at " + firstNonempty(text(i, "revoked_at"), "-")
+		detail += " · burnt after failed attempts " + firstNonempty(clirender.When(now, text(i, "revoked_at")), "-")
 	}
 	return accountRow{kind: "invite", id: text(i, "invite_id"), owner: text(i, "email"), status: text(i, "status"), detail: detail}
 }
@@ -260,10 +283,10 @@ func (m Model) applyAccount(x accountLoadedMsg) Model {
 	}
 	m.loading = false
 	if x.err != nil {
-		m.errText = displayError(x.err)
+		m.loadErr = displayError(x.err)
 		return m
 	}
-	m.errText = ""
+	m.loadErr = ""
 	m.source = "server"
 	// A code on show, an action awaiting its word and a label draft's
 	// device survive the reload (R108-L2).
@@ -280,19 +303,19 @@ func (m Model) accountDo(action accountAction) (Model, tea.Cmd) {
 	if m.loading {
 		// One write at a time, on a screen that shows its answer (R108-L1);
 		// a confirmation stays, for Enter again once the load lands.
-		m.actionErr = "wait for the screen to finish loading, then press Enter again"
+		m.status = noteStatus("wait for the screen to finish loading, then press Enter again")
 		return m, nil
 	}
 	m.account.pending = nil
 	m.confirming = false
 	m.confirm = ""
 	if m.writesBlocked() {
-		m.actionErr = "the authority is offline; nothing was changed"
+		m.status = noteStatus("the authority is offline; nothing was changed")
 		return m, nil
 	}
 	m.request++
 	m.loading = true
-	m.actionErr = ""
+	m.status = status{}
 	requestID, executor, ctx, req := m.request, m.cfg.Executor, m.cfg.Context, m.accountRequest(action.op, action.args)
 	return m, func() tea.Msg {
 		result, err := executor.Execute(ctx, req)
@@ -309,7 +332,7 @@ func (m Model) applyAccountAction(x accountActionMsg) (Model, tea.Cmd) {
 	}
 	m.loading = false
 	if x.err != nil {
-		m.actionErr = displayError(x.err)
+		m.status = errStatus(x.err)
 		return m, nil
 	}
 	data := mapData(x.result.Data)
@@ -326,21 +349,23 @@ func (m Model) applyAccountAction(x accountActionMsg) (Model, tea.Cmd) {
 		default:
 			m.account.codeNote = "Give " + email + " the code and this server's URL (" + server + ") over a channel you'd trust with a password. It works once, for " + email + " only, until " + text(data, "expires_at") + "."
 		}
-		m.actionErr = "Invite " + text(data, "invite_id") + " issued."
+		m.status = okStatus("Invite for " + email + " created.")
 	case "device_revoke":
-		m.actionErr = "Device " + text(data, "device_id") + " revoked."
+		m.status = okStatus(m.account.find("device", text(data, "device_id")).name() + " revoked.")
 	case "device_label":
-		m.actionErr = "Device " + text(data, "device_id") + " relabelled."
+		row := m.account.find("device", text(data, "device_id"))
+		m.status = okStatus(row.name() + " renamed to " + firstNonempty(text(data, "label"), "(no label)") + ".")
 	case "device_ack":
-		m.actionErr = "Device events marked seen on this device."
+		m.status = okStatus("Device events marked seen on this device.")
 	case "invite_revoke":
-		m.actionErr = "Invite " + text(data, "invite_id") + " revoked."
+		row := m.account.find("invite", text(data, "invite_id"))
+		m.status = okStatus("Invite for " + firstNonempty(row.owner, row.id) + " revoked.")
 	case "user_revoke":
-		m.actionErr = fmt.Sprintf("%s removed: %d devices revoked.", text(data, "principal"), len(stringsOf(data["revoked_devices"])))
+		m.status = okStatus(fmt.Sprintf("%s removed: %d devices revoked.", text(data, "principal"), len(stringsOf(data["revoked_devices"]))))
 	case "owner_transfer_offer":
-		m.actionErr = "Ownership offered to " + text(data, "to") + "; they accept from their own device."
+		m.status = okStatus("Ownership offered to " + text(data, "to") + "; they accept from their own device.")
 	case "owner_transfer_respond":
-		m.actionErr = "Ownership offer " + text(data, "status") + "."
+		m.status = okStatus("Ownership offer " + text(data, "status") + ".")
 	}
 	m.request++
 	m.loading = true
@@ -367,7 +392,7 @@ func (m Model) confirmAccount(action accountAction) Model {
 	m.account.pending = &action
 	m.confirming = true
 	m.confirm = ""
-	m.actionErr = ""
+	m.status = status{}
 	return m
 }
 
@@ -383,7 +408,7 @@ func (m Model) accountKey(key string) (Model, tea.Cmd) {
 		return m, nil
 	}
 	if m.loading && strings.Contains("ailxtydce", key) && len(key) == 1 {
-		m.actionErr = "wait for the screen to finish loading"
+		m.status = noteStatus("wait for the screen to finish loading")
 		return m, nil
 	}
 	row, selected := m.accountSelected()
@@ -392,13 +417,13 @@ func (m Model) accountKey(key string) (Model, tea.Cmd) {
 		// A live code is minted only on a typed word (R108-L4).
 		return m.confirmAccount(accountAction{op: "invite_create", args: map[string]any{"email": m.account.principal, "purpose": "device"}, prompt: "Make a one-time code to add another device of yours? Type add", phrase: "add"}), nil
 	case "i":
-		m.inputMode, m.draft, m.actionErr = inputAccountInvite, "", ""
+		m.inputMode, m.draft, m.status = inputAccountInvite, "", status{}
 	case "l":
 		if !selected || row.kind != "device" || row.owner != m.account.principal || row.status != "active" {
-			m.actionErr = "select one of your active devices to label it"
+			m.status = noteStatus("select one of your active devices to label it")
 			return m, nil
 		}
-		m.inputMode, m.draft, m.actionErr, m.account.labelling = inputAccountLabel, row.label, "", row.id
+		m.inputMode, m.draft, m.status, m.account.labelling = inputAccountLabel, row.label, status{}, row.id
 	case "x":
 		if !selected {
 			return m, nil
@@ -415,12 +440,12 @@ func (m Model) accountKey(key string) (Model, tea.Cmd) {
 		case row.kind == "user" && m.account.mainOwner:
 			return m.confirmAccount(accountAction{op: "user_revoke", args: map[string]any{"principal": row.id}, prompt: "Remove " + row.id + " from the workspace: every role, device and pending invite here. Type their email", phrase: row.id}), nil
 		}
-		m.actionErr = "nothing to revoke on this row"
+		m.status = noteStatus("nothing to revoke on this row")
 	case "w":
 		// §17.4: confirm wakes a dormant device, or restarts an idle one's
 		// clock; this device's own clock runs on its use.
 		if !selected || row.kind != "device" || (row.status != "active" && row.status != "dormant") || row.id == m.cfg.DeviceID {
-			m.actionErr = "select another active or dormant device to confirm it"
+			m.status = noteStatus("select another active or dormant device to confirm it")
 			return m, nil
 		}
 		args := map[string]any{"device_id": row.id}
@@ -430,14 +455,14 @@ func (m Model) accountKey(key string) (Model, tea.Cmd) {
 		return m.confirmAccount(accountAction{op: "device_confirm", args: args, prompt: "Confirm device " + row.id + " (" + row.label + ") of " + row.owner + ", so it stays usable? Type confirm", phrase: "confirm"}), nil
 	case "t":
 		if !m.account.mainOwner {
-			m.actionErr = "only the workspace owner may offer ownership"
+			m.status = noteStatus("only the workspace owner may offer ownership")
 			return m, nil
 		}
 		if m.account.transfer != nil {
-			m.actionErr = "an ownership offer is already pending; c cancels it"
+			m.status = noteStatus("an ownership offer is already pending; c cancels it")
 			return m, nil
 		}
-		m.inputMode, m.draft, m.actionErr = inputAccountTransfer, "", ""
+		m.inputMode, m.draft, m.status = inputAccountTransfer, "", status{}
 	case "y", "d":
 		if text(m.account.transfer, "to") != m.account.principal {
 			return m, nil
@@ -473,7 +498,7 @@ func (m Model) accountSubmit() (Model, tea.Cmd) {
 			return m.CancelInput(), nil
 		}
 		if strings.TrimSpace(m.confirm) != action.phrase {
-			m.actionErr = "the confirmation doesn't match; nothing was changed"
+			m.status = noteStatus("the confirmation doesn't match; nothing was changed")
 			return m, nil
 		}
 		return m.accountDo(*action)
@@ -486,24 +511,24 @@ func (m Model) accountSubmit() (Model, tea.Cmd) {
 		id := m.account.labelling
 		m.account.labelling = ""
 		if id == "" {
-			m.actionErr = "select one of your devices to label it"
+			m.status = noteStatus("select one of your devices to label it")
 			return m, nil
 		}
 		if draft == "" || len(draft) > 64 {
-			m.actionErr = "a device label is 1-64 characters"
+			m.status = noteStatus("a device label is 1-64 characters")
 			return m, nil
 		}
 		return m.accountDo(accountAction{op: "device_label", args: map[string]any{"device_id": id, "label": draft}})
 	case inputAccountInvite:
 		email, grants, err := parseInviteDraft(draft)
 		if err != nil {
-			m.actionErr = err.Error()
+			m.status = noteStatus(err.Error())
 			return m, nil
 		}
 		return m.accountDo(accountAction{op: "invite_create", args: map[string]any{"email": email, "purpose": "user", "grants": grants}})
 	case inputAccountTransfer:
 		if !strings.Contains(draft, "@") {
-			m.actionErr = "offer ownership to a member's email"
+			m.status = noteStatus("offer ownership to a member's email")
 			return m, nil
 		}
 		to := strings.ToLower(draft)
@@ -550,8 +575,11 @@ func renderAccount(m Model) string {
 		b.WriteString("Account works on a hosted workspace; local mode has no invites or devices.")
 		return b.String()
 	}
+	if body, ok := bodyState(m, "your account", m.account.principal != ""); ok {
+		return b.String() + body
+	}
 	if m.account.principal == "" {
-		b.WriteString("Not loaded. r reloads.")
+		b.WriteString("Not loaded. " + firstNonempty(keyHint(m, ScreenAccount, "reload"), "r reload") + ".")
 		return b.String()
 	}
 	role := "member"

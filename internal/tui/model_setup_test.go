@@ -109,7 +109,7 @@ func TestModelSetupScreen(t *testing.T) {
 	if s := m.ModelSetupState(); !s.Owner || s.Step != "" {
 		t.Fatalf("%+v", s)
 	}
-	for _, want := range []string{"Settings / Dispatcher / Model", "6 Dispatcher", "active (revision 2)", "running", "s set up the model"} {
+	for _, want := range []string{"Dispatcher model", "6 Dispatcher", "active (revision 2)", "running", "s set up the model"} {
 		if !strings.Contains(frames[0], want) {
 			t.Fatalf("no %q in %s", want, frames[0])
 		}
@@ -133,7 +133,7 @@ func TestModelSetupScreen(t *testing.T) {
 	m = framed(t, m, &frames, strings.Split("500,000", "")...)
 	m = framed(t, m, &frames, "enter")
 	if s := m.ModelSetupState(); s.Step != "disclosure" {
-		t.Fatalf("%+v %s", s, m.actionErr)
+		t.Fatalf("%+v %s", s, m.status.text)
 	}
 	m = framed(t, m, &frames, "y", "e", "s", "enter")
 
@@ -193,8 +193,8 @@ func TestModelSetupWipesTheKey(t *testing.T) {
 	m, key := start(t)
 	m = press(t, m, "esc")
 	zeroed(t, m, key)
-	if !strings.Contains(m.actionErr, "Nothing was set up") {
-		t.Fatal(m.actionErr)
+	if !strings.Contains(m.status.text, "Nothing was set up") {
+		t.Fatal(m.status.text)
 	}
 
 	m, key = start(t)
@@ -234,8 +234,8 @@ func TestModelSetupWipesTheKey(t *testing.T) {
 	}
 	m, _ = m.UpdateModel(tea.KeyMsg{Type: tea.KeyCtrlU})
 	m = press(t, m, "ab\x1bc")
-	if len(m.modelSetup.wizard.key) != 0 || !strings.Contains(m.actionErr, "control character") {
-		t.Fatal(len(m.modelSetup.wizard.key), m.actionErr)
+	if len(m.modelSetup.wizard.key) != 0 || !strings.Contains(m.status.text, "control character") {
+		t.Fatal(len(m.modelSetup.wizard.key), m.status.text)
 	}
 
 	// A key that outgrows its buffer leaves no copy behind.
@@ -261,18 +261,18 @@ func TestModelSetupFields(t *testing.T) {
 		m, _ = m.UpdateModel(tea.KeyMsg{Type: tea.KeyBackspace})
 	}
 	m = press(t, m, modelTestKey, "enter")
-	if s := m.ModelSetupState(); s.Step != "model" || !strings.Contains(m.actionErr, "looks like a key") || strings.Contains(Render(m), "SECRET") {
-		t.Fatalf("%+v %s", s, m.actionErr)
+	if s := m.ModelSetupState(); s.Step != "model" || !strings.Contains(m.status.text, "looks like a key") || strings.Contains(Render(m), "SECRET") {
+		t.Fatalf("%+v %s", s, m.status.text)
 	}
 	m = typed(t, m, "m1")
 	m = press(t, m, "enter", modelTestKey, "enter", "enter", "enter", "enter", "enter", "enter")
-	if s := m.ModelSetupState(); s.Step != "caps" || !strings.Contains(m.actionErr, "daily") {
-		t.Fatalf("%+v %q", s, m.actionErr)
+	if s := m.ModelSetupState(); s.Step != "caps" || !strings.Contains(m.status.text, "daily") {
+		t.Fatalf("%+v %q", s, m.status.text)
 	}
 	m = typed(t, m, "9000")
 	m = press(t, m, "enter", "n", "o", "enter")
-	if s := m.ModelSetupState(); s.Step != "" || s.KeyEntered || !strings.Contains(m.actionErr, "not confirmed") {
-		t.Fatalf("%+v %s", s, m.actionErr)
+	if s := m.ModelSetupState(); s.Step != "" || s.KeyEntered || !strings.Contains(m.status.text, "not confirmed") {
+		t.Fatalf("%+v %s", s, m.status.text)
 	}
 	if _, sent := a.setup(); sent {
 		t.Fatal("a refused setup was sent")
@@ -286,8 +286,8 @@ func TestModelSetupFields(t *testing.T) {
 	m = press(t, m, "enter")
 	m = typed(t, m, "http://example.test/v1")
 	m = press(t, m, "enter")
-	if s := m.ModelSetupState(); s.Step != "base_url" || s.Provider != "openai-compatible" || m.actionErr == "" {
-		t.Fatalf("%+v %s", s, m.actionErr)
+	if s := m.ModelSetupState(); s.Step != "base_url" || s.Provider != "openai-compatible" || m.status.text == "" {
+		t.Fatalf("%+v %s", s, m.status.text)
 	}
 }
 
@@ -302,8 +302,8 @@ func TestModelSetupRedactsServerErrors(t *testing.T) {
 	m = press(t, m, "enter")
 	m = typed(t, m, "yes")
 	m = press(t, m, "enter")
-	if s := m.ModelSetupState(); s.Step != "" || s.KeyEntered || !strings.Contains(m.actionErr, "Setup failed") || strings.Contains(Render(m), "SECRET") {
-		t.Fatalf("%+v %s", s, m.actionErr)
+	if s := m.ModelSetupState(); s.Step != "" || s.KeyEntered || !strings.Contains(m.status.text, "Setup failed") || strings.Contains(Render(m), "SECRET") {
+		t.Fatalf("%+v %s", s, m.status.text)
 	}
 }
 
@@ -317,8 +317,8 @@ func TestModelSetupOwnerOnly(t *testing.T) {
 	}
 	m = modelScreen(t, &modelAuthority{noSeal: true})
 	m = press(t, m, "s")
-	if s := m.ModelSetupState(); s.Step != "" || !strings.Contains(m.actionErr, "seal key") {
-		t.Fatalf("%+v %s", s, m.actionErr)
+	if s := m.ModelSetupState(); s.Step != "" || !strings.Contains(m.status.text, "seal key") {
+		t.Fatalf("%+v %s", s, m.status.text)
 	}
 }
 

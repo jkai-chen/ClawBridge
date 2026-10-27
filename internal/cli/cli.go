@@ -32,7 +32,8 @@ import (
 const Usage = `clawbridge: local and authenticated hosted agent messaging
 Global flags: --db PATH --workspace NAME_OR_ID --project SLUG_OR_ID --session NAME_OR_ID --instance ID --json
 Commands: setup --local, project create SLUG, register [NAME], sessions, send TO BODY --operation-id ID,
-          inbox, inbox-status [--after N], mark-read ID..., reply ID BODY --operation-id ID, update, retire, history, whoami, status ID,
+          inbox, inbox-status [--after N], mark-read ID..., reply ID BODY --operation-id ID, update,
+          retire [--target-session S] [--successor S --status moved] [--outcome done | --confirm], history, whoami, status ID,
           notification-status [--after N], notification-policy --policy accept|hold|refuse,
           assignment propose [--issue-uuid UUID --issue-identifier ID] [--task-role ROLE] [--scope-repo REMOTE] [--scope-path PATTERN]...,
           assignment confirm TARGET_SESSION --revision REV [--allow-overlap], assignment release [TARGET_SESSION] --revision REV,
@@ -623,6 +624,8 @@ flags:`)
 		op = "retire_session"
 		stringArg("successor", "successor")
 		stringArg("status", "status")
+		stringArg("outcome", "outcome")
+		f.Bool("confirm", false, "release a confirmed assignment as it is, with no outcome")
 	case "history":
 		op = "history"
 		commonPage()
@@ -750,6 +753,10 @@ flags:`)
 			return errors.New("principal-unbind releases an address from its Google account; repeat with --confirm")
 		}
 		a["principal"] = pos[0]
+	case "retire":
+		if f.Lookup("confirm").Value.(flag.Getter).Get().(bool) {
+			a["confirm"] = true
+		}
 	case "send":
 		a["to"], a["body"] = pos[0], pos[1]
 	case "reply":
@@ -905,6 +912,9 @@ flags:`)
 	}
 	result, err := executor.Execute(ctx, bus.Request{Operation: op, Workspace: config.Workspace, Project: config.Project, Session: config.Session, Args: a})
 	if err != nil {
+		if op == "retire_session" && strings.Contains(err.Error(), "holds the confirmed assignment") {
+			return retireAgain(err, config.Session, config.Instance, rest)
+		}
 		return err
 	}
 	if op == "assignment_confirm" || op == "assignment_release" {
@@ -1076,4 +1086,18 @@ func setupWantsCloud(args []string) bool {
 		}
 	}
 	return false
+}
+
+// retireAgain adds the two commands that retire a session holding a
+// confirmed assignment: done if the work is finished, or as it is.
+func retireAgain(err error, session, instance string, rest []string) error {
+	again := "clawbridge "
+	if session != "" {
+		again += "--session " + session + " "
+	}
+	if instance != "" {
+		again += "--instance " + instance + " "
+	}
+	again += strings.TrimSpace("retire " + strings.Join(rest, " "))
+	return fmt.Errorf("%w\nFinished:   %s --outcome done\nAs it is:   %s --confirm", err, again, again)
 }

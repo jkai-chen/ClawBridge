@@ -3,6 +3,7 @@ package mcpserver
 import (
 	"context"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -76,5 +77,16 @@ func TestAssignmentToolsReachTheStoreAndFindOwners(t *testing.T) {
 	}
 	if listed, _ = call("list_sessions", map[string]any{"scope_path": "internal/bus/store.go"}); len(listed["sessions"].([]any)) != 0 {
 		t.Fatal(listed)
+	}
+	// retire_session asks about confirmed work, and takes outcome done.
+	proposed, _ = call("assignment_propose", map[string]any{"issue_uuid": "0c0c0c0c-0c0c-4c0c-8c0c-0c0c0c0c0c0c", "issue_identifier": "SYN-9"})
+	exec("assignment_confirm", "coord", map[string]any{"instance": "coord-i", "target_session": "eng", "revision": proposed["assignment"].(map[string]any)["revision"]})
+	r, e := cs.CallTool(ctx, &mcp.CallToolParams{Name: "retire_session", Arguments: map[string]any{}})
+	if e != nil || !r.IsError || !strings.Contains(r.Content[0].(*mcp.TextContent).Text, "SYN-9") {
+		t.Fatal("retire_session did not ask about confirmed work:", e, r)
+	}
+	retired, failed := call("retire_session", map[string]any{"outcome": "done"})
+	if failed || retired["status"] != "retired" || retired["assignment"].(map[string]any)["outcome"] != "done" {
+		t.Fatal(retired)
 	}
 }

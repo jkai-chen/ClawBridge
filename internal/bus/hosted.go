@@ -115,7 +115,7 @@ func (s *Store) revokeProjectRole(ctx context.Context, tx *transaction, w map[st
 		if err = s.audit(ctx, tx, wid, pid, "", "session", sid, "retired", map[string]any{"reason": "access_revoked"}); err != nil {
 			return nil, err
 		}
-		if _, err = s.endSessionAssignment(ctx, tx, wid, pid, sid, "access_revoked", nil); err != nil {
+		if _, err = s.endSessionAssignment(ctx, tx, wid, pid, sid, "access_revoked", nil, false); err != nil {
 			return nil, err
 		}
 		retired = append(retired, sid)

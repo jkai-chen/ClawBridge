@@ -152,3 +152,36 @@ func TestCLIProjectFlowResume(t *testing.T) {
 		t.Fatal("resume on an unbound project:", e, out.String())
 	}
 }
+
+// Retiring a session that holds a confirmed assignment asks first: the
+// refusal names the issue and gives both commands, each of which works.
+func TestRetireAsksAboutConfirmedWork(t *testing.T) {
+	isolated(t)
+	invoke(t, "setup", "--local", "--workspace", "w")
+	invoke(t, "project", "create", "p")
+	t.Setenv("CLAWBRIDGE_PROJECT", "p")
+	invoke(t, "register", "coord", "--instance", "coord-i")
+	invoke(t, "--session", "coord", "--instance", "coord-i", "project", "coordinator-set", "coord")
+	confirm := func(name, issue, ident string) {
+		invoke(t, "register", name, "--instance", name+"-i")
+		a := invoke(t, "--session", name, "--instance", name+"-i", "assignment", "propose", "--issue-uuid", issue, "--issue-identifier", ident)["assignment"].(map[string]any)
+		invoke(t, "--session", "coord", "--instance", "coord-i", "assignment", "confirm", name, "--revision", a["revision"].(string))
+	}
+	confirm("eng", "0d0d0d0d-0d0d-4d0d-8d0d-0d0d0d0d0d0d", "SYN-4")
+	var out, errs bytes.Buffer
+	err := Run(context.Background(), []string{"--session", "eng", "--instance", "eng-i", "retire"}, &out, &errs)
+	if err == nil || !strings.Contains(err.Error(), "SYN-4") ||
+		!strings.Contains(err.Error(), "clawbridge --session eng --instance eng-i retire --outcome done") ||
+		!strings.Contains(err.Error(), "clawbridge --session eng --instance eng-i retire --confirm") {
+		t.Fatal("retire did not ask:", err)
+	}
+	done := invoke(t, "--session", "eng", "--instance", "eng-i", "retire", "--outcome", "done")
+	if done["status"] != "retired" || done["assignment"].(map[string]any)["outcome"] != "done" {
+		t.Fatal(done)
+	}
+	confirm("ops", "0e0e0e0e-0e0e-4e0e-8e0e-0e0e0e0e0e0e", "SYN-5")
+	kept := invoke(t, "--session", "ops", "--instance", "ops-i", "retire", "--confirm")
+	if kept["status"] != "retired" || kept["assignment"].(map[string]any)["outcome"] != nil {
+		t.Fatal(kept)
+	}
+}

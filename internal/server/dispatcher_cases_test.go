@@ -159,7 +159,8 @@ func TestModelCaseEndpoints(t *testing.T) {
 		t.Fatal(status, next)
 	}
 	tools := ModelCasesNextPath[:len(ModelCasesNextPath)-len("next")] + c["case_id"].(string) + "/tools/"
-	if status, body := e.do("POST", tools+"recommend", token, map[string]any{"action": "wait", "reason_code": "uncertain", "explanation": ""}); status != 400 || body["error"] != "tool_refused" || body["tool"] != "recommend" {
+	usage := map[string]any{"input_tokens": 10, "output_tokens": 2, "tool_calls": 1, "duration_ms": 50, "provider": "anthropic", "model": "claude-test"}
+	if status, body := e.do("POST", tools+"recommend", token, map[string]any{"action": "wait", "reason_code": "uncertain", "explanation": "", "usage": usage}); status != 400 || body["error"] != "tool_refused" || body["tool"] != "recommend" {
 		t.Fatal(status, body)
 	}
 	if status, body := e.do("POST", tools+"read_issue_facts", token, map[string]any{"issue_id": caseIssue, "extra": true}); status != 400 || body["error"] != "invalid_argument" {
@@ -171,7 +172,6 @@ func TestModelCaseEndpoints(t *testing.T) {
 	if status, body := e.do("POST", "/v1/dispatcher-model/cases/case_00000000000000000000000000000000/tools/list_sessions", token, map[string]any{"active_only": true}); status != 404 || body["error"] != "case_not_found" {
 		t.Fatal(status, body)
 	}
-	usage := map[string]any{"input_tokens": 10, "output_tokens": 2, "tool_calls": 1, "duration_ms": 50, "provider": "anthropic", "model": "claude-test"}
 	// Closed as the schema: abstain's three codes, decide's seven actions.
 	if status, body := e.do("POST", tools+"abstain", token, map[string]any{"reason_code": "bored", "usage": usage}); status != 400 || body["error"] != "invalid_argument" {
 		t.Fatal(status, body)

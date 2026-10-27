@@ -69,6 +69,13 @@
 - **Onboarding offers the dispatcher.** The guided setup's last step offers a hosted project's owner the dispatcher in
   the rules engine, with what it does and the `dispatcher enable` preview; it stays off unless you say yes, and
   `dispatcher disable` turns it off any time.
+- **The dispatcher's model can advise in rules mode (schema 28).** `clawbridge dispatcher model advise on` lets the
+  model recommend confirm, decline or wait on each claim the rules escalate; the escalation still goes out at once, a
+  person decides, and the follow-up carries only the action and reason. The model's note is read with
+  `dispatcher escalations`, never in an inbox. `dispatcher model tools set` turns on the opt-in tools: `route_notice`
+  (an unplaced escalation to a configured domain) and `ask_session` (one fixed question, capped). Disable and enable
+  turn advice and the tools off. One owner's agent serves at most 100 projects with the model on; past that, the
+  previews and doctor warn.
 
 ## Running your own server on AWS
 

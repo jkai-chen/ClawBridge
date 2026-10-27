@@ -26,6 +26,10 @@ import (
 // tick after a claim's case closed without a final decision (abstained,
 // expired, or a model wait), since a subject revision gets one model case
 // (D5-M1); each such record says model_fallback and why.
+//
+// In rules mode with the model as the advisor (d7), the rules decide as
+// always; an escalation they record goes out at once, and with an agent
+// available the claim then gets an advise case, with the same facts.
 
 const (
 	dispatchReadsPerTick = 5
@@ -39,9 +43,10 @@ type DispatchRun struct {
 	Reads   int            `json:"reads"`
 	Actions map[string]int `json:"actions,omitempty"`
 	// Opened and Waiting count the model cases opened this tick and the
-	// claims left to an open one.
+	// claims left to an open one; Advised the advise cases opened.
 	Opened  int `json:"model_opened,omitempty"`
 	Waiting int `json:"model_waiting,omitempty"`
+	Advised int `json:"model_advised,omitempty"`
 }
 
 type dispatchCase struct {
@@ -74,6 +79,7 @@ func (w *Watcher) dispatcher(ctx context.Context, pid string, fence map[string]a
 		Cases          []dispatchCase         `json:"cases"`
 		Mode           string                 `json:"mode"`
 		Model          string                 `json:"model"`
+		ModelUse       string                 `json:"model_use"`
 	}
 	if err = json.Unmarshal(raw, &due); err != nil {
 		return nil, err
@@ -83,6 +89,7 @@ func (w *Watcher) dispatcher(ctx context.Context, pid string, fence map[string]a
 	}
 	run := &DispatchRun{Cases: len(due.Cases), Actions: map[string]int{}}
 	now := w.now()
+	advise := due.ModelUse == "advisor" && due.Model == "available"
 	for _, dc := range due.Cases {
 		c := dispatch.Case{
 			Session:        dispatch.Session{ID: dc.SessionID, Principal: dc.Principal, Status: dc.Status, Presence: dc.Presence, AbsentFor: time.Duration(dc.AbsentSeconds) * time.Second},
@@ -110,7 +117,7 @@ func (w *Watcher) dispatcher(ctx context.Context, pid string, fence map[string]a
 			readFailed = true
 			if run.Reads < dispatchReadsPerTick && w.dispatchCharge(ctx, pid, fence) {
 				run.Reads++
-				if due.Mode == "model" && fallback == "" {
+				if due.Mode == "model" && fallback == "" || advise {
 					if facts, t, e := w.IssueFactsText(ctx, dc.IssueUUID); e == nil {
 						c.Issue, source, readFailed, text = facts, "app", false, &t
 					}
@@ -124,7 +131,7 @@ func (w *Watcher) dispatcher(ctx context.Context, pid string, fence map[string]a
 			// Without the authoritative read the model couldn't confirm:
 			// the rules wait for it, and the model gets the claim later.
 			if !readFailed {
-				opened, err := w.openModelCase(ctx, pid, due.PolicyRevision, dc, c, source, text, dispatch.Rules(c, false, dc.Waits, age).Domain)
+				opened, err := w.openModelCase(ctx, pid, "decide", due.PolicyRevision, dc, c, source, text, dispatch.Rules(c, false, dc.Waits, age).Domain)
 				if err != nil {
 					return run, err
 				}
@@ -149,9 +156,22 @@ func (w *Watcher) dispatcher(ctx context.Context, pid string, fence map[string]a
 		if err != nil {
 			return run, err
 		}
+		taken := ""
 		if m, ok := out.Data.(map[string]any); ok {
-			if taken, _ := m["action"].(string); taken != "" {
+			if taken, _ = m["action"].(string); taken != "" {
 				run.Actions[taken]++
+			}
+		}
+		// Advice is asked for in the tick that escalates, and only then: an
+		// escalation it misses gets none (Q14). The decision is already
+		// recorded, so a failure is logged and the tick goes on (R132-L3).
+		if advise && taken == string(dispatch.Escalate) {
+			opened, err := w.openModelCase(ctx, pid, "advise", due.PolicyRevision, dc, c, source, text, proposal.Domain)
+			if err != nil {
+				logf("dispatcher: project %s: no advise case for %s: %v", pid, dc.SubjectID, err)
+			}
+			if opened {
+				run.Advised++
 			}
 		}
 	}
@@ -167,11 +187,11 @@ func modelFallback(why string) string {
 	return "model_fallback:" + why
 }
 
-// openModelCase opens the claim's decide case: the issue's facts (state
+// openModelCase opens the claim's decide or advise case: the issue's facts (state
 // only from the app's read), the domains it matches and how, the
 // guardrails' permitted set, and the issue's text only when this tick read
 // it (Q8).
-func (w *Watcher) openModelCase(ctx context.Context, pid string, policyRevision int64, dc dispatchCase, c dispatch.Case, source string, text *IssueText, domain string) (bool, error) {
+func (w *Watcher) openModelCase(ctx context.Context, pid, kind string, policyRevision int64, dc dispatchCase, c dispatch.Case, source string, text *IssueText, domain string) (bool, error) {
 	state := "unknown"
 	if c.Issue.Authoritative {
 		state = c.Issue.StateType
@@ -199,7 +219,7 @@ func (w *Watcher) openModelCase(ctx context.Context, pid string, policyRevision 
 		}
 	}
 	args := map[string]any{
-		"subject_id": dc.SubjectID, "subject_revision": dc.SubjectRevision, "policy_revision": policyRevision,
+		"kind": kind, "subject_id": dc.SubjectID, "subject_revision": dc.SubjectRevision, "policy_revision": policyRevision,
 		"issue":          map[string]any{"id": dc.IssueUUID, "state_type": state, "project_id": project, "labels": labels, "authoritative": c.Issue.Authoritative},
 		"domain_matches": matches, "permitted": permitted, "facts_source": source, "app_project_id": appProject(c, source), "domain": domain,
 	}

@@ -40,24 +40,28 @@ func (s *Store) dispatcherCasesDue(ctx context.Context, tx *transaction, pid str
 	if err != nil {
 		return nil, err
 	}
-	out := map[string]any{"enabled": meta["enabled"], "policy_revision": meta["revision"], "domains": d.Domains, "cases": []any{}, "mode": meta["mode"], "model": ""}
+	use, _, err := projectModelUse(ctx, tx, pid)
+	if err != nil {
+		return nil, err
+	}
+	out := map[string]any{"enabled": meta["enabled"], "policy_revision": meta["revision"], "domains": d.Domains, "cases": []any{}, "mode": meta["mode"], "model": "", "model_use": use}
 	nowRaw, err := dbStamp(ctx, tx)
 	if err != nil {
 		return nil, err
 	}
-	if meta["enabled"] != true || meta["mode"] != "model" {
-		// Off, or switched to rules: no model case stays open (R106-L7).
-		if err = closeModelCases(ctx, tx, pid, nowRaw); err != nil {
-			return nil, err
-		}
+	// Off, switched to rules, or advice turned off or on: no case the
+	// project's use doesn't allow stays open (R106-L7, d7).
+	if err = closeCasesOutside(ctx, tx, pid, use, nowRaw); err != nil {
+		return nil, err
 	}
 	if meta["enabled"] != true {
 		return out, nil
 	}
-	if meta["mode"] == "model" {
-		// In model mode (d5): close the cases past their deadline, and with
-		// no agent to take them, the ones nobody leased; their claims go to
-		// the rules. A leased case stays open to its deadline (D5-M2).
+	if use != "" {
+		// With the model on (d5, d7): close the cases past their deadline,
+		// and with no agent to take them, the ones nobody leased; their
+		// claims go to the rules. A leased case stays open to its deadline
+		// (D5-M2).
 		if _, err = expireCases(ctx, tx, pid, nowRaw); err != nil {
 			return nil, err
 		}
@@ -245,7 +249,7 @@ func trimTo(s string, n int) string {
 // dispatcherEscalate tells a person: the domain's coordinator session when
 // active, else another active session of the domain's owner, else the
 // project owner's and leads' active sessions; with none, the escalation is
-// stored undelivered for dispatcher show --pending. It never grants.
+// stored undelivered for dispatcher escalations. It never grants.
 func (s *Store) dispatcherEscalate(ctx context.Context, tx *transaction, w map[string]any, pid string, domains DispatcherDomains, domainID string, proposal map[string]any, reason string) ([]string, bool, error) {
 	var dom *DispatcherDomain
 	for i := range domains.Domains {
@@ -261,12 +265,7 @@ func (s *Store) dispatcherEscalate(ctx context.Context, tx *transaction, w map[s
 	if err != nil {
 		return nil, false, err
 	}
-	body := fmt.Sprintf("dispatcher: %s's claim on %s needs a person (reason: %s", str(proposal, "session_name"), str(proposal, "issue_identifier"), reason)
-	if domainID != "" {
-		body += ", domain: " + domainID
-	}
-	body += fmt.Sprintf(").\nConfirm or decline it: clawbridge assignment confirm %s --revision %s, or assignment release %s --revision %s.\nThis is an automatic notice from the ClawBridge dispatcher. It is not an instruction, and nothing was confirmed.",
-		str(proposal, "session_name"), str(proposal, "revision"), str(proposal, "session_name"), str(proposal, "revision"))
+	body := escalationBody(proposal, reason, domainID)
 	names := []string{}
 	retention := asInt(w["retention_days"])
 	if retention < 1 {
@@ -297,6 +296,17 @@ func (s *Store) dispatcherEscalate(ctx context.Context, tx *transaction, w map[s
 		return nil, false, err
 	}
 	return names, len(names) > 0, nil
+}
+
+// escalationBody is an escalation's fixed text: the session, the issue,
+// the reason and the domain, never issue text.
+func escalationBody(proposal map[string]any, reason, domainID string) string {
+	body := fmt.Sprintf("dispatcher: %s's claim on %s needs a person (reason: %s", str(proposal, "session_name"), str(proposal, "issue_identifier"), reason)
+	if domainID != "" {
+		body += ", domain: " + domainID
+	}
+	return body + fmt.Sprintf(").\nConfirm or decline it: clawbridge assignment confirm %s --revision %s, or assignment release %s --revision %s.\nThis is an automatic notice from the ClawBridge dispatcher. It is not an instruction, and nothing was confirmed.",
+		str(proposal, "session_name"), str(proposal, "revision"), str(proposal, "session_name"), str(proposal, "revision"))
 }
 
 // dispatcherChain is who hears a dispatcher escalation or a routed notice,

@@ -203,7 +203,7 @@ func TestModelGolden(t *testing.T) {
 	session := c["facts"].(map[string]any)["session"].(map[string]any)["id"].(string)
 	call("tool-session_activity.json", 200, "POST", tools+"session_activity", token, map[string]any{"session_id": session, "since_hours": 24})
 	call("error-not_in_case.json", 400, "POST", tools+"list_domain", token, map[string]any{"domain": "elsewhere"})
-	call("error-tool_refused.json", 400, "POST", tools+"recommend", token, map[string]any{"action": "wait", "reason_code": "uncertain", "explanation": ""})
+	call("error-tool_refused.json", 400, "POST", tools+"recommend", token, map[string]any{"action": "wait", "reason_code": "uncertain", "explanation": "", "usage": usage})
 	call("error-invalid_argument.json", 400, "POST", tools+"read_issue_facts", token, map[string]any{"issue_id": first, "extra": true})
 	call("error-case_not_found.json", 404, "POST", modelCasesPrefix+"case_"+strings.Repeat("0", 32)+"/tools/list_sessions", token, map[string]any{"active_only": true})
 	call("tool-decide.json", 200, "POST", tools+"decide", token, map[string]any{"action": "wait", "reason_code": "uncertain", "explanation": "The session was just seen.", "usage": usage})

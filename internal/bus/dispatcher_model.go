@@ -454,21 +454,39 @@ func revokeOwnerCredentials(ctx context.Context, tx *transaction, owner, nowRaw 
 	return err
 }
 
-// modelProjects are owner's projects with the dispatcher on in model mode:
-// the projects its agent gets tokens for [Q5].
+// maxModelProjects is how many projects one owner's agent serves: the
+// agent's schema caps its project list at 100. Past it, the first 100 by
+// project ID are served, and doctor and the previews say so.
+const maxModelProjects = 100
+
+// modelProjects are the projects owner's agent gets tokens for [Q5, d7
+// Q7], and so the launcher's reason to run it: the first maxModelProjects
+// of allModelProjects.
 func modelProjects(ctx context.Context, tx *transaction, owner string) ([]string, error) {
+	all, err := allModelProjects(ctx, tx, owner)
+	if len(all) > maxModelProjects {
+		all = all[:maxModelProjects]
+	}
+	return all, err
+}
+
+// allModelProjects are owner's projects with the model on, in mode model
+// or as the advisor in rules mode, by project ID.
+func allModelProjects(ctx context.Context, tx *transaction, owner string) ([]string, error) {
 	// A local store has no project roles: its workspace owner owns all.
 	owns, args := `w.owner_principal=?`, []any{owner}
 	if tx.postgres {
 		owns, args = `w.owner_principal=? OR EXISTS(SELECT 1 FROM project_roles r WHERE r.project_id=p.id AND r.principal=? AND r.role='owner')`, []any{owner, owner}
 	}
-	rows, err := query(ctx, tx, `SELECT p.id FROM projects p JOIN workspaces w ON w.id=p.workspace_id JOIN dispatcher_policies d ON d.project_id=p.id WHERE d.enabled=1 AND d.mode='model' AND (`+owns+`) ORDER BY p.id`, args...)
+	rows, err := query(ctx, tx, `SELECT p.id,d.mode,d.model FROM projects p JOIN workspaces w ON w.id=p.workspace_id JOIN dispatcher_policies d ON d.project_id=p.id WHERE d.enabled=1 AND (`+owns+`) ORDER BY p.id`, args...)
 	if err != nil {
 		return nil, err
 	}
 	out := []string{}
 	for _, r := range rows {
-		out = append(out, str(r, "id"))
+		if modelUseOf(true, str(r, "mode"), str(r, "model")) != "" {
+			out = append(out, str(r, "id"))
+		}
 	}
 	return out, nil
 }

@@ -75,6 +75,13 @@ func TestDoctorShowsTheDispatcherModel(t *testing.T) {
 			"dispatcher.model.launcher": {Pass, "agentd is reporting: it last called 20 s ago; its launcher token expires in 60 days"},
 			"dispatcher.model.capacity": {Pass, "1 of at most 2 model agents"},
 		}},
+		"past the project cap": {change: func(m map[string]any) {
+			h := m["holders"].([]any)[0].(map[string]any)
+			h["model_projects"], h["model_projects_cap"], h["project_served"] = 101, 100, false
+		}, want: map[string]want{
+			"dispatcher.model.seal": {Pass, ""}, "dispatcher.model.key": {Pass, ""}, "dispatcher.model.agent": {Pass, ""}, "dispatcher.model.launcher": {Pass, ""}, "dispatcher.model.capacity": {Pass, ""},
+			"dispatcher.model.projects": {Warn, "yours: the model is on in 101 projects, and the agent serves the first 100 by project ID; this project is NOT among them"},
+		}},
 		"broken": {change: func(m map[string]any) {
 			m["seal_configured"] = false
 			h := m["holders"].([]any)[0].(map[string]any)

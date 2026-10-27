@@ -2,6 +2,7 @@ package bus
 
 import (
 	"context"
+	"slices"
 	"time"
 )
 
@@ -41,11 +42,13 @@ func (s *Store) modelDoctor(ctx context.Context, tx *transaction, w, p map[strin
 		"seal_configured": s.modelSeal != nil,
 		"seal_previous":   s.modelSeal != nil && s.modelSeal.previous != nil,
 	}
-	policy, err := query(ctx, tx, `SELECT enabled,mode FROM dispatcher_policies WHERE project_id=?`, pid)
+	// On means in mode model or as the advisor (d7): either needs a key
+	// and an agent.
+	use, _, err := projectModelUse(ctx, tx, pid)
 	if err != nil {
 		return nil, err
 	}
-	out["model_on"] = len(policy) == 1 && asInt(policy[0]["enabled"]) == 1 && str(policy[0], "mode") == "model"
+	out["model_on"] = use != ""
 	// A local store has no project roles: its workspace owner owns all.
 	owns, args := `k.owner_principal=?`, []any{str(w, "owner_principal")}
 	if tx.postgres {
@@ -102,6 +105,17 @@ func (s *Store) modelDoctor(ctx context.Context, tx *transaction, w, p map[strin
 		}
 		if len(flags) > 0 {
 			h["credential_flag"] = str(flags[0], "flagged")
+		}
+		// Past the cap the agent serves the first maxModelProjects by
+		// project ID only.
+		all, err := allModelProjects(ctx, tx, owner)
+		if err != nil {
+			return nil, err
+		}
+		if len(all) > maxModelProjects {
+			served := slices.Index(all, pid)
+			h["model_projects"], h["model_projects_cap"] = len(all), maxModelProjects
+			h["project_served"] = served >= 0 && served < maxModelProjects
 		}
 		holders = append(holders, h)
 	}

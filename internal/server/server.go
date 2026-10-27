@@ -287,6 +287,9 @@ type HandlerOptions struct {
 	Auth AuthOptions
 	// Now is the clock device sign-in reads; nil is time.Now.
 	Now func() time.Time
+	// ModelMaxAgents is dispatcher_model_max_agents, what launcher/wanted
+	// reports; zero is the default, 2.
+	ModelMaxAgents int
 }
 
 // NewHandlerWithOptions also serves the send-only /mcp/intake endpoint when
@@ -298,7 +301,7 @@ func NewHandlerWithOptions(store Executor, verifier Verifier, o HandlerOptions) 
 	// the principal's request limit. 240 a minute is 120 sessions renewing
 	// every 30 s.
 	beats := &limiter{users: map[string]window{}, perMinute: 240}
-	var intake, tick http.Handler
+	var intake, tick, model http.Handler
 	if s, ok := store.(IntakeStore); ok {
 		intake = newIntakeHandler(s, o.IntakeProver, l)
 	}
@@ -308,6 +311,9 @@ func NewHandlerWithOptions(store Executor, verifier Verifier, o HandlerOptions) 
 	now := o.Now
 	if now == nil {
 		now = time.Now
+	}
+	if s, ok := store.(ModelStore); ok {
+		model = newModelHandler(s, cmp.Or(o.ModelMaxAgents, defaultMaxAgents), now)
 	}
 	methods := []string{AuthGoogle}
 	if len(o.Auth.Methods) > 0 {
@@ -381,6 +387,10 @@ func NewHandlerWithOptions(store Executor, verifier Verifier, o HandlerOptions) 
 		}
 		if r.URL.Path == IntakePath && intake != nil {
 			intake.ServeHTTP(w, r)
+			return
+		}
+		if modelPath(r.URL.Path) && model != nil {
+			model.ServeHTTP(w, r)
 			return
 		}
 		if r.URL.Path == TickPath && tick != nil {
@@ -610,7 +620,12 @@ func Run(ctx context.Context, args []string) error {
 		return err
 	}
 	auth.Devices = store
-	options := startWatcher(ctx, store, watch, HandlerOptions{OAuth: metadata, Writer: writer, Auth: auth})
+	seal, maxAgents, err := readModelSettings(os.Getenv)
+	if err != nil {
+		return err
+	}
+	store.SetModelSeal(seal)
+	options := startWatcher(ctx, store, watch, HandlerOptions{OAuth: metadata, Writer: writer, Auth: auth, ModelMaxAgents: maxAgents})
 	// A Linear write the server runs as the app may take up to a minute.
 	srv := &http.Server{Addr: settings.Listen, Handler: NewHandlerWithOptions(store, verifier, options), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 20 * time.Second, WriteTimeout: 80 * time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 24 << 10}
 	result := make(chan error, 1)
@@ -646,9 +661,12 @@ func openServingStore(ctx context.Context, dsn, owner string) (*bus.Store, error
 // cannot sign in: their own address moved to a new Google account, or a
 // workspace allow-list refuses every account.
 func RunOperator(ctx context.Context, args []string, stdout io.Writer) error {
-	const usage = "usage: clawbridge operator principal-unbind EMAIL --confirm [--allow-previous] | workspace-clear-domains WORKSPACE --confirm | linear-app-probe --confirm [--project UUID] [--p8 [--dry-run] | --health-order] | linear-app-doc-probe --confirm | health-run --project UUID --confirm [--force-new | --delete UPDATE_ID] | bootstrap-invite --workspace NAME [--force-stdout] [--database-url-env NAME]"
+	const usage = "usage: clawbridge operator principal-unbind EMAIL --confirm [--allow-previous] | workspace-clear-domains WORKSPACE --confirm | linear-app-probe --confirm [--project UUID] [--p8 [--dry-run] | --health-order] | linear-app-doc-probe --confirm | health-run --project UUID --confirm [--force-new | --delete UPDATE_ID] | bootstrap-invite --workspace NAME [--force-stdout] [--database-url-env NAME] | launcher-token create --out PATH [--print] | launcher-token revoke ID"
 	if len(args) > 0 && args[0] == "bootstrap-invite" {
 		return runBootstrapInvite(ctx, args[1:], stdout)
+	}
+	if len(args) > 0 && args[0] == "launcher-token" {
+		return runLauncherToken(ctx, args[1:], stdout)
 	}
 	if len(args) == 0 || (args[0] != "principal-unbind" && args[0] != "workspace-clear-domains" && args[0] != "linear-app-probe" && args[0] != "linear-app-doc-probe" && args[0] != "health-run") {
 		return errors.New(usage)

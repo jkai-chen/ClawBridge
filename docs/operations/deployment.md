@@ -488,6 +488,44 @@ Keep the repository and environment file in a private deployment directory such 
 `/opt/clawbridge/repo`. Rebuild and recreate the API after every application commit;
 restarting a VM only restarts the existing container image.
 
+### The dispatcher model's launcher (optional, groundwork)
+
+An owner's model provider key is stored sealed, and handed only to that owner's
+agent container, which `clawbridge-agentd` starts on the host. The server side
+ships here; nothing runs an agent until agentd is installed with a launcher token.
+
+```sh
+CLAWBRIDGE_MODEL_KEY_SEAL_KEY=<32 random bytes, base64>   # openssl rand -base64 32
+CLAWBRIDGE_DISPATCHER_MODEL_MAX_AGENTS=2                  # optional, 1-20
+```
+
+- **The seal key.** It seals every owner's provider key (AES-GCM, bound to the
+  owner, provider and revision). It is separate from the Linear app token key, so
+  the two are rotated and revoked separately. Without it, model setup is refused
+  as unavailable. Losing it loses the stored provider keys, and owners run setup
+  again; nothing else is lost.
+- **Rotating it.** Set the new key, and the old one as
+  `CLAWBRIDGE_MODEL_KEY_SEAL_KEY_PREVIOUS`. The server opens keys under either
+  key until the operator removes the previous one. The re-seal command comes
+  later; until then, keep the previous key set.
+- **The agent cap.** It is what the server reports to agentd: agentd never runs
+  more agent containers than this. The default is 2.
+- **The launcher token.** agentd's credential opens only its three calls: which
+  owners need an agent, a one-time credential for one of them, and a fixed-code
+  report. Create it on the host, straight into a new env file for agentd:
+
+  ```sh
+  ... run --rm --no-deps -v /etc/clawbridge-agentd:/out api operator launcher-token create --out /out/launcher.env
+  ... run --rm --no-deps api operator launcher-token revoke lt_...
+  ```
+
+  The token is written only to that file (0600, and never over an existing
+  one); `chown root:root` it afterwards, since agentd's env file is root's. The command prints only the token's ID, and the database keeps only
+  its hash. `--print` shows the token instead, on a terminal only.
+- **No bodies in the logs.** The agent's config answer carries the owner's
+  provider key once. Keep the reverse proxy from logging request or response
+  bodies; the reference Caddy configuration logs none.
+
 ## Persistent disk and backup guards
 
 These commands assume the reviewed checkout is `/opt/clawbridge/repo`, the initialized

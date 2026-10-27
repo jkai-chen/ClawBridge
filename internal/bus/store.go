@@ -50,6 +50,8 @@ type Store struct {
 	// projectFlowProven is serve --project-flow-proven: the operator ran
 	// the deploy probe, so a status policy may turn project flow on.
 	projectFlowProven bool
+	// modelSeal seals owners' provider keys; nil leaves model setup off.
+	modelSeal *ModelSeal
 }
 
 // SQLiteURIPath is the path part of a file: URI that SQLite resolves to path.
@@ -126,7 +128,7 @@ func (s *Store) migrate() error {
 	if err = tx.QueryRow("PRAGMA user_version").Scan(&version); err != nil {
 		return err
 	}
-	if version > 22 {
+	if version > 23 {
 		return errors.New("database schema is newer than this ClawBridge binary")
 	}
 	if version == 0 {
@@ -243,6 +245,11 @@ func (s *Store) migrate() error {
 	}
 	if version < 22 {
 		if _, err = tx.Exec(projectFlowSchemaV22 + `PRAGMA user_version=22;`); err != nil {
+			return err
+		}
+	}
+	if version < 23 {
+		if _, err = tx.Exec(dispatcherModelSchemaV23 + `PRAGMA user_version=23;`); err != nil {
 			return err
 		}
 	}
@@ -485,6 +492,9 @@ var operationArgs = map[string]string{
 	"doc_policy_set":              "instance expected_revision doc_policy",
 	"health_get":                  "instance",
 	"health_set":                  "instance linear_project expected_revision health_policy",
+	"dispatcher_model_setup":      "instance provider_id api base_url model key caps egress_text_version egress_confirmed",
+	"dispatcher_model_status":     "instance config_revision",
+	"dispatcher_model_key_delete": "instance",
 	"health_due":                  "instance lease_token generation limit nudges_only",
 	"health_force":                "instance lease_token generation linear_project force_new",
 	"health_report":               "instance lease_token generation linear_project calls error facts forced force_new flow nudge",
@@ -520,7 +530,7 @@ func validateArgs(op string, a map[string]any) error {
 			return fmt.Errorf("unsupported argument %q for %s", k, op)
 		}
 		switch k {
-		case "retention_days", "limit", "after", "expected_revision", "ledger", "generation", "budget", "calls", "charged", "policy_revision", "engineer", "if_unset", "expires_days", "expires_hours", "s5_calls_per_hour", "out_of_binding_limit", "template_version", "part_number", "part_count", "seq":
+		case "retention_days", "limit", "after", "expected_revision", "ledger", "generation", "budget", "calls", "charged", "policy_revision", "engineer", "if_unset", "expires_days", "expires_hours", "s5_calls_per_hour", "out_of_binding_limit", "template_version", "part_number", "part_count", "seq", "config_revision":
 			if _, err := integer(v); err != nil {
 				return fmt.Errorf("%s: %w", k, err)
 			}
@@ -553,6 +563,10 @@ func validateArgs(op string, a map[string]any) error {
 		case "health_policy":
 			if _, err := ParseHealthPolicy(v); err != nil {
 				return err
+			}
+		case "caps":
+			if _, ok := v.(map[string]any); !ok {
+				return errors.New("caps must be a JSON object")
 			}
 		case "facts", "flow":
 			if _, ok := v.(map[string]any); !ok {
@@ -598,7 +612,7 @@ func validateArgs(op string, a map[string]any) error {
 			default:
 				return errors.New("ids must be an array of strings")
 			}
-		case "unread_only", "resume", "allow_overlap", "allow_previous", "repair", "confirm", "forced", "force_new", "nudges_only":
+		case "unread_only", "resume", "allow_overlap", "allow_previous", "repair", "confirm", "forced", "force_new", "nudges_only", "egress_confirmed":
 			if _, ok := v.(bool); !ok {
 				return fmt.Errorf("%s must be boolean", k)
 			}
@@ -1284,6 +1298,14 @@ func (s *Store) execute(ctx context.Context, tx *transaction, r Request) (any, e
 			return nil, invalid("instance requires session")
 		}
 		return s.projectFlowResumeOp(ctx, tx, w["id"].(string), p["id"].(string), projectRole, actor, r)
+	}
+	// Model setup is the owner's own CLI command, never a session's: the
+	// key is the owner's.
+	if dispatcherModelOperation(r.Operation) {
+		if actor != nil || str(a, "instance") != "" {
+			return nil, invalid("model setup runs without a session")
+		}
+		return s.dispatcherModelOp(ctx, tx, w, p, projectRole, r)
 	}
 	// Publishing documents is a lead's or owner's CLI command, as seeding.
 	if docPublicationOperation(r.Operation) {

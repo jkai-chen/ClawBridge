@@ -406,3 +406,52 @@ func TestOperatorLauncherToken(t *testing.T) {
 		t.Fatal("a failed revoke succeeded")
 	}
 }
+
+// fakeModelSeal records the operator's rotation.
+type fakeModelSeal struct {
+	seal             *bus.ModelSeal
+	deleteUnreadable bool
+}
+
+func (f *fakeModelSeal) OperatorModelSealRotate(_ context.Context, seal *bus.ModelSeal, deleteUnreadable bool) (int, int, error) {
+	f.seal, f.deleteUnreadable = seal, deleteUnreadable
+	return 3, 1, nil
+}
+func (f *fakeModelSeal) Close() error { return nil }
+
+// AG-L1: rotate reads the seal keys from the environment only, refuses
+// before Postgres without the current one, and prints counts, never a key.
+func TestOperatorModelSealKeyRotate(t *testing.T) {
+	f := &fakeModelSeal{}
+	saved := openModelSealStore
+	t.Cleanup(func() { openModelSealStore = saved })
+	openModelSealStore = func(context.Context, string) (modelSealStore, error) { return f, nil }
+	t.Setenv("CLAWBRIDGE_DATABASE_URL", "postgres://test")
+	t.Setenv("CLAWBRIDGE_MODEL_KEY_SEAL_KEY", "")
+	t.Setenv("CLAWBRIDGE_MODEL_KEY_SEAL_KEY_PREVIOUS", "")
+	current, previous := base64.StdEncoding.EncodeToString(bytes.Repeat([]byte{9}, 32)), base64.StdEncoding.EncodeToString(bytes.Repeat([]byte{7}, 32))
+	var out bytes.Buffer
+	for _, c := range []struct {
+		args []string
+		want string
+	}{
+		{[]string{"model-seal-key"}, "usage"},
+		{[]string{"model-seal-key", "rotate", current}, "usage"},
+		{[]string{"model-seal-key", "rotate"}, "CLAWBRIDGE_MODEL_KEY_SEAL_KEY is not set"},
+	} {
+		if err := RunOperator(context.Background(), c.args, &out); err == nil || !strings.Contains(err.Error(), c.want) {
+			t.Errorf("%v: %v", c.args, err)
+		}
+	}
+	if f.seal != nil {
+		t.Fatal("a refused run reached the store")
+	}
+	t.Setenv("CLAWBRIDGE_MODEL_KEY_SEAL_KEY", current)
+	t.Setenv("CLAWBRIDGE_MODEL_KEY_SEAL_KEY_PREVIOUS", previous)
+	if err := RunOperator(context.Background(), []string{"model-seal-key", "rotate", "--delete-unreadable"}, &out); err != nil || f.seal == nil || !f.deleteUnreadable {
+		t.Fatal(err, f)
+	}
+	if s := out.String(); !strings.Contains(s, "Re-sealed 3") || !strings.Contains(s, "deleted 1") || strings.Contains(s, current) || strings.Contains(s, previous) {
+		t.Fatal(s)
+	}
+}

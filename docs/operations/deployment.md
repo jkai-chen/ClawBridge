@@ -505,10 +505,22 @@ CLAWBRIDGE_DISPATCHER_MODEL_MAX_AGENTS=2                  # optional, 1-20
   the two are rotated and revoked separately. Without it, model setup is refused
   as unavailable. Losing it loses the stored provider keys, and owners run setup
   again; nothing else is lost.
-- **Rotating it.** Set the new key, and the old one as
-  `CLAWBRIDGE_MODEL_KEY_SEAL_KEY_PREVIOUS`. The server opens keys under either
-  key until the operator removes the previous one. The re-seal command comes
-  later; until then, keep the previous key set.
+- **Rotating it.**
+  1. Set the new key as `CLAWBRIDGE_MODEL_KEY_SEAL_KEY`, and the old one as
+     `CLAWBRIDGE_MODEL_KEY_SEAL_KEY_PREVIOUS`, and recreate the API. The server
+     opens keys under either, and seals new ones under the new key.
+  2. Re-seal every stored key under the new key, in one transaction:
+
+     ```sh
+     ... run --rm --no-deps api operator model-seal-key rotate
+     ```
+
+     It reads both keys from the same environment, never the command line, and
+     prints only a count; each workspace's history records it. If a stored key
+     opens under neither, it changes nothing and says how many.
+     `--delete-unreadable` deletes those keys instead, and their owners run
+     `dispatcher model setup` again.
+  3. Remove `CLAWBRIDGE_MODEL_KEY_SEAL_KEY_PREVIOUS` and recreate the API.
 - **The agent cap.** It is what the server reports to agentd: agentd never runs
   more agent containers than this. The default is 2.
 - **The launcher token.** agentd's credential opens only its three calls: which
@@ -523,6 +535,10 @@ CLAWBRIDGE_DISPATCHER_MODEL_MAX_AGENTS=2                  # optional, 1-20
   The token is written only to that file (0600, and never over an existing
   one); `chown root:root` it afterwards, since agentd's env file is root's. The command prints only the token's ID, and the database keeps only
   its hash. `--print` shows the token instead, on a terminal only.
+
+  A launcher token expires 90 days after it is created, and the command prints
+  the date. Before then, create the next one into a new env file, point agentd
+  at it, and revoke the old one by its ID.
 - **No bodies in the logs.** The agent's config answer carries the owner's
   provider key once. Keep the reverse proxy from logging request or response
   bodies; the reference Caddy configuration logs none.

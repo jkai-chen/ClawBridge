@@ -347,6 +347,7 @@ func withAccountRecorder(t *testing.T, r *accountRecorder) {
 
 func TestAccountCommandsMapToTheBus(t *testing.T) {
 	googleProfile(t)
+	onTerminal(t)
 	for _, c := range []struct {
 		args []string
 		op   string
@@ -403,6 +404,7 @@ func TestAccountCommandsMapToTheBus(t *testing.T) {
 
 func TestCIDeviceKeyIsShownOnceAndOnlyItsPublicHalfSent(t *testing.T) {
 	googleProfile(t)
+	onTerminal(t)
 	r := &accountRecorder{data: map[string]any{"principal": "ci:deploy@acme"}}
 	withAccountRecorder(t, r)
 	out, err := run("device", "add", "--ci", "deploy", "--grant", "api=member", "--expires", "30d")

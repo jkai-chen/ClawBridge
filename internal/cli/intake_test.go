@@ -32,6 +32,7 @@ func TestCLIIntakeRoundTrip(t *testing.T) {
 	if out := run("intake", "trust", "add", "00000000-0000-4000-8000-0000000000f1"); !strings.Contains(out, "00000000-0000-4000-8000-0000000000f1") {
 		t.Fatal(out)
 	}
+	onTerminal(t)
 	token := invoke(t, append(as, "intake", "token", "create", "--expires-days", "7")...)
 	if !strings.HasPrefix(token["token"].(string), "cbi_") || token["id"] == nil {
 		t.Fatal(token)

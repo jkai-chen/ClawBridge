@@ -1324,7 +1324,8 @@ answers `app_unavailable`. The setup below describes that later release.
   --signals S5`).
 - If you use it, give the Loop a narrow trigger.
 - Setup:
-  1. A lead creates a project token with `clawbridge intake token create`. It is shown once.
+  1. A lead creates a project token with `clawbridge intake token create`. It is shown once, on a terminal only;
+     `--out FILE` writes it to a new file (0600) instead.
   2. A Linear admin adds the server under Settings → AI & Agents → MCP servers → Custom URL, with the header
      `Authorization: Bearer <token>`.
 - The endpoint takes one typed argument (the issue), returns nothing about the issue, and is rate-limited per

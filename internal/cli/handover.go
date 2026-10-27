@@ -13,6 +13,7 @@ import (
 	"strings"
 
 	"clawbridge/internal/buildinfo"
+	"clawbridge/internal/secretenv"
 	"clawbridge/internal/skill"
 )
 
@@ -422,7 +423,9 @@ func handOver(ctx context.Context, s *onboardingState, bin, skillAgent string, s
 		return err
 	}
 	fmt.Fprintf(stdout, "\nStarting %s in %s. Exit it when it is done; ClawBridge then runs the checks.\n\n", bin, dir)
-	env := append(os.Environ(), "CLOUDSDK_ACTIVE_CONFIG_NAME="+gcloudConfiguration)
+	// G9 F3: the agent gets the user's environment without ClawBridge's
+	// own secrets.
+	env := append(secretenv.Scrub(os.Environ()), "CLOUDSDK_ACTIVE_CONFIG_NAME="+gcloudConfiguration)
 	if err = runAgent(ctx, bin, dir, env, "Read TASK.md in this directory and follow it."); err != nil && ctx.Err() != nil {
 		return ctx.Err()
 	}

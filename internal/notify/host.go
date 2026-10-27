@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+
+	"clawbridge/internal/secretenv"
 )
 
 type Runner interface {
@@ -40,6 +42,8 @@ type processRunner struct{}
 
 func (processRunner) Run(ctx context.Context, path string, args []string) ([]byte, error) {
 	cmd := exec.CommandContext(ctx, path, args...)
+	// G9 F3: Codex gets the environment without ClawBridge's secrets.
+	cmd.Env = secretenv.Scrub(os.Environ())
 	cmd.WaitDelay = 250000000
 	var output boundedOutput
 	cmd.Stdout = &output

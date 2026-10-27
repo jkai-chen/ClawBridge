@@ -503,6 +503,7 @@ flags:`)
 		case "token create":
 			op = "intake_token_create"
 			f.Int("expires-days", 0, "days until the token expires (default 90, at most 365)")
+			f.String("out", "", "write the token to this new file (0600, never over an existing one) instead of this terminal")
 		case "token list":
 			op = "intake_token_list"
 		case "token revoke":
@@ -679,7 +680,7 @@ flags:`)
 	f.Visit(func(fl *flag.Flag) {
 		key := strings.ReplaceAll(fl.Name, "-", "_")
 		switch fl.Name {
-		case "local", "cloud", "name", "retention-days", "confirm", "clear":
+		case "local", "cloud", "name", "retention-days", "confirm", "clear", "out":
 			return
 		}
 		if getter, ok := fl.Value.(flag.Getter); ok {
@@ -910,12 +911,36 @@ flags:`)
 			a["instance"] = config.Instance
 		}
 	}
+	// G9 F2: an intake token goes to this terminal or a new file, decided
+	// before it exists.
+	var secret *secretOut
+	if op == "intake_token_create" {
+		if secret, err = openSecretOut("clawbridge intake token create", f.Lookup("out").Value.String(), stdout); err != nil {
+			return err
+		}
+	}
 	result, err := executor.Execute(ctx, bus.Request{Operation: op, Workspace: config.Workspace, Project: config.Project, Session: config.Session, Args: a})
 	if err != nil {
+		secret.discard()
 		if op == "retire_session" && strings.Contains(err.Error(), "holds the confirmed assignment") {
 			return retireAgain(err, config.Session, config.Instance, rest)
 		}
 		return err
+	}
+	if secret.toFile() {
+		data, _ := result.Data.(map[string]any)
+		token, _ := data["token"].(string)
+		if token == "" {
+			secret.discard()
+			return errors.New("the server's answer had no intake token; revoke it and create another")
+		}
+		if err = secret.write(token + "\n"); err != nil {
+			_, _ = executor.Execute(ctx, bus.Request{Operation: "intake_token_revoke", Workspace: config.Workspace, Project: config.Project, Session: config.Session, Args: map[string]any{"instance": config.Instance, "token_id": data["id"]}})
+			return fmt.Errorf("%w; the new intake token was revoked", err)
+		}
+		delete(data, "token")
+		data["token_file"] = secret.path
+		data["note"] = "Wrote the token to " + secret.path + " (0600): put it in Linear's MCP server header Authorization: Bearer <token>, then delete the file."
 	}
 	if op == "assignment_confirm" || op == "assignment_release" {
 		applyLinearMarker(ctx, cmp.Or(flags.LinearProfile, config.LinearProfile), executor, config, op, result)

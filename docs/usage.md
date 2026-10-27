@@ -331,7 +331,7 @@ clawbridge tui
 clawbridge tui --screen doctor
 ```
 
-Run in an interactive terminal. Use 1–8 or Tab to switch screens, `?` for help,
+Run in an interactive terminal. Use 1–9 or Tab to switch screens, `?` for help,
 `r` to reload, and `q` or Ctrl-C to quit. Arrows/j/k select rows. PageUp/PageDown
 scroll details, including complete selected immutable IDs. Below 24 columns or
 9 rows, resize the terminal; quit and Escape remain available.

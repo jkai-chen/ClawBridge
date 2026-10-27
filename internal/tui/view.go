@@ -91,6 +91,8 @@ func renderBody(m Model) string {
 		return renderLinear(m)
 	case ScreenAccount:
 		return renderAccount(m)
+	case ScreenModel:
+		return renderModelSetup(m)
 	case ScreenOverview:
 		return renderOverview(m)
 	case ScreenProjects:
@@ -478,6 +480,8 @@ func title(s Screen) string {
 		return "Linear"
 	case ScreenAccount:
 		return "Account"
+	case ScreenModel:
+		return "Model"
 	case ScreenOverview:
 		return "Overview"
 	case ScreenProjects:

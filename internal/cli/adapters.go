@@ -102,7 +102,7 @@ var runTUIProgram = tui.RunProgram
 func runTUI(ctx context.Context, flags Config, args []string, stdout, stderr io.Writer) error {
 	screen := "overview"
 	_, err := commandFlags("tui", args, stderr, func(f *flag.FlagSet) {
-		f.StringVar(&screen, "screen", "overview", "overview, projects, sessions, inbox, cloud, doctor, linear or account")
+		f.StringVar(&screen, "screen", "overview", "overview, projects, sessions, inbox, cloud, doctor, linear, account or model")
 	})
 	if errors.Is(err, flag.ErrHelp) {
 		return nil
@@ -111,7 +111,7 @@ func runTUI(ctx context.Context, flags Config, args []string, stdout, stderr io.
 		return err
 	}
 	switch tui.Screen(screen) {
-	case tui.Overview, tui.Projects, tui.Sessions, tui.Inbox, tui.Cloud, tui.Doctor, tui.Linear, tui.Account:
+	case tui.Overview, tui.Projects, tui.Sessions, tui.Inbox, tui.Cloud, tui.Doctor, tui.Linear, tui.Account, tui.DispatcherModel:
 	default:
 		return errors.New("invalid TUI screen")
 	}

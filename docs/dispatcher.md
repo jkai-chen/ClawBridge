@@ -133,7 +133,7 @@ Status, on the current main branch:
 | `clawbridge-agentd` (the launcher) with its per-owner network and egress proxy | on main |
 | Deployment, and CI against a real Docker daemon, for the launcher | planned |
 | A guided `dispatcher model setup` in the CLI | on main |
-| The same setup in the TUI | planned |
+| The same setup in the TUI (the Model screen, `9`) | on main |
 | Advice in rules mode (`recommend`), and the opt-in tools | on main |
 
 Only the agent is in a release so far (v0.3.4). The rows marked on main are not released yet, and the rest is not on
@@ -174,6 +174,12 @@ clawbridge dispatcher model setup --provider anthropic --model MODEL --daily-tok
 `--key-stdin` reads a pipe or a file, never a terminal, where the key would show as you type it. Setup exits 0 when
 the model is set up, 3 when the test hasn't finished within a minute (check with `dispatcher model status`), and 1 when
 it failed or stopped. A model ID that looks like a key is refused, since the model is stored and audited in the clear.
+
+In the TUI, the Model screen (`9`, or `clawbridge tui --screen model`) shows a project owner their key, their agent and
+the last test, and `s` runs the same setup, step by step, through the same code as the CLI. The key field shows only
+whether something was typed, never the key or its length. Esc cancels at any step before the confirmation, and the key
+is wiped from memory once sent, on Esc, and when you leave the screen or quit. Members who aren't owners see only that
+an owner sets the model up.
 
 To change the key, provider or model, run setup again. The new configuration is tested in a fresh agent, and the old
 one keeps running until the new test passes.

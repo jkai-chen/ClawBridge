@@ -165,6 +165,10 @@ func TestMainEgressReloadsAndFailsClosed(t *testing.T) {
 	// connect sends a CONNECT for evil.test and returns the logged reason.
 	connect := func() string {
 		t.Helper()
+		// Only this connection's refusal counts: the first one logged after
+		// it starts. The mark comes before the dial: a source on no owner's
+		// network is refused (and logged) on accept, before the CONNECT.
+		mark := len(logs.String())
 		var conn net.Conn
 		for deadline := time.Now().Add(5 * time.Second); ; time.Sleep(10 * time.Millisecond) {
 			if conn, err = net.Dial("tcp", addr); err == nil || time.Now().After(deadline) {
@@ -175,16 +179,21 @@ func TestMainEgressReloadsAndFailsClosed(t *testing.T) {
 			t.Fatal(err)
 		}
 		defer conn.Close()
-		before := strings.Count(logs.String(), "egress refused")
 		io.WriteString(conn, "CONNECT evil.test:443 HTTP/1.1\r\n\r\n")
 		resp, err := http.ReadResponse(bufio.NewReader(conn), nil)
 		if err != nil || resp.StatusCode != http.StatusForbidden {
 			t.Fatalf("%v %v", resp, err)
 		}
-		for deadline := time.Now().Add(5 * time.Second); strings.Count(logs.String(), "egress refused") == before && time.Now().Before(deadline); time.Sleep(10 * time.Millisecond) {
+		for deadline := time.Now().Add(5 * time.Second); ; time.Sleep(10 * time.Millisecond) {
+			for _, line := range strings.Split(logs.String()[mark:], "\n") {
+				if strings.Contains(line, "egress refused") {
+					return line
+				}
+			}
+			if time.Now().After(deadline) {
+				t.Fatalf("no refusal logged for this CONNECT: %s", logs.String())
+			}
 		}
-		lines := strings.Split(strings.TrimSpace(logs.String()), "\n")
-		return lines[len(lines)-1]
 	}
 	// waitLog waits for a new line with s: one logged after the write that
 	// precedes it, not an earlier one.

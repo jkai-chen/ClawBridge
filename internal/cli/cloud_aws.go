@@ -213,6 +213,7 @@ func (s ssmTransport) setSecret(ctx context.Context, key, value string, stderr i
 // short-lived SecureString named for key, and returns the script's output.
 // The parameter is deleted on every path; script(name) must read it with
 // the instance's role (exit 3 without the AWS CLI, 5 when the role can't).
+// When only the delete failed, the output comes back with a *leftParameter.
 // what names the command in the parameter's description, and late is the
 // advice when the script did not finish in time.
 func (s ssmTransport) throughParameter(ctx context.Context, key, value, what, late string, script func(name string) string, stderr io.Writer) (out []byte, err error) {
@@ -244,9 +245,7 @@ func (s ssmTransport) throughParameter(ctx context.Context, key, value, what, la
 		cleanup, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
 		defer cancel()
 		if _, derr := awsCLI(cleanup, t.aws("ssm", "delete-parameter", "--name", name), nil); derr != nil && s.parameterExists(cleanup, name) {
-			left := errors.New("parameter left behind: " + name + "; delete it with aws ssm delete-parameters --names " + name)
-			err = errors.Join(err, left)
-			out = nil
+			err = errors.Join(err, &leftParameter{name})
 		}
 	}()
 	if _, err = awsCLI(ctx, t.aws("ssm", "put-parameter", "--cli-input-json", "file:///dev/stdin"), request); err != nil {
@@ -269,6 +268,14 @@ func (s ssmTransport) throughParameter(ctx context.Context, key, value, what, la
 		return nil, secretAdvice("the instance cannot read its parameter (no role, a missing policy, or no route to SSM); see deploy/aws-instance-role-policy.json")
 	}
 	return nil, err
+}
+
+// leftParameter is a parameter whose delete failed. After a script that
+// succeeded it is the only error, and the script's output is kept.
+type leftParameter struct{ name string }
+
+func (l *leftParameter) Error() string {
+	return "parameter left behind: " + l.name + "; delete it with aws ssm delete-parameters --names " + l.name
 }
 
 // parameterExists says the parameter is still there, or that this can't be

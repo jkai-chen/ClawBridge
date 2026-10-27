@@ -26,6 +26,8 @@ type bootstrapAWS struct {
 	stdins []string
 	answer string
 	status string
+	// keep fails the parameter's delete, and says it is still there.
+	keep bool
 }
 
 func (a *bootstrapAWS) run(_ context.Context, argv []string, stdin []byte) ([]byte, error) {
@@ -48,7 +50,12 @@ func (a *bootstrapAWS) run(_ context.Context, argv []string, stdin []byte) ([]by
 		out, _ := json.Marshal(map[string]any{"Status": status, "StandardOutputContent": a.answer, "ResponseCode": 6})
 		return out, nil
 	case "ssm delete-parameter":
+		if a.keep {
+			return nil, errors.New("denied")
+		}
 		return []byte(`{}`), nil
+	case "ssm describe-parameters":
+		return []byte(`{"Parameters":[{"Name":"left"}]}`), nil
 	}
 	return nil, errors.New("unexpected aws call")
 }
@@ -109,10 +116,11 @@ func TestCloudBootstrapOverSSM(t *testing.T) {
 			t.Fatalf("%s carries the code", a.ops()[i])
 		}
 	}
-	if !strings.Contains(a.stdins[2], "--workspace acme --code-stdin") || !strings.Contains(a.stdins[2], "get-parameter --with-decryption --name /clawbridge/"+ec2ID+"/bootstrap-code") {
+	if !strings.Contains(a.stdins[2], "--workspace acme --code-stdin") || strings.Contains(a.stdins[2], "expect-owner") || !strings.Contains(a.stdins[2], "get-parameter --with-decryption --name /clawbridge/"+ec2ID+"/bootstrap-code") {
 		t.Fatal("send-command:", a.stdins[2])
 	}
-	// --email is checked against the server's owner before any join.
+	// --email goes to the server's --expect-owner, and is checked again
+	// against the invite before any join.
 	if _, err = bootstrap(append(bootstrapArgs, "--email", "someone@example.test")...); err == nil || !strings.Contains(err.Error(), "bootstrap owner is owner@example.test") || len(*joins) != 1 {
 		t.Fatal(err, *joins)
 	}
@@ -124,16 +132,35 @@ func TestCloudBootstrapOverSSM(t *testing.T) {
 	}
 }
 
+// R128-M1: the invite was made but the parameter's delete failed: the
+// owner still joins (which uses the code up), and is told where the
+// parameter is.
+func TestCloudBootstrapJoinsDespiteALeftParameter(t *testing.T) {
+	a, joins := stubBootstrap(t, `invite {"invite_id":"inv_1","email":"owner@example.test","workspace":"acme","workspace_created":true,"expires_at":"x"}`+"\n")
+	a.keep = true
+	out, err := bootstrap(bootstrapArgs...)
+	if err != nil || len(*joins) != 1 || !strings.Contains(out, `"source":"cloud_bootstrap"`) || !strings.Contains(out, "warning: parameter left behind: /clawbridge/"+ec2ID+"/bootstrap-code") || strings.Contains(out, (*joins)[0].Code) {
+		t.Fatal(err, out)
+	}
+	// A failed script with a left parameter is still a failure, and says so.
+	a, joins = stubBootstrap(t, "")
+	a.keep, a.status = true, "Failed"
+	if _, err = bootstrap(bootstrapArgs...); err == nil || !strings.Contains(err.Error(), "parameter left behind") || len(*joins) != 0 {
+		t.Fatal(err)
+	}
+}
+
 // A refusal comes back as a fixed reason, joins nothing, and still deletes
 // the parameter; an answer that carries a code, or none, is refused.
 func TestCloudBootstrapRefusals(t *testing.T) {
 	for answer, want := range map[string]string{
-		"refused clawbridge: the owner has 3 pending invites; revoke one first\n":                 "(pending_invites)",
-		"refused clawbridge: that workspace's owner is not the bootstrap owner\n":                 "(not_owner)",
-		"refused clawbridge: CLAWBRIDGE_BOOTSTRAP_OWNER is empty; it names the bootstrap owner\n": "(no_owner)",
-		"refused clawbridge: flag provided but not defined: -code-stdin\n":                        "(old_server)",
-		"refused clawbridge: something else\n":                                                    "(refused)",
-		`invite {"email":"owner@example.test","code":"CBJ-AAAA-BBBB-CCCC-DDDD"}` + "\n":           "unreadable",
+		"refused clawbridge: CLAWBRIDGE_BOOTSTRAP_OWNER names another email than --expect-owner; nothing was created\n": "(owner_mismatch)",
+		"refused clawbridge: the owner has 3 pending invites; revoke one first\n":                                       "(pending_invites)",
+		"refused clawbridge: that workspace's owner is not the bootstrap owner\n":                                       "(not_owner)",
+		"refused clawbridge: CLAWBRIDGE_BOOTSTRAP_OWNER is empty; it names the bootstrap owner\n":                       "(no_owner)",
+		"refused clawbridge: flag provided but not defined: -code-stdin\n":                                              "(old_server)",
+		"refused clawbridge: something else\n":                                                                          "(refused)",
+		`invite {"email":"owner@example.test","code":"CBJ-AAAA-BBBB-CCCC-DDDD"}` + "\n":                                 "unreadable",
 		"\n": "unreadable",
 	} {
 		a, joins := stubBootstrap(t, answer)
@@ -163,6 +190,8 @@ func TestCloudBootstrapInputs(t *testing.T) {
 		{"--instance", ec2ID, "--region", "us-east-1", "--server", "https://cb.example.test", "--workspace", "acme; rm"},
 		{"--instance", ec2ID, "--region", "us-east-1", "--server", "http://cb.example.test", "--workspace", "acme"},
 		{"--instance", ec2ID, "--region", "us-east-1", "--server", "https://cb.example.test", "--workspace", "acme", "extra"},
+		{"--instance", ec2ID, "--region", "us-east-1", "--server", "https://cb.example.test", "--workspace", "acme", "--email", "o'wner@example.test"},
+		{"--instance", ec2ID, "--region", "us-east-1", "--server", "https://cb.example.test", "--workspace", "acme", "--email", "not-an-email"},
 	} {
 		if _, err := bootstrap(args...); err == nil {
 			t.Fatal("took", args)
@@ -226,9 +255,10 @@ echo '{"invite_id":"inv_1","email":"owner@example.test"}'
 `, 0o755)
 	env := filepath.Join(dir, "clawbridge.env")
 	write(env, "POSTGRES_PASSWORD=x\nCOMPOSE_PROJECT_NAME=clawbridge\n", 0o600)
+	owner := ""
 	run := func(envFile string, refuse bool) (string, int) {
 		t.Helper()
-		cmd := exec.Command("sh", "-c", ssmBootstrapScriptFor("/clawbridge/"+ec2ID+"/bootstrap-code", "us-east-1", "acme", envFile, "/opt/c/compose.yaml"))
+		cmd := exec.Command("sh", "-c", ssmBootstrapScriptFor("/clawbridge/"+ec2ID+"/bootstrap-code", "us-east-1", "acme", owner, envFile, "/opt/c/compose.yaml"))
 		cmd.Env = append(os.Environ(), "PATH="+bin+":/usr/bin:/bin", "CB_DIR="+dir)
 		if refuse {
 			cmd.Env = append(cmd.Env, "CB_REFUSE=1")
@@ -250,6 +280,13 @@ echo '{"invite_id":"inv_1","email":"owner@example.test"}'
 		strings.TrimSpace(string(argv)) != "compose --env-file "+env+" --project-name clawbridge -f /opt/c/compose.yaml run --rm --no-deps -T api operator bootstrap-invite --workspace acme --code-stdin" {
 		t.Fatalf("%d %q argv %q stdin %q", status, out, argv, stdin)
 	}
+	owner = "owner@example.test"
+	if _, status = run(env, false); status != 0 {
+		t.Fatal(status)
+	}
+	if argv, _ = os.ReadFile(filepath.Join(dir, "docker.argv")); !strings.HasSuffix(strings.TrimSpace(string(argv)), "--workspace acme --expect-owner owner@example.test --code-stdin") {
+		t.Fatalf("--email: %q", argv)
+	}
 	if out, status = run(env, true); status != 0 || out != "refused clawbridge: the owner has 3 pending invites; revoke one first\n" {
 		t.Fatalf("refused: %d %q", status, out)
 	}
@@ -257,7 +294,7 @@ echo '{"invite_id":"inv_1","email":"owner@example.test"}'
 	if _, status = run(env, false); status != 6 {
 		t.Fatal("no project:", status)
 	}
-	if strings.Contains(ssmBootstrapScript("n", "us-east-1", "acme"), "'") {
+	if strings.Contains(ssmBootstrapScript("n", "us-east-1", "acme", "o.w+n-er@example.test"), "'") {
 		t.Fatal("the script travels inside single quotes")
 	}
 }

@@ -333,7 +333,9 @@ sudo docker compose --env-file /etc/clawbridge/clawbridge.env --project-name "$P
     --account ACCOUNT_ID --server https://DOMAIN --workspace WORKSPACE --email OWNER
   ```
 
-  It needs the server on the same release or newer. If the join's answer is lost,
+  With `--email`, it passes `--expect-owner EMAIL`, which refuses before anything
+  exists unless `CLAWBRIDGE_BOOTSTRAP_OWNER` is that email. It needs the server on
+  the same release or newer. If the join's answer is lost,
   it asks the server with the kept key whether the device joined before you ask
   for another invite.
 - Accepting an ownership transfer revokes any pending bootstrap code.

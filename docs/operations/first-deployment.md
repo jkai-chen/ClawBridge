@@ -227,10 +227,20 @@ with): the host operator lets the owner in with a one-time code instead.
 `operator bootstrap-invite` shipped in v0.3.4; `clawbridge join` is **not released
 yet** (it comes with the next client release).
 
-**On AWS:** the server host is reached over SSM, not SSH. A `clawbridge cloud
-bootstrap --instance` command that makes the owner's invite and hands it over
-without it appearing in SSM command history is **planned, not built**: no release,
-and not the current main branch, has it. Until it ships, use Google sign-in on AWS.
+**On AWS:** the server host is reached over SSM, not SSH, so one command on your
+own computer does both steps:
+
+```sh
+clawbridge cloud bootstrap --instance INSTANCE_ID --region REGION --profile PROFILE \
+  --account ACCOUNT_ID --server https://clawbridge.example.com --workspace my-team --email OWNER
+```
+
+It makes the one-time code on your computer and hands it to the server's
+`operator bootstrap-invite --code-stdin` through a short-lived encrypted
+parameter, so it is in no SSM command history and never on screen, then joins
+this device with it. Run it yourself, never through an agent. It comes with the
+next release (it is on the main branch, not in v0.3.4), and needs the server on
+that release too; until then, use Google sign-in on AWS.
 
 Done when `clawbridge cloud check workspace` passes: you are signed in, and you
 own the workspace.

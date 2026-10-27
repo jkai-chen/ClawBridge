@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"path/filepath"
+	"regexp"
 	"strings"
 
 	"clawbridge/internal/bus"
@@ -42,6 +43,7 @@ var (
 
 // bootstrapRefusals maps the operator's fixed refusals to what to do.
 var bootstrapRefusals = []struct{ text, reason, advice string }{
+	{"another email than --expect-owner", "owner_mismatch", "the server's CLAWBRIDGE_BOOTSTRAP_OWNER is another email than --email; nothing was created: fix the env file, or bootstrap as that owner"},
 	{"has 3 pending invites", "pending_invites", "the owner has 3 unused invites: wait for them to expire (24 hours) or revoke one with clawbridge invite revoke"},
 	{"owner is not the bootstrap owner", "not_owner", "that workspace is owned by someone else than CLAWBRIDGE_BOOTSTRAP_OWNER; its owner joins with their own device, or name another --workspace"},
 	{"names the bootstrap owner", "no_owner", "CLAWBRIDGE_BOOTSTRAP_OWNER is not set in the server's env file; set it (docs/operations/first-deployment.md)"},
@@ -78,6 +80,8 @@ func runCloudBootstrap(ctx context.Context, args []string, stdout, stderr io.Wri
 		return errors.New("cloud bootstrap needs --server, the server's public URL")
 	case !bootstrapWorkspace(*workspace):
 		return errors.New("--workspace names the workspace: letters, digits, '.', '_' and '-', starting with a letter or digit")
+	case *owner != "" && !bootstrapEmail.MatchString(*owner):
+		return errors.New("--email must be an email address")
 	}
 	if _, ok := serverURL(*server); !ok {
 		return errors.New("--server must be the server's https URL")
@@ -96,7 +100,14 @@ func runCloudBootstrap(ctx context.Context, args []string, stdout, stderr io.Wri
 	code := devicekey.NewCode()
 	out, err := ssm.throughParameter(ctx, "bootstrap-code", code, "cloud bootstrap",
 		"the server did not answer in time, so the invite may or may not exist; run cloud bootstrap again (a second invite does no harm)",
-		func(name string) string { return ssmBootstrapScript(name, target.region, *workspace) }, stderr)
+		func(name string) string { return ssmBootstrapScript(name, target.region, *workspace, *owner) }, stderr)
+	// R128-M1: the invite exists even when only the delete failed; joining
+	// uses the code up, so go on, and say where the parameter is.
+	var left *leftParameter
+	if out != nil && errors.As(err, &left) {
+		defer fmt.Fprintln(stderr, "warning: "+left.Error()+" (it expires within 15 minutes)")
+		err = nil
+	}
 	if err != nil {
 		var specific secretAdvice
 		advice := ssm.describe()
@@ -141,6 +152,9 @@ func runCloudBootstrap(ctx context.Context, args []string, stdout, stderr io.Wri
 	}})
 }
 
+// bootstrapEmail is an --email safe in the script's single quotes.
+var bootstrapEmail = regexp.MustCompile(`^[A-Za-z0-9._%+-]{1,64}@[A-Za-z0-9.-]{1,253}$`)
+
 // bootstrapWorkspace is a workspace name the server takes, safe inside the
 // script's single quotes.
 func bootstrapWorkspace(name string) bool {
@@ -165,11 +179,15 @@ func isAlnum(c byte) bool {
 // operator's own error line, which never holds the code. It exits 3
 // without the AWS CLI, 5 when the role cannot read the parameter, and 6
 // without the env file's Compose project. Every input is pattern-checked.
-func ssmBootstrapScript(name, region, workspace string) string {
-	return ssmBootstrapScriptFor(name, region, workspace, serverEnvFile, bootstrapComposeFile)
+func ssmBootstrapScript(name, region, workspace, owner string) string {
+	return ssmBootstrapScriptFor(name, region, workspace, owner, serverEnvFile, bootstrapComposeFile)
 }
 
-func ssmBootstrapScriptFor(name, region, workspace, envFile, composeFile string) string {
+func ssmBootstrapScriptFor(name, region, workspace, owner, envFile, composeFile string) string {
+	expect := ""
+	if owner != "" {
+		expect = " --expect-owner " + owner
+	}
 	return strings.Join([]string{
 		"command -v aws >/dev/null || exit 3",
 		"aws ssm get-parameter --name " + name + " --region " + region + " --query Parameter.Name --output text >/dev/null || exit 5",
@@ -179,7 +197,7 @@ func ssmBootstrapScriptFor(name, region, workspace, envFile, composeFile string)
 		`e=$(mktemp)`,
 		`trap "rm -f \"\$e\"" EXIT`,
 		"if out=$(aws ssm get-parameter --with-decryption --name " + name + " --region " + region + " --query Parameter.Value --output text |" +
-			` docker compose --env-file "$f" --project-name "$p" -f ` + composeFile + ` run --rm --no-deps -T api operator bootstrap-invite --workspace ` + workspace + ` --code-stdin 2>"$e"); then`,
+			` docker compose --env-file "$f" --project-name "$p" -f ` + composeFile + ` run --rm --no-deps -T api operator bootstrap-invite --workspace ` + workspace + expect + ` --code-stdin 2>"$e"); then`,
 		`  printf "invite %s\n" "$(printf "%s\n" "$out" | tail -n 1)"`,
 		"else",
 		`  printf "refused %s\n" "$(grep "^clawbridge: " "$e" | tail -n 1 | cut -c1-300)"`,

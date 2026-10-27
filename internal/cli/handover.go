@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 
 	"clawbridge/internal/buildinfo"
@@ -285,7 +286,7 @@ func startOwnServer(ctx context.Context, prompt *wizardPrompt, stdout, stderr io
 		}
 	}
 	if state.Step == "signin" {
-		return finishSignin(state, stdout)
+		return finishSignin(ctx, state, prompt, stdout, stderr)
 	}
 	agent := handoverAgents[agents[0]]
 	if len(agents) > 1 {
@@ -445,7 +446,7 @@ func handOver(ctx context.Context, s *onboardingState, bin, skillAgent string, s
 	if err = saveOnboarding(s); err != nil {
 		return err
 	}
-	return finishSignin(s, stdout)
+	return finishSignin(ctx, s, nil, stdout, stderr)
 }
 
 // setEnv sets one variable for this process and its children, and returns
@@ -463,15 +464,30 @@ func setEnv(key, value string) func() {
 }
 
 // finishSignin names the sign-in step the user runs in their own terminal.
-func finishSignin(s *onboardingState, stdout io.Writer) error {
+// On AWS it first offers to run that step, cloud bootstrap, here. prompt
+// may be nil: after a hand-over the agent had the terminal, so it opens one.
+func finishSignin(ctx context.Context, s *onboardingState, prompt *wizardPrompt, stdout, stderr io.Writer) (retErr error) {
 	if s.Cloud == "aws" {
-		_, err := fmt.Fprintf(stdout, `
+		if prompt == nil {
+			var err error
+			if prompt, err = newWizardPrompt(ctx, stdout, "guided terminal input cleanup failed; the server is up, restore the terminal before retrying"); err != nil {
+				return err
+			}
+			defer func() {
+				if e := prompt.close(); e != nil && !errors.Is(retErr, e) {
+					retErr = errors.Join(retErr, e)
+				}
+			}()
+		}
+		done, err := offerBootstrap(ctx, s, prompt, stdout, stderr)
+		if done || err != nil {
+			return err
+		}
+		_, err = fmt.Fprintf(stdout, `
 The server is up. Last step, in your own terminal (not your agent's): create the workspace as its owner,
 following the sign-in section of the clawbridge-provision-aws skill (references/signin.md). Then check:
 
-  clawbridge cloud check workspace
-  clawbridge cloud check backups --bucket %s --region %s --profile %s
-`, s.Bucket, s.Region, s.Profile)
+%s`, signinChecks(s))
 		return err
 	}
 	_, err := fmt.Fprintf(stdout, `
@@ -482,4 +498,54 @@ following the sign-in section of the clawbridge-provision-gcp skill (references/
   clawbridge cloud check backups --bucket %s --project %s
 `, s.Bucket, s.Project)
 	return err
+}
+
+func signinChecks(s *onboardingState) string {
+	return fmt.Sprintf("  clawbridge cloud check workspace\n  clawbridge cloud check backups --bucket %s --region %s --profile %s\n",
+		s.Bucket, s.Region, s.Profile)
+}
+
+// cloudBootstrap is the in-process `clawbridge cloud bootstrap`.
+var cloudBootstrap = runCloudBootstrap
+
+// offerBootstrap runs cloud bootstrap for the owner when the server offers
+// device sign-in and they say yes. done says the step ran and its outcome
+// was printed; otherwise the caller prints the written step. Ended input,
+// like any other answer but yes, is a no.
+func offerBootstrap(ctx context.Context, s *onboardingState, prompt *wizardPrompt, stdout, stderr io.Writer) (done bool, err error) {
+	server := "https://" + s.Domain
+	if methods, err := wizardMethods(ctx, server); err != nil || !slices.Contains(methods, "device") {
+		return false, ctx.Err()
+	}
+	fmt.Fprintf(stdout, "\nThe server is up and offers device sign-in. ClawBridge can create your workspace now: the server\n"+
+		"makes a one-time invite for %s, and this device joins with it (nothing to copy or paste).\n", wizardSafe(s.Owner))
+	workspace, err := prompt.ask("Workspace name [my-team]: ")
+	if err != nil {
+		return false, ctx.Err()
+	}
+	if workspace == "" {
+		workspace = "my-team"
+	}
+	if !bootstrapWorkspace(workspace) {
+		fmt.Fprintln(stdout, "That is not a workspace name: letters, digits, '.', '_' and '-', starting with a letter or digit.")
+		return false, nil
+	}
+	answer, err := prompt.ask("Create the workspace and join this device now? [y/N]: ")
+	if err != nil {
+		return false, ctx.Err()
+	}
+	if a := strings.ToLower(answer); a != "y" && a != "yes" {
+		return false, nil
+	}
+	err = cloudBootstrap(ctx, []string{"--instance", s.Instance, "--region", s.Region, "--profile", s.Profile,
+		"--account", s.Account, "--server", server, "--workspace", workspace, "--email", s.Owner}, stdout, stderr)
+	if ctx.Err() != nil {
+		return false, ctx.Err()
+	}
+	if err != nil {
+		fmt.Fprintln(stdout, "\nThe workspace was not created: "+err.Error())
+		return false, nil
+	}
+	_, err = fmt.Fprintf(stdout, "\nThe workspace %s is created and this device has joined it. Check:\n\n%s", workspace, signinChecks(s))
+	return true, err
 }

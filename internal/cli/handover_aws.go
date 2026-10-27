@@ -187,5 +187,5 @@ func handOverAWS(ctx context.Context, s *onboardingState, bin, skillAgent string
 	if err = saveOnboarding(s); err != nil {
 		return err
 	}
-	return finishSignin(s, stdout)
+	return finishSignin(ctx, s, nil, stdout, stderr)
 }

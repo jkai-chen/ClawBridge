@@ -627,6 +627,7 @@ func (m Model) CancelInput() Model {
 	m.confirming = false
 	m.confirm = ""
 	m.account.pending = nil
+	m.account.labelling = ""
 	return m
 }
 

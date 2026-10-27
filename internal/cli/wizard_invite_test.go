@@ -255,3 +255,25 @@ func TestWizardInviteJoinsARealServer(t *testing.T) {
 		t.Fatalf("%+v %+v", f.exec.ids, f.exec.requests)
 	}
 }
+
+// R108-M1: the TUI's Account screen can be opened directly.
+func TestTUIOpensTheAccountScreen(t *testing.T) {
+	old := checkTUITerminal
+	t.Cleanup(func() { checkTUITerminal = old })
+	checkTUITerminal = func(io.Reader, io.Writer) error { return errors.New("terminal checked") }
+	if err := runTUI(context.Background(), Config{}, []string{"--screen", "account"}, io.Discard, io.Discard); err == nil || err.Error() != "terminal checked" {
+		t.Fatal(err)
+	}
+	if err := runTUI(context.Background(), Config{}, []string{"--screen", "accounts"}, io.Discard, io.Discard); err == nil || err.Error() != "invalid TUI screen" {
+		t.Fatal(err)
+	}
+}
+
+// R108-L3: a failed code read says why.
+func TestWizardInviteCodeReadFailureIsShown(t *testing.T) {
+	w := newInviteWizard(t, "https://service.test\n1\nada@example.com\n\ny\n", "device", "google")
+	wizardInviteCode = func() (string, error) { return "", errors.New("inappropriate ioctl for device") }
+	if _, err := w.run(); err == nil || !strings.Contains(err.Error(), "inappropriate ioctl") || len(w.joined) != 0 {
+		t.Fatal(err)
+	}
+}

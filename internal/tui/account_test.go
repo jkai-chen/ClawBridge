@@ -20,6 +20,7 @@ type accountAuthority struct {
 	principal string
 	owner     string
 	transfer  map[string]any
+	newDevice bool
 	calls     []bus.Request
 }
 
@@ -36,6 +37,10 @@ func (a *accountAuthority) Execute(_ context.Context, r bus.Request) (bus.Result
 			map[string]any{"device_id": "dev_this", "principal": a.principal, "kind": "device", "label": "laptop", "status": "active", "key_store": "keyring"},
 			map[string]any{"device_id": "dev_old", "principal": a.principal, "kind": "device", "label": "old\x1b[31m", "status": "revoked"},
 		}}
+		if a.newDevice {
+			// A device added elsewhere sorts first.
+			data["devices"] = append([]any{map[string]any{"device_id": "dev_new", "principal": a.principal, "kind": "device", "label": "new", "status": "active"}}, data["devices"].([]any)...)
+		}
 	case "owner_transfer_get":
 		data = map[string]any{"pending": a.transfer}
 	case "invite_list":
@@ -201,6 +206,11 @@ func TestAccountCodeShowsOnce(t *testing.T) {
 	a := &accountAuthority{principal: "owner@example.com", owner: "owner@example.com"}
 	m := accountModel(t, a)
 	m = press(t, m, "a")
+	if len(a.writes()) != 0 || m.AccountState().Pending != "invite_create" {
+		t.Fatal("a code was minted on one key")
+	}
+	m = typed(t, m, "add")
+	m = press(t, m, "enter")
 	w := a.writes()
 	if len(w) != 1 || w[0].Operation != "invite_create" || w[0].Args["purpose"] != "device" || w[0].Args["email"] != "owner@example.com" {
 		t.Fatal(w)
@@ -387,5 +397,83 @@ func TestAccountLocalModeAsksNothing(t *testing.T) {
 	m = press(t, m, "a", "i", "x")
 	if len(a.calls) != 0 || !strings.Contains(Render(m), "local mode has no invites or devices") {
 		t.Fatal(a.calls, Render(m))
+	}
+}
+
+// R108-M2: a label is for the device selected when l was pressed, even if
+// a reload in between moves the rows.
+func TestAccountLabelKeepsItsDevice(t *testing.T) {
+	a := &accountAuthority{principal: "owner@example.com", owner: "owner@example.com"}
+	m := accountModel(t, a)
+	m = selectRow(t, m, "device:dev_this")
+	m = press(t, m, "l")
+	a.mu.Lock()
+	a.newDevice = true
+	a.mu.Unlock()
+	m.request++
+	m, cmd := m.accountRefresh()
+	m = settle(t, m, cmd)
+	if m.AccountState().Rows[0] != "device:dev_new" || m.inputMode != inputAccountLabel {
+		t.Fatal(m.AccountState().Rows, m.inputMode)
+	}
+	m = typed(t, m, "!")
+	m = press(t, m, "enter")
+	if w := a.writes(); len(w) != 1 || w[0].Args["device_id"] != "dev_this" || w[0].Args["label"] != "laptop!" {
+		t.Fatal(w)
+	}
+}
+
+// R108-L1, L2: no write starts while the screen loads or a write is in
+// flight, and an action awaiting its word survives a load.
+func TestAccountOneWriteAtATime(t *testing.T) {
+	a := &accountAuthority{principal: "owner@example.com", owner: "owner@example.com"}
+	m := accountModel(t, a)
+	// A revoke in flight: its answer hasn't come back.
+	m = press(t, m, "x")
+	m = typed(t, m, "revoke")
+	m, inFlight := m.UpdateModel(tea.KeyMsg{Type: tea.KeyEnter})
+	for _, k := range []string{"a", "x", "i", "t"} {
+		m, _ = m.UpdateModel(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(k)})
+		if m.AccountState().Pending != "" || m.inputMode != inputNone {
+			t.Fatal(k, "started a write while one was in flight")
+		}
+	}
+	m = settle(t, m, inFlight)
+	if w := a.writes(); len(w) != 1 || w[0].Operation != "device_revoke" {
+		t.Fatal(w)
+	}
+	// An action begun before a load lands keeps its word through it.
+	m.request++
+	m, load := m.accountRefresh()
+	m.loading = false
+	m = press(t, m, "a")
+	m.loading = true
+	m = settle(t, m, load)
+	m = typed(t, m, "add")
+	m = press(t, m, "enter")
+	if !a.did("invite_create") || !m.AccountState().CodeShown {
+		t.Fatal("a load dropped the pending action:", a.writes())
+	}
+}
+
+// R108-L1: Enter on a confirmation while a load is in flight sends
+// nothing, and keeps the confirmation for once the load lands.
+func TestAccountConfirmationWaitsForTheLoad(t *testing.T) {
+	a := &accountAuthority{principal: "owner@example.com", owner: "owner@example.com"}
+	m := accountModel(t, a)
+	m = selectRow(t, m, "invite:inv_1")
+	m = press(t, m, "x")
+	m = typed(t, m, "revoke")
+	m.request++
+	m.loading = true
+	m, load := m.accountRefresh()
+	m, _ = m.UpdateModel(tea.KeyMsg{Type: tea.KeyEnter})
+	if len(a.writes()) != 0 || m.AccountState().Pending != "invite_revoke" || !strings.Contains(m.State().Error, "press Enter again") {
+		t.Fatal(a.writes(), m.AccountState(), m.State().Error)
+	}
+	m = settle(t, m, load)
+	m = press(t, m, "enter")
+	if !a.did("invite_revoke") {
+		t.Fatal(a.writes())
 	}
 }

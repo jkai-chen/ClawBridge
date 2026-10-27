@@ -111,7 +111,7 @@ func runTUI(ctx context.Context, flags Config, args []string, stdout, stderr io.
 		return err
 	}
 	switch tui.Screen(screen) {
-	case tui.Overview, tui.Projects, tui.Sessions, tui.Inbox, tui.Cloud, tui.Doctor, tui.Linear:
+	case tui.Overview, tui.Projects, tui.Sessions, tui.Inbox, tui.Cloud, tui.Doctor, tui.Linear, tui.Account:
 	default:
 		return errors.New("invalid TUI screen")
 	}

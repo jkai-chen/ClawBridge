@@ -82,12 +82,12 @@ func Render(d Doc, w int, st style) string {
 				styled = st.pass.Render(word)
 			case Warn:
 				styled = st.warn.Render(word)
-			case Fail:
+			case Fail, Error:
 				styled = st.fail.Render(word)
-			case Info:
+			case Info, Busy:
 				styled = st.muted.Render(word)
 			}
-			lead := pad + styled + strings.Repeat(" ", 5-len(word))
+			lead := pad + styled + strings.Repeat(" ", max(1, 5-ansi.StringWidth(word)))
 			writeWrapped(&b, lead, bl.text, w)
 		case bNote:
 			b.WriteString(pad + st.muted.Render(ansi.Wordwrap(bl.text, w-len(pad), " ")) + "\n")

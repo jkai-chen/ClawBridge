@@ -47,9 +47,16 @@ const (
 	Warn
 	Fail
 	Info
+	// Error is an action that failed; Busy one still running. The TUI's
+	// status line uses them (TUI-UX-AUDIT §3.3).
+	Error
+	Busy
 )
 
-var levelWords = map[Level]string{OK: "OK", Pass: "PASS", Warn: "WARN", Fail: "FAIL", Info: "NOTE"}
+var levelWords = map[Level]string{OK: "OK", Pass: "PASS", Warn: "WARN", Fail: "FAIL", Info: "NOTE", Error: "ERROR", Busy: "…"}
+
+// Word is a level's word, which carries its meaning without colour.
+func Word(l Level) string { return levelWords[l] }
 
 // Col is a table column. Keep marks one the next command needs (an ID, a
 // revision, a link): it is never cut (L4).

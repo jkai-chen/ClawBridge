@@ -83,7 +83,13 @@ func TestPhase4TUIActorlessActionsDoNotReachAuthority(t *testing.T) {
 			if len(e.recorded()) != 0 {
 				t.Error("actorless action reached executor")
 			}
-			if next.State().Error == "" {
+			if name == "inbox" {
+				// Without a session the Inbox explains whose inboxes these
+				// are; it is not an error (owner, TUI-UX-AUDIT Q1).
+				if next.State().Error != "" || !strings.Contains(tui.Render(next), "Inboxes belong to agent sessions") {
+					t.Errorf("sessionless inbox not explained: %+v", next.State())
+				}
+			} else if next.State().Error == "" {
 				t.Error("actorless action lacked actionable error")
 			}
 		})

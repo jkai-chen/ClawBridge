@@ -1,0 +1,35 @@
+### loading
+ClawBridge · ws_1 › prj_1 › engineer  cloud
+1 Overview  2 Projects  3 Sessions  [4 Inbox]  5 Linear  6 Dispatcher  7 Account  8 Doctor
+Showing: current · page 1
+…  Loading…
+╭──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ Inbox                                                                                                                │
+│                                                                                                                      │
+│ Loading the inbox…                                                                                                   │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+n new message · v filter · ] next page · [ previous page · ↑↓ select · r reload · ? help · q quit
+### error
+ClawBridge · ws_1 › prj_1 › engineer  cloud
+1 Overview  2 Projects  3 Sessions  [4 Inbox]  5 Linear  6 Dispatcher  7 Account  8 Doctor
+Showing: current · page 1
+
+╭──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ Inbox                                                                                                                │
+│                                                                                                                      │
+│ ERROR  Couldn't load the inbox. The server can't be reached.                                                         │
+│ r reload · 8 Doctor                                                                                                  │
+│ remote: 503 Service Unavailable: upstream connect error or disconnect/reset before headers                           │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+n new message · v filter · ] next page · [ previous page · ↑↓ select · r reload · ? help · q quit
+### empty
+ClawBridge · ws_1 › prj_1 › engineer  cloud
+1 Overview  2 Projects  3 Sessions  [4 Inbox]  5 Linear  6 Dispatcher  7 Account  8 Doctor
+Showing: current · page 1
+
+╭──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ Inbox                                                                                                                │
+│                                                                                                                      │
+│ No messages for engineer.                                                                                            │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+n new message · v filter · ] next page · [ previous page · ↑↓ select · r reload · ? help · q quit

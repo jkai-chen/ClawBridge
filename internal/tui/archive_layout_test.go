@@ -117,8 +117,8 @@ func TestResponsiveWholeScreenBoundsAndResizePurity(t *testing.T) {
 	m.workspace.Name = long
 	m.project.Slug = long
 	m.session.Name = long
-	m.errText = long
-	m.actionErr = long
+	m.loadErr = long
+	m.status = noteStatus(long)
 	for i := 0; i < 40; i++ {
 		m.projects = append(m.projects, ProjectRow{ID: fmt.Sprint(i), Slug: long, Name: long})
 		m.sessions = append(m.sessions, SessionRow{ID: fmt.Sprint(i), Name: long, Owner: long, Host: long})

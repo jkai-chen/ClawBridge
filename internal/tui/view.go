@@ -6,6 +6,7 @@ import (
 	"unicode"
 	"unicode/utf8"
 
+	"clawbridge/internal/clirender"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
 )
@@ -112,8 +113,8 @@ func renderTabs(m Model) string {
 	return title(m.screen) + " · Tab screens"
 }
 
-// statusLine is the row under the tabs: an offline copy, the last error,
-// the last note. (TUI-UX-AUDIT PR B gives it levels.)
+// statusLine is the row under the tabs: an offline copy, then what the
+// last action did (status). A failed load shows in the body (§3.5).
 func statusLine(m Model) string {
 	parts := []string{}
 	if terminalText(m.source) == "offline-mirror" {
@@ -126,13 +127,12 @@ func statusLine(m Model) string {
 		}
 		parts = append(parts, warnStyle.Render(fresh+", read-only: writes unavailable"))
 	}
-	if m.errText != "" {
-		parts = append(parts, "Error: "+terminalText(m.errText))
+	if line := m.status.line(); line != "" {
+		parts = append(parts, line)
+	} else if m.loading {
+		parts = append(parts, busyStatus("Loading…").line())
 	}
-	if m.actionErr != "" {
-		parts = append(parts, "Notice: "+terminalText(m.actionErr))
-	}
-	return strings.Join(parts, " ")
+	return strings.Join(parts, " · ")
 }
 
 func renderBody(m Model) string {
@@ -167,6 +167,9 @@ func renderOverview(m Model) string {
 	var b strings.Builder
 	b.WriteString(title(ScreenOverview))
 	b.WriteString("\n\n")
+	if m.loadErr != "" {
+		b.WriteString(errorBody(m, "the overview", m.loadErr) + "\n\n")
+	}
 	b.WriteString(kv("Workspace", firstNonempty(terminalText(m.workspace.Name), terminalText(m.cfg.Workspace), "not configured")))
 	b.WriteString(kv("Project", firstNonempty(terminalText(m.project.Slug), terminalText(m.cfg.Project), "not configured")))
 	b.WriteString(kv("Session", firstNonempty(terminalText(m.session.Name), terminalText(m.cfg.Session), "not bound")))
@@ -190,7 +193,11 @@ func renderOverview(m Model) string {
 	b.WriteString(kv("Authority", firstNonempty(terminalText(m.source), "not loaded")+" · "+online))
 	b.WriteString("\n")
 	b.WriteString(kv("Sessions", fmt.Sprintf("%d in pinned project", len(m.sessions))))
-	b.WriteString(kv("Unread", fmt.Sprintf("%d in current session", len(m.messages))))
+	if m.cfg.Session == "" {
+		b.WriteString(kv("Inbox", "no session on this profile (agents' inboxes are per session)"))
+	} else {
+		b.WriteString(kv("Unread", fmt.Sprintf("%d in %s's inbox", len(m.messages), terminalText(m.cfg.Session))))
+	}
 	if m.cfg.Linear != nil {
 		b.WriteString("\nOptional integration: 7 Linear → Connect Linear / Later. Joining does not depend on Linear.\n")
 	}
@@ -212,8 +219,11 @@ func renderProjects(m Model) string {
 	var b strings.Builder
 	b.WriteString(title(ScreenProjects))
 	b.WriteString("\n\n")
+	if body, ok := bodyState(m, "projects", len(m.projects) > 0); ok {
+		return b.String() + body
+	}
 	if len(m.projects) == 0 {
-		b.WriteString("No projects returned for this workspace.")
+		b.WriteString("No projects in this workspace yet. An owner creates one with clawbridge project create SLUG.")
 		return b.String()
 	}
 	rows := make([][]string, len(m.projects))
@@ -232,8 +242,11 @@ func renderSessions(m Model) string {
 	var b strings.Builder
 	b.WriteString(title(ScreenSessions))
 	b.WriteString("\n\n")
+	if body, ok := bodyState(m, "sessions", len(m.sessions) > 0); ok {
+		return b.String() + body
+	}
 	if len(m.sessions) == 0 {
-		b.WriteString("No sessions returned for this project.")
+		b.WriteString("No sessions yet. An agent joins with clawbridge register NAME in its checkout.")
 		return b.String()
 	}
 	rows := make([][]string, len(m.sessions))
@@ -339,7 +352,7 @@ func messageStatus(message MessageRow) string {
 func renderMessage(m Model, message MessageRow) string {
 	var b strings.Builder
 	b.WriteString(accentStyle.Render(firstNonempty(terminalText(message.Sender), "unknown sender")))
-	b.WriteString(" · " + firstNonempty(terminalText(message.Kind), "message") + " · " + messageStatus(message) + " · " + terminalText(message.CreatedAt) + "\n\n")
+	b.WriteString(" · " + firstNonempty(terminalText(message.Kind), "message") + " · " + messageStatus(message) + " · " + terminalText(clirender.WhenExact(m.now(), message.CreatedAt)) + "\n\n")
 	b.WriteString(terminalText(message.Body) + "\n")
 	if message.ReplyTo != "" {
 		parent := mutedStyle.Render("an earlier message, not on this page")
@@ -376,8 +389,17 @@ func renderInbox(m Model) string {
 			return b.String() + renderMessage(m, message)
 		}
 	}
+	if m.cfg.Session == "" || m.cfg.Instance == "" {
+		// Not an error: a person's profile has no inbox (U36).
+		b.WriteString("Inboxes belong to agent sessions, and this profile has none.\n" +
+			"To read as a session: clawbridge tui --session NAME, on that session's machine.")
+		return b.String()
+	}
+	if body, ok := bodyState(m, "the inbox", len(m.messages) > 0); ok {
+		return b.String() + body
+	}
 	if len(m.messages) == 0 {
-		b.WriteString("No messages in the current session inbox.")
+		b.WriteString("No messages for " + terminalText(m.cfg.Session) + ".")
 		return b.String()
 	}
 	for i, message := range m.messages {
@@ -393,7 +415,7 @@ func renderInbox(m Model) string {
 		b.WriteString(" · ")
 		b.WriteString(status)
 		b.WriteString(" · ")
-		b.WriteString(clip(firstNonempty(terminalText(message.CreatedAt), terminalText(message.ID)), 36))
+		b.WriteString(clip(firstNonempty(terminalText(clirender.When(m.now(), message.CreatedAt)), terminalText(message.ID)), 36))
 		b.WriteString("\n    ")
 		b.WriteString(terminalText(message.Body))
 		b.WriteString("\n")
@@ -420,6 +442,9 @@ func renderCloud(m Model) string {
 	if m.cfg.Setup == nil && m.cfg.CloudInfo != "" {
 		b.WriteString(terminalText(m.cfg.CloudInfo))
 		return b.String()
+	}
+	if body, ok := bodyState(m, "the setup plan", m.plan != nil); ok {
+		return b.String() + body
 	}
 	if m.plan == nil {
 		b.WriteString("No setup plan loaded.")
@@ -479,8 +504,11 @@ func renderDoctor(m Model) string {
 	var b strings.Builder
 	b.WriteString(title(ScreenDoctor))
 	b.WriteString("\n\n")
+	if body, ok := bodyState(m, "the checks", len(m.checks) > 0); ok {
+		return b.String() + body
+	}
 	if len(m.checks) == 0 {
-		b.WriteString("No diagnostic results.")
+		b.WriteString("No checks ran.")
 		return b.String()
 	}
 	counts := map[Status]int{}

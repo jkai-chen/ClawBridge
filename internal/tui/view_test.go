@@ -30,7 +30,7 @@ func TestRenderEscapesAllDynamicFieldsWithoutChangingStoredText(t *testing.T) {
 	payload := "peer\x1b]52;c;YXVkaXQ=\a\r\x9b31m\u202e\x1b[2J"
 	m := Model{
 		cfg:     Config{Mode: ModeLocal, Workspace: payload, Project: payload, Session: payload, Principal: payload, Provenance: payload},
-		errText: payload, actionErr: payload, source: payload, draft: payload, confirm: payload,
+		loadErr: payload, status: noteStatus(payload), source: payload, draft: payload, confirm: payload,
 		workspace: WorkspaceView{Name: payload}, project: ProjectView{Slug: payload}, session: SessionView{Name: payload},
 		identity: IdentityView{Principal: payload, Provenance: payload}, fresh: Freshness{UpdatedAt: payload},
 		projects: []ProjectRow{{Slug: payload, Role: payload, Name: payload}},

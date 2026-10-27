@@ -142,8 +142,8 @@ func (m Model) linearCommand(request LinearRequest) (Model, tea.Cmd) {
 	}
 	m.request++
 	m.loading = true
-	m.actionErr = ""
-	m.errText = ""
+	m.status = status{}
+	m.loadErr = ""
 	timeout := 45 * time.Second
 	if request.Operation == "connect" {
 		timeout = 5 * time.Minute
@@ -187,7 +187,7 @@ func (m Model) applyLinear(x linearLoadedMsg) Model {
 	m.loading = false
 	m.linearCancel = nil
 	if x.err != nil {
-		m.actionErr = displayError(x.err)
+		m.status = errStatus(x.err)
 		return m
 	}
 	m.source = "linear"
@@ -198,10 +198,10 @@ func (m Model) applyLinear(x linearLoadedMsg) Model {
 		m.linear.step = "profiles"
 		m.selected = 0
 		if x.operation == "connect" {
-			m.actionErr = "Personal connection saved. Select a profile to continue."
+			m.status = okStatus("Linear connection saved. Select it to continue.")
 		}
 		if x.operation == "logout" {
-			m.actionErr = "Personal profile logged out. Shared project binding preserved."
+			m.status = okStatus("Linear connection signed out. The project's Linear board stays linked.")
 		}
 	case "teams":
 		m.linear.teams = append([]linearprovider.Team(nil), x.data.Teams.Items...)
@@ -243,13 +243,18 @@ func (m Model) applyLinear(x linearLoadedMsg) Model {
 		m.linear.cursor = ""
 		m.linear.visited = []string{""}
 		m.linear.page = 0
-		m.actionErr = "Shared board saved. Press r to read tasks."
+		text, failed := "Linear board linked. r reads its tasks.", false
 		for _, o := range x.data.ClosesOutcomes {
 			if o.Outcome == "set" {
-				m.actionErr += " " + o.LinearProject + ": closed by " + closesWord(o.Closes) + "."
+				text += " " + o.LinearProject + ": closed by " + closesWord(o.Closes) + "."
 			} else {
-				m.actionErr += " " + o.LinearProject + ": who closes was not set (" + o.Error + "); re-run " + o.Rerun
+				text += " " + o.LinearProject + ": who closes was not set (" + o.Error + "); re-run " + o.Rerun
+				failed = true
 			}
+		}
+		m.status = okStatus(text)
+		if failed {
+			m.status = failStatus(text)
 		}
 		m.linear.closes, m.linear.lines, m.linear.minimal = nil, nil, ""
 	case "unlink-preview":
@@ -258,7 +263,7 @@ func (m Model) applyLinear(x linearLoadedMsg) Model {
 	case "unlink":
 		m.applyLinearBinding(x.data)
 		m.linear.step = "profiles"
-		m.actionErr = "Project unlinked. Personal connections preserved."
+		m.status = okStatus("Linear board unlinked. Your Linear connections are kept.")
 	case "issues":
 		m.linear.issues = append([]linearprovider.Issue(nil), x.data.Issues.Items...)
 		m.linear.next = x.data.Issues.NextCursor
@@ -332,7 +337,7 @@ func (m Model) linearPage(next bool) (Model, tea.Cmd) {
 	}
 	if next {
 		if m.linear.next == "" {
-			m.actionErr = "No next page; this is the current response, not an all-workspace search."
+			m.status = noteStatus("No next page; this is the current response, not an all-workspace search.")
 			return m, nil
 		}
 		m.linear.cursor = m.linear.next
@@ -392,7 +397,7 @@ func (m Model) linearBack() (Model, tea.Cmd) {
 		m.linearCancel = nil
 	}
 	m.request++
-	m.loading, m.actionErr = false, ""
+	m.loading, m.status = false, status{}
 	prev := linearPrevious[m.linearStep()]
 	if prev == "" {
 		return m.CancelInput(), nil
@@ -426,7 +431,7 @@ func (m Model) linearKey(key string) (Model, tea.Cmd) {
 	}
 	if key == "l" {
 		if m.linear.profile == "" {
-			m.actionErr = "Select a personal connection first."
+			m.status = noteStatus("Select a personal connection first.")
 			return m, nil
 		}
 		m.linear.step = "teams"
@@ -464,7 +469,7 @@ func (m Model) linearKey(key string) (Model, tea.Cmd) {
 			ids = next
 		} else {
 			if len(ids) >= 20 {
-				m.actionErr = "Select at most 20 teams."
+				m.status = noteStatus("Select at most 20 teams.")
 				return m, nil
 			}
 			ids = append(ids, id)
@@ -494,7 +499,7 @@ func (m Model) linearKey(key string) (Model, tea.Cmd) {
 			m.linear.selectedProjects = ids
 		} else {
 			if len(m.linear.selectedProjects) >= 50 {
-				m.actionErr = "Select at most 50 projects."
+				m.status = noteStatus("Select at most 50 projects.")
 				return m, nil
 			}
 			m.linear.selectedProjects = append(append([]string{}, m.linear.selectedProjects...), id)
@@ -512,7 +517,7 @@ func (m Model) linearKey(key string) (Model, tea.Cmd) {
 	case "profiles":
 		id := m.linearSelected()
 		if id == "" {
-			m.actionErr = "Connect Linear with +, or come back later from another screen."
+			m.status = noteStatus("Connect Linear with +, or come back later from another screen.")
 			return m, nil
 		}
 		m.linear.profile = id
@@ -527,7 +532,7 @@ func (m Model) linearKey(key string) (Model, tea.Cmd) {
 		return m.linearRefresh()
 	case "teams":
 		if len(m.linear.chosen) == 0 {
-			m.actionErr = "Space selects allowed teams; Enter continues after selection."
+			m.status = noteStatus("Space selects allowed teams; Enter continues after selection.")
 			return m, nil
 		}
 		m.linear.step = "default"
@@ -573,17 +578,17 @@ func (m Model) linearKey(key string) (Model, tea.Cmd) {
 		// The names come from what the link will send, checked against a
 		// preview of exactly that (R114-M1).
 		if m.loading {
-			m.actionErr = "wait for the preview to finish, then press Enter"
+			m.status = noteStatus("wait for the preview to finish, then press Enter")
 			return m, nil
 		}
 		typing, err := m.linearClosesToType()
 		if err != nil {
-			m.actionErr = err.Error()
+			m.status = noteStatus(err.Error())
 			return m, nil
 		}
 		m.linear.typing = typing
 		if len(m.linear.typing) > 0 {
-			m.inputMode, m.draft, m.actionErr = inputLinearClosesName, "", ""
+			m.inputMode, m.draft, m.status = inputLinearClosesName, "", status{}
 			return m, nil
 		}
 		return m.linearLink(true)
@@ -614,7 +619,7 @@ func closesWord(who string) string {
 // minimal policy's consequences, come from the server.
 func (m Model) linearToggleCloses() (Model, tea.Cmd) {
 	if m.loading {
-		m.actionErr = "wait for the preview to finish"
+		m.status = noteStatus("wait for the preview to finish")
 		return m, nil
 	}
 	if m.linear.bindingV2 == nil || m.linear.teamBoard || m.selected < 0 || m.selected >= len(m.linear.lines) {
@@ -678,7 +683,7 @@ func (m Model) linearClosesTyped() (Model, tea.Cmd) {
 	want := m.linear.typing[0].Name
 	if want == "" || m.draft != want {
 		m.inputMode, m.draft, m.linear.typing = inputNone, "", nil
-		m.actionErr = fmt.Sprintf("the name typed is not %q; nothing was changed", want)
+		m.status = noteStatus(fmt.Sprintf("the name typed is not %q; nothing was changed", want))
 		return m, nil
 	}
 	m.linear.typing, m.draft = m.linear.typing[1:], ""
@@ -701,7 +706,7 @@ func renderLinear(m Model) string {
 			if v.Mode == "team_board" {
 				b.WriteString("Board: Team board — no Linear project\n")
 			} else {
-				b.WriteString("Project set: " + strings.Join(v.LinearProjectIDs, ", ") + "\n")
+				b.WriteString("Linear projects: " + strings.Join(v.LinearProjectIDs, ", ") + "\n")
 			}
 		} else {
 			b.WriteString("Allowed teams: " + strings.Join(m.linear.binding.LinearTeamIDs, ", ") + "\nDefault team: " + m.linear.binding.LinearDefaultTeamID + "\n")

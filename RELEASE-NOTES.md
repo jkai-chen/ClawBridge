@@ -170,6 +170,19 @@
   Account's decline is `d` (was `n`). Linear connects with `+` (was `c`, which now only switches who closes in the
   link review); Esc on Linear goes back one step and keeps the teams and projects you chose, instead of starting over.
 
+- **Every screen says what it's doing (TUI-UX-AUDIT PR B).** While a screen loads it says "Loading sessions…" and the
+  layout stays put. A failed load says what failed in words ("The server can't be reached", "You're signed out"), the
+  keys that help (`r` reload, the Doctor tab), then the raw error. An empty screen says why, and how to fill it.
+- **One status line, with a word for its meaning.** Under the tabs, `OK`, `ERROR`, `NOTE` or `…`, the same words as the
+  CLI, so it reads the same without colour. A send, reply or mark-read now says so ("OK  Sent to engineer-backend."),
+  and Account and Linear name what changed ("laptop renamed to work-mac") instead of an ID.
+- **Times are relative.** Inbox and Account show "4 min ago" or "in 2 days"; an opened message adds the time in UTC.
+- **Inbox without a session explains itself.** Inboxes belong to agent sessions; a person's profile gets a note on how to
+  read one (`clawbridge tui --session NAME`) instead of an error.
+- **The Dispatcher screen keeps its place while it sends and tests.** A key no longer leaves the screen and loses the
+  test's answer; Esc stops waiting. The field being typed in stays on screen at 80×24, and the outcome is marked `OK` or
+  `FAIL`.
+
 ## The dispatcher
 
 - **`clawbridge dispatcher model setup` guides an owner through the model's setup.** It asks for the provider (from

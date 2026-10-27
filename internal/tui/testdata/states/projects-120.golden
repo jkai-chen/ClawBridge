@@ -1,0 +1,32 @@
+### loading
+ClawBridge · ws_1 › prj_1 › engineer  cloud
+1 Overview  [2 Projects]  3 Sessions  4 Inbox  5 Linear  6 Dispatcher  7 Account  8 Doctor
+…  Loading…
+╭──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ Projects                                                                                                             │
+│                                                                                                                      │
+│ Loading projects…                                                                                                    │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+↑↓ select · r reload · ? help · q quit
+### error
+ClawBridge · ws_1 › prj_1 › engineer  cloud
+1 Overview  [2 Projects]  3 Sessions  4 Inbox  5 Linear  6 Dispatcher  7 Account  8 Doctor
+
+╭──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ Projects                                                                                                             │
+│                                                                                                                      │
+│ ERROR  Couldn't load projects. The server can't be reached.                                                          │
+│ r reload · 8 Doctor                                                                                                  │
+│ remote: 503 Service Unavailable: upstream connect error or disconnect/reset before headers                           │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+↑↓ select · r reload · ? help · q quit
+### empty
+ClawBridge · ws_1 › prj_1 › engineer  cloud
+1 Overview  [2 Projects]  3 Sessions  4 Inbox  5 Linear  6 Dispatcher  7 Account  8 Doctor
+
+╭──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ Projects                                                                                                             │
+│                                                                                                                      │
+│ No projects in this workspace yet. An owner creates one with clawbridge project create SLUG.                         │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+↑↓ select · r reload · ? help · q quit

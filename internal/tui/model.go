@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"clawbridge/internal/bus"
+	"clawbridge/internal/clirender"
 	tea "github.com/charmbracelet/bubbletea"
 )
 
@@ -271,7 +272,10 @@ type Snapshot struct {
 	Screen       Screen
 	Mode         Mode
 	Loading      bool
-	Error        string
+	// Error is the failed load, else the status line's text; Status is
+	// that line's level.
+	Error  string
+	Status clirender.Level
 
 	Source     string
 	Workspace  WorkspaceView
@@ -303,10 +307,11 @@ type Model struct {
 
 	tickStarted bool
 	loading     bool
-	errText     string
-	source      string
-	fresh       Freshness
-	online      *bool
+	// loadErr is the last failed load, raw; the body shows it (§3.5).
+	loadErr string
+	source  string
+	fresh   Freshness
+	online  *bool
 
 	workspace WorkspaceView
 	project   ProjectView
@@ -345,7 +350,9 @@ type Model struct {
 	replyTarget string
 	confirming  bool
 	confirm     string
-	actionErr   string
+	status      status
+	// done is what the write in flight says when it works.
+	done string
 }
 
 type inputMode uint8
@@ -452,13 +459,12 @@ func (m Model) UpdateModel(msg tea.Msg) (Model, tea.Cmd) {
 			return m, nil
 		}
 		m.loading = false
-		m.errText = ""
-		m.actionErr = ""
+		m.loadErr = ""
 		if x.err != nil {
 			m = m.restorePage()
-			m.errText = displayError(x.err)
+			m.loadErr = displayError(x.err)
 			if x.kind == loadProjects {
-				m.errText = projectError(x.err)
+				m.loadErr = projectError(x.err)
 			}
 			return m, nil
 		}
@@ -474,18 +480,21 @@ func (m Model) UpdateModel(msg tea.Msg) (Model, tea.Cmd) {
 			return m, nil
 		}
 		m.loading = false
-		m.actionErr = ""
+		m.status = status{}
 		if x.err != nil {
-			m.actionErr = displayError(x.err)
+			m.status = errStatus(x.err)
 			return m, nil
 		}
 		switch x.kind {
 		case actionReply, actionSend, actionRead:
 			m.source = x.result.Source
+			m.status = okStatus(m.done)
 			if x.kind == actionRead || x.kind == actionReply || x.kind == actionSend {
 				m.inputMode = inputNone
 				m.draft = ""
 				_, cmd := m.reload()
+				// That reload is the one the OK line outlives.
+				m.status = m.status.kept()
 				return m, cmd
 			}
 		case actionApply:
@@ -528,7 +537,7 @@ func (m Model) Show(screen Screen) (Model, tea.Cmd) {
 	}
 	m.loading = false
 	if !knownScreen(screen) {
-		m.actionErr = "unknown screen"
+		m.status = noteStatus("unknown screen")
 		return m, nil
 	}
 	m.help, m.quitAsk, m.inboxOpen = false, false, false
@@ -545,7 +554,7 @@ func (m Model) Show(screen Screen) (Model, tea.Cmd) {
 	m.inputMode = inputNone
 	m.confirming = false
 	m.confirm = ""
-	m.actionErr = ""
+	m.status = status{}
 	return m.refresh()
 }
 
@@ -600,26 +609,35 @@ func (m Model) SelectedMessage() (MessageRow, bool) {
 	return m.messages[m.selected], true
 }
 
+func (m Model) messageByID(id string) (MessageRow, bool) {
+	for _, msg := range m.messages {
+		if msg.ID == id {
+			return msg, true
+		}
+	}
+	return MessageRow{}, false
+}
+
 // BeginReply opens an explicit reply draft for the selected inbox message.
 func (m Model) BeginReply() Model {
 	if m.cfg.Session == "" || m.cfg.Instance == "" {
-		m.actionErr = "this action requires a bound session and matching instance; use explicit --session and --instance"
+		m.status = noteStatus("this action requires a bound session and matching instance; use explicit --session and --instance")
 		return m
 	}
 
 	selected, ok := m.SelectedMessage()
 	if !ok {
-		m.actionErr = "select an inbox message before replying"
+		m.status = noteStatus("select an inbox message before replying")
 		return m
 	}
 	if m.writesBlocked() {
-		m.actionErr = "the authority is offline; replies are not queued and remain unavailable until reconnect"
+		m.status = noteStatus("the authority is offline; replies are not queued and remain unavailable until reconnect")
 		return m
 	}
 	m.replyTarget = selected.ID
 	m.inputMode = inputReply
 	m.draft = ""
-	m.actionErr = ""
+	m.status = status{}
 	return m
 }
 
@@ -627,17 +645,17 @@ func (m Model) BeginReply() Model {
 // entered before the body as "session|body" when submitted by the TUI.
 func (m Model) BeginSend() Model {
 	if m.cfg.Session == "" || m.cfg.Instance == "" {
-		m.actionErr = "this action requires a bound session and matching instance; use explicit --session and --instance"
+		m.status = noteStatus("this action requires a bound session and matching instance; use explicit --session and --instance")
 		return m
 	}
 
 	if m.writesBlocked() {
-		m.actionErr = "the authority is offline; sends are not queued and remain unavailable until reconnect"
+		m.status = noteStatus("the authority is offline; sends are not queued and remain unavailable until reconnect")
 		return m
 	}
 	m.inputMode = inputSend
 	m.draft = ""
-	m.actionErr = ""
+	m.status = status{}
 	return m
 }
 
@@ -656,17 +674,21 @@ func (m Model) CancelInput() Model {
 // Reply is an explicit mutation. It is never invoked by navigation or refresh.
 func (m Model) Reply(messageID, body, operationID string) (Model, tea.Cmd) {
 	if m.cfg.Session == "" || m.cfg.Instance == "" {
-		m.actionErr = "this action requires a bound session and matching instance; use explicit --session and --instance"
+		m.status = noteStatus("this action requires a bound session and matching instance; use explicit --session and --instance")
 		return m, nil
 	}
 
 	if messageID == "" || strings.TrimSpace(body) == "" || operationID == "" {
-		m.actionErr = "reply requires a selected message, nonempty body and operation ID"
+		m.status = noteStatus("reply requires a selected message, nonempty body and operation ID")
 		return m, nil
 	}
 	if m.writesBlocked() {
-		m.actionErr = "authority is offline; reply was not attempted or queued"
+		m.status = noteStatus("authority is offline; reply was not attempted or queued")
 		return m, nil
+	}
+	m.done = "Reply sent."
+	if msg, ok := m.messageByID(messageID); ok && msg.Sender != "" {
+		m.done = "Reply sent to " + msg.Sender + "."
 	}
 	m.request++
 	m.loading = true
@@ -681,18 +703,19 @@ func (m Model) Reply(messageID, body, operationID string) (Model, tea.Cmd) {
 // Send is an explicit mutation. operationID is required for safe idempotent retry.
 func (m Model) Send(to, body, operationID string) (Model, tea.Cmd) {
 	if m.cfg.Session == "" || m.cfg.Instance == "" {
-		m.actionErr = "this action requires a bound session and matching instance; use explicit --session and --instance"
+		m.status = noteStatus("this action requires a bound session and matching instance; use explicit --session and --instance")
 		return m, nil
 	}
 
 	if strings.TrimSpace(to) == "" || strings.TrimSpace(body) == "" || operationID == "" {
-		m.actionErr = "send requires a recipient, nonempty body and operation ID"
+		m.status = noteStatus("send requires a recipient, nonempty body and operation ID")
 		return m, nil
 	}
 	if m.writesBlocked() {
-		m.actionErr = "authority is offline; send was not attempted or queued"
+		m.status = noteStatus("authority is offline; send was not attempted or queued")
 		return m, nil
 	}
+	m.done = "Sent to " + to + "."
 	m.request++
 	m.loading = true
 	req := m.requestWithInstance("send", map[string]any{
@@ -706,17 +729,21 @@ func (m Model) Send(to, body, operationID string) (Model, tea.Cmd) {
 // MarkRead is an explicit mutation. Offline mirror reads never become writes.
 func (m Model) MarkRead(ids []string) (Model, tea.Cmd) {
 	if m.cfg.Session == "" || m.cfg.Instance == "" {
-		m.actionErr = "this action requires a bound session and matching instance; use explicit --session and --instance"
+		m.status = noteStatus("this action requires a bound session and matching instance; use explicit --session and --instance")
 		return m, nil
 	}
 
 	if len(ids) == 0 {
-		m.actionErr = "select at least one message to mark read"
+		m.status = noteStatus("select at least one message to mark read")
 		return m, nil
 	}
 	if m.writesBlocked() {
-		m.actionErr = "authority is offline; mark-read was not attempted or queued"
+		m.status = noteStatus("authority is offline; mark-read was not attempted or queued")
 		return m, nil
+	}
+	m.done = "Marked read."
+	if len(ids) > 1 {
+		m.done = fmt.Sprintf("Marked %d messages read.", len(ids))
 	}
 	m.request++
 	m.loading = true
@@ -728,28 +755,28 @@ func (m Model) MarkRead(ids []string) (Model, tea.Cmd) {
 // human. The adapter also receives the phrase so a caller cannot bypass the gate.
 func (m Model) ApplySetup(confirmation string) (Model, tea.Cmd) {
 	if m.cfg.Mode != ModeCloud {
-		m.actionErr = "setup apply is available only in explicitly configured cloud mode"
+		m.status = noteStatus("setup apply is available only in explicitly configured cloud mode")
 		return m, nil
 	}
 	if m.cfg.Setup == nil {
-		m.actionErr = "setup adapter is not configured"
+		m.status = noteStatus("setup adapter is not configured")
 		return m, nil
 	}
 	if m.plan == nil {
-		m.actionErr = "load and review the exact setup plan before applying"
+		m.status = noteStatus("load and review the exact setup plan before applying")
 		return m, nil
 	}
 	if strings.TrimSpace(m.plan.Plan) == "" || strings.TrimSpace(m.plan.Confirmation) == "" || strings.TrimSpace(m.plan.MonthlyCost) == "" {
-		m.actionErr = "setup plan must show resources and cost before apply"
+		m.status = noteStatus("setup plan must show resources and cost before apply")
 		return m, nil
 	}
 	if confirmation == "" || confirmation != m.plan.Confirmation {
-		m.actionErr = "confirmation phrase does not match the displayed plan; nothing was applied"
+		m.status = noteStatus("confirmation phrase does not match the displayed plan; nothing was applied")
 		return m, nil
 	}
 	m.request++
 	m.loading = true
-	m.actionErr = ""
+	m.status = status{}
 	setup, phrase, req := m.cfg.Setup, confirmation, m.request
 	ctx := m.cfg.Context
 	return m, func() tea.Msg {
@@ -805,8 +832,8 @@ func (m Model) refresh() (Model, tea.Cmd) {
 }
 func (m Model) refreshView() (Model, tea.Cmd) {
 	m.loading = true
-	m.errText = ""
-	m.actionErr = ""
+	m.loadErr = ""
+	m.status = m.status.kept()
 	m.confirming = false
 	m.confirm = ""
 	screen, requestID := m.screen, m.request
@@ -867,10 +894,9 @@ func (m Model) refreshView() (Model, tea.Cmd) {
 			}
 		}
 		if m.cfg.Session == "" || m.cfg.Instance == "" {
-			return m, func() tea.Msg {
-				return loadedMsg{request: requestID, screen: screen, kind: loadInbox,
-					err: errors.New("inbox requires an explicitly bound session and instance; run register or resume first")}
-			}
+			// Nothing to load: the body says whose inboxes these are (U36).
+			m.loading = false
+			return m, nil
 		}
 		return m, func() tea.Msg {
 			result, err := m.cfg.Executor.Execute(m.cfg.Context, m.requestWithInstance("inbox", map[string]any{
@@ -1103,7 +1129,7 @@ func (m Model) snapshot() Snapshot {
 	s := Snapshot{
 		Filter: m.filter, Page: m.pageIndex + 1, HasMore: m.hasMore, Cursor: m.pageCursor(), ScrollOffset: bodyOffset(m, lines, budget),
 		Screen: m.screen, Mode: m.cfg.Mode, Loading: m.loading,
-		Error: firstNonempty(m.errText, m.actionErr), Source: m.source,
+		Error: firstNonempty(m.loadErr, m.status.text), Status: m.status.level, Source: m.source,
 		Workspace: m.workspace, Project: m.project, Session: m.session, Identity: m.identity,
 		Freshness: m.fresh, Projects: append([]ProjectRow(nil), m.projects...),
 		Sessions: append([]SessionRow(nil), m.sessions...), Messages: append([]MessageRow(nil), m.messages...),
@@ -1174,6 +1200,11 @@ func (m Model) updateKey(msg tea.KeyMsg) (Model, tea.Cmd) {
 		// neither switches screens nor quits.
 		return m.modelKey(msg)
 	}
+	if m.screen == ScreenModel && (m.modelSetup.wizard.step == modelStepSending || m.modelSetup.wizard.step == modelStepTesting) {
+		// While it sends and tests, the screen keeps every key, so its
+		// answer isn't lost to a tab switch (U42).
+		return m.modelBusyKey(key), nil
+	}
 	if m.screen == ScreenAccount && m.account.code != "" {
 		// A code just issued holds the screen until it is dismissed.
 		return m.accountKey(key)
@@ -1182,7 +1213,7 @@ func (m Model) updateKey(msg tea.KeyMsg) (Model, tea.Cmd) {
 		if key == "y" {
 			return m.quit()
 		}
-		m.quitAsk, m.actionErr = false, ""
+		m.quitAsk, m.status = false, status{}
 		return m, nil
 	}
 	if m.help {
@@ -1234,7 +1265,7 @@ func (m Model) updateEditor(key string, runes []rune) (Model, tea.Cmd) {
 		if m.inputMode == inputLinearName {
 			name := strings.TrimSpace(m.draft)
 			if name == "" || len(name) > 128 {
-				m.actionErr = "Connection label requires 1–128 characters"
+				m.status = noteStatus("Connection label requires 1–128 characters")
 				return m, nil
 			}
 			m.inputMode = inputNone
@@ -1248,13 +1279,13 @@ func (m Model) updateEditor(key string, runes []rune) (Model, tea.Cmd) {
 			if m.replyTarget != "" {
 				return m.Reply(m.replyTarget, m.draft, m.operationID("reply"))
 			}
-			m.actionErr = "selected inbox message is no longer available"
+			m.status = noteStatus("selected inbox message is no longer available")
 			return m, nil
 		}
 		if m.inputMode == inputSend {
 			to, body, ok := strings.Cut(m.draft, "|")
 			if !ok || strings.TrimSpace(to) == "" || strings.TrimSpace(body) == "" {
-				m.actionErr = "send draft must be `recipient|message`"
+				m.status = noteStatus("send draft must be `recipient|message`")
 				return m, nil
 			}
 			return m.Send(strings.TrimSpace(to), strings.TrimSpace(body), m.operationID("send"))

@@ -1,5 +1,6 @@
 ClawBridge · pilot › core › engineer  cloud
 [1 Overview]  2 Projects  3 Sessions  4 Inbox  5 Linear  6 Dispatcher  7 Account  8 Doctor
+
 ╭──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
 │ Overview                                                                                                             │
 │                                                                                                                      │
@@ -10,7 +11,7 @@ ClawBridge · pilot › core › engineer  cloud
 │ Authority       server · online                                                                                      │
 │                                                                                                                      │
 │ Sessions        1 in pinned project                                                                                  │
-│ Unread          2 in current session                                                                                 │
+│ Unread          2 in engineer's inbox                                                                                │
 │                                                                                                                      │
 │ Optional integration: 7 Linear → Connect Linear / Later. Joining does not depend on Linear.                          │
 │                                                                                                                      │

@@ -10,6 +10,7 @@ import (
 	"unicode/utf8"
 
 	"clawbridge/internal/bus"
+	"clawbridge/internal/clirender"
 	"clawbridge/internal/dispatchermodel"
 	tea "github.com/charmbracelet/bubbletea"
 )
@@ -57,8 +58,10 @@ type modelSetupState struct {
 	// only to a project owner; denied says why there is none.
 	status map[string]any
 	denied string
-	// outcome is the last setup's result, in the shared package's words.
+	// outcome is the last setup's result, in the shared package's words;
+	// active is whether it worked, which colours it (U55).
 	outcome string
+	active  bool
 	wizard  modelWizard
 	// sends counts setups sent, so a reload while one is tested doesn't
 	// lose its answer, and an answer to an older one is dropped.
@@ -156,9 +159,9 @@ func (m Model) applyModelLoaded(x modelLoadedMsg) Model {
 	case x.err != nil && strings.Contains(x.err.Error(), "owner permission"):
 		m.modelSetup.denied = "Only a project owner sees and sets up the dispatcher model."
 	case x.err != nil:
-		m.errText = displayError(x.err)
+		m.loadErr = displayError(x.err)
 	case x.status == nil:
-		m.errText = "the server's answer had no model status"
+		m.loadErr = "the server's answer had no model status"
 	default:
 		m.modelSetup.status = x.status
 	}
@@ -191,15 +194,25 @@ func appendKey(key, typed []rune) []rune {
 	return append(grown, typed...)
 }
 
+// modelBusyKey is a key while the setup is sent or tested: Esc stops
+// waiting for the test (the setup stays sent); every other key waits.
+func (m Model) modelBusyKey(key string) Model {
+	if key == "esc" && m.modelSetup.wizard.step == modelStepTesting {
+		m = m.closeModelSetup()
+		m.status = noteStatus("Stopped waiting. The setup was sent; " + firstNonempty(keyHint(m, ScreenModel, "reload"), "r reload") + " shows its test.")
+	}
+	return m
+}
+
 func (m Model) modelKey(msg tea.KeyMsg) (Model, tea.Cmd) {
 	key := msg.String()
 	w := &m.modelSetup.wizard
 	if key == "esc" {
 		m = m.closeModelSetup()
-		m.actionErr = "Setup cancelled. Nothing was set up."
+		m.status = noteStatus("Setup cancelled. Nothing was set up.")
 		return m, nil
 	}
-	m.actionErr = ""
+	m.status = status{}
 	switch w.step {
 	case modelStepProvider:
 		list := dispatchermodel.Providers()
@@ -227,7 +240,7 @@ func (m Model) modelKey(msg tea.KeyMsg) (Model, tea.Cmd) {
 			w.wipeKey()
 		case "enter":
 			if len(w.key) == 0 {
-				m.actionErr = "type or paste your key; Esc cancels"
+				m.status = noteStatus("type or paste your key; Esc cancels")
 				return m, nil
 			}
 			w.step = modelStepCaps
@@ -243,9 +256,9 @@ func (m Model) modelKey(msg tea.KeyMsg) (Model, tea.Cmd) {
 			}
 			switch {
 			case containsControl(typed):
-				m.actionErr = "that paste has a control character in it; nothing was added. Paste the key again"
+				m.status = noteStatus("that paste has a control character in it; nothing was added. Paste the key again")
 			case len(w.key)+len(typed) > maxModelKey:
-				m.actionErr = "the key is longer than 16 KiB"
+				m.status = noteStatus("the key is longer than 16 KiB")
 			default:
 				w.key = appendKey(w.key, typed)
 			}
@@ -277,7 +290,7 @@ func (m Model) modelNext() (Model, tea.Cmd) {
 	switch w.step {
 	case modelStepBaseURL:
 		if err := dispatchermodel.ValidateBaseURL(answer); err != nil {
-			m.actionErr = err.Error()
+			m.status = noteStatus(err.Error())
 			return m, nil
 		}
 		w.baseURL, w.step = answer, modelStepModel
@@ -285,13 +298,13 @@ func (m Model) modelNext() (Model, tea.Cmd) {
 		shown, _ := dispatchermodel.ModelHints(w.provider.ID)
 		answer = dispatchermodel.ModelAnswer(answer, shown)
 		if answer == "" {
-			m.actionErr = "type the model ID, as " + w.provider.Name + " names it; there is no default"
+			m.status = noteStatus("type the model ID, as " + w.provider.Name + " names it; there is no default")
 			return m, nil
 		}
 		// A key typed here echoed: the field is already cleared, and the
 		// shared rule refuses it.
 		if err := dispatchermodel.ValidateModel(answer); err != nil {
-			m.actionErr = err.Error()
+			m.status = noteStatus(err.Error())
 			return m, nil
 		}
 		w.model, w.step = answer, modelStepKey
@@ -300,11 +313,11 @@ func (m Model) modelNext() (Model, tea.Cmd) {
 		if answer != "" {
 			n, err := strconv.ParseInt(strings.ReplaceAll(answer, ",", ""), 10, 64)
 			if err != nil {
-				m.actionErr = field.Key + " must be a number"
+				m.status = noteStatus(field.Key + " must be a number")
 				return m, nil
 			}
 			if err := w.caps.Set(field.Key, n); err != nil {
-				m.actionErr = err.Error()
+				m.status = noteStatus(err.Error())
 				return m, nil
 			}
 		}
@@ -313,7 +326,7 @@ func (m Model) modelNext() (Model, tea.Cmd) {
 			return m, nil
 		}
 		if err := w.caps.Validate(); err != nil {
-			m.actionErr = err.Error()
+			m.status = noteStatus(err.Error())
 			w.capIndex = 0
 			for i, f := range dispatchermodel.CapFields {
 				if w.caps.Get(f.Key) == 0 {
@@ -326,7 +339,7 @@ func (m Model) modelNext() (Model, tea.Cmd) {
 	case modelStepDisclosure:
 		if answer != "yes" {
 			m = m.closeModelSetup()
-			m.actionErr = "Setup stopped: the disclosure was not confirmed. Nothing was set up."
+			m.status = noteStatus("Setup stopped: the disclosure was not confirmed. Nothing was set up.")
 			return m, nil
 		}
 		return m.modelSend()
@@ -340,7 +353,7 @@ func (m Model) modelSend() (Model, tea.Cmd) {
 	w := &m.modelSetup.wizard
 	if m.writesBlocked() {
 		m = m.closeModelSetup()
-		m.actionErr = "the authority is offline; nothing was set up"
+		m.status = noteStatus("the authority is offline; nothing was set up")
 		return m, nil
 	}
 	key := make([]byte, 0, len(w.key)*utf8.UTFMax)
@@ -350,6 +363,7 @@ func (m Model) modelSend() (Model, tea.Cmd) {
 	w.wipeKey()
 	request := dispatchermodel.Request{Provider: w.provider, BaseURL: w.baseURL, Model: w.model, Key: key, Caps: w.caps, EgressConfirmed: true}
 	w.step = modelStepSending
+	m.status = busyStatus("Sending your setup…")
 	m.modelSetup.sends++
 	requestID, exec, ctx := m.modelSetup.sends, m.modelExec(), m.cfg.Context
 	return m, func() tea.Msg {
@@ -364,10 +378,11 @@ func (m Model) applyModelSent(x modelSentMsg) (Model, tea.Cmd) {
 	}
 	if x.err != nil {
 		m = m.closeModelSetup()
-		m.actionErr = "Setup failed: " + displayError(x.err)
+		m.status = failStatus("Setup failed: " + displayError(x.err))
 		return m, nil
 	}
 	m.modelSetup.wizard.step, m.modelSetup.wizard.revision = modelStepTesting, x.revision
+	m.status = busyStatus("Testing your key (up to 60 s)… Esc stops waiting.")
 	requestID, exec, ctx, revision := m.modelSetup.sends, m.modelExec(), m.cfg.Context, x.revision
 	return m, func() tea.Msg {
 		outcome, err := dispatchermodel.WaitForTest(ctx, exec, revision, modelTestPoll, modelTestWait)
@@ -381,8 +396,9 @@ func (m Model) applyModelTested(x modelTestedMsg) (Model, tea.Cmd) {
 	}
 	w := m.modelSetup.wizard
 	m = m.closeModelSetup()
+	m.status = status{}
 	if x.err != nil {
-		m.actionErr = "The setup was sent, but its test could not be read: " + displayError(x.err)
+		m.status = failStatus("The setup was sent, but its test could not be read: " + displayError(x.err))
 		return m.Reload()
 	}
 	baseURL := w.provider.BaseURL
@@ -390,6 +406,7 @@ func (m Model) applyModelTested(x modelTestedMsg) (Model, tea.Cmd) {
 		baseURL = w.baseURL
 	}
 	m.modelSetup.outcome = dispatchermodel.OutcomeText(x.outcome, baseURL)
+	m.modelSetup.active = x.outcome == "active"
 	if x.outcome == "active" {
 		m.modelSetup.outcome += " Next, per project: dispatcher enable --engine model, or dispatcher model advise on (each with a preview)."
 	}
@@ -400,13 +417,13 @@ func (m Model) applyModelTested(x modelTestedMsg) (Model, tea.Cmd) {
 func (m Model) modelStart() Model {
 	switch {
 	case m.loading:
-		m.actionErr = "wait for the screen to finish loading"
+		m.status = noteStatus("wait for the screen to finish loading")
 	case m.modelSetup.status == nil:
-		m.actionErr = firstNonempty(m.modelSetup.denied, "the model status hasn't loaded; r reloads")
+		m.status = noteStatus(firstNonempty(m.modelSetup.denied, "the model status hasn't loaded; r reloads"))
 	case m.modelSetup.status["seal_configured"] != true:
-		m.actionErr = "model setup is unavailable: the server has no model key seal key"
+		m.status = noteStatus("model setup is unavailable: the server has no model key seal key")
 	case m.writesBlocked():
-		m.actionErr = "the authority is offline; setup needs the server"
+		m.status = noteStatus("the authority is offline; setup needs the server")
 	default:
 		m.modelSetup.outcome = ""
 		m.modelSetup.wizard = modelWizard{step: modelStepProvider, caps: dispatchermodel.DefaultCaps()}
@@ -416,7 +433,7 @@ func (m Model) modelStart() Model {
 
 func renderModelSetup(m Model) string {
 	var b strings.Builder
-	b.WriteString("Settings / Dispatcher / Model")
+	b.WriteString("Dispatcher model")
 	b.WriteString("  ")
 	b.WriteString(mutedStyle.Render("the model that decides claims, set up with your own key"))
 	b.WriteString("\n\n")
@@ -426,15 +443,27 @@ func renderModelSetup(m Model) string {
 		return b.String()
 	}
 	if m.modelSetup.outcome != "" {
-		b.WriteString(warnStyle.Render(terminalText(m.modelSetup.outcome)) + "\n\n")
+		word, style := clirender.Word(clirender.Fail), errorStyle
+		if m.modelSetup.active {
+			word, style = clirender.Word(clirender.OK), passStyle
+		}
+		b.WriteString(style.Render(word) + "  " + terminalText(m.modelSetup.outcome) + "\n\n")
 	}
 	if m.modelSetup.denied != "" {
 		b.WriteString(m.modelSetup.denied + "\nAn owner runs setup here, or with clawbridge dispatcher model setup.")
 		return b.String()
 	}
+	if m.cfg.Project == "" && m.project.Slug == "" {
+		// r can't help here (U56).
+		b.WriteString("No project on this profile. Run clawbridge tui from a project's checkout, or pass --project.")
+		return b.String()
+	}
 	s := m.modelSetup.status
+	if body, ok := bodyState(m, "the dispatcher model", s != nil); ok {
+		return b.String() + body
+	}
 	if s == nil {
-		b.WriteString("Not loaded. r reloads.")
+		b.WriteString("Not loaded. " + firstNonempty(keyHint(m, ScreenModel, "reload"), "r reload") + ".")
 		return b.String()
 	}
 	if s["seal_configured"] != true {

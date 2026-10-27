@@ -87,6 +87,8 @@ func screenFixtures(t *testing.T) map[Screen]Model {
 		{"id": "msg_2", "sender": "lead", "body": "Yes, after lunch.", "thread_id": "msg_1", "reply_to": "msg_1", "created_at": "2026-10-27T09:20:00Z", "delivered_at": "2026-10-27T09:20:01Z", "read_at": "2026-10-27T09:30:00Z"},
 	}}
 	cfg := testConfig(inbox)
+	// A fixed clock, so the relative times in the goldens don't drift.
+	cfg.Now = func() time.Time { return time.Date(2026, 10, 27, 16, 30, 0, 0, time.UTC) }
 	cfg.Doctor = DoctorFunc(func(context.Context) ([]Check, error) {
 		return []Check{{ID: "server", Title: "Server reachable", Status: "pass"}, {ID: "linear", Title: "Linear board", Status: "warn", Detail: "not linked"}}, nil
 	})
@@ -339,9 +341,9 @@ func TestGoldenViews(t *testing.T) {
 // in words, and no escape reaches the screen.
 func TestViewsSayStatusInWords(t *testing.T) {
 	m := screenFixtures(t)[ScreenProjects].SetSize(80, 24)
-	m.errText = "remote: 503 Service Unavailable"
+	m.loadErr = "remote: 503 Service Unavailable"
 	view := Render(m)
-	if strings.Contains(view, "\x1b") || !strings.Contains(view, "Error: remote: 503") {
+	if strings.Contains(view, "\x1b") || !strings.Contains(view, "ERROR  Couldn't load") || !strings.Contains(view, "remote: 503") {
 		t.Fatalf("%q", view)
 	}
 }

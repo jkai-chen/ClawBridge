@@ -1,5 +1,6 @@
 ClawBridge · ws_1 › prj_1 › engineer  cloud
 1 Overview  2 Projects  3 Sessions  4 Inbox  5 Linear  6 Dispatcher  [7 Account]  8 Doctor
+
 ╭──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
 │ Account                                                                                                              │
 │                                                                                                                      │
@@ -15,6 +16,6 @@ ClawBridge · ws_1 › prj_1 › engineer  cloud
 │                                                                                                                      │
 │ Invites                                                                                                              │
 │   ada@example.com · inv_1 · pending · user · expires 2026-10-29 · prj_1=member                                       │
-│   bob@example.com · inv_2 · burnt · user · expires - · burnt after failed attempts at 2026-10-26                     │
+│   bob@example.com · inv_2 · burnt · user · expires - · burnt after failed attempts 2026-10-26                        │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
 a add a device · i invite · l label · x revoke · w confirm · t offer ownership · ↑↓ select · r reload · ? help · q quit

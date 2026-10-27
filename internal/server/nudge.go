@@ -5,6 +5,8 @@ import (
 	"log"
 	"sync"
 	"time"
+
+	"clawbridge/internal/watcher"
 )
 
 // A nudge applies one project's due claim markers soon after a confirm or
@@ -60,6 +62,27 @@ func (n *nudger) Nudge(workspace, project string) {
 	}
 }
 
+// Ticked marks pending each project whose tick's marker pass stopped with
+// rows left, so a nudge pass with its own deadline drains them without
+// waiting for a confirm or a release. It never blocks.
+func (n *nudger) Ticked(got any) {
+	ticks, _ := got.([]watcher.ProjectTick)
+	left := false
+	n.mu.Lock()
+	for _, t := range ticks {
+		if t.MarkersPending() {
+			n.pending[t.ProjectID], left = true, true
+		}
+	}
+	n.mu.Unlock()
+	if left {
+		select {
+		case n.wake <- struct{}{}:
+		default:
+		}
+	}
+}
+
 // run serves nudges until ctx ends.
 func (n *nudger) run(ctx context.Context) {
 	timer := time.NewTimer(time.Hour)
@@ -109,20 +132,27 @@ func (n *nudger) serve(ctx context.Context) time.Duration {
 			}
 			return wait
 		}
-		ran := false
+		ran, more := false, false
 		ok := n.flight.claim()
 		if ok {
 			func() {
 				defer n.flight.running.Store(false)
 				pass, cancel := context.WithTimeout(ctx, tickDeadline)
 				defer cancel()
-				n.markers.Markers(pass, pid)
+				out := n.markers.Markers(pass, pid)
 				ran = true
+				left, _ := out.(interface{ MarkersPending() bool })
+				more = left != nil && left.MarkersPending()
 			}()
 		}
 		n.mu.Lock()
 		if ran {
-			delete(n.pending, pid)
+			// A pass that stopped with rows left (its row limit or its
+			// clock) comes again in a minute, in its own budget, until
+			// the queue drains.
+			if !more {
+				delete(n.pending, pid)
+			}
 			n.last[pid] = n.now()
 		}
 		n.mu.Unlock()

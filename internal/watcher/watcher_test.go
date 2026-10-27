@@ -61,12 +61,14 @@ type fakeLinear struct {
 	events     []string
 	// dispatchIssues answers the dispatcher's issue facts read.
 	dispatchIssues map[string]any
+	// project, when set, is the Linear project issueA and issueB are in.
+	project string
 }
 
 func (f *fakeLinear) issue(id string) (linearprovider.IssueV2, error) {
 	switch id {
 	case issueA, issueB:
-		return linearprovider.IssueV2{Issue: linearprovider.Issue{ID: id, Identifier: "FIX-" + id[:1], Title: "title " + id[:1], TeamID: team}, ProjectKnown: true, DescriptionKnown: true, UpdatedAt: time.Now().UTC().Format(time.RFC3339Nano)}, nil
+		return linearprovider.IssueV2{Issue: linearprovider.Issue{ID: id, Identifier: "FIX-" + id[:1], Title: "title " + id[:1], TeamID: team, ProjectID: f.project}, ProjectKnown: true, DescriptionKnown: true, UpdatedAt: time.Now().UTC().Format(time.RFC3339Nano)}, nil
 	case issueOut:
 		return linearprovider.IssueV2{Issue: linearprovider.Issue{ID: id, Identifier: "OUT-1", TeamID: otherTeam}, ProjectKnown: true}, nil
 	}

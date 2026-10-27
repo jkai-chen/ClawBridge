@@ -63,6 +63,13 @@ type WatchCycle struct {
 	// MarkersReadOnly is set when the watcher's Linear profile cannot
 	// write, so claim markers wait for a client that can.
 	MarkersReadOnly bool `json:"markers_read_only,omitempty"`
+	// MarkersLeft counts the due rows this pass didn't apply, and
+	// MarkersStopped says why: limit, budget, time, deadline or error
+	// (empty when it applied every due row). MarkersCharged is the pass's
+	// net charge, after reconciling and refunding.
+	MarkersLeft    int    `json:"markers_left,omitempty"`
+	MarkersStopped string `json:"markers_stopped,omitempty"`
+	MarkersCharged int    `json:"markers_charged,omitempty"`
 }
 
 // watchLease is the fence every watch operation carries.
@@ -134,7 +141,8 @@ func (s *Service) Watch(ctx context.Context, scope bus.Request, opts WatchOption
 		if err = s.renewWatch(ctx, scope, lease, true); err != nil {
 			return err
 		}
-		cycle, err := s.watchCycle(ctx, scope, lease, calls, opts.MarkersOnly)
+		credit := watchConnectCalls
+		cycle, err := s.watchCycle(ctx, scope, lease, calls, opts.MarkersOnly, &credit)
 		if err != nil {
 			return err
 		}
@@ -143,6 +151,15 @@ func (s *Service) Watch(ctx context.Context, scope bus.Request, opts WatchOption
 				return err
 			}
 			if err = opts.Within(ctx, lease.fence(map[string]any{})); err != nil {
+				return err
+			}
+		}
+		if !opts.MarkersOnly {
+			// The hotfix (live/MARKER-PASS-HOTFIX.md): a tick's markers come
+			// last, in the time the other steps leave, so they can never
+			// starve the comment watch; nudge passes drain the rest in
+			// their own budget.
+			if err = s.applyDueMarkers(ctx, scope, lease, &cycle, calls, &credit); err != nil {
 				return err
 			}
 		}
@@ -227,11 +244,10 @@ func pollCost(before, after linearCalls, credit *int) int {
 	return spent
 }
 
-func (s *Service) watchCycle(ctx context.Context, scope bus.Request, lease *watchLease, calls func() linearCalls, markersOnly bool) (WatchCycle, error) {
+func (s *Service) watchCycle(ctx context.Context, scope bus.Request, lease *watchLease, calls func() linearCalls, markersOnly bool, credit *int) (WatchCycle, error) {
 	cycle := WatchCycle{Notified: []string{}}
-	credit := watchConnectCalls
-	if err := s.applyDueMarkers(ctx, scope, lease, &cycle, calls, &credit); err != nil || markersOnly {
-		return cycle, err
+	if markersOnly {
+		return cycle, s.applyDueMarkers(ctx, scope, lease, &cycle, calls, credit)
 	}
 	due, err := s.commentLedger(ctx, scope, "comment_watch_due", lease.fence(map[string]any{}))
 	if err != nil {
@@ -253,7 +269,7 @@ func (s *Service) watchCycle(ctx context.Context, scope bus.Request, lease *watc
 		}
 		before := calls()
 		report := s.pollIssue(ctx, scope, lease, issue, since)
-		spent := pollCost(before, calls(), &credit)
+		spent := pollCost(before, calls(), credit)
 		report["calls"] = min(spent, 1000)
 		lease.overBudget(s.cfg.Now(), spent, cycle.BudgetLimit)
 		out, err := s.commentLedger(ctx, scope, "comment_watch_report", lease.fence(report))
@@ -291,6 +307,39 @@ func (s *Service) watchCycle(ctx context.Context, scope bus.Request, lease *watc
 
 // applyDueMarkers applies the claim markers the bus says are due, under
 // the lease; markers come before comment polls.
+// The marker pass's bounds (the hotfix, live/MARKER-PASS-HOTFIX.md). It
+// runs last in a tick, and alone in a nudge. It takes at most
+// markerPassRows rows; it starts none after markerPassTime, nor with less
+// than markerRowRoom left; and it runs under a context that ends
+// markerReserve before its caller's deadline, so a row in flight is cut
+// there and the lease's release and the tick's record keep that time. In a
+// nudge's own 20 s: 8 s + one slow row (7 s seen live, 9 s at most) + 3 s
+// = 20 s. A row cut short settles uncertain and stays due.
+const markerPassRows = 3
+
+// The pass's clock bounds are variables only so tests can shrink them.
+var (
+	markerPassTime      = 8 * time.Second
+	markerRowRoom       = 6 * time.Second
+	markerReserve       = 3 * time.Second
+	markerSettleTimeout = 2 * time.Second
+)
+
+// tooLate reports whether ctx ends within room: no time to start a row.
+func tooLate(ctx context.Context, room time.Duration) bool {
+	deadline, ok := ctx.Deadline()
+	return ok && time.Until(deadline) < room
+}
+
+func isConflict(err error) bool {
+	var coded interface{ Code() string }
+	return errors.As(err, &coded) && coded.Code() == "conflict"
+}
+
+// applyDueMarkers is the marker pass: a few due rows, under one held
+// operation (one connection, one binding proof), each reconciled with what
+// it spent. Only a lost lease fails the cycle: a pass that runs out of time
+// or meets an error stops, refunds the rows it didn't start, and says why.
 func (s *Service) applyDueMarkers(ctx context.Context, scope bus.Request, lease *watchLease, cycle *WatchCycle, calls func() linearCalls, credit *int) error {
 	if s.cfg.Connections == nil {
 		return nil
@@ -299,27 +348,76 @@ func (s *Service) applyDueMarkers(ctx context.Context, scope bus.Request, lease 
 		cycle.MarkersReadOnly = true
 		return nil
 	}
-	due, err := s.commentLedger(ctx, scope, "marker_due", lease.fence(map[string]any{}))
+	due, err := s.commentLedger(ctx, scope, "marker_due", lease.fence(map[string]any{"limit": markerPassRows}))
 	if err != nil {
-		var coded interface{ Code() string }
-		if errors.As(err, &coded) && coded.Code() == "conflict" {
+		if isConflict(err) {
 			return err
 		}
+		cycle.MarkersStopped = "error"
 		return nil
 	}
 	markers, _ := due["markers"].([]any)
-	for _, raw := range markers {
+	cycle.MarkersLeft = number(due["left"])
+	cycle.MarkersStopped, _ = due["stopped"].(string)
+	if len(markers) == 0 {
+		return nil
+	}
+	pass := ctx
+	if deadline, ok := ctx.Deadline(); ok {
+		var cancel context.CancelFunc
+		pass, cancel = context.WithDeadline(ctx, deadline.Add(-markerReserve))
+		defer cancel()
+	}
+	held, release := s.hold()
+	defer release()
+	start := s.cfg.Now()
+	// A budget stop stands: another pass this hour would find no budget,
+	// so it must not read as rows a nudge can take now.
+	stopped := func(why string) {
+		if cycle.MarkersStopped != "budget" {
+			cycle.MarkersStopped = why
+		}
+	}
+	stop := func(i int, why string) {
+		// The rows not started give their charge back now.
+		for _, raw := range markers[i:] {
+			m, _ := raw.(map[string]any)
+			refund := map[string]any{"assignment_id": m["assignment_id"], "phase": m["phase"], "calls": 0, "charged": m["charged"]}
+			_, _ = s.commentLedger(ctx, scope, "marker_spent", lease.fence(refund))
+		}
+		cycle.MarkersLeft += len(markers) - i
+		stopped(why)
+	}
+	for i, raw := range markers {
+		switch {
+		case i > 0 && s.cfg.Now().Sub(start) >= markerPassTime:
+			stop(i, "time")
+			return nil
+		case pass.Err() != nil || tooLate(pass, markerRowRoom):
+			stop(i, "deadline")
+			return nil
+		}
 		m, _ := raw.(map[string]any)
 		assignment, _ := m["assignment_id"].(string)
 		phase, _ := m["phase"].(string)
 		if err = s.renewWatch(ctx, scope, lease, false); err != nil {
-			return err
+			if isConflict(err) {
+				return err
+			}
+			stop(i, "error")
+			return nil
 		}
 		before, reads := calls(), s.stateReads.Load()
-		cycle.Markers = append(cycle.Markers, s.ApplyMarker(ctx, scope, assignment, phase, lease.fence(map[string]any{})))
-		if err = s.markerSpent(ctx, scope, lease, m, before, calls(), s.stateReads.Load()-reads, credit); err != nil {
+		cycle.Markers = append(cycle.Markers, held.ApplyMarker(pass, scope, assignment, phase, lease.fence(map[string]any{})))
+		spent, err := s.markerSpent(ctx, scope, lease, m, before, calls(), s.stateReads.Load()-reads, credit)
+		cycle.MarkersCharged += spent
+		if err != nil {
 			return err
 		}
+	}
+	if pass.Err() != nil {
+		// The last row was cut.
+		stopped("deadline")
 	}
 	return nil
 }
@@ -329,20 +427,22 @@ func (s *Service) applyDueMarkers(ctx context.Context, scope bus.Request, lease 
 // provider that cannot count reports nothing, so its charge stands. Only a
 // lost lease stops the cycle; an authority without marker_spent (older,
 // or a member's client watcher) keeps the charge.
-func (s *Service) markerSpent(ctx context.Context, scope bus.Request, lease *watchLease, row map[string]any, before, after linearCalls, reads int64, credit *int) error {
+// It returns the row's net charge: what it spent once reconciled, or its
+// up-front charge when it can't be.
+func (s *Service) markerSpent(ctx context.Context, scope bus.Request, lease *watchLease, row map[string]any, before, after linearCalls, reads int64, credit *int) (int, error) {
 	charged, ok := row["charged"]
 	if !ok || !after.known {
-		return nil
+		return number(charged), nil
 	}
-	spent := pollCost(before, after, credit) + int(reads)
-	report := map[string]any{"assignment_id": row["assignment_id"], "phase": row["phase"], "calls": min(spent, 1000), "charged": charged}
+	spent := min(pollCost(before, after, credit)+int(reads), 1000)
+	report := map[string]any{"assignment_id": row["assignment_id"], "phase": row["phase"], "calls": spent, "charged": charged}
 	if _, err := s.commentLedger(ctx, scope, "marker_spent", lease.fence(report)); err != nil {
-		var coded interface{ Code() string }
-		if errors.As(err, &coded) && coded.Code() == "conflict" {
-			return err
+		if isConflict(err) {
+			return 0, err
 		}
+		return number(charged), nil
 	}
-	return nil
+	return spent, nil
 }
 
 func (c *WatchCycle) hold(issue, reason string) {

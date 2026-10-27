@@ -57,6 +57,9 @@
   key (and a previous one still set), each owner's key and agent (last seen, `provider_auth`, a failed newer test, a
   crash loop agentd reported, a flagged credential), whether agentd is calling and when its launcher token expires, and
   the live agents against the cap with the host's memory headroom (docs/dispatcher.md).
+- **Onboarding offers the dispatcher.** The guided setup's last step offers a hosted project's owner the dispatcher in
+  the rules engine, with what it does and the `dispatcher enable` preview; it stays off unless you say yes, and
+  `dispatcher disable` turns it off any time.
 
 ## Running your own server on AWS
 

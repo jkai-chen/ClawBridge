@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -174,5 +175,100 @@ func TestGuidedOnboardingWithoutAgentsOffersCommands(t *testing.T) {
 		if !strings.Contains(o.out.String(), want) {
 			t.Fatalf("output lacks %q:\n%s", want, o.out.String())
 		}
+	}
+}
+
+// G5: onboarding's last step offers a hosted project's owner the dispatcher
+// in the rules engine, says what it does and how to turn it off, and turns
+// it on only on a yes, with the revision it showed. Anything else is a
+// skip or a failure with the commands for later; nothing is written.
+func TestOnboardingOffersTheDispatcher(t *testing.T) {
+	dir := t.TempDir()
+	cloud, local := filepath.Join(dir, "cloud.toml"), filepath.Join(dir, "local.toml")
+	if err := os.WriteFile(cloud, []byte("mode = \"cloud\"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(local, []byte("mode = \"local\"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	old := wizardDispatcher
+	t.Cleanup(func() { wizardDispatcher = old })
+	for name, c := range map[string]struct {
+		path           string
+		enabled        bool
+		previewErr     error
+		confirmErr     error
+		answer         bool
+		outcome, later string
+		calls          []string
+		shownOneLiner  bool
+	}{
+		"local":      {path: local, outcome: "skipped: the dispatcher runs on a hosted server"},
+		"already on": {path: cloud, enabled: true, outcome: "already on", calls: []string{"show"}},
+		"not owner":  {path: cloud, previewErr: errors.New("project owner permission required"), outcome: "skipped: only a project owner", later: "enable --expected-revision 3 --confirm", calls: []string{"show", "enable --engine rules --expected-revision 3"}},
+		"unlinked":   {path: cloud, previewErr: errors.New("link the task board before enabling the dispatcher"), outcome: "skipped: link the task board first", later: "--expected-revision 3", calls: []string{"show", "enable --engine rules --expected-revision 3"}},
+		"session":    {path: cloud, previewErr: errors.New("the dispatcher is turned on or off by the project owner, not from a session"), outcome: "skipped: turn it on in your own terminal", later: "--expected-revision 3", calls: []string{"show", "enable --engine rules --expected-revision 3"}},
+		"declined":   {path: cloud, outcome: "offered, left off", later: "enable --expected-revision 3 --confirm", calls: []string{"show", "enable --engine rules --expected-revision 3"}, shownOneLiner: true},
+		"enabled":    {path: cloud, answer: true, outcome: "on (rules engine); turn it off with clawbridge dispatcher disable", later: "model mode", calls: []string{"show", "enable --engine rules --expected-revision 3", "enable --engine rules --expected-revision 3 --confirm"}, shownOneLiner: true},
+		"conflict":   {path: cloud, answer: true, confirmErr: errors.New("the dispatcher policy changed: current revision is 4"), outcome: "failed: the dispatcher policy changed", later: "--expected-revision 3 --confirm", calls: []string{"show", "enable --engine rules --expected-revision 3", "enable --engine rules --expected-revision 3 --confirm"}, shownOneLiner: true},
+	} {
+		var calls []string
+		wizardDispatcher = func(_ context.Context, path string, args []string) (map[string]any, error) {
+			if path != c.path {
+				t.Fatal(name, "another profile:", path)
+			}
+			calls = append(calls, strings.Join(args, " "))
+			switch {
+			case args[0] == "show":
+				return map[string]any{"enabled": c.enabled, "revision": 3}, nil
+			case strings.HasSuffix(strings.Join(args, " "), "--confirm"):
+				return map[string]any{"enabled": true}, c.confirmErr
+			}
+			return map[string]any{"coordinator_before": "lead", "domains": []any{"all-work"}}, c.previewErr
+		}
+		var out bytes.Buffer
+		var outcome, later string
+		asked := false
+		yes := func(q string) (bool, error) { asked = true; return c.answer, nil }
+		record := func(n, o, l string) { outcome, later = o, l }
+		failed := func(e error) string { return "failed: " + e.Error() }
+		if err := offerDispatcher(context.Background(), c.path, &out, yes, record, failed); err != nil {
+			t.Fatal(name, err)
+		}
+		if !strings.HasPrefix(outcome, c.outcome) || !strings.Contains(later, c.later) || strings.Join(calls, ",") != strings.Join(c.calls, ",") || asked != c.shownOneLiner {
+			t.Fatalf("%s: %q later %q calls %v asked %v", name, outcome, later, calls, asked)
+		}
+		if c.shownOneLiner != strings.Contains(out.String(), "clawbridge dispatcher disable turns it off any time") || c.shownOneLiner != strings.Contains(out.String(), "all-work") {
+			t.Fatalf("%s: %s", name, out.String())
+		}
+	}
+	// A cancelled question stops onboarding, as every step's does.
+	wizardDispatcher = func(context.Context, string, []string) (map[string]any, error) {
+		return map[string]any{"enabled": false, "revision": 0}, nil
+	}
+	stop := errors.New("cancelled")
+	if err := offerDispatcher(context.Background(), cloud, io.Discard, func(string) (bool, error) { return false, stop }, func(string, string, string) {}, func(e error) string { return e.Error() }); !errors.Is(err, stop) {
+		t.Fatal(err)
+	}
+}
+
+// The step's commands, for real on a local store: show reads the policy,
+// and the enable preview's refusal for an unlinked task board is one the
+// step turns into a skip.
+func TestWizardDispatcherRunsTheCommands(t *testing.T) {
+	isolated(t)
+	path := filepath.Join(t.TempDir(), "client.toml")
+	for _, args := range [][]string{{"setup", "--local", "--workspace", "w", "--project", "p"}, {"project", "create", "p"}} {
+		if err := Run(context.Background(), append([]string{"--client-config", path}, args...), io.Discard, io.Discard); err != nil {
+			t.Fatal(args, err)
+		}
+	}
+	shown, err := runWizardDispatcher(context.Background(), path, []string{"show"})
+	if err != nil || shown["enabled"] != false || fmt.Sprint(shown["revision"]) != "0" {
+		t.Fatal(shown, err)
+	}
+	_, err = runWizardDispatcher(context.Background(), path, []string{"enable", "--engine", "rules", "--expected-revision", "0"})
+	if err == nil || !strings.Contains(err.Error(), dispatcherSkips[1].text) {
+		t.Fatal("the unlinked refusal changed:", err)
 	}
 }

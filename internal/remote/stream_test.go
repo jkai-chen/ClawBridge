@@ -111,7 +111,7 @@ func (w *waits) wait(ctx context.Context, d time.Duration) error {
 // never in the URL, and neither does the instance.
 func TestStreamEventsByeAndRevoked(t *testing.T) {
 	f := &fakeStreamServer{answers: []func(http.ResponseWriter){
-		sse("id: 1\nevent: message\ndata: {\"recipient_seq\":1}\n\n", ": ping\n\n", "event: status\ndata: {\"unacked\":1}\n\n", "event: bye\ndata: {}\n\n"),
+		sse("id: 1\nevent: message\ndata: {\"recipient_seq\":1}\n\n", ": ping\n\n", "id: 9\ndata: {\"stray\":1}\n\n", "event: status\ndata: {\"unacked\":1}\n\n", "event: bye\ndata: {}\n\n"),
 		sse("event: revoked\ndata: {}\n\n"),
 	}}
 	client := streamClient(t, f)
@@ -198,18 +198,21 @@ func TestStreamTicketRefused(t *testing.T) {
 			t.Fatal(code, err)
 		}
 	}
-	f := &fakeStreamServer{ticketStatus: 429}
-	client := streamClient(t, f)
-	ctx, cancel := context.WithCancel(context.Background())
-	w := &waits{}
-	stop := func(c context.Context, d time.Duration) error {
-		if len(w.d) == 2 {
-			cancel()
+	for _, code := range []int{408, 409, 425, 429, 503} {
+		f := &fakeStreamServer{ticketStatus: code}
+		client := streamClient(t, f)
+		ctx, cancel := context.WithCancel(context.Background())
+		w := &waits{}
+		stop := func(c context.Context, d time.Duration) error {
+			if len(w.d) == 2 {
+				cancel()
+			}
+			return w.wait(c, d)
 		}
-		return w.wait(c, d)
-	}
-	if err := client.Stream(ctx, streamScope, StreamOptions{Wait: stop}, func(StreamEvent) error { return nil }); !errors.Is(err, context.Canceled) || len(w.d) < 2 {
-		t.Fatal(err, w.d)
+		if err := client.Stream(ctx, streamScope, StreamOptions{Wait: stop}, func(StreamEvent) error { return nil }); !errors.Is(err, context.Canceled) || len(w.d) < 2 {
+			t.Fatal(code, err, w.d)
+		}
+		cancel()
 	}
 }
 

@@ -22,7 +22,9 @@ candidate evidence remains dated in the archive.
 On a server with the message stream, the watcher is woken by the server as soon
 as the session's mail changes, and still checks once a minute in case a wake was
 missed. Against an older server, or in local mode, it polls at a five-second
-default interval and says `stream_unavailable` once on stderr. The agent fetches
+default interval and says `stream_unavailable` once on stderr. Each watcher, like
+each open TUI and each agent, holds one of the 8 streams an account may have open
+on a server; past that, a new one waits and retries. The agent fetches
 actual message content with `inbox` and marks it read after processing. A
 notification or accepted queue request is not a delivery/read receipt.
 

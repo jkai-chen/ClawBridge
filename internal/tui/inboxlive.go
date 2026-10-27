@@ -25,14 +25,22 @@ type InboxChangedMsg struct{}
 // executor can stream; start begins following the stream, once.
 type inboxLive struct {
 	wake  chan struct{}
+	ended chan struct{}
 	start sync.Once
 }
+
+// InboxLiveEndedMsg says the stream ended for good: an older server, or
+// the server ended it. The Inbox reloads on r from then on.
+type InboxLiveEndedMsg struct{}
+
+// liveOffNote is what the TUI says when its stream ends for good.
+const liveOffNote = "Live inbox updates are off (this server has no message stream, or it ended it); r refreshes."
 
 func newInboxLive(cfg Config) *inboxLive {
 	if _, ok := cfg.Executor.(streamer); !ok || cfg.Session == "" || cfg.Instance == "" {
 		return nil
 	}
-	return &inboxLive{wake: make(chan struct{}, 1)}
+	return &inboxLive{wake: make(chan struct{}, 1), ended: make(chan struct{})}
 }
 
 // inboxLiveCmd starts following the stream, the first time, and waits for
@@ -61,21 +69,28 @@ func (m Model) inboxLiveCmd() tea.Cmd {
 				}
 				return nil
 			})
+			if ctx.Err() == nil {
+				close(live.ended)
+			}
 		}()
 	})
-	return waitInboxChange(live.wake)
+	return waitInboxChange(live)
 }
 
-func waitInboxChange(wake <-chan struct{}) tea.Cmd {
+func waitInboxChange(live *inboxLive) tea.Cmd {
 	return func() tea.Msg {
-		<-wake
-		return InboxChangedMsg{}
+		select {
+		case <-live.wake:
+			return InboxChangedMsg{}
+		case <-live.ended:
+			return InboxLiveEndedMsg{}
+		}
 	}
 }
 
 // inboxChanged reloads a shown, idle Inbox and waits for the next change.
 func (m Model) inboxChanged() (Model, tea.Cmd) {
-	next := waitInboxChange(m.inboxLive.wake)
+	next := waitInboxChange(m.inboxLive)
 	if m.screen != ScreenInbox || m.loading || m.inputMode != inputNone || m.confirming {
 		return m, next
 	}

@@ -225,11 +225,11 @@ func doctorView(v any) (clirender.Doc, bool) {
 		case doctor.Fail:
 			level = clirender.Fail
 		}
-		text := firstNonEmpty(c.Title, c.ID)
-		if c.Message != "" {
-			text += ": " + c.Message
+		line, detail := doctorLine(c)
+		d.Status(level, line)
+		if detail != "" {
+			d.Detail(detail)
 		}
-		d.Status(level, text)
 		if c.Path != "" && c.Status != doctor.Pass {
 			d.Detail(c.Path)
 		}

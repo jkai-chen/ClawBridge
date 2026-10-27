@@ -136,6 +136,10 @@
   read it. `invite list`, `device list`, `user list` and `owner show` are tables, with a device going dormant marked
   "dormant in N days". Times are relative ("4 min ago", "in 2 days"), with UTC where the exact time matters, through one
   formatter that the TUI uses too. `--json` is unchanged.
+- **`doctor` says how each check came out, in plain words (O3).** A check's line now reads as an answer ("Your
+  ClawBridge settings can't be used.", "This agent's ClawBridge connection is missing or can't start.", "Your workspace answers."),
+  with its details (counts, paths, versions) on the line under it and what to do after `→`. Checks whose message
+  already read that way keep it. `--json` is unchanged, check IDs included.
 
 # ClawBridge v0.3.5 (unreleased)
 

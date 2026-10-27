@@ -540,12 +540,18 @@ func (m Model) linearKey(key string) (Model, tea.Cmd) {
 		return m.linearLink(false)
 	case "preview":
 		// Agents close a project's issues only once its name is typed.
-		m.linear.typing = nil
-		for _, l := range m.linear.lines {
-			if l.Set == linearboard.ClosesAgent {
-				m.linear.typing = append(m.linear.typing, l)
-			}
+		// The names come from what the link will send, checked against a
+		// preview of exactly that (R114-M1).
+		if m.loading {
+			m.actionErr = "wait for the preview to finish, then press Enter"
+			return m, nil
 		}
+		typing, err := m.linearClosesToType()
+		if err != nil {
+			m.actionErr = err.Error()
+			return m, nil
+		}
+		m.linear.typing = typing
 		if len(m.linear.typing) > 0 {
 			m.inputMode, m.draft, m.actionErr = inputLinearClosesName, "", ""
 			return m, nil
@@ -577,6 +583,10 @@ func closesWord(who string) string {
 // between people and agents, and previews again so the line, and the
 // minimal policy's consequences, come from the server.
 func (m Model) linearToggleCloses() (Model, tea.Cmd) {
+	if m.loading {
+		m.actionErr = "wait for the preview to finish"
+		return m, nil
+	}
 	if m.linear.bindingV2 == nil || m.linear.teamBoard || m.selected < 0 || m.selected >= len(m.linear.lines) {
 		return m, nil
 	}
@@ -599,6 +609,33 @@ func (m Model) linearToggleCloses() (Model, tea.Cmd) {
 	closes[l.LinearProject] = next
 	m.linear.closes = closes
 	return m.linearLink(false)
+}
+
+// linearClosesToType is every project the link would let agents close
+// that they don't already: each needs its name typed. An answer the shown
+// preview doesn't reflect means the preview is stale, and nothing goes.
+func (m Model) linearClosesToType() ([]linearboard.ClosesLine, error) {
+	lines := map[string]linearboard.ClosesLine{}
+	for _, l := range m.linear.lines {
+		lines[l.LinearProject] = l
+	}
+	var out []linearboard.ClosesLine
+	for _, l := range m.linear.lines {
+		want := m.linear.closes[l.LinearProject]
+		switch {
+		case want == linearboard.ClosesAgent && l.Set == linearboard.ClosesAgent:
+			out = append(out, l)
+		case want == linearboard.ClosesAgent && l.Closes == "agents":
+		case want == linearboard.ClosesAgent || l.Set != "" && l.Set != want:
+			return nil, errors.New("the preview is out of date; press c again or reopen the link review. Nothing was changed")
+		}
+	}
+	for id, who := range m.linear.closes {
+		if _, shown := lines[id]; !shown && who == linearboard.ClosesAgent {
+			return nil, errors.New("the preview is out of date; reopen the link review. Nothing was changed")
+		}
+	}
+	return out, nil
 }
 
 // linearClosesTyped checks the name typed for the next project agents

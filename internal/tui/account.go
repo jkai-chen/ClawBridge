@@ -30,6 +30,8 @@ type accountRow struct {
 	label  string
 	status string
 	detail string
+	// used is a device's last use, a column of its own.
+	used string
 }
 
 // shownDeviceEvents is how many device events the banner lists: the
@@ -59,6 +61,10 @@ func (s accountState) find(kind, id string) accountRow {
 }
 
 type accountState struct {
+	// projects are the workspace's projects, for the invite checklist
+	// (U54); invite is that checklist while it's open.
+	projects  []ProjectRow
+	invite    *inviteDraft
 	principal string
 	mainOwner bool
 	devices   []accountRow // this user's own, and the CI devices they made
@@ -207,8 +213,16 @@ func (m Model) accountRefresh() (Model, tea.Cmd) {
 		if err != nil {
 			return accountLoadedMsg{request: requestID, err: err}
 		}
+		// U43: grants by project slug; best effort, an ID stays an ID.
+		slugs := map[string]string{}
+		if projects, e := read("list_projects", map[string]any{}); e == nil {
+			s.projects = projectRows(records(projects["projects"]))
+			for _, p := range s.projects {
+				slugs[p.ID] = p.Slug
+			}
+		}
 		for _, i := range records(invites["invites"]) {
-			s.invites = append(s.invites, inviteRow(now, i))
+			s.invites = append(s.invites, inviteRow(now, i, slugs))
 		}
 		if s.mainOwner {
 			users, err := read("user_list", map[string]any{})
@@ -225,7 +239,7 @@ func (m Model) accountRefresh() (Model, tea.Cmd) {
 					roles = append(roles, text(r, "slug")+"="+text(r, "role"))
 				}
 				devices := records(u["devices"])
-				s.members = append(s.members, accountRow{kind: "user", id: email, detail: fmt.Sprintf("%s · %d devices · invited by %s", firstNonempty(strings.Join(roles, ", "), "no roles"), len(devices), firstNonempty(text(u, "invited_by"), "-"))})
+				s.members = append(s.members, accountRow{kind: "user", id: email, detail: firstNonempty(strings.Join(roles, ", "), "no roles") + " · " + plural(len(devices), "device", "devices") + " · invited by " + firstNonempty(text(u, "invited_by"), "-")})
 				for _, d := range devices {
 					s.members = append(s.members, deviceRow(now, d))
 				}
@@ -237,7 +251,8 @@ func (m Model) accountRefresh() (Model, tea.Cmd) {
 
 func deviceRow(now time.Time, d map[string]any) accountRow {
 	kind := text(d, "kind")
-	detail := "added " + firstNonempty(clirender.When(now, text(d, "created_at")), "-") + " · last used " + firstNonempty(clirender.When(now, text(d, "last_used_at")), "never")
+	used := "last used " + firstNonempty(clirender.When(now, text(d, "last_used_at")), "never")
+	detail := "added " + firstNonempty(clirender.When(now, text(d, "created_at")), "-")
 	if kind == "ci" {
 		detail = "CI · " + detail + " · expires " + firstNonempty(clirender.When(now, text(d, "expires_at")), "-")
 	}
@@ -249,15 +264,18 @@ func deviceRow(now time.Time, d map[string]any) accountRow {
 	} else if d["dormant_soon"] == true {
 		detail += " · goes dormant " + due + " unless used or confirmed (w)"
 	}
-	return accountRow{kind: "device", id: text(d, "device_id"), owner: text(d, "principal"), label: text(d, "label"), status: text(d, "status"), detail: detail}
+	return accountRow{kind: "device", id: text(d, "device_id"), owner: text(d, "principal"), label: text(d, "label"), status: text(d, "status"), detail: detail, used: used}
 }
 
-func inviteRow(now time.Time, i map[string]any) accountRow {
+func inviteRow(now time.Time, i map[string]any, slugs map[string]string) accountRow {
 	grants := []string{}
 	for project, role := range mapData(i["grants"]) {
-		grants = append(grants, fmt.Sprintf("%s=%v", project, role))
+		grants = append(grants, fmt.Sprintf("%s=%v", firstNonempty(slugs[project], project), role))
 	}
-	detail := text(i, "purpose") + " · expires " + firstNonempty(clirender.When(now, text(i, "expires_at")), "-")
+	detail := "expires " + firstNonempty(clirender.When(now, text(i, "expires_at")), "-")
+	if p := text(i, "purpose"); p != "" && p != "user" {
+		detail = p + " · " + detail
+	}
 	if len(grants) > 0 {
 		detail += " · " + strings.Join(sortedStrings(grants), ", ")
 	}
@@ -522,6 +540,16 @@ func (m Model) accountSubmit() (Model, tea.Cmd) {
 		}
 		return m.accountDo(accountAction{op: "device_label", args: map[string]any{"device_id": id, "label": draft}})
 	case inputAccountInvite:
+		if !strings.Contains(draft, "=") && !strings.Contains(strings.TrimSpace(draft), " ") {
+			// U54: the email, then a checklist of projects and roles.
+			if !strings.Contains(draft, "@") {
+				m.status = noteStatus("type the invitee's email")
+				return m, nil
+			}
+			m.inputMode, m.draft = inputNone, ""
+			m.account.invite = &inviteDraft{email: strings.ToLower(strings.TrimSpace(draft)), roles: map[string]string{}}
+			return m, nil
+		}
 		email, grants, err := parseInviteDraft(draft)
 		if err != nil {
 			m.status = noteStatus(err.Error())
@@ -563,6 +591,9 @@ func renderAccount(m Model) string {
 	var b strings.Builder
 	b.WriteString(title(ScreenAccount))
 	b.WriteString("\n\n")
+	if m.account.invite != nil {
+		return b.String() + renderInvite(m)
+	}
 	if m.account.code != "" {
 		modal := warnStyle.Render("Invite code (shown once, never again)") + "\n\n  " + accentStyle.Render(terminalText(m.account.code)) + "\n\n" +
 			terminalText(m.account.codeNote) + "\nCopy it now. Enter or Esc closes this, and the code is gone."
@@ -650,12 +681,19 @@ func renderAccount(m Model) string {
 		b.WriteString(out + "\n")
 		index++
 	}
-	device := func(r accountRow, indent string) {
-		this := ""
-		if r.id == m.cfg.DeviceID && r.id != "" {
-			this = " (this device)"
+	// U43: aligned columns; the ID and the rest only on the selected row.
+	selectedDetail := func(text string) {
+		if index-1 == m.selected {
+			b.WriteString(mutedStyle.Render("      "+terminalText(text)) + "\n")
 		}
-		line(r, fmt.Sprintf("%s%s · %s%s · %s · %s", indent, r.label, r.id, this, r.status, r.detail))
+	}
+	device := func(r accountRow, indent string) {
+		name := r.label
+		if r.id == m.cfg.DeviceID && r.id != "" {
+			name += " (this device)"
+		}
+		line(r, indent+padRight(clip(name, 30), 31)+padRight(r.status, 10)+r.used)
+		selectedDetail(r.id + " · " + r.detail)
 	}
 	b.WriteString("\nYour devices\n")
 	if len(m.account.devices) == 0 {
@@ -671,7 +709,7 @@ func renderAccount(m Model) string {
 		}
 		for _, r := range m.account.members {
 			if r.kind == "user" {
-				line(r, r.id+" · "+r.detail)
+				line(r, padRight(clip(r.id, 30), 31)+r.detail)
 			} else {
 				device(r, "    ")
 			}
@@ -682,7 +720,80 @@ func renderAccount(m Model) string {
 		b.WriteString(mutedStyle.Render("  none") + "\n")
 	}
 	for _, r := range m.account.invites {
-		line(r, fmt.Sprintf("%s · %s · %s · %s", r.owner, r.id, r.status, r.detail))
+		line(r, padRight(clip(r.owner, 30), 31)+padRight(r.status, 10)+r.detail)
+		selectedDetail(r.id)
 	}
 	return strings.TrimRight(b.String(), "\n")
+}
+
+// inviteDraft is the invite checklist: the email typed, then a role per
+// project (U54).
+type inviteDraft struct {
+	email  string
+	roles  map[string]string // project slug -> role
+	cursor int
+}
+
+// inviteRoles are the roles Space cycles through; "" grants nothing.
+var inviteRoles = []string{"", "reader", "member", "lead", "owner"}
+
+// inviteKey runs the checklist: ↑↓ a project, Space its role, Enter the
+// invite, Esc back to the email.
+func (m Model) inviteKey(key string) (Model, tea.Cmd) {
+	d := m.account.invite
+	switch key {
+	case "up", "k":
+		d.cursor = max(0, d.cursor-1)
+	case "down", "j":
+		d.cursor = min(max(0, len(m.account.projects)-1), d.cursor+1)
+	case " ":
+		if d.cursor < len(m.account.projects) {
+			slug := m.account.projects[d.cursor].Slug
+			for i, r := range inviteRoles {
+				if r == d.roles[slug] {
+					d.roles[slug] = inviteRoles[(i+1)%len(inviteRoles)]
+					break
+				}
+			}
+			if d.roles[slug] == "" {
+				delete(d.roles, slug)
+			}
+		}
+	case "esc":
+		m.account.invite = nil
+		m.inputMode, m.draft = inputAccountInvite, d.email
+	case "enter":
+		grants := map[string]any{}
+		for slug, role := range d.roles {
+			grants[slug] = role
+		}
+		m.account.invite = nil
+		return m.accountDo(accountAction{op: "invite_create", args: map[string]any{"email": d.email, "purpose": "user", "grants": grants}})
+	}
+	return m, nil
+}
+
+// renderInvite is the checklist.
+func renderInvite(m Model) string {
+	d := m.account.invite
+	var b strings.Builder
+	b.WriteString("Invite " + terminalText(d.email) + "\n")
+	if len(m.account.projects) == 0 {
+		b.WriteString(mutedStyle.Render("No projects to grant yet; the invite lets them in, and they wait for a project.") + "\n")
+		return b.String()
+	}
+	b.WriteString(mutedStyle.Render("Space sets a project's role (reader, member, lead, owner, none); Enter sends the invite.") + "\n")
+	for i, p := range m.account.projects {
+		prefix := "  "
+		if i == d.cursor {
+			prefix = accentStyle.Render("› ")
+		}
+		role := firstNonempty(d.roles[p.Slug], "—")
+		b.WriteString(prefix + padRight("["+role+"]", 10) + terminalText(p.Slug))
+		if name := terminalText(p.Name); name != "" && name != p.Slug {
+			b.WriteString(mutedStyle.Render("  " + name))
+		}
+		b.WriteString("\n")
+	}
+	return b.String()
 }

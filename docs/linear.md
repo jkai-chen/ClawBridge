@@ -1046,7 +1046,7 @@ clawbridge linear link --team T --default-team T --linear-project P \
 - If setting who closes fails after the binding, the binding stays, the project
   is closed by people, and the command to re-run is printed.
 - **In the TUI** (the Linear view, `5`), the link review lists who closes each
-  project. Enter keeps the rules as they are, so people by default; `c` switches
+  project. Enter keeps the rules as they are, so people by default; Space switches
   the highlighted project between people and agents, and previews again. Letting
   agents close then asks for the project's name, typed in the TUI (`via: tui`).
   The TUI refuses any change of who closes when it's bound to a session, and
@@ -1652,7 +1652,11 @@ the bound team/project fails clearly. Missing credentials, expired authorization
 or provider outages do not silently open a browser or substitute another account.
 
 Logout removes the selected personal credential; unlink removes the shared board
-mapping through an authorized project owner/lead. Those are separate actions.
+mapping through an authorized project owner/lead. Those are separate actions. In
+the TUI, `x` asks y/N before logging a connection out, and unlinking takes the
+project's slug typed, since it changes the board for everyone in the project.
+The Linear view names its step ("Link a board · step 2 of 5") and the board in
+words; `d` shows the raw IDs and the binding's revision.
 The binding retains a revision so concurrent changes fail rather than overwriting
 another administrator's selection. An outage leaves the mapping intact.
 

@@ -89,7 +89,7 @@ var (
 	kEnter = tea.KeyMsg{Type: tea.KeyEnter}
 	kSpace = tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(" ")}
 	kDown  = tea.KeyMsg{Type: tea.KeyDown}
-	kC     = tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("c")}
+	kC     = tea.KeyMsg{Type: tea.KeySpace} // U35: Space switches who closes
 	kEsc   = tea.KeyMsg{Type: tea.KeyEsc}
 )
 
@@ -121,10 +121,17 @@ func TestLinearReviewEnterKeepsPeople(t *testing.T) {
 	source := &closesLinearSource{agents: map[string]bool{}}
 	m := closesPreview(t, source)
 	view := Render(m)
-	for _, want := range []string{"Who closes each project's issues? Enter keeps people", "Payments · " + closesP + " · closes: people (default)", `Web\x1b[31m`} {
+	for _, want := range []string{"Who closes each project's issues? Enter keeps people", "Payments · closes: people (default)", `Web\x1b[31m`, "Link a board · step 5 of 5: review"} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("review missing %q:\n%s", want, view)
 		}
+	}
+	// U32: the IDs only with d.
+	if strings.Contains(view, closesP) {
+		t.Fatalf("the review shows a raw ID:\n%s", view)
+	}
+	if shown := Render(linearKeys(t, m, kType("d"))); !strings.Contains(shown, "Payments · closes: people (default) · "+closesP) {
+		t.Fatalf("d didn't show the IDs:\n%s", shown)
 	}
 	m = linearKeys(t, m, kEnter)
 	link := source.last("link")
@@ -133,7 +140,7 @@ func TestLinearReviewEnterKeepsPeople(t *testing.T) {
 	}
 }
 
-// c switches the highlighted project to agents and previews again; Enter
+// Space switches the highlighted project to agents and previews again; Enter
 // then asks for that project's name, and only the right name confirms,
 // as tui.
 func TestLinearReviewAgentsNeedsTheName(t *testing.T) {

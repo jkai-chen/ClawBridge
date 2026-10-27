@@ -52,6 +52,10 @@ type LinearData struct {
 	ClosesOutcomes []linearboard.ClosesOutcome
 }
 type linearState struct {
+	// logoutAsk is the connection an x is waiting to log out, until y.
+	logoutAsk string
+	// showIDs shows the raw Linear IDs (d).
+	showIDs              bool
 	step                 string
 	profile              string
 	profiles             []linearconn.Profile
@@ -417,7 +421,9 @@ func (m Model) linearBack() (Model, tea.Cmd) {
 }
 
 func (m Model) linearKey(key string) (Model, tea.Cmd) {
-	if key == "c" && m.linear.step == "preview" {
+	// U35: Space toggles, here as on the teams: who closes the
+	// highlighted project.
+	if key == " " && m.linear.step == "preview" {
 		return m.linearToggleCloses()
 	}
 	if key == "+" || key == "w" {
@@ -446,9 +452,12 @@ func (m Model) linearKey(key string) (Model, tea.Cmd) {
 		return m.linearRefresh()
 	}
 	if key == "x" && m.linear.step == "profiles" {
+		// U34: logging a connection out asks y/N first.
 		if id := m.linearSelected(); id != "" {
-			return m.linearCommand(LinearRequest{Operation: "logout", ProfileID: id})
+			m.linear.logoutAsk = id
+			m.status = noteStatus("Log out of Linear connection " + id + "? y logs out; any other key keeps it.")
 		}
+		return m, nil
 	}
 	if key == "u" && m.linearConfigured() {
 		return m.linearCommand(LinearRequest{Operation: "unlink-preview", ExpectedRevision: m.linearRevision()})
@@ -593,7 +602,10 @@ func (m Model) linearKey(key string) (Model, tea.Cmd) {
 		}
 		return m.linearLink(true)
 	case "unlink":
-		return m.linearCommand(LinearRequest{Operation: "unlink", ExpectedRevision: m.linearRevision(), Confirm: true})
+		// U34: unlinking the shared board takes the project's slug typed,
+		// as Account's removals take a typed word.
+		m.inputMode, m.draft, m.status = inputLinearUnlink, "", status{}
+		return m, nil
 	case "tasks":
 		id := m.linearSelected()
 		if id != "" {
@@ -675,6 +687,32 @@ func (m Model) linearClosesToType() ([]linearboard.ClosesLine, error) {
 
 // linearClosesTyped checks the name typed for the next project agents
 // would close; once every name matches, the link is confirmed.
+// linearUnlinkSlug is what an unlink takes typed: the project's slug.
+func (m Model) linearUnlinkSlug() string {
+	return firstNonempty(m.project.Slug, m.cfg.Project)
+}
+
+func (m Model) linearUnlinkTyped() (Model, tea.Cmd) {
+	want := m.linearUnlinkSlug()
+	typed := m.draft
+	m.inputMode, m.draft = inputNone, ""
+	if want == "" || typed != want {
+		m.status = noteStatus(fmt.Sprintf("the slug typed is not %q; nothing was unlinked", want))
+		return m, nil
+	}
+	return m.linearCommand(LinearRequest{Operation: "unlink", ExpectedRevision: m.linearRevision(), Confirm: true})
+}
+
+// linearLogoutAnswer is the key pressed after x on a connection.
+func (m Model) linearLogoutAnswer(key string) (Model, tea.Cmd) {
+	id := m.linear.logoutAsk
+	m.linear.logoutAsk, m.status = "", status{}
+	if key != "y" {
+		return m, nil
+	}
+	return m.linearCommand(LinearRequest{Operation: "logout", ProfileID: id})
+}
+
 func (m Model) linearClosesTyped() (Model, tea.Cmd) {
 	if len(m.linear.typing) == 0 {
 		m.inputMode = inputNone
@@ -697,28 +735,18 @@ func (m Model) linearClosesTyped() (Model, tea.Cmd) {
 func renderLinear(m Model) string {
 	var b strings.Builder
 	b.WriteString("Settings / Integrations / Linear\n\n")
-	b.WriteString("Optional: connect Linear (" + keyHint(m, ScreenLinear, "connect") + ") to see and link this project's board, or come back later.\n")
-	b.WriteString("Task ownership comes from the coordinator's issue assignment; selecting a row never claims or completes work.\n")
-	b.WriteString(fmt.Sprintf("Shared board: configured=%t · revision=%d\n", m.linearConfigured(), m.linearRevision()))
-	if m.linearConfigured() {
-		if v := m.linear.bindingV2; v != nil {
-			b.WriteString("Allowed teams: " + strings.Join(v.LinearTeamIDs, ", ") + "\nDefault team: " + v.LinearDefaultTeamID + "\n")
-			if v.Mode == "team_board" {
-				b.WriteString("Board: Team board — no Linear project\n")
-			} else {
-				b.WriteString("Linear projects: " + strings.Join(v.LinearProjectIDs, ", ") + "\n")
-			}
-		} else {
-			b.WriteString("Allowed teams: " + strings.Join(m.linear.binding.LinearTeamIDs, ", ") + "\nDefault team: " + m.linear.binding.LinearDefaultTeamID + "\n")
-			project := m.linear.binding.LinearProjectID
-			if project == "" {
-				project = "Team board — no Linear project"
-			}
-			b.WriteString("Board: " + project + "\n")
-		}
+	b.WriteString(accentStyle.Render(linearStepTitle(m)) + "\n")
+	if m.linearStep() == "profiles" && len(m.linear.profiles) == 0 {
+		b.WriteString("Optional: connect Linear (" + keyHint(m, ScreenLinear, "connect") + ") to see and link this project's board, or come back later.\n")
 	}
-	b.WriteString("Personal profile: " + terminalText(m.linear.profile) + " · workspace UUID may be unavailable\n")
-	b.WriteString("Step: " + terminalText(m.linearStep()) + "\n\n")
+	b.WriteString(linearBoardLine(m) + "\n")
+	if conn := m.linearConnectionName(); conn != "" {
+		b.WriteString("Connection: " + terminalText(conn) + "\n")
+	}
+	if m.linear.showIDs {
+		b.WriteString(mutedStyle.Render(linearIDLines(m)) + "\n")
+	}
+	b.WriteString("\n")
 	if m.linear.step == "preview" || m.linear.step == "unlink" {
 		projects := m.linear.project
 		if m.linear.bindingV2 != nil {
@@ -726,13 +754,16 @@ func renderLinear(m Model) string {
 		}
 		b.WriteString("REVIEW BEFORE SAVE. Enter confirms; Esc cancels.\n")
 		if m.linear.step == "preview" && len(m.linear.lines) > 0 {
-			b.WriteString("\nWho closes each project's issues? Enter keeps people; c switches the highlighted one between people and agents.\n")
+			b.WriteString("\nWho closes each project's issues? Enter keeps people; Space switches the highlighted one between people and agents.\n")
 			for i, l := range m.linear.lines {
 				prefix := "  "
 				if i == m.selected {
 					prefix = "› "
 				}
-				line := firstNonempty(l.Name, l.LinearProject) + " · " + l.LinearProject + " · closes: " + l.Closes
+				line := firstNonempty(l.Name, l.LinearProject) + " · closes: " + l.Closes
+				if m.linear.showIDs {
+					line += " · " + l.LinearProject
+				}
 				if l.Set != "" {
 					line += " → " + closesWord(l.Set) + " (this link sets it)"
 				}
@@ -743,7 +774,14 @@ func renderLinear(m Model) string {
 			}
 			b.WriteString("\n")
 		}
-		b.WriteString(terminalText(m.linear.preview) + "\nAllowed team IDs: " + strings.Join(m.linear.chosen, ", ") + "\nDefault: " + m.linear.defaultTeam + "\nProject selection: " + projects + fmt.Sprintf(" · team board=%t\n", m.linear.teamBoard))
+		board := "Linear project(s): " + m.linearNames(strings.Split(projects, ", "))
+		if m.linear.teamBoard || projects == "" {
+			board = "the team board (no Linear project)"
+		}
+		b.WriteString(terminalText(m.linear.preview) + "\nTeams: " + m.linearNames(m.linear.chosen) + " · default " + m.linearNames([]string{m.linear.defaultTeam}) + "\nBoard: " + board + "\n")
+		if m.linear.showIDs {
+			b.WriteString(mutedStyle.Render("IDs: teams "+strings.Join(m.linear.chosen, ", ")+" · default "+m.linear.defaultTeam+" · projects "+projects) + "\n")
+		}
 		return b.String()
 	}
 	rows := m.linearRows()
@@ -788,13 +826,13 @@ func renderLinear(m Model) string {
 		b.WriteString(prefix + terminalText(label) + "\n")
 	}
 	if m.linear.step == "teams" {
-		b.WriteString("\nSpace toggles a team; Enter chooses default. Selected: " + strings.Join(m.linear.chosen, ", ") + "\n")
+		b.WriteString("\nSelected: " + firstNonempty(m.linearNames(m.linear.chosen), "none yet") + "\n")
 	}
 	if m.linear.step == "projects" && m.linear.bindingV2 != nil {
-		b.WriteString("\nSpace toggles up to 50 projects, or explicitly selects Team board. Enter previews. Selected project IDs: " + strings.Join(m.linear.selectedProjects, ", ") + "\n")
+		b.WriteString("\nSelected (up to 50, or the team board): " + firstNonempty(m.linearNames(m.linear.selectedProjects), "none yet") + "\n")
 	}
-	if m.linear.step == "profiles" {
-		b.WriteString("\nx logs out only the selected personal connection; shared binding is retained.\n")
+	if m.linear.step == "profiles" && len(m.linear.profiles) > 0 {
+		b.WriteString(mutedStyle.Render("\nLogging a connection out keeps the project's board linked.") + "\n")
 	}
 	if m.linear.step == "details" && m.linear.issue != nil {
 		i := m.linear.issue
@@ -835,4 +873,86 @@ func renderLinear(m Model) string {
 		b.WriteString("\nNew connection label (" + string(m.linear.connectAccess) + "): " + terminalText(m.draft) + "\nEnter starts explicit OAuth consent; Esc cancels.\n")
 	}
 	return b.String()
+}
+
+// linearStepTitle says where the person is: in "Link a board", which step
+// of five (U31).
+func linearStepTitle(m Model) string {
+	switch m.linearStep() {
+	case "teams":
+		return "Link a board · step 2 of 5: choose the teams"
+	case "default":
+		return "Link a board · step 3 of 5: the default team for new issues"
+	case "projects":
+		return "Link a board · step 4 of 5: the Linear projects"
+	case "preview":
+		return "Link a board · step 5 of 5: review"
+	case "tasks":
+		return "The board's issues"
+	case "details":
+		return "An issue"
+	case "unlink":
+		return "Unlink the board"
+	}
+	if m.linearConfigured() {
+		return "Your Linear connections"
+	}
+	return "Link a board · step 1 of 5: choose a Linear connection"
+}
+
+// linearNames names teams and projects as the loaded lists know them; an
+// ID nothing names stays an ID (the names stored with the board come in E2).
+func (m Model) linearNames(ids []string) string {
+	known := map[string]string{}
+	for _, t := range m.linear.teams {
+		known[t.ID] = t.Name
+	}
+	for _, p := range m.linear.projects {
+		known[p.ID] = p.Name
+	}
+	out := []string{}
+	for _, id := range ids {
+		if id != "" {
+			out = append(out, firstNonempty(terminalText(known[id]), terminalText(id)))
+		}
+	}
+	return strings.Join(out, ", ")
+}
+
+// linearBoardLine is the board in words; the revision and IDs are behind d.
+func linearBoardLine(m Model) string {
+	if !m.linearConfigured() {
+		return "Board: not linked yet"
+	}
+	teams, projects := m.linear.binding.LinearTeamIDs, []string{m.linear.binding.LinearProjectID}
+	teamBoard := m.linear.binding.LinearProjectID == ""
+	if v := m.linear.bindingV2; v != nil {
+		teams, projects, teamBoard = v.LinearTeamIDs, v.LinearProjectIDs, v.Mode == "team_board"
+	}
+	line := "Board: linked · " + plural(len(teams), "team", "teams")
+	if teamBoard {
+		return line + " · the team board"
+	}
+	return line + " · " + plural(len(projects), "project", "projects")
+}
+
+// linearIDLines are the board's IDs and revision, shown with d.
+func linearIDLines(m Model) string {
+	if !m.linearConfigured() {
+		return "No board IDs yet."
+	}
+	if v := m.linear.bindingV2; v != nil {
+		return fmt.Sprintf("Revision %d · teams %s · default %s · projects %s", m.linearRevision(), strings.Join(v.LinearTeamIDs, ", "), v.LinearDefaultTeamID, strings.Join(v.LinearProjectIDs, ", "))
+	}
+	return fmt.Sprintf("Revision %d · teams %s · default %s · project %s", m.linearRevision(), strings.Join(m.linear.binding.LinearTeamIDs, ", "), m.linear.binding.LinearDefaultTeamID, m.linear.binding.LinearProjectID)
+}
+
+// linearConnectionName is the chosen connection, by name.
+func (m Model) linearConnectionName() string {
+	for _, p := range m.linear.profiles {
+		if p.ID == m.linear.profile {
+			return p.Name + " (" + string(p.Access) + ")"
+		}
+	}
+	return ""
 }

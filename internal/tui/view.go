@@ -452,6 +452,9 @@ func renderInput(m Model) string {
 	if m.inputMode == inputLinearName {
 		return "Connection label: " + terminalText(m.draft)
 	}
+	if m.inputMode == inputLinearUnlink {
+		return warnStyle.Render("Unlinking the board affects everyone in this project. Type "+terminalText(fmt.Sprintf("%q", m.linearUnlinkSlug()))+" to unlink; Esc cancels") + "\n> " + terminalText(m.draft) + "█"
+	}
 	if m.inputMode == inputLinearClosesName && len(m.linear.typing) > 0 {
 		return warnStyle.Render("Type "+terminalText(fmt.Sprintf("%q", m.linear.typing[0].Name))+" to let agents close its issues; Esc cancels") + "\n> " + terminalText(m.draft) + "█"
 	}
@@ -460,7 +463,7 @@ func renderInput(m Model) string {
 	}
 	switch m.inputMode {
 	case inputAccountInvite:
-		return mutedStyle.Render("Invite: EMAIL PROJECT=ROLE [PROJECT=ROLE]... (Enter issues, Esc cancels)") + "\n> " + terminalText(m.draft) + "█"
+		return mutedStyle.Render("Invite: their email (Enter, then choose projects and roles; Esc cancels)") + "\n> " + terminalText(m.draft) + "█"
 	case inputAccountLabel:
 		return mutedStyle.Render("Device label (Enter saves, Esc cancels)") + "\n> " + terminalText(m.draft) + "█"
 	case inputAccountTransfer:

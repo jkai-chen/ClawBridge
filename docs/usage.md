@@ -203,7 +203,9 @@ same on a hosted workspace:
 
 - your devices, this one marked: `a` adds a device (a one-time code, after you
   type `add`), `l` labels, `x` revokes;
-- `i` issues an invite (`EMAIL PROJECT=ROLE ...`), and `x` revokes a pending one;
+- `i` issues an invite: type the email, then Space sets each project's role
+  (reader, member, lead, owner or none) and Enter sends it (`EMAIL PROJECT=ROLE`
+  typed in one line still works); `x` revokes a pending one;
 - for the main owner, every member with their devices: `x` on a member removes
   them, and `t` offers ownership. The recipient sees a banner and answers with `y`
   or `d` (decline); the owner cancels with `c`.

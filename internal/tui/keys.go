@@ -225,10 +225,23 @@ var linearBindings = []Binding{
 		}
 		return "next"
 	}, Action: linearKeyAction},
-	{ID: "select", Keys: []string{" "}, Label: "select", When: func(m Model) bool {
-		return m.linearStep() == "teams" || (m.linearStep() == "projects" && m.linear.bindingV2 != nil)
+	{ID: "select", Keys: []string{" "}, Labeler: func(m Model) string {
+		if m.linearStep() == "preview" {
+			return "people or agents close"
+		}
+		return "select"
+	}, When: func(m Model) bool {
+		return m.linearStep() == "teams" || m.linearStep() == "preview" || (m.linearStep() == "projects" && m.linear.bindingV2 != nil)
 	}, Action: linearKeyAction},
-	{ID: "closes", Keys: []string{"c"}, Label: "who closes", When: linearAt("preview"), Action: linearKeyAction},
+	{ID: "ids", Keys: []string{"d"}, Labeler: func(m Model) string {
+		if m.linear.showIDs {
+			return "hide IDs"
+		}
+		return "show IDs"
+	}, When: func(m Model) bool { return m.linearConfigured() || m.linearStep() == "preview" }, Action: func(m Model, _ string) (Model, tea.Cmd) {
+		m.linear.showIDs = !m.linear.showIDs
+		return m, nil
+	}},
 	{ID: "connect", Keys: []string{"+"}, Label: "connect", When: linearAt("profiles"), Action: linearKeyAction},
 	{ID: "connect-write", Keys: []string{"w"}, Label: "connect with write", When: linearAt("profiles"), Action: linearKeyAction},
 	{ID: "link", Keys: []string{"l"}, Label: "link a board", When: func(m Model) bool { return m.linear.profile != "" && linearAt("profiles", "tasks")(m) }, Action: linearKeyAction},
@@ -321,6 +334,9 @@ func footerText(m Model) string {
 	if m.quitAsk {
 		return "y quit · any other key stays"
 	}
+	if m.screen == ScreenAccount && m.account.invite != nil {
+		return "↑↓ project · Space role · Enter send the invite · Esc back to the email"
+	}
 	if m.help {
 		return "Esc or ? closes help"
 	}
@@ -357,7 +373,7 @@ var screenAbout = map[Screen]string{
 	ScreenProjects: "The workspace's projects. A workspace-scoped, read-only view.",
 	ScreenSessions: "The project's sessions. v filters this page only; [ goes to the previous page you saw, ] to the server's next page. There is no search across pages.",
 	ScreenInbox:    "The current session's messages. The server stamps delivery; a reload never marks a message read.",
-	ScreenLinear:   "The project's Linear board: your personal Linear connection, and the board this project is linked to.",
+	ScreenLinear:   "The project's Linear board: your personal Linear connection, and the board this project is linked to. Task ownership comes from the coordinator's issue assignment; selecting a row never claims or completes work.",
 	ScreenAccount:  "Your devices and the workspace's members and invites. Anything that revokes or mints a code asks you to type a word first.",
 	ScreenModel:    "The dispatcher's model: the provider, model and key it uses, and its caps.",
 	ScreenDoctor:   "Checks of this profile, the server and the project: pass, warn or fail.",

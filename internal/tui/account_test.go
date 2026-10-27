@@ -47,6 +47,8 @@ func (a *accountAuthority) Execute(_ context.Context, r bus.Request) (bus.Result
 		}
 	case "owner_transfer_get":
 		data = map[string]any{"pending": a.transfer}
+	case "list_projects":
+		data = map[string]any{"projects": []any{map[string]any{"id": "prj_1", "slug": "api"}, map[string]any{"id": "prj_2", "slug": "web"}}}
 	case "device_events":
 		data = map[string]any{"events": a.events}
 	case "device_ack":
@@ -100,7 +102,7 @@ func (a *accountAuthority) writes() []bus.Request {
 	out := []bus.Request{}
 	for _, r := range a.calls {
 		switch r.Operation {
-		case "whoami", "device_list", "owner_transfer_get", "invite_list", "user_list", "device_events":
+		case "whoami", "device_list", "owner_transfer_get", "invite_list", "user_list", "device_events", "list_projects":
 		default:
 			out = append(out, r)
 		}
@@ -192,7 +194,7 @@ func TestAccountShowsDevicesMembersAndInvites(t *testing.T) {
 		t.Fatalf("%+v", s)
 	}
 	view := Render(m)
-	for _, want := range []string{"7 Account", "owner@example.com (workspace owner)", "dev_this (this device)", "cy@example.com · api=member", "burnt after failed attempts", "t offer ownership", `old\x1b[31m`} {
+	for _, want := range []string{"7 Account", "owner@example.com (workspace owner)", "laptop (this device)", "dev_this · added", "api=member", "cy@example.com                 api=member", "burnt after failed attempts", "t offer ownership", `old\x1b[31m`} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("view missing %q:\n%s", want, view)
 		}
@@ -302,7 +304,12 @@ func TestAccountRevokeDeviceNeedsTypedConfirmation(t *testing.T) {
 func TestAccountConfirmsADormantDevice(t *testing.T) {
 	a := &accountAuthority{principal: "owner@example.com", owner: "owner@example.com", dormant: true}
 	m := accountModel(t, a)
-	if !strings.Contains(Render(m), "dormant since 2026-10-01") {
+	// The status column says dormant; the selected row says since when
+	// and how it's confirmed (U43: detail on the selected row).
+	if view := Render(m); !strings.Contains(view, "dormant") || strings.Contains(view, "dormant since") {
+		t.Fatal("unselected:", view)
+	}
+	if !strings.Contains(Render(selectRow(t, m, "device:dev_cyold")), "dormant since 2026-10-01") {
 		t.Fatal(Render(m))
 	}
 	for _, row := range []string{"device:dev_this", "device:dev_old"} {

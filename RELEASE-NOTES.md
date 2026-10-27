@@ -296,7 +296,7 @@
   and stopped after four pages, so in a project set of more than four projects a label in a later project was never
   seen, and every poll repeated the same partial read. It now reads each bound team once, across all its projects,
   and queues only issues in the binding; one in a project the binding doesn't hold is skipped as `not_in_binding`,
-  without reading it.
+  without reading it. This fix shipped early, over v0.3.5, as the v0.3.5.1 server hotfix (#195).
 - **A project's owner can set its own watch budget.** `clawbridge project watch-budget set N` (1 to 600 Linear calls
   an hour) sets the comment watcher's budget for that project, ahead of the server's `CLAWBRIDGE_WATCH_BUDGET` and a
   client's `linear watch --budget`, from the watcher's next call. `project watch-budget clear` goes back to them, and

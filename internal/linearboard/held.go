@@ -25,6 +25,10 @@ type membership struct{ found, complete bool }
 // hold returns a Service whose commands share one held operation, and the
 // function that ends it.
 func (s *Service) hold() (*Service, func()) {
+	if s.held != nil {
+		// Already held (a marker pass): share it; its holder releases it.
+		return s, func() {}
+	}
 	held := *s
 	held.held = &heldOperation{proofs: map[string]verifiedV2{}, issues: map[string]linearprovider.IssueV2{}, members: map[string]membership{}}
 	return &held, func() {

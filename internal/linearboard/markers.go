@@ -80,7 +80,15 @@ func (s *Service) markerPart(ctx context.Context, scope bus.Request, args map[st
 		if failure != nil {
 			a["error"] = safeMarkerError(failure)
 		}
-		if _, err := s.commentLedger(ctx, scope, "marker_settle", a); err != nil {
+		// A row cut by the pass's deadline still records what it knows
+		// (uncertain, so the next attempt re-reads before writing again).
+		sctx := ctx
+		if ctx.Err() != nil {
+			var cancel context.CancelFunc
+			sctx, cancel = context.WithTimeout(context.WithoutCancel(ctx), markerSettleTimeout)
+			defer cancel()
+		}
+		if _, err := s.commentLedger(sctx, scope, "marker_settle", a); err != nil {
 			return outcome, err
 		}
 		return outcome, failure

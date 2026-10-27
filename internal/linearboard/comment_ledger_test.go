@@ -47,6 +47,12 @@ type fakeCommentLedger struct {
 	markerSettles []map[string]any
 	markersDue    []any
 	markerSpents  []map[string]any
+	// markerDueArgs records marker_due; markersLeft and markersStopped
+	// are its answer's left and stopped; onGo runs on each marker_go.
+	markerDueArgs  []map[string]any
+	markersLeft    int
+	markersStopped string
+	onGo           func(map[string]any)
 }
 
 func (f *fakeCommentLedger) execute(r bus.Request) (bus.Result, error) {
@@ -110,6 +116,9 @@ func (f *fakeCommentLedger) execute(r bus.Request) (bus.Result, error) {
 		return bus.Result{Source: "local-authority", Data: map[string]any{"state": "posted"}}, nil
 	case "marker_go":
 		f.markerGoes = append(f.markerGoes, r.Args)
+		if f.onGo != nil {
+			f.onGo(r.Args)
+		}
 		if e := f.goErr[r.Args["part"].(string)]; e != nil {
 			return bus.Result{}, e
 		}
@@ -128,12 +137,13 @@ func (f *fakeCommentLedger) execute(r bus.Request) (bus.Result, error) {
 		f.markerSpents = append(f.markerSpents, r.Args)
 		return bus.Result{Source: "local-authority", Data: map[string]any{"budget_used": 1, "budget_limit": 200}}, nil
 	case "marker_due":
+		f.markerDueArgs = append(f.markerDueArgs, r.Args)
 		due := f.markersDue
 		f.markersDue = nil
 		if due == nil {
 			due = []any{}
 		}
-		return bus.Result{Source: "local-authority", Data: map[string]any{"markers": due}}, nil
+		return bus.Result{Source: "local-authority", Data: map[string]any{"markers": due, "left": f.markersLeft, "stopped": f.markersStopped}}, nil
 	case "linear_comment_settle":
 		f.settles = append(f.settles, r.Args)
 		if f.unavailable != nil {

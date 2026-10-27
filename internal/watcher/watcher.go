@@ -8,6 +8,7 @@ package watcher
 import (
 	"context"
 	"errors"
+	"log"
 	"net/http"
 	"sync"
 	"time"
@@ -102,6 +103,7 @@ func (w *Watcher) Tick(ctx context.Context) []ProjectTick {
 		pctx, cancel := context.WithTimeout(ctx, ProjectDeadline)
 		tick := w.project(pctx, pid, healthLeft)
 		cancel()
+		logTick(pid, "tick", tick)
 		healthLeft -= len(tick.Health)
 		_ = w.Store.WatchTicked(ctx, pid, tick.Error == "", tick.Error)
 		out = append(out, tick)
@@ -161,7 +163,41 @@ func (w *Watcher) Markers(ctx context.Context, pid string) ProjectTick {
 	if err != nil {
 		tick.Error = failureCode(err)
 	}
+	logTick(pid, "nudge", tick)
 	return tick
+}
+
+// MarkersPending reports whether the marker pass stopped with rows left
+// that another pass would take now: stopped by its row limit or its clock,
+// not by the hour's budget or an error.
+func (t ProjectTick) MarkersPending() bool {
+	c := t.Comments
+	if c == nil || c.MarkersLeft == 0 {
+		return false
+	}
+	switch c.MarkersStopped {
+	case "limit", "time", "deadline":
+		return true
+	}
+	return false
+}
+
+// logf is where the watcher's outcome lines go; tests read them.
+var logf = log.Printf
+
+// logTick logs a tick's or nudge's marker pass, and a failure, as codes
+// and counts only: never Linear or bus text, issue IDs or titles.
+func logTick(pid, kind string, tick ProjectTick) {
+	if c := tick.Comments; c != nil && (len(c.Markers) > 0 || c.MarkersLeft > 0 || c.MarkersStopped != "") {
+		stopped := c.MarkersStopped
+		if stopped == "" {
+			stopped = "done"
+		}
+		logf("watcher: markers: project %s (%s): applied %d, left %d, stopped %s, charged %d", pid, kind, len(c.Markers), c.MarkersLeft, stopped, c.MarkersCharged)
+	}
+	if tick.Error != "" {
+		logf("watcher: %s: project %s failed: %s", kind, pid, tick.Error)
+	}
 }
 
 // service is the project's board Service: the system session's executor,

@@ -61,6 +61,10 @@ coordinator lists them, and the label is never approval or an assignment.
 - Send references to secrets' storage locations, never keys, tokens, passwords,
   or private-key contents. If a body is rejected, remove the sensitive data;
   do not disguise it to bypass validation.
+- The project owner can read every message in the project, yours included, from
+  their own terminal (`clawbridge project threads`); each read is in the project's
+  history. That read is theirs alone: it refuses `--session` and an agent's
+  environment, so don't try it. Never ask for thread bodies to be pasted to you.
 
 ## Hand over
 

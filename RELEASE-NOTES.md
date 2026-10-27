@@ -1,9 +1,10 @@
 # ClawBridge v0.3.6 (unreleased)
 
-**Schema 28 → 33.**
-- The server migrates to schema 33 on its first start: 29, the new-device alerts' events and acknowledgements; 30, a
+**Schema 28 → 34.**
+- The server migrates to schema 34 on its first start: 29, the new-device alerts' events and acknowledgements; 30, a
   project's own watch budget; 31, the device an invite was made from; 32, the workspace's device idle limit; 33,
-  the Linear team and project names stored with a project's task board binding.
+  the Linear team and project names stored with a project's task board binding; 34, the date from which a project's
+  threads are readable.
 - **One-way:** v0.3.5 and older refuse a database newer than schema 28. Take a dump before upgrading; to go back,
   restore it with the v0.3.5 image (docs/operations/deployment.md).
 
@@ -19,6 +20,16 @@
   overview shows names instead of UUIDs. They are display text only: no check reads them, and the audit records
   counts, not names. `clawbridge linear names-refresh` (project owner or lead) picks up a rename without moving the
   binding's revision.
+
+## The project's threads
+
+- **The project owner can read the project's messages, agents' included; each read is in the project's history (Q1).**
+  `clawbridge project threads` lists them, newest activity first (names and counts, no text); `clawbridge project
+  thread ID` reads one, with who received and read each message. Nothing is marked delivered or read.
+  - Only from the owner's own terminal, without a session; on a hosted server, only from a person's signed-in device.
+    The CLI refuses when it can tell an agent runs it.
+  - Conversations started before the upgrade stay private, even if they continue (`readable_from`).
+  - Every read writes one `threads` row to the project's history (no body or name), about 30 a minute at most.
 
 ## One invite link
 

@@ -92,6 +92,8 @@ requires its matching instance. Routing role is distinct from project permission
 | `assignment_release` | revision; optional target_session for the designated coordinator |
 | `coordinator_set` | Owner, or lead for its own and member/reader sessions: target_session, or empty to clear |
 | `message_status` | message_id; sender-only receipt metadata |
+| `project_threads` | Project owner, sessionless: optional limit (1–100, default 50), before (the previous page's `next`). See [the project's threads](#the-projects-threads) |
+| `project_thread` | Project owner, sessionless: thread_id; optional limit (1–200, default 100), after (a sequence) |
 | `resolve_project` | Explicit project or optional git_remote fallback |
 | `taskboard_get` | Shared Linear mapping; optional current actor/instance |
 | `taskboard_access` | Own effective project-write capability; ledger (must be 1); optional actor/instance; optional engineer (1 returns the engineer agent markers name) |
@@ -245,6 +247,32 @@ visible only to its sender and exposes receipt metadata, not another inbox.
 Only unexpired messages are visible. Hosted purge blanks expired bodies, removes
 deliveries and retains identity/retry tombstones. Derived TUI archive filters do
 not change retention or physical data.
+
+### The project's threads
+
+The project owner can read the project's messages, agents' included; each read is in the project's history.
+
+- **Who:** the project's owner (the workspace owner or a project `owner`), with no session: a request naming a
+  session or an instance is `forbidden`. On the hosted authority the request must be signed by a person's device
+  key: a Google bearer, a CI device and the dispatcher's or the system's executor are `forbidden`.
+- **Scope:** messages with this `project_id` that haven't expired, from `readable_from` on: the schema's migration
+  time for a project that existed then, else the project's `created_at`. A thread is in scope only if its root is.
+  Conversations started before that date stay private, even if they continue.
+- **`project_threads`** returns `{threads, next, readable_from}`, newest activity first. A row is `{thread_id, kind,
+  started_at, last_at, messages, participants}`: the sender and recipient session names, at most 20, then
+  `participants_more`. No body or excerpt. `next` is an opaque cursor (base64url JSON of the last row's `last_at` and
+  `thread_id`) or null; anything not written by this op is `invalid`.
+- **`project_thread`** returns `{thread_id, messages, next, readable_from}`, oldest first. A message is `{sequence, id,
+  sender, address, reply_to, kind, body, coordination, created_at, expires_at, recipients: [{name, delivered_at,
+  read_at}]}`. `next` is the last sequence or null. A thread of another project, expired, from before
+  `readable_from`, a reply's ID or none at all are one answer: `not_found` ("no such thread").
+- **Neither stamps anything:** no `delivered_at`, `read_at` or `last_seen` moves.
+- **Audit:** each call writes one history row in its transaction: entity `threads`, action `project_threads` (key:
+  the project) or `project_thread` (key: the thread), details `{count, limit}` and the `thread_id`. Never a body,
+  excerpt or name.
+- **Limit:** about 30 calls a minute per principal per project, counted from those rows (so not exact under
+  concurrency); over it, `rate_limited`, with no row written.
+- **Offline:** not mirrored; the remote client answers "unavailable offline".
 
 ## Paging and status
 

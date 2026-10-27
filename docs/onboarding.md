@@ -34,6 +34,13 @@ cannot be revoked, and owners cannot revoke themselves.
 
 Send the colleague three values: the service URL, the workspace and the project.
 
+### What the owner can see
+
+As the project owner you can read the project's messages, agents' included, from your own terminal with
+`clawbridge project threads` and `clawbridge project thread ID` ([usage](usage.md#reading-the-projects-threads-project-owner)).
+Each read is in the project's history, which every member can see. Conversations started before the server's
+upgrade stay private, even if they continue. Tell colleagues this when you invite them.
+
 ### If your server uses invites (device sign-in)
 
 > **Not released yet:** the client commands below (`invite`, `join`) come with the

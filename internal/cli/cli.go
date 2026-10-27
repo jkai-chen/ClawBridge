@@ -2,6 +2,7 @@
 package cli
 
 import (
+	"clawbridge/internal/linearkey"
 	"cmp"
 	"context"
 	"encoding/json"
@@ -195,6 +196,11 @@ func interspersedFlags(f *flag.FlagSet, args []string) ([]string, error) {
 }
 
 func Run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
+	// K1: only linear key and linear view may read the person's Linear API
+	// key; any other entry (mcp, runner, serve, notify, ...) can never.
+	if !linearKeyEntry(args) {
+		linearkey.Forbid()
+	}
 	// The output format, once, for every command (live/CLI-OUTPUT-PLAN.md
 	// §2): --json, CLAWBRIDGE_OUTPUT, an agent's shell, a terminal.
 	mode, err := clirender.Choose(jsonFlag(args), os.Environ(), stdout)
@@ -1312,6 +1318,7 @@ func collectDoctor(ctx context.Context, config Config, configPath string, existi
 				defer cancel()
 				return linearCapabilities(bounded, manager, config.LinearProfile)
 			}
+			in.LinearAPIKey = func() (string, bool) { return linearKeys(directory).Recorded(config.LinearProfile) }
 		}
 	}
 	return doctor.Run(ctx, in, executor), nil

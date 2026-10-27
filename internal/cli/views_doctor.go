@@ -75,6 +75,7 @@ var doctorAnswers = map[string]doctorAnswer{
 	// These messages already read as answers.
 	"auth.clock":                {},
 	"context":                   {},
+	"linear.api_key":            {},
 	"linear.app":                {},
 	"linear.label_policy":       {},
 	"linear.markers":            {},

@@ -126,6 +126,10 @@ type Input struct {
 	// the provider's negotiated capabilities from its advertised tool list.
 	// It performs no Linear write. Nil skips the Linear section.
 	LinearCapabilities func(context.Context) (linearprovider.Capabilities, error)
+	// LinearAPIKey says whether the profile has a Linear API key saved, and
+	// in which store, from its marker: doctor never reads the key. Nil skips
+	// the check.
+	LinearAPIKey func() (store string, saved bool)
 	// Skills reports the agent skill installations. Nil skips the check.
 	Skills func() ([]skill.State, error)
 	// Context reads this session's context watching state, locally. Nil
@@ -206,6 +210,9 @@ func Run(ctx context.Context, in Input, executor Executor) Report {
 	if in.LinearCapabilities != nil {
 		checkLinearCapabilities(ctx, in.LinearCapabilities, add)
 	}
+	if in.LinearAPIKey != nil {
+		checkLinearAPIKey(in.LinearAPIKey, add)
+	}
 	if in.Skills != nil {
 		checkSkills(in.Skills, add)
 	}
@@ -256,6 +263,21 @@ func checkLinearCapabilities(ctx context.Context, read func(context.Context) (li
 		}
 		check.Action = "Commands that need an off capability are refused until it returns; report a provider schema change to the coordinator."
 	}
+	add(check)
+}
+
+// checkLinearAPIKey reports the person's Linear API key from its marker
+// only: the key is read just by linear key and linear view (K1).
+func checkLinearAPIKey(saved func() (string, bool), add func(Check)) {
+	check := Check{ID: "linear.api_key", Title: "Linear API key", Status: Pass}
+	store, ok := saved()
+	if !ok {
+		check.Message = "No Linear API key is saved; one is needed only to write Linear views."
+		add(check)
+		return
+	}
+	check.Message = "A Linear API key is saved (" + store + " store). It acts as you everywhere in Linear, and any program running as you can read it; doctor doesn't read it."
+	check.Action = "Check it with `clawbridge linear key status --profile ID`; revoke it in Linear and run `clawbridge linear key remove` when you don't need it."
 	add(check)
 }
 

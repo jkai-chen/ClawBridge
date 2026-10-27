@@ -1293,7 +1293,9 @@ Linear can tell ClawBridge that an issue needs an agent. ClawBridge queues the i
 project's coordinator session, which then routes it.
 
 **Signals.** Each signal is polled by the server's own watcher, at no Linear Agent cost:
-- **S1:** a person adds the `needs-agent` label (one label of that exact name per team);
+- **S1:** a person adds the `needs-agent` label (one label of that exact name per team). The watcher reads each
+  bound team's labelled issues in one query, across all its projects, and queues only those in the project's
+  binding: an issue in a project the binding doesn't hold is skipped;
 - **S2:** a person **delegates** the issue to the ClawBridge Linear app. The app can be a delegate, never an
   assignee: Linear accepts an "assign to the app" and silently does nothing;
 - **S3:** a person @-mentions the app in a comment.

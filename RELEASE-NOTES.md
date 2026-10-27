@@ -1,3 +1,15 @@
+# ClawBridge v0.3.5.1 (server hotfix)
+
+A server-only hotfix over v0.3.5. **No schema change** (still 28), so it deploys over v0.3.5 data and rolls back to
+the v0.3.5 image.
+
+- **Intake's `needs-agent` signal (S1) now sees every project of a binding.** It read the bound projects one at a time
+  and stopped after four pages, so in a project set of more than four projects a label in a later project was never
+  seen, and every poll repeated the same partial read. It now reads each bound team once, across all its projects,
+  and queues only issues in the binding. One in a project the binding doesn't hold is skipped as `not_in_binding`,
+  without reading it, and only counted: no ID, title or project of it is kept in the queue, the history, the logs or
+  the poll's record.
+
 # ClawBridge v0.3.5 (unreleased)
 
 **Schema 19 → 28.**

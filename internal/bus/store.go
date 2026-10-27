@@ -132,7 +132,7 @@ func (s *Store) migrate() error {
 	if err = tx.QueryRow("PRAGMA user_version").Scan(&version); err != nil {
 		return err
 	}
-	if version > 25 {
+	if version > 26 {
 		return errors.New("database schema is newer than this ClawBridge binary")
 	}
 	if version == 0 {
@@ -264,6 +264,11 @@ func (s *Store) migrate() error {
 	}
 	if version < 25 {
 		if _, err = tx.Exec(dispatcherChatSchemaV25 + `PRAGMA user_version=25;`); err != nil {
+			return err
+		}
+	}
+	if version < 26 {
+		if _, err = tx.Exec(contextSchemaV26 + `PRAGMA user_version=26;`); err != nil {
 			return err
 		}
 	}
@@ -478,6 +483,9 @@ var operationArgs = map[string]string{
 	"status_closes_set":           "instance expected_revision linear_project closes via",
 	"doc_policy_get":              "instance",
 	"dispatcher_get":              "instance",
+	"context_watch_get":           "instance",
+	"context_watch_set":           "instance expected_revision context_watch",
+	"report_context":              "instance tokens window level compactions observed_at trigger",
 	"dispatcher_cases_due":        "instance",
 	"dispatcher_decision_record":  "instance subject_id subject_revision policy_revision engine proposal reason_code explanation guardrail action domain facts_source app_project_id",
 	"invite_create":               "email grants purpose expires_hours revoke_others",
@@ -549,6 +557,12 @@ func validateArgs(op string, a map[string]any) error {
 			return fmt.Errorf("unsupported argument %q for %s", k, op)
 		}
 		switch k {
+		case "tokens", "window", "compactions":
+			if v != nil {
+				if _, err := integer(v); err != nil {
+					return invalid(k + " must be an integer")
+				}
+			}
 		case "retention_days", "limit", "since_hours", "after", "expected_revision", "ledger", "generation", "budget", "calls", "charged", "policy_revision", "engineer", "if_unset", "expires_days", "expires_hours", "s5_calls_per_hour", "out_of_binding_limit", "template_version", "part_number", "part_count", "seq", "config_revision":
 			if _, err := integer(v); err != nil {
 				return fmt.Errorf("%s: %w", k, err)
@@ -577,6 +591,10 @@ func validateArgs(op string, a map[string]any) error {
 			}
 		case "dispatcher_domains":
 			if _, err := ParseDispatcherDomains(v); err != nil {
+				return err
+			}
+		case "context_watch":
+			if _, err := ParseContextWatch(v); err != nil {
 				return err
 			}
 		case "health_policy":
@@ -765,7 +783,7 @@ func (s *Store) ExecuteAs(ctx context.Context, principal string, r Request) (Res
 // inbox stamps deliveries, so those keep the locks.
 func pureRead(r Request) bool {
 	switch r.Operation {
-	case "snapshot", "inbox_status", "notification_status", "taskboard_get", "taskboard_get_v2", "taskboard_access", "list_projects", "list_members", "comment_watch_status", "label_policy_get", "status_policy_get", "doc_policy_get", "dispatcher_get", "health_get", "doc_seed_get", "doc_publication_get", "invite_list", "device_list", "user_list", "owner_transfer_get", "dispatcher_chat_show", "dispatcher_decisions_list", "dispatcher_model_doctor":
+	case "snapshot", "inbox_status", "notification_status", "taskboard_get", "taskboard_get_v2", "taskboard_access", "list_projects", "list_members", "comment_watch_status", "label_policy_get", "status_policy_get", "doc_policy_get", "dispatcher_get", "context_watch_get", "health_get", "doc_seed_get", "doc_publication_get", "invite_list", "device_list", "user_list", "owner_transfer_get", "dispatcher_chat_show", "dispatcher_decisions_list", "dispatcher_model_doctor":
 		return true
 	case "list_sessions", "history", "whoami", "linear_comments_posted", "linear_comment_precheck", "intake_policy_get", "intake_trust_list", "intake_list":
 		// Naming a session with its instance makes it a heartbeat read: the
@@ -1086,6 +1104,11 @@ func (s *Store) execute(ctx context.Context, tx *transaction, r Request) (any, e
 	if r.Operation == "heartbeat" {
 		return s.heartbeatOp(ctx, tx, pid, r)
 	}
+	// A context report is liveness-like too: fenced like a heartbeat, and
+	// it doesn't touch last_seen.
+	if r.Operation == "report_context" {
+		return s.reportContextOp(ctx, tx, w, pid, r)
+	}
 	if r.Operation == "list_sessions" {
 		if err = s.touchReadActor(ctx, tx, pid, r); err != nil {
 			return nil, err
@@ -1152,6 +1175,13 @@ func (s *Store) execute(ctx context.Context, tx *transaction, r Request) (any, e
 			return nil, errors.New("instance requires session")
 		}
 		return statusPolicyView(ctx, tx, pid, s.projectFlowProven)
+	}
+	// Any project member may read the context-watch setting.
+	if r.Operation == "context_watch_get" {
+		if r.Session == "" && str(a, "instance") != "" {
+			return nil, errors.New("instance requires session")
+		}
+		return contextWatchView(ctx, tx, pid)
 	}
 	// Any project member may read the dispatcher's policy and domains.
 	if r.Operation == "dispatcher_get" {
@@ -1293,6 +1323,12 @@ func (s *Store) execute(ctx context.Context, tx *transaction, r Request) (any, e
 		}
 		return s.statusClosesOp(ctx, tx, wid, pid, projectRole, actor, r)
 	}
+	if actor == nil && contextWatchOperation(r.Operation) {
+		if str(a, "instance") != "" {
+			return nil, invalid("instance requires session")
+		}
+		return s.contextWatchOp(ctx, tx, w, p, projectRole, nil, r)
+	}
 	if actor == nil && dispatcherOperation(r.Operation) {
 		if str(a, "instance") != "" {
 			return nil, invalid("instance requires session")
@@ -1376,6 +1412,9 @@ func (s *Store) execute(ctx context.Context, tx *transaction, r Request) (any, e
 	}
 	if dispatcherOperation(r.Operation) {
 		return s.dispatcherOp(ctx, tx, w, p, projectRole, actor, r)
+	}
+	if contextWatchOperation(r.Operation) {
+		return s.contextWatchOp(ctx, tx, w, p, projectRole, actor, r)
 	}
 	if healthOperation(r.Operation) {
 		return s.healthOp(ctx, tx, w, p, projectRole, actor, r)

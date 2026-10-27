@@ -49,6 +49,7 @@ Commands: setup --local, project create SLUG, register [NAME], sessions, send TO
           sync, purge-expired, principal-unbind EMAIL --confirm [--allow-previous],
           workspace-domains DOMAIN...|--clear, doctor, tui [--screen SCREEN], version,
           cloud check [infra|server|version|workspace|linear-app|backups|all], cloud secret set KEY (own-server onboarding),
+          project context-watch show|set --file FILE --expected-revision N,
           context show [--session NAME | --agent claude-code|codex --transcript PATH] [--json],
           context bind [--session NAME] --codex-thread UUID|--agent K --transcript PATH, context hooks install|uninstall [--scope local|user|project-shared]
 Interactive: bare clawbridge opens the selected profile, or Start without one; onboard reopens Start
@@ -453,6 +454,19 @@ flags:`)
 				arityMin, arityMax = 1, 1
 			}
 			rest = rest[2:]
+		case "context-watch":
+			// Context watching: any member reads it; the project owner sets it.
+			switch {
+			case len(rest) >= 2 && rest[1] == "show":
+				op = "context_watch_get"
+			case len(rest) >= 2 && rest[1] == "set":
+				op = "context_watch_set"
+				f.String("file", "", "the setting, JSON: {\"enabled\", \"levels\", \"extra_recipients\", \"handover_hint\"}")
+				f.Int64("expected-revision", -1, "the setting's revision you last read (0 for none)")
+			default:
+				return errors.New("usage: project context-watch show; project context-watch set --file FILE --expected-revision N")
+			}
+			rest = rest[2:]
 		default:
 			return errors.New("unknown project command")
 		}
@@ -750,6 +764,25 @@ flags:`)
 			if len(pos) > 0 {
 				a["target_session"] = pos[0]
 			}
+		} else if op == "context_watch_set" {
+			if v, _ := a["expected_revision"].(int64); v < 0 || a["expected_revision"] == nil {
+				return errors.New("project context-watch set requires --expected-revision")
+			}
+			path, _ := a["file"].(string)
+			delete(a, "file")
+			if path == "" {
+				return errors.New("project context-watch set requires --file")
+			}
+			raw, err := readLinearFile(path)
+			if err != nil {
+				return err
+			}
+			var doc any
+			if err = json.Unmarshal([]byte(raw), &doc); err != nil {
+				return errors.New("the context-watch file must hold one JSON object")
+			}
+			a["context_watch"] = doc
+		} else if op == "context_watch_get" {
 		} else {
 			a["principal"], a["role"] = pos[0], pos[1]
 		}

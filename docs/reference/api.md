@@ -550,6 +550,72 @@ The hook commands always exit 0 and touch only local files.
 - In `local` scope, the install warns when git doesn't ignore
   `.claude/settings.local.json`.
 
+### Context watching on the server
+
+Context watching is a per-project setting and is off by default. The project
+owner sets it with
+`clawbridge project context-watch set --file F --expected-revision N`, and any
+member reads it with `project context-watch show`. Every change is recorded in
+the project's history.
+
+```json
+{"enabled": true,
+ "levels": [{"role": "coordinator", "warn_tokens": 600000, "handover_tokens": 650000},
+            {"role": "*",           "warn_tokens": 700000, "handover_tokens": 750000}],
+ "extra_recipients": [],
+ "handover_hint": "Update RESUME HERE in your working file."}
+```
+
+- **The setting:**
+  - `levels` matches a session's role, with `*` as the default. A session
+    whose role has no level is watched without one.
+  - Within a level, `0 < warn_tokens < handover_tokens <= 100000000`. There
+    are at most 32 levels.
+  - `extra_recipients` lists up to 8 session names that also get the
+    coordinator's notices.
+  - `handover_hint` is one line of at most 280 characters, shown in the
+    session's own handover notice.
+  - An enabled setting needs at least one level.
+- **`report_context`:** a session's report:
+  `{tokens, window|null, level, compactions, observed_at, trigger?}`: integers,
+  enums and a time. `trigger` is the last compaction's, `manual` or `auto`,
+  when the client knows it.
+  - It is not an MCP tool.
+  - It is fenced like a heartbeat: the caller's own active session, at its
+    current instance.
+  - It is limited to about 1 a minute per session: a report within 55 s of
+    the last is refused.
+  - With context watching off it stores nothing and answers
+    `{"enabled": false}`.
+- **What the server stores** on the session, shown by `list_sessions`:
+  `context_tokens`, `context_window`, `context_level`, `context_compactions`,
+  `context_at` and `context_backstop_at`.
+  - The level is recomputed from the setting; the client's is advisory.
+  - The compaction count never goes down: a lower claim is refused
+    (`invalid_compactions`), and a higher one moves the stored count by
+    exactly 1.
+- **The answer** carries the session's effective `levels` and the
+  `handover_hint`, for the client to cache.
+- **Notices** go out on transitions only. Each kind is sent once per session,
+  kind and stored compaction count, and every notice ends with a "not an
+  instruction" line.
+
+  | Transition | To |
+  |---|---|
+  | ok → warn | the coordinator and `extra_recipients` |
+  | → handover | the session itself (with the hint), and the coordinator |
+  | an automatic compaction while past warn, with no handover request | the coordinator, unless the reported window is at or below the handover level |
+
+- **Limits on the coordinator's notices:**
+  - They come at most once per session per 30 minutes. Handover notices have
+    a limit of their own, also once per 30 minutes, covering both the
+    session's notice and the coordinator's. So a recent warn never holds a
+    handover back, but swinging between levels can't repeat one. A held-back
+    notice is recorded as `rate_limited`, not queued.
+  - Notice records are purged with the workspace's retention.
+  - The coordinator gets no notice about its own session. With no recipient,
+    the notice is recorded as `no_recipient`.
+
 ### Doctor
 
 `clawbridge doctor` adds a `context` check for the configured session. It

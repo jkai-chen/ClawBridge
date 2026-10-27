@@ -117,15 +117,17 @@ func startWatcher(ctx context.Context, store *bus.Store, w watchSettings, opts H
 		}
 	}
 	if w.interval > 0 {
-		go runWatchLoop(ctx, ticker, w.interval)
-		log.Printf("watcher: ticking every %s", w.interval)
 		// Nudges ride beside the in-process clock only: with the scheduler's
-		// endpoint alone there is no process to run them.
+		// endpoint alone there is no process to run them. A tick whose
+		// marker pass left rows hands them to the nudges.
 		if markers, ok := built.(markerPasser); ok && store != nil {
 			n := newNudger(ticker, markers, store.WatchProjectID)
+			ticker.after = n.Ticked
 			go n.run(ctx)
 			opts.Nudge = n.Nudge
 		}
+		go runWatchLoop(ctx, ticker, w.interval)
+		log.Printf("watcher: ticking every %s", w.interval)
 	}
 	return opts
 }

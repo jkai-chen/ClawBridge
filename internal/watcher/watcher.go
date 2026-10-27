@@ -150,6 +150,8 @@ func (w *Watcher) project(ctx context.Context, pid string, healthLeft int) Proje
 // a release (live/STATUS-FLOW-DESIGN.md §8.3). It doesn't count as the
 // project's tick.
 func (w *Watcher) Markers(ctx context.Context, pid string) ProjectTick {
+	ctx, cancel := context.WithTimeout(ctx, nudgeDeadline)
+	defer cancel()
 	tick := ProjectTick{ProjectID: pid}
 	scope := bus.Request{Session: bus.SystemSessionName, Args: map[string]any{}}
 	err := w.service(pid).Watch(ctx, scope, linearboard.WatchOptions{
@@ -166,6 +168,10 @@ func (w *Watcher) Markers(ctx context.Context, pid string) ProjectTick {
 	logTick(pid, "nudge", tick)
 	return tick
 }
+
+// nudgeDeadline is a nudge pass's deadline: a tick's per-project share,
+// not the whole tick's. A variable only so tests can shrink it.
+var nudgeDeadline = ProjectDeadline
 
 // MarkersPending reports whether the marker pass stopped with rows left
 // that another pass would take now: stopped by its row limit or its clock,

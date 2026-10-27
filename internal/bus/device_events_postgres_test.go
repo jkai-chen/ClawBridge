@@ -378,7 +378,7 @@ func TestPostgresOwnerCoordinatorHearsOfDevices(t *testing.T) {
 		t.Fatal(err)
 	}
 	got := f.securityNotices("coord")
-	if len(got) != 1 || !strings.Contains(got[0], `new device "laptop" (`+keyID(t, key)+`) added to `+ada) || !strings.Contains(got[0], "via invite") || strings.Contains(got[0], key) {
+	if len(got) != 1 || !strings.Contains(got[0], `new device `+keyID(t, key)+` added to `+ada) || !strings.Contains(got[0], "via invite") || strings.Contains(got[0], key) || strings.Contains(got[0], "laptop") {
 		t.Fatal(got)
 	}
 	// Once per event, however often it's sent.
@@ -391,7 +391,7 @@ func TestPostgresOwnerCoordinatorHearsOfDevices(t *testing.T) {
 		t.Fatal(err)
 	}
 	tx := &transaction{Tx: raw, postgres: true}
-	if err = f.s.ownerDeviceNotices(context.Background(), tx, f.workspaceID(f.workspace), event, ada, keyID(t, key), "added", "laptop", "invite", f.owner, stamp()); err != nil {
+	if err = f.s.ownerDeviceNotices(context.Background(), tx, f.workspaceID(f.workspace), event, ada, keyID(t, key), "added", "invite", f.owner, stamp()); err != nil {
 		t.Fatal(err)
 	}
 	if err = raw.Commit(); err != nil {

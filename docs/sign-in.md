@@ -208,8 +208,9 @@ New device "Ada's desktop" (dev_9k2…) joined ada@example.com at 2026-10-27 14:
 - Alerts need a device-key sign-in; a Google sign-in has no device to alert.
 - **The owner's coordinator session** hears of every event too: one `security`
   message in each project whose coordinator session the main owner registered
-  (never one another person runs). It names the user, the device's label and ID,
-  what happened and when.
+  (never one another person runs). It names the user, the device's ID, what
+  happened and when; never the label, which the device's adder chose. An owner
+  who runs no coordinator session gets only the device alerts above.
 
 ## Members and ownership
 

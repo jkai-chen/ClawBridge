@@ -135,6 +135,9 @@ type Input struct {
 	// Context reads this session's context watching state, locally. Nil
 	// skips the check.
 	Context func() ContextState
+	// Queue reads this session's message queue state, locally; the counts
+	// are the server's. Nil skips the check.
+	Queue func() QueueState
 }
 
 // Check is one stable machine-readable diagnostic.
@@ -218,6 +221,13 @@ func Run(ctx context.Context, in Input, executor Executor) Report {
 	}
 	if in.Context != nil {
 		checkContext(in.Context(), add)
+	}
+	if in.Queue != nil {
+		var queueExecutor Executor
+		if authorityOK {
+			queueExecutor = executor
+		}
+		checkQueue(ctx, in.Queue(), in.Config, queueExecutor, in.Now, add)
 	}
 	if len(in.MCPConfigs) == 0 {
 		add(Check{

@@ -409,6 +409,55 @@ event: replaced | revoked | bye      (then the server closes)
 Schema 36 adds the `stream_tickets` table and the consumer each lease was
 taken under.
 
+## Agents and the queue
+
+An agent's MCP server is its consumer of the queue.
+
+- **It takes deliveries from the agent's first message tool call** (`inbox`,
+  `ack`, `reply` or `mark_read`), so a server that is only started or listed
+  makes no call. On a server with the stream it holds the session's consume
+  stream; otherwise, and in local mode, it polls `lease` every 2 s with its own
+  consumer. A server without the queue refuses `lease`, and the inbox works as
+  before.
+- **`inbox` keeps its shape and paging.** Each message the MCP server holds
+  carries `lease: {lease_id, attempt, lease_until}`.
+- **`ack`** (MCP tool) takes `acks: [{message_id, lease_id?}]` and an optional
+  `operation_id`; a missing `lease_id` is the one the server holds. **`reply`**
+  takes `ack: true`, which becomes the reply's own `ack` with the held lease,
+  in the reply's transaction.
+- **Auto-extend:** while the agent has called a tool in the last 10 minutes, the
+  MCP server extends its held leases by 10 minutes every 5 minutes. An idle or
+  stuck agent stops extending, and its leases run out and are offered again.
+- **The record:** the MCP server keeps `<state home>/context/<session>.queue.json`
+  (0600) for the agent's hooks, which run as their own processes. It holds the
+  instance, the route (the server's URL or the local database), the server's
+  and the agent's process IDs, the stream's state and the held message and
+  lease IDs; never a credential or a message. It is rewritten every minute and
+  removed when the MCP server ends. A hook acts on a record only when it is
+  under 3 minutes old, a private regular file, and its MCP server is alive and
+  the child of the hook's own agent process. A hosted record's server must be
+  the configured one.
+- **Stop hook** (`clawbridge hook stop --from-hook`, Claude Code's `Stop`):
+  with unacked messages it blocks the stop with
+  `{"decision":"block","reason":"N ClawBridge messages are waiting: call inbox, handle them, then ack"}`.
+  The reason is fixed text and a count, never a sender, subject or body. It
+  never blocks while Claude Code says `stop_hook_active`, blocks at most once
+  per new message (it remembers the newest `recipient_seq` it blocked for), and
+  only for the MCP server's own instance with the policy at `accept`. It allows
+  the stop on any error, an older server, or no answer within 2 s.
+- **Compaction:** `context compacting` (Claude Code's `PreCompact`) sets the
+  policy to `hold`, when it is `accept`, and then gives back the held leases
+  (`nack`, no delay, no attempt counted). It marks that hold as the
+  compaction's. `context bind` (`SessionStart`) sets `accept` again only under
+  that mark, so a hold or refuse you set yourself is never changed. A hold left
+  by an agent that died mid-compaction is lifted by the next MCP server to
+  start, by the next `SessionStart`, or by a running MCP server after 15
+  minutes. A session whose MCP server never returns stays held: nothing is
+  leased, so its messages wait, with no attempt counted and no dead letter.
+  `clawbridge doctor` shows the hold and since when.
+- **A policy change wakes the session's streams,** so `accept` re-offers at
+  once.
+
 ## Paging and status
 
 Lists accept limit 1–1000 (default 100) and nonnegative exclusive after sequence.
@@ -751,12 +800,23 @@ sent anywhere. Rebinding keeps what the record caches for the session.
 - `--session NAME` names the session, default `CLAWBRIDGE_SESSION`.
 
 For Claude Code, `clawbridge context hooks install [--scope local|user|project-shared]`
-adds two hooks:
+adds three hooks; `mcp install --agent claude-code` adds them too (below):
 - `SessionStart` runs `context bind --from-hook`. After a compaction it also
   prints a fixed reminder to re-read the handover note, followed by the
-  project's handover hint when one is cached;
+  project's handover hint when one is cached, and lifts the compaction's hold
+  on the session's notifications;
 - `PreCompact` runs `context compacting --from-hook`, which notes the
-  compaction and its trigger on the binding.
+  compaction and its trigger on the binding, holds the session's
+  notifications and gives back its leases;
+- `Stop` runs `hook stop --from-hook`, which keeps the agent from going idle
+  on unhandled messages ("Agents and the queue").
+
+`mcp install --agent claude-code` installs them with the entry, in the local
+settings of the entry's project (the directory of `--config`), or in the
+user's settings for `~/.claude.json`. `--hooks local|user|project-shared|none`
+chooses; `project-shared` needs `--confirm-shared`. It reports the change on
+standard error, so its JSON stays alone on standard output; a default install
+that can't add them says so and keeps the entry.
 
 The hooks are opt-in per user:
 - **Scopes:**
@@ -778,7 +838,8 @@ The hooks are opt-in per user:
 - **Uninstall:** `hooks uninstall` removes only entries whose command is
   exactly one ClawBridge writes, ending in `# clawbridge-context-hook v1`.
 
-The hook commands always exit 0 and touch only local files.
+The hook commands always exit 0. The context steps touch only local files;
+the queue's steps call the server through the MCP server's record, as above.
 - They read the hook's JSON on stdin. Without `session_id` and
   `transcript_path` as strings, or without `CLAWBRIDGE_SESSION`, they bind
   nothing and print nothing.

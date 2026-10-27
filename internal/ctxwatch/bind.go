@@ -79,6 +79,9 @@ type HookInput struct {
 	// Source is SessionStart's (startup, resume, clear or compact);
 	// Trigger is PreCompact's (manual or auto).
 	Source, Trigger string
+	// StopHookActive is Stop's: the agent is already continuing because a
+	// Stop hook blocked its stop.
+	StopHookActive bool
 }
 
 // maxHookInput bounds what is read from a hook's stdin.
@@ -105,6 +108,11 @@ func ReadHookInput(r io.Reader) (HookInput, bool) {
 		return s
 	}
 	in := HookInput{SessionID: str("session_id"), TranscriptPath: str("transcript_path"), Source: str("source"), Trigger: str("trigger")}
+	// Anything but false counts as active, so a Stop hook never blocks twice.
+	var active bool
+	if raw["stop_hook_active"] != nil && (json.Unmarshal(raw["stop_hook_active"], &active) != nil || active) {
+		in.StopHookActive = true
+	}
 	if in.SessionID == "" || in.TranscriptPath == "" {
 		return HookInput{}, false
 	}

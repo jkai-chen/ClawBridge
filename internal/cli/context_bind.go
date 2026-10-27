@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"errors"
 	"flag"
 	"fmt"
@@ -31,7 +32,7 @@ const sharedWarning = "This file is committed: the hooks will run for every team
 // runContextBind runs `context bind`. With --from-hook it is Claude Code's
 // SessionStart hook: it always succeeds, prints nothing but the reminder,
 // and binds nothing from input it can't trust (CW-L2).
-func runContextBind(args []string, stdout, stderr io.Writer) error {
+func runContextBind(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	f := flag.NewFlagSet("context bind", flag.ContinueOnError)
 	f.SetOutput(stderr)
 	f.Usage = func() { fmt.Fprintln(stderr, contextUsage) }
@@ -50,7 +51,7 @@ func runContextBind(args []string, stdout, stderr io.Writer) error {
 		if *agent != "" || *transcript != "" || *thread != "" {
 			return errors.New(contextUsage)
 		}
-		bindFromHook(*session, stdout)
+		bindFromHook(ctx, *session, stdout)
 		return nil
 	}
 	b := ctxwatch.Binding{BoundAt: ctxwatch.Now()}
@@ -163,8 +164,13 @@ func mayRebind(old ctxwatch.Binding, bound bool, id string, pid int) bool {
 	return !ctxwatch.ProcessAlive(old.AgentPID)
 }
 
-func bindFromHook(session string, stdout io.Writer) {
+func bindFromHook(ctx context.Context, session string, stdout io.Writer) {
 	in, dir, transcript, ok := hookBinding(session)
+	if in.SessionID != "" {
+		// The queue's step needs only a usable input and the MCP server's
+		// record, not the transcript binding.
+		defer bindQueue(ctx, session)
+	}
 	if !ok {
 		return
 	}
@@ -187,7 +193,7 @@ func bindFromHook(session string, stdout io.Writer) {
 // runContextCompacting runs `context compacting --from-hook`, Claude Code's
 // PreCompact hook: it notes the compaction and its trigger on the session's
 // binding, when that is the hook's transcript. It always succeeds, silently.
-func runContextCompacting(args []string, stderr io.Writer) error {
+func runContextCompacting(ctx context.Context, args []string, stderr io.Writer) error {
 	f := flag.NewFlagSet("context compacting", flag.ContinueOnError)
 	f.SetOutput(stderr)
 	f.Usage = func() { fmt.Fprintln(stderr, contextUsage) }
@@ -200,6 +206,9 @@ func runContextCompacting(args []string, stderr io.Writer) error {
 		return errors.New(contextUsage)
 	}
 	in, dir, transcript, ok := hookBinding(*session)
+	if in.SessionID != "" {
+		defer compactingQueue(ctx, *session)
+	}
 	if !ok {
 		return nil
 	}
@@ -237,12 +246,19 @@ func runContextHooks(args []string, stdout, stderr io.Writer) error {
 	if *agent != ctxwatch.ClaudeCode {
 		return fmt.Errorf("hooks are for %s only; bind a Codex session with `context bind --codex-thread`", ctxwatch.ClaudeCode)
 	}
+	return applyHooks(*scope, "", install, *dryRun, *confirmShared, stdout, stderr)
+}
+
+// applyHooks installs or removes ClawBridge's Claude Code hooks at scope.
+// The local and shared scopes are the settings of the project at root, or
+// with no root of the git work tree holding the current directory.
+func applyHooks(scope, root string, install, dryRun, confirmShared bool, stdout, stderr io.Writer) error {
 	// The hook commands are POSIX shell.
 	if install && contextGOOS == "windows" {
 		return errors.New("the hooks need a POSIX shell and are not installed on Windows; bind with `context bind --agent claude-code --transcript PATH`")
 	}
 	var path string
-	switch *scope {
+	switch scope {
 	case ctxwatch.ScopeUser:
 		config, err := ctxwatch.ClaudeConfigDir()
 		if err != nil {
@@ -250,16 +266,21 @@ func runContextHooks(args []string, stdout, stderr io.Writer) error {
 		}
 		path = filepath.Join(config, "settings.json")
 	case ctxwatch.ScopeLocal, ctxwatch.ScopeProjectShared:
-		root, inGit, err := projectRoot()
-		if err != nil {
-			return err
+		inGit := false
+		if root == "" {
+			var err error
+			if root, inGit, err = projectRoot(); err != nil {
+				return err
+			}
+		} else {
+			inGit = exec.Command("git", "-C", root, "rev-parse", "--show-toplevel").Run() == nil
 		}
 		name := "settings.local.json"
-		if *scope == ctxwatch.ScopeProjectShared {
+		if scope == ctxwatch.ScopeProjectShared {
 			name = "settings.json"
 		}
 		path = filepath.Join(root, ".claude", name)
-		if install && *scope == ctxwatch.ScopeLocal && inGit {
+		if install && scope == ctxwatch.ScopeLocal && inGit {
 			rel := filepath.Join(".claude", name)
 			if gitTracks(root, rel) {
 				return fmt.Errorf("%s is tracked by git, so it is not private to you; untrack it, or use --scope user", path)
@@ -269,10 +290,10 @@ func runContextHooks(args []string, stdout, stderr io.Writer) error {
 			}
 		}
 	default:
-		return fmt.Errorf("unknown scope %q: want %s, %s or %s", *scope, ctxwatch.ScopeLocal, ctxwatch.ScopeUser, ctxwatch.ScopeProjectShared)
+		return fmt.Errorf("unknown scope %q: want %s, %s or %s", scope, ctxwatch.ScopeLocal, ctxwatch.ScopeUser, ctxwatch.ScopeProjectShared)
 	}
 	binary := ""
-	if install && *scope != ctxwatch.ScopeProjectShared {
+	if install && scope != ctxwatch.ScopeProjectShared {
 		exe, err := os.Executable()
 		if err == nil {
 			exe, err = filepath.EvalSymlinks(exe)
@@ -282,7 +303,7 @@ func runContextHooks(args []string, stdout, stderr io.Writer) error {
 		}
 		binary = exe
 	}
-	change, err := ctxwatch.PlanHooks(path, *scope, binary, install)
+	change, err := ctxwatch.PlanHooks(path, scope, binary, install)
 	if err != nil {
 		return err
 	}
@@ -291,13 +312,13 @@ func runContextHooks(args []string, stdout, stderr io.Writer) error {
 		return err
 	}
 	fmt.Fprintf(stdout, "%s:\n%s", path, change.Diff())
-	if *dryRun {
+	if dryRun {
 		_, err := fmt.Fprintln(stdout, "dry run: nothing written")
 		return err
 	}
-	if install && *scope == ctxwatch.ScopeProjectShared {
+	if install && scope == ctxwatch.ScopeProjectShared {
 		fmt.Fprintln(stdout, sharedWarning)
-		if !*confirmShared {
+		if !confirmShared {
 			return errors.New("nothing written: run again with --confirm-shared to edit the committed file")
 		}
 	}

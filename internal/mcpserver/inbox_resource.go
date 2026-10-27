@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"sync"
 	"time"
 
@@ -21,8 +22,16 @@ type Options struct {
 	PollTimeout  time.Duration
 	Wait         func(context.Context, time.Duration) error
 	// ContextDir holds the binding records; when set, the server reports
-	// its session's context if no other process does.
+	// its session's context if no other process does, and keeps the
+	// queue record its hooks read.
 	ContextDir string
+	// Server or DB is the route the queue record names for the hooks.
+	Server, DB string
+	// Diagnostics gets the queue's notes; standard error by default.
+	Diagnostics io.Writer
+	// The queue's intervals and clock, for tests.
+	LeasePoll, RecordEvery, ExtendEvery, ActiveWindow time.Duration
+	Now                                               func() time.Time
 }
 type inboxResource struct {
 	mu             sync.Mutex
@@ -36,6 +45,8 @@ type inboxResource struct {
 	publication    notify.Status
 	publicationGen uint64
 	publicationCtx context.Context
+	// wake is the queue, whose changes check the status at once.
+	wake *queue
 }
 type resourceListener struct {
 	active, seen   bool
@@ -251,7 +262,7 @@ func (r *inboxResource) poll(ctx context.Context, gen, epoch uint64) {
 	delay := r.options.PollInterval
 	first := true
 	for {
-		if (!first && r.options.Wait(ctx, delay) != nil) || ctx.Err() != nil {
+		if (!first && r.waitNext(ctx, delay) != nil) || ctx.Err() != nil {
 			return
 		}
 		first = false
@@ -295,5 +306,27 @@ func (r *inboxResource) poll(ctx context.Context, gen, epoch uint64) {
 		if changed {
 			_ = r.server.ResourceUpdated(ctx, &mcp.ResourceUpdatedNotificationParams{URI: InboxStatusURI})
 		}
+	}
+}
+
+// waitNext waits for the next status check: the poll interval, or with the
+// consume stream open a minute, since the stream's offers and the agent's
+// acks wake it at once.
+func (r *inboxResource) waitNext(ctx context.Context, d time.Duration) error {
+	if r.wake == nil {
+		return r.options.Wait(ctx, d)
+	}
+	if r.wake.streaming() {
+		d = max(d, streamSafety)
+	}
+	bounded, cancel := context.WithCancel(ctx)
+	defer cancel()
+	done := make(chan error, 1)
+	go func() { done <- r.options.Wait(bounded, d) }()
+	select {
+	case err := <-done:
+		return err
+	case <-r.wake.wake:
+		return ctx.Err()
 	}
 }

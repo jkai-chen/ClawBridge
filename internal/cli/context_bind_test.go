@@ -225,7 +225,7 @@ func TestContextHooksCommand(t *testing.T) {
 	exe, _ = filepath.EvalSymlinks(exe)
 	// The settings file is JSON: compare the command as JSON writes it.
 	guard := jsonString("[ -x '" + exe + "' ] || exit 0")
-	if strings.Count(string(data), ctxwatch.HookMarker) != 2 || !strings.Contains(string(data), guard[1:len(guard)-1]) {
+	if strings.Count(string(data), ctxwatch.HookMarker) != 3 || !strings.Contains(string(data), guard[1:len(guard)-1]) || !strings.Contains(string(data), "hook stop --from-hook") {
 		t.Fatalf("%s", data)
 	}
 	if out, err = runContextCmd(t, "hooks", "install"); err != nil || !strings.Contains(out, "no change") {
@@ -262,7 +262,7 @@ func TestContextHooksCommand(t *testing.T) {
 	if _, err = runContextCmd(t, "hooks", "install", "--scope", "user"); err != nil {
 		t.Fatal(err)
 	}
-	if data, _ = os.ReadFile(filepath.Join(dir, "claude", "settings.json")); strings.Count(string(data), ctxwatch.HookMarker) != 2 {
+	if data, _ = os.ReadFile(filepath.Join(dir, "claude", "settings.json")); strings.Count(string(data), ctxwatch.HookMarker) != 3 {
 		t.Fatalf("%s", data)
 	}
 	contextGOOS = "windows"

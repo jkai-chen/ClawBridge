@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"clawbridge/internal/ctxwatch"
 	"clawbridge/internal/doctor"
@@ -67,9 +68,9 @@ func runContext(ctx context.Context, args []string, stdout, stderr io.Writer) er
 	switch args[0] {
 	case "show":
 	case "bind":
-		return runContextBind(args[1:], stdout, stderr)
+		return runContextBind(ctx, args[1:], stdout, stderr)
 	case "compacting":
-		return runContextCompacting(args[1:], stderr)
+		return runContextCompacting(ctx, args[1:], stderr)
 	case "hooks":
 		return runContextHooks(args[1:], stdout, stderr)
 	default:
@@ -182,6 +183,44 @@ func doctorContext(session string) doctor.ContextState {
 	if err == nil && st.Bound {
 		st.Transcript, st.Levels = b.Transcript, b.Levels
 		st.Reading, err = ctxwatch.Read(b.Agent, b.Transcript)
+	}
+	st.Err = err
+	return st
+}
+
+// queueServer and queueDB are the route an MCP server's queue record names
+// for its hooks: the hosted server's URL, or the local database.
+func queueServer(c Config) string {
+	if c.Mode == "cloud" {
+		return c.Server
+	}
+	return ""
+}
+
+func queueDB(c Config) string {
+	if c.Mode == "cloud" {
+		return ""
+	}
+	return c.DB
+}
+
+// doctorQueue reads the session's queue record and compaction hold.
+func doctorQueue(session string) doctor.QueueState {
+	st := doctor.QueueState{Session: session}
+	dir, err := contextDir()
+	if err != nil {
+		st.Err = err
+		return st
+	}
+	if path, e := ctxwatch.BindingPath(dir, session); e == nil {
+		st.Path = strings.TrimSuffix(path, ".json") + ".queue.json"
+	}
+	r, ok, err := ctxwatch.LoadQueueRecord(dir, session)
+	if ok {
+		st.Record = &r
+	}
+	if h, held := ctxwatch.LoadCompactionHold(dir, session); held {
+		st.Hold = &h
 	}
 	st.Err = err
 	return st

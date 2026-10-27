@@ -25,7 +25,7 @@ missed. Against an older server, or in local mode, it polls at a five-second
 default interval and says `stream_unavailable` once on stderr. Each watcher, like
 each open TUI and each agent, holds one of the 8 streams an account may have open
 on a server; past that, a new one waits and retries. The agent fetches
-actual message content with `inbox` and marks it read after processing. A
+actual message content with `inbox` and acks it after processing. A
 notification or accepted queue request is not a delivery/read receipt.
 
 ## Inspect without consuming mail
@@ -110,6 +110,40 @@ clawbridge --session reviewer --instance INSTANCE notify --adapter command --sta
 
 Typing into a terminal while the agent is busy queues the line as its next
 prompt in most hosts; check yours before you rely on it.
+
+## Agents: ack, the Stop hook and compaction
+
+An agent's MCP server takes the session's messages from the queue once the
+agent first calls `inbox` (or `ack`, `reply`, `mark_read`): on a server with
+the stream it holds the session's consume stream, otherwise it polls. Messages
+it holds show a `lease` in `inbox`. The agent handles each one, then calls
+`ack`, or answers with `reply` and `ack: true`, which acks in the same step. A
+message that isn't acked is offered again when its lease runs out, and after 5
+offers it is a dead letter the coordinator is told about. While the agent keeps
+working, the MCP server extends its leases, so a long turn doesn't use up
+offers.
+
+`clawbridge mcp install --agent claude-code` also installs Claude Code hooks
+in the project's `.claude/settings.local.json` (`--hooks none` leaves them out;
+`clawbridge context hooks install` adds them later):
+
+- **Stop:** a turn that ends with unacked messages is sent back once with
+  `N ClawBridge messages are waiting: call inbox, handle them, then ack`. It
+  doesn't block again for the same messages, nor when the server is old, slow
+  or down, nor while the session's policy is `hold` or `refuse`.
+- **PreCompact and SessionStart:** before a compaction the session's
+  notifications are held and its leases given back without counting an offer;
+  after it they are accepted again and everything is offered anew. A hold that
+  you set yourself is never lifted. If the agent dies mid-compaction, the next
+  start lifts the hold; until then its messages wait, and `clawbridge doctor`
+  shows the hold.
+
+The Stop hook covers a busy agent. An idle one still needs the command adapter
+above to be woken.
+
+`clawbridge doctor` shows whether the session's MCP server holds the stream,
+and the session's unacked and dead counts. Details: [API reference, "Agents and
+the queue"](reference/api.md#agents-and-the-queue).
 
 ## Choose when to receive automatic notices
 

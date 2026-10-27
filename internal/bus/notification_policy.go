@@ -14,6 +14,11 @@ func (s *Store) setNotificationPolicy(ctx context.Context, tx *transaction, wid,
 	if _, err := tx.ExecContext(ctx, `UPDATE sessions SET notification_policy=?,updated_at=? WHERE project_id=? AND id=?`, policy, stamp(), pid, sid); err != nil {
 		return nil, err
 	}
+	// The session's consume stream leases again at once on accept, and
+	// stops leasing on hold or refuse.
+	if err := queueNotify(ctx, tx, pid, sid); err != nil {
+		return nil, err
+	}
 	if err := s.audit(ctx, tx, wid, pid, sid, "session", sid, "notification_policy", map[string]any{"old": actor["notification_policy"], "new": policy}); err != nil {
 		return nil, err
 	}

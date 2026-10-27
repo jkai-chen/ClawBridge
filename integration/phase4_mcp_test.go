@@ -50,6 +50,12 @@ func TestPhase4InstalledFreshProcessAndSelectedDoctor(t *testing.T) {
 			data = map[string]any{"projects": []map[string]any{{"id": "prj_pinned", "slug": "project"}}}
 		case "whoami":
 			data = map[string]any{"principal": "agent@project.iam.gserviceaccount.com", "online": true, "verified": true, "storage_mode": "cloud", "identity_provenance": "google-id-token", "workspace": map[string]any{"id": "ws_pinned"}, "project": map[string]any{"id": "prj_pinned"}}
+		case "notification_status":
+			// doctor's queue check: a pure read, with the queue's counts.
+			if req.Args["queue"] != true {
+				t.Error("doctor read notification status without the queue counts")
+			}
+			data = map[string]any{"policy": "accept", "unacked_count": 0, "dead_count": 0, "latest_seq": 0}
 		default:
 			t.Errorf("read-only probe requested %s", req.Operation)
 			w.WriteHeader(400)
@@ -76,9 +82,13 @@ func TestPhase4InstalledFreshProcessAndSelectedDoctor(t *testing.T) {
 		cmd := exec.CommandContext(ctx, p.binary, args...)
 		cmd.Dir = dir
 		cmd.Env = env
-		out, err := cmd.CombinedOutput()
+		// Standard output is the result; mcp install reports the hooks it
+		// adds on standard error.
+		var stderr bytes.Buffer
+		cmd.Stderr = &stderr
+		out, err := cmd.Output()
 		if err != nil {
-			t.Fatalf("CLI failed: %v: %s", err, out)
+			t.Fatalf("CLI failed: %v: %s%s", err, out, stderr.Bytes())
 		}
 		return out
 	}

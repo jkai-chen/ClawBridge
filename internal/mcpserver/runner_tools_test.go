@@ -13,7 +13,7 @@ import (
 // placed, so it never reaches a runner's agent by default.
 func TestRunnerClassifiesEveryWriteTool(t *testing.T) {
 	sessionsOwn := []string{
-		"register_session", "send", "reply", "inbox", "mark_read", "set_notification_policy",
+		"register_session", "send", "reply", "inbox", "mark_read", "ack", "set_notification_policy",
 		"update_session", "retire_session", "assignment_propose", "assignment_release",
 	}
 	p := &recordingBoardV2{recordingBoard: recordingBoard{data: map[string]any{"ok": true}}}

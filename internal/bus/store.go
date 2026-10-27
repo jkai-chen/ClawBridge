@@ -135,7 +135,7 @@ func (s *Store) migrate() error {
 	if err = tx.QueryRow("PRAGMA user_version").Scan(&version); err != nil {
 		return err
 	}
-	if version > 33 {
+	if version > 34 {
 		return errors.New("database schema is newer than this ClawBridge binary")
 	}
 	if version == 0 {
@@ -307,6 +307,19 @@ func (s *Store) migrate() error {
 	}
 	if version < 33 {
 		if _, err = tx.Exec(linearNamesSchemaV33 + `PRAGMA user_version=33;`); err != nil {
+			return err
+		}
+	}
+	if version < 34 {
+		// Messages sent before this schema stay private: every project that
+		// exists now reads its threads from now on.
+		if _, err = tx.Exec(threadsFromSchemaV34); err != nil {
+			return err
+		}
+		if _, err = tx.Exec(`UPDATE projects SET threads_from=?`, stamp()); err != nil {
+			return err
+		}
+		if _, err = tx.Exec(`PRAGMA user_version=34;`); err != nil {
 			return err
 		}
 	}
@@ -593,7 +606,7 @@ var operationArgs = map[string]string{
 	"intake_list":                 "instance state",
 	"intake_dismiss":              "instance issue_uuid",
 	"intake_rearm":                "instance issue_uuid",
-	"workspace_init":              "mode name retention_days", "project_create": "slug name git_remote", "list_projects": "", "list_members": "", "register_session": "instance resume role agent_kind model host account notes transport", "list_sessions": "instance status role limit after issue scope_path assignment_state", "send": "instance to body kind thread_id operation_id coordination", "reply": "instance message_id body kind operation_id coordination", "inbox": "instance unread_only limit after", "mark_read": "instance ids", "update_session": "instance target_session role model host account notes transport", "retire_session": "instance target_session successor status outcome confirm", "history": "instance entity key limit after", "whoami": "instance", "heartbeat": "instance state", "message_status": "instance message_id", "resolve_project": "git_remote instance", "snapshot": "instance", "project_role_set": "instance principal role", "project_role_revoke": "instance principal", "purge_expired": "instance", "principal_unbind": "principal allow_previous", "workspace_set_domains": "domains",
+	"workspace_init":              "mode name retention_days", "project_create": "slug name git_remote", "list_projects": "", "list_members": "", "register_session": "instance resume role agent_kind model host account notes transport", "list_sessions": "instance status role limit after issue scope_path assignment_state", "send": "instance to body kind thread_id operation_id coordination", "reply": "instance message_id body kind operation_id coordination", "inbox": "instance unread_only limit after", "mark_read": "instance ids", "update_session": "instance target_session role model host account notes transport", "retire_session": "instance target_session successor status outcome confirm", "history": "instance entity key limit after", "project_threads": "instance limit before", "project_thread": "instance thread_id limit after", "whoami": "instance", "heartbeat": "instance state", "message_status": "instance message_id", "resolve_project": "git_remote instance", "snapshot": "instance", "project_role_set": "instance principal role", "project_role_revoke": "instance principal", "purge_expired": "instance", "principal_unbind": "principal allow_previous", "workspace_set_domains": "domains",
 }
 
 func validateArgs(op string, a map[string]any) error {
@@ -1201,6 +1214,9 @@ func (s *Store) execute(ctx context.Context, tx *transaction, r Request) (any, e
 			return nil, e
 		}
 		return page("events", rows, n, after), nil
+	}
+	if r.Operation == "project_threads" || r.Operation == "project_thread" {
+		return s.threadsOp(ctx, tx, wid, p, projectRole, r)
 	}
 	var actor map[string]any
 	if r.Session != "" {

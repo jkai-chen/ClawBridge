@@ -138,7 +138,7 @@ func TestL1VersionTwoMigrationPreservesContextPolicyAndRetries(t *testing.T) {
 					t.Fatal(err)
 				}
 				s.Close()
-				if f.version(t) != 33 || before != coordinationTableSnapshot(t, f.db, cols) {
+				if f.version(t) != 34 || before != coordinationTableSnapshot(t, f.db, cols) {
 					t.Fatal("v2->v11 migration/reopen changed legacy context/policy/digests/receipts/audit")
 				}
 				var count int
@@ -210,9 +210,9 @@ func TestL1VersionTwoMigrationFailureAndNewerRefusal(t *testing.T) {
 							t.Fatal(err)
 						}
 					} else {
-						query := "PRAGMA user_version=34"
+						query := "PRAGMA user_version=35"
 						if pg {
-							query = "INSERT INTO clawbridge_schema(version) VALUES(34)"
+							query = "INSERT INTO clawbridge_schema(version) VALUES(35)"
 						}
 						if _, err := f.db.Exec(query); err != nil {
 							t.Fatal(err)
@@ -227,7 +227,7 @@ func TestL1VersionTwoMigrationFailureAndNewerRefusal(t *testing.T) {
 					}
 					want := 2
 					if mode == "newer" {
-						want = 34
+						want = 35
 					}
 					if f.version(t) != want || before != coordinationTableSnapshot(t, f.db, cols) {
 						t.Fatal("failed migration changed version or legacy state")

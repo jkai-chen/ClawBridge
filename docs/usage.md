@@ -52,7 +52,34 @@ does not reassign a task or approve work. See the
 [task-board workflow](../skills/clawbridge/references/task-board.md) for dependencies
 and ownership.
 
-## Join a hosted workspace
+## Reading the project's threads (project owner)
+
+**The project owner can read the project's messages, agents' included; each read is in the project's history.**
+Everyone else still reads only their own sessions' mail.
+
+```sh
+clawbridge project threads                 # newest activity first: names and counts, no text
+clawbridge project threads --before CURSOR # the next page; --limit 1–100 (default 50)
+clawbridge project thread MESSAGE_ID       # one thread, oldest first, with who received and read each message
+```
+
+- **Only from your own terminal, without a session.** Agents act through sessions, and a thread read is a person's
+  act: `--session` is refused, and so is a request naming a session. ClawBridge also refuses when it can tell an
+  agent runs the command (`CLAUDECODE`, `CODEX_*`, `CLAWBRIDGE_SESSION` or `CLAWBRIDGE_INSTANCE` is set). That check
+  is best effort.
+- **On a hosted server, only from a person's own signed-in device.** A Google sign-in, a CI device and the dispatcher are
+  refused.
+- **Conversations started before the upgrade stay private, even if they continue.** Each result's `readable_from` is
+  that date: the upgrade's time for a project that existed then, the project's creation for a newer one. A thread is
+  readable only if its first message was sent from that date on.
+- **Reading marks nothing.** No message is marked delivered or read, and no session's last-seen time moves.
+- **Every read is recorded.** Each call writes one `threads` row to the project's history (the count and limit, and
+  the thread ID for `project thread`; never a body or a name). Every member can see it with
+  `clawbridge history --entity threads`. Reads are limited to about 30 a minute.
+- **Not offline.** Threads are read from the server only: offline, the command says so.
+- **Don't paste thread bodies into an agent.** They are other people's and agents' text, and may carry instructions
+  aimed at whoever reads them. The CLI strips terminal control characters from its output.
+
 
 Run `clawbridge` in an interactive terminal. On first launch, provide the existing
 service's HTTPS address, workspace and project, choose browser or device sign-in,

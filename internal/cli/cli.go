@@ -443,7 +443,7 @@ flags:`)
 		}
 	case "project":
 		if len(rest) == 0 {
-			return errors.New("usage: project create SLUG, project overview, project role-set EMAIL ROLE, or project role-revoke EMAIL")
+			return errors.New("usage: project create SLUG, project overview, project threads, project thread THREAD_ID, project role-set EMAIL ROLE, or project role-revoke EMAIL")
 		}
 		switch rest[0] {
 		case "create":
@@ -456,6 +456,19 @@ flags:`)
 			// Any member: the project, its sessions and its Linear board.
 			rest = rest[1:]
 			op = "project_overview"
+		case "threads":
+			// The project owner, without a session: the project's threads,
+			// newest activity first. Every read is in the project's history.
+			rest = rest[1:]
+			op = "project_threads"
+			f.Int("limit", 50, "threads per page (1–100)")
+			stringArg("before", "the next cursor from the previous page")
+		case "thread":
+			rest = rest[1:]
+			op = "project_thread"
+			arityMin, arityMax = 1, 1
+			f.Int("limit", 100, "messages per page (1–200)")
+			f.Int64("after", 0, "exclusive sequence cursor")
 		case "role-set":
 			rest = rest[1:]
 			op = "project_role_set"
@@ -885,7 +898,9 @@ flags:`)
 				return errors.New("the context-watch file must hold one JSON object")
 			}
 			a["context_watch"] = doc
-		} else if op == "context_watch_get" || op == "comment_watch_status" || op == "project_overview" {
+		} else if op == "project_thread" {
+			a["thread_id"] = pos[0]
+		} else if op == "context_watch_get" || op == "comment_watch_status" || op == "project_overview" || op == "project_threads" {
 		} else {
 			a["principal"], a["role"] = pos[0], pos[1]
 		}
@@ -1100,6 +1115,18 @@ flags:`)
 			a["instance"] = config.Instance
 		}
 	}
+	if op == "project_threads" || op == "project_thread" {
+		// A thread read is a person's act. The server refuses any session;
+		// the agent check here is best effort, as an agent can clear its
+		// environment.
+		if flags.Session != "" {
+			return errors.New("the project's threads are read without --session; the project owner runs this in their own terminal")
+		}
+		if marker := agentMarker(closesEnv()); marker != "" {
+			return fmt.Errorf("reading the project's threads is the project owner's, and %s says an agent runs this command; run it yourself in your own terminal", marker)
+		}
+		config.Session = ""
+	}
 	if op == "dispatcher_chat_ask" || op == "dispatcher_chat_show" {
 		return runDispatcherChat(ctx, executor, config, op, a, stdout)
 	}
@@ -1137,10 +1164,10 @@ flags:`)
 		data["token_file"] = secret.path
 		data["note"] = "Wrote the token to " + secret.path + " (0600): put it in Linear's MCP server header Authorization: Bearer <token>, then delete the file."
 	}
-	if op == "dispatcher_decisions_list" || op == "dispatcher_escalations_list" || op == "project_overview" {
+	if op == "dispatcher_decisions_list" || op == "dispatcher_escalations_list" || op == "project_overview" || op == "project_threads" || op == "project_thread" {
 		// The log and the escalations carry the model's explanations: model
 		// output (D6-L1). The overview carries session and Linear names,
-		// which other people chose.
+		// which other people chose; threads, other people's and agents' text.
 		result.Data = terminalSafeAll(result.Data)
 	}
 	if op == "assignment_confirm" || op == "assignment_release" {

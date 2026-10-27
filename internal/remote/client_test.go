@@ -101,6 +101,14 @@ func TestScopedSyncOutageAndDefinitiveDenials(t *testing.T) {
 	if _, err = client.Execute(ctx, overview); !errors.Is(err, ErrOverviewOffline) {
 		t.Fatalf("offline overview: %v", err)
 	}
+	// The project's threads are read from the authority only: offline it
+	// says so, and never reads as a failed write.
+	for _, op := range []string{"project_threads", "project_thread"} {
+		threads := bus.Request{Operation: op, Workspace: wid, Project: pid, Args: map[string]any{}}
+		if _, err = client.Execute(ctx, threads); !errors.Is(err, ErrThreadsOffline) {
+			t.Fatalf("offline %s: %v", op, err)
+		}
+	}
 	request.Operation = "inbox"
 	for _, denial := range []int64{400, 401, 403, 404, 409, 429} {
 		status.Store(denial)

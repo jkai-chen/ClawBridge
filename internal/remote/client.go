@@ -730,10 +730,17 @@ func (c *Client) binding(r bus.Request) mirror.Binding {
 // reached: the overview is read from the authority only.
 var ErrOverviewOffline = errors.New("project overview unavailable offline: the server could not be reached")
 
+// ErrThreadsOffline answers a thread read when the server can't be
+// reached: the project's threads are read from the authority only.
+var ErrThreadsOffline = errors.New("the project's threads are unavailable offline: the server could not be reached")
+
 func (c *Client) Execute(ctx context.Context, r bus.Request) (bus.Result, error) {
 	result, unavailable, err := c.call(ctx, r)
 	if err == nil {
 		return result, nil
+	}
+	if unavailable && (r.Operation == "project_threads" || r.Operation == "project_thread") {
+		return bus.Result{}, ErrThreadsOffline
 	}
 	if r.Operation == "inbox_status" || r.Operation == "notification_status" || r.Operation == "taskboard_get" || r.Operation == "taskboard_get_v2" || r.Operation == "taskboard_access" || r.Operation == "label_policy_get" || r.Operation == "doc_policy_get" {
 		// Status and binding metadata require the authority, never a mirror.

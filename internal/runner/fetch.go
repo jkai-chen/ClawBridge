@@ -85,6 +85,13 @@ func (r *Runner) checkClone(clone string) error {
 			return refuse("borrows objects from elsewhere (" + f + ")")
 		}
 	}
+	// Its objects and refs are its own directories, not links elsewhere
+	// (R141-L3).
+	for _, d := range []string{"objects", "refs"} {
+		if info, err := os.Lstat(filepath.Join(gitDir, d)); err != nil || !info.IsDir() {
+			return refuse("has an " + d + " entry that isn't a plain directory")
+		}
+	}
 	config := filepath.Join(gitDir, "config")
 	if info, err := os.Lstat(config); err != nil || !info.Mode().IsRegular() {
 		return refuse("has no plain config file")

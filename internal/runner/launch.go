@@ -387,7 +387,7 @@ func (r *Runner) Launch(spec Spec) (Prepared, error) {
 	if _, err = rand.Read(canary); err != nil {
 		return p, err
 	}
-	launch := LaunchScript(environ, hex.EncodeToString(canary), p.SettingsFile, p.MCPFile, spec.Settings.Model, StartPrompt(spec.Identifier, spec.IssueID, branch, filepath.Join(p.Cache, "selftest.sh")))
+	launch := LaunchScript(hex.EncodeToString(canary), p.SettingsFile, p.MCPFile, spec.Settings.Model, StartPrompt(spec.Identifier, spec.IssueID, branch, filepath.Join(p.Cache, "selftest.sh")))
 	for path, data := range map[string][]byte{p.SettingsFile: append(settings, '\n'), p.MCPFile: append(mcp, '\n'), script: []byte(launch)} {
 		if err = writePrivate(path, data); err != nil {
 			return p, err

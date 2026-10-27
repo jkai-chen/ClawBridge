@@ -1,0 +1,108 @@
+package watcher
+
+import (
+	"context"
+	"fmt"
+	"strings"
+	"testing"
+	"time"
+
+	"clawbridge/internal/linearboard"
+)
+
+// queueMarkers leaves n marker rows due for session eng: each a claim
+// released before it ran, as in the live miss this hotfix answers, so each issue has
+// a claim row and a close row.
+func (e *env) queueMarkers(n int) {
+	e.t.Helper()
+	for i := 0; i < n; i++ {
+		issue := []string{issueA, issueB}[i%2]
+		proposed := e.call("assignment_propose", "eng", map[string]any{"issue_uuid": issue, "issue_identifier": "FIX-1"})
+		confirmed := e.call("assignment_confirm", "coord", map[string]any{"target_session": "eng", "revision": proposed["assignment"].(map[string]any)["revision"]})["assignment"].(map[string]any)
+		e.call("assignment_release", "eng", map[string]any{"revision": confirmed["revision"], "outcome": "done"})
+	}
+	e.sql(`UPDATE assignment_markers SET next_attempt_at='2000-01-01T00:00:00.000000000Z'`)
+}
+
+func (e *env) budgetUsed() int {
+	e.t.Helper()
+	var used int
+	e.queryRow(`SELECT budget_used FROM watch_lease`, &used)
+	return used
+}
+
+// The live miss's shape: twenty bound Linear
+// projects, a queue of marker rows, a budget near its limit, and slow
+// Linear. The pass applies what fits its time box, refunds the rest, and
+// the tick completes every other step without failing.
+func TestTickSurvivesTonightsMarkerQueue(t *testing.T) {
+	e := setup(t)
+	e.bindProjects("p", 1, 20)
+	e.f.project = linearProjectID(1)
+	e.tick() // takes the lease, and the day's health
+	e.queueMarkers(3)
+	var due int
+	e.queryRow(`SELECT COUNT(*) FROM assignment_markers WHERE next_attempt_at<='2001'`, &due)
+	if due < 4 {
+		t.Fatal("queue:", due)
+	}
+	// Slow Linear: every read or write the fake answers takes 3 s.
+	clock := time.Now()
+	e.w.Now = func() time.Time { clock = clock.Add(time.Second); return clock }
+	e.sql(`UPDATE watch_lease SET budget_used=budget_limit-60, budget_hour=?`, time.Now().UTC().Format("2006-01-02T15"))
+	e.dueNow()
+	before := e.budgetUsed()
+	logged := []string{}
+	old := logf
+	logf = func(format string, a ...any) { logged = append(logged, fmt.Sprintf(format, a...)) }
+	defer func() { logf = old }()
+	tick := e.tick()
+	if tick.Error != "" || tick.Comments == nil || tick.Intake == nil {
+		t.Fatalf("the tick did not complete its other steps: %+v", tick)
+	}
+	c := tick.Comments
+	if len(c.Markers) == 0 || len(c.Markers) > 3 || c.MarkersLeft == 0 || c.MarkersStopped == "" {
+		t.Fatalf("the pass did not stop with rows left: %d applied, %d left, %q", len(c.Markers), c.MarkersLeft, c.MarkersStopped)
+	}
+	// The rows not started give their charge back: across a markers-only
+	// pass, the budget moves by exactly the pass's net charge.
+	e.queueMarkers(2)
+	before = e.budgetUsed()
+	pass := e.w.Markers(context.Background(), e.pid)
+	if pass.Error != "" || pass.Comments == nil || pass.Comments.MarkersLeft == 0 {
+		t.Fatalf("the nudge pass left nothing to refund: %+v", pass)
+	}
+	if spent := e.budgetUsed() - before; spent != pass.Comments.MarkersCharged {
+		t.Fatal("the budget kept charges for rows never applied:", spent, "net", pass.Comments.MarkersCharged)
+	}
+	if len(logged) != 2 || !strings.HasPrefix(logged[0], "watcher: markers: project "+e.pid+" (tick): applied ") || !strings.Contains(logged[0], "stopped "+c.MarkersStopped) || !strings.HasPrefix(logged[1], "watcher: markers: project "+e.pid+" (nudge): applied ") {
+		t.Fatal("log:", logged)
+	}
+}
+
+// A failed tick or nudge logs its code; a pass with nothing due logs no
+// marker line.
+func TestLogTickSaysCodesOnly(t *testing.T) {
+	logged := []string{}
+	old := logf
+	logf = func(format string, a ...any) { logged = append(logged, fmt.Sprintf(format, a...)) }
+	defer func() { logf = old }()
+	logTick("prj_1", "tick", ProjectTick{Error: "deadline"})
+	logTick("prj_1", "nudge", ProjectTick{Comments: &linearboard.WatchCycle{}})
+	if strings.Join(logged, "|") != "watcher: tick: project prj_1 failed: deadline" {
+		t.Fatal(logged)
+	}
+}
+
+// A pass stopped by its limit or clock with rows left wants another pass;
+// one stopped by the budget or an error, or with nothing left, doesn't.
+func TestMarkersPending(t *testing.T) {
+	for stopped, want := range map[string]bool{"limit": true, "time": true, "deadline": true, "budget": false, "error": false} {
+		if got := (ProjectTick{Comments: &linearboard.WatchCycle{MarkersLeft: 2, MarkersStopped: stopped}}).MarkersPending(); got != want {
+			t.Fatal(stopped, got)
+		}
+	}
+	if (ProjectTick{Comments: &linearboard.WatchCycle{MarkersStopped: "time"}}).MarkersPending() || (ProjectTick{}).MarkersPending() {
+		t.Fatal("pending with nothing left")
+	}
+}

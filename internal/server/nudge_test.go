@@ -251,3 +251,35 @@ func TestClockTickWaitsOutANudge(t *testing.T) {
 		t.Fatal("the held tick did not run soon after the nudge:", n)
 	}
 }
+
+// leftover is a pass result that says whether rows are left.
+type leftover bool
+
+func (l leftover) MarkersPending() bool { return bool(l) }
+
+type leavingPasses struct {
+	passes
+	left []bool
+}
+
+func (p *leavingPasses) Markers(ctx context.Context, pid string) any {
+	p.passes.Markers(ctx, pid)
+	l := p.left[0]
+	p.left = p.left[1:]
+	return leftover(l)
+}
+
+// The hotfix: a pass that stopped with rows left runs again a minute on,
+// with no new signal, until the queue drains.
+func TestNudgeDrainsALeftQueue(t *testing.T) {
+	p := &leavingPasses{left: []bool{true, true, false}}
+	n, clock := testNudger(p, oneAtATime(&countTicks{ticks: make(chan struct{}, 8)}))
+	n.Nudge("w", "p1")
+	for i := 0; i < 4; i++ {
+		n.serve(context.Background())
+		*clock = clock.Add(nudgeEvery)
+	}
+	if p.count() != 3 {
+		t.Fatal("passes:", p.pids)
+	}
+}

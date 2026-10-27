@@ -34,11 +34,12 @@ const (
 )
 
 // MarkerRowCalls is what one marker row is charged up front for a binding
-// of teams and projects: markerDueCalls, plus the row's write proof of the
-// binding (writes prove it afresh, once per row). That proof reads each
-// team and lists its projects, or, where Linear offers no project list,
-// reads each project: teams + projects is its upper bound. A live state
-// part adds MarkerStateCalls.
+// of teams and projects: markerDueCalls, plus the write proof of the
+// binding. That proof reads each team and lists its projects, or, where
+// Linear offers no project list, reads each project: teams + projects is
+// its upper bound. A pass proves the binding once, fresh at its start, so
+// only the first row of a marker_due answer pays it; a later row pays
+// markerDueCalls. A live state part adds MarkerStateCalls.
 func MarkerRowCalls(teams, projects int) int { return markerDueCalls + teams + projects }
 
 // markerReasons are the only words a close note says about why.
@@ -540,14 +541,25 @@ func (c commentCall) markerSettle(ctx context.Context) (any, error) {
 	return map[string]any{"assignment_id": m.assignment, "phase": m.phase, "part": m.part, "state": state, "next_attempt_at": next}, nil
 }
 
-// markerDue hands the watcher the marker rows to apply, charging their
-// calls to the lease budget first: markers come before comment polls.
+// markerDue hands the watcher the marker rows to apply, at most limit
+// (default markerDueLimit), charging their calls to the lease budget first:
+// markers come before comment polls. The binding proof is charged once, on
+// the first row: the watcher's pass shares it. left counts the due rows not
+// handed out, and stopped says why: limit or budget.
 func (c commentCall) markerDue(ctx context.Context) (any, error) {
 	lease, err := c.fence(ctx)
 	if err != nil {
 		return nil, err
 	}
-	used, limit, err := c.charge(ctx, lease, 0)
+	limit := markerDueLimit
+	if v, ok := c.a["limit"]; ok {
+		n, e := integer(v)
+		if e != nil || n < 1 || n > markerDueLimit {
+			return nil, invalid(fmt.Sprintf("limit must be 1–%d", markerDueLimit))
+		}
+		limit = n
+	}
+	used, budget, err := c.charge(ctx, lease, 0)
 	if err != nil {
 		return nil, err
 	}
@@ -563,23 +575,33 @@ func (c commentCall) markerDue(ctx context.Context) (any, error) {
 			return nil, err
 		}
 	}
+	stopped := ""
 	for _, row := range rows {
-		calls := rowCalls
+		if len(markers) == limit {
+			stopped = "limit"
+			break
+		}
+		calls := markerDueCalls
+		if len(markers) == 0 {
+			// The pass's one binding proof.
+			calls = rowCalls
+		}
 		if s := str(row, "state_state"); s == "pending" || s == "in_flight" {
 			calls += MarkerStateCalls
 		}
-		if used+cost+calls > limit {
+		if used+cost+calls > budget {
+			stopped = "budget"
 			break
 		}
 		cost += calls
 		markers = append(markers, map[string]any{"assignment_id": row["assignment_id"], "phase": row["phase"], "issue_uuid": row["issue_uuid"], "charged": calls})
 	}
 	if len(markers) > 0 {
-		if _, _, err = c.charge(ctx, map[string]any{"budget_used": used, "budget_hour": layout(c.now)[:13], "budget_limit": limit}, cost); err != nil {
+		if _, _, err = c.charge(ctx, map[string]any{"budget_used": used, "budget_hour": layout(c.now)[:13], "budget_limit": budget}, cost); err != nil {
 			return nil, err
 		}
 	}
-	return map[string]any{"markers": markers}, nil
+	return map[string]any{"markers": markers, "left": len(rows) - len(markers), "stopped": stopped}, nil
 }
 
 // markerSpent reconciles one applied row with what it really spent, as a

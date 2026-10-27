@@ -1,0 +1,46 @@
+### whoami --session a --instance a-one
+Who you are
+Signed in as  local:<USER> (the local OS user, not verified)
+Workspace     w (local)
+Project       p
+Session       a · active · last seen just now
+Connection    local · online
+### status <ID> --session=a --instance=a-one
+Message
+ID       <ID>
+Sent     just now (<UTC>)
+Expires  in 90 days
+
+TO  DELIVERED  READ
+b   just now   just now
+### invite_list
+Invites
+ID        EMAIL             FOR     STATUS   EXPIRES    GRANTS
+inv_7Q2M  ada@example.test  user    pending  in 2 days  api=owner, core=member
+inv_3KD9  lin@example.test  device  used     -          -
+### invite_list
+Invites
+No invites. An owner invites someone with clawbridge invite create --email ADDRESS.
+### device_list
+Devices
+ID           LABEL    KIND    STATUS             LAST USED    ADDED
+dev_LAPTOP1  laptop   device  active             4 min ago    30 days ago
+dev_OLDMAC2  old mac  device  dormant in 3 days  57 days ago  200 days ago
+dev_CI00003  -        ci      revoked            never        2 days ago
+### user_list
+Members
+MEMBER                      ROLES       DEVICES        INVITED BY          ADDED
+owner@example.test (owner)  core=owner  1 active of 2  -                   90 days ago
+ada@example.test            -           0 active of 0  owner@example.test  3 h ago
+### owner_transfer_get
+Workspace ownership
+No ownership offer is pending.
+### owner_transfer_get
+Workspace ownership
+Offered by  owner@example.test
+Offered to  ada@example.test
+Offered     1 h ago (<UTC>)
+Expires     in 7 days (<UTC>)
+
+The member accepts or declines with clawbridge owner accept or owner decline, on their own device.
+The owner withdraws it with clawbridge owner cancel.                                              

@@ -69,6 +69,7 @@ const (
 	bSecret
 	bSection
 	bText
+	bDetail
 )
 
 type block struct {
@@ -147,6 +148,12 @@ func (d *Doc) Records(cols []Col, rows [][]string, empty string) {
 // Status is a line led by its level's word: PASS, WARN, FAIL, OK, NOTE.
 func (d *Doc) Status(level Level, text string) {
 	d.blocks = append(d.blocks, block{kind: bStatus, level: level, text: Safe(text), indent: d.indent})
+}
+
+// Detail is a line under the Status before it, aligned with its text,
+// such as the action a failed check asks for.
+func (d *Doc) Detail(s string) {
+	d.blocks = append(d.blocks, block{kind: bDetail, text: Safe(s), indent: d.indent})
 }
 
 // Note is a muted line of advice.

@@ -150,6 +150,8 @@ func (d *docker) removeNetwork(ctx context.Context, ref string) error {
 type ownerNetwork struct {
 	subnet netip.Prefix
 	egress bool
+	// agents: a container other than the egress proxy is on it.
+	agents bool
 }
 
 // inspectNetwork reads ref's network.
@@ -173,6 +175,7 @@ func (d *docker) inspectNetwork(ctx context.Context, ref string) (ownerNetwork, 
 	}
 	for _, c := range n.Containers {
 		got.egress = got.egress || c.Name == egressName
+		got.agents = got.agents || c.Name != egressName
 	}
 	return got, nil
 }
@@ -191,6 +194,17 @@ func (d *docker) disconnectEgress(ctx context.Context, ref string) error {
 func (d *docker) create(ctx context.Context, name string, spec any) error {
 	_, err := d.call(ctx, http.MethodPost, "/containers/create?name="+name, spec)
 	return err
+}
+
+// imageExists reports whether the daemon has image. The proxy allows this
+// for the egress image only.
+func (d *docker) imageExists(ctx context.Context, image string) (bool, error) {
+	_, err := d.call(ctx, http.MethodGet, "/images/"+image+"/json", nil)
+	var de *dockerError
+	if errors.As(err, &de) && de.status == http.StatusNotFound {
+		return false, nil
+	}
+	return err == nil, err
 }
 
 // containerState is a container as Docker inspects it.

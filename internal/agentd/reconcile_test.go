@@ -449,8 +449,10 @@ func (f *fakeDaemon) running() int {
 	return n
 }
 
-// An agent whose stop failed still runs, so it counts toward the cap, and
-// nothing starts in that round [R86-M1].
+// A failed stop is followed by a forced removal. Only an agent that can be
+// neither stopped nor removed still runs: it counts toward the cap, and
+// nothing starts in that round. A stopped agent that couldn't be removed
+// doesn't run, so it doesn't count [R86-M1, R94-F1].
 func TestReconcileCountsAFailedStopTowardTheCap(t *testing.T) {
 	s := newStack(t)
 	server := &fakeServer{refs: []string{refA, refB}, max: 2}
@@ -458,40 +460,62 @@ func TestReconcileCountsAFailedStopTowardTheCap(t *testing.T) {
 	if err := r.Step(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	s.daemon.mu.Lock()
-	s.daemon.failStop = map[string]bool{containerName(refB): true}
-	s.daemon.mu.Unlock()
+	set := func(failStop, failRemove []string) {
+		s.daemon.mu.Lock()
+		defer s.daemon.mu.Unlock()
+		s.daemon.failStop, s.daemon.failRemove = map[string]bool{}, map[string]bool{}
+		for _, ref := range failStop {
+			s.daemon.failStop[containerName(ref)] = true
+		}
+		for _, ref := range failRemove {
+			s.daemon.failRemove[containerName(ref)] = true
+		}
+	}
+	// The stop fails, the forced removal ends it, and C starts.
+	set([]string{refB}, nil)
 	server.refs = []string{refA, refC}
 	if err := r.Step(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if got := s.daemon.state(); got[containerName(refB)] != "running" || got[containerName(refC)] != "" || s.daemon.running() != 2 {
+	if got := s.daemon.state(); got[containerName(refB)] != "" || got[containerName(refC)] != "running" {
+		t.Fatalf("%v", got)
+	}
+	// Neither works: C still runs, so B doesn't start.
+	set([]string{refC}, []string{refC})
+	server.refs = []string{refA, refB}
+	if err := r.Step(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if got := s.daemon.state(); got[containerName(refC)] != "running" || got[containerName(refB)] != "" || s.daemon.running() != 2 {
 		t.Fatalf("%v", got)
 	}
 	if !strings.Contains(s.log.String(), "starting none this round") {
 		t.Fatal(s.log.String())
 	}
-	// A lowered cap with a stop that fails: the next agent in line is
+	// A lowered cap with an agent that can't be stopped: the next in line is
 	// stopped instead, never one more started.
 	server.refs, server.max = []string{refA, refB, refC}, 1
-	s.daemon.mu.Lock()
-	s.daemon.failStop = map[string]bool{containerName(refB): true}
-	s.daemon.mu.Unlock()
 	if err := r.Step(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if got := s.daemon.state(); got[containerName(refA)] != "" || got[containerName(refC)] != "" || s.daemon.running() != 1 {
+	if got := s.daemon.state(); got[containerName(refA)] != "" || got[containerName(refB)] != "" || s.daemon.running() != 1 {
 		t.Fatalf("%v", got)
 	}
-	// Once it stops, the round starts again.
-	s.daemon.mu.Lock()
-	s.daemon.failStop = nil
-	s.daemon.mu.Unlock()
-	server.refs, server.max = []string{refA, refC}, 2
+	// It stops but can't be removed: it no longer runs, so B starts.
+	set(nil, []string{refC})
+	server.refs, server.max = []string{refA, refB}, 2
 	if err := r.Step(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if got := s.daemon.state(); got[containerName(refA)] != "running" || got[containerName(refC)] != "running" || got[containerName(refB)] != "" {
+	if got := s.daemon.state(); got[containerName(refC)] != "exited" || got[containerName(refA)] != "running" || got[containerName(refB)] != "running" {
+		t.Fatalf("%v", got)
+	}
+	// Once it can be removed, it is.
+	set(nil, nil)
+	if err := r.Step(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if got := s.daemon.state(); got[containerName(refC)] != "" {
 		t.Fatalf("%v", got)
 	}
 }
@@ -720,5 +744,55 @@ func TestReconcileWaitsForThePolicyBeforeStarting(t *testing.T) {
 	}
 	if !slices.Equal(waits, []string{policySettle.String() + " false"}) || s.daemon.state()[containerName(refA)] != "running" {
 		t.Fatalf("waits %v", waits)
+	}
+}
+
+// A network on the wrong subnet with a container on it is left alone and
+// logged, not torn down and failed again every round [R94-F2].
+func TestReconcileKeepsAMisplacedNetworkWithAContainer(t *testing.T) {
+	s := newStack(t)
+	s.daemon.containers = map[string]string{containerName(refA): "running"}
+	s.daemon.bodies[containerName(refA)] = mustJSON(t, agentSpec(testImage, testServer, refA, 1))
+	s.daemon.networks = map[string]*fakeNet{networkName(refA): {subnet: "10.99.0.0/24", members: map[string]bool{containerName(refA): true}}}
+	r := newTestReconciler(s, &fakeServer{refs: []string{refA}, max: 2})
+	for range 2 {
+		if err := r.Step(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, q := range s.daemon.seen() {
+		if strings.Contains(q, "DELETE /networks/") || strings.Contains(q, "/networks/"+networkName(refA)+"/disconnect") {
+			t.Fatalf("tore down a network under its agent: %s", q)
+		}
+	}
+	if got := s.daemon.state(); got[containerName(refA)] != "running" || !strings.Contains(s.log.String(), "a container is on it") {
+		t.Fatalf("%v %s", got, s.log.String())
+	}
+	if p := s.readPolicy(t); len(p.Networks) != 0 {
+		t.Fatalf("the policy names a subnet the agent isn't on: %v", p)
+	}
+}
+
+// A new egress image that isn't loaded leaves the old egress proxy running
+// rather than removing it for nothing [R94-F3].
+func TestReconcileKeepsTheEgressWhenTheNewImageIsMissing(t *testing.T) {
+	s := newStack(t)
+	r := newTestReconciler(s, &fakeServer{refs: []string{refA}, max: 2})
+	if err := r.Step(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	old := []byte(`{"Image":"ghcr.io/example/clawbridge-agentd@sha256:` + strings.Repeat("0", 64) + `"}`)
+	s.daemon.mu.Lock()
+	s.daemon.bodies[egressName] = old
+	s.daemon.missingImages = map[string]bool{testEgressImage: true}
+	s.daemon.mu.Unlock()
+	if err := r.Step(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	s.daemon.mu.Lock()
+	body := string(s.daemon.bodies[egressName])
+	s.daemon.mu.Unlock()
+	if body != string(old) || s.daemon.state()[egressName] != "running" || !strings.Contains(s.log.String(), "the new egress image is not loaded") {
+		t.Fatalf("%s %v", body, s.daemon.state())
 	}
 }

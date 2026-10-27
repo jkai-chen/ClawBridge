@@ -181,6 +181,11 @@ func TestPostgresDispatcherModelConcurrency(t *testing.T) {
 		wg.Wait()
 	}
 	for round := range 10 {
+		// Each round mints three times: the earlier mints are moved back
+		// two hours so maxMintsPerHour never refuses one here.
+		if _, err = f.s.db.ExecContext(ctx, `UPDATE dispatcher_agent_credentials SET created_at=$1 WHERE owner_principal=$2`, layout(time.Now().UTC().Add(-2*time.Hour)), f.owner); err != nil {
+			t.Fatal(err)
+		}
 		// Two launchers: one launcher token's own row would serialize them.
 		both(func(i int) { _, _, _ = f.s.LauncherCredential(ctx, launchers[i], ref) })
 		var live int

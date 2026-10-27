@@ -131,9 +131,10 @@ func newModelHandler(store ModelStore, maxAgents int, now func() time.Time, nudg
 			modelFail(w, 400, "unsupported_version")
 			return
 		}
-		// A credential or token for the agent travels only over HTTPS, or
-		// to a client on this machine (§1).
-		if strings.HasPrefix(r.URL.Path, "/v1/dispatcher-model/") && plainRemote(r) {
+		// A token travels only over HTTPS, or to a client on this machine
+		// (§1): the agent's, and the launcher's, which mints credentials
+		// that open every owner's provider key (G9-3).
+		if plainRemote(r) {
 			modelFail(w, 403, "unauthorized")
 			return
 		}
@@ -230,6 +231,8 @@ func newModelHandler(store ModelStore, maxAgents int, now func() time.Time, nudg
 			switch code {
 			case "invalid":
 				modelFail(w, 400, "invalid_argument")
+			case "rate_limited":
+				modelFail(w, 429, "rate_limited")
 			case "not_found":
 				// The case API's code for it; agentd's launcher keeps
 				// not_found.

@@ -549,7 +549,12 @@ CLAWBRIDGE_DISPATCHER_MODEL_MAX_AGENTS=2                  # optional, 1-20
   still start need more than the host's available memory (`MemAvailable`).
 - **The launcher token.** agentd's credential opens only its three calls: which
   owners need an agent, a one-time credential for one of them, and a fixed-code
-  report. Create it on the host, straight into a new env file for agentd:
+  report. It serves every owner on the server, so **treat it like every owner's
+  provider key**: a credential it mints opens that owner's key. The server
+  accepts it only over HTTPS, or from this machine, and mints at most 6
+  credentials an hour per owner (429 past that). Each mint replaces the owner's
+  running agent, and `clawbridge doctor` warns an owner whose agent got more
+  than 3 in a day. Create it on the host, straight into a new env file for agentd:
 
   ```sh
   ... run --rm --no-deps -v /etc/clawbridge-agentd:/out api operator launcher-token create --out /out/launcher.env
@@ -564,6 +569,10 @@ CLAWBRIDGE_DISPATCHER_MODEL_MAX_AGENTS=2                  # optional, 1-20
   the date. Before then, create the next one into a new env file, point agentd
   at it, and revoke the old one by its ID. `clawbridge doctor` warns project
   owners 14 days ahead, and when agentd has not called for 5 minutes.
+
+  The credential agentd hands an agent lives 24 hours from the agent's start.
+  Then the agent stops, and agentd starts it again with a fresh one: one
+  restart a day per owner is normal.
 - **No bodies in the logs.** The agent's config answer carries the owner's
   provider key once. Keep the reverse proxy from logging request or response
   bodies; the reference Caddy configuration logs none.

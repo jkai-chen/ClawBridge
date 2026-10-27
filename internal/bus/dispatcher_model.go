@@ -54,6 +54,14 @@ const (
 	agentCredentialTTL = 5 * time.Minute
 	// modelTokenTTL is a project token's life; the agent renews it [N5].
 	modelTokenTTL = time.Hour
+	// agentCredentialMaxAge is a redeemed credential's life from its
+	// redemption (G9-4). Past it renew and status refuse it, the agent
+	// stops, and agentd starts it again with a fresh credential.
+	agentCredentialMaxAge = 24 * time.Hour
+	// maxMintsPerHour is how many credentials the launcher may mint for one
+	// owner an hour: each mint replaces the owner's running agent, so a
+	// leaked launcher token can't bounce it faster (G9-3).
+	maxMintsPerHour = 6
 	// setupTestWait is how long a pending key waits for its agent before
 	// setup reports agent_unavailable.
 	setupTestWait = 10 * time.Minute
@@ -622,9 +630,9 @@ func ownerByRef(ctx context.Context, tx *transaction, ref, nowRaw string) (strin
 }
 
 // LauncherCredential mints a one-time agent credential for a wanted ref,
-// valid agentCredentialTTL until its first redemption. It revokes the
-// owner's previous credentials and their project tokens: one instance at a
-// time.
+// valid agentCredentialTTL until its first redemption, at most
+// maxMintsPerHour an hour per owner. It revokes the owner's previous
+// credentials and their project tokens: one instance at a time.
 func (s *Store) LauncherCredential(ctx context.Context, token, ref string) (string, time.Time, error) {
 	tx, err := s.beginIntake(ctx)
 	if err != nil {
@@ -646,6 +654,13 @@ func (s *Store) LauncherCredential(ctx context.Context, token, ref string) (stri
 	// revokes this one's credential instead of missing it.
 	if _, err = tx.ExecContext(ctx, `UPDATE dispatcher_owners SET last_revision=last_revision WHERE owner_principal=?`, owner); err != nil {
 		return "", time.Time{}, err
+	}
+	var minted int
+	if err = tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM dispatcher_agent_credentials WHERE owner_principal=? AND created_at>?`, owner, layout(at(nowRaw).Add(-time.Hour))).Scan(&minted); err != nil {
+		return "", time.Time{}, err
+	}
+	if minted >= maxMintsPerHour {
+		return "", time.Time{}, scoped(fmt.Sprintf("at most %d agent credentials an hour per owner", maxMintsPerHour), "rate_limited")
 	}
 	if err = revokeOwnerCredentials(ctx, tx, owner, nowRaw); err != nil {
 		return "", time.Time{}, err
@@ -856,8 +871,10 @@ type wrongBinding struct{ id string }
 func (wrongBinding) Error() string        { return ErrModelUnauthorized.Error() }
 func (wrongBinding) Is(target error) bool { return target == ErrModelUnauthorized }
 
-// boundCredential checks a redeemed credential and its binding secret.
-func boundCredential(ctx context.Context, tx *transaction, credential, secret string) (map[string]any, error) {
+// boundCredential checks a redeemed credential and its binding secret, and
+// that it was redeemed less than agentCredentialMaxAge ago. An expired one
+// gets the uniform refusal, unflagged: it is the normal end of a credential.
+func boundCredential(ctx context.Context, tx *transaction, credential, secret, nowRaw string) (map[string]any, error) {
 	cred, err := agentCredential(ctx, tx, credential)
 	if err != nil {
 		return nil, err
@@ -867,6 +884,9 @@ func boundCredential(ctx context.Context, tx *transaction, credential, secret st
 		if cred["used_at"] != nil {
 			return nil, wrongBinding{str(cred, "id")}
 		}
+		return nil, ErrModelUnauthorized
+	}
+	if str(cred, "used_at") <= layout(at(nowRaw).Add(-agentCredentialMaxAge)) {
 		return nil, ErrModelUnauthorized
 	}
 	return cred, nil
@@ -895,7 +915,7 @@ func (s *Store) RenewAgentTokens(ctx context.Context, credential, secret string)
 	if err != nil {
 		return nil, err
 	}
-	cred, err := boundCredential(ctx, tx, credential, secret)
+	cred, err := boundCredential(ctx, tx, credential, secret, nowRaw)
 	if err != nil {
 		return nil, s.refused(ctx, tx, err)
 	}
@@ -930,7 +950,7 @@ func (s *Store) AgentTestResult(ctx context.Context, credential, secret string, 
 	if err != nil {
 		return err
 	}
-	cred, err := boundCredential(ctx, tx, credential, secret)
+	cred, err := boundCredential(ctx, tx, credential, secret, nowRaw)
 	if err != nil {
 		return s.refused(ctx, tx, err)
 	}
@@ -983,7 +1003,7 @@ func (s *Store) AgentStatus(ctx context.Context, credential, secret, status stri
 	if err != nil {
 		return err
 	}
-	cred, err := boundCredential(ctx, tx, credential, secret)
+	cred, err := boundCredential(ctx, tx, credential, secret, nowRaw)
 	if err != nil {
 		return s.refused(ctx, tx, err)
 	}

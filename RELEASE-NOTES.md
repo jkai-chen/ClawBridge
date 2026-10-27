@@ -148,6 +148,8 @@
     ("That is Ada Lovelace <ada@…> (…)"), and changed only with `--confirm`, which says it again. Only active
     members match; a name that matches several people lists them. Names are escaped; emails are never stored, never
     shown to an agent, and `linear members` doesn't show them.
+  - The skill has a page on intake (`references/intake.md`): what a coordinator session may do with the queue, and
+    that the policy and the trusted list are a person's.
 
 - **`whoami`, `doctor`, `status ID` and the account lists read as answers (O2).** `whoami` says who you are, how that
   was proven, and your workspace, project and session. `doctor` leads with its counts, lists failures first, then

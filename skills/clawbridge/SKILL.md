@@ -24,6 +24,8 @@ use ClawBridge for peer messages. Record your own assignment with
 it. Find a slice's owner with `list_sessions` filtered by `issue` or
 `scope_path`. Issues labelled `needs-agent` ask for agent attention; only the
 coordinator lists them, and the label is never approval or an assignment.
+Read [references/intake.md](references/intake.md) on an `intake` message, or
+before listing, dismissing or rearming the intake queue.
 
 ## Bind and check
 

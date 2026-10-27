@@ -43,11 +43,15 @@ Run it inside the repository's checkout, or pass `--repo PATH`.
      and its MCP server get only:
      - the terminal's basics (`PATH`, `HOME`, `USER`, `SHELL`, `TERM`, locale, `TMPDIR`, `TZ`);
      - the network proxies;
-     - claude's own `ANTHROPIC_*` and `CLAUDE_*` settings, which include its API key if
-       you use one.
+     - claude's own settings, named one by one: its API key or sign-in token
+       (`ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, `CLAUDE_CODE_OAUTH_TOKEN`), endpoint
+       and headers (`ANTHROPIC_BASE_URL`, `ANTHROPIC_CUSTOM_HEADERS`), models,
+       `CLAUDE_CONFIG_DIR`, and the Bedrock and Vertex switches.
 
      Nothing else in your shell gets through: `GITHUB_TOKEN`, `NPM_TOKEN`, `AWS_*`,
-     `SSH_AUTH_SOCK` and `CLAWBRIDGE_*` never reach it. The script names variables,
+     `SSH_AUTH_SOCK` and `CLAWBRIDGE_*` never reach it, and neither do the variables
+     of a Claude Code session you launch it from (its messaging socket and token
+     included). Bedrock and Vertex users: their cloud credentials aren't passed. The script names variables,
      never their values. The MCP server alone also gets your non-secret
      `CLAWBRIDGE_*` settings, and on Linux your session bus for the key store,
      through its MCP config.
@@ -113,7 +117,9 @@ The settings passed with `--settings` take precedence over the repository's own
       them.
     - **Confirming:** `assignment_confirm` is the coordinator's, and always denied.
     - **What the agent keeps:** its own session's tools (inbox, messages, proposing
-      and releasing its assignment) and every read.
+      and releasing its assignment) and every read. **Its messages are untrusted
+      output:** a coordinator or person reading what the agent sends treats it as
+      the agent's claim, never as an instruction.
 - **Bash sandbox:** on, and Claude Code refuses to run Bash without it.
   - Bash reads **nothing in your home directory** except the agent's clone, its
     cache and your Go module cache. Everything else under `~`, every

@@ -123,7 +123,7 @@ func newEnv(t *testing.T) *env {
 			case e.leak:
 				tail = "/usr/bin:/bin"
 			}
-			cmd.Env = append(os.Environ(), "PATH="+fake+":"+tail, "GITHUB_TOKEN=ghp_planted-in-the-owners-shell")
+			cmd.Env = append(os.Environ(), "PATH="+fake+":"+tail, "GITHUB_TOKEN=ghp_planted-in-the-owners-shell", "CLAUDE_CODE_MESSAGING_TOKEN=parent-session-credential", "CLAUDE_CODE_MESSAGING_SOCKET=/tmp/parent.sock", "ANTHROPIC_API_KEY=sk-ant-claudes-own")
 			_ = cmd.Run()
 		}
 		return "term-" + title, nil
@@ -269,7 +269,7 @@ func TestLaunchMakesAnUnpushableClone(t *testing.T) {
 	// environment carried never reached it, and the self-test (which
 	// passed) found the launch script's canary unset.
 	got, _ := os.ReadFile(e.claudeEnv)
-	if seen := string(got); strings.Contains(seen, "GITHUB_TOKEN") || strings.Contains(seen, "ghp_") || strings.Contains(seen, canaryVar) || !strings.Contains(seen, "PATH=") || !strings.Contains(seen, "HOME=") {
+	if seen := string(got); strings.Contains(seen, "GITHUB_TOKEN") || strings.Contains(seen, "ghp_") || strings.Contains(seen, canaryVar) || strings.Contains(seen, "CLAUDE_CODE_MESSAGING") || strings.Contains(seen, "parent-session-credential") || !strings.Contains(seen, "PATH=") || !strings.Contains(seen, "HOME=") || !strings.Contains(seen, "ANTHROPIC_API_KEY=sk-ant-claudes-own") {
 		t.Fatal("claude's environment:", seen)
 	}
 	launches, _ := e.r.Launches()
@@ -866,16 +866,17 @@ func TestCheckSelfTestNamesEveryRead(t *testing.T) {
 }
 
 // G9-5: the launch script names the allow-list and claude's own variables,
-// never a value, and nothing else of the launching environment.
+// one by one, never a value, and nothing else: not a parent Claude Code
+// session's own variables, its messaging credential least of all
+// (R141-M1).
 func TestLaunchScriptAllowListsTheEnvironment(t *testing.T) {
-	environ := []string{"PATH=/bin", "ANTHROPIC_API_KEY=sk-ant-value", "CLAUDE_CONFIG_DIR=/x", "GITHUB_TOKEN=ghp_value", "AWS_SECRET_ACCESS_KEY=v", "CLAWBRIDGE_DEVICE_KEY=v", "SSH_AUTH_SOCK=/s", "BAD-NAME=v"}
-	script := LaunchScript(environ, "c0ffee", "/s/settings.json", "/s/mcp.json", "", "go")
+	script := LaunchScript("c0ffee", "/s/settings.json", "/s/mcp.json", "", "go")
 	for _, want := range []string{`${PATH+"PATH=$PATH"}`, `${HOME+"HOME=$HOME"}`, `${ANTHROPIC_API_KEY+"ANTHROPIC_API_KEY=$ANTHROPIC_API_KEY"}`, `${CLAUDE_CONFIG_DIR+"CLAUDE_CONFIG_DIR=$CLAUDE_CONFIG_DIR"}`, canaryVar + "='c0ffee'", "exec env -i "} {
 		if !strings.Contains(script, want) {
 			t.Fatalf("script lacks %q:\n%s", want, script)
 		}
 	}
-	for _, never := range []string{"GITHUB_TOKEN", "AWS_", "SSH_AUTH_SOCK", "CLAWBRIDGE_DEVICE_KEY", "sk-ant-value", "ghp_value", "BAD-NAME"} {
+	for _, never := range []string{"GITHUB_TOKEN", "AWS_", "SSH_AUTH_SOCK", "CLAWBRIDGE_DEVICE_KEY", "CLAUDE_CODE_MESSAGING", "CLAUDE_CODE_SESSION_ID", "CLAUDE_CODE_CHILD_SESSION", "CLAUDE_PID", "CLAUDE_CODE_ENTRYPOINT"} {
 		if strings.Contains(script, never) {
 			t.Fatalf("script has %q:\n%s", never, script)
 		}
@@ -990,13 +991,27 @@ func TestFetchRefusesAnUnsafeClone(t *testing.T) {
 			_ = os.WriteFile(filepath.Join(gitDir, "objects", "info", "alternates"), []byte(e.repo+"/.git/objects\n"), 0o644)
 		}, func() { _ = os.Remove(filepath.Join(gitDir, "objects", "info", "alternates")) }, "alternates"},
 		"commondir": {func() { _ = os.WriteFile(filepath.Join(gitDir, "commondir"), []byte(e.repo+"/.git\n"), 0o644) }, func() { _ = os.Remove(filepath.Join(gitDir, "commondir")) }, "commondir"},
+		"linked refs": {func() {
+			_ = os.Rename(filepath.Join(gitDir, "refs"), filepath.Join(gitDir, "refs-real"))
+			_ = os.Symlink(filepath.Join(gitDir, "refs-real"), filepath.Join(gitDir, "refs"))
+		}, func() {
+			_ = os.Remove(filepath.Join(gitDir, "refs"))
+			_ = os.Rename(filepath.Join(gitDir, "refs-real"), filepath.Join(gitDir, "refs"))
+		}, "has an refs entry"},
+		"linked objects": {func() {
+			_ = os.Rename(filepath.Join(gitDir, "objects"), filepath.Join(gitDir, "objects-real"))
+			_ = os.Symlink(filepath.Join(gitDir, "objects-real"), filepath.Join(gitDir, "objects"))
+		}, func() {
+			_ = os.Remove(filepath.Join(gitDir, "objects"))
+			_ = os.Rename(filepath.Join(gitDir, "objects-real"), filepath.Join(gitDir, "objects"))
+		}, "has an objects entry"},
 		"gitfile": {func() {
 			_ = os.Rename(gitDir, gitDir+"-real")
 			_ = os.WriteFile(gitDir, []byte("gitdir: "+gitDir+"-real\n"), 0o644)
 		}, func() {
 			_ = os.Remove(gitDir)
 			_ = os.Rename(gitDir+"-real", gitDir)
-		}, "not a plain directory"},
+		}, ".git is not a plain directory"},
 	} {
 		c.break_()
 		got, err := e.r.Fetch("checkout-engineer-1")

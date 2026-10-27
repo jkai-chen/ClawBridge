@@ -190,6 +190,15 @@
   `project watch-budget show` and `doctor` show the budget in force and where it comes from. Each change is recorded in
   the project's history. Schema 30.
 
+## Linear views
+
+- **ClawBridge lists a board's shared Linear views (views phase 2).** `clawbridge linear view list [--team UUID]
+  [--type issue|project]` and `clawbridge linear view show ID` list the shared issue and project views of the
+  binding's teams, and agents get the read-only MCP tool `taskboard_views_v2`. Private, workspace and other kinds of
+  views aren't listed, only counted. A view's filter isn't shown: Linear's MCP doesn't return it, and reading it comes
+  with the owner's personal API key in a later release. Agents can't create or change views; the new skill page
+  (`skills/clawbridge/references/views.md`) has them draft a view set for the project owner to apply.
+
 ## The command line
 
 - **Results are readable at a terminal; scripts and agents keep the same JSON.** On a terminal, a result is now laid

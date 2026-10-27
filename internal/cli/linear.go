@@ -188,7 +188,7 @@ type linearFlags struct {
 	revision                                                                                                             int64
 	teamBoard, confirm, noBrowser, tokenStdin, resolveLabels, comments, repair, once                                     bool
 	noSeedDocs, update, reseed                                                                                           bool
-	initiative, commit                                                                                                   string
+	initiative, commit, viewKind                                                                                         string
 	maxBytes                                                                                                             int
 	allowPatterns                                                                                                        []string
 	split, recreate                                                                                                      bool
@@ -329,6 +329,17 @@ func parseLinear(command string, args []string, stderr io.Writer) (linearFlags, 
 		// The read-only initiative show takes no operation ID.
 		profile()
 		min, max = 1, 1
+	case "view-list", "view-show":
+		// Shared team views, read over MCP: never a filter (§12.1).
+		profile()
+		f.StringVar(&v.team, "team", "", "a bound team UUID (default: the binding's default team)")
+		if command == "view-list" {
+			f.IntVar(&v.limit, "limit", 50, "page size (1–100)")
+			f.StringVar(&v.cursor, "cursor", "", "opaque next cursor")
+			f.StringVar(&v.viewKind, "type", "", "issue or project (default: both)")
+		} else {
+			min, max = 1, 1
+		}
 	case "doc":
 		profile()
 		f.StringVar(&v.team, "team", "", "list: the bound team UUID whose documents to list")
@@ -446,6 +457,12 @@ func parseLinear(command string, args []string, stderr io.Writer) (linearFlags, 
 	}
 	if v.repair && !v.confirm {
 		return v, nil, errors.New("unlink --repair clears an unreadable binding without previewing it; repeat with --confirm")
+	}
+	if command == "view-list" && v.viewKind != "" && linearprovider.ViewKinds[v.viewKind] == "" {
+		return v, nil, errors.New("--type is issue or project")
+	}
+	if (command == "view-list" || command == "view-show") && v.team != "" && !linearprovider.ValidID(v.team) {
+		return v, nil, errors.New("--team takes a team UUID")
 	}
 	if command == "labels" || command == "members" {
 		if !linearprovider.ValidID(v.team) {
@@ -746,7 +763,7 @@ func linearWriteInput(command string, v linearFlags, pos []string) (linearboard.
 
 func runLinear(ctx context.Context, flags Config, args []string, stdout, stderr io.Writer) error {
 	if len(args) == 0 || len(args) == 1 && (args[0] == "--help" || args[0] == "-h" || args[0] == "help") {
-		_, err := io.WriteString(stdout, "clawbridge linear connect|import|profiles|status|logout|teams|projects|binding|link|seed-docs|unlink|names-refresh|context|issues|issue|states|labels|members|create|update|comment|relation|watch\nProject owner only: label create|rename, project create, initiative create|add-project, label-policy show|set, status-policy show|set, doc-policy set, health set|enable|disable, admin audit-replay.\nShown names: names-refresh (project owner or lead) stores the bound teams' and projects' current names, as Linear gives them to you.\nWho closes issues: closes show (any member); closes set (project owner or lead, never a session).\nProject status follows the work (status policy project_flow): project-flow resume --linear-project UUID (project owner or lead, never a session) clears a hold.\nProject health (any member): health show.\nProject status, as the server's app: project status LINEAR_PROJECT [--suggest] (any member); project status set LINEAR_PROJECT --type T --operation-id ID, then --confirm --expected-status UUID (the coordinator session, or the project owner or a lead without a session).\nLinear documents (any member): doc list|get, initiative show, doc-policy show. Project owner or lead: doc publish FILE.\nYour name in agent markers: display-name set NAME|clear|capture --profile ID.\nYour Linear API key, for view writes (project owner, own terminal): key set|status|remove --profile ID.\nUse COMMAND --help for explicit flags. Token import accepts --token-stdin only.\n")
+		_, err := io.WriteString(stdout, "clawbridge linear connect|import|profiles|status|logout|teams|projects|binding|link|seed-docs|unlink|names-refresh|context|issues|issue|states|labels|members|create|update|comment|relation|watch\nProject owner only: label create|rename, project create, initiative create|add-project, label-policy show|set, status-policy show|set, doc-policy set, health set|enable|disable, admin audit-replay.\nShown names: names-refresh (project owner or lead) stores the bound teams' and projects' current names, as Linear gives them to you.\nWho closes issues: closes show (any member); closes set (project owner or lead, never a session).\nProject status follows the work (status policy project_flow): project-flow resume --linear-project UUID (project owner or lead, never a session) clears a hold.\nProject health (any member): health show.\nLinear views (any member): view list [--team UUID] [--type issue|project], view show ID.\nProject status, as the server's app: project status LINEAR_PROJECT [--suggest] (any member); project status set LINEAR_PROJECT --type T --operation-id ID, then --confirm --expected-status UUID (the coordinator session, or the project owner or a lead without a session).\nLinear documents (any member): doc list|get, initiative show, doc-policy show. Project owner or lead: doc publish FILE.\nYour name in agent markers: display-name set NAME|clear|capture --profile ID.\nYour Linear API key, for view writes (project owner, own terminal): key set|status|remove --profile ID.\nUse COMMAND --help for explicit flags. Token import accepts --token-stdin only.\n")
 		return err
 	}
 	command := args[0]
@@ -760,7 +777,7 @@ func runLinear(ctx context.Context, flags Config, args []string, stdout, stderr 
 		parseArgs = parseArgs[1:]
 	}
 	adminAction := ""
-	if (command == "key" || command == "label" || command == "project" || command == "initiative" || command == "doc" || command == "doc-policy" || command == "label-policy" || command == "status-policy" || command == "closes" || command == "health" || command == "project-flow" || command == "display-name" || command == "admin") && len(parseArgs) > 0 && parseArgs[0] != "--help" && parseArgs[0] != "-h" {
+	if (command == "key" || command == "view" || command == "label" || command == "project" || command == "initiative" || command == "doc" || command == "doc-policy" || command == "label-policy" || command == "status-policy" || command == "closes" || command == "health" || command == "project-flow" || command == "display-name" || command == "admin") && len(parseArgs) > 0 && parseArgs[0] != "--help" && parseArgs[0] != "-h" {
 		adminAction = parseArgs[0]
 		parseArgs = parseArgs[1:]
 	}
@@ -777,8 +794,9 @@ func runLinear(ctx context.Context, flags Config, args []string, stdout, stderr 
 		command == "project-flow" && adminAction != "resume",
 		command == "key" && adminAction != "set" && adminAction != "status" && adminAction != "remove",
 		command == "display-name" && adminAction != "set" && adminAction != "clear" && adminAction != "capture",
+		command == "view" && adminAction != "list" && adminAction != "show",
 		command == "admin" && adminAction != "audit-replay":
-		return errors.New("use linear doc list|get|publish, initiative show, doc-policy show|set, label create|rename, project create|status [set], initiative create|add-project, label-policy show|set, status-policy show|set, closes show|set, project-flow resume, health show|set|enable|disable, display-name set|clear|capture, key set|status|remove, or admin audit-replay")
+		return errors.New("use linear view list|show, doc list|get|publish, initiative show, doc-policy show|set, label create|rename, project create|status [set], initiative create|add-project, label-policy show|set, status-policy show|set, closes show|set, project-flow resume, health show|set|enable|disable, display-name set|clear|capture, key set|status|remove, or admin audit-replay")
 	}
 	parseAs := command
 	if command == "initiative" && adminAction == "show" {
@@ -790,6 +808,9 @@ func runLinear(ctx context.Context, flags Config, args []string, stdout, stderr 
 		if len(parseArgs) > 0 && parseArgs[0] == "set" {
 			statusSet, parseArgs = true, parseArgs[1:]
 		}
+	}
+	if command == "view" {
+		parseAs = "view-" + adminAction
 	}
 	v, pos, err := parseLinear(parseAs, parseArgs, stderr)
 	v.relationAction = relationAction
@@ -1006,6 +1027,8 @@ func runLinear(ctx context.Context, flags Config, args []string, stdout, stderr 
 		service.CacheReadBindingProof(linearboard.BindingProofTTL)
 		defer service.Close()
 		return service.Watch(bounded, scope, linearboard.WatchOptions{Budget: v.budget, Once: v.once, Cycle: func(c linearboard.WatchCycle) error { return emit(c) }})
+	case "view":
+		data, err = linearViews(bounded, service, scope, v, pos)
 	case "labels":
 		data, err = service.LabelsV2(bounded, scope, v.team, v.limit, v.cursor)
 	case "members":

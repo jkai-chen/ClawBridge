@@ -463,3 +463,26 @@ func TestOperatorModelSealKeyRotate(t *testing.T) {
 		t.Fatal(s)
 	}
 }
+
+// M2: doctor's headroom reads the host's MemAvailable, in bytes, and says
+// unknown where there is none.
+func TestMemAvailable(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "meminfo")
+	defer func(old string) { memInfoPath = old }(memInfoPath)
+	memInfoPath = path
+	if _, ok := memAvailable(); ok {
+		t.Fatal("read a missing file")
+	}
+	for raw, want := range map[string]uint64{
+		"MemTotal:        2014156 kB\nMemFree:          112340 kB\nMemAvailable:     921600 kB\n": 921600 << 10,
+		"MemTotal:        2014156 kB\n": 0,
+		"MemAvailable:     lots kB\n":   0,
+	} {
+		if err := os.WriteFile(path, []byte(raw), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if got, ok := memAvailable(); got != want || ok != (want != 0) {
+			t.Fatal(raw, got, ok)
+		}
+	}
+}

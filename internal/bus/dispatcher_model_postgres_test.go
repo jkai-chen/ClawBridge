@@ -50,6 +50,26 @@ func TestPostgresDispatcherModelFlow(t *testing.T) {
 	if _, err = f.s.db.ExecContext(ctx, `INSERT INTO dispatcher_policies(project_id,revision,enabled,mode,domains,updated_at,updated_by_principal) VALUES($1,1,1,'model','{}','2026-01-01T00:00:00Z','x')`, pid); err != nil {
 		t.Fatal(err)
 	}
+	// M2: doctor's model fields are a pure read, for a project owner only,
+	// and list every key-holder who owns the project, the owner by role too.
+	doctor := Request{Operation: "dispatcher_model_doctor", Workspace: f.workspace, Project: "p", Args: map[string]any{}}
+	if _, err = f.as(member, "sub-member", doctor); err == nil || !strings.Contains(err.Error(), "owner") {
+		t.Fatal("a member read doctor's model fields:", err)
+	}
+	read, err := f.as(lead, "sub-lead", doctor)
+	if err != nil {
+		t.Fatal(err)
+	}
+	holders := read.Data.(map[string]any)["holders"].([]any)
+	if len(holders) != 2 || read.Data.(map[string]any)["model_on"] != true {
+		t.Fatal("doctor's holders:", read.Data)
+	}
+	for _, raw := range holders {
+		h := raw.(map[string]any)
+		if h["key"] != "pending_test" || h["you"] != (h["principal"] == lead) || h["principal"] != lead && h["principal"] != f.owner {
+			t.Fatal("doctor's holder:", h)
+		}
+	}
 	refs := map[string]string{}
 	for _, principal := range []string{f.owner, lead} {
 		var ref string

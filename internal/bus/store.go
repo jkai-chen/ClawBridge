@@ -52,6 +52,10 @@ type Store struct {
 	projectFlowProven bool
 	// modelSeal seals owners' provider keys; nil leaves model setup off.
 	modelSeal *ModelSeal
+	// modelMaxAgents and memAvailable are the serving process's, for
+	// doctor (SetModelHost).
+	modelMaxAgents int
+	memAvailable   func() (uint64, bool)
 }
 
 // SQLiteURIPath is the path part of a file: URI that SQLite resolves to path.
@@ -509,6 +513,7 @@ var operationArgs = map[string]string{
 	"dispatcher_chat_show":        "instance case_id",
 	"dispatcher_chat_leads":       "instance allow expected_revision",
 	"dispatcher_decisions_list":   "instance since_hours limit",
+	"dispatcher_model_doctor":     "instance",
 	"health_due":                  "instance lease_token generation limit nudges_only",
 	"health_force":                "instance lease_token generation linear_project force_new",
 	"health_report":               "instance lease_token generation linear_project calls error facts forced force_new flow nudge",
@@ -760,7 +765,7 @@ func (s *Store) ExecuteAs(ctx context.Context, principal string, r Request) (Res
 // inbox stamps deliveries, so those keep the locks.
 func pureRead(r Request) bool {
 	switch r.Operation {
-	case "snapshot", "inbox_status", "notification_status", "taskboard_get", "taskboard_get_v2", "taskboard_access", "list_projects", "list_members", "comment_watch_status", "label_policy_get", "status_policy_get", "doc_policy_get", "dispatcher_get", "health_get", "doc_seed_get", "doc_publication_get", "invite_list", "device_list", "user_list", "owner_transfer_get", "dispatcher_chat_show", "dispatcher_decisions_list":
+	case "snapshot", "inbox_status", "notification_status", "taskboard_get", "taskboard_get_v2", "taskboard_access", "list_projects", "list_members", "comment_watch_status", "label_policy_get", "status_policy_get", "doc_policy_get", "dispatcher_get", "health_get", "doc_seed_get", "doc_publication_get", "invite_list", "device_list", "user_list", "owner_transfer_get", "dispatcher_chat_show", "dispatcher_decisions_list", "dispatcher_model_doctor":
 		return true
 	case "list_sessions", "history", "whoami", "linear_comments_posted", "linear_comment_precheck", "intake_policy_get", "intake_trust_list", "intake_list":
 		// Naming a session with its instance makes it a heartbeat read: the

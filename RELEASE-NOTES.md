@@ -53,6 +53,10 @@
   answers from the read tools and the decision log, which `dispatcher decisions` shows too. The reply is printed only to
   the asker's terminal, stripped of terminal controls, and nothing in it is acted on. Chats use at most a quarter of the
   model's runs, after claims. The `dispatcher enable --engine model` preview says who can ask.
+- **Doctor shows the model mode to project owners.** Once an owner of the project has a model key: the server's seal
+  key (and a previous one still set), each owner's key and agent (last seen, `provider_auth`, a failed newer test, a
+  crash loop agentd reported, a flagged credential), whether agentd is calling and when its launcher token expires, and
+  the live agents against the cap with the host's memory headroom (docs/dispatcher.md).
 
 ## Running your own server on AWS
 

@@ -290,6 +290,9 @@ func statusPolicyView(ctx context.Context, tx *transaction, pid string, proven b
 	if policy.ProjectTargets != nil {
 		out["project_targets"] = policy.ProjectTargets
 	}
+	// Whether project flow may be turned on here (A4 L5), so a client can
+	// say so before it offers it.
+	out["project_flow_proven"] = proven
 	flow, err := projectFlowView(ctx, tx, pid, policy, proven)
 	if err != nil {
 		return nil, err

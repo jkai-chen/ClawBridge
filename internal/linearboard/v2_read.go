@@ -327,7 +327,7 @@ func (s *Service) LinkV2(ctx context.Context, scope bus.Request, in LinkInputV2)
 			return nil, errors.New("letting agents close issues is confirmed at a terminal, by typing the project's name; nothing was changed")
 		}
 		if policy.Revision == 0 && !in.MinimalPolicy {
-			return nil, errors.New(MinimalPolicyConsequences + " Run the link again with --minimal-status-policy to create it; nothing was changed.")
+			return nil, errors.New(minimalPolicy(policy.FlowProven) + " Run the link again with --minimal-status-policy to create it; nothing was changed.")
 		}
 	}
 	if policy.Revision == 0 && in.MinimalPolicy {

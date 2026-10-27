@@ -497,3 +497,16 @@ func TestProjectFlowSurvivesClosesSet(t *testing.T) {
 		t.Fatal("closes set dropped project flow:", raw, e)
 	}
 }
+
+// A client is told whether project flow is proven here, policy or not, so
+// it can offer it only where it can be turned on.
+func TestStatusPolicyViewSaysWhetherFlowIsProven(t *testing.T) {
+	h := newHarness(t)
+	if view := h.call("status_policy_get", "", nil).(map[string]any); view["project_flow_proven"] != false {
+		t.Fatal(view)
+	}
+	h.s.SetProjectFlowProven(true)
+	if view := h.call("status_policy_get", "", nil).(map[string]any); view["project_flow_proven"] != true {
+		t.Fatal(view)
+	}
+}

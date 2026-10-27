@@ -981,6 +981,13 @@ targets. Only the project owner can create it. From then on:
 - an agent's write to a state whose type can't be told is refused. So in local
   mode, the minimal policy is offered only when Linear's status list reports
   state types; otherwise use a hosted server or a full status policy.
+- **project status follows the work** (`"project_flow": true`), when the
+  server has project flow proven (`serve --project-flow-proven`): every bound
+  project moves to started when its work starts, and one whose issues agents
+  close moves to completed when they're all closed; for the others the
+  coordinator is told. The preview says `Project status: follows the work`.
+  Where project flow isn't proven, the policy leaves it off, and the preview
+  says so. `status-policy show` reports `project_flow_proven`.
 
 **A project that joins unlisted.** When a link adds a Linear project the
 enabled policy doesn't name, the project's coordinator gets one `close-policy`

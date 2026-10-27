@@ -1,11 +1,13 @@
 package watcher
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 	"reflect"
 	"strconv"
@@ -635,6 +637,10 @@ func TestMarkersPassAppliesOnlyMarkers(t *testing.T) {
 // row shows a project outside the binding is skipped unread; one whose row
 // hides its project is read, and its own read rules it out.
 func TestIntakeS1ReadsTheTeamAcrossAllItsProjects(t *testing.T) {
+	var logged bytes.Buffer
+	old := logf
+	logf = func(format string, args ...any) { fmt.Fprintf(&logged, format+"\n", args...) }
+	t.Cleanup(func() { logf = old })
 	e := setup(t)
 	n := intakePages + 2
 	ids := []string{}
@@ -675,5 +681,22 @@ func TestIntakeS1ReadsTheTeamAcrossAllItsProjects(t *testing.T) {
 	e.queryRow(`SELECT cursor_time FROM watch_cursors WHERE source='intake-s1'`, &moved)
 	if moved <= started {
 		t.Fatal("the cursor did not move:", started, moved)
+	}
+	// Issues outside the binding leave no trace: only their count is kept,
+	// in no table, log line or poll record. The store's files are read
+	// whole, so every table counts.
+	poll, _ := json.Marshal(tick)
+	stored := []byte{}
+	for _, suffix := range []string{"", "-wal"} {
+		b, _ := os.ReadFile(e.path + suffix)
+		stored = append(stored, b...)
+	}
+	for _, id := range []string{outside, hidden} {
+		if strings.Contains(string(poll), id) || strings.Contains(logged.String(), id) || bytes.Contains(stored, []byte(id)) {
+			t.Fatal("an out-of-binding issue was recorded:", id)
+		}
+	}
+	if !bytes.Contains(stored, []byte(last)) {
+		t.Fatal("the store's files hold no issue at all; the check above proves nothing")
 	}
 }

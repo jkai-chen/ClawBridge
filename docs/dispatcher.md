@@ -84,6 +84,8 @@ clawbridge dispatcher disable --expected-revision N
   - With no domains set, an **All work** domain (`all-work`) is created. It matches every bound Linear project, you
     own it, its coordinator is your most recently seen session, and it trusts no session. So nothing is confirmed on its
     own until you trust one.
+  - With no domains set and a binding that names no Linear projects, there is nothing to match: the preview says
+    `blocked: no_domains`, and enable is refused until you set domains.
 - **Disable** needs no preview. It turns the dispatcher off, retires its two sessions (they are never deleted), and
   makes your most recently seen session in the project the coordinator again. Domains and trust are kept for the next
   enable.

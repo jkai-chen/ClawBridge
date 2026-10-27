@@ -93,3 +93,20 @@ func TestDispatcherEnableDisable(t *testing.T) {
 		t.Fatal("the same session was not reactivated", status, err)
 	}
 }
+
+// R107-L1: with no domains and a binding that names no Linear projects,
+// the preview says enable is blocked, and a confirm is refused.
+func TestDispatcherEnableNeedsADomain(t *testing.T) {
+	h := newHarness(t)
+	h.call("taskboard_set_v2", "a", taskboardArgsV2(0))
+	preview, err := h.switchCall("dispatcher_enable", map[string]any{"expected_revision": 0})
+	if err != nil || preview["blocked"] != "no_domains" || len(preview["domains"].([]string)) != 0 {
+		t.Fatal(preview, err)
+	}
+	if _, err = h.switchCall("dispatcher_enable", map[string]any{"expected_revision": 0, "confirm": true}); err == nil || !strings.Contains(err.Error(), "no domains") {
+		t.Fatal("enabled with no domain:", err)
+	}
+	if n := count(t, h.s.db, "dispatcher_policies"); n != 0 {
+		t.Fatal("the refusal wrote", n)
+	}
+}

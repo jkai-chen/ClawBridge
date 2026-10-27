@@ -6,11 +6,13 @@ Pick the path by the user's ClawBridge release, on their machine:
 clawbridge cloud bootstrap --help
 ```
 
-- It succeeds: the release has **device sign-in**, and its compose file no
-  longer requires the Google entries. Use the device path. The server needs no
-  Google OAuth client.
-- It fails with an unknown command: the release predates device sign-in. Use
-  the Google fallback.
+- It succeeds and lists `--vm`: the release has **device sign-in** and can
+  bootstrap a Compute Engine VM. Use the device path. The server needs no Google
+  OAuth client.
+- It succeeds without `--vm` (v0.3.5 bootstraps only an EC2 instance), or fails
+  with an unknown command: use the Google fallback. (A host operator can still
+  let the owner in by hand with `operator bootstrap-invite`; see
+  docs/operations/deployment.md.)
 
 ## Device path (default)
 

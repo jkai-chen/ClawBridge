@@ -39,6 +39,7 @@ const cloudUsage = `clawbridge cloud check [infra|server|version|workspace|linea
                         --instance ID --region R [--profile P] [--account N]]
 clawbridge cloud secret set KEY (--ssh HOST | --vm NAME --project P --zone Z |
                             --instance ID --region R [--profile P] [--account N]) [--value-stdin]
+` + cloudBootstrapUsage + `
 
 On AWS, the server is an EC2 instance reached over SSM with your own AWS CLI
 profile (default ` + defaultAWSProfile + `); backups are read from S3 with --bucket and --region.`
@@ -93,6 +94,8 @@ func runCloud(ctx context.Context, args []string, stdout, stderr io.Writer) erro
 		return runCloudCheck(ctx, args[1:], stdout, stderr)
 	case len(args) >= 2 && args[0] == "secret" && args[1] == "set":
 		return runCloudSecretSet(ctx, args[2:], stdout, stderr)
+	case args[0] == "bootstrap":
+		return runCloudBootstrap(ctx, args[1:], stdout, stderr)
 	}
 	return errors.New("unknown cloud command; see clawbridge cloud --help")
 }

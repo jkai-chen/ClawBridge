@@ -1,10 +1,10 @@
 # Sign-in: device sign-in, or the Google fallback
 
 Pick the path by the user's ClawBridge release. v0.3.4 brings device sign-in to
-the server, but no release up to and including v0.3.4 has `cloud bootstrap
---instance`, the EC2 bootstrap over SSM. It is planned for a later release
-(v0.3.5 at the earliest), so with v0.3.4 or older use the Google fallback. Check
-the release on the user's machine:
+the server, and v0.3.5 adds `cloud bootstrap --instance`, the EC2 bootstrap over
+SSM; with v0.3.4 or older use the Google fallback. The server must run the same
+release or newer: its `operator bootstrap-invite` takes the code. Check the
+release on the user's machine:
 
 ```sh
 clawbridge cloud bootstrap --help
@@ -31,13 +31,16 @@ clawbridge cloud bootstrap --help
   their first device:
 
   ```sh
-  clawbridge cloud bootstrap --instance INSTANCE_ID --region REGION --profile PROFILE --workspace my-team --email OWNER_EMAIL
+  clawbridge cloud bootstrap --instance INSTANCE_ID --region REGION --profile PROFILE --account ACCOUNT_ID \
+    --server https://DOMAIN --workspace my-team --email OWNER_EMAIL
   ```
 
   It makes the one-time owner invite on the user's machine, hands it to the
   server through the same short-lived encrypted parameter as `cloud secret
   set`, and joins with it, so the code never appears in SSM command history or
-  on screen. When the onboarding TUI resumes after your
+  on screen. The server keeps only a salted hash of it. `--email` is checked
+  against the env file's `CLAWBRIDGE_BOOTSTRAP_OWNER`; a mismatch stops before
+  the join. When the onboarding TUI resumes after your
   hand-over, it runs this for the user. **Never run the invite yourself, in any
   form:** its code is a credential. If it fails, the user runs it again; a code
   that was issued expires in 24 hours.

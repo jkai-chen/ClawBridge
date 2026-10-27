@@ -3,12 +3,15 @@ package server
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"io"
 	"os"
 	"regexp"
 	"strings"
 	"testing"
 	"time"
+
+	"clawbridge/internal/devicekey"
 )
 
 // The code is a secret: without a terminal, and without --force-stdout,
@@ -23,6 +26,26 @@ func TestBootstrapInviteRefusesANonTerminal(t *testing.T) {
 	}
 	if err = RunOperator(context.Background(), []string{"bootstrap-invite"}, &out); err == nil || !strings.Contains(err.Error(), "--workspace") {
 		t.Fatal(err)
+	}
+}
+
+// --code-stdin refuses stdin without a code, and --force-stdout with it,
+// before it opens the database; it never echoes what it read.
+func TestBootstrapInviteCodeStdinRefuses(t *testing.T) {
+	t.Setenv("CLAWBRIDGE_DATABASE_URL", "postgres://unused.invalid/none")
+	t.Setenv("CLAWBRIDGE_BOOTSTRAP_OWNER", "owner@example.test")
+	t.Cleanup(func() { operatorStdin = os.Stdin })
+	for stdin, args := range map[string][]string{
+		"not-a-code-zzzz\n":         {"--code-stdin"},
+		"":                          {"--code-stdin"},
+		"CBJ-ABCD-EFGH-JKMN-PQRS\n": {"--code-stdin", "--force-stdout"},
+	} {
+		operatorStdin = strings.NewReader(stdin)
+		var out bytes.Buffer
+		err := RunOperator(context.Background(), append([]string{"bootstrap-invite", "--workspace", "acme"}, args...), &out)
+		if err == nil || out.Len() != 0 || strings.Contains(err.Error(), "zzzz") || strings.Contains(err.Error(), "unused.invalid") || strings.Contains(err.Error(), "Postgres") {
+			t.Fatal(args, err, out.String())
+		}
 	}
 }
 
@@ -55,6 +78,21 @@ func TestPostgresBootstrapInviteJoinsTheOwner(t *testing.T) {
 		t.Fatal(err, tty.String())
 	}
 
+	// cloud bootstrap's way: the code it made, on stdin; one JSON line
+	// back, without it, to any output.
+	mine := devicekey.NewCode()
+	operatorStdin = strings.NewReader(strings.ToLower(mine) + "\n")
+	t.Cleanup(func() { operatorStdin = os.Stdin })
+	stdoutIsTerminal = func(io.Writer) bool { return false }
+	var given bytes.Buffer
+	if err := RunOperator(context.Background(), []string{"bootstrap-invite", "--workspace", ws, "--code-stdin"}, &given); err != nil {
+		t.Fatal(err)
+	}
+	var invite map[string]any
+	if err := json.Unmarshal(given.Bytes(), &invite); err != nil || invite["code"] != nil || invite["email"] != owner || invite["workspace"] != ws || strings.Contains(strings.ToUpper(given.String()), mine[4:8]+mine[9:13]) || strings.Count(given.String(), "\n") != 1 {
+		t.Fatal(err, given.String())
+	}
+
 	store, err := openServingStore(context.Background(), dsn, owner)
 	if err != nil {
 		t.Fatal(err)
@@ -63,6 +101,11 @@ func TestPostgresBootstrapInviteJoinsTheOwner(t *testing.T) {
 	f := newPGDeviceClient(t, store)
 	if w := f.postJoin(f.joinBody(owner, strings.TrimSpace(code), f.now.Unix(), f.priv), "198.51.100.30"); w.Code != 200 {
 		t.Fatal(w.Code, w.Body.String())
+	}
+	// The given code joins too, as the owner's second device.
+	second := newPGDeviceClient(t, store)
+	if w := second.postJoin(second.joinBody(owner, mine, second.now.Unix(), second.priv), "198.51.100.31"); w.Code != 200 {
+		t.Fatal("the given code:", w.Code, w.Body.String())
 	}
 	if w := f.do("/v1/execute", `{"operation":"project_create","workspace":"`+ws+`","args":{"slug":"p"}}`); w.Code != 200 {
 		t.Fatal("the owner's first device can't act as the owner:", w.Code, w.Body.String())

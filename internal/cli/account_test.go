@@ -89,6 +89,9 @@ func (e *signedRecorder) ExecuteAsIdentity(_ context.Context, id bus.Identity, r
 	defer e.mu.Unlock()
 	e.ids = append(e.ids, id)
 	e.requests = append(e.requests, r)
+	if r.Operation == "whoami" {
+		return bus.Result{Source: "server", Data: map[string]any{"principal": id.Principal}}, nil
+	}
 	if r.Operation == "list_projects" {
 		return bus.Result{Source: "server", Data: map[string]any{"projects": []any{map[string]any{"id": "p1", "slug": "api", "role": "member"}}}}, nil
 	}

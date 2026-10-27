@@ -204,10 +204,21 @@ func (a secretAdvice) Error() string { return string(a) }
 // its parameters. The value goes to put-parameter on the CLI's stdin; a fixed
 // script on the instance reads it with the instance's own role and pipes it
 // into remoteSetScript; the parameter is deleted on every path.
-func (s ssmTransport) setSecret(ctx context.Context, key, value string, stderr io.Writer) (err error) {
+func (s ssmTransport) setSecret(ctx context.Context, key, value string, stderr io.Writer) error {
+	_, err := s.throughParameter(ctx, key, value, "cloud secret set", "the write did not finish in time, so it may not have been written; run cloud secret set again", func(name string) string { return ssmSetScript(name, s.target.region, key) }, stderr)
+	return err
+}
+
+// throughParameter hands value to a fixed script on the instance through a
+// short-lived SecureString named for key, and returns the script's output.
+// The parameter is deleted on every path; script(name) must read it with
+// the instance's role (exit 3 without the AWS CLI, 5 when the role can't).
+// what names the command in the parameter's description, and late is the
+// advice when the script did not finish in time.
+func (s ssmTransport) throughParameter(ctx context.Context, key, value, what, late string, script func(name string) string, stderr io.Writer) (out []byte, err error) {
 	t := s.target
 	if err = s.ready(ctx); err != nil {
-		return err
+		return nil, err
 	}
 	name := secretParameter(t.instance, key)
 	// An expiration policy bounds its life even if this process dies before
@@ -217,15 +228,15 @@ func (s ssmTransport) setSecret(ctx context.Context, key, value string, stderr i
 		"Attributes": map[string]string{"Timestamp": cloudNow().UTC().Add(secretParameterLife).Format(time.RFC3339)},
 	}})
 	if err != nil {
-		return err
+		return nil, err
 	}
 	request, err := json.Marshal(map[string]any{
 		"Name": name, "Type": "SecureString", "Overwrite": true, "Value": value, "Tier": "Advanced",
 		"Policies":    string(expiry),
-		"Description": "clawbridge cloud secret set: deleted once written, expires within 15 minutes",
+		"Description": "clawbridge " + what + ": deleted once read, expires within 15 minutes",
 	})
 	if err != nil {
-		return err
+		return nil, err
 	}
 	defer func() {
 		// Even after a failed or cancelled write (a lost response may still
@@ -235,28 +246,29 @@ func (s ssmTransport) setSecret(ctx context.Context, key, value string, stderr i
 		if _, derr := awsCLI(cleanup, t.aws("ssm", "delete-parameter", "--name", name), nil); derr != nil && s.parameterExists(cleanup, name) {
 			left := errors.New("parameter left behind: " + name + "; delete it with aws ssm delete-parameters --names " + name)
 			err = errors.Join(err, left)
+			out = nil
 		}
 	}()
 	if _, err = awsCLI(ctx, t.aws("ssm", "put-parameter", "--cli-input-json", "file:///dev/stdin"), request); err != nil {
-		return secretAdvice("Parameter Store did not take the value; check the profile may put Advanced-tier parameters, and this machine's clock (the parameter's expiry is set from it)")
+		return nil, secretAdvice("Parameter Store did not take the value; check the profile may put Advanced-tier parameters, and this machine's clock (the parameter's expiry is set from it)")
 	}
-	_, err = s.run(ctx, ssmSetScript(name, t.region, key), stderr)
+	out, err = s.run(ctx, script(name), stderr)
 	var failed *ssmRunError
 	switch {
 	case !errors.As(err, &failed):
-		return err
+		return out, err
 	case failed.unfinished:
 		// Stop it before the delete, so it can't read the parameter after.
 		cleanup, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
 		defer cancel()
 		_, _ = awsCLI(cleanup, t.aws("ssm", "cancel-command", "--command-id", failed.commandID, "--instance-ids", t.instance), nil)
-		return secretAdvice("the write did not finish in time, so it may not have been written; run cloud secret set again")
+		return nil, secretAdvice(late)
 	case failed.code == 3:
-		return secretAdvice("the instance has no AWS CLI; install it there (Amazon Linux 2023 has it)")
+		return nil, secretAdvice("the instance has no AWS CLI; install it there (Amazon Linux 2023 has it)")
 	case failed.code == 5:
-		return secretAdvice("the instance cannot read its parameter (no role, a missing policy, or no route to SSM); see deploy/aws-instance-role-policy.json")
+		return nil, secretAdvice("the instance cannot read its parameter (no role, a missing policy, or no route to SSM); see deploy/aws-instance-role-policy.json")
 	}
-	return err
+	return nil, err
 }
 
 // parameterExists says the parameter is still there, or that this can't be

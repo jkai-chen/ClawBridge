@@ -77,6 +77,15 @@ func (f *pgIdentityFixture) inviteRow(id string) map[string]any {
 	return row
 }
 
+func (f *pgIdentityFixture) workspaceExists(name string) bool {
+	f.t.Helper()
+	var n int
+	if err := f.s.db.QueryRow(`SELECT COUNT(*) FROM workspaces WHERE name=$1`, name).Scan(&n); err != nil {
+		f.t.Fatal(err)
+	}
+	return n != 0
+}
+
 func (f *pgIdentityFixture) exec(q string, a ...any) {
 	f.t.Helper()
 	if _, err := f.s.db.ExecContext(context.Background(), (&transaction{postgres: true}).bind(q), a...); err != nil {
@@ -829,7 +838,7 @@ func TestPostgresOperatorBootstrapInvite(t *testing.T) {
 	f := newPGIdentityFixture(t)
 	owner := newID("boot") + "@identity-test.example"
 	ws := newID("bootws")
-	out, err := f.s.OperatorBootstrapInvite(context.Background(), ws, owner)
+	out, err := f.s.OperatorBootstrapInvite(context.Background(), ws, owner, "")
 	if err != nil || out["workspace_created"] != true || out["purpose"] != "recovery" {
 		t.Fatal(out, err)
 	}
@@ -845,12 +854,12 @@ func TestPostgresOperatorBootstrapInvite(t *testing.T) {
 		t.Fatal("the owner's device can't act as the owner:", err)
 	}
 	// Run again for an owner who lost every device: the workspace stays.
-	again, err := f.s.OperatorBootstrapInvite(context.Background(), ws, owner)
+	again, err := f.s.OperatorBootstrapInvite(context.Background(), ws, owner, "")
 	if err != nil || again["workspace_created"] != false {
 		t.Fatal(again, err)
 	}
 	// It never serves a workspace someone else owns...
-	if _, err = f.s.OperatorBootstrapInvite(context.Background(), f.workspace, owner); err == nil {
+	if _, err = f.s.OperatorBootstrapInvite(context.Background(), f.workspace, owner, ""); err == nil {
 		t.Fatal("a bootstrap invite for another owner's workspace")
 	}
 	// ...and its code joins only while its email owns the workspace.
@@ -860,7 +869,25 @@ func TestPostgresOperatorBootstrapInvite(t *testing.T) {
 	if _, err = f.join(owner, again["code"].(string), newKey(t)); err != ErrInvalidInvite || f.failReason(again["invite_id"].(string)) != "issuer_lost_authority" {
 		t.Fatal("an operator invite joined a former owner:", err)
 	}
-	if _, err = f.s.OperatorBootstrapInvite(context.Background(), ws, "ci:x@"+ws); err == nil {
+	if _, err = f.s.OperatorBootstrapInvite(context.Background(), ws, "ci:x@"+ws, ""); err == nil {
 		t.Fatal("a CI principal as the bootstrap owner")
+	}
+	// cloud bootstrap makes the code itself: only its hash is stored, and it
+	// is never returned; a malformed one is refused before anything exists.
+	ws2 := newID("bootws")
+	if _, err = f.s.OperatorBootstrapInvite(context.Background(), ws2, owner, "CBJ-not-a-code"); err == nil || f.workspaceExists(ws2) {
+		t.Fatal("took a malformed code:", err)
+	}
+	mine := devicekey.NewCode()
+	given, err := f.s.OperatorBootstrapInvite(context.Background(), ws2, owner, strings.ToLower(mine))
+	if err != nil || given["code"] != nil || given["workspace_created"] != true {
+		t.Fatal(given, err)
+	}
+	normal, _ := devicekey.NormalCode(mine)
+	if row := f.inviteRow(given["invite_id"].(string)); row["code_sha256"] != devicekey.CodeHash(given["invite_id"].(string), normal) {
+		t.Fatal("the given code's hash:", row)
+	}
+	if _, err = f.join(owner, mine, newKey(t)); err != nil {
+		t.Fatal("the given code doesn't join:", err)
 	}
 }

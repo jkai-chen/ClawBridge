@@ -538,14 +538,8 @@ func JoinDevice(ctx context.Context, p JoinParams) (JoinResult, error) {
 	if err != nil {
 		return JoinResult{}, err
 	}
-	path := p.ConfigPath
-	if path == "" {
-		path = firstConfigPath("", os.Getenv("CLAWBRIDGE_CONFIG"))
-	}
-	if path == "" {
-		path = filepath.Join(home, "config.toml")
-	}
-	if path, err = filepath.Abs(path); err != nil {
+	path, err := joinConfigPath(p.ConfigPath)
+	if err != nil {
 		return JoinResult{}, err
 	}
 	origin, err := remote.JoinServer(ctx, p.Server, p.HTTPClient)
@@ -592,6 +586,22 @@ func JoinDevice(ctx context.Context, p JoinParams) (JoinResult, error) {
 		out.Warning = devicesign.FileWarning
 	}
 	return out, nil
+}
+
+// joinConfigPath is the profile a join writes: path, else the selected one
+// (CLAWBRIDGE_CONFIG, or config.toml in the state directory).
+func joinConfigPath(path string) (string, error) {
+	if path == "" {
+		path = firstConfigPath("", os.Getenv("CLAWBRIDGE_CONFIG"))
+	}
+	if path == "" {
+		home, err := stateHome()
+		if err != nil {
+			return "", err
+		}
+		path = filepath.Join(home, "config.toml")
+	}
+	return filepath.Abs(path)
 }
 
 // joinableProfile reads the profile a join will write and refuses one that

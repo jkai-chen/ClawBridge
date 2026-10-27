@@ -1094,10 +1094,17 @@ func liveDevice(ctx context.Context, tx *transaction, id Identity, workspace str
 // lost every device. It creates the workspace for owner if it doesn't exist
 // (as workspace_init would for the bootstrap owner), then issues a 24 h
 // recovery invite for owner alone, from operator:local. Its code is shown
-// once, to the caller.
-func (s *Store) OperatorBootstrapInvite(ctx context.Context, workspace, owner string) (map[string]any, error) {
+// once, to the caller. A caller that made the code itself passes it as code
+// (cloud bootstrap): only its salted hash is stored, and it is not returned.
+func (s *Store) OperatorBootstrapInvite(ctx context.Context, workspace, owner, code string) (map[string]any, error) {
 	if !s.postgres {
 		return nil, errors.New("bootstrap-invite needs the hosted authority")
+	}
+	given := code != ""
+	if given {
+		if _, ok := devicekey.NormalCode(code); !ok {
+			return nil, errors.New("the given code is not an invite code (CBJ- and 16 letters and digits)")
+		}
 	}
 	owner = normalPrincipal(owner)
 	if !validPrincipal(owner) {
@@ -1148,7 +1155,9 @@ func (s *Store) OperatorBootstrapInvite(ctx context.Context, workspace, owner st
 		return nil, errors.New("the owner has 3 pending invites; revoke one first")
 	}
 	id := devicekey.NewInviteID()
-	code := devicekey.NewCode()
+	if !given {
+		code = devicekey.NewCode()
+	}
 	normal, _ := devicekey.NormalCode(code)
 	expires := future(inviteDeviceHours * time.Hour)
 	if _, err = tx.ExecContext(ctx, `INSERT INTO invites(invite_id,workspace_id,email,code_sha256,purpose,grants,revoke_others,created_by,created_at,expires_at) VALUES(?,?,?,?,'recovery','{}',0,?,?,?)`, id, wid, owner, devicekey.CodeHash(id, normal), OperatorPrincipal, stamp(), expires); err != nil {
@@ -1163,7 +1172,10 @@ func (s *Store) OperatorBootstrapInvite(ctx context.Context, workspace, owner st
 	if err = tx.Commit(); err != nil {
 		return nil, errors.New("authority commit failed")
 	}
-	out := map[string]any{"code": code}
+	out := map[string]any{}
+	if !given {
+		out["code"] = code
+	}
 	for k, v := range shown {
 		out[k] = v
 	}

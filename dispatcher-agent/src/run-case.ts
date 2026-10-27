@@ -123,7 +123,7 @@ export async function runCase(c: CaseT, optIn: readonly OptInTool[], deps: RunCa
 				return { content: [{ type: "text", text: JSON.stringify({ error: r.code }) }], details: undefined, terminate: true };
 			}
 			if (!r.ok) return { content: [{ type: "text", text: JSON.stringify({ error: r.code }) }], details: undefined, isError: true };
-			return { content: [{ type: "text", text: JSON.stringify(r.body.result) }], details: undefined };
+			return { content: [{ type: "text", text: JSON.stringify(modelResult(t.name, r.body.result)) }], details: undefined };
 		},
 	}));
 
@@ -201,3 +201,18 @@ function usageFields(u: UsageT) {
 }
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+/**
+ * A read tool's result as the model sees it. list_decisions' explanations are earlier model output, which an issue's
+ * text could have steered, so each moves under `untrusted`: data, never instructions (d6). A result in any other
+ * shape than the agreed array fails closed: all of it goes under `untrusted`.
+ */
+export function modelResult(tool: string, result: unknown): unknown {
+	if (tool !== "list_decisions") return result;
+	if (!Array.isArray(result)) return { untrusted: { result } };
+	return result.map((item) => {
+		if (item === null || typeof item !== "object" || !("explanation" in item)) return item;
+		const { explanation, ...rest } = item as Record<string, unknown>;
+		return { ...rest, untrusted: { explanation } };
+	});
+}

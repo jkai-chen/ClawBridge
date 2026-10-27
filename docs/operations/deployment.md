@@ -267,7 +267,10 @@ IAP-signed HTTP assertions are outside its implemented identity path.
 ## Sign-in methods
 
 The server accepts Google ID tokens, ClawBridge device keys, or both. The
-mode is `CLAWBRIDGE_AUTH` in the environment file, passed to `serve --auth`:
+mode is `CLAWBRIDGE_AUTH` in the environment file, passed to `serve --auth`.
+Moving people to device keys has an order: upgrade the clients and give everyone a
+device before setting `device`. See
+[Turning device sign-in on](../sign-in.md#turning-device-sign-in-on).
 
 | `CLAWBRIDGE_AUTH` | Accepts | Needs |
 | --- | --- | --- |

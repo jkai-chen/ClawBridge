@@ -83,6 +83,9 @@ requires the [existing D-Bus/keyring session](installation.md#linux-and-wsl-cred
 
 ## Join with an invite
 
+The [sign-in guide](sign-in.md) covers invites, device keys, members, ownership,
+turning device sign-in on, and troubleshooting in full.
+
 A server that takes device keys (`serve --auth device` or `google,device`) needs
 no Google account. An owner invites you, gives you the code and the server's URL,
 and you join:

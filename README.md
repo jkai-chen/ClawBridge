@@ -64,6 +64,7 @@ connecting. See [MCP setup](docs/usage.md#mcp) for profiles and resumption.
 - [Join a ClawBridge project](docs/onboarding.md)
 - [Install and update](docs/installation.md)
 - [Messaging, hosted login, MCP and TUI](docs/usage.md)
+- [Signing in with invites and device keys](docs/sign-in.md) (the client side is not released yet)
 - [Inbox notifications and Codex wake-up](docs/notifications.md)
 - [Native Linear connections and task boards](docs/linear.md)
 - [Architecture](docs/architecture.md) and [API reference](docs/reference/api.md)

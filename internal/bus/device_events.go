@@ -3,6 +3,8 @@ package bus
 import (
 	"context"
 	"errors"
+	"fmt"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -35,12 +37,16 @@ const maxDeviceAck = 100
 // by actor (and actorDevice, when a device key signed the request). It also
 // drops the workspace's events past their lifetime, with their acks, so
 // the table needs no sweep of its own.
-func deviceEvent(ctx context.Context, tx *transaction, wid, principal, device, kind, label, route, actor, actorDevice string) error {
+func (s *Store) deviceEvent(ctx context.Context, tx *transaction, wid, principal, device, kind, label, route, actor, actorDevice string) error {
 	var by any
 	if actorDevice != "" {
 		by = actorDevice
 	}
-	if _, err := tx.ExecContext(ctx, `INSERT INTO device_events(event_id,workspace_id,principal,device_id,kind,label,route,actor,actor_device,created_at) VALUES(?,?,?,?,?,?,?,?,?,?)`, newID("dve_"), wid, principal, device, kind, label, route, actor, by, stamp()); err != nil {
+	id, now := newID("dve_"), stamp()
+	if _, err := tx.ExecContext(ctx, `INSERT INTO device_events(event_id,workspace_id,principal,device_id,kind,label,route,actor,actor_device,created_at) VALUES(?,?,?,?,?,?,?,?,?,?)`, id, wid, principal, device, kind, label, route, actor, by, now); err != nil {
+		return err
+	}
+	if err := s.ownerDeviceNotices(ctx, tx, wid, id, principal, device, kind, label, route, actor, now); err != nil {
 		return err
 	}
 	cutoff := hostClock().UTC().Add(-deviceEventDays * 24 * time.Hour).Format(timestampLayout)
@@ -49,6 +55,51 @@ func deviceEvent(ctx context.Context, tx *transaction, wid, principal, device, k
 	}
 	_, err := tx.ExecContext(ctx, `DELETE FROM device_events WHERE workspace_id=? AND created_at<=?`, wid, cutoff)
 	return err
+}
+
+// ownerDeviceNotices tells the main owner's coordinator sessions of a
+// device event (A1-D4): one security notice in each project of the
+// workspace whose coordinator session the main owner registered and is
+// active. A session run by anyone else gets nothing. The notice names the
+// user, the device's label and ID, what happened and when, nothing more;
+// its operation ID is the event's, so a project gets it once.
+func (s *Store) ownerDeviceNotices(ctx context.Context, tx *transaction, wid, event, principal, device, kind, label, route, actor, now string) error {
+	w, err := one(ctx, tx, `SELECT * FROM workspaces WHERE id=?`, wid)
+	if err != nil {
+		return err
+	}
+	to, err := query(ctx, tx, `SELECT p.id AS project_id,c.id,c.name FROM projects p JOIN sessions c ON c.project_id=p.id AND c.id=p.coordinator_session WHERE p.workspace_id=? AND c.status='active' AND c.role<>'system' AND c.owner_principal=? ORDER BY p.id`, wid, w["owner_principal"])
+	if err != nil || len(to) == 0 {
+		return err
+	}
+	body := fmt.Sprintf("Security: new device %s (%s) added to %s at %s via %s.", strconv.Quote(label), device, principal, now, strings.ReplaceAll(route, "_", " "))
+	if kind == "revoked" {
+		body = fmt.Sprintf("Security: device %s (%s) of %s revoked at %s by %s.", strconv.Quote(label), device, principal, now, actor)
+	}
+	body += " Not expected? clawbridge user list, then device revoke."
+	retention := asInt(w["retention_days"])
+	if retention < 1 {
+		retention = 30
+	}
+	for _, c := range to {
+		pid := str(c, "project_id")
+		if err = s.ensureSystemSession(ctx, tx, wid, pid); err != nil {
+			return err
+		}
+		system, err := one(ctx, tx, `SELECT id FROM sessions WHERE project_id=? AND role='system' AND name=?`, pid, SystemSessionName)
+		if err != nil {
+			return err
+		}
+		id := newID("msg_")
+		if _, err = tx.ExecContext(ctx, `INSERT INTO messages(id,project_id,source_project_id,sender_id,address,thread_id,reply_to,kind,body,created_at,expires_at,created_by_principal,operation_id,payload_hash,coordination) VALUES(?,?,?,?,?,?,NULL,'security',?,?,?,?,?,?,NULL) ON CONFLICT(sender_id,operation_id) DO NOTHING`,
+			id, pid, pid, system["id"], str(c, "name"), id, body, now, layout(at(now).AddDate(0, 0, retention)), systemPrincipal, event, digestOf(body)); err != nil {
+			return err
+		}
+		if _, err = tx.ExecContext(ctx, `INSERT INTO deliveries(message_id,project_id,recipient_id) SELECT id,project_id,? FROM messages WHERE id=? AND project_id=?`, c["id"], id, pid); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // actorDevice is the device that signed this request, if one did.
@@ -61,7 +112,7 @@ func (s *Store) actorDevice() string {
 
 // revokedDeviceEvents records a revocation event for each of ids, devices
 // of principal revoked together (recovery).
-func revokedDeviceEvents(ctx context.Context, tx *transaction, wid, principal string, ids []string, route, actor, actorDevice string) error {
+func (s *Store) revokedDeviceEvents(ctx context.Context, tx *transaction, wid, principal string, ids []string, route, actor, actorDevice string) error {
 	for _, id := range ids {
 		row, err := one(ctx, tx, `SELECT kind,label FROM devices WHERE device_id=?`, id)
 		if err != nil {
@@ -70,7 +121,7 @@ func revokedDeviceEvents(ctx context.Context, tx *transaction, wid, principal st
 		if row["kind"] != "device" {
 			continue
 		}
-		if err = deviceEvent(ctx, tx, wid, principal, id, "revoked", row["label"].(string), route, actor, actorDevice); err != nil {
+		if err = s.deviceEvent(ctx, tx, wid, principal, id, "revoked", row["label"].(string), route, actor, actorDevice); err != nil {
 			return err
 		}
 	}

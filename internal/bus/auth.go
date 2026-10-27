@@ -584,13 +584,13 @@ func (s *Store) Join(ctx context.Context, in JoinRequest) (map[string]any, error
 		}
 		// The joining device caused these revokes, so it isn't alerted to
 		// them on its first command.
-		if err = revokedDeviceEvents(ctx, tx, wid, email, revoked, "recovery", match["created_by"].(string), deviceID); err != nil {
+		if err = js.revokedDeviceEvents(ctx, tx, wid, email, revoked, "recovery", match["created_by"].(string), deviceID); err != nil {
 			return nil, err
 		}
 	}
 	route := map[string]string{"user": "invite", "device": "device_add", "recovery": "recovery"}[purpose]
 	issuedBy, _ := match["issued_device"].(string)
-	if err = deviceEvent(ctx, tx, wid, email, deviceID, "added", label, route, match["created_by"].(string), issuedBy); err != nil {
+	if err = js.deviceEvent(ctx, tx, wid, email, deviceID, "added", label, route, match["created_by"].(string), issuedBy); err != nil {
 		return nil, err
 	}
 	if err = js.audit(ctx, tx, wid, "", "", "invite", match["invite_id"].(string), "invite_used", map[string]any{"invite_id": match["invite_id"], "device_id": deviceID, "purpose": purpose, "invited_by": match["created_by"]}); err != nil {
@@ -723,7 +723,7 @@ func (s *Store) revokeDevice(ctx context.Context, tx *transaction, w map[string]
 	// A stolen device could revoke the very devices that would show its
 	// alert, so a revoke is an event too (R6).
 	if row["kind"] == "device" {
-		if err = deviceEvent(ctx, tx, w["id"].(string), row["principal"].(string), id, "revoked", row["label"].(string), "revoke", s.principal, s.actorDevice()); err != nil {
+		if err = s.deviceEvent(ctx, tx, w["id"].(string), row["principal"].(string), id, "revoked", row["label"].(string), "revoke", s.principal, s.actorDevice()); err != nil {
 			return nil, err
 		}
 	}
@@ -789,7 +789,7 @@ func (s *Store) addDevice(ctx context.Context, tx *transaction, w map[string]any
 		return nil, err
 	}
 	if kind == "device" {
-		if err := deviceEvent(ctx, tx, w["id"].(string), owner, id, "added", label, "enroll", s.principal, s.actorDevice()); err != nil {
+		if err := s.deviceEvent(ctx, tx, w["id"].(string), owner, id, "added", label, "enroll", s.principal, s.actorDevice()); err != nil {
 			return nil, err
 		}
 	}
@@ -933,7 +933,7 @@ func (s *Store) revokeUser(ctx context.Context, tx *transaction, w map[string]an
 		return nil, err
 	}
 	// A stolen owner device could remove members silently otherwise (R6).
-	if err = revokedDeviceEvents(ctx, tx, wid, who, devices, "user_revoked", s.principal, s.actorDevice()); err != nil {
+	if err = s.revokedDeviceEvents(ctx, tx, wid, who, devices, "user_revoked", s.principal, s.actorDevice()); err != nil {
 		return nil, err
 	}
 	ci, err := query(ctx, tx, `SELECT device_id FROM devices WHERE workspace_id=? AND kind='ci' AND created_by=? AND revoked_at IS NULL ORDER BY device_id`, wid, who)

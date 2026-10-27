@@ -33,6 +33,8 @@
   - A revoke is an alert too, including the owner's `user revoke`, so a stolen device can't quietly revoke your
     others.
   - Not alerted: the device itself, the device that revoked a device, and CI devices.
+  - The main owner's coordinator sessions get each event as one `security` message per project, if the owner
+    registered them; a coordinator someone else runs gets nothing (A1-D4).
   - The server answers every device-signed request with `pending_device_events`; the client fetches the events at
     most once a minute. Older clients ignore the field.
 - **Device labels are printable text.** A label is shown on your other devices, so the server refuses control

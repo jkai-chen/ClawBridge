@@ -458,6 +458,9 @@ func (m Model) UpdateModel(msg tea.Msg) (Model, tea.Cmd) {
 			return m, nil
 		}
 		return m.inboxChanged()
+	case InboxLiveEndedMsg:
+		m.status = noteStatus(liveOffNote)
+		return m, nil
 	case tea.WindowSizeMsg:
 		m.width, m.height = x.Width, x.Height
 		return m, nil

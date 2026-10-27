@@ -208,7 +208,10 @@ func (c *Client) StreamOnce(ctx context.Context, scope StreamScope, opts StreamO
 			event.Name = strings.TrimPrefix(line, "event: ")
 		case strings.HasPrefix(line, "data: "):
 			event.Data = json.RawMessage(strings.TrimPrefix(line, "data: "))
-		case line == "" && event.Name != "":
+		case line == "" && event.Name == "":
+			// A block without an event name carries nothing.
+			event = StreamEvent{}
+		case line == "":
 			switch event.Name {
 			case "bye":
 				return true, nil
@@ -240,8 +243,9 @@ func (c *Client) streamTicket(ctx context.Context, scope StreamScope) (string, e
 		return "", ErrStreamUnsupported
 	}
 	// A definite refusal (a moved instance, a removed member, a retired
-	// session) won't pass on a retry; a rate limit or an outage may.
-	if errors.As(err, &refused) && refused.Status >= 400 && refused.Status < 500 && refused.Status != http.StatusTooManyRequests {
+	// session, a bad request) won't pass on a retry; anything else (a rate
+	// limit, a timeout, a conflict, an outage) may.
+	if errors.As(err, &refused) && ticketRefusedForGood(refused.Status) {
 		return "", &StreamEnded{Reason: "refused", Err: err}
 	}
 	if err != nil {
@@ -253,6 +257,15 @@ func (c *Client) streamTicket(ctx context.Context, scope StreamScope) (string, e
 		return "", errors.New("the server's stream ticket is unreadable")
 	}
 	return ticket, nil
+}
+
+// ticketRefusedForGood is a stream_ticket answer that no retry changes.
+func ticketRefusedForGood(status int) bool {
+	switch status {
+	case http.StatusBadRequest, http.StatusUnauthorized, http.StatusForbidden, http.StatusNotFound:
+		return true
+	}
+	return false
 }
 
 // hasStreamRoute asks, without credentials, whether the server routes

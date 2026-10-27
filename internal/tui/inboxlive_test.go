@@ -105,3 +105,27 @@ func TestInboxLiveOffWithoutAStream(t *testing.T) {
 		t.Fatal("acted on a change without a stream")
 	}
 }
+
+// endedAuthority's stream ends at once, as an older server's does.
+type endedAuthority struct{ *fakeAuthority }
+
+func (endedAuthority) Stream(context.Context, remote.StreamScope, remote.StreamOptions, func(remote.StreamEvent) error) error {
+	return remote.ErrStreamUnsupported
+}
+
+// A stream that ends for good says so once; the Inbox reloads on r from
+// then on.
+func TestInboxLiveEndedSaysSo(t *testing.T) {
+	model, err := New(testConfig(endedAuthority{&fakeAuthority{}}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	msg := model.inboxLiveCmd()()
+	if _, ok := msg.(InboxLiveEndedMsg); !ok {
+		t.Fatalf("%T", msg)
+	}
+	next, cmd := model.UpdateModel(msg)
+	if next.status != noteStatus(liveOffNote) || cmd != nil {
+		t.Fatal(next.status, cmd != nil)
+	}
+}

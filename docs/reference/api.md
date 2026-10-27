@@ -391,7 +391,10 @@ event: replaced | revoked | bye      (then the server closes)
   or the database is unavailable, and the client reconnects, which signs in
   again.
 - **One account holds at most 8 streams** of any mode on a server; the next
-  is refused with 429, and its ticket stays usable once one closes. A client
+  is refused with 429, and its ticket stays usable once one closes. A
+  client retries a 429 with its reconnect backoff: after a dropped network,
+  the old streams still count until the server notices them gone, which
+  takes up to about a minute (a ping plus the 30 s write wait). A client
   that stops reading for 30 s while an event waits loses its stream; its
   leases run out and are offered again.
 - **Behind Caddy** the events arrive unbuffered with no configuration; the

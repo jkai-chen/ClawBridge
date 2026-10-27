@@ -37,6 +37,8 @@ type AppWriter struct {
 	App   *linearapp.App
 	Store *bus.Store
 	Now   func() time.Time
+	// Member, when set, replaces the membership check (tests).
+	Member func(ctx context.Context, identity bus.Identity, workspace string) error
 
 	typesOnce sync.Once
 	types     *linearboard.StateTypeCache
@@ -153,6 +155,11 @@ func (w *AppWriter) Execute(parent context.Context, identity bus.Identity, r bus
 			return bus.Result{}, appRefusal("linear_write cannot choose an identity; the server writes as the ClawBridge app")
 		}
 	}
+	// G9 F1: after the request's own checks, and before anything reaches
+	// the app, the caller proves membership; status and states do the same.
+	if err := w.member(parent, identity, r.Workspace); err != nil {
+		return bus.Result{}, err
+	}
 	if err := relationScope(parent, operation, w.App.HasScope); err != nil {
 		return bus.Result{}, err
 	}
@@ -178,6 +185,41 @@ func (w *AppWriter) Execute(parent context.Context, identity bus.Identity, r bus
 		return bus.Result{Data: map[string]any{"receipt": data, "outcome": receipt.Outcome}}, nil
 	}
 	return bus.Result{}, writeError(err)
+}
+
+// member proves identity is a member of workspace, or, with none named, of
+// some workspace on this server: a bus read as identity, which applies the
+// membership, the domain gate and the account binding. Clients name no
+// workspace when they ask whether the server writes as the app.
+func (w *AppWriter) member(ctx context.Context, identity bus.Identity, workspace string) error {
+	if w.Member != nil {
+		return w.Member(ctx, identity, workspace)
+	}
+	if w.Store == nil {
+		return bus.PublicError("unavailable", "the authority is unavailable; retry")
+	}
+	candidates := []string{workspace}
+	if workspace == "" {
+		var err error
+		if candidates, err = w.Store.MemberWorkspaces(ctx, identity.Principal); err != nil {
+			return bus.PublicError("unavailable", "the authority is unavailable; retry")
+		}
+	}
+	// Every refusal reads the same (R120-L1): a missing workspace and one
+	// the caller isn't a member of must not be told apart. Only an
+	// unavailable authority says so, to be retried.
+	refused := bus.PublicError("forbidden", "workspace membership required")
+	for _, ws := range candidates {
+		_, err := identityExecutor{w.Store, identity}.Execute(ctx, bus.Request{Operation: "list_projects", Workspace: ws, Args: map[string]any{}})
+		if err == nil {
+			return nil
+		}
+		var coded interface{ Code() string }
+		if errors.As(err, &coded) && coded.Code() == "unavailable" {
+			return bus.PublicError("unavailable", "the authority is unavailable; retry")
+		}
+	}
+	return refused
 }
 
 // writeError gives the caller the board's own message: ClawBridge's text,
@@ -208,6 +250,9 @@ func writeError(err error) error {
 func (w *AppWriter) status(parent context.Context, identity bus.Identity, r bus.Request) (bus.Result, error) {
 	ctx, cancel := context.WithTimeout(parent, 20*time.Second)
 	defer cancel()
+	if err := w.member(ctx, identity, r.Workspace); err != nil {
+		return bus.Result{}, err
+	}
 	service, id, err := w.service(ctx, identity)
 	if err != nil {
 		return bus.Result{}, err
@@ -260,6 +305,9 @@ func (w *AppWriter) states(parent context.Context, identity bus.Identity, r bus.
 	}
 	ctx, cancel := context.WithTimeout(parent, 20*time.Second)
 	defer cancel()
+	if err := w.member(ctx, identity, r.Workspace); err != nil {
+		return bus.Result{}, err
+	}
 	service, _, err := w.service(ctx, identity)
 	if err != nil {
 		return bus.Result{}, err

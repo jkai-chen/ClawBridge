@@ -51,7 +51,7 @@ func TestPostgresBootstrapInviteJoinsTheOwner(t *testing.T) {
 	stdoutIsTerminal = func(io.Writer) bool { return true }
 	t.Cleanup(func() { stdoutIsTerminal = func(w io.Writer) bool { return false } })
 	var tty bytes.Buffer
-	if err := RunOperator(context.Background(), []string{"bootstrap-invite", "--workspace", ws}, &tty); err != nil || !strings.Contains(tty.String(), "clawbridge join") || !strings.Contains(tty.String(), "secret") {
+	if err := RunOperator(context.Background(), []string{"bootstrap-invite", "--workspace", ws}, &tty); err != nil || !strings.Contains(tty.String(), "clawbridge join") || !strings.Contains(tty.String(), "secret") || strings.Contains(tty.String(), "--code") || !strings.Contains(tty.String(), "asks for the code") {
 		t.Fatal(err, tty.String())
 	}
 

@@ -124,7 +124,7 @@ func TestRelationWriteRefusedWhenTheTokenFails(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	w := &AppWriter{App: app}
+	w := &AppWriter{App: app, Member: func(context.Context, bus.Identity, string) error { return nil }}
 	_, err = w.Execute(context.Background(), bus.Identity{Principal: "a@example.com"}, bus.Request{Operation: "linear_write", Args: map[string]any{"operation": "relation_add", "args": map[string]any{}}})
 	if err == nil || !strings.Contains(err.Error(), "token store unavailable") {
 		t.Fatal(err)
@@ -156,4 +156,29 @@ type noLinear struct{ t *testing.T }
 func (n noLinear) RoundTrip(r *http.Request) (*http.Response, error) {
 	n.t.Fatalf("a request reached Linear: %s %s", r.Method, r.URL)
 	return nil, errorString("unreachable")
+}
+
+// G9 F1: with no authority to prove membership, the app is never reached:
+// the check fails closed.
+func TestAppWriterRefusesWithoutAMembershipCheck(t *testing.T) {
+	app, err := linearapp.New(linearapp.Config{
+		ClientID: "client", Secret: "secret", Key: make([]byte, 32),
+		Store:        failingTokenStore{},
+		HTTP:         &http.Client{Transport: noLinear{t}},
+		MCPTransport: noLinear{t},
+		Now:          time.Now,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	w := &AppWriter{App: app}
+	for _, r := range []bus.Request{
+		{Operation: "linear_app_status", Args: map[string]any{}},
+		{Operation: "linear_write", Args: map[string]any{"operation": "relation_add", "args": map[string]any{}}},
+	} {
+		out, err := w.Execute(context.Background(), bus.Identity{Principal: "a@example.com"}, r)
+		if code, _ := serviceError(err); code != "unavailable" || out.Data != nil {
+			t.Fatal(r.Operation, out.Data, err)
+		}
+	}
 }

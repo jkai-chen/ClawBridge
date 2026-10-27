@@ -313,7 +313,8 @@ sudo docker compose --env-file /etc/clawbridge/clawbridge.env --project-name "$P
   exist. For an existing workspace it refuses unless the bootstrap owner owns it.
 - It prints a single-use code, valid for 24 hours, for the owner's email only. The
   owner then runs, on their own computer:
-  `clawbridge join --server https://DOMAIN --email OWNER --code CODE`.
+  `clawbridge join --server https://DOMAIN --email OWNER`, which asks for the code
+  without showing it. Never put the code on the command line (`--code`).
   (`clawbridge join` ships with the client in the same release.)
 - **The code is a secret.** Run the command in your own terminal session, not
   through an agent, and type the code yourself. The command refuses to print to

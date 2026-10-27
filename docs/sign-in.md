@@ -85,8 +85,9 @@ Invite code:            # typed, not shown
 clawbridge --project api whoami      # identity_provenance: device-key
 ```
 
-- **The code** can also be given as `--code`, but leaving it out keeps it out of
-  your shell history.
+- **The code** is typed at the prompt, or piped on stdin. `--code` exists for
+  scripts, but don't use it by hand: a command line is kept in shell history and
+  shown in other users' process lists.
 - **Where it goes.** `join` writes the profile (`~/.clawbridge/config.toml`, or
   the one `--client-config` names) to sign with the new key. The label is just a
   name, and defaults to the computer's name.

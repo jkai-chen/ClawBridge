@@ -502,3 +502,41 @@ func TestPostgresAppStatesReadsABoundTeamsWorkflow(t *testing.T) {
 		t.Fatal("a refused member reached Linear")
 	}
 }
+
+// G9 F1: the app's identity and every app call wait for membership. A
+// stranger (any Google account can get a token for the public client IDs)
+// is refused before the app mints or reads anything; a member asking with
+// no workspace, as a client deciding whether to write as the app does, is
+// found by their membership.
+func TestPostgresAppNeedsMembershipFirst(t *testing.T) {
+	f := newAWFixture(t, awOrg)
+	stranger := bus.Identity{Principal: awUnique("stranger") + "@appwrite-test.example", Issuer: bus.GoogleIssuer, Subject: "sub-stranger"}
+	for _, r := range []bus.Request{
+		{Operation: "linear_app_status", Args: map[string]any{}},
+		{Operation: "linear_app_status", Workspace: f.workspace, Project: "p", Args: map[string]any{}},
+		{Operation: "linear_app_states", Workspace: f.workspace, Project: "p", Args: map[string]any{"team": awTeam}},
+		{Operation: "linear_write", Workspace: f.workspace, Project: "p", Args: map[string]any{"operation": "comment", "args": map[string]any{}}},
+	} {
+		out, err := f.writer.Execute(context.Background(), stranger, r)
+		if err == nil || !strings.Contains(err.Error(), "membership") || out.Data != nil {
+			t.Fatal("a stranger reached the app:", r.Operation, r.Workspace, out.Data, err)
+		}
+	}
+	// R120-L1: a workspace that doesn't exist is refused in the same words
+	// as one the caller isn't a member of.
+	_, missing := f.writer.Execute(context.Background(), stranger, bus.Request{Operation: "linear_app_status", Workspace: awUnique("nowhere"), Args: map[string]any{}})
+	_, foreign := f.writer.Execute(context.Background(), stranger, bus.Request{Operation: "linear_app_status", Workspace: f.workspace, Args: map[string]any{}})
+	if missing == nil || foreign == nil || missing.Error() != foreign.Error() {
+		t.Fatal("a missing workspace is told apart:", missing, foreign)
+	}
+	f.api.mu.Lock()
+	mints := f.api.mints
+	f.api.mu.Unlock()
+	if mints != 0 {
+		t.Fatal("the app minted a token for a stranger:", mints)
+	}
+	out, err := f.writer.Execute(context.Background(), f.identity(), bus.Request{Operation: "linear_app_status", Args: map[string]any{}})
+	if data, _ := out.Data.(map[string]any); err != nil || data["app_user_id"] != awAppUser {
+		t.Fatal("a member asking with no workspace was refused:", out.Data, err)
+	}
+}

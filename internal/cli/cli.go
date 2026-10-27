@@ -56,7 +56,7 @@ Onboarding: setup join --server URL --workspace TEAM --project CODEBASE [--login
 setup --cloud initializes an existing service only; no infrastructure is created.
 Global: --client-config /absolute/path/config.toml (trusted route; not agent --config)
 Commands: login [--device|--use-gcloud], logout,
-          join --email EMAIL [--code CODE] (with --server URL: join a hosted workspace with an invite),
+          join --email EMAIL (with --server URL: join a hosted workspace with an invite; asks for the code),
           invite, device, user, owner (accounts on a hosted workspace; each takes --help)
 Cloud flags: --mode cloud --server URL --audience AUDIENCE [--credential-source oauth|gcloud|adc|device] [--oauth-client-id ID --oauth-client-secret CREDENTIAL --oauth-device-client-id ID --oauth-device-client-secret CREDENTIAL] [--principal EMAIL] [--cache PATH]
 All normal results are JSON with source. See docs/reference/api.md for command flags and isolated test environment variables.

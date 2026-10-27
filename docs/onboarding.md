@@ -154,7 +154,9 @@ without undoing the earlier ones:
    and prints a summary of what was set up, what was skipped, and the exact command for each
    skipped step.
 
-The terminal view opens afterwards.
+The terminal view opens afterwards. Next, take a first issue from proposal to
+release: [your first task](usage.md#your-first-task-claim-and-release). Ask the
+owner which session is the project's coordinator; it confirms your assignments.
 
 ### Explicit commands
 

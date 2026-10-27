@@ -35,9 +35,10 @@ reopens it at any time):
 
 1. **Just this machine:** local messaging between your agents, with no server or
    account ([local messaging](docs/usage.md#local-messaging)).
-2. **Join a team server:** have its HTTPS address, workspace, project and an
-   authorized Google account ready; [joining a project](docs/onboarding.md)
-   walks through it.
+2. **Join a team server:** have its HTTPS address ready, and either an invite
+   code from its owner (from v0.3.5) or, where the server still offers Google
+   sign-in, the workspace, project and the Google account the owner authorized.
+   [Joining a project](docs/onboarding.md) walks through both.
 3. **Set up my own server:** on Google Cloud or AWS. With Claude Code or Codex
    installed, ClawBridge asks which cloud, then hands the provisioning to your
    own agent with the `clawbridge-provision-gcp` or `clawbridge-provision-aws`
@@ -64,7 +65,8 @@ connecting. See [MCP setup](docs/usage.md#mcp) for profiles and resumption.
 - [Join a ClawBridge project](docs/onboarding.md)
 - [Install and update](docs/installation.md)
 - [Messaging, hosted login, MCP and TUI](docs/usage.md)
-- [Signing in with invites and device keys](docs/sign-in.md) (the client side is not released yet)
+- [Signing in with invites and device keys](docs/sign-in.md) (the client side from v0.3.5)
+- [Your first task: claim and release](docs/usage.md#your-first-task-claim-and-release)
 - [Inbox notifications and Codex wake-up](docs/notifications.md)
 - [Native Linear connections and task boards](docs/linear.md)
 - [Architecture](docs/architecture.md) and [API reference](docs/reference/api.md)

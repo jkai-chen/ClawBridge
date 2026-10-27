@@ -135,7 +135,7 @@ func (s *Store) migrate() error {
 	if err = tx.QueryRow("PRAGMA user_version").Scan(&version); err != nil {
 		return err
 	}
-	if version > 30 {
+	if version > 31 {
 		return errors.New("database schema is newer than this ClawBridge binary")
 	}
 	if version == 0 {
@@ -292,6 +292,11 @@ func (s *Store) migrate() error {
 	}
 	if version < 30 {
 		if _, err = tx.Exec(watchBudgetSchemaV30 + `PRAGMA user_version=30;`); err != nil {
+			return err
+		}
+	}
+	if version < 31 {
+		if _, err = tx.Exec(inviteIssuedDeviceSchemaV31 + `PRAGMA user_version=31;`); err != nil {
 			return err
 		}
 	}
@@ -513,7 +518,7 @@ var operationArgs = map[string]string{
 	"context_levels_set":          "instance warn_tokens handover_tokens clear",
 	"dispatcher_cases_due":        "instance",
 	"dispatcher_decision_record":  "instance subject_id subject_revision policy_revision engine proposal reason_code explanation guardrail action domain facts_source app_project_id",
-	"invite_create":               "email grants purpose expires_hours revoke_others",
+	"invite_create":               "email grants purpose expires_hours expires_minutes revoke_others",
 	"invite_list":                 "",
 	"invite_revoke":               "invite_id",
 	"device_list":                 "principal",
@@ -593,7 +598,7 @@ func validateArgs(op string, a map[string]any) error {
 					return invalid(k + " must be an integer")
 				}
 			}
-		case "retention_days", "limit", "since_hours", "after", "expected_revision", "ledger", "generation", "budget", "calls", "charged", "policy_revision", "engineer", "if_unset", "expires_days", "expires_hours", "s5_calls_per_hour", "out_of_binding_limit", "template_version", "part_number", "part_count", "seq", "config_revision":
+		case "retention_days", "limit", "since_hours", "after", "expected_revision", "ledger", "generation", "budget", "calls", "charged", "policy_revision", "engineer", "if_unset", "expires_days", "expires_hours", "expires_minutes", "s5_calls_per_hour", "out_of_binding_limit", "template_version", "part_number", "part_count", "seq", "config_revision":
 			if _, err := integer(v); err != nil {
 				return fmt.Errorf("%s: %w", k, err)
 			}

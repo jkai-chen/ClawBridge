@@ -21,6 +21,7 @@ import (
 
 	"clawbridge/internal/buildinfo"
 	"clawbridge/internal/bus"
+	"clawbridge/internal/devicekey"
 	"clawbridge/internal/principal"
 	"google.golang.org/api/idtoken"
 )
@@ -403,6 +404,21 @@ func NewHandlerWithOptions(store Executor, verifier Verifier, o HandlerOptions) 
 			tick.ServeHTTP(w, r)
 			return
 		}
+		if r.URL.Path == devicekey.LinkPath {
+			// An invite link opened in a browser lands here. The code is in
+			// the fragment, which the browser never sends; the page has no
+			// script, so nothing reads it (§17.1).
+			if r.Method != http.MethodGet && r.Method != http.MethodHead {
+				fail(w, 405, "method_not_allowed", "GET required")
+				return
+			}
+			w.Header().Set("Content-Type", "text/html; charset=utf-8")
+			w.Header().Set("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'; frame-ancestors 'none'")
+			w.Header().Set("Referrer-Policy", "no-referrer")
+			w.Header().Set("X-Content-Type-Options", "nosniff")
+			_, _ = io.WriteString(w, joinPage)
+			return
+		}
 		if r.URL.Path == "/v1/join" && join != nil {
 			join.ServeHTTP(w, r)
 			return
@@ -537,6 +553,20 @@ func NewHandlerWithOptions(store Executor, verifier Verifier, o HandlerOptions) 
 		_, _ = w.Write(append(encoded, '\n'))
 	})
 }
+
+// joinPage is the static page an invite link opens in a browser.
+const joinPage = `<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Join ClawBridge</title>
+<style>body{font:16px/1.5 system-ui,sans-serif;max-width:36rem;margin:3rem auto;padding:0 1rem}code{background:#eee;padding:.1rem .3rem}</style>
+</head><body>
+<h1>Join ClawBridge</h1>
+<p>This is a ClawBridge invite link. It isn't opened in a browser.</p>
+<p>In a terminal, run <code>clawbridge join</code> and paste the whole link when it asks. Or choose
+"I have an invite code" in <code>clawbridge</code>'s guided setup and paste it there.</p>
+<p>The link works once. Treat it like a password: don't forward it.</p>
+</body></html>
+`
 
 // deviceEventCounter is the hosted store's count of a device's pending
 // device events.

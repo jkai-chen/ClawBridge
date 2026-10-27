@@ -11,6 +11,7 @@ import (
 
 	"clawbridge/internal/auth"
 	"clawbridge/internal/bus"
+	"clawbridge/internal/devicekey"
 	"clawbridge/internal/devicesign"
 	"clawbridge/internal/remote"
 	"github.com/pelletier/go-toml/v2"
@@ -94,12 +95,12 @@ func wizardSignIn(ask func(string) (string, error), methods []string, stdout io.
 func wizardInvite(ctx context.Context, prompt *wizardPrompt, path, server string, stdout, stderr io.Writer) error {
 	ask := prompt.ask
 	fmt.Fprintln(stdout, "Join with an invite. ClawBridge makes a key for this device and keeps it on this machine.")
-	email, err := ask("Email the invite was issued for: ")
+	email, err := ask("Email the invite was issued for (leave empty if you have an invite link): ")
 	if err != nil {
 		return err
 	}
-	if !strings.Contains(email, "@") {
-		return errors.New("the invite's email is required; run clawbridge onboard to start again")
+	if email != "" && !strings.Contains(email, "@") {
+		return errors.New("that isn't an email; run clawbridge onboard to start again")
 	}
 	host, _ := os.Hostname()
 	label, err := ask("Name for this device [" + wizardSafe(host) + "]: ")
@@ -125,8 +126,12 @@ func wizardInvite(ctx context.Context, prompt *wizardPrompt, path, server string
 		shown = host
 	}
 	where := map[string]string{devicesign.StoreKeyring: "the system key store", devicesign.StoreFile: "a file (0600)"}[store]
-	fmt.Fprintf(stdout, "Service: %s\nEmail: %s\nThis device: %s\nKey: %s\nConfig: %s\n", wizardSafe(server), wizardSafe(email), wizardSafe(shown), where, wizardSafe(path))
-	answer, err := ask("Continue, then enter the invite code? [y/N]: ")
+	shownEmail := email
+	if shownEmail == "" {
+		shownEmail = "(from the invite link)"
+	}
+	fmt.Fprintf(stdout, "Service: %s\nEmail: %s\nThis device: %s\nKey: %s\nConfig: %s\n", wizardSafe(server), wizardSafe(shownEmail), wizardSafe(shown), where, wizardSafe(path))
+	answer, err := ask("Continue, then paste the invite link or code? [y/N]: ")
 	if err != nil {
 		return err
 	}
@@ -140,7 +145,7 @@ func wizardInvite(ctx context.Context, prompt *wizardPrompt, path, server string
 	if err = prompt.close(); err != nil {
 		return err
 	} // The code is read with echo off, from the terminal itself.
-	fmt.Fprint(stdout, "Invite code (not shown as you type): ")
+	fmt.Fprint(stdout, "Invite link or code (not shown as you type): ")
 	code, err := wizardInviteCode()
 	fmt.Fprintln(stdout)
 	if err != nil {
@@ -148,6 +153,19 @@ func wizardInvite(ctx context.Context, prompt *wizardPrompt, path, server string
 	}
 	if code == "" {
 		return errors.New("no invite code was entered; nothing was changed")
+	}
+	// The same field takes the whole link (§17.1): it must be for this
+	// server, and for the email typed, if one was.
+	if link, e := devicekey.ParseLink(code); e == nil {
+		if link.Origin != strings.TrimRight(strings.ToLower(server), "/") {
+			return fmt.Errorf("that invite link is for %s, not %s; nothing was changed", link.Origin, wizardSafe(server))
+		}
+		if email != "" && !strings.EqualFold(email, link.Email) {
+			return fmt.Errorf("that invite link is for %s, not %s; nothing was changed", wizardSafe(link.Email), wizardSafe(email))
+		}
+		email, code = link.Email, link.Code
+	} else if email == "" {
+		return errors.New("without an email, paste the whole invite link; nothing was changed")
 	}
 	joined, err := wizardDeviceJoin(ctx, JoinParams{Server: server, Email: email, Code: code, Label: label, KeyStore: store, ConfigPath: path})
 	if err != nil {

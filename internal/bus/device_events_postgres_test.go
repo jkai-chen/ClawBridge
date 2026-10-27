@@ -72,8 +72,9 @@ func TestPostgresDeviceEvents(t *testing.T) {
 	}
 	a1 := keyID(t, key)
 	a2 := f.deviceInvite(ada, a1)
-	// a1 hears of a2; a2 hears nothing of itself nor of a1, which came first.
-	if got := kinds(f.events(ada, a1, false)); got != "added:device_add:"+a2 {
+	// a1 made a2's invite, so it isn't told (§17.2); a2 hears nothing of
+	// itself nor of a1, which came first. The owner hears of both, below.
+	if got := kinds(f.events(ada, a1, false)); got != "" {
 		t.Fatal(got)
 	}
 	if n := f.pending(a2); n != 0 {
@@ -82,8 +83,8 @@ func TestPostgresDeviceEvents(t *testing.T) {
 	if got := kinds(f.events(f.owner, o, false)); got != "added:device_add:"+a2+",added:invite:"+a1 {
 		t.Fatal("the owner's device:", got)
 	}
-	e := f.events(ada, a1, false)[0]
-	if e["label"] != "laptop" || e["actor"] != ada || e["principal"] != ada {
+	e := f.events(f.owner, o, false)[0]
+	if e["label"] != "laptop" || e["actor"] != ada || e["principal"] != ada || e["actor_device"] != a1 {
 		t.Fatal(e)
 	}
 	// A revoke reaches the user's remaining devices and the owner, not the
@@ -92,7 +93,7 @@ func TestPostgresDeviceEvents(t *testing.T) {
 	if _, err := f.asDevice(ada, a2, Request{Operation: "device_revoke", Workspace: f.workspace, Args: map[string]any{"device_id": a3}}); err != nil {
 		t.Fatal(err)
 	}
-	if got := kinds(f.events(ada, a1, false)); !strings.HasPrefix(got, "revoked:revoke:"+a3+",added:device_add:"+a3) {
+	if got := kinds(f.events(ada, a1, false)); got != "revoked:revoke:"+a3 {
 		t.Fatal(got)
 	}
 	if got := kinds(f.events(ada, a2, false)); got != "added:device_add:"+a3 {
@@ -230,7 +231,8 @@ func TestPostgresDeviceEventsExpire(t *testing.T) {
 			t.Fatal("not purged:", q)
 		}
 	}
-	if n := f.pending(a1); n != 1 {
+	// a1 made the invite, so the new event isn't a1's to see either.
+	if n := f.pending(a1); n != 0 {
 		t.Fatal(n)
 	}
 }
@@ -267,6 +269,77 @@ func TestPostgresDeviceLabelIsPrintableText(t *testing.T) {
 	for _, label := range []string{"Ada's desktop", "café · 東京", strings.Repeat("x", 64), strings.Repeat("東", 64)} {
 		if _, err := f.asDevice(ada, a1, Request{Operation: "device_label", Workspace: f.workspace, Args: map[string]any{"device_id": a1, "label": label}}); err != nil {
 			t.Fatalf("%q: %v", label, err)
+		}
+	}
+}
+
+// §17.2: a device invite lasts 15 minutes unless asked, at most 24 hours;
+// it works only while the device that made it is live; and the device that
+// made it isn't alerted when it's used (L1).
+func TestPostgresDeviceInviteLifeAndIssuer(t *testing.T) {
+	f := newPGIdentityFixture(t)
+	ada := newID("ada") + "@identity-test.example"
+	key := newKey(t)
+	if _, err := f.join(ada, f.invite(f.owner, ada, "member")["code"].(string), key); err != nil {
+		t.Fatal(err)
+	}
+	a1 := keyID(t, key)
+	add := func(device string, args map[string]any) (map[string]any, error) {
+		a := map[string]any{"email": ada, "purpose": "device"}
+		for k, v := range args {
+			a[k] = v
+		}
+		out, err := f.asDevice(ada, device, Request{Operation: "invite_create", Workspace: f.workspace, Args: a})
+		if err != nil {
+			return nil, err
+		}
+		return out.Data.(map[string]any), nil
+	}
+	out, err := add(a1, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	expires, _ := time.Parse(timestampLayout, out["expires_at"].(string))
+	if left := time.Until(expires); left < 14*time.Minute || left > 15*time.Minute {
+		t.Fatal("default life", left)
+	}
+	if f.inviteRow(out["invite_id"].(string))["issued_device"] != a1 {
+		t.Fatal("the issuing device wasn't recorded")
+	}
+	for _, bad := range []map[string]any{{"expires_minutes": 24*60 + 1}, {"expires_hours": 25}, {"expires_minutes": 0}, {"expires_hours": 1, "expires_minutes": 60}} {
+		if _, err = add(a1, bad); err == nil {
+			t.Fatal("accepted", bad)
+		}
+	}
+	if _, err = add(a1, map[string]any{"expires_minutes": 24 * 60}); err != nil {
+		t.Fatal(err)
+	}
+	f.exec(`UPDATE invites SET revoked_at=$1 WHERE email=$2 AND used_at IS NULL AND revoked_at IS NULL`, stamp(), ada)
+	// Used: the issuing device isn't told; another device of ada's is.
+	a2 := f.deviceInvite(ada, a1)
+	if n := f.pending(a1); n != 0 {
+		t.Fatal("the issuing device was alerted to its own invite:", kinds(f.events(ada, a1, false)))
+	}
+	// A device invite dies with the device that made it.
+	pending, err := add(a2, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = f.asDevice(ada, a1, Request{Operation: "device_revoke", Workspace: f.workspace, Args: map[string]any{"device_id": a2}}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = f.join(ada, pending["code"].(string), newKey(t)); err == nil {
+		t.Fatal("joined with an invite whose issuing device is revoked")
+	}
+	if reason := f.failReason(pending["invite_id"].(string)); reason != "issuer_device_gone" {
+		t.Fatal(reason)
+	}
+	// A device invite made without a device (a Google sign-in) has no
+	// issuing device to outlive.
+	google, err := f.as(ada, "sub-"+ada, Request{Operation: "invite_create", Workspace: f.workspace, Args: map[string]any{"email": ada, "purpose": "device"}})
+	if err == nil {
+		if _, err = f.join(ada, google.Data.(map[string]any)["code"].(string), newKey(t)); err != nil {
+			t.Fatal(err)
 		}
 	}
 }

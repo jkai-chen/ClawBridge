@@ -531,3 +531,28 @@ func TestAccountShowsDeviceEvents(t *testing.T) {
 		}
 	}
 }
+
+// With the server known, the one-time box comes with the invite link
+// (§17.1), unwrapped below it; it goes when the box does.
+func TestAccountCodeShowsTheLink(t *testing.T) {
+	a := &accountAuthority{principal: "ada@example.com", owner: "owner@example.com"}
+	cfg := testConfig(a)
+	cfg.DeviceID, cfg.Server, cfg.Workspace = "dev_this", "https://cb.example.com", "acme"
+	m, err := New(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	m, cmd := m.SetSize(140, 60).Show(ScreenAccount)
+	m = settle(t, m, cmd)
+	m = press(t, m, "a")
+	m = typed(t, m, "add")
+	m = press(t, m, "enter")
+	link := "https://cb.example.com/join#cbj1.acme.YWRhQGV4YW1wbGUuY29t.CBJ-4K7P-WQ9D-2MXH-T6RB"
+	if view := Render(m); !strings.Contains(view, "Invite link:") || !strings.Contains(view, link) || !strings.Contains(view, "clawbridge join, then paste it") {
+		t.Fatal(view)
+	}
+	m = press(t, m, "esc")
+	if strings.Contains(Render(m), "cbj1.") || m.account.link != "" {
+		t.Fatal("the link outlived its box")
+	}
+}

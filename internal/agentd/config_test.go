@@ -42,6 +42,10 @@ func TestLoadConfig(t *testing.T) {
 		"root daemon, run":  {"CLAWBRIDGE_AGENTD_DOCKER", "/run/docker.sock"},
 		"relative socket":   {"CLAWBRIDGE_AGENTD_DOCKER", "docker.sock"},
 		"unclean socket":    {"CLAWBRIDGE_AGENTD_DOCKER", "/run/../var/run/docker.sock"},
+		"private server":    {"CLAWBRIDGE_SERVER_URL", "https://10.0.0.5"},
+		"loopback server":   {"CLAWBRIDGE_SERVER_URL", "https://127.0.0.1:8443"},
+		"cgnat server":      {"CLAWBRIDGE_SERVER_URL", "https://100.64.1.1"},
+		"metadata server":   {"CLAWBRIDGE_SERVER_URL", "https://[fe80::1]"},
 	} {
 		bad := map[string]string{}
 		for k, v := range env {
@@ -57,6 +61,11 @@ func TestLoadConfig(t *testing.T) {
 		}
 	}
 	if err := validServerURL("http://localhost:8080"); err != nil {
+		t.Fatal(err)
+	}
+	// A public IP literal is a server the agents can reach [R90-L5].
+	env["CLAWBRIDGE_SERVER_URL"] = "https://203.0.113.5:8443"
+	if _, err := LoadConfig(func(k string) string { return env[k] }); err != nil {
 		t.Fatal(err)
 	}
 }

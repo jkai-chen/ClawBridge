@@ -13,6 +13,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // Proxy is the validating socket proxy in front of the rootless dockerd
@@ -59,6 +60,17 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	p.forward.ServeHTTP(w, r)
 }
 
+// proxyReadTimeout bounds reading a request to the proxy.
+var proxyReadTimeout = 30 * time.Second
+
+// proxyServer serves the proxy p. A slow client can't hold a request open
+// past proxyReadTimeout. The attach stream is not bound by it: net/http
+// clears the deadline when the stream is hijacked, and agentd closes it
+// once the credential is written or the start failed.
+func proxyServer(p *Proxy) *http.Server {
+	return &http.Server{Handler: p, ReadHeaderTimeout: 10 * time.Second, ReadTimeout: proxyReadTimeout}
+}
+
 // allow checks r and, for a create, replaces its body with the canonical one.
 func (p *Proxy) allow(r *http.Request) error {
 	path := r.URL.Path
@@ -83,7 +95,11 @@ func (p *Proxy) allow(r *http.Request) error {
 	op := r.Method + " " + parts[0]
 	switch {
 	case op == "GET containers" && len(parts) == 2 && parts[1] == "json":
-		return onlyQuery(query, "all", "filters", "limit")
+		// The list agentd sends, and no other: its own containers only.
+		if query.Get("all") != "1" || query.Get("filters") != containerListFilters {
+			return fmt.Errorf("the list must be all=1 with agentd's name filter")
+		}
+		return onlyQuery(query, "all", "filters")
 	case op == "POST containers" && len(parts) == 2 && parts[1] == "create":
 		if err := onlyQuery(query, "name"); err != nil {
 			return err
@@ -111,6 +127,9 @@ func (p *Proxy) allow(r *http.Request) error {
 			return checkCreate(body, agentSpec(p.spec.AgentImage, p.spec.ServerURL, ref, revision))
 		})
 	case op == "GET networks" && len(parts) == 1:
+		if query.Get("filters") != networkListFilters {
+			return fmt.Errorf("the list must carry agentd's name filter")
+		}
 		return onlyQuery(query, "filters")
 	case op == "POST networks" && len(parts) == 2 && parts[1] == "create":
 		if err := onlyQuery(query); err != nil {

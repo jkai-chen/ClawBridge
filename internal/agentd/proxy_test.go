@@ -3,13 +3,18 @@ package agentd
 import (
 	"bufio"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/netip"
+	"net/url"
+	"os"
 	"slices"
 	"strings"
 	"testing"
+	"time"
 )
 
 func bufioReader(r io.Reader) *bufio.Reader { return bufio.NewReader(r) }
@@ -58,6 +63,13 @@ func TestProxyRefusesCreatesOutsideTheSpec(t *testing.T) {
 		"added capability": func(m map[string]any) { hostCfg(m)["CapAdd"] = []string{"SYS_ADMIN"} },
 		"no cap drop":      func(m map[string]any) { hostCfg(m)["CapDrop"] = []string{} },
 		"device":           func(m map[string]any) { hostCfg(m)["Devices"] = []any{map[string]any{"PathOnHost": "/dev/sda"}} },
+		"no log limit":     func(m map[string]any) { delete(hostCfg(m), "LogConfig") },
+		"bigger logs": func(m map[string]any) {
+			hostCfg(m)["LogConfig"] = map[string]any{"Type": "json-file", "Config": map[string]any{"max-size": "1g", "max-file": "2"}}
+		},
+		"other log driver": func(m map[string]any) { hostCfg(m)["LogConfig"].(map[string]any)["Type"] = "local" },
+		"no cpu limit":     func(m map[string]any) { delete(hostCfg(m), "NanoCpus") },
+		"more cpu":         func(m map[string]any) { hostCfg(m)["NanoCpus"] = 4_000_000_000 },
 		"host pid":         func(m map[string]any) { hostCfg(m)["PidMode"] = "host" },
 		"seccomp off":      func(m map[string]any) { hostCfg(m)["SecurityOpt"] = []string{"seccomp=unconfined"} },
 		"extra env":        func(m map[string]any) { m["Env"] = append(m["Env"].([]any), "NODE_OPTIONS=--require /tmp/x.js") },
@@ -178,6 +190,12 @@ func TestProxyRefusesOtherEndpoints(t *testing.T) {
 		"network connect":  {"POST", "/networks/cbnet-" + refA + "/connect", []byte(`{"Container":"postgres"}`)},
 		"remove bridge":    {"DELETE", "/networks/bridge", nil},
 		"list extra query": {"GET", "/containers/json?size=1", nil},
+		"list no filter":   {"GET", "/containers/json?all=1", nil},
+		"list running":     {"GET", "/containers/json?filters=" + url.QueryEscape(containerListFilters), nil},
+		"list other name":  {"GET", "/containers/json?all=1&filters=" + url.QueryEscape(`{"name":["postgres"]}`), nil},
+		"list limit":       {"GET", "/containers/json?all=1&limit=1&filters=" + url.QueryEscape(containerListFilters), nil},
+		"networks all":     {"GET", "/networks", nil},
+		"networks other":   {"GET", "/networks?filters=" + url.QueryEscape(`{"driver":["bridge"]}`), nil},
 	} {
 		if got := s.send(t, c.method, c.path, c.body); got != http.StatusForbidden {
 			t.Errorf("%s: status %d", name, got)
@@ -289,5 +307,41 @@ func TestProxyEgressAndNetworks(t *testing.T) {
 		if got := s.send(t, http.MethodPost, c.path, c.body); got != c.want {
 			t.Errorf("%s: status %d", c.name, got)
 		}
+	}
+}
+
+// A request the proxy can't read in time is refused without reaching the
+// daemon, and the lists pass only as agentd sends them [R86-L4].
+func TestProxyTimesOutSlowRequests(t *testing.T) {
+	old := proxyReadTimeout
+	proxyReadTimeout = 100 * time.Millisecond
+	t.Cleanup(func() { proxyReadTimeout = old })
+	s := newStack(t)
+	refusesSlowRequests(t, s.proxy)
+	for _, path := range []string{"/containers/json?all=1&filters=" + url.QueryEscape(containerListFilters), "/networks?filters=" + url.QueryEscape(networkListFilters)} {
+		if got := s.send(t, http.MethodGet, path, nil); got != http.StatusOK {
+			t.Fatalf("%s: %d", path, got)
+		}
+	}
+	if seen := s.daemon.seen(); len(seen) != 2 {
+		t.Fatalf("%v", seen)
+	}
+}
+
+// refusesSlowRequests checks that the proxy at socket doesn't wait for a
+// body that never comes; proxyReadTimeout must be short.
+func refusesSlowRequests(t *testing.T, socket string) {
+	t.Helper()
+	conn, err := net.Dial("unix", socket)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	_, _ = io.WriteString(conn, "POST /containers/create?name=clawbridge-agent-"+refA+" HTTP/1.1\r\nHost: docker\r\nContent-Length: 100\r\n\r\n{\"Image\":")
+	_ = conn.SetDeadline(time.Now().Add(5 * time.Second))
+	if resp, err := http.ReadResponse(bufioReader(conn), nil); err == nil && resp.StatusCode != http.StatusForbidden {
+		t.Fatalf("status %d", resp.StatusCode)
+	} else if errors.Is(err, os.ErrDeadlineExceeded) {
+		t.Fatal("the proxy waited for the body")
 	}
 }

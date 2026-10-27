@@ -457,3 +457,96 @@ func TestEgressServeSurvivesAcceptErrors(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+// Each address gets its own share of the dial: a blackholed first address
+// leaves time for the next one [R88-L1].
+func TestEgressDialsEachAddressWithItsOwnTimeout(t *testing.T) {
+	h := newEgressHarness(t)
+	echo := h.e.dial
+	var waits []time.Duration
+	h.e.dial = func(ctx context.Context, addr netip.AddrPort) (net.Conn, error) {
+		deadline, _ := ctx.Deadline()
+		h.mu.Lock()
+		waits = append(waits, time.Until(deadline))
+		h.mu.Unlock()
+		if addr.Addr() == netip.MustParseAddr("203.0.113.40") {
+			return nil, context.DeadlineExceeded
+		}
+		return echo(ctx, addr)
+	}
+	egressDNS["two.test"] = []string{"203.0.113.40", "203.0.113.41"}
+	t.Cleanup(func() { delete(egressDNS, "two.test") })
+	p := testPolicy()
+	p.Networks[0].Allow = []string{"bridge.example.test:443", "two.test:443"}
+	if err := h.e.SetPolicy(p); err != nil {
+		t.Fatal(err)
+	}
+	if c := h.connect(t, "172.30.1.5", "two.test:443", ""); c.status != 200 {
+		t.Fatal(c.status, h.log.String())
+	}
+	if len(waits) != 2 || waits[0] > egressAddrWait || waits[1] > egressAddrWait {
+		t.Fatalf("dial waits %v", waits)
+	}
+}
+
+// A long answer to a client that sends nothing is not idle; a tunnel where
+// neither side sends anything ends after the idle time [R88-L2].
+func TestEgressIdleCountsBothDirections(t *testing.T) {
+	h := newEgressHarness(t)
+	h.e.idle = 150 * time.Millisecond
+	stop := make(chan struct{})
+	h.e.dial = func(context.Context, netip.AddrPort) (net.Conn, error) {
+		proxySide, upstream := net.Pipe()
+		go func() {
+			defer upstream.Close()
+			// It streams for 600 ms, four idle times, then goes quiet.
+			for range 20 {
+				select {
+				case <-stop:
+					return
+				case <-time.After(30 * time.Millisecond):
+				}
+				if _, err := upstream.Write([]byte("x")); err != nil {
+					return
+				}
+			}
+			<-stop
+		}()
+		return proxySide, nil
+	}
+	t.Cleanup(func() { close(stop) })
+	c := h.connect(t, "172.30.1.5", "api.provider-a.test:443", "")
+	if c.status != 200 {
+		t.Fatal(c.status)
+	}
+	_ = c.conn.SetDeadline(time.Now().Add(5 * time.Second))
+	got, err := io.ReadAll(c.r)
+	if len(got) != 20 || err != nil {
+		t.Fatalf("got %d bytes before the tunnel ended: %v", len(got), err)
+	}
+}
+
+// One owner's refusals are logged at most refusalLogs times a minute; the
+// others' still are [R88-L3].
+func TestEgressRateLimitsTheRefusalLog(t *testing.T) {
+	h := newEgressHarness(t)
+	for range 3 * refusalLogs {
+		if c := h.connect(t, "172.30.1.5", "evil.test:443", ""); c.status != 403 {
+			t.Fatal(c.status)
+		}
+	}
+	if c := h.connect(t, "172.30.2.5", "evil.test:443", ""); c.status != 403 {
+		t.Fatal(c.status)
+	}
+	if n := strings.Count(h.log.String(), `"egress refused"`); n != refusalLogs+1 {
+		t.Fatalf("%d refusals logged", n)
+	}
+	// A new minute logs again, with the count of those it left out.
+	h.e.mu.Lock()
+	h.e.refusals[refA].start = time.Now().Add(-time.Minute)
+	h.e.mu.Unlock()
+	h.connect(t, "172.30.1.5", "evil.test:443", "")
+	if n := strings.Count(h.log.String(), `"egress refused"`); n != refusalLogs+2 || !strings.Contains(h.log.String(), `"egress refusals not logged","ref":"`+refA+`","count":20`) {
+		t.Fatalf("%d refusals logged: %s", n, h.log.String())
+	}
+}

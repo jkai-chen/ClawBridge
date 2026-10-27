@@ -46,6 +46,17 @@ const (
 	restartsPerHour  = 3
 	codeCrashloop    = "agent_crashloop"
 	maxAgentsCeiling = 16
+	// codeStartFailing is reported once an owner's agent failed to start
+	// startFailuresReported times in a row.
+	codeStartFailing      = "agent_start_failing"
+	startFailuresReported = 3
+	// maxStartBackoff caps the rounds skipped after failed starts: 64
+	// rounds, about half an hour.
+	maxStartBackoff = 64
+	// policySettle is how long a new agent waits after a policy change: the
+	// egress proxy rereads the file every 2 s (egressPoll), and before then
+	// it refuses the new agent's egress.
+	policySettle = 3 * time.Second
 )
 
 // Reconciler starts and stops agent containers to match the server's wanted
@@ -62,6 +73,8 @@ type Reconciler struct {
 	// restarts holds, per ref, when an exited container was replaced.
 	restarts map[string][]time.Time
 	reported map[string]bool
+	// failed holds, per ref, its agent's failed starts in a row.
+	failed map[string]*startFailures
 	// policy is the egress policy last written.
 	policy []byte
 	// freed holds when each owner subnet was given up. It isn't handed to
@@ -71,13 +84,34 @@ type Reconciler struct {
 	// be handed out again at once, guarded then only by the egress proxy's
 	// policy reload.
 	freed map[netip.Prefix]time.Time
+	// sleep waits; tests replace it.
+	sleep func(ctx context.Context, d time.Duration) error
+}
+
+// startFailures counts an owner's failed starts. Each one doubles the
+// rounds skipped before the next try.
+type startFailures struct {
+	count, skip int
+	reported    bool
 }
 
 // NewReconciler returns a Reconciler for cfg, which LoadConfig validated.
 func NewReconciler(cfg Config, server Server, log *slog.Logger) *Reconciler {
 	target, _ := serverTarget(cfg.ServerURL)
 	return &Reconciler{cfg: cfg, server: server, docker: newDocker(cfg.Docker), log: log, now: time.Now,
-		serverTarget: target, restarts: map[string][]time.Time{}, reported: map[string]bool{}, freed: map[netip.Prefix]time.Time{}}
+		serverTarget: target, restarts: map[string][]time.Time{}, reported: map[string]bool{}, failed: map[string]*startFailures{},
+		freed: map[netip.Prefix]time.Time{}, sleep: sleep}
+}
+
+func sleep(ctx context.Context, d time.Duration) error {
+	t := time.NewTimer(d)
+	defer t.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-t.C:
+		return nil
+	}
 }
 
 // Run reconciles at once, then every 30 seconds until ctx ends. A failed
@@ -130,10 +164,14 @@ func (r *Reconciler) Step(ctx context.Context) error {
 		provider[w.Ref] = target
 		revision[w.Ref] = w.Revision
 	}
-	// No agent runs without the egress proxy.
-	if err := r.ensureEgress(ctx); err != nil {
-		return err
+	for ref := range r.failed {
+		if provider[ref] == "" {
+			delete(r.failed, ref)
+		}
 	}
+	// No agent starts without the egress proxy, but unwanted agents are
+	// still stopped.
+	egressErr := r.ensureEgress(ctx)
 	subnets, err := r.docker.listNetworks(ctx)
 	if err != nil {
 		return err
@@ -142,89 +180,157 @@ func (r *Reconciler) Step(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	live := map[string]bool{}
+	// live are the wanted agents running on their revision; present, every
+	// ref whose container is still there after this round's stops. running
+	// counts every running container, so one whose stop failed still
+	// counts toward the cap.
+	live, present := map[string]bool{}, map[string]bool{}
+	running := 0
+	stopFailed := false
 	for _, c := range containers {
+		gone := false
 		switch {
 		case provider[c.ref] == "":
-			r.stopAgent(ctx, c.ref, subnets)
+			gone = r.removeAgent(ctx, c.ref, "")
 		case c.revision != revision[c.ref]:
 			// A rotated key or a new model runs in a fresh instance (§11.6),
 			// which fetches the new revision; not a crash. Its network stays.
 			r.log.Info("config revision changed", "ref", c.ref, "from", c.revision, "to", revision[c.ref])
-			name := containerName(c.ref)
-			if r.act("stop for new revision", c.ref, r.docker.stop(ctx, name)) {
-				r.act("remove for new revision", c.ref, r.docker.remove(ctx, name))
-			}
+			gone = r.removeAgent(ctx, c.ref, " for new revision")
 		case c.running:
 			live[c.ref] = true
 		default:
 			// It exited: remove it, and count the restart that replaces it.
-			if r.act("remove exited", c.ref, r.docker.remove(ctx, containerName(c.ref))) {
+			if gone = r.act("remove exited", c.ref, r.docker.remove(ctx, containerName(c.ref))); gone {
 				r.restarts[c.ref] = append(r.restarts[c.ref], r.now())
+			}
+		}
+		if !gone {
+			present[c.ref] = true
+			if c.running {
+				running++
+				stopFailed = stopFailed || !live[c.ref]
 			}
 		}
 	}
 	// A lowered cap stops the extra agents, so Docker never runs more than it.
-	running := slices.Sorted(maps.Keys(live))
-	for _, ref := range running[min(maxAgents, len(running)):] {
+	sorted := slices.Sorted(maps.Keys(live))
+	for i := len(sorted) - 1; i >= 0 && running > maxAgents; i-- {
+		ref := sorted[i]
 		r.log.Warn("over the agent cap", "ref", ref, "max_agents", maxAgents)
-		r.stopAgent(ctx, ref, subnets)
+		if !r.removeAgent(ctx, ref, " over the cap") {
+			stopFailed = true
+			continue
+		}
 		delete(live, ref)
+		delete(present, ref)
+		running--
+	}
+	// A network outlives its container when a stop, a failed start or an
+	// exit removed only the container: an owner no longer wanted, with no
+	// container left, loses its network, egress attachment and subnet.
+	for _, ref := range slices.Sorted(maps.Keys(subnets)) {
+		if provider[ref] == "" && !present[ref] {
+			r.removeNetwork(ctx, ref, subnets)
+		}
 	}
 	// Keep the egress proxy on every live owner's network: a recreated
 	// egress container has lost them.
 	for ref := range live {
-		if !r.ensureNetwork(ctx, ref, subnets) {
+		if egressErr == nil && !r.ensureNetwork(ctx, ref, subnets) {
 			r.log.Warn("the owner's agent has no egress this round", "ref", ref)
 		}
 	}
 	var starting []string
-	for _, ref := range slices.Sorted(maps.Keys(provider)) {
-		if live[ref] {
-			continue
-		}
-		if len(live)+len(starting) >= maxAgents {
-			r.log.Warn("agent cap reached", "max_agents", maxAgents)
-			break
-		}
-		if r.crashlooping(ref) {
-			if !r.reported[ref] && r.server.Report(ctx, ref, codeCrashloop) == nil {
-				r.reported[ref] = true
+	switch {
+	case egressErr != nil:
+	case stopFailed:
+		// What failed to stop may still run: start nothing until it is gone.
+		r.log.Warn("an agent could not be stopped; starting none this round")
+	default:
+		for _, ref := range slices.Sorted(maps.Keys(provider)) {
+			if present[ref] {
+				continue
 			}
-			r.log.Warn("not restarting", "ref", ref, "reason", codeCrashloop)
-			continue
-		}
-		delete(r.reported, ref)
-		if r.ensureNetwork(ctx, ref, subnets) {
-			starting = append(starting, ref)
+			if running+len(starting) >= maxAgents {
+				r.log.Warn("agent cap reached", "max_agents", maxAgents)
+				break
+			}
+			if r.crashlooping(ref) {
+				if !r.reported[ref] && r.server.Report(ctx, ref, codeCrashloop) == nil {
+					r.reported[ref] = true
+				}
+				r.log.Warn("not restarting", "ref", ref, "reason", codeCrashloop)
+				continue
+			}
+			delete(r.reported, ref)
+			if f := r.failed[ref]; f != nil && f.skip > 0 {
+				f.skip--
+				continue
+			}
+			if r.ensureNetwork(ctx, ref, subnets) {
+				starting = append(starting, ref)
+			}
 		}
 	}
 	// The policy allows a new agent's egress before the agent starts.
-	if err := r.writePolicy(append(slices.Collect(maps.Keys(live)), starting...), subnets, provider); err != nil {
+	changed, err := r.writePolicy(append(slices.Collect(maps.Keys(live)), starting...), subnets, provider)
+	if err != nil {
 		return err
 	}
-	for _, ref := range starting {
-		r.startAgent(ctx, ref, revision[ref])
+	if changed && len(starting) > 0 {
+		if err := r.sleep(ctx, policySettle); err != nil {
+			return err
+		}
 	}
-	return nil
+	for _, ref := range starting {
+		if r.startAgent(ctx, ref, revision[ref]) {
+			delete(r.failed, ref)
+		} else {
+			r.startFailed(ctx, ref)
+		}
+	}
+	return egressErr
+}
+
+// startFailed counts a failed start of ref's agent, and backs off: 1, 2,
+// 4… rounds are skipped before the next try. After startFailuresReported
+// in a row it reports codeStartFailing, once.
+func (r *Reconciler) startFailed(ctx context.Context, ref string) {
+	f := r.failed[ref]
+	if f == nil {
+		f = &startFailures{}
+		r.failed[ref] = f
+	}
+	f.count++
+	f.skip = min(1<<min(f.count-1, 6), maxStartBackoff) - 1
+	if f.count >= startFailuresReported && !f.reported && r.server.Report(ctx, ref, codeStartFailing) == nil {
+		f.reported = true
+	}
+	r.log.Warn("start failed", "ref", ref, "failures", f.count, "rounds_skipped", f.skip)
 }
 
 // ensureEgress creates the egress network and keeps the egress proxy
 // running, from its fixed spec. Its policy file exists before it starts.
 func (r *Reconciler) ensureEgress(ctx context.Context) error {
-	if err := r.docker.createNetwork(ctx, egressNetSpec()); err != nil {
+	if _, err := r.docker.createNetwork(ctx, egressNetSpec()); err != nil {
 		return err
 	}
-	exists, running, err := r.docker.running(ctx, egressName)
-	if err != nil || running {
+	c, err := r.docker.inspect(ctx, egressName)
+	if err != nil || c.running && c.image == r.cfg.EgressImage {
 		return err
+	}
+	if c.running {
+		// A new egress image takes effect at once: the old proxy is replaced,
+		// and agents reconnect through the new one.
+		r.log.Info("egress image changed", "ref", egressName)
 	}
 	if _, err := os.Stat(filepath.Join(r.cfg.PolicyDir, policyFile)); errors.Is(err, os.ErrNotExist) {
 		if err := r.writeFile([]byte(`{"networks":[]}` + "\n")); err != nil {
 			return err
 		}
 	}
-	if exists && !r.act("remove exited", egressName, r.docker.remove(ctx, egressName)) {
+	if c.exists && !r.act("remove", egressName, r.docker.remove(ctx, egressName)) {
 		return errors.New("the egress proxy could not be replaced")
 	}
 	if !r.act("create", egressName, r.docker.create(ctx, egressName, egressSpec(r.cfg.EgressImage, r.cfg.PolicyDir))) ||
@@ -237,27 +343,50 @@ func (r *Reconciler) ensureEgress(ctx context.Context) error {
 // ensureNetwork gives ref its network, on a free subnet of the pool when it
 // has none yet, with the egress proxy connected.
 func (r *Reconciler) ensureNetwork(ctx context.Context, ref string, subnets map[string]netip.Prefix) bool {
-	if _, ok := subnets[ref]; !ok {
-		for p, at := range r.freed {
-			if r.now().Sub(at) >= subnetQuarantine {
-				delete(r.freed, p)
-			}
-		}
-		subnet, ok := freeSubnet(subnets, r.freed)
-		if !ok {
-			r.log.Warn("no free subnet", "ref", ref, "pool", subnetPool.String())
-			return false
-		}
-		if !r.act("create network", ref, r.docker.createNetwork(ctx, agentNetwork(ref, subnet))) {
-			return false
-		}
-		subnets[ref] = subnet
+	if _, ok := subnets[ref]; !ok && !r.createNetwork(ctx, ref, subnets) {
+		return false
 	}
-	connected, err := r.docker.egressConnected(ctx, ref)
+	n, err := r.docker.inspectNetwork(ctx, ref)
 	if !r.act("inspect network", ref, err) {
 		return false
 	}
-	return connected || r.act("connect egress", ref, r.docker.connectEgress(ctx, ref))
+	if n.subnet != subnets[ref] {
+		// A cbnet-<ref> was already there on another subnet (made before
+		// fixed subnets, or by hand). The egress proxy would refuse its agent
+		// every round: replace it.
+		r.log.Error("the owner's network is not on its subnet; replacing it", "ref", ref)
+		if n.egress && !r.act("disconnect egress", ref, r.docker.disconnectEgress(ctx, ref)) ||
+			!r.act("remove network", ref, r.docker.removeNetwork(ctx, ref)) {
+			return false
+		}
+		delete(subnets, ref)
+		if !r.createNetwork(ctx, ref, subnets) {
+			return false
+		}
+		n.egress = false
+	}
+	return n.egress || r.act("connect egress", ref, r.docker.connectEgress(ctx, ref))
+}
+
+// createNetwork creates ref's network on a free subnet of the pool, and
+// records it in subnets.
+func (r *Reconciler) createNetwork(ctx context.Context, ref string, subnets map[string]netip.Prefix) bool {
+	for p, at := range r.freed {
+		if r.now().Sub(at) >= subnetQuarantine {
+			delete(r.freed, p)
+		}
+	}
+	subnet, ok := freeSubnet(subnets, r.freed)
+	if !ok {
+		r.log.Warn("no free subnet", "ref", ref, "pool", subnetPool.String())
+		return false
+	}
+	_, err := r.docker.createNetwork(ctx, agentNetwork(ref, subnet))
+	if !r.act("create network", ref, err) {
+		return false
+	}
+	subnets[ref] = subnet
+	return true
 }
 
 // freeSubnet returns the first /28 of the pool that no owner uses and that
@@ -285,7 +414,7 @@ func freeSubnet(subnets map[string]netip.Prefix, quarantined map[netip.Prefix]ti
 
 // writePolicy writes the egress policy for refs, when it changed: each
 // owner's subnet may reach the server and that owner's provider.
-func (r *Reconciler) writePolicy(refs []string, subnets map[string]netip.Prefix, provider map[string]string) error {
+func (r *Reconciler) writePolicy(refs []string, subnets map[string]netip.Prefix, provider map[string]string) (changed bool, err error) {
 	slices.Sort(refs)
 	p := EgressPolicy{Networks: []EgressNetwork{}}
 	for _, ref := range refs {
@@ -301,22 +430,22 @@ func (r *Reconciler) writePolicy(refs []string, subnets map[string]netip.Prefix,
 	}
 	// The proxy would refuse what doesn't compile; so does agentd.
 	if _, err := compileEgress(p); err != nil {
-		return errors.New("the egress policy is not valid: " + err.Error())
+		return false, errors.New("the egress policy is not valid: " + err.Error())
 	}
 	data, err := json.Marshal(p)
 	if err != nil {
-		return err
+		return false, err
 	}
 	data = append(data, '\n')
 	if bytes.Equal(data, r.policy) {
-		return nil
+		return false, nil
 	}
 	if err := r.writeFile(data); err != nil {
-		return err
+		return false, err
 	}
 	r.policy = data
 	r.log.Info("egress policy written", "networks", len(p.Networks))
-	return nil
+	return true, nil
 }
 
 // writeFile replaces the policy file atomically. It holds no secrets: the
@@ -357,35 +486,56 @@ func (r *Reconciler) startAgent(ctx context.Context, ref string, revision int64)
 	if !r.act("create", ref, r.docker.create(ctx, name, agentSpec(r.cfg.AgentImage, r.cfg.ServerURL, ref, revision))) {
 		return false
 	}
-	send, err := r.docker.attach(ctx, ref)
-	ok := r.act("attach", ref, err) && r.act("start", ref, r.docker.start(ctx, name))
-	if ok {
-		credential, err := r.server.Credential(ctx, ref)
-		if err != nil {
-			err = fmt.Errorf("the server did not mint an agent credential: %w", err)
-		} else {
-			err = send(credential)
-		}
-		ok = r.act("hand over credential", ref, err)
-	} else if send != nil {
-		_ = send("")
-	}
+	ok := r.handOver(ctx, ref)
 	if !ok {
 		r.act("remove failed start", ref, r.docker.remove(ctx, name))
 	}
 	return ok
 }
 
-// stopAgent stops and removes ref's container, then takes the egress proxy
-// off its network and removes the network.
-func (r *Reconciler) stopAgent(ctx context.Context, ref string, subnets map[string]netip.Prefix) {
+// handOver attaches to the created container's stdin, starts it, and
+// writes a credential minted only once the agent is up: each one is
+// one-time, and one minted for an agent that never runs is wasted. The
+// stream is closed on every path.
+func (r *Reconciler) handOver(ctx context.Context, ref string) bool {
 	name := containerName(ref)
-	if r.act("stop", ref, r.docker.stop(ctx, name)) && r.act("remove", ref, r.docker.remove(ctx, name)) &&
-		r.act("disconnect egress", ref, r.docker.disconnectEgress(ctx, ref)) &&
+	stdin, err := r.docker.attach(ctx, ref)
+	if !r.act("attach", ref, err) {
+		return false
+	}
+	defer stdin.close()
+	if !r.act("start", ref, r.docker.start(ctx, name)) {
+		return false
+	}
+	c, err := r.docker.inspect(ctx, name)
+	if err == nil && !c.running {
+		err = errors.New("it exited before its credential was sent")
+	}
+	if !r.act("inspect started", ref, err) {
+		return false
+	}
+	credential, err := r.server.Credential(ctx, ref)
+	if err != nil {
+		err = fmt.Errorf("the server did not mint an agent credential: %w", err)
+	} else {
+		err = stdin.send(credential)
+	}
+	return r.act("hand over credential", ref, err)
+}
+
+// removeAgent stops and removes ref's container, and reports whether it
+// is gone. why is added to the logged actions.
+func (r *Reconciler) removeAgent(ctx context.Context, ref, why string) bool {
+	name := containerName(ref)
+	return r.act("stop"+why, ref, r.docker.stop(ctx, name)) && r.act("remove"+why, ref, r.docker.remove(ctx, name))
+}
+
+// removeNetwork takes the egress proxy off ref's network and removes it.
+// Its subnet is quarantined before another owner gets it.
+func (r *Reconciler) removeNetwork(ctx context.Context, ref string, subnets map[string]netip.Prefix) {
+	if r.act("disconnect egress", ref, r.docker.disconnectEgress(ctx, ref)) &&
 		r.act("remove network", ref, r.docker.removeNetwork(ctx, ref)) {
-		if subnet, ok := subnets[ref]; ok {
-			r.freed[subnet] = r.now()
-		}
+		r.freed[subnets[ref]] = r.now()
 		delete(subnets, ref)
 	}
 }

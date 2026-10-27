@@ -15,6 +15,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 )
 
 const (
@@ -38,6 +39,13 @@ type fakeDaemon struct {
 	// onCreate, when set, runs as a container is created; refuse makes
 	// that create fail.
 	onCreate func(name string) (refuse bool)
+	// failStop and failNetworkDelete name what can't be stopped or
+	// removed; exitOnStart, agents that exit as soon as they start;
+	// attachStatus, when set, is attach's answer instead of 101.
+	failStop, failNetworkDelete, exitOnStart map[string]bool
+	attachStatus                             int
+	// slow delays every answer; set before the daemon serves.
+	slow time.Duration
 }
 
 type fakeNet struct {
@@ -47,6 +55,7 @@ type fakeNet struct {
 
 func (f *fakeDaemon) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	body, _ := io.ReadAll(r.Body)
+	time.Sleep(f.slow)
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.requests = append(f.requests, r.Method+" "+r.URL.RequestURI())
@@ -109,6 +118,10 @@ func (f *fakeDaemon) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		_ = json.Unmarshal(body, &c)
 		switch r.Method + " " + strings.Join(parts[2:], "/") {
 		case "DELETE ":
+			if f.failNetworkDelete[parts[1]] {
+				w.WriteHeader(http.StatusInternalServerError)
+				return
+			}
 			if len(n.members) > 0 {
 				w.WriteHeader(http.StatusForbidden) // "has active endpoints"
 				return
@@ -120,7 +133,8 @@ func (f *fakeDaemon) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			for name := range n.members {
 				members["id-"+name] = map[string]string{"Name": name}
 			}
-			_ = json.NewEncoder(w).Encode(map[string]any{"Name": parts[1], "Containers": members})
+			_ = json.NewEncoder(w).Encode(map[string]any{"Name": parts[1], "Containers": members,
+				"IPAM": map[string]any{"Config": []map[string]string{{"Subnet": n.subnet}}}})
 		case "POST connect":
 			if _, ok := f.containers[c.Container]; !ok || n.members[c.Container] {
 				w.WriteHeader(http.StatusForbidden)
@@ -148,8 +162,15 @@ func (f *fakeDaemon) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		switch r.Method + " " + strings.Join(parts[2:], "/") {
 		case "POST start":
 			f.containers[name] = "running"
+			if f.exitOnStart[name] {
+				f.containers[name] = "exited"
+			}
 			w.WriteHeader(http.StatusNoContent)
 		case "POST stop":
+			if f.failStop[name] {
+				w.WriteHeader(http.StatusInternalServerError)
+				return
+			}
 			f.containers[name] = "exited"
 			w.WriteHeader(http.StatusNoContent)
 		case "DELETE ":
@@ -160,8 +181,14 @@ func (f *fakeDaemon) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			}
 			w.WriteHeader(http.StatusNoContent)
 		case "GET json":
-			_ = json.NewEncoder(w).Encode(map[string]any{"State": map[string]any{"Running": state == "running"}})
+			var created struct{ Image string }
+			_ = json.Unmarshal(f.bodies[name], &created)
+			_ = json.NewEncoder(w).Encode(map[string]any{"State": map[string]any{"Running": state == "running"}, "Config": map[string]any{"Image": created.Image}})
 		case "POST attach":
+			if f.attachStatus != 0 {
+				w.WriteHeader(f.attachStatus)
+				return
+			}
 			conn, buf, err := http.NewResponseController(w).Hijack()
 			if err != nil {
 				return
@@ -234,7 +261,13 @@ func newStack(t *testing.T) *testStack {
 	if err != nil {
 		t.Fatal(err)
 	}
-	serveUnix(t, s.proxy, p)
+	l, err := net.Listen("unix", s.proxy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv := proxyServer(p)
+	go srv.Serve(l)
+	t.Cleanup(func() { srv.Close() })
 	return s
 }
 
@@ -294,6 +327,7 @@ type fakeServer struct {
 	revisions map[string]int64
 	max       int
 	mintErr   error
+	mintDelay time.Duration
 	minted    []string
 	reports   []string
 	wantedErr error
@@ -315,6 +349,7 @@ func (s *fakeServer) Wanted(context.Context) ([]Wanted, int, error) {
 	return out, s.max, s.wantedErr
 }
 func (s *fakeServer) Credential(_ context.Context, ref string) (string, error) {
+	time.Sleep(s.mintDelay)
 	if s.mintErr != nil {
 		return "", s.mintErr
 	}

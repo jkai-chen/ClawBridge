@@ -3,10 +3,13 @@ package agentd
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"regexp"
@@ -82,7 +85,7 @@ func (c *launcherClient) call(ctx context.Context, method, path string, body, ou
 	name := method + " " + path
 	resp, err := c.http.Do(req)
 	if err != nil {
-		return 0, fmt.Errorf("launcher %s: unreachable", name)
+		return 0, fmt.Errorf("launcher %s: %s", name, transportReason(err))
 	}
 	defer resp.Body.Close()
 	data, err := io.ReadAll(io.LimitReader(resp.Body, maxLauncherBody+1))
@@ -102,9 +105,33 @@ func (c *launcherClient) call(ctx context.Context, method, path string, body, ou
 	return resp.StatusCode, nil
 }
 
+// transportReason names why a request got no answer, from a fixed set, so
+// a log tells a DNS or TLS problem from a timeout without echoing the raw
+// error.
+func transportReason(err error) string {
+	var dns *net.DNSError
+	var cert *tls.CertificateVerificationError
+	var record tls.RecordHeaderError
+	var alert tls.AlertError
+	var unknownAuthority x509.UnknownAuthorityError
+	var hostname x509.HostnameError
+	var invalid x509.CertificateInvalidError
+	var ne net.Error
+	switch {
+	case errors.As(err, &dns):
+		return "dns"
+	case errors.As(err, &cert), errors.As(err, &record), errors.As(err, &alert),
+		errors.As(err, &unknownAuthority), errors.As(err, &hostname), errors.As(err, &invalid):
+		return "tls"
+	case errors.Is(err, context.DeadlineExceeded), errors.As(err, &ne) && ne.Timeout():
+		return "timeout"
+	}
+	return "unreachable"
+}
+
 func (c *launcherClient) Wanted(ctx context.Context) ([]Wanted, int, error) {
 	var out struct {
-		Agents []struct {
+		Agents *[]struct {
 			OwnerRef       string `json:"owner_ref"`
 			Provider       string `json:"provider"`
 			ConfigRevision int64  `json:"config_revision"`
@@ -117,8 +144,13 @@ func (c *launcherClient) Wanted(ctx context.Context) ([]Wanted, int, error) {
 	if out.MaxAgents == nil {
 		return nil, 0, errors.New("launcher GET v1/dispatcher/launcher/wanted: no max_agents")
 	}
-	wanted := make([]Wanted, 0, len(out.Agents))
-	for _, a := range out.Agents {
+	// An answer without the list is not an empty wanted set: read as one,
+	// it would stop every agent.
+	if out.Agents == nil {
+		return nil, 0, errors.New("launcher GET v1/dispatcher/launcher/wanted: no agents list")
+	}
+	wanted := make([]Wanted, 0, len(*out.Agents))
+	for _, a := range *out.Agents {
 		// Each value is checked by the reconciler.
 		wanted = append(wanted, Wanted{Ref: a.OwnerRef, Provider: a.Provider, Revision: a.ConfigRevision})
 	}

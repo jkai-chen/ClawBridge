@@ -2,11 +2,14 @@ package agentd
 
 import (
 	"context"
+	"crypto/x509"
 	"encoding/json"
 	"errors"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strconv"
 	"strings"
 	"sync"
@@ -177,6 +180,7 @@ func TestReconcileWithTheLauncherClient(t *testing.T) {
 	s := newStack(t)
 	cfg := Config{Spec: testSpec(s.policyDir), LauncherToken: testToken, Docker: s.proxy}
 	r := NewReconciler(cfg, c, s.logger)
+	r.sleep = func(context.Context, time.Duration) error { return nil }
 	f.agents = []map[string]any{{"owner_ref": refA, "provider": "api.provider.test:443", "config_revision": 1}}
 	if err := r.Step(context.Background()); err != nil {
 		t.Fatal(err, s.log.String())
@@ -194,7 +198,7 @@ func TestReconcileWithTheLauncherClient(t *testing.T) {
 		t.Fatalf("a new revision did not restart the agent: %v", f.minted)
 	}
 	f.mu.Lock()
-	f.agents = nil
+	f.agents = []map[string]any{}
 	f.mu.Unlock()
 	if err := r.Step(context.Background()); err != nil {
 		t.Fatal(err)
@@ -233,5 +237,62 @@ func TestLauncherClientRateLimited(t *testing.T) {
 	_, _, err := c.Wanted(context.Background())
 	if err == nil || errors.Is(err, errLauncherRefused) || !strings.Contains(err.Error(), "rate limited") {
 		t.Fatalf("%v", err)
+	}
+}
+
+// A wanted answer without its agents list is refused, not read as an empty
+// set that would stop every agent [R94-L1].
+func TestLauncherClientNeedsTheAgentsList(t *testing.T) {
+	f, c := newFakeLauncher(t)
+	for body, ok := range map[string]bool{
+		`{"agents":[],"max_agents":3}`:   true,
+		`{"max_agents":3}`:               false,
+		`{"agents":null,"max_agents":3}`: false,
+	} {
+		f.override = func(w http.ResponseWriter, r *http.Request) bool {
+			io.WriteString(w, body)
+			return true
+		}
+		wanted, max, err := c.Wanted(context.Background())
+		if ok != (err == nil) || len(wanted) != 0 || ok && max != 3 {
+			t.Fatalf("%s: %v %d %v", body, wanted, max, err)
+		}
+	}
+}
+
+// A request with no answer says why from a fixed set: tls, timeout, dns or
+// unreachable, never the raw error [R94-L2].
+func TestLauncherClientNamesTransportFailures(t *testing.T) {
+	// A certificate the client doesn't trust.
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+	t.Cleanup(srv.Close)
+	c := NewLauncherClient(srv.URL, testToken).(*launcherClient)
+	if _, _, err := c.Wanted(context.Background()); err == nil || err.Error() != "launcher GET v1/dispatcher/launcher/wanted: tls" {
+		t.Fatalf("%v", err)
+	}
+	// An answer slower than the client's timeout.
+	f, c := newFakeLauncher(t)
+	f.override = func(http.ResponseWriter, *http.Request) bool {
+		time.Sleep(300 * time.Millisecond)
+		return true
+	}
+	c.http.Timeout = 50 * time.Millisecond
+	if _, _, err := c.Wanted(context.Background()); err == nil || err.Error() != "launcher GET v1/dispatcher/launcher/wanted: timeout" {
+		t.Fatalf("%v", err)
+	}
+	// A refused connection, and a name that doesn't resolve.
+	srv.Close()
+	if _, _, err := c.Wanted(context.Background()); err == nil || !strings.HasSuffix(err.Error(), ": unreachable") && !strings.HasSuffix(err.Error(), ": timeout") {
+		t.Fatalf("%v", err)
+	}
+	for err, want := range map[error]string{
+		&url.Error{Op: "Get", Err: &net.DNSError{Err: "no such host", Name: "x.invalid"}}: "dns",
+		&url.Error{Op: "Get", Err: x509.UnknownAuthorityError{}}:                          "tls",
+		&url.Error{Op: "Get", Err: context.DeadlineExceeded}:                              "timeout",
+		&url.Error{Op: "Get", Err: errors.New("connection refused")}:                      "unreachable",
+	} {
+		if got := transportReason(err); got != want {
+			t.Fatalf("%v: %s, not %s", err, got, want)
+		}
 	}
 }

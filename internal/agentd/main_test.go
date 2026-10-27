@@ -205,3 +205,46 @@ func TestMainEgressReloadsAndFailsClosed(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+// On shutdown the proxy lets requests in flight finish before it returns
+// [R86-L3].
+func TestMainProxyFinishesRequestsOnShutdown(t *testing.T) {
+	skipAsRoot(t)
+	old := proxyReadTimeout
+	proxyReadTimeout = 100 * time.Millisecond
+	t.Cleanup(func() { proxyReadTimeout = old })
+	s := newStack(t)
+	s.daemon.slow = 300 * time.Millisecond
+	dir := socketDir(t)
+	upstream := filepath.Join(dir, "docker.sock")
+	serveUnix(t, upstream, s.daemon)
+	listen := filepath.Join(dir, "proxy.sock")
+	env := map[string]string{"CLAWBRIDGE_SERVER_URL": testServer, "CLAWBRIDGE_AGENT_IMAGE": testImage,
+		"CLAWBRIDGE_EGRESS_IMAGE": testEgressImage, "CLAWBRIDGE_EGRESS_POLICY_DIR": "/var/lib/clawbridge-agentd/egress"}
+	ctx, cancel := context.WithCancel(context.Background())
+	returned := make(chan time.Time, 1)
+	go func() {
+		_ = Main(ctx, []string{"proxy", "--listen", listen, "--upstream", upstream}, func(k string) string { return env[k] }, io.Discard, io.Discard)
+		returned <- time.Now()
+	}()
+	for deadline := time.Now().Add(5 * time.Second); checkSocket(listen) != nil; time.Sleep(10 * time.Millisecond) {
+		if time.Now().After(deadline) {
+			t.Fatal("the proxy did not listen")
+		}
+	}
+	// It has the read timeout [R86-L4].
+	refusesSlowRequests(t, listen)
+	answered := make(chan time.Time, 1)
+	go func() {
+		proxied := &testStack{daemon: s.daemon, proxy: listen}
+		if got := proxied.send(t, http.MethodPost, "/containers/create?name=clawbridge-agent-"+refA, mustJSON(t, agentSpec(testImage, testServer, refA, 1))); got != http.StatusCreated {
+			t.Errorf("create: %d", got)
+		}
+		answered <- time.Now()
+	}()
+	time.Sleep(100 * time.Millisecond)
+	cancel()
+	if at, done := <-answered, <-returned; done.Before(at) {
+		t.Fatal("the proxy returned before its request was answered")
+	}
+}

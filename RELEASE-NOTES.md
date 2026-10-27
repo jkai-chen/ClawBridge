@@ -132,6 +132,8 @@
   asks for the new key at the hidden prompt (or `--key-stdin`), and tests it like a new setup; the old key keeps running
   until the new one passes. The disclosure is asked again only if its text changed. In the TUI, `c` on the Dispatcher screen
   does the same.
+- **The TUI's Dispatcher screen says how the model is used, and with what.** It shows whether the model decides claims or
+  advises the rules in this project, and your provider and model, from the dispatcher's own status.
 
 # ClawBridge v0.3.9.1 (server hotfix, deployed 29 Oct; no client release or tag)
 

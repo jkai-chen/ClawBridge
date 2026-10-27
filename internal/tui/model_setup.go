@@ -57,6 +57,7 @@ type modelSetupState struct {
 	// status is dispatcher_model_doctor's answer, which the server gives
 	// only to a project owner; denied says why there is none.
 	status map[string]any
+	view   map[string]any
 	denied string
 	// outcome is the last setup's result, in the shared package's words;
 	// active is whether it worked, which colours it (U55).
@@ -110,7 +111,11 @@ func (m Model) ModelSetupState() ModelSetupSnapshot {
 type modelLoadedMsg struct {
 	request uint64
 	status  map[string]any
-	err     error
+	// view is dispatcher_get's model block, for an owner: how the model is
+	// used here, and their provider and model. nil when the server sends
+	// none (an older server, or the read failed): doctor's on/off stands.
+	view map[string]any
+	err  error
 }
 
 type modelSentMsg struct {
@@ -148,7 +153,14 @@ func (m Model) modelRefresh() (Model, tea.Cmd) {
 	exec, ctx := m.modelExec(), m.cfg.Context
 	return m, func() tea.Msg {
 		status, err := exec(ctx, "dispatcher_model_doctor", map[string]any{})
-		return modelLoadedMsg{request: requestID, status: status, err: err}
+		if err != nil {
+			return modelLoadedMsg{request: requestID, err: err}
+		}
+		var view map[string]any
+		if d, err := exec(ctx, "dispatcher_get", map[string]any{}); err == nil {
+			view = mapData(d["model"])
+		}
+		return modelLoadedMsg{request: requestID, status: status, view: view}
 	}
 }
 
@@ -158,7 +170,7 @@ func (m Model) applyModelLoaded(x modelLoadedMsg) Model {
 	}
 	m.loading = false
 	m.source = "server"
-	m.modelSetup.status, m.modelSetup.denied = nil, ""
+	m.modelSetup.status, m.modelSetup.view, m.modelSetup.denied = nil, nil, ""
 	switch {
 	case x.err != nil && strings.Contains(x.err.Error(), "owner permission"):
 		m.modelSetup.denied = "Only a project owner sees and sets up the dispatcher model."
@@ -167,7 +179,7 @@ func (m Model) applyModelLoaded(x modelLoadedMsg) Model {
 	case x.status == nil:
 		m.loadErr = "the server's answer had no model status"
 	default:
-		m.modelSetup.status = x.status
+		m.modelSetup.status, m.modelSetup.view = x.status, x.view
 	}
 	return m
 }
@@ -554,7 +566,25 @@ func renderModelSetup(m Model) string {
 	if s["model_on"] == true {
 		on = "on"
 	}
+	if v := m.modelSetup.view; v != nil {
+		switch text(v, "use") {
+		case "engine":
+			on = "on: the model decides claims"
+		case "advisor":
+			on = "advising: the rules decide, the model's advice is shown"
+		}
+	}
 	b.WriteString(kv("Model mode", on))
+	if v := m.modelSetup.view; v != nil {
+		setup := "none"
+		if text(v, "key") != "none" {
+			setup = firstNonempty(terminalText(text(v, "provider_id")), "?") + " · model " + firstNonempty(terminalText(text(v, "model")), "?")
+			if p, ok := dispatchermodel.LookupProvider(text(v, "provider_id")); ok {
+				setup = p.Name + " · model " + firstNonempty(terminalText(text(v, "model")), "?")
+			}
+		}
+		b.WriteString(kv("Your setup", setup))
+	}
 	yours := ownModelKey(s)
 	switch {
 	case yours == nil:

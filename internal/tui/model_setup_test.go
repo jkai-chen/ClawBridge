@@ -27,6 +27,9 @@ type modelAuthority struct {
 	calls    []bus.Request
 	// config is dispatcher_model_config's answer; nil is no setup.
 	config map[string]any
+	// view is dispatcher_get's model block; nil sends none, as to a
+	// non-owner or from an older server.
+	view map[string]any
 }
 
 func (a *modelAuthority) Execute(_ context.Context, r bus.Request) (bus.Result, error) {
@@ -41,6 +44,12 @@ func (a *modelAuthority) Execute(_ context.Context, r bus.Request) (bus.Result, 
 		return bus.Result{Source: "server", Data: map[string]any{"seal_configured": !a.noSeal, "model_on": false, "holders": []any{
 			map[string]any{"principal": "human@example.test", "you": true, "key": "active", "config_revision": int64(2), "agent": "running"},
 		}}}, nil
+	case "dispatcher_get":
+		data := map[string]any{"mode": "rules"}
+		if a.view != nil {
+			data["model"] = a.view
+		}
+		return bus.Result{Source: "server", Data: data}, nil
 	case "dispatcher_model_config":
 		var active any
 		if a.config != nil {
@@ -156,7 +165,7 @@ func TestModelSetupScreen(t *testing.T) {
 	if !reflect.DeepEqual(r.Args, want) || r.Workspace != "ws_1" || r.Project != "prj_1" {
 		t.Fatalf("%v", r)
 	}
-	if got := a.ops(); !reflect.DeepEqual(got, []string{"dispatcher_model_doctor", "dispatcher_model_setup", "dispatcher_model_status", "dispatcher_model_status", "dispatcher_model_doctor"}) {
+	if got := a.ops(); !reflect.DeepEqual(got, []string{"dispatcher_model_doctor", "dispatcher_get", "dispatcher_model_setup", "dispatcher_model_status", "dispatcher_model_status", "dispatcher_model_doctor", "dispatcher_get"}) {
 		t.Fatal(got)
 	}
 	for i, f := range frames {
@@ -441,5 +450,40 @@ func TestModelRotateScreenRefusals(t *testing.T) {
 	}
 	if _, sent := a.setup(); sent {
 		t.Fatal("sent with no setup")
+	}
+}
+
+// The status shows dispatcher_get's model block (C3): how the model is used
+// here, and the owner's provider and model, or none; without the block, the
+// doctor's on/off stands and there is no setup line.
+func TestModelSetupShowLines(t *testing.T) {
+	for _, c := range []struct {
+		name  string
+		view  map[string]any
+		want  []string
+		never []string
+	}{
+		{"engine", map[string]any{"use": "engine", "provider_id": "anthropic", "model": "claude-sonnet-4-5", "key": "active", "agent": "running"},
+			[]string{"on: the model decides claims", "Your setup", "Anthropic · model claude-sonnet-4-5"}, nil},
+		{"advisor", map[string]any{"use": "advisor", "provider_id": "openai-compatible", "model": "local\x1b[2Jmodel", "key": "pending_test", "agent": "never_seen"},
+			[]string{"advising: the rules decide", "OpenAI-compatible, your own base URL · model local\\x1b[2Jmodel"}, []string{"\x1b[2J"}},
+		{"no key", map[string]any{"use": "off", "provider_id": "", "model": "", "key": "none", "agent": "never_seen"},
+			[]string{"off (the rules decide)", "none"}, []string{"model ?"}},
+		{"no block", nil, []string{"off (the rules decide)"}, []string{"Your setup"}},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			m := modelScreen(t, &modelAuthority{view: c.view})
+			frame := Render(m)
+			for _, w := range c.want {
+				if !strings.Contains(frame, w) {
+					t.Fatalf("no %q in\n%s", w, frame)
+				}
+			}
+			for _, n := range c.never {
+				if strings.Contains(frame, n) {
+					t.Fatalf("%q in\n%s", n, frame)
+				}
+			}
+		})
 	}
 }

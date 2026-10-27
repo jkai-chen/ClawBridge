@@ -89,6 +89,33 @@ func TestCLIContextWatchSetting(t *testing.T) {
 	rejectCLI(t, "project", "context-watch", "set", "--file", file, "--expected-revision", "1")
 }
 
+// The owner sets the project's watch budget and clears it; any member
+// shows it.
+func TestCLIProjectWatchBudget(t *testing.T) {
+	isolated(t)
+	invoke(t, "setup", "--local", "--workspace", "w")
+	invoke(t, "project", "create", "p")
+	t.Setenv("CLAWBRIDGE_PROJECT", "p")
+	if got := invoke(t, "project", "watch-budget", "show"); got["watch_budget"] != nil || got["budget_source"] != nil {
+		t.Fatal(got)
+	}
+	if got := invoke(t, "project", "watch-budget", "set", "120"); got["watch_budget"] != float64(120) || got["budget_source"] != "project" {
+		t.Fatal(got)
+	}
+	if got := invoke(t, "project", "watch-budget", "show"); got["budget_limit"] != float64(120) {
+		t.Fatal(got)
+	}
+	if got := invoke(t, "project", "watch-budget", "clear"); got["watch_budget"] != nil {
+		t.Fatal(got)
+	}
+	rejectCLI(t, "project", "watch-budget", "set")
+	rejectCLI(t, "project", "watch-budget", "set", "0")
+	rejectCLI(t, "project", "watch-budget", "set", "601")
+	rejectCLI(t, "project", "watch-budget", "set", "ten")
+	rejectCLI(t, "project", "watch-budget", "clear", "5")
+	rejectCLI(t, "project", "watch-budget")
+}
+
 // A session lowers its own levels below the project's, and clears them.
 func TestCLIContextLevelsSet(t *testing.T) {
 	isolated(t)

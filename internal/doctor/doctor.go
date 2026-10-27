@@ -635,6 +635,9 @@ func checkCommentWatch(ctx context.Context, executor Executor, wid, pid string, 
 		watch.Status = Warn
 		watch.Message = fmt.Sprintf("%d watched issues could not be polled last time; their comments are held and retried.", n("held_issues"))
 	}
+	if status["budget_source"] == "project" {
+		watch.Message += fmt.Sprintf(" The project's own budget is %d Linear calls an hour.", n("watch_budget"))
+	}
 	markers.Status = Pass
 	markers.Message = "Claim markers are applied. Session names are shown in Linear claim comments: name sessions by role, never with personal data."
 	problems := []string{}

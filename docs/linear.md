@@ -603,6 +603,12 @@ line per cycle.
   for a day); errors back off to hourly.
 - **Budget.** The watcher spends at most `--budget` Linear calls an hour (default
   200, at most 600), counted on the bus so a restart or takeover cannot reset it.
+  The project owner can set the project's own budget with `clawbridge project
+  watch-budget set N` (1 to 600), which wins over `--budget` and the server's
+  `CLAWBRIDGE_WATCH_BUDGET` from the watcher's next call; `project watch-budget
+  clear` removes it. Any member reads it with `project watch-budget show`
+  (`budget_limit`, and `budget_source` `project` or `watcher`). Each change is
+  recorded in the project's history.
 - `clawbridge doctor` warns when assigned issues are watched but no watcher runs.
 - **On a hosted server with its own watcher** (`CLAWBRIDGE_WATCH_INTERVAL`,
   docs/operations/deployment.md), the server watches every bound project as the

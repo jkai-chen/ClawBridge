@@ -51,6 +51,7 @@ Commands: setup --local, project create SLUG, register [NAME], sessions, send TO
           workspace-domains DOMAIN...|--clear, doctor, tui [--screen SCREEN], version,
           cloud check [infra|server|version|workspace|linear-app|backups|all], cloud secret set KEY (own-server onboarding),
           project context-watch show|set --file FILE --expected-revision N,
+          project watch-budget show|set CALLS_PER_HOUR|clear,
           context levels set [--warn-tokens N] [--handover-tokens N] | --clear,
           context show [--session NAME | --agent claude-code|codex --transcript PATH] [--json],
           context bind [--session NAME] --codex-thread UUID|--agent K --transcript PATH, context hooks install|uninstall [--scope local|user|project-shared]
@@ -477,6 +478,21 @@ flags:`)
 				return errors.New("usage: project context-watch show; project context-watch set --file FILE --expected-revision N")
 			}
 			rest = rest[2:]
+		case "watch-budget":
+			// The comment watcher's hourly Linear budget for this project:
+			// any member reads it; the project owner sets or clears it.
+			switch {
+			case len(rest) >= 2 && rest[1] == "show":
+				op = "comment_watch_status"
+			case len(rest) >= 2 && rest[1] == "set":
+				op = "comment_watch_budget_set"
+				arityMin, arityMax = 1, 1
+			case len(rest) >= 2 && rest[1] == "clear":
+				op = "comment_watch_budget_set"
+			default:
+				return errors.New("usage: project watch-budget show; project watch-budget set CALLS_PER_HOUR; project watch-budget clear")
+			}
+			rest = rest[2:]
 		default:
 			return errors.New("unknown project command")
 		}
@@ -825,6 +841,15 @@ flags:`)
 			if len(pos) > 0 {
 				a["target_session"] = pos[0]
 			}
+		} else if op == "comment_watch_budget_set" {
+			a["watch_budget"] = nil
+			if len(pos) == 1 {
+				n, err := strconv.Atoi(pos[0])
+				if err != nil || n < 1 || n > 600 {
+					return errors.New("project watch-budget set takes 1–600 Linear calls per hour")
+				}
+				a["watch_budget"] = n
+			}
 		} else if op == "context_watch_set" {
 			if v, _ := a["expected_revision"].(int64); v < 0 || a["expected_revision"] == nil {
 				return errors.New("project context-watch set requires --expected-revision")
@@ -843,7 +868,7 @@ flags:`)
 				return errors.New("the context-watch file must hold one JSON object")
 			}
 			a["context_watch"] = doc
-		} else if op == "context_watch_get" {
+		} else if op == "context_watch_get" || op == "comment_watch_status" {
 		} else {
 			a["principal"], a["role"] = pos[0], pos[1]
 		}

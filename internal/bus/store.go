@@ -135,7 +135,7 @@ func (s *Store) migrate() error {
 	if err = tx.QueryRow("PRAGMA user_version").Scan(&version); err != nil {
 		return err
 	}
-	if version > 29 {
+	if version > 30 {
 		return errors.New("database schema is newer than this ClawBridge binary")
 	}
 	if version == 0 {
@@ -287,6 +287,11 @@ func (s *Store) migrate() error {
 	}
 	if version < 29 {
 		if _, err = tx.Exec(deviceEventsSchemaV29 + `PRAGMA user_version=29;`); err != nil {
+			return err
+		}
+	}
+	if version < 30 {
+		if _, err = tx.Exec(watchBudgetSchemaV30 + `PRAGMA user_version=30;`); err != nil {
 			return err
 		}
 	}
@@ -489,6 +494,7 @@ var operationArgs = map[string]string{
 	"linear_comments_posted":      "instance issue_uuid comment_ids",
 	"linear_comment_settle_match": "instance lease_token generation operation_digest issue_uuid comment_id created_at",
 	"comment_watch_lease":         "instance action lease_token generation budget",
+	"comment_watch_budget_set":    "instance watch_budget",
 	"comment_watch_due":           "instance lease_token generation",
 	"comment_watch_report":        "instance lease_token generation issue_uuid calls error comments",
 	"marker_go":                   "instance lease_token generation assignment_id phase part",
@@ -581,7 +587,7 @@ func validateArgs(op string, a map[string]any) error {
 			return fmt.Errorf("unsupported argument %q for %s", k, op)
 		}
 		switch k {
-		case "tokens", "window", "compactions", "warn_tokens", "handover_tokens":
+		case "tokens", "window", "compactions", "warn_tokens", "handover_tokens", "watch_budget":
 			if v != nil {
 				if _, err := integer(v); err != nil {
 					return invalid(k + " must be an integer")
@@ -1350,6 +1356,12 @@ func (s *Store) execute(ctx context.Context, tx *transaction, r Request) (any, e
 		}
 		return s.statusClosesOp(ctx, tx, wid, pid, projectRole, actor, r)
 	}
+	if actor == nil && watchBudgetOperation(r.Operation) {
+		if str(a, "instance") != "" {
+			return nil, invalid("instance requires session")
+		}
+		return s.watchBudgetOp(ctx, tx, w, p, projectRole, nil, r)
+	}
 	if actor == nil && contextWatchOperation(r.Operation) {
 		if str(a, "instance") != "" {
 			return nil, invalid("instance requires session")
@@ -1450,6 +1462,9 @@ func (s *Store) execute(ctx context.Context, tx *transaction, r Request) (any, e
 	}
 	if contextWatchOperation(r.Operation) {
 		return s.contextWatchOp(ctx, tx, w, p, projectRole, actor, r)
+	}
+	if watchBudgetOperation(r.Operation) {
+		return s.watchBudgetOp(ctx, tx, w, p, projectRole, actor, r)
 	}
 	if healthOperation(r.Operation) {
 		return s.healthOp(ctx, tx, w, p, projectRole, actor, r)

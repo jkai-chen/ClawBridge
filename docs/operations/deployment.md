@@ -464,7 +464,8 @@ CLAWBRIDGE_WATCH_INTERVAL=15m
   refuses to start). It covers every tick, nudge and `operator health-run`, for
   every project on the server. The interval sets latency more than cost: each
   issue and intake source keeps its own polling schedule, and a tick with nothing
-  due calls nothing.
+  due calls nothing. A project's owner can set that project's own budget with
+  `clawbridge project watch-budget set N`, which wins over the server's.
 - **Clients.** While the server's ticks for a project are fresh, a client
   `clawbridge linear watch` is refused. Stop client watchers before turning this
   on. A client may take over again once the server has not ticked for 10

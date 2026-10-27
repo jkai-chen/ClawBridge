@@ -533,6 +533,13 @@ func (c commentCall) fence(ctx context.Context) (map[string]any, error) {
 	if len(rows) == 0 || str(rows[0], "lease_token") != token || asInt(rows[0]["generation"]) != gen || str(rows[0], "session_id") != c.sid || str(rows[0], "expires_at") <= layout(c.now) {
 		return nil, scoped("the comment watch lease was lost; acquire it again", "conflict")
 	}
+	// The project's budget, when its owner set one, is the lease's limit
+	// from the next call on.
+	if n, ok, err := watchBudgetOverride(ctx, c.tx, c.pid); err != nil {
+		return nil, err
+	} else if ok {
+		rows[0]["budget_limit"] = n
+	}
 	return rows[0], nil
 }
 
@@ -617,6 +624,12 @@ func (c commentCall) lease(ctx context.Context) (any, error) {
 			}
 			budget = n
 		}
+		limit := budget
+		if n, ok, e := watchBudgetOverride(ctx, c.tx, c.pid); e != nil {
+			return nil, e
+		} else if ok {
+			limit = n
+		}
 		var b [16]byte
 		if _, err = rand.Read(b[:]); err != nil {
 			return nil, err
@@ -627,7 +640,7 @@ func (c commentCall) lease(ctx context.Context) (any, error) {
 			if _, err = c.tx.ExecContext(ctx, `INSERT INTO watch_lease(project_id,session_id,lease_token,generation,expires_at,budget_hour,budget_used,budget_limit) VALUES(?,?,?,1,?,?,0,?)`, c.pid, c.sid, token, expires, hour, budget); err != nil {
 				return nil, err
 			}
-			return view(token, 1, map[string]any{"budget_limit": budget, "budget_used": 0, "budget_hour": hour}), nil
+			return view(token, 1, map[string]any{"budget_limit": limit, "budget_used": 0, "budget_hour": hour}), nil
 		}
 		row := rows[0]
 		if str(row, "expires_at") > now {
@@ -641,7 +654,7 @@ func (c commentCall) lease(ctx context.Context) (any, error) {
 		if _, err = c.tx.ExecContext(ctx, `UPDATE watch_lease SET session_id=?,lease_token=?,generation=?,expires_at=?,budget_hour=?,budget_used=?,budget_limit=? WHERE project_id=?`, c.sid, token, gen, expires, hour, used, budget, c.pid); err != nil {
 			return nil, err
 		}
-		return view(token, gen, map[string]any{"budget_limit": budget, "budget_used": used, "budget_hour": hour}), nil
+		return view(token, gen, map[string]any{"budget_limit": limit, "budget_used": used, "budget_hour": hour}), nil
 	case "renew", "release":
 		row, e := c.fence(ctx)
 		if e != nil {

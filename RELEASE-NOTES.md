@@ -59,6 +59,14 @@
   same hardening agentd gives it. `CLAWBRIDGE_AGENT_IMAGE` and `CLAWBRIDGE_EGRESS_IMAGE` now also accept an image ID
   (`sha256:…`), since an image loaded with `docker load` has no repo digest to pin.
 
+## The comment watcher
+
+- **A project's owner can set its own watch budget.** `clawbridge project watch-budget set N` (1 to 600 Linear calls
+  an hour) sets the comment watcher's budget for that project, ahead of the server's `CLAWBRIDGE_WATCH_BUDGET` and a
+  client's `linear watch --budget`, from the watcher's next call. `project watch-budget clear` goes back to them, and
+  `project watch-budget show` and `doctor` show the budget in force and where it comes from. Each change is recorded in
+  the project's history. Schema 30.
+
 # ClawBridge v0.3.5 (unreleased)
 
 **Schema 19 → 28.**

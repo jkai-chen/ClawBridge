@@ -41,6 +41,10 @@
 
 ## The comment watcher
 
+- **ClawBridge's own claim and close notes no longer speed up the comment watch.** An issue's comments were polled
+  every 5 minutes for an hour after any ClawBridge comment on it, so every claim and release kept its issue on the short
+  cadence. That was most of the watcher's fixed Linear calls. Only a session's own comment, which awaits an answer, does
+  that now; a marker note leaves the issue on its usual 15-minute or hourly cadence.
 - **The marker pass can no longer starve or fail a tick** (#117, the fix the v0.3.4 hotfix image carried).
   - **Markers run last:** in a tick, the claim markers run after the comment watch, intake, health, docs and the
     dispatcher.

@@ -7,6 +7,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -179,8 +180,17 @@ func TestNotifyCommandAdapterGivesFixedTextOnly(t *testing.T) {
 }
 
 // The real runner hands the notice over as one argument, so shell
-// characters in it stay text.
+// characters in it stay text. The check drives /bin/sh, so it runs where
+// there is one; the argument checks run everywhere.
 func TestNotifyCommandRunnerNoShell(t *testing.T) {
+	for _, bad := range [][]string{nil, {""}, {"no-such-program-for-notify"}, {"/bin/sh", "a\x00b"}} {
+		if _, err := resolveCommand(bad); err == nil {
+			t.Fatal(bad)
+		}
+	}
+	if runtime.GOOS == "windows" {
+		t.Skip("no /bin/sh on Windows; runCommand is the same exec there")
+	}
 	out := filepath.Join(t.TempDir(), "out")
 	argv, err := resolveCommand([]string{"/bin/sh", "-c", `printf %s "$1" > "$2"`, "sh", "a ' \" $(x) `y` ;b", out})
 	if err != nil {
@@ -191,10 +201,5 @@ func TestNotifyCommandRunnerNoShell(t *testing.T) {
 	}
 	if b, _ := os.ReadFile(out); string(b) != "a ' \" $(x) `y` ;b" {
 		t.Fatalf("%q", b)
-	}
-	for _, bad := range [][]string{nil, {""}, {"no-such-program-for-notify"}, {"/bin/sh", "a\x00b"}} {
-		if _, err = resolveCommand(bad); err == nil {
-			t.Fatal(bad)
-		}
 	}
 }

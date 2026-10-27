@@ -13,6 +13,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -40,6 +41,8 @@ type modelEnv struct {
 	bodies strings.Builder
 	// seen is each path's last response body, for the golden files.
 	seen map[string][]byte
+	// mu guards bodies and seen.
+	mu sync.Mutex
 	// dbPath is the store's file.
 	dbPath string
 }
@@ -74,8 +77,35 @@ func newModelEnv(t *testing.T) *modelEnv {
 	return e
 }
 
-// do sends one request and returns the status and decoded body.
+// do sends one request, records its answer, and returns the status and
+// decoded body.
 func (e *modelEnv) do(method, path, token string, body any, header ...string) (int, map[string]any) {
+	e.t.Helper()
+	status, raw := e.send(method, path, token, body, header...)
+	e.mu.Lock()
+	if path != AgentConfigPath {
+		e.bodies.Write(raw)
+	}
+	if e.seen == nil {
+		e.seen = map[string][]byte{}
+	}
+	e.seen[path] = raw
+	e.mu.Unlock()
+	var out map[string]any
+	_ = json.Unmarshal(raw, &out)
+	return status, out
+}
+
+// last is path's last recorded answer.
+func (e *modelEnv) last(path string) []byte {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return e.seen[path]
+}
+
+// send sends one request and returns the status and raw body, recording
+// nothing: what a second goroutine uses.
+func (e *modelEnv) send(method, path, token string, body any, header ...string) (int, []byte) {
 	e.t.Helper()
 	var reader io.Reader
 	if body != nil {
@@ -100,16 +130,7 @@ func (e *modelEnv) do(method, path, token string, body any, header ...string) (i
 	}
 	defer res.Body.Close()
 	raw, _ := io.ReadAll(res.Body)
-	if path != AgentConfigPath {
-		e.bodies.Write(raw)
-	}
-	if e.seen == nil {
-		e.seen = map[string][]byte{}
-	}
-	e.seen[path] = raw
-	var out map[string]any
-	_ = json.Unmarshal(raw, &out)
-	return res.StatusCode, out
+	return res.StatusCode, raw
 }
 
 // The launcher's and the agent's endpoints end to end: wanted, credential,

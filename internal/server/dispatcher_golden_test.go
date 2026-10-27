@@ -120,12 +120,12 @@ func TestModelGolden(t *testing.T) {
 		if status != want {
 			t.Fatal(name, status, out)
 		}
-		keep(name, e.seen[path])
+		keep(name, e.last(path))
 		return out
 	}
 	// The launcher's and the agent's answers, from newCaseEnv's start.
 	for name, path := range map[string]string{"launcher-wanted.json": LauncherWantedPath, "launcher-credential.json": LauncherCredentialPath, "agent-config.json": AgentConfigPath, "ok.json": AgentTestResultPath, "agent-renew.json": AgentRenewPath} {
-		keep(name, e.seen[path])
+		keep(name, e.last(path))
 	}
 	_, wanted := e.do("GET", LauncherWantedPath, e.launcher, nil)
 	ref := wanted["agents"].([]any)[0].(map[string]any)["owner_ref"].(string)
@@ -186,7 +186,7 @@ func TestModelGolden(t *testing.T) {
 			t.Fatal(name, "served no case:", status, out)
 		}
 		if name != "" {
-			keep(name, e.seen[ModelCasesNextPath])
+			keep(name, e.last(ModelCasesNextPath))
 		}
 		return c, modelCasesPrefix + c["case_id"].(string) + "/tools/"
 	}
@@ -240,7 +240,7 @@ func TestModelGolden(t *testing.T) {
 	// A second poll while one waits.
 	var wg sync.WaitGroup
 	wg.Add(1)
-	go func() { defer wg.Done(); e.do("POST", ModelCasesNextPath, token, map[string]any{"wait_seconds": 2}) }()
+	go func() { defer wg.Done(); e.send("POST", ModelCasesNextPath, token, map[string]any{"wait_seconds": 2}) }()
 	time.Sleep(300 * time.Millisecond)
 	call("error-server_busy.json", 503, "POST", ModelCasesNextPath, token, map[string]any{"wait_seconds": 0})
 	wg.Wait()

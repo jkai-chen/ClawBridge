@@ -40,13 +40,8 @@ func runModelSetup(ctx context.Context, executor interface {
 	}
 	keyStdin, _ := a["key_stdin"].(bool)
 	interactive := !keyStdin
-	if interactive && !stdinTerminal() {
-		return errors.New("dispatcher model setup asks for the key at a hidden prompt, so it needs a terminal; in a script, pass --key-stdin with --provider, --model, --daily-tokens and --confirm-egress")
-	}
-	if keyStdin && stdinTerminal() {
-		// Typed at a terminal, the key would echo: that is what the hidden
-		// prompt is for.
-		return errors.New("--key-stdin reads a pipe or a file, not a terminal, where the key would show as you type it; run setup without --key-stdin for the hidden prompt")
+	if err := checkKeyInput(keyStdin, "dispatcher model setup", "--provider, --model, --daily-tokens and --confirm-egress"); err != nil {
+		return err
 	}
 	in := bufio.NewReader(cloudStdin)
 	ask := func(prompt string) (string, error) {
@@ -139,18 +134,10 @@ func runModelSetup(ctx context.Context, executor interface {
 	}
 
 	// 3. The key: a hidden prompt, or stdin.
-	var key []byte
-	var err error
-	if keyStdin {
-		key, err = io.ReadAll(io.LimitReader(cloudStdin, 16<<10+2))
-	} else {
-		fmt.Fprintf(stdout, "%s (hidden): ", provider.KeyHint)
-		key, err = readHidden()
-		fmt.Fprintln(stdout)
-	}
+	key, err := readModelKey(keyStdin, provider.KeyHint, stdout)
 	defer clear(key)
 	if err != nil {
-		return errors.New("the key could not be read. Nothing was set up")
+		return err
 	}
 
 	// 4. The caps, before anything is enabled.
@@ -210,7 +197,46 @@ func runModelSetup(ctx context.Context, executor interface {
 	}
 
 	// 6. Setup, and its test in your agent.
-	revision, err := dispatchermodel.Setup(ctx, exec, dispatchermodel.Request{Provider: provider, BaseURL: baseURL, Model: model, Key: key, Caps: caps, EgressConfirmed: true})
+	request := dispatchermodel.Request{Provider: provider, BaseURL: baseURL, Model: model, Key: key, Caps: caps, EgressConfirmed: true}
+	return sendModelSetup(ctx, exec, request, stdout, "Next, per project: clawbridge dispatcher enable --engine model --expected-revision N (a preview first), or as the rules' advisor: clawbridge dispatcher model advise on --expected-revision N")
+}
+
+// checkKeyInput refuses a key read that would echo or can't happen: the
+// hidden prompt needs a terminal, and --key-stdin must not be one.
+func checkKeyInput(keyStdin bool, command, flags string) error {
+	if !keyStdin && !stdinTerminal() {
+		return errors.New(command + " asks for the key at a hidden prompt, so it needs a terminal; in a script, pass --key-stdin with " + flags)
+	}
+	if keyStdin && stdinTerminal() {
+		// Typed at a terminal, the key would echo: that is what the hidden
+		// prompt is for.
+		return errors.New("--key-stdin reads a pipe or a file, not a terminal, where the key would show as you type it; run " + command + " without --key-stdin for the hidden prompt")
+	}
+	return nil
+}
+
+// readModelKey reads the key at the hidden prompt, or from stdin. The
+// caller clears it.
+func readModelKey(keyStdin bool, hint string, stdout io.Writer) ([]byte, error) {
+	var key []byte
+	var err error
+	if keyStdin {
+		key, err = io.ReadAll(io.LimitReader(cloudStdin, 16<<10+2))
+	} else {
+		fmt.Fprintf(stdout, "%s (hidden): ", hint)
+		key, err = readHidden()
+		fmt.Fprintln(stdout)
+	}
+	if err != nil {
+		return key, errors.New("the key could not be read. Nothing was set up")
+	}
+	return key, nil
+}
+
+// sendModelSetup sends a setup, waits for its test and says what came of
+// it; next is what to do once it passed.
+func sendModelSetup(ctx context.Context, exec dispatchermodel.Exec, request dispatchermodel.Request, stdout io.Writer, next string) error {
+	revision, err := dispatchermodel.Setup(ctx, exec, request)
 	if err != nil {
 		return err
 	}
@@ -219,15 +245,14 @@ func runModelSetup(ctx context.Context, executor interface {
 	if err != nil {
 		return err
 	}
-	if provider.Custom {
-		fmt.Fprintln(stdout, dispatchermodel.OutcomeText(outcome, baseURL))
-	} else {
-		fmt.Fprintln(stdout, dispatchermodel.OutcomeText(outcome, provider.BaseURL))
+	baseURL := request.Provider.BaseURL
+	if request.Provider.Custom {
+		baseURL = request.BaseURL
 	}
+	fmt.Fprintln(stdout, dispatchermodel.OutcomeText(outcome, baseURL))
 	switch outcome {
 	case "active":
-		// 7. Enabling stays per project, with its own preview.
-		fmt.Fprintln(stdout, "Next, per project: clawbridge dispatcher enable --engine model --expected-revision N (a preview first), or as the rules' advisor: clawbridge dispatcher model advise on --expected-revision N")
+		fmt.Fprintln(stdout, next)
 		return nil
 	case "pending":
 		// Not a success: a script can tell it from one by the exit code.
@@ -252,4 +277,51 @@ func providerIDs() string {
 		ids = append(ids, p.ID)
 	}
 	return strings.Join(ids, ", ")
+}
+
+// runModelRotate is `dispatcher model key rotate` (§11.6): the owner's own
+// setup, unchanged, with a new key, tested like a new setup; the old key
+// keeps running until the new one passes. The disclosure is confirmed again
+// only when the stored one is an older text.
+func runModelRotate(ctx context.Context, executor interface {
+	Execute(context.Context, bus.Request) (bus.Result, error)
+}, config Config, a map[string]any, stdout io.Writer) error {
+	exec := func(ctx context.Context, op string, args map[string]any) (map[string]any, error) {
+		r, err := executor.Execute(ctx, bus.Request{Operation: op, Workspace: config.Workspace, Project: config.Project, Session: config.Session, Args: args})
+		m, _ := r.Data.(map[string]any)
+		return m, err
+	}
+	keyStdin, _ := a["key_stdin"].(bool)
+	if err := checkKeyInput(keyStdin, "dispatcher model key rotate", "--confirm-egress if it asks for it"); err != nil {
+		return err
+	}
+	cfg, pending, err := dispatchermodel.CurrentConfig(ctx, exec)
+	if err != nil {
+		return err
+	}
+	rotation, err := dispatchermodel.PlanRotation(cfg)
+	if err != nil {
+		return err
+	}
+	fmt.Fprintln(stdout, clirender.Safe(rotation.Describe(pending)))
+	key, err := readModelKey(keyStdin, rotation.Provider.KeyHint, stdout)
+	defer clear(key)
+	if err != nil {
+		return err
+	}
+	if rotation.Disclose {
+		fmt.Fprintln(stdout, "The disclosure changed since you confirmed it:")
+		fmt.Fprintln(stdout, dispatchermodel.Disclosure(rotation.Provider))
+		if confirmed, _ := a["confirm_egress"].(bool); !confirmed {
+			if keyStdin {
+				return errors.New("with --key-stdin, --confirm-egress is required: the disclosure changed since you confirmed it. Nothing was changed")
+			}
+			fmt.Fprint(stdout, `Type "yes" to confirm: `)
+			answer, err := bufio.NewReader(cloudStdin).ReadString('\n')
+			if strings.TrimSpace(answer) != "yes" || err != nil && answer == "" {
+				return errors.New("rotation stopped: the disclosure was not confirmed. Nothing was changed")
+			}
+		}
+	}
+	return sendModelSetup(ctx, exec, rotation.Request(key), stdout, "The new key is active; the old one is gone.")
 }

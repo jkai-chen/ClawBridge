@@ -635,7 +635,7 @@ flags:`)
 	case "dispatcher":
 		// The dispatcher's policy: any member reads it; the owner sets the
 		// domains; a domain's owner edits its trust list and coordinator.
-		usage := errors.New("usage: dispatcher show; dispatcher enable [--engine rules|model] --expected-revision N [--confirm]; dispatcher disable --expected-revision N; dispatcher domains set --file FILE --expected-revision N; dispatcher domain trust|untrust|coordinator DOMAIN SESSION --expected-revision N; dispatcher decisions [--since-hours N] [--limit N]; dispatcher chat \"QUESTION\"; dispatcher chat show [CASE]; dispatcher chat leads on|off --expected-revision N; dispatcher model advise on|off --expected-revision N [--confirm]; dispatcher model tools set [route_notice] [ask_session] --expected-revision N [--confirm]; dispatcher model setup [--provider ID --model M [--base-url URL] --key-stdin --daily-tokens N [--caps K=V,…] --confirm-egress]; dispatcher model status; dispatcher model key delete --confirm; dispatcher escalations [--all] [--limit N]")
+		usage := errors.New("usage: dispatcher show; dispatcher enable [--engine rules|model] --expected-revision N [--confirm]; dispatcher disable --expected-revision N; dispatcher domains set --file FILE --expected-revision N; dispatcher domain trust|untrust|coordinator DOMAIN SESSION --expected-revision N; dispatcher decisions [--since-hours N] [--limit N]; dispatcher chat \"QUESTION\"; dispatcher chat show [CASE]; dispatcher chat leads on|off --expected-revision N; dispatcher model advise on|off --expected-revision N [--confirm]; dispatcher model tools set [route_notice] [ask_session] --expected-revision N [--confirm]; dispatcher model setup [--provider ID --model M [--base-url URL] --key-stdin --daily-tokens N [--caps K=V,…] --confirm-egress]; dispatcher model status; dispatcher model key rotate [--key-stdin] [--confirm-egress]; dispatcher model key delete --confirm; dispatcher escalations [--all] [--limit N]")
 		switch {
 		case len(rest) >= 1 && rest[0] == "show":
 			op, rest = "dispatcher_get", rest[1:]
@@ -690,6 +690,17 @@ flags:`)
 			f.Bool("confirm-egress", false, "confirm the egress disclosure setup prints")
 		case len(rest) >= 2 && rest[0] == "model" && rest[1] == "status":
 			op, rest = "dispatcher_model_doctor", rest[2:]
+		case len(rest) >= 3 && rest[0] == "model" && rest[1] == "key" && rest[2] == "rotate":
+			// The same key rules as setup: never an argument.
+			for _, arg := range rest[3:] {
+				if dispatchermodel.LooksLikeCredential(arg) {
+					return errKeyInArgs
+				}
+			}
+			// Client side only: rotation is a setup of the stored config.
+			op, rest = "dispatcher_model_key_rotate", rest[3:]
+			f.Bool("key-stdin", false, "read the new key from stdin; never a flag or env variable")
+			f.Bool("confirm-egress", false, "confirm the disclosure again, if it changed since you confirmed it")
 		case len(rest) >= 3 && rest[0] == "model" && rest[1] == "key" && rest[2] == "delete":
 			op, rest = "dispatcher_model_key_delete", rest[3:]
 			f.Bool("confirm", false, "delete your key; your agent stops and the model goes off in your projects")
@@ -1037,7 +1048,7 @@ flags:`)
 		}
 		switch op {
 		case "dispatcher_get", "dispatcher_decisions_list", "dispatcher_chat_ask", "dispatcher_chat_show", "dispatcher_escalations_list",
-			"dispatcher_model_setup", "dispatcher_model_doctor", "dispatcher_model_key_delete":
+			"dispatcher_model_setup", "dispatcher_model_doctor", "dispatcher_model_key_delete", "dispatcher_model_key_rotate":
 		default:
 			if v, _ := a["expected_revision"].(int64); v < 0 || a["expected_revision"] == nil {
 				return errors.New(op + " requires --expected-revision")
@@ -1212,6 +1223,9 @@ flags:`)
 	}
 	if op == "dispatcher_model_setup" {
 		return runModelSetup(ctx, executor, config, a, stdout)
+	}
+	if op == "dispatcher_model_key_rotate" {
+		return runModelRotate(ctx, executor, config, a, stdout)
 	}
 	if (op == "intake_trust_add" || op == "intake_trust_remove") && !linearprovider.ValidID(a["linear_user_id"].(string)) {
 		who := strings.TrimSpace(a["linear_user_id"].(string))

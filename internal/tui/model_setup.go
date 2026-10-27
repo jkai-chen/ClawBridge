@@ -82,6 +82,10 @@ type modelWizard struct {
 	caps     dispatchermodel.Caps
 	capIndex int
 	revision int64
+	// rotating: a key rotation (§11.6), which keeps the stored provider,
+	// model and caps; disclose, when the stored disclosure is an older text.
+	rotating, disclose bool
+	pending            bool
 }
 
 // ModelSetupSnapshot is the Model screen's display state. It never holds
@@ -243,7 +247,14 @@ func (m Model) modelKey(msg tea.KeyMsg) (Model, tea.Cmd) {
 				m.status = noteStatus("type or paste your key; Esc cancels")
 				return m, nil
 			}
-			w.step = modelStepCaps
+			switch {
+			case !w.rotating:
+				w.step = modelStepCaps
+			case w.disclose:
+				w.step = modelStepDisclosure
+			default:
+				return m.modelSend()
+			}
 		default:
 			if msg.Type != tea.KeyRunes {
 				return m, nil
@@ -414,6 +425,75 @@ func (m Model) applyModelTested(x modelTestedMsg) (Model, tea.Cmd) {
 }
 
 // modelStart opens a setup, for an owner whose status has loaded.
+// modelReady says why a setup or rotation can't start now, or "".
+func (m Model) modelReady() string {
+	switch {
+	case m.loading:
+		return "wait for the screen to finish loading"
+	case m.modelSetup.status == nil:
+		return firstNonempty(m.modelSetup.denied, "the model status hasn't loaded; r reloads")
+	case m.modelSetup.status["seal_configured"] != true:
+		return "model setup is unavailable: the server has no model key seal key"
+	case m.writesBlocked():
+		return "the authority is offline; setup needs the server"
+	}
+	return ""
+}
+
+// ownModelKey is this owner's key holder in the model status, or nil.
+func ownModelKey(s map[string]any) map[string]any {
+	var yours map[string]any
+	for _, h := range records(s["holders"]) {
+		if boolean(h, "you") {
+			yours = h
+		}
+	}
+	return yours
+}
+
+type modelConfigMsg struct {
+	sends    uint64
+	rotation dispatchermodel.Rotation
+	pending  bool
+	err      error
+}
+
+// modelRotateStart reads the owner's stored setup, for a key rotation.
+func (m Model) modelRotateStart() (Model, tea.Cmd) {
+	if why := m.modelReady(); why != "" {
+		m.status = noteStatus(why)
+		return m, nil
+	}
+	m.modelSetup.outcome, m.status = "", busyStatus("Reading your setup…")
+	m.modelSetup.sends++
+	sends, exec, ctx := m.modelSetup.sends, m.modelExec(), m.cfg.Context
+	return m, func() tea.Msg {
+		cfg, pending, err := dispatchermodel.CurrentConfig(ctx, exec)
+		if err != nil {
+			return modelConfigMsg{sends: sends, err: err}
+		}
+		rotation, err := dispatchermodel.PlanRotation(cfg)
+		return modelConfigMsg{sends: sends, rotation: rotation, pending: pending, err: err}
+	}
+}
+
+// applyModelConfig opens the rotation at the key: the provider, model and
+// caps are the stored ones.
+func (m Model) applyModelConfig(x modelConfigMsg) Model {
+	if x.sends != m.modelSetup.sends || m.screen != ScreenModel || m.modelSetup.wizard.step != modelStepNone {
+		return m
+	}
+	m.status = status{}
+	if x.err != nil {
+		m.status = errStatus(x.err)
+		return m
+	}
+	r := x.rotation
+	m.modelSetup.wizard = modelWizard{step: modelStepKey, provider: r.Provider, baseURL: r.Config.BaseURL, model: r.Config.Model,
+		caps: r.Config.Caps, rotating: true, disclose: r.Disclose, pending: x.pending, revision: r.Config.ConfigRevision}
+	return m
+}
+
 func (m Model) modelStart() Model {
 	switch {
 	case m.loading:
@@ -475,12 +555,7 @@ func renderModelSetup(m Model) string {
 		on = "on"
 	}
 	b.WriteString(kv("Model mode", on))
-	var yours map[string]any
-	for _, h := range records(s["holders"]) {
-		if boolean(h, "you") {
-			yours = h
-		}
-	}
+	yours := ownModelKey(s)
 	switch {
 	case yours == nil:
 		b.WriteString(kv("Your key", "none"))
@@ -503,6 +578,14 @@ func renderModelSetup(m Model) string {
 }
 
 func renderModelWizard(b *strings.Builder, w modelWizard) {
+	if w.rotating {
+		r := dispatchermodel.Rotation{Provider: w.provider, Config: dispatchermodel.Config{Model: w.model, ConfigRevision: w.revision}}
+		b.WriteString(terminalText(r.Describe(w.pending)) + "\n")
+		if w.disclose && w.step == modelStepDisclosure {
+			b.WriteString(warnStyle.Render("The disclosure changed since you confirmed it.") + "\n")
+		}
+		b.WriteString("\n")
+	}
 	field := func(prompt, value string) {
 		b.WriteString(prompt + "\n> " + terminalText(value) + "█\n")
 	}
@@ -545,7 +628,11 @@ func renderModelWizard(b *strings.Builder, w modelWizard) {
 		if len(w.key) > 0 {
 			state = "typed (hidden)"
 		}
-		b.WriteString("3. " + w.provider.KeyHint + ": type or paste it; it is never shown. Ctrl-U clears it.\n> [" + state + "]\n")
+		step := "3. "
+		if w.rotating {
+			step = "The new "
+		}
+		b.WriteString(step + w.provider.KeyHint + ": type or paste it; it is never shown. Ctrl-U clears it.\n> [" + state + "]\n")
 	case modelStepCaps:
 		b.WriteString("4. Caps (Enter keeps the value shown)\n")
 		for i, f := range dispatchermodel.CapFields {

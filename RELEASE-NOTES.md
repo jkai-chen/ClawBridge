@@ -128,6 +128,10 @@
 - **A project owner's `dispatcher show` includes their model setup.** A `model` block shows the project's model use,
   the owner's provider and model, and their key's and agent's state. A new read-only `dispatcher_model_config` returns
   the owner's own active and pending setups, never the key, for key rotation. Other members see neither.
+- **`clawbridge dispatcher model key rotate` changes only your key.** It keeps your stored provider, model and caps,
+  asks for the new key at the hidden prompt (or `--key-stdin`), and tests it like a new setup; the old key keeps running
+  until the new one passes. The disclosure is asked again only if its text changed. In the TUI, `c` on the Dispatcher screen
+  does the same.
 
 # ClawBridge v0.3.9.1 (server hotfix, deployed 29 Oct; no client release or tag)
 

@@ -150,6 +150,7 @@ The design is in this section so that owners can judge it before it ships.
 ```sh
 clawbridge dispatcher model setup             # guided, in your own terminal
 clawbridge dispatcher model status            # your key, your agent and the test, as doctor sees them
+clawbridge dispatcher model key rotate          # a new key, the same provider, model and caps
 clawbridge dispatcher model key delete --confirm
 ```
 
@@ -190,7 +191,10 @@ whether something was typed, never the key or its length. Esc cancels at any ste
 is wiped from memory once sent, on Esc, and when you leave the screen or quit. Members who aren't owners see only that
 an owner sets the model up.
 
-To change the key, provider or model, run setup again. The new configuration is tested in a fresh agent, and the old
+To change only the key, run `dispatcher model key rotate` (or press `c` on the TUI's Dispatcher screen). It reads your
+stored setup, asks for the new key at the same hidden prompt (or `--key-stdin`), and sends the same provider, model and
+caps with it, tested like a new setup. It asks for the disclosure again only if its text changed since you confirmed
+it (`--confirm-egress` with `--key-stdin`). To change the provider or model, run setup again. The new configuration is tested in a fresh agent, and the old
 one keeps running until the new test passes.
 
 ### The model's key: setup and test

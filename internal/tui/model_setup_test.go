@@ -25,6 +25,8 @@ type modelAuthority struct {
 	outcomes []string
 	fail     error
 	calls    []bus.Request
+	// config is dispatcher_model_config's answer; nil is no setup.
+	config map[string]any
 }
 
 func (a *modelAuthority) Execute(_ context.Context, r bus.Request) (bus.Result, error) {
@@ -39,6 +41,12 @@ func (a *modelAuthority) Execute(_ context.Context, r bus.Request) (bus.Result, 
 		return bus.Result{Source: "server", Data: map[string]any{"seal_configured": !a.noSeal, "model_on": false, "holders": []any{
 			map[string]any{"principal": "human@example.test", "you": true, "key": "active", "config_revision": int64(2), "agent": "running"},
 		}}}, nil
+	case "dispatcher_model_config":
+		var active any
+		if a.config != nil {
+			active = a.config
+		}
+		return bus.Result{Source: "server", Data: map[string]any{"active": active, "pending": nil}}, nil
 	case "dispatcher_model_setup":
 		if a.fail != nil {
 			return bus.Result{}, a.fail
@@ -352,5 +360,86 @@ func TestModelSetupReloadDuringTest(t *testing.T) {
 	m = settle(t, m, testCmd)
 	if s := m.ModelSetupState(); s.Step != "" || !strings.Contains(s.Outcome, "didn't call the tool") {
 		t.Fatalf("%+v", s)
+	}
+}
+
+func storedConfig(version string) map[string]any {
+	caps := dispatchermodel.DefaultCaps()
+	caps.RunsPerHour, caps.DailyTokens = 4, 500000
+	return map[string]any{"provider_id": "anthropic", "api": "anthropic-messages", "base_url": "https://api.anthropic.com", "model": "claude-sonnet-4-5",
+		"caps": caps.Args(), "egress_text_version": version, "config_revision": int64(5), "created_at": "2026-10-27T10:00:00Z"}
+}
+
+// c rotates the key (§11.6): the stored provider, model and caps, a new key
+// in the same never-drawn field, wiped once sent, and no other question
+// while the disclosure is the current one.
+func TestModelRotateScreen(t *testing.T) {
+	a := &modelAuthority{outcomes: []string{"active"}, config: storedConfig(dispatchermodel.DisclosureVersion)}
+	m := modelScreen(t, a)
+	frames := []string{Render(m)}
+	if !strings.Contains(frames[0], "c rotate your key") {
+		t.Fatal(frames[0])
+	}
+	m = framed(t, m, &frames, "c")
+	if s := m.ModelSetupState(); s.Step != "key" || s.Provider != "anthropic" || s.Model != "claude-sonnet-4-5" {
+		t.Fatalf("%+v %s", s, m.status.text)
+	}
+	if !strings.Contains(frames[len(frames)-1], "Rotating the key of your active setup: Anthropic, model claude-sonnet-4-5 (revision 5)") {
+		t.Fatal(frames[len(frames)-1])
+	}
+	m = framed(t, m, &frames, modelTestKey)
+	typedKey := m.modelSetup.wizard.key
+	m = framed(t, m, &frames, "enter")
+	r, ok := a.setup()
+	if !ok {
+		t.Fatal(a.ops(), m.status.text)
+	}
+	caps := dispatchermodel.DefaultCaps()
+	caps.RunsPerHour, caps.DailyTokens = 4, 500000
+	want := map[string]any{"provider_id": "anthropic", "api": "anthropic-messages", "base_url": "https://api.anthropic.com", "model": "claude-sonnet-4-5",
+		"key": modelTestKey, "caps": caps.Args(), "egress_text_version": dispatchermodel.DisclosureVersion, "egress_confirmed": true}
+	if !reflect.DeepEqual(r.Args, want) {
+		t.Fatalf("%v", r.Args)
+	}
+	for i, f := range frames {
+		if strings.Contains(f, "SECRET") {
+			t.Fatalf("frame %d shows the key", i)
+		}
+	}
+	for _, r := range typedKey {
+		if r != 0 {
+			t.Fatal("the typed key was not zeroed")
+		}
+	}
+	if s := m.ModelSetupState(); s.Step != "" || !strings.Contains(s.Outcome, "the model is set up") {
+		t.Fatalf("%+v", s)
+	}
+}
+
+// An older disclosure is confirmed again before the rotation is sent; with
+// no setup there is nothing to rotate, and nothing is sent.
+func TestModelRotateScreenRefusals(t *testing.T) {
+	a := &modelAuthority{outcomes: []string{"active"}, config: storedConfig("v0")}
+	m := modelScreen(t, a)
+	m = press(t, m, "c", modelTestKey, "enter")
+	if s := m.ModelSetupState(); s.Step != "disclosure" || !strings.Contains(Render(m), "The disclosure changed") {
+		t.Fatalf("%+v", s)
+	}
+	if _, sent := a.setup(); sent {
+		t.Fatal("sent before the disclosure")
+	}
+	m = typed(t, m, "yes")
+	m = press(t, m, "enter")
+	if _, sent := a.setup(); !sent {
+		t.Fatal(a.ops())
+	}
+	a = &modelAuthority{}
+	m = modelScreen(t, a)
+	m = press(t, m, "c")
+	if s := m.ModelSetupState(); s.Step != "" || !strings.Contains(m.status.text, "dispatcher model setup") {
+		t.Fatalf("%+v %q", s, m.status.text)
+	}
+	if _, sent := a.setup(); sent {
+		t.Fatal("sent with no setup")
 	}
 }

@@ -360,6 +360,10 @@ var accountBindings = []Binding{
 
 var modelBindings = []Binding{
 	{ID: "setup", Keys: []string{"s"}, Label: "set up the model", When: func(m Model) bool { return m.modelSetup.wizard.step == modelStepNone }, Action: func(m Model, _ string) (Model, tea.Cmd) { return m.modelStart(), nil }},
+	// c changes only the key; without a key of yours there is nothing to rotate.
+	{ID: "rotate", Keys: []string{"c"}, Label: "rotate your key", When: func(m Model) bool {
+		return m.modelSetup.wizard.step == modelStepNone && ownModelKey(m.modelSetup.status) != nil
+	}, Action: func(m Model, _ string) (Model, tea.Cmd) { return m.modelRotateStart() }},
 }
 
 var cloudBindings = []Binding{

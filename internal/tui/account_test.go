@@ -69,7 +69,7 @@ func (a *accountAuthority) Execute(_ context.Context, r bus.Request) (bus.Result
 		}}
 		if a.dormant {
 			cy := data["users"].([]any)[1].(map[string]any)
-			cy["devices"] = append(cy["devices"].([]any), map[string]any{"device_id": "dev_cyold", "principal": "cy@example.com", "kind": "device", "label": "cy's old", "status": "dormant", "dormant_at": "2026-10-01"})
+			cy["devices"] = append(cy["devices"].([]any), map[string]any{"device_id": "dev_cyold", "principal": "cy@example.com", "kind": "device", "label": "cy's\x1b[2K old", "status": "dormant", "dormant_at": "2026-10-01"})
 		}
 	case "invite_create":
 		data = map[string]any{"code": testCode, "invite_id": "inv_new", "email": r.Args["email"], "purpose": r.Args["purpose"], "expires_at": "2026-10-28"}
@@ -324,6 +324,14 @@ func TestAccountConfirmsADormantDevice(t *testing.T) {
 	w := a.writes()
 	if len(w) != 1 || w[0].Operation != "device_confirm" || w[0].Args["device_id"] != "dev_cyold" || w[0].Args["principal"] != "cy@example.com" {
 		t.Fatal(w)
+	}
+	// The success line names the device by its label, which a member
+	// chose: shown escaped, never as a terminal control.
+	if m.State().Status != clirender.OK || m.status.text != "cy's\x1b[2K old confirmed." {
+		t.Fatalf("%q", m.status.text)
+	}
+	if view := Render(m); !strings.Contains(view, `cy's\x1b[2K old confirmed.`) || strings.Contains(view, "\x1b[2K") {
+		t.Fatalf("%q", view)
 	}
 }
 

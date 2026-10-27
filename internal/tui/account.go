@@ -352,6 +352,8 @@ func (m Model) applyAccountAction(x accountActionMsg) (Model, tea.Cmd) {
 		m.status = okStatus("Invite for " + email + " created.")
 	case "device_revoke":
 		m.status = okStatus(m.account.find("device", text(data, "device_id")).name() + " revoked.")
+	case "device_confirm":
+		m.status = okStatus(m.account.find("device", text(data, "device_id")).name() + " confirmed.")
 	case "device_label":
 		row := m.account.find("device", text(data, "device_id"))
 		m.status = okStatus(row.name() + " renamed to " + firstNonempty(text(data, "label"), "(no label)") + ".")

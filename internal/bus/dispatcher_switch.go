@@ -147,9 +147,18 @@ func (s *Store) dispatcherSwitch(ctx context.Context, tx *transaction, w, p map[
 	if model != nil {
 		preview["model"] = model
 	}
+	// With no domain every claim would escalate as no_domain, so enable
+	// refuses it: the preview says why (R107-L1).
+	noDomains := len(next.Domains) == 0
+	if noDomains {
+		preview["blocked"] = "no_domains"
+	}
 	if a["confirm"] != true {
 		preview["preview"] = true
 		return preview, nil
+	}
+	if noDomains {
+		return nil, invalid("the dispatcher has no domains and the task board binding names no Linear projects, so every claim would be escalated: set domains first (dispatcher domains set)")
 	}
 	current := int64(expected)
 	// A new default domain, or a first policy row, is written first.

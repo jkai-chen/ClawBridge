@@ -138,19 +138,29 @@ readlink -f "$DISK"
 
 The last two lines must print the same device: the mount is the data disk.
 
-**Docker,** from Docker's own Debian repository:
+**Docker,** from Docker's own Debian repository. Its signing key is checked
+against Docker's published fingerprint before apt trusts it:
 
 ```sh
 sudo apt-get update
-sudo apt-get install -y ca-certificates curl git
+sudo apt-get install -y ca-certificates curl git gnupg
 sudo install -m 0755 -d /etc/apt/keyrings
 sudo curl -fsSL https://download.docker.com/linux/debian/gpg -o /etc/apt/keyrings/docker.asc
-sudo chmod a+r /etc/apt/keyrings/docker.asc
-echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/debian $(. /etc/os-release && echo "$VERSION_CODENAME") stable" |
-  sudo tee /etc/apt/sources.list.d/docker.list >/dev/null
-sudo apt-get update
-sudo apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+FPR=$(gpg --show-keys --with-colons /etc/apt/keyrings/docker.asc | awk -F: '/^fpr/ {print $10; exit}')
+if [ "$FPR" != 9DC858229FC7DD38854AE2D88D81803C0EBFCD88 ]; then
+  sudo rm -f /etc/apt/keyrings/docker.asc
+  echo "STOP: Docker's apt key has fingerprint ${FPR:-none}, not 9DC8 5822 9FC7 DD38 854A E2D8 8D81 803C 0EBF CD88"
+else
+  sudo chmod a+r /etc/apt/keyrings/docker.asc
+  echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/debian $(. /etc/os-release && echo "$VERSION_CODENAME") stable" |
+    sudo tee /etc/apt/sources.list.d/docker.list >/dev/null
+  sudo apt-get update
+  sudo apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+fi
 ```
+
+If it prints STOP, nothing from Docker's repository was trusted or installed:
+stop and ask (rule 5).
 
 **The release.** Check out the tag of the user's own ClawBridge release, never
 a branch. On the user's machine, `clawbridge version` prints its `version` (the

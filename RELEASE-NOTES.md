@@ -240,6 +240,11 @@
   (`r` now), and once a project is yours saves it to the profile and reopens on it.
 - **Doctor lists failures first.** Passes are folded (`p` shows them), Enter on a failing Linear, Dispatcher or
   device check opens that screen, the last results stay while the checks run again, and it says when they ran.
+- **Linear and Account say what they mean, and guard what's shared (PR E1).** Linear names its step ("Link a board ·
+  step 2 of 5") and the board in words, with the IDs and revision behind `d`; unlinking the board takes the project's
+  slug typed, and logging a connection out asks y/N first; Space (not `c`) switches who closes in the review. Account
+  rows are aligned columns with the ID shown for the selected row only, grants by project slug, and an invite is now
+  an email, then a role per project from a checklist.
 - **Changed keys:** Inbox Enter opens a message, with what it answers and its thread (`m` marks read, as before).
   Account's decline is `d` (was `n`). Linear connects with `+` (was `c`, which now only switches who closes in the
   link review); Esc on Linear goes back one step and keeps the teams and projects you chose, instead of starting over.

@@ -7,18 +7,18 @@ ClawBridge · ws_1 › prj_1 › engineer  cloud
 │ Signed in as    owner@example.com (workspace owner)                          │
 │                                                                              │
 │ Your devices                                                                 │
-│ › laptop · dev_this (this device) · active · added - · last used never · key │
-│ in keyring                                                                   │
-│   old\x1b[31m · dev_old · revoked · added - · last used never                │
+│ › laptop (this device)           active    last used never                   │
+│       dev_this · added - · key in keyring                                    │
+│   old\x1b[31m                            revoked   last used never           │
 │                                                                              │
 │ Members                                                                      │
-│   cy@example.com · api=member · 1 devices · invited by owner@example.com     │
-│       cy's · dev_cy · active · added - · last used never                     │
+│   cy@example.com                 api=member · 1 device · invited by          │
+│ owner@example.com                                                            │
+│       cy's                           active    last used never               │
 │                                                                              │
 │ Invites                                                                      │
-│   ada@example.com · inv_1 · pending · user · expires 2026-10-29 ·            │
-│ prj_1=member                                                                 │
-│   bob@example.com · inv_2 · burnt · user · expires - · burnt after failed    │
+│   ada@example.com                pending   expires 2026-10-29 · api=member   │
+│   bob@example.com                burnt     expires - · burnt after failed    │
 │ attempts 2026-10-26                                                          │
 ╰──────────────────────────────────────────────────────────────────────────────╯
 a add a device · i invite · l label · x revoke · w confirm · … · ? help

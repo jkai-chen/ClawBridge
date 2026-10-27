@@ -4,12 +4,13 @@ ClawBridge · ws_1 › prj_1 › engineer › Linear › Help  cloud
 ╭──────────────────────────────────────────────────────────────────────────────╮
 │ Help · Linear                                                                │
 │ The project's Linear board: your personal Linear connection, and the board   │
-│ this project is linked to.                                                   │
+│ this project is linked to. Task ownership comes from the coordinator's issue │
+│ assignment; selecting a row never claims or completes work.                  │
 │                                                                              │
 │ This screen                                                                  │
 │   Enter      next                                                            │
 │   Space      select (not now)                                                │
-│   c          who closes (not now)                                            │
+│   d          show IDs (not now)                                              │
 │   +          connect                                                         │
 │   w          connect with write                                              │
 │   l          link a board (not now)                                          │

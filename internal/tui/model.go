@@ -383,6 +383,9 @@ const (
 	inputAccountLabel
 	inputAccountTransfer
 	inputLinearClosesName
+	// inputLinearUnlink takes the project's slug before an unlink
+	// (TUI-UX-AUDIT U34).
+	inputLinearUnlink
 )
 
 // New validates the trusted mode and immutable boundary.
@@ -1289,6 +1292,12 @@ func (m Model) updateKey(msg tea.KeyMsg) (Model, tea.Cmd) {
 		m.quitAsk, m.status = false, status{}
 		return m, nil
 	}
+	if m.screen == ScreenLinear && m.linear.logoutAsk != "" {
+		return m.linearLogoutAnswer(key)
+	}
+	if m.screen == ScreenAccount && m.account.invite != nil {
+		return m.inviteKey(key)
+	}
 	if m.help {
 		// The overlay takes the keys it is closed with; anything else
 		// is ignored, so a key read off it acts only once it's closed.
@@ -1331,6 +1340,9 @@ func (m Model) updateEditor(key string, runes []rune) (Model, tea.Cmd) {
 	if key == "enter" {
 		if m.inputMode == inputLinearClosesName {
 			return m.linearClosesTyped()
+		}
+		if m.inputMode == inputLinearUnlink {
+			return m.linearUnlinkTyped()
 		}
 		if m.screen == ScreenAccount && (m.confirming || m.inputMode == inputAccountInvite || m.inputMode == inputAccountLabel || m.inputMode == inputAccountTransfer) {
 			return m.accountSubmit()

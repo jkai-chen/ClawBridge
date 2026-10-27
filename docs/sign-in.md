@@ -83,9 +83,10 @@ the invitee can pipe to `clawbridge join --yes`. ClawBridge sends no email:
 - **An existing member** isn't invited again: they add a device themselves
   ([Your devices](#your-devices)), or the main owner issues a recovery invite.
 
-In the TUI, the Account screen (`7`) issues an invite with `i`, typed as
-`EMAIL PROJECT=ROLE ...`. The code shows in a box, with the link below it, that
-holds the screen until Enter or Esc, and is never drawn again.
+In the TUI, the Account screen (`7`) issues an invite with `i`: the email, then
+a role for each project (Space cycles it; Enter sends). The code shows in a box,
+with the link below it, that holds the screen until Enter or Esc, and is never
+drawn again.
 
 ## Joining a device
 

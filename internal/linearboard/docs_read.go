@@ -345,7 +345,9 @@ func (s *Service) DocGetV2(ctx context.Context, scope bus.Request, id string, ma
 // partialReadNote says a read is partial, and how to read more where more
 // can be read.
 func partialReadNote(got, whole, max int) string {
-	note := fmt.Sprintf("partial read: %d of %d bytes; the document was cut at a line boundary, nothing is missing from it.", got, whole)
+	// R52-M1: say what wasn't returned, so a reader never takes the cut
+	// content for the whole document.
+	note := fmt.Sprintf("partial read: the first %d of %d bytes, cut at a line boundary; the remaining %d bytes were not returned.", got, whole, whole-got)
 	if max < DocMaxBytes {
 		return note + fmt.Sprintf(" Read more with --max-bytes (MCP max_bytes) up to %d.", DocMaxBytes)
 	}

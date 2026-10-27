@@ -202,6 +202,7 @@ func TestOnboardingOffersTheDispatcher(t *testing.T) {
 		outcome, later string
 		calls          []string
 		shownOneLiner  bool
+		revision       any
 	}{
 		"local":      {path: local, outcome: "skipped: the dispatcher runs on a hosted server"},
 		"already on": {path: cloud, enabled: true, outcome: "already on", calls: []string{"show"}},
@@ -211,7 +212,13 @@ func TestOnboardingOffersTheDispatcher(t *testing.T) {
 		"declined":   {path: cloud, outcome: "offered, left off", later: "enable --expected-revision 3 --confirm", calls: []string{"show", "enable --engine rules --expected-revision 3"}, shownOneLiner: true},
 		"enabled":    {path: cloud, answer: true, outcome: "on (rules engine); turn it off with clawbridge dispatcher disable", later: "model mode", calls: []string{"show", "enable --engine rules --expected-revision 3", "enable --engine rules --expected-revision 3 --confirm"}, shownOneLiner: true},
 		"conflict":   {path: cloud, answer: true, confirmErr: errors.New("the dispatcher policy changed: current revision is 4"), outcome: "failed: the dispatcher policy changed", later: "--expected-revision 3 --confirm", calls: []string{"show", "enable --engine rules --expected-revision 3", "enable --engine rules --expected-revision 3 --confirm"}, shownOneLiner: true},
+		// A revision read from JSON is a float64: from 1,000,000 up it
+		// must still print as an integer.
+		"big revision": {path: cloud, revision: float64(1_000_000), answer: true, outcome: "on (rules engine)", later: "model mode", calls: []string{"show", "enable --engine rules --expected-revision 1000000", "enable --engine rules --expected-revision 1000000 --confirm"}, shownOneLiner: true},
 	} {
+		if c.revision == nil {
+			c.revision = 3
+		}
 		var calls []string
 		wizardDispatcher = func(_ context.Context, path string, args []string) (map[string]any, error) {
 			if path != c.path {
@@ -220,7 +227,7 @@ func TestOnboardingOffersTheDispatcher(t *testing.T) {
 			calls = append(calls, strings.Join(args, " "))
 			switch {
 			case args[0] == "show":
-				return map[string]any{"enabled": c.enabled, "revision": 3}, nil
+				return map[string]any{"enabled": c.enabled, "revision": c.revision}, nil
 			case strings.HasSuffix(strings.Join(args, " "), "--confirm"):
 				return map[string]any{"enabled": true}, c.confirmErr
 			}

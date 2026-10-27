@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"strconv"
 	"strings"
 
 	"clawbridge/internal/doctor"
@@ -345,6 +346,9 @@ func offerDispatcher(ctx context.Context, path string, stdout io.Writer, yes fun
 		return nil
 	}
 	revision := fmt.Sprint(shown["revision"])
+	if f, ok := shown["revision"].(float64); ok {
+		revision = strconv.FormatFloat(f, 'f', -1, 64)
+	}
 	later = "clawbridge dispatcher show, then clawbridge dispatcher enable --expected-revision " + wizardSafe(revision) + " --confirm"
 	preview, err := wizardDispatcher(ctx, path, []string{"enable", "--engine", "rules", "--expected-revision", revision})
 	if err != nil {

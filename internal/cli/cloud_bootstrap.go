@@ -146,7 +146,7 @@ func runCloudBootstrap(ctx context.Context, args []string, stdout, stderr io.Wri
 	if joined.Warning != "" {
 		fmt.Fprintln(stderr, "warning: "+joined.Warning+".")
 	}
-	return json.NewEncoder(stdout).Encode(map[string]any{"source": "cloud_bootstrap", "data": map[string]any{
+	return emit(ctx, stdout, "cloud_bootstrap", map[string]any{"source": "cloud_bootstrap", "data": map[string]any{
 		"workspace": joined.Workspace, "workspace_created": invite["workspace_created"], "principal": joined.Principal,
 		"device_id": joined.DeviceID, "label": joined.Label, "key_store": joined.KeyStore, "config": joined.ConfigPath,
 	}})

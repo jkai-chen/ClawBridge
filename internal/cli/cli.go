@@ -19,6 +19,7 @@ import (
 	"clawbridge/internal/auth"
 	"clawbridge/internal/buildinfo"
 	"clawbridge/internal/bus"
+	"clawbridge/internal/clirender"
 	"clawbridge/internal/dispatchermodel"
 	"clawbridge/internal/doctor"
 	"clawbridge/internal/linearboard"
@@ -64,7 +65,9 @@ Commands: login [--device|--use-gcloud], logout,
           join --email EMAIL (with --server URL: join a hosted workspace with an invite; asks for the code),
           invite, device, user, owner (accounts on a hosted workspace; each takes --help)
 Cloud flags: --mode cloud --server URL --audience AUDIENCE [--credential-source oauth|gcloud|adc|device] [--oauth-client-id ID --oauth-client-secret CREDENTIAL --oauth-device-client-id ID --oauth-device-client-secret CREDENTIAL] [--principal EMAIL] [--cache PATH]
-All normal results are JSON with source. See docs/reference/api.md for command flags and isolated test environment variables.
+Results are laid out for people at a terminal and are JSON with source otherwise: on a pipe, in an agent's shell, with --json
+or CLAWBRIDGE_OUTPUT=json (--json=false or CLAWBRIDGE_OUTPUT=human asks for the layout). Scripts and agents: pass --json.
+See docs/reference/api.md for command flags and isolated test environment variables.
 `
 
 var (
@@ -110,10 +113,13 @@ func extractGlobals(args []string) (Config, []string, error) {
 			continue
 		}
 		if name == "json" {
+			c.JSONFlag = "true"
 			if has {
-				if _, err := strconv.ParseBool(val); err != nil {
+				b, err := strconv.ParseBool(val)
+				if err != nil {
 					return c, nil, errors.New("--json expects a boolean")
 				}
+				c.JSONFlag = strconv.FormatBool(b)
 			}
 			continue
 		}
@@ -189,11 +195,18 @@ func interspersedFlags(f *flag.FlagSet, args []string) ([]string, error) {
 }
 
 func Run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
+	// The output format, once, for every command (live/CLI-OUTPUT-PLAN.md
+	// §2): --json, CLAWBRIDGE_OUTPUT, an agent's shell, a terminal.
+	mode, err := clirender.Choose(jsonFlag(args), os.Environ(), stdout)
+	if err != nil {
+		return err
+	}
+	ctx = clirender.WithMode(ctx, mode)
 	if len(args) > 0 && (args[0] == "version" || args[0] == "--version") {
 		if len(args) != 1 {
 			return errors.New("version accepts no arguments")
 		}
-		return json.NewEncoder(stdout).Encode(struct {
+		return emit(ctx, stdout, "version", struct {
 			Source string         `json:"source"`
 			Data   buildinfo.Info `json:"data"`
 		}{Source: "build", Data: buildinfo.Current()})
@@ -317,7 +330,7 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 					ImpersonateServiceAccount: gcloudConfig.ImpersonateServiceAccount,
 				}
 				if _, probeErr := source.Token(ctx); probeErr == nil {
-					return json.NewEncoder(stdout).Encode(map[string]any{
+					return emit(ctx, stdout, "login", map[string]any{
 						"credential_source": "gcloud", "principal": gcloudConfig.ImpersonateServiceAccount,
 					})
 				}
@@ -352,7 +365,7 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 			if err = auth.Logout(ctx, loginCredentialStore(config.OAuthKeyringService), config.OAuthClientID); err != nil {
 				return err
 			}
-			return json.NewEncoder(stdout).Encode(map[string]any{"logged_out": true, "client_id": config.OAuthClientID})
+			return emit(ctx, stdout, "logout", map[string]any{"logged_out": true, "client_id": config.OAuthClientID})
 		}
 		if *device && *useGcloud {
 			return errors.New("login accepts either --device or --use-gcloud, not both")
@@ -369,7 +382,7 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 			return fmt.Errorf("login did not complete because trusted config update failed; prior configuration and keychain state were preserved: %w", err)
 		}
 		transaction.Commit()
-		return json.NewEncoder(stdout).Encode(map[string]any{
+		return emit(ctx, stdout, "login", map[string]any{
 			"logged_in": true, "credential_source": "oauth",
 			"principal": config.Principal, "oauth_client_id": config.OAuthClientID,
 		})
@@ -1075,7 +1088,7 @@ flags:`)
 		if e != nil {
 			return e
 		}
-		return json.NewEncoder(stdout).Encode(result)
+		return emit(ctx, stdout, "sync", result)
 	}
 	if config.Instance != "" {
 		switch op {
@@ -1150,7 +1163,7 @@ flags:`)
 			}
 		}
 	}
-	return json.NewEncoder(stdout).Encode(result)
+	return emit(ctx, stdout, op, result)
 }
 
 // applyLinearMarker applies the Linear claim marker of a confirm or release
@@ -1277,7 +1290,7 @@ func runDoctor(ctx context.Context, config Config, configPath string, stdout io.
 	if err != nil {
 		return err
 	}
-	if err = json.NewEncoder(stdout).Encode(report); err != nil {
+	if err = emit(ctx, stdout, "doctor", report); err != nil {
 		return err
 	}
 	if !report.OK() {
@@ -1308,4 +1321,24 @@ func retireAgain(err error, session, instance string, rest []string) error {
 	}
 	again += strings.TrimSpace("retire " + strings.Join(rest, " "))
 	return fmt.Errorf("%w\nFinished:   %s --outcome done\nAs it is:   %s --confirm", err, again, again)
+}
+
+// jsonFlag is --json as given anywhere before "--" (a message body after
+// it is never a flag); extractGlobals still checks its value.
+func jsonFlag(args []string) clirender.Flag {
+	flag := clirender.FlagUnset
+	for _, arg := range args {
+		if arg == "--" {
+			break
+		}
+		name, val, has := strings.Cut(arg, "=")
+		if name != "--json" {
+			continue
+		}
+		flag = clirender.FlagTrue
+		if b, err := strconv.ParseBool(val); has && err == nil && !b {
+			flag = clirender.FlagFalse
+		}
+	}
+	return flag
 }

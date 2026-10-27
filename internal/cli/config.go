@@ -14,8 +14,11 @@ import (
 )
 
 type Config struct {
-	LinearProfile             string `toml:"-"`
-	ClientConfig              string `toml:"-"`
+	LinearProfile string `toml:"-"`
+	ClientConfig  string `toml:"-"`
+	// JSONFlag is --json as given ("", "true" or "false"): the output format
+	// (internal/clirender). Never written to a config file.
+	JSONFlag                  string `toml:"-"`
 	DB                        string `toml:"db"`
 	Workspace                 string `toml:"workspace"`
 	Project                   string `toml:"project"`

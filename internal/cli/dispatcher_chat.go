@@ -2,7 +2,6 @@ package cli
 
 import (
 	"context"
-	"encoding/json"
 	"io"
 	"strings"
 	"time"
@@ -33,7 +32,7 @@ func runDispatcherChat(ctx context.Context, executor interface {
 		if err != nil {
 			return err
 		}
-		return printChat(stdout, r, view)
+		return printChat(ctx, stdout, r, view)
 	}
 	_, asked, err := request(op, a)
 	if err != nil {
@@ -47,7 +46,7 @@ func runDispatcherChat(ctx context.Context, executor interface {
 			return err
 		}
 		if str(view, "state") != "waiting" || !time.Now().Before(deadline.Add(5*time.Second)) {
-			return printChat(stdout, r, view)
+			return printChat(ctx, stdout, r, view)
 		}
 		select {
 		case <-ctx.Done():
@@ -59,7 +58,7 @@ func runDispatcherChat(ctx context.Context, executor interface {
 
 // printChat prints a chat as the CLI prints any result, with what its
 // state means in words.
-func printChat(stdout io.Writer, r bus.Result, view map[string]any) error {
+func printChat(ctx context.Context, stdout io.Writer, r bus.Result, view map[string]any) error {
 	out := map[string]any{}
 	for k, v := range view {
 		if s, ok := v.(string); ok {
@@ -88,7 +87,7 @@ func printChat(stdout io.Writer, r bus.Result, view map[string]any) error {
 	}
 	out["note"] = chatProviderNote
 	r.Data = out
-	return json.NewEncoder(stdout).Encode(r)
+	return emit(ctx, stdout, "dispatcher_chat", r)
 }
 
 // terminalSafe drops what could drive a terminal from text: C0 controls

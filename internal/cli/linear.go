@@ -810,7 +810,9 @@ func runLinear(ctx context.Context, flags Config, args []string, stdout, stderr 
 		return err
 	}
 	manager := newLinearManager(directory)
-	emit := func(data any) error { return json.NewEncoder(stdout).Encode(bus.Result{Source: "linear", Data: data}) }
+	emit := func(data any) error {
+		return emit(ctx, stdout, "linear_"+command, bus.Result{Source: "linear", Data: data})
+	}
 	switch command {
 	case "connect", "login":
 		profile, e := manager.Connect(bounded, linearconn.ConnectOptions{Name: v.name, ProfileID: v.profile, Access: linearconn.Access(v.access), NoBrowser: v.noBrowser, PresentURL: presentLinearURL(bounded, stderr, v.noBrowser)})

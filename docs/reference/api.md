@@ -10,6 +10,28 @@ recipient wake policy, local host observation and [native Linear](../linear.md)
 task-board actions after v0.1.0. Dated acceptance evidence is indexed in
 [the archive](../archive/README.md); a source build does not upgrade a hosted service.
 
+## Output format
+
+The CLI writes each result in one of two formats, chosen by the first rule that applies:
+
+| Signal | Format |
+|---|---|
+| `--json` (or `--json=true`) | JSON |
+| `--json=false` | the human layout, even on a pipe |
+| `CLAWBRIDGE_OUTPUT=json` or `human` | as set; any other value is an error |
+| an agent's shell (`CLAUDECODE` set, or a `CODEX_*` variable) | JSON |
+| stdout is not a terminal | JSON |
+| otherwise | the human layout |
+
+The flags are read up to `--` only: a message body after `--` is never taken for one. A body that is literally
+`--json` placed before `--` is read as the flag, so put such a body after `--`.
+
+The JSON is the contract: byte for byte what earlier releases printed, `{"source": …, "data": …}`, with a test that
+fails on any change. Scripts and agents pass `--json`. The human layout (aligned fields, tables, PASS/WARN/FAIL lines,
+data from outside escaped) is for people, and may change between releases. Errors and notices go to stderr in both
+formats, unchanged. A secret (an invite code or link, a CI device key, an intake token) is printed once in either,
+alone on its own line in the layout so it copies whole.
+
 ## Request and result
 
 ```go

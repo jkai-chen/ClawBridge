@@ -106,7 +106,7 @@ func runRunner(ctx context.Context, flags Config, args []string, stdout, stderr 
 		return err
 	}
 	r := newRunner(state)
-	emit := func(v any) error { return json.NewEncoder(stdout).Encode(bus.Result{Source: "runner", Data: v}) }
+	emit := func(v any) error { return emit(ctx, stdout, "runner_"+args[0], bus.Result{Source: "runner", Data: v}) }
 	switch args[0] {
 	case "gc":
 		f := flag.NewFlagSet("runner gc", flag.ContinueOnError)

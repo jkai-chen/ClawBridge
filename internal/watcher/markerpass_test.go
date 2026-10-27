@@ -106,3 +106,22 @@ func TestMarkersPending(t *testing.T) {
 		t.Fatal("pending with nothing left")
 	}
 }
+
+// R116-L1: a nudge pass runs under its own deadline (ProjectDeadline, as
+// a tick's project does), not the whole tick's deadline it is handed.
+func TestANudgeRunsUnderTheProjectDeadline(t *testing.T) {
+	e := setup(t)
+	e.tick()
+	e.queueMarkers(1)
+	saved := nudgeDeadline
+	nudgeDeadline = time.Nanosecond
+	defer func() { nudgeDeadline = saved }()
+	if saved != ProjectDeadline {
+		t.Fatal("a nudge's deadline is not ProjectDeadline:", saved)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+	if pass := e.w.Markers(ctx, e.pid); pass.Error == "" {
+		t.Fatalf("the nudge outlived its project deadline: %+v", pass)
+	}
+}

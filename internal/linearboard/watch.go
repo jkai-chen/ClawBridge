@@ -322,7 +322,7 @@ var (
 	markerPassTime      = 8 * time.Second
 	markerRowRoom       = 6 * time.Second
 	markerReserve       = 3 * time.Second
-	markerSettleTimeout = 3 * time.Second
+	markerSettleTimeout = 2 * time.Second
 )
 
 // tooLate reports whether ctx ends within room: no time to start a row.
@@ -371,6 +371,13 @@ func (s *Service) applyDueMarkers(ctx context.Context, scope bus.Request, lease 
 	held, release := s.hold()
 	defer release()
 	start := s.cfg.Now()
+	// A budget stop stands: another pass this hour would find no budget,
+	// so it must not read as rows a nudge can take now.
+	stopped := func(why string) {
+		if cycle.MarkersStopped != "budget" {
+			cycle.MarkersStopped = why
+		}
+	}
 	stop := func(i int, why string) {
 		// The rows not started give their charge back now.
 		for _, raw := range markers[i:] {
@@ -379,7 +386,7 @@ func (s *Service) applyDueMarkers(ctx context.Context, scope bus.Request, lease 
 			_, _ = s.commentLedger(ctx, scope, "marker_spent", lease.fence(refund))
 		}
 		cycle.MarkersLeft += len(markers) - i
-		cycle.MarkersStopped = why
+		stopped(why)
 	}
 	for i, raw := range markers {
 		switch {
@@ -407,6 +414,10 @@ func (s *Service) applyDueMarkers(ctx context.Context, scope bus.Request, lease 
 		if err != nil {
 			return err
 		}
+	}
+	if pass.Err() != nil {
+		// The last row was cut.
+		stopped("deadline")
 	}
 	return nil
 }

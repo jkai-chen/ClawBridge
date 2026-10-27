@@ -5,6 +5,8 @@ import (
 	"log"
 	"sync"
 	"time"
+
+	"clawbridge/internal/watcher"
 )
 
 // A nudge applies one project's due claim markers soon after a confirm or
@@ -57,6 +59,27 @@ func (n *nudger) Nudge(workspace, project string) {
 	select {
 	case n.wake <- struct{}{}:
 	default:
+	}
+}
+
+// Ticked marks pending each project whose tick's marker pass stopped with
+// rows left, so a nudge pass with its own deadline drains them without
+// waiting for a confirm or a release. It never blocks.
+func (n *nudger) Ticked(got any) {
+	ticks, _ := got.([]watcher.ProjectTick)
+	left := false
+	n.mu.Lock()
+	for _, t := range ticks {
+		if t.MarkersPending() {
+			n.pending[t.ProjectID], left = true, true
+		}
+	}
+	n.mu.Unlock()
+	if left {
+		select {
+		case n.wake <- struct{}{}:
+		default:
+		}
 	}
 }
 

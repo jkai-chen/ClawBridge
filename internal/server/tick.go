@@ -35,6 +35,8 @@ type Ticker interface {
 type singleFlight struct {
 	ticker  Ticker
 	running atomic.Bool
+	// after, when set, gets each finished tick once the flight is free.
+	after func(got any)
 }
 
 // tickRunning is what a tick asked for while another runs reports.
@@ -51,8 +53,14 @@ func oneAtATime(t Ticker) *singleFlight {
 func (s *singleFlight) claim() bool { return s.running.CompareAndSwap(false, true) }
 
 func (s *singleFlight) run(ctx context.Context) any {
-	defer s.running.Store(false)
-	return s.ticker.Tick(ctx)
+	got := func() any {
+		defer s.running.Store(false)
+		return s.ticker.Tick(ctx)
+	}()
+	if s.after != nil {
+		s.after(got)
+	}
+	return got
 }
 
 func (s *singleFlight) Tick(ctx context.Context) any {

@@ -10,6 +10,7 @@ import (
 	"io"
 	"os/user"
 	"path/filepath"
+	"slices"
 	"time"
 
 	"clawbridge/internal/bus"
@@ -35,8 +36,13 @@ func runNotify(ctx context.Context, flags Config, args []string, stdout, stderr 
 	var adapter, thread, state, command string
 	var interval time.Duration
 	var once bool
+	// The command adapter's argv follows "--", never through a shell.
+	var argv []string
+	if i := slices.Index(args, "--"); i >= 0 {
+		args, argv = args[:i], args[i+1:]
+	}
 	f, err := commandFlags("notify", args, stderr, func(f *flag.FlagSet) {
-		f.StringVar(&adapter, "adapter", "", "json or codex (explicit opt-in)")
+		f.StringVar(&adapter, "adapter", "", "json, codex or command (explicit opt-in); command runs the argv after --, with {text} replaced by a fixed notice")
 		f.StringVar(&thread, "thread", "", "explicit canonical Codex thread UUID")
 		f.StringVar(&state, "state", "", "absolute private checkpoint path")
 		f.StringVar(&command, "codex-command", "", "absolute Codex executable override")
@@ -49,8 +55,11 @@ func runNotify(ctx context.Context, flags Config, args []string, stdout, stderr 
 	if err != nil {
 		return err
 	}
-	if adapter != "json" && adapter != "codex" {
-		return errors.New("notify requires --adapter json or codex")
+	if adapter != "json" && adapter != "codex" && adapter != "command" {
+		return errors.New("notify requires --adapter json, codex or command")
+	}
+	if (adapter == "command") != (len(argv) > 0) {
+		return errors.New("--adapter command, and only it, takes a command after --: notify --adapter command --state PATH -- PROGRAM [ARG|{text}]...")
 	}
 	if !filepath.IsAbs(state) || interval < time.Second || interval > 300*time.Second {
 		return errors.New("notify requires absolute --state and interval 1s–300s")
@@ -58,7 +67,7 @@ func runNotify(ctx context.Context, flags Config, args []string, stdout, stderr 
 	if adapter == "codex" && (!notify.ValidThread(thread) || (command != "" && !filepath.IsAbs(command))) {
 		return errors.New("Codex adapter requires canonical UUID --thread and an absolute executable override")
 	}
-	if adapter == "json" {
+	if adapter == "json" || adapter == "command" {
 		bad := false
 		f.Visit(func(fl *flag.Flag) {
 			if fl.Name == "thread" || fl.Name == "codex-command" {
@@ -66,7 +75,7 @@ func runNotify(ctx context.Context, flags Config, args []string, stdout, stderr 
 			}
 		})
 		if bad {
-			return errors.New("JSON adapter rejects Codex-only flags")
+			return errors.New("the " + adapter + " adapter rejects Codex-only flags")
 		}
 	}
 	c, _, err := resolveConfig(ctx, flags)
@@ -114,5 +123,5 @@ func runNotify(ctx context.Context, flags Config, args []string, stdout, stderr 
 		return err
 	}
 	defer closeExecutor()
-	return runNotifyWatcher(ctx, notify.Config{Binding: notify.Binding{Authority: hex.EncodeToString(digest[:]), Principal: principal, Workspace: c.Workspace, Project: c.Project, Session: c.Session, Instance: c.Instance, Adapter: adapter, Thread: thread}, Executor: executor, StatePath: state, Interval: interval, Once: once, Output: stdout, Diagnostics: stderr, CodexCommand: command, ContextDir: contextDirOrEmpty()})
+	return runNotifyWatcher(ctx, notify.Config{Binding: notify.Binding{Authority: hex.EncodeToString(digest[:]), Principal: principal, Workspace: c.Workspace, Project: c.Project, Session: c.Session, Instance: c.Instance, Adapter: adapter, Thread: thread, Command: argv}, Executor: executor, StatePath: state, Interval: interval, Once: once, Output: stdout, Diagnostics: stderr, CodexCommand: command, ContextDir: contextDirOrEmpty()})
 }

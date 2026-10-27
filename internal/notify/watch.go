@@ -71,6 +71,16 @@ func Run(ctx context.Context, c Config) error {
 		c.HostTimeout = 10 * time.Second
 	}
 	path := ""
+	if c.Binding.Adapter == "command" {
+		argv, err := resolveCommand(c.Binding.Command)
+		if err != nil {
+			return err
+		}
+		c.Binding.Command = argv
+		if c.CommandRunner == nil {
+			c.CommandRunner = runCommand
+		}
+	}
 	if c.Binding.Adapter == "codex" {
 		var err error
 		path, err = resolveCodex(c.CodexCommand)
@@ -112,6 +122,14 @@ func Run(ctx context.Context, c Config) error {
 			go ReportContext(beat, c.Executor, c.ContextDir, ContextInterval, session)
 		}
 	}
+	// The server's observe stream wakes the loop when the session's queue
+	// changes; without one (local mode, an older server) it polls.
+	var wake *waker
+	if s, ok := c.Executor.(Streamer); ok && !c.Once {
+		streamCtx, stop := context.WithCancel(ctx)
+		defer stop()
+		wake = startWaker(streamCtx, s, c.Binding)
+	}
 	backoff := time.Second
 	for {
 		if ctx.Err() != nil {
@@ -135,7 +153,7 @@ func Run(ctx context.Context, c Config) error {
 			return nil
 		}
 		backoff = time.Second
-		if err = c.Wait(ctx, c.Interval); err != nil {
+		if err = wake.wait(ctx, c); err != nil {
 			return err
 		}
 	}
@@ -173,7 +191,12 @@ func once(ctx context.Context, c Config, path string, f *checkpointFile, state *
 		return nil
 	}
 	e := event(c.Binding, s)
-	if c.Binding.Adapter == "json" {
+	switch c.Binding.Adapter {
+	case "command":
+		if err = commandHint(ctx, c, e); err != nil {
+			return err
+		}
+	case "json":
 		err = json.NewEncoder(c.Output).Encode(struct {
 			Source string `json:"source"`
 			Data   Event  `json:"data"`
@@ -181,7 +204,7 @@ func once(ctx context.Context, c Config, path string, f *checkpointFile, state *
 		if err != nil {
 			return Permanent(errors.New("notification output failed; checkpoint not advanced"))
 		}
-	} else {
+	default:
 		bounded, cancel = context.WithTimeout(ctx, c.HostTimeout)
 		_, err = c.Runner.Run(bounded, path, []string{"queue", "--thread", b.Thread, "--message", hint(e)})
 		cancel()

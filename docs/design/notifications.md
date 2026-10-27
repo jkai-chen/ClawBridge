@@ -101,6 +101,7 @@ Add a foreground command:
 ```text
 clawbridge notify --adapter json --state /absolute/private/notify.json [--interval 5s] [--once]
 clawbridge notify --adapter codex --thread THREAD_UUID --state /absolute/private/notify.json [--codex-command /absolute/path/to/codex] [--interval 5s] [--once]
+clawbridge notify --adapter command --state /absolute/private/notify.json [--interval 5s] [--once] -- PROGRAM [ARG|{text}]...
 ```
 
 Existing trusted route/scope flags apply. Require an existing session and exact

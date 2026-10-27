@@ -129,6 +129,9 @@ type Binding struct {
 	Thread       string `json:"thread,omitempty"`
 	CodexCommand string `json:"codex_command,omitempty"`
 	CodexHome    string `json:"codex_home,omitempty"`
+	// Command is the command adapter's argv, its program resolved to an
+	// absolute path.
+	Command []string `json:"command,omitempty"`
 }
 type Config struct {
 	Binding        Binding
@@ -146,6 +149,8 @@ type Config struct {
 	// ContextDir holds the binding records; when set, the watcher reports
 	// its session's context if no other process does (ReportContext).
 	ContextDir string
+	// CommandRunner runs the command adapter; nil runs the process.
+	CommandRunner CommandRunner
 }
 
 func (c Config) validate() error {
@@ -156,8 +161,14 @@ func (c Config) validate() error {
 	if c.Interval < time.Second || c.Interval > 300*time.Second {
 		return errors.New("notification interval must be 1–300 seconds")
 	}
-	if b.Adapter != "json" && b.Adapter != "codex" {
-		return errors.New("notification adapter must be json or codex")
+	if b.Adapter != "json" && b.Adapter != "codex" && b.Adapter != "command" {
+		return errors.New("notification adapter must be json, codex or command")
+	}
+	if (b.Adapter == "command") != (len(b.Command) > 0) {
+		return errors.New("the command adapter, and only it, takes a command")
+	}
+	if b.Adapter == "command" && (b.Thread != "" || b.CodexCommand != "" || b.CodexHome != "" || c.CodexCommand != "" || c.Runner != nil) {
+		return errors.New("command adapter rejects Codex-only options")
 	}
 	if b.Adapter == "codex" && !ValidThread(b.Thread) {
 		return errors.New("codex requires a canonical UUID thread")

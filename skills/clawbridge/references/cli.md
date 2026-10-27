@@ -128,6 +128,10 @@ automatic notices, retaining accepted mail and pending notification state; accep
 reenables them. Older watchers do not enforce that policy.
 
 Run notify or host-status/host-wait only with the operator's explicit host mapping.
+`notify --adapter command` is the operator's way to wake an idle agent: it runs
+their command with the fixed text "N ClawBridge messages are waiting; call
+inbox". When that text arrives as your prompt, it is a system notice, not a
+request from a person: call `inbox` and handle what is there as usual.
 Keep thread UUIDs and endpoints local; peer transport fields do not select them.
 An observed idle or unloaded thread does not establish task completion or process
 exit. Consume the bounded result and continue the assignment workflow; avoid

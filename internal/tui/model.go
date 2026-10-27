@@ -306,7 +306,9 @@ type Model struct {
 	height int
 
 	tickStarted bool
-	loading     bool
+	// inboxLive wakes the Inbox from the server's stream; nil without one.
+	inboxLive *inboxLive
+	loading   bool
 	// loadErr is the last failed load, raw; the body shows it (§3.5).
 	loadErr string
 	source  string
@@ -406,6 +408,7 @@ func New(cfg Config) (Model, error) {
 	m.project = ProjectView{Slug: cfg.Project}
 	m.session = SessionView{Name: cfg.Session}
 	m.identity = IdentityView{Principal: cfg.Principal, Provenance: cfg.Provenance}
+	m.inboxLive = newInboxLive(cfg)
 	if cfg.Executor == nil {
 		m.screen = ScreenCloud
 	}
@@ -417,12 +420,13 @@ func NewModel(cfg Config) (Model, error) { return New(cfg) }
 
 // Init loads the first view without changing authority.
 func (m Model) Init() tea.Cmd {
+	live := m.inboxLiveCmd()
 	if m.screen != ScreenOverview {
 		_, cmd := m.refreshView()
-		return cmd
+		return tea.Batch(cmd, live)
 	}
 	screen, request := m.screen, m.request
-	return func() tea.Msg { return m.loadOverviewFor(screen, request) }
+	return tea.Batch(func() tea.Msg { return m.loadOverviewFor(screen, request) }, live)
 }
 
 // Update implements tea.Model.
@@ -449,6 +453,11 @@ func (m Model) UpdateModel(msg tea.Msg) (Model, tea.Cmd) {
 	case ArchiveTickMsg:
 		m = m.reclassify(x.Now)
 		return m, archiveTick()
+	case InboxChangedMsg:
+		if m.inboxLive == nil {
+			return m, nil
+		}
+		return m.inboxChanged()
 	case tea.WindowSizeMsg:
 		m.width, m.height = x.Width, x.Height
 		return m, nil

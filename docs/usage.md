@@ -440,7 +440,9 @@ Inbox: Enter opens a message with what it answers and the rest of its thread,
 These actor operations need an explicit current session/instance. Opening the UI
 does not register/resume an actor. Without a session the Inbox says so and asks
 the server nothing: inboxes belong to agent sessions, so to read one as a session,
-run `clawbridge tui --session NAME` on that session's machine. Cloud is informational; provisioning and new
+run `clawbridge tui --session NAME` on that session's machine. On a server with the
+message stream, the Inbox reloads by itself when the session's mail changes, while it
+is on screen and you aren't typing; elsewhere, `r` reloads it. Cloud is informational; provisioning and new
 project administration use explicit operator workflows.
 
 On Sessions and Inbox, `v` cycles Current/Archive/All. Retired/moved sessions enter

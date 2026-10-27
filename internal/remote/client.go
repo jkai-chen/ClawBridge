@@ -654,27 +654,13 @@ func (c *Client) noticeDeviceEvents(ctx context.Context, r bus.Request) {
 // is 0 when nothing came back.
 func (c *Client) send(ctx context.Context, client *http.Client, method, target string, body []byte, token string) (int, []byte, error) {
 	for attempt := 0; ; attempt++ {
-		req, err := http.NewRequestWithContext(ctx, method, c.config.URL, bytes.NewReader(body))
+		req, err := c.newRequest(ctx, method, target, body, token)
 		if err != nil {
-			return 0, nil, errors.New("invalid cloud request URL")
-		}
-		// Opaque is sent verbatim as the request target, so nothing
-		// re-encodes what was signed. A bearer route keeps its server
-		// URL's path in front, as before (R85-L1); a device route has
-		// none, since the signature covers the target alone.
-		path, query, _ := strings.Cut(target, "?")
-		if c.signer == nil {
-			path = strings.TrimSuffix(req.URL.EscapedPath(), "/") + path
-		}
-		req.URL.Opaque, req.URL.RawQuery = path, query
-		if c.signer != nil {
-			header, e := c.signer.Authorization(method, target, body)
-			if e != nil {
-				return -1, nil, &credentialError{e}
+			var credential *credentialError
+			if errors.As(err, &credential) {
+				return -1, nil, err
 			}
-			req.Header.Set("Authorization", header)
-		} else {
-			req.Header.Set("Authorization", "Bearer "+token)
+			return 0, nil, err
 		}
 		req.Header.Set("Content-Type", "application/json")
 		response, err := client.Do(req)
@@ -702,6 +688,34 @@ func (c *Client) send(ctx context.Context, client *http.Client, method, target s
 			c.config.SaveClockOffset(offset, at)
 		}
 	}
+}
+
+// newRequest is one authenticated request for target (path and query, in
+// the one form the server accepts).
+func (c *Client) newRequest(ctx context.Context, method, target string, body []byte, token string) (*http.Request, error) {
+	req, err := http.NewRequestWithContext(ctx, method, c.config.URL, bytes.NewReader(body))
+	if err != nil {
+		return nil, errors.New("invalid cloud request URL")
+	}
+	// Opaque is sent verbatim as the request target, so nothing
+	// re-encodes what was signed. A bearer route keeps its server URL's
+	// path in front, as before (R85-L1); a device route has none, since
+	// the signature covers the target alone.
+	path, query, _ := strings.Cut(target, "?")
+	if c.signer == nil {
+		path = strings.TrimSuffix(req.URL.EscapedPath(), "/") + path
+	}
+	req.URL.Opaque, req.URL.RawQuery = path, query
+	if c.signer != nil {
+		header, e := c.signer.Authorization(method, target, body)
+		if e != nil {
+			return nil, &credentialError{e}
+		}
+		req.Header.Set("Authorization", header)
+	} else {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
+	return req, nil
 }
 
 // clockSkewTime reads a clock_skew refusal's server_time.

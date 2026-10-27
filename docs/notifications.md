@@ -14,12 +14,17 @@ candidate evidence remains dated in the archive.
 
 - A subscribed MCP client receives changes to `clawbridge://inbox/status`. Its
   host decides whether to display that notice or start an agent turn.
-- A foreground watcher emits JSON events for a host integration, or queues a
-  fixed inbox-check notice into an explicitly selected existing Codex thread.
+- A foreground watcher emits JSON events for a host integration, queues a
+  fixed inbox-check notice into an explicitly selected existing Codex thread, or
+  runs a command you choose with a fixed notice (for example, to type it into an
+  idle agent's terminal).
 
-Both paths poll authoritative metadata at a five-second default interval. The
-agent fetches actual message content with `inbox` and marks it read after
-processing. A notification or accepted queue request is not a delivery/read receipt.
+On a server with the message stream, the watcher is woken by the server as soon
+as the session's mail changes, and still checks once a minute in case a wake was
+missed. Against an older server, or in local mode, it polls at a five-second
+default interval and says `stream_unavailable` once on stderr. The agent fetches
+actual message content with `inbox` and marks it read after processing. A
+notification or accepted queue request is not a delivery/read receipt.
 
 ## Inspect without consuming mail
 
@@ -67,6 +72,42 @@ keeps the existing Codex account, model and execution permissions. It queues a
 fixed metadata-only notice without including peer text or typing into a terminal.
 A busy agent handles it through the host queue; actual wake/processing depends on
 that host. No additional agent or background service is installed.
+
+## Command adapter: wake an idle terminal
+
+An agent that is idle in a terminal (Claude Code between turns, for example) has
+nothing running that could notice mail. The command adapter runs a command you
+choose whenever new mail arrives, such as one that types into that terminal:
+
+```sh
+clawbridge --session reviewer --instance INSTANCE notify --adapter command --state /absolute/private/reviewer-command-notify.json -- PROGRAM [ARG]...
+```
+
+Everything after `--` is the command, run directly, never through a shell. It is
+only ever given fixed text: `N ClawBridge messages are waiting; call inbox` (or
+`1 ClawBridge message is waiting; call inbox`). Each `{text}` argument is replaced
+by it, and it is also in `CLAWBRIDGE_NOTICE_TEXT`, with the count in
+`CLAWBRIDGE_NOTICE_COUNT`. Stdin gets the event's JSON: the type, IDs, counts and
+sequence. No sender, subject or body ever reaches the command, so nobody who can
+send to the session can type into its terminal. The command must finish within
+10 seconds; if it fails, the checkpoint isn't advanced and the next change tries
+again. ClawBridge's own secrets are removed from its environment.
+
+In an [Orca](https://github.com/stablyai/orca) terminal (use the terminal's
+handle):
+
+```sh
+clawbridge --session reviewer --instance INSTANCE notify --adapter command --state /absolute/private/reviewer-command-notify.json -- orca terminal send --terminal TERMINAL_HANDLE --text {text} --enter
+```
+
+In tmux:
+
+```sh
+clawbridge --session reviewer --instance INSTANCE notify --adapter command --state /absolute/private/reviewer-command-notify.json -- tmux send-keys -t SESSION:WINDOW.PANE {text} Enter
+```
+
+Typing into a terminal while the agent is busy queues the line as its next
+prompt in most hosts; check yours before you rely on it.
 
 ## Choose when to receive automatic notices
 

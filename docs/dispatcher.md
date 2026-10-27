@@ -150,7 +150,10 @@ clawbridge dispatcher model key delete --confirm
 Setup asks, in this order:
 1. **The provider,** from the list the dispatcher agent can run: Anthropic, OpenAI, Google Gemini, Mistral, DeepSeek,
    Groq, Together, OpenRouter, or an OpenAI-compatible endpoint at a base URL you give.
-2. **The model ID,** as the provider names it. There is no default. A model without tool use fails the test.
+2. **The model ID,** as the provider names it. There is no default. Setup lists up to ten of the provider's models from
+   the agent's own catalogue, cheapest first by list price, with their context window. A number picks one, and any
+   other model ID can be typed. Floating aliases (OpenRouter's `~…-latest`) and routers aren't accepted: the dispatcher
+   runs one pinned model, the one its setup test checked. A model without tool use fails the test.
 3. **Your key,** at a hidden prompt.
    - It is never an argument or an environment variable. An argument that looks like a key stops setup before
      anything is sent.

@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"clawbridge/internal/bus"
+	"clawbridge/internal/dispatchermodel"
 	"clawbridge/internal/tui"
 	tea "github.com/charmbracelet/bubbletea"
 )
@@ -21,6 +22,8 @@ func TestModelSetupCLIAndTUIAgree(t *testing.T) {
 	}{
 		{name: "listed", provider: "anthropic", model: "claude-sonnet-4-5", runsPerHour: "", daily: "500000", choice: 0},
 		{name: "custom", provider: "openai-compatible", baseURL: "https://llm.example.test/v1", model: "local-model", runsPerHour: "4", daily: "20000", choice: 8},
+		// A number picks from the agent's catalogue, the same model in both.
+		{name: "picked from the list", provider: "anthropic", model: "2", daily: "500000", choice: 0},
 	}
 	for _, f := range fixtures {
 		t.Run(f.name, func(t *testing.T) {
@@ -77,6 +80,9 @@ func TestModelSetupCLIAndTUIAgree(t *testing.T) {
 			}
 			if cliSetup.Args["key"] != modelTestKey || cliSetup.Args["provider_id"] != f.provider {
 				t.Fatalf("%v", cliSetup.Args)
+			}
+			if shown, _ := dispatchermodel.ModelHints(f.provider); f.model == "2" && cliSetup.Args["model"] != shown[1].ID {
+				t.Fatalf("picked %v, want %s", cliSetup.Args["model"], shown[1].ID)
 			}
 		})
 	}

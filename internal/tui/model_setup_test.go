@@ -115,6 +115,13 @@ func TestModelSetupScreen(t *testing.T) {
 		}
 	}
 	m = framed(t, m, &frames, "s", "enter")
+	// The model step lists the agent's catalogue for the provider.
+	shown, more := dispatchermodel.ModelHints("anthropic")
+	for _, want := range []string{"1. " + dispatchermodel.HintLine(shown[0]), dispatchermodel.HintsNote(more)} {
+		if !strings.Contains(frames[len(frames)-1], want) {
+			t.Fatalf("no %q in\n%s", want, frames[len(frames)-1])
+		}
+	}
 	m = framed(t, m, &frames, strings.Split("claude-sonnet-4-5", "")...)
 	m = framed(t, m, &frames, "enter", modelTestKey)
 	typedKey := m.modelSetup.wizard.key

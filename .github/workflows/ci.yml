@@ -49,6 +49,8 @@ jobs:
       - run: npm ci --ignore-scripts
       - run: npm run check
       - run: npm run check:schema
+      # The model hints setup shows come from the pinned pi-ai's catalogue.
+      - run: npm run check:models
       - run: npm run check:lock
       - run: npm audit --omit=dev --audit-level=high
       # No provider keys exist in this workflow; the tests use local fakes only.

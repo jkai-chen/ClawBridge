@@ -133,10 +133,13 @@ func TestPostgresQueue(t *testing.T) {
 		t.Fatal(res, err)
 	}
 	holder.Rollback()
-	// The sweep is global: other tests' run-out leases in the same database
-	// may die with this one.
-	if res, err := q.s.SweepDeliveries(context.Background()); err != nil || res.Dead < 1 {
-		t.Fatal(res, err)
+	// The lease dies through the session's own sweep, which lease runs
+	// first. Not SweepDeliveries: it is global, and with this test's clock
+	// 11 minutes ahead and one attempt it would kill the live leases of
+	// other packages' tests sharing the database (the server's stream tests
+	// run alongside under go test -p 2).
+	if got := q.lease("b"); len(got) != 0 {
+		t.Fatal("a dead letter was offered", got)
 	}
 	notice := q.do("inbox", "c", nil).(map[string]any)["messages"].([]map[string]any)
 	if len(notice) != 1 || notice[0]["kind"] != deadLetterKind || strings.Contains(notice[0]["body"].(string), "hello") {

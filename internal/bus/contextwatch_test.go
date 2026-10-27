@@ -436,3 +436,118 @@ func TestPurgeRemovesOldContextNotices(t *testing.T) {
 		t.Fatalf("%d %v", n, h.outcomes())
 	}
 }
+
+func (h *contextHarness) setLevels(session string, a map[string]any) (map[string]any, error) {
+	r, err := h.s.Execute(context.Background(), h.request("context_levels_set", session, a))
+	if err != nil {
+		return nil, err
+	}
+	return r.Data.(map[string]any), nil
+}
+
+// §4.3: a session may lower its own levels, never raise them past the
+// project's, and clear them back to the project's.
+func TestContextLevelsSet(t *testing.T) {
+	h := newContextHarness(t, nil) // * : warn 100k, handover 200k
+	out, err := h.setLevels("a", map[string]any{"warn_tokens": 50000})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if l := out["levels"].(map[string]any); l["warn_tokens"] != int64(50000) || l["handover_tokens"] != int64(200000) {
+		t.Fatalf("%+v", out)
+	}
+	// The lowered level drives the report and its notice.
+	r := h.mustReport("a", 60000, 0, 0)
+	if r["level"] != "warn" || r["levels"].(map[string]any)["warn_tokens"] != int64(50000) || len(h.notices("c")) != 1 {
+		t.Fatalf("%+v %q", r, h.notices("c"))
+	}
+	if s := h.session("a"); s["context_warn_tokens"] != int64(50000) || s["context_handover_tokens"] != nil {
+		t.Fatalf("%+v", s)
+	}
+	for name, a := range map[string]map[string]any{
+		"raise warn":           {"warn_tokens": 150000},
+		"raise handover":       {"handover_tokens": 250000},
+		"warn above handover":  {"warn_tokens": 90000, "handover_tokens": 80000},
+		"warn above project's": {"handover_tokens": 40000}, // with own warn unset, the project's 100k
+		"nothing":              {},
+		"clear with a level":   {"clear": true, "warn_tokens": 10},
+		"zero":                 {"warn_tokens": 0},
+		"text":                 {"warn_tokens": "5"},
+		"unknown argument":     {"warn": 5},
+	} {
+		if _, err := h.setLevels("a", a); err == nil {
+			t.Fatalf("%s accepted", name)
+		}
+	}
+	if _, err := h.setLevels("a", map[string]any{"warn_tokens": 40000, "handover_tokens": 80000}); err != nil {
+		t.Fatal(err)
+	}
+	// Setting one level keeps the other [R131-L1]; the check is against the
+	// levels as they will be.
+	if out, err = h.setLevels("a", map[string]any{"warn_tokens": 30000}); err != nil || out["levels"].(map[string]any)["handover_tokens"] != int64(80000) {
+		t.Fatalf("%+v %v", out, err)
+	}
+	if _, err := h.setLevels("a", map[string]any{"handover_tokens": 30000}); err == nil {
+		t.Fatal("a handover at the session's own warn was accepted")
+	}
+	if _, err := h.setLevels("a", map[string]any{"warn_tokens": 90000}); err == nil {
+		t.Fatal("a warn above the session's own handover was accepted")
+	}
+	// Below the project's warn but above the session's own: fine.
+	if _, err := h.setLevels("a", map[string]any{"handover_tokens": 50000}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.setLevels("a", map[string]any{"handover_tokens": 80000}); err != nil {
+		t.Fatal(err)
+	}
+	if s := h.session("a"); s["context_warn_tokens"] != int64(30000) || s["context_handover_tokens"] != int64(80000) {
+		t.Fatalf("%+v", s)
+	}
+	out, err = h.setLevels("a", map[string]any{"clear": true})
+	if err != nil || out["levels"].(map[string]any)["warn_tokens"] != int64(100000) {
+		t.Fatalf("%+v %v", out, err)
+	}
+	if s := h.session("a"); s["context_warn_tokens"] != nil || s["context_handover_tokens"] != nil {
+		t.Fatalf("%+v", s)
+	}
+	if got := strings.Join(h.actions("context_levels"), ","); got != strings.TrimSuffix(strings.Repeat("context_levels_set,", 6), ",") {
+		t.Fatal(got)
+	}
+	// Fenced like a report.
+	wrong := h.request("context_levels_set", "a", map[string]any{"instance": "stale", "warn_tokens": 10})
+	if _, err := h.s.Execute(context.Background(), wrong); err == nil {
+		t.Fatal("a stale instance set levels")
+	}
+	h.call("update_session", "b", map[string]any{"role": "reviewer"})
+	h.call("retire_session", "b", nil)
+	if _, err := h.setLevels("b", map[string]any{"warn_tokens": 10}); err == nil {
+		t.Fatal("a retired session set levels")
+	}
+}
+
+func TestContextLevelsSetNeedsAProjectLevel(t *testing.T) {
+	h := newContextHarness(t, map[string]any{"enabled": true, "levels": []any{map[string]any{"role": "lead", "warn_tokens": 10, "handover_tokens": 20}}})
+	if _, err := h.setLevels("a", map[string]any{"warn_tokens": 5}); err == nil || !strings.Contains(err.Error(), "no context level") {
+		t.Fatalf("%v", err)
+	}
+	off := newContextHarness(t, map[string]any{"enabled": false})
+	if _, err := off.setLevels("a", map[string]any{"warn_tokens": 5}); err == nil || !strings.Contains(err.Error(), "off") {
+		t.Fatalf("%v", err)
+	}
+}
+
+// The project can lower its own levels below a session's later: the
+// session's warn then stays below the handover level.
+func TestEffectiveLevelsKeepWarnBelowHandover(t *testing.T) {
+	project := &ContextLevel{Role: "*", WarnTokens: 100, HandoverTokens: 120}
+	l := effectiveLevels(project, map[string]any{"context_warn_tokens": int64(90), "context_handover_tokens": int64(80)})
+	if l.WarnTokens != 79 || l.HandoverTokens != 80 {
+		t.Fatalf("%+v", l)
+	}
+	if l := effectiveLevels(project, map[string]any{"context_warn_tokens": int64(500)}); l.WarnTokens != 100 {
+		t.Fatalf("a session raised its level: %+v", l)
+	}
+	if effectiveLevels(nil, nil) != nil {
+		t.Fatal("levels without a project level")
+	}
+}

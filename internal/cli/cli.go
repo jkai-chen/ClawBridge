@@ -50,6 +50,7 @@ Commands: setup --local, project create SLUG, register [NAME], sessions, send TO
           workspace-domains DOMAIN...|--clear, doctor, tui [--screen SCREEN], version,
           cloud check [infra|server|version|workspace|linear-app|backups|all], cloud secret set KEY (own-server onboarding),
           project context-watch show|set --file FILE --expected-revision N,
+          context levels set [--warn-tokens N] [--handover-tokens N] | --clear,
           context show [--session NAME | --agent claude-code|codex --transcript PATH] [--json],
           context bind [--session NAME] --codex-thread UUID|--agent K --transcript PATH, context hooks install|uninstall [--scope local|user|project-shared]
 Interactive: bare clawbridge opens the selected profile, or Start without one; onboard reopens Start
@@ -212,7 +213,9 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		return server.RunOperator(ctx, args[1:], stdout)
 	}
 	// Context watching reads local files only.
-	if len(args) > 0 && args[0] == "context" {
+	// `context levels` is the server's (the session's own levels); the rest
+	// reads local files.
+	if len(args) > 0 && args[0] == "context" && (len(args) < 2 || args[1] != "levels") {
 		return runContext(ctx, args[1:], stdout, stderr)
 	}
 	// The onboarding probes take cloud flags (--project is a cloud project
@@ -682,6 +685,15 @@ flags:`)
 		arityMin, arityMax = 1, 1
 		f.Bool("confirm", false, "confirm releasing this address from its bound Google account")
 		f.Bool("allow-previous", false, "let the released account bind again, for an unbind made by mistake")
+	case "context":
+		// Only `context levels set` reaches here; see above.
+		if len(rest) < 2 || rest[1] != "set" {
+			return errors.New("usage: context levels set [--warn-tokens N] [--handover-tokens N] | --clear")
+		}
+		op, rest = "context_levels_set", rest[2:]
+		f.Int64("warn-tokens", 0, "this session's own warn level, below the project's")
+		f.Int64("handover-tokens", 0, "this session's own handover level, below the project's")
+		f.Bool("clear", false, "go back to the project's levels")
 	case "whoami":
 		op = "whoami"
 	case "status":
@@ -749,6 +761,9 @@ flags:`)
 			a["mode"] = "server"
 		}
 		a["retention_days"] = f.Lookup("retention-days").Value.(flag.Getter).Get()
+	}
+	if op == "context_levels_set" && f.Lookup("clear").Value.(flag.Getter).Get().(bool) {
+		a["clear"] = true
 	}
 	switch command {
 	case "project":
@@ -976,7 +991,7 @@ flags:`)
 	}
 	if config.Instance != "" {
 		switch op {
-		case "register_session", "list_sessions", "history", "send", "reply", "inbox", "inbox_status", "notification_status", "set_notification_policy", "mark_read", "update_session", "retire_session", "whoami", "message_status", "project_role_set", "project_role_revoke", "purge_expired", "assignment_propose", "assignment_confirm", "assignment_release", "coordinator_set", "intake_policy_get", "intake_policy_set", "intake_trust_add", "intake_trust_remove", "intake_trust_list", "intake_token_create", "intake_token_list", "intake_token_revoke", "intake_list", "intake_dismiss", "intake_rearm":
+		case "register_session", "list_sessions", "history", "send", "reply", "inbox", "inbox_status", "notification_status", "set_notification_policy", "mark_read", "update_session", "retire_session", "whoami", "message_status", "project_role_set", "project_role_revoke", "purge_expired", "assignment_propose", "assignment_confirm", "assignment_release", "coordinator_set", "intake_policy_get", "intake_policy_set", "intake_trust_add", "intake_trust_remove", "intake_trust_list", "intake_token_create", "intake_token_list", "intake_token_revoke", "intake_list", "intake_dismiss", "intake_rearm", "context_levels_set":
 			a["instance"] = config.Instance
 		}
 	}

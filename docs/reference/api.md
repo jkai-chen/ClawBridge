@@ -587,6 +587,17 @@ the project's history.
     the last is refused.
   - With context watching off it stores nothing and answers
     `{"enabled": false}`.
+- **A session's own levels:** `clawbridge context levels set [--warn-tokens N]
+  [--handover-tokens N]` (bus op `context_levels_set`) lowers the calling
+  session's levels below the project's, and `--clear` goes back to them. A
+  level not given keeps the session's own, if it set one.
+  - It is fenced like a report, and audited.
+  - A level above the project's is refused: a session may lower its levels,
+    never raise them.
+  - Warn must stay below handover.
+  - Reports and their notices use the lower of the session's and the
+    project's levels, and `list_sessions` shows `context_warn_tokens` and
+    `context_handover_tokens` (null for the project's).
 - **What the server stores** on the session, shown by `list_sessions`:
   `context_tokens`, `context_window`, `context_level`, `context_compactions`,
   `context_at` and `context_backstop_at`.

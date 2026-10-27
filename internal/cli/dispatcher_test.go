@@ -88,3 +88,32 @@ func TestCLIContextWatchSetting(t *testing.T) {
 	}
 	rejectCLI(t, "project", "context-watch", "set", "--file", file, "--expected-revision", "1")
 }
+
+// A session lowers its own levels below the project's, and clears them.
+func TestCLIContextLevelsSet(t *testing.T) {
+	isolated(t)
+	invoke(t, "setup", "--local", "--workspace", "w")
+	invoke(t, "project", "create", "p")
+	t.Setenv("CLAWBRIDGE_PROJECT", "p")
+	invoke(t, "register", "eng", "--instance", "eng-i")
+	file := filepath.Join(t.TempDir(), "context-watch.json")
+	if err := os.WriteFile(file, []byte(`{"enabled": true, "levels": [{"role": "*", "warn_tokens": 700000, "handover_tokens": 750000}]}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	invoke(t, "project", "context-watch", "set", "--file", file, "--expected-revision", "0")
+	as := []string{"--session", "eng", "--instance", "eng-i", "context", "levels", "set"}
+	got := invoke(t, append(as, "--warn-tokens", "500000")...)
+	if l := got["levels"].(map[string]any); l["warn_tokens"] != float64(500000) || l["handover_tokens"] != float64(750000) {
+		t.Fatal(got)
+	}
+	rejectCLI(t, append(as, "--handover-tokens", "800000")...)
+	rejectCLI(t, append(as, "--clear", "--warn-tokens", "1")...)
+	rejectCLI(t, "--session", "eng", "--instance", "eng-i", "context", "levels", "show")
+	if got = invoke(t, append(as, "--clear")...); got["levels"].(map[string]any)["warn_tokens"] != float64(700000) {
+		t.Fatal(got)
+	}
+	// The local context commands still need no server.
+	if out, err := runContextCmd(t, "show", "--session", "eng"); err != nil || !strings.Contains(out, "not bound") {
+		t.Fatalf("%q %v", out, err)
+	}
+}

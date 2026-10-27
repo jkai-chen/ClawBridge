@@ -335,7 +335,7 @@ func (s *Store) reportContextOp(ctx context.Context, tx *transaction, w map[stri
 	if compacted {
 		count++
 	}
-	levels := policy.levelFor(str(actor, "role"))
+	levels := effectiveLevels(policy.levelFor(str(actor, "role")), actor)
 	previous := str(actor, "context_level")
 	level := contextLevel(levels, report.tokens)
 	var window any
@@ -539,4 +539,130 @@ func purgeContextNotices(ctx context.Context, tx *transaction, wid, pid, now str
 		return 0, err
 	}
 	return res.RowsAffected()
+}
+
+// contextLevelsSchemaV27 holds a session's own lower levels (§4.3): null
+// is the project's.
+const contextLevelsSchemaV27 = `
+ALTER TABLE sessions ADD COLUMN context_warn_tokens INTEGER;
+ALTER TABLE sessions ADD COLUMN context_handover_tokens INTEGER;
+`
+
+// effectiveLevels are the project's levels for a session, lowered by the
+// session's own where it set lower ones. A session can never raise them.
+func effectiveLevels(project *ContextLevel, session map[string]any) *ContextLevel {
+	if project == nil {
+		return nil
+	}
+	l := *project
+	if v, ok := session["context_warn_tokens"]; ok && v != nil {
+		if n := int64(asInt(v)); n >= 1 && n < l.WarnTokens {
+			l.WarnTokens = n
+		}
+	}
+	if v, ok := session["context_handover_tokens"]; ok && v != nil {
+		if n := int64(asInt(v)); n >= 2 && n < l.HandoverTokens {
+			l.HandoverTokens = n
+		}
+	}
+	// A project handover since lowered below the session's own warn keeps
+	// warn below handover.
+	if l.WarnTokens >= l.HandoverTokens {
+		l.WarnTokens = l.HandoverTokens - 1
+	}
+	return &l
+}
+
+// contextLevelsSetOp sets the caller's own session's levels below the
+// project's (§4.3), or with clear returns it to the project's. A level not
+// given keeps the session's own. Fenced like
+// a report: the caller's own active session at its instance. Audited.
+func (s *Store) contextLevelsSetOp(ctx context.Context, tx *transaction, w map[string]any, pid string, r Request) (any, error) {
+	instance := str(r.Args, "instance")
+	if r.Session == "" || instance == "" {
+		return nil, invalid("context_levels_set needs the session and its instance")
+	}
+	match, args := sessionAddress(r.Session)
+	actor, err := one(ctx, tx, `SELECT * FROM sessions WHERE project_id=? AND `+match+` AND instance=? AND owner_principal=?`, append(append([]any{pid}, args...), instance, s.principal)...)
+	if err != nil {
+		return nil, scopedError(err, "session instance mismatch; pass the instance returned by register", "forbidden")
+	}
+	if actor["status"] != "active" {
+		return nil, invalid("the session is retired or moved; it cannot set its levels")
+	}
+	policy, _, err := readContextWatch(ctx, tx, pid)
+	if err != nil {
+		return nil, err
+	}
+	if !policy.Enabled {
+		return nil, invalid("context watching is off for this project")
+	}
+	project := policy.levelFor(str(actor, "role"))
+	if project == nil {
+		return nil, invalid("this project sets no context level for the session's role")
+	}
+	a := r.Args
+	clear := a["clear"] == true
+	var warn, handover any
+	read := func(key string) (int64, bool, error) {
+		v, ok := a[key]
+		if !ok || v == nil {
+			return 0, false, nil
+		}
+		n, err := integer(v)
+		if err != nil || n < 1 || n > contextMaxTokens {
+			return 0, false, invalid(fmt.Sprintf("%s is 1 to %d", key, contextMaxTokens))
+		}
+		return int64(n), true, nil
+	}
+	ownWarn, hasWarn, err := read("warn_tokens")
+	if err != nil {
+		return nil, err
+	}
+	ownHandover, hasHandover, err := read("handover_tokens")
+	if err != nil {
+		return nil, err
+	}
+	switch {
+	case clear && (hasWarn || hasHandover):
+		return nil, invalid("clear takes no levels")
+	case !clear && !hasWarn && !hasHandover:
+		return nil, invalid("set warn_tokens, handover_tokens or both, or clear")
+	case !clear:
+		// A level not given keeps the session's own, if it set one.
+		warn, handover = actor["context_warn_tokens"], actor["context_handover_tokens"]
+		effWarn, effHandover := project.WarnTokens, project.HandoverTokens
+		if warn != nil && int64(asInt(warn)) < effWarn {
+			effWarn = int64(asInt(warn))
+		}
+		if handover != nil && int64(asInt(handover)) < effHandover {
+			effHandover = int64(asInt(handover))
+		}
+		if hasWarn {
+			if ownWarn > project.WarnTokens {
+				return nil, invalid(fmt.Sprintf("a session may only lower its levels: the project's warn level is %d", project.WarnTokens))
+			}
+			effWarn, warn = ownWarn, ownWarn
+		}
+		if hasHandover {
+			if ownHandover > project.HandoverTokens {
+				return nil, invalid(fmt.Sprintf("a session may only lower its levels: the project's handover level is %d", project.HandoverTokens))
+			}
+			effHandover, handover = ownHandover, ownHandover
+		}
+		if effWarn >= effHandover {
+			return nil, invalid(fmt.Sprintf("the warn level (%d) must stay below the handover level (%d)", effWarn, effHandover))
+		}
+	}
+	if _, err = tx.ExecContext(ctx, `UPDATE sessions SET context_warn_tokens=?,context_handover_tokens=? WHERE id=? AND instance=? AND status='active'`, warn, handover, actor["id"], instance); err != nil {
+		return nil, err
+	}
+	if err = s.audit(ctx, tx, w["id"].(string), pid, actor["id"].(string), "context_levels", actor["id"].(string), "context_levels_set",
+		map[string]any{"warn_tokens": warn, "handover_tokens": handover, "cleared": clear}); err != nil {
+		return nil, err
+	}
+	actor["context_warn_tokens"], actor["context_handover_tokens"] = warn, handover
+	l := effectiveLevels(project, actor)
+	return map[string]any{"levels": map[string]any{"warn_tokens": l.WarnTokens, "handover_tokens": l.HandoverTokens},
+		"own": map[string]any{"warn_tokens": warn, "handover_tokens": handover}}, nil
 }

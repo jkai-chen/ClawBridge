@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"strconv"
 	"strings"
 	"time"
 )
@@ -46,7 +45,7 @@ func (s *Store) deviceEvent(ctx context.Context, tx *transaction, wid, principal
 	if _, err := tx.ExecContext(ctx, `INSERT INTO device_events(event_id,workspace_id,principal,device_id,kind,label,route,actor,actor_device,created_at) VALUES(?,?,?,?,?,?,?,?,?,?)`, id, wid, principal, device, kind, label, route, actor, by, now); err != nil {
 		return err
 	}
-	if err := s.ownerDeviceNotices(ctx, tx, wid, id, principal, device, kind, label, route, actor, now); err != nil {
+	if err := s.ownerDeviceNotices(ctx, tx, wid, id, principal, device, kind, route, actor, now); err != nil {
 		return err
 	}
 	cutoff := hostClock().UTC().Add(-deviceEventDays * 24 * time.Hour).Format(timestampLayout)
@@ -61,9 +60,11 @@ func (s *Store) deviceEvent(ctx context.Context, tx *transaction, wid, principal
 // device event (A1-D4): one security notice in each project of the
 // workspace whose coordinator session the main owner registered and is
 // active. A session run by anyone else gets nothing. The notice names the
-// user, the device's label and ID, what happened and when, nothing more;
-// its operation ID is the event's, so a project gets it once.
-func (s *Store) ownerDeviceNotices(ctx context.Context, tx *transaction, wid, event, principal, device, kind, label, route, actor, now string) error {
+// user, the device's ID, what happened and when, nothing more: never the
+// label, which a member chooses and which would reach an AI coordinator
+// under the system session's name; its operation ID is the event's, so a
+// project gets it once.
+func (s *Store) ownerDeviceNotices(ctx context.Context, tx *transaction, wid, event, principal, device, kind, route, actor, now string) error {
 	w, err := one(ctx, tx, `SELECT * FROM workspaces WHERE id=?`, wid)
 	if err != nil {
 		return err
@@ -72,9 +73,9 @@ func (s *Store) ownerDeviceNotices(ctx context.Context, tx *transaction, wid, ev
 	if err != nil || len(to) == 0 {
 		return err
 	}
-	body := fmt.Sprintf("Security: new device %s (%s) added to %s at %s via %s.", strconv.Quote(label), device, principal, now, strings.ReplaceAll(route, "_", " "))
+	body := fmt.Sprintf("Security: new device %s added to %s at %s via %s.", device, principal, now, strings.ReplaceAll(route, "_", " "))
 	if kind == "revoked" {
-		body = fmt.Sprintf("Security: device %s (%s) of %s revoked at %s by %s.", strconv.Quote(label), device, principal, now, actor)
+		body = fmt.Sprintf("Security: device %s of %s revoked at %s by %s.", device, principal, now, actor)
 	}
 	body += " Not expected? clawbridge user list, then device revoke."
 	retention := asInt(w["retention_days"])

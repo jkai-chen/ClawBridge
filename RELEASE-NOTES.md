@@ -34,7 +34,8 @@
     others.
   - Not alerted: the device itself, the device that revoked a device, and CI devices.
   - The main owner's coordinator sessions get each event as one `security` message per project, if the owner
-    registered them; a coordinator someone else runs gets nothing (A1-D4).
+    registered them; a coordinator someone else runs gets nothing (A1-D4). It names the user and the device ID, never
+    the member-chosen label.
   - The server answers every device-signed request with `pending_device_events`; the client fetches the events at
     most once a minute. Older clients ignore the field.
 - **Device labels are printable text.** A label is shown on your other devices, so the server refuses control

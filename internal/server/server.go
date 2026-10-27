@@ -629,6 +629,7 @@ func Run(ctx context.Context, args []string) error {
 		return err
 	}
 	store.SetModelSeal(seal)
+	store.SetModelHost(maxAgents, memAvailable)
 	options := startWatcher(ctx, store, watch, HandlerOptions{OAuth: metadata, Writer: writer, Auth: auth, ModelMaxAgents: maxAgents})
 	// A Linear write the server runs as the app may take up to a minute.
 	srv := &http.Server{Addr: settings.Listen, Handler: NewHandlerWithOptions(store, verifier, options), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 20 * time.Second, WriteTimeout: 80 * time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 24 << 10}

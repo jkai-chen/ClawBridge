@@ -128,6 +128,7 @@ Status, on the current main branch:
 | `dispatcher enable --engine model` | on main; refused until a model setup has passed its test |
 | Model key setup and test, the launcher's and the agent's endpoints | on main |
 | Cases: `cases/next`, the read tools, `decide` and `abstain`, the rules fallback | on main |
+| `doctor`'s model checks | on main |
 | Chat (`dispatcher chat`) | in review |
 | `clawbridge-agentd` (the launcher) with its per-owner network and egress proxy | in review |
 | Deployment, and CI against a real Docker daemon, for the launcher | planned |
@@ -218,3 +219,24 @@ A project owner can ask the model a question from their own terminal, with no se
   - To act, use the CLI's own commands.
 - **Retention:** questions and replies are kept with the case, like other cases. There is no purge yet; a retention
   policy is planned before v1.0.
+
+### What doctor shows
+
+`clawbridge doctor`, run with your Linear profile (as for the task board's checks), shows a project owner the model
+mode, once an owner of the project has a model key or model mode is on. Members see none of it. It reads only, and
+never the key:
+
+- **The seal key** (`dispatcher.model.seal`): fails when the server has none, so no stored key opens; warns while
+  `CLAWBRIDGE_MODEL_KEY_SEAL_KEY_PREVIOUS` is still set, which means a rotation isn't finished. That warning is shown
+  even before anyone sets the model up.
+- **The keys** (`dispatcher.model.key`): each owner's key, active or pending its test, with its revision. It fails when
+  model mode is on but no owner has a tested key, and warns when a newer setup's test failed (the active key keeps
+  running).
+- **The agents** (`dispatcher.model.agent`): each owner's agent, running or offline, and when it last called. It fails
+  when the provider refuses the key (`provider_auth`) or agentd reported the agent crash-looping in the last hour, and
+  warns when a credential was presented twice or with a wrong binding secret in the last week, or when model mode is on
+  and no agent has called for 5 minutes.
+- **agentd** (`dispatcher.model.launcher`): whether it called in the last 5 minutes, and when its launcher token
+  expires; it warns 14 days ahead.
+- **Capacity** (`dispatcher.model.capacity`): the server's live agents against the cap, warning at the cap, and when
+  the agents that may still start (160 MiB each) need more than the host's available memory.

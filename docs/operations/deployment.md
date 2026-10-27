@@ -541,9 +541,12 @@ CLAWBRIDGE_DISPATCHER_MODEL_MAX_AGENTS=2                  # optional, 1-20
      owners run `dispatcher model setup` again. It ends by saying whether any
      key still needs the previous key.
   3. Once none does, remove `CLAWBRIDGE_MODEL_KEY_SEAL_KEY_PREVIOUS` and
-     recreate the API.
+     recreate the API. Until then, `clawbridge doctor` warns project owners
+     that a rotation is not finished.
 - **The agent cap.** It is what the server reports to agentd: agentd never runs
-  more agent containers than this. The default is 2.
+  more agent containers than this. The default is 2. Each agent container may
+  use up to 160 MiB, and `clawbridge doctor` warns when the agents that may
+  still start need more than the host's available memory (`MemAvailable`).
 - **The launcher token.** agentd's credential opens only its three calls: which
   owners need an agent, a one-time credential for one of them, and a fixed-code
   report. Create it on the host, straight into a new env file for agentd:
@@ -559,7 +562,8 @@ CLAWBRIDGE_DISPATCHER_MODEL_MAX_AGENTS=2                  # optional, 1-20
 
   A launcher token expires 90 days after it is created, and the command prints
   the date. Before then, create the next one into a new env file, point agentd
-  at it, and revoke the old one by its ID.
+  at it, and revoke the old one by its ID. `clawbridge doctor` warns project
+  owners 14 days ahead, and when agentd has not called for 5 minutes.
 - **No bodies in the logs.** The agent's config answer carries the owner's
   provider key once. Keep the reverse proxy from logging request or response
   bodies; the reference Caddy configuration logs none.

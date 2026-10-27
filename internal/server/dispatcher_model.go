@@ -10,6 +10,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"os"
 	"strconv"
 	"strings"
 	"sync"
@@ -550,4 +551,25 @@ func readModelSettings(getenv func(string) string) (*bus.ModelSeal, int, error) 
 	}
 	seal, err := bus.NewModelSeal(keys[0], keys[1])
 	return seal, maxAgents, err
+}
+
+// memInfoPath is where the host's available memory is read, for doctor's
+// headroom warning (§5.1).
+var memInfoPath = "/proc/meminfo"
+
+// memAvailable reads MemAvailable from memInfoPath, in bytes; ok is false
+// where there is none (not Linux).
+func memAvailable() (uint64, bool) {
+	raw, err := os.ReadFile(memInfoPath)
+	if err != nil {
+		return 0, false
+	}
+	for _, line := range strings.Split(string(raw), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) == 3 && fields[0] == "MemAvailable:" && fields[2] == "kB" {
+			n, err := strconv.ParseUint(fields[1], 10, 64)
+			return n << 10, err == nil
+		}
+	}
+	return 0, false
 }

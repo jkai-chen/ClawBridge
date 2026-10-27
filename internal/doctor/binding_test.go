@@ -64,7 +64,7 @@ func TestDoctorReadsTheBindingOnlyForALinearUser(t *testing.T) {
 		for _, check := range report.Checks {
 			read = read || check.ID == "linear.binding"
 		}
-		if read != linear || strings.Contains(strings.Join(ops, ","), "taskboard") != linear {
+		if read != linear || strings.Contains(strings.Join(ops, ","), "taskboard") != linear || strings.Contains(strings.Join(ops, ","), "dispatcher_model_doctor") != linear {
 			t.Errorf("linear=%v: binding check %v, ops %v", linear, read, ops)
 		}
 	}

@@ -190,6 +190,9 @@ func Run(ctx context.Context, in Input, executor Executor) Report {
 		if in.Config.Mode == "cloud" {
 			checkLinearApp(ctx, executor, wid, pid, add)
 		}
+		// The dispatcher needs the task board, so its owner is a Linear
+		// user; its model mode is shown to a project owner only.
+		checkDispatcherModel(ctx, executor, wid, pid, add)
 	}
 	for _, mcp := range in.MCPConfigs {
 		if mcp.Agent == "" {

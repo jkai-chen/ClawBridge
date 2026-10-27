@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/charmbracelet/x/ansi"
 )
@@ -48,7 +49,7 @@ func TestSessionsAttributionDetailsPreserveFullSanitizedMetadata(t *testing.T) {
 	for _, width := range []int{32, 80, 140} {
 		m := Model{width: width, sessions: rows, selected: 0, cfg: Config{Mode: ModeLocal}}
 		output := ansi.Strip(renderSessions(m))
-		details := output[strings.Index(output, "Selected session"):]
+		details := output[strings.Index(output, "Owner "):]
 		flat := strings.ReplaceAll(details, "\n", "")
 		for _, want := range []string{"long-owner@example.test", `界host\x1b[2J-long-name`, "self-reported", "not verified identity", "not-google", "no Google verification claimed"} {
 			if !strings.Contains(flat, want) {
@@ -78,7 +79,7 @@ func TestSessionsDetailsShowTheLiveAssignment(t *testing.T) {
 	if rows[0].Assignment != "confirmed SYN-5 (engineer) internal/tui/**, docs [owner stale]" || rows[1].Assignment != "" {
 		t.Fatalf("%q %q", rows[0].Assignment, rows[1].Assignment)
 	}
-	for selected, want := range []string{"Assignment: confirmed SYN-5", "Assignment: None"} {
+	for selected, want := range []string{"Issue    confirmed SYN-5", "Issue    None"} {
 		m := Model{width: 140, sessions: rows, selected: selected}
 		if out := ansi.Strip(renderSessions(m)); !strings.Contains(out, want) {
 			t.Fatalf("missing %q:\n%s", want, out)
@@ -95,12 +96,13 @@ func TestSessionsShowTheLastContextReport(t *testing.T) {
 	if rows[0].Context != "612k warn [1000k]" || rows[1].Context != "5k" || rows[2].Context != "" {
 		t.Fatalf("%q %q %q", rows[0].Context, rows[1].Context, rows[2].Context)
 	}
-	if rows[0].ContextDetail != "612k tokens, level warn, window 1000k, 2 compaction(s), reported 2026-01-01T10:00:00Z" ||
+	if rows[0].ContextDetail != "612k tokens, level warn, window 1000k, 2 compaction(s)" || rows[0].ContextAt != "2026-01-01T10:00:00Z" ||
 		!strings.Contains(rows[1].ContextDetail, "last compacted before its handover level at 2026-01-01T09:00:00Z") {
 		t.Fatalf("%q %q", rows[0].ContextDetail, rows[1].ContextDetail)
 	}
-	for selected, want := range []string{"Context: 612k tokens, level warn", "Context: 5k tokens, level ok", "Context: Not reported"} {
-		m := Model{width: 160, sessions: rows, selected: selected}
+	now := func() time.Time { return time.Date(2026, 1, 1, 10, 4, 0, 0, time.UTC) }
+	for selected, want := range []string{"Context  612k tokens, level warn, window 1000k, 2 compaction(s), 4 minutes ago", "Context  5k tokens, level ok", "Context  Not reported"} {
+		m := Model{width: 160, sessions: rows, selected: selected, cfg: Config{Now: now}}
 		out := ansi.Strip(renderSessions(m))
 		if !strings.Contains(out, want) || !strings.Contains(out, "CONTEXT") {
 			t.Fatalf("missing %q:\n%s", want, out)

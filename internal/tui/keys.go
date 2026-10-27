@@ -161,8 +161,10 @@ func screenBindings(s Screen) []Binding {
 		return overviewBindings
 	case ScreenDoctor:
 		return doctorBindings
+	case ScreenProjects:
+		return projectBindings
 	case ScreenSessions:
-		return pageBindings
+		return append(append([]Binding{}, sessionBindings...), pageBindings...)
 	case ScreenInbox:
 		return append(append([]Binding{}, inboxBindings...), pageBindings...)
 	case ScreenLinear:
@@ -412,8 +414,8 @@ func footerText(m Model) string {
 // screenAbout is what a screen is for, shown in its help.
 var screenAbout = map[Screen]string{
 	ScreenOverview: "Where you are: the workspace, project and session, and who you're signed in as.",
-	ScreenProjects: "The workspace's projects. A workspace-scoped, read-only view.",
-	ScreenSessions: "The project's sessions. v filters this page only; [ goes to the previous page you saw, ] to the server's next page. There is no search across pages.",
+	ScreenProjects: "The workspace's projects you can see: your role, sessions, coordinator and Linear board. ● marks the project this profile works in. Enter opens one, read-only; s and l go to your own project's sessions and board.",
+	ScreenSessions: "The project's sessions. ★ marks the coordinator; STATE is retired, moved, stale or the session's presence; n messages the selected session. v filters this page only; [ goes to the previous page you saw, ] to the server's next page. There is no search across pages.",
 	ScreenInbox:    "The current session's messages. The server stamps delivery; a reload never marks a message read.",
 	ScreenLinear:   "The project's Linear board: your personal Linear connection, and the board this project is linked to. Task ownership comes from the coordinator's issue assignment; selecting a row never claims or completes work. In Intake (n), only a needs-agent label, delegation or mention a trusted person makes in Linear itself counts; signals made through ClawBridge run as the app and are never trusted.",
 	ScreenAccount:  "Your devices and the workspace's members and invites. Anything that revokes or mints a code asks you to type a word first.",
@@ -468,6 +470,9 @@ func (m Model) back() (Model, tea.Cmd) {
 	case m.screen == ScreenInbox && m.inboxOpen:
 		m.inboxOpen = false
 		return m, nil
+	case m.screen == ScreenProjects && m.projectOpen:
+		m.projectOpen = false
+		return m, nil
 	case m.screen == ScreenLinear:
 		return m.linearBack()
 	}
@@ -477,7 +482,7 @@ func (m Model) back() (Model, tea.Cmd) {
 // backTarget names where Esc goes, for the footer; "" when nowhere.
 func (m Model) backTarget() string {
 	switch {
-	case m.screen == ScreenInbox && m.inboxOpen:
+	case m.screen == ScreenInbox && m.inboxOpen, m.screen == ScreenProjects && m.projectOpen:
 		return "back to the list"
 	case m.screen == ScreenLinear:
 		if prev := linearPrevious[m.linearStep()]; prev != "" {

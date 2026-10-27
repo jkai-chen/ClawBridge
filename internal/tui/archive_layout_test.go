@@ -174,7 +174,9 @@ func TestResponsiveSelectedVisibilityAndFullDetailScroll(t *testing.T) {
 	m.screen = ScreenSessions
 	m = m.SetSize(40, 12)
 	for i := 0; i < 80; i++ {
-		m.sessions = append(m.sessions, SessionRow{ID: fmt.Sprint(i), Name: fmt.Sprintf("row-%02d", i), Owner: strings.Repeat("owner", 40) + "OWNER-END", Host: "host"})
+		// 42 repeats keep the marker whole where the 40-column view
+		// hard-wraps the "Owner" detail line.
+		m.sessions = append(m.sessions, SessionRow{ID: fmt.Sprint(i), Name: fmt.Sprintf("row-%02d", i), Owner: strings.Repeat("owner", 42) + "OWNER-END", Host: "host"})
 	}
 	m = m.Select(65)
 	if !strings.Contains(ansi.Strip(m.View()), "row-65") {

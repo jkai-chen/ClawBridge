@@ -4,14 +4,9 @@ ClawBridge · ws_1 › prj_1 › engineer  cloud
 ╭──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
 │ Projects                                                                                                             │
 │                                                                                                                      │
-│   SLUG                         ROLE       NAME                                                                       │
-│ › core                         owner      Core                                                                       │
+│   PROJECT                  ROLE     SESSIONS         COORDINATOR        LINEAR                                       │
+│ › ● core                   owner    0 of 0 active    none               not linked                                   │
 │                                                                                                                      │
-│ Selected project                                                                                                     │
-│ ID: prj_1                                                                                                            │
-│ Slug: core                                                                                                           │
-│ Name: Core                                                                                                           │
-│ Role: owner                                                                                                          │
-│ Git remote: github.com/acme/core                                                                                     │
+│ ● the project this profile works in · Enter opens a project                                                          │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
-↑↓ select · r reload · ? help · q quit
+Enter open · ↑↓ select · r reload · ? help · q quit

@@ -3,7 +3,13 @@ ClawBridge · ws_1 › prj_1 › engineer › Projects › Help  cloud
 
 ╭──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
 │ Help · Projects                                                                                                      │
-│ The workspace's projects. A workspace-scoped, read-only view.                                                        │
+│ The workspace's projects you can see: your role, sessions, coordinator and Linear board. ● marks the project this    │
+│ profile works in. Enter opens one, read-only; s and l go to your own project's sessions and board.                   │
+│                                                                                                                      │
+│ This screen                                                                                                          │
+│   Enter      open                                                                                                    │
+│   s          its sessions (not now)                                                                                  │
+│   l          its Linear board (not now)                                                                              │
 │                                                                                                                      │
 │ Everywhere                                                                                                           │
 │   Tab        next screen                                                                                             │

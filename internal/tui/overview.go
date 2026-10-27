@@ -287,12 +287,19 @@ func renderOverview(m Model) string {
 		b.WriteString(kv("Unread", fmt.Sprintf("%d", len(m.messages))))
 	}
 	if len(m.sessions) > 0 {
-		b.WriteString("\nSessions\n")
-		for i, s := range m.sessions {
-			if i >= 5 {
+		// U22: counted in the Sessions tab's words, and listed as its
+		// "current" filter lists them.
+		b.WriteString("\nSessions · " + sessionCounts(m.sessions) + "\n")
+		shown := 0
+		for _, s := range m.sessions {
+			if shown == 5 {
 				break
 			}
-			b.WriteString(fmt.Sprintf("  %-24s %-10s %s\n", clip(terminalText(s.Name), 24), firstNonempty(terminalText(s.Status), "-"), firstNonempty(terminalText(s.AgentKind), "-")))
+			if (s.Status == "retired" || s.Status == "moved") && archivedStamp(s.UpdatedAt, m.cfg.Now()) {
+				continue
+			}
+			shown++
+			b.WriteString(fmt.Sprintf("  %-24s %-10s %s\n", clip(terminalText(sessionName(s)), 24), stateWord(s), firstNonempty(terminalText(s.Issue), terminalText(s.AgentKind), "-")))
 		}
 	}
 	return strings.TrimRight(b.String(), "\n")

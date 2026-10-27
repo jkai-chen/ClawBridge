@@ -30,7 +30,7 @@ func TestPhase4TUIDraftsRequireExplicitSubmitAndDoNotRetryFailures(t *testing.T)
 	m, cmd := m.Show(tui.Inbox)
 	m = applyTUIMsg(t, m, runTUICmd(t, cmd))
 	before := len(e.recorded())
-	for _, key := range []tea.KeyMsg{{Type: tea.KeyRunes, Runes: []rune("n")}, {Type: tea.KeyRunes, Runes: []rune("peer|cancel this draft")}, {Type: tea.KeyEsc}} {
+	for _, key := range []tea.KeyMsg{{Type: tea.KeyRunes, Runes: []rune("n")}, {Type: tea.KeyRunes, Runes: []rune("peer")}, {Type: tea.KeyEnter}, {Type: tea.KeyRunes, Runes: []rune("cancel this draft")}, {Type: tea.KeyEsc}} {
 		m, cmd = m.UpdateModel(key)
 		if cmd != nil {
 			t.Fatal("draft edit/cancel issued authority command")
@@ -39,7 +39,7 @@ func TestPhase4TUIDraftsRequireExplicitSubmitAndDoNotRetryFailures(t *testing.T)
 	if len(e.recorded()) != before {
 		t.Fatal("canceled draft reached authority")
 	}
-	for _, key := range []tea.KeyMsg{{Type: tea.KeyRunes, Runes: []rune("n")}, {Type: tea.KeyRunes, Runes: []rune("peer|explicit message")}, {Type: tea.KeyEnter}} {
+	for _, key := range []tea.KeyMsg{{Type: tea.KeyRunes, Runes: []rune("n")}, {Type: tea.KeyRunes, Runes: []rune("peer")}, {Type: tea.KeyEnter}, {Type: tea.KeyRunes, Runes: []rune("explicit message")}, {Type: tea.KeyEnter}} {
 		m, cmd = m.UpdateModel(key)
 	}
 	if cmd == nil {

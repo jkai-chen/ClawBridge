@@ -27,6 +27,11 @@
 - **Invite codes stay off the command line (F4).** The bootstrap invite's hint, the CLI help and the docs now say
   `clawbridge join --server URL --email EMAIL`, which asks for the code without echoing it (or reads it from stdin).
   `--code` still works, for scripts.
+- **Downloads in the provisioning skills are pinned (G9-13).** The AWS skill checks Docker's Compose and Buildx
+  plugins against SHA-256 values written in the skill, not checksum files from the same release. The GCP skill checks
+  Docker's apt signing key against its published fingerprint before trusting the repository, and stops if it differs.
+- **The dispatcher agent's model library is pinned to one fork release (G9-11).** The lock check accepts only the
+  `cb-v1.1.0-1` tarballs, by version and integrity, and fails if that tag stops pointing at its commit (`96f054a`).
 
 ## Linear documents
 

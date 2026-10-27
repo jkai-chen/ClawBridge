@@ -242,8 +242,11 @@ mistyped. Nothing was written, so check `attach-volume` and run the block
 again.
 
 **Docker.** Docker comes from Amazon Linux's own package. The Compose and Buildx
-plugins come from their projects' releases, pinned by version and checked
-against the published checksums:
+plugins come from their projects' releases, pinned by version and by SHA-256.
+The checksums are written here, not fetched from the same release as the file:
+whoever could replace a release asset could replace its checksum file too. They
+were checked against each release's published checksums when the version was
+pinned, and a version bump changes both lines together:
 
 ```sh
 set -e
@@ -252,11 +255,13 @@ systemctl enable --now docker
 mkdir -p /usr/local/lib/docker/cli-plugins
 cd /usr/local/lib/docker/cli-plugins
 COMPOSE=v2.29.7
+COMPOSE_SHA256=6e9fbd5daa20dca5d7d89145081ae8155d68ef2928b497d9f85b54fe0f9dbb2c
 curl -fsSLo docker-compose "https://github.com/docker/compose/releases/download/$COMPOSE/docker-compose-linux-aarch64"
-echo "$(curl -fsSL "https://github.com/docker/compose/releases/download/$COMPOSE/docker-compose-linux-aarch64.sha256" | cut -d' ' -f1)  docker-compose" | sha256sum -c
+echo "$COMPOSE_SHA256  docker-compose" | sha256sum -c
 BUILDX=v0.17.1
+BUILDX_SHA256=de05dccd47932eb9fd6e63781ab29d2b0b2c834bbdd19b51d7ea452b1fe378d3
 curl -fsSLo docker-buildx "https://github.com/docker/buildx/releases/download/$BUILDX/buildx-$BUILDX.linux-arm64"
-echo "$(curl -fsSL "https://github.com/docker/buildx/releases/download/$BUILDX/checksums.txt" | grep " \*buildx-$BUILDX.linux-arm64$" | cut -d' ' -f1)  docker-buildx" | sha256sum -c
+echo "$BUILDX_SHA256  docker-buildx" | sha256sum -c
 chmod 0755 docker-compose docker-buildx
 docker compose version
 docker buildx version

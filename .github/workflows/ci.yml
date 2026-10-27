@@ -32,6 +32,10 @@ jobs:
       - run: python3 scripts/test_publish.py
       - run: bash -n scripts/build-release.sh scripts/publish-release.sh
       - run: sh -n scripts/install.sh
+      - run: sh -n deploy/agentd-check.sh deploy/agentd-check-test.sh
+      # agentd's install check, against a correct install and each break,
+      # in a disposable container (it creates users).
+      - run: docker run --rm -v "$PWD/deploy:/deploy:ro" debian:bookworm-20261005-slim@sha256:7c7b2c966bc9ee8cedfeef67e0e279108992c77681fa595db4a9d65c06ccc587 sh /deploy/agentd-check-test.sh
   dispatcher-agent:
     if: ${{ github.event.repository.private == false }}
     runs-on: ubuntu-latest

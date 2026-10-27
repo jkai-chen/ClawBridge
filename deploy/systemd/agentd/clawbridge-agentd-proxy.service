@@ -1,0 +1,40 @@
+# clawbridge-agentd's socket proxy, in front of cbagent's rootless dockerd
+# (docs/operations/agentd.md). It runs as cbagent, the daemon's own user,
+# and listens on a 0660 socket whose group, cbagent-sock, is how agentd
+# reaches it. It holds no secrets.
+[Unit]
+Description=ClawBridge agentd socket proxy
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=cbagent
+Group=cbagent-sock
+# No secrets: the server URL, both images and the policy directory.
+EnvironmentFile=/etc/clawbridge-agentd/proxy.env
+RuntimeDirectory=clawbridge-agentd
+RuntimeDirectoryMode=0750
+# The proxy checks its upstream socket once, at start. cbagent's user
+# manager starts its dockerd at boot (linger), not always first: wait.
+# systemd expands $NAME itself: $$ passes a $ to the shell.
+ExecStartPre=/bin/sh -c 's=/run/user/$$(id -u)/docker.sock; i=0; while [ ! -S "$$s" ]; do i=$$((i+1)); [ "$$i" -le 60 ] || exit 1; sleep 1; done'
+ExecStart=/bin/sh -c 'exec /usr/local/libexec/clawbridge/clawbridge-agentd proxy --listen /run/clawbridge-agentd/docker.sock --upstream /run/user/$$(id -u)/docker.sock'
+Restart=on-failure
+RestartSec=5
+MemoryMax=64M
+NoNewPrivileges=yes
+ProtectSystem=strict
+# Read-only, not hidden: the upstream socket is under /run/user, which
+# ProtectHome=yes would hide.
+ProtectHome=read-only
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictAddressFamilies=AF_UNIX
+CapabilityBoundingSet=
+LockPersonality=yes
+
+[Install]
+WantedBy=multi-user.target

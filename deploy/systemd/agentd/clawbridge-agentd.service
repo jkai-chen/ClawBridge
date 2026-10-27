@@ -1,0 +1,40 @@
+# clawbridge-agentd, the dispatcher agents' launcher (docs/operations/agentd.md).
+# It runs as cbagentd, which reaches Docker only through the proxy's socket
+# (group cbagent-sock), never the daemon's own. Its env files are root's
+# (0600): systemd reads them, and agentd can't.
+[Unit]
+Description=ClawBridge agentd (the dispatcher agents' launcher)
+After=clawbridge-agentd-proxy.service network-online.target
+Requires=clawbridge-agentd-proxy.service
+Wants=network-online.target
+
+[Service]
+User=cbagentd
+Group=cbagentd
+SupplementaryGroups=cbagent-sock
+EnvironmentFile=/etc/clawbridge-agentd/agentd.env
+# From `operator launcher-token create --out` (docs/operations/agentd.md).
+EnvironmentFile=/etc/clawbridge-agentd/launcher.env
+# The proxy unit counts as started before its socket exists: wait for it.
+# systemd expands $NAME itself: $$ passes a $ to the shell.
+ExecStartPre=/bin/sh -c 'i=0; while [ ! -S /run/clawbridge-agentd/docker.sock ]; do i=$$((i+1)); [ "$$i" -le 30 ] || exit 1; sleep 1; done'
+ExecStartPre=/usr/local/libexec/clawbridge/clawbridge-agentd check
+ExecStart=/usr/local/libexec/clawbridge/clawbridge-agentd run
+Restart=on-failure
+RestartSec=10
+MemoryMax=64M
+NoNewPrivileges=yes
+ProtectSystem=strict
+ReadWritePaths=/var/lib/clawbridge-agentd/policy
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+CapabilityBoundingSet=
+LockPersonality=yes
+
+[Install]
+WantedBy=multi-user.target

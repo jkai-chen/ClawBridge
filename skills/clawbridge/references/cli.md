@@ -5,6 +5,22 @@ commands then return JSON with `source` and `data`, and failures use stderr and 
 nonzero exit status. Without it, a terminal gets a layout for people, which is not
 a contract and may change.
 
+## Check the setup with doctor
+
+`clawbridge doctor --json` checks the configuration, the credential route, the
+connection and the session binding. It only reads: it changes nothing and
+writes no ClawBridge state, so it is safe to run whenever something looks
+wrong. Each check has an `id`, a `status`, a `message` and often an `action`:
+
+- `pass`: fine.
+- `warn`: works, but something needs attention, such as an old skill copy. The
+  command still succeeds.
+- `fail`: a required check failed; the command exits nonzero. Report the check's
+  `id`, `message` and `action` to the human; don't work around it.
+
+The report's own `status` is the worst check's. Read the JSON; the human
+layout words the same checks for people and may change.
+
 ## Select local or cloud mode
 
 Local mode uses the writable SQLite authority. Hosted cloud mode uses an

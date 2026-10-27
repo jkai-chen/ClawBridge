@@ -1203,6 +1203,24 @@ can run `show`.
   project's newest five updates and when. Never titles, descriptions, comment
   text or update text.
 
+## Linear views
+
+ClawBridge lists the shared views of the board's bound teams: issue views and project views.
+
+```sh
+clawbridge linear view list --profile PROFILE_ID [--team TEAM_UUID] [--type issue|project] [--limit N] [--cursor C]
+clawbridge linear view show VIEW_UUID --profile PROFILE_ID
+```
+
+- **What's listed:** shared views of a bound team (the binding's default team unless `--team` names another). A
+  person's private views, workspace views and other kinds aren't listed; the answer counts the last two
+  (`workspace_views`, `other_kinds`) and names none.
+- **The filter isn't shown yet.** Linear's MCP doesn't return a view's filter. Reading it, and creating or changing
+  views, will use the project owner's personal Linear API key in a later release.
+- **Agents** list views with the MCP tool `taskboard_views_v2`. They can't create or change views; they prepare a view
+  set for the project owner ([the agent's guide](../skills/clawbridge/references/views.md)).
+- **Names are text others wrote:** the CLI strips terminal control characters from them.
+
 ## Linear documents (v0.3.2)
 
 Agents can read the Linear documents of the board they work on. They never

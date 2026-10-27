@@ -1377,7 +1377,8 @@ the project owner's, and nobody else's:
 - **Check it:** `clawbridge linear key status --profile ID` says whether a key
   is saved and where, and that it still reads as you, without printing it.
   `clawbridge doctor` says only whether one is saved: it never reads it.
-- **Remove it:** `clawbridge linear key remove --profile ID`. `linear logout`
+- **Remove it:** `clawbridge linear key remove --profile ID`, in your own
+  terminal (it refuses an agent's environment, as `set` does). `linear logout`
   of the profile removes its key too.
 
 **What keeps agents and other ClawBridge processes away from it:**

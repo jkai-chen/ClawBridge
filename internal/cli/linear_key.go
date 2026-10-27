@@ -35,8 +35,9 @@ func linearKeys(directory string) linearkey.Store {
 // linearKey runs linear key set|status|remove for one profile.
 func linearKey(ctx context.Context, flags Config, manager *linearconn.Manager, directory, action, profile string, stderr io.Writer) (any, error) {
 	keys := linearKeys(directory)
-	if action == "set" || action == "status" {
-		// Refused before anything is asked or read (K1, K2).
+	if action == "set" || action == "status" || action == "remove" {
+		// Refused before anything is asked or read (K1, K2). An agent
+		// doesn't remove the owner's key either; linear logout still does.
 		if err := linearkey.Allowed(); err != nil {
 			return nil, err
 		}

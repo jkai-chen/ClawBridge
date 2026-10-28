@@ -17,6 +17,10 @@
   and update tools take Linear's priority, by name (`none`, `urgent`, `high`, `medium`, `low`) or 0–4. It is sent
   only when Linear's tool takes a priority, and the returned issue is checked like the other fields. No schema
   change, no Linear configuration.
+- **`clawbridge linear labels` without `--team` maps every bound team's label names to IDs in one call**, per team
+  (each team has its own IDs, so teams are never merged). Group and archived labels are left out, and a name two
+  labels share is listed under `duplicates`. `--team` pages one team as before. No schema change, no Linear
+  configuration.
 
 # ClawBridge v0.3.6 (released 28 Oct)
 

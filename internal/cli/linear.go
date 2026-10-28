@@ -263,7 +263,11 @@ func parseLinear(command string, args []string, stderr io.Writer) (linearFlags, 
 		}
 	case "labels", "members":
 		page()
-		f.StringVar(&v.team, "team", "", "required allowed team UUID")
+		if command == "labels" {
+			f.StringVar(&v.team, "team", "", "one bound team's labels, paged; without it, every bound team's labels by name")
+		} else {
+			f.StringVar(&v.team, "team", "", "required allowed team UUID")
+		}
 	case "issue", "states":
 		profile()
 		if command == "issue" {
@@ -519,10 +523,11 @@ func parseLinear(command string, args []string, stderr io.Writer) (linearFlags, 
 	if (command == "view-list" || command == "view-show") && v.team != "" && !linearprovider.ValidID(v.team) {
 		return v, nil, errors.New("--team takes a team UUID")
 	}
-	if command == "labels" || command == "members" {
-		if !linearprovider.ValidID(v.team) {
-			return v, nil, errors.New("discovery requires --team UUID")
-		}
+	if command == "labels" && !v.supplied["team"] && (v.supplied["limit"] || v.supplied["cursor"]) {
+		return v, nil, errors.New("--limit and --cursor page one team's labels: add --team UUID")
+	}
+	if (command == "labels" && v.supplied["team"] || command == "members") && !linearprovider.ValidID(v.team) {
+		return v, nil, errors.New("discovery requires --team UUID")
 	}
 	if v.supplied["comments-since"] && !v.comments {
 		return v, nil, errors.New("--comments-since requires --comments")
@@ -1111,6 +1116,12 @@ func runLinear(ctx context.Context, flags Config, args []string, stdout, stderr 
 		}
 		data, err = linearViews(bounded, service, scope, v, pos)
 	case "labels":
+		if v.team == "" {
+			// Every bound team's labels by name, per team.
+			teams, e := service.LabelMapV2(bounded, scope)
+			data, err = map[string]any{"teams": teams}, e
+			break
+		}
 		data, err = service.LabelsV2(bounded, scope, v.team, v.limit, v.cursor)
 	case "members":
 		data, err = service.MembersV2(bounded, scope, v.team, v.limit, v.cursor)

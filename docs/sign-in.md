@@ -12,6 +12,9 @@ computer signs every request with its own **device key**.
 >     `device enroll`, and the device checks in `whoami` and `doctor`;
 >   - the TUI's Account screen and the guided setup's "I have an invite code" path;
 >   - the `auth_mismatch` check in `clawbridge cloud check server`.
+> - **The next release (v0.3.6, on main) adds** the invite link, the short-lived
+>   `device add` link, new-device alerts and dormant devices; its server and
+>   client come together.
 >
 > A v0.3.4 client can't join a server with device keys: install v0.3.5 or later
 > first ([install and update](installation.md)).

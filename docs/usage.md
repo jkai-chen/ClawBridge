@@ -437,9 +437,14 @@ clawbridge tui --screen doctor
 
 Run in an interactive terminal.
 
+- **The header** reads `ClawBridge · workspace › project › session`, then the
+  mode: `local`, `cloud`, or `cloud · offline, read-only` while reads come from
+  the offline mirror. In help, or in an opened message, it ends with where you
+  are (`› Inbox › from reviewer`).
 - **Screens:** Overview, Projects, Sessions, Inbox, then Linear, Dispatcher,
   Account (hosted workspaces only) and Doctor. The digits follow that order (1–8;
   Doctor is 7 in local mode). Tab and Shift-Tab step through them.
+  `--screen cloud` adds a Cloud tab with the server information.
 - **Keys:** the footer shows the screen's own keys, and `?` opens help with every
   key for the screen and everywhere (Esc or `?` closes it). Arrows/j/k select
   rows, PageUp/PageDown scroll, `r` reloads, and `q` or Ctrl-C quits. `q` asks first
@@ -521,7 +526,7 @@ does not register/resume an actor. Without a session the Inbox says so and asks
 the server nothing: inboxes belong to agent sessions, so to read one as a session,
 run `clawbridge tui --session NAME` on that session's machine. On a server with the
 message stream, the Inbox reloads by itself when the session's mail changes, while it
-is on screen and you aren't typing; elsewhere, `r` reloads it. Cloud is informational; provisioning and new
+is on screen and you aren't typing; elsewhere, `r` reloads it. Provisioning and new
 project administration use explicit operator workflows.
 
 On Sessions and Inbox, `v` cycles Current/Archive/All. Retired/moved sessions enter

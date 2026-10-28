@@ -707,7 +707,7 @@ that needs a label or project asks the coordinator.
 - **Where.** Only in a team of the project's binding.
 - **Nothing is ever retired, deleted or merged.**
 
-### Project kinds (a project-label group, setting only)
+### Project kinds (a project-label group)
 
 A project kind says what each of the project's Linear projects is for, such as Engineering, Review or Test. It's one
 single-select **project-label group** (default `Type`) on one bound team, plus its values. Project views (filtered by

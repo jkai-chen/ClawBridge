@@ -168,9 +168,8 @@ Choose how people sign in. `CLAWBRIDGE_AUTH` in the server's env file sets it
 - **Device sign-in** (`device`, or `google,device` for both): people join with an
   invite code and their computer's own key, and a device-only server needs no Google
   OAuth client.
-  - **What is released:** the server side shipped in v0.3.4. The client commands
-    that join and invite (`clawbridge join`, `invite`) are **not released yet**; they
-    come with the next client release. Until then, choose Google sign-in.
+  - **What is released:** the server side shipped in v0.3.4, and the client
+    commands that join and invite (`clawbridge join`, `invite`) in v0.3.5.
   - See [signing in with invites and device keys](../sign-in.md).
 
 **On AWS:** Google sign-in needs those clients in a Google Cloud project you own,
@@ -226,8 +225,7 @@ with): the host operator lets the owner in with a one-time code instead.
    project yet, so the terminal view opens on **Waiting for a project** and shows
    `clawbridge project create SLUG`; once you've created it, the view opens on it.
 
-`operator bootstrap-invite` shipped in v0.3.4; `clawbridge join` is **not released
-yet** (it comes with the next client release).
+`operator bootstrap-invite` shipped in v0.3.4, and `clawbridge join` in v0.3.5.
 
 **On AWS:** the server host is reached over SSM, not SSH, so one command on your
 own computer does both steps:
@@ -318,7 +316,7 @@ clawbridge project role-set colleague@example.com member
 They join with Start's "Join a team server" (see [joining a project](../onboarding.md)).
 
 **With device sign-in**, invite them instead, and give each the code and the
-server's URL yourself (the client commands are not released yet):
+server's URL yourself (the client commands are in v0.3.5):
 
 ```sh
 clawbridge invite --email colleague@example.com --grant my-project=member

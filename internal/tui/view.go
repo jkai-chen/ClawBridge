@@ -163,58 +163,6 @@ func renderBody(m Model) string {
 	}
 }
 
-func renderOverview(m Model) string {
-	var b strings.Builder
-	b.WriteString(title(ScreenOverview))
-	b.WriteString("\n\n")
-	if m.loadErr != "" {
-		b.WriteString(errorBody(m, "the overview", m.loadErr) + "\n\n")
-	}
-	b.WriteString(kv("Workspace", firstNonempty(terminalText(m.workspace.Name), terminalText(m.cfg.Workspace), "not configured")))
-	b.WriteString(kv("Project", firstNonempty(terminalText(m.project.Slug), terminalText(m.cfg.Project), "not configured")))
-	b.WriteString(kv("Session", firstNonempty(terminalText(m.session.Name), terminalText(m.cfg.Session), "not bound")))
-	identity := firstNonempty(terminalText(m.identity.Principal), terminalText(m.cfg.Principal), "not established")
-	provenance := firstNonempty(terminalText(m.identity.Provenance), terminalText(m.cfg.Provenance), "unknown provenance")
-	verified := "unverified"
-	if m.identity.Verified {
-		verified = "verified"
-	}
-	b.WriteString(kv("Identity", identity+" · "+provenance+" · "+verified))
-	online := "unknown"
-	if m.online != nil {
-		online = "offline"
-		if *m.online {
-			online = "online"
-		}
-	}
-	if terminalText(m.source) == "offline-mirror" {
-		online = "offline · scoped cached read"
-	}
-	b.WriteString(kv("Authority", firstNonempty(terminalText(m.source), "not loaded")+" · "+online))
-	b.WriteString("\n")
-	b.WriteString(kv("Sessions", fmt.Sprintf("%d in pinned project", len(m.sessions))))
-	if m.cfg.Session == "" {
-		b.WriteString(kv("Inbox", "no session on this profile (agents' inboxes are per session)"))
-	} else {
-		b.WriteString(kv("Unread", fmt.Sprintf("%d in %s's inbox", len(m.messages), terminalText(m.cfg.Session))))
-	}
-	if m.cfg.Linear != nil {
-		b.WriteString("\nOptional integration: 7 Linear → Connect Linear / Later. Joining does not depend on Linear.\n")
-	}
-	if len(m.sessions) > 0 {
-		b.WriteString("\n")
-		b.WriteString(mutedStyle.Render("Pinned project sessions"))
-		b.WriteString("\n")
-		for i, s := range m.sessions {
-			if i >= 5 {
-				break
-			}
-			b.WriteString(fmt.Sprintf("  %-24s %-10s %s\n", clip(terminalText(s.Name), 24), firstNonempty(terminalText(s.Status), "-"), firstNonempty(terminalText(s.AgentKind), "-")))
-		}
-	}
-	return strings.TrimRight(b.String(), "\n")
-}
-
 func renderProjects(m Model) string {
 	var b strings.Builder
 	b.WriteString(title(ScreenProjects))
@@ -496,52 +444,6 @@ func renderCloud(m Model) string {
 		b.WriteString("\n")
 		b.WriteString(warnStyle.Render("Write boundary  "))
 		b.WriteString("Press `a`, review the displayed plan, then type its exact confirmation phrase. Nothing is applied before Enter.")
-	}
-	return strings.TrimRight(b.String(), "\n")
-}
-
-func renderDoctor(m Model) string {
-	var b strings.Builder
-	b.WriteString(title(ScreenDoctor))
-	b.WriteString("\n\n")
-	if body, ok := bodyState(m, "the checks", len(m.checks) > 0); ok {
-		return b.String() + body
-	}
-	if len(m.checks) == 0 {
-		b.WriteString("No checks ran.")
-		return b.String()
-	}
-	counts := map[Status]int{}
-	for _, check := range m.checks {
-		counts[check.Status]++
-	}
-	b.WriteString(fmt.Sprintf("%d pass · %d warn · %d fail\n\n", counts[Pass], counts[Warn], counts[Fail]))
-	for i, check := range m.checks {
-		prefix := "  "
-		if i == m.selected {
-			prefix = accentStyle.Render("› ")
-		}
-		mark := strings.ToUpper(terminalText(string(check.Status)))
-		switch check.Status {
-		case Pass:
-			mark = passStyle.Render(mark)
-		case Warn:
-			mark = warnStyle.Render(mark)
-		default:
-			mark = errorStyle.Render(mark)
-		}
-		b.WriteString(prefix)
-		b.WriteString(mark)
-		b.WriteString("  ")
-		b.WriteString(firstNonempty(terminalText(check.Title), terminalText(check.ID)))
-		b.WriteString("\n")
-		if terminalText(check.Detail) != "" {
-			b.WriteString(mutedStyle.Render("       " + terminalText(check.Detail)))
-			b.WriteString("\n")
-		}
-		if terminalText(check.Fix) != "" {
-			b.WriteString("       Fix: " + terminalText(check.Fix) + "\n")
-		}
 	}
 	return strings.TrimRight(b.String(), "\n")
 }

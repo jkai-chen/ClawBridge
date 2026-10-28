@@ -90,7 +90,7 @@ func screenFixtures(t *testing.T) map[Screen]Model {
 	// A fixed clock, so the relative times in the goldens don't drift.
 	cfg.Now = func() time.Time { return time.Date(2026, 10, 27, 16, 30, 0, 0, time.UTC) }
 	cfg.Doctor = DoctorFunc(func(context.Context) ([]Check, error) {
-		return []Check{{ID: "server", Title: "Server reachable", Status: "pass"}, {ID: "linear", Title: "Linear board", Status: "warn", Detail: "not linked"}}, nil
+		return []Check{{ID: "authority.health", Title: "Server reachable", Status: "pass"}, {ID: "linear.binding", Title: "Linear board", Status: "warn", Detail: "not linked"}}, nil
 	})
 	cfg.Linear = &testLinearSource{}
 	for _, s := range []Screen{ScreenOverview, ScreenProjects, ScreenSessions, ScreenInbox, ScreenDoctor, ScreenLinear} {

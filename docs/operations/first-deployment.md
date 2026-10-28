@@ -222,7 +222,9 @@ with): the host operator lets the owner in with a one-time code instead.
    The command is under
    [letting the owner in without Google](deployment.md#letting-the-owner-in-without-google-operator-bootstrap-invite).
 2. On your own computer: `clawbridge --server https://clawbridge.example.com join
-   --email OWNER`, which asks for the code without showing it.
+   --email OWNER`, which asks for the code without showing it. The workspace has no
+   project yet, so the terminal view opens on **Waiting for a project** and shows
+   `clawbridge project create SLUG`; once you've created it, the view opens on it.
 
 `operator bootstrap-invite` shipped in v0.3.4; `clawbridge join` is **not released
 yet** (it comes with the next client release).

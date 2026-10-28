@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 
 	"clawbridge/internal/bus"
@@ -212,6 +213,43 @@ func runDoctorCommand(ctx context.Context, flags Config, args []string, stdout, 
 var checkTUITerminal = tui.CheckTerminal
 var runTUIProgram = tui.RunProgram
 
+// waitForProject reports whether the TUI opens on "Waiting for a project":
+// a hosted profile with a workspace and no project, given or saved, whose
+// project didn't resolve, AND whose signed project list for that workspace
+// answers: with none (wait for one) or some (pick one). Any other failure, a
+// revoked device, a server down, TLS or DNS, a membership removed, is
+// returned as the resolve error it was (R175-M1).
+func waitForProject(resolveErr error, mode, workspace, flagProject, project string, listProjects func() error) bool {
+	if resolveErr == nil || mode != "cloud" || workspace == "" || strings.TrimSpace(flagProject) != "" || project != "" {
+		return false
+	}
+	return listProjects() == nil
+}
+
+// signedProjectList asks the server for this person's projects in the
+// workspace; only its own answer counts, never a cached one.
+func signedProjectList(ctx context.Context, executor doctor.Executor, workspace string) error {
+	r, err := executor.Execute(ctx, bus.Request{Operation: "list_projects", Workspace: workspace, Args: map[string]any{}})
+	if err == nil && r.Source == "offline-mirror" {
+		// A cached list can't say the server has no project for us.
+		return errors.New("the server is offline; a cached project list doesn't count")
+	}
+	return err
+}
+
+// projectSlug is the shape of a project slug (bus namePattern); a slug the
+// server hands the TUI is checked before it's written to the profile.
+var projectSlug = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$`)
+
+// saveFoundProject writes the project the waiting screen found to the
+// profile, if it is a slug.
+func saveFoundProject(path, slug string) error {
+	if !projectSlug.MatchString(slug) {
+		return errors.New("the server named a project that isn't a slug; set project in " + path + " by hand")
+	}
+	return setProfileValue(path, "project", slug)
+}
+
 func runTUI(ctx context.Context, flags Config, args []string, stdout, stderr io.Writer) error {
 	screen := "overview"
 	_, err := commandFlags("tui", args, stderr, func(f *flag.FlagSet) {
@@ -255,10 +293,19 @@ func runTUI(ctx context.Context, flags Config, args []string, stdout, stderr io.
 	if err != nil {
 		return err
 	}
+	workspace := c.Workspace
 	c.Workspace, c.Project, err = executor.ResolveProject(bounded, c.Workspace, c.Project, gitRemote(bounded))
+	// A hosted profile that joined a workspace but has no project yet opens
+	// on "Waiting for a project" (TUI-UX-AUDIT PR D), which saves the
+	// project once one is shared and reopens the TUI on it.
+	waiting := waitForProject(err, c.Mode, workspace, flags.Project, c.Project, func() error { return signedProjectList(bounded, executor, workspace) })
+	if waiting {
+		c.Workspace, err = workspace, nil
+	}
 	if err != nil {
 		return err
 	}
+	found := ""
 	info := "Provisioning unavailable. This interface never creates infrastructure."
 	if c.Mode == "cloud" {
 		info = "Endpoint: " + c.Server + "\n" + info
@@ -269,7 +316,13 @@ func runTUI(ctx context.Context, flags Config, args []string, stdout, stderr io.
 	if e != nil {
 		return e
 	}
-	model, err := tui.New(tui.Config{Linear: linearSource, Executor: executor, Mode: tui.Mode(c.Mode), Workspace: c.Workspace, Project: c.Project, Session: c.Session, Instance: c.Instance, Server: c.Server, Audience: c.Audience, Principal: c.Principal, DeviceID: c.DeviceID, Context: bounded, InitialScreen: tui.Screen(screen), CloudInfo: info,
+	model, err := tui.New(tui.Config{WaitingForProject: waiting, ProjectFound: func(slug string) error {
+		if e := saveFoundProject(path, slug); e != nil {
+			return e
+		}
+		found = slug
+		return nil
+	}, Linear: linearSource, Executor: executor, Mode: tui.Mode(c.Mode), Workspace: c.Workspace, Project: c.Project, Session: c.Session, Instance: c.Instance, Server: c.Server, Audience: c.Audience, Principal: c.Principal, DeviceID: c.DeviceID, Context: bounded, InitialScreen: tui.Screen(screen), CloudInfo: info,
 		Doctor: tui.DoctorFunc(func(ctx context.Context) ([]tui.Check, error) {
 			report, e := collectDoctor(ctx, c, path, executor)
 			if e != nil {
@@ -285,5 +338,13 @@ func runTUI(ctx context.Context, flags Config, args []string, stdout, stderr io.
 	if err != nil {
 		return err
 	}
-	return runTUIProgram(bounded, model, os.Stdin, stdout)
+	if err = runTUIProgram(bounded, model, os.Stdin, stdout); err != nil || found == "" {
+		return err
+	}
+	// The project was just saved: open the TUI on it, as if started there.
+	// This runs once per save: the saved project resolves, so the next run
+	// can't wait again unless the project is taken away in between, and
+	// then only after the person has seen it and quit.
+	fmt.Fprintf(stderr, "Project %s saved to %s.\n", wizardSafe(found), path)
+	return runTUI(ctx, flags, args, stdout, stderr)
 }

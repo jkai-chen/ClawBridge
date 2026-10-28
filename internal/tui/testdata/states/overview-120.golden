@@ -5,14 +5,15 @@ ClawBridge · ws_1 › prj_1 › engineer  cloud
 ╭──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
 │ Overview                                                                                                             │
 │                                                                                                                      │
+│ Needs attention                                                                                                      │
+│   Checking…                                                                                                          │
+│                                                                                                                      │
+│ Signed in       human@example.test (Google)                                                                          │
+│ Server          not reached yet                                                                                      │
 │ Workspace       ws_1                                                                                                 │
 │ Project         prj_1                                                                                                │
 │ Session         engineer                                                                                             │
-│ Identity        human@example.test · google-id-token · unverified                                                    │
-│ Authority       not loaded · unknown                                                                                 │
-│                                                                                                                      │
-│ Sessions        0 in pinned project                                                                                  │
-│ Unread          0 in engineer's inbox                                                                                │
+│ Unread          0                                                                                                    │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
 ↑↓ select · r reload · ? help · q quit
 ### error
@@ -26,14 +27,15 @@ ClawBridge · ws_1 › prj_1 › engineer  cloud
 │ r reload · 8 Doctor                                                                                                  │
 │ remote: 503 Service Unavailable: upstream connect error or disconnect/reset before headers                           │
 │                                                                                                                      │
+│ Needs attention                                                                                                      │
+│   Not checked: the overview didn't load.                                                                             │
+│                                                                                                                      │
+│ Signed in       human@example.test (Google)                                                                          │
+│ Server          not reached yet                                                                                      │
 │ Workspace       ws_1                                                                                                 │
 │ Project         prj_1                                                                                                │
 │ Session         engineer                                                                                             │
-│ Identity        human@example.test · google-id-token · unverified                                                    │
-│ Authority       not loaded · unknown                                                                                 │
-│                                                                                                                      │
-│ Sessions        0 in pinned project                                                                                  │
-│ Unread          0 in engineer's inbox                                                                                │
+│ Unread          0                                                                                                    │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
 ↑↓ select · r reload · ? help · q quit
 ### empty
@@ -43,13 +45,14 @@ ClawBridge · pilot › core › engineer  cloud
 ╭──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
 │ Overview                                                                                                             │
 │                                                                                                                      │
+│ Needs attention                                                                                                      │
+│   Checking…                                                                                                          │
+│                                                                                                                      │
+│ Signed in       human@example.test (Google, verified)                                                                │
+│ Server          online                                                                                               │
 │ Workspace       pilot                                                                                                │
 │ Project         core                                                                                                 │
 │ Session         engineer                                                                                             │
-│ Identity        human@example.test · google-id-token · verified                                                      │
-│ Authority       server · online                                                                                      │
-│                                                                                                                      │
-│ Sessions        0 in pinned project                                                                                  │
-│ Unread          0 in engineer's inbox                                                                                │
+│ Unread          0                                                                                                    │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
 ↑↓ select · r reload · ? help · q quit

@@ -7,7 +7,7 @@ ClawBridge · ws_1 › prj_1 › engineer  cloud
 │                                                                              │
 │ Loading the checks…                                                          │
 ╰──────────────────────────────────────────────────────────────────────────────╯
-? help · q quit
+p show passes · ? help · q quit
 ### error
 ClawBridge · ws_1 › prj_1 › engineer  cloud
 1 Ovw 2 Prj 3 Ses 4 Inb 5 Lin 6 Dsp 7 Acc [8 Doctor]
@@ -20,7 +20,7 @@ ClawBridge · ws_1 › prj_1 › engineer  cloud
 │ remote: 503 Service Unavailable: upstream connect error or disconnect/reset  │
 │ before headers                                                               │
 ╰──────────────────────────────────────────────────────────────────────────────╯
-? help · q quit
+p show passes · ? help · q quit
 ### empty
 ClawBridge · ws_1 › prj_1 › engineer  cloud
 1 Ovw 2 Prj 3 Ses 4 Inb 5 Lin 6 Dsp 7 Acc [8 Doctor]
@@ -30,4 +30,4 @@ ClawBridge · ws_1 › prj_1 › engineer  cloud
 │                                                                              │
 │ No checks ran.                                                               │
 ╰──────────────────────────────────────────────────────────────────────────────╯
-? help · q quit
+p show passes · ? help · q quit

@@ -62,6 +62,9 @@ clawbridge invite revoke inv_...
   password.
 - They join with `clawbridge --server URL join --email colleague@example.test`, which
   asks for the code without showing it, or with the guided setup's "I have an invite code".
+- An invite with no `--grant` lets them in with no project: their terminal view waits
+  on "Waiting for a project" until you grant one with
+  `clawbridge --project checkout project role set colleague@example.test member`.
 - The code expires (72 hours by default, `--expires`); `invite list` shows each
   invite's status, never the code. A lost or burnt code means a new invite.
 - On a device-only server, the Google steps below (test users, a Google email) don't
@@ -127,7 +130,10 @@ When the server takes device keys, the guided setup asks first how you sign in:
 Google**. With a code it asks for the email the invite was issued for and a name
 for this device, shows your answers, and asks to continue; only then does it ask
 for the code, which isn't echoed. It makes this device's key, joins, and saves the
-profile, then picks your project (or asks, if you have several). On a machine with
+profile, then picks your project (or asks, if you have several). If the owner
+hasn't granted you a project yet, the terminal view opens on **Waiting for a
+project**: it names the owner to ask, checks again every 30 seconds, and opens your
+project once it's yours. On a machine with
 no system key store, such as headless Linux, it explains that the key would be a
 plain file only you can read, and asks before using one.
 

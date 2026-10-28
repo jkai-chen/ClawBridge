@@ -4,19 +4,19 @@ ClawBridge · pilot › core › engineer  cloud
 ╭──────────────────────────────────────────────────────────────────────────────╮
 │ Overview                                                                     │
 │                                                                              │
+│ Needs attention                                                              │
+│ › Doctor: 1 warning                                    8 Doctor              │
+│   This project's Linear board isn't linked (optional)  5 Linear              │
+│   The dispatcher's model isn't set up (optional)       6 Dispatcher          │
+│                                                                              │
+│ Signed in       human@example.test (Google, verified)                        │
+│ Server          online                                                       │
 │ Workspace       pilot                                                        │
 │ Project         core                                                         │
 │ Session         engineer                                                     │
-│ Identity        human@example.test · google-id-token · verified              │
-│ Authority       server · online                                              │
+│ Unread          2                                                            │
 │                                                                              │
-│ Sessions        1 in pinned project                                          │
-│ Unread          2 in engineer's inbox                                        │
-│                                                                              │
-│ Optional integration: 7 Linear → Connect Linear / Later. Joining does not    │
-│ depend on Linear.                                                            │
-│                                                                              │
-│ Pinned project sessions                                                      │
+│ Sessions                                                                     │
 │   engineer                 active     codex                                  │
 ╰──────────────────────────────────────────────────────────────────────────────╯
-? help · q quit
+Enter go there · ? help · q quit

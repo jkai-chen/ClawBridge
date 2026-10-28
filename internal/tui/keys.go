@@ -77,6 +77,14 @@ func keyName(k string) string {
 // settings ones. Account needs a hosted workspace; the setup screen
 // (Cloud) shows only while a setup adapter is wired.
 func (m Model) tabs() []Screen {
+	if m.waiting {
+		// Only what works without a project.
+		out := []Screen{ScreenOverview}
+		if m.cfg.Mode == ModeCloud {
+			out = append(out, ScreenAccount)
+		}
+		return append(out, ScreenDoctor)
+	}
 	out := []Screen{ScreenOverview, ScreenProjects, ScreenSessions, ScreenInbox, ScreenLinear, ScreenModel}
 	if m.cfg.Mode == ModeCloud {
 		out = append(out, ScreenAccount)
@@ -86,6 +94,16 @@ func (m Model) tabs() []Screen {
 		out = append(out, ScreenCloud)
 	}
 	return out
+}
+
+// hasTab reports whether s is one of this profile's tabs.
+func (m Model) hasTab(s Screen) bool {
+	for _, t := range m.tabs() {
+		if t == s {
+			return true
+		}
+	}
+	return false
 }
 
 // tabStep is the screen delta tabs from this one, wrapping.
@@ -139,6 +157,10 @@ func globalBindings(m Model) []Binding {
 // screenBindings are a screen's own keys.
 func screenBindings(s Screen) []Binding {
 	switch s {
+	case ScreenOverview:
+		return overviewBindings
+	case ScreenDoctor:
+		return doctorBindings
 	case ScreenSessions:
 		return pageBindings
 	case ScreenInbox:

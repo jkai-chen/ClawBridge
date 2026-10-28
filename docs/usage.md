@@ -462,6 +462,22 @@ Run in an interactive terminal.
 - Below 24 columns or 9 rows, resize the terminal; quit and Escape remain
   available.
 
+Overview is the home screen: "Needs attention" lists what's waiting for you (failing
+or warning Doctor checks, an unlinked Linear board, an ownership offer, unused
+invites, the dispatcher's model for a project owner), each with its tab; Enter goes
+there. Below it: who you're signed in as, the server, and the workspace and project.
+
+A hosted profile that has joined a workspace but has no project yet (an invite with
+no grants) opens on **Waiting for a project**: it names the workspace owner to ask
+and the command they run (`clawbridge --project PROJECT project role set EMAIL
+member`), checks again every 30 s (`r` now), and once a project is yours saves it to
+the profile and reopens on it. With several, pick one with Enter. The owner, right
+after a bootstrap join, is shown `clawbridge project create SLUG` instead.
+
+Doctor lists failures first and folds the passes (`p` shows them). Enter on a failing
+Linear, Dispatcher or device check opens that screen. Its last results stay on screen
+while the checks run again.
+
 Inbox: Enter opens a message with what it answers and the rest of its thread,
 `m` marks it read, `n` composes, `p` replies, and Escape cancels drafts.
 These actor operations need an explicit current session/instance. Opening the UI

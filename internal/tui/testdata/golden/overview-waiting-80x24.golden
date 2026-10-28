@@ -1,0 +1,17 @@
+ClawBridge · pilot  cloud
+[1 Overview] 2 Acc 3 Doc
+
+╭──────────────────────────────────────────────────────────────────────────────╮
+│ Overview                                                                     │
+│                                                                              │
+│ Waiting for a project                                                        │
+│                                                                              │
+│ You've joined pilot, but no project has been shared with you yet.            │
+│                                                                              │
+│ Ask owner@example.test to grant you one:                                     │
+│   clawbridge --project PROJECT project role set human@example.test member    │
+│                                                                              │
+│ This screen checks again every 30s (r reload now) and opens the project once │
+│ it's yours.                                                                  │
+╰──────────────────────────────────────────────────────────────────────────────╯
+? help · q quit

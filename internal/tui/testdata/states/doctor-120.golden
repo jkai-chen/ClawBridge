@@ -7,7 +7,7 @@ ClawBridge · ws_1 › prj_1 › engineer  cloud
 │                                                                                                                      │
 │ Loading the checks…                                                                                                  │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
-↑↓ select · r reload · ? help · q quit
+p show passes · ↑↓ select · r reload · ? help · q quit
 ### error
 ClawBridge · ws_1 › prj_1 › engineer  cloud
 1 Overview  2 Projects  3 Sessions  4 Inbox  5 Linear  6 Dispatcher  7 Account  [8 Doctor]
@@ -19,7 +19,7 @@ ClawBridge · ws_1 › prj_1 › engineer  cloud
 │ r reload                                                                                                             │
 │ remote: 503 Service Unavailable: upstream connect error or disconnect/reset before headers                           │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
-↑↓ select · r reload · ? help · q quit
+p show passes · ↑↓ select · r reload · ? help · q quit
 ### empty
 ClawBridge · ws_1 › prj_1 › engineer  cloud
 1 Overview  2 Projects  3 Sessions  4 Inbox  5 Linear  6 Dispatcher  7 Account  [8 Doctor]
@@ -29,4 +29,4 @@ ClawBridge · ws_1 › prj_1 › engineer  cloud
 │                                                                                                                      │
 │ No checks ran.                                                                                                       │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
-↑↓ select · r reload · ? help · q quit
+p show passes · ↑↓ select · r reload · ? help · q quit

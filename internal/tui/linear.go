@@ -65,6 +65,7 @@ type linearState struct {
 	// refreshNames asks the next load to refresh the stored names first
 	// (r, an owner or lead only); namesNote says why that didn't work.
 	stored               map[string]string
+	holders              map[string]issueHolder
 	namesAt              string
 	role                 string
 	refreshNames         bool
@@ -153,13 +154,27 @@ type linearLoadedMsg struct {
 // storedNames are a board's names as project_overview returns them, and
 // the viewer's role in the project.
 type storedNames struct {
-	byID map[string]string
-	at   string
-	role string
+	byID    map[string]string
+	at      string
+	role    string
+	holders map[string]issueHolder
 }
 
-// linearNamesOps are the loads that show the board, so read its names.
-var linearNamesOps = map[string]bool{"profiles": true, "connect": true, "logout": true, "link": true, "unlink": true, "issues": true}
+// issueHolder is the session an issue is assigned to (U40).
+type issueHolder struct {
+	id, name, state string
+}
+
+func (h issueHolder) String() string {
+	if h.state != "" && h.state != "confirmed" {
+		return h.name + " (" + h.state + ")"
+	}
+	return h.name
+}
+
+// linearNamesOps are the loads that show the board or its issues, so read
+// its names and who holds each issue.
+var linearNamesOps = map[string]bool{"profiles": true, "connect": true, "logout": true, "link": true, "unlink": true, "issues": true, "issue": true}
 
 // readStoredNames reads the board's stored names through project_overview,
 // as the person; nil when it can't be read.
@@ -173,7 +188,12 @@ func readStoredNames(ctx context.Context, executor Executor, workspace, project 
 	}
 	data := mapData(result.Data)
 	o := parseProjectOverview(data)
-	n := &storedNames{byID: map[string]string{}, at: o.Linear.NamesAt, role: text(mapData(data["project"]), "role")}
+	n := &storedNames{byID: map[string]string{}, at: o.Linear.NamesAt, role: text(mapData(data["project"]), "role"), holders: map[string]issueHolder{}}
+	for _, r := range o.Sessions {
+		if r.IssueUUID != "" {
+			n.holders[r.IssueUUID] = issueHolder{id: r.ID, name: r.Name, state: r.IssueState}
+		}
+	}
 	for _, b := range append(append([]boardName{}, o.Linear.Teams...), o.Linear.Projects...) {
 		if b.Name != "" {
 			n.byID[b.ID] = b.Name
@@ -268,7 +288,7 @@ func (m Model) applyLinear(x linearLoadedMsg) Model {
 	}
 	m.source = "linear"
 	if x.names != nil {
-		m.linear.stored, m.linear.namesAt, m.linear.role = x.names.byID, x.names.at, x.names.role
+		m.linear.stored, m.linear.namesAt, m.linear.role, m.linear.holders = x.names.byID, x.names.at, x.names.role, x.names.holders
 	}
 	m.linear.namesNote = ""
 	if x.namesErr != "" {
@@ -912,6 +932,9 @@ func renderLinear(m Model) string {
 		case "tasks":
 			i := m.linear.issues[index]
 			label = fmt.Sprintf("%s · %s · %s · %s", i.Identifier, i.Title, i.State, i.Assignee)
+			if h, ok := m.linear.holders[i.ID]; ok {
+				label += " · held by " + h.String()
+			}
 		}
 		b.WriteString(prefix + terminalText(label) + "\n")
 	}
@@ -923,6 +946,9 @@ func renderLinear(m Model) string {
 	}
 	if m.linear.step == "profiles" && len(m.linear.profiles) > 0 {
 		b.WriteString(mutedStyle.Render("\nLogging a connection out keeps the project's board linked.") + "\n")
+	}
+	if h, ok := m.issueHolder(); ok {
+		b.WriteString("Held by " + terminalText(h.String()) + "  " + mutedStyle.Render(keyHint(m, ScreenLinear, "its-session")) + "\n")
 	}
 	if m.linear.step == "details" && m.linear.issue != nil {
 		i := m.linear.issue
@@ -1051,6 +1077,15 @@ func (m Model) namedOrCounted(ids []string, one, many string) string {
 		}
 	}
 	return many + " " + m.linearNames(ids)
+}
+
+// issueHolder is the session holding the opened issue, if one does.
+func (m Model) issueHolder() (issueHolder, bool) {
+	if m.linear.step != "details" || m.linear.issue == nil {
+		return issueHolder{}, false
+	}
+	h, ok := m.linear.holders[m.linear.issue.ID]
+	return h, ok
 }
 
 // linearNamesLine says how old the stored names are, and whether r

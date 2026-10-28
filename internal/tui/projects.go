@@ -11,8 +11,9 @@ import (
 	"clawbridge/internal/bus"
 )
 
-// maxOverviews caps the project_overview reads one Projects load makes.
-const maxOverviews = 50
+// maxOverviews caps the project_overview reads one Projects load makes;
+// opening a project past it reads that one (TUI-UX-AUDIT L1).
+const maxOverviews = 20
 
 // projectOverview is one project as project_overview describes it: its
 // sessions and counts, its coordinator and its Linear board, by name.
@@ -75,14 +76,37 @@ func (m Model) readOverviews(projects []ProjectRow) map[string]projectOverview {
 		if i == maxOverviews {
 			break
 		}
-		result, err := m.cfg.Executor.Execute(m.cfg.Context, bus.Request{Operation: "project_overview", Workspace: m.cfg.Workspace, Project: firstNonempty(p.Slug, p.ID), Args: map[string]any{}})
-		if err != nil {
-			out[p.ID] = projectOverview{Err: displayError(err)}
-			continue
-		}
-		out[p.ID] = parseProjectOverview(mapData(result.Data))
+		out[p.ID] = m.readOverview(p)
 	}
 	return out
+}
+
+// readOverview reads one project's overview, as the person.
+func (m Model) readOverview(p ProjectRow) projectOverview {
+	result, err := m.cfg.Executor.Execute(m.cfg.Context, bus.Request{Operation: "project_overview", Workspace: m.cfg.Workspace, Project: firstNonempty(p.Slug, p.ID), Args: map[string]any{}})
+	if err != nil {
+		return projectOverview{Err: displayError(err)}
+	}
+	return parseProjectOverview(mapData(result.Data))
+}
+
+// overviewMsg is one project's overview, read when it's opened.
+type overviewMsg struct {
+	request uint64
+	id      string
+	o       projectOverview
+}
+
+func (m Model) applyOverviewMsg(x overviewMsg) Model {
+	if x.request != m.request || m.screen != ScreenProjects {
+		return m
+	}
+	m.loading = false
+	if m.overviews == nil {
+		m.overviews = map[string]projectOverview{}
+	}
+	m.overviews[x.id] = x.o
+	return m
 }
 
 // ownProject reports whether p is the project this profile works in.
@@ -205,7 +229,7 @@ func renderProjectDetail(m Model, p ProjectRow) string {
 	o, ok := m.overviews[p.ID]
 	switch {
 	case !ok:
-		b.WriteString(mutedStyle.Render("Not read: only the first 50 projects are read at once.") + "\n")
+		b.WriteString(loadingBody("the project") + "\n")
 		return strings.TrimRight(b.String(), "\n")
 	case o.Err != "":
 		b.WriteString("Couldn't read this project: " + terminalText(o.Err) + "\n")
@@ -257,7 +281,15 @@ func projectOpenOwn(m Model) bool {
 var projectBindings = []Binding{
 	{ID: "open", Keys: []string{"enter"}, Label: "open", When: func(m Model) bool { _, ok := m.selectedProject(); return ok && !m.projectOpen }, Action: func(m Model, _ string) (Model, tea.Cmd) {
 		m.projectOpen = true
-		return m, nil
+		p, _ := m.selectedProject()
+		if _, ok := m.overviews[p.ID]; ok {
+			return m, nil
+		}
+		// Past the first maxOverviews: read this one now.
+		m.request++
+		m.loading = true
+		request := m.request
+		return m, func() tea.Msg { return overviewMsg{request: request, id: p.ID, o: m.readOverview(p)} }
 	}},
 	// U13: from the profile's own project to its sessions and board.
 	{ID: "its-sessions", Keys: []string{"s"}, Label: "its sessions", When: projectOpenOwn, Action: func(m Model, _ string) (Model, tea.Cmd) { return m.Show(ScreenSessions) }},

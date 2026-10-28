@@ -5,10 +5,11 @@ Showing: current · page 1
 ╭──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
 │ Help · Sessions                                                                                                      │
 │ The project's sessions. ★ marks the coordinator; STATE is retired, moved, stale or the session's presence; n         │
-│ messages the selected session. v filters this page only; [ goes to the previous page you saw, ] to the server's next │
-│ page. There is no search across pages.                                                                               │
+│ messages the selected session, and i opens its issue on the Linear screen. v filters this page only; [ goes to the   │
+│ previous page you saw, ] to the server's next page. There is no search across pages.                                 │
 │                                                                                                                      │
 │ This screen                                                                                                          │
+│   i          open its issue (not now)                                                                                │
 │   n          message it                                                                                              │
 │   v          filter                                                                                                  │
 │   ]          next page                                                                                               │

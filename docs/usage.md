@@ -513,7 +513,10 @@ own, `s` goes to its sessions and `l` to its Linear board. Esc returns to the li
 Sessions shows each session's NAME (`★` marks the project's coordinator), STATE
 (retired, moved, stale, or its presence), ISSUE (its assigned Linear issue), CONTEXT
 and AGENT; OWNER and HOST appear from 140 columns and are always in the selected
-session's details, which end with its ID. `n` writes to the selected session.
+session's details, which end with its ID. `n` writes to the selected session, and `i`
+opens its issue on the Linear screen (with your only Linear connection if you haven't
+chosen one). On the Linear screen, each issue names the session holding it ("held by
+reviewer"), and `s` on an opened issue goes to that session.
 Overview counts the sessions in the same words ("Sessions · 2 active · 1 retired").
 
 Inbox: Enter opens a message with what it answers and the rest of its thread,

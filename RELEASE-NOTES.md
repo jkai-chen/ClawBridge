@@ -72,6 +72,12 @@
   the app, never mints, writes nothing, and prints only each request's status and Linear's rate-limit headers: which
   limits the MCP server reports, for pacing Linear calls (docs/operations/deployment.md).
 
+## The terminal interface
+
+- **Issues and the sessions holding them (U15, U40).** `i` on Sessions opens the selected session's issue on the
+  Linear screen; Linear's issue list says which session holds each issue ("held by reviewer"), and `s` on an opened
+  issue goes to that session. Projects reads the first 20 projects' summaries on load and any other when it's opened.
+
 # ClawBridge v0.3.6 (released 28 Oct)
 
 **Schema 28 → 39.**

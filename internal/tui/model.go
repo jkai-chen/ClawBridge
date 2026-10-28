@@ -243,6 +243,10 @@ type SessionRow struct {
 	// it isn't confirmed yet; Coordinator marks the project's coordinator.
 	Issue       string `json:"issue,omitempty"`
 	Coordinator bool   `json:"coordinator,omitempty"`
+	// IssueUUID and IssueState are the assignment's issue and state, for
+	// opening it on Linear (i) and naming its holder there.
+	IssueUUID  string `json:"issue_uuid,omitempty"`
+	IssueState string `json:"issue_state,omitempty"`
 	// Context is the session's last context report, in short ("612k warn
 	// [1000k]"), and ContextDetail the same in full; both empty without
 	// one.
@@ -357,6 +361,9 @@ type Model struct {
 	help      bool
 	quitAsk   bool
 	inboxOpen bool
+	// selectID is a row to select once the screen loads (a jump to a
+	// session from its issue).
+	selectID string
 	// projectOpen shows the selected project's detail; overviews are the
 	// listed projects' project_overview reads, by project ID.
 	projectOpen bool
@@ -485,6 +492,8 @@ func (m Model) UpdateModel(msg tea.Msg) (Model, tea.Cmd) {
 	switch x := msg.(type) {
 	case linearLoadedMsg:
 		return m.applyLinear(x), nil
+	case overviewMsg:
+		return m.applyOverviewMsg(x), nil
 	case intakeLoadedMsg:
 		return m.applyIntake(x), nil
 	case intakeDoneMsg:
@@ -1169,6 +1178,9 @@ func (m *Model) applyLoad(x loadedMsg) {
 	defer func() {
 		rows := m.currentRows()
 		m.selected = min(m.selected, max(0, len(rows)-1))
+		if m.selectID != "" {
+			oldID, m.selectID = m.selectID, ""
+		}
 		for i, id := range rows {
 			if id == oldID {
 				m.selected = i
@@ -1572,6 +1584,9 @@ func sessionRows(rows []map[string]any) []SessionRow {
 			Presence: text(r, "presence"), Stale: boolean(r, "stale"), Assignment: assignmentSummary(r["assignment"]),
 			Issue: assignmentIssue(r["assignment"]), Coordinator: boolean(r, "coordinator"), ContextAt: text(r, "context_at"),
 		})
+		if a, ok := r["assignment"].(map[string]any); ok {
+			out[len(out)-1].IssueUUID, out[len(out)-1].IssueState = text(a, "issue_uuid"), text(a, "state")
+		}
 		out[len(out)-1].Context, out[len(out)-1].ContextDetail = contextSummary(r)
 	}
 	return out

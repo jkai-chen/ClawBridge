@@ -7,6 +7,8 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/x/ansi"
+
+	"clawbridge/internal/linearprovider"
 )
 
 // stateWord is a session's state in one word: retired or moved first,
@@ -138,6 +140,16 @@ func (m Model) selectedSession() (SessionRow, bool) {
 }
 
 var sessionBindings = []Binding{
+	// U15: the selected session's issue, opened on the Linear screen.
+	{ID: "issue", Keys: []string{"i"}, Label: "open its issue", When: func(m Model) bool {
+		s, ok := m.selectedSession()
+		return ok && s.IssueUUID != "" && m.cfg.Linear != nil && m.hasTab(ScreenLinear)
+	}, Action: func(m Model, _ string) (Model, tea.Cmd) {
+		s, _ := m.selectedSession()
+		m.linear.step, m.linear.issueV2 = "details", nil
+		m.linear.issue = &linearprovider.Issue{ID: s.IssueUUID}
+		return m.Show(ScreenLinear)
+	}},
 	// U26: a message to the selected session, its name filled in.
 	{ID: "message", Keys: []string{"n"}, Label: "message it", When: func(m Model) bool { _, ok := m.selectedSession(); return ok }, Action: func(m Model, _ string) (Model, tea.Cmd) {
 		s, _ := m.selectedSession()

@@ -36,7 +36,7 @@ reopens it at any time):
 1. **Just this machine:** local messaging between your agents, with no server or
    account ([local messaging](docs/usage.md#local-messaging)).
 2. **Join a team server:** have its HTTPS address ready, and either an invite
-   from its owner (a code from v0.3.5, a link from the next release) or, where
+   from its owner (a code from v0.3.5, a link from v0.3.6) or, where
    the server still offers Google sign-in, the workspace, project and the Google
    account the owner authorized.
    [Joining a project](docs/onboarding.md) walks through both. If the owner hasn't

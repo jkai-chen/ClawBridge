@@ -1,5 +1,7 @@
 # Unreleased
 
+# ClawBridge v0.3.6 (released 28 Oct)
+
 **Schema 28 → 39.**
 - The server migrates to schema 39 on its first start: 29, the new-device alerts' events and acknowledgements; 30, a
   project's own watch budget; 31, the device an invite was made from; 32, the workspace's device idle limit; 33,

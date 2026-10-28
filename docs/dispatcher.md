@@ -132,9 +132,9 @@ Status: in a release, on main (not released yet), in review, or planned.
 | Chat (`dispatcher chat`) | v0.3.5 |
 | Advice in rules mode (`dispatcher model advise`), and the opt-in tools (`dispatcher model tools`) | v0.3.5 |
 | `clawbridge-agentd` (the launcher) with its per-owner network and egress proxy | v0.3.5 |
-| The egress proxy's own image, images pinned by ID, and agentd's units and install check | on main |
-| A guided `dispatcher model setup` in the CLI, with the provider's model list | on main |
-| The same setup in the TUI (the Dispatcher screen, `6`) | on main |
+| The egress proxy's own image, images pinned by ID, and agentd's units and install check | v0.3.6 |
+| A guided `dispatcher model setup` in the CLI, with the provider's model list | v0.3.6 |
+| The same setup in the TUI (the Dispatcher screen, `6`) | v0.3.6 |
 | `dispatcher model key rotate`, and how the model is used on the Dispatcher screen | in review |
 | CI against a real rootless Docker daemon, one model agent by default, and agentd's measured cost in `doctor` | in review |
 | Deployment of the launcher | planned |

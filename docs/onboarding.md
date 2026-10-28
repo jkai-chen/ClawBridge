@@ -43,8 +43,8 @@ upgrade stay private, even if they continue. Tell colleagues this when you invit
 
 ### If your server uses invites (device sign-in)
 
-> The client commands below (`invite`, `join`) come with v0.3.5. Invite links
-> come with the next release; until then, give the code and the server's URL.
+> The client commands below (`invite`, `join`) come with v0.3.5, and invite
+> links with v0.3.6; with v0.3.5, give the code and the server's URL.
 > See [signing in with invites](sign-in.md).
 
 On a server whose `CLAWBRIDGE_AUTH` is `device` or `google,device`

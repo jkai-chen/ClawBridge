@@ -143,3 +143,79 @@ func TestProjectLeadNotice(t *testing.T) {
 		}
 	}
 }
+
+// The earlier lead is told only when ClawBridge itself set them there and
+// the client agrees (review): a spoofed previous UUID and a lead set
+// outside ClawBridge tell nobody, counted not_told.
+func TestProjectLeadOldNotice(t *testing.T) {
+	h := newHarness(t)
+	h.link(0, []string{cpOne})
+	me := h.s.principal
+	ada, ben := person(roleAda, "lead", sfTeam), person(roleBen, "lead", sfTeam)
+	ada["principal"], ben["principal"] = me, me
+	h.call("team_roles_set", "", rolesSet(0, true, []map[string]any{{"team_id": sfTeam, "leads": []string{roleAda, roleBen}}}, []map[string]any{ada, ben}))
+	record := func(lead, previous, op string) map[string]any {
+		a := map[string]any{"linear_project": cpOne, "source": "apply", "outcome": "accepted", "lead": lead, "operation_id": op}
+		if previous != "" {
+			a["previous_lead"] = previous
+		}
+		return h.call("project_lead_record", "", a).(map[string]any)
+	}
+	oldNotices := func() int {
+		var n int
+		if err := h.s.db.QueryRow(`SELECT count(*) FROM messages WHERE kind='project-lead' AND body LIKE 'You''re no longer%'`).Scan(&n); err != nil {
+			t.Fatal(err)
+		}
+		return n
+	}
+	// A lead set outside ClawBridge: nothing recorded there, so not told.
+	if got := record(roleAda, roleCleo, "op-1"); got["old_lead"] != "not_told" || oldNotices() != 0 {
+		t.Fatal(got)
+	}
+	// ClawBridge set Ada; a client naming someone else as the earlier lead
+	// tells nobody.
+	if got := record(roleBen, "dddddddd-0000-4000-8000-00000000000d", "op-2"); got["old_lead"] != "not_told" || oldNotices() != 0 {
+		t.Fatal("spoofed", got)
+	}
+	// ClawBridge set Ben (op-2); replacing Ben with Ada tells Ben, once.
+	if got := record(roleAda, roleBen, "op-3"); got["old_lead"] != "told" || oldNotices() == 0 {
+		t.Fatal(got)
+	}
+	n := oldNotices()
+	if got := record(roleAda, roleBen, "op-3"); oldNotices() != n || got["notified"] != 0 {
+		t.Fatal("a retry told again", got)
+	}
+	// The same lead again is no replacement: nobody is told they're out.
+	if got := record(roleAda, roleAda, "op-4"); got["old_lead"] != "" || oldNotices() != n {
+		t.Fatal("the same lead was told they're out", got)
+	}
+	var details string
+	if err := h.s.db.QueryRow(`SELECT details FROM history WHERE entity='project_lead' AND action='lead' ORDER BY sequence DESC LIMIT 1`).Scan(&details); err != nil || strings.Contains(details, roleBen) || strings.Contains(details, roleAda) {
+		t.Fatal(details, err)
+	}
+}
+
+// With no session open the notice waits, and the person's next session
+// registration delivers it once. Locally that person is the OS user, whose
+// principal keeps its case (capitals on Windows) while the notice holds it
+// normalized.
+func TestProjectLeadNoticeWaitsForRegister(t *testing.T) {
+	h := newHarness(t)
+	h.link(0, []string{cpOne})
+	ada := person(roleAda, "lead", sfTeam)
+	ada["principal"] = h.s.principal
+	h.call("team_roles_set", "", rolesSet(0, true, []map[string]any{{"team_id": sfTeam, "leads": []string{roleAda}}}, []map[string]any{ada}))
+	if _, err := h.s.db.Exec(`UPDATE sessions SET status='retired' WHERE role<>'system'`); err != nil {
+		t.Fatal(err)
+	}
+	got := h.call("project_lead_record", "", map[string]any{"linear_project": cpOne, "source": "apply", "outcome": "accepted", "lead": roleAda, "operation_id": "op-1"}).(map[string]any)
+	if got["notified"] != 0 || got["queued"] != 1 {
+		t.Fatal(got)
+	}
+	h.call("register_session", "late", map[string]any{"instance": "late-i", "role": "worker"})
+	h.call("register_session", "later", map[string]any{"instance": "later-i", "role": "worker"})
+	var n int
+	if err := h.s.db.QueryRow(`SELECT count(*) FROM deliveries d JOIN messages m ON m.id=d.message_id WHERE m.kind='project-lead'`).Scan(&n); err != nil || n != 1 {
+		t.Fatal("delivered", n, err)
+	}
+}

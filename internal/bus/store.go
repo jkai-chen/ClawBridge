@@ -147,7 +147,7 @@ func (s *Store) migrate() error {
 	if err = tx.QueryRow("PRAGMA user_version").Scan(&version); err != nil {
 		return err
 	}
-	if version > 44 {
+	if version > 45 {
 		return errors.New("database schema is newer than this ClawBridge binary")
 	}
 	if version == 0 {
@@ -382,6 +382,11 @@ func (s *Store) migrate() error {
 	}
 	if version < 44 {
 		if _, err = tx.Exec(projectLeadSchema + `PRAGMA user_version=44;`); err != nil {
+			return err
+		}
+	}
+	if version < 45 {
+		if _, err = tx.Exec(projectLeadNoticeSchema + `PRAGMA user_version=45;`); err != nil {
 			return err
 		}
 	}
@@ -690,7 +695,7 @@ var operationArgs = map[string]string{
 	"team_roles_doc_get":          "instance",
 	"project_lead_get":            "instance",
 	"project_lead_set":            "instance expected_revision mode",
-	"project_lead_record":         "instance linear_project source outcome replaced members_before members_after lead operation_id",
+	"project_lead_record":         "instance linear_project source outcome replaced members_before members_after lead previous_lead operation_id",
 	"team_roles_doc_put":          "instance parent_kind parent_id source_path state publish_token expect_token document_id published_sha256 mapping_revision source_sha256 replaced_document_id",
 	"project_kind_record":         "instance expected_revision action proof group_label_id label_ids",
 	"issue_subscribers_get":       "instance",
@@ -1276,7 +1281,15 @@ func (s *Store) execute(ctx context.Context, tx *transaction, r Request) (any, e
 		}
 	}
 	if r.Operation == "register_session" {
-		return s.register(ctx, tx, wid, pid, r)
+		out, err := s.register(ctx, tx, wid, pid, r)
+		if err != nil {
+			return nil, err
+		}
+		// Project lead notices that waited for this person's session.
+		if _, err = s.deliverLeadNotices(ctx, tx, wid, pid, s.principal); err != nil {
+			return nil, err
+		}
+		return out, nil
 	}
 	if r.Operation == "heartbeat" {
 		return s.heartbeatOp(ctx, tx, pid, r)

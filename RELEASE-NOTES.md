@@ -1,8 +1,8 @@
 # Unreleased
 
-**Schema 41 → 44.**
-- The server migrates to schema 44 on its first start: 42, the agent writes the server queued (the Linear write
-  outbox); 43, the team roles; 44, the project lead settings.
+**Schema 41 → 45.**
+- The server migrates to schema 45 on its first start: 42, the agent writes the server queued (the Linear write
+  outbox); 43, the team roles; 44, the project lead settings; 45, the project lead notices.
 - **One-way:** v0.3.7 refuses a database newer than schema 41. Take a dump before upgrading; to go back, restore it
   with the v0.3.7 image (docs/operations/deployment.md).
 
@@ -72,6 +72,19 @@
 - A queued write is sent only while the person who asked still may: their session (if any) active, their role
   held, their device live or their Google account still bound. Otherwise it fails as `identity_revoked` and nothing
   is sent.
+
+## Team roles: telling project leads
+
+- **A `project-lead` notice waits for a session.** When ClawBridge sets someone's Linear project lead and they have no
+  session open, the notice waits and is delivered once, at their next session start. It waits 30 days at most, and a
+  later notice about the same project replaces it.
+- **`--replace` tells the earlier lead** they're no longer the lead. This happens only when ClawBridge set that lead
+  itself, by its own record (never the client's word), and they are still a project member. A lead set in Linear
+  isn't told.
+- **`project overview` shows the owner "Project leads"**: set and told in the last 7 days, and how many notices are
+  waiting. Counts only.
+- **Schema 45:** the lead ClawBridge last set on each Linear project, and the waiting notices.
+  Delivered notices are pruned after 90 days. No Linear configuration.
 
 ## Team roles: Linear project leads
 

@@ -141,7 +141,7 @@ type statusProbeMove struct {
 // holds the write scope. With dryRun it stops there. Each move is sent once
 // and read back by status ID; a move not accepted stops the probe, after
 // one read of where the project is. It prints IDs, types and classes only.
-func linearAppStatusProbe(ctx context.Context, store statusProbeStore, project string, dryRun bool, stdout io.Writer) error {
+func linearAppStatusProbe(ctx context.Context, store statusProbeStore, project, allowMember string, dryRun bool, stdout io.Writer) error {
 	project = strings.ToLower(project)
 	out := map[string]any{"project": project}
 	emit := func(ret error) error {
@@ -174,6 +174,7 @@ func linearAppStatusProbe(ctx context.Context, store statusProbeStore, project s
 	if err != nil {
 		return probeFailure("project_status_project", err)
 	}
+	pre.Allow(allowMember)
 	out["shape"] = pre
 	if !pre.Empty() {
 		return refuse("the project must exist with no issues, members or lead")

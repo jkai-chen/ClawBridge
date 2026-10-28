@@ -255,25 +255,41 @@ func TestP8ProjectPrecheck(t *testing.T) {
 		t.Fatal(err)
 	}
 	probe, _ := New(Config{ClientID: "client-1", Secret: secret, Key: key, Store: store, HTTP: &http.Client{Transport: s}, Now: func() time.Time { return now }, NoMint: true})
+	two := map[string]any{"nodes": []any{map[string]any{"id": "c0000000-0000-4000-8000-0000000000c2"}, map[string]any{"id": "c0000000-0000-4000-8000-0000000000c3"}}}
 	for name, c := range map[string]struct {
 		project map[string]any
 		empty   bool
+		allow   string
 	}{
-		"empty":   {map[string]any{"id": project, "lead": nil, "members": none, "issues": none}, true},
-		"issue":   {map[string]any{"id": project, "lead": nil, "members": none, "issues": one}, false},
-		"member":  {map[string]any{"id": project, "lead": nil, "members": one, "issues": none}, false},
-		"lead":    {map[string]any{"id": project, "lead": map[string]any{"id": appUser}, "members": none, "issues": none}, false},
-		"missing": {nil, false},
-		"other":   {map[string]any{"id": "c0000000-0000-4000-8000-0000000000c9", "lead": nil, "members": none, "issues": none}, false},
+		"empty":   {map[string]any{"id": project, "lead": nil, "members": none, "issues": none}, true, ""},
+		"issue":   {map[string]any{"id": project, "lead": nil, "members": none, "issues": one}, false, ""},
+		"member":  {map[string]any{"id": project, "lead": nil, "members": one, "issues": none}, false, ""},
+		"lead":    {map[string]any{"id": project, "lead": map[string]any{"id": appUser}, "members": none, "issues": none}, false, ""},
+		"missing": {nil, false, ""},
+		"other":   {map[string]any{"id": "c0000000-0000-4000-8000-0000000000c9", "lead": nil, "members": none, "issues": none}, false, ""},
+		// --allow-member: exactly the one member allowed, by Linear ID.
+		"member allowed":       {map[string]any{"id": project, "lead": nil, "members": one, "issues": none}, true, "c0000000-0000-4000-8000-0000000000c2"},
+		"member allowed, case": {map[string]any{"id": project, "lead": nil, "members": one, "issues": none}, true, "C0000000-0000-4000-8000-0000000000C2"},
+		"another member":       {map[string]any{"id": project, "lead": nil, "members": one, "issues": none}, false, "c0000000-0000-4000-8000-0000000000c3"},
+		"two members":          {map[string]any{"id": project, "lead": nil, "members": two, "issues": none}, false, "c0000000-0000-4000-8000-0000000000c2"},
+		"allowed, but issue":   {map[string]any{"id": project, "lead": nil, "members": one, "issues": one}, false, "c0000000-0000-4000-8000-0000000000c2"},
+		"allowed, but lead":    {map[string]any{"id": project, "lead": map[string]any{"id": appUser}, "members": one, "issues": none}, false, "c0000000-0000-4000-8000-0000000000c2"},
+		"allowed, no member":   {map[string]any{"id": project, "lead": nil, "members": none, "issues": none}, true, "c0000000-0000-4000-8000-0000000000c2"},
 	} {
 		s.project = c.project
 		got, err := probe.ProbeP8Project(context.Background(), project)
+		got.Allow(c.allow)
 		if err != nil || got.Empty() != c.empty {
 			t.Fatal(name, got, err)
 		}
+		// Only the one member allowed is reported as allowed.
+		allowed := strings.HasPrefix(name, "member allowed") || name == "allowed, but issue" || name == "allowed, but lead"
+		if got.MemberAllowed != allowed {
+			t.Fatal(name, "member_allowed", got.MemberAllowed)
+		}
 	}
 	for _, q := range s.queries {
-		if strings.Contains(q, "mutation") || !strings.Contains(q, "includeArchived: true") {
+		if strings.Contains(q, "mutation") || !strings.Contains(q, "includeArchived: true") || !strings.Contains(q, "members(first: 2)") {
 			t.Fatal("the precheck is not a read of every issue:", q)
 		}
 	}

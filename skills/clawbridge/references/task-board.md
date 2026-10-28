@@ -108,7 +108,9 @@ label list); agents do not create it.
   the label's UUID with `labels`, then list `issues` with that `label_id`
   (CLI `linear issues --label UUID`), following cursors until complete. To
   see only issues changed since your last check, add `updated_after` with the
-  absolute time of that check.
+  absolute time of that check. A page's `filtered_other_team` counts issues of
+  a team or project outside the binding that Linear returned and ClawBridge
+  dropped; they are not yours to read, so don't go looking for them.
 - Other sessions do not pick work from this list; they wait for the
   coordinator's assignment.
 - The label asks for attention. It is not approval, an assignment or a scope

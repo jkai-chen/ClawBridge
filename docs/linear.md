@@ -147,6 +147,12 @@ when starting a direct `clawbridge mcp` process. The original task-board tools a
 `taskboard_binding`, `taskboard_context`, `taskboard_issues`, `taskboard_issue`,
 `taskboard_create`, `taskboard_update` and `taskboard_comment`. Tools pin the
 process's profile/project; tool arguments cannot choose another account or board.
+**Sub-teams.** Linear can list a sub-team's issues under its parent team. An issue listing only ever shows issues of
+the pair it is reading (a bound team, and in a project set a bound project with that team). A row of another bound
+team on a verified pair is shown when the listing reaches that pair, never twice. Any other row (a team the binding
+doesn't list, a pair it doesn't hold, or a pair a label or view filter left out) is dropped and counted in the page's
+`filtered_other_team`. Nothing of it is shown.
+
 When checking that installation with `doctor`, pass the same `--linear-profile`
 alongside its MCP agent/config/session selection so the expected routes agree.
 
@@ -1544,8 +1550,10 @@ project's coordinator session, which then routes it.
 **Signals.** Each signal is polled by the server's own watcher, at no Linear Agent cost:
 - **S1:** a person adds the `needs-agent` label (one label of that exact name per team). The watcher reads each
   bound team's labelled issues in one query, across all its projects, and queues only those in the project's
-  binding: an issue in a project the binding doesn't hold is skipped, and only counted. ClawBridge keeps nothing of
-  it: no ID, title or project in the queue, the history, the logs or the poll's record;
+  binding: an issue in a project the binding doesn't hold is skipped, and only counted. So is an issue of another
+  team that Linear returns under a parent team's filter (`other_team`); a bound sub-team's issues are read under
+  that team. ClawBridge keeps nothing of it: no ID, title or project in the queue, the history, the logs or the
+  poll's record;
 - **S2:** a person **delegates** the issue to the ClawBridge Linear app. The app can be a delegate, never an
   assignee: Linear accepts an "assign to the app" and silently does nothing;
 - **S3:** a person @-mentions the app in a comment.

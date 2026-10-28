@@ -29,6 +29,9 @@ type TeamLabelledPageV2 struct {
 	Items      []TeamIssueRefV2
 	NextCursor string
 	Complete   bool
+	// FilteredOtherTeam counts rows of an unlisted team the provider
+	// returned (a sub-team under its parent's filter), dropped unshown.
+	FilteredOtherTeam int
 }
 
 // TeamLabelledV2 reads one page of a bound team's issues carrying a label
@@ -82,8 +85,16 @@ func (s *Service) TeamLabelledV2(ctx context.Context, scope bus.Request, in Team
 	out := TeamLabelledPageV2{Items: []TeamIssueRefV2{}, NextCursor: page.NextCursor, Complete: page.Complete}
 	filteredName := ""
 	for _, issue := range page.Items {
-		if !linearprovider.ValidID(issue.ID) || issue.TeamID != in.TeamID {
+		if !linearprovider.ValidID(issue.ID) {
 			return empty, errors.New("provider page escaped the selected team")
+		}
+		if issue.TeamID != in.TeamID {
+			// A sub-team's row under its parent's filter: a listed team's
+			// own read returns it; any other is dropped and counted.
+			if !contains(b.LinearTeamIDs, issue.TeamID) {
+				out.FilteredOtherTeam++
+			}
+			continue
 		}
 		if updated, ok := linearprovider.UpdatedAfterTime(issue.UpdatedAt); !ok || updated.Before(after) {
 			return empty, errors.New("provider did not prove the updated_after filter")

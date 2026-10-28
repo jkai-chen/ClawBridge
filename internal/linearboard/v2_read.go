@@ -194,6 +194,20 @@ func listBoundProjects(ctx context.Context, p Provider, teams, bound []string) (
 // projects themselves; individual verification still decides.
 var batchFallbackKinds = map[string]bool{"capability_unavailable": true, "invalid_response": true, "scope_metadata_missing": true, "pagination_unavailable": true, "result_limit": true}
 
+// walksPairV2: the listing walks the issue's own verified pair, so the
+// issue is shown under that pair.
+func walksPairV2(pairs []pairV2, b bus.TaskboardBindingV2, issue linearprovider.IssueV2) bool {
+	for _, pair := range pairs {
+		if pair.TeamID != issue.TeamID {
+			continue
+		}
+		if b.Mode != "project_set" || (issue.ProjectKnown && pair.ProjectID == issue.ProjectID) {
+			return true
+		}
+	}
+	return false
+}
+
 func checkIssueV2(issue linearprovider.IssueV2, b bus.TaskboardBindingV2, v verifiedV2) error {
 	if !linearprovider.ValidID(issue.ID) || !contains(b.LinearTeamIDs, issue.TeamID) {
 		return outOfScopeError("issue is outside the selected task-board scope")
@@ -584,14 +598,25 @@ func (s *Service) IssuesV2(ctx context.Context, scope bus.Request, in IssuesInpu
 	}
 	seen := map[string]string{}
 	filteredName := ""
-	var kept []linearprovider.IssueV2
+	var rows, kept []linearprovider.IssueV2
 	for _, issue := range page.Items {
+		if linearprovider.ValidID(issue.ID) && issue.TeamID != pair.TeamID {
+			// Linear may list a sub-team's issues under its parent team's
+			// filter. Such a row is never shown on this pair's page: a
+			// verified pair this listing walks shows it there, and anything
+			// else is dropped and only counted.
+			if !walksPairV2(pairs, b, issue) {
+				page.FilteredOtherTeam++
+			}
+			continue
+		}
 		if e = checkIssueV2(issue, b, v); e != nil {
 			return empty, e
 		}
 		if issue.TeamID != pair.TeamID || (b.Mode == "project_set" && issue.ProjectID != pair.ProjectID) {
 			return empty, errors.New("provider page escaped the selected pair")
 		}
+		rows = append(rows, issue)
 		if in.UpdatedAfter != "" {
 			if updated, ok := linearprovider.UpdatedAfterTime(issue.UpdatedAt); !ok || updated.Before(after) {
 				return empty, errors.New("provider did not prove the updated_after filter")
@@ -626,6 +651,7 @@ func (s *Service) IssuesV2(ctx context.Context, scope bus.Request, in IssuesInpu
 			}
 		}
 	}
+	page.Items = rows
 	if in.view != nil {
 		page.Items = kept
 	}

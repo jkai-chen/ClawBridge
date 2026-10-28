@@ -328,7 +328,14 @@ func TestLinearV2PairPaginationUsesOnePageIncludingEmptyContinuation(t *testing.
 	if cursor != "" || p.queries[0].ProjectID != projectA || p.queries[1].Cursor != "next-page" || p.queries[2].TeamID != otherTeamID {
 		t.Fatal(p.queries, cursor)
 	}
+	// Another team on a pair nobody verified is dropped and counted.
 	p.pages = []linearprovider.Page[linearprovider.IssueV2]{{Items: []linearprovider.IssueV2{{Issue: linearprovider.Issue{ID: issueID, TeamID: otherTeamID, ProjectID: projectA}, ProjectKnown: true}}, Complete: true}}
+	if page, e := s.IssuesV2(context.Background(), scope, IssuesInputV2{Limit: 10}); e != nil || len(page.Items) != 0 || page.FilteredOtherTeam != 1 {
+		t.Fatal("cross-product pair shown:", page, e)
+	}
+	// The pair's own team in another project is the provider escaping
+	// the project filter.
+	p.pages = []linearprovider.Page[linearprovider.IssueV2]{{Items: []linearprovider.IssueV2{{Issue: linearprovider.Issue{ID: issueID, TeamID: teamID, ProjectID: projectB}, ProjectKnown: true}}, Complete: true}}
 	if _, e := s.IssuesV2(context.Background(), scope, IssuesInputV2{Limit: 10}); e == nil {
 		t.Fatal("cross-product pair accepted")
 	}
@@ -337,6 +344,52 @@ func TestLinearV2PairPaginationUsesOnePageIncludingEmptyContinuation(t *testing.
 		t.Fatal("invalid cursor accepted")
 	}
 }
+
+// Linear may list a sub-team's issues under its parent team's filter. Such
+// a row never shows on the parent's page: a verified pair the listing walks
+// shows it there, and an unlisted team, an unverified pair or a pair the
+// listing doesn't walk is dropped and counted. Nothing is shown twice.
+func TestLinearV2ListingDropsAnotherTeamsRows(t *testing.T) {
+	const unlistedTeam = "abababab-abab-4bab-8bab-abababababab"
+	const rowD = "dededede-dede-4ede-8ede-dededededede"
+	const rowE = "efefefef-efef-4fef-8fef-efefefefefef"
+	const rowF = "fafafafa-fafa-4afa-8afa-fafafafafafa"
+	s, _, p, scope := testV2(t)
+	row := func(id, team, project string, known bool) linearprovider.IssueV2 {
+		return linearprovider.IssueV2{Issue: linearprovider.Issue{ID: id, TeamID: team, ProjectID: project}, ProjectKnown: known, LabelIDs: []string{labelA}, LabelsKnown: true}
+	}
+	mixed := func() linearprovider.Page[linearprovider.IssueV2] {
+		return linearprovider.Page[linearprovider.IssueV2]{Items: []linearprovider.IssueV2{
+			row(issueID, teamID, projectA, true),
+			row(parentA, otherTeamID, projectB, true), // its own verified pair
+			row(rowC, unlistedTeam, projectA, true),   // unlisted team
+			row(rowD, otherTeamID, projectA, true),    // listed team, unverified pair
+			row(rowE, otherTeamID, "", false),         // project unknown
+			row(rowF, otherTeamID, projectB, false),   // project not proven
+		}, Complete: true}
+	}
+	p.pages = []linearprovider.Page[linearprovider.IssueV2]{mixed()}
+	page, e := s.IssuesV2(context.Background(), scope, IssuesInputV2{Limit: 10})
+	if e != nil || len(page.Items) != 1 || page.Items[0].ID != issueID || page.FilteredOtherTeam != 4 {
+		t.Fatal(page, e)
+	}
+	if body, _ := json.Marshal(page); !strings.Contains(string(body), `"filtered_other_team":4`) || strings.Contains(string(body), rowC) {
+		t.Fatal(string(body))
+	}
+	// A label of the first team narrows the listing to its pair: the other
+	// team's verified pair isn't walked, so its row is counted too.
+	p.labels = []linearprovider.Label{{ID: labelA, Name: "a", TeamID: teamID, EligibilityKnown: true}}
+	p.pages = []linearprovider.Page[linearprovider.IssueV2]{mixed()}
+	if page, e = s.IssuesV2(context.Background(), scope, IssuesInputV2{Limit: 10, LabelID: labelA}); e != nil || len(page.Items) != 1 || page.FilteredOtherTeam != 5 {
+		t.Fatal(page, e)
+	}
+	// A malformed row still refuses the page.
+	p.pages = []linearprovider.Page[linearprovider.IssueV2]{{Items: []linearprovider.IssueV2{row("FIX-1", unlistedTeam, projectA, true)}, Complete: true}}
+	if _, e = s.IssuesV2(context.Background(), scope, IssuesInputV2{Limit: 10}); e == nil {
+		t.Fatal("malformed row accepted")
+	}
+}
+
 func TestLinearV2DestinationAndTriStateMutationLedger(t *testing.T) {
 	s, _, p, scope := testV2(t)
 	title := "new issue"

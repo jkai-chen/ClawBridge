@@ -98,6 +98,9 @@ type Page[T any] struct {
 	Items      []T    `json:"items"`
 	NextCursor string `json:"next_cursor,omitempty"`
 	Complete   bool   `json:"complete"`
+	// FilteredOtherTeam counts rows of another team that the provider
+	// returned and that were dropped unshown (an issue listing only).
+	FilteredOtherTeam int `json:"filtered_other_team,omitempty"`
 }
 type Team struct {
 	ID   string `json:"id"`

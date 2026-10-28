@@ -26,7 +26,9 @@ const (
 // fakeStatusProbe scripts the app's answers, records every call, and moves
 // its project's status as a send succeeds.
 type fakeStatusProbe struct {
-	project  linearapp.P8Project
+	project linearapp.P8Project
+	// allow is the run's --allow-member.
+	allow    string
 	missing  bool
 	archived bool
 	trashed  bool
@@ -149,7 +151,7 @@ func runStatusProbe(t *testing.T, f *fakeStatusProbe, store fakeProbeStore, dry 
 	}
 	store.noTokens = noTokens{t}
 	var out bytes.Buffer
-	err := linearAppStatusProbe(context.Background(), store, strings.ToUpper(p8Project), dry, &out)
+	err := linearAppStatusProbe(context.Background(), store, strings.ToUpper(p8Project), f.allow, dry, &out)
 	if strings.Contains(out.String(), "Planned") || strings.Contains(out.String(), "\x1b") {
 		t.Fatal("a name reached the output:", out.String())
 	}
@@ -283,6 +285,22 @@ func TestStatusProbeStopsOnTheFirstMoveNotAccepted(t *testing.T) {
 	}
 }
 
+// --allow-member lets the probe project's one member through, that member
+// only.
+func TestStatusProbeAllowsOneMember(t *testing.T) {
+	t.Setenv(probeProjectEnv, p8Project)
+	f := newFakeStatusProbe()
+	f.project.Members, f.project.MemberIDs, f.allow = true, []string{p8Update}, p8Update
+	if out, calls, err := runStatusProbe(t, f, fakeProbeStore{}, true); err != nil || calls != "shape,read,scope" || out["shape"].(map[string]any)["member_allowed"] != true {
+		t.Fatal(out, calls, err)
+	}
+	f = newFakeStatusProbe()
+	f.project.Members, f.project.MemberIDs, f.allow = true, []string{p8Update, p8Project}, p8Update
+	if _, calls, err := runStatusProbe(t, f, fakeProbeStore{}, true); err == nil || calls != "shape" {
+		t.Fatal("two members passed:", calls, err)
+	}
+}
+
 func TestStatusProbeArguments(t *testing.T) {
 	for _, c := range []struct {
 		args []string
@@ -293,6 +311,12 @@ func TestStatusProbeArguments(t *testing.T) {
 		{[]string{"linear-app-probe", "--confirm", "--project-status", "--health-order", "--project", p8Project}, "not --p8"},
 		{[]string{"linear-app-probe", "--project-status", "--project", p8Project}, "repeat with --confirm"},
 		{[]string{"linear-app-probe", "--project-status", "--dry-run", "--project", p8Project}, "repeat with --confirm"},
+		// --allow-member: one Linear user UUID, with --p8 or --project-status.
+		{[]string{"linear-app-probe", "--confirm", "--allow-member", p8Update}, "with --p8 or --project-status"},
+		{[]string{"linear-app-probe", "--confirm", "--health-order", "--project", p8Project, "--allow-member", p8Update}, "with --p8 or --project-status"},
+		{[]string{"linear-app-probe", "--confirm", "--p8", "--project", p8Project, "--allow-member", "owner@example.com"}, "one Linear user UUID"},
+		{[]string{"linear-app-probe", "--confirm", "--project-status", "--project", p8Project, "--allow-member", "Owner Name"}, "one Linear user UUID"},
+		{[]string{"linear-app-probe", "--p8", "--project", p8Project, "--allow-member", p8Update}, "repeat with --confirm"},
 	} {
 		var out bytes.Buffer
 		if err := RunOperator(context.Background(), c.args, &out); err == nil || !strings.Contains(err.Error(), c.want) || out.Len() != 0 {

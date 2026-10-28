@@ -752,7 +752,7 @@ func openServingStore(ctx context.Context, dsn, owner string) (*bus.Store, error
 // cannot sign in: their own address moved to a new Google account, or a
 // workspace allow-list refuses every account.
 func RunOperator(ctx context.Context, args []string, stdout io.Writer) error {
-	const usage = "usage: clawbridge operator principal-unbind EMAIL --confirm [--allow-previous] | workspace-clear-domains WORKSPACE --confirm | linear-app-probe --confirm [--project UUID] [--p8 [--dry-run] | --health-order | --project-status [--dry-run]] | linear-app-doc-probe --confirm | health-run --project UUID --confirm [--force-new | --delete UPDATE_ID] | bootstrap-invite --workspace NAME [--force-stdout | --code-stdin [--expect-owner EMAIL]] [--database-url-env NAME] | launcher-token create --out PATH [--print] | launcher-token revoke ID | model-seal-key rotate [--confirm [--delete-unreadable]]"
+	const usage = "usage: clawbridge operator principal-unbind EMAIL --confirm [--allow-previous] | workspace-clear-domains WORKSPACE --confirm | linear-app-probe --confirm [--project UUID] [--p8 [--dry-run] [--allow-member UUID] | --health-order | --project-status [--dry-run] [--allow-member UUID]] | linear-app-doc-probe --confirm | health-run --project UUID --confirm [--force-new | --delete UPDATE_ID] | bootstrap-invite --workspace NAME [--force-stdout | --code-stdin [--expect-owner EMAIL]] [--database-url-env NAME] | launcher-token create --out PATH [--print] | launcher-token revoke ID | model-seal-key rotate [--confirm [--delete-unreadable]]"
 	if len(args) > 0 && args[0] == "bootstrap-invite" {
 		return runBootstrapInvite(ctx, args[1:], stdout)
 	}
@@ -774,11 +774,13 @@ func RunOperator(ctx context.Context, args []string, stdout io.Writer) error {
 	}
 	project := ""
 	p8, dryRun, healthOrder, projectStatus := false, false, false, false
+	allowMember := ""
 	if command == "linear-app-probe" {
 		f.StringVar(&project, "project", "", "a bound Linear project UUID whose health inputs are read; with --p8, the empty throwaway project")
 		f.BoolVar(&p8, "p8", false, "post one real status update to the empty --project as the app, read it back, delete it and read again (P8)")
 		f.BoolVar(&dryRun, "dry-run", false, "with --p8 or --project-status: check the project and the app, and send nothing")
 		f.BoolVar(&projectStatus, "project-status", false, "move the empty --project, named by "+probeProjectEnv+", to started, completed and back as the app, reading each move back (A4)")
+		f.StringVar(&allowMember, "allow-member", "", "with --p8 or --project-status: accept the empty project's members when they are exactly this one Linear user (a UUID, never a name or email)")
 		f.BoolVar(&healthOrder, "health-order", false, "read --project's updates as the health judgement does and with last:, two reads, and print their order")
 	}
 	forceNew, deleteID := false, ""
@@ -808,6 +810,9 @@ func RunOperator(ctx context.Context, args []string, stdout io.Writer) error {
 	}
 	if projectStatus && (project == "" || p8 || healthOrder) {
 		return errors.New("--project-status needs --project, and not --p8 or --health-order")
+	}
+	if allowMember != "" && (!p8 && !projectStatus || !projectUUID.MatchString(allowMember)) {
+		return errors.New("--allow-member takes one Linear user UUID, with --p8 or --project-status")
 	}
 	if healthOrder && (project == "" || p8) {
 		return errors.New("--health-order needs --project, and not --p8")
@@ -855,10 +860,10 @@ func RunOperator(ctx context.Context, args []string, stdout io.Writer) error {
 		return linearAppHealthOrder(ctx, store, project, stdout)
 	}
 	if command == "linear-app-probe" && projectStatus {
-		return linearAppStatusProbe(ctx, store, project, dryRun, stdout)
+		return linearAppStatusProbe(ctx, store, project, allowMember, dryRun, stdout)
 	}
 	if command == "linear-app-probe" && p8 {
-		return linearAppP8(ctx, store, project, dryRun, stdout)
+		return linearAppP8(ctx, store, project, allowMember, dryRun, stdout)
 	}
 	if command == "linear-app-probe" {
 		return linearAppProbe(ctx, store, project, stdout)

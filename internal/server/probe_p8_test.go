@@ -73,13 +73,13 @@ func (f *fakeP8) DeleteStatusUpdate(_ context.Context, id string) error {
 }
 func (f *fakeP8) Close() error { f.closed = true; return nil }
 
-func runP8(t *testing.T, f *fakeP8, dry bool) (map[string]any, string, error) {
+func runP8(t *testing.T, f *fakeP8, dry bool, allow ...string) (map[string]any, string, error) {
 	t.Helper()
 	saved := newP8App
 	t.Cleanup(func() { newP8App = saved })
 	newP8App = func(linearapp.Store) (p8App, error) { return f, nil }
 	var out bytes.Buffer
-	err := linearAppP8(context.Background(), nil, p8Project, dry, &out)
+	err := linearAppP8(context.Background(), nil, p8Project, strings.Join(allow, ""), dry, &out)
 	var got map[string]map[string]any
 	if json.Unmarshal(out.Bytes(), &got) != nil {
 		t.Fatal("output is not JSON:", out.String())
@@ -128,6 +128,35 @@ func TestP8RefusesBeforeSending(t *testing.T) {
 		t.Fatal(out, calls, err)
 	}
 }
+
+// --allow-member accepts exactly the one member it names, by Linear ID, and
+// the output says so; another member, or more than one, still refuses.
+func TestP8AllowsOneNamedMember(t *testing.T) {
+	const member = "e0000000-0000-4000-8000-0000000000d1"
+	one := linearapp.P8Project{Found: true, Members: true, MemberIDs: []string{member}}
+	out, calls, err := runP8(t, &fakeP8{project: one}, true, member)
+	if err != nil || calls != "precheck,preflight" || out["project"].(map[string]any)["member_allowed"] != true || out["project"].(map[string]any)["has_members"] != true {
+		t.Fatal(out, calls, err)
+	}
+	if strings.Contains(fmtJSON(out), member) {
+		t.Fatal("the member's ID was printed:", out)
+	}
+	for name, c := range map[string]struct {
+		project linearapp.P8Project
+		allow   string
+	}{
+		"no allow":       {one, ""},
+		"another member": {one, p8Update},
+		"two members":    {linearapp.P8Project{Found: true, Members: true, MemberIDs: []string{member, p8Update}}, member},
+		"and a lead":     {linearapp.P8Project{Found: true, Members: true, Lead: true, MemberIDs: []string{member}}, member},
+	} {
+		if _, calls, err := runP8(t, &fakeP8{project: c.project}, true, c.allow); err == nil || calls != "precheck" {
+			t.Fatal(name, calls, err)
+		}
+	}
+}
+
+func fmtJSON(v any) string { raw, _ := json.Marshal(v); return string(raw) }
 
 // A refused save that left nothing is the answer, with no delete.
 func TestP8RefusedSaveIsTheAnswer(t *testing.T) {

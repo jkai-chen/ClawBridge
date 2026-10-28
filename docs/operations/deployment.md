@@ -162,6 +162,13 @@ project status update as the app and removes it again:
 - **The project** must be an empty throwaway: no issues (archived ones
   included), no members and no lead. Anything else is refused before a write,
   so nobody is notified.
+- **One member you can't remove:** `--allow-member UUID` (with `--p8` or
+  `--project-status`) accepts a project whose members are exactly that one
+  Linear user, named by their Linear user ID, never a name or email. Any other
+  member, or more than one, is still refused; the output's project shape says
+  `"member_allowed": true`, without the ID. That member may see the probe's
+  update, so use it only for a person who expects it, such as the owner, and
+  replace the project with a fresh empty one when you can.
 - **Before sending,** it checks that the app's MCP tools can create, list and
   delete a project status update (`save_status_update`, `get_status_updates`,
   `delete_status_update`), with `project` as the update's type and `onTrack` as
@@ -188,7 +195,8 @@ export CLAWBRIDGE_PROBE_PROJECT=UUID
 
 - **Only the operator's probe project.** `--project` must equal
   `CLAWBRIDGE_PROBE_PROJECT`, the empty throwaway `--p8` uses. It must exist,
-  unarchived and not trashed, with no issues, members or lead. It must not be
+  unarchived and not trashed, with no issues, members or lead (or only the
+  member `--allow-member` names). It must not be
   named by any task board binding on this server. And it must be on a team that
   a binding uses, so a pass proves the app's access there.
 - **Before sending,** it maps the moves to the workspace's one unarchived

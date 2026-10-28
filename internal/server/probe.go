@@ -205,7 +205,7 @@ func probeClass(err error) string {
 // tools can create, list and delete a status update. With dryRun it stops
 // there. It prints classes, the schemas' field names and enums, and the
 // update's ID only; an update it cannot prove deleted is an ALERT.
-func linearAppP8(ctx context.Context, store linearapp.Store, project string, dryRun bool, stdout io.Writer) error {
+func linearAppP8(ctx context.Context, store linearapp.Store, project, allowMember string, dryRun bool, stdout io.Writer) error {
 	app, err := newP8App(store)
 	if err != nil {
 		return err
@@ -221,6 +221,7 @@ func linearAppP8(ctx context.Context, store linearapp.Store, project string, dry
 	if err != nil {
 		return probeFailure("p8_project", err)
 	}
+	pre.Allow(allowMember)
 	out["project"] = pre
 	if !pre.Empty() {
 		return emit(errors.New("linear-app-probe p8: refused: the project must exist with no issues, members or lead; nothing was sent"))

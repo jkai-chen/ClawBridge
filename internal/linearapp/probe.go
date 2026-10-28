@@ -291,8 +291,9 @@ func (a *App) ProbeDocuments(ctx context.Context) (DocumentsProbe, error) {
 
 // p8ProjectProbe reads whether a project is empty and unattended: P8 posts
 // a real update only to a project with no issues, members or lead, so
-// nobody is notified.
-const p8ProjectProbe = `query P8Project($id: String!) { project(id: $id) { id lead { id } members(first: 1) { nodes { id } } issues(first: 1, includeArchived: true) { nodes { id } } } }`
+// nobody is notified. Two members are read, so one the operator allows
+// can be told from more.
+const p8ProjectProbe = `query P8Project($id: String!) { project(id: $id) { id lead { id } members(first: 2) { nodes { id } } issues(first: 1, includeArchived: true) { nodes { id } } } }`
 
 // P8Project is what P8's precheck found, as booleans only.
 type P8Project struct {
@@ -300,10 +301,24 @@ type P8Project struct {
 	Issues  bool `json:"has_issues"`
 	Members bool `json:"has_members"`
 	Lead    bool `json:"has_lead"`
+	// MemberAllowed is set by Allow: the project's one member is the
+	// Linear user the operator allowed.
+	MemberAllowed bool `json:"member_allowed,omitempty"`
+	// MemberIDs are the members read (two at most); never printed.
+	MemberIDs []string `json:"-"`
+}
+
+// Allow accepts the project's members when they are exactly one, the
+// Linear user member (a UUID); any other member, or more than one, still
+// refuses.
+func (p *P8Project) Allow(member string) {
+	p.MemberAllowed = len(p.MemberIDs) == 1 && strings.EqualFold(p.MemberIDs[0], member)
 }
 
 // Empty reports whether P8 may post to the project.
-func (p P8Project) Empty() bool { return p.Found && !p.Issues && !p.Members && !p.Lead }
+func (p P8Project) Empty() bool {
+	return p.Found && !p.Issues && (!p.Members || p.MemberAllowed) && !p.Lead
+}
 
 // ProbeP8Project reads, as the app, whether project is empty: no issue
 // (archived included), no member and no lead.
@@ -332,5 +347,9 @@ func (a *App) ProbeP8Project(ctx context.Context, project string) (P8Project, er
 	if out.Project == nil || !strings.EqualFold(out.Project.ID, project) {
 		return P8Project{}, nil
 	}
-	return P8Project{Found: true, Issues: len(out.Project.Issues.Nodes) > 0, Members: len(out.Project.Members.Nodes) > 0, Lead: out.Project.Lead != nil}, nil
+	members := []string{}
+	for _, m := range out.Project.Members.Nodes {
+		members = append(members, m.ID)
+	}
+	return P8Project{Found: true, Issues: len(out.Project.Issues.Nodes) > 0, Members: len(members) > 0, Lead: out.Project.Lead != nil, MemberIDs: members}, nil
 }

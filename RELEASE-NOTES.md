@@ -18,6 +18,12 @@
   only when Linear's tool takes a priority, and the returned issue is checked like the other fields. No schema
   change, no Linear configuration.
 
+## Operations
+
+- **`linear-app-probe --allow-member UUID`** (with `--p8` or `--project-status`) lets the empty probe project keep
+  exactly one member, the Linear user named by ID; another member, or more than one, is still refused, and the output
+  says `member_allowed`. For a probe project that a person can't leave. No schema change. Linear config scope: none.
+
 # ClawBridge v0.3.6 (released 28 Oct)
 
 **Schema 28 → 39.**

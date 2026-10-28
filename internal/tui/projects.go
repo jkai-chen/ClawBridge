@@ -181,6 +181,9 @@ func renderProjects(m Model) string {
 		b.WriteString("No projects in this workspace yet. An owner creates one with clawbridge project create SLUG.")
 		return b.String()
 	}
+	if m.threads.open {
+		return b.String() + renderThreads(m)
+	}
 	if p, ok := m.selectedProject(); ok && m.projectOpen {
 		return b.String() + renderProjectDetail(m, p)
 	}
@@ -275,11 +278,20 @@ func renderProjectDetail(m Model, p ProjectRow) string {
 
 func projectOpenOwn(m Model) bool {
 	p, ok := m.selectedProject()
-	return ok && m.projectOpen && m.ownProject(p)
+	return ok && m.projectOpen && !m.threads.open && m.ownProject(p)
 }
 
-var projectBindings = []Binding{
-	{ID: "open", Keys: []string{"enter"}, Label: "open", When: func(m Model) bool { _, ok := m.selectedProject(); return ok && !m.projectOpen }, Action: func(m Model, _ string) (Model, tea.Cmd) {
+var projectBindings = append([]Binding{
+	{ID: "open", Keys: []string{"enter"}, Label: "open", When: func(m Model) bool {
+		if m.threads.open {
+			return m.threads.thread == nil && m.selected < len(m.threads.rows)
+		}
+		_, ok := m.selectedProject()
+		return ok && !m.projectOpen
+	}, Action: func(m Model, _ string) (Model, tea.Cmd) {
+		if m.threads.open {
+			return m.openThread()
+		}
 		m.projectOpen = true
 		p, _ := m.selectedProject()
 		if _, ok := m.overviews[p.ID]; ok {
@@ -294,4 +306,4 @@ var projectBindings = []Binding{
 	// U13: from the profile's own project to its sessions and board.
 	{ID: "its-sessions", Keys: []string{"s"}, Label: "its sessions", When: projectOpenOwn, Action: func(m Model, _ string) (Model, tea.Cmd) { return m.Show(ScreenSessions) }},
 	{ID: "its-linear", Keys: []string{"l"}, Label: "its Linear board", When: func(m Model) bool { return projectOpenOwn(m) && m.hasTab(ScreenLinear) }, Action: func(m Model, _ string) (Model, tea.Cmd) { return m.Show(ScreenLinear) }},
-}
+}, threadBindings...)

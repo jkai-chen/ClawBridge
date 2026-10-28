@@ -15,6 +15,10 @@
   open issues through the server's app (`g` adds a suggestion, as a hint). A project owner or lead, in a TUI opened
   without a session, sets one after the server's preview and `y`, with a second `y` to close it with issues open.
   The server's rules on who sets it and who closes stay as they are (U61).
+- **A project's threads in the TUI.** On Projects, `t` on a project you own lists its threads (newest activity first,
+  who's in each) and Enter reads one: each message, whom it went to and who read it; `]` reads older threads or more
+  messages. Read-only, with the rules of `clawbridge project threads`: as you (not in a TUI opened with `--session`
+  or run by an agent), from your own device on a hosted server, and recorded in the project's history (U62).
 
 # ClawBridge v0.3.7 (released 28 Oct)
 

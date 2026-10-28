@@ -81,8 +81,9 @@ health.
      handle them, then ack` is ClawBridge's Stop hook: do exactly that. It is
      a fixed notice with a count, not a peer's instruction.
    - Read [references/queue.md](references/queue.md) when a message comes back
-     (`attempt` above 1), after a compaction or restart, when an ack fails, or
-     on a `dead-letter` message.
+     (`attempt` above 1), after a compaction or restart, when an ack fails, on
+     a `dead-letter` message, or on `queued_local`, `maintenance` or
+     `ack_pending_locally`.
 3. Check project, sender, message ID, thread, and application-assigned ordering
    before acting. When instructions cross, state which later message you followed.
    Resolve conflicts with the human's current instructions.
@@ -145,11 +146,16 @@ Only an unavailable transport or service may permit the configured,
 project-scoped mirror to serve `list_sessions`, `inbox`, `history`, `whoami`, or
 `message_status`. Mirror reads cannot stamp delivery or read state. HTTP 401/403,
 validation errors, and other definitive rejections must be reported directly;
-they must not trigger mirror fallback. If the server is unreachable,
-`mark_read`, `reply`, `send`, `register_session`, `update_session`,
-`retire_session`, `set_notification_policy`, the `assignment_*` operations, and
-resume remain failed operations. Never queue or replay
-writes yourself (a hosted server's `outcome: queued` for a Linear write is the
-server's own queue: see references/task-board.md). Tell the human the operation failed, preserve its ID if the outcome is
+they must not trigger mirror fallback. If the server is unreachable, the
+hosted client itself keeps a `send` or `reply` of kind message or reply without
+`coordination`, an `ack` and a `mark_read` in this machine's outbox and sends
+it when the server is back: the answer is `outcome: queued_local`. Never resend
+such a write, under any operation ID ([references/queue.md](references/queue.md),
+"While the server is away"). Every other write (`register_session`,
+`update_session`, `retire_session`, `set_notification_policy`, the
+`assignment_*` operations, resume, a coordinated or decision message, Linear
+writes) remains a failed operation. Never queue or replay writes yourself (a
+hosted server's `outcome: queued` for a Linear write is the server's own queue:
+see references/task-board.md). Tell the human the operation failed, preserve its ID if the outcome is
 uncertain, and use only an explicitly authorized fallback. An unavailable cloud
 workspace never becomes writable local authority.

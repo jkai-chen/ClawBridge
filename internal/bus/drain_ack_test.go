@@ -1,8 +1,11 @@
 package bus
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 )
@@ -115,5 +118,27 @@ func TestOldInstanceReplyWithAckRefusedWhole(t *testing.T) {
 	fresh := map[string]any{"message_id": id, "body": "answer", "operation_id": fmt.Sprintf("r-new-%v", id), "instance": "b-new", "ack": map[string]any{"message_id": id}}
 	if out := h.call("reply", "b", fresh).(map[string]any); out["ack"].(map[string]any)["outcome"] != "acked" {
 		t.Fatal(out)
+	}
+}
+
+// The fence's two refusals are told apart: an earlier instance of one's
+// own session is a public invalid that names itself, so a client's outbox
+// can dead-letter it as instance_changed (ZERO-LOSS-DEPLOY §1.8); another
+// principal's session is forbidden, never mistaken for an instance change.
+func TestInstanceMismatchIsPublic(t *testing.T) {
+	h := newHarness(t)
+	if _, err := h.s.db.Exec(`UPDATE sessions SET owner_principal='grace@example.test' WHERE name='b'`); err != nil {
+		t.Fatal(err)
+	}
+	_, err := h.s.Execute(context.Background(), h.request("send", "b", map[string]any{"to": "a", "body": "x", "operation_id": "op-0"}))
+	var owner interface{ Code() string }
+	if _, public := PublicMessage(err); public || !errors.As(err, &owner) || owner.Code() != "forbidden" || strings.Contains(err.Error(), "instance") {
+		t.Fatal("another principal's session:", err)
+	}
+	_, err = h.s.Execute(context.Background(), h.request("send", "a", map[string]any{"instance": "old-instance", "to": "b", "body": "x", "operation_id": "op-1"}))
+	message, public := PublicMessage(err)
+	var coded interface{ Code() string }
+	if !public || message != "session instance mismatch; pass the instance returned by register" || !errors.As(err, &coded) || coded.Code() != "invalid" {
+		t.Fatal(err, message, public)
 	}
 }

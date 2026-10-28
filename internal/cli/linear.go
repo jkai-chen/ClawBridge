@@ -764,7 +764,13 @@ func linearExecutor(ctx context.Context, flags Config) (linearboard.Executor, fu
 	}
 	cleanup := func() {}
 	if c.Mode == "cloud" {
-		executor, err = remote.New(remoteConfig(c))
+		var client *remote.Client
+		if client, err = remote.New(remoteConfig(c)); err == nil {
+			executor = client
+			// The linear commands and the runner send what waits in the
+			// outbox first, as every command does.
+			drainBeforeCommand(ctx, client)
+		}
 	} else {
 		var local *bus.Store
 		local, err = bus.Open(c.DB)

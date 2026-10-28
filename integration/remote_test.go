@@ -13,6 +13,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"clawbridge/internal/bus"
 	"clawbridge/internal/remote"
@@ -149,6 +150,17 @@ func TestPostgresRemoteSyncOfflineAndDenial(t *testing.T) {
 			r.Args["notes"] = "offline-must-not-queue"
 		case "retire_session":
 			r.Args["successor"] = "alice"
+		}
+		if op == "send" || op == "reply" || op == "mark_read" {
+			// A message write waits in the client's outbox (ZERO-LOSS-DEPLOY
+			// §1); the call's deadline ends its in-process retries.
+			bounded, cancel := context.WithTimeout(ctx, 1500*time.Millisecond)
+			result, err := client.Execute(bounded, r)
+			cancel()
+			if data, _ := result.Data.(map[string]any); err != nil || result.Source != "client_outbox" || data["outcome"] != "queued_local" {
+				t.Errorf("offline %s wasn't queued locally: %v %+v", op, err, result)
+			}
+			continue
 		}
 		if _, err := client.Execute(ctx, r); err == nil {
 			t.Errorf("offline write %s succeeded", op)

@@ -212,6 +212,10 @@ func Run(ctx context.Context, in Input, executor Executor) Report {
 
 	configOK := checkConfig(in.Config, add)
 	authorityOK, projectsOK := checkAuthority(ctx, in.Config, executor, add)
+	if authorityOK && executor != nil {
+		checkServerMaintenance(executor, add)
+	}
+	checkClientOutbox(ctx, in.Config, add)
 	checkCredentials(ctx, in, configOK, add)
 	wid, pid, resolutionOK := checkResolution(ctx, in.Config, in.GitRemote, executor, authorityOK, projectsOK, add)
 	checkMirror(ctx, in, wid, pid, resolutionOK, add)

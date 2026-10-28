@@ -196,6 +196,53 @@ func TestAppWriteAnswersKeepTheirTypes(t *testing.T) {
 	}
 }
 
+// §3: a server in maintenance refused before anything reached Linear, so
+// the answer is definitive, never uncertain. The CLI's service doesn't
+// retry; the MCP server's retries once, after Retry-After, with the same
+// request, within the call's deadline.
+func TestAppWriteInMaintenance(t *testing.T) {
+	drain := func() (bus.Result, error) {
+		return bus.Result{}, &remote.HTTPError{Status: 503, Code: "maintenance", RetryAfter: time.Second}
+	}
+	receipt := func() (bus.Result, error) {
+		return bus.Result{Source: "server", Data: map[string]any{"receipt": map[string]any{"id": "c"}}}, nil
+	}
+	answers := []func() (bus.Result, error){drain, receipt}
+	server := &appServer{status: appOn, write: func(bus.Request) (bus.Result, error) {
+		next := answers[0]
+		answers = answers[1:]
+		return next()
+	}}
+	s, _, scope := routedV2(t, server)
+	_, e := s.WriteV2(context.Background(), scope, commentIn)
+	if e == nil || IsUncertain(e) || !strings.Contains(e.Error(), "nothing was sent to Linear; retry the same operation_id after 1 s") || len(server.writes) != 1 {
+		t.Fatal(e, len(server.writes))
+	}
+	answers = []func() (bus.Result, error){drain, receipt}
+	server.writes = nil
+	s.RetryMaintenanceOnce()
+	started := time.Now()
+	if got, e := s.WriteV2(context.Background(), scope, commentIn); e != nil || got == nil || len(server.writes) != 2 || time.Since(started) < time.Second {
+		t.Fatal(got, e, len(server.writes))
+	}
+	if !reflect.DeepEqual(server.writes[0].Args, server.writes[1].Args) {
+		t.Fatal("the retry changed the request")
+	}
+	// Once only, and only when the deadline leaves room.
+	answers = []func() (bus.Result, error){drain, drain, receipt}
+	server.writes = nil
+	if _, e = s.WriteV2(context.Background(), scope, commentIn); e == nil || IsUncertain(e) || len(server.writes) != 2 {
+		t.Fatal(e, len(server.writes))
+	}
+	answers = []func() (bus.Result, error){drain, receipt}
+	server.writes = nil
+	short, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	if _, e = s.WriteV2(short, scope, commentIn); e == nil || len(server.writes) != 1 {
+		t.Fatal(e, len(server.writes))
+	}
+}
+
 // What a client sends is exactly what the server reads back, and an absent
 // field is never sent.
 func TestWriteArgsRoundTrip(t *testing.T) {

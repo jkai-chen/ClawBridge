@@ -36,6 +36,12 @@ func (s *Service) KeepProviderOpen(ttl time.Duration) {
 	}
 }
 
+// RetryMaintenanceOnce makes an app-route write that a server in
+// maintenance refused retry once, after the wait it asked for, within the
+// call's deadline (ZERO-LOSS-DEPLOY §3). The MCP server sets it; the CLI
+// doesn't, and prints when to retry.
+func (s *Service) RetryMaintenanceOnce() { s.retryMaintenance = true }
+
 // Close releases a kept-open native connection and any cached binding proof.
 func (s *Service) Close() error {
 	s.pool.drop()

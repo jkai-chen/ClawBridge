@@ -118,6 +118,14 @@ func (c *Client) Stream(ctx context.Context, scope StreamScope, opts StreamOptio
 			// bye: the server's lifetime or shutdown; reconnect now.
 			continue
 		}
+		if pause, ok := Maintenance(err); ok {
+			// The server is draining for a deploy (§2.4): wait what it
+			// asked, which isn't a failure and doesn't grow the backoff.
+			if e := opts.Wait(ctx, pause); e != nil {
+				return e
+			}
+			continue
+		}
 		wait := backoff/2 + rand.N(backoff/2+1)
 		if e := opts.Wait(ctx, wait); e != nil {
 			return e
@@ -181,6 +189,9 @@ func (c *Client) StreamOnce(ctx context.Context, scope StreamScope, opts StreamO
 			}
 			return false, &credentialError{errors.New("the server refused this credential for the stream")}
 		}
+		if response.StatusCode == http.StatusServiceUnavailable && errorCode(encoded) == "maintenance" {
+			return false, &HTTPError{Status: response.StatusCode, Code: "maintenance", RetryAfter: retryAfter(response.Header)}
+		}
 		// 403 (the ticket was used or ran out), 429 (too many streams for
 		// now) and 5xx are retried with a new ticket after the backoff.
 		return false, &HTTPError{Status: response.StatusCode, Code: "stream_refused"}
@@ -217,6 +228,14 @@ func (c *Client) StreamOnce(ctx context.Context, scope StreamScope, opts StreamO
 				return true, nil
 			case "revoked", "replaced":
 				return true, &StreamEnded{Reason: event.Name}
+			case "maintenance":
+				// The server is draining; it says bye next. Reconnect after
+				// retry_after.
+				var m struct {
+					RetryAfter int `json:"retry_after"`
+				}
+				json.Unmarshal(event.Data, &m)
+				return true, &HTTPError{Status: http.StatusServiceUnavailable, Code: "maintenance", RetryAfter: time.Duration(min(max(m.RetryAfter, 1), 3600)) * time.Second}
 			}
 			if !json.Valid(event.Data) {
 				return true, errors.New("the server sent an unreadable stream event")
@@ -231,6 +250,17 @@ func (c *Client) StreamOnce(ctx context.Context, scope StreamScope, opts StreamO
 		return true, ctx.Err()
 	}
 	return true, errors.New("the stream connection was lost; it will reconnect")
+}
+
+// errorCode reads an error answer's code.
+func errorCode(encoded []byte) string {
+	var body struct {
+		Error struct {
+			Code string `json:"code"`
+		} `json:"error"`
+	}
+	json.Unmarshal(encoded, &body)
+	return body.Error.Code
 }
 
 // streamTicket asks for one connect's ticket. An older server doesn't know

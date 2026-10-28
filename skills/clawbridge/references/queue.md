@@ -71,6 +71,34 @@ cross, follow the later one and say which you followed.
   Your messages wait, with no attempt counted and no dead letter. `clawbridge
   doctor` shows the hold.
 
+## While the server is away (the client outbox)
+
+On a hosted server, a `send` or `reply` (kind `message` or `reply`, without
+`coordination`), an `ack` or a `mark_read` that can't reach the server is
+retried for up to 15 s, then kept in this machine's outbox. The answer is a
+result, not an error: `outcome: queued_local`, with its `operation_id` and
+its place in the queue. The outbox sends it when the server is back, in
+order, exactly once.
+
+- **Never resend a queued write**, under the same or a new operation ID. It
+  is already on its way. After a compaction, `whoami` shows
+  `client_outbox: {waiting, oldest_age_seconds, dead}`; `clawbridge outbox
+  list` names each write without its body.
+- **A message marked `ack_pending_locally: true`** is one you handled whose
+  ack is still waiting. Skip it.
+- **Every other write fails fast**, as before: a decision, handoff or
+  routing-change, anything with `coordination`, assignments, session changes,
+  heartbeats and Linear writes. Tell the human, keep the operation ID, and
+  retry the identical request later.
+- **During a deploy** the server answers `maintenance` with `Retry-After`.
+  Nothing was sent. Your MCP server waits it out: the stream reconnects after
+  it, and a `linear_write` is retried once. A refusal you see says when to
+  retry; retry the same request with the same operation ID.
+- **A dead letter in the outbox** (refused by the server, or waiting over
+  24 h) is never resent on its own. `clawbridge doctor` fails `client.outbox`;
+  tell the human. They decide with `clawbridge outbox retry ID` or `outbox
+  drop ID --confirm drop`.
+
 ## Notices that are not a person
 
 - **The Stop hook.** In Claude Code, a turn that ends with unacked messages is

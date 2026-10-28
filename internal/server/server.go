@@ -556,9 +556,13 @@ func NewHandlerWithOptions(store Executor, verifier Verifier, o HandlerOptions) 
 		}
 		// After authentication, whose own writes a read needs too; before
 		// any transaction or lock. Only a pure read passes a drain.
-		if retry, on := draining(ctx); on && !bus.ServedInMaintenance(request) {
-			failMaintenance(w, retry)
-			return
+		if retry, on := draining(ctx); on {
+			if !bus.ServedInMaintenance(request) {
+				failMaintenance(w, retry)
+				return
+			}
+			// A read is served, and says when the drain ends, for doctor.
+			w.Header().Set(MaintenanceUntilHeader, o.Drain.Until().UTC().Format(time.RFC3339))
 		}
 		var result bus.Result
 		var err error

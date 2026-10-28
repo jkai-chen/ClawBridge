@@ -16,6 +16,25 @@
   requests (was 5 s), and compose gives it 90 s. Older clients see a 503 as today. The first deploy of this release
   can't drain (the running server has no drain); later deploys can. Linear config scope: none.
 
+## Messages survive a server deploy
+
+- **The client keeps what it couldn't send.** On a hosted server, a `send` or `reply` (kind message or reply, without
+  coordination), an `ack` and a `mark_read` that can't reach the server, or that a draining server refuses, are
+  retried for 15 s, then kept in this machine's outbox (`outbox.db` beside the mirror, mode 0600) and answered
+  `outcome: queued_local`. They are sent in order, exactly once under their own operation ID, when the server is back:
+  by the agent's MCP server within seconds, before any `clawbridge` command or TUI start, or with `clawbridge outbox
+  flush`. Every other write fails fast as before. Bounds: 1000 writes and 8 MiB; 24 h, then a dead letter
+  (docs/usage.md, "Messages while the server is away").
+- **`clawbridge outbox list [--dead] | flush | retry ID | drop ID --confirm drop`**; doctor's `client.outbox` (warns
+  past 10 minutes or half full, fails when full or on a dead letter from the last day); `whoami`'s `client_outbox`;
+  the TUI's `outbox: N waiting`. A message whose ack still waits locally isn't handed to the agent again (marked
+  `ack_pending_locally`). `CLAWBRIDGE_CLIENT_OUTBOX=off` turns it off.
+- **Clients wait out a drain.** `maintenance` is definitive (nothing was sent): the stream reconnects after
+  `retry_after` with no error, the lease loop pauses, the MCP server retries a `linear_write` once, and doctor shows
+  `server.maintenance` with when it ends (servers mark reads they serve during a drain with
+  `ClawBridge-Maintenance-Until`). The server's refusal of a session's earlier instance now names it. No schema change.
+  Linear config scope: none.
+
 ## Linear
 
 - **Doctor's `linear.writes` covers every recorded Linear write.** It names each project create, issue move or team

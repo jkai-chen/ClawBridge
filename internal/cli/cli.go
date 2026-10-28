@@ -15,6 +15,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"clawbridge/internal/auth"
@@ -52,6 +53,7 @@ Commands: setup --local, project create SLUG, register [NAME], sessions, send TO
           skill install|status|uninstall [--agent claude-code|codex|all] [--dir SKILLS_DIR] [--force],
           serve, operator principal-unbind|workspace-clear-domains ... --confirm (on the server host),
           sync, purge-expired, principal-unbind EMAIL --confirm [--allow-previous],
+          outbox list [--dead] | flush | retry ID | drop ID --confirm drop (writes waiting on this machine),
           workspace-domains DOMAIN...|--clear, doctor, tui [--screen SCREEN], version,
           cloud check [infra|server|version|workspace|linear-app|backups|all], cloud secret set KEY (own-server onboarding),
           project context-watch show|set --file FILE --expected-revision N,
@@ -197,7 +199,16 @@ func interspersedFlags(f *flag.FlagSet, args []string) ([]string, error) {
 	return append(opts, pos...), nil
 }
 
+// runDepth counts the Runs in progress in this process.
+var runDepth atomic.Int32
+
 func Run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
+	// The outboxes a command opened are closed when the outermost Run ends
+	// (a command runs others, such as the wizard's dispatcher).
+	if runDepth.Add(1) == 1 {
+		defer remote.CloseOutboxes()
+	}
+	defer runDepth.Add(-1)
 	// K1: only linear key and linear view may read the person's Linear API
 	// key; any other entry (mcp, runner, serve, notify, ...) can never.
 	if !linearKeyEntry(args) {
@@ -274,6 +285,13 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	if rest[0] != "mcp" {
 		remote.SetDeviceEventsNotice(printDeviceEvents(stderr))
 		defer remote.SetDeviceEventsNotice(nil)
+		// The client outbox's lines (a write queued, queued writes sent)
+		// print on stderr too; an MCP server answers in its tool results.
+		remote.SetOutboxNotice(outboxLines(stderr))
+		defer remote.SetOutboxNotice(nil)
+	}
+	if rest[0] == "outbox" {
+		return runOutbox(ctx, flags, rest[1:], stdout, stderr)
 	}
 	if rest[0] == "linear" {
 		return runLinear(ctx, flags, rest[1:], stdout, stderr)
@@ -1096,6 +1114,10 @@ flags:`)
 			return err
 		}
 		executor = cloudClient
+		if command != "mcp" {
+			// Writes waiting in the outbox go first (ZERO-LOSS-DEPLOY §1.4).
+			drainBeforeCommand(ctx, cloudClient)
+		}
 	} else {
 		localStore, err = bus.Open(config.DB)
 		if err != nil {
@@ -1141,6 +1163,7 @@ flags:`)
 			// and read tools reuse a verified binding briefly. Writes do neither.
 			board.KeepProviderOpen(linearboard.ProviderTTL)
 			board.CacheReadBindingProof(linearboard.BindingProofTTL)
+			board.RetryMaintenanceOnce()
 			defer board.Close()
 			native := mcpserver.NewServerWithOptions(executor, config.Workspace, config.Project, config.Session, config.Instance, mcpserver.Options{Context: ctx, Taskboard: board, ContextDir: contextDirOrEmpty(), Server: queueServer(config), DB: queueDB(config)})
 			return native.Run(ctx, &mcp.StdioTransport{})

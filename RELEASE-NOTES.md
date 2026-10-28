@@ -77,6 +77,10 @@
 - **Issues and the sessions holding them (U15, U40).** `i` on Sessions opens the selected session's issue on the
   Linear screen; Linear's issue list says which session holds each issue ("held by reviewer"), and `s` on an opened
   issue goes to that session. Projects reads the first 20 projects' summaries on load and any other when it's opened.
+- **Relinking starts from the board (U33); the Dispatcher speaks plainly (U55).** `l` on a linked board opens the
+  link wizard with its teams, default team and projects already chosen. Without the server's model key, the Dispatcher
+  screen says the server isn't set up for model keys (operator: see docs/dispatcher.md) instead of naming the
+  operator's variable.
 
 # ClawBridge v0.3.6 (released 28 Oct)
 

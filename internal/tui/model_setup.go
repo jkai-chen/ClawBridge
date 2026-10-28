@@ -421,7 +421,7 @@ func (m Model) modelStart() Model {
 	case m.modelSetup.status == nil:
 		m.status = noteStatus(firstNonempty(m.modelSetup.denied, "the model status hasn't loaded; r reloads"))
 	case m.modelSetup.status["seal_configured"] != true:
-		m.status = noteStatus("model setup is unavailable: the server has no model key seal key")
+		m.status = noteStatus("model setup is unavailable: the server isn't set up for model keys (operator: see docs/dispatcher.md)")
 	case m.writesBlocked():
 		m.status = noteStatus("the authority is offline; setup needs the server")
 	default:
@@ -467,7 +467,8 @@ func renderModelSetup(m Model) string {
 		return b.String()
 	}
 	if s["seal_configured"] != true {
-		b.WriteString(kv("Setup", "unavailable: the server has no CLAWBRIDGE_MODEL_KEY_SEAL_KEY"))
+		// U55: in words for the person; the variable is the operator's.
+		b.WriteString(kv("Setup", "unavailable: the server isn't set up for model keys (operator: see docs/dispatcher.md)"))
 	}
 	on := "off (the rules decide)"
 	if s["model_on"] == true {

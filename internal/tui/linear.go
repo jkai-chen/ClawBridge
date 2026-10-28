@@ -64,8 +64,10 @@ type linearState struct {
 	// ID, as of namesAt; role is the viewer's project role, and
 	// refreshNames asks the next load to refresh the stored names first
 	// (r, an owner or lead only); namesNote says why that didn't work.
-	stored               map[string]string
-	holders              map[string]issueHolder
+	stored  map[string]string
+	holders map[string]issueHolder
+	// relinking says the wizard started from the linked board (U33).
+	relinking            bool
 	namesAt              string
 	role                 string
 	refreshNames         bool
@@ -553,6 +555,7 @@ func (m Model) linearKey(key string) (Model, tea.Cmd) {
 		m.linear.project = ""
 		m.linear.teamBoard = false
 		m.linear.closes, m.linear.lines, m.linear.minimal, m.linear.typing = nil, nil, "", nil
+		m = m.linearFromBoard()
 		return m.linearRefresh()
 	}
 	if key == "x" && m.linear.step == "profiles" {
@@ -938,6 +941,9 @@ func renderLinear(m Model) string {
 		}
 		b.WriteString(prefix + terminalText(label) + "\n")
 	}
+	if m.linear.relinking && linearAt("teams", "default", "projects")(m) {
+		b.WriteString(mutedStyle.Render("\nStarting from the linked board: change what you need; Enter goes on.") + "\n")
+	}
 	if m.linear.step == "teams" {
 		b.WriteString("\nSelected: " + firstNonempty(m.linearNames(m.linear.chosen), "none yet") + "\n")
 	}
@@ -1077,6 +1083,28 @@ func (m Model) namedOrCounted(ids []string, one, many string) string {
 		}
 	}
 	return many + " " + m.linearNames(ids)
+}
+
+// linearFromBoard starts a relink from the linked board's teams, default
+// and projects, so changing one thing doesn't mean choosing all again
+// (TUI-UX-AUDIT U33).
+func (m Model) linearFromBoard() Model {
+	m.linear.relinking = false
+	if !m.linearConfigured() {
+		return m
+	}
+	if v := m.linear.bindingV2; v != nil {
+		m.linear.chosen = append([]string(nil), v.LinearTeamIDs...)
+		m.linear.defaultTeam = v.LinearDefaultTeamID
+		m.linear.selectedProjects = append([]string(nil), v.LinearProjectIDs...)
+		m.linear.teamBoard = v.Mode == "team_board"
+	} else {
+		b := m.linear.binding
+		m.linear.chosen = append([]string(nil), b.LinearTeamIDs...)
+		m.linear.defaultTeam, m.linear.project, m.linear.teamBoard = b.LinearDefaultTeamID, b.LinearProjectID, b.LinearProjectID == ""
+	}
+	m.linear.relinking = true
+	return m
 }
 
 // issueHolder is the session holding the opened issue, if one does.

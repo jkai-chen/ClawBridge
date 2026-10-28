@@ -1089,7 +1089,41 @@ The TUI's Linear screen has the same view and changes (`R`; see the
     change.
   - **`clawbridge doctor`** (the owner, with a Linear connection) warns when the
     document was edited in Linear, is behind the roles, or was archived.
-- **Nothing uses the roles yet.** Trust by role for intake, issue subscribers,
+- **Linear project leads.** A Linear project has a lead. ClawBridge can set it to its team's mapped lead, through the
+  project owner's own Linear connection, once the owner turns it on:
+
+  ```sh
+  clawbridge linear roles project-lead                                   # show
+  clawbridge linear roles project-lead on --expected-revision N          # or off
+  clawbridge linear project create NAME --team UUID --operation-id ID [--lead WHO]
+  clawbridge linear roles apply-leads --expected-revision N [--replace PROJECT_UUID] [--confirm]
+  ```
+
+  - **`project create`,** with project leads on, sets the new project's lead to the team's one mapped lead. A team
+    with several mapped leads needs `--lead`, one of them, and the create is refused without it. A team with no
+    mapped lead gets a project with no lead, and the answer says so. A project that was already there isn't
+    changed.
+  - **`apply-leads`** previews each bound project, at most 50:
+    - a project with **no lead** gets its team's one mapped lead;
+    - one whose lead **differs** is listed and never changed, except the single project you name with `--replace`;
+    - a project is skipped when its bound teams have no lead, several, or different ones; when the lead isn't an
+      active, non-guest workspace user; or when Linear's answer doesn't say who leads it.
+
+    `--expected-revision` is the team roles' revision. Each project is read again just before the write, and
+    skipped (`drifted`) if it changed. The write is read back (`accepted` or `uncertain`).
+  - **Linear also makes the lead a member of the project.** Clearing or replacing the lead doesn't remove them, so
+    `--replace` leaves the earlier lead a member. ClawBridge never removes members; remove one in Linear if that's not
+    wanted. **Linear doesn't notify the person** they're made the lead (or that it was removed). ClawBridge sends a
+    `project-lead` notice to their active sessions, naming the Linear project only, when you linked their lead row to
+    their account (`roles person … --link`) and they are still a project member. Otherwise tell them yourself. The
+    preview says both.
+  - **What is sent:** only the lead's Linear user ID from the roles, never a name or an email, with the project's ID.
+    History records each write by outcome and the project's member counts, never who.
+  - **What isn't automatic:** nothing sets a lead on its own yet. Projects people create in Linear get one only
+    through `apply-leads`.
+  - **Linear configuration:** a project's lead in a bound team, and the project membership Linear adds with it.
+    Nothing at team or workspace scope.
+- **Nothing else uses the roles yet.** Trust by role for intake, issue subscribers,
   project leads and dispatcher routing come later. Each is off until you turn
   it on.
 

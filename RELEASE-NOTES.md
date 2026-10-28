@@ -1,8 +1,8 @@
 # Unreleased
 
-**Schema 41 → 43.**
-- The server migrates to schema 43 on its first start: 42, the agent writes the server queued (the Linear write
-  outbox); 43, the team roles.
+**Schema 41 → 44.**
+- The server migrates to schema 44 on its first start: 42, the agent writes the server queued (the Linear write
+  outbox); 43, the team roles; 44, the project lead settings.
 - **One-way:** v0.3.7 refuses a database newer than schema 41. Take a dump before upgrading; to go back, restore it
   with the v0.3.7 image (docs/operations/deployment.md).
 
@@ -72,6 +72,23 @@
 - A queued write is sent only while the person who asked still may: their session (if any) active, their role
   held, their device live or their Google account still bound. Otherwise it fails as `identity_revoked` and nothing
   is sent.
+
+## Team roles: Linear project leads
+
+- **A Linear project's lead from the team roles.**
+  - **`clawbridge linear roles project-lead on`** (the project owner) lets `linear project create` set a new
+    project's lead to its team's one mapped lead. `--lead` picks one when the team has several.
+  - **`clawbridge linear roles apply-leads`** previews, then sets, the lead of each bound project that has none. A
+    project with another lead changes only when you name it with `--replace`.
+  - It all goes through the owner's own Linear connection. It sends only the lead's Linear user ID, re-reads each
+    project before writing, and reads the lead back. History records the outcome and member counts, never who.
+  - **Linear also makes the lead a member of the project, and clearing or replacing the lead doesn't remove them.**
+    ClawBridge never removes members. Linear doesn't notify the person either, so ClawBridge sends a `project-lead`
+    notice to their sessions when their lead row is linked to their account. The preview says both.
+  - The lead write was proven in a Sandbox probe through the owner's profile. Nothing sets a lead on its own yet.
+  - **Schema 44:** the project lead setting.
+  - **Linear configuration:** a project's lead in a bound team, and the project membership Linear adds with it.
+    Nothing at team or workspace scope.
 
 ## Team roles: the "Team roles (ClawBridge)" Linear document
 

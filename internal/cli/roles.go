@@ -23,6 +23,8 @@ clawbridge linear roles person WHO --role lead|engineer|reviewer --team UUID [--
 clawbridge linear roles person WHO --remove --expected-revision N [--confirm]
 clawbridge linear roles lead TEAM_UUID WHO [--remove] --expected-revision N [--confirm] [--profile ID]
 clawbridge linear roles publish [--team UUID | --linear-project UUID] [--recreate] [--confirm] [--profile ID]
+clawbridge linear roles project-lead [on|off --expected-revision N]
+clawbridge linear roles apply-leads --expected-revision N [--replace PROJECT_UUID] [--confirm] [--profile ID]
   Who leads each bound Linear team, and each person's role. Any member reads
   it. The project owner changes it, in their own terminal, never with
   --session; a team's lead sets engineer and reviewer roles in the teams they
@@ -33,11 +35,18 @@ clawbridge linear roles publish [--team UUID | --linear-project UUID] [--recreat
   publish (the project owner) writes the roles as the Linear document "Team
   roles (ClawBridge)" through your own Linear connection, with display names
   only. Name the team or project the first time; it is remembered. The
-  document is generated: an edit made in Linear is overwritten.`
+  document is generated: an edit made in Linear is overwritten.
+  project-lead on (the project owner) lets project create set a new
+  project's lead to its team's mapped lead. apply-leads sets the lead of each
+  bound project that has none to its team's one mapped lead, through your own
+  Linear connection; a project with another lead changes only with --replace.
+  Linear also makes the lead a project member and never removes them;
+  ClawBridge doesn't remove members either. apply-leads' --expected-revision
+  is the team roles' revision.`
 
 type rolesFlags struct {
 	file, role, link, profile string
-	team, project             string
+	team, project, replace    string
 	recreate                  bool
 	teams                     multiFlag
 	revision                  int64
@@ -81,8 +90,12 @@ func runLinearRoles(ctx context.Context, flags Config, args []string, stdout, st
 		f.StringVar(&v.project, "linear-project", "", "the bound Linear project the document goes under (the first time)")
 		f.BoolVar(&v.recreate, "recreate", false, "create the document again, or under another parent; the old one is left for you to archive")
 		f.BoolVar(&v.confirm, "confirm", false, "publish what the preview showed")
+	case "project-lead":
+		max = 1
+	case "apply-leads":
+		f.StringVar(&v.replace, "replace", "", "the one bound project whose different lead is replaced")
 	default:
-		return errors.New("use linear roles show|set|person|lead|publish")
+		return errors.New("use linear roles show|set|person|lead|publish|project-lead|apply-leads")
 	}
 	if action != "show" && action != "publish" {
 		f.Int64Var(&v.revision, "expected-revision", -1, "the roles' revision you last read (0 for none)")
@@ -135,6 +148,43 @@ func runLinearRoles(ctx context.Context, flags Config, args []string, stdout, st
 			out["names"] = names
 		}
 		return emit(ctx, stdout, "linear_roles", bus.Result{Source: "server", Data: out})
+	}
+	if action == "project-lead" {
+		if len(pos) == 0 {
+			result, e := executor.Execute(bounded, bus.Request{Operation: "project_lead_get", Workspace: scope.Workspace, Project: scope.Project, Session: scope.Session, Args: instanceArgs(scope)})
+			if e != nil {
+				return e
+			}
+			return emit(ctx, stdout, "linear_roles_project_lead", bus.Result{Source: result.Source, Data: result.Data})
+		}
+		if pos[0] != "on" && pos[0] != "off" {
+			return errors.New("roles project-lead takes on or off")
+		}
+		if flags.Session != "" {
+			return errors.New("project leads are switched without --session; the project owner runs this in their own terminal")
+		}
+		if v.revision < 0 {
+			return errors.New("--expected-revision is required: the revision roles project-lead printed (0 for none)")
+		}
+		result, e := executor.Execute(bounded, bus.Request{Operation: "project_lead_set", Workspace: scope.Workspace, Project: scope.Project, Args: map[string]any{"expected_revision": v.revision, "mode": pos[0]}})
+		if e != nil {
+			return e
+		}
+		return emit(ctx, stdout, "linear_roles_project_lead", bus.Result{Source: result.Source, Data: result.Data})
+	}
+	if action == "apply-leads" {
+		if flags.Session != "" {
+			return errors.New("project leads are set without --session; the project owner runs this in their own terminal")
+		}
+		if v.revision < 0 {
+			return errors.New("--expected-revision is required: the team roles' revision linear roles show printed")
+		}
+		scope.Session = ""
+		result, e := rolesApplyLeads(bounded, executor, scope, v.profile, linearboard.ApplyLeadsInput{Revision: int(v.revision), Replace: strings.ToLower(v.replace), Confirm: v.confirm})
+		if e != nil {
+			return e
+		}
+		return emit(ctx, stdout, "linear_roles_apply_leads", bus.Result{Source: "server", Data: result})
 	}
 	if action == "publish" {
 		if flags.Session != "" {
@@ -428,6 +478,15 @@ var rolesPublish = func(ctx context.Context, executor linearboard.Executor, scop
 		return linearboard.RolesPublishResult{}, err
 	}
 	return service.PublishTeamRoles(ctx, scope, in)
+}
+
+// rolesApplyLeads sets project leads through this person's own connection.
+var rolesApplyLeads = func(ctx context.Context, executor linearboard.Executor, scope bus.Request, profile string, in linearboard.ApplyLeadsInput) (linearboard.ApplyLeadsResult, error) {
+	service, err := rolesService(executor, scope, profile)
+	if err != nil {
+		return linearboard.ApplyLeadsResult{}, err
+	}
+	return service.ApplyLeads(ctx, scope, in)
 }
 
 // rolesService is the Linear service on this person's own connection.

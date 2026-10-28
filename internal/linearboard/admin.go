@@ -54,6 +54,9 @@ type AdminResult struct {
 	Proposal       any      `json:"proposal"`
 	ProposalNote   string   `json:"proposal_note,omitempty"`
 	ConfirmCommand string   `json:"confirm_command,omitempty"`
+	// Lead is what project create did about the new project's lead, with
+	// project leads on (step 6.1a); nil otherwise.
+	Lead *CreateLeadResult `json:"lead,omitempty"`
 }
 
 // adminProvider is a provider that can run the admin writes.

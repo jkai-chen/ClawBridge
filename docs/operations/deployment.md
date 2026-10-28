@@ -720,7 +720,12 @@ Nothing here is configured; what it costs and how to watch it:
 
   Requeue offers the message again from its first attempt; dismiss acks it.
   Both are in the project's history with who did it. A list shows no bodies.
-- **Throughput** has a limit per workspace.
+- **Throughput is limited per workspace.** Writes in one workspace run one at a time:
+  sends, leases, acks, extends and sweeps. In the chaos soak (one workspace, 50 busy
+  sessions, a local Postgres) that came to about 16–30 write transactions a second,
+  and under heavy consumer churn the queue fell behind: leases ran out while they
+  waited. No message was lost or handled twice. Spread a large, busy team over
+  several workspaces; narrowing this is planned.
 - **A held session.** A session whose notification policy is `hold` or
   `refuse` takes no leases: its messages wait, with no attempt counted and no
   dead letter, until it accepts again. `clawbridge doctor` shows it.

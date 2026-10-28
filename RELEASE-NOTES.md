@@ -283,7 +283,13 @@
   then `--expected-plan-sha256 SHA --confirm` makes the group and its values as project labels of the kind's team, or
   adopts the ones already there, with the owner's own Linear profile. A name a workspace project label has is refused
   before anything is sent (Linear refuses that clash), as is any other clash. Each label is recorded before it is
-  sent and proven in the team's list; the IDs are then stored. Applying a kind to projects comes next.
+  sent and proven in the team's list; the IDs are then stored.
+- **Apply a kind to each project (phase 3).** `clawbridge linear kind apply --file kinds.json --operation-id ID
+  --profile P` previews a mapping of up to 50 bound projects to kinds; a confirm carries the preview's plan digest,
+  and the first one of a setting is a `--canary` of one project. Each project's labels are proven by ID (each label's
+  projects, listed by its ID), and a project whose labels can't be is refused. The write removes only this kind's
+  other values and adds the kind, keeping every other label; it is read again before sending and read back after,
+  and only the same set is accepted. A change made at the same time is reported, never retried.
 
 ## Linear views
 

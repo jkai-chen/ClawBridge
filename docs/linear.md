@@ -751,7 +751,32 @@ clawbridge linear kind seed --operation-id seed-1 --profile PROFILE_ID --expecte
 - **Two seeds at once** (say, two terminals): each create is its own ledger operation, and the IDs are stored with the
   setting's revision as a compare-and-set, so only one records. The other's read-back may find two labels of a name
   and stop as `uncertain`; preview again, and remove a duplicate in Linear if one was made.
-- Applying a kind to each project comes in a later release.
+
+#### Applying a kind to each project
+
+```sh
+clawbridge linear kind apply --file kinds.json --operation-id apply-1 --profile PROFILE_ID                          # preview
+clawbridge linear kind apply --file kinds.json --operation-id apply-1 --profile PROFILE_ID --expected-plan-sha256 SHA --confirm --canary
+clawbridge linear kind apply --file kinds.json --operation-id apply-1 --profile PROFILE_ID --expected-plan-sha256 SHA --confirm
+```
+
+- **The file** is `{"projects": [{"project": "PROJECT_UUID", "kind": "Review"}]}`, 1 to 50 projects, each once; a
+  project not in the file is left alone. Every project must be in the binding, and every kind a value of the seeded
+  setting (names are exact).
+- **The preview** reads each project's labels and proves them by ID: Linear's project read names a project's labels,
+  and only listing each label's projects (by the label's ID) shows which label it is. A project whose labels can't
+  all be proven that way (a label of another team, two labels of one name, or an archived or retired label Linear's
+  project read doesn't show) is refused: remove that label from the project in Linear, or leave the project out of
+  the file. The plan per project is
+  `set` (add the kind; remove only this kind's other values, by their stored IDs; keep every other label) or
+  `unchanged`. The preview counts its Linear reads (`reads`); each read is bounded.
+- **The canary:** the first confirm of a setting revision must be `--canary`. It applies the first project to change
+  only. Check it in Linear, preview again, then confirm without `--canary` for the rest. `--skip-canary` goes on
+  without one only when a canary already proved these same labels (after a setting change that kept them).
+- **Each write** is recorded before it is sent. The project's labels are read again first: if they changed since the
+  preview, nothing is sent. Linear replaces a project's whole label set, so the write sends the full set. It is then
+  read back by ID: only the same set is `accepted`. Anything else (for example, a person's edit at the same moment)
+  is `uncertain`, names the project, stops the run, and is never sent again.
 - **History** records `project_kind_policy set` with the scope (`team:UUID`) and the number of values, never the
   names.
 

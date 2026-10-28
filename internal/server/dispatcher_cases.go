@@ -21,6 +21,10 @@ const (
 	ModelHelloPath     = "/v1/dispatcher-model/hello"
 	ModelCasesNextPath = "/v1/dispatcher-model/cases/next"
 	modelCasesPrefix   = "/v1/dispatcher-model/cases/"
+	// caseSafety is how often cases/next still checks while the hub wakes
+	// it on each new case: a missed notification, and a case's expiry,
+	// cost at most this.
+	caseSafety = 5 * time.Second
 	// casePollEvery is how often cases/next checks for a case while it
 	// waits; casePollLimit bounds the wait, so the server's write timeout
 	// and the proxy's outlast it (D5-L2).
@@ -81,11 +85,12 @@ func (p *casePolls) give(key string) {
 	delete(p.held, key)
 }
 
-// serveCasesNext long-polls for a case: a check now, then one a second
-// until a case comes or wait_seconds pass. It stops at once when the
-// client goes (D5-L2). A case that expired on the way nudges the rules'
-// fallback.
-func serveCasesNext(ctx context.Context, store ModelStore, token string, body map[string]json.RawMessage, maxAgents int, polls *casePolls, nudge func(string)) (any, error) {
+// serveCasesNext long-polls for a case: a check now, then one on each new
+// case the hub announces (every caseSafety at least), or without a hub one
+// a second, until a case comes or wait_seconds pass. It stops at once when
+// the client goes (D5-L2). A case that expired on the way nudges the
+// rules' fallback.
+func serveCasesNext(ctx context.Context, store ModelStore, hub *StreamHub, token string, body map[string]json.RawMessage, maxAgents int, polls *casePolls, nudge func(string)) (any, error) {
 	f, err := fields(body, "wait_seconds")
 	if err != nil {
 		return nil, err
@@ -100,6 +105,14 @@ func serveCasesNext(ctx context.Context, store ModelStore, token string, body ma
 	}
 	defer polls.give(key)
 	until := time.Now().Add(time.Duration(wait) * time.Second)
+	// Subscribed before the first check, so a case opened between a check
+	// and the wait still wakes it.
+	every, wake := casePollEvery, (<-chan struct{})(nil)
+	if hub != nil {
+		sub := hub.subscribeCases()
+		defer hub.unsubscribeCases(sub)
+		every, wake = caseSafety, sub.wake
+	}
 	for {
 		next, err := store.ModelNextCase(ctx, token, maxAgents)
 		if errors.Is(err, bus.ErrCaseLeased) {
@@ -120,7 +133,8 @@ func serveCasesNext(ctx context.Context, store ModelStore, token string, body ma
 		select {
 		case <-ctx.Done():
 			return nil, ctx.Err()
-		case <-time.After(casePollEvery):
+		case <-wake:
+		case <-time.After(min(every, time.Until(until))):
 		}
 	}
 }

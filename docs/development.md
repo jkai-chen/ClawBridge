@@ -23,6 +23,22 @@ integration/run-postgres.sh go test ./... -count=1
 integration/run-postgres.sh go test -race ./... -count=1
 ```
 
+The message queue's chaos suite runs under the `chaos` build tag, against real
+PostgreSQL: API crashes (its database backends terminated mid-transaction), a
+killed LISTEN connection, a stalled network, a consumer killed mid-handle, and
+a compaction cycle. CI runs these short cases. The soak (10k messages over 50
+sessions, consumers killed at random) runs nightly and on demand in the "Chaos
+soak" workflow; a failed run prints `CHAOS_SEED`, which replays its kills:
+
+```sh
+integration/run-postgres.sh go test -tags chaos ./internal/server -run '^TestChaos' -short -count=1
+CHAOS_SEED=N CHAOS_MESSAGES=1000 integration/run-postgres.sh go test -tags chaos ./internal/server -run '^TestChaosSoak$' -count=1 -v
+```
+
+The chaos API runs in the test process: a crash closes its connections at once
+and terminates its Postgres backends, but the operating system's own socket
+teardown of a killed process isn't exercised.
+
 The wrapper creates a unique loopback-only PostgreSQL container, supplies its DSN
 through the test environment and removes its container/anonymous volume on exit.
 It does not reuse an existing database. Live identity and native-keychain checks

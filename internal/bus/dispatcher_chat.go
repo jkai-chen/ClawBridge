@@ -219,6 +219,9 @@ func (s *Store) chatAsk(ctx context.Context, tx *transaction, w, p map[string]an
 		id, pid, newID("msg_"), meta["revision"], due, nowRaw, s.principal, string(message)); err != nil {
 		return nil, err
 	}
+	if err = caseNotify(ctx, tx, pid); err != nil {
+		return nil, err
+	}
 	// The length only: the question is the asker's own text.
 	if err = s.audit(ctx, tx, str(w, "id"), pid, "", "dispatcher_chat", id, "dispatcher_chat_ask", map[string]any{"length": len(text)}); err != nil {
 		return nil, err

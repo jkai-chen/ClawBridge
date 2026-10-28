@@ -604,6 +604,9 @@ func (s *Store) dispatcherCaseOpen(ctx context.Context, tx *transaction, pid str
 	if n, _ := res.RowsAffected(); n != 1 {
 		return map[string]any{"opened": false, "reason": "case_exists"}, nil
 	}
+	if err = caseNotify(ctx, tx, pid); err != nil {
+		return nil, err
+	}
 	return map[string]any{"opened": true, "case_id": id}, nil
 }
 

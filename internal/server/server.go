@@ -331,7 +331,7 @@ func NewHandlerWithOptions(store Executor, verifier Verifier, o HandlerOptions) 
 		tick = newTickHandler(o.TickVerifier, o.Ticker, newPreauthLimiter(60, now))
 	}
 	if s, ok := store.(ModelStore); ok {
-		model = newModelHandler(s, cmp.Or(o.ModelMaxAgents, defaultMaxAgents), now, o.NudgeProject)
+		model = newModelHandler(s, o.Streams, cmp.Or(o.ModelMaxAgents, defaultMaxAgents), now, o.NudgeProject)
 	}
 	methods := []string{AuthGoogle}
 	if len(o.Auth.Methods) > 0 {

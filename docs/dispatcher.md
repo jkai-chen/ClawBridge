@@ -238,6 +238,8 @@ one keeps running until the new test passes.
 - **Latency.** An abstain or a missed deadline asks the watcher for an early pass, so the rules decide within about a
   minute. Without the in-process watcher clock, or when an agent stops mid-case, the worst case is the deadline plus
   the watch interval.
+- **Waking.** On a hosted server, `cases/next` is woken when a case opens, rather than checking every second; it
+  still checks every 5 s. Without the server's notification connection it checks every second.
 - **Timeouts.** An agent's `cases/next` waits at most 30 s for a case. The server's write timeout (80 s) outlasts it,
   and so does the bundled Caddy, which sets no response timeout on the proxy.
 - **Turning it off.** Disabling the dispatcher, or switching it to rules, closes every open case at once.

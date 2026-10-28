@@ -27,6 +27,8 @@ type StreamHub struct {
 	once    sync.Once
 	// open counts each principal's open streams on this server (§8).
 	open map[string]int
+	// cases are the waiting cases/next polls, woken by any new case.
+	cases map[*streamSub]struct{}
 }
 
 // streamSub is one stream's subscription to its session's queue.
@@ -41,7 +43,7 @@ type streamSub struct {
 }
 
 func NewStreamHub() *StreamHub {
-	return &StreamHub{subs: map[string]map[*streamSub]struct{}{}, closing: make(chan struct{}), open: map[string]int{}}
+	return &StreamHub{subs: map[string]map[*streamSub]struct{}{}, closing: make(chan struct{}), open: map[string]int{}, cases: map[*streamSub]struct{}{}}
 }
 
 // acquire counts a stream for principal if it has fewer than limit open.
@@ -108,7 +110,8 @@ func (h *StreamHub) Wake(key string) {
 }
 
 // WakeAll wakes every stream, each of which re-reads and re-authorizes: after
-// the listener reconnects, at start, and when a device is revoked.
+// the listener reconnects, at start, and when a device is revoked. The
+// waiting cases/next polls re-read too.
 func (h *StreamHub) WakeAll() {
 	h.mu.Lock()
 	defer h.mu.Unlock()
@@ -116,6 +119,34 @@ func (h *StreamHub) WakeAll() {
 		for sub := range subs {
 			sub.poke()
 		}
+	}
+	for sub := range h.cases {
+		sub.poke()
+	}
+}
+
+// subscribeCases is a cases/next poll's wake for new cases.
+func (h *StreamHub) subscribeCases() *streamSub {
+	sub := &streamSub{wake: make(chan struct{}, 1)}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.cases[sub] = struct{}{}
+	return sub
+}
+
+func (h *StreamHub) unsubscribeCases(sub *streamSub) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	delete(h.cases, sub)
+}
+
+// WakeCases wakes every waiting cases/next poll: each reads its own
+// projects' cases, so a case in another project costs one read.
+func (h *StreamHub) WakeCases() {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	for sub := range h.cases {
+		sub.poke()
 	}
 }
 
@@ -135,6 +166,8 @@ func (h *StreamHub) notified(channel, payload string) {
 	switch channel {
 	case bus.DeliveryChannel:
 		h.Wake(payload)
+	case bus.CaseChannel:
+		h.WakeCases()
 	case bus.ConsumerChannel:
 		if i := strings.LastIndexByte(payload, ':'); i > 0 {
 			h.takeover(payload[:i], payload[i+1:])
@@ -177,7 +210,7 @@ func (h *StreamHub) listenOnce(ctx context.Context, dsn string) error {
 		return err
 	}
 	defer conn.Close(context.Background())
-	for _, channel := range []string{bus.DeliveryChannel, bus.ConsumerChannel} {
+	for _, channel := range []string{bus.DeliveryChannel, bus.ConsumerChannel, bus.CaseChannel} {
 		if _, err = conn.Exec(ctx, "LISTEN "+pgx.Identifier{channel}.Sanitize()); err != nil {
 			return err
 		}

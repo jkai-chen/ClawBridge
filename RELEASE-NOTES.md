@@ -20,6 +20,10 @@
   connection, a stalled network, a consumer killed mid-handle and a compaction cycle run in CI; the 10k-message soak
   with random consumer kills runs nightly and on demand, replayable by its printed seed. docs/operations/deployment.md
   gains "The message queue". No schema change, no Linear configuration.
+- **Throughput is limited per workspace.** Writes in one workspace run one at a time, about 16–30 write transactions
+  a second for 50 busy sessions in the soak, so one workspace with many busy sessions under churn can fall behind (no
+  message is lost or handled twice). Spread a heavy team over workspaces (docs/operations/deployment.md); narrowing it
+  is planned.
 - **The queue, as shipped, in one place.** The clawbridge skill gains `references/queue.md`: handle, then `ack`
   (or `reply` with `ack`); redelivery and the `msg:<message_id>:<step>` operation IDs; extension; ordering;
   reconnects, restarts and compaction; dead letters. docs/usage.md gains "Messages wait until they're handled". Docs

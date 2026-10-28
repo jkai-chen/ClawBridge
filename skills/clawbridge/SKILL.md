@@ -34,7 +34,8 @@ it. Find a slice's owner with `list_sessions` filtered by `issue` or
 coordinator lists them, and the label is never approval or an assignment.
 Read [references/intake.md](references/intake.md) on an `intake` message, or
 before listing, dismissing or rearming the intake queue.
-If `whoami` says you are the project's coordinator, read
+If `whoami`'s `project.coordinator_session` is your session's ID, you are the
+project's coordinator: read
 [references/coordinator.md](references/coordinator.md) at the start of each turn:
 it covers the project's own playbook, briefs, routing, claims, gates and session
 health.

@@ -78,7 +78,7 @@ func LinearNameOK(name string) bool {
 // request gives replaces that map; one it leaves out keeps the names of
 // the IDs still bound (PROJECT-OVERVIEW-PLAN-REVIEW L2).
 func nextNames(a map[string]any, prev linearNames, next TaskboardBindingV2, at string) (linearNames, error) {
-	teams, teamsGiven, err := parseNameMap(a, "linear_team_names", next.LinearTeamIDs)
+	teams, teamsGiven, err := parseNameMap(a, "linear_team_names", next.ListedTeamIDs())
 	if err != nil {
 		return linearNames{}, err
 	}
@@ -87,7 +87,7 @@ func nextNames(a map[string]any, prev linearNames, next TaskboardBindingV2, at s
 		return linearNames{}, err
 	}
 	if !teamsGiven {
-		teams = keptNames(prev.Teams, next.LinearTeamIDs)
+		teams = keptNames(prev.Teams, next.ListedTeamIDs())
 	}
 	if !projectsGiven {
 		projects = keptNames(prev.Projects, next.LinearProjectIDs)

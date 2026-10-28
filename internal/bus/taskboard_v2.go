@@ -28,8 +28,57 @@ type TaskboardBindingV2 struct {
 	LinearDefaultTeamID string
 	LinearProjectIDs    []string
 	LinearWorkspaceID   string
+	// LinearOtherTeams lists the teams a binding names besides its write
+	// teams, by access: read, comment or linked (CROSS-TEAM-BINDING-DESIGN
+	// §3). LinearTeamIDs stays the write teams, so every check that knows
+	// only it allows nothing more than before.
+	LinearOtherTeams map[string]string
+	// LinearParentTeamID is the parent team among the listed teams, for
+	// display; sub-teams are never added on their own.
+	LinearParentTeamID string
 }
 type BindingV2 = TaskboardBindingV2
+
+// Team access levels beside write (the teams in LinearTeamIDs).
+const (
+	TeamAccessWrite   = "write"
+	TeamAccessRead    = "read"
+	TeamAccessComment = "comment"
+	TeamAccessLinked  = "linked"
+)
+
+// TeamAccess is the access the binding gives a team; "" when it doesn't
+// list it.
+func (b TaskboardBindingV2) TeamAccess(team string) string {
+	for _, id := range b.LinearTeamIDs {
+		if id == team {
+			return TeamAccessWrite
+		}
+	}
+	return b.LinearOtherTeams[team]
+}
+
+// TeamReadable: the team's issues are listed and read in full.
+func (b TaskboardBindingV2) TeamReadable(team string) bool {
+	a := b.TeamAccess(team)
+	return a == TeamAccessWrite || a == TeamAccessRead || a == TeamAccessComment
+}
+
+// ListedTeamIDs are every team the binding names, sorted.
+func (b TaskboardBindingV2) ListedTeamIDs() []string {
+	out := append([]string(nil), b.LinearTeamIDs...)
+	for id := range b.LinearOtherTeams {
+		out = append(out, id)
+	}
+	sort.Strings(out)
+	return out
+}
+
+// crossTeam: the binding uses version 3's fields, which a client that
+// reads only version 2 must refuse rather than ignore.
+func (b TaskboardBindingV2) crossTeam() bool {
+	return len(b.LinearOtherTeams) > 0 || b.LinearParentTeamID != ""
+}
 
 func parseTaskboardMappingV2(a map[string]any) (TaskboardBindingV2, error) {
 	b := TaskboardBindingV2{MappingVersion: 2, Provider: "linear", Mode: str(a, "mode")}
@@ -66,21 +115,76 @@ func parseTaskboardMappingV2(a map[string]any) (TaskboardBindingV2, error) {
 		seen[id] = true
 	}
 	sort.Strings(b.LinearProjectIDs)
+	if e := parseCrossTeam(a, &b); e != nil {
+		return b, e
+	}
 	return b, nil
+}
+
+// parseCrossTeam reads version 3's optional fields: the other teams by
+// access, and the parent team.
+func parseCrossTeam(a map[string]any, b *TaskboardBindingV2) error {
+	if raw, ok := a["linear_other_teams"]; ok && raw != nil {
+		m, ok := raw.(map[string]any)
+		if !ok {
+			return errors.New("linear_other_teams must be an object of team ID to access")
+		}
+		for id, v := range m {
+			access, _ := v.(string)
+			if !taskboardUUID.MatchString(id) || containsString(b.LinearTeamIDs, id) {
+				return errors.New("linear_other_teams names canonical team UUIDs that are not write teams")
+			}
+			if access != TeamAccessRead && access != TeamAccessComment && access != TeamAccessLinked {
+				return errors.New("a team's access is read, comment or linked")
+			}
+			if b.LinearOtherTeams == nil {
+				b.LinearOtherTeams = map[string]string{}
+			}
+			b.LinearOtherTeams[id] = access
+		}
+		if len(b.LinearTeamIDs)+len(b.LinearOtherTeams) > 20 {
+			return errors.New("a binding lists at most 20 teams in all")
+		}
+	}
+	if raw, ok := a["linear_parent_team_id"]; ok && raw != nil {
+		id, _ := raw.(string)
+		if b.TeamAccess(id) == "" {
+			return errors.New("the parent team must be one of the binding's teams")
+		}
+		b.LinearParentTeamID = id
+	}
+	if b.crossTeam() {
+		b.MappingVersion = 3
+	}
+	return nil
 }
 func mappingMapV2(b TaskboardBindingV2) map[string]any {
 	b.LinearTeamIDs = append([]string(nil), b.LinearTeamIDs...)
 	sort.Strings(b.LinearTeamIDs)
 	b.LinearProjectIDs = append([]string{}, b.LinearProjectIDs...)
 	sort.Strings(b.LinearProjectIDs)
-	return map[string]any{"provider": "linear", "mode": b.Mode, "linear_team_ids": b.LinearTeamIDs, "linear_default_team_id": b.LinearDefaultTeamID, "linear_project_ids": b.LinearProjectIDs, "linear_workspace_id": nullable(b.LinearWorkspaceID)}
+	m := map[string]any{"provider": "linear", "mode": b.Mode, "linear_team_ids": b.LinearTeamIDs, "linear_default_team_id": b.LinearDefaultTeamID, "linear_project_ids": b.LinearProjectIDs, "linear_workspace_id": nullable(b.LinearWorkspaceID)}
+	// A version 2 binding keeps exactly its version 2 form, so its stored
+	// mapping, its digest and what an older client reads are unchanged.
+	if b.crossTeam() {
+		others := map[string]any{}
+		for id, access := range b.LinearOtherTeams {
+			others[id] = access
+		}
+		m["linear_other_teams"], m["linear_parent_team_id"] = others, nullable(b.LinearParentTeamID)
+	}
+	return m
 }
 func bindingMapV2(b TaskboardBindingV2) map[string]any {
 	var mapping any
 	if b.Configured {
 		mapping = mappingMapV2(b)
 	}
-	return map[string]any{"workspace_id": b.WorkspaceID, "project_id": b.ProjectID, "configured": b.Configured, "revision": b.Revision, "mapping_version": 2, "binding": mapping, "updated_at": nullable(b.UpdatedAt)}
+	version := 2
+	if b.Configured && b.crossTeam() {
+		version = 3
+	}
+	return map[string]any{"workspace_id": b.WorkspaceID, "project_id": b.ProjectID, "configured": b.Configured, "revision": b.Revision, "mapping_version": version, "binding": mapping, "updated_at": nullable(b.UpdatedAt)}
 }
 func (b TaskboardBindingV2) MarshalJSON() ([]byte, error) { return json.Marshal(bindingMapV2(b)) }
 func (b *TaskboardBindingV2) UnmarshalJSON(raw []byte) error {
@@ -103,18 +207,25 @@ func ParseTaskboardBindingV2(v any) (TaskboardBindingV2, error) {
 	if dec.Decode(&m) != nil || len(m) != 7 {
 		return b, errors.New("invalid V2 binding fields")
 	}
+	// Version 3 adds a binding's other teams and parent. A client that
+	// reads only version 2 refuses it: ignoring access levels would let it
+	// write a team the binding only reads.
 	n, e := integer(m["mapping_version"])
-	if e != nil || n != 2 {
-		return b, errors.New("mapping_version must be 2")
+	if e != nil || n != 2 && n != 3 {
+		return b, errors.New("mapping_version must be 2 or 3")
 	}
 	delete(m, "mapping_version")
 	var mapping TaskboardBindingV2
 	if configured, ok := m["configured"].(bool); ok && configured {
 		a, ok := m["binding"].(map[string]any)
-		if !ok || len(a) != 6 || a["provider"] != "linear" {
+		fields := []string{"provider", "mode", "linear_team_ids", "linear_default_team_id", "linear_project_ids", "linear_workspace_id"}
+		if n == 3 {
+			fields = append(fields, "linear_other_teams", "linear_parent_team_id")
+		}
+		if !ok || len(a) != len(fields) || a["provider"] != "linear" {
 			return b, errors.New("invalid V2 mapping")
 		}
-		for _, k := range []string{"provider", "mode", "linear_team_ids", "linear_default_team_id", "linear_project_ids", "linear_workspace_id"} {
+		for _, k := range fields {
 			if _, ok := a[k]; !ok {
 				return b, errors.New("missing V2 mapping field")
 			}
@@ -122,6 +233,9 @@ func ParseTaskboardBindingV2(v any) (TaskboardBindingV2, error) {
 		mapping, e = parseTaskboardMappingV2(a)
 		if e != nil {
 			return b, e
+		}
+		if mapping.crossTeam() != (n == 3) {
+			return b, errors.New("mapping_version does not match the mapping")
 		}
 		old := TaskboardBinding{LinearTeamIDs: mapping.LinearTeamIDs, LinearDefaultTeamID: mapping.LinearDefaultTeamID, LinearWorkspaceID: mapping.LinearWorkspaceID}
 		m["binding"] = mappingMap(old)
@@ -137,6 +251,9 @@ func ParseTaskboardBindingV2(v any) (TaskboardBindingV2, error) {
 	b.UpdatedAt = old.UpdatedAt
 	b.Configured = old.Configured
 	b.MappingVersion = 2
+	if b.crossTeam() {
+		b.MappingVersion = 3
+	}
 	return b, nil
 }
 func convertLegacyBinding(b TaskboardBinding) TaskboardBindingV2 {
@@ -148,7 +265,7 @@ func convertLegacyBinding(b TaskboardBinding) TaskboardBindingV2 {
 	return next
 }
 func legacyBinding(b TaskboardBindingV2) (TaskboardBinding, error) {
-	if b.Configured && len(b.LinearProjectIDs) > 1 {
+	if b.Configured && (len(b.LinearProjectIDs) > 1 || b.crossTeam()) {
 		return TaskboardBinding{}, &serviceError{code: "unsupported_mapping", cause: errors.New("mapping requires a V2-capable client")}
 	}
 	old := TaskboardBinding{WorkspaceID: b.WorkspaceID, ProjectID: b.ProjectID, Configured: b.Configured, Revision: b.Revision, UpdatedAt: b.UpdatedAt, Provider: b.Provider, LinearTeamIDs: b.LinearTeamIDs, LinearDefaultTeamID: b.LinearDefaultTeamID, LinearWorkspaceID: b.LinearWorkspaceID}

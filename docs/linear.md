@@ -307,6 +307,40 @@ the verified project/team pair. A multi-project create needs its explicit
 destination; a singleton can supply its sole project. Global `--project` still
 selects the ClawBridge scope; `--linear-project` selects the Linear destination.
 
+### A parent team, its sub-teams, and teams agents only read
+
+A binding can list more teams than the ones agents write. Each team has an access level:
+- `--team` (write): listed, read and written, as before;
+- `--read-team`: listed and read in full, never written, not even a comment;
+- `--comment-team`: read in full, plus new comments from agents. Nothing else is written there: no create, edit,
+  state, label, assignee or relation, and no ClawBridge marker;
+- `--linked-team`: never listed and never read in full. An agent reading it gets `linked_only`. Showing these as
+  linked issues comes in a later release.
+
+`--parent-team` names the parent among the listed teams. ClawBridge checks it against Linear: every other listed team
+must be the parent's sub-team, or the link is refused. Sub-teams are never added on their own; each is listed by hand.
+At most 20 teams in all.
+
+```sh
+clawbridge linear link --profile PROFILE_ID \
+  --team PARENT_UUID --team SUB_A_UUID --default-team SUB_A_UUID \
+  --comment-team REVIEW_UUID --read-team SUB_B_UUID --parent-team PARENT_UUID \
+  --linear-project PROJECT_UUID --expected-revision CURRENT_REVISION
+```
+
+The preview shows each team's access and the parent. A write to a team that isn't a write team is refused before
+anything is sent, with `read_only_team`. Intake, markers, status moves and the other server-side writes act only on
+write teams. In a project set, read and comment teams need a verified project pair, as write teams do. A linked team
+needs none.
+
+**Not yet for read and comment teams.** A team's catalog reads (`labels`, `members`, `states`, views) and the
+`needs-agent` intake still cover write teams only, so they refuse or skip a read or comment team. That is stricter
+than needed, never looser, and it widens in a later release.
+
+**Compatibility.** A binding that uses these levels is binding version 3. A client older than this release refuses it
+rather than ignore the levels, so upgrade every client before relinking with them. An older server refuses the link.
+A binding without them keeps its exact version 2 form.
+
 Discover scoped metadata before writing:
 
 ```sh

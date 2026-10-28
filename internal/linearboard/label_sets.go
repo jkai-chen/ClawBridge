@@ -37,7 +37,7 @@ var (
 func labelTeamsV2(v verifiedV2, b bus.TaskboardBindingV2, team string) []string {
 	out := []string{team}
 	for _, t := range v.Teams {
-		if t.ID == team && t.ParentID != "" && t.ParentID != team && contains(b.LinearTeamIDs, t.ParentID) {
+		if t.ID == team && t.ParentID != "" && t.ParentID != team && b.TeamReadable(t.ParentID) {
 			out = append(out, t.ParentID)
 		}
 	}

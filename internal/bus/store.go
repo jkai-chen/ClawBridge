@@ -570,7 +570,7 @@ var operationArgs = map[string]string{
 	"taskboard_get":               "instance",
 	"taskboard_get_v2":            "instance",
 	"comment_watch_status":        "",
-	"taskboard_set_v2":            "instance expected_revision mode linear_team_ids linear_default_team_id linear_project_ids linear_workspace_id closes_pending linear_team_names linear_project_names",
+	"taskboard_set_v2":            "instance expected_revision mode linear_team_ids linear_default_team_id linear_project_ids linear_workspace_id closes_pending linear_team_names linear_project_names linear_other_teams linear_parent_team_id",
 	"taskboard_names_set":         "instance expected_revision linear_team_names linear_project_names",
 	"taskboard_clear_v2":          "instance expected_revision repair",
 	"taskboard_access":            "instance ledger engineer",
@@ -728,13 +728,13 @@ func validateArgs(op string, a map[string]any) error {
 			if _, err := integer(v); err != nil {
 				return fmt.Errorf("%s: %w", k, err)
 			}
-		case "linear_project_id", "linear_workspace_id":
+		case "linear_project_id", "linear_workspace_id", "linear_parent_team_id":
 			if v != nil {
 				if _, ok := v.(string); !ok {
 					return fmt.Errorf("%s must be UUID or null", k)
 				}
 			}
-		case "linear_team_names", "linear_project_names":
+		case "linear_team_names", "linear_project_names", "linear_other_teams":
 			if _, ok := v.(map[string]any); !ok {
 				return fmt.Errorf("%s must be an object of IDs to names", k)
 			}

@@ -269,7 +269,7 @@ func (d *docScope) proveIssue(ctx context.Context, id string) error {
 	if issue.ID != id {
 		return errors.New("provider returned another issue")
 	}
-	return checkIssueV2(issue, d.b, d.v)
+	return checkReadIssueV2(issue, d.b, d.v)
 }
 
 // proveParents proves every parent a document has; a document with none,

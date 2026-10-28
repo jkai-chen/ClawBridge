@@ -89,6 +89,16 @@ func writePlanV2(ctx context.Context, p ProviderV2, issue linearprovider.IssueV2
 
 // descriptionSHA256 is the hex SHA-256 of the exact description bytes a read
 // returned; callers echo it back as expected_description_sha256.
+// writeScopeV2 is the scope a write needs: an agent's comment may go on a
+// comment team's issue too; everything else, a marker's comment included,
+// needs a write team.
+func writeScopeV2(in WriteInputV2) func(linearprovider.IssueV2, bus.TaskboardBindingV2, verifiedV2) error {
+	if in.Operation == "comment" && !in.marker {
+		return checkCommentIssueV2
+	}
+	return checkIssueV2
+}
+
 func descriptionSHA256(description string) string {
 	h := sha256.Sum256([]byte(description))
 	return hex.EncodeToString(h[:])
@@ -205,7 +215,13 @@ func ValidateWriteV2(in WriteInputV2) error {
 	}
 	return nil
 }
+
+// legacyMappingV2: the binding can be served by the legacy path, which
+// knows no access levels, so a version 3 binding never is.
 func legacyMappingV2(b bus.TaskboardBindingV2) bool {
+	if len(b.LinearOtherTeams) > 0 || b.LinearParentTeamID != "" {
+		return false
+	}
 	return b.Mode == "team_board" || (b.Mode == "project_set" && len(b.LinearProjectIDs) == 1)
 }
 func sameLegacyMappingV2(old bus.TaskboardBinding, b bus.TaskboardBindingV2) bool {
@@ -382,7 +398,7 @@ func (s *Service) WriteV2(ctx context.Context, scope bus.Request, in WriteInputV
 		if current.ID != in.IssueID {
 			return nil, errors.New("issue identity changed")
 		}
-		if e = checkIssueV2(current, b, v); e != nil {
+		if e = writeScopeV2(in)(current, b, v); e != nil {
 			return nil, e
 		}
 		if e = textGuardV2(in, current); e != nil {
@@ -435,7 +451,7 @@ func (s *Service) WriteV2(ctx context.Context, scope bus.Request, in WriteInputV
 	if in.Operation == "create" {
 		effective.ID = "00000000-0000-0000-0000-000000000000"
 	}
-	if e = checkIssueV2(effective, b, v); e != nil {
+	if e = writeScopeV2(in)(effective, b, v); e != nil {
 		return nil, e
 	}
 	if in.Labels.Present {

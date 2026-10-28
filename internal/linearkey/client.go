@@ -14,9 +14,16 @@ import (
 const Endpoint = "https://api.linear.app/graphql"
 
 // queries are the only GraphQL texts the key is ever sent with, by name.
+// The view texts are the probe's recorded ones (LINEAR-VIEWS-PLAN §10b); a
+// create always names its team and is always shared (§14).
 var queries = map[string]string{
-	"viewer": `query Viewer { viewer { id } }`,
+	"viewer":     `query Viewer { viewer { id } }`,
+	"viewCreate": `mutation ViewCreate($input: CustomViewCreateInput!) { customViewCreate(input: $input) { success customView { ` + viewFields + ` } } }`,
+	"viewUpdate": `mutation ViewUpdate($id: String!, $input: CustomViewUpdateInput!) { customViewUpdate(id: $id, input: $input) { success customView { ` + viewFields + ` } } }`,
+	"view":       `query View($id: String!) { customView(id: $id) { ` + viewFields + ` } }`,
 }
+
+const viewFields = `id name shared updatedAt team { id } filterData`
 
 // Client sends the person's key with an allow-listed query.
 type Client struct {
@@ -32,10 +39,15 @@ var (
 	ErrRejected    = errors.New("Linear refused the API key: it is wrong, revoked or expired; create a new key in Linear (Settings, Security & access, Personal API keys), then clawbridge linear key set")
 	ErrUnavailable = errors.New("Linear's API could not be reached or answered an error; try again")
 	errUnknown     = errors.New("not an allow-listed Linear API query")
+	// ErrViewRefused is Linear refusing a view's input, such as its filter.
+	ErrViewRefused = errors.New("Linear refused the view (its input error): check the filter and the name")
+	// ErrViewNotFound is a view Linear doesn't have, or the key can't see.
+	ErrViewNotFound = errors.New("Linear has no such view, or this key can't see it")
+	errInput        = errors.New("input error")
 )
 
-// Do sends the named allow-listed query and decodes its data into out.
-func (c *Client) Do(ctx context.Context, name string, variables map[string]any, out any) error {
+// do sends the named allow-listed query and decodes its data into out.
+func (c *Client) do(ctx context.Context, name string, variables map[string]any, out any) error {
 	if err := guard(); err != nil {
 		return err
 	}
@@ -78,8 +90,11 @@ func (c *Client) Do(ctx context.Context, name string, variables map[string]any, 
 		return ErrUnavailable
 	}
 	if len(envelope.Errors) > 0 {
-		if envelope.Errors[0].Extensions.Code == "AUTHENTICATION_ERROR" {
+		switch envelope.Errors[0].Extensions.Code {
+		case "AUTHENTICATION_ERROR":
 			return ErrRejected
+		case "INPUT_ERROR":
+			return errInput
 		}
 		return ErrUnavailable
 	}
@@ -96,8 +111,8 @@ func (c *Client) Viewer(ctx context.Context) (string, error) {
 			ID string `json:"id"`
 		} `json:"viewer"`
 	}
-	if err := c.Do(ctx, "viewer", map[string]any{}, &out); err != nil {
-		return "", err
+	if err := c.do(ctx, "viewer", map[string]any{}, &out); err != nil {
+		return "", viewErr(err, ErrUnavailable)
 	}
 	if out.Viewer == nil || out.Viewer.ID == "" {
 		return "", ErrUnavailable

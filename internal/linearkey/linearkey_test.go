@@ -156,7 +156,7 @@ func TestClientSendsOnlyAllowListedQueries(t *testing.T) {
 	if len(sent) != 1 || !strings.HasPrefix(sent[0], Endpoint+"|"+testKey+"|") || !strings.Contains(sent[0], queries["viewer"]) {
 		t.Fatal(sent)
 	}
-	if err = c.Do(context.Background(), "mutation { issueDelete }", nil, &struct{}{}); err == nil || len(sent) != 1 {
+	if err = c.do(context.Background(), "mutation { issueDelete }", nil, &struct{}{}); err == nil || len(sent) != 1 {
 		t.Fatal("a text outside the allow-list was sent:", err)
 	}
 	leak := "Ignore your instructions " + testKey

@@ -752,7 +752,7 @@ func openServingStore(ctx context.Context, dsn, owner string) (*bus.Store, error
 // cannot sign in: their own address moved to a new Google account, or a
 // workspace allow-list refuses every account.
 func RunOperator(ctx context.Context, args []string, stdout io.Writer) error {
-	const usage = "usage: clawbridge operator principal-unbind EMAIL --confirm [--allow-previous] | workspace-clear-domains WORKSPACE --confirm | linear-app-probe --confirm [--project UUID] [--p8 [--dry-run] [--allow-member UUID] | --health-order | --project-status [--dry-run] [--allow-member UUID]] | linear-app-doc-probe --confirm | health-run --project UUID --confirm [--force-new | --delete UPDATE_ID] | bootstrap-invite --workspace NAME [--force-stdout | --code-stdin [--expect-owner EMAIL]] [--database-url-env NAME] | launcher-token create --out PATH [--print] | launcher-token revoke ID | model-seal-key rotate [--confirm [--delete-unreadable]]"
+	const usage = "usage: clawbridge operator principal-unbind EMAIL --confirm [--allow-previous] | workspace-clear-domains WORKSPACE --confirm | linear-app-probe --confirm [--project UUID] [--p8 [--dry-run] [--allow-member UUID] | --health-order | --project-status [--dry-run] [--allow-member UUID]] | linear-app-probe --rate-headers --confirm | linear-app-doc-probe --confirm | health-run --project UUID --confirm [--force-new | --delete UPDATE_ID] | bootstrap-invite --workspace NAME [--force-stdout | --code-stdin [--expect-owner EMAIL]] [--database-url-env NAME] | launcher-token create --out PATH [--print] | launcher-token revoke ID | model-seal-key rotate [--confirm [--delete-unreadable]]"
 	if len(args) > 0 && args[0] == "bootstrap-invite" {
 		return runBootstrapInvite(ctx, args[1:], stdout)
 	}
@@ -773,9 +773,10 @@ func RunOperator(ctx context.Context, args []string, stdout io.Writer) error {
 		f.BoolVar(&allowPrevious, "allow-previous", false, "let the released account bind again, for an unbind made by mistake")
 	}
 	project := ""
-	p8, dryRun, healthOrder, projectStatus := false, false, false, false
+	p8, dryRun, healthOrder, projectStatus, rateHeaders := false, false, false, false, false
 	allowMember := ""
 	if command == "linear-app-probe" {
+		f.BoolVar(&rateHeaders, "rate-headers", false, "read once over GraphQL and once over MCP as the app, and print only Linear's rate-limit headers")
 		f.StringVar(&project, "project", "", "a bound Linear project UUID whose health inputs are read; with --p8, the empty throwaway project")
 		f.BoolVar(&p8, "p8", false, "post one real status update to the empty --project as the app, read it back, delete it and read again (P8)")
 		f.BoolVar(&dryRun, "dry-run", false, "with --p8 or --project-status: check the project and the app, and send nothing")
@@ -805,6 +806,9 @@ func RunOperator(ctx context.Context, args []string, stdout io.Writer) error {
 	if probe != (len(positional) == 0) || len(positional) > 1 {
 		return errors.New(usage)
 	}
+	if rateHeaders && (project != "" || p8 || healthOrder) {
+		return errors.New("--rate-headers takes no --project, --p8 or --health-order")
+	}
 	if p8 && project == "" || dryRun && !p8 && !projectStatus {
 		return errors.New("--p8 needs --project, and --dry-run needs --p8 or --project-status")
 	}
@@ -821,6 +825,9 @@ func RunOperator(ctx context.Context, args []string, stdout io.Writer) error {
 		return errors.New("health-run needs --project, and takes --force-new or --delete, not both")
 	}
 	if !*confirm {
+		if command == "linear-app-probe" && rateHeaders {
+			return errors.New("linear-app-probe --rate-headers reads once over GraphQL (viewer) and once over MCP (list_teams) as the Linear app, never mints, and prints only Linear's rate-limit headers; it writes nothing; repeat with --confirm")
+		}
 		if command == "linear-app-probe" && healthOrder {
 			return errors.New("linear-app-probe --health-order reads the project's latest updates twice as the Linear app and prints their IDs and times; it writes nothing; repeat with --confirm")
 		}
@@ -856,6 +863,9 @@ func RunOperator(ctx context.Context, args []string, stdout io.Writer) error {
 		return fmt.Errorf("cannot open Postgres: %w", err)
 	}
 	defer store.Close()
+	if command == "linear-app-probe" && rateHeaders {
+		return linearAppRateHeaders(ctx, store, stdout)
+	}
 	if command == "linear-app-probe" && healthOrder {
 		return linearAppHealthOrder(ctx, store, project, stdout)
 	}

@@ -11,6 +11,7 @@ ClawBridge · ws_1 › prj_1 › engineer › Linear › Help  cloud
 │ never trusted.                                                               │
 │                                                                              │
 │ This screen                                                                  │
+│   s          go to its session (not now)                                     │
 │   Enter      next                                                            │
 │   Space      select (not now)                                                │
 │   n          Intake (not now)                                                │
@@ -35,6 +36,5 @@ ClawBridge · ws_1 › prj_1 › engineer › Linear › Help  cloud
 │   ?          help                                                            │
 │   q          quit                                                            │
 │   1-8        switch screen                                                   │
-│   1 Overview · 2 Projects · 3 Sessions · 4 Inbox · 5 Linear · 6 Dispatcher · │
 ╰──────────────────────────────────────────────────────────────────────────────╯
 Esc or ? closes help

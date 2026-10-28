@@ -177,6 +177,14 @@ func (s *linearTUISource) Do(ctx context.Context, r tui.LinearRequest) (tui.Line
 		data.IssuesV2 = &page
 		return data, err
 	case "issue":
+		if r.ProfileID == "" {
+			// Opened from a session's issue (i) before a connection was
+			// chosen.
+			var err error
+			if service, err = s.onlyProfile(); err != nil {
+				return data, err
+			}
+		}
 		issue, err := service.IssueV2(ctx, s.scope, r.IssueID)
 		if err == nil {
 			data.IssueV2 = &issue
@@ -184,21 +192,29 @@ func (s *linearTUISource) Do(ctx context.Context, r tui.LinearRequest) (tui.Line
 		return data, err
 	case "intake":
 		if r.ProfileID == "" {
-			// Opened from Overview before a connection was chosen: the
-			// only one, as the CLI's lookup does.
-			profiles, err := s.manager.Profiles()
-			if err != nil {
+			// Opened from Overview before a connection was chosen.
+			var err error
+			if service, err = s.onlyProfile(); err != nil {
 				return data, err
 			}
-			if len(profiles) != 1 {
-				return data, errors.New("choose your Linear connection on the Linear screen first")
-			}
-			service = newLinearService(s.directory, profiles[0].ID, s.manager, s.executor, s.authority)
 		}
 		return data, s.intake(ctx, service, &data)
 	default:
 		return data, errors.New("unsupported native Linear action")
 	}
+}
+
+// onlyProfile is the service on the viewer's only Linear connection, as
+// the CLI's lookup picks it; with none or several, the Linear screen asks.
+func (s *linearTUISource) onlyProfile() (*linearboard.Service, error) {
+	profiles, err := s.manager.Profiles()
+	if err != nil {
+		return nil, err
+	}
+	if len(profiles) != 1 {
+		return nil, errors.New("choose your Linear connection on the Linear screen first")
+	}
+	return newLinearService(s.directory, profiles[0].ID, s.manager, s.executor, s.authority), nil
 }
 
 // intakePages bounds each team's reads for the Intake view, as the

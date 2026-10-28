@@ -233,6 +233,13 @@ func linearAt(steps ...string) func(Model) bool {
 func linearKeyAction(m Model, key string) (Model, tea.Cmd) { return m.linearKey(key) }
 
 var linearBindings = []Binding{
+	// U40: from an issue to the session holding it.
+	{ID: "its-session", Keys: []string{"s"}, Label: "go to its session", When: func(m Model) bool { _, ok := m.issueHolder(); return ok }, Action: func(m Model, _ string) (Model, tea.Cmd) {
+		h, _ := m.issueHolder()
+		next, cmd := m.Show(ScreenSessions)
+		next.selectID = h.id
+		return next, cmd
+	}},
 	{ID: "open", Keys: []string{"enter"}, Labeler: func(m Model) string {
 		switch m.linearStep() {
 		case "tasks":
@@ -415,7 +422,7 @@ func footerText(m Model) string {
 var screenAbout = map[Screen]string{
 	ScreenOverview: "Where you are: the workspace, project and session, and who you're signed in as.",
 	ScreenProjects: "The workspace's projects you can see: your role, sessions, coordinator and Linear board. ● marks the project this profile works in. Enter opens one, read-only; s and l go to your own project's sessions and board.",
-	ScreenSessions: "The project's sessions. ★ marks the coordinator; STATE is retired, moved, stale or the session's presence; n messages the selected session. v filters this page only; [ goes to the previous page you saw, ] to the server's next page. There is no search across pages.",
+	ScreenSessions: "The project's sessions. ★ marks the coordinator; STATE is retired, moved, stale or the session's presence; n messages the selected session, and i opens its issue on the Linear screen. v filters this page only; [ goes to the previous page you saw, ] to the server's next page. There is no search across pages.",
 	ScreenInbox:    "The current session's messages. The server stamps delivery; a reload never marks a message read.",
 	ScreenLinear:   "The project's Linear board: your personal Linear connection, and the board this project is linked to. Task ownership comes from the coordinator's issue assignment; selecting a row never claims or completes work. In Intake (n), only a needs-agent label, delegation or mention a trusted person makes in Linear itself counts; signals made through ClawBridge run as the app and are never trusted.",
 	ScreenAccount:  "Your devices and the workspace's members and invites. Anything that revokes or mints a code asks you to type a word first.",

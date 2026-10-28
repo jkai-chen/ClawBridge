@@ -1757,6 +1757,8 @@ linked · teams Eng · projects Payments"), with how old the names are; `d` show
 the raw IDs and the binding's revision. A rename in Linear shows once the names are
 refreshed: `r` on the Linear view refreshes them for a project owner or lead, with
 their own Linear connection. Names are display text only; nothing matches on them.
+The issue list names the session each issue is assigned to ("held by reviewer"), and
+`s` on an opened issue goes to that session on the Sessions screen.
 The binding retains a revision so concurrent changes fail rather than overwriting
 another administrator's selection. An outage leaves the mapping intact.
 

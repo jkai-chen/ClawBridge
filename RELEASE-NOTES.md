@@ -223,6 +223,9 @@
   member with no project yet (no project, no session) for the workspace alone, so the TUI's Waiting screen knows
   whose workspace it is: the bootstrap owner is told `clawbridge project create SLUG` instead of to ask themselves,
   and a member is told the owner's address.
+- **`clawbridge whoami` works before you have a project,** showing who you are and the workspace (`Project: none`)
+  instead of failing to resolve one; a named project or a session must still resolve. The Waiting screen says it's
+  checking until its first answer, instead of briefly showing a member's "ask the owner".
 - **One set of keys, shown where you look (TUI-UX-AUDIT PR A).** The footer shows the screen's own keys, and `?`
   opens help listing every key for the screen and everywhere; the old one-line notice is gone. Keys never mean two
   things: **Enter opens** the selected row and never changes anything by itself, **Esc goes back one level** (help, an

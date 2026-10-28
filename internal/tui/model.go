@@ -359,8 +359,11 @@ type Model struct {
 	// waiting is the no-project mode; waitingOwner whom to ask.
 	waiting      bool
 	waitingOwner string
-	checksAt     time.Time
-	doctorPasses bool
+	// waitingChecked says a check has answered, so the screen knows
+	// whether to say create or ask.
+	waitingChecked bool
+	checksAt       time.Time
+	doctorPasses   bool
 
 	inputMode   inputMode
 	draft       string

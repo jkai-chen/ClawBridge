@@ -1,0 +1,17 @@
+ClawBridge · ws_1 › prj_1 › engineer › Linear › Help  cloud
+1 Ovw 2 Prj 3 Ses 4 Inb [5 Linear] 6 Dsp 7 Acc 8 Doc
+
+╭──────────────────────────────────────────────────────────────────────────────╮
+│ Help · Linear                                                                │
+│ This screen                                                                  │
+│   Enter      next                                                            │
+│   +          connect                                                         │
+│   w          connect with write                                              │
+│   x          log out                                                         │
+│   15 more not usable now; a taller window lists them                         │
+│                                                                              │
+│ Everywhere                                                                   │
+│   Tab next screen · S-Tab previous screen · ↑↓ select · PgUp/PgDn scroll ·   │
+│ Esc back · r reload · ? help · q quit · 1-8 switch screen                    │
+╰──────────────────────────────────────────────────────────────────────────────╯
+Esc or ? closes help

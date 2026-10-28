@@ -28,6 +28,10 @@
   project, by name and kind, with the selected one's URL, read with your Linear connection as `linear view list`
   does; workspace views and other kinds are counted, not listed. Read-only: a project owner writes views in their own
   terminal with `clawbridge linear view create|update|delete` (U63).
+- **The help fits small windows.** When `?` doesn't fit, the screen's description and the screens' names go first and
+  the keys used everywhere run on one line, so every key is still listed; then the keys not usable now become a count
+  ("12 more not usable now"), so `q quit` and `1-8` stay in view down to 80x24. A window tall enough shows it all, as
+  before. Docs: none needed.
 
 ## Linear
 

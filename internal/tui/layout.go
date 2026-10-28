@@ -60,12 +60,15 @@ func layoutParts(m Model) ([]string, []string, int) {
 	for i := range header {
 		header[i] = ansi.Truncate(singleLine(header[i]), w, "…")
 	}
+	budget := max(1, h-len(header)-len(editor)-3)
 	body := renderBody(m)
+	if m.help {
+		body = renderHelpIn(m, budget)
+	}
 	if (m.screen == ScreenSessions || m.screen == ScreenInbox) && m.source == "offline-mirror" && !m.help {
 		body += "\nMirror coverage is incomplete; retained snapshot only, read-only."
 	}
 	content := screenLines(body, w-4)
-	budget := max(1, h-len(header)-len(editor)-3)
 	return append(header, editor...), content, budget
 }
 func bodyOffset(m Model, lines []string, budget int) int {

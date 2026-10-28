@@ -3,15 +3,6 @@ ClawBridge · ws_1 › prj_1 › engineer › Linear › Help  cloud
 
 ╭──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
 │ Help · Linear                                                                                                        │
-│ The project's Linear board: your personal Linear connection, and the board this project is linked to. Task ownership │
-│ comes from the coordinator's issue assignment; selecting a row never claims or completes work. In Intake (n), only a │
-│ needs-agent label, delegation or mention a trusted person makes in Linear itself counts; signals made through        │
-│ ClawBridge run as the app and are never trusted. Project status (p) reads each Linear project's status through the   │
-│ server's ClawBridge app, which costs the project's Linear budget; a project owner or lead, in a TUI opened without a │
-│ session, sets one after the server's preview. Shared views (v) lists the board's teams' Linear views with your       │
-│ Linear connection, read-only; a project owner writes them in their own terminal with clawbridge linear view create,  │
-│ update and delete.                                                                                                   │
-│                                                                                                                      │
 │ This screen                                                                                                          │
 │   s          go to its session (not now)                                                                             │
 │   Enter      next                                                                                                    │
@@ -34,7 +25,7 @@ ClawBridge · ws_1 › prj_1 › engineer › Linear › Help  cloud
 │   [          previous page (not now)                                                                                 │
 │                                                                                                                      │
 │ Everywhere                                                                                                           │
-│   Tab        next screen                                                                                             │
-│   S-Tab      previous screen                                                                                         │
+│   Tab next screen · S-Tab previous screen · ↑↓ select · PgUp/PgDn scroll · Esc back · r reload · ? help · q quit ·   │
+│ 1-8 switch screen                                                                                                    │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
 Esc or ? closes help

@@ -1,0 +1,22 @@
+ClawBridge · ws_1 › prj_1 › engineer › Account › Help  cloud
+1 Ovw 2 Prj 3 Ses 4 Inb 5 Lin 6 Dsp [7 Account] 8 Doc
+
+╭──────────────────────────────────────────────────────────────────────────────╮
+│ Help · Account                                                               │
+│ This screen                                                                  │
+│   a          add a device                                                    │
+│   i          invite                                                          │
+│   l          label                                                           │
+│   x          revoke                                                          │
+│   w          confirm                                                         │
+│   e          mark the alerts seen (not now)                                  │
+│   t          offer ownership                                                 │
+│   y          accept ownership (not now)                                      │
+│   d          decline ownership (not now)                                     │
+│   c          cancel the offer (not now)                                      │
+│                                                                              │
+│ Everywhere                                                                   │
+│   Tab next screen · S-Tab previous screen · ↑↓ select · PgUp/PgDn scroll ·   │
+│ Esc back · r reload · ? help · q quit · 1-8 switch screen                    │
+╰──────────────────────────────────────────────────────────────────────────────╯
+Esc or ? closes help

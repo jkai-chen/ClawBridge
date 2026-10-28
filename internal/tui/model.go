@@ -320,7 +320,9 @@ type Model struct {
 	// projectStatus is the Linear screen's project status view (U61).
 	projectStatus projectStatusState
 	// views is the Linear screen's shared views list (U63).
-	views        viewsState
+	views viewsState
+	// roles is the Linear screen's team roles view.
+	roles        rolesState
 	linearCancel context.CancelFunc
 	account      accountState
 	modelSetup   modelSetupState
@@ -522,6 +524,10 @@ func (m Model) UpdateModel(msg tea.Msg) (Model, tea.Cmd) {
 		return m.applyIntakeDone(x)
 	case viewsLoadedMsg:
 		return m.applyViews(x), nil
+	case rolesLoadedMsg:
+		return m.applyRoles(x), nil
+	case rolesSetMsg:
+		return m.applyRolesSet(x)
 	case projectStatusLoadedMsg:
 		return m.applyProjectStatus(x), nil
 	case projectStatusDoneMsg:
@@ -1422,6 +1428,9 @@ func (m Model) updateKey(msg tea.KeyMsg) (Model, tea.Cmd) {
 	}
 	if m.screen == ScreenLinear && m.linear.step == "intake" && (m.intake.ask != nil || m.intake.picking) {
 		return m.intakeModalKey(key)
+	}
+	if m.screen == ScreenLinear && m.linear.step == "roles" && (m.roles.ask != nil || m.roles.picking != "") {
+		return m.rolesModalKey(key)
 	}
 	if m.screen == ScreenLinear && m.linear.step == "status" && (m.projectStatus.ask != nil || m.projectStatus.picking) {
 		return m.projectStatusModalKey(key)

@@ -514,6 +514,26 @@ any past the first 250 a team aren't listed; the view counts them. A team whose 
 read says why on its own line. It's read-only and costs no project budget: a project owner
 writes views in their own terminal with `clawbridge linear view create|update|delete`.
 
+Team roles (`R` on the Linear screen once a board is linked) shows each bound team's lead,
+engineers and reviewers, by their Linear names, read with your own Linear connection. A team
+the binding dropped is marked "no longer bound". A person Linear doesn't call active and
+non-guest is marked too, and so is a lead in a team they work in but don't lead ("not
+leading this team"; `x` there takes them out of it). The header says what you can change:
+- **The project owner:**
+  - `l` adds a lead, and `x` on a lead stops them leading;
+  - `a` adds someone to a team as an engineer or reviewer (`e` or `r`), picked from the
+    Linear workspace's active, non-guest users;
+  - `e` switches a person between engineer and reviewer, and `x` takes them out of that team.
+- **A team's lead:** `a`, `e` and `x` for engineers and reviewers in the teams they lead.
+- **Anyone else:** reads.
+
+Each change shows the server's preview first, and `y` stores it at the revision you read.
+If someone changed the roles meantime, nothing is stored and `r` reads them again. A person's
+ClawBridge account shows as "linked by the owner (account)" to the owner, and as "linked" to
+anyone else. As in the CLI, changes come only from a TUI opened without `--session` and not
+run by an agent. The server enforces who may change what (see
+[Team roles](linear.md#team-roles-project-owner-and-leads-for-their-teams)).
+
 A hosted profile that has joined a workspace but has no project yet (an invite with
 no grants) opens on **Waiting for a project**: it names the workspace owner to ask
 and the command they run (`clawbridge --project PROJECT project role set EMAIL

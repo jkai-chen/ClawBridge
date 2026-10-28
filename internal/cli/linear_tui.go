@@ -201,6 +201,21 @@ func (s *linearTUISource) Do(ctx context.Context, r tui.LinearRequest) (tui.Line
 		return data, s.intake(ctx, service, &data)
 	case "project-status", "project-status-set":
 		return data, s.projectStatus(ctx, service, r, &data)
+	case "roles", "roles-set":
+		if r.ProfileID == "" {
+			// From the board before a connection was chosen: names need one,
+			// a read without them still works.
+			only, err := s.onlyProfile()
+			if err != nil {
+				service = nil
+			} else {
+				service = only
+			}
+		}
+		if r.Operation == "roles" {
+			return data, s.rolesView(ctx, service, &data)
+		}
+		return data, s.rolesSet(ctx, service, r.Roles, &data)
 	case "views":
 		if r.ProfileID == "" {
 			// From the board before a connection was chosen.

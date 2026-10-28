@@ -33,6 +33,10 @@
   the keys used everywhere run on one line, so every key is still listed; then the keys not usable now become a count
   ("12 more not usable now"), so `q quit` and `1-8` stay in view down to 80x24. A window tall enough shows it all, as
   before. Docs: none needed.
+- **Team roles in the TUI (`R` on the Linear screen).** Each bound team's lead, engineers and reviewers by Linear
+  name. The project owner adds and removes leads and people, and a team's lead changes engineers and reviewers in
+  the teams they lead. Each change is the server's preview first, then `y` at that revision. It's read-only for
+  anyone else and in a TUI with a session or run by an agent.
 
 ## Linear
 

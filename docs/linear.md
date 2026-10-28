@@ -1024,6 +1024,9 @@ clawbridge linear roles person "Ada Lovelace" --remove --expected-revision N [--
 clawbridge linear roles set --file roles.json --expected-revision N [--confirm]
 ```
 
+The TUI's Linear screen has the same view and changes (`R`; see the
+[usage guide](usage.md)): one change at a time, each previewed first.
+
 - **Who:**
   - Any member or session reads the roles. Agents read them with the MCP tool
     `team_roles_get`.

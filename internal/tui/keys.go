@@ -255,7 +255,7 @@ var linearBindings = []Binding{
 		}
 		return "next"
 	}, When: func(m Model) bool {
-		return m.linearStep() != "intake" && m.linearStep() != "views" && (m.linearStep() != "status" || (m.projectStatus.loaded && m.projectStatus.canEdit))
+		return m.linearStep() != "intake" && m.linearStep() != "views" && m.linearStep() != "roles" && (m.linearStep() != "status" || (m.projectStatus.loaded && m.projectStatus.canEdit))
 	}, Action: linearKeyAction},
 	{ID: "select", Keys: []string{" "}, Labeler: func(m Model) string {
 		switch m.linearStep() {
@@ -276,6 +276,9 @@ var linearBindings = []Binding{
 	{ID: "views", Keys: []string{"v"}, Label: "shared views", When: func(m Model) bool {
 		return m.linearConfigured() && linearAt("profiles", "tasks", "details")(m)
 	}, Action: func(m Model, _ string) (Model, tea.Cmd) { return m.openViews() }},
+	{ID: "roles", Keys: []string{"R"}, Label: "team roles", When: func(m Model) bool {
+		return m.linearConfigured() && linearAt("profiles", "tasks", "details")(m)
+	}, Action: func(m Model, _ string) (Model, tea.Cmd) { return m.openRoles() }},
 	{ID: "status-suggest", Keys: []string{"g"}, Label: "suggest a status", When: func(m Model) bool {
 		return m.linearStep() == "status" && m.projectStatus.loaded && len(m.projectStatus.rows) > 0
 	}, Action: linearKeyAction},
@@ -292,7 +295,14 @@ var linearBindings = []Binding{
 	}},
 	{ID: "connect", Keys: []string{"+"}, Label: "connect", When: linearAt("profiles"), Action: linearKeyAction},
 	{ID: "connect-write", Keys: []string{"w"}, Label: "connect with write", When: linearAt("profiles"), Action: linearKeyAction},
-	{ID: "link", Keys: []string{"l"}, Label: "link a board", When: func(m Model) bool { return m.linear.profile != "" && linearAt("profiles", "tasks")(m) }, Action: linearKeyAction},
+	{ID: "link", Keys: []string{"l"}, Labeler: func(m Model) string {
+		if m.linearStep() == "roles" {
+			return "add a lead"
+		}
+		return "link a board"
+	}, When: func(m Model) bool {
+		return (m.linear.profile != "" && linearAt("profiles", "tasks")(m)) || rolesKeyOn(m, "l")
+	}, Action: linearKeyAction},
 	{ID: "unlink", Keys: []string{"u"}, Label: "unlink", When: func(m Model) bool { return m.linearConfigured() && linearAt("profiles", "tasks", "details")(m) }, Action: linearKeyAction},
 	{ID: "logout", Keys: []string{"x"}, Labeler: func(m Model) string {
 		switch {
@@ -300,13 +310,25 @@ var linearBindings = []Binding{
 			return "stop trusting"
 		case intakeOn(m, "queue"):
 			return "dismiss"
+		case m.linearStep() == "roles":
+			return "remove"
 		}
 		return "log out"
 	}, When: func(m Model) bool {
-		return (m.linearStep() == "profiles" && m.linearSelected() != "") || (intakeEditable(m) && intakeOn(m, "trusted", "queue"))
+		return (m.linearStep() == "profiles" && m.linearSelected() != "") || (intakeEditable(m) && intakeOn(m, "trusted", "queue")) || rolesKeyOn(m, "x")
 	}, Action: linearKeyAction},
-	{ID: "intake-trust", Keys: []string{"a"}, Label: "trust someone", When: intakeEditable, Action: linearKeyAction},
-	{ID: "intake-rearm", Keys: []string{"e"}, Label: "rearm", When: func(m Model) bool { return intakeEditable(m) && intakeOn(m, "queue") }, Action: linearKeyAction},
+	{ID: "add", Keys: []string{"a"}, Labeler: func(m Model) string {
+		if m.linearStep() == "roles" {
+			return "add an engineer or reviewer"
+		}
+		return "trust someone"
+	}, When: func(m Model) bool { return intakeEditable(m) || rolesKeyOn(m, "a") }, Action: linearKeyAction},
+	{ID: "edit", Keys: []string{"e"}, Labeler: func(m Model) string {
+		if m.linearStep() == "roles" {
+			return "engineer ⇄ reviewer"
+		}
+		return "rearm"
+	}, When: func(m Model) bool { return (intakeEditable(m) && intakeOn(m, "queue")) || rolesKeyOn(m, "e") }, Action: linearKeyAction},
 	{ID: "next-page", Keys: []string{"]"}, Label: "next page", When: linearAt("teams", "projects", "tasks"), Action: func(m Model, _ string) (Model, tea.Cmd) { return m.linearPage(true) }},
 	{ID: "previous-page", Keys: []string{"["}, Label: "previous page", When: linearAt("teams", "projects", "tasks"), Action: func(m Model, _ string) (Model, tea.Cmd) { return m.linearPage(false) }},
 }
@@ -399,6 +421,15 @@ func footerText(m Model) string {
 	}
 	if m.screen == ScreenLinear && m.linear.step == "intake" && m.intake.ask != nil {
 		return "y do it · any other key keeps things as they are"
+	}
+	if m.screen == ScreenLinear && m.linear.step == "roles" && m.roles.ask != nil {
+		return "y store it · any other key keeps the roles as they are"
+	}
+	if m.screen == ScreenLinear && m.linear.step == "roles" && m.roles.picking != "" {
+		if m.roles.pickRoles {
+			return "e engineer · r reviewer · Esc close"
+		}
+		return "↑↓ person · Enter choose · Esc close"
 	}
 	if m.screen == ScreenLinear && m.linear.step == "intake" && m.intake.picking {
 		return "↑↓ member · Enter trust them · Esc close"

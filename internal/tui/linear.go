@@ -37,8 +37,13 @@ type LinearRequest struct {
 	// second confirm to close with issues open, and a read's suggestion.
 	LinearProject, StatusType, OperationID, ExpectedStatus string
 	AllowOpen, Suggest                                     bool
+	// Roles is a team roles change (roles-set).
+	Roles *RolesChange
 }
 type LinearData struct {
+	// Roles is the team roles read, RolesSet a change's answer.
+	Roles     *TeamRolesView
+	RolesSet  *RolesSetResult
 	Profiles  []linearconn.Profile
 	Binding   bus.TaskboardBinding
 	BindingV2 *bus.TaskboardBindingV2
@@ -301,6 +306,9 @@ func (m Model) linearRefresh() (Model, tea.Cmd) {
 	case "views":
 		m.linear.refreshNames = false
 		return m.viewsLoad()
+	case "roles":
+		m.linear.refreshNames = false
+		return m.rolesLoad()
 	default:
 		request.Operation = "profiles"
 	}
@@ -463,6 +471,8 @@ func (m Model) linearRows() []string {
 		return m.projectStatusRows()
 	case "views":
 		return m.viewRows()
+	case "roles":
+		return m.rolesRows()
 	}
 	return rows
 }
@@ -527,7 +537,7 @@ func (m Model) linearStep() string {
 // linearPrevious is the step Esc goes back to from each step.
 var linearPrevious = map[string]string{
 	"teams": "profiles", "default": "teams", "projects": "default", "preview": "projects",
-	"tasks": "profiles", "details": "tasks", "unlink": "tasks", "intake": "tasks", "status": "tasks", "views": "tasks",
+	"tasks": "profiles", "details": "tasks", "unlink": "tasks", "intake": "tasks", "status": "tasks", "views": "tasks", "roles": "tasks",
 	"writes": "profiles",
 }
 
@@ -560,6 +570,9 @@ func (m Model) linearBack() (Model, tea.Cmd) {
 }
 
 func (m Model) linearKey(key string) (Model, tea.Cmd) {
+	if m.linear.step == "roles" {
+		return m.rolesKey(key)
+	}
 	if m.linear.step == "intake" {
 		return m.intakeKey(key)
 	}
@@ -905,6 +918,9 @@ func renderLinear(m Model) string {
 	if m.linear.step == "status" {
 		return strings.TrimRight(b.String()+renderProjectStatus(m), "\n")
 	}
+	if m.linear.step == "roles" {
+		return strings.TrimRight(b.String()+renderRoles(m), "\n")
+	}
 	if m.linear.step == "views" {
 		return strings.TrimRight(b.String()+renderViews(m), "\n")
 	}
@@ -1072,6 +1088,8 @@ func linearStepTitle(m Model) string {
 		return "Project status: each Linear project of the board"
 	case "views":
 		return "Shared views: the board's teams' Linear views"
+	case "roles":
+		return "Team roles: who leads each team, and who engineers and reviews"
 	}
 	if m.linearConfigured() {
 		return "Your Linear connections"

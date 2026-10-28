@@ -218,3 +218,35 @@ func TestLinearViewForget(t *testing.T) {
 		t.Fatal(details, err)
 	}
 }
+
+// An adoption records a view made in Linear as ClawBridge's (adopted
+// true) once its read-back proves the new filter; history names the old
+// filter's digest, never the filter. old_filter_sha256 goes with an
+// adoption only.
+func TestLinearViewAdoptRecord(t *testing.T) {
+	h := newHarness(t)
+	h.link(0, []string{cpOne})
+	old := strings.Repeat("a", 64)
+	bad := lvRecord("create", lvView, "Urgent bugs", lvFilter, "2026-10-27T21:00:00.000Z", "", 1)
+	bad["old_filter_sha256"] = old
+	if err := h.viewErr("linear_view_record", "", bad); !strings.Contains(err.Error(), "only with one") {
+		t.Fatal(err)
+	}
+	if err := h.viewErr("linear_view_record", "", lvRecord("adopt", lvView, "Urgent bugs", lvFilter, "2026-10-27T21:00:00.000Z", "", 1)); !strings.Contains(err.Error(), "only with one") {
+		t.Fatal(err)
+	}
+	a := lvRecord("adopt", lvView, "Urgent bugs", lvFilter, "2026-10-27T21:00:00.000Z", "", 1)
+	a["old_filter_sha256"] = old
+	view := h.call("linear_view_record", "", a).(map[string]any)["view"].(map[string]any)
+	if view["adopted"] != true || view["scope"] != "team" {
+		t.Fatal(view)
+	}
+	var details string
+	if err := h.s.db.QueryRow(`SELECT details FROM history WHERE action='view_adopted'`).Scan(&details); err != nil || !strings.Contains(details, `"old_filter_sha256":"`+old+`"`) || strings.Contains(details, "priority") {
+		t.Fatal(details, err)
+	}
+	// It is ClawBridge's now: a second adoption is a conflict, an update works.
+	if err := h.viewErr("linear_view_record", "", map[string]any{"action": "adopt", "view_id": lvView, "team_id": sfTeam, "name": "Other", "filter": lvFilter, "filter_sha256": a["filter_sha256"], "filter_as_of": "2026-10-27T21:01:00.000Z", "agent_filter": "available", "expected_binding_revision": 1, "old_filter_sha256": old}); !strings.Contains(err.Error(), "already recorded") {
+		t.Fatal(err)
+	}
+}

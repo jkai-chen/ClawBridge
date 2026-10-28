@@ -266,7 +266,12 @@
     this project; a view Linear no longer has afterwards is dropped from what agents filter by (history
     `view_deleted`), one still there is `uncertain`. The confirm carries the preview's `filter_as_of`, and a view
     someone changed in Linear since ClawBridge wrote it is never deleted.
-  - Schema 37 stores the views. Adopting views and `view apply --file` come later.
+  - **View sets and adoption (phase 3d):** `linear view apply --file F [--adopt NAME]... [--confirm]` previews a file
+    of up to 50 issue views as creates, updates, unchanged and refused, then writes each as its own operation. A view
+    someone made in Linear is taken over only with `--adopt` and only if exactly one has the name; the preview shows
+    its current filter, creator and last change, and history records `view_adopted` with the old filter's digest. The
+    confirm carries the preview's `plan_sha256`, and a plan that changed since is refused.
+  - Schema 37 stores the views.
 
 ## The command line
 

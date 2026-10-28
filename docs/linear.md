@@ -1273,7 +1273,31 @@ clawbridge linear view update VIEW_UUID [--name NAME] [--filter-file FILE] --ope
   (history `view_deleted` with the scope). A view still there afterwards is `uncertain`, kept, and never sent again
   under that operation ID. A view someone made by hand in Linear isn't ClawBridge's to delete (`not_found`); delete
   it in Linear.
-- **Adopting a view made in Linear, and applying a whole view-set file, come later.**
+- **Apply a whole view-set file**, for example one per kind of project:
+
+  ```sh
+  clawbridge linear view apply --file views.json --operation-id set-1 --profile PROFILE_ID            # preview
+  clawbridge linear view apply --file views.json --operation-id set-1 --profile PROFILE_ID --expected-plan-sha256 SHA --confirm
+  ```
+
+  The file is `{"views": [{"team": "TEAM_UUID", "name": "Urgent bugs", "filter": {...}}]}`, 1 to 50 issue views. The
+  preview plans each entry: `create` for a free name, `update` for a view ClawBridge wrote with that name and another
+  filter, `unchanged` for one with the same filter, and `refused`, with the reason. Each entry is checked like
+  `view create` (team, scope line, every ID in its filter) and gets its own operation ID from yours, so running the
+  same confirm again sends nothing twice. Any refused entry refuses the whole confirm, before anything is sent.
+  The preview ends with `plan_sha256`, a digest of the whole plan as shown (each entry, what it read, and for an
+  adoption the view it replaces), and the confirm command it prints carries it. A confirm whose plan has changed since
+  is refused and shows the new plan; nothing is sent. An update in the set never overwrites a change made in Linear,
+  as for `view update`.
+- **Adopting a view someone made in Linear.** A name already held by a hand-made view on that team is refused, unless
+  you adopt it: `--adopt NAME` (repeat for several), or `"adopt": true` on the entry. Then:
+  - exactly one shared issue view on that team may have the name; none or several are refused;
+  - the preview reads the view as it is now with your key and shows its current filter, who made it and when it last
+    changed, and the filter keys agents couldn't use that go away;
+  - the confirm replaces its filter (and keeps its team and sharing), reads it back, and from then on it's
+    ClawBridge's (`adopted: true`), so agents can filter by it;
+  - if the view is gone by then, nothing is created;
+  - history records `view_adopted` with the old filter's digest, never the filter.
 
 ## Linear documents (v0.3.2)
 

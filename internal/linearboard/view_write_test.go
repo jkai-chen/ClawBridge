@@ -33,6 +33,12 @@ type viewAuthority struct {
 
 func (a *viewAuthority) Execute(ctx context.Context, r bus.Request) (bus.Result, error) {
 	switch r.Operation {
+	case "linear_views_list":
+		views := []any{}
+		if a.stored != nil {
+			views = append(views, a.stored)
+		}
+		return bus.Result{Source: "local-authority", Data: map[string]any{"views": views}}, nil
 	case "linear_view_get":
 		if a.stored == nil || a.stored["view_id"] != r.Args["view_id"] {
 			return bus.Result{}, errors.New("not_found")

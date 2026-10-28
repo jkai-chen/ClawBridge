@@ -32,6 +32,7 @@ type ViewKey interface {
 // KeyView is a view as Linear reads it back through the key.
 type KeyView struct {
 	ID, Name, UpdatedAt, TeamID, Filter string
+	CreatorID, CreatorName              string
 	Shared                              bool
 }
 
@@ -63,6 +64,9 @@ type ViewWriteInput struct {
 	ExpectedRevision   int64
 	ExpectedFilterSHA  string
 	ExpectedFilterAsOf string
+	// adoption checks an adoption's write: the name is the adopted view's
+	// own, so the name check is skipped. Never sent.
+	adoption bool
 }
 
 // ViewWriteResult is a preview, or the outcome of a confirmed write.
@@ -92,6 +96,9 @@ type ViewWriteResult struct {
 	// read-back fields that differ when uncertain.
 	Outcome  string   `json:"outcome,omitempty"`
 	Mismatch []string `json:"mismatch,omitempty"`
+	// OldFilterSHA is, for an adoption, the digest of the filter it
+	// replaced (A2).
+	OldFilterSHA string `json:"old_filter_sha256,omitempty"`
 	// FilterAsOf is Linear's updatedAt from an accepted read-back.
 	FilterAsOf string `json:"filter_as_of,omitempty"`
 	// Recorded says the accepted view is stored for agents; RecordError
@@ -204,8 +211,11 @@ func (s *Service) ViewWrite(ctx context.Context, scope bus.Request, in ViewWrite
 	}
 	out.TeamName, out.Members, out.MembersKnown = vs.teamName, vs.members, vs.membersKnown
 	out.Scope = ScopeLine(out.TeamID, out.TeamName, out.Members, out.MembersKnown)
-	if e = s.viewNameFree(ctx, scope, p, out.TeamID, name, in.ViewID); e != nil {
-		return none, e
+	// An adoption keeps the adopted view's own name; the apply checked it (A1).
+	if !in.adoption {
+		if e = s.viewNameFree(ctx, scope, p, out.TeamID, name, in.ViewID); e != nil {
+			return none, e
+		}
 	}
 	if e = s.unchangedV2(ctx, scope, b); e != nil {
 		return none, e
@@ -390,7 +400,8 @@ func (s *Service) sendView(ctx context.Context, scope bus.Request, b bus.Taskboa
 		Team, View      string
 		Name, FilterSHA string
 		ExpectedAsOf    string
-	}{1, "view_" + in.Action, s.cfg.ProfileID, b.Revision, out.TeamID, out.ViewID, out.Name, f.SHA256, out.ExpectedFilterAsOf}
+		OldFilterSHA    string `json:",omitempty"`
+	}{1, "view_" + in.Action, s.cfg.ProfileID, b.Revision, out.TeamID, out.ViewID, out.Name, f.SHA256, out.ExpectedFilterAsOf, out.OldFilterSHA}
 	l := s.operations(ctx)
 	if r, exists, e := l.lookup(namespace, in.OperationID, payload); exists || e != nil {
 		if e != nil {
@@ -430,6 +441,9 @@ func (s *Service) sendView(ctx context.Context, scope bus.Request, b bus.Taskboa
 		switch {
 		case errors.Is(e, ErrKeyNotSent):
 			return nil, notDispatched(e)
+		case in.Action == "adopt" && errors.Is(e, ErrKeyNotFound):
+			// A5: an adoption never creates the view it meant to take over.
+			return nil, refusedBeforeDispatch(errors.New("the view to adopt is gone from Linear; an adoption never creates one, so nothing was made"))
 		case errors.Is(e, ErrKeyRefused), errors.Is(e, ErrKeyNotFound):
 			return nil, refusedBeforeDispatch(e)
 		case e != nil:
@@ -530,6 +544,9 @@ func (s *Service) recordView(ctx context.Context, scope bus.Request, action stri
 	args := map[string]any{"action": action, "view_id": r.ViewID, "team_id": r.TeamID, "name": r.Name, "filter": f.Canonical, "filter_sha256": f.SHA256, "filter_as_of": r.FilterAsOf, "agent_filter": f.AgentFilter(), "uses": uses, "expected_binding_revision": r.BindingRevision}
 	if action == "update" {
 		args["expected_filter_as_of"] = r.ExpectedFilterAsOf
+	}
+	if action == "adopt" {
+		args["old_filter_sha256"] = r.OldFilterSHA
 	}
 	scope.Operation, scope.Args = "linear_view_record", args
 	_, e := s.cfg.Executor.Execute(ctx, scope)

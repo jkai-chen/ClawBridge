@@ -79,6 +79,14 @@ func TestPostgresLinearViewRecordAccess(t *testing.T) {
 	if f.audited("view_created", lvView) != 1 {
 		t.Fatal("audit rows")
 	}
+	// Forgetting a deleted view is the owner's, from a device, too.
+	forget := map[string]any{"view_id": lvView, "expected_filter_as_of": "2026-10-27T21:00:00.000Z"}
+	if _, err = as("lead", Request{Operation: "linear_view_forget", Args: forget}); !refusedWith(err, "owner") {
+		t.Fatal("lead forgot:", err)
+	}
+	if _, err = f.as(f.owner, "sub-owner", Request{Operation: "linear_view_forget", Workspace: f.workspace, Project: "p", Args: forget}); !refusedWith(err, "device") {
+		t.Fatal("google forgot:", err)
+	}
 	for _, role := range []string{"lead", "member", "reader"} {
 		one, err := as(role, Request{Operation: "linear_view_get", Args: map[string]any{"view_id": lvView}})
 		if err != nil || one.Data.(map[string]any)["filter"] != lvFilter || one.Data.(map[string]any)["team_bound"] != true {
@@ -88,5 +96,32 @@ func TestPostgresLinearViewRecordAccess(t *testing.T) {
 		if err != nil || len(list.Data.(map[string]any)["views"].([]any)) != 1 {
 			t.Fatal(role, list, err)
 		}
+	}
+}
+
+// The owner's device forgets a deleted view once; history says so.
+func TestPostgresLinearViewForget(t *testing.T) {
+	f := newPGIdentityFixture(t)
+	p := newID("owner") + "@identity-test.example"
+	key := newKey(t)
+	if _, err := f.join(p, f.invite(f.owner, p, "owner")["code"].(string), key); err != nil {
+		t.Fatal(err)
+	}
+	as := func(r Request) (Result, error) {
+		r.Workspace, r.Project = f.workspace, "p"
+		return f.asDevice(p, keyID(t, key), r)
+	}
+	if _, err := as(Request{Operation: "taskboard_set_v2", Args: map[string]any{"expected_revision": 0, "mode": "project_set", "linear_team_ids": []string{sfTeam}, "linear_default_team_id": sfTeam, "linear_project_ids": []string{cpOne}}}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := as(Request{Operation: "linear_view_record", Args: lvRecord("create", lvView, "Urgent bugs", lvFilter, "2026-10-27T21:00:00.000Z", "", 1)}); err != nil {
+		t.Fatal(err)
+	}
+	got, err := as(Request{Operation: "linear_view_forget", Args: map[string]any{"view_id": lvView, "expected_filter_as_of": "2026-10-27T21:00:00.000Z"}})
+	if err != nil || got.Data.(map[string]any)["replayed"] != false || f.audited("view_deleted", lvView) != 1 {
+		t.Fatal(got, err)
+	}
+	if _, err = as(Request{Operation: "linear_view_get", Args: map[string]any{"view_id": lvView}}); err == nil {
+		t.Fatal("a forgotten view is still read")
 	}
 }

@@ -1259,7 +1259,21 @@ clawbridge linear view update VIEW_UUID [--name NAME] [--filter-file FILE] --ope
   (`record_error`), run the same command again: it stores it without sending anything.
 - **History** records `view_created` and `view_updated` with the scope (`team:UUID`), the view ID and the filter's
   digest, never the filter or the name.
-- **Deleting a view, and adopting one made in Linear, come later.**
+- **Delete** a view ClawBridge wrote in this project, the same way:
+
+  ```sh
+  clawbridge linear view delete VIEW_UUID --operation-id del-1 --profile PROFILE_ID            # preview
+  clawbridge linear view delete VIEW_UUID --operation-id del-1 --profile PROFILE_ID --expected-filter-as-of AS_OF --confirm
+  ```
+
+  The preview names the view and its scope line, and prints the confirm command with the stored row's
+  `filter_as_of`; nothing is sent. With `--confirm` the delete is refused if that row changed since. It reads the view
+  with your key first: one someone changed in Linear since ClawBridge wrote it (name, filter or sharing) isn't
+  deleted. Then the delete is recorded, sent with your key, and read back: only a view Linear no longer has is `deleted` and dropped from what agents filter by
+  (history `view_deleted` with the scope). A view still there afterwards is `uncertain`, kept, and never sent again
+  under that operation ID. A view someone made by hand in Linear isn't ClawBridge's to delete (`not_found`); delete
+  it in Linear.
+- **Adopting a view made in Linear, and applying a whole view-set file, come later.**
 
 ## Linear documents (v0.3.2)
 

@@ -21,6 +21,7 @@ var queries = map[string]string{
 	"viewCreate": `mutation ViewCreate($input: CustomViewCreateInput!) { customViewCreate(input: $input) { success customView { ` + viewFields + ` } } }`,
 	"viewUpdate": `mutation ViewUpdate($id: String!, $input: CustomViewUpdateInput!) { customViewUpdate(id: $id, input: $input) { success customView { ` + viewFields + ` } } }`,
 	"view":       `query View($id: String!) { customView(id: $id) { ` + viewFields + ` } }`,
+	"viewDelete": `mutation ViewDelete($id: String!) { customViewDelete(id: $id) { success } }`,
 }
 
 const viewFields = `id name shared updatedAt team { id } filterData`

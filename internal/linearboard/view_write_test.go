@@ -28,6 +28,7 @@ type viewAuthority struct {
 	stored   map[string]any
 	records  []map[string]any
 	recordOK bool
+	onForget func(map[string]any)
 }
 
 func (a *viewAuthority) Execute(ctx context.Context, r bus.Request) (bus.Result, error) {
@@ -37,6 +38,11 @@ func (a *viewAuthority) Execute(ctx context.Context, r bus.Request) (bus.Result,
 			return bus.Result{}, errors.New("not_found")
 		}
 		return bus.Result{Source: "local-authority", Data: a.stored}, nil
+	case "linear_view_forget":
+		if a.onForget != nil {
+			a.onForget(r.Args)
+		}
+		return bus.Result{Source: "local-authority", Data: map[string]any{"forgotten": true}}, nil
 	case "linear_view_record":
 		a.records = append(a.records, r.Args)
 		if !a.recordOK {
@@ -50,10 +56,15 @@ func (a *viewAuthority) Execute(ctx context.Context, r bus.Request) (bus.Result,
 // fakeKey plays the person's key client: it records every create and
 // update, and reads back what back gives (the sent view by default).
 type fakeKey struct {
-	creates, updates []string
-	err              error
-	back             func(KeyView) (KeyView, error)
-	last             KeyView
+	creates, updates, deletes []string
+	err                       error
+	back                      func(KeyView) (KeyView, error)
+	last                      KeyView
+}
+
+func (k *fakeKey) DeleteView(_ context.Context, id string) error {
+	k.deletes = append(k.deletes, id)
+	return k.err
 }
 
 func (k *fakeKey) CreateView(_ context.Context, team, name string, filter json.RawMessage) (KeyView, error) {

@@ -32,8 +32,16 @@ func TestLinearViewWriteParsing(t *testing.T) {
 			t.Fatal("parsed", command, args)
 		}
 	}
+	if v, pos, err = parseLinear("view-delete", []string{viewTeamID, "--profile", "p", "--operation-id", "op-3", "--confirm"}, &bytes.Buffer{}); err != nil || pos[0] != viewTeamID || !v.confirm || v.operation != "op-3" {
+		t.Fatal(v, pos, err)
+	}
+	for _, args := range [][]string{{"--profile", "p", "--operation-id", "op"}, {viewTeamID, "--profile", "p", "--name", "x", "--operation-id", "op"}} {
+		if _, _, err = parseLinear("view-delete", args, &bytes.Buffer{}); err == nil {
+			t.Fatal("parsed", args)
+		}
+	}
 	var out bytes.Buffer
-	if err = Run(context.Background(), []string{"linear", "--help"}, &out, &bytes.Buffer{}); err != nil || !strings.Contains(out.String(), "view create --team UUID|update ID") {
+	if err = Run(context.Background(), []string{"linear", "--help"}, &out, &bytes.Buffer{}); err != nil || !strings.Contains(out.String(), "view create --team UUID|update ID|delete ID") {
 		t.Fatal(out.String(), err)
 	}
 }

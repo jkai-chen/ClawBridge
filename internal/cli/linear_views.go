@@ -143,6 +143,34 @@ func linearViewWrite(ctx context.Context, service *linearboard.Service, scope bu
 	return out, nil
 }
 
+// linearViewDelete runs view delete: a preview, then the delete with
+// --confirm, for a view ClawBridge wrote in this project.
+func linearViewDelete(ctx context.Context, service *linearboard.Service, scope bus.Request, directory string, v linearFlags, pos []string) (any, error) {
+	if err := linearkey.Allowed(); err != nil {
+		return nil, err
+	}
+	var key linearboard.ViewKey
+	if v.confirm {
+		client, err := linearKeys(directory).Open(v.profile)
+		if err != nil {
+			return nil, err
+		}
+		key = viewKey{client}
+	}
+	result, err := service.ViewDelete(ctx, scope, linearboard.ViewDeleteInput{ViewID: pos[0], OperationID: v.operation, Confirm: v.confirm, ExpectedFilterAsOf: v.expectedAsOf}, key)
+	if err != nil {
+		return nil, err
+	}
+	out, err := safeData(result)
+	if err != nil {
+		return nil, err
+	}
+	if result.Preview {
+		out.(map[string]any)["next"] = strings.Join([]string{"clawbridge linear view delete", pos[0], "--operation-id", v.operation, "--profile", v.profile, "--expected-filter-as-of", strconv.Quote(terminalSafe(result.ExpectedFilterAsOf)), "--confirm"}, " ")
+	}
+	return out, nil
+}
+
 // viewConfirmLine is the command that sends what the preview showed.
 func viewConfirmLine(v linearFlags, in linearboard.ViewWriteInput, preview linearboard.ViewWriteResult) string {
 	parts := []string{"clawbridge linear view", in.Action}
@@ -192,4 +220,9 @@ func (k viewKey) UpdateView(ctx context.Context, id, name string, filter json.Ra
 
 func (k viewKey) View(ctx context.Context, id string) (linearboard.KeyView, error) {
 	return k.wrap(k.c.View(ctx, id))
+}
+
+func (k viewKey) DeleteView(ctx context.Context, id string) error {
+	_, err := k.wrap(linearkey.View{}, k.c.DeleteView(ctx, id))
+	return err
 }

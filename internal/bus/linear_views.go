@@ -36,7 +36,7 @@ var (
 )
 
 func linearViewOperation(op string) bool {
-	return op == "linear_view_record" || op == "linear_view_get" || op == "linear_views_list"
+	return op == "linear_view_record" || op == "linear_view_forget" || op == "linear_view_get" || op == "linear_views_list"
 }
 
 // linearViewsOp runs the stored views' operations. Any project member or
@@ -65,7 +65,7 @@ func (s *Store) linearViewsOp(ctx context.Context, tx *transaction, wid, pid, pr
 		return row, err
 	}
 	if r.Session != "" {
-		return nil, scoped("a session can't record a Linear view; the project owner runs linear view create or update in their own terminal", "forbidden")
+		return nil, scoped("a session can't write a Linear view; the project owner runs linear view create, update or delete in their own terminal", "forbidden")
 	}
 	if projectRole != "owner" {
 		return nil, scoped("project owner permission required", "forbidden")
@@ -73,7 +73,37 @@ func (s *Store) linearViewsOp(ctx context.Context, tx *transaction, wid, pid, pr
 	if s.postgres && (s.identity == nil || s.identity.Issuer != DeviceIssuer || principal.CI(s.principal)) {
 		return nil, scoped("a Linear view is recorded only from a person's own signed-in device", "forbidden")
 	}
+	if r.Operation == "linear_view_forget" {
+		return s.forgetLinearView(ctx, tx, wid, pid, a)
+	}
 	return s.recordLinearView(ctx, tx, wid, pid, a)
+}
+
+// forgetLinearView drops a view the CLI deleted in Linear and read back as
+// gone. It must still be the row the preview read; a row already gone
+// answers as a replay.
+func (s *Store) forgetLinearView(ctx context.Context, tx *transaction, wid, pid string, a map[string]any) (any, error) {
+	id, expected := str(a, "view_id"), str(a, "expected_filter_as_of")
+	if !viewIDPattern.MatchString(id) || expected == "" {
+		return nil, invalid("view_id and expected_filter_as_of (the preview's) are required")
+	}
+	prev, err := s.linearView(ctx, tx, pid, id, false)
+	if errors.Is(err, errNotFound) {
+		return map[string]any{"view_id": id, "forgotten": true, "replayed": true}, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	if prev["filter_as_of"] != expected {
+		return nil, &serviceError{code: "conflict", cause: errors.New("the recorded view changed since the preview; run the preview again")}
+	}
+	if _, err = tx.ExecContext(ctx, `DELETE FROM linear_views WHERE project_id=? AND view_id=?`, pid, id); err != nil {
+		return nil, err
+	}
+	if err = s.audit(ctx, tx, wid, pid, "", "linear_view", id, "view_deleted", map[string]any{"scope": "team:" + prev["team_id"].(string), "view_id": id}); err != nil {
+		return nil, err
+	}
+	return map[string]any{"view_id": id, "forgotten": true, "replayed": false}, nil
 }
 
 // viewRecord is a checked linear_view_record request.

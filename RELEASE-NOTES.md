@@ -1,7 +1,8 @@
 # Unreleased
 
-**Schema 41 → 42.**
-- The server migrates to schema 42 on its first start: the agent writes the server queued (the Linear write outbox).
+**Schema 41 → 43.**
+- The server migrates to schema 43 on its first start: 42, the agent writes the server queued (the Linear write
+  outbox); 43, the team roles.
 - **One-way:** v0.3.7 refuses a database newer than schema 41. Take a dump before upgrading; to go back, restore it
   with the v0.3.7 image (docs/operations/deployment.md).
 
@@ -67,6 +68,15 @@
 - A queued write is sent only while the person who asked still may: their session (if any) active, their role
   held, their device live or their Google account still bound. Otherwise it fails as `identity_revoked` and nothing
   is sent.
+
+## Team roles (step 1)
+
+- **ClawBridge keeps who leads each bound Linear team, and each person's role** (`lead`, `engineer` or `reviewer`),
+  because Linear makes every workspace admin a team owner. `clawbridge linear roles show|set|person|lead`; the MCP
+  tool `team_roles_get` reads them. Only the project owner changes them, in their own terminal, at the revision read,
+  previewed first. People are active, non-guest users of the Linear workspace (never a team's membership). History
+  counts only. Doctor warns about a team that left the binding or a person who is no longer active. Nothing uses the
+  roles yet. Schema 43. No Linear configuration: it reads the workspace's users only.
 
 # ClawBridge v0.3.7 (released 28 Oct)
 

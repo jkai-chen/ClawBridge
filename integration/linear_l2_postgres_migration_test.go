@@ -36,7 +36,7 @@ func TestL2PostgresSchema3MappingPreservationRollbackAndNewerRefusal(t *testing.
 			if _, err := f.db.Exec(`INSERT INTO projects(id,workspace_id,slug,name,git_remote,created_at) SELECT 'prj_l2_pg_tombstone',workspace_id,'cleared','Synthetic cleared','','2026-10-22T00:00:00Z' FROM projects WHERE slug='p'; INSERT INTO taskboard_bindings(project_id,revision,mapping,updated_at) VALUES('prj_l2_pg_tombstone',2,NULL,'2026-10-22T00:00:01Z')`); err != nil {
 				t.Fatal(err)
 			}
-			wantVersion := 42
+			wantVersion := 43
 			switch mode {
 			case "failed_ddl_rollback":
 				if _, err := f.db.Exec(`ALTER TABLE taskboard_bindings ADD COLUMN mapping_version TEXT DEFAULT 'sentinel'`); err != nil {
@@ -44,10 +44,10 @@ func TestL2PostgresSchema3MappingPreservationRollbackAndNewerRefusal(t *testing.
 				}
 				wantVersion = 3
 			case "newer_refused":
-				if _, err := f.db.Exec(`INSERT INTO clawbridge_schema(version) VALUES(43)`); err != nil {
+				if _, err := f.db.Exec(`INSERT INTO clawbridge_schema(version) VALUES(44)`); err != nil {
 					t.Fatal(err)
 				}
-				wantVersion = 43
+				wantVersion = 44
 			}
 			columns := coordinationLegacyColumns(t, f.db)
 			for _, table := range []string{"taskboard_bindings", "members", "project_roles"} {

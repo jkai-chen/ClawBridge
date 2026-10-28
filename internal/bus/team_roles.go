@@ -56,8 +56,8 @@ func teamRolesOperation(op string) bool {
 }
 
 // teamRolesOp reads the mapping (any member or session) or sets it (the
-// project owner, without a session; on the hosted server only from a
-// person's own device).
+// project owner, or a team's lead within their own teams; without a
+// session; on the hosted server only from a person's own device).
 func (s *Store) teamRolesOp(ctx context.Context, tx *transaction, wid, pid, projectRole string, r Request) (any, error) {
 	a := r.Args
 	if a == nil {
@@ -72,19 +72,21 @@ func (s *Store) teamRolesOp(ctx context.Context, tx *transaction, wid, pid, proj
 	if r.Session != "" {
 		return nil, scoped("a session can't set team roles; the project owner runs linear roles set in their own terminal", "forbidden")
 	}
-	if projectRole != "owner" {
+	if projectRole == "" || projectRole == "reader" {
 		return nil, scoped("project owner permission required", "forbidden")
 	}
 	if s.postgres && (s.identity == nil || s.identity.Issuer != DeviceIssuer || principal.CI(s.principal)) {
 		return nil, scoped("team roles are set only from a person's own signed-in device", "forbidden")
 	}
-	return s.setTeamRoles(ctx, tx, wid, pid, a)
+	return s.setTeamRoles(ctx, tx, wid, pid, a, projectRole != "owner")
 }
 
 // setTeamRoles checks the new mapping against the binding and the
 // project's members, and stores it at the revision read. Without confirm
-// it is a preview: the change, counted, and nothing written.
-func (s *Store) setTeamRoles(ctx context.Context, tx *transaction, wid, pid string, a map[string]any) (any, error) {
+// it is a preview: the change, counted, and nothing written. byLead is a
+// caller who isn't the owner: their set must stay inside the teams they
+// lead (checkLeadEdit).
+func (s *Store) setTeamRoles(ctx context.Context, tx *transaction, wid, pid string, a map[string]any, byLead bool) (any, error) {
 	expected, err := integer(a["expected_revision"])
 	if err != nil || a["expected_revision"] == nil {
 		return nil, invalid("team_roles_set requires expected_revision")
@@ -109,6 +111,15 @@ func (s *Store) setTeamRoles(ctx context.Context, tx *transaction, wid, pid stri
 	}
 	if err = checkTeamRoles(&next, b.LinearTeamIDs); err != nil {
 		return nil, err
+	}
+	if byLead {
+		led := ledTeams(current, s.principal, b.LinearTeamIDs)
+		if len(led) == 0 {
+			return nil, scoped("only the project owner or a team's lead sets team roles; a lead's row must be linked to their ClawBridge account by the owner", "forbidden")
+		}
+		if err = checkLeadEdit(current, next, led); err != nil {
+			return nil, err
+		}
 	}
 	for _, p := range next.People {
 		if p.Principal == "" {
@@ -149,7 +160,11 @@ func (s *Store) setTeamRoles(ctx context.Context, tx *transaction, wid, pid stri
 		return nil, err
 	}
 	// Counts only: never a name, an email or a Linear user ID (T6).
-	detail := map[string]any{"revision": revision, "teams": len(next.Teams), "people": len(next.People), "roles": roleCounts(next), "added": change["added"], "removed": change["removed"], "changed": change["changed"]}
+	by := "owner"
+	if byLead {
+		by = "lead"
+	}
+	detail := map[string]any{"revision": revision, "by": by, "teams": len(next.Teams), "people": len(next.People), "roles": roleCounts(next), "added": change["added"], "removed": change["removed"], "changed": change["changed"]}
 	if err = s.audit(ctx, tx, wid, pid, "", "team_roles", pid, "set", detail); err != nil {
 		return nil, err
 	}
@@ -172,6 +187,81 @@ func (s *Store) projectMember(ctx context.Context, tx *transaction, wid, pid, wh
 	}
 	rows, err := query(ctx, tx, `SELECT 1 FROM project_roles WHERE project_id=? AND principal=?`, pid, who)
 	return len(rows) > 0, err
+}
+
+// ledTeams are the bound teams that the caller leads: teams whose leads
+// include a person with role lead whose row the owner linked to the
+// caller's principal (T3). Only the stored mapping counts, never the set.
+func ledTeams(m TeamRoles, who string, bound []string) []string {
+	mine := map[string]bool{}
+	for _, p := range m.People {
+		if p.Role == "lead" && p.Principal != "" && samePrincipal(p.Principal, who) {
+			mine[p.LinearUserID] = true
+		}
+	}
+	var out []string
+	for _, t := range m.Teams {
+		if !slices.Contains(bound, t.TeamID) {
+			continue
+		}
+		for _, l := range t.Leads {
+			if mine[l] {
+				out = append(out, t.TeamID)
+				break
+			}
+		}
+	}
+	return out
+}
+
+// checkLeadEdit holds a lead's set to the owner's ruling (design §11.1 Q1,
+// review T2'): the teams and their leads stay as they are, and every row
+// added, removed or changed is an engineer or reviewer, before and after,
+// working only in teams the lead leads. A lead never changes a lead row,
+// their own included, and never links a person to a ClawBridge account:
+// that link is the owner's assertion (T3).
+func checkLeadEdit(old, next TeamRoles, led []string) error {
+	before, _ := json.Marshal(old.Teams)
+	after, _ := json.Marshal(next.Teams)
+	if string(before) != string(after) {
+		return scoped("a lead can't change which teams are mapped or who leads them; the project owner does", "forbidden")
+	}
+	rows := map[string][2]*TeamRolePerson{}
+	for i := range old.People {
+		p := &old.People[i]
+		r := rows[p.LinearUserID]
+		r[0] = p
+		rows[p.LinearUserID] = r
+	}
+	for i := range next.People {
+		p := &next.People[i]
+		r := rows[p.LinearUserID]
+		r[1] = p
+		rows[p.LinearUserID] = r
+	}
+	for _, r := range rows {
+		was, now := r[0], r[1]
+		if was != nil && now != nil && was.Role == now.Role && was.Principal == now.Principal && slices.Equal(was.Teams, now.Teams) {
+			continue
+		}
+		for _, p := range r {
+			if p == nil {
+				continue
+			}
+			if p.Role == "lead" {
+				return scoped("a lead sets only engineer and reviewer roles; the project owner sets leads", "forbidden")
+			}
+			for _, t := range p.Teams {
+				if !slices.Contains(led, t) {
+					return scoped("a lead sets roles only for people who work only in teams they lead", "forbidden")
+				}
+			}
+		}
+		if now != nil && (was == nil && now.Principal != "" || was != nil && was.Principal != now.Principal) {
+			return scoped("only the project owner links a person to a ClawBridge account", "forbidden")
+		}
+	}
+	return nil
 }
 
 // samePrincipal compares principals as stored: a stored one is normalized
@@ -348,7 +438,9 @@ func readTeamRoles(ctx context.Context, tx *transaction, pid string) (TeamRoles,
 
 // readTeamRolesView is what team_roles_get shows: the mapping, with each
 // team marked bound or not (a later binding change can drop one; every
-// consumer then ignores it), and who set it when.
+// consumer then ignores it), who set it when, and you_lead: the bound teams
+// the reader leads, so a lead's view knows what it may change. The server
+// checks that again at set.
 func (s *Store) readTeamRolesView(ctx context.Context, tx *transaction, pid string) (map[string]any, error) {
 	m, revision, err := readTeamRoles(ctx, tx, pid)
 	if err != nil {
@@ -362,7 +454,11 @@ func (s *Store) readTeamRolesView(ctx context.Context, tx *transaction, pid stri
 	for _, t := range m.Teams {
 		teams = append(teams, map[string]any{"team_id": t.TeamID, "leads": t.Leads, "team_bound": slices.Contains(bound, t.TeamID)})
 	}
-	out := map[string]any{"revision": revision, "teams": teams, "people": m.People, "roles": roleCounts(m), "updated_by": nil, "updated_at": nil}
+	youLead := ledTeams(m, s.principal, bound)
+	if youLead == nil {
+		youLead = []string{}
+	}
+	out := map[string]any{"revision": revision, "teams": teams, "people": m.People, "roles": roleCounts(m), "you_lead": youLead, "updated_by": nil, "updated_at": nil}
 	if revision > 0 {
 		row, e := one(ctx, tx, `SELECT updated_by,updated_at FROM team_role_mapping WHERE project_id=?`, pid)
 		if e != nil {
@@ -371,4 +467,52 @@ func (s *Store) readTeamRolesView(ctx context.Context, tx *transaction, pid stri
 		out["updated_by"], out["updated_at"] = row["updated_by"], row["updated_at"]
 	}
 	return out, nil
+}
+
+// roleTrusted is the mapping's half of trust by role for intake (design
+// §6.3, review T2' (a)): whether the stored mapping gives the Linear user
+// one of roles in the issue's team, at the current revision, with that
+// team still bound. reason says why not, for the caller's audit. It fails
+// closed: no mapping, an unreadable one or a dropped team is not trusted.
+// T2' (b), an active non-guest workspace user read within 15 minutes, is a
+// Linear read and stays with the caller, as does excluding bots by the
+// actor class (§12 L1/L2). reviewer never authorises (r3), so roles naming
+// it trusts nobody.
+func (s *Store) roleTrusted(ctx context.Context, tx *transaction, pid, team, linearUserID string, roles []string) (bool, string, error) {
+	if len(roles) == 0 {
+		return false, "no roles are trusted", nil
+	}
+	for _, r := range roles {
+		if r != "lead" && r != "engineer" {
+			return false, "only lead and engineer can be trusted roles", nil
+		}
+	}
+	m, revision, err := readTeamRoles(ctx, tx, pid)
+	if err != nil {
+		return false, "the team roles are unreadable", err
+	}
+	if revision == 0 {
+		return false, "no team roles are set", nil
+	}
+	team, linearUserID = strings.ToLower(team), strings.ToLower(linearUserID)
+	b, err := s.kindBinding(ctx, tx, pid)
+	if err != nil {
+		return false, "the binding is unreadable", err
+	}
+	if !slices.Contains(b.LinearTeamIDs, team) {
+		return false, "the issue's team isn't bound", nil
+	}
+	for _, p := range m.People {
+		if p.LinearUserID != linearUserID {
+			continue
+		}
+		if !slices.Contains(p.Teams, team) {
+			return false, "the person doesn't work in the issue's team", nil
+		}
+		if !slices.Contains(roles, p.Role) {
+			return false, "the person's role isn't trusted", nil
+		}
+		return true, "trusted by role " + p.Role, nil
+	}
+	return false, "the person has no team role", nil
 }

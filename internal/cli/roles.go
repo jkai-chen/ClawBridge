@@ -23,8 +23,9 @@ clawbridge linear roles person WHO --role lead|engineer|reviewer --team UUID [--
 clawbridge linear roles person WHO --remove --expected-revision N [--confirm]
 clawbridge linear roles lead TEAM_UUID WHO [--remove] --expected-revision N [--confirm] [--profile ID]
   Who leads each bound Linear team, and each person's role. Any member reads
-  it. Only the project owner changes it, in their own terminal, never with
-  --session. WHO is a Linear name, email or user ID, looked up among the
+  it. The project owner changes it, in their own terminal, never with
+  --session; a team's lead sets engineer and reviewer roles in the teams they
+  lead. WHO is a Linear name, email or user ID, looked up among the
   Linear workspace's users through your own Linear connection: a role needs
   workspace membership, never a team's, and a guest or inactive user can't
   have one. Without --confirm a change is only previewed.`
@@ -123,9 +124,10 @@ func runLinearRoles(ctx context.Context, flags Config, args []string, stdout, st
 		}
 		return emit(ctx, stdout, "linear_roles", bus.Result{Source: "server", Data: out})
 	}
-	// Setting roles is the owner's own act: never a session's.
+	// Setting roles is a person's own act (the owner's, or a lead's in their
+	// teams): never a session's.
 	if flags.Session != "" {
-		return errors.New("team roles are set without --session; the project owner runs this in their own terminal")
+		return errors.New("team roles are set without --session; the project owner or a team's lead runs this in their own terminal")
 	}
 	if v.revision < 0 {
 		return errors.New("--expected-revision is required: the revision linear roles show printed (0 for none)")

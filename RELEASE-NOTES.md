@@ -69,6 +69,14 @@
   held, their device live or their Google account still bound. Otherwise it fails as `identity_revoked` and nothing
   is sent.
 
+## Team roles: leads edit their own teams
+
+- **A team's lead sets `engineer` and `reviewer` roles** for people who work only in the teams they lead, with the
+  same `clawbridge linear roles` commands, preview and revision. The server enforces the scope: a lead never changes
+  a lead (their own row included), a team, or a person's ClawBridge account link. The owner links the lead's row to
+  their account first (`--link`); only the owner sets leads. History records whether the owner or a lead made the
+  change. No schema change. No Linear configuration: it reads the workspace's users only.
+
 ## Team roles (step 1)
 
 - **ClawBridge keeps who leads each bound Linear team, and each person's role** (`lead`, `engineer` or `reviewer`),

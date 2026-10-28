@@ -25,8 +25,10 @@ jobs:
           go-version-file: go.mod
           cache: true
           cache-dependency-path: go.sum
+      # The release builder probes run once, in checks: they build in a
+      # subprocess, so neither -race nor this job's load adds anything.
       - name: Full tests with real disposable PostgreSQL
-        run: bash integration/run-postgres.sh go test ./... -count=1 -timeout 25m
+        run: bash integration/run-postgres.sh go test ./... -skip '^TestReleaseBuilder' -count=1 -timeout 25m
   # internal/bus and integration are most of the race run (17 and 11 minutes
   # alone), so each is split in 3 by test name (scripts/go_test_shard.py: sorted,
   # dealt out in turn, disjoint and complete); every other package runs in
@@ -76,7 +78,7 @@ jobs:
           else
             go test -race -list . "$PACKAGE" > tests.txt
             run="$(python3 scripts/go_test_shard.py "$SHARD" "$OF" < tests.txt)"
-            bash integration/run-postgres.sh go test -race "$PACKAGE" -run "$run" -count=1 -timeout 25m
+            bash integration/run-postgres.sh go test -race "$PACKAGE" -run "$run" -skip '^TestReleaseBuilder' -count=1 -timeout 25m
           fi
   checks:
     if: ${{ github.event.repository.private == false }}
@@ -95,6 +97,15 @@ jobs:
       # stall, a compaction); the 10k soak runs in chaos.yml.
       - name: Message queue chaos cases with real disposable PostgreSQL
         run: bash integration/run-postgres.sh go test -tags chaos ./internal/server -run '^TestChaos' -short -count=1 -timeout 10m
+      # The release builder probes cross-build in a subprocess, so they run
+      # here, once, without -race and away from the PG suites' load; the
+      # step fails unless both ran and passed.
+      - name: Release builder probes
+        run: |
+          set -euo pipefail
+          go test ./integration -run '^TestReleaseBuilder' -count=1 -v -timeout 15m | tee release-probes.txt
+          grep -q '^--- PASS: TestReleaseBuilderIndependent ' release-probes.txt
+          grep -q '^--- PASS: TestReleaseBuilderRejectsExternalSourceOverrides ' release-probes.txt
       - run: go vet ./...
       - run: python3 scripts/test_install.py
       - run: python3 scripts/test_release.py

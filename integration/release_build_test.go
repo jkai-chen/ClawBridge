@@ -21,7 +21,8 @@ func TestReleaseBuilderIndependent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	// A cold CI build takes over 3 minutes (209 s on 28 Oct): headroom.
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, python, "-I", "release_fixtures/build_probe.py", root)
 	if out, err := cmd.CombinedOutput(); err != nil {

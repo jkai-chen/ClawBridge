@@ -69,6 +69,9 @@ type Check struct {
 	ID     string `json:"id"`
 	Title  string `json:"title"`
 	Status Status `json:"status"`
+	// Answer is the CLI doctor's plain answer for the status (O3), shown on
+	// the line with Detail under it; empty when Detail reads as one.
+	Answer string `json:"answer,omitempty"`
 	Detail string `json:"detail,omitempty"`
 	Fix    string `json:"fix,omitempty"`
 }

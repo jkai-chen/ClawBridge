@@ -329,11 +329,7 @@ func runTUI(ctx context.Context, flags Config, args []string, stdout, stderr io.
 			if e != nil {
 				return nil, e
 			}
-			out := make([]tui.Check, 0, len(report.Checks))
-			for _, check := range report.Checks {
-				out = append(out, tui.Check{ID: check.ID, Title: check.Title, Status: tui.Status(check.Status), Detail: check.Message, Fix: check.Action})
-			}
-			return out, nil
+			return tuiChecks(report.Checks), nil
 		}),
 	})
 	if err != nil {
@@ -348,4 +344,14 @@ func runTUI(ctx context.Context, flags Config, args []string, stdout, stderr io.
 	// then only after the person has seen it and quit.
 	fmt.Fprintf(stderr, "Project %s saved to %s.\n", clirender.Safe(found), path)
 	return runTUI(ctx, flags, args, stdout, stderr)
+}
+
+// tuiChecks are doctor's checks for the TUI's Doctor tab, each with the
+// CLI's answer for its status (U60).
+func tuiChecks(checks []doctor.Check) []tui.Check {
+	out := make([]tui.Check, 0, len(checks))
+	for _, check := range checks {
+		out = append(out, tui.Check{ID: check.ID, Title: check.Title, Status: tui.Status(check.Status), Answer: doctorAnswerOf(check), Detail: check.Message, Fix: check.Action})
+	}
+	return out
 }

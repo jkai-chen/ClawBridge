@@ -367,13 +367,21 @@ func renderDoctor(m Model) string {
 		default:
 			mark = errorStyle.Render(mark)
 		}
-		b.WriteString(prefix + mark + "  " + firstNonempty(terminalText(check.Title), terminalText(check.ID)))
+		// U60: the CLI doctor's line: the answer with the message under
+		// it, or the message alone on the line.
+		line, detail := firstNonempty(terminalText(check.Title), terminalText(check.ID)), terminalText(check.Detail)
+		if answer := terminalText(check.Answer); answer != "" {
+			line += ": " + answer
+		} else if detail != "" {
+			line, detail = line+": "+detail, ""
+		}
+		b.WriteString(prefix + mark + "  " + line)
 		if s := checkScreen(check.ID); s != "" && m.hasTab(s) && check.Status != Pass && i == m.selected {
 			b.WriteString(mutedStyle.Render("  Enter: " + title(s)))
 		}
 		b.WriteString("\n")
-		if terminalText(check.Detail) != "" {
-			b.WriteString(mutedStyle.Render("       "+terminalText(check.Detail)) + "\n")
+		if detail != "" {
+			b.WriteString(mutedStyle.Render("       "+detail) + "\n")
 		}
 		if terminalText(check.Fix) != "" {
 			b.WriteString("       Fix: " + terminalText(check.Fix) + "\n")

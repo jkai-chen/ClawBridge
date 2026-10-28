@@ -31,6 +31,11 @@
   team). A team board is unchanged. The live check (`linear-app-probe --subscribe`) no longer needs an empty fixture:
   the creator Linear subscribes is counted, not refused; it refuses only a target already subscribed, and fails if
   anyone else is added or gone. No schema change. Linear config scope: none (reads only).
+- **ClawBridge paces its Linear calls per credential** (the server's app, your Linear connection, your API key),
+  following Linear's rate-limit headers, so it rarely meets a 429. A call with no room waits (reads up to 20 s, writes
+  up to 5 s) instead of failing at once; past that, nothing is sent and the answer says when to retry. The app's reads
+  now say `rate_limited` with a retry time, where they said `unavailable` or `query_failed`, and an API key's say how
+  long to wait (docs/linear.md, "Linear's rate limits").
 
 # ClawBridge v0.3.7 (released 28 Oct)
 

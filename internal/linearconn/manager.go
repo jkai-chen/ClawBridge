@@ -19,6 +19,8 @@ import (
 
 	"github.com/zalando/go-keyring"
 	"golang.org/x/oauth2"
+
+	"clawbridge/internal/linearpace"
 )
 
 const maxFile = 128 << 10
@@ -448,6 +450,8 @@ func (m *Manager) HTTPClient(ctx context.Context, id string) (*http.Client, erro
 		return nil, e
 	}
 	base := m.baseClient()
-	base.Transport = &profileTransport{m: m, id: p.ID, access: p.Access}
+	// One pacer per profile in this process: its calls share the person's
+	// Linear rate limit.
+	base.Transport = linearpace.Transport{Base: &profileTransport{m: m, id: p.ID, access: p.Access}, Pacer: linearpace.For("profile:"+p.ID, linearpace.OAuthPerHour)}
 	return base, nil
 }

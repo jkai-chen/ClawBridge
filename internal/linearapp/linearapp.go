@@ -25,6 +25,7 @@ import (
 	"time"
 
 	"clawbridge/internal/bus"
+	"clawbridge/internal/linearpace"
 )
 
 // Scopes is the one scope set every mint requests. Minting another set
@@ -67,9 +68,24 @@ const (
 )
 
 // Error is a failure with a stable code and no Linear text or secret.
-type Error struct{ Code string }
+// RetryAt is set for rate_limited: when Linear, or this process's pacer,
+// will take the call.
+type Error struct {
+	Code    string
+	RetryAt time.Time
+}
 
 func (e *Error) Error() string { return "Linear app: " + e.Code }
+
+// RetryAt is when a rate-limited app call may go again; false for any other
+// error.
+func RetryAt(err error) (time.Time, bool) {
+	var e *Error
+	if errors.As(err, &e) && e.Code == "rate_limited" {
+		return e.RetryAt, true
+	}
+	return time.Time{}, false
+}
 
 func fail(code string) error { return &Error{Code: code} }
 
@@ -149,6 +165,13 @@ func New(c Config) (*App, error) {
 	if c.Now == nil {
 		c.Now = time.Now
 	}
+	// Every API and MCP call as the app goes through one pacer for the app
+	// user, shared by every App of this client ID in the process.
+	pacer := linearpace.For("app:"+c.ClientID, linearpace.OAuthPerHour)
+	paced := *c.HTTP
+	paced.Transport = linearpace.Transport{Base: c.HTTP.Transport, Pacer: pacer}
+	c.HTTP = &paced
+	c.MCPTransport = linearpace.Transport{Base: c.MCPTransport, Pacer: pacer}
 	return &App{cfg: c, aead: aead}, nil
 }
 
@@ -476,7 +499,7 @@ func (a *App) request(ctx context.Context) (string, time.Time, []string, error) 
 // viewer reads the app user and its organisation with the new token.
 func (a *App) viewer(ctx context.Context, token string) (Identity, error) {
 	payload, _ := json.Marshal(map[string]string{"query": "{ viewer { id app organization { id } } }"})
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, graphqlURL, bytes.NewReader(payload))
+	req, err := http.NewRequestWithContext(linearpace.WithKind(ctx, linearpace.Read), http.MethodPost, graphqlURL, bytes.NewReader(payload))
 	if err != nil {
 		return Identity{}, err
 	}

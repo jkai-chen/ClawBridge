@@ -130,6 +130,9 @@ func addTaskboardToolsV2(s *mcp.Server, b *binding, p TaskboardToolsV2) {
 					raw, _ := json.Marshal(out)
 					return &mcp.CallToolResult{IsError: true, StructuredContent: out, Content: []mcp.Content{&mcp.TextContent{Text: string(raw)}}}, out, nil
 				}
+				if rejected, out, ok := rejectedResult(err); ok {
+					return rejected, out, nil
+				}
 				return nil, bus.Result{}, err
 			}
 			return nil, bus.Result{Source: "linear", Data: data}, nil
@@ -181,6 +184,9 @@ func addDocToolsV2(s *mcp.Server, b *binding, p TaskboardToolsV2) {
 			defer cancel()
 			data, err := p.ExecuteV2(bounded, scope, operation, args)
 			if err != nil {
+				if rejected, out, ok := rejectedResult(err); ok {
+					return rejected, out, nil
+				}
 				return nil, bus.Result{}, err
 			}
 			return nil, bus.Result{Source: "linear", Data: data}, nil
@@ -231,6 +237,9 @@ func addProjectStatusToolsV2(s *mcp.Server, b *binding, p TaskboardToolsV2) {
 			defer cancel()
 			data, err := p.ExecuteV2(bounded, scope, operation, args)
 			if err != nil {
+				if rejected, out, ok := rejectedResult(err); ok {
+					return rejected, out, nil
+				}
 				return nil, bus.Result{}, err
 			}
 			return nil, bus.Result{Source: "linear", Data: data}, nil

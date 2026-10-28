@@ -8,6 +8,7 @@ import (
 
 	"clawbridge/internal/bus"
 	"clawbridge/internal/linearboard"
+	"clawbridge/internal/linearprovider"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
@@ -98,8 +99,25 @@ func addBoard[In any](s *mcp.Server, b *binding, p TaskboardTools, operation str
 				raw, _ := json.Marshal(result)
 				return &mcp.CallToolResult{IsError: true, StructuredContent: result, Content: []mcp.Content{&mcp.TextContent{Text: string(raw)}}}, result, nil
 			}
+			if rejected, out, ok := rejectedResult(err); ok {
+				return rejected, out, nil
+			}
 			return nil, bus.Result{}, err
 		}
 		return nil, bus.Result{Source: "linear", Data: data}, nil
 	})
+}
+
+// rejectedResult answers a Linear refusal that names a fixed reason as a
+// structured error, so an agent can act on reason without parsing text:
+// outcome refused, error provider_rejected, reason (exists_in_workspace,
+// already_exists). Linear's own text is never passed on.
+func rejectedResult(err error) (*mcp.CallToolResult, bus.Result, bool) {
+	reason := linearprovider.RejectionReason(err)
+	if reason == "" {
+		return nil, bus.Result{}, false
+	}
+	out := bus.Result{Source: "linear", Data: map[string]any{"outcome": "refused", "error": "provider_rejected", "reason": reason}}
+	raw, _ := json.Marshal(out)
+	return &mcp.CallToolResult{IsError: true, StructuredContent: out, Content: []mcp.Content{&mcp.TextContent{Text: string(raw)}}}, out, true
 }

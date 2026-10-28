@@ -414,6 +414,10 @@
   - **Damaged settings:** settings that are incomplete or damaged say what is wrong and how to start again.
   - **Clearer questions:** "Sign in: open a browser here, or show a code to enter on another device". "Google
     Cloud project ID".
+- **Only an intake signal made in Linear itself is a trusted person's.** On a hosted server, issue writes through
+  ClawBridge, including the owner's own `linear update --add-label`, are made as the ClawBridge app, so Linear's
+  history names the app and the signal only notifies the coordinator. docs/linear.md and the skill's intake page now
+  say so.
 - **The project owner manages intake without a session (E3a).** `clawbridge intake policy|trust|list|dismiss|rearm`
   no longer needs a registered session: the project role decides, as before (any member reads; a lead or owner
   changes; a dismiss without a session needs a lead or owner).

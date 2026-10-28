@@ -188,7 +188,7 @@ func TestHandoverCloudAnswer(t *testing.T) {
 		h, _ := awsHandoverStub(t)
 		var out bytes.Buffer
 		err := Run(context.Background(), []string{"onboard"}, &out, io.Discard)
-		if err == nil || !strings.Contains(err.Error(), "answer 1 or 2") || h.ran != nil || strings.Contains(out.String(), "choices") {
+		if err == nil || !strings.Contains(err.Error(), "choose 1 or 2") || h.ran != nil || strings.Contains(out.String(), "choices") {
 			t.Fatalf("%s: %v %s", answer, err, out.String())
 		}
 		if _, err := os.Stat(filepath.Join(home, "state", "onboarding")); !os.IsNotExist(err) {
@@ -238,9 +238,30 @@ func bootstrapStub(t *testing.T, methods []string, fail error) *[][]string {
 	}
 	cloudBootstrap = func(_ context.Context, args []string, _, _ io.Writer) error {
 		*ran = append(*ran, args)
-		return fail
+		if fail != nil {
+			return fail
+		}
+		// As the real one: the joined device's profile, with no project.
+		flags := map[string]string{}
+		for i := 0; i+1 < len(args); i += 2 {
+			flags[args[i]] = args[i+1]
+		}
+		return writeConfigValues(flags["--client-config"], map[string]any{"mode": "cloud", "server": flags["--server"], "workspace": flags["--workspace"]})
 	}
 	return ran
+}
+
+// projectStub replaces project create, recording the projects made.
+func projectStub(t *testing.T) *[]string {
+	t.Helper()
+	made := new([]string)
+	old := wizardCreateProject
+	t.Cleanup(func() { wizardCreateProject = old })
+	wizardCreateProject = func(_ context.Context, _, project string, _ io.Writer) error {
+		*made = append(*made, project)
+		return nil
+	}
+	return made
 }
 
 // At sign-in on AWS, a server offering device sign-in gets cloud bootstrap
@@ -248,7 +269,7 @@ func bootstrapStub(t *testing.T, methods []string, fail error) *[][]string {
 func TestHandoverOnAWSOffersBootstrap(t *testing.T) {
 	bootstrapArgs := func(workspace string) []string {
 		return []string{"--instance", ec2ID, "--region", "eu-west-1", "--profile", "clawbridge-onboarding", "--account", "123456789012",
-			"--server", "https://bridge.example.test", "--workspace", workspace, "--email", "o@example.test"}
+			"--server", "https://bridge.example.test", "--workspace", workspace, "--email", "o@example.test", "--client-config", "<PROFILE>"}
 	}
 	for name, c := range map[string]struct {
 		methods []string
@@ -257,12 +278,14 @@ func TestHandoverOnAWSOffersBootstrap(t *testing.T) {
 		ran     [][]string
 		want    []string
 	}{
-		"yes":             {[]string{"google", "device"}, nil, "\ny\n", [][]string{bootstrapArgs("my-team")}, []string{"The workspace my-team is created"}},
-		"named":           {[]string{"device"}, nil, "acme-dev\nyes\n", [][]string{bootstrapArgs("acme-dev")}, []string{"The workspace acme-dev is created"}},
+		// After the bootstrap: the first project, then no to opening.
+		"yes":             {[]string{"google", "device"}, nil, "\ny\nfirst\nn\n", [][]string{bootstrapArgs("my-team")}, []string{"The workspace my-team is created", "Project first is ready."}},
+		"named":           {[]string{"device"}, nil, "acme-dev\nyes\nfirst\nn\n", [][]string{bootstrapArgs("acme-dev")}, []string{"The workspace acme-dev is created", "Project first is ready."}},
 		"no":              {[]string{"device"}, nil, "\nn\n", nil, []string{"references/signin.md"}},
 		"default no":      {[]string{"device"}, nil, "\n\n", nil, []string{"references/signin.md"}},
 		"ended input":     {[]string{"device"}, nil, "", nil, []string{"references/signin.md"}},
-		"bad name":        {[]string{"device"}, nil, "-x\ny\n", nil, []string{"not a workspace name", "references/signin.md"}},
+		"bad name":        {[]string{"device"}, nil, "-x\n.y\n_z\n", nil, []string{"a workspace name is letters", "references/signin.md"}},
+		"bad, then good":  {[]string{"device"}, nil, "-x\nacme\ny\nfirst\nn\n", [][]string{bootstrapArgs("acme")}, []string{"a workspace name is letters", "Try again", "Project first is ready."}},
 		"google only":     {[]string{"google"}, nil, "y\n", nil, []string{"references/signin.md"}},
 		"bootstrap fails": {[]string{"device"}, errors.New("synthetic refusal"), "\ny\n", [][]string{bootstrapArgs("my-team")}, []string{"was not created: synthetic refusal", "references/signin.md"}},
 	} {
@@ -275,9 +298,13 @@ func TestHandoverOnAWSOffersBootstrap(t *testing.T) {
 		wizardHooks(t, "3\n\n"+c.answers)
 		awsHandoverStub(t)
 		ran := bootstrapStub(t, c.methods, c.fail)
+		made := projectStub(t)
 		var out bytes.Buffer
 		if err := Run(context.Background(), []string{"onboard"}, &out, io.Discard); err != nil {
 			t.Fatalf("%s: %v", name, err)
+		}
+		for _, args := range c.ran {
+			args[len(args)-1] = clientPath(t) // each case has its own home
 		}
 		if !reflect.DeepEqual(*ran, c.ran) {
 			t.Fatalf("%s: bootstrap ran %v", name, *ran)
@@ -291,8 +318,8 @@ func TestHandoverOnAWSOffersBootstrap(t *testing.T) {
 				t.Fatalf("%s: lacks %q:\n%s", name, want, out.String())
 			}
 		}
-		if c.ran != nil && c.fail == nil && strings.Contains(out.String(), "references/signin.md") {
-			t.Fatalf("%s: the written step after a bootstrap:\n%s", name, out.String())
+		if c.ran != nil && c.fail == nil && (strings.Contains(out.String(), "references/signin.md") || !reflect.DeepEqual(*made, []string{"first"}) || profile(t, clientPath(t))["project"] != "first") {
+			t.Fatalf("%s: no first project after a bootstrap (%v):\n%s", name, *made, out.String())
 		}
 	}
 }
@@ -301,7 +328,7 @@ func TestHandoverOnAWSOffersBootstrap(t *testing.T) {
 // answers from a prompt of its own.
 func TestHandoverOnAWSBootstrapsAfterTheAgent(t *testing.T) {
 	isolated(t)
-	wizardHooks(t, awsHandoverInputs+"y\n\ny\n")
+	wizardHooks(t, awsHandoverInputs+"y\n\ny\nfirst\nn\n")
 	_, a := awsHandoverStub(t)
 	a.out["sts get-caller-identity"] = `{"Account":"123456789012"}`
 	inner := awsCLI
@@ -312,6 +339,7 @@ func TestHandoverOnAWSBootstrapsAfterTheAgent(t *testing.T) {
 		return inner(ctx, argv, stdin)
 	}
 	ran := bootstrapStub(t, []string{"device"}, nil)
+	projectStub(t)
 	var out bytes.Buffer
 	if err := Run(context.Background(), []string{"onboard"}, &out, io.Discard); err != nil {
 		t.Fatal(err, out.String())
@@ -319,4 +347,14 @@ func TestHandoverOnAWSBootstrapsAfterTheAgent(t *testing.T) {
 	if len(*ran) != 1 || !slices.Contains((*ran)[0], ec2ID) || !slices.Contains((*ran)[0], "owner@example.test") {
 		t.Fatalf("bootstrap: %v\n%s", *ran, out.String())
 	}
+}
+
+// clientPath is the selected profile of an isolated test.
+func clientPath(t *testing.T) string {
+	t.Helper()
+	path, err := selectedClientPath(Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return path
 }

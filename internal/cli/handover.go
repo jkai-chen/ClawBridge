@@ -14,6 +14,7 @@ import (
 	"strings"
 
 	"clawbridge/internal/buildinfo"
+	"clawbridge/internal/clirender"
 	"clawbridge/internal/secretenv"
 	"clawbridge/internal/skill"
 )
@@ -135,60 +136,104 @@ func saveOnboarding(s *onboardingState) error {
 	return os.Rename(tmp, filepath.Join(dir, "onboarding.json"))
 }
 
-// validInputs reports the first input that is not well formed.
-func validInputs(s *onboardingState) error {
-	switch s.Cloud {
-	case "aws":
-		return validAWSInputs(s)
-	case "gcp":
-	default:
-		return errors.New("the saved progress names an unknown cloud; remove it to start over")
+// inputQuestion is one own-server input: asked in order, checked as it is
+// typed (U45), and checked again when saved progress is resumed. fallback
+// and ok see the answers given before it.
+type inputQuestion struct {
+	label    string
+	field    func(*onboardingState) *string
+	fallback func(*onboardingState) string
+	ok       func(*onboardingState, string) bool
+	why      string
+}
+
+func fixed(v string) func(*onboardingState) string { return func(*onboardingState) string { return v } }
+
+func matches(p interface{ MatchString(string) bool }) func(*onboardingState, string) bool {
+	return func(_ *onboardingState, v string) bool { return p.MatchString(v) }
+}
+
+var (
+	domainQuestion = inputQuestion{"Domain for the server", func(s *onboardingState) *string { return &s.Domain }, fixed(""), matches(domainPattern),
+		"the domain must be a DNS name you control, like clawbridge.example.com"}
+	ownerQuestion = inputQuestion{"Owner's email (becomes workspace owner)", func(s *onboardingState) *string { return &s.Owner }, fixed(""), matches(emailPattern),
+		"the owner must be an email address"}
+)
+
+// gcpQuestions are Google Cloud's inputs; account is the signed-in gcloud
+// account, offered first.
+func gcpQuestions(account string) []inputQuestion {
+	owner := ownerQuestion
+	owner.fallback = func(s *onboardingState) string { return s.Account }
+	return []inputQuestion{
+		{"Google account", func(s *onboardingState) *string { return &s.Account }, fixed(account), matches(emailPattern),
+			"the Google account must be an email address"},
+		// U49: the Google Cloud project, not a ClawBridge project.
+		{"Google Cloud project ID", func(s *onboardingState) *string { return &s.Project }, fixed(""), matches(projectPattern),
+			"the Google Cloud project ID is lowercase letters, digits and dashes, like my-team-123456"},
+		{"Region", func(s *onboardingState) *string { return &s.Region }, fixed("europe-west1"), matches(regionPattern),
+			"the region must look like europe-west1"},
+		{"Zone", func(s *onboardingState) *string { return &s.Zone }, func(s *onboardingState) string { return s.Region + "-b" },
+			func(s *onboardingState, v string) bool {
+				return zonePattern.MatchString(v) && strings.HasPrefix(v, s.Region+"-")
+			},
+			"the zone must be in the region, like europe-west1-b"},
+		domainQuestion,
+		owner,
+		{"VM size, e2-small or e2-medium", func(s *onboardingState) *string { return &s.Size }, fixed("e2-small"),
+			func(_ *onboardingState, v string) bool { return vmSizes[v] }, "the VM size must be e2-small or e2-medium"},
+		{"Backup bucket", func(s *onboardingState) *string { return &s.Bucket }, func(s *onboardingState) string { return s.Project + "-clawbridge-backups" },
+			matches(bucketPattern), "the bucket must be a valid, globally unique bucket name"},
 	}
-	switch {
-	case !emailPattern.MatchString(s.Account):
-		return errors.New("the Google account must be an email address")
-	case !projectPattern.MatchString(s.Project):
-		return errors.New("the project must be a Google Cloud project ID")
-	case !regionPattern.MatchString(s.Region):
-		return errors.New("the region must look like europe-west1")
-	case !zonePattern.MatchString(s.Zone) || !strings.HasPrefix(s.Zone, s.Region+"-"):
-		return errors.New("the zone must be in the region, like europe-west1-b")
-	case !domainPattern.MatchString(s.Domain):
-		return errors.New("the domain must be a DNS name you control, like clawbridge.example.com")
-	case !emailPattern.MatchString(s.Owner):
-		return errors.New("the owner must be an email address")
-	case !vmSizes[s.Size]:
-		return errors.New("the VM size must be e2-small or e2-medium")
-	case !bucketPattern.MatchString(s.Bucket):
-		return errors.New("the bucket must be a valid, globally unique bucket name")
+}
+
+// askQuestions asks each question, with its fallback, until its answer
+// passes its check.
+func askQuestions(prompt *wizardPrompt, stdout io.Writer, s *onboardingState, questions []inputQuestion) error {
+	for _, q := range questions {
+		fallback := q.fallback(s)
+		label := q.label + ": "
+		if fallback != "" {
+			label = q.label + " [" + fallback + "]: "
+		}
+		v, err := askUntil(prompt.ask, stdout, label, func(a string) (string, error) {
+			if a == "" {
+				a = fallback
+			}
+			if !q.ok(s, a) {
+				return "", errors.New(q.why)
+			}
+			return a, nil
+		})
+		if err != nil {
+			return err
+		}
+		*q.field(s) = v
 	}
 	return nil
 }
 
-// validAWSInputs is validInputs for AWS. The instance is set only after the
-// checks found it.
-func validAWSInputs(s *onboardingState) error {
-	switch {
-	case awsGOOS == "windows":
-		return errAWSOnWindows
-	case !awsProfilePattern.MatchString(s.Profile):
-		return errors.New("the profile must be a named AWS CLI profile")
-	case !accountPattern.MatchString(s.Account):
-		return errors.New("the account must be a 12-digit AWS account ID")
-	case !awsRegionPattern.MatchString(s.Region):
-		return errors.New("the region must look like eu-west-1")
-	case len(s.Zone) != len(s.Region)+1 || !strings.HasPrefix(s.Zone, s.Region) || s.Zone[len(s.Region)] < 'a' || s.Zone[len(s.Region)] > 'z':
-		return errors.New("the zone must be in the region, like eu-west-1a")
-	case !domainPattern.MatchString(s.Domain):
-		return errors.New("the domain must be a DNS name you control, like clawbridge.example.com")
-	case !emailPattern.MatchString(s.Owner):
-		return errors.New("the owner must be an email address")
-	case !awsSizes[s.Size]:
-		return errors.New("the instance size must be t4g.small or t4g.medium")
-	case !s3BucketPattern.MatchString(s.Bucket):
-		return errors.New("the bucket must be a valid, globally unique bucket name")
-	case s.Instance != "" && !instancePattern.MatchString(s.Instance):
-		return errors.New("the saved instance is not an EC2 instance ID")
+// validInputs reports the first input that is not well formed.
+func validInputs(s *onboardingState) error {
+	var questions []inputQuestion
+	switch s.Cloud {
+	case "aws":
+		if awsGOOS == "windows" {
+			return errAWSOnWindows
+		}
+		if s.Instance != "" && !instancePattern.MatchString(s.Instance) {
+			return errors.New("the saved instance is not an EC2 instance ID")
+		}
+		questions = awsQuestions(nil)
+	case "gcp":
+		questions = gcpQuestions("")
+	default:
+		return errors.New("the saved progress names an unknown cloud; remove it to start over")
+	}
+	for _, q := range questions {
+		if !q.ok(s, *q.field(s)) {
+			return errors.New(q.why)
+		}
 	}
 	return nil
 }
@@ -223,13 +268,13 @@ in a second terminal: secrets never go through the agent.
 // summary names the saved progress in one line.
 func (s *onboardingState) summary() string {
 	if s.Cloud == "aws" {
-		return "AWS account " + wizardSafe(s.Account) + ", domain " + wizardSafe(s.Domain) + ", step " + wizardSafe(s.Step)
+		return "AWS account " + clirender.Safe(s.Account) + ", domain " + clirender.Safe(s.Domain) + ", step " + clirender.Safe(s.Step)
 	}
-	return "project " + wizardSafe(s.Project) + ", domain " + wizardSafe(s.Domain) + ", step " + wizardSafe(s.Step)
+	return "project " + clirender.Safe(s.Project) + ", domain " + clirender.Safe(s.Domain) + ", step " + clirender.Safe(s.Step)
 }
 
 // startOwnServer is Start's third choice.
-func startOwnServer(ctx context.Context, prompt *wizardPrompt, stdout, stderr io.Writer) error {
+func startOwnServer(ctx context.Context, prompt *wizardPrompt, path string, stdout, stderr io.Writer) error {
 	var agents []int
 	for i, a := range handoverAgents {
 		if _, err := lookAgent(a.bin); err == nil {
@@ -261,21 +306,23 @@ func startOwnServer(ctx context.Context, prompt *wizardPrompt, stdout, stderr io
 		}
 	}
 	if state == nil {
-		answer, err := prompt.ask("Which cloud? 1. Google Cloud or 2. AWS [1]: ")
+		cloud, err := askUntil(prompt.ask, stdout, "Which cloud? 1. Google Cloud or 2. AWS [1]: ", func(a string) (string, error) {
+			if v, ok := pick(a, "1", cloudChoices); ok {
+				return v, nil
+			}
+			return "", errors.New("choose 1 or 2")
+		})
 		if err != nil {
 			return err
 		}
-		switch strings.ToLower(strings.TrimSpace(answer)) {
-		case "", "1", "gcp":
-			state, err = askInputs(ctx, prompt, stdout)
-		case "2", "aws":
+		if cloud == "aws" {
 			// Before any question, and long before the agent creates anything.
 			if awsGOOS == "windows" {
 				return errAWSOnWindows
 			}
 			state, err = askAWSInputs(ctx, prompt, stdout)
-		default:
-			return errors.New("answer 1 or 2 to the cloud question; run clawbridge onboard to start again")
+		} else {
+			state, err = askInputs(ctx, prompt, stdout)
 		}
 		if err != nil {
 			return err
@@ -286,7 +333,7 @@ func startOwnServer(ctx context.Context, prompt *wizardPrompt, stdout, stderr io
 		}
 	}
 	if state.Step == "signin" {
-		return finishSignin(ctx, state, prompt, stdout, stderr)
+		return finishSignin(ctx, state, prompt, path, stdout, stderr)
 	}
 	agent := handoverAgents[agents[0]]
 	if len(agents) > 1 {
@@ -310,7 +357,7 @@ func startOwnServer(ctx context.Context, prompt *wizardPrompt, stdout, stderr io
 	if err = prompt.close(); err != nil {
 		return err
 	}
-	return handOver(ctx, state, agent.bin, agent.skillAgent, stdout, stderr)
+	return handOver(ctx, state, agent.bin, agent.skillAgent, path, stdout, stderr)
 }
 
 func askInputs(ctx context.Context, prompt *wizardPrompt, stdout io.Writer) (*onboardingState, error) {
@@ -319,44 +366,9 @@ func askInputs(ctx context.Context, prompt *wizardPrompt, stdout io.Writer) (*on
 	if out, err := runGcloud(ctx, "config", "get", "account"); err == nil {
 		account = strings.TrimSpace(string(out))
 	}
-	s := &onboardingState{}
-	for _, q := range []struct {
-		label, fallback string
-		dest            *string
-	}{
-		{"Google account", account, &s.Account},
-		{"Project ID", "", &s.Project},
-		{"Region", "europe-west1", &s.Region},
-		{"Zone", "", &s.Zone},
-		{"Domain for the server", "", &s.Domain},
-		{"Owner's email (becomes workspace owner)", "", &s.Owner},
-		{"VM size, e2-small or e2-medium", "e2-small", &s.Size},
-		{"Backup bucket", "", &s.Bucket},
-	} {
-		fallback := q.fallback
-		switch q.dest {
-		case &s.Zone:
-			fallback = s.Region + "-b"
-		case &s.Owner:
-			fallback = s.Account
-		case &s.Bucket:
-			fallback = s.Project + "-clawbridge-backups"
-		}
-		label := q.label + ": "
-		if fallback != "" {
-			label = q.label + " [" + fallback + "]: "
-		}
-		answer, err := prompt.ask(label)
-		if err != nil {
-			return nil, err
-		}
-		if *q.dest = strings.TrimSpace(answer); *q.dest == "" {
-			*q.dest = fallback
-		}
-	}
-	s.Cloud = "gcp"
-	if err := validInputs(s); err != nil {
-		return nil, fmt.Errorf("%w; run clawbridge onboard to start again", err)
+	s := &onboardingState{Cloud: "gcp"}
+	if err := askQuestions(prompt, stdout, s, gcpQuestions(account)); err != nil {
+		return nil, err
 	}
 	return s, nil
 }
@@ -395,9 +407,9 @@ after you exit.
 // handOver prepares the agent's working directory, the playbook and a
 // dedicated gcloud configuration, runs the agent in this terminal, then runs
 // the step's checks itself.
-func handOver(ctx context.Context, s *onboardingState, bin, skillAgent string, stdout, stderr io.Writer) error {
+func handOver(ctx context.Context, s *onboardingState, bin, skillAgent, path string, stdout, stderr io.Writer) error {
 	if s.Cloud == "aws" {
-		return handOverAWS(ctx, s, bin, skillAgent, stdout, stderr)
+		return handOverAWS(ctx, s, bin, skillAgent, path, stdout, stderr)
 	}
 	if err := installPlaybook("gcp", skillAgent); err != nil {
 		return fmt.Errorf("the playbook could not be installed for the agent: %w", err)
@@ -446,7 +458,7 @@ func handOver(ctx context.Context, s *onboardingState, bin, skillAgent string, s
 	if err = saveOnboarding(s); err != nil {
 		return err
 	}
-	return finishSignin(ctx, s, nil, stdout, stderr)
+	return finishSignin(ctx, s, nil, path, stdout, stderr)
 }
 
 // setEnv sets one variable for this process and its children, and returns
@@ -463,41 +475,98 @@ func setEnv(key, value string) func() {
 	}
 }
 
-// finishSignin names the sign-in step the user runs in their own terminal.
-// On AWS it first offers to run that step, cloud bootstrap, here. prompt
-// may be nil: after a hand-over the agent had the terminal, so it opens one.
-func finishSignin(ctx context.Context, s *onboardingState, prompt *wizardPrompt, stdout, stderr io.Writer) (retErr error) {
-	if s.Cloud == "aws" {
-		if prompt == nil {
-			var err error
-			if prompt, err = newWizardPrompt(ctx, stdout, "guided terminal input cleanup failed; the server is up, restore the terminal before retrying"); err != nil {
-				return err
-			}
-			defer func() {
-				if e := prompt.close(); e != nil && !errors.Is(retErr, e) {
-					retErr = errors.Join(retErr, e)
-				}
-			}()
-		}
-		done, err := offerBootstrap(ctx, s, prompt, stdout, stderr)
-		if done || err != nil {
+// finishSignin is the sign-in step. Once the workspace exists, made here
+// by cloud bootstrap or by the owner by hand, the path goes on to the first
+// project and the offer to open ClawBridge (U48). Otherwise it names the
+// step the owner runs in their own terminal; onboard resumes after it.
+// prompt may be nil: after a hand-over the agent had the terminal, so it
+// opens one.
+func finishSignin(ctx context.Context, s *onboardingState, prompt *wizardPrompt, path string, stdout, stderr io.Writer) (retErr error) {
+	if prompt == nil {
+		var err error
+		if prompt, err = newWizardPrompt(ctx, stdout, "guided terminal input cleanup failed; the server is up, restore the terminal before retrying"); err != nil {
 			return err
 		}
-		_, err = fmt.Fprintf(stdout, `
-The server is up. Last step, in your own terminal (not your agent's): create the workspace as its owner,
-following the sign-in section of the clawbridge-provision-aws skill (references/signin.md). Then check:
-
-%s`, signinChecks(s))
-		return err
+		defer func() {
+			if e := prompt.close(); e != nil && !errors.Is(retErr, e) {
+				retErr = errors.Join(retErr, e)
+			}
+		}()
+	}
+	if signedIn(path, s) {
+		return firstProject(ctx, prompt, path, stdout, stderr)
+	}
+	// cloud bootstrap runs over SSM, so only on AWS for now; on Google
+	// Cloud the owner runs the written step.
+	if s.Cloud == "aws" {
+		done, err := offerBootstrap(ctx, s, prompt, path, stdout, stderr)
+		if err != nil {
+			return err
+		}
+		if done {
+			return firstProject(ctx, prompt, path, stdout, stderr)
+		}
+	}
+	playbook, checks := "clawbridge-provision-gcp", fmt.Sprintf("  clawbridge cloud check workspace\n  clawbridge cloud check backups --bucket %s --project %s\n", s.Bucket, s.Project)
+	if s.Cloud == "aws" {
+		playbook, checks = "clawbridge-provision-aws", signinChecks(s)
 	}
 	_, err := fmt.Fprintf(stdout, `
 The server is up. Last step, in your own terminal (not your agent's): create the workspace as its owner,
-following the sign-in section of the clawbridge-provision-gcp skill (references/signin.md). Then check:
+following the sign-in section of the %s skill (references/signin.md). Then check:
 
-  clawbridge cloud check workspace
-  clawbridge cloud check backups --bucket %s --project %s
-`, s.Bucket, s.Project)
+%s
+Then run clawbridge onboard again: it goes on to your first project and opens ClawBridge.
+`, playbook, checks)
 	return err
+}
+
+// signedIn reports whether the profile at path names a workspace on this
+// server: the sign-in step is done.
+func signedIn(path string, s *onboardingState) bool {
+	c, err := readConfig(path, false)
+	return err == nil && c.Mode == "cloud" && c.Workspace != "" && strings.TrimSuffix(c.Server, "/") == "https://"+s.Domain
+}
+
+// wizardCreateProject is `clawbridge project create`; tests replace it. It
+// is set in init: Run reaches onboarding, which uses it.
+var wizardCreateProject func(ctx context.Context, path, project string, stderr io.Writer) error
+
+func init() {
+	wizardCreateProject = func(ctx context.Context, path, project string, stderr io.Writer) error {
+		return Run(ctx, []string{"--client-config", path, "project", "create", project}, io.Discard, stderr)
+	}
+}
+
+// firstProject creates the workspace's first project, unless the profile
+// already has one, and offers to open ClawBridge.
+func firstProject(ctx context.Context, prompt *wizardPrompt, path string, stdout, stderr io.Writer) error {
+	c, err := readConfig(path, false)
+	if err != nil {
+		return err
+	}
+	if c.Project == "" {
+		fmt.Fprintln(stdout, "\nYour workspace is ready. A project is one codebase your agents share; create the first one.")
+		fallback := defaultProject()
+		project, err := askUntil(prompt.ask, stdout, "First project ["+fallback+"]: ", askProjectSlug(fallback))
+		if err != nil {
+			return err
+		}
+		if err = prompt.close(); err != nil {
+			return err
+		}
+		if err = wizardCreateProject(ctx, path, project, stderr); err != nil {
+			return fmt.Errorf("the workspace is ready, but creating the project failed (retry: clawbridge project create %s): %w", project, err)
+		}
+		if err = setProfileValue(path, "project", project); err != nil {
+			return fmt.Errorf("project %s is created, but it could not be saved as your default; set project = %q in %s: %w", project, project, path, err)
+		}
+		fmt.Fprintf(stdout, "Project %s is ready.\n", clirender.Safe(project))
+	}
+	if err = prompt.close(); err != nil {
+		return err
+	}
+	return openNow(ctx, path, stdout, stderr)
 }
 
 func signinChecks(s *onboardingState) string {
@@ -512,23 +581,28 @@ var cloudBootstrap = runCloudBootstrap
 // device sign-in and they say yes. done says the step ran and its outcome
 // was printed; otherwise the caller prints the written step. Ended input,
 // like any other answer but yes, is a no.
-func offerBootstrap(ctx context.Context, s *onboardingState, prompt *wizardPrompt, stdout, stderr io.Writer) (done bool, err error) {
+func offerBootstrap(ctx context.Context, s *onboardingState, prompt *wizardPrompt, path string, stdout, stderr io.Writer) (done bool, err error) {
 	server := "https://" + s.Domain
 	if methods, err := wizardMethods(ctx, server); err != nil || !slices.Contains(methods, "device") {
 		return false, ctx.Err()
 	}
 	fmt.Fprintf(stdout, "\nThe server is up and offers device sign-in. ClawBridge can create your workspace now: the server\n"+
-		"makes a one-time invite for %s, and this device joins with it (nothing to copy or paste).\n", wizardSafe(s.Owner))
-	workspace, err := prompt.ask("Workspace name [my-team]: ")
+		"makes a one-time invite for %s, and this device joins with it (nothing to copy or paste).\n", clirender.Safe(s.Owner))
+	workspace, err := askUntil(prompt.ask, stdout, "Workspace name [my-team]: ", func(a string) (string, error) {
+		if a == "" {
+			a = "my-team"
+		}
+		if !bootstrapWorkspace(a) {
+			return "", errors.New("a workspace name is letters, digits, '.', '_' and '-', starting with a letter or digit")
+		}
+		return a, nil
+	})
 	if err != nil {
+		// Three wrong names, or ended input: the written step instead.
+		if ctx.Err() == nil {
+			fmt.Fprintln(stdout, clirender.Safe(err.Error())+".")
+		}
 		return false, ctx.Err()
-	}
-	if workspace == "" {
-		workspace = "my-team"
-	}
-	if !bootstrapWorkspace(workspace) {
-		fmt.Fprintln(stdout, "That is not a workspace name: letters, digits, '.', '_' and '-', starting with a letter or digit.")
-		return false, nil
 	}
 	answer, err := prompt.ask("Create the workspace and join this device now? [y/N]: ")
 	if err != nil {
@@ -538,12 +612,12 @@ func offerBootstrap(ctx context.Context, s *onboardingState, prompt *wizardPromp
 		return false, nil
 	}
 	err = cloudBootstrap(ctx, []string{"--instance", s.Instance, "--region", s.Region, "--profile", s.Profile,
-		"--account", s.Account, "--server", server, "--workspace", workspace, "--email", s.Owner}, stdout, stderr)
+		"--account", s.Account, "--server", server, "--workspace", workspace, "--email", s.Owner, "--client-config", path}, stdout, stderr)
 	if ctx.Err() != nil {
 		return false, ctx.Err()
 	}
 	if err != nil {
-		fmt.Fprintln(stdout, "\nThe workspace was not created: "+wizardSafe(err.Error()))
+		fmt.Fprintln(stdout, "\nThe workspace was not created: "+clirender.Safe(err.Error()))
 		return false, nil
 	}
 	_, err = fmt.Fprintf(stdout, "\nThe workspace %s is created and this device has joined it. Check:\n\n%s", workspace, signinChecks(s))

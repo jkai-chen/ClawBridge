@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -10,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 
+	"clawbridge/internal/clirender"
 	"clawbridge/internal/doctor"
 	"clawbridge/internal/install"
 	"clawbridge/internal/linearconn"
@@ -124,7 +126,9 @@ func runOnboarding(ctx context.Context, path string, stdout, stderr io.Writer) (
 		a = strings.ToLower(a)
 		return a == "y" || a == "yes", e
 	}
-	failed := func(e error) string { return "failed: " + wizardSafe(e.Error()) }
+	failed := func(e error) string { return "failed: " + clirender.Safe(e.Error()) }
+	// U52: where the person is in the optional steps.
+	heading := func(n int, name string) { fmt.Fprintf(stdout, "\nOptional setup %d of 5 · %s\n", n, name) }
 
 	fmt.Fprintln(stdout, "\nOptional setup. Each step can be skipped and run later; nothing is written without a yes.")
 	agents := []string{}
@@ -134,12 +138,13 @@ func runOnboarding(ctx context.Context, path string, stdout, stderr io.Writer) (
 	}
 
 	// 1. Agent skill.
+	heading(1, "Agent skill")
 	const skillLater = "clawbridge skill install [--agent claude-code|codex|all]"
 	if targetErr != nil {
 		record("Agent skill", "skipped: no Claude Code or Codex configuration found", skillLater)
 	} else {
 		for _, t := range targets {
-			fmt.Fprintf(stdout, "  %s: %s\n", wizardAgentNames[t.Agent], wizardSafe(t.Dir))
+			fmt.Fprintf(stdout, "  %s: %s\n", wizardAgentNames[t.Agent], clirender.Safe(t.Dir))
 		}
 		ok, e := yes("Install or update the ClawBridge agent skill there?")
 		switch {
@@ -159,7 +164,7 @@ func runOnboarding(ctx context.Context, path string, stdout, stderr io.Writer) (
 			case e != nil:
 				record("Agent skill", failed(e), skillLater)
 			case len(refused) > 0:
-				record("Agent skill", "refused: "+wizardSafe(strings.Join(refused, "; ")), "clawbridge skill status, then clawbridge skill install --force")
+				record("Agent skill", "refused: "+clirender.Safe(strings.Join(refused, "; ")), "clawbridge skill status, then clawbridge skill install --force")
 			default:
 				record("Agent skill", "installed", "")
 			}
@@ -168,6 +173,7 @@ func runOnboarding(ctx context.Context, path string, stdout, stderr io.Writer) (
 
 	// 2. The user's own Linear account, so MCP entries can pin its profile.
 	profile := ""
+	heading(2, "Linear")
 	const linearLater = "clawbridge linear connect --name NAME --access read, then clawbridge doctor --linear-profile PROFILE_ID"
 	ok, err := yes("Connect your own Linear account (optional)?")
 	if err != nil {
@@ -206,7 +212,7 @@ func runOnboarding(ctx context.Context, path string, stdout, stderr io.Writer) (
 				profile = ""
 				record("Linear", failed(e), linearLater)
 			} else {
-				outcome := "connected (" + access + " access, profile " + wizardSafe(profile) + ")"
+				outcome := "connected (" + access + " access, profile " + clirender.Safe(profile) + ")"
 				if report, e := wizardDoctor(ctx, path, profile, nil); e != nil {
 					outcome += "; doctor " + failed(e)
 				} else {
@@ -220,6 +226,7 @@ func runOnboarding(ctx context.Context, path string, stdout, stderr io.Writer) (
 	// 3. MCP entry per detected agent, previewed before it is written.
 	type entry struct{ agent, path, session string }
 	installed := []entry{}
+	heading(3, "MCP")
 	if len(agents) == 0 {
 		record("MCP", "skipped: no Claude Code or Codex configuration found", "clawbridge mcp install --agent codex|claude-code --session NAME --dry-run")
 	}
@@ -251,8 +258,9 @@ func runOnboarding(ctx context.Context, path string, stdout, stderr io.Writer) (
 			record(label, failed(e), later)
 			continue
 		}
-		shown, _ := json.MarshalIndent(preview.Entry, "  ", "  ")
-		fmt.Fprintf(stdout, "  File: %s\n  Entry: %s\n", wizardSafe(preview.Path), wizardSafe(string(shown)))
+		if err := clirender.Write(stdout, clirender.Human, "onboarding_mcp_entry", preview); err != nil {
+			return err
+		}
 		if !preview.Changed {
 			record(label, "already configured", "")
 			installed = append(installed, entry{agent, preview.Path, session})
@@ -271,9 +279,9 @@ func runOnboarding(ctx context.Context, path string, stdout, stderr io.Writer) (
 			record(label, failed(e), later)
 			continue
 		}
-		outcome := "configured in " + wizardSafe(result.Path)
+		outcome := "configured in " + clirender.Safe(result.Path)
 		if result.Backup != "" {
-			outcome += " (previous file kept at " + wizardSafe(result.Backup) + ")"
+			outcome += " (previous file kept at " + clirender.Safe(result.Backup) + ")"
 		}
 		record(label, outcome, "")
 		installed = append(installed, entry{agent, result.Path, session})
@@ -285,6 +293,7 @@ func runOnboarding(ctx context.Context, path string, stdout, stderr io.Writer) (
 		name string
 		args []string
 	}
+	heading(4, "Doctor")
 	runs := []doctorRun{{"Doctor", nil}}
 	if len(installed) > 0 {
 		runs = nil
@@ -299,6 +308,7 @@ func runOnboarding(ctx context.Context, path string, stdout, stderr io.Writer) (
 			record(run.name, doctorSummary(report), "clawbridge doctor")
 		}
 	}
+	heading(5, "Dispatcher")
 	// 5. The dispatcher, offered to a hosted project's owner (G5,
 	// ONBOARDING-DESIGN step 10): off unless they say yes, rules engine.
 	if err := offerDispatcher(ctx, path, stdout, yes, record, failed); err != nil {
@@ -349,7 +359,7 @@ func offerDispatcher(ctx context.Context, path string, stdout io.Writer, yes fun
 	if f, ok := shown["revision"].(float64); ok {
 		revision = strconv.FormatFloat(f, 'f', -1, 64)
 	}
-	later = "clawbridge dispatcher show, then clawbridge dispatcher enable --expected-revision " + wizardSafe(revision) + " --confirm"
+	later = "clawbridge dispatcher show, then clawbridge dispatcher enable --expected-revision " + clirender.Safe(revision) + " --confirm"
 	preview, err := wizardDispatcher(ctx, path, []string{"enable", "--engine", "rules", "--expected-revision", revision})
 	if err != nil {
 		for _, s := range dispatcherSkips {
@@ -361,9 +371,16 @@ func offerDispatcher(ctx context.Context, path string, stdout io.Writer, yes fun
 		record(name, failed(err), later)
 		return nil
 	}
-	fmt.Fprintln(stdout, "\nThe dispatcher coordinates this project for you: it confirms claims from sessions you trust, routes notices and releases abandoned claims. It stays off unless you say yes, and clawbridge dispatcher disable turns it off any time.")
-	shownPreview, _ := json.MarshalIndent(preview, "  ", "  ")
-	fmt.Fprintf(stdout, "  Preview: %s\n", wizardSafe(string(shownPreview)))
+	// Enabling would be refused: say why instead of asking.
+	if blocked := previewWord(preview["blocked"]); blocked != "-" {
+		why := map[string]string{"no_domains": "skipped: the task board names no Linear projects; set domains first (clawbridge dispatcher domains set)"}[blocked]
+		record(name, cmp.Or(why, "skipped: "+clirender.Safe(blocked)), later)
+		return nil
+	}
+	fmt.Fprintln(stdout, "\nThe dispatcher coordinates this project for you: it confirms claims from sessions you trust, routes notices and releases abandoned claims. It stays off unless you say yes, and clawbridge dispatcher disable turns it off any time. Turning it on:")
+	if err = clirender.Write(stdout, clirender.Human, "onboarding_dispatcher_preview", preview); err != nil {
+		return err
+	}
 	ok, err := yes("Turn the dispatcher on now (rules engine)?")
 	switch {
 	case err != nil:
@@ -400,5 +417,5 @@ func doctorSummary(r doctor.Report) string {
 	if len(issues) == 0 {
 		return r.Status
 	}
-	return wizardSafe(r.Status + " (" + strings.Join(issues, "; ") + ")")
+	return clirender.Safe(r.Status + " (" + strings.Join(issues, "; ") + ")")
 }

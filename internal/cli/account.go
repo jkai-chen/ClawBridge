@@ -19,6 +19,7 @@ import (
 	"unicode/utf8"
 
 	"clawbridge/internal/bus"
+	"clawbridge/internal/clirender"
 	"clawbridge/internal/devicekey"
 	"clawbridge/internal/devicesign"
 	"clawbridge/internal/remote"
@@ -414,7 +415,7 @@ func runAccount(ctx context.Context, flags Config, command string, args []string
 		if e != nil {
 			link = ""
 			// Say why there's no link, so nobody waits for one.
-			fmt.Fprintf(stderr, "No invite link: %v (the profile's server is %s); give the code and the server's URL instead.\n", e, wizardSafe(config.Server))
+			fmt.Fprintf(stderr, "No invite link: %v (the profile's server is %s); give the code and the server's URL instead.\n", e, clirender.Safe(config.Server))
 		}
 		if !secret.toFile() {
 			if link != "" {
@@ -450,7 +451,7 @@ func safeLabels(v any) {
 	case map[string]any:
 		for k, x := range t {
 			if s, ok := x.(string); ok && k == "label" {
-				t[k] = wizardSafe(s)
+				t[k] = labelSafe(s)
 			} else {
 				safeLabels(x)
 			}
@@ -464,7 +465,7 @@ func safeLabels(v any) {
 
 // deviceEventLine is one device event as the line printed on stderr.
 func deviceEventLine(e map[string]any) string {
-	s := func(k string) string { v, _ := e[k].(string); return wizardSafe(v) }
+	s := func(k string) string { v, _ := e[k].(string); return labelSafe(v) }
 	at := s("created_at")
 	if t, err := time.Parse(time.RFC3339Nano, at); err == nil {
 		at = t.Local().Format("2006-01-02 15:04")
@@ -898,11 +899,11 @@ func runDeviceJoin(ctx context.Context, flags Config, args []string, stdin io.Re
 			return e
 		}
 		if server != "" && strings.TrimRight(strings.ToLower(server), "/") != link.Origin {
-			return fmt.Errorf("the link is for %s, not --server %s; leave --server out", link.Origin, wizardSafe(server))
+			return fmt.Errorf("the link is for %s, not --server %s; leave --server out", link.Origin, clirender.Safe(server))
 		}
 		server, *email, *code, linkWorkspace = link.Origin, link.Email, link.Code, link.Workspace
 		host := strings.TrimPrefix(strings.TrimPrefix(link.Origin, "https://"), "http://")
-		question := fmt.Sprintf("Join workspace %s on %s as %s?", wizardSafe(link.Workspace), wizardSafe(host), wizardSafe(link.Email))
+		question := fmt.Sprintf("Join workspace %s on %s as %s?", clirender.Safe(link.Workspace), clirender.Safe(host), clirender.Safe(link.Email))
 		switch {
 		case *yes:
 		case !terminal:
@@ -926,10 +927,10 @@ func runDeviceJoin(ctx context.Context, flags Config, args []string, stdin io.Re
 		// server and its email, so one server's code never goes to another.
 		if link, e := devicekey.ParseLink(*code); e == nil {
 			if strings.TrimRight(strings.ToLower(server), "/") != link.Origin {
-				return fmt.Errorf("that link is for %s, not --server %s; nothing was sent", link.Origin, wizardSafe(server))
+				return fmt.Errorf("that link is for %s, not --server %s; nothing was sent", link.Origin, clirender.Safe(server))
 			}
 			if !strings.EqualFold(link.Email, strings.TrimSpace(*email)) {
-				return fmt.Errorf("that link is for %s, not %s", wizardSafe(link.Email), wizardSafe(*email))
+				return fmt.Errorf("that link is for %s, not %s", clirender.Safe(link.Email), clirender.Safe(*email))
 			}
 			*code = link.Code
 		}
@@ -943,7 +944,22 @@ func runDeviceJoin(ctx context.Context, flags Config, args []string, stdin io.Re
 	}
 	if linkWorkspace != "" && joined.Workspace != linkWorkspace {
 		// The link's name is only shown; the server's answer is the truth.
-		fmt.Fprintf(stderr, "Note: the link said workspace %s, but the server joined you to %s.\n", wizardSafe(linkWorkspace), wizardSafe(joined.Workspace))
+		fmt.Fprintf(stderr, "Note: the link said workspace %s, but the server joined you to %s.\n", clirender.Safe(linkWorkspace), clirender.Safe(joined.Workspace))
 	}
 	return emit(ctx, stdout, "join", map[string]any{"source": "client", "data": joined})
+}
+
+// labelSafe escapes a label's controls and bidi characters as \uXXXX. It
+// keeps the form device answers have always printed, in JSON too, so it
+// is not clirender.Safe (CLI-OUTPUT-PLAN M2: sanitisers unchanged).
+func labelSafe(s string) string {
+	var b strings.Builder
+	for _, r := range s {
+		if unicode.IsControl(r) || r == 0x061c || r == 0x200e || r == 0x200f || (r >= 0x202a && r <= 0x202e) || (r >= 0x2066 && r <= 0x2069) {
+			fmt.Fprintf(&b, "\\u%04x", r)
+		} else {
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
 }

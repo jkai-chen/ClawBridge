@@ -7,10 +7,12 @@ import (
 	"io"
 	"os"
 	"slices"
+	"strconv"
 	"strings"
 
 	"clawbridge/internal/auth"
 	"clawbridge/internal/bus"
+	"clawbridge/internal/clirender"
 	"clawbridge/internal/devicekey"
 	"clawbridge/internal/devicesign"
 	"clawbridge/internal/remote"
@@ -69,17 +71,13 @@ func wizardSignIn(ask func(string) (string, error), methods []string, stdout io.
 	switch {
 	case device && google:
 		fmt.Fprintln(stdout, "How do you sign in?\n  1. I have an invite code\n  2. Sign in with Google")
-		answer, err := ask("Choose 1 or 2 [1]: ")
-		if err != nil {
-			return false, err
-		}
-		switch answer {
-		case "", "1":
-			return true, nil
-		case "2":
-			return false, nil
-		}
-		return false, errors.New("choose 1 or 2; run clawbridge onboard to start again")
+		answer, err := askUntil(ask, stdout, "Choose 1 or 2 [1]: ", func(a string) (string, error) {
+			if v, ok := pick(a, "1", joinChoices); ok {
+				return v, nil
+			}
+			return "", errors.New("choose 1 or 2")
+		})
+		return answer == "invite", err
 	case device:
 		fmt.Fprintln(stdout, "This server signs in with an invite code.")
 		return true, nil
@@ -95,22 +93,24 @@ func wizardSignIn(ask func(string) (string, error), methods []string, stdout io.
 func wizardInvite(ctx context.Context, prompt *wizardPrompt, path, server string, stdout, stderr io.Writer) error {
 	ask := prompt.ask
 	fmt.Fprintln(stdout, "Join with an invite. ClawBridge makes a key for this device and keeps it on this machine.")
-	email, err := ask("Email the invite was issued for (leave empty if you have an invite link): ")
+	email, err := askUntil(ask, stdout, "Email the invite was issued for (leave empty if you have an invite link): ", func(a string) (string, error) {
+		if a != "" && !strings.Contains(a, "@") {
+			return "", errors.New("that isn't an email address; leave it empty if you have an invite link")
+		}
+		return a, nil
+	})
 	if err != nil {
 		return err
 	}
-	if email != "" && !strings.Contains(email, "@") {
-		return errors.New("that isn't an email; run clawbridge onboard to start again")
-	}
 	host, _ := os.Hostname()
-	label, err := ask("Name for this device [" + wizardSafe(host) + "]: ")
+	label, err := ask("Name for this device [" + clirender.Safe(host) + "]: ")
 	if err != nil {
 		return err
 	}
 	store := devicesign.StoreKeyring
 	if e := wizardKeyStore(ctx); e != nil {
 		// Headless Linux, or a container: no system key store.
-		fmt.Fprintf(stdout, "This machine has no system key store (%s).\nClawBridge can keep the device key in a plain file under ~/.clawbridge/device, readable only by you. But %s.\n", wizardSafe(e.Error()), devicesign.FileWarning)
+		fmt.Fprintf(stdout, "This machine has no system key store (%s).\nClawBridge can keep the device key in a plain file under ~/.clawbridge/device, readable only by you. But %s.\n", clirender.Safe(e.Error()), devicesign.FileWarning)
 		answer, err := ask("Keep the device key in a file? [y/N]: ")
 		if err != nil {
 			return err
@@ -130,7 +130,7 @@ func wizardInvite(ctx context.Context, prompt *wizardPrompt, path, server string
 	if shownEmail == "" {
 		shownEmail = "(from the invite link)"
 	}
-	fmt.Fprintf(stdout, "Service: %s\nEmail: %s\nThis device: %s\nKey: %s\nConfig: %s\n", wizardSafe(server), wizardSafe(shownEmail), wizardSafe(shown), where, wizardSafe(path))
+	fmt.Fprintf(stdout, "Service: %s\nEmail: %s\nThis device: %s\nKey: %s\nConfig: %s\n", clirender.Safe(server), clirender.Safe(shownEmail), clirender.Safe(shown), where, clirender.Safe(path))
 	answer, err := ask("Continue, then paste the invite link or code? [y/N]: ")
 	if err != nil {
 		return err
@@ -158,10 +158,10 @@ func wizardInvite(ctx context.Context, prompt *wizardPrompt, path, server string
 	// server, and for the email typed, if one was.
 	if link, e := devicekey.ParseLink(code); e == nil {
 		if link.Origin != strings.TrimRight(strings.ToLower(server), "/") {
-			return fmt.Errorf("that invite link is for %s, not %s; nothing was changed", link.Origin, wizardSafe(server))
+			return fmt.Errorf("that invite link is for %s, not %s; nothing was changed", link.Origin, clirender.Safe(server))
 		}
 		if email != "" && !strings.EqualFold(email, link.Email) {
-			return fmt.Errorf("that invite link is for %s, not %s; nothing was changed", wizardSafe(link.Email), wizardSafe(email))
+			return fmt.Errorf("that invite link is for %s, not %s; nothing was changed", clirender.Safe(link.Email), clirender.Safe(email))
 		}
 		email, code = link.Email, link.Code
 	} else if email == "" {
@@ -171,7 +171,7 @@ func wizardInvite(ctx context.Context, prompt *wizardPrompt, path, server string
 	if err != nil {
 		return err
 	}
-	fmt.Fprintf(stdout, "Joined workspace %s as %s. This device: %s %q, key in %s.\n", wizardSafe(joined.Workspace), wizardSafe(joined.Principal), joined.DeviceID, wizardSafe(joined.Label), where)
+	fmt.Fprintf(stdout, "Joined workspace %s as %s. This device: %s %q, key in %s.\n", clirender.Safe(joined.Workspace), clirender.Safe(joined.Principal), joined.DeviceID, clirender.Safe(joined.Label), where)
 	if joined.Warning != "" {
 		fmt.Fprintln(stdout, "Note: "+joined.Warning+".")
 	}
@@ -181,57 +181,60 @@ func wizardInvite(ctx context.Context, prompt *wizardPrompt, path, server string
 		return fmt.Errorf("joined, but a request signed with the new key failed; run clawbridge doctor: %w", err)
 	}
 	project, err := wizardProject(ctx, projects, path, stdout)
-	if err != nil {
+	switch {
+	case err != nil:
 		return err
+	case project == "":
+		// No project yet: the profile is saved, and the TUI waits for one.
+		return openNow(context.WithValue(ctx, guidedRouteKey{}, true), path, stdout, stderr)
 	}
-	if err = setProfileValue(path, "project", project); err != nil {
-		return fmt.Errorf("joined, but the project could not be saved; set project = %q in %s: %w", project, path, err)
-	}
-	isolated := context.WithValue(ctx, guidedRouteKey{}, true)
-	if err = runOnboarding(isolated, path, stdout, stderr); err != nil {
-		return fmt.Errorf("joined; saved route preserved, but guided setup stopped: %w", err)
-	}
-	fmt.Fprintln(stdout, "Opening TUI…")
-	if err = wizardTUI(isolated, Config{ClientConfig: path}, stdout, stderr); err != nil {
-		return fmt.Errorf("joined; saved route preserved, but TUI startup failed: %w", err)
-	}
-	return nil
+	return finishJoin(ctx, path, project, stdout, stderr)
 }
 
+// waitingForProject is what a member with no project yet is told (U47):
+// the profile is saved, and the TUI waits for a project (PR D).
+const waitingForProject = `
+You have joined, but you have no project in this workspace yet. Ask the workspace owner to grant you
+one. ClawBridge opens on a waiting screen that checks for it, and switches to the project once it is there.
+`
+
 // wizardProject picks the project the profile works in: the only one, or
-// the person's choice among them.
-func wizardProject(ctx context.Context, projects []string, path string, stdout io.Writer) (string, error) {
+// the person's choice from a numbered list. With none it says what it is
+// waiting for, and returns "".
+func wizardProject(ctx context.Context, projects []string, path string, stdout io.Writer) (_ string, retErr error) {
 	switch len(projects) {
 	case 0:
-		return "", fmt.Errorf("joined, but you have no project in this workspace yet; once an owner grants you one, set project = \"SLUG\" in %s", path)
+		_, err := io.WriteString(stdout, waitingForProject)
+		return "", err
 	case 1:
-		fmt.Fprintf(stdout, "Project: %s\n", wizardSafe(projects[0]))
+		fmt.Fprintf(stdout, "Project: %s\n", clirender.Safe(projects[0]))
 		return projects[0], nil
 	}
-	prompt, err := newWizardPrompt(ctx, stdout, "guided terminal input cleanup failed; joined, restore the terminal and set project in "+path)
+	prompt, err := newWizardPrompt(ctx, stdout, "guided terminal input cleanup failed; joined, restore the terminal and run clawbridge to choose the project")
 	if err != nil {
 		return "", err
 	}
-	defer prompt.close()
-	shown := make([]string, len(projects))
+	defer func() {
+		if e := prompt.close(); e != nil && !errors.Is(retErr, e) {
+			retErr = errors.Join(retErr, e)
+		}
+	}()
+	fmt.Fprintln(stdout, "Your projects:")
 	for i, p := range projects {
-		shown[i] = wizardSafe(p)
+		fmt.Fprintf(stdout, "  %d. %s\n", i+1, clirender.Safe(p))
 	}
-	fmt.Fprintln(stdout, "Your projects: "+strings.Join(shown, ", "))
-	answer, err := prompt.ask("Project to work in [" + shown[0] + "]: ")
-	if err != nil {
-		return "", err
-	}
-	if answer == "" {
-		return projects[0], nil
-	}
-	if !slices.Contains(projects, answer) {
-		return "", fmt.Errorf("%s is not one of your projects; set project = \"SLUG\" in %s", wizardSafe(answer), path)
-	}
-	if err = prompt.close(); err != nil {
-		return "", err
-	}
-	return answer, nil
+	return askUntil(prompt.ask, stdout, "Choose a project [1]: ", func(a string) (string, error) {
+		if a == "" {
+			a = "1"
+		}
+		if n, e := strconv.Atoi(a); e == nil && n >= 1 && n <= len(projects) {
+			return projects[n-1], nil
+		}
+		if slices.Contains(projects, a) {
+			return a, nil
+		}
+		return "", fmt.Errorf("choose a number from 1 to %d", len(projects))
+	})
 }
 
 // setProfileValue sets one key of a profile, keeping every other.

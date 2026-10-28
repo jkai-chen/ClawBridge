@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"clawbridge/internal/bus"
+	"clawbridge/internal/clirender"
 	"clawbridge/internal/dispatchermodel"
 )
 
@@ -119,7 +120,7 @@ func runModelSetup(ctx context.Context, executor interface {
 			fmt.Fprintln(stdout, "Models:")
 			for i, m := range shown {
 				// The catalogue's text, escaped like any text from outside.
-				fmt.Fprintf(stdout, "  %d. %s\n", i+1, wizardSafe(dispatchermodel.HintLine(m)))
+				fmt.Fprintf(stdout, "  %d. %s\n", i+1, clirender.Safe(dispatchermodel.HintLine(m)))
 			}
 			fmt.Fprintln(stdout, "  "+dispatchermodel.HintsNote(more))
 			prompt = "Model (number or ID, no default): "

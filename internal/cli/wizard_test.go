@@ -121,7 +121,8 @@ func TestGuidedDeclineEOFAndInvalidTargetDoNotAcquire(t *testing.T) {
 func TestGuidedHandoffClosesReaderAndPreservesPublishedRouteOnTUIFailure(t *testing.T) {
 	isolated(t)
 	path := filepath.Join(t.TempDir(), "client.toml")
-	r := wizardHooks(t, "https://service.test\nws\nprj\ndevice\ny\nTUI-INPUT")
+	// After the join's own input: Linear no, then yes to opening ClawBridge.
+	r := wizardHooks(t, "https://service.test\nws\nprj\ndevice\ny\nTUI-INPUT\n\n")
 	calls := []string{}
 	wizardKeyring = func(context.Context) error {
 		if !r.closed {
@@ -138,8 +139,8 @@ func TestGuidedHandoffClosesReaderAndPreservesPublishedRouteOnTUIFailure(t *test
 		if guided, _ := ctx.Value(guidedRouteKey{}).(bool); !guided {
 			t.Fatal("missing isolation")
 		}
-		rest, _ := io.ReadAll(r.Reader)
-		if string(rest) != "TUI-INPUT" {
+		rest := make([]byte, len("TUI-INPUT"))
+		if _, err := io.ReadFull(r.Reader, rest); err != nil || string(rest) != "TUI-INPUT" {
 			t.Fatalf("wizard consumed TUI input: %q", rest)
 		}
 		return os.WriteFile(c.ClientConfig, []byte("published-route"), 0600)
@@ -158,7 +159,7 @@ func TestGuidedHandoffClosesReaderAndPreservesPublishedRouteOnTUIFailure(t *test
 	if strings.Contains(out.String(), "availability checked") || strings.Contains(out.String(), "ready") || !strings.Contains(out.String(), credentialStoreNote(runtime.GOOS)) {
 		t.Fatalf("misleading credential-store status: %q", out.String())
 	}
-	if err == nil || !strings.Contains(err.Error(), "join completed; saved route preserved") {
+	if err == nil || !strings.Contains(err.Error(), "everything is saved, but ClawBridge didn't open") {
 		t.Fatalf("untruthful failure: %v", err)
 	}
 	if strings.Join(calls, ",") != "keyring,join,tui" {

@@ -12,9 +12,9 @@ import (
 	"strings"
 	"sync/atomic"
 	"time"
-	"unicode"
 
 	"clawbridge/internal/auth"
+	"clawbridge/internal/clirender"
 	"clawbridge/internal/setup"
 	"github.com/muesli/cancelreader"
 )
@@ -96,32 +96,43 @@ func runStartup(ctx context.Context, flags Config, args []string, stdout, stderr
 	if errors.Is(err, os.ErrNotExist) {
 		return runStart(ctx, path, stdout, stderr)
 	}
+	// U53: a broken profile says what is wrong and how to start again.
+	shown := clirender.Safe(path)
 	if err != nil || !stat.Mode().IsRegular() || stat.Size() > 4<<20 {
-		return errors.New("trusted config is inaccessible or not a regular nonsymlink file; choose a separate --client-config")
+		return fmt.Errorf("your ClawBridge settings at %s can't be used: they must be a plain file (not a link or a folder) under 4 MB. Move it aside and run clawbridge onboard to set up again, or choose another file with --client-config", shown)
 	}
 	c, err := readConfig(path, true)
 	if err != nil {
-		return errors.New("trusted config is malformed; repair it or choose a separate --client-config")
+		return fmt.Errorf("your ClawBridge settings at %s are damaged and can't be read. Repair the file, or move it aside and run clawbridge onboard to set up again", shown)
 	}
 	if c.Mode == "local" && c.Workspace != "" && c.Project == "" {
 		return errors.New("this local workspace has no default project yet: run clawbridge project create NAME (the first project becomes the default), then clawbridge again")
 	}
-	if c.Mode == "" || c.Workspace == "" || c.Project == "" {
-		return errors.New("trusted config is incomplete; use explicit setup join or repair the selected profile")
+	// A member with no project yet: the TUI waits for one (U47, PR D).
+	waiting := c.Mode == "cloud" && c.Workspace != "" && c.Project == ""
+	var missing []string
+	for _, f := range [][2]string{{"mode", c.Mode}, {"workspace", c.Workspace}, {"project", c.Project}} {
+		if f[1] == "" {
+			missing = append(missing, f[0])
+		}
+	}
+	if len(missing) > 0 && !waiting {
+		return fmt.Errorf("your ClawBridge settings at %s are incomplete (missing: %s). Move the file aside and run clawbridge onboard to set up again, or join with clawbridge setup join", shown, strings.Join(missing, ", "))
 	}
 	return wizardTUI(context.WithValue(ctx, guidedRouteKey{}, true), Config{ClientConfig: path}, stdout, stderr)
 }
 
-func wizardSafe(s string) string {
-	var b strings.Builder
-	for _, r := range s {
-		if unicode.IsControl(r) || r == 0x061c || r == 0x200e || r == 0x200f || (r >= 0x202a && r <= 0x202e) || (r >= 0x2066 && r <= 0x2069) {
-			fmt.Fprintf(&b, "\\u%04x", r)
-		} else {
-			b.WriteRune(r)
-		}
+// finishJoin saves the chosen project, then the optional setup and the
+// offer to open ClawBridge.
+func finishJoin(ctx context.Context, path, project string, stdout, stderr io.Writer) error {
+	if err := setProfileValue(path, "project", project); err != nil {
+		return fmt.Errorf("joined, but the project could not be saved; set project = %q in %s: %w", project, path, err)
 	}
-	return b.String()
+	isolated := context.WithValue(ctx, guidedRouteKey{}, true)
+	if err := runOnboarding(isolated, path, stdout, stderr); err != nil {
+		return fmt.Errorf("joined; saved route preserved, but guided setup stopped: %w", err)
+	}
+	return openNow(isolated, path, stdout, stderr)
 }
 
 func runWizard(ctx context.Context, flags Config, args []string, stdout, stderr io.Writer) (retErr error) {
@@ -153,54 +164,62 @@ func runWizard(ctx context.Context, flags Config, args []string, stdout, stderr 
 	}()
 	ask := prompt.ask
 	fmt.Fprintln(stdout, "Join an existing ClawBridge service. No infrastructure is created.")
-	url, err := ask("Service HTTPS URL: ")
+	// Each answer is checked as it is given (U46).
+	url, err := askUntil(ask, stdout, "Service HTTPS URL: ", func(a string) (string, error) {
+		switch {
+		case a == "":
+			return "", errors.New("the service URL is required, like https://clawbridge.example.com")
+		case setup.ValidateJoinTarget(path, a, "") != nil:
+			return "", errors.New("that is not a valid service URL, or these settings already belong to another service (choose a separate --client-config)")
+		}
+		return a, nil
+	})
 	if err != nil {
 		return err
 	}
-	if url != "" {
-		if err = setup.ValidateJoinTarget(path, url, ""); err != nil {
-			return errors.New("invalid service URL or incompatible trusted target; use a valid service and separate profile when needed")
-		}
-		methods, e := wizardMethods(ctx, url)
-		if e != nil {
-			// Each way in reports its own failure once chosen; nothing is
-			// written before the confirmation.
-			fmt.Fprintf(stdout, "Couldn't read the service's sign-in settings (%s); both ways in are offered.\n", wizardSafe(e.Error()))
-			methods = []string{"device", "google"}
-		}
-		invite, e := wizardSignIn(ask, methods, stdout)
-		if e != nil {
-			return e
-		}
-		if invite {
-			return wizardInvite(ctx, prompt, path, url, stdout, stderr)
+	methods, e := wizardMethods(ctx, url)
+	if e != nil {
+		// Each way in reports its own failure once chosen; nothing is
+		// written before the confirmation.
+		fmt.Fprintf(stdout, "Couldn't read the service's sign-in settings (%s); both ways in are offered.\n", clirender.Safe(e.Error()))
+		methods = []string{"device", "google"}
+	}
+	invite, e := wizardSignIn(ask, methods, stdout)
+	if e != nil {
+		return e
+	}
+	if invite {
+		return wizardInvite(ctx, prompt, path, url, stdout, stderr)
+	}
+	required := func(what string) func(string) (string, error) {
+		return func(a string) (string, error) {
+			if a == "" {
+				return "", errors.New("the " + what + " is required")
+			}
+			return a, nil
 		}
 	}
-	workspace, err := ask("Workspace: ")
+	workspace, err := askUntil(ask, stdout, "Workspace: ", required("workspace"))
 	if err != nil {
 		return err
 	}
-	project, err := ask("Project: ")
+	project, err := askUntil(ask, stdout, "Project: ", required("project"))
 	if err != nil {
 		return err
 	}
-	if url == "" || workspace == "" || project == "" {
-		return errors.New("service URL, workspace and project are required")
-	}
-	flow, err := ask("Sign-in browser/device [browser] (device recommended for SSH): ")
+	// U49: "device" here was OAuth's device flow, not a device key.
+	fmt.Fprintln(stdout, "Sign in:\n  1. open a browser here\n  2. show a code to enter on another device (for SSH)")
+	flow, err := askUntil(ask, stdout, "Choose 1 or 2 [1]: ", func(a string) (string, error) {
+		if v, ok := pick(a, "1", signInChoices); ok {
+			return v, nil
+		}
+		return "", errors.New("choose 1 or 2")
+	})
 	if err != nil {
 		return err
 	}
-	if flow == "" {
-		flow = "browser"
-	}
-	if flow != "browser" && flow != "device" {
-		return errors.New("choose browser or device")
-	}
-	if err = setup.ValidateJoinTarget(path, url, ""); err != nil {
-		return errors.New("invalid service URL or incompatible trusted target; use a valid service and separate profile when needed")
-	}
-	fmt.Fprintf(stdout, "Service: %s\nWorkspace: %s\nProject: %s\nConfig: %s\nSign-in: %s\n", wizardSafe(url), wizardSafe(workspace), wizardSafe(project), wizardSafe(path), flow)
+	how := map[string]string{"browser": "a browser here", "device": "a code on another device"}[flow]
+	fmt.Fprintf(stdout, "Service: %s\nWorkspace: %s\nProject: %s\nConfig: %s\nSign-in: %s\n", clirender.Safe(url), clirender.Safe(workspace), clirender.Safe(project), clirender.Safe(path), how)
 	answer, err := ask("Continue with sign-in and save after verified join? [y/N]: ")
 	if err != nil {
 		return err
@@ -232,11 +251,7 @@ func runWizard(ctx context.Context, flags Config, args []string, stdout, stderr 
 	if err = runOnboarding(isolated, path, stdout, stderr); err != nil {
 		return fmt.Errorf("join completed; saved route preserved, but guided setup stopped: %w", err)
 	}
-	fmt.Fprintln(stdout, "Opening TUI…")
-	if err = wizardTUI(isolated, Config{ClientConfig: path}, stdout, stderr); err != nil {
-		return fmt.Errorf("join completed; saved route preserved, but TUI startup failed: %w", err)
-	}
-	return nil
+	return openNow(isolated, path, stdout, stderr)
 }
 
 // wizardPrompt reads answers from a cancellable terminal reader. Close it

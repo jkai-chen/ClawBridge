@@ -370,6 +370,20 @@
   anywhere. Invite codes and links, CI device keys and intake tokens are printed once, alone on their line. The skill
   tells agents to pass `--json`. Commands get their own layouts in the next releases; until then they show every
   field.
+- **Onboarding carries you through instead of stopping you.**
+  - **Wrong answers:** a wrong answer is asked again, with the reason, up to three times. The join wizard checks each
+    answer as you give it, not after every question.
+  - **Opening ClawBridge:** every path (local, joining a server, your own server) ends with "Open ClawBridge now?
+    [Y/n]", after the summary.
+  - **Invite joins:** with several projects you pick one from a numbered list. With none yet, your profile is saved
+    and ClawBridge waits on its Overview until an owner grants you one.
+  - **Your own server:** once the workspace exists (made by `cloud bootstrap` on AWS, or by hand and then
+    `clawbridge onboard` again), it goes on to your first project.
+  - **Optional setup:** the steps count "Optional setup n of 5". The MCP entry and the dispatcher preview read as
+    text, not JSON.
+  - **Damaged settings:** settings that are incomplete or damaged say what is wrong and how to start again.
+  - **Clearer questions:** "Sign in: open a browser here, or show a code to enter on another device". "Google
+    Cloud project ID".
 - **The project owner manages intake without a session (E3a).** `clawbridge intake policy|trust|list|dismiss|rearm`
   no longer needs a registered session: the project role decides, as before (any member reads; a lead or owner
   changes; a dismiss without a session needs a lead or owner).

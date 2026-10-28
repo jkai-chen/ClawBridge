@@ -242,7 +242,8 @@ It makes the one-time code on your computer and hands it to the server's
 parameter, so it is in no SSM command history and never on screen, then joins
 this device with it. Run it yourself, never through an agent. If you set the server up
 with `clawbridge onboard`'s AWS hand-over, it offers to run this for you once the
-checks pass (or when you run `clawbridge onboard` again and resume). It comes with the
+checks pass (or when you run `clawbridge onboard` again and resume), and then goes on
+to the first project (section 8) and offers to open ClawBridge. It comes with the
 next release (it is on the main branch, not in v0.3.4), and needs the server on
 that release too; until then, use Google sign-in on AWS.
 
@@ -254,6 +255,11 @@ own the workspace.
 ```sh
 clawbridge project create my-project
 ```
+
+With `clawbridge onboard`, this step is asked for you once the workspace exists:
+after its own `cloud bootstrap` on AWS, or, when you signed in by hand (as on
+Google Cloud), when you run `clawbridge onboard` again and resume. It creates the
+project, saves it as your profile's default and offers to open ClawBridge.
 
 Optionally bind it to a Linear team with `clawbridge linear link` (see
 [Linear](../linear.md)).

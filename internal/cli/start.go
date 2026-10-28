@@ -10,6 +10,8 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+
+	"clawbridge/internal/clirender"
 )
 
 // Start is the first-run screen (live/ONBOARDING-DESIGN.md §1): what
@@ -18,7 +20,7 @@ const startText = `ClawBridge connects your coding agents (Claude Code, Codex) s
 Linear issues, and work as a team. Pick how you want to start:
 
   1. Just this machine     Local messaging between agents on this computer. No server, no account.
-  2. Join a team server    Someone gave you a server address, workspace and project.
+  2. Join a team server    Someone invited you (a server address and an invite code).
   3. Set up my own server  Host ClawBridge for your team (a small cloud VM, about $15–30/month).
 `
 
@@ -27,7 +29,8 @@ Linear issues, and work as a team. Pick how you want to start:
 const startCommands = `
 Without a terminal, run the command for your choice:
   1. clawbridge setup --local --name WORKSPACE --project PROJECT, then clawbridge project create PROJECT
-  2. clawbridge setup join --server URL --workspace TEAM --project CODEBASE [--device]
+  2. with an invite: clawbridge --server URL join --email EMAIL (asks for the code);
+     with Google sign-in: clawbridge setup join --server URL --workspace TEAM --project CODEBASE [--device]
   3. see docs/operations/first-deployment.md; check each step with clawbridge cloud check
 Run clawbridge onboard in a terminal to choose interactively, or clawbridge help for every command.
 `
@@ -91,11 +94,16 @@ func runStart(ctx context.Context, path string, stdout, stderr io.Writer) (retEr
 		}
 	}()
 	fmt.Fprint(stdout, startText+"\n")
-	choice, err := prompt.ask("Choose 1, 2 or 3: ")
+	choice, err := askUntil(prompt.ask, stdout, "Choose 1, 2 or 3: ", func(a string) (string, error) {
+		if a != "1" && a != "2" && a != "3" {
+			return "", errors.New("choose 1, 2 or 3")
+		}
+		return a, nil
+	})
 	if err != nil {
 		return err
 	}
-	switch strings.TrimSpace(choice) {
+	switch choice {
 	case "1":
 		return startLocal(ctx, prompt, path, stdout, stderr)
 	case "2":
@@ -105,9 +113,9 @@ func runStart(ctx context.Context, path string, stdout, stderr io.Writer) (retEr
 		}
 		return runWizard(ctx, Config{ClientConfig: path}, nil, stdout, stderr)
 	case "3":
-		return startOwnServer(ctx, prompt, stdout, stderr)
+		return startOwnServer(ctx, prompt, path, stdout, stderr)
 	}
-	return errors.New("choose 1, 2 or 3; run clawbridge onboard to start again")
+	return nil
 }
 
 // startLocal runs the same commands as setup --local and project create,
@@ -122,15 +130,9 @@ func startLocal(ctx context.Context, prompt *wizardPrompt, path string, stdout, 
 		workspace = "my-team"
 	}
 	fallback := defaultProject()
-	project, err := prompt.ask("First project [" + fallback + "]: ")
+	project, err := askUntil(prompt.ask, stdout, "First project ["+fallback+"]: ", askProjectSlug(fallback))
 	if err != nil {
 		return err
-	}
-	if project = strings.TrimSpace(project); project == "" {
-		project = fallback
-	}
-	if !startSlug.MatchString(project) {
-		return errors.New("a project name is lowercase letters, digits and dashes; run clawbridge onboard to start again")
 	}
 	if err = prompt.close(); err != nil {
 		return err
@@ -142,14 +144,26 @@ func startLocal(ctx context.Context, prompt *wizardPrompt, path string, stdout, 
 	if err = Run(ctx, append(selector, "project", "create", project), io.Discard, stderr); err != nil {
 		return fmt.Errorf("the workspace is set up, but creating the project failed (retry: clawbridge project create %s): %w", project, err)
 	}
-	fmt.Fprintf(stdout, "Workspace %s and project %s are ready.\n", wizardSafe(workspace), wizardSafe(project))
+	fmt.Fprintf(stdout, "Workspace %s and project %s are ready.\n", clirender.Safe(workspace), clirender.Safe(project))
 	if err = runOnboarding(ctx, path, stdout, stderr); err != nil {
 		return fmt.Errorf("local setup is saved, but the optional setup stopped: %w", err)
 	}
 	fmt.Fprintln(stdout, `
 Your agents can now register and message each other. To try it here:
   clawbridge register me
-  clawbridge sessions
-Run clawbridge to open the overview.`)
-	return nil
+  clawbridge sessions`)
+	return openNow(ctx, path, stdout, stderr)
+}
+
+// askProjectSlug checks a project name as it is typed; empty is fallback.
+func askProjectSlug(fallback string) func(string) (string, error) {
+	return func(a string) (string, error) {
+		if a == "" {
+			a = fallback
+		}
+		if !startSlug.MatchString(a) {
+			return "", errors.New("a project name is lowercase letters, digits and dashes")
+		}
+		return a, nil
+	}
 }

@@ -23,7 +23,7 @@ func TestCoordinationMCPToolSchemaAndActorPinning(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(tools.Tools) != 19 {
+	if len(tools.Tools) != 20 {
 		t.Fatalf("tool inventory=%d want19", len(tools.Tools))
 	}
 	for _, tool := range tools.Tools {

@@ -147,7 +147,7 @@ func (s *Store) migrate() error {
 	if err = tx.QueryRow("PRAGMA user_version").Scan(&version); err != nil {
 		return err
 	}
-	if version > 42 {
+	if version > 43 {
 		return errors.New("database schema is newer than this ClawBridge binary")
 	}
 	if version == 0 {
@@ -372,6 +372,11 @@ func (s *Store) migrate() error {
 	}
 	if version < 42 {
 		if _, err = tx.Exec(linearOutboxSchema + `PRAGMA user_version=42;`); err != nil {
+			return err
+		}
+	}
+	if version < 43 {
+		if _, err = tx.Exec(teamRolesSchema + `PRAGMA user_version=43;`); err != nil {
 			return err
 		}
 	}
@@ -675,6 +680,8 @@ var operationArgs = map[string]string{
 	"linear_views_list":           "instance",
 	"project_kind_get":            "instance",
 	"project_kind_set":            "instance expected_revision team_id scope group_name kinds",
+	"team_roles_get":              "instance",
+	"team_roles_set":              "instance expected_revision mapping confirm",
 	"project_kind_record":         "instance expected_revision action proof group_label_id label_ids",
 	"issue_subscribers_get":       "instance",
 	"issue_subscribers_set":       "instance expected_revision enabled owner user_ids",
@@ -789,6 +796,10 @@ func validateArgs(op string, a map[string]any) error {
 		case "ack":
 			if _, ok := v.(map[string]any); !ok {
 				return errors.New("ack must be an object {message_id, lease_id}")
+			}
+		case "mapping":
+			if _, ok := v.(map[string]any); !ok {
+				return errors.New("mapping must be an object {teams, people}")
 			}
 		case "lines":
 			if _, ok := intList(v, 1000); !ok {
@@ -936,7 +947,7 @@ func pureRead(r Request) bool {
 	switch r.Operation {
 	case "snapshot", "inbox_status", "notification_status", "taskboard_get", "taskboard_get_v2", "taskboard_access", "list_projects", "list_members", "comment_watch_status", "label_policy_get", "status_policy_get", "doc_policy_get", "dispatcher_get", "context_watch_get", "health_get", "doc_seed_get", "doc_publication_get", "invite_list", "device_list", "device_events", "user_list", "owner_transfer_get", "dispatcher_chat_show", "dispatcher_decisions_list", "dispatcher_escalations_list", "dispatcher_model_doctor", "project_overview":
 		return true
-	case "list_sessions", "history", "whoami", "linear_comments_posted", "linear_comment_precheck", "intake_policy_get", "intake_trust_list", "intake_list", "linear_view_get", "linear_views_list", "project_kind_get":
+	case "list_sessions", "history", "whoami", "linear_comments_posted", "linear_comment_precheck", "intake_policy_get", "intake_trust_list", "intake_list", "linear_view_get", "linear_views_list", "project_kind_get", "team_roles_get":
 		// Naming a session with its instance makes it a heartbeat read: the
 		// read itself is pure and the heartbeat follows (see beat).
 		return (r.Session == "") == (str(r.Args, "instance") == "")
@@ -1338,6 +1349,9 @@ func (s *Store) execute(ctx context.Context, tx *transaction, r Request) (any, e
 	}
 	if issueSubscribersOperation(r.Operation) {
 		return s.issueSubscribersOp(ctx, tx, wid, pid, projectRole, r)
+	}
+	if teamRolesOperation(r.Operation) {
+		return s.teamRolesOp(ctx, tx, wid, pid, projectRole, r)
 	}
 	// Any project member may read the approved label list, with or
 	// without a session; setting it is the owner's (labelPolicyOp).

@@ -1392,6 +1392,12 @@ func collectDoctor(ctx context.Context, config Config, configPath string, existi
 				return linearCapabilities(bounded, manager, config.LinearProfile)
 			}
 			in.LinearAPIKey = func() (string, bool) { return linearKeys(directory).Recorded(config.LinearProfile) }
+			if board, ok := executor.(linearboard.Executor); ok {
+				in.WorkspaceUsers = func(ctx context.Context, wid, pid string) ([]linearprovider.WorkspaceUser, error) {
+					service := newLinearService(directory, config.LinearProfile, manager, board, linearAuthority(config))
+					return service.WorkspaceUsers(ctx, bus.Request{Workspace: wid, Project: pid, Args: map[string]any{"linear_authority": linearAuthority(config)}})
+				}
+			}
 		}
 	}
 	return doctor.Run(ctx, in, executor), nil

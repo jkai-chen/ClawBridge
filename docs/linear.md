@@ -1010,6 +1010,53 @@ clawbridge linear admin audit-replay --operation-id ID
   a comment or issue write, or one still running is refused.
 - A replay of a write already in history answers `"audit": "already"`.
 
+## Team roles (project owner only)
+
+Linear can't say who leads a team: every workspace admin becomes a team owner in
+each team they join. So ClawBridge keeps its own record, per project: each bound
+team's **leads**, and each person's **role**: `lead` (the engineering lead), `engineer` or `reviewer`.
+
+```sh
+clawbridge linear roles show [--names --profile ID]
+clawbridge linear roles person "Ada Lovelace" --role reviewer --team TEAM_UUID --expected-revision N [--confirm]
+clawbridge linear roles lead TEAM_UUID "Dana Example" --expected-revision N [--confirm]
+clawbridge linear roles person "Ada Lovelace" --remove --expected-revision N [--confirm]
+clawbridge linear roles set --file roles.json --expected-revision N [--confirm]
+```
+
+- **Who:**
+  - Any member or session reads the roles. Agents read them with the MCP tool
+    `team_roles_get`.
+  - Only the project owner changes them, in their own terminal, never with
+    `--session`. On a hosted server that has to be from their own signed-in
+    device.
+  - Each change is made at the revision you read. Without `--confirm` it's only
+    previewed: who is added, removed or changed.
+- **People** are Linear users, found by name, email or user ID among the Linear
+  **workspace's** users, through your own Linear connection.
+  - A role needs workspace membership, never a team's. Joining a Linear team
+    grants nothing in ClawBridge.
+  - A guest or an inactive user can't have a role. Linear has to state both
+    flags; one it leaves out counts against.
+  - `teams` are the bound teams the person works for. A lead is a person with
+    role `lead` in that team, and a team has at most 3 leads.
+- **`--link EMAIL`** links the person to their ClawBridge account. It's your
+  assertion, shown as such, and must be a project member. Anything that uses it
+  checks it again. Changing a person with `roles person` keeps their link when
+  you leave `--link` out, and keeps their leads while they stay a lead in that
+  team. To clear a link, drop `principal` from that person in a `roles set
+  --file`.
+- **History** records each change by counts only, never a name, an email or an
+  ID.
+- **`clawbridge doctor`,** with your Linear connection, warns about:
+  - a mapped team that left the binding;
+  - a mapped person who is no longer an active, non-guest user of the workspace.
+
+  No consumer uses those roles.
+- **Nothing uses the roles yet.** Trust by role for intake, issue subscribers,
+  project leads and dispatcher routing come later. Each is off until you turn
+  it on.
+
 ## Status policy (project owner only)
 
 A project owner can let an agent's work move its issue forward through the

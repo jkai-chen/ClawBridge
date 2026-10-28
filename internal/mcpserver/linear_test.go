@@ -73,7 +73,7 @@ func TestLinearMCPAdditiveClosedPinnedTools(t *testing.T) {
 	for _, tool := range listed.Tools {
 		tools[tool.Name] = tool
 	}
-	if len(tools) != 26 {
+	if len(tools) != 27 {
 		t.Fatalf("expected legacy19 plus7, got%d", len(tools))
 	}
 	cases := []struct {

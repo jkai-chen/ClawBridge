@@ -143,6 +143,10 @@ type Input struct {
 	// Playbook reads the project playbook's state in this checkout, for the
 	// coordinator session. Nil skips the check.
 	Playbook func() playbook.State
+	// WorkspaceUsers lists the Linear workspace's users through this
+	// person's own connection, for the team roles check. Nil skips that
+	// part of it.
+	WorkspaceUsers func(ctx context.Context, wid, pid string) ([]linearprovider.WorkspaceUser, error)
 }
 
 // Check is one stable machine-readable diagnostic.
@@ -199,6 +203,7 @@ func Run(ctx context.Context, in Input, executor Executor) Report {
 		checkTaskboardBinding(ctx, executor, wid, pid, add)
 		checkCommentWatch(ctx, executor, wid, pid, add)
 		checkLabelPolicy(ctx, executor, wid, pid, add)
+		checkTeamRoles(ctx, executor, wid, pid, in.WorkspaceUsers, add)
 		if in.Config.Mode == "cloud" {
 			checkLinearApp(ctx, executor, wid, pid, add)
 			checkIssueSubscribers(ctx, executor, wid, pid, add)

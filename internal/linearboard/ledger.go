@@ -403,6 +403,10 @@ func recordOutcome(previous ledgerRecord) (any, bool, error) {
 		if !validDeleteReceipt(previous.Receipt) {
 			return nil, true, errors.New("invalid recorded view receipt")
 		}
+	} else if kind == "kind_label" {
+		if !validKindReceipt(previous.Receipt) {
+			return nil, true, errors.New("invalid recorded project label receipt")
+		}
 	} else if kind, _ := receipt["kind"].(string); adminKinds[kind] {
 		if !validAdminReceipt(previous.Receipt) {
 			return nil, true, errors.New("invalid recorded admin receipt")

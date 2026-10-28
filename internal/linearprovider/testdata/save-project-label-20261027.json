@@ -1,0 +1,43 @@
+{
+  "annotations": {
+    "destructiveHint": true,
+    "idempotentHint": false,
+    "openWorldHint": false,
+    "readOnlyHint": false
+  },
+  "inputSchema": {
+    "additionalProperties": false,
+    "properties": {
+      "color": {
+        "type": "string"
+      },
+      "groupType": {
+        "enum": [
+          "singleSelect",
+          "multiSelect"
+        ],
+        "type": "string"
+      },
+      "id": {
+        "type": "string"
+      },
+      "isGroup": {
+        "type": "boolean"
+      },
+      "name": {
+        "type": "string"
+      },
+      "parent": {
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "teamId": {
+        "type": "string"
+      }
+    },
+    "type": "object"
+  },
+  "name": "save_project_label"
+}

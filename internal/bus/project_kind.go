@@ -33,7 +33,7 @@ type ProjectKindValue struct {
 }
 
 func projectKindOperation(op string) bool {
-	return op == "project_kind_get" || op == "project_kind_set"
+	return op == "project_kind_get" || op == "project_kind_set" || op == "project_kind_record"
 }
 
 // projectKindOp reads the setting (any member or session) or sets it (the
@@ -48,7 +48,16 @@ func (s *Store) projectKindOp(ctx context.Context, tx *transaction, wid, pid, pr
 		return nil, errors.New("instance requires session")
 	}
 	if r.Operation == "project_kind_get" {
-		return readProjectKind(ctx, tx, pid)
+		out, err := readProjectKind(ctx, tx, pid)
+		if err != nil {
+			return nil, err
+		}
+		// A later binding change can drop the kind's team (review L1).
+		if team, _ := out["team_id"].(string); team != "" {
+			b, e := s.kindBinding(ctx, tx, pid)
+			out["team_bound"] = e == nil && slices.Contains(b.LinearTeamIDs, team)
+		}
+		return out, nil
 	}
 	if r.Session != "" {
 		return nil, scoped("a session can't set the project kind; the project owner runs linear kind set in their own terminal", "forbidden")
@@ -59,7 +68,84 @@ func (s *Store) projectKindOp(ctx context.Context, tx *transaction, wid, pid, pr
 	if s.postgres && (s.identity == nil || s.identity.Issuer != DeviceIssuer || principal.CI(s.principal)) {
 		return nil, scoped("the project kind is set only from a person's own signed-in device", "forbidden")
 	}
+	if r.Operation == "project_kind_record" {
+		return s.recordProjectKind(ctx, tx, wid, pid, a)
+	}
 	return s.setProjectKind(ctx, tx, wid, pid, a)
+}
+
+// recordProjectKind stores the label IDs a seed or an adoption proved in
+// Linear (P2): the group's and one per value, in the setting's order, at
+// the revision the preview read. The team must still be bound.
+func (s *Store) recordProjectKind(ctx context.Context, tx *transaction, wid, pid string, a map[string]any) (any, error) {
+	expected, err := integer(a["expected_revision"])
+	if err != nil || a["expected_revision"] == nil {
+		return nil, invalid("project_kind_record requires expected_revision")
+	}
+	current, err := readProjectKind(ctx, tx, pid)
+	if err != nil {
+		return nil, err
+	}
+	if asInt(current["revision"]) != expected || expected == 0 {
+		return nil, conflict(fmt.Sprintf("the project kind changed: current revision is %d; preview again", asInt(current["revision"])))
+	}
+	action, proof := str(a, "action"), str(a, "proof")
+	if action != "seeded" && action != "adopted" {
+		return nil, invalid("action must be seeded or adopted")
+	}
+	// The one proof the seed makes (review L1: nothing else is accepted).
+	if proof != "team_list" {
+		return nil, invalid("proof must be team_list")
+	}
+	team := current["team_id"].(string)
+	b, err := s.kindBinding(ctx, tx, pid)
+	if err != nil {
+		return nil, err
+	}
+	if !slices.Contains(b.LinearTeamIDs, team) {
+		return nil, invalid("the project kind's team left the binding; set the kind again on a bound team")
+	}
+	group, err := lowerUUID(a, "group_label_id", true)
+	if err != nil {
+		return nil, err
+	}
+	raw, _ := a["label_ids"].([]any)
+	if list, ok := a["label_ids"].([]string); ok {
+		for _, id := range list {
+			raw = append(raw, id)
+		}
+	}
+	values := current["values"].([]ProjectKindValue)
+	if len(raw) != len(values) {
+		return nil, invalid("label_ids names one label per value, in the setting's order")
+	}
+	seen := map[string]bool{group: true}
+	for i, v := range raw {
+		id, _ := v.(string)
+		id = strings.ToLower(id)
+		if !viewIDPattern.MatchString(id) || seen[id] {
+			return nil, invalid("label_ids are distinct Linear label IDs, none the group's")
+		}
+		seen[id] = true
+		values[i].LabelID = id
+	}
+	encoded, _ := json.Marshal(values)
+	now, err := dbStamp(ctx, tx)
+	if err != nil {
+		return nil, err
+	}
+	revision := expected + 1
+	result, err := tx.ExecContext(ctx, `UPDATE project_kind_policy SET revision=?,group_label_id=?,kind_values=?,updated_by=?,updated_at=? WHERE project_id=? AND revision=?`, revision, group, string(encoded), s.principal, now, pid, expected)
+	if err != nil {
+		return nil, err
+	}
+	if n, _ := result.RowsAffected(); n != 1 {
+		return nil, conflict("the project kind changed concurrently; preview again")
+	}
+	if err = s.audit(ctx, tx, wid, pid, "", "project_kind_policy", pid, action, map[string]any{"revision": revision, "scope": "team:" + team, "group_label_id": group, "values": len(values), "proof": proof}); err != nil {
+		return nil, err
+	}
+	return readProjectKind(ctx, tx, pid)
 }
 
 func (s *Store) setProjectKind(ctx context.Context, tx *transaction, wid, pid string, a map[string]any) (any, error) {

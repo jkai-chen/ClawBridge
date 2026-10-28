@@ -104,3 +104,62 @@ func TestProjectKindKeepsIDsOnlyForTheSameGroup(t *testing.T) {
 		t.Fatal(got)
 	}
 }
+
+const (
+	pkGroup = "e7e7e7e7-0000-4000-8000-000000000001"
+	pkEng   = "e7e7e7e7-0000-4000-8000-000000000002"
+	pkRev   = "e7e7e7e7-0000-4000-8000-000000000003"
+)
+
+func kindRecord(rev int, ids ...string) map[string]any {
+	return map[string]any{"expected_revision": rev, "action": "seeded", "proof": "team_list", "group_label_id": pkGroup, "label_ids": ids}
+}
+
+// P2: a seed or adoption records the proven IDs at the revision it read;
+// the setting is then seeded, history names the proof, and the team must
+// still be bound (review L1), which kind show also says.
+func TestProjectKindRecord(t *testing.T) {
+	h := newHarness(t)
+	h.link(0, []string{cpOne})
+	h.call("project_kind_set", "", kindSet(0, "", "", "Engineering", "Review"))
+	for want, a := range map[string]map[string]any{
+		"current revision is 1":   kindRecord(2, pkEng, pkRev),
+		"one label per value":     kindRecord(1, pkEng),
+		"distinct Linear label":   kindRecord(1, pkEng, pkEng),
+		"none the group's":        kindRecord(1, pkEng, pkGroup),
+		"must be a Linear UUID":   {"expected_revision": 1, "action": "seeded", "proof": "team_list", "group_label_id": "x", "label_ids": []string{pkEng, pkRev}},
+		"seeded or adopted":       {"expected_revision": 1, "action": "made", "proof": "team_list", "group_label_id": pkGroup, "label_ids": []string{pkEng, pkRev}},
+		"proof must be team_list": {"expected_revision": 1, "action": "seeded", "proof": "key_parent_id", "group_label_id": pkGroup, "label_ids": []string{pkEng, pkRev}},
+	} {
+		if err := h.viewErr("project_kind_record", "", a); !strings.Contains(err.Error(), want) {
+			t.Fatal(want, err)
+		}
+	}
+	got := h.call("project_kind_record", "", kindRecord(1, strings.ToUpper(pkEng), pkRev)).(map[string]any)
+	want := []ProjectKindValue{{Name: "Engineering", LabelID: pkEng}, {Name: "Review", LabelID: pkRev}}
+	if got["revision"] != 2 || got["seeded"] != true || got["group_label_id"] != pkGroup || !reflect.DeepEqual(got["values"], want) {
+		t.Fatal(got)
+	}
+	var details string
+	if err := h.s.db.QueryRow(`SELECT details FROM history WHERE entity='project_kind_policy' AND action='seeded'`).Scan(&details); err != nil || !strings.Contains(details, `"proof":"team_list"`) || strings.Contains(details, "Engineering") {
+		t.Fatal(details, err)
+	}
+	if show := h.call("project_kind_get", "", nil).(map[string]any); show["team_bound"] != true {
+		t.Fatal(show)
+	}
+	// The team leaves the binding: show says so, and a record is refused.
+	other := "11111111-1111-4111-8111-111111111112"
+	h.call("taskboard_set_v2", "", map[string]any{"expected_revision": 1, "mode": "project_set", "linear_team_ids": []string{other}, "linear_default_team_id": other, "linear_project_ids": []string{cpOne}})
+	if show := h.call("project_kind_get", "", nil).(map[string]any); show["team_bound"] != false {
+		t.Fatal(show)
+	}
+	if err := h.viewErr("project_kind_record", "", kindRecord(2, pkEng, pkRev)); !strings.Contains(err.Error(), "left the binding") {
+		t.Fatal(err)
+	}
+	h.call("register_session", "kind-s", map[string]any{"instance": "kind-i", "role": "worker"})
+	rec := kindRecord(2, pkEng, pkRev)
+	rec["instance"] = "kind-i"
+	if err := h.viewErr("project_kind_record", "kind-s", rec); !strings.Contains(err.Error(), "a session can't") {
+		t.Fatal(err)
+	}
+}

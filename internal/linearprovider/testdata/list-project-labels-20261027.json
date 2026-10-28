@@ -1,0 +1,45 @@
+{
+  "annotations": {
+    "destructiveHint": false,
+    "idempotentHint": true,
+    "openWorldHint": false,
+    "readOnlyHint": true
+  },
+  "inputSchema": {
+    "additionalProperties": false,
+    "properties": {
+      "cursor": {
+        "type": "string"
+      },
+      "includeArchived": {
+        "default": false,
+        "type": "boolean"
+      },
+      "includeGroups": {
+        "default": false,
+        "type": "boolean"
+      },
+      "limit": {
+        "default": 50,
+        "maximum": 250,
+        "type": "number"
+      },
+      "name": {
+        "type": "string"
+      },
+      "orderBy": {
+        "default": "updatedAt",
+        "enum": [
+          "createdAt",
+          "updatedAt"
+        ],
+        "type": "string"
+      },
+      "team": {
+        "type": "string"
+      }
+    },
+    "type": "object"
+  },
+  "name": "list_project_labels"
+}

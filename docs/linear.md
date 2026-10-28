@@ -721,9 +721,37 @@ clawbridge linear kind set --values Engineering,Review,Test [--group Type] [--te
   (on a hosted server, from their own signed-in device). A set is refused when the setting changed since revision
   `N`.
 - **The values:** 1 to 20 names, unique ignoring case, none named like the group.
-- **This release stores the setting only; nothing is sent to Linear.** `seeded: false` until ClawBridge has made or
-  adopted the group and its labels in Linear, which comes in a later release. Until then, make them in Linear
-  (Settings → Projects → Labels), on that team. Linear refuses a team label with a workspace label's name.
+- **`seeded: true`** once the group and every value have their Linear label ID (below). `team_bound: false` means a
+  binding change dropped the kind's team: set the kind again on a bound team.
+- **Value names can't contain a comma** (`--values` is comma-separated).
+
+#### Seeding the labels in Linear
+
+```sh
+clawbridge linear kind seed --operation-id seed-1 --profile PROFILE_ID                                   # preview
+clawbridge linear kind seed --operation-id seed-1 --profile PROFILE_ID --expected-plan-sha256 SHA --confirm
+```
+
+- **With your own Linear profile,** in your own terminal: the labels are your act, never the ClawBridge app's.
+- **The preview** reads the team's project labels and the workspace's, sends nothing, and plans each name:
+  - the group: **adopt** the team's one live single-select group with exactly that name, or **create** it;
+  - each value: **adopt** the group's live choice with exactly that name, or **create** it under the group;
+  - choices of an adopted group that the setting doesn't name are listed as `untouched`, and left alone;
+  - **refused**, with the reason: a workspace project label with that name (`exists_in_workspace`: Linear refuses a
+    team label that takes it; choose another name with `kind set`, or rename the workspace label in Linear), another
+    team label with that name, a multi-select, archived or duplicated group, or a name that differs only in case
+    (set the kind with Linear's exact name). Any refused name refuses the whole confirm, before anything is sent.
+- **The confirm** carries the preview's `plan_sha256` (the command it prints); a plan that changed is refused and
+  shown again. The group is made first, then each value. Each create is recorded before it is sent and proven in the
+  team's list (one live label of that name on the team, not in the workspace's list, a single-select group or a
+  choice of it); only `accepted` goes on, and an `uncertain` one is never sent again. A failure stops the run; a new
+  preview adopts what was made.
+- **Then** the IDs are stored in the setting (`seeded: true`). History records `project_kind_policy seeded` (or
+  `adopted`) with the scope, the group's ID, the count and the proof used, never the names.
+- **Two seeds at once** (say, two terminals): each create is its own ledger operation, and the IDs are stored with the
+  setting's revision as a compare-and-set, so only one records. The other's read-back may find two labels of a name
+  and stop as `uncertain`; preview again, and remove a duplicate in Linear if one was made.
+- Applying a kind to each project comes in a later release.
 - **History** records `project_kind_policy set` with the scope (`team:UUID`) and the number of values, never the
   names.
 

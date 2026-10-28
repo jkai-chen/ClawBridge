@@ -276,8 +276,12 @@
 - **A project kind setting (phase 1 of the project-kind labels).** `clawbridge linear kind set --values
   Engineering,Review,Test [--group Type] [--team UUID] --expected-revision N` names a single-select project-label
   group on one bound team, never the workspace, and its values; `kind show` reads it (any member or session). Only
-  the project owner sets it, in their own terminal. This release stores the setting only: seeding the group in
-  Linear and applying a kind to each project come next. Schema 39.
+  the project owner sets it, in their own terminal. Schema 39.
+- **Seed the kind's labels in Linear (phase 2).** `clawbridge linear kind seed --operation-id ID --profile P` previews,
+  then `--expected-plan-sha256 SHA --confirm` makes the group and its values as project labels of the kind's team, or
+  adopts the ones already there, with the owner's own Linear profile. A name a workspace project label has is refused
+  before anything is sent (Linear refuses that clash), as is any other clash. Each label is recorded before it is
+  sent and proven in the team's list; the IDs are then stored. Applying a kind to projects comes next.
 
 ## Linear views
 

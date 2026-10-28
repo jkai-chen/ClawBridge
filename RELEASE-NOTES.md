@@ -1,11 +1,11 @@
 # ClawBridge v0.3.6 (unreleased)
 
-**Schema 28 → 38.**
-- The server migrates to schema 38 on its first start: 29, the new-device alerts' events and acknowledgements; 30, a
+**Schema 28 → 39.**
+- The server migrates to schema 39 on its first start: 29, the new-device alerts' events and acknowledgements; 30, a
   project's own watch budget; 31, the device an invite was made from; 32, the workspace's device idle limit; 33,
   the Linear team and project names stored with a project's task board binding; 34, the date from which a project's
   threads are readable; 35, the message queue's leases, acks and per-recipient numbering; 36, the message stream's
-  tickets; 37, the Linear issue views ClawBridge wrote; 38, project views among them. The upgrade numbers existing
+  tickets; 37, the Linear issue views ClawBridge wrote; 38, project views among them; 39, the project kind setting. The upgrade numbers existing
   deliveries, about 2–4 s per million, and counts what was read as handled.
 - **One-way:** v0.3.5 and older refuse a database newer than schema 28. Take a dump before upgrading; to go back,
   restore it with the v0.3.5 image (docs/operations/deployment.md).
@@ -270,6 +270,14 @@
   client's `linear watch --budget`, from the watcher's next call. `project watch-budget clear` goes back to them, and
   `project watch-budget show` and `doctor` show the budget in force and where it comes from. Each change is recorded in
   the project's history. Schema 30.
+
+## Project kinds
+
+- **A project kind setting (phase 1 of the project-kind labels).** `clawbridge linear kind set --values
+  Engineering,Review,Test [--group Type] [--team UUID] --expected-revision N` names a single-select project-label
+  group on one bound team, never the workspace, and its values; `kind show` reads it (any member or session). Only
+  the project owner sets it, in their own terminal. This release stores the setting only: seeding the group in
+  Linear and applying a kind to each project come next. Schema 39.
 
 ## Linear views
 

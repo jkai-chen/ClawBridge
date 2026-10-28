@@ -704,6 +704,29 @@ that needs a label or project asks the coordinator.
 - **Where.** Only in a team of the project's binding.
 - **Nothing is ever retired, deleted or merged.**
 
+### Project kinds (a project-label group, setting only)
+
+A project kind says what each of the project's Linear projects is for, such as Engineering, Review or Test. It's one
+single-select **project-label group** (default `Type`) on one bound team, plus its values. Project views (filtered by
+project labels) and agents name the kinds by ID.
+
+```sh
+clawbridge linear kind show
+clawbridge linear kind set --values Engineering,Review,Test [--group Type] [--team TEAM_UUID] --expected-revision N
+```
+
+- **Scope: always one bound team, never the workspace.** `--team` defaults to the binding's default team. No binding
+  is workspace-wide yet, so a workspace-scoped kind is refused.
+- **Who:** any member or session reads it. Only the project owner sets it, in their own terminal, without a session
+  (on a hosted server, from their own signed-in device). A set is refused when the setting changed since revision
+  `N`.
+- **The values:** 1 to 20 names, unique ignoring case, none named like the group.
+- **This release stores the setting only; nothing is sent to Linear.** `seeded: false` until ClawBridge has made or
+  adopted the group and its labels in Linear, which comes in a later release. Until then, make them in Linear
+  (Settings → Projects → Labels), on that team. Linear refuses a team label with a workspace label's name.
+- **History** records `project_kind_policy set` with the scope (`team:UUID`) and the number of values, never the
+  names.
+
 ### The approved label list
 
 Labels come only from the project's approved list, which the project owner sets:

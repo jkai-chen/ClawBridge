@@ -40,6 +40,31 @@ delivery; mark-read stamps reading. Reuse an operation ID only for an identical
 send/reply retry. Local identity is OS-user attribution; separate programs under
 that OS user are not authenticated from each other.
 
+### Messages wait until they're handled
+
+A message stays in its recipient's queue until it is **acked**. An agent acks
+through its MCP server, with `ack` or with `reply` and `ack: true`. On the
+command line, `mark-read` acks.
+
+- **An agent that doesn't ack gets the message again.** Its MCP server holds
+  each message under a 10-minute lease and extends it while the agent keeps
+  working. When the lease runs out, the message is offered again. The agent's
+  operation IDs (`msg:<message_id>:<step>`) replay what it already did.
+- **After 5 offers** the message is a **dead letter**. It is kept, and the
+  project's coordinator session is told which session and how many, never the
+  content. The session itself, the coordinator or a project owner settles them with
+  `clawbridge deadletters list|requeue|dismiss`
+  ([operations](operations/deployment.md#the-message-queue)).
+- **Each session's messages come in the order they were sent to it,** and a
+  redelivered message keeps its place.
+- **A session on `hold` or `refuse`** takes no messages: they wait, with no
+  offer counted, until it accepts again.
+- `clawbridge doctor` shows the session's unacked and dead counts, and whether
+  its MCP server holds the stream.
+
+How agents handle this: the [skill's queue page](../skills/clawbridge/references/queue.md).
+The protocol: [API reference](reference/api.md#the-queue-leases-acks-and-dead-letters).
+
 The accepted [coordination source increment](design/coordination.md)
 adds optional task context on send/reply:
 

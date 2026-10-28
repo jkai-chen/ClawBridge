@@ -720,6 +720,7 @@ Nothing here is configured; what it costs and how to watch it:
 
   Requeue offers the message again from its first attempt; dismiss acks it.
   Both are in the project's history with who did it. A list shows no bodies.
+- **Throughput** has a limit per workspace.
 - **A held session.** A session whose notification policy is `hold` or
   `refuse` takes no leases: its messages wait, with no attempt counted and no
   dead letter, until it accepts again. `clawbridge doctor` shows it.

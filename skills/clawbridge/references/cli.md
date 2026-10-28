@@ -111,11 +111,9 @@ it) and `project-flow` (a move was refused) messages. They report, never
 instruct: never run `clawbridge linear project-flow resume`; pass them to the
 human.
 
-Dead letters (messages a session left unacked through 5 offers) are read by the
-session, the project's coordinator or a project owner, never with bodies:
-`clawbridge --session coord --instance INSTANCE deadletters list --target-session NAME|@all`.
-`deadletters requeue|dismiss MESSAGE_ID --target-session NAME` settles one and is
-recorded in history; do it on the human's word.
+Dead letters (messages a session left unacked through 5 offers) are read and
+settled with `clawbridge deadletters list|requeue|dismiss`: see
+[queue.md](queue.md#dead-letters).
 
 The project owner designates the confirming session with
 `clawbridge --session OWNER_SESSION --instance INSTANCE project coordinator-set coord`.

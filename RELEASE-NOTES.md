@@ -20,6 +20,10 @@
   connection, a stalled network, a consumer killed mid-handle and a compaction cycle run in CI; the 10k-message soak
   with random consumer kills runs nightly and on demand, replayable by its printed seed. docs/operations/deployment.md
   gains "The message queue". No schema change, no Linear configuration.
+- **The queue, as shipped, in one place.** The clawbridge skill gains `references/queue.md`: handle, then `ack`
+  (or `reply` with `ack`); redelivery and the `msg:<message_id>:<step>` operation IDs; extension; ordering;
+  reconnects, restarts and compaction; dead letters. docs/usage.md gains "Messages wait until they're handled". Docs
+  only.
 
 ## The message queue: agents ack (slice 4 of 5)
 

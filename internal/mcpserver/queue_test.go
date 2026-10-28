@@ -449,3 +449,17 @@ func TestQueueRecordNotWrittenAfterClose(t *testing.T) {
 		t.Fatal("a write after close brought the record back")
 	}
 }
+
+// An agent that never read the skill still learns to settle what it handles:
+// the server's own instructions say ack, the reply's ack, the mark_read
+// fallback and the msg:<message_id>:<step> operation IDs. Without them, its
+// messages are offered again and end as dead letters.
+func TestInstructionsSayHowToSettleAMessage(t *testing.T) {
+	_, cs := queueSession(t, &queueStore{}, Options{})
+	text := cs.InitializeResult().Instructions
+	for _, required := range []string{"Handle each message, then settle it", "call ack", "reply with ack: true", "mark_read settles it", "operation_id msg:<message_id>:<step>", "offered again"} {
+		if !strings.Contains(text, required) {
+			t.Fatalf("instructions miss %q:\n%s", required, text)
+		}
+	}
+}

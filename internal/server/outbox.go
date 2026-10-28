@@ -277,15 +277,20 @@ func (w *AppWriter) writeStatus(parent context.Context, identity bus.Identity, r
 	return bus.Result{Data: map[string]any{"writes": out}}, nil
 }
 
-// runOutbox sends queued writes every interval until ctx ends.
-func (w *AppWriter) runOutbox(ctx context.Context, every time.Duration) {
+// runOutbox sends queued writes every interval until ctx ends. While the
+// server drains (maintenance.go), and in the grace after, it sends nothing:
+// the writes wait queued for the new server.
+func (w *AppWriter) runOutbox(ctx context.Context, every time.Duration, drain *Drain) {
 	var b [8]byte
 	rand.Read(b[:])
 	owner := "outbox-" + hex.EncodeToString(b[:])
 	t := time.NewTicker(every)
 	defer t.Stop()
 	for {
-		w.outboxCycle(ctx, owner)
+		if done, ok := drain.startWork(); ok {
+			w.outboxCycle(ctx, owner)
+			done()
+		}
 		select {
 		case <-ctx.Done():
 			return

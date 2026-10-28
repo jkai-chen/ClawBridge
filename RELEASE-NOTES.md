@@ -1,5 +1,21 @@
 # Unreleased
 
+**Schema 47 → 48.**
+- The server migrates to schema 48 on its first start: the server drain's maintenance row and its instances' reports.
+- **One-way:** v0.3.8 refuses a database newer than schema 47. Take a dump before upgrading; to go back, restore it
+  with the v0.3.8 image (docs/operations/deployment.md).
+
+## Operations
+
+- **Drain the server before a deploy's swap.** `operator maintenance start --reason TEXT --wait 90s --confirm` makes
+  every server answer each write with 503 `maintenance` and `Retry-After` (reads still answer), close its streams with
+  `event: maintenance` then `bye`, and pause its watcher, sweeper, Linear write outbox and dispatcher model; it prints
+  `drained` once every live server has nothing in flight, or names the ones that haven't. The new server's start ends
+  it; `maintenance end` and a 15-minute TTL (at most 60) do too, and the workers resume 90 s later, after every live
+  session has checked in. `maintenance show` prints the state. On SIGTERM `serve` now waits up to 75 s for in-flight
+  requests (was 5 s), and compose gives it 90 s. Older clients see a 503 as today. The first deploy of this release
+  can't drain (the running server has no drain); later deploys can. Linear config scope: none.
+
 ## Linear
 
 - **Doctor's `linear.writes` covers every recorded Linear write.** It names each project create, issue move or team

@@ -37,10 +37,26 @@ type singleFlight struct {
 	running atomic.Bool
 	// after, when set, gets each finished tick once the flight is free.
 	after func(got any)
+	// drain, when set, pauses the flight while the server drains, and
+	// counts the running tick or pass in flight until release.
+	drain *Drain
+	done  func()
 }
 
 // tickRunning is what a tick asked for while another runs reports.
 var tickRunning = map[string]any{"running": true}
+
+// tickPaused is what a tick asked for while the server drains reports.
+var tickPaused = map[string]any{"paused": true}
+
+// paused is a drain that starts no new tick or pass.
+func (s *singleFlight) paused() bool {
+	if s.drain == nil {
+		return false
+	}
+	_, paused := s.drain.Paused()
+	return paused
+}
 
 func oneAtATime(t Ticker) *singleFlight {
 	if s, ok := t.(*singleFlight); ok {
@@ -49,12 +65,35 @@ func oneAtATime(t Ticker) *singleFlight {
 	return &singleFlight{ticker: t}
 }
 
-// claim reserves the next tick; run must follow a successful claim.
-func (s *singleFlight) claim() bool { return s.running.CompareAndSwap(false, true) }
+// claim reserves the next tick, counted in flight on the drain; run, or
+// release, must follow a successful claim. A draining server claims
+// nothing.
+func (s *singleFlight) claim() bool {
+	if !s.running.CompareAndSwap(false, true) {
+		return false
+	}
+	done, ok := s.drain.startWork()
+	if !ok {
+		s.running.Store(false)
+		return false
+	}
+	s.done = done
+	return true
+}
+
+// release frees a claimed flight.
+func (s *singleFlight) release() {
+	done := s.done
+	s.done = nil
+	s.running.Store(false)
+	if done != nil {
+		done()
+	}
+}
 
 func (s *singleFlight) run(ctx context.Context) any {
 	got := func() any {
-		defer s.running.Store(false)
+		defer s.release()
 		return s.ticker.Tick(ctx)
 	}()
 	if s.after != nil {
@@ -64,6 +103,9 @@ func (s *singleFlight) run(ctx context.Context) any {
 }
 
 func (s *singleFlight) Tick(ctx context.Context) any {
+	if s.paused() {
+		return tickPaused
+	}
 	if !s.claim() {
 		return tickRunning
 	}
@@ -145,6 +187,11 @@ func newTickHandler(verifier TickVerifier, ticker Ticker, ips *preauthLimiter) h
 		}
 		// One tick at a time: while one runs, the scheduler is told so and
 		// nothing starts.
+		if flight.paused() {
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(tickPaused)
+			return
+		}
 		if !flight.claim() {
 			w.Header().Set("Content-Type", "application/json")
 			_ = json.NewEncoder(w).Encode(tickRunning)

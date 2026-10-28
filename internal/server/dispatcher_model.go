@@ -111,7 +111,9 @@ func modelOK(w http.ResponseWriter, v any) {
 // newModelHandler serves the launcher, agent and case endpoints for store.
 // nudge, when set, asks the watcher for an early pass of a project; hub,
 // when set, wakes cases/next on each new case.
-func newModelHandler(store ModelStore, hub *StreamHub, maxAgents int, now func() time.Time, nudge func(string)) http.Handler {
+// drain, when set, makes every endpoint busy while the server drains and
+// for the grace after (E2).
+func newModelHandler(store ModelStore, hub *StreamHub, maxAgents int, now func() time.Time, nudge func(string), drain *Drain) http.Handler {
 	failures := &modelLockouts{now: now, keys: map[string]*lockoutState{}}
 	// Each authenticated token's calls: polls and renewals are well under
 	// these. Only calls that authenticated are counted, so random tokens
@@ -175,6 +177,18 @@ func newModelHandler(store ModelStore, hub *StreamHub, maxAgents int, now func()
 			modelFail(w, 429, "rate_limited")
 			return
 		}
+		// A draining server starts nothing for the model, and judges no
+		// session's presence until the grace after the drain.
+		if drain != nil {
+			if retry, on := drain.Check(r.Context()); on {
+				failModelBusy(w, retry)
+				return
+			}
+			if retry, paused := drain.Paused(); paused {
+				failModelBusy(w, retry)
+				return
+			}
+		}
 		var body map[string]json.RawMessage
 		if want == http.MethodPost {
 			raw, err := io.ReadAll(http.MaxBytesReader(w, r.Body, modelBodyBytes))
@@ -196,7 +210,7 @@ func newModelHandler(store ModelStore, hub *StreamHub, maxAgents int, now func()
 		case r.URL.Path == ModelHelloPath:
 			out, err = store.ModelHello(ctx, token, maxAgents)
 		case r.URL.Path == ModelCasesNextPath:
-			out, err = serveCasesNext(ctx, store, hub, token, body, maxAgents, polls, nudge)
+			out, err = serveCasesNext(ctx, store, hub, token, body, maxAgents, polls, nudge, drain)
 		case isTool:
 			out, err = serveCaseTool(ctx, store, token, caseID, tool, body, nudge)
 		default:

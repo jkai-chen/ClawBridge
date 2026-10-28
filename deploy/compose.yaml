@@ -86,6 +86,10 @@ services:
       - backend
       - egress
     restart: unless-stopped
+    # serve waits up to 75 s for in-flight requests on SIGTERM (an app write
+    # to Linear); compose must not kill it first. A drained server
+    # (operator maintenance start --wait) stops at once.
+    stop_grace_period: 90s
 
   caddy:
     image: caddy:2.10-alpine

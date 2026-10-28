@@ -548,3 +548,30 @@ func TestPostgresOutboxRechecksTheLane(t *testing.T) {
 		t.Fatal("a write outside the session's lane was sent:", q.State, q.Reason, f.mcp.count("save_comment"))
 	}
 }
+
+// While the server drains, the outbox sends nothing: a queued write waits
+// for the swap's new server (ZERO-LOSS-DEPLOY §2.3), and goes once the
+// drain is over.
+func TestPostgresOutboxWaitsOutADrain(t *testing.T) {
+	f := newOutboxFixture(t)
+	f.mcp.refuse = 1
+	res, err := f.queueWrite("comment", map[string]any{"id": awIssue, "body": "drain", "operation_id": "d-1"})
+	if err != nil || awJSON(t, res.Data)["outcome"] != "queued" {
+		t.Fatal("not queued:", res, err)
+	}
+	draining, _, _ := newTestDrain(on(drainStart, 10*time.Minute))
+	draining.Check(context.Background())
+	f.writer.Now = func() time.Time { return time.Now().Add(2 * time.Minute) }
+	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
+	f.writer.runOutbox(ctx, 50*time.Millisecond, draining)
+	cancel()
+	f.writer.Now = nil
+	if n := f.mcp.count("save_comment"); n != 0 || f.queued("d-1").State == bus.OutboxDone {
+		t.Fatal("a draining server sent a queued write:", n)
+	}
+	// The drain over, the next cycle sends it.
+	f.later(2 * time.Minute)
+	if n := f.mcp.count("save_comment"); n != 1 || f.queued("d-1").State != bus.OutboxDone {
+		t.Fatal("the write didn't go after the drain:", n, f.queued("d-1").State)
+	}
+}

@@ -80,6 +80,9 @@ type Store struct {
 	memAvailable   func() (uint64, bool)
 	// queue bounds the message queue's leases (queue.go).
 	queue QueueLimits
+	// quiet, while it answers true, skips a pure read's writes after its
+	// commit: a draining server (SetQuiet).
+	quiet func() bool
 }
 
 // SQLiteURIPath is the path part of a file: URI that SQLite resolves to path.
@@ -156,7 +159,7 @@ func (s *Store) migrate() error {
 	if err = tx.QueryRow("PRAGMA user_version").Scan(&version); err != nil {
 		return err
 	}
-	if version > 47 {
+	if version > 48 {
 		return errors.New("database schema is newer than this ClawBridge binary")
 	}
 	if version == 0 {
@@ -406,6 +409,12 @@ func (s *Store) migrate() error {
 	}
 	if version < 47 {
 		if _, err = tx.Exec(linearWritesSchema + `PRAGMA user_version=47;`); err != nil {
+			return err
+		}
+	}
+	if version < maintenanceSchemaVersion {
+		// The server drain's tables are hosted only (maintenance.go).
+		if _, err = tx.Exec(fmt.Sprintf(`PRAGMA user_version=%d;`, maintenanceSchemaVersion)); err != nil {
 			return err
 		}
 	}
@@ -1157,10 +1166,14 @@ func (s *Store) executeRequest(ctx context.Context, r Request) (Result, error) {
 	if err = tx.Commit(); err != nil {
 		return Result{}, errors.New("authority commit failed; no write queued")
 	}
+	// A draining server writes nothing for a read: the lease isn't renewed
+	// (renewed: false, as a busy lock answers) and the heartbeat isn't
+	// recorded. Nothing judges presence until a grace after the drain.
+	quiet := s.isQuiet()
 	if tx.lease != nil {
-		data.(map[string]any)["renewed"] = s.renewLease(ctx, r, tx.lease)
+		data.(map[string]any)["renewed"] = !quiet && s.renewLease(ctx, r, tx.lease)
 	}
-	if tx.beat != nil {
+	if tx.beat != nil && !quiet {
 		if now, ok := s.beat(ctx, r, tx.beat); ok && r.Operation == "whoami" {
 			// whoami shows the heartbeat it just recorded; when the beat was
 			// skipped it shows the last recorded one.

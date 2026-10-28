@@ -45,7 +45,7 @@ func TestCasesNextWaitsOnTheHub(t *testing.T) {
 	}
 	done := make(chan answer, 1)
 	go func() {
-		out, err := serveCasesNext(context.Background(), store, hub, "tok", body, 3, polls, nil)
+		out, err := serveCasesNext(context.Background(), store, hub, "tok", body, 3, polls, nil, nil)
 		done <- answer{out, err}
 	}()
 	time.Sleep(1500 * time.Millisecond)
@@ -84,7 +84,7 @@ func TestCasesNextWaitsOnTheHub(t *testing.T) {
 	// A missed notification costs at most caseSafety: it still re-reads.
 	quiet := &nextCases{}
 	body = map[string]json.RawMessage{"wait_seconds": json.RawMessage(`7`)}
-	if out, err := serveCasesNext(context.Background(), quiet, hub, "tok", body, 3, polls, nil); err != nil || out.(map[string]any)["case"] != nil {
+	if out, err := serveCasesNext(context.Background(), quiet, hub, "tok", body, 3, polls, nil, nil); err != nil || out.(map[string]any)["case"] != nil {
 		t.Fatal(out, err)
 	}
 	if n := quiet.count(); n != 3 {
@@ -94,7 +94,7 @@ func TestCasesNextWaitsOnTheHub(t *testing.T) {
 	// Without a hub: a re-read every second.
 	plain := &nextCases{}
 	body = map[string]json.RawMessage{"wait_seconds": json.RawMessage(`2`)}
-	if out, err := serveCasesNext(context.Background(), plain, nil, "tok", body, 3, polls, nil); err != nil || out.(map[string]any)["case"] != nil {
+	if out, err := serveCasesNext(context.Background(), plain, nil, "tok", body, 3, polls, nil, nil); err != nil || out.(map[string]any)["case"] != nil {
 		t.Fatal(out, err)
 	}
 	if n := plain.count(); n < 3 {
@@ -117,7 +117,7 @@ func TestPostgresCasesNextWokenByNotify(t *testing.T) {
 	polls := &casePolls{held: map[string]bool{}, limit: 10}
 	done := make(chan any, 1)
 	go func() {
-		out, _ := serveCasesNext(ctx, store, hub, "tok", map[string]json.RawMessage{"wait_seconds": json.RawMessage(`20`)}, 3, polls, nil)
+		out, _ := serveCasesNext(ctx, store, hub, "tok", map[string]json.RawMessage{"wait_seconds": json.RawMessage(`20`)}, 3, polls, nil, nil)
 		done <- out
 	}()
 	// Past the listener's connect, whose wake re-reads once.

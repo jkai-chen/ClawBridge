@@ -173,7 +173,7 @@ func (n *nudger) serve(ctx context.Context) time.Duration {
 		}
 		if ok {
 			func() {
-				defer n.flight.running.Store(false)
+				defer n.flight.release()
 				pass, cancel := context.WithTimeout(ctx, tickDeadline)
 				defer cancel()
 				var out any

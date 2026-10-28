@@ -306,6 +306,10 @@ type HandlerOptions struct {
 	// StreamLimits are the stream's intervals and caps; zero fields take
 	// the defaults.
 	StreamLimits StreamLimits
+	// Drain, when set, refuses what a draining server must not start
+	// (maintenance.go) and counts each request in flight; nil never
+	// drains.
+	Drain *Drain
 }
 
 // NewHandlerWithOptions also serves the send-only /mcp/intake endpoint when
@@ -331,7 +335,7 @@ func NewHandlerWithOptions(store Executor, verifier Verifier, o HandlerOptions) 
 		tick = newTickHandler(o.TickVerifier, o.Ticker, newPreauthLimiter(60, now))
 	}
 	if s, ok := store.(ModelStore); ok {
-		model = newModelHandler(s, o.Streams, cmp.Or(o.ModelMaxAgents, defaultMaxAgents), now, o.NudgeProject)
+		model = newModelHandler(s, o.Streams, cmp.Or(o.ModelMaxAgents, defaultMaxAgents), now, o.NudgeProject, o.Drain)
 	}
 	methods := []string{AuthGoogle}
 	if len(o.Auth.Methods) > 0 {
@@ -411,13 +415,27 @@ func NewHandlerWithOptions(store Executor, verifier Verifier, o HandlerOptions) 
 	}
 	var stream http.Handler
 	if s, ok := store.(StreamStore); ok && o.Streams != nil {
-		stream = &streamHandler{store: s, hub: o.Streams, authenticate: authenticate, limit: l, limits: o.StreamLimits.orDefaults(), now: now}
+		stream = &streamHandler{store: s, hub: o.Streams, authenticate: authenticate, limit: l, limits: o.StreamLimits.orDefaults(), now: now, drain: o.Drain}
+	}
+	// draining is a maintenance the request must not pass, with its
+	// Retry-After.
+	draining := func(ctx context.Context) (int, bool) {
+		if o.Drain == nil {
+			return 0, false
+		}
+		return o.Drain.Check(ctx)
 	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Cache-Control", "no-store")
 		if r.URL.Path == StreamPath && stream != nil {
+			// A stream is never in flight: a drain closes it.
 			stream.ServeHTTP(w, r)
 			return
+		}
+		// Counted from its start, before authentication and the
+		// maintenance check (D5).
+		if o.Drain != nil {
+			defer o.Drain.Begin()()
 		}
 		if r.URL.Path == "/healthz" {
 			if r.Method != http.MethodGet {
@@ -457,6 +475,10 @@ func NewHandlerWithOptions(store Executor, verifier Verifier, o HandlerOptions) 
 			return
 		}
 		if r.URL.Path == IntakePath && intake != nil {
+			if retry, on := draining(r.Context()); on {
+				failIntakeMaintenance(w, retry)
+				return
+			}
 			intake.ServeHTTP(w, r)
 			return
 		}
@@ -484,6 +506,10 @@ func NewHandlerWithOptions(store Executor, verifier Verifier, o HandlerOptions) 
 			return
 		}
 		if r.URL.Path == "/v1/join" && join != nil {
+			if retry, on := draining(r.Context()); on {
+				failMaintenance(w, retry)
+				return
+			}
 			join.ServeHTTP(w, r)
 			return
 		}
@@ -526,6 +552,12 @@ func NewHandlerWithOptions(store Executor, verifier Verifier, o HandlerOptions) 
 		}
 		if request.Operation == "" || store == nil {
 			fail(w, 400, "invalid", "an operation is required")
+			return
+		}
+		// After authentication, whose own writes a read needs too; before
+		// any transaction or lock. Only a pure read passes a drain.
+		if retry, on := draining(ctx); on && !bus.ServedInMaintenance(request) {
+			failMaintenance(w, retry)
 			return
 		}
 		var result bus.Result
@@ -714,15 +746,30 @@ func Run(ctx context.Context, args []string) error {
 	}
 	store.SetModelSeal(seal)
 	store.SetModelHost(maxAgents, memAvailable)
-	options := startWatcher(ctx, store, watch, HandlerOptions{OAuth: metadata, Writer: writer, Auth: auth, ModelMaxAgents: maxAgents})
+	// The drain (maintenance.go): a start ends a maintenance that began
+	// before it, since this binary is the swap's new one, and then waits
+	// the resume grace; a start that cleared nothing never waits.
+	instance, err := newInstanceName()
+	if err != nil {
+		return err
+	}
+	drain := NewDrain(store, instance, time.Now)
+	clearAtStart(ctx, store, drain)
+	store.SetQuiet(drain.Quiet)
+	hub := NewStreamHub()
+	hub.maintenance = drain.Invalidate
+	drain.onStart, drain.onEnd = hub.StartDrain, hub.EndDrain
+	options := startWatcher(ctx, store, watch, HandlerOptions{OAuth: metadata, Writer: writer, Auth: auth, ModelMaxAgents: maxAgents, Drain: drain})
 	// The message queue: the hub wakes the streams, the sweeper offers run-out
 	// leases again and makes dead letters.
-	options.Streams = startStreamHub(ctx, store, dsn)
-	go runSweeper(ctx, store, sweepEvery)
+	options.Streams = hub
+	go hub.ListenAs(ctx, dsn, store.InstanceName())
+	go drain.Run(ctx)
+	go runSweeper(ctx, store, sweepEvery, drain)
 	// The Linear write outbox: queued app writes are sent as Linear and the
-	// project's cap allow.
+	// project's cap allow; it sends nothing while the server drains.
 	if writer != nil && store.OutboxAvailable() {
-		go writer.runOutbox(ctx, outboxEvery)
+		go writer.runOutbox(ctx, outboxEvery, drain)
 	}
 	// A Linear write the server runs as the app may take up to a minute. A
 	// stream clears its own deadlines.
@@ -737,11 +784,17 @@ func Run(ctx context.Context, args []string) error {
 		}
 		return fmt.Errorf("serve: %w", err)
 	case <-ctx.Done():
-		shutdown, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		// Long enough for an app write to Linear (LinearWriteTimeout) to
+		// finish; a drained server has nothing in flight and stops at once.
+		shutdown, cancel := context.WithTimeout(context.Background(), shutdownGrace)
 		defer cancel()
 		return srv.Shutdown(shutdown)
 	}
 }
+
+// shutdownGrace is how long serve waits for in-flight requests on SIGTERM;
+// compose's stop_grace_period (90s) is above it.
+const shutdownGrace = 75 * time.Second
 
 // openServingStore opens the hosted authority the server serves. Every request
 // must pass the account binding, so the store refuses any path that would
@@ -763,7 +816,7 @@ func openServingStore(ctx context.Context, dsn, owner string) (*bus.Store, error
 // cannot sign in: their own address moved to a new Google account, or a
 // workspace allow-list refuses every account.
 func RunOperator(ctx context.Context, args []string, stdout io.Writer) error {
-	const usage = "usage: clawbridge operator principal-unbind EMAIL --confirm [--allow-previous] | workspace-clear-domains WORKSPACE --confirm | linear-app-probe --confirm [--project UUID] [--p8 [--dry-run] [--allow-member UUID] | --health-order | --project-status [--dry-run] [--allow-member UUID]] | linear-app-probe --rate-headers --confirm | linear-app-probe --confirm --subscribe --issue UUID --team UUID (--email OWNER | --email-stdin) [--user UUID] [--dry-run] | linear-app-doc-probe --confirm | health-run --project UUID --confirm [--force-new | --delete UPDATE_ID] | bootstrap-invite --workspace NAME [--force-stdout | --code-stdin [--expect-owner EMAIL]] [--database-url-env NAME] | launcher-token create --out PATH [--print] | launcher-token revoke ID | model-seal-key rotate [--confirm [--delete-unreadable]]"
+	const usage = "usage: clawbridge operator principal-unbind EMAIL --confirm [--allow-previous] | workspace-clear-domains WORKSPACE --confirm | linear-app-probe --confirm [--project UUID] [--p8 [--dry-run] [--allow-member UUID] | --health-order | --project-status [--dry-run] [--allow-member UUID]] | linear-app-probe --rate-headers --confirm | linear-app-probe --confirm --subscribe --issue UUID --team UUID (--email OWNER | --email-stdin) [--user UUID] [--dry-run] | linear-app-doc-probe --confirm | health-run --project UUID --confirm [--force-new | --delete UPDATE_ID] | bootstrap-invite --workspace NAME [--force-stdout | --code-stdin [--expect-owner EMAIL]] [--database-url-env NAME] | launcher-token create --out PATH [--print] | launcher-token revoke ID | model-seal-key rotate [--confirm [--delete-unreadable]] | maintenance start --reason TEXT [--ttl 15m] (--wait DURATION | --no-wait) --confirm | maintenance end --confirm | maintenance show"
 	if len(args) > 0 && args[0] == "bootstrap-invite" {
 		return runBootstrapInvite(ctx, args[1:], stdout)
 	}
@@ -772,6 +825,9 @@ func RunOperator(ctx context.Context, args []string, stdout io.Writer) error {
 	}
 	if len(args) > 0 && args[0] == "model-seal-key" {
 		return runModelSealKey(ctx, args[1:], stdout)
+	}
+	if len(args) > 0 && args[0] == "maintenance" {
+		return runMaintenance(ctx, args[1:], stdout)
 	}
 	if len(args) == 0 || (args[0] != "principal-unbind" && args[0] != "workspace-clear-domains" && args[0] != "linear-app-probe" && args[0] != "linear-app-doc-probe" && args[0] != "health-run") {
 		return errors.New(usage)

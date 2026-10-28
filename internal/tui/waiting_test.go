@@ -101,6 +101,13 @@ func TestWaitingOwnerCreatesTheFirstProject(t *testing.T) {
 	if !strings.Contains(view, "pilot has no project yet. Create the first one:") || !strings.Contains(view, "clawbridge project create SLUG") || strings.Contains(view, "Ask ") {
 		t.Fatal(view)
 	}
+	// The owner comes from the workspace-only whoami: no project, no
+	// session, which the server answers for a member with no project.
+	for _, c := range a.calls {
+		if c.request.Operation == "whoami" && (c.request.Project != "" || c.request.Session != "" || len(c.request.Args) != 0) {
+			t.Fatal("whoami named a scope the waiting profile doesn't have:", c.request)
+		}
+	}
 }
 
 // Several projects: the person picks one. With no saver, the TUI goes on

@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 )
 
@@ -20,6 +21,14 @@ type kindKey struct{}
 // its sender marks it a Read.
 func WithKind(ctx context.Context, k Kind) context.Context {
 	return context.WithValue(ctx, kindKey{}, k)
+}
+
+type counterKey struct{}
+
+// WithCounter counts in n every paced call sent to Linear under ctx: what
+// one write spent, for its project's hourly budget.
+func WithCounter(ctx context.Context, n *atomic.Int64) context.Context {
+	return context.WithValue(ctx, counterKey{}, n)
 }
 
 // Transport paces every Linear API and MCP call through one credential's
@@ -84,6 +93,9 @@ func (t Transport) RoundTrip(r *http.Request) (*http.Response, error) {
 			return paced(r, until.Sub(t.Pacer.now())), nil
 		}
 		bound -= t.Pacer.now().Sub(start)
+		if n, ok := r.Context().Value(counterKey{}).(*atomic.Int64); ok {
+			n.Add(1)
+		}
 		res, err := t.base().RoundTrip(r)
 		if err != nil {
 			return res, err

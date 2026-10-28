@@ -1,5 +1,10 @@
 # Unreleased
 
+**Schema 41 → 42.**
+- The server migrates to schema 42 on its first start: the agent writes the server queued (the Linear write outbox).
+- **One-way:** v0.3.7 refuses a database newer than schema 41. Take a dump before upgrading; to go back, restore it
+  with the v0.3.7 image (docs/operations/deployment.md).
+
 ## The terminal interface
 
 - **Issues and the sessions holding them (U15, U40).** `i` on Sessions opens the selected session's issue on the
@@ -36,6 +41,22 @@
   up to 5 s) instead of failing at once; past that, nothing is sent and the answer says when to retry. The app's reads
   now say `rate_limited` with a retry time, where they said `unavailable` or `query_failed`, and an API key's say how
   long to wait (docs/linear.md, "Linear's rate limits").
+- **Agent writes queue instead of failing** on a hosted server with the ClawBridge app. A write that Linear's rate
+  limit or the project's hourly budget holds, or one behind a queued write on the same issue, is queued: the answer
+  is `outcome: queued` (not an error), the session gets a `linear-write` message when it ends, and `clawbridge linear
+  write-status` lists it. Repeat the same operation_id to ask; never use a new one. Clients older than this release
+  are never queued and get `rate_limited` with when to retry (docs/linear.md, "Queued writes").
+- **Agent writes now count against the project's hourly Linear budget**, whose default rises from 200 to 600. Its
+  names are now `project linear-budget` and `CLAWBRIDGE_LINEAR_BUDGET`; the old ones keep working. An owner may raise
+  a project's budget up to the server's `CLAWBRIDGE_LINEAR_BUDGET_MAX` (default 2000), where 600 was the most; the
+  server refuses to start when that ceiling is below the default budget. Project status and a forced health run that
+  meet a spent budget now say when to retry.
+- **Upgrade note:** the 600 now covers agent writes as well as watch, health and status reads. A project that set its
+  budget by hand, or a server with `CLAWBRIDGE_WATCH_BUDGET` set, keeps that number, which now has to cover writes
+  too; check `clawbridge project linear-budget` after upgrading and raise it if agents write a lot.
+- A queued write is sent only while the person who asked still may: their session (if any) active, their role
+  held, their device live or their Google account still bound. Otherwise it fails as `identity_revoked` and nothing
+  is sent.
 
 # ClawBridge v0.3.7 (released 28 Oct)
 

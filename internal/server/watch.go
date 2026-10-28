@@ -71,8 +71,10 @@ func (t watcherTicker) Fallback(ctx context.Context, pid string) any { return t.
 type watchSettings struct {
 	interval                  time.Duration
 	tickAudience, tickAccount string
-	// budget is CLAWBRIDGE_WATCH_BUDGET; 0 when unset (the bus's 200).
+	// budget is CLAWBRIDGE_LINEAR_BUDGET; 0 when unset (the bus's 600).
 	budget int
+	// budgetMax is CLAWBRIDGE_LINEAR_BUDGET_MAX, the owner's ceiling.
+	budgetMax int
 }
 
 // readWatchSettings reads CLAWBRIDGE_WATCH_INTERVAL (1m–30m, empty for no
@@ -89,6 +91,9 @@ func readWatchSettings(getenv func(string) string) (watchSettings, error) {
 		return w, err
 	}
 	w.budget = budget
+	if w.budgetMax, err = readLinearBudgetMax(getenv, budget); err != nil {
+		return w, err
+	}
 	if raw := strings.TrimSpace(getenv("CLAWBRIDGE_WATCH_INTERVAL")); raw != "" {
 		d, err := time.ParseDuration(raw)
 		if err != nil || d < time.Minute || d > 30*time.Minute {
@@ -102,17 +107,48 @@ func readWatchSettings(getenv func(string) string) (watchSettings, error) {
 	return w, nil
 }
 
-// readWatchBudget reads CLAWBRIDGE_WATCH_BUDGET: the Linear calls per hour
-// every project's server watch may make, 1–600; empty is 0, the bus's
-// default of 200.
+// readWatchBudget reads CLAWBRIDGE_LINEAR_BUDGET (or its old name
+// CLAWBRIDGE_WATCH_BUDGET): the Linear calls per hour every project may
+// make by default, agent writes included, 1–600; empty is 0, the bus's
+// default of 600.
 func readWatchBudget(getenv func(string) string) (int, error) {
-	raw := strings.TrimSpace(getenv("CLAWBRIDGE_WATCH_BUDGET"))
+	raw := strings.TrimSpace(getenv("CLAWBRIDGE_LINEAR_BUDGET"))
+	if old := strings.TrimSpace(getenv("CLAWBRIDGE_WATCH_BUDGET")); raw == "" {
+		raw = old
+	} else if old != "" && old != raw {
+		return 0, fmt.Errorf("CLAWBRIDGE_LINEAR_BUDGET and its old name CLAWBRIDGE_WATCH_BUDGET differ; set only CLAWBRIDGE_LINEAR_BUDGET")
+	}
 	if raw == "" {
 		return 0, nil
 	}
 	n, err := strconv.Atoi(raw)
 	if err != nil || n < 1 || n > 600 {
-		return 0, fmt.Errorf("CLAWBRIDGE_WATCH_BUDGET must be a whole number from 1 to 600 (Linear calls per hour)")
+		return 0, fmt.Errorf("CLAWBRIDGE_LINEAR_BUDGET must be a whole number from 1 to 600 (Linear calls per hour)")
+	}
+	return n, nil
+}
+
+// Linear's hourly request limit for an OAuth app user, which bounds the
+// operator's ceiling.
+const linearAppHourly = 5000
+
+// readLinearBudgetMax reads CLAWBRIDGE_LINEAR_BUDGET_MAX: how far a project
+// owner may raise the project's cap (R2), default 2000, at most Linear's
+// 5000 an hour for the app. It may not be below the default cap, so owners
+// always have room to raise.
+func readLinearBudgetMax(getenv func(string) string, budget int) (int, error) {
+	if budget == 0 {
+		budget = bus.LinearBudgetDefault
+	}
+	n := bus.LinearBudgetCeiling
+	if raw := strings.TrimSpace(getenv("CLAWBRIDGE_LINEAR_BUDGET_MAX")); raw != "" {
+		var err error
+		if n, err = strconv.Atoi(raw); err != nil || n < 1 || n > linearAppHourly {
+			return 0, fmt.Errorf("CLAWBRIDGE_LINEAR_BUDGET_MAX must be a whole number from 1 to %d (Linear calls per hour)", linearAppHourly)
+		}
+	}
+	if n < budget {
+		return 0, fmt.Errorf("CLAWBRIDGE_LINEAR_BUDGET_MAX (%d) is below the default cap CLAWBRIDGE_LINEAR_BUDGET (%d); raise it or lower the cap", n, budget)
 	}
 	return n, nil
 }

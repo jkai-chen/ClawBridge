@@ -56,6 +56,10 @@ type Store struct {
 	// issueSubscribersProven is serve --issue-subscribers-proven: the
 	// operator's live check showed the app may subscribe other people (B2).
 	issueSubscribersProven bool
+	// linearBudgetMax is how far an owner may raise a project's Linear cap.
+	linearBudgetMax int
+	// outboxOnly limits the outbox worker's queries to one project (tests).
+	outboxOnly string
 	// modelSeal seals owners' provider keys; nil leaves model setup off.
 	modelSeal *ModelSeal
 	// modelMaxAgents and memAvailable are the serving process's, for
@@ -140,7 +144,7 @@ func (s *Store) migrate() error {
 	if err = tx.QueryRow("PRAGMA user_version").Scan(&version); err != nil {
 		return err
 	}
-	if version > 41 {
+	if version > 42 {
 		return errors.New("database schema is newer than this ClawBridge binary")
 	}
 	if version == 0 {
@@ -360,6 +364,11 @@ func (s *Store) migrate() error {
 	}
 	if version < 41 {
 		if _, err = tx.Exec(issueSubscribersSchema + `PRAGMA user_version=41;`); err != nil {
+			return err
+		}
+	}
+	if version < 42 {
+		if _, err = tx.Exec(linearOutboxSchema + `PRAGMA user_version=42;`); err != nil {
 			return err
 		}
 	}

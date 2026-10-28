@@ -649,7 +649,7 @@ func (c commentCall) healthForce(ctx context.Context) (any, error) {
 		return nil, err
 	}
 	if budget-used-watchConnectCalls-1 < HealthMaxCalls {
-		return nil, scoped("the hour's Linear call budget cannot pay a health run now; try again next hour", "rate_limited")
+		return nil, scoped(fmt.Sprintf("the hour's Linear call budget cannot pay a health run now (%d of %d calls used); try again at %s, or raise it with project linear-budget set", used, budget, c.now.UTC().Truncate(time.Hour).Add(time.Hour).Format(time.RFC3339)), "rate_limited")
 	}
 	if _, _, err = c.charge(ctx, map[string]any{"budget_used": used, "budget_hour": layout(c.now)[:13], "budget_limit": budget}, HealthMaxCalls); err != nil {
 		return nil, err

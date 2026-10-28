@@ -55,7 +55,7 @@ Commands: setup --local, project create SLUG, register [NAME], sessions, send TO
           workspace-domains DOMAIN...|--clear, doctor, tui [--screen SCREEN], version,
           cloud check [infra|server|version|workspace|linear-app|backups|all], cloud secret set KEY (own-server onboarding),
           project context-watch show|set --file FILE --expected-revision N,
-          project watch-budget show|set CALLS_PER_HOUR|clear,
+          project linear-budget show|set CALLS_PER_HOUR|clear (old name: watch-budget),
           context levels set [--warn-tokens N] [--handover-tokens N] | --clear,
           context show [--session NAME | --agent claude-code|codex --transcript PATH] [--json],
           context bind [--session NAME] --codex-thread UUID|--agent K --transcript PATH, context hooks install|uninstall [--scope local|user|project-shared]
@@ -520,9 +520,10 @@ flags:`)
 				return errors.New("usage: project context-watch show; project context-watch set --file FILE --expected-revision N")
 			}
 			rest = rest[2:]
-		case "watch-budget":
-			// The comment watcher's hourly Linear budget for this project:
-			// any member reads it; the project owner sets or clears it.
+		case "linear-budget", "watch-budget":
+			// The project's hourly Linear budget, agent writes included
+			// (watch-budget is its old name): any member reads it; the
+			// project owner sets or clears it.
 			switch {
 			case len(rest) >= 2 && rest[1] == "show":
 				op = "comment_watch_status"
@@ -532,7 +533,7 @@ flags:`)
 			case len(rest) >= 2 && rest[1] == "clear":
 				op = "comment_watch_budget_set"
 			default:
-				return errors.New("usage: project watch-budget show; project watch-budget set CALLS_PER_HOUR; project watch-budget clear")
+				return errors.New("usage: project linear-budget show; project linear-budget set CALLS_PER_HOUR; project linear-budget clear")
 			}
 			rest = rest[2:]
 		default:
@@ -913,8 +914,10 @@ flags:`)
 			a["watch_budget"] = nil
 			if len(pos) == 1 {
 				n, err := strconv.Atoi(pos[0])
-				if err != nil || n < 1 || n > 600 {
-					return errors.New("project watch-budget set takes 1–600 Linear calls per hour")
+				// The server bounds it by its ceiling,
+				// CLAWBRIDGE_LINEAR_BUDGET_MAX.
+				if err != nil || n < 1 || n > 5000 {
+					return errors.New("project linear-budget set takes 1 to the server's ceiling (default 2000) Linear calls per hour")
 				}
 				a["watch_budget"] = n
 			}
@@ -1206,6 +1209,10 @@ flags:`)
 		}
 	}
 	result, err := executor.Execute(ctx, bus.Request{Operation: op, Workspace: config.Workspace, Project: config.Project, Session: config.Session, Args: a})
+	if n, ok := a["watch_budget"].(int); err == nil && op == "comment_watch_budget_set" && ok {
+		// N1: the ceiling bounds one project, not the sum.
+		_, _ = fmt.Fprintf(stderr, "This project may now make %d Linear calls an hour, agent writes included: %d%% of the ClawBridge app's 5000 an hour. Other projects on this server share that credential, and the server's ceiling bounds each project, not their sum; past Linear's limit, writes wait in the queue.\n", n, n*100/5000)
+	}
 	if err != nil {
 		secret.discard()
 		if op == "retire_session" && strings.Contains(err.Error(), "holds the confirmed assignment") {

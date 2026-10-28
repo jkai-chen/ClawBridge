@@ -19,6 +19,19 @@ same ID and payload shortly. On a hosted server with the ClawBridge Linear app,
 your writes are made as the app; when one fails, report it and never repeat it
 through another Linear tool or account.
 
+**Queued writes.** On such a server, a write that can't go now answers
+`outcome: queued` (with `reason`, `position`, `estimated_at`): it is not an
+error, and it is not done. Don't act as if it landed, and never retry it with a
+new operation_id: repeat the same ID and payload to ask where it is, or run
+`clawbridge linear write-status [OPERATION_ID]`. A `linear-write` message tells
+your session how it ended: `done` (its receipt), `failed` or `expired` (nothing
+was sent; decide again, with a new operation_id), `dead` (nothing was sent after
+8 tries; tell the coordinator) or `uncertain` (read the issue back first).
+Writes on one issue go in order; writes on different issues don't, so when one
+depends on another (a comment on an issue you are creating), wait for the first
+one's result. Queued writes are checked again when sent: a retired session's or a
+revoked role's never go.
+
 ## Establish the work map
 
 Start from the issue assigned by the human or coordinator. Read its description,

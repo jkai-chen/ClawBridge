@@ -16,6 +16,7 @@ import (
 	"clawbridge/internal/linearapp"
 	"clawbridge/internal/linearboard"
 	"clawbridge/internal/linearconn"
+	"clawbridge/internal/linearpace"
 	"clawbridge/internal/linearprovider"
 )
 
@@ -144,19 +145,21 @@ func (w *AppWriter) Execute(parent context.Context, identity bus.Identity, r bus
 		return w.projectStatus(parent, identity, r)
 	case "linear_app_subscribers_backfill":
 		return w.subscribersBackfill(parent, identity, r)
+	case "linear_write_status":
+		return w.writeStatus(parent, identity, r)
 	case "linear_write":
 	default:
 		return bus.Result{}, appRefusal("unsupported operation")
 	}
 	for k := range r.Args {
-		if k != "instance" && k != "operation" && k != "args" && k != "agent_marker" {
-			return bus.Result{}, appRefusal("linear_write takes instance, operation, args and agent_marker only")
+		if k != "instance" && k != "operation" && k != "args" && k != "agent_marker" && k != "accept_queued" {
+			return bus.Result{}, appRefusal("linear_write takes instance, operation, args, agent_marker and accept_queued only")
 		}
 	}
-	marker, err := writeMarker(r.Args)
-	if err != nil {
+	if _, err := writeMarker(r.Args); err != nil {
 		return bus.Result{}, err
 	}
+	queue, _ := r.Args["accept_queued"].(bool)
 	operation, _ := r.Args["operation"].(string)
 	if !appWriteOperations[operation] {
 		return bus.Result{}, appRefusal("linear_write runs comment, create, update, relation_add or relation_remove only; binding and admin operations never run as the app")
@@ -170,20 +173,48 @@ func (w *AppWriter) Execute(parent context.Context, identity bus.Identity, r bus
 			return bus.Result{}, appRefusal("linear_write cannot choose an identity; the server writes as the ClawBridge app")
 		}
 	}
+	// A client that accepts queueing has a write that can't go now queued
+	// (§4.1); an older one is refused as before.
+	if w.Store != nil && w.Store.OutboxAvailable() {
+		return w.queueable(parent, identity, r, operation, args, queue)
+	}
+	return w.answer(w.send(parent, identity, r, operation, args, ""))
+}
+
+// send runs one write as identity: the membership and scope checks, then
+// the board's own, then Linear. The outbox's deferred send takes the same
+// path, so every check runs again at send time (R1).
+//
+// With a project, the Linear calls the write makes are charged to its
+// hourly budget once it is done, sent or not.
+func (w *AppWriter) send(parent context.Context, identity bus.Identity, r bus.Request, operation string, args map[string]any, project string) (any, error) {
+	marker, err := writeMarker(r.Args)
+	if err != nil {
+		return nil, err
+	}
 	// G9 F1: after the request's own checks, and before anything reaches
 	// the app, the caller proves membership; status and states do the same.
 	if err := w.member(parent, identity, r.Workspace); err != nil {
-		return bus.Result{}, err
+		return nil, err
 	}
 	if err := relationScope(parent, operation, w.App.HasScope); err != nil {
-		return bus.Result{}, err
+		return nil, err
 	}
 	// The write finishes once started, even if the client goes away.
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(parent), appWriteTimeout)
 	defer cancel()
+	if project != "" {
+		var calls atomic.Int64
+		ctx = linearpace.WithCounter(ctx, &calls)
+		defer func() {
+			if err := w.Store.ChargeLinearBudget(context.WithoutCancel(parent), project, int(calls.Load())); err != nil {
+				log.Printf("clawbridge: linear budget: charge failed")
+			}
+		}()
+	}
 	service, _, err := w.service(ctx, identity)
 	if err != nil {
-		return bus.Result{}, err
+		return nil, err
 	}
 	instance, _ := r.Args["instance"].(string)
 	scope := bus.Request{Workspace: r.Workspace, Project: r.Project, Session: r.Session, Args: map[string]any{"instance": instance}}
@@ -192,15 +223,16 @@ func (w *AppWriter) Execute(parent context.Context, identity bus.Identity, r bus
 		// A failed write may mean the workflow changed: read types afresh.
 		w.stateTypes().Drop()
 	}
+	// Who asked for the write is recorded when it is sent, now or from the
+	// outbox (intake attribution); a created issue's people are queued for
+	// subscribing.
 	var receipt *linearboard.ReceiptError
 	switch {
 	case err == nil:
 		w.attribute(ctx, identity, r, operation, args, data, marker)
 		w.queueSubscribers(ctx, identity, scope, operation, data)
-		return bus.Result{Data: map[string]any{"receipt": data}}, nil
 	case data != nil && errors.As(err, &receipt):
 		w.attribute(ctx, identity, r, operation, args, data, marker)
-		return bus.Result{Data: map[string]any{"receipt": data, "outcome": receipt.Outcome}}, nil
 	case linearboard.IsUncertain(err) && operation == "update":
 		// It may have reached Linear: its labels are recorded from the
 		// request, on the issue it named by UUID. An uncertain create or
@@ -210,6 +242,18 @@ func (w *AppWriter) Execute(parent context.Context, identity bus.Identity, r bus
 		// comment is matched by its own ID, which nothing else can carry.
 		id, _ := args["id"].(string)
 		w.attribute(ctx, identity, r, operation, args, linearboard.ReceiptV2{Kind: "issue", ID: id}, marker)
+	}
+	return data, err
+}
+
+// answer is a write's result as the caller sees it.
+func (w *AppWriter) answer(data any, err error) (bus.Result, error) {
+	var receipt *linearboard.ReceiptError
+	switch {
+	case err == nil:
+		return bus.Result{Data: map[string]any{"receipt": data}}, nil
+	case data != nil && errors.As(err, &receipt):
+		return bus.Result{Data: map[string]any{"receipt": data, "outcome": receipt.Outcome}}, nil
 	}
 	return bus.Result{}, writeError(err)
 }
@@ -405,6 +449,10 @@ func (w *AppWriter) status(parent context.Context, identity bus.Identity, r bus.
 		return bus.Result{}, err
 	}
 	out := map[string]any{"configured": true, "app_user_id": id.AppUserID, "linear_org_id": id.LinearOrgID, "attribution_record_failures": w.attributionFailures.Load()}
+	if w.Store != nil && w.Store.OutboxAvailable() {
+		// A client that sees this may send accept_queued (§4.1).
+		out["queues_writes"] = true
+	}
 	if r.Project == "" {
 		return bus.Result{Data: out}, nil
 	}

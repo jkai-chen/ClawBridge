@@ -587,6 +587,40 @@ it:
   is.
 - Several server processes pace apart: each follows the headers it sees, and a 429 holds only the one that met it.
 
+### Queued writes
+
+On a hosted server with the ClawBridge app, an agent write that can't go now waits in the server's queue instead of
+failing. A write is queued when:
+- Linear's rate limit kept it from being sent (`reason: linear_rate_limit`);
+- the project's hourly Linear budget is spent (`project_hourly_cap`): agent writes now count against it;
+- an earlier write on the same issue is still queued (`ordered_behind`). Writes on one issue go in the order they were
+  asked for, and a later one never overtakes. Writes on different issues have no order: if one depends on another,
+  such as a comment on an issue you are creating, wait for the first one's result.
+
+The answer is not an error. MCP returns it as the tool's result, and the CLI prints it, exits 0 and says so on stderr:
+
+```json
+{"outcome": "queued", "operation_id": "…", "operation": "comment", "issue": "…", "reason": "linear_rate_limit",
+ "position": 1, "queued_at": "…", "estimated_at": "…", "expires_at": "…"}
+```
+
+- **A queued write is not done.** Your session gets a `linear-write` message when it ends: `done` (with the comment or
+  issue it made), `failed` (refused at send time; nothing was sent), `uncertain` (it may have reached Linear: read the
+  issue back), `dead` (Linear refused it 8 times; the coordinator is told too) or `expired` (it waited 3 hours and is
+  never sent after that, since the request may be stale). The message has typed fields only, never the write's text.
+- **Never retry with a new operation_id.** Repeat the same one to ask: a queued write answers where it is, a sent one
+  answers its receipt, and nothing is sent twice. Reusing an operation_id for a different write is refused.
+- `clawbridge linear write-status [OPERATION_ID]` lists your session's queued and recent writes (a CLI write made
+  without a session lists your own), with the same fields.
+- **At send time every check runs again**, as for a write made then: your session is still active, your project role
+  may still write, the device that asked is still live (or your Google account still bound to your address), and the
+  binding and the issue's team still hold. If one fails, the write fails and nothing is sent; a revoked device or a
+  released account fails it as `identity_revoked`.
+- The queued write keeps its text on the server only to send it, and is deleted 7 days after it ends.
+- **Older clients**, which don't ask for queueing, are never queued: a write past the budget, or behind a queued
+  write on its issue, is refused with `rate_limited`, "nothing was sent; retry the same operation_id at …". A client
+  that asks for queueing does so only when the server says it queues.
+
 ### ClawBridge's own comments
 
 Every comment ClawBridge posts is recorded on the bus before it is sent, so a
@@ -647,19 +681,25 @@ line per cycle.
   newer activity, can be missed.
 - **Polling** backs off from every 5 minutes (recent activity) to hourly (quiet
   for a day); errors back off to hourly.
-- **Budget.** The watcher spends at most `--budget` Linear calls an hour (default
-  200, at most 600), counted on the bus so a restart or takeover cannot reset it.
-  The project owner can set the project's own budget with `clawbridge project
-  watch-budget set N` (1 to 600), which wins over `--budget` and the server's
-  `CLAWBRIDGE_WATCH_BUDGET` from the watcher's next call; `project watch-budget
-  clear` removes it. Any member reads it with `project watch-budget show`
-  (`budget_limit`, and `budget_source` `project` or `watcher`). Each change is
-  recorded in the project's history.
+- **Budget.** A project spends at most its hourly Linear budget (default 600),
+  counted on the bus so a restart or takeover cannot reset it. It covers the
+  watcher, project status and health, and agent writes made as the ClawBridge
+  app; past it, writes are queued ([Queued writes](#queued-writes)) and reads
+  are refused with when to retry. The watcher's own `--budget` (1 to 600)
+  applies when the project sets none. The project owner sets the project's own
+  with `clawbridge project linear-budget set N`, from 1 to the server's ceiling
+  (`CLAWBRIDGE_LINEAR_BUDGET_MAX`, default 2000); it wins over `--budget` and the
+  server's `CLAWBRIDGE_LINEAR_BUDGET` from the next call, and `project
+  linear-budget clear` removes it. The CLI says what share of the app's 5000 an
+  hour that is: other projects on the server share it, and the ceiling bounds
+  each project, not their sum. Any member reads it with `project linear-budget
+  show` (`budget_limit`, and `budget_source` `project` or `watcher`). Each
+  change is recorded in the project's history. `watch-budget` is the old name.
 - `clawbridge doctor` warns when assigned issues are watched but no watcher runs.
 - **On a hosted server with its own watcher** (`CLAWBRIDGE_WATCH_INTERVAL`,
   docs/operations/deployment.md), the server watches every bound project as the
   ClawBridge app, and also applies pending claim markers, within the server's
-  budget (`CLAWBRIDGE_WATCH_BUDGET`, default 200). A client `linear watch`
+  budget (`CLAWBRIDGE_LINEAR_BUDGET`, default 600). A client `linear watch`
   is then refused until the server has not ticked for 10 minutes.
 
 ### Claim markers

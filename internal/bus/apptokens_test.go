@@ -36,7 +36,7 @@ func TestAppIdentitySchemaNineMigratesAVersionEightStore(t *testing.T) {
 	}
 	defer s.Close()
 	var version, tables int
-	if err = s.db.QueryRow(`PRAGMA user_version`).Scan(&version); err != nil || version != 41 {
+	if err = s.db.QueryRow(`PRAGMA user_version`).Scan(&version); err != nil || version != 42 {
 		t.Fatal(version, err)
 	}
 	if err = s.db.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='linear_app_tokens'`).Scan(&tables); err != nil || tables != 1 {

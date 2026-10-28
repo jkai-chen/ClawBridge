@@ -530,7 +530,7 @@ func NewHandlerWithOptions(store Executor, verifier Verifier, o HandlerOptions) 
 		}
 		var result bus.Result
 		var err error
-		if request.Operation == "linear_write" || request.Operation == "linear_app_status" || request.Operation == "linear_app_states" || request.Operation == "linear_app_project_status" || request.Operation == "linear_app_project_status_set" || request.Operation == "linear_app_subscribers_backfill" {
+		if request.Operation == "linear_write" || request.Operation == "linear_app_status" || request.Operation == "linear_app_states" || request.Operation == "linear_app_project_status" || request.Operation == "linear_app_project_status_set" || request.Operation == "linear_app_subscribers_backfill" || request.Operation == "linear_write_status" {
 			result, err = writer.Execute(r.Context(), verified, request)
 		} else if bound, ok := store.(IdentityExecutor); ok {
 			result, err = bound.ExecuteAsIdentity(ctx, verified, request)
@@ -699,6 +699,7 @@ func Run(ctx context.Context, args []string) error {
 	defer store.Close()
 	store.SetProjectFlowProven(settings.ProjectFlowProven)
 	store.SetIssueSubscribersProven(settings.IssueSubscribersProven)
+	store.SetLinearBudgetMax(watch.budgetMax)
 	writer, err := appWriter(store)
 	if err != nil {
 		return err
@@ -716,6 +717,11 @@ func Run(ctx context.Context, args []string) error {
 	options.Streams = NewStreamHub()
 	go options.Streams.Listen(ctx, dsn)
 	go runSweeper(ctx, store, sweepEvery)
+	// The Linear write outbox: queued app writes are sent as Linear and the
+	// project's cap allow.
+	if writer != nil && store.OutboxAvailable() {
+		go writer.runOutbox(ctx, outboxEvery)
+	}
 	// A Linear write the server runs as the app may take up to a minute. A
 	// stream clears its own deadlines.
 	srv := &http.Server{Addr: settings.Listen, Handler: NewHandlerWithOptions(store, verifier, options), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 20 * time.Second, WriteTimeout: 80 * time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 24 << 10}

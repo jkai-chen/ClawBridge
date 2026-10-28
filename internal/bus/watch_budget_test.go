@@ -18,7 +18,7 @@ func TestProjectWatchBudget(t *testing.T) {
 		t.Fatal("no lease, no override:", got)
 	}
 	w := newWatchHarness(t)
-	if got := status(w.harness); got["budget_source"] != "watcher" || got["budget_limit"] != 200 || got["watch_budget"] != nil {
+	if got := status(w.harness); got["budget_source"] != "watcher" || got["budget_limit"] != LinearBudgetDefault || got["watch_budget"] != nil {
 		t.Fatal("the watcher's default:", got)
 	}
 	set := w.call("comment_watch_budget_set", "", map[string]any{"watch_budget": 5}).(map[string]any)
@@ -49,7 +49,7 @@ func TestProjectWatchBudget(t *testing.T) {
 	}
 	for name, a := range map[string]map[string]any{
 		"zero":     {"watch_budget": 0},
-		"over":     {"watch_budget": watchMaxBudget + 1},
+		"over":     {"watch_budget": LinearBudgetCeiling + 1},
 		"negative": {"watch_budget": -1},
 		"text":     {"watch_budget": "100"},
 		"missing":  {},
@@ -58,8 +58,13 @@ func TestProjectWatchBudget(t *testing.T) {
 			t.Errorf("%s: %v", name, e)
 		}
 	}
-	if got := w.call("comment_watch_budget_set", "", map[string]any{"watch_budget": watchMaxBudget}).(map[string]any); got["budget_limit"] != watchMaxBudget {
-		t.Fatal("the maximum:", got)
+	// An owner may raise it to the operator's ceiling (R2), not past it.
+	if got := w.call("comment_watch_budget_set", "", map[string]any{"watch_budget": LinearBudgetCeiling}).(map[string]any); got["budget_limit"] != LinearBudgetCeiling {
+		t.Fatal("the ceiling:", got)
+	}
+	w.s.SetLinearBudgetMax(900)
+	if _, e := w.s.Execute(context.Background(), w.request("comment_watch_budget_set", "", map[string]any{"watch_budget": 901})); e == nil || !strings.Contains(e.Error(), "1–900") {
+		t.Fatal("a raise past the operator's ceiling:", e)
 	}
 	if got := w.actions("watch_budget"); strings.Join(got, ",") != "comment_watch_budget_set,comment_watch_budget_set,comment_watch_budget_set" {
 		t.Fatalf("history %v", got)

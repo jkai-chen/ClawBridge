@@ -447,6 +447,9 @@ func parseLinear(command string, args []string, stderr io.Writer) (linearFlags, 
 		f.StringVar(&v.project, "linear-project", "", "set|enable|disable: the bound Linear project UUID")
 		f.StringVar(&v.policyFile, "file", "", "set: JSON file {\"enabled\": true, \"weekly\": false, \"stalled_days\": 5, ...}")
 		f.Int64Var(&v.revision, "expected-revision", -1, "set|enable|disable: the project's health revision you last read (0 for a new one)")
+	case "write-status":
+		// Your writes queued on the server, or one by its operation_id.
+		min, max = 0, 1
 	case "comment":
 		write()
 		f.StringVar(&v.bodyFile, "body-file", "", "bounded UTF-8 comment file")
@@ -469,7 +472,7 @@ func parseLinear(command string, args []string, stderr io.Writer) (linearFlags, 
 	if len(pos) < min || len(pos) > max {
 		return v, nil, errors.New("invalid Linear positional arguments")
 	}
-	needsProfile := command != "profiles" && command != "connect" && command != "login" && command != "import" && command != "binding" && command != "unlink" && command != "label-policy" && command != "kind" && command != "status-policy" && command != "closes" && command != "doc-policy" && command != "health" && command != "project-flow" && command != "project-status" && command != "display-name" && command != "admin" && command != "subscribers"
+	needsProfile := command != "profiles" && command != "connect" && command != "login" && command != "import" && command != "binding" && command != "unlink" && command != "label-policy" && command != "kind" && command != "status-policy" && command != "closes" && command != "doc-policy" && command != "health" && command != "project-flow" && command != "project-status" && command != "display-name" && command != "admin" && command != "subscribers" && command != "write-status"
 	if needsProfile && !validLinearProfile(v.profile) {
 		return v, nil, errors.New("select --profile with the opaque ID from linear profiles")
 	}
@@ -916,6 +919,10 @@ func runLinear(ctx context.Context, flags Config, args []string, stdout, stderr 
 		// A hosted server writing as the ClawBridge app may take a minute.
 		cancel()
 		bounded, cancel = context.WithTimeout(ctx, linearboard.WriteTimeout)
+		if !v.statusSet {
+			// A write that can't go now may be queued on the server.
+			bounded = linearboard.AcceptQueued(bounded)
+		}
 	}
 	if command == "watch" {
 		// The watcher runs until interrupted; each poll bounds itself.
@@ -1048,6 +1055,14 @@ func runLinear(ctx context.Context, flags Config, args []string, stdout, stderr 
 	service := newLinearService(directory, v.profile, manager, executor, scope.Args["linear_authority"].(string))
 	var data any
 	switch command {
+	case "write-status":
+		args := map[string]any{"instance": scope.Args["instance"]}
+		if len(pos) == 1 {
+			args["operation_id"] = pos[0]
+		}
+		var r bus.Result
+		r, err = executor.Execute(bounded, bus.Request{Operation: "linear_write_status", Workspace: scope.Workspace, Project: scope.Project, Session: scope.Session, Args: args})
+		data = r.Data
 	case "binding":
 		data, err = service.BindingV2(bounded, scope)
 	case "link":
@@ -1309,6 +1324,9 @@ func runLinear(ctx context.Context, flags Config, args []string, stdout, stderr 
 			}
 		}
 		return err
+	}
+	if q, ok := data.(map[string]any); ok && q["outcome"] == "queued" {
+		_, _ = fmt.Fprintf(stderr, "queued on the server (%v): not sent yet. Your session is told when it is; `clawbridge linear write-status %v` shows it. Don't retry with a new --operation-id.\n", q["reason"], q["operation_id"])
 	}
 	return emit(data)
 }

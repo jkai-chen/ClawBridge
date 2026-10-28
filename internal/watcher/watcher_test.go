@@ -37,9 +37,17 @@ const (
 // fakeLinear is Linear as the app sees it: two issues in the bound team,
 // one in another team, comments, labels, and GraphQL answers.
 type fakeLinear struct {
-	comments  []linearprovider.Comment
-	labelled  []string
-	delegated []string
+	// subscribeTeam and subscribeMembers answer the subscribe pass's issue
+	// read (no team: no issue); subscribeClass answers SubscribeIssue by
+	// email or user ID (default subscribed), and subscribed records each.
+	subscribeTeam    string
+	subscribeMembers []string
+	subscribeErr     error
+	subscribeClass   map[string]string
+	subscribed       []string
+	comments         []linearprovider.Comment
+	labelled         []string
+	delegated        []string
 	// delegatedMore makes every delegated page say there is another.
 	delegatedMore bool
 	history       map[string][]map[string]any
@@ -226,6 +234,14 @@ func (a fakeApp) Open(context.Context, bool) (linearboard.Provider, error) {
 func (a fakeApp) HasScope(_ context.Context, scope string) (bool, error) {
 	return scope != "write" || !a.f.noWrite, nil
 }
+func (a fakeApp) SubscribeIssue(_ context.Context, issue, email, user string) (string, error) {
+	who := email + user
+	a.f.subscribed = append(a.f.subscribed, issue+" "+who)
+	if class, ok := a.f.subscribeClass[who]; ok {
+		return class, nil
+	}
+	return "subscribed", nil
+}
 func (a fakeApp) Identity(context.Context) (AppIdentity, error) {
 	return AppIdentity{AppUserID: appUser, LinearOrgID: "org"}, nil
 }
@@ -271,6 +287,19 @@ func (a fakeApp) GraphQL(_ context.Context, query string, vars map[string]any, o
 		data = map[string]any{"project": map[string]any{"id": vars["id"], "status": a.f.status(a.f.projectStatus)}}
 	case healthActivityQuery:
 		data = map[string]any{"issue": a.f.activity[vars["id"].(string)]}
+	case subscribeCheckQuery:
+		if a.f.subscribeErr != nil {
+			return a.f.subscribeErr
+		}
+		if a.f.subscribeTeam == "" {
+			data = map[string]any{"issue": nil}
+			break
+		}
+		nodes := []any{}
+		for _, id := range a.f.subscribeMembers {
+			nodes = append(nodes, map[string]any{"id": id})
+		}
+		data = map[string]any{"issue": map[string]any{"id": vars["id"], "team": map[string]any{"id": a.f.subscribeTeam, "members": map[string]any{"nodes": nodes}}}}
 	case dispatchIssueQuery, dispatchIssueTextQuery:
 		issue, ok := a.f.dispatchIssues[vars["id"].(string)]
 		if !ok {

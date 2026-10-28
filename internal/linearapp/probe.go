@@ -15,8 +15,8 @@ import (
 	"clawbridge/internal/linearprovider"
 )
 
-// projectUpdateProbe is the only mutation the app ever sends outside the
-// board write path: a project update for a project that does not exist, so
+// projectUpdateProbe is, with issueSubscribeMutation, one of the two
+// mutations the app sends outside the MCP board write path: a project update for a project that does not exist, so
 // Linear's answer tells whether the app's scopes allow project updates
 // without anything being created.
 const projectUpdateProbe = `mutation ProbeProjectUpdate($input: ProjectUpdateCreateInput!) { projectUpdateCreate(input: $input) { success projectUpdate { id } } }`

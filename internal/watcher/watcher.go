@@ -36,6 +36,10 @@ type App interface {
 	GraphQL(ctx context.Context, query string, variables map[string]any, out any) error
 	// Identity is the app's Linear user.
 	Identity(ctx context.Context) (AppIdentity, error)
+	// SubscribeIssue adds one subscriber to one issue as the app, the owner
+	// by email or anyone else by ID; it answers a class, never Linear's text
+	// (linearapp.SubscribeIssue).
+	SubscribeIssue(ctx context.Context, issue, email, user string) (string, error)
 	// HasScope is whether the app's token in use was granted scope.
 	HasScope(ctx context.Context, scope string) (bool, error)
 }
@@ -90,7 +94,9 @@ type ProjectTick struct {
 	Health    []HealthRun             `json:"health,omitempty"`
 	Docs      *DocPoll                `json:"docs,omitempty"`
 	Dispatch  *DispatchRun            `json:"dispatch,omitempty"`
-	Error     string                  `json:"error,omitempty"`
+	// Subscribers is the issue subscribers pass (ISSUE-SUBSCRIBERS-PLAN).
+	Subscribers *SubscribePass `json:"subscribers,omitempty"`
+	Error       string         `json:"error,omitempty"`
 }
 
 // Tick serves up to TickProjects projects, the longest since their last
@@ -137,6 +143,9 @@ func (w *Watcher) project(ctx context.Context, pid string, healthLeft int) Proje
 			poll, err := w.intake(ctx, svc, scope, pid, fence)
 			tick.Intake = poll
 			if err != nil {
+				return err
+			}
+			if tick.Subscribers, err = w.subscribers(ctx, svc, scope, pid, fence); err != nil {
 				return err
 			}
 			if tick.Health, err = w.health(ctx, svc, scope, pid, fence, healthLeft, false); err != nil {
@@ -243,6 +252,9 @@ func logTick(pid, kind string, tick ProjectTick) {
 			stopped = "done"
 		}
 		logf("watcher: markers: project %s (%s): applied %d, left %d, stopped %s, charged %d", pid, kind, len(c.Markers), c.MarkersLeft, stopped, c.MarkersCharged)
+	}
+	if p := tick.Subscribers; p != nil && (p.Done+p.Skipped+p.Retry > 0 || p.Left > 0) {
+		logf("watcher: subscribers: project %s (%s): done %d, skipped %d, retry %d, left %d", pid, kind, p.Done, p.Skipped, p.Retry, p.Left)
 	}
 	if tick.Error != "" {
 		logf("watcher: %s: project %s failed: %s", kind, pid, tick.Error)

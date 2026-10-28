@@ -15,6 +15,7 @@ import (
 	"regexp"
 	"slices"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -196,6 +197,7 @@ func Run(ctx context.Context, in Input, executor Executor) Report {
 		checkLabelPolicy(ctx, executor, wid, pid, add)
 		if in.Config.Mode == "cloud" {
 			checkLinearApp(ctx, executor, wid, pid, add)
+			checkIssueSubscribers(ctx, executor, wid, pid, add)
 		}
 		// The dispatcher needs the task board, so its owner is a Linear
 		// user; its model mode is shown to a project owner only.
@@ -769,6 +771,43 @@ func checkLabelPolicy(ctx context.Context, executor Executor, wid, pid string, a
 			return 0
 		}
 		check.Message = fmt.Sprintf("Approved label list revision %v, set by %v at %v: %d labels, %d renames.", m["revision"], m["updated_by"], m["updated_at"], size(m["labels"]), size(m["renames"]))
+	}
+	add(check)
+}
+
+// checkIssueSubscribers says who hears of the issues agents create or claim
+// as the ClawBridge app (live/ISSUE-SUBSCRIBERS-PLAN.md): the hint for a
+// board linked before the setting existed, and Linear refusing the owner.
+// It reads only, and never shows an email (B4).
+func checkIssueSubscribers(ctx context.Context, executor Executor, wid, pid string, add func(Check)) {
+	check := Check{ID: "linear.issue_subscribers", Title: "Who hears of agents' issues", Status: Pass}
+	r, err := executor.Execute(ctx, bus.Request{Operation: "issue_subscribers_get", Workspace: wid, Project: pid, Args: map[string]any{}})
+	m, _ := r.Data.(map[string]any)
+	rows, _ := m["rows"].(map[string]any)
+	failed := 0
+	if rows != nil {
+		failed, _ = strconv.Atoi(fmt.Sprint(rows["failed"]))
+	}
+	switch {
+	case err != nil || m == nil:
+		// A server older than the setting has nothing to say.
+		check.Message = "This server doesn't subscribe anyone to agents' issues."
+	case m["proven"] != true:
+		check.Message = "This server doesn't subscribe anyone to agents' issues yet; its operator turns it on after a live check."
+	case m["enabled"] != true:
+		check.Status = Warn
+		check.Message = "Issues agents create or claim notify nobody: their Linear author is the ClawBridge app."
+		check.Action = "The project owner or a lead turns it on with `clawbridge linear subscribers on`."
+	case m["owner_not_in_linear_until"] != nil:
+		check.Status = Warn
+		check.Message = "Linear knows no user by the project owner's email, so the owner isn't subscribed to agents' issues."
+		check.Action = "Add the owner's Linear user with `clawbridge linear subscribers add LINEAR_USER_UUID`."
+	case failed > 0:
+		check.Status = Warn
+		check.Message = fmt.Sprintf("%d agent issues couldn't be subscribed after several tries.", failed)
+		check.Action = "`clawbridge linear subscribers show` lists the counts; the ClawBridge Linear app's status may say why."
+	default:
+		check.Message = "Agents' issues notify the project's people."
 	}
 	add(check)
 }

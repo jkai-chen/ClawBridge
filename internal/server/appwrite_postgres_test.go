@@ -53,6 +53,10 @@ type awLinearAPI struct {
 	mu             sync.Mutex
 	mints          int
 	workflowStates int
+	// backfill answers the subscribers backfill's issues query, and
+	// backfillVars records what it was asked.
+	backfill     []any
+	backfillVars []map[string]any
 }
 
 func (l *awLinearAPI) workflowReads() int {
@@ -80,6 +84,12 @@ func (l *awLinearAPI) RoundTrip(r *http.Request) (*http.Response, error) {
 	case "https://api.linear.app/graphql":
 		if r.Header.Get("Authorization") != "Bearer "+awToken {
 			return reply(401, map[string]any{})
+		}
+		if strings.Contains(body, "BackfillIssues") {
+			var sent struct{ Variables map[string]any }
+			_ = json.Unmarshal([]byte(body), &sent)
+			l.backfillVars = append(l.backfillVars, sent.Variables)
+			return reply(200, map[string]any{"data": map[string]any{"issues": map[string]any{"nodes": l.backfill, "pageInfo": map[string]any{"hasNextPage": false}}}})
 		}
 		if strings.Contains(body, "workflowStates") {
 			l.workflowStates++

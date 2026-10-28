@@ -202,6 +202,8 @@ type linearFlags struct {
 	kindGroup, kindValues                                                                                                string
 	kindCanary, kindSkipCanary                                                                                           bool
 	priority                                                                                                             string
+	subscribersSince                                                                                                     string
+	subscribersApply                                                                                                     bool
 }
 type repeatedIDs []string
 
@@ -417,6 +419,10 @@ func parseLinear(command string, args []string, stderr io.Writer) (linearFlags, 
 		f.BoolVar(&v.kindCanary, "canary", false, "apply --confirm: apply only the first project that changes (the first apply of a setting must be one)")
 		f.BoolVar(&v.kindSkipCanary, "skip-canary", false, "apply --confirm: go on without a canary, when one already proved these same labels")
 		profile()
+	case "subscribers":
+		f.StringVar(&v.subscribersSince, "since", "", "backfill: the date (YYYY-MM-DD) or RFC 3339 time from which agents' issues are found")
+		f.BoolVar(&v.subscribersApply, "apply", false, "backfill: queue what the dry run lists")
+		min, max = 0, 1
 	case "label-policy":
 		f.StringVar(&v.policyFile, "file", "", "set: JSON file {\"labels\": [names], \"renames\": {old: new}}")
 		f.Int64Var(&v.revision, "expected-revision", -1, "set: the policy revision you last read")
@@ -463,7 +469,7 @@ func parseLinear(command string, args []string, stderr io.Writer) (linearFlags, 
 	if len(pos) < min || len(pos) > max {
 		return v, nil, errors.New("invalid Linear positional arguments")
 	}
-	needsProfile := command != "profiles" && command != "connect" && command != "login" && command != "import" && command != "binding" && command != "unlink" && command != "label-policy" && command != "kind" && command != "status-policy" && command != "closes" && command != "doc-policy" && command != "health" && command != "project-flow" && command != "project-status" && command != "display-name" && command != "admin"
+	needsProfile := command != "profiles" && command != "connect" && command != "login" && command != "import" && command != "binding" && command != "unlink" && command != "label-policy" && command != "kind" && command != "status-policy" && command != "closes" && command != "doc-policy" && command != "health" && command != "project-flow" && command != "project-status" && command != "display-name" && command != "admin" && command != "subscribers"
 	if needsProfile && !validLinearProfile(v.profile) {
 		return v, nil, errors.New("select --profile with the opaque ID from linear profiles")
 	}
@@ -830,7 +836,7 @@ func linearWriteInput(command string, v linearFlags, pos []string) (linearboard.
 
 func runLinear(ctx context.Context, flags Config, args []string, stdout, stderr io.Writer) error {
 	if len(args) == 0 || len(args) == 1 && (args[0] == "--help" || args[0] == "-h" || args[0] == "help") {
-		_, err := io.WriteString(stdout, "clawbridge linear connect|import|profiles|status|logout|teams|projects|binding|link|seed-docs|unlink|names-refresh|context|issues|issue|states|labels|members|create|update|comment|relation|watch\nProject owner only: label create|rename, project create, initiative create|add-project, label-policy show|set, status-policy show|set, doc-policy set, health set|enable|disable, admin audit-replay.\nProject kinds (a project-label group such as Type): kind show (any member); kind set --values A,B,C [--group NAME] [--team UUID] --expected-revision N, then kind seed --operation-id ID --profile ID [--confirm] makes or adopts its project labels, and kind apply --file F --operation-id ID --profile ID [--confirm --canary] sets each project's kind (project owner, own terminal).\nShown names: names-refresh (project owner or lead) stores the bound teams' and projects' current names, as Linear gives them to you.\nWho closes issues: closes show (any member); closes set (project owner or lead, never a session).\nProject status follows the work (status policy project_flow): project-flow resume --linear-project UUID (project owner or lead, never a session) clears a hold.\nProject health (any member): health show.\nLinear views (any member): view list [--team UUID] [--type issue|project], view show ID. Project owner, own terminal, with your Linear API key: view create --team UUID [--kind project]|update ID|delete ID|apply --file F [--adopt NAME].\nLinear documents (any member): doc list|get, initiative show, doc-policy show. Project owner or lead: doc publish FILE.\nYour name in agent markers: display-name set NAME|clear|capture --profile ID.\nYour Linear API key, for view writes (project owner, own terminal): key set|status|remove --profile ID.\nUse COMMAND --help for explicit flags. Token import accepts --token-stdin only.\n")
+		_, err := io.WriteString(stdout, "clawbridge linear connect|import|profiles|status|logout|teams|projects|binding|link|seed-docs|unlink|names-refresh|context|issues|issue|states|labels|members|create|update|comment|relation|watch\nProject owner only: label create|rename, project create, initiative create|add-project, label-policy show|set, status-policy show|set, doc-policy set, health set|enable|disable, admin audit-replay.\nProject kinds (a project-label group such as Type): kind show (any member); kind set --values A,B,C [--group NAME] [--team UUID] --expected-revision N, then kind seed --operation-id ID --profile ID [--confirm] makes or adopts its project labels, and kind apply --file F --operation-id ID --profile ID [--confirm --canary] sets each project's kind (project owner, own terminal).\nShown names: names-refresh (project owner or lead) stores the bound teams' and projects' current names, as Linear gives them to you.\nWho closes issues: closes show (any member); closes set (project owner or lead, never a session).\nProject status follows the work (status policy project_flow): project-flow resume --linear-project UUID (project owner or lead, never a session) clears a hold.\nProject health (any member): health show.\nWho hears of agents' issues (hosted, as the app): subscribers show (any member); subscribers on|off, owner on|off, add|remove LINEAR_USER_UUID, backfill --since DATE [--apply] (project owner or lead, never a session).\nLinear views (any member): view list [--team UUID] [--type issue|project], view show ID. Project owner, own terminal, with your Linear API key: view create --team UUID [--kind project]|update ID|delete ID|apply --file F [--adopt NAME].\nLinear documents (any member): doc list|get, initiative show, doc-policy show. Project owner or lead: doc publish FILE.\nYour name in agent markers: display-name set NAME|clear|capture --profile ID.\nYour Linear API key, for view writes (project owner, own terminal): key set|status|remove --profile ID.\nUse COMMAND --help for explicit flags. Token import accepts --token-stdin only.\n")
 		return err
 	}
 	command := args[0]
@@ -844,7 +850,7 @@ func runLinear(ctx context.Context, flags Config, args []string, stdout, stderr 
 		parseArgs = parseArgs[1:]
 	}
 	adminAction := ""
-	if (command == "key" || command == "view" || command == "label" || command == "project" || command == "initiative" || command == "doc" || command == "doc-policy" || command == "label-policy" || command == "kind" || command == "status-policy" || command == "closes" || command == "health" || command == "project-flow" || command == "display-name" || command == "admin") && len(parseArgs) > 0 && parseArgs[0] != "--help" && parseArgs[0] != "-h" {
+	if (command == "key" || command == "view" || command == "label" || command == "project" || command == "initiative" || command == "doc" || command == "doc-policy" || command == "label-policy" || command == "kind" || command == "status-policy" || command == "closes" || command == "health" || command == "project-flow" || command == "display-name" || command == "admin" || command == "subscribers") && len(parseArgs) > 0 && parseArgs[0] != "--help" && parseArgs[0] != "-h" {
 		adminAction = parseArgs[0]
 		parseArgs = parseArgs[1:]
 	}
@@ -863,8 +869,9 @@ func runLinear(ctx context.Context, flags Config, args []string, stdout, stderr 
 		command == "key" && adminAction != "set" && adminAction != "status" && adminAction != "remove",
 		command == "display-name" && adminAction != "set" && adminAction != "clear" && adminAction != "capture",
 		command == "view" && adminAction != "list" && adminAction != "show" && adminAction != "create" && adminAction != "update" && adminAction != "delete" && adminAction != "apply",
+		command == "subscribers" && adminAction != "show" && adminAction != "on" && adminAction != "off" && adminAction != "owner" && adminAction != "add" && adminAction != "remove" && adminAction != "backfill",
 		command == "admin" && adminAction != "audit-replay":
-		return errors.New("use linear view list|show|create|update|delete|apply, doc list|get|publish, initiative show, doc-policy show|set, label create|rename, project create|status [set], initiative create|add-project, label-policy show|set, kind show|set|seed|apply, status-policy show|set, closes show|set, project-flow resume, health show|set|enable|disable, display-name set|clear|capture, key set|status|remove, or admin audit-replay")
+		return errors.New("use linear view list|show|create|update|delete|apply, subscribers show|on|off|owner|add|remove|backfill, doc list|get|publish, initiative show, doc-policy show|set, label create|rename, project create|status [set], initiative create|add-project, label-policy show|set, kind show|set|seed|apply, status-policy show|set, closes show|set, project-flow resume, health show|set|enable|disable, display-name set|clear|capture, key set|status|remove, or admin audit-replay")
 	}
 	parseAs := command
 	if command == "initiative" && adminAction == "show" {
@@ -1168,6 +1175,31 @@ func runLinear(ctx context.Context, flags Config, args []string, stdout, stderr 
 		data, err = service.Admin(bounded, scope, in)
 	case "admin":
 		data, err = service.AdminAuditReplay(bounded, scope, v.operation)
+	case "subscribers":
+		if adminAction == "show" {
+			data, err = service.IssueSubscribers(bounded, scope)
+			break
+		}
+		// Who is told of agents' work is a person's choice: never a
+		// session's.
+		if flags.Session != "" {
+			return errors.New("issue subscribers are set without --session; the project owner or a lead runs this in their own terminal")
+		}
+		scope.Session = ""
+		delete(scope.Args, "instance")
+		if adminAction == "backfill" {
+			since, e := subscribersSince(v.subscribersSince)
+			if e != nil {
+				return e
+			}
+			data, err = service.SubscribersBackfill(bounded, scope, since, v.subscribersApply)
+			break
+		}
+		value := ""
+		if len(pos) == 1 {
+			value = pos[0]
+		}
+		data, err = service.ChangeIssueSubscribers(bounded, scope, adminAction, value)
 	case "kind":
 		if adminAction == "show" {
 			data, err = service.ProjectKind(bounded, scope)
@@ -1426,4 +1458,19 @@ func sourceGit(dir string, trimmed bool, args ...string) (string, error) {
 		return strings.TrimSpace(string(out)), err
 	}
 	return string(out), err
+}
+
+// subscribersSince reads backfill's --since: a date, taken as its start in
+// UTC, or an RFC 3339 time.
+func subscribersSince(raw string) (string, error) {
+	if raw == "" {
+		return "", errors.New("subscribers backfill requires --since DATE")
+	}
+	if t, err := time.Parse("2006-01-02", raw); err == nil {
+		return t.UTC().Format(time.RFC3339), nil
+	}
+	if t, err := time.Parse(time.RFC3339, raw); err == nil {
+		return t.UTC().Format(time.RFC3339), nil
+	}
+	return "", errors.New("--since is a date (YYYY-MM-DD) or an RFC 3339 time")
 }

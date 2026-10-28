@@ -94,7 +94,7 @@ func TestPostgresLabelPolicySchemaEightMigratesAVersionSevenStore(t *testing.T) 
 	}
 	s.Close()
 	var version, tables int
-	if err = admin.QueryRowContext(ctx, `SELECT MAX(version) FROM `+schema+`.clawbridge_schema`).Scan(&version); err != nil || version != 40 {
+	if err = admin.QueryRowContext(ctx, `SELECT MAX(version) FROM `+schema+`.clawbridge_schema`).Scan(&version); err != nil || version != 41 {
 		t.Fatal(version, err)
 	}
 	if err = admin.QueryRowContext(ctx, `SELECT COUNT(*) FROM information_schema.tables WHERE table_schema=$1 AND table_name='linear_label_policy'`, schema).Scan(&tables); err != nil || tables != 1 {

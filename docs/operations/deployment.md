@@ -426,6 +426,9 @@ CLAWBRIDGE_BOOTSTRAP_OWNER=you@example.com
 CLAWBRIDGE_POSTGRES_DATA_PATH=/var/lib/clawbridge-postgres/data
 CLAWBRIDGE_BACKUP_BUCKET=private-clawbridge-backup-bucket
 COMPOSE_PROJECT_NAME=clawbridge
+# Optional gates, each set to 1 only after its live check passes (below); empty or 0 is off.
+# CLAWBRIDGE_PROJECT_FLOW_PROVEN=1
+# CLAWBRIDGE_ISSUE_SUBSCRIBERS_PROVEN=1
 ```
 
 Use a random hexadecimal password so it can be interpolated safely into the
@@ -499,6 +502,38 @@ CLAWBRIDGE_LINEAR_APP_TOKEN_KEY=<32 random bytes, base64>
   has moved a throwaway project by status ID as the app and read it back. The
   flag is read at every run, so restarting without it stops all project
   moves; policies keep `project_flow` on and resume when it returns.
+- **Issue subscribers are off until proven.** Projects can subscribe their
+  people to the issues agents create or claim (see [Linear](../linear.md)). The
+  server queues and applies nothing, and refuses to turn the setting on, until
+  it runs with `serve --issue-subscribers-proven` or
+  `CLAWBRIDGE_ISSUE_SUBSCRIBERS_PROVEN=1`. Set that only after the live check
+  passes: the app subscribes **another** person to a fixture issue
+  (`issueSubscribe`, the one board write the app sends as GraphQL rather than
+  through Linear's MCP) and the subscription is read back. Restarting without
+  the flag stops every pass; settings and queued issues wait.
+
+  ```sh
+  printf '%s\n' "$OWNER_EMAIL" | ... run --rm --no-deps -T api operator linear-app-probe --confirm --subscribe \
+        --issue ISSUE_UUID --team TEAM_UUID --email-stdin [--user LINEAR_USER_UUID] [--dry-run]
+  ```
+
+  `--email-stdin` reads the owner's email from one line of stdin, so it isn't on the host's command line or in its
+  shell history (`--email OWNER_EMAIL` also works). The probe never prints the email.
+
+  - **The fixture.** The owner creates one issue by hand in a test team, titled
+    exactly `ClawBridge subscribe probe, will be deleted`, then **unsubscribes
+    themselves from it in Linear** (Linear subscribes the creator, which would
+    make the email call a no-op). The probe refuses, sending nothing, any other
+    title, another team than `--team`, a comment, or any subscriber at all.
+    `--dry-run` stops after that check.
+  - **The run.** It subscribes `--email` (and `--user`) as the app, then reads
+    the subscribers back. It prints each call's class, whether each person is
+    there by ID, the issue's and team's IDs, and `pass`, never the email.
+  - **Reading it.** Only `pass: true` lets the flag be set. A `scope` or
+    `refused` class means Linear won't let the app subscribe someone else, so
+    the feature stays off.
+  - **Cleanup.** It never unsubscribes anyone: the owner deletes the fixture
+    issue by its printed ID.
 - **Timeouts.** A write the server makes can take up to a minute, and it
   finishes even if the client disconnects. Keep the proxy and load-balancer
   timeouts for `/v1/execute` at 75 seconds or more.

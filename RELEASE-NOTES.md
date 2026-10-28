@@ -1,12 +1,12 @@
 # ClawBridge v0.3.6 (unreleased)
 
-**Schema 28 → 37.**
-- The server migrates to schema 37 on its first start: 29, the new-device alerts' events and acknowledgements; 30, a
+**Schema 28 → 38.**
+- The server migrates to schema 38 on its first start: 29, the new-device alerts' events and acknowledgements; 30, a
   project's own watch budget; 31, the device an invite was made from; 32, the workspace's device idle limit; 33,
   the Linear team and project names stored with a project's task board binding; 34, the date from which a project's
   threads are readable; 35, the message queue's leases, acks and per-recipient numbering; 36, the message stream's
-  tickets; 37, the Linear issue views ClawBridge wrote. The upgrade numbers existing deliveries, about 2–4 s per
-  million, and counts what was read as handled.
+  tickets; 37, the Linear issue views ClawBridge wrote; 38, project views among them. The upgrade numbers existing
+  deliveries, about 2–4 s per million, and counts what was read as handled.
 - **One-way:** v0.3.5 and older refuse a database newer than schema 28. Take a dump before upgrading; to go back,
   restore it with the v0.3.5 image (docs/operations/deployment.md).
 
@@ -295,7 +295,10 @@
     someone made in Linear is taken over only with `--adopt` and only if exactly one has the name; the preview shows
     its current filter, creator and last change, and history records `view_adopted` with the old filter's digest. The
     confirm carries the preview's `plan_sha256`, and a plan that changed since is refused.
-  - Schema 37 stores the views.
+  - **Project views (phase 3e):** `view create --kind project` and `"kind": "project"` in a view-set file make a shared
+    team view of projects, filtered by project labels: each a live choice of a single-select group of that team or
+    the workspace, proven by ID with the owner's key. Agents list project views but don't filter by them yet.
+  - Schema 37 stores the views, and schema 38 lets a stored view be a project view.
 
 ## The command line
 

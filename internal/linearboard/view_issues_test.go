@@ -23,7 +23,7 @@ func viewRow(id string, priority *int, labels ...string) linearprovider.IssueV2 
 
 func storeView(t *testing.T, a *viewAuthority, filter string, bound bool) {
 	t.Helper()
-	a.stored = map[string]any{"view_id": vwView, "team_id": teamID, "name": "Urgent bugs", "filter": filter, "filter_sha256": mustFilterSHA(t, filter), "filter_as_of": "2026-10-27T21:00:00.000Z", "team_bound": bound}
+	a.stored = map[string]any{"view_id": vwView, "kind": "issue", "team_id": teamID, "name": "Urgent bugs", "filter": filter, "filter_sha256": mustFilterSHA(t, filter), "filter_as_of": "2026-10-27T21:00:00.000Z", "team_bound": bound}
 }
 
 // K3: issues by a view are the plain issues rows the filter matches, on the

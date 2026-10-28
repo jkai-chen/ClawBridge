@@ -28,7 +28,7 @@ func OpenPostgres(ctx context.Context, dsn, bootstrapOwner string) (*Store, erro
 }
 
 // postgresSchemaVersion is the hosted schema version this binary writes.
-const postgresSchemaVersion = 37
+const postgresSchemaVersion = 38
 
 // OpenPostgresOperator opens the hosted authority for a host operator's
 // maintenance command. It has no bootstrap owner, so no request run through
@@ -291,6 +291,11 @@ func (s *Store) migratePostgres(ctx context.Context) error {
 	}
 	if version < 37 {
 		if _, err = tx.ExecContext(ctx, linearViewsSchemaV37+`INSERT INTO clawbridge_schema(version) VALUES(37)`); err != nil {
+			return err
+		}
+	}
+	if version < 38 {
+		if _, err = tx.ExecContext(ctx, linearViewsSchemaV38Postgres+`INSERT INTO clawbridge_schema(version) VALUES(38)`); err != nil {
 			return err
 		}
 	}

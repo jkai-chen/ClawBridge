@@ -127,7 +127,7 @@ func (s *Service) ViewDelete(ctx context.Context, scope bus.Request, in ViewDele
 		case e != nil && !errors.Is(e, ErrKeyNotFound):
 			return nil, notDispatched(e)
 		case e == nil:
-			if drift := viewMismatch(cur, in.ViewID, stored.team, stored.name, stored.filter); len(drift) > 0 {
+			if drift := viewMismatch(cur, in.ViewID, stored.team, stored.kind, stored.name, stored.filter); len(drift) > 0 {
 				return nil, refusedBeforeDispatch(fmt.Errorf("the view was changed in Linear since ClawBridge wrote it (%s); nothing was deleted", strings.Join(drift, ", ")))
 			}
 		}

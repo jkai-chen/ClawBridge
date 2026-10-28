@@ -54,7 +54,7 @@ func TestViewApplyPlans(t *testing.T) {
 	s, a, scope := applyTest(t, linearprovider.View{ID: vwView, Name: "Urgent bugs", Kind: "issue", TeamID: teamID})
 	storeView(t, a, `{"priority":{"eq":1}}`, true)
 	// Linear still has the stored view as ClawBridge wrote it.
-	key := &fakeKey{last: KeyView{ID: vwView, Name: "Urgent bugs", TeamID: teamID, Shared: true, Filter: `{"priority":{"eq":1}}`}}
+	key := &fakeKey{last: KeyView{ID: vwView, Name: "Urgent bugs", Kind: "issue", TeamID: teamID, Shared: true, Filter: `{"priority":{"eq":1}}`}}
 	file := viewSet(entry("Urgent bugs", `{"priority":{"eq":1}}`), entry("Open bugs", `{"labels":{"some":{"id":{"eq":"`+vwLabel+`"}}}}`))
 	got, e := s.ViewApply(context.Background(), scope, ViewApplyInput{File: file, OperationID: "set-1"}, key)
 	if e != nil || !got.Preview || got.Refused != 0 || len(got.Entries) != 2 {
@@ -101,7 +101,7 @@ func TestViewApplyAdoption(t *testing.T) {
 	s, a, scope := applyTest(t, hand)
 	old := `{"or":[{"priority":{"eq":1}}]}`
 	key := &fakeKey{back: func(KeyView) (KeyView, error) {
-		return KeyView{ID: vwHand, Name: "Triage", TeamID: teamID, Shared: true, Filter: old, CreatorID: "u-1", CreatorName: "Ada", UpdatedAt: "2026-10-20T10:00:00.000Z"}, nil
+		return KeyView{ID: vwHand, Name: "Triage", Kind: "issue", TeamID: teamID, Shared: true, Filter: old, CreatorID: "u-1", CreatorName: "Ada", UpdatedAt: "2026-10-20T10:00:00.000Z"}, nil
 	}}
 	file := viewSet(entry("Triage", `{"priority":{"eq":1}}`))
 	got, e := s.ViewApply(context.Background(), scope, ViewApplyInput{File: file, OperationID: "set-3"}, key)
@@ -123,7 +123,7 @@ func TestViewApplyAdoption(t *testing.T) {
 	// an adoption with the old filter's digest.
 	key.back = func(v KeyView) (KeyView, error) {
 		if len(key.updates) == 0 {
-			return KeyView{ID: vwHand, Name: "Triage", TeamID: teamID, Shared: true, Filter: old}, nil
+			return KeyView{ID: vwHand, Name: "Triage", Kind: "issue", TeamID: teamID, Shared: true, Filter: old}, nil
 		}
 		return v, nil
 	}
@@ -158,7 +158,7 @@ func TestViewApplyAdoptionNeverCreates(t *testing.T) {
 	reads := 0
 	key = &fakeKey{back: func(v KeyView) (KeyView, error) {
 		reads++
-		return KeyView{ID: vwHand, Name: "Triage", TeamID: teamID, Shared: true, Filter: `{}`}, nil
+		return KeyView{ID: vwHand, Name: "Triage", Kind: "issue", TeamID: teamID, Shared: true, Filter: `{}`}, nil
 	}, err: nil}
 	gone := &goneOnUpdate{fakeKey: key}
 	got, e = confirmApply(t, s, scope, ViewApplyInput{File: file, OperationID: "set-6", Adopt: []string{"Triage"}}, gone)
@@ -169,7 +169,7 @@ func TestViewApplyAdoptionNeverCreates(t *testing.T) {
 
 type goneOnUpdate struct{ *fakeKey }
 
-func (g *goneOnUpdate) UpdateView(_ context.Context, id, _ string, _ json.RawMessage) (KeyView, error) {
+func (g *goneOnUpdate) UpdateView(_ context.Context, id, _, _ string, _ json.RawMessage) (KeyView, error) {
 	g.updates = append(g.updates, id)
 	return KeyView{}, fmt.Errorf("%w: gone", ErrKeyNotFound)
 }
@@ -212,7 +212,7 @@ func TestViewApplyAdoptionTeamAndSharing(t *testing.T) {
 		b := back
 		key := &fakeKey{back: func(KeyView) (KeyView, error) { return b, nil }}
 		got, e := s.ViewApply(context.Background(), scope, ViewApplyInput{File: viewSet(entry("Triage", `{"priority":{"eq":1}}`)), OperationID: "set-7", Adopt: []string{"Triage"}}, key)
-		if e != nil || got.Refused != 1 || !strings.Contains(got.Entries[0].Reason, "isn't a shared view of this team") {
+		if e != nil || got.Refused != 1 || !strings.Contains(got.Entries[0].Reason, "isn't a shared issue view of this team") {
 			t.Fatal(name, got, e)
 		}
 	}

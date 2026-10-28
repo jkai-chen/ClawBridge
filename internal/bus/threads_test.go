@@ -241,7 +241,7 @@ func TestThreadsSchemaStampsExistingProjects(t *testing.T) {
 	var version int
 	var from string
 	s.db.QueryRow(`PRAGMA user_version`).Scan(&version)
-	if err = s.db.QueryRow(`SELECT threads_from FROM projects WHERE slug='p'`).Scan(&from); err != nil || from != layout(at) || version != 37 {
+	if err = s.db.QueryRow(`SELECT threads_from FROM projects WHERE slug='p'`).Scan(&from); err != nil || from != layout(at) || version != 38 {
 		t.Fatal(from, version, err)
 	}
 	h = &harness{t, s}

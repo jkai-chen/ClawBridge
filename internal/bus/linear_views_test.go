@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
@@ -182,7 +183,7 @@ func TestLinearViewTeamLeftTheBinding(t *testing.T) {
 	}
 }
 
-// viewsDowngradeSQLite returns a schema-37 database to schema 36's shape.
+// viewsDowngradeSQLite returns a schema-38 database to schema 36's shape.
 const viewsDowngradeSQLite = "DROP TABLE linear_views;\n"
 
 // viewsDowngradePostgres is viewsDowngradeSQLite for a Postgres schema.
@@ -248,5 +249,73 @@ func TestLinearViewAdoptRecord(t *testing.T) {
 	// It is ClawBridge's now: a second adoption is a conflict, an update works.
 	if err := h.viewErr("linear_view_record", "", map[string]any{"action": "adopt", "view_id": lvView, "team_id": sfTeam, "name": "Other", "filter": lvFilter, "filter_sha256": a["filter_sha256"], "filter_as_of": "2026-10-27T21:01:00.000Z", "agent_filter": "available", "expected_binding_revision": 1, "old_filter_sha256": old}); !strings.Contains(err.Error(), "already recorded") {
 		t.Fatal(err)
+	}
+}
+
+// A project view is recorded with kind project, only as unavailable to
+// agents; an update keeps the kind.
+func TestLinearViewProjectKind(t *testing.T) {
+	h := newHarness(t)
+	h.link(0, []string{cpOne})
+	p := lvRecord("create", lvView, "Review", `{"labels":{"some":{"id":{"in":["`+lvOther+`"]}}}}`, "2026-10-27T21:00:00.000Z", "", 1)
+	p["kind"] = "project"
+	if err := h.viewErr("linear_view_record", "", p); !strings.Contains(err.Error(), "project views") {
+		t.Fatal(err)
+	}
+	p["agent_filter"], p["uses"] = "unavailable", []any{"kind.project"}
+	view := h.call("linear_view_record", "", p).(map[string]any)["view"].(map[string]any)
+	if view["kind"] != "project" || view["agent_filter"] != "unavailable" {
+		t.Fatal(view)
+	}
+	up := lvRecord("update", lvView, "Review", lvFilter, "2026-10-27T21:05:00.000Z", "2026-10-27T21:00:00.000Z", 1)
+	if err := h.viewErr("linear_view_record", "", up); !strings.Contains(err.Error(), "keeps the view's kind") {
+		t.Fatal(err)
+	}
+	bad := lvRecord("create", lvView2, "X", lvFilter, "2026-10-27T21:00:00.000Z", "", 1)
+	bad["kind"] = "initiative"
+	if err := h.viewErr("linear_view_record", "", bad); !strings.Contains(err.Error(), "kind must be") {
+		t.Fatal(err)
+	}
+}
+
+// Schema 38: a schema-37 store holding an issue view upgrades with the row
+// intact, and then accepts a project view, which 37's CHECK refused.
+func TestLinearViewsSchema38Upgrade(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "core.db")
+	s, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	h := &harness{t, s}
+	h.call("workspace_init", "", map[string]any{"mode": "local"})
+	h.call("project_create", "", map[string]any{"slug": "p"})
+	h.link(0, []string{cpOne})
+	h.call("linear_view_record", "", lvRecord("create", lvView, "Urgent bugs", lvFilter, "2026-10-27T21:00:00.000Z", "", 1))
+	before := h.call("linear_view_get", "", map[string]any{"view_id": lvView})
+	// Back to schema 37's table, as a v0.3.6-dev store would have it.
+	v37 := strings.Replace(linearViewsSchemaV37, "CREATE TABLE linear_views(", "CREATE TABLE linear_views_v37(", 1)
+	if _, err = s.db.Exec(v37 + `INSERT INTO linear_views_v37 SELECT * FROM linear_views; DROP TABLE linear_views; ALTER TABLE linear_views_v37 RENAME TO linear_views; PRAGMA user_version=37;`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = s.db.Exec(`UPDATE linear_views SET kind='project'`); err == nil {
+		t.Fatal("schema 37's table took a project view")
+	}
+	s.Close()
+	if s, err = Open(path); err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	h = &harness{t, s}
+	var version int
+	if err = s.db.QueryRow(`PRAGMA user_version`).Scan(&version); err != nil || version != 38 {
+		t.Fatal(version, err)
+	}
+	if after := h.call("linear_view_get", "", map[string]any{"view_id": lvView}); !reflect.DeepEqual(after, before) {
+		t.Fatal(before, after)
+	}
+	p := lvRecord("create", lvView2, "Review", `{"labels":{"some":{"id":{"in":["`+lvOther+`"]}}}}`, "2026-10-27T21:00:00.000Z", "", 1)
+	p["kind"], p["agent_filter"], p["uses"] = "project", "unavailable", []any{"kind.project"}
+	if view := h.call("linear_view_record", "", p).(map[string]any)["view"].(map[string]any); view["kind"] != "project" {
+		t.Fatal(view)
 	}
 }

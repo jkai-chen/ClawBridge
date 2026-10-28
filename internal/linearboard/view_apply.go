@@ -36,6 +36,7 @@ type ViewApplyInput struct {
 // ViewApplyEntry is one entry's plan, and with --confirm its outcome.
 type ViewApplyEntry struct {
 	Team string `json:"team_id"`
+	Kind string `json:"kind"`
 	Name string `json:"name"`
 	// Action is create, update, unchanged, adopt or refused.
 	Action      string   `json:"action"`
@@ -79,7 +80,9 @@ type ViewApplyResult struct {
 }
 
 type viewSetEntry struct {
-	Team   string          `json:"team"`
+	Team string `json:"team"`
+	// Kind is "issue" (the default) or "project".
+	Kind   string          `json:"kind"`
 	Name   string          `json:"name"`
 	Filter json.RawMessage `json:"filter"`
 	Adopt  bool            `json:"adopt"`
@@ -111,7 +114,13 @@ func parseViewSet(raw []byte) ([]viewSetEntry, error) {
 		if len(bytes.TrimSpace(e.Filter)) == 0 {
 			return nil, fmt.Errorf("views[%d]: filter is required", i)
 		}
-		key := e.Team + "|" + strings.ToLower(strings.TrimSpace(e.Name))
+		if e.Kind == "" {
+			file.Views[i].Kind, e.Kind = "issue", "issue"
+		}
+		if e.Kind != "issue" && e.Kind != "project" {
+			return nil, fmt.Errorf("views[%d]: kind is issue or project", i)
+		}
+		key := e.Team + "|" + e.Kind + "|" + strings.ToLower(strings.TrimSpace(e.Name))
 		if seen[key] {
 			return nil, fmt.Errorf("views[%d]: another entry has this name on this team", i)
 		}
@@ -123,7 +132,7 @@ func parseViewSet(raw []byte) ([]viewSetEntry, error) {
 // entryOperationID derives an entry's own operation ID from the apply's
 // and the entry's team and name, so a re-run sends nothing twice.
 func entryOperationID(base string, e viewSetEntry) string {
-	return base + "-" + digest([]string{e.Team, strings.ToLower(strings.TrimSpace(e.Name))})[:12]
+	return base + "-" + digest([]string{e.Team, e.Kind, strings.ToLower(strings.TrimSpace(e.Name))})[:12]
 }
 
 // ViewApply previews or applies a view-set file. Any refused entry refuses
@@ -216,6 +225,7 @@ func (s *Service) storedViews(ctx context.Context, scope bus.Request) (map[strin
 		Views []struct {
 			ViewID    string `json:"view_id"`
 			TeamID    string `json:"team_id"`
+			Kind      string `json:"kind"`
 			Name      string `json:"name"`
 			FilterSHA string `json:"filter_sha256"`
 		} `json:"views"`
@@ -225,7 +235,7 @@ func (s *Service) storedViews(ctx context.Context, scope bus.Request) (map[strin
 	}
 	out := map[string]storedRow{}
 	for _, v := range list.Views {
-		out[v.TeamID+"|"+strings.ToLower(strings.TrimSpace(v.Name))] = storedRow{v.ViewID, v.FilterSHA}
+		out[v.TeamID+"|"+v.Kind+"|"+strings.ToLower(strings.TrimSpace(v.Name))] = storedRow{v.ViewID, v.FilterSHA}
 	}
 	return out, nil
 }
@@ -237,12 +247,12 @@ func (s *Service) storedViews(ctx context.Context, scope bus.Request) (map[strin
 func (s *Service) planEntry(ctx context.Context, scope bus.Request, e viewSetEntry, base string, stored map[string]storedRow, adopt bool, key ViewKey) ViewApplyEntry {
 	p := ViewApplyEntry{Team: e.Team, Name: strings.TrimSpace(e.Name), OperationID: entryOperationID(base, e)}
 	refuse := func(reason string) ViewApplyEntry { p.Action, p.Reason = "refused", reason; return p }
-	f, err := ParseViewFilter(e.Filter)
+	f, err := parseKindFilter(e.Kind, e.Filter)
 	if err != nil {
 		return refuse(err.Error())
 	}
-	p.AgentFilter, p.Uses, p.FilterSHA = f.AgentFilter(), f.Uses, f.SHA256
-	if row, ok := stored[e.Team+"|"+strings.ToLower(p.Name)]; ok {
+	p.Kind, p.AgentFilter, p.Uses, p.FilterSHA = e.Kind, f.AgentFilter(), f.Uses, f.SHA256
+	if row, ok := stored[e.Team+"|"+e.Kind+"|"+strings.ToLower(p.Name)]; ok {
 		p.ViewID = row.id
 		if row.sha == f.SHA256 {
 			p.Action = "unchanged"
@@ -256,14 +266,14 @@ func (s *Service) planEntry(ctx context.Context, scope bus.Request, e viewSetEnt
 		p.Scope, p.BindingRevision, p.ExpectedFilterAsOf = pre.Scope, pre.BindingRevision, pre.ExpectedFilterAsOf
 		return p
 	}
-	matches, err := s.namedIssueViews(ctx, e.Team, p.Name)
+	matches, err := s.namedViews(ctx, e.Team, e.Kind, p.Name)
 	if err != nil {
 		return refuse(err.Error())
 	}
 	switch {
 	case len(matches) == 0:
 		p.Action = "create"
-		pre, err := s.ViewWrite(ctx, scope, ViewWriteInput{Action: "create", Team: e.Team, Name: p.Name, Filter: e.Filter, OperationID: p.OperationID}, key)
+		pre, err := s.ViewWrite(ctx, scope, ViewWriteInput{Action: "create", Kind: e.Kind, Team: e.Team, Name: p.Name, Filter: e.Filter, OperationID: p.OperationID}, key)
 		if err != nil {
 			return refuse(err.Error())
 		}
@@ -283,9 +293,9 @@ func (s *Service) planEntry(ctx context.Context, scope bus.Request, e viewSetEnt
 	return p
 }
 
-// namedIssueViews lists the team's shared issue views with this name, over
-// the person's MCP connection.
-func (s *Service) namedIssueViews(ctx context.Context, team, name string) ([]string, error) {
+// namedViews lists the team's shared views of this kind with this name,
+// over the person's MCP connection.
+func (s *Service) namedViews(ctx context.Context, team, kind, name string) ([]string, error) {
 	_, p, done, e := s.open(ctx)
 	if e != nil {
 		return nil, e
@@ -298,7 +308,7 @@ func (s *Service) namedIssueViews(ctx context.Context, team, name string) ([]str
 	var ids []string
 	cursor := ""
 	for page := 0; page < viewScopePages; page++ {
-		got, e := vp.Views(ctx, team, "issue", linearprovider.PageOptions{Limit: viewPageSize, Cursor: cursor})
+		got, e := vp.Views(ctx, team, kind, linearprovider.PageOptions{Limit: viewPageSize, Cursor: cursor})
 		if e != nil {
 			return nil, e
 		}
@@ -322,7 +332,7 @@ func (s *Service) adoptPreview(ctx context.Context, scope bus.Request, e viewSet
 	if key == nil {
 		return ViewWriteResult{}, nil, errors.New("an adoption reads the view's current filter with your Linear API key")
 	}
-	pre, err := s.ViewWrite(ctx, scope, ViewWriteInput{Action: "create", Team: e.Team, Name: p.Name, Filter: e.Filter, OperationID: p.OperationID, adoption: true}, key)
+	pre, err := s.ViewWrite(ctx, scope, ViewWriteInput{Action: "create", Kind: e.Kind, Team: e.Team, Name: p.Name, Filter: e.Filter, OperationID: p.OperationID, adoption: true}, key)
 	if err != nil {
 		return ViewWriteResult{}, nil, err
 	}
@@ -332,12 +342,12 @@ func (s *Service) adoptPreview(ctx context.Context, scope bus.Request, e viewSet
 		return ViewWriteResult{}, nil, errors.New("the view to adopt is gone from Linear; an adoption never creates one")
 	case err != nil:
 		return ViewWriteResult{}, nil, err
-	case now.TeamID != e.Team || !now.Shared:
-		return ViewWriteResult{}, nil, errors.New("the view to adopt isn't a shared view of this team")
+	case now.TeamID != e.Team || !now.Shared || now.Kind != e.Kind:
+		return ViewWriteResult{}, nil, errors.New("the view to adopt isn't a shared " + e.Kind + " view of this team")
 	}
 	old := &AdoptedView{Filter: now.Filter, CreatorID: now.CreatorID, CreatorName: now.CreatorName, UpdatedAt: now.UpdatedAt}
 	old.FilterSHA = digestText(now.Filter)
-	if now.Filter != "" {
+	if now.Filter != "" && e.Kind == "issue" {
 		if f, err := ParseViewFilter([]byte(now.Filter)); err == nil {
 			old.GoesAway = f.Uses
 		} else {
@@ -352,7 +362,7 @@ func (s *Service) adoptPreview(ctx context.Context, scope bus.Request, e viewSet
 func (s *Service) applyEntry(ctx context.Context, scope bus.Request, e viewSetEntry, p ViewApplyEntry, key ViewKey) (ViewWriteResult, error) {
 	switch p.Action {
 	case "create":
-		return s.ViewWrite(ctx, scope, ViewWriteInput{Action: "create", Team: e.Team, Name: p.Name, Filter: e.Filter, OperationID: p.OperationID, Confirm: true, ExpectedRevision: p.BindingRevision, ExpectedFilterSHA: p.FilterSHA}, key)
+		return s.ViewWrite(ctx, scope, ViewWriteInput{Action: "create", Kind: e.Kind, Team: e.Team, Name: p.Name, Filter: e.Filter, OperationID: p.OperationID, Confirm: true, ExpectedRevision: p.BindingRevision, ExpectedFilterSHA: p.FilterSHA}, key)
 	case "update":
 		return s.ViewWrite(ctx, scope, ViewWriteInput{Action: "update", ViewID: p.ViewID, Filter: e.Filter, OperationID: p.OperationID, Confirm: true, ExpectedRevision: p.BindingRevision, ExpectedFilterSHA: p.FilterSHA, ExpectedFilterAsOf: p.ExpectedFilterAsOf}, key)
 	case "adopt":
@@ -380,7 +390,7 @@ func (s *Service) adoptView(ctx context.Context, scope bus.Request, e viewSetEnt
 	if err != nil {
 		return ViewWriteResult{}, err
 	}
-	f, err := ParseViewFilter(e.Filter)
+	f, err := parseKindFilter(e.Kind, e.Filter)
 	if err != nil {
 		return ViewWriteResult{}, err
 	}
@@ -403,4 +413,13 @@ func digestText(text string) string {
 		return f.SHA256
 	}
 	return digest(text)
+}
+
+// parseKindFilter parses a filter by its view's kind.
+func parseKindFilter(kind string, text []byte) (ViewFilter, error) {
+	if kind == "project" {
+		f, _, err := ParseProjectViewFilter(text)
+		return f, err
+	}
+	return ParseViewFilter(text)
 }

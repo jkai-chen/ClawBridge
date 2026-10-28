@@ -63,9 +63,15 @@ func (a *viewAuthority) Execute(ctx context.Context, r bus.Request) (bus.Result,
 // update, and reads back what back gives (the sent view by default).
 type fakeKey struct {
 	creates, updates, deletes []string
+	kinds                     []string
+	labels                    []KeyProjectLabel
 	err                       error
 	back                      func(KeyView) (KeyView, error)
 	last                      KeyView
+}
+
+func (k *fakeKey) ProjectLabels(context.Context) ([]KeyProjectLabel, error) {
+	return k.labels, nil
 }
 
 func (k *fakeKey) DeleteView(_ context.Context, id string) error {
@@ -73,21 +79,23 @@ func (k *fakeKey) DeleteView(_ context.Context, id string) error {
 	return k.err
 }
 
-func (k *fakeKey) CreateView(_ context.Context, team, name string, filter json.RawMessage) (KeyView, error) {
+func (k *fakeKey) CreateView(_ context.Context, team, name, kind string, filter json.RawMessage) (KeyView, error) {
 	k.creates = append(k.creates, team+"|"+name+"|"+string(filter))
+	k.kinds = append(k.kinds, kind)
 	if k.err != nil {
 		return KeyView{}, k.err
 	}
-	k.last = KeyView{ID: vwView, Name: name, TeamID: team, Shared: true, Filter: string(filter), UpdatedAt: "2026-10-27T22:00:00.000Z"}
+	k.last = KeyView{ID: vwView, Name: name, TeamID: team, Kind: kind, Shared: true, Filter: string(filter), UpdatedAt: "2026-10-27T22:00:00.000Z"}
 	return k.last, nil
 }
 
-func (k *fakeKey) UpdateView(_ context.Context, id, name string, filter json.RawMessage) (KeyView, error) {
+func (k *fakeKey) UpdateView(_ context.Context, id, name, kind string, filter json.RawMessage) (KeyView, error) {
 	k.updates = append(k.updates, id+"|"+name+"|"+string(filter))
+	k.kinds = append(k.kinds, kind)
 	if k.err != nil {
 		return KeyView{}, k.err
 	}
-	k.last = KeyView{ID: id, Name: name, TeamID: teamID, Shared: true, Filter: string(filter), UpdatedAt: "2026-10-27T22:05:00.000Z"}
+	k.last = KeyView{ID: id, Name: name, TeamID: teamID, Kind: kind, Shared: true, Filter: string(filter), UpdatedAt: "2026-10-27T22:05:00.000Z"}
 	return k.last, nil
 }
 
@@ -252,7 +260,7 @@ func TestViewWriteRefusals(t *testing.T) {
 func TestViewWriteUpdate(t *testing.T) {
 	s, a, _, scope := viewWriteTest(t, linearprovider.View{ID: vwView, Name: "Urgent bugs", Kind: "issue", TeamID: teamID})
 	old := `{"priority":{"eq":1}}`
-	a.stored = map[string]any{"view_id": vwView, "team_id": teamID, "name": "Urgent bugs", "filter": old, "filter_sha256": mustFilterSHA(t, old), "filter_as_of": "2026-10-27T21:00:00.000Z", "team_bound": true}
+	a.stored = map[string]any{"view_id": vwView, "kind": "issue", "team_id": teamID, "name": "Urgent bugs", "filter": old, "filter_sha256": mustFilterSHA(t, old), "filter_as_of": "2026-10-27T21:00:00.000Z", "team_bound": true}
 	key := &fakeKey{}
 	in := ViewWriteInput{Action: "update", ViewID: vwView, Filter: []byte(`{"priority":{"in":[1,2]}}`), OperationID: "view-2"}
 	got, e := s.ViewWrite(context.Background(), scope, in, key)
@@ -260,7 +268,7 @@ func TestViewWriteUpdate(t *testing.T) {
 		t.Fatal(got, e)
 	}
 	in = confirmIn(t, in, "2026-10-27T21:00:00.000Z")
-	key.last = KeyView{ID: vwView, Name: "Urgent bugs", TeamID: teamID, Shared: true, Filter: old, UpdatedAt: "2026-10-27T21:00:00.000Z"}
+	key.last = KeyView{ID: vwView, Name: "Urgent bugs", Kind: "issue", TeamID: teamID, Shared: true, Filter: old, UpdatedAt: "2026-10-27T21:00:00.000Z"}
 	if got, e = s.ViewWrite(context.Background(), scope, in, key); e != nil || got.Outcome != "accepted" || !got.Recorded {
 		t.Fatal(got, e)
 	}
@@ -318,8 +326,8 @@ func TestViewWriteConfirmHoldsThePreview(t *testing.T) {
 	old := `{"priority":{"eq":1}}`
 	setup := func() (*Service, *viewAuthority, bus.Request, *fakeKey, ViewWriteInput) {
 		s, a, _, scope := viewWriteTest(t, linearprovider.View{ID: vwView, Name: "Urgent bugs", Kind: "issue", TeamID: teamID})
-		a.stored = map[string]any{"view_id": vwView, "team_id": teamID, "name": "Urgent bugs", "filter": old, "filter_sha256": mustFilterSHA(t, old), "filter_as_of": "2026-10-27T21:00:00.000Z", "team_bound": true}
-		key := &fakeKey{last: KeyView{ID: vwView, Name: "Urgent bugs", TeamID: teamID, Shared: true, Filter: old, UpdatedAt: "2026-10-27T21:00:00.000Z"}}
+		a.stored = map[string]any{"view_id": vwView, "kind": "issue", "team_id": teamID, "name": "Urgent bugs", "filter": old, "filter_sha256": mustFilterSHA(t, old), "filter_as_of": "2026-10-27T21:00:00.000Z", "team_bound": true}
+		key := &fakeKey{last: KeyView{ID: vwView, Name: "Urgent bugs", Kind: "issue", TeamID: teamID, Shared: true, Filter: old, UpdatedAt: "2026-10-27T21:00:00.000Z"}}
 		in := confirmIn(t, ViewWriteInput{Action: "update", ViewID: vwView, Name: "  Urgent and high  ", Filter: []byte(`{"priority":{"in":[1,2]}}`), OperationID: "view-2"}, "2026-10-27T21:00:00.000Z")
 		return s, a, scope, key, in
 	}

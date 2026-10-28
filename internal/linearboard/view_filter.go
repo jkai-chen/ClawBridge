@@ -530,3 +530,67 @@ func comparePriority(p int, op string, n int) bool {
 	}
 	return false
 }
+
+const projectViewMaxLabels = 50
+
+// ParseProjectViewFilter reads a project view's filter (projectFilterData,
+// LINEAR-VIEWS-PLAN §15): in v1 only the project labels, by ID,
+// {"labels": {"some": {"id": {"eq": ID} | {"in": [IDs]}}}}, at most 50.
+// Agents don't filter by project views yet, so its agent_filter is always
+// unavailable (uses kind.project). The label IDs are returned for the
+// write's check of each one (D3).
+func ParseProjectViewFilter(text []byte) (ViewFilter, []string, error) {
+	if len(text) > viewFilterMaxBytes {
+		return ViewFilter{}, nil, filterError("larger than 16 KiB")
+	}
+	dec := json.NewDecoder(bytes.NewReader(text))
+	dec.UseNumber()
+	var raw any
+	if err := dec.Decode(&raw); err != nil || dec.More() {
+		return ViewFilter{}, nil, filterError("not one JSON object")
+	}
+	refuse := filterError(`a project view's filter is {"labels": {"some": {"id": {"eq": ID} or {"in": [IDs]}}}} in this release`)
+	labels, ok := single(raw, "labels")
+	if !ok {
+		return ViewFilter{}, nil, refuse
+	}
+	some, ok := single(labels, "some")
+	if !ok {
+		return ViewFilter{}, nil, refuse
+	}
+	cmp, ok := single(some, "id")
+	if !ok {
+		return ViewFilter{}, nil, refuse
+	}
+	var ids []string
+	if id, ok := single(cmp, "eq"); ok {
+		text, isText := id.(string)
+		if !isText || !viewUUID.MatchString(text) {
+			return ViewFilter{}, nil, filterError("labels.some.id.eq is not an ID")
+		}
+		ids = []string{text}
+	} else if list, ok := single(cmp, "in"); ok {
+		items, isList := list.([]any)
+		if !isList || len(items) == 0 || len(items) > projectViewMaxLabels {
+			return ViewFilter{}, nil, filterError("labels.some.id.in takes 1 to %d IDs", projectViewMaxLabels)
+		}
+		for _, item := range items {
+			text, isText := item.(string)
+			if !isText || !viewUUID.MatchString(text) {
+				return ViewFilter{}, nil, filterError("labels.some.id.in holds something other than an ID")
+			}
+			ids = append(ids, text)
+		}
+	} else {
+		return ViewFilter{}, nil, refuse
+	}
+	if err := walkFilter(raw, "filter", 0, func(string, string) error { return nil }); err != nil {
+		return ViewFilter{}, nil, err
+	}
+	canonical, err := json.Marshal(raw)
+	if err != nil {
+		return ViewFilter{}, nil, refuse
+	}
+	sum := sha256.Sum256(canonical)
+	return ViewFilter{Canonical: string(canonical), SHA256: hex.EncodeToString(sum[:]), Uses: []string{"kind.project"}, raw: raw}, ids, nil
+}

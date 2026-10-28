@@ -1289,6 +1289,15 @@ clawbridge linear view update VIEW_UUID [--name NAME] [--filter-file FILE] --ope
   adoption the view it replaces), and the confirm command it prints carries it. A confirm whose plan has changed since
   is refused and shows the new plan; nothing is sent. An update in the set never overwrites a change made in Linear,
   as for `view update`.
+- **Project views** list projects instead of issues: `view create --kind project` (or `"kind": "project"` in a
+  view-set file). In this release the filter is project labels only, by ID:
+  `{"labels": {"some": {"id": {"in": ["LABEL_UUID", ...]}}}}`, at most 50.
+  - Each label must be a live choice (not archived, not retired, and of a live group) of a single-select project-label
+    group, either your view's team's or the workspace's. ClawBridge proves that with your key, by ID; another team's label is refused.
+  - The view is a shared team view like any other, and its preview starts with the same scope line.
+  - Agents can list project views, but don't filter by them yet (`agent_filter: unavailable`).
+  - Making the labels themselves is done in Linear (Settings → Projects → Labels). Linear won't let a team label take
+    the name of a workspace label; ClawBridge then says `exists_in_workspace`.
 - **Adopting a view someone made in Linear.** A name already held by a hand-made view on that team is refused, unless
   you adopt it: `--adopt NAME` (repeat for several), or `"adopt": true` on the entry. Then:
   - exactly one shared issue view on that team may have the name; none or several are refused;

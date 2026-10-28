@@ -348,6 +348,7 @@ func parseLinear(command string, args []string, stderr io.Writer) (linearFlags, 
 		write()
 		if command == "view-create" {
 			f.StringVar(&v.team, "team", "", "required: the bound team UUID the view belongs to (no default)")
+			f.StringVar(&v.viewKind, "kind", "issue", "issue or project (a project view filters projects by their labels)")
 		} else {
 			min, max = 1, 1
 		}
@@ -489,6 +490,9 @@ func parseLinear(command string, args []string, stderr io.Writer) (linearFlags, 
 	}
 	if v.repair && !v.confirm {
 		return v, nil, errors.New("unlink --repair clears an unreadable binding without previewing it; repeat with --confirm")
+	}
+	if command == "view-create" && v.viewKind != "issue" && v.viewKind != "project" {
+		return v, nil, errors.New("--kind is issue or project")
 	}
 	if command == "view-list" && v.viewKind != "" && linearprovider.ViewKinds[v.viewKind] == "" {
 		return v, nil, errors.New("--type is issue or project")
@@ -795,7 +799,7 @@ func linearWriteInput(command string, v linearFlags, pos []string) (linearboard.
 
 func runLinear(ctx context.Context, flags Config, args []string, stdout, stderr io.Writer) error {
 	if len(args) == 0 || len(args) == 1 && (args[0] == "--help" || args[0] == "-h" || args[0] == "help") {
-		_, err := io.WriteString(stdout, "clawbridge linear connect|import|profiles|status|logout|teams|projects|binding|link|seed-docs|unlink|names-refresh|context|issues|issue|states|labels|members|create|update|comment|relation|watch\nProject owner only: label create|rename, project create, initiative create|add-project, label-policy show|set, status-policy show|set, doc-policy set, health set|enable|disable, admin audit-replay.\nShown names: names-refresh (project owner or lead) stores the bound teams' and projects' current names, as Linear gives them to you.\nWho closes issues: closes show (any member); closes set (project owner or lead, never a session).\nProject status follows the work (status policy project_flow): project-flow resume --linear-project UUID (project owner or lead, never a session) clears a hold.\nProject health (any member): health show.\nLinear views (any member): view list [--team UUID] [--type issue|project], view show ID. Project owner, own terminal, with your Linear API key: view create --team UUID|update ID|delete ID|apply --file F [--adopt NAME].\nProject status, as the server's app: project status LINEAR_PROJECT [--suggest] (any member); project status set LINEAR_PROJECT --type T --operation-id ID, then --confirm --expected-status UUID (the coordinator session, or the project owner or a lead without a session).\nLinear documents (any member): doc list|get, initiative show, doc-policy show. Project owner or lead: doc publish FILE.\nYour name in agent markers: display-name set NAME|clear|capture --profile ID.\nYour Linear API key, for view writes (project owner, own terminal): key set|status|remove --profile ID.\nUse COMMAND --help for explicit flags. Token import accepts --token-stdin only.\n")
+		_, err := io.WriteString(stdout, "clawbridge linear connect|import|profiles|status|logout|teams|projects|binding|link|seed-docs|unlink|names-refresh|context|issues|issue|states|labels|members|create|update|comment|relation|watch\nProject owner only: label create|rename, project create, initiative create|add-project, label-policy show|set, status-policy show|set, doc-policy set, health set|enable|disable, admin audit-replay.\nShown names: names-refresh (project owner or lead) stores the bound teams' and projects' current names, as Linear gives them to you.\nWho closes issues: closes show (any member); closes set (project owner or lead, never a session).\nProject status follows the work (status policy project_flow): project-flow resume --linear-project UUID (project owner or lead, never a session) clears a hold.\nProject health (any member): health show.\nLinear views (any member): view list [--team UUID] [--type issue|project], view show ID. Project owner, own terminal, with your Linear API key: view create --team UUID [--kind project]|update ID|delete ID|apply --file F [--adopt NAME].\nLinear documents (any member): doc list|get, initiative show, doc-policy show. Project owner or lead: doc publish FILE.\nYour name in agent markers: display-name set NAME|clear|capture --profile ID.\nYour Linear API key, for view writes (project owner, own terminal): key set|status|remove --profile ID.\nUse COMMAND --help for explicit flags. Token import accepts --token-stdin only.\n")
 		return err
 	}
 	command := args[0]

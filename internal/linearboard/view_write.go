@@ -23,17 +23,29 @@ import (
 
 // ViewKey is the person's key client, as the CLI provides it.
 type ViewKey interface {
-	CreateView(ctx context.Context, team, name string, filter json.RawMessage) (KeyView, error)
-	UpdateView(ctx context.Context, id, name string, filter json.RawMessage) (KeyView, error)
+	CreateView(ctx context.Context, team, name, kind string, filter json.RawMessage) (KeyView, error)
+	UpdateView(ctx context.Context, id, name, kind string, filter json.RawMessage) (KeyView, error)
 	View(ctx context.Context, id string) (KeyView, error)
 	DeleteView(ctx context.Context, id string) error
+	// ProjectLabels reads the project labels a project view's filter may
+	// name (Q-D (b)).
+	ProjectLabels(ctx context.Context) ([]KeyProjectLabel, error)
+}
+
+// KeyProjectLabel is a project label as the key reads it; TeamID is "" for
+// a workspace label, and Archived covers retired labels too.
+type KeyProjectLabel struct {
+	ID, TeamID, ParentID, ParentGroupType string
+	Group, Archived, ParentIsGroup        bool
 }
 
 // KeyView is a view as Linear reads it back through the key.
 type KeyView struct {
 	ID, Name, UpdatedAt, TeamID, Filter string
 	CreatorID, CreatorName              string
-	Shared                              bool
+	// Kind is issue or project, from Linear's modelName.
+	Kind   string
+	Shared bool
 }
 
 // A ViewKey wraps its errors in one of these, so the ledger knows what
@@ -51,7 +63,10 @@ var (
 // ViewWriteInput is one create or update. Name and Filter are optional on
 // an update, which keeps what isn't given.
 type ViewWriteInput struct {
-	Action      string // create or update
+	Action string // create or update
+	// Kind is "issue" (the default) or "project"; an update keeps the
+	// view's kind.
+	Kind        string
 	Team        string // create only
 	ViewID      string // update only
 	Name        string
@@ -75,6 +90,8 @@ type ViewWriteResult struct {
 	Kind    string `json:"kind,omitempty"`
 	Preview bool   `json:"preview"`
 	Action  string `json:"action"`
+	// ViewKind is issue or project.
+	ViewKind string `json:"view_kind"`
 	// Scope is the line stating where the view is visible (§14.1).
 	Scope        string   `json:"scope"`
 	TeamID       string   `json:"team_id"`
@@ -152,7 +169,10 @@ func (s *Service) ViewWrite(ctx context.Context, scope bus.Request, in ViewWrite
 	if access.ProjectRole != "owner" || access.SessionID != "" {
 		return none, errors.New("only the project owner, without a session, writes a Linear view")
 	}
-	out := ViewWriteResult{Action: in.Action, BindingRevision: b.Revision}
+	out := ViewWriteResult{Action: in.Action, BindingRevision: b.Revision, ViewKind: in.Kind}
+	if out.ViewKind == "" {
+		out.ViewKind = "issue"
+	}
 	name, filterText := in.Name, in.Filter
 	storedSHA := ""
 	var was *storedViewRow
@@ -163,7 +183,7 @@ func (s *Service) ViewWrite(ctx context.Context, scope bus.Request, in ViewWrite
 		if e != nil {
 			return none, e
 		}
-		out.TeamID, out.ViewID, out.ExpectedFilterAsOf = stored.team, in.ViewID, stored.asOf
+		out.TeamID, out.ViewID, out.ExpectedFilterAsOf, out.ViewKind = stored.team, in.ViewID, stored.asOf, stored.kind
 		if !stored.bound {
 			return none, errors.New("this view's team left the binding; nothing was sent")
 		}
@@ -181,7 +201,13 @@ func (s *Service) ViewWrite(ctx context.Context, scope bus.Request, in ViewWrite
 	if !contains(b.LinearTeamIDs, out.TeamID) {
 		return none, errors.New("the team is not in this project's binding; nothing was sent")
 	}
-	f, e := ParseViewFilter(filterText)
+	var f ViewFilter
+	var projectLabels []string
+	if out.ViewKind == "project" {
+		f, projectLabels, e = ParseProjectViewFilter(filterText)
+	} else {
+		f, e = ParseViewFilter(filterText)
+	}
 	if e != nil {
 		return none, e
 	}
@@ -198,22 +224,29 @@ func (s *Service) ViewWrite(ctx context.Context, scope bus.Request, in ViewWrite
 	if _, e = s.verifyReadBindingV2(ctx, p, b); e != nil {
 		return none, e
 	}
-	v2, ok := p.(ProviderV2)
-	if !ok {
-		return none, &linearprovider.Error{Kind: "capability_unavailable", NotSent: true}
+	if out.ViewKind == "project" {
+		if e = checkProjectLabels(ctx, key, out.TeamID, projectLabels); e != nil {
+			return none, e
+		}
+		out.TeamName, out.Members, out.MembersKnown = teamLine(ctx, p, out.TeamID)
+	} else {
+		v2, ok := p.(ProviderV2)
+		if !ok {
+			return none, &linearprovider.Error{Kind: "capability_unavailable", NotSent: true}
+		}
+		vs, e := viewScope(ctx, p, v2, b, out.TeamID)
+		if e != nil {
+			return none, e
+		}
+		if e = f.CheckIDs(vs.ViewScope); e != nil {
+			return none, e
+		}
+		out.TeamName, out.Members, out.MembersKnown = vs.teamName, vs.members, vs.membersKnown
 	}
-	vs, e := viewScope(ctx, p, v2, b, out.TeamID)
-	if e != nil {
-		return none, e
-	}
-	if e = f.CheckIDs(vs.ViewScope); e != nil {
-		return none, e
-	}
-	out.TeamName, out.Members, out.MembersKnown = vs.teamName, vs.members, vs.membersKnown
 	out.Scope = ScopeLine(out.TeamID, out.TeamName, out.Members, out.MembersKnown)
 	// An adoption keeps the adopted view's own name; the apply checked it (A1).
 	if !in.adoption {
-		if e = s.viewNameFree(ctx, scope, p, out.TeamID, name, in.ViewID); e != nil {
+		if e = s.viewNameFree(ctx, scope, p, out.TeamID, out.ViewKind, name, in.ViewID); e != nil {
 			return none, e
 		}
 	}
@@ -270,8 +303,8 @@ func validateViewWrite(in ViewWriteInput) error {
 }
 
 type storedViewRow struct {
-	team, name, filter, sha, asOf string
-	bound                         bool
+	team, name, filter, sha, asOf, kind string
+	bound                               bool
 }
 
 // storedView reads a view ClawBridge recorded.
@@ -290,8 +323,9 @@ func (s *Service) storedView(ctx context.Context, scope bus.Request, id string) 
 	row.filter, _ = m["filter"].(string)
 	row.sha, _ = m["filter_sha256"].(string)
 	row.asOf, _ = m["filter_as_of"].(string)
+	row.kind, _ = m["kind"].(string)
 	row.bound, _ = m["team_bound"].(bool)
-	if row.team == "" || row.filter == "" || row.asOf == "" {
+	if row.team == "" || row.filter == "" || row.asOf == "" || (row.kind != "issue" && row.kind != "project") {
 		return storedViewRow{}, errors.New("the recorded view is unreadable")
 	}
 	return row, nil
@@ -365,20 +399,20 @@ func viewScope(ctx context.Context, p Provider, v2 ProviderV2, b bus.TaskboardBi
 }
 
 // viewNameFree refuses a name another issue view on the team already has.
-func (s *Service) viewNameFree(ctx context.Context, scope bus.Request, p Provider, team, name, self string) error {
+func (s *Service) viewNameFree(ctx context.Context, scope bus.Request, p Provider, team, kind, name, self string) error {
 	vp, ok := p.(viewsProvider)
 	if !ok {
 		return &linearprovider.Error{Kind: "capability_unavailable", NotSent: true}
 	}
 	cursor := ""
 	for page := 0; page < viewScopePages; page++ {
-		got, e := vp.Views(ctx, team, "issue", linearprovider.PageOptions{Limit: viewPageSize, Cursor: cursor})
+		got, e := vp.Views(ctx, team, kind, linearprovider.PageOptions{Limit: viewPageSize, Cursor: cursor})
 		if e != nil {
 			return e
 		}
 		for _, v := range got.Items {
 			if v.ID != self && strings.EqualFold(strings.TrimSpace(v.Name), strings.TrimSpace(name)) {
-				return fmt.Errorf("the team already has an issue view %s with that name; choose another name; nothing was sent", v.ID)
+				return fmt.Errorf("the team already has an %s view %s with that name; choose another name; nothing was sent", kind, v.ID)
 			}
 		}
 		if got.Complete {
@@ -401,7 +435,10 @@ func (s *Service) sendView(ctx context.Context, scope bus.Request, b bus.Taskboa
 		Name, FilterSHA string
 		ExpectedAsOf    string
 		OldFilterSHA    string `json:",omitempty"`
-	}{1, "view_" + in.Action, s.cfg.ProfileID, b.Revision, out.TeamID, out.ViewID, out.Name, f.SHA256, out.ExpectedFilterAsOf, out.OldFilterSHA}
+		// ViewKind keeps an operation ID used for one kind of view from
+		// replaying its receipt for the other.
+		ViewKind string
+	}{1, "view_" + in.Action, s.cfg.ProfileID, b.Revision, out.TeamID, out.ViewID, out.Name, f.SHA256, out.ExpectedFilterAsOf, out.OldFilterSHA, out.ViewKind}
 	l := s.operations(ctx)
 	if r, exists, e := l.lookup(namespace, in.OperationID, payload); exists || e != nil {
 		if e != nil {
@@ -429,14 +466,14 @@ func (s *Service) sendView(ctx context.Context, scope bus.Request, b bus.Taskboa
 			case e != nil:
 				return nil, notDispatched(e)
 			}
-			if drift := viewMismatch(cur, out.ViewID, was.team, was.name, was.filter); len(drift) > 0 {
+			if drift := viewMismatch(cur, out.ViewID, was.team, was.kind, was.name, was.filter); len(drift) > 0 {
 				return nil, refusedBeforeDispatch(fmt.Errorf("the view was changed in Linear since ClawBridge wrote it (%s); nothing was sent: adopt it with view apply --adopt, or leave it", strings.Join(drift, ", ")))
 			}
 		}
 		if in.Action == "create" {
-			sent, e = key.CreateView(ctx, out.TeamID, out.Name, json.RawMessage(f.Canonical))
+			sent, e = key.CreateView(ctx, out.TeamID, out.Name, out.ViewKind, json.RawMessage(f.Canonical))
 		} else {
-			sent, e = key.UpdateView(ctx, out.ViewID, out.Name, json.RawMessage(f.Canonical))
+			sent, e = key.UpdateView(ctx, out.ViewID, out.Name, out.ViewKind, json.RawMessage(f.Canonical))
 		}
 		switch {
 		case errors.Is(e, ErrKeyNotSent):
@@ -458,7 +495,7 @@ func (s *Service) sendView(ctx context.Context, scope bus.Request, b bus.Taskboa
 			r.Outcome, r.Mismatch = "uncertain", []string{"read_back"}
 			return r, nil
 		}
-		r.Mismatch = viewMismatch(back, sent.ID, out.TeamID, out.Name, f.Canonical)
+		r.Mismatch = viewMismatch(back, sent.ID, out.TeamID, out.ViewKind, out.Name, f.Canonical)
 		if len(r.Mismatch) > 0 {
 			r.Outcome = "uncertain"
 			return r, nil
@@ -491,13 +528,16 @@ func (s *Service) recordAccepted(ctx context.Context, scope bus.Request, action 
 }
 
 // viewMismatch names the read-back fields that differ from what was sent.
-func viewMismatch(back KeyView, id, team, name, filter string) []string {
+func viewMismatch(back KeyView, id, team, kind, name, filter string) []string {
 	var bad []string
 	if !linearprovider.ValidID(id) || !strings.EqualFold(back.ID, id) {
 		bad = append(bad, "id")
 	}
 	if back.TeamID != team {
 		bad = append(bad, "team")
+	}
+	if back.Kind != kind {
+		bad = append(bad, "kind")
 	}
 	if back.Name != name {
 		bad = append(bad, "name")
@@ -541,7 +581,7 @@ func (s *Service) recordView(ctx context.Context, scope bus.Request, action stri
 	for _, u := range f.Uses {
 		uses = append(uses, u)
 	}
-	args := map[string]any{"action": action, "view_id": r.ViewID, "team_id": r.TeamID, "name": r.Name, "filter": f.Canonical, "filter_sha256": f.SHA256, "filter_as_of": r.FilterAsOf, "agent_filter": f.AgentFilter(), "uses": uses, "expected_binding_revision": r.BindingRevision}
+	args := map[string]any{"action": action, "kind": r.ViewKind, "view_id": r.ViewID, "team_id": r.TeamID, "name": r.Name, "filter": f.Canonical, "filter_sha256": f.SHA256, "filter_as_of": r.FilterAsOf, "agent_filter": f.AgentFilter(), "uses": uses, "expected_binding_revision": r.BindingRevision}
 	if action == "update" {
 		args["expected_filter_as_of"] = r.ExpectedFilterAsOf
 	}
@@ -551,4 +591,39 @@ func (s *Service) recordView(ctx context.Context, scope bus.Request, action stri
 	scope.Operation, scope.Args = "linear_view_record", args
 	_, e := s.cfg.Executor.Execute(ctx, scope)
 	return e
+}
+
+// checkProjectLabels proves each label of a project view's filter (Q-D
+// D1–D3): a non-archived, non-retired label that isn't a group, of the
+// view's team or of the workspace (by team ID), and a child of a
+// single-select group. Anything else refuses the write, naming the label.
+func checkProjectLabels(ctx context.Context, key ViewKey, team string, ids []string) error {
+	if key == nil {
+		return errors.New("a project view's labels are checked with your Linear API key")
+	}
+	labels, e := key.ProjectLabels(ctx)
+	if e != nil {
+		return e
+	}
+	byID := map[string]KeyProjectLabel{}
+	for _, l := range labels {
+		byID[l.ID] = l
+	}
+	for _, id := range ids {
+		l, ok := byID[id]
+		switch {
+		case !ok || l.Archived:
+			return fmt.Errorf("project label %s isn't a live project label Linear shows you; nothing was sent", id)
+		case l.TeamID != "" && l.TeamID != team:
+			return fmt.Errorf("project label %s belongs to another team; a team view names only its own team's or the workspace's labels; nothing was sent", id)
+		case l.Group || l.ParentID == "" || !l.ParentIsGroup || l.ParentGroupType != "singleSelect":
+			return fmt.Errorf("project label %s isn't a choice of a single-select label group; nothing was sent", id)
+		}
+		// The list holds the groups too: a choice of an archived or retired
+		// group, or of one the key can't see, isn't live.
+		if parent, ok := byID[l.ParentID]; !ok || parent.Archived {
+			return fmt.Errorf("project label %s is a choice of an archived label group; nothing was sent", id)
+		}
+	}
+	return nil
 }

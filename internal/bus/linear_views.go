@@ -23,6 +23,21 @@ const linearViewsSchemaV37 = `
 CREATE TABLE linear_views(project_id TEXT NOT NULL REFERENCES projects(id),view_id TEXT NOT NULL,team_id TEXT NOT NULL,kind TEXT NOT NULL CHECK(kind='issue'),scope TEXT NOT NULL CHECK(scope='team'),name TEXT NOT NULL,filter TEXT NOT NULL,filter_sha256 TEXT NOT NULL,filter_as_of TEXT NOT NULL,agent_filter TEXT NOT NULL CHECK(agent_filter IN ('available','unavailable')),uses TEXT NOT NULL,binding_revision INTEGER NOT NULL,adopted INTEGER NOT NULL CHECK(adopted IN (0,1)),created_by TEXT NOT NULL,created_at TEXT NOT NULL,updated_at TEXT NOT NULL,PRIMARY KEY(project_id,view_id));
 `
 
+// Schema 38 lets a row be a project view (3e): kind issue or project.
+// SQLite can't alter a CHECK, so the table is rebuilt in the migration's
+// transaction; Postgres replaces the constraint by its name.
+const linearViewsSchemaV38SQLite = `
+CREATE TABLE linear_views_v38(project_id TEXT NOT NULL REFERENCES projects(id),view_id TEXT NOT NULL,team_id TEXT NOT NULL,kind TEXT NOT NULL CHECK(kind IN ('issue','project')),scope TEXT NOT NULL CHECK(scope='team'),name TEXT NOT NULL,filter TEXT NOT NULL,filter_sha256 TEXT NOT NULL,filter_as_of TEXT NOT NULL,agent_filter TEXT NOT NULL CHECK(agent_filter IN ('available','unavailable')),uses TEXT NOT NULL,binding_revision INTEGER NOT NULL,adopted INTEGER NOT NULL CHECK(adopted IN (0,1)),created_by TEXT NOT NULL,created_at TEXT NOT NULL,updated_at TEXT NOT NULL,PRIMARY KEY(project_id,view_id));
+INSERT INTO linear_views_v38(project_id,view_id,team_id,kind,scope,name,filter,filter_sha256,filter_as_of,agent_filter,uses,binding_revision,adopted,created_by,created_at,updated_at) SELECT project_id,view_id,team_id,kind,scope,name,filter,filter_sha256,filter_as_of,agent_filter,uses,binding_revision,adopted,created_by,created_at,updated_at FROM linear_views;
+DROP TABLE linear_views;
+ALTER TABLE linear_views_v38 RENAME TO linear_views;
+`
+
+// linearViewsSchemaV38Postgres: schema 37's inline CHECK is Postgres's
+// linear_views_kind_check; schema 38 names it the same.
+const linearViewsSchemaV38Postgres = `ALTER TABLE linear_views DROP CONSTRAINT linear_views_kind_check, ADD CONSTRAINT linear_views_kind_check CHECK(kind IN ('issue','project'));
+`
+
 const (
 	maxViewFilterBytes = 16 << 10
 	maxViewUses        = 20
@@ -108,14 +123,21 @@ func (s *Store) forgetLinearView(ctx context.Context, tx *transaction, wid, pid 
 
 // viewRecord is a checked linear_view_record request.
 type viewRecord struct {
-	action, viewID, teamID, name, filter, sha, asOf, agentFilter, uses, expectedAsOf, oldSHA string
-	revision                                                                                 int64
+	action, kind, viewID, teamID, name, filter, sha, asOf, agentFilter, uses, expectedAsOf, oldSHA string
+	revision                                                                                       int64
 }
 
 func parseViewRecord(a map[string]any) (viewRecord, error) {
 	v := viewRecord{action: str(a, "action"), viewID: str(a, "view_id"), teamID: str(a, "team_id"), name: strings.TrimSpace(str(a, "name")), filter: str(a, "filter"), sha: str(a, "filter_sha256"), asOf: str(a, "filter_as_of"), agentFilter: str(a, "agent_filter"), expectedAsOf: str(a, "expected_filter_as_of"), oldSHA: str(a, "old_filter_sha256")}
 	if v.action != "create" && v.action != "update" && v.action != "adopt" {
 		return v, invalid("action must be create, update or adopt")
+	}
+	v.kind = str(a, "kind")
+	if v.kind == "" {
+		v.kind = "issue"
+	}
+	if v.kind != "issue" && v.kind != "project" {
+		return v, invalid("kind must be issue or project")
 	}
 	// An adoption names the digest of the filter it replaced (A2), and
 	// only an adoption does.
@@ -148,6 +170,8 @@ func parseViewRecord(a map[string]any) (viewRecord, error) {
 		}
 	}
 	switch {
+	case v.kind == "project" && v.agentFilter != "unavailable":
+		return v, invalid("agents don't filter by project views: agent_filter is unavailable")
 	case v.agentFilter == "available" && len(uses) == 0, v.agentFilter == "unavailable" && len(uses) > 0:
 	default:
 		return v, invalid("agent_filter is available with no uses, unavailable with them")
@@ -185,7 +209,7 @@ func (s *Store) recordLinearView(ctx context.Context, tx *transaction, wid, pid 
 		return nil, err
 	}
 	exists := err == nil
-	same := exists && prev["team_id"] == v.teamID && prev["name"] == v.name && prev["filter_sha256"] == v.sha && prev["filter_as_of"] == v.asOf
+	same := exists && prev["team_id"] == v.teamID && prev["kind"] == v.kind && prev["name"] == v.name && prev["filter_sha256"] == v.sha && prev["filter_as_of"] == v.asOf
 	if same {
 		return viewAnswer(prev, true), nil
 	}
@@ -201,14 +225,16 @@ func (s *Store) recordLinearView(ctx context.Context, tx *transaction, wid, pid 
 		if count >= maxStoredViews {
 			return nil, invalid("a project records at most 200 views")
 		}
-		if _, err = tx.ExecContext(ctx, `INSERT INTO linear_views(project_id,view_id,team_id,kind,scope,name,filter,filter_sha256,filter_as_of,agent_filter,uses,binding_revision,adopted,created_by,created_at,updated_at) VALUES(?,?,?,'issue','team',?,?,?,?,?,?,?,?,?,?,?)`,
-			pid, v.viewID, v.teamID, v.name, v.filter, v.sha, v.asOf, v.agentFilter, v.uses, v.revision, boolInt(v.action == "adopt"), s.principal, now, now); err != nil {
+		if _, err = tx.ExecContext(ctx, `INSERT INTO linear_views(project_id,view_id,team_id,kind,scope,name,filter,filter_sha256,filter_as_of,agent_filter,uses,binding_revision,adopted,created_by,created_at,updated_at) VALUES(?,?,?,?,'team',?,?,?,?,?,?,?,?,?,?,?)`,
+			pid, v.viewID, v.teamID, v.kind, v.name, v.filter, v.sha, v.asOf, v.agentFilter, v.uses, v.revision, boolInt(v.action == "adopt"), s.principal, now, now); err != nil {
 			return nil, err
 		}
 	case !exists:
 		return nil, scoped("no view "+v.viewID+" is recorded for this project; ClawBridge updates only views it wrote", "not_found")
 	case prev["team_id"] != v.teamID:
 		return nil, invalid("an update keeps the view's team")
+	case prev["kind"] != v.kind:
+		return nil, invalid("an update keeps the view's kind")
 	default:
 		res, err := tx.ExecContext(ctx, `UPDATE linear_views SET name=?,filter=?,filter_sha256=?,filter_as_of=?,agent_filter=?,uses=?,binding_revision=?,updated_at=? WHERE project_id=? AND view_id=? AND filter_as_of=?`,
 			v.name, v.filter, v.sha, v.asOf, v.agentFilter, v.uses, v.revision, now, pid, v.viewID, v.expectedAsOf)

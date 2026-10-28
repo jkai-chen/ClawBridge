@@ -74,9 +74,15 @@ What you can do is prepare the view set:
 Project views filter projects by a project label. ClawBridge expects one single-select project-label group, for
 example `Type`, with one label per kind (`Engineering`, `Review`, `Test`). A project carries one of them.
 
-Until ClawBridge has a setting for this:
-- **You propose the mapping:** a table of the project's Linear projects and the kind each should carry, for the owner
-  to confirm.
-- **The owner makes it in Linear:** Settings → Projects → Labels for the group and its labels, then each project's
-  label on the project itself.
-- **ClawBridge only reads the labels,** for views.
+The project's kind setting names the group and its values: read it with `clawbridge --json linear kind show` (any
+session). `seeded: true` means each value has its label ID there; use those IDs in a project view's filter.
+
+- **You draft; the owner decides.** Propose the mapping as a table of the project's Linear projects and the kind each
+  should carry, with a one-line reason each. Leave out a project you can't read, and say so.
+- **Never run `linear kind set`:** the setting is the project owner's, in their own terminal, and a session is refused.
+  If no setting exists yet, suggest the command to your user: `clawbridge linear kind set --values
+  Engineering,Review,Test --expected-revision 0`.
+- **Until ClawBridge seeds the labels** (`seeded: false`), the owner makes them in Linear: Settings → Projects →
+  Labels for the group and its labels on that team, then each project's label on the project itself.
+- **A name clash is the owner's call.** Linear refuses a team label with a workspace label's name
+  (`exists_in_workspace`). Report it; choosing another name or renaming the workspace label is for your user.

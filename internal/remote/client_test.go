@@ -89,6 +89,8 @@ func TestScopedSyncOutageAndDefinitiveDenials(t *testing.T) {
 	if !bytes.Contains(encoded, []byte("cached private message")) || !bytes.Contains(encoded, []byte(`"delivered_at":null`)) {
 		t.Fatal("cached inbox changed content or stamped delivery")
 	}
+	// With the outbox switched off, no write waits (outbox_test.go has it on).
+	t.Setenv("CLAWBRIDGE_CLIENT_OUTBOX", "off")
 	for _, op := range []string{"send", "reply", "mark_read", "register_session", "retire_session", "project_role_set"} {
 		request.Operation = op
 		if _, err = client.Execute(ctx, request); err == nil || !strings.Contains(err.Error(), "no write queued") {

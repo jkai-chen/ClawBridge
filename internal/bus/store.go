@@ -1411,8 +1411,14 @@ func (s *Store) execute(ctx context.Context, tx *transaction, r Request) (any, e
 		if err != nil {
 			return nil, err
 		}
-		if actor["owner_principal"] != s.principal || str(a, "instance") == "" || actor["instance"] != str(a, "instance") {
-			return nil, errors.New("session instance mismatch; pass the instance returned by register")
+		// Two refusals, told apart: another principal's session is not
+		// this caller's at all; an earlier instance of its own is (a
+		// client's outbox dead-letters it as instance_changed).
+		if actor["owner_principal"] != s.principal {
+			return nil, &serviceError{code: "forbidden", cause: errors.New("this session belongs to another principal")}
+		}
+		if str(a, "instance") == "" || actor["instance"] != str(a, "instance") {
+			return nil, invalid("session instance mismatch; pass the instance returned by register")
 		}
 	}
 	if r.Operation == "comment_watch_status" {

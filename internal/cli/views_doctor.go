@@ -76,6 +76,8 @@ var doctorAnswers = map[string]doctorAnswer{
 	"auth.clock":                {},
 	"context":                   {},
 	"queue":                     {},
+	"server.maintenance":        {},
+	"client.outbox":             {},
 	"coordinator.playbook":      {},
 	"linear.team_roles":         {},
 	"linear.team_roles_doc":     {},

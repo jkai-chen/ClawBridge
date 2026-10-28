@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"clawbridge/internal/bus"
+	"clawbridge/internal/remote"
 )
 
 // fakeDrainStore is the maintenance row and the instance reports.
@@ -147,6 +148,10 @@ func TestDrainRefusesAllButPureReads(t *testing.T) {
 		if c.served != (res.StatusCode == 200) {
 			t.Fatalf("%s: status %d", c.body, res.StatusCode)
 		}
+		// A served read says when the drain ends, for doctor.
+		if until := res.Header.Get(MaintenanceUntilHeader); c.served != (until == "2026-10-28T22:10:00Z") {
+			t.Fatalf("%s: until %q", c.body, until)
+		}
 		if !c.served && (res.StatusCode != 503 || got.Error.Code != "maintenance" || res.Header.Get("Retry-After") != "30" || got.Error.Message != "the server is in maintenance; retry after 30 s") {
 			t.Fatalf("%s: %d %+v retry %q", c.body, res.StatusCode, got, res.Header.Get("Retry-After"))
 		}
@@ -182,8 +187,8 @@ func TestDrainOffServesWrites(t *testing.T) {
 		res := drainPost(t, host.URL+"/v1/execute", `{"operation":"send","workspace":"w","project":"p","session":"s","args":{"instance":"i"}}`)
 		res.Body.Close()
 		host.Close()
-		if res.StatusCode != 200 || len(store.ran()) != 1 {
-			t.Fatal(res.StatusCode, store.ran())
+		if res.StatusCode != 200 || len(store.ran()) != 1 || res.Header.Get(MaintenanceUntilHeader) != "" {
+			t.Fatal(res.StatusCode, store.ran(), res.Header)
 		}
 	}
 }
@@ -678,5 +683,12 @@ func TestShutdownGraceOutlastsAppWrites(t *testing.T) {
 	grace, err := time.ParseDuration(m[1])
 	if err != nil || grace <= shutdownGrace {
 		t.Fatal("compose stops the API before serve's shutdown ends:", m[1], err)
+	}
+}
+
+// The client reads the header the server sets.
+func TestMaintenanceUntilHeaderMatchesTheClients(t *testing.T) {
+	if MaintenanceUntilHeader != remote.MaintenanceUntilHeader {
+		t.Fatal(MaintenanceUntilHeader, remote.MaintenanceUntilHeader)
 	}
 }

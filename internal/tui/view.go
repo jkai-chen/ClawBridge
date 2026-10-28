@@ -127,6 +127,11 @@ func statusLine(m Model) string {
 		}
 		parts = append(parts, warnStyle.Render(fresh+", read-only: writes unavailable"))
 	}
+	if m.cfg.OutboxWaiting != nil {
+		if n := m.cfg.OutboxWaiting(); n > 0 {
+			parts = append(parts, warnStyle.Render(fmt.Sprintf("outbox: %d waiting", n)))
+		}
+	}
 	if line := m.status.line(); line != "" {
 		parts = append(parts, line)
 	} else if m.loading {

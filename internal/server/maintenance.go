@@ -217,6 +217,18 @@ func (d *Drain) retryLocked() int {
 	return retrySeconds(d.state.Remaining() - d.now().Sub(d.readAt))
 }
 
+// MaintenanceUntilHeader carries, on a read served during a drain, when
+// the drain's TTL ends it.
+const MaintenanceUntilHeader = "ClawBridge-Maintenance-Until"
+
+// Until is when the current maintenance ends by its TTL, on this
+// process's clock.
+func (d *Drain) Until() time.Time {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return d.now().Add(d.state.Remaining() - d.now().Sub(d.readAt))
+}
+
 func retrySeconds(left time.Duration) int {
 	return max(1, min(maxRetryAfter, int(math.Ceil(left.Seconds()))))
 }

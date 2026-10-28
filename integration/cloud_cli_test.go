@@ -98,6 +98,10 @@ func TestPostgresCloudCLITrustedRoutingAndOffline(t *testing.T) {
 	if len(inbox) != 1 || object(t, inbox[0])["body"] != "CLI-cloud-mail" {
 		t.Fatalf("CLI mirror inbox %v", inbox)
 	}
+	// With the client outbox off, a write fails fast and never falls back
+	// to a local authority. (With it on, the send would wait in the outbox:
+	// internal/cli's TestOutboxCommands.)
+	env = append(env, "CLAWBRIDGE_CLIENT_OUTBOX=off")
 	run(true, "send", "alice", "do-not-queue", "--operation-id", "cli-offline-write")
 	if _, err := os.Stat(filepath.Join(home, "local.db")); !os.IsNotExist(err) {
 		t.Fatal("cloud CLI silently opened writable local authority")

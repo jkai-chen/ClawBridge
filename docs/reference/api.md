@@ -676,7 +676,8 @@ exchanges nothing, ignores its query string and never logs it.
 
 Definitive authentication, authorization, validation and fencing failures are
 returned directly. Only transport/service outages may permit supported reads
-from an explicitly synchronized, bound mirror. Offline writes are never queued.
+from an explicitly synchronized, bound mirror. The client's outbox (below) keeps
+the few writes a replay can't change; every other offline write fails.
 New cloud notification clients require a service supporting inbox_status; an
 older service must fail explicitly instead of falling back to inbox fetching.
 Policy-aware clients additionally require notification_status; they do not fall
@@ -705,7 +706,49 @@ and the other reads that take no lock) still answer, and record no heartbeat whi
 `/v1/join` answers the same 503, `/mcp/intake` a JSON-RPC error at 503 with `Retry-After`, the dispatcher model API
 `503 {"error": "server_busy", "retry_after": N}`, and the watcher's tick endpoint `{"paused": true}`. `/healthz`,
 `/v1/config` and the static pages answer as usual. The model API and the server's own workers stay paused 90 s after
-maintenance ends.
+maintenance ends. A pure read served during maintenance carries `ClawBridge-Maintenance-Until: <RFC 3339 UTC>`, when
+the drain's TTL ends it, which `clawbridge doctor` shows as `server.maintenance`.
+
+What this release's clients do with `maintenance`: it is definitive, since nothing was sent. The client outbox waits
+`Retry-After` without counting an attempt; the stream reconnects after `retry_after` with no backoff; the MCP
+server's lease loop pauses for it; a `linear_write` through the MCP server is retried once after it, within the
+call's deadline, while the CLI prints when to retry. Older clients read it as a plain 503.
+
+### The client outbox
+
+A hosted client keeps the writes that couldn't reach the server, of four kinds only, and sends them when it is back:
+
+| Queues | Never queues |
+|---|---|
+| `send` and `reply` of kind `message` or `reply` without `coordination`; `ack`; `mark_read` | every read; `heartbeat`, `extend`, `lease`, `nack`; a decision, handoff or routing-change, or anything with `coordination`; session, assignment, admin and Linear writes; anything with an expected revision |
+
+- **When.** After a refused or reset connection, a timeout, or a 502, 503 or 504 (including `maintenance`), the
+  client retries for up to 15 s within the call's deadline, honouring `Retry-After`. Then it stores the request and
+  answers `{"source": "client_outbox", "data": {"outcome": "queued_local", "operation", "operation_id", "position",
+  "message"}}`. A write behind one already waiting in its queue is stored at once. A definitive refusal (any 4xx, a
+  401, a malformed answer) never queues.
+- **Exactly once.** The stored request is replayed verbatim, with fresh credentials, under its own `operation_id`:
+  the server's dedupe returns the first result. An `ack` without an `operation_id` is given one (`ack-…`) before it
+  is stored.
+- **Order.** One queue per server, workspace, project, session and instance, sent in order; a transient failure
+  stops that queue (backoff 1 s doubling to 60 s, or `Retry-After`). An ack may overtake a send: a message offered
+  again whose ack waits has its ack sent first, and the MCP server doesn't hand that message on (it is marked
+  `ack_pending_locally: true` while the ack still waits).
+- **Dead letters.** A refusal makes a write a dead letter with its class (`forbidden`, `not_found`,
+  `instance_changed` for a session that registered again, `account_changed` when the profile now signs in as someone
+  else, `expired` after 24 h). A reply refused for its piggybacked `ack` is sent once more without it, under the same
+  `operation_id`, and only the ack becomes a dead letter (`ack_refused:<class>`). An ack that lands on a delivery that
+  had died meanwhile is done, and listed once as `acked_after_dead`. Dead letters are kept 7 days.
+- **Bounds.** 1000 writes and 8 MiB per profile; past that a write fails as before, saying the outbox is full.
+- **Storage.** `outbox.db` beside the profile's mirror, mode 0600, holding the request (with its body) and never a
+  credential. A write is deleted the moment the server takes it.
+- **Who sends.** The MCP server, every 5 s while something waits and after any successful call; each CLI command,
+  the TUI and the runner, for up to 2 s before their own call; and `clawbridge outbox flush`.
+- **Kill switch.** `CLAWBRIDGE_CLIENT_OUTBOX=off` queues nothing: the client fails fast as before.
+- **Older servers** need nothing new: the outbox uses only `operation_id` dedupe.
+
+The server's refusal of a request from a session's earlier instance now says `session instance mismatch; pass the
+instance returned by register` (400 `invalid`), where it said only the generic text, so the outbox can tell it.
 
 ## Version output
 

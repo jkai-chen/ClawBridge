@@ -237,7 +237,7 @@ func TestDeviceRequestSendsTheTargetItSigned(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, target := range []string{"/v1/a%20b", "/v1/execute?note=a%20b&x=%7E", "/v1/execute"} {
-		status, _, err := c.send(context.Background(), c.http, http.MethodPost, target, []byte(`{}`), "")
+		status, _, _, err := c.send(context.Background(), c.http, http.MethodPost, target, []byte(`{}`), "")
 		if err != nil || status != 204 || got != target {
 			t.Fatalf("%s: sent %q, status %d, %v", target, got, status, err)
 		}

@@ -597,9 +597,44 @@ mail read; explicit actions retain their normal authority checks.
 
 `clawbridge sync` explicitly saves a project-scoped read-only cloud snapshot.
 During transport/service outages, supported reads may return `offline-mirror`
-with its freshness. Authentication/permission failures remain errors. Writes,
-registration/resume and notification status stay unavailable; they are never
-queued for later replay or redirected to writable local storage.
+with its freshness. Authentication/permission failures remain errors.
+Registration/resume, notification status and most writes stay unavailable; they
+are never redirected to writable local storage. Messages are the exception:
+see the next section.
+
+## Messages while the server is away
+
+On a hosted server, a message you send or reply with, an ack and a mark-read
+aren't lost when the server can't be reached, for instance while it is
+redeployed. The client tries for up to 15 seconds, then keeps the write in this
+machine's outbox and answers `queued_local`:
+
+```text
+clawbridge: the server is unreachable; send op-… is queued on this machine (position 1) and will be sent when it's back; don't resend it with a new operation ID
+```
+
+It is sent, in order and exactly once, when the server answers again: by your
+agent's MCP server within seconds, by the next `clawbridge` command, or now with
+`clawbridge outbox flush`. Only those four kinds wait; a decision, handoff or
+coordinated message, session and assignment changes and Linear writes still fail
+at once, and say so.
+
+```sh
+clawbridge outbox list            # what waits: operation, recipient, size, age; never the text
+clawbridge outbox list --dead     # what the server refused, or what waited 24 hours
+clawbridge outbox flush           # send now
+clawbridge outbox retry ID        # send a dead letter again, first in its queue
+clawbridge outbox drop ID --confirm drop   # delete one for good
+```
+
+`clawbridge doctor` shows `client.outbox`: a warning when a write has waited
+over 10 minutes or the outbox is half full, a failure when it is full or holds a
+dead letter from the last day. The TUI's status line shows `outbox: N waiting`.
+While a deploy drains the server, doctor also shows `server.maintenance` with
+when it ends. The outbox holds the message text, in `outbox.db` beside the
+mirror (mode 0600), until the server takes it. Set
+`CLAWBRIDGE_CLIENT_OUTBOX=off` to turn it off; details are in the
+[API reference](reference/api.md#the-client-outbox).
 
 See the [API reference](reference/api.md) for operations and pagination, and the
 [deployment guide](operations/deployment.md) for hosted administration.

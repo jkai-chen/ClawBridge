@@ -199,7 +199,7 @@ func (q *queue) consume(ctx context.Context, epoch uint64, instance string) {
 		scope := remote.StreamScope{Workspace: q.b.workspace, Project: q.b.project, Session: q.b.session, Instance: instance, Mode: "consume"}
 		err := s.Stream(ctx, scope, remote.StreamOptions{OnConnect: func() { q.setState(epoch, "stream") }}, func(e remote.StreamEvent) error {
 			if e.Name == "message" {
-				q.offered(epoch, e.Data)
+				q.offered(ctx, epoch, instance, e.Data)
 			}
 			return nil
 		})
@@ -218,7 +218,7 @@ func (q *queue) consume(ctx context.Context, epoch uint64, instance string) {
 }
 
 // offered takes one delivery from a stream's message event.
-func (q *queue) offered(epoch uint64, data json.RawMessage) {
+func (q *queue) offered(ctx context.Context, epoch uint64, instance string, data json.RawMessage) {
 	var e struct {
 		LeaseID    string `json:"lease_id"`
 		LeaseUntil any    `json:"lease_until"`
@@ -230,7 +230,10 @@ func (q *queue) offered(epoch uint64, data json.RawMessage) {
 	if json.Unmarshal(data, &e) != nil || e.Message.ID == "" || e.LeaseID == "" {
 		return
 	}
-	q.hold(epoch, map[string]heldLease{e.Message.ID: {LeaseID: e.LeaseID, Attempt: e.Attempt, LeaseUntil: e.LeaseUntil}})
+	leases := map[string]heldLease{e.Message.ID: {LeaseID: e.LeaseID, Attempt: e.Attempt, LeaseUntil: e.LeaseUntil}}
+	if q.skipAcked(ctx, instance, leases); len(leases) > 0 {
+		q.hold(epoch, leases)
+	}
 }
 
 func (q *queue) hold(epoch uint64, leases map[string]heldLease) {
@@ -266,6 +269,12 @@ func (q *queue) poll(ctx context.Context, epoch uint64, instance string) {
 			return
 		}
 		if err != nil {
+			if pause, ok := remote.Maintenance(err); ok {
+				// The server is draining for a deploy (§2.4): wait what it
+				// asked, without counting a failure.
+				delay = pause
+				continue
+			}
 			if strings.Contains(err.Error(), "unsupported operation") || notify.IsPermanent(err) {
 				q.setState(epoch, "off")
 				return
@@ -281,7 +290,7 @@ func (q *queue) poll(ctx context.Context, epoch uint64, instance string) {
 				leases[id] = heldLease{LeaseID: lease, Attempt: m["attempt"], LeaseUntil: m["lease_until"]}
 			}
 		}
-		if len(leases) > 0 {
+		if q.skipAcked(ctx, instance, leases); len(leases) > 0 {
 			q.hold(epoch, leases)
 		}
 	}

@@ -140,6 +140,16 @@ func (s *Service) appWrite(ctx context.Context, scope bus.Request, operation str
 		request.Args["accept_queued"] = true
 	}
 	result, err := s.cfg.Executor.Execute(ctx, request)
+	if wait, ok := maintenanceWait(err); ok && s.retryMaintenance && waitFits(ctx, wait) {
+		// The server is draining for a deploy and sent nothing (§3): one
+		// retry of the same request, after the wait it asked for.
+		if sleepCtx(ctx, wait) == nil {
+			result, err = s.cfg.Executor.Execute(ctx, request)
+		}
+	}
+	if wait, ok := maintenanceWait(err); ok {
+		return nil, fmt.Errorf("the ClawBridge server is in maintenance for a deploy; nothing was sent to Linear; retry the same operation_id after %d s: %w", int(wait/time.Second), err)
+	}
 	var rejected rejection
 	if errors.As(err, &rejected) {
 		status, code, message := rejected.Rejection()
@@ -240,4 +250,46 @@ func writeArgsV2(in WriteInputV2) map[string]any {
 		}
 	}
 	return args
+}
+
+// maintenanceWait reads a draining server's refusal of a write: nothing
+// was sent, and it says how long to wait (at least a second).
+func maintenanceWait(err error) (time.Duration, bool) {
+	var rejected rejection
+	if !errors.As(err, &rejected) {
+		return 0, false
+	}
+	if status, code, _ := rejected.Rejection(); status != http.StatusServiceUnavailable || code != "maintenance" {
+		return 0, false
+	}
+	wait := time.Second
+	var hinted interface{ RetryAfterHint() time.Duration }
+	if errors.As(err, &hinted) {
+		wait = max(wait, hinted.RetryAfterHint())
+	}
+	return wait, true
+}
+
+// maxMaintenanceRetry bounds the wait before the one retry when the call
+// has no deadline of its own.
+const maxMaintenanceRetry = 30 * time.Second
+
+// waitFits says whether a wait of d still leaves the call time for the
+// retry.
+func waitFits(ctx context.Context, d time.Duration) bool {
+	if deadline, ok := ctx.Deadline(); ok {
+		return time.Until(deadline) > d+5*time.Second
+	}
+	return d <= maxMaintenanceRetry
+}
+
+func sleepCtx(ctx context.Context, d time.Duration) error {
+	t := time.NewTimer(d)
+	defer t.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-t.C:
+		return nil
+	}
 }

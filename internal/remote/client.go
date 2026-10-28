@@ -16,6 +16,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"clawbridge/internal/auth"
@@ -23,6 +24,7 @@ import (
 	"clawbridge/internal/devicekey"
 	"clawbridge/internal/devicesign"
 	"clawbridge/internal/mirror"
+	"clawbridge/internal/outbox"
 	"golang.org/x/oauth2"
 	"google.golang.org/api/impersonate"
 	"google.golang.org/api/option"
@@ -232,6 +234,14 @@ type Client struct {
 	http       *http.Client
 	mu         sync.Mutex
 	selections map[string][]mirror.Selection
+	// The profile's outbox, opened on first use (outbox.go).
+	outboxOnce  sync.Once
+	outboxStore atomic.Pointer[outbox.Store]
+	// outboxKick is signalled when a call succeeds while writes wait.
+	outboxKick chan struct{}
+	// maintenanceUntil is when the server's maintenance ends, in Unix
+	// nanoseconds, as its last answer said; 0 when it isn't in one.
+	maintenanceUntil atomic.Int64
 }
 
 func New(c Config) (*Client, error) {
@@ -490,7 +500,7 @@ func newClient(c Config, tokens TokenSource, signer *devicesign.Signer, httpClie
 	if copyClient.Timeout == 0 {
 		copyClient.Timeout = 20 * time.Second
 	}
-	return &Client{config: c, tokens: tokens, signer: signer, http: &copyClient, selections: map[string][]mirror.Selection{}}, nil
+	return &Client{config: c, tokens: tokens, signer: signer, http: &copyClient, selections: map[string][]mirror.Selection{}, outboxKick: make(chan struct{}, 1)}, nil
 }
 
 // LinearWriteTimeout bounds a linear_write request: past the server's
@@ -500,11 +510,17 @@ const LinearWriteTimeout = 75 * time.Second
 type HTTPError struct {
 	Status int
 	Code   string
+	// RetryAfter is the server's Retry-After, when it sent one.
+	RetryAfter time.Duration
 	// Message is the server's caller-facing reason for a 400 refusal, a
 	// conflict or unreadable task board binding (409) or a rate limit (429),
 	// kept only when it is one line of printable text.
 	Message string
 }
+
+// RetryAfterHint is the server's Retry-After, for callers that wait on a
+// refusal without importing this package.
+func (e *HTTPError) RetryAfterHint() time.Duration { return e.RetryAfter }
 
 // Rejection reports the status, code and kept message, for callers that
 // tell refusals apart without importing this package.
@@ -513,6 +529,9 @@ func (e *HTTPError) Rejection() (status int, code, message string) {
 }
 
 func (e *HTTPError) Error() string {
+	if e.Code == "maintenance" {
+		return fmt.Sprintf("the server is in maintenance; nothing was sent; retry after %d s with the same operation ID; no write queued", max(1, int(e.RetryAfter/time.Second)))
+	}
 	if e.Message != "" {
 		return fmt.Sprintf("cloud request rejected (%d, %s): %s; no write queued", e.Status, e.Code, e.Message)
 	}
@@ -553,7 +572,7 @@ func (c *Client) call(ctx context.Context, r bus.Request) (bus.Result, bool, err
 		longer.Timeout = LinearWriteTimeout
 		client = &longer
 	}
-	status, encoded, err := c.send(ctx, client, http.MethodPost, "/v1/execute", raw, token)
+	status, encoded, header, err := c.send(ctx, client, http.MethodPost, "/v1/execute", raw, token)
 	if err != nil {
 		return bus.Result{}, status == 0 && ctx.Err() == nil, err
 	}
@@ -569,12 +588,22 @@ func (c *Client) call(ctx context.Context, r bus.Request) (bus.Result, bool, err
 			switch body.Error.Code {
 			case "unauthenticated", "forbidden", "invalid", "conflict", "not_found", "rate_limited", "unavailable", "binding_unreadable", "in_progress", "clock_skew":
 				code = body.Error.Code
+			case "maintenance":
+				if status == http.StatusServiceUnavailable {
+					code = body.Error.Code
+				}
 			}
 			if (status == http.StatusBadRequest && code == "invalid") || (status == http.StatusConflict && (code == "binding_unreadable" || code == "conflict" || code == "in_progress")) || (status == http.StatusTooManyRequests && code == "rate_limited") || (status == http.StatusUnauthorized && c.signer != nil) {
 				message, _ = bus.SafePublicText(body.Error.Message)
 			}
 		}
-		return bus.Result{}, status == 502 || status == 503 || status == 504, &HTTPError{Status: status, Code: code, Message: message}
+		failure := &HTTPError{Status: status, Code: code, Message: message, RetryAfter: retryAfter(header)}
+		if code == "maintenance" {
+			c.maintenanceUntil.Store(time.Now().Add(max(failure.RetryAfter, time.Second)).UnixNano())
+		}
+		// A server in maintenance refused before doing anything: that is
+		// definitive (nothing was sent), not an uncertain outage (§2.4).
+		return bus.Result{}, code != "maintenance" && (status == 502 || status == 503 || status == 504), failure
 	}
 	var result bus.Result
 	decoder := json.NewDecoder(bytes.NewReader(encoded))
@@ -589,6 +618,8 @@ func (c *Client) call(ctx context.Context, r bus.Request) (bus.Result, bool, err
 	if result.PendingDeviceEvents != nil && *result.PendingDeviceEvents > 0 && c.signer != nil {
 		c.noticeDeviceEvents(ctx, r)
 	}
+	c.noteMaintenance(header)
+	c.kickOutbox()
 	return result, false, nil
 }
 
@@ -652,36 +683,36 @@ func (c *Client) noticeDeviceEvents(ctx context.Context, r bus.Request) {
 // target and sends exactly it; a clock_skew refusal is corrected by the
 // server's time and retried once, with a new nonce and signature. status
 // is 0 when nothing came back.
-func (c *Client) send(ctx context.Context, client *http.Client, method, target string, body []byte, token string) (int, []byte, error) {
+func (c *Client) send(ctx context.Context, client *http.Client, method, target string, body []byte, token string) (int, []byte, http.Header, error) {
 	for attempt := 0; ; attempt++ {
 		req, err := c.newRequest(ctx, method, target, body, token)
 		if err != nil {
 			var credential *credentialError
 			if errors.As(err, &credential) {
-				return -1, nil, err
+				return -1, nil, nil, err
 			}
-			return 0, nil, err
+			return 0, nil, nil, err
 		}
 		req.Header.Set("Content-Type", "application/json")
 		response, err := client.Do(req)
 		if err != nil {
-			return 0, nil, errors.New("cloud transport unavailable; operation outcome may be uncertain, no write queued")
+			return 0, nil, nil, errors.New("cloud transport unavailable; operation outcome may be uncertain, no write queued")
 		}
 		encoded, err := io.ReadAll(io.LimitReader(response.Body, (16<<20)+1))
 		response.Body.Close()
 		if err != nil || len(encoded) > 16<<20 {
-			return -1, nil, errors.New("invalid or oversized cloud response")
+			return -1, nil, nil, errors.New("invalid or oversized cloud response")
 		}
 		if c.signer == nil || attempt > 0 || response.StatusCode != http.StatusUnauthorized {
-			return response.StatusCode, encoded, nil
+			return response.StatusCode, encoded, response.Header, nil
 		}
 		serverTime, skewed := clockSkewTime(encoded)
 		if !skewed {
-			return response.StatusCode, encoded, nil
+			return response.StatusCode, encoded, response.Header, nil
 		}
 		offset, err := c.signer.Correct(serverTime)
 		if err != nil {
-			return -1, nil, &credentialError{err}
+			return -1, nil, nil, &credentialError{err}
 		}
 		if c.config.SaveClockOffset != nil {
 			_, at := c.signer.Offset()
@@ -749,7 +780,18 @@ var ErrOverviewOffline = errors.New("project overview unavailable offline: the s
 var ErrThreadsOffline = errors.New("the project's threads are unavailable offline: the server could not be reached")
 
 func (c *Client) Execute(ctx context.Context, r bus.Request) (bus.Result, error) {
+	if outbox.Queueable(r) {
+		if ob := c.outbox(); ob != nil {
+			return c.executeQueueable(ctx, ob, r)
+		}
+	}
 	result, unavailable, err := c.call(ctx, r)
+	return c.answer(ctx, r, result, unavailable, err)
+}
+
+// answer is Execute's answer to one call: the result, a mirror read when
+// the authority can't be reached, or the error.
+func (c *Client) answer(ctx context.Context, r bus.Request, result bus.Result, unavailable bool, err error) (bus.Result, error) {
 	if err == nil {
 		return result, nil
 	}

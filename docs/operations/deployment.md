@@ -926,7 +926,13 @@ docker compose ... run --rm --no-deps api operator maintenance start --reason "d
   model API wait 90 s more, so every live session checks in before anything judges whether it's still there. A plain
   restart that ended nothing (a crash) doesn't wait.
 - **Check:** `operator maintenance show` prints the state and each server's report. If you abandon the swap, run
-  `operator maintenance end --confirm`.
+  `operator maintenance end --confirm`. A minute after the swap, `clawbridge doctor` on a member's machine shows
+  `client.outbox` empty: the messages, replies and acks made during the drain have been sent from their machines'
+  outboxes.
+- **What clients do.** Clients of this release keep a message, reply, ack or mark-read that the drain refuses in
+  their machine's outbox and send it once the new server answers; the stream and the lease loop wait out
+  `Retry-After`; doctor shows `server.maintenance` (docs/usage.md, "Messages while the server is away"). Older
+  clients see a plain 503 and tell their human to retry with the same operation ID.
 - **Which image runs it.** Run it after `build api`: the new image's `maintenance` command opens any schema that has
   the drain (42 or later), older or newer than its own, and touches only the drain's tables. The running server must
   have the drain itself, so the first deploy of a schema-42 release skips this step, and the command says so.

@@ -281,8 +281,15 @@ func runTUI(ctx context.Context, flags Config, args []string, stdout, stderr io.
 	bounded, cancel := context.WithCancel(ctx)
 	defer cancel()
 	var executor doctor.Executor
+	var outboxWaiting func() int
 	if c.Mode == "cloud" {
-		executor, err = remote.New(remoteConfig(c))
+		var client *remote.Client
+		client, err = remote.New(remoteConfig(c))
+		if err == nil {
+			executor = client
+			drainBeforeCommand(bounded, client)
+			outboxWaiting = func() int { return outboxCount(bounded, client) }
+		}
 	} else {
 		var store *bus.Store
 		store, err = bus.Open(c.DB)
@@ -323,7 +330,7 @@ func runTUI(ctx context.Context, flags Config, args []string, stdout, stderr io.
 		}
 		found = slug
 		return nil
-	}, Linear: linearSource, Executor: executor, Mode: tui.Mode(c.Mode), Workspace: c.Workspace, Project: c.Project, Session: c.Session, Instance: c.Instance, AgentMarker: agentMarker(closesEnv()), Server: c.Server, Audience: c.Audience, Principal: c.Principal, DeviceID: c.DeviceID, Context: bounded, InitialScreen: tui.Screen(screen), CloudInfo: info,
+	}, Linear: linearSource, Executor: executor, OutboxWaiting: outboxWaiting, Mode: tui.Mode(c.Mode), Workspace: c.Workspace, Project: c.Project, Session: c.Session, Instance: c.Instance, AgentMarker: agentMarker(closesEnv()), Server: c.Server, Audience: c.Audience, Principal: c.Principal, DeviceID: c.DeviceID, Context: bounded, InitialScreen: tui.Screen(screen), CloudInfo: info,
 		Doctor: tui.DoctorFunc(func(ctx context.Context) ([]tui.Check, error) {
 			report, e := collectDoctor(ctx, c, path, executor)
 			if e != nil {

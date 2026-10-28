@@ -75,6 +75,8 @@ type Service struct {
 	pool       *providerPool
 	proofs     *bindingProofCache
 	held       *heldOperation
+	// retryMaintenance retries a write a draining server refused, once.
+	retryMaintenance bool
 }
 
 func New(c Config) *Service {

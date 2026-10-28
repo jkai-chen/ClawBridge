@@ -175,6 +175,9 @@ type Config struct {
 	// DeviceID is the device key this profile signs with, if any; the
 	// Account screen marks it.
 	DeviceID string
+	// OutboxWaiting, when set, counts the writes waiting in this
+	// machine's client outbox, for the status line (ZERO-LOSS-DEPLOY §1.5).
+	OutboxWaiting func() int
 	// WaitingForProject opens on "Waiting for a project": the profile
 	// has a workspace but no project yet. ProjectFound saves the project
 	// once there is one; the TUI then quits so the caller reopens it.

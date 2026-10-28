@@ -243,3 +243,30 @@ func TestStreamLivenessAndHandlerError(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+// §2.4: a draining server's maintenance event, and its 503 to a new
+// stream, are waited out for the retry_after it gives, without growing the
+// backoff, and nothing reaches the handler.
+func TestStreamWaitsOutMaintenance(t *testing.T) {
+	f := &fakeStreamServer{answers: []func(http.ResponseWriter){
+		status(503),
+		sse("event: maintenance\ndata: {\"retry_after\":12}\n\n", "event: bye\ndata: {}\n\n"),
+		func(w http.ResponseWriter) {
+			w.Header().Set("Retry-After", "7")
+			w.WriteHeader(503)
+			io.WriteString(w, `{"error":{"code":"maintenance","message":"the server is in maintenance; retry after 7 s"}}`)
+		},
+		sse("event: revoked\ndata: {}\n\n"),
+	}}
+	client := streamClient(t, f)
+	w := &waits{}
+	handled := 0
+	err := client.Stream(context.Background(), streamScope, StreamOptions{Wait: w.wait}, func(StreamEvent) error { handled++; return nil })
+	var ended *StreamEnded
+	if !errors.As(err, &ended) || handled != 0 {
+		t.Fatal(err, handled)
+	}
+	if len(w.d) != 3 || w.d[0] > time.Second || w.d[1] != 12*time.Second || w.d[2] != 7*time.Second {
+		t.Fatal(w.d)
+	}
+}

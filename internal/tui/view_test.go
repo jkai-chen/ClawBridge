@@ -55,3 +55,20 @@ func TestRenderEscapesAllDynamicFieldsWithoutChangingStoredText(t *testing.T) {
 		t.Fatal("render mutated stored/action input")
 	}
 }
+
+// The status line says when writes wait in this machine's outbox
+// (ZERO-LOSS-DEPLOY §1.5), and says nothing when none do.
+func TestStatusLineShowsTheOutbox(t *testing.T) {
+	waiting := 3
+	m := Model{cfg: Config{Mode: ModeCloud, OutboxWaiting: func() int { return waiting }}}
+	if line := statusLine(m); !strings.Contains(line, "outbox: 3 waiting") {
+		t.Fatal(line)
+	}
+	waiting = 0
+	if line := statusLine(m); strings.Contains(line, "outbox") {
+		t.Fatal(line)
+	}
+	if line := statusLine(Model{}); strings.Contains(line, "outbox") {
+		t.Fatal(line)
+	}
+}

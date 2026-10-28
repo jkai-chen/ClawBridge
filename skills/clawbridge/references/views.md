@@ -34,6 +34,10 @@ taskboard_issues_v2 {"view_id": "VIEW_UUID", "limit": 50}
   Report those counts rather than treating the list as complete.
 - **`agent_filter: unavailable (uses: ...)`** means the filter uses something ClawBridge can't evaluate (`or`, `not`,
   titles, dates...). People still use that view in Linear; read the issues another way and say so.
+- **Issue views only.** A project view's ID answers `agent_filter: unavailable (uses: kind.project)`: agents list
+  project views but don't filter by them yet. A view whose team left the binding isn't read at all.
+- **Issue rows carry `priority`** (0 none, 1 urgent ... 4 low) only when `priority_known` is true. When it is false,
+  Linear's answer didn't say, so treat the priority as unknown, not as none.
 - `view_id` doesn't combine with `label_id`; `updated_after`, `limit` and `cursor` work as usual.
 
 ## Seeding views: draft, show, hand over

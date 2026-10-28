@@ -58,7 +58,7 @@ func TestPostgresAppCreateQueuesSubscribers(t *testing.T) {
 func TestPostgresSubscribersBackfill(t *testing.T) {
 	f := newAWFixture(t, awOrg)
 	f.store.SetIssueSubscribersProven(true)
-	f.api.backfill = []any{map[string]any{"id": strings.ToUpper(subIssueOne), "identifier": "FIX-1"}, map[string]any{"id": subIssueTwo, "identifier": "FIX-2"}}
+	f.api.backfill = []any{map[string]any{"id": strings.ToUpper(subIssueOne), "identifier": "FIX-1", "team": map[string]any{"id": awTeam}}, map[string]any{"id": subIssueTwo, "identifier": "FIX-2", "team": map[string]any{"id": awTeam}}}
 	run := func(session string, args map[string]any) (map[string]any, error) {
 		r, err := f.writer.Execute(context.Background(), f.identity(), bus.Request{Operation: "linear_app_subscribers_backfill", Workspace: f.workspace, Project: "p", Session: session, Args: args})
 		if err != nil {
@@ -136,4 +136,57 @@ func toStrings(v any) []string {
 		}
 	}
 	return out
+}
+
+// The backfill lists only the binding's own issues: a team board's bound
+// teams; a project set's own projects, so a project another binding holds
+// in the same team is never listed (V037 §4.4). Linear's filter carries
+// the projects, and each row is checked again.
+func TestPostgresSubscribersBackfillStaysInTheBinding(t *testing.T) {
+	const (
+		projectMine  = "c7000000-0000-4000-8000-0000000000e1"
+		projectOther = "c7000000-0000-4000-8000-0000000000e2"
+		otherTeam    = "c7000000-0000-4000-8000-0000000000c9"
+		issueMine    = "c7000000-0000-4000-8000-0000000000f1"
+		issueOther   = "c7000000-0000-4000-8000-0000000000f2"
+		issueBare    = "c7000000-0000-4000-8000-0000000000f3"
+		issueAway    = "c7000000-0000-4000-8000-0000000000f4"
+	)
+	f := newAWFixture(t, awOrg)
+	f.store.SetIssueSubscribersProven(true)
+	f.api.backfill = []any{
+		map[string]any{"id": issueMine, "identifier": "FIX-1", "team": map[string]any{"id": awTeam}, "project": map[string]any{"id": projectMine}},
+		map[string]any{"id": issueOther, "identifier": "FIX-2", "team": map[string]any{"id": strings.ToUpper(awTeam)}, "project": map[string]any{"id": projectOther}},
+		map[string]any{"id": issueBare, "identifier": "FIX-3", "team": map[string]any{"id": awTeam}, "project": nil},
+		map[string]any{"id": issueAway, "identifier": "AWAY-1", "team": map[string]any{"id": otherTeam}, "project": map[string]any{"id": projectMine}},
+	}
+	run := func() []string {
+		t.Helper()
+		r, err := f.writer.Execute(context.Background(), f.identity(), bus.Request{Operation: "linear_app_subscribers_backfill", Workspace: f.workspace, Project: "p", Args: map[string]any{"since": "2026-10-27T00:00:00Z"}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return toStrings(awJSON(t, r.Data)["issues"])
+	}
+	// A team board: the bound team's, any project or none; another team's
+	// never. The query names no projects.
+	got := strings.Join(run(), " ")
+	if !strings.Contains(got, "FIX-1") || !strings.Contains(got, "FIX-2") || !strings.Contains(got, "FIX-3") || strings.Contains(got, "AWAY-1") {
+		t.Fatal(got)
+	}
+	if q, v := f.api.backfillQueries[0], f.api.backfillVars[0]; q != "BackfillIssues" || v["projects"] != nil {
+		t.Fatal(q, v)
+	}
+	// A project set: its own project's only.
+	f.must(bus.Request{Operation: "taskboard_set_v2", Workspace: f.workspace, Project: "p", Session: awSession, Args: map[string]any{
+		"instance": awSession + "-i", "expected_revision": 1, "mode": "project_set", "linear_team_ids": []string{awTeam},
+		"linear_default_team_id": awTeam, "linear_project_ids": []string{projectMine}, "linear_workspace_id": awOrg,
+	}})
+	got = strings.Join(run(), " ")
+	if !strings.Contains(got, "FIX-1") || strings.Contains(got, "FIX-2") || strings.Contains(got, "FIX-3") || strings.Contains(got, "AWAY-1") {
+		t.Fatal("outside the binding's projects:", got)
+	}
+	if q, v := f.api.backfillQueries[1], f.api.backfillVars[1]; q != "BackfillProjectIssues" || strings.Join(toStrings(v["projects"]), ",") != projectMine {
+		t.Fatal(q, v)
+	}
 }

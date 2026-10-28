@@ -520,15 +520,18 @@ CLAWBRIDGE_LINEAR_APP_TOKEN_KEY=<32 random bytes, base64>
   `--email-stdin` reads the owner's email from one line of stdin, so it isn't on the host's command line or in its
   shell history (`--email OWNER_EMAIL` also works). The probe never prints the email.
 
-  - **The fixture.** The owner creates one issue by hand in a test team, titled
-    exactly `ClawBridge subscribe probe, will be deleted`, then **unsubscribes
-    themselves from it in Linear** (Linear subscribes the creator, which would
-    make the email call a no-op). The probe refuses, sending nothing, any other
-    title, another team than `--team`, a comment, or any subscriber at all.
-    `--dry-run` stops after that check.
+  - **The fixture.** Someone creates one issue by hand in a test team, titled
+    exactly `ClawBridge subscribe probe, will be deleted`. Linear subscribes its
+    creator, and that's fine as long as the creator isn't one of the targets
+    (the owner by `--email`, the `--user`). The probe refuses, sending nothing,
+    any other title, another team than `--team`, a comment, or a target already
+    subscribed (`inconclusive`: they unsubscribe in Linear first, or the call
+    would pass as a no-op). `--dry-run` stops after that check.
   - **The run.** It subscribes `--email` (and `--user`) as the app, then reads
-    the subscribers back. It prints each call's class, whether each person is
-    there by ID, the issue's and team's IDs, and `pass`, never the email.
+    the subscribers back. `pass` needs both calls `subscribed`, both targets in
+    the read-back, and nobody else added or gone. It prints each call's class,
+    whether each target is there, how many others there are (never who), the
+    issue's and team's IDs, and `pass`, never an email.
   - **Reading it.** Only `pass: true` lets the flag be set. A `scope` or
     `refused` class means Linear won't let the app subscribe someone else, so
     the feature stays off.

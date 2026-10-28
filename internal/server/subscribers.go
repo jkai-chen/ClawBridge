@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"slices"
 	"strings"
 	"time"
 
@@ -19,7 +20,12 @@ const backfillPages = 3
 
 // backfillIssuesQuery lists issues the app created in the bound teams since
 // a time, newest first.
-const backfillIssuesQuery = `query BackfillIssues($app: ID!, $teams: [ID!], $since: DateTimeOrDuration!, $after: String) { issues(first: 50, after: $after, orderBy: createdAt, filter: { creator: { id: { eq: $app } }, team: { id: { in: $teams } }, createdAt: { gte: $since } }) { nodes { id identifier } pageInfo { hasNextPage endCursor } } }`
+const backfillIssuesQuery = `query BackfillIssues($app: ID!, $teams: [ID!], $since: DateTimeOrDuration!, $after: String) { issues(first: 50, after: $after, orderBy: createdAt, filter: { creator: { id: { eq: $app } }, team: { id: { in: $teams } }, createdAt: { gte: $since } }) { nodes { id identifier team { id } project { id } } pageInfo { hasNextPage endCursor } } }`
+
+// backfillProjectIssuesQuery is backfillIssuesQuery for a project_set
+// binding: another binding can share its teams with other projects, so
+// only the binding's own projects count.
+const backfillProjectIssuesQuery = `query BackfillProjectIssues($app: ID!, $teams: [ID!], $projects: [ID!], $since: DateTimeOrDuration!, $after: String) { issues(first: 50, after: $after, orderBy: createdAt, filter: { creator: { id: { eq: $app } }, team: { id: { in: $teams } }, project: { id: { in: $projects } }, createdAt: { gte: $since } }) { nodes { id identifier team { id } project { id } } pageInfo { hasNextPage endCursor } } }`
 
 func (w *AppWriter) subscribersBackfill(parent context.Context, identity bus.Identity, r bus.Request) (bus.Result, error) {
 	for k := range r.Args {
@@ -75,10 +81,18 @@ func (w *AppWriter) subscribersBackfill(parent context.Context, identity bus.Ide
 	type found struct{ id, identifier, reason string }
 	issues, seen := []found{}, map[string]bool{}
 	reads, after, more := 0, any(nil), false
+	query, vars := backfillIssuesQuery, map[string]any{"app": id.AppUserID, "teams": b.LinearTeamIDs, "since": since.UTC().Format(time.RFC3339)}
+	if b.Mode == "project_set" {
+		query, vars["projects"] = backfillProjectIssuesQuery, b.LinearProjectIDs
+	}
 	for page := 0; page < backfillPages; page++ {
 		var out struct {
 			Issues struct {
-				Nodes    []struct{ ID, Identifier string }
+				Nodes []struct {
+					ID, Identifier string
+					Team           struct{ ID string }
+					Project        *struct{ ID string }
+				}
 				PageInfo struct {
 					HasNextPage bool
 					EndCursor   string
@@ -86,11 +100,17 @@ func (w *AppWriter) subscribersBackfill(parent context.Context, identity bus.Ide
 			}
 		}
 		reads++
-		if err = w.App.GraphQL(ctx, backfillIssuesQuery, map[string]any{"app": id.AppUserID, "teams": b.LinearTeamIDs, "since": since.UTC().Format(time.RFC3339), "after": after}, &out); err != nil {
+		vars["after"] = after
+		if err = w.App.GraphQL(ctx, query, vars, &out); err != nil {
 			return bus.Result{}, bus.PublicError("unavailable", "the ClawBridge Linear app could not list the issues it created")
 		}
 		for _, n := range out.Issues.Nodes {
 			issue := strings.ToLower(n.ID)
+			// Linear's filter decides, and each row is checked again: an issue
+			// outside the binding's pairs is never listed.
+			if !inBinding(b, n.Team.ID, n.Project) {
+				continue
+			}
 			if linearprovider.ValidID(issue) && !seen[issue] {
 				seen[issue] = true
 				issues = append(issues, found{issue, n.Identifier, "create"})
@@ -157,4 +177,16 @@ func withOp(r bus.Request, op string) bus.Request {
 	}
 	r.Args = args
 	return r
+}
+
+// inBinding says an issue's team and project are within the binding: a
+// bound team, and for a project_set binding one of its projects.
+func inBinding(b bus.TaskboardBindingV2, team string, project *struct{ ID string }) bool {
+	if !slices.ContainsFunc(b.LinearTeamIDs, func(t string) bool { return strings.EqualFold(t, team) }) {
+		return false
+	}
+	if b.Mode != "project_set" {
+		return true
+	}
+	return project != nil && slices.ContainsFunc(b.LinearProjectIDs, func(p string) bool { return strings.EqualFold(p, project.ID) })
 }

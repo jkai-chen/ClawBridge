@@ -26,26 +26,52 @@ type SubscribePass struct {
 	Stopped string `json:"stopped,omitempty"`
 }
 
-// subscribeCheckQuery reads the one issue a row names: its team, to prove
-// it is bound (B1), and which of the row's people are its active members
-// (B5).
-const subscribeCheckQuery = `query SubscribeCheck($id: String!, $users: [ID!]) { issue(id: $id) { id team { id members(filter: {id: {in: $users}, active: {eq: true}}, first: 10) { nodes { id } } } } }`
+// subscribeCheckQuery reads the one issue a row names: its team and
+// project, to prove it is the binding's (B1), and which of the row's people
+// are its team's active members (B5).
+const subscribeCheckQuery = `query SubscribeCheck($id: String!, $users: [ID!]) { issue(id: $id) { id project { id } team { id members(filter: {id: {in: $users}, active: {eq: true}}, first: 10) { nodes { id } } } } }`
+
+// subscribeScope is the binding's issues: its teams, and for a project_set
+// binding its projects, so an issue another binding holds in the same team
+// is never subscribed.
+type subscribeScope struct {
+	teams, projects []string
+	projectSet      bool
+}
+
+func (s subscribeScope) holds(team, project string) bool {
+	if !slices.Contains(s.teams, strings.ToLower(team)) {
+		return false
+	}
+	return !s.projectSet || slices.Contains(s.projects, strings.ToLower(project))
+}
+
+// bindingScope is a binding's subscribeScope.
+func bindingScope(b bus.TaskboardBindingV2) subscribeScope {
+	s := subscribeScope{projectSet: b.Mode == "project_set"}
+	for _, t := range b.LinearTeamIDs {
+		s.teams = append(s.teams, strings.ToLower(t))
+	}
+	for _, p := range b.LinearProjectIDs {
+		s.projects = append(s.projects, strings.ToLower(p))
+	}
+	return s
+}
 
 func (w *Watcher) subscribers(ctx context.Context, svc *linearboard.Service, scope bus.Request, pid string, fence map[string]any) (*SubscribePass, error) {
-	return w.subscribePass(ctx, pid, fence, func() []string {
-		bound := []string{}
-		if b, err := svc.BindingV2(ctx, scope); err == nil {
-			for _, t := range b.LinearTeamIDs {
-				bound = append(bound, strings.ToLower(t))
-			}
+	return w.subscribePass(ctx, pid, fence, func() subscribeScope {
+		// A binding that can't be read holds nothing: every row is skipped.
+		b, err := svc.BindingV2(ctx, scope)
+		if err != nil {
+			return subscribeScope{}
 		}
-		return bound
+		return bindingScope(b)
 	})
 }
 
-// subscribePass applies the due rows; teams reads the bound teams once,
-// only when a row is due.
-func (w *Watcher) subscribePass(ctx context.Context, pid string, fence map[string]any, teams func() []string) (*SubscribePass, error) {
+// subscribePass applies the due rows; binding reads the binding once, only
+// when a row is due.
+func (w *Watcher) subscribePass(ctx context.Context, pid string, fence map[string]any, binding func() subscribeScope) (*SubscribePass, error) {
 	pass := &SubscribePass{}
 	due, err := w.Store.ExecuteSystem(ctx, pid, bus.Request{Operation: "subscribe_due", Args: copyArgs(fence, nil)})
 	if err != nil {
@@ -58,7 +84,7 @@ func (w *Watcher) subscribePass(ctx context.Context, pid string, fence map[strin
 	if len(rows) == 0 {
 		return pass, nil
 	}
-	bound := teams()
+	bound := binding()
 	for _, raw := range rows {
 		row, _ := raw.(map[string]any)
 		outcome, reason, calls, ownerMissing := w.subscribeRow(ctx, row, bound)
@@ -84,7 +110,7 @@ func (w *Watcher) subscribePass(ctx context.Context, pid string, fence map[strin
 // subscribeRow subscribes one row's people. It returns the settle's outcome
 // and reason, the Linear calls made, and whether Linear refused the owner's
 // email.
-func (w *Watcher) subscribeRow(ctx context.Context, row map[string]any, bound []string) (outcome, reason string, calls int, ownerMissing bool) {
+func (w *Watcher) subscribeRow(ctx context.Context, row map[string]any, bound subscribeScope) (outcome, reason string, calls int, ownerMissing bool) {
 	issue, _ := row["issue_uuid"].(string)
 	email, _ := row["owner_email"].(string)
 	wanted := []string{}
@@ -99,8 +125,9 @@ func (w *Watcher) subscribeRow(ctx context.Context, row map[string]any, bound []
 	}
 	var check struct {
 		Issue *struct {
-			ID   string
-			Team struct {
+			ID      string
+			Project *struct{ ID string }
+			Team    struct {
 				ID      string
 				Members struct{ Nodes []struct{ ID string } }
 			}
@@ -113,7 +140,7 @@ func (w *Watcher) subscribeRow(ctx context.Context, row map[string]any, bound []
 	switch {
 	case check.Issue == nil || !strings.EqualFold(check.Issue.ID, issue):
 		return "skipped", "not_found", calls, false
-	case !slices.Contains(bound, strings.ToLower(check.Issue.Team.ID)):
+	case !bound.holds(check.Issue.Team.ID, issueProject(check.Issue.Project)):
 		return "skipped", "not_bound", calls, false
 	}
 	members := map[string]bool{}
@@ -198,4 +225,11 @@ func asCount(v any) int {
 		return int(n)
 	}
 	return 0
+}
+
+func issueProject(p *struct{ ID string }) string {
+	if p == nil {
+		return ""
+	}
+	return p.ID
 }

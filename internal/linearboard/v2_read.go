@@ -298,6 +298,15 @@ func (s *Service) ContextV2(ctx context.Context, scope bus.Request) (ContextV2, 
 		return ContextV2{}, e
 	}
 	out := ContextV2{Binding: b, Profile: profile, WorkspaceIDAvailable: profile.WorkspaceID != ""}
+	if len(b.Lanes) > 0 && scope.Session != "" {
+		access, e := s.access(ctx, scope)
+		if e != nil {
+			return ContextV2{}, e
+		}
+		if access.LaneWriteTeamIDs != nil {
+			out.Lane = &LaneViewV2{Name: access.Lane, WriteTeamIDs: access.LaneWriteTeamIDs}
+		}
+	}
 	if p2, ok := p.(ProviderV2); ok {
 		// Capability negotiation reads only the advertised tool list.
 		if caps, e := p2.Capabilities(ctx); e == nil {
@@ -349,7 +358,19 @@ func (s *Service) LinkV2(ctx context.Context, scope bus.Request, in LinkInputV2)
 		}
 		mapping.LinearOtherTeams[id] = access
 	}
-	if len(mapping.LinearOtherTeams) > 0 || mapping.LinearParentTeamID != "" {
+	mapping.Lanes, mapping.Unpinned = nil, ""
+	for _, l := range in.Lanes {
+		l.WriteTeamIDs = SortedTeams(l.WriteTeamIDs)
+		mapping.Lanes = append(mapping.Lanes, l)
+	}
+	sort.Slice(mapping.Lanes, func(i, j int) bool { return mapping.Lanes[i].Name < mapping.Lanes[j].Name })
+	if len(mapping.Lanes) > 0 {
+		mapping.Unpinned = in.Unpinned
+		if mapping.Unpinned == "" {
+			mapping.Unpinned = bus.LaneReadOnly
+		}
+	}
+	if mapping.CrossTeam() {
 		mapping.MappingVersion = 3
 	}
 	v, e := verifyBindingV2(ctx, p, mapping)
@@ -396,7 +417,7 @@ func (s *Service) LinkV2(ctx context.Context, scope bus.Request, in LinkInputV2)
 		}
 	}
 	if !in.Confirm {
-		preview := LinkPreviewV2{Binding: b, DefaultTeamID: in.DefaultTeamID, Teams: v.Teams, Projects: v.Projects, TeamBoard: in.TeamBoard, LinearWorkspaceID: workspace, OtherTeams: mapping.LinearOtherTeams, ParentTeamID: mapping.LinearParentTeamID}
+		preview := LinkPreviewV2{Binding: b, DefaultTeamID: in.DefaultTeamID, Teams: v.Teams, Projects: v.Projects, TeamBoard: in.TeamBoard, LinearWorkspaceID: workspace, OtherTeams: mapping.LinearOtherTeams, ParentTeamID: mapping.LinearParentTeamID, Lanes: mapping.Lanes, Unpinned: mapping.Unpinned}
 		linkClosesPreview(policy, in, &preview)
 		return preview, nil
 	}
@@ -445,6 +466,9 @@ func (s *Service) LinkV2(ctx context.Context, scope bus.Request, in LinkInputV2)
 		scope.Args["linear_other_teams"] = others
 		if mapping.LinearParentTeamID != "" {
 			scope.Args["linear_parent_team_id"] = mapping.LinearParentTeamID
+		}
+		if len(mapping.Lanes) > 0 {
+			scope.Args["lanes"], scope.Args["unpinned"] = bus.LanesArg(mapping.Lanes), mapping.Unpinned
 		}
 	}
 	if workspace != "" {
@@ -509,6 +533,9 @@ func ValidateLinkV2(in LinkInputV2) error {
 	}
 	if p := in.ParentTeamID; p != "" && !contains(in.TeamIDs, p) && in.OtherTeams[p] == "" {
 		return errors.New("the parent team must be one of the binding's teams")
+	}
+	if len(in.Lanes) > 0 || in.Unpinned != "" {
+		return bus.ValidateLanes(in.TeamIDs, in.Lanes, in.Unpinned)
 	}
 	return nil
 }

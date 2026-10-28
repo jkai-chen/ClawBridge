@@ -1,5 +1,14 @@
 package bus
 
+// lanesDowngradeSQLite returns a schema-46 database to schema 45's shape:
+// the lane pins.
+const lanesDowngradeSQLite = "DROP TABLE lane_pins_revision;\nDROP TABLE lane_pins;\n"
+
+// lanesDowngradePostgres is lanesDowngradeSQLite for a Postgres schema.
+func lanesDowngradePostgres(schema string) string {
+	return "DROP TABLE " + schema + ".lane_pins_revision;\nDROP TABLE " + schema + ".lane_pins;\n"
+}
+
 // outboxDowngradeSQLite returns a schema-42 database to schema 41's shape.
 const outboxDowngradeSQLite = "DROP TABLE linear_write_outbox;\n"
 

@@ -147,7 +147,7 @@ func (s *Store) migrate() error {
 	if err = tx.QueryRow("PRAGMA user_version").Scan(&version); err != nil {
 		return err
 	}
-	if version > 45 {
+	if version > 46 {
 		return errors.New("database schema is newer than this ClawBridge binary")
 	}
 	if version == 0 {
@@ -390,6 +390,11 @@ func (s *Store) migrate() error {
 			return err
 		}
 	}
+	if version < 46 {
+		if _, err = tx.Exec(lanePinsSchema + `PRAGMA user_version=46;`); err != nil {
+			return err
+		}
+	}
 	return tx.Commit()
 }
 
@@ -570,10 +575,10 @@ var operationArgs = map[string]string{
 	"taskboard_get":               "instance",
 	"taskboard_get_v2":            "instance",
 	"comment_watch_status":        "",
-	"taskboard_set_v2":            "instance expected_revision mode linear_team_ids linear_default_team_id linear_project_ids linear_workspace_id closes_pending linear_team_names linear_project_names linear_other_teams linear_parent_team_id",
+	"taskboard_set_v2":            "instance expected_revision mode linear_team_ids linear_default_team_id linear_project_ids linear_workspace_id closes_pending linear_team_names linear_project_names linear_other_teams linear_parent_team_id lanes unpinned",
 	"taskboard_names_set":         "instance expected_revision linear_team_names linear_project_names",
 	"taskboard_clear_v2":          "instance expected_revision repair",
-	"taskboard_access":            "instance ledger engineer",
+	"taskboard_access":            "instance ledger engineer lane_scope",
 	"member_display_name_set":     "display_name if_unset",
 	"taskboard_set":               "instance expected_revision linear_team_ids linear_default_team_id linear_project_id linear_workspace_id",
 	"taskboard_clear":             "instance expected_revision repair",
@@ -688,6 +693,9 @@ var operationArgs = map[string]string{
 	"linear_view_forget":          "instance view_id expected_filter_as_of",
 	"linear_view_get":             "instance view_id",
 	"linear_views_list":           "instance",
+	"lane_pins_get":               "instance",
+	"lane_pin_set":                "instance expected_revision kind key lane confirm",
+	"lane_pin_clear":              "instance expected_revision kind key confirm",
 	"project_kind_get":            "instance",
 	"project_kind_set":            "instance expected_revision team_id scope group_name kinds",
 	"team_roles_get":              "instance",
@@ -724,7 +732,7 @@ func validateArgs(op string, a map[string]any) error {
 					return invalid(k + " must be an integer")
 				}
 			}
-		case "retention_days", "limit", "since_hours", "after", "expected_revision", "expected_binding_revision", "ledger", "generation", "budget", "calls", "charged", "policy_revision", "engineer", "if_unset", "expires_days", "expires_hours", "expires_minutes", "device_idle_days", "delay_seconds", "seconds", "s5_calls_per_hour", "out_of_binding_limit", "template_version", "part_number", "part_count", "seq", "config_revision", "mapping_revision", "members_before", "members_after":
+		case "retention_days", "limit", "since_hours", "after", "expected_revision", "expected_binding_revision", "ledger", "lane_scope", "generation", "budget", "calls", "charged", "policy_revision", "engineer", "if_unset", "expires_days", "expires_hours", "expires_minutes", "device_idle_days", "delay_seconds", "seconds", "s5_calls_per_hour", "out_of_binding_limit", "template_version", "part_number", "part_count", "seq", "config_revision", "mapping_revision", "members_before", "members_after":
 			if _, err := integer(v); err != nil {
 				return fmt.Errorf("%s: %w", k, err)
 			}
@@ -811,6 +819,15 @@ func validateArgs(op string, a map[string]any) error {
 		case "ack":
 			if _, ok := v.(map[string]any); !ok {
 				return errors.New("ack must be an object {message_id, lease_id}")
+			}
+		case "lanes":
+			// The lanes themselves are checked by parseLanes.
+			if _, ok := v.([]any); !ok {
+				return errors.New("lanes must be an array of lanes")
+			}
+		case "unpinned":
+			if _, ok := v.(string); !ok && v != nil {
+				return errors.New("unpinned must be read_only, a lane name or null")
 			}
 		case "mapping":
 			if _, ok := v.(map[string]any); !ok {
@@ -962,7 +979,7 @@ func pureRead(r Request) bool {
 	switch r.Operation {
 	case "snapshot", "inbox_status", "notification_status", "taskboard_get", "taskboard_get_v2", "taskboard_access", "list_projects", "list_members", "comment_watch_status", "label_policy_get", "status_policy_get", "doc_policy_get", "dispatcher_get", "context_watch_get", "health_get", "doc_seed_get", "doc_publication_get", "invite_list", "device_list", "device_events", "user_list", "owner_transfer_get", "dispatcher_chat_show", "dispatcher_decisions_list", "dispatcher_escalations_list", "dispatcher_model_doctor", "project_overview":
 		return true
-	case "list_sessions", "history", "whoami", "linear_comments_posted", "linear_comment_precheck", "intake_policy_get", "intake_trust_list", "intake_list", "linear_view_get", "linear_views_list", "project_kind_get", "team_roles_get":
+	case "list_sessions", "history", "whoami", "linear_comments_posted", "linear_comment_precheck", "intake_policy_get", "intake_trust_list", "intake_list", "linear_view_get", "linear_views_list", "project_kind_get", "team_roles_get", "lane_pins_get":
 		// Naming a session with its instance makes it a heartbeat read: the
 		// read itself is pure and the heartbeat follows (see beat).
 		return (r.Session == "") == (str(r.Args, "instance") == "")
@@ -1379,6 +1396,9 @@ func (s *Store) execute(ctx context.Context, tx *transaction, r Request) (any, e
 	if projectLeadOperation(r.Operation) {
 		return s.projectLeadOp(ctx, tx, wid, pid, projectRole, r)
 	}
+	if lanePinOperation(r.Operation) {
+		return s.lanePinsOp(ctx, tx, wid, pid, projectRole, r)
+	}
 	// Any project member may read the approved label list, with or
 	// without a session; setting it is the owner's (labelPolicyOp).
 	if r.Operation == "label_policy_get" {
@@ -1441,6 +1461,24 @@ func (s *Store) execute(ctx context.Context, tx *transaction, r Request) (any, e
 				access.SessionID = actor["id"].(string)
 				access.SessionName = actor["name"].(string)
 				access.CanWrite = access.CanWrite && actor["status"] == "active"
+			}
+			// A client that asks gets the session's lane when the binding
+			// has lanes; it refuses writes on a binding with lanes when the
+			// server names none.
+			if n, e := integer(a["lane_scope"]); e == nil && n == 1 {
+				// Without a session, the caller's own principal's pin
+				// applies, then unpinned.
+				who := actor
+				if who == nil {
+					who = map[string]any{"owner_principal": s.principal}
+				}
+				lane, teams, ok, e := s.sessionLane(ctx, tx, pid, who)
+				if e != nil {
+					return nil, e
+				}
+				if ok {
+					access.Lane, access.LaneWriteTeamIDs = lane, teams
+				}
 			}
 			out := accessMap(access)
 			// A client that asks gets the engineer behind the session, from

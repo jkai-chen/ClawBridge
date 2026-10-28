@@ -219,7 +219,7 @@ func ValidateWriteV2(in WriteInputV2) error {
 // legacyMappingV2: the binding can be served by the legacy path, which
 // knows no access levels, so a version 3 binding never is.
 func legacyMappingV2(b bus.TaskboardBindingV2) bool {
-	if len(b.LinearOtherTeams) > 0 || b.LinearParentTeamID != "" {
+	if b.CrossTeam() {
 		return false
 	}
 	return b.Mode == "team_board" || (b.Mode == "project_set" && len(b.LinearProjectIDs) == 1)
@@ -454,6 +454,13 @@ func (s *Service) WriteV2(ctx context.Context, scope bus.Request, in WriteInputV
 	if e = writeScopeV2(in)(effective, b, v); e != nil {
 		return nil, e
 	}
+	// A session writes only its lane's teams; a marker is ClawBridge's own
+	// bookkeeping on a claim, not the session's write.
+	if !in.marker {
+		if e = checkLaneV2(b, access, team); e != nil {
+			return nil, e
+		}
+	}
 	if in.Labels.Present {
 		if !caps.Labels || !caps.ReplaceLabels {
 			return nil, errors.New("provider cannot safely replace issue labels")
@@ -640,6 +647,9 @@ func (s *Service) WriteV2(ctx context.Context, scope bus.Request, in WriteInputV
 		if fresh.SessionID != access.SessionID {
 			return nil, refusedBeforeDispatch(errActorChanged)
 		}
+		if !sameLaneV2(b, access, fresh) {
+			return nil, refusedBeforeDispatch(errLaneChanged)
+		}
 		if e = s.refreshWriteProofV2(ctx, p, p2, b, v, in, team, project, current, legacy, plan); e != nil {
 			return nil, proofFailure(e)
 		}
@@ -652,6 +662,9 @@ func (s *Service) WriteV2(ctx context.Context, scope bus.Request, in WriteInputV
 		}
 		if fresh.SessionID != access.SessionID {
 			return nil, refusedBeforeDispatch(errActorChanged)
+		}
+		if !sameLaneV2(b, access, fresh) {
+			return nil, refusedBeforeDispatch(errLaneChanged)
 		}
 		if e = ctx.Err(); e != nil {
 			return nil, notDispatched(e)

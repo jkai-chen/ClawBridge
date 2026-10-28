@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"regexp"
 	"sort"
 	"strings"
 )
@@ -36,7 +37,39 @@ type TaskboardBindingV2 struct {
 	// LinearParentTeamID is the parent team among the listed teams, for
 	// display; sub-teams are never added on their own.
 	LinearParentTeamID string
+	// Lanes filter which write teams a session writes (§3.1); none means
+	// every session writes every write team, as before.
+	Lanes []Lane
+	// Unpinned is the lane of a session with no pin, or LaneReadOnly; ""
+	// when the binding has no lanes.
+	Unpinned string
 }
+
+// Lane is a named set of write teams a pinned session writes.
+type Lane struct {
+	Name          string   `json:"name"`
+	WriteTeamIDs  []string `json:"write_team_ids"`
+	DefaultTeamID string   `json:"default_team_id"`
+}
+
+// LaneReadOnly is the unpinned setting under which a session with no pin
+// writes no team.
+const LaneReadOnly = "read_only"
+
+const maxLanes = 10
+
+var laneName = regexp.MustCompile(`^[a-z][a-z0-9-]{0,31}$`)
+
+// Lane is the binding's lane of that name.
+func (b TaskboardBindingV2) Lane(name string) (Lane, bool) {
+	for _, l := range b.Lanes {
+		if l.Name == name {
+			return l, true
+		}
+	}
+	return Lane{}, false
+}
+
 type BindingV2 = TaskboardBindingV2
 
 // Team access levels beside write (the teams in LinearTeamIDs).
@@ -74,10 +107,10 @@ func (b TaskboardBindingV2) ListedTeamIDs() []string {
 	return out
 }
 
-// crossTeam: the binding uses version 3's fields, which a client that
+// CrossTeam: the binding uses version 3's fields, which a client that
 // reads only version 2 must refuse rather than ignore.
-func (b TaskboardBindingV2) crossTeam() bool {
-	return len(b.LinearOtherTeams) > 0 || b.LinearParentTeamID != ""
+func (b TaskboardBindingV2) CrossTeam() bool {
+	return len(b.LinearOtherTeams) > 0 || b.LinearParentTeamID != "" || len(b.Lanes) > 0
 }
 
 func parseTaskboardMappingV2(a map[string]any) (TaskboardBindingV2, error) {
@@ -153,11 +186,103 @@ func parseCrossTeam(a map[string]any, b *TaskboardBindingV2) error {
 		}
 		b.LinearParentTeamID = id
 	}
-	if b.crossTeam() {
+	if e := parseLanes(a, b); e != nil {
+		return e
+	}
+	if b.CrossTeam() {
 		b.MappingVersion = 3
 	}
 	return nil
 }
+
+// ValidateLanes applies the binding's lane rules to a link before it is
+// sent: lanes over writeTeams, and the unpinned setting ("" for its
+// default, read_only).
+func ValidateLanes(writeTeams []string, lanes []Lane, unpinned string) error {
+	b := TaskboardBindingV2{LinearTeamIDs: writeTeams}
+	a := map[string]any{"lanes": LanesArg(lanes)}
+	if lanes == nil {
+		a["lanes"] = nil
+	}
+	if unpinned != "" {
+		a["unpinned"] = unpinned
+	}
+	return parseLanes(a, &b)
+}
+
+// LanesArg is lanes as a taskboard_set_v2 argument.
+func LanesArg(lanes []Lane) []any {
+	out := []any{}
+	for _, l := range lanes {
+		ids := []any{}
+		for _, id := range l.WriteTeamIDs {
+			ids = append(ids, id)
+		}
+		out = append(out, map[string]any{"name": l.Name, "write_team_ids": ids, "default_team_id": l.DefaultTeamID})
+	}
+	return out
+}
+
+// parseLanes reads version 3's lanes and the unpinned setting.
+func parseLanes(a map[string]any, b *TaskboardBindingV2) error {
+	if raw, ok := a["lanes"]; ok && raw != nil {
+		list, ok := raw.([]any)
+		if !ok || len(list) > maxLanes {
+			return fmt.Errorf("lanes is a list of at most %d lanes", maxLanes)
+		}
+		for _, item := range list {
+			m, ok := item.(map[string]any)
+			if !ok || len(m) != 3 {
+				return errors.New("a lane has exactly name, write_team_ids and default_team_id")
+			}
+			name, _ := m["name"].(string)
+			if !laneName.MatchString(name) || name == LaneReadOnly {
+				return errors.New("a lane name is 1 to 32 lowercase letters, digits or dashes, starting with a letter, and not read_only")
+			}
+			if _, dup := b.Lane(name); dup {
+				return errors.New("lane names are unique")
+			}
+			ids, isArray, ok := stringList(m["write_team_ids"])
+			if !isArray || !ok || len(ids) == 0 {
+				return errors.New("a lane's write_team_ids is a non-empty list of team IDs")
+			}
+			seen := map[string]bool{}
+			for _, id := range ids {
+				if seen[id] || !containsString(b.LinearTeamIDs, id) {
+					return errors.New("a lane's write teams are distinct write teams of the binding")
+				}
+				seen[id] = true
+			}
+			sort.Strings(ids)
+			def, _ := m["default_team_id"].(string)
+			if !containsString(ids, def) {
+				return errors.New("a lane's default team is one of its write teams")
+			}
+			b.Lanes = append(b.Lanes, Lane{Name: name, WriteTeamIDs: ids, DefaultTeamID: def})
+		}
+		sort.Slice(b.Lanes, func(i, j int) bool { return b.Lanes[i].Name < b.Lanes[j].Name })
+	}
+	raw, present := a["unpinned"]
+	unpinned, isString := raw.(string)
+	switch {
+	case len(b.Lanes) == 0 && present && raw != nil:
+		return errors.New("unpinned needs lanes")
+	case len(b.Lanes) == 0:
+	case !present || raw == nil:
+		b.Unpinned = LaneReadOnly
+	case !isString:
+		return errors.New("unpinned is read_only or a lane name")
+	case unpinned == LaneReadOnly:
+		b.Unpinned = LaneReadOnly
+	default:
+		if _, ok := b.Lane(unpinned); !ok {
+			return errors.New("unpinned is read_only or a lane name")
+		}
+		b.Unpinned = unpinned
+	}
+	return nil
+}
+
 func mappingMapV2(b TaskboardBindingV2) map[string]any {
 	b.LinearTeamIDs = append([]string(nil), b.LinearTeamIDs...)
 	sort.Strings(b.LinearTeamIDs)
@@ -166,12 +291,17 @@ func mappingMapV2(b TaskboardBindingV2) map[string]any {
 	m := map[string]any{"provider": "linear", "mode": b.Mode, "linear_team_ids": b.LinearTeamIDs, "linear_default_team_id": b.LinearDefaultTeamID, "linear_project_ids": b.LinearProjectIDs, "linear_workspace_id": nullable(b.LinearWorkspaceID)}
 	// A version 2 binding keeps exactly its version 2 form, so its stored
 	// mapping, its digest and what an older client reads are unchanged.
-	if b.crossTeam() {
+	if b.CrossTeam() {
 		others := map[string]any{}
 		for id, access := range b.LinearOtherTeams {
 			others[id] = access
 		}
 		m["linear_other_teams"], m["linear_parent_team_id"] = others, nullable(b.LinearParentTeamID)
+		lanes := []any{}
+		for _, l := range b.Lanes {
+			lanes = append(lanes, map[string]any{"name": l.Name, "write_team_ids": append([]string(nil), l.WriteTeamIDs...), "default_team_id": l.DefaultTeamID})
+		}
+		m["lanes"], m["unpinned"] = lanes, nullable(b.Unpinned)
 	}
 	return m
 }
@@ -181,7 +311,7 @@ func bindingMapV2(b TaskboardBindingV2) map[string]any {
 		mapping = mappingMapV2(b)
 	}
 	version := 2
-	if b.Configured && b.crossTeam() {
+	if b.Configured && b.CrossTeam() {
 		version = 3
 	}
 	return map[string]any{"workspace_id": b.WorkspaceID, "project_id": b.ProjectID, "configured": b.Configured, "revision": b.Revision, "mapping_version": version, "binding": mapping, "updated_at": nullable(b.UpdatedAt)}
@@ -220,7 +350,7 @@ func ParseTaskboardBindingV2(v any) (TaskboardBindingV2, error) {
 		a, ok := m["binding"].(map[string]any)
 		fields := []string{"provider", "mode", "linear_team_ids", "linear_default_team_id", "linear_project_ids", "linear_workspace_id"}
 		if n == 3 {
-			fields = append(fields, "linear_other_teams", "linear_parent_team_id")
+			fields = append(fields, "linear_other_teams", "linear_parent_team_id", "lanes", "unpinned")
 		}
 		if !ok || len(a) != len(fields) || a["provider"] != "linear" {
 			return b, errors.New("invalid V2 mapping")
@@ -234,7 +364,7 @@ func ParseTaskboardBindingV2(v any) (TaskboardBindingV2, error) {
 		if e != nil {
 			return b, e
 		}
-		if mapping.crossTeam() != (n == 3) {
+		if mapping.CrossTeam() != (n == 3) {
 			return b, errors.New("mapping_version does not match the mapping")
 		}
 		old := TaskboardBinding{LinearTeamIDs: mapping.LinearTeamIDs, LinearDefaultTeamID: mapping.LinearDefaultTeamID, LinearWorkspaceID: mapping.LinearWorkspaceID}
@@ -251,7 +381,7 @@ func ParseTaskboardBindingV2(v any) (TaskboardBindingV2, error) {
 	b.UpdatedAt = old.UpdatedAt
 	b.Configured = old.Configured
 	b.MappingVersion = 2
-	if b.crossTeam() {
+	if b.CrossTeam() {
 		b.MappingVersion = 3
 	}
 	return b, nil
@@ -265,7 +395,7 @@ func convertLegacyBinding(b TaskboardBinding) TaskboardBindingV2 {
 	return next
 }
 func legacyBinding(b TaskboardBindingV2) (TaskboardBinding, error) {
-	if b.Configured && (len(b.LinearProjectIDs) > 1 || b.crossTeam()) {
+	if b.Configured && (len(b.LinearProjectIDs) > 1 || b.CrossTeam()) {
 		return TaskboardBinding{}, &serviceError{code: "unsupported_mapping", cause: errors.New("mapping requires a V2-capable client")}
 	}
 	old := TaskboardBinding{WorkspaceID: b.WorkspaceID, ProjectID: b.ProjectID, Configured: b.Configured, Revision: b.Revision, UpdatedAt: b.UpdatedAt, Provider: b.Provider, LinearTeamIDs: b.LinearTeamIDs, LinearDefaultTeamID: b.LinearDefaultTeamID, LinearWorkspaceID: b.LinearWorkspaceID}

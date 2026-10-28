@@ -152,7 +152,12 @@ func (c *commandCapsV2) get(ctx context.Context) (linearprovider.Capabilities, e
 	return *c.caps, nil
 }
 
-func relationEvidenceV2(ctx context.Context, p ProviderV2, b bus.TaskboardBindingV2, v verifiedV2, caps *commandCapsV2, in RelationInputV2) (*linearprovider.Relation, bool, error) {
+// relationEvidenceV2 reads both ends and their edges. lane, when the
+// binding has lanes, checks a team against the session's lane (X2): an add
+// needs the caller's own end in it; a remove needs the stored edge's from
+// end, as Linear reports it, and both ends of a related edge whose stored
+// direction isn't seen.
+func relationEvidenceV2(ctx context.Context, p ProviderV2, b bus.TaskboardBindingV2, v verifiedV2, caps *commandCapsV2, in RelationInputV2, lane func(team string) error) (*linearprovider.Relation, bool, error) {
 	from, e := p.IssueV2(ctx, in.FromID)
 	if e != nil {
 		return nil, false, e
@@ -188,6 +193,7 @@ func relationEvidenceV2(ctx context.Context, p ProviderV2, b bus.TaskboardBindin
 		return "", true
 	}
 	var existing *linearprovider.Relation
+	storedFrom := ""
 	for _, issue := range []linearprovider.IssueV2{from, to} {
 		for _, edge := range issue.Relations {
 			fromID, okFrom := resolve(edge.FromID, edge.FromIdentifier)
@@ -199,6 +205,7 @@ func relationEvidenceV2(ctx context.Context, p ProviderV2, b bus.TaskboardBindin
 				continue
 			}
 			edge.FromID, edge.ToID, edge.FromIdentifier, edge.ToIdentifier = fromID, toID, "", ""
+			reported := edge.FromID
 			if (edge.Type != "blocks" && edge.Type != "related") || edge.FromID == edge.ToID || (edge.ID != "" && !linearprovider.ValidID(edge.ID)) {
 				return nil, false, errors.New("invalid authoritative relation evidence")
 			}
@@ -211,10 +218,30 @@ func relationEvidenceV2(ctx context.Context, p ProviderV2, b bus.TaskboardBindin
 				}
 				copy := edge
 				existing = &copy
+				storedFrom = reported
 			}
 		}
 	}
 	observed := (in.Action == "add" && existing != nil) || (in.Action == "remove" && existing == nil && from.RelationsKnown && to.RelationsKnown)
+	if lane != nil && !observed {
+		teamOf := map[string]string{from.ID: from.TeamID, to.ID: to.TeamID}
+		var ends []string
+		switch {
+		case in.Action == "add":
+			ends = []string{in.source}
+		case storedFrom != "":
+			ends = []string{storedFrom}
+		case in.Type == "related":
+			ends = []string{from.ID, to.ID}
+		default:
+			ends = []string{in.FromID}
+		}
+		for _, id := range ends {
+			if e = lane(teamOf[id]); e != nil {
+				return nil, false, e
+			}
+		}
+	}
 	if !observed {
 		c, e := caps.get(ctx)
 		if e != nil {

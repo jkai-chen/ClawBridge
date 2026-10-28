@@ -239,10 +239,18 @@ func (s *Service) access(ctx context.Context, scope bus.Request) (bus.TaskboardA
 	scope.Args["ledger"] = 1
 	// The marker names the engineer behind the session, from the authority.
 	scope.Args["engineer"] = 1
+	// The session's lane, when the binding has lanes (§3.1).
+	scope.Args["lane_scope"] = 1
 	result, err := s.cfg.Executor.Execute(ctx, scope)
-	if err != nil && strings.Contains(err.Error(), `unsupported argument "engineer"`) {
-		// A server older than v0.2.8 names no engineer; the marker omits it.
-		delete(scope.Args, "engineer")
+	// An older server refuses the optional arguments it doesn't know, one
+	// at a time: without "lane_scope" it names no lane, and a binding with lanes
+	// then refuses every write (checkLaneV2); a server older than v0.2.8
+	// names no engineer, and the marker omits it.
+	for _, optional := range []string{"lane_scope", "engineer", "lane_scope"} {
+		if err == nil || !strings.Contains(err.Error(), `unsupported argument "`+optional+`"`) {
+			continue
+		}
+		delete(scope.Args, optional)
 		result, err = s.cfg.Executor.Execute(ctx, scope)
 	}
 	if err != nil && strings.Contains(err.Error(), `unsupported argument "ledger"`) {

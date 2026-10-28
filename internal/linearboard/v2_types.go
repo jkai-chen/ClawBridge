@@ -27,6 +27,17 @@ type ContextV2 struct {
 	// why a capability is off. It is omitted for a provider without V2
 	// capability reporting.
 	Capabilities *linearprovider.Capabilities `json:"capabilities,omitempty"`
+	// Lane is the session's lane and the teams it writes, when the binding
+	// has lanes and the call names a session (§3.1), so an agent knows
+	// before it tries.
+	Lane *LaneViewV2 `json:"lane,omitempty"`
+}
+
+// LaneViewV2 is a session's lane: its name, or read_only, and the write
+// teams it writes, none when read-only.
+type LaneViewV2 struct {
+	Name         string   `json:"name"`
+	WriteTeamIDs []string `json:"write_team_ids"`
 }
 type LinkInputV2 struct {
 	TeamIDs            []string
@@ -45,6 +56,10 @@ type LinkInputV2 struct {
 	// parent team among them all (CROSS-TEAM-BINDING-DESIGN §3).
 	OtherTeams   map[string]string
 	ParentTeamID string
+	// Lanes filter which write teams each session writes; Unpinned is the
+	// lane of a session with no pin, or read_only, the default (§3.1).
+	Lanes    []bus.Lane
+	Unpinned string
 }
 type LinkPreviewV2 struct {
 	Binding       bus.TaskboardBindingV2   `json:"current"`
@@ -65,6 +80,10 @@ type LinkPreviewV2 struct {
 	// teams, by access, and its parent team (binding version 3).
 	OtherTeams   map[string]string `json:"other_teams,omitempty"`
 	ParentTeamID string            `json:"parent_team_id,omitempty"`
+	// Lanes and Unpinned are the link's lanes and the lane of a session
+	// with no pin.
+	Lanes    []bus.Lane `json:"lanes,omitempty"`
+	Unpinned string     `json:"unpinned,omitempty"`
 }
 
 // CommentsInputV2 opts an issue read into its comments. Since is a
@@ -131,7 +150,12 @@ type WriteInputV2 struct {
 	// sent.
 	marker bool
 }
-type RelationInputV2 struct{ OperationID, Action, Type, FromID, ToID string }
+type RelationInputV2 struct {
+	OperationID, Action, Type, FromID, ToID string
+	// source is the caller's own end, its first argument, before
+	// normalization swaps or sorts the ends; a lane checks it on add.
+	source string
+}
 type ReceiptV2 struct {
 	Kind       string  `json:"kind"`
 	Outcome    string  `json:"outcome"`

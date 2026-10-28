@@ -253,22 +253,32 @@ func (s *Store) setProjectKind(ctx context.Context, tx *transaction, wid, pid st
 
 // kindBinding is the project's binding, which a kind's team must be in.
 func (s *Store) kindBinding(ctx context.Context, tx *transaction, pid string) (TaskboardBindingV2, error) {
+	b, linked, err := storedBinding(ctx, tx, pid)
+	if err == nil && !linked {
+		err = invalid(projectKindNoTeam)
+	}
+	return b, err
+}
+
+// storedBinding reads a project's binding from the store; linked is false
+// when the task board isn't linked.
+func storedBinding(ctx context.Context, tx *transaction, pid string) (b TaskboardBindingV2, linked bool, err error) {
 	row, err := one(ctx, tx, `SELECT revision,mapping,mapping_version FROM taskboard_bindings WHERE project_id=?`, pid)
 	if errors.Is(err, errNotFound) {
-		return TaskboardBindingV2{}, invalid(projectKindNoTeam)
+		return TaskboardBindingV2{}, false, nil
 	}
 	if err != nil {
-		return TaskboardBindingV2{}, err
+		return TaskboardBindingV2{}, false, err
 	}
 	mapping, ok := row["mapping"].(string)
 	if !ok {
-		return TaskboardBindingV2{}, invalid(projectKindNoTeam)
+		return TaskboardBindingV2{}, false, nil
 	}
-	b, err := readStoredMapping(mapping, int(asInt(row["mapping_version"])))
+	b, err = readStoredMapping(mapping, int(asInt(row["mapping_version"])))
 	if err != nil {
-		return TaskboardBindingV2{}, bindingUnreadable(int64(asInt(row["revision"])), errors.Is(err, errMappingFormat))
+		return TaskboardBindingV2{}, true, bindingUnreadable(int64(asInt(row["revision"])), errors.Is(err, errMappingFormat))
 	}
-	return b, nil
+	return b, true, nil
 }
 
 // readProjectKind is the setting, or revision 0 with the default group and

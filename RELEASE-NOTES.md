@@ -1,8 +1,8 @@
 # Unreleased
 
-**Schema 41 → 45.**
-- The server migrates to schema 45 on its first start: 42, the agent writes the server queued (the Linear write
-  outbox); 43, the team roles; 44, the project lead settings; 45, the project lead notices.
+**Schema 41 → 46.**
+- The server migrates to schema 46 on its first start: 42, the agent writes the server queued (the Linear write
+  outbox); 43, the team roles; 44, the project lead settings; 45, the project lead notices; 46, the lane pins.
 - **One-way:** v0.3.7 refuses a database newer than schema 41. Take a dump before upgrading; to go back, restore it
   with the v0.3.7 image (docs/operations/deployment.md).
 
@@ -86,6 +86,17 @@
   relinking with it. No schema change. Linear config scope: none. **Rollback:** an older server reading such a
   binding sees only its write teams, which is more restrictive, never less. Relink without the new flags before
   downgrading clients.
+- **Lanes: which write teams each session writes.** `linear link --lane NAME=TEAM,…` splits a binding's write teams
+  into lanes, and `--unpinned` sets the lane of a session nobody pinned (`read_only` by default). The project owner
+  pins a session or a principal to a lane with `linear lanes pin`, in their own terminal; a session pin binds the
+  principal it was set for. A write to a write team outside the session's lane, through a profile or the ClawBridge
+  app, is refused before anything is sent (`outside_lane`), and again inside the write lock if the pin changed.
+  Relations need the caller's own end in the lane. Writes without a session follow the caller's principal pin, so with
+  `read_only` the owner pins their own principal before writing from the CLI. A queued write is checked again at send
+  by its session's lane as pinned then. Every listed team stays readable, comment teams take comments from every lane,
+  and markers and server-side writes aren't filtered. An agent's `context` shows its lane. Schema 46: the lane pins.
+  Linear config scope: none. **Rollback:** relink without `--lane`; every session then writes every write team, as
+  before.
 
 ## Team roles: telling project leads
 

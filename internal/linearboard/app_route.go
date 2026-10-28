@@ -3,6 +3,7 @@ package linearboard
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"sync"
 	"time"
@@ -33,7 +34,23 @@ type appRoute struct {
 	known  bool
 	on     bool
 	userID string
+	// queues says the server queues a write that can't go now for a
+	// client that accepts it.
+	queues bool
 }
+
+type acceptQueuedKey struct{}
+
+// AcceptQueued marks a write's context as from a caller that handles a
+// queued answer: the MCP tools and the CLI's write commands. Other writes
+// (claim markers) are never queued.
+func AcceptQueued(ctx context.Context) context.Context {
+	return context.WithValue(ctx, acceptQueuedKey{}, true)
+}
+
+// QueuedOutcomes are the answers of a queued write: queued, or how one
+// that never got a receipt ended.
+var QueuedOutcomes = map[string]bool{"queued": true, "failed": true, "uncertain": true, "dead": true, "expired": true}
 
 // appWrites reports whether this service's agent writes go to the hosted
 // server as linear_write. A server that offers the app always gets them:
@@ -70,6 +87,7 @@ func (s *Service) appWrites(ctx context.Context) (bool, error) {
 		return false, errors.New("the ClawBridge server's Linear app status is invalid; nothing was sent")
 	}
 	s.app.known, s.app.on, s.app.userID = true, true, user
+	s.app.queues = data["queues_writes"] == true
 	return true, nil
 }
 
@@ -114,6 +132,13 @@ func (s *Service) appWrite(ctx context.Context, scope bus.Request, operation str
 	// The server credits a write to a person only when no agent's
 	// environment runs it (intake attribution, A2).
 	request := bus.Request{Operation: "linear_write", Workspace: scope.Workspace, Project: scope.Project, Session: scope.Session, Args: map[string]any{"instance": instance, "operation": operation, "args": args, "agent_marker": AgentMarker(agentEnviron())}}
+	s.app.mu.Lock()
+	queues := s.app.queues
+	s.app.mu.Unlock()
+	accept, _ := ctx.Value(acceptQueuedKey{}).(bool)
+	if queues && accept {
+		request.Args["accept_queued"] = true
+	}
 	result, err := s.cfg.Executor.Execute(ctx, request)
 	var rejected rejection
 	if errors.As(err, &rejected) {
@@ -138,6 +163,9 @@ func (s *Service) appWrite(ctx context.Context, scope bus.Request, operation str
 		return nil, UncertainError{Message: "the ClawBridge server's Linear write may have been sent; outcome uncertain, retry the same operation_id to read the recorded outcome"}
 	}
 	data, _ := result.Data.(map[string]any)
+	if outcome, _ := data["outcome"].(string); request.Args["accept_queued"] == true && data["receipt"] == nil && QueuedOutcomes[outcome] {
+		return queuedResult(data)
+	}
 	receipt, ok := data["receipt"]
 	if !ok || receipt == nil {
 		return nil, UncertainError{Message: "the ClawBridge server answered a Linear write without a receipt; outcome uncertain, retry the same operation_id"}
@@ -146,6 +174,33 @@ func (s *Service) appWrite(ctx context.Context, scope bus.Request, operation str
 		return receipt, &ReceiptError{Outcome: outcome}
 	}
 	return receipt, nil
+}
+
+// queuedResult is a queued write's answer. Queued is not an error: the
+// write waits on the server and its session is told how it ends. A queued
+// write that already ended without a receipt is: nothing was sent, or (uncertain)
+// it may have been.
+func queuedResult(data map[string]any) (any, error) {
+	out := map[string]any{}
+	for _, k := range []string{"outcome", "operation_id", "operation", "issue", "reason", "position", "queued_at", "estimated_at", "expires_at", "settled_at", "attempts", "state"} {
+		if v, ok := data[k]; ok {
+			out[k] = v
+		}
+	}
+	outcome, _ := out["outcome"].(string)
+	reason, _ := out["reason"].(string)
+	switch outcome {
+	case "queued":
+		return out, nil
+	case "uncertain":
+		return nil, UncertainError{Message: "the queued Linear write may have been sent; outcome uncertain, inspect Linear before retrying"}
+	}
+	if safe, ok := bus.SafePublicText(reason); ok {
+		reason = safe
+	} else {
+		reason = outcome
+	}
+	return nil, fmt.Errorf("the queued Linear write ended %s (%s); nothing was sent; decide again, and use a new operation_id for a new write", outcome, reason)
 }
 
 // writeArgsV2 is the linear_write argument map for a create, update or

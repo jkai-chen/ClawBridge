@@ -103,7 +103,9 @@ func (s *Store) ExecuteAsIdentity(ctx context.Context, id Identity, r Request) (
 		scoped.hostedDomain, _ = principal.NormalDomain(id.Principal[strings.LastIndex(id.Principal, "@")+1:])
 	}
 	result, err := scoped.executeRequest(ctx, r)
-	if errors.Is(err, errNeedsBind) {
+	if errors.Is(err, errNeedsBind) && withoutBinding(ctx) {
+		err = &serviceError{code: "forbidden", cause: errors.New("the account that asked is no longer bound to " + id.Principal), public: true}
+	} else if errors.Is(err, errNeedsBind) {
 		if err = s.bindSubject(ctx, id); err == nil {
 			result, err = scoped.executeRequest(ctx, r)
 			if errors.Is(err, errNeedsBind) {
@@ -112,6 +114,37 @@ func (s *Store) ExecuteAsIdentity(ctx context.Context, id Identity, r Request) (
 		}
 	}
 	return result, classify(err)
+}
+
+type withoutBindingKey struct{}
+
+// WithoutBinding marks a request run for an identity that proves nothing
+// afresh, such as a queued write sent later as the person who asked: an
+// account no longer bound to its principal is refused, never bound again.
+func WithoutBinding(ctx context.Context) context.Context {
+	return context.WithValue(ctx, withoutBindingKey{}, true)
+}
+
+func withoutBinding(ctx context.Context) bool {
+	on, _ := ctx.Value(withoutBindingKey{}).(bool)
+	return on
+}
+
+// IdentityLive reports whether id may still act as its principal: a
+// device still live and the principal's, or an account still bound to it.
+// A queued write is sent only while it is.
+func (s *Store) IdentityLive(ctx context.Context, id Identity) (bool, error) {
+	q := `SELECT COUNT(*) FROM principal_subjects WHERE principal=? AND issuer=? AND subject=?`
+	args := []any{normalPrincipal(id.Principal), id.Issuer, id.Subject}
+	if id.Issuer == DeviceIssuer {
+		q = `SELECT COUNT(*) FROM devices WHERE device_id=? AND principal=? AND revoked_at IS NULL AND (expires_at IS NULL OR expires_at>?)`
+		args = []any{id.Subject, normalPrincipal(id.Principal), stamp()}
+	}
+	var n int
+	if err := s.db.QueryRowContext(ctx, (&transaction{postgres: s.postgres}).bind(q), args...).Scan(&n); err != nil {
+		return false, err
+	}
+	return n == 1, nil
 }
 
 // requireBound is called inside a request once it has proved the caller's

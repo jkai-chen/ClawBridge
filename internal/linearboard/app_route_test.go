@@ -306,3 +306,77 @@ func TestAnOperationFromBeforeTheAppIsNeverResent(t *testing.T) {
 		t.Fatal("a new operation", e)
 	}
 }
+
+// A write is sent with accept_queued only when the server says it queues
+// writes and the caller handles a queued answer (the MCP tools, the CLI): a
+// claim note or an older server never sees it. A queued answer is a result,
+// not an error; a queued write that ended unsent is an error.
+func TestQueuedAppWrites(t *testing.T) {
+	queues := func() (bus.Result, error) {
+		r, _ := appOn()
+		r.Data.(map[string]any)["queues_writes"] = true
+		return r, nil
+	}
+	answer := map[string]any{"outcome": "queued", "operation_id": "c-1", "reason": "linear_rate_limit", "position": 1}
+	for name, c := range map[string]struct {
+		status func() (bus.Result, error)
+		ctx    context.Context
+		want   bool
+	}{
+		"queues, caller accepts":  {queues, AcceptQueued(context.Background()), true},
+		"queues, caller doesn't":  {queues, context.Background(), false},
+		"older server, accepting": {appOn, AcceptQueued(context.Background()), false},
+	} {
+		server := &appServer{status: c.status, write: func(bus.Request) (bus.Result, error) {
+			return bus.Result{Source: "server", Data: answer}, nil
+		}}
+		s, _, scope := routedV2(t, server)
+		got, e := s.WriteV2(c.ctx, scope, commentIn)
+		if sent := server.writes[0].Args["accept_queued"] == true; sent != c.want {
+			t.Fatal(name, "accept_queued sent:", sent)
+		}
+		if c.want && (e != nil || !reflect.DeepEqual(got, answer)) {
+			t.Fatal(name, "queued answer:", got, e)
+		}
+		if !c.want && !IsUncertain(e) {
+			// Without accept_queued, a receiptless answer stays uncertain.
+			t.Fatal(name, got, e)
+		}
+	}
+	for outcome, check := range map[string]func(error) bool{
+		"failed": func(e error) bool {
+			return e != nil && !IsUncertain(e) && strings.Contains(e.Error(), "nothing was sent")
+		},
+		"dead": func(e error) bool { return e != nil && !IsUncertain(e) && strings.Contains(e.Error(), "ended dead") },
+		"expired": func(e error) bool {
+			return e != nil && !IsUncertain(e) && strings.Contains(e.Error(), "new operation_id")
+		},
+		"uncertain": IsUncertain,
+	} {
+		server := &appServer{status: queues, write: func(bus.Request) (bus.Result, error) {
+			return bus.Result{Source: "server", Data: map[string]any{"outcome": outcome, "reason": "linear_rate_limit"}}, nil
+		}}
+		s, _, scope := routedV2(t, server)
+		if got, e := s.WriteV2(AcceptQueued(context.Background()), scope, commentIn); got != nil || !check(e) {
+			t.Fatal(outcome, got, e)
+		}
+	}
+}
+
+// Only Linear's rate limit, or the pacer's, reads as a write to queue: a
+// write not sent for another reason is not, nor one that may have gone.
+func TestRateLimitedNotSent(t *testing.T) {
+	limited := writeFailure(nil, 0, false, &linearprovider.Error{Kind: "rate_limited", RetryAfter: "5", NotSent: true}, func(e error) error { return e })
+	if wait, ok := RateLimitedNotSent(notDispatchedError{errors.New("nothing was sent"), &linearprovider.Error{Kind: "rate_limited", RetryAfter: "5", NotSent: true}}); !ok || wait != 5*time.Second {
+		t.Fatal(wait, ok)
+	}
+	for name, err := range map[string]error{
+		"down":     notDispatchedError{errors.New("nothing was sent"), &linearprovider.Error{Kind: "unavailable", NotSent: true}},
+		"no cause": notDispatched(errors.New("nothing was sent")),
+		"maybe":    limited,
+	} {
+		if _, ok := RateLimitedNotSent(err); ok {
+			t.Fatal(name, "read as rate-limited and unsent")
+		}
+	}
+}

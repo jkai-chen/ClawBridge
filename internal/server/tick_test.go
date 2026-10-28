@@ -147,7 +147,25 @@ func TestWatchSettings(t *testing.T) {
 			t.Fatal("budget", n, w.budget, err)
 		}
 	}
+	// The new name, the old name, both alike; the ceiling's default and its
+	// own setting (R2).
+	for _, e := range []func(string) string{env("CLAWBRIDGE_LINEAR_BUDGET", "300"), env("CLAWBRIDGE_WATCH_BUDGET", "300"), env("CLAWBRIDGE_LINEAR_BUDGET", "300", "CLAWBRIDGE_WATCH_BUDGET", "300")} {
+		if w, err = readWatchSettings(e); err != nil || w.budget != 300 || w.budgetMax != bus.LinearBudgetCeiling {
+			t.Fatal(w.budget, w.budgetMax, err)
+		}
+	}
+	if w, err = readWatchSettings(env("CLAWBRIDGE_LINEAR_BUDGET_MAX", "5000")); err != nil || w.budgetMax != 5000 {
+		t.Fatal(w.budgetMax, err)
+	}
+	if w, err = readWatchSettings(env("CLAWBRIDGE_LINEAR_BUDGET", "100", "CLAWBRIDGE_LINEAR_BUDGET_MAX", "100")); err != nil || w.budgetMax != 100 {
+		t.Fatal("a ceiling equal to the cap:", w.budgetMax, err)
+	}
 	for name, e := range map[string]func(string) string{
+		"names differ":            env("CLAWBRIDGE_LINEAR_BUDGET", "300", "CLAWBRIDGE_WATCH_BUDGET", "200"),
+		"ceiling below the cap":   env("CLAWBRIDGE_LINEAR_BUDGET", "300", "CLAWBRIDGE_LINEAR_BUDGET_MAX", "299"),
+		"ceiling below default":   env("CLAWBRIDGE_LINEAR_BUDGET_MAX", "599"),
+		"ceiling over Linear's":   env("CLAWBRIDGE_LINEAR_BUDGET_MAX", "5001"),
+		"ceiling not a number":    env("CLAWBRIDGE_LINEAR_BUDGET_MAX", "lots"),
 		"interval too short":      env("CLAWBRIDGE_WATCH_INTERVAL", "10s"),
 		"interval not a duration": env("CLAWBRIDGE_WATCH_INTERVAL", "2"),
 		"half the tick settings":  env("CLAWBRIDGE_TICK_AUDIENCE", tickURL),

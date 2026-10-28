@@ -914,3 +914,29 @@ func TestPostgresInviteGrantsBySlug(t *testing.T) {
 		t.Fatal("an unknown slug:", err)
 	}
 }
+
+// IdentityLive holds for a device only while it is live and its
+// principal's: a queued write sent later is sent only then (M2).
+func TestPostgresIdentityLiveFollowsTheDevice(t *testing.T) {
+	ctx := context.Background()
+	f := newPGIdentityFixture(t)
+	ada := newID("ada") + "@identity-test.example"
+	key := newKey(t)
+	if _, err := f.join(ada, f.invite(f.owner, ada, "member")["code"].(string), key); err != nil {
+		t.Fatal(err)
+	}
+	dev := keyID(t, key)
+	id := Identity{Principal: ada, Issuer: DeviceIssuer, Subject: dev}
+	if live, err := f.s.IdentityLive(ctx, id); err != nil || !live {
+		t.Fatal("a live device is not live:", live, err)
+	}
+	if live, _ := f.s.IdentityLive(ctx, Identity{Principal: f.owner, Issuer: DeviceIssuer, Subject: dev}); live {
+		t.Fatal("a device is live for another principal")
+	}
+	if _, err := f.s.db.ExecContext(ctx, `UPDATE devices SET revoked_at='2000-01-01T00:00:00.000000000Z' WHERE device_id=$1`, dev); err != nil {
+		t.Fatal(err)
+	}
+	if live, err := f.s.IdentityLive(ctx, id); err != nil || live {
+		t.Fatal("a revoked device is live:", live, err)
+	}
+}

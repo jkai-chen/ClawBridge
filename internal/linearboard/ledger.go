@@ -14,6 +14,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"time"
 )
 
@@ -36,12 +37,19 @@ var errBindingChangedAfterProviderError = errors.New("task-board binding changed
 // revoked, actor changed, refreshed proof mismatch). The ledger records a
 // terminal refusal: a same-ID retry returns it without any Linear I/O, because
 // retrying would act on state the caller never saw.
-type notDispatchedError struct{ err error }
+// notDispatchedError keeps its cause, when the provider gave one, so a
+// caller can tell Linear's rate limit from other "not sent" failures.
+type notDispatchedError struct{ err, cause error }
 type refusedBeforeDispatchError struct{ err error }
 
-func (e notDispatchedError) Error() string         { return e.err.Error() }
-func (e notDispatchedError) Unwrap() error         { return e.err }
-func notDispatched(err error) error                { return notDispatchedError{err} }
+func (e notDispatchedError) Error() string { return e.err.Error() }
+func (e notDispatchedError) Unwrap() []error {
+	if e.cause == nil {
+		return []error{e.err}
+	}
+	return []error{e.err, e.cause}
+}
+func notDispatched(err error) error                { return notDispatchedError{err: err} }
 func (e refusedBeforeDispatchError) Error() string { return e.err.Error() }
 func (e refusedBeforeDispatchError) Unwrap() error { return e.err }
 func refusedBeforeDispatch(err error) error        { return refusedBeforeDispatchError{err} }
@@ -102,9 +110,22 @@ func sentCount(p any) (count uint64, known bool) {
 // any other failure goes to post and stays possibly dispatched.
 func writeFailure(p any, before uint64, known bool, err error, post func(error) error) error {
 	if after, ok := sentCount(p); known && ok && after == before {
-		return notDispatched(fmt.Errorf("nothing was sent to Linear (%s); retry with the same operation_id", cmp.Or(safeFailure(err), "unavailable")))
+		return notDispatchedError{fmt.Errorf("nothing was sent to Linear (%s); retry with the same operation_id", cmp.Or(safeFailure(err), "unavailable")), err}
 	}
 	return post(err)
+}
+
+// RateLimitedNotSent reports a write Linear's rate limit (or ClawBridge's
+// pacer) kept from being sent, and how long Linear asked to wait, 0 when
+// it didn't say.
+func RateLimitedNotSent(err error) (time.Duration, bool) {
+	var never notDispatchedError
+	var provider *linearprovider.Error
+	if !errors.As(err, &never) || never.cause == nil || !errors.As(never.cause, &provider) || provider.Kind != "rate_limited" {
+		return 0, false
+	}
+	seconds, _ := strconv.Atoi(provider.RetryAfter)
+	return time.Duration(max(0, seconds)) * time.Second, true
 }
 
 // safeFailure names a provider failure without its text, or returns "" for

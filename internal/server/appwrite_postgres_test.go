@@ -1,6 +1,7 @@
 package server
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"encoding/hex"
@@ -137,6 +138,11 @@ type awMCP struct {
 	saved    []map[string]any
 	comments []map[string]any
 	issues   map[string]string
+	// refuse is how many save_comment calls Linear answers 429 at HTTP,
+	// before any tool runs.
+	refuse int
+	// onSave, if set, runs as each save_comment call starts.
+	onSave func()
 }
 
 func (m *awMCP) count(tool string) int {
@@ -227,6 +233,12 @@ func newAWMCP(t *testing.T) (*awMCP, *httptest.Server) {
 	})
 	srv.AddTool(awSaveCommentTool(t), func(_ context.Context, req *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		a := args(req)
+		m.mu.Lock()
+		onSave := m.onSave
+		m.mu.Unlock()
+		if onSave != nil {
+			onSave()
+		}
 		now := time.Now().UTC().Format(time.RFC3339Nano)
 		row := map[string]any{"id": awComment, "body": str(a, "body"), "createdAt": now, "updatedAt": now, "author": map[string]any{"id": awAppUser, "name": "ClawBridge"}, "onBehalfOf": nil, "parentId": nil, "resolvedAt": nil, "quotedText": nil, "attachments": []any{}}
 		m.mu.Lock()
@@ -259,9 +271,20 @@ func newAWMCP(t *testing.T) (*awMCP, *httptest.Server) {
 	})
 	handler := mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server { return srv }, &mcp.StreamableHTTPOptions{JSONResponse: true})
 	h := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		r.Body = io.NopCloser(bytes.NewReader(body))
 		m.mu.Lock()
 		m.auths = append(m.auths, r.Header.Get("Authorization"))
+		refused := m.refuse > 0 && bytes.Contains(body, []byte(`"save_comment"`))
+		if refused {
+			m.refuse--
+		}
 		m.mu.Unlock()
+		if refused {
+			w.Header().Set("Retry-After", "1")
+			w.WriteHeader(http.StatusTooManyRequests)
+			return
+		}
 		handler.ServeHTTP(w, r)
 	}))
 	t.Cleanup(h.Close)

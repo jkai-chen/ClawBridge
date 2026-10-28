@@ -368,34 +368,92 @@ func flowStateOf(ctx context.Context, tx *transaction, pid, lp string, on bool) 
 // default. A project no watcher ever ran for gets an expired lease row to
 // carry the hour's count, which the first watcher then takes over.
 func (s *Store) chargeProjectStatus(ctx context.Context, tx *transaction, pid string, calls int) error {
+	b, err := s.projectBudget(ctx, tx, pid)
+	if err != nil {
+		return err
+	}
+	if b.used+calls > b.limit {
+		return scoped(fmt.Sprintf("this project's Linear budget for the hour is spent (%d of %d calls used; this needs %d); try again at %s", b.used, b.limit, calls, b.resetAt.Format(time.RFC3339)), "rate_limited")
+	}
+	return b.charge(ctx, tx, pid, calls)
+}
+
+// projectBudget is a project's hourly Linear budget at the database's now:
+// the calls used this hour and the limit, the project's own budget, else
+// the last watcher's, else the default.
+type projectBudget struct {
+	hour        string
+	used, limit int
+	resetAt     time.Time
+	row         bool
+}
+
+func (s *Store) projectBudget(ctx context.Context, tx *transaction, pid string) (projectBudget, error) {
 	now, err := dbStamp(ctx, tx)
 	if err != nil {
-		return err
+		return projectBudget{}, err
 	}
-	hour := now[:13]
-	rows, err := query(ctx, tx, `SELECT budget_hour,budget_used,budget_limit FROM watch_lease WHERE project_id=?`, pid)
+	b := projectBudget{hour: now[:13], limit: watchDefaultBudget, resetAt: at(now).Truncate(time.Hour).Add(time.Hour)}
+	rows, err := query(ctx, tx, `SELECT budget_hour,budget_used,budget_limit FROM watch_lease WHERE project_id=?`+forUpdate(tx), pid)
 	if err != nil {
-		return err
+		return b, err
 	}
-	used, limit := 0, watchDefaultBudget
 	if len(rows) == 1 {
-		limit = asInt(rows[0]["budget_limit"])
-		if str(rows[0], "budget_hour") == hour {
-			used = asInt(rows[0]["budget_used"])
+		b.row, b.limit = true, asInt(rows[0]["budget_limit"])
+		if str(rows[0], "budget_hour") == b.hour {
+			b.used = asInt(rows[0]["budget_used"])
 		}
 	}
 	if n, ok, e := watchBudgetOverride(ctx, tx, pid); e != nil {
-		return e
+		return b, e
 	} else if ok {
-		limit = n
+		b.limit = n
 	}
-	if used+calls > limit {
-		return scoped(fmt.Sprintf("this project's Linear budget for the hour is spent (%d of %d calls used; this needs %d); try again next hour", used, limit, calls), "rate_limited")
-	}
-	if len(rows) == 0 {
-		_, err = tx.ExecContext(ctx, `INSERT INTO watch_lease(project_id,session_id,lease_token,generation,expires_at,budget_hour,budget_used,budget_limit) VALUES(?,'','',0,'',?,?,?)`, pid, hour, calls, watchDefaultBudget)
+	return b, nil
+}
+
+// charge adds calls to the hour. A project no watcher ever ran for gets an
+// expired lease row to carry the hour's count, which the first watcher
+// then takes over.
+func (b projectBudget) charge(ctx context.Context, tx *transaction, pid string, calls int) error {
+	if !b.row {
+		_, err := tx.ExecContext(ctx, `INSERT INTO watch_lease(project_id,session_id,lease_token,generation,expires_at,budget_hour,budget_used,budget_limit) VALUES(?,'','',0,'',?,?,?) ON CONFLICT(project_id) DO UPDATE SET budget_used=CASE WHEN watch_lease.budget_hour=excluded.budget_hour THEN watch_lease.budget_used+excluded.budget_used ELSE excluded.budget_used END,budget_hour=excluded.budget_hour`, pid, b.hour, calls, watchDefaultBudget)
 		return err
 	}
-	_, err = tx.ExecContext(ctx, `UPDATE watch_lease SET budget_hour=?,budget_used=? WHERE project_id=?`, hour, used+calls, pid)
+	_, err := tx.ExecContext(ctx, `UPDATE watch_lease SET budget_hour=?,budget_used=? WHERE project_id=?`, b.hour, b.used+calls, pid)
 	return err
+}
+
+func forUpdate(tx *transaction) string {
+	if tx.postgres {
+		return ` FOR UPDATE`
+	}
+	return ""
+}
+
+// LinearBudgetRoom says whether a project's hourly Linear budget has room
+// for one more write now, and when the hour rolls (§5). Agent writes count
+// against it like every other call made for the project.
+func (s *Store) LinearBudgetRoom(ctx context.Context, pid string) (ok bool, used, limit int, resetAt time.Time, err error) {
+	err = s.ledgerTx(ctx, func(tx *transaction) error {
+		b, err := s.projectBudget(ctx, tx, pid)
+		ok, used, limit, resetAt = b.used < b.limit, b.used, b.limit, b.resetAt
+		return err
+	})
+	return ok, used, limit, resetAt, err
+}
+
+// ChargeLinearBudget charges calls a write made to its project's hour. It
+// never refuses: the write was already admitted, and its calls were made.
+func (s *Store) ChargeLinearBudget(ctx context.Context, pid string, calls int) error {
+	if calls <= 0 {
+		return nil
+	}
+	return s.ledgerTx(ctx, func(tx *transaction) error {
+		b, err := s.projectBudget(ctx, tx, pid)
+		if err != nil {
+			return err
+		}
+		return b.charge(ctx, tx, pid, calls)
+	})
 }

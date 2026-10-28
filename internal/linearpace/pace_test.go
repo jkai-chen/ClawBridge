@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -320,5 +321,20 @@ func TestTransportRetriesAReadOnlyOnce(t *testing.T) {
 	res, err := Transport{Base: f, Pacer: p}.RoundTrip(read(t, "https://api.linear.app/graphql"))
 	if err != nil || res.StatusCode != 429 || len(f.sent) != 2 {
 		t.Fatal(res, err, f.sent)
+	}
+}
+
+// A counter in the context counts the calls sent, not those held.
+func TestTransportCountsSentCalls(t *testing.T) {
+	p, _ := fakePacer(OAuthPerHour)
+	var n atomic.Int64
+	ctx := WithCounter(context.Background(), &n)
+	f := &fakeLinear{answers: []*http.Response{answer(200, http.Header{}), answer(429, headers("Retry-After", "600"))}}
+	tr := Transport{Base: f, Pacer: p}
+	tr.RoundTrip(post(t, ctx, "https://mcp.linear.app/mcp"))
+	tr.RoundTrip(post(t, ctx, "https://mcp.linear.app/mcp"))
+	tr.RoundTrip(post(t, ctx, "https://mcp.linear.app/mcp"))
+	if n.Load() != 2 || len(f.sent) != 2 {
+		t.Fatal("counted", n.Load(), "sent", len(f.sent))
 	}
 }

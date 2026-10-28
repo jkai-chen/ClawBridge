@@ -35,7 +35,7 @@ const (
 	watchLag            = 10 * time.Minute
 	watchLeaseTTL       = 3 * time.Minute
 	watchInactiveKeep   = 24 * time.Hour
-	watchDefaultBudget  = 200
+	watchDefaultBudget  = LinearBudgetDefault
 	watchMaxBudget      = 600
 	watchConnectCalls   = 2
 	maxReportedComments = 100

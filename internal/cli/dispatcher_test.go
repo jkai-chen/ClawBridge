@@ -110,7 +110,11 @@ func TestCLIProjectWatchBudget(t *testing.T) {
 	}
 	rejectCLI(t, "project", "watch-budget", "set")
 	rejectCLI(t, "project", "watch-budget", "set", "0")
-	rejectCLI(t, "project", "watch-budget", "set", "601")
+	rejectCLI(t, "project", "watch-budget", "set", "2001")
+	rejectCLI(t, "project", "linear-budget", "set", "5001")
+	if got := invoke(t, "project", "linear-budget", "set", "2000"); got["budget_limit"] != float64(2000) {
+		t.Fatal("linear-budget:", got)
+	}
 	rejectCLI(t, "project", "watch-budget", "set", "ten")
 	rejectCLI(t, "project", "watch-budget", "clear", "5")
 	rejectCLI(t, "project", "watch-budget")

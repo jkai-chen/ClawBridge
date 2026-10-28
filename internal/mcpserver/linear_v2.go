@@ -123,6 +123,9 @@ func addTaskboardToolsV2(s *mcp.Server, b *binding, p TaskboardToolsV2) {
 			limit := 45 * time.Second
 			if !readOnly {
 				limit = linearboard.WriteTimeout
+				// A write that can't go now may be queued on the server: a
+				// structured answer, not an error.
+				ctx = linearboard.AcceptQueued(ctx)
 			}
 			bounded, cancel := context.WithTimeout(ctx, limit)
 			defer cancel()
@@ -230,6 +233,9 @@ func addProjectStatusToolsV2(s *mcp.Server, b *binding, p TaskboardToolsV2) {
 			limit := 45 * time.Second
 			if !readOnly {
 				limit = linearboard.WriteTimeout
+				// A write that can't go now may be queued on the server: a
+				// structured answer, not an error.
+				ctx = linearboard.AcceptQueued(ctx)
 			}
 			bounded, cancel := context.WithTimeout(ctx, limit)
 			defer cancel()

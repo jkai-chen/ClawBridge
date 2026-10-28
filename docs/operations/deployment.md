@@ -560,14 +560,23 @@ CLAWBRIDGE_WATCH_INTERVAL=15m
   never overlap, and each runs within 50 seconds. The startup log says `watcher:
   ticking every 15m0s`, or `watcher: off (…)` with the reason. Without the Linear
   app, the watcher stays off and the server serves as before.
-- **Calls.** Each project's watch spends at most 200 Linear calls an hour on the
-  bus budget; `CLAWBRIDGE_WATCH_BUDGET` sets another, from 1 to 600 (anything else
-  refuses to start). It covers every tick, nudge and `operator health-run`, for
-  every project on the server. The interval sets latency more than cost: each
-  issue and intake source keeps its own polling schedule, and a tick with nothing
-  due calls nothing. An intake source is next due 5 or 15 minutes after its read
-  started, and a tick up to 30 s early still polls it. A project's owner can set that project's own budget with
-  `clawbridge project watch-budget set N`, which wins over the server's.
+- **Calls.** Each project spends at most 600 Linear calls an hour on the bus
+  budget; `CLAWBRIDGE_LINEAR_BUDGET` (old name `CLAWBRIDGE_WATCH_BUDGET`) sets
+  another, from 1 to 600 (anything else refuses to start). It covers every tick,
+  nudge and `operator health-run`, and the agent writes the server makes as the
+  app, for every project on the server; past it, writes wait in the server's
+  queue. The interval sets latency more than cost: each issue and intake source
+  keeps its own polling schedule, and a tick with nothing due calls nothing. An
+  intake source is next due 5 or 15 minutes after its read started, and a tick up
+  to 30 s early still polls it. A
+  project's owner can set that project's own budget with `clawbridge project
+  linear-budget set N`, which wins over the server's, up to
+  `CLAWBRIDGE_LINEAR_BUDGET_MAX` (default 2000, at most Linear's 5000 an hour for
+  the app). The server refuses to start when the ceiling is below the default
+  budget. The ceiling bounds each project, not their sum: several raised projects
+  can together pass Linear's limit, and then their writes queue.
+- **Queued writes.** The server sends queued agent writes every 5 seconds as
+  Linear and each project's budget allow (docs/linear.md, "Queued writes").
 - **Clients.** While the server's ticks for a project are fresh, a client
   `clawbridge linear watch` is refused. Stop client watchers before turning this
   on. A client may take over again once the server has not ticked for 10

@@ -1,0 +1,368 @@
+package server
+
+import (
+	"context"
+	"encoding/json"
+	"strings"
+	"sync"
+	"testing"
+	"time"
+
+	"clawbridge/internal/bus"
+)
+
+// newOutboxFixture is an app writer fixture whose queued writes are purged
+// when the test ends: one worker serves every project in the shared
+// database, so a later test's worker would send them.
+func newOutboxFixture(t *testing.T) *awFixture {
+	f := newAWFixture(t, awOrg)
+	pid := f.projectID()
+	t.Cleanup(func() {
+		if err := f.store.OutboxPurgeProject(context.Background(), pid); err != nil {
+			t.Error(err)
+		}
+	})
+	return f
+}
+
+// queueWrite is f.write from a client that accepts queueing.
+func (f *awFixture) queueWrite(operation string, args map[string]any) (bus.Result, error) {
+	return f.writer.Execute(context.Background(), f.identity(), bus.Request{Operation: "linear_write", Workspace: f.workspace, Project: "p", Session: awSession, Args: map[string]any{"instance": awSession + "-i", "operation": operation, "args": args, "accept_queued": true}})
+}
+
+// later runs the outbox worker once, d from now: past any wait Linear asked
+// for.
+func (f *awFixture) later(d time.Duration) {
+	f.writer.Now = func() time.Time { return time.Now().Add(d) }
+	f.writer.outboxCycle(context.Background(), "test-worker")
+	f.writer.Now = nil
+}
+
+func (f *awFixture) projectID() string {
+	a, err := f.writer.access(context.Background(), f.identity(), bus.Request{Workspace: f.workspace, Project: "p", Session: awSession, Args: map[string]any{"instance": awSession + "-i"}})
+	if err != nil {
+		f.t.Fatal(err)
+	}
+	return a.ProjectID
+}
+
+func (f *awFixture) queued(op string) bus.OutboxWrite {
+	f.t.Helper()
+	a, err := f.writer.access(context.Background(), f.identity(), bus.Request{Workspace: f.workspace, Project: "p", Session: awSession, Args: map[string]any{"instance": awSession + "-i"}})
+	if err != nil {
+		f.t.Fatal(err)
+	}
+	q, ok, err := f.store.OutboxGet(context.Background(), a.ProjectID, a.SessionID, op)
+	if err != nil || !ok {
+		f.t.Fatal("not queued:", op, err)
+	}
+	return q
+}
+
+// linearWriteNotices are the linear-write messages the session was sent.
+func (f *awFixture) linearWriteNotices() []string {
+	f.t.Helper()
+	out, err := f.store.ExecuteAsIdentity(context.Background(), f.identity(), bus.Request{Operation: "inbox", Workspace: f.workspace, Project: "p", Session: awSession, Args: map[string]any{"instance": awSession + "-i"}})
+	if err != nil {
+		f.t.Fatal(err)
+	}
+	raw, _ := json.Marshal(out.Data)
+	var inbox struct {
+		Messages []struct {
+			Kind string `json:"kind"`
+			Body string `json:"body"`
+		} `json:"messages"`
+	}
+	json.Unmarshal(raw, &inbox)
+	var bodies []string
+	for _, m := range inbox.Messages {
+		if m.Kind == "linear-write" {
+			bodies = append(bodies, m.Body)
+		}
+	}
+	return bodies
+}
+
+const queuedBody = "synthetic queued comment text"
+
+// A write Linear rate-limits is queued for a client that accepts it,
+// answered with typed fields only; a repeat answers the same; the worker
+// sends it once Linear allows, the session is told, and a later repeat
+// gets the receipt without sending again. An older client is refused as
+// before.
+func TestPostgresOutboxQueuesARateLimitedWrite(t *testing.T) {
+	f := newOutboxFixture(t)
+	// An older client: refused as before, nothing queued.
+	f.mcp.refuse = 1
+	if _, err := f.write("comment", map[string]any{"id": awIssue, "body": "old client", "operation_id": "old-1"}); err == nil || !strings.Contains(err.Error(), "rate_limited, HTTP 429") {
+		t.Fatal("an old client's rate-limited write was not refused as before:", err)
+	}
+	f.mcp.refuse = 1
+	args := map[string]any{"id": awIssue, "body": queuedBody, "operation_id": "q-1"}
+	res, err := f.queueWrite("comment", args)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := awJSON(t, res.Data)
+	raw, _ := json.Marshal(res.Data)
+	if got["outcome"] != "queued" || got["reason"] != reasonRateLimit || got["position"] != float64(1) || got["operation_id"] != "q-1" || strings.Contains(string(raw), queuedBody) {
+		t.Fatal("not queued, or the answer shows the text:", string(raw))
+	}
+	if n := f.mcp.count("save_comment"); n != 0 {
+		t.Fatal("save_comment ran:", n)
+	}
+	if again, err := f.queueWrite("comment", args); err != nil || awJSON(t, again.Data)["outcome"] != "queued" {
+		t.Fatal("a repeat was not answered from the queue:", again, err)
+	}
+	status, err := f.writer.Execute(context.Background(), f.identity(), bus.Request{Operation: "linear_write_status", Workspace: f.workspace, Project: "p", Session: awSession, Args: map[string]any{"instance": awSession + "-i", "operation_id": "q-1"}})
+	raw, _ = json.Marshal(status.Data)
+	if err != nil || !strings.Contains(string(raw), `"operation_id":"q-1"`) || !strings.Contains(string(raw), `"state":"queued"`) || strings.Contains(string(raw), queuedBody) {
+		t.Fatal("write-status:", string(raw), err)
+	}
+	other := map[string]any{"id": awIssue, "body": "other", "operation_id": "q-1"}
+	if _, err := f.queueWrite("comment", other); err == nil || !strings.Contains(err.Error(), "different write") {
+		t.Fatal("an operation_id reused for another write was accepted:", err)
+	}
+	f.mcp.refuse = 0
+	f.later(2 * time.Minute)
+	if q := f.queued("q-1"); q.State != bus.OutboxDone || !strings.HasPrefix(q.Result, "comment") {
+		t.Fatal("the queued write was not sent:", q.State, q.Reason, q.Result)
+	}
+	if n := f.mcp.count("save_comment"); n != 1 {
+		t.Fatal("save_comment sent", n, "times")
+	}
+	notices := f.linearWriteNotices()
+	if len(notices) != 1 || !strings.Contains(notices[0], "q-1") || !strings.Contains(notices[0], ": done.") || strings.Contains(notices[0], queuedBody) {
+		t.Fatal("the session was not told once, typed:", notices)
+	}
+	again, err := f.queueWrite("comment", args)
+	if err != nil || awJSON(t, again.Data)["receipt"] == nil || f.mcp.count("save_comment") != 1 {
+		t.Fatal("a repeat after the send did not replay the receipt:", again, err)
+	}
+	f.later(3 * time.Minute)
+	if n := len(f.linearWriteNotices()); n != 1 {
+		t.Fatal("the notice was sent again:", n)
+	}
+}
+
+// A write on an issue with a queued write queues behind it, though Linear
+// would take it now, and the two go in order (§4.3): the second once the
+// head is sent, in the same cycle.
+func TestPostgresOutboxKeepsAnIssuesOrder(t *testing.T) {
+	f := newOutboxFixture(t)
+	f.mcp.refuse = 1
+	f.queueWrite("comment", map[string]any{"id": awIssue, "body": "first", "operation_id": "o-1"})
+	res, err := f.queueWrite("comment", map[string]any{"id": awIssue, "body": "second", "operation_id": "o-2"})
+	if got := awJSON(t, res.Data); err != nil || got["outcome"] != "queued" || got["reason"] != reasonOrdered || got["position"] != float64(2) {
+		t.Fatal("the second write overtook or was not queued:", res, err)
+	}
+	f.later(2 * time.Minute)
+	bodies := f.mcp.savedBodies()
+	if len(bodies) != 2 || !strings.HasPrefix(bodies[0], "first") || !strings.HasPrefix(bodies[1], "second") {
+		t.Fatal("not sent in order:", bodies)
+	}
+}
+
+// A queued write is sent only if its session is still active (R1): one
+// retired while it waited fails, and nothing is sent.
+func TestPostgresOutboxRechecksTheSession(t *testing.T) {
+	f := newOutboxFixture(t)
+	f.mcp.refuse = 1
+	f.queueWrite("comment", map[string]any{"id": awIssue, "body": "late", "operation_id": "r-1"})
+	f.must(bus.Request{Operation: "retire_session", Workspace: f.workspace, Project: "p", Session: awSession, Args: map[string]any{"instance": awSession + "-i"}})
+	f.later(2 * time.Minute)
+	q := f.queued("r-1")
+	if q.State != bus.OutboxFailed || f.mcp.count("save_comment") != 0 {
+		t.Fatal("a retired session's write was sent:", q.State, q.Reason, f.mcp.count("save_comment"))
+	}
+	if n := len(f.linearWriteNotices()); n != 0 {
+		t.Fatal("a retired session was sent a notice:", n)
+	}
+}
+
+// A queued write is sent only while its person may still write (R1): one
+// whose role was revoked while it waited fails, and nothing is sent.
+func TestPostgresOutboxRechecksTheRole(t *testing.T) {
+	f := newOutboxFixture(t)
+	member := awUnique("member") + "@appwrite-test.example"
+	f.must(bus.Request{Operation: "project_role_set", Workspace: f.workspace, Project: "p", Args: map[string]any{"principal": member, "role": "member"}})
+	as := bus.Identity{Principal: member, Issuer: bus.GoogleIssuer, Subject: "sub-member"}
+	ctx := context.Background()
+	if _, err := f.store.ExecuteAsIdentity(ctx, as, bus.Request{Operation: "register_session", Workspace: f.workspace, Project: "p", Session: "member-s", Args: map[string]any{"instance": "member-i", "role": "worker"}}); err != nil {
+		t.Fatal(err)
+	}
+	f.mcp.refuse = 1
+	res, err := f.writer.Execute(ctx, as, bus.Request{Operation: "linear_write", Workspace: f.workspace, Project: "p", Session: "member-s", Args: map[string]any{"instance": "member-i", "operation": "comment", "args": map[string]any{"id": awIssue, "body": "revoked", "operation_id": "m-1"}, "accept_queued": true}})
+	if err != nil || awJSON(t, res.Data)["outcome"] != "queued" {
+		t.Fatal(res, err)
+	}
+	f.must(bus.Request{Operation: "project_role_revoke", Workspace: f.workspace, Project: "p", Args: map[string]any{"principal": member}})
+	f.later(2 * time.Minute)
+	if n := f.mcp.count("save_comment"); n != 0 {
+		t.Fatal("a revoked member's queued write was sent:", n)
+	}
+	st, _ := f.store.OutboxStatusOf(ctx, f.projectID(), time.Now())
+	if st.Queued != 0 || st.Sending != 0 {
+		t.Fatalf("the revoked write did not settle: %+v", st)
+	}
+}
+
+// Agent writes count against the project's hourly cap (§5): past it, a
+// write is queued for a client that accepts it and refused, unsent, for an
+// older one; the queued write waits without spending a try, and goes when
+// the owner raises the cap.
+func TestPostgresOutboxHonoursTheHourlyCap(t *testing.T) {
+	f := newOutboxFixture(t)
+	f.must(bus.Request{Operation: "comment_watch_budget_set", Workspace: f.workspace, Project: "p", Args: map[string]any{"watch_budget": 1}})
+	if _, err := f.queueWrite("comment", map[string]any{"id": awIssue, "body": "fits", "operation_id": "c-1"}); err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	_, used, limit, _, err := f.store.LinearBudgetRoom(ctx, f.projectID())
+	if err != nil || used < 2 || limit != 1 {
+		t.Fatal("the write's Linear calls were not charged:", used, limit, err)
+	}
+	// A budget the hour has used exactly is spent.
+	f.must(bus.Request{Operation: "comment_watch_budget_set", Workspace: f.workspace, Project: "p", Args: map[string]any{"watch_budget": used}})
+	res, err := f.queueWrite("comment", map[string]any{"id": awIssue, "body": "over", "operation_id": "c-2"})
+	if got := awJSON(t, res.Data); err != nil || got["outcome"] != "queued" || got["reason"] != reasonCap {
+		t.Fatal("a write over the cap was not queued:", res, err)
+	}
+	if _, err := f.write("comment", map[string]any{"id": awIssue + "x", "body": "old", "operation_id": "c-3"}); err == nil || !strings.Contains(err.Error(), "budget for the hour is spent") || !strings.Contains(err.Error(), "nothing was sent") {
+		t.Fatal("an older client's write over the cap was not refused:", err)
+	}
+	saves := f.mcp.count("save_comment")
+	// Due, but the hour's budget is still spent: held again, without a try.
+	f.later(2 * time.Hour)
+	if q := f.queued("c-2"); q.State != bus.OutboxQueued || q.Attempts != 0 || q.Reason != reasonCap || f.mcp.count("save_comment") != saves {
+		t.Fatal("a capped write was sent, or spent a try:", q.State, q.Attempts, q.Reason)
+	}
+	f.must(bus.Request{Operation: "comment_watch_budget_set", Workspace: f.workspace, Project: "p", Args: map[string]any{"watch_budget": 600}})
+	f.later(2 * time.Hour)
+	if q := f.queued("c-2"); q.State != bus.OutboxDone {
+		t.Fatal("the raise did not let the queued write go:", q.State, q.Reason)
+	}
+}
+
+// The worker leases each write just before its send, so a cycle of slow
+// sends never sends a write after its lease ran out (M1): another replica
+// reclaiming during every send finds nothing of this cycle's to take, and
+// each write settles as the one who leased it.
+func TestPostgresOutboxLeasesEachWriteBeforeItsSend(t *testing.T) {
+	f := newOutboxFixture(t)
+	f.mcp.refuse = 1
+	for _, op := range []string{"l-1", "l-2", "l-3"} {
+		if res, err := f.queueWrite("comment", map[string]any{"id": awIssue, "body": op, "operation_id": op}); err != nil || awJSON(t, res.Data)["outcome"] != "queued" {
+			t.Fatal(op, res, err)
+		}
+	}
+	var mu sync.Mutex
+	at := time.Now().Add(2 * time.Minute)
+	clock := func() time.Time { mu.Lock(); defer mu.Unlock(); return at }
+	f.writer.Now = clock
+	f.mcp.mu.Lock()
+	f.mcp.onSave = func() {
+		// Each send takes 50 s; three outlast one 90 s lease.
+		mu.Lock()
+		at = at.Add(50 * time.Second)
+		mu.Unlock()
+		if _, err := f.store.OutboxReclaim(context.Background(), clock()); err != nil {
+			t.Error(err)
+		}
+	}
+	f.mcp.mu.Unlock()
+	f.writer.outboxCycle(context.Background(), "test-worker")
+	f.writer.Now = nil
+	f.mcp.mu.Lock()
+	f.mcp.onSave = nil
+	f.mcp.mu.Unlock()
+	if bodies := f.mcp.savedBodies(); len(bodies) != 3 {
+		t.Fatal("not every write was sent once:", bodies)
+	}
+	for _, op := range []string{"l-1", "l-2", "l-3"} {
+		if q := f.queued(op); q.State != bus.OutboxDone {
+			t.Fatal(op, "was reclaimed during its send:", q.State, q.Reason)
+		}
+	}
+}
+
+// A queued write proves nothing afresh (M2): once the owner releases the
+// Google account that queued it, the write fails as identity_revoked,
+// nothing is sent, and the account is not bound again, though the release
+// allowed it to bind on its next sign-in.
+func TestPostgresOutboxRechecksTheAccount(t *testing.T) {
+	f := newOutboxFixture(t)
+	member := awUnique("member") + "@appwrite-test.example"
+	f.must(bus.Request{Operation: "project_role_set", Workspace: f.workspace, Project: "p", Args: map[string]any{"principal": member, "role": "member"}})
+	as := bus.Identity{Principal: member, Issuer: bus.GoogleIssuer, Subject: "sub-released"}
+	ctx := context.Background()
+	if _, err := f.store.ExecuteAsIdentity(ctx, as, bus.Request{Operation: "register_session", Workspace: f.workspace, Project: "p", Session: "released-s", Args: map[string]any{"instance": "released-i", "role": "worker"}}); err != nil {
+		t.Fatal(err)
+	}
+	f.mcp.refuse = 1
+	r := bus.Request{Operation: "linear_write", Workspace: f.workspace, Project: "p", Session: "released-s", Args: map[string]any{"instance": "released-i", "operation": "comment", "args": map[string]any{"id": awIssue, "body": "released", "operation_id": "a-1"}, "accept_queued": true}}
+	res, err := f.writer.Execute(ctx, as, r)
+	if err != nil || awJSON(t, res.Data)["outcome"] != "queued" {
+		t.Fatal("the write was not queued:", res, err)
+	}
+	access, err := f.writer.access(ctx, as, r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if live, err := f.store.IdentityLive(ctx, as); err != nil || !live {
+		t.Fatal("the bound account is not live:", live, err)
+	}
+	if _, err := f.store.OperatorUnbindPrincipal(ctx, member, true); err != nil {
+		t.Fatal(err)
+	}
+	f.later(2 * time.Minute)
+	if n := f.mcp.count("save_comment"); n != 0 {
+		t.Fatal("a released account's queued write was sent:", n)
+	}
+	q, ok, err := f.store.OutboxGet(ctx, access.ProjectID, access.SessionID, "a-1")
+	if err != nil || !ok || q.State != bus.OutboxFailed || q.Reason != "identity_revoked" {
+		t.Fatalf("the write did not fail as identity_revoked: %+v %v", q, err)
+	}
+	if live, _ := f.store.IdentityLive(ctx, as); live {
+		t.Fatal("the queued write bound the released account again")
+	}
+	// What the send runs under refuses a released account, even past the
+	// check above, and never binds it.
+	if _, err := f.store.ExecuteAsIdentity(bus.WithoutBinding(ctx), as, bus.Request{Operation: "whoami", Workspace: f.workspace, Project: "p", Session: "released-s", Args: map[string]any{"instance": "released-i"}}); err == nil || !strings.Contains(err.Error(), "no longer bound") {
+		t.Fatal("a released account ran without binding:", err)
+	}
+	if live, _ := f.store.IdentityLive(ctx, as); live {
+		t.Fatal("WithoutBinding bound the released account again")
+	}
+}
+
+// An account released while its queued write is being sent is not bound
+// again by what the send records afterwards.
+func TestPostgresOutboxNeverBindsDuringTheSend(t *testing.T) {
+	f := newOutboxFixture(t)
+	member := awUnique("member") + "@appwrite-test.example"
+	f.must(bus.Request{Operation: "project_role_set", Workspace: f.workspace, Project: "p", Args: map[string]any{"principal": member, "role": "member"}})
+	as := bus.Identity{Principal: member, Issuer: bus.GoogleIssuer, Subject: "sub-mid-send"}
+	ctx := context.Background()
+	if _, err := f.store.ExecuteAsIdentity(ctx, as, bus.Request{Operation: "register_session", Workspace: f.workspace, Project: "p", Session: "mid-s", Args: map[string]any{"instance": "mid-i", "role": "worker"}}); err != nil {
+		t.Fatal(err)
+	}
+	f.mcp.refuse = 1
+	if res, err := f.writer.Execute(ctx, as, bus.Request{Operation: "linear_write", Workspace: f.workspace, Project: "p", Session: "mid-s", Args: map[string]any{"instance": "mid-i", "operation": "comment", "args": map[string]any{"id": awIssue, "body": "mid", "operation_id": "b-1"}, "accept_queued": true}}); err != nil || awJSON(t, res.Data)["outcome"] != "queued" {
+		t.Fatal(res, err)
+	}
+	f.mcp.mu.Lock()
+	f.mcp.onSave = func() {
+		if _, err := f.store.OperatorUnbindPrincipal(ctx, member, true); err != nil {
+			t.Error(err)
+		}
+	}
+	f.mcp.mu.Unlock()
+	f.later(2 * time.Minute)
+	f.mcp.mu.Lock()
+	f.mcp.onSave = nil
+	f.mcp.mu.Unlock()
+	if live, _ := f.store.IdentityLive(ctx, as); live {
+		t.Fatal("the send bound the released account again")
+	}
+}

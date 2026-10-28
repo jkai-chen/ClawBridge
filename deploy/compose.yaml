@@ -53,8 +53,12 @@ services:
       # interval or the scheduler tick settings are set, and the Linear app
       # is configured.
       CLAWBRIDGE_WATCH_INTERVAL: ${CLAWBRIDGE_WATCH_INTERVAL:-}
-      # Linear calls per hour each project's watch may make, 1-600; empty is 200.
+      # Linear calls per hour each project may make, agent writes included,
+      # 1-600; empty is 600. CLAWBRIDGE_WATCH_BUDGET is its old name.
+      CLAWBRIDGE_LINEAR_BUDGET: ${CLAWBRIDGE_LINEAR_BUDGET:-}
       CLAWBRIDGE_WATCH_BUDGET: ${CLAWBRIDGE_WATCH_BUDGET:-}
+      # How far a project owner may raise it, up to 5000; empty is 2000.
+      CLAWBRIDGE_LINEAR_BUDGET_MAX: ${CLAWBRIDGE_LINEAR_BUDGET_MAX:-}
       CLAWBRIDGE_TICK_AUDIENCE: ${CLAWBRIDGE_TICK_AUDIENCE:-}
       CLAWBRIDGE_TICK_SERVICE_ACCOUNT: ${CLAWBRIDGE_TICK_SERVICE_ACCOUNT:-}
       # Gates the operator sets only after their live checks pass

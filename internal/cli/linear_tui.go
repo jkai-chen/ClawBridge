@@ -201,6 +201,15 @@ func (s *linearTUISource) Do(ctx context.Context, r tui.LinearRequest) (tui.Line
 		return data, s.intake(ctx, service, &data)
 	case "project-status", "project-status-set":
 		return data, s.projectStatus(ctx, service, r, &data)
+	case "views":
+		if r.ProfileID == "" {
+			// From the board before a connection was chosen.
+			var err error
+			if service, err = s.onlyProfile(); err != nil {
+				return data, err
+			}
+		}
+		return data, s.views(ctx, service, &data)
 	default:
 		return data, errors.New("unsupported native Linear action")
 	}
@@ -222,6 +231,53 @@ func (s *linearTUISource) onlyProfile() (*linearboard.Service, error) {
 // intakePages bounds each team's reads for the Intake view, as the
 // watcher bounds its own.
 const intakePages = 5
+
+// teamViews reads each team's views through read, page by page, up to
+// intakePages; a team whose read fails keeps the error on its row.
+func teamViews(teams []string, read func(team, cursor string) (linearprovider.ViewPage, error)) []tui.TeamViews {
+	out := []tui.TeamViews{}
+	for _, team := range teams {
+		views := tui.TeamViews{TeamID: team}
+		cursor := ""
+		for page := 0; ; page++ {
+			if page == intakePages {
+				views.More = true
+				break
+			}
+			got, e := read(team, cursor)
+			if e != nil {
+				views.Err = e.Error()
+				break
+			}
+			views.Views = append(views.Views, got.Items...)
+			views.OtherKinds, views.WorkspaceViews = views.OtherKinds+got.OtherKinds, max(views.WorkspaceViews, got.WorkspaceViews)
+			if cursor = got.NextCursor; got.Complete || cursor == "" {
+				// A page that's incomplete with no cursor can't go on.
+				views.More = !got.Complete
+				break
+			}
+		}
+		out = append(out, views)
+	}
+	return out
+}
+
+// views reads the board's shared Linear views, each bound team's, both
+// kinds, up to intakePages pages of 50 a team, as linear view list does.
+// It writes nothing.
+func (s *linearTUISource) views(ctx context.Context, service *linearboard.Service, data *tui.LinearData) error {
+	binding, err := service.BindingV2(ctx, s.scope)
+	if err != nil {
+		return err
+	}
+	if !binding.Configured {
+		return errors.New("this project has no Linear board linked")
+	}
+	data.Views = teamViews(binding.LinearTeamIDs, func(team, cursor string) (linearprovider.ViewPage, error) {
+		return service.ViewsV2(ctx, s.scope, team, "", 50, cursor)
+	})
+	return nil
+}
 
 // intake reads, through the viewer's own connection, the bound teams'
 // members (names for the trusted list and the picker) and each team's

@@ -1363,6 +1363,8 @@ clawbridge linear view show VIEW_UUID --profile PROFILE_ID
   with `taskboard_issues_v2 {view_id}` (not by project views yet). They can't create or change views; they prepare a view set for the project owner
   ([the agent's guide](../skills/clawbridge/references/views.md)).
 - **Names are text others wrote:** the CLI strips terminal control characters from them.
+- **In the TUI**, `v` on the Linear screen lists the same views for every bound team, read-only
+  ([usage](usage.md)).
 
 ### Creating and changing issue views (project owner)
 

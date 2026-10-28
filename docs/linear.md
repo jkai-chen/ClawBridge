@@ -1010,7 +1010,7 @@ clawbridge linear admin audit-replay --operation-id ID
   a comment or issue write, or one still running is refused.
 - A replay of a write already in history answers `"audit": "already"`.
 
-## Team roles (project owner only)
+## Team roles (project owner, and leads for their teams)
 
 Linear can't say who leads a team: every workspace admin becomes a team owner in
 each team they join. So ClawBridge keeps its own record, per project: each bound
@@ -1027,9 +1027,17 @@ clawbridge linear roles set --file roles.json --expected-revision N [--confirm]
 - **Who:**
   - Any member or session reads the roles. Agents read them with the MCP tool
     `team_roles_get`.
-  - Only the project owner changes them, in their own terminal, never with
+  - The project owner changes them, in their own terminal, never with
     `--session`. On a hosted server that has to be from their own signed-in
     device.
+  - **A team's lead** sets `engineer` and `reviewer` roles for people who work
+    only in teams they lead, the same way. The server holds them to that:
+    - a lead never adds, removes or changes a lead, their own row included,
+      and never adds or removes a team;
+    - a lead never links a person to a ClawBridge account (`--link`);
+    - ClawBridge knows you lead a team only when the owner linked your lead row
+      to your ClawBridge account with `--link`. Until then the server refuses
+      your change.
   - Each change is made at the revision you read. Without `--confirm` it's only
     previewed: who is added, removed or changed.
 - **People** are Linear users, found by name, email or user ID among the Linear
@@ -1040,14 +1048,14 @@ clawbridge linear roles set --file roles.json --expected-revision N [--confirm]
     flags; one it leaves out counts against.
   - `teams` are the bound teams the person works for. A lead is a person with
     role `lead` in that team, and a team has at most 3 leads.
-- **`--link EMAIL`** links the person to their ClawBridge account. It's your
-  assertion, shown as such, and must be a project member. Anything that uses it
-  checks it again. Changing a person with `roles person` keeps their link when
+- **`--link EMAIL`** links the person to their ClawBridge account. It's the
+  owner's assertion, shown as such, and must be a project member. Anything
+  that uses it checks it again. Changing a person with `roles person` keeps their link when
   you leave `--link` out, and keeps their leads while they stay a lead in that
   team. To clear a link, drop `principal` from that person in a `roles set
   --file`.
-- **History** records each change by counts only, never a name, an email or an
-  ID.
+- **History** records each change by counts only, and whether the owner or a
+  lead made it, never a name, an email or an ID.
 - **`clawbridge doctor`,** with your Linear connection, warns about:
   - a mapped team that left the binding;
   - a mapped person who is no longer an active, non-guest user of the workspace.

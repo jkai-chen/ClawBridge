@@ -1,6 +1,7 @@
 package bus
 
 import (
+	"context"
 	"strings"
 	"testing"
 )
@@ -146,6 +147,118 @@ func TestTeamRolesFirstSetRace(t *testing.T) {
 	}
 	if err := h.viewErr("team_roles_set", "", rolesSet(0, true, nil, []map[string]any{person(roleAda, "engineer", sfTeam)})); err == nil || !strings.Contains(err.Error(), "current revision is 1") {
 		t.Fatal(err)
+	}
+}
+
+// A lead's set (design §11.1 Q1, review T2'): only engineer and reviewer
+// rows working only in teams the lead leads; never a lead row, their own
+// included, a team or its leads, or a person's account link.
+func TestTeamRolesLeadEdit(t *testing.T) {
+	const teamA, teamB = "aaaa0000-0000-4000-8000-0000000000a1", "bbbb0000-0000-4000-8000-0000000000b2"
+	me := "lead@example.test"
+	base := func() TeamRoles {
+		return TeamRoles{
+			Teams: []TeamRoleTeam{{TeamID: teamA, Leads: []string{roleAda}}, {TeamID: teamB, Leads: []string{roleCleo}}},
+			People: []TeamRolePerson{
+				{LinearUserID: roleAda, Role: "lead", Teams: []string{teamA}, Principal: me},
+				{LinearUserID: roleBen, Role: "engineer", Teams: []string{teamA}, Principal: "ben@example.test"},
+				{LinearUserID: roleCleo, Role: "lead", Teams: []string{teamB}},
+			},
+		}
+	}
+	bound := []string{teamA, teamB}
+	if got := ledTeams(base(), me, bound); len(got) != 1 || got[0] != teamA {
+		t.Fatal(got)
+	}
+	if got := ledTeams(base(), "LEAD@example.test", bound); len(got) != 1 {
+		t.Fatal("the principal compares normalised", got)
+	}
+	if got := ledTeams(base(), me, []string{teamB}); len(got) != 0 {
+		t.Fatal("an unbound team is never led", got)
+	}
+	if got := ledTeams(base(), "ben@example.test", bound); len(got) != 0 {
+		t.Fatal("an engineer leads nothing", got)
+	}
+	noLink := base()
+	noLink.People[0].Principal = ""
+	if got := ledTeams(noLink, "", bound); len(got) != 0 {
+		t.Fatal("an unlinked lead row matches nobody", got)
+	}
+	led := []string{teamA}
+	dan := TeamRolePerson{LinearUserID: "dddddddd-0000-4000-8000-00000000000d", Role: "reviewer", Teams: []string{teamA}}
+	for name, c := range map[string]struct {
+		edit func(*TeamRoles)
+		want string
+	}{
+		"no change":          {func(*TeamRoles) {}, ""},
+		"add a reviewer":     {func(m *TeamRoles) { m.People = append(m.People, dan) }, ""},
+		"engineer->reviewer": {func(m *TeamRoles) { m.People[1].Role = "reviewer" }, ""},
+		"remove an engineer": {func(m *TeamRoles) { m.People = m.People[:1:1]; m.People = append(m.People, base().People[2]) }, ""},
+		"keep the link":      {func(m *TeamRoles) { m.People[1].Role = "reviewer"; m.People[1].Principal = "ben@example.test" }, ""},
+		"own row":            {func(m *TeamRoles) { m.People[0].Role = "engineer" }, "sets leads"},
+		"make a lead":        {func(m *TeamRoles) { m.People[1].Role = "lead" }, "sets leads"},
+		"add a lead row":     {func(m *TeamRoles) { d := dan; d.Role = "lead"; m.People = append(m.People, d) }, "sets leads"},
+		"remove a lead row":  {func(m *TeamRoles) { m.People = m.People[:2] }, "sets leads"},
+		"change leads":       {func(m *TeamRoles) { m.Teams[0].Leads = nil }, "who leads them"},
+		"drop a team":        {func(m *TeamRoles) { m.Teams = m.Teams[:1] }, "who leads them"},
+		"another team":       {func(m *TeamRoles) { d := dan; d.Teams = []string{teamB}; m.People = append(m.People, d) }, "teams they lead"},
+		"also another team":  {func(m *TeamRoles) { m.People[1].Teams = []string{teamA, teamB} }, "teams they lead"},
+		"link an account":    {func(m *TeamRoles) { d := dan; d.Principal = "dan@example.test"; m.People = append(m.People, d) }, "links a person"},
+		"change a link":      {func(m *TeamRoles) { m.People[1].Principal = "me@example.test" }, "links a person"},
+		"clear a link":       {func(m *TeamRoles) { m.People[1].Principal = "" }, "links a person"},
+	} {
+		next := base()
+		c.edit(&next)
+		err := checkLeadEdit(base(), next, led)
+		if c.want == "" && err != nil || c.want != "" && (err == nil || !strings.Contains(err.Error(), c.want)) {
+			t.Fatal(name, err)
+		}
+	}
+}
+
+// roleTrusted (§6.3, T2' (a)) for intake: a role in the issue's own bound
+// team, at the current revision; reviewer never; no mapping trusts nobody.
+func TestTeamRolesRoleTrusted(t *testing.T) {
+	h := newHarness(t)
+	h.link(0, []string{cpOne})
+	ctx := context.Background()
+	pid := h.projectID()
+	check := func(team, who string, roles []string) (bool, string) {
+		tx, err := h.s.beginIntake(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer tx.Rollback()
+		ok, reason, err := h.s.roleTrusted(ctx, tx, pid, team, who, roles)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return ok, reason
+	}
+	both := []string{"lead", "engineer"}
+	if ok, reason := check(sfTeam, roleAda, both); ok || !strings.Contains(reason, "no team roles") {
+		t.Fatal(reason)
+	}
+	teams := []map[string]any{{"team_id": sfTeam, "leads": []string{roleAda}}}
+	h.call("team_roles_set", "", rolesSet(0, true, teams, []map[string]any{person(roleAda, "lead", sfTeam), person(roleBen, "engineer", sfTeam), person(roleCleo, "reviewer", sfTeam)}))
+	for _, c := range []struct {
+		team, who string
+		roles     []string
+		ok        bool
+		reason    string
+	}{
+		{sfTeam, strings.ToUpper(roleAda), both, true, "role lead"},
+		{sfTeam, roleBen, both, true, "role engineer"},
+		{sfTeam, roleBen, []string{"lead"}, false, "isn't trusted"},
+		{sfTeam, roleCleo, both, false, "isn't trusted"},
+		{sfTeam, roleCleo, []string{"reviewer"}, false, "only lead and engineer"},
+		{sfTeam, roleAda, nil, false, "no roles"},
+		{roleTeamX, roleAda, both, false, "isn't bound"},
+		{sfTeam, "dddddddd-0000-4000-8000-00000000000d", both, false, "no team role"},
+	} {
+		if ok, reason := check(c.team, c.who, c.roles); ok != c.ok || !strings.Contains(reason, c.reason) {
+			t.Fatal(c, ok, reason)
+		}
 	}
 }
 

@@ -1557,6 +1557,11 @@ project's coordinator session, which then routes it.
   looked up among the linked teams' members through your Linear connection, `--linear-profile` if you have
   several; without `--confirm` it only shows who that is), or by Linear user ID. `trust remove` works the same way. ClawBridge reads who added the label, delegated the issue or wrote
   the mention from Linear's own history.
+- **Only a signal made in Linear itself counts as the person's.** On a hosted server with the ClawBridge app, an issue
+  write through ClawBridge (`clawbridge linear update --add-label`, an agent's MCP write) is made **as the app**
+  ([Writes as the ClawBridge app](#writes-as-the-clawbridge-app-hosted-servers)), even when the project owner runs it.
+  Linear's history then names the app, so it is not a trusted person's signal and only notifies the coordinator. A
+  trusted person adds `needs-agent`, delegates or mentions in Linear's own app or web UI.
 - Anyone else's signal, a bot's, or one whose author can't be proven only notifies the coordinator.
 - An issue's title and description never route anything. They become the agent's task, and the trusted person
   vouches for them as they stood at that moment.

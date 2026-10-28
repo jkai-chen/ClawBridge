@@ -19,6 +19,10 @@
   who's in each) and Enter reads one: each message, whom it went to and who read it; `]` reads older threads or more
   messages. Read-only, with the rules of `clawbridge project threads`: as you (not in a TUI opened with `--session`
   or run by an agent), from your own device on a hosted server, and recorded in the project's history (U62).
+- **Shared Linear views in the TUI.** `v` on the Linear screen lists each bound team's shared views, issue and
+  project, by name and kind, with the selected one's URL, read with your Linear connection as `linear view list`
+  does; workspace views and other kinds are counted, not listed. Read-only: a project owner writes views in their own
+  terminal with `clawbridge linear view create|update|delete` (U63).
 
 # ClawBridge v0.3.7 (released 28 Oct)
 

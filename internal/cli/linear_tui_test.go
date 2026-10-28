@@ -2,10 +2,12 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 
 	"clawbridge/internal/bus"
+	"clawbridge/internal/linearprovider"
 	"clawbridge/internal/tui"
 )
 
@@ -21,7 +23,7 @@ func TestLinearTUIIssueWithoutAConnectionAsks(t *testing.T) {
 		t.Fatal(err)
 	}
 	s := &linearTUISource{directory: dir, manager: newLinearManager(dir)}
-	for _, op := range []string{"issue", "intake"} {
+	for _, op := range []string{"issue", "intake", "views"} {
 		_, err := s.Do(context.Background(), tui.LinearRequest{Operation: op, IssueID: "00000000-0000-4000-8000-0000000000c1"})
 		if err == nil || !strings.Contains(err.Error(), "choose your Linear connection on the Linear screen first") {
 			t.Fatal(op, err)
@@ -95,5 +97,49 @@ func TestLinearTUIProjectStatus(t *testing.T) {
 	set.Confirm = false
 	if _, err = s.Do(context.Background(), set); err != nil || e.requests[3].Args["confirm"] != nil || e.requests[3].Args["expected_status_id"] != nil || e.requests[3].Args["allow_open"] != nil {
 		t.Fatal(err, e.requests[3].Args)
+	}
+}
+
+// U63: each team's views, page by page up to intakePages; what's left out
+// is counted (workspace views once, as each page repeats them), and a
+// team that fails keeps its error.
+func TestTeamViewsReadsEachTeam(t *testing.T) {
+	calls := map[string][]string{}
+	got := teamViews([]string{"team-a", "team-b", "team-c", "team-d"}, func(team, cursor string) (linearprovider.ViewPage, error) {
+		calls[team] = append(calls[team], cursor)
+		switch team {
+		case "team-a":
+			p := linearprovider.ViewPage{OtherKinds: 1, WorkspaceViews: 2}
+			p.Items = []linearprovider.View{{ID: "v-" + cursor, Kind: "issue", TeamID: team}}
+			if cursor == "" {
+				p.NextCursor = "c1"
+			} else {
+				p.Complete = true
+			}
+			return p, nil
+		case "team-b":
+			return linearprovider.ViewPage{}, errors.New("capability_unavailable")
+		case "team-d":
+			return linearprovider.ViewPage{}, nil
+		}
+		p := linearprovider.ViewPage{}
+		p.NextCursor = "again"
+		return p, nil
+	})
+	if len(got) != 4 {
+		t.Fatal(got)
+	}
+	if a := got[0]; len(a.Views) != 2 || a.Views[1].ID != "v-c1" || a.OtherKinds != 2 || a.WorkspaceViews != 2 || a.More || a.Err != "" || len(calls["team-a"]) != 2 || calls["team-a"][1] != "c1" {
+		t.Fatal(a, calls["team-a"])
+	}
+	if b := got[1]; b.Err != "capability_unavailable" || len(b.Views) != 0 {
+		t.Fatal(b)
+	}
+	if c := got[2]; !c.More || len(calls["team-c"]) != intakePages {
+		t.Fatal(c, len(calls["team-c"]))
+	}
+	// Incomplete with no cursor: one read, and more not shown.
+	if d := got[3]; !d.More || len(calls["team-d"]) != 1 {
+		t.Fatal(d, calls["team-d"])
 	}
 }

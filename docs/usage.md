@@ -506,6 +506,14 @@ a TUI opened with a session, reads it; a coordinator sets it from its session wi
 the preview says so: name one with the CLI's `--status-id`. A local workspace has no app,
 so each project reads "not read".
 
+Shared views (`v` on the Linear screen once a board is linked) lists the shared Linear views
+of each bound team, issue and project views, by name and kind, read with your own Linear
+connection as `clawbridge linear view list` does. The selected view shows its URL to open in
+a browser, and `d` its ID for `clawbridge linear view show`. Workspace views, other kinds and
+any past the first 250 a team aren't listed; the view counts them. A team whose views can't be
+read says why on its own line. It's read-only and costs no project budget: a project owner
+writes views in their own terminal with `clawbridge linear view create|update|delete`.
+
 A hosted profile that has joined a workspace but has no project yet (an invite with
 no grants) opens on **Waiting for a project**: it names the workspace owner to ask
 and the command they run (`clawbridge --project PROJECT project role set EMAIL

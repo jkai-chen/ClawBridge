@@ -61,6 +61,8 @@ type LinearData struct {
 	ClosesOutcomes []linearboard.ClosesOutcome
 	// ProjectStatus is a project status read, preview or set.
 	ProjectStatus *ProjectStatus
+	// Views are the board's shared Linear views, by bound team.
+	Views []TeamViews
 }
 type linearState struct {
 	// logoutAsk is the connection an x is waiting to log out, until y.
@@ -283,6 +285,9 @@ func (m Model) linearRefresh() (Model, tea.Cmd) {
 	case "status":
 		m.linear.refreshNames = false
 		return m.projectStatusLoad()
+	case "views":
+		m.linear.refreshNames = false
+		return m.viewsLoad()
 	default:
 		request.Operation = "profiles"
 	}
@@ -440,6 +445,8 @@ func (m Model) linearRows() []string {
 		return m.intakeRows()
 	case "status":
 		return m.projectStatusRows()
+	case "views":
+		return m.viewRows()
 	}
 	return rows
 }
@@ -504,7 +511,7 @@ func (m Model) linearStep() string {
 // linearPrevious is the step Esc goes back to from each step.
 var linearPrevious = map[string]string{
 	"teams": "profiles", "default": "teams", "projects": "default", "preview": "projects",
-	"tasks": "profiles", "details": "tasks", "unlink": "tasks", "intake": "tasks", "status": "tasks",
+	"tasks": "profiles", "details": "tasks", "unlink": "tasks", "intake": "tasks", "status": "tasks", "views": "tasks",
 }
 
 // linearBack is Esc on the Linear screen: one step back, keeping what was
@@ -878,6 +885,9 @@ func renderLinear(m Model) string {
 	if m.linear.step == "status" {
 		return strings.TrimRight(b.String()+renderProjectStatus(m), "\n")
 	}
+	if m.linear.step == "views" {
+		return strings.TrimRight(b.String()+renderViews(m), "\n")
+	}
 	if m.linear.step == "preview" || m.linear.step == "unlink" {
 		projects := m.linear.project
 		if m.linear.bindingV2 != nil {
@@ -1037,6 +1047,8 @@ func linearStepTitle(m Model) string {
 		return "Intake: which Linear signals ask for an agent, and whose"
 	case "status":
 		return "Project status: each Linear project of the board"
+	case "views":
+		return "Shared views: the board's teams' Linear views"
 	}
 	if m.linearConfigured() {
 		return "Your Linear connections"

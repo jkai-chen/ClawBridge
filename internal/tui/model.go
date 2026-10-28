@@ -319,10 +319,12 @@ type Model struct {
 	intake intakeState
 	// projectStatus is the Linear screen's project status view (U61).
 	projectStatus projectStatusState
-	linearCancel  context.CancelFunc
-	account       accountState
-	modelSetup    modelSetupState
-	cfg           Config
+	// views is the Linear screen's shared views list (U63).
+	views        viewsState
+	linearCancel context.CancelFunc
+	account      accountState
+	modelSetup   modelSetupState
+	cfg          Config
 
 	screen Screen
 	width  int
@@ -512,6 +514,8 @@ func (m Model) UpdateModel(msg tea.Msg) (Model, tea.Cmd) {
 		return m.applyIntake(x), nil
 	case intakeDoneMsg:
 		return m.applyIntakeDone(x)
+	case viewsLoadedMsg:
+		return m.applyViews(x), nil
 	case projectStatusLoadedMsg:
 		return m.applyProjectStatus(x), nil
 	case projectStatusDoneMsg:

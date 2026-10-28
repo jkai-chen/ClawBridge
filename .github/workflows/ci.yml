@@ -3,12 +3,16 @@ on:
   push:
     branches: [main]
   pull_request:
+  merge_group:
   workflow_dispatch:
   workflow_call:
 permissions:
   contents: read
 jobs:
-  linux:
+  # The Go suites run as parallel jobs; `linux`, the check the ruleset
+  # requires, passes only when all of them pass. Test results are never
+  # cached (-count=1); only modules and build output are, keyed on go.sum.
+  test:
     if: ${{ github.event.repository.private == false }}
     runs-on: ubuntu-latest
     timeout-minutes: 45
@@ -19,13 +23,74 @@ jobs:
       - uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5.5.0
         with:
           go-version-file: go.mod
-          cache: false
-      # internal/bus under -race with PostgreSQL takes 8 to 10 minutes on a
-      # hosted runner, past go test's default 10-minute -timeout.
+          cache: true
+          cache-dependency-path: go.sum
       - name: Full tests with real disposable PostgreSQL
         run: bash integration/run-postgres.sh go test ./... -count=1 -timeout 25m
+  # internal/bus and integration are most of the race run (17 and 11 minutes
+  # alone), so each is split in 3 by test name (scripts/go_test_shard.py: sorted,
+  # dealt out in turn, disjoint and complete); every other package runs in
+  # one job.
+  race:
+    if: ${{ github.event.repository.private == false }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {name: bus 1/3, package: ./internal/bus, shard: 1, of: 3}
+          - {name: bus 2/3, package: ./internal/bus, shard: 2, of: 3}
+          - {name: bus 3/3, package: ./internal/bus, shard: 3, of: 3}
+          - {name: integration 1/3, package: ./integration, shard: 1, of: 3}
+          - {name: integration 2/3, package: ./integration, shard: 2, of: 3}
+          - {name: integration 3/3, package: ./integration, shard: 3, of: 3}
+          - {name: the rest, package: rest}
+    name: race (${{ matrix.name }})
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5.5.0
+        with:
+          go-version-file: go.mod
+          cache: true
+          # Its own key, go.sum with go.mod, so race builds don't share the
+          # plain build's cache entry.
+          cache-dependency-path: |
+            go.sum
+            go.mod
       - name: Race tests with real disposable PostgreSQL
-        run: bash integration/run-postgres.sh go test -race ./... -count=1 -timeout 25m
+        env:
+          PACKAGE: ${{ matrix.package }}
+          SHARD: ${{ matrix.shard }}
+          OF: ${{ matrix.of }}
+        run: |
+          set -euo pipefail
+          if [ "$PACKAGE" = rest ]; then
+            # Every package but the split ones; the list is checked to be
+            # non-empty and to leave nothing else out.
+            go list ./... | grep -v -x -e clawbridge/internal/bus -e clawbridge/integration > packages.txt
+            test "$(wc -l < packages.txt)" -eq "$(( $(go list ./... | wc -l) - 2 ))"
+            bash integration/run-postgres.sh go test -race $(cat packages.txt) -count=1 -timeout 25m
+          else
+            go test -race -list . "$PACKAGE" > tests.txt
+            run="$(python3 scripts/go_test_shard.py "$SHARD" "$OF" < tests.txt)"
+            bash integration/run-postgres.sh go test -race "$PACKAGE" -run "$run" -count=1 -timeout 25m
+          fi
+  checks:
+    if: ${{ github.event.repository.private == false }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5.5.0
+        with:
+          go-version-file: go.mod
+          cache: true
+          cache-dependency-path: go.sum
       # The message queue's chaos cases (crashes, a killed LISTEN, a network
       # stall, a compaction); the 10k soak runs in chaos.yml.
       - name: Message queue chaos cases with real disposable PostgreSQL
@@ -34,12 +99,28 @@ jobs:
       - run: python3 scripts/test_install.py
       - run: python3 scripts/test_release.py
       - run: python3 scripts/test_publish.py
+      - run: python3 scripts/test_shard.py
       - run: bash -n scripts/build-release.sh scripts/publish-release.sh
       - run: sh -n scripts/install.sh
       - run: sh -n deploy/agentd-check.sh deploy/agentd-check-test.sh
       # agentd's install check, against a correct install and each break,
       # in a disposable container (it creates users).
       - run: docker run --rm -v "$PWD/deploy:/deploy:ro" debian:bookworm-20261005-slim@sha256:7c7b2c966bc9ee8cedfeef67e0e279108992c77681fa595db4a9d65c06ccc587 sh /deploy/agentd-check-test.sh
+  # The required check: green only when every Go job above is.
+  linux:
+    if: ${{ always() && github.event.repository.private == false }}
+    needs: [test, race, checks]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Every Go job passed
+        env:
+          RESULTS: ${{ needs.test.result }} ${{ needs.race.result }} ${{ needs.checks.result }}
+        run: |
+          echo "test, race, checks: $RESULTS"
+          for r in $RESULTS; do
+            [ "$r" = success ] || { echo "::error::a Go job did not pass ($RESULTS)"; exit 1; }
+          done
   dispatcher-agent:
     if: ${{ github.event.repository.private == false }}
     runs-on: ubuntu-latest

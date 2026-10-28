@@ -1,7 +1,8 @@
 # Coordinating a project
 
-Read this when you are the project's designated coordinator session (`whoami`
-says so; the owner sets it with `project coordinator-set`). The other pages hold
+Read this when you are the project's designated coordinator session: `whoami`'s
+`project.coordinator_session` is your session's ID (the owner sets it with
+`project coordinator-set`). The other pages hold
 the mechanics. This one is the method: how a request becomes work, who decides,
 and how the team stays healthy.
 

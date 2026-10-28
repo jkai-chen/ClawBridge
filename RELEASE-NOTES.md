@@ -48,6 +48,9 @@
   counts, and a `hold` policy (whose messages wait without attempts or dead letters).
 - The clawbridge skill gains the protocol: handle, then `ack` (or `reply` with `ack`), with
   `operation_id = msg:<message_id>:<step>`. No Linear configuration is involved.
+- **The MCP server's own instructions say how to settle a message** (handle, then `ack`, or `reply` with `ack: true`;
+  `mark_read` where `ack` is unavailable; the `msg:<message_id>:<step>` operation IDs). Before, only the skill said
+  so, and an agent without it read its messages without acking them, so each came back and ended as a dead letter.
 
 ## The message queue: clients follow the stream (slice 3 of 5)
 

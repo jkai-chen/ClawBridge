@@ -1758,7 +1758,9 @@ the raw IDs and the binding's revision. A rename in Linear shows once the names 
 refreshed: `r` on the Linear view refreshes them for a project owner or lead, with
 their own Linear connection. Names are display text only; nothing matches on them.
 The issue list names the session each issue is assigned to ("held by reviewer"), and
-`s` on an opened issue goes to that session on the Sessions screen.
+`s` on an opened issue goes to that session on the Sessions screen. `l` on a linked board starts the
+link wizard from it, with its teams, default team and projects already chosen, so
+changing one thing is one change.
 The binding retains a revision so concurrent changes fail rather than overwriting
 another administrator's selection. An outage leaves the mapping intact.
 

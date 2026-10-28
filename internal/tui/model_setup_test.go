@@ -317,8 +317,12 @@ func TestModelSetupOwnerOnly(t *testing.T) {
 	}
 	m = modelScreen(t, &modelAuthority{noSeal: true})
 	m = press(t, m, "s")
-	if s := m.ModelSetupState(); s.Step != "" || !strings.Contains(m.status.text, "seal key") {
+	if s := m.ModelSetupState(); s.Step != "" || !strings.Contains(m.status.text, "isn't set up for model keys") {
 		t.Fatalf("%+v %s", s, m.status.text)
+	}
+	// U55: the operator's variable isn't shown to the person.
+	if view := Render(m); strings.Contains(view, "SEAL_KEY") || !strings.Contains(view, "operator: see docs/dispatcher.md") {
+		t.Fatal(view)
 	}
 }
 

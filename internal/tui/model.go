@@ -169,6 +169,11 @@ type Config struct {
 	// DeviceID is the device key this profile signs with, if any; the
 	// Account screen marks it.
 	DeviceID string
+	// WaitingForProject opens on "Waiting for a project": the profile
+	// has a workspace but no project yet. ProjectFound saves the project
+	// once there is one; the TUI then quits so the caller reopens it.
+	WaitingForProject bool
+	ProjectFound      func(slug string) error
 
 	Context context.Context
 	Now     func() time.Time
@@ -347,6 +352,16 @@ type Model struct {
 	quitAsk   bool
 	inboxOpen bool
 
+	// attention is Overview's "Needs attention"; checksAt is when the
+	// doctor's checks ran; doctorPasses shows the folded passes.
+	attention       []attentionItem
+	attentionLoaded bool
+	// waiting is the no-project mode; waitingOwner whom to ask.
+	waiting      bool
+	waitingOwner string
+	checksAt     time.Time
+	doctorPasses bool
+
 	inputMode   inputMode
 	draft       string
 	replyTarget string
@@ -404,6 +419,9 @@ func New(cfg Config) (Model, error) {
 		}
 		m.screen = cfg.InitialScreen
 	}
+	if cfg.WaitingForProject && cfg.Executor != nil && cfg.Project == "" {
+		m.waiting, m.screen = true, ScreenOverview
+	}
 	m.workspace = WorkspaceView{Name: cfg.Workspace}
 	m.project = ProjectView{Slug: cfg.Project}
 	m.session = SessionView{Name: cfg.Session}
@@ -424,6 +442,10 @@ func (m Model) Init() tea.Cmd {
 	if m.screen != ScreenOverview {
 		_, cmd := m.refreshView()
 		return tea.Batch(cmd, live)
+	}
+	if m.waiting {
+		_, cmd := m.loadWaiting()
+		return cmd
 	}
 	screen, request := m.screen, m.request
 	return tea.Batch(func() tea.Msg { return m.loadOverviewFor(screen, request) }, live)
@@ -466,6 +488,20 @@ func (m Model) UpdateModel(msg tea.Msg) (Model, tea.Cmd) {
 		return m, nil
 	case tea.KeyMsg:
 		return m.updateKey(x)
+	case waitingTickMsg:
+		if x.request != m.request || !m.waiting || m.screen != ScreenOverview {
+			return m, nil
+		}
+		return m.loadWaiting()
+	case waitingLoadedMsg:
+		return m.applyWaiting(x)
+	case attentionMsg:
+		m = m.applyAttention(x)
+		if !m.tickStarted {
+			m.tickStarted = true
+			return m, archiveTick()
+		}
+		return m, nil
 	case loadedMsg:
 		if x.request != m.request || x.screen != m.screen {
 			return m, nil
@@ -482,6 +518,13 @@ func (m Model) UpdateModel(msg tea.Msg) (Model, tea.Cmd) {
 		}
 		m.pageRollback = nil
 		(&m).applyLoad(x)
+		if x.kind == loadOverview && x.screen == ScreenOverview {
+			// The attention lines follow the Overview, one read after
+			// another; the archive tick starts once they're in.
+			if cmd := m.loadAttention(x.request); cmd != nil {
+				return m, cmd
+			}
+		}
 		if !m.tickStarted {
 			m.tickStarted = true
 			return m, archiveTick()
@@ -858,6 +901,9 @@ func (m Model) refreshView() (Model, tea.Cmd) {
 	case ScreenModel:
 		return m.modelRefresh()
 	case ScreenOverview:
+		if m.waiting {
+			return m.loadWaiting()
+		}
 		if m.cfg.Executor == nil {
 			target := ScreenCloud
 			if m.cfg.Setup == nil {
@@ -1060,6 +1106,7 @@ func (m *Model) applyLoad(x loadedMsg) {
 		m.source = "setup-plan"
 	case loadDoctor:
 		m.checks = append([]Check(nil), x.checks...)
+		m.checksAt = m.cfg.Now()
 		m.source = "doctor"
 	}
 }
@@ -1190,9 +1237,23 @@ func (m Model) currentRows() []string {
 		}
 		return out
 	case ScreenDoctor:
-		out := make([]string, len(m.checks))
-		for i := range m.checks {
-			out[i] = m.checks[i].ID
+		rows := doctorRows(m)
+		out := make([]string, len(rows))
+		for i := range rows {
+			out[i] = rows[i].ID
+		}
+		return out
+	case ScreenOverview:
+		if m.waiting {
+			out := make([]string, len(m.projects))
+			for i := range m.projects {
+				out[i] = m.projects[i].ID
+			}
+			return out
+		}
+		out := make([]string, len(m.attention))
+		for i := range m.attention {
+			out[i] = fmt.Sprint(i)
 		}
 		return out
 	}

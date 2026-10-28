@@ -319,3 +319,82 @@ func TestWizardTakesAnInviteLink(t *testing.T) {
 		}
 	}
 }
+
+// TUI-UX-AUDIT PR D, R175-M1: the TUI waits for a project only when the
+// signed project list answers; a revoked device, a server down or a lost
+// membership fails as before, and never says "ask the owner".
+func TestTUIWaitsOnlyForAMissingProject(t *testing.T) {
+	failed := errors.New("project not resolved")
+	listed := func() error { return nil }
+	for _, c := range []struct {
+		name                              string
+		err                               error
+		mode, workspace, flag, configured string
+		list                              func() error
+		wait                              bool
+	}{
+		{"no project yet", failed, "cloud", "acme", "", "", listed, true},
+		{"resolved", nil, "cloud", "acme", "", "", listed, false},
+		{"local", failed, "local", "acme", "", "", listed, false},
+		{"no workspace", failed, "cloud", "", "", "", listed, false},
+		{"--project", failed, "cloud", "acme", "api", "", listed, false},
+		{"saved project", failed, "cloud", "acme", "", "api", listed, false},
+		{"device revoked", failed, "cloud", "acme", "", "", func() error { return errors.New("this device was revoked") }, false},
+		{"server down", failed, "cloud", "acme", "", "", func() error { return errors.New("503 Service Unavailable") }, false},
+		{"tls or dns", failed, "cloud", "acme", "", "", func() error { return errors.New("x509: certificate signed by unknown authority") }, false},
+		{"membership removed", failed, "cloud", "acme", "", "", func() error { return errors.New("workspace membership required") }, false},
+		{"offline copy", failed, "cloud", "acme", "", "", func() error { return errors.New("offline") }, false},
+	} {
+		if got := waitForProject(c.err, c.mode, c.workspace, c.flag, c.configured, c.list); got != c.wait {
+			t.Errorf("%s: waited %v", c.name, got)
+		}
+	}
+}
+
+// R175-L1: only a slug reaches the profile.
+func TestFoundProjectMustBeASlug(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.toml")
+	if err := os.WriteFile(path, []byte("mode = \"cloud\"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for _, bad := range []string{"", "-x", "a b", "a\"\nmode = \"local", "../x", strings.Repeat("a", 129)} {
+		if err := saveFoundProject(path, bad); err == nil {
+			t.Fatalf("saved %q", bad)
+		}
+	}
+	if err := saveFoundProject(path, "api-v2"); err != nil {
+		t.Fatal(err)
+	}
+	if raw, _ := os.ReadFile(path); !strings.Contains(string(raw), "api-v2") || strings.Contains(string(raw), "local") {
+		t.Fatalf("%s", raw)
+	}
+}
+
+type listExecutor struct {
+	source string
+	err    error
+	got    bus.Request
+}
+
+func (e *listExecutor) Execute(_ context.Context, r bus.Request) (bus.Result, error) {
+	e.got = r
+	return bus.Result{Source: e.source}, e.err
+}
+
+func (e *listExecutor) ResolveProject(context.Context, string, string, string) (string, string, error) {
+	return "", "", errors.New("unused")
+}
+
+// The list that decides is the server's own, for this workspace.
+func TestSignedProjectList(t *testing.T) {
+	ok := &listExecutor{source: "server"}
+	if err := signedProjectList(context.Background(), ok, "acme"); err != nil || ok.got.Operation != "list_projects" || ok.got.Workspace != "acme" {
+		t.Fatal(err, ok.got)
+	}
+	if err := signedProjectList(context.Background(), &listExecutor{source: "offline-mirror"}, "acme"); err == nil {
+		t.Fatal("a cached list counted")
+	}
+	if err := signedProjectList(context.Background(), &listExecutor{err: errors.New("revoked")}, "acme"); err == nil {
+		t.Fatal("a refusal counted")
+	}
+}

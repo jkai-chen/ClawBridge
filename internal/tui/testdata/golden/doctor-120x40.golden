@@ -4,10 +4,11 @@ ClawBridge · ws_1 › prj_1 › engineer  cloud
 ╭──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
 │ Doctor                                                                                                               │
 │                                                                                                                      │
-│ 1 pass · 1 warn · 0 fail                                                                                             │
+│ 0 fail · 1 warn · 1 pass · checked just now                                                                          │
 │                                                                                                                      │
-│ › PASS  Server reachable                                                                                             │
-│   WARN  Linear board                                                                                                 │
+│ › WARN  Linear board  Enter: Linear                                                                                  │
 │        not linked                                                                                                    │
+│                                                                                                                      │
+│ 1 passed (p show passes)                                                                                             │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
-↑↓ select · r reload · ? help · q quit
+Enter go to its screen · p show passes · ↑↓ select · r reload · ? help · q quit

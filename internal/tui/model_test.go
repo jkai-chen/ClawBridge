@@ -142,7 +142,7 @@ func TestOverviewPinsScopeAndShowsProvenance(t *testing.T) {
 		}
 	}
 	view := Render(model)
-	for _, expected := range []string{"Overview", "verified", "google-id-token", "pilot › core › engineer"} {
+	for _, expected := range []string{"Overview", "human@example.test (Google, verified)", "pilot › core › engineer"} {
 		if !strings.Contains(view, expected) {
 			t.Fatalf("view missing %q:\n%s", expected, view)
 		}
@@ -315,8 +315,13 @@ func TestDoctorStableStatusesAndMissingAdapter(t *testing.T) {
 	model, cmd := model.Show(ScreenDoctor)
 	model, _ = model.UpdateModel(runCommand(t, cmd))
 	view := Render(model)
-	if !strings.Contains(view, "1 pass · 1 warn · 0 fail") || !strings.Contains(view, "Run gcloud auth login") {
+	// U38: failures and warnings first, the passes folded until p.
+	if !strings.Contains(view, "0 fail · 1 warn · 1 pass") || !strings.Contains(view, "Run gcloud auth login") || !strings.Contains(view, "1 passed (p show passes)") || strings.Contains(view, "PASS  Authority") {
 		t.Fatalf("doctor output incomplete:\n%s", view)
+	}
+	model, _ = model.UpdateModel(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("p")})
+	if view = Render(model); !strings.Contains(view, "PASS  Authority") || strings.Index(view, "WARN") > strings.Index(view, "PASS") {
+		t.Fatalf("p didn't show the passes after the warning:\n%s", view)
 	}
 
 	cfg.Doctor = nil

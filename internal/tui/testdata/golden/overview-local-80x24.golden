@@ -1,0 +1,19 @@
+ClawBridge · pilot › core › engineer  local
+[1 Overview] 2 Prj 3 Ses 4 Inb 5 Lin 6 Dsp 7 Doc
+
+╭──────────────────────────────────────────────────────────────────────────────╮
+│ Overview                                                                     │
+│                                                                              │
+│ Needs attention                                                              │
+│ › The dispatcher's model isn't set up (optional)  6 Dispatcher               │
+│                                                                              │
+│ Signed in       human@example.test (Google, verified)                        │
+│ Server          online                                                       │
+│ Workspace       pilot                                                        │
+│ Project         core                                                         │
+│ Inbox           no session on this profile (agents' inboxes are per session) │
+│                                                                              │
+│ Sessions                                                                     │
+│   engineer                 active     codex                                  │
+╰──────────────────────────────────────────────────────────────────────────────╯
+Enter go there · ? help · q quit

@@ -223,6 +223,16 @@
 - **The header says where you are, once.** One line, `ClawBridge · workspace › project › session`, with the mode and
   an offline badge; the status line sits under the tabs. The `Scope:` and `Source` lines and each screen's subtitle
   are gone from the body (the subtitles are in help).
+- **Overview says what needs you (PR D).** A "Needs attention" block lists failing or warning Doctor checks, an
+  unlinked Linear board, an ownership offer, unused invites and, for a project owner, the dispatcher's model, each
+  with its tab; Enter goes there. Identity reads "Signed in as … (Google, verified)", and a profile with no session is
+  told inboxes are per session instead of showing "Unread 0".
+- **No project yet? The TUI waits for one.** A hosted profile that joined a workspace with no project shared yet
+  opens on "Waiting for a project" instead of failing: it says whom to ask and what they run (the owner, right after a
+  bootstrap join, how to create the first project), checks again every 30 s
+  (`r` now), and once a project is yours saves it to the profile and reopens on it.
+- **Doctor lists failures first.** Passes are folded (`p` shows them), Enter on a failing Linear, Dispatcher or
+  device check opens that screen, the last results stay while the checks run again, and it says when they ran.
 - **Changed keys:** Inbox Enter opens a message, with what it answers and its thread (`m` marks read, as before).
   Account's decline is `d` (was `n`). Linear connects with `+` (was `c`, which now only switches who closes in the
   link review); Esc on Linear goes back one step and keeps the teams and projects you chose, instead of starting over.

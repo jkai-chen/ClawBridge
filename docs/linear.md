@@ -1302,8 +1302,8 @@ clawbridge linear view show VIEW_UUID --profile PROFILE_ID
   (`workspace_views`, `other_kinds`) and names none.
 - **The filter isn't shown here.** Linear's MCP doesn't return a view's filter. ClawBridge keeps the filter only of
   the issue views it wrote (below).
-- **Agents** list views with the MCP tool `taskboard_views_v2`, and filter issues by a view ClawBridge wrote with
-  `taskboard_issues_v2 {view_id}`. They can't create or change views; they prepare a view set for the project owner
+- **Agents** list views with the MCP tool `taskboard_views_v2`, and filter issues by an issue view ClawBridge wrote
+  with `taskboard_issues_v2 {view_id}` (not by project views yet). They can't create or change views; they prepare a view set for the project owner
   ([the agent's guide](../skills/clawbridge/references/views.md)).
 - **Names are text others wrote:** the CLI strips terminal control characters from them.
 

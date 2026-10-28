@@ -1,5 +1,11 @@
 # Unreleased
 
+## Docs
+
+- **The skill's views page, as shipped in v0.3.6:** agents filter issues only by issue views (a project view answers
+  `agent_filter: unavailable (uses: kind.project)`), a view whose team left the binding isn't read, and issue rows'
+  `priority` counts only with `priority_known`. Docs only.
+
 ## Linear
 
 - **A parent team's issue listing no longer fails when Linear returns its sub-teams' issues.** Before, one such row

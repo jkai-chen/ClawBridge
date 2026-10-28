@@ -122,13 +122,13 @@ func (p *fakeProvider) Create(context.Context, linearprovider.CreateInput) (line
 func (p *fakeProvider) Update(context.Context, linearprovider.UpdateInput) (linearprovider.Issue, error) {
 	return p.Create(context.Background(), linearprovider.CreateInput{})
 }
-func (p *fakeProvider) Comment(_ context.Context, _ string, body string) (linearprovider.Receipt, error) {
+func (p *fakeProvider) Comment(_ context.Context, issue string, body string) (linearprovider.Receipt, error) {
 	p.writes++
 	if p.commentErr != nil {
 		return linearprovider.Receipt{}, p.commentErr
 	}
 	p.bodies = append(p.bodies, body)
-	return linearprovider.Receipt{ID: issueID, IssueID: issueID}, nil
+	return linearprovider.Receipt{ID: issueID, IssueID: issue}, nil
 }
 func testService(t *testing.T) (*Service, *fakeAuthority, *fakeProvider, bus.Request) {
 	t.Helper()

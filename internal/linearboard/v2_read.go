@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"slices"
 	"sort"
@@ -71,8 +72,10 @@ func verifyBindingV2(ctx context.Context, p Provider, b bus.TaskboardBindingV2) 
 	if !b.Configured {
 		return out, errors.New("task-board is not linked")
 	}
-	teams := SortedTeams(b.LinearTeamIDs)
-	for _, id := range teams {
+	// Every listed team is verified live; only readable ones (write, read,
+	// comment) have pairs, since a linked team is never listed.
+	var teams []string
+	for _, id := range b.ListedTeamIDs() {
 		team, e := p.GetTeam(ctx, id)
 		if e != nil {
 			return out, e
@@ -81,6 +84,17 @@ func verifyBindingV2(ctx context.Context, p Provider, b bus.TaskboardBindingV2) 
 			return out, errors.New("Linear team access or identity changed")
 		}
 		out.Teams = append(out.Teams, team)
+		if b.TeamReadable(id) {
+			teams = append(teams, id)
+		}
+	}
+	// The parent is Linear's: every other listed team must be its child.
+	if parent := b.LinearParentTeamID; parent != "" {
+		for _, team := range out.Teams {
+			if team.ID != parent && team.ParentID != parent {
+				return out, fmt.Errorf("Linear doesn't report team %s as a sub-team of the binding's parent team", team.ID)
+			}
+		}
 	}
 	if b.Mode == "team_board" {
 		for _, id := range teams {
@@ -208,7 +222,18 @@ func walksPairV2(pairs []pairV2, b bus.TaskboardBindingV2, issue linearprovider.
 	return false
 }
 
+// readOnlyTeamError refuses a write to a team the binding lists, but not
+// for writing (read, comment or linked); nothing is sent.
+type readOnlyTeamError string
+
+func (e readOnlyTeamError) Error() string { return string(e) }
+
+// checkIssueV2 is the write scope: the issue's team is a write team, and in
+// a project set its pair is verified.
 func checkIssueV2(issue linearprovider.IssueV2, b bus.TaskboardBindingV2, v verifiedV2) error {
+	if linearprovider.ValidID(issue.ID) && !contains(b.LinearTeamIDs, issue.TeamID) && b.TeamAccess(issue.TeamID) != "" {
+		return readOnlyTeamError("read_only_team: this binding lists the issue's team as " + b.TeamAccess(issue.TeamID) + ", not for writing; nothing was sent")
+	}
 	if !linearprovider.ValidID(issue.ID) || !contains(b.LinearTeamIDs, issue.TeamID) {
 		return outOfScopeError("issue is outside the selected task-board scope")
 	}
@@ -225,6 +250,40 @@ func checkIssueV2(issue linearprovider.IssueV2, b bus.TaskboardBindingV2, v veri
 	}
 	return nil
 }
+
+// checkReadIssueV2 is the read scope: the issue's team is readable (write,
+// read or comment) and in a project set its pair is verified. A linked
+// team's issue is seen only as a linked summary, never read in full.
+func checkReadIssueV2(issue linearprovider.IssueV2, b bus.TaskboardBindingV2, v verifiedV2) error {
+	if !linearprovider.ValidID(issue.ID) || !b.TeamReadable(issue.TeamID) {
+		if b.TeamAccess(issue.TeamID) == bus.TeamAccessLinked {
+			return outOfScopeError("linked_only: this binding shows the issue's team only as linked issues; nothing was read in full")
+		}
+		return outOfScopeError("issue is outside the selected task-board scope")
+	}
+	if b.Mode == "project_set" {
+		if !issue.ProjectKnown {
+			return errors.New("issue project context is unavailable")
+		}
+		for _, pair := range v.Pairs {
+			if pair.ProjectID == issue.ProjectID && pair.TeamID == issue.TeamID {
+				return nil
+			}
+		}
+		return outOfScopeError("issue project/team pair is outside the verified scope")
+	}
+	return nil
+}
+
+// checkCommentIssueV2 is the comment scope: a write team's issue, or a
+// comment team's, which takes new comments only.
+func checkCommentIssueV2(issue linearprovider.IssueV2, b bus.TaskboardBindingV2, v verifiedV2) error {
+	if b.TeamAccess(issue.TeamID) == bus.TeamAccessComment {
+		return checkReadIssueV2(issue, b, v)
+	}
+	return checkIssueV2(issue, b, v)
+}
+
 func (s *Service) ContextV2(ctx context.Context, scope bus.Request) (ContextV2, error) {
 	b, e := s.BindingV2(ctx, scope)
 	if e != nil {
@@ -283,6 +342,16 @@ func (s *Service) LinkV2(ctx context.Context, scope bus.Request, in LinkInputV2)
 	if mapping.LinearProjectIDs == nil {
 		mapping.LinearProjectIDs = []string{}
 	}
+	mapping.LinearOtherTeams, mapping.LinearParentTeamID = nil, in.ParentTeamID
+	for id, access := range in.OtherTeams {
+		if mapping.LinearOtherTeams == nil {
+			mapping.LinearOtherTeams = map[string]string{}
+		}
+		mapping.LinearOtherTeams[id] = access
+	}
+	if len(mapping.LinearOtherTeams) > 0 || mapping.LinearParentTeamID != "" {
+		mapping.MappingVersion = 3
+	}
 	v, e := verifyBindingV2(ctx, p, mapping)
 	if e != nil {
 		return nil, e
@@ -327,7 +396,7 @@ func (s *Service) LinkV2(ctx context.Context, scope bus.Request, in LinkInputV2)
 		}
 	}
 	if !in.Confirm {
-		preview := LinkPreviewV2{Binding: b, DefaultTeamID: in.DefaultTeamID, Teams: v.Teams, Projects: v.Projects, TeamBoard: in.TeamBoard, LinearWorkspaceID: workspace}
+		preview := LinkPreviewV2{Binding: b, DefaultTeamID: in.DefaultTeamID, Teams: v.Teams, Projects: v.Projects, TeamBoard: in.TeamBoard, LinearWorkspaceID: workspace, OtherTeams: mapping.LinearOtherTeams, ParentTeamID: mapping.LinearParentTeamID}
 		linkClosesPreview(policy, in, &preview)
 		return preview, nil
 	}
@@ -365,6 +434,19 @@ func (s *Service) LinkV2(ctx context.Context, scope bus.Request, in LinkInputV2)
 	scope.Args["linear_team_ids"] = mapping.LinearTeamIDs
 	scope.Args["linear_default_team_id"] = mapping.LinearDefaultTeamID
 	scope.Args["linear_project_ids"] = mapping.LinearProjectIDs
+	// Version 3's fields go only with a binding that uses them: an older
+	// server refuses the unknown arguments, so it never stores a binding it
+	// would read without its access levels.
+	if mapping.MappingVersion == 3 {
+		others := map[string]any{}
+		for id, access := range mapping.LinearOtherTeams {
+			others[id] = access
+		}
+		scope.Args["linear_other_teams"] = others
+		if mapping.LinearParentTeamID != "" {
+			scope.Args["linear_parent_team_id"] = mapping.LinearParentTeamID
+		}
+	}
 	if workspace != "" {
 		scope.Args["linear_workspace_id"] = workspace
 	}
@@ -413,6 +495,20 @@ func ValidateLinkV2(in LinkInputV2) error {
 			}
 			seen[id] = true
 		}
+	}
+	for id, access := range in.OtherTeams {
+		if !linearprovider.ValidID(id) || contains(in.TeamIDs, id) {
+			return errors.New("a read, comment or linked team is a canonical team UUID that is not also a write team")
+		}
+		if access != bus.TeamAccessRead && access != bus.TeamAccessComment && access != bus.TeamAccessLinked {
+			return errors.New("a team's access is read, comment or linked")
+		}
+	}
+	if len(in.TeamIDs)+len(in.OtherTeams) > 20 {
+		return errors.New("a binding lists at most 20 teams in all")
+	}
+	if p := in.ParentTeamID; p != "" && !contains(in.TeamIDs, p) && in.OtherTeams[p] == "" {
+		return errors.New("the parent team must be one of the binding's teams")
 	}
 	return nil
 }
@@ -632,7 +728,7 @@ func (s *Service) IssuesV2(ctx context.Context, scope bus.Request, in IssuesInpu
 			}
 			continue
 		}
-		if e = checkIssueV2(issue, b, v); e != nil {
+		if e = checkReadIssueV2(issue, b, v); e != nil {
 			return empty, e
 		}
 		if issue.TeamID != pair.TeamID || (b.Mode == "project_set" && issue.ProjectID != pair.ProjectID) {
@@ -766,7 +862,7 @@ func (s *Service) issueV2(ctx context.Context, scope bus.Request, id string, res
 	if issue.ID != id {
 		return empty, out, errors.New("provider returned another issue")
 	}
-	if e = checkIssueV2(issue, b, v); e != nil {
+	if e = checkReadIssueV2(issue, b, v); e != nil {
 		return empty, out, e
 	}
 	if resolve {

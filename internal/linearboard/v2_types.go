@@ -40,6 +40,11 @@ type LinkInputV2 struct {
 	Closes        map[string]string
 	Via           string
 	MinimalPolicy bool
+	// OtherTeams are teams the binding lists besides TeamIDs (the write
+	// teams), by access: read, comment or linked. ParentTeamID is the
+	// parent team among them all (CROSS-TEAM-BINDING-DESIGN §3).
+	OtherTeams   map[string]string
+	ParentTeamID string
 }
 type LinkPreviewV2 struct {
 	Binding       bus.TaskboardBindingV2   `json:"current"`
@@ -56,6 +61,10 @@ type LinkPreviewV2 struct {
 	LinearWorkspaceID string `json:"linear_workspace_id,omitempty"`
 	// SeedDocs names the guide documents a confirmed link creates.
 	SeedDocs any `json:"seed_docs,omitempty"`
+	// OtherTeams and ParentTeamID are the link's teams beside the write
+	// teams, by access, and its parent team (binding version 3).
+	OtherTeams   map[string]string `json:"other_teams,omitempty"`
+	ParentTeamID string            `json:"parent_team_id,omitempty"`
 }
 
 // CommentsInputV2 opts an issue read into its comments. Since is a

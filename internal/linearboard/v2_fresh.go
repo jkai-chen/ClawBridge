@@ -38,7 +38,7 @@ func (s *Service) refreshWriteProofV2(ctx context.Context, p Provider, p2 Provid
 		if current.ID != in.IssueID || current.TeamID != original.TeamID || current.ProjectID != original.ProjectID {
 			return errors.New("source issue context changed before dispatch")
 		}
-		if e = checkIssueV2(current, b, v); e != nil {
+		if e = writeScopeV2(in)(current, b, v); e != nil {
 			return e
 		}
 		if e = textGuardV2(in, current); e != nil {
@@ -82,7 +82,7 @@ func (s *Service) refreshWriteProofV2(ctx context.Context, p Provider, p2 Provid
 			return errors.New("effective destination is unavailable before parent change")
 		}
 	}
-	if e = checkIssueV2(linearprovider.IssueV2{Issue: linearprovider.Issue{ID: "00000000-0000-0000-0000-000000000000", TeamID: team, ProjectID: project}, ProjectKnown: true}, b, v); e != nil {
+	if e = writeScopeV2(in)(linearprovider.IssueV2{Issue: linearprovider.Issue{ID: "00000000-0000-0000-0000-000000000000", TeamID: team, ProjectID: project}, ProjectKnown: true}, b, v); e != nil {
 		return e
 	}
 	for i, labels := range [][]string{in.Labels.Value, in.AddLabels} {

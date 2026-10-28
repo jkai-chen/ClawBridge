@@ -180,6 +180,8 @@ type linearFlags struct {
 	supplied                                                                                                             map[string]bool
 	profile, name, access, cursor, project, defaultTeam, title, description, descriptionFile, state, operation, bodyFile string
 	teams                                                                                                                []string
+	readTeams, commentTeams, linkedTeams                                                                                 []string
+	parentTeam                                                                                                           string
 	projects, labels, expectedLabels, addLabels, removeLabels                                                            []string
 	team, parent, assignee, relationType, relationAction, labelFilter                                                    string
 	expectTitle, expectDescriptionSHA256, updatedAfter, commentsSince, replyTo, inResponseTo, policyFile, adminAction    string
@@ -282,6 +284,10 @@ func parseLinear(command string, args []string, stderr io.Writer) (linearFlags, 
 		profile()
 		f.Var((*repeatedIDs)(&v.teams), "team", "allowed team UUID (repeat up to 20)")
 		f.StringVar(&v.defaultTeam, "default-team", "", "default selected team UUID")
+		f.Var((*repeatedIDs)(&v.readTeams), "read-team", "a team UUID agents read but never write (repeat)")
+		f.Var((*repeatedIDs)(&v.commentTeams), "comment-team", "a team UUID agents read and add comments to, nothing else (repeat)")
+		f.Var((*repeatedIDs)(&v.linkedTeams), "linked-team", "a team UUID agents see only as issues linked from their own (repeat)")
+		f.StringVar(&v.parentTeam, "parent-team", "", "the parent team UUID among the listed teams; every other one must be its sub-team in Linear")
 		f.Var((*repeatedIDs)(&v.projects), "linear-project", "allowed Linear project UUID (repeat up to 50)")
 		f.BoolVar(&v.teamBoard, "team-board", false, "explicit team board without a Linear project")
 		f.Int64Var(&v.revision, "expected-revision", -1, "required current mapping revision")
@@ -1075,7 +1081,18 @@ func runLinear(ctx context.Context, flags Config, args []string, stdout, stderr 
 	case "binding":
 		data, err = service.BindingV2(bounded, scope)
 	case "link":
-		in := linearboard.LinkInputV2{TeamIDs: v.teams, DefaultTeamID: v.defaultTeam, ProjectIDs: append([]string{}, v.projects...), ExpectedRevision: v.revision, TeamBoard: v.teamBoard, Confirm: v.confirm, MinimalPolicy: v.minimalPolicy}
+		in := linearboard.LinkInputV2{TeamIDs: v.teams, DefaultTeamID: v.defaultTeam, ProjectIDs: append([]string{}, v.projects...), ExpectedRevision: v.revision, TeamBoard: v.teamBoard, Confirm: v.confirm, MinimalPolicy: v.minimalPolicy, ParentTeamID: v.parentTeam}
+		for access, ids := range map[string][]string{bus.TeamAccessRead: v.readTeams, bus.TeamAccessComment: v.commentTeams, bus.TeamAccessLinked: v.linkedTeams} {
+			for _, id := range ids {
+				if in.OtherTeams == nil {
+					in.OtherTeams = map[string]string{}
+				}
+				if in.OtherTeams[id] != "" {
+					return errors.New("a team takes one of --read-team, --comment-team and --linked-team")
+				}
+				in.OtherTeams[id] = access
+			}
+		}
 		if in.Closes, err = linkCloses(v.closesPairs); err != nil {
 			return err
 		}

@@ -78,6 +78,14 @@
   parent's. `issues --label` with the parent's label reads a bound sub-team that has no copy. A new doctor check,
   `linear.labels`, shows each bound team's two label sets. Before, a sub-team issue carrying the parent's label was
   never polled, and its marker label never removed. No schema change. Linear config scope: none.
+- **A binding can list teams agents only read or comment on (binding version 3).** `linear link` takes
+  `--read-team`, `--comment-team` and `--linked-team` beside `--team`, the teams agents write, and `--parent-team`,
+  which Linear must confirm is every other listed team's parent. A write to a team that isn't a write team is refused
+  before anything is sent (`read_only_team`). A comment team takes agents' new comments only. A linked team is never
+  read in full (`linked_only`). Clients older than this release refuse such a binding, so upgrade them before
+  relinking with it. No schema change. Linear config scope: none. **Rollback:** an older server reading such a
+  binding sees only its write teams, which is more restrictive, never less. Relink without the new flags before
+  downgrading clients.
 
 ## Team roles: telling project leads
 

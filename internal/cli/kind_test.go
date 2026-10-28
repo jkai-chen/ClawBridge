@@ -70,3 +70,27 @@ func TestKindSeedOutput(t *testing.T) {
 		t.Fatal("a refused plan offered a confirm")
 	}
 }
+
+// An apply is the owner's, with a profile and a file; its preview offers a
+// canary first.
+func TestCLIProjectKindApply(t *testing.T) {
+	isolated(t)
+	invoke(t, "setup", "--local", "--workspace", "w")
+	invoke(t, "project", "create", "p")
+	t.Setenv("CLAWBRIDGE_PROJECT", "p")
+	invoke(t, "register", "eng", "--instance", "eng-i")
+	for want, args := range map[string][]string{
+		"requires --profile": {"linear", "kind", "apply", "--file", "k.json", "--operation-id", "a-1"},
+		"requires --file":    {"linear", "kind", "apply", "--operation-id", "a-1", "--profile", "p1"},
+		"without --session":  {"--session", "eng", "--instance", "eng-i", "linear", "kind", "apply", "--file", "k.json", "--operation-id", "a-1", "--profile", "p1"},
+	} {
+		var out, errs bytes.Buffer
+		if e := Run(context.Background(), args, &out, &errs); e == nil || !strings.Contains(e.Error(), want) {
+			t.Fatal(args, e)
+		}
+	}
+	out, err := kindApplyOutput(linearboard.KindApplyResult{Preview: true, PlanSHA: "abc"}, linearFlags{filterFile: "kinds.json", operation: "a-1", profile: "p1"}, nil)
+	if m := out.(map[string]any); err != nil || m["next"] != `clawbridge linear kind apply --file "kinds.json" --operation-id a-1 --profile p1 --expected-plan-sha256 abc --confirm --canary` {
+		t.Fatal(m, err)
+	}
+}

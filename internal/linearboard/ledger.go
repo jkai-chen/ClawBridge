@@ -403,6 +403,14 @@ func recordOutcome(previous ledgerRecord) (any, bool, error) {
 		if !validDeleteReceipt(previous.Receipt) {
 			return nil, true, errors.New("invalid recorded view receipt")
 		}
+	} else if kind == "kind_apply" {
+		if !validKindApplyReceipt(previous.Receipt) {
+			return nil, true, errors.New("invalid recorded project kind receipt")
+		}
+	} else if kind == "kind_canary" {
+		if !validKindCanary(receipt) {
+			return nil, true, errors.New("invalid recorded canary receipt")
+		}
 	} else if kind == "kind_label" {
 		if !validKindReceipt(previous.Receipt) {
 			return nil, true, errors.New("invalid recorded project label receipt")

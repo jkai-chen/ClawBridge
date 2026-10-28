@@ -7,6 +7,7 @@ import (
 	"errors"
 	"io"
 	"net/mail"
+	"sort"
 	"strings"
 
 	"clawbridge/internal/linearapp"
@@ -61,6 +62,23 @@ type subscribeFixture struct {
 	}
 }
 
+// others are the subscribers who are neither target, by ID.
+func (f subscribeFixture) others(email, user string) []string {
+	out := []string{}
+	for _, s := range f.Issue.Subscribers.Nodes {
+		if (email != "" && strings.EqualFold(s.Email, email)) || (user != "" && strings.EqualFold(s.ID, user)) {
+			continue
+		}
+		out = append(out, strings.ToLower(s.ID))
+	}
+	sort.Strings(out)
+	return out
+}
+
+func sameIDs(a, b []string) bool {
+	return strings.Join(a, ",") == strings.Join(b, ",")
+}
+
 func (f subscribeFixture) has(email, user string) (byEmail, byID bool) {
 	for _, s := range f.Issue.Subscribers.Nodes {
 		byEmail = byEmail || email != "" && strings.EqualFold(s.Email, email)
@@ -71,9 +89,12 @@ func (f subscribeFixture) has(email, user string) (byEmail, byID bool) {
 
 // linearAppSubscribeProbe runs the live check. It refuses, sending nothing,
 // unless the issue is the fixture: the exact title, in team, with no
-// comment and no subscriber at all (L1: the owner, as its creator, was
-// subscribed by Linear and unsubscribes in Linear first, or the email call
-// would pass as a no-op). With dryRun it stops after the guard.
+// comment, and neither target (the owner by email, --user by ID) already
+// subscribed, or the call would pass as a no-op (L1). Others, such as the
+// fixture's creator, whom Linear subscribes, may be there: they are
+// counted, never named. A pass is both calls subscribed, both targets in
+// the read-back, and nobody else added or gone. With dryRun it stops after
+// the guard.
 func linearAppSubscribeProbe(ctx context.Context, store linearapp.Store, issue, team, email, user string, dryRun bool, stdout io.Writer) error {
 	issue, team, user = strings.ToLower(issue), strings.ToLower(team), strings.ToLower(user)
 	if !linearprovider.ValidID(issue) || !linearprovider.ValidID(team) || email == "" || !strings.Contains(email, "@") || (user != "" && !linearprovider.ValidID(user)) {
@@ -108,11 +129,12 @@ func linearAppSubscribeProbe(ctx context.Context, store linearapp.Store, issue, 
 		return refuse("the issue is in another team than --team")
 	case len(before.Issue.Comments.Nodes) > 0:
 		return refuse("the fixture has a comment")
-	case len(before.Issue.Subscribers.Nodes) > 0:
-		out["subscribers_before"] = len(before.Issue.Subscribers.Nodes)
-		return refuse("inconclusive: the fixture already has subscribers; its creator unsubscribes in Linear first")
 	}
-	out["subscribers_before"] = 0
+	out["subscribers_before"] = len(before.Issue.Subscribers.Nodes)
+	if byEmail, byID := before.has(email, user); byEmail || byID {
+		return refuse("inconclusive: a target is already subscribed to the fixture; they unsubscribe in Linear first")
+	}
+	out["others_before"] = len(before.Issue.Subscribers.Nodes)
 	if dryRun {
 		out["dry_run"] = true
 		return emit(nil)
@@ -140,11 +162,17 @@ func linearAppSubscribeProbe(ctx context.Context, store linearapp.Store, issue, 
 		return emit(errors.New("linear-app-probe subscribe: the read-back failed; check the fixture's subscribers in Linear, then delete it by its ID"))
 	}
 	byEmail, byID := after.has(email, user)
-	back := map[string]any{"owner_subscribed": byEmail, "subscribers": len(after.Issue.Subscribers.Nodes)}
+	others := after.others(email, user)
+	back := map[string]any{"owner_subscribed": byEmail, "subscribers": len(after.Issue.Subscribers.Nodes), "others": len(others)}
 	pass = pass && byEmail
 	if user != "" {
 		back["user_subscribed"] = byID
 		pass = pass && byID
+	}
+	// Nobody else came or went: the others after are the subscribers before.
+	if !sameIDs(others, before.others(email, user)) {
+		back["others_changed"] = true
+		pass = false
 	}
 	out["read_back"] = back
 	out["pass"] = pass

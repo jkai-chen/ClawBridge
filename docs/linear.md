@@ -742,14 +742,16 @@ clawbridge linear subscribers backfill --since 2026-10-27 --apply
   (`linear.issue_subscribers`) offers `clawbridge linear subscribers on`. Nothing runs at all until the server's
   operator has proven it (see the deployment guide); until then, `show` says `proven: false` and `on` is refused.
 - **Never a session.** Agents read the setting but can't change it.
-- **Budget.** Each issue costs one read, to check that its team is bound and the people are its members, plus one
-  call per person. It comes from the project's hourly Linear budget, after the comment watch and markers, at most
-  5 issues a pass. An issue outside the bound teams is skipped. A person who is no longer an active member of the
+- **Budget.** Each issue costs one read, to check that it is the binding's and the people are its team's members,
+  plus one call per person. It comes from the project's hourly Linear budget, after the comment watch and markers,
+  at most 5 issues a pass. An issue outside the binding is skipped: outside its teams, or, for a project set,
+  outside its projects (another binding's project in the same team is never touched). A person who is no longer an active member of the
   issue's team is left out.
 - **The owner isn't a Linear user.** When Linear knows no user by the owner's email, the others are still
   subscribed and doctor says so. Add the owner's Linear user with `add`. ClawBridge waits a day before trying the
   email again.
-- **Backfill.** It finds the issues the app created in the bound teams since the date, and the claims since then,
+- **Backfill.** It finds the issues the app created in the binding since the date (its teams, and for a project set
+  only its projects), and the claims since then,
   and lists them by identifier. Its own reads (1 to 3 calls) come from the hour's budget. The dry run is a plain
   read: it works with the setting off and before the server is proven, so you can see the list before turning it
   on. `--apply` needs the setting on and the server proven, and queues them for the same pass, so a big backfill

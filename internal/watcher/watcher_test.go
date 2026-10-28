@@ -41,6 +41,7 @@ type fakeLinear struct {
 	// read (no team: no issue); subscribeClass answers SubscribeIssue by
 	// email or user ID (default subscribed), and subscribed records each.
 	subscribeTeam    string
+	subscribeProject string
 	subscribeMembers []string
 	subscribeErr     error
 	subscribeClass   map[string]string
@@ -299,7 +300,11 @@ func (a fakeApp) GraphQL(_ context.Context, query string, vars map[string]any, o
 		for _, id := range a.f.subscribeMembers {
 			nodes = append(nodes, map[string]any{"id": id})
 		}
-		data = map[string]any{"issue": map[string]any{"id": vars["id"], "team": map[string]any{"id": a.f.subscribeTeam, "members": map[string]any{"nodes": nodes}}}}
+		var project any
+		if a.f.subscribeProject != "" {
+			project = map[string]any{"id": a.f.subscribeProject}
+		}
+		data = map[string]any{"issue": map[string]any{"id": vars["id"], "project": project, "team": map[string]any{"id": a.f.subscribeTeam, "members": map[string]any{"nodes": nodes}}}}
 	case dispatchIssueQuery, dispatchIssueTextQuery:
 		issue, ok := a.f.dispatchIssues[vars["id"].(string)]
 		if !ok {

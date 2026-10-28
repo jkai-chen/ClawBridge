@@ -172,6 +172,62 @@ func (q *quietApp) SubscribeIssue(_ context.Context, _, email, user string) (str
 	return "subscribed", nil
 }
 
+// Linear subscribes the fixture's creator: someone already there who is
+// neither target is fine, counted and never named. A target already there
+// is inconclusive, sending nothing; someone else added (or gone) by the
+// time of the read-back is no pass.
+func TestSubscribeProbeTargetsOnly(t *testing.T) {
+	const creator = "00000000-0000-4000-8000-0000000000c7"
+	creatorRow := map[string]any{"id": creator, "email": "creator@probe.example"}
+	app := fixture()
+	app.subscribers = []map[string]any{creatorRow}
+	got, out, err := runSubscribeProbe(t, app, probeUser, false)
+	back, _ := got["read_back"].(map[string]any)
+	if err != nil || got["pass"] != true || got["subscribers_before"] != float64(1) || got["others_before"] != float64(1) || back["others"] != float64(1) || back["subscribers"] != float64(3) {
+		t.Fatal(got, err)
+	}
+	if strings.Contains(out, "creator@probe.example") || strings.Contains(out, creator) {
+		t.Fatal("another subscriber named:", out)
+	}
+	// --user already subscribed: inconclusive, nothing sent.
+	app = fixture()
+	app.subscribers = []map[string]any{creatorRow, {"id": probeUser, "email": "second@probe.example"}}
+	if _, _, err = runSubscribeProbe(t, app, probeUser, false); err == nil || !strings.Contains(err.Error(), "inconclusive") || len(app.sent) != 0 {
+		t.Fatal(err, app.sent)
+	}
+	// Someone else added after: no pass.
+	app = fixture()
+	app.subscribers = []map[string]any{creatorRow}
+	app.stranger = true
+	if got, _, _ = runSubscribeProbe(t, app, "", false); got["pass"] != false || got["read_back"].(map[string]any)["others_changed"] != true {
+		t.Fatal(got)
+	}
+	// Someone gone by the read-back: no pass either.
+	vanish := &vanishingApp{fakeSubscribeApp: fixture()}
+	vanish.subscribers = []map[string]any{creatorRow}
+	prev := newSubscribeProbeApp
+	newSubscribeProbeApp = func(linearapp.Store) (subscribeProbeApp, error) { return vanish, nil }
+	t.Cleanup(func() { newSubscribeProbeApp = prev })
+	var buf bytes.Buffer
+	if err = linearAppSubscribeProbe(context.Background(), nil, probeIssue, probeTeam, probeOwner, "", false, &buf); err != nil || !strings.Contains(buf.String(), `"pass":false`) || !strings.Contains(buf.String(), `"others_changed":true`) {
+		t.Fatal(buf.String(), err)
+	}
+}
+
+// vanishingApp drops everyone else on the first subscribe.
+type vanishingApp struct{ *fakeSubscribeApp }
+
+func (v *vanishingApp) SubscribeIssue(ctx context.Context, issue, email, user string) (string, error) {
+	kept := []map[string]any{}
+	for _, s := range v.subscribers {
+		if s["email"] == email || s["id"] == user {
+			kept = append(kept, s)
+		}
+	}
+	v.subscribers = kept
+	return v.fakeSubscribeApp.SubscribeIssue(ctx, issue, email, user)
+}
+
 // The arguments are checked before anything is opened.
 func TestSubscribeProbeArguments(t *testing.T) {
 	for _, a := range [][4]string{{"x", probeTeam, probeOwner, ""}, {probeIssue, "x", probeOwner, ""}, {probeIssue, probeTeam, "", ""}, {probeIssue, probeTeam, probeOwner, "x"}} {

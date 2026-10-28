@@ -41,9 +41,14 @@ func (s *subscribeStore) ExecuteSystem(_ context.Context, _ string, r bus.Reques
 
 func subscribeRun(t *testing.T, f *fakeLinear, row map[string]any) (*SubscribePass, map[string]any) {
 	t.Helper()
+	return subscribeRunIn(t, f, row, subscribeScope{teams: []string{subTeam}})
+}
+
+func subscribeRunIn(t *testing.T, f *fakeLinear, row map[string]any, scope subscribeScope) (*SubscribePass, map[string]any) {
+	t.Helper()
 	store := &subscribeStore{rows: []any{row}}
 	w := &Watcher{Store: store, App: fakeApp{f}}
-	pass, err := w.subscribePass(context.Background(), "prj_1", map[string]any{"lease_token": "t", "generation": 1}, func() []string { return []string{subTeam} })
+	pass, err := w.subscribePass(context.Background(), "prj_1", map[string]any{"lease_token": "t", "generation": 1}, func() subscribeScope { return scope })
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -96,6 +101,33 @@ func TestSubscribePassSkipsAnIssueOutsideTheBinding(t *testing.T) {
 	f = &fakeLinear{subscribeErr: errors.New("unavailable")}
 	if pass, settle := subscribeRun(t, f, subscribeRow()); settle["outcome"] != "retry" || settle["reason"] != "error" || pass.Retry != 1 {
 		t.Fatalf("%+v", settle)
+	}
+}
+
+// A project set: only an issue in one of its projects is subscribed; the
+// same team's issue in another binding's project, or in none, is skipped
+// after the one read (V037 §4.4). A team board takes its team's any.
+func TestSubscribePassStaysInTheBindingsProjects(t *testing.T) {
+	const mine, other = "00000000-0000-4000-8000-00000000dd01", "00000000-0000-4000-8000-00000000dd02"
+	set := subscribeScope{teams: []string{subTeam}, projects: []string{mine}, projectSet: true}
+	for project, want := range map[string]string{mine: "done", strings.ToUpper(mine): "done", other: "skipped", "": "skipped"} {
+		f := &fakeLinear{subscribeTeam: subTeam, subscribeProject: project, subscribeMembers: []string{subPerson}}
+		_, settle := subscribeRunIn(t, f, subscribeRow(subPerson), set)
+		if settle["outcome"] != want || (want == "skipped" && (settle["reason"] != "not_bound" || len(f.subscribed) != 0 || settle["calls"] != 1)) {
+			t.Fatalf("project %q: %+v %v", project, settle, f.subscribed)
+		}
+	}
+	f := &fakeLinear{subscribeTeam: subTeam, subscribeProject: other, subscribeMembers: []string{subPerson}}
+	if _, settle := subscribeRun(t, f, subscribeRow(subPerson)); settle["outcome"] != "done" {
+		t.Fatalf("a team board: %+v", settle)
+	}
+	// The scope read from a binding: a project set's projects count, a team
+	// board's none.
+	if s := bindingScope(bus.TaskboardBindingV2{Mode: "project_set", LinearTeamIDs: []string{strings.ToUpper(subTeam)}, LinearProjectIDs: []string{strings.ToUpper(mine)}}); !s.projectSet || !s.holds(subTeam, mine) || s.holds(subTeam, other) || s.holds(subTeam, "") {
+		t.Fatalf("%+v", s)
+	}
+	if s := bindingScope(bus.TaskboardBindingV2{Mode: "team_board", LinearTeamIDs: []string{subTeam}}); s.projectSet || !s.holds(subTeam, other) || s.holds(subOther, other) {
+		t.Fatalf("%+v", s)
 	}
 }
 

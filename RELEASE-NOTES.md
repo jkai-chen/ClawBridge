@@ -24,6 +24,14 @@
   does; workspace views and other kinds are counted, not listed. Read-only: a project owner writes views in their own
   terminal with `clawbridge linear view create|update|delete` (U63).
 
+## Linear
+
+- **Issue subscribers stay in the binding.** A project set's backfill, and every subscribe, now count only issues in
+  the binding's own projects; before, another binding's project in the same team was listed too (both read the whole
+  team). A team board is unchanged. The live check (`linear-app-probe --subscribe`) no longer needs an empty fixture:
+  the creator Linear subscribes is counted, not refused; it refuses only a target already subscribed, and fails if
+  anyone else is added or gone. No schema change. Linear config scope: none (reads only).
+
 # ClawBridge v0.3.7 (released 28 Oct)
 
 **Schema 39 → 41.**

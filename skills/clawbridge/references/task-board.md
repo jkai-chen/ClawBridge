@@ -126,6 +126,10 @@ label list); agents do not create it.
   absolute time of that check. A page's `filtered_other_team` counts issues of
   a team or project outside the binding that Linear returned and ClawBridge
   dropped; they are not yours to read, so don't go looking for them.
+- A sub-team's issues may carry its own `needs-agent` or its bound parent
+  team's: the two have different IDs. The server's intake reads both. A
+  manual `issues --label` with the parent's UUID can't reach a sub-team that
+  has its own copy, so use the intake queue (`intake list`) as the full list.
 - Other sessions do not pick work from this list; they wait for the
   coordinator's assignment.
 - The label asks for attention. It is not approval, an assignment or a scope

@@ -12,9 +12,6 @@ import (
 	"time"
 )
 
-// markerLabelPages bounds the label catalog walk that finds agent-working.
-const markerLabelPages = 5
-
 // MarkerApply is what one apply of an assignment's claim or close marker
 // did, per part: the bus's go-ahead, and the outcome when one was sent.
 type MarkerApply struct {
@@ -138,7 +135,7 @@ func (s *Service) markerPart(ctx context.Context, scope bus.Request, args map[st
 		}
 		return settle("done", map[string]any{"comment_id": id}, nil)
 	case "add", "remove":
-		label, err := s.markerLabel(ctx, scope, issue)
+		set, err := s.markerLabel(ctx, scope, issue)
 		if errors.Is(err, errNoMarkerLabel) {
 			return settle("no_label", nil, err)
 		}
@@ -151,10 +148,12 @@ func (s *Service) markerPart(ctx context.Context, scope bus.Request, args map[st
 			return settle(outcome, nil, err)
 		}
 		in := WriteInputV2{WriteInput: WriteInput{Operation: "update", OperationID: markerOperation(), IssueID: issue}, marker: true}
+		// Added: the team's own label, else its parent's. Removed: every
+		// one of the set the issue carries (CROSS-TEAM-BINDING §3.2).
 		if action == "add" {
-			in.AddLabels = []string{label}
+			in.AddLabels = []string{set.Apply}
 		} else {
-			in.RemoveLabels = []string{label}
+			in.RemoveLabels = set.IDs
 		}
 		if _, err = s.WriteV2(ctx, scope, in); err != nil {
 			return settle(markerFailure(err), nil, err)
@@ -181,41 +180,29 @@ var errMarkerWalk = errors.New("the team has too many labels to prove agent-work
 
 var errNoMarkerLabel = errors.New("label " + bus.MarkerLabel + " is missing in the issue's team, or ambiguous; a Linear admin must create exactly one")
 
-// markerLabel finds the one agent-working label the issue's team can use.
-// It is resolved by exact name among eligible labels; none, or more than
-// one, is never guessed.
-func (s *Service) markerLabel(ctx context.Context, scope bus.Request, issue string) (string, error) {
+// markerLabel finds the agent-working label set of the issue's team: its
+// own label, and its parent's when the binding binds the parent. It is
+// resolved by exact name; none to apply, or two in one team, is never
+// guessed.
+func (s *Service) markerLabel(ctx context.Context, scope bus.Request, issue string) (LabelSetV2, error) {
 	current, err := s.IssueV2(ctx, scope, issue)
 	if err != nil {
-		return "", err
+		return LabelSetV2{}, err
 	}
-	found := []string{}
-	cursor := ""
-	for page := 0; page < markerLabelPages; page++ {
-		labels, err := s.LabelsV2(ctx, scope, current.TeamID, 100, cursor)
-		if err != nil {
-			return "", err
-		}
-		for _, l := range labels.Items {
-			if l.Name == bus.MarkerLabel && eligibleLabelV2(l) == nil {
-				found = append(found, l.ID)
-			}
-		}
-		if labels.NextCursor == "" {
-			cursor = ""
-			break
-		}
-		cursor = labels.NextCursor
+	set, err := s.LabelSetV2(ctx, scope, current.TeamID, bus.MarkerLabel)
+	switch {
+	case errors.Is(err, ErrLabelWalk):
+		// A walk cut off by the page bound could hide a second label:
+		// nothing is guessed from it. Nothing was sent.
+		return set, errMarkerWalk
+	case errors.Is(err, ErrLabelAmbiguous):
+		return set, errNoMarkerLabel
+	case err != nil:
+		return set, err
+	case set.Apply == "":
+		return set, errNoMarkerLabel
 	}
-	// A walk cut off by the page bound could hide a second label: nothing
-	// is guessed from it. Nothing was sent.
-	if cursor != "" {
-		return "", errMarkerWalk
-	}
-	if len(found) != 1 {
-		return "", errNoMarkerLabel
-	}
-	return found[0], nil
+	return set, nil
 }
 
 // findMarkerComment looks for a comment whose body is exactly the marker's

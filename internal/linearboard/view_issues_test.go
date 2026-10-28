@@ -139,3 +139,19 @@ func TestViewIssuesEmptyIsAnEmptyList(t *testing.T) {
 		t.Fatal(string(raw), e)
 	}
 }
+
+// A view authorizes by label ID: one naming the parent team's label never
+// matches an issue carrying a sub-team's same-named copy (CROSS-TEAM-BINDING
+// §3.2, W1).
+func TestViewLabelFilterStaysByID(t *testing.T) {
+	const copyLabel = "40404040-4040-4040-8040-404040404040"
+	s, a, p, scope := viewWriteTest(t)
+	p.parents = map[string]string{otherTeamID: teamID}
+	p.labels = append(p.labels, linearprovider.Label{ID: copyLabel, Name: "bug", TeamID: otherTeamID, EligibilityKnown: true})
+	storeView(t, a, `{"labels":{"some":{"id":{"eq":"`+vwLabel+`"}}}}`, true)
+	p.pages = []linearprovider.Page[linearprovider.IssueV2]{{Items: []linearprovider.IssueV2{viewRow(viIssue1, nil, copyLabel), viewRow(viIssue2, nil, vwLabel)}, Complete: true}}
+	got, e := s.ViewIssuesV2(context.Background(), scope, vwView, IssuesInputV2{Limit: 50})
+	if e != nil || len(got.Items) != 1 || got.Items[0].ID != viIssue2 {
+		t.Fatal(got, e)
+	}
+}

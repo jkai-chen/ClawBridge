@@ -106,6 +106,9 @@ type Team struct {
 	ID   string `json:"id"`
 	Name string `json:"name"`
 	Key  string `json:"key,omitempty"`
+	// ParentID is the team's parent team, when Linear reports one (a
+	// sub-team); "" otherwise.
+	ParentID string `json:"parent_id,omitempty"`
 }
 type Project struct {
 	ID      string   `json:"id"`
@@ -1092,7 +1095,11 @@ func parseTeam(m map[string]any) (Team, error) {
 	if e != nil {
 		return Team{}, e
 	}
-	return Team{i, str(m, "name"), str(m, "key")}, nil
+	t := Team{ID: i, Name: str(m, "name"), Key: str(m, "key")}
+	if parent := str(m, "parentId"); ValidID(parent) && parent != i {
+		t.ParentID = parent
+	}
+	return t, nil
 }
 func (p *Provider) Teams(ctx context.Context, o PageOptions) (Page[Team], error) {
 	args, e := pageArgs(o)

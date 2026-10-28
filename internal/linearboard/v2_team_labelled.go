@@ -68,12 +68,24 @@ func (s *Service) TeamLabelledV2(ctx context.Context, scope bus.Request, in Team
 	if !ok {
 		return empty, errors.New("native provider lacks V2 issue capability")
 	}
-	label, e := findLabelV2(ctx, p2, in.TeamID, in.LabelID)
-	if e != nil {
-		return empty, e
+	// The label may be the team's own or, for a sub-team, its bound parent's
+	// (CROSS-TEAM-BINDING §3.2); a names-only row is then proven against the
+	// listing of the team that holds it. A row carrying the team's own copy
+	// of the name also passes: this read serves intake, for which every
+	// label of the name's set means the same.
+	owner := ""
+	for _, t := range labelTeamsV2(v, b, in.TeamID) {
+		label, e := findLabelV2(ctx, p2, t, in.LabelID)
+		if e != nil {
+			return empty, e
+		}
+		if label != nil {
+			owner = t
+			break
+		}
 	}
-	if label == nil {
-		return empty, errors.New("label is not verified for the team")
+	if owner == "" {
+		return empty, ErrLabelNotVerified
 	}
 	page, e := p2.IssuesV2(ctx, linearprovider.IssueQueryV2{IssueQuery: linearprovider.IssueQuery{TeamID: in.TeamID, Limit: in.Limit, Cursor: in.Cursor}, LabelID: in.LabelID, UpdatedAfter: in.UpdatedAfter})
 	if e != nil {
@@ -101,7 +113,7 @@ func (s *Service) TeamLabelledV2(ctx context.Context, scope bus.Request, in Team
 		}
 		if !issue.LabelsKnown {
 			if filteredName == "" {
-				if filteredName, e = filteredLabelNameV2(ctx, p2, in.TeamID, in.LabelID); e != nil {
+				if filteredName, e = filteredLabelNameV2(ctx, p2, owner, in.LabelID); e != nil {
 					return empty, e
 				}
 			}

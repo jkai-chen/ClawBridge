@@ -271,8 +271,22 @@ func (s *Service) Admin(ctx context.Context, scope bus.Request, in AdminInput) (
 	if reason := admin.InitiativeReason(); initiative && reason != "" {
 		return AdminResult{}, errors.New("Linear initiative writes are unavailable: " + reason)
 	}
-	if _, e = verifyBindingV2(ctx, p, b); e != nil {
+	v, e := verifyBindingV2(ctx, p, b)
+	if e != nil {
 		return AdminResult{}, e
+	}
+	// A sub-team's issues can use its bound parent's labels, so ClawBridge
+	// never makes a sub-team copy of one (CROSS-TEAM-BINDING §3.2).
+	if p2, ok := p.(ProviderV2); ok && in.Kind == "label_create" {
+		for _, parent := range labelTeamsV2(v, b, in.TeamID)[1:] {
+			found, _, e := labelsNamedV2(ctx, p2, parent, in.Name)
+			if e != nil {
+				return AdminResult{}, e
+			}
+			if len(found) > 0 {
+				return AdminResult{}, fmt.Errorf("the bound parent team already has label %q, and the sub-team's issues can use it; nothing was sent", in.Name)
+			}
+		}
 	}
 	// The pre-check decides the outcome before the ledger: an existing name
 	// is never written over, and an incomplete walk sends nothing.

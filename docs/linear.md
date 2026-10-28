@@ -153,6 +153,21 @@ team on a verified pair is shown when the listing reaches that pair, never twice
 doesn't list, a pair it doesn't hold, or a pair a label or view filter left out) is dropped and counted in the page's
 `filtered_other_team`. Nothing of it is shown.
 
+**Labels across a parent and its sub-teams.** A sub-team's issues may carry labels of the sub-team, its parent team,
+or the workspace. A sub-team made from its parent's settings has its own copy of each parent team label, with a new
+ID. So where ClawBridge finds a label by name (`needs-agent`, `agent-working`), it uses a **label set**: the team's
+own label of that name, plus its parent's when the parent team is also bound. The parent comes from Linear.
+- Reads accept either label.
+- A marker adds the team's own label, else the parent's, and a close removes whichever the issue carries.
+- An agent may apply the bound parent's label to a sub-team issue.
+- `issues --label PARENT_LABEL` also reads a bound sub-team, but only while that sub-team has no label of the same
+  name, so a row that names its labels only still proves which one it carries.
+- What authorizes stays as it was: the label policy by name, project kinds and views by label ID.
+- `linear label create` in a sub-team refuses a name its bound parent already has: the sub-team's issues can use
+  the parent's.
+- `doctor` (with `--linear-profile`) shows each bound team's two sets as `linear.labels`, and warns when a team has
+  no `needs-agent`, or no `agent-working` to apply.
+
 When checking that installation with `doctor`, pass the same `--linear-profile`
 alongside its MCP agent/config/session selection so the expected routes agree.
 
@@ -729,8 +744,9 @@ ended.
   otherwise, or when that fails, the comment watcher applies it later, if its
   profile can write.
 - **The label must exist.** A Linear admin creates `agent-working` once per bound
-  team, or once as a workspace label. Without exactly one such label, the note is
-  still posted and doctor warns.
+  team, or once as a workspace label; a sub-team may use its bound parent's (see
+  "Labels across a parent and its sub-teams"). Without one to apply, or with two
+  in one team, the note is still posted and doctor warns.
 - The label is removed only when it is on the issue and no other confirmed
   assignment names the issue. A claim that never reached Linear gets no release
   note. Notes have their own bound: at most 6 per issue per hour.
@@ -1809,7 +1825,8 @@ Linear can tell ClawBridge that an issue needs an agent. ClawBridge queues the i
 project's coordinator session, which then routes it.
 
 **Signals.** Each signal is polled by the server's own watcher, at no Linear Agent cost:
-- **S1:** a person adds the `needs-agent` label (one label of that exact name per team). The watcher reads each
+- **S1:** a person adds the `needs-agent` label (one label of that exact name per team; a sub-team's issue may carry
+  its own or its bound parent's, and the watcher reads both). The watcher reads each
   bound team's labelled issues in one query, across all its projects, and queues only those in the project's
   binding: an issue in a project the binding doesn't hold is skipped, and only counted. So is an issue of another
   team that Linear returns under a parent team's filter (`other_team`); a bound sub-team's issues are read under

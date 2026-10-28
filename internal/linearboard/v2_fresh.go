@@ -91,7 +91,7 @@ func (s *Service) refreshWriteProofV2(ctx context.Context, p Provider, p2 Provid
 		if len(labels) == 0 || i == 1 && in.marker {
 			continue
 		}
-		found, e := findLabelsV2(ctx, p2, team, labels)
+		found, e := findTeamLabelsV2(ctx, p2, labelTeamsV2(v, b, team), labels)
 		if e != nil {
 			return e
 		}

@@ -172,3 +172,46 @@ func TestIntakeS3CreditsTheOwnersCommentThroughTheApp(t *testing.T) {
 		t.Fatal("caps:", caps)
 	}
 }
+
+// W2 (CROSS-TEAM-BINDING §3.2): with no transition, the label-on proof
+// accepts any ID of the team's needs-agent set, so a sub-team issue read by
+// its own copy still counts when it now carries the parent's label; the
+// credit stays by the written label's ID, and a label outside the set
+// proves nothing.
+func TestIntakeAttributionLabelOnTakesTheSet(t *testing.T) {
+	const subTeam = "abababab-abab-4bab-8bab-abababababab"
+	const copyNeeds = "cdcdcdcd-cdcd-4dcd-8dcd-cdcdcdcdcdcd"
+	e, owner := attributed(t)
+	e.call("taskboard_set_v2", "coord", map[string]any{"expected_revision": 1, "mode": "team_board", "linear_team_ids": []string{team, subTeam}, "linear_default_team_id": team, "linear_project_ids": []string{}})
+	needs := func(id, t string) linearprovider.Label {
+		return linearprovider.Label{ID: id, Name: needsAgentLabel, TeamID: t, EligibilityKnown: true}
+	}
+	e.f.parents = map[string]string{subTeam: team}
+	e.f.teamLabels = map[string][]linearprovider.Label{team: {needs(labelNeeds, team)}, subTeam: {needs(copyNeeds, subTeam)}}
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	for _, id := range []string{issueA, issueB} {
+		e.f.extra[id] = linearprovider.IssueV2{Issue: linearprovider.Issue{ID: id, Identifier: "SUB-" + id[:1], Title: "t", TeamID: subTeam}, ProjectKnown: true, DescriptionKnown: true, UpdatedAt: now}
+	}
+	// issueC's board read carries label IDs: the parent's.
+	e.f.extra[issueC] = linearprovider.IssueV2{Issue: linearprovider.Issue{ID: issueC, Identifier: "SUB-C", Title: "t", TeamID: subTeam}, ProjectKnown: true, DescriptionKnown: true, LabelsKnown: true, LabelIDs: []string{labelNeeds}, UpdatedAt: now}
+	e.f.labelled = []string{issueA, issueB, issueC}
+	e.f.carries = map[string][]string{issueA: {copyNeeds}, issueB: {copyNeeds}, issueC: {copyNeeds}}
+	// Both now carry another label than the one read: issueA the parent's
+	// needs-agent, issueB a label outside the set.
+	e.f.issueLabels = map[string][]string{issueA: {labelNeeds}, issueB: {"cccccccc-cccc-4ccc-8ccc-cccccccccccc"}}
+	for _, issue := range []string{issueA, issueB, issueC} {
+		w := bus.AppWrite{Workspace: "w", Project: "p", Issue: issue, Identity: bus.Identity{Principal: owner, Issuer: bus.DeviceIssuer, Subject: "dev_owner"}, Labels: []string{copyNeeds}}
+		if err := e.s.RecordAppWrite(context.Background(), w); err != nil {
+			t.Fatal(err)
+		}
+	}
+	e.tick()
+	e.dueNow()
+	tick := e.tick()
+	if tick.Intake == nil || len(tick.Intake.Queued) != 2 || tick.Intake.Skipped["transition_not_found"] != 1 {
+		t.Fatalf("intake: %+v", tick.Intake)
+	}
+	if caps := e.caps(); caps[issueA] != "auto" || caps[issueC] != "auto" {
+		t.Fatal("caps:", caps)
+	}
+}

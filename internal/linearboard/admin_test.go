@@ -176,9 +176,19 @@ func TestAdminWritesAreRefusedBeforeLinear(t *testing.T) {
 		setup func(*adminAuthority, *adminFake)
 		want  string
 	}{
-		"a member":        {AdminInput{Kind: "label_create", OperationID: "x", TeamID: teamID, Name: "Bug"}, func(a *adminAuthority, _ *adminFake) { a.role = "member" }, "project owner only"},
-		"a lead":          {AdminInput{Kind: "project_create", OperationID: "x", TeamID: teamID, Name: "Q4"}, func(a *adminAuthority, _ *adminFake) { a.role = "lead" }, "project owner only"},
-		"not approved":    {AdminInput{Kind: "label_create", OperationID: "x", TeamID: teamID, Name: "Feature"}, nil, "not in the approved list"},
+		"a member":     {AdminInput{Kind: "label_create", OperationID: "x", TeamID: teamID, Name: "Bug"}, func(a *adminAuthority, _ *adminFake) { a.role = "member" }, "project owner only"},
+		"a lead":       {AdminInput{Kind: "project_create", OperationID: "x", TeamID: teamID, Name: "Q4"}, func(a *adminAuthority, _ *adminFake) { a.role = "lead" }, "project owner only"},
+		"not approved": {AdminInput{Kind: "label_create", OperationID: "x", TeamID: teamID, Name: "Feature"}, nil, "not in the approved list"},
+		// A sub-team never gets a copy of its bound parent's label, and the
+		// parent having a name approves nothing (CROSS-TEAM-BINDING §3.2).
+		"parent has it": {AdminInput{Kind: "label_create", OperationID: "x", TeamID: otherTeamID, Name: "Bug"}, func(_ *adminAuthority, p *adminFake) {
+			p.providerV2.parents = map[string]string{otherTeamID: teamID}
+			p.providerV2.labels = []linearprovider.Label{{ID: dupLabel, Name: "Bug", TeamID: teamID, EligibilityKnown: true}}
+		}, "bound parent team already has"},
+		"parent approves nothing": {AdminInput{Kind: "label_create", OperationID: "x", TeamID: otherTeamID, Name: "Feature"}, func(_ *adminAuthority, p *adminFake) {
+			p.providerV2.parents = map[string]string{otherTeamID: teamID}
+			p.providerV2.labels = []linearprovider.Label{{ID: dupLabel, Name: "Feature", TeamID: teamID, EligibilityKnown: true}}
+		}, "not in the approved list"},
 		"case differs":    {AdminInput{Kind: "label_create", OperationID: "x", TeamID: teamID, Name: "bug"}, nil, "not in the approved list"},
 		"unbound team":    {AdminInput{Kind: "label_create", OperationID: "x", TeamID: "99999999-9999-4999-8999-999999999999", Name: "Bug"}, nil, "not in this project's binding"},
 		"rename unlisted": {AdminInput{Kind: "label_rename", OperationID: "x", TeamID: teamID, From: "Bugs", Name: "Bug new"}, nil, "not in the approved list"},

@@ -131,6 +131,8 @@ type providerV2 struct {
 	// landed, when set, is the state an update's answer reports, whatever
 	// was asked.
 	landed string
+	// parents are the teams' parent teams, as get_team's parentId.
+	parents map[string]string
 }
 
 func (p *providerV2) named(i linearprovider.IssueV2) linearprovider.IssueV2 {
@@ -166,7 +168,9 @@ func (p *providerV2) Comment(ctx context.Context, issue, body string) (linearpro
 }
 func (p *providerV2) GetTeam(ctx context.Context, id string) (linearprovider.Team, error) {
 	p.tools++
-	return p.fakeProvider.GetTeam(ctx, id)
+	t, e := p.fakeProvider.GetTeam(ctx, id)
+	t.ParentID = p.parents[id]
+	return t, e
 }
 func (p *providerV2) GetProject(_ context.Context, id string) (linearprovider.Project, error) {
 	p.tools++

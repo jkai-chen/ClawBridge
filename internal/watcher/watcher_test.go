@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -99,6 +100,13 @@ type fakeLinear struct {
 	// spill makes the labelled list also return other teams' issues, as a
 	// parent team's filter may return its sub-teams'.
 	spill bool
+	// parents are teams' parent teams (get_team's parentId); teamLabels,
+	// when set, are each team's label list; carries, when set, are the
+	// label IDs each labelled issue carries, which the labelled list
+	// filters by.
+	parents    map[string]string
+	teamLabels map[string][]linearprovider.Label
+	carries    map[string][]string
 }
 
 func (f *fakeLinear) issue(id string) (linearprovider.IssueV2, error) {
@@ -128,7 +136,7 @@ type fakeProvider struct{ f *fakeLinear }
 
 func (p fakeProvider) Close() error { return nil }
 func (p fakeProvider) GetTeam(_ context.Context, id string) (linearprovider.Team, error) {
-	return linearprovider.Team{ID: id, Name: "T"}, nil
+	return linearprovider.Team{ID: id, Name: "T", ParentID: p.f.parents[id]}, nil
 }
 func (p fakeProvider) GetProject(_ context.Context, id string) (linearprovider.Project, error) {
 	if p.f.projects[id] {
@@ -178,7 +186,7 @@ func (p fakeProvider) IssueV2(_ context.Context, id string) (linearprovider.Issu
 }
 func (p fakeProvider) IssuesV2(_ context.Context, q linearprovider.IssueQueryV2) (linearprovider.Page[linearprovider.IssueV2], error) {
 	out := linearprovider.Page[linearprovider.IssueV2]{Complete: true}
-	if q.LabelID != labelNeeds {
+	if q.LabelID != labelNeeds && p.f.carries == nil {
 		return out, nil
 	}
 	// Like Linear, the list is filtered by the queried team, project and
@@ -189,6 +197,12 @@ func (p fakeProvider) IssuesV2(_ context.Context, q linearprovider.IssueQueryV2)
 			continue
 		}
 		i.LabelIDs, i.LabelsKnown = []string{labelNeeds}, true
+		if p.f.carries != nil {
+			if !slices.Contains(p.f.carries[id], q.LabelID) {
+				continue
+			}
+			i.LabelIDs = p.f.carries[id]
+		}
 		if p.f.unlisted[id] {
 			i.ProjectID, i.ProjectKnown = "", false
 		}
@@ -205,6 +219,9 @@ func (p fakeProvider) IssuesV2(_ context.Context, q linearprovider.IssueQueryV2)
 	return out, nil
 }
 func (p fakeProvider) Labels(_ context.Context, t string, _ linearprovider.PageOptions) (linearprovider.Page[linearprovider.Label], error) {
+	if p.f.teamLabels != nil {
+		return linearprovider.Page[linearprovider.Label]{Items: p.f.teamLabels[t], Complete: true}, nil
+	}
 	return linearprovider.Page[linearprovider.Label]{Items: []linearprovider.Label{{ID: labelNeeds, Name: needsAgentLabel, TeamID: t, EligibilityKnown: true}}, Complete: true}, nil
 }
 func (p fakeProvider) Members(context.Context, string, linearprovider.PageOptions) (linearprovider.Page[linearprovider.Member], error) {
@@ -519,6 +536,48 @@ func TestIntakeS1SkipsAnotherTeamsRows(t *testing.T) {
 	}
 	if e.f.issueReads-reads != 1 {
 		t.Fatal("another team's row was read:", e.f.issueReads-reads)
+	}
+}
+
+// A bound sub-team's needs-agent set is its own copy and its bound
+// parent's label (CROSS-TEAM-BINDING §3.2): S1 reads the sub-team once per
+// label, so an issue carrying either is queued. A label of the cached set
+// that stops verifying (merged away in Linear) re-resolves the set once.
+func TestIntakeS1ReadsTheSubTeamsLabelSet(t *testing.T) {
+	const subTeam = "abababab-abab-4bab-8bab-abababababab"
+	const copyNeeds = "cdcdcdcd-cdcd-4dcd-8dcd-cdcdcdcdcdcd"
+	const subA = "a9a9a9a9-a9a9-4a9a-8a9a-a9a9a9a9a9a9"
+	const subB = "b0b0b0b0-b0b0-4b0b-8b0b-b0b0b0b0b0b0"
+	e := setup(t)
+	e.call("taskboard_set_v2", "coord", map[string]any{"expected_revision": 1, "mode": "team_board", "linear_team_ids": []string{team, subTeam}, "linear_default_team_id": team, "linear_project_ids": []string{}})
+	e.call("intake_trust_add", "coord", map[string]any{"linear_user_id": trustedUser})
+	needs := func(id, t string) linearprovider.Label {
+		return linearprovider.Label{ID: id, Name: needsAgentLabel, TeamID: t, EligibilityKnown: true}
+	}
+	e.f.parents = map[string]string{subTeam: team}
+	e.f.teamLabels = map[string][]linearprovider.Label{team: {needs(labelNeeds, team)}, subTeam: {needs(copyNeeds, subTeam)}}
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	e.f.extra = map[string]linearprovider.IssueV2{}
+	for _, id := range []string{subA, subB} {
+		e.f.extra[id] = linearprovider.IssueV2{Issue: linearprovider.Issue{ID: id, Identifier: "SUB-" + id[:1], Title: "t", TeamID: subTeam}, ProjectKnown: true, DescriptionKnown: true, UpdatedAt: now}
+	}
+	e.f.labelled = []string{subA, subB}
+	e.f.carries = map[string][]string{subA: {labelNeeds}, subB: {copyNeeds}}
+	e.f.history[subA] = []map[string]any{entry(now, trustedUser, map[string]any{"addedLabelIds": []string{labelNeeds}})}
+	e.f.history[subB] = []map[string]any{entry(now, trustedUser, map[string]any{"addedLabelIds": []string{copyNeeds}})}
+	e.tick()
+	e.dueNow()
+	tick := e.tick()
+	if tick.Intake == nil || len(tick.Intake.Queued) != 2 || len(tick.Intake.Unreadable) != 0 {
+		t.Fatalf("intake: %+v", tick.Intake)
+	}
+	// The owner merges the copy into the parent's label: the cached set
+	// still names the copy, which no longer verifies.
+	e.f.teamLabels[subTeam] = nil
+	e.f.carries = map[string][]string{subA: {labelNeeds}, subB: {labelNeeds}}
+	e.dueNow()
+	if tick = e.tick(); tick.Intake == nil || len(tick.Intake.Unreadable) != 0 || len(tick.Intake.NoLabel) != 0 {
+		t.Fatalf("the set was not re-resolved: %+v", tick.Intake)
 	}
 }
 

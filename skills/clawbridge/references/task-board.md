@@ -200,7 +200,10 @@ as `@name`, `@Linear` or a profile link. ClawBridge refuses a title,
 description or comment that does, even inside code: write scoped packages
 without the `@` (`types/node`).
 
-Use canonical IDs from scoped provider discovery. Preserve omitted fields;
+Use canonical IDs from scoped provider discovery. To turn label names into IDs,
+`clawbridge linear labels` (no `--team`) gives each bound team's
+`{name: ID}` in one call. Use the issue's own team's map, never another team's:
+the same name has a different ID in each team. Preserve omitted fields;
 clear or replace them only when the assignment requests that exact change.
 Supplied label IDs replace the complete set: known labels omitted from that set
 are removed, `[]` clears it, and omission preserves it. Review existing labels

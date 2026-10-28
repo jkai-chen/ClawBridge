@@ -296,10 +296,23 @@ Discover scoped metadata before writing:
 
 ```sh
 clawbridge linear labels --profile PROFILE_ID --team TEAM_UUID --limit 50
+clawbridge linear labels --profile PROFILE_ID
 clawbridge linear members --profile PROFILE_ID --team TEAM_UUID --limit 50
 ```
 
-`linear labels` lists the team's own labels and workspace labels available to it.
+`linear labels --team` lists the team's own labels and workspace labels available to it, a page at a time.
+Without `--team`, `linear labels` reads every bound team in one call and answers
+`{"teams": [{"team_id", "default", "labels": {NAME: ID}, "duplicates", "complete"}]}`,
+in the binding's order:
+
+- **Per team, never merged.** Each team has its own label IDs, so the same name
+  in two teams has two IDs; workspace labels appear under every team.
+- `labels` holds the labels an issue can carry. Group and archived labels are left out.
+- `duplicates` lists a name used by more than one of a team's labels (in two
+  groups, say) with every ID, and that name isn't in `labels`. Pick by ID.
+- `complete: false` means the team has more than 1,000 labels; page it with `--team`.
+
+`--limit` and `--cursor` need `--team`.
 A workspace label can be applied under the same eligibility proof as a team
 label; a label without that proof is refused.
 

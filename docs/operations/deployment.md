@@ -176,6 +176,42 @@ project status update as the app and removes it again:
   the ID (or saying to check the project), and the owner deletes it.
 - It never mints; the token rules are as above.
 
+Before `--project-flow-proven` is set, `--project-status` proves that the app
+moves a project's status the way project flow does: the same MCP call
+(`save_project`), and the same read-back by status ID.
+
+```sh
+export CLAWBRIDGE_PROBE_PROJECT=UUID
+... run --rm --no-deps -e CLAWBRIDGE_PROBE_PROJECT api operator linear-app-probe --confirm --project-status --project UUID --dry-run   # checks only
+... run --rm --no-deps -e CLAWBRIDGE_PROBE_PROJECT api operator linear-app-probe --confirm --project-status --project UUID
+```
+
+- **Only the operator's probe project.** `--project` must equal
+  `CLAWBRIDGE_PROBE_PROJECT`, the empty throwaway `--p8` uses. It must exist,
+  unarchived and not trashed, with no issues, members or lead. It must not be
+  named by any task board binding on this server. And it must be on a team that
+  a binding uses, so a pass proves the app's access there.
+- **Before sending,** it maps the moves to the workspace's one unarchived
+  `started` status and one `completed` status (several or none of either is
+  refused), and it checks that the app holds the `write` scope. `--dry-run`
+  stops there and prints the plan.
+- **The run, about 8 calls as the app:**
+  - **a:** to started;
+  - **b:** to completed;
+  - **c:** back to the original status ID.
+
+  Each move is sent once and read back by status ID. A move that isn't
+  `accepted` stops the run without a retry, after one read of the project's
+  status now.
+- **What it prints:** the project's team IDs and the bound ones, the original
+  status `{id, type}` (keep it in the deploy log: a failed step c is put back
+  by that ID), each move's `{step, to_type, outcome, code}`, and `result` `PASS`
+  or `FAIL`. Never a name.
+- **PASS** (all three moves accepted) is the app-write proof for
+  `CLAWBRIDGE_PROJECT_FLOW_PROVEN=1`. Turning project flow on for a real
+  project also needs the owner-present checks (a person's move back, an issue
+  leaving the project).
+
 Before the server posts health for a project, `--health-order` settles that the
 health judgement's read holds that project's newest update, the one it acts on:
 

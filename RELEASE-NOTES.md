@@ -196,6 +196,10 @@
 
 ## The comment watcher
 
+- **A label added just after an issue's create is no longer reported uncertain.** Linear's label-filtered issue list
+  can lag a write by a few seconds, so the check after `--add-label` or `--remove-label` sometimes found a label that
+  had landed still missing (`receipt_mismatch`). A contradicting check is now asked again after 2 s and after 4 s
+  more; only one that holds through both makes the write uncertain.
 - **Intake's `needs-agent` signal (S1) now sees every project of a binding.** It read the bound projects one at a time
   and stopped after four pages, so in a project set of more than four projects a label in a later project was never
   seen, and every poll repeated the same partial read. It now reads each bound team once, across all its projects,

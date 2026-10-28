@@ -7,6 +7,7 @@ import (
 	"errors"
 	"regexp"
 	"slices"
+	"time"
 
 	"clawbridge/internal/bus"
 	"clawbridge/internal/linearconn"
@@ -955,9 +956,11 @@ func receiptFieldsV2(issue linearprovider.IssueV2, in WriteInputV2, legacy bool)
 
 // deltaReadBackV2 asks Linear's label-filtered issue list, for each requested
 // delta label, whether the issue now carries it: an added label must be found
-// and a removed one proven absent. A contradiction is a receipt_mismatch
-// error; a check that cannot run or reach an answer leaves the labels
-// unconfirmed (false) rather than assumed.
+// and a removed one proven absent. The list lags a write by some seconds (seen
+// on an issue labelled 14 s after its create), so a contradiction is asked
+// again after each of deltaRecheckDelays; one that holds through them is a
+// receipt_mismatch error. A check that cannot run or reach an answer leaves
+// the labels unconfirmed (false) rather than assumed.
 func deltaReadBackV2(ctx context.Context, p ProviderV2, in WriteInputV2, issue, team, project string) (bool, error) {
 	m, ok := p.(labelMembershipV2)
 	if !ok {
@@ -970,6 +973,17 @@ func deltaReadBackV2(ctx context.Context, p ProviderV2, in WriteInputV2, issue, 
 	for want, labels := range map[bool][]string{true: in.AddLabels, false: in.RemoveLabels} {
 		for _, label := range labels {
 			found, complete, e := m.IssueHasLabel(ctx, issue, team, project, label)
+			for _, wait := range deltaRecheckDelays {
+				if e != nil || !complete || found == want {
+					break
+				}
+				select {
+				case <-ctx.Done():
+					return false, nil
+				case <-time.After(wait):
+				}
+				found, complete, e = m.IssueHasLabel(ctx, issue, team, project, label)
+			}
 			switch {
 			case e != nil || (!found && !complete):
 				confirmed = false
@@ -980,6 +994,10 @@ func deltaReadBackV2(ctx context.Context, p ProviderV2, in WriteInputV2, issue, 
 	}
 	return confirmed, nil
 }
+
+// deltaRecheckDelays are the waits before a contradicting label check is
+// asked again; tests shorten them.
+var deltaRecheckDelays = []time.Duration{2 * time.Second, 4 * time.Second}
 
 func receiptParentV2(issue linearprovider.IssueV2, parent linearprovider.Field[*string], verified linearprovider.IssueV2) error {
 	if !parent.Present || !issue.ParentKnown {

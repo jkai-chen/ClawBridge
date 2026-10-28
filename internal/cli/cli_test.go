@@ -132,6 +132,7 @@ func TestRemoteResolutionAmbiguityAndCase(t *testing.T) {
 	git(t, "remote", "set-url", "origin", "git@example.com:org/repo.git")
 	rejectCLI(t, "whoami")
 }
+
 // A member with no project yet runs whoami for the workspace alone; a
 // session or a named project still has to resolve.
 func TestWhoamiWithNoProjectYet(t *testing.T) {

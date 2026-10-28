@@ -88,6 +88,9 @@ for profiles and resumption.
   reviewers comment in Linear, and agents answer and turn feedback into work.
 - [Reviewer quickstart](docs/guides/reviewer-quickstart.md): a one-page guide to
   hand to product reviewers, who never need ClawBridge.
+- [The coordinator session](docs/guides/coordinator.md): what your project's
+  coordinator agent does, and how to give it your project's rules in
+  `docs/COORDINATOR.md` ([template](docs/guides/coordinator-playbook-template.md)).
 
 Published binaries are at [GitHub Releases](https://github.com/jkai-chen/ClawBridge/releases).
 Notifications, structured coordination and native Linear support are additions

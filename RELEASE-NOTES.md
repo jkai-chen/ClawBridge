@@ -40,6 +40,15 @@
 - **One-way:** v0.3.5 and older refuse a database newer than schema 28. Take a dump before upgrading; to go back,
   restore it with the v0.3.5 image (docs/operations/deployment.md).
 
+## Coordinating a project
+
+- **The clawbridge skill teaches a coordinator how to run the work,** not only the commands
+  (`references/coordinator.md`): a brief before any issue, routing, claims, default gates, which calls are the human's,
+  session health, milestone comments and holds.
+- **A project keeps its own rules in `docs/COORDINATOR.md`,** read by the coordinator as merged on the default branch.
+  It may tighten the skill's defaults, never loosen them. docs/guides/coordinator.md explains it, with a template
+  (docs/guides/coordinator-playbook-template.md). Docs and skill only.
+
 ## The message queue: the dispatcher, chaos tests, operations (slice 5 of 5)
 
 - **The dispatcher model's `cases/next` is woken when a case opens** (a `cb_case` notification), instead of checking

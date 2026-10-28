@@ -263,19 +263,26 @@ func (s *Store) IntakeSystemState(ctx context.Context, pid string) (IntakeState,
 	for _, r := range trusted {
 		st.Trusted[str(r, "linear_user_id")] = true
 	}
+	// A tick that starts a little early still polls a source due within
+	// the slack, rather than a whole tick later.
+	due := layout(at(now).Add(intakeDueSlack))
 	cursors, err := query(ctx, tx, `SELECT source,subject,cursor_time,next_poll_at FROM watch_cursors WHERE project_id=? AND source LIKE 'intake-%'`, pid)
 	if err != nil {
 		return IntakeState{}, err
 	}
 	for _, r := range cursors {
-		st.Cursors[str(r, "source")+"|"+str(r, "subject")] = IntakeCursor{Time: str(r, "cursor_time"), Due: str(r, "next_poll_at") <= now}
+		st.Cursors[str(r, "source")+"|"+str(r, "subject")] = IntakeCursor{Time: str(r, "cursor_time"), Due: str(r, "next_poll_at") <= due}
 	}
 	return st, nil
 }
 
+// intakeDueSlack is how early a tick may find an intake source due.
+const intakeDueSlack = 30 * time.Second
+
 // IntakeCursorSet records an intake source's complete read up to polled
-// (the read's start). It polls again in 5 minutes while it saw a signal in
-// the last hour, otherwise in 15 (IN-M4). A new source starts at polled:
+// (the read's start). It polls again 5 minutes after polled while it saw a
+// signal in the last hour, otherwise 15 (IN-M4): counted from the read's
+// start, not from when it was recorded. A new source starts at polled:
 // history never triggers.
 func (s *Store) IntakeCursorSet(ctx context.Context, pid, source, subject, polled string, signal bool) error {
 	if !strings.HasPrefix(source, "intake-") {
@@ -305,7 +312,11 @@ func (s *Store) IntakeCursorSet(ctx context.Context, pid, source, subject, polle
 	if activity != "" && activity > layout(at(now).Add(-time.Hour)) {
 		wait = 5 * time.Minute
 	}
-	next := layout(at(now).Add(wait))
+	from := at(now)
+	if p := at(polled); !p.IsZero() && p.Before(from) {
+		from = p
+	}
+	next := layout(from.Add(wait))
 	if len(rows) == 0 {
 		_, err = tx.ExecContext(ctx, `INSERT INTO watch_cursors(project_id,source,subject,cursor_time,watch_started_at,next_poll_at,last_activity_at,updated_at) VALUES(?,?,?,?,?,?,?,?)`, pid, source, subject, polled, polled, next, nullable(activity), now)
 	} else {

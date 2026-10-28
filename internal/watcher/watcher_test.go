@@ -700,3 +700,43 @@ func TestIntakeS1ReadsTheTeamAcrossAllItsProjects(t *testing.T) {
 		t.Fatal("the store's files hold no issue at all; the check above proves nothing")
 	}
 }
+
+// A source is due again 15 minutes after its read started, and a tick up
+// to 30 s early still polls it, rather than a whole tick later (the
+// v0.3.5.1 smoke: due at :55:18.1, the tick at :55:14.97).
+func TestIntakeSourceDueWithinTheSlack(t *testing.T) {
+	e := setup(t)
+	e.tick()
+	var cursor, next string
+	e.queryRow(`SELECT cursor_time FROM watch_cursors WHERE source='intake-s2'`, &cursor)
+	e.dueNow()
+	e.tick()
+	e.queryRow(`SELECT cursor_time FROM watch_cursors WHERE source='intake-s2'`, &cursor)
+	e.queryRow(`SELECT next_poll_at FROM watch_cursors WHERE source='intake-s2'`, &next)
+	read, _ := time.Parse(time.RFC3339Nano, cursor)
+	due, _ := time.Parse(time.RFC3339Nano, next)
+	if due.Sub(read) != 15*time.Minute {
+		t.Fatalf("next poll %s is not 15 minutes after the read's start %s", next, cursor)
+	}
+	polls := func() int {
+		n := 0
+		for _, q := range e.f.queries {
+			if q == delegatedQuery {
+				n++
+			}
+		}
+		return n
+	}
+	for _, c := range []struct {
+		in   time.Duration
+		poll bool
+	}{{3 * time.Second, true}, {25 * time.Second, true}, {2 * time.Minute, false}} {
+		at := time.Now().UTC().Add(c.in).Format("2006-01-02T15:04:05.000000000Z")
+		e.sql(`UPDATE watch_cursors SET next_poll_at='` + at + `' WHERE source='intake-s2'`)
+		before := polls()
+		e.tick()
+		if polled := polls() > before; polled != c.poll {
+			t.Fatalf("due in %s: polled %v", c.in, polled)
+		}
+	}
+}

@@ -690,6 +690,40 @@ clients. The VM needs an approved egress path for image retrieval, ACME and
 Google signing-key refresh. Include static-address, disk, egress and registry
 implications in the cost estimate.
 
+## The message queue
+
+The server pushes each session's messages and keeps them until they are acked
+([API reference](../reference/api.md#the-queue-leases-acks-and-dead-letters)).
+Nothing here is configured; what it costs and how to watch it:
+
+- **Connections.** Each server process holds one extra Postgres connection,
+  which LISTENs on `cb_delivery`, `cb_consumer` and `cb_case`. If it drops, the
+  server reconnects and re-reads every open stream. Each stream also re-reads
+  every 30 s, so a lost notification delays a message at most that long and
+  never loses it. The dispatcher's `cases/next` waits on `cb_case`, and still
+  checks every 5 s.
+- **The sweeper.** Every 15 s, one process at a time (an advisory lock) offers
+  again the leases that ran out (10 minutes each). After 5 offers a delivery
+  is a dead letter.
+- **Streams.** Each lives 30 minutes, then the client reconnects. An account
+  holds at most 8 at once, and pings every 25 s keep proxies from closing them.
+  The bundled Caddy passes them through unbuffered.
+- **Dead letters.** The project's coordinator session gets a `dead-letter`
+  message with the session and a count, never the content. The session
+  itself, the coordinator or a project owner reads and settles them:
+
+  ```sh
+  clawbridge --session coord --instance INSTANCE deadletters list --target-session @all
+  clawbridge --session coord --instance INSTANCE deadletters requeue MESSAGE_ID --target-session worker-2
+  clawbridge --session coord --instance INSTANCE deadletters dismiss MESSAGE_ID --target-session worker-2
+  ```
+
+  Requeue offers the message again from its first attempt; dismiss acks it.
+  Both are in the project's history with who did it. A list shows no bodies.
+- **A held session.** A session whose notification policy is `hold` or
+  `refuse` takes no leases: its messages wait, with no attempt counted and no
+  dead letter, until it accepts again. `clawbridge doctor` shows it.
+
 ## Update and rollback
 
 **v0.2.5 (schema 7): upgrade the server before the clients.** A v0.2.5 server

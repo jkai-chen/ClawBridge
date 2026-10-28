@@ -101,6 +101,21 @@ func (s *Store) RedeemStreamTicket(ctx context.Context, id Identity, ticket stri
 // replica's older consume stream for that session is replaced.
 const ConsumerChannel = "cb_consumer"
 
+// CaseChannel is the Postgres channel a new dispatcher case notifies, with
+// the project's ID: the model's cases/next long-polls wait on it instead of
+// re-reading every second (MESSAGE-QUEUE-DESIGN §4). It says only "look".
+const CaseChannel = "cb_case"
+
+// caseNotify tells the server's waiting cases/next polls that a case
+// opened. NOTIFY is transactional, so a rolled-back case wakes no one.
+func caseNotify(ctx context.Context, tx *transaction, pid string) error {
+	if !tx.postgres {
+		return nil
+	}
+	_, err := tx.ExecContext(ctx, `SELECT pg_notify(?,?)`, CaseChannel, pid)
+	return err
+}
+
 // AnnounceConsumer tells every replica that consumer is now the session's
 // consume stream.
 func (s *Store) AnnounceConsumer(ctx context.Context, pid, sid, consumer string) error {

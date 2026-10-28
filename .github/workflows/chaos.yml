@@ -1,0 +1,40 @@
+name: Chaos soak
+# The message queue's soak (MESSAGE-QUEUE-DESIGN §9): 10k messages over 50
+# sessions with consumers killed at random. Nightly and on demand; not a
+# required check. A red run prints its CHAOS_SEED; run it again with that
+# seed to replay the same kills.
+on:
+  schedule:
+    - cron: "17 3 * * *"
+  workflow_dispatch:
+    inputs:
+      seed:
+        description: "CHAOS_SEED to replay (empty for a new one)"
+        required: false
+        default: ""
+      messages:
+        description: "Messages in all (at least 50)"
+        required: false
+        default: "10000"
+permissions:
+  contents: read
+jobs:
+  soak:
+    if: ${{ github.event.repository.private == false }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5.5.0
+        with:
+          go-version-file: go.mod
+          cache: false
+      # run-postgres.sh starts a disposable container and removes it, with
+      # its volume, however the run ends.
+      - name: Soak with real disposable PostgreSQL
+        env:
+          CHAOS_SEED: ${{ inputs.seed }}
+          CHAOS_MESSAGES: ${{ inputs.messages || '10000' }}
+        run: bash integration/run-postgres.sh go test -tags chaos ./internal/server -run '^TestChaosSoak$' -count=1 -v -timeout 40m

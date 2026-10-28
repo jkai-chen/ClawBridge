@@ -10,6 +10,17 @@
 - **One-way:** v0.3.5 and older refuse a database newer than schema 28. Take a dump before upgrading; to go back,
   restore it with the v0.3.5 image (docs/operations/deployment.md).
 
+## The message queue: the dispatcher, chaos tests, operations (slice 5 of 5)
+
+- **The dispatcher model's `cases/next` is woken when a case opens** (a `cb_case` notification), instead of checking
+  every second; it still checks every 5 s. Without the notification connection it checks every second as before.
+- **`clawbridge deadletters list|requeue|dismiss`** reads and settles dead letters from the CLI (the session, the
+  project's coordinator or a project owner; no bodies; requeue and dismiss are recorded in history).
+- **The chaos suite** (`-tags chaos`, real Postgres): API crashes with in-flight transactions aborted, a killed LISTEN
+  connection, a stalled network, a consumer killed mid-handle and a compaction cycle run in CI; the 10k-message soak
+  with random consumer kills runs nightly and on demand, replayable by its printed seed. docs/operations/deployment.md
+  gains "The message queue". No schema change, no Linear configuration.
+
 ## The message queue: agents ack (slice 4 of 5)
 
 - **An agent's MCP server takes the session's messages from the queue** from the agent's first `inbox`, `ack`,

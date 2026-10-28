@@ -109,8 +109,9 @@ func modelOK(w http.ResponseWriter, v any) {
 }
 
 // newModelHandler serves the launcher, agent and case endpoints for store.
-// nudge, when set, asks the watcher for an early pass of a project.
-func newModelHandler(store ModelStore, maxAgents int, now func() time.Time, nudge func(string)) http.Handler {
+// nudge, when set, asks the watcher for an early pass of a project; hub,
+// when set, wakes cases/next on each new case.
+func newModelHandler(store ModelStore, hub *StreamHub, maxAgents int, now func() time.Time, nudge func(string)) http.Handler {
 	failures := &modelLockouts{now: now, keys: map[string]*lockoutState{}}
 	// Each authenticated token's calls: polls and renewals are well under
 	// these. Only calls that authenticated are counted, so random tokens
@@ -195,7 +196,7 @@ func newModelHandler(store ModelStore, maxAgents int, now func() time.Time, nudg
 		case r.URL.Path == ModelHelloPath:
 			out, err = store.ModelHello(ctx, token, maxAgents)
 		case r.URL.Path == ModelCasesNextPath:
-			out, err = serveCasesNext(ctx, store, token, body, maxAgents, polls, nudge)
+			out, err = serveCasesNext(ctx, store, hub, token, body, maxAgents, polls, nudge)
 		case isTool:
 			out, err = serveCaseTool(ctx, store, token, caseID, tool, body, nudge)
 		default:

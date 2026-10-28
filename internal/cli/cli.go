@@ -38,6 +38,7 @@ Commands: setup --local, project create SLUG, register [NAME], sessions, send TO
           inbox, inbox-status [--after N], mark-read ID..., reply ID BODY --operation-id ID, update,
           retire [--target-session S] [--successor S --status moved] [--outcome done | --confirm], history, whoami, status ID,
           notification-status [--after N], notification-policy --policy accept|hold|refuse,
+          deadletters list [--target-session NAME|@all], deadletters requeue|dismiss MESSAGE_ID [--target-session NAME],
           assignment propose [--issue-uuid UUID --issue-identifier ID] [--task-role ROLE] [--scope-repo REMOTE] [--scope-path PATTERN]...,
           assignment confirm TARGET_SESSION --revision REV [--allow-overlap], assignment release [TARGET_SESSION] --revision REV,
           project coordinator-set SESSION, project coordinator-clear,
@@ -766,6 +767,26 @@ flags:`)
 		stringArg("status", "status")
 		stringArg("outcome", "outcome")
 		f.Bool("confirm", false, "release a confirmed assignment as it is, with no outcome")
+	case "deadletters":
+		// A session's dead letters: the session itself, the project's
+		// coordinator or a project owner; --target-session @all lists the
+		// project's. Rows carry no body.
+		usage := "usage: deadletters list [--target-session NAME|@all], or deadletters requeue|dismiss MESSAGE_ID [--target-session NAME]"
+		if len(rest) == 0 {
+			return errors.New(usage)
+		}
+		switch rest[0] {
+		case "list":
+			op = "deadletters_list"
+			f.Int("limit", 100, "page size (1–1000)")
+		case "requeue", "dismiss":
+			op = "deadletters_" + rest[0]
+			arityMin, arityMax = 1, 1
+		default:
+			return errors.New(usage)
+		}
+		rest = rest[1:]
+		stringArg("target-session", "target_session")
 	case "history":
 		op = "history"
 		commonPage()
@@ -943,6 +964,10 @@ flags:`)
 		a["to"], a["body"] = pos[0], pos[1]
 	case "reply":
 		a["message_id"], a["body"] = pos[0], pos[1]
+	case "deadletters":
+		if len(pos) == 1 {
+			a["message_id"] = pos[0]
+		}
 	case "mark-read":
 		a["ids"] = pos
 	case "dispatcher":
@@ -1124,7 +1149,7 @@ flags:`)
 	}
 	if config.Instance != "" {
 		switch op {
-		case "register_session", "list_sessions", "history", "send", "reply", "inbox", "inbox_status", "notification_status", "set_notification_policy", "mark_read", "update_session", "retire_session", "whoami", "message_status", "project_role_set", "project_role_revoke", "purge_expired", "assignment_propose", "assignment_confirm", "assignment_release", "coordinator_set", "intake_policy_get", "intake_policy_set", "intake_trust_add", "intake_trust_remove", "intake_trust_list", "intake_token_create", "intake_token_list", "intake_token_revoke", "intake_list", "intake_dismiss", "intake_rearm", "context_levels_set":
+		case "register_session", "list_sessions", "history", "send", "reply", "inbox", "inbox_status", "notification_status", "set_notification_policy", "mark_read", "update_session", "retire_session", "whoami", "message_status", "project_role_set", "project_role_revoke", "purge_expired", "assignment_propose", "assignment_confirm", "assignment_release", "coordinator_set", "intake_policy_get", "intake_policy_set", "intake_trust_add", "intake_trust_remove", "intake_trust_list", "intake_token_create", "intake_token_list", "intake_token_revoke", "intake_list", "intake_dismiss", "intake_rearm", "context_levels_set", "deadletters_list", "deadletters_requeue", "deadletters_dismiss":
 			a["instance"] = config.Instance
 		}
 	}

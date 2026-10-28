@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -201,5 +202,33 @@ func TestO2ViewsEscape(t *testing.T) {
 	_ = clirender.Write(&out, clirender.Human, "doctor", doctor.Report{Checks: []doctor.Check{{Title: bad, Status: doctor.Fail, Message: bad, Action: bad}}})
 	if strings.ContainsAny(out.String(), "\x1b\a\u202e") {
 		t.Fatalf("%q", out.String())
+	}
+}
+
+// The coordinator's whoami says where its playbook is, and whether it
+// counts yet; no other whoami has the line.
+func TestWhoamiShowsTheCoordinatorsPlaybook(t *testing.T) {
+	cases := map[string]struct {
+		pb   map[string]any
+		want string
+	}{
+		"merged":    {map[string]any{"path": "docs/COORDINATOR.md", "merged": true, "local": true, "ref": "origin/main"}, "your project's playbook is docs/COORDINATOR.md on origin/main"},
+		"only here": {map[string]any{"path": "docs/COORDINATOR.md", "merged": false, "local": true, "ref": "origin/main"}, "doesn't count until merged"},
+		"none":      {map[string]any{"path": "docs/COORDINATOR.md", "merged": false, "local": false, "ref": "origin/main"}, "has no docs/COORDINATOR.md yet"},
+		"no ref":    {map[string]any{"path": "docs/COORDINATOR.md", "merged": false, "local": true, "note": "the checkout has no origin/HEAD"}, "no origin/HEAD"},
+	}
+	for name, tc := range cases {
+		if got := playbookLine(tc.pb); !strings.Contains(got, tc.want) {
+			t.Fatalf("%s: %q", name, got)
+		}
+	}
+	base := map[string]any{"principal": "p@example.test", "workspace": map[string]any{"name": "w"}, "online": true}
+	d, ok := whoamiView(map[string]any{"data": base})
+	if !ok || strings.Contains(fmt.Sprint(d), "Coordinator") {
+		t.Fatal("a non-coordinator's whoami showed the playbook")
+	}
+	base["coordinator_playbook"] = cases["merged"].pb
+	if d, ok = whoamiView(map[string]any{"data": base}); !ok || !strings.Contains(fmt.Sprint(d), "on origin/main") {
+		t.Fatalf("%+v", d)
 	}
 }

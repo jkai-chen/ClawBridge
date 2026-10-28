@@ -13,7 +13,11 @@
   session health, milestone comments and holds.
 - **A project keeps its own rules in `docs/COORDINATOR.md`,** read by the coordinator as merged on the default branch.
   It may tighten the skill's defaults, never loosen them. docs/guides/coordinator.md explains it, with a template
-  (docs/guides/coordinator-playbook-template.md). Docs and skill only.
+  (docs/guides/coordinator-playbook-template.md).
+- **The coordinator's `whoami` names the playbook** (`coordinator_playbook`: where it is, the `git show` that reads the
+  merged copy, and whether it is merged or only in the working tree), read from the checkout the CLI or the MCP server
+  runs in; nothing goes to the server. **`clawbridge doctor` gains `coordinator.playbook`** for the coordinator session
+  only: it passes when the default branch has `docs/COORDINATOR.md`, and warns when it is missing or not merged.
 
 ## Agents' issues notify their people
 

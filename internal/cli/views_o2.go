@@ -147,7 +147,25 @@ func whoamiView(v any) (clirender.Doc, bool) {
 		online = "online"
 	}
 	d.KV("Connection", orDash(field(r, "storage_mode"))+" · "+online)
+	if pb := object(r, "coordinator_playbook"); pb != nil {
+		d.KV("Coordinator", playbookLine(pb))
+	}
 	return d, true
+}
+
+// playbookLine says where the coordinator's playbook is, for the
+// coordinator's whoami.
+func playbookLine(pb map[string]any) string {
+	switch {
+	case pb["merged"] == true:
+		return "you are; your project's playbook is " + field(pb, "path") + " on " + field(pb, "ref")
+	case pb["local"] == true && field(pb, "ref") != "":
+		return "you are; " + field(pb, "path") + " is here but not on " + field(pb, "ref") + ", so it doesn't count until merged"
+	case field(pb, "note") != "":
+		return "you are; " + field(pb, "note")
+	default:
+		return "you are; your project has no " + field(pb, "path") + " yet"
+	}
 }
 
 // provenanceWords names how the caller was proven; any other value is

@@ -132,6 +132,20 @@ func TestRemoteResolutionAmbiguityAndCase(t *testing.T) {
 	git(t, "remote", "set-url", "origin", "git@example.com:org/repo.git")
 	rejectCLI(t, "whoami")
 }
+// A member with no project yet runs whoami for the workspace alone; a
+// session or a named project still has to resolve.
+func TestWhoamiWithNoProjectYet(t *testing.T) {
+	isolated(t)
+	invoke(t, "setup", "--local", "--workspace", "w")
+	info := invoke(t, "whoami")
+	if info["principal"] == nil || info["project"] != nil || info["workspace"].(map[string]any)["name"] != "w" {
+		t.Fatalf("%+v", info)
+	}
+	rejectCLI(t, "whoami", "--session", "s")
+	// A named project that doesn't exist is still an error, not the
+	// workspace-only answer.
+	rejectCLI(t, "whoami", "--project", "missing")
+}
 func TestExplicitConfigIsolationAndPreservation(t *testing.T) {
 	dir := isolated(t)
 	path := filepath.Join(dir, "explicit.toml")

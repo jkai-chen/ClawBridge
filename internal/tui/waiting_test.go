@@ -123,3 +123,19 @@ func TestWaitingPicksAmongProjects(t *testing.T) {
 		t.Fatal("didn't go on with web:", m.cfg.Project, m.waiting)
 	}
 }
+
+// Before the first check answers, the screen says it's checking: not the
+// member's "ask the owner", which would be wrong for the owner.
+func TestWaitingChecksBeforeSayingWhatToDo(t *testing.T) {
+	cfg := testConfig(&fakeAuthority{})
+	cfg.Project, cfg.Session, cfg.Instance = "", "", ""
+	cfg.WaitingForProject = true
+	m, err := New(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	view := Render(m.SetSize(80, 24))
+	if !strings.Contains(view, "Loading your projects and role in") || strings.Contains(view, "Ask ") || strings.Contains(view, "Create the first") {
+		t.Fatal(view)
+	}
+}

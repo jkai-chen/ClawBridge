@@ -1104,10 +1104,16 @@ flags:`)
 	}
 	if command != "setup" && op != "project_create" && op != "workspace_set_domains" && op != "principal_unbind" {
 		workspace, project, e := executor.ResolveProject(ctx, config.Workspace, config.Project, gitRemote(ctx))
-		if e != nil {
+		switch {
+		case e == nil:
+			config.Workspace, config.Project = workspace, project
+		case op == "whoami" && config.Project == "" && config.Session == "" && config.Workspace != "" && noProjects(ctx, executor, config.Workspace):
+			// A member with no project yet: the server answers whoami for
+			// the workspace alone. With any project, an unresolved or
+			// ambiguous one is still the error.
+		default:
 			return e
 		}
-		config.Workspace, config.Project = workspace, project
 	}
 	if command == "mcp" {
 		if config.Session == "" {
@@ -1423,4 +1429,26 @@ func jsonFlag(args []string) clirender.Flag {
 		}
 	}
 	return flag
+}
+
+// noProjects reports whether the caller has no project in workspace: the
+// one case where whoami answers without resolving one.
+func noProjects(ctx context.Context, executor interface {
+	Execute(context.Context, bus.Request) (bus.Result, error)
+}, workspace string) bool {
+	r, err := executor.Execute(ctx, bus.Request{Operation: "list_projects", Workspace: workspace, Args: map[string]any{}})
+	if err != nil {
+		return false
+	}
+	d, ok := r.Data.(map[string]any)
+	if !ok {
+		return false
+	}
+	projects, ok := d["projects"].([]any)
+	if !ok {
+		// A local store answers with typed rows.
+		rows, typed := d["projects"].([]map[string]any)
+		return typed && len(rows) == 0
+	}
+	return len(projects) == 0
 }

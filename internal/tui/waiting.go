@@ -66,6 +66,7 @@ func (m Model) applyWaiting(x waitingLoadedMsg) (Model, tea.Cmd) {
 		m.loadErr = x.err.Error()
 		return m, m.waitingTick()
 	}
+	m.waitingChecked = true
 	if x.owner != "" {
 		m.waitingOwner = x.owner
 	}
@@ -117,6 +118,12 @@ func renderWaiting(m Model) string {
 			b.WriteString("\n")
 		}
 		return strings.TrimRight(b.String(), "\n")
+	}
+	if !m.waitingChecked {
+		// Before the first answer, neither create nor ask: it depends on
+		// whose workspace it is.
+		b.WriteString(loadingBody("your projects and role in " + workspace))
+		return b.String()
 	}
 	me := firstNonempty(terminalText(m.identity.Principal), terminalText(m.cfg.Principal), "YOUR_EMAIL")
 	if m.waitingOwner != "" && m.waitingOwner == m.identity.Principal {

@@ -126,6 +126,8 @@ approval from another device. No gcloud installation is needed for either path.
 A complete existing OAuth route reuses its keychain credential; `--login` requests
 a fresh browser sign-in. A failed join preserves the previous trusted route.
 Joining does not register an agent session.
+`clawbridge whoami` works before any project is shared with you: it shows who you
+are and the workspace, with `Project: none`.
 
 Use `clawbridge setup wizard` to open guided join again. A saved profile that is
 incomplete or damaged is never overwritten: bare `clawbridge` says what is wrong

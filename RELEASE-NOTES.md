@@ -112,6 +112,19 @@
   `uncertain` one too. Linear config scope: one project in a bound team, with a label of the project's kind; nothing
   at team or workspace scope. **Rollback:** unset the coordinator designation (or the project kinds); the owner's
   create is unchanged.
+- **Moving an issue to another bound team.** `clawbridge linear move ISSUE --team TEAM` (MCP
+  `taskboard_issue_move_v2`) previews the move: the state by name, else by its one state of the same type; each
+  label by name to the target team's set (its own, its bound parent's, the workspace's); the cycle cleared; the
+  estimate kept. It refuses, and lists, a label or state it can't map, a project without the target team, and an
+  issue with a parent or sub-issues (Linear moves sub-issues with their parent; families wait for a batch command).
+  The project owner or a project lead (the ClawBridge project role), from their own terminal, or the project's
+  coordinator session between its own lane's teams, confirms with `--operation-id ID --confirm --expected-plan-sha256 SHA`: the server reserves it, one write
+  goes through the person's own Linear profile, and the issue is read back by UUID, `accepted` or `uncertain` field
+  by field, never retried. The stored identifier of its claims and intake entry follows; the old identifier keeps
+  opening the issue in Linear. **Off until proven:** a server confirms no move until its operator sets
+  `serve --issue-move-proven` (`CLAWBRIDGE_ISSUE_MOVE_PROVEN=1`) after one Sandbox move through the command reads
+  `accepted`; previews work without it. No schema change: a move is recorded with the other Linear writes, as kind
+  `issue_move`. Linear config scope: none (issue writes in bound teams). **Rollback:** unset the flag; nothing else changes.
 
 ## Team roles: telling project leads
 

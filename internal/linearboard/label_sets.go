@@ -87,6 +87,19 @@ func (s *Service) LabelSetV2(ctx context.Context, scope bus.Request, team, name 
 	if !ok {
 		return set, errors.New("native provider lacks V2 labels capability")
 	}
+	if set, e = labelSetInV2(ctx, p2, v, b, team, name); e != nil {
+		return set, e
+	}
+	if e = s.unchangedV2(ctx, scope, b); e != nil {
+		return LabelSetV2{Calls: set.Calls}, e
+	}
+	return set, nil
+}
+
+// labelSetInV2 is LabelSetV2 on a provider already open and a binding
+// already verified.
+func labelSetInV2(ctx context.Context, p2 ProviderV2, v verifiedV2, b bus.TaskboardBindingV2, team, name string) (LabelSetV2, error) {
+	var set LabelSetV2
 	for i, t := range labelTeamsV2(v, b, team) {
 		found, calls, e := labelsNamedV2(ctx, p2, t, name)
 		set.Calls += calls
@@ -107,9 +120,6 @@ func (s *Service) LabelSetV2(ctx context.Context, scope bus.Request, team, name 
 				set.Apply = l.ID
 			}
 		}
-	}
-	if e = s.unchangedV2(ctx, scope, b); e != nil {
-		return LabelSetV2{Calls: set.Calls}, e
 	}
 	return set, nil
 }

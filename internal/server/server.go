@@ -700,6 +700,7 @@ func Run(ctx context.Context, args []string) error {
 	store.SetProjectFlowProven(settings.ProjectFlowProven)
 	store.SetIssueSubscribersProven(settings.IssueSubscribersProven)
 	store.SetLinearBudgetMax(watch.budgetMax)
+	store.SetIssueMoveProven(settings.IssueMoveProven)
 	writer, err := appWriter(store)
 	if err != nil {
 		return err
@@ -1032,6 +1033,10 @@ type ServeSettings struct {
 	// CLAWBRIDGE_ISSUE_SUBSCRIBERS_PROVEN=1, set by the operator after the
 	// live check that the app may subscribe other people.
 	IssueSubscribersProven bool
+	// IssueMoveProven lets an issue's team move be confirmed (FR7): serve
+	// --issue-move-proven or CLAWBRIDGE_ISSUE_MOVE_PROVEN=1, set by the
+	// operator after the move probe. Previews work without it.
+	IssueMoveProven bool
 }
 
 // ParseServe reads serve's flags and the OAuth secrets from getenv. The
@@ -1050,6 +1055,7 @@ func ParseServe(args []string, getenv func(string) string) (ServeSettings, error
 	publicOrigin := f.String("public-origin", "", "this server's public origin, https://HOST[:PORT]; device signatures and join proofs cover it, so device sign-in requires it")
 	flowProven := f.Bool("project-flow-proven", false, "let status policies turn project flow on; set only after the deploy probe proves it (also CLAWBRIDGE_PROJECT_FLOW_PROVEN=1)")
 	subscribersProven := f.Bool("issue-subscribers-proven", false, "let projects subscribe their people to agents' issues; set only after the live check proves the app may (also CLAWBRIDGE_ISSUE_SUBSCRIBERS_PROVEN=1)")
+	moveProven := f.Bool("issue-move-proven", false, "let an issue's team move be confirmed; set only after the move probe proves it (also CLAWBRIDGE_ISSUE_MOVE_PROVEN=1)")
 	if err := f.Parse(args); err != nil {
 		return ServeSettings{}, err
 	}
@@ -1079,6 +1085,15 @@ func ParseServe(args []string, getenv func(string) string) (ServeSettings, error
 	case "0", "false":
 	default:
 		return ServeSettings{}, errors.New("CLAWBRIDGE_ISSUE_SUBSCRIBERS_PROVEN is 1 or 0")
+	}
+	out.IssueMoveProven = *moveProven
+	switch v := getenv("CLAWBRIDGE_ISSUE_MOVE_PROVEN"); v {
+	case "":
+	case "1", "true":
+		out.IssueMoveProven = true
+	case "0", "false":
+	default:
+		return ServeSettings{}, errors.New("CLAWBRIDGE_ISSUE_MOVE_PROVEN is 1 or 0")
 	}
 	if out.Auth.accepts(AuthDevice) {
 		if out.Auth.PublicOrigin, err = ParsePublicOrigin(*publicOrigin); err != nil {

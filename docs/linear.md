@@ -948,6 +948,82 @@ clawbridge linear subscribers backfill --since 2026-10-27 --apply
   spreads over hours. An issue already done is never queued again.
 - **The owner's email** goes only to Linear's subscribe call. History, doctor and logs never show it.
 
+### Moving an issue to another team
+
+An issue can move to another write team of the same binding, for example from
+a parent team into its sub-team. The move goes through your own Linear
+profile, never the ClawBridge app.
+
+```sh
+clawbridge linear move ISSUE_UUID --team TEAM_UUID --profile ID
+clawbridge linear move ISSUE_UUID --team TEAM_UUID --profile ID \
+  --operation-id ID --confirm --expected-plan-sha256 SHA
+```
+
+Agents use the MCP tool `taskboard_issue_move_v2` (`id`, `team_id`,
+`operation_id`, `confirm`, `expected_plan_sha256`).
+
+- **Preview first.** Without `--confirm` nothing is sent. The preview shows
+  the plan and everything that stops it, with `plan_sha256`:
+  - **State:** the target team's state of the same name, else its one state
+    of the same type (backlog, unstarted, started, …). With none, or several,
+    the move is refused, and the target's states are listed. An issue in
+    triage moves only to a team with triage.
+  - **Labels:** each label, by name, to the target team's label of that name:
+    its own, its bound parent team's, or a workspace label. A name the target
+    lacks, or has twice in one team, refuses the move and is listed.
+  - **Cycle:** cleared. A cycle belongs to its team.
+  - **Estimate:** kept.
+  - **Project:** the issue stays in its project, which must include the
+    target team. Otherwise add the team to the project first, or take the
+    issue out of it.
+- **Families stay whole.** An issue with sub-issues is refused, because
+  Linear moves the sub-issues with their parent. A sub-issue is refused too.
+  Linear would let it move alone, but ClawBridge keeps a parent and its
+  children in one team: that is ClawBridge's rule, not a Linear limit. Moving
+  a whole family is a later batch command.
+- **Who confirms.** The project owner or a project lead, from their own
+  terminal with no session. A project lead here is the ClawBridge project role
+  (`project role set PRINCIPAL lead`), not a team's lead in the team roles, a
+  session's role, or a Linear project's lead. Or the project's designated coordinator session, when
+  both the issue's team and the target team are write teams of its own lane.
+  Every other session only previews, and asks a person. The server decides
+  this, not the client.
+- **Off until proven.** A server confirms no move until its operator runs it
+  with `serve --issue-move-proven` (`CLAWBRIDGE_ISSUE_MOVE_PROVEN=1`), after a
+  Sandbox move through this command reads `accepted`. Until then a confirm is
+  refused with `issue_move_unproven`, and the preview works.
+- **The confirm.** It re-plans and refuses a plan that changed since the
+  preview (the issue, its state or labels, or the target's labels or states):
+  preview again. The server records the move before anything reaches Linear,
+  under the operation ID. Then one write sends the team, the state, the full
+  label set and a cleared cycle, by IDs.
+- **A confirm that never settled.** The server keeps the move with its other
+  recorded Linear writes, as kind `issue_move`. One left unsettled for 10
+  minutes (a crash, or an answer lost on the way back) may have moved the
+  issue. It shows in the overview, `linear writes` and doctor's
+  `linear.project_creates`, and the owner's sessions get one message. Read the
+  issue in Linear, then acknowledge it with
+  `clawbridge linear writes --ack OP_ID`.
+- **Read back, never retried.** The issue is read back by UUID. The result is
+  `accepted` only when the same issue is in the target team under a new
+  identifier, with the planned state and labels, no cycle, and its assignee,
+  project, parent, priority and estimate unchanged. Anything else is
+  `uncertain`, with the fields it couldn't prove; it is never sent again.
+  The same operation ID answers from the record.
+- **Identifiers.** The result names the old and the new identifier. The old
+  one keeps opening the issue in Linear, and a move back restores the
+  original. ClawBridge updates the identifier it shows for the issue's claims
+  and intake entry, so `sessions --issue NEW-ID` finds the holder. Claims and
+  markers are keyed by the issue's UUID and stay as they are.
+- **Cost.** A preview reads the issue, its sub-issues, both teams' states,
+  the target's labels, and the project when there is one: about 6 to 10
+  calls. A confirm repeats the reads, then makes one write and one read.
+- **Linear config scope:** none. A move is an issue write inside bound teams.
+- **Audit.** History records `issue_move` `reserve` and the outcome, with the
+  issue UUID, both teams, the old and new identifiers, who moved it (`owner`,
+  `lead` or `coordinator`) and the lane. Never a title or a name.
+
 ## Labels and projects (project owner; a coordinator creates projects in its own team)
 
 The ClawBridge project owner can create team labels and projects in Linear from

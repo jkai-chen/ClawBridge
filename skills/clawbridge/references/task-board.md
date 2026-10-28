@@ -233,6 +233,29 @@ answer is lost, rerun the same command with it, never a new ID, so no second
 project is made. Never archive or delete a project; that is the owner's, in
 Linear.
 
+To move an issue to another bound team, preview it with
+`taskboard_issue_move_v2 {id, team_id}` (CLI `clawbridge linear move ISSUE
+--team TEAM`). The preview maps the state and labels by name, clears the cycle,
+keeps the estimate, and lists anything that refuses the move: a label the
+target team lacks, no single target state, a project without the target team,
+or a parent or sub-issues (families move together only in a later batch
+command). Only the project owner or a project lead (the ClawBridge project
+role) in their own terminal, or the
+project's designated coordinator session for a move between its own lane's
+teams, confirms. Any other session previews and passes the plan to a person.
+As the coordinator:
+- confirm only a move your person or the owner asked for, never on your own
+  judgment;
+- always preview first, then confirm with `confirm: true`, a new
+  `operation_id` and the preview's `plan_sha256` as `expected_plan_sha256`;
+- afterwards, tell whoever asked for the move (your person, or the session
+  that tracks the work) the old and the new identifier. The old one
+  keeps opening the issue in Linear.
+
+A changed plan is refused, so preview again. An `uncertain` move is never sent
+again: read the issue first. `issue_move_unproven` means the server's operator
+hasn't turned moves on yet; tell the human.
+
 Write Linear text without mentions: name people and agents in plain words, never
 as `@name`, `@Linear` or a profile link. ClawBridge refuses a title,
 description or comment that does, even inside code: write scoped packages

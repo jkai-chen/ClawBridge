@@ -66,6 +66,9 @@ One Linear project per piece of work, a few issues in it, each with a one-line
 done-when. Use labels from the project's approved list and its project kinds
 (references/views.md); never create a label or setting the human hasn't
 approved. Write with an `operation_id` and read back anything uncertain
+(references/task-board.md). Moving an issue to another team of your lane is
+yours to confirm only when your person or the owner asked for it: preview,
+confirm, then report the old and new identifiers to whoever asked for it
 (references/task-board.md).
 
 ## Claims

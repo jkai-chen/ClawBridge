@@ -429,6 +429,7 @@ COMPOSE_PROJECT_NAME=clawbridge
 # Optional gates, each set to 1 only after its live check passes (below); empty or 0 is off.
 # CLAWBRIDGE_PROJECT_FLOW_PROVEN=1
 # CLAWBRIDGE_ISSUE_SUBSCRIBERS_PROVEN=1
+# CLAWBRIDGE_ISSUE_MOVE_PROVEN=1
 ```
 
 Use a random hexadecimal password so it can be interpolated safely into the
@@ -537,6 +538,12 @@ CLAWBRIDGE_LINEAR_APP_TOKEN_KEY=<32 random bytes, base64>
     the feature stays off.
   - **Cleanup.** It never unsubscribes anyone: the owner deletes the fixture
     issue by its printed ID.
+
+- **Issue moves are off until proven.** The server confirms no issue team
+  move (`clawbridge linear move`, see [Linear](../linear.md)) until it runs
+  with `serve --issue-move-proven` or `CLAWBRIDGE_ISSUE_MOVE_PROVEN=1`. Set
+  that after one Sandbox move through `clawbridge linear move` itself
+  (preview, then confirm) reads `accepted`. Previews work without it.
 - **Timeouts.** A write the server makes can take up to a minute, and it
   finishes even if the client disconnects. Keep the proxy and load-balancer
   timeouts for `/v1/execute` at 75 seconds or more.

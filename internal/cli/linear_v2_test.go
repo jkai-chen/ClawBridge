@@ -352,3 +352,25 @@ func TestLinearV2Priority(t *testing.T) {
 		}
 	}
 }
+
+// linear move takes the issue, --team, and on a confirm the operation ID
+// and the preview's plan digest; its help touches nothing.
+func TestLinearMoveParses(t *testing.T) {
+	const issue = "11111111-1111-4111-8111-111111111111"
+	const team = "22222222-2222-4222-8222-222222222222"
+	sha := strings.Repeat("a", 64)
+	v, pos, err := parseLinear("move", []string{issue, "--profile", "native", "--team", team, "--operation-id", "mv-1", "--confirm", "--expected-plan-sha256", sha}, &bytes.Buffer{})
+	if err != nil || len(pos) != 1 || pos[0] != issue || v.team != team || v.operation != "mv-1" || !v.confirm || v.expectedSHA != sha {
+		t.Fatal(v, pos, err)
+	}
+	if _, _, err = parseLinear("move", []string{"--profile", "native", "--team", team}, &bytes.Buffer{}); err == nil {
+		t.Fatal("a move without the issue parsed")
+	}
+	var out, diag bytes.Buffer
+	if err = Run(context.Background(), []string{"linear", "move", "--help"}, &out, &diag); err != nil {
+		t.Fatal(err)
+	}
+	if err = Run(context.Background(), []string{"linear", "--help"}, &out, &diag); err != nil || !strings.Contains(out.String(), "move ISSUE_UUID --team UUID") {
+		t.Fatal(out.String(), err)
+	}
+}

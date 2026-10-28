@@ -14,6 +14,9 @@
 | Recipient retired or moved | Inspect successor and history; address the successor explicitly after checking the handover |
 | Delivered but unread | Treat as awaiting attention; delivery is not acceptance or approval |
 | Secret pattern rejection | Remove the secret, refer to its existing secure location, and send corrected content under a new operation ID |
+| `outside_lane`: a write to a team outside your session's lane, or a coordinator's move or create outside its lane | Nothing was sent. Don't retry it under another team or session. Hand the work to a session in that team's lane, or ask the project owner, who pins sessions to lanes (`linear lanes pin`) |
+| `read_only_team`: a write to a team the binding lists only for reading, commenting or linking | Nothing was sent. That team isn't yours to write; pass the change to the human or the team's own sessions. A comment team takes new comments only |
+| `issue_move_unproven`: a move confirm on a server whose operator hasn't proven moves yet | Nothing was sent. The preview still works: keep its plan, tell the human, and confirm again only after the operator has turned moves on |
 | Database contention | Retry within a reasonable bound using the same operation ID for the same send; report persistent failure |
 
 Preserve message and operation IDs in recovery reports. Use the application's

@@ -243,6 +243,25 @@ health judgement's read holds that project's newest update, the one it acts on:
   keep post off and tell the coordinator.
 - It never mints; the token rules are as above.
 
+To see which rate-limit headers Linear sends the app, on its API and on its MCP server, `--rate-headers` reads once
+over each:
+
+```sh
+... run --rm --no-deps api operator linear-app-probe --confirm --rate-headers
+```
+
+- **The reads:** GraphQL `viewer`, and the read-only MCP endpoint's `list_teams` (one team; connecting adds the MCP
+  handshake's own requests). Both run as the app; nothing is written.
+- **What it prints:** for each request, its path, method and HTTP status, and only Linear's documented rate-limit
+  headers (`X-RateLimit-*`, `X-Complexity`, `Retry-After`, a date allowed there), with any value that isn't a number
+  or a plain name printed as `(unprintable)`. Any other header whose name looks like a rate limit's (rate, limit,
+  retry, quota, complexity, throttle) is listed under `other_headers`, so an MCP server's own scheme doesn't read as
+  none; its value only in a number or policy shape (`100;w=60`), else `(unprintable)`. Never an ID, a name, a body or
+  another header. A read that fails prints its class and what its requests answered.
+- **Why:** ClawBridge paces its Linear calls by these headers. Linear documents them for its API, not for its MCP
+  server; this shows which the MCP server sends.
+- It never mints; the token rules are as above.
+
 To check whether the app may list the workspace's Linear documents (which the
 server watcher's document notices need), run `operator linear-app-doc-probe
 --confirm` the same way.

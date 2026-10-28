@@ -36,6 +36,9 @@
 - **`linear-app-probe --allow-member UUID`** (with `--p8` or `--project-status`) lets the empty probe project keep
   exactly one member, the Linear user named by ID; another member, or more than one, is still refused, and the output
   says `member_allowed`. For a probe project that a person can't leave. No schema change. Linear config scope: none.
+- **`operator linear-app-probe --rate-headers`** reads once over Linear's GraphQL API and once over its MCP server as
+  the app, never mints, writes nothing, and prints only each request's status and Linear's rate-limit headers: which
+  limits the MCP server reports, for pacing Linear calls (docs/operations/deployment.md).
 
 # ClawBridge v0.3.6 (released 28 Oct)
 

@@ -61,8 +61,8 @@ func TestLinearMCPV2ClosedNullablePinnedTools(t *testing.T) {
 		{"binding", map[string]any{}, true}, {"context", map[string]any{}, true},
 		{"issues", map[string]any{"limit": 2, "cursor": "opaque", "label_id": id}, true},
 		{"issue", map[string]any{"id": id}, true},
-		{"create", map[string]any{"title": "new", "operation_id": "create", "team_id": id, "parent_id": nil, "assignee_id": nil}, false},
-		{"update", map[string]any{"id": id, "operation_id": "update", "project_id": nil, "parent_id": nil, "assignee_id": nil, "label_ids": []string{}, "expected_label_ids": []string{id}}, false},
+		{"create", map[string]any{"title": "new", "operation_id": "create", "team_id": id, "parent_id": nil, "assignee_id": nil, "priority": "high"}, false},
+		{"update", map[string]any{"id": id, "operation_id": "update", "project_id": nil, "parent_id": nil, "assignee_id": nil, "label_ids": []string{}, "expected_label_ids": []string{id}, "priority": 2}, false},
 		{"comment", map[string]any{"id": id, "body": "body", "operation_id": "comment"}, false},
 		{"labels", map[string]any{"team_id": id, "limit": 1}, true},
 		{"members", map[string]any{"team_id": id, "cursor": "opaque"}, true},
@@ -101,6 +101,9 @@ func TestLinearMCPV2ClosedNullablePinnedTools(t *testing.T) {
 	}
 	if labels, ok := update["label_ids"].([]any); !ok || labels == nil || len(labels) != 0 {
 		t.Fatal("explicit empty labels lost", update)
+	}
+	if update["priority"] != float64(2) || p.calls[4].args["priority"] != "high" {
+		t.Fatal("priority lost", update, p.calls[4].args)
 	}
 }
 

@@ -79,12 +79,20 @@ func TestLinearV2LabelDeltasSendOnlyRealChanges(t *testing.T) {
 	if _, e = s.WriteV2(ctx, scope, in); e != nil || p.writes != 2 || p.updated[1].AddLabels != nil || p.updated[1].Title == nil {
 		t.Fatal("no-op delta sent beside a title change", e, p.updated)
 	}
+	// Beside a priority, likewise: the priority alone is a change.
+	in = deltaV2("with-priority", []string{labelA}, nil)
+	urgent := 1
+	in.Priority = &urgent
+	p.caps.Priority = true
+	if _, e = s.WriteV2(ctx, scope, in); e != nil || p.writes != 3 || p.updated[2].AddLabels != nil || p.updated[2].Priority == nil || *p.updated[2].Priority != 1 {
+		t.Fatal("no-op delta beside a priority sent nothing", e, p.updated)
+	}
 	// An ineligible add and a missing capability are refused before the ledger.
-	if _, e = s.WriteV2(ctx, scope, deltaV2("foreign", []string{parentA}, nil)); e == nil || p.writes != 2 || ledgerStateV2(t, s, a, "foreign") != "absent" {
+	if _, e = s.WriteV2(ctx, scope, deltaV2("foreign", []string{parentA}, nil)); e == nil || p.writes != 3 || ledgerStateV2(t, s, a, "foreign") != "absent" {
 		t.Fatal("ineligible label added", e)
 	}
 	p.caps.LabelDeltas = false
-	if _, e = s.WriteV2(ctx, scope, deltaV2("no-cap", []string{memberA}, nil)); e == nil || p.writes != 2 || ledgerStateV2(t, s, a, "no-cap") != "absent" {
+	if _, e = s.WriteV2(ctx, scope, deltaV2("no-cap", []string{memberA}, nil)); e == nil || p.writes != 3 || ledgerStateV2(t, s, a, "no-cap") != "absent" {
 		t.Fatal("deltas sent without the capability", e)
 	}
 }

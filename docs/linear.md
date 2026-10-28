@@ -663,6 +663,7 @@ ended.
 | Update `--expect-description-sha256 HEX` | Optional with `--description`: the `description_sha256` from your last `linear issue` read. A different current description refuses the update; nothing is sent. Planned to become required in v0.2.2 |
 | `--parent UUID` | Scoped, acyclic parent in the child's own team and project; a parent in another team or project is refused |
 | `--assignee UUID` | Explicit eligible team member; no agent claim or permission change |
+| `--priority none\|urgent\|high\|medium\|low` (or `0`–`4`) | Linear's priority, on create or update: 0 none, 1 urgent, 2 high, 3 medium, 4 low (`normal` is medium). Sent only when the Linear tool takes a priority on both create and update; otherwise refused and nothing is sent. The returned issue is checked: another priority makes the write uncertain, and a priority Linear doesn't report is listed under `unverified` |
 | Update `--clear-project`, `--clear-labels`, `--clear-parent`, `--clear-assignee` | Explicit clearing; project clear is limited to team-board mode |
 
 A parent is accepted only when it shares the child's effective team and project.

@@ -111,6 +111,7 @@ type Capabilities struct {
 	ReplaceLabels            bool `json:"replace_labels"`
 	Parent                   bool `json:"parent"`
 	Assignee                 bool `json:"assignee"`
+	Priority                 bool `json:"priority"` // create and update both take Linear's 0-4
 	ParentSameDestination    bool `json:"parent_same_destination"`
 	RelationAdd              bool `json:"relation_add"`
 	RelationRemove           bool `json:"relation_remove"`
@@ -145,6 +146,9 @@ type CreateInputV2 struct {
 	Project          Field[*string]
 	Labels           Field[[]string]
 	Parent, Assignee Field[*string]
+	// Priority is Linear's 0-4 (0 none, 1 urgent, 2 high, 3 medium, 4 low);
+	// nil leaves it as it is.
+	Priority *int
 	// parentVerified is set only through WithSameDestinationParent. No wire
 	// argument, schema, flag or environment maps to it, and it is never
 	// serialized.
@@ -155,6 +159,7 @@ type UpdateInputV2 struct {
 	Project          Field[*string]
 	Labels           Field[[]string]
 	Parent, Assignee Field[*string]
+	Priority         *int
 	// AddLabels and RemoveLabels are label UUIDs added to or removed from
 	// the current set (native addLabels/removeLabels); never with Labels.
 	AddLabels, RemoveLabels []string
@@ -223,8 +228,14 @@ func nullableArg(f Field[*string], aliases ...string) (arg, bool, error) {
 	}
 	return a(*f.Value, aliases...), true, nil
 }
-func extraArgs(project Field[*string], labels Field[[]string], parent, assignee Field[*string]) ([]arg, error) {
+func extraArgs(project Field[*string], labels Field[[]string], parent, assignee Field[*string], priority *int) ([]arg, error) {
 	out := []arg{}
+	if priority != nil {
+		if *priority < 0 || *priority > 4 {
+			return nil, fail("invalid")
+		}
+		out = append(out, arg{[]string{"priority"}, *priority, "integer"})
+	}
 	for _, f := range []struct {
 		value Field[*string]
 		keys  []string
@@ -511,7 +522,8 @@ func (p *Provider) Capabilities(context.Context) (Capabilities, error) {
 	update := []arg{a(sample, "id", "issueId")}
 	labels := has([]string{"list_issue_labels"}, a(sample, "team", "teamId"), arg{[]string{"limit", "first"}, 1, "integer"})
 	members := has([]string{"list_users", "list_team_members"}, a(sample, "team", "teamId"), arg{[]string{"limit", "first"}, 1, "integer"})
-	capabilities := Capabilities{Labels: labels, Members: members, CreateProject: has([]string{"create_issue", "save_issue"}, append(create, a(sample, "projectId", "project"))...), UpdateProject: has([]string{"update_issue", "save_issue"}, append(update, a(sample, "projectId", "project"))...), ReplaceLabels: has([]string{"update_issue", "save_issue"}, append(update, arg{[]string{"labelIds", "labels"}, []string{}, "array"})...), Parent: has([]string{"update_issue", "save_issue"}, append(update, a(sample, "parentId"))...), Assignee: has([]string{"update_issue", "save_issue"}, append(update, a(sample, "assigneeId", "assignee"))...)}
+	capabilities := Capabilities{Labels: labels, Members: members, CreateProject: has([]string{"create_issue", "save_issue"}, append(create, a(sample, "projectId", "project"))...), UpdateProject: has([]string{"update_issue", "save_issue"}, append(update, a(sample, "projectId", "project"))...), ReplaceLabels: has([]string{"update_issue", "save_issue"}, append(update, arg{[]string{"labelIds", "labels"}, []string{}, "array"})...), Parent: has([]string{"update_issue", "save_issue"}, append(update, a(sample, "parentId"))...), Assignee: has([]string{"update_issue", "save_issue"}, append(update, a(sample, "assigneeId", "assignee"))...),
+		Priority: has([]string{"create_issue", "save_issue"}, append(create, arg{[]string{"priority"}, 2, "integer"})...) && has([]string{"update_issue", "save_issue"}, append(update, arg{[]string{"priority"}, 2, "integer"})...)}
 	// Field shapes, descriptions and schema extensions never prove that a
 	// parent change preserves the destination. This capability only says the
 	// provider can express a parent beside a project and read issues back;
@@ -1260,7 +1272,7 @@ func createArgsV2(in CreateInputV2) ([]arg, error) {
 	if in.StateID != "" {
 		args = append(args, a(in.StateID, "stateId", "state"))
 	}
-	extra, e := extraArgs(in.Project, in.Labels, in.Parent, in.Assignee)
+	extra, e := extraArgs(in.Project, in.Labels, in.Parent, in.Assignee, in.Priority)
 	if e != nil {
 		return nil, e
 	}
@@ -1294,7 +1306,7 @@ func (p *Provider) CreateV2(ctx context.Context, in CreateInputV2) (IssueV2, err
 	return x, nil
 }
 func updateArgsV2(in UpdateInputV2) ([]arg, error) {
-	if !ValidID(in.ID) || (in.Title == nil && in.Description == nil && in.StateID == nil && !in.Project.Present && !in.Labels.Present && !in.Parent.Present && !in.Assignee.Present && in.AddLabels == nil && in.RemoveLabels == nil) {
+	if !ValidID(in.ID) || (in.Title == nil && in.Description == nil && in.StateID == nil && !in.Project.Present && !in.Labels.Present && !in.Parent.Present && !in.Assignee.Present && in.Priority == nil && in.AddLabels == nil && in.RemoveLabels == nil) {
 		return nil, fail("invalid")
 	}
 	if in.Labels.Present && (in.AddLabels != nil || in.RemoveLabels != nil) {
@@ -1329,7 +1341,7 @@ func updateArgsV2(in UpdateInputV2) ([]arg, error) {
 	if in.StateID != nil && !ValidID(*in.StateID) {
 		return nil, fail("invalid")
 	}
-	extra, e := extraArgs(in.Project, in.Labels, in.Parent, in.Assignee)
+	extra, e := extraArgs(in.Project, in.Labels, in.Parent, in.Assignee, in.Priority)
 	if e != nil {
 		return nil, e
 	}

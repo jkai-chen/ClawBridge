@@ -304,3 +304,48 @@ func TestConfirmedLinkSurvivesASeedingFailure(t *testing.T) {
 		t.Fatal(got)
 	}
 }
+
+// --priority takes Linear's names or 0-4 on create and update, counts as
+// an update's change, and a bad value is refused before any connection.
+func TestLinearV2Priority(t *testing.T) {
+	const a = "11111111-1111-4111-8111-111111111111"
+	for _, c := range []struct {
+		command, value string
+		want           int
+	}{{"create", "urgent", 1}, {"create", "Medium", 3}, {"update", "none", 0}, {"update", "4", 4}} {
+		args := []string{"--profile", "native", "--operation-id", "p", "--priority", c.value}
+		if c.command == "create" {
+			args = append(args, "--title", "new")
+		} else {
+			args = append([]string{a}, args...)
+		}
+		v, pos, err := parseLinear(c.command, args, &bytes.Buffer{})
+		if err != nil {
+			t.Fatal(c, err)
+		}
+		input, err := linearWriteInput(c.command, v, pos)
+		if err != nil || input.Priority == nil || *input.Priority != c.want {
+			t.Fatalf("%v: %+v %v", c, input.Priority, err)
+		}
+	}
+	v, pos, err := parseLinear("update", []string{a, "--profile", "native", "--operation-id", "p", "--title", "new"}, &bytes.Buffer{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if input, err := linearWriteInput("update", v, pos); err != nil || input.Priority != nil {
+		t.Fatal("priority invented", input.Priority, err)
+	}
+	isolated(t)
+	previous := newLinearManager
+	t.Cleanup(func() { newLinearManager = previous })
+	newLinearManager = func(string) *linearconn.Manager {
+		t.Fatal("a bad priority touched the manager")
+		return nil
+	}
+	for _, bad := range []string{"5", "critical", "-1", "1.5"} {
+		var out, diag bytes.Buffer
+		if err := Run(context.Background(), []string{"linear", "update", a, "--profile", "p", "--operation-id", "op", "--priority", bad}, &out, &diag); err == nil || !strings.Contains(err.Error(), "priority") {
+			t.Fatal(bad, err)
+		}
+	}
+}

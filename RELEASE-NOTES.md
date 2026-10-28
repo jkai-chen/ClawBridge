@@ -7,6 +7,10 @@
   list issues or poll `needs-agent`. Now the row is shown only under its own bound pair, never twice. A row of a
   team or pair the binding doesn't hold is dropped, and counted as `filtered_other_team` (intake: `other_team`).
   No schema change. Linear config scope: none.
+- **An issue's priority on create and update.** `clawbridge linear create|update --priority` and the agents' create
+  and update tools take Linear's priority, by name (`none`, `urgent`, `high`, `medium`, `low`) or 0–4. It is sent
+  only when Linear's tool takes a priority, and the returned issue is checked like the other fields. No schema
+  change, no Linear configuration.
 
 # ClawBridge v0.3.6 (released 28 Oct)
 

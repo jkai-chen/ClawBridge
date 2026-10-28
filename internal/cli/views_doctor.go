@@ -99,11 +99,17 @@ func doctorAnswerKey(id string) string {
 	return id
 }
 
+// doctorAnswerOf is a check's answer for its status, or "" when its
+// message already reads as one. The TUI's Doctor tab shows the same.
+func doctorAnswerOf(c doctor.Check) string {
+	return doctorAnswers[doctorAnswerKey(c.ID)].in(c.Status)
+}
+
 // doctorLine is a check's line and the detail under it: the answer and
 // the message, or the message alone.
 func doctorLine(c doctor.Check) (line, detail string) {
 	line = firstNonEmpty(c.Title, c.ID)
-	if answer := doctorAnswers[doctorAnswerKey(c.ID)].in(c.Status); answer != "" {
+	if answer := doctorAnswerOf(c); answer != "" {
 		return line + ": " + answer, c.Message
 	}
 	if c.Message != "" {

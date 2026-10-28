@@ -6,8 +6,7 @@ ClawBridge · ws_1 › prj_1 › engineer  cloud
 │                                                                                                                      │
 │ 0 fail · 1 warn · 1 pass · checked just now                                                                          │
 │                                                                                                                      │
-│ › WARN  Linear board  Enter: Linear                                                                                  │
-│        not linked                                                                                                    │
+│ › WARN  Linear board: not linked  Enter: Linear                                                                      │
 │                                                                                                                      │
 │ 1 passed (p show passes)                                                                                             │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯

@@ -502,7 +502,9 @@ after a bootstrap join, is shown `clawbridge project create SLUG` instead.
 
 Doctor lists failures first and folds the passes (`p` shows them). Enter on a failing
 Linear, Dispatcher or device check opens that screen. Its last results stay on screen
-while the checks run again.
+while the checks run again. Each check reads as `clawbridge doctor` says it: the
+answer on the line ("Workspace: Your workspace can't be reached.") and the check's
+own message under it.
 
 Projects lists the projects you can see: your role, the sessions ("2 of 3 active"),
 the coordinator and the Linear board. `●` marks the project this profile works in.

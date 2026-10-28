@@ -81,6 +81,8 @@
   link wizard with its teams, default team and projects already chosen. Without the server's model key, the Dispatcher
   screen says the server isn't set up for model keys (operator: see docs/dispatcher.md) instead of naming the
   operator's variable.
+- **Doctor in the TUI answers like `clawbridge doctor`.** Each check reads "Workspace: Your workspace can't be
+  reached." with the check's own message under it, the same words as the CLI (U60).
 
 # ClawBridge v0.3.6 (released 28 Oct)
 

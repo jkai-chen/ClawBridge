@@ -146,3 +146,22 @@ func TestDoctorFailuresFirstAndJumps(t *testing.T) {
 		t.Fatalf("the last results went while running:\n%s", view)
 	}
 }
+
+// U60: a check reads as the CLI doctor's line: the answer on it with the
+// message muted under it, or the message alone on the line, escaped.
+func TestDoctorShowsTheAnswer(t *testing.T) {
+	m := screenFixtures(t)[ScreenDoctor]
+	m.checks = []Check{
+		{ID: "authority.health", Title: "Workspace", Status: Fail, Answer: "Your workspace can't be reached.", Detail: "dial \x1b[2Jtcp: refused"},
+		{ID: "auth.clock", Title: "Clock", Status: Warn, Detail: "the clock is 3m off"},
+	}
+	view := Render(m)
+	for _, want := range []string{"FAIL  Workspace: Your workspace can't be reached.", `dial \x1b[2Jtcp: refused`, "WARN  Clock: the clock is 3m off"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("no %q in\n%s", want, view)
+		}
+	}
+	if strings.Count(view, "the clock is 3m off") != 1 || strings.Count(view, "refused") != 1 {
+		t.Fatalf("a message shown twice:\n%s", view)
+	}
+}

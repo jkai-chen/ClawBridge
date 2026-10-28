@@ -94,3 +94,18 @@ func TestDoctorViewAnswers(t *testing.T) {
 		t.Fatalf("--json changed:\n%s\n%s", got.String(), was.String())
 	}
 }
+
+// U60: the TUI's Doctor tab gets the CLI's answer for each check's status,
+// with the message kept as the detail.
+func TestTUIChecksCarryTheAnswer(t *testing.T) {
+	got := tuiChecks([]doctor.Check{
+		{ID: "authority.health", Title: "Workspace", Status: doctor.Fail, Message: "dial tcp: refused", Action: "check the server"},
+		{ID: "auth.clock", Title: "Clock", Status: doctor.Warn, Message: "the clock is 3m off"},
+	})
+	if len(got) != 2 || got[0].Answer != "Your workspace can't be reached." || got[0].Detail != "dial tcp: refused" || got[0].Fix != "check the server" || got[0].Status != "fail" {
+		t.Fatalf("%+v", got)
+	}
+	if got[1].Answer != "" || got[1].Detail != "the clock is 3m off" {
+		t.Fatalf("a check without an answer: %+v", got[1])
+	}
+}

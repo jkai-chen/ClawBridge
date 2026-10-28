@@ -193,6 +193,11 @@ projects and initiatives (`linear label create`, `linear project create`,
 `linear initiative create|add-project`; labels from an approved list; CLI only);
 when you need one, ask the coordinator.
 
+A tool error with `"reason"` is Linear refusing a taken name:
+`exists_in_workspace` means a workspace label already has it (a team label can't
+take it), `already_exists` that the team has one. Don't retry the same name;
+report the reason and let your user choose another name.
+
 Write Linear text without mentions: name people and agents in plain words, never
 as `@name`, `@Linear` or a profile link. ClawBridge refuses a title,
 description or comment that does, even inside code: write scoped packages

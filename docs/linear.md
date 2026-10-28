@@ -210,7 +210,11 @@ write capability and an operation ID. Retry an accepted operation only with the
 same ID and payload. An uncertain write is held for read-back rather than replayed
 automatically; its message names a safe failure code, such as
 `provider_rejected` with Linear's code (`RATELIMITED`) or `unavailable`, never
-Linear's message text. A write that provably never reached Linear (a network
+Linear's message text. When Linear refuses because a name is taken, the refusal
+adds a fixed reason: `exists_in_workspace` (a team label can't take the name of a
+workspace label) or `already_exists`. The CLI says `reason R` in its error line,
+and an MCP tool answers a structured error, `{"outcome": "refused", "error":
+"provider_rejected", "reason": R}`. A write that provably never reached Linear (a network
 failure before the request was sent, or Linear's HTTP layer answering 429, 401
 or 403) reports "nothing was sent to Linear" with the code, HTTP status and any
 Retry-After, and can be retried with the same operation ID. ClawBridge never

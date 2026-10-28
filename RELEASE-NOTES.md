@@ -222,7 +222,8 @@
 - **A Linear refusal says why, when it's a name clash.** A write Linear refuses used to report only
   `provider_rejected` and its code. When Linear's message says the name is taken, the error now adds a fixed
   reason: `exists_in_workspace` (a team label can't take the name of a workspace label) or `already_exists`. Linear's
-  own text is still never shown or kept: it can carry other people's names.
+  own text is still never shown or kept: it can carry other people's names. An MCP tool answers such a refusal as a
+  structured error with `reason`, so an agent can act on it without reading text.
 
 ## Linear views
 

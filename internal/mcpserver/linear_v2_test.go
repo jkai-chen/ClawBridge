@@ -3,11 +3,13 @@ package mcpserver
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
 
 	"clawbridge/internal/bus"
 	"clawbridge/internal/linearboard"
+	"clawbridge/internal/linearprovider"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
@@ -267,5 +269,27 @@ func TestLinearMCPDocTools(t *testing.T) {
 	}
 	if p.count() != calls {
 		t.Fatal("invalid arguments reached the adapter")
+	}
+}
+
+// A Linear refusal with a fixed reason is a structured error naming it;
+// Linear's text never reaches the agent. One without stays a plain error.
+func TestLinearMCPV2RefusalReason(t *testing.T) {
+	const id = "11111111-1111-4111-8111-111111111111"
+	refusal := fmt.Errorf("refused before dispatch: %w", &linearprovider.Error{Kind: "provider_rejected", LinearCode: "INVALID_INPUT", Reason: "exists_in_workspace"})
+	p := &recordingBoardV2{recordingBoard: recordingBoard{err: refusal}}
+	ctx, cs := boardSession(t, p)
+	result, err := cs.CallTool(ctx, &mcp.CallToolParams{Name: "taskboard_update_v2", Arguments: map[string]any{"id": id, "title": "x", "operation_id": "op"}})
+	if err != nil || !result.IsError {
+		t.Fatal(err, result)
+	}
+	raw, _ := json.Marshal(result.StructuredContent)
+	if !strings.Contains(string(raw), `"reason":"exists_in_workspace"`) || !strings.Contains(string(raw), `"error":"provider_rejected"`) || !strings.Contains(string(raw), `"outcome":"refused"`) {
+		t.Fatal(string(raw))
+	}
+	p.err = &linearprovider.Error{Kind: "provider_rejected"}
+	result, err = cs.CallTool(ctx, &mcp.CallToolParams{Name: "taskboard_update_v2", Arguments: map[string]any{"id": id, "title": "x", "operation_id": "op2"}})
+	if err != nil || !result.IsError || result.StructuredContent != nil {
+		t.Fatal("a refusal without a reason became structured:", err, result)
 	}
 }

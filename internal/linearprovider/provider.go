@@ -771,8 +771,6 @@ func (p *Provider) invoke(ctx context.Context, chosen string, values map[string]
 // did not change sent nothing.
 func (p *Provider) Sent() uint64 { return p.sent.Load() }
 
-// rejectionCode returns Linear's error code from a rejected tool result, only
-// when its JSON carries one in the expected place and shape.
 // rejectionReasons maps a known phrase of Linear's refusal to a fixed
 // reason. Order matters: the more specific phrase first. Linear's text is
 // only matched, never passed on: it can carry other people's names.
@@ -805,6 +803,18 @@ func rejectionReason(r *mcp.CallToolResult) string {
 	return ""
 }
 
+// RejectionReason is the fixed reason of a Linear refusal in err's chain,
+// or "" when it has none. Only a provider_rejected error carries one.
+func RejectionReason(err error) string {
+	var e *Error
+	if errors.As(err, &e) {
+		return e.Reason
+	}
+	return ""
+}
+
+// rejectionCode returns Linear's error code from a rejected tool result, only
+// when its JSON carries one in the expected place and shape.
 func rejectionCode(r *mcp.CallToolResult) string {
 	if r == nil {
 		return ""

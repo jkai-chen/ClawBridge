@@ -530,7 +530,7 @@ func NewHandlerWithOptions(store Executor, verifier Verifier, o HandlerOptions) 
 		}
 		var result bus.Result
 		var err error
-		if request.Operation == "linear_write" || request.Operation == "linear_app_status" || request.Operation == "linear_app_states" || request.Operation == "linear_app_project_status" || request.Operation == "linear_app_project_status_set" {
+		if request.Operation == "linear_write" || request.Operation == "linear_app_status" || request.Operation == "linear_app_states" || request.Operation == "linear_app_project_status" || request.Operation == "linear_app_project_status_set" || request.Operation == "linear_app_subscribers_backfill" {
 			result, err = writer.Execute(r.Context(), verified, request)
 		} else if bound, ok := store.(IdentityExecutor); ok {
 			result, err = bound.ExecuteAsIdentity(ctx, verified, request)
@@ -698,6 +698,7 @@ func Run(ctx context.Context, args []string) error {
 	}
 	defer store.Close()
 	store.SetProjectFlowProven(settings.ProjectFlowProven)
+	store.SetIssueSubscribersProven(settings.IssueSubscribersProven)
 	writer, err := appWriter(store)
 	if err != nil {
 		return err
@@ -752,7 +753,7 @@ func openServingStore(ctx context.Context, dsn, owner string) (*bus.Store, error
 // cannot sign in: their own address moved to a new Google account, or a
 // workspace allow-list refuses every account.
 func RunOperator(ctx context.Context, args []string, stdout io.Writer) error {
-	const usage = "usage: clawbridge operator principal-unbind EMAIL --confirm [--allow-previous] | workspace-clear-domains WORKSPACE --confirm | linear-app-probe --confirm [--project UUID] [--p8 [--dry-run] [--allow-member UUID] | --health-order | --project-status [--dry-run] [--allow-member UUID]] | linear-app-probe --rate-headers --confirm | linear-app-doc-probe --confirm | health-run --project UUID --confirm [--force-new | --delete UPDATE_ID] | bootstrap-invite --workspace NAME [--force-stdout | --code-stdin [--expect-owner EMAIL]] [--database-url-env NAME] | launcher-token create --out PATH [--print] | launcher-token revoke ID | model-seal-key rotate [--confirm [--delete-unreadable]]"
+	const usage = "usage: clawbridge operator principal-unbind EMAIL --confirm [--allow-previous] | workspace-clear-domains WORKSPACE --confirm | linear-app-probe --confirm [--project UUID] [--p8 [--dry-run] [--allow-member UUID] | --health-order | --project-status [--dry-run] [--allow-member UUID]] | linear-app-probe --rate-headers --confirm | linear-app-probe --confirm --subscribe --issue UUID --team UUID (--email OWNER | --email-stdin) [--user UUID] [--dry-run] | linear-app-doc-probe --confirm | health-run --project UUID --confirm [--force-new | --delete UPDATE_ID] | bootstrap-invite --workspace NAME [--force-stdout | --code-stdin [--expect-owner EMAIL]] [--database-url-env NAME] | launcher-token create --out PATH [--print] | launcher-token revoke ID | model-seal-key rotate [--confirm [--delete-unreadable]]"
 	if len(args) > 0 && args[0] == "bootstrap-invite" {
 		return runBootstrapInvite(ctx, args[1:], stdout)
 	}
@@ -775,8 +776,15 @@ func RunOperator(ctx context.Context, args []string, stdout io.Writer) error {
 	project := ""
 	p8, dryRun, healthOrder, projectStatus, rateHeaders := false, false, false, false, false
 	allowMember := ""
+	subscribe, subIssue, subTeam, subEmail, subUser, emailStdin := false, "", "", "", "", false
 	if command == "linear-app-probe" {
 		f.BoolVar(&rateHeaders, "rate-headers", false, "read once over GraphQL and once over MCP as the app, and print only Linear's rate-limit headers")
+		f.BoolVar(&subscribe, "subscribe", false, "the issue subscribers live check: subscribe --email (and --user) to the fixture --issue in --team as the app, and read back")
+		f.StringVar(&subIssue, "issue", "", "with --subscribe: the hand-made fixture issue's UUID")
+		f.StringVar(&subTeam, "team", "", "with --subscribe: the fixture's team UUID")
+		f.StringVar(&subEmail, "email", "", "with --subscribe: the project owner's email, subscribed by email")
+		f.BoolVar(&emailStdin, "email-stdin", false, "with --subscribe: read the owner's email from stdin instead of --email, so it isn't on the command line")
+		f.StringVar(&subUser, "user", "", "with --subscribe: a second Linear user's UUID, subscribed by ID")
 		f.StringVar(&project, "project", "", "a bound Linear project UUID whose health inputs are read; with --p8, the empty throwaway project")
 		f.BoolVar(&p8, "p8", false, "post one real status update to the empty --project as the app, read it back, delete it and read again (P8)")
 		f.BoolVar(&dryRun, "dry-run", false, "with --p8 or --project-status: check the project and the app, and send nothing")
@@ -806,11 +814,17 @@ func RunOperator(ctx context.Context, args []string, stdout io.Writer) error {
 	if probe != (len(positional) == 0) || len(positional) > 1 {
 		return errors.New(usage)
 	}
-	if rateHeaders && (project != "" || p8 || healthOrder) {
-		return errors.New("--rate-headers takes no --project, --p8 or --health-order")
+	if rateHeaders && (project != "" || p8 || healthOrder || subscribe) {
+		return errors.New("--rate-headers takes no --project, --p8, --health-order or --subscribe")
 	}
-	if p8 && project == "" || dryRun && !p8 && !projectStatus {
-		return errors.New("--p8 needs --project, and --dry-run needs --p8 or --project-status")
+	if emailStdin && (!subscribe || subEmail != "") {
+		return errors.New("--email-stdin goes with --subscribe, in place of --email")
+	}
+	if subscribe && (p8 || healthOrder || projectStatus || project != "" || allowMember != "") {
+		return errors.New("--subscribe takes --issue, --team, --email and --user, not --project, --p8, --health-order, --project-status or --allow-member")
+	}
+	if p8 && project == "" || dryRun && !p8 && !projectStatus && !subscribe {
+		return errors.New("--p8 needs --project, and --dry-run needs --p8, --project-status or --subscribe")
 	}
 	if projectStatus && (project == "" || p8 || healthOrder) {
 		return errors.New("--project-status needs --project, and not --p8 or --health-order")
@@ -834,6 +848,9 @@ func RunOperator(ctx context.Context, args []string, stdout io.Writer) error {
 		if command == "linear-app-probe" && projectStatus {
 			return errors.New("linear-app-probe --project-status moves the empty probe project's status three times as the Linear app (to started, completed and back); repeat with --confirm")
 		}
+		if command == "linear-app-probe" && subscribe {
+			return errors.New("linear-app-probe --subscribe subscribes the owner (and --user) to the fixture issue as the Linear app and reads its subscribers back; it never unsubscribes, so the owner deletes the fixture after; repeat with --confirm")
+		}
 		if command == "linear-app-probe" && p8 {
 			return errors.New("linear-app-probe --p8 posts one real status update to the empty project as the Linear app, then deletes it; repeat with --confirm")
 		}
@@ -854,6 +871,13 @@ func RunOperator(ctx context.Context, args []string, stdout io.Writer) error {
 		}
 		return errors.New("principal-unbind releases an address from its Google account; repeat with --confirm")
 	}
+	if emailStdin {
+		// Read before anything is opened; never echoed.
+		var err error
+		if subEmail, err = readProbeEmail(operatorStdin); err != nil {
+			return err
+		}
+	}
 	dsn := os.Getenv(*dsnEnv)
 	if dsn == "" {
 		return errors.New("Postgres connection environment variable is empty")
@@ -871,6 +895,9 @@ func RunOperator(ctx context.Context, args []string, stdout io.Writer) error {
 	}
 	if command == "linear-app-probe" && projectStatus {
 		return linearAppStatusProbe(ctx, store, project, allowMember, dryRun, stdout)
+	}
+	if command == "linear-app-probe" && subscribe {
+		return linearAppSubscribeProbe(ctx, store, subIssue, subTeam, subEmail, subUser, dryRun, stdout)
 	}
 	if command == "linear-app-probe" && p8 {
 		return linearAppP8(ctx, store, project, allowMember, dryRun, stdout)
@@ -993,6 +1020,11 @@ type ServeSettings struct {
 	// serve --project-flow-proven or CLAWBRIDGE_PROJECT_FLOW_PROVEN=1, set
 	// by the operator after the deploy probe.
 	ProjectFlowProven bool
+	// IssueSubscribersProven lets a project's issue subscribers turn on
+	// (ISSUE-SUBSCRIBERS-PLAN B2): serve --issue-subscribers-proven or
+	// CLAWBRIDGE_ISSUE_SUBSCRIBERS_PROVEN=1, set by the operator after the
+	// live check that the app may subscribe other people.
+	IssueSubscribersProven bool
 }
 
 // ParseServe reads serve's flags and the OAuth secrets from getenv. The
@@ -1010,6 +1042,7 @@ func ParseServe(args []string, getenv func(string) string) (ServeSettings, error
 	authFlag := f.String("auth", "", "sign-in methods: google, device or google,device; without it, google with --audience and device with --public-origin")
 	publicOrigin := f.String("public-origin", "", "this server's public origin, https://HOST[:PORT]; device signatures and join proofs cover it, so device sign-in requires it")
 	flowProven := f.Bool("project-flow-proven", false, "let status policies turn project flow on; set only after the deploy probe proves it (also CLAWBRIDGE_PROJECT_FLOW_PROVEN=1)")
+	subscribersProven := f.Bool("issue-subscribers-proven", false, "let projects subscribe their people to agents' issues; set only after the live check proves the app may (also CLAWBRIDGE_ISSUE_SUBSCRIBERS_PROVEN=1)")
 	if err := f.Parse(args); err != nil {
 		return ServeSettings{}, err
 	}
@@ -1023,7 +1056,7 @@ func ParseServe(args []string, getenv func(string) string) (ServeSettings, error
 	if err != nil {
 		return ServeSettings{}, err
 	}
-	out := ServeSettings{Listen: *listen, BootstrapOwner: *owner, DatabaseURLEnv: *dsnEnv, Auth: AuthOptions{Methods: methods}, ProjectFlowProven: *flowProven}
+	out := ServeSettings{Listen: *listen, BootstrapOwner: *owner, DatabaseURLEnv: *dsnEnv, Auth: AuthOptions{Methods: methods}, ProjectFlowProven: *flowProven, IssueSubscribersProven: *subscribersProven}
 	switch v := getenv("CLAWBRIDGE_PROJECT_FLOW_PROVEN"); v {
 	case "":
 	case "1", "true":
@@ -1031,6 +1064,14 @@ func ParseServe(args []string, getenv func(string) string) (ServeSettings, error
 	case "0", "false":
 	default:
 		return ServeSettings{}, errors.New("CLAWBRIDGE_PROJECT_FLOW_PROVEN is 1 or 0")
+	}
+	switch v := getenv("CLAWBRIDGE_ISSUE_SUBSCRIBERS_PROVEN"); v {
+	case "":
+	case "1", "true":
+		out.IssueSubscribersProven = true
+	case "0", "false":
+	default:
+		return ServeSettings{}, errors.New("CLAWBRIDGE_ISSUE_SUBSCRIBERS_PROVEN is 1 or 0")
 	}
 	if out.Auth.accepts(AuthDevice) {
 		if out.Auth.PublicOrigin, err = ParsePublicOrigin(*publicOrigin); err != nil {

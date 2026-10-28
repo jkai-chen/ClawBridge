@@ -499,6 +499,10 @@ func (s *Store) assignment(ctx context.Context, tx *transaction, w, p map[string
 		if err = markAssignment(ctx, tx, pid, str(live, "id"), str(live, "issue_uuid"), str(target, "name"), engineer); err != nil {
 			return nil, err
 		}
+		// A claim notifies the project's people (ISSUE-SUBSCRIBERS-PLAN).
+		if _, err = s.queueSubscription(ctx, tx, pid, str(live, "issue_uuid"), "claim"); err != nil {
+			return nil, err
+		}
 		if err = s.audit(ctx, tx, wid, pid, sid, "assignment", live["id"].(string), "confirmed", map[string]any{"session_id": tid}); err != nil {
 			return nil, err
 		}

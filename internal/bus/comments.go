@@ -163,6 +163,17 @@ func (s *Store) commentOp(ctx context.Context, tx *transaction, w, p map[string]
 	case "marker_spent":
 		// Not a commentOperation: only ExecuteSystem reaches it.
 		return c.markerSpent(ctx)
+	case "subscribe_queue":
+		// Nor these: the server's queue and its watcher's pass.
+		return c.subscribeQueue(ctx)
+	case "subscribe_due":
+		return c.subscribeDue(ctx)
+	case "subscribe_settle":
+		return c.subscribeSettle(ctx)
+	case "subscribe_claims":
+		return c.subscribeClaims(ctx)
+	case "subscribe_charge":
+		return c.subscribeCharge(ctx)
 	}
 	return nil, fmt.Errorf("unsupported operation %q", r.Operation)
 }

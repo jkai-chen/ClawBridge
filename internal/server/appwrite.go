@@ -142,6 +142,8 @@ func (w *AppWriter) Execute(parent context.Context, identity bus.Identity, r bus
 		return w.states(parent, identity, r)
 	case "linear_app_project_status", "linear_app_project_status_set":
 		return w.projectStatus(parent, identity, r)
+	case "linear_app_subscribers_backfill":
+		return w.subscribersBackfill(parent, identity, r)
 	case "linear_write":
 	default:
 		return bus.Result{}, appRefusal("unsupported operation")
@@ -194,6 +196,7 @@ func (w *AppWriter) Execute(parent context.Context, identity bus.Identity, r bus
 	switch {
 	case err == nil:
 		w.attribute(ctx, identity, r, operation, args, data, marker)
+		w.queueSubscribers(ctx, identity, scope, operation, data)
 		return bus.Result{Data: map[string]any{"receipt": data}}, nil
 	case data != nil && errors.As(err, &receipt):
 		w.attribute(ctx, identity, r, operation, args, data, marker)
@@ -292,6 +295,43 @@ func labelArgs(v any) []string {
 		}
 	}
 	return out
+}
+
+// queueSubscribers queues the project's people as subscribers of an issue
+// the app just created (ISSUE-SUBSCRIBERS-PLAN §3). The write has already
+// succeeded, so a queue that fails is logged by code and never fails it.
+func (w *AppWriter) queueSubscribers(ctx context.Context, identity bus.Identity, scope bus.Request, operation string, receipt any) {
+	// Only a create: an agent's update or comment is on an issue that was
+	// created or claimed already.
+	if w.Store == nil || operation != "create" {
+		return
+	}
+	issue := ""
+	switch r := receipt.(type) {
+	case linearboard.ReceiptV2:
+		issue = r.ID
+	case linearprovider.Receipt:
+		issue = r.ID
+	}
+	if !linearprovider.ValidID(issue) {
+		return
+	}
+	scope.Operation = "taskboard_access"
+	scope.Args = map[string]any{"instance": scope.Args["instance"], "ledger": 1}
+	access, err := identityExecutor{w.Store, identity}.Execute(ctx, scope)
+	data, _ := access.Data.(map[string]any)
+	pid, _ := data["project_id"].(string)
+	if err == nil && pid != "" {
+		_, err = w.Store.ExecuteSystem(ctx, pid, bus.Request{Operation: "subscribe_queue", Args: map[string]any{"issue_uuid": issue, "reason": "create"}})
+	}
+	if err != nil {
+		var coded interface{ Code() string }
+		code := "failed"
+		if errors.As(err, &coded) {
+			code = coded.Code()
+		}
+		log.Printf("clawbridge: issue subscribers: queue after create failed: %s", code)
+	}
 }
 
 // member proves identity is a member of workspace, or, with none named, of

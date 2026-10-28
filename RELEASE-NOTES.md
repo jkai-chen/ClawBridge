@@ -1,8 +1,8 @@
 # Unreleased
 
-**Schema 39 → 40.**
-- The server migrates to schema 40 on its first start: who asked for each write the ClawBridge app made (intake
-  attribution).
+**Schema 39 → 41.**
+- The server migrates to schema 41 on its first start: 40, who asked for each write the ClawBridge app made (intake
+  attribution); 41, who is subscribed to agents' issues (a board already linked starts off).
 - **One-way:** v0.3.6 refuses a database newer than schema 39. Take a dump before upgrading; to go back, restore it
   with the v0.3.6 image (docs/operations/deployment.md).
 
@@ -14,6 +14,21 @@
 - **A project keeps its own rules in `docs/COORDINATOR.md`,** read by the coordinator as merged on the default branch.
   It may tighten the skill's defaults, never loosen them. docs/guides/coordinator.md explains it, with a template
   (docs/guides/coordinator-playbook-template.md). Docs and skill only.
+
+## Agents' issues notify their people
+
+- **The project owner, and up to 5 people they name, are subscribed to each issue an agent creates or claims** on a
+  hosted server, so they get Linear's notifications. Before this, the app authored those issues and nobody was
+  subscribed. `clawbridge linear subscribers show|on|off|owner on|off|add|remove`, plus `backfill --since DATE
+  [--apply]` for what agents did before.
+  - **Issue-level only.** No team, workspace or notification setting changes, nobody is ever unsubscribed, and each
+    issue is subscribed once.
+  - **The default.** On for boards linked after the upgrade; off for boards already linked, with a doctor hint.
+  - **Costs and gates.** One read plus one call per person, from the project's hourly Linear budget. It is only for
+    bound teams and their active members. The owner is added by email, which is never logged or shown.
+  - **Off until the operator proves it.** The server runs with `serve --issue-subscribers-proven` only after a live
+    check that the app may subscribe someone else (docs/operations/deployment.md). It is the one board write the
+    app sends as GraphQL.
 
 ## Docs
 

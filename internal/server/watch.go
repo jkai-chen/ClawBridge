@@ -44,6 +44,9 @@ func (a watcherApp) GraphQL(ctx context.Context, query string, variables map[str
 	return a.app.GraphQL(ctx, query, variables, out)
 }
 
+func (a watcherApp) SubscribeIssue(ctx context.Context, issue, email, user string) (string, error) {
+	return a.app.SubscribeIssue(ctx, issue, email, user)
+}
 func (a watcherApp) HasScope(ctx context.Context, scope string) (bool, error) {
 	return a.app.HasScope(ctx, scope)
 }

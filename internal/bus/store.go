@@ -53,6 +53,9 @@ type Store struct {
 	// projectFlowProven is serve --project-flow-proven: the operator ran
 	// the deploy probe, so a status policy may turn project flow on.
 	projectFlowProven bool
+	// issueSubscribersProven is serve --issue-subscribers-proven: the
+	// operator's live check showed the app may subscribe other people (B2).
+	issueSubscribersProven bool
 	// modelSeal seals owners' provider keys; nil leaves model setup off.
 	modelSeal *ModelSeal
 	// modelMaxAgents and memAvailable are the serving process's, for
@@ -137,7 +140,7 @@ func (s *Store) migrate() error {
 	if err = tx.QueryRow("PRAGMA user_version").Scan(&version); err != nil {
 		return err
 	}
-	if version > 40 {
+	if version > 41 {
 		return errors.New("database schema is newer than this ClawBridge binary")
 	}
 	if version == 0 {
@@ -352,6 +355,11 @@ func (s *Store) migrate() error {
 	}
 	if version < 40 {
 		if _, err = tx.Exec(intakeAttributionSchema + `PRAGMA user_version=40;`); err != nil {
+			return err
+		}
+	}
+	if version < 41 {
+		if _, err = tx.Exec(issueSubscribersSchema + `PRAGMA user_version=41;`); err != nil {
 			return err
 		}
 	}
@@ -656,6 +664,13 @@ var operationArgs = map[string]string{
 	"project_kind_get":            "instance",
 	"project_kind_set":            "instance expected_revision team_id scope group_name kinds",
 	"project_kind_record":         "instance expected_revision action proof group_label_id label_ids",
+	"issue_subscribers_get":       "instance",
+	"issue_subscribers_set":       "instance expected_revision enabled owner user_ids",
+	"subscribe_queue":             "issue_uuid reason",
+	"subscribe_due":               "lease_token generation",
+	"subscribe_settle":            "lease_token generation issue_uuid outcome reason calls charged owner_missing",
+	"subscribe_claims":            "since",
+	"subscribe_charge":            "calls",
 	"workspace_init":              "mode name retention_days", "project_create": "slug name git_remote", "list_projects": "", "list_members": "", "register_session": "instance resume role agent_kind model host account notes transport", "list_sessions": "instance status role limit after issue scope_path assignment_state", "send": "instance to body kind thread_id operation_id coordination ack", "reply": "instance message_id body kind operation_id coordination ack", "inbox": "instance unread_only limit after", "mark_read": "instance ids", "update_session": "instance target_session role model host account notes transport", "retire_session": "instance target_session successor status outcome confirm", "history": "instance entity key limit after", "project_threads": "instance limit before", "project_thread": "instance thread_id limit after", "whoami": "instance", "heartbeat": "instance state", "message_status": "instance message_id", "resolve_project": "git_remote instance", "snapshot": "instance", "project_role_set": "instance principal role", "project_role_revoke": "instance principal", "purge_expired": "instance", "principal_unbind": "principal allow_previous", "workspace_set_domains": "domains",
 }
 
@@ -767,13 +782,13 @@ func validateArgs(op string, a map[string]any) error {
 			if _, ok := intList(v, 1000); !ok {
 				return errors.New("lines must be an array of line numbers")
 			}
-		case "ids", "event_ids", "linear_team_ids", "linear_project_ids", "closes_pending", "scope_paths", "domains", "comment_ids", "signals", "roles", "pattern_ids", "issue_labels", "tools", "uses", "leases", "kinds", "label_ids":
+		case "ids", "event_ids", "linear_team_ids", "linear_project_ids", "closes_pending", "scope_paths", "domains", "comment_ids", "signals", "roles", "pattern_ids", "issue_labels", "tools", "uses", "leases", "kinds", "label_ids", "user_ids":
 			switch v.(type) {
 			case []string, []any:
 			default:
 				return errors.New("ids must be an array of strings")
 			}
-		case "unread_only", "queue", "on", "all", "resume", "allow_overlap", "allow_previous", "repair", "confirm", "forced", "force_new", "nudges_only", "egress_confirmed", "set":
+		case "unread_only", "queue", "on", "all", "resume", "allow_overlap", "allow_previous", "repair", "confirm", "forced", "force_new", "nudges_only", "egress_confirmed", "set", "enabled", "owner", "owner_missing":
 			if _, ok := v.(bool); !ok {
 				return fmt.Errorf("%s must be boolean", k)
 			}
@@ -1308,6 +1323,9 @@ func (s *Store) execute(ctx context.Context, tx *transaction, r Request) (any, e
 	}
 	if projectKindOperation(r.Operation) {
 		return s.projectKindOp(ctx, tx, wid, pid, projectRole, r)
+	}
+	if issueSubscribersOperation(r.Operation) {
+		return s.issueSubscribersOp(ctx, tx, wid, pid, projectRole, r)
 	}
 	// Any project member may read the approved label list, with or
 	// without a session; setting it is the owner's (labelPolicyOp).

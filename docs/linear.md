@@ -716,6 +716,46 @@ The versioned MCP family exposes the same scoped operations through the existing
 profile opt-in. Prefer advertised `taskboard_*_v2` tools on L2 builds; original
 tools remain available for representable L1 mappings.
 
+### Who hears of agents' issues (hosted servers)
+
+On a hosted server with the ClawBridge app, an issue an agent creates is authored by the app ("from CB Agents"), so
+nobody is subscribed to it and nobody gets Linear inbox notifications. Linear can't subscribe a person to a whole
+team. So ClawBridge subscribes the project's people to **each issue an agent creates or claims**:
+
+- **Who.** The project owner, by their email, plus up to 5 Linear users you name.
+- **When.** Within a watch interval of the create or the confirmed claim. A claim of an issue a person created counts
+  too.
+- **Scope.** Issue-level only. ClawBridge adds subscribers to that one issue and changes no team, workspace or
+  notification setting. It never unsubscribes anyone, and it subscribes each issue once: if you unsubscribe in
+  Linear, it doesn't add you back.
+
+```sh
+clawbridge linear subscribers show                          # any member
+clawbridge linear subscribers on|off                        # project owner or a lead, own terminal
+clawbridge linear subscribers owner on|off                  # subscribe the project owner or not
+clawbridge linear subscribers add|remove LINEAR_USER_UUID   # the others (linear members lists them)
+clawbridge linear subscribers backfill --since 2026-10-27   # dry run: what agents created or claimed since then
+clawbridge linear subscribers backfill --since 2026-10-27 --apply
+```
+
+- **Default.** On for a board linked after the upgrade. Off for a board that was already linked, and doctor
+  (`linear.issue_subscribers`) offers `clawbridge linear subscribers on`. Nothing runs at all until the server's
+  operator has proven it (see the deployment guide); until then, `show` says `proven: false` and `on` is refused.
+- **Never a session.** Agents read the setting but can't change it.
+- **Budget.** Each issue costs one read, to check that its team is bound and the people are its members, plus one
+  call per person. It comes from the project's hourly Linear budget, after the comment watch and markers, at most
+  5 issues a pass. An issue outside the bound teams is skipped. A person who is no longer an active member of the
+  issue's team is left out.
+- **The owner isn't a Linear user.** When Linear knows no user by the owner's email, the others are still
+  subscribed and doctor says so. Add the owner's Linear user with `add`. ClawBridge waits a day before trying the
+  email again.
+- **Backfill.** It finds the issues the app created in the bound teams since the date, and the claims since then,
+  and lists them by identifier. Its own reads (1 to 3 calls) come from the hour's budget. The dry run is a plain
+  read: it works with the setting off and before the server is proven, so you can see the list before turning it
+  on. `--apply` needs the setting on and the server proven, and queues them for the same pass, so a big backfill
+  spreads over hours. An issue already done is never queued again.
+- **The owner's email** goes only to Linear's subscribe call. History, doctor and logs never show it.
+
 ## Labels and projects (project owner only)
 
 The ClawBridge project owner can create team labels and projects in Linear from

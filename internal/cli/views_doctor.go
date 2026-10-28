@@ -79,6 +79,7 @@ var doctorAnswers = map[string]doctorAnswer{
 	"linear.api_key":            {},
 	"linear.app":                {},
 	"linear.label_policy":       {},
+	"linear.issue_subscribers":  {},
 	"linear.markers":            {},
 	"linear.watch":              {},
 	"dispatcher.model.agent":    {},

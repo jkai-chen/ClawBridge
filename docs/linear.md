@@ -1227,7 +1227,10 @@ clawbridge linear project status set LINEAR_PROJECT --type TYPE --operation-id I
 ```
 
 Agents use the MCP tools `taskboard_project_status_v2` and
-`taskboard_project_status_set_v2`, which take the same fields.
+`taskboard_project_status_set_v2`, which take the same fields. In the TUI,
+`p` on the Linear screen shows each linked project's status, and lets the
+project owner or a lead (with no session) set one after the same preview
+(docs/usage.md).
 
 - **Read (any member or session).** The project's status (ID, name, type), its
   issue counts by state type (open are triage, backlog, unstarted and

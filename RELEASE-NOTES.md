@@ -83,6 +83,10 @@
   operator's variable.
 - **Doctor in the TUI answers like `clawbridge doctor`.** Each check reads "Workspace: Your workspace can't be
   reached." with the check's own message under it, the same words as the CLI (U60).
+- **Linear project status in the TUI.** `p` on the Linear screen reads each linked Linear project's status and
+  open issues through the server's app (`g` adds a suggestion, as a hint). A project owner or lead, in a TUI opened
+  without a session, sets one after the server's preview and `y`, with a second `y` to close it with issues open.
+  The server's rules on who sets it and who closes stay as they are (U61).
 
 # ClawBridge v0.3.6 (released 28 Oct)
 

@@ -199,6 +199,8 @@ func (s *linearTUISource) Do(ctx context.Context, r tui.LinearRequest) (tui.Line
 			}
 		}
 		return data, s.intake(ctx, service, &data)
+	case "project-status", "project-status-set":
+		return data, s.projectStatus(ctx, service, r, &data)
 	default:
 		return data, errors.New("unsupported native Linear action")
 	}
@@ -273,4 +275,47 @@ func needsAgentLabels(labels []linearprovider.Label) int {
 		}
 	}
 	return n
+}
+
+// projectStatus reads, previews or sets a bound Linear project's status
+// through the server's app (U61), as linear project status does. A set is
+// the person's own, so it goes without the TUI's session, and is refused
+// in a TUI opened with one or run by an agent.
+func (s *linearTUISource) projectStatus(ctx context.Context, service *linearboard.Service, r tui.LinearRequest, data *tui.LinearData) error {
+	scope := s.scope
+	args := map[string]any{"linear_project": r.LinearProject}
+	set := r.Operation == "project-status-set"
+	if !set {
+		if r.Suggest {
+			args["suggest"] = true
+		}
+	} else {
+		if scope.Session != "" {
+			return errors.New("a Linear project's status is set by a person with no session: open the TUI without --session to set it. Nothing was changed")
+		}
+		if marker := agentMarker(closesEnv()); marker != "" {
+			return fmt.Errorf("setting a Linear project's status without a session is a person's, and %s says an agent runs this TUI; nothing was changed", marker)
+		}
+		args["type"], args["operation_id"] = r.StatusType, r.OperationID
+		if r.Confirm {
+			args["confirm"], args["expected_status_id"] = true, r.ExpectedStatus
+			if r.AllowOpen {
+				args["allow_open"] = true
+			}
+		}
+	}
+	result, err := service.ProjectStatusAppV2(ctx, scope, set, args)
+	if err != nil {
+		return err
+	}
+	raw, err := json.Marshal(result)
+	if err != nil {
+		return err
+	}
+	var status tui.ProjectStatus
+	if err = json.Unmarshal(raw, &status); err != nil {
+		return err
+	}
+	data.ProjectStatus = &status
+	return nil
 }

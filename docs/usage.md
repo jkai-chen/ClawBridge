@@ -493,6 +493,19 @@ delegation or mention a trusted person makes in Linear itself counts: signals ma
 ClawBridge run as the ClawBridge app and are never trusted. Names come from your own
 Linear connection; without it, trusted users show by ID.
 
+Project status (`p` on the Linear screen once a board with Linear projects is linked)
+reads each linked Linear project's status (its name, and how many of its issues are open)
+through the hosted server's ClawBridge app. Each read costs the project's Linear budget,
+so it is read when the view opens and on `r`, not with the board. `g` adds a suggestion
+from the project's issues, as a hint only. A project owner or lead, in a TUI opened without
+a session, sets one: Enter, pick the status type, read the server's preview, then `y`.
+Setting it completed with issues still open (or not all read) asks for a second `y`. The
+server keeps who may set it and who closes the project; a refusal says why. Anyone else, and
+a TUI opened with a session, reads it; a coordinator sets it from its session with
+`clawbridge linear project status set`. Where the workspace has several statuses of a type,
+the preview says so: name one with the CLI's `--status-id`. A local workspace has no app,
+so each project reads "not read".
+
 A hosted profile that has joined a workspace but has no project yet (an invite with
 no grants) opens on **Waiting for a project**: it names the workspace owner to ask
 and the command they run (`clawbridge --project PROJECT project role set EMAIL

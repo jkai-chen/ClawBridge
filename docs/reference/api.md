@@ -94,7 +94,7 @@ requires its matching instance. Routing role is distinct from project permission
 | `update_session` | One or more role/model/host/account/notes/transport fields; hosted owners and leads may target_session (see below) |
 | `retire_session` | Optional successor and status retired/moved; hosted owners and leads may target_session (see below) |
 | `history` | Optional entity, key, limit, after |
-| `whoami` | No extra arguments; the session includes its live `assignment` and the project its `coordinator_session` |
+| `whoami` | No extra arguments; the session includes its live `assignment` and the project its `coordinator_session`. With no project and no session (a member with no project yet), it answers for the workspace alone: `principal` and `workspace`, with `project` and `session` null |
 | `assignment_propose` | Own session only: optional issue_uuid (lowercase UUID), issue_identifier (needs issue_uuid), task_role, scope_repo (git remote), scope_paths (up to 32 patterns); needs an issue or a path. Replaces the session's live assignment and returns overlapping live assignments as `conflicts` |
 | `assignment_confirm` | Designated coordinator session: revision, optional target_session, allow_overlap. Refuses overlap with a confirmed assignment unless allow_overlap (audited as conflict_overridden) |
 | `assignment_release` | revision; optional target_session for the designated coordinator |

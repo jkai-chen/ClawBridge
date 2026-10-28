@@ -1168,6 +1168,11 @@ func (s *Store) execute(ctx context.Context, tx *transaction, r Request) (any, e
 	if r.Operation == "list_projects" {
 		return s.listProjects(ctx, tx, w)
 	}
+	if r.Operation == "whoami" && r.Project == "" && r.Session == "" && str(a, "instance") == "" {
+		// A member with no project yet (a bootstrap owner, or one waiting
+		// for a grant) still learns who they are and whose workspace it is.
+		return s.whoami(ctx, tx, w, nil, nil)
+	}
 	if r.Project == "" {
 		return nil, errors.New("project is required; select an existing project explicitly")
 	}
@@ -1422,10 +1427,6 @@ func (s *Store) execute(ctx context.Context, tx *transaction, r Request) (any, e
 		decorateSession(actor)
 	}
 	if r.Operation == "whoami" {
-		provenance, mode := "local-os-user-unverified", "local"
-		if s.postgres {
-			provenance, mode = s.provenance(), "cloud"
-		}
 		if actor != nil {
 			live, e := liveAssignment(ctx, tx, pid, actor["id"].(string))
 			if e != nil {
@@ -1433,16 +1434,7 @@ func (s *Store) execute(ctx context.Context, tx *transaction, r Request) (any, e
 			}
 			actor["assignment"] = assignmentView(live, actor)
 		}
-		out := map[string]any{"workspace": shownWorkspace(w, w["owner_principal"] == s.principal), "project": p, "session": actor, "principal": s.principal, "identity_provenance": provenance, "verified": s.postgres, "storage_mode": mode, "online": true}
-		if s.postgres && s.identity != nil && s.identity.Issuer == DeviceIssuer {
-			device, e := one(ctx, tx, `SELECT * FROM devices WHERE device_id=?`, s.identity.Subject)
-			if e != nil {
-				return nil, e
-			}
-			view := deviceView(device, w, stamp())
-			out["device"] = map[string]any{"device_id": view["device_id"], "label": view["label"], "kind": view["kind"], "key_store": view["key_store"], "expires_at": view["expires_at"], "status": view["status"]}
-		}
-		return out, nil
+		return s.whoami(ctx, tx, w, p, actor)
 	}
 	// The owner's admin commands are CLI-only and may run without a session:
 	// the Linear write is authorized sessionless, so its audit and the
@@ -1852,4 +1844,23 @@ func (s *Store) touchReadActor(ctx context.Context, tx *transaction, pid string,
 	// Like a heartbeat, only an active session's last_seen moves.
 	_, err = tx.ExecContext(ctx, `UPDATE sessions SET last_seen=? WHERE project_id=? AND id=? AND status='active'`, stamp(), pid, actor["id"])
 	return err
+}
+
+// whoami is the caller's identity in w, and in project p and session actor
+// when the request names them (each nil otherwise).
+func (s *Store) whoami(ctx context.Context, tx *transaction, w, p, actor map[string]any) (any, error) {
+	provenance, mode := "local-os-user-unverified", "local"
+	if s.postgres {
+		provenance, mode = s.provenance(), "cloud"
+	}
+	out := map[string]any{"workspace": shownWorkspace(w, w["owner_principal"] == s.principal), "project": p, "session": actor, "principal": s.principal, "identity_provenance": provenance, "verified": s.postgres, "storage_mode": mode, "online": true}
+	if s.postgres && s.identity != nil && s.identity.Issuer == DeviceIssuer {
+		device, e := one(ctx, tx, `SELECT * FROM devices WHERE device_id=?`, s.identity.Subject)
+		if e != nil {
+			return nil, e
+		}
+		view := deviceView(device, w, stamp())
+		out["device"] = map[string]any{"device_id": view["device_id"], "label": view["label"], "kind": view["kind"], "key_store": view["key_store"], "expires_at": view["expires_at"], "status": view["status"]}
+	}
+	return out, nil
 }

@@ -219,6 +219,10 @@
 
 ## The terminal interface
 
+- **Waiting for a project tells the workspace owner to create the first one.** The server's `whoami` now answers a
+  member with no project yet (no project, no session) for the workspace alone, so the TUI's Waiting screen knows
+  whose workspace it is: the bootstrap owner is told `clawbridge project create SLUG` instead of to ask themselves,
+  and a member is told the owner's address.
 - **One set of keys, shown where you look (TUI-UX-AUDIT PR A).** The footer shows the screen's own keys, and `?`
   opens help listing every key for the screen and everywhere; the old one-line notice is gone. Keys never mean two
   things: **Enter opens** the selected row and never changes anything by itself, **Esc goes back one level** (help, an

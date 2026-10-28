@@ -33,6 +33,11 @@ func (f *fakeAuthority) Execute(_ context.Context, request bus.Request) (bus.Res
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.calls = append(f.calls, call{request: request})
+	// As the server: whoami names a project, or no session at all (the
+	// workspace-only read a member with no project makes).
+	if request.Operation == "whoami" && request.Project == "" && (request.Session != "" || request.Args["instance"] != nil) {
+		return bus.Result{}, errors.New("invalid: project is required; select an existing project explicitly")
+	}
 	if err := f.errs[request.Operation]; err != nil {
 		return bus.Result{}, err
 	}
@@ -55,6 +60,9 @@ func (f *fakeAuthority) Execute(_ context.Context, request bus.Request) (bus.Res
 			"storage_mode":        "cloud",
 			"verified":            true,
 			"online":              source == "server",
+		}
+		if request.Project == "" {
+			data["project"], data["session"] = nil, nil
 		}
 	case "list_projects":
 		data = map[string]any{"projects": []any{map[string]any{"id": "prj_1", "slug": "core", "name": "Core", "role": "owner", "git_remote": "github.com/acme/core"}}}

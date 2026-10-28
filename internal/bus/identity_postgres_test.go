@@ -772,3 +772,30 @@ func TestPostgresBindingTimesUseTheDatabaseClock(t *testing.T) {
 		}
 	}
 }
+
+// A member with no project yet (the bootstrap owner, or one waiting for a
+// grant) still reads whoami for the workspace: who they are and whose
+// workspace it is. A session still needs its project, and a stranger is
+// refused.
+func TestPostgresWhoamiWithoutAProject(t *testing.T) {
+	f := newPGIdentityFixture(t)
+	waiting := newID("w") + "@identity-test.example"
+	if _, err := f.s.db.ExecContext(context.Background(), `INSERT INTO members(workspace_id,principal,added_by,added_at) SELECT id,$1,owner_principal,created_at FROM workspaces WHERE name=$2`, waiting, f.workspace); err != nil {
+		t.Fatal(err)
+	}
+	subjects := map[string]string{f.owner: "sub-owner", waiting: "sub-waiting"}
+	for _, who := range []string{f.owner, waiting} {
+		out := f.must(who, subjects[who], Request{Operation: "whoami", Workspace: f.workspace, Args: map[string]any{}})
+		d := out.Data.(map[string]any)
+		w, _ := d["workspace"].(map[string]any)
+		if d["principal"] != who || w["owner_principal"] != f.owner || d["project"] != nil && d["project"].(map[string]any) != nil || d["session"] != nil && d["session"].(map[string]any) != nil {
+			t.Fatalf("%s: %+v", who, d)
+		}
+	}
+	if _, err := f.as(waiting, "sub-waiting", Request{Operation: "whoami", Workspace: f.workspace, Session: "s", Args: map[string]any{"instance": "i"}}); err == nil {
+		t.Fatal("a session's whoami without its project answered")
+	}
+	if _, err := f.as("stranger@identity-test.example", "sub-stranger", Request{Operation: "whoami", Workspace: f.workspace, Args: map[string]any{}}); err == nil {
+		t.Fatal("a non-member's whoami answered")
+	}
+}

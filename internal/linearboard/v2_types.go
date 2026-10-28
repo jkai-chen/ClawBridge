@@ -101,6 +101,9 @@ type WriteInputV2 struct {
 	ExpectedLabels linearprovider.Field[[]string]
 	Parent         linearprovider.Field[*string]
 	Assignee       linearprovider.Field[*string]
+	// Priority is Linear's 0-4 on a create or update; omitempty keeps the
+	// ledger digest of writes without one unchanged.
+	Priority *int `json:",omitempty"`
 	// ExpectedTitle and ExpectedDescriptionSHA256 are optional guards on an
 	// update that replaces the title or description: the title, or the
 	// description_sha256, the caller last read. omitempty keeps the ledger

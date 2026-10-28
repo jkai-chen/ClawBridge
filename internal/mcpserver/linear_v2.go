@@ -68,6 +68,7 @@ func boardSchemaV2(operation string) map[string]any {
 		props["project_id"] = uuid(true)
 		props["parent_id"] = uuid(true)
 		props["assignee_id"] = uuid(true)
+		props["priority"] = map[string]any{"type": []string{"integer", "string"}, "description": "Linear priority: 0 none, 1 urgent, 2 high, 3 medium, 4 low; or the name (none, urgent, high, medium, low). Never put a priority in the title"}
 		props["label_ids"] = map[string]any{"type": "array", "maxItems": 100, "uniqueItems": true, "items": uuid(false)}
 		if operation == "create" {
 			props["team_id"] = uuid(false)

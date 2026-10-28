@@ -174,6 +174,9 @@ func writeArgsV2(in WriteInputV2) map[string]any {
 			args[key] = field.Value
 		}
 	}
+	if in.Priority != nil {
+		args["priority"] = *in.Priority
+	}
 	for key, ids := range map[string][]string{"add_label_ids": in.AddLabels, "remove_label_ids": in.RemoveLabels} {
 		if ids != nil {
 			args[key] = ids

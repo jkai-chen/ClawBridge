@@ -20,7 +20,7 @@ func validReceiptV2(raw []byte) bool {
 	}
 	fields := map[string]bool{}
 	for _, f := range r.Unverified {
-		if fields[f] || (f != "labels" && f != "assignee" && f != "parent" && f != "state") {
+		if fields[f] || (f != "labels" && f != "assignee" && f != "parent" && f != "state" && f != "priority") {
 			return false
 		}
 		fields[f] = true

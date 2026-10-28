@@ -201,6 +201,7 @@ type linearFlags struct {
 	statusType, expectedStatus, statusID                                                                                 string
 	kindGroup, kindValues                                                                                                string
 	kindCanary, kindSkipCanary                                                                                           bool
+	priority                                                                                                             string
 }
 type repeatedIDs []string
 
@@ -234,6 +235,7 @@ func parseLinear(command string, args []string, stderr io.Writer) (linearFlags, 
 		f.Var((*repeatedIDs)(&v.labels), "label", "team label UUID; explicit replacement (repeat up to 100)")
 		f.StringVar(&v.parent, "parent", "", "in-scope parent issue UUID")
 		f.StringVar(&v.assignee, "assignee", "", "canonical active member UUID of the effective team")
+		f.StringVar(&v.priority, "priority", "", "Linear priority: none, urgent, high, medium or low (or 0-4)")
 	}
 	min, max := 0, 0
 	switch command {
@@ -609,7 +611,7 @@ func parseLinear(command string, args []string, stderr io.Writer) (linearFlags, 
 		if command == "update" {
 			changed := v.clearProject || v.clearLabels || v.clearParent || v.clearAssignee
 			f.Visit(func(fl *flag.Flag) {
-				if fl.Name == "title" || fl.Name == "description" || fl.Name == "description-file" || fl.Name == "state" || fl.Name == "linear-project" || fl.Name == "label" || fl.Name == "add-label" || fl.Name == "remove-label" || fl.Name == "parent" || fl.Name == "assignee" {
+				if fl.Name == "title" || fl.Name == "description" || fl.Name == "description-file" || fl.Name == "state" || fl.Name == "linear-project" || fl.Name == "label" || fl.Name == "add-label" || fl.Name == "remove-label" || fl.Name == "parent" || fl.Name == "assignee" || fl.Name == "priority" {
 					changed = true
 				}
 			})
@@ -807,6 +809,13 @@ func linearWriteInput(command string, v linearFlags, pos []string) (linearboard.
 	}
 	if v.clearAssignee {
 		writeInput.Assignee = linearprovider.Field[*string]{Present: true}
+	}
+	if v.supplied["priority"] {
+		n, e := linearboard.ParsePriority(v.priority)
+		if e != nil {
+			return writeInput, e
+		}
+		writeInput.Priority = &n
 	}
 	if err = linearboard.ValidateWriteV2(writeInput); err != nil {
 		return writeInput, err

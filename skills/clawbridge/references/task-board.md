@@ -241,6 +241,10 @@ uncertain outcomes through read-back. A receipt listing fields under
 `unverified` was accepted, but Linear did not report those fields; read the
 issue before relying on them.
 
+Set an issue's priority with `priority` on create or update (`linear create|update
+--priority`, or the `priority` field of the create and update tools): `none`,
+`urgent`, `high`, `medium`, `low`, or 0–4. Never put a priority in the title.
+
 Set a human assignee only when explicitly requested and verified as an eligible
 team member. That assignment does not replace the coordinator's Current agent
 block or transfer repository ownership. After a requested project/parent change,

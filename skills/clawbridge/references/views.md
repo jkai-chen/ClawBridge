@@ -82,7 +82,8 @@ session). `seeded: true` means each value has its label ID there; use those IDs 
 - **Never run `linear kind set`:** the setting is the project owner's, in their own terminal, and a session is refused.
   If no setting exists yet, suggest the command to your user: `clawbridge linear kind set --values
   Engineering,Review,Test --expected-revision 0`.
-- **Until ClawBridge seeds the labels** (`seeded: false`), the owner makes them in Linear: Settings → Projects →
-  Labels for the group and its labels on that team, then each project's label on the project itself.
+- **Until the labels are seeded** (`seeded: false`), suggest the owner runs `clawbridge linear kind seed
+  --operation-id ID --profile ID` (a preview), then the command it prints. Never run it yourself. Until applying a
+  kind is in ClawBridge, the owner sets each project's label on the project in Linear.
 - **A name clash is the owner's call.** Linear refuses a team label with a workspace label's name
   (`exists_in_workspace`). Report it; choosing another name or renaming the workspace label is for your user.

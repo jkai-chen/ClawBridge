@@ -650,6 +650,7 @@ var operationArgs = map[string]string{
 	"linear_views_list":           "instance",
 	"project_kind_get":            "instance",
 	"project_kind_set":            "instance expected_revision team_id scope group_name kinds",
+	"project_kind_record":         "instance expected_revision action proof group_label_id label_ids",
 	"workspace_init":              "mode name retention_days", "project_create": "slug name git_remote", "list_projects": "", "list_members": "", "register_session": "instance resume role agent_kind model host account notes transport", "list_sessions": "instance status role limit after issue scope_path assignment_state", "send": "instance to body kind thread_id operation_id coordination ack", "reply": "instance message_id body kind operation_id coordination ack", "inbox": "instance unread_only limit after", "mark_read": "instance ids", "update_session": "instance target_session role model host account notes transport", "retire_session": "instance target_session successor status outcome confirm", "history": "instance entity key limit after", "project_threads": "instance limit before", "project_thread": "instance thread_id limit after", "whoami": "instance", "heartbeat": "instance state", "message_status": "instance message_id", "resolve_project": "git_remote instance", "snapshot": "instance", "project_role_set": "instance principal role", "project_role_revoke": "instance principal", "purge_expired": "instance", "principal_unbind": "principal allow_previous", "workspace_set_domains": "domains",
 }
 
@@ -761,7 +762,7 @@ func validateArgs(op string, a map[string]any) error {
 			if _, ok := intList(v, 1000); !ok {
 				return errors.New("lines must be an array of line numbers")
 			}
-		case "ids", "event_ids", "linear_team_ids", "linear_project_ids", "closes_pending", "scope_paths", "domains", "comment_ids", "signals", "roles", "pattern_ids", "issue_labels", "tools", "uses", "leases", "kinds":
+		case "ids", "event_ids", "linear_team_ids", "linear_project_ids", "closes_pending", "scope_paths", "domains", "comment_ids", "signals", "roles", "pattern_ids", "issue_labels", "tools", "uses", "leases", "kinds", "label_ids":
 			switch v.(type) {
 			case []string, []any:
 			default:

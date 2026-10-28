@@ -120,24 +120,26 @@ fallback. The model can only choose among the actions the rules engine's guardra
 careful than the rules (wait or escalate where they would confirm), but it can never grant more. The rules engine
 stays the default and needs no model.
 
-Status, on the current main branch:
+Status: in a release, on main (not released yet), in review, or planned.
 
 | Part | Status |
 |---|---|
-| The dispatcher agent (`dispatcher-agent/`) and its hardened container image | on main |
-| `dispatcher enable --engine model` | on main; refused until a model setup has passed its test |
-| Model key setup and test, the launcher's and the agent's endpoints | on main |
-| Cases: `cases/next`, the read tools, `decide` and `abstain`, the rules fallback | on main |
-| `doctor`'s model checks | on main |
-| Chat (`dispatcher chat`) | on main |
-| `clawbridge-agentd` (the launcher) with its per-owner network and egress proxy | on main |
-| Deployment, and CI against a real Docker daemon, for the launcher | planned |
-| A guided `dispatcher model setup` in the CLI | on main |
-| The same setup in the TUI (the Model screen, `9`) | on main |
-| Advice in rules mode (`recommend`), and the opt-in tools | on main |
+| The dispatcher agent (`dispatcher-agent/`) and its hardened container image | v0.3.4 |
+| `dispatcher enable --engine model` | v0.3.5; refused until a model setup has passed its test |
+| Model key setup and test, the launcher's and the agent's endpoints | v0.3.5, as API operations (the CLI command came with the guided setup, below) |
+| Cases: `cases/next`, the read tools, `decide` and `abstain`, the rules fallback | v0.3.5 |
+| `doctor`'s model checks | v0.3.5 |
+| Chat (`dispatcher chat`) | v0.3.5 |
+| Advice in rules mode (`dispatcher model advise`), and the opt-in tools (`dispatcher model tools`) | v0.3.5 |
+| `clawbridge-agentd` (the launcher) with its per-owner network and egress proxy | v0.3.5 |
+| The egress proxy's own image, images pinned by ID, and agentd's units and install check | on main |
+| A guided `dispatcher model setup` in the CLI, with the provider's model list | on main |
+| The same setup in the TUI (the Dispatcher screen, `6`) | on main |
+| `dispatcher model key rotate`, and how the model is used on the Dispatcher screen | in review |
+| CI against a real rootless Docker daemon, one model agent by default, and agentd's measured cost in `doctor` | in review |
+| Deployment of the launcher | planned |
 
-Only the agent is in a release so far (v0.3.4). The rows marked on main are not released yet, and the rest is not on
-main yet. The design is in this section so that owners can judge it before it ships.
+The design is in this section so that owners can judge it before it ships.
 
 ### Setting up your model
 

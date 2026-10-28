@@ -7,7 +7,11 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"regexp"
+	"strings"
 	"time"
+
+	"clawbridge/internal/linearpace"
 )
 
 // Endpoint is Linear's GraphQL API.
@@ -55,6 +59,27 @@ var (
 	errInput        = errors.New("input error")
 )
 
+// RateLimitedError is Linear's rate limit for the key, or the pacer's
+// hold on it: nothing was sent.
+type RateLimitedError struct{ RetryAfter string }
+
+func (e RateLimitedError) Error() string {
+	if e.RetryAfter == "" {
+		return "Linear's rate limit for this API key has no room now; nothing was sent; try again shortly"
+	}
+	return "Linear's rate limit for this API key has no room now; nothing was sent; try again in " + e.RetryAfter + " s"
+}
+
+var retryAfterSeconds = regexp.MustCompile(`^[0-9]{1,6}$`)
+
+func rateLimited(v string) error {
+	v = strings.TrimSpace(v)
+	if !retryAfterSeconds.MatchString(v) {
+		v = ""
+	}
+	return RateLimitedError{RetryAfter: v}
+}
+
 // do sends the named allow-listed query and decodes its data into out.
 func (c *Client) do(ctx context.Context, name string, variables map[string]any, out any) error {
 	if err := guard(); err != nil {
@@ -67,6 +92,11 @@ func (c *Client) do(ctx context.Context, name string, variables map[string]any, 
 	body, err := json.Marshal(map[string]any{"query": text, "variables": variables})
 	if err != nil {
 		return errUnknown
+	}
+	// GraphQL is paced as a write unless it is a query: a mutation is
+	// never re-sent on a 429.
+	if strings.HasPrefix(strings.TrimSpace(text), "query") {
+		ctx = linearpace.WithKind(ctx, linearpace.Read)
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, Endpoint, bytes.NewReader(body))
 	if err != nil {
@@ -84,6 +114,8 @@ func (c *Client) do(ctx context.Context, name string, variables map[string]any, 
 	switch {
 	case resp.StatusCode == http.StatusUnauthorized:
 		return ErrRejected
+	case resp.StatusCode == http.StatusTooManyRequests:
+		return rateLimited(resp.Header.Get("Retry-After"))
 	case err != nil || resp.StatusCode != http.StatusOK:
 		return ErrUnavailable
 	}
@@ -104,6 +136,8 @@ func (c *Client) do(ctx context.Context, name string, variables map[string]any, 
 			return ErrRejected
 		case "INPUT_ERROR":
 			return errInput
+		case "RATELIMITED":
+			return rateLimited(resp.Header.Get("Retry-After"))
 		}
 		return ErrUnavailable
 	}

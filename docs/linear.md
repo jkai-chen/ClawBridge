@@ -563,6 +563,30 @@ app**. Your personal profile still reads, but never writes:
   - which bound teams the app cannot see, where writes would fail. A private
     team needs the app as a member.
 
+### Linear's rate limits
+
+Linear limits each credential with a leaky bucket of requests and of query complexity an hour: an OAuth app user
+5,000 requests, a personal API key 2,500, all of a user's keys together
+([Linear's rate limiting](https://linear.app/developers/rate-limiting)). ClawBridge paces its own calls to stay inside
+it:
+- **Per credential, per process.** Every call as the server's app, as your Linear connection, or with your API key goes
+  through one pacer for that credential. It follows the `X-RateLimit-*` headers Linear sends, refills at Linear's rate,
+  and keeps a tenth of the bucket for writes.
+- **Waiting, not failing.** A call with no room waits for it: a read up to 20 s, a write up to 5 s. Past that, or after
+  Linear itself answers 429, nothing is sent and the answer says when to try again: `rate_limited` with a retry time
+  for the app's reads, "Linear's rate limit for this API key has no room now; nothing was sent; try again in N s" for a
+  key, and the board's usual "nothing was sent to Linear (rate_limited…); retry with the same operation_id" for a
+  write.
+- **Reads and writes.** GraphQL queries and the read-only MCP endpoint are reads. Everything sent to the MCP endpoint
+  that can write is paced as a write, reads included: your Linear connection's reads made there take a write's 5 s
+  bound and are never re-sent. A GraphQL mutation is a write.
+- **Query complexity.** When less than one query's maximum (10,000 points) is left, a GraphQL call waits for Linear's
+  complexity bucket to refill that far, at its hourly limit, or until its reset if sooner.
+- **After a 429** every call on that credential waits for Linear's `Retry-After` (seconds or a date; a backoff from 2 s
+  up to a minute when it names none). A read Linear refused is sent once more if that wait fits its 20 s; a write never
+  is.
+- Several server processes pace apart: each follows the headers it sees, and a 429 holds only the one that met it.
+
 ### ClawBridge's own comments
 
 Every comment ClawBridge posts is recorded on the bus before it is sent, so a

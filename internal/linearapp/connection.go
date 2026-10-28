@@ -7,8 +7,11 @@ import (
 	"io"
 	"net/http"
 	"regexp"
+	"strconv"
 	"strings"
+	"time"
 
+	"clawbridge/internal/linearpace"
 	"clawbridge/internal/linearprovider"
 )
 
@@ -80,6 +83,9 @@ func (a *App) GraphQL(ctx context.Context, query string, variables map[string]an
 	if err != nil {
 		return fail("invalid")
 	}
+	// A query is a read: the pacer may hold it longer, and re-send it once
+	// on Linear's 429.
+	ctx = linearpace.WithKind(ctx, linearpace.Read)
 	for attempt := 0; ; attempt++ {
 		token, _, err := a.Token(ctx)
 		if err != nil {
@@ -106,14 +112,29 @@ func (a *App) GraphQL(ctx context.Context, query string, variables map[string]an
 			}
 			continue
 		}
+		if res.StatusCode == http.StatusTooManyRequests {
+			return a.rateLimited(res.Header.Get("Retry-After"))
+		}
 		if res.StatusCode != http.StatusOK {
 			return fail("unavailable")
 		}
 		var envelope struct {
 			Data   json.RawMessage `json:"data"`
-			Errors []any           `json:"errors"`
+			Errors []struct {
+				Extensions struct {
+					Code string `json:"code"`
+				} `json:"extensions"`
+			} `json:"errors"`
 		}
-		if json.Unmarshal(raw, &envelope) != nil || len(envelope.Errors) > 0 || len(envelope.Data) == 0 {
+		if json.Unmarshal(raw, &envelope) != nil {
+			return fail("query_failed")
+		}
+		for _, e := range envelope.Errors {
+			if e.Extensions.Code == "RATELIMITED" {
+				return a.rateLimited(res.Header.Get("Retry-After"))
+			}
+		}
+		if len(envelope.Errors) > 0 || len(envelope.Data) == 0 {
 			return fail("query_failed")
 		}
 		if json.Unmarshal(envelope.Data, out) != nil {
@@ -121,4 +142,15 @@ func (a *App) GraphQL(ctx context.Context, query string, variables map[string]an
 		}
 		return nil
 	}
+}
+
+// rateLimited is a read Linear, or the pacer, would not take now: nothing
+// was sent, and RetryAt says when it may go (a minute on, when Linear named
+// no time).
+func (a *App) rateLimited(retryAfter string) error {
+	wait := time.Minute
+	if n, err := strconv.Atoi(strings.TrimSpace(retryAfter)); err == nil && n >= 0 && n <= 24*3600 {
+		wait = time.Duration(n) * time.Second
+	}
+	return &Error{Code: "rate_limited", RetryAt: a.cfg.Now().Add(wait)}
 }

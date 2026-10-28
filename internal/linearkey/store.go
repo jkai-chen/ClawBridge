@@ -1,6 +1,8 @@
 package linearkey
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -8,6 +10,8 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+
+	"clawbridge/internal/linearpace"
 )
 
 // The places a key may be kept.
@@ -144,7 +148,11 @@ func NewClient(key string) (*Client, error) {
 	if !ValidKey(key) {
 		return nil, errors.New("that is not a Linear personal API key (lin_api_...)")
 	}
-	return &Client{key: key, http: httpClient}, nil
+	// Linear limits a user's keys together; the pacer is per key, which is
+	// as close as this process can tell.
+	paced := *httpClient
+	paced.Transport = linearpace.Transport{Base: httpClient.Transport, Pacer: linearpace.For("key:"+keyDigest(key), linearpace.APIKeyPerHour)}
+	return &Client{key: key, http: &paced}, nil
 }
 
 // Remove deletes profile's key, wherever its marker says it is, and the
@@ -189,4 +197,10 @@ func writePrivate(path, content string) error {
 		return errors.New("cannot write the Linear API key's files")
 	}
 	return nil
+}
+
+// keyDigest names a key's pacer without holding the key.
+func keyDigest(key string) string {
+	sum := sha256.Sum256([]byte(key))
+	return hex.EncodeToString(sum[:8])
 }

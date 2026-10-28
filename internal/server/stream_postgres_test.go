@@ -555,16 +555,27 @@ func TestPostgresStreamStalledClient(t *testing.T) {
 	}
 	defer conn.Close()
 	fmt.Fprintf(conn, "GET %s HTTP/1.1\r\nHost: %s\r\nAuthorization: Bearer tok-%s\r\n%s: %s\r\n\r\n", u.RequestURI(), u.Host, f.owner, StreamTicketHeader, f.ticket("b", bus.StreamConsume))
-	key := ""
-	deadline := time.Now().Add(20 * time.Second)
+	// Polled, not timed, so a loaded machine only makes it slower. The
+	// stream opened (it leased all 400) and was closed for its stalled
+	// writes: the hub holds nothing.
+	db, err := sqlOpen(f.dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	count := func(where string) int {
+		var n int
+		if err := db.QueryRow(`SELECT COUNT(*) FROM deliveries d JOIN sessions s ON s.id=d.recipient_id AND s.project_id=d.project_id JOIN projects p ON p.id=s.project_id JOIN workspaces w ON w.id=p.workspace_id WHERE w.name=$1 AND s.name='b' AND `+where, f.workspace).Scan(&n); err != nil {
+			t.Fatal(err)
+		}
+		return n
+	}
+	deadline := time.Now().Add(90 * time.Second)
 	for {
 		f.hub.mu.Lock()
 		subs, open := len(f.hub.subs), f.hub.open[f.owner]
-		for k := range f.hub.subs {
-			key = k
-		}
 		f.hub.mu.Unlock()
-		if key != "" && subs == 0 && open == 0 {
+		if count(`(d.lease_id IS NOT NULL OR d.attempts>=1)`) == 400 && subs == 0 && open == 0 {
 			break
 		}
 		if time.Now().After(deadline) {
@@ -572,9 +583,17 @@ func TestPostgresStreamStalledClient(t *testing.T) {
 		}
 		time.Sleep(50 * time.Millisecond)
 	}
-	time.Sleep(5 * time.Second)
-	if res, err := f.store.SweepDeliveries(context.Background()); err != nil || res.Reoffered < 400 {
-		t.Fatal(res, err)
+	// Its leases run out and are offered again with the attempt counted.
+	// The sweep is global, so another package's sweeper may get there first:
+	// count the deliveries, not this sweep's result.
+	for deadline = time.Now().Add(60 * time.Second); count(`d.lease_id IS NULL AND d.attempts=1`) < 400; {
+		if _, err := f.store.SweepDeliveries(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("the stalled stream's leases weren't offered again", count(`d.lease_id IS NULL AND d.attempts=1`))
+		}
+		time.Sleep(200 * time.Millisecond)
 	}
 	s := f.open("b", bus.StreamConsume)
 	if e := s.must(5*time.Second, "message"); e.data["attempt"] != float64(2) {

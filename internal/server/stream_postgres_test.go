@@ -445,7 +445,7 @@ func TestPostgresStreamSweeper(t *testing.T) {
 	f := newSTFixture(t, StreamLimits{Reread: time.Hour}, bus.QueueLimits{Lease: 300 * time.Millisecond})
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	go runSweeper(ctx, f.store, 100*time.Millisecond)
+	go runSweeper(ctx, f.store, 100*time.Millisecond, nil)
 	id := f.send("b", "slow")
 	s := f.open("b", bus.StreamConsume)
 	if e := s.must(5*time.Second, "message"); messageID(e) != id || e.data["attempt"] != float64(1) {

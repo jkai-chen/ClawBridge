@@ -79,7 +79,7 @@ func (a *chaosAPI) start() {
 	store.SetQueueLimits(a.queue)
 	hub := NewStreamHub()
 	go hub.Listen(ctx, a.dsn())
-	go runSweeper(ctx, store, 200*time.Millisecond)
+	go runSweeper(ctx, store, 200*time.Millisecond, nil)
 	addr := a.addr
 	if addr == "" {
 		addr = "127.0.0.1:0"

@@ -77,6 +77,8 @@ type streamHandler struct {
 	limit        *limiter
 	limits       StreamLimits
 	now          func() time.Time
+	// drain refuses a new stream while the server drains; nil never does.
+	drain *Drain
 }
 
 // streamScope reads the stream's URL: workspace, project, session and mode,
@@ -127,6 +129,14 @@ func (h *streamHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		cancel()
 		fail(w, 429, "rate_limited", "principal request limit reached")
 		return
+	}
+	// A draining server opens no stream: a consume stream leases.
+	if h.drain != nil {
+		if retry, on := h.drain.Check(ctx); on {
+			cancel()
+			failMaintenance(w, retry)
+			return
+		}
 	}
 	tickets := r.Header.Values(StreamTicketHeader)
 	if len(tickets) != 1 {
@@ -219,10 +229,16 @@ func (s *stream) run(ctx context.Context) {
 	defer ping.Stop()
 	reread := time.NewTicker(s.h.limits.Reread)
 	defer reread.Stop()
+	drain := s.h.hub.drainSignal()
 	sub.poke()
 	for {
 		select {
 		case <-ctx.Done():
+			return
+		case <-drain:
+			// The client waits retry_after, then reconnects (§2.4).
+			s.event("maintenance", map[string]any{"retry_after": s.h.hub.retryAfter()})
+			s.event("bye", map[string]any{})
 			return
 		case <-sub.replaced:
 			s.event("replaced", map[string]any{})

@@ -168,7 +168,7 @@ func TestPostgresLinearViewsSchema38Upgrade(t *testing.T) {
 	}
 	s.Close()
 	// Back to schema 37: its CHECK as Postgres named it.
-	if _, err = admin.ExecContext(ctx, ledgerDowngradePostgres(schema)+lanesDowngradePostgres(schema)+noticeDowngradePostgres(schema)+leadDowngradePostgres(schema)+rolesDowngradePostgres(schema)+kindDowngradePostgres(schema)+`ALTER TABLE `+schema+`.linear_views DROP CONSTRAINT linear_views_kind_check, ADD CHECK(kind='issue'); DELETE FROM `+schema+`.clawbridge_schema WHERE version>=38`); err != nil {
+	if _, err = admin.ExecContext(ctx, maintenanceDowngradePostgres(schema)+ledgerDowngradePostgres(schema)+lanesDowngradePostgres(schema)+noticeDowngradePostgres(schema)+leadDowngradePostgres(schema)+rolesDowngradePostgres(schema)+kindDowngradePostgres(schema)+`ALTER TABLE `+schema+`.linear_views DROP CONSTRAINT linear_views_kind_check, ADD CHECK(kind='issue'); DELETE FROM `+schema+`.clawbridge_schema WHERE version>=38`); err != nil {
 		t.Fatal(err)
 	}
 	if def := check(); strings.Contains(def, "project") {
@@ -179,7 +179,7 @@ func TestPostgresLinearViewsSchema38Upgrade(t *testing.T) {
 	}
 	s.Close()
 	var version int
-	if err = admin.QueryRowContext(ctx, `SELECT MAX(version) FROM `+schema+`.clawbridge_schema`).Scan(&version); err != nil || version != 47 {
+	if err = admin.QueryRowContext(ctx, `SELECT MAX(version) FROM `+schema+`.clawbridge_schema`).Scan(&version); err != nil || version != 48 {
 		t.Fatal(version, err)
 	}
 	if def := check(); !strings.Contains(def, "'project'") {

@@ -900,6 +900,39 @@ result. Record the current commit, rendered service state and the most recent
 verified backup timestamp. Never delete the only Postgres volume with
 `docker compose down -v`.
 
+### Draining before the swap
+
+From schema 42 on, a deploy drains the running server before it swaps the API, so the swap cuts nothing in flight:
+
+```sh
+docker compose ... run --rm --no-deps api operator maintenance start --reason "deploy $TAG" --wait 90s --confirm
+```
+
+- **What the servers do.** Every server answers each write with 503 `maintenance` and `Retry-After` (at most 30 s)
+  before any transaction, so nothing is written and nothing waits on a lock. Reads still answer, so doctor, the TUI and
+  agents' inbox reads keep working; a read records no heartbeat. Open streams get `event: maintenance` with
+  `retry_after`, then `bye`; a new stream or `stream_ticket` gets the 503. The watcher, its ticks and nudges, the
+  sweeper, the Linear write outbox (queued app writes wait) and the dispatcher model start nothing new (the model
+  API answers `server_busy`); what they began finishes.
+  `/v1/join` and `/mcp/intake` get the 503 too: a Linear agent that calls intake during the drain sees the error, and
+  the watcher's intake reads (the needs-agent label, delegation, mentions) pick the issue up after the swap.
+- **`--wait` must print `drained`.** It waits until every live server (one that reported within 15 s) has drained:
+  its maintenance flag is set and nothing is in flight, a running Linear app write included. If the wait runs out, it
+  names the servers that haven't drained and leaves maintenance on: decide before you swap, and don't swap on a
+  partial drain. `--no-wait --confirm` starts without waiting, for an emergency only: in-flight work may be cut.
+- **What ends it.** The new server's start ends a maintenance that began before it, so a single-instance deploy needs
+  no `end`. With several instances, drain, swap every one, then run `operator maintenance end --confirm`. A forgotten
+  maintenance ends on its own after `--ttl` (15 minutes by default, at most 60). After any end, the workers and the
+  model API wait 90 s more, so every live session checks in before anything judges whether it's still there. A plain
+  restart that ended nothing (a crash) doesn't wait.
+- **Check:** `operator maintenance show` prints the state and each server's report. If you abandon the swap, run
+  `operator maintenance end --confirm`.
+- **Which image runs it.** Run it after `build api`: the new image's `maintenance` command opens any schema that has
+  the drain (42 or later), older or newer than its own, and touches only the drain's tables. The running server must
+  have the drain itself, so the first deploy of a schema-42 release skips this step, and the command says so.
+- **Shutdown.** On SIGTERM `serve` waits up to 75 s for what's in flight, and compose gives the API 90 s
+  (`stop_grace_period`). A drained server has nothing in flight and stops at once.
+
 For a source-only archive deployment, `/opt/clawbridge/repo` has no
 remote Git credentials or `.git` directory. On the operator checkout, verify the
 reviewed commit was pushed, then export exactly that commit (never the dirty tree):
@@ -943,10 +976,18 @@ sudo docker compose --env-file /etc/clawbridge/clawbridge.env \
 sudo docker compose --env-file /etc/clawbridge/clawbridge.env \
   --project-name "${PROJECT:?set PROJECT first}" \
   -f /opt/clawbridge/repo/deploy/compose.yaml build api
+# Drain (see "Draining before the swap"); it must print drained.
+sudo docker compose --env-file /etc/clawbridge/clawbridge.env \
+  --project-name "${PROJECT:?set PROJECT first}" \
+  -f /opt/clawbridge/repo/deploy/compose.yaml run --rm --no-deps api \
+  operator maintenance start --reason "deploy $DEPLOY_SHA" --wait 90s --confirm
 sudo docker compose --env-file /etc/clawbridge/clawbridge.env \
   --project-name "${PROJECT:?set PROJECT first}" \
   -f /opt/clawbridge/repo/deploy/compose.yaml up -d --no-deps api
 ```
+
+If `--wait` names a server that hasn't drained, stop before `up -d`: run `operator maintenance end --confirm`, restore
+the recovery directory and rebuild the API from it, and find out why.
 
 Record the archive checksum, image ID, source fingerprints, recovery directory,
 and deployed SHA. Check HTTPS `/healthz`, the exact four-field `/v1/config`
@@ -1003,9 +1044,16 @@ not an archive.
      -f /opt/clawbridge/repo/deploy/compose.yaml config --quiet
    docker compose --env-file /etc/clawbridge/clawbridge.env --project-name "$PROJECT" \
      -f /opt/clawbridge/repo/deploy/compose.yaml build api
+   # Drain (see "Draining before the swap"); it must print drained.
+   docker compose --env-file /etc/clawbridge/clawbridge.env --project-name "$PROJECT" \
+     -f /opt/clawbridge/repo/deploy/compose.yaml run --rm --no-deps api \
+     operator maintenance start --reason "deploy $TAG" --wait 90s --confirm
    docker compose --env-file /etc/clawbridge/clawbridge.env --project-name "$PROJECT" \
      -f /opt/clawbridge/repo/deploy/compose.yaml up -d --no-deps api
    ```
+
+   If `--wait` names a server that hasn't drained, stop before `up -d`: run `operator maintenance end --confirm`,
+   move the old checkout back and rebuild the API from it, and find out why before trying again.
 
 5. **Check it** from your machine:
 

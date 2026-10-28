@@ -542,7 +542,7 @@ func TestQueueBackfillFromSchema34(t *testing.T) {
 	}
 	h.call("send", "a", map[string]any{"to": "@all", "body": "everyone", "operation_id": "all"})
 	h.call("mark_read", "b", map[string]any{"ids": []any{ids[1]}})
-	if _, err = s.db.Exec(ledgerDowngradeSQLite + lanesDowngradeSQLite + noticeDowngradeSQLite + leadDowngradeSQLite + rolesDowngradeSQLite + kindDowngradeSQLite + viewsDowngradeSQLite + queueDowngradeSQLite + `PRAGMA user_version=34;`); err != nil {
+	if _, err = s.db.Exec(maintenanceDowngradeSQLite + ledgerDowngradeSQLite + lanesDowngradeSQLite + noticeDowngradeSQLite + leadDowngradeSQLite + rolesDowngradeSQLite + kindDowngradeSQLite + viewsDowngradeSQLite + queueDowngradeSQLite + `PRAGMA user_version=34;`); err != nil {
 		t.Fatal(err)
 	}
 	s.Close()

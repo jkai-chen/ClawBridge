@@ -294,7 +294,7 @@ func TestLinearViewsSchema38Upgrade(t *testing.T) {
 	before := h.call("linear_view_get", "", map[string]any{"view_id": lvView})
 	// Back to schema 37's table, as a v0.3.6-dev store would have it.
 	v37 := strings.Replace(linearViewsSchemaV37, "CREATE TABLE linear_views(", "CREATE TABLE linear_views_v37(", 1)
-	if _, err = s.db.Exec(ledgerDowngradeSQLite + lanesDowngradeSQLite + noticeDowngradeSQLite + leadDowngradeSQLite + rolesDowngradeSQLite + kindDowngradeSQLite + v37 + `INSERT INTO linear_views_v37 SELECT * FROM linear_views; DROP TABLE linear_views; ALTER TABLE linear_views_v37 RENAME TO linear_views; PRAGMA user_version=37;`); err != nil {
+	if _, err = s.db.Exec(maintenanceDowngradeSQLite + ledgerDowngradeSQLite + lanesDowngradeSQLite + noticeDowngradeSQLite + leadDowngradeSQLite + rolesDowngradeSQLite + kindDowngradeSQLite + v37 + `INSERT INTO linear_views_v37 SELECT * FROM linear_views; DROP TABLE linear_views; ALTER TABLE linear_views_v37 RENAME TO linear_views; PRAGMA user_version=37;`); err != nil {
 		t.Fatal(err)
 	}
 	if _, err = s.db.Exec(`UPDATE linear_views SET kind='project'`); err == nil {
@@ -307,7 +307,7 @@ func TestLinearViewsSchema38Upgrade(t *testing.T) {
 	defer s.Close()
 	h = &harness{t, s}
 	var version int
-	if err = s.db.QueryRow(`PRAGMA user_version`).Scan(&version); err != nil || version != 47 {
+	if err = s.db.QueryRow(`PRAGMA user_version`).Scan(&version); err != nil || version != 48 {
 		t.Fatal(version, err)
 	}
 	if after := h.call("linear_view_get", "", map[string]any{"view_id": lvView}); !reflect.DeepEqual(after, before) {

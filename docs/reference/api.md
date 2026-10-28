@@ -399,6 +399,9 @@ data: {"message": {…an inbox row…}, "recipient_seq": 42, "lease_id": "lse_�
 event: status
 data: {"unacked": 3, "latest_seq": 42, "dead": 0}
 
+event: maintenance
+data: {"retry_after": 30}            (then bye: reconnect after retry_after)
+
 event: replaced | revoked | bye      (then the server closes)
 : ping                               (every 25 s)
 ```
@@ -684,6 +687,25 @@ The version-2 coordination and version-3 settings upgrades are described in
 [recovery](../operations/backup-and-recovery.md#coordination-schema-upgrade);
 the [project-set upgrade](../operations/backup-and-recovery.md#linear-project-set-upgrade)
 covers schema 4.
+
+### Maintenance
+
+While the operator drains the servers for a deploy (`operator maintenance start`,
+[deployment](../operations/deployment.md#draining-before-the-swap)), every request but a pure read answers 503:
+
+```json
+{"error": {"code": "maintenance", "message": "the server is in maintenance; retry after 30 s"}}
+```
+
+with `Retry-After` (at most 30 s). It is refused after authentication and before any transaction, so nothing was
+written: retry the same request, with the same `operation_id`, after `Retry-After`. `lease` is refused too, so
+consumers pause. Pure reads (`snapshot`, `list_sessions`, `whoami`, `inbox_status`, `taskboard_get_v2`, `history`
+and the other reads that take no lock) still answer, and record no heartbeat while it lasts; `heartbeat` answers
+`renewed: false`. A stream gets `event: maintenance` and `bye`; a new stream or `stream_ticket` gets the 503.
+`/v1/join` answers the same 503, `/mcp/intake` a JSON-RPC error at 503 with `Retry-After`, the dispatcher model API
+`503 {"error": "server_busy", "retry_after": N}`, and the watcher's tick endpoint `{"paused": true}`. `/healthz`,
+`/v1/config` and the static pages answer as usual. The model API and the server's own workers stay paused 90 s after
+maintenance ends.
 
 ## Version output
 

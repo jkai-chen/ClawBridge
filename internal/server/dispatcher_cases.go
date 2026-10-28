@@ -90,7 +90,9 @@ func (p *casePolls) give(key string) {
 // a second, until a case comes or wait_seconds pass. It stops at once when
 // the client goes (D5-L2). A case that expired on the way nudges the
 // rules' fallback.
-func serveCasesNext(ctx context.Context, store ModelStore, hub *StreamHub, token string, body map[string]json.RawMessage, maxAgents int, polls *casePolls, nudge func(string)) (any, error) {
+// A drain wakes it (StartDrain), and it answers no case without leasing
+// one.
+func serveCasesNext(ctx context.Context, store ModelStore, hub *StreamHub, token string, body map[string]json.RawMessage, maxAgents int, polls *casePolls, nudge func(string), drain *Drain) (any, error) {
 	f, err := fields(body, "wait_seconds")
 	if err != nil {
 		return nil, err
@@ -114,6 +116,11 @@ func serveCasesNext(ctx context.Context, store ModelStore, hub *StreamHub, token
 		every, wake = caseSafety, sub.wake
 	}
 	for {
+		if drain != nil {
+			if _, paused := drain.Paused(); paused {
+				return map[string]any{"case": nil}, nil
+			}
+		}
 		next, err := store.ModelNextCase(ctx, token, maxAgents)
 		if errors.Is(err, bus.ErrCaseLeased) {
 			return nil, caseError{code: "case_leased"}

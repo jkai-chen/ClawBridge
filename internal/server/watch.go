@@ -185,6 +185,7 @@ func startWatcher(ctx context.Context, store *bus.Store, w watchSettings, opts H
 	// The clock and the endpoint share one flight, so their ticks never
 	// overlap.
 	ticker := oneAtATime(built)
+	ticker.drain = opts.Drain
 	if w.tickAudience != "" {
 		verifier, err := NewGoogleTickVerifier(ctx, w.tickAudience, w.tickAccount)
 		if err != nil {

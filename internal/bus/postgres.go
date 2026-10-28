@@ -48,7 +48,7 @@ func OpenPostgresServer(ctx context.Context, dsn, bootstrapOwner string) (*Store
 }
 
 // postgresSchemaVersion is the hosted schema version this binary writes.
-const postgresSchemaVersion = 47
+const postgresSchemaVersion = 48
 
 // OpenPostgresOperator opens the hosted authority for a host operator's
 // maintenance command. It has no bootstrap owner, so no request run through
@@ -57,6 +57,15 @@ const postgresSchemaVersion = 47
 // exactly this binary's, so an operator image newer than the running server
 // cannot upgrade the schema under it.
 func OpenPostgresOperator(ctx context.Context, dsn string) (*Store, error) {
+	return openPostgresOperator(ctx, dsn, func(version int) error {
+		if version != postgresSchemaVersion {
+			return fmt.Errorf("Postgres schema is version %d but this binary is version %d; run the operator command from the server's own release", version, postgresSchemaVersion)
+		}
+		return nil
+	})
+}
+
+func openPostgresOperator(ctx context.Context, dsn string, accept func(version int) error) (*Store, error) {
 	if dsn == "" {
 		return nil, errors.New("Postgres DSN is required")
 	}
@@ -78,9 +87,9 @@ func OpenPostgresOperator(ctx context.Context, dsn string) (*Store, error) {
 		}
 		return nil, errors.New("Postgres unavailable; check the connection URL, credentials and network")
 	}
-	if version != postgresSchemaVersion {
+	if err = accept(version); err != nil {
 		db.Close()
-		return nil, fmt.Errorf("Postgres schema is version %d but this binary is version %d; run the operator command from the server's own release", version, postgresSchemaVersion)
+		return nil, err
 	}
 	return &Store{db: db, postgres: true}, nil
 }
@@ -380,6 +389,11 @@ func (s *Store) migratePostgres(ctx context.Context) error {
 	}
 	if version < 47 {
 		if _, err = tx.ExecContext(ctx, linearWritesSchema+`INSERT INTO clawbridge_schema(version) VALUES(47)`); err != nil {
+			return err
+		}
+	}
+	if version < maintenanceSchemaVersion {
+		if _, err = tx.ExecContext(ctx, maintenanceSchema+fmt.Sprintf(`INSERT INTO clawbridge_schema(version) VALUES(%d)`, maintenanceSchemaVersion)); err != nil {
 			return err
 		}
 	}

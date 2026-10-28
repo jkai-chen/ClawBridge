@@ -1579,11 +1579,35 @@ project's coordinator session, which then routes it.
   looked up among the linked teams' members through your Linear connection, `--linear-profile` if you have
   several; without `--confirm` it only shows who that is), or by Linear user ID. `trust remove` works the same way. ClawBridge reads who added the label, delegated the issue or wrote
   the mention from Linear's own history.
-- **Only a signal made in Linear itself counts as the person's.** On a hosted server with the ClawBridge app, an issue
-  write through ClawBridge (`clawbridge linear update --add-label`, an agent's MCP write) is made **as the app**
-  ([Writes as the ClawBridge app](#writes-as-the-clawbridge-app-hosted-servers)), even when the project owner runs it.
-  Linear's history then names the app, so it is not a trusted person's signal and only notifies the coordinator. A
-  trusted person adds `needs-agent`, delegates or mentions in Linear's own app or web UI.
+- **A trusted person's own write through ClawBridge counts too.** On a hosted server with the ClawBridge app, an
+  issue write through ClawBridge (`clawbridge linear update --add-label`, a comment) is made **as the app**
+  ([Writes as the ClawBridge app](#writes-as-the-clawbridge-app-hosted-servers)), so Linear's history names the app,
+  or, for a label added just after the issue was created, has no entry at all. The server records who asked for
+  each app write that adds a label or posts a comment. Intake credits the label (S1) or the mention's comment (S3)
+  to a trusted person only when all of these hold:
+  - **they are linked:** their trusted-list entry is linked to their ClawBridge principal (below), and that principal
+    is still a member of the project;
+  - **it was their own terminal:** the write was signed by their own device key (not a Google sign-in, not a CI
+    device), with no `--session`, from a shell with no agent's environment (`CLAUDECODE`, `CODEX_*`,
+    `CLAWBRIDGE_SESSION`, `CLAWBRIDGE_INSTANCE`);
+  - **it was the only one:** it is the only app write of that label (or that comment) on the issue from 2 minutes
+    before Linear's entry to 10 s after it, or, with no entry, in the whole poll window, with the label still on the
+    issue.
+
+  An agent's write never counts, even in its person's project: a write through a session is recorded too, so an agent
+  adding `needs-agent` near its person's own add makes both uncounted (`attribution_ambiguous` in the poll's skip
+  counts; `attributed_untrusted` when the one write isn't a trusted, linked person's own). The agent's environment is
+  the client's own word: an agent that clears it in its person's own shell passes as that person, the same trust as
+  the device key it signs with. Records are kept 7 days.
+- **Credit assumes the record.** The server records each app write after Linear accepts it. If that record fails (a
+  database error), the write stands, the failure is logged, and `clawbridge doctor` warns on the `linear.app` check
+  with the count since the server started: until then, intake may have missed or misjudged whose label or mention a
+  write was. With no transition in Linear's history, the label must also be proven on the issue by its ID, or the
+  signal is skipped as `transition_not_found`.
+- **Linking:** `clawbridge intake trust add EMAIL --confirm` links the person when the email they were found by is
+  also a ClawBridge project member's; `--principal EMAIL` names the member explicitly (it must be one). The command
+  says "Linked to principal …" or why not, the history records the link, and `intake trust list` shows it. Adding
+  someone again without a link keeps their link; removing them drops it. The TUI's trust add doesn't link.
 - Anyone else's signal, a bot's, or one whose author can't be proven only notifies the coordinator.
 - An issue's title and description never route anything. They become the agent's task, and the trusted person
   vouches for them as they stood at that moment.

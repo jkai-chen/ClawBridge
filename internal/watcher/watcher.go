@@ -51,6 +51,7 @@ type Store interface {
 	IntakeSystemState(ctx context.Context, projectID string) (bus.IntakeState, error)
 	IntakeCursorSet(ctx context.Context, projectID, source, subject, polled string, signal bool) error
 	IntakeEnqueueSystem(ctx context.Context, projectID string, ev bus.IntakeEvent) (string, error)
+	IntakeAttribution(ctx context.Context, projectID, issue, kind, target string, from, to time.Time) (bus.AttributionCredit, error)
 	ExecuteDispatcher(ctx context.Context, projectID, session string, r bus.Request) (bus.Result, error)
 }
 

@@ -733,6 +733,14 @@ func checkLinearApp(ctx context.Context, executor Executor, wid, pid string, add
 			check.Message = fmt.Sprintf("Agent writes go to Linear as the ClawBridge app, but it cannot see bound teams %s, so writes there fail.", strings.Join(hidden, ", "))
 			check.Action = "A Linear admin adds the ClawBridge app to each of those teams (private teams need it as a member)."
 		}
+		// Intake credits a trusted person's write through the app only by
+		// the server's record of it; a write it failed to record leaves
+		// that window to whatever else was recorded.
+		if n, _ := m["attribution_record_failures"].(float64); n > 0 && check.Status == Pass {
+			check.Status = Warn
+			check.Message += fmt.Sprintf(" The server failed to record who asked for %d of its app writes since it started, so intake may have missed or misjudged whose label or mention those were.", int64(n))
+			check.Action = "The server operator checks the server log for \"intake attribution was not recorded\" and the database's health."
+		}
 	}
 	add(check)
 }

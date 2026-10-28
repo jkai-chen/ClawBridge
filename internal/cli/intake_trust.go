@@ -145,3 +145,37 @@ func confirmTrustee(stderr io.Writer, op string, m linearprovider.Member, confir
 	_, _ = fmt.Fprintf(stderr, "%s %s.\n", doing, line)
 	return nil
 }
+
+// trustLinkNote says whether trust add linked the person to a ClawBridge
+// principal (Q2): only a linked person's own writes through ClawBridge, from
+// their own terminal, count as theirs.
+func trustLinkNote(stderr io.Writer, a map[string]any, result bus.Result) {
+	user, _ := a["linear_user_id"].(string)
+	rows := []map[string]any{}
+	switch data := result.Data.(type) {
+	case []map[string]any:
+		rows = data
+	case []any:
+		for _, v := range data {
+			if row, ok := v.(map[string]any); ok {
+				rows = append(rows, row)
+			}
+		}
+	}
+	linked := ""
+	for _, row := range rows {
+		if id, _ := row["linear_user_id"].(string); strings.EqualFold(id, user) {
+			linked, _ = row["principal"].(string)
+		}
+	}
+	switch {
+	case linked != "" && trusteeEmails():
+		_, _ = fmt.Fprintf(stderr, "Linked to principal %s: their own writes through ClawBridge, from their own terminal, count as theirs.\n", clirender.Safe(linked))
+	case linked != "":
+		_, _ = fmt.Fprintln(stderr, "Linked to a ClawBridge principal: their own writes through ClawBridge, from their own terminal, count as theirs.")
+	case a["link_email"] != nil:
+		_, _ = fmt.Fprintln(stderr, "Not linked: no member of this ClawBridge project has that email. Their writes through ClawBridge don't count as theirs; add --principal EMAIL to link them.")
+	default:
+		_, _ = fmt.Fprintln(stderr, "Not linked to a ClawBridge principal: their writes through ClawBridge don't count as theirs; add --principal EMAIL to link them.")
+	}
+}

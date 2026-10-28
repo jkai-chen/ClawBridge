@@ -111,7 +111,9 @@ func (s *Service) appWrite(ctx context.Context, scope bus.Request, operation str
 		}
 	}
 	instance, _ := scope.Args["instance"].(string)
-	request := bus.Request{Operation: "linear_write", Workspace: scope.Workspace, Project: scope.Project, Session: scope.Session, Args: map[string]any{"instance": instance, "operation": operation, "args": args}}
+	// The server credits a write to a person only when no agent's
+	// environment runs it (intake attribution, A2).
+	request := bus.Request{Operation: "linear_write", Workspace: scope.Workspace, Project: scope.Project, Session: scope.Session, Args: map[string]any{"instance": instance, "operation": operation, "args": args, "agent_marker": AgentMarker(agentEnviron())}}
 	result, err := s.cfg.Executor.Execute(ctx, request)
 	var rejected rejection
 	if errors.As(err, &rejected) {

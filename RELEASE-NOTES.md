@@ -526,6 +526,11 @@ deploys over v0.3.5 data and rolls back to the v0.3.5 image. Clients stay on v0.
   --project-flow-proven` (`CLAWBRIDGE_PROJECT_FLOW_PROVEN=1`), after the deploy probe; until then `status-policy show`
   says `off (not proven on this server)`. The minimal status policy that `link --closes …=agent` offers turns it on
   only on a proven server, and its preview says which.
+- **`operator linear-app-probe --project-status --project UUID [--dry-run]`** is that proof (A4). It moves the
+  operator's empty probe project, which `CLAWBRIDGE_PROBE_PROJECT` must name, to started, to completed and back, as
+  the app with project flow's own call. Each move is read back by status ID. The project must be in no binding, and
+  on a team a binding uses. Three accepted moves are the PASS that `--project-flow-proven` needs. It prints IDs and
+  types, never names. Details: docs/operations/deployment.md.
 
 ## Project health
 

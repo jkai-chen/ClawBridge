@@ -752,7 +752,7 @@ func openServingStore(ctx context.Context, dsn, owner string) (*bus.Store, error
 // cannot sign in: their own address moved to a new Google account, or a
 // workspace allow-list refuses every account.
 func RunOperator(ctx context.Context, args []string, stdout io.Writer) error {
-	const usage = "usage: clawbridge operator principal-unbind EMAIL --confirm [--allow-previous] | workspace-clear-domains WORKSPACE --confirm | linear-app-probe --confirm [--project UUID] [--p8 [--dry-run] | --health-order] | linear-app-doc-probe --confirm | health-run --project UUID --confirm [--force-new | --delete UPDATE_ID] | bootstrap-invite --workspace NAME [--force-stdout | --code-stdin [--expect-owner EMAIL]] [--database-url-env NAME] | launcher-token create --out PATH [--print] | launcher-token revoke ID | model-seal-key rotate [--confirm [--delete-unreadable]]"
+	const usage = "usage: clawbridge operator principal-unbind EMAIL --confirm [--allow-previous] | workspace-clear-domains WORKSPACE --confirm | linear-app-probe --confirm [--project UUID] [--p8 [--dry-run] | --health-order | --project-status [--dry-run]] | linear-app-doc-probe --confirm | health-run --project UUID --confirm [--force-new | --delete UPDATE_ID] | bootstrap-invite --workspace NAME [--force-stdout | --code-stdin [--expect-owner EMAIL]] [--database-url-env NAME] | launcher-token create --out PATH [--print] | launcher-token revoke ID | model-seal-key rotate [--confirm [--delete-unreadable]]"
 	if len(args) > 0 && args[0] == "bootstrap-invite" {
 		return runBootstrapInvite(ctx, args[1:], stdout)
 	}
@@ -773,11 +773,12 @@ func RunOperator(ctx context.Context, args []string, stdout io.Writer) error {
 		f.BoolVar(&allowPrevious, "allow-previous", false, "let the released account bind again, for an unbind made by mistake")
 	}
 	project := ""
-	p8, dryRun, healthOrder := false, false, false
+	p8, dryRun, healthOrder, projectStatus := false, false, false, false
 	if command == "linear-app-probe" {
 		f.StringVar(&project, "project", "", "a bound Linear project UUID whose health inputs are read; with --p8, the empty throwaway project")
 		f.BoolVar(&p8, "p8", false, "post one real status update to the empty --project as the app, read it back, delete it and read again (P8)")
-		f.BoolVar(&dryRun, "dry-run", false, "with --p8: check the project and the app's tools, and send nothing")
+		f.BoolVar(&dryRun, "dry-run", false, "with --p8 or --project-status: check the project and the app, and send nothing")
+		f.BoolVar(&projectStatus, "project-status", false, "move the empty --project, named by "+probeProjectEnv+", to started, completed and back as the app, reading each move back (A4)")
 		f.BoolVar(&healthOrder, "health-order", false, "read --project's updates as the health judgement does and with last:, two reads, and print their order")
 	}
 	forceNew, deleteID := false, ""
@@ -802,8 +803,11 @@ func RunOperator(ctx context.Context, args []string, stdout io.Writer) error {
 	if probe != (len(positional) == 0) || len(positional) > 1 {
 		return errors.New(usage)
 	}
-	if p8 && project == "" || dryRun && !p8 {
-		return errors.New("--p8 needs --project, and --dry-run needs --p8")
+	if p8 && project == "" || dryRun && !p8 && !projectStatus {
+		return errors.New("--p8 needs --project, and --dry-run needs --p8 or --project-status")
+	}
+	if projectStatus && (project == "" || p8 || healthOrder) {
+		return errors.New("--project-status needs --project, and not --p8 or --health-order")
 	}
 	if healthOrder && (project == "" || p8) {
 		return errors.New("--health-order needs --project, and not --p8")
@@ -814,6 +818,9 @@ func RunOperator(ctx context.Context, args []string, stdout io.Writer) error {
 	if !*confirm {
 		if command == "linear-app-probe" && healthOrder {
 			return errors.New("linear-app-probe --health-order reads the project's latest updates twice as the Linear app and prints their IDs and times; it writes nothing; repeat with --confirm")
+		}
+		if command == "linear-app-probe" && projectStatus {
+			return errors.New("linear-app-probe --project-status moves the empty probe project's status three times as the Linear app (to started, completed and back); repeat with --confirm")
 		}
 		if command == "linear-app-probe" && p8 {
 			return errors.New("linear-app-probe --p8 posts one real status update to the empty project as the Linear app, then deletes it; repeat with --confirm")
@@ -846,6 +853,9 @@ func RunOperator(ctx context.Context, args []string, stdout io.Writer) error {
 	defer store.Close()
 	if command == "linear-app-probe" && healthOrder {
 		return linearAppHealthOrder(ctx, store, project, stdout)
+	}
+	if command == "linear-app-probe" && projectStatus {
+		return linearAppStatusProbe(ctx, store, project, dryRun, stdout)
 	}
 	if command == "linear-app-probe" && p8 {
 		return linearAppP8(ctx, store, project, dryRun, stdout)

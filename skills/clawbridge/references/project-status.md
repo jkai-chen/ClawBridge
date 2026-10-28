@@ -44,3 +44,8 @@ naming the designated coordinator means you are not it: stop there.
 When project flow is on, your set holds flow for that project until the
 project owner or a lead runs `project-flow resume`. Say so when you report the
 set.
+
+Project flow stays off on a server until its operator has run the app-write
+probe (`operator linear-app-probe --project-status`) and set it proven. If
+`status-policy show` says `off (not proven on this server)`, that's why: it isn't
+yours to change, so tell the project owner.

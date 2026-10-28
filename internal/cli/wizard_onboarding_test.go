@@ -95,7 +95,7 @@ func TestGuidedOnboardingRunsEachConfirmedStepInOrder(t *testing.T) {
 	// Skill Yes; Linear YES as "Work" with READ access; Claude Code yes as
 	// session "eng" and written; Codex yes as "cx" and written. Answers are
 	// case-insensitive.
-	o := newOnboardingRun(t, "Yes\nYES\nWork\n READ \ny\neng\nY\ny\ncx\nyes\n")
+	o := newOnboardingRun(t, "Yes\nYES\nWork\n READ \ny\neng\nY\ny\ncx\nyes\n\n")
 	if err := o.run(); err != nil {
 		t.Fatal(err, o.out.String())
 	}
@@ -121,7 +121,7 @@ func TestGuidedOnboardingRunsEachConfirmedStepInOrder(t *testing.T) {
 
 func TestGuidedOnboardingWritesNothingWithoutAYes(t *testing.T) {
 	// Every question declined, including a previewed MCP entry.
-	o := newOnboardingRun(t, "n\nn\ny\neng\nn\n\n")
+	o := newOnboardingRun(t, "n\nn\ny\neng\nn\n\n\n")
 	if err := o.run(); err != nil {
 		t.Fatal(err)
 	}
@@ -142,7 +142,7 @@ func TestGuidedOnboardingReportsFailuresAndContinues(t *testing.T) {
 		t.Fatal(err)
 	}
 	// A failed Linear connection pins no profile; a failed preview writes nothing.
-	o.want("keyring", "join", "skill", "linear:Linear:write", "mcp-preview:claude-code:eng:", "doctor::", "tui")
+	o.want("keyring", "join", "skill", "linear:Linear:write", "mcp-preview:claude-code:eng:", "doctor::")
 	for _, want := range []string{"- Agent skill: failed: synthetic skill failure", "- Linear: failed: synthetic linear failure", "- MCP for Claude Code: failed: synthetic mcp-preview failure", "- Doctor: failed: synthetic doctor failure"} {
 		if !strings.Contains(o.out.String(), want) {
 			t.Fatalf("output lacks %q:\n%s", want, o.out.String())
@@ -156,7 +156,7 @@ func TestGuidedOnboardingRejectsAnUnknownAccessAndSkipsAfterInputEnds(t *testing
 		t.Fatal(err)
 	}
 	// "admin" is neither read nor write; input then ends at the session name.
-	o.want("keyring", "join", "doctor::", "tui")
+	o.want("keyring", "join", "doctor::")
 	for _, want := range []string{"- Linear: skipped: choose read or write", "- MCP for Claude Code: skipped", "- MCP for Codex: skipped", "Input ended; the remaining steps were skipped."} {
 		if !strings.Contains(o.out.String(), want) {
 			t.Fatalf("output lacks %q:\n%s", want, o.out.String())
@@ -170,7 +170,7 @@ func TestGuidedOnboardingWithoutAgentsOffersCommands(t *testing.T) {
 	if err := o.run(); err != nil {
 		t.Fatal(err)
 	}
-	o.want("keyring", "join", "doctor::", "tui")
+	o.want("keyring", "join", "doctor::")
 	for _, want := range []string{"- Agent skill: skipped: no Claude Code or Codex configuration found", "- MCP: skipped: no Claude Code or Codex configuration found"} {
 		if !strings.Contains(o.out.String(), want) {
 			t.Fatalf("output lacks %q:\n%s", want, o.out.String())
@@ -203,12 +203,16 @@ func TestOnboardingOffersTheDispatcher(t *testing.T) {
 		calls          []string
 		shownOneLiner  bool
 		revision       any
+		blocked        string
 	}{
 		"local":      {path: local, outcome: "skipped: the dispatcher runs on a hosted server"},
 		"already on": {path: cloud, enabled: true, outcome: "already on", calls: []string{"show"}},
 		"not owner":  {path: cloud, previewErr: errors.New("project owner permission required"), outcome: "skipped: only a project owner", later: "enable --expected-revision 3 --confirm", calls: []string{"show", "enable --engine rules --expected-revision 3"}},
 		"unlinked":   {path: cloud, previewErr: errors.New("link the task board before enabling the dispatcher"), outcome: "skipped: link the task board first", later: "--expected-revision 3", calls: []string{"show", "enable --engine rules --expected-revision 3"}},
 		"session":    {path: cloud, previewErr: errors.New("the dispatcher is turned on or off by the project owner, not from a session"), outcome: "skipped: turn it on in your own terminal", later: "--expected-revision 3", calls: []string{"show", "enable --engine rules --expected-revision 3"}},
+		// A preview that says enabling would be refused is not offered.
+		"no domains": {path: cloud, blocked: "no_domains", outcome: "skipped: the task board names no Linear projects", later: "--expected-revision 3", calls: []string{"show", "enable --engine rules --expected-revision 3"}},
+		"blocked":    {path: cloud, blocked: "model_projects_over_cap", outcome: "skipped: model_projects_over_cap", calls: []string{"show", "enable --engine rules --expected-revision 3"}},
 		"declined":   {path: cloud, outcome: "offered, left off", later: "enable --expected-revision 3 --confirm", calls: []string{"show", "enable --engine rules --expected-revision 3"}, shownOneLiner: true},
 		"enabled":    {path: cloud, answer: true, outcome: "on (rules engine); turn it off with clawbridge dispatcher disable", later: "model mode", calls: []string{"show", "enable --engine rules --expected-revision 3", "enable --engine rules --expected-revision 3 --confirm"}, shownOneLiner: true},
 		"conflict":   {path: cloud, answer: true, confirmErr: errors.New("the dispatcher policy changed: current revision is 4"), outcome: "failed: the dispatcher policy changed", later: "--expected-revision 3 --confirm", calls: []string{"show", "enable --engine rules --expected-revision 3", "enable --engine rules --expected-revision 3 --confirm"}, shownOneLiner: true},
@@ -231,7 +235,11 @@ func TestOnboardingOffersTheDispatcher(t *testing.T) {
 			case strings.HasSuffix(strings.Join(args, " "), "--confirm"):
 				return map[string]any{"enabled": true}, c.confirmErr
 			}
-			return map[string]any{"coordinator_before": "lead", "domains": []any{"all-work"}}, c.previewErr
+			preview := map[string]any{"preview": true, "mode": "rules", "coordinator_before": "lead", "coordinator_after": "dispatcher", "domains": []any{"all-work"}}
+			if c.blocked != "" {
+				preview["blocked"] = c.blocked
+			}
+			return preview, c.previewErr
 		}
 		var out bytes.Buffer
 		var outcome, later string
@@ -245,7 +253,8 @@ func TestOnboardingOffersTheDispatcher(t *testing.T) {
 		if !strings.HasPrefix(outcome, c.outcome) || !strings.Contains(later, c.later) || strings.Join(calls, ",") != strings.Join(c.calls, ",") || asked != c.shownOneLiner {
 			t.Fatalf("%s: %q later %q calls %v asked %v", name, outcome, later, calls, asked)
 		}
-		if c.shownOneLiner != strings.Contains(out.String(), "clawbridge dispatcher disable turns it off any time") || c.shownOneLiner != strings.Contains(out.String(), "all-work") {
+		if c.shownOneLiner != strings.Contains(out.String(), "clawbridge dispatcher disable turns it off any time") || c.shownOneLiner != strings.Contains(out.String(), "lead → dispatcher") ||
+			strings.Contains(out.String(), "{") {
 			t.Fatalf("%s: %s", name, out.String())
 		}
 	}

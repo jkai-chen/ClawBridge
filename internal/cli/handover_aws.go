@@ -24,51 +24,43 @@ func askAWSInputs(ctx context.Context, prompt *wizardPrompt, stdout io.Writer) (
 	fmt.Fprintln(stdout, "\nYour AWS choices. None of these is a secret. The profile is a named AWS CLI profile you set up")
 	fmt.Fprintln(stdout, "yourself (for example with aws configure sso --profile "+defaultAWSProfile+"); ClawBridge never creates it.")
 	s := &onboardingState{Cloud: "aws"}
-	for _, q := range []struct {
-		label, fallback string
-		dest            *string
-	}{
-		{"AWS CLI profile", defaultAWSProfile, &s.Profile},
-		{"Region", "eu-west-1", &s.Region},
-		{"Account ID", "", &s.Account},
-		{"Zone", "", &s.Zone},
-		{"Domain for the server", "", &s.Domain},
-		{"Owner's email (becomes workspace owner)", "", &s.Owner},
-		{"Instance size, t4g.small or t4g.medium", "t4g.small", &s.Size},
-		{"Backup bucket", "", &s.Bucket},
-	} {
-		fallback := q.fallback
-		switch q.dest {
-		case &s.Account:
-			// The profile's own account, when it can be read.
-			if awsProfilePattern.MatchString(s.Profile) && awsRegionPattern.MatchString(s.Region) {
-				if out, err := awsCLI(ctx, []string{"aws", "sts", "get-caller-identity", "--query", "Account", "--output", "text", "--profile", s.Profile, "--region", s.Region}, nil); err == nil {
-					if id := strings.TrimSpace(string(out)); accountPattern.MatchString(id) {
-						fallback = id
-					}
-				}
-			}
-		case &s.Zone:
-			fallback = s.Region + "a"
-		case &s.Bucket:
-			fallback = "clawbridge-backups-" + s.Account + "-" + s.Region
-		}
-		label := q.label + ": "
-		if fallback != "" {
-			label = q.label + " [" + fallback + "]: "
-		}
-		answer, err := prompt.ask(label)
-		if err != nil {
-			return nil, err
-		}
-		if *q.dest = strings.TrimSpace(answer); *q.dest == "" {
-			*q.dest = fallback
-		}
-	}
-	if err := validInputs(s); err != nil {
-		return nil, fmt.Errorf("%w; run clawbridge onboard to start again", err)
+	if err := askQuestions(prompt, stdout, s, awsQuestions(ctx)); err != nil {
+		return nil, err
 	}
 	return s, nil
+}
+
+// awsQuestions are AWS's inputs. With a context, the account is offered
+// as the profile's own, when it can be read; validInputs passes nil.
+func awsQuestions(ctx context.Context) []inputQuestion {
+	account := func(s *onboardingState) string {
+		if ctx == nil || !awsProfilePattern.MatchString(s.Profile) || !awsRegionPattern.MatchString(s.Region) {
+			return ""
+		}
+		out, err := awsCLI(ctx, []string{"aws", "sts", "get-caller-identity", "--query", "Account", "--output", "text", "--profile", s.Profile, "--region", s.Region}, nil)
+		if id := strings.TrimSpace(string(out)); err == nil && accountPattern.MatchString(id) {
+			return id
+		}
+		return ""
+	}
+	return []inputQuestion{
+		{"AWS CLI profile", func(s *onboardingState) *string { return &s.Profile }, fixed(defaultAWSProfile), matches(awsProfilePattern),
+			"the profile must be a named AWS CLI profile"},
+		{"Region", func(s *onboardingState) *string { return &s.Region }, fixed("eu-west-1"), matches(awsRegionPattern),
+			"the region must look like eu-west-1"},
+		{"Account ID", func(s *onboardingState) *string { return &s.Account }, account, matches(accountPattern),
+			"the account must be a 12-digit AWS account ID"},
+		{"Zone", func(s *onboardingState) *string { return &s.Zone }, func(s *onboardingState) string { return s.Region + "a" },
+			func(s *onboardingState, v string) bool {
+				return len(v) == len(s.Region)+1 && strings.HasPrefix(v, s.Region) && v[len(s.Region)] >= 'a' && v[len(s.Region)] <= 'z'
+			}, "the zone must be in the region, like eu-west-1a"},
+		domainQuestion,
+		ownerQuestion,
+		{"Instance size, t4g.small or t4g.medium", func(s *onboardingState) *string { return &s.Size }, fixed("t4g.small"),
+			func(_ *onboardingState, v string) bool { return awsSizes[v] }, "the instance size must be t4g.small or t4g.medium"},
+		{"Backup bucket", func(s *onboardingState) *string { return &s.Bucket }, func(s *onboardingState) string { return "clawbridge-backups-" + s.Account + "-" + s.Region },
+			matches(s3BucketPattern), "the bucket must be a valid, globally unique bucket name"},
+	}
 }
 
 // awsTaskText is the TASK.md the agent starts from on AWS.
@@ -143,7 +135,7 @@ func findInstance(ctx context.Context, s *onboardingState) (string, error) {
 }
 
 // handOverAWS is handOver for AWS.
-func handOverAWS(ctx context.Context, s *onboardingState, bin, skillAgent string, stdout, stderr io.Writer) error {
+func handOverAWS(ctx context.Context, s *onboardingState, bin, skillAgent, path string, stdout, stderr io.Writer) error {
 	if err := installPlaybook("aws", skillAgent); err != nil {
 		return fmt.Errorf("the playbook could not be installed for the agent: %w", err)
 	}
@@ -187,5 +179,5 @@ func handOverAWS(ctx context.Context, s *onboardingState, bin, skillAgent string
 	if err = saveOnboarding(s); err != nil {
 		return err
 	}
-	return finishSignin(ctx, s, nil, stdout, stderr)
+	return finishSignin(ctx, s, nil, path, stdout, stderr)
 }

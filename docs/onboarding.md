@@ -119,8 +119,9 @@ clawbridge
 
 On first launch this opens the guided setup (`clawbridge setup wizard` opens it
 again later). It asks for the service URL, workspace and project and how to sign
-in (browser, or device sign-in for SSH and headless machines), shows your
-answers, and asks `Continue with sign-in and save after verified join? [y/N]`;
+in (open a browser here, or show a code to enter on another device, for SSH and
+headless machines). Each answer is checked as you give it; a wrong one is asked
+again with the reason, up to three times. It then shows your answers, and asks `Continue with sign-in and save after verified join? [y/N]`;
 anything but `y` cancels without changing anything. It then signs you in with
 Google, verifies your membership, and saves the trusted route. Your Google
 account must already have the role from the owner; joining does not grant it.
@@ -130,10 +131,11 @@ When the server takes device keys, the guided setup asks first how you sign in:
 Google**. With a code it asks for the email the invite was issued for and a name
 for this device, shows your answers, and asks to continue; only then does it ask
 for the code, which isn't echoed. It makes this device's key, joins, and saves the
-profile, then picks your project (or asks, if you have several). If the owner
-hasn't granted you a project yet, the terminal view opens on **Waiting for a
-project**: it names the owner to ask, checks again every 30 seconds, and opens your
-project once it's yours. On a machine with
+profile, then picks your project. With several, it lists them numbered and you
+pick one. If the owner hasn't granted you a project yet, the profile is still
+saved, and the terminal view opens on **Waiting for a project**: it names the
+owner to ask, checks again every 30 seconds, and opens your project once it's
+yours. On a machine with
 no system key store, such as headless Linux, it explains that the key would be a
 plain file only you can read, and asks before using one.
 
@@ -148,8 +150,8 @@ example an Orca agent shell), `CLAUDE_CONFIG_DIR` and `CODEX_HOME` may point at
 that tool's profile, and the skill and MCP steps then write there instead of
 `~/.claude` and `~/.codex`.
 
-After the join, the setup offers each remaining step in turn. Every step can be
-skipped, nothing is written until you answer yes, and a failed step is reported
+After the join, the setup offers each remaining step in turn, headed
+"Optional setup 1 of 5" to "5 of 5". Every step can be skipped, nothing is written until you answer yes, and a failed step is reported
 without undoing the earlier ones:
 
 1. **Agent skill.** Installs or updates the skill for the detected agents, the
@@ -161,13 +163,16 @@ without undoing the earlier ones:
    printed too, for another browser profile on this computer. The connection and
    its credentials are yours; nobody else's account is used.
 3. **MCP for each agent.** Asks for a session name, shows the entry it would
-   write as a dry run, and writes it after you confirm. With a Linear profile from
+   write (the file, the command and its arguments) as a dry run, and writes it
+   after you confirm. With a Linear profile from
    step 2, the entry also enables the native task-board tools.
 4. **Doctor.** Runs `clawbridge doctor` once for each MCP entry it configured.
 5. **The dispatcher (owners of a hosted project).** If you own the project, its
    task board is linked and the dispatcher is off, it says in one line what the
-   dispatcher does, shows the `dispatcher enable` preview, and asks whether to turn
-   it on in the rules engine. The default is no. `clawbridge dispatcher disable`
+   dispatcher does, shows what turning it on changes (its coordinator, sessions
+   and domains, and where it confirms claims itself), and asks whether to turn
+   it on in the rules engine. If enabling would be refused, for example because
+   the task board names no Linear projects, the step is skipped with the reason. The default is no. `clawbridge dispatcher disable`
    turns it off any time. Model mode is set up separately (see
    [the dispatcher](dispatcher.md#model-mode-designed-partly-built)). For anyone
    else the step is skipped, with the reason.
@@ -175,7 +180,8 @@ without undoing the earlier ones:
 It then prints a summary of what was set up, what was skipped, and the exact
 command for each skipped step.
 
-The terminal view opens afterwards. Next, take a first issue from proposal to
+It then asks `Open ClawBridge now? [Y/n]`; Enter opens the terminal view, and `n`
+leaves it for later (run `clawbridge`). Next, take a first issue from proposal to
 release: [your first task](usage.md#your-first-task-claim-and-release). Ask the
 owner which session is the project's coordinator; it confirms your assignments.
 

@@ -46,11 +46,14 @@ reopens it at any time):
    own agent with the `clawbridge-provision-gcp` or `clawbridge-provision-aws`
    playbook, in this terminal. You approve each of its commands, and
    `clawbridge cloud check` decides when each step is done. Progress is saved,
-   so `clawbridge onboard` resumes it. Without an agent, follow the
+   so `clawbridge onboard` resumes it. Once your workspace exists, it creates
+   your first project. Without an agent, follow the
    [first-deployment guide](docs/operations/first-deployment.md), which covers
    both clouds.
 
-Without a terminal, `clawbridge` prints the command behind each choice.
+A wrong answer is asked again with the reason, and every path ends by asking
+`Open ClawBridge now? [Y/n]`. Without a terminal, `clawbridge` prints the
+command behind each choice.
 
 Install a separate MCP session for each agent:
 

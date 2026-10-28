@@ -13,6 +13,7 @@ import (
 	"strings"
 
 	"clawbridge/internal/bus"
+	"clawbridge/internal/clirender"
 	"clawbridge/internal/doctor"
 	"clawbridge/internal/install"
 	"clawbridge/internal/remote"
@@ -345,6 +346,6 @@ func runTUI(ctx context.Context, flags Config, args []string, stdout, stderr io.
 	// This runs once per save: the saved project resolves, so the next run
 	// can't wait again unless the project is taken away in between, and
 	// then only after the person has seen it and quit.
-	fmt.Fprintf(stderr, "Project %s saved to %s.\n", wizardSafe(found), path)
+	fmt.Fprintf(stderr, "Project %s saved to %s.\n", clirender.Safe(found), path)
 	return runTUI(ctx, flags, args, stdout, stderr)
 }

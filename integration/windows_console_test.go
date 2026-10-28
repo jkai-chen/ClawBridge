@@ -61,12 +61,14 @@ func TestWindowsGuidedSetupConsoleInput(t *testing.T) {
 	c.send("wq\x7fs-alpha\r")
 	c.expect("Project:", "Enter did not complete the workspace prompt")
 	c.send("p-alpha\r")
-	c.expect("Sign-in browser/device", "Enter did not complete the project prompt")
-	// Only "device" is accepted here, so a Backspace stored as a byte fails.
+	c.expect("show a code to enter on another device", "Enter did not complete the project prompt")
+	c.expect("Choose 1 or 2", "the sign-in choice did not prompt")
+	// "device" picks the code; a Backspace stored as a byte would be asked
+	// again instead, and the summary below would never come.
 	c.send("devicx\x7fe\r")
 	// The wizard's own summary shows the answers it received.
 	c.expect("Workspace: ws-alpha", "Backspace did not edit the workspace answer")
-	c.expect("Sign-in: device", "Backspace did not edit the sign-in answer")
+	c.expect("Sign-in: a code on another device", "Backspace did not edit the sign-in answer")
 	c.expect("Continue with sign-in", "the confirmation prompt did not appear")
 	c.send("\x03")
 	if code := c.wait(15 * time.Second); code == 0 {

@@ -186,7 +186,8 @@ func TestHandoverDeclinedOrRefused(t *testing.T) {
 	}
 	// A bad input is refused before anything is saved or run.
 	home := isolated(t)
-	wizardHooks(t, "3\n\n\nexample-project\neurope-west1\nus-east1-b\nbridge.example.test\n\n\n\n")
+	// Three zones outside the region: asked again each time, then refused.
+	wizardHooks(t, "3\n\n\nexample-project\neurope-west1\nus-east1-b\nus-east1-c\nasia-east1-a\n")
 	h = stubHandover(t)
 	if err := Run(context.Background(), []string{"onboard"}, io.Discard, io.Discard); err == nil || !strings.Contains(err.Error(), "zone must be in the region") || h.ran != nil {
 		t.Fatal(err)

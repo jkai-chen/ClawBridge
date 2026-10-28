@@ -109,8 +109,9 @@ clawbridge project thread MESSAGE_ID       # one thread, oldest first, with who 
 
 
 Run `clawbridge` in an interactive terminal. On first launch, provide the existing
-service's HTTPS address, workspace and project, choose browser or device sign-in,
-and confirm. Later launches open the saved profile's TUI. Your Google account
+service's HTTPS address, workspace and project, choose how to sign in (open a
+browser here, or show a code to enter on another device), and confirm. Each
+answer is checked as you give it, and a wrong one is asked again. Later launches open the saved profile's TUI. Your Google account
 must already have membership; joining does not grant it or create infrastructure.
 
 For explicit commands:
@@ -126,8 +127,10 @@ A complete existing OAuth route reuses its keychain credential; `--login` reques
 a fresh browser sign-in. A failed join preserves the previous trusted route.
 Joining does not register an agent session.
 
-Use `clawbridge setup wizard` to open guided join again. An invalid saved profile
-is reported for repair instead of overwritten. Bare noninteractive invocation
+Use `clawbridge setup wizard` to open guided join again. A saved profile that is
+incomplete or damaged is never overwritten: bare `clawbridge` says what is wrong
+(the missing settings, or a file it can't read) and how to start again with
+`clawbridge onboard`. Bare noninteractive invocation
 prints help; automation uses explicit commands.
 
 `clawbridge login`, `login --device`, `logout` and `doctor` operate on the selected

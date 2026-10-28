@@ -100,7 +100,8 @@ func (w *inviteWizard) profile() map[string]any {
 // only then the code, unechoed; the join, the first signed read, the
 // project saved beside the device route, onboarding and the TUI.
 func TestWizardJoinsWithAnInviteCode(t *testing.T) {
-	w := newInviteWizard(t, "https://service.test\n1\nada@example.com\nAda's laptop\ny\n", "google", "device")
+	// After the code: Linear no, then yes to opening ClawBridge.
+	w := newInviteWizard(t, "https://service.test\n1\nada@example.com\nAda's laptop\ny\nn\n\n", "google", "device")
 	out, err := w.run()
 	if err != nil {
 		t.Fatal(err, out)
@@ -139,7 +140,7 @@ func TestWizardOffersOnlyWhatTheServerTakes(t *testing.T) {
 	}
 	w = newInviteWizard(t, "https://service.test\n2\nws\nprj\ndevice\nn\n", "google", "device")
 	out, err = w.run()
-	if err != nil || !strings.Contains(out, "Sign-in: device") || !strings.Contains(out, "Canceled; no credentials or configuration changed.") || len(w.joined) != 0 {
+	if err != nil || !strings.Contains(out, "Sign-in: a code on another device") || !strings.Contains(out, "Canceled; no credentials or configuration changed.") || len(w.joined) != 0 {
 		t.Fatal(err, out)
 	}
 	w = newInviteWizard(t, "https://service.test\n", "saml")
@@ -190,21 +191,27 @@ func TestWizardInviteDeclineChangesNothing(t *testing.T) {
 // With several projects the person picks one; with none, or a failed
 // signed read, the wizard says what to do and opens nothing.
 func TestWizardInviteProjectChoice(t *testing.T) {
-	w := newInviteWizard(t, "https://service.test\n1\nada@example.com\n\ny\nweb\n", "device", "google")
-	w.projects = []string{"api", "web"}
-	out, err := w.run()
-	if err != nil || w.profile()["project"] != "web" || !strings.Contains(out, "Your projects: api, web") {
-		t.Fatal(err, out)
+	// A numbered list: a number or a slug picks; a wrong answer asks again.
+	for answer, want := range map[string]string{"2": "web", "web": "web", "": "api", "3\nother\n2": "web"} {
+		w := newInviteWizard(t, "https://service.test\n1\nada@example.com\n\ny\n"+answer+"\nn\n\n", "device", "google")
+		w.projects = []string{"api", "web"}
+		out, err := w.run()
+		if err != nil || w.profile()["project"] != want || !strings.Contains(out, "Your projects:\n  1. api\n  2. web\n") || !w.tui {
+			t.Fatalf("%q: %v %s", answer, err, out)
+		}
 	}
-	w = newInviteWizard(t, "https://service.test\n1\nada@example.com\n\ny\nother\n", "device", "google")
+	w := newInviteWizard(t, "https://service.test\n1\nada@example.com\n\ny\nother\n0\n9\n", "device", "google")
 	w.projects = []string{"api", "web"}
-	if _, err = w.run(); err == nil || !strings.Contains(err.Error(), "not one of your projects") || w.tui {
+	if _, err := w.run(); err == nil || !strings.Contains(err.Error(), "choose a number from 1 to 2") || w.tui {
 		t.Fatal(err)
 	}
-	w = newInviteWizard(t, "https://service.test\n1\nada@example.com\n\ny\n", "device", "google")
+	// U47: with none, the profile is kept, the person is told what it waits
+	// for, and ClawBridge opens on its waiting screen (PR D); not an error.
+	w = newInviteWizard(t, "https://service.test\n1\nada@example.com\n\ny\n\n", "device", "google")
 	w.projects = nil
-	if _, err = w.run(); err == nil || !strings.Contains(err.Error(), "no project in this workspace yet") || w.tui {
-		t.Fatal(err)
+	out, err := w.run()
+	if err != nil || !strings.Contains(out, "no project in this workspace yet") || !strings.Contains(out, "waiting screen") || !w.tui || w.profile()["project"] != nil || w.profile()["workspace"] != "pilot" {
+		t.Fatal(err, out)
 	}
 	w = newInviteWizard(t, "https://service.test\n1\nada@example.com\n\ny\n", "device", "google")
 	wizardProjects = func(context.Context, string) ([]string, error) { return nil, errors.New("401") }
@@ -234,7 +241,7 @@ func TestWizardInviteJoinsARealServer(t *testing.T) {
 	f := newJoinFixture(t)
 	methods, join, projects := wizardMethods, wizardDeviceJoin, wizardProjects
 	path := filepath.Join(t.TempDir(), "client.toml")
-	r := wizardHooks(t, f.url+"\nada@example.com\nAda's laptop\ny\n")
+	r := wizardHooks(t, f.url+"\nada@example.com\nAda's laptop\ny\nn\n\n")
 	wizardMethods, wizardDeviceJoin, wizardProjects = methods, join, projects
 	wizardInviteCode = func() (string, error) {
 		if !r.closed {

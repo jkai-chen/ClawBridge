@@ -115,10 +115,11 @@ clawbridge --project api whoami      # identity_provenance: device-key
   server**, give the URL, and choose **I have an invite code**. It asks for the
   email (leave it empty if you have a link) and a name for this device, shows
   your answers, and only after you confirm asks for the link or the code,
-  unechoed. It then picks your project (or asks, if you have
-  several) and opens the TUI. If no project has been shared with you yet, the TUI
-  opens on **Waiting for a project**, which names the owner to ask and opens your
-  project as soon as it's granted ([the terminal interface](usage.md#terminal-interface)).
+  unechoed. It then picks your project (a numbered list, if you have several)
+  and offers to open the TUI. If no project has been shared with you yet, the
+  profile is still saved and the TUI opens on **Waiting for a project**, which
+  names the owner to ask and opens your project as soon as it's granted
+  ([the terminal interface](usage.md#terminal-interface)).
 - **Already signed in with Google?** `clawbridge device enroll` adds a key to this
   computer with no invite. Your verified Google account is the proof. The profile
   then signs with the key, and the Google sign-in stays until `clawbridge logout`.

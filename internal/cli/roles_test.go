@@ -212,3 +212,45 @@ func TestCLIRolesPublish(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+// roles project-lead shows the setting and switches it (the owner, no
+// session); apply-leads passes the revision, --replace and --confirm
+// through and refuses a session or a missing revision.
+func TestCLIRolesProjectLeadAndApplyLeads(t *testing.T) {
+	rolesProject(t)
+	if got, err := rolesRun(t, "project-lead"); err != nil || got["mode"] != "off" || got["revision"] != float64(0) {
+		t.Fatal(got, err)
+	}
+	if _, err := rolesRun(t, "project-lead", "on"); err == nil || !strings.Contains(err.Error(), "--expected-revision") {
+		t.Fatal(err)
+	}
+	if _, err := rolesRun(t, "project-lead", "auto", "--expected-revision", "0"); err == nil || !strings.Contains(err.Error(), "on or off") {
+		t.Fatal(err)
+	}
+	if got, err := rolesRun(t, "project-lead", "on", "--expected-revision", "0"); err != nil || got["mode"] != "on" || got["on_at"] == nil {
+		t.Fatal(got, err)
+	}
+	var got linearboard.ApplyLeadsInput
+	old := rolesApplyLeads
+	t.Cleanup(func() { rolesApplyLeads = old })
+	rolesApplyLeads = func(_ context.Context, _ linearboard.Executor, scope bus.Request, _ string, in linearboard.ApplyLeadsInput) (linearboard.ApplyLeadsResult, error) {
+		if scope.Session != "" {
+			t.Fatal("applied as a session")
+		}
+		got = in
+		return linearboard.ApplyLeadsResult{Revision: in.Revision}, nil
+	}
+	if _, err := rolesRun(t, "apply-leads", "--expected-revision", "3", "--replace", strings.ToUpper(rolesTeam), "--confirm"); err != nil || got.Revision != 3 || got.Replace != rolesTeam || !got.Confirm {
+		t.Fatal(got, err)
+	}
+	if _, err := rolesRun(t, "apply-leads"); err == nil || !strings.Contains(err.Error(), "--expected-revision") {
+		t.Fatal(err)
+	}
+	invoke(t, "register", "eng", "--instance", "eng-i")
+	var o, e bytes.Buffer
+	for _, args := range [][]string{{"apply-leads", "--expected-revision", "1"}, {"project-lead", "off", "--expected-revision", "1"}} {
+		if err := Run(context.Background(), append([]string{"--session", "eng", "--instance", "eng-i", "linear", "roles"}, args...), &o, &e); err == nil || !strings.Contains(err.Error(), "without --session") {
+			t.Fatal(args, err)
+		}
+	}
+}

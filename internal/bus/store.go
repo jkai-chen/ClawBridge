@@ -147,7 +147,7 @@ func (s *Store) migrate() error {
 	if err = tx.QueryRow("PRAGMA user_version").Scan(&version); err != nil {
 		return err
 	}
-	if version > 43 {
+	if version > 44 {
 		return errors.New("database schema is newer than this ClawBridge binary")
 	}
 	if version == 0 {
@@ -377,6 +377,11 @@ func (s *Store) migrate() error {
 	}
 	if version < 43 {
 		if _, err = tx.Exec(teamRolesSchema + `PRAGMA user_version=43;`); err != nil {
+			return err
+		}
+	}
+	if version < 44 {
+		if _, err = tx.Exec(projectLeadSchema + `PRAGMA user_version=44;`); err != nil {
 			return err
 		}
 	}
@@ -683,6 +688,9 @@ var operationArgs = map[string]string{
 	"team_roles_get":              "instance",
 	"team_roles_set":              "instance expected_revision mapping confirm",
 	"team_roles_doc_get":          "instance",
+	"project_lead_get":            "instance",
+	"project_lead_set":            "instance expected_revision mode",
+	"project_lead_record":         "instance linear_project source outcome replaced members_before members_after lead operation_id",
 	"team_roles_doc_put":          "instance parent_kind parent_id source_path state publish_token expect_token document_id published_sha256 mapping_revision source_sha256 replaced_document_id",
 	"project_kind_record":         "instance expected_revision action proof group_label_id label_ids",
 	"issue_subscribers_get":       "instance",
@@ -711,7 +719,7 @@ func validateArgs(op string, a map[string]any) error {
 					return invalid(k + " must be an integer")
 				}
 			}
-		case "retention_days", "limit", "since_hours", "after", "expected_revision", "expected_binding_revision", "ledger", "generation", "budget", "calls", "charged", "policy_revision", "engineer", "if_unset", "expires_days", "expires_hours", "expires_minutes", "device_idle_days", "delay_seconds", "seconds", "s5_calls_per_hour", "out_of_binding_limit", "template_version", "part_number", "part_count", "seq", "config_revision", "mapping_revision":
+		case "retention_days", "limit", "since_hours", "after", "expected_revision", "expected_binding_revision", "ledger", "generation", "budget", "calls", "charged", "policy_revision", "engineer", "if_unset", "expires_days", "expires_hours", "expires_minutes", "device_idle_days", "delay_seconds", "seconds", "s5_calls_per_hour", "out_of_binding_limit", "template_version", "part_number", "part_count", "seq", "config_revision", "mapping_revision", "members_before", "members_after":
 			if _, err := integer(v); err != nil {
 				return fmt.Errorf("%s: %w", k, err)
 			}
@@ -813,7 +821,7 @@ func validateArgs(op string, a map[string]any) error {
 			default:
 				return errors.New("ids must be an array of strings")
 			}
-		case "unread_only", "queue", "on", "all", "resume", "allow_overlap", "allow_previous", "repair", "confirm", "forced", "force_new", "nudges_only", "egress_confirmed", "set", "enabled", "owner", "owner_missing":
+		case "unread_only", "queue", "on", "all", "resume", "allow_overlap", "allow_previous", "repair", "confirm", "forced", "force_new", "nudges_only", "egress_confirmed", "set", "enabled", "owner", "owner_missing", "replaced":
 			if _, ok := v.(bool); !ok {
 				return fmt.Errorf("%s must be boolean", k)
 			}
@@ -1354,6 +1362,9 @@ func (s *Store) execute(ctx context.Context, tx *transaction, r Request) (any, e
 	}
 	if teamRolesOperation(r.Operation) {
 		return s.teamRolesOp(ctx, tx, wid, pid, projectRole, r)
+	}
+	if projectLeadOperation(r.Operation) {
+		return s.projectLeadOp(ctx, tx, wid, pid, projectRole, r)
 	}
 	// Any project member may read the approved label list, with or
 	// without a session; setting it is the owner's (labelPolicyOp).

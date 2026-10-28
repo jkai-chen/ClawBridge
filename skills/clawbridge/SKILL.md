@@ -32,7 +32,8 @@ use ClawBridge for peer messages. Record your own assignment with
 it. `team_roles_get` says who leads each bound team and who reviews; a role
 says who someone is, never what they may approve, and people (never sessions) change roles. The Linear
 document "Team roles (ClawBridge)" is generated for people to read: never edit it
-or read roles from it; use `team_roles_get`. Find a slice's owner with `list_sessions` filtered by `issue` or
+or read roles from it; use `team_roles_get`. Project leads (`linear roles project-lead`,
+`apply-leads`, `project create --lead`) are the project owner's to set, never a session's. Find a slice's owner with `list_sessions` filtered by `issue` or
 `scope_path`. Issues labelled `needs-agent` ask for agent attention; only the
 coordinator lists them, and the label is never approval or an assignment.
 Read [references/intake.md](references/intake.md) on an `intake` message, or

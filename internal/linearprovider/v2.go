@@ -60,6 +60,14 @@ type IssueV2 struct {
 	DescriptionKnown bool `json:"-"`
 	// UpdatedAt is Linear's last-update time when the read returned it.
 	UpdatedAt string `json:"updated_at,omitempty"`
+	// The team-scoped fields a team move clears, and the sub-issues it
+	// refuses on (FR7 M2, M3); each is set only when the read reported it.
+	CycleSet      bool     `json:"cycle_set,omitempty"`
+	CycleKnown    bool     `json:"cycle_known"`
+	Estimate      *float64 `json:"estimate,omitempty"`
+	EstimateKnown bool     `json:"estimate_known"`
+	Children      int      `json:"children,omitempty"`
+	ChildrenKnown bool     `json:"children_known"`
 }
 type Label struct {
 	ID       string `json:"id"`
@@ -470,7 +478,7 @@ func (p *Provider) v2Negotiation(names []string, args []arg) (string, map[string
 						allowed[text] = true
 					}
 				}
-				for _, key := range []string{"labels", "labelIds", "assigneeId", "parentId"} {
+				for _, key := range []string{"labels", "labelIds", "assigneeId", "parentId", "cycleId", "cycle", "estimate", "children", "subIssues"} {
 					if allowed[key] {
 						present := false
 						for _, old := range projection {
@@ -699,6 +707,7 @@ func (p *Provider) parseIssueV2(ctx context.Context, m map[string]any) (IssueV2,
 		return IssueV2{}, e
 	}
 	x.UpdatedAt = str(m, "updatedAt")
+	parseTeamFieldsV2(m, &x)
 	x.ParentID, x.ParentIdentifier, x.ParentKnown, e = parseParentV2(m)
 	if e != nil {
 		return IssueV2{}, e

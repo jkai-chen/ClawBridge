@@ -63,6 +63,9 @@ type Store struct {
 	linearBudgetMax int
 	// outboxOnly limits the outbox worker's queries to one project (tests).
 	outboxOnly string
+	// issueMoveProven is serve --issue-move-proven: the operator ran the
+	// move probe, so an issue's team move may be confirmed (FR7).
+	issueMoveProven bool
 	// modelSeal seals owners' provider keys; nil leaves model setup off.
 	modelSeal *ModelSeal
 	// modelMaxAgents and memAvailable are the serving process's, for
@@ -588,6 +591,8 @@ var operationArgs = map[string]string{
 	"project_create_settle":       "instance operation_id outcome linear_project_id",
 	"project_create_list":         "instance",
 	"project_create_ack":          "instance operation_id",
+	"issue_move_reserve":          "instance operation_id issue_uuid from_team to_team plan_sha256",
+	"issue_move_settle":           "instance operation_id outcome old_identifier new_identifier",
 	"member_display_name_set":     "display_name if_unset",
 	"taskboard_set":               "instance expected_revision linear_team_ids linear_default_team_id linear_project_id linear_workspace_id",
 	"taskboard_clear":             "instance expected_revision repair",
@@ -1410,6 +1415,9 @@ func (s *Store) execute(ctx context.Context, tx *transaction, r Request) (any, e
 	}
 	if projectCreateOperation(r.Operation) {
 		return s.projectCreateOp(ctx, tx, w, p, projectRole, actor, r)
+	}
+	if issueMoveOperation(r.Operation) {
+		return s.issueMoveOp(ctx, tx, wid, pid, projectRole, actor, r)
 	}
 	// Any project member may read the approved label list, with or
 	// without a session; setting it is the owner's (labelPolicyOp).

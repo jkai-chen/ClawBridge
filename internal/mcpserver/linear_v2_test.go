@@ -35,7 +35,7 @@ func TestLinearMCPV2InitializationGuidanceIsAdditiveWithoutIO(t *testing.T) {
 		}
 	}
 	tools, err := newSession.ListTools(ctx, nil)
-	if err != nil || len(tools.Tools) != 43 || v1.count() != 0 || v2.count() != 0 {
+	if err != nil || len(tools.Tools) != 44 || v1.count() != 0 || v2.count() != 0 {
 		t.Fatal("initialization/list changed tools or performed provider IO", err)
 	}
 }
@@ -44,7 +44,7 @@ func TestLinearMCPV2ClosedNullablePinnedTools(t *testing.T) {
 	p := &recordingBoardV2{recordingBoard: recordingBoard{data: map[string]any{"ok": true}}}
 	ctx, cs := boardSession(t, p)
 	listed, err := cs.ListTools(ctx, nil)
-	if err != nil || len(listed.Tools) != 43 || p.count() != 0 {
+	if err != nil || len(listed.Tools) != 44 || p.count() != 0 {
 		t.Fatalf("native list: %v %d calls=%d", err, len(listed.Tools), p.count())
 	}
 	tools := map[string]*mcp.Tool{}
@@ -71,6 +71,7 @@ func TestLinearMCPV2ClosedNullablePinnedTools(t *testing.T) {
 		{"relation_remove", map[string]any{"from_id": id, "to_id": to, "type": "related", "operation_id": "edge-remove"}, false},
 		{"project_status", map[string]any{"linear_project": id, "suggest": true}, true},
 		{"project_status_set", map[string]any{"linear_project": id, "type": "started", "operation_id": "status-1", "confirm": true, "expected_status_id": to}, false},
+		{"issue_move", map[string]any{"id": id, "team_id": to, "operation_id": "move-1", "confirm": true, "expected_plan_sha256": strings.Repeat("a", 64)}, false},
 	}
 	for _, tc := range cases {
 		tool := tools["taskboard_"+tc.op+"_v2"]
@@ -271,4 +272,26 @@ func TestLinearMCPDocTools(t *testing.T) {
 	if p.count() != calls {
 		t.Fatal("invalid arguments reached the adapter")
 	}
+}
+
+// O1: the move tool takes no source team. The client reads it from Linear,
+// so an agent can't name one to fit its lane.
+func TestIssueMoveToolTakesNoSourceTeam(t *testing.T) {
+	p := &recordingBoardV2{recordingBoard: recordingBoard{data: map[string]any{"ok": true}}}
+	ctx, cs := boardSession(t, p)
+	listed, err := cs.ListTools(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tool := range listed.Tools {
+		if tool.Name != "taskboard_issue_move_v2" {
+			continue
+		}
+		raw, _ := json.Marshal(tool.InputSchema)
+		if strings.Contains(string(raw), "from_team") || strings.Contains(string(raw), "source") {
+			t.Fatal("the move tool takes a source team:", string(raw))
+		}
+		return
+	}
+	t.Fatal("no taskboard_issue_move_v2")
 }

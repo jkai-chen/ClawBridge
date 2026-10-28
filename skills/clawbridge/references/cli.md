@@ -43,7 +43,9 @@ A cloud profile may sign with a device key (`credential_source = "device"`) inst
 of Google: it has no audience, and the key stays in the human's key store, never
 in agent configuration. `join`, `device`, `invite`, `user` and `owner` manage the
 human's account and devices; run them only when the human asks. They show an
-invite code or a CI key once, and both are secrets.
+invite link or code, a device-add link, or a CI key once: each is a secret. A
+dormant device is confirmed from another of the human's devices (`device
+confirm`), never from yours.
 
 `sync` is the only operation that publishes a new mirror. It requires an online
 authorized snapshot and preserves the previous complete snapshot if it fails.

@@ -295,6 +295,10 @@
 - **The Dispatcher screen keeps its place while it sends and tests.** A key no longer leaves the screen and loses the
   test's answer; Esc stops waiting. The field being typed in stays on screen at 80×24, and the outcome is marked `OK` or
   `FAIL`.
+- **The docs describe the TUI and onboarding as shipped.** The header, the Cloud tab and the Dispatcher screen's key in
+  the TUI reference; invite links and which release has the client commands in the README, onboarding, first-deployment
+  and sign-in guides; the hooks the guided MCP step installs; and the skill's invite link, device-add link and `device
+  confirm`. Docs only.
 
 ## The dispatcher
 

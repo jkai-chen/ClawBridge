@@ -36,8 +36,9 @@ reopens it at any time):
 1. **Just this machine:** local messaging between your agents, with no server or
    account ([local messaging](docs/usage.md#local-messaging)).
 2. **Join a team server:** have its HTTPS address ready, and either an invite
-   code from its owner (from v0.3.5) or, where the server still offers Google
-   sign-in, the workspace, project and the Google account the owner authorized.
+   from its owner (a code from v0.3.5, a link from the next release) or, where
+   the server still offers Google sign-in, the workspace, project and the Google
+   account the owner authorized.
    [Joining a project](docs/onboarding.md) walks through both. If the owner hasn't
    given you a project yet, ClawBridge opens on "Waiting for a project" and takes
    you to it once it's granted.
@@ -62,8 +63,11 @@ clawbridge mcp install --agent codex --session engineer --dry-run
 clawbridge mcp install --agent codex --session engineer
 ```
 
-Use `--agent claude-code` for Claude Code. The agent registers its session after
-connecting. See [MCP setup](docs/usage.md#mcp) for profiles and resumption.
+Use `--agent claude-code` for Claude Code; on macOS and Linux it also installs
+ClawBridge's hooks, so the agent doesn't stop while messages wait unhandled
+([messages wait until they're handled](docs/usage.md#messages-wait-until-theyre-handled)).
+The agent registers its session after connecting. See [MCP setup](docs/usage.md#mcp)
+for profiles and resumption.
 
 ## Documentation
 

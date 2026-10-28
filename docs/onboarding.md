@@ -43,8 +43,9 @@ upgrade stay private, even if they continue. Tell colleagues this when you invit
 
 ### If your server uses invites (device sign-in)
 
-> **Not released yet:** the client commands below (`invite`, `join`) come with the
-> next client release after v0.3.4. See [what is released](sign-in.md).
+> The client commands below (`invite`, `join`) come with v0.3.5. Invite links
+> come with the next release; until then, give the code and the server's URL.
+> See [signing in with invites](sign-in.md).
 
 On a server whose `CLAWBRIDGE_AUTH` is `device` or `google,device`
 ([sign-in methods](operations/deployment.md#sign-in-methods)), you can let people in
@@ -57,11 +58,12 @@ clawbridge invite list
 clawbridge invite revoke inv_...
 ```
 
-- `invite` prints a one-time code once. ClawBridge sends no email: give the colleague
-  the code and the service URL yourself, over a channel you would trust with a
-  password.
-- They join with `clawbridge --server URL join --email colleague@example.test`, which
-  asks for the code without showing it, or with the guided setup's "I have an invite code".
+- `invite` prints a one-time invite link once (with v0.3.5, a code). ClawBridge
+  sends no email: give the colleague the link (or the code and the service URL)
+  yourself, over a channel you would trust with a password.
+- They join with `clawbridge join`, which asks for the link without showing it; with
+  a code, `clawbridge --server URL join --email colleague@example.test`. The guided
+  setup's "I have an invite code" takes either.
 - An invite with no `--grant` lets them in with no project: their terminal view waits
   on "Waiting for a project" until you grant one with
   `clawbridge --project checkout project role set colleague@example.test member`.
@@ -121,23 +123,24 @@ On first launch this opens the guided setup (`clawbridge setup wizard` opens it
 again later). It asks for the service URL, workspace and project and how to sign
 in (open a browser here, or show a code to enter on another device, for SSH and
 headless machines). Each answer is checked as you give it; a wrong one is asked
-again with the reason, up to three times. It then shows your answers, and asks `Continue with sign-in and save after verified join? [y/N]`;
+again with the reason, up to three times. It then shows your answers, and asks
+`Continue with sign-in and save after verified join? [y/N]`;
 anything but `y` cancels without changing anything. It then signs you in with
 Google, verifies your membership, and saves the trusted route. Your Google
 account must already have the role from the owner; joining does not grant it.
 
 When the server takes device keys, the guided setup asks first how you sign in:
 **I have an invite code** or, when the server still offers it, **Sign in with
-Google**. With a code it asks for the email the invite was issued for and a name
-for this device, shows your answers, and asks to continue; only then does it ask
-for the code, which isn't echoed. It makes this device's key, joins, and saves the
-profile, then picks your project. With several, it lists them numbered and you
-pick one. If the owner hasn't granted you a project yet, the profile is still
-saved, and the terminal view opens on **Waiting for a project**: it names the
-owner to ask, checks again every 30 seconds, and opens your project once it's
-yours. On a machine with
-no system key store, such as headless Linux, it explains that the key would be a
-plain file only you can read, and asks before using one.
+Google**. It asks for the email the invite was issued for (leave it empty with
+a link) and a name for this device, shows your answers, and asks to continue;
+only then does it ask for the link or the code, which isn't echoed. It makes this
+device's key, joins, and saves the profile, then picks your project. With
+several, it lists them numbered and you pick one. If the owner hasn't granted you
+a project yet, the profile is still saved, and the terminal view opens on
+**Waiting for a project**: it names the owner to ask, checks again every 30
+seconds, and opens your project once it's yours. On a machine with no system key
+store, such as headless Linux, it explains that the key would be a plain file
+only you can read, and asks before using one.
 
 Browser sign-in opens your default browser and also prints the sign-in URL. If
 that browser is signed in to a different Google account, open the URL in another
@@ -151,8 +154,9 @@ that tool's profile, and the skill and MCP steps then write there instead of
 `~/.claude` and `~/.codex`.
 
 After the join, the setup offers each remaining step in turn, headed
-"Optional setup 1 of 5" to "5 of 5". Every step can be skipped, nothing is written until you answer yes, and a failed step is reported
-without undoing the earlier ones:
+"Optional setup 1 of 5" to "5 of 5". Every step can be skipped, nothing is
+written until you answer yes, and a failed step is reported without undoing the
+earlier ones:
 
 1. **Agent skill.** Installs or updates the skill for the detected agents, the
    same as `clawbridge skill install`.
@@ -165,15 +169,18 @@ without undoing the earlier ones:
 3. **MCP for each agent.** Asks for a session name, shows the entry it would
    write (the file, the command and its arguments) as a dry run, and writes it
    after you confirm. With a Linear profile from
-   step 2, the entry also enables the native task-board tools.
+   step 2, the entry also enables the native task-board tools. For Claude Code
+   on macOS and Linux it also installs ClawBridge's hooks, so the agent doesn't
+   stop while messages wait ([messages wait until they're handled](usage.md#messages-wait-until-theyre-handled)).
 4. **Doctor.** Runs `clawbridge doctor` once for each MCP entry it configured.
 5. **The dispatcher (owners of a hosted project).** If you own the project, its
    task board is linked and the dispatcher is off, it says in one line what the
    dispatcher does, shows what turning it on changes (its coordinator, sessions
    and domains, and where it confirms claims itself), and asks whether to turn
    it on in the rules engine. If enabling would be refused, for example because
-   the task board names no Linear projects, the step is skipped with the reason. The default is no. `clawbridge dispatcher disable`
-   turns it off any time. Model mode is set up separately (see
+   the task board names no Linear projects, the step is skipped with the reason.
+   The default is no. `clawbridge dispatcher disable` turns it off any time.
+   Model mode is set up separately (see
    [the dispatcher](dispatcher.md#model-mode-designed-partly-built)). For anyone
    else the step is skipped, with the reason.
 

@@ -335,6 +335,9 @@
   seen, and every poll repeated the same partial read. It now reads each bound team once, across all its projects,
   and queues only issues in the binding; one in a project the binding doesn't hold is skipped as `not_in_binding`,
   without reading it. This fix shipped early, over v0.3.5, as the v0.3.5.1 server hotfix (#195).
+- **Intake polls on time.** An intake source's next poll was counted from when its read was recorded, a few seconds
+  after the tick began, so a tick that started a few seconds earlier skipped it, and a 15-minute source polled every
+  30 minutes. The next poll now counts from the read's start, and a tick up to 30 s early still polls it.
 - **A project's owner can set its own watch budget.** `clawbridge project watch-budget set N` (1 to 600 Linear calls
   an hour) sets the comment watcher's budget for that project, ahead of the server's `CLAWBRIDGE_WATCH_BUDGET` and a
   client's `linear watch --budget`, from the watcher's next call. `project watch-budget clear` goes back to them, and

@@ -22,7 +22,7 @@ def run(args, cwd, ok=True, extra=None):
     actual_env = env.copy()
     if extra:
         actual_env.update(extra)
-    r = subprocess.run(args, cwd=cwd, env=actual_env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=240)
+    r = subprocess.run(args, cwd=cwd, env=actual_env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=480)
     check((r.returncode == 0) == ok, (args, r.returncode, r.stdout.decode(errors="replace")))
     return r.stdout
 

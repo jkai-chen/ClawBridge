@@ -437,7 +437,7 @@ func footerText(m Model) string {
 // screenAbout is what a screen is for, shown in its help.
 var screenAbout = map[Screen]string{
 	ScreenOverview: "Where you are: the workspace, project and session, and who you're signed in as.",
-	ScreenProjects: "The workspace's projects you can see: your role, sessions, coordinator and Linear board. ● marks the project this profile works in. Enter opens one, read-only; s and l go to your own project's sessions and board.",
+	ScreenProjects: "The workspace's projects you can see: your role, sessions, coordinator and Linear board. ● marks the project this profile works in. Enter opens one, read-only; s and l go to your own project's sessions and board. On a project you own, t reads its threads: what its sessions sent each other, read-only; Enter opens a thread and ] reads older threads or more messages.",
 	ScreenSessions: "The project's sessions. ★ marks the coordinator; STATE is retired, moved, stale or the session's presence; n messages the selected session, and i opens its issue on the Linear screen. v filters this page only; [ goes to the previous page you saw, ] to the server's next page. There is no search across pages.",
 	ScreenInbox:    "The current session's messages. The server stamps delivery; a reload never marks a message read.",
 	ScreenLinear:   "The project's Linear board: your personal Linear connection, and the board this project is linked to. Task ownership comes from the coordinator's issue assignment; selecting a row never claims or completes work. In Intake (n), only a needs-agent label, delegation or mention a trusted person makes in Linear itself counts; signals made through ClawBridge run as the app and are never trusted. Project status (p) reads each Linear project's status through the server's ClawBridge app, which costs the project's Linear budget; a project owner or lead, in a TUI opened without a session, sets one after the server's preview.",
@@ -493,6 +493,8 @@ func (m Model) back() (Model, tea.Cmd) {
 	case m.screen == ScreenInbox && m.inboxOpen:
 		m.inboxOpen = false
 		return m, nil
+	case m.screen == ScreenProjects && m.threads.open:
+		return m.threadsBack(), nil
 	case m.screen == ScreenProjects && m.projectOpen:
 		m.projectOpen = false
 		return m, nil
@@ -505,6 +507,8 @@ func (m Model) back() (Model, tea.Cmd) {
 // backTarget names where Esc goes, for the footer; "" when nowhere.
 func (m Model) backTarget() string {
 	switch {
+	case m.screen == ScreenProjects && m.threads.open:
+		return m.threadsBackTarget()
 	case m.screen == ScreenInbox && m.inboxOpen, m.screen == ScreenProjects && m.projectOpen:
 		return "back to the list"
 	case m.screen == ScreenLinear:

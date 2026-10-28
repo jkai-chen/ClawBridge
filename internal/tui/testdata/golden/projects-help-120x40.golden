@@ -4,12 +4,16 @@ ClawBridge · ws_1 › prj_1 › engineer › Projects › Help  cloud
 ╭──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
 │ Help · Projects                                                                                                      │
 │ The workspace's projects you can see: your role, sessions, coordinator and Linear board. ● marks the project this    │
-│ profile works in. Enter opens one, read-only; s and l go to your own project's sessions and board.                   │
+│ profile works in. Enter opens one, read-only; s and l go to your own project's sessions and board. On a project you  │
+│ own, t reads its threads: what its sessions sent each other, read-only; Enter opens a thread and ] reads older       │
+│ threads or more messages.                                                                                            │
 │                                                                                                                      │
 │ This screen                                                                                                          │
 │   Enter      open                                                                                                    │
 │   s          its sessions (not now)                                                                                  │
 │   l          its Linear board (not now)                                                                              │
+│   t          its threads (not now)                                                                                   │
+│   ]          older threads (not now)                                                                                 │
 │                                                                                                                      │
 │ Everywhere                                                                                                           │
 │   Tab        next screen                                                                                             │

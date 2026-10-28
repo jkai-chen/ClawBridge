@@ -525,6 +525,14 @@ Enter opens one, read-only: its coordinator, its sessions, and its Linear teams 
 projects by name. On another project a banner says you're only viewing it; on your
 own, `s` goes to its sessions and `l` to its Linear board. Esc returns to the list.
 
+On a project you own, `t` reads its threads, the same read as `clawbridge project threads`: what
+its sessions sent each other, newest activity first, with who took part. Enter opens a thread:
+each message with its sender, whom it went to, and who received and read it; `]` reads older
+threads or more messages, and Esc goes back to the list, then to the project. It's read-only, with
+the CLI's rules: as you, so a TUI opened with `--session` or run by an agent says so and reads
+nothing; on a hosted server only your own signed-in device can; and each read goes into the
+project's history. Threads started before the date at the top stay private.
+
 Sessions shows each session's NAME (`★` marks the project's coordinator), STATE
 (retired, moved, stale, or its presence), ISSUE (its assigned Linear issue), CONTEXT
 and AGENT; OWNER and HOST appear from 140 columns and are always in the selected

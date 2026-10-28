@@ -323,7 +323,7 @@ func runTUI(ctx context.Context, flags Config, args []string, stdout, stderr io.
 		}
 		found = slug
 		return nil
-	}, Linear: linearSource, Executor: executor, Mode: tui.Mode(c.Mode), Workspace: c.Workspace, Project: c.Project, Session: c.Session, Instance: c.Instance, Server: c.Server, Audience: c.Audience, Principal: c.Principal, DeviceID: c.DeviceID, Context: bounded, InitialScreen: tui.Screen(screen), CloudInfo: info,
+	}, Linear: linearSource, Executor: executor, Mode: tui.Mode(c.Mode), Workspace: c.Workspace, Project: c.Project, Session: c.Session, Instance: c.Instance, AgentMarker: agentMarker(closesEnv()), Server: c.Server, Audience: c.Audience, Principal: c.Principal, DeviceID: c.DeviceID, Context: bounded, InitialScreen: tui.Screen(screen), CloudInfo: info,
 		Doctor: tui.DoctorFunc(func(ctx context.Context) ([]tui.Check, error) {
 			report, e := collectDoctor(ctx, c, path, executor)
 			if e != nil {

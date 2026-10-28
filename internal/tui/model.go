@@ -160,15 +160,18 @@ type Config struct {
 	// view still fails with an actionable configuration error.
 	AllowSetupOnly bool
 
-	Mode       Mode
-	Workspace  string
-	Project    string
-	Session    string
-	Instance   string
-	Server     string
-	Audience   string
-	Principal  string
-	Provenance string
+	Mode      Mode
+	Workspace string
+	Project   string
+	Session   string
+	Instance  string
+	// AgentMarker names the environment variable that says an agent runs
+	// this TUI, or ""; a person's own reads (a project's threads) refuse it.
+	AgentMarker string
+	Server      string
+	Audience    string
+	Principal   string
+	Provenance  string
 	// DeviceID is the device key this profile signs with, if any; the
 	// Account screen marks it.
 	DeviceID string
@@ -373,6 +376,8 @@ type Model struct {
 	// listed projects' project_overview reads, by project ID.
 	projectOpen bool
 	overviews   map[string]projectOverview
+	// threads is the opened project's threads, for its owner (U62).
+	threads threadsState
 
 	// attention is Overview's "Needs attention"; checksAt is when the
 	// doctor's checks ran; doctorPasses shows the folded passes.
@@ -499,6 +504,10 @@ func (m Model) UpdateModel(msg tea.Msg) (Model, tea.Cmd) {
 		return m.applyLinear(x), nil
 	case overviewMsg:
 		return m.applyOverviewMsg(x), nil
+	case threadsMsg:
+		return m.applyThreadsMsg(x), nil
+	case threadMsg:
+		return m.applyThreadMsg(x), nil
 	case intakeLoadedMsg:
 		return m.applyIntake(x), nil
 	case intakeDoneMsg:
@@ -641,6 +650,7 @@ func (m Model) Show(screen Screen) (Model, tea.Cmd) {
 		return m, nil
 	}
 	m.help, m.quitAsk, m.inboxOpen, m.projectOpen = false, false, false, false
+	m.threads = threadsState{}
 	// Leaving the Model screen ends a setup and wipes its key.
 	m = m.closeModelSetup()
 	m.screen = screen
@@ -661,6 +671,9 @@ func (m Model) Show(screen Screen) (Model, tea.Cmd) {
 // Reload refreshes the selected screen through the configured executor or
 // read-only adapter.
 func (m Model) Reload() (Model, tea.Cmd) {
+	if m.screen == ScreenProjects && m.threads.open {
+		return m.reloadThreads()
+	}
 	// On Linear, r also refreshes the board's stored names (an owner or
 	// lead; see canRefreshNames).
 	m.linear.refreshNames = m.screen == ScreenLinear
@@ -1322,6 +1335,9 @@ func (m Model) currentRows() []string {
 	case ScreenAccount:
 		return m.accountRowIDs()
 	case ScreenProjects:
+		if m.threads.open {
+			return m.threadRowIDs()
+		}
 		out := make([]string, len(m.projects))
 		for i := range m.projects {
 			out[i] = m.projects[i].ID

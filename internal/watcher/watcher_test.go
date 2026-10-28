@@ -83,6 +83,9 @@ type fakeLinear struct {
 	unlisted     map[string]bool
 	labelledPage int
 	issueReads   int
+	// spill makes the labelled list also return other teams' issues, as a
+	// parent team's filter may return its sub-teams'.
+	spill bool
 }
 
 func (f *fakeLinear) issue(id string) (linearprovider.IssueV2, error) {
@@ -169,7 +172,7 @@ func (p fakeProvider) IssuesV2(_ context.Context, q linearprovider.IssueQueryV2)
 	// label.
 	for _, id := range p.f.labelled {
 		i, _ := p.f.issue(id)
-		if i.TeamID != q.TeamID || (q.ProjectID != "" && i.ProjectID != q.ProjectID) {
+		if (i.TeamID != q.TeamID && !p.f.spill) || (q.ProjectID != "" && i.ProjectID != q.ProjectID) {
 			continue
 		}
 		i.LabelIDs, i.LabelsKnown = []string{labelNeeds}, true
@@ -443,6 +446,31 @@ func TestIntakeS1ProvesTheBindingAndTheActor(t *testing.T) {
 	e.queryRow(`SELECT budget_used FROM watch_lease`, &used)
 	if used < tick.Intake.Calls {
 		t.Fatal("intake calls not charged:", used, tick.Intake.Calls)
+	}
+}
+
+// A parent team's filter may also return its sub-teams' issues: a row of a
+// team the binding doesn't list is skipped as other_team, never read or
+// queued, and the bound team's own rows still are.
+func TestIntakeS1SkipsAnotherTeamsRows(t *testing.T) {
+	e := setup(t)
+	e.call("intake_trust_add", "coord", map[string]any{"linear_user_id": trustedUser})
+	e.f.labelled, e.f.spill = []string{issueA, issueOut}, true
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	e.tick()
+	e.f.history[issueA] = []map[string]any{entry(now, trustedUser, map[string]any{"addedLabelIds": []string{labelNeeds}})}
+	e.f.history[issueOut] = []map[string]any{entry(now, trustedUser, map[string]any{"addedLabelIds": []string{labelNeeds}})}
+	e.dueNow()
+	reads := e.f.issueReads
+	tick := e.tick()
+	if tick.Intake == nil || len(tick.Intake.Queued) != 1 || tick.Intake.Skipped["other_team"] != 1 {
+		t.Fatalf("intake: %+v", tick.Intake)
+	}
+	if q := e.queue(); len(q) != 1 || q[0]["issue_uuid"] != issueA {
+		t.Fatal("queue:", q)
+	}
+	if e.f.issueReads-reads != 1 {
+		t.Fatal("another team's row was read:", e.f.issueReads-reads)
 	}
 }
 

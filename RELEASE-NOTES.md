@@ -1,5 +1,13 @@
 # Unreleased
 
+## Linear
+
+- **A parent team's issue listing no longer fails when Linear returns its sub-teams' issues.** Before, one such row
+  refused the whole page ("provider page escaped the selected pair"), so a team that gained sub-teams could no longer
+  list issues or poll `needs-agent`. Now the row is shown only under its own bound pair, never twice. A row of a
+  team or pair the binding doesn't hold is dropped, and counted as `filtered_other_team` (intake: `other_team`).
+  No schema change. Linear config scope: none.
+
 # ClawBridge v0.3.6 (released 28 Oct)
 
 **Schema 28 → 39.**

@@ -48,8 +48,16 @@ func TestTeamLabelledV2(t *testing.T) {
 	}
 	in.Cursor = ""
 
+	// A sub-team's rows under the parent's filter: a listed team's row is
+	// left to that team's own read, an unlisted team's is counted; neither
+	// is returned.
+	const unlistedTeam = "abababab-abab-4bab-8bab-abababababab"
+	p.pages = []linearprovider.Page[linearprovider.IssueV2]{{Items: []linearprovider.IssueV2{row(issueID, teamID, projectA, true), row(parentA, otherTeamID, projectB, true), row(rowC, unlistedTeam, projectA, true), row("dededede-dede-4ede-8ede-dededededede", unlistedTeam, "", false)}, Complete: true}}
+	if page, e = s.TeamLabelledV2(context.Background(), scope, in); e != nil || !reflect.DeepEqual(page.Items, []TeamIssueRefV2{{ID: issueID}}) || page.FilteredOtherTeam != 2 {
+		t.Fatal(page, e)
+	}
+
 	bad := map[string]linearprovider.Page[linearprovider.IssueV2]{
-		"another team": {Items: []linearprovider.IssueV2{row(issueID, otherTeamID, projectB, true)}, Complete: true},
 		"older": {Items: []linearprovider.IssueV2{func() linearprovider.IssueV2 {
 			r := row(issueID, teamID, projectA, true)
 			r.UpdatedAt = "2026-10-21T09:00:00Z"

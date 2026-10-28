@@ -173,6 +173,9 @@ func (r *intakeRun) labelled(ctx context.Context, team string, since time.Time) 
 		if err != nil {
 			return signal, false, err
 		}
+		for range issues.FilteredOtherTeam {
+			r.poll.skip("other_team")
+		}
 		for _, i := range issues.Items {
 			if i.OutOfBinding {
 				r.poll.skip("not_in_binding")

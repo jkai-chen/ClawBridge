@@ -250,9 +250,13 @@ var linearBindings = []Binding{
 			return "link"
 		case "unlink":
 			return "unlink"
+		case "status":
+			return "set its status"
 		}
 		return "next"
-	}, When: func(m Model) bool { return m.linearStep() != "intake" }, Action: linearKeyAction},
+	}, When: func(m Model) bool {
+		return m.linearStep() != "intake" && (m.linearStep() != "status" || (m.projectStatus.loaded && m.projectStatus.canEdit))
+	}, Action: linearKeyAction},
 	{ID: "select", Keys: []string{" "}, Labeler: func(m Model) string {
 		switch m.linearStep() {
 		case "preview":
@@ -266,6 +270,12 @@ var linearBindings = []Binding{
 			(intakeEditable(m) && intakeOn(m, "mode", "signal"))
 	}, Action: linearKeyAction},
 	{ID: "intake", Keys: []string{"n"}, Label: "Intake", When: func(m Model) bool { return m.linearConfigured() && linearAt("profiles", "tasks", "details")(m) }, Action: func(m Model, _ string) (Model, tea.Cmd) { return m.openIntake() }},
+	{ID: "project-status", Keys: []string{"p"}, Label: "project status", When: func(m Model) bool {
+		return m.linearConfigured() && len(m.projectStatusIDs()) > 0 && linearAt("profiles", "tasks", "details")(m)
+	}, Action: func(m Model, _ string) (Model, tea.Cmd) { return m.openProjectStatus() }},
+	{ID: "status-suggest", Keys: []string{"g"}, Label: "suggest a status", When: func(m Model) bool {
+		return m.linearStep() == "status" && m.projectStatus.loaded && len(m.projectStatus.rows) > 0
+	}, Action: linearKeyAction},
 	{ID: "ids", Keys: []string{"d"}, Labeler: func(m Model) string {
 		if m.linear.showIDs {
 			return "hide IDs"
@@ -388,6 +398,12 @@ func footerText(m Model) string {
 	if m.screen == ScreenLinear && m.linear.step == "intake" && m.intake.picking {
 		return "↑↓ member · Enter trust them · Esc close"
 	}
+	if m.screen == ScreenLinear && m.linear.step == "status" && m.projectStatus.ask != nil {
+		return "y do it · any other key keeps things as they are"
+	}
+	if m.screen == ScreenLinear && m.linear.step == "status" && m.projectStatus.picking {
+		return "↑↓ status type · Enter preview · Esc close"
+	}
 	if m.help {
 		return "Esc or ? closes help"
 	}
@@ -424,7 +440,7 @@ var screenAbout = map[Screen]string{
 	ScreenProjects: "The workspace's projects you can see: your role, sessions, coordinator and Linear board. ● marks the project this profile works in. Enter opens one, read-only; s and l go to your own project's sessions and board.",
 	ScreenSessions: "The project's sessions. ★ marks the coordinator; STATE is retired, moved, stale or the session's presence; n messages the selected session, and i opens its issue on the Linear screen. v filters this page only; [ goes to the previous page you saw, ] to the server's next page. There is no search across pages.",
 	ScreenInbox:    "The current session's messages. The server stamps delivery; a reload never marks a message read.",
-	ScreenLinear:   "The project's Linear board: your personal Linear connection, and the board this project is linked to. Task ownership comes from the coordinator's issue assignment; selecting a row never claims or completes work. In Intake (n), only a needs-agent label, delegation or mention a trusted person makes in Linear itself counts; signals made through ClawBridge run as the app and are never trusted.",
+	ScreenLinear:   "The project's Linear board: your personal Linear connection, and the board this project is linked to. Task ownership comes from the coordinator's issue assignment; selecting a row never claims or completes work. In Intake (n), only a needs-agent label, delegation or mention a trusted person makes in Linear itself counts; signals made through ClawBridge run as the app and are never trusted. Project status (p) reads each Linear project's status through the server's ClawBridge app, which costs the project's Linear budget; a project owner or lead, in a TUI opened without a session, sets one after the server's preview.",
 	ScreenAccount:  "Your devices and the workspace's members and invites. Anything that revokes or mints a code asks you to type a word first.",
 	ScreenModel:    "The dispatcher's model: the provider, model and key it uses, and its caps.",
 	ScreenDoctor:   "Checks of this profile, the server and the project: pass, warn or fail.",

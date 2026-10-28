@@ -6,6 +6,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/charmbracelet/lipgloss"
+
 	"clawbridge/internal/bus"
 )
 
@@ -163,5 +165,22 @@ func TestDoctorShowsTheAnswer(t *testing.T) {
 	}
 	if strings.Count(view, "the clock is 3m off") != 1 || strings.Count(view, "refused") != 1 {
 		t.Fatalf("a message shown twice:\n%s", view)
+	}
+}
+
+// #213 L1: a check without an answer puts its message on the line; a long
+// one at 80 columns wraps inside the frame, never past it.
+func TestDoctorLongMessageStaysInTheFrame(t *testing.T) {
+	m := screenFixtures(t)[ScreenDoctor].SetSize(80, 24)
+	long := "the clock is 3m off from the server's, so signed requests may be refused until the clock is set right again"
+	m.checks = []Check{{ID: "auth.clock", Title: "Clock", Status: Warn, Detail: long}}
+	view := Render(m)
+	if !strings.Contains(view, "WARN  Clock: the clock is 3m off") || !strings.Contains(view, "set right again") {
+		t.Fatalf("the message isn't all there:\n%s", view)
+	}
+	for _, line := range strings.Split(view, "\n") {
+		if w := lipgloss.Width(line); w > 80 {
+			t.Fatalf("a line %d cells wide:\n%s", w, view)
+		}
 	}
 }

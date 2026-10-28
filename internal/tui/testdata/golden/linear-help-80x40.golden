@@ -8,13 +8,18 @@ ClawBridge · ws_1 › prj_1 › engineer › Linear › Help  cloud
 │ assignment; selecting a row never claims or completes work. In Intake (n),   │
 │ only a needs-agent label, delegation or mention a trusted person makes in    │
 │ Linear itself counts; signals made through ClawBridge run as the app and are │
-│ never trusted.                                                               │
+│ never trusted. Project status (p) reads each Linear project's status through │
+│ the server's ClawBridge app, which costs the project's Linear budget; a      │
+│ project owner or lead, in a TUI opened without a session, sets one after the │
+│ server's preview.                                                            │
 │                                                                              │
 │ This screen                                                                  │
 │   s          go to its session (not now)                                     │
 │   Enter      next                                                            │
 │   Space      select (not now)                                                │
 │   n          Intake (not now)                                                │
+│   p          project status (not now)                                        │
+│   g          suggest a status (not now)                                      │
 │   d          show IDs (not now)                                              │
 │   +          connect                                                         │
 │   w          connect with write                                              │
@@ -31,10 +36,5 @@ ClawBridge · ws_1 › prj_1 › engineer › Linear › Help  cloud
 │   S-Tab      previous screen                                                 │
 │   ↑↓         select                                                          │
 │   PgUp/PgDn  scroll                                                          │
-│   Esc        back                                                            │
-│   r          reload                                                          │
-│   ?          help                                                            │
-│   q          quit                                                            │
-│   1-8        switch screen                                                   │
 ╰──────────────────────────────────────────────────────────────────────────────╯
 Esc or ? closes help

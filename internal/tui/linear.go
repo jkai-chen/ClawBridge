@@ -32,6 +32,11 @@ type LinearRequest struct {
 	LinkV2                     *linearboard.LinkInputV2
 	ExpectedRevision           int64
 	Confirm                    bool
+	// The project status view's (U61): the Linear project, the type a
+	// set names and its operation ID, the status its preview saw, the
+	// second confirm to close with issues open, and a read's suggestion.
+	LinearProject, StatusType, OperationID, ExpectedStatus string
+	AllowOpen, Suggest                                     bool
 }
 type LinearData struct {
 	Profiles  []linearconn.Profile
@@ -54,6 +59,8 @@ type LinearData struct {
 	IntakeLabels []IntakeLabel
 	// ClosesOutcomes is what a confirmed link did about who closes.
 	ClosesOutcomes []linearboard.ClosesOutcome
+	// ProjectStatus is a project status read, preview or set.
+	ProjectStatus *ProjectStatus
 }
 type linearState struct {
 	// logoutAsk is the connection an x is waiting to log out, until y.
@@ -273,6 +280,9 @@ func (m Model) linearRefresh() (Model, tea.Cmd) {
 	case "intake":
 		m.linear.refreshNames = false
 		return m.intakeLoad()
+	case "status":
+		m.linear.refreshNames = false
+		return m.projectStatusLoad()
 	default:
 		request.Operation = "profiles"
 	}
@@ -428,6 +438,8 @@ func (m Model) linearRows() []string {
 		}
 	case "intake":
 		return m.intakeRows()
+	case "status":
+		return m.projectStatusRows()
 	}
 	return rows
 }
@@ -492,7 +504,7 @@ func (m Model) linearStep() string {
 // linearPrevious is the step Esc goes back to from each step.
 var linearPrevious = map[string]string{
 	"teams": "profiles", "default": "teams", "projects": "default", "preview": "projects",
-	"tasks": "profiles", "details": "tasks", "unlink": "tasks", "intake": "tasks",
+	"tasks": "profiles", "details": "tasks", "unlink": "tasks", "intake": "tasks", "status": "tasks",
 }
 
 // linearBack is Esc on the Linear screen: one step back, keeping what was
@@ -526,6 +538,9 @@ func (m Model) linearBack() (Model, tea.Cmd) {
 func (m Model) linearKey(key string) (Model, tea.Cmd) {
 	if m.linear.step == "intake" {
 		return m.intakeKey(key)
+	}
+	if m.linear.step == "status" {
+		return m.projectStatusKey(key)
 	}
 	// U35: Space toggles, here as on the teams: who closes the
 	// highlighted project.
@@ -860,6 +875,9 @@ func renderLinear(m Model) string {
 	if m.linear.step == "intake" {
 		return strings.TrimRight(b.String()+renderIntake(m), "\n")
 	}
+	if m.linear.step == "status" {
+		return strings.TrimRight(b.String()+renderProjectStatus(m), "\n")
+	}
 	if m.linear.step == "preview" || m.linear.step == "unlink" {
 		projects := m.linear.project
 		if m.linear.bindingV2 != nil {
@@ -1017,6 +1035,8 @@ func linearStepTitle(m Model) string {
 		return "Unlink the board"
 	case "intake":
 		return "Intake: which Linear signals ask for an agent, and whose"
+	case "status":
+		return "Project status: each Linear project of the board"
 	}
 	if m.linearConfigured() {
 		return "Your Linear connections"

@@ -312,12 +312,14 @@ type Snapshot struct {
 
 // Model implements tea.Model and can be tested directly with UpdateModel.
 type Model struct {
-	linear       linearState
-	intake       intakeState
-	linearCancel context.CancelFunc
-	account      accountState
-	modelSetup   modelSetupState
-	cfg          Config
+	linear linearState
+	intake intakeState
+	// projectStatus is the Linear screen's project status view (U61).
+	projectStatus projectStatusState
+	linearCancel  context.CancelFunc
+	account       accountState
+	modelSetup    modelSetupState
+	cfg           Config
 
 	screen Screen
 	width  int
@@ -501,6 +503,10 @@ func (m Model) UpdateModel(msg tea.Msg) (Model, tea.Cmd) {
 		return m.applyIntake(x), nil
 	case intakeDoneMsg:
 		return m.applyIntakeDone(x)
+	case projectStatusLoadedMsg:
+		return m.applyProjectStatus(x), nil
+	case projectStatusDoneMsg:
+		return m.applyProjectStatusDone(x)
 	case accountLoadedMsg:
 		return m.applyAccount(x), nil
 	case accountActionMsg:
@@ -1387,6 +1393,9 @@ func (m Model) updateKey(msg tea.KeyMsg) (Model, tea.Cmd) {
 	}
 	if m.screen == ScreenLinear && m.linear.step == "intake" && (m.intake.ask != nil || m.intake.picking) {
 		return m.intakeModalKey(key)
+	}
+	if m.screen == ScreenLinear && m.linear.step == "status" && (m.projectStatus.ask != nil || m.projectStatus.picking) {
+		return m.projectStatusModalKey(key)
 	}
 	if m.screen == ScreenAccount && m.account.invite != nil {
 		return m.inviteKey(key)

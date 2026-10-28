@@ -42,12 +42,16 @@ type IssueV2 struct {
 	// ParentIdentifier holds a parent reported only by its display identifier
 	// (native Linear returns parentId as e.g. "TEAM-4"). It is never turned
 	// into a UUID here; a reader resolves it with IssueV2 when needed.
-	ParentIdentifier string     `json:"parent_identifier,omitempty"`
-	ParentKnown      bool       `json:"parent_known"`
-	AssigneeID       string     `json:"assignee_id,omitempty"`
-	AssigneeKnown    bool       `json:"assignee_known"`
-	Relations        []Relation `json:"relations,omitempty"`
-	RelationsKnown   bool       `json:"relations_known"`
+	ParentIdentifier string `json:"parent_identifier,omitempty"`
+	ParentKnown      bool   `json:"parent_known"`
+	AssigneeID       string `json:"assignee_id,omitempty"`
+	AssigneeKnown    bool   `json:"assignee_known"`
+	// Priority is Linear's 0-4 (0 none, 1 urgent ... 4 low), set only when
+	// PriorityKnown: a value of any other shape is left unknown, never guessed.
+	Priority       *int       `json:"priority,omitempty"`
+	PriorityKnown  bool       `json:"priority_known"`
+	Relations      []Relation `json:"relations,omitempty"`
+	RelationsKnown bool       `json:"relations_known"`
 	// DescriptionSHA256 is set only by a single-issue board read; a caller
 	// sends it back as expected_description_sha256.
 	DescriptionSHA256 string `json:"description_sha256,omitempty"`
@@ -691,6 +695,7 @@ func (p *Provider) parseIssueV2(ctx context.Context, m map[string]any) (IssueV2,
 	if e != nil {
 		return IssueV2{}, e
 	}
+	x.Priority, x.PriorityKnown = parsePriority(m["priority"])
 	// Only an explicitly complete typed edge list proves absence. Unrecognized
 	// legacy linked-context forms retain RelationsKnown=false.
 	if raw, present := m["issueRelations"]; present {
@@ -1650,4 +1655,18 @@ func (p *Provider) IssueHasLabel(ctx context.Context, issue, team, project, labe
 		cursor = next
 	}
 	return false, false, nil
+}
+
+// parsePriority reads Linear's issue priority: a whole number 0-4, bare or
+// as {value}. Anything else, null included, is unknown.
+func parsePriority(raw any) (*int, bool) {
+	if node, ok := raw.(map[string]any); ok {
+		raw = node["value"]
+	}
+	n, ok := raw.(float64)
+	if !ok || n != float64(int(n)) || n < 0 || n > 4 {
+		return nil, false
+	}
+	p := int(n)
+	return &p, true
 }

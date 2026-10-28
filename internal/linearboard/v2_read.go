@@ -524,6 +524,9 @@ func (s *Service) IssuesV2(ctx context.Context, scope bus.Request, in IssuesInpu
 		return empty, errors.New("native provider lacks V2 issue capability")
 	}
 	pairs := v.Pairs
+	if in.view != nil {
+		pairs = in.view.narrow(pairs)
+	}
 	if in.LabelID != "" {
 		// A team label selects its one team; a workspace label, or a row
 		// scoped only by the provider's team filter, spans every allowed team
@@ -558,7 +561,12 @@ func (s *Service) IssuesV2(ctx context.Context, scope bus.Request, in IssuesInpu
 			}
 		}
 	}
-	key := issueCursorKeyV2(s.cfg.ProfileID, b, in.LabelID, in.UpdatedAfter, pairs)
+	filterKey := in.LabelID
+	if in.view != nil {
+		// A cursor continues only the same view at the same filter.
+		filterKey = "view:" + in.view.id + ":" + in.view.filter.SHA256
+	}
+	key := issueCursorKeyV2(s.cfg.ProfileID, b, filterKey, in.UpdatedAfter, pairs)
 	c, e := readCursorV2(in.Cursor, key, len(pairs))
 	if e != nil {
 		return empty, e
@@ -576,6 +584,7 @@ func (s *Service) IssuesV2(ctx context.Context, scope bus.Request, in IssuesInpu
 	}
 	seen := map[string]string{}
 	filteredName := ""
+	var kept []linearprovider.IssueV2
 	for _, issue := range page.Items {
 		if e = checkIssueV2(issue, b, v); e != nil {
 			return empty, e
@@ -607,6 +616,18 @@ func (s *Service) IssuesV2(ctx context.Context, scope bus.Request, in IssuesInpu
 			return empty, errors.New("contradictory duplicate issue identity")
 		}
 		seen[issue.ID] = h
+		if in.view != nil {
+			ok, e := in.view.match(ctx, p, issue)
+			if e != nil {
+				return empty, e
+			}
+			if ok {
+				kept = append(kept, issue)
+			}
+		}
+	}
+	if in.view != nil {
+		page.Items = kept
 	}
 	if e = s.unchangedV2(ctx, scope, b); e != nil {
 		return empty, e

@@ -1,11 +1,12 @@
 # ClawBridge v0.3.6 (unreleased)
 
-**Schema 28 → 36.**
-- The server migrates to schema 36 on its first start: 29, the new-device alerts' events and acknowledgements; 30, a
+**Schema 28 → 37.**
+- The server migrates to schema 37 on its first start: 29, the new-device alerts' events and acknowledgements; 30, a
   project's own watch budget; 31, the device an invite was made from; 32, the workspace's device idle limit; 33,
   the Linear team and project names stored with a project's task board binding; 34, the date from which a project's
   threads are readable; 35, the message queue's leases, acks and per-recipient numbering; 36, the message stream's
-  tickets. The upgrade numbers existing deliveries, about 2–4 s per million, and counts what was read as handled.
+  tickets; 37, the Linear issue views ClawBridge wrote. The upgrade numbers existing deliveries, about 2–4 s per
+  million, and counts what was read as handled.
 - **One-way:** v0.3.5 and older refuse a database newer than schema 28. Take a dump before upgrading; to go back,
   restore it with the v0.3.5 image (docs/operations/deployment.md).
 
@@ -212,9 +213,28 @@
 - **ClawBridge lists a board's shared Linear views (views phase 2).** `clawbridge linear view list [--team UUID]
   [--type issue|project]` and `clawbridge linear view show ID` list the shared issue and project views of the
   binding's teams, and agents get the read-only MCP tool `taskboard_views_v2`. Private, workspace and other kinds of
-  views aren't listed, only counted. A view's filter isn't shown: Linear's MCP doesn't return it, and reading it comes
-  with the owner's personal API key in a later release. Agents can't create or change views; the new skill page
-  (`skills/clawbridge/references/views.md`) has them draft a view set for the project owner to apply.
+  views aren't listed, only counted. A view's filter isn't shown: Linear's MCP doesn't return it. Agents can't create
+  or change views; the new skill page (`skills/clawbridge/references/views.md`) has them draft a view set for the
+  project owner to apply.
+- **The project owner creates and updates shared issue views, and agents filter issues by them (views phase 3b).**
+  `clawbridge linear view create --team UUID` and `linear view update ID` (`--name`, `--filter-file`,
+  `--operation-id`, `--confirm`) write with the owner's own Linear API key, in their own terminal, without a session.
+  - **Always one bound team, never the workspace:** `--team` is required, with no default. The preview's first line
+    states the scope ("a shared team view: visible to everyone in that team (N members)"), and history records
+    `scope: team:UUID` with the view ID and the filter's digest, never the filter or the name.
+  - **Every ID in the filter**, under any key, must be the view's team or the binding's (projects, labels, states,
+    members); a name another issue view on the team has is refused.
+  - **The confirm holds the preview:** it carries the preview's binding revision, filter digest and, for an update,
+    the stored view's `filter_as_of`; anything changed since is refused. An update first reads the view in Linear and
+    never overwrites a change someone made there.
+  - **Recorded before it's sent, read back after:** only a read-back with the same team, name, sharing and filter is
+    accepted and stored for agents; anything else is uncertain and never sent again.
+  - **Agents:** `taskboard_issues_v2` takes `view_id` for a view ClawBridge wrote. ClawBridge evaluates the filter on
+    the rows (team, project, labels, state, assignee, priority, one `and`), and the answer adds `filter_as_of`,
+    `agent_filter` and the rows left out for an unknown field. A view using anything else is
+    `agent_filter: unavailable` for agents, while people still see it in Linear. Issue rows now carry `priority`
+    (0–4) with `priority_known`.
+  - Schema 37 stores the views. Deleting and adopting views come later.
 
 ## The command line
 

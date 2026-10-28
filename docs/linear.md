@@ -1215,11 +1215,51 @@ clawbridge linear view show VIEW_UUID --profile PROFILE_ID
 - **What's listed:** shared views of a bound team (the binding's default team unless `--team` names another). A
   person's private views, workspace views and other kinds aren't listed; the answer counts the last two
   (`workspace_views`, `other_kinds`) and names none.
-- **The filter isn't shown yet.** Linear's MCP doesn't return a view's filter. Reading it, and creating or changing
-  views, will use the project owner's personal Linear API key in a later release.
-- **Agents** list views with the MCP tool `taskboard_views_v2`. They can't create or change views; they prepare a view
-  set for the project owner ([the agent's guide](../skills/clawbridge/references/views.md)).
+- **The filter isn't shown here.** Linear's MCP doesn't return a view's filter. ClawBridge keeps the filter only of
+  the issue views it wrote (below).
+- **Agents** list views with the MCP tool `taskboard_views_v2`, and filter issues by a view ClawBridge wrote with
+  `taskboard_issues_v2 {view_id}`. They can't create or change views; they prepare a view set for the project owner
+  ([the agent's guide](../skills/clawbridge/references/views.md)).
 - **Names are text others wrote:** the CLI strips terminal control characters from them.
+
+### Creating and changing issue views (project owner)
+
+You, the project owner, create and update shared issue views on a bound team with your own Linear API key
+([saved first](#your-linear-api-key-for-writing-views)), in your own terminal, without a session:
+
+```sh
+clawbridge linear view create --team TEAM_UUID --name "Urgent bugs" --filter-file urgent.json --operation-id urgent-1 --profile PROFILE_ID
+clawbridge linear view update VIEW_UUID [--name NAME] [--filter-file FILE] --operation-id urgent-2 --profile PROFILE_ID
+```
+
+- **Scope: always one team, never the workspace.** `--team` is required (there's no default team). Every view is
+  shared: everyone in that team sees it. An update keeps the view's team, so it takes no `--team`; a view whose team
+  has left the binding isn't updated.
+- **Preview first.** Without `--confirm` nothing is sent. The preview starts with the scope line, for example
+  `scope: team Engineering (UUID), a shared team view: visible to everyone in that team (12 members)`, read through
+  your MCP connection (`members: unknown` when the count can't be read). It also shows the filter's `agent_filter`
+  line and, for an update, what changes, then the command to repeat with `--confirm`. That command carries what the
+  preview showed (`--expected-revision`, `--expected-filter-sha256` and, for an update, `--expected-filter-as-of`): if
+  the binding, the filter or the stored view changed since, the confirm is refused and nothing is sent.
+- **The filter** is Linear's issue filter as JSON (its `filterData`), for example
+  `{"and":[{"labels":{"some":{"id":{"eq":"LABEL_UUID"}}}},{"priority":{"in":[1,2]}}]}`. Every ID in it, under any key,
+  must be the view's team or the binding's: a bound project, a bound team's label, state or member. Any other ID is
+  refused, naming where it is.
+- **Which filters agents can use.** ClawBridge evaluates a filter itself for agents, so only these keys count: `team`
+  and `project` by ID, `labels.some` by ID, `state` by type or ID, `assignee` by ID or `null`, `priority` (`eq`, `in`,
+  `lt`, `lte`, `gt`, `gte`; 0 none, 1 urgent ... 4 low: Linear counts no priority as 0, so "priority ≤ High" includes
+  issues with no priority), and one top-level `and` of them. Anything else (`or`, `not`, titles, dates...) still makes
+  a view for people, marked `agent_filter: unavailable (uses: ...)`; agents can list it but not filter by it.
+- **The name** must be new among the team's issue views. Spaces around it are trimmed.
+- **An update never overwrites a change made in Linear.** Before sending, it reads the view with your key. If its
+  name, filter or sharing differs from what ClawBridge wrote, the update is refused and nothing is sent.
+- **The write** is recorded before it is sent (the operation ID makes a retry safe), then read back from Linear. Only
+  a read-back showing the same team, name, sharing and filter is `accepted`; anything else is `uncertain` and never
+  sent again. An accepted view is stored for agents, with Linear's `updatedAt` as `filter_as_of`. If storing it fails
+  (`record_error`), run the same command again: it stores it without sending anything.
+- **History** records `view_created` and `view_updated` with the scope (`team:UUID`), the view ID and the filter's
+  digest, never the filter or the name.
+- **Deleting a view, and adopting one made in Linear, come later.**
 
 ## Linear documents (v0.3.2)
 

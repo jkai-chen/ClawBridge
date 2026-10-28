@@ -85,6 +85,8 @@ type IssueCommentsV2 struct {
 type IssuesInputV2 struct {
 	Limit                         int
 	Cursor, LabelID, UpdatedAfter string
+	// view filters the rows by a stored view; set only by ViewIssuesV2.
+	view *issueView
 }
 
 // WriteInputV2 deliberately embeds, rather than extends, the historical digest

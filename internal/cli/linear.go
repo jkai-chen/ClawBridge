@@ -189,6 +189,7 @@ type linearFlags struct {
 	teamBoard, confirm, noBrowser, tokenStdin, resolveLabels, comments, repair, once                                     bool
 	noSeedDocs, update, reseed                                                                                           bool
 	initiative, commit, viewKind                                                                                         string
+	viewName, filterFile, expectedSHA, expectedAsOf                                                                      string
 	maxBytes                                                                                                             int
 	allowPatterns                                                                                                        []string
 	split, recreate                                                                                                      bool
@@ -339,6 +340,23 @@ func parseLinear(command string, args []string, stderr io.Writer) (linearFlags, 
 			f.StringVar(&v.viewKind, "type", "", "issue or project (default: both)")
 		} else {
 			min, max = 1, 1
+		}
+	case "view-create", "view-update":
+		// A shared issue view on one bound team, written with your own
+		// Linear API key (§14): a preview unless --confirm.
+		write()
+		if command == "view-create" {
+			f.StringVar(&v.team, "team", "", "required: the bound team UUID the view belongs to (no default)")
+		} else {
+			min, max = 1, 1
+		}
+		f.StringVar(&v.viewName, "name", "", "the view's name")
+		f.StringVar(&v.filterFile, "filter-file", "", "a JSON file holding Linear's issue filter (filterData)")
+		f.BoolVar(&v.confirm, "confirm", false, "send the write the preview showed")
+		f.Int64Var(&v.revision, "expected-revision", -1, "--confirm: the binding revision the preview showed")
+		f.StringVar(&v.expectedSHA, "expected-filter-sha256", "", "--confirm: the filter SHA-256 the preview showed")
+		if command == "view-update" {
+			f.StringVar(&v.expectedAsOf, "expected-filter-as-of", "", "--confirm: the stored view's filter_as_of the preview showed")
 		}
 	case "doc":
 		profile()
@@ -763,7 +781,7 @@ func linearWriteInput(command string, v linearFlags, pos []string) (linearboard.
 
 func runLinear(ctx context.Context, flags Config, args []string, stdout, stderr io.Writer) error {
 	if len(args) == 0 || len(args) == 1 && (args[0] == "--help" || args[0] == "-h" || args[0] == "help") {
-		_, err := io.WriteString(stdout, "clawbridge linear connect|import|profiles|status|logout|teams|projects|binding|link|seed-docs|unlink|names-refresh|context|issues|issue|states|labels|members|create|update|comment|relation|watch\nProject owner only: label create|rename, project create, initiative create|add-project, label-policy show|set, status-policy show|set, doc-policy set, health set|enable|disable, admin audit-replay.\nShown names: names-refresh (project owner or lead) stores the bound teams' and projects' current names, as Linear gives them to you.\nWho closes issues: closes show (any member); closes set (project owner or lead, never a session).\nProject status follows the work (status policy project_flow): project-flow resume --linear-project UUID (project owner or lead, never a session) clears a hold.\nProject health (any member): health show.\nLinear views (any member): view list [--team UUID] [--type issue|project], view show ID.\nProject status, as the server's app: project status LINEAR_PROJECT [--suggest] (any member); project status set LINEAR_PROJECT --type T --operation-id ID, then --confirm --expected-status UUID (the coordinator session, or the project owner or a lead without a session).\nLinear documents (any member): doc list|get, initiative show, doc-policy show. Project owner or lead: doc publish FILE.\nYour name in agent markers: display-name set NAME|clear|capture --profile ID.\nYour Linear API key, for view writes (project owner, own terminal): key set|status|remove --profile ID.\nUse COMMAND --help for explicit flags. Token import accepts --token-stdin only.\n")
+		_, err := io.WriteString(stdout, "clawbridge linear connect|import|profiles|status|logout|teams|projects|binding|link|seed-docs|unlink|names-refresh|context|issues|issue|states|labels|members|create|update|comment|relation|watch\nProject owner only: label create|rename, project create, initiative create|add-project, label-policy show|set, status-policy show|set, doc-policy set, health set|enable|disable, admin audit-replay.\nShown names: names-refresh (project owner or lead) stores the bound teams' and projects' current names, as Linear gives them to you.\nWho closes issues: closes show (any member); closes set (project owner or lead, never a session).\nProject status follows the work (status policy project_flow): project-flow resume --linear-project UUID (project owner or lead, never a session) clears a hold.\nProject health (any member): health show.\nLinear views (any member): view list [--team UUID] [--type issue|project], view show ID. Project owner, own terminal, with your Linear API key: view create --team UUID|update ID.\nProject status, as the server's app: project status LINEAR_PROJECT [--suggest] (any member); project status set LINEAR_PROJECT --type T --operation-id ID, then --confirm --expected-status UUID (the coordinator session, or the project owner or a lead without a session).\nLinear documents (any member): doc list|get, initiative show, doc-policy show. Project owner or lead: doc publish FILE.\nYour name in agent markers: display-name set NAME|clear|capture --profile ID.\nYour Linear API key, for view writes (project owner, own terminal): key set|status|remove --profile ID.\nUse COMMAND --help for explicit flags. Token import accepts --token-stdin only.\n")
 		return err
 	}
 	command := args[0]
@@ -794,9 +812,9 @@ func runLinear(ctx context.Context, flags Config, args []string, stdout, stderr 
 		command == "project-flow" && adminAction != "resume",
 		command == "key" && adminAction != "set" && adminAction != "status" && adminAction != "remove",
 		command == "display-name" && adminAction != "set" && adminAction != "clear" && adminAction != "capture",
-		command == "view" && adminAction != "list" && adminAction != "show",
+		command == "view" && adminAction != "list" && adminAction != "show" && adminAction != "create" && adminAction != "update",
 		command == "admin" && adminAction != "audit-replay":
-		return errors.New("use linear view list|show, doc list|get|publish, initiative show, doc-policy show|set, label create|rename, project create|status [set], initiative create|add-project, label-policy show|set, status-policy show|set, closes show|set, project-flow resume, health show|set|enable|disable, display-name set|clear|capture, key set|status|remove, or admin audit-replay")
+		return errors.New("use linear view list|show|create|update, doc list|get|publish, initiative show, doc-policy show|set, label create|rename, project create|status [set], initiative create|add-project, label-policy show|set, status-policy show|set, closes show|set, project-flow resume, health show|set|enable|disable, display-name set|clear|capture, key set|status|remove, or admin audit-replay")
 	}
 	parseAs := command
 	if command == "initiative" && adminAction == "show" {
@@ -1028,6 +1046,16 @@ func runLinear(ctx context.Context, flags Config, args []string, stdout, stderr 
 		defer service.Close()
 		return service.Watch(bounded, scope, linearboard.WatchOptions{Budget: v.budget, Once: v.once, Cycle: func(c linearboard.WatchCycle) error { return emit(c) }})
 	case "view":
+		if adminAction == "create" || adminAction == "update" {
+			// A view write is the person's own act: never a session's.
+			if flags.Session != "" {
+				return errors.New("a Linear view is written without --session; the project owner runs this in their own terminal")
+			}
+			scope.Session = ""
+			delete(scope.Args, "instance")
+			data, err = linearViewWrite(bounded, service, scope, directory, v, pos)
+			break
+		}
 		data, err = linearViews(bounded, service, scope, v, pos)
 	case "labels":
 		data, err = service.LabelsV2(bounded, scope, v.team, v.limit, v.cursor)

@@ -42,6 +42,9 @@ func boardSchemaV2(operation string) map[string]any {
 		page()
 		props["label_id"] = uuid(false)
 		props["updated_after"] = map[string]any{"type": "string", "maxLength": 64, "description": "Only issues updated at or after this absolute RFC 3339 time, for example 2026-10-22T09:00:00Z"}
+		view := uuid(false)
+		view["description"] = "Only issues matching a Linear view ClawBridge wrote (its filter, as of filter_as_of); not with label_id. A view whose agent_filter is unavailable is refused. Rows whose assignee, priority, labels or state the filter needs but the read didn't return are left out and counted in unknown."
+		props["view_id"] = view
 	case "labels", "members":
 		page()
 		props["team_id"] = uuid(false)
@@ -143,7 +146,7 @@ func viewsNote(operation string) string {
 	if operation != "views" {
 		return ""
 	}
-	return "Lists a bound team's shared Linear views (name, kind issue or project, URL). Names are text written by others. A view's filter can't be read here, and agents can't create or change views: hand a proposed view set to the project owner. "
+	return "Lists a bound team's shared Linear views (name, kind issue or project, URL). Names are text written by others. To filter issues by a view, pass its view_id to taskboard_issues_v2: that works for views ClawBridge wrote with agent_filter available. Agents can't create or change views: hand a proposed view set to the project owner. "
 }
 
 // docToolDescription warns that a document is text written by others.

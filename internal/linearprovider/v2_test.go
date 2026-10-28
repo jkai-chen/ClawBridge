@@ -303,3 +303,20 @@ func TestV2LabelNamesCannotBecomeCanonicalUUIDs(t *testing.T) {
 		t.Fatal("UUID-shaped labelname trusted", x, e)
 	}
 }
+
+// Priority is known only as a whole number 0-4, bare or as {value}.
+func TestParsePriority(t *testing.T) {
+	for raw, want := range map[any]int{float64(0): 0, float64(1): 1, float64(4): 4} {
+		if p, ok := parsePriority(raw); !ok || *p != want {
+			t.Fatal(raw)
+		}
+		if p, ok := parsePriority(map[string]any{"value": raw, "name": "x"}); !ok || *p != want {
+			t.Fatal(raw)
+		}
+	}
+	for _, raw := range []any{nil, float64(5), float64(-1), 1.5, "1", "Urgent", map[string]any{"name": "Urgent"}, true} {
+		if p, ok := parsePriority(raw); ok || p != nil {
+			t.Fatal("known:", raw)
+		}
+	}
+}

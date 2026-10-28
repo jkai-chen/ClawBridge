@@ -40,8 +40,14 @@ func TestLinearViewWriteParsing(t *testing.T) {
 			t.Fatal("parsed", args)
 		}
 	}
+	if v, _, err = parseLinear("view-apply", []string{"--profile", "p", "--file", "set.json", "--adopt", "Triage", "--adopt", "Bugs", "--operation-id", "set-1", "--confirm"}, &bytes.Buffer{}); err != nil || v.filterFile != "set.json" || len(v.adoptNames) != 2 || v.adoptNames[1] != "Bugs" || !v.confirm {
+		t.Fatal(v, err)
+	}
+	if _, _, err = parseLinear("view-apply", []string{"extra", "--profile", "p", "--file", "f", "--operation-id", "op"}, &bytes.Buffer{}); err == nil {
+		t.Fatal("apply took a positional")
+	}
 	var out bytes.Buffer
-	if err = Run(context.Background(), []string{"linear", "--help"}, &out, &bytes.Buffer{}); err != nil || !strings.Contains(out.String(), "view create --team UUID|update ID|delete ID") {
+	if err = Run(context.Background(), []string{"linear", "--help"}, &out, &bytes.Buffer{}); err != nil || !strings.Contains(out.String(), "apply --file F [--adopt NAME]") {
 		t.Fatal(out.String(), err)
 	}
 }

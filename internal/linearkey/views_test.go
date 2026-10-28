@@ -15,7 +15,7 @@ const (
 	tkView = "70000000-0000-4000-8000-000000000001"
 )
 
-const tkNode = `{"id":"` + tkView + `","name":"Urgent bugs","shared":true,"updatedAt":"2026-10-27T21:00:00.000Z","team":{"id":"` + tkTeam + `"},"filterData":{"team":{"id":{"eq":"` + tkTeam + `"}},"priority":{"eq":1}}}`
+const tkNode = `{"id":"` + tkView + `","name":"Urgent bugs","shared":true,"updatedAt":"2026-10-27T21:00:00.000Z","team":{"id":"` + tkTeam + `"},"creator":{"id":"u-1","name":"Ada"},"filterData":{"team":{"id":{"eq":"` + tkTeam + `"}},"priority":{"eq":1}}}`
 
 type sentQuery struct {
 	Query     string         `json:"query"`
@@ -88,7 +88,7 @@ func TestViewReadBack(t *testing.T) {
 	noAgent(t)
 	recordLinear(t, `{"data":{"customView":`+tkNode+`}}`)
 	c, _ := NewClient(testKey)
-	if v, err := c.View(context.Background(), tkView); err != nil || v.TeamID != tkTeam {
+	if v, err := c.View(context.Background(), tkView); err != nil || v.TeamID != tkTeam || v.CreatorID != "u-1" || v.CreatorName != "Ada" {
 		t.Fatal(v, err)
 	}
 	for _, answer := range []string{

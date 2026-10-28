@@ -16,6 +16,9 @@ type View struct {
 	UpdatedAt string
 	// TeamID is "" for a view with no team, which ClawBridge never writes.
 	TeamID string
+	// CreatorID and CreatorName say who made the view (shown before an
+	// adoption replaces its filter). The name is text from Linear.
+	CreatorID, CreatorName string
 	// Filter is filterData as Linear holds it, re-encoded with sorted keys
 	// and its numbers kept exactly, for comparing with what was sent.
 	Filter string
@@ -34,6 +37,10 @@ type viewNode struct {
 	Team      *struct {
 		ID string `json:"id"`
 	} `json:"team"`
+	Creator *struct {
+		ID   string `json:"id"`
+		Name string `json:"name"`
+	} `json:"creator"`
 	FilterData json.RawMessage `json:"filterData"`
 }
 
@@ -44,6 +51,9 @@ func (n *viewNode) view() (View, error) {
 	v := View{ID: n.ID, Name: n.Name, Shared: n.Shared, UpdatedAt: n.UpdatedAt}
 	if n.Team != nil {
 		v.TeamID = n.Team.ID
+	}
+	if n.Creator != nil {
+		v.CreatorID, v.CreatorName = n.Creator.ID, n.Creator.Name
 	}
 	filter, err := Canonical(n.FilterData)
 	if err != nil {

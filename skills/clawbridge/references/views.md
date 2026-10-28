@@ -27,7 +27,7 @@ taskboard_issues_v2 {"view_id": "VIEW_UUID", "limit": 50}
 
 - **Works for issue views ClawBridge wrote** (the owner made them with `linear view create|update`): ClawBridge keeps
   their filter and evaluates it on the rows itself. A view made by hand in Linear is listed but answers `not_found`
-  here.
+  here until the owner adopts it.
 - **The answer** is the usual issues page plus `view_id`, `filter_as_of` (when the filter was read back from Linear),
   `agent_filter` and `unknown`: rows left out because the filter needs a field the read didn't return
   (`assignee_unknown`, `priority_unknown`, `labels_unknown`, `state_unknown`, `project_unknown`), counted by reason.
@@ -46,10 +46,12 @@ What you can do is prepare the view set:
    - project views `Engineering`, `Review` and `Test`, each filtered by the project label group `Type`;
    - one issue view per bound team (for example "Open bugs": state not completed, label `bug`).
 2. **Show it.** Put the file in the repository or the thread, with a one-line reason per view.
-3. **Hand it to the project owner.** They preview and create each issue view themselves, in their own terminal:
-   `clawbridge linear view create --team TEAM_UUID --name NAME --filter-file FILE --operation-id ID --profile ID`,
-   then the command the preview prints (it adds `--confirm` and the preview's expected values). Give them the commands in your message; applying a whole file at once
-   (`view apply --file`) and project views come later.
+3. **Hand it to the project owner.** Write the set as a view-set file,
+   `{"views": [{"team": "TEAM_UUID", "name": "Open bugs", "filter": {...}}]}` (issue views; project views come later),
+   and give them the command to preview it in their own terminal:
+   `clawbridge linear view apply --file FILE --operation-id ID --profile ID`, then the command the preview prints (it adds `--confirm` and the preview's expected values).
+   - **A name a person already used** for a view in Linear is refused. Say so in your message: adopting it
+     (`--adopt NAME`) replaces that person's filter, so whether to adopt is the owner's call, not yours.
    - **One team per view, named with `--team`:** every view is shared with that whole team.
    - **Every ID in the filter** must be the view's team or the binding's (projects, the bound teams' labels, states
      and members), or the write is refused.

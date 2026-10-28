@@ -634,7 +634,7 @@ var operationArgs = map[string]string{
 	"intake_list":                 "instance state",
 	"intake_dismiss":              "instance issue_uuid",
 	"intake_rearm":                "instance issue_uuid",
-	"linear_view_record":          "instance action view_id team_id name filter filter_sha256 filter_as_of agent_filter uses expected_binding_revision expected_filter_as_of",
+	"linear_view_record":          "instance action view_id team_id name filter filter_sha256 filter_as_of agent_filter uses expected_binding_revision expected_filter_as_of old_filter_sha256",
 	"linear_view_forget":          "instance view_id expected_filter_as_of",
 	"linear_view_get":             "instance view_id",
 	"linear_views_list":           "instance",

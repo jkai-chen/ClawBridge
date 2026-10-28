@@ -395,7 +395,7 @@ func recordOutcome(previous ledgerRecord) (any, bool, error) {
 		return nil, true, errors.New("invalid recorded receipt")
 	}
 	id, _ := receipt["id"].(string)
-	if kind, _ := receipt["kind"].(string); kind == "view_create" || kind == "view_update" {
+	if kind, _ := receipt["kind"].(string); kind == "view_create" || kind == "view_update" || kind == "view_adopt" {
 		if !validViewReceipt(previous.Receipt) {
 			return nil, true, errors.New("invalid recorded view receipt")
 		}

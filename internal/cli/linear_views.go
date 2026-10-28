@@ -171,6 +171,43 @@ func linearViewDelete(ctx context.Context, service *linearboard.Service, scope b
 	return out, nil
 }
 
+// linearViewApply runs view apply: the file's plan, then with --confirm
+// each entry's write. The key is opened even for the preview, which reads
+// the current filter of a view being adopted (A2).
+func linearViewApply(ctx context.Context, service *linearboard.Service, scope bus.Request, directory string, v linearFlags) (any, error) {
+	if err := linearkey.Allowed(); err != nil {
+		return nil, err
+	}
+	if v.filterFile == "" {
+		return nil, errors.New("view apply requires --file")
+	}
+	raw, err := readLinearFile(v.filterFile)
+	if err != nil {
+		return nil, err
+	}
+	client, err := linearKeys(directory).Open(v.profile)
+	if err != nil {
+		return nil, err
+	}
+	// A refused confirm is an error; the preview shows which entries refuse.
+	result, err := service.ViewApply(ctx, scope, linearboard.ViewApplyInput{File: []byte(raw), OperationID: v.operation, Adopt: v.adoptNames, Confirm: v.confirm, ExpectedPlanSHA: v.expectedSHA}, viewKey{client})
+	if err != nil {
+		return nil, err
+	}
+	out, err := safeData(result)
+	if err != nil {
+		return nil, err
+	}
+	if result.Preview && result.Refused == 0 {
+		parts := []string{"clawbridge linear view apply --file", strconv.Quote(terminalSafe(v.filterFile))}
+		for _, name := range v.adoptNames {
+			parts = append(parts, "--adopt", strconv.Quote(terminalSafe(name)))
+		}
+		out.(map[string]any)["next"] = strings.Join(append(parts, "--operation-id", v.operation, "--profile", v.profile, "--expected-plan-sha256", result.PlanSHA, "--confirm"), " ")
+	}
+	return out, nil
+}
+
 // viewConfirmLine is the command that sends what the preview showed.
 func viewConfirmLine(v linearFlags, in linearboard.ViewWriteInput, preview linearboard.ViewWriteResult) string {
 	parts := []string{"clawbridge linear view", in.Action}
@@ -199,7 +236,7 @@ type viewKey struct{ c *linearkey.Client }
 func (k viewKey) wrap(v linearkey.View, err error) (linearboard.KeyView, error) {
 	switch {
 	case err == nil:
-		return linearboard.KeyView{ID: v.ID, Name: v.Name, UpdatedAt: v.UpdatedAt, TeamID: v.TeamID, Filter: v.Filter, Shared: v.Shared}, nil
+		return linearboard.KeyView{ID: v.ID, Name: v.Name, UpdatedAt: v.UpdatedAt, TeamID: v.TeamID, Filter: v.Filter, CreatorID: v.CreatorID, CreatorName: v.CreatorName, Shared: v.Shared}, nil
 	case errors.Is(err, linearkey.ErrForbidden), errors.Is(err, linearkey.ErrRejected), errors.Is(err, linearkey.ErrNoKey):
 		return linearboard.KeyView{}, fmt.Errorf("%w: %w", linearboard.ErrKeyNotSent, err)
 	case errors.Is(err, linearkey.ErrViewRefused):

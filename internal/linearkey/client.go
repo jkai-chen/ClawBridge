@@ -24,7 +24,7 @@ var queries = map[string]string{
 	"viewDelete": `mutation ViewDelete($id: String!) { customViewDelete(id: $id) { success } }`,
 }
 
-const viewFields = `id name shared updatedAt team { id } filterData`
+const viewFields = `id name shared updatedAt team { id } creator { id name } filterData`
 
 // Client sends the person's key with an allow-listed query.
 type Client struct {

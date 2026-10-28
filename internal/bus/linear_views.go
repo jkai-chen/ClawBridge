@@ -108,14 +108,19 @@ func (s *Store) forgetLinearView(ctx context.Context, tx *transaction, wid, pid 
 
 // viewRecord is a checked linear_view_record request.
 type viewRecord struct {
-	action, viewID, teamID, name, filter, sha, asOf, agentFilter, uses, expectedAsOf string
-	revision                                                                         int64
+	action, viewID, teamID, name, filter, sha, asOf, agentFilter, uses, expectedAsOf, oldSHA string
+	revision                                                                                 int64
 }
 
 func parseViewRecord(a map[string]any) (viewRecord, error) {
-	v := viewRecord{action: str(a, "action"), viewID: str(a, "view_id"), teamID: str(a, "team_id"), name: strings.TrimSpace(str(a, "name")), filter: str(a, "filter"), sha: str(a, "filter_sha256"), asOf: str(a, "filter_as_of"), agentFilter: str(a, "agent_filter"), expectedAsOf: str(a, "expected_filter_as_of")}
-	if v.action != "create" && v.action != "update" {
-		return v, invalid("action must be create or update")
+	v := viewRecord{action: str(a, "action"), viewID: str(a, "view_id"), teamID: str(a, "team_id"), name: strings.TrimSpace(str(a, "name")), filter: str(a, "filter"), sha: str(a, "filter_sha256"), asOf: str(a, "filter_as_of"), agentFilter: str(a, "agent_filter"), expectedAsOf: str(a, "expected_filter_as_of"), oldSHA: str(a, "old_filter_sha256")}
+	if v.action != "create" && v.action != "update" && v.action != "adopt" {
+		return v, invalid("action must be create, update or adopt")
+	}
+	// An adoption names the digest of the filter it replaced (A2), and
+	// only an adoption does.
+	if (v.action == "adopt") != (v.oldSHA != "") || (v.oldSHA != "" && !viewSHAPattern.MatchString(v.oldSHA)) {
+		return v, invalid("old_filter_sha256 goes with an adoption, and only with one")
 	}
 	if !viewIDPattern.MatchString(v.viewID) || !viewIDPattern.MatchString(v.teamID) {
 		return v, invalid("view_id and team_id must be lower-case UUIDs")
@@ -186,9 +191,9 @@ func (s *Store) recordLinearView(ctx context.Context, tx *transaction, wid, pid 
 	}
 	now := stamp()
 	switch {
-	case v.action == "create" && exists:
+	case v.action != "update" && exists:
 		return nil, &serviceError{code: "conflict", cause: errors.New("view " + v.viewID + " is already recorded; update it instead")}
-	case v.action == "create":
+	case v.action != "update":
 		var count int
 		if err = tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM linear_views WHERE project_id=?`, pid).Scan(&count); err != nil {
 			return nil, err
@@ -196,8 +201,8 @@ func (s *Store) recordLinearView(ctx context.Context, tx *transaction, wid, pid 
 		if count >= maxStoredViews {
 			return nil, invalid("a project records at most 200 views")
 		}
-		if _, err = tx.ExecContext(ctx, `INSERT INTO linear_views(project_id,view_id,team_id,kind,scope,name,filter,filter_sha256,filter_as_of,agent_filter,uses,binding_revision,adopted,created_by,created_at,updated_at) VALUES(?,?,?,'issue','team',?,?,?,?,?,?,?,0,?,?,?)`,
-			pid, v.viewID, v.teamID, v.name, v.filter, v.sha, v.asOf, v.agentFilter, v.uses, v.revision, s.principal, now, now); err != nil {
+		if _, err = tx.ExecContext(ctx, `INSERT INTO linear_views(project_id,view_id,team_id,kind,scope,name,filter,filter_sha256,filter_as_of,agent_filter,uses,binding_revision,adopted,created_by,created_at,updated_at) VALUES(?,?,?,'issue','team',?,?,?,?,?,?,?,?,?,?,?)`,
+			pid, v.viewID, v.teamID, v.name, v.filter, v.sha, v.asOf, v.agentFilter, v.uses, v.revision, boolInt(v.action == "adopt"), s.principal, now, now); err != nil {
 			return nil, err
 		}
 	case !exists:
@@ -216,11 +221,12 @@ func (s *Store) recordLinearView(ctx context.Context, tx *transaction, wid, pid 
 	}
 	// History names the scope, the view, its sharing and the filter's
 	// digest: never the filter or the names (§14.1).
-	action := "view_created"
-	if v.action == "update" {
-		action = "view_updated"
+	action := map[string]string{"create": "view_created", "update": "view_updated", "adopt": "view_adopted"}[v.action]
+	details := map[string]any{"scope": "team:" + v.teamID, "view_id": v.viewID, "shared": true, "filter_sha256": v.sha, "agent_filter": v.agentFilter}
+	if v.oldSHA != "" {
+		details["old_filter_sha256"] = v.oldSHA
 	}
-	if err = s.audit(ctx, tx, wid, pid, "", "linear_view", v.viewID, action, map[string]any{"scope": "team:" + v.teamID, "view_id": v.viewID, "shared": true, "filter_sha256": v.sha, "agent_filter": v.agentFilter}); err != nil {
+	if err = s.audit(ctx, tx, wid, pid, "", "linear_view", v.viewID, action, details); err != nil {
 		return nil, err
 	}
 	row, err := s.linearView(ctx, tx, pid, v.viewID, true)

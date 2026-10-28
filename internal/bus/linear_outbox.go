@@ -311,6 +311,28 @@ func (s *Store) outboxUpdate(ctx context.Context, q string, a ...any) (bool, err
 	return ok, err
 }
 
+// OutboxListProject is a project's queued writes, oldest first, then those
+// settled since since, newest first: typed fields only, for the project's
+// queue view.
+func (s *Store) OutboxListProject(ctx context.Context, project string, since time.Time, limit int) ([]OutboxWrite, error) {
+	var out []OutboxWrite
+	err := s.ledgerTx(ctx, func(tx *transaction) error {
+		rows, err := query(ctx, tx, `SELECT `+outboxColumns+` FROM linear_write_outbox WHERE project_id=? AND (state IN ('queued','sending') OR settled_at>=?) ORDER BY CASE WHEN state IN ('queued','sending') THEN 0 ELSE 1 END,CASE WHEN state IN ('queued','sending') THEN created_at ELSE '' END,settled_at DESC,id LIMIT ?`, project, layout(since), limit)
+		if err != nil {
+			return err
+		}
+		for _, r := range rows {
+			w := outboxRow(r)
+			if err = s.outboxPosition(ctx, tx, &w); err != nil {
+				return err
+			}
+			out = append(out, w)
+		}
+		return nil
+	})
+	return out, err
+}
+
 // OutboxList is a project's queued writes and those settled in the last
 // OutboxKeep, newest first, for one session or (session "") one person's
 // sessionless writes: typed fields only.

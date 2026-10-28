@@ -699,6 +699,23 @@ CLAWBRIDGE_DISPATCHER_MODEL_MAX_AGENTS=2                  # optional, 1-20
   provider key once. Keep the reverse proxy from logging request or response
   bodies; the reference Caddy configuration logs none.
 
+### More than one server
+
+Run one server instance per database. Each server paces its Linear calls on its own, from the rate-limit headers
+Linear sends it, so two servers can together pass Linear's limits and a project's hourly budget; Linear's 429s then
+absorb the overshoot, and queued writes wait longer.
+
+`clawbridge doctor` shows `linear.instances`: how many servers have a connection open to the database. Each serving
+process names its connections `clawbridge-server-<random>` (`application_name`; CLI and operator commands don't) and
+keeps idle ones open, so a quiet server still counts. The count reads "can't be told" rather than guessing when:
+- the database URL sets its own `application_name`;
+- a connection pooler such as PgBouncer sits in front (doctor names it when it sees it);
+- another client of the server's database role has no name. An operator command, or `psql` signed in as the same
+  role, makes the count "can't be told" while it is connected; that is expected, and the count comes back when it
+  disconnects.
+
+Each server's connections, its pool and the stream hub's always-open listener alike, carry its one name.
+
 ## Persistent disk and backup guards
 
 These commands assume the reviewed checkout is `/opt/clawbridge/repo`, the initialized

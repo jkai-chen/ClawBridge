@@ -67,6 +67,13 @@ type LinearData struct {
 type linearState struct {
 	// logoutAsk is the connection an x is waiting to log out, until y.
 	logoutAsk string
+	// queue is a hosted project's Linear budget and queued writes, read
+	// with the board; nil when the server has none. writes is the queue
+	// view's list (o). budgetAsk is a typed budget waiting for y (-1
+	// clears it), 0 when none.
+	queue     *linearQueue
+	writes    []map[string]any
+	budgetAsk int
 	// showIDs shows the raw Linear IDs (d).
 	showIDs bool
 	// stored are the team and project names stored with the board, by
@@ -160,6 +167,9 @@ type linearLoadedMsg struct {
 	// not read. namesErr is a names refresh that didn't work.
 	names    *storedNames
 	namesErr string
+	// queue is the project's Linear budget and queue, read with the
+	// board on a hosted server.
+	queue *linearQueue
 }
 
 // storedNames are a board's names as project_overview returns them, and
@@ -244,7 +254,7 @@ func (m Model) linearCommand(request LinearRequest) (Model, tea.Cmd) {
 	source := m.cfg.Linear
 	refresh := m.linear.refreshNames && m.canRefreshNames()
 	m.linear.refreshNames = false
-	executor, workspace, project := m.cfg.Executor, m.cfg.Workspace, m.cfg.Project
+	executor, workspace, project, hosted := m.cfg.Executor, m.cfg.Workspace, m.cfg.Project, m.cfg.Mode == ModeCloud
 	return m, func() tea.Msg {
 		defer cancel()
 		msg := linearLoadedMsg{request: requestID, operation: request.Operation}
@@ -258,6 +268,9 @@ func (m Model) linearCommand(request LinearRequest) (Model, tea.Cmd) {
 		msg.data, msg.err = source.Do(ctx, request)
 		if msg.err == nil && linearNamesOps[request.Operation] {
 			msg.names = readStoredNames(ctx, executor, workspace, project)
+			if hosted {
+				msg.queue = readLinearQueue(ctx, executor, workspace, project)
+			}
 		}
 		return msg
 	}
@@ -306,6 +319,9 @@ func (m Model) applyLinear(x linearLoadedMsg) Model {
 	m.source = "linear"
 	if x.names != nil {
 		m.linear.stored, m.linear.namesAt, m.linear.role, m.linear.holders = x.names.byID, x.names.at, x.names.role, x.names.holders
+	}
+	if x.queue != nil {
+		m.linear.queue = x.queue
 	}
 	m.linear.namesNote = ""
 	if x.namesErr != "" {
@@ -512,6 +528,7 @@ func (m Model) linearStep() string {
 var linearPrevious = map[string]string{
 	"teams": "profiles", "default": "teams", "projects": "default", "preview": "projects",
 	"tasks": "profiles", "details": "tasks", "unlink": "tasks", "intake": "tasks", "status": "tasks", "views": "tasks",
+	"writes": "profiles",
 }
 
 // linearBack is Esc on the Linear screen: one step back, keeping what was
@@ -864,6 +881,9 @@ func (m Model) linearClosesTyped() (Model, tea.Cmd) {
 func renderLinear(m Model) string {
 	var b strings.Builder
 	b.WriteString("Settings / Integrations / Linear\n\n")
+	if m.linear.queue != nil {
+		b.WriteString(linearQueueLine(m.linear.queue) + "\n")
+	}
 	b.WriteString(accentStyle.Render(linearStepTitle(m)) + "\n")
 	if m.linearStep() == "profiles" && len(m.linear.profiles) == 0 {
 		b.WriteString("Optional: connect Linear (" + keyHint(m, ScreenLinear, "connect") + ") to see and link this project's board, or come back later.\n")
@@ -887,6 +907,9 @@ func renderLinear(m Model) string {
 	}
 	if m.linear.step == "views" {
 		return strings.TrimRight(b.String()+renderViews(m), "\n")
+	}
+	if m.linear.step == "writes" {
+		return strings.TrimRight(b.String()+renderLinearWrites(m), "\n")
 	}
 	if m.linear.step == "preview" || m.linear.step == "unlink" {
 		projects := m.linear.project

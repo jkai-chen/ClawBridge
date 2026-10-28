@@ -425,6 +425,8 @@ const (
 	// inputLinearUnlink takes the project's slug before an unlink
 	// (TUI-UX-AUDIT U34).
 	inputLinearUnlink
+	// inputLinearBudget takes the project's hourly Linear budget (b).
+	inputLinearBudget
 )
 
 // New validates the trusted mode and immutable boundary.
@@ -512,6 +514,10 @@ func (m Model) UpdateModel(msg tea.Msg) (Model, tea.Cmd) {
 		return m.applyThreadMsg(x), nil
 	case intakeLoadedMsg:
 		return m.applyIntake(x), nil
+	case linearWritesMsg:
+		return m.applyLinearWrites(x), nil
+	case linearBudgetMsg:
+		return m.applyLinearBudget(x)
 	case intakeDoneMsg:
 		return m.applyIntakeDone(x)
 	case viewsLoadedMsg:
@@ -1411,6 +1417,9 @@ func (m Model) updateKey(msg tea.KeyMsg) (Model, tea.Cmd) {
 	if m.screen == ScreenLinear && m.linear.logoutAsk != "" {
 		return m.linearLogoutAnswer(key)
 	}
+	if m.screen == ScreenLinear && m.linear.budgetAsk != 0 {
+		return m.linearBudgetAnswer(key)
+	}
 	if m.screen == ScreenLinear && m.linear.step == "intake" && (m.intake.ask != nil || m.intake.picking) {
 		return m.intakeModalKey(key)
 	}
@@ -1472,6 +1481,9 @@ func (m Model) updateEditor(key string, runes []rune) (Model, tea.Cmd) {
 		}
 		if m.inputMode == inputLinearUnlink {
 			return m.linearUnlinkTyped()
+		}
+		if m.inputMode == inputLinearBudget {
+			return m.linearBudgetTyped()
 		}
 		if m.screen == ScreenAccount && (m.confirming || m.inputMode == inputAccountInvite || m.inputMode == inputAccountLabel || m.inputMode == inputAccountTransfer) {
 			return m.accountSubmit()

@@ -384,8 +384,11 @@ func (s *Store) chargeProjectStatus(ctx context.Context, tx *transaction, pid st
 type projectBudget struct {
 	hour        string
 	used, limit int
-	resetAt     time.Time
-	row         bool
+	// source is where the limit comes from: "project" (its owner set it),
+	// "watcher" (the last watcher's) or "default" (the server's).
+	source  string
+	resetAt time.Time
+	row     bool
 }
 
 func (s *Store) projectBudget(ctx context.Context, tx *transaction, pid string) (projectBudget, error) {
@@ -393,13 +396,13 @@ func (s *Store) projectBudget(ctx context.Context, tx *transaction, pid string) 
 	if err != nil {
 		return projectBudget{}, err
 	}
-	b := projectBudget{hour: now[:13], limit: watchDefaultBudget, resetAt: at(now).Truncate(time.Hour).Add(time.Hour)}
+	b := projectBudget{hour: now[:13], limit: watchDefaultBudget, source: "default", resetAt: at(now).Truncate(time.Hour).Add(time.Hour)}
 	rows, err := query(ctx, tx, `SELECT budget_hour,budget_used,budget_limit FROM watch_lease WHERE project_id=?`+forUpdate(tx), pid)
 	if err != nil {
 		return b, err
 	}
 	if len(rows) == 1 {
-		b.row, b.limit = true, asInt(rows[0]["budget_limit"])
+		b.row, b.limit, b.source = true, asInt(rows[0]["budget_limit"]), "watcher"
 		if str(rows[0], "budget_hour") == b.hour {
 			b.used = asInt(rows[0]["budget_used"])
 		}
@@ -407,9 +410,28 @@ func (s *Store) projectBudget(ctx context.Context, tx *transaction, pid string) 
 	if n, ok, e := watchBudgetOverride(ctx, tx, pid); e != nil {
 		return b, e
 	} else if ok {
-		b.limit = n
+		b.limit, b.source = n, "project"
 	}
 	return b, nil
+}
+
+// LinearBudget is a project's hourly Linear budget as status shows it.
+type LinearBudget struct {
+	Used     int       `json:"used"`
+	Limit    int       `json:"limit"`
+	Source   string    `json:"source"`
+	ResetsAt time.Time `json:"window_resets_at"`
+}
+
+// LinearBudgetOf reads a project's hourly Linear budget.
+func (s *Store) LinearBudgetOf(ctx context.Context, pid string) (LinearBudget, error) {
+	var out LinearBudget
+	err := s.ledgerTx(ctx, func(tx *transaction) error {
+		b, err := s.projectBudget(ctx, tx, pid)
+		out = LinearBudget{Used: b.used, Limit: b.limit, Source: b.source, ResetsAt: b.resetAt.UTC()}
+		return err
+	})
+	return out, err
 }
 
 // charge adds calls to the hour. A project no watcher ever ran for gets an

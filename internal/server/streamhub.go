@@ -175,14 +175,29 @@ func (h *StreamHub) notified(channel, payload string) {
 	}
 }
 
+// startStreamHub is serve's hub: its listener carries the serving store's
+// name, so it counts as that server.
+func startStreamHub(ctx context.Context, store *bus.Store, dsn string) *StreamHub {
+	hub := NewStreamHub()
+	go hub.ListenAs(ctx, dsn, store.InstanceName())
+	return hub
+}
+
 // Listen keeps the hub's LISTEN connection open until ctx ends. Each
 // (re)connect wakes every stream once, which catches up on whatever was
 // notified while the connection was down. The connection string is never
 // logged.
 func (h *StreamHub) Listen(ctx context.Context, dsn string) {
+	h.ListenAs(ctx, dsn, "")
+}
+
+// ListenAs is Listen with the serving store's application_name (unless the
+// DSN sets one), so the always-open listener counts as that server
+// (bus.LiveServerInstances), not as an unnamed client.
+func (h *StreamHub) ListenAs(ctx context.Context, dsn, name string) {
 	backoff := time.Second
 	for ctx.Err() == nil {
-		err := h.listenOnce(ctx, dsn)
+		err := h.listenOnce(ctx, dsn, name)
 		if ctx.Err() != nil {
 			return
 		}
@@ -204,8 +219,15 @@ func (h *StreamHub) Listen(ctx context.Context, dsn string) {
 // errListenerUp is a connection that worked for a while, then dropped.
 var errListenerUp = errors.New("listener connection lost")
 
-func (h *StreamHub) listenOnce(ctx context.Context, dsn string) error {
-	conn, err := pgx.Connect(ctx, dsn)
+func (h *StreamHub) listenOnce(ctx context.Context, dsn, name string) error {
+	cfg, err := pgx.ParseConfig(dsn)
+	if err != nil {
+		return err
+	}
+	if name != "" && cfg.RuntimeParams["application_name"] == "" {
+		cfg.RuntimeParams["application_name"] = name
+	}
+	conn, err := pgx.ConnectConfig(ctx, cfg)
 	if err != nil {
 		return err
 	}

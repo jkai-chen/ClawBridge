@@ -279,6 +279,8 @@ var linearBindings = []Binding{
 	{ID: "status-suggest", Keys: []string{"g"}, Label: "suggest a status", When: func(m Model) bool {
 		return m.linearStep() == "status" && m.projectStatus.loaded && len(m.projectStatus.rows) > 0
 	}, Action: linearKeyAction},
+	{ID: "queue", Keys: []string{"o"}, Label: "queued writes", When: func(m Model) bool { return m.linear.queue != nil && linearAt("profiles", "tasks", "details")(m) }, Action: func(m Model, _ string) (Model, tea.Cmd) { return m.openLinearWrites() }},
+	{ID: "budget", Keys: []string{"b"}, Label: "set the budget", When: func(m Model) bool { return m.canSetLinearBudget() && linearAt("profiles", "writes")(m) }, Action: func(m Model, _ string) (Model, tea.Cmd) { return m.beginLinearBudget(), nil }},
 	{ID: "ids", Keys: []string{"d"}, Labeler: func(m Model) string {
 		if m.linear.showIDs {
 			return "hide IDs"

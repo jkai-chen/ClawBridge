@@ -197,7 +197,7 @@ type linearFlags struct {
 	closesPairs                                                                                                          []string
 	closesWho                                                                                                            string
 	closesAgent, closesHuman, minimalPolicy                                                                              bool
-	suggest, allowOpen, statusSet                                                                                        bool
+	suggest, allowOpen, statusSet, projectWide                                                                           bool
 	statusType, expectedStatus, statusID                                                                                 string
 	kindGroup, kindValues                                                                                                string
 	kindCanary, kindSkipCanary                                                                                           bool
@@ -448,7 +448,9 @@ func parseLinear(command string, args []string, stderr io.Writer) (linearFlags, 
 		f.StringVar(&v.policyFile, "file", "", "set: JSON file {\"enabled\": true, \"weekly\": false, \"stalled_days\": 5, ...}")
 		f.Int64Var(&v.revision, "expected-revision", -1, "set|enable|disable: the project's health revision you last read (0 for a new one)")
 	case "write-status":
-		// Your writes queued on the server, or one by its operation_id.
+		// Your writes queued on the server, or one by its operation_id;
+		// --project-wide lists the whole project's queue.
+		f.BoolVar(&v.projectWide, "project-wide", false, "list the project's queued and recent writes, not only your session's (typed fields only)")
 		min, max = 0, 1
 	case "comment":
 		write()
@@ -1059,6 +1061,9 @@ func runLinear(ctx context.Context, flags Config, args []string, stdout, stderr 
 		args := map[string]any{"instance": scope.Args["instance"]}
 		if len(pos) == 1 {
 			args["operation_id"] = pos[0]
+		}
+		if v.projectWide {
+			args["scope"] = "project"
 		}
 		var r bus.Result
 		r, err = executor.Execute(bounded, bus.Request{Operation: "linear_write_status", Workspace: scope.Workspace, Project: scope.Project, Session: scope.Session, Args: args})

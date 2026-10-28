@@ -611,12 +611,22 @@ The answer is not an error. MCP returns it as the tool's result, and the CLI pri
 - **Never retry with a new operation_id.** Repeat the same one to ask: a queued write answers where it is, a sent one
   answers its receipt, and nothing is sent twice. Reusing an operation_id for a different write is refused.
 - `clawbridge linear write-status [OPERATION_ID]` lists your session's queued and recent writes (a CLI write made
-  without a session lists your own), with the same fields.
+  without a session lists your own), with the same fields. `--project-wide` lists the whole project's queue and the
+  writes that ended in the last 24 hours, for any member: typed fields only, never a write's text.
 - **At send time every check runs again**, as for a write made then: your session is still active, your project role
   may still write, the device that asked is still live (or your Google account still bound to your address), and the
   binding and the issue's team still hold. If one fails, the write fails and nothing is sent; a revoked device or a
   released account fails it as `identity_revoked`.
 - The queued write keeps its text on the server only to send it, and is deleted 7 days after it ends.
+- **Seeing the queue.** `clawbridge doctor` (with a Linear profile, on a hosted project) has a `linear.outbox` check:
+  it passes while nothing has waited long, warns when the oldest queued write has waited 15 minutes, and fails at an
+  hour or when a write was given up (`dead` or `expired`) in the last 24 hours. It says how many wait, for how long,
+  what most wait for, and what to do: wait for the hour to reset, have the owner raise the budget, or redo the writes
+  given up. `linear_app_status` carries the counts as `outbox` (`queued`, `sending`, `oldest_queued_age_s`,
+  `waiting`, `dead_24h`, `expired_24h`, `uncertain_24h`) and the hour as `budget` (`used`, `limit`, `source`,
+  `window_resets_at`). In the TUI, the Linear screen's header reads `Linear: 143/600 this hour · 3 queued (oldest 6
+  min)`, amber from 15 minutes and red from an hour; `o` lists the queue, and the project owner sets the budget with
+  `b` (a number, then `y`; empty goes back to the server's).
 - **Older clients**, which don't ask for queueing, are never queued: a write past the budget, or behind a queued
   write on its issue, is refused with `rate_limited`, "nothing was sent; retry the same operation_id at …". A client
   that asks for queueing does so only when the server says it queues.
@@ -693,9 +703,11 @@ line per cycle.
   linear-budget clear` removes it. The CLI says what share of the app's 5000 an
   hour that is: other projects on the server share it, and the ceiling bounds
   each project, not their sum. Any member reads it with `project linear-budget
-  show` (`budget_limit`, and `budget_source` `project` or `watcher`). Each
-  change is recorded in the project's history. `watch-budget` is the old name.
-- `clawbridge doctor` warns when assigned issues are watched but no watcher runs.
+  show` (`budget_used` this hour, `budget_limit`, and `budget_source`
+  `project`, `watcher` or `default`). Each change is recorded in the project's
+  history. `watch-budget` is the old name.
+- `clawbridge doctor` warns when assigned issues are watched but no watcher
+  runs, and its `linear.watch` line shows the hour's calls used and the limit.
 - **On a hosted server with its own watcher** (`CLAWBRIDGE_WATCH_INTERVAL`,
   docs/operations/deployment.md), the server watches every bound project as the
   ClawBridge app, and also applies pending claim markers, within the server's

@@ -29,8 +29,10 @@ was sent; decide again, with a new operation_id), `dead` (nothing was sent after
 8 tries; tell the coordinator) or `uncertain` (read the issue back first).
 Writes on one issue go in order; writes on different issues don't, so when one
 depends on another (a comment on an issue you are creating), wait for the first
-one's result. Queued writes are checked again when sent: a retired session's or a
-revoked role's never go.
+one's result. Queued writes are checked again when sent: a retired session's, a
+revoked role's or a revoked device's never go. To see the project's whole queue
+(say, before writing more while many wait), run `clawbridge linear write-status
+--project-wide`; `clawbridge doctor` warns when the oldest has waited 15 minutes.
 
 ## Establish the work map
 

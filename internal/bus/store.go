@@ -56,6 +56,9 @@ type Store struct {
 	// issueSubscribersProven is serve --issue-subscribers-proven: the
 	// operator's live check showed the app may subscribe other people (B2).
 	issueSubscribersProven bool
+	// instance is the server's application_name on its connections
+	// (OpenPostgresServer), "" for any other store.
+	instance string
 	// linearBudgetMax is how far an owner may raise a project's Linear cap.
 	linearBudgetMax int
 	// outboxOnly limits the outbox worker's queries to one project (tests).

@@ -400,6 +400,8 @@ func renderInput(m Model) string {
 		return warnStyle.Render("Type "+terminalText(m.account.pending.phrase)+" to confirm; Esc cancels") + "\n> " + terminalText(m.confirm) + "█"
 	}
 	switch m.inputMode {
+	case inputLinearBudget:
+		return mutedStyle.Render("This project's Linear calls an hour (Enter, then y; empty goes back to the server's; Esc cancels)") + "\n> " + terminalText(m.draft) + "█"
 	case inputAccountInvite:
 		return mutedStyle.Render("Invite: their email (Enter, then choose projects and roles; Esc cancels)") + "\n> " + terminalText(m.draft) + "█"
 	case inputAccountLabel:

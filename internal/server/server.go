@@ -714,8 +714,7 @@ func Run(ctx context.Context, args []string) error {
 	options := startWatcher(ctx, store, watch, HandlerOptions{OAuth: metadata, Writer: writer, Auth: auth, ModelMaxAgents: maxAgents})
 	// The message queue: the hub wakes the streams, the sweeper offers run-out
 	// leases again and makes dead letters.
-	options.Streams = NewStreamHub()
-	go options.Streams.Listen(ctx, dsn)
+	options.Streams = startStreamHub(ctx, store, dsn)
 	go runSweeper(ctx, store, sweepEvery)
 	// The Linear write outbox: queued app writes are sent as Linear and the
 	// project's cap allow.
@@ -745,7 +744,9 @@ func Run(ctx context.Context, args []string) error {
 // must pass the account binding, so the store refuses any path that would
 // reach it without the verified account.
 func openServingStore(ctx context.Context, dsn, owner string) (*bus.Store, error) {
-	store, err := bus.OpenPostgres(ctx, dsn, strings.ToLower(owner))
+	// Only serve names its connections, so doctor counts serving
+	// instances, never CLI or operator commands.
+	store, err := bus.OpenPostgresServer(ctx, dsn, strings.ToLower(owner))
 	if err != nil {
 		return nil, err
 	}

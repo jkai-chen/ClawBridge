@@ -20,6 +20,8 @@ ClawBridge · ws_1 › prj_1 › engineer › Linear › Help  cloud
 │   p          project status (not now)                                                                                │
 │   v          shared views (not now)                                                                                  │
 │   g          suggest a status (not now)                                                                              │
+│   o          queued writes (not now)                                                                                 │
+│   b          set the budget (not now)                                                                                │
 │   d          show IDs (not now)                                                                                      │
 │   +          connect                                                                                                 │
 │   w          connect with write                                                                                      │
@@ -34,7 +36,5 @@ ClawBridge · ws_1 › prj_1 › engineer › Linear › Help  cloud
 │ Everywhere                                                                                                           │
 │   Tab        next screen                                                                                             │
 │   S-Tab      previous screen                                                                                         │
-│   ↑↓         select                                                                                                  │
-│   PgUp/PgDn  scroll                                                                                                  │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
 Esc or ? closes help

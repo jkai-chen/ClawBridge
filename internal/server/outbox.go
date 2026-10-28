@@ -235,9 +235,13 @@ func queuedAnswer(q bus.OutboxWrite) bus.Result {
 // fields only, never a write's text (R3).
 func (w *AppWriter) writeStatus(parent context.Context, identity bus.Identity, r bus.Request) (bus.Result, error) {
 	for k := range r.Args {
-		if k != "instance" && k != "operation_id" {
-			return bus.Result{}, appRefusal("linear_write_status takes instance and operation_id only")
+		if k != "instance" && k != "operation_id" && k != "scope" {
+			return bus.Result{}, appRefusal("linear_write_status takes instance, operation_id and scope only")
 		}
+	}
+	scope, _ := r.Args["scope"].(string)
+	if scope != "" && scope != "project" {
+		return bus.Result{}, appRefusal(`linear_write_status scope is "project" or empty`)
 	}
 	if w.Store == nil || !w.Store.OutboxAvailable() {
 		return bus.Result{}, appRefusal("this server does not queue Linear writes")
@@ -249,7 +253,14 @@ func (w *AppWriter) writeStatus(parent context.Context, identity bus.Identity, r
 	if err != nil {
 		return bus.Result{}, err
 	}
-	writes, err := w.Store.OutboxList(parent, access.ProjectID, access.SessionID, identity.Principal, 100)
+	var writes []bus.OutboxWrite
+	if scope == "project" {
+		// The project's queue, for its members' queue view: typed fields
+		// only, as the session's own.
+		writes, err = w.Store.OutboxListProject(parent, access.ProjectID, w.now().Add(-24*time.Hour), 100)
+	} else {
+		writes, err = w.Store.OutboxList(parent, access.ProjectID, access.SessionID, identity.Principal, 100)
+	}
 	if err != nil {
 		return bus.Result{}, bus.PublicError("unavailable", "the Linear write queue is unavailable")
 	}

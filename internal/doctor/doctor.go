@@ -676,8 +676,11 @@ func checkCommentWatch(ctx context.Context, executor Executor, wid, pid string, 
 		watch.Status = Warn
 		watch.Message = fmt.Sprintf("%d watched issues could not be polled last time; their comments are held and retried.", n("held_issues"))
 	}
-	if status["budget_source"] == "project" {
-		watch.Message += fmt.Sprintf(" The project's own budget is %d Linear calls an hour.", n("watch_budget"))
+	switch {
+	case status["budget_source"] == "project":
+		watch.Message += fmt.Sprintf(" This hour %d of the project's own budget of %d Linear calls are used.", n("budget_used"), n("watch_budget"))
+	case status["budget_limit"] != nil:
+		watch.Message += fmt.Sprintf(" This hour %d of %d Linear calls are used.", n("budget_used"), n("budget_limit"))
 	}
 	markers.Status = Pass
 	markers.Message = "Claim markers are applied. Session names are shown in Linear claim comments: name sessions by role, never with personal data."
@@ -752,6 +755,124 @@ func checkLinearApp(ctx context.Context, executor Executor, wid, pid string, add
 		}
 	}
 	add(check)
+	if err == nil && m != nil && m["outbox"] != nil {
+		checkLinearOutbox(m, add)
+	}
+	if err == nil && m != nil && m["server_instances"] != nil {
+		checkServerInstances(m, add)
+	}
+}
+
+// checkServerInstances says how many servers share the database: each
+// paces Linear on its own, so more than one may together pass Linear's
+// limits and a project's budget (LINEAR-QUEUE-DESIGN §3).
+func checkServerInstances(status map[string]any, add func(Check)) {
+	check := Check{ID: "linear.instances", Title: "Servers pacing Linear", Status: Pass}
+	var n bus.ServerInstances
+	raw, _ := json.Marshal(status["server_instances"])
+	json.Unmarshal(raw, &n)
+	switch {
+	case n.Pooler:
+		check.Message = "The number of servers can't be told: a connection pooler (PgBouncer) sits in front of the database."
+		check.Action = "Run one server instance, or see docs/operations/deployment.md, \"More than one server\"."
+	case !n.Known:
+		check.Message = "The number of servers can't be told from the database's connections."
+	case n.Live > 1:
+		check.Status = Warn
+		check.Message = fmt.Sprintf("%d servers share this database. Each paces its Linear calls on its own, so together they can pass Linear's rate limits and a project's hourly budget.", n.Live)
+		check.Action = "Run one server instance; see docs/operations/deployment.md, \"More than one server\"."
+	default:
+		check.Message = "One server paces this database's Linear calls."
+	}
+	add(check)
+}
+
+// Queue-age thresholds for linear.outbox (LINEAR-QUEUE-DESIGN §8).
+const (
+	outboxWarnAge = 15 * time.Minute
+	outboxFailAge = 60 * time.Minute
+)
+
+// checkLinearOutbox reports a hosted project's queued Linear writes from
+// the app status: how many, the oldest's age and what most wait for. It
+// warns when the oldest waited 15 minutes and fails at an hour, or when a
+// write died or expired in the last day. Counts and times only.
+func checkLinearOutbox(status map[string]any, add func(Check)) {
+	check := Check{ID: "linear.outbox", Title: "Queued Linear writes", Status: Pass}
+	var st bus.OutboxStatus
+	var budget bus.LinearBudget
+	raw, _ := json.Marshal(status["outbox"])
+	json.Unmarshal(raw, &st)
+	raw, _ = json.Marshal(status["budget"])
+	json.Unmarshal(raw, &budget)
+	used := ""
+	if budget.Limit > 0 {
+		used = fmt.Sprintf(" This hour %d of the project's %d Linear calls are used.", budget.Used, budget.Limit)
+	}
+	oldest := time.Duration(st.OldestQueued) * time.Second
+	check.Message = "No Linear writes are queued." + used
+	switch {
+	case st.Queued == 0 && st.Sending > 0:
+		check.Message = fmt.Sprintf("%d Linear writes are being sent now.", st.Sending) + used
+	case st.Queued > 0:
+		check.Message = fmt.Sprintf("%d Linear writes are queued, the oldest for %s, most %s.", st.Queued+st.Sending, waitedFor(oldest), waitingFor(st.Waiting)) + used
+	}
+	switch {
+	case oldest >= outboxFailAge:
+		check.Status = Fail
+	case oldest >= outboxWarnAge:
+		check.Status = Warn
+	}
+	if check.Status != Pass {
+		switch st.Waiting {
+		case "project_hourly_cap":
+			check.Action = "They go when the hour resets"
+			if !budget.ResetsAt.IsZero() {
+				check.Action += " (" + budget.ResetsAt.UTC().Format("15:04") + " UTC)"
+			}
+			check.Action += "; or the project owner raises the budget with `clawbridge project linear-budget set N`."
+		case "linear_rate_limit":
+			check.Action = "Linear's rate limit holds them and they go when it allows; if it lasts, look for another client spending the app's limit."
+		default:
+			check.Action = "They wait behind earlier writes on the same issue; `clawbridge linear write-status` lists them."
+		}
+	}
+	if lost := st.Dead24h + st.Expired24h; lost > 0 {
+		check.Status = Fail
+		check.Message += fmt.Sprintf(" %d writes were given up in the last 24 hours (%d failed every try, %d waited past 3 hours); nothing was sent for them.", lost, st.Dead24h, st.Expired24h)
+		check.Action = "Each session was told; `clawbridge linear write-status` lists them. Redo the writes still wanted."
+	}
+	if st.Uncertain24h > 0 {
+		if check.Status == Pass {
+			check.Status = Warn
+		}
+		check.Message += fmt.Sprintf(" %d writes in the last 24 hours may or may not have reached Linear.", st.Uncertain24h)
+		if check.Action == "" {
+			check.Action = "Check those issues in Linear before writing again; `clawbridge linear write-status` lists them."
+		}
+	}
+	add(check)
+}
+
+// waitedFor is a queue age in whole minutes.
+func waitedFor(d time.Duration) string {
+	if m := int(d / time.Minute); m != 1 {
+		return fmt.Sprintf("%d minutes", m)
+	}
+	return "1 minute"
+}
+
+// waitingFor is what most queued writes wait for, in words.
+func waitingFor(reason string) string {
+	switch reason {
+	case "project_hourly_cap":
+		return "for the project's hourly Linear budget"
+	case "linear_rate_limit":
+		return "for Linear's rate limit"
+	case "ordered_behind":
+		return "behind earlier writes on the same issue"
+	}
+	return "being sent"
 }
 
 // checkLabelPolicy shows the project owner's approved label list: its

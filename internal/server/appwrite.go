@@ -452,9 +452,30 @@ func (w *AppWriter) status(parent context.Context, identity bus.Identity, r bus.
 	if w.Store != nil && w.Store.OutboxAvailable() {
 		// A client that sees this may send accept_queued (§4.1).
 		out["queues_writes"] = true
+		// Each instance paces Linear on its own (§3, v1): doctor says when
+		// more than one serves.
+		instances, _ := w.Store.LiveServerInstances(ctx)
+		out["server_instances"] = instances
 	}
 	if r.Project == "" {
 		return bus.Result{Data: out}, nil
+	}
+	if w.Store != nil && w.Store.OutboxAvailable() {
+		// The project's queued writes and hourly budget (§8): counts and
+		// times only, never a write's text. A caller the project refuses
+		// gets the binding's own refusal below.
+		if access, err := w.access(ctx, identity, r); err == nil {
+			unavailable := bus.PublicError("unavailable", "the Linear write queue is unavailable")
+			st, err := w.Store.OutboxStatusOf(ctx, access.ProjectID, w.now())
+			if err != nil {
+				return bus.Result{}, unavailable
+			}
+			budget, err := w.Store.LinearBudgetOf(ctx, access.ProjectID)
+			if err != nil {
+				return bus.Result{}, unavailable
+			}
+			out["outbox"], out["budget"] = st, budget
+		}
 	}
 	instance, _ := r.Args["instance"].(string)
 	b, err := service.BindingV2(ctx, bus.Request{Workspace: r.Workspace, Project: r.Project, Session: r.Session, Args: map[string]any{"instance": instance}})

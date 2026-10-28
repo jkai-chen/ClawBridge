@@ -14,7 +14,7 @@ func TestProjectWatchBudget(t *testing.T) {
 		h.t.Helper()
 		return h.call("comment_watch_status", "", nil).(map[string]any)
 	}
-	if got := status(newHarness(t)); got["budget_source"] != nil || got["budget_limit"] != nil || got["watch_budget"] != nil {
+	if got := status(newHarness(t)); got["budget_source"] != "default" || got["budget_limit"] != LinearBudgetDefault || got["budget_used"] != 0 || got["watch_budget"] != nil {
 		t.Fatal("no lease, no override:", got)
 	}
 	w := newWatchHarness(t)

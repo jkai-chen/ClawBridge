@@ -96,7 +96,7 @@ func TestCLIProjectWatchBudget(t *testing.T) {
 	invoke(t, "setup", "--local", "--workspace", "w")
 	invoke(t, "project", "create", "p")
 	t.Setenv("CLAWBRIDGE_PROJECT", "p")
-	if got := invoke(t, "project", "watch-budget", "show"); got["watch_budget"] != nil || got["budget_source"] != nil {
+	if got := invoke(t, "project", "watch-budget", "show"); got["watch_budget"] != nil || got["budget_source"] != "default" {
 		t.Fatal(got)
 	}
 	if got := invoke(t, "project", "watch-budget", "set", "120"); got["watch_budget"] != float64(120) || got["budget_source"] != "project" {

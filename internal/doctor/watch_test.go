@@ -35,7 +35,8 @@ func TestDoctorReportsTheCommentWatchAndMarkers(t *testing.T) {
 		"missing label":     {map[string]any{"watched_issues": 1, "watcher_live": true, "markers_no_label": 1}, nil, Pass, Warn, "agent-working label"},
 		"stale markers":     {map[string]any{"watched_issues": 1, "watcher_live": true, "markers_pending": 3, "markers_oldest_pending": "2026-10-23T10:00:00Z"}, nil, Pass, Warn, "3 markers pending"},
 		"close label drift": {map[string]any{"watched_issues": 0, "watcher_live": false, "close_label_drift": 1}, nil, Pass, Warn, "may still show agent-working"},
-		"project budget":    {map[string]any{"watched_issues": 2, "watcher_live": true, "watch_budget": 120, "budget_limit": 120, "budget_source": "project"}, nil, Pass, Pass, "own budget is 120 Linear calls"},
+		"project budget":    {map[string]any{"watched_issues": 2, "watcher_live": true, "watch_budget": 120, "budget_limit": 120, "budget_source": "project", "budget_used": 37}, nil, Pass, Pass, "37 of the project's own budget of 120 Linear calls"},
+		"server budget":     {map[string]any{"watched_issues": 2, "watcher_live": true, "budget_limit": 600, "budget_source": "default", "budget_used": 12}, nil, Pass, Pass, "12 of 600 Linear calls are used"},
 		"older server":      {nil, codedError{"invalid", "unsupported operation"}, Warn, Warn, "upgrade the server"},
 	} {
 		var checks []Check

@@ -184,3 +184,66 @@ func (s serverOps) Execute(ctx context.Context, r bus.Request) (bus.Result, erro
 	out.Source = "server"
 	return out, err
 }
+
+// linear.outbox follows the app status's queue: pass while nothing waits
+// long, warn at 15 minutes, fail at an hour or when a write was given up;
+// its action names what the writes wait for. Counts only, never text.
+func TestDoctorLinearOutbox(t *testing.T) {
+	budget := map[string]any{"used": 140, "limit": 600, "source": "default", "window_resets_at": "2026-10-28T15:00:00Z"}
+	queue := func(q map[string]any) map[string]any {
+		return map[string]any{"configured": true, "app_user_id": "app", "teams_visible": map[string]any{}, "outbox": q, "budget": budget}
+	}
+	for name, c := range map[string]struct {
+		outbox map[string]any
+		status string
+		text   []string
+	}{
+		"empty":     {map[string]any{}, Pass, []string{"No Linear writes are queued.", "140 of the project's 600 Linear calls"}},
+		"fresh":     {map[string]any{"queued": 2, "oldest_queued_age_s": 300, "waiting": "linear_rate_limit"}, Pass, []string{"2 Linear writes are queued, the oldest for 5 minutes, most for Linear's rate limit."}},
+		"sending":   {map[string]any{"sending": 1}, Pass, []string{"1 Linear writes are being sent now."}},
+		"warn cap":  {map[string]any{"queued": 3, "oldest_queued_age_s": 15 * 60, "waiting": "project_hourly_cap"}, Warn, []string{"for the project's hourly Linear budget", "15:00 UTC", "project linear-budget set"}},
+		"fail age":  {map[string]any{"queued": 1, "oldest_queued_age_s": 3600, "waiting": "ordered_behind"}, Fail, []string{"60 minutes", "behind earlier writes", "write-status"}},
+		"dead":      {map[string]any{"dead_24h": 1, "expired_24h": 2}, Fail, []string{"3 writes were given up", "1 failed every try, 2 waited past 3 hours", "Redo the writes"}},
+		"one dead":  {map[string]any{"dead_24h": 1}, Fail, []string{"1 writes were given up"}},
+		"uncertain": {map[string]any{"uncertain_24h": 1}, Warn, []string{"may or may not have reached Linear", "Check those issues"}},
+	} {
+		var checks []Check
+		checkLinearApp(context.Background(), appExecutor{data: queue(c.outbox), got: new(bus.Request)}, "w", "p", func(check Check) { checks = append(checks, check) })
+		if len(checks) != 2 || checks[1].ID != "linear.outbox" || checks[1].Status != c.status {
+			t.Errorf("%s: %+v", name, checks)
+			continue
+		}
+		for _, want := range c.text {
+			if all := checks[1].Message + " " + checks[1].Action; !strings.Contains(all, want) {
+				t.Errorf("%s: lacks %q: %s", name, want, all)
+			}
+		}
+	}
+	// A server without the outbox shows no queue check.
+	var checks []Check
+	checkLinearApp(context.Background(), appExecutor{data: map[string]any{"configured": true, "app_user_id": "app", "teams_visible": map[string]any{}}, got: new(bus.Request)}, "w", "p", func(check Check) { checks = append(checks, check) })
+	if len(checks) != 1 {
+		t.Fatal("a server without the outbox got a queue check:", checks)
+	}
+}
+
+// linear.instances warns when more than one server shares the database,
+// and says when it can't tell.
+func TestDoctorServerInstances(t *testing.T) {
+	for name, c := range map[string]struct {
+		n      map[string]any
+		status string
+		text   string
+	}{
+		"one":     {map[string]any{"live": 1, "known": true}, Pass, "One server paces"},
+		"two":     {map[string]any{"live": 2, "known": true}, Warn, "2 servers share this database. Each paces its Linear calls on its own"},
+		"unknown": {map[string]any{"live": 1, "known": false}, Pass, "can't be told"},
+		"pooler":  {map[string]any{"live": 1, "known": false, "pooler": true}, Pass, "PgBouncer"},
+	} {
+		var checks []Check
+		checkLinearApp(context.Background(), appExecutor{data: map[string]any{"configured": true, "app_user_id": "app", "teams_visible": map[string]any{}, "server_instances": c.n}, got: new(bus.Request)}, "w", "p", func(check Check) { checks = append(checks, check) })
+		if len(checks) != 2 || checks[1].ID != "linear.instances" || checks[1].Status != c.status || !strings.Contains(checks[1].Message, c.text) {
+			t.Errorf("%s: %+v", name, checks)
+		}
+	}
+}

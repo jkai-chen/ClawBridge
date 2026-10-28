@@ -54,6 +54,12 @@
 - **Upgrade note:** the 600 now covers agent writes as well as watch, health and status reads. A project that set its
   budget by hand, or a server with `CLAWBRIDGE_WATCH_BUDGET` set, keeps that number, which now has to cover writes
   too; check `clawbridge project linear-budget` after upgrading and raise it if agents write a lot.
+- **Doctor and the TUI show the Linear budget and the write queue.** A new `linear.outbox` check warns when the
+  oldest queued write has waited 15 minutes and fails at an hour, or when a write was given up in the last day;
+  `linear.watch` always shows the hour's calls used and the limit; `linear.instances` warns when more than one server
+  shares the database, since each paces Linear on its own. The TUI's Linear screen header reads `Linear: 143/600
+  this hour · 3 queued (oldest 6 min)`; `o` lists the queue, and the project owner sets the budget with `b`.
+  `clawbridge linear write-status --project-wide` lists the project's queue (docs/linear.md, "Queued writes").
 - A queued write is sent only while the person who asked still may: their session (if any) active, their role
   held, their device live or their Google account still bound. Otherwise it fails as `identity_revoked` and nothing
   is sent.

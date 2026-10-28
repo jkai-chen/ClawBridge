@@ -2,12 +2,15 @@ package bus
 
 import (
 	"context"
+	"crypto/rand"
 	"database/sql"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"time"
 
-	_ "github.com/jackc/pgx/v5/stdlib"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/stdlib"
 
 	"clawbridge/internal/principal"
 )
@@ -24,7 +27,24 @@ func OpenPostgres(ctx context.Context, dsn, bootstrapOwner string) (*Store, erro
 	if dsn == "" || !validPrincipal(bootstrapOwner) {
 		return nil, errors.New("Postgres DSN and bootstrap owner email are required")
 	}
-	return openPostgres(ctx, dsn, bootstrapOwner)
+	return openPostgres(ctx, dsn, bootstrapOwner, "")
+}
+
+// OpenPostgresServer is OpenPostgres for the server that serves requests
+// (serve only): its connections carry application_name
+// clawbridge-server-<random>, so doctor can count live instances
+// (LiveServerInstances). An application_name the DSN already sets wins, and
+// the count then reads unknown.
+func OpenPostgresServer(ctx context.Context, dsn, bootstrapOwner string) (*Store, error) {
+	bootstrapOwner = normalPrincipal(bootstrapOwner)
+	if dsn == "" || !validPrincipal(bootstrapOwner) {
+		return nil, errors.New("Postgres DSN and bootstrap owner email are required")
+	}
+	var b [8]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		return nil, err
+	}
+	return openPostgres(ctx, dsn, bootstrapOwner, ServerInstancePrefix+hex.EncodeToString(b[:]))
 }
 
 // postgresSchemaVersion is the hosted schema version this binary writes.
@@ -65,14 +85,33 @@ func OpenPostgresOperator(ctx context.Context, dsn string) (*Store, error) {
 	return &Store{db: db, postgres: true}, nil
 }
 
-func openPostgres(ctx context.Context, dsn, bootstrapOwner string) (*Store, error) {
+func openPostgres(ctx context.Context, dsn, bootstrapOwner, instance string) (*Store, error) {
+	// Only the serving store parses its DSN to name its connections; any
+	// other opens it as given (a test may pass a registered config name).
 	db, err := sql.Open("pgx", dsn)
 	if err != nil {
 		return nil, errors.New("invalid Postgres configuration")
 	}
+	if instance != "" {
+		cfg, err := pgx.ParseConfig(dsn)
+		if err != nil {
+			db.Close()
+			return nil, errors.New("invalid Postgres configuration")
+		}
+		if cfg.RuntimeParams["application_name"] != "" {
+			instance = ""
+		} else {
+			cfg.RuntimeParams["application_name"] = instance
+			db.Close()
+			db = stdlib.OpenDB(*cfg)
+		}
+	}
 	db.SetMaxOpenConns(16)
+	// Idle connections stay open, with no idle timeout, so a server that
+	// is quiet still shows in pg_stat_activity (LiveServerInstances).
 	db.SetMaxIdleConns(4)
-	s := &Store{db: db, postgres: true, bootstrapOwner: bootstrapOwner}
+	db.SetConnMaxIdleTime(0)
+	s := &Store{db: db, postgres: true, bootstrapOwner: bootstrapOwner, instance: instance}
 	startup, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
 	if err = s.migratePostgres(startup); err != nil {

@@ -515,3 +515,36 @@ func TestPostgresServersCountThemselves(t *testing.T) {
 	serve(false)
 	until(first, bus.ServerInstances{Live: 3})
 }
+
+// A queued write is sent only while its session's lane still takes its
+// team (X6): the send runs the lane check again on the session's current
+// lane, so a lane taken away while the write waited fails it as
+// outside_lane, and nothing is sent.
+func TestPostgresOutboxRechecksTheLane(t *testing.T) {
+	f := newOutboxFixture(t)
+	binding := func(rev int, unpinned string) map[string]any {
+		return map[string]any{
+			"instance":               awSession + "-i",
+			"expected_revision":      rev,
+			"mode":                   "team_board",
+			"linear_team_ids":        []string{awTeam},
+			"linear_default_team_id": awTeam,
+			"linear_project_ids":     []string{},
+			"linear_workspace_id":    awOrg,
+			"lanes":                  []any{map[string]any{"name": "work", "write_team_ids": []any{awTeam}, "default_team_id": awTeam}},
+			"unpinned":               unpinned,
+		}
+	}
+	f.must(bus.Request{Operation: "taskboard_set_v2", Workspace: f.workspace, Project: "p", Session: awSession, Args: binding(1, "work")})
+	f.mcp.refuse = 1
+	res, err := f.queueWrite("comment", map[string]any{"id": awIssue, "body": "lane", "operation_id": "l-1"})
+	if err != nil || awJSON(t, res.Data)["outcome"] != "queued" {
+		t.Fatal("not queued:", res, err)
+	}
+	f.must(bus.Request{Operation: "taskboard_set_v2", Workspace: f.workspace, Project: "p", Session: awSession, Args: binding(2, "read_only")})
+	f.later(2 * time.Minute)
+	q := f.queued("l-1")
+	if q.State != bus.OutboxFailed || !strings.Contains(q.Reason, "outside_lane") || f.mcp.count("save_comment") != 0 {
+		t.Fatal("a write outside the session's lane was sent:", q.State, q.Reason, f.mcp.count("save_comment"))
+	}
+}

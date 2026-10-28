@@ -73,6 +73,10 @@ func IsUncertain(err error) bool { var u UncertainError; return errors.As(err, &
 func IsInProgress(err error) bool { var p InProgressError; return errors.As(err, &p) }
 
 var errActorChanged = errors.New("task-board actor changed before dispatch")
+
+// errLaneChanged: the session's lane changed between the check and the
+// send, so the write it was checked for no longer holds (X6).
+var errLaneChanged = outsideLaneError("outside_lane: this session's lane changed before dispatch; nothing was sent")
 var errWriteAccessDenied = errors.New("current ClawBridge project role/actor does not permit task-board writes")
 
 // authorityFailure classifies a binding or write-access check: a definite

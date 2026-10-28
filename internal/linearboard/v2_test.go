@@ -46,6 +46,10 @@ type authorityV2 struct {
 	initiatives []string
 	// role is the project role taskboard_access reports; member when empty.
 	role string
+	// lane and laneTeams are the session's lane taskboard_access names when
+	// asked (lane_scope: 1); none when laneTeams is nil.
+	lane      string
+	laneTeams []string
 }
 
 func (a *authorityV2) Execute(_ context.Context, r bus.Request) (bus.Result, error) {
@@ -61,6 +65,9 @@ func (a *authorityV2) Execute(_ context.Context, r bus.Request) (bus.Result, err
 		}
 		if r.Args["engineer"] == 1 {
 			access.Engineer = a.engineer
+		}
+		if r.Args["lane_scope"] == 1 && a.laneTeams != nil {
+			access.Lane, access.LaneWriteTeamIDs = a.lane, a.laneTeams
 		}
 		return bus.Result{Source: "local-authority", Data: access}, nil
 	}

@@ -19,12 +19,21 @@ type TaskboardAccess struct {
 	// Engineer names the person behind the session for agent markers, when
 	// the client asked for it (engineer: 1).
 	Engineer string `json:"engineer,omitempty"`
+	// Lane is the session's lane, or LaneReadOnly, when the client asked
+	// (lane_scope: 1) and the binding has lanes; LaneWriteTeamIDs are the teams
+	// it writes, empty when read-only, and nil when the server named no
+	// lane.
+	Lane             string   `json:"lane,omitempty"`
+	LaneWriteTeamIDs []string `json:"lane_write_team_ids,omitempty"`
 }
 
 func accessMap(a TaskboardAccess) map[string]any {
 	m := map[string]any{"workspace_id": a.WorkspaceID, "project_id": a.ProjectID, "session_id": nullable(a.SessionID), "session_name": nullable(a.SessionName), "can_write": a.CanWrite, "project_role": a.ProjectRole}
 	if a.Engineer != "" {
 		m["engineer"] = a.Engineer
+	}
+	if a.LaneWriteTeamIDs != nil {
+		m["lane"], m["lane_write_team_ids"] = a.Lane, append([]string{}, a.LaneWriteTeamIDs...)
 	}
 	return m
 }
@@ -39,12 +48,41 @@ func (a *TaskboardAccess) UnmarshalJSON(raw []byte) error {
 func ParseTaskboardAccess(v any) (TaskboardAccess, error) {
 	var a TaskboardAccess
 	raw, e := json.Marshal(v)
-	if e != nil || len(raw) > 2048 {
+	if e != nil || len(raw) > 4096 {
 		return a, errors.New("invalid taskboard access")
 	}
 	var m map[string]any
 	dec := json.NewDecoder(bytes.NewReader(raw))
-	if dec.Decode(&m) != nil || (len(m) != 6 && !(len(m) == 7 && m["engineer"] != nil)) {
+	if dec.Decode(&m) != nil {
+		return a, errors.New("invalid taskboard access fields")
+	}
+	extra := 0
+	if m["engineer"] != nil {
+		extra++
+	}
+	_, lane := m["lane"]
+	_, teams := m["lane_write_team_ids"]
+	if lane != teams {
+		return a, errors.New("an access lane comes with its write teams")
+	}
+	if lane {
+		extra += 2
+		name, ok := m["lane"].(string)
+		ids, isArray, listOK := stringList(m["lane_write_team_ids"])
+		if !ok || !(laneName.MatchString(name) || name == LaneReadOnly) || !isArray || !listOK || len(ids) > 20 {
+			return a, errors.New("invalid access lane")
+		}
+		for _, id := range ids {
+			if !taskboardUUID.MatchString(id) {
+				return a, errors.New("invalid access lane team")
+			}
+		}
+		if ids == nil {
+			ids = []string{}
+		}
+		a.Lane, a.LaneWriteTeamIDs = name, ids
+	}
+	if len(m) != 6+extra {
 		return a, errors.New("invalid taskboard access fields")
 	}
 	if v, present := m["engineer"]; present {

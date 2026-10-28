@@ -341,6 +341,69 @@ than needed, never looser, and it widens in a later release.
 rather than ignore the levels, so upgrade every client before relinking with them. An older server refuses the link.
 A binding without them keeps its exact version 2 form.
 
+### Lanes: which write teams each session writes
+
+With several teams written by different people's agents, for example an AI team and a Platform team under one
+parent, a binding can split its write teams into **lanes**. Every session still reads every listed team; a lane only
+limits what a session **writes**. It is a write filter, not a trust boundary.
+
+```sh
+clawbridge linear link --profile PROFILE_ID \
+  --team PARENT_UUID --team AI_UUID --team PLATFORM_UUID --default-team AI_UUID \
+  --lane ai=AI_UUID,PARENT_UUID --lane platform=PLATFORM_UUID,PARENT_UUID \
+  --unpinned read_only --parent-team PARENT_UUID \
+  --linear-project PROJECT_UUID --expected-revision CURRENT_REVISION
+```
+
+- `--lane NAME=TEAM[,TEAM...]`: a lane and the write teams it writes; the first team is its default. Up to 10 lanes,
+  named with lowercase letters, digits and dashes. Lanes may share a team, such as the parent.
+- `--unpinned`: the lane of a session nobody pinned, or `read_only`, the default.
+
+**Which lane a session is in** is set on the project, never by the session. The project owner pins, in their own
+terminal, without `--session`:
+
+```sh
+clawbridge linear lanes show
+clawbridge linear lanes pin --pin-session NAME --lane ai --expected-revision N
+clawbridge linear lanes pin --pin-principal colleague@example.com --lane platform --expected-revision N
+clawbridge linear lanes unpin --pin-session NAME --expected-revision N
+```
+
+Without `--confirm` each prints what it would do, including the principal a session pin binds; repeat with
+`--confirm`. A session's lane is, in order:
+1. its own pin, which applies only while the session belongs to the principal it was pinned for, so another account's
+   session that later takes the name doesn't get it;
+2. the pin of a session it moved from, under the same principal;
+3. its principal's pin;
+4. the binding's `--unpinned` setting.
+
+A pin to a lane the binding no longer has leaves the session read-only. History records each change by counts only.
+
+**Your own writes without a session** (the owner's or a lead's CLI, no `--session`) follow your principal's pin, then
+`--unpinned`. So with `--unpinned read_only`, pin your own principal to a lane before you write from the CLI, or your
+writes are refused as `outside_lane` too:
+
+```sh
+clawbridge linear lanes pin --pin-principal you@example.com --lane ai --expected-revision N --confirm
+```
+On a hosted server, pins are set only from a person's own signed-in device.
+
+**What a lane refuses**, with `outside_lane` ("team … is written by lane platform; you are in lane ai"), before
+anything is sent:
+- a create, edit, state, label, assignee or comment on a write team outside the session's lane, through your profile
+  or the ClawBridge app;
+- an unpinned session's write when `--unpinned` is `read_only`;
+- a relation added from an issue outside the lane (the issue you name first is yours); a relation removed whose
+  stored "from" end, as Linear reports it, is outside the lane.
+
+The lane is checked again inside the write lock: a pin changed meanwhile stops the write. Comment teams take comments
+from every lane. ClawBridge's own markers and server-side writes (intake, status moves) aren't a session's writes, so
+lanes don't filter them. An agent sees its lane and write teams in its `context`.
+
+**Compatibility.** Lanes are part of binding version 3, and a client must be this release or newer to use them. A
+server older than this release can't store them, and a binding with lanes refuses every write from a session whose
+server named no lane. Removing the lanes (relinking without `--lane`) restores writes to every write team.
+
 Discover scoped metadata before writing:
 
 ```sh
@@ -664,8 +727,9 @@ The answer is not an error. MCP returns it as the tool's result, and the CLI pri
   writes that ended in the last 24 hours, for any member: typed fields only, never a write's text.
 - **At send time every check runs again**, as for a write made then: your session is still active, your project role
   may still write, the device that asked is still live (or your Google account still bound to your address), and the
-  binding and the issue's team still hold. If one fails, the write fails and nothing is sent; a revoked device or a
-  released account fails it as `identity_revoked`.
+  binding and the issue's team still hold, and your session's lane, as pinned now, still writes that team. If one
+  fails, the write fails and nothing is sent; a revoked device or a released account fails it as `identity_revoked`,
+  and a lane that no longer takes the team as `outside_lane`.
 - The queued write keeps its text on the server only to send it, and is deleted 7 days after it ends.
 - **Seeing the queue.** `clawbridge doctor` (with a Linear profile, on a hosted project) has a `linear.outbox` check:
   it passes while nothing has waited long, warns when the oldest queued write has waited 15 minutes, and fails at an

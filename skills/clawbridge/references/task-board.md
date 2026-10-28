@@ -130,6 +130,11 @@ label list); agents do not create it.
   (`linked`). `taskboard_binding` shows each team's access. Don't write to a read or linked team; on a comment team,
   only add comments. A refusal says `read_only_team` and nothing was sent. Ask the coordinator who owns that team's
   work.
+- A binding may split its write teams into lanes. Your session writes only its lane's teams, and reads every listed
+  team; `context` shows your `lane` and its `write_team_ids` (`read_only` with none). A write to another lane's team
+  is refused as `outside_lane`, and nothing was sent: hand it to that lane's coordinator, never retry it another way.
+  Your first-named issue in a relation must be in your lane. You can't change your lane; the project owner pins it.
+  Your user's own CLI writes without a session follow their principal's pin.
 - A sub-team's issues may carry its own `needs-agent` or its bound parent
   team's: the two have different IDs. The server's intake reads both. A
   manual `issues --label` with the parent's UUID can't reach a sub-team that

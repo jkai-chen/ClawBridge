@@ -104,12 +104,12 @@ requires its matching instance. Routing role is distinct from project permission
 | `project_thread` | Project owner, sessionless: thread_id; optional limit (1–200, default 100), after (a sequence) |
 | `resolve_project` | Explicit project or optional git_remote fallback |
 | `taskboard_get` | Shared Linear mapping; optional current actor/instance |
-| `taskboard_access` | Own effective project-write capability; ledger (must be 1); optional actor/instance; optional engineer (1 returns the engineer agent markers name) |
+| `taskboard_access` | Own effective project-write capability; ledger (must be 1); optional actor/instance; optional engineer (1 returns the engineer agent markers name); optional lane_scope (1 returns the session's lane, when the binding has lanes) |
 | `member_display_name_set` | Hosted only, the caller's own name in the workspace for agent markers: display_name (up to 200 characters, no `@`, stored stripped of mentions, links and Markdown; empty clears it); optional if_unset (1 keeps a name already recorded). Answers `{display_name, engineer, kept}`. Audited |
 | `taskboard_set` | expected_revision, linear_team_ids, linear_default_team_id, linear_project_id (UUID/null); optional linear_workspace_id (UUID/null) |
 | `taskboard_clear` | expected_revision; authorized owner/lead; optional repair (project owner, unreadable binding only) |
 | `taskboard_get_v2` | Versioned shared mapping; optional current actor/instance |
-| `taskboard_set_v2` | expected_revision, mode, linear_team_ids, linear_default_team_id, linear_project_ids; optional nullable linear_workspace_id; optional linear_team_names and linear_project_names (ID→name objects, see [Linear names](#linear-names)) |
+| `taskboard_set_v2` | expected_revision, mode, linear_team_ids, linear_default_team_id, linear_project_ids; optional nullable linear_workspace_id; optional linear_team_names and linear_project_names (ID→name objects, see [Linear names](#linear-names)); binding version 3: optional linear_other_teams (team ID→`read`, `comment` or `linked`), linear_parent_team_id, lanes (`[{name, write_team_ids, default_team_id}]`, at most 10, over write teams) and unpinned (`read_only`, the default, or a lane name) |
 | `taskboard_names_set` | expected_revision (the binding's current one), linear_team_names and/or linear_project_names; authorized owner/lead; the revision doesn't move |
 | `taskboard_clear_v2` | expected_revision; authorized owner/lead; optional repair (project owner, unreadable binding only) |
 | `linear_write` | Hosted server with the ClawBridge Linear app only: instance, operation (comment, create, update, relation_add, relation_remove), args (exactly what the `taskboard_<operation>_v2` tool takes). The server makes the write as the app, with every scope check, the mention guard, the marker and its own shared operation ledger, and answers `{receipt, outcome?}`. Binding and admin operations and identity arguments are refused; a binding not pinned to the app's workspace is refused (`workspace_unpinned`, `workspace_mismatch`). An uncertain outcome is a 409 |
@@ -117,6 +117,9 @@ requires its matching instance. Routing role is distinct from project permission
 | `label_policy_get` | Any project member, session optional: the approved Linear label list (`revision`, `labels`, `renames`, `updated_by`, `updated_at`; revision 0 when unset) |
 | `project_kind_get` | Any project member, session optional: the project kind setting (`revision`, `team_id`, `scope` `team`, `group_name`, `group_label_id`, `values` `[{name, label_id?}]`, `seeded`, `team_bound`) |
 | `project_kind_set` | Project owner without a session (hosted: a person's own device key): `expected_revision`, `kinds` (1–20 names), optional `group_name` (default `Type`) and `team_id` (a bound team; default the binding's default team). Scope is team only. Schema 39 |
+| `lane_pins_get` | Any project member, session optional: the lane pins (`revision`, `pins` `[{kind, key, principal, lane, created_at}]`; revision 0 when none) |
+| `lane_pin_set` | Project owner without a session (hosted: a person's own device key): `expected_revision`, `kind` (`session` or `principal`), `key` (a session name or a principal), `lane` (one of the binding's lanes), `confirm`. Without `confirm: true` it returns a `preview` naming the principal a session pin binds (the session's owner now) and writes nothing. History records counts only. Schema 41 |
+| `lane_pin_clear` | As `lane_pin_set`, without `lane` |
 | `project_kind_record` | Project owner without a session (hosted: a person's own device key): stores the label IDs a seed proved. `expected_revision`, `action` (`seeded` or `adopted`), `proof` (`team_list`), `group_label_id`, `label_ids` (one per value, in the setting's order). Refused once the kind's team left the binding |
 | `issue_subscribers_get` | Any project member, session optional: who is subscribed to agents' issues (`revision`, `enabled`, `owner`, `user_ids`, `default`, `proven`, `on`, `rows` by state, `owner_not_in_linear_until`). Never an email. Schema 41 |
 | `issue_subscribers_set` | Project owner or lead without a session: `expected_revision` and any of `enabled`, `owner`, `user_ids` (at most 5 distinct Linear user IDs, replacing the list). `enabled: true` is refused until the server runs with `--issue-subscribers-proven`. Off drops queued issues. Scope is issue only |
@@ -537,7 +540,12 @@ never fall back to a mirror.
 can_write and project_role without stamps. With `engineer: 1` and a session, it
 adds `engineer`: the session owner's recorded display name (at most 40
 characters), when one is recorded. It always comes from the server's records,
-and is never an email. Native issue writes require both an
+and is never an email. With `lane_scope: 1`, a session and a binding with
+lanes, it adds `lane` (the lane's name, or `read_only`) and
+`lane_write_team_ids` (the write teams the session writes; empty when
+read-only): its own pin while it belongs to the principal pinned, else a pin
+of the session it moved from under the same principal, else its principal's
+pin, else the binding's `unpinned`. Native issue writes require both an
 allowed ClawBridge role and personal Linear write capability. A supplied actor
 must also be current/active. Writes verify this immediately before dispatch.
 The private local operation ledger retains accepted/uncertain outcomes against

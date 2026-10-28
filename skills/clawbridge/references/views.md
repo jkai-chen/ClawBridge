@@ -47,8 +47,10 @@ What you can do is prepare the view set:
    - one issue view per bound team (for example "Open bugs": state not completed, label `bug`).
 2. **Show it.** Put the file in the repository or the thread, with a one-line reason per view.
 3. **Hand it to the project owner.** Write the set as a view-set file,
-   `{"views": [{"team": "TEAM_UUID", "name": "Open bugs", "filter": {...}}]}` (issue views; project views come later),
-   and give them the command to preview it in their own terminal:
+   `{"views": [{"team": "TEAM_UUID", "name": "Open bugs", "filter": {...}}]}`. A project view takes
+   `"kind": "project"` and a filter of project labels only: `{"labels": {"some": {"id": {"in": ["LABEL_UUID"]}}}}`,
+   each a choice of a single-select group (for example `Type`: Engineering, Review, Test) of that team or the
+   workspace. Give the owner the command to preview it in their own terminal:
    `clawbridge linear view apply --file FILE --operation-id ID --profile ID`, then the command the preview prints (it adds `--confirm` and the preview's expected values).
    - **A name a person already used** for a view in Linear is refused. Say so in your message: adopting it
      (`--adopt NAME`) replaces that person's filter, so whether to adopt is the owner's call, not yours.

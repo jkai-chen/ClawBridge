@@ -109,7 +109,7 @@ func linearViewWrite(ctx context.Context, service *linearboard.Service, scope bu
 	if err := linearkey.Allowed(); err != nil {
 		return nil, err
 	}
-	in := linearboard.ViewWriteInput{Action: v.adminAction, Team: v.team, Name: v.viewName, OperationID: v.operation, Confirm: v.confirm, ExpectedRevision: v.revision, ExpectedFilterSHA: v.expectedSHA, ExpectedFilterAsOf: v.expectedAsOf}
+	in := linearboard.ViewWriteInput{Action: v.adminAction, Kind: v.viewKind, Team: v.team, Name: v.viewName, OperationID: v.operation, Confirm: v.confirm, ExpectedRevision: v.revision, ExpectedFilterSHA: v.expectedSHA, ExpectedFilterAsOf: v.expectedAsOf}
 	if v.adminAction == "update" {
 		in.ViewID = pos[0]
 	}
@@ -121,7 +121,7 @@ func linearViewWrite(ctx context.Context, service *linearboard.Service, scope bu
 		in.Filter = []byte(raw)
 	}
 	var key linearboard.ViewKey
-	if v.confirm {
+	if viewWriteNeedsKey(v) {
 		client, err := linearKeys(directory).Open(v.profile)
 		if err != nil {
 			return nil, err
@@ -213,6 +213,9 @@ func viewConfirmLine(v linearFlags, in linearboard.ViewWriteInput, preview linea
 	parts := []string{"clawbridge linear view", in.Action}
 	if in.Action == "create" {
 		parts = append(parts, "--team", in.Team)
+		if in.Kind == "project" {
+			parts = append(parts, "--kind", "project")
+		}
 	} else {
 		parts = append(parts, in.ViewID)
 	}
@@ -236,7 +239,7 @@ type viewKey struct{ c *linearkey.Client }
 func (k viewKey) wrap(v linearkey.View, err error) (linearboard.KeyView, error) {
 	switch {
 	case err == nil:
-		return linearboard.KeyView{ID: v.ID, Name: v.Name, UpdatedAt: v.UpdatedAt, TeamID: v.TeamID, Filter: v.Filter, CreatorID: v.CreatorID, CreatorName: v.CreatorName, Shared: v.Shared}, nil
+		return linearboard.KeyView{ID: v.ID, Name: v.Name, UpdatedAt: v.UpdatedAt, TeamID: v.TeamID, Filter: v.Filter, CreatorID: v.CreatorID, CreatorName: v.CreatorName, Kind: v.Kind, Shared: v.Shared}, nil
 	case errors.Is(err, linearkey.ErrForbidden), errors.Is(err, linearkey.ErrRejected), errors.Is(err, linearkey.ErrNoKey):
 		return linearboard.KeyView{}, fmt.Errorf("%w: %w", linearboard.ErrKeyNotSent, err)
 	case errors.Is(err, linearkey.ErrViewRefused):
@@ -247,12 +250,24 @@ func (k viewKey) wrap(v linearkey.View, err error) (linearboard.KeyView, error) 
 	return linearboard.KeyView{}, err
 }
 
-func (k viewKey) CreateView(ctx context.Context, team, name string, filter json.RawMessage) (linearboard.KeyView, error) {
-	return k.wrap(k.c.CreateView(ctx, team, name, filter))
+func (k viewKey) CreateView(ctx context.Context, team, name, kind string, filter json.RawMessage) (linearboard.KeyView, error) {
+	return k.wrap(k.c.CreateView(ctx, team, name, kind, filter))
 }
 
-func (k viewKey) UpdateView(ctx context.Context, id, name string, filter json.RawMessage) (linearboard.KeyView, error) {
-	return k.wrap(k.c.UpdateView(ctx, id, name, filter))
+func (k viewKey) UpdateView(ctx context.Context, id, name, kind string, filter json.RawMessage) (linearboard.KeyView, error) {
+	return k.wrap(k.c.UpdateView(ctx, id, name, kind, filter))
+}
+
+func (k viewKey) ProjectLabels(ctx context.Context) ([]linearboard.KeyProjectLabel, error) {
+	labels, err := k.c.ProjectLabels(ctx)
+	if _, wrapped := k.wrap(linearkey.View{}, err); err != nil {
+		return nil, wrapped
+	}
+	out := make([]linearboard.KeyProjectLabel, 0, len(labels))
+	for _, l := range labels {
+		out = append(out, linearboard.KeyProjectLabel{ID: l.ID, TeamID: l.TeamID, ParentID: l.ParentID, ParentGroupType: l.ParentGroupType, Group: l.Group, Archived: l.Archived, ParentIsGroup: l.ParentIsGroup})
+	}
+	return out, nil
 }
 
 func (k viewKey) View(ctx context.Context, id string) (linearboard.KeyView, error) {
@@ -262,4 +277,11 @@ func (k viewKey) View(ctx context.Context, id string) (linearboard.KeyView, erro
 func (k viewKey) DeleteView(ctx context.Context, id string) error {
 	_, err := k.wrap(linearkey.View{}, k.c.DeleteView(ctx, id))
 	return err
+}
+
+// viewWriteNeedsKey: a confirm sends with the key; a project view's preview
+// reads its labels with it; and an update's preview may be of a project
+// view, whose kind is the stored one, so it opens the key too.
+func viewWriteNeedsKey(v linearFlags) bool {
+	return v.confirm || v.viewKind == "project" || v.adminAction == "update"
 }

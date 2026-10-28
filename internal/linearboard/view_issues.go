@@ -85,6 +85,9 @@ func (s *Service) ViewIssuesV2(ctx context.Context, scope bus.Request, viewID st
 	if !stored.bound {
 		return ViewIssuesPage{}, errors.New("this view's team left the binding; its issues aren't read")
 	}
+	if stored.kind != "issue" {
+		return ViewIssuesPage{}, errors.New("agent_filter: unavailable (uses: kind.project): agents filter issues only by issue views")
+	}
 	f, e := ParseViewFilter([]byte(stored.filter))
 	if e != nil || f.SHA256 != stored.sha {
 		return ViewIssuesPage{}, errors.New("the recorded view's filter is unreadable")

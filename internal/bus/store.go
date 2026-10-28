@@ -137,7 +137,7 @@ func (s *Store) migrate() error {
 	if err = tx.QueryRow("PRAGMA user_version").Scan(&version); err != nil {
 		return err
 	}
-	if version > 37 {
+	if version > 38 {
 		return errors.New("database schema is newer than this ClawBridge binary")
 	}
 	if version == 0 {
@@ -337,6 +337,11 @@ func (s *Store) migrate() error {
 	}
 	if version < 37 {
 		if _, err = tx.Exec(linearViewsSchemaV37 + `PRAGMA user_version=37;`); err != nil {
+			return err
+		}
+	}
+	if version < 38 {
+		if _, err = tx.Exec(linearViewsSchemaV38SQLite + `PRAGMA user_version=38;`); err != nil {
 			return err
 		}
 	}
@@ -634,7 +639,7 @@ var operationArgs = map[string]string{
 	"intake_list":                 "instance state",
 	"intake_dismiss":              "instance issue_uuid",
 	"intake_rearm":                "instance issue_uuid",
-	"linear_view_record":          "instance action view_id team_id name filter filter_sha256 filter_as_of agent_filter uses expected_binding_revision expected_filter_as_of old_filter_sha256",
+	"linear_view_record":          "instance action kind view_id team_id name filter filter_sha256 filter_as_of agent_filter uses expected_binding_revision expected_filter_as_of old_filter_sha256",
 	"linear_view_forget":          "instance view_id expected_filter_as_of",
 	"linear_view_get":             "instance view_id",
 	"linear_views_list":           "instance",

@@ -22,9 +22,17 @@ var queries = map[string]string{
 	"viewUpdate": `mutation ViewUpdate($id: String!, $input: CustomViewUpdateInput!) { customViewUpdate(id: $id, input: $input) { success customView { ` + viewFields + ` } } }`,
 	"view":       `query View($id: String!) { customView(id: $id) { ` + viewFields + ` } }`,
 	"viewDelete": `mutation ViewDelete($id: String!) { customViewDelete(id: $id) { success } }`,
+	// projectLabels is read only for a project view's write (Q-D (b)), to
+	// prove each filter label's team and group.
+	"projectLabels": `query ProjectLabels($after: String) { projectLabels(first: 250, after: $after) { nodes { ` + projectLabelFields + ` } pageInfo { hasNextPage endCursor } } }`,
 }
 
-const viewFields = `id name shared updatedAt team { id } creator { id name } filterData`
+// projectLabelFields are from the tester's introspection of ProjectLabel
+// (27 Oct, live/keyprobe-ledger.txt): team is null for a workspace label,
+// and groupType (singleSelect or multiSelect) is set on a group.
+const projectLabelFields = `id name isGroup groupType archivedAt retiredAt parent { id isGroup groupType } team { id }`
+
+const viewFields = `id name shared updatedAt modelName team { id } creator { id name } filterData projectFilterData`
 
 // Client sends the person's key with an allow-listed query.
 type Client struct {

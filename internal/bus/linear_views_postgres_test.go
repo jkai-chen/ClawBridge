@@ -2,6 +2,9 @@ package bus
 
 import (
 	"context"
+	"database/sql"
+	"net/url"
+	"os"
 	"strings"
 	"testing"
 )
@@ -123,5 +126,63 @@ func TestPostgresLinearViewForget(t *testing.T) {
 	}
 	if _, err = as(Request{Operation: "linear_view_get", Args: map[string]any{"view_id": lvView}}); err == nil {
 		t.Fatal("a forgotten view is still read")
+	}
+}
+
+// Schema 38 on Postgres: schema 37's kind CHECK, under the name Postgres
+// gives an inline CHECK, is replaced by one that takes project views.
+func TestPostgresLinearViewsSchema38Upgrade(t *testing.T) {
+	dsn := os.Getenv("CLAWBRIDGE_TEST_POSTGRES_DSN")
+	if dsn == "" {
+		t.Skip("reviewer supplies disposable Postgres DSN")
+	}
+	ctx := context.Background()
+	admin, err := sql.Open("pgx", dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer admin.Close()
+	schema := strings.ReplaceAll(newID("lv"), "-", "_")
+	if _, err = admin.ExecContext(ctx, `CREATE SCHEMA `+schema); err != nil {
+		t.Fatal(err)
+	}
+	defer admin.ExecContext(ctx, `DROP SCHEMA `+schema+` CASCADE`)
+	parsed, err := url.Parse(dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	q := parsed.Query()
+	q.Set("search_path", schema)
+	parsed.RawQuery = q.Encode()
+	owner := newID("owner") + "@identity-test.example"
+	check := func() string {
+		var def string
+		if err := admin.QueryRowContext(ctx, `SELECT pg_get_constraintdef(c.oid) FROM pg_constraint c JOIN pg_namespace n ON n.oid=c.connamespace WHERE n.nspname=$1 AND c.conname='linear_views_kind_check'`, schema).Scan(&def); err != nil {
+			t.Fatal(err)
+		}
+		return def
+	}
+	s, err := OpenPostgres(ctx, parsed.String(), owner)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.Close()
+	// Back to schema 37: its CHECK as Postgres named it.
+	if _, err = admin.ExecContext(ctx, `ALTER TABLE `+schema+`.linear_views DROP CONSTRAINT linear_views_kind_check, ADD CHECK(kind='issue'); DELETE FROM `+schema+`.clawbridge_schema WHERE version>=38`); err != nil {
+		t.Fatal(err)
+	}
+	if def := check(); strings.Contains(def, "project") {
+		t.Fatal("schema 37's CHECK took project views:", def)
+	}
+	if s, err = OpenPostgres(ctx, parsed.String(), owner); err != nil {
+		t.Fatal(err)
+	}
+	s.Close()
+	var version int
+	if err = admin.QueryRowContext(ctx, `SELECT MAX(version) FROM `+schema+`.clawbridge_schema`).Scan(&version); err != nil || version != 38 {
+		t.Fatal(version, err)
+	}
+	if def := check(); !strings.Contains(def, "'project'") {
+		t.Fatal(def)
 	}
 }

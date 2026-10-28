@@ -40,6 +40,12 @@ func TestLinearViewWriteParsing(t *testing.T) {
 			t.Fatal("parsed", args)
 		}
 	}
+	if v, _, err = parseLinear("view-create", []string{"--profile", "p", "--team", viewTeamID, "--kind", "project", "--name", "Review", "--filter-file", "f.json", "--operation-id", "op"}, &bytes.Buffer{}); err != nil || v.viewKind != "project" {
+		t.Fatal(v, err)
+	}
+	if _, _, err = parseLinear("view-create", []string{"--profile", "p", "--team", viewTeamID, "--kind", "initiative", "--operation-id", "op"}, &bytes.Buffer{}); err == nil {
+		t.Fatal("accepted --kind initiative")
+	}
 	if v, _, err = parseLinear("view-apply", []string{"--profile", "p", "--file", "set.json", "--adopt", "Triage", "--adopt", "Bugs", "--operation-id", "set-1", "--confirm"}, &bytes.Buffer{}); err != nil || v.filterFile != "set.json" || len(v.adoptNames) != 2 || v.adoptNames[1] != "Bugs" || !v.confirm {
 		t.Fatal(v, err)
 	}
@@ -94,5 +100,24 @@ func TestViewKeyErrors(t *testing.T) {
 	}
 	if v, err := (viewKey{}).wrap(linearkey.View{ID: "v", TeamID: "t", Shared: true, Filter: "{}"}, nil); err != nil || v.ID != "v" || v.TeamID != "t" || !v.Shared || v.Filter != "{}" {
 		t.Fatal(v, err)
+	}
+}
+
+// M1: an update's preview opens the key, since the stored view may be a
+// project view, whose labels are read with it; so do a confirm and a
+// project create. An issue create's preview doesn't.
+func TestViewWriteNeedsKey(t *testing.T) {
+	for want, v := range map[bool]linearFlags{
+		true:  {adminAction: "update"},
+		false: {adminAction: "create", viewKind: "issue"},
+	} {
+		if viewWriteNeedsKey(v) != want {
+			t.Fatal(v, want)
+		}
+	}
+	for _, v := range []linearFlags{{adminAction: "create", confirm: true}, {adminAction: "create", viewKind: "project"}} {
+		if !viewWriteNeedsKey(v) {
+			t.Fatal(v)
+		}
 	}
 }

@@ -19,9 +19,25 @@ type View struct {
 	// CreatorID and CreatorName say who made the view (shown before an
 	// adoption replaces its filter). The name is text from Linear.
 	CreatorID, CreatorName string
-	// Filter is filterData as Linear holds it, re-encoded with sorted keys
-	// and its numbers kept exactly, for comparing with what was sent.
+	// Kind is "issue" or "project", from Linear's modelName; "" for any
+	// other kind.
+	Kind string
+	// Filter is the view's filter as Linear holds it (filterData for an
+	// issue view, projectFilterData for a project view), re-encoded with
+	// sorted keys and its numbers kept exactly, for comparing with what was
+	// sent.
 	Filter string
+}
+
+// filterField is the input and read-back field of a kind's filter.
+func filterField(kind string) (string, error) {
+	switch kind {
+	case "issue":
+		return "filterData", nil
+	case "project":
+		return "projectFilterData", nil
+	}
+	return "", errors.New("a view's kind is issue or project")
 }
 
 var viewID = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
@@ -41,7 +57,9 @@ type viewNode struct {
 		ID   string `json:"id"`
 		Name string `json:"name"`
 	} `json:"creator"`
-	FilterData json.RawMessage `json:"filterData"`
+	ModelName         string          `json:"modelName"`
+	FilterData        json.RawMessage `json:"filterData"`
+	ProjectFilterData json.RawMessage `json:"projectFilterData"`
 }
 
 func (n *viewNode) view() (View, error) {
@@ -55,7 +73,14 @@ func (n *viewNode) view() (View, error) {
 	if n.Creator != nil {
 		v.CreatorID, v.CreatorName = n.Creator.ID, n.Creator.Name
 	}
-	filter, err := Canonical(n.FilterData)
+	raw := n.FilterData
+	switch n.ModelName {
+	case "Issue", "":
+		v.Kind = "issue"
+	case "Project":
+		v.Kind, raw = "project", n.ProjectFilterData
+	}
+	filter, err := Canonical(raw)
 	if err != nil {
 		return View{}, ErrUnavailable
 	}
@@ -89,11 +114,15 @@ func viewErr(err error, input error) error {
 
 // CreateView creates a shared view on team, with the filter as filterData.
 // team must be a team ID: without one nothing is built or sent.
-func (c *Client) CreateView(ctx context.Context, team, name string, filter json.RawMessage) (View, error) {
+func (c *Client) CreateView(ctx context.Context, team, name, kind string, filter json.RawMessage) (View, error) {
 	if !viewID.MatchString(team) {
 		return View{}, errNoTeam
 	}
-	input := map[string]any{"name": name, "teamId": team, "shared": true, "filterData": filter}
+	field, err := filterField(kind)
+	if err != nil {
+		return View{}, err
+	}
+	input := map[string]any{"name": name, "teamId": team, "shared": true, field: filter}
 	var out struct {
 		Result *struct {
 			Success    bool      `json:"success"`
@@ -111,7 +140,7 @@ func (c *Client) CreateView(ctx context.Context, team, name string, filter json.
 
 // UpdateView renames the view and replaces its filter. It never names a
 // team or the sharing: the view keeps both.
-func (c *Client) UpdateView(ctx context.Context, id, name string, filter json.RawMessage) (View, error) {
+func (c *Client) UpdateView(ctx context.Context, id, name, kind string, filter json.RawMessage) (View, error) {
 	if !viewID.MatchString(id) {
 		return View{}, ErrViewNotFound
 	}
@@ -121,7 +150,11 @@ func (c *Client) UpdateView(ctx context.Context, id, name string, filter json.Ra
 			CustomView *viewNode `json:"customView"`
 		} `json:"customViewUpdate"`
 	}
-	input := map[string]any{"name": name, "filterData": filter}
+	field, err := filterField(kind)
+	if err != nil {
+		return View{}, err
+	}
+	input := map[string]any{"name": name, field: filter}
 	if err := c.do(ctx, "viewUpdate", map[string]any{"id": id, "input": input}, &out); err != nil {
 		return View{}, viewErr(err, ErrViewRefused)
 	}
@@ -166,4 +199,87 @@ func (c *Client) DeleteView(ctx context.Context, id string) error {
 		return ErrUnavailable
 	}
 	return nil
+}
+
+// ProjectLabel is a project label as the key reads it: its team is "" for
+// a workspace label.
+type ProjectLabel struct {
+	ID, Name, TeamID, ParentID string
+	// ParentGroupType is the parent group's groupType: singleSelect or
+	// multiSelect.
+	ParentGroupType string
+	Group           bool
+	// Archived is true for an archived or a retired label.
+	Archived      bool
+	ParentIsGroup bool
+}
+
+// projectLabelPages bounds the read (D2): past it, the list is refused,
+// never used in part.
+const projectLabelPages = 4
+
+// ErrTooManyLabels is a label list longer than ClawBridge reads.
+var ErrTooManyLabels = errors.New("the workspace has more project labels than ClawBridge reads (1,000); nothing was sent")
+
+// ProjectLabels reads every project label the key can see, workspace and
+// team ones, archived ones included (the caller leaves those out).
+func (c *Client) ProjectLabels(ctx context.Context) ([]ProjectLabel, error) {
+	var out []ProjectLabel
+	after := ""
+	for page := 0; page < projectLabelPages; page++ {
+		var res struct {
+			Labels *struct {
+				Nodes []struct {
+					ID         string  `json:"id"`
+					Name       string  `json:"name"`
+					IsGroup    bool    `json:"isGroup"`
+					ArchivedAt *string `json:"archivedAt"`
+					RetiredAt  *string `json:"retiredAt"`
+					Parent     *struct {
+						ID        string `json:"id"`
+						IsGroup   bool   `json:"isGroup"`
+						GroupType string `json:"groupType"`
+					} `json:"parent"`
+					Team *struct {
+						ID string `json:"id"`
+					} `json:"team"`
+				} `json:"nodes"`
+				PageInfo struct {
+					HasNextPage bool   `json:"hasNextPage"`
+					EndCursor   string `json:"endCursor"`
+				} `json:"pageInfo"`
+			} `json:"projectLabels"`
+		}
+		vars := map[string]any{}
+		if after != "" {
+			vars["after"] = after
+		}
+		if err := c.do(ctx, "projectLabels", vars, &res); err != nil {
+			return nil, viewErr(err, ErrUnavailable)
+		}
+		if res.Labels == nil {
+			return nil, ErrUnavailable
+		}
+		for _, n := range res.Labels.Nodes {
+			if !viewID.MatchString(n.ID) {
+				return nil, ErrUnavailable
+			}
+			l := ProjectLabel{ID: n.ID, Name: n.Name, Group: n.IsGroup, Archived: n.ArchivedAt != nil || n.RetiredAt != nil}
+			if n.Team != nil {
+				l.TeamID = n.Team.ID
+			}
+			if n.Parent != nil {
+				l.ParentID, l.ParentIsGroup, l.ParentGroupType = n.Parent.ID, n.Parent.IsGroup, n.Parent.GroupType
+			}
+			out = append(out, l)
+		}
+		if !res.Labels.PageInfo.HasNextPage {
+			return out, nil
+		}
+		if res.Labels.PageInfo.EndCursor == "" || res.Labels.PageInfo.EndCursor == after {
+			return nil, ErrUnavailable
+		}
+		after = res.Labels.PageInfo.EndCursor
+	}
+	return nil, ErrTooManyLabels
 }

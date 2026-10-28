@@ -18,7 +18,7 @@ func storedDeletable(t *testing.T, a *viewAuthority) {
 
 // inLinear is the stored view as Linear shows it, unchanged.
 func inLinear() KeyView {
-	return KeyView{ID: vwView, Name: "Urgent bugs", TeamID: teamID, Shared: true, Filter: `{"priority":{"eq":1}}`, UpdatedAt: deleteAsOf}
+	return KeyView{ID: vwView, Name: "Urgent bugs", Kind: "issue", TeamID: teamID, Shared: true, Filter: `{"priority":{"eq":1}}`, UpdatedAt: deleteAsOf}
 }
 
 // A preview names the view and its scope and sends nothing; the confirm

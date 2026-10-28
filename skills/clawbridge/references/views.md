@@ -62,7 +62,7 @@ What you can do is prepare the view set:
 
 - **A personal Linear API key** with Read and Write, never Admin, saved with `clawbridge linear key set` by the owner.
   It acts as the owner everywhere in Linear, so the owner revokes it when it's not in use. It is theirs alone: you
-  never run `linear key` or `linear view create|update`, and never ask for the key.
+  never run `linear key` or `linear view create|update|delete`, and never ask for the key.
 - **Project-kind labels**, for project views (below).
 
 ## Project-kind labels

@@ -247,7 +247,11 @@
     `agent_filter` and the rows left out for an unknown field. A view using anything else is
     `agent_filter: unavailable` for agents, while people still see it in Linear. Issue rows now carry `priority`
     (0–4) with `priority_known`.
-  - Schema 37 stores the views. Deleting and adopting views come later.
+  - **Delete (phase 3c):** `linear view delete ID [--confirm]`, the owner only, and only a view ClawBridge wrote in
+    this project; a view Linear no longer has afterwards is dropped from what agents filter by (history
+    `view_deleted`), one still there is `uncertain`. The confirm carries the preview's `filter_as_of`, and a view
+    someone changed in Linear since ClawBridge wrote it is never deleted.
+  - Schema 37 stores the views. Adopting views and `view apply --file` come later.
 
 ## The command line
 

@@ -137,3 +137,23 @@ func (c *Client) View(ctx context.Context, id string) (View, error) {
 	}
 	return out.CustomView.view()
 }
+
+// DeleteView deletes a view. Linear answering it has no such view is
+// ErrViewNotFound: it may already be gone.
+func (c *Client) DeleteView(ctx context.Context, id string) error {
+	if !viewID.MatchString(id) {
+		return ErrViewNotFound
+	}
+	var out struct {
+		Result *struct {
+			Success bool `json:"success"`
+		} `json:"customViewDelete"`
+	}
+	if err := c.do(ctx, "viewDelete", map[string]any{"id": id}, &out); err != nil {
+		return viewErr(err, ErrViewNotFound)
+	}
+	if out.Result == nil || !out.Result.Success {
+		return ErrUnavailable
+	}
+	return nil
+}

@@ -26,6 +26,7 @@ type ViewKey interface {
 	CreateView(ctx context.Context, team, name string, filter json.RawMessage) (KeyView, error)
 	UpdateView(ctx context.Context, id, name string, filter json.RawMessage) (KeyView, error)
 	View(ctx context.Context, id string) (KeyView, error)
+	DeleteView(ctx context.Context, id string) error
 }
 
 // KeyView is a view as Linear reads it back through the key.

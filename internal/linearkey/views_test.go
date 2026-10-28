@@ -136,3 +136,30 @@ func TestViewWriteRefusals(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+// A delete sends only the view's ID; Linear's not found is ErrViewNotFound,
+// and a delete that didn't succeed is unavailable.
+func TestDeleteView(t *testing.T) {
+	noAgent(t)
+	sent := recordLinear(t, `{"data":{"customViewDelete":{"success":true}}}`)
+	c, _ := NewClient(testKey)
+	if err := c.DeleteView(context.Background(), tkView); err != nil {
+		t.Fatal(err)
+	}
+	if q := (*sent)[0]; q.Query != queries["viewDelete"] || len(q.Variables) != 1 || q.Variables["id"] != tkView {
+		t.Fatal(q)
+	}
+	for answer, want := range map[string]error{
+		`{"errors":[{"message":"Entity not found: CustomView","extensions":{"code":"INPUT_ERROR"}}]}`: ErrViewNotFound,
+		`{"data":{"customViewDelete":{"success":false}}}`:                                             ErrUnavailable,
+	} {
+		recordLinear(t, answer)
+		c, _ = NewClient(testKey)
+		if err := c.DeleteView(context.Background(), tkView); !errors.Is(err, want) {
+			t.Fatal(answer, err)
+		}
+	}
+	if err := c.DeleteView(context.Background(), "VIEW"); !errors.Is(err, ErrViewNotFound) {
+		t.Fatal(err)
+	}
+}

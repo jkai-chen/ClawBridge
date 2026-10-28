@@ -189,3 +189,32 @@ const viewsDowngradeSQLite = "DROP TABLE linear_views;\n"
 func viewsDowngradePostgres(schema string) string {
 	return "DROP TABLE " + schema + ".linear_views;\n"
 }
+
+// The owner forgets a view deleted in Linear: only the row the preview
+// read, once; a second call is a replay. History says view_deleted with
+// the scope.
+func TestLinearViewForget(t *testing.T) {
+	h := newHarness(t)
+	h.link(0, []string{cpOne})
+	h.call("linear_view_record", "", lvRecord("create", lvView, "Urgent bugs", lvFilter, "2026-10-27T21:00:00.000Z", "", 1))
+	if err := h.viewErr("linear_view_forget", "", map[string]any{"view_id": lvView, "expected_filter_as_of": "2026-10-27T20:00:00.000Z"}); !strings.Contains(err.Error(), "changed since the preview") {
+		t.Fatal(err)
+	}
+	if err := h.viewErr("linear_view_forget", "a", map[string]any{"view_id": lvView, "expected_filter_as_of": "2026-10-27T21:00:00.000Z"}); !strings.Contains(err.Error(), "a session can't") {
+		t.Fatal(err)
+	}
+	if err := h.viewErr("linear_view_forget", "", map[string]any{"view_id": lvView}); !strings.Contains(err.Error(), "required") {
+		t.Fatal(err)
+	}
+	got := h.call("linear_view_forget", "", map[string]any{"view_id": lvView, "expected_filter_as_of": "2026-10-27T21:00:00.000Z"}).(map[string]any)
+	if got["forgotten"] != true || got["replayed"] != false || count(t, h.s.db, "linear_views") != 0 {
+		t.Fatal(got)
+	}
+	if again := h.call("linear_view_forget", "", map[string]any{"view_id": lvView, "expected_filter_as_of": "2026-10-27T21:00:00.000Z"}).(map[string]any); again["replayed"] != true {
+		t.Fatal(again)
+	}
+	var details string
+	if err := h.s.db.QueryRow(`SELECT details FROM history WHERE action='view_deleted'`).Scan(&details); err != nil || !strings.Contains(details, `"scope":"team:`+sfTeam+`"`) || strings.Contains(details, "Urgent") {
+		t.Fatal(details, err)
+	}
+}

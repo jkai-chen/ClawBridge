@@ -1,5 +1,23 @@
 # Unreleased
 
+## The terminal interface
+
+- **Issues and the sessions holding them (U15, U40).** `i` on Sessions opens the selected session's issue on the
+  Linear screen; Linear's issue list says which session holds each issue ("held by reviewer"), and `s` on an opened
+  issue goes to that session. Projects reads the first 20 projects' summaries on load and any other when it's opened.
+- **Relinking starts from the board (U33); the Dispatcher speaks plainly (U55).** `l` on a linked board opens the
+  link wizard with its teams, default team and projects already chosen. Without the server's model key, the Dispatcher
+  screen says the server isn't set up for model keys (operator: see docs/dispatcher.md) instead of naming the
+  operator's variable.
+- **Doctor in the TUI answers like `clawbridge doctor`.** Each check reads "Workspace: Your workspace can't be
+  reached." with the check's own message under it, the same words as the CLI (U60).
+- **Linear project status in the TUI.** `p` on the Linear screen reads each linked Linear project's status and
+  open issues through the server's app (`g` adds a suggestion, as a hint). A project owner or lead, in a TUI opened
+  without a session, sets one after the server's preview and `y`, with a second `y` to close it with issues open.
+  The server's rules on who sets it and who closes stay as they are (U61).
+
+# ClawBridge v0.3.7 (released 28 Oct)
+
 **Schema 39 → 41.**
 - The server migrates to schema 41 on its first start: 40, who asked for each write the ClawBridge app made (intake
   attribution); 41, who is subscribed to agents' issues (a board already linked starts off).
@@ -71,22 +89,6 @@
 - **`operator linear-app-probe --rate-headers`** reads once over Linear's GraphQL API and once over its MCP server as
   the app, never mints, writes nothing, and prints only each request's status and Linear's rate-limit headers: which
   limits the MCP server reports, for pacing Linear calls (docs/operations/deployment.md).
-
-## The terminal interface
-
-- **Issues and the sessions holding them (U15, U40).** `i` on Sessions opens the selected session's issue on the
-  Linear screen; Linear's issue list says which session holds each issue ("held by reviewer"), and `s` on an opened
-  issue goes to that session. Projects reads the first 20 projects' summaries on load and any other when it's opened.
-- **Relinking starts from the board (U33); the Dispatcher speaks plainly (U55).** `l` on a linked board opens the
-  link wizard with its teams, default team and projects already chosen. Without the server's model key, the Dispatcher
-  screen says the server isn't set up for model keys (operator: see docs/dispatcher.md) instead of naming the
-  operator's variable.
-- **Doctor in the TUI answers like `clawbridge doctor`.** Each check reads "Workspace: Your workspace can't be
-  reached." with the check's own message under it, the same words as the CLI (U60).
-- **Linear project status in the TUI.** `p` on the Linear screen reads each linked Linear project's status and
-  open issues through the server's app (`g` adds a suggestion, as a hint). A project owner or lead, in a TUI opened
-  without a session, sets one after the server's preview and `y`, with a second `y` to close it with issues open.
-  The server's rules on who sets it and who closes stay as they are (U61).
 
 # ClawBridge v0.3.6 (released 28 Oct)
 

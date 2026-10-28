@@ -24,6 +24,8 @@
 - The client reconnects with a fresh single-use ticket each time, backs off 1 s doubling to 60 s with jitter, and
   treats 90 s without a line as a dead connection. A refused ticket (a moved instance, a removed member) ends the
   stream; a full account (429) or an outage is retried.
+- **`clawbridge notify` stops its heartbeat and context reporter before it exits**, so no context report is still
+  writing to the session's context records after the watcher has stopped.
 
 ## The message queue: pushed (slice 2 of 5)
 

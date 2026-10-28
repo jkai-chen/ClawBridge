@@ -338,6 +338,60 @@ func TestWatcherReportsContext(t *testing.T) {
 	}
 }
 
+// Run returns only once the context reporter has stopped: a report still
+// in flight when the loop ends holds Run, so nothing writes under
+// ContextDir after it returns (the TempDir cleanup flake on #202).
+func TestWatcherWaitsForTheReporter(t *testing.T) {
+	interval := ContextInterval
+	ContextInterval = 10 * time.Millisecond
+	t.Cleanup(func() { ContextInterval = interval })
+	f := newReportFixture(t)
+	c := config(t)
+	c.Once = false
+	c.Binding.Session = "worker-1"
+	c.ContextDir = f.dir
+	entered, release := make(chan struct{}), make(chan struct{})
+	var once sync.Once
+	c.Executor = executorFunc(func(ctx context.Context, r bus.Request) (bus.Result, error) {
+		if r.Operation == "report_context" {
+			// A report that outlives its context, as a slow write would.
+			once.Do(func() { close(entered) })
+			<-release
+			return bus.Result{Source: "server", Data: map[string]any{}}, nil
+		}
+		return result(0, 0, 0), nil
+	})
+	c.Wait = func(ctx context.Context, d time.Duration) error {
+		select {
+		case <-entered:
+		case <-time.After(5 * time.Second):
+		}
+		return context.Canceled
+	}
+	done := make(chan error, 1)
+	go func() { done <- Run(context.Background(), c) }()
+	select {
+	case <-entered:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the reporter never reported")
+	}
+	select {
+	case e := <-done:
+		close(release)
+		t.Fatal("Run returned while the reporter could still write:", e)
+	case <-time.After(200 * time.Millisecond):
+	}
+	close(release)
+	select {
+	case e := <-done:
+		if !errors.Is(e, context.Canceled) {
+			t.Fatal(e)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("Run never returned")
+	}
+}
+
 // R105-M1: the PreCompact hook's trigger goes with the compaction it noted,
 // so the server can tell a manual /compact from the auto-compact backstop.
 func TestReportContextSendsTheCompactionTrigger(t *testing.T) {

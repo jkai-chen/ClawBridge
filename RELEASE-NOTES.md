@@ -1,4 +1,4 @@
-# ClawBridge v0.3.6 (unreleased)
+# Unreleased
 
 **Schema 28 → 39.**
 - The server migrates to schema 39 on its first start: 29, the new-device alerts' events and acknowledgements; 30, a
@@ -432,7 +432,15 @@
   with its details (counts, paths, versions) on the line under it and what to do after `→`. Checks whose message
   already read that way keep it. `--json` is unchanged, check IDs included.
 
-# ClawBridge v0.3.5 (unreleased)
+# ClawBridge v0.3.5.1 (server hotfix, deployed 27 Oct; no client release or tag)
+
+A server-only image over v0.3.5, built from `release/v0.3.5-hotfix` (#195). **No schema change** (still 28), so it
+deploys over v0.3.5 data and rolls back to the v0.3.5 image. Clients stay on v0.3.5.
+
+- **Intake's `needs-agent` signal (S1) sees every project of a binding** (#182, with #186's test). The fix is described
+  under "The comment watcher" above; it is in the next release too.
+
+# ClawBridge v0.3.5 (released 27 Oct)
 
 **Schema 19 → 28.**
 - The server migrates to schema 28 on its first start:

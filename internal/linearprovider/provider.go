@@ -725,6 +725,7 @@ func (p *Provider) negotiate(names []string, args ...arg) (string, map[string]an
 	}
 	return chosen, values, nil
 }
+
 // withinSchemaBounds reports whether n is inside the minimum and maximum
 // a tool's schema declares for the property, if it declares them.
 func withinSchemaBounds(prop any, n int) bool {
@@ -1060,6 +1061,7 @@ func listRows(m map[string]any, key string) ([]map[string]any, string, bool, err
 	}
 	return items, next, complete, nil
 }
+
 // MaxProjectsPage is the largest projects page Linear answers: its
 // list_projects schema says 50 and refuses 51, while teams and issues take
 // 100.

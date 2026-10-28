@@ -223,6 +223,10 @@ func SaveStopMark(dir, session string, m StopMark) error {
 	return writePrivate(dir, path, data)
 }
 
+// afterStat runs between readPrivate's stat and its open; tests remove or
+// replace the file there.
+var afterStat = func() {}
+
 // readPrivate reads a small record: a regular file, not a link, owned by
 // this user and readable by nobody else.
 func readPrivate(path string) ([]byte, bool, error) {
@@ -236,11 +240,23 @@ func readPrivate(path string) ([]byte, bool, error) {
 	if err := privateToUser(info); err != nil {
 		return nil, false, fmt.Errorf("%s %s", path, err)
 	}
+	afterStat()
 	f, err := openNoFollow(path)
+	if errors.Is(err, os.ErrNotExist) {
+		// Removed since the stat: the MCP server exited.
+		return nil, false, nil
+	}
 	if err != nil {
 		return nil, false, fmt.Errorf("%s is not readable", path)
 	}
 	defer f.Close()
+	// A rename since the stat can put another file there; check the one opened.
+	if info, err = f.Stat(); err != nil || !info.Mode().IsRegular() {
+		return nil, false, fmt.Errorf("%s is not a regular file", path)
+	}
+	if err := privateToUser(info); err != nil {
+		return nil, false, fmt.Errorf("%s %s", path, err)
+	}
 	data, err := io.ReadAll(io.LimitReader(f, 256<<10))
 	if err != nil {
 		return nil, false, fmt.Errorf("%s is not readable", path)

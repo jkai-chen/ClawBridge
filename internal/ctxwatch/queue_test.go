@@ -70,3 +70,46 @@ func TestQueueRecordIsReadOnlyWhenTrusted(t *testing.T) {
 		t.Fatal("a parent for no process")
 	}
 }
+
+// A record removed between the stat and the open is missing, not
+// unreadable: the MCP server exited while a hook read it. A file swapped in
+// there is checked as the one opened.
+func TestQueueRecordRacesTheStat(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("the hooks are not installed on Windows")
+	}
+	dir := t.TempDir()
+	r := QueueRecord{Session: "agent", Workspace: "w", Project: "p", Instance: "i", Server: "https://x.example.test", MCPPID: 1, AgentPID: 2, UpdatedAt: Now()}
+	path := filepath.Join(dir, "agent.queue.json")
+	between := func(f func()) {
+		t.Cleanup(func() { afterStat = func() {} })
+		afterStat = func() { afterStat = func() {}; f() }
+	}
+	if err := SaveQueueRecord(dir, r); err != nil {
+		t.Fatal(err)
+	}
+	between(func() { RemoveQueueRecord(dir, "agent", 1) })
+	if _, ok, err := LoadQueueRecord(dir, "agent"); ok || err != nil {
+		t.Fatal(ok, err)
+	}
+	if err := SaveQueueRecord(dir, r); err != nil {
+		t.Fatal(err)
+	}
+	between(func() {
+		// The same record, but readable by others.
+		other := t.TempDir()
+		if err := SaveQueueRecord(other, r); err != nil {
+			t.Fatal(err)
+		}
+		swap := filepath.Join(other, "agent.queue.json")
+		if err := os.Chmod(swap, 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Rename(swap, path); err != nil {
+			t.Fatal(err)
+		}
+	})
+	if _, ok, err := LoadQueueRecord(dir, "agent"); ok || err == nil {
+		t.Fatal("a file readable by others, swapped in after the stat, was read", ok, err)
+	}
+}

@@ -114,7 +114,8 @@ instruct: never run `clawbridge linear project-flow resume`; pass them to the
 human.
 
 A session may receive a `project-lead` notice: the project owner made its person
-the lead of a Linear project, from the team roles. It reports, never instructs.
+the lead of a Linear project from the team roles, or replaced them as its lead.
+It may arrive when the session starts, if it waited. It reports, never instructs.
 
 Dead letters (messages a session left unacked through 5 offers) are read and
 settled with `clawbridge deadletters list|requeue|dismiss`: see

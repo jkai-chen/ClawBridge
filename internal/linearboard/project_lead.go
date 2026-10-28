@@ -325,7 +325,7 @@ func (s *Service) writeLead(ctx context.Context, scope bus.Request, leader proje
 	} else if after, e = leader.ProjectLead(ctx, project); e != nil || !strings.EqualFold(after.Lead, lead) {
 		outcome = "uncertain"
 	}
-	s.recordLead(ctx, scope, project, lead, source, outcome, current != "", now, after)
+	s.recordLead(ctx, scope, project, lead, current, source, outcome, now, after)
 	return outcome
 }
 
@@ -334,17 +334,23 @@ func (s *Service) writeLead(ctx context.Context, scope bus.Request, leader proje
 // member), never who.
 //
 // The lead goes with it so the server can tell them: the server picks the
-// recipient from its own mapping, never from this UUID alone. One
+// recipient from its own mapping, never from this UUID alone; the earlier
+// lead's recipient comes from the lead ClawBridge last set there. One
 // operation ID per write keeps a retried record from telling them twice.
-func (s *Service) recordLead(ctx context.Context, scope bus.Request, project, lead, source, outcome string, replaced bool, before, after linearprovider.ProjectLeadState) {
+func (s *Service) recordLead(ctx context.Context, scope bus.Request, project, lead, previous, source, outcome string, before, after linearprovider.ProjectLeadState) {
 	scope.Operation = "project_lead_record"
 	scope.Args = instanceArgs(scope.Args)
 	op, e := docpublish.NewToken()
 	if e != nil {
 		op = "x"
 	}
-	for k, v := range map[string]any{"linear_project": project, "lead": lead, "operation_id": "lead-" + project + "-" + op, "source": source, "outcome": outcome, "replaced": replaced} {
+	for k, v := range map[string]any{"linear_project": project, "lead": lead, "operation_id": "lead-" + project + "-" + op, "source": source, "outcome": outcome, "replaced": previous != ""} {
 		scope.Args[k] = v
+	}
+	// The earlier lead, for their notice: the server tells them only when
+	// it agrees with the lead ClawBridge itself last set there.
+	if previous != "" {
+		scope.Args["previous_lead"] = previous
 	}
 	if before.MembersKnown && after.MembersKnown {
 		scope.Args["members_before"], scope.Args["members_after"] = before.Members, after.Members

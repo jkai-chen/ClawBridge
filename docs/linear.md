@@ -1114,9 +1114,16 @@ The TUI's Linear screen has the same view and changes (`R`; see the
   - **Linear also makes the lead a member of the project.** Clearing or replacing the lead doesn't remove them, so
     `--replace` leaves the earlier lead a member. ClawBridge never removes members; remove one in Linear if that's not
     wanted. **Linear doesn't notify the person** they're made the lead (or that it was removed). ClawBridge sends a
-    `project-lead` notice to their active sessions, naming the Linear project only, when you linked their lead row to
-    their account (`roles person … --link`) and they are still a project member. Otherwise tell them yourself. The
-    preview says both.
+    `project-lead` notice to their sessions, naming the Linear project only, when you linked their lead row to their
+    account (`roles person … --link`) and they are still a project member. Otherwise tell them yourself. The preview
+    says both.
+    - **No session open?** The notice waits, and is delivered once, when they next start a session. It waits 30
+      days at most, and a later notice about the same project replaces it.
+    - **`--replace`** also tells the earlier lead that they're no longer the lead, but only when ClawBridge set that
+      lead itself and they are still a project member. A lead someone set in Linear isn't told; history counts it
+      as `not_told`.
+    - **`clawbridge project overview`** shows the project owner "Project leads": how many ClawBridge set and told in
+      the last 7 days, and how many notices wait for a session. Counts only.
   - **What is sent:** only the lead's Linear user ID from the roles, never a name or an email, with the project's ID.
     History records each write by outcome and the project's member counts, never who.
   - **What isn't automatic:** nothing sets a lead on its own yet. Projects people create in Linear get one only

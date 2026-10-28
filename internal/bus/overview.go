@@ -2,7 +2,9 @@ package bus
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"net/url"
 	"strings"
 	"time"
@@ -101,8 +103,43 @@ func (s *Store) projectOverview(ctx context.Context, tx *transaction, w, p map[s
 	if err != nil {
 		return nil, err
 	}
-	return map[string]any{"project": project, "coordinator": coord, "counts": counts, "sessions": rows,
-		"sessions_truncated": truncated, "linear": linear}, nil
+	out := map[string]any{"project": project, "coordinator": coord, "counts": counts, "sessions": rows,
+		"sessions_truncated": truncated, "linear": linear}
+	if role == "owner" {
+		if out["project_leads"], err = projectLeadCounts(ctx, tx, pid, now); err != nil {
+			return nil, err
+		}
+	}
+	return out, nil
+}
+
+// projectLeadCounts is the owner's line on Linear project leads: in the
+// last 7 days, how many ClawBridge set and how many of its notices reached
+// someone, and how many wait for a session. Counts only, never who.
+func projectLeadCounts(ctx context.Context, tx *transaction, pid string, now time.Time) (map[string]any, error) {
+	rows, err := query(ctx, tx, `SELECT details FROM history WHERE project_id=? AND entity='project_lead' AND action='lead' AND changed_at>=?`, pid, now.Add(-7*24*time.Hour).Format(timestampLayout))
+	if err != nil {
+		return nil, err
+	}
+	set := 0
+	for _, r := range rows {
+		// The details come back decoded or as JSON text, by dialect.
+		d, ok := r["details"].(map[string]any)
+		if !ok && json.Unmarshal([]byte(fmt.Sprint(r["details"])), &d) != nil {
+			continue
+		}
+		if d["outcome"] != "accepted" {
+			continue
+		}
+		set++
+	}
+	// Told: notices delivered in the window, whenever their write was;
+	// waiting: notices no session has had yet.
+	n, err := one(ctx, tx, `SELECT COALESCE(SUM(CASE WHEN delivered_at>=? THEN 1 ELSE 0 END),0) AS told,COALESCE(SUM(CASE WHEN delivered_at IS NULL AND created_at>=? THEN 1 ELSE 0 END),0) AS waiting FROM project_lead_notices WHERE project_id=?`, now.Add(-7*24*time.Hour).Format(timestampLayout), now.Add(-leadNoticeWaitDays*24*time.Hour).Format(timestampLayout), pid)
+	if err != nil {
+		return nil, err
+	}
+	return map[string]any{"set_7d": set, "told_7d": asInt(n["told"]), "waiting": asInt(n["waiting"])}, nil
 }
 
 // overviewAssignment is a session's live assignment: the issue's

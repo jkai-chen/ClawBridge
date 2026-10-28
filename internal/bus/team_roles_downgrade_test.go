@@ -15,3 +15,11 @@ const leadDowngradeSQLite = "DROP TABLE project_lead_settings;\n"
 func leadDowngradePostgres(schema string) string {
 	return "DROP TABLE " + schema + ".project_lead_settings;\n"
 }
+
+// noticeDowngradeSQLite returns a schema-45 database to schema 44's shape.
+const noticeDowngradeSQLite = "DROP TABLE project_lead_notices;\nDROP TABLE project_lead_state;\n"
+
+// noticeDowngradePostgres is noticeDowngradeSQLite for a Postgres schema.
+func noticeDowngradePostgres(schema string) string {
+	return "DROP TABLE " + schema + ".project_lead_notices;\nDROP TABLE " + schema + ".project_lead_state;\n"
+}

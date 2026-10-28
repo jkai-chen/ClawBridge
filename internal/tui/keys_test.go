@@ -11,6 +11,7 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/x/ansi"
 )
 
 var updateGolden = flag.Bool("update", false, "rewrite the golden views in testdata/golden")
@@ -331,7 +332,7 @@ func TestGoldenViews(t *testing.T) {
 		}
 		h := m
 		h.help = true
-		for _, size := range sizes[1:] {
+		for _, size := range sizes {
 			golden(t, fmt.Sprintf("%s-help-%dx%d", s, size[0], size[1]), Render(h.SetSize(size[0], size[1])))
 		}
 	}
@@ -366,5 +367,44 @@ func golden(t *testing.T, name, got string) {
 	}
 	if string(want) != got {
 		t.Fatalf("%s differs from %s:\n%s", name, path, got)
+	}
+}
+
+// The help fits its window: on every screen, down to 80x24, quit and the
+// screen keys stay in view. The screen's description gives way first, so
+// every key is listed while it can be; then the keys not usable now, as a
+// count. A window tall enough shows everything.
+func TestHelpFitsTheWindow(t *testing.T) {
+	for s, m := range screenFixtures(t) {
+		m.help = true
+		for _, size := range [][2]int{{80, 24}, {80, 40}, {120, 40}} {
+			view := ansi.Strip(Render(m.SetSize(size[0], size[1])))
+			for _, want := range []string{"quit", "switch screen", "help"} {
+				if !strings.Contains(view, want) {
+					t.Fatalf("%s %dx%d help hides %q:\n%s", s, size[0], size[1], want, view)
+				}
+			}
+		}
+	}
+	m := screenFixtures(t)[ScreenLinear]
+	m.help = true
+	if view := ansi.Strip(Render(m.SetSize(120, 80))); !strings.Contains(view, "(not now)") || strings.Contains(view, "more not usable now") {
+		t.Fatal("a tall window hides keys:", view)
+	}
+	if view := ansi.Strip(Render(m.SetSize(80, 24))); strings.Contains(view, "(not now)") || !strings.Contains(view, "more not usable now") {
+		t.Fatal("the short help lists keys not usable now:", view)
+	}
+	view := ansi.Strip(Render(m.SetSize(120, 40)))
+	for _, key := range []string{"project status", "shared views", "suggest a status", "queued writes", "set the budget"} {
+		if !strings.Contains(view, key) {
+			t.Fatalf("the help left out %q before the screen's description:\n%s", key, view)
+		}
+	}
+	if strings.Contains(view, "more not usable now") || strings.Contains(view, "The project's Linear board") {
+		t.Fatal("the description stayed while keys went:", view)
+	}
+	// Without a window to fit, the help is whole.
+	if help := ansi.Strip(renderHelp(m)); !strings.Contains(help, "(not now)") || !strings.Contains(help, "1 Overview") {
+		t.Fatal("the unbounded help left keys out:", help)
 	}
 }

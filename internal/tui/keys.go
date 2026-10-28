@@ -453,34 +453,76 @@ var screenAbout = map[Screen]string{
 }
 
 // renderHelp is the ? overlay: this screen's keys, then everyone's.
-func renderHelp(m Model) string {
+func renderHelp(m Model) string { return renderHelpIn(m, 0) }
+
+// renderHelpIn is the help in rows body rows (0 for any). When it doesn't
+// fit, the screen's description and the screens' names (the tab bar has
+// them) go first, then the keys not usable now give way to a count of
+// them, so every key is listed while it can be, and the keys that work, q
+// and 1-N stay in view.
+func renderHelpIn(m Model, rows int) string {
+	fits := func(s string) bool { return rows <= 0 || len(screenLines(s, max(1, m.width-4))) <= rows }
+	full := helpText(m, true, true)
+	if fits(full) {
+		return full
+	}
+	if keys := helpText(m, true, false); fits(keys) {
+		return keys
+	}
+	return helpText(m, false, false)
+}
+
+// helpText is the help with the keys not usable now listed (idle), and
+// with the screen's description and the screens' names (about); without
+// about, the keys used everywhere run on in one wrapped line.
+func helpText(m Model, idle, about bool) string {
 	var b strings.Builder
 	b.WriteString("Help · " + title(m.screen) + "\n")
-	b.WriteString(mutedStyle.Render(screenAbout[m.screen]) + "\n\n")
+	if about {
+		b.WriteString(mutedStyle.Render(screenAbout[m.screen]) + "\n\n")
+	}
 	row := func(k, label string) { b.WriteString("  " + padRight(k, 11) + label + "\n") }
 	own := screenBindings(m.screen)
 	if len(own) > 0 {
 		b.WriteString("This screen\n")
+		hidden := 0
 		for _, x := range own {
 			label := x.label(m)
 			if !x.live(m) {
+				if !idle {
+					hidden++
+					continue
+				}
 				label += mutedStyle.Render(" (not now)")
 			}
 			row(x.key(), label)
 		}
+		if hidden > 0 {
+			b.WriteString(mutedStyle.Render("  "+strconv.Itoa(hidden)+" more not usable now; a taller window lists them") + "\n")
+		}
 		b.WriteString("\n")
 	}
 	b.WriteString("Everywhere\n")
-	tabs := []string{}
+	tabs, inline := []string{}, []string{}
 	for _, x := range globalBindings(m) {
 		if strings.HasPrefix(x.ID, "tab:") {
 			tabs = append(tabs, x.key()+" "+x.label(m))
 			continue
 		}
+		if !about {
+			inline = append(inline, x.key()+" "+x.label(m))
+			continue
+		}
 		row(x.key(), x.label(m))
 	}
-	row("1-"+strconv.Itoa(len(tabs)), "switch screen")
-	b.WriteString("  " + strings.Join(tabs, " · "))
+	if !about {
+		// Compact: the keys run on, and the tab bar names the screens.
+		inline = append(inline, "1-"+strconv.Itoa(len(tabs))+" switch screen")
+		b.WriteString("  " + strings.Join(inline, " · "))
+	} else {
+		row("1-"+strconv.Itoa(len(tabs)), "switch screen")
+		b.WriteString("  " + strings.Join(tabs, " · "))
+	}
 	// Wrapped at words here, so the body's hard wrap never splits one.
 	return ansi.Wrap(strings.TrimRight(b.String(), "\n"), max(20, m.width-4), " ")
 }

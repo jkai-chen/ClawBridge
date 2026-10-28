@@ -1402,10 +1402,45 @@ func collectDoctor(ctx context.Context, config Config, configPath string, existi
 					d, e := service.TeamRolesDocDrift(ctx, bus.Request{Workspace: wid, Project: pid, Args: map[string]any{"linear_authority": linearAuthority(config)}})
 					return doctor.RolesDocState{Published: d.Published, Pending: d.Pending, Edited: d.Edited, Archived: d.Archived, Unreadable: d.Unreadable, Revision: d.Revision, PublishedRevision: d.PublishedRevision, Replaced: d.Replaced}, e
 				}
+				in.LabelSets = func(ctx context.Context) ([]doctor.LabelSet, error) {
+					bounded, cancel := context.WithTimeout(ctx, 45*time.Second)
+					defer cancel()
+					return doctorLabelSets(bounded, newLinearService(directory, config.LinearProfile, manager, board, linearAuthority(config)), config)
+				}
 			}
 		}
 	}
 	return doctor.Run(ctx, in, executor), nil
+}
+
+// doctorLabelSets reads each bound team's needs-agent and agent-working
+// label sets (CROSS-TEAM-BINDING §3.2).
+func doctorLabelSets(ctx context.Context, service *linearboard.Service, config Config) ([]doctor.LabelSet, error) {
+	scope := bus.Request{Workspace: config.Workspace, Project: config.Project, Session: config.Session, Args: map[string]any{}}
+	if config.Instance != "" {
+		scope.Args["instance"] = config.Instance
+	}
+	b, err := service.BindingV2(ctx, scope)
+	if err != nil || !b.Configured {
+		return nil, err
+	}
+	var out []doctor.LabelSet
+	for _, team := range b.LinearTeamIDs {
+		for _, name := range []string{"needs-agent", bus.MarkerLabel} {
+			set, err := service.LabelSetV2(ctx, scope, team, name)
+			row := doctor.LabelSet{Team: team, Name: name, Scopes: set.Scopes, Apply: set.Apply != ""}
+			switch {
+			case errors.Is(err, linearboard.ErrLabelAmbiguous):
+				row.Err = "two in one team"
+			case errors.Is(err, linearboard.ErrLabelWalk):
+				row.Err = "too many labels to check"
+			case err != nil:
+				return out, err
+			}
+			out = append(out, row)
+		}
+	}
+	return out, nil
 }
 
 func runDoctor(ctx context.Context, config Config, configPath string, stdout io.Writer, selections ...doctor.MCPConfig) error {

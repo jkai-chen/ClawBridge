@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"time"
 
 	"clawbridge/internal/bus"
@@ -74,6 +75,9 @@ type intakeRun struct {
 	app   AppIdentity
 	state bus.IntakeState
 	poll  *IntakePoll
+	// resolved marks teams whose needs-agent set this run already resolved
+	// afresh after a label stopped verifying: once, then it stops.
+	resolved map[string]bool
 }
 
 // intake polls the project's due intake sources under the watch lease and
@@ -93,7 +97,7 @@ func (w *Watcher) intake(ctx context.Context, svc *linearboard.Service, scope bu
 		poll.Unreadable = append(poll.Unreadable, "app_identity")
 		return poll, nil
 	}
-	run := &intakeRun{w: w, svc: svc, scope: scope, pid: pid, app: app, state: st, poll: poll}
+	run := &intakeRun{w: w, svc: svc, scope: scope, pid: pid, app: app, state: st, poll: poll, resolved: map[string]bool{}}
 	enabled := map[string]bool{}
 	for _, s := range st.Signals {
 		enabled[s] = true
@@ -154,85 +158,114 @@ func (r *intakeRun) source(ctx context.Context, source, subject string, read fun
 }
 
 // labelled is S1: the team's issues carrying needs-agent, updated since.
-// It reads the team once, across all its projects, rather than one bound
-// project at a time: a binding with many projects would otherwise never
-// finish within intakePages. An issue whose project the page shows outside
-// the binding is skipped unread; candidate proves every other one.
+// It reads the team once per label of the needs-agent set (the team's own,
+// and its bound parent's, CROSS-TEAM-BINDING §3.2), across all its
+// projects, rather than one bound project at a time: a binding with many
+// projects would otherwise never finish within intakePages. An issue whose
+// project the page shows outside the binding is skipped unread; candidate
+// proves every other one.
 func (r *intakeRun) labelled(ctx context.Context, team string, since time.Time) (bool, bool, error) {
-	label, err := r.needsAgent(ctx, team)
+	set, err := r.needsAgent(ctx, team, false)
 	if err != nil {
 		return false, false, err
 	}
-	if label == "" {
+	if len(set) == 0 {
 		r.poll.NoLabel = append(r.poll.NoLabel, team)
 		return false, true, nil
 	}
-	signal := false
+	signal, complete := false, true
+	seen := map[string]bool{}
+	carries := func(n historyEntry) bool {
+		for _, id := range set {
+			if contains(n.AddedLabelIDs, id) {
+				return true
+			}
+		}
+		return false
+	}
+	for i := 0; i < len(set); i++ {
+		done, err := r.labelledBy(ctx, team, set[i], set, since, seen, carries, &signal)
+		// A label Linear no longer verifies for the team (merged or
+		// removed): the set is resolved again once, then read afresh.
+		if errors.Is(err, linearboard.ErrLabelNotVerified) && !r.resolved[team] {
+			r.resolved[team] = true
+			if set, err = r.needsAgent(ctx, team, true); err != nil {
+				return signal, false, err
+			}
+			if len(set) == 0 {
+				r.poll.NoLabel = append(r.poll.NoLabel, team)
+				return signal, true, nil
+			}
+			i, complete = -1, true
+			continue
+		}
+		if err != nil {
+			return signal, false, err
+		}
+		complete = complete && done
+	}
+	return signal, complete, nil
+}
+
+// labelledBy reads the team's issues carrying label, one of set; an issue
+// another label of the set already brought is not queued again.
+func (r *intakeRun) labelledBy(ctx context.Context, team, label string, set []string, since time.Time, seen map[string]bool, carries func(historyEntry) bool, signal *bool) (bool, error) {
 	cursor := ""
 	for page := 0; page < intakePages; page++ {
 		r.poll.Calls++
 		issues, err := r.svc.TeamLabelledV2(ctx, r.scope, linearboard.TeamLabelledInputV2{TeamID: team, LabelID: label, UpdatedAfter: since.UTC().Format(time.RFC3339Nano), Cursor: cursor, Limit: 50})
 		if err != nil {
-			return signal, false, err
+			return false, err
 		}
 		for range issues.FilteredOtherTeam {
 			r.poll.skip("other_team")
 		}
 		for _, i := range issues.Items {
+			if seen[i.ID] {
+				continue
+			}
+			seen[i.ID] = true
 			if i.OutOfBinding {
 				r.poll.skip("not_in_binding")
 				continue
 			}
-			signal = r.candidate(ctx, "S1", i.ID, func(n historyEntry) bool { return contains(n.AddedLabelIDs, label) }, "", "", &attribution{kind: "label", target: label, since: since}) || signal
+			*signal = r.candidate(ctx, "S1", i.ID, carries, "", "", &attribution{kind: "label", target: label, set: set, since: since}) || *signal
 		}
 		if issues.Complete {
-			return signal, true, nil
+			return true, nil
 		}
 		cursor = issues.NextCursor
 	}
-	return signal, false, nil
+	return false, nil
 }
 
-// needsAgent is the team's needs-agent label, by exact name among its
-// labels, cached for an hour; "" when there is none or more than one.
-func (r *intakeRun) needsAgent(ctx context.Context, team string) (string, error) {
+// needsAgent is the team's needs-agent label set (linearboard.LabelSetV2),
+// by exact name, cached for an hour; empty when there is none or a team
+// lists more than one. fresh drops the cached set first.
+func (r *intakeRun) needsAgent(ctx context.Context, team string, fresh bool) ([]string, error) {
 	now := r.w.now()
+	key := r.pid + "|" + team
 	r.w.mu.Lock()
 	if r.w.labels == nil {
 		r.w.labels = map[string]labelCache{}
 	}
-	cached, ok := r.w.labels[r.pid+"|"+team]
+	cached, ok := r.w.labels[key]
 	r.w.mu.Unlock()
-	if ok && now.Sub(cached.checked) < labelCacheTTL {
-		return cached.id, nil
+	if ok && !fresh && now.Sub(cached.checked) < labelCacheTTL {
+		return cached.ids, nil
 	}
-	found := []string{}
-	cursor := ""
-	for page := 0; page < intakePages; page++ {
-		r.poll.Calls++
-		labels, err := r.svc.LabelsV2(ctx, r.scope, team, 100, cursor)
-		if err != nil {
-			return "", err
-		}
-		for _, l := range labels.Items {
-			if l.Name == needsAgentLabel && !l.Archived && !l.Group {
-				found = append(found, l.ID)
-			}
-		}
-		if labels.NextCursor == "" {
-			cursor = ""
-			break
-		}
-		cursor = labels.NextCursor
-	}
-	id := ""
-	if len(found) == 1 && cursor == "" {
-		id = found[0]
+	set, err := r.svc.LabelSetV2(ctx, r.scope, team, needsAgentLabel)
+	r.poll.Calls += set.Calls
+	switch {
+	case errors.Is(err, linearboard.ErrLabelAmbiguous), errors.Is(err, linearboard.ErrLabelWalk):
+		set.IDs = nil
+	case err != nil:
+		return nil, err
 	}
 	r.w.mu.Lock()
-	r.w.labels[r.pid+"|"+team] = labelCache{id: id, checked: now}
+	r.w.labels[key] = labelCache{ids: set.IDs, checked: now}
 	r.w.mu.Unlock()
-	return id, nil
+	return set.IDs, nil
 }
 
 // delegated is S2: issues delegated to the app, updated since (probe I1:
@@ -343,7 +376,10 @@ type historyEntry struct {
 // no entry for the label at all.
 type attribution struct {
 	kind, target string
-	since        time.Time
+	// set is a needs-agent label's whole set (CROSS-TEAM-BINDING W2): the
+	// label-on proof accepts any of its IDs; the credit stays by target.
+	set   []string
+	since time.Time
 }
 
 // candidate proves one issue inside the binding and its transition's
@@ -376,7 +412,7 @@ func (r *intakeRun) candidate(ctx context.Context, signal, issueID string, match
 			// entry. Only an attribution, the one write in the whole poll
 			// window, with the label proven on the issue by ID now, can
 			// stand for it.
-			if attr == nil || attr.since.IsZero() || !r.labelOn(ctx, issue, attr.target) {
+			if attr == nil || attr.since.IsZero() || !r.labelOn(ctx, issue, append([]string{attr.target}, attr.set...)) {
 				r.poll.skip("transition_not_found")
 				return true
 			}
@@ -425,13 +461,18 @@ func (r *intakeRun) candidate(ctx context.Context, signal, issueID string, match
 	return true
 }
 
-// labelOn proves label is on the issue now, by ID: from the board's read
+// labelOn proves one of labels (a needs-agent set, W2) is on the issue now, by ID: from the board's read
 // when it carries label IDs, else from the app's own read of the issue's
 // labels (native Linear's board read gives names only). A read that fails,
 // or a list past one page, proves nothing.
-func (r *intakeRun) labelOn(ctx context.Context, issue linearprovider.IssueV2, label string) bool {
+func (r *intakeRun) labelOn(ctx context.Context, issue linearprovider.IssueV2, labels []string) bool {
 	if issue.LabelsKnown {
-		return contains(issue.LabelIDs, label)
+		for _, l := range labels {
+			if contains(issue.LabelIDs, l) {
+				return true
+			}
+		}
+		return false
 	}
 	var out struct {
 		Issue *struct {
@@ -449,7 +490,7 @@ func (r *intakeRun) labelOn(ctx context.Context, issue linearprovider.IssueV2, l
 		return false
 	}
 	for _, n := range out.Issue.Labels.Nodes {
-		if n.ID == label {
+		if contains(labels, n.ID) {
 			return true
 		}
 	}

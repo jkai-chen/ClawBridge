@@ -82,7 +82,7 @@ type Watcher struct {
 }
 
 type labelCache struct {
-	id      string
+	ids     []string
 	checked time.Time
 }
 

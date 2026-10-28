@@ -151,6 +151,9 @@ type Input struct {
 	// through this person's own connection (the project owner's only). Nil
 	// skips the check.
 	TeamRolesDoc func(ctx context.Context, wid, pid string) (RolesDocState, error)
+	// LabelSets reads the bound teams' label sets through the personal
+	// Linear profile; reads only. Nil skips the check.
+	LabelSets func(context.Context) ([]LabelSet, error)
 }
 
 // RolesDocState is the generated team roles document as doctor reports
@@ -217,6 +220,9 @@ func Run(ctx context.Context, in Input, executor Executor) Report {
 		checkLabelPolicy(ctx, executor, wid, pid, add)
 		checkTeamRoles(ctx, executor, wid, pid, in.WorkspaceUsers, add)
 		checkTeamRolesDoc(ctx, wid, pid, in.TeamRolesDoc, add)
+		if in.LabelSets != nil {
+			checkLabelSets(ctx, in.LabelSets, add)
+		}
 		if in.Config.Mode == "cloud" {
 			checkLinearApp(ctx, executor, wid, pid, add)
 			checkIssueSubscribers(ctx, executor, wid, pid, add)
@@ -1321,4 +1327,55 @@ func SortedChecks(checks []Check) []Check {
 	out := append([]Check{}, checks...)
 	sort.SliceStable(out, func(i, j int) bool { return out[i].ID < out[j].ID })
 	return out
+}
+
+// LabelSet is one bound team's label set for a name ClawBridge finds labels
+// by (needs-agent, agent-working): where each label of it is listed.
+type LabelSet struct {
+	Team   string   `json:"team"`
+	Name   string   `json:"name"`
+	Scopes []string `json:"scopes"`
+	Apply  bool     `json:"apply"`
+	Err    string   `json:"error,omitempty"`
+}
+
+// checkLabelSets shows each bound team's needs-agent and agent-working
+// sets (CROSS-TEAM-BINDING §3.2), read now through the person's profile. A
+// team with no needs-agent is never polled for it; one with no agent-working
+// to apply gets no marker label.
+func checkLabelSets(ctx context.Context, read func(context.Context) ([]LabelSet, error), add func(Check)) {
+	check := Check{ID: "linear.labels", Title: "Linear label sets", Status: Pass}
+	sets, err := read(ctx)
+	if err != nil {
+		check.Status = Warn
+		check.Message = "The label sets could not be read (" + safeCode(err) + ")."
+		check.Action = "Check the personal Linear profile with `clawbridge linear status --profile ID`."
+		add(check)
+		return
+	}
+	parts, gaps := []string{}, []string{}
+	for _, s := range sets {
+		team := s.Team
+		if len(team) > 8 {
+			team = team[:8]
+		}
+		switch {
+		case s.Err != "":
+			gaps = append(gaps, fmt.Sprintf("%s %s: %s", team, s.Name, s.Err))
+		case len(s.Scopes) == 0 || s.Name != "needs-agent" && !s.Apply:
+			gaps = append(gaps, fmt.Sprintf("%s %s: none", team, s.Name))
+		default:
+			parts = append(parts, fmt.Sprintf("%s %s: %s", team, s.Name, strings.Join(s.Scopes, "+")))
+		}
+	}
+	check.Message = "Read now; the server's watcher re-reads its copy at least hourly."
+	if len(parts) > 0 {
+		check.Message = strings.Join(parts, "; ") + ". " + check.Message
+	}
+	if len(gaps) > 0 {
+		check.Status = Warn
+		check.Message = strings.Join(gaps, "; ") + ". " + check.Message
+		check.Action = "A team with no needs-agent is never polled for it, and one with no agent-working gets no marker label. Create the label in the team or its bound parent, or remove the duplicate a team lists twice."
+	}
+	add(check)
 }

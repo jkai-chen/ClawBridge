@@ -457,7 +457,7 @@ func (s *Service) WriteV2(ctx context.Context, scope bus.Request, in WriteInputV
 				return nil, errors.New("issue labels differ from expected_label_ids; inspect current labels")
 			}
 		}
-		found, e := findLabelsV2(ctx, p2, team, in.Labels.Value)
+		found, e := findTeamLabelsV2(ctx, p2, labelTeamsV2(v, b, team), in.Labels.Value)
 		if e != nil {
 			return nil, e
 		}
@@ -477,7 +477,7 @@ func (s *Service) WriteV2(ctx context.Context, scope bus.Request, in WriteInputV
 			if !caps.Labels {
 				return nil, errors.New("provider cannot prove label eligibility")
 			}
-			found, e := findLabelsV2(ctx, p2, team, in.AddLabels)
+			found, e := findTeamLabelsV2(ctx, p2, labelTeamsV2(v, b, team), in.AddLabels)
 			if e != nil {
 				return nil, e
 			}

@@ -541,11 +541,13 @@ func (s *Service) IssuesV2(ctx context.Context, scope bus.Request, in IssuesInpu
 	if in.view != nil {
 		pairs = in.view.narrow(pairs)
 	}
+	inherited := map[string]string{}
 	if in.LabelID != "" {
 		// A team label selects its one team; a workspace label, or a row
 		// scoped only by the provider's team filter, spans every allowed team
 		// whose listing returns it.
 		teams := map[string]bool{}
+		name := ""
 		global, scoped := false, false
 		for _, id := range SortedTeams(b.LinearTeamIDs) {
 			label, e := findLabelV2(ctx, p2, id, in.LabelID)
@@ -553,7 +555,7 @@ func (s *Service) IssuesV2(ctx context.Context, scope bus.Request, in IssuesInpu
 				return empty, e
 			}
 			if label != nil {
-				teams[id] = true
+				teams[id], name = true, label.Name
 				spans := label.Global || label.FilterScoped
 				global = global || spans
 				scoped = scoped || !spans
@@ -568,9 +570,29 @@ func (s *Service) IssuesV2(ctx context.Context, scope bus.Request, in IssuesInpu
 		if !global && len(teams) > 1 {
 			return empty, errors.New("ambiguous label team")
 		}
+		// A team label may also go on its bound sub-teams' issues
+		// (CROSS-TEAM-BINDING §3.2). A sub-team is read too when its own
+		// listing has no label of the same name, so a names-only row still
+		// proves which label it carries; with a copy, it is left out.
+		if !global {
+			for owner := range teams {
+				for _, t := range v.Teams {
+					if t.ParentID != owner || teams[t.ID] || !contains(b.LinearTeamIDs, t.ID) {
+						continue
+					}
+					copies, _, e := labelsNamedV2(ctx, p2, t.ID, name)
+					if e != nil {
+						return empty, e
+					}
+					if len(copies) == 0 {
+						inherited[t.ID] = owner
+					}
+				}
+			}
+		}
 		pairs = nil
 		for _, pair := range v.Pairs {
-			if teams[pair.TeamID] {
+			if teams[pair.TeamID] || inherited[pair.TeamID] != "" {
 				pairs = append(pairs, pair)
 			}
 		}
@@ -626,7 +648,11 @@ func (s *Service) IssuesV2(ctx context.Context, scope bus.Request, in IssuesInpu
 			// Native rows name their labels; one catalog walk per page names
 			// the selected label, and each row must carry that name.
 			if filteredName == "" {
-				if filteredName, e = filteredLabelNameV2(ctx, p2, pair.TeamID, in.LabelID); e != nil {
+				holder := pair.TeamID
+				if owner := inherited[pair.TeamID]; owner != "" {
+					holder = owner
+				}
+				if filteredName, e = filteredLabelNameV2(ctx, p2, holder, in.LabelID); e != nil {
 					return empty, e
 				}
 			}

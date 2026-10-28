@@ -72,6 +72,12 @@
 - A queued write is sent only while the person who asked still may: their session (if any) active, their role
   held, their device live or their Google account still bound. Otherwise it fails as `identity_revoked` and nothing
   is sent.
+- **Sub-teams and labels.** A sub-team holds its own copy of each parent team label, under a new ID, and its issues
+  may carry either. Intake's `needs-agent` (and the proof, for a write credited through the app, that the label is on
+  the issue), the markers' `agent-working` and agent label writes now use the team's own label plus its bound
+  parent's. `issues --label` with the parent's label reads a bound sub-team that has no copy. A new doctor check,
+  `linear.labels`, shows each bound team's two label sets. Before, a sub-team issue carrying the parent's label was
+  never polled, and its marker label never removed. No schema change. Linear config scope: none.
 
 ## Team roles: telling project leads
 

@@ -137,7 +137,7 @@ func (s *Store) migrate() error {
 	if err = tx.QueryRow("PRAGMA user_version").Scan(&version); err != nil {
 		return err
 	}
-	if version > 39 {
+	if version > 40 {
 		return errors.New("database schema is newer than this ClawBridge binary")
 	}
 	if version == 0 {
@@ -347,6 +347,11 @@ func (s *Store) migrate() error {
 	}
 	if version < 39 {
 		if _, err = tx.Exec(projectKindSchema + `PRAGMA user_version=39;`); err != nil {
+			return err
+		}
+	}
+	if version < 40 {
+		if _, err = tx.Exec(intakeAttributionSchema + `PRAGMA user_version=40;`); err != nil {
 			return err
 		}
 	}
@@ -635,7 +640,7 @@ var operationArgs = map[string]string{
 	"watch_charge":                "instance lease_token generation calls",
 	"intake_policy_get":           "instance",
 	"intake_policy_set":           "instance expected_revision mode signals roles s5_calls_per_hour out_of_binding_limit",
-	"intake_trust_add":            "instance linear_user_id",
+	"intake_trust_add":            "instance linear_user_id principal link_email",
 	"intake_trust_remove":         "instance linear_user_id",
 	"intake_trust_list":           "instance",
 	"intake_token_create":         "instance expires_days",

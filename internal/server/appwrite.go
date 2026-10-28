@@ -9,6 +9,7 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"clawbridge/internal/bus"
@@ -45,6 +46,9 @@ type AppWriter struct {
 
 	typesOnce sync.Once
 	types     *linearboard.StateTypeCache
+	// attributionFailures counts the app writes whose intake attribution
+	// this process failed to record; linear_app_status reports it.
+	attributionFailures atomic.Int64
 }
 
 // stateTypeTTL is how long a team's workflow state types read as the app
@@ -143,9 +147,13 @@ func (w *AppWriter) Execute(parent context.Context, identity bus.Identity, r bus
 		return bus.Result{}, appRefusal("unsupported operation")
 	}
 	for k := range r.Args {
-		if k != "instance" && k != "operation" && k != "args" {
-			return bus.Result{}, appRefusal("linear_write takes instance, operation and args only")
+		if k != "instance" && k != "operation" && k != "args" && k != "agent_marker" {
+			return bus.Result{}, appRefusal("linear_write takes instance, operation, args and agent_marker only")
 		}
+	}
+	marker, err := writeMarker(r.Args)
+	if err != nil {
+		return bus.Result{}, err
 	}
 	operation, _ := r.Args["operation"].(string)
 	if !appWriteOperations[operation] {
@@ -185,11 +193,105 @@ func (w *AppWriter) Execute(parent context.Context, identity bus.Identity, r bus
 	var receipt *linearboard.ReceiptError
 	switch {
 	case err == nil:
+		w.attribute(ctx, identity, r, operation, args, data, marker)
 		return bus.Result{Data: map[string]any{"receipt": data}}, nil
 	case data != nil && errors.As(err, &receipt):
+		w.attribute(ctx, identity, r, operation, args, data, marker)
 		return bus.Result{Data: map[string]any{"receipt": data, "outcome": receipt.Outcome}}, nil
+	case linearboard.IsUncertain(err) && operation == "update":
+		// It may have reached Linear: its labels are recorded from the
+		// request, on the issue it named by UUID. An uncertain create or
+		// comment records nothing: there is no issue or comment ID to
+		// record it on, and none is needed. A create's issue is new, so no
+		// other write in its window can be credited for its labels; a
+		// comment is matched by its own ID, which nothing else can carry.
+		id, _ := args["id"].(string)
+		w.attribute(ctx, identity, r, operation, args, linearboard.ReceiptV2{Kind: "issue", ID: id}, marker)
 	}
 	return bus.Result{}, writeError(err)
+}
+
+// writeMarker is the agent marker a client sent with linear_write (A2):
+// the environment variable that says an agent runs it, "" for none. A
+// client that sends none is an older one, and its writes are never credited
+// to a person.
+func writeMarker(args map[string]any) (string, error) {
+	v, present := args["agent_marker"]
+	if !present {
+		return bus.MarkerUnsent, nil
+	}
+	m, ok := v.(string)
+	if !ok || len(m) > 64 {
+		return "", appRefusal("agent_marker must be a short string")
+	}
+	return m, nil
+}
+
+// attribute records who asked for a write that reached Linear and added
+// labels or posted a comment (intake attribution, A1): every such write,
+// a session's too. It records more labels than were added rather than
+// fewer: a label set replaced on update counts whole, and a create's
+// labels count even when Linear's answer left them unconfirmed. An extra
+// record can only make intake's credit ambiguous; a missing one could let
+// a session's write pass as a person's. A record that fails is logged; the
+// write itself stands.
+func (w *AppWriter) attribute(ctx context.Context, identity bus.Identity, r bus.Request, operation string, args map[string]any, data any, marker string) {
+	if w.Store == nil {
+		return
+	}
+	// A board on a legacy mapping answers with the older receipts: the
+	// provider's for a comment, a map for an issue.
+	var receipt linearboard.ReceiptV2
+	switch v := data.(type) {
+	case linearboard.ReceiptV2:
+		receipt = v
+	case *linearboard.ReceiptV2:
+		if v == nil {
+			return
+		}
+		receipt = *v
+	case linearprovider.Receipt:
+		receipt = linearboard.ReceiptV2{Kind: "comment", ID: v.ID, IssueID: v.IssueID}
+	case map[string]any:
+		id, _ := v["id"].(string)
+		receipt = linearboard.ReceiptV2{Kind: "issue", ID: id}
+	default:
+		return
+	}
+	write := bus.AppWrite{Workspace: r.Workspace, Project: r.Project, Identity: identity, Session: r.Session, AgentMarker: marker}
+	write.OperationID, _ = args["operation_id"].(string)
+	switch {
+	case operation == "comment" && receipt.Kind == "comment":
+		write.Issue, write.Comment = receipt.IssueID, receipt.ID
+	case (operation == "create" || operation == "update") && receipt.Kind == "issue":
+		write.Issue = receipt.ID
+		write.Labels = append(write.Labels, receipt.LabelsAdded...)
+		for _, key := range []string{"label_ids", "add_label_ids"} {
+			write.Labels = append(write.Labels, labelArgs(args[key])...)
+		}
+	default:
+		return
+	}
+	if err := w.Store.RecordAppWrite(ctx, write); err != nil {
+		w.attributionFailures.Add(1)
+		log.Printf("clawbridge: linear app: the write's intake attribution was not recorded: %v", err)
+	}
+}
+
+// labelArgs reads a label argument as the board accepts it: a list of IDs.
+func labelArgs(v any) []string {
+	out := []string{}
+	switch list := v.(type) {
+	case []string:
+		out = append(out, list...)
+	case []any:
+		for _, x := range list {
+			if id, ok := x.(string); ok {
+				out = append(out, id)
+			}
+		}
+	}
+	return out
 }
 
 // member proves identity is a member of workspace, or, with none named, of
@@ -262,7 +364,7 @@ func (w *AppWriter) status(parent context.Context, identity bus.Identity, r bus.
 	if err != nil {
 		return bus.Result{}, err
 	}
-	out := map[string]any{"configured": true, "app_user_id": id.AppUserID, "linear_org_id": id.LinearOrgID}
+	out := map[string]any{"configured": true, "app_user_id": id.AppUserID, "linear_org_id": id.LinearOrgID, "attribution_record_failures": w.attributionFailures.Load()}
 	if r.Project == "" {
 		return bus.Result{Data: out}, nil
 	}

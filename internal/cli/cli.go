@@ -583,6 +583,9 @@ flags:`)
 			// A name or email is looked up among the board's members
 			// (--linear-profile) and shown before it changes anything.
 			f.Bool("confirm", false, "with a name or email: make the change after it's resolved")
+			if action == "add" {
+				stringArg("principal", "link them to this ClawBridge project member (email), so their own writes through ClawBridge count")
+			}
 		case "trust list":
 			op = "intake_trust_list"
 		case "token create":
@@ -1178,7 +1181,8 @@ flags:`)
 		return runModelSetup(ctx, executor, config, a, stdout)
 	}
 	if (op == "intake_trust_add" || op == "intake_trust_remove") && !linearprovider.ValidID(a["linear_user_id"].(string)) {
-		member, e := resolveTrustee(ctx, executor, config, strings.TrimSpace(a["linear_user_id"].(string)))
+		who := strings.TrimSpace(a["linear_user_id"].(string))
+		member, e := resolveTrustee(ctx, executor, config, who)
 		if e != nil {
 			return e
 		}
@@ -1186,6 +1190,11 @@ flags:`)
 			return e
 		}
 		a["linear_user_id"] = member.ID
+		// Q2: found by their email, they link to the project member with
+		// that email, when there is one; --principal overrides it.
+		if op == "intake_trust_add" && a["principal"] == nil && member.Email != "" && strings.EqualFold(who, member.Email) {
+			a["link_email"] = who
+		}
 	}
 	// G9 F2: an intake token goes to this terminal or a new file, decided
 	// before it exists.
@@ -1217,6 +1226,9 @@ flags:`)
 		delete(data, "token")
 		data["token_file"] = secret.path
 		data["note"] = "Wrote the token to " + secret.path + " (0600): put it in Linear's MCP server header Authorization: Bearer <token>, then delete the file."
+	}
+	if op == "intake_trust_add" {
+		trustLinkNote(stderr, a, result)
 	}
 	if op == "dispatcher_decisions_list" || op == "dispatcher_escalations_list" || op == "project_overview" || op == "project_threads" || op == "project_thread" {
 		// The log and the escalations carry the model's explanations: model

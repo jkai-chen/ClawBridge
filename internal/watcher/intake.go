@@ -8,6 +8,7 @@ import (
 
 	"clawbridge/internal/bus"
 	"clawbridge/internal/linearboard"
+	"clawbridge/internal/linearprovider"
 )
 
 // Intake reads (live/INTAKE-DESIGN.md §1, §12 probes I1–I4): S1 is the
@@ -35,7 +36,8 @@ const (
 const (
 	delegatedQuery = `query Delegated($app: ID!, $since: DateTimeOrDuration!, $after: String) { issues(first: 50, after: $after, filter: { delegate: { id: { eq: $app } }, updatedAt: { gt: $since } }) { nodes { id updatedAt } pageInfo { hasNextPage endCursor } } }`
 	historyQuery   = `query History($id: String!, $first: Int!, $after: String) { issue(id: $id) { history(first: $first, after: $after) { nodes { createdAt actorId botActor { id } addedLabelIds toDelegate { id } } pageInfo { hasNextPage endCursor } } } }`
-	mentionsQuery  = `query Mentions($first: Int!, $after: String) { notifications(first: $first, after: $after) { nodes { id type createdAt ... on IssueNotification { issue { id } actor { id } } } pageInfo { hasNextPage endCursor } } }`
+	labelsQuery    = `query IssueLabels($id: String!) { issue(id: $id) { id labels(first: 50) { nodes { id } pageInfo { hasNextPage } } } }`
+	mentionsQuery  = `query Mentions($first: Int!, $after: String) { notifications(first: $first, after: $after) { nodes { id type createdAt ... on IssueNotification { issue { id } actor { id } comment { id } } } pageInfo { hasNextPage endCursor } } }`
 )
 
 // IntakePoll is what one tick's intake did for a project.
@@ -181,7 +183,7 @@ func (r *intakeRun) labelled(ctx context.Context, team string, since time.Time) 
 				r.poll.skip("not_in_binding")
 				continue
 			}
-			signal = r.candidate(ctx, "S1", i.ID, func(n historyEntry) bool { return contains(n.AddedLabelIDs, label) }, "", "") || signal
+			signal = r.candidate(ctx, "S1", i.ID, func(n historyEntry) bool { return contains(n.AddedLabelIDs, label) }, "", "", &attribution{kind: "label", target: label, since: since}) || signal
 		}
 		if issues.Complete {
 			return signal, true, nil
@@ -252,7 +254,7 @@ func (r *intakeRun) delegated(ctx context.Context, _ string, since time.Time) (b
 			return signal, false, err
 		}
 		for _, n := range out.Issues.Nodes {
-			signal = r.candidate(ctx, "S2", n.ID, func(e historyEntry) bool { return e.ToDelegate != nil && e.ToDelegate.ID == r.app.AppUserID }, "", "") || signal
+			signal = r.candidate(ctx, "S2", n.ID, func(e historyEntry) bool { return e.ToDelegate != nil && e.ToDelegate.ID == r.app.AppUserID }, "", "", nil) || signal
 		}
 		if !out.Issues.PageInfo.HasNextPage {
 			return signal, true, nil
@@ -281,6 +283,9 @@ func (r *intakeRun) mentioned(ctx context.Context, _ string, since time.Time) (b
 					Actor *struct {
 						ID string `json:"id"`
 					} `json:"actor"`
+					Comment *struct {
+						ID string `json:"id"`
+					} `json:"comment"`
 				} `json:"nodes"`
 				PageInfo pageInfo `json:"pageInfo"`
 			} `json:"notifications"`
@@ -303,7 +308,11 @@ func (r *intakeRun) mentioned(ctx context.Context, _ string, since time.Time) (b
 			if n.Actor != nil {
 				actor = n.Actor.ID
 			}
-			signal = r.candidate(ctx, "S3", n.Issue.ID, nil, actor, n.CreatedAt) || signal
+			var attr *attribution
+			if n.Comment != nil && n.Comment.ID != "" {
+				attr = &attribution{kind: "comment", target: n.Comment.ID}
+			}
+			signal = r.candidate(ctx, "S3", n.Issue.ID, nil, actor, n.CreatedAt, attr) || signal
 		}
 		// Notifications are newest first: a page reaching past since ends
 		// the walk.
@@ -328,11 +337,22 @@ type historyEntry struct {
 	} `json:"toDelegate"`
 }
 
+// attribution is what a signal's app write would carry (intake
+// attribution): the label it added (S1) or the comment it posted (S3), and
+// for S1 the start of the poll window, searched when Linear's history has
+// no entry for the label at all.
+type attribution struct {
+	kind, target string
+	since        time.Time
+}
+
 // candidate proves one issue inside the binding and its transition's
 // actor, then queues it. matches finds the transition in the issue's
-// history (S1, S2); S3 passes its actor and time instead. It reports
-// whether the issue was a signal at all.
-func (r *intakeRun) candidate(ctx context.Context, signal, issueID string, matches func(historyEntry) bool, actor, at string) bool {
+// history (S1, S2); S3 passes its actor and time instead. When Linear names
+// this server's app as the actor, or (S1) has no entry, attr looks for the
+// person who asked the app for that write. It reports whether the issue was
+// a signal at all.
+func (r *intakeRun) candidate(ctx context.Context, signal, issueID string, matches func(historyEntry) bool, actor, at string, attr *attribution) bool {
 	r.poll.Calls++
 	issue, err := r.svc.IssueV2(ctx, r.scope, issueID)
 	if err != nil {
@@ -344,6 +364,7 @@ func (r *intakeRun) candidate(ctx context.Context, signal, issueID string, match
 		return false
 	}
 	bot := false
+	var credit bus.AttributionCredit
 	if matches != nil {
 		entry, found, err := r.transition(ctx, issue.ID, matches)
 		if err != nil {
@@ -351,15 +372,41 @@ func (r *intakeRun) candidate(ctx context.Context, signal, issueID string, match
 			return true
 		}
 		if !found {
-			r.poll.skip("transition_not_found")
-			return true
+			// A label added just after the create leaves no history
+			// entry. Only an attribution, the one write in the whole poll
+			// window, with the label proven on the issue by ID now, can
+			// stand for it.
+			if attr == nil || attr.since.IsZero() || !r.labelOn(ctx, issue, attr.target) {
+				r.poll.skip("transition_not_found")
+				return true
+			}
+			if credit = r.attributed(ctx, issue.ID, attr, attr.since, r.w.now()); credit.Result != "credited" {
+				r.poll.skip(cmpOr(credit.Result, "transition_not_found"))
+				return true
+			}
+		} else {
+			actor, at, bot = entry.ActorID, entry.CreatedAt, entry.BotActor != nil
 		}
-		actor, at, bot = entry.ActorID, entry.CreatedAt, entry.BotActor != nil
 	}
-	// A bot, the app itself, or an unknown actor is never trusted.
+	if credit.Result == "" && !bot && actor != "" && actor == r.app.AppUserID && attr != nil {
+		// A5: Linear's time follows the write's by up to 120 s, and may
+		// read up to 10 s before it.
+		if t, err := time.Parse(time.RFC3339Nano, at); err == nil {
+			credit = r.attributed(ctx, issue.ID, attr, t.Add(-bus.AttributionAfter), t.Add(bus.AttributionBefore))
+			if credit.Result != "" && credit.Result != "credited" {
+				r.poll.skip(credit.Result)
+			}
+		}
+	}
+	// A bot, the app itself, or an unknown actor is never trusted; the app
+	// only when its write is credited to a trusted, linked person.
 	trusted := !bot && actor != "" && actor != r.app.AppUserID && r.state.Trusted[actor]
+	via := ""
+	if credit.Result == "credited" {
+		actor, trusted, via = credit.Actor, true, credit.Principal
+	}
 	title := sha256.Sum256([]byte(issue.Title))
-	ev := bus.IntakeEvent{Signal: signal, Actor: actor, Trusted: trusted, At: at, Issue: bus.IntakeIssue{UUID: issue.ID, Identifier: issue.Identifier, TitleSHA256: hex.EncodeToString(title[:]), DescriptionSHA256: issue.DescriptionSHA256, UpdatedAt: issue.UpdatedAt}}
+	ev := bus.IntakeEvent{Signal: signal, Actor: actor, Trusted: trusted, At: at, Via: via, Issue: bus.IntakeIssue{UUID: issue.ID, Identifier: issue.Identifier, TitleSHA256: hex.EncodeToString(title[:]), DescriptionSHA256: issue.DescriptionSHA256, UpdatedAt: issue.UpdatedAt}}
 	if issue.ProjectKnown {
 		ev.Issue.ProjectID = issue.ProjectID
 	}
@@ -376,6 +423,54 @@ func (r *intakeRun) candidate(ctx context.Context, signal, issueID string, match
 		r.poll.skip(result)
 	}
 	return true
+}
+
+// labelOn proves label is on the issue now, by ID: from the board's read
+// when it carries label IDs, else from the app's own read of the issue's
+// labels (native Linear's board read gives names only). A read that fails,
+// or a list past one page, proves nothing.
+func (r *intakeRun) labelOn(ctx context.Context, issue linearprovider.IssueV2, label string) bool {
+	if issue.LabelsKnown {
+		return contains(issue.LabelIDs, label)
+	}
+	var out struct {
+		Issue *struct {
+			ID     string `json:"id"`
+			Labels struct {
+				Nodes []struct {
+					ID string `json:"id"`
+				} `json:"nodes"`
+				PageInfo pageInfo `json:"pageInfo"`
+			} `json:"labels"`
+		} `json:"issue"`
+	}
+	r.poll.Calls++
+	if err := r.w.App.GraphQL(ctx, labelsQuery, map[string]any{"id": issue.ID}, &out); err != nil || out.Issue == nil || out.Issue.ID != issue.ID || out.Issue.Labels.PageInfo.HasNextPage {
+		return false
+	}
+	for _, n := range out.Issue.Labels.Nodes {
+		if n.ID == label {
+			return true
+		}
+	}
+	return false
+}
+
+// attributed reads the app writes for attr on issue recorded between from
+// and to. A read that fails credits nothing.
+func (r *intakeRun) attributed(ctx context.Context, issue string, attr *attribution, from, to time.Time) bus.AttributionCredit {
+	credit, err := r.w.Store.IntakeAttribution(ctx, r.pid, issue, attr.kind, attr.target, from, to)
+	if err != nil {
+		return bus.AttributionCredit{Result: "attribution_unreadable"}
+	}
+	return credit
+}
+
+func cmpOr(a, b string) string {
+	if a != "" {
+		return a
+	}
+	return b
 }
 
 // transition finds the newest history entry that matches: the transition

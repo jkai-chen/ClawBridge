@@ -1,5 +1,11 @@
 # Unreleased
 
+**Schema 39 → 40.**
+- The server migrates to schema 40 on its first start: who asked for each write the ClawBridge app made (intake
+  attribution).
+- **One-way:** v0.3.6 refuses a database newer than schema 39. Take a dump before upgrading; to go back, restore it
+  with the v0.3.6 image (docs/operations/deployment.md).
+
 ## Coordinating a project
 
 - **The clawbridge skill teaches a coordinator how to run the work,** not only the commands
@@ -30,6 +36,13 @@
   (each team has its own IDs, so teams are never merged). Group and archived labels are left out, and a name two
   labels share is listed under `duplicates`. `--team` pages one team as before. No schema change, no Linear
   configuration.
+- **A trusted person's own label or mention through ClawBridge counts as theirs.** On a hosted server, issue writes
+  through ClawBridge are made as the app, so Linear names the app and the signal only notified the coordinator. The
+  server now records who asked for each app write that adds a label or posts a comment, and intake credits it to a
+  trusted person when it was the only such write in the signal's window and they made it in their own terminal: their
+  device key, no session, no agent's environment. Their trusted-list entry must be linked to their ClawBridge
+  principal: `intake trust add EMAIL` links a project member found by that email, `--principal EMAIL` names one. An
+  agent's write never counts, and one near the person's own makes both uncounted. Linear config: none written.
 
 ## Operations
 

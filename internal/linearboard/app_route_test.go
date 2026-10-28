@@ -95,6 +95,35 @@ func TestHostedAgentWritesGoToTheServerAsTheApp(t *testing.T) {
 	}
 }
 
+// Every write to the app says whether an agent's environment runs it, so
+// the server credits only a person's own write to them (intake attribution).
+func TestHostedAgentWritesSayWhetherAnAgentRunsThem(t *testing.T) {
+	server := &appServer{status: appOn, write: func(bus.Request) (bus.Result, error) {
+		return bus.Result{Source: "server", Data: map[string]any{"receipt": map[string]any{"kind": "comment"}}}, nil
+	}}
+	s, _, scope := routedV2(t, server)
+	defer func(old func() []string) { agentEnviron = old }(agentEnviron)
+	for i, env := range [][]string{{"HOME=/h", "TERM=xterm"}, {"HOME=/h", "CLAUDECODE=1"}, {"CODEX_HOME=/c"}, {"CLAWBRIDGE_SESSION=s"}} {
+		agentEnviron = func() []string { return env }
+		in := commentIn
+		in.OperationID = "c-env-" + string(rune('a'+i))
+		if _, e := s.WriteV2(context.Background(), scope, in); e != nil {
+			t.Fatal(e)
+		}
+	}
+	got := []any{}
+	for _, w := range server.writes {
+		v, ok := w.Args["agent_marker"]
+		if !ok {
+			t.Fatal("a write without agent_marker", w.Args)
+		}
+		got = append(got, v)
+	}
+	if !reflect.DeepEqual(got, []any{"", "CLAUDECODE", "CODEX_HOME", "CLAWBRIDGE_SESSION"}) {
+		t.Fatal(got)
+	}
+}
+
 // A server without the app, or older than v0.2.8, refuses the status as
 // invalid: writes stay with the member's profile. An unanswered status
 // sends nothing and is asked again.

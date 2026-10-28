@@ -179,7 +179,7 @@ func TestPostgresLinearViewsSchema38Upgrade(t *testing.T) {
 	}
 	s.Close()
 	var version int
-	if err = admin.QueryRowContext(ctx, `SELECT MAX(version) FROM `+schema+`.clawbridge_schema`).Scan(&version); err != nil || version != 39 {
+	if err = admin.QueryRowContext(ctx, `SELECT MAX(version) FROM `+schema+`.clawbridge_schema`).Scan(&version); err != nil || version != 40 {
 		t.Fatal(version, err)
 	}
 	if def := check(); !strings.Contains(def, "'project'") {

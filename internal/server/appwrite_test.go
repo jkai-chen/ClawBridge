@@ -30,6 +30,8 @@ func TestLinearWriteRefusesBeforeAnyAccess(t *testing.T) {
 		"token arg":    {"operation": "comment", "args": map[string]any{"token": "x"}},
 		"identity arg": {"operation": "update", "args": map[string]any{"write_identity": "personal"}},
 		"as arg":       {"operation": "relation_add", "args": map[string]any{"as": "me"}},
+		"marker type":  {"operation": "comment", "args": map[string]any{}, "agent_marker": true},
+		"long marker":  {"operation": "comment", "args": map[string]any{}, "agent_marker": strings.Repeat("A", 65)},
 	} {
 		_, err := w.Execute(context.Background(), id, bus.Request{Operation: "linear_write", Args: args})
 		if err == nil {
@@ -42,6 +44,24 @@ func TestLinearWriteRefusesBeforeAnyAccess(t *testing.T) {
 	var none *AppWriter
 	if _, err := none.Execute(context.Background(), id, bus.Request{Operation: "linear_write"}); err == nil || !strings.Contains(err.Error(), "app_unavailable") {
 		t.Fatal("no app configured", err)
+	}
+}
+
+// The client's agent marker: what it sent, or, from a client that sent
+// none, the older client's mark, never "no agent".
+func TestLinearWriteAgentMarker(t *testing.T) {
+	for _, c := range []struct {
+		args map[string]any
+		want string
+	}{{map[string]any{}, bus.MarkerUnsent}, {map[string]any{"agent_marker": ""}, ""}, {map[string]any{"agent_marker": "CLAUDECODE"}, "CLAUDECODE"}} {
+		if got, err := writeMarker(c.args); err != nil || got != c.want {
+			t.Fatal(c.args, got, err)
+		}
+	}
+	for _, v := range []any{true, nil, strings.Repeat("A", 65)} {
+		if _, err := writeMarker(map[string]any{"agent_marker": v}); err == nil {
+			t.Fatal("accepted", v)
+		}
 	}
 }
 

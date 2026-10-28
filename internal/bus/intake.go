@@ -120,7 +120,7 @@ func (s *Store) intakeOp(ctx context.Context, tx *transaction, w, p map[string]a
 	case "intake_policy_get":
 		return intakePolicy(ctx, tx, pid)
 	case "intake_trust_list":
-		return query(ctx, tx, `SELECT linear_user_id,added_by,added_at FROM intake_trusted WHERE project_id=? ORDER BY added_at,linear_user_id`, pid)
+		return query(ctx, tx, `SELECT linear_user_id,principal,added_by,added_at FROM intake_trusted WHERE project_id=? ORDER BY added_at,linear_user_id`, pid)
 	case "intake_list":
 		state := str(a, "state")
 		if state != "" && !map[string]bool{"queued": true, "offered": true, "assigned": true, "parked": true, "dismissed": true, "closed": true}[state] {
@@ -174,18 +174,29 @@ func (s *Store) intakeOp(ctx context.Context, tx *transaction, w, p map[string]a
 		if e != nil {
 			return nil, e
 		}
+		details := map[string]any{"linear_user_id": user}
 		if r.Operation == "intake_trust_add" {
-			_, e = tx.ExecContext(ctx, `INSERT INTO intake_trusted(project_id,linear_user_id,added_by,added_at) VALUES(?,?,?,?) ON CONFLICT(project_id,linear_user_id) DO NOTHING`, pid, user, s.principal, nowRaw)
-		} else {
-			_, e = tx.ExecContext(ctx, `DELETE FROM intake_trusted WHERE project_id=? AND linear_user_id=?`, pid, user)
-		}
-		if e != nil {
+			// Q2: the link to a ClawBridge principal, which lets intake
+			// credit this person's own writes through the app. A re-add
+			// with a link sets it; one without keeps the old link.
+			link, e := trustLink(ctx, tx, pid, a)
+			if e != nil {
+				return nil, e
+			}
+			_, e = tx.ExecContext(ctx, `INSERT INTO intake_trusted(project_id,linear_user_id,added_by,added_at,principal) VALUES(?,?,?,?,?) ON CONFLICT(project_id,linear_user_id) DO UPDATE SET principal=COALESCE(excluded.principal,intake_trusted.principal)`, pid, user, s.principal, nowRaw, nullable(link))
+			if e != nil {
+				return nil, e
+			}
+			if link != "" {
+				details["principal"] = link
+			}
+		} else if _, e = tx.ExecContext(ctx, `DELETE FROM intake_trusted WHERE project_id=? AND linear_user_id=?`, pid, user); e != nil {
 			return nil, e
 		}
-		if e = audit(strings.TrimPrefix(r.Operation, "intake_"), map[string]any{"linear_user_id": user}); e != nil {
+		if e = audit(strings.TrimPrefix(r.Operation, "intake_"), details); e != nil {
 			return nil, e
 		}
-		return query(ctx, tx, `SELECT linear_user_id,added_by,added_at FROM intake_trusted WHERE project_id=? ORDER BY added_at,linear_user_id`, pid)
+		return query(ctx, tx, `SELECT linear_user_id,principal,added_by,added_at FROM intake_trusted WHERE project_id=? ORDER BY added_at,linear_user_id`, pid)
 	case "intake_token_create":
 		days := intakeDefaultTokenDays
 		if v, ok := a["expires_days"]; ok {
@@ -335,6 +346,10 @@ type IntakeEvent struct {
 	// At is when the transition happened (Linear's time), for the closed
 	// row rule; empty for a request (S5).
 	At string
+	// Via is the principal whose own write through the ClawBridge app
+	// made the signal, when intake credited it to Actor by its
+	// attribution; empty when Linear's history named Actor itself.
+	Via string
 }
 
 // triggerCap is the furthest an event may take its issue (§1.1): a trusted,
@@ -360,7 +375,11 @@ func (s *Store) intakeEnqueue(ctx context.Context, tx *transaction, w map[string
 		return "", err
 	}
 	limit := ev.triggerCap()
-	setBy := fmt.Sprintf("%s by %s at %s", ev.Signal, cmpOr(ev.Actor, "unknown"), nowRaw)
+	by := cmpOr(ev.Actor, "unknown")
+	if ev.Via != "" {
+		by += " via clawbridge"
+	}
+	setBy := fmt.Sprintf("%s by %s at %s", ev.Signal, by, nowRaw)
 	rows, err := query(ctx, tx, `SELECT * FROM intake_queue WHERE project_id=? AND issue_uuid=?`, pid, ev.Issue.UUID)
 	if err != nil {
 		return "", err
@@ -396,7 +415,12 @@ func (s *Store) intakeEnqueue(ctx context.Context, tx *transaction, w map[string
 	} else if _, err = tx.ExecContext(ctx, `INSERT INTO intake_queue(project_id,issue_uuid,issue_identifier,signals,trigger_actor,trigger_cap,cap_set_by,queued_title_sha256,queued_description_sha256,queued_updated_at,state,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,'queued',?,?)`, pid, ev.Issue.UUID, ev.Issue.Identifier, ev.Signal, ev.Actor, limit, setBy, ev.Issue.TitleSHA256, ev.Issue.DescriptionSHA256, ev.Issue.UpdatedAt, nowRaw, nowRaw); err != nil {
 		return "", err
 	}
-	if err = s.audit(ctx, tx, w["id"].(string), pid, "", "intake", ev.Issue.UUID, "queued", map[string]any{"signal": ev.Signal, "actor": ev.Actor, "trusted": ev.Trusted, "cap": limit}); err != nil {
+	details := map[string]any{"signal": ev.Signal, "actor": ev.Actor, "trusted": ev.Trusted, "cap": limit}
+	if ev.Via != "" {
+		details["via"] = "clawbridge"
+		details["principal"] = ev.Via
+	}
+	if err = s.audit(ctx, tx, w["id"].(string), pid, "", "intake", ev.Issue.UUID, "queued", details); err != nil {
 		return "", err
 	}
 	// Only notify exists so far: offer and auto are refused by the policy.
@@ -466,6 +490,9 @@ func (s *Store) intakeNotice(ctx context.Context, tx *transaction, w map[string]
 		who = "a Linear Loop (an LLM's judgement, never trusted)"
 	case ev.Trusted && ev.Actor != "":
 		who = "a trusted Linear user (" + ev.Actor + ")"
+		if ev.Via != "" {
+			who += ", in their own terminal through ClawBridge"
+		}
 	}
 	var b strings.Builder
 	fmt.Fprintf(&b, "Intake: %s (issue %s) asks for an agent, signal %s, triggered by %s; it may go no further than %s here.", identifier, ev.Issue.UUID, ev.Signal, who, limit)

@@ -43,9 +43,13 @@ type fakeLinear struct {
 	// delegatedMore makes every delegated page say there is another.
 	delegatedMore bool
 	history       map[string][]map[string]any
-	mentions      []map[string]any
-	queries       []string
-	notes         int
+	// issueLabels answers the app's read of an issue's label IDs; an issue
+	// not in it is unreadable. labelsMore says each list has another page.
+	issueLabels map[string][]string
+	labelsMore  bool
+	mentions    []map[string]any
+	queries     []string
+	notes       int
 	// healthIssues and activity answer project health's reads.
 	healthIssues []map[string]any
 	activity     map[string]map[string]any
@@ -239,6 +243,16 @@ func (a fakeApp) GraphQL(_ context.Context, query string, vars map[string]any, o
 		data = map[string]any{"issues": map[string]any{"nodes": nodes, "pageInfo": map[string]any{"hasNextPage": a.f.delegatedMore, "endCursor": "next"}}}
 	case mentionsQuery:
 		data = map[string]any{"notifications": map[string]any{"nodes": a.f.mentions, "pageInfo": map[string]any{"hasNextPage": false}}}
+	case labelsQuery:
+		ids, ok := a.f.issueLabels[vars["id"].(string)]
+		if !ok {
+			return errors.New("inaccessible issue")
+		}
+		nodes := []any{}
+		for _, id := range ids {
+			nodes = append(nodes, map[string]any{"id": id})
+		}
+		data = map[string]any{"issue": map[string]any{"id": vars["id"], "labels": map[string]any{"nodes": nodes, "pageInfo": map[string]any{"hasNextPage": a.f.labelsMore}}}}
 	case healthProjectQuery:
 		updates := []any{}
 		for _, u := range a.f.updates {

@@ -134,12 +134,14 @@ func TestDoctorShowsTheLinearApp(t *testing.T) {
 		status string
 		text   string
 	}{
-		"no app":     {appExecutor{err: &remote.HTTPError{Status: 400, Code: "invalid"}}, Pass, "own Linear profile"},
-		"down":       {appExecutor{err: &remote.HTTPError{Status: 503, Code: "unavailable"}}, Warn, "could not be read (unavailable)"},
-		"all teams":  {appExecutor{data: map[string]any{"configured": true, "app_user_id": app, "teams_visible": map[string]any{"t1": true, "t2": true}}}, Pass, "sees all 2 bound teams"},
-		"hidden":     {appExecutor{data: map[string]any{"configured": true, "app_user_id": app, "teams_visible": map[string]any{"t1": true, "t2": false, "t0": false}}}, Fail, "cannot see bound teams t0, t2"},
-		"no binding": {appExecutor{data: map[string]any{"configured": true, "app_user_id": app, "binding": "unpinned"}}, Warn, "binding could not be read: unpinned"},
-		"odd answer": {appExecutor{data: map[string]any{"configured": false}}, Warn, "could not be read"},
+		"no app":        {appExecutor{err: &remote.HTTPError{Status: 400, Code: "invalid"}}, Pass, "own Linear profile"},
+		"down":          {appExecutor{err: &remote.HTTPError{Status: 503, Code: "unavailable"}}, Warn, "could not be read (unavailable)"},
+		"all teams":     {appExecutor{data: map[string]any{"configured": true, "app_user_id": app, "teams_visible": map[string]any{"t1": true, "t2": true}}}, Pass, "sees all 2 bound teams"},
+		"hidden":        {appExecutor{data: map[string]any{"configured": true, "app_user_id": app, "teams_visible": map[string]any{"t1": true, "t2": false, "t0": false}}}, Fail, "cannot see bound teams t0, t2"},
+		"no binding":    {appExecutor{data: map[string]any{"configured": true, "app_user_id": app, "binding": "unpinned"}}, Warn, "binding could not be read: unpinned"},
+		"odd answer":    {appExecutor{data: map[string]any{"configured": false}}, Warn, "could not be read"},
+		"no failures":   {appExecutor{data: map[string]any{"configured": true, "app_user_id": app, "teams_visible": map[string]any{"t1": true}, "attribution_record_failures": float64(0)}}, Pass, "sees all 1 bound teams"},
+		"failed record": {appExecutor{data: map[string]any{"configured": true, "app_user_id": app, "teams_visible": map[string]any{"t1": true}, "attribution_record_failures": float64(2)}}, Warn, "failed to record who asked for 2 of its app writes"},
 	} {
 		var got bus.Request
 		c.exec.got = &got

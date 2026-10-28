@@ -26,15 +26,7 @@ var (
 
 // agentMarker names the environment variable that says an agent runs this
 // command: Claude Code's, Codex's, or a ClawBridge session's.
-func agentMarker(environ []string) string {
-	for _, kv := range environ {
-		name, _, _ := strings.Cut(kv, "=")
-		if name == "CLAUDECODE" || strings.HasPrefix(name, "CODEX_") || name == "CLAWBRIDGE_SESSION" || name == "CLAWBRIDGE_INSTANCE" {
-			return name
-		}
-	}
-	return ""
-}
+func agentMarker(environ []string) string { return linearboard.AgentMarker(environ) }
 
 // confirmAgentCloses asks the person to type each project's name, in
 // order of UUID. names maps a project UUID to its Linear name.

@@ -322,7 +322,7 @@ func TestAssignmentSchemaFiveMigratesAVersionFourStore(t *testing.T) {
 	}
 	defer s.Close()
 	var version, tables int
-	if e = s.db.QueryRow(`PRAGMA user_version`).Scan(&version); e != nil || version != 39 {
+	if e = s.db.QueryRow(`PRAGMA user_version`).Scan(&version); e != nil || version != 40 {
 		t.Fatal(version, e)
 	}
 	if e = s.db.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE name IN ('session_assignments','live_session_assignment')`).Scan(&tables); e != nil || tables != 2 {

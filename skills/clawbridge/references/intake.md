@@ -15,6 +15,17 @@ it never counts as a trusted person's. A `needs-agent` label you add only
 notifies the coordinator; when your user wants intake to act on an issue, they
 add it in Linear.
 
+Your own writes never count as your user's signal. On a hosted server, a label
+or comment written through ClawBridge is made as the ClawBridge app, and the
+server records who asked: it credits a trusted person only for a write from
+their own terminal, with no session and no agent's environment. A
+`needs-agent` label you add, through your MCP tools or the CLI, only notifies
+the coordinator, and makes your user's own add in the same couple of minutes
+uncounted too. When your user wants intake to act on an issue, they add the
+label (or the mention) themselves. Never clear your environment's agent
+variables (`CLAUDECODE`, `CODEX_*`, `CLAWBRIDGE_SESSION`,
+`CLAWBRIDGE_INSTANCE`) to run a command as your user.
+
 ## The coordinator session
 
 Intake is CLI-only (no MCP tools). As the project's designated coordinator
@@ -39,4 +50,8 @@ only when your user asks you to and runs it as themselves.
 `intake trust add NAME|EMAIL` finds the Linear user among the linked teams'
 members, prints who that is, and changes nothing without `--confirm`. That
 confirmation is the person's: show them the line it printed and let them
-confirm. Under an agent's environment it never prints emails.
+confirm. Under an agent's environment it never prints emails. Found by an
+email that is also a ClawBridge project member's, the person is linked to that
+principal, so their own writes through ClawBridge count as theirs;
+`--principal EMAIL` links a member explicitly. The command says whether it
+linked.

@@ -26,6 +26,7 @@ import (
 	"clawbridge/internal/linearboard"
 	"clawbridge/internal/linearprovider"
 	"clawbridge/internal/mcpserver"
+	"clawbridge/internal/playbook"
 	"clawbridge/internal/remote"
 	"clawbridge/internal/server"
 	"clawbridge/internal/skill"
@@ -1224,6 +1225,9 @@ flags:`)
 		// which other people chose; threads, other people's and agents' text.
 		result.Data = terminalSafeAll(result.Data)
 	}
+	if op == "whoami" {
+		result.Data = playbook.Annotate(ctx, result.Data, ".")
+	}
 	if op == "assignment_confirm" || op == "assignment_release" {
 		applyLinearMarker(ctx, cmp.Or(flags.LinearProfile, config.LinearProfile), executor, config, op, result)
 	}
@@ -1321,6 +1325,7 @@ func collectDoctor(ctx context.Context, config Config, configPath string, existi
 	if config.Session != "" {
 		in.Context = func() doctor.ContextState { return doctorContext(config.Session) }
 		in.Queue = func() doctor.QueueState { return doctorQueue(config.Session) }
+		in.Playbook = func() playbook.State { return playbook.Find(ctx, ".") }
 	}
 	var executor doctor.Executor = existing
 	if config.Mode == "cloud" && config.CredentialSource == remote.CredentialSourceDevice {

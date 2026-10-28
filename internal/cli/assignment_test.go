@@ -185,3 +185,22 @@ func TestRetireAsksAboutConfirmedWork(t *testing.T) {
 		t.Fatal(kept)
 	}
 }
+
+// The coordinator's whoami names its project's playbook; another session's
+// doesn't.
+func TestCLIWhoamiNamesTheCoordinatorsPlaybook(t *testing.T) {
+	isolated(t)
+	invoke(t, "setup", "--local", "--workspace", "w")
+	invoke(t, "project", "create", "p")
+	t.Setenv("CLAWBRIDGE_PROJECT", "p")
+	invoke(t, "register", "eng", "--instance", "eng-i")
+	invoke(t, "register", "coord", "--instance", "coord-i")
+	invoke(t, "--session", "coord", "--instance", "coord-i", "project", "coordinator-set", "coord")
+	got := invoke(t, "--session", "coord", "--instance", "coord-i", "whoami")
+	if pb, ok := got["coordinator_playbook"].(map[string]any); !ok || pb["path"] != "docs/COORDINATOR.md" {
+		t.Fatalf("%+v", got)
+	}
+	if got = invoke(t, "--session", "eng", "--instance", "eng-i", "whoami"); got["coordinator_playbook"] != nil {
+		t.Fatalf("%+v", got)
+	}
+}

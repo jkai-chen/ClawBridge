@@ -56,6 +56,10 @@ func TestPhase4InstalledFreshProcessAndSelectedDoctor(t *testing.T) {
 				t.Error("doctor read notification status without the queue counts")
 			}
 			data = map[string]any{"policy": "accept", "unacked_count": 0, "dead_count": 0, "latest_seq": 0}
+		case "project_overview":
+			// doctor's coordinator check: a pure read of who coordinates.
+			// Another session does, so there is no playbook check.
+			data = map[string]any{"coordinator": map[string]any{"session_id": "ses_coord", "name": "coord"}}
 		default:
 			t.Errorf("read-only probe requested %s", req.Operation)
 			w.WriteHeader(400)

@@ -11,6 +11,7 @@ import (
 
 	"clawbridge/internal/bus"
 	"clawbridge/internal/notify"
+	"clawbridge/internal/playbook"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
@@ -195,6 +196,8 @@ func add[In any](s *mcp.Server, b *binding, operation, description string, readO
 			return nil, bus.Result{}, err
 		}
 		switch operation {
+		case "whoami":
+			result.Data = playbook.Annotate(ctx, result.Data, ".")
 		case "inbox":
 			b.queue.annotate(result.Data)
 		case "ack", "reply":

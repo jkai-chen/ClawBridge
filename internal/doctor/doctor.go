@@ -21,6 +21,7 @@ import (
 	"clawbridge/internal/bus"
 	"clawbridge/internal/linearprovider"
 	"clawbridge/internal/mirror"
+	"clawbridge/internal/playbook"
 	"clawbridge/internal/remote"
 	"clawbridge/internal/skill"
 	"github.com/pelletier/go-toml/v2"
@@ -138,6 +139,9 @@ type Input struct {
 	// Queue reads this session's message queue state, locally; the counts
 	// are the server's. Nil skips the check.
 	Queue func() QueueState
+	// Playbook reads the project playbook's state in this checkout, for the
+	// coordinator session. Nil skips the check.
+	Playbook func() playbook.State
 }
 
 // Check is one stable machine-readable diagnostic.
@@ -228,6 +232,9 @@ func Run(ctx context.Context, in Input, executor Executor) Report {
 			queueExecutor = executor
 		}
 		checkQueue(ctx, in.Queue(), in.Config, queueExecutor, in.Now, add)
+	}
+	if in.Playbook != nil && authorityOK {
+		checkPlaybook(ctx, in.Playbook, in.Config, executor, add)
 	}
 	if len(in.MCPConfigs) == 0 {
 		add(Check{

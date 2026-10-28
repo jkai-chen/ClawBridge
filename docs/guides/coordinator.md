@@ -53,3 +53,7 @@ which reviews you require, what may be spent, what is frozen. Write them in
   the budget you approved.
 - **Your current word wins** over the file, and the coordinator says when the two
   differ.
+- **Check it with `clawbridge doctor`** as the coordinator session, in the
+  repository: the `coordinator.playbook` check passes when the default branch has
+  the file, and warns when it's missing, or present here but not merged. The
+  coordinator's `whoami` shows the same.

@@ -3,13 +3,13 @@
 Status: **approved L2 implementation contract, 22 October 2026**. The owner approved
 all five core extensions. This does not
 change the approved [L1 contract](linear.md), the deployed schema-3 service, or a
-saved board mapping. Requested by the Finjourney planner on 22 October 2026 in
+saved board mapping. Requested by a user project's coordinating session on 22 October 2026 in
 `CLAWBRIDGE-linear-needs-from-migration.md`. No Linear objects are created by this
 design review.
 
 ## Required workflow
 
-The Platform and AI workstreams share one Linear team, FJ-AgentTaskBoard. They
+The Platform and AI workstreams share one Linear team, the live test team. They
 coordinate across several Linear projects while retaining separate code and
 repository ownership. A Linear team, a workstream and a ClawBridge project remain
 different concepts. Labels, assignees and issue text do not grant code access,
@@ -114,7 +114,7 @@ Freeze functional bytes before final full/race/vet/cross checks.
 Native write consent and a new bounded live-test plan are separate owner actions.
 The existing personal read profile and exhausted prior fixture budget do not
 authorize new writes, ten project creations or a migration-wide issue import.
-Until L2 is accepted, the planner can use its authorized Linear tooling for setup
+Until L2 is accepted, that session can use its authorized Linear tooling for setup
 and relations while ClawBridge supplies messaging and L1 task inspection.
 
 ## Exact implementation addendum

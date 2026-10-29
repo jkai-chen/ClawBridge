@@ -1194,8 +1194,9 @@ clawbridge linear writes [--ack OP_ID]             # the same, for every kind of
   applied in the create, by its stored ID.
 - **The name** gets an agent issue's mention guard: no `@` mention, profile
   link or `mention://` URL. `--closes` stays the owner's.
-- **No lead is set** yet: the result says so. The lead will come from the team
-  roles.
+- **No lead is set:** the result says so. The project owner can set it later
+  from the team roles with `linear roles apply-leads` (below, in Team roles);
+  the coordinator never does.
 - **The record comes first.** Before anything is sent, the server reserves the
   create by its operation ID (the team, the kind and a SHA-256 of the name;
   never the name). After Linear accepts, the reservation is settled with the
@@ -1381,8 +1382,9 @@ The TUI's Linear screen has the same view and changes (`R`; see the
   - a mapped team that left the binding;
   - a mapped person who is no longer an active, non-guest user of the workspace.
 
-  Linear project leads (below) and adding a team to a project (a team's lead
-  may add their own team; see "Adding a team to a project") use them.
+  Linear project leads (below), intake trust by team role, and adding a team to
+  a project (a team's lead may add their own team; see "Adding a team to a
+  project") use them.
 - **The "Team roles (ClawBridge)" document.** `roles publish` writes the roles
   as one Linear document, for people to read. Only the project owner publishes
   it, in their own terminal, through their own Linear connection.

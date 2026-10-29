@@ -6,7 +6,7 @@ independent acceptance and bounded live testing overnight. Orca's existing Linea
 authentication may assist tests; the installed product must work without Orca,
 Node, a teammate's agent host or a separately registered OAuth application.
 
-The Finjourney migration requests additional capabilities. The separate
+A user project's migration requests additional capabilities. The separate
 [L2 migration extension](linear-migration.md) records the owner-approved scope
 and versioned implementation contract. The deployed L1 contract remains unchanged.
 
@@ -41,7 +41,7 @@ retain a provider-returned workspace UUID, with its provenance, when available.
 Every connection must independently resolve the selected team IDs under its own
 authorization before using the binding. Switching profiles does not retarget it.
 
-The dedicated live team is FJ-AgentTaskBoard (FJA). Exact private workspace/team
+The dedicated live team is a private test team. Exact private workspace/team
 IDs are supplied in the trusted worker briefs. No project is currently visible;
 support an explicitly selected **Team board — no Linear project** option. This
 avoids creating a project merely to complete setup. A product spanning frontend
@@ -277,7 +277,7 @@ real CLI/MCP routing. Capture source/module/fixture freezes before full/race/vet
 and relevant cross-builds. Prior coordination heavy gates are historical baseline.
 
 Live testing may read metadata and create at most six clearly named
-`[ClawBridge test]` issues solely in FJ-AgentTaskBoard. Use no project unless one
+`[ClawBridge test]` issues solely in the live test team. Use no project unless one
 is explicitly discovered/created for this test. May comment/update only those
 test-owned issues, including a simulated frontend/backend/review dependency and
 handoff. Do not alter existing issues, team settings, memberships, credentials,

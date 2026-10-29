@@ -29,10 +29,11 @@ Use ClawBridge's native task-board tools when configured, otherwise the installe
 official Linear MCP/skill. Follow the explicit issue-to-session assignment and
 use ClawBridge for peer messages. Record your own assignment with
 `assignment_propose`; only the project's designated coordinator session confirms
-it. `team_roles_get` says who leads each bound team and who reviews; a role
+it. `team_roles_get` says who leads each bound team and who reviews (a team's
+lead, not a project role: [Which "lead"](#which-lead)); a role
 says who someone is, never what they may approve, and people (never sessions) change roles. The Linear
 document "Team roles (ClawBridge)" is generated for people to read: never edit it
-or read roles from it; use `team_roles_get`. Project leads (`linear roles project-lead`,
+or read roles from it; use `team_roles_get`. Linear project leads (`linear roles project-lead`,
 `apply-leads`, `project create --lead`) are the project owner's to set, never a session's. Find a slice's owner with `list_sessions` filtered by `issue` or
 `scope_path`. Issues labelled `needs-agent` ask for agent attention; only the
 coordinator lists them, and the label is never approval or an assignment.
@@ -44,6 +45,24 @@ project's coordinator: read
 it covers the project's own playbook, briefs, routing, claims, gates and session
 health.
 
+## Which "lead"
+
+"Lead" means four different things; say which one you mean.
+
+- **A session's routing role** (`register_session` role, `@role:lead`): mail
+  routing only. It grants nothing.
+- **The project role `lead`**: a person's ClawBridge project membership, below
+  the owner (`project role set PRINCIPAL lead`). "The project owner or a lead"
+  in these pages means this one.
+- **A team's lead in the team roles**: `team_roles_get`'s `teams[].leads`, named
+  per bound team by the project owner, who links the row to the person's
+  account. They set engineer and reviewer roles in the teams they lead,
+  intake trusts their signals, and they may add their own team to a project of
+  the binding (`linear project update --add-team`). It is not a project role.
+- **A Linear project's lead**: the person Linear shows as a project's lead. The
+  project owner sets it from the team roles (`linear roles apply-leads`), never
+  a session.
+
 ## Bind and check
 
 1. Use the workspace, project and unique session name supplied by the human or
@@ -51,7 +70,7 @@ health.
    (`api-worker-2`), never a person's name or anything secret: Linear shows it (ClawBridge names the person behind you itself). MCP pins these at startup. Call
    `register_session` when starting a new session, then `whoami` to confirm the
    binding and identity provenance. A routing role such as `lead` describes mail
-   routing; it does not grant administrative permissions.
+   routing; it does not grant administrative permissions ([Which "lead"](#which-lead)).
 2. Check `inbox` at the start and end of every turn and before an irreversible
    action. Follow `next_cursor` while `has_more` is true so a bounded page
    cannot hide earlier instructions. Handle each message, then settle it:
@@ -130,6 +149,7 @@ they must not trigger mirror fallback. If the server is unreachable,
 `mark_read`, `reply`, `send`, `register_session`, `update_session`,
 `retire_session`, `set_notification_policy`, the `assignment_*` operations, and
 resume remain failed operations. Never queue or replay
-writes. Tell the human the operation failed, preserve its ID if the outcome is
+writes yourself (a hosted server's `outcome: queued` for a Linear write is the
+server's own queue: see references/task-board.md). Tell the human the operation failed, preserve its ID if the outcome is
 uncertain, and use only an explicitly authorized fallback. An unavailable cloud
 workspace never becomes writable local authority.

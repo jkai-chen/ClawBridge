@@ -18,7 +18,7 @@ Initial COORDINATION.md and CORE-API.md described Phase 1; PHASE-2-PLAN.md,
 the final shared contract and owner checkpoints were read as they appeared.
 Docker server 29.8.2 was available. Existing container
 `69e6bdeeb1373090b7dcc8fdd66b3f0a1d046d559d83796506ef4000ae68e07e`
-(`fj-db-test-6703-770266`) was unrelated, was not modified, and remains running.
+(another project's test database) was unrelated, was not modified, and remains running.
 Every reviewer PG run used its own fresh `postgres:17-alpine` container, random
 loopback port, anonymous volume and environment-only random test password. The
 cleanup-trapped runner recorded and removed those exact resources. Passwords and

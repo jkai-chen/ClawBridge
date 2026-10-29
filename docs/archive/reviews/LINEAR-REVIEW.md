@@ -23,7 +23,7 @@ Latest combined focused command: `go test ./integration -run '^TestL1(NativeOAut
 
 L1 adds an optional personal native Linear connection, a separate shared ClawBridge-project board mapping, and curated scoped task actions through CLI/TUI/MCP. Linear remains the assignment/dependency/workflow record. A coordinator-confirmed issue/session/revision is distinct from provider authentication, project membership and descriptive session labels. No automatic task claim, human approval, completion, host launch or external assignment truth follows from a provider result.
 
-The product must use Go and the official Linear remote MCP service, without Orca, Node, another host's credentials or an operator-registered OAuth application. The reviewer uses synthetic providers/transports, memory credentials, owned temporary files/stores and SDK in-memory MCP clients only. No credential access, OAuth consent, external Linear read/write, Orca operation, live host, SSH, deployment or publication is authorized for this reviewer. The selected FJA live team and private UUIDs belong to the separate bounded tester brief; this report will not publish private bindings or imply that synthetic fixtures touched that team. Its limit of six test issues does not authorize reviewer writes.
+The product must use Go and the official Linear remote MCP service, without Orca, Node, another host's credentials or an operator-registered OAuth application. The reviewer uses synthetic providers/transports, memory credentials, owned temporary files/stores and SDK in-memory MCP clients only. No credential access, OAuth consent, external Linear read/write, Orca operation, live host, SSH, deployment or publication is authorized for this reviewer. The selected live team and private UUIDs belong to the separate bounded tester brief; this report will not publish private bindings or imply that synthetic fixtures touched that team. Its limit of six test issues does not authorize reviewer writes.
 
 Prior [coordination acceptance](COORDINATION-REVIEW.md), its PostgreSQL/backpressure evidence, the unpublished v0.2.0 candidate and historical native/WSL observations retain their exact source attribution. They are not L1 OAuth/schema-3/provider/live evidence. This new report does not reopen or rewrite the old verdict. Full/race/actual disposable-PG/vet/cross gates wait an explicit stable L1 source freeze, with consumed non-Go test inputs included in the baseline.
 
@@ -64,7 +64,7 @@ The matrix records expected boundaries. The focused/final evidence below establi
 | TUI lifecycle and safe rendering | Fake client delayed responses race profile/mapping navigation/cancel/leave. Requests cancel and stale generations cannot repaint; drafts/selection/scope preserved as specified. Refresh is read-only. Long Unicode/control text, empty pages/errors, six-screen compatibility and whole-screen resize/tiny bounds remain safe; details/dependencies inspectable, no raw provider escape sequences. |
 | Agent ownership workflow | Read root-owned instructions for issue coordinator assignment/revision, repository-qualified scope and paged actor discovery. Stale/retired/replaced/ambiguous/foreign binding escalates; presence/role/name is not host reachability or task ownership. No auto-claim/human approval/closure/dependency acceptance from arbitrary issue/comment text or peer progress. No external board action by reviewer. |
 | Final frozen gates | Capture exact production/module/probe and consumed non-Go fixture fingerprints, then uncached full/race with actual disposable PG, vet and CGO0 darwin/arm64 + linux/amd64 + windows/amd64 builds. Record actual skips, exact PG resources/cleanup and no drift. Do not substitute prior coordination runs or compile success for L1/native runtime evidence. |
-| Separate live attribution | Reconcile bounded tester evidence only when supplied: exact source/profile route, native official transport versus proxy/imported test credentials, write/read-back/operation ledger and at most six test-owned FJA issues. No synthetic OAuth = owner consent, relay = native transport, fake actor = real host, or team = project claim. No reviewer consent/live operations. |
+| Separate live attribution | Reconcile bounded tester evidence only when supplied: exact source/profile route, native official transport versus proxy/imported test credentials, write/read-back/operation ledger and at most six test-owned live-team issues. No synthetic OAuth = owner consent, relay = native transport, fake actor = real host, or team = project claim. No reviewer consent/live operations. |
 
 ## Early clarifications and seam requests
 
@@ -413,7 +413,7 @@ recovery tree remained unchanged. Live rollback was prepared, not exercised; the
 upgraded database must not be paired with the old server image.
 
 Root separately verified the owner's native Google credential against the service,
-previewed then confirmed an FJA **team board** at revision1, and performed native
+previewed then confirmed the live team's **team board** at revision1, and performed native
 Linear context/issues reads through the personal read profile. No Linear project,
 issue or comment was created or changed. The previous default client configuration
 was preserved, the verified personal route became the default, and the exact
@@ -430,7 +430,7 @@ recovery data were retained. Evidence is private under
 `live-owner-board/`, and default-client receipts. This paragraph attributes live
 operations to root; independent artifact reconciliation is recorded separately.
 
-The Finjourney requirements were read after activation. The linked L2 migration
+The user project's requirements were read after activation. The linked L2 migration
 proposal flags project sets, labels, relations, parents and explicit assignment
 as contract extensions. The owner subsequently approved all five for L2. No
 saved mapping or provider write permission was expanded by that design work.

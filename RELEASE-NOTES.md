@@ -1,7 +1,7 @@
 # Unreleased
 
 **Schema 41 → 47.**
-- The server migrates to schema 46 on its first start: 42, the agent writes the server queued (the Linear write
+- The server migrates to schema 47 on its first start: 42, the agent writes the server queued (the Linear write
   outbox); 43, the team roles; 44, the project lead settings; 45, the project lead notices; 46, the lane pins;
   47, the Linear write reservations (a coordinator's project creates, and later kinds).
 - **One-way:** v0.3.7 refuses a database newer than schema 41. Take a dump before upgrading; to go back, restore it
@@ -12,32 +12,31 @@
 - **Issues and the sessions holding them (U15, U40).** `i` on Sessions opens the selected session's issue on the
   Linear screen; Linear's issue list says which session holds each issue ("held by reviewer"), and `s` on an opened
   issue goes to that session. Projects reads the first 20 projects' summaries on load and any other when it's opened.
+  Linear config scope: none.
 - **Relinking starts from the board (U33); the Dispatcher speaks plainly (U55).** `l` on a linked board opens the
   link wizard with its teams, default team and projects already chosen. Without the server's model key, the Dispatcher
   screen says the server isn't set up for model keys (operator: see docs/dispatcher.md) instead of naming the
-  operator's variable.
+  operator's variable. Linear config scope: none.
 - **Doctor in the TUI answers like `clawbridge doctor`.** Each check reads "Workspace: Your workspace can't be
-  reached." with the check's own message under it, the same words as the CLI (U60).
+  reached." with the check's own message under it, the same words as the CLI (U60). Linear config scope: none.
 - **Linear project status in the TUI.** `p` on the Linear screen reads each linked Linear project's status and
   open issues through the server's app (`g` adds a suggestion, as a hint). A project owner or lead, in a TUI opened
   without a session, sets one after the server's preview and `y`, with a second `y` to close it with issues open.
-  The server's rules on who sets it and who closes stay as they are (U61).
+  The server's rules on who sets it and who closes stay as they are (U61). Linear config scope: one bound project's
+  status; nothing at team or workspace scope.
 - **A project's threads in the TUI.** On Projects, `t` on a project you own lists its threads (newest activity first,
   who's in each) and Enter reads one: each message, whom it went to and who read it; `]` reads older threads or more
   messages. Read-only, with the rules of `clawbridge project threads`: as you (not in a TUI opened with `--session`
-  or run by an agent), from your own device on a hosted server, and recorded in the project's history (U62).
+  or run by an agent), from your own device on a hosted server, and recorded in the project's history (U62). Linear
+  config scope: none.
 - **Shared Linear views in the TUI.** `v` on the Linear screen lists each bound team's shared views, issue and
   project, by name and kind, with the selected one's URL, read with your Linear connection as `linear view list`
   does; workspace views and other kinds are counted, not listed. Read-only: a project owner writes views in their own
-  terminal with `clawbridge linear view create|update|delete` (U63).
+  terminal with `clawbridge linear view create|update|delete` (U63). Linear config scope: none.
 - **The help fits small windows.** When `?` doesn't fit, the screen's description and the screens' names go first and
   the keys used everywhere run on one line, so every key is still listed; then the keys not usable now become a count
   ("12 more not usable now"), so `q quit` and `1-8` stay in view down to 80x24. A window tall enough shows it all, as
-  before. Docs: none needed.
-- **Team roles in the TUI (`R` on the Linear screen).** Each bound team's lead, engineers and reviewers by Linear
-  name. The project owner adds and removes leads and people, and a team's lead changes engineers and reviewers in
-  the teams they lead. Each change is the server's preview first, then `y` at that revision. It's read-only for
-  anyone else and in a TUI with a session or run by an agent.
+  before. Linear config scope: none.
 
 ## Linear
 
@@ -50,29 +49,33 @@
   following Linear's rate-limit headers, so it rarely meets a 429. A call with no room waits (reads up to 20 s, writes
   up to 5 s) instead of failing at once; past that, nothing is sent and the answer says when to retry. The app's reads
   now say `rate_limited` with a retry time, where they said `unavailable` or `query_failed`, and an API key's say how
-  long to wait (docs/linear.md, "Linear's rate limits").
+  long to wait (docs/linear.md, "Linear's rate limits"). Linear config scope: none.
 - **Agent writes queue instead of failing** on a hosted server with the ClawBridge app. A write that Linear's rate
   limit or the project's hourly budget holds, or one behind a queued write on the same issue, is queued: the answer
   is `outcome: queued` (not an error), the session gets a `linear-write` message when it ends, and `clawbridge linear
   write-status` lists it. Repeat the same operation_id to ask; never use a new one. Clients older than this release
-  are never queued and get `rate_limited` with when to retry (docs/linear.md, "Queued writes").
-- **Agent writes now count against the project's hourly Linear budget**, whose default rises from 200 to 600. Its
-  names are now `project linear-budget` and `CLAWBRIDGE_LINEAR_BUDGET`; the old ones keep working. An owner may raise
-  a project's budget up to the server's `CLAWBRIDGE_LINEAR_BUDGET_MAX` (default 2000), where 600 was the most; the
-  server refuses to start when that ceiling is below the default budget. Project status and a forced health run that
-  meet a spent budget now say when to retry.
+  are never queued and get `rate_limited` with when to retry (docs/linear.md, "Queued writes"). Linear config scope:
+  none.
+- A queued write is sent only while the person who asked still may: their session (if any) active, their role
+  held, their device live or their Google account still bound. Otherwise it fails as `identity_revoked` and nothing
+  is sent. Linear config scope: none.
+- **Agent writes made as the ClawBridge app now count against the project's hourly Linear budget**, whose default
+  rises from 200 to 600; writes through a person's own Linear profile aren't charged. Its names are now `project
+  linear-budget` and `CLAWBRIDGE_LINEAR_BUDGET`; the old ones keep working. An owner may raise a project's budget up
+  to the server's `CLAWBRIDGE_LINEAR_BUDGET_MAX` (default 2000), where 600 was the most; the server refuses to start
+  when that ceiling is below the default budget. Project status and a forced health run that meet a spent budget now
+  say when to retry. Linear config scope: none.
 - **Upgrade note:** the 600 now covers agent writes as well as watch, health and status reads. A project that set its
   budget by hand, or a server with `CLAWBRIDGE_WATCH_BUDGET` set, keeps that number, which now has to cover writes
-  too; check `clawbridge project linear-budget` after upgrading and raise it if agents write a lot.
+  too; check `clawbridge project linear-budget` after upgrading and raise it if agents write a lot. Linear config
+  scope: none.
 - **Doctor and the TUI show the Linear budget and the write queue.** A new `linear.outbox` check warns when the
   oldest queued write has waited 15 minutes and fails at an hour, or when a write was given up in the last day;
   `linear.watch` always shows the hour's calls used and the limit; `linear.instances` warns when more than one server
   shares the database, since each paces Linear on its own. The TUI's Linear screen header reads `Linear: 143/600
   this hour · 3 queued (oldest 6 min)`; `o` lists the queue, and the project owner sets the budget with `b`.
   `clawbridge linear write-status --project-wide` lists the project's queue (docs/linear.md, "Queued writes").
-- A queued write is sent only while the person who asked still may: their session (if any) active, their role
-  held, their device live or their Google account still bound. Otherwise it fails as `identity_revoked` and nothing
-  is sent.
+  Linear config scope: none.
 - **Sub-teams and labels.** A sub-team holds its own copy of each parent team label, under a new ID, and its issues
   may carry either. Intake's `needs-agent` (and the proof, for a write credited through the app, that the label is on
   the issue), the markers' `agent-working` and agent label writes now use the team's own label plus its bound
@@ -118,22 +121,14 @@
   estimate kept. It refuses, and lists, a label or state it can't map, a project without the target team, and an
   issue with a parent or sub-issues (Linear moves sub-issues with their parent; families wait for a batch command).
   The project owner or a project lead (the ClawBridge project role), from their own terminal, or the project's
-  coordinator session between its own lane's teams, confirms with `--operation-id ID --confirm --expected-plan-sha256 SHA`: the server reserves it, one write
-  goes through the person's own Linear profile, and the issue is read back by UUID, `accepted` or `uncertain` field
-  by field, never retried. The stored identifier of its claims and intake entry follows; the old identifier keeps
-  opening the issue in Linear. **Off until proven:** a server confirms no move until its operator sets
-  `serve --issue-move-proven` (`CLAWBRIDGE_ISSUE_MOVE_PROVEN=1`) after one Sandbox move through the command reads
-  `accepted`; previews work without it. No schema change: a move is recorded with the other Linear writes, as kind
-  `issue_move`. Linear config scope: none (issue writes in bound teams). **Rollback:** unset the flag; nothing else changes.
-
-## Intake trusts by team role
-
-- **A signal from a person whose team role is lead or engineer for the issue's own team is trusted**, like one from
-  the trusted list. `clawbridge intake policy set --roles lead` narrows it to leads; a reviewer is never trusted by
-  role, and setting `reviewer` (or any other name) is refused. Each such author is also read from Linear, at most
-  15 minutes old, and trusted only as an active, non-guest user; a failed read only notifies, and a bot or app
-  never counts. Nothing changes until the owner sets the team roles. The poll reports `trust` counts. No schema
-  change. Linear config scope: none (it reads one user at a time).
+  coordinator session between its own lane's teams, confirms with `--operation-id ID --confirm
+  --expected-plan-sha256 SHA`: the server reserves it, one write goes through the person's own Linear profile, and
+  the issue is read back by UUID, `accepted` or `uncertain` field by field, never retried. The stored identifier of
+  its claims and intake entry follows; the old identifier keeps opening the issue in Linear. **Off until proven:** a
+  server confirms no move until its operator sets `serve --issue-move-proven` (`CLAWBRIDGE_ISSUE_MOVE_PROVEN=1`)
+  after one Sandbox move through the command reads `accepted`; previews work without it. No schema change: a move is
+  recorded with the other Linear writes, as kind `issue_move`. Linear config scope: none (issue writes in bound
+  teams). **Rollback:** unset the flag; nothing else changes.
 - **Add a bound team to a Linear project from ClawBridge.** `clawbridge linear project update PROJECT --add-team TEAM`
   and the coordinator's `taskboard_project_add_team_v2` add a bound write team to a project of the binding, so an
   issue can move there, without Linear's UI. The project owner, a lead, or the added team's lead in the team roles (an
@@ -146,21 +141,34 @@
   out are named `unverified`. Off until the operator sets `serve --project-team-add-proven` after the probe. No schema
   change. Linear config scope: project.
 
-## Team roles: telling project leads
+## Team roles
 
-- **A `project-lead` notice waits for a session.** When ClawBridge sets someone's Linear project lead and they have no
-  session open, the notice waits and is delivered once, at their next session start. It waits 30 days at most, and a
-  later notice about the same project replaces it.
-- **`--replace` tells the earlier lead** they're no longer the lead. This happens only when ClawBridge set that lead
-  itself, by its own record (never the client's word), and they are still a project member. A lead set in Linear
-  isn't told.
-- **`project overview` shows the owner "Project leads"**: set and told in the last 7 days, and how many notices are
-  waiting. Counts only.
-- **Schema 45:** the lead ClawBridge last set on each Linear project, and the waiting notices.
-  Delivered notices are pruned after 90 days. No Linear configuration.
-
-## Team roles: Linear project leads
-
+- **Step 1: ClawBridge keeps who leads each bound Linear team, and each person's role** (`lead`, `engineer` or
+  `reviewer`), because Linear makes every workspace admin a team owner. `clawbridge linear roles
+  show|set|person|lead`; the MCP tool `team_roles_get` reads them. The project owner changes them, and a team's lead
+  changes engineers and reviewers in their teams (below), in their own terminal, at the revision read, previewed
+  first. People are active, non-guest users of the Linear workspace (never a team's membership). History counts only.
+  Doctor warns about a team that left the binding or a person who is no longer active. Linear project leads and intake
+  use the roles (below), and a team's lead may add their team to a project (under Linear). Schema 43. Linear config
+  scope: none (it reads the workspace's users only).
+- **A team's lead sets `engineer` and `reviewer` roles** for people who work only in the teams they lead, with the
+  same `clawbridge linear roles` commands, preview and revision. The server enforces the scope: a lead never changes
+  a lead (their own row included), a team, or a person's ClawBridge account link. The owner links the lead's row to
+  their account first (`--link`); only the owner sets leads. History records whether the owner or a lead made the
+  change. No schema change. Linear config scope: none (it reads the workspace's users only).
+- **Team roles in the TUI (`R` on the Linear screen).** Each bound team's lead, engineers and reviewers by Linear
+  name. The project owner adds and removes leads and people, and a team's lead changes engineers and reviewers in
+  the teams they lead. Each change is the server's preview first, then `y` at that revision. It's read-only for
+  anyone else and in a TUI with a session or run by an agent. Linear config scope: none (ClawBridge only).
+- **The "Team roles (ClawBridge)" Linear document: `clawbridge linear roles publish`** writes the team roles as one
+  Linear document for people to read, under a bound team or project you name the first time. It shows each team's
+  leads, engineers and reviewers by Linear display name, never an email, an ID or a ClawBridge account. The project
+  owner publishes it through their own Linear connection, previewed first. It is generated: a publish overwrites an
+  edit made in Linear. ClawBridge writes only the document it created, by its stored ID, and `linear doc publish`
+  and the roles document never write each other's documents. The project's deny patterns apply. `clawbridge doctor`
+  warns when the document was edited in Linear, is behind the roles, or was archived. Nothing publishes it on its
+  own yet. No schema change (it uses the document publish ledger). Linear config scope: one document under a bound
+  team or project; nothing at workspace scope.
 - **A Linear project's lead from the team roles.**
   - **`clawbridge linear roles project-lead on`** (the project owner) lets `linear project create` set a new
     project's lead to its team's one mapped lead. `--lead` picks one when the team has several.
@@ -173,37 +181,36 @@
     notice to their sessions when their lead row is linked to their account. The preview says both.
   - The lead write was proven in a Sandbox probe through the owner's profile. Nothing sets a lead on its own yet.
   - **Schema 44:** the project lead setting.
-  - **Linear configuration:** a project's lead in a bound team, and the project membership Linear adds with it.
+  - **Linear config scope:** a project's lead in a bound team, and the project membership Linear adds with it.
     Nothing at team or workspace scope.
+- **Telling project leads.**
+  - **A `project-lead` notice waits for a session.** When ClawBridge sets someone's Linear project lead and they have
+    no session open, the notice waits and is delivered once, at their next session start. It waits 30 days at most,
+    and a later notice about the same project replaces it.
+  - **`--replace` tells the earlier lead** they're no longer the lead. This happens only when ClawBridge set that lead
+    itself, by its own record (never the client's word), and they are still a project member. A lead set in Linear
+    isn't told.
+  - **`project overview` shows the owner "Project leads"**: set and told in the last 7 days, and how many notices are
+    waiting. Counts only.
+  - **Schema 45:** the lead ClawBridge last set on each Linear project, and the waiting notices. Delivered notices
+    are pruned after 90 days. Linear config scope: none.
 
-## Team roles: the "Team roles (ClawBridge)" Linear document
+## Intake trusts by team role
 
-- **`clawbridge linear roles publish`** writes the team roles as one Linear document for people to read, under a bound
-  team or project you name the first time. It shows each team's leads, engineers and reviewers by Linear display name,
-  never an email, an ID or a ClawBridge account. The project owner publishes it through their own Linear connection,
-  previewed first. It is generated: a publish overwrites an edit made in Linear. ClawBridge writes only the document
-  it created, by its stored ID, and `linear doc publish` and the roles document never write each other's documents.
-  The project's deny patterns apply. `clawbridge doctor` warns when the document was edited in Linear, is behind the
-  roles, or was archived. Nothing publishes it on its own yet. No schema change (it uses the document publish
-  ledger). Linear configuration: one document under a bound team or project; nothing at workspace scope.
+- **A signal from a person whose team role is lead or engineer for the issue's own team is trusted**, like one from
+  the trusted list. `clawbridge intake policy set --roles lead` narrows it to leads; a reviewer is never trusted by
+  role, and setting `reviewer` (or any other name) is refused. Each such author is also read from Linear, at most
+  15 minutes old, and trusted only as an active, non-guest user; a failed read only notifies, and a bot or app
+  never counts. Nothing changes until the owner sets the team roles. The poll reports `trust` counts. No schema
+  change. Linear config scope: none (it reads one user at a time).
 
-## Team roles: leads edit their own teams
+## Docs
 
-- **A team's lead sets `engineer` and `reviewer` roles** for people who work only in the teams they lead, with the
-  same `clawbridge linear roles` commands, preview and revision. The server enforces the scope: a lead never changes
-  a lead (their own row included), a team, or a person's ClawBridge account link. The owner links the lead's row to
-  their account first (`--link`); only the owner sets leads. History records whether the owner or a lead made the
-  change. No schema change. No Linear configuration: it reads the workspace's users only.
-
-## Team roles (step 1)
-
-- **ClawBridge keeps who leads each bound Linear team, and each person's role** (`lead`, `engineer` or `reviewer`),
-  because Linear makes every workspace admin a team owner. `clawbridge linear roles show|set|person|lead`; the MCP
-  tool `team_roles_get` reads them. Only the project owner changes them, in their own terminal, at the revision read,
-  previewed first. People are active, non-guest users of the Linear workspace (never a team's membership). History
-  counts only. Doctor warns about a team that left the binding or a person who is no longer active. Linear project
-  leads use them, and a team's lead may add their team to a project (see Linear). Schema 43. No Linear configuration:
-  it reads the workspace's users only.
+- **The skill and docs as shipped in v0.3.8.** The skill tells apart the four meanings of "lead", and its pages agree
+  with what shipped: a bound parent's labels, one coordinator per project, the server's write queue, `rate_limited`'s
+  retry time and trust by team role, with recovery rows for `outcome: queued`, `rate_limited`, `identity_revoked`,
+  `linked_only` and `project_team_add_unproven`. docs/reference/api.md gains the team roles operations and the right
+  schema numbers. Docs only. Linear config scope: none.
 
 # ClawBridge v0.3.7 (released 28 Oct)
 

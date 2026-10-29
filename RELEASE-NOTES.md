@@ -144,6 +144,9 @@
   does the same.
 - **The TUI's Dispatcher screen says how the model is used, and with what.** It shows whether the model decides claims or
   advises the rules in this project, and your provider and model, from the dispatcher's own status.
+- **The dispatcher agent reaches the network only through its egress proxy.** It needs `CLAWBRIDGE_EGRESS_PROXY`, sends
+  every request (to ClawBridge and to the model provider) through it, and refuses any direct connection or name lookup,
+  logging `egress_refused` or `egress_unavailable`.
 
 # ClawBridge v0.3.9.1 (server hotfix, deployed 29 Oct; no client release or tag)
 

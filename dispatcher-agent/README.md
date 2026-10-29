@@ -14,8 +14,10 @@ come in later steps (see "Status").
 
 ## What it does
 
-1. **Starts** with two inputs only:
+1. **Starts** with three inputs only:
    - the server URL, in `CLAWBRIDGE_SERVER_URL` (HTTPS; plain HTTP only for localhost);
+   - the egress proxy, in `CLAWBRIDGE_EGRESS_PROXY` (`http://HOST:PORT`). It is required: unset, malformed or
+     unreachable, the agent refuses to start and says why;
    - a one-time agent credential (`cba_…`) on **stdin**, read once.
 2. **Fetches its configuration** from the server (`agent/config`): provider, model, key, project tokens and per-run
    limits. The key lives only in memory.
@@ -58,6 +60,20 @@ come in later steps (see "Status").
   codes, counts and durations only. Provider errors are reduced to a status and a fixed type.
 - **Outside access:** it has no database, Linear, filesystem or shell access, and makes no call except to the
   ClawBridge server and the one provider host.
+- **Direct connections:** every request goes through the egress proxy (`src/egress.ts`):
+  - Node's `fetch`, which the ClawBridge client and the provider SDKs use, is undici's `fetch` on a `ProxyAgent`. That
+    includes their retries. Every request, http or https, is a CONNECT tunnel.
+  - Every other connection or DNS lookup fails at once with `egress refused`: `node:http`, `node:https`, `node:net`,
+    `dns` and its resolvers, and libraries built on them. There is no direct-dial fallback.
+  - A refused destination reports `egress_refused`, a proxy that can't be reached `egress_unavailable`. A reset or a
+    timeout on an open tunnel is an ordinary `network` failure, because the request may have arrived. An outcome is
+    retried after either `network` or `egress_unavailable`. A provider call failing either way is the setup test's
+    `egress_blocked`.
+  - **At startup** the proxy may not have this agent's policy yet, since it rereads it every 2 seconds. The first
+    config call is tried up to 6 times, a second apart, while the proxy refuses it or can't be reached. Such a call
+    never reached the server, so the one-time credential is still unused.
+  - **What it doesn't cover:** this fence lives in the agent's own process. It can't see `worker_threads`, UDP
+    (`node:dgram`) or a `child_process`. The real boundary is the container: its only route out is the egress proxy.
 - **Memory between cases:** none.
 
 ## The contract
@@ -79,7 +95,8 @@ npm run check:lock     # pi from the fork release, 14-day package age, allowed l
 npm test               # node:test against a fake ClawBridge and a fake provider; no network, no keys
 ```
 
-- **Node:** Node 22.19 or later runs the TypeScript directly, with no build step.
+- **Node:** Node 22.20, the version CI and the image test, runs the TypeScript directly, with no build step.
+  `engines` pins it: the egress proxy's undici must match the one Node bundles.
 - **Tests:** they never call a real provider. They run in CI with no keys present.
 
 ## The container
@@ -98,19 +115,22 @@ printf '%s\n' "$AGENT_CREDENTIAL" | docker run -i --rm --name clawbridge-agent-O
   --cap-drop ALL --security-opt no-new-privileges --pids-limit 64 \
   --memory 160m --memory-swap 160m --user node \
   -e CLAWBRIDGE_SERVER_URL=https://clawbridge.example.com \
+  -e CLAWBRIDGE_EGRESS_PROXY=http://clawbridge-egress:3128 \
   clawbridge-dispatcher-agent
 ```
 
-- **Environment:** exactly one variable, the server URL. The credential goes on stdin, never in env or argv. The agent
-  refuses to start if a provider-key, proxy or Node TLS/preload variable is set.
+- **Environment:** exactly two variables, the server URL and the egress proxy. The credential goes on stdin, never in
+  env or argv. The agent refuses to start if a provider-key, ambient proxy (`HTTP_PROXY` and the like) or Node
+  TLS/preload variable is set.
 - **Memory:** 160 MiB with no swap. The heap is capped at 96 MiB by the image's entry point.
 - **Network:** no inbound port. The per-owner network and the egress proxy, which allows only the ClawBridge host and
-  that owner's provider host, come with `clawbridge-agentd`.
+  that owner's provider host, come with `clawbridge-agentd`. Its container is `clawbridge-egress`, on port 3128.
 
 `scripts/container-test.sh` (run in CI) builds the image and runs 1,000 cases through it under exactly these flags. The
 fakes it runs against share only a loopback network with it. It checks:
 - every outcome, against the schema;
-- no OOM, reporting the cgroup's memory peak (94 MiB on the last run);
+- no OOM, reporting the cgroup's memory peak (91 MiB on the last run);
+- every request went through a fake egress proxy, tunnelled to the server and the provider only;
 - no connection or DNS lookup beyond loopback, with a negative control;
 - the hardening itself: non-root, read-only root, no capabilities, no npm.
 

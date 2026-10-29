@@ -5,6 +5,7 @@ import { afterEach, beforeEach, test } from "node:test";
 import { runAgent } from "../src/agent.ts";
 import { ClawBridgeClient } from "../src/client.ts";
 import { Logger } from "../src/log.ts";
+import { AgentConfigResponse } from "../src/schema.ts";
 import {
 	BINDING_SECRET,
 	CREDENTIAL,
@@ -285,4 +286,39 @@ test("a pending_test config with no project yet runs the setup test, reports it,
 	assert.equal(stopped, "signal", "it did not exit for lack of a project");
 	assert.deepEqual(cb.testResults, [{ binding_secret: BINDING_SECRET, config_revision: 7, result: "active" }]);
 	assert.ok(!cb.requests.some((r) => r.path.endsWith("/hello")));
+});
+
+test("the first config call is retried while the egress proxy refuses it, then served [R90-M1]", async () => {
+	let refusals = 2;
+	const early: typeof fetch = (input, init) =>
+		String(input).endsWith("/agent/config") && refusals-- > 0
+			? Promise.reject(new TypeError("fetch failed", { cause: new Error("Proxy response (403) !== 200 when HTTP Tunneling") }))
+			: fetch(input, init);
+	await runUntil(() => lines.some((l) => l.includes('"configured"')), {
+		client: new ClawBridgeClient(new URL(cb.url), early),
+		startupRetryMs: 10,
+	});
+	assert.equal(lines.filter((l) => l.includes('"config_retry"')).length, 2);
+	assert.ok(lines.some((l) => l.includes('"configured"')));
+});
+
+test("a refused credential is not retried", async () => {
+	await assert.rejects(runUntil(() => false, { credential: `cba_${"n".repeat(43)}`, startupRetryMs: 10 }));
+	assert.equal(lines.filter((l) => l.includes('"config_retry"')).length, 0);
+});
+
+test("the client's default fetch is the global one at call time, not at construction [R93-M2]", async () => {
+	const client = new ClawBridgeClient(new URL(cb.url));
+	const native = globalThis.fetch;
+	let seen = 0;
+	globalThis.fetch = ((input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
+		seen++;
+		return native(input, init);
+	}) as typeof fetch;
+	try {
+		await client.call("POST", "/v1/dispatcher-model/agent/config", CREDENTIAL, AgentConfigResponse, { instance_id: "i" });
+	} finally {
+		globalThis.fetch = native;
+	}
+	assert.equal(seen, 1);
 });

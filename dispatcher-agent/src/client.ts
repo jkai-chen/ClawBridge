@@ -2,6 +2,7 @@
 // Results carry codes, never response text, and a failure never includes the bearer token or a request body.
 import type { Static, TSchema } from "typebox";
 import { Value } from "typebox/value";
+import { egressFailure } from "./egress.ts";
 import { API_VERSION, ErrorResponse } from "./schema.ts";
 
 export type ClientResult<T> =
@@ -54,7 +55,8 @@ export class ClawBridgeClient {
 	private readonly base: URL;
 	private readonly fetchImpl: typeof fetch;
 
-	constructor(base: URL, fetchImpl: typeof fetch = fetch) {
+	// The default looks fetch up at each call, so it is the one installEgress set, whenever the client was made.
+	constructor(base: URL, fetchImpl: typeof fetch = (input, init) => globalThis.fetch(input, init)) {
 		this.base = base;
 		this.fetchImpl = fetchImpl;
 	}
@@ -85,7 +87,9 @@ export class ClawBridgeClient {
 			});
 		} catch (err) {
 			const name = (err as { name?: string }).name;
-			return { ok: false, status: null, code: name === "TimeoutError" || name === "AbortError" ? "timeout" : "network" };
+			if (name === "TimeoutError" || name === "AbortError") return { ok: false, status: null, code: "timeout" };
+			// Every connection goes through the egress proxy (egress.ts), so a failed one names it.
+			return { ok: false, status: null, code: egressFailure(err) ?? "network" };
 		}
 		let parsed: unknown;
 		try {

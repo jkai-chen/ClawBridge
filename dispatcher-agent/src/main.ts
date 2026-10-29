@@ -1,9 +1,11 @@
-// Entry point. Inputs: CLAWBRIDGE_SERVER_URL (env) and the one-time agent credential on stdin (design §5.2, §11.4).
-// Everything else, the provider key included, comes from the server into memory.
+// Entry point. Inputs: CLAWBRIDGE_SERVER_URL and CLAWBRIDGE_EGRESS_PROXY (env), and the one-time agent credential on
+// stdin (design §5.2, §5.3, §11.4). Everything else, the provider key included, comes from the server into memory.
+// Nothing leaves the process except through the egress proxy: without one, the agent does not start.
 import { randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { ConfigError, runAgent } from "./agent.ts";
 import { ClawBridgeClient, parseServerUrl } from "./client.ts";
+import { installEgress, parseEgressProxy, proxyReachable } from "./egress.ts";
 import { forbiddenEnv } from "./env-guard.ts";
 import { Logger } from "./log.ts";
 
@@ -33,7 +35,11 @@ export async function main(env: NodeJS.ProcessEnv = process.env): Promise<number
 	let client: ClawBridgeClient;
 	let credential: string;
 	try {
-		client = new ClawBridgeClient(parseServerUrl(env.CLAWBRIDGE_SERVER_URL));
+		const server = parseServerUrl(env.CLAWBRIDGE_SERVER_URL);
+		const proxy = parseEgressProxy(env.CLAWBRIDGE_EGRESS_PROXY);
+		if (!(await proxyReachable(proxy))) throw new Error("the egress proxy CLAWBRIDGE_EGRESS_PROXY is unreachable");
+		installEgress(proxy);
+		client = new ClawBridgeClient(server);
 		credential = await readCredential(process.stdin);
 	} catch (err) {
 		process.stderr.write(`refusing to start: ${(err as Error).message}\n`);

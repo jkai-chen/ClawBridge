@@ -34,7 +34,8 @@ export interface CaseResult {
 	providerAuth: boolean;
 }
 
-const RETRYABLE = new Set(["network", "timeout", "server_busy"]);
+// egress_unavailable: the proxy couldn't be reached, so the request never left; it may be back a moment later.
+const RETRYABLE = new Set(["network", "timeout", "server_busy", "egress_unavailable"]);
 const CLOSED = new Set(["case_closed", "deadline_passed", "case_not_found", "case_leased"]);
 
 export async function runCase(c: CaseT, optIn: readonly OptInTool[], deps: RunCaseDeps): Promise<CaseResult> {

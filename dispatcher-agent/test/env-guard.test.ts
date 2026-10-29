@@ -79,3 +79,34 @@ test("the agent refuses a plain-http server URL other than localhost [A8]", () =
 	assert.equal(r.status, 2);
 	assert.match(r.stderr, /must use https/);
 });
+
+test("the agent refuses to start without a reachable egress proxy, and says why", async () => {
+	const { createServer } = await import("node:net");
+	// A port that was free a moment ago: nothing listens on it.
+	const closed = await new Promise<number>((resolve) => {
+		const s = createServer().listen(0, "127.0.0.1", () => {
+			const port = (s.address() as { port: number }).port;
+			s.close(() => resolve(port));
+		});
+	});
+	for (const [proxy, message] of [
+		[undefined, /CLAWBRIDGE_EGRESS_PROXY must be set/],
+		["", /CLAWBRIDGE_EGRESS_PROXY must be set/],
+		["https://clawbridge-egress:3128", /must be http:\/\/HOST:PORT/],
+		["http://clawbridge-egress", /must be http:\/\/HOST:PORT/],
+		["http://user:pw@clawbridge-egress:3128", /must be http:\/\/HOST:PORT/],
+		["http://clawbridge-egress:3128/path", /must be http:\/\/HOST:PORT/],
+		[`http://127.0.0.1:${closed}`, /egress proxy CLAWBRIDGE_EGRESS_PROXY is unreachable/],
+	] as const) {
+		const env: Record<string, string | undefined> = { PATH: process.env.PATH, CLAWBRIDGE_SERVER_URL: "https://cb.example" };
+		if (proxy !== undefined) env.CLAWBRIDGE_EGRESS_PROXY = proxy;
+		const r = spawnSync(process.execPath, [join(root, "src/main.ts")], {
+			env,
+			input: "cba_abcdefghijklmnopqrstuvwxyz\n",
+			encoding: "utf8",
+			timeout: 20_000,
+		});
+		assert.equal(r.status, 2, String(proxy));
+		assert.match(r.stderr, message);
+	}
+});

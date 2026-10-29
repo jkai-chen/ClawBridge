@@ -45,6 +45,12 @@
 
 ## Linear
 
+- **A board listing no longer fails on another team's issues.** Linear lists another team's issues under a team
+  filter: a parent team's filter includes its sub-teams' issues, and a project that holds several teams lists them
+  all. Since a binding's projects gained more teams, `clawbridge linear issues` failed on the first such page with
+  `scope_mismatch`, and the watcher's needs-agent intake (S1) would have failed the same way for a labelled sub-team
+  issue. Such a row is now dropped and counted (`filtered_other_team`), as the board was built to; a row outside the
+  asked project is still refused. No schema change. Linear config scope: none.
 - **Doctor's `linear.writes` covers every recorded Linear write.** It names each project create, issue move or team
   add that may have happened unconfirmed (unsettled after 10 minutes, or settled `uncertain`) by kind and state, until
   the owner runs `clawbridge linear writes --ack`. The check was `linear.project_creates`: that ID stays in the

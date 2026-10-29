@@ -14,6 +14,12 @@
   `accepted` when the read shows it as planned, `not_sent` only when Linear refused it and the issue is still in its
   team, else `uncertain`. No schema change. Linear config scope: none.
 
+## Docs
+
+- **Adding a brand-new team to a project set.** docs/linear.md and the skill say the one step `--add-team` can't do: a
+  team the binding doesn't hold yet goes onto one bound project in Linear first, then the binding is linked again
+  with it; `--add-team` adds it to every later project. Docs only. Linear config scope: none.
+
 # ClawBridge v0.3.8 (released 29 Oct)
 
 **Schema 41 → 47.**

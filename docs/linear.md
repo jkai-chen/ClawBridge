@@ -779,6 +779,11 @@ The answer is not an error. MCP returns it as the tool's result, and the CLI pri
 - `clawbridge linear write-status [OPERATION_ID]` lists your session's queued and recent writes (a CLI write made
   without a session lists your own), with the same fields. `--project-wide` lists the whole project's queue and the
   writes that ended in the last 24 hours, for any member: typed fields only, never a write's text.
+- **A settled create names the new issue twice.** Its `result` reads `issue ENG-88 (<uuid>)`, and `write-status`
+  adds `result_identifier` (`ENG-88`) and `result_id` (the issue's UUID); the `linear-write` message and the queue
+  view show the same text. Hand the new issue on with `result_id`, the UUID (an assignment, a comment, a child
+  issue). Any settled issue write whose receipt has both (a create, an update, an unchanged read-back) carries the
+  two fields; comments and results from before carry neither.
 - **At send time every check runs again**, as for a write made then: your session is still active, your project role
   may still write, the device that asked is still live (or your Google account still bound to your address), and the
   binding and the issue's team still hold, and your session's lane, as pinned now, still writes that team. If one

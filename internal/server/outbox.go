@@ -13,6 +13,7 @@ import (
 
 	"clawbridge/internal/bus"
 	"clawbridge/internal/linearboard"
+	"clawbridge/internal/linearprovider"
 )
 
 // The write outbox (live/LINEAR-QUEUE-DESIGN.md §4): a client that sends
@@ -394,7 +395,7 @@ func (w *AppWriter) notify(ctx context.Context, id string) {
 var safeID = regexp.MustCompile(`^[A-Za-z0-9._:-]{1,128}$`)
 
 // receiptSummary is a receipt's typed fields: its kind (else the
-// operation) and ID.
+// operation) and its identifier and UUID (both when it has both).
 func receiptSummary(operation string, data any, outcome string) string {
 	raw, _ := json.Marshal(data)
 	var r linearboard.ReceiptV2
@@ -403,11 +404,14 @@ func receiptSummary(operation string, data any, outcome string) string {
 	if !safeID.MatchString(s) {
 		s = operation
 	}
-	for _, v := range []string{r.Identifier, r.ID} {
-		if v != "" && safeID.MatchString(v) {
-			s += " " + v
-			break
-		}
+	switch {
+	case safeID.MatchString(r.Identifier) && linearprovider.ValidID(r.ID):
+		// A create: the identifier for people, the UUID to hand the issue on.
+		s += " " + r.Identifier + " (" + r.ID + ")"
+	case r.Identifier != "" && safeID.MatchString(r.Identifier):
+		s += " " + r.Identifier
+	case r.ID != "" && safeID.MatchString(r.ID):
+		s += " " + r.ID
 	}
 	if outcome != "" && safeID.MatchString(outcome) {
 		s += " (" + outcome + ")"

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"regexp"
 	"strings"
 	"time"
 )
@@ -71,6 +72,11 @@ type OutboxWrite struct {
 	Position int
 }
 
+// resultWithUUID is a settled create's result as the server writes it:
+// "<kind> <identifier> (<uuid>)", optionally followed by " (<outcome>)".
+// The text is the server's own, built only from safe tokens.
+var resultWithUUID = regexp.MustCompile(`^[A-Za-z0-9._:-]{1,128} ([A-Za-z0-9._:-]{1,128}) \(([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\)(?: \([A-Za-z0-9._:-]{1,128}\))?$`)
+
 // View is the write's typed fields, for write-status and doctor: never its
 // request (R3).
 func (w OutboxWrite) View() map[string]any {
@@ -82,6 +88,9 @@ func (w OutboxWrite) View() map[string]any {
 		v["settled_at"] = w.SettledAt.UTC().Format(time.RFC3339)
 		if w.Result != "" {
 			v["result"] = w.Result
+			if m := resultWithUUID.FindStringSubmatch(w.Result); m != nil {
+				v["result_identifier"], v["result_id"] = m[1], m[2]
+			}
 		}
 	}
 	return v
@@ -521,7 +530,12 @@ func (s *Store) OutboxUnnotified(ctx context.Context, limit int) (ids []string, 
 // outboxNotice is a settled write's notice: typed fields only.
 func outboxNotice(w OutboxWrite) string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "Your queued Linear %s (operation_id %s) on %s: %s.", w.Operation, w.OperationID, w.Issue, w.State)
+	if w.Issue == "" {
+		// A create has no issue yet: its result names the new one.
+		fmt.Fprintf(&b, "Your queued Linear %s (operation_id %s) settled: %s.", w.Operation, w.OperationID, w.State)
+	} else {
+		fmt.Fprintf(&b, "Your queued Linear %s (operation_id %s) on %s: %s.", w.Operation, w.OperationID, w.Issue, w.State)
+	}
 	switch w.State {
 	case OutboxDone:
 		if w.Result != "" {

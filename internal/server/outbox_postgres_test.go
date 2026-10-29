@@ -575,3 +575,53 @@ func TestPostgresOutboxWaitsOutADrain(t *testing.T) {
 		t.Fatal("the write didn't go after the drain:", n, f.queued("d-1").State)
 	}
 }
+
+// A queued create the worker sends settles with the new issue's identifier
+// and UUID (FR16): write-status carries them apart and the session's notice
+// names the issue. A comment's result carries neither field.
+func TestPostgresOutboxQueuedCreateSettlesWithItsUUID(t *testing.T) {
+	f := newOutboxFixture(t)
+	f.mcp.refuse = 1
+	res, err := f.queueWrite("create", map[string]any{"team_id": awTeam, "title": "synthetic created issue", "operation_id": "fr16-create"})
+	if err != nil || awJSON(t, res.Data)["outcome"] != "queued" {
+		t.Fatal("the create was not queued:", res, err)
+	}
+	f.mcp.refuse = 0
+	f.later(2 * time.Minute)
+	q := f.queued("fr16-create")
+	if want := "issue SYN-7 (" + awCreatedIssue + ")"; q.State != bus.OutboxDone || q.Result != want {
+		t.Fatal("the create did not settle with both:", q.State, q.Reason, q.Result)
+	}
+	if n := f.mcp.count("save_issue"); n != 1 {
+		t.Fatal("save_issue sent", n, "times")
+	}
+	status := func(op string) map[string]any {
+		res, err := f.writer.Execute(context.Background(), f.identity(), bus.Request{Operation: "linear_write_status", Workspace: f.workspace, Project: "p", Session: awSession, Args: map[string]any{"instance": awSession + "-i", "operation_id": op}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		rows, _ := awJSON(t, res.Data)["writes"].([]any)
+		if len(rows) != 1 {
+			t.Fatal("write-status rows:", rows)
+		}
+		row, _ := rows[0].(map[string]any)
+		return row
+	}
+	if got := status("fr16-create"); got["result_id"] != awCreatedIssue || got["result_identifier"] != "SYN-7" {
+		t.Fatal("write-status of a create:", got)
+	}
+	notices := f.linearWriteNotices()
+	if len(notices) != 1 || !strings.Contains(notices[0], "(operation_id fr16-create) settled: done. issue SYN-7 ("+awCreatedIssue+").") {
+		t.Fatal("the create's notice does not name the issue:", notices)
+	}
+	// A comment's result has no UUID pair.
+	f.mcp.refuse = 1
+	if _, err := f.queueWrite("comment", map[string]any{"id": awIssue, "body": queuedBody, "operation_id": "fr16-comment"}); err != nil {
+		t.Fatal(err)
+	}
+	f.mcp.refuse = 0
+	f.later(4 * time.Minute)
+	if got := status("fr16-comment"); got["result_id"] != nil || got["result_identifier"] != nil {
+		t.Fatal("a comment carries the create's fields:", got)
+	}
+}

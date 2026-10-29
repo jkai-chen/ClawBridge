@@ -34,6 +34,10 @@ new operation_id: repeat the same ID and payload to ask where it is, or run
 your session how it ended: `done` (its receipt), `failed` or `expired` (nothing
 was sent; decide again, with a new operation_id), `dead` (nothing was sent after
 8 tries; tell the coordinator) or `uncertain` (read the issue back first).
+A settled issue write whose receipt has both names the issue by identifier and
+UUID: the notice reads `issue ENG-88 (<uuid>)`, and `write-status` carries
+`result_identifier` and `result_id` (a comment has neither). After a queued
+create, hand the new issue on with `result_id`, the UUID.
 Writes on one issue go in order; writes on different issues don't, so when one
 depends on another (a comment on an issue you are creating), wait for the first
 one's result. Queued writes are checked again when sent: a retired session's, a

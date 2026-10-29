@@ -17,6 +17,9 @@ clawbridge cloud check workspace          # after setup --cloud
 clawbridge cloud check backups            # after the first backup run
 ```
 
+To run the server on your own machine instead, see local-host.md; its checks are
+`clawbridge cloud check --local` (docs/reference/api.md, "Cloud check and secret entry").
+
 The exact commands for each cloud are in its provisioning playbook, with its
 cost table and the checks for each step:
 - Google Cloud: `clawbridge skill install --playbook gcp`. The server is a

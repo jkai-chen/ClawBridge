@@ -33,13 +33,19 @@ import (
 // passes, warns, or fails with a fixed reason code and one line of advice; it
 // never reads a secret's value and never writes.
 
-const cloudUsage = `clawbridge cloud check [infra|server|version|workspace|linear-app|backups|all] [--server URL]
+const cloudUsage = `clawbridge cloud check [infra|server|trust|version|workspace|linear-app|backups|all] [--server URL]
                        [--client-config PATH] [--bucket NAME] [--json]
                        [--ssh HOST | --vm NAME --project P --zone Z |
-                        --instance ID --region R [--profile P] [--account N]]
+                        --instance ID --region R [--profile P] [--account N] |
+                        --local [--local-dir DIR]]
 clawbridge cloud secret set KEY (--ssh HOST | --vm NAME --project P --zone Z |
                             --instance ID --region R [--profile P] [--account N]) [--value-stdin]
 ` + cloudBootstrapUsage + `
+
+With --local the server runs on this machine (deploy/local-host.sh): the checks read its
+env file and containers here, infra is not applicable, the trust check (--local only)
+tests the https certificate against this machine's trust store, and backups are the
+newest dump in DIR/backups (default $CLAWBRIDGE_LOCAL_DIR or ~/.clawbridge-server).
 
 On AWS, the server is an EC2 instance reached over SSM with your own AWS CLI
 profile (default ` + defaultAWSProfile + `); backups are read from S3 with --bucket and --region.`
@@ -73,6 +79,7 @@ var cloudChecks = []struct {
 }{
 	{"infra", checkInfra},
 	{"server", checkServer},
+	{"trust", checkTrust},
 	{"version", checkVersion},
 	{"workspace", checkWorkspace},
 	{"linear-app", checkLinearApp},
@@ -108,6 +115,8 @@ func runCloudCheck(ctx context.Context, args []string, stdout, stderr io.Writer)
 	f := flag.NewFlagSet("cloud check", flag.ContinueOnError)
 	f.SetOutput(stderr)
 	bindTarget(f, &target)
+	f.BoolVar(&target.local, "local", false, "check the server running on this machine (deploy/local-host.sh)")
+	f.StringVar(&target.localDir, "local-dir", "", "the local server's folder (default $CLAWBRIDGE_LOCAL_DIR or ~/.clawbridge-server)")
 	f.StringVar(&bucket, "bucket", "", "backup bucket (for backups)")
 	f.StringVar(&server, "server", "", "server URL (default: the configured server)")
 	f.StringVar(&clientConfig, "client-config", "", "trusted client configuration")
@@ -129,15 +138,23 @@ func runCloudCheck(ctx context.Context, args []string, stdout, stderr io.Writer)
 			known = known || c.name == name
 		}
 		if !known {
-			return fmt.Errorf("unknown check %q; checks: infra, server, version, workspace, linear-app, backups, all", name)
+			return fmt.Errorf("unknown check %q; checks: infra, server, trust, version, workspace, linear-app, backups, all", name)
+		}
+		if name == "trust" && !target.local {
+			return errors.New("the trust check runs with --local only")
 		}
 		want[name] = true
 	}
 	if len(want) == 0 {
 		want["all"] = true
 	}
+	if target.local || target.localDir != "" {
+		if target, err = localTarget(target, bucket); err != nil {
+			return err
+		}
+	}
 	// --project alone names the bucket's project for backups.
-	if target.set() && (target.remote() || target.zone != "") {
+	if !target.local && target.set() && (target.remote() || target.zone != "") {
 		if _, err = target.transport(); err != nil {
 			return err
 		}
@@ -145,11 +162,18 @@ func runCloudCheck(ctx context.Context, args []string, stdout, stderr io.Writer)
 	probe := &cloudProbe{target: target, bucket: bucket, stderr: stderr}
 	probe.config, _, probe.configErr = resolveConfig(ctx, Config{ClientConfig: clientConfig, Server: server})
 	probe.server = server
-	if probe.server == "" && probe.configErr == nil {
+	if target.local {
+		if probe.server == "" {
+			probe.server = localOrigin(target.localDir)
+		}
+	} else if probe.server == "" && probe.configErr == nil {
 		probe.server = probe.config.Server
 	}
 	var results []cloudResult
 	for _, c := range cloudChecks {
+		if c.name == "trust" && !target.local {
+			continue
+		}
 		if want["all"] || want[c.name] {
 			results = append(results, c.run(ctx, probe))
 		}
@@ -194,6 +218,9 @@ func serverURL(raw string) (*url.URL, bool) {
 
 // health fetches /healthz once per run; the server and version checks share it.
 func (p *cloudProbe) health(ctx context.Context) (string, cloudResult) {
+	if p.server == "" && p.target.local {
+		return "", localNoServer("server", p.target.localDir)
+	}
 	if p.server == "" {
 		return "", failed("server", "no_server", "pass --server https://YOUR-DOMAIN or run setup --cloud")
 	}
@@ -207,7 +234,11 @@ func (p *cloudProbe) health(ctx context.Context) (string, cloudResult) {
 	}
 	resp, err := cloudHTTP.Do(req)
 	if err != nil {
-		return "", failed("server", transportReason(err), transportAdvice[transportReason(err)])
+		reason := transportReason(err)
+		if reason == "tls" && p.target.local {
+			return "", failed("server", reason, "the certificate is not trusted or not valid for this name; see the trust check (deploy/local-host.sh trust)")
+		}
+		return "", failed("server", reason, transportAdvice[reason])
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
@@ -252,6 +283,9 @@ func checkServer(ctx context.Context, p *cloudProbe) cloudResult {
 	p.version = version
 	if r.Status != "pass" {
 		return r
+	}
+	if p.target.local {
+		return p.checkLocalServer(ctx)
 	}
 	if !p.target.remote() {
 		r.Advice = serverUnchecked

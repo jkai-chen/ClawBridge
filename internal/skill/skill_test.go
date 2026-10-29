@@ -120,7 +120,7 @@ func TestPlaybookInstallsBesideTheSkill(t *testing.T) {
 	if states, err := Status(main); err != nil || !states[0].Current {
 		t.Fatalf("the main skill changed: %+v %v", states, err)
 	}
-	if err := RunWithIO([]string{"install", "--playbook", "azure", "--dir", parent}, &out, &errs); err == nil || !strings.Contains(err.Error(), "--playbook must be gcp or aws") {
+	if err := RunWithIO([]string{"install", "--playbook", "azure", "--dir", parent}, &out, &errs); err == nil || !strings.Contains(err.Error(), "--playbook must be gcp, aws or local") {
 		t.Fatal(err)
 	}
 	// The AWS playbook installs and uninstalls the same way, on its own.
@@ -602,6 +602,44 @@ func TestAWSPlaybookMatchesTheRulesAndTheDeployFiles(t *testing.T) {
 	for _, rule := range []string{"--profile PROFILE --region REGION", "AWS-RunShellScript", "never put a secret"} {
 		if !strings.Contains(read("skills", "clawbridge-provision-aws", "SKILL.md")+commands, rule) {
 			t.Fatalf("missing: %s", rule)
+		}
+	}
+}
+
+// The local playbook installs like the others, and holds its hard rules and
+// deploy/local-host.sh's fixed commands.
+func TestLocalPlaybook(t *testing.T) {
+	parent := t.TempDir()
+	var out, errs bytes.Buffer
+	if err := RunWithIO([]string{"install", "--playbook", "local", "--dir", parent}, &out, &errs); err != nil {
+		t.Fatal(err, errs.String())
+	}
+	for _, p := range []string{"SKILL.md", "LICENSE", "agents/openai.yaml", "references/signin.md"} {
+		if _, err := os.Stat(filepath.Join(parent, "clawbridge-provision-local", filepath.FromSlash(p))); err != nil {
+			t.Fatal(err)
+		}
+	}
+	read := func(p string) string {
+		raw, err := os.ReadFile(filepath.Join("..", "..", "skills", "clawbridge-provision-local", filepath.FromSlash(p)))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(raw)
+	}
+	skill, signin := read("SKILL.md"), read("references/signin.md")
+	for _, want := range []string{"1. **No installs without asking.**", "2. **Never use sudo.**", "4. **Secrets stay out of your hands.**",
+		"5. **Stop on mismatch.**", "6. **The check decides.**", "grep -c '^KEY=.' ~/.clawbridge-server/clawbridge.env",
+		"git clone --depth 1 --branch vX.Y.Z https://github.com/jkai-chen/ClawBridge clawbridge",
+		"local-host.sh up --lan clawbridge.lan --bind 192.0.2.10 --owner owner@example.test --workspace my-team </dev/null", "with `</dev/null`, and never in an interactive",
+		"clawbridge cloud check server version --local --server http://127.0.0.1:8443", "clawbridge cloud check trust --local", "untrusted_ca"} {
+		if !strings.Contains(skill, want) {
+			t.Fatalf("SKILL.md misses %q", want)
+		}
+	}
+	for _, want := range []string{"sh clawbridge/deploy/local-host.sh trust", "sh clawbridge/deploy/local-host.sh invite-owner --workspace my-team",
+		"clawbridge join --server http://127.0.0.1:8443 --email owner@example.test", "clawbridge onboard", "192.0.2.10 clawbridge.lan"} {
+		if !strings.Contains(signin, want) {
+			t.Fatalf("signin.md misses %q", want)
 		}
 	}
 }

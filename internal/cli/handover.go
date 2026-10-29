@@ -40,6 +40,12 @@ type onboardingState struct {
 	// AWS only: the named profile, and the instance the checks found.
 	Profile  string `json:"profile,omitempty"`
 	Instance string `json:"instance,omitempty"`
+	// This machine or the LAN only: solo or lan, the workspace the owner's
+	// invite names, and the LAN address the server publishes on. Domain is
+	// the LAN host, Owner the owner's email.
+	Shape     string `json:"shape,omitempty"`
+	Workspace string `json:"workspace,omitempty"`
+	Bind      string `json:"bind,omitempty"`
 }
 
 const gcloudConfiguration = "clawbridge-onboarding"
@@ -227,6 +233,19 @@ func validInputs(s *onboardingState) error {
 		questions = awsQuestions(nil)
 	case "gcp":
 		questions = gcpQuestions("")
+	case "local":
+		if localGOOS == "windows" {
+			return errLocalOnWindows
+		}
+		if s.Shape != "solo" && s.Shape != "lan" {
+			return errors.New("the saved progress names an unknown shape; remove it to start over")
+		}
+		// The host as askLocalInputs saves it, so signedIn compares one form.
+		s.Domain = strings.ToLower(s.Domain)
+		if s.Shape == "solo" && (s.Domain != "" || s.Bind != "") {
+			return errors.New("the saved progress for this machine names a LAN host or address")
+		}
+		questions = localQuestions(s.Shape)
 	default:
 		return errors.New("the saved progress names an unknown cloud; remove it to start over")
 	}
@@ -253,20 +272,31 @@ reached over SSM (no SSH) and an Elastic IP, after showing you the cost and gett
 installs the server.
 `
 	}
-	return what + handoverRules
+	if cloud == "local" {
+		return localControls + handoverApproval + localSecrets
+	}
+	return what + handoverApproval + handoverSecrets
 }
 
-const handoverRules = `
+const handoverApproval = `
 The real controls: the playbook's rules guide the agent, but what protects you is that you approve
 each of its commands, and that ClawBridge's checks, not the agent, decide when a step is done. Keep the
 agent in its normal approval mode; avoid bypass or auto-approve modes for this hand-over.
+`
 
+const handoverSecrets = `
 The agent holds this terminal. When it asks you to enter a secret (clawbridge cloud secret set KEY), run that
 in a second terminal: secrets never go through the agent.
 `
 
 // summary names the saved progress in one line.
 func (s *onboardingState) summary() string {
+	if s.Cloud == "local" {
+		if s.Shape == "lan" {
+			return "LAN host " + clirender.Safe(s.Domain) + " on " + clirender.Safe(s.Bind) + ", step " + clirender.Safe(s.Step)
+		}
+		return "this machine, solo, step " + clirender.Safe(s.Step)
+	}
 	if s.Cloud == "aws" {
 		return "AWS account " + clirender.Safe(s.Account) + ", domain " + clirender.Safe(s.Domain) + ", step " + clirender.Safe(s.Step)
 	}
@@ -306,22 +336,29 @@ func startOwnServer(ctx context.Context, prompt *wizardPrompt, path string, stdo
 		}
 	}
 	if state == nil {
-		cloud, err := askUntil(prompt.ask, stdout, "Which cloud? 1. Google Cloud or 2. AWS [1]: ", func(a string) (string, error) {
+		cloud, err := askUntil(prompt.ask, stdout, "Where? 1. Google Cloud 2. AWS 3. This machine or my LAN (no cloud) [1]: ", func(a string) (string, error) {
 			if v, ok := pick(a, "1", cloudChoices); ok {
 				return v, nil
 			}
-			return "", errors.New("choose 1 or 2")
+			return "", errors.New("choose 1, 2 or 3")
 		})
 		if err != nil {
 			return err
 		}
-		if cloud == "aws" {
+		switch cloud {
+		case "local":
+			// Before any question: deploy/local-host.sh needs a POSIX shell.
+			if localGOOS == "windows" {
+				return errLocalOnWindows
+			}
+			state, err = askLocalInputs(prompt, stdout)
+		case "aws":
 			// Before any question, and long before the agent creates anything.
 			if awsGOOS == "windows" {
 				return errAWSOnWindows
 			}
 			state, err = askAWSInputs(ctx, prompt, stdout)
-		} else {
+		default:
 			state, err = askInputs(ctx, prompt, stdout)
 		}
 		if err != nil {
@@ -351,7 +388,11 @@ func startOwnServer(ctx context.Context, prompt *wizardPrompt, path string, stdo
 		return err
 	}
 	if a := strings.ToLower(strings.TrimSpace(answer)); a != "y" && a != "yes" {
-		_, err = io.WriteString(stdout, ownServerText)
+		text := ownServerText
+		if state.Cloud == "local" {
+			text = localWrittenSteps(state)
+		}
+		_, err = io.WriteString(stdout, text)
 		return err
 	}
 	if err = prompt.close(); err != nil {
@@ -408,8 +449,11 @@ after you exit.
 // dedicated gcloud configuration, runs the agent in this terminal, then runs
 // the step's checks itself.
 func handOver(ctx context.Context, s *onboardingState, bin, skillAgent, path string, stdout, stderr io.Writer) error {
-	if s.Cloud == "aws" {
+	switch s.Cloud {
+	case "aws":
 		return handOverAWS(ctx, s, bin, skillAgent, path, stdout, stderr)
+	case "local":
+		return handOverLocal(ctx, s, bin, skillAgent, path, stdout, stderr)
 	}
 	if err := installPlaybook("gcp", skillAgent); err != nil {
 		return fmt.Errorf("the playbook could not be installed for the agent: %w", err)
@@ -496,6 +540,14 @@ func finishSignin(ctx context.Context, s *onboardingState, prompt *wizardPrompt,
 	if signedIn(path, s) {
 		return firstProject(ctx, prompt, path, stdout, stderr)
 	}
+	if s.Cloud == "local" {
+		text, err := localSigninText(s)
+		if err != nil {
+			return err
+		}
+		_, err = io.WriteString(stdout, text)
+		return err
+	}
 	// cloud bootstrap runs over SSM, so only on AWS for now; on Google
 	// Cloud the owner runs the written step.
 	if s.Cloud == "aws" {
@@ -524,8 +576,12 @@ Then run clawbridge onboard again: it goes on to your first project and opens Cl
 // signedIn reports whether the profile at path names a workspace on this
 // server: the sign-in step is done.
 func signedIn(path string, s *onboardingState) bool {
+	server := "https://" + s.Domain
+	if s.Cloud == "local" {
+		server = localServerURL(s)
+	}
 	c, err := readConfig(path, false)
-	return err == nil && c.Mode == "cloud" && c.Workspace != "" && strings.TrimSuffix(c.Server, "/") == "https://"+s.Domain
+	return err == nil && c.Mode == "cloud" && c.Workspace != "" && strings.TrimSuffix(c.Server, "/") == server
 }
 
 // wizardCreateProject is `clawbridge project create`; tests replace it. It

@@ -1,0 +1,4 @@
+interface:
+  display_name: "ClawBridge on this machine"
+  short_description: "Run a ClawBridge server on this machine or your LAN, with no cloud"
+  default_prompt: "Use $clawbridge-provision-local to run my ClawBridge server on this machine, following its hard rules."

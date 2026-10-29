@@ -18,3 +18,8 @@ var ProvisionGCP embed.FS
 //
 //go:embed clawbridge-provision-aws
 var ProvisionAWS embed.FS
+
+// ProvisionLocal holds the playbook for a server on this machine or the LAN.
+//
+//go:embed clawbridge-provision-local
+var ProvisionLocal embed.FS

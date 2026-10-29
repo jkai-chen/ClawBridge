@@ -182,13 +182,13 @@ func TestHandoverCloudAnswer(t *testing.T) {
 			t.Fatalf("%s: %v %s", answer, err, out.String())
 		}
 	}
-	for _, answer := range []string{"3", "azure", "2x"} {
+	for _, answer := range []string{"4", "azure", "2x"} {
 		home := isolated(t)
 		wizardHooks(t, "3\n"+answer+"\n")
 		h, _ := awsHandoverStub(t)
 		var out bytes.Buffer
 		err := Run(context.Background(), []string{"onboard"}, &out, io.Discard)
-		if err == nil || !strings.Contains(err.Error(), "choose 1 or 2") || h.ran != nil || strings.Contains(out.String(), "choices") {
+		if err == nil || !strings.Contains(err.Error(), "choose 1, 2 or 3") || h.ran != nil || strings.Contains(out.String(), "choices") {
 			t.Fatalf("%s: %v %s", answer, err, out.String())
 		}
 		if _, err := os.Stat(filepath.Join(home, "state", "onboarding")); !os.IsNotExist(err) {

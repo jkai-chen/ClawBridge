@@ -1137,8 +1137,11 @@ uninstall add changed and refused, and install adds backup when `--force` moved
 a folder aside; any refused target also makes the command exit nonzero.
 
 `--playbook gcp` acts on the Google Cloud provisioning playbook
-(`clawbridge-provision-gcp`), and `--playbook aws` on the AWS one
-(`clawbridge-provision-aws`), instead of the main skill. Each installs beside the
+(`clawbridge-provision-gcp`), `--playbook aws` on the AWS one
+(`clawbridge-provision-aws`), and `--playbook local` on the one for a server on
+this machine or the LAN (`clawbridge-provision-local`, which runs
+`deploy/local-host.sh up` and creates no cloud resource), instead of the main
+skill. Each installs beside the
 main skill, in the same agent folders, and is managed on its own. A coding agent
 loads one to provision a server in the user's own Google Cloud project or AWS
 account, step by step, under its hard rules, with `clawbridge cloud check`

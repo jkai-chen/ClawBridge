@@ -27,13 +27,14 @@ const Name = "clawbridge"
 // Playbooks are the provisioning playbooks (live/ONBOARDING-DESIGN.md §3),
 // each its own skill, installed with --playbook and versioned with the
 // binary like the main skill.
-var Playbooks = map[string]string{"gcp": "clawbridge-provision-gcp", "aws": "clawbridge-provision-aws"}
+var Playbooks = map[string]string{"gcp": "clawbridge-provision-gcp", "aws": "clawbridge-provision-aws", "local": "clawbridge-provision-local"}
 
 // bundled are the skills this binary carries, by directory name.
 var bundled = map[string]fs.FS{
-	Name:                       skills.ClawBridge,
-	"clawbridge-provision-gcp": skills.ProvisionGCP,
-	"clawbridge-provision-aws": skills.ProvisionAWS,
+	Name:                         skills.ClawBridge,
+	"clawbridge-provision-gcp":   skills.ProvisionGCP,
+	"clawbridge-provision-aws":   skills.ProvisionAWS,
+	"clawbridge-provision-local": skills.ProvisionLocal,
 }
 
 // Marker records what an installation wrote. It lives inside the skill

@@ -25,7 +25,7 @@ func RunWithIO(args []string, stdout, stderr io.Writer) error {
 	f.SetOutput(stderr)
 	agent := f.String("agent", "", "claude-code, codex or all (default: each agent whose configuration exists)")
 	dir := f.String("dir", "", "custom skills directory; the skill goes in DIR/clawbridge")
-	playbook := f.String("playbook", "", "a provisioning playbook instead of the main skill: gcp or aws")
+	playbook := f.String("playbook", "", "a provisioning playbook instead of the main skill: gcp, aws or local")
 	force := new(bool)
 	if command != "status" {
 		f.BoolVar(force, "force", false, "replace or remove files changed since installation")
@@ -46,7 +46,7 @@ func RunWithIO(args []string, stdout, stderr io.Writer) error {
 	name := Name
 	if *playbook != "" {
 		if name = Playbooks[*playbook]; name == "" {
-			return errors.New("--playbook must be gcp or aws")
+			return errors.New("--playbook must be gcp, aws or local")
 		}
 	}
 	targets, err := TargetsFor(name, *agent, *dir)

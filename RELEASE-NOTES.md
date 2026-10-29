@@ -1,5 +1,13 @@
 # Unreleased
 
+## Linear
+
+- **Doctor's `linear.writes` covers every recorded Linear write.** It names each project create, issue move or team
+  add that may have happened unconfirmed (unsettled after 10 minutes, or settled `uncertain`) by kind and state, until
+  the owner runs `clawbridge linear writes --ack`. The check was `linear.project_creates`: that ID stays in the
+  check's `aliases` for one release, and the project overview gains `linear_writes` (its `project_creates.unconfirmed`
+  stays too, until v0.3.10). No schema change. Linear config scope: none.
+
 # ClawBridge v0.3.8 (released 29 Oct)
 
 **Schema 41 → 47.**

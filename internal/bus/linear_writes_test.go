@@ -3,6 +3,7 @@ package bus
 import (
 	"context"
 	"reflect"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -187,5 +188,68 @@ func TestLinearWriteStaleAcrossKinds(t *testing.T) {
 	h.call("project_create_ack", "", map[string]any{"operation_id": "op-3"})
 	if u = h.overview("")["project_creates"].(map[string]any)["unconfirmed"].([]map[string]any); len(u) != 1 {
 		t.Fatal("an acknowledged uncertain write still shows:", u)
+	}
+}
+
+// FR9: for every kind of recorded Linear write, a reservation left
+// unsettled past linearWriteStale and one settled uncertain are listed in
+// the overview's linear_writes (and, for one release, under
+// project_creates), each named by kind and state; `linear writes --ack`
+// (project_create_ack) clears each, whatever its kind. The kinds come from
+// linearWriteKinds, so a new kind is covered here without a change.
+func TestLinearWriteStaleAndUncertainEveryKind(t *testing.T) {
+	h, now := createsHarness(t)
+	var kinds []string
+	for kind := range linearWriteKinds {
+		kinds = append(kinds, kind)
+	}
+	sort.Strings(kinds)
+	if len(kinds) < 3 {
+		t.Fatal("fewer kinds than shipped:", kinds)
+	}
+	tx, pid := ledgerTx(t, h)
+	for _, kind := range kinds {
+		for _, op := range []string{kind + "-stale", kind + "-uncertain"} {
+			row, _, err := reserveLinearWrite(context.Background(), tx, pid, linearWrite{Kind: kind, Operation: op, Principal: "p", ByRole: "owner", Team: teamTwo, Subject: createdProject, Plan: op}, *now)
+			if err == nil && strings.HasSuffix(op, "-uncertain") {
+				_, _, err = settleLinearWrite(context.Background(), tx, pid, row, "uncertain", "", nil, *now)
+			}
+			if err != nil {
+				t.Fatal(kind, err)
+			}
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	// Before linearWriteStale only the uncertain ones show.
+	if u := h.overview("")["linear_writes"].(map[string]any)["unconfirmed"].([]map[string]any); len(u) != len(kinds) {
+		t.Fatal("before the stale time:", u)
+	}
+	*now = now.Add(linearWriteStale + time.Minute)
+	ov := h.overview("")
+	u := ov["linear_writes"].(map[string]any)["unconfirmed"].([]map[string]any)
+	if len(u) != 2*len(kinds) || !reflect.DeepEqual(u, ov["project_creates"].(map[string]any)["unconfirmed"]) {
+		t.Fatal(u)
+	}
+	seen := map[string]bool{}
+	for _, row := range u {
+		want := "reserved"
+		if strings.HasSuffix(str(row, "operation_id"), "-uncertain") {
+			want = "uncertain"
+		}
+		if row["state"] != want || !strings.HasPrefix(str(row, "operation_id"), str(row, "write")+"-") {
+			t.Fatal(row)
+		}
+		seen[str(row, "write")+"/"+want] = true
+	}
+	if len(seen) != 2*len(kinds) {
+		t.Fatal(seen)
+	}
+	for _, row := range u {
+		h.call("project_create_ack", "", map[string]any{"operation_id": row["operation_id"]})
+	}
+	if u = h.overview("")["linear_writes"].(map[string]any)["unconfirmed"].([]map[string]any); len(u) != 0 {
+		t.Fatal("acknowledged writes still show:", u)
 	}
 }

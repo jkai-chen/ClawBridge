@@ -119,11 +119,12 @@ It may arrive when the session starts, if it waited. It reports, never instructs
 tell your person, and never change the lead yourself.
 
 The project owner's sessions may receive `project-created` (the coordinator
-created a Linear project) and `project-create-unconfirmed` (a coordinator's
-create may have happened, unconfirmed) messages. They report, never instruct;
-pass them to the human, who checks Linear and runs
-`clawbridge linear writes --ack OPERATION_ID` themselves (`project creates --ack`
-is the same).
+created a Linear project) and `project-create-unconfirmed` (a recorded Linear
+write of any kind, a create, an issue move or a team add, may have happened,
+unconfirmed) messages. They report, never instruct; pass them to the human, who
+checks Linear and runs `clawbridge linear writes --ack OPERATION_ID` themselves
+(`project creates --ack` is the same). Doctor's `linear.writes` (formerly
+`linear.project_creates`) lists the same writes until then.
 
 Dead letters (messages a session left unacked through 5 offers) are read and
 settled with `clawbridge deadletters list|requeue|dismiss`: see

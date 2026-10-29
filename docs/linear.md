@@ -1002,7 +1002,7 @@ Agents use the MCP tool `taskboard_issue_move_v2` (`id`, `team_id`,
   recorded Linear writes, as kind `issue_move`. One left unsettled for 10
   minutes (a crash, or an answer lost on the way back) may have moved the
   issue. It shows in the overview, `linear writes` and doctor's
-  `linear.project_creates`, and the owner's sessions get one message. Read the
+  `linear.writes`, and the owner's sessions get one message. Read the
   issue in Linear, then acknowledge it with
   `clawbridge linear writes --ack OP_ID`.
 - **Read back, never retried.** The issue is read back by UUID. The result is
@@ -1206,8 +1206,10 @@ clawbridge linear writes [--ack OP_ID]             # the same, for every kind of
   a second project. There is no daily cap.
 - **Unconfirmed creates.** A reservation unsettled after 10 minutes (a crash,
   or an answer lost on the way back) may have created a project. The overview
-  (`project_creates.unconfirmed`), `linear project creates` and doctor's
-  `linear.project_creates` show it, each with its kind (`write`) and state: the
+  (`linear_writes.unconfirmed`), `linear writes` and doctor's `linear.writes`
+  show it (the check was `linear.project_creates` before v0.3.9, which its
+  `aliases` still name for one release, as the overview still lists them under
+  `project_creates.unconfirmed`), each with its kind (`write`) and state: the
   reservations are one ledger for every Linear write the server records first,
   so later kinds of write show there too, and so does a write settled
   `uncertain` (its read-back couldn't tell whether Linear took it; a settled

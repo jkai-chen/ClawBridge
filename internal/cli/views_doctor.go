@@ -84,7 +84,7 @@ var doctorAnswers = map[string]doctorAnswer{
 	"linear.label_policy":       {},
 	"linear.issue_subscribers":  {},
 	"linear.labels":             {},
-	"linear.project_creates":    {},
+	"linear.writes":             {},
 	"linear.project_team_adds":  {},
 	"linear.markers":            {},
 	"linear.outbox":             {},

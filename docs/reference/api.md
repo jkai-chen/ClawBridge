@@ -642,6 +642,12 @@ already read through `list_sessions`, `taskboard_get_v2` and `status_policy_get`
   name, `closes` human or agent, and `health` when health posts are on),
   `names_updated_at`, and `status_policy` (enabled, revision). A name is `""`
   when none is stored.
+- **`linear_writes`:** `unconfirmed`, every recorded Linear write of any kind
+  (`write`: `project_create`, `issue_move` or `project_team_add`) reserved more
+  than 10 minutes ago and never settled, or settled `uncertain`, until the
+  owner acknowledges it (`project_create_ack`), each with its `state`, `team_id`
+  and `subject`; and `keep_days`. Doctor's `linear.writes` reads it. Until
+  v0.3.10 the same list is also under `project_creates.unconfirmed`.
 
 It isn't in the offline mirror: when the server can't be reached the remote
 client answers "project overview unavailable offline: the server could not

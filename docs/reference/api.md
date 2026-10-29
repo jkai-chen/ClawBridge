@@ -648,6 +648,12 @@ already read through `list_sessions`, `taskboard_get_v2` and `status_policy_get`
   owner acknowledges it (`project_create_ack`), each with its `state`, `team_id`
   and `subject`; and `keep_days`. Doctor's `linear.writes` reads it. Until
   v0.3.10 the same list is also under `project_creates.unconfirmed`.
+- **`proven_gates`** (the project owner only): the server's five PROVEN gates
+  in a fixed order, `project_flow`, `issue_subscribers`, `issue_move`,
+  `issue_family_move` and `project_team_add`, each `{"name", "on"}`. A write
+  behind a gate that is off is refused as unproven. Nothing else of the
+  server's settings is shown.
+  Doctor's `linear.proven_gates` and the TUI's Overview read it.
 
 It isn't in the offline mirror: when the server can't be reached the remote
 client answers "project overview unavailable offline: the server could not

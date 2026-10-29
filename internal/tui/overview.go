@@ -7,6 +7,8 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+
+	"clawbridge/internal/bus"
 )
 
 // Overview is a person's home screen (TUI-UX-AUDIT PR D): what needs them,
@@ -31,6 +33,10 @@ type attentionMsg struct {
 	at      time.Time
 	// intake is the project's intake summary, when it could be read.
 	intake string
+	// gatesOn and gatesOff name the server's PROVEN gates, for the
+	// project owner; gatesRead is false for anyone else.
+	gatesOn, gatesOff []string
+	gatesRead         bool
 }
 
 // checkScreen is the screen where a check's problem is dealt with, if a
@@ -131,6 +137,12 @@ func (m Model) loadAttention(requestID uint64) tea.Cmd {
 			}
 		}
 		if m.cfg.Project != "" {
+			// Only the project owner's overview lists the PROVEN gates.
+			if r, err := m.cfg.Executor.Execute(ctx, m.intakeRequest("project_overview", map[string]any{})); err == nil && r.Source != "offline-mirror" {
+				out.gatesOn, out.gatesOff, out.gatesRead = bus.ProvenGatesOnOff(mapData(r.Data)["proven_gates"])
+			}
+		}
+		if m.cfg.Project != "" {
 			// Only a project owner may read it; anyone else is told
 			// nothing here.
 			if s, err := m.modelExec()(ctx, "dispatcher_model_doctor", map[string]any{}); err == nil && s != nil {
@@ -182,6 +194,7 @@ func (m Model) applyAttention(x attentionMsg) Model {
 	if m.hasTab(ScreenLinear) {
 		m.intakeLine = x.intake
 	}
+	m.gatesOn, m.gatesOff, m.gatesRead = x.gatesOn, x.gatesOff, x.gatesRead
 	if rows := len(m.overviewRows()); m.selected >= rows {
 		m.selected = max(0, rows-1)
 	}
@@ -277,6 +290,14 @@ func renderOverview(m Model) string {
 		server = s + " · " + server
 	}
 	b.WriteString(kv("Server", server))
+	if m.gatesRead {
+		// The server's PROVEN gates, for the project owner: a Linear
+		// write behind one that is off is refused as unproven.
+		b.WriteString(kv("Proven gates", terminalText(firstNonempty(strings.Join(m.gatesOn, ", "), "none"))))
+		if len(m.gatesOff) > 0 {
+			b.WriteString(kv("Not proven", terminalText(strings.Join(m.gatesOff, ", "))))
+		}
+	}
 	b.WriteString(kv("Workspace", firstNonempty(terminalText(m.workspace.Name), terminalText(m.cfg.Workspace), "not configured")))
 	b.WriteString(kv("Project", firstNonempty(terminalText(m.project.Slug), terminalText(m.cfg.Project), "not configured")))
 	if m.cfg.Session == "" || m.cfg.Instance == "" {

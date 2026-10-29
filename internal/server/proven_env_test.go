@@ -6,6 +6,8 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+
+	"clawbridge/internal/bus"
 )
 
 // Every CLAWBRIDGE_*_PROVEN key the server reads must be passed through by
@@ -49,5 +51,27 @@ func TestServeEmptyGatesAreOff(t *testing.T) {
 	settings, err := ParseServe(base, func(string) string { return "" })
 	if err != nil || settings.ProjectFlowProven || settings.IssueSubscribersProven {
 		t.Fatal(settings.ProjectFlowProven, settings.IssueSubscribersProven, err)
+	}
+}
+
+// Every CLAWBRIDGE_*_PROVEN key the server reads is a gate the owner's
+// overview shows, by the key's lower-case name.
+func TestEveryProvenGateIsShown(t *testing.T) {
+	src, err := os.ReadFile("server.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	shown := map[string]bool{}
+	for _, name := range bus.ProvenGateNames {
+		shown[name] = true
+	}
+	keys := regexp.MustCompile(`getenv\("CLAWBRIDGE_([A-Z_]+)_PROVEN"\)`).FindAllStringSubmatch(string(src), -1)
+	if len(keys) != len(shown) {
+		t.Fatalf("the server reads %d gates and the overview shows %d", len(keys), len(shown))
+	}
+	for _, k := range keys {
+		if !shown[strings.ToLower(k[1])] {
+			t.Errorf("CLAWBRIDGE_%s_PROVEN isn't in bus.ProvenGateNames", k[1])
+		}
 	}
 }

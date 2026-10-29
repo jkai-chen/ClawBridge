@@ -124,6 +124,8 @@ func (s *Store) projectOverview(ctx context.Context, tx *transaction, w, p map[s
 		if out["project_leads"], err = projectLeadCounts(ctx, tx, pid, now); err != nil {
 			return nil, err
 		}
+		// Which of the server's PROVEN gates are on, by name only.
+		out["proven_gates"] = s.provenGates()
 	}
 	return out, nil
 }

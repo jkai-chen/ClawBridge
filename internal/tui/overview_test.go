@@ -184,3 +184,25 @@ func TestDoctorLongMessageStaysInTheFrame(t *testing.T) {
 		}
 	}
 }
+
+// The project owner's Overview names the server's PROVEN gates that are
+// on and those that are off; a member, whose overview has none, sees no
+// row.
+func TestOverviewShowsProvenGatesToTheOwner(t *testing.T) {
+	gates := []any{
+		map[string]any{"name": "project_flow", "on": false},
+		map[string]any{"name": "issue_subscribers", "on": true},
+		map[string]any{"name": "issue_move", "on": true},
+		map[string]any{"name": "issue_family_move", "on": false},
+		map[string]any{"name": "project_team_add", "on": false},
+	}
+	owner := map[string]bus.Result{"project_overview": {Source: "server", Data: map[string]any{"proven_gates": gates}}}
+	view := Render(overviewFor(t, ModeCloud, false, passing, owner, nil, true))
+	if !strings.Contains(view, "Proven gates    issue_subscribers, issue_move  ") || !strings.Contains(view, "Not proven      project_flow, issue_family_move, project_team_add  ") {
+		t.Fatalf("no gates row in\n%s", view)
+	}
+	member := map[string]bus.Result{"project_overview": {Source: "server", Data: map[string]any{"project": map[string]any{}}}}
+	if view = Render(overviewFor(t, ModeCloud, false, passing, member, nil, true)); strings.Contains(view, "Proven gates") {
+		t.Fatalf("a member sees the gates row\n%s", view)
+	}
+}

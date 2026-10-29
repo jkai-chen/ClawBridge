@@ -194,3 +194,25 @@ func TestPublicRemote(t *testing.T) {
 		}
 	}
 }
+
+// The owner's overview lists every PROVEN gate by name, in a fixed order,
+// with whether it is on, and nothing else of the server's settings.
+func TestProjectOverviewShowsProvenGates(t *testing.T) {
+	h := newHarness(t)
+	h.s.SetIssueMoveProven(true)
+	h.s.SetProjectTeamAddProven(true)
+	gates := h.overview("")["proven_gates"].([]map[string]any)
+	want := []string{"project_flow off", "issue_subscribers off", "issue_move on", "issue_family_move off", "project_team_add on"}
+	if len(gates) != len(want) {
+		t.Fatal(gates)
+	}
+	for i, g := range gates {
+		state := "off"
+		if g["on"] == true {
+			state = "on"
+		}
+		if len(g) != 2 || fmt.Sprint(g["name"], " ", state) != want[i] {
+			t.Fatal(i, g)
+		}
+	}
+}

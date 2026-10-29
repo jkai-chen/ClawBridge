@@ -270,6 +270,8 @@ again: read the issue first. A `not_sent` move is one Linear refused, with the
 issue (and, for a family, every child) still in its team: tell the human why
 before trying again. `issue_move_unproven` (or `issue_family_move_unproven`)
 means the server's operator hasn't turned those moves on yet; tell the human.
+The project owner's doctor (`linear.proven_gates`) names the server's PROVEN
+gates that are on.
 
 A project includes the teams its issues may be in. To add a bound write team to
 a project of the binding, preview with `taskboard_project_add_team_v2`

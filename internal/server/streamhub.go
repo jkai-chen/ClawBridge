@@ -309,6 +309,14 @@ type deliverySweeper interface {
 	SweepDeliveries(context.Context) (bus.SweepResult, error)
 }
 
+// webhookPurger is the hosted authority's webhook retention.
+type webhookPurger interface {
+	PurgeWebhooks(context.Context, time.Time) (int64, error)
+}
+
+// webhookPurgeEvery is how often the sweeper purges webhook rows.
+const webhookPurgeEvery = time.Hour
+
 // runSweeper sweeps at once and then every interval until ctx ends. Each
 // sweep is one transaction under the sweeper's lock, so with several
 // replicas one sweeps and the others skip (L2). What it changes notifies
@@ -317,10 +325,19 @@ type deliverySweeper interface {
 func runSweeper(ctx context.Context, store deliverySweeper, every time.Duration, drain *Drain) {
 	tick := time.NewTicker(every)
 	defer tick.Stop()
+	purger, purges := store.(webhookPurger)
+	var purged time.Time
 	for {
 		if done, ok := drain.startWork(); ok {
 			if _, err := store.SweepDeliveries(ctx); err != nil && ctx.Err() == nil {
 				log.Print("sweeper: sweep failed; retrying at the next interval")
+			}
+			// Webhook deliveries and counters past their retention, hourly.
+			if purges && time.Since(purged) >= webhookPurgeEvery {
+				purged = time.Now()
+				if _, err := purger.PurgeWebhooks(ctx, purged); err != nil && ctx.Err() == nil {
+					log.Print("sweeper: webhook purge failed; retrying in an hour")
+				}
 			}
 			done()
 		}

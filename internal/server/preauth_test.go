@@ -120,3 +120,26 @@ func TestTickLimitsAnAddress(t *testing.T) {
 		t.Fatal(codes)
 	}
 }
+
+// blocked counts nothing; reject counts one refusal, per minute.
+func TestPreauthLimiterBlockedAndReject(t *testing.T) {
+	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	p := newPreauthLimiter(2, func() time.Time { return now })
+	for range 10 {
+		if p.blocked("a") {
+			t.Fatal("blocked with no refusal")
+		}
+	}
+	p.reject("a")
+	if p.blocked("a") {
+		t.Fatal("blocked after one of two")
+	}
+	p.reject("a")
+	if !p.blocked("a") || p.blocked("b") {
+		t.Fatal("a not blocked at its limit, or b blocked")
+	}
+	now = now.Add(time.Minute)
+	if p.blocked("a") {
+		t.Fatal("still blocked after the minute")
+	}
+}

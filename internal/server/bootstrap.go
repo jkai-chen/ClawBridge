@@ -8,6 +8,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"net/url"
 	"os"
 	"strings"
 
@@ -42,11 +43,19 @@ func runBootstrapInvite(ctx context.Context, args []string, stdout io.Writer) er
 	expectOwner := f.String("expect-owner", "", "refuse, before anything exists, unless the bootstrap owner is this email")
 	ownerEnv := f.String("owner-env", "CLAWBRIDGE_BOOTSTRAP_OWNER", "environment variable holding the bootstrap owner's email")
 	dsnEnv := f.String("database-url-env", "CLAWBRIDGE_DATABASE_URL", "environment variable holding the Postgres connection URL")
+	server := f.String("server", "", "the server's URL, for the join command it prints (default https://YOUR-DOMAIN)")
 	if err := f.Parse(args); err != nil {
 		return err
 	}
 	if f.NArg() != 0 || *workspace == "" {
-		return errors.New("usage: clawbridge operator bootstrap-invite --workspace NAME [--force-stdout | --code-stdin]")
+		return errors.New("usage: clawbridge operator bootstrap-invite --workspace NAME [--server URL] [--force-stdout | --code-stdin]")
+	}
+	joinServer := "https://YOUR-DOMAIN"
+	if *server != "" {
+		if !joinServerURL(*server) {
+			return errors.New("--server is the server's URL, such as https://clawbridge.example.com or http://127.0.0.1:8443")
+		}
+		joinServer = strings.TrimSuffix(*server, "/")
 	}
 	// Refuse before any invite exists, so a refused run leaves nothing.
 	var given string
@@ -100,6 +109,14 @@ func runBootstrapInvite(ctx context.Context, args []string, stdout io.Writer) er
 	if out["workspace_created"] == true {
 		verb = "Created workspace %s"
 	}
-	_, err = fmt.Fprintf(stdout, verb+"; its owner is %s.\n\nOne-time sign-in code (single use, expires %s):\n\n    %s\n\nOn your own computer, run:\n\n    clawbridge join --server https://YOUR-DOMAIN --email %s\n\nIt asks for the code without showing it. The code is a secret: type it yourself at that prompt, never on a command line (where shell history and other users' process lists keep it), and never paste it into a chat or an agent.\n", out["workspace"], out["email"], out["expires_at"], code, out["email"])
+	_, err = fmt.Fprintf(stdout, verb+"; its owner is %s.\n\nOne-time sign-in code (single use, expires %s):\n\n    %s\n\nOn your own computer, run:\n\n    clawbridge join --server %s --email %s\n\nIt asks for the code without showing it. The code is a secret: type it yourself at that prompt, never on a command line (where shell history and other users' process lists keep it), and never paste it into a chat or an agent.\n", out["workspace"], out["email"], out["expires_at"], code, joinServer, out["email"])
 	return err
+}
+
+// joinServerURL accepts a bare http or https origin, as printed in the join
+// command: a scheme and a host (with a port), nothing else.
+func joinServerURL(raw string) bool {
+	u, err := url.Parse(strings.TrimSuffix(raw, "/"))
+	return err == nil && (u.Scheme == "https" || u.Scheme == "http") && u.Host != "" && u.User == nil &&
+		u.Path == "" && u.RawQuery == "" && u.Fragment == "" && u.Scheme+"://"+u.Host == strings.TrimSuffix(raw, "/")
 }

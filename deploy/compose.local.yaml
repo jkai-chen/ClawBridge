@@ -1,0 +1,103 @@
+# Runs ClawBridge on your own machine, layered on compose.yaml:
+#
+#   docker compose -f deploy/compose.yaml -f deploy/compose.local.yaml ...
+#
+# deploy/local-host.sh writes the env file and runs this for you; the guide is
+# docs/operations/local-host.md. Two shapes, chosen by Compose profile:
+#
+# - solo (the default, no profile): the API on http://127.0.0.1:PORT, for this
+#   machine only. No Caddy.
+# - lan (COMPOSE_PROFILES=lan): Caddy serves https://CLAWBRIDGE_DOMAIN on
+#   CLAWBRIDGE_BIND_ADDR:443 (127.0.0.1 unless you choose a LAN address), with
+#   a certificate from Caddy's own internal CA. With CLAWBRIDGE_TLS_CERT and
+#   CLAWBRIDGE_TLS_KEY set, use COMPOSE_PROFILES=lan-cert instead: Caddy serves
+#   that certificate (mkcert, or `tailscale cert`).
+#
+# Sign-in is device keys only: no Google settings. Everything else (the
+# hardening, the networks, Postgres on a named volume) is compose.yaml's.
+services:
+  api:
+    command: !override
+      - serve
+      - --listen
+      - 0.0.0.0:8080
+      - --auth
+      - device
+      # solo: http://127.0.0.1:PORT (a numeric loopback: clients join over
+      # http only to one). lan: https://CLAWBRIDGE_DOMAIN.
+      - --public-origin
+      - ${CLAWBRIDGE_PUBLIC_ORIGIN:-http://127.0.0.1:${CLAWBRIDGE_LOCAL_PORT:-8443}}
+      - --bootstrap-owner
+      - ${CLAWBRIDGE_BOOTSTRAP_OWNER:?Set the owner's email}
+    environment:
+      # local-host.sh makes the Linear app's token key at setup, so the env
+      # file a person backs up already holds it. serve refuses a key with no
+      # app, so it is passed on only once the app's client ID is set.
+      CLAWBRIDGE_LINEAR_APP_TOKEN_KEY: ${CLAWBRIDGE_LINEAR_APP_CLIENT_ID:+${CLAWBRIDGE_LINEAR_APP_TOKEN_KEY}}
+    # Loopback only, in both shapes: solo's clients use it, and in lan it is
+    # the host's own health check. Never a LAN address.
+    ports: !override
+      - 127.0.0.1:${CLAWBRIDGE_LOCAL_PORT:-8443}:8080
+
+  # B1: Caddy's internal CA. local-host.sh trust exports its root. The
+  # Caddyfile is written at start into Caddy's tmpfs from CLAWBRIDGE_DOMAIN.
+  # default_sni serves the certificate to clients that send no server name,
+  # as every client of an IP address does (Go's among them); without it
+  # Caddy ends their handshake with "internal error".
+  caddy:
+    profiles: [lan]
+    entrypoint: [/bin/sh, -c]
+    command: !override
+      - |
+        printf '{\n\tauto_https disable_redirects\n\tlocal_certs\n\tdefault_sni %s\n}\n%s {\n\treverse_proxy api:8080\n}\n' "$$CLAWBRIDGE_DOMAIN" "$$CLAWBRIDGE_DOMAIN" >/tmp/Caddyfile &&
+        exec caddy run --config /tmp/Caddyfile --adapter caddyfile
+    environment:
+      CLAWBRIDGE_DOMAIN: ${CLAWBRIDGE_DOMAIN:?Set the name or address clients use}
+    ports: !override
+      - ${CLAWBRIDGE_BIND_ADDR:-127.0.0.1}:443:443
+
+  # B2 and B3: a certificate you bring. The Caddyfile is written at start into
+  # Caddy's tmpfs from CLAWBRIDGE_DOMAIN, with default_sni as for B1; the key
+  # never leaves its mount.
+  # It runs as the person who started it (local-host.sh passes their uid and
+  # gid), so the key can stay 0600 in their private folder; the
+  # unprivileged-port sysctl lets that user bind 443. A brought certificate
+  # needs no CA or ACME state, so Caddy's data and config live in its tmpfs.
+  caddy-cert:
+    profiles: [lan-cert]
+    image: caddy:2.10-alpine
+    user: ${CLAWBRIDGE_LOCAL_UID:-0}:${CLAWBRIDGE_LOCAL_GID:-0}
+    sysctls:
+      net.ipv4.ip_unprivileged_port_start: 443
+    entrypoint: [/bin/sh, -c]
+    command:
+      - |
+        printf '{\n\tauto_https disable_redirects\n\tdefault_sni %s\n}\n%s {\n\ttls /run/clawbridge-tls/cert.pem /run/clawbridge-tls/key.pem\n\treverse_proxy api:8080\n}\n' "$$CLAWBRIDGE_DOMAIN" "$$CLAWBRIDGE_DOMAIN" >/tmp/Caddyfile &&
+        exec caddy run --config /tmp/Caddyfile --adapter caddyfile
+    environment:
+      CLAWBRIDGE_DOMAIN: ${CLAWBRIDGE_DOMAIN:?Set the name or address clients use}
+      XDG_DATA_HOME: /tmp/caddy-data
+      XDG_CONFIG_HOME: /tmp/caddy-config
+    ports:
+      - ${CLAWBRIDGE_BIND_ADDR:-127.0.0.1}:443:443
+    volumes:
+      - ${CLAWBRIDGE_TLS_CERT:-/dev/null}:/run/clawbridge-tls/cert.pem:ro
+      - ${CLAWBRIDGE_TLS_KEY:-/dev/null}:/run/clawbridge-tls/key.pem:ro
+    depends_on:
+      api:
+        condition: service_started
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    # Caddy's binary carries this file capability, and won't start without
+    # it in the bounding set, even as a non-root user.
+    cap_add:
+      - NET_BIND_SERVICE
+    networks:
+      - backend
+      - egress
+    restart: unless-stopped

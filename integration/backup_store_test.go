@@ -1,11 +1,14 @@
 package integration
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 )
 
 // runBackupWith runs the backup script against an env file, with every
@@ -123,5 +126,154 @@ func TestBackupUploadCommands(t *testing.T) {
 	sum := strings.Index(script, `upload "$checksum_file" "$object_base.sha256"`)
 	if dump < 0 || sum < 0 || dump > sum {
 		t.Fatal("the dump must upload before its checksum")
+	}
+}
+
+// runLocalBackup runs the backup runner with CLAWBRIDGE_BACKUP_DIR, a fake
+// docker first on PATH (a local backup keeps the caller's PATH) that answers
+// pg_isready, pg_dump and pg_restore --list, and extra environment.
+func runLocalBackup(t *testing.T, backupDir string, envLines []string, extra ...string) (string, error, string) {
+	t.Helper()
+	if runtime.GOOS == "windows" {
+		t.Skip("the backup runner is a POSIX shell script")
+	}
+	runner := deploymentBackupRunner(t)
+	fakeBin, runDir, deployDir := t.TempDir(), t.TempDir(), t.TempDir()
+	commandLog := filepath.Join(t.TempDir(), "commands.log")
+	docker := "#!/bin/sh\nprintf '%s\\n' \"$*\" >>" + shellQuote(commandLog) + "\n" +
+		"case \"$*\" in\n" +
+		"*' pg_dump '*) printf 'PGDMP synthetic archive' ;;\n" +
+		"*' pg_restore --list'*) cat >/dev/null ;;\n" +
+		"esac\nexit 0\n"
+	if err := os.WriteFile(filepath.Join(fakeBin, "docker"), []byte(docker), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"gcloud", "gsutil", "aws", "mountpoint"} {
+		writeFakeCommand(t, filepath.Join(fakeBin, name), commandLog)
+	}
+	if err := os.MkdirAll(filepath.Join(deployDir, "deploy"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"compose.yaml", "compose.local.yaml"} {
+		if err := os.WriteFile(filepath.Join(deployDir, "deploy", name), []byte("services: {}\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	envFile := filepath.Join(runDir, "clawbridge.env")
+	if err := os.WriteFile(envFile, []byte(strings.Join(append([]string{"COMPOSE_PROJECT_NAME=cb-from-env-file"}, envLines...), "\n")+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cmd := backupRunnerCommand(t, runner)
+	cmd.Dir = runDir
+	cmd.Env = append([]string{
+		"PATH=" + fakeBin + string(os.PathListSeparator) + os.Getenv("PATH"),
+		"HOME=" + runDir, "TMPDIR=" + runDir, "LANG=C", "LC_ALL=C",
+		"CLAWBRIDGE_ENV_FILE=" + envFile,
+		"CLAWBRIDGE_DEPLOY_DIR=" + deployDir,
+		"CLAWBRIDGE_BACKUP_DIR=" + backupDir,
+	}, extra...)
+	out, err := cmd.CombinedOutput()
+	ran, _ := os.ReadFile(commandLog)
+	return string(out), err, string(ran)
+}
+
+// A local folder gets the same dump, validation and checksum, through the
+// given project and override, and keeps only its own recent pairs.
+func TestBackupLocalFolder(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "backups")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	old := time.Now().Add(-30 * 24 * time.Hour)
+	recent := time.Now().Add(-5 * 24 * time.Hour)
+	for name, at := range map[string]time.Time{
+		"20200101T000000Z.dump": old, "20200101T000000Z.sha256": old,
+		"20200102T000000Z.dump": recent, "20200102T000000Z.sha256": recent,
+		"notes.txt": old,
+	} {
+		path := filepath.Join(dir, name)
+		if err := os.WriteFile(path, []byte(name), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Chtimes(path, at, at); err != nil {
+			t.Fatal(err)
+		}
+	}
+	out, err, ran := runLocalBackup(t, dir, nil, "CLAWBRIDGE_COMPOSE_PROJECT=cb-local-test", "CLAWBRIDGE_COMPOSE_OVERRIDE=compose.local.yaml")
+	if err != nil {
+		t.Fatalf("local backup: %v\n%s\n%s", err, out, ran)
+	}
+	if !strings.Contains(ran, "--project-name cb-local-test") || !strings.Contains(ran, filepath.Join("deploy", "compose.local.yaml")+" exec -T db pg_dump") {
+		t.Fatalf("compose calls:\n%s", ran)
+	}
+	for _, tool := range []string{"gcloud", "aws", "mountpoint"} {
+		if strings.Contains(ran, tool) {
+			t.Fatalf("a local backup ran %s:\n%s", tool, ran)
+		}
+	}
+	dumps, _ := filepath.Glob(filepath.Join(dir, "2*.dump"))
+	var fresh string
+	for _, d := range dumps {
+		if !strings.HasPrefix(filepath.Base(d), "2020") {
+			fresh = d
+		}
+	}
+	if fresh == "" {
+		t.Fatalf("no new dump: %v\n%s", dumps, out)
+	}
+	body, _ := os.ReadFile(fresh)
+	sum := sha256.Sum256(body)
+	gotSum, _ := os.ReadFile(strings.TrimSuffix(fresh, ".dump") + ".sha256")
+	if string(body) != "PGDMP synthetic archive" || string(gotSum) != hex.EncodeToString(sum[:])+"  "+filepath.Base(fresh)+"\n" {
+		t.Fatalf("dump %q, checksum %q", body, gotSum)
+	}
+	if info, _ := os.Stat(fresh); info.Mode().Perm() != 0o600 {
+		t.Fatalf("dump mode %v", info.Mode())
+	}
+	if !strings.Contains(out, "backup="+strings.TrimSuffix(fresh, ".dump")+".dump") {
+		t.Fatalf("output: %s", out)
+	}
+	for name, kept := range map[string]bool{
+		"20200101T000000Z.dump": false, "20200101T000000Z.sha256": false,
+		"20200102T000000Z.dump": true, "20200102T000000Z.sha256": true, "notes.txt": true,
+	} {
+		if _, err := os.Stat(filepath.Join(dir, name)); (err == nil) != kept {
+			t.Errorf("%s: kept=%v, want %v", name, err == nil, kept)
+		}
+	}
+	if left, _ := filepath.Glob(filepath.Join(dir, ".*")); len(left) != 0 {
+		t.Fatalf("partial files left: %v", left)
+	}
+
+	// The project defaults to the env file's, and a folder is made if missing.
+	other := filepath.Join(t.TempDir(), "new", "backups")
+	if out, err, ran = runLocalBackup(t, other, nil); err != nil || !strings.Contains(ran, "--project-name cb-from-env-file") {
+		t.Fatalf("defaults: %v\n%s\n%s", err, out, ran)
+	}
+	if info, err := os.Stat(other); err != nil || info.Mode().Perm() != 0o700 {
+		t.Fatalf("made folder: %v %v", info, err)
+	}
+}
+
+// A bad local configuration fails before any command runs.
+func TestBackupLocalFolderFailsClosed(t *testing.T) {
+	for name, c := range map[string]struct {
+		dir   string
+		env   []string
+		extra []string
+		want  string
+	}{
+		"and a bucket":  {t.TempDir(), []string{"CLAWBRIDGE_BACKUP_URL=s3://backups"}, nil, "must not also set"},
+		"and a bucket2": {t.TempDir(), []string{"CLAWBRIDGE_BACKUP_BUCKET=backups"}, nil, "must not also set"},
+		"relative":      {"backups", nil, nil, "absolute path"},
+		"keep zero":     {t.TempDir(), nil, []string{"CLAWBRIDGE_BACKUP_KEEP_DAYS=0"}, "KEEP_DAYS"},
+		"keep words":    {t.TempDir(), nil, []string{"CLAWBRIDGE_BACKUP_KEEP_DAYS=two"}, "KEEP_DAYS"},
+		"no override":   {t.TempDir(), nil, []string{"CLAWBRIDGE_COMPOSE_OVERRIDE=missing.yaml"}, "override file is missing"},
+		"bad project":   {t.TempDir(), nil, []string{"CLAWBRIDGE_COMPOSE_PROJECT=Bad Project"}, "not a valid Compose project name"},
+	} {
+		out, err, ran := runLocalBackup(t, c.dir, c.env, c.extra...)
+		if err == nil || !strings.Contains(out, c.want) || ran != "" {
+			t.Errorf("%s: %v %q, commands run: %q", name, err, out, ran)
+		}
 	}
 }

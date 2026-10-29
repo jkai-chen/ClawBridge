@@ -24,6 +24,9 @@ cost table and the checks for each step:
 - AWS: `clawbridge skill install --playbook aws`. The server is an EC2 instance
   reached over SSM, with no SSH, and its backups go to S3.
 
+No cloud account? To run the server on a computer you already have, for yourself or
+for a team on one network, see [Running the server on your own machine](local-host.md).
+
 A playbook for any VM with Docker comes later. This guide names what each step
 needs and links to the [deployment guide](deployment.md) for the server itself.
 

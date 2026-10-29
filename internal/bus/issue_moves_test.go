@@ -2,6 +2,7 @@ package bus
 
 import (
 	"fmt"
+	"reflect"
 	"slices"
 	"sort"
 	"strings"
@@ -390,5 +391,36 @@ func TestIssueMoveChargesTheBudget(t *testing.T) {
 	got := h.call("issue_move_reserve", "", moveArgs("m-3", teamOne, teamTwo)).(map[string]any)
 	if got["state"] != "reserved" || h.budgetUsed() != 28 || count(t, h.s.db, "linear_write_reservations") != 5 {
 		t.Fatal("a person was refused or not charged past the limit:", got, h.budgetUsed())
+	}
+}
+
+// A family's operation acknowledges the family: the parent and each child
+// still open, listed in the answer; a child's own operation ID can be
+// acknowledged alone. History records the IDs only.
+func TestIssueMoveFamilyAcknowledged(t *testing.T) {
+	h := movesHarness(t)
+	h.s.SetIssueFamilyMoveProven(true)
+	h.call("issue_move_reserve", "", familyArgs("f-1", childOne, childTwo))
+	h.call("issue_move_reserve", "", familyArgs("f-2", childOne, childTwo))
+	got := h.call("project_create_ack", "", map[string]any{"operation_id": "f-1"}).(map[string]any)
+	want := []string{"f-1", childOperation("f-1", childOne), childOperation("f-1", childTwo)}
+	if !reflect.DeepEqual(got["acknowledged"], want) {
+		t.Fatal(got["acknowledged"])
+	}
+	var open int
+	if err := h.s.db.QueryRow(`SELECT COUNT(*) FROM linear_write_reservations WHERE operation_id LIKE 'f-1%' AND acknowledged_at IS NULL`).Scan(&open); err != nil || open != 0 {
+		t.Fatal("the family is still open:", open, err)
+	}
+	kid := childOperation("f-2", childTwo)
+	if got = h.call("project_create_ack", "", map[string]any{"operation_id": kid}).(map[string]any); !reflect.DeepEqual(got["acknowledged"], []string{kid}) {
+		t.Fatal("a child alone:", got["acknowledged"])
+	}
+	// The parent then acknowledges what is left of its family.
+	if got = h.call("project_create_ack", "", map[string]any{"operation_id": "f-2"}).(map[string]any); !reflect.DeepEqual(got["acknowledged"], []string{"f-2", childOperation("f-2", childOne)}) {
+		t.Fatal(got["acknowledged"])
+	}
+	var details string
+	if err := h.s.db.QueryRow(`SELECT details FROM history WHERE entity='project_create' AND entity_key='f-1' AND action='acknowledged'`).Scan(&details); err != nil || !strings.Contains(details, childOperation("f-1", childOne)) || strings.Contains(details, "@") {
+		t.Fatal(details, err)
 	}
 }

@@ -153,7 +153,7 @@ func (s *Service) AckProjectCreate(ctx context.Context, scope bus.Request, opera
 		return nil, errors.New("--ack takes the create's operation ID")
 	}
 	if scope.Session != "" {
-		return nil, errors.New("a session can't acknowledge a project create; the project owner does, in their own terminal, without --session")
+		return nil, errors.New("a session can't acknowledge a Linear write; the project owner, or the project lead who confirmed it, does, in their own terminal, without --session")
 	}
 	scope.Operation = "project_create_ack"
 	scope.Args = map[string]any{"operation_id": operationID}

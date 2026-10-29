@@ -65,6 +65,70 @@ func TestPostgresIssueMoves(t *testing.T) {
 	}
 }
 
+// Who acknowledges an unconfirmed move: the project owner, any; a project
+// lead, only a move they confirmed as a lead; never another lead, a member
+// or a session.
+func TestPostgresIssueMoveAcknowledgedBy(t *testing.T) {
+	f := newPGIdentityFixture(t)
+	f.s.SetIssueMoveProven(true)
+	device := map[string]string{}
+	people := map[string]string{}
+	for _, role := range []string{"owner", "lead", "lead2", "member"} {
+		p := newID(role) + "@identity-test.example"
+		grant := role
+		if role == "lead2" {
+			grant = "lead"
+		}
+		code := f.invite(f.owner, p, grant)["code"].(string)
+		key := newKey(t)
+		if _, err := f.join(p, code, key); err != nil {
+			t.Fatal(err)
+		}
+		people[role], device[role] = p, keyID(t, key)
+	}
+	as := func(role string, r Request) (Result, error) {
+		r.Workspace, r.Project = f.workspace, "p"
+		return f.asDevice(people[role], device[role], r)
+	}
+	binding := taskboardArgsV2(0)
+	binding["linear_team_ids"] = []string{teamOne, teamTwo}
+	if _, err := as("owner", Request{Operation: "taskboard_set_v2", Args: binding}); err != nil {
+		t.Fatal(err)
+	}
+	move := func(op string) map[string]any {
+		return map[string]any{"operation_id": op, "issue_uuid": movedIssue, "from_team": teamOne, "to_team": teamTwo, "plan_sha256": strings.Repeat("a", 64), "calls": 8}
+	}
+	for _, r := range []struct{ role, op string }{{"owner", "m-owner"}, {"lead", "m-lead"}, {"lead", "m-lead-2"}} {
+		if _, err := as(r.role, Request{Operation: "issue_move_reserve", Args: move(r.op)}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	ack := func(role, op string) error {
+		_, err := as(role, Request{Operation: "project_create_ack", Args: map[string]any{"operation_id": op}})
+		return err
+	}
+	for _, c := range []struct{ role, op, refusal string }{
+		{"lead", "m-owner", "the project lead who confirmed"},
+		{"lead2", "m-lead", "the project lead who confirmed"},
+		{"member", "m-lead", "owner permission"},
+	} {
+		if err := ack(c.role, c.op); !refusedWith(err, c.refusal) {
+			t.Fatal(c.role, "acknowledged", c.op, err)
+		}
+	}
+	if _, err := as("lead", Request{Operation: "project_create_ack", Session: "s", Args: map[string]any{"operation_id": "m-lead"}}); err == nil {
+		t.Fatal("a session acknowledged")
+	}
+	if err := ack("lead", "m-lead"); err != nil {
+		t.Fatal("the lead who confirmed it:", err)
+	}
+	for _, op := range []string{"m-owner", "m-lead-2"} {
+		if err := ack("owner", op); err != nil {
+			t.Fatal("the owner:", op, err)
+		}
+	}
+}
+
 // On the hosted authority a family under a long operation ID finds its
 // children again on a repeat and on its settle, and a neighbouring long
 // operation never shares them, whatever the database's collation: the

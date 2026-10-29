@@ -81,6 +81,12 @@
   still refused at link when no project carries it. Such a binding is version 4: a v0.3.8 client refuses it
   ("mapping_version must be 2 or 3") rather than half use it, so upgrade every client first. Before downgrading the
   server below v0.3.9, relink without --team-without-project. No schema change. Linear config scope: none.
+- **A family's acknowledgement covers its sub-issues; a lead acknowledges their own moves.** `linear writes --ack
+  OP_ID` on a family move's operation ID acknowledges the parent and every child still unconfirmed (a crash before the
+  settle, or a child whose read-back failed), and lists them; a child's own ID still acknowledges it alone. The project
+  owner acknowledges any recorded Linear write; a project lead now acknowledges a move they confirmed themselves, from
+  their own terminal; never another lead's, a coordinator's, or from a session. History records the IDs only. No schema
+  change. Linear config scope: none.
 
 # ClawBridge v0.3.8 (released 29 Oct)
 

@@ -234,26 +234,63 @@ func (s *Store) settleProjectCreate(ctx context.Context, tx *transaction, w map[
 // A clean accepted write has nothing to acknowledge.
 func (s *Store) ackProjectCreate(ctx context.Context, tx *transaction, wid, pid, projectRole string, r Request, now time.Time) (any, error) {
 	if r.Session != "" {
-		return nil, scoped("a session can't acknowledge a project create; the project owner does, in their own terminal", "forbidden")
+		return nil, scoped("a session can't acknowledge a Linear write; the project owner, or the project lead who confirmed it, does, in their own terminal", "forbidden")
 	}
-	if projectRole != "owner" {
-		return nil, scoped("project owner permission required", "forbidden")
+	if projectRole != "owner" && projectRole != "lead" {
+		return nil, scoped("project owner permission required, or the project lead who confirmed the write", "forbidden")
 	}
 	if s.postgres && (s.identity == nil || s.identity.Issuer != DeviceIssuer || principal.CI(s.principal)) {
-		return nil, scoped("a project create is acknowledged only from a person's own signed-in device", "forbidden")
+		return nil, scoped("a Linear write is acknowledged only from a person's own signed-in device", "forbidden")
 	}
 	op := str(r.Args, "operation_id")
-	res, err := tx.ExecContext(ctx, `UPDATE linear_write_reservations SET acknowledged_at=? WHERE project_id=? AND operation_id=? AND (state IN ('reserved','uncertain') OR (kind=? AND state='accepted' AND detail LIKE ?)) AND acknowledged_at IS NULL`, layout(now), pid, op, projectTeamAddKind, `%"changed":[%`)
+	open := `project_id=? AND operation_id=? AND (state IN ('reserved','uncertain') OR (kind=? AND state='accepted' AND detail LIKE ?)) AND acknowledged_at IS NULL`
+	found, err := query(ctx, tx, `SELECT * FROM linear_write_reservations WHERE `+open, pid, op, projectTeamAddKind, `%"changed":[%`)
 	if err != nil {
 		return nil, err
 	}
-	if n, _ := res.RowsAffected(); n != 1 {
+	if len(found) != 1 {
 		return nil, &serviceError{code: "not_found", cause: errors.New("the project has no unacknowledged, unsettled Linear write, or team add Linear answered with other changes, with that operation_id"), public: true}
 	}
-	if err = s.audit(ctx, tx, wid, pid, "", "project_create", op, "acknowledged", map[string]any{}); err != nil {
+	row := found[0]
+	// The project owner acknowledges any write; a project lead only one
+	// they confirmed themselves, as a lead. A coordinator's write is the
+	// owner's to acknowledge.
+	if projectRole != "owner" && (str(row, "by_role") != "lead" || str(row, "principal") != s.principal) {
+		return nil, scoped("only the project owner, or the project lead who confirmed this write, acknowledges it", "forbidden")
+	}
+	// A family's operation acknowledges its children too, those still
+	// open; a child's own operation ID acknowledges that child alone.
+	ops := []string{op}
+	if str(row, "kind") == issueMoveKind {
+		kids, _ := detailOf(row)["children"].([]any)
+		for _, kid := range kids {
+			child, _ := kid.(string)
+			if child == "" {
+				continue
+			}
+			c, err := query(ctx, tx, `SELECT operation_id FROM linear_write_reservations WHERE `+open+` AND kind=?`, pid, childOperation(op, child), projectTeamAddKind, `%"changed":[%`, issueMoveChildKind)
+			if err != nil {
+				return nil, err
+			}
+			if len(c) == 1 {
+				ops = append(ops, str(c[0], "operation_id"))
+			}
+		}
+	}
+	for _, o := range ops {
+		if _, err = tx.ExecContext(ctx, `UPDATE linear_write_reservations SET acknowledged_at=? WHERE project_id=? AND operation_id=? AND acknowledged_at IS NULL`, layout(now), pid, o); err != nil {
+			return nil, err
+		}
+	}
+	if err = s.audit(ctx, tx, wid, pid, "", "project_create", op, "acknowledged", map[string]any{"operation_ids": ops, "by": projectRole}); err != nil {
 		return nil, err
 	}
-	return projectCreatesView(ctx, tx, pid, now)
+	view, err := projectCreatesView(ctx, tx, pid, now)
+	if err != nil {
+		return nil, err
+	}
+	view["acknowledged"] = ops
+	return view, nil
 }
 
 // tellStaleProjectCreates tells the owner's sessions, once, of each

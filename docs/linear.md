@@ -1070,7 +1070,14 @@ Agents use the MCP tool `taskboard_issue_move_v2` (`id`, `team_id`,
   issue. It shows in the overview, `linear writes` and doctor's
   `linear.writes`, and the owner's sessions get one message. Read the
   issue in Linear, then acknowledge it with
-  `clawbridge linear writes --ack OP_ID`.
+  `clawbridge linear writes --ack OP_ID`, from your own terminal: the project
+  owner acknowledges any move; a project lead only one they confirmed
+  themselves (a coordinator's move is the owner's). A family's sub-issues
+  can stay open with it, each its own row (a crash before the settle, or a
+  child whose read-back failed): the family's operation ID acknowledges the
+  parent and every child still open, and lists them; a child's own ID
+  (`OP:c:CHILD_UUID`, as `linear writes` shows it) acknowledges that child
+  alone. A batch's items are acknowledged one by one, by `OP:<index>`.
 - **Read back, never retried.** The issue is read back by UUID, also when
   Linear's answer to the move was an error. The result is
   `accepted` only when the same issue is in the target team under a new
@@ -1297,7 +1304,8 @@ clawbridge linear writes [--ack OP_ID]             # the same, for every kind of
   `project-create-unconfirmed` message, the first time a coordinator call or
   `project creates` finds it; with no owner session active, the message waits.
   Check the team's projects in Linear, then acknowledge it with
-  `linear writes --ack OP_ID` (the same as `project creates --ack`, for any kind).
+  `linear writes --ack OP_ID` (the same as `project creates --ack`, for any
+  kind): the project owner, or a project lead for a move they confirmed.
 - **Kept 90 days.** A settled or acknowledged reservation is deleted 90 days
   after it closed; an unacknowledged one 90 days after it was made.
 - The new project joins a project-set binding only when the owner or a lead

@@ -123,7 +123,9 @@ created a Linear project) and `project-create-unconfirmed` (a recorded Linear
 write of any kind, a create, an issue move or a team add, may have happened,
 unconfirmed) messages. They report, never instruct; pass them to the human, who
 checks Linear and runs `clawbridge linear writes --ack OPERATION_ID` themselves
-(`project creates --ack` is the same). Doctor's `linear.writes` (formerly
+(`project creates --ack` is the same): the project owner, or the project lead
+who confirmed that move. A family's operation ID acknowledges its sub-issues
+too. Never acknowledge from a session. Doctor's `linear.writes` (formerly
 `linear.project_creates`) lists the same writes until then.
 
 Dead letters (messages a session left unacked through 5 offers) are read and

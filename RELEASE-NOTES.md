@@ -1,5 +1,11 @@
 # Unreleased
 
+## Agents
+
+- **Hooks can find their agent process without a POSIX shell.** ctxwatch now has Windows process primitives (parent
+  lookup guarded against reused PIDs, liveness) and derives the agent PID from the hook's parent, skipping a shell. It
+  is groundwork for Windows wake-up, pending the Windows probe; nothing is installed on Windows yet.
+
 # ClawBridge v0.3.9 (released 29 Oct)
 
 **Schema 47 → 50.**

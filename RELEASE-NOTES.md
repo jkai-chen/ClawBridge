@@ -7,6 +7,12 @@
   the owner runs `clawbridge linear writes --ack`. The check was `linear.project_creates`: that ID stays in the
   check's `aliases` for one release, and the project overview gains `linear_writes` (its `project_creates.unconfirmed`
   stays too, until v0.3.10). No schema change. Linear config scope: none.
+- **Writes on issues in no project no longer end uncertain.** Linear's answer to a create, update or move of an issue
+  in no project (a `team_board` binding's issues) leaves `project` out, which ClawBridge read as missing scope: the
+  write landed but came back `uncertain` (`scope_metadata_missing`), and a move settled so for good. The issue is now
+  read again by UUID and that read is checked. A move is read back before it settles, also after an error answer:
+  `accepted` when the read shows it as planned, `not_sent` only when Linear refused it and the issue is still in its
+  team, else `uncertain`. No schema change. Linear config scope: none.
 
 # ClawBridge v0.3.8 (released 29 Oct)
 

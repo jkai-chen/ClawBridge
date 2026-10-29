@@ -271,6 +271,9 @@ A write is accepted only on evidence that it landed where it was asked to:
   removed edge must have been visible before and be gone).
 - A created or updated issue's labels, assignee and state must match what was
   asked whenever Linear reports them.
+- Linear's answer for an issue in no project (a `team_board` binding's issues)
+  leaves `project` out. Such an answer isn't uncertain: the issue is read
+  again by UUID, and that read is checked instead.
 
 Otherwise the write is uncertain (`receipt_unverified` or `receipt_mismatch`).
 When Linear's response simply leaves a field out, the receipt lists it under
@@ -1005,10 +1008,12 @@ Agents use the MCP tool `taskboard_issue_move_v2` (`id`, `team_id`,
   `linear.writes`, and the owner's sessions get one message. Read the
   issue in Linear, then acknowledge it with
   `clawbridge linear writes --ack OP_ID`.
-- **Read back, never retried.** The issue is read back by UUID. The result is
+- **Read back, never retried.** The issue is read back by UUID, also when
+  Linear's answer to the move was an error. The result is
   `accepted` only when the same issue is in the target team under a new
   identifier, with the planned state and labels, no cycle, and its assignee,
-  project, parent, priority and estimate unchanged. Anything else is
+  project, parent, priority and estimate unchanged. Linear refusing the move
+  outright, with the issue still in its team, is `not_sent`. Anything else is
   `uncertain`, with the fields it couldn't prove; it is never sent again.
   The same operation ID answers from the record.
 - **Identifiers.** The result names the old and the new identifier. The old

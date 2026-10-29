@@ -103,7 +103,8 @@ func (p *Provider) ValidateMoveV2(in MoveInputV2) error {
 }
 
 // MoveV2 sends the move. The answer must name the same issue; the caller
-// proves the rest with a read by UUID.
+// proves the rest with a read by UUID, also when the answer leaves its
+// scope out.
 func (p *Provider) MoveV2(ctx context.Context, in MoveInputV2) (IssueV2, error) {
 	args, e := moveArgsV2(in)
 	if e != nil {
@@ -113,7 +114,18 @@ func (p *Provider) MoveV2(ctx context.Context, in MoveInputV2) (IssueV2, error) 
 	if e != nil {
 		return IssueV2{}, e
 	}
-	x, e := p.parseIssueV2(ctx, unwrap(m, "issue"))
+	answer := unwrap(m, "issue")
+	x, e := p.parseIssueV2(ctx, answer)
+	if pe, ok := e.(*Error); ok && pe.Kind == "scope_metadata_missing" {
+		// Linear leaves `project` out for an issue in no project; the
+		// caller's read by UUID proves the rest, so the answer only names
+		// the issue.
+		x, e = IssueV2{}, nil
+		x.ID, e = entityID(answer, "issueId")
+		if x.Identifier = str(answer, "identifier"); x.Identifier == "" && !ValidID(str(answer, "id")) {
+			x.Identifier = str(answer, "id")
+		}
+	}
 	if e != nil {
 		return IssueV2{}, e
 	}

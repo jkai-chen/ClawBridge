@@ -30,6 +30,9 @@ type moveFake struct {
 	moveErr   error
 	validErr  error
 	afterMove func(*linearprovider.IssueV2)
+	// landed applies the move before answering moveErr; vanish then makes
+	// the issue unreadable.
+	landed, vanish bool
 }
 
 func (p *moveFake) ValidateMoveV2(linearprovider.MoveInputV2) error { return p.validErr }
@@ -41,7 +44,7 @@ func (p *moveFake) MoveV2(_ context.Context, in linearprovider.MoveInputV2) (lin
 	p.tools++
 	p.writes++
 	p.moves = append(p.moves, in)
-	if p.moveErr != nil {
+	if p.moveErr != nil && !p.landed {
 		return linearprovider.IssueV2{}, p.moveErr
 	}
 	i := p.issues[in.ID]
@@ -59,6 +62,12 @@ func (p *moveFake) MoveV2(_ context.Context, in linearprovider.MoveInputV2) (lin
 		p.afterMove(&i)
 	}
 	p.issues[in.ID] = i
+	if p.vanish {
+		delete(p.issues, in.ID)
+	}
+	if p.moveErr != nil {
+		return linearprovider.IssueV2{}, p.moveErr
+	}
 	return p.named(i), nil
 }
 
@@ -280,6 +289,43 @@ func TestMoveReadBackUncertain(t *testing.T) {
 	got, e = s.MoveIssueV2(context.Background(), scope, MoveInputV2{IssueID: issueID, TeamID: otherTeamID, OperationID: "mv", Confirm: true, ExpectedPlanSHA256: plan.PlanSHA256})
 	if e != nil || got.Outcome != "uncertain" || p.writes != 0 || !strings.Contains(got.Note, "nothing was sent again") {
 		t.Fatal("replay:", got, e)
+	}
+}
+
+// A failed answer to a sent move is read back by UUID before the settle:
+// a definite refusal with the issue still in its team is not_sent; an
+// answer that failed otherwise (one that didn't parse, a transport error)
+// is accepted when the read shows the move as planned, and uncertain when
+// it doesn't or the read fails.
+func TestMoveFailedAnswerReadsBack(t *testing.T) {
+	refused := &linearprovider.Error{Kind: "provider_rejected"}
+	unparsed := &linearprovider.Error{Kind: "scope_metadata_missing"}
+	for name, c := range map[string]struct {
+		err            error
+		landed, vanish bool
+		outcome        string
+		failed         bool
+	}{
+		"refused":                  {refused, false, false, "not_sent", true},
+		"refused, but it moved":    {refused, true, false, "accepted", false},
+		"unparsed answer, moved":   {unparsed, true, false, "accepted", false},
+		"unparsed answer, unmoved": {unparsed, false, false, "uncertain", true},
+		"transport, moved":         {errors.New("transport"), true, false, "accepted", false},
+		"read-back fails":          {unparsed, true, true, "uncertain", true},
+	} {
+		s, a, p, scope := moveTest(t)
+		plan := s.previewMove(t, scope).Plan
+		p.moveErr, p.landed, p.vanish = c.err, c.landed, c.vanish
+		got, e := s.MoveIssueV2(context.Background(), scope, MoveInputV2{IssueID: issueID, TeamID: otherTeamID, OperationID: "mv", Confirm: true, ExpectedPlanSHA256: plan.PlanSHA256})
+		if got.Outcome != c.outcome || (e != nil) != c.failed || len(p.moves) != 1 || len(a.settles) != 1 || a.settles[0]["outcome"] != c.outcome {
+			t.Fatal(name, got, e, a.settles)
+		}
+		if c.outcome == "accepted" && (got.NewIdentifier != "NEW-158" || a.settles[0]["new_identifier"] != "NEW-158") {
+			t.Fatal(name, "the read's identifier is settled", got, a.settles)
+		}
+		if name == "read-back fails" && !contains(got.Unverified, "read-back") {
+			t.Fatal(name, got.Unverified)
+		}
 	}
 }
 

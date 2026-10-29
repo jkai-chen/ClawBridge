@@ -74,6 +74,9 @@ type Store struct {
 	// app isn't a member of, so a domain coordinator's status set may rely
 	// on the team list being whole.
 	projectStatusDomainProven bool
+	// projectPlanProven is serve --project-plan-proven: the operator ran
+	// the plan probe, so a project's plan fields are set (FR13).
+	projectPlanProven bool
 	// issueFamilyMoveProven is serve --issue-family-move-proven: a family
 	// move (a parent with its sub-issues) may be confirmed (FR7 F1).
 	issueFamilyMoveProven bool
@@ -630,6 +633,8 @@ var operationArgs = map[string]string{
 	"project_team_add_reserve":    "instance operation_id linear_project team_id project_teams plan_sha256",
 	"project_team_add_settle":     "instance operation_id outcome changed unverified",
 	"project_team_add_list":       "instance",
+	"project_plan_reserve":        "instance operation_id linear_project team_ids fields plan_sha256 confirm agent_marker project_teams project_teams_more",
+	"project_plan_settle":         "instance operation_id outcome changed",
 	"member_display_name_set":     "display_name if_unset",
 	"taskboard_set":               "instance expected_revision linear_team_ids linear_default_team_id linear_project_id linear_workspace_id",
 	"taskboard_clear":             "instance expected_revision repair",
@@ -896,7 +901,7 @@ func validateArgs(op string, a map[string]any) error {
 			if _, ok := intList(v, 1000); !ok {
 				return errors.New("lines must be an array of line numbers")
 			}
-		case "ids", "event_ids", "linear_team_ids", "linear_project_ids", "teams_without_project", "closes_pending", "scope_paths", "domains", "comment_ids", "signals", "roles", "pattern_ids", "issue_labels", "tools", "uses", "leases", "kinds", "label_ids", "user_ids", "project_teams", "changed", "unverified":
+		case "ids", "event_ids", "linear_team_ids", "linear_project_ids", "teams_without_project", "closes_pending", "scope_paths", "domains", "comment_ids", "signals", "roles", "pattern_ids", "issue_labels", "tools", "uses", "leases", "kinds", "label_ids", "user_ids", "project_teams", "changed", "unverified", "team_ids", "fields":
 			switch v.(type) {
 			case []string, []any:
 			default:
@@ -1482,6 +1487,9 @@ func (s *Store) execute(ctx context.Context, tx *transaction, r Request) (any, e
 	}
 	if projectTeamAddOperation(r.Operation) {
 		return s.projectTeamAddOp(ctx, tx, wid, pid, projectRole, actor, r)
+	}
+	if projectPlanOperation(r.Operation) {
+		return s.projectPlanOp(ctx, tx, wid, pid, projectRole, actor, r)
 	}
 	// Any project member may read the approved label list, with or
 	// without a session; setting it is the owner's (labelPolicyOp).

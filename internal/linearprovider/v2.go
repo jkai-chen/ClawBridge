@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -48,8 +49,12 @@ type IssueV2 struct {
 	AssigneeKnown    bool   `json:"assignee_known"`
 	// Priority is Linear's 0-4 (0 none, 1 urgent ... 4 low), set only when
 	// PriorityKnown: a value of any other shape is left unknown, never guessed.
-	Priority       *int       `json:"priority,omitempty"`
-	PriorityKnown  bool       `json:"priority_known"`
+	Priority      *int `json:"priority,omitempty"`
+	PriorityKnown bool `json:"priority_known"`
+	// DueDate is the issue's due date as YYYY-MM-DD, nil for none; set only
+	// when DueDateKnown: a value of any other shape stays unknown.
+	DueDate        *string    `json:"due_date,omitempty"`
+	DueDateKnown   bool       `json:"due_date_known"`
 	Relations      []Relation `json:"relations,omitempty"`
 	RelationsKnown bool       `json:"relations_known"`
 	// DescriptionSHA256 is set only by a single-issue board read; a caller
@@ -120,6 +125,7 @@ type Capabilities struct {
 	Parent                   bool `json:"parent"`
 	Assignee                 bool `json:"assignee"`
 	Priority                 bool `json:"priority"` // create and update both take Linear's 0-4
+	DueDate                  bool `json:"due_date"` // create and update take a date string; update also null
 	ParentSameDestination    bool `json:"parent_same_destination"`
 	RelationAdd              bool `json:"relation_add"`
 	RelationRemove           bool `json:"relation_remove"`
@@ -157,6 +163,8 @@ type CreateInputV2 struct {
 	// Priority is Linear's 0-4 (0 none, 1 urgent, 2 high, 3 medium, 4 low);
 	// nil leaves it as it is.
 	Priority *int
+	// DueDate is a YYYY-MM-DD date; Present with a nil Value clears it.
+	DueDate Field[*string]
 	// parentVerified is set only through WithSameDestinationParent. No wire
 	// argument, schema, flag or environment maps to it, and it is never
 	// serialized.
@@ -168,6 +176,7 @@ type UpdateInputV2 struct {
 	Labels           Field[[]string]
 	Parent, Assignee Field[*string]
 	Priority         *int
+	DueDate          Field[*string]
 	// AddLabels and RemoveLabels are label UUIDs added to or removed from
 	// the current set (native addLabels/removeLabels); never with Labels.
 	AddLabels, RemoveLabels []string
@@ -236,8 +245,17 @@ func nullableArg(f Field[*string], aliases ...string) (arg, bool, error) {
 	}
 	return a(*f.Value, aliases...), true, nil
 }
-func extraArgs(project Field[*string], labels Field[[]string], parent, assignee Field[*string], priority *int) ([]arg, error) {
+func extraArgs(project Field[*string], labels Field[[]string], parent, assignee Field[*string], priority *int, dueDate Field[*string]) ([]arg, error) {
 	out := []arg{}
+	if dueDate.Present {
+		if dueDate.Value == nil {
+			out = append(out, arg{[]string{"dueDate"}, nil, "null"})
+		} else if !validPlanDate(*dueDate.Value) {
+			return nil, fail("invalid")
+		} else {
+			out = append(out, arg{[]string{"dueDate"}, *dueDate.Value, "string"})
+		}
+	}
 	if priority != nil {
 		if *priority < 0 || *priority > 4 {
 			return nil, fail("invalid")
@@ -531,7 +549,8 @@ func (p *Provider) Capabilities(context.Context) (Capabilities, error) {
 	labels := has([]string{"list_issue_labels"}, a(sample, "team", "teamId"), arg{[]string{"limit", "first"}, 1, "integer"})
 	members := has([]string{"list_users", "list_team_members"}, a(sample, "team", "teamId"), arg{[]string{"limit", "first"}, 1, "integer"})
 	capabilities := Capabilities{Labels: labels, Members: members, CreateProject: has([]string{"create_issue", "save_issue"}, append(create, a(sample, "projectId", "project"))...), UpdateProject: has([]string{"update_issue", "save_issue"}, append(update, a(sample, "projectId", "project"))...), ReplaceLabels: has([]string{"update_issue", "save_issue"}, append(update, arg{[]string{"labelIds", "labels"}, []string{}, "array"})...), Parent: has([]string{"update_issue", "save_issue"}, append(update, a(sample, "parentId"))...), Assignee: has([]string{"update_issue", "save_issue"}, append(update, a(sample, "assigneeId", "assignee"))...),
-		Priority: has([]string{"create_issue", "save_issue"}, append(create, arg{[]string{"priority"}, 2, "integer"})...) && has([]string{"update_issue", "save_issue"}, append(update, arg{[]string{"priority"}, 2, "integer"})...)}
+		Priority: has([]string{"create_issue", "save_issue"}, append(create, arg{[]string{"priority"}, 2, "integer"})...) && has([]string{"update_issue", "save_issue"}, append(update, arg{[]string{"priority"}, 2, "integer"})...),
+		DueDate:  p.dueDateCapable()}
 	// Field shapes, descriptions and schema extensions never prove that a
 	// parent change preserves the destination. This capability only says the
 	// provider can express a parent beside a project and read issues back;
@@ -717,6 +736,7 @@ func (p *Provider) parseIssueV2(ctx context.Context, m map[string]any) (IssueV2,
 		return IssueV2{}, e
 	}
 	x.Priority, x.PriorityKnown = parsePriority(m["priority"])
+	x.DueDate, x.DueDateKnown = parseDueDate(m, "dueDate")
 	// Only an explicitly complete typed edge list proves absence. Unrecognized
 	// legacy linked-context forms retain RelationsKnown=false.
 	if raw, present := m["issueRelations"]; present {
@@ -1300,7 +1320,7 @@ func createArgsV2(in CreateInputV2) ([]arg, error) {
 	if in.StateID != "" {
 		args = append(args, a(in.StateID, "stateId", "state"))
 	}
-	extra, e := extraArgs(in.Project, in.Labels, in.Parent, in.Assignee, in.Priority)
+	extra, e := extraArgs(in.Project, in.Labels, in.Parent, in.Assignee, in.Priority, in.DueDate)
 	if e != nil {
 		return nil, e
 	}
@@ -1312,6 +1332,9 @@ func (p *Provider) CreateV2(ctx context.Context, in CreateInputV2) (IssueV2, err
 	args, e := createArgsV2(in)
 	if e != nil {
 		return IssueV2{}, e
+	}
+	if in.DueDate.Present && !p.dueDateCapable() {
+		return IssueV2{}, fail("capability_unavailable")
 	}
 	m, e := p.mutateV2(ctx, []string{"create_issue", "save_issue"}, args, in.Parent, in.parentVerified)
 	if e != nil {
@@ -1334,7 +1357,7 @@ func (p *Provider) CreateV2(ctx context.Context, in CreateInputV2) (IssueV2, err
 	return x, nil
 }
 func updateArgsV2(in UpdateInputV2) ([]arg, error) {
-	if !ValidID(in.ID) || (in.Title == nil && in.Description == nil && in.StateID == nil && !in.Project.Present && !in.Labels.Present && !in.Parent.Present && !in.Assignee.Present && in.Priority == nil && in.AddLabels == nil && in.RemoveLabels == nil) {
+	if !ValidID(in.ID) || (in.Title == nil && in.Description == nil && in.StateID == nil && !in.Project.Present && !in.Labels.Present && !in.Parent.Present && !in.Assignee.Present && in.Priority == nil && !in.DueDate.Present && in.AddLabels == nil && in.RemoveLabels == nil) {
 		return nil, fail("invalid")
 	}
 	if in.Labels.Present && (in.AddLabels != nil || in.RemoveLabels != nil) {
@@ -1369,7 +1392,7 @@ func updateArgsV2(in UpdateInputV2) ([]arg, error) {
 	if in.StateID != nil && !ValidID(*in.StateID) {
 		return nil, fail("invalid")
 	}
-	extra, e := extraArgs(in.Project, in.Labels, in.Parent, in.Assignee, in.Priority)
+	extra, e := extraArgs(in.Project, in.Labels, in.Parent, in.Assignee, in.Priority, in.DueDate)
 	if e != nil {
 		return nil, e
 	}
@@ -1381,6 +1404,9 @@ func (p *Provider) UpdateV2(ctx context.Context, in UpdateInputV2) (IssueV2, err
 	args, e := updateArgsV2(in)
 	if e != nil {
 		return IssueV2{}, e
+	}
+	if in.DueDate.Present && !p.dueDateCapable() {
+		return IssueV2{}, fail("capability_unavailable")
 	}
 	if (in.AddLabels != nil || in.RemoveLabels != nil) && p.labelDeltasReason() != "" {
 		return IssueV2{}, fail("capability_unavailable")
@@ -1709,4 +1735,62 @@ func parsePriority(raw any) (*int, bool) {
 	}
 	p := int(n)
 	return &p, true
+}
+
+// dueDateCapable: create and update both take dueDate as a string, and update
+// also takes null (the recorded save_issue types it ["string","null"]).
+func (p *Provider) dueDateCapable() bool {
+	sample := "00000000-0000-4000-8000-000000000001"
+	create := []arg{a(sample, "team", "teamId"), a("title", "title"), a("", "description"), arg{[]string{"dueDate"}, "2026-11-14", "string"}}
+	update := []arg{a(sample, "id", "issueId")}
+	ok := func(names []string, args ...arg) bool { _, _, e := p.v2Negotiation(names, args); return e == nil }
+	return ok([]string{"create_issue", "save_issue"}, create...) &&
+		ok([]string{"update_issue", "save_issue"}, append(slices.Clone(update), arg{[]string{"dueDate"}, "2026-11-14", "string"})...) &&
+		ok([]string{"update_issue", "save_issue"}, append(slices.Clone(update), arg{[]string{"dueDate"}, nil, "null"})...)
+}
+
+// validPlanDate: a real calendar date YYYY-MM-DD from 2000-01-01 to 2100-12-31.
+func validPlanDate(s string) bool {
+	if len(s) != 10 {
+		return false
+	}
+	t, e := time.Parse("2006-01-02", s)
+	return e == nil && t.Year() >= 2000 && t.Year() <= 2100
+}
+
+// parseDueDate reads a date field of a row: a YYYY-MM-DD string, or an ISO
+// datetime (RFC 3339) of which only the date is kept, is a date; null or an
+// empty string is none; an absent key or any other shape is unknown.
+func parseDueDate(m map[string]any, key string) (*string, bool) {
+	raw, present := m[key]
+	if !present {
+		return nil, false
+	}
+	return parseDateValue(raw)
+}
+
+func parseDateValue(raw any) (*string, bool) {
+	if raw == nil {
+		return nil, true
+	}
+	s, ok := raw.(string)
+	if !ok {
+		return nil, false
+	}
+	if s == "" {
+		return nil, true
+	}
+	if len(s) > 10 && s[10] == 'T' {
+		if _, e := time.Parse(time.RFC3339, s); e != nil {
+			return nil, false
+		}
+		s = s[:10]
+	}
+	if len(s) != 10 {
+		return nil, false
+	}
+	if _, e := time.Parse("2006-01-02", s); e != nil {
+		return nil, false
+	}
+	return &s, true
 }

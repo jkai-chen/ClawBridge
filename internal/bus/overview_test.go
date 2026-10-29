@@ -203,7 +203,7 @@ func TestProjectOverviewShowsProvenGates(t *testing.T) {
 	h.s.SetIssueMoveProven(true)
 	h.s.SetProjectTeamAddProven(true)
 	gates := h.overview("")["proven_gates"].([]map[string]any)
-	want := []string{"project_flow off", "issue_subscribers off", "issue_move on", "issue_family_move off", "project_team_add on", "project_status_domain off"}
+	want := []string{"project_flow off", "issue_subscribers off", "issue_move on", "issue_family_move off", "project_team_add on", "project_status_domain off", "project_plan off"}
 	if len(gates) != len(want) {
 		t.Fatal(gates)
 	}

@@ -259,6 +259,9 @@ func TestWriteArgsRoundTrip(t *testing.T) {
 		{WriteInput: WriteInput{Operation: "comment", OperationID: "c-2", IssueID: issueID, Body: "reply"}, Parent: linearprovider.Field[*string]{Present: true, Value: text(parentA)}, InResponseTo: parentA},
 		{WriteInput: WriteInput{Operation: "create", OperationID: "n-1", Title: text("t"), Description: text(""), StateID: text(memberA)}, TeamID: teamID, Project: linearprovider.Field[*string]{Present: true, Value: text(projectA)}, Labels: linearprovider.Field[[]string]{Present: true, Value: []string{labelA}}, Assignee: linearprovider.Field[*string]{Present: true, Value: text(memberA)}},
 		{WriteInput: WriteInput{Operation: "update", OperationID: "u-1", IssueID: issueID, Title: text("new")}, ExpectedTitle: text("old"), ExpectedDescriptionSHA256: text("abc"), Project: linearprovider.Field[*string]{Present: true}, Parent: linearprovider.Field[*string]{Present: true}, Assignee: linearprovider.Field[*string]{Present: true}, Labels: linearprovider.Field[[]string]{Present: true, Value: []string{}}, ExpectedLabels: linearprovider.Field[[]string]{Present: true, Value: []string{labelA}}},
+		{WriteInput: WriteInput{Operation: "update", OperationID: "u-3", IssueID: issueID}, DueDate: linearprovider.Field[*string]{Present: true, Value: text("2026-11-14")}},
+		{WriteInput: WriteInput{Operation: "update", OperationID: "u-4", IssueID: issueID}, DueDate: linearprovider.Field[*string]{Present: true}},
+		{WriteInput: WriteInput{Operation: "create", OperationID: "n-2", Title: text("t")}, TeamID: teamID, DueDate: linearprovider.Field[*string]{Present: true, Value: text("2026-11-14")}},
 		{WriteInput: WriteInput{Operation: "update", OperationID: "u-2", IssueID: issueID}, AddLabels: []string{labelA}, RemoveLabels: []string{}},
 	} {
 		got, e := parseWriteArgsV2(in.Operation, writeArgsV2(in))

@@ -91,6 +91,10 @@ with `--team-without-project`, then this tool adds it, or the owner puts it on
 one project in Linear first and links it. Tell the human when that's what an
 issue needs. Until a bound project carries such a team, its issues are refused
 with `team_without_project`: nothing is read or written there.
+After you evaluate a project (or your lane's part of it), preview its priority,
+target date and start date with `taskboard_project_plan_v2`, confirm inside your
+lane, and comment on the project or its tracking issue why. Others preview and
+ask.
 
 ## Claims
 

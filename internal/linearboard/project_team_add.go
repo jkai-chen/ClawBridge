@@ -377,7 +377,7 @@ func confirmerEligible(ctx context.Context, p Provider) error {
 		for _, u := range got.Items {
 			if u.ID == me.ID {
 				if !u.Eligible() {
-					return errors.New("a team's lead adds their team only as an active, non-guest Linear user, and Linear doesn't say you are one; nothing was sent")
+					return errors.New("a team's lead confirms this only as an active, non-guest Linear user, and Linear doesn't say you are one; nothing was sent")
 				}
 				return nil
 			}

@@ -206,6 +206,10 @@ type linearFlags struct {
 	kindGroup, kindValues                                                                                                string
 	kindCanary, kindSkipCanary                                                                                           bool
 	priority                                                                                                             string
+	dueDate                                                                                                              string
+	clearDueDate                                                                                                         bool
+	targetDate, startDate                                                                                                string
+	clearTargetDate, clearStartDate                                                                                      bool
 	subscribersSince                                                                                                     string
 	subscribersApply                                                                                                     bool
 	lanes                                                                                                                []string
@@ -259,6 +263,8 @@ func parseLinear(command string, args []string, stderr io.Writer) (linearFlags, 
 		f.StringVar(&v.parent, "parent", "", "in-scope parent issue UUID")
 		f.StringVar(&v.assignee, "assignee", "", "canonical active member UUID of the effective team")
 		f.StringVar(&v.priority, "priority", "", "Linear priority: none, urgent, high, medium or low (or 0-4)")
+		f.StringVar(&v.dueDate, "due-date", "", "issue due date, YYYY-MM-DD")
+		f.BoolVar(&v.clearDueDate, "clear-due-date", false, "explicitly clear the due date (update only)")
 	}
 	min, max := 0, 0
 	switch command {
@@ -482,7 +488,12 @@ func parseLinear(command string, args []string, stderr io.Writer) (linearFlags, 
 	case "project-update":
 		write()
 		f.StringVar(&v.addTeam, "add-team", "", "the bound write team's UUID to add to the project (never a name)")
-		f.BoolVar(&v.confirm, "confirm", false, "add the team the preview showed")
+		f.StringVar(&v.priority, "priority", "", "the project's priority: none, urgent, high, medium or low (or 0-4)")
+		f.StringVar(&v.targetDate, "target-date", "", "the project's target date, YYYY-MM-DD")
+		f.BoolVar(&v.clearTargetDate, "clear-target-date", false, "clear the project's target date")
+		f.StringVar(&v.startDate, "start-date", "", "the project's start date, YYYY-MM-DD")
+		f.BoolVar(&v.clearStartDate, "clear-start-date", false, "clear the project's start date")
+		f.BoolVar(&v.confirm, "confirm", false, "add the team, or set the plan, the preview showed")
 		f.StringVar(&v.expectedSHA, "expected-plan-sha256", "", "--confirm: the plan_sha256 the preview showed")
 		min, max = 1, 1
 	case "project-creates":
@@ -634,10 +645,13 @@ func parseLinear(command string, args []string, stderr io.Writer) (linearFlags, 
 		for _, pair := range []struct {
 			set, clear string
 			active     bool
-		}{{"linear-project", "clear-project", v.clearProject}, {"label", "clear-labels", v.clearLabels}, {"parent", "clear-parent", v.clearParent}, {"assignee", "clear-assignee", v.clearAssignee}} {
+		}{{"linear-project", "clear-project", v.clearProject}, {"label", "clear-labels", v.clearLabels}, {"parent", "clear-parent", v.clearParent}, {"assignee", "clear-assignee", v.clearAssignee}, {"due-date", "clear-due-date", v.clearDueDate}} {
 			if v.supplied[pair.set] && pair.active {
 				return v, nil, errors.New("set and clear flags conflict")
 			}
+		}
+		if command == "create" && v.clearDueDate {
+			return v, nil, errors.New("a new issue has no due date to clear")
 		}
 		for _, value := range []struct{ key, id string }{{"linear-project", v.project}, {"parent", v.parent}, {"assignee", v.assignee}, {"team", v.team}, {"state", v.state}, {"reply-to", v.replyTo}, {"in-response-to", v.inResponseTo}} {
 			if v.supplied[value.key] && !linearprovider.ValidID(value.id) {
@@ -678,15 +692,23 @@ func parseLinear(command string, args []string, stderr io.Writer) (linearFlags, 
 		}
 		sort.Strings(v.expectedLabels)
 		if command == "update" {
-			changed := v.clearProject || v.clearLabels || v.clearParent || v.clearAssignee
+			changed := v.clearProject || v.clearLabels || v.clearParent || v.clearAssignee || v.clearDueDate
 			f.Visit(func(fl *flag.Flag) {
-				if fl.Name == "title" || fl.Name == "description" || fl.Name == "description-file" || fl.Name == "state" || fl.Name == "linear-project" || fl.Name == "label" || fl.Name == "add-label" || fl.Name == "remove-label" || fl.Name == "parent" || fl.Name == "assignee" || fl.Name == "priority" {
+				if fl.Name == "title" || fl.Name == "description" || fl.Name == "description-file" || fl.Name == "state" || fl.Name == "linear-project" || fl.Name == "label" || fl.Name == "add-label" || fl.Name == "remove-label" || fl.Name == "parent" || fl.Name == "assignee" || fl.Name == "priority" || fl.Name == "due-date" {
 					changed = true
 				}
 			})
 			if !changed {
 				return v, nil, errors.New("update requires explicit changed fields")
 			}
+		}
+	}
+	if command == "project-update" {
+		if v.supplied["target-date"] && v.clearTargetDate || v.supplied["start-date"] && v.clearStartDate {
+			return v, nil, errors.New("set and clear flags conflict: give a date or its clear, not both")
+		}
+		if v.supplied["add-team"] && projectPlanFlags(v) {
+			return v, nil, errors.New("linear project update adds a team (--add-team) or sets plan fields (--priority, --target-date, --start-date), never both in one call")
 		}
 	}
 	if min > 0 && command != "label" && command != "project" && command != "initiative" && !linearprovider.ValidID(pos[0]) {
@@ -895,6 +917,16 @@ func linearWriteInput(command string, v linearFlags, pos []string) (linearboard.
 		}
 		writeInput.Priority = &n
 	}
+	if v.supplied["due-date"] {
+		d, e := linearboard.ParseDueDate(v.dueDate)
+		if e != nil {
+			return writeInput, e
+		}
+		writeInput.DueDate = linearprovider.Field[*string]{Present: true, Value: &d}
+	}
+	if v.clearDueDate {
+		writeInput.DueDate = linearprovider.Field[*string]{Present: true}
+	}
 	if err = linearboard.ValidateWriteV2(writeInput); err != nil {
 		return writeInput, err
 	}
@@ -906,7 +938,7 @@ func linearWriteInput(command string, v linearFlags, pos []string) (linearboard.
 var linearInternalCommands = map[string]string{
 	"project-status":    "project status LINEAR_PROJECT [--suggest], or project status set LINEAR_PROJECT --type TYPE --operation-id ID",
 	"project-creates":   "project creates (or writes)",
-	"project-update":    "project update LINEAR_PROJECT --add-team TEAM",
+	"project-update":    "project update LINEAR_PROJECT --add-team TEAM, or project update LINEAR_PROJECT --priority P --target-date D --start-date D --operation-id ID",
 	"project-team-adds": "project team-adds",
 	"initiative-show":   "initiative show INITIATIVE",
 	"view-list":         "view list",
@@ -919,7 +951,7 @@ var linearInternalCommands = map[string]string{
 
 func runLinear(ctx context.Context, flags Config, args []string, stdout, stderr io.Writer) error {
 	if len(args) == 0 || len(args) == 1 && (args[0] == "--help" || args[0] == "-h" || args[0] == "help") {
-		_, err := io.WriteString(stdout, "clawbridge linear connect|import|profiles|status|logout|teams|projects|binding|link|seed-docs|unlink|names-refresh|context|issues|issue|states|labels|members|create|update|comment|relation|move|watch\nMove an issue to another bound team: move ISSUE_UUID --team UUID [--operation-id ID --confirm --expected-plan-sha256 SHA]; without --confirm it is a preview. The project owner or a project lead (the ClawBridge project role) confirms from their own terminal, or the coordinator session within its lane.\nProject owner only: label create|rename, project create [--kind NAME], initiative create|add-project, label-policy show|set, status-policy show|set, doc-policy set, health set|enable|disable, admin audit-replay.\nProject kinds (a project-label group such as Type): kind show (any member); kind set --values A,B,C [--group NAME] [--team UUID] --expected-revision N, then kind seed --operation-id ID --profile ID [--confirm] makes or adopts its project labels, and kind apply --file F --operation-id ID --profile ID [--confirm --canary] sets each project's kind (project owner, own terminal).\nA coordinator's projects: the project's designated coordinator session (while the dispatcher is on, a domain's) runs project create NAME --team UUID --kind NAME --operation-id ID in its lane's default team; project creates lists them and the unconfirmed ones (any member); project creates --ack OPERATION_ID (project owner, own terminal) clears one you checked in Linear.\nLinear writes that may have happened, of every kind (a create, a move, a team added; unsettled or uncertain), and issue writes (create, update, comment, relation) this machine or the server holds uncertain: writes (any member); writes --ack OPERATION_ID (project owner, or the project lead who confirmed it; own terminal; your own issue writes too) clears one you checked in Linear, a family's with its sub-issues.\nLanes (a binding's --lane NAME=TEAM,…): lanes show (any member); lanes pin --pin-session NAME|--pin-principal EMAIL --lane NAME --expected-revision N [--confirm], lanes unpin … (project owner, own terminal).\nTeam roles (who leads each bound team; lead, engineer or reviewer): roles show (any member); roles person|lead|set ... --expected-revision N [--confirm] (project owner, own terminal); roles project-lead on|off and roles apply-leads set Linear project leads from them. linear roles --help for more.\nShown names: names-refresh (project owner or lead) stores the bound teams' and projects' current names, as Linear gives them to you.\nWho closes issues: closes show (any member); closes set (project owner or lead, never a session).\nProject status follows the work (status policy project_flow): project-flow resume --linear-project UUID (project owner or lead, never a session) clears a hold.\nProject health (any member): health show.\nWho hears of agents' issues (hosted, as the app): subscribers show (any member); subscribers on|off, owner on|off, add|remove LINEAR_USER_UUID, backfill --since DATE [--apply] (project owner or lead, never a session).\nLinear views (any member): view list [--team UUID] [--type issue|project], view show ID. Project owner, own terminal, with your Linear API key: view create --team UUID [--kind project]|update ID|delete ID|apply --file F [--adopt NAME].\nLinear documents (any member): doc list|get, initiative show, doc-policy show. Project owner or lead: doc publish FILE.\nYour name in agent markers: display-name set NAME|clear|capture --profile ID.\nYour Linear API key, for view writes (project owner, own terminal): key set|status|remove --profile ID.\nUse COMMAND --help for explicit flags. Token import accepts --token-stdin only.\n")
+		_, err := io.WriteString(stdout, "clawbridge linear connect|import|profiles|status|logout|teams|projects|binding|link|seed-docs|unlink|names-refresh|context|issues|issue|states|labels|members|create|update|comment|relation|move|watch\nMove an issue to another bound team: move ISSUE_UUID --team UUID [--operation-id ID --confirm --expected-plan-sha256 SHA]; without --confirm it is a preview. The project owner or a project lead (the ClawBridge project role) confirms from their own terminal, or the coordinator session within its lane.\nA Linear project's priority and dates: project update PROJECT_UUID [--priority P] [--target-date D|--clear-target-date] [--start-date D|--clear-start-date] --operation-id ID [--confirm --expected-plan-sha256 SHA]; without --confirm it is a preview. The project owner, a project lead or a team's lead in the team roles confirms from their own terminal, or the coordinator session (or a session of a team's lead) within its lane; anyone else previews and asks.\nProject owner only: label create|rename, project create [--kind NAME], initiative create|add-project, label-policy show|set, status-policy show|set, doc-policy set, health set|enable|disable, admin audit-replay.\nProject kinds (a project-label group such as Type): kind show (any member); kind set --values A,B,C [--group NAME] [--team UUID] --expected-revision N, then kind seed --operation-id ID --profile ID [--confirm] makes or adopts its project labels, and kind apply --file F --operation-id ID --profile ID [--confirm --canary] sets each project's kind (project owner, own terminal).\nA coordinator's projects: the project's designated coordinator session (while the dispatcher is on, a domain's) runs project create NAME --team UUID --kind NAME --operation-id ID in its lane's default team; project creates lists them and the unconfirmed ones (any member); project creates --ack OPERATION_ID (project owner, own terminal) clears one you checked in Linear.\nLinear writes that may have happened, of every kind (a create, a move, a team added; unsettled or uncertain), and issue writes (create, update, comment, relation) this machine or the server holds uncertain: writes (any member); writes --ack OPERATION_ID (project owner, or the project lead who confirmed it; own terminal; your own issue writes too) clears one you checked in Linear, a family's with its sub-issues.\nLanes (a binding's --lane NAME=TEAM,…): lanes show (any member); lanes pin --pin-session NAME|--pin-principal EMAIL --lane NAME --expected-revision N [--confirm], lanes unpin … (project owner, own terminal).\nTeam roles (who leads each bound team; lead, engineer or reviewer): roles show (any member); roles person|lead|set ... --expected-revision N [--confirm] (project owner, own terminal); roles project-lead on|off and roles apply-leads set Linear project leads from them. linear roles --help for more.\nShown names: names-refresh (project owner or lead) stores the bound teams' and projects' current names, as Linear gives them to you.\nWho closes issues: closes show (any member); closes set (project owner or lead, never a session).\nProject status follows the work (status policy project_flow): project-flow resume --linear-project UUID (project owner or lead, never a session) clears a hold.\nProject health (any member): health show.\nWho hears of agents' issues (hosted, as the app): subscribers show (any member); subscribers on|off, owner on|off, add|remove LINEAR_USER_UUID, backfill --since DATE [--apply] (project owner or lead, never a session).\nLinear views (any member): view list [--team UUID] [--type issue|project], view show ID. Project owner, own terminal, with your Linear API key: view create --team UUID [--kind project]|update ID|delete ID|apply --file F [--adopt NAME].\nLinear documents (any member): doc list|get, initiative show, doc-policy show. Project owner or lead: doc publish FILE.\nYour name in agent markers: display-name set NAME|clear|capture --profile ID.\nYour Linear API key, for view writes (project owner, own terminal): key set|status|remove --profile ID.\nUse COMMAND --help for explicit flags. Token import accepts --token-stdin only.\n")
 		return err
 	}
 	command := args[0]
@@ -1304,6 +1336,10 @@ func runLinear(ctx context.Context, flags Config, args []string, stdout, stderr 
 	case "label", "project":
 		if adminAction == "status" {
 			data, err = linearProjectStatus(bounded, service, scope, flags, v, pos[0])
+			break
+		}
+		if adminAction == "update" && projectPlanFlags(v) {
+			data, err = linearProjectPlan(bounded, service, scope, v, pos[0])
 			break
 		}
 		if adminAction == "update" {

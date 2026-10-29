@@ -17,7 +17,7 @@ import (
 var sha256Pattern = regexp.MustCompile(`\A[0-9a-f]{64}\z`)
 
 func legacyOnlyV2(in WriteInputV2) bool {
-	return in.TeamID == "" && !in.Project.Present && !in.Labels.Present && !in.ExpectedLabels.Present && !in.Parent.Present && !in.Assignee.Present && in.Priority == nil && in.ExpectedTitle == nil && in.ExpectedDescriptionSHA256 == nil && in.AddLabels == nil && in.RemoveLabels == nil && in.InResponseTo == ""
+	return in.TeamID == "" && !in.Project.Present && !in.Labels.Present && !in.ExpectedLabels.Present && !in.Parent.Present && !in.Assignee.Present && in.Priority == nil && !in.DueDate.Present && in.ExpectedTitle == nil && in.ExpectedDescriptionSHA256 == nil && in.AddLabels == nil && in.RemoveLabels == nil && in.InResponseTo == ""
 }
 
 // labelPlanV2 is the part of the requested label deltas that would change the
@@ -133,6 +133,12 @@ func ValidateWriteV2(in WriteInputV2) error {
 	}
 	if in.StateID != nil && !linearprovider.ValidID(*in.StateID) {
 		return errors.New("state requires UUID")
+	}
+	if (!in.DueDate.Present && in.DueDate.Value != nil) || (in.DueDate.Value != nil && !validDueDate(*in.DueDate.Value)) {
+		return errDueDate
+	}
+	if in.Operation == "create" && in.DueDate.Present && in.DueDate.Value == nil {
+		return errors.New("a new issue has no due date to clear")
 	}
 	for _, f := range []linearprovider.Field[*string]{in.Project, in.Parent, in.Assignee} {
 		if (!f.Present && f.Value != nil) || (f.Present && f.Value != nil && !linearprovider.ValidID(*f.Value)) {
@@ -528,9 +534,12 @@ func (s *Service) writeV2Personal(ctx context.Context, scope bus.Request, in Wri
 	}
 	// A request whose only intent is label deltas that are already in effect
 	// is recorded as observed_unchanged and sends nothing.
-	unchanged := deltas && plan.empty() && in.Title == nil && in.Description == nil && in.StateID == nil && !in.Project.Present && !in.Parent.Present && !in.Assignee.Present && in.Priority == nil
+	unchanged := deltas && plan.empty() && in.Title == nil && in.Description == nil && in.StateID == nil && !in.Project.Present && !in.Parent.Present && !in.Assignee.Present && in.Priority == nil && !in.DueDate.Present
 	if in.Priority != nil && !caps.Priority {
 		return nil, errors.New("provider cannot set an issue's priority; nothing was sent")
+	}
+	if in.DueDate.Present && !caps.DueDate {
+		return nil, errors.New("this Linear connection can't set a due date; nothing was sent")
 	}
 	if in.Assignee.Present {
 		if !caps.Assignee {
@@ -630,13 +639,13 @@ func (s *Service) writeV2Personal(ctx context.Context, scope bus.Request, in Wri
 				if in.StateID != nil {
 					state = *in.StateID
 				}
-				create := linearprovider.CreateInputV2{CreateInput: linearprovider.CreateInput{TeamID: team, ProjectID: project, Title: *in.Title, Description: description, StateID: state}, Project: in.Project, Labels: in.Labels, Parent: in.Parent, Assignee: in.Assignee, Priority: in.Priority}
+				create := linearprovider.CreateInputV2{CreateInput: linearprovider.CreateInput{TeamID: team, ProjectID: project, Title: *in.Title, Description: description, StateID: state}, Project: in.Project, Labels: in.Labels, Parent: in.Parent, Assignee: in.Assignee, Priority: in.Priority, DueDate: in.DueDate}
 				if verifiedParent {
 					create = create.WithSameDestinationParent()
 				}
 				e = validation.ValidateCreateV2(create)
 			} else if in.Operation == "update" && !unchanged {
-				update := linearprovider.UpdateInputV2{UpdateInput: linearprovider.UpdateInput{ID: in.IssueID, Title: in.Title, Description: in.Description, StateID: in.StateID}, Project: in.Project, Labels: in.Labels, Parent: in.Parent, Assignee: in.Assignee, Priority: in.Priority, AddLabels: nonEmptyV2(plan.Add), RemoveLabels: nonEmptyV2(plan.Remove)}
+				update := linearprovider.UpdateInputV2{UpdateInput: linearprovider.UpdateInput{ID: in.IssueID, Title: in.Title, Description: in.Description, StateID: in.StateID}, Project: in.Project, Labels: in.Labels, Parent: in.Parent, Assignee: in.Assignee, Priority: in.Priority, DueDate: in.DueDate, AddLabels: nonEmptyV2(plan.Add), RemoveLabels: nonEmptyV2(plan.Remove)}
 				if verifiedParent {
 					update = update.WithSameDestinationParent()
 				}
@@ -707,7 +716,7 @@ func (s *Service) writeV2Personal(ctx context.Context, scope bus.Request, in Wri
 				issue.Issue = i
 				issue.ProjectKnown = true
 			} else {
-				create := linearprovider.CreateInputV2{CreateInput: base, Project: in.Project, Labels: in.Labels, Parent: in.Parent, Assignee: in.Assignee, Priority: in.Priority}
+				create := linearprovider.CreateInputV2{CreateInput: base, Project: in.Project, Labels: in.Labels, Parent: in.Parent, Assignee: in.Assignee, Priority: in.Priority, DueDate: in.DueDate}
 				if verifiedParent {
 					create = create.WithSameDestinationParent()
 				}
@@ -740,7 +749,7 @@ func (s *Service) writeV2Personal(ctx context.Context, scope bus.Request, in Wri
 				issue.Issue = i
 				issue.ProjectKnown = true
 			} else {
-				update := linearprovider.UpdateInputV2{UpdateInput: base, Project: in.Project, Labels: in.Labels, Parent: in.Parent, Assignee: in.Assignee, Priority: in.Priority, AddLabels: nonEmptyV2(plan.Add), RemoveLabels: nonEmptyV2(plan.Remove)}
+				update := linearprovider.UpdateInputV2{UpdateInput: base, Project: in.Project, Labels: in.Labels, Parent: in.Parent, Assignee: in.Assignee, Priority: in.Priority, DueDate: in.DueDate, AddLabels: nonEmptyV2(plan.Add), RemoveLabels: nonEmptyV2(plan.Remove)}
 				if verifiedParent {
 					update = update.WithSameDestinationParent()
 				}
@@ -991,6 +1000,19 @@ func receiptFieldsV2(issue linearprovider.IssueV2, in WriteInputV2, legacy bool)
 		case !issue.PriorityKnown || issue.Priority == nil:
 			unverified = append(unverified, "priority")
 		case *issue.Priority != *in.Priority:
+			return nil, mismatch
+		}
+	}
+	if in.DueDate.Present {
+		want := ""
+		if in.DueDate.Value != nil {
+			want = *in.DueDate.Value
+		}
+		got := ""
+		if issue.DueDate != nil {
+			got = *issue.DueDate
+		}
+		if !issue.DueDateKnown || got != want {
 			return nil, mismatch
 		}
 	}

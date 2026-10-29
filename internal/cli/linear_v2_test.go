@@ -353,6 +353,52 @@ func TestLinearV2Priority(t *testing.T) {
 	}
 }
 
+// --due-date takes YYYY-MM-DD on create and update, --clear-due-date clears
+// it on an update and counts as its change, and a bad value, or both flags,
+// is refused before any connection.
+func TestLinearV2DueDate(t *testing.T) {
+	const a = "11111111-1111-4111-8111-111111111111"
+	base := []string{"--profile", "native", "--operation-id", "p"}
+	build := func(command string, extra ...string) (linearboard.WriteInputV2, error) {
+		args := append(append([]string{}, base...), extra...)
+		if command == "create" {
+			args = append(args, "--title", "new")
+		} else {
+			args = append([]string{a}, args...)
+		}
+		v, pos, err := parseLinear(command, args, &bytes.Buffer{})
+		if err != nil {
+			return linearboard.WriteInputV2{}, err
+		}
+		return linearWriteInput(command, v, pos)
+	}
+	for _, command := range []string{"create", "update"} {
+		input, err := build(command, "--due-date", "2026-11-14")
+		if err != nil || !input.DueDate.Present || input.DueDate.Value == nil || *input.DueDate.Value != "2026-11-14" {
+			t.Fatal(command, input.DueDate, err)
+		}
+	}
+	// An update with only a due date, or only a clear, is a change.
+	input, err := build("update", "--clear-due-date")
+	if err != nil || !input.DueDate.Present || input.DueDate.Value != nil {
+		t.Fatal("clear:", input.DueDate, err)
+	}
+	if input, err = build("update", "--title", "t"); err != nil || input.DueDate.Present {
+		t.Fatal("due date invented", input.DueDate, err)
+	}
+	if _, err = build("update", "--due-date", "2026-11-14", "--clear-due-date"); err == nil {
+		t.Fatal("both flags accepted")
+	}
+	if _, err = build("create", "--clear-due-date"); err == nil {
+		t.Fatal("create took --clear-due-date")
+	}
+	for _, bad := range []string{"2026-02-30", "tomorrow", "2026-11-14T00:00:00Z", "1999-01-01", ""} {
+		if _, err = build("update", "--due-date", bad); err == nil || !strings.Contains(err.Error(), "due date") {
+			t.Fatal(bad, err)
+		}
+	}
+}
+
 // linear move takes the issue, --team, and on a confirm the operation ID
 // and the preview's plan digest; its help touches nothing.
 func TestLinearMoveParses(t *testing.T) {

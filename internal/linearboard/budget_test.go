@@ -115,6 +115,10 @@ func TestEveryAgentWriteToolIsBudgeted(t *testing.T) {
 			_, e := s.ExecuteV2(context.Background(), scope, "project_add_team", map[string]any{"linear_project": projectA, "team_id": teamID, "operation_id": "op-taskboard_project_add_team_v2", "confirm": true, "expected_plan_sha256": strings.Repeat("a", 64)})
 			return e
 		}},
+		"taskboard_project_plan_v2": {"project_plan", func(s *Service) error {
+			_, e := s.ExecuteV2(context.Background(), scope, "project_plan", map[string]any{"linear_project": projectA, "priority": 2, "operation_id": "op-taskboard_project_plan_v2", "confirm": true, "expected_plan_sha256": strings.Repeat("a", 64)})
+			return e
+		}},
 	}
 	elsewhere := map[string]func(*Service) error{
 		// The server's app sets it, charged there.

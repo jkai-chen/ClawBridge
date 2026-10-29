@@ -30,7 +30,7 @@ ALTER TABLE watch_lease ADD COLUMN budget_agents INTEGER NOT NULL DEFAULT 0;
 // linearWriteCallFloor is the fewest calls each kind of write makes: the
 // write, and its read-back where it always reads back.
 var linearWriteCallFloor = map[string]int{
-	"create": 2, "update": 2, "comment": 2, "relation": 2, "project_create": 2, "project_team_add": 2,
+	"create": 2, "update": 2, "comment": 2, "relation": 2, "project_create": 2, "project_team_add": 2, "project_plan": 2,
 	"document": 2, "project_lead": 1, "view": 1, "subscribe": 1, "admin": 1,
 }
 
@@ -57,7 +57,7 @@ func (s *Store) linearWriteCharge(ctx context.Context, tx *transaction, pid, pro
 	kind := str(a, "kind")
 	floor, ok := linearWriteCallFloor[kind]
 	if !ok {
-		return nil, invalid("kind must be one of create, update, comment, relation, project_create, project_team_add, document, project_lead, view, subscribe or admin")
+		return nil, invalid("kind must be one of create, update, comment, relation, project_create, project_team_add, project_plan, document, project_lead, view, subscribe or admin")
 	}
 	calls := 0
 	if v, ok := a["calls"]; ok {

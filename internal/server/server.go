@@ -566,6 +566,7 @@ func NewHandlerWithOptions(store Executor, verifier Verifier, o HandlerOptions) 
 		}
 		var result bus.Result
 		var err error
+		request = planReserveRequest(r.Context(), writer, request)
 		if request.Operation == "linear_write" || request.Operation == "linear_app_status" || request.Operation == "linear_app_states" || request.Operation == "linear_app_project_status" || request.Operation == "linear_app_project_status_set" || request.Operation == "linear_app_subscribers_backfill" || request.Operation == "linear_write_status" {
 			result, err = writer.Execute(r.Context(), verified, request)
 		} else if bound, ok := store.(IdentityExecutor); ok {
@@ -739,6 +740,7 @@ func Run(ctx context.Context, args []string) error {
 	store.SetIssueMoveProven(settings.IssueMoveProven)
 	store.SetProjectTeamAddProven(settings.ProjectTeamAddProven)
 	store.SetProjectStatusDomainProven(settings.ProjectStatusDomainProven)
+	store.SetProjectPlanProven(settings.ProjectPlanProven)
 	store.SetIssueFamilyMoveProven(settings.IssueFamilyMoveProven)
 	writer, err := appWriter(store)
 	if err != nil {
@@ -1110,6 +1112,11 @@ type ServeSettings struct {
 	// set by the operator after the probe that the app's project.teams lists
 	// a private team the app isn't a member of.
 	ProjectStatusDomainProven bool
+	// ProjectPlanProven lets a Linear project's priority, target date and
+	// start date be confirmed (FR13): serve --project-plan-proven or
+	// CLAWBRIDGE_PROJECT_PLAN_PROVEN=1, set by the operator after the plan
+	// probe. Previews work without it.
+	ProjectPlanProven bool
 	// IssueFamilyMoveProven lets a family move (a parent with its
 	// sub-issues) be confirmed too: serve --issue-family-move-proven or
 	// CLAWBRIDGE_ISSUE_FAMILY_MOVE_PROVEN=1, after the family probe. It
@@ -1135,6 +1142,7 @@ func ParseServe(args []string, getenv func(string) string) (ServeSettings, error
 	subscribersProven := f.Bool("issue-subscribers-proven", false, "let projects subscribe their people to agents' issues; set only after the live check proves the app may (also CLAWBRIDGE_ISSUE_SUBSCRIBERS_PROVEN=1)")
 	familyProven := f.Bool("issue-family-move-proven", false, "let a family move (a parent with its sub-issues) be confirmed; set only after the family probe proves it (also CLAWBRIDGE_ISSUE_FAMILY_MOVE_PROVEN=1)")
 	moveProven := f.Bool("issue-move-proven", false, "let an issue's team move be confirmed; set only after the move probe proves it (also CLAWBRIDGE_ISSUE_MOVE_PROVEN=1)")
+	planProven := f.Bool("project-plan-proven", false, "let the project owner, a lead, a team's lead or the coordinator set a Linear project's priority, target date and start date; set only after the plan probe proves it (also CLAWBRIDGE_PROJECT_PLAN_PROVEN=1)")
 	teamAddProven := f.Bool("project-team-add-proven", false, "let the project owner, a lead or the coordinator add a bound team to a Linear project; set only after the team-add probe proves it (also CLAWBRIDGE_PROJECT_TEAM_ADD_PROVEN=1)")
 	statusDomainProven := f.Bool("project-status-domain-proven", false, "let a dispatcher domain's coordinator set a Linear project's status inside its lane; set only after the probe shows the app's project teams list a private team the app isn't a member of (also CLAWBRIDGE_PROJECT_STATUS_DOMAIN_PROVEN=1)")
 	if err := f.Parse(args); err != nil {
@@ -1150,7 +1158,7 @@ func ParseServe(args []string, getenv func(string) string) (ServeSettings, error
 	if err != nil {
 		return ServeSettings{}, err
 	}
-	out := ServeSettings{Listen: *listen, BootstrapOwner: *owner, DatabaseURLEnv: *dsnEnv, Auth: AuthOptions{Methods: methods}, ProjectFlowProven: *flowProven, IssueSubscribersProven: *subscribersProven, ProjectTeamAddProven: *teamAddProven, ProjectStatusDomainProven: *statusDomainProven}
+	out := ServeSettings{Listen: *listen, BootstrapOwner: *owner, DatabaseURLEnv: *dsnEnv, Auth: AuthOptions{Methods: methods}, ProjectFlowProven: *flowProven, IssueSubscribersProven: *subscribersProven, ProjectTeamAddProven: *teamAddProven, ProjectStatusDomainProven: *statusDomainProven, ProjectPlanProven: *planProven}
 	switch v := getenv("CLAWBRIDGE_PROJECT_FLOW_PROVEN"); v {
 	case "":
 	case "1", "true":
@@ -1191,6 +1199,14 @@ func ParseServe(args []string, getenv func(string) string) (ServeSettings, error
 	case "0", "false":
 	default:
 		return ServeSettings{}, errors.New("CLAWBRIDGE_PROJECT_STATUS_DOMAIN_PROVEN is 1 or 0")
+	}
+	switch v := getenv("CLAWBRIDGE_PROJECT_PLAN_PROVEN"); v {
+	case "":
+	case "1", "true":
+		out.ProjectPlanProven = true
+	case "0", "false":
+	default:
+		return ServeSettings{}, errors.New("CLAWBRIDGE_PROJECT_PLAN_PROVEN is 1 or 0")
 	}
 	out.IssueFamilyMoveProven = *familyProven
 	switch v := getenv("CLAWBRIDGE_ISSUE_FAMILY_MOVE_PROVEN"); v {

@@ -942,7 +942,8 @@ ended.
 | `--parent UUID` | Scoped, acyclic parent in the child's own team and project; a parent in another team or project is refused |
 | `--assignee UUID` | Explicit eligible team member; no agent claim or permission change |
 | `--priority none\|urgent\|high\|medium\|low` (or `0`–`4`) | Linear's priority, on create or update: 0 none, 1 urgent, 2 high, 3 medium, 4 low (`normal` is medium). Sent only when the Linear tool takes a priority on both create and update; otherwise refused and nothing is sent. The returned issue is checked: another priority makes the write uncertain, and a priority Linear doesn't report is listed under `unverified` |
-| Update `--clear-project`, `--clear-labels`, `--clear-parent`, `--clear-assignee` | Explicit clearing; project clear is limited to team-board mode |
+| `--due-date YYYY-MM-DD` | The issue's due date, on create or update: a real calendar date from 2000-01-01 to 2100-12-31, nothing else (no time, no "tomorrow"). Sent only when the Linear tool takes a due date on both create and update, including null on update; otherwise refused with "this Linear connection can't set a due date; nothing was sent". The returned issue is checked: another date, or no date reported, makes the write uncertain (`receipt_mismatch`, field `due_date`). The MCP create and update tools take `due_date` (a string, or null to clear it) |
+| Update `--clear-project`, `--clear-labels`, `--clear-parent`, `--clear-assignee`, `--clear-due-date` | Explicit clearing; project clear is limited to team-board mode. `--clear-due-date` (or `due_date: null`) is for an update; a new issue has nothing to clear, and `--due-date` with `--clear-due-date` is refused |
 
 A parent is accepted only when it shares the child's effective team and project.
 Linear can pass a parent's team and project on to a sub-issue, so this restriction
@@ -1126,7 +1127,7 @@ parent with its sub-issues).
   Linear's answer to the move was an error. The result is
   `accepted` only when the same issue is in the target team under a new
   identifier, with the planned state and labels, no cycle, and its assignee,
-  project, parent, priority and estimate unchanged. Linear refusing the move
+  project, parent, priority, due date and estimate unchanged. Linear refusing the move
   outright, with the issue (for a family, every child too) still in its team,
   is `not_sent`. Anything else is
   `uncertain`, with the fields it couldn't prove; it is never sent again.
@@ -1490,6 +1491,96 @@ clawbridge linear project team-adds                 # any member: the adds, and 
   `serve --project-team-add-proven` after the team-add probe. The preview always
   works.
 - History records the add by IDs and changed field names only, never names.
+
+### Setting a project's priority and dates
+
+`linear project update` also sets a Linear project's priority, target date and
+start date, after someone has evaluated the work. It is a project-level write:
+only the fields given are sent, and nothing else changes.
+
+```sh
+clawbridge linear project update PROJECT_UUID [--priority none|urgent|high|medium|low|0-4] \
+  [--target-date YYYY-MM-DD | --clear-target-date] [--start-date YYYY-MM-DD | --clear-start-date] \
+  --operation-id ID --profile PROFILE_ID
+clawbridge linear project update PROJECT_UUID ... --operation-id ID --profile PROFILE_ID \
+  --confirm --expected-plan-sha256 SHA
+```
+
+Agents use `taskboard_project_plan_v2` (`priority` an integer or a name;
+`target_date` and `start_date` a date, or null to clear).
+
+- **One thing per call.** A call adds a team (`--add-team`) or sets plan
+  fields, never both. A date and its clear can't go together either.
+- **The checks, before anything is sent.** The binding must be a project set
+  and the project one of its projects, taken by UUID. At least one field is
+  given, the priority is 0–4 or its name, and the dates are real `YYYY-MM-DD`
+  dates. The start date may not come after the target date, checked on the
+  dates the project would end up with: a target date given alone is compared
+  with the start date the project has. A Linear connection whose `save_project`
+  can't take the fields is refused: "this Linear connection can't set project
+  …; nothing was sent".
+- **Date precision.** Linear keeps a date with a precision (a day, month,
+  quarter, half-year or year), and ClawBridge sends only a day's date. When the
+  date being set or cleared is held at another precision than a day, the plan
+  is refused: "this project's target date is a quarter in Linear; change its
+  precision there first". The preview shows that precision.
+- **Who confirms.** Anyone may preview. The server decides who confirms, from
+  its own records, never from the client:
+
+  | Who | Where | Recorded as |
+  | --- | --- | --- |
+  | The project owner | their own terminal, no session | `owner` |
+  | A project lead (ClawBridge project role `lead`) | their own terminal, no session | `project_lead` |
+  | A team's lead in the [team roles](#team-roles-project-owner-and-leads-for-their-teams), of a write team the project holds | their own terminal, no session, while Linear states them an active, non-guest user | `team_lead` |
+  | The project's designated coordinator session | inside its lane: the project holds one of its lane's write teams | `coordinator` |
+  | A session owned by a team's lead in the team roles | inside a lane that holds that team, which the project holds | `team_lead_session` |
+  | While the dispatcher is on, a domain's coordinator session | inside its lane, for a project whose teams are **all** write teams of its lane, as the server's own app read of the project's teams shows them (a partial or empty read is refused); only after the operator's `--project-status-domain-proven`, as for its project status set | `coordinator` |
+
+  In a binding without lanes no session sets a plan (`outside_lane`); the
+  owner, a lead or a team's lead does, in their own terminal. A command an agent
+  runs without a session (its person's shell) is refused. Everyone else gets
+  the preview with `ask` and the reason, and asks the project owner or a lead.
+  The write goes through the confirming person's own Linear profile, never the
+  ClawBridge app.
+- **Preview, then confirm.** The preview reads the project and prints each
+  field's current and planned value, who confirms, what is sent and
+  `plan_sha256`, a digest of the project, its teams, the planned values and the
+  current values read. It sends nothing. The confirm repeats the same command
+  with `--confirm` and that digest. If the project's values changed since, it is
+  refused: "the project changed since the preview; preview again".
+- **The record comes first.** Before anything is sent, the server reserves the
+  plan by its operation ID, in the same ledger as team adds (`linear writes`),
+  with the field names only; the plan's values are never stored. The lane and
+  the binding are checked again right before the send. After the send, the
+  project is read back (again after 2 s and 4 s more if a field isn't there
+  yet) before the reservation is settled, and the settled outcome never
+  changes:
+  - `accepted`: every field reads back as sent, and nothing else changed;
+  - `accepted_with_changes`: the fields are set, and Linear also changed others
+    (`changed` names them: `lead`, `status`, `startDateResolution`, ...).
+    ClawBridge never undoes Linear's changes. A planned date whose precision
+    stays a day is not a change;
+  - `not_sent`: Linear refused the write, and the project reads as before;
+  - `uncertain`: a field doesn't read back as sent, the project couldn't be
+    read back, or a plan field this plan didn't send changed too. It is never
+    sent again: read the project in Linear and tell the owner.
+- **Counted and acknowledged.** The overview (`project_plans`) and doctor's
+  `linear.project_plans` count the plans Linear answered with other fields
+  changed (`accepted_with_changes`), and doctor names each until it is
+  acknowledged with `linear writes --ack OP_ID`; uncertain plans show in
+  `linear writes` the same way. Who acknowledges a plan, always in their own
+  terminal (a session never acknowledges):
+  - the project owner, any plan;
+  - a project lead, the plans they confirmed (`project_lead`);
+  - a team's lead, the plans they confirmed in their own terminal
+    (`team_lead`) and those their own sessions confirmed (`team_lead_session`).
+- **Off until proven.** A server refuses every confirm
+  (`project_plan_unproven`) until its operator sets
+  `serve --project-plan-proven` (or `CLAWBRIDGE_PROJECT_PLAN_PROVEN=1`) after
+  the plan probe. The preview always works.
+- History records the plan by IDs and field names only: the project, who
+  confirmed (a session with its owning person), the lane, the fields and the
+  changed names. Never a value or a title.
 
 ## Team roles (project owner, and leads for their teams)
 

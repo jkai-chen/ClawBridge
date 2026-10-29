@@ -118,3 +118,10 @@ func TestStartRefusesOtherAnswersAndFlags(t *testing.T) {
 		t.Fatal(err, out.String())
 	}
 }
+
+func TestStartCommandsNameTheInviteLinkFirst(t *testing.T) {
+	want := "with an invite link: clawbridge join (paste the link); with an invite code: clawbridge --server URL join --email EMAIL"
+	if !strings.Contains(startCommands, want) {
+		t.Fatal(startCommands)
+	}
+}

@@ -29,7 +29,7 @@ Linear issues, and work as a team. Pick how you want to start:
 const startCommands = `
 Without a terminal, run the command for your choice:
   1. clawbridge setup --local --name WORKSPACE --project PROJECT, then clawbridge project create PROJECT
-  2. with an invite: clawbridge --server URL join --email EMAIL (asks for the code);
+  2. with an invite link: clawbridge join (paste the link); with an invite code: clawbridge --server URL join --email EMAIL (asks for the code);
      with Google sign-in: clawbridge setup join --server URL --workspace TEAM --project CODEBASE [--device]
   3. see docs/operations/first-deployment.md; check each step with clawbridge cloud check
 Run clawbridge onboard in a terminal to choose interactively, or clawbridge help for every command.

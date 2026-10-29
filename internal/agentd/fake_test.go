@@ -45,7 +45,9 @@ type fakeDaemon struct {
 	failStop, failRemove, failNetworkDelete, exitOnStart map[string]bool
 	// missingImages are images the daemon doesn't have; it has all others.
 	missingImages map[string]bool
-	attachStatus  int
+	// vanishOnInspect: networks that are listed, then gone when inspected.
+	vanishOnInspect map[string]bool
+	attachStatus    int
 	// slow delays every answer; set before the daemon serves.
 	slow time.Duration
 }
@@ -118,6 +120,9 @@ func (f *fakeDaemon) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusCreated)
 		f.bodies[n.Name] = body
 	case parts[0] == "networks" && len(parts) >= 2:
+		if r.Method == http.MethodGet && f.vanishOnInspect[parts[1]] {
+			delete(f.networks, parts[1])
+		}
 		n := f.networks[parts[1]]
 		if n == nil {
 			w.WriteHeader(http.StatusNotFound)
@@ -153,7 +158,8 @@ func (f *fakeDaemon) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			w.WriteHeader(http.StatusOK)
 		case "POST disconnect":
 			if !n.members[c.Container] {
-				w.WriteHeader(http.StatusNotFound)
+				// What Docker 29 answers (agentd-rootless CI): not 404.
+				w.WriteHeader(http.StatusInternalServerError)
 				return
 			}
 			delete(n.members, c.Container)

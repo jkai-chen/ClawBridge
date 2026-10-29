@@ -185,6 +185,8 @@ func (d *docker) connectEgress(ctx context.Context, ref string) error {
 	return err
 }
 
+// disconnectEgress takes the egress proxy off ref's network. Call it only
+// when the proxy is on it: Docker answers otherwise with a 500.
 func (d *docker) disconnectEgress(ctx context.Context, ref string) error {
 	_, err := d.call(ctx, http.MethodPost, "/networks/"+networkName(ref)+"/disconnect", connectSpec{Container: egressName}, http.StatusNotFound)
 	return err

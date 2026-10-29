@@ -660,6 +660,41 @@ func TestReconcileRemovesLeftoverNetworks(t *testing.T) {
 	}
 }
 
+// A leftover network the egress proxy isn't on is removed without a
+// disconnect, which Docker would answer with a 500 (agentd-rootless CI); one
+// gone by the time it is inspected is freed, with no failed action.
+func TestReconcileRemovesNetworksWithoutEgress(t *testing.T) {
+	s := newStack(t)
+	s.daemon.containers = map[string]string{egressName: "running"}
+	s.daemon.networks = map[string]*fakeNet{
+		egressNetName:     {subnet: "172.31.255.0/28", members: map[string]bool{}},
+		networkName(refA): {subnet: subnet0, members: map[string]bool{}},
+		networkName(refB): {subnet: subnet1, members: map[string]bool{}},
+	}
+	s.daemon.vanishOnInspect = map[string]bool{networkName(refB): true}
+	r := newTestReconciler(s, &fakeServer{max: 2})
+	if err := r.Step(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	got := s.daemon.state()
+	if _, ok := got[networkName(refA)]; ok {
+		t.Fatalf("kept: %v", got)
+	}
+	for _, subnet := range []string{subnet0, subnet1} {
+		if _, ok := r.freed[netip.MustParsePrefix(subnet)]; !ok {
+			t.Fatalf("%s is not quarantined", subnet)
+		}
+	}
+	for _, q := range s.daemon.seen() {
+		if strings.Contains(q, "/disconnect") || strings.Contains(q, "DELETE /networks/"+networkName(refB)) {
+			t.Fatalf("called %s", q)
+		}
+	}
+	if strings.Contains(s.log.String(), "action failed") {
+		t.Fatal(s.log.String())
+	}
+}
+
 // An owner network already there on another subnet is replaced, so the
 // policy names the subnet the agent is really on [R90-M3].
 func TestReconcileReplacesANetworkOnAnotherSubnet(t *testing.T) {

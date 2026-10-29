@@ -233,6 +233,30 @@ jobs:
           persist-credentials: false
       # The egress container's image, run with the fixed spec's hardening.
       - run: bash cmd/clawbridge-agentd/scripts/image-test.sh
+  agentd-rootless:
+    if: ${{ github.event.repository.private == false }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5.5.0
+        with:
+          go-version-file: go.mod
+          cache: false
+      # agentd installed as docs/operations/agentd.md says, under a real
+      # rootless daemon, against a fake server: no provider and no key.
+      - name: Install agentd (setup.sh)
+        run: sudo --preserve-env=GITHUB_ACTIONS,PATH bash integration/agentd-rootless/setup.sh
+      - name: Probe the boundaries (probe.sh)
+        run: sudo --preserve-env=GITHUB_ACTIONS,GITHUB_STEP_SUMMARY bash integration/agentd-rootless/probe.sh
+      - name: Logs
+        if: always()
+        run: |
+          sudo journalctl -u clawbridge-agentd -u clawbridge-agentd-proxy --no-pager -n 200 || true
+          sudo journalctl _UID=$(id -u cbagent 2>/dev/null || echo 0) --no-pager -n 100 || true
+          sudo cat /var/tmp/agentd-ci/fakelauncher.log || true
   dispatcher-agent-container:
     needs: changes
     if: ${{ github.event.repository.private == false && needs.changes.outputs.node == 'true' }}

@@ -266,6 +266,9 @@ jobs:
       - name: Native Windows CLI-owned stdin regressions
         shell: pwsh
         run: go test ./internal/cli -run '^TestLinearImportReader' -count=1
+      - name: Native Windows self-update (rename a running binary aside)
+        shell: pwsh
+        run: go test ./internal/selfupdate -count=1
       # Each step from here reports on its own; the job still fails if any does.
       - name: Guided setup typed into a real Windows console (ConPTY)
         if: ${{ !cancelled() }}

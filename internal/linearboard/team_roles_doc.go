@@ -419,7 +419,15 @@ func renderTeamRoles(m teamRolesMapping, bound []string, teamNames map[string]st
 		}
 		return "Team " + t
 	}
-	sort.Slice(teams, func(i, j int) bool { return title(teams[i]) < title(teams[j]) })
+	// By title, then by ID: two teams may share a name, and the teams come
+	// from a map, so without the ID the order (and the document's digest)
+	// could change between two publishes of the same roles.
+	sort.Slice(teams, func(i, j int) bool {
+		if a, b := title(teams[i]), title(teams[j]); a != b {
+			return a < b
+		}
+		return teams[i] < teams[j]
+	})
 	var b strings.Builder
 	b.WriteString("Who leads each team and each person's role, as ClawBridge holds them.\n")
 	if len(teams) == 0 {

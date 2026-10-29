@@ -617,12 +617,18 @@ CLAWBRIDGE_WATCH_INTERVAL=15m
   markers. The comment watch stops polling with 10 s of the share left
   (`comments_stopped: deadline`); the issues it didn't reach stay due, and the
   next tick goes on with them, so a large budget, or none, can't starve the
-  rest. A poll the share cuts still reports, so its calls are charged. A step
-  that fails is recorded and the next still runs; a share that runs out is
-  recorded as `deadline`. A pass of 5 s or more logs each step's time and its
-  share (`watcher: tick: project … took …ms of its …ms share: comments …, intake
-  …`). The watcher's reads reuse a verified binding for 20 minutes, across
-  ticks; a relink or a failed check drops it, and writes always verify.
+  rest. A poll the share cuts still reports, so its calls are charged. Intake
+  reads its sources oldest cursor first and starts a source, or its next page,
+  only with 8 s of the share left; one it can't start keeps its cursor and goes
+  first next tick (`deferred_sources`), so a project with many teams and
+  projects catches up over a few ticks instead of failing. The steps after the
+  comment watch leave the last 3 s to the claim markers. A step that fails is
+  recorded and the next still runs; a share that runs out is recorded as
+  `deadline`. A pass of 5 s or more logs each step's time and its share
+  (`watcher: tick: project … took …ms of its …ms share: comments …, intake …ms
+  (S1 …ms, S2 …ms, S3 …ms), …`). The watcher's reads reuse a verified binding
+  for 20 minutes, across ticks; a relink or a failed check drops it, and writes
+  always verify.
 - **Queued writes.** The server sends queued agent writes every 5 seconds as
   Linear and each project's budget allow (docs/linear.md, "Queued writes").
 - **Clients.** While the server's ticks for a project are fresh, a client

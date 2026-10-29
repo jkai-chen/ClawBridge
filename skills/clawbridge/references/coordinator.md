@@ -80,6 +80,9 @@ When an issue must move to a team its project doesn't include, add your lane's
 team to the project with `taskboard_project_add_team_v2`, previewing first:
 only to a project that already holds one of your lane's teams. Never in Linear's
 UI, and never a removal; any other add is the owner's or a lead's.
+A team the binding doesn't hold yet can't be added this way: the owner puts it
+on one project in Linear first and links it, and then this tool adds it to the
+others. Tell the human when that's what an issue needs.
 
 ## Claims
 

@@ -1287,6 +1287,11 @@ clawbridge linear project team-adds                 # any member: the adds, and 
   one of its projects, and the team one of its write teams. A team board has no
   projects, so it is refused. A team already in the project is `already`, and
   nothing is sent.
+- **A brand-new team.** A project set links only teams that one of its
+  projects already carries, so a team the binding doesn't hold yet can't be
+  added this way. To add a new team, put it on one bound project in Linear
+  first, then link the binding again with the team; `--add-team` does the rest
+  for every later project.
 - **Who confirms.** Anyone may preview. The server decides who confirms:
   - the project owner or a lead, in their own terminal without a session;
   - the added team's own lead in the [team roles](#team-roles-project-owner-and-leads-for-their-teams):

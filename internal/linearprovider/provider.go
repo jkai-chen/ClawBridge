@@ -1547,6 +1547,21 @@ func (p *Provider) Issues(ctx context.Context, q IssueQuery) (Page[Issue], error
 	}
 	return out, nil
 }
+
+// writtenIssue parses a write's answer. Linear leaves `project` out of the
+// answer for an issue in no project, so an answer missing its scope is read
+// again by UUID, as the list paths do, and the read is what's checked.
+func (p *Provider) writtenIssue(ctx context.Context, m map[string]any) (Issue, error) {
+	x, e := p.parseIssue(ctx, m)
+	if pe, ok := e.(*Error); ok && pe.Kind == "scope_metadata_missing" {
+		canonical, identityErr := entityID(m, "issueId")
+		if identityErr != nil {
+			return Issue{}, identityErr
+		}
+		return p.GetIssue(ctx, canonical)
+	}
+	return x, e
+}
 func (p *Provider) GetIssue(ctx context.Context, i string) (Issue, error) {
 	if !ValidID(i) {
 		return Issue{}, fail("invalid")
@@ -1621,7 +1636,7 @@ func (p *Provider) Create(ctx context.Context, in CreateInput) (Issue, error) {
 	if e != nil {
 		return Issue{}, e
 	}
-	x, e := p.parseIssue(ctx, unwrap(m, "issue"))
+	x, e := p.writtenIssue(ctx, unwrap(m, "issue"))
 	if e == nil && (x.TeamID != in.TeamID || x.ProjectID != in.ProjectID) {
 		e = fail("scope_mismatch")
 	}
@@ -1651,7 +1666,7 @@ func (p *Provider) Update(ctx context.Context, in UpdateInput) (Issue, error) {
 	if e != nil {
 		return Issue{}, e
 	}
-	x, e := p.parseIssue(ctx, unwrap(m, "issue"))
+	x, e := p.writtenIssue(ctx, unwrap(m, "issue"))
 	if e == nil && x.ID != in.ID {
 		e = fail("scope_mismatch")
 	}

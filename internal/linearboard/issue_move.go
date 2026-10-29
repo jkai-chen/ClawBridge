@@ -197,22 +197,31 @@ func (s *Service) MoveIssueV2(ctx context.Context, scope bus.Request, in MoveInp
 	}
 	moved, sendErr := mover.MoveV2(ctx, send)
 	s.wrote(plan.IssueID)
-	if sendErr != nil {
-		out.Outcome = "uncertain"
-		out.Note = "Linear's answer to the move was an error; it may or may not have moved; read the issue in Linear; nothing is retried"
-		return out, errors.Join(sendErr, settle("uncertain", ""))
-	}
-	back, e := p2.IssueV2(ctx, plan.IssueID)
-	if e != nil {
+	// The read-back comes before the settle, whatever Linear answered, so
+	// the settle states what the read shows: an answer that failed to
+	// parse may still have moved the issue. Only a definite refusal with
+	// the issue still in its team is not_sent (as FR10's F1).
+	back, readErr := p2.IssueV2(ctx, plan.IssueID)
+	switch {
+	case readErr != nil:
 		out.Outcome = "uncertain"
 		out.Unverified = []string{"read-back"}
-		return out, errors.Join(e, settle("uncertain", ""))
+		out.Note = "the issue couldn't be read back after the move was sent; it may or may not have moved; read the issue in Linear; nothing is retried"
+		return out, errors.Join(sendErr, readErr, settle("uncertain", ""))
+	case sendErr != nil && definiteRefusal(sendErr) && back.TeamID == plan.FromTeam:
+		out.Outcome = "not_sent"
+		out.Note = "Linear refused the move, and the issue is still in its team"
+		return out, errors.Join(sendErr, settle("not_sent", ""))
 	}
 	out.Unverified = moveReadBackV2(plan, moved, back)
 	out.NewIdentifier = back.Identifier
 	out.Outcome = "accepted"
 	if len(out.Unverified) > 0 {
 		out.Outcome = "uncertain"
+		if sendErr != nil {
+			out.Note = "Linear's answer to the move was an error, and the read-back doesn't show the move as planned; read the issue in Linear; nothing is retried"
+			return out, errors.Join(sendErr, settle("uncertain", ""))
+		}
 	}
 	if e = settle(out.Outcome, out.NewIdentifier); e != nil {
 		return out, fmt.Errorf("the move was sent (%s) but not settled on the server: %w", out.Outcome, e)

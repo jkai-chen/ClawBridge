@@ -21,8 +21,10 @@ type fake struct {
 	calls  []string
 	args   []map[string]any
 	result any
-	err    error
-	next   string
+	// results answers a tool by name, before result.
+	results map[string]any
+	err     error
+	next    string
 }
 
 func (f *fake) ListTools(context.Context, *mcp.ListToolsParams) (*mcp.ListToolsResult, error) {
@@ -33,6 +35,9 @@ func (f *fake) CallTool(_ context.Context, p *mcp.CallToolParams) (*mcp.CallTool
 	f.args = append(f.args, p.Arguments.(map[string]any))
 	if f.err != nil {
 		return nil, f.err
+	}
+	if r, ok := f.results[p.Name]; ok {
+		return &mcp.CallToolResult{StructuredContent: r}, nil
 	}
 	return &mcp.CallToolResult{StructuredContent: f.result}, nil
 }

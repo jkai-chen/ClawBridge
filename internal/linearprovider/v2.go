@@ -813,6 +813,19 @@ func nativeRelationsV2(self Issue, native map[string]any) []Relation {
 
 // IssueV2 reads one issue by UUID or by display identifier. An identifier read
 // must return that exact identifier together with a canonical UUID.
+// writtenIssueV2 is writtenIssue for the V2 tools: an answer missing its
+// scope (no `project` for an issue in no project) is read again by UUID.
+func (p *Provider) writtenIssueV2(ctx context.Context, m map[string]any) (IssueV2, error) {
+	x, e := p.parseIssueV2(ctx, m)
+	if pe, ok := e.(*Error); ok && pe.Kind == "scope_metadata_missing" {
+		canonical, identityErr := entityID(m, "issueId")
+		if identityErr != nil {
+			return IssueV2{}, identityErr
+		}
+		return p.IssueV2(ctx, canonical)
+	}
+	return x, e
+}
 func (p *Provider) IssueV2(ctx context.Context, id string) (IssueV2, error) {
 	byIdentifier := !ValidID(id)
 	if byIdentifier && !ValidIssueIdentifier(id) {
@@ -1298,7 +1311,7 @@ func (p *Provider) CreateV2(ctx context.Context, in CreateInputV2) (IssueV2, err
 	if e != nil {
 		return IssueV2{}, e
 	}
-	x, e := p.parseIssueV2(ctx, unwrap(m, "issue"))
+	x, e := p.writtenIssueV2(ctx, unwrap(m, "issue"))
 	if e != nil {
 		return IssueV2{}, e
 	}
@@ -1370,7 +1383,7 @@ func (p *Provider) UpdateV2(ctx context.Context, in UpdateInputV2) (IssueV2, err
 	if e != nil {
 		return IssueV2{}, e
 	}
-	x, e := p.parseIssueV2(ctx, unwrap(m, "issue"))
+	x, e := p.writtenIssueV2(ctx, unwrap(m, "issue"))
 	if e != nil {
 		return IssueV2{}, e
 	}

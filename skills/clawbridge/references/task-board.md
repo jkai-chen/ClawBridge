@@ -258,7 +258,8 @@ As the coordinator:
   keeps opening the issue in Linear.
 
 A changed plan is refused, so preview again. An `uncertain` move is never sent
-again: read the issue first. `issue_move_unproven` means the server's operator
+again: read the issue first. A `not_sent` move is one Linear refused, with the
+issue still in its team: tell the human why before trying again. `issue_move_unproven` means the server's operator
 hasn't turned moves on yet; tell the human.
 
 A project includes the teams its issues may be in. To add a bound write team to

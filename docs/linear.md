@@ -137,6 +137,7 @@ adapter. Existing host credentials are not copied into ClawBridge automatically.
 ```sh
 clawbridge linear issues --profile PROFILE_ID --limit 50
 clawbridge linear issue ISSUE_UUID --profile PROFILE_ID
+clawbridge linear issue ENG-88 --profile PROFILE_ID
 clawbridge mcp install --agent codex --session engineer \
   --linear-profile PROFILE_ID --dry-run
 ```
@@ -512,6 +513,27 @@ rows keep `labels_known: false`.
 
 `linear issue ISSUE_UUID --comments` (MCP `comments: true`) also returns the
 issue's comments; a plain read never reads them.
+
+`linear issue` (and MCP `taskboard_issue_v2`'s `id`) takes the issue's UUID or its
+display identifier, such as `ENG-88`, with all its flags. A UUID is read as before. An
+identifier is first resolved by an authoritative Linear read through your profile, under
+the binding's own checks, so an issue outside the binding is refused exactly as its UUID
+would be. A stale identifier is refused, never followed: if Linear now returns another
+identifier for it (the issue moved teams), the answer is `ENG-88 now resolves to OPS-5;
+use that identifier or the UUID`. When Linear reports the issue as not found, the answer
+is `no issue ENG-88 in this binding`; any other refusal from Linear is passed through as it
+is. The output is unchanged and carries both `id` and `identifier`. Every other command
+(`update`, `comment`, `move`, `relation`) still takes the UUID. An identifier read costs
+what a UUID read costs (one connection, one binding check, one issue read); the issue it
+returns supplies the UUID for the comments that follow. `assignment propose
+--issue-identifier` makes that one read and no other.
+
+`clawbridge assignment propose --issue-identifier ENG-88 --linear-profile PROFILE_ID`
+(without `--issue-uuid`) resolves the identifier the same way and sends the server both
+the UUID and the current identifier. With `--issue-uuid`, nothing is read from Linear. The
+MCP `assignment_propose` does the same with `issue_identifier` alone when its server was
+started with a Linear profile (`mcp install --linear-profile`); otherwise it still needs
+`issue_uuid`.
 
 - **Scope.** The issue read runs first and stays the scope proof. Comments are
   then read by the proven issue UUID. Linear's comment rows name no issue, so the

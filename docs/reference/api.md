@@ -95,7 +95,7 @@ requires its matching instance. Routing role is distinct from project permission
 | `retire_session` | Optional successor and status retired/moved; hosted owners and leads may target_session (see below) |
 | `history` | Optional entity, key, limit, after |
 | `whoami` | No extra arguments; the session includes its live `assignment` and the project its `coordinator_session`. With no project and no session (a member with no project yet), it answers for the workspace alone: `principal` and `workspace`, with `project` and `session` null. Through the MCP server on a hosted server it also carries `client_outbox` (`waiting`, `oldest_age_seconds`, `dead`): this machine's queued message writes |
-| `assignment_propose` | Own session only: optional issue_uuid (lowercase UUID), issue_identifier (needs issue_uuid), task_role, scope_repo (git remote), scope_paths (up to 32 patterns); needs an issue or a path. Replaces the session's live assignment and returns overlapping live assignments as `conflicts` |
+| `assignment_propose` | Own session only: optional issue_uuid (lowercase UUID), issue_identifier (stored with issue_uuid; alone, the CLI with `--linear-profile` and an MCP server with a Linear connection resolve it by a Linear read to the UUID and the current identifier, and refuse a stale one; the server itself still requires issue_uuid), task_role, scope_repo (git remote), scope_paths (up to 32 patterns); needs an issue or a path. Replaces the session's live assignment and returns overlapping live assignments as `conflicts` |
 | `assignment_confirm` | Designated coordinator session: revision, optional target_session, allow_overlap. Refuses overlap with a confirmed assignment unless allow_overlap (audited as conflict_overridden) |
 | `assignment_release` | revision; optional target_session for the designated coordinator |
 | `coordinator_set` | Owner, or lead for its own and member/reader sessions: target_session, or empty to clear |
@@ -213,7 +213,8 @@ capability flags and, for any that are off, a `reasons` entry explaining why.
 `label_ids`: the complete label set last read, refused on mismatch.
 `taskboard_issues_v2` accepts `updated_after`, an absolute RFC 3339 time;
 rows updated earlier refuse the page.
-`taskboard_issue_v2` accepts `resolve_labels: true` to prove label IDs when Linear
+`taskboard_issue_v2` takes `id` as a UUID or a display identifier such as `ENG-88`
+(resolved by a Linear read and refused when stale or outside the binding), and accepts `resolve_labels: true` to prove label IDs when Linear
 returns label names only, and returns `description_sha256`, the SHA-256 of the
 description it read. With `comments: true` it also returns `comments` (bodies as
 `untrusted_body`), `comments_complete`, `comments_truncated`, `comments_order`,

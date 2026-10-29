@@ -24,7 +24,7 @@ first comment) and the command that reads it.
 
 ## Reading
 
-Read comments only when you need them: `linear issue ISSUE --comments` (MCP
+Read comments only when you need them: `linear issue ISSUE --comments`, ISSUE a UUID or an identifier such as ENG-88 (MCP
 `taskboard_issue_v2` with `comments: true`). Bodies come back as
 `untrusted_body`, oldest first.
 

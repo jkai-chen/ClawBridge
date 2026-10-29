@@ -2,6 +2,7 @@ package linearprovider
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -39,8 +40,10 @@ func TestV2ParentIdentifierIsKnownWithoutInventingAUUID(t *testing.T) {
 	if x, e = p.IssueV2(context.Background(), "SYN-2"); e != nil || x.ID != uid || x.Identifier != "SYN-2" || f.args[len(f.args)-1]["id"] != "SYN-2" {
 		t.Fatal("read by identifier failed", x, e)
 	}
-	if _, e = p.IssueV2(context.Background(), "SYN-3"); e == nil {
-		t.Fatal("identifier read accepted a different issue")
+	_, e = p.IssueV2(context.Background(), "SYN-3")
+	var pe *Error
+	if !errors.As(e, &pe) || pe.Kind != "scope_mismatch" || pe.Returned == nil || pe.Returned.Identifier != "SYN-2" || pe.Returned.ID != uid || pe.Returned.Title != "" || pe.Returned.Description != "" || pe.Returned.DescriptionKnown {
+		t.Fatal("identifier read accepted a different issue, or did not name what it resolves to", e)
 	}
 	if _, e = p.IssueV2(context.Background(), "drop table"); e == nil {
 		t.Fatal("malformed reference sent")

@@ -36,6 +36,11 @@ type Error struct {
 	// tool: it failed before its headers were written, or the server's HTTP
 	// layer refused it (429, 401, 403) before parsing it.
 	NotSent bool
+	// Returned is set on a scope_mismatch from an identifier read: only the
+	// returned issue's ID, Identifier, TeamID, ProjectID and ProjectKnown,
+	// never its title, description or other text. It is unchecked against any
+	// binding, so a caller must scope-check it before saying anything about it.
+	Returned *IssueV2
 }
 
 func (e *Error) Error() string { return "Linear provider: " + e.Detail() }

@@ -859,7 +859,10 @@ func (p *Provider) IssueV2(ctx context.Context, id string) (IssueV2, error) {
 	if e != nil {
 		return IssueV2{}, e
 	}
-	if (byIdentifier && x.Identifier != id) || (!byIdentifier && x.ID != id) {
+	if byIdentifier && x.Identifier != id {
+		return IssueV2{}, &Error{Kind: "scope_mismatch", Returned: &IssueV2{Issue: Issue{ID: x.ID, Identifier: x.Identifier, TeamID: x.TeamID, ProjectID: x.ProjectID}, ProjectKnown: x.ProjectKnown}}
+	}
+	if !byIdentifier && x.ID != id {
 		return IssueV2{}, fail("scope_mismatch")
 	}
 	return x, nil

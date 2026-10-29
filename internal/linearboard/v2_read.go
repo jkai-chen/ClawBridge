@@ -916,28 +916,126 @@ func (s *Service) IssueV2ResolvedLabels(ctx context.Context, scope bus.Request, 
 // comments. The issue read stays the scope proof: comments are read only
 // after it passes, by the proven issue UUID.
 func (s *Service) IssueV2WithComments(ctx context.Context, scope bus.Request, id string, in CommentsInputV2) (IssueCommentsV2, error) {
-	if !linearprovider.ValidID(id) {
-		return IssueCommentsV2{}, errors.New("issue requires immutable UUID")
+	// The watermark is bound to the issue's UUID. A UUID is checked now, before
+	// any Linear call; an identifier is checked once its read returns the UUID.
+	var since *string = &in.Since
+	if linearprovider.ValidID(id) {
+		if _, e := linearprovider.ParseCommentsSince(id, in.Since); e != nil {
+			return IssueCommentsV2{}, e
+		}
 	}
-	since, e := linearprovider.ParseCommentsSince(id, in.Since)
-	if e != nil {
-		return IssueCommentsV2{}, e
-	}
-	issue, comments, e := s.issueV2(ctx, scope, id, in.ResolveLabels, &since)
+	issue, comments, e := s.issueV2(ctx, scope, id, in.ResolveLabels, since)
 	if e != nil {
 		return IssueCommentsV2{}, e
 	}
 	out := IssueCommentsV2{IssueV2: issue, Comments: comments, CommentsOwnership: "unavailable"}
-	out.Items, out.own = s.commentOwners(ctx, scope, id, comments.Items)
+	out.Items, out.own = s.commentOwners(ctx, scope, issue.ID, comments.Items)
 	if out.own.available {
 		out.CommentsOwnership, out.CommentsYoungPending = "available", out.own.youngPending
 	}
 	return out, nil
 }
-func (s *Service) issueV2(ctx context.Context, scope bus.Request, id string, resolve bool, comments *linearprovider.CommentsSince) (issue linearprovider.IssueV2, out linearprovider.Comments, e error) {
+
+// errIssueRef is the refusal for a reference that is neither a UUID nor an
+// issue identifier.
+var errIssueRef = errors.New("issue requires its UUID or an identifier like ENG-88")
+
+// IssueRef turns an issue reference into the issue's UUID. A UUID passes
+// through with no Linear call and an empty identifier. An identifier such as
+// ENG-88 is resolved by an authoritative read through the person's profile
+// under the binding's own checks, so an issue outside the binding is refused
+// exactly as its UUID would be. A stale identifier (Linear now returns another
+// one for it) is refused, never silently followed.
+func (s *Service) IssueRef(ctx context.Context, scope bus.Request, ref string) (id, identifier string, e error) {
+	if linearprovider.ValidID(ref) {
+		return ref, "", nil
+	}
+	if !linearprovider.ValidIssueIdentifier(ref) {
+		return "", "", errIssueRef
+	}
+	b, e := s.BindingV2(ctx, scope)
+	if e != nil {
+		return "", "", e
+	}
+	_, p, done, e := s.open(ctx)
+	if e != nil {
+		return "", "", e
+	}
+	defer done()
+	v, e := s.verifyReadBindingV2(ctx, p, b)
+	if e != nil {
+		return "", "", e
+	}
+	p2, ok := p.(ProviderV2)
+	if !ok {
+		return "", "", errors.New("native provider lacks V2 issue capability")
+	}
+	issue, e := s.readRefV2(ctx, p2, b, v, ref)
+	if e != nil {
+		return "", "", e
+	}
+	if e = s.unchangedV2(ctx, scope, b); e != nil {
+		return "", "", e
+	}
+	return issue.ID, issue.Identifier, nil
+}
+
+// readRefV2 is the one authoritative read of an issue by UUID or identifier,
+// judged against the verified binding. IssueRef and issueV2 both use it, so
+// their refusals and their order cannot drift. An identifier Linear no longer
+// gives to that issue is refused, never followed, and the issue Linear
+// returned is named only once it passes the binding check a UUID read gets.
+func (s *Service) readRefV2(ctx context.Context, p ProviderV2, b bus.TaskboardBindingV2, v verifiedV2, ref string) (linearprovider.IssueV2, error) {
 	empty := linearprovider.IssueV2{}
-	if !linearprovider.ValidID(id) {
-		return empty, out, errors.New("issue requires immutable UUID")
+	byUUID := linearprovider.ValidID(ref)
+	issue, e := s.readIssue(ctx, p, ref)
+	var returned *linearprovider.IssueV2
+	if e != nil {
+		var pe *linearprovider.Error
+		if byUUID || !errors.As(e, &pe) {
+			return empty, e
+		}
+		switch {
+		case pe.Kind == "scope_mismatch":
+			returned = pe.Returned
+		case pe.Kind == "provider_rejected" && strings.Contains(pe.LinearCode, "NOT_FOUND"):
+			return empty, fmt.Errorf("no issue %s in this binding", ref)
+		default:
+			return empty, e
+		}
+	} else if byUUID && issue.ID != ref {
+		return empty, errors.New("provider returned another issue")
+	} else if !byUUID && issue.Identifier != ref {
+		returned = &issue
+	}
+	if e != nil || returned != nil {
+		if returned == nil {
+			return empty, fmt.Errorf("%s no longer names the issue Linear returned; use its current identifier or the UUID", ref)
+		}
+		if e = checkReadIssueV2(*returned, b, v); e != nil {
+			return empty, e
+		}
+		if linearprovider.ValidIssueIdentifier(returned.Identifier) {
+			return empty, fmt.Errorf("%s now resolves to %s; use that identifier or the UUID", ref, returned.Identifier)
+		}
+		return empty, fmt.Errorf("%s no longer names the issue Linear returned; use its current identifier or the UUID", ref)
+	}
+	if !linearprovider.ValidID(issue.ID) {
+		return empty, errors.New("provider returned another issue")
+	}
+	if e = checkReadIssueV2(issue, b, v); e != nil {
+		return empty, e
+	}
+	return issue, nil
+}
+
+// issueV2 reads one issue by UUID or identifier inside a single connection and
+// binding check. since, when set, is the comments_since text of a comments
+// read; it is bound to the UUID the read returns.
+func (s *Service) issueV2(ctx context.Context, scope bus.Request, id string, resolve bool, since *string) (issue linearprovider.IssueV2, out linearprovider.Comments, e error) {
+	empty := linearprovider.IssueV2{}
+	if !linearprovider.ValidID(id) && !linearprovider.ValidIssueIdentifier(id) {
+		return empty, out, errIssueRef
 	}
 	b, e := s.BindingV2(ctx, scope)
 	if e != nil {
@@ -956,15 +1054,17 @@ func (s *Service) issueV2(ctx context.Context, scope bus.Request, id string, res
 	if !ok {
 		return empty, out, errors.New("native provider lacks V2 issue capability")
 	}
-	issue, e = s.readIssue(ctx, p2, id)
+	issue, e = s.readRefV2(ctx, p2, b, v, id)
 	if e != nil {
 		return empty, out, e
 	}
-	if issue.ID != id {
-		return empty, out, errors.New("provider returned another issue")
-	}
-	if e = checkReadIssueV2(issue, b, v); e != nil {
-		return empty, out, e
+	var comments *linearprovider.CommentsSince
+	if since != nil {
+		parsed, e := linearprovider.ParseCommentsSince(issue.ID, *since)
+		if e != nil {
+			return empty, out, e
+		}
+		comments = &parsed
 	}
 	if resolve {
 		if issue, e = resolveLabelsV2(ctx, p2, issue); e != nil {

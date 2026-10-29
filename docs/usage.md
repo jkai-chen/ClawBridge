@@ -613,6 +613,9 @@ machine's outbox and answers `queued_local`:
 clawbridge: the server is unreachable; send op-… is queued on this machine (position 1) and will be sent when it's back; don't resend it with a new operation ID
 ```
 
+A mark-read has no operation ID, so its line names the messages it marks
+instead ("mark-read of MESSAGE_ID is queued…; don't run it again").
+
 It is sent, in order and exactly once, when the server answers again: by your
 agent's MCP server within seconds, by the next `clawbridge` command, or now with
 `clawbridge outbox flush`. Only those four kinds wait; a decision, handoff or

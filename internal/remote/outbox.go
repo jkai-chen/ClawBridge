@@ -245,7 +245,7 @@ func (c *Client) queue(ctx context.Context, ob *outbox.Store, r bus.Request, why
 		return bus.Result{}, errors.New("cloud write failed or its outcome is uncertain; no write queued (" + reason + "); preserve the operation ID for an identical retry and tell the human")
 	}
 	op, _ := r.Args["operation_id"].(string)
-	message := fmt.Sprintf("%s; %s %s is queued on this machine (position %d) and will be sent when it's back; don't resend it with a new operation ID", why, r.Operation, op, q.Position)
+	message := fmt.Sprintf("%s; %s is queued on this machine (position %d) and will be sent when it's back; %s", why, queuedWhat(r, op), q.Position, queuedAdvice(op))
 	if outboxNotice != nil {
 		outboxNotice("clawbridge: " + message)
 	}
@@ -256,6 +256,49 @@ func (c *Client) queue(ctx context.Context, ob *outbox.Store, r bus.Request, why
 		"position":     q.Position,
 		"message":      message,
 	}}, nil
+}
+
+// queuedNamed is how many messages a queued mark-read's notice names.
+const queuedNamed = 5
+
+// queuedWhat names a queued write: its operation and operation ID, or,
+// for a mark-read, which carries no operation ID, the messages it marks.
+func queuedWhat(r bus.Request, op string) string {
+	if op != "" {
+		return r.Operation + " " + op
+	}
+	if r.Operation == "mark_read" {
+		var ids []string
+		switch v := r.Args["ids"].(type) {
+		case []string:
+			ids = v
+		case []any:
+			for _, id := range v {
+				if s, ok := id.(string); ok {
+					ids = append(ids, s)
+				}
+			}
+		}
+		if len(ids) == 0 {
+			return "mark-read"
+		}
+		// A mark-read takes up to 1000 IDs; the notice names the first few.
+		if len(ids) > queuedNamed {
+			return fmt.Sprintf("mark-read of %s and %d more", strings.Join(ids[:queuedNamed], ", "), len(ids)-queuedNamed)
+		}
+		return "mark-read of " + strings.Join(ids, ", ")
+	}
+	return r.Operation
+}
+
+// queuedAdvice is what not to do while a write waits: a write with an
+// operation ID must not be resent under a new one; one without has no ID
+// to keep, and needs no rerun.
+func queuedAdvice(op string) string {
+	if op == "" {
+		return "don't run it again"
+	}
+	return "don't resend it with a new operation ID"
 }
 
 // kickOutbox wakes a drainer after a successful call, when writes may wait.

@@ -1,5 +1,7 @@
 # Unreleased
 
+# ClawBridge v0.3.8 (released 29 Oct)
+
 **Schema 41 → 47.**
 - The server migrates to schema 47 on its first start: 42, the agent writes the server queued (the Linear write
   outbox); 43, the team roles; 44, the project lead settings; 45, the project lead notices; 46, the lane pins;

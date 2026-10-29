@@ -622,24 +622,28 @@ CLAWBRIDGE_WATCH_INTERVAL=15m
 - **Each project's share of a tick.** A tick serves up to 10 projects, the
   longest since its last tick first, each in its share: 20 s, plus 2 s for each
   bound team or Linear project past four, up to 40 s, and never more than the
-  tick has left. A project the tick has less than 15 s left for isn't started;
+  tick has left. A project the tick has less than 20 s left for isn't started;
   it comes first in the next tick. In the share run the comment watch, then
   intake, subscribers, health, documents and the dispatcher, then the claim
-  markers. The comment watch stops polling with 10 s of the share left
-  (`comments_stopped: deadline`); the issues it didn't reach stay due, and the
-  next tick goes on with them, so a large budget, or none, can't starve the
-  rest. A poll the share cuts still reports, so its calls are charged. Intake
-  reads its sources oldest cursor first and starts a source, or its next page,
-  only with 8 s of the share left; one it can't start keeps its cursor and goes
-  first next tick (`deferred_sources`), so a project with many teams and
-  projects catches up over a few ticks instead of failing. The steps after the
-  comment watch leave the last 3 s to the claim markers. A step that fails is
-  recorded and the next still runs; a share that runs out is recorded as
-  `deadline`. A pass of 5 s or more logs each step's time and its share
-  (`watcher: tick: project … took …ms of its …ms share: comments …, intake …ms
-  (S1 …ms, S2 …ms, S3 …ms), …`). The watcher's reads reuse a verified binding
-  for 20 minutes, across ticks; a relink or a failed check drops it, and writes
-  always verify.
+  markers. The comment watch stops polling with 15 s left (`comments_stopped:
+  deadline`); the issues it didn't reach stay due, and the next tick goes on
+  with them, so a large budget, or none, can't starve the rest. A poll the share
+  cuts still reports, so its calls are charged. Intake reads its sources oldest
+  cursor first and starts a source, or its next page, only with 5 s of the share
+  left; one it can't start keeps its cursor and goes first next tick
+  (`deferred_sources`), so a project with many teams and projects catches up
+  over a few ticks instead of failing. The share is split so every part gets
+  time, in any share a pass starts with (20 s or more): the comment watch stops
+  polling with 15 s left (so it polls for at least 5 s); intake and the steps
+  after it run until 9 s are left (at least 6 s, enough to start intake); the
+  claim markers get the last 9 s, what a marker pass needs to apply a row. These
+  come from the marker pass's own reserve and row room and intake's room, so
+  they can't drift apart. A step that fails is recorded and the next still runs;
+  a share that runs out is recorded as `deadline`. A pass of 5 s or more logs
+  each step's time and its share (`watcher: tick: project … took …ms of its …ms
+  share: comments …, intake …ms (S1 …ms, S2 …ms, S3 …ms), …`). The watcher's
+  reads reuse a verified binding for 20 minutes, across ticks; a relink or a
+  failed check drops it, and writes always verify.
 - **Queued writes.** The server sends queued agent writes every 5 seconds as
   Linear and each project's budget allow (docs/linear.md, "Queued writes").
 - **Clients.** While the server's ticks for a project are fresh, a client

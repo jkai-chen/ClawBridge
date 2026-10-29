@@ -430,3 +430,14 @@ func TestACutPollStillReports(t *testing.T) {
 		t.Fatal("the cut poll wasn't reported:", a.comments.reports)
 	}
 }
+
+// MarkerPassRoom is what a pass needs to apply a row: its reserve, and a
+// row's room. Less, and the pass stops as deadline before the first row.
+func TestMarkerPassRoomFitsARow(t *testing.T) {
+	if MarkerPassRoom() < markerReserve+markerRowRoom {
+		t.Fatal(MarkerPassRoom(), markerReserve, markerRowRoom)
+	}
+	if CommentStop(time.Second) < MarkerPassRoom()+time.Second || CommentStop(0) != commentPollRoom {
+		t.Fatal(CommentStop(time.Second), CommentStop(0))
+	}
+}

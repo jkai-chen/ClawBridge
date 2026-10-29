@@ -65,7 +65,8 @@ type fakeLinear struct {
 	// GraphQL read wait for its context to end.
 	onLabelled func()
 	block      bool
-	notes       int
+	onComments func(context.Context)
+	notes      int
 	// healthIssues and activity answer project health's reads.
 	healthIssues []map[string]any
 	activity     map[string]map[string]any
@@ -248,8 +249,11 @@ func (p fakeProvider) UpdateV2(context.Context, linearprovider.UpdateInputV2) (l
 func (p fakeProvider) Relation(context.Context, linearprovider.RelationInput) (linearprovider.RelationReceipt, error) {
 	return linearprovider.RelationReceipt{}, errors.New("no writes")
 }
-func (p fakeProvider) IssueComments(context.Context, linearprovider.CommentsQuery) (linearprovider.Comments, error) {
+func (p fakeProvider) IssueComments(ctx context.Context, _ linearprovider.CommentsQuery) (linearprovider.Comments, error) {
 	p.f.events = append(p.f.events, "comments")
+	if p.f.onComments != nil {
+		p.f.onComments(ctx)
+	}
 	return linearprovider.Comments{Items: p.f.comments, Complete: true}, nil
 }
 

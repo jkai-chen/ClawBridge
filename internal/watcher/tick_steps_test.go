@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"clawbridge/internal/bus"
+	"clawbridge/internal/linearboard"
 )
 
 // stepStore fails intake's state read with an uncoded error and records the
@@ -294,5 +295,64 @@ func TestIntakeS1StopsBetweenPages(t *testing.T) {
 	tick := e.w.project(ctx, e.pid, HealthRunsPerTick)
 	if pages != 1 || tick.Intake == nil || !slices.Contains(tick.Intake.Deferred, "intake-s1") {
 		t.Fatalf("S1 read on past its room: %d pages, %+v", pages, tick.Intake)
+	}
+}
+
+// The budgets add up in every share a pass starts with: the comment poll
+// gets time, the steps get enough to start intake, and the markers get
+// what a marker pass needs to apply a row.
+func TestAShareFitsCommentsStepsAndMarkers(t *testing.T) {
+	stop := linearboard.CommentStop(stepsRoom)
+	if markerRoom < linearboard.MarkerPassRoom() {
+		t.Fatal("the markers' room can't fit a row:", markerRoom, linearboard.MarkerPassRoom())
+	}
+	if steps := stop - markerRoom; steps < intakeRoom+time.Second {
+		t.Fatal("the comment stop leaves the steps too little:", steps)
+	}
+	for _, share := range []time.Duration{minProjectShare, ProjectDeadline, shareFor(14), maxProjectShare} {
+		if polls := share - stop; polls < 5*time.Second {
+			t.Errorf("a %s share polls comments for only %s", share, polls)
+		}
+	}
+}
+
+// A comment poll that runs to its stop still leaves the steps their room:
+// the first issue's read takes the share right up to the stop, and a second
+// due issue (whose read would take 6 s more) isn't polled. Intake runs,
+// nothing fails as deadline, and the markers' time is left.
+func TestACommentPollToItsStopLeavesTheSteps(t *testing.T) {
+	e := setup(t)
+	// Each session holds one assignment: two sessions, two watched issues.
+	for session, issue := range map[string]string{"eng": issueA, "coord": issueB} {
+		proposed := e.call("assignment_propose", session, map[string]any{"issue_uuid": issue, "issue_identifier": "FIX-" + issue[:1]})
+		e.call("assignment_confirm", "coord", map[string]any{"target_session": session, "revision": proposed["assignment"].(map[string]any)["revision"]})
+	}
+	e.tick() // the first poll starts the cursors
+	e.dueNow()
+	stop := linearboard.CommentStop(stepsRoom)
+	start := time.Now()
+	reads := 0
+	e.f.onComments = func(ctx context.Context) {
+		reads++
+		wait := 6 * time.Second
+		if reads == 1 {
+			wait = time.Until(start.Add(ProjectDeadline - stop + 50*time.Millisecond))
+		}
+		select {
+		case <-time.After(wait):
+		case <-ctx.Done():
+		}
+	}
+	ctx, cancel := context.WithDeadline(context.Background(), start.Add(ProjectDeadline))
+	defer cancel()
+	tick := e.w.project(ctx, e.pid, HealthRunsPerTick)
+	if reads != 1 || tick.Comments == nil || tick.Comments.CommentsStopped != "deadline" {
+		t.Fatalf("the poll didn't stop at its stop: %d reads, %+v", reads, tick.Comments)
+	}
+	if tick.Error != "" || tick.Intake == nil || len(tick.Intake.Deferred) != 0 {
+		t.Fatalf("the steps were starved: error %q, intake %+v", tick.Error, tick.Intake)
+	}
+	if left := time.Until(start.Add(ProjectDeadline)); left < markerRoom {
+		t.Fatal("the markers' room was used:", left)
 	}
 }

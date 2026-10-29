@@ -2,8 +2,10 @@ package watcher
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
+	"maps"
 	"slices"
 	"strings"
 	"sync"
@@ -165,5 +167,82 @@ func TestATickServesOnlyWhatItHasTimeFor(t *testing.T) {
 	got := e.w.Tick(ctx)
 	if len(got) != 1 || got[0].ShareMS <= 0 || got[0].ShareMS > (minProjectShare+time.Second).Milliseconds() {
 		t.Fatal("the share wasn't cut to what the tick had left:", got)
+	}
+}
+
+// A share too short for intake defers its sources: nothing is read, every
+// cursor stays, the project doesn't fail, and the markers still run.
+func TestIntakeDefersPastItsRoom(t *testing.T) {
+	e := setup(t)
+	e.tick() // the first poll starts the cursors
+	e.dueNow()
+	cursors := func() map[string]string {
+		out := map[string]string{}
+		db, err := sql.Open("sqlite", e.path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer db.Close()
+		rows, err := db.Query(`SELECT source||'|'||subject, cursor_time FROM watch_cursors WHERE source LIKE 'intake-%'`)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var k, v string
+			if err := rows.Scan(&k, &v); err != nil {
+				t.Fatal(err)
+			}
+			out[k] = v
+		}
+		return out
+	}
+	before := cursors()
+	if len(before) == 0 {
+		t.Fatal("no intake cursors started")
+	}
+	saved := intakeRoom
+	intakeRoom = time.Hour
+	t.Cleanup(func() { intakeRoom = saved })
+	queries := len(e.f.queries)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	tick := e.w.project(ctx, e.pid, HealthRunsPerTick)
+	if tick.Error != "" || tick.Intake == nil || len(tick.Intake.Deferred) != len(before) || tick.Intake.Calls != 0 || len(e.f.queries) != queries {
+		t.Fatalf("intake wasn't deferred whole: %+v %+v", tick.Error, tick.Intake)
+	}
+	if after := cursors(); !maps.Equal(after, before) {
+		t.Fatal("a deferred source's cursor moved:", before, after)
+	}
+	if c := tick.Comments; c == nil || c.MarkersStopped == "error" {
+		t.Fatalf("the markers didn't get their time: %+v", c)
+	}
+}
+
+// The oldest cursor is read first: S3's, made older than S2's, before it.
+func TestIntakeReadsTheOldestCursorFirst(t *testing.T) {
+	e := setup(t)
+	e.tick()
+	e.sql(`UPDATE watch_cursors SET cursor_time='2026-01-01T00:00:00Z' WHERE source='intake-s3'`)
+	e.sql(`UPDATE watch_cursors SET cursor_time='2026-01-02T00:00:00Z' WHERE source='intake-s2'`)
+	e.dueNow()
+	queries := len(e.f.queries)
+	e.tick()
+	got := e.f.queries[queries:]
+	s2, s3 := slices.Index(got, delegatedQuery), slices.Index(got, mentionsQuery)
+	if s2 < 0 || s3 < 0 || s3 > s2 {
+		t.Fatal("the older S3 wasn't read first:", s2, s3)
+	}
+}
+
+// A slow pass's intake names each signal's time.
+func TestASlowPassSplitsIntakeBySignal(t *testing.T) {
+	var logged []string
+	old := logf
+	logf = func(format string, args ...any) { logged = append(logged, fmt.Sprintf(format, args...)) }
+	t.Cleanup(func() { logf = old })
+	logTick("p1", "tick", ProjectTick{ShareMS: 40000, TookMS: map[string]int64{"comments": 5000, "intake": 15000}, Intake: &IntakePoll{TookMS: map[string]int64{"S1": 12000, "S3": 2500}}})
+	if len(logged) != 1 || logged[0] != "watcher: tick: project p1 took 20000ms of its 40000ms share: comments 5000ms, intake 15000ms (S1 12000ms, S3 2500ms)" {
+		t.Fatal(logged)
 	}
 }

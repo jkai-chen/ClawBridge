@@ -246,3 +246,53 @@ func TestASlowPassSplitsIntakeBySignal(t *testing.T) {
 		t.Fatal(logged)
 	}
 }
+
+// A read the share cuts still has its calls charged, and the steps' cut
+// leaves the markers their room.
+func TestAnIntakeCutStillChargesAndKeepsTheMarkersRoom(t *testing.T) {
+	e := setup(t)
+	e.tick()
+	e.dueNow()
+	e.f.block = true
+	saved := intakeRoom
+	intakeRoom = 0
+	t.Cleanup(func() { intakeRoom = saved })
+	var before int
+	e.queryRow(`SELECT budget_used FROM watch_lease`, &before)
+	ctx, cancel := context.WithTimeout(context.Background(), markerRoom+500*time.Millisecond)
+	defer cancel()
+	tick := e.w.project(ctx, e.pid, HealthRunsPerTick)
+	if tick.Intake == nil || tick.Intake.Calls == 0 {
+		t.Fatalf("no intake read was cut: %+v", tick.Intake)
+	}
+	var after int
+	e.queryRow(`SELECT budget_used FROM watch_lease`, &after)
+	if after-before < tick.Intake.Calls {
+		t.Fatal("the cut intake's calls weren't charged:", after-before, tick.Intake.Calls)
+	}
+	if c := tick.Comments; c == nil || c.MarkersStopped == "error" {
+		t.Fatalf("the markers lost their room: %+v", c)
+	}
+}
+
+// S1 stops between pages once the share is short, as deferred.
+func TestIntakeS1StopsBetweenPages(t *testing.T) {
+	e := setup(t)
+	e.f.labelled, e.f.labelledPage = []string{issueA, issueB}, 1
+	e.tick()
+	e.dueNow()
+	saved := intakeRoom
+	t.Cleanup(func() { intakeRoom = saved })
+	pages := 0
+	e.f.onLabelled = func() {
+		pages++
+		intakeRoom = time.Hour // the share runs short after the first page
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	intakeRoom = 0
+	tick := e.w.project(ctx, e.pid, HealthRunsPerTick)
+	if pages != 1 || tick.Intake == nil || !slices.Contains(tick.Intake.Deferred, "intake-s1") {
+		t.Fatalf("S1 read on past its room: %d pages, %+v", pages, tick.Intake)
+	}
+}

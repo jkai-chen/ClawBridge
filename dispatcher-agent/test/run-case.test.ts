@@ -272,3 +272,21 @@ test("an answer over the size cap, or a renew list over the project cap, is refu
 	const fits: typeof fetch = async () => Response.json({ projects: Array(MAX_PROJECTS).fill(project) });
 	assert.ok((await new ClawBridgeClient(new URL(server.url), fits).call("POST", "/x", "t", AgentRenewResponse, {})).ok);
 });
+
+test("an outcome is retried after a reset tunnel or an unreachable proxy, never lost [R93-M1]", async () => {
+	const failures = [{ code: "ECONNRESET" }, { code: "ECONNREFUSED" }];
+	const flaky: typeof fetch = (input, init) => {
+		const f = String(input).endsWith("/decide") ? failures.shift() : undefined;
+		return f ? Promise.reject(new TypeError("fetch failed", { cause: f })) : fetch(input, init);
+	};
+	const { deps } = setup(
+		[fauxAssistantMessage(fauxToolCall("decide", { action: "wait", reason_code: "overlap", explanation: "x" }))],
+		{ client: new ClawBridgeClient(new URL(server.url), flaky) },
+	);
+	const r = await run(sampleCase(), deps);
+	assert.equal(r.outcome, "decide");
+	assert.deepEqual(
+		lines.filter((l) => l.includes('"outcome_failed"')).map((l) => JSON.parse(l).code),
+		["network", "egress_unavailable"],
+	);
+});

@@ -50,6 +50,8 @@ export function providerFailure(
 ): ProviderFailure {
 	if (stopReason === "aborted") return { status: null, error_type: "aborted" };
 	const text = errorMessage ?? "";
+	// The egress proxy refusing or failing is a network failure, whatever status its CONNECT answer carried.
+	if (httpStatus === null && /Proxy response \(|egress refused/i.test(text)) return { status: null, error_type: "network" };
 	const m = /\b([45]\d\d)\b/.exec(text);
 	const status = httpStatus !== null && httpStatus >= 400 ? httpStatus : m ? Number(m[1]) : null;
 	if (status === 401) return { status, error_type: "auth" };

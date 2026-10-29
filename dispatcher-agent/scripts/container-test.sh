@@ -3,7 +3,8 @@
 # fakes that share only a loopback network with it. Checks, over CASES cases (default 1000):
 # - every case gets its outcome, and every message matches v1.schema.json;
 # - memory: no OOM under --memory 160m, and the cgroup's peak is reported;
-# - egress: a preload records any non-loopback connect or DNS lookup (none allowed), with a negative control;
+# - egress: every request goes through the (fake) egress proxy, to the server and the provider only; a preload
+#   records any non-loopback connect or DNS lookup (none allowed), with a negative control;
 # - hardening: non-root, read-only root, no capabilities, no package manager.
 # Removes its containers by name on exit. Needs docker and a prior `npm ci` (the fakes use the dev dependencies).
 set -euo pipefail
@@ -45,7 +46,7 @@ printf '%s\n' "$CREDENTIAL" | docker run -i --name "$AGENT" --network "container
 	--read-only --tmpfs /tmp:rw,noexec,nosuid,size=8m --cap-drop ALL --security-opt no-new-privileges \
 	--pids-limit 64 --memory 160m --memory-swap 160m --user node \
 	-v "$DIR/test/container/egress-guard.mjs:/guard/egress-guard.mjs:ro" \
-	-e CLAWBRIDGE_SERVER_URL=http://127.0.0.1:18080 \
+	-e CLAWBRIDGE_SERVER_URL=http://127.0.0.1:18080 -e CLAWBRIDGE_EGRESS_PROXY=http://127.0.0.1:18082 \
 	--entrypoint node "$IMAGE" \
 	--max-old-space-size=96 --disable-warning=ExperimentalWarning --import /guard/egress-guard.mjs src/main.ts \
 	>"$LOG" 2>&1 &
@@ -87,6 +88,7 @@ echo "hardening: $(echo "$hardening" | tr '\n' ' ')"
 echo "egress: $egress; negative control: $control"
 
 echo "$done_line" | grep -q "\"outcomes\":$CASES,\"decide\":$CASES,\"violations\":0," || fail "outcomes or schema violations"
+echo "$done_line" | grep -q '"tunnels":\["127.0.0.1:18080","127.0.0.1:18081"\],"plain":0' || fail "not every request went through the egress proxy"
 [ "$oom" = 0 ] && [ "$oom_killed" = false ] || fail "the agent ran out of memory"
 [ "$exit_code" = 0 ] || fail "the agent exited with $exit_code on SIGTERM"
 [ "$egress" = '{"egress_attempts":[]}' ] || fail "egress beyond loopback: $egress"

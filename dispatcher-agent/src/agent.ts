@@ -34,6 +34,8 @@ export interface AgentOptions {
 	idleRenewMs?: number;
 	/** While stopped on provider_auth, how often to repeat that status (d4.1: at most every 5 min). */
 	statusEveryMs?: number;
+	/** The wait between the first config call's tries while the egress proxy refuses it (tests shorten it). */
+	startupRetryMs?: number;
 	setupTestTimeoutMs?: number;
 }
 
@@ -45,10 +47,22 @@ export class ConfigError extends Error {
 	}
 }
 
+// The egress proxy rereads its policy every 2 s, so a new agent's first request can be refused, or find the proxy
+// restarting. Neither reached the server, so the one-time credential is still unused, and the call is tried again.
+const STARTUP_EGRESS = new Set(["egress_refused", "egress_unavailable"]);
+const STARTUP_TRIES = 6;
+
 export async function runAgent(o: AgentOptions): Promise<{ stopped: string }> {
-	const cfg = await o.client.call("POST", "/v1/dispatcher-model/agent/config", o.credential, AgentConfigResponse, {
-		instance_id: o.instanceId,
-	});
+	const fetchConfig = () =>
+		o.client.call("POST", "/v1/dispatcher-model/agent/config", o.credential, AgentConfigResponse, {
+			instance_id: o.instanceId,
+		});
+	let cfg = await fetchConfig();
+	for (let tries = 1; !cfg.ok && STARTUP_EGRESS.has(cfg.code) && tries < STARTUP_TRIES && !o.signal.aborted; tries++) {
+		o.logger.log("config_retry", { code: cfg.code, attempt: tries });
+		await sleep(o.startupRetryMs ?? 1_000, o.signal);
+		cfg = await fetchConfig();
+	}
 	if (!cfg.ok) {
 		o.logger.log("config_failed", { code: cfg.code, status: cfg.status });
 		throw new ConfigError(cfg.code);

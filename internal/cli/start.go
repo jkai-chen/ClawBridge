@@ -21,7 +21,7 @@ Linear issues, and work as a team. Pick how you want to start:
 
   1. Just this machine     Local messaging between agents on this computer. No server, no account.
   2. Join a team server    Someone invited you (a server address and an invite code).
-  3. Set up my own server  Host ClawBridge for your team (a small cloud VM, about $15–30/month).
+  3. Set up my own server  Host ClawBridge for your team (a small cloud VM, about $15–30/month, or this machine).
 `
 
 // startCommands is what Start prints without a terminal: the command behind
@@ -31,7 +31,8 @@ Without a terminal, run the command for your choice:
   1. clawbridge setup --local --name WORKSPACE --project PROJECT, then clawbridge project create PROJECT
   2. with an invite link: clawbridge join (paste the link); with an invite code: clawbridge --server URL join --email EMAIL (asks for the code);
      with Google sign-in: clawbridge setup join --server URL --workspace TEAM --project CODEBASE [--device]
-  3. see docs/operations/first-deployment.md; check each step with clawbridge cloud check
+  3. see docs/operations/first-deployment.md (a cloud VM) or docs/operations/local-host.md (this machine or your LAN);
+     check each step with clawbridge cloud check
 Run clawbridge onboard in a terminal to choose interactively, or clawbridge help for every command.
 `
 
@@ -46,6 +47,7 @@ Your own server, in order. Each step is done when its check passes:
 To do it yourself, follow docs/operations/first-deployment.md and run the check after each step. With
 Claude Code or Codex installed, clawbridge onboard can hand the Google Cloud steps to your agent instead.
 Secrets you hold are entered with clawbridge cloud secret set KEY, never through an agent.
+On this machine or your LAN instead (no cloud): see docs/operations/local-host.md (deploy/local-host.sh up).
 `
 
 var startSlug = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,62}$`)

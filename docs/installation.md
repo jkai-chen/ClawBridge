@@ -249,8 +249,8 @@ folder holds links.
 `clawbridge onboard` (Start's "Set up my own server") and the
 [first-deployment guide](operations/first-deployment.md) cover Google Cloud and
 AWS. `clawbridge skill install --playbook gcp` or `--playbook aws` installs that
-cloud's provisioning playbook for your agent. Each route uses that cloud's own
-CLI, which ClawBridge doesn't install, configure or sign in for you:
+cloud's provisioning playbook for your agent. Each cloud route uses that cloud's
+own CLI, which ClawBridge doesn't install, configure or sign in for you:
 
 | Cloud | CLI | Sign-in | Runs on |
 | --- | --- | --- | --- |
@@ -261,6 +261,12 @@ ClawBridge never reads `~/.aws` or the gcloud credential store. It checks that
 the named profile or configuration exists and is signed in to the account you
 chose. The AWS profile's permissions for the checks and `cloud secret set` are
 in [`deploy/aws-profile-policy.json`](../deploy/aws-profile-policy.json).
+
+Start's "Where?" question has a third answer, "This machine or my LAN (no
+cloud)". It hands `deploy/local-host.sh up` to your agent with the
+`--playbook local` skill instead: it needs Docker, no cloud CLI, creates nothing
+in any cloud, and runs on macOS, Linux or WSL
+([local hosting](operations/local-host.md)).
 
 ## Windows: set up WSL for the AWS route
 

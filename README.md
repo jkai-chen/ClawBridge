@@ -44,15 +44,18 @@ reopens it at any time):
    [Joining a project](docs/onboarding.md) walks through both. If the owner hasn't
    given you a project yet, ClawBridge opens on "Waiting for a project" and takes
    you to it once it's granted.
-3. **Set up my own server:** on Google Cloud or AWS. With Claude Code or Codex
-   installed, ClawBridge asks which cloud, then hands the provisioning to your
-   own agent with the `clawbridge-provision-gcp` or `clawbridge-provision-aws`
-   playbook, in this terminal. You approve each of its commands, and
-   `clawbridge cloud check` decides when each step is done. Progress is saved,
-   so `clawbridge onboard` resumes it. Once your workspace exists, it creates
-   your first project. Without an agent, follow the
+3. **Set up my own server:** on Google Cloud, on AWS, or on this machine or
+   your LAN. With Claude Code or Codex installed, ClawBridge asks where, then
+   hands the provisioning to your own agent with the `clawbridge-provision-gcp`,
+   `clawbridge-provision-aws` or `clawbridge-provision-local` playbook, in this
+   terminal. You approve each of its commands, and `clawbridge cloud check`
+   decides when each step is done. Progress is saved, so `clawbridge onboard`
+   resumes it. Once your workspace exists, it creates your first project.
+   Without an agent, follow the
    [first-deployment guide](docs/operations/first-deployment.md), which covers
-   both clouds.
+   both clouds. Start's "Where?" question has a third answer, "This machine or
+   my LAN (no cloud)": it runs the server with Docker on your own machine, with
+   no cloud ([local hosting](docs/operations/local-host.md)).
 
 A wrong answer is asked again with the reason, and every path ends by asking
 `Open ClawBridge now? [Y/n]`. Without a terminal, `clawbridge` prints the

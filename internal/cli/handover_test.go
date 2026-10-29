@@ -26,6 +26,8 @@ type handoverStub struct {
 	installErr, checkErr error
 	checked              []string
 	checkConfig          string
+	checks               [][]string
+	checkFn              func(args []string) error // when set, replaces checkErr
 }
 
 // stubHandover replaces every outside effect of the hand-over: no real
@@ -63,8 +65,12 @@ func stubHandover(t *testing.T) *handoverStub {
 		h.installedCloud = append(h.installedCloud, cloud)
 		return h.installErr
 	}
-	runHandoverChecks = func(_ context.Context, args []string, _, _ io.Writer) error {
+	runHandoverChecks = func(_ context.Context, args []string, stdout, _ io.Writer) error {
 		h.checked = args
+		h.checks = append(h.checks, args)
+		if h.checkFn != nil {
+			return h.checkFn(args)
+		}
 		h.checkConfig = os.Getenv("CLOUDSDK_ACTIVE_CONFIG_NAME")
 		return h.checkErr
 	}

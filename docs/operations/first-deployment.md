@@ -3,8 +3,11 @@
 This guide takes a team from nothing to its own running ClawBridge server, a
 first project and the Linear app, on **Google Cloud** or **AWS**. It is the
 written path behind Start's "Set up my own server" (`clawbridge onboard`, choice
-3, which then asks which cloud), for people who do the steps themselves rather
-than hand them to a coding agent.
+3, which then asks where: Google Cloud, AWS, or this machine or your LAN), for
+people who do the steps themselves rather than hand them to a coding agent. The
+third answer runs the server with Docker on your own machine, with no cloud; its
+guide is [local hosting](local-host.md), and its playbook
+`clawbridge skill install --playbook local`.
 
 It follows a fixed sequence of steps. A step is done when its check passes, never
 when someone says it is. The checks are deterministic, read no secret values and

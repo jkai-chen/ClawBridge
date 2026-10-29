@@ -117,6 +117,12 @@
   `infra` passes as `not_applicable`, a new `trust` check (`--local` only) fails `untrusted_ca` when this machine
   doesn't trust the https certificate, and `backups` warns when the newest dump in `DIR/backups` is over 26 hours old
   or has no checksum. Remote checks are unchanged. No schema change. Linear config scope: none.
+- **Onboarding can host the server on this machine or your LAN.** Start's "Set up my own server" now asks "Where?"
+  with a third answer, "This machine or my LAN (no cloud)": just you at `http://127.0.0.1:8443`, or your team at
+  `https://HOST` on the LAN. With Claude Code or Codex it hands `deploy/local-host.sh up` to your agent with the new
+  `clawbridge-provision-local` playbook (`clawbridge skill install --playbook local`), then `cloud check --local`
+  decides, and you make the owner's sign-in code in your own terminal. Refused on native Windows (use WSL). No schema
+  change. Linear config scope: none.
 
 ## Install and upgrade
 

@@ -253,7 +253,7 @@ func TestDispatcherPreviewViewTakesOnlyAPreview(t *testing.T) {
 // Each numbered question's words name one choice, in lower case, since pick
 // lowers the answer and walks a map.
 func TestPickWordsAreUnique(t *testing.T) {
-	for name, choices := range map[string]map[string][]string{"cloud": cloudChoices, "join": joinChoices, "sign-in": signInChoices} {
+	for name, choices := range map[string]map[string][]string{"cloud": cloudChoices, "shape": shapeChoices, "join": joinChoices, "sign-in": signInChoices} {
 		seen := map[string]string{}
 		for value, words := range choices {
 			for _, w := range words {

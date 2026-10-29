@@ -80,6 +80,11 @@ func hookRecord(session string) (string, ctxwatch.QueueRecord, bool) {
 
 // runHook runs `clawbridge hook stop --from-hook`.
 func runHook(ctx context.Context, args []string, stdout, stderr io.Writer) error {
+	// The exec form (Windows) ends with --hook-tag TAG, which only marks the
+	// entry as ClawBridge's.
+	if len(args) == 4 && args[2] == "--hook-tag" {
+		args = args[:2]
+	}
 	if len(args) != 2 || args[0] != "stop" || args[1] != "--from-hook" {
 		return errors.New("usage: clawbridge hook stop --from-hook (Claude Code's Stop hook, installed by mcp install)")
 	}

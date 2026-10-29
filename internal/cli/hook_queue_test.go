@@ -75,18 +75,16 @@ func (s *hookServer) ops() string {
 // child of the hook's agent, and routes the hooks to server.
 func queueHookSetup(t *testing.T, server *hookServer) string {
 	t.Helper()
-	if runtime.GOOS == "windows" {
-		t.Skip("the hooks are not installed on Windows, where a process's parent is unknown")
-	}
 	isolated(t)
 	t.Setenv("CLAWBRIDGE_SESSION", "")
-	t.Setenv("CLAWBRIDGE_AGENT_PID", strconv.Itoa(os.Getppid()))
+	parent, _ := ctxwatch.ParentPID(os.Getpid())
+	t.Setenv("CLAWBRIDGE_AGENT_PID", strconv.Itoa(parent))
 	dir, err := contextDir()
 	if err != nil {
 		t.Fatal(err)
 	}
 	record := ctxwatch.QueueRecord{Session: "agent", Workspace: "w", Project: "p", Instance: "inst-1", Server: "https://clawbridge.example.test",
-		MCPPID: os.Getpid(), AgentPID: os.Getppid(), Stream: "stream", UpdatedAt: time.Now().UTC().Format(time.RFC3339),
+		MCPPID: os.Getpid(), AgentPID: parent, Stream: "stream", UpdatedAt: time.Now().UTC().Format(time.RFC3339),
 		Leases: []ctxwatch.QueueLease{{MessageID: "msg-1", LeaseID: "lse_1"}, {MessageID: "msg-2", LeaseID: "lse_2"}}}
 	if err = ctxwatch.SaveQueueRecord(dir, record); err != nil {
 		t.Fatal(err)
@@ -194,19 +192,22 @@ func TestQueueHooksActOnlyForTheirAgent(t *testing.T) {
 			t.Fatalf("%s: %q %s", name, out, server.ops())
 		}
 	}
-	// A record readable by others is not trusted.
+	// A record readable by others is not trusted. Windows has no file modes;
+	// the record is protected by the user profile folder's ACL.
 	if err := ctxwatch.SaveQueueRecord(dir, record); err != nil {
 		t.Fatal(err)
 	}
 	path := filepath.Join(dir, "agent.queue.json")
-	if err := os.Chmod(path, 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if out := stopRun(t, stopInput); out != "" {
-		t.Fatalf("a world-readable record was used: %q", out)
-	}
-	if err := os.Chmod(path, 0o600); err != nil {
-		t.Fatal(err)
+	if runtime.GOOS != "windows" {
+		if err := os.Chmod(path, 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if out := stopRun(t, stopInput); out != "" {
+			t.Fatalf("a world-readable record was used: %q", out)
+		}
+		if err := os.Chmod(path, 0o600); err != nil {
+			t.Fatal(err)
+		}
 	}
 	// Named by CLAWBRIDGE_SESSION, the record must still be the agent's.
 	t.Setenv("CLAWBRIDGE_SESSION", "agent")

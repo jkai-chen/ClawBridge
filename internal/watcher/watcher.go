@@ -22,10 +22,24 @@ import (
 
 // TickProjects bounds the projects one tick serves, and ProjectDeadline
 // each project's share of a tick, so one slow project cannot starve the
-// rest (IN-M1).
+// rest (IN-M1). A larger binding gets a larger share (projectShare).
 const (
 	TickProjects    = 10
 	ProjectDeadline = 20 * time.Second
+)
+
+// A project's share grows by shareStep for each bound team or Linear
+// project past shareBaseUnits, up to maxProjectShare: a binding of many
+// teams and projects reads more each pass (its issues, comments, intake
+// and health per team and project) than a small one, and a flat share
+// cut its later steps every tick. A project the tick has less than
+// minProjectShare left for waits for the next tick, first in line, rather
+// than starting a pass the tick's own deadline would cut.
+var (
+	shareBaseUnits  = 4
+	shareStep       = 2 * time.Second
+	maxProjectShare = 40 * time.Second
+	minProjectShare = 15 * time.Second
 )
 
 // watcherProofTTL is how long the watcher's read paths reuse a verified
@@ -118,7 +132,10 @@ type ProjectTick struct {
 	Dispatch  *DispatchRun            `json:"dispatch,omitempty"`
 	// Subscribers is the issue subscribers pass (ISSUE-SUBSCRIBERS-PLAN).
 	Subscribers *SubscribePass `json:"subscribers,omitempty"`
-	Error       string         `json:"error,omitempty"`
+	// ShareMS is the time the tick gave this project, in milliseconds
+	// (projectShare, or what the tick had left); 0 for a nudge.
+	ShareMS int64  `json:"share_ms,omitempty"`
+	Error   string `json:"error,omitempty"`
 	// TookMS is each step's time in milliseconds (comments, then the
 	// steps after it, then markers), so a slow project shows where its
 	// share went.
@@ -136,7 +153,9 @@ func (t *ProjectTick) took(step string, start time.Time) time.Time {
 }
 
 // Tick serves up to TickProjects projects, the longest since their last
-// tick first, each within ProjectDeadline.
+// tick first, each within its share (projectShare) of what the tick has
+// left. The projects it has too little left for are not served: they stay
+// first for the next tick.
 func (w *Watcher) Tick(ctx context.Context) []ProjectTick {
 	projects, err := w.Store.WatchProjects(ctx, TickProjects)
 	if err != nil {
@@ -145,10 +164,20 @@ func (w *Watcher) Tick(ctx context.Context) []ProjectTick {
 	out := []ProjectTick{}
 	// Health runs are capped per tick across all projects (HP-M3).
 	healthLeft := HealthRunsPerTick
-	for _, pid := range projects {
-		pctx, cancel := context.WithTimeout(ctx, ProjectDeadline)
+	for i, pid := range projects {
+		share := w.projectShare(ctx, pid)
+		if deadline, ok := ctx.Deadline(); ok {
+			left := time.Until(deadline)
+			if left < minProjectShare {
+				logf("watcher: tick: %d project(s) wait for the next tick: %dms left, under %dms", len(projects)-i, left.Milliseconds(), minProjectShare.Milliseconds())
+				break
+			}
+			share = min(share, left)
+		}
+		pctx, cancel := context.WithTimeout(ctx, share)
 		tick := w.project(pctx, pid, healthLeft)
 		cancel()
+		tick.ShareMS = share.Milliseconds()
 		logTick(pid, "tick", tick)
 		// Nudged runs have their own allowance in the bus (R101-L2).
 		for _, run := range tick.Health {
@@ -160,6 +189,28 @@ func (w *Watcher) Tick(ctx context.Context) []ProjectTick {
 		out = append(out, tick)
 	}
 	return out
+}
+
+// projectShare is pid's share of a tick: ProjectDeadline, plus shareStep
+// for each bound team or Linear project past shareBaseUnits, up to
+// maxProjectShare. The binding is the stored one, read from the bus (no
+// Linear call); a project whose binding can't be read gets ProjectDeadline.
+func (w *Watcher) projectShare(ctx context.Context, pid string) time.Duration {
+	scope := bus.Request{Session: bus.SystemSessionName, Args: map[string]any{}}
+	b, err := w.service(pid).BindingV2(ctx, scope)
+	if err != nil {
+		return ProjectDeadline
+	}
+	return shareFor(len(b.LinearTeamIDs) + len(b.LinearProjectIDs))
+}
+
+// shareFor is the share of a binding of units teams and projects.
+func shareFor(units int) time.Duration {
+	share := ProjectDeadline
+	if units > shareBaseUnits {
+		share += time.Duration(units-shareBaseUnits) * shareStep
+	}
+	return min(share, maxProjectShare)
 }
 
 func (w *Watcher) project(ctx context.Context, pid string, healthLeft int) ProjectTick {
@@ -339,7 +390,11 @@ func logTick(pid, kind string, tick ProjectTick) {
 		}
 	}
 	if total >= slowPassMS {
-		logf("watcher: %s: project %s took %dms: %s", kind, pid, total, strings.Join(parts, ", "))
+		of := ""
+		if tick.ShareMS > 0 {
+			of = fmt.Sprintf(" of its %dms share", tick.ShareMS)
+		}
+		logf("watcher: %s: project %s took %dms%s: %s", kind, pid, total, of, strings.Join(parts, ", "))
 	}
 	if tick.Error != "" {
 		logf("watcher: %s: project %s failed: %s", kind, pid, tick.Error)

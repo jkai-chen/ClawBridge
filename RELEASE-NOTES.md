@@ -36,6 +36,18 @@
   says what sends the write: the next `clawbridge` command, or `clawbridge outbox flush`. No schema change. Linear
   config scope: none.
 
+# ClawBridge v0.3.9.1 (server hotfix, deployed 29 Oct; no client release or tag)
+
+A server-only hotfix to v0.3.9: no schema change and no client change.
+
+## Operations
+
+- **A large binding gets a larger share of each watcher tick.** A project's share is 20 s plus 2 s for each bound
+  team or Linear project past four, up to 40 s, and never more than the tick has left; a project the tick has under
+  15 s left for waits, first in line, for the next tick instead of starting a pass the tick would cut. A slow pass's
+  log line names its share (`took …ms of its …ms share`), and a tick that defers projects says how many. Linear config
+  scope: none.
+
 # ClawBridge v0.3.9 (released 29 Oct)
 
 **Schema 47 → 50.**

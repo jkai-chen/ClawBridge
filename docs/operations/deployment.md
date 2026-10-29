@@ -619,17 +619,21 @@ CLAWBRIDGE_WATCH_INTERVAL=15m
     for the app), and `clear` it. The server refuses to start when the ceiling
     is below a server cap that is set. The ceiling bounds each project, not
     their sum.
-- **Each project's share of a tick.** A tick serves up to 10 projects, each in a
-  20 s share: the comment watch, then intake, subscribers, health, documents and
-  the dispatcher, then the claim markers. The comment watch stops polling with
-  10 s of the share left (`comments_stopped: deadline`); the issues it didn't
-  reach stay due, and the next tick goes on with them, so a large budget, or none,
-  can't starve the rest. A poll the share cuts still reports, so its calls are
-  charged. A step that fails is recorded and the next still runs; a share that
-  runs out is recorded as `deadline`. A pass of 5 s or more logs each step's
-  time (`watcher: tick: project … took …ms: comments …, intake …`). The
-  watcher's reads reuse a verified binding for 20 minutes, across ticks; a
-  relink or a failed check drops it, and writes always verify.
+- **Each project's share of a tick.** A tick serves up to 10 projects, the
+  longest since its last tick first, each in its share: 20 s, plus 2 s for each
+  bound team or Linear project past four, up to 40 s, and never more than the
+  tick has left. A project the tick has less than 15 s left for isn't started;
+  it comes first in the next tick. In the share run the comment watch, then
+  intake, subscribers, health, documents and the dispatcher, then the claim
+  markers. The comment watch stops polling with 10 s of the share left
+  (`comments_stopped: deadline`); the issues it didn't reach stay due, and the
+  next tick goes on with them, so a large budget, or none, can't starve the
+  rest. A poll the share cuts still reports, so its calls are charged. A step
+  that fails is recorded and the next still runs; a share that runs out is
+  recorded as `deadline`. A pass of 5 s or more logs each step's time and its
+  share (`watcher: tick: project … took …ms of its …ms share: comments …, intake
+  …`). The watcher's reads reuse a verified binding for 20 minutes, across
+  ticks; a relink or a failed check drops it, and writes always verify.
 - **Queued writes.** The server sends queued agent writes every 5 seconds as
   Linear and each project's budget allow (docs/linear.md, "Queued writes").
 - **Clients.** While the server's ticks for a project are fresh, a client

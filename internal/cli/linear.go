@@ -200,7 +200,8 @@ type linearFlags struct {
 	closesWho, leadWho                                                                                                   string
 	projectKind, ackCreate, addTeam                                                                                      string
 	closesAgent, closesHuman, minimalPolicy                                                                              bool
-	suggest, allowOpen, statusSet, projectWide                                                                           bool
+	suggest, allowOpen, statusSet, projectWide, family                                                                   bool
+	moveFile                                                                                                             string
 	statusType, expectedStatus, statusID                                                                                 string
 	kindGroup, kindValues                                                                                                string
 	kindCanary, kindSkipCanary                                                                                           bool
@@ -351,7 +352,9 @@ func parseLinear(command string, args []string, stderr io.Writer) (linearFlags, 
 		f.StringVar(&v.team, "team", "", "required target team UUID, a bound write team")
 		f.BoolVar(&v.confirm, "confirm", false, "send the move the preview showed (project owner or lead in your own terminal, or the coordinator session within its lane)")
 		f.StringVar(&v.expectedSHA, "expected-plan-sha256", "", "--confirm: the plan_sha256 the preview showed")
-		min, max = 1, 1
+		f.BoolVar(&v.family, "family", false, "move the issue with all its sub-issues (name the parent): one write on the parent, each child read back")
+		f.StringVar(&v.moveFile, "file", "", `a batch: {"team_id": UUID, "issues": [UUID, …]}, previewed together, then moved one by one, stopping at the first that isn't accepted; a re-run with the same --operation-id resumes`)
+		min, max = 0, 1
 	case "label", "project":
 		write()
 		f.StringVar(&v.team, "team", "", "required bound team UUID")
@@ -993,6 +996,11 @@ func runLinear(ctx context.Context, flags Config, args []string, stdout, stderr 
 			bounded = linearboard.AcceptQueued(bounded)
 		}
 	}
+	if command == "move" && v.moveFile != "" {
+		// A batch bounds each issue's move, never the whole run.
+		cancel()
+		bounded, cancel = context.WithCancel(ctx)
+	}
 	if command == "watch" {
 		// The watcher runs until interrupted; each poll bounds itself.
 		cancel()
@@ -1467,7 +1475,26 @@ func runLinear(ctx context.Context, flags Config, args []string, stdout, stderr 
 		}
 		data, err = service.ProjectFlowResumeV2(bounded, scope, v.project)
 	case "move":
-		data, err = service.MoveIssueV2(bounded, scope, linearboard.MoveInputV2{IssueID: pos[0], TeamID: v.team, OperationID: v.operation, Confirm: v.confirm, ExpectedPlanSHA256: v.expectedSHA})
+		if v.moveFile != "" {
+			if len(pos) != 0 || v.team != "" || v.family {
+				return errors.New("move --file takes the team and issues from the file, not --team, --family or an issue")
+			}
+			raw, e := readLinearFile(v.moveFile)
+			if e != nil {
+				return e
+			}
+			batch, e := linearboard.ParseBatchMoves([]byte(raw))
+			if e != nil {
+				return e
+			}
+			batch.OperationID, batch.Confirm, batch.ExpectedPlanSHA256 = v.operation, v.confirm, v.expectedSHA
+			data, err = service.BatchMoveV2(bounded, scope, batch)
+			break
+		}
+		if len(pos) != 1 {
+			return errors.New("move takes one issue UUID, or --file")
+		}
+		data, err = service.MoveIssueV2(bounded, scope, linearboard.MoveInputV2{IssueID: pos[0], TeamID: v.team, OperationID: v.operation, Confirm: v.confirm, ExpectedPlanSHA256: v.expectedSHA, Family: v.family})
 	case "relation":
 		data, err = service.RelationV2(bounded, scope, linearboard.RelationInputV2{OperationID: v.operation, Action: v.relationAction, Type: v.relationType, FromID: pos[0], ToID: pos[1]})
 	default:

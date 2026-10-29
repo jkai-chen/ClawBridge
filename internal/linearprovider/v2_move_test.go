@@ -133,3 +133,47 @@ func TestV2SubIssues(t *testing.T) {
 		t.Fatal("a list without parentId proved none")
 	}
 }
+
+// pagedFake answers each call with the next of its pages.
+type pagedFake struct {
+	fake
+	pages []any
+}
+
+func (f *pagedFake) CallTool(ctx context.Context, p *mcp.CallToolParams) (*mcp.CallToolResult, error) {
+	f.result = f.pages[0]
+	if len(f.pages) > 1 {
+		f.pages = f.pages[1:]
+	}
+	return f.fake.CallTool(ctx, p)
+}
+
+// Children pages list_issues {parentId} to its end; past max, or a page
+// that says more without a cursor, is an error, never a short list.
+func TestV2ChildrenPagesToTheEnd(t *testing.T) {
+	list := &mcp.Tool{Name: "list_issues", InputSchema: map[string]any{"type": "object", "properties": map[string]any{"parentId": map[string]any{"type": "string"}, "limit": map[string]any{"type": "number"}, "cursor": map[string]any{"type": "string"}}}}
+	row := func(id string) map[string]any {
+		return map[string]any{"id": id, "teamId": tid, "projectId": nil, "parentId": iid}
+	}
+	const c1, c2 = "c1000000-0000-4000-8000-000000000001", "c1000000-0000-4000-8000-000000000002"
+	f := &pagedFake{fake: fake{tools: []*mcp.Tool{list}}, pages: []any{
+		map[string]any{"issues": []any{row(c1)}, "hasNextPage": true, "nextCursor": "n1"},
+		map[string]any{"issues": []any{row(c2)}, "hasNextPage": false},
+	}}
+	p, err := NewWithCaller(context.Background(), f)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := p.Children(context.Background(), iid, 50)
+	if err != nil || len(got) != 2 || got[0].ID != c1 || got[1].ID != c2 || f.args[1]["cursor"] != "n1" || f.args[0]["parentId"] != iid {
+		t.Fatal(got, err, f.args)
+	}
+	f.pages = []any{map[string]any{"issues": []any{row(c1), row(c2)}, "hasNextPage": false}}
+	if _, err = p.Children(context.Background(), iid, 1); err == nil {
+		t.Fatal("more than max children listed")
+	}
+	f.pages = []any{map[string]any{"issues": []any{row(c1)}}}
+	if _, err = p.Children(context.Background(), iid, 50); err == nil {
+		t.Fatal("a listing that can't prove its end passed")
+	}
+}

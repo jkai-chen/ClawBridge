@@ -430,6 +430,8 @@ COMPOSE_PROJECT_NAME=clawbridge
 # CLAWBRIDGE_PROJECT_FLOW_PROVEN=1
 # CLAWBRIDGE_ISSUE_SUBSCRIBERS_PROVEN=1
 # CLAWBRIDGE_ISSUE_MOVE_PROVEN=1
+# CLAWBRIDGE_ISSUE_FAMILY_MOVE_PROVEN=1
+# CLAWBRIDGE_PROJECT_TEAM_ADD_PROVEN=1
 ```
 
 Use a random hexadecimal password so it can be interpolated safely into the
@@ -544,6 +546,11 @@ CLAWBRIDGE_LINEAR_APP_TOKEN_KEY=<32 random bytes, base64>
   with `serve --issue-move-proven` or `CLAWBRIDGE_ISSUE_MOVE_PROVEN=1`. Set
   that after one Sandbox move through `clawbridge linear move` itself
   (preview, then confirm) reads `accepted`. Previews work without it.
+  Family moves (a parent with its sub-issues) also need
+  `serve --issue-family-move-proven` or `CLAWBRIDGE_ISSUE_FAMILY_MOVE_PROVEN=1`.
+  Set that after one Sandbox family move through `clawbridge linear move`
+  reads `accepted`, with its children carrying a team label and a state
+  other than backlog.
 - **Team adds are off until proven.** Adding a team to a Linear project
   (`linear project update --add-team`, see [Linear](../linear.md)) is refused
   with `project_team_add_unproven` until the server runs with

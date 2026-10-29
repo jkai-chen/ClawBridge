@@ -69,6 +69,9 @@ type Store struct {
 	// projectTeamAddProven is serve --project-team-add-proven: the operator
 	// ran the team-add probe, so a team is added to a project (FR10).
 	projectTeamAddProven bool
+	// issueFamilyMoveProven is serve --issue-family-move-proven: a family
+	// move (a parent with its sub-issues) may be confirmed (FR7 F1).
+	issueFamilyMoveProven bool
 	// modelSeal seals owners' provider keys; nil leaves model setup off.
 	modelSeal *ModelSeal
 	// modelMaxAgents and memAvailable are the serving process's, for
@@ -594,8 +597,9 @@ var operationArgs = map[string]string{
 	"project_create_settle":       "instance operation_id outcome linear_project_id",
 	"project_create_list":         "instance",
 	"project_create_ack":          "instance operation_id",
-	"issue_move_reserve":          "instance operation_id issue_uuid from_team to_team plan_sha256",
-	"issue_move_settle":           "instance operation_id outcome old_identifier new_identifier",
+	"issue_move_reserve":          "instance operation_id issue_uuid from_team to_team plan_sha256 children calls",
+	"issue_move_settle":           "instance operation_id outcome old_identifier new_identifier children",
+	"issue_move_status":           "instance operation_id",
 	"project_team_add_reserve":    "instance operation_id linear_project team_id project_teams plan_sha256",
 	"project_team_add_settle":     "instance operation_id outcome changed unverified",
 	"project_team_add_list":       "instance",
@@ -839,6 +843,14 @@ func validateArgs(op string, a map[string]any) error {
 		case "ack":
 			if _, ok := v.(map[string]any); !ok {
 				return errors.New("ack must be an object {message_id, lease_id}")
+			}
+		case "children":
+			// A family move's children: UUIDs on reserve, outcomes on
+			// settle; issue_moves.go checks each.
+			switch v.(type) {
+			case []string, []any:
+			default:
+				return errors.New("children must be an array")
 			}
 		case "lanes":
 			// The lanes themselves are checked by parseLanes.

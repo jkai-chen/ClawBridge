@@ -702,6 +702,7 @@ func Run(ctx context.Context, args []string) error {
 	store.SetLinearBudgetMax(watch.budgetMax)
 	store.SetIssueMoveProven(settings.IssueMoveProven)
 	store.SetProjectTeamAddProven(settings.ProjectTeamAddProven)
+	store.SetIssueFamilyMoveProven(settings.IssueFamilyMoveProven)
 	writer, err := appWriter(store)
 	if err != nil {
 		return err
@@ -1042,6 +1043,11 @@ type ServeSettings struct {
 	// serve --project-team-add-proven or CLAWBRIDGE_PROJECT_TEAM_ADD_PROVEN=1,
 	// set by the operator after the team-add probe.
 	ProjectTeamAddProven bool
+	// IssueFamilyMoveProven lets a family move (a parent with its
+	// sub-issues) be confirmed too: serve --issue-family-move-proven or
+	// CLAWBRIDGE_ISSUE_FAMILY_MOVE_PROVEN=1, after the family probe. It
+	// needs IssueMoveProven as well.
+	IssueFamilyMoveProven bool
 }
 
 // ParseServe reads serve's flags and the OAuth secrets from getenv. The
@@ -1060,6 +1066,7 @@ func ParseServe(args []string, getenv func(string) string) (ServeSettings, error
 	publicOrigin := f.String("public-origin", "", "this server's public origin, https://HOST[:PORT]; device signatures and join proofs cover it, so device sign-in requires it")
 	flowProven := f.Bool("project-flow-proven", false, "let status policies turn project flow on; set only after the deploy probe proves it (also CLAWBRIDGE_PROJECT_FLOW_PROVEN=1)")
 	subscribersProven := f.Bool("issue-subscribers-proven", false, "let projects subscribe their people to agents' issues; set only after the live check proves the app may (also CLAWBRIDGE_ISSUE_SUBSCRIBERS_PROVEN=1)")
+	familyProven := f.Bool("issue-family-move-proven", false, "let a family move (a parent with its sub-issues) be confirmed; set only after the family probe proves it (also CLAWBRIDGE_ISSUE_FAMILY_MOVE_PROVEN=1)")
 	moveProven := f.Bool("issue-move-proven", false, "let an issue's team move be confirmed; set only after the move probe proves it (also CLAWBRIDGE_ISSUE_MOVE_PROVEN=1)")
 	teamAddProven := f.Bool("project-team-add-proven", false, "let the project owner, a lead or the coordinator add a bound team to a Linear project; set only after the team-add probe proves it (also CLAWBRIDGE_PROJECT_TEAM_ADD_PROVEN=1)")
 	if err := f.Parse(args); err != nil {
@@ -1108,6 +1115,15 @@ func ParseServe(args []string, getenv func(string) string) (ServeSettings, error
 	case "0", "false":
 	default:
 		return ServeSettings{}, errors.New("CLAWBRIDGE_PROJECT_TEAM_ADD_PROVEN is 1 or 0")
+	}
+	out.IssueFamilyMoveProven = *familyProven
+	switch v := getenv("CLAWBRIDGE_ISSUE_FAMILY_MOVE_PROVEN"); v {
+	case "":
+	case "1", "true":
+		out.IssueFamilyMoveProven = true
+	case "0", "false":
+	default:
+		return ServeSettings{}, errors.New("CLAWBRIDGE_ISSUE_FAMILY_MOVE_PROVEN is 1 or 0")
 	}
 	if out.Auth.accepts(AuthDevice) {
 		if out.Auth.PublicOrigin, err = ParsePublicOrigin(*publicOrigin); err != nil {

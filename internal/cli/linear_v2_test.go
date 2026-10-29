@@ -363,8 +363,11 @@ func TestLinearMoveParses(t *testing.T) {
 	if err != nil || len(pos) != 1 || pos[0] != issue || v.team != team || v.operation != "mv-1" || !v.confirm || v.expectedSHA != sha {
 		t.Fatal(v, pos, err)
 	}
-	if _, _, err = parseLinear("move", []string{"--profile", "native", "--team", team}, &bytes.Buffer{}); err == nil {
-		t.Fatal("a move without the issue parsed")
+	if v, pos, err = parseLinear("move", []string{"--profile", "native", "--file", "moves.json", "--operation-id", "b-1"}, &bytes.Buffer{}); err != nil || len(pos) != 0 || v.moveFile != "moves.json" {
+		t.Fatal("a batch didn't parse:", v, pos, err)
+	}
+	if v, _, err = parseLinear("move", []string{issue, "--profile", "native", "--team", team, "--family"}, &bytes.Buffer{}); err != nil || !v.family {
+		t.Fatal("--family didn't parse:", err)
 	}
 	var out, diag bytes.Buffer
 	if err = Run(context.Background(), []string{"linear", "move", "--help"}, &out, &diag); err != nil {

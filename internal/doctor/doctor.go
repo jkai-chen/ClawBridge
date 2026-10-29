@@ -248,6 +248,7 @@ func Run(ctx context.Context, in Input, executor Executor) Report {
 		if in.TeamsWithoutProject != nil {
 			checkTeamsWithoutProject(ctx, in.TeamsWithoutProject, wid, pid, add)
 		}
+		checkStatusPolicyTeams(ctx, executor, wid, pid, add)
 		checkProvenGates(ctx, executor, wid, pid, add)
 		checkLinearBudget(ctx, executor, wid, pid, add)
 		if in.LabelSets != nil {
@@ -719,6 +720,61 @@ func checkTeamsWithoutProject(ctx context.Context, read func(context.Context, st
 		check.Action = "Nothing is wrong: a team a bound project carries works as an ordinary team. The next `clawbridge linear link` drops its entry."
 	}
 	add(check)
+}
+
+// checkStatusPolicyTeams warns of bound teams the status policy has no
+// entry for: it is a snapshot of the teams bound when it was set, so a
+// claim or done-release there leaves the issue's state alone. It reads the
+// overview; with no such team, a disabled policy, or an older server's
+// overview (no field), the check is left out.
+func checkStatusPolicyTeams(ctx context.Context, executor Executor, wid, pid string, add func(Check)) {
+	r, err := executor.Execute(ctx, bus.Request{Operation: "project_overview", Workspace: wid, Project: pid, Args: map[string]any{}})
+	m, _ := r.Data.(map[string]any)
+	linear, _ := m["linear"].(map[string]any)
+	policy, _ := linear["status_policy"].(map[string]any)
+	if err != nil || policy == nil {
+		return
+	}
+	var missing []string
+	switch list := policy["teams_missing"].(type) {
+	case []string:
+		missing = list
+	case []any:
+		for _, x := range list {
+			missing = append(missing, fmt.Sprint(x))
+		}
+	}
+	if len(missing) == 0 {
+		return
+	}
+	names := map[string]string{}
+	each := func(row map[string]any) {
+		if id, _ := row["id"].(string); id != "" {
+			names[id], _ = row["name"].(string)
+		}
+	}
+	switch rows := linear["teams"].(type) {
+	case []map[string]any:
+		for _, row := range rows {
+			each(row)
+		}
+	case []any:
+		for _, raw := range rows {
+			row, _ := raw.(map[string]any)
+			each(row)
+		}
+	}
+	labels := []string{}
+	for _, id := range missing {
+		if names[id] != "" {
+			labels = append(labels, names[id])
+		} else {
+			labels = append(labels, id)
+		}
+	}
+	add(Check{ID: "linear.status_policy", Title: "Status policy teams", Status: Warn,
+		Message: "Bound team(s) " + strings.Join(labels, ", ") + " are not in the status policy: claims and done-releases there don't move the issue's state.",
+		Action:  "The project owner runs `clawbridge linear status-policy set --file FILE --expected-revision N` with FILE `{\"enabled\": true}`: it reads every bound team's states again and keeps every other key as it is."})
 }
 
 // checkCommentWatch reports the project's comment watcher and claim

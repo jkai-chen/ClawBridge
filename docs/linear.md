@@ -339,6 +339,9 @@ clawbridge linear link --profile PROFILE_ID \
   --linear-project PROJECT_UUID --expected-revision CURRENT_REVISION
 ```
 
+A team bound after the status policy was set is not in the policy until you run
+[`status-policy set`](#status-policy-project-owner-only) again: see there.
+
 The preview says "no bound project carries team T yet; it reads nothing and takes no issue writes until one does".
 The link's history entry names the list. Until a bound project carries the team, it is **inert**:
 - no issue of it is listed or read, and intake skips it;
@@ -1424,6 +1427,11 @@ clawbridge linear project team-adds                 # any member: the adds, and 
   Every other session previews and asks. The write goes through the confirming
   person's own Linear profile, never the ClawBridge app, so Linear's own
   permissions apply as well.
+- **The status policy.** A team bound to the board after the status policy was
+  set is not in the policy: claims and done-releases there don't move the
+  issue's state. Run [`status-policy set`](#status-policy-project-owner-only)
+  again with the file `{"enabled": true}`: keys it leaves out keep their current
+  values.
 - **Preview, then confirm.** The preview reads the project and prints its
   teams, the team added, what is sent and `plan_sha256`. It sends nothing. The
   confirm repeats it with an operation ID and that digest, and is refused if the
@@ -1600,6 +1608,33 @@ issue: see [who closes an issue](#who-closes-an-issue).
 - **Setting it** reads each bound team's workflow and resolves every name
   exactly. A name missing, or not unique, in any bound team refuses the policy,
   and nothing is set.
+- **A snapshot of the bound teams.** The policy holds an entry for each team
+  bound when it was set; a team bound later has none. A claim or done-release in
+  such a team leaves the issue's state alone and records the skip reason
+  `team_not_in_policy` (a team in the policy but with no target for the move
+  records `team_off`). It is not silent any more: the project overview's
+  `status_policy` lists `teams_missing` (while the policy is enabled), doctor's
+  `linear.status_policy` check warns and names the teams, and a confirmed
+  `linear move` into such a team says so in its note. After binding a team, run
+  `status-policy set` again with the file `{"enabled": true}`: it reads every
+  bound team's states, and every key it leaves out keeps its current value, so
+  closes and done states survive. Don't reuse an older full file: a key it
+  includes replaces the current value (its `closes` would undo every later
+  `closes set`).
+- **Keys you leave out keep their current values; keys you include replace
+  them.** This holds for `closes`, `create`, `claim`, `release_done`, `done`,
+  `claim_from_triage`, `project_flow` and `project_targets`; `enabled` is always
+  required. So `"closes": {}` clears every close rule, `"done": ""` clears every
+  done state, and `"project_flow": false` turns project flow off, while a file
+  without those keys changes none of them. A kept state is looked up by its ID in
+  each team's workflow, then once by its stored name; if neither is found the
+  set is refused (a kept `done` instead leaves that team without one, and the
+  answer says so). A newly bound team takes a kept state by name only when every
+  current team that has it uses the same name; otherwise it is left unset and the
+  answer's `notes` name the team. A kept `closes` entry for a project no longer
+  bound is dropped and named in `notes`. The answer lists `kept`, the keys taken
+  from the current policy; the CLI prints "Kept from revision N: ...". If the
+  current policy can't be read, nothing is set.
 - **State types.** Linear's status list through MCP may leave out each state's
   type. Then a hosted server's ClawBridge Linear app reads the team's workflow
   instead (`linear_app_states`, a read, only for a bound team, and only for a
@@ -1739,6 +1774,14 @@ the policy still names but the board no longer binds "(not bound)"; the next
 - **Never a session.** The server refuses `closes set` from any session,
   whoever its owner is, and refuses a `status-policy set` from a session that
   changes who closes. The rest of the status policy stays the owner's.
+- **A file that names agent close rules isn't an agent's to run.** The CLI
+  refuses `status-policy set` under `--session` or an agent's environment when
+  the file's `"closes"` names any project `agent`, changed or not, before
+  anything is sent; leave `"closes"` out and the current rules are kept.
+- **A warning when a team has no done state.** After `closes set --agent` is
+  accepted, the answer's `notes` name each team the status policy gives no
+  `done` state: agent-closed work there stops at `release_done` until the
+  owner adds `"done"` with `status-policy set`. It never refuses.
 - **It needs a status policy.** With none, `closes set` is refused; the owner
   creates one with `status-policy set`, or with the minimal policy below.
 

@@ -16,9 +16,13 @@ import (
 
 // StatusPolicyFile is what the owner writes: state names, resolved per
 // bound team when the policy is set.
+//
+// A top-level key the file leaves out keeps its current value; one it
+// includes replaces it (an empty "closes" clears every rule, "done": ""
+// clears every done state). Presence is read from the raw file.
 type StatusPolicyFile struct {
 	Enabled         *bool  `json:"enabled"`
-	ClaimFromTriage bool   `json:"claim_from_triage"`
+	ClaimFromTriage *bool  `json:"claim_from_triage"`
 	Create          string `json:"create"`
 	Claim           string `json:"claim"`
 	ReleaseDone     string `json:"release_done"`
@@ -31,7 +35,7 @@ type StatusPolicyFile struct {
 	// ProjectFlow lets each bound Linear project's status follow its
 	// issues (A4); ProjectTargets overrides the statuses it moves to, by
 	// project status ID.
-	ProjectFlow    bool                `json:"project_flow"`
+	ProjectFlow    *bool               `json:"project_flow"`
 	ProjectTargets *bus.ProjectTargets `json:"project_targets"`
 }
 
@@ -64,6 +68,14 @@ func (s *Service) SetStatusPolicyV2(ctx context.Context, scope bus.Request, raw 
 	if dec.Decode(&file) != nil || dec.Decode(new(any)) != io.EOF || file.Enabled == nil {
 		return nil, errors.New(`the status policy file must be {"enabled": true|false, "claim_from_triage", "create", "claim", "release_done", "done"} with state names, "closes": {"<Linear project UUID>": "agent"|"human"}, "project_flow": true|false, and "project_targets": {"started": "<project status UUID>", "completed": "<project status UUID>"}`)
 	}
+	// Keys match as the decoder matches them, ignoring case.
+	var keys map[string]json.RawMessage
+	_ = json.Unmarshal(raw, &keys)
+	present := map[string]bool{}
+	for k := range keys {
+		present[strings.ToLower(k)] = true
+	}
+	has := func(key string) bool { return present[key] }
 	b, e := s.BindingV2(ctx, scope)
 	if e != nil {
 		return nil, e
@@ -71,13 +83,29 @@ func (s *Service) SetStatusPolicyV2(ctx context.Context, scope bus.Request, raw 
 	if !b.Configured || len(b.LinearTeamIDs) == 0 {
 		return nil, errors.New("link the task board before setting a status policy")
 	}
+	// What the file leaves out is kept from the policy now set, so the
+	// current policy is read first and never replaced blindly.
+	cur, e := s.statusPolicy(ctx, scope)
+	if e != nil {
+		return nil, errors.New("the current status policy could not be read; nothing was set")
+	}
+	kept := map[string]bool{}
+	notes := []string{}
 	closes := map[string]any{}
 	agents := false
-	for project, who := range file.Closes {
+	source := file.Closes
+	if !has("closes") {
+		source = cur.Closes
+	}
+	for project, who := range source {
 		project = strings.ToLower(project)
 		bound := false
 		for _, p := range b.LinearProjectIDs {
 			bound = bound || strings.EqualFold(p, project)
+		}
+		if !bound && !has("closes") {
+			notes = append(notes, fmt.Sprintf("closes kept from the current policy names Linear project %s, which is no longer in this board's binding: dropped", project))
+			continue
 		}
 		if !bound {
 			return nil, fmt.Errorf("closes names Linear project %q, which is not in this board's binding; nothing was set", project)
@@ -87,10 +115,24 @@ func (s *Service) SetStatusPolicyV2(ctx context.Context, scope bus.Request, raw 
 		}
 		closes[project] = who
 		agents = agents || who == "agent"
+		kept["closes"] = kept["closes"] || !has("closes")
 	}
 	via, e := s.confirmLoosened(ctx, scope, closes, confirm)
 	if e != nil {
 		return nil, e
+	}
+	fileNames := map[string]string{"create": file.Create, "claim": file.Claim, "release_done": file.ReleaseDone, "done": file.Done}
+	fields := []string{"create", "claim", "release_done", "done"}
+	// For a newly bound team, the name every current team that has the
+	// field agrees on.
+	agreed := map[string]map[string]bool{}
+	for _, field := range fields {
+		agreed[field] = map[string]bool{}
+		for _, t := range cur.Teams {
+			if st := stateOf(t, field); st != nil {
+				agreed[field][st.Name] = true
+			}
+		}
 	}
 	stops := []string{}
 	teams := map[string]any{}
@@ -108,41 +150,100 @@ func (s *Service) SetStatusPolicyV2(ctx context.Context, scope bus.Request, raw 
 		}
 		workflow := map[string]any{}
 		byName := map[string][]linearprovider.Status{}
+		byID := map[string]linearprovider.Status{}
 		for _, st := range states {
 			if st.Type == "" {
 				return nil, errors.New("the Linear connection did not report workflow state types; nothing was set")
 			}
 			workflow[strings.ToLower(st.ID)] = st.Type
 			byName[st.Name] = append(byName[st.Name], st)
+			byID[strings.ToLower(st.ID)] = st
 		}
 		entry := map[string]any{"workflow": workflow}
-		for field, name := range map[string]string{"create": file.Create, "claim": file.Claim, "release_done": file.ReleaseDone, "done": file.Done} {
-			if name == "" {
-				continue
-			}
-			found := byName[name]
-			if field == "done" && len(found) == 0 {
-				stops = append(stops, team)
-				continue
-			}
-			if len(found) != 1 {
-				return nil, fmt.Errorf("%s state %q is missing or not unique in team %s; nothing was set", field, name, team)
-			}
-			entry[field] = map[string]any{"id": strings.ToLower(found[0].ID), "name": found[0].Name, "type": found[0].Type}
+		set := func(field string, st linearprovider.Status) {
+			entry[field] = map[string]any{"id": strings.ToLower(st.ID), "name": st.Name, "type": st.Type}
 		}
-		if file.Done == "" {
-			stops = append(stops, team)
+		curTeam, known := cur.Teams[strings.ToLower(team)]
+		for _, field := range fields {
+			if has(field) {
+				name := fileNames[field]
+				if name == "" {
+					if field == "done" {
+						stops = append(stops, team)
+					}
+					continue
+				}
+				found := byName[name]
+				if field == "done" && len(found) == 0 {
+					stops = append(stops, team)
+					continue
+				}
+				if len(found) != 1 {
+					return nil, fmt.Errorf("%s state %q is missing or not unique in team %s; nothing was set", field, name, team)
+				}
+				set(field, found[0])
+				continue
+			}
+			// Left out of the file: keep what the policy has.
+			var resolved *linearprovider.Status
+			switch old := stateOf(curTeam, field); {
+			case known && old != nil:
+				if st, ok := byID[strings.ToLower(old.ID)]; ok {
+					resolved = &st
+				} else if found := byName[old.Name]; len(found) == 1 {
+					resolved = &found[0]
+				} else if field != "done" {
+					return nil, fmt.Errorf("%s state %s kept from the current policy is no longer in team %s; nothing was set", field, old.Name, team)
+				} else {
+					notes = append(notes, fmt.Sprintf("done state %s kept from the current policy is no longer in team %s: its done-releases stop at release_done", old.Name, team))
+				}
+			case !known && len(agreed[field]) == 1:
+				var name string
+				for name = range agreed[field] {
+				}
+				if found := byName[name]; len(found) == 1 {
+					resolved = &found[0]
+				} else {
+					notes = append(notes, fmt.Sprintf("team %s has no unique %s state named %s, which the current policy uses: left unset", team, field, name))
+				}
+			case !known && len(agreed[field]) > 1:
+				notes = append(notes, fmt.Sprintf("team %s is new and the current teams disagree on the %s state name: left unset", team, field))
+			}
+			if resolved != nil {
+				set(field, *resolved)
+				kept[field] = true
+			} else if field == "done" {
+				stops = append(stops, team)
+			}
 		}
 		teams[strings.ToLower(team)] = entry
 	}
-	policy := map[string]any{"enabled": *file.Enabled, "claim_from_triage": file.ClaimFromTriage, "teams": teams}
+	claimFromTriage := cur.ClaimFromTriage
+	if file.ClaimFromTriage != nil {
+		claimFromTriage = *file.ClaimFromTriage
+	} else if claimFromTriage {
+		kept["claim_from_triage"] = true
+	}
+	policy := map[string]any{"enabled": *file.Enabled, "claim_from_triage": claimFromTriage, "teams": teams}
 	if len(closes) > 0 {
 		policy["closes"] = closes
 	}
-	if file.ProjectFlow {
+	projectFlow := cur.ProjectFlow
+	if file.ProjectFlow != nil {
+		projectFlow = *file.ProjectFlow
+	} else if projectFlow {
+		kept["project_flow"] = true
+	}
+	if projectFlow {
 		policy["project_flow"] = true
 	}
-	if t := file.ProjectTargets; t != nil {
+	targets := cur.ProjectTargets
+	if has("project_targets") {
+		targets = file.ProjectTargets
+	} else if targets != nil {
+		kept["project_targets"] = true
+	}
+	if t := targets; t != nil {
 		policy["project_targets"] = map[string]any{"started": strings.ToLower(t.Started), "completed": strings.ToLower(t.Completed)}
 	}
 	if _, e = bus.ParseStatusPolicy(policy); e != nil {
@@ -159,19 +260,48 @@ func (s *Service) SetStatusPolicyV2(ctx context.Context, scope bus.Request, raw 
 		delete(scope.Args, "via")
 		r, e = s.cfg.Executor.Execute(ctx, scope)
 	}
-	if e != nil || !agents || len(stops) == 0 {
+	if e != nil {
 		return r.Data, e
 	}
-	// A2-L3: say where a project agents close will stop short of done.
+	if agents && len(stops) > 0 {
+		// A2-L3: say where a project agents close will stop short of done.
+		sort.Strings(stops)
+		notes = append(notes, fmt.Sprintf("closes names projects agents close, but team(s) %s have no done state: their done-releases stop at release_done", strings.Join(stops, ", ")))
+	}
+	if len(notes) == 0 && len(kept) == 0 {
+		return r.Data, nil
+	}
 	out := map[string]any{}
 	if m, ok := r.Data.(map[string]any); ok {
 		for k, v := range m {
 			out[k] = v
 		}
 	}
-	sort.Strings(stops)
-	out["notes"] = []string{fmt.Sprintf("closes names projects agents close, but team(s) %s have no done state: their done-releases stop at release_done", strings.Join(stops, ", "))}
+	if len(notes) > 0 {
+		out["notes"] = notes
+	}
+	if len(kept) > 0 {
+		keys := []string{}
+		for k := range kept {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+		out["kept"] = keys
+	}
 	return out, nil
+}
+
+// stateOf is a policy team's state for a file field, or nil.
+func stateOf(t bus.StatusTeam, field string) *bus.StatusState {
+	switch field {
+	case "create":
+		return t.Create
+	case "claim":
+		return t.Claim
+	case "release_done":
+		return t.ReleaseDone
+	}
+	return t.Done
 }
 
 func typed(states []linearprovider.Status) bool {
@@ -245,11 +375,13 @@ func decodeStatusPolicy(v any) (bus.StatusPolicy, error) {
 		ClaimFromTriage bool                      `json:"claim_from_triage"`
 		Teams           map[string]bus.StatusTeam `json:"teams"`
 		Closes          map[string]string         `json:"closes"`
+		ProjectFlow     bool                      `json:"project_flow"`
+		ProjectTargets  *bus.ProjectTargets       `json:"project_targets"`
 	}
 	if json.Unmarshal(raw, &view) != nil {
 		return bus.StatusPolicy{}, errors.New("the status policy is unreadable")
 	}
-	return bus.StatusPolicy{Enabled: view.Enabled, ClaimFromTriage: view.ClaimFromTriage, Teams: view.Teams, Closes: view.Closes}, nil
+	return bus.StatusPolicy{Enabled: view.Enabled, ClaimFromTriage: view.ClaimFromTriage, Teams: view.Teams, Closes: view.Closes, ProjectFlow: view.ProjectFlow, ProjectTargets: view.ProjectTargets}, nil
 }
 
 // createState is the policy's create state for team, or "" when the policy
@@ -332,7 +464,7 @@ func inClaimFromSet(kindOf string, policy bus.StatusPolicy) bool {
 }
 
 // stateMove decides and makes one state move for a marker row: the issue is
-// read again, its team must be bound and in the policy, the target in that
+// read again, its team must be bound and in the policy (a bound team the policy lacks is skipped as team_not_in_policy), the target in that
 // team's workflow, and the current state in the move's "from" set (a claim
 // from the claim's from-set; a release only from exactly the claim state,
 // or from the claim's from-set too when its claim was overtaken). A move
@@ -365,7 +497,11 @@ func (s *Service) stateMove(ctx context.Context, scope bus.Request, issue, kind 
 			target = t.Done
 		}
 	}
-	if !ok || target == nil {
+	if !ok {
+		// Bound, but the policy was set before the team was bound.
+		return skip("team_not_in_policy")
+	}
+	if target == nil {
 		return skip("team_off")
 	}
 	if t.Workflow[target.ID] == "" {

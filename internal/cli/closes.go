@@ -3,6 +3,7 @@ package cli
 import (
 	"bufio"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -61,6 +62,40 @@ func confirmAgentCloses(flags Config, names map[string]string, stderr io.Writer)
 		}
 	}
 	return nil
+}
+
+// refuseAgentCloseFile refuses a status-policy file that names any project
+// "agent" under --session or an agent's environment, changed or not: who
+// closes is a person's decision, and a file that leaves "closes" out keeps
+// the current rules. It runs before anything is sent.
+func refuseAgentCloseFile(flags Config, raw []byte) error {
+	var file map[string]json.RawMessage
+	if json.Unmarshal(raw, &file) != nil {
+		return nil
+	}
+	named := false
+	for key, value := range file {
+		if !strings.EqualFold(key, "closes") {
+			continue
+		}
+		var closes map[string]string
+		if json.Unmarshal(value, &closes) != nil {
+			continue
+		}
+		for _, who := range closes {
+			named = named || strings.EqualFold(who, linearboard.ClosesAgent)
+		}
+	}
+	if !named {
+		return nil
+	}
+	marker := "--session"
+	if flags.Session == "" {
+		if marker = agentMarker(closesEnv()); marker == "" {
+			return nil
+		}
+	}
+	return fmt.Errorf(`close rules are a person's decision, and %s says an agent runs this command; leave "closes" out of the file (the current rules are kept) or have the person run it in their own terminal`, marker)
 }
 
 // linkCloses reads link's --closes UUID=agent|human pairs.

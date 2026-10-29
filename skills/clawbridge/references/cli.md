@@ -103,8 +103,15 @@ A coordinator session may also receive a `close-policy` message when a Linear
 project joins the board: people close its issues unless the project owner or a
 project lead (the project role) decides otherwise, or the policy already lets agents close it. It reports,
 never instructs. Who closes is a person's decision: never run
-`clawbridge linear closes set`, `link --closes`, or a `status-policy set` that
-changes `closes`; pass the message to the human.
+`clawbridge linear closes set`, `link --closes`, or a `status-policy set` whose
+file includes `closes` (leave closes out: the current rules are kept); pass the message to the human.
+
+A state that didn't move after a release in a newly bound team is usually the
+status policy not including that team yet (skip reason `team_not_in_policy`;
+doctor's `linear.status_policy` warns). Tell the project owner: they run
+`status-policy set` with the file `{"enabled": true}`, which reads every bound
+team again and keeps every other key (closes, done states) as it is. Never run
+it yourself.
 
 Where the status policy lets project status follow the work, a coordinator may
 also receive `project-done` (every issue closed, and people finish the project),

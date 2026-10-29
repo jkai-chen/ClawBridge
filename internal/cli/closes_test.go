@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bytes"
+	"fmt"
 	"strings"
 	"testing"
 )
@@ -94,6 +95,39 @@ func TestClosesSetNeedsOneValueAndARevision(t *testing.T) {
 		}
 		if err := runLinear(t.Context(), Config{}, args, &bytes.Buffer{}, &bytes.Buffer{}); err == nil || !strings.Contains(err.Error(), want) {
 			t.Fatal(args, err)
+		}
+	}
+}
+
+// A status-policy file that names an agent close rule is a person's
+// decision, changed or not: refused under an agent's environment or
+// --session. A file without closes, with only human rules, or run by a
+// person is not refused by this rule.
+func TestStatusPolicyFileWithAgentClosesIsNotAnAgentsToRun(t *testing.T) {
+	const want = `close rules are a person's decision, and %s says an agent runs this command; leave "closes" out of the file (the current rules are kept) or have the person run it in their own terminal`
+	agentFile := `{"enabled": true, "claim": "In Progress", "closes": {"` + closesProject + `": "agent"}}`
+	for _, c := range []struct {
+		name, file, marker string
+		flags              Config
+		env                []string
+		refused            bool
+	}{
+		{"agent env, an agent rule", agentFile, "CLAUDECODE", Config{}, []string{"CLAUDECODE=1"}, true},
+		{"session", agentFile, "--session", Config{Session: "worker"}, nil, true},
+		{"another case of the key", strings.Replace(agentFile, `"closes"`, `"Closes"`, 1), "CLAUDECODE", Config{}, []string{"CLAUDECODE=1"}, true},
+		{"agent among human rules", `{"enabled": true, "closes": {"44444444-4444-4444-8444-444444444444": "human", "` + closesProject + `": "agent"}}`, "CLAUDECODE", Config{}, []string{"CLAUDECODE=1"}, true},
+		{"no closes key", `{"enabled": true, "claim": "In Progress"}`, "", Config{}, []string{"CLAUDECODE=1"}, false},
+		{"only human rules", `{"enabled": true, "closes": {"` + closesProject + `": "human"}}`, "", Config{}, []string{"CLAUDECODE=1"}, false},
+		{"empty closes", `{"enabled": true, "closes": {}}`, "", Config{}, []string{"CLAUDECODE=1"}, false},
+		{"a person's shell", agentFile, "", Config{}, []string{"HOME=/x"}, false},
+	} {
+		typing(t, true, "", c.env...)
+		err := refuseAgentCloseFile(c.flags, []byte(c.file))
+		switch {
+		case c.refused && (err == nil || err.Error() != fmt.Sprintf(want, c.marker)):
+			t.Fatal(c.name, err)
+		case !c.refused && err != nil:
+			t.Fatal(c.name, err)
 		}
 	}
 }

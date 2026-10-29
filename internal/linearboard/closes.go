@@ -130,7 +130,34 @@ func (s *Service) SetClosesV2(ctx context.Context, scope bus.Request, project, c
 		// §10.4: an older server; never write the whole policy for a lead.
 		return nil, fmt.Errorf("this server predates closes set; the project owner sets who closes with clawbridge linear status-policy set, naming %s in the file's \"closes\"", project)
 	}
-	return r.Data, e
+	if e != nil || closes != ClosesAgent {
+		return r.Data, e
+	}
+	// A warning, never a refusal: a team with no done state stops its
+	// done-releases at release_done. A policy that can't be read says nothing.
+	policy, pe := s.statusPolicy(ctx, scope)
+	if pe != nil {
+		return r.Data, nil
+	}
+	var missing []string
+	for team, t := range policy.Teams {
+		if t.Done == nil {
+			missing = append(missing, team)
+		}
+	}
+	if len(missing) == 0 {
+		return r.Data, nil
+	}
+	sort.Strings(missing)
+	out := map[string]any{}
+	if m, ok := r.Data.(map[string]any); ok {
+		for k, v := range m {
+			out[k] = v
+		}
+	}
+	notes, _ := out["notes"].([]string)
+	out["notes"] = append(notes, fmt.Sprintf(`agents close this project, but team(s) %s have no done state in the status policy: their done-releases stop at release_done; the project owner adds "done" with clawbridge linear status-policy set --file FILE (FILE {"enabled": true, "done": "NAME"})`, strings.Join(missing, ", ")))
+	return out, nil
 }
 
 // ProjectNameV2 is a bound project's name, read from Linear, for a person

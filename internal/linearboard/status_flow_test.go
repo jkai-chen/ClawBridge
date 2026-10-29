@@ -185,19 +185,26 @@ func TestStateMoveSkipsTeamsAndTargetsOutsideThePolicy(t *testing.T) {
 	team := unknown.Teams[teamID]
 	team.Workflow = map[string]string{sfBacklog: "backlog"}
 	unknown.Teams[teamID] = team
+	// An entry with no target: the team is in the policy but switched off.
+	noTarget := bus.StatusPolicy{Enabled: true, Teams: map[string]bus.StatusTeam{teamID: {Workflow: sfPolicy().Teams[teamID].Workflow}}}
 	for name, c := range map[string]struct {
 		policy bus.StatusPolicy
 		team   string
 		reason string
+		kind   string
+		marker string
 	}{
-		"team not in the policy": {off, teamID, "team_off"},
-		"target not in workflow": {unknown, teamID, "target_unknown"},
+		"team not in the policy":         {off, teamID, "team_not_in_policy", "claim", "claim"},
+		"team not in the policy, a done": {off, teamID, "team_not_in_policy", "release_done", "close"},
+		"team in the policy, no target":  {noTarget, teamID, "team_off", "claim", "claim"},
+		"no target on a done-release":    {noTarget, teamID, "team_off", "release_done", "close"},
+		"target not in workflow":         {unknown, teamID, "target_unknown", "claim", "claim"},
 	} {
-		s, a, p, scope := stateTest(t, "claim", sfBacklog, c.policy, false)
+		s, a, p, scope := stateTest(t, c.kind, sfBacklog, c.policy, false)
 		issue := p.issues[issueID]
 		issue.TeamID = c.team
 		p.issues[issueID] = issue
-		s.ApplyMarker(context.Background(), scope, "asg_1", "claim", nil)
+		s.ApplyMarker(context.Background(), scope, "asg_1", c.marker, nil)
 		if got := settled(a, "state"); len(stateMoves(p)) != 0 || got["outcome"] != "skipped" || got["skip_reason"] != c.reason {
 			t.Fatal(name, stateMoves(p), got)
 		}

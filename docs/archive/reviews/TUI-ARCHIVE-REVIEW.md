@@ -39,7 +39,7 @@ Latest command: `go test ./integration -run '^TestTUIArchive' -count=1 -v` — *
 
 Additional public-model probes in integration/tui_archive_layout_test.go pass:
 
-- All six loaded screens at widths 8,12,23,24,32,40,80,141,215 and heights 1,4,8,9,12,24,50 (378 screen/size combinations). Whole-screen cell/row bounds, sanitized Unicode/control text, no peer instance exposure, immutable selection/scope/identity, tiny-view quit and no executor/doctor/planner activity during resize.
+- All six loaded screens at widths 8,12,23,24,32,40,80,141,215 and heights 1,4,8,9,12,24,50 (378 screen/size combinations). Whole-screen cell/row bounds, sanitized Unicode/control text, no peer instance exposure, immutable selection/scope/identity, tiny-view quit and no executor/doctor/setup-plan activity during resize.
 - Selected row 35 remains visible across shrink/grow on Projects/Sessions/Inbox; full owner/body tails and Cloud plan/Doctor diagnostic tails remain inspectable by content scrolling. Assertions remove presentation borders/whitespace so wrapping a marker is not misreported as data loss.
 - Draft survives tiny/large/repeated resize. v/]/[ type into draft without changing filter/page or starting commands; public NextPage/CycleFilter are also inert during edit. Explicit submit preserves exact Unicode body and pinned actor/instance. Confirmation survives 24×9 resize and cancels without Apply.
 - Refresh/reordering and filter changes preserve selected immutable session ID; disappeared item clamps safely. Requests retain actor/scope.

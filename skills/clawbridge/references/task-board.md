@@ -39,7 +39,8 @@ revoked role's or a revoked device's never go. To see the project's whole queue
 Start from the issue assigned by the human or coordinator. Read its description,
 acceptance criteria, parent/sub-issues, dependencies, related issues and relevant
 decisions. Resolve the canonical issue UUID and authorized Linear workspace;
-display identifiers such as ENG-123 can change when an issue moves teams.
+display identifiers such as ENG-123 can change when an issue moves teams (see
+"Change issue structure"; claims and intake follow the new identifier).
 Check the configured team and project separately: a team is not a project, and
 a project can span multiple teams. An explicitly linked team board may have no
 Linear project. When the installed adapter supports a project set, an issue must
@@ -97,7 +98,7 @@ they no longer record ownership.
 
 Only the project's designated coordinator session confirms or releases another
 session's assignment, at the revision it reviewed. The project owner designates
-it with `clawbridge project coordinator-set SESSION`; a lead can designate only
+it with `clawbridge project coordinator-set SESSION`; a project lead (the project role) can designate only
 its own or member and reader sessions. Confirmation refuses overlap with an
 already confirmed assignment unless the coordinator passes `allow_overlap`,
 which is audited. An assignment is descriptive: it is not a lock, does not
@@ -119,7 +120,7 @@ People ask for agent attention by adding the label `needs-agent` to an issue.
 Creating that label is the project owner's action (it must be on the approved
 label list); agents do not create it.
 
-- The coordinator session checks for it when it runs. For each bound team, find
+- The coordinator session checks for it when it runs. For each bound write team, find
   the label's UUID with `labels`, then list `issues` with that `label_id`
   (CLI `linear issues --label UUID`), following cursors until complete. To
   see only issues changed since your last check, add `updated_after` with the
@@ -129,10 +130,11 @@ label list); agents do not create it.
 - A binding may list teams you only read (`read`), comment on (`comment`) or see only as linked issues
   (`linked`). `taskboard_binding` shows each team's access. Don't write to a read or linked team; on a comment team,
   only add comments. A refusal says `read_only_team` and nothing was sent. Ask the coordinator who owns that team's
-  work.
+  work. `labels`, `members`, `states` and views cover write teams only; a linked team's full read is `linked_only`.
 - A binding may split its write teams into lanes. Your session writes only its lane's teams, and reads every listed
   team; `context` shows your `lane` and its `write_team_ids` (`read_only` with none). A write to another lane's team
-  is refused as `outside_lane`, and nothing was sent: hand it to that lane's coordinator, never retry it another way.
+  is refused as `outside_lane`, and nothing was sent: hand it to the project's coordinator (there is one per project),
+  who routes it to a session in that lane; never retry it another way.
   Your first-named issue in a relation must be in your lane. You can't change your lane; the project owner pins it.
   Your user's own CLI writes without a session follow their principal's pin.
 - A sub-team's issues may carry its own `needs-agent` or its bound parent
@@ -228,7 +230,8 @@ your own terminal: `clawbridge --session YOU --instance I linear project create
 NAME --team TEAM --kind KIND --operation-id ID --profile P`. Only in your lane's
 default team (else `outside_lane`), with one of the project kinds
 (`linear kind show`); refused until the owner has set and seeded them. Name
-nobody in it. The owner is told; no lead is set. Keep the operation ID: if the
+nobody in it. The owner is told; no lead is set (the project owner may set one
+later with `linear roles apply-leads`; never you). Keep the operation ID: if the
 answer is lost, rerun the same command with it, never a new ID, so no second
 project is made. Never archive or delete a project; that is the owner's, in
 Linear.
@@ -240,9 +243,11 @@ keeps the estimate, and lists anything that refuses the move: a label the
 target team lacks, no single target state, a project without the target team,
 or a parent or sub-issues (families move together only in a later batch
 command). Only the project owner or a project lead (the ClawBridge project
-role) in their own terminal, or the
+role `lead`: [Which "lead"](../SKILL.md#which-lead)) in their own terminal, or the
 project's designated coordinator session for a move between its own lane's
-teams, confirms. Any other session previews and passes the plan to a person.
+teams, confirms. A binding without lanes, or a coordinator with no lane, gives
+the coordinator no move (`outside_lane`). Any other session previews and passes
+the plan to a person.
 As the coordinator:
 - confirm only a move your person or the owner asked for, never on your own
   judgment;
@@ -275,8 +280,10 @@ without the `@` (`types/node`).
 
 Use canonical IDs from scoped provider discovery. To turn label names into IDs,
 `clawbridge linear labels` (no `--team`) gives each bound team's
-`{name: ID}` in one call. Use the issue's own team's map, never another team's:
-the same name has a different ID in each team. Preserve omitted fields;
+`{name: ID}` in one call. Use the issue's own team's map, or for a sub-team's
+issue its bound parent team's (prefer the team's own when both have the name);
+never a sibling's or another team's: the same name has a different ID in each
+team. Preserve omitted fields;
 clear or replace them only when the assignment requests that exact change.
 Supplied label IDs replace the complete set: known labels omitted from that set
 are removed, `[]` clears it, and omission preserves it. Review existing labels
@@ -297,7 +304,8 @@ membership cannot be proven is refused.
 Use only label IDs returned by scoped label discovery for the issue's own team,
 team or workspace; both need eligibility proof before they apply. On native
 Linear that proof comes from Linear's documented list filters, so a label
-discovered for another team is refused even if the names match. A label's name does not prove its
+discovered for another team is refused even if the names match, except the
+bound parent team's label on its sub-team's issue. A label's name does not prove its
 team, and a global user record does not prove membership in the issue's team.
 
 Before reading, answering or posting Linear comments, or on a `linear-comment`
@@ -306,7 +314,8 @@ notice, read [comments.md](comments.md).
 Check both issues before adding a dependency or parent. Their effective project
 and team must remain in the binding; required ancestry must be available and
 acyclic. A parent must be in the child's own team and project; a parent elsewhere
-is refused, so ask the coordinator instead of moving issues to make it fit.
+is refused, so ask the coordinator instead of moving issues to make it fit (a
+move is a person's decision: see the move rules above).
 Linear may show a parent by its identifier (such as `TEAM-4`) rather than its UUID. Request one relation edge at a time. A successful edge write is not a
 transaction across tasks. An `observed_unchanged` receipt records an observation,
 not a provider CAS guarantee. A fresh mutation-intent request still requires

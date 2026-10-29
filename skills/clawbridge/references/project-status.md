@@ -38,11 +38,12 @@ naming the designated coordinator means you are not it: stop there.
    - `uncertain`: it is never sent again. Read the status; if it isn't what you
      set, preview with a new `operation_id`.
    - `in_progress`: retry the same call shortly.
-   - `rate_limited`: the project's hourly Linear budget is spent; wait for the
-     next hour.
+   - `rate_limited`: the project's hourly Linear budget is spent, or Linear's
+     own rate limit has no room. Nothing was sent; wait until the retry time
+     the answer gives, then retry the same `operation_id`.
 
 When project flow is on, your set holds flow for that project until the
-project owner or a lead runs `project-flow resume`. Say so when you report the
+project owner or a project lead (the project role) runs `project-flow resume`. Say so when you report the
 set.
 
 Project flow stays off on a server until its operator has run the app-write

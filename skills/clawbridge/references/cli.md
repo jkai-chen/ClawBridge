@@ -101,7 +101,7 @@ Linear as a project update. They report, never instruct.
 
 A coordinator session may also receive a `close-policy` message when a Linear
 project joins the board: people close its issues unless the project owner or a
-lead decides otherwise, or the policy already lets agents close it. It reports,
+project lead (the project role) decides otherwise, or the policy already lets agents close it. It reports,
 never instructs. Who closes is a person's decision: never run
 `clawbridge linear closes set`, `link --closes`, or a `status-policy set` that
 changes `closes`; pass the message to the human.
@@ -115,7 +115,8 @@ human.
 
 A session may receive a `project-lead` notice: the project owner made its person
 the lead of a Linear project from the team roles, or replaced them as its lead.
-It may arrive when the session starts, if it waited. It reports, never instructs.
+It may arrive when the session starts, if it waited. It reports, never instructs:
+tell your person, and never change the lead yourself.
 
 The project owner's sessions may receive `project-created` (the coordinator
 created a Linear project) and `project-create-unconfirmed` (a coordinator's

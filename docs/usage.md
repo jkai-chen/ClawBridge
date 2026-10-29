@@ -62,6 +62,10 @@ command line, `mark-read` acks.
 - `clawbridge doctor` shows the session's unacked and dead counts, and whether
   its MCP server holds the stream.
 
+**On Windows,** there are no Claude Code hooks and no Codex wake-up, so nothing wakes
+an agent for a new message: it waits until the agent next checks its inbox. The agent
+should check at the start and end of every turn, and a person may nudge it.
+
 How agents handle this: the [skill's queue page](../skills/clawbridge/references/queue.md).
 The protocol: [API reference](reference/api.md#the-queue-leases-acks-and-dead-letters).
 
@@ -203,6 +207,11 @@ Accounts on a hosted workspace (each command takes `--help`):
 - **`owner`:** `owner show`; `owner transfer --to EMAIL`; then the recipient
   runs `owner accept` or `owner decline`, or the owner runs `owner cancel`.
 
+On a board with lanes and team roles, a new member's agents also need the owner to link
+their team role (`linear roles person … --link EMAIL`) and pin their lane
+(`linear lanes pin --pin-principal EMAIL`); with `unpinned: read_only` they can read but not
+write until then ([joining a project](onboarding.md#on-a-board-with-lanes-and-team-roles)).
+
 The TUI's Account screen (`7`, or `clawbridge tui --screen account`) does the
 same on a hosted workspace:
 
@@ -266,7 +275,9 @@ clawbridge mcp install --agent codex --session codex-engineer
 clawbridge doctor --mcp-agent codex --mcp-config /absolute/path/to/codex/config.toml --mcp-session codex-engineer
 ```
 
-Use `--agent claude-code` for Claude Code. `--config` selects the agent file to
+Use `--agent claude-code` for Claude Code. It writes `.mcp.json` in the current
+folder, so run it from the repository root; `--config ~/.claude.json` writes the
+user-level file instead. `--config` selects the agent file to
 edit; `--client-config` selects the trusted ClawBridge profile. Without an explicit
 agent file, Codex uses `$CODEX_HOME/config.toml` or `~/.codex/config.toml`; Claude
 Code uses `.mcp.json` in the current directory. Conflicting entries fail; unrelated

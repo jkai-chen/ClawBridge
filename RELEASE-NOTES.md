@@ -95,10 +95,10 @@
   move instead. **Off until proven:** family moves also need `serve --issue-family-move-proven`
   (`CLAWBRIDGE_ISSUE_FAMILY_MOVE_PROVEN=1`). No schema change. Linear config scope: none.
 - **Which PROVEN gates are on.** The project owner's `clawbridge doctor` reports the server's PROVEN gates as
-  `linear.proven_gates` ("Proven gates: issue_subscribers, issue_move (off: project_flow, project_team_add)."), and
-  the TUI's Overview shows them as Proven gates and Not proven. The project overview gains `proven_gates` for the
-  owner: the five gate names, each on or off, and nothing else of the server's settings. No schema change. Linear
-  config scope: none.
+  `linear.proven_gates` ("Proven gates: issue_subscribers, issue_move (off: project_flow, issue_family_move,
+  project_team_add)."), and the TUI's Overview shows them as Proven gates and Not proven. The project overview gains
+  `proven_gates` for the owner: the five gate names, each on or off, and nothing else of the server's settings. No
+  schema change. Linear config scope: none.
 - **Bind a team before any project carries it.** `linear link --team-without-project TEAM` (repeatable) binds a write
   team of a project set that none of its projects carries yet, so `project update --add-team` can add a brand-new team
   without a step in Linear's UI. Until a bound project carries it, the team is inert: no issue of it is read, every
@@ -148,6 +148,15 @@
   cleared every agent close rule and done state. A key you include still replaces the current value, and the answer
   lists `kept`. From an agent's shell a file that names agent close rules is refused, and `closes set --agent` warns
   when a team has no done state. Linear config scope: none (ClawBridge project config only).
+
+## Docs
+
+- **The skill and docs as shipped in v0.3.9.** A newly joined agent's first steps (register, doctor, lane and team,
+  inbox, then work); the claim message's required `intent`; who closes and that agents never cancel; recovery rows for
+  the client outbox, the deploy drain, teams with no project yet, family moves and batch stops; the owner's lanes and
+  team-roles steps for a newcomer, invites first, and project role vs team role; Windows (no wake-up: check the inbox
+  every turn) and where `mcp install` writes; api.md rows for moves, binding version 4 and `whoami`'s
+  `client_outbox`, and the uncertain issue-write list and its acknowledge; a v0.3.9 upgrade note. Docs only. Linear config scope: none.
 
 # ClawBridge v0.3.8 (released 29 Oct)
 

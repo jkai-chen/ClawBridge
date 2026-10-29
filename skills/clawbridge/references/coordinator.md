@@ -79,7 +79,8 @@ confirm, then report the old and new identifiers to whoever asked for it
 When an issue must move to a team its project doesn't include, add your lane's
 team to the project with `taskboard_project_add_team_v2`, previewing first:
 only to a project that already holds one of your lane's teams. Never in Linear's
-UI, and never a removal; any other add is the owner's or a lead's.
+UI, and never a removal; any other add is the owner's, a project lead's, or the
+added team's own lead's in the team roles ([Which "lead"](../SKILL.md#which-lead)).
 A team the binding doesn't hold yet can't be added this way: the owner links it
 with `--team-without-project`, then this tool adds it, or the owner puts it on
 one project in Linear first and links it. Tell the human when that's what an

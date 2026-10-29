@@ -1036,7 +1036,8 @@ clawbridge linear move ISSUE_UUID --team TEAM_UUID --profile ID \
 ```
 
 Agents use the MCP tool `taskboard_issue_move_v2` (`id`, `team_id`,
-`operation_id`, `confirm`, `expected_plan_sha256`).
+`operation_id`, `confirm`, `expected_plan_sha256`, and `family: true` to move a
+parent with its sub-issues).
 
 - **Preview first.** Without `--confirm` nothing is sent. The preview shows
   the plan and everything that stops it, with `plan_sha256`:
@@ -1413,7 +1414,8 @@ clawbridge linear project team-adds                 # any member: the adds, and 
   read. Or put it on one bound project in Linear, then link it as an ordinary
   team.
 - **Who confirms.** Anyone may preview. The server decides who confirms:
-  - the project owner or a lead, in their own terminal without a session;
+  - the project owner or a project lead (the ClawBridge project role), in their
+    own terminal without a session;
   - the added team's own lead in the [team roles](#team-roles-project-owner-and-leads-for-their-teams):
     a lead row of that team the owner linked to their ClawBridge account, in
     their own terminal without a session, while Linear states them an active,

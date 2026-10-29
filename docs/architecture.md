@@ -49,8 +49,11 @@ and coordinator decisions determine current ownership.
 Cloud clients can explicitly sync a project-scoped read-only mirror. Supported
 reads may use it during transport/service outages and clearly report their source
 and freshness. Authentication/permission failures are returned directly. Writes
-and notification status never fall back to a writable local authority or queue
-for replay.
+and notification status never fall back to a writable local authority. The one
+replay is the client outbox: on a hosted server, a plain message, reply, ack or
+mark-read that can't reach the server waits in this machine's outbox and is sent
+once, in order, when it is back (`outcome: queued_local`); every other write
+fails fast.
 
 ## Credentials and configuration
 

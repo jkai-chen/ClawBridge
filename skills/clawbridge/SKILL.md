@@ -12,6 +12,18 @@ fails or a peer retires. ClawBridge supports local mode and an explicitly truste
 Google-authenticated cloud mode. Cloud clients may use a project-scoped read-only
 mirror during a transport or service outage.
 
+## Start here (a newly joined agent)
+
+1. Register: `register_session`, then `whoami` to confirm the binding
+   ([Bind and check](#bind-and-check)).
+2. Check `clawbridge doctor` (CLI) and tell the human what it flags.
+3. Find your lane and team: `taskboard_context_v2` shows your `lane` and its
+   `write_team_ids`; `team_roles_get` shows who leads each team.
+4. Read your `inbox` ([Bind and check](#bind-and-check), step 2).
+5. Find work: take the issue your human or the coordinator gives you, then
+   propose it with `assignment_propose` and wait for the coordinator
+   ([task-board.md](references/task-board.md)).
+
 For a Linear-backed task, read [references/task-board.md](references/task-board.md)
 when starting a slice, finding its owner or collaborator, changing issue
 structure, or handing it over. Read [references/comments.md](references/comments.md)
@@ -34,7 +46,10 @@ lead, not a project role: [Which "lead"](#which-lead)); a role
 says who someone is, never what they may approve, and people (never sessions) change roles. The Linear
 document "Team roles (ClawBridge)" is generated for people to read: never edit it
 or read roles from it; use `team_roles_get`. Linear project leads (`linear roles project-lead`,
-`apply-leads`, `project create --lead`) are the project owner's to set, never a session's. Find a slice's owner with `list_sessions` filtered by `issue` or
+`apply-leads`, `project create --lead`) are the project owner's to set, never a session's. Agents never set a canceled or duplicate state; set a completed state only
+where the project's close rule says agents close, else release with
+`assignment_release` outcome `done` and a person closes
+([task-board.md](references/task-board.md#resume-and-close)). Find a slice's owner with `list_sessions` filtered by `issue` or
 `scope_path`. Issues labelled `needs-agent` ask for agent attention; only the
 coordinator lists them, and the label is never approval or an assignment.
 Read [references/intake.md](references/intake.md) on an `intake` message, or
@@ -56,8 +71,8 @@ health.
   in these pages means this one.
 - **A team's lead in the team roles**: `team_roles_get`'s `teams[].leads`, named
   per bound team by the project owner, who links the row to the person's
-  account. They set engineer and reviewer roles in the teams they lead,
-  intake trusts their signals, and they may add their own team to a project of
+  account. A person sets roles, never a session: the project owner, or a
+  team's lead for their own team, in their own terminal. Intake trusts their signals, and they may add their own team to a project of
   the binding (`linear project update --add-team`). It is not a project role.
 - **A Linear project's lead**: the person Linear shows as a project's lead. The
   project owner sets it from the team roles (`linear roles apply-leads`), never
@@ -72,7 +87,9 @@ health.
    binding and identity provenance. A routing role such as `lead` describes mail
    routing; it does not grant administrative permissions ([Which "lead"](#which-lead)).
 2. Check `inbox` at the start and end of every turn and before an irreversible
-   action. Follow `next_cursor` while `has_more` is true so a bounded page
+   action. On Windows nothing wakes you: there are no Claude Code hooks and no
+   Codex wake-up, so these checks are the only way you hear of new messages. A
+   person may nudge you. Follow `next_cursor` while `has_more` is true so a bounded page
    cannot hide earlier instructions. Handle each message, then settle it:
    - Give the writes a message causes `operation_id = msg:<message_id>:<step>`.
    - Once you have acted, call `ack` with its message ID, or answer with

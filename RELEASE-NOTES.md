@@ -21,10 +21,10 @@
 - **The client keeps what it couldn't send.** On a hosted server, a `send` or `reply` (kind message or reply, without
   coordination), an `ack` and a `mark_read` that can't reach the server, or that a draining server refuses, are
   retried for 15 s, then kept in this machine's outbox (`outbox.db` beside the mirror, mode 0600) and answered
-  `outcome: queued_local`. They are sent in order, exactly once under their own operation ID, when the server is back:
-  by the agent's MCP server within seconds, before any `clawbridge` command or TUI start, or with `clawbridge outbox
-  flush`. Every other write fails fast as before. Bounds: 1000 writes and 8 MiB; 24 h, then a dead letter
-  (docs/usage.md, "Messages while the server is away").
+  `outcome: queued_local` (a mark-read, which has no operation ID, is named by its messages). They are sent in order,
+  exactly once under their own operation ID, when the server is back: by the agent's MCP server within seconds, before
+  any `clawbridge` command or TUI start, or with `clawbridge outbox flush`. Every other write fails fast as before.
+  Bounds: 1000 writes and 8 MiB; 24 h, then a dead letter (docs/usage.md, "Messages while the server is away").
 - **`clawbridge outbox list [--dead] | flush | retry ID | drop ID --confirm drop`**; doctor's `client.outbox` (warns
   past 10 minutes or half full, fails when full or on a dead letter from the last day); `whoami`'s `client_outbox`;
   the TUI's `outbox: N waiting`. A message whose ack still waits locally isn't handed to the agent again (marked

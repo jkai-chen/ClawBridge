@@ -368,3 +368,33 @@ func TestMaintenanceUntil(t *testing.T) {
 		t.Fatal("kept after the drain")
 	}
 }
+
+// A queued mark-read carries no operation ID, so its notice names the
+// messages it marks and asks for no rerun; a write with one still says not
+// to resend it under a new one.
+func TestOutboxQueuedMarkReadNamesItsMessages(t *testing.T) {
+	shortWindow(t, 100*time.Millisecond)
+	s := newOutboxServer(t)
+	client, _ := outboxClient(t, s)
+	ctx := context.Background()
+	s.mode.Store("down")
+	read := bus.Request{Operation: "mark_read", Workspace: "ws_1", Project: "prj_1", Session: "worker", Args: map[string]any{"instance": "instance-1", "ids": []any{"msg_1", "msg_2"}}}
+	result, err := client.Execute(ctx, read)
+	if err != nil {
+		t.Fatal(err)
+	}
+	msg := result.Data.(map[string]any)["message"].(string)
+	if !strings.Contains(msg, "; mark-read of msg_1, msg_2 is queued on this machine (position 1)") || !strings.HasSuffix(msg, "; don't run it again") || strings.Contains(msg, "  ") || strings.Contains(msg, "operation ID") {
+		t.Fatal(msg)
+	}
+	// A long list is cut to the first five.
+	read.Args = map[string]any{"instance": "instance-1", "ids": []any{"m1", "m2", "m3", "m4", "m5", "m6", "m7"}}
+	result, err = client.Execute(ctx, read)
+	if msg = result.Data.(map[string]any)["message"].(string); err != nil || !strings.Contains(msg, "; mark-read of m1, m2, m3, m4, m5 and 2 more is queued") {
+		t.Fatal(msg, err)
+	}
+	result, err = client.Execute(ctx, message("op-1", "x"))
+	if msg = result.Data.(map[string]any)["message"].(string); err != nil || !strings.Contains(msg, "; send op-1 is queued") || !strings.HasSuffix(msg, "; don't resend it with a new operation ID") {
+		t.Fatal(msg, err)
+	}
+}

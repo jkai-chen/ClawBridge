@@ -22,16 +22,23 @@ clawbridge linear roles set --file F --expected-revision N [--confirm] [--profil
 clawbridge linear roles person WHO --role lead|engineer|reviewer --team UUID [--team UUID]... [--link EMAIL] --expected-revision N [--confirm] [--profile ID]
 clawbridge linear roles person WHO --remove --expected-revision N [--confirm]
 clawbridge linear roles lead TEAM_UUID WHO [--remove] --expected-revision N [--confirm] [--profile ID]
+clawbridge linear roles publish [--team UUID | --linear-project UUID] [--recreate] [--confirm] [--profile ID]
   Who leads each bound Linear team, and each person's role. Any member reads
   it. The project owner changes it, in their own terminal, never with
   --session; a team's lead sets engineer and reviewer roles in the teams they
   lead. WHO is a Linear name, email or user ID, looked up among the
   Linear workspace's users through your own Linear connection: a role needs
   workspace membership, never a team's, and a guest or inactive user can't
-  have one. Without --confirm a change is only previewed.`
+  have one. Without --confirm a change is only previewed.
+  publish (the project owner) writes the roles as the Linear document "Team
+  roles (ClawBridge)" through your own Linear connection, with display names
+  only. Name the team or project the first time; it is remembered. The
+  document is generated: an edit made in Linear is overwritten.`
 
 type rolesFlags struct {
 	file, role, link, profile string
+	team, project             string
+	recreate                  bool
 	teams                     multiFlag
 	revision                  int64
 	confirm, remove, names    bool
@@ -52,7 +59,7 @@ func runLinearRoles(ctx context.Context, flags Config, args []string, stdout, st
 	var v rolesFlags
 	f := flag.NewFlagSet("linear roles "+action, flag.ContinueOnError)
 	f.SetOutput(stderr)
-	f.StringVar(&v.profile, "profile", flags.LinearProfile, "your Linear connection, to look people up (clawbridge linear profiles)")
+	f.StringVar(&v.profile, "profile", flags.LinearProfile, "your Linear connection, to look people up and publish (clawbridge linear profiles)")
 	min, max := 0, 0
 	switch action {
 	case "show":
@@ -69,10 +76,15 @@ func runLinearRoles(ctx context.Context, flags Config, args []string, stdout, st
 	case "lead":
 		f.BoolVar(&v.remove, "remove", false, "stop the person leading the team")
 		min, max = 2, 2
+	case "publish":
+		f.StringVar(&v.team, "team", "", "the bound team the document goes under (the first time)")
+		f.StringVar(&v.project, "linear-project", "", "the bound Linear project the document goes under (the first time)")
+		f.BoolVar(&v.recreate, "recreate", false, "create the document again, or under another parent; the old one is left for you to archive")
+		f.BoolVar(&v.confirm, "confirm", false, "publish what the preview showed")
 	default:
-		return errors.New("use linear roles show|set|person|lead")
+		return errors.New("use linear roles show|set|person|lead|publish")
 	}
-	if action != "show" {
+	if action != "show" && action != "publish" {
 		f.Int64Var(&v.revision, "expected-revision", -1, "the roles' revision you last read (0 for none)")
 		f.BoolVar(&v.confirm, "confirm", false, "store the change the preview showed")
 	}
@@ -123,6 +135,33 @@ func runLinearRoles(ctx context.Context, flags Config, args []string, stdout, st
 			out["names"] = names
 		}
 		return emit(ctx, stdout, "linear_roles", bus.Result{Source: "server", Data: out})
+	}
+	if action == "publish" {
+		if flags.Session != "" {
+			return errors.New("the team roles document is published without --session; the project owner runs this in their own terminal")
+		}
+		if v.team != "" && v.project != "" {
+			return errors.New("roles publish takes one of --team or --linear-project")
+		}
+		in := linearboard.RolesPublishInput{Recreate: v.recreate, Confirm: v.confirm}
+		if v.team != "" {
+			in.ParentKind, in.ParentID = "team", strings.ToLower(v.team)
+		}
+		if v.project != "" {
+			in.ParentKind, in.ParentID = "project", strings.ToLower(v.project)
+		}
+		scope.Session = ""
+		result, e := rolesPublish(bounded, executor, scope, v.profile, in)
+		if e != nil {
+			return e
+		}
+		if e = emit(ctx, stdout, "linear_roles_publish", bus.Result{Source: "server", Data: result}); e != nil {
+			return e
+		}
+		if result.Refused != "" {
+			return errors.New("nothing was published: " + result.Refused)
+		}
+		return nil
 	}
 	// Setting roles is a person's own act (the owner's, or a lead's in their
 	// teams): never a session's.
@@ -381,9 +420,18 @@ func rolesArg(m bus.TeamRoles) map[string]any {
 	return out
 }
 
-// rolesUsers lists the Linear workspace's users through this person's own
-// connection (--profile, or the only one). Nothing is stored.
-var rolesUsers = func(ctx context.Context, flags Config, executor linearboard.Executor, scope bus.Request, profile string) ([]linearprovider.WorkspaceUser, error) {
+// rolesPublish publishes the roles document through this person's own
+// connection (--profile, or the only one), with write access.
+var rolesPublish = func(ctx context.Context, executor linearboard.Executor, scope bus.Request, profile string, in linearboard.RolesPublishInput) (linearboard.RolesPublishResult, error) {
+	service, err := rolesService(executor, scope, profile)
+	if err != nil {
+		return linearboard.RolesPublishResult{}, err
+	}
+	return service.PublishTeamRoles(ctx, scope, in)
+}
+
+// rolesService is the Linear service on this person's own connection.
+func rolesService(executor linearboard.Executor, scope bus.Request, profile string) (*linearboard.Service, error) {
 	directory, err := linearDirectory()
 	if err != nil {
 		return nil, err
@@ -395,10 +443,19 @@ var rolesUsers = func(ctx context.Context, flags Config, executor linearboard.Ex
 			return nil, e
 		}
 		if len(profiles) != 1 {
-			return nil, errors.New("to look people up, name your Linear connection with --profile (clawbridge linear profiles)")
+			return nil, errors.New("to reach Linear, name your Linear connection with --profile (clawbridge linear profiles)")
 		}
 		profile = profiles[0].ID
 	}
-	service := newLinearService(directory, profile, manager, executor, scope.Args["linear_authority"].(string))
+	return newLinearService(directory, profile, manager, executor, scope.Args["linear_authority"].(string)), nil
+}
+
+// rolesUsers lists the Linear workspace's users through this person's own
+// connection (--profile, or the only one). Nothing is stored.
+var rolesUsers = func(ctx context.Context, flags Config, executor linearboard.Executor, scope bus.Request, profile string) ([]linearprovider.WorkspaceUser, error) {
+	service, err := rolesService(executor, scope, profile)
+	if err != nil {
+		return nil, err
+	}
 	return service.WorkspaceUsers(ctx, scope)
 }

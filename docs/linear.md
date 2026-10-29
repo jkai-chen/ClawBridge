@@ -1022,6 +1022,7 @@ clawbridge linear roles person "Ada Lovelace" --role reviewer --team TEAM_UUID -
 clawbridge linear roles lead TEAM_UUID "Dana Example" --expected-revision N [--confirm]
 clawbridge linear roles person "Ada Lovelace" --remove --expected-revision N [--confirm]
 clawbridge linear roles set --file roles.json --expected-revision N [--confirm]
+clawbridge linear roles publish [--team UUID | --linear-project UUID] [--recreate] [--confirm]
 ```
 
 The TUI's Linear screen has the same view and changes (`R`; see the
@@ -1064,6 +1065,30 @@ The TUI's Linear screen has the same view and changes (`R`; see the
   - a mapped person who is no longer an active, non-guest user of the workspace.
 
   No consumer uses those roles.
+- **The "Team roles (ClawBridge)" document.** `roles publish` writes the roles
+  as one Linear document, for people to read. Only the project owner publishes
+  it, in their own terminal, through their own Linear connection.
+  - Name a bound team (`--team`) or project (`--linear-project`) the first
+    time. ClawBridge remembers it.
+  - Each bound team gets its leads, engineers and reviewers by Linear display
+    name, read at publish time. The document never shows an email, a Linear
+    user ID or a ClawBridge account. Someone who has left the workspace shows
+    as "(a former user)".
+  - **It is generated.** The roles in ClawBridge are the only source, so a
+    publish overwrites an edit made in Linear, and the preview says so. Change
+    roles with `clawbridge linear roles` instead. Nothing ever reads the
+    document as roles.
+  - ClawBridge only ever writes the document it created, found by the ID it
+    stored, never one that has the same title. `linear doc publish` and the
+    roles document never write each other's documents.
+  - The project's deny patterns apply, with no override.
+  - Moving the document to another parent, or making it again after it was
+    archived, needs `--recreate`. The old document stays in Linear for you to
+    archive, and the preview and doctor name it.
+  - Nothing publishes it on its own yet. Run `roles publish --confirm` after a
+    change.
+  - **`clawbridge doctor`** (the owner, with a Linear connection) warns when the
+    document was edited in Linear, is behind the roles, or was archived.
 - **Nothing uses the roles yet.** Trust by role for intake, issue subscribers,
   project leads and dispatcher routing come later. Each is off until you turn
   it on.

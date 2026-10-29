@@ -53,3 +53,42 @@ func TestCheckTeamRoles(t *testing.T) {
 		}
 	}
 }
+
+// The team roles document: silent for a non-owner and before a publish;
+// in step passes; edited, behind, archived, unreadable and interrupted
+// warn; a replaced document is named for archiving by hand.
+func TestCheckTeamRolesDoc(t *testing.T) {
+	published := RolesDocState{Published: true, Revision: 3, PublishedRevision: 3}
+	with := func(f func(*RolesDocState)) RolesDocState { d := published; f(&d); return d }
+	cases := []struct {
+		name   string
+		state  RolesDocState
+		err    error
+		status string
+		words  string
+	}{
+		{"not the owner", RolesDocState{}, errors.New("project owner permission required"), "", ""},
+		{"never published", RolesDocState{Revision: 3}, nil, "", ""},
+		{"in step", published, nil, Pass, "revision 3"},
+		{"edited", with(func(d *RolesDocState) { d.Edited = true }), nil, Warn, "the next publish overwrites it"},
+		{"behind", with(func(d *RolesDocState) { d.Revision = 4 }), nil, Warn, "out of date"},
+		{"archived", with(func(d *RolesDocState) { d.Archived = true }), nil, Warn, "archived"},
+		{"unreadable", with(func(d *RolesDocState) { d.Unreadable = true }), nil, Warn, "could not be read in Linear"},
+		{"interrupted", with(func(d *RolesDocState) { d.Pending = true }), nil, Warn, "interrupted"},
+		{"replaced", with(func(d *RolesDocState) { d.Replaced = "d0c00000-0000-4000-8000-000000000001" }), nil, Warn, "d0c00000-0000-4000-8000-000000000001"},
+		{"record fails", RolesDocState{}, errors.New("authority unavailable"), Warn, "could not be read"},
+	}
+	for _, tc := range cases {
+		var got []Check
+		checkTeamRolesDoc(context.Background(), "w", "p", func(context.Context, string, string) (RolesDocState, error) { return tc.state, tc.err }, func(c Check) { got = append(got, c) })
+		if tc.status == "" {
+			if len(got) != 0 {
+				t.Fatalf("%s: %+v", tc.name, got)
+			}
+			continue
+		}
+		if len(got) != 1 || got[0].ID != "linear.team_roles_doc" || got[0].Status != tc.status || !strings.Contains(got[0].Message, tc.words) {
+			t.Fatalf("%s: %+v", tc.name, got)
+		}
+	}
+}

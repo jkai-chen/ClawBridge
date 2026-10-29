@@ -176,3 +176,39 @@ func TestCLIRolesSetFileChecksEveryone(t *testing.T) {
 		t.Fatal(got, err)
 	}
 }
+
+// roles publish passes the parent and flags through, refuses a session
+// and two parents, and fails when the publish was refused.
+func TestCLIRolesPublish(t *testing.T) {
+	rolesProject(t)
+	var got linearboard.RolesPublishInput
+	refused := ""
+	old := rolesPublish
+	t.Cleanup(func() { rolesPublish = old })
+	rolesPublish = func(_ context.Context, _ linearboard.Executor, scope bus.Request, _ string, in linearboard.RolesPublishInput) (linearboard.RolesPublishResult, error) {
+		if scope.Session != "" {
+			t.Fatal("published as a session")
+		}
+		got = in
+		return linearboard.RolesPublishResult{Action: "create", Refused: refused}, nil
+	}
+	out, err := rolesRun(t, "publish", "--team", strings.ToUpper(rolesTeam), "--recreate", "--confirm")
+	if err != nil || out["action"] != "create" || got.ParentKind != "team" || got.ParentID != rolesTeam || !got.Recreate || !got.Confirm {
+		t.Fatal(out, got, err)
+	}
+	if _, err = rolesRun(t, "publish"); err != nil || got.ParentID != "" || got.Confirm {
+		t.Fatal("the remembered parent", got, err)
+	}
+	refused = "the document matches deny patterns [x]"
+	if _, err = rolesRun(t, "publish", "--confirm"); err == nil || !strings.Contains(err.Error(), "nothing was published") {
+		t.Fatal(err)
+	}
+	if _, err = rolesRun(t, "publish", "--team", rolesTeam, "--linear-project", rolesTeam); err == nil || !strings.Contains(err.Error(), "one of --team") {
+		t.Fatal(err)
+	}
+	invoke(t, "register", "eng", "--instance", "eng-i")
+	var o, e bytes.Buffer
+	if err = Run(context.Background(), []string{"--session", "eng", "--instance", "eng-i", "linear", "roles", "publish"}, &o, &e); err == nil || !strings.Contains(err.Error(), "without --session") {
+		t.Fatal(err)
+	}
+}

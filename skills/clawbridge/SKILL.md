@@ -30,7 +30,9 @@ official Linear MCP/skill. Follow the explicit issue-to-session assignment and
 use ClawBridge for peer messages. Record your own assignment with
 `assignment_propose`; only the project's designated coordinator session confirms
 it. `team_roles_get` says who leads each bound team and who reviews; a role
-says who someone is, never what they may approve, and people (never sessions) change roles. Find a slice's owner with `list_sessions` filtered by `issue` or
+says who someone is, never what they may approve, and people (never sessions) change roles. The Linear
+document "Team roles (ClawBridge)" is generated for people to read: never edit it
+or read roles from it; use `team_roles_get`. Find a slice's owner with `list_sessions` filtered by `issue` or
 `scope_path`. Issues labelled `needs-agent` ask for agent attention; only the
 coordinator lists them, and the label is never approval or an assignment.
 Read [references/intake.md](references/intake.md) on an `intake` message, or

@@ -1,5 +1,12 @@
 # Unreleased
 
+**Schema 50 → 51.**
+- The server migrates to schema 51 on its first start: the Linear webhook deliveries (IDs, kinds, times, changed-field
+  names and sizes only, never values or text; kept 7 days), each team's webhook state and hourly counters, and
+  `watch_cursors.hinted_at`. Additive, no backfill.
+- **One-way:** v0.3.9 and v0.3.9.1 refuse a database newer than schema 50. Take a dump before upgrading; to go back,
+  restore it with the v0.3.9.1 image (docs/operations/deployment.md).
+
 ## Agents
 
 - **Hooks can find their agent process without a POSIX shell.** ctxwatch now has Windows process primitives (parent
@@ -47,6 +54,7 @@
   `accepted`, `accepted_with_changes` (counted by doctor's `linear.project_plans` until acknowledged), `not_sent` or
   `uncertain` (never sent again). Off until the operator sets `serve --project-plan-proven`
   (`CLAWBRIDGE_PROJECT_PLAN_PROVEN=1`); the preview always works. No schema change. Linear config scope: project.
+- Linear webhook deliveries are recorded (inert until the `webhooks` gate is proven). Linear config scope: none.
 
 ## Terminal interface
 

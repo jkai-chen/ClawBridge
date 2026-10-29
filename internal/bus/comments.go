@@ -898,7 +898,12 @@ func (c commentCall) report(ctx context.Context) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	if _, err = c.tx.ExecContext(ctx, `UPDATE watch_cursors SET cursor_time=?,polled_at=NULL,next_poll_at=?,last_activity_at=?,failures=0,last_error='',updated_at=? WHERE project_id=? AND source='comments' AND subject=?`, polled, next, nullable(activity), now, c.pid, issue); err != nil {
+	// A webhook hint after the poll's start keeps the issue due (FR14 §6
+	// P3); the guard is in the UPDATE too, for a hint racing this report.
+	if str(cursor, "hinted_at") > polled {
+		next = now
+	}
+	if _, err = c.tx.ExecContext(ctx, `UPDATE watch_cursors SET cursor_time=?,polled_at=NULL,next_poll_at=CASE WHEN hinted_at>? THEN ? ELSE ? END,last_activity_at=?,failures=0,last_error='',updated_at=? WHERE project_id=? AND source='comments' AND subject=?`, polled, polled, now, next, nullable(activity), now, c.pid, issue); err != nil {
 		return nil, err
 	}
 	out["next_poll_at"] = next

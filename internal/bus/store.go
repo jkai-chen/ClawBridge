@@ -80,6 +80,12 @@ type Store struct {
 	// issueFamilyMoveProven is serve --issue-family-move-proven: a family
 	// move (a parent with its sub-issues) may be confirmed (FR7 F1).
 	issueFamilyMoveProven bool
+	// webhooksProven is the webhooks gate (FR14): off, a verified Linear
+	// delivery is recorded inert and marks no cursor.
+	webhooksProven bool
+	// webhookAfterInsert runs between a delivery's insert and its cursor
+	// marks; tests inject a failure there. nil in production.
+	webhookAfterInsert func() error
 	// modelSeal seals owners' provider keys; nil leaves model setup off.
 	modelSeal *ModelSeal
 	// modelMaxAgents and memAvailable are the serving process's, for
@@ -167,7 +173,7 @@ func (s *Store) migrate() error {
 	if err = tx.QueryRow("PRAGMA user_version").Scan(&version); err != nil {
 		return err
 	}
-	if version > linearBudgetSchemaVersion {
+	if version > webhookSchemaVersion {
 		return errors.New("database schema is newer than this ClawBridge binary")
 	}
 	if version == 0 {
@@ -436,6 +442,11 @@ func (s *Store) migrate() error {
 			return err
 		}
 	}
+	if version < webhookSchemaVersion {
+		if _, err = tx.Exec(webhookSchema + fmt.Sprintf(`PRAGMA user_version=%d;`, webhookSchemaVersion)); err != nil {
+			return err
+		}
+	}
 	return tx.Commit()
 }
 
@@ -616,6 +627,7 @@ var operationArgs = map[string]string{
 	"taskboard_get":               "instance",
 	"taskboard_get_v2":            "instance",
 	"comment_watch_status":        "",
+	"webhook_status":              "",
 	"taskboard_set_v2":            "instance expected_revision mode linear_team_ids linear_default_team_id linear_project_ids linear_workspace_id closes_pending linear_team_names linear_project_names linear_other_teams linear_parent_team_id lanes unpinned teams_without_project",
 	"taskboard_names_set":         "instance expected_revision linear_team_names linear_project_names",
 	"taskboard_clear_v2":          "instance expected_revision repair",
@@ -1041,7 +1053,7 @@ func (s *Store) ExecuteAs(ctx context.Context, principal string, r Request) (Res
 // inbox stamps deliveries, so those keep the locks.
 func pureRead(r Request) bool {
 	switch r.Operation {
-	case "snapshot", "inbox_status", "notification_status", "taskboard_get", "taskboard_get_v2", "taskboard_access", "list_projects", "list_members", "comment_watch_status", "label_policy_get", "status_policy_get", "doc_policy_get", "dispatcher_get", "context_watch_get", "health_get", "doc_seed_get", "doc_publication_get", "invite_list", "device_list", "device_events", "user_list", "owner_transfer_get", "dispatcher_chat_show", "dispatcher_decisions_list", "dispatcher_escalations_list", "dispatcher_model_doctor", "project_overview":
+	case "snapshot", "inbox_status", "notification_status", "taskboard_get", "taskboard_get_v2", "taskboard_access", "list_projects", "list_members", "comment_watch_status", "webhook_status", "label_policy_get", "status_policy_get", "doc_policy_get", "dispatcher_get", "context_watch_get", "health_get", "doc_seed_get", "doc_publication_get", "invite_list", "device_list", "device_events", "user_list", "owner_transfer_get", "dispatcher_chat_show", "dispatcher_decisions_list", "dispatcher_escalations_list", "dispatcher_model_doctor", "project_overview":
 		return true
 	case "list_sessions", "history", "whoami", "linear_comments_posted", "linear_comment_precheck", "intake_policy_get", "intake_trust_list", "intake_list", "linear_view_get", "linear_views_list", "project_kind_get", "team_roles_get", "lane_pins_get", "project_team_add_list":
 		// Naming a session with its instance makes it a heartbeat read: the
@@ -1446,6 +1458,9 @@ func (s *Store) execute(ctx context.Context, tx *transaction, r Request) (any, e
 	}
 	if r.Operation == "comment_watch_status" {
 		return watchStatus(ctx, tx, pid)
+	}
+	if r.Operation == "webhook_status" {
+		return s.webhookStatus(ctx, tx, pid, projectRole)
 	}
 	// Any project member may read the project's overview, with or without
 	// a session (PROJECT-OVERVIEW-PLAN §1).

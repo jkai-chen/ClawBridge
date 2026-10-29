@@ -1,5 +1,15 @@
 package bus
 
+// webhookDowngradeSQLite returns a webhookSchemaVersion database to the
+// shape before it: the webhook deliveries, team states, counters and
+// cursor hints. The chain that uses it sets the version.
+const webhookDowngradeSQLite = "DROP INDEX webhook_deliveries_team;\nDROP TABLE webhook_deliveries;\nDROP TABLE webhook_teams;\nDROP TABLE webhook_counts;\nDROP TABLE webhook_server;\nALTER TABLE watch_cursors DROP COLUMN hinted_at;\n"
+
+// webhookDowngradePostgres is webhookDowngradeSQLite for a Postgres schema.
+func webhookDowngradePostgres(schema string) string {
+	return "DROP INDEX " + schema + ".webhook_deliveries_team;\nDROP TABLE " + schema + ".webhook_deliveries;\nDROP TABLE " + schema + ".webhook_teams;\nDROP TABLE " + schema + ".webhook_counts;\nDROP TABLE " + schema + ".webhook_server;\nALTER TABLE " + schema + ".watch_cursors DROP COLUMN hinted_at;\n"
+}
+
 // budgetDowngradeSQLite returns a schema-50 database to schema 49's shape:
 // the budget's split.
 const budgetDowngradeSQLite = "ALTER TABLE watch_lease DROP COLUMN budget_agents;\nALTER TABLE watch_lease DROP COLUMN budget_people;\n"

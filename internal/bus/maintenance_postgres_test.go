@@ -21,7 +21,7 @@ var maintenanceReadOps = []string{
 	"health_get", "heartbeat", "history", "inbox_status", "intake_list", "intake_policy_get", "intake_trust_list", "invite_list",
 	"label_policy_get", "lane_pins_get", "linear_comment_precheck", "linear_comments_posted", "linear_view_get", "linear_views_list", "list_members",
 	"list_projects", "list_sessions", "notification_status", "owner_transfer_get", "project_kind_get", "project_overview",
-	"project_team_add_list", "resolve_project", "snapshot", "status_policy_get", "taskboard_access", "taskboard_get", "taskboard_get_v2", "team_roles_get", "user_list", "whoami",
+	"project_team_add_list", "resolve_project", "snapshot", "status_policy_get", "taskboard_access", "taskboard_get", "taskboard_get_v2", "team_roles_get", "user_list", "webhook_status", "whoami",
 }
 
 // The pinned list is exactly pureRead's.

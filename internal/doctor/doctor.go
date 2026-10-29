@@ -172,6 +172,9 @@ type Check struct {
 	Message string `json:"message"`
 	Path    string `json:"path,omitempty"`
 	Action  string `json:"action,omitempty"`
+	// Aliases are earlier IDs of the same check, kept for one release so
+	// a script reading the old ID still finds it.
+	Aliases []string `json:"aliases,omitempty"`
 }
 
 // Report has an aggregate status derived from the most severe check.
@@ -220,7 +223,7 @@ func Run(ctx context.Context, in Input, executor Executor) Report {
 		checkLabelPolicy(ctx, executor, wid, pid, add)
 		checkTeamRoles(ctx, executor, wid, pid, in.WorkspaceUsers, add)
 		checkTeamRolesDoc(ctx, wid, pid, in.TeamRolesDoc, add)
-		checkProjectCreates(ctx, executor, wid, pid, add)
+		checkLinearWrites(ctx, executor, wid, pid, add)
 		checkProjectTeamAdds(ctx, executor, wid, pid, add)
 		if in.LabelSets != nil {
 			checkLabelSets(ctx, in.LabelSets, add)
@@ -966,15 +969,23 @@ func checkIssueSubscribers(ctx context.Context, executor Executor, wid, pid stri
 	add(check)
 }
 
-// checkProjectCreates warns of a coordinator's Linear write that may have
-// happened unconfirmed (FR5's creates, and every later kind in the same
-// ledger): reserved more than ten minutes ago and never settled. It reads the overview, which never sends the notice.
-func checkProjectCreates(ctx context.Context, executor Executor, wid, pid string, add func(Check)) {
-	check := Check{ID: "linear.project_creates", Title: "Coordinator project creates", Status: Pass}
+// checkLinearWrites warns of a recorded Linear write of any kind (a
+// project create, an issue move, a team added to a project) that may have
+// happened unconfirmed (FR9): reserved more than ten minutes ago and never
+// settled, or settled uncertain, and not acknowledged. It reads the
+// overview, which never sends the notice. The check was
+// linear.project_creates until v0.3.9; that ID stays an alias for one
+// release.
+func checkLinearWrites(ctx context.Context, executor Executor, wid, pid string, add func(Check)) {
+	check := Check{ID: "linear.writes", Title: "Linear writes", Status: Pass, Aliases: []string{"linear.project_creates"}}
 	r, err := executor.Execute(ctx, bus.Request{Operation: "project_overview", Workspace: wid, Project: pid, Args: map[string]any{}})
 	m, _ := r.Data.(map[string]any)
-	creates, _ := m["project_creates"].(map[string]any)
-	if err != nil || creates == nil {
+	writes, _ := m["linear_writes"].(map[string]any)
+	if writes == nil {
+		// A server before v0.3.9 lists them under project_creates.
+		writes, _ = m["project_creates"].(map[string]any)
+	}
+	if err != nil || writes == nil {
 		// An older server keeps no record of them.
 		return
 	}
@@ -992,7 +1003,7 @@ func checkProjectCreates(ctx context.Context, executor Executor, wid, pid string
 		}
 		return named
 	}
-	switch rows := creates["unconfirmed"].(type) {
+	switch rows := writes["unconfirmed"].(type) {
 	case []map[string]any:
 		for _, row := range rows {
 			ops = append(ops, named(row))
@@ -1004,13 +1015,13 @@ func checkProjectCreates(ctx context.Context, executor Executor, wid, pid string
 		}
 	}
 	if len(ops) == 0 {
-		check.Message = "No coordinator Linear write is unconfirmed."
+		check.Message = "No Linear write is unconfirmed."
 		add(check)
 		return
 	}
 	check.Status = Warn
-	check.Message = fmt.Sprintf("%d coordinator Linear write(s) may have happened, unconfirmed: %s.", len(ops), strings.Join(ops, ", "))
-	check.Action = "Check each in Linear (the team's projects for a create), then the project owner runs `clawbridge linear writes --ack OPERATION_ID` for each."
+	check.Message = fmt.Sprintf("%d Linear write(s) may have happened, unconfirmed: %s.", len(ops), strings.Join(ops, ", "))
+	check.Action = "Check each in Linear (the team's projects for a create, the issue for a move, the project for a team add), then the project owner runs `clawbridge linear writes --ack OPERATION_ID` for each."
 	add(check)
 }
 

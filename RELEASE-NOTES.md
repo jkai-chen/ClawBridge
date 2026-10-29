@@ -87,6 +87,12 @@
   owner acknowledges any recorded Linear write; a project lead now acknowledges a move they confirmed themselves, from
   their own terminal; never another lead's, a coordinator's, or from a session. History records the IDs only. No schema
   change. Linear config scope: none.
+- **`linear project-status` is refused with the command to type, never sent as an issue write.** The two-word
+  commands' internal names (`project-status`, `project-update`, `project-creates`, `project-team-adds`,
+  `initiative-show`, `view-*`) were accepted as commands and fell through to an issue write, so `linear project-status
+  UUID` failed with "write requires operation_id". They now answer with the spaced form (`linear project status
+  LINEAR_PROJECT [--suggest]`), and a command the dispatch doesn't know is refused as unknown. The documented forms are
+  unchanged. Linear config scope: none.
 
 # ClawBridge v0.3.8 (released 29 Oct)
 

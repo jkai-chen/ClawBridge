@@ -159,6 +159,10 @@
 - **The dispatcher agent reaches the network only through its egress proxy.** It needs `CLAWBRIDGE_EGRESS_PROXY`, sends
   every request (to ClawBridge and to the model provider) through it, and refuses any direct connection or name lookup,
   logging `egress_refused` or `egress_unavailable`.
+- **agentd frees a leftover owner network on Docker 29.** Docker 29 answers a disconnect of a container that isn't on
+  the network with a 500, so agentd never removed a leftover owner network, and never freed its subnet, every round.
+  It now inspects the network and disconnects the egress proxy only when it is on it. CI also installs and probes
+  agentd under a real rootless daemon. No schema change. Linear config scope: none.
 
 # ClawBridge v0.3.9.1 (server hotfix, deployed 29 Oct; no client release or tag)
 

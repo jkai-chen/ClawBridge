@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log/slog"
 	"maps"
+	"net/http"
 	"net/netip"
 	"os"
 	"path/filepath"
@@ -558,9 +559,22 @@ func (r *Reconciler) removeAgent(ctx context.Context, ref, why string) (gone, ru
 }
 
 // removeNetwork takes the egress proxy off ref's network and removes it.
-// Its subnet is quarantined before another owner gets it.
+// Its subnet is quarantined before another owner gets it. The proxy is
+// disconnected only when it is on the network: Docker answers a disconnect
+// of a container that isn't with a 500, not a 404, which would keep the
+// network, and its subnet, every round.
 func (r *Reconciler) removeNetwork(ctx context.Context, ref string, subnets map[string]netip.Prefix) {
-	if r.act("disconnect egress", ref, r.docker.disconnectEgress(ctx, ref)) &&
+	n, err := r.docker.inspectNetwork(ctx, ref)
+	var de *dockerError
+	if errors.As(err, &de) && de.status == http.StatusNotFound {
+		r.freed[subnets[ref]] = r.now()
+		delete(subnets, ref)
+		return
+	}
+	if !r.act("inspect network", ref, err) {
+		return
+	}
+	if (!n.egress || r.act("disconnect egress", ref, r.docker.disconnectEgress(ctx, ref))) &&
 		r.act("remove network", ref, r.docker.removeNetwork(ctx, ref)) {
 		r.freed[subnets[ref]] = r.now()
 		delete(subnets, ref)

@@ -205,7 +205,8 @@ Next:
   show:
   - an owner network's embedded DNS doesn't forward external names, so an agent can't use DNS as a way out;
   - the rootless bridge gateway exposes no host services;
-  - `disconnect` of a container that isn't on the network answers 404, not 403, which agentd takes as done.
+  - `disconnect` of a container that isn't on the network answers 500 (Docker 29), not 404. So agentd disconnects
+    the egress proxy only from a network it is on, and removes one it isn't on directly.
   - The CPU and memory limits need the `cpu` and `memory` cgroup controllers delegated to `cbagent` (systemd does
     this by default for user sessions); without them every create fails.
 - **Overhead:** measure the fixed memory overhead, for `doctor`.

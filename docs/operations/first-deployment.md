@@ -236,6 +236,14 @@ with): the host operator lets the owner in with a one-time code instead.
 
 `operator bootstrap-invite` shipped in v0.3.4, and `clawbridge join` in v0.3.5.
 
+**On a server you reach over SSH:** one command on your own computer does both
+steps. The code goes only on ssh's stdin:
+
+```sh
+clawbridge cloud bootstrap --ssh admin@clawbridge.example.com \
+  --server https://clawbridge.example.com --workspace my-team --email OWNER
+```
+
 **On AWS:** the server host is reached over SSM, not SSH, so one command on your
 own computer does both steps:
 

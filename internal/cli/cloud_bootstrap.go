@@ -17,15 +17,16 @@ import (
 	"clawbridge/internal/remote"
 )
 
-// cloud bootstrap (ONBOARDING-DESIGN §13, G8 W3): the owner's first device on
-// a new AWS server with device sign-in. This process makes the one-time owner
-// invite's code, hands it to the server's `operator bootstrap-invite
-// --code-stdin` through a short-lived SecureString (as cloud secret set
-// does), so it is in no command's parameters or SSM history, and joins with
-// it in memory. The server stores only its salted hash; the code is never
-// printed.
+// cloud bootstrap (ONBOARDING-DESIGN §13, G8 W3, ANY-VM-PLAN §5): the
+// owner's first device on a new server with device sign-in. This process
+// makes the one-time owner invite's code and hands it to the server's
+// `operator bootstrap-invite --code-stdin`: on AWS through a short-lived
+// SecureString (as cloud secret set does), so it is in no command's
+// parameters or SSM history; over plain SSH on ssh's stdin. It joins with
+// the code in memory. The server stores only its salted hash; the code is
+// never printed.
 
-const cloudBootstrapUsage = `clawbridge cloud bootstrap --instance ID --region R [--profile P] [--account N]
+const cloudBootstrapUsage = `clawbridge cloud bootstrap (--ssh HOST | --instance ID --region R [--profile P] [--account N])
                           --server URL --workspace NAME [--email OWNER] [--label L]
                           [--key-store keyring|file]
                           [--client-config PATH]`
@@ -55,6 +56,7 @@ func runCloudBootstrap(ctx context.Context, args []string, stdout, stderr io.Wri
 	f := flag.NewFlagSet("cloud bootstrap", flag.ContinueOnError)
 	f.SetOutput(stderr)
 	bindAWSTarget(f, &target)
+	f.StringVar(&target.host, "ssh", "", "SSH host of the server (any VM)")
 	server := f.String("server", "", "the server's public URL (its --public-origin)")
 	workspace := f.String("workspace", "", "the workspace to create, owned by the server's CLAWBRIDGE_BOOTSTRAP_OWNER")
 	label := f.String("label", "", "this device's label (default: this machine's name)")
@@ -74,8 +76,8 @@ func runCloudBootstrap(ctx context.Context, args []string, stdout, stderr io.Wri
 	switch {
 	case f.NArg() != 0:
 		return errors.New("usage: " + cloudBootstrapUsage)
-	case target.instance == "":
-		return errors.New("cloud bootstrap runs on AWS (--instance and --region); on another host, run operator bootstrap-invite there (docs/operations/deployment.md)")
+	case target.instance == "" && target.host == "":
+		return errors.New("cloud bootstrap needs the server's route: --ssh HOST, or --instance ID and --region on AWS")
 	case *server == "":
 		return errors.New("cloud bootstrap needs --server, the server's public URL")
 	case !bootstrapWorkspace(*workspace):
@@ -93,11 +95,27 @@ func runCloudBootstrap(ctx context.Context, args []string, stdout, stderr io.Wri
 	if err != nil {
 		return err
 	}
+	code := devicekey.NewCode()
+	if sh, ok := tr.(shellTransport); ok {
+		out, err := sh.exchange(ctx, sshBootstrapScript(*workspace, *owner), strings.NewReader(code+"\n"), stderr)
+		if err != nil {
+			advice := sh.describe() + "; the invite may or may not exist, so run cloud bootstrap again (a second invite does no harm)"
+			switch {
+			case errors.Is(err, errHostKey):
+				advice = hostKeyAdvice
+			case errors.Is(err, errSudoPassword):
+				advice = sudoAdvice
+			case exitCode(err) == 6:
+				advice = "the server has no " + serverEnvFile + " naming COMPOSE_PROJECT_NAME; install the server first"
+			}
+			return errors.New("the server did not make the invite; " + advice + " (nothing was printed)")
+		}
+		return joinBootstrapped(ctx, out, code, *server, *workspace, *owner, *label, *store, *clientConfig, stdout, stderr)
+	}
 	ssm, ok := tr.(ssmTransport)
 	if !ok {
-		return errors.New("cloud bootstrap runs on AWS (--instance and --region)")
+		return errors.New("cloud bootstrap needs the server's route: --ssh HOST, or --instance ID and --region on AWS")
 	}
-	code := devicekey.NewCode()
 	out, err := ssm.throughParameter(ctx, "bootstrap-code", code, "cloud bootstrap",
 		"the server did not answer in time, so the invite may or may not exist; run cloud bootstrap again (a second invite does no harm)",
 		func(name string) string { return ssmBootstrapScript(name, target.region, *workspace, *owner) }, stderr)
@@ -124,21 +142,27 @@ func runCloudBootstrap(ctx context.Context, args []string, stdout, stderr io.Wri
 		}
 		return errors.New(msg)
 	}
+	return joinBootstrapped(ctx, out, code, *server, *workspace, *owner, *label, *store, *clientConfig, stdout, stderr)
+}
+
+// joinBootstrapped reads the server's answer and, given an invite for the
+// expected owner, joins this device with the code, whichever route made it.
+func joinBootstrapped(ctx context.Context, out []byte, code, server, workspace, owner, label, store, clientConfig string, stdout, stderr io.Writer) error {
 	invite, err := bootstrapInvite(out)
 	if err != nil {
 		return err
 	}
 	email, _ := invite["email"].(string)
-	if *owner != "" && !strings.EqualFold(strings.TrimSpace(*owner), email) {
-		return fmt.Errorf("the server's bootstrap owner is %s, not %s: its invite (unused, expires %v) is for %s; fix CLAWBRIDGE_BOOTSTRAP_OWNER, or bootstrap as that owner", email, *owner, invite["expires_at"], email)
+	if owner != "" && !strings.EqualFold(strings.TrimSpace(owner), email) {
+		return fmt.Errorf("the server's bootstrap owner is %s, not %s: its invite (unused, expires %v) is for %s; fix CLAWBRIDGE_BOOTSTRAP_OWNER, or bootstrap as that owner", email, owner, invite["expires_at"], email)
 	}
-	params := JoinParams{Server: *server, Email: email, Code: code, Label: *label, KeyStore: *store, ConfigPath: *clientConfig}
+	params := JoinParams{Server: server, Email: email, Code: code, Label: label, KeyStore: store, ConfigPath: clientConfig}
 	joined, err := joinDevice(ctx, params)
 	var uncertain *JoinUncertainError
 	if errors.As(err, &uncertain) {
 		// The answer was lost: the device may have joined. Ask the server,
 		// signing with the kept key, before anyone asks for a new invite.
-		joined, err = probeJoin(ctx, uncertain, *workspace, params)
+		joined, err = probeJoin(ctx, uncertain, workspace, params)
 	}
 	if err != nil {
 		return fmt.Errorf("the server made the invite for %s (it expires %v), but joining failed: %w", email, invite["expires_at"], err)
@@ -184,20 +208,43 @@ func ssmBootstrapScript(name, region, workspace, owner string) string {
 }
 
 func ssmBootstrapScriptFor(name, region, workspace, owner, envFile, composeFile string) string {
+	return strings.Join([]string{
+		"command -v aws >/dev/null || exit 3",
+		"aws ssm get-parameter --name " + name + " --region " + region + " --query Parameter.Name --output text >/dev/null || exit 5",
+		bootstrapScriptBody("aws ssm get-parameter --with-decryption --name "+name+" --region "+region+" --query Parameter.Value --output text", workspace, owner, envFile, composeFile),
+	}, "\n")
+}
+
+// sshBootstrapScript reads the code from its stdin, which is ssh's: over
+// plain SSH the code travels nowhere else (ANY-VM-PLAN §5).
+func sshBootstrapScript(workspace, owner string) string {
+	return sshBootstrapScriptFor(workspace, owner, serverEnvFile, bootstrapComposeFile)
+}
+
+func sshBootstrapScriptFor(workspace, owner, envFile, composeFile string) string {
+	return bootstrapScriptBody("head -n 1", workspace, owner, envFile, composeFile)
+}
+
+// bootstrapScriptBody pipes the code from codeSource into a one-off api
+// container's bootstrap-invite --code-stdin, in the env file's Compose
+// project, and prints only the invite line or the operator's own error
+// line. A deployment that pulls the published image (CLAWBRIDGE_IMAGE set)
+// adds compose.image.yaml beside composeFile, so api is never built.
+func bootstrapScriptBody(codeSource, workspace, owner, envFile, composeFile string) string {
 	expect := ""
 	if owner != "" {
 		expect = " --expect-owner " + owner
 	}
 	return strings.Join([]string{
-		"command -v aws >/dev/null || exit 3",
-		"aws ssm get-parameter --name " + name + " --region " + region + " --query Parameter.Name --output text >/dev/null || exit 5",
 		"f=" + envFile,
 		`p=$(sed -n "s/^COMPOSE_PROJECT_NAME=//p" "$f" 2>/dev/null | tail -n 1)`,
 		`[ -n "$p" ] || exit 6`,
+		`i=""`,
+		`if grep -q "^CLAWBRIDGE_IMAGE=." "$f"; then i="-f ` + strings.TrimSuffix(composeFile, "compose.yaml") + `compose.image.yaml"; fi`,
 		`e=$(mktemp)`,
 		`trap "rm -f \"\$e\"" EXIT`,
-		"if out=$(aws ssm get-parameter --with-decryption --name " + name + " --region " + region + " --query Parameter.Value --output text |" +
-			` docker compose --env-file "$f" --project-name "$p" -f ` + composeFile + ` run --rm --no-deps -T api operator bootstrap-invite --workspace ` + workspace + expect + ` --code-stdin 2>"$e"); then`,
+		"if out=$(" + codeSource + " |" +
+			` docker compose --env-file "$f" --project-name "$p" -f ` + composeFile + ` $i run --rm --no-deps -T api operator bootstrap-invite --workspace ` + workspace + expect + ` --code-stdin 2>"$e"); then`,
 		`  printf "invite %s\n" "$(printf "%s\n" "$out" | tail -n 1)"`,
 		"else",
 		`  printf "refused %s\n" "$(grep "^clawbridge: " "$e" | tail -n 1 | cut -c1-300)"`,

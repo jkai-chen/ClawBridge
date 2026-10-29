@@ -402,6 +402,12 @@ sudo docker compose --env-file /etc/clawbridge/clawbridge.env --project-name "$P
     --account ACCOUNT_ID --server https://DOMAIN --workspace WORKSPACE --email OWNER
   ```
 
+  On a host you reach over plain SSH, `cloud bootstrap --ssh HOST --server
+  https://DOMAIN --workspace WORKSPACE --email OWNER` does the same, with the code
+  on ssh's stdin to a fixed script, never in any command. It uses the same ssh
+  options as `cloud check`, and adds `compose.image.yaml` when the env file sets
+  `CLAWBRIDGE_IMAGE`.
+
   With `--email`, it passes `--expect-owner EMAIL`, which refuses before anything
   exists unless `CLAWBRIDGE_BOOTSTRAP_OWNER` is that email. It needs the server on
   the same release or newer. If the join's answer is lost,

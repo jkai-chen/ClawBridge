@@ -56,7 +56,7 @@ func TestHostFactsScript(t *testing.T) {
 	}
 	h, out := run(env)
 	want := hostFacts{arch: "arm64", docker: true, compose: [2]int{2, 29}, mounted: true, freeKiB: 48881488, ntp: "yes", env: "600:root", rootDisk: true,
-		addrs: h.addrs}
+		addrs: h.addrs, seen: map[string]bool{"mount": true, "free": true}}
 	if !reflect.DeepEqual(h, want) || len(h.addrs) != 2 || h.addrs[0].String() != "203.0.113.7" || h.addrs[1].String() != "2001:db8::7" {
 		t.Fatalf("%+v\n%s", h, out)
 	}
@@ -68,8 +68,8 @@ func TestHostFactsScript(t *testing.T) {
 // Remote output is untrusted: a line that isn't exactly a fact is left
 // out, so it reads as the fact missing.
 func TestParseHostFactsIsStrict(t *testing.T) {
-	h := parseHostFacts([]byte("platform Darwin arm64\ndocker 27.0 extra\ncompose v2.x\nmount none\nmount $(evil)\nfree lots\nntp maybe\nenv 600:root;rm\nrootdisk 2\naddr not-an-ip\n"))
-	if !reflect.DeepEqual(h, hostFacts{}) {
+	h := parseHostFacts([]byte("platform Darwin arm64\ndocker 27.0 extra\ncompose v2.x\nmount $(evil)\nfree lots\nfree -5\nntp maybe\nenv 600:root;rm\nrootdisk 2\naddr not-an-ip\n"))
+	if !reflect.DeepEqual(h, hostFacts{seen: map[string]bool{}}) {
 		t.Fatalf("%+v", h)
 	}
 	h = parseHostFacts([]byte("platform Linux x86_64\ndocker 27.3.1-ce\ncompose v2.24.0\nmount /dev/mapper/vg-data\n"))
@@ -129,6 +129,9 @@ func TestCloudCheckInfraOverSSH(t *testing.T) {
 		"clock unknown":     {[]string{"ntp unknown"}, []string{"203.0.113.7"}, nil, "warn", "clock_unknown"},
 		"two warnings":      {[]string{"mount none", "rootdisk 1"}, []string{"198.51.100.9"}, nil, "warn", "data_on_root_disk,dns_not_this_host"},
 		"opt-out not set 1": {[]string{"mount none", "rootdisk 0"}, nil, nil, "fail", "data_not_mounted"},
+		"no free fact":      {[]string{"free -"}, nil, nil, "fail", "facts_incomplete"},
+		"no mount fact":     {[]string{"mount -"}, nil, nil, "fail", "facts_incomplete"},
+		"garbled free":      {[]string{"free 12abc"}, nil, nil, "fail", "facts_incomplete"},
 	} {
 		stubCloud(t, &gcloudStub{}, c.ips, c.dialErr)
 		runs := stubRemote(t, hostFactsOutput(c.facts...), nil)
@@ -136,7 +139,7 @@ func TestCloudCheckInfraOverSSH(t *testing.T) {
 		if got.Check != "infra" || got.Status != c.status || got.Reason != c.reason || (c.status != "pass" && got.Advice == "") {
 			t.Fatalf("%s: %+v", name, got)
 		}
-		if len(*runs) != 1 || !reflect.DeepEqual((*runs)[0].argv, wantSSH("admin@bridge.example.test", `sudo -n sh -c '`+hostFactsScript()+`'`)) {
+		if len(*runs) != 1 || !reflect.DeepEqual((*runs)[0].argv, wantSSH("admin@bridge.example.test", `env LC_ALL=C sudo -n sh -c '`+hostFactsScript()+`'`)) {
 			t.Fatalf("%s: runs %+v", name, *runs)
 		}
 	}
@@ -181,5 +184,36 @@ func TestSSHFailureReasons(t *testing.T) {
 		if (reason == "host_key_unknown") != errors.Is(err, errHostKey) || (reason == "sudo_needs_password") != errors.Is(err, errSudoPassword) {
 			t.Fatalf("%q: %v", stderr, err)
 		}
+	}
+}
+
+// The remote side's stderr reaches the terminal a line at a time with
+// control and bidi characters escaped, and still names the failure.
+func TestSSHStderrIsEscaped(t *testing.T) {
+	old := remoteOutput
+	t.Cleanup(func() { remoteOutput = old })
+	remoteOutput = func(_ context.Context, _ []string, w io.Writer) ([]byte, error) {
+		_, _ = io.WriteString(w, "\x1b]0;owned\x07banner \u202eevil\r\nHost key verification ")
+		_, _ = io.WriteString(w, "failed.\nno newline at the end")
+		return nil, errors.New("exit status 255")
+	}
+	var terminal strings.Builder
+	_, err := sshRun(context.Background(), []string{"ssh"}, nil, &terminal)
+	if !errors.Is(err, errHostKey) {
+		t.Fatal(err)
+	}
+	want := "\\u001b]0;owned\\u0007banner \\u202eevil\nHost key verification failed.\nno newline at the end\n"
+	if terminal.String() != want {
+		t.Fatalf("%q", terminal.String())
+	}
+}
+
+// A line with no newline is passed on once it passes 4 KiB, not kept.
+func TestSafeLinesFlushesALongLine(t *testing.T) {
+	var out strings.Builder
+	s := &safeLines{w: &out}
+	_, _ = s.Write([]byte(strings.Repeat("x", 5000)))
+	if out.Len() != 5001 || len(s.buf) != 0 {
+		t.Fatalf("%d written, %d kept", out.Len(), len(s.buf))
 	}
 }

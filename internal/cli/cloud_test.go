@@ -278,7 +278,7 @@ func TestCloudSecretSetSendsTheValueOnStdinOnly(t *testing.T) {
 		argv     []string
 	}{
 		"ssh, hidden prompt": {[]string{key, "--ssh", "admin@bridge.example.test"}, true,
-			wantSSH("admin@bridge.example.test", script)},
+			wantSSH("admin@bridge.example.test", "env LC_ALL=C "+script)},
 		"gcloud, piped": {[]string{key, "--vm", "clawbridge-1", "--project", "example-project", "--zone", "europe-west1-b", "--value-stdin"}, false,
 			[]string{"gcloud", "compute", "ssh", "clawbridge-1", "--project", "example-project", "--zone", "europe-west1-b", "--tunnel-through-iap", "--command", script}},
 	} {

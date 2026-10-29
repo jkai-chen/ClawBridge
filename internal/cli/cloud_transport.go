@@ -27,7 +27,7 @@ type cloudTransport interface {
 type shellTransport struct{ target cloudTarget }
 
 func (s shellTransport) run(ctx context.Context, script string, stderr io.Writer) ([]byte, error) {
-	argv, err := s.target.argv(`sudo -n sh -c '` + script + `'`)
+	argv, err := s.target.argv(s.sudo() + script + `'`)
 	if err != nil {
 		return nil, err
 	}
@@ -38,7 +38,7 @@ func (s shellTransport) run(ctx context.Context, script string, stderr io.Writer
 }
 
 func (s shellTransport) setSecret(ctx context.Context, key, value string, stderr io.Writer) error {
-	argv, err := s.target.argv(`sudo -n sh -c '` + remoteSetScript(key, serverEnvFile) + `'`)
+	argv, err := s.target.argv(s.sudo() + remoteSetScript(key, serverEnvFile) + `'`)
 	if err != nil {
 		return err
 	}
@@ -47,6 +47,16 @@ func (s shellTransport) setSecret(ctx context.Context, key, value string, stderr
 		return err
 	}
 	return runRemote(ctx, argv, strings.NewReader(value+"\n"), stderr)
+}
+
+// sudo opens the remote command. Over plain SSH it runs in the C locale,
+// so sudo's refusals are the English phrases sshFailure reads, whatever
+// LANG the user's ssh sends.
+func (s shellTransport) sudo() string {
+	if s.target.host != "" {
+		return `env LC_ALL=C sudo -n sh -c '`
+	}
+	return `sudo -n sh -c '`
 }
 
 func (shellTransport) describe() string {

@@ -1,8 +1,9 @@
 # Unreleased
 
-**Schema 41 → 46.**
+**Schema 41 → 47.**
 - The server migrates to schema 46 on its first start: 42, the agent writes the server queued (the Linear write
-  outbox); 43, the team roles; 44, the project lead settings; 45, the project lead notices; 46, the lane pins.
+  outbox); 43, the team roles; 44, the project lead settings; 45, the project lead notices; 46, the lane pins;
+  47, the Linear write reservations (a coordinator's project creates, and later kinds).
 - **One-way:** v0.3.7 refuses a database newer than schema 41. Take a dump before upgrading; to go back, restore it
   with the v0.3.7 image (docs/operations/deployment.md).
 
@@ -97,6 +98,20 @@
   and markers and server-side writes aren't filtered. An agent's `context` shows its lane. Schema 46: the lane pins.
   Linear config scope: none. **Rollback:** relink without `--lane`; every session then writes every write team, as
   before.
+- **The coordinator creates Linear projects in its own team.** The project's designated coordinator session may run
+  `linear project create NAME --team T --kind K`, through its person's own Linear profile, in its lane's default team
+  only (the binding's default team without lanes), with a seeded project kind whose label the project gets in the same
+  create. No lead is set (the project owner can set one later with `linear roles apply-leads`). The server reserves
+  the create before anything is sent and settles it with the project's ID after; the owner's sessions get a
+  `project-created` message and the overview and history show it. A create left unsettled for 10 minutes shows as
+  unconfirmed in the overview, `linear project creates` and doctor (`linear.project_creates`), with one message to the
+  owner, who acknowledges it with `linear writes --ack` (or `project creates --ack`). Records are kept 90 days. The
+  owner's `project create` takes `--kind` too. No cap; archive and delete stay the owner's, in Linear. Schema 47: the
+  reservations, one ledger (`linear_write_reservations`) for every Linear write the server records before a client
+  makes it, by kind; later kinds join it without a schema change, and doctor names each unconfirmed write's kind, an
+  `uncertain` one too. Linear config scope: one project in a bound team, with a label of the project's kind; nothing
+  at team or workspace scope. **Rollback:** unset the coordinator designation (or the project kinds); the owner's
+  create is unchanged.
 
 ## Team roles: telling project leads
 

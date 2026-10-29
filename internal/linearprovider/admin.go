@@ -2,6 +2,7 @@ package linearprovider
 
 import (
 	"context"
+	"slices"
 	"strings"
 )
 
@@ -221,17 +222,47 @@ func (p *Provider) TeamProjectsNamed(ctx context.Context, team, name string) ([]
 	return found, false, nil
 }
 
-// CreateTeamProject creates a project in team: it sends name and addTeams
-// only. The receipt must name the project; its teams, when Linear leaves
-// them out, are read back with get_project.
-func (p *Provider) CreateTeamProject(ctx context.Context, team, name string) (AdminReceipt, error) {
+// CreateTeamProject creates a project in team: it sends name and addTeams,
+// and labels, by ID, when given (a project kind's label). The receipt must
+// name the project; its teams, when Linear leaves them out, are read back
+// with get_project. A label is proven on the project by its carriers
+// (list_projects filtered by the label's ID); one that can't be is
+// reported unverified, never retried.
+func (p *Provider) CreateTeamProject(ctx context.Context, team, name string, labels ...string) (AdminReceipt, error) {
+	for _, l := range labels {
+		if !ValidID(l) {
+			return AdminReceipt{}, fail("invalid")
+		}
+	}
+	if len(labels) > 0 && p.ProjectKindApplyReason() != "" {
+		return AdminReceipt{}, fail("capability_unavailable")
+	}
+	r, e := p.createTeamProject(ctx, team, name, labels)
+	if e != nil {
+		return r, e
+	}
+	for _, l := range labels {
+		carriers, e := p.ProjectsWithLabel(ctx, l)
+		if e != nil || !slices.Contains(carriers, strings.ToLower(r.ID)) {
+			r.Unverified = append(r.Unverified, "labels")
+			break
+		}
+	}
+	return r, nil
+}
+
+func (p *Provider) createTeamProject(ctx context.Context, team, name string, labels []string) (AdminReceipt, error) {
 	if !ValidID(team) || name == "" || !textOK(name, 256) {
 		return AdminReceipt{}, fail("invalid")
 	}
 	if p.AdminReason() != "" {
 		return AdminReceipt{}, fail("capability_unavailable")
 	}
-	m, e := p.v2Call(ctx, []string{"save_project"}, a(name, "name"), arg{[]string{"addTeams"}, []string{team}, "array"})
+	args := []arg{a(name, "name"), {[]string{"addTeams"}, []string{team}, "array"}}
+	if len(labels) > 0 {
+		args = append(args, arg{[]string{"labels"}, labels, "array"})
+	}
+	m, e := p.v2Call(ctx, []string{"save_project"}, args...)
 	if e != nil {
 		return AdminReceipt{}, e
 	}

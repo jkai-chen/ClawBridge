@@ -220,6 +220,7 @@ func Run(ctx context.Context, in Input, executor Executor) Report {
 		checkLabelPolicy(ctx, executor, wid, pid, add)
 		checkTeamRoles(ctx, executor, wid, pid, in.WorkspaceUsers, add)
 		checkTeamRolesDoc(ctx, wid, pid, in.TeamRolesDoc, add)
+		checkProjectCreates(ctx, executor, wid, pid, add)
 		if in.LabelSets != nil {
 			checkLabelSets(ctx, in.LabelSets, add)
 		}
@@ -961,6 +962,54 @@ func checkIssueSubscribers(ctx context.Context, executor Executor, wid, pid stri
 	default:
 		check.Message = "Agents' issues notify the project's people."
 	}
+	add(check)
+}
+
+// checkProjectCreates warns of a coordinator's Linear write that may have
+// happened unconfirmed (FR5's creates, and every later kind in the same
+// ledger): reserved more than ten minutes ago and never settled. It reads the overview, which never sends the notice.
+func checkProjectCreates(ctx context.Context, executor Executor, wid, pid string, add func(Check)) {
+	check := Check{ID: "linear.project_creates", Title: "Coordinator project creates", Status: Pass}
+	r, err := executor.Execute(ctx, bus.Request{Operation: "project_overview", Workspace: wid, Project: pid, Args: map[string]any{}})
+	m, _ := r.Data.(map[string]any)
+	creates, _ := m["project_creates"].(map[string]any)
+	if err != nil || creates == nil {
+		// An older server keeps no record of them.
+		return
+	}
+	// Every kind of Linear write the server records, each named by its
+	// kind (an older server's rows have none: a project create).
+	var ops []string
+	named := func(row map[string]any) string {
+		write := fmt.Sprint(row["write"])
+		if row["write"] == nil {
+			write = "project_create"
+		}
+		named := fmt.Sprintf("%s %v", write, row["operation_id"])
+		if row["state"] == "uncertain" {
+			named += " (uncertain)"
+		}
+		return named
+	}
+	switch rows := creates["unconfirmed"].(type) {
+	case []map[string]any:
+		for _, row := range rows {
+			ops = append(ops, named(row))
+		}
+	case []any:
+		for _, raw := range rows {
+			row, _ := raw.(map[string]any)
+			ops = append(ops, named(row))
+		}
+	}
+	if len(ops) == 0 {
+		check.Message = "No coordinator Linear write is unconfirmed."
+		add(check)
+		return
+	}
+	check.Status = Warn
+	check.Message = fmt.Sprintf("%d coordinator Linear write(s) may have happened, unconfirmed: %s.", len(ops), strings.Join(ops, ", "))
+	check.Action = "Check each in Linear (the team's projects for a create), then the project owner runs `clawbridge linear writes --ack OPERATION_ID` for each."
 	add(check)
 }
 

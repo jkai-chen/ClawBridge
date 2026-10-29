@@ -219,9 +219,19 @@ Discover the installed capability before using project sets, labels, parents,
 human assignment or relation mutations. Older adapters expose fewer fields;
 an unavailable capability goes to the coordinator rather than a broader account
 or an arbitrary provider tool. Only the project owner creates labels and
-projects and initiatives (`linear label create`, `linear project create`,
-`linear initiative create|add-project`; labels from an approved list; CLI only);
-when you need one, ask the coordinator.
+initiatives (`linear label create`, `linear initiative create|add-project`;
+labels from an approved list; CLI only), and projects, except the coordinator's
+below; when you need one, ask the coordinator.
+
+As the project's designated coordinator you may create a Linear project, in
+your own terminal: `clawbridge --session YOU --instance I linear project create
+NAME --team TEAM --kind KIND --operation-id ID --profile P`. Only in your lane's
+default team (else `outside_lane`), with one of the project kinds
+(`linear kind show`); refused until the owner has set and seeded them. Name
+nobody in it. The owner is told; no lead is set. Keep the operation ID: if the
+answer is lost, rerun the same command with it, never a new ID, so no second
+project is made. Never archive or delete a project; that is the owner's, in
+Linear.
 
 Write Linear text without mentions: name people and agents in plain words, never
 as `@name`, `@Linear` or a profile link. ClawBridge refuses a title,

@@ -104,7 +104,7 @@ requires its matching instance. Routing role is distinct from project permission
 | `project_thread` | Project owner, sessionless: thread_id; optional limit (1–200, default 100), after (a sequence) |
 | `resolve_project` | Explicit project or optional git_remote fallback |
 | `taskboard_get` | Shared Linear mapping; optional current actor/instance |
-| `taskboard_access` | Own effective project-write capability; ledger (must be 1); optional actor/instance; optional engineer (1 returns the engineer agent markers name); optional lane_scope (1 returns the session's lane, when the binding has lanes) |
+| `taskboard_access` | Own effective project-write capability; ledger (must be 1); optional actor/instance; optional engineer (1 returns the engineer agent markers name); optional lane_scope (1 returns the session's lane, when the binding has lanes); optional coordinator_scope (1 returns `coordinator: true` when the session is the project's active designated coordinator) |
 | `member_display_name_set` | Hosted only, the caller's own name in the workspace for agent markers: display_name (up to 200 characters, no `@`, stored stripped of mentions, links and Markdown; empty clears it); optional if_unset (1 keeps a name already recorded). Answers `{display_name, engineer, kept}`. Audited |
 | `taskboard_set` | expected_revision, linear_team_ids, linear_default_team_id, linear_project_id (UUID/null); optional linear_workspace_id (UUID/null) |
 | `taskboard_clear` | expected_revision; authorized owner/lead; optional repair (project owner, unreadable binding only) |
@@ -120,6 +120,10 @@ requires its matching instance. Routing role is distinct from project permission
 | `lane_pins_get` | Any project member, session optional: the lane pins (`revision`, `pins` `[{kind, key, principal, lane, created_at}]`; revision 0 when none) |
 | `lane_pin_set` | Project owner without a session (hosted: a person's own device key): `expected_revision`, `kind` (`session` or `principal`), `key` (a session name or a principal), `lane` (one of the binding's lanes), `confirm`. Without `confirm: true` it returns a `preview` naming the principal a session pin binds (the session's owner now) and writes nothing. History records counts only. Schema 41 |
 | `lane_pin_clear` | As `lane_pin_set`, without `lane` |
+| `project_create_reserve` | The project's active designated coordinator session, before a Linear project create: `operation_id`, `team_id` (its lane's default team, or the binding's without lanes; else `outside_lane`), `kind` (a seeded project kind of that team), `name_sha256`. Returns the reservation and `kind_label_id`; a repeat returns it again (`replay`), a not-sent one reopens. No cap. History: IDs only. Schema 42 |
+| `project_create_settle` | The session that reserved: `operation_id`, `outcome` `created` with `linear_project_id` (tells each active session of the project owner, `owner_sessions_told`; a repeat is a `replay`, another ID a conflict) or `not_sent` |
+| `project_create_list` | Any project member: `created` (latest 20), `unconfirmed` (every recorded Linear write unsettled after 10 minutes or settled `uncertain`, not acknowledged, each with its kind as `write`, its `state`, and `subject` when it has one) and `keep_days` (90). Tells the owner's sessions once of each newly stale one |
+| `project_create_ack` | Project owner without a session (hosted: a person's own device key): `operation_id` of an unconfirmed Linear write of any kind |
 | `project_kind_record` | Project owner without a session (hosted: a person's own device key): stores the label IDs a seed proved. `expected_revision`, `action` (`seeded` or `adopted`), `proof` (`team_list`), `group_label_id`, `label_ids` (one per value, in the setting's order). Refused once the kind's team left the binding |
 | `issue_subscribers_get` | Any project member, session optional: who is subscribed to agents' issues (`revision`, `enabled`, `owner`, `user_ids`, `default`, `proven`, `on`, `rows` by state, `owner_not_in_linear_until`). Never an email. Schema 41 |
 | `issue_subscribers_set` | Project owner or lead without a session: `expected_revision` and any of `enabled`, `owner`, `user_ids` (at most 5 distinct Linear user IDs, replacing the list). `enabled: true` is refused until the server runs with `--issue-subscribers-proven`. Off drops queued issues. Scope is issue only |
@@ -545,7 +549,9 @@ lanes, it adds `lane` (the lane's name, or `read_only`) and
 `lane_write_team_ids` (the write teams the session writes; empty when
 read-only): its own pin while it belongs to the principal pinned, else a pin
 of the session it moved from under the same principal, else its principal's
-pin, else the binding's `unpinned`. Native issue writes require both an
+pin, else the binding's `unpinned`. With `coordinator_scope: 1`, it adds
+`coordinator: true` when the session is the project's active designated
+coordinator (never the dispatcher's system session). Native issue writes require both an
 allowed ClawBridge role and personal Linear write capability. A supplied actor
 must also be current/active. Writes verify this immediately before dispatch.
 The private local operation ledger retains accepted/uncertain outcomes against

@@ -25,6 +25,9 @@ type TaskboardAccess struct {
 	// lane.
 	Lane             string   `json:"lane,omitempty"`
 	LaneWriteTeamIDs []string `json:"lane_write_team_ids,omitempty"`
+	// Coordinator is true when the client asked (coordinator_scope: 1) and
+	// the session is the project's active designated coordinator.
+	Coordinator bool `json:"coordinator,omitempty"`
 }
 
 func accessMap(a TaskboardAccess) map[string]any {
@@ -34,6 +37,9 @@ func accessMap(a TaskboardAccess) map[string]any {
 	}
 	if a.LaneWriteTeamIDs != nil {
 		m["lane"], m["lane_write_team_ids"] = a.Lane, append([]string{}, a.LaneWriteTeamIDs...)
+	}
+	if a.Coordinator {
+		m["coordinator"] = true
 	}
 	return m
 }
@@ -81,6 +87,13 @@ func ParseTaskboardAccess(v any) (TaskboardAccess, error) {
 			ids = []string{}
 		}
 		a.Lane, a.LaneWriteTeamIDs = name, ids
+	}
+	if v, present := m["coordinator"]; present {
+		if v != true || m["session_id"] == nil {
+			return a, errors.New("invalid access coordinator")
+		}
+		extra++
+		a.Coordinator = true
 	}
 	if len(m) != 6+extra {
 		return a, errors.New("invalid taskboard access fields")

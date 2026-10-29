@@ -198,6 +198,7 @@ type linearFlags struct {
 	split, recreate                                                                                                      bool
 	closesPairs                                                                                                          []string
 	closesWho, leadWho                                                                                                   string
+	projectKind, ackCreate                                                                                               string
 	closesAgent, closesHuman, minimalPolicy                                                                              bool
 	suggest, allowOpen, statusSet, projectWide                                                                           bool
 	statusType, expectedStatus, statusID                                                                                 string
@@ -351,6 +352,7 @@ func parseLinear(command string, args []string, stderr io.Writer) (linearFlags, 
 		if command == "project" {
 			f.StringVar(&v.closesWho, "closes", "", "create: agent puts who closes the new project's issues into the proposed link; human is the default")
 			f.StringVar(&v.leadWho, "lead", "", "create, with project leads on: which of the team's mapped leads leads it (a name, email or user ID), when the team has several")
+			f.StringVar(&v.projectKind, "kind", "", "create: the project kind whose label the new project gets (linear kind show); the coordinator's create needs it")
 		}
 		min, max = 1, 2
 	case "closes":
@@ -466,6 +468,8 @@ func parseLinear(command string, args []string, stderr io.Writer) (linearFlags, 
 		f.StringVar(&v.project, "linear-project", "", "resume: the bound Linear project UUID whose status is held")
 	case "key":
 		profile()
+	case "project-creates":
+		f.StringVar(&v.ackCreate, "ack", "", "the operation ID of an unconfirmed Linear write, of any kind, you checked in Linear (project owner, own terminal)")
 	case "project-status":
 		f.BoolVar(&v.suggest, "suggest", false, "status: also propose a status from the issue counts")
 		f.StringVar(&v.statusType, "type", "", "set: backlog, planned, started, completed or canceled")
@@ -506,7 +510,7 @@ func parseLinear(command string, args []string, stderr io.Writer) (linearFlags, 
 	if len(pos) < min || len(pos) > max {
 		return v, nil, errors.New("invalid Linear positional arguments")
 	}
-	needsProfile := command != "profiles" && command != "connect" && command != "login" && command != "import" && command != "binding" && command != "unlink" && command != "label-policy" && command != "kind" && command != "lanes" && command != "status-policy" && command != "closes" && command != "doc-policy" && command != "health" && command != "project-flow" && command != "project-status" && command != "display-name" && command != "admin" && command != "subscribers" && command != "write-status"
+	needsProfile := command != "profiles" && command != "connect" && command != "login" && command != "import" && command != "binding" && command != "unlink" && command != "label-policy" && command != "kind" && command != "lanes" && command != "status-policy" && command != "closes" && command != "doc-policy" && command != "health" && command != "project-flow" && command != "project-status" && command != "display-name" && command != "project-creates" && command != "admin" && command != "subscribers" && command != "write-status"
 	if needsProfile && !validLinearProfile(v.profile) {
 		return v, nil, errors.New("select --profile with the opaque ID from linear profiles")
 	}
@@ -689,7 +693,7 @@ func validLinearOperation(s string) bool { return validLinearProfile(s) }
 // linearAdminInput maps `linear label create|rename` and `linear project
 // create` to an admin write.
 func linearAdminInput(command, action string, v linearFlags, pos []string) (linearboard.AdminInput, error) {
-	in := linearboard.AdminInput{Kind: command + "_" + strings.ReplaceAll(action, "-", "_"), OperationID: v.operation, TeamID: v.team, Closes: v.closesWho}
+	in := linearboard.AdminInput{Kind: command + "_" + strings.ReplaceAll(action, "-", "_"), OperationID: v.operation, TeamID: v.team, Closes: v.closesWho, ProjectKind: v.projectKind}
 	switch {
 	case command == "initiative" && action == "create" && len(pos) == 1:
 		in.Name, in.Description = pos[0], v.description
@@ -873,7 +877,7 @@ func linearWriteInput(command string, v linearFlags, pos []string) (linearboard.
 
 func runLinear(ctx context.Context, flags Config, args []string, stdout, stderr io.Writer) error {
 	if len(args) == 0 || len(args) == 1 && (args[0] == "--help" || args[0] == "-h" || args[0] == "help") {
-		_, err := io.WriteString(stdout, "clawbridge linear connect|import|profiles|status|logout|teams|projects|binding|link|seed-docs|unlink|names-refresh|context|issues|issue|states|labels|members|create|update|comment|relation|watch\nProject owner only: label create|rename, project create, initiative create|add-project, label-policy show|set, status-policy show|set, doc-policy set, health set|enable|disable, admin audit-replay.\nProject kinds (a project-label group such as Type): kind show (any member); kind set --values A,B,C [--group NAME] [--team UUID] --expected-revision N, then kind seed --operation-id ID --profile ID [--confirm] makes or adopts its project labels, and kind apply --file F --operation-id ID --profile ID [--confirm --canary] sets each project's kind (project owner, own terminal).\nLanes (a binding's --lane NAME=TEAM,…): lanes show (any member); lanes pin --pin-session NAME|--pin-principal EMAIL --lane NAME --expected-revision N [--confirm], lanes unpin … (project owner, own terminal).\nTeam roles (who leads each bound team; lead, engineer or reviewer): roles show (any member); roles person|lead|set ... --expected-revision N [--confirm] (project owner, own terminal); roles project-lead on|off and roles apply-leads set Linear project leads from them. linear roles --help for more.\nShown names: names-refresh (project owner or lead) stores the bound teams' and projects' current names, as Linear gives them to you.\nWho closes issues: closes show (any member); closes set (project owner or lead, never a session).\nProject status follows the work (status policy project_flow): project-flow resume --linear-project UUID (project owner or lead, never a session) clears a hold.\nProject health (any member): health show.\nWho hears of agents' issues (hosted, as the app): subscribers show (any member); subscribers on|off, owner on|off, add|remove LINEAR_USER_UUID, backfill --since DATE [--apply] (project owner or lead, never a session).\nLinear views (any member): view list [--team UUID] [--type issue|project], view show ID. Project owner, own terminal, with your Linear API key: view create --team UUID [--kind project]|update ID|delete ID|apply --file F [--adopt NAME].\nLinear documents (any member): doc list|get, initiative show, doc-policy show. Project owner or lead: doc publish FILE.\nYour name in agent markers: display-name set NAME|clear|capture --profile ID.\nYour Linear API key, for view writes (project owner, own terminal): key set|status|remove --profile ID.\nUse COMMAND --help for explicit flags. Token import accepts --token-stdin only.\n")
+		_, err := io.WriteString(stdout, "clawbridge linear connect|import|profiles|status|logout|teams|projects|binding|link|seed-docs|unlink|names-refresh|context|issues|issue|states|labels|members|create|update|comment|relation|watch\nProject owner only: label create|rename, project create [--kind NAME], initiative create|add-project, label-policy show|set, status-policy show|set, doc-policy set, health set|enable|disable, admin audit-replay.\nProject kinds (a project-label group such as Type): kind show (any member); kind set --values A,B,C [--group NAME] [--team UUID] --expected-revision N, then kind seed --operation-id ID --profile ID [--confirm] makes or adopts its project labels, and kind apply --file F --operation-id ID --profile ID [--confirm --canary] sets each project's kind (project owner, own terminal).\nA coordinator's projects: the project's designated coordinator session runs project create NAME --team UUID --kind NAME --operation-id ID in its lane's default team; project creates lists them and the unconfirmed ones (any member); project creates --ack OPERATION_ID (project owner, own terminal) clears one you checked in Linear.\nLinear writes that may have happened, of every kind (a create, a move, a team added; unsettled or uncertain): writes (any member); writes --ack OPERATION_ID (project owner, own terminal) clears one you checked in Linear.\nLanes (a binding's --lane NAME=TEAM,…): lanes show (any member); lanes pin --pin-session NAME|--pin-principal EMAIL --lane NAME --expected-revision N [--confirm], lanes unpin … (project owner, own terminal).\nTeam roles (who leads each bound team; lead, engineer or reviewer): roles show (any member); roles person|lead|set ... --expected-revision N [--confirm] (project owner, own terminal); roles project-lead on|off and roles apply-leads set Linear project leads from them. linear roles --help for more.\nShown names: names-refresh (project owner or lead) stores the bound teams' and projects' current names, as Linear gives them to you.\nWho closes issues: closes show (any member); closes set (project owner or lead, never a session).\nProject status follows the work (status policy project_flow): project-flow resume --linear-project UUID (project owner or lead, never a session) clears a hold.\nProject health (any member): health show.\nWho hears of agents' issues (hosted, as the app): subscribers show (any member); subscribers on|off, owner on|off, add|remove LINEAR_USER_UUID, backfill --since DATE [--apply] (project owner or lead, never a session).\nLinear views (any member): view list [--team UUID] [--type issue|project], view show ID. Project owner, own terminal, with your Linear API key: view create --team UUID [--kind project]|update ID|delete ID|apply --file F [--adopt NAME].\nLinear documents (any member): doc list|get, initiative show, doc-policy show. Project owner or lead: doc publish FILE.\nYour name in agent markers: display-name set NAME|clear|capture --profile ID.\nYour Linear API key, for view writes (project owner, own terminal): key set|status|remove --profile ID.\nUse COMMAND --help for explicit flags. Token import accepts --token-stdin only.\n")
 		return err
 	}
 	command := args[0]
@@ -881,6 +885,11 @@ func runLinear(ctx context.Context, flags Config, args []string, stdout, stderr 
 		return runLinearRoles(ctx, flags, args[1:], stdout, stderr)
 	}
 	parseArgs := args[1:]
+	if command == "writes" {
+		// linear writes [--ack OP]: every kind of recorded Linear write
+		// that may have happened, the same list and ack as project creates.
+		command, parseArgs = "project", append([]string{"creates"}, parseArgs...)
+	}
 	relationAction := ""
 	if command == "relation" && len(parseArgs) > 0 && parseArgs[0] != "--help" && parseArgs[0] != "-h" {
 		relationAction = parseArgs[0]
@@ -896,7 +905,7 @@ func runLinear(ctx context.Context, flags Config, args []string, stdout, stderr 
 	}
 	switch {
 	case command == "label" && adminAction != "create" && adminAction != "rename",
-		command == "project" && adminAction != "create" && adminAction != "status",
+		command == "project" && adminAction != "create" && adminAction != "status" && adminAction != "creates",
 		command == "initiative" && adminAction != "create" && adminAction != "add-project" && adminAction != "show",
 		command == "doc" && adminAction != "list" && adminAction != "get" && adminAction != "publish",
 		command == "doc-policy" && adminAction != "show" && adminAction != "set",
@@ -912,7 +921,7 @@ func runLinear(ctx context.Context, flags Config, args []string, stdout, stderr 
 		command == "view" && adminAction != "list" && adminAction != "show" && adminAction != "create" && adminAction != "update" && adminAction != "delete" && adminAction != "apply",
 		command == "subscribers" && adminAction != "show" && adminAction != "on" && adminAction != "off" && adminAction != "owner" && adminAction != "add" && adminAction != "remove" && adminAction != "backfill",
 		command == "admin" && adminAction != "audit-replay":
-		return errors.New("use linear view list|show|create|update|delete|apply, subscribers show|on|off|owner|add|remove|backfill, lanes show|pin|unpin, doc list|get|publish, initiative show, doc-policy show|set, label create|rename, project create|status [set], initiative create|add-project, label-policy show|set, kind show|set|seed|apply, status-policy show|set, closes show|set, project-flow resume, health show|set|enable|disable, display-name set|clear|capture, key set|status|remove, or admin audit-replay")
+		return errors.New("use linear view list|show|create|update|delete|apply, subscribers show|on|off|owner|add|remove|backfill, lanes show|pin|unpin, doc list|get|publish, initiative show, doc-policy show|set, label create|rename, project create|status [set]|creates, initiative create|add-project, label-policy show|set, kind show|set|seed|apply, status-policy show|set, closes show|set, project-flow resume, health show|set|enable|disable, display-name set|clear|capture, key set|status|remove, or admin audit-replay")
 	}
 	parseAs := command
 	if command == "initiative" && adminAction == "show" {
@@ -924,6 +933,9 @@ func runLinear(ctx context.Context, flags Config, args []string, stdout, stderr 
 		if len(parseArgs) > 0 && parseArgs[0] == "set" {
 			statusSet, parseArgs = true, parseArgs[1:]
 		}
+	}
+	if command == "project" && adminAction == "creates" {
+		parseAs = "project-creates"
 	}
 	if command == "view" {
 		parseAs = "view-" + adminAction
@@ -1236,6 +1248,14 @@ func runLinear(ctx context.Context, flags Config, args []string, stdout, stderr 
 	case "label", "project":
 		if adminAction == "status" {
 			data, err = linearProjectStatus(bounded, service, scope, flags, v, pos[0])
+			break
+		}
+		if adminAction == "creates" {
+			if v.ackCreate != "" {
+				data, err = service.AckProjectCreate(bounded, scope, v.ackCreate)
+			} else {
+				data, err = service.ProjectCreates(bounded, scope)
+			}
 			break
 		}
 		in, e := linearAdminInput(command, adminAction, v, pos)

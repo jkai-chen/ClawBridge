@@ -34,6 +34,9 @@ type AdminInput struct {
 	// Closes is project create's --closes (A3): agent puts the new project's
 	// rule into the proposed link; human is the default and adds nothing.
 	Closes string
+	// ProjectKind is project create's --kind: the project kind whose
+	// seeded label the new project gets. A coordinator's create needs it.
+	ProjectKind string
 }
 
 // AdminResult is an admin write's receipt. Proposal is the binding preview
@@ -57,6 +60,12 @@ type AdminResult struct {
 	// Lead is what project create did about the new project's lead, with
 	// project leads on (step 6.1a); nil otherwise.
 	Lead *CreateLeadResult `json:"lead,omitempty"`
+	// A project create with a kind: the kind and its label's ID.
+	ProjectKind string `json:"project_kind,omitempty"`
+	KindLabelID string `json:"kind_label_id,omitempty"`
+	// OwnerNotice is how the owner was told of a coordinator's create
+	// (FR5).
+	OwnerNotice string `json:"owner_notice,omitempty"`
 }
 
 // adminProvider is a provider that can run the admin writes.
@@ -66,7 +75,7 @@ type adminProvider interface {
 	CreateTeamLabel(ctx context.Context, team, name string) (linearprovider.AdminReceipt, error)
 	RenameTeamLabel(ctx context.Context, team, id, name string) (linearprovider.AdminReceipt, error)
 	TeamProjectsNamed(ctx context.Context, team, name string) ([]linearprovider.ProjectListing, bool, error)
-	CreateTeamProject(ctx context.Context, team, name string) (linearprovider.AdminReceipt, error)
+	CreateTeamProject(ctx context.Context, team, name string, labels ...string) (linearprovider.AdminReceipt, error)
 	InitiativeReason() string
 	InitiativesNamed(ctx context.Context, name string) ([]linearprovider.Initiative, bool, error)
 	CreateInitiative(ctx context.Context, name, description string) (linearprovider.AdminReceipt, error)
@@ -76,6 +85,9 @@ type adminProvider interface {
 
 var errAdminOwnerOnly = errors.New("Linear label and project creation is for the ClawBridge project owner only; ask the coordinator")
 
+// noLeadYet is a coordinator's create's lead line (FR5 Q-C).
+const noLeadYet = "no lead set: a coordinator's create sets none; once the project is in the binding, the project owner can set one with clawbridge linear roles apply-leads"
+
 // ValidateAdmin checks an admin write before any read.
 func ValidateAdmin(in AdminInput) error {
 	if !operationPattern.MatchString(in.OperationID) {
@@ -83,6 +95,14 @@ func ValidateAdmin(in AdminInput) error {
 	}
 	if in.Closes != "" && (in.Kind != "project_create" || in.Closes != ClosesAgent && in.Closes != ClosesHuman) {
 		return errors.New("--closes is agent or human, on project create only")
+	}
+	if in.ProjectKind != "" && in.Kind != "project_create" {
+		return errors.New("--kind is for project create only")
+	}
+	if in.ProjectKind != "" {
+		if e := bus.ValidLabelName(in.ProjectKind); e != nil {
+			return errors.New("--kind must name one of the project's kinds")
+		}
 	}
 	switch in.Kind {
 	case "initiative_create":
@@ -205,8 +225,17 @@ func (s *Service) Admin(ctx context.Context, scope bus.Request, in AdminInput) (
 	if e != nil {
 		return AdminResult{}, e
 	}
-	if access.ProjectRole != "owner" {
+	// The project's designated coordinator session may create a project,
+	// in its lane's default team, with a kind (FR5); every other admin
+	// write stays the owner's.
+	coordinator := access.ProjectRole != "owner"
+	if coordinator && (in.Kind != "project_create" || !access.Coordinator) {
 		return AdminResult{}, errAdminOwnerOnly
+	}
+	if coordinator {
+		if e := coordinatorCreateChecks(b, access, in); e != nil {
+			return AdminResult{}, e
+		}
 	}
 	initiative := strings.HasPrefix(in.Kind, "initiative_")
 	if !initiative && !contains(b.LinearTeamIDs, in.TeamID) {
@@ -226,6 +255,26 @@ func (s *Service) Admin(ctx context.Context, scope bus.Request, in AdminInput) (
 			return AdminResult{}, fmt.Errorf("renaming %q to %q is not in the approved list (revision %d); nothing was sent", in.From, in.Name, rev)
 		}
 	}
+	dispatching, settled := false, false
+	// The kind's label: for a coordinator from its reservation, made
+	// before anything reaches Linear (F1); for the owner from the setting.
+	label := ""
+	if coordinator {
+		if label, e = s.reserveProjectCreate(ctx, scope, in); e != nil {
+			return AdminResult{}, e
+		}
+		// Until the write starts, any refusal closes the reservation as
+		// not sent; a retry with the same operation_id reopens it.
+		defer func() {
+			if !dispatching && !settled {
+				s.settleProjectCreate(ctx, scope, in, nil)
+			}
+		}()
+	} else if in.ProjectKind != "" {
+		if label, e = s.ownerKindLabel(ctx, scope, in); e != nil {
+			return AdminResult{}, e
+		}
+	}
 	namespace := digest([]string{s.cfg.Authority, b.WorkspaceID, b.ProjectID, access.SessionID})
 	payload := struct {
 		Version                        int
@@ -235,15 +284,25 @@ func (s *Service) Admin(ctx context.Context, scope bus.Request, in AdminInput) (
 		Actor, Authority, InstanceHash string
 		Input                          AdminInput
 		PolicyRevision                 int
-	}{1, "admin", s.cfg.ProfileID, b, access.SessionID, s.cfg.Authority, digest(scope.Args["instance"]), in, revision}
+		KindLabelID                    string `json:",omitempty"`
+	}{1, "admin", s.cfg.ProfileID, b, access.SessionID, s.cfg.Authority, digest(scope.Args["instance"]), in, revision, label}
 	l := s.operations(ctx)
 	if r, exists, e := l.lookup(namespace, in.OperationID, payload); exists || e != nil {
+		// A recorded operation may have reached Linear: its reservation
+		// is settled from the receipt, or stays open.
+		dispatching = exists
 		if e != nil {
 			return AdminResult{}, e
 		}
 		result, e := adminResult(r)
 		if e != nil {
 			return AdminResult{}, e
+		}
+		// A retry after a lost answer settles the reservation from the
+		// receipt: nothing is created twice (F3).
+		if coordinator {
+			s.settleProjectCreate(ctx, scope, in, &result)
+			settled = true
 		}
 		// A retry records an audit an earlier run failed to; the authority
 		// keeps one row per operation.
@@ -297,6 +356,7 @@ func (s *Service) Admin(ctx context.Context, scope bus.Request, in AdminInput) (
 	if e = s.unchangedV2(ctx, scope, b); e != nil {
 		return AdminResult{}, e
 	}
+	dispatching = true
 	out, e := l.write(namespace, in.OperationID, payload, func() (any, error) {
 		if e := s.unchangedV2(ctx, scope, b); e != nil {
 			return nil, authorityFailure(e)
@@ -305,7 +365,11 @@ func (s *Service) Admin(ctx context.Context, scope bus.Request, in AdminInput) (
 		if e != nil {
 			return nil, authorityFailure(e)
 		}
-		if fresh.SessionID != access.SessionID || fresh.ProjectRole != "owner" {
+		still := fresh.ProjectRole == "owner"
+		if coordinator {
+			still = fresh.Coordinator && fresh.Lane == access.Lane
+		}
+		if fresh.SessionID != access.SessionID || !still {
 			return nil, refusedBeforeDispatch(errAdminOwnerOnly)
 		}
 		// The approved list is read again: a change since the check, even
@@ -325,7 +389,7 @@ func (s *Service) Admin(ctx context.Context, scope bus.Request, in AdminInput) (
 		if e = ctx.Err(); e != nil {
 			return nil, notDispatched(e)
 		}
-		result := AdminResult{Kind: in.Kind, Name: in.Name, TeamID: in.TeamID, ProjectID: in.ProjectID, PolicyRevision: revision}
+		result := AdminResult{Kind: in.Kind, Name: in.Name, TeamID: in.TeamID, ProjectID: in.ProjectID, PolicyRevision: revision, ProjectKind: in.ProjectKind, KindLabelID: label}
 		if in.Kind == "initiative_add_project" {
 			result.ID = in.InitiativeID
 		}
@@ -351,7 +415,11 @@ func (s *Service) Admin(ctx context.Context, scope bus.Request, in AdminInput) (
 		case "initiative_add_project":
 			r, e = admin.AddProjectToInitiative(ctx, in.InitiativeID, in.ProjectID)
 		default:
-			r, e = admin.CreateTeamProject(ctx, in.TeamID, in.Name)
+			var labels []string
+			if label != "" {
+				labels = []string{label}
+			}
+			r, e = admin.CreateTeamProject(ctx, in.TeamID, in.Name, labels...)
 		}
 		if e != nil {
 			return nil, writeFailure(p, sent, known, e, func(e error) error { return e })
@@ -383,11 +451,22 @@ func (s *Service) Admin(ctx context.Context, scope bus.Request, in AdminInput) (
 		return result, nil
 	})
 	if e != nil {
+		// A refusal sent nothing and is final for this operation_id: the
+		// reservation closes as not sent. Any other failure may have
+		// reached Linear, so it stays open and shows as unconfirmed.
+		var refused refusedBeforeDispatchError
+		var never notDispatchedError
+		if coordinator && (errors.As(e, &refused) || errors.As(e, &never)) {
+			s.settleProjectCreate(ctx, scope, in, nil)
+		}
 		return AdminResult{}, e
 	}
 	result, e := adminResult(out)
 	if e != nil {
 		return AdminResult{}, e
+	}
+	if coordinator {
+		s.settleProjectCreate(ctx, scope, in, &result)
 	}
 	if _, e = s.auditAdmin(ctx, scope, in, result); e != nil {
 		result.Audit = "failed: " + e.Error()

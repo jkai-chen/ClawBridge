@@ -5,19 +5,24 @@ set -euo pipefail
 release_version=$1
 [[ $release_version =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]] || exit 1
 [[ ${GITHUB_ACTIONS:-} == true && ${GITHUB_EVENT_NAME:-} == push && ${GITHUB_REF:-} == "refs/tags/$release_version" && ${GITHUB_REPOSITORY:-} == jkai-chen/ClawBridge ]] || { echo 'publication requires the exact repository tag-push CI context' >&2; exit 1; }
+# The server image this release names, pushed and attested by the workflow
+# before this script runs.
+[[ ${IMAGE_DIGEST:-} =~ ^sha256:[0-9a-f]{64}$ ]] || { echo 'publication requires the pushed image digest (IMAGE_DIGEST)' >&2; exit 1; }
+release_image="ghcr.io/jkai-chen/clawbridge@$IMAGE_DIGEST"
 export GH_REPO=jkai-chen/ClawBridge
 release_assets=$(cd "$2" && pwd -P)
 release_commit=$(git rev-parse --verify "refs/tags/$release_version^{commit}")
 [[ $(git rev-parse HEAD) == "$release_commit" ]] || exit 1
 validate_assets() {
-  python3 - "$1" "$release_version" "$release_commit" <<'PY'
+  python3 - "$1" "$release_version" "$release_commit" "$release_image" <<'PY'
 import hashlib,pathlib,re,sys
-p=pathlib.Path(sys.argv[1]); version,commit=sys.argv[2:]
-names={'LICENSE','install.sh','install.ps1','SOURCE-COMMIT.txt'}
+p=pathlib.Path(sys.argv[1]); version,commit,image=sys.argv[2:]
+names={'LICENSE','install.sh','install.ps1','SOURCE-COMMIT.txt','IMAGE-DIGEST.txt'}
 names.update('clawbridge_'+version+'_'+target for target in ['darwin_amd64','darwin_arm64','linux_amd64','linux_arm64','windows_amd64.exe','windows_arm64.exe'])
 assert {f.name for f in p.iterdir()}==names|{'SHA256SUMS'},'unexpected/missing assets'
 assert all(f.is_file() and not f.is_symlink() and f.stat().st_size for f in p.iterdir()),'nonregular/empty asset'
 assert (p/'SOURCE-COMMIT.txt').read_text()==commit+'\n','source marker mismatch'
+assert (p/'IMAGE-DIGEST.txt').read_text()==image+'\n','image digest mismatch'
 seen={}
 for line in (p/'SHA256SUMS').read_text().splitlines():
  m=re.fullmatch(r'([0-9a-f]{64})  ([A-Za-z0-9_.-]+)',line)
@@ -32,6 +37,15 @@ release_verify=$(mktemp -d)
 trap 'rm -rf -- "$release_verify"' EXIT
 # Notes come from the tagged tree, never conversation/history or a mutable file.
 git show "$release_commit:RELEASE-NOTES.md" > "$release_verify/notes.md"
+# The image digest can't be in the tagged notes, which are part of what was
+# built; the release body names it.
+cat >> "$release_verify/notes.md" <<EOF_IMAGE
+
+## Server image
+
+\`$release_image\` (linux/amd64, linux/arm64). Pin it by this digest; check it with
+\`gh attestation verify oci://$release_image --repo jkai-chen/ClawBridge --signer-workflow jkai-chen/ClawBridge/.github/workflows/release.yml\`.
+EOF_IMAGE
 # Listing drafts as well as published releases distinguishes absence from an API
 # failure and refuses existing drafts, too. A failed query stops before creation.
 release_existing=$(gh api --paginate 'repos/jkai-chen/ClawBridge/releases?per_page=100' --jq ".[] | select(.tag_name == \"$release_version\") | .id")

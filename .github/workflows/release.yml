@@ -66,12 +66,18 @@ jobs:
     # approval; see docs/design/releases.md for the one-time repository setting.
     environment: release
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    # The two-platform image build, push and attestation run after the
+    # approval, besides the assets.
+    timeout-minutes: 30
     permissions:
       contents: write
+      # The server image goes to ghcr.io/jkai-chen/clawbridge with this
+      # job's GITHUB_TOKEN; only this job may write packages.
+      packages: write
       # Build provenance (G9-10): a keyless Sigstore certificate for this
-      # workflow run signs one statement per asset, recorded in GitHub's
-      # attestation store and the public transparency log.
+      # workflow run signs one statement per asset and for the image,
+      # recorded in GitHub's attestation store and the public transparency
+      # log.
       id-token: write
       attestations: write
     steps:
@@ -89,6 +95,73 @@ jobs:
         run: |
           git fetch --no-tags origin +refs/heads/main:refs/remotes/origin/main
           git merge-base --is-ancestor "$GITHUB_SHA" refs/remotes/origin/main || { echo "::error::$GITHUB_SHA is not an ancestor of origin/main"; exit 1; }
+      # The image tag moves only while no release exists for this tag, draft
+      # or published, checked before login and push; publish-release.sh
+      # refuses an existing release too. A run that failed before its draft
+      # can be re-run: builds aren't byte-reproducible, so the re-run pushes a
+      # new digest, which the release then names, and the first one stays
+      # orphaned with its attestation.
+      - name: Refuse an existing release before the image tag moves
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          existing=$(gh api --paginate 'repos/jkai-chen/ClawBridge/releases?per_page=100' --jq ".[] | select(.tag_name == \"$RELEASE_TAG\") | .id")
+          [[ -z $existing ]] || { echo "::error::release $RELEASE_TAG already exists; its image tag is left alone"; exit 1; }
+      # The binary's build time is the commit's, as build-release.sh stamps
+      # it, so the image and the release binaries report the same; the image
+      # is still its own build of that commit, not the binaries' bytes.
+      - name: Stamp the image from the tagged commit
+        id: stamp
+        run: |
+          echo "build_time=$(TZ=UTC0 git show -s --format=%cd --date=format-local:%Y-%m-%dT%H:%M:%SZ "$GITHUB_SHA")" >> "$GITHUB_OUTPUT"
+          echo "epoch=$(git show -s --format=%ct "$GITHUB_SHA")" >> "$GITHUB_OUTPUT"
+      - uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0
+      - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+      # One tag per release, never latest: deployments pin the digest.
+      - name: Build and push the server image
+        id: image
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
+        env:
+          SOURCE_DATE_EPOCH: ${{ steps.stamp.outputs.epoch }}
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ghcr.io/jkai-chen/clawbridge:${{ github.ref_name }}
+          build-args: |
+            VERSION=${{ github.ref_name }}
+            COMMIT=${{ github.sha }}
+            BUILD_TIME=${{ steps.stamp.outputs.build_time }}
+          labels: |
+            org.opencontainers.image.source=https://github.com/jkai-chen/ClawBridge
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.version=${{ github.ref_name }}
+          # Provenance comes from attest-build-provenance below, one
+          # mechanism for the image and the assets; the SBOM stays with the
+          # image.
+          provenance: false
+          sbom: true
+      - name: Attest the server image's build provenance
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-name: ghcr.io/jkai-chen/clawbridge
+          subject-digest: ${{ steps.image.outputs.digest }}
+          push-to-registry: true
+      # The digest becomes an asset, in SHA256SUMS and attested with the
+      # others, before anything is public.
+      - name: Record the image digest as an asset
+        env:
+          IMAGE_DIGEST: ${{ steps.image.outputs.digest }}
+        run: |
+          [[ $IMAGE_DIGEST =~ ^sha256:[0-9a-f]{64}$ ]] || { echo "::error::unexpected image digest"; exit 1; }
+          cd "$RUNNER_TEMP/release-assets"
+          printf 'ghcr.io/jkai-chen/clawbridge@%s\n' "$IMAGE_DIGEST" > IMAGE-DIGEST.txt
+          sha256sum IMAGE-DIGEST.txt >> SHA256SUMS
       # Attested before publication, so no published asset is ever without
       # its provenance. `gh attestation verify ASSET --repo
       # jkai-chen/ClawBridge` checks one, and the installers do with
@@ -101,4 +174,5 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ github.ref_name }}
+          IMAGE_DIGEST: ${{ steps.image.outputs.digest }}
         run: bash scripts/publish-release.sh "$RELEASE_TAG" "$RUNNER_TEMP/release-assets"

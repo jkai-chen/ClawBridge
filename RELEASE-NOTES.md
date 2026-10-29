@@ -101,6 +101,15 @@
   connection, with the label listings uncharged; it now reads each team with one app GraphQL query for the whole
   needs-agent set, and every page is charged. A large binding's intake drops from about 14 s to about 1 s. If Linear
   refuses the set's filter, S1 reads one query per label for the rest of that pass. Linear config scope: none.
+- **Each release publishes the server image.** It goes to `ghcr.io/jkai-chen/clawbridge:vX.Y.Z` for linux/amd64 and
+  linux/arm64, behind the same release approval as the binaries.
+  - **Naming:** the release page names it by digest, and `IMAGE-DIGEST.txt` carries the digest.
+  - **Verifying:** it has a build provenance attestation (`gh attestation verify oci://…`) and an SBOM.
+  - **Using it:** `deploy/compose.image.yaml` pulls exactly that digest (`CLAWBRIDGE_IMAGE`), with no source or build
+    on the server. Rolling back means setting the previous release's digest.
+  - **From source:** building from source stays as the fallback.
+  - **Base images:** both are now pinned by digest.
+  - **Version stamping:** the release image reports its tag, commit and commit time in `clawbridge version`.
 - **Run the server on your own machine.** `deploy/local-host.sh up --owner EMAIL` builds and starts the server
   for this machine only on `http://127.0.0.1:8443` (device sign-in, no Caddy, no Google settings), writes a private
   env file once, and shows the owner's one-time code in the terminal; `up --lan HOST [--bind IP]` serves

@@ -11,6 +11,8 @@ import tempfile
 import unittest
 
 ROOT = Path(__file__).resolve().parent.parent
+DIGEST = "sha256:" + "ab" * 32
+IMAGE = "ghcr.io/jkai-chen/clawbridge@" + DIGEST
 GH = r'''#!PYTHON
 import json,os,pathlib,shutil,sys
 # The checks below are asserts; PYTHONOPTIMIZE would strip them silently.
@@ -29,7 +31,10 @@ if args[0]=='api':
 elif args[:2]==['release','create']:
  assert '--draft' in args and '--verify-tag' in args
  assert '--notes-file' in args
- assert pathlib.Path(args[args.index('--notes-file')+1]).read_text()=='Tagged release fixture notes\n'
+ notes=pathlib.Path(args[args.index('--notes-file')+1]).read_text()
+ # The tagged notes, then the image the workflow pushed.
+ assert notes.startswith('Tagged release fixture notes\n\n## Server image\n'),notes
+ assert '`'+os.environ['FIXTURE_IMAGE']+'`' in notes and 'gh attestation verify oci://'+os.environ['FIXTURE_IMAGE'] in notes,notes
  (p/'draft').write_text('draft')
 elif args[:2]==['release','upload']:
  assert (p/'draft').exists() and '--clobber' not in args
@@ -61,7 +66,7 @@ class PublishTests(unittest.TestCase):
         (self.repo / "marker").write_text("isolated tag fixture")
         (self.repo / "RELEASE-NOTES.md").write_text("Tagged release fixture notes\n")
         self.env = os.environ.copy()
-        self.env.update(GIT_AUTHOR_NAME="Fixture", GIT_AUTHOR_EMAIL="fixture@example.test", GIT_COMMITTER_NAME="Fixture", GIT_COMMITTER_EMAIL="fixture@example.test", GITHUB_ACTIONS="true", GITHUB_EVENT_NAME="push", GITHUB_REF="refs/tags/v0.1.0", GITHUB_REPOSITORY="jkai-chen/ClawBridge", PUBLISH_FIXTURE=str(self.root))
+        self.env.update(GIT_AUTHOR_NAME="Fixture", GIT_AUTHOR_EMAIL="fixture@example.test", GIT_COMMITTER_NAME="Fixture", GIT_COMMITTER_EMAIL="fixture@example.test", GITHUB_ACTIONS="true", GITHUB_EVENT_NAME="push", GITHUB_REF="refs/tags/v0.1.0", GITHUB_REPOSITORY="jkai-chen/ClawBridge", PUBLISH_FIXTURE=str(self.root), IMAGE_DIGEST=DIGEST, FIXTURE_IMAGE=IMAGE)
         for args in [("init", "-q"), ("add", "."), ("commit", "-qm", "fixture"), ("tag", "v0.1.0")]:
             subprocess.run(["git", *args], cwd=self.repo, env=self.env, check=True, capture_output=True)
         commit = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=self.repo, text=True).strip()
@@ -70,6 +75,7 @@ class PublishTests(unittest.TestCase):
         for name in ["LICENSE", "install.sh", "install.ps1", *["clawbridge_v0.1.0_" + t for t in ["darwin_amd64", "darwin_arm64", "linux_amd64", "linux_arm64", "windows_amd64.exe", "windows_arm64.exe"]]]:
             (self.assets / name).write_text("fixture bytes " + name)
         (self.assets / "SOURCE-COMMIT.txt").write_text(commit + "\n")
+        (self.assets / "IMAGE-DIGEST.txt").write_text(IMAGE + "\n")
         (self.assets / "SHA256SUMS").write_text("".join(hashlib.sha256(p.read_bytes()).hexdigest() + "  " + p.name + "\n" for p in sorted(self.assets.iterdir())))
         stub = self.root / "gh"
         stub.write_text(GH.replace("#!PYTHON", "#!" + sys.executable))
@@ -131,6 +137,22 @@ class PublishTests(unittest.TestCase):
     def test_extra_remote_asset_never_publishes(self):
         self.publish("extra-asset")
         self.assertFalse((self.root / "published").exists())
+
+    def test_missing_or_malformed_image_digest_never_contacts_gh(self):
+        for digest in [None, "", "sha256:" + "ab" * 31, "sha512:" + "ab" * 32, DIGEST + "\n"]:
+            with self.subTest(digest=digest):
+                if digest is None:
+                    self.env.pop("IMAGE_DIGEST", None)
+                else:
+                    self.env["IMAGE_DIGEST"] = digest
+                result = subprocess.run(["bash", str(ROOT / "scripts/publish-release.sh"), "v0.1.0", str(self.assets)], cwd=self.repo, env=self.env, capture_output=True, text=True)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("requires the pushed image digest", result.stderr)
+                self.assertFalse((self.root / "calls").exists())
+
+    def test_image_asset_must_name_the_pushed_digest(self):
+        self.env["IMAGE_DIGEST"] = "sha256:" + "cd" * 32
+        self.assertEqual(self.publish(), [])
 
     def test_dispatch_and_bad_local_payload_never_contact_gh(self):
         self.env["GITHUB_EVENT_NAME"] = "workflow_dispatch"

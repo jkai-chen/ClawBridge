@@ -129,6 +129,53 @@ accepted commit. Observe release workflow and verify published assets before
 claiming a working public install. Do not claim public CI execution from static
 workflow inspection, or native runtime acceptance from cross-compilation.
 
+## The server image
+
+Each release also publishes the server image, `ghcr.io/jkai-chen/clawbridge:vX.Y.Z`. It is a multi-arch index for
+linux/amd64 and linux/arm64, built from the repository's `Dockerfile` in the same `publish` job, behind the same
+`release` approval.
+
+- **Permissions:** only that job has `packages: write`, `id-token: write` and `attestations: write`. It logs in with
+  its own `GITHUB_TOKEN`; there is no other credential.
+- **Order:**
+  1. The job refuses if any release for the tag exists, draft or published, before it logs in or pushes. So the tag
+     never moves under a release.
+  2. It builds and pushes.
+  3. It attests the image (`actions/attest-build-provenance`, with the bundle pushed next to the image).
+  4. It writes `IMAGE-DIGEST.txt` (`ghcr.io/jkai-chen/clawbridge@sha256:…`) into the assets and SHA256SUMS, and
+     attests every asset.
+  5. `publish-release.sh` refuses to run without that digest. It appends a "Server image" section with the digest
+     and its `gh attestation verify` command to the release body.
+- **Re-runs:** builds aren't byte-reproducible, so a re-run after a failure before the draft pushes a new digest,
+  which is the one the release names. The first digest stays orphaned, with its attestation.
+- **Tags and notes:**
+  - Each release has exactly one tag. There is never a `latest`, and nothing is retagged or deleted.
+  - RELEASE-NOTES.md never carries the digest: the tagged notes are part of what is built. The release body and
+    `IMAGE-DIGEST.txt` do.
+- **What the image is:**
+  - Its binary is stamped with the tag, the commit and the commit's time, the same as the release binaries.
+  - It is still its own build of that commit, not the binaries' bytes.
+  - It carries BuildKit's SBOM.
+- **Signing:** provenance is the Sigstore keyless attestation alone; there is no separate cosign signature.
+  `gh attestation verify oci://… --repo jkai-chen/ClawBridge --signer-workflow
+  jkai-chen/ClawBridge/.github/workflows/release.yml` checks it, and `cosign verify-attestation
+  --new-bundle-format` verifies the same bundle.
+- **Base images:**
+  - Both bases are pinned by their multi-arch index digest.
+  - Before each cut, run `bash scripts/check-image.sh bases --strict`. It fails when a base has moved; refresh the
+    digest (`docker buildx imagetools inspect <tag>` prints the index digest) in its own PR.
+  - CI runs `check-image.sh bases` and `arch` on every PR. `arch` builds both platforms and checks each binary and
+    each base's packages.
+- **The package's visibility (owner, one-time, after the first push):**
+  - The first push creates the package private, so its tag exists before anyone can pull it. That is harmless, since
+    the digest is attested, but it means a failed release can leave a private `vX.Y.Z` image behind.
+  - Then: github.com → your profile → Packages → `clawbridge` → Package settings → Danger Zone → Change visibility
+    → Public.
+  - Check that "Repository source" shows `jkai-chen/ClawBridge`. The image's `org.opencontainers.image.source`
+    label links it.
+  - Until it is public, deployments use the build-from-source path, or log the host in with `docker login ghcr.io`
+    and a token that has only `read:packages`.
+
 ## POSIX installer
 
 Ship scripts/install.sh (copied as release asset install.sh). It works under

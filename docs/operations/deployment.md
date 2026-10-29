@@ -544,6 +544,14 @@ CLAWBRIDGE_LINEAR_APP_TOKEN_KEY=<32 random bytes, base64>
   with `serve --issue-move-proven` or `CLAWBRIDGE_ISSUE_MOVE_PROVEN=1`. Set
   that after one Sandbox move through `clawbridge linear move` itself
   (preview, then confirm) reads `accepted`. Previews work without it.
+- **Team adds are off until proven.** Adding a team to a Linear project
+  (`linear project update --add-team`, see [Linear](../linear.md)) is refused
+  with `project_team_add_unproven` until the server runs with
+  `serve --project-team-add-proven` or `CLAWBRIDGE_PROJECT_TEAM_ADD_PROVEN=1`
+  (the compose file passes it through). Set it only after the team-add probe:
+  on a throwaway project, an add read back field by field shows the team added
+  and the lead, members, status, dates and labels as they were. The write goes
+  through the confirming person's own Linear profile, never the app.
 - **Timeouts.** A write the server makes can take up to a minute, and it
   finishes even if the client disconnects. Keep the proxy and load-balancer
   timeouts for `/v1/execute` at 75 seconds or more.

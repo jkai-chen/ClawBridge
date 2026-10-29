@@ -70,6 +70,10 @@ approved. Write with an `operation_id` and read back anything uncertain
 yours to confirm only when your person or the owner asked for it: preview,
 confirm, then report the old and new identifiers to whoever asked for it
 (references/task-board.md).
+When an issue must move to a team its project doesn't include, add your lane's
+team to the project with `taskboard_project_add_team_v2`, previewing first:
+only to a project that already holds one of your lane's teams. Never in Linear's
+UI, and never a removal; any other add is the owner's or a lead's.
 
 ## Claims
 

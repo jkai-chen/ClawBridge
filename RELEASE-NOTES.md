@@ -134,6 +134,17 @@
   15 minutes old, and trusted only as an active, non-guest user; a failed read only notifies, and a bot or app
   never counts. Nothing changes until the owner sets the team roles. The poll reports `trust` counts. No schema
   change. Linear config scope: none (it reads one user at a time).
+- **Add a bound team to a Linear project from ClawBridge.** `clawbridge linear project update PROJECT --add-team TEAM`
+  and the coordinator's `taskboard_project_add_team_v2` add a bound write team to a project of the binding, so an
+  issue can move there, without Linear's UI. The project owner, a lead, or the added team's lead in the team roles (an
+  active, non-guest user) confirms from their own terminal, or the designated coordinator for its own lane's team, to
+  a project that already holds one of its lane's teams. It is previewed, reserved first in the Linear write ledger,
+  sent as `addTeams` by UUID only (never a name, never a removal, no other field), and read back before it is
+  recorded: `accepted`, `accepted_with_changes` (Linear changed other fields too: named, counted in doctor
+  `linear.project_team_adds` and the overview until acknowledged with `linear writes --ack`, never undone), `not_sent`
+  (Linear refused it) or `uncertain` (still missing after re-reads at 2 s and 6 s); a lead or members the read leaves
+  out are named `unverified`. Off until the operator sets `serve --project-team-add-proven` after the probe. No schema
+  change. Linear config scope: project.
 
 ## Team roles: telling project leads
 
@@ -190,8 +201,9 @@
   because Linear makes every workspace admin a team owner. `clawbridge linear roles show|set|person|lead`; the MCP
   tool `team_roles_get` reads them. Only the project owner changes them, in their own terminal, at the revision read,
   previewed first. People are active, non-guest users of the Linear workspace (never a team's membership). History
-  counts only. Doctor warns about a team that left the binding or a person who is no longer active. Nothing uses the
-  roles yet. Schema 43. No Linear configuration: it reads the workspace's users only.
+  counts only. Doctor warns about a team that left the binding or a person who is no longer active. Linear project
+  leads use them, and a team's lead may add their team to a project (see Linear). Schema 43. No Linear configuration:
+  it reads the workspace's users only.
 
 # ClawBridge v0.3.7 (released 28 Oct)
 

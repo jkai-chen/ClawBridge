@@ -221,6 +221,7 @@ func Run(ctx context.Context, in Input, executor Executor) Report {
 		checkTeamRoles(ctx, executor, wid, pid, in.WorkspaceUsers, add)
 		checkTeamRolesDoc(ctx, wid, pid, in.TeamRolesDoc, add)
 		checkProjectCreates(ctx, executor, wid, pid, add)
+		checkProjectTeamAdds(ctx, executor, wid, pid, add)
 		if in.LabelSets != nil {
 			checkLabelSets(ctx, in.LabelSets, add)
 		}
@@ -1426,5 +1427,66 @@ func checkLabelSets(ctx context.Context, read func(context.Context) ([]LabelSet,
 		check.Message = strings.Join(gaps, "; ") + ". " + check.Message
 		check.Action = "A team with no needs-agent is never polled for it, and one with no agent-working gets no marker label. Create the label in the team or its bound parent, or remove the duplicate a team lists twice."
 	}
+	add(check)
+}
+
+// checkProjectTeamAdds counts the teams added to Linear projects (FR10)
+// and warns of those Linear answered with other fields changed, naming
+// the operation and the fields, until the owner acknowledges each:
+// ClawBridge never undoes them, so a person looks. It reads the overview.
+func checkProjectTeamAdds(ctx context.Context, executor Executor, wid, pid string, add func(Check)) {
+	r, err := executor.Execute(ctx, bus.Request{Operation: "project_overview", Workspace: wid, Project: pid, Args: map[string]any{}})
+	m, _ := r.Data.(map[string]any)
+	adds, _ := m["project_team_adds"].(map[string]any)
+	if err != nil || adds == nil {
+		// An older server keeps no record of them.
+		return
+	}
+	count := func(v any) int {
+		switch n := v.(type) {
+		case int:
+			return n
+		case float64:
+			return int(n)
+		}
+		return 0
+	}
+	check := Check{ID: "linear.project_team_adds", Title: "Teams added to Linear projects", Status: Pass}
+	added, changed := count(adds["added"]), count(adds["with_changes"])
+	check.Message = fmt.Sprintf("%d team(s) added to Linear projects; none changed anything else.", added)
+	if changed == 0 {
+		add(check)
+		return
+	}
+	var named []string
+	each := func(row map[string]any) {
+		if row["state"] != "accepted_with_changes" || row["acknowledged_at"] != nil {
+			return
+		}
+		var fields []string
+		switch list := row["changed"].(type) {
+		case []string:
+			fields = list
+		case []any:
+			for _, x := range list {
+				fields = append(fields, fmt.Sprint(x))
+			}
+		}
+		named = append(named, fmt.Sprintf("%v (%s)", row["operation_id"], strings.Join(fields, ", ")))
+	}
+	switch rows := adds["recent"].(type) {
+	case []map[string]any:
+		for _, row := range rows {
+			each(row)
+		}
+	case []any:
+		for _, raw := range rows {
+			row, _ := raw.(map[string]any)
+			each(row)
+		}
+	}
+	check.Status = Warn
+	check.Message = fmt.Sprintf("%d team(s) added to Linear projects; Linear changed other fields with %d: %s.", added, changed, strings.Join(named, ", "))
+	check.Action = "Look at each project in Linear (ClawBridge sent only the team and never undoes what Linear changed), then the project owner runs `clawbridge linear writes --ack OPERATION_ID` for each."
 	add(check)
 }

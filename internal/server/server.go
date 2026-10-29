@@ -701,6 +701,7 @@ func Run(ctx context.Context, args []string) error {
 	store.SetIssueSubscribersProven(settings.IssueSubscribersProven)
 	store.SetLinearBudgetMax(watch.budgetMax)
 	store.SetIssueMoveProven(settings.IssueMoveProven)
+	store.SetProjectTeamAddProven(settings.ProjectTeamAddProven)
 	writer, err := appWriter(store)
 	if err != nil {
 		return err
@@ -1037,6 +1038,10 @@ type ServeSettings struct {
 	// --issue-move-proven or CLAWBRIDGE_ISSUE_MOVE_PROVEN=1, set by the
 	// operator after the move probe. Previews work without it.
 	IssueMoveProven bool
+	// ProjectTeamAddProven lets a team be added to a Linear project (FR10):
+	// serve --project-team-add-proven or CLAWBRIDGE_PROJECT_TEAM_ADD_PROVEN=1,
+	// set by the operator after the team-add probe.
+	ProjectTeamAddProven bool
 }
 
 // ParseServe reads serve's flags and the OAuth secrets from getenv. The
@@ -1056,6 +1061,7 @@ func ParseServe(args []string, getenv func(string) string) (ServeSettings, error
 	flowProven := f.Bool("project-flow-proven", false, "let status policies turn project flow on; set only after the deploy probe proves it (also CLAWBRIDGE_PROJECT_FLOW_PROVEN=1)")
 	subscribersProven := f.Bool("issue-subscribers-proven", false, "let projects subscribe their people to agents' issues; set only after the live check proves the app may (also CLAWBRIDGE_ISSUE_SUBSCRIBERS_PROVEN=1)")
 	moveProven := f.Bool("issue-move-proven", false, "let an issue's team move be confirmed; set only after the move probe proves it (also CLAWBRIDGE_ISSUE_MOVE_PROVEN=1)")
+	teamAddProven := f.Bool("project-team-add-proven", false, "let the project owner, a lead or the coordinator add a bound team to a Linear project; set only after the team-add probe proves it (also CLAWBRIDGE_PROJECT_TEAM_ADD_PROVEN=1)")
 	if err := f.Parse(args); err != nil {
 		return ServeSettings{}, err
 	}
@@ -1069,7 +1075,7 @@ func ParseServe(args []string, getenv func(string) string) (ServeSettings, error
 	if err != nil {
 		return ServeSettings{}, err
 	}
-	out := ServeSettings{Listen: *listen, BootstrapOwner: *owner, DatabaseURLEnv: *dsnEnv, Auth: AuthOptions{Methods: methods}, ProjectFlowProven: *flowProven, IssueSubscribersProven: *subscribersProven}
+	out := ServeSettings{Listen: *listen, BootstrapOwner: *owner, DatabaseURLEnv: *dsnEnv, Auth: AuthOptions{Methods: methods}, ProjectFlowProven: *flowProven, IssueSubscribersProven: *subscribersProven, ProjectTeamAddProven: *teamAddProven}
 	switch v := getenv("CLAWBRIDGE_PROJECT_FLOW_PROVEN"); v {
 	case "":
 	case "1", "true":
@@ -1094,6 +1100,14 @@ func ParseServe(args []string, getenv func(string) string) (ServeSettings, error
 	case "0", "false":
 	default:
 		return ServeSettings{}, errors.New("CLAWBRIDGE_ISSUE_MOVE_PROVEN is 1 or 0")
+	}
+	switch v := getenv("CLAWBRIDGE_PROJECT_TEAM_ADD_PROVEN"); v {
+	case "":
+	case "1", "true":
+		out.ProjectTeamAddProven = true
+	case "0", "false":
+	default:
+		return ServeSettings{}, errors.New("CLAWBRIDGE_PROJECT_TEAM_ADD_PROVEN is 1 or 0")
 	}
 	if out.Auth.accepts(AuthDevice) {
 		if out.Auth.PublicOrigin, err = ParsePublicOrigin(*publicOrigin); err != nil {

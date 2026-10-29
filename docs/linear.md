@@ -1257,6 +1257,76 @@ clawbridge linear admin audit-replay --operation-id ID
   a comment or issue write, or one still running is refused.
 - A replay of a write already in history answers `"audit": "already"`.
 
+### Adding a team to a project
+
+An issue moves to another team only when its project includes that team.
+`linear project update --add-team` adds a bound write team to a Linear project
+of the binding, so nobody has to do it in Linear's UI. It is a project-level
+write: no team, membership or workspace setting changes.
+
+```sh
+clawbridge linear project update PROJECT_UUID --add-team TEAM_UUID --profile PROFILE_ID
+clawbridge linear project update PROJECT_UUID --add-team TEAM_UUID --profile PROFILE_ID \
+  --operation-id ID --confirm --expected-plan-sha256 SHA
+clawbridge linear project team-adds                 # any member: the adds, and those with changes
+```
+
+- **UUIDs only.** The project and the team are taken by UUID, never by name,
+  and only `id` and `addTeams` are sent. Linear's `addTeams` appends, so a team
+  someone else added at the same moment isn't lost. ClawBridge never removes a
+  team from a project and never sends any other project field.
+- **Which project and team.** The binding must be a project set, the project
+  one of its projects, and the team one of its write teams. A team board has no
+  projects, so it is refused. A team already in the project is `already`, and
+  nothing is sent.
+- **Who confirms.** Anyone may preview. The server decides who confirms:
+  - the project owner or a lead, in their own terminal without a session;
+  - the added team's own lead in the [team roles](#team-roles-project-owner-and-leads-for-their-teams):
+    a lead row of that team the owner linked to their ClawBridge account, in
+    their own terminal without a session, while Linear states them an active,
+    non-guest user (checked before anything is reserved);
+  - the project's designated coordinator session, only for a write team of its
+    own lane, and only to a project that already holds one of its lane's teams.
+    Otherwise the add is `outside_lane`, because it would pull another lane's
+    project into this one. In a binding without lanes, the coordinator adds no
+    team.
+
+  Every other session previews and asks. The write goes through the confirming
+  person's own Linear profile, never the ClawBridge app, so Linear's own
+  permissions apply as well.
+- **Preview, then confirm.** The preview reads the project and prints its
+  teams, the team added, what is sent and `plan_sha256`. It sends nothing. The
+  confirm repeats it with an operation ID and that digest, and is refused if the
+  project's teams changed since.
+- **The record comes first.** Before anything is sent, the server reserves the
+  add by its operation ID, in the same ledger as a coordinator's project
+  creates (`linear writes`). After the add, the project is read back before the
+  reservation is settled, and the settled outcome never changes. Linear's reads
+  can lag its writes, so a team not there yet is read again after 2 s and after
+  4 s more:
+  - `accepted`: the team is in the project, and nothing else changed;
+  - `accepted_with_changes`: the team is in, and Linear also changed other
+    fields (`changed` names them: `lead`, `members`, `teams_removed`, ...).
+    ClawBridge never undoes Linear's changes. `team-adds`, the overview
+    (`project_team_adds`) and doctor's `linear.project_team_adds` count them,
+    and doctor names each one, until the owner looks in Linear and
+    acknowledges it with `linear writes --ack OP_ID` (a clean add has nothing
+    to acknowledge);
+  - `not_sent`: Linear refused the add, and the project doesn't hold the team.
+    The same operation ID may be confirmed again;
+  - `uncertain`: the team still isn't there after the re-reads, or the project
+    couldn't be read back. It is never sent again; it shows in `linear writes`
+    and doctor until the owner checks Linear and acknowledges it with
+    `linear writes --ack OP_ID`.
+
+  When Linear's read leaves out the lead or the members, the add can't prove
+  them unchanged: the answer and history name them as `unverified`.
+- **Off until proven.** A server refuses every confirm
+  (`project_team_add_unproven`) until its operator sets
+  `serve --project-team-add-proven` after the team-add probe. The preview always
+  works.
+- History records the add by IDs and changed field names only, never names.
+
 ## Team roles (project owner, and leads for their teams)
 
 Linear can't say who leads a team: every workspace admin becomes a team owner in
@@ -1311,7 +1381,8 @@ The TUI's Linear screen has the same view and changes (`R`; see the
   - a mapped team that left the binding;
   - a mapped person who is no longer an active, non-guest user of the workspace.
 
-  No consumer uses those roles.
+  Linear project leads (below) and adding a team to a project (a team's lead
+  may add their own team; see "Adding a team to a project") use them.
 - **The "Team roles (ClawBridge)" document.** `roles publish` writes the roles
   as one Linear document, for people to read. Only the project owner publishes
   it, in their own terminal, through their own Linear connection.

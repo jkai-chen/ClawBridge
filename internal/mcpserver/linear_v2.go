@@ -107,6 +107,7 @@ func addTaskboardToolsV2(s *mcp.Server, b *binding, p TaskboardToolsV2) {
 	addDocToolsV2(s, b, p)
 	addProjectStatusToolsV2(s, b, p)
 	addIssueMoveToolV2(s, b, p)
+	addProjectTeamToolV2(s, b, p)
 	for _, operation := range []string{"binding", "context", "issues", "issue", "create", "update", "comment", "labels", "members", "views", "relation_add", "relation_remove"} {
 		readOnly := operation != "create" && operation != "update" && operation != "comment" && operation != "relation_add" && operation != "relation_remove"
 		closed := false
@@ -276,6 +277,41 @@ func addIssueMoveToolV2(s *mcp.Server, b *binding, p TaskboardToolsV2) {
 		bounded, cancel := context.WithTimeout(ctx, linearboard.WriteTimeout)
 		defer cancel()
 		data, err := p.ExecuteV2(bounded, scope, "issue_move", args)
+		if err != nil {
+			return nil, bus.Result{}, err
+		}
+		return nil, bus.Result{Source: "linear", Data: data}, nil
+	})
+}
+
+// projectTeamDescription says who adds a team to a Linear project and how
+// an add is confirmed.
+const projectTeamDescription = "Add a bound write team to a Linear project of the binding (a project set), by UUIDs only; nothing is ever removed, and no other project field is sent. Without confirm it is a preview: the project's teams now, the team added, what is sent and plan_sha256; it sends nothing. Only the project's designated coordinator session confirms, and only for a team of its own lane, to a project that already holds one of its lane's teams; every other session previews and asks the project owner or a lead, who confirm from their own terminal. To send it, repeat the call with an operation_id, confirm: true and the preview's plan_sha256 as expected_plan_sha256; a project whose teams changed since is refused. The project is read back before the add is recorded: accepted, accepted_with_changes (changed names the other fields Linear changed; ClawBridge never undoes them), not_sent or uncertain. An uncertain add is never sent again: read the project in Linear and tell the owner. Confirming your own preview is your decision, not a person's approval."
+
+// addProjectTeamToolV2 adds the tool that adds a team to a project.
+func addProjectTeamToolV2(s *mcp.Server, b *binding, p TaskboardToolsV2) {
+	pattern := `^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`
+	schema := map[string]any{"type": "object", "additionalProperties": false, "properties": map[string]any{
+		"linear_project":       map[string]any{"type": "string", "pattern": pattern, "description": "The Linear project's UUID, one of the binding's projects"},
+		"team_id":              map[string]any{"type": "string", "pattern": pattern, "description": "The bound write team's UUID to add; never a name"},
+		"operation_id":         map[string]any{"type": "string", "minLength": 1, "maxLength": 128, "pattern": `^[A-Za-z0-9._:-]+$`},
+		"confirm":              map[string]any{"type": "boolean", "description": "Send the add; needs operation_id and expected_plan_sha256 from the preview"},
+		"expected_plan_sha256": map[string]any{"type": "string", "pattern": `^[0-9a-f]{64}$`, "description": "The plan_sha256 the preview showed"},
+	}, "required": []string{"linear_project", "team_id"}}
+	closed := false
+	mcp.AddTool(s, &mcp.Tool{
+		Name: "taskboard_project_add_team_v2", InputSchema: schema, Description: projectTeamDescription,
+		Annotations: &mcp.ToolAnnotations{ReadOnlyHint: false, IdempotentHint: false, OpenWorldHint: &closed},
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, args map[string]any) (*mcp.CallToolResult, bus.Result, error) {
+		b.mu.Lock()
+		defer b.mu.Unlock()
+		scope := bus.Request{Workspace: b.workspace, Project: b.project, Session: b.session, Args: map[string]any{}}
+		if b.instance != "" {
+			scope.Args["instance"] = b.instance
+		}
+		bounded, cancel := context.WithTimeout(ctx, linearboard.WriteTimeout)
+		defer cancel()
+		data, err := p.ExecuteV2(bounded, scope, "project_add_team", args)
 		if err != nil {
 			return nil, bus.Result{}, err
 		}

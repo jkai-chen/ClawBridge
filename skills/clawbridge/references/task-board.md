@@ -256,6 +256,18 @@ A changed plan is refused, so preview again. An `uncertain` move is never sent
 again: read the issue first. `issue_move_unproven` means the server's operator
 hasn't turned moves on yet; tell the human.
 
+A project includes the teams its issues may be in. To add a bound write team to
+a project of the binding, preview with `taskboard_project_add_team_v2`
+(`linear_project`, `team_id`; or `clawbridge linear project update PROJECT
+--add-team TEAM --profile P`): it sends nothing and shows `plan_sha256`. Only
+the coordinator session confirms (`operation_id`, `confirm: true`,
+`expected_plan_sha256`), for a team of its own lane to a project that already
+holds one of its lane's teams; otherwise ask the project owner or a lead. UUIDs
+only, never a team's name. Never add a team in Linear's UI, and never remove
+one. An `accepted_with_changes` outcome names fields Linear changed besides the
+teams: tell the owner. An `uncertain` one is never sent again: read the project
+in Linear and tell the owner.
+
 Write Linear text without mentions: name people and agents in plain words, never
 as `@name`, `@Linear` or a profile link. ClawBridge refuses a title,
 description or comment that does, even inside code: write scoped packages

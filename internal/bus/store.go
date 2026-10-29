@@ -66,6 +66,9 @@ type Store struct {
 	// issueMoveProven is serve --issue-move-proven: the operator ran the
 	// move probe, so an issue's team move may be confirmed (FR7).
 	issueMoveProven bool
+	// projectTeamAddProven is serve --project-team-add-proven: the operator
+	// ran the team-add probe, so a team is added to a project (FR10).
+	projectTeamAddProven bool
 	// modelSeal seals owners' provider keys; nil leaves model setup off.
 	modelSeal *ModelSeal
 	// modelMaxAgents and memAvailable are the serving process's, for
@@ -593,6 +596,9 @@ var operationArgs = map[string]string{
 	"project_create_ack":          "instance operation_id",
 	"issue_move_reserve":          "instance operation_id issue_uuid from_team to_team plan_sha256",
 	"issue_move_settle":           "instance operation_id outcome old_identifier new_identifier",
+	"project_team_add_reserve":    "instance operation_id linear_project team_id project_teams plan_sha256",
+	"project_team_add_settle":     "instance operation_id outcome changed unverified",
+	"project_team_add_list":       "instance",
 	"member_display_name_set":     "display_name if_unset",
 	"taskboard_set":               "instance expected_revision linear_team_ids linear_default_team_id linear_project_id linear_workspace_id",
 	"taskboard_clear":             "instance expected_revision repair",
@@ -851,7 +857,7 @@ func validateArgs(op string, a map[string]any) error {
 			if _, ok := intList(v, 1000); !ok {
 				return errors.New("lines must be an array of line numbers")
 			}
-		case "ids", "event_ids", "linear_team_ids", "linear_project_ids", "closes_pending", "scope_paths", "domains", "comment_ids", "signals", "roles", "pattern_ids", "issue_labels", "tools", "uses", "leases", "kinds", "label_ids", "user_ids":
+		case "ids", "event_ids", "linear_team_ids", "linear_project_ids", "closes_pending", "scope_paths", "domains", "comment_ids", "signals", "roles", "pattern_ids", "issue_labels", "tools", "uses", "leases", "kinds", "label_ids", "user_ids", "project_teams", "changed", "unverified":
 			switch v.(type) {
 			case []string, []any:
 			default:
@@ -993,7 +999,7 @@ func pureRead(r Request) bool {
 	switch r.Operation {
 	case "snapshot", "inbox_status", "notification_status", "taskboard_get", "taskboard_get_v2", "taskboard_access", "list_projects", "list_members", "comment_watch_status", "label_policy_get", "status_policy_get", "doc_policy_get", "dispatcher_get", "context_watch_get", "health_get", "doc_seed_get", "doc_publication_get", "invite_list", "device_list", "device_events", "user_list", "owner_transfer_get", "dispatcher_chat_show", "dispatcher_decisions_list", "dispatcher_escalations_list", "dispatcher_model_doctor", "project_overview":
 		return true
-	case "list_sessions", "history", "whoami", "linear_comments_posted", "linear_comment_precheck", "intake_policy_get", "intake_trust_list", "intake_list", "linear_view_get", "linear_views_list", "project_kind_get", "team_roles_get", "lane_pins_get":
+	case "list_sessions", "history", "whoami", "linear_comments_posted", "linear_comment_precheck", "intake_policy_get", "intake_trust_list", "intake_list", "linear_view_get", "linear_views_list", "project_kind_get", "team_roles_get", "lane_pins_get", "project_team_add_list":
 		// Naming a session with its instance makes it a heartbeat read: the
 		// read itself is pure and the heartbeat follows (see beat).
 		return (r.Session == "") == (str(r.Args, "instance") == "")
@@ -1418,6 +1424,9 @@ func (s *Store) execute(ctx context.Context, tx *transaction, r Request) (any, e
 	}
 	if issueMoveOperation(r.Operation) {
 		return s.issueMoveOp(ctx, tx, wid, pid, projectRole, actor, r)
+	}
+	if projectTeamAddOperation(r.Operation) {
+		return s.projectTeamAddOp(ctx, tx, wid, pid, projectRole, actor, r)
 	}
 	// Any project member may read the approved label list, with or
 	// without a session; setting it is the owner's (labelPolicyOp).

@@ -85,6 +85,7 @@ var doctorAnswers = map[string]doctorAnswer{
 	"linear.issue_subscribers":  {},
 	"linear.labels":             {},
 	"linear.project_creates":    {},
+	"linear.project_team_adds":  {},
 	"linear.markers":            {},
 	"linear.outbox":             {},
 	"linear.instances":          {},

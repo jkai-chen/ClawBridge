@@ -198,7 +198,7 @@ type linearFlags struct {
 	split, recreate                                                                                                      bool
 	closesPairs                                                                                                          []string
 	closesWho, leadWho                                                                                                   string
-	projectKind, ackCreate                                                                                               string
+	projectKind, ackCreate, addTeam                                                                                      string
 	closesAgent, closesHuman, minimalPolicy                                                                              bool
 	suggest, allowOpen, statusSet, projectWide                                                                           bool
 	statusType, expectedStatus, statusID                                                                                 string
@@ -474,6 +474,13 @@ func parseLinear(command string, args []string, stderr io.Writer) (linearFlags, 
 		f.StringVar(&v.project, "linear-project", "", "resume: the bound Linear project UUID whose status is held")
 	case "key":
 		profile()
+	case "project-team-adds":
+	case "project-update":
+		write()
+		f.StringVar(&v.addTeam, "add-team", "", "the bound write team's UUID to add to the project (never a name)")
+		f.BoolVar(&v.confirm, "confirm", false, "add the team the preview showed")
+		f.StringVar(&v.expectedSHA, "expected-plan-sha256", "", "--confirm: the plan_sha256 the preview showed")
+		min, max = 1, 1
 	case "project-creates":
 		f.StringVar(&v.ackCreate, "ack", "", "the operation ID of an unconfirmed Linear write, of any kind, you checked in Linear (project owner, own terminal)")
 	case "project-status":
@@ -516,7 +523,7 @@ func parseLinear(command string, args []string, stderr io.Writer) (linearFlags, 
 	if len(pos) < min || len(pos) > max {
 		return v, nil, errors.New("invalid Linear positional arguments")
 	}
-	needsProfile := command != "profiles" && command != "connect" && command != "login" && command != "import" && command != "binding" && command != "unlink" && command != "label-policy" && command != "kind" && command != "lanes" && command != "status-policy" && command != "closes" && command != "doc-policy" && command != "health" && command != "project-flow" && command != "project-status" && command != "display-name" && command != "project-creates" && command != "admin" && command != "subscribers" && command != "write-status"
+	needsProfile := command != "profiles" && command != "connect" && command != "login" && command != "import" && command != "binding" && command != "unlink" && command != "label-policy" && command != "kind" && command != "lanes" && command != "status-policy" && command != "closes" && command != "doc-policy" && command != "health" && command != "project-flow" && command != "project-status" && command != "display-name" && command != "project-creates" && command != "project-team-adds" && command != "admin" && command != "subscribers" && command != "write-status"
 	if needsProfile && !validLinearProfile(v.profile) {
 		return v, nil, errors.New("select --profile with the opaque ID from linear profiles")
 	}
@@ -679,6 +686,9 @@ func parseLinear(command string, args []string, stderr io.Writer) (linearFlags, 
 		}
 	}
 	if min > 0 && command != "label" && command != "project" && command != "initiative" && !linearprovider.ValidID(pos[0]) {
+		if command == "project-update" {
+			return v, nil, errors.New("linear project update requires the Linear project's UUID, never its name")
+		}
 		return v, nil, errors.New("issue requires its immutable UUID")
 	}
 	return v, pos, nil
@@ -911,7 +921,7 @@ func runLinear(ctx context.Context, flags Config, args []string, stdout, stderr 
 	}
 	switch {
 	case command == "label" && adminAction != "create" && adminAction != "rename",
-		command == "project" && adminAction != "create" && adminAction != "status" && adminAction != "creates",
+		command == "project" && adminAction != "create" && adminAction != "status" && adminAction != "creates" && adminAction != "update" && adminAction != "team-adds",
 		command == "initiative" && adminAction != "create" && adminAction != "add-project" && adminAction != "show",
 		command == "doc" && adminAction != "list" && adminAction != "get" && adminAction != "publish",
 		command == "doc-policy" && adminAction != "show" && adminAction != "set",
@@ -927,7 +937,7 @@ func runLinear(ctx context.Context, flags Config, args []string, stdout, stderr 
 		command == "view" && adminAction != "list" && adminAction != "show" && adminAction != "create" && adminAction != "update" && adminAction != "delete" && adminAction != "apply",
 		command == "subscribers" && adminAction != "show" && adminAction != "on" && adminAction != "off" && adminAction != "owner" && adminAction != "add" && adminAction != "remove" && adminAction != "backfill",
 		command == "admin" && adminAction != "audit-replay":
-		return errors.New("use linear view list|show|create|update|delete|apply, subscribers show|on|off|owner|add|remove|backfill, lanes show|pin|unpin, doc list|get|publish, initiative show, doc-policy show|set, label create|rename, project create|status [set]|creates, initiative create|add-project, label-policy show|set, kind show|set|seed|apply, status-policy show|set, closes show|set, project-flow resume, health show|set|enable|disable, display-name set|clear|capture, key set|status|remove, or admin audit-replay")
+		return errors.New("use linear view list|show|create|update|delete|apply, subscribers show|on|off|owner|add|remove|backfill, lanes show|pin|unpin, doc list|get|publish, initiative show, doc-policy show|set, label create|rename, project create|status [set]|creates|update|team-adds, initiative create|add-project, label-policy show|set, kind show|set|seed|apply, status-policy show|set, closes show|set, project-flow resume, health show|set|enable|disable, display-name set|clear|capture, key set|status|remove, or admin audit-replay")
 	}
 	parseAs := command
 	if command == "initiative" && adminAction == "show" {
@@ -942,6 +952,9 @@ func runLinear(ctx context.Context, flags Config, args []string, stdout, stderr 
 	}
 	if command == "project" && adminAction == "creates" {
 		parseAs = "project-creates"
+	}
+	if command == "project" && (adminAction == "update" || adminAction == "team-adds") {
+		parseAs = "project-" + adminAction
 	}
 	if command == "view" {
 		parseAs = "view-" + adminAction
@@ -1254,6 +1267,14 @@ func runLinear(ctx context.Context, flags Config, args []string, stdout, stderr 
 	case "label", "project":
 		if adminAction == "status" {
 			data, err = linearProjectStatus(bounded, service, scope, flags, v, pos[0])
+			break
+		}
+		if adminAction == "update" {
+			data, err = linearProjectAddTeam(bounded, service, scope, v, pos[0])
+			break
+		}
+		if adminAction == "team-adds" {
+			data, err = service.ProjectTeamAdds(bounded, scope)
 			break
 		}
 		if adminAction == "creates" {

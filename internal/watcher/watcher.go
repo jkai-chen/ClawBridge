@@ -40,6 +40,9 @@ var (
 	shareStep       = 2 * time.Second
 	maxProjectShare = 40 * time.Second
 	minProjectShare = 15 * time.Second
+	// markerRoom is the part of a project's share the steps after the
+	// comment watch leave for the claim markers.
+	markerRoom = 3 * time.Second
 )
 
 // watcherProofTTL is how long the watcher's read paths reuse a verified
@@ -232,6 +235,13 @@ func (w *Watcher) project(ctx context.Context, pid string, healthLeft int) Proje
 		// pass, since every later step would be refused.
 		Within: func(ctx context.Context, fence map[string]any) error {
 			mark = tick.took("comments", mark)
+			// The steps leave markerRoom of the share to the markers that
+			// follow them.
+			if deadline, ok := ctx.Deadline(); ok {
+				var cancel context.CancelFunc
+				ctx, cancel = context.WithDeadline(ctx, deadline.Add(-markerRoom))
+				defer cancel()
+			}
 			steps := []struct {
 				name string
 				run  func() error
@@ -385,7 +395,17 @@ func logTick(pid, kind string, tick ProjectTick) {
 	parts, total := []string{}, int64(0)
 	for _, step := range []string{"comments", "intake", "subscribers", "health", "docs", "dispatcher", "markers"} {
 		if ms, ok := tick.TookMS[step]; ok {
-			parts = append(parts, fmt.Sprintf("%s %dms", step, ms))
+			part := fmt.Sprintf("%s %dms", step, ms)
+			if step == "intake" && tick.Intake != nil && len(tick.Intake.TookMS) > 0 {
+				split := []string{}
+				for _, sig := range []string{"S1", "S2", "S3"} {
+					if ms, ok := tick.Intake.TookMS[sig]; ok {
+						split = append(split, fmt.Sprintf("%s %dms", sig, ms))
+					}
+				}
+				part += " (" + strings.Join(split, ", ") + ")"
+			}
+			parts = append(parts, part)
 			total += ms
 		}
 	}

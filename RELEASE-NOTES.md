@@ -47,6 +47,12 @@ A server-only hotfix to v0.3.9: no schema change and no client change.
   15 s left for waits, first in line, for the next tick instead of starting a pass the tick would cut. A slow pass's
   log line names its share (`took …ms of its …ms share`), and a tick that defers projects says how many. Linear config
   scope: none.
+- **Intake no longer fails a large project's tick.** Intake reads its sources (S1 per team, S2, S3) oldest cursor first
+  and starts a source, or its next page, only with 8 s of the project's share left; one it can't start keeps its cursor
+  and goes first next tick (`deferred_sources`), instead of the project failing as `deadline`. The calls a cut read made
+  are still charged. The steps after the comment watch leave the last 3 s of the share to the claim markers, which a
+  slow intake used to starve. A slow pass's log line splits intake by signal (`intake …ms (S1 …ms, S2 …ms, S3 …ms)`).
+  Linear config scope: none.
 
 # ClawBridge v0.3.9 (released 29 Oct)
 

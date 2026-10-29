@@ -61,6 +61,10 @@ type fakeLinear struct {
 	labelsMore  bool
 	mentions    []map[string]any
 	queries     []string
+	// onLabelled runs on each labelled-list read; block makes every app
+	// GraphQL read wait for its context to end.
+	onLabelled func()
+	block      bool
 	notes       int
 	// healthIssues and activity answer project health's reads.
 	healthIssues []map[string]any
@@ -188,6 +192,9 @@ func (p fakeProvider) IssueV2(_ context.Context, id string) (linearprovider.Issu
 }
 func (p fakeProvider) IssuesV2(_ context.Context, q linearprovider.IssueQueryV2) (linearprovider.Page[linearprovider.IssueV2], error) {
 	out := linearprovider.Page[linearprovider.IssueV2]{Complete: true}
+	if p.f.onLabelled != nil {
+		p.f.onLabelled()
+	}
 	if q.LabelID != labelNeeds && p.f.carries == nil {
 		return out, nil
 	}
@@ -265,8 +272,12 @@ func (a fakeApp) SubscribeIssue(_ context.Context, issue, email, user string) (s
 func (a fakeApp) Identity(context.Context) (AppIdentity, error) {
 	return AppIdentity{AppUserID: appUser, LinearOrgID: "org"}, nil
 }
-func (a fakeApp) GraphQL(_ context.Context, query string, vars map[string]any, out any) error {
+func (a fakeApp) GraphQL(ctx context.Context, query string, vars map[string]any, out any) error {
 	a.f.queries = append(a.f.queries, query)
+	if a.f.block {
+		<-ctx.Done()
+		return ctx.Err()
+	}
 	var data any
 	switch query {
 	case userQuery:

@@ -682,6 +682,8 @@ var operationArgs = map[string]string{
 	"project_kind_set":            "instance expected_revision team_id scope group_name kinds",
 	"team_roles_get":              "instance",
 	"team_roles_set":              "instance expected_revision mapping confirm",
+	"team_roles_doc_get":          "instance",
+	"team_roles_doc_put":          "instance parent_kind parent_id source_path state publish_token expect_token document_id published_sha256 mapping_revision source_sha256 replaced_document_id",
 	"project_kind_record":         "instance expected_revision action proof group_label_id label_ids",
 	"issue_subscribers_get":       "instance",
 	"issue_subscribers_set":       "instance expected_revision enabled owner user_ids",
@@ -709,7 +711,7 @@ func validateArgs(op string, a map[string]any) error {
 					return invalid(k + " must be an integer")
 				}
 			}
-		case "retention_days", "limit", "since_hours", "after", "expected_revision", "expected_binding_revision", "ledger", "generation", "budget", "calls", "charged", "policy_revision", "engineer", "if_unset", "expires_days", "expires_hours", "expires_minutes", "device_idle_days", "delay_seconds", "seconds", "s5_calls_per_hour", "out_of_binding_limit", "template_version", "part_number", "part_count", "seq", "config_revision":
+		case "retention_days", "limit", "since_hours", "after", "expected_revision", "expected_binding_revision", "ledger", "generation", "budget", "calls", "charged", "policy_revision", "engineer", "if_unset", "expires_days", "expires_hours", "expires_minutes", "device_idle_days", "delay_seconds", "seconds", "s5_calls_per_hour", "out_of_binding_limit", "template_version", "part_number", "part_count", "seq", "config_revision", "mapping_revision":
 			if _, err := integer(v); err != nil {
 				return fmt.Errorf("%s: %w", k, err)
 			}

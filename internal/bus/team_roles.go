@@ -52,7 +52,7 @@ type TeamRoles struct {
 }
 
 func teamRolesOperation(op string) bool {
-	return op == "team_roles_get" || op == "team_roles_set"
+	return op == "team_roles_get" || op == "team_roles_set" || op == "team_roles_doc_get" || op == "team_roles_doc_put"
 }
 
 // teamRolesOp reads the mapping (any member or session) or sets it (the
@@ -71,6 +71,19 @@ func (s *Store) teamRolesOp(ctx context.Context, tx *transaction, wid, pid, proj
 	}
 	if r.Session != "" {
 		return nil, scoped("a session can't set team roles; the project owner runs linear roles set in their own terminal", "forbidden")
+	}
+	// The generated document is the owner's alone (design §13).
+	if r.Operation == "team_roles_doc_get" || r.Operation == "team_roles_doc_put" {
+		if projectRole != "owner" {
+			return nil, scoped("project owner permission required", "forbidden")
+		}
+		if s.postgres && (s.identity == nil || s.identity.Issuer != DeviceIssuer || principal.CI(s.principal)) {
+			return nil, scoped("the team roles document is published only from a person's own signed-in device", "forbidden")
+		}
+		if r.Operation == "team_roles_doc_get" {
+			return s.teamRolesDocGet(ctx, tx, pid)
+		}
+		return s.teamRolesDocPut(ctx, tx, wid, pid, a)
 	}
 	if projectRole == "" || projectRole == "reader" {
 		return nil, scoped("project owner permission required", "forbidden")

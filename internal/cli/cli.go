@@ -1397,6 +1397,11 @@ func collectDoctor(ctx context.Context, config Config, configPath string, existi
 					service := newLinearService(directory, config.LinearProfile, manager, board, linearAuthority(config))
 					return service.WorkspaceUsers(ctx, bus.Request{Workspace: wid, Project: pid, Args: map[string]any{"linear_authority": linearAuthority(config)}})
 				}
+				in.TeamRolesDoc = func(ctx context.Context, wid, pid string) (doctor.RolesDocState, error) {
+					service := newLinearService(directory, config.LinearProfile, manager, board, linearAuthority(config))
+					d, e := service.TeamRolesDocDrift(ctx, bus.Request{Workspace: wid, Project: pid, Args: map[string]any{"linear_authority": linearAuthority(config)}})
+					return doctor.RolesDocState{Published: d.Published, Pending: d.Pending, Edited: d.Edited, Archived: d.Archived, Unreadable: d.Unreadable, Revision: d.Revision, PublishedRevision: d.PublishedRevision, Replaced: d.Replaced}, e
+				}
 			}
 		}
 	}

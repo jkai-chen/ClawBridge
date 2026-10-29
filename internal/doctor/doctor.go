@@ -147,6 +147,18 @@ type Input struct {
 	// person's own connection, for the team roles check. Nil skips that
 	// part of it.
 	WorkspaceUsers func(ctx context.Context, wid, pid string) ([]linearprovider.WorkspaceUser, error)
+	// TeamRolesDoc reads the generated "Team roles" document's state
+	// through this person's own connection (the project owner's only). Nil
+	// skips the check.
+	TeamRolesDoc func(ctx context.Context, wid, pid string) (RolesDocState, error)
+}
+
+// RolesDocState is the generated team roles document as doctor reports
+// it: published or not, the revisions, and what Linear shows.
+type RolesDocState struct {
+	Published, Pending, Edited, Archived, Unreadable bool
+	Revision, PublishedRevision                      int
+	Replaced                                         string
 }
 
 // Check is one stable machine-readable diagnostic.
@@ -204,6 +216,7 @@ func Run(ctx context.Context, in Input, executor Executor) Report {
 		checkCommentWatch(ctx, executor, wid, pid, add)
 		checkLabelPolicy(ctx, executor, wid, pid, add)
 		checkTeamRoles(ctx, executor, wid, pid, in.WorkspaceUsers, add)
+		checkTeamRolesDoc(ctx, wid, pid, in.TeamRolesDoc, add)
 		if in.Config.Mode == "cloud" {
 			checkLinearApp(ctx, executor, wid, pid, add)
 			checkIssueSubscribers(ctx, executor, wid, pid, add)

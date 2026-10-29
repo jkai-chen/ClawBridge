@@ -79,3 +79,63 @@ func checkTeamRoles(ctx context.Context, executor Executor, wid, pid string, use
 	c.Message = strings.Join(notes, " ")
 	add(c)
 }
+
+// checkTeamRolesDoc reports the generated "Team roles" document (design
+// §4, §13) for the project owner: edited in Linear (the next publish
+// overwrites it), behind the mapping, archived or unreadable, and a
+// document a --recreate left for archiving by hand. Silent for anyone else
+// and when nothing was published. It warns and never fails.
+func checkTeamRolesDoc(ctx context.Context, wid, pid string, read func(context.Context, string, string) (RolesDocState, error), add func(Check)) {
+	if read == nil {
+		return
+	}
+	bounded, cancel := context.WithTimeout(ctx, 45*time.Second)
+	d, err := read(bounded, wid, pid)
+	cancel()
+	c := Check{ID: "linear.team_roles_doc", Title: "Team roles document", Status: Pass}
+	switch {
+	case err != nil && safeCode(err) == "forbidden":
+		return
+	case err != nil:
+		c.Status, c.Message = Warn, "The team roles document's record could not be read ("+safeCode(err)+")."
+		add(c)
+		return
+	case !d.Published:
+		return
+	}
+	notes := []string{fmt.Sprintf("Published from revision %d; the roles are at revision %d.", d.PublishedRevision, d.Revision)}
+	publish := "Run `clawbridge linear roles publish --confirm`."
+	switch {
+	case d.Pending:
+		c.Status = Warn
+		notes = append(notes, "A publish was interrupted before it was recorded.")
+		c.Action = publish
+	case d.Unreadable:
+		c.Status = Warn
+		notes = append(notes, "The document could not be read in Linear.")
+		c.Action = "Check your Linear connection; if the document was deleted, run `clawbridge linear roles publish --recreate --confirm`."
+	case d.Archived:
+		c.Status = Warn
+		notes = append(notes, "The document is archived in Linear.")
+		c.Action = "Run `clawbridge linear roles publish --recreate --confirm` to create it again."
+	case d.Edited:
+		c.Status = Warn
+		notes = append(notes, "Team roles was edited in Linear; the next publish overwrites it. Change roles with clawbridge linear roles.")
+		c.Action = publish
+	case d.PublishedRevision != d.Revision:
+		c.Status = Warn
+		notes = append(notes, "The document is out of date.")
+		c.Action = publish
+	}
+	if d.Replaced != "" {
+		c.Status = Warn
+		notes = append(notes, "An earlier team roles document, "+d.Replaced+", was replaced and is still in Linear.")
+		if c.Action == "" {
+			c.Action = "Archive it in Linear by hand."
+		} else {
+			c.Action += " Archive the earlier document in Linear by hand."
+		}
+	}
+	c.Message = strings.Join(notes, " ")
+	add(c)
+}

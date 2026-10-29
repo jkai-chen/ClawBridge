@@ -78,6 +78,7 @@ var doctorAnswers = map[string]doctorAnswer{
 	"queue":                     {},
 	"coordinator.playbook":      {},
 	"linear.team_roles":         {},
+	"linear.team_roles_doc":     {},
 	"linear.api_key":            {},
 	"linear.app":                {},
 	"linear.label_policy":       {},

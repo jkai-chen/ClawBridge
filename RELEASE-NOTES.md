@@ -73,6 +73,17 @@
   held, their device live or their Google account still bound. Otherwise it fails as `identity_revoked` and nothing
   is sent.
 
+## Team roles: the "Team roles (ClawBridge)" Linear document
+
+- **`clawbridge linear roles publish`** writes the team roles as one Linear document for people to read, under a bound
+  team or project you name the first time. It shows each team's leads, engineers and reviewers by Linear display name,
+  never an email, an ID or a ClawBridge account. The project owner publishes it through their own Linear connection,
+  previewed first. It is generated: a publish overwrites an edit made in Linear. ClawBridge writes only the document
+  it created, by its stored ID, and `linear doc publish` and the roles document never write each other's documents.
+  The project's deny patterns apply. `clawbridge doctor` warns when the document was edited in Linear, is behind the
+  roles, or was archived. Nothing publishes it on its own yet. No schema change (it uses the document publish
+  ledger). Linear configuration: one document under a bound team or project; nothing at workspace scope.
+
 ## Team roles: leads edit their own teams
 
 - **A team's lead sets `engineer` and `reviewer` roles** for people who work only in the teams they lead, with the

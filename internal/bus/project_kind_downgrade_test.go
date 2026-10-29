@@ -1,13 +1,20 @@
 package bus
 
-// maintenanceDowngradeSQLite returns a schema-48 database to schema 47's
-// shape: the server drain's tables are hosted only, so nothing in SQLite.
-const maintenanceDowngradeSQLite = ""
+// ledgerScopeDowngradeSQLite returns a schema-49 database to schema 48's
+// shape: the shared operation ledger's project, principal,
+// acknowledgement and pending columns.
+const ledgerScopeDowngradeSQLite = "DROP INDEX linear_write_ledger_pending;\nALTER TABLE linear_write_ledger DROP COLUMN pending;\nALTER TABLE linear_write_ledger DROP COLUMN project_id;\nALTER TABLE linear_write_ledger DROP COLUMN principal;\nALTER TABLE linear_write_ledger DROP COLUMN acknowledged_at;\n"
 
-// maintenanceDowngradePostgres returns a schema-48 Postgres schema to 47's
-// shape: the server drain's maintenance row and instance reports.
+// maintenanceDowngradeSQLite returns a schema-49 database to schema 47's
+// shape: the ledger's scope (49); the server drain's tables (48) are
+// hosted only, so nothing more in SQLite.
+const maintenanceDowngradeSQLite = ledgerScopeDowngradeSQLite
+
+// maintenanceDowngradePostgres returns a schema-49 Postgres schema to 47's
+// shape: the ledger's scope (49), then the server drain's maintenance row
+// and instance reports (48).
 func maintenanceDowngradePostgres(schema string) string {
-	return "DROP TABLE " + schema + ".server_maintenance_instances;\nDROP TABLE " + schema + ".server_maintenance;\n"
+	return "DROP INDEX " + schema + ".linear_write_ledger_pending;\nALTER TABLE " + schema + ".linear_write_ledger DROP COLUMN pending;\nALTER TABLE " + schema + ".linear_write_ledger DROP COLUMN project_id;\nALTER TABLE " + schema + ".linear_write_ledger DROP COLUMN principal;\nALTER TABLE " + schema + ".linear_write_ledger DROP COLUMN acknowledged_at;\nDROP TABLE " + schema + ".server_maintenance_instances;\nDROP TABLE " + schema + ".server_maintenance;\n"
 }
 
 // ledgerDowngradeSQLite returns a schema-47 database to schema 46's shape:

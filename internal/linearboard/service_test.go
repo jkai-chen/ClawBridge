@@ -211,7 +211,7 @@ func TestLinearLedgerReleasesOnlyNeverDispatchedFailures(t *testing.T) {
 	path := filepath.Join(l.dir, digest("ns"), digest("op")+".json")
 	refused := errors.New("actor changed before dispatch")
 	pendingSeen := false
-	_, err := l.write("ns", "op", "payload", func() (any, error) {
+	_, err := l.write("ns", "op", ledgerMeta{}, "payload", func() (any, error) {
 		_, e := os.Stat(path)
 		pendingSeen = e == nil
 		return nil, notDispatched(refused)
@@ -222,20 +222,20 @@ func TestLinearLedgerReleasesOnlyNeverDispatchedFailures(t *testing.T) {
 	if _, e := os.Stat(path); !os.IsNotExist(e) {
 		t.Fatal("never-dispatched record retained", e)
 	}
-	if _, err = l.write("ns", "drift", "payload", func() (any, error) { return nil, refusedBeforeDispatch(refused) }); err == nil || !strings.Contains(err.Error(), "refused before dispatch; nothing was sent: actor changed before dispatch; re-read and submit a new operation_id") {
+	if _, err = l.write("ns", "drift", ledgerMeta{}, "payload", func() (any, error) { return nil, refusedBeforeDispatch(refused) }); err == nil || !strings.Contains(err.Error(), "refused before dispatch; nothing was sent: actor changed before dispatch; re-read and submit a new operation_id") {
 		t.Fatal("drift was not a terminal refusal", err)
 	}
-	again, err := l.write("ns", "drift", "payload", func() (any, error) { t.Fatal("terminal refusal redispatched"); return nil, nil })
+	again, err := l.write("ns", "drift", ledgerMeta{}, "payload", func() (any, error) { t.Fatal("terminal refusal redispatched"); return nil, nil })
 	if again != nil || err == nil || !strings.Contains(err.Error(), "refused before dispatch; nothing was sent: actor changed") {
 		t.Fatal("recorded refusal not returned", again, err)
 	}
 	// Only the closure's own top-level marker is honoured; a marker nested
 	// inside another error, or any plain error, stays uncertain.
 	for _, failure := range []error{errors.Join(errors.New("provider"), notDispatched(refused)), errors.Join(errors.New("provider"), refusedBeforeDispatch(refused)), fmt.Errorf("wrapped: %w", refusedBeforeDispatch(refused)), errors.New("provider")} {
-		if _, err = l.write("ns", "op", "payload", func() (any, error) { return nil, failure }); err == nil || !strings.Contains(err.Error(), "outcome uncertain") {
+		if _, err = l.write("ns", "op", ledgerMeta{}, "payload", func() (any, error) { return nil, failure }); err == nil || !strings.Contains(err.Error(), "outcome uncertain") {
 			t.Fatal("dispatched failure released", err)
 		}
-		if _, err = l.write("ns", "op", "payload", func() (any, error) { t.Fatal("pending replayed"); return nil, nil }); err == nil || !strings.Contains(err.Error(), "uncertain") {
+		if _, err = l.write("ns", "op", ledgerMeta{}, "payload", func() (any, error) { t.Fatal("pending replayed"); return nil, nil }); err == nil || !strings.Contains(err.Error(), "uncertain") {
 			t.Fatal("pending operation not refused", err)
 		}
 		_ = os.Remove(path)
@@ -340,7 +340,7 @@ func TestLinearAcceptedReceiptSurvivesLedgerSaveFailure(t *testing.T) {
 	operation := "accepted-save-failure"
 	path := filepath.Join(dir, digest(namespace), digest(operation)+".json")
 	known := map[string]any{"id": issueID}
-	receipt, err := l.write(namespace, operation, "payload", func() (any, error) {
+	receipt, err := l.write(namespace, operation, ledgerMeta{}, "payload", func() (any, error) {
 		if err := os.Rename(path, path+".pending"); err != nil {
 			t.Fatal(err)
 		}
@@ -359,7 +359,7 @@ func TestLinearAcceptedReceiptSurvivesLedgerSaveFailure(t *testing.T) {
 	if err := os.Rename(path+".pending", path); err != nil {
 		t.Fatal(err)
 	}
-	_, err = l.write(namespace, operation, "payload", func() (any, error) { t.Fatal("pending result replayed"); return nil, nil })
+	_, err = l.write(namespace, operation, ledgerMeta{}, "payload", func() (any, error) { t.Fatal("pending result replayed"); return nil, nil })
 	if err == nil {
 		t.Fatal("pending accepted after failed save")
 	}
@@ -408,7 +408,7 @@ func TestLinearWriteThatSentNothingIsReleasedAndAnyOtherStaysUncertain(t *testin
 	post := func(e error) error { return e }
 	rateLimited := &linearprovider.Error{Kind: "rate_limited", Status: 429, RetryAfter: "30", NotSent: true}
 	p := &countingProvider{sent: 4}
-	_, err := l.write("ns", "op", "payload", func() (any, error) {
+	_, err := l.write("ns", "op", ledgerMeta{}, "payload", func() (any, error) {
 		before, known := sentCount(p)
 		return nil, writeFailure(p, before, known, rateLimited, post)
 	})
@@ -417,7 +417,7 @@ func TestLinearWriteThatSentNothingIsReleasedAndAnyOtherStaysUncertain(t *testin
 	}
 	// Released: the same operation_id dispatches again.
 	rejected := &linearprovider.Error{Kind: "provider_rejected", LinearCode: "RATELIMITED"}
-	_, err = l.write("ns", "op", "payload", func() (any, error) {
+	_, err = l.write("ns", "op", ledgerMeta{}, "payload", func() (any, error) {
 		before, known := sentCount(p)
 		p.sent++
 		return nil, writeFailure(p, before, known, rejected, post)
@@ -425,19 +425,19 @@ func TestLinearWriteThatSentNothingIsReleasedAndAnyOtherStaysUncertain(t *testin
 	if err == nil || !strings.Contains(err.Error(), "outcome uncertain (provider_rejected, Linear code RATELIMITED)") {
 		t.Fatal("a sent write must stay uncertain", err)
 	}
-	_, err = l.write("ns", "op", "payload", func() (any, error) { t.Fatal("pending operation redispatched"); return nil, nil })
+	_, err = l.write("ns", "op", ledgerMeta{}, "payload", func() (any, error) { t.Fatal("pending operation redispatched"); return nil, nil })
 	if err == nil || !strings.Contains(err.Error(), "operation outcome uncertain (provider_rejected, Linear code RATELIMITED)") {
 		t.Fatal("pending record lost its safe reason", err)
 	}
 	// A provider that cannot count, or a failure that is not the provider's,
 	// stays uncertain without a code.
-	_, err = l.write("ns", "op2", "payload", func() (any, error) {
+	_, err = l.write("ns", "op2", ledgerMeta{}, "payload", func() (any, error) {
 		return nil, writeFailure(struct{}{}, 0, false, rateLimited, post)
 	})
 	if err == nil || !strings.Contains(err.Error(), "outcome uncertain (rate_limited, HTTP 429, retry after 30)") {
 		t.Fatal("an uncounted provider must stay uncertain", err)
 	}
-	if _, err = l.write("ns", "op3", "payload", func() (any, error) { return nil, errors.New("receipt mismatch") }); err == nil || !strings.Contains(err.Error(), "outcome uncertain, inspect") {
+	if _, err = l.write("ns", "op3", ledgerMeta{}, "payload", func() (any, error) { return nil, errors.New("receipt mismatch") }); err == nil || !strings.Contains(err.Error(), "outcome uncertain, inspect") {
 		t.Fatal(err)
 	}
 }

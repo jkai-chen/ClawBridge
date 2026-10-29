@@ -1436,6 +1436,19 @@ func collectDoctor(ctx context.Context, config Config, configPath string, existi
 					}
 					return out, e
 				}
+				in.IssueWrites = func(ctx context.Context, wid, pid string) (doctor.IssueWritesState, error) {
+					service := newLinearService(directory, config.LinearProfile, manager, board, linearAuthority(config))
+					w, e := service.UncertainIssueWrites(ctx, bus.Request{Workspace: wid, Project: pid, Args: map[string]any{"linear_authority": linearAuthority(config)}})
+					st := doctor.IssueWritesState{OlderLocal: w.OlderLocal, OlderLocalHow: w.OlderLocalHow, LocalNote: w.LocalNote}
+					for _, x := range w.Writes {
+						if x.State == "in_progress" {
+							st.InProgress++
+						} else {
+							st.Uncertain = append(st.Uncertain, x.Operation+" "+x.OperationID)
+						}
+					}
+					return st, e
+				}
 				in.LabelSets = func(ctx context.Context) ([]doctor.LabelSet, error) {
 					bounded, cancel := context.WithTimeout(ctx, 45*time.Second)
 					defer cancel()

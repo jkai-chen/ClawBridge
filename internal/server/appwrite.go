@@ -120,7 +120,7 @@ func (w *AppWriter) service(ctx context.Context, identity bus.Identity) (*linear
 		Executor:    identityExecutor{w.Store, identity},
 		Connections: appConnections{id.LinearOrgID},
 		ProfileID:   "app:" + id.LinearOrgID,
-		Ledger:      linearboard.SharedLedger(w.Store, now),
+		Ledger:      linearboard.SharedLedgerAs(w.Store, now, identity.Principal),
 		Workspace:   id.LinearOrgID,
 		Now:         now,
 		Open: func(ctx context.Context, _ *http.Client, readonly bool) (linearboard.Provider, error) {

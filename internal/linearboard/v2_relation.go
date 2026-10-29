@@ -91,7 +91,7 @@ func (s *Service) RelationV2(ctx context.Context, scope bus.Request, in Relation
 	if e = s.unchangedV2(ctx, scope, b); e != nil {
 		return nil, e
 	}
-	return l.write(namespace, in.OperationID, payload, func() (any, error) {
+	return l.write(namespace, in.OperationID, ledgerMeta{"relation_" + in.Action, b.ProjectID}, payload, func() (any, error) {
 		if e := s.unchangedV2(ctx, scope, b); e != nil {
 			return nil, authorityFailure(e)
 		}

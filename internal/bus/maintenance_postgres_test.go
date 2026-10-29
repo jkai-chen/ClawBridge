@@ -344,7 +344,7 @@ func TestMaintenanceIsHostedOnly(t *testing.T) {
 		t.Fatal("SQLite started")
 	}
 	var version int
-	if err := h.s.db.QueryRow(`PRAGMA user_version`).Scan(&version); err != nil || version != maintenanceSchemaVersion {
+	if err := h.s.db.QueryRow(`PRAGMA user_version`).Scan(&version); err != nil || version < maintenanceSchemaVersion {
 		t.Fatal(version, err)
 	}
 }

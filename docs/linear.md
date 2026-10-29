@@ -232,7 +232,23 @@ whether Linear still documents the filter.
 Task-board inspection is read-only. Creating/updating/commenting requires explicit
 write capability and an operation ID. Retry an accepted operation only with the
 same ID and payload. An uncertain write is held for read-back rather than replayed
-automatically; its message names a safe failure code, such as
+automatically. `clawbridge linear writes` lists it under `issue_writes` (since
+v0.3.9) with its operation ID, its operation (`create`, `update`, `comment`,
+`relation_add`…), its failure code and when, from this machine's operation
+ledger (`where: this_machine`, every session on it included; at most 500
+records are read, and the answer says "first 500 checked" when there are
+more) and from the server's (`where: server`, your own writes, or all of them
+for the project owner). Doctor's `linear.issue_writes` warns while one is
+listed, and the overview counts the server's (`linear_writes.uncertain_issue_writes`).
+Read the issue in Linear, then `clawbridge linear writes --ack OP_ID`, from
+your own terminal: the write is hidden from the list, and a retry of the same
+operation ID still sends nothing. A write still being sent (`in_progress`)
+can't be acknowledged until its outcome is in, and isn't counted. An ID that names both such a write and a
+recorded one (a project create, move or team add) is refused, naming both. A
+record written before v0.3.9 names no operation or project: doctor counts
+those and names the folder that holds them, to delete once checked in Linear.
+A record holds the operation ID, the operation and the ClawBridge project's
+ID, never a title, body or name. A still-uncertain write's message names a safe failure code, such as
 `provider_rejected` with Linear's code (`RATELIMITED`) or `unavailable`, never
 Linear's message text. A write that provably never reached Linear (a network
 failure before the request was sent, or Linear's HTTP layer answering 429, 401
@@ -1269,7 +1285,7 @@ clawbridge --session COORD --instance INSTANCE linear project create NAME \
   --team TEAM_UUID --kind NAME --operation-id ID --profile PROFILE_ID
 clawbridge linear project creates                  # any member
 clawbridge linear project creates --ack OP_ID      # project owner, own terminal
-clawbridge linear writes [--ack OP_ID]             # the same, for every kind of write
+clawbridge linear writes [--ack OP_ID]             # the same, for every kind of write, and uncertain issue writes
 ```
 
 - **Only its lane's default team.** With lanes, the team must be the default

@@ -271,7 +271,7 @@ func (s *Service) KindApply(ctx context.Context, scope bus.Request, in KindApply
 			break
 		}
 		applied++
-		if !s.applyKind(ctx, l, namespace, raw, rows, stored, setting, entry) {
+		if !s.applyKind(ctx, l, namespace, b.ProjectID, raw, rows, stored, setting, entry) {
 			out.Stopped = entry.Project
 			return out, nil
 		}
@@ -441,7 +441,8 @@ func (s *Service) kindCanaryGate(l OperationLedger, namespace string, set kindSe
 // markKindCanary records an accepted canary, by revision and by label IDs.
 func (s *Service) markKindCanary(l OperationLedger, namespace string, set kindSettingRow) {
 	for _, key := range []string{kindCanaryKey(set), kindIDsKey(set)} {
-		_, _ = l.write(namespace, key, struct {
+		// A marker is recorded accepted at once, so it is never listed.
+		_, _ = l.write(namespace, key, ledgerMeta{Operation: "kind_canary"}, struct {
 			Kind     string
 			Revision int64
 		}{"kind_canary", set.revision}, func() (any, error) {
@@ -483,7 +484,7 @@ func validKindApplyReceipt(raw []byte) bool {
 // applyKind writes one project under the ledger: its labels are read again
 // first and must be the preview's (else nothing is sent), then the whole
 // set is sent and read back; only the same set by ID is accepted (K2).
-func (s *Service) applyKind(ctx context.Context, l OperationLedger, namespace string, labels kindApplier, rows []linearprovider.ProjectLabelRow, stored map[string]bool, set kindSettingRow, entry *KindApplyEntry) bool {
+func (s *Service) applyKind(ctx context.Context, l OperationLedger, namespace, pid string, labels kindApplier, rows []linearprovider.ProjectLabelRow, stored map[string]bool, set kindSettingRow, entry *KindApplyEntry) bool {
 	sent := kindNewSet(entry.Labels, entry.Add, entry.Remove)
 	payload := struct {
 		Version         int
@@ -492,7 +493,7 @@ func (s *Service) applyKind(ctx context.Context, l OperationLedger, namespace st
 		SettingRevision int64
 		Labels, Sent    []string
 	}{1, "kind_apply", s.cfg.ProfileID, entry.Project, set.team, set.revision, entry.Labels, sent}
-	receipt, err := l.write(namespace, entry.OperationID, payload, func() (any, error) {
+	receipt, err := l.write(namespace, entry.OperationID, ledgerMeta{"kind_apply", pid}, payload, func() (any, error) {
 		now, e := readProjectLabelSet(ctx, labels, rows, entry.Project, stored, entry.KindLabel, map[string][]string{})
 		if e != nil || !slices.Equal(now, entry.Labels) {
 			return nil, refusedBeforeDispatch(errors.New("the project's labels changed since the preview; preview again"))

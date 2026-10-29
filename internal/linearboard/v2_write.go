@@ -636,7 +636,7 @@ func (s *Service) WriteV2(ctx context.Context, scope bus.Request, in WriteInputV
 	if e = s.unchangedV2(ctx, scope, b); e != nil {
 		return nil, e
 	}
-	return l.write(namespace, in.OperationID, payload, func() (any, error) {
+	return l.write(namespace, in.OperationID, ledgerMeta{in.Operation, b.ProjectID}, payload, func() (any, error) {
 		if e := s.unchangedV2(ctx, scope, b); e != nil {
 			return nil, authorityFailure(e)
 		}

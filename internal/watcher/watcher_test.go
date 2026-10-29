@@ -663,7 +663,7 @@ type ledgerStore struct {
 	inserts int
 }
 
-func (m *ledgerStore) LedgerInsert(_ context.Context, ns, op, record string) (string, bool, error) {
+func (m *ledgerStore) LedgerInsert(_ context.Context, ns, op, record, _, _ string) (string, bool, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if r, ok := m.records[ns+"/"+op]; ok {

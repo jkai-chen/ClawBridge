@@ -63,7 +63,7 @@ func (t cloudTarget) argv(remoteCommand string) ([]string, error) {
 		if !sshHostPattern.MatchString(t.host) {
 			return nil, errors.New("--ssh must be a host name or user@host")
 		}
-		return []string{"ssh", "-T", t.host, remoteCommand}, nil
+		return append(append([]string{"ssh", "-T"}, sshOptions...), "--", t.host, remoteCommand), nil
 	case t.host == "" && t.vm != "":
 		if !vmPattern.MatchString(t.vm) || !projectPattern.MatchString(t.project) || !zonePattern.MatchString(t.zone) {
 			return nil, errors.New("--vm, --project and --zone must all be valid Compute Engine names")

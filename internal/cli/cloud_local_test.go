@@ -75,8 +75,10 @@ func TestLocalTargetBuildsALocalShellNeverSSH(t *testing.T) {
 	if !strings.Contains(script, `f="`+dir+`/clawbridge.env"`) || strings.Contains(script, "findmnt") {
 		t.Fatalf("script: %s", script)
 	}
-	// The remote argv and script are unchanged.
-	if remote, _ := (cloudTarget{host: "admin@bridge.example.test"}).argv("x"); !reflect.DeepEqual(remote, []string{"ssh", "-T", "admin@bridge.example.test", "x"}) {
+	// The remote argv (plain SSH with its fixed options) and script are
+	// unchanged.
+	wantRemote := append(append([]string{"ssh", "-T"}, sshOptions...), "--", "admin@bridge.example.test", "x")
+	if remote, _ := (cloudTarget{host: "admin@bridge.example.test"}).argv("x"); !reflect.DeepEqual(remote, wantRemote) {
 		t.Fatalf("%v", remote)
 	}
 	if factsScript() != factsScriptFor(serverEnvFile) || !strings.Contains(factsScript(), "findmnt") || !strings.HasPrefix(factsScript(), "f="+serverEnvFile+"\n") {

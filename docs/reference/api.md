@@ -797,7 +797,8 @@ advice}`, otherwise a table. The exit status is non-zero when any check fails.
 |---|---|---|
 | `infra` (Google Cloud) | with `--vm`: the VM is running; its external IP is a reserved static address in use; the server's domain resolves to that IP; a non-boot disk is attached and mounted at `/var/lib/clawbridge-postgres` (`findmnt`, over the target); last, TCP 443 answers, which it does only once the server runs | `needs_vm`, `vm_unreadable`, `vm_not_running`, `no_external_ip`, `ip_not_static`, `no_server`, `dns_mismatch`, `no_data_disk`, `ssh_failed`, `data_not_mounted`, `port_closed` |
 | `infra` (AWS) | with `--instance` and `--region`: the instance is running; its public IP is an Elastic IP associated with it; the domain resolves to that IP; a non-root EBS volume is attached and encrypted; its security groups let in tcp/443 and nothing else; SSM sees it online; the data volume is mounted (over SSM); last, TCP 443 answers | `needs_instance`, `cloud_auth`, `vm_unreadable`, `vm_not_running`, `no_external_ip`, `ip_not_static`, `no_server`, `dns_mismatch`, `no_data_disk`, `data_disk_unencrypted`, `ssh_port_open`, `extra_ingress`, `ssm_offline`, `parameters_unreadable`, `secret_left_behind`, `ssm_failed`, `data_not_mounted`, `port_closed` |
-| `server` | `GET /healthz` over HTTPS (plain HTTP only to loopback) answers 200 `{"status":"ok"}`, without following redirects; with a target, also every required setting of `deploy/compose.yaml` is set once in the env file; Google sign-in's five settings are all set unless `CLAWBRIDGE_AUTH=device`; the deployment's `api`, `caddy` and `db` containers run (`db` healthy); and the running server's `/v1/config` `auth_methods` match `CLAWBRIDGE_AUTH` (unset is `google`) | `no_server`, `invalid_url`, `dns`, `tls`, `unreachable`, `http_status`, `not_clawbridge`, `ssh_failed`, `env_missing`, `setting_missing`, `setting_invalid`, `setting_duplicate`, `service_down`, `config_unreadable`, `auth_mismatch` |
+| `infra` (any host over SSH) | with `--ssh`: 64-bit Linux, amd64 or arm64; Docker with Compose v2.24 or later; the env file, once it exists, mode 600 and owned by root; a separate volume mounted at `/var/lib/clawbridge-postgres`, or the owner's stated `CLAWBRIDGE_DATA_ON_ROOT_DISK=1` in the env file (a warning, `data_on_root_disk`); at least 10 GiB free there; the clock NTP-synchronised; the domain resolves; last, TCP 443 answers. A domain whose addresses are none of the host's own (normal behind 1:1 NAT) warns `dns_not_this_host`, and an unreadable clock warns `clock_unknown`: there is no cloud API to ask, and the 443 dial and `server`'s certificate prove the record | `no_server`, `needs_host`, `ssh_failed`, `host_key_unknown`, `sudo_needs_password`, `unsupported_platform`, `docker_missing`, `compose_too_old`, `env_file_mode`, `data_not_mounted`, `data_disk_full`, `clock_unsynced`, `dns_unresolved`, `port_closed` |
+| `server` | `GET /healthz` over HTTPS (plain HTTP only to loopback) answers 200 `{"status":"ok"}`, without following redirects; with a target, also every required setting of `deploy/compose.yaml` is set once in the env file; Google sign-in's five settings are all set unless `CLAWBRIDGE_AUTH=device`; the deployment's `api`, `caddy` and `db` containers run (`db` healthy); and the running server's `/v1/config` `auth_methods` match `CLAWBRIDGE_AUTH` (unset is `google`) | `no_server`, `invalid_url`, `dns`, `tls`, `unreachable`, `http_status`, `not_clawbridge`, `ssh_failed`, `host_key_unknown`, `sudo_needs_password`, `env_missing`, `setting_missing`, `setting_invalid`, `setting_duplicate`, `service_down`, `config_unreadable`, `auth_mismatch` |
 | `trust` (`--local` only) | an https server URL completes a TLS handshake against this machine's trust store; plain http to loopback is `pass` with reason `not_applicable` | `env_missing`, `setting_invalid`, `untrusted_ca`, `invalid_url`, `dns`, `tls`, `unreachable` |
 | `version` | the server's release equals the client's; a dev build on either side warns `dev_build` | `server_too_old`, `version_mismatch` |
 | `workspace` | `whoami` with the configured cloud profile shows the signed-in principal owns the workspace | `no_config`, `not_cloud`, `other_server`, `not_signed_in`, `no_workspace`, `whoami_failed`, `not_owner` |
@@ -838,7 +839,18 @@ many non-empty lines set each one in the env file (a count, never a value), and
 the state of the service containers (not `compose run` one-offs) in the env
 file's Compose project; every container of a service must be up. `sudo -n`
 needs passwordless sudo for the user's SSH account; with Google Cloud OS Login
-that is the `roles/compute.osAdminLogin` role. `infra` and `backups` read the
+that is the `roles/compute.osAdminLogin` role.
+
+With `--ssh`, ClawBridge runs `ssh -T` with `-o BatchMode=yes -o
+ConnectTimeout=15 -o StrictHostKeyChecking=yes -o ForwardAgent=no -o
+ForwardX11=no -o ClearAllForwardings=yes -o PermitLocalCommand=no -o
+RemoteCommand=none -- HOST`. On the command line these win over
+`~/.ssh/config`, which still supplies the identity and any ProxyJump, so it
+never prompts, never accepts a host key for you, and forwards nothing to a host
+where it runs commands with sudo. A host key ssh can't verify fails
+`host_key_unknown`: connect once with `ssh HOST` and compare the fingerprint with
+your provider's console. A sudo that asks for a password fails
+`sudo_needs_password`. `cloud secret set --ssh` uses the same options. `infra` and `backups` read the
 cloud with the user's own `gcloud` credentials and name the project in every
 command.
 

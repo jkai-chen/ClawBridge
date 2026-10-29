@@ -324,6 +324,10 @@ func (p *cloudProbe) remoteFailure(check string, err error) cloudResult {
 		return failed(check, "cloud_auth", accountMsg)
 	case p.target.instance != "":
 		return failed(check, "ssm_failed", ssmAdvice)
+	case errors.Is(err, errHostKey):
+		return failed(check, "host_key_unknown", hostKeyAdvice)
+	case errors.Is(err, errSudoPassword):
+		return failed(check, "sudo_needs_password", sudoAdvice)
 	}
 	return failed(check, "ssh_failed", remoteAdvice)
 }

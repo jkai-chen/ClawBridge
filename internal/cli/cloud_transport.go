@@ -31,12 +31,19 @@ func (s shellTransport) run(ctx context.Context, script string, stderr io.Writer
 	if err != nil {
 		return nil, err
 	}
+	if s.target.host != "" {
+		return sshRun(ctx, argv, nil, stderr)
+	}
 	return remoteOutput(ctx, argv, stderr)
 }
 
 func (s shellTransport) setSecret(ctx context.Context, key, value string, stderr io.Writer) error {
 	argv, err := s.target.argv(`sudo -n sh -c '` + remoteSetScript(key, serverEnvFile) + `'`)
 	if err != nil {
+		return err
+	}
+	if s.target.host != "" {
+		_, err = sshRun(ctx, argv, strings.NewReader(value+"\n"), stderr)
 		return err
 	}
 	return runRemote(ctx, argv, strings.NewReader(value+"\n"), stderr)

@@ -240,3 +240,25 @@ func TestRenderTeamRolesNamesArePlain(t *testing.T) {
 		t.Fatal(body)
 	}
 }
+
+// Two bound teams with the same name render in one order every time (by
+// ID after the name), so an unchanged mapping publishes as "none" rather
+// than an update caused by map order.
+func TestRenderTeamRolesSameNameIsStable(t *testing.T) {
+	m := teamRolesMapping{Revision: 1, People: []bus.TeamRolePerson{
+		{LinearUserID: rolesAda, Role: "engineer", Teams: []string{otherTeamID}},
+		{LinearUserID: rolesBen, Role: "reviewer", Teams: []string{teamID}},
+	}}
+	names := map[string]string{teamID: "Team", otherTeamID: "Team"}
+	users := []linearprovider.WorkspaceUser{{ID: rolesAda, Name: "Ada"}, {ID: rolesBen, Name: "Ben"}}
+	first := renderTeamRoles(m, []string{teamID, otherTeamID}, names, users)
+	for range 200 {
+		if got := renderTeamRoles(m, []string{otherTeamID, teamID}, names, users); got != first {
+			t.Fatal("the same roles rendered in another order:\n", first, "\n---\n", got)
+		}
+	}
+	// teamID sorts before otherTeamID, so its reviewer comes first.
+	if strings.Index(first, "Ben") > strings.Index(first, "Ada") {
+		t.Fatal("same-named teams aren't ordered by ID:", first)
+	}
+}

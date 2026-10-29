@@ -39,10 +39,19 @@ var (
 	shareBaseUnits  = 4
 	shareStep       = 2 * time.Second
 	maxProjectShare = 40 * time.Second
-	minProjectShare = 15 * time.Second
+	minProjectShare = ProjectDeadline
 	// markerRoom is the part of a project's share the steps after the
-	// comment watch leave for the claim markers.
-	markerRoom = 3 * time.Second
+	// comment watch leave for the claim markers: what a marker pass needs
+	// to apply a row (linearboard.MarkerPassRoom, 9 s).
+	markerRoom = linearboard.MarkerPassRoom()
+	// stepsRoom is what the comment poll leaves the steps on top of the
+	// markers' room: enough to start intake, and a second of slack. So in
+	// any share a pass starts with (at least ProjectDeadline, 20 s): the
+	// comment poll stops with markerRoom+stepsRoom (15 s) left, so it
+	// polls for at least 5 s; the steps run until markerRoom is left, so
+	// they get at least stepsRoom (6 s, intake needs intakeRoom, 5 s); the
+	// markers get at least markerRoom (9 s).
+	stepsRoom = intakeRoom + time.Second
 )
 
 // watcherProofTTL is how long the watcher's read paths reuse a verified
@@ -222,8 +231,9 @@ func (w *Watcher) project(ctx context.Context, pid string, healthLeft int) Proje
 	scope := bus.Request{Session: bus.SystemSessionName, Args: map[string]any{}}
 	mark := time.Now()
 	err := svc.Watch(ctx, scope, linearboard.WatchOptions{
-		Budget: w.Budget,
-		Once:   true,
+		Budget:    w.Budget,
+		Once:      true,
+		StepsRoom: stepsRoom,
 		Cycle: func(c linearboard.WatchCycle) error {
 			tick.Comments = &c
 			return nil

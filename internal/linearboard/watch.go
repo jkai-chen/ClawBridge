@@ -49,6 +49,10 @@ type WatchOptions struct {
 	// WithinOnly runs Within alone under the lease: no comment sweep,
 	// poll or markers (an operator's forced health run).
 	WithinOnly bool
+	// StepsRoom is the time Within needs between the comment poll and the
+	// markers: a pass with a deadline stops polling comments with
+	// CommentStop(StepsRoom) left.
+	StepsRoom time.Duration
 }
 
 // WatchCycle is what one watch cycle did. Held names the issues whose poll
@@ -151,7 +155,7 @@ func (s *Service) Watch(ctx context.Context, scope bus.Request, opts WatchOption
 		var cycle WatchCycle
 		credit := watchConnectCalls
 		if !opts.WithinOnly {
-			if cycle, err = s.watchCycle(ctx, scope, lease, calls, opts.MarkersOnly, &credit); err != nil {
+			if cycle, err = s.watchCycle(ctx, scope, lease, calls, opts.MarkersOnly, opts.StepsRoom, &credit); err != nil {
 				return err
 			}
 		}
@@ -253,7 +257,7 @@ func pollCost(before, after linearCalls, credit *int) int {
 	return spent
 }
 
-func (s *Service) watchCycle(ctx context.Context, scope bus.Request, lease *watchLease, calls func() linearCalls, markersOnly bool, credit *int) (WatchCycle, error) {
+func (s *Service) watchCycle(ctx context.Context, scope bus.Request, lease *watchLease, calls func() linearCalls, markersOnly bool, stepsRoom time.Duration, credit *int) (WatchCycle, error) {
 	cycle := WatchCycle{Notified: []string{}}
 	if markersOnly {
 		return cycle, s.applyDueMarkers(ctx, scope, lease, &cycle, calls, credit)
@@ -273,7 +277,7 @@ func (s *Service) watchCycle(ctx context.Context, scope bus.Request, lease *watc
 		// A pass with a deadline (a server tick's per-project share) keeps
 		// room for intake, health and the markers after it: a large budget
 		// must not let the comment poll take the whole share.
-		if tooLate(ctx, commentPollRoom) {
+		if tooLate(ctx, CommentStop(stepsRoom)) {
 			cycle.CommentsStopped = "deadline"
 			break
 		}
@@ -337,6 +341,22 @@ func (s *Service) watchCycle(ctx context.Context, scope bus.Request, lease *watc
 // nudge's own 20 s: 8 s + one slow row (7 s seen live, 9 s at most) + 3 s
 // = 20 s. A row cut short settles uncertain and stays due.
 const markerPassRows = 3
+
+// MarkerPassRoom is the time a marker pass needs left to apply a row: its
+// own reserve, and a row's room. A caller that runs work before the markers
+// leaves them at least this much.
+func MarkerPassRoom() time.Duration { return markerReserve + markerRowRoom }
+
+// CommentStop is the time a pass with a deadline keeps after its comment
+// poll. With stepsRoom (the server's intake and the steps after it) it is
+// the markers' room plus stepsRoom, and never less than commentPollRoom;
+// without, commentPollRoom.
+func CommentStop(stepsRoom time.Duration) time.Duration {
+	if stepsRoom <= 0 {
+		return commentPollRoom
+	}
+	return max(commentPollRoom, MarkerPassRoom()+stepsRoom)
+}
 
 // The pass's clock bounds are variables only so tests can shrink them.
 var (

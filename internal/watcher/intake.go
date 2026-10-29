@@ -174,7 +174,7 @@ var (
 	// the project's share to start: less, and it waits for the next poll
 	// with its cursor where it was, leaving the rest of the share to the
 	// steps after intake and the markers.
-	intakeRoom = 8 * time.Second
+	intakeRoom = 5 * time.Second
 	// intakeChargeTimeout bounds the charge of intake's calls once the
 	// share has run out.
 	intakeChargeTimeout = 5 * time.Second

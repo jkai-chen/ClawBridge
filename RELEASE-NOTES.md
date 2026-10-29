@@ -36,6 +36,15 @@
   says what sends the write: the next `clawbridge` command, or `clawbridge outbox flush`. No schema change. Linear
   config scope: none.
 
+## Operations
+
+- **Every part of a watcher pass gets its time.** A project's share is now split so the comment watch, the steps after
+  it and the claim markers each fit, in any share a pass starts with (20 s or more; a project with less left waits for
+  the next tick, first in line): the comment watch stops with 15 s left, intake and the later steps run until 9 s are
+  left (intake starts a source or page with 5 s), and the markers get the last 9 s, what a marker pass needs to apply a
+  row. In v0.3.9.1 the markers got 3 s and stopped as `deadline` without applying anything (a nudge applied them).
+  Linear config scope: none.
+
 # ClawBridge v0.3.9.1 (server hotfix, deployed 29 Oct; no client release or tag)
 
 A server-only hotfix to v0.3.9: no schema change and no client change.

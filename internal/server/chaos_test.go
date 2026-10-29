@@ -44,10 +44,19 @@ type chaosAPI struct {
 	srv    *http.Server
 	cancel context.CancelFunc
 	store  *bus.Store
+	// drained runs the API as serve does, with its drain (maintenance.go):
+	// a start clears an older maintenance, and drain is this run's.
+	drained bool
+	drain   *Drain
 }
 
 func newChaosAPI(t *testing.T, f *stFixture, limits StreamLimits, queue bus.QueueLimits) *chaosAPI {
-	a := &chaosAPI{t: t, f: f, app: strings.ReplaceAll(awUnique("cbchaos"), "-", "_"), limits: limits, queue: queue}
+	return startChaosAPI(&chaosAPI{t: t, f: f, limits: limits, queue: queue})
+}
+
+func startChaosAPI(a *chaosAPI) *chaosAPI {
+	t := a.t
+	a.app = strings.ReplaceAll(awUnique("cbchaos"), "-", "_")
 	a.start()
 	t.Cleanup(func() {
 		if a.srv != nil {
@@ -78,8 +87,20 @@ func (a *chaosAPI) start() {
 	store.RequireVerifiedAccount()
 	store.SetQueueLimits(a.queue)
 	hub := NewStreamHub()
+	options := HandlerOptions{Streams: hub, StreamLimits: a.limits}
+	var drain *Drain
+	if a.drained {
+		drain = NewDrain(store, a.app, time.Now)
+		clearAtStart(ctx, store, drain)
+		store.SetQuiet(drain.Quiet)
+		hub.maintenance = drain.Invalidate
+		drain.onStart, drain.onEnd = hub.StartDrain, hub.EndDrain
+		options.Drain = drain
+		go drain.Run(ctx)
+	}
+	a.drain = drain
 	go hub.Listen(ctx, a.dsn())
-	go runSweeper(ctx, store, 200*time.Millisecond, nil)
+	go runSweeper(ctx, store, 200*time.Millisecond, drain)
 	addr := a.addr
 	if addr == "" {
 		addr = "127.0.0.1:0"
@@ -98,7 +119,7 @@ func (a *chaosAPI) start() {
 	verifier := VerifierFunc(func(_ context.Context, token string) (Identity, error) {
 		return Identity{Principal: strings.TrimPrefix(token, "tok-"), Subject: "sub-" + strings.TrimPrefix(token, "tok-")}, nil
 	})
-	a.srv = &http.Server{Handler: NewHandlerWithOptions(store, verifier, HandlerOptions{Streams: hub, StreamLimits: a.limits})}
+	a.srv = &http.Server{Handler: NewHandlerWithOptions(store, verifier, options)}
 	a.cancel, a.store = cancel, store
 	go a.srv.Serve(ln)
 }
@@ -153,6 +174,8 @@ type chaosConsumer struct {
 	done     chan struct{}
 	attempts map[string][]float64
 	connects int
+	// ends counts the streams that ended with an error.
+	ends int
 	// errs counts the handler's failed calls by message; last is when it
 	// last finished a message: the soak's diagnosis.
 	errs map[string]int
@@ -242,6 +265,9 @@ func (c *chaosConsumer) start() {
 				return nil
 			})
 			if ctx.Err() == nil {
+				c.mu.Lock()
+				c.ends++
+				c.mu.Unlock()
 				c.t.Logf("%s: the stream ended (%v); starting it again", c.session, err)
 				time.Sleep(200 * time.Millisecond)
 			}

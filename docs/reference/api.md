@@ -737,7 +737,9 @@ A hosted client keeps the writes that couldn't reach the server, of four kinds o
 - **Dead letters.** A refusal makes a write a dead letter with its class (`forbidden`, `not_found`,
   `instance_changed` for a session that registered again, `account_changed` when the profile now signs in as someone
   else, `expired` after 24 h). A reply refused for its piggybacked `ack` is sent once more without it, under the same
-  `operation_id`, and only the ack becomes a dead letter (`ack_refused:<class>`). An ack that lands on a delivery that
+  `operation_id`, and only the ack becomes a dead letter (`ack_refused:<class>`). When the bare one is refused too, the
+  write itself is the dead letter: a reply to a message that expired meanwhile (`not_found`), or one from an earlier
+  instance (`instance_changed`). An ack that lands on a delivery that
   had died meanwhile is done, and listed once as `acked_after_dead`. Dead letters are kept 7 days.
 - **Bounds.** 1000 writes and 8 MiB per profile; past that a write fails as before, saying the outbox is full.
 - **Storage.** `outbox.db` beside the profile's mirror, mode 0600, holding the request (with its body) and never a

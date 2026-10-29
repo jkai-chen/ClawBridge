@@ -19,6 +19,9 @@ import (
 
 const env = "CLAWBRIDGE_FAKE_TOOL"
 
+// LogEnv names the file the record behaviours write the argument list to.
+const LogEnv = "CLAWBRIDGE_FAKE_TOOL_LOG"
+
 // Main runs the tool behaviour when this binary was started as a fake tool,
 // and the package's tests otherwise. Call it from TestMain.
 func Main(m *testing.M) {
@@ -35,6 +38,9 @@ func Main(m *testing.M) {
 //	print:TEXT  print TEXT without a newline
 //	exit:N      exit with status N
 //	sleep:D     stay running for duration D, then exit 0
+//	record      write the arguments, each followed by a NUL, to the file named
+//	            by LogEnv; print a line of synthetic output
+//	codex-queue as record, but answer "queue --help" as Codex's CLI does
 func Install(t testing.TB, dir, name, behaviour string) string {
 	t.Helper()
 	self, err := os.Executable()
@@ -75,6 +81,20 @@ func run(behaviour string, args []string, out io.Writer) int {
 		for _, a := range args {
 			fmt.Fprintln(out, a)
 		}
+		return 0
+	case behaviour == "record" || behaviour == "codex-queue":
+		if behaviour == "codex-queue" && len(args) == 2 && args[0] == "queue" && args[1] == "--help" {
+			fmt.Fprintln(out, "queue --thread --message")
+			return 0
+		}
+		var log strings.Builder
+		for _, a := range args {
+			log.WriteString(a + "\x00")
+		}
+		if os.WriteFile(os.Getenv(LogEnv), []byte(log.String()), 0600) != nil {
+			return 124
+		}
+		fmt.Fprintln(out, "synthetic-host-output-not-for-user")
 		return 0
 	case strings.HasPrefix(behaviour, "print:"):
 		fmt.Fprint(out, strings.TrimPrefix(behaviour, "print:"))

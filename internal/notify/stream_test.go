@@ -7,13 +7,13 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
 	"clawbridge/internal/bus"
+	"clawbridge/internal/faketool"
 	"clawbridge/internal/remote"
 )
 
@@ -180,26 +180,26 @@ func TestNotifyCommandAdapterGivesFixedTextOnly(t *testing.T) {
 }
 
 // The real runner hands the notice over as one argument, so shell
-// characters in it stay text. The check drives /bin/sh, so it runs where
-// there is one; the argument checks run everywhere.
+// characters in it stay text. The program is a fake built from the test
+// binary, so the check runs on every OS, Windows included.
 func TestNotifyCommandRunnerNoShell(t *testing.T) {
 	for _, bad := range [][]string{nil, {""}, {"no-such-program-for-notify"}, {"/bin/sh", "a\x00b"}} {
 		if _, err := resolveCommand(bad); err == nil {
 			t.Fatal(bad)
 		}
 	}
-	if runtime.GOOS == "windows" {
-		t.Skip("no /bin/sh on Windows; runCommand is the same exec there")
-	}
-	out := filepath.Join(t.TempDir(), "out")
-	argv, err := resolveCommand([]string{"/bin/sh", "-c", `printf %s "$1" > "$2"`, "sh", "a ' \" $(x) `y` ;b", out})
+	log := filepath.Join(t.TempDir(), "argv")
+	t.Setenv(faketool.LogEnv, log)
+	program := faketool.Install(t, t.TempDir(), "fake notify command", "record")
+	hostile := "a ' \" $(x) `y` ;b"
+	argv, err := resolveCommand([]string{program, hostile, "second arg"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if err = runCommand(context.Background(), argv, nil, nil); err != nil {
 		t.Fatal(err)
 	}
-	if b, _ := os.ReadFile(out); string(b) != "a ' \" $(x) `y` ;b" {
+	if b, _ := os.ReadFile(log); string(b) != hostile+"\x00second arg\x00" {
 		t.Fatalf("%q", b)
 	}
 }

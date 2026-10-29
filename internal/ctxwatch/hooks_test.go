@@ -9,21 +9,27 @@ import (
 	"testing"
 )
 
-const bin = "/opt/claw bridge/clawbridge"
+var bin = absPath("opt", "claw bridge", "clawbridge")
 
 func TestHookCommand(t *testing.T) {
 	local, err := HookCommand(ScopeLocal, bin, "bind")
-	if err != nil || local != `[ -x '/opt/claw bridge/clawbridge' ] || exit 0; CLAWBRIDGE_AGENT_PID=$PPID '/opt/claw bridge/clawbridge' context bind --from-hook `+HookMarker {
+	if err != nil || local != `[ -x '`+bin+`' ] || exit 0; CLAWBRIDGE_AGENT_PID=$PPID '`+bin+`' context bind --from-hook `+HookMarker {
 		t.Fatalf("%q %v", local, err)
 	}
 	shared, err := HookCommand(ScopeProjectShared, "", "compacting")
-	if err != nil || shared != "command -v clawbridge >/dev/null 2>&1 || exit 0; CLAWBRIDGE_AGENT_PID=$PPID clawbridge context compacting --from-hook "+HookMarker {
+	if runtime.GOOS == "windows" {
+		// The POSIX hook text is unix-only; the Windows form is FR15 Task 3.
+		// Everything else here still runs.
+		if err != nil {
+			t.Fatal(err)
+		}
+	} else if err != nil || shared != "command -v clawbridge >/dev/null 2>&1 || exit 0; CLAWBRIDGE_AGENT_PID=$PPID clawbridge context compacting --from-hook "+HookMarker {
 		t.Fatalf("%q %v", shared, err)
 	}
 	for name, c := range map[string]struct{ scope, binary string }{
 		"relative": {ScopeUser, "clawbridge"},
-		"quote":    {ScopeLocal, "/opt/it's/clawbridge"},
-		"newline":  {ScopeLocal, "/opt/x\n/clawbridge"},
+		"quote":    {ScopeLocal, absPath("opt", "it's", "clawbridge")},
+		"newline":  {ScopeLocal, absPath("opt", "x\n", "clawbridge")},
 		"scope":    {"project", bin},
 	} {
 		if got, err := HookCommand(c.scope, c.binary, "bind"); err == nil {
@@ -36,14 +42,15 @@ func TestHookCommand(t *testing.T) {
 		}
 	}
 	// Only exactly ClawBridge's text: a similar hook of the user's stays.
+	a, b := absPath("a", "clawbridge"), absPath("b", "clawbridge")
 	for _, other := range []string{
 		strings.TrimSuffix(local, " "+HookMarker),
 		local + " && echo hi",
 		"echo pwned; " + local,
-		`[ -x '/a/clawbridge' ] || exit 0; CLAWBRIDGE_AGENT_PID=$PPID '/b/clawbridge' context bind --from-hook ` + HookMarker,
-		`[ -x '/a/clawbridge' ] || exit 0; '/a/clawbridge' context bind --from-hook ` + HookMarker,
+		`[ -x '` + a + `' ] || exit 0; CLAWBRIDGE_AGENT_PID=$PPID '` + b + `' context bind --from-hook ` + HookMarker,
+		`[ -x '` + a + `' ] || exit 0; '` + a + `' context bind --from-hook ` + HookMarker,
 		`[ -x 'rel/clawbridge' ] || exit 0; CLAWBRIDGE_AGENT_PID=$PPID 'rel/clawbridge' context bind --from-hook ` + HookMarker,
-		`[ -x '/a/clawbridge' ] || exit 0; CLAWBRIDGE_AGENT_PID=$PPID '/a/clawbridge' context show --from-hook ` + HookMarker,
+		`[ -x '` + a + `' ] || exit 0; CLAWBRIDGE_AGENT_PID=$PPID '` + a + `' context show --from-hook ` + HookMarker,
 		"clawbridge context bind --from-hook " + HookMarker,
 	} {
 		if isOwnHook(other) {
@@ -143,9 +150,10 @@ func TestInstallAndUninstallHooks(t *testing.T) {
 		t.Fatalf("reinstall changed:\n%s", c.Diff())
 	}
 	// A moved binary replaces the old entries rather than adding to them.
-	apply(t, path, ScopeLocal, "/usr/local/bin/clawbridge", true)
+	moved := absPath("usr", "local", "bin", "clawbridge")
+	apply(t, path, ScopeLocal, moved, true)
 	data, _ = os.ReadFile(path)
-	if strings.Count(string(data), HookMarker) != 3 || strings.Contains(string(data), bin) {
+	if strings.Count(string(data), HookMarker) != 3 || strings.Contains(string(data), jsonEscaped(bin)) || !strings.Contains(string(data), jsonEscaped(moved)) {
 		t.Fatalf("%s", data)
 	}
 	// Uninstall leaves the user's own settings and hooks as they were.
@@ -170,7 +178,8 @@ func TestHooksOnANewFile(t *testing.T) {
 		t.Fatalf("%v %v", info, err)
 	}
 	// The command is written as it runs, not with \u escapes.
-	if data, _ := os.ReadFile(path); !strings.Contains(string(data), ">/dev/null 2>&1 || exit 0") {
+	// The POSIX hook text is unix-only; the Windows form is FR15 Task 3.
+	if data, _ := os.ReadFile(path); runtime.GOOS != "windows" && !strings.Contains(string(data), ">/dev/null 2>&1 || exit 0") {
 		t.Fatalf("%s", data)
 	}
 	apply(t, path, ScopeLocal, "", false)
@@ -194,9 +203,7 @@ func TestHooksRefuseWhatTheyCantEdit(t *testing.T) {
 	}
 	real := settingsFile(t, "{}")
 	link := filepath.Join(t.TempDir(), "settings.json")
-	if err := os.Symlink(real, link); err != nil {
-		t.Fatal(err)
-	}
+	symlink(t, real, link)
 	if _, err := PlanHooks(link, ScopeLocal, bin, true); err == nil {
 		t.Fatal("a link was accepted")
 	}

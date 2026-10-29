@@ -10,7 +10,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
-	"strconv"
 	"strings"
 
 	"clawbridge/internal/ctxwatch"
@@ -138,14 +137,8 @@ func hookBinding(session string) (ctxwatch.HookInput, string, string, bool) {
 	return in, dir, transcript, true
 }
 
-// hookAgentPID is the Claude Code process the hook command named, or 0.
-func hookAgentPID() int {
-	pid, err := strconv.Atoi(os.Getenv("CLAWBRIDGE_AGENT_PID"))
-	if err != nil || pid <= 0 {
-		return 0
-	}
-	return pid
-}
+// hookAgentPID is the Claude Code process the hook runs under, or 0.
+func hookAgentPID() int { return ctxwatch.HookAgentPID() }
 
 // mayRebind says whether a hook from Claude Code session id in process pid
 // may take over the binding old. The session that holds it may always

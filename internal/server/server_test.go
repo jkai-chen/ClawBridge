@@ -453,3 +453,31 @@ func TestServeProjectFlowProven(t *testing.T) {
 		}
 	}
 }
+
+// FR10: a team add is proven by the flag or the environment, off by
+// default, and independent of project flow.
+func TestServeProjectTeamAddProven(t *testing.T) {
+	base := []string{"--bootstrap-owner", "owner@example.test", "--auth", "device", "--public-origin", "https://cb.example.test"}
+	for name, c := range map[string]struct {
+		flag bool
+		env  string
+		want bool
+		err  bool
+	}{
+		"default": {}, "flag": {flag: true, want: true}, "env": {env: "1", want: true}, "env true": {env: "true", want: true}, "env off": {env: "0"}, "env bad": {env: "yes", err: true},
+	} {
+		args := append([]string{}, base...)
+		if c.flag {
+			args = append(args, "--project-team-add-proven")
+		}
+		settings, err := ParseServe(args, func(k string) string {
+			if k == "CLAWBRIDGE_PROJECT_TEAM_ADD_PROVEN" {
+				return c.env
+			}
+			return ""
+		})
+		if (err != nil) != c.err || err == nil && (settings.ProjectTeamAddProven != c.want || settings.ProjectFlowProven) {
+			t.Errorf("%s: %v %v", name, settings.ProjectTeamAddProven, err)
+		}
+	}
+}

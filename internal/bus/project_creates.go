@@ -228,8 +228,10 @@ func (s *Store) settleProjectCreate(ctx context.Context, tx *transaction, w map[
 	return nil, invalid("outcome must be created or not_sent")
 }
 
-// ackProjectCreate is the owner's acknowledgement of an unsettled
-// reservation: it stops showing, and is pruned with the settled ones.
+// ackProjectCreate is the owner's acknowledgement of an unsettled or
+// uncertain reservation, or of a team add Linear answered with other
+// fields changed: it stops showing, and is pruned with the settled ones.
+// A clean accepted write has nothing to acknowledge.
 func (s *Store) ackProjectCreate(ctx context.Context, tx *transaction, wid, pid, projectRole string, r Request, now time.Time) (any, error) {
 	if r.Session != "" {
 		return nil, scoped("a session can't acknowledge a project create; the project owner does, in their own terminal", "forbidden")
@@ -241,12 +243,12 @@ func (s *Store) ackProjectCreate(ctx context.Context, tx *transaction, wid, pid,
 		return nil, scoped("a project create is acknowledged only from a person's own signed-in device", "forbidden")
 	}
 	op := str(r.Args, "operation_id")
-	res, err := tx.ExecContext(ctx, `UPDATE linear_write_reservations SET acknowledged_at=? WHERE project_id=? AND operation_id=? AND state IN ('reserved','uncertain') AND acknowledged_at IS NULL`, layout(now), pid, op)
+	res, err := tx.ExecContext(ctx, `UPDATE linear_write_reservations SET acknowledged_at=? WHERE project_id=? AND operation_id=? AND (state IN ('reserved','uncertain') OR (kind=? AND state='accepted' AND detail LIKE ?)) AND acknowledged_at IS NULL`, layout(now), pid, op, projectTeamAddKind, `%"changed":[%`)
 	if err != nil {
 		return nil, err
 	}
 	if n, _ := res.RowsAffected(); n != 1 {
-		return nil, &serviceError{code: "not_found", cause: errors.New("the project has no unacknowledged, unsettled Linear write with that operation_id"), public: true}
+		return nil, &serviceError{code: "not_found", cause: errors.New("the project has no unacknowledged, unsettled Linear write, or team add Linear answered with other changes, with that operation_id"), public: true}
 	}
 	if err = s.audit(ctx, tx, wid, pid, "", "project_create", op, "acknowledged", map[string]any{}); err != nil {
 		return nil, err

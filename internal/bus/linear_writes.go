@@ -31,12 +31,14 @@ CREATE INDEX linear_write_reservations_open ON linear_write_reservations(project
 // the keys its detail may hold: IDs of the write's subject and target, and
 // changed field names, never a member's ID, a name or a title (R5).
 var linearWriteKinds = map[string][]string{
-	"project_create": {"kind_label_id"},
-	"issue_move":     {"from_team", "old_identifier"},
+	"project_create":   {"kind_label_id"},
+	"issue_move":       {"from_team", "old_identifier"},
+	"project_team_add": {"changed", "unverified"},
 }
 
-// linearWriteRoles is who may make a recorded write.
-var linearWriteRoles = []string{"owner", "lead", "coordinator"}
+// linearWriteRoles is who may make a recorded write. team_lead is a bound
+// team's lead in the team roles, adding that team to a project (FR10).
+var linearWriteRoles = []string{"owner", "lead", "coordinator", "team_lead"}
 
 const (
 	// linearWriteStale is how long a reservation may stay unsettled before

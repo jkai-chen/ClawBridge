@@ -109,8 +109,14 @@ func (s *Store) projectOverview(ctx context.Context, tx *transaction, w, p map[s
 	if err != nil {
 		return nil, err
 	}
+	// Teams added to projects, and how many came back with other fields
+	// changed (FR10 Q3).
+	teamAdds, err := projectTeamAddsView(ctx, tx, pid)
+	if err != nil {
+		return nil, err
+	}
 	out := map[string]any{"project": project, "coordinator": coord, "counts": counts, "sessions": rows,
-		"sessions_truncated": truncated, "linear": linear, "project_creates": creates}
+		"sessions_truncated": truncated, "linear": linear, "project_creates": creates, "project_team_adds": teamAdds}
 	if role == "owner" {
 		if out["project_leads"], err = projectLeadCounts(ctx, tx, pid, now); err != nil {
 			return nil, err

@@ -160,7 +160,7 @@ var AgentLinearWriteTools = []string{
 	"taskboard_create", "taskboard_update", "taskboard_comment",
 	"taskboard_create_v2", "taskboard_update_v2", "taskboard_comment_v2",
 	"taskboard_relation_add_v2", "taskboard_relation_remove_v2",
-	"taskboard_project_status_set_v2", "taskboard_issue_move_v2",
+	"taskboard_project_status_set_v2", "taskboard_issue_move_v2", "taskboard_project_add_team_v2",
 }
 
 // AgentDeniedTools are never the agent's: they act for another session.

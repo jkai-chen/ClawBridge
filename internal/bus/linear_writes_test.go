@@ -24,13 +24,6 @@ func ledgerTx(t *testing.T, h *harness) (*transaction, string) {
 	return tx, pid
 }
 
-// withKind adds a kind to the ledger's set for one test: a later write's
-// kind (FR7, FR10) joins the same way.
-func withKind(t *testing.T, kind string, keys ...string) {
-	linearWriteKinds[kind] = keys
-	t.Cleanup(func() { delete(linearWriteKinds, kind) })
-}
-
 func ledgerRows(t *testing.T, tx *transaction) int {
 	t.Helper()
 	var n int
@@ -44,11 +37,11 @@ func ledgerRows(t *testing.T, tx *transaction) int {
 // the subject and target only, never a member's ID, a name or a title.
 // Every kind the code writes is in the set.
 func TestLinearWriteKindsPinned(t *testing.T) {
-	want := map[string][]string{"project_create": {"kind_label_id"}, "issue_move": {"from_team", "old_identifier"}}
+	want := map[string][]string{"project_create": {"kind_label_id"}, "issue_move": {"from_team", "old_identifier"}, "project_team_add": {"changed", "unverified"}}
 	if !reflect.DeepEqual(linearWriteKinds, want) {
 		t.Fatalf("the kinds changed: %v; pin the new kind's detail keys here", linearWriteKinds)
 	}
-	for _, kind := range []string{projectCreateKind, issueMoveKind} {
+	for _, kind := range []string{projectCreateKind, issueMoveKind, projectTeamAddKind} {
 		if _, ok := linearWriteKinds[kind]; !ok {
 			t.Fatal("the code writes an unlisted kind:", kind)
 		}
@@ -88,7 +81,6 @@ func TestLinearWriteRefusedBeforeInsert(t *testing.T) {
 // a different settle is a conflict.
 func TestLinearWriteReplayAndSettle(t *testing.T) {
 	h, _ := createsHarness(t)
-	withKind(t, "project_team_add", "changed")
 	tx, pid := ledgerTx(t, h)
 	ctx, now := context.Background(), time.Now()
 	if linearWritePlan("project_create", "plan") == linearWritePlan("project_team_add", "plan") {
@@ -145,7 +137,6 @@ func TestLinearWriteReplayAndSettle(t *testing.T) {
 // with its kind, and the owner is told of each once.
 func TestLinearWriteStaleAcrossKinds(t *testing.T) {
 	h, now := createsHarness(t)
-	withKind(t, "project_team_add", "changed")
 	h.pin("lane_pin_set", map[string]any{"expected_revision": 0, "kind": "session", "key": "c", "lane": "both"})
 	h.seedKinds(teamTwo)
 	h.call("project_create_reserve", "c", reserveArgs("op-1", teamTwo, "Engineering"))

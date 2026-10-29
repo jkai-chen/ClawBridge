@@ -66,6 +66,7 @@ services:
       CLAWBRIDGE_PROJECT_FLOW_PROVEN: ${CLAWBRIDGE_PROJECT_FLOW_PROVEN:-}
       CLAWBRIDGE_ISSUE_SUBSCRIBERS_PROVEN: ${CLAWBRIDGE_ISSUE_SUBSCRIBERS_PROVEN:-}
       CLAWBRIDGE_ISSUE_MOVE_PROVEN: ${CLAWBRIDGE_ISSUE_MOVE_PROVEN:-}
+      CLAWBRIDGE_PROJECT_TEAM_ADD_PROVEN: ${CLAWBRIDGE_PROJECT_TEAM_ADD_PROVEN:-}
       # Optional: the dispatcher model's key seal and agent cap
       # (docs/operations/deployment.md). Without the seal key, model setup
       # is off.

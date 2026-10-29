@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -396,5 +397,76 @@ func TestOutboxQueuedMarkReadNamesItsMessages(t *testing.T) {
 	result, err = client.Execute(ctx, message("op-1", "x"))
 	if msg = result.Data.(map[string]any)["message"].(string); err != nil || !strings.Contains(msg, "; send op-1 is queued") || !strings.HasSuffix(msg, "; don't resend it with a new operation ID") {
 		t.Fatal(msg, err)
+	}
+}
+
+// A long-lived client's drainer (FR11) sends what waits on its own: on its
+// interval while anything waits, and at once after a successful call, with
+// no command run; it stops with its context.
+func TestDrainOutboxWhile(t *testing.T) {
+	shortWindow(t, 100*time.Millisecond)
+	for name, every := range map[string]time.Duration{"interval": 50 * time.Millisecond, "kick": time.Hour} {
+		t.Run(name, func(t *testing.T) {
+			s := newOutboxServer(t)
+			client, _ := outboxClient(t, s)
+			s.mode.Store("down")
+			if result, err := client.Execute(context.Background(), message("op-1", "first")); err != nil || result.Source != "client_outbox" {
+				t.Fatal(result, err)
+			}
+			client.Outbox().SetNow(func() time.Time { return time.Now().Add(time.Hour) })
+			ctx, cancel := context.WithCancel(context.Background())
+			done := make(chan struct{})
+			go func() { client.DrainOutboxWhile(ctx, every); close(done) }()
+			s.mode.Store("up")
+			if name == "kick" {
+				// A successful call of another kind wakes the drainer.
+				if _, err := client.Execute(context.Background(), bus.Request{Operation: "whoami", Args: map[string]any{}}); err != nil {
+					t.Fatal(err)
+				}
+			}
+			deadline := time.Now().Add(5 * time.Second)
+			for !slices.Contains(s.ops(), "send:op-1") && time.Now().Before(deadline) {
+				time.Sleep(10 * time.Millisecond)
+			}
+			if !slices.Contains(s.ops(), "send:op-1") {
+				t.Fatal("the drainer sent nothing:", s.ops())
+			}
+			if st, _ := client.Outbox().Status(context.Background()); st.Waiting != 0 {
+				t.Fatal(st)
+			}
+			cancel()
+			select {
+			case <-done:
+			case <-time.After(5 * time.Second):
+				t.Fatal("the drainer didn't stop with its context")
+			}
+		})
+	}
+}
+
+// The drainer looks the outbox up each turn: a client whose outbox can't
+// open yet keeps running, and stops with its context.
+func TestDrainOutboxWhileWithoutAnOutbox(t *testing.T) {
+	client, err := NewWithTokenSource(Config{URL: "https://bus.example.test", Audience: "audience", Principal: "ada@example.test"}, TokenSourceFunc(func(context.Context) (string, error) { return "synthetic-token", nil }))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if client.Outbox() != nil {
+		t.Skip("this client has an outbox")
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() { client.DrainOutboxWhile(ctx, 10*time.Millisecond); close(done) }()
+	time.Sleep(50 * time.Millisecond)
+	select {
+	case <-done:
+		t.Fatal("the drainer stopped without an outbox")
+	default:
+	}
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the drainer didn't stop with its context")
 	}
 }

@@ -491,7 +491,7 @@ func NewModel(cfg Config) (Model, error) { return New(cfg) }
 
 // Init loads the first view without changing authority.
 func (m Model) Init() tea.Cmd {
-	live := m.inboxLiveCmd()
+	live := tea.Batch(m.inboxLiveCmd(), m.outboxTick())
 	if m.screen != ScreenOverview {
 		_, cmd := m.refreshView()
 		return tea.Batch(cmd, live)
@@ -502,6 +502,22 @@ func (m Model) Init() tea.Cmd {
 	}
 	screen, request := m.screen, m.request
 	return tea.Batch(func() tea.Msg { return m.loadOverviewFor(screen, request) }, live)
+}
+
+// outboxTickMsg redraws the status line's outbox count while the outbox is
+// drained in the background (FR11).
+type outboxTickMsg struct{}
+
+// outboxEvery is how often the status line's outbox count is redrawn.
+const outboxEvery = 5 * time.Second
+
+// outboxTick schedules the next redraw; a profile without an outbox has
+// none.
+func (m Model) outboxTick() tea.Cmd {
+	if m.cfg.OutboxWaiting == nil {
+		return nil
+	}
+	return tea.Tick(outboxEvery, func(time.Time) tea.Msg { return outboxTickMsg{} })
 }
 
 // Update implements tea.Model.
@@ -552,6 +568,9 @@ func (m Model) UpdateModel(msg tea.Msg) (Model, tea.Cmd) {
 	case ArchiveTickMsg:
 		m = m.reclassify(x.Now)
 		return m, archiveTick()
+	case outboxTickMsg:
+		// Nothing to change: the status line reads the count afresh.
+		return m, m.outboxTick()
 	case InboxChangedMsg:
 		if m.inboxLive == nil {
 			return m, nil

@@ -21,9 +21,9 @@ var _ outboxClient = (*remote.Client)(nil)
 type outboxStore struct {
 	*queueStore
 	ob       *outbox.Store
-	kicks    chan struct{}
 	mu       sync.Mutex
 	drains   int
+	every    time.Duration
 	promoted []string
 	// localAcks maps a message to whether its ack still waits after a
 	// promote (true) or is sent by it (false).
@@ -37,16 +37,15 @@ func newOutboxStore(t *testing.T, q *queueStore) *outboxStore {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { ob.Close() })
-	return &outboxStore{queueStore: q, ob: ob, kicks: make(chan struct{}, 1), localAcks: map[string]bool{}}
+	return &outboxStore{queueStore: q, ob: ob, localAcks: map[string]bool{}}
 }
 
-func (s *outboxStore) Outbox() *outbox.Store        { return s.ob }
-func (s *outboxStore) OutboxKicks() <-chan struct{} { return s.kicks }
-func (s *outboxStore) DrainOutbox(context.Context, time.Duration) (outbox.Report, error) {
+func (s *outboxStore) Outbox() *outbox.Store { return s.ob }
+func (s *outboxStore) DrainOutboxWhile(_ context.Context, every time.Duration) {
 	s.mu.Lock()
 	s.drains++
+	s.every = every
 	s.mu.Unlock()
-	return outbox.Report{}, nil
 }
 func (s *outboxStore) PromoteAck(_ context.Context, r bus.Request, id string) (bool, bool, error) {
 	s.mu.Lock()
@@ -158,21 +157,17 @@ func TestQueuedAckSettlesTheLease(t *testing.T) {
 	waitFor(t, "the queued ack didn't settle the lease", func() bool { r, ok := readRecord(t, dir); return ok && len(r.Leases) == 0 })
 }
 
-// The MCP server drains the outbox when a call succeeds while writes wait.
-func TestMCPDrainsTheOutbox(t *testing.T) {
+// The MCP server runs the client's outbox drainer for its lifetime, at
+// its interval (the loop itself is remote's, tested there).
+func TestMCPRunsTheOutboxDrainer(t *testing.T) {
 	store := newOutboxStore(t, &queueStore{})
 	queueSession(t, store, Options{})
-	store.kicks <- struct{}{}
-	time.Sleep(50 * time.Millisecond)
-	if store.drained() != 0 {
-		t.Fatal("drained an empty outbox")
+	waitFor(t, "the drainer never started", func() bool { return store.drained() == 1 })
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	if store.every != outboxEvery {
+		t.Fatal(store.every)
 	}
-	r := bus.Request{Operation: "mark_read", Workspace: "w", Project: "p", Session: "agent", Args: map[string]any{"instance": "inst-1", "ids": []any{"msg-1"}}}
-	if _, err := store.ob.Enqueue(context.Background(), "https://bus.example.test", outbox.Scope{}, r); err != nil {
-		t.Fatal(err)
-	}
-	store.kicks <- struct{}{}
-	waitFor(t, "never drained", func() bool { return store.drained() == 1 })
 }
 
 // §2.4: the lease loop waits out a maintenance refusal without counting a

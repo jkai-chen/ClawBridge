@@ -109,6 +109,20 @@ func runOutbox(ctx context.Context, flags Config, args []string, stdout, stderr 
 	}
 }
 
+// tuiOutboxEvery is how often the running TUI looks at a non-empty outbox,
+// as an agent's MCP server does; a successful call wakes it sooner. Tests
+// shorten it.
+var tuiOutboxEvery = 5 * time.Second
+
+// tuiOutbox sends what waits before the TUI opens, keeps sending it while
+// the TUI runs (FR11), and counts what waits, for its status line. All of
+// it stops with ctx.
+func tuiOutbox(ctx context.Context, client *remote.Client) func() int {
+	drainBeforeCommand(ctx, client)
+	go client.DrainOutboxWhile(ctx, tuiOutboxEvery)
+	return func() int { return outboxCount(ctx, client) }
+}
+
 // drainBeforeCommand sends what waits in the outbox, briefly, before a
 // command's own call, so a command never overtakes them.
 func drainBeforeCommand(ctx context.Context, client *remote.Client) {

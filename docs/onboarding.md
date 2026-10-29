@@ -219,7 +219,8 @@ earlier ones:
    `clawbridge mcp install --agent claude-code` writes `.mcp.json` in the current
    folder, so run it from the repository root. To write the user-level file
    instead, pass `--config ~/.claude.json`.
-4. **Doctor.** Runs `clawbridge doctor` once for each MCP entry it configured.
+4. **Doctor.** Runs `clawbridge doctor` once for each MCP entry it configured,
+   and shows its result. It should show no fail.
 5. **The dispatcher (owners of a hosted project).** If you own the project, its
    task board is linked and the dispatcher is off, it says in one line what the
    dispatcher does, shows what turning it on changes (its coordinator, sessions
@@ -228,8 +229,9 @@ earlier ones:
    the task board names no Linear projects, the step is skipped with the reason.
    The default is no. `clawbridge dispatcher disable` turns it off any time.
    Model mode is set up separately (see
-   [the dispatcher](dispatcher.md#model-mode-designed-partly-built)). For anyone
-   else the step is skipped, with the reason.
+   [the dispatcher](dispatcher.md#model-mode-designed-partly-built)). For a
+   member it prints `skipped: the project owner sets the dispatcher` and asks
+   nothing; for anyone else it is skipped, with the reason.
 
 It then prints a summary of what was set up, what was skipped, and the exact
 command for each skipped step.

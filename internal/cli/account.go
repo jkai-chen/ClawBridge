@@ -12,6 +12,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
 	"time"
@@ -440,7 +441,67 @@ func runAccount(ctx context.Context, flags Config, command string, args []string
 		}
 	}
 	safeLabels(result.Data)
-	return emit(ctx, stdout, op, result)
+	err = emit(ctx, stdout, op, result)
+	if op == "device_revoke" {
+		offerLocalKeyRemoval(config, fmt.Sprint(a["device_id"]), accountStdin, stderr)
+	}
+	return err
+}
+
+// accountStdin is where device revoke reads its yes or no; tests replace it.
+var accountStdin io.Reader = os.Stdin
+
+// deleteDeviceKey removes one device key from its store; tests replace it so
+// none touches a real key store.
+var deleteDeviceKey = devicesign.Delete
+
+// keyStoreGOOS is the OS the manual key-store step is worded for.
+var keyStoreGOOS = runtime.GOOS
+
+// manualKeyRemoval is the step that removes a device's key by hand: the
+// exact service and account of the OS store entry, or the key file.
+func manualKeyRemoval(goos string, l devicesign.Location) string {
+	account := l.Host + "/" + l.DeviceID
+	if l.Store == devicesign.StoreFile {
+		return "Delete the device key file: " + clirender.Safe(l.Path())
+	}
+	switch goos {
+	case "darwin":
+		return "Remove it with: security delete-generic-password -s " + devicesign.KeyringService + " -a " + clirender.Safe(account)
+	case "windows":
+		return "Remove it with: cmdkey /delete:" + devicesign.KeyringService + ":" + clirender.Safe(account) + " (Credential Manager, target " + devicesign.KeyringService + ":" + clirender.Safe(account) + ")"
+	}
+	return "Remove it with: secret-tool clear service " + devicesign.KeyringService + " username " + clirender.Safe(account) + " (your system key store, service " + devicesign.KeyringService + ", account " + clirender.Safe(account) + ")"
+}
+
+// offerLocalKeyRemoval runs after a device revoke succeeds. When the revoked
+// device is this one, its key is still in the key store: at a terminal it
+// asks to remove exactly that entry, otherwise it names the manual step. A
+// revoke of any other device never reaches here with a local key.
+func offerLocalKeyRemoval(c Config, deviceID string, stdin io.Reader, stderr io.Writer) {
+	if c.CredentialSource != remote.CredentialSourceDevice || c.DeviceID == "" || c.DeviceID != deviceID {
+		return
+	}
+	if c.KeyStore != devicesign.StoreKeyring && c.KeyStore != devicesign.StoreFile {
+		return
+	}
+	u, _ := url.Parse(c.Server)
+	home, _ := stateHome()
+	where := devicesign.Location{Store: c.KeyStore, Host: u.Host, Home: home, DeviceID: deviceID}
+	manual := manualKeyRemoval(keyStoreGOOS, where)
+	if stdinTerminal() {
+		fmt.Fprint(stderr, "Remove this device's key from the system key store too? [y/N] ")
+		line, _ := bufio.NewReader(stdin).ReadString('\n')
+		if a := strings.ToLower(strings.TrimSpace(line)); a == "y" || a == "yes" {
+			if err := deleteDeviceKey(where); err != nil {
+				fmt.Fprintf(stderr, "The key could not be removed: %v\n%s\n", err, manual)
+				return
+			}
+			fmt.Fprintln(stderr, "Removed this device's key from the key store.")
+			return
+		}
+	}
+	fmt.Fprintf(stderr, "This device's key is still in the key store. %s\n", manual)
 }
 
 // safeLabels escapes terminal controls in every device label of an answer

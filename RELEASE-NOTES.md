@@ -7,6 +7,13 @@
 - **One-way:** v0.3.9 and v0.3.9.1 refuse a database newer than schema 50. Take a dump before upgrading; to go back,
   restore it with the v0.3.9.1 image (docs/operations/deployment.md).
 
+## Onboarding
+
+- **Guided setup and `device revoke` fixes.** The doctor step no longer fails with "doctor returned no report" in a real
+  terminal; a member's dispatcher step prints "skipped: the project owner sets the dispatcher" instead of a 403; and
+  `device revoke` of this device offers to remove its key from the system key store (or names the manual step).
+  Linear config scope: none.
+
 ## Agents
 
 - **Hooks can find their agent process without a POSIX shell.** ctxwatch now has Windows process primitives (parent

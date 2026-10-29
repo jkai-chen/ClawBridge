@@ -195,6 +195,11 @@ Accounts on a hosted workspace (each command takes `--help`):
 - **`device`:** `device list`, `device revoke ID`, `device label ID LABEL`,
   `device events` and `device ack` (new-device alerts, docs/sign-in.md),
   `device confirm ID [--member EMAIL]` (a dormant device, docs/sign-in.md).
+  - After `device revoke ID` of this device, its key is still in the system
+    key store (or key file). At a terminal it asks `Remove this device's key from
+    the system key store too? [y/N]`; otherwise it prints the manual step (on
+    macOS `security delete-generic-password -s clawbridge-device -a HOST/ID`).
+    Revoking another device never touches local keys.
   - `device add` is an invite link for another device of yours, good for 15
     minutes (`--expires` up to `24h`).
   - `device add --ci NAME --grant PROJECT=member --expires 30d` makes a CI

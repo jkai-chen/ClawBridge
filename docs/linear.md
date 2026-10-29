@@ -1301,9 +1301,8 @@ The TUI's Linear screen has the same view and changes (`R`; see the
     through `apply-leads`.
   - **Linear configuration:** a project's lead in a bound team, and the project membership Linear adds with it.
     Nothing at team or workspace scope.
-- **Nothing else uses the roles yet.** Trust by role for intake, issue subscribers,
-  project leads and dispatcher routing come later. Each is off until you turn
-  it on.
+- **Intake trusts by role** (below, [Issue intake](#issue-intake-v03)). Dispatcher
+  routing comes later. Each is off until you turn it on.
 
 ## Status policy (project owner only)
 
@@ -1998,6 +1997,14 @@ project's coordinator session, which then routes it.
   looked up among the linked teams' members through your Linear connection, `--linear-profile` if you have
   several; without `--confirm` it only shows who that is), or by Linear user ID. `trust remove` works the same way. ClawBridge reads who added the label, delegated the issue or wrote
   the mention from Linear's own history.
+- **Trust by team role.** Once the project owner sets the team roles (`linear roles set`), a signal is also trusted
+  when its author's mapped role is in the intake policy's `roles` **for the issue's own team**: lead and engineer by
+  default, or `clawbridge intake policy set --roles lead` for leads only. A reviewer is never trusted by role. At
+  each signal, ClawBridge also reads the author from Linear, at most 15 minutes old, and trusts them only as an
+  active, non-guest user. A failed read only notifies. A bot or app never counts. The poll's `trust` counts say how
+  each author was judged: `list`, `role`, `role_ineligible` or `role_unverified`.
+  A `roles` list stored before this check with any other name turns role trust off, and `intake policy show`
+  says so (`roles_note`); set it again with `intake policy set --roles`.
 - **A trusted person's own write through ClawBridge counts too.** On a hosted server with the ClawBridge app, an
   issue write through ClawBridge (`clawbridge linear update --add-label`, a comment) is made **as the app**
   ([Writes as the ClawBridge app](#writes-as-the-clawbridge-app-hosted-servers)), so Linear's history names the app,

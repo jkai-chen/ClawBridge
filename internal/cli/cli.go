@@ -575,7 +575,7 @@ flags:`)
 			// --mode is the global storage mode, so the policy's is --intake-mode.
 			stringArg("intake-mode", "off or notify (offer and auto are not available yet)")
 			f.Var(&repeatedIDs{}, "signals", "enabled signal S1–S5, repeatable; replaces the list")
-			f.Var(&repeatedIDs{}, "roles", "session role eligible for offers, repeatable; replaces the list")
+			f.Var(&repeatedIDs{}, "roles", "team roles whose people intake trusts for their teams' issues: lead and engineer (the default) or lead; repeatable, replaces the list")
 			f.Int("s5-calls-per-hour", 0, "Linear calls per hour the /mcp/intake proofs may spend")
 			f.Int("out-of-binding-limit", 0, "out-of-binding requests per hour that suspend an intake token")
 			f.Int("expected-revision", 0, "the policy revision you last read")

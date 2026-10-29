@@ -433,6 +433,7 @@ COMPOSE_PROJECT_NAME=clawbridge
 # CLAWBRIDGE_ISSUE_FAMILY_MOVE_PROVEN=1
 # CLAWBRIDGE_PROJECT_TEAM_ADD_PROVEN=1
 # CLAWBRIDGE_PROJECT_STATUS_DOMAIN_PROVEN=1
+# CLAWBRIDGE_PROJECT_PLAN_PROVEN=1
 ```
 
 Use a random hexadecimal password so it can be interpolated safely into the
@@ -570,12 +571,22 @@ CLAWBRIDGE_LINEAR_APP_TOKEN_KEY=<32 random bytes, base64>
   on a throwaway project, an add read back field by field shows the team added
   and the lead, members, status, dates and labels as they were. The write goes
   through the confirming person's own Linear profile, never the app.
+- **Project plans are off until proven.** Setting a Linear project's priority,
+  target date and start date (`linear project update --priority … --target-date …`,
+  see [Linear](../linear.md)) is refused with `project_plan_unproven` until the
+  server runs with `serve --project-plan-proven` or
+  `CLAWBRIDGE_PROJECT_PLAN_PROVEN=1` (the compose file passes it through). Set
+  it only after the plan probe: on a throwaway project, a plan read back shows
+  the fields as sent, and what Linear does with a date held at a quarter's
+  precision. The preview works without it, and the write goes through the
+  confirming person's own Linear profile, never the app.
 - **Which gates are on.** The project owner's `clawbridge doctor` reports them
   as `linear.proven_gates` ("Proven gates: issue_subscribers, issue_move (off:
-  project_flow, issue_family_move, project_team_add, project_status_domain)."), and the TUI's
-  Overview shows the same in two rows, Proven gates and Not proven. Both read
-  the project overview's `proven_gates`: the six gate names, each on or off,
-  and nothing else of the server's settings. Members don't see them.
+  project_flow, issue_family_move, project_team_add, project_status_domain,
+  project_plan)."), and the TUI's Overview shows the same in two rows, Proven
+  gates and Not proven. Both read the project overview's `proven_gates`: the
+  seven gate names, each on or off, and nothing else of the server's settings.
+  Members don't see them.
 - **Timeouts.** A write the server makes can take up to a minute, and it
   finishes even if the client disconnects. Keep the proxy and load-balancer
   timeouts for `/v1/execute` at 75 seconds or more.

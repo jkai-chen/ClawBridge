@@ -248,6 +248,7 @@ func Run(ctx context.Context, in Input, executor Executor) Report {
 		checkIssueWrites(ctx, wid, pid, in.IssueWrites, add)
 		checkLinearWrites(ctx, executor, wid, pid, add)
 		checkProjectTeamAdds(ctx, executor, wid, pid, add)
+		checkProjectPlans(ctx, executor, wid, pid, add)
 		if in.TeamsWithoutProject != nil {
 			checkTeamsWithoutProject(ctx, in.TeamsWithoutProject, wid, pid, add)
 		}
@@ -1685,6 +1686,68 @@ func checkProjectTeamAdds(ctx context.Context, executor Executor, wid, pid strin
 	check.Status = Warn
 	check.Message = fmt.Sprintf("%d team(s) added to Linear projects; Linear changed other fields with %d: %s.", added, changed, strings.Join(named, ", "))
 	check.Action = "Look at each project in Linear (ClawBridge sent only the team and never undoes what Linear changed), then the project owner runs `clawbridge linear writes --ack OPERATION_ID` for each."
+	add(check)
+}
+
+// checkProjectPlans counts the plans (priority and dates) set on Linear
+// projects (FR13) and warns of those Linear answered with other fields
+// changed, naming the operation and the fields, until each is
+// acknowledged: ClawBridge never undoes them, so a person looks. It reads
+// the overview.
+func checkProjectPlans(ctx context.Context, executor Executor, wid, pid string, add func(Check)) {
+	r, err := executor.Execute(ctx, bus.Request{Operation: "project_overview", Workspace: wid, Project: pid, Args: map[string]any{}})
+	m, _ := r.Data.(map[string]any)
+	plans, _ := m["project_plans"].(map[string]any)
+	if err != nil || plans == nil {
+		// An older server keeps no record of them.
+		return
+	}
+	count := func(v any) int {
+		switch n := v.(type) {
+		case int:
+			return n
+		case float64:
+			return int(n)
+		}
+		return 0
+	}
+	check := Check{ID: "linear.project_plans", Title: "Plans set on Linear projects", Status: Pass}
+	planned, changed := count(plans["planned"]), count(plans["with_changes"])
+	check.Message = fmt.Sprintf("%d project plan(s) set; none changed anything else.", planned)
+	if changed == 0 {
+		add(check)
+		return
+	}
+	var named []string
+	each := func(row map[string]any) {
+		if row["state"] != "accepted_with_changes" || row["acknowledged_at"] != nil {
+			return
+		}
+		var fields []string
+		switch list := row["changed"].(type) {
+		case []string:
+			fields = list
+		case []any:
+			for _, x := range list {
+				fields = append(fields, fmt.Sprint(x))
+			}
+		}
+		named = append(named, fmt.Sprintf("%v (%s)", row["operation_id"], strings.Join(fields, ", ")))
+	}
+	switch rows := plans["recent"].(type) {
+	case []map[string]any:
+		for _, row := range rows {
+			each(row)
+		}
+	case []any:
+		for _, raw := range rows {
+			row, _ := raw.(map[string]any)
+			each(row)
+		}
+	}
+	check.Status = Warn
+	check.Message = fmt.Sprintf("%d project plan(s) set; Linear changed other fields with %d: %s.", planned, changed, strings.Join(named, ", "))
+	check.Action = "Look at each project in Linear (ClawBridge sent only the plan fields and never undoes what Linear changed), then acknowledge each with `clawbridge linear writes --ack OPERATION_ID`."
 	add(check)
 }
 

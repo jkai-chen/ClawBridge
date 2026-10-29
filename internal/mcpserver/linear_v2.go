@@ -69,6 +69,7 @@ func boardSchemaV2(operation string) map[string]any {
 		props["parent_id"] = uuid(true)
 		props["assignee_id"] = uuid(true)
 		props["priority"] = map[string]any{"type": []string{"integer", "string"}, "description": "Linear priority: 0 none, 1 urgent, 2 high, 3 medium, 4 low; or the name (none, urgent, high, medium, low). Never put a priority in the title"}
+		props["due_date"] = map[string]any{"type": []string{"string", "null"}, "description": "the issue's due date, YYYY-MM-DD; null clears it"}
 		props["label_ids"] = map[string]any{"type": "array", "maxItems": 100, "uniqueItems": true, "items": uuid(false)}
 		if operation == "create" {
 			props["team_id"] = uuid(false)
@@ -108,6 +109,7 @@ func addTaskboardToolsV2(s *mcp.Server, b *binding, p TaskboardToolsV2) {
 	addProjectStatusToolsV2(s, b, p)
 	addIssueMoveToolV2(s, b, p)
 	addProjectTeamToolV2(s, b, p)
+	addProjectPlanToolV2(s, b, p)
 	for _, operation := range []string{"binding", "context", "issues", "issue", "create", "update", "comment", "labels", "members", "views", "relation_add", "relation_remove"} {
 		readOnly := operation != "create" && operation != "update" && operation != "comment" && operation != "relation_add" && operation != "relation_remove"
 		closed := false
@@ -313,6 +315,44 @@ func addProjectTeamToolV2(s *mcp.Server, b *binding, p TaskboardToolsV2) {
 		bounded, cancel := context.WithTimeout(ctx, linearboard.WriteTimeout)
 		defer cancel()
 		data, err := p.ExecuteV2(bounded, scope, "project_add_team", args)
+		if err != nil {
+			return nil, bus.Result{}, err
+		}
+		return nil, bus.Result{Source: "linear", Data: data}, nil
+	})
+}
+
+// projectPlanDescription says who sets a Linear project's priority and
+// dates and how a plan is confirmed (FR13).
+const projectPlanDescription = "Set a Linear project's priority, target date and start date (a project of the binding's project set), by UUID; only the fields you give are sent, nothing else changes. priority is 0-4 or a name (none, urgent, high, medium, low); target_date and start_date are YYYY-MM-DD, or null to clear; the start date may not come after the target date (the date you give against the one the project has). Set them after you evaluate the project (or your lane's part of it), and comment on the project or its tracking issue why. Without confirm it is a preview: each field's current and planned value, who confirms, and plan_sha256; it sends nothing. Who confirms: the project owner, a project lead or a team's lead in the team roles, each in their own terminal; the coordinator session inside its lane (while the dispatcher is on, a domain's coordinator too, for a project whose teams are all its lane's, as the server reads them); a session owned by a team's lead inside a lane holding that team. Everyone else previews and asks: the preview says ask (ask the project owner or a lead). To send it, repeat the call with the same operation_id, confirm: true and the preview's plan_sha256 as expected_plan_sha256; a project that changed since is refused. A date Linear holds as a month, quarter, half-year or year is refused: its precision is changed in Linear first. The server refuses every confirm with project_plan_unproven until its operator proves plans; the preview works. The project is read back before the plan is recorded: accepted, accepted_with_changes (changed names the other fields Linear changed; ClawBridge never undoes them), not_sent or uncertain. An uncertain plan is never sent again: read the project in Linear and tell the owner. Confirming your own preview is your decision, not a person's approval."
+
+// addProjectPlanToolV2 adds the tool that sets a project's plan fields.
+func addProjectPlanToolV2(s *mcp.Server, b *binding, p TaskboardToolsV2) {
+	pattern := `^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`
+	date := `^[0-9]{4}-[0-9]{2}-[0-9]{2}$`
+	schema := map[string]any{"type": "object", "additionalProperties": false, "properties": map[string]any{
+		"linear_project":       map[string]any{"type": "string", "pattern": pattern, "description": "The Linear project's UUID, one of the binding's projects"},
+		"priority":             map[string]any{"type": []string{"integer", "string"}, "description": "The project's priority: 0 none, 1 urgent, 2 high, 3 medium, 4 low; or the name"},
+		"target_date":          map[string]any{"type": []string{"string", "null"}, "pattern": date, "description": "The project's target date, YYYY-MM-DD; null clears it"},
+		"start_date":           map[string]any{"type": []string{"string", "null"}, "pattern": date, "description": "The project's start date, YYYY-MM-DD; null clears it"},
+		"operation_id":         map[string]any{"type": "string", "minLength": 1, "maxLength": 128, "pattern": `^[A-Za-z0-9._:-]+$`, "description": "The plan's durable identifier; the preview and its confirm use the same one"},
+		"confirm":              map[string]any{"type": "boolean", "description": "Send the plan; needs expected_plan_sha256 from the preview"},
+		"expected_plan_sha256": map[string]any{"type": "string", "pattern": `^[0-9a-f]{64}$`, "description": "The plan_sha256 the preview showed"},
+	}, "required": []string{"linear_project", "operation_id"}}
+	closed := false
+	mcp.AddTool(s, &mcp.Tool{
+		Name: "taskboard_project_plan_v2", InputSchema: schema, Description: projectPlanDescription,
+		Annotations: &mcp.ToolAnnotations{ReadOnlyHint: false, IdempotentHint: false, OpenWorldHint: &closed},
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, args map[string]any) (*mcp.CallToolResult, bus.Result, error) {
+		b.mu.Lock()
+		defer b.mu.Unlock()
+		scope := bus.Request{Workspace: b.workspace, Project: b.project, Session: b.session, Args: map[string]any{}}
+		if b.instance != "" {
+			scope.Args["instance"] = b.instance
+		}
+		bounded, cancel := context.WithTimeout(ctx, linearboard.WriteTimeout)
+		defer cancel()
+		data, err := p.ExecuteV2(bounded, scope, "project_plan", args)
 		if err != nil {
 			return nil, bus.Result{}, err
 		}

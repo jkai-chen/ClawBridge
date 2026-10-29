@@ -130,7 +130,9 @@ type providerV2 struct {
 	// naming the edge, so the board must confirm it by a read.
 	unconfirmedEdges bool
 	preflightErr     error
-	writeErr         error
+	// validatedDue records the due date each preflight saw.
+	validatedDue []linearprovider.Field[*string]
+	writeErr     error
 	// statuses, when set, are the workflow states Statuses answers.
 	statuses []linearprovider.Status
 	// tools counts every call that would be a Linear tool call.
@@ -234,8 +236,14 @@ func (p *providerV2) Members(_ context.Context, team string, _ linearprovider.Pa
 func (p *providerV2) Capabilities(context.Context) (linearprovider.Capabilities, error) {
 	return p.caps, nil
 }
-func (p *providerV2) ValidateCreateV2(linearprovider.CreateInputV2) error { return p.preflightErr }
-func (p *providerV2) ValidateUpdateV2(linearprovider.UpdateInputV2) error { return p.preflightErr }
+func (p *providerV2) ValidateCreateV2(in linearprovider.CreateInputV2) error {
+	p.validatedDue = append(p.validatedDue, in.DueDate)
+	return p.preflightErr
+}
+func (p *providerV2) ValidateUpdateV2(in linearprovider.UpdateInputV2) error {
+	p.validatedDue = append(p.validatedDue, in.DueDate)
+	return p.preflightErr
+}
 func (p *providerV2) CreateV2(_ context.Context, in linearprovider.CreateInputV2) (linearprovider.IssueV2, error) {
 	p.tools++
 	p.created = append(p.created, in)

@@ -509,3 +509,31 @@ func TestServeProjectTeamAddProven(t *testing.T) {
 		}
 	}
 }
+
+// FR13: a project plan is proven by the flag or the environment, off by
+// default, and independent of the team add.
+func TestServeProjectPlanProven(t *testing.T) {
+	base := []string{"--bootstrap-owner", "owner@example.test", "--auth", "device", "--public-origin", "https://cb.example.test"}
+	for name, c := range map[string]struct {
+		flag bool
+		env  string
+		want bool
+		err  bool
+	}{
+		"default": {}, "flag": {flag: true, want: true}, "env": {env: "1", want: true}, "env true": {env: "true", want: true}, "env off": {env: "0"}, "env bad": {env: "yes", err: true},
+	} {
+		args := append([]string{}, base...)
+		if c.flag {
+			args = append(args, "--project-plan-proven")
+		}
+		settings, err := ParseServe(args, func(k string) string {
+			if k == "CLAWBRIDGE_PROJECT_PLAN_PROVEN" {
+				return c.env
+			}
+			return ""
+		})
+		if (err != nil) != c.err || err == nil && (settings.ProjectPlanProven != c.want || settings.ProjectTeamAddProven) {
+			t.Errorf("%s: %v %v", name, settings.ProjectPlanProven, err)
+		}
+	}
+}

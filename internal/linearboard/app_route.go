@@ -241,6 +241,13 @@ func writeArgsV2(in WriteInputV2) map[string]any {
 			args[key] = field.Value
 		}
 	}
+	if in.DueDate.Present {
+		if in.DueDate.Value == nil {
+			args["due_date"] = nil
+		} else {
+			args["due_date"] = *in.DueDate.Value
+		}
+	}
 	if in.Priority != nil {
 		args["priority"] = *in.Priority
 	}

@@ -16,7 +16,7 @@ import (
 // would resolve a team's name itself.
 func linearProjectAddTeam(ctx context.Context, service *linearboard.Service, scope bus.Request, v linearFlags, project string) (any, error) {
 	if !linearprovider.ValidID(v.addTeam) {
-		return nil, errors.New("linear project update requires --add-team, the bound team's UUID; a team's name is never sent")
+		return nil, errors.New("linear project update requires --add-team, the bound team's UUID (a team's name is never sent), or plan fields: --priority, --target-date, --start-date, --clear-target-date or --clear-start-date")
 	}
 	if v.confirm != (v.expectedSHA != "") {
 		return nil, errors.New("--confirm goes with --expected-plan-sha256, the plan_sha256 the preview showed")

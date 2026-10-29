@@ -3,6 +3,7 @@ package mcpserver
 import (
 	"context"
 	"encoding/json"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -35,7 +36,7 @@ func TestLinearMCPV2InitializationGuidanceIsAdditiveWithoutIO(t *testing.T) {
 		}
 	}
 	tools, err := newSession.ListTools(ctx, nil)
-	if err != nil || len(tools.Tools) != 45 || v1.count() != 0 || v2.count() != 0 {
+	if err != nil || len(tools.Tools) != 46 || v1.count() != 0 || v2.count() != 0 {
 		t.Fatal("initialization/list changed tools or performed provider IO", err)
 	}
 }
@@ -44,7 +45,7 @@ func TestLinearMCPV2ClosedNullablePinnedTools(t *testing.T) {
 	p := &recordingBoardV2{recordingBoard: recordingBoard{data: map[string]any{"ok": true}}}
 	ctx, cs := boardSession(t, p)
 	listed, err := cs.ListTools(ctx, nil)
-	if err != nil || len(listed.Tools) != 45 || p.count() != 0 {
+	if err != nil || len(listed.Tools) != 46 || p.count() != 0 {
 		t.Fatalf("native list: %v %d calls=%d", err, len(listed.Tools), p.count())
 	}
 	tools := map[string]*mcp.Tool{}
@@ -61,8 +62,8 @@ func TestLinearMCPV2ClosedNullablePinnedTools(t *testing.T) {
 		{"binding", map[string]any{}, true}, {"context", map[string]any{}, true},
 		{"issues", map[string]any{"limit": 2, "cursor": "opaque", "label_id": id}, true},
 		{"issue", map[string]any{"id": id}, true},
-		{"create", map[string]any{"title": "new", "operation_id": "create", "team_id": id, "parent_id": nil, "assignee_id": nil, "priority": "high"}, false},
-		{"update", map[string]any{"id": id, "operation_id": "update", "project_id": nil, "parent_id": nil, "assignee_id": nil, "label_ids": []string{}, "expected_label_ids": []string{id}, "priority": 2}, false},
+		{"create", map[string]any{"title": "new", "operation_id": "create", "team_id": id, "parent_id": nil, "assignee_id": nil, "priority": "high", "due_date": "2026-11-14"}, false},
+		{"update", map[string]any{"id": id, "operation_id": "update", "project_id": nil, "parent_id": nil, "assignee_id": nil, "label_ids": []string{}, "expected_label_ids": []string{id}, "priority": 2, "due_date": nil}, false},
 		{"comment", map[string]any{"id": id, "body": "body", "operation_id": "comment"}, false},
 		{"labels", map[string]any{"team_id": id, "limit": 1}, true},
 		{"members", map[string]any{"team_id": id, "cursor": "opaque"}, true},
@@ -106,6 +107,28 @@ func TestLinearMCPV2ClosedNullablePinnedTools(t *testing.T) {
 	if update["priority"] != float64(2) || p.calls[4].args["priority"] != "high" {
 		t.Fatal("priority lost", update, p.calls[4].args)
 	}
+	if v, exists := update["due_date"]; !exists || v != nil {
+		t.Fatal("explicit null due_date lost", update)
+	}
+	if p.calls[4].args["due_date"] != "2026-11-14" {
+		t.Fatal("due_date lost", p.calls[4].args)
+	}
+	if _, exists := p.calls[6].args["due_date"]; exists {
+		t.Fatal("an absent due_date was invented", p.calls[6].args)
+	}
+	for _, op := range []string{"create", "update"} {
+		schema, _ := json.Marshal(tools["taskboard_"+op+"_v2"].InputSchema)
+		var decoded struct {
+			Properties map[string]map[string]any `json:"properties"`
+		}
+		if json.Unmarshal(schema, &decoded) != nil {
+			t.Fatal(op, string(schema))
+		}
+		due := decoded.Properties["due_date"]
+		if !reflect.DeepEqual(due["type"], []any{"string", "null"}) || !strings.Contains(due["description"].(string), "YYYY-MM-DD") {
+			t.Fatal(op, "schema lacks due_date:", string(schema))
+		}
+	}
 }
 
 func TestLinearMCPV2RejectsClosedSchemaBeforeAdapter(t *testing.T) {
@@ -127,6 +150,7 @@ func TestLinearMCPV2RejectsClosedSchemaBeforeAdapter(t *testing.T) {
 		{"create", map[string]any{"title": "x", "operation_id": "op", "label_ids": nil}},
 		{"create", map[string]any{"title": "x", "operation_id": "op", "label_ids": []string{id, id}}},
 		{"update", map[string]any{"id": id, "operation_id": "op", "state_id": nil}},
+		{"update", map[string]any{"id": id, "operation_id": "op", "due_date": 20261114}},
 		{"update", map[string]any{"id": id, "operation_id": "op", "team_id": id}},
 		{"update", map[string]any{"id": id, "operation_id": "op", "description": nil}},
 		{"update", map[string]any{"id": id, "operation_id": "op", "parent_id": "FJA-1"}},

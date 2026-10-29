@@ -44,6 +44,9 @@ type AppWriter struct {
 	// StatusLinear, when set, replaces the app's project status calls
 	// (tests).
 	StatusLinear projectStatusLinear
+	// PlanTeams reads a Linear project's teams for a domain coordinator's
+	// project plan; nil reads them through App (tests replace it).
+	PlanTeams func(ctx context.Context, lp string) ([]string, bool, error)
 
 	typesOnce sync.Once
 	types     *linearboard.StateTypeCache

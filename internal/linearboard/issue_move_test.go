@@ -210,7 +210,8 @@ func moveTest(t *testing.T) (*Service, *moveAuthority, *moveFake, bus.Request) {
 		{ID: moveBugB, Name: "Bug", TeamID: otherTeamID, EligibilityKnown: true},
 	}
 	two := 2
-	p.issues[issueID] = linearprovider.IssueV2{Issue: linearprovider.Issue{ID: issueID, Identifier: "OLD-1", TeamID: teamID, StateID: moveTodoA}, ProjectKnown: true, LabelNames: []string{"Bug"}, ParentKnown: true, AssigneeKnown: true, Priority: &two, PriorityKnown: true, CycleKnown: true, CycleSet: true, EstimateKnown: true, UpdatedAt: "2026-10-28T12:00:00.000Z"}
+	due := "2026-11-14"
+	p.issues[issueID] = linearprovider.IssueV2{Issue: linearprovider.Issue{ID: issueID, Identifier: "OLD-1", TeamID: teamID, StateID: moveTodoA}, ProjectKnown: true, LabelNames: []string{"Bug"}, ParentKnown: true, AssigneeKnown: true, Priority: &two, PriorityKnown: true, DueDate: &due, DueDateKnown: true, CycleKnown: true, CycleSet: true, EstimateKnown: true, UpdatedAt: "2026-10-28T12:00:00.000Z"}
 	f := &moveFake{providerV2: p}
 	auth := &moveAuthority{authorityV2: a}
 	s.cfg.Executor = auth
@@ -338,13 +339,16 @@ func TestMoveReadBackUncertain(t *testing.T) {
 		change func(*linearprovider.IssueV2)
 		field  string
 	}{
-		"labels":   {func(i *linearprovider.IssueV2) { i.LabelNames = nil }, "labels"},
-		"state":    {func(i *linearprovider.IssueV2) { i.StateID = moveBacklogB }, "state"},
-		"cycle":    {func(i *linearprovider.IssueV2) { i.CycleSet = true }, "cycle"},
-		"estimate": {func(i *linearprovider.IssueV2) { three := 3.0; i.Estimate = &three }, "estimate"},
-		"priority": {func(i *linearprovider.IssueV2) { one := 1; i.Priority = &one }, "priority"},
-		"team":     {func(i *linearprovider.IssueV2) { i.TeamID = teamID }, "team"},
-		"same id":  {func(i *linearprovider.IssueV2) { i.Identifier = "OLD-1" }, "identifier"},
+		"labels":           {func(i *linearprovider.IssueV2) { i.LabelNames = nil }, "labels"},
+		"state":            {func(i *linearprovider.IssueV2) { i.StateID = moveBacklogB }, "state"},
+		"cycle":            {func(i *linearprovider.IssueV2) { i.CycleSet = true }, "cycle"},
+		"estimate":         {func(i *linearprovider.IssueV2) { three := 3.0; i.Estimate = &three }, "estimate"},
+		"priority":         {func(i *linearprovider.IssueV2) { one := 1; i.Priority = &one }, "priority"},
+		"due date":         {func(i *linearprovider.IssueV2) { d := "2026-12-01"; i.DueDate = &d }, "due_date"},
+		"due date dropped": {func(i *linearprovider.IssueV2) { i.DueDate, i.DueDateKnown = nil, false }, "due_date"},
+		"due date cleared": {func(i *linearprovider.IssueV2) { i.DueDate = nil }, "due_date"},
+		"team":             {func(i *linearprovider.IssueV2) { i.TeamID = teamID }, "team"},
+		"same id":          {func(i *linearprovider.IssueV2) { i.Identifier = "OLD-1" }, "identifier"},
 	} {
 		s, a, p, scope := moveTest(t)
 		plan := s.previewMove(t, scope).Plan

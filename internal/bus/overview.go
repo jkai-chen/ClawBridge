@@ -116,6 +116,12 @@ func (s *Store) projectOverview(ctx context.Context, tx *transaction, w, p map[s
 	if err != nil {
 		return nil, err
 	}
+	// Plans set on projects, and how many came back with other fields
+	// changed (FR13).
+	plans, err := projectPlansView(ctx, tx, pid)
+	if err != nil {
+		return nil, err
+	}
 	// Every kind's Linear writes that may have happened (FR9). The same
 	// list stays under project_creates.unconfirmed for one release.
 	writes := map[string]any{"unconfirmed": creates["unconfirmed"], "keep_days": linearWriteKeepDays}
@@ -132,7 +138,7 @@ func (s *Store) projectOverview(ctx context.Context, tx *transaction, w, p map[s
 		return nil, err
 	}
 	out := map[string]any{"project": project, "coordinator": coord, "counts": counts, "sessions": rows,
-		"sessions_truncated": truncated, "linear": linear, "linear_writes": writes, "linear_budget": budget.view(), "project_creates": creates, "project_team_adds": teamAdds}
+		"sessions_truncated": truncated, "linear": linear, "linear_writes": writes, "linear_budget": budget.view(), "project_creates": creates, "project_team_adds": teamAdds, "project_plans": plans}
 	if role == "owner" {
 		if out["project_leads"], err = projectLeadCounts(ctx, tx, pid, now); err != nil {
 			return nil, err

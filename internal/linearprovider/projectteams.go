@@ -59,7 +59,7 @@ func (p *Provider) AddProjectTeam(ctx context.Context, project, team string) err
 // projectSnapshotFields are the project fields a team add must leave as
 // they were, each compared as Linear returned it. Teams, the lead and the
 // members are compared by ID.
-var projectSnapshotFields = []string{"status", "state", "startDate", "targetDate", "labels", "priority", "name"}
+var projectSnapshotFields = []string{"status", "state", "startDate", "targetDate", "startDateResolution", "targetDateResolution", "labels", "priority", "name"}
 
 // ProjectSnapshot is a project as get_project gives it, for comparing a
 // team add's before and after. Member IDs are only ever compared, never

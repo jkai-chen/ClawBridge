@@ -311,6 +311,13 @@ one. An `accepted_with_changes` outcome names fields Linear changed besides the
 teams: tell the owner. An `uncertain` one is never sent again: read the project
 in Linear and tell the owner.
 
+A project's priority, target date and start date are set with
+`taskboard_project_plan_v2` (preview first, then confirm with its
+`plan_sha256`). Only the coordinator inside its lane (while the dispatcher is
+on, a domain's coordinator too, for a project whose teams are all its lane's),
+or a session owned by a team's lead inside a lane holding that team, confirms;
+every other session previews and asks the project owner or a lead.
+
 Write Linear text without mentions: name people and agents in plain words, never
 as `@name`, `@Linear` or a profile link. ClawBridge refuses a title,
 description or comment that does, even inside code: write scoped packages
@@ -367,6 +374,14 @@ issue before relying on them.
 Set an issue's priority with `priority` on create or update (`linear create|update
 --priority`, or the `priority` field of the create and update tools): `none`,
 `urgent`, `high`, `medium`, `low`, or 0–4. Never put a priority in the title.
+
+Set its due date with `due_date` on create or update (`linear create|update
+--due-date YYYY-MM-DD`, `--clear-due-date` to clear on an update; `due_date`
+null on the update tool). After you evaluate your part of an issue, set its due
+date if you can commit to one (`due_date`), and say why in a comment. Don't set
+one you haven't evaluated, and don't move someone else's without asking. A
+server that can't set a due date refuses the write and sends nothing; a date
+Linear doesn't confirm makes the write uncertain, so read the issue back.
 
 Set a human assignee only when explicitly requested and verified as an eligible
 team member. That assignment does not replace the coordinator's Current agent

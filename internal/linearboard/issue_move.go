@@ -635,7 +635,17 @@ func moveReadBackV2(plan MovePlanV2, moved, back linearprovider.IssueV2) []strin
 	if was.PriorityKnown && (!back.PriorityKnown || *back.Priority != *was.Priority) {
 		off = append(off, "priority")
 	}
+	if was.DueDateKnown && (!back.DueDateKnown || derefDate(back.DueDate) != derefDate(was.DueDate)) {
+		off = append(off, "due_date")
+	}
 	return off
+}
+
+func derefDate(s *string) string {
+	if s == nil {
+		return ""
+	}
+	return *s
 }
 
 func deref(f *float64) float64 {

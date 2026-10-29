@@ -285,26 +285,36 @@ func (s *Store) ackProjectCreate(ctx context.Context, tx *transaction, wid, pid,
 	if r.Session != "" {
 		return nil, scoped("a session can't acknowledge a Linear write; the project owner, or the project lead who confirmed it, does, in their own terminal", "forbidden")
 	}
-	if projectRole != "owner" && projectRole != "lead" {
+	if projectRole == "reader" {
 		return nil, scoped("project owner permission required, or the project lead who confirmed the write", "forbidden")
 	}
 	if s.postgres && (s.identity == nil || s.identity.Issuer != DeviceIssuer || principal.CI(s.principal)) {
 		return nil, scoped("a Linear write is acknowledged only from a person's own signed-in device", "forbidden")
 	}
 	op := str(r.Args, "operation_id")
-	open := `project_id=? AND operation_id=? AND (state IN ('reserved','uncertain') OR (kind=? AND state='accepted' AND detail LIKE ?)) AND acknowledged_at IS NULL`
-	found, err := query(ctx, tx, `SELECT * FROM linear_write_reservations WHERE `+open, pid, op, projectTeamAddKind, `%"changed":[%`)
+	open := `project_id=? AND operation_id=? AND (state IN ('reserved','uncertain') OR (kind IN (?,?) AND state='accepted' AND detail LIKE ?)) AND acknowledged_at IS NULL`
+	found, err := query(ctx, tx, `SELECT * FROM linear_write_reservations WHERE `+open, pid, op, projectTeamAddKind, projectPlanKind, `%"changed":[%`)
 	if err != nil {
 		return nil, err
 	}
 	if len(found) != 1 {
+		// A member who isn't a lead learns nothing of other writes: the
+		// refusal is the one before FR13 let a team's lead acknowledge.
+		if projectRole != "owner" && projectRole != "lead" {
+			return nil, scoped("project owner permission required, or the project lead who confirmed the write", "forbidden")
+		}
 		return nil, &serviceError{code: "not_found", cause: errors.New("the project has no unacknowledged, unsettled Linear write, or team add Linear answered with other changes, with that operation_id"), public: true}
 	}
 	row := found[0]
 	// The project owner acknowledges any write; a project lead only one
 	// they confirmed themselves, as a lead. A coordinator's write is the
-	// owner's to acknowledge.
-	if projectRole != "owner" && (str(row, "by_role") != "lead" || str(row, "principal") != s.principal) {
+	// owner's to acknowledge. A project plan (FR13) a team's lead confirmed,
+	// in their terminal or from a session they own, is also that lead's to
+	// acknowledge, in their own terminal (a session never acknowledges).
+	if projectRole != "owner" && !ownAck(row, projectRole, s.principal) {
+		if projectRole != "lead" {
+			return nil, scoped("project owner permission required, or the project lead who confirmed the write", "forbidden")
+		}
 		return nil, scoped("only the project owner, or the project lead who confirmed this write, acknowledges it", "forbidden")
 	}
 	// A family's operation acknowledges its children too, those still
@@ -317,7 +327,7 @@ func (s *Store) ackProjectCreate(ctx context.Context, tx *transaction, wid, pid,
 			if child == "" {
 				continue
 			}
-			c, err := query(ctx, tx, `SELECT operation_id FROM linear_write_reservations WHERE `+open+` AND kind=?`, pid, childOperation(op, child), projectTeamAddKind, `%"changed":[%`, issueMoveChildKind)
+			c, err := query(ctx, tx, `SELECT operation_id FROM linear_write_reservations WHERE `+open+` AND kind=?`, pid, childOperation(op, child), projectTeamAddKind, projectPlanKind, `%"changed":[%`, issueMoveChildKind)
 			if err != nil {
 				return nil, err
 			}
@@ -340,6 +350,24 @@ func (s *Store) ackProjectCreate(ctx context.Context, tx *transaction, wid, pid,
 	}
 	view["acknowledged"] = ops
 	return view, nil
+}
+
+// ownAck reports whether a caller who isn't the owner may acknowledge row
+// as its confirmer: a project lead their own lead (or FR13 project_lead)
+// row, and a team's lead their own project plan.
+func ownAck(row map[string]any, projectRole, who string) bool {
+	if str(row, "principal") != who {
+		return false
+	}
+	switch str(row, "by_role") {
+	case "lead":
+		return projectRole == "lead"
+	case "project_lead":
+		return projectRole == "lead" && str(row, "kind") == projectPlanKind
+	case "team_lead", "team_lead_session":
+		return str(row, "kind") == projectPlanKind
+	}
+	return false
 }
 
 // tellStaleProjectCreates tells the owner's sessions, once, of each

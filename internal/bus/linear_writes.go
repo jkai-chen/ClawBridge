@@ -35,11 +35,14 @@ var linearWriteKinds = map[string][]string{
 	"issue_move":       {"from_team", "old_identifier", "children"},
 	"issue_move_child": {"parent", "from_team", "old_identifier"},
 	"project_team_add": {"changed", "unverified"},
+	"project_plan":     {"fields", "changed"},
 }
 
 // linearWriteRoles is who may make a recorded write. team_lead is a bound
-// team's lead in the team roles, adding that team to a project (FR10).
-var linearWriteRoles = []string{"owner", "lead", "coordinator", "team_lead"}
+// team's lead in the team roles, adding that team to a project (FR10) or
+// setting a project's plan (FR13). project_lead and team_lead_session are
+// FR13's: a project-role lead, and a session a team's lead owns.
+var linearWriteRoles = []string{"owner", "lead", "coordinator", "team_lead", "project_lead", "team_lead_session"}
 
 const (
 	// linearWriteStale is how long a reservation may stay unsettled before

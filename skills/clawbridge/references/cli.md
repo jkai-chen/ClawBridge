@@ -160,6 +160,10 @@ On Windows the hooks are written in Claude Code's exec form (`command` plus
 `args`, no shell), pending the Windows probe; `clawbridge doctor` shows the hook
 form and the Claude Code version.
 
+## Updating ClawBridge
+
+Run `clawbridge self-update --check` to see whether an update exists and tell your human. Never upgrade ClawBridge yourself: `clawbridge self-update` is a person's decision, and it refuses in an agent's shell.
+
 ## Notification and host capabilities
 
 Check installed command help before using source-only additions. On matching

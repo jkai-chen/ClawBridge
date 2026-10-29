@@ -51,6 +51,7 @@ Commands: setup --local, project create SLUG, register [NAME], sessions, send TO
           runner launch ISSUE_UUID --profile ID [--role ROLE] [--dry-run], runner gc [--confirm] (Claude in an Orca terminal),
           mcp [--linear-profile ID], mcp install ... [--linear-profile ID] (opt-in native Linear tools),
           skill install|status|uninstall [--agent claude-code|codex|all] [--dir SKILLS_DIR] [--force],
+          self-update [--check] [--version vX.Y.Z] [--verify-attestation] [--no-skill] (alias upgrade; replaces this binary with a release),
           serve, operator principal-unbind|workspace-clear-domains ... --confirm (on the server host),
           sync, purge-expired, principal-unbind EMAIL --confirm [--allow-previous],
           outbox list [--dead] | flush | retry ID | drop ID --confirm drop (writes waiting on this machine),
@@ -234,6 +235,11 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	// route is resolved.
 	if len(args) > 0 && args[0] == "skill" {
 		return skill.RunWithIO(args[1:], stdout, stderr)
+	}
+	// self-update needs no profile and no sign-in; it runs before any route
+	// or outbox is resolved.
+	if len(args) > 0 && (args[0] == "self-update" || args[0] == "upgrade") {
+		return runSelfUpdate(ctx, args[1:], stdout, stderr)
 	}
 	if len(args) == 1 && (args[0] == "--help" || args[0] == "help" || args[0] == "-h") {
 		_, err := io.WriteString(stdout, Usage)

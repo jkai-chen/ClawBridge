@@ -84,6 +84,18 @@
   needs-agent set, and every page is charged. A large binding's intake drops from about 14 s to about 1 s. If Linear
   refuses the set's filter, S1 reads one query per label for the rest of that pass. Linear config scope: none.
 
+## Install and upgrade
+
+- **`clawbridge self-update` (alias `upgrade`) (FR12).** Replaces the running binary with a GitHub release, with the
+  installers' checks (the release's `SHA256SUMS` lists the asset once and the download matches it; the new binary
+  reports the release's version before it replaces anything), then re-runs `skill install` with the new binary
+  (`--no-skill` skips it). `--check` reports the plan and changes nothing, and an agent may run it; `--version vX.Y.Z`
+  is the only way to an older release; `--verify-attestation` or `CLAWBRIDGE_VERIFY=required` checks the build
+  provenance with `gh`. In an agent's shell it refuses without a terminal, and at one asks the person to type the
+  version. It needs no profile or sign-in, and tells you when your hosted server runs an older release than the
+  client now does. Windows renames the old binary aside. Running `clawbridge mcp` servers keep the old version until
+  their session restarts (docs/installation.md, "Upgrade"). Linear config scope: none.
+
 # ClawBridge v0.3.9.1 (server hotfix, deployed 29 Oct; no client release or tag)
 
 A server-only hotfix to v0.3.9: no schema change and no client change.

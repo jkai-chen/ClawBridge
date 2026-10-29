@@ -15,6 +15,8 @@ clawbridge --version
 clawbridge
 ```
 
+Already installed? Upgrade with `clawbridge self-update` (see [Upgrade](#upgrade)).
+
 To pin the installer and binary version:
 
 ```sh
@@ -64,6 +66,7 @@ Use `-Version vX.Y.Z` for an explicit binary version or `-InstallDir 'C:\absolut
 for a different directory; add them after the script path. Default is
 `%LOCALAPPDATA%\Programs\ClawBridge`. As on macOS and Linux, the installer then runs
 `clawbridge skill install` once, a failure only warns, and `-NoSkill` skips it.
+Once installed, `clawbridge self-update` upgrades it in place (see [Upgrade](#upgrade)).
 
 Unlike the macOS and Linux installer, the Windows installer adds its directory to
 your **user** PATH (`HKCU\Environment\Path`), so new terminals find
@@ -148,6 +151,52 @@ release approval are for.
 
 `clawbridge version` and `clawbridge --version` print JSON with version, commit and
 build timestamp without loading app state. Source builds use dev/unknown defaults.
+
+## Upgrade
+
+`clawbridge self-update` (alias `clawbridge upgrade`) replaces the running binary with a
+GitHub release, with the installers' checks: the release's `SHA256SUMS` must list the
+asset exactly once and the download must match it, and the new binary must report the
+release's version before it replaces anything. It keeps your saved route, database,
+cache and native credentials, signs in to nothing, and needs no profile.
+
+```sh
+clawbridge self-update --check     # reports the running and latest versions; changes nothing
+clawbridge self-update             # upgrade to the latest release
+clawbridge self-update --version vX.Y.Z
+```
+
+- **`--check`** prints the plan as JSON and one line on stderr: an update is available,
+  you are up to date, the latest is older than the running version, or this is a
+  development build. It exits 0 for all four and reads only the latest-release redirect.
+- **Downgrades.** The command never installs an older release by itself. Naming one with
+  `--version vX.Y.Z` is the explicit consent; without it, a latest release older than the
+  running version is refused. A development build must name its release with `--version`.
+- **Attestation.** `--verify-attestation`, or `CLAWBRIDGE_VERIFY=required` as for the
+  installers, also runs `gh attestation verify` on the download; `gh` must be on PATH and
+  signed in, and a binary that fails is not installed. Without it the output says
+  `build provenance: not checked`.
+- **The skill.** Afterwards the new binary runs `clawbridge skill install`; a failure only
+  warns. `--no-skill` skips it.
+- **Agent shells.** Upgrading is a person's decision. When an agent's environment
+  (`CLAUDECODE`, `CODEX_*`, `CLAWBRIDGE_SESSION`, `CLAWBRIDGE_INSTANCE`) is set, the
+  command refuses without a terminal, so an agent's own tool call changes nothing and
+  downloads nothing; at a terminal you type the target version to confirm. In your own
+  terminal there is no prompt. `--check` stays allowed everywhere, so an agent can tell
+  you an update exists.
+- **Where it writes.** The binary it replaces, in place, via a temporary file in the same
+  directory. A binary in a directory you cannot write (a package manager's, root-owned)
+  is refused with nothing changed; reinstall with the install script, or run the command
+  where you can write. It never uses sudo.
+- **Windows.** A running `.exe` cannot be overwritten but can be renamed: the old binary
+  is renamed aside (`clawbridge-previous-<random>.exe.old`, in `%TEMP%` when that is on the
+  same volume, otherwise beside the binary) and the new one takes its name; if the second
+  rename fails, the first is undone. The old file stays while any `clawbridge` process
+  still runs it, and later runs delete the leftovers.
+- **Running agents.** An agent's running MCP server (`clawbridge mcp`) keeps the old
+  version until its session restarts. When you use a hosted server, the command also says
+  if the server runs an older release than the client now does; `clawbridge doctor`
+  compares them.
 
 ## Agent skill
 

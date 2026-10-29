@@ -27,6 +27,8 @@ For Windows PowerShell, pinned versions and source builds, see the
 [installation guide](docs/installation.md). Installers verify release checksums
 and preserve application state. Binaries are unsigned.
 
+Already installed? `clawbridge self-update --check` says whether a newer release exists, and `clawbridge self-update` upgrades in place ([Upgrade](docs/installation.md#upgrade)).
+
 ## Start
 
 Run `clawbridge` in a terminal. With a saved profile it opens the overview;

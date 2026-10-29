@@ -46,7 +46,9 @@ revoked role's or a revoked device's never go. To see the project's whole queue
 Start from the issue assigned by the human or coordinator. Read its description,
 acceptance criteria, parent/sub-issues, dependencies, related issues and relevant
 decisions. Resolve the canonical issue UUID and authorized Linear workspace;
-display identifiers such as ENG-123 can change when an issue moves teams (see
+`linear issue ENG-123` and `taskboard_issue_v2 {id: "ENG-123"}` read by identifier, resolved by a Linear
+read and refused when Linear now returns another identifier (use that one, or the UUID); writes take the UUID.
+Display identifiers such as ENG-123 can change when an issue moves teams (see
 "Change issue structure"; claims and intake follow the new identifier).
 Check the configured team and project separately: a team is not a project, and
 a project can span multiple teams. An explicitly linked team board may have no
@@ -93,7 +95,8 @@ Keep host thread UUIDs, instance tokens and executable routes in the local host
 configuration, outside this public-to-team assignment block.
 
 After checking `whoami`, record your assignment with `assignment_propose`: the
-issue UUID and display identifier, your task role, and the owned scope as the
+issue UUID and display identifier (the identifier alone is enough where this server has a Linear
+connection: it is resolved to the UUID, and a stale one is refused), your task role, and the owned scope as the
 repository (`scope_repo`) and path patterns (`scope_paths`, such as
 `internal/notify/**`). A pattern covers what it matches and everything beneath
 it. Then send the coordinator a message with structured `coordination`

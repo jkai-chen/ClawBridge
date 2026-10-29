@@ -83,6 +83,8 @@ Assignments from the CLI:
 
 ```sh
 clawbridge --session reviewer --instance INSTANCE assignment propose --issue-uuid ISSUE_UUID --issue-identifier ABC-12 --task-role reviewer --scope-path 'internal/notify/**'
+# or only the identifier, resolved by a Linear read (refused when stale):
+clawbridge --linear-profile PROFILE_ID --session reviewer --instance INSTANCE assignment propose --issue-identifier ABC-12 --task-role reviewer
 clawbridge --session coord --instance INSTANCE assignment confirm reviewer --revision REVISION
 clawbridge sessions --issue ABC-12
 clawbridge sessions --scope-path internal/notify/watch.go --assignment-state confirmed

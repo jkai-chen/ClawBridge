@@ -41,7 +41,7 @@ Commands: setup --local, project create SLUG, register [NAME], sessions, send TO
           retire [--target-session S] [--successor S --status moved] [--outcome done | --confirm], history, whoami, status ID,
           notification-status [--after N], notification-policy --policy accept|hold|refuse,
           deadletters list [--target-session NAME|@all], deadletters requeue|dismiss MESSAGE_ID [--target-session NAME],
-          assignment propose [--issue-uuid UUID --issue-identifier ID] [--task-role ROLE] [--scope-repo REMOTE] [--scope-path PATTERN]...,
+          assignment propose [--issue-uuid UUID] [--issue-identifier ID] [--task-role ROLE] [--scope-repo REMOTE] [--scope-path PATTERN]...,
           assignment confirm TARGET_SESSION --revision REV [--allow-overlap], assignment release [TARGET_SESSION] --revision REV,
           project coordinator-set SESSION, project coordinator-clear,
           sessions [--issue ID] [--scope-path PATH] [--assignment-state proposed|confirmed],
@@ -735,8 +735,8 @@ flags:`)
 		switch rest[0] {
 		case "propose":
 			op = "assignment_propose"
-			stringArg("issue-uuid", "Linear issue UUID")
-			stringArg("issue-identifier", "Linear display identifier, such as ABC-12")
+			stringArg("issue-uuid", "Linear issue UUID; with it no Linear read is made")
+			stringArg("issue-identifier", "Linear display identifier, such as ABC-12; without --issue-uuid it is resolved by a Linear read (needs --linear-profile) and refused when stale")
 			stringArg("task-role", "task role, such as engineer or reviewer")
 			stringArg("scope-repo", "git remote of the owned repository")
 			f.Var(&repeatedIDs{}, "scope-path", "owned path pattern, repeatable (internal/bus/**, docs/*.md)")
@@ -1227,6 +1227,11 @@ flags:`)
 		// that email, when there is one; --principal overrides it.
 		if op == "intake_trust_add" && a["principal"] == nil && member.Email != "" && strings.EqualFold(who, member.Email) {
 			a["link_email"] = who
+		}
+	}
+	if op == "assignment_propose" {
+		if e := resolveProposeIssue(ctx, config, executor, a); e != nil {
+			return e
 		}
 	}
 	// G9 F2: an intake token goes to this terminal or a new file, decided

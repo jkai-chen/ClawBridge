@@ -402,6 +402,8 @@ clawbridge --session eng --instance eng-1 assignment propose \
 ```
 
 - **Without a board:** any UUID and label you choose will do.
+- **With a Linear profile**, `--issue-identifier SHOP-1` alone works: add `--linear-profile PROFILE_ID`
+  and it is read from Linear and sent with its UUID (refused when stale). Give `--issue-uuid` to skip that read.
 - **With a Linear board:** use the issue's own UUID and identifier, from `clawbridge
   linear issues --profile PROFILE_ID` (see [Linear](linear.md)).
 

@@ -711,7 +711,10 @@ func parseLinear(command string, args []string, stderr io.Writer) (linearFlags, 
 			return v, nil, errors.New("linear project update adds a team (--add-team) or sets plan fields (--priority, --target-date, --start-date), never both in one call")
 		}
 	}
-	if min > 0 && command != "label" && command != "project" && command != "initiative" && !linearprovider.ValidID(pos[0]) {
+	if min > 0 && command == "issue" && !linearprovider.ValidID(pos[0]) && !linearprovider.ValidIssueIdentifier(pos[0]) {
+		return v, nil, errors.New("issue requires its UUID or an identifier like ENG-88")
+	}
+	if min > 0 && command != "issue" && command != "label" && command != "project" && command != "initiative" && !linearprovider.ValidID(pos[0]) {
 		if command == "project-update" {
 			return v, nil, errors.New("linear project update requires the Linear project's UUID, never its name")
 		}
@@ -1781,4 +1784,44 @@ func linearWritesView(ctx context.Context, service *linearboard.Service, scope b
 		out[k] = v
 	}
 	return out, nil
+}
+
+// resolveProposeIssue lets `assignment propose --issue-identifier ENG-88` stand
+// alone: with no --issue-uuid it resolves the identifier by an authoritative
+// Linear read under the project's binding, then sends both the UUID and the
+// current identifier. With --issue-uuid it does nothing, so no Linear call.
+func resolveProposeIssue(ctx context.Context, config Config, executor linearboard.Executor, a map[string]any) error {
+	identifier, _ := a["issue_identifier"].(string)
+	if uuid, _ := a["issue_uuid"].(string); uuid != "" || identifier == "" {
+		return nil
+	}
+	if !linearprovider.ValidIssueIdentifier(identifier) {
+		return errors.New("--issue-identifier must look like ENG-88")
+	}
+	if config.LinearProfile == "" || !validLinearProfile(config.LinearProfile) {
+		return errors.New("resolving --issue-identifier reads Linear: pass --linear-profile, or pass --issue-uuid")
+	}
+	id, current, err := resolveIssueIdentifier(ctx, config, executor, identifier)
+	if err != nil {
+		return err
+	}
+	a["issue_uuid"], a["issue_identifier"] = id, current
+	return nil
+}
+
+// resolveIssueIdentifier is the authoritative Linear read behind an identifier
+// given to the CLI; tests replace it with a fake that counts its calls.
+var resolveIssueIdentifier = func(ctx context.Context, config Config, executor linearboard.Executor, identifier string) (string, string, error) {
+	directory, err := linearDirectory()
+	if err != nil {
+		return "", "", err
+	}
+	bounded, cancel := context.WithTimeout(ctx, 45*time.Second)
+	defer cancel()
+	service := newLinearService(directory, config.LinearProfile, newLinearManager(directory), executor, linearAuthority(config))
+	scope := bus.Request{Workspace: config.Workspace, Project: config.Project, Session: config.Session, Args: map[string]any{}}
+	if config.Instance != "" {
+		scope.Args["instance"] = config.Instance
+	}
+	return service.IssueRef(bounded, scope, identifier)
 }

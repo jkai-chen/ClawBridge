@@ -47,6 +47,13 @@
   can't set one, and the returned issue is checked: another date, or none reported, makes the write uncertain
   (`receipt_mismatch`). An issue move now also settles uncertain when the read-back loses a due date the issue had.
   No schema change. Linear config scope: none (issue data).
+- **`linear issue` and `assignment propose` take an issue identifier such as `ENG-88`.** `linear issue ENG-88`
+  (with `--resolve-labels`, `--comments`, `--comments-since`; MCP `taskboard_issue_v2`'s `id`) resolves the
+  identifier by an authoritative Linear read under the binding, and refuses a stale one ("ENG-88 now resolves to
+  OPS-5; use that identifier or the UUID") or one outside the binding. `assignment propose --issue-identifier ENG-88`
+  (with `--linear-profile`, no `--issue-uuid`; MCP `assignment_propose` where the server has a Linear connection)
+  sends both the UUID and the current identifier; with `--issue-uuid` no Linear read is made. Writes still take the
+  UUID. No schema change. Linear config scope: none.
 - **Linear projects take a priority, target date and start date (FR13).** `linear project update PROJECT_UUID` takes
   `--priority`, `--target-date YYYY-MM-DD` or `--clear-target-date`, and `--start-date YYYY-MM-DD` or
   `--clear-start-date`, with an `--operation-id`; agents use `taskboard_project_plan_v2`. A call adds a team or sets

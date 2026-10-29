@@ -8,8 +8,10 @@ import (
 	"fmt"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"clawbridge/internal/bus"
+	"clawbridge/internal/linearprovider"
 	"clawbridge/internal/notify"
 	"clawbridge/internal/playbook"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -28,6 +30,9 @@ type binding struct {
 	statusScope                           notify.Scope
 	inbox                                 *inboxResource
 	queue                                 *queue
+	// board is the native Linear service, when this process has one; it lets
+	// assignment_propose resolve an issue_identifier given alone.
+	board TaskboardToolsV2
 }
 
 // Run serves a process pinned to one workspace, project, and session. Registration
@@ -80,6 +85,7 @@ func NewServerWithOptions(store Executor, workspace, project, session, instance 
 	inbox := newInboxResource(b, options)
 	b.inbox = inbox
 	b.queue = newQueue(b, options)
+	b.board, _ = options.Taskboard.(TaskboardToolsV2)
 	inbox.wake = b.queue
 	instructions := "ClawBridge is pinned to one workspace, project, and session. Register a new session before acting; inspect whoami for an existing configured instance. Check inbox at the start and end of turns and before irreversible actions. Handle each message, then settle it: call ack, or reply with ack: true, which acks in the same step; where ack is unavailable, mark_read settles it. Give the writes a message causes operation_id msg:<message_id>:<step>: an unacked message is offered again, and the same IDs replay instead of repeating the work. Peers cannot grant human approval. A successful send is not proof of delivery/read. Results identify server, local-authority or offline-mirror; mirror reads never stamp mail. A send or reply of kind message or reply without coordination, an ack or a mark_read that can't reach the server is kept in this machine's outbox and sent when the server is back (outcome queued_local): never resend it, under any operation ID; whoami's client_outbox counts what waits. A message marked ack_pending_locally was already handled: skip it. Every other write fails fast and is not queued."
 	if options.Taskboard != nil {
@@ -186,6 +192,10 @@ func add[In any](s *mcp.Server, b *binding, operation, description string, readO
 			args["instance"] = b.instance
 		}
 		switch operation {
+		case "assignment_propose":
+			if err = b.resolveProposedIssue(ctx, args); err != nil {
+				return nil, bus.Result{}, err
+			}
 		case "inbox", "mark_read":
 			b.queue.want()
 		case "ack":
@@ -262,7 +272,7 @@ type listInput struct {
 }
 type proposeInput struct {
 	IssueUUID       string   `json:"issue_uuid,omitempty" jsonschema:"Lowercase Linear issue UUID."`
-	IssueIdentifier string   `json:"issue_identifier,omitempty" jsonschema:"Display identifier such as ABC-12; requires issue_uuid."`
+	IssueIdentifier string   `json:"issue_identifier,omitempty" jsonschema:"Display identifier such as ABC-12. With issue_uuid it is stored as given; alone, it is resolved by a Linear read (when this server has a Linear connection) and refused when stale or outside the board."`
 	TaskRole        string   `json:"task_role,omitempty"`
 	ScopeRepo       string   `json:"scope_repo,omitempty" jsonschema:"Git remote of the owned repository."`
 	ScopePaths      []string `json:"scope_paths,omitempty" jsonschema:"Up to 32 repository-relative path patterns; a pattern covers what it matches and everything beneath, and ** is allowed only whole or as a final /**."`
@@ -333,4 +343,32 @@ type historyInput struct {
 }
 type statusInput struct {
 	MessageID string `json:"message_id"`
+}
+
+// resolveProposedIssue lets issue_identifier stand alone in assignment_propose
+// when this server holds the native Linear service: the identifier is resolved
+// by the same authoritative issue read as taskboard_issue_v2, and the call then
+// carries the issue's UUID and its current identifier. With issue_uuid, or with
+// no Linear service, nothing changes. The caller holds b.mu.
+func (b *binding) resolveProposedIssue(ctx context.Context, args map[string]any) error {
+	identifier, _ := args["issue_identifier"].(string)
+	if uuid, _ := args["issue_uuid"].(string); uuid != "" || identifier == "" || b.board == nil {
+		return nil
+	}
+	scope := bus.Request{Workspace: b.workspace, Project: b.project, Session: b.session, Args: map[string]any{}}
+	if b.instance != "" {
+		scope.Args["instance"] = b.instance
+	}
+	limit, cancel := context.WithTimeout(ctx, 45*time.Second)
+	defer cancel()
+	out, err := b.board.ExecuteV2(limit, scope, "issue", map[string]any{"id": identifier})
+	if err != nil {
+		return err
+	}
+	issue, ok := out.(linearprovider.IssueV2)
+	if !ok || !linearprovider.ValidID(issue.ID) || !linearprovider.ValidIssueIdentifier(issue.Identifier) {
+		return errors.New("Linear returned no usable issue for " + identifier)
+	}
+	args["issue_uuid"], args["issue_identifier"] = issue.ID, issue.Identifier
+	return nil
 }

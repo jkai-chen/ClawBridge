@@ -271,3 +271,50 @@ func TestPostgresModelCaseLeaseOnce(t *testing.T) {
 		exec(`UPDATE dispatcher_cases SET closed_at=$1,outcome='abstain' WHERE id=$2`, now, id)
 	}
 }
+
+// R142-L6: a key-holder who is no longer an owner can still delete their
+// own key, as a member or a reader, and only their own; setup, status and
+// doctor stay the owner's.
+func TestPostgresModelKeyDeleteOwn(t *testing.T) {
+	f := newPGIdentityFixture(t)
+	ctx := context.Background()
+	seal, _ := NewModelSeal(bytes.Repeat([]byte{6}, 32), nil)
+	f.s.SetModelSeal(seal)
+	setup := func(principal, subject string) (Result, error) {
+		return f.as(principal, subject, Request{Operation: "dispatcher_model_setup", Workspace: f.workspace, Project: "p", Args: map[string]any{"provider_id": "anthropic", "api": "anthropic-messages", "base_url": "https://api.anthropic.com", "model": "claude-test", "key": "sk-" + subject + "-000000000000", "caps": map[string]any{"daily_tokens": 500000}, "egress_text_version": "v2", "egress_confirmed": true}})
+	}
+	keys := func(principal string) int {
+		var n int
+		if err := f.s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM dispatcher_model_keys WHERE owner_principal=$1`, principal).Scan(&n); err != nil {
+			t.Fatal(err)
+		}
+		return n
+	}
+	former := newID("o") + "@identity-test.example"
+	f.must(f.owner, "sub-owner", Request{Operation: "project_role_set", Workspace: f.workspace, Project: "p", Args: map[string]any{"principal": former, "role": "owner"}})
+	for _, who := range []struct{ principal, subject string }{{f.owner, "sub-owner"}, {former, "sub-former"}} {
+		if _, err := setup(who.principal, who.subject); err != nil {
+			t.Fatal(err)
+		}
+	}
+	remove := Request{Operation: "dispatcher_model_key_delete", Workspace: f.workspace, Project: "p", Args: map[string]any{}}
+	for _, role := range []string{"member", "reader"} {
+		f.must(f.owner, "sub-owner", Request{Operation: "project_role_set", Workspace: f.workspace, Project: "p", Args: map[string]any{"principal": former, "role": role}})
+		if _, err := setup(former, "sub-former"); err == nil || !strings.Contains(err.Error(), "owner") {
+			t.Fatal("a", role, "set a model key:", err)
+		}
+		if _, err := f.as(former, "sub-former", Request{Operation: "dispatcher_model_status", Workspace: f.workspace, Project: "p", Args: map[string]any{"config_revision": 1}}); err == nil || !strings.Contains(err.Error(), "owner") {
+			t.Fatal("a", role, "read the setup status:", err)
+		}
+		out, err := f.as(former, "sub-former", remove)
+		if err != nil {
+			t.Fatal("a", role, "couldn't delete their own key:", err)
+		}
+		if role == "member" && out.Data.(map[string]any)["deleted"] != true || keys(former) != 0 {
+			t.Fatal("as a", role, out.Data, keys(former))
+		}
+		if keys(f.owner) != 1 {
+			t.Fatal("a", role, "deleted another principal's key")
+		}
+	}
+}

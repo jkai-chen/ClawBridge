@@ -141,9 +141,9 @@ func TestMarkerPassCutsARowInFlightAndKeepsTheTick(t *testing.T) {
 		return cutCommenter{pv.(commentingV2)}, err
 	}
 	a.comments.markersDue = dueRows(3)
-	room, reserve := markerRowRoom, markerReserve
-	markerRowRoom, markerReserve = 100*time.Millisecond, 300*time.Millisecond
-	defer func() { markerRowRoom, markerReserve = room, reserve }()
+	room, reserve, poll := markerRowRoom, markerReserve, commentPollRoom
+	markerRowRoom, markerReserve, commentPollRoom = 100*time.Millisecond, 300*time.Millisecond, 200*time.Millisecond
+	defer func() { markerRowRoom, markerReserve, commentPollRoom = room, reserve, poll }()
 	ctx, cancel := context.WithTimeout(context.Background(), 700*time.Millisecond)
 	defer cancel()
 	started := time.Now()
@@ -374,5 +374,59 @@ func TestMarkerPassAsksAnUnavailableBusOnce(t *testing.T) {
 	cycle, err := watchPass(t, s, scope, context.Background())
 	if err != nil || cycle.MarkersStopped != "error" || n != 1 {
 		t.Fatal(err, cycle.MarkersStopped, n)
+	}
+}
+
+// A pass whose deadline leaves less than commentPollRoom polls no issue:
+// the comment poll stops as "deadline" without failing the pass, so the
+// steps after it keep their time, and the issue stays due for the next
+// pass, which polls it.
+func TestCommentPollStopsForThePassesLaterSteps(t *testing.T) {
+	s, a, _, scope, _, _ := passTest(t)
+	poll := commentPollRoom
+	commentPollRoom = time.Hour
+	defer func() { commentPollRoom = poll }()
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+	cycle, err := watchPass(t, s, scope, ctx)
+	if err != nil || cycle.CommentsStopped != "deadline" || cycle.Polled != 0 || len(a.comments.reports) != 0 {
+		t.Fatalf("%+v %v %v", cycle, err, a.comments.reports)
+	}
+	commentPollRoom = poll
+	a.comments.due = []any{map[string]any{"issue_uuid": issueID, "since": "2026-10-22T07:00:00.000000000Z"}}
+	if cycle, err = watchPass(t, s, scope, ctx); err != nil || cycle.CommentsStopped != "" || cycle.Polled != 1 || len(a.comments.reports) != 1 {
+		t.Fatalf("the next pass didn't poll the issue left due: %+v %v", cycle, err)
+	}
+}
+
+// blockingComments holds the issue read until its context ends: a poll the
+// pass's deadline cuts before its comment walk (whose own reserve keeps it
+// short of the deadline).
+type blockingComments struct{ commentingV2 }
+
+func (p blockingComments) IssueV2(ctx context.Context, _ string) (linearprovider.IssueV2, error) {
+	<-ctx.Done()
+	return linearprovider.IssueV2{}, ctx.Err()
+}
+
+// A poll the deadline cuts still reports, on a live context, so its calls
+// are charged and the issue stays due; the pass itself doesn't fail.
+func TestACutPollStillReports(t *testing.T) {
+	s, a, _, scope, _, _ := passTest(t)
+	open := s.cfg.Open
+	s.cfg.Open = func(ctx context.Context, h *http.Client, ro bool) (Provider, error) {
+		pv, err := open(ctx, h, ro)
+		return blockingComments{pv.(commentingV2)}, err
+	}
+	poll := commentPollRoom
+	commentPollRoom = 50 * time.Millisecond
+	defer func() { commentPollRoom = poll }()
+	ctx, cancel := context.WithTimeout(context.Background(), 400*time.Millisecond)
+	defer cancel()
+	if _, err := watchPass(t, s, scope, ctx); err != nil {
+		t.Fatal("the cut poll failed the pass:", err)
+	}
+	if len(a.comments.reports) != 1 || a.comments.reports[0]["error"] == nil || a.comments.reports[0]["calls"] == nil {
+		t.Fatal("the cut poll wasn't reported:", a.comments.reports)
 	}
 }

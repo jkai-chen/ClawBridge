@@ -61,6 +61,10 @@ type WatchCycle struct {
 	BudgetUsed      int               `json:"budget_used"`
 	BudgetLimit     int               `json:"budget_limit"`
 	BudgetExhausted bool              `json:"budget_exhausted,omitempty"`
+	// CommentsStopped is "deadline" when the poll stopped to leave the
+	// pass's later steps their time; the issues not polled stay due, so the
+	// next pass goes on with them.
+	CommentsStopped string `json:"comments_stopped,omitempty"`
 	// Markers are the claim markers this cycle applied, first.
 	Markers []MarkerApply `json:"markers,omitempty"`
 	// MarkersReadOnly is set when the watcher's Linear profile cannot
@@ -266,6 +270,13 @@ func (s *Service) watchCycle(ctx context.Context, scope bus.Request, lease *watc
 			cycle.BudgetExhausted = true
 			break
 		}
+		// A pass with a deadline (a server tick's per-project share) keeps
+		// room for intake, health and the markers after it: a large budget
+		// must not let the comment poll take the whole share.
+		if tooLate(ctx, commentPollRoom) {
+			cycle.CommentsStopped = "deadline"
+			break
+		}
 		item, _ := raw.(map[string]any)
 		issue, _ := item["issue_uuid"].(string)
 		since, _ := item["since"].(string)
@@ -277,7 +288,12 @@ func (s *Service) watchCycle(ctx context.Context, scope bus.Request, lease *watc
 		spent := pollCost(before, calls(), credit)
 		report["calls"] = min(spent, 1000)
 		lease.overBudget(s.cfg.Now(), spent, cycle.BudgetLimit)
-		out, err := s.commentLedger(ctx, scope, "comment_watch_report", lease.fence(report))
+		// A poll the pass's deadline cut still reports, on a short live
+		// context: its calls are charged and the issue stays due, so the
+		// next pass doesn't find the same budget and redo the same work.
+		rctx, cancel := reportContext(ctx)
+		out, err := s.commentLedger(rctx, scope, "comment_watch_report", lease.fence(report))
+		cancel()
 		if err != nil {
 			var coded interface{ Code() string }
 			if errors.As(err, &coded) && coded.Code() == "conflict" {
@@ -328,7 +344,19 @@ var (
 	markerRowRoom       = 6 * time.Second
 	markerReserve       = 3 * time.Second
 	markerSettleTimeout = 2 * time.Second
+	// commentPollRoom is the time a pass with a deadline keeps after its
+	// comment poll: no new issue is polled with less left.
+	commentPollRoom = 10 * time.Second
 )
+
+// reportContext is ctx, or, once ctx has ended, a short live context for
+// recording what was already spent.
+func reportContext(ctx context.Context) (context.Context, context.CancelFunc) {
+	if ctx.Err() == nil {
+		return context.WithCancel(ctx)
+	}
+	return context.WithTimeout(context.WithoutCancel(ctx), markerSettleTimeout)
+}
 
 // tooLate reports whether ctx ends within room: no time to start a row.
 func tooLate(ctx context.Context, room time.Duration) bool {

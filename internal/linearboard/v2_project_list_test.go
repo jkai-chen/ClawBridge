@@ -172,3 +172,19 @@ func TestLinearV2BindingRefusesATrashedBoundProjectWithoutGetProject(t *testing.
 		t.Fatal(e, *projects)
 	}
 }
+
+// A project that holds several teams is listed under each, and Linear may
+// order its teams differently per listing: that's the same project, proved
+// from the listing with no get_project of its own.
+func TestLinearV2BindingListsAMultiTeamProjectOnce(t *testing.T) {
+	_, a, _, _ := testV2(t)
+	l, _, _, projects := newListing(t)
+	l.pages[teamID] = complete(row(projectA, "A", false, teamID, otherTeamID))
+	l.pages[otherTeamID] = complete(row(projectA, "A", false, otherTeamID, teamID), row(projectB, "B", false, otherTeamID))
+	if _, e := verifyBindingV2(context.Background(), l, a.b); e != nil {
+		t.Fatal(e)
+	}
+	if *projects != 0 {
+		t.Fatalf("get_project reads = %d, want 0", *projects)
+	}
+}

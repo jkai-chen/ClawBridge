@@ -221,7 +221,10 @@ func listBoundProjects(ctx context.Context, p Provider, teams, bound []string) (
 					// get_project cannot see the trash, so never fall back.
 					return nil, errors.New("bound Linear project is in trash; relink the task board")
 				}
-				if prior, seen := found[row.ID]; seen && !slices.Equal(prior.TeamIDs, row.TeamIDs) {
+				// A project holding several teams is listed under each;
+				// Linear may order its teams differently per listing, so
+				// they are compared as a set.
+				if prior, seen := found[row.ID]; seen && !slices.Equal(SortedTeams(prior.TeamIDs), SortedTeams(row.TeamIDs)) {
 					delete(found, row.ID)
 					excluded[row.ID] = true
 					continue

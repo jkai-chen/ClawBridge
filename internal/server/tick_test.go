@@ -154,6 +154,14 @@ func TestWatchSettings(t *testing.T) {
 			t.Fatal(w.budget, w.budgetMax, err)
 		}
 	}
+	// FR8 r3: unset is no cap, and a low ceiling binds no project without
+	// one.
+	if w, err = readWatchSettings(env()); err != nil || w.budget != 0 {
+		t.Fatal(w.budget, err)
+	}
+	if w, err = readWatchSettings(env("CLAWBRIDGE_LINEAR_BUDGET_MAX", "50")); err != nil || w.budgetMax != 50 {
+		t.Fatal(w.budgetMax, err)
+	}
 	if w, err = readWatchSettings(env("CLAWBRIDGE_LINEAR_BUDGET_MAX", "5000")); err != nil || w.budgetMax != 5000 {
 		t.Fatal(w.budgetMax, err)
 	}
@@ -163,7 +171,6 @@ func TestWatchSettings(t *testing.T) {
 	for name, e := range map[string]func(string) string{
 		"names differ":            env("CLAWBRIDGE_LINEAR_BUDGET", "300", "CLAWBRIDGE_WATCH_BUDGET", "200"),
 		"ceiling below the cap":   env("CLAWBRIDGE_LINEAR_BUDGET", "300", "CLAWBRIDGE_LINEAR_BUDGET_MAX", "299"),
-		"ceiling below default":   env("CLAWBRIDGE_LINEAR_BUDGET_MAX", "599"),
 		"ceiling over Linear's":   env("CLAWBRIDGE_LINEAR_BUDGET_MAX", "5001"),
 		"ceiling not a number":    env("CLAWBRIDGE_LINEAR_BUDGET_MAX", "lots"),
 		"interval too short":      env("CLAWBRIDGE_WATCH_INTERVAL", "10s"),

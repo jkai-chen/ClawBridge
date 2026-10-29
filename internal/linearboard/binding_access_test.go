@@ -163,6 +163,9 @@ type recordingLinkV2 struct {
 }
 
 func (r *recordingLinkV2) Execute(ctx context.Context, q bus.Request) (bus.Result, error) {
+	if q.Operation == "linear_write_charge" {
+		return budgetAnswer(q)
+	}
 	if q.Operation == "taskboard_set_v2" {
 		r.args = q.Args
 		return bus.Result{Source: "local-authority", Data: map[string]any{"revision": 2}}, nil

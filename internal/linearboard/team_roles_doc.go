@@ -94,6 +94,20 @@ func (s *Service) TeamRolesDoc(ctx context.Context, scope bus.Request) (TeamRole
 // PublishTeamRoles previews, or with Confirm carries out, a publish of
 // the role mapping.
 func (s *Service) PublishTeamRoles(ctx context.Context, scope bus.Request, in RolesPublishInput) (RolesPublishResult, error) {
+	if !(in.Confirm) {
+		return s.publishTeamRoles(ctx, scope, in)
+	}
+	// A confirm writes through the person's own profile: the project's hourly budget counts it (FR8).
+	var out RolesPublishResult
+	err := s.budgeted(ctx, scope, "document", "", func(ctx context.Context) error {
+		var e error
+		out, e = s.publishTeamRoles(ctx, scope, in)
+		return e
+	})
+	return out, err
+}
+
+func (s *Service) publishTeamRoles(ctx context.Context, scope bus.Request, in RolesPublishInput) (RolesPublishResult, error) {
 	out := RolesPublishResult{Title: TeamRolesDocTitle}
 	b, e := s.BindingV2(ctx, scope)
 	if e != nil {

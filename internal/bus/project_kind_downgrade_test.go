@@ -1,5 +1,14 @@
 package bus
 
+// budgetDowngradeSQLite returns a schema-50 database to schema 49's shape:
+// the budget's split.
+const budgetDowngradeSQLite = "ALTER TABLE watch_lease DROP COLUMN budget_agents;\nALTER TABLE watch_lease DROP COLUMN budget_people;\n"
+
+// budgetDowngradePostgres is budgetDowngradeSQLite for a Postgres schema.
+func budgetDowngradePostgres(schema string) string {
+	return "ALTER TABLE " + schema + ".watch_lease DROP COLUMN budget_agents;\nALTER TABLE " + schema + ".watch_lease DROP COLUMN budget_people;\n"
+}
+
 // ledgerScopeDowngradeSQLite returns a schema-49 database to schema 48's
 // shape: the shared operation ledger's project, principal,
 // acknowledgement and pending columns.

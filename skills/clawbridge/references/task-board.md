@@ -19,6 +19,13 @@ same ID and payload shortly. On a hosted server with the ClawBridge Linear app,
 your writes are made as the app; when one fails, report it and never repeat it
 through another Linear tool or account.
 
+**Linear's rate limit.** There is no ClawBridge limit on your Linear writes
+by default (v0.3.9): they are counted, never refused for the count. Linear's
+own rate limit is respected through the queue: a write it holds answers
+`rate_limited` with a retry time, and nothing is sent. Wait until then and
+retry the same operation_id and payload. Never switch to the app profile, or
+another route, to get around it.
+
 **Queued writes.** On such a server, a write that can't go now answers
 `outcome: queued` (with `reason`, `position`, `estimated_at`): it is not an
 error, and it is not done. Don't act as if it landed, and never retry it with a

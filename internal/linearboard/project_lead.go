@@ -195,6 +195,20 @@ func projectTeamLead(m teamRolesMapping, bound, teams []string) (string, string)
 // ApplyLeads previews, or with Confirm carries out, setting each bound
 // project's lead from the team roles.
 func (s *Service) ApplyLeads(ctx context.Context, scope bus.Request, in ApplyLeadsInput) (ApplyLeadsResult, error) {
+	if !(in.Confirm) {
+		return s.applyLeads(ctx, scope, in)
+	}
+	// A confirm writes through the person's own profile: the project's hourly budget counts it (FR8).
+	var out ApplyLeadsResult
+	err := s.budgeted(ctx, scope, "project_lead", "", func(ctx context.Context) error {
+		var e error
+		out, e = s.applyLeads(ctx, scope, in)
+		return e
+	})
+	return out, err
+}
+
+func (s *Service) applyLeads(ctx context.Context, scope bus.Request, in ApplyLeadsInput) (ApplyLeadsResult, error) {
 	out := ApplyLeadsResult{Revision: in.Revision, Projects: []ApplyLeadsEntry{}, Notice: leadNotice}
 	if in.Replace != "" && !linearprovider.ValidID(in.Replace) {
 		return out, errors.New("--replace names one Linear project by UUID")
@@ -438,6 +452,20 @@ func (s *Service) PlanCreateLead(ctx context.Context, scope bus.Request, team, p
 // SetCreatedProjectLead sets a project ClawBridge just created to the lead
 // PlanCreateLead chose, at the same team roles revision, and reads it back.
 func (s *Service) SetCreatedProjectLead(ctx context.Context, scope bus.Request, project string, plan CreateLead) (string, error) {
+	if !(plan.Lead != "") {
+		return s.setCreatedProjectLead(ctx, scope, project, plan)
+	}
+	// The lead is written through the person's own profile: the project's hourly budget counts it (FR8).
+	var out string
+	err := s.budgeted(ctx, scope, "project_lead", "", func(ctx context.Context) error {
+		var e error
+		out, e = s.setCreatedProjectLead(ctx, scope, project, plan)
+		return e
+	})
+	return out, err
+}
+
+func (s *Service) setCreatedProjectLead(ctx context.Context, scope bus.Request, project string, plan CreateLead) (string, error) {
 	if plan.Lead == "" {
 		return "", nil
 	}

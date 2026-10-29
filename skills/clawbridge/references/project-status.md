@@ -38,8 +38,8 @@ naming the designated coordinator means you are not it: stop there.
    - `uncertain`: it is never sent again. Read the status; if it isn't what you
      set, preview with a new `operation_id`.
    - `in_progress`: retry the same call shortly.
-   - `rate_limited`: the project's hourly Linear budget is spent, or Linear's
-     own rate limit has no room. Nothing was sent; wait until the retry time
+   - `rate_limited`: Linear's own rate limit has no room (or a cap the
+     project's owner opted into is spent; there is none by default). Nothing was sent; wait until the retry time
      the answer gives, then retry the same `operation_id`.
 
 When project flow is on, your set holds flow for that project until the

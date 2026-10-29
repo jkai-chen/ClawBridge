@@ -124,6 +124,7 @@ requires its matching instance. Routing role is distinct from project permission
 | `project_create_settle` | The session that reserved: `operation_id`, `outcome` `created` with `linear_project_id` (tells each active session of the project owner, `owner_sessions_told`; a repeat is a `replay`, another ID a conflict) or `not_sent` |
 | `project_create_list` | Any project member: `created` (latest 20), `unconfirmed` (every recorded Linear write unsettled after 10 minutes or settled `uncertain`, not acknowledged, each with its kind as `write`, its `state`, and `subject` when it has one) and `keep_days` (90). Tells the owner's sessions once of each newly stale one |
 | `project_create_ack` | Project owner without a session (hosted: a person's own device key): `operation_id` of an unconfirmed Linear write of any kind, or of a team add settled with `changed` |
+| `linear_write_charge` | A write made through a person's own Linear profile, counted in the project's hourly Linear count after its calls (FR8): `operation_id`, `kind` (`create`, `update`, `comment`, `relation`, `project_create`, `project_team_add`, `document`, `project_lead`, `view`, `subscribe`, `admin`), `calls` (0–200, raised to the kind's floor). To people without a session, to agents with one; never refused, cap or not. Any project role but reader. Returns `charged`, `used`, `limit` (0 with no cap), `capped`, `window_resets_at` and `by` (`app`, `people`, `agents`). Moves and app writes never send it |
 | `project_team_add_reserve` | The project owner or a lead without a session, or the project's active designated coordinator session for a write team of its lane to a project whose `project_teams` already hold one (else `outside_lane`), before adding a team to a Linear project: `operation_id`, `linear_project` (a project of the project-set binding), `team_id` (a bound write team), `project_teams` (the project's teams as read), `plan_sha256`. Refused with `project_team_add_unproven` until `serve --project-team-add-proven`. Returns the reservation (`by`, `lane`, `state`); a repeat returns it again (`replay`), a not-sent one reopens. History: IDs only |
 | `project_team_add_settle` | The caller that reserved: `operation_id`, `outcome` (`accepted`, `uncertain` or `not_sent`), and for `accepted` `changed`, the names of other fields Linear changed (shown as `accepted_with_changes`), and `unverified`, `lead` and/or `members` when a read left them out. A settled outcome never changes; a repeat is a replay |
 | `project_team_add_list` | Any project member: `added`, `with_changes` (not yet acknowledged with `project_create_ack`), `recent` (latest 20 settled adds) and `keep_days` (90). The overview carries it as `project_team_adds` |
@@ -651,6 +652,13 @@ already read through `list_sessions`, `taskboard_get_v2` and `status_policy_get`
   owner acknowledges it (`project_create_ack`), each with its `state`, `team_id`
   and `subject`; and `keep_days`. Doctor's `linear.writes` reads it. Until
   v0.3.10 the same list is also under `project_creates.unconfirmed`.
+- **`linear_budget`:** the project's hourly Linear count: `used`, `limit` (0
+  with no cap, the default), `capped` (false with no cap), `source` (`project`,
+  `watcher` or `default`), `window_resets_at`, and `by`, the hour's calls of
+  the app (the server's jobs and app writes), `people` (their own writes) and
+  `agents` (sessions writing through a personal profile). Counts only; `capped`
+  and `source` are stable machine fields. Doctor's `linear.budget` reads it;
+  `linear_app_status`'s `budget` carries the same.
 - **`proven_gates`** (the project owner only): the server's five PROVEN gates
   in a fixed order, `project_flow`, `issue_subscribers`, `issue_move`,
   `issue_family_move` and `project_team_add`, each `{"name", "on"}`. A write

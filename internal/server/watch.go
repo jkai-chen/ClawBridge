@@ -71,7 +71,8 @@ func (t watcherTicker) Fallback(ctx context.Context, pid string) any { return t.
 type watchSettings struct {
 	interval                  time.Duration
 	tickAudience, tickAccount string
-	// budget is CLAWBRIDGE_LINEAR_BUDGET; 0 when unset (the bus's 600).
+	// budget is CLAWBRIDGE_LINEAR_BUDGET, an opt-in cap; 0 when unset, no
+	// cap (the default since v0.3.9).
 	budget int
 	// budgetMax is CLAWBRIDGE_LINEAR_BUDGET_MAX, the owner's ceiling.
 	budgetMax int
@@ -79,7 +80,8 @@ type watchSettings struct {
 
 // readWatchSettings reads CLAWBRIDGE_WATCH_INTERVAL (1m–30m, empty for no
 // in-process clock), the two tick variables (both or neither) and
-// CLAWBRIDGE_WATCH_BUDGET. The app's marker writes use the shared
+// CLAWBRIDGE_LINEAR_BUDGET (or its deprecated old name
+// CLAWBRIDGE_WATCH_BUDGET). The app's marker writes use the shared
 // operation ledger in Postgres.
 func readWatchSettings(getenv func(string) string) (watchSettings, error) {
 	w := watchSettings{
@@ -107,10 +109,11 @@ func readWatchSettings(getenv func(string) string) (watchSettings, error) {
 	return w, nil
 }
 
-// readWatchBudget reads CLAWBRIDGE_LINEAR_BUDGET (or its old name
-// CLAWBRIDGE_WATCH_BUDGET): the Linear calls per hour every project may
-// make by default, agent writes included, 1–600; empty is 0, the bus's
-// default of 600.
+// readWatchBudget reads CLAWBRIDGE_LINEAR_BUDGET (or its deprecated old
+// name CLAWBRIDGE_WATCH_BUDGET): an opt-in cap on the Linear calls per hour
+// every project may make, 1–600. Empty is 0: no ClawBridge cap, the
+// default since v0.3.9 (Linear's own rate limit is respected through the
+// pacer and the queues).
 func readWatchBudget(getenv func(string) string) (int, error) {
 	raw := strings.TrimSpace(getenv("CLAWBRIDGE_LINEAR_BUDGET"))
 	if old := strings.TrimSpace(getenv("CLAWBRIDGE_WATCH_BUDGET")); raw == "" {
@@ -132,10 +135,11 @@ func readWatchBudget(getenv func(string) string) (int, error) {
 // operator's ceiling.
 const linearAppHourly = 5000
 
-// readLinearBudgetMax reads CLAWBRIDGE_LINEAR_BUDGET_MAX: how far a project
-// owner may raise the project's cap (R2), default 2000, at most Linear's
-// 5000 an hour for the app. It may not be below the default cap, so owners
-// always have room to raise.
+// readLinearBudgetMax reads CLAWBRIDGE_LINEAR_BUDGET_MAX: the highest cap
+// a project owner may opt into (R2), default 2000, at most Linear's 5000 an
+// hour for the app. It may not be below a server cap that is set, so
+// owners always have room to raise; a project with no cap is never bound by
+// it.
 func readLinearBudgetMax(getenv func(string) string, budget int) (int, error) {
 	if budget == 0 {
 		budget = bus.LinearBudgetDefault

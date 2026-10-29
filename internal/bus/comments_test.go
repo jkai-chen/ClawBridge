@@ -3,6 +3,7 @@ package bus
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -604,5 +605,26 @@ func TestCommentWatchCadenceIgnoresMarkerNotes(t *testing.T) {
 	}
 	if d := next(); d > 6*time.Minute {
 		t.Fatal("a session's own comment didn't keep the issue on the short cadence:", d)
+	}
+}
+
+// FR8 r3: with no cap (the default) a tick still polls at most
+// watchTickIssues issues, so after a downtime the overdue ones are spread
+// over ticks, never all at once; nothing says the budget is spent.
+func TestCommentWatchTickIsBoundedWithoutACap(t *testing.T) {
+	w := newWatchHarness(t)
+	var pid string
+	if e := w.s.db.QueryRow(`SELECT id FROM projects WHERE slug='p'`).Scan(&pid); e != nil {
+		t.Fatal(e)
+	}
+	past := layout(time.Now().Add(-time.Hour))
+	for i := 0; i < 150; i++ {
+		if _, e := w.s.db.Exec(`INSERT INTO watch_cursors(project_id,source,subject,cursor_time,watch_started_at,next_poll_at,updated_at) VALUES(?,'comments',?,?,?,?,?)`, pid, fmt.Sprintf("00000000-0000-4000-8000-%012d", i), past, past, past, past); e != nil {
+			t.Fatal(e)
+		}
+	}
+	due := w.call("comment_watch_due", "c", w.fenced(map[string]any{})).(map[string]any)
+	if n := len(due["issues"].([]any)); n != watchTickIssues || due["budget_limit"] != 0 || due["budget_exhausted"] != false {
+		t.Fatal(n, due["budget_limit"], due["budget_exhausted"])
 	}
 }

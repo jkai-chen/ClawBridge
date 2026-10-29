@@ -27,6 +27,9 @@ type kindAuthority struct {
 }
 
 func (a *kindAuthority) Execute(ctx context.Context, r bus.Request) (bus.Result, error) {
+	if r.Operation == "linear_write_charge" {
+		return budgetAnswer(r)
+	}
 	switch r.Operation {
 	case "project_kind_get":
 		return bus.Result{Source: "local-authority", Data: a.setting}, nil

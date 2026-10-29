@@ -58,11 +58,11 @@ func TestPostgresWatchStatusShowsBudgetUsed(t *testing.T) {
 		t.Fatal("the charged calls are not shown:", got)
 	}
 	b, err := f.s.LinearBudgetOf(ctx, pid)
-	if err != nil || b.Used != 7 || b.Limit != LinearBudgetDefault || b.Source != "watcher" || !b.ResetsAt.After(time.Now()) {
+	if err != nil || b.Used != 7 || b.Limit != 0 || b.Capped || b.Source != "default" || !b.ResetsAt.After(time.Now()) {
 		t.Fatalf("%+v %v", b, err)
 	}
 	f.must(f.owner, "sub-owner", Request{Operation: "comment_watch_budget_set", Workspace: f.workspace, Project: "p", Args: map[string]any{"watch_budget": 50}})
-	if b, err = f.s.LinearBudgetOf(ctx, pid); err != nil || b.Limit != 50 || b.Source != "project" {
+	if b, err = f.s.LinearBudgetOf(ctx, pid); err != nil || b.Limit != 50 || !b.Capped || b.Source != "project" {
 		t.Fatalf("the project's own budget: %+v %v", b, err)
 	}
 	// Calls charged in an earlier hour are not this hour's.

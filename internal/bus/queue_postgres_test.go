@@ -220,7 +220,7 @@ func TestPostgresQueueBackfillFromSchema34(t *testing.T) {
 	q.do("send", "a", map[string]any{"to": "@all", "body": "everyone", "operation_id": "all"})
 	q.do("mark_read", "b", map[string]any{"ids": []any{ids[1]}})
 	q.s.Close()
-	if _, err = admin.ExecContext(ctx, maintenanceDowngradePostgres(schema)+ledgerDowngradePostgres(schema)+lanesDowngradePostgres(schema)+noticeDowngradePostgres(schema)+leadDowngradePostgres(schema)+rolesDowngradePostgres(schema)+kindDowngradePostgres(schema)+viewsDowngradePostgres(schema)+queueDowngradePostgres(schema)+`DELETE FROM `+schema+`.clawbridge_schema WHERE version>=35`); err != nil {
+	if _, err = admin.ExecContext(ctx, budgetDowngradePostgres(schema)+maintenanceDowngradePostgres(schema)+ledgerDowngradePostgres(schema)+lanesDowngradePostgres(schema)+noticeDowngradePostgres(schema)+leadDowngradePostgres(schema)+rolesDowngradePostgres(schema)+kindDowngradePostgres(schema)+viewsDowngradePostgres(schema)+queueDowngradePostgres(schema)+`DELETE FROM `+schema+`.clawbridge_schema WHERE version>=35`); err != nil {
 		t.Fatal(err)
 	}
 	if q.s, err = OpenPostgres(ctx, parsed.String(), q.owner); err != nil {

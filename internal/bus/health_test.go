@@ -15,7 +15,9 @@ type healthHarness struct {
 }
 
 // newHealthHarness binds the project to two Linear projects, makes c the
-// coordinator, and takes the watch lease as the system session.
+// coordinator, and takes the watch lease as the system session, with an
+// opt-in cap of 600 calls an hour (the budget tests below need one; the
+// default is no cap).
 func newHealthHarness(t *testing.T) *healthHarness {
 	t.Helper()
 	h := &healthHarness{harness: newHarness(t)}
@@ -24,7 +26,7 @@ func newHealthHarness(t *testing.T) *healthHarness {
 	if e := h.s.db.QueryRow(`SELECT id FROM projects WHERE slug='p'`).Scan(&h.pid); e != nil {
 		t.Fatal(e)
 	}
-	l := h.sys("comment_watch_lease", map[string]any{"action": "acquire"})
+	l := h.sys("comment_watch_lease", map[string]any{"action": "acquire", "budget": 600})
 	h.token, h.gen = l["lease_token"].(string), l["generation"].(int)
 	return h
 }

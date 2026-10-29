@@ -23,6 +23,9 @@ type teamAdds struct {
 }
 
 func (t *teamAdds) Execute(ctx context.Context, r bus.Request) (bus.Result, error) {
+	if r.Operation == "linear_write_charge" {
+		return budgetAnswer(r)
+	}
 	switch r.Operation {
 	case "project_team_add_reserve":
 		t.reserves = append(t.reserves, r.Args)

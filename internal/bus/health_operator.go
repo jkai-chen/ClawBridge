@@ -127,7 +127,7 @@ func (s *Store) OperatorForcedHealthPostDeleted(ctx context.Context, post Health
 		return errors.New("that post's row changed meanwhile; its delete is not recorded")
 	}
 	hour := nowRaw[:13]
-	if _, err = tx.ExecContext(ctx, `UPDATE watch_lease SET budget_used=CASE WHEN budget_hour=? THEN budget_used+? ELSE ? END,budget_hour=? WHERE project_id=?`, hour, HealthPostDeleteCalls, HealthPostDeleteCalls, hour, post.ProjectID); err != nil {
+	if _, err = tx.ExecContext(ctx, `UPDATE watch_lease SET budget_used=CASE WHEN budget_hour=? THEN budget_used+? ELSE ? END,budget_people=CASE WHEN budget_hour=? THEN budget_people ELSE 0 END,budget_agents=CASE WHEN budget_hour=? THEN budget_agents ELSE 0 END,budget_hour=? WHERE project_id=?`, hour, HealthPostDeleteCalls, HealthPostDeleteCalls, hour, hour, hour, post.ProjectID); err != nil {
 		return errors.New("authority unavailable")
 	}
 	scoped := *s

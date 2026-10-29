@@ -26,6 +26,9 @@ func TestMarkerNamesTheEngineerFromTheAuthority(t *testing.T) {
 type preEngineerServer struct{ *authorityV2 }
 
 func (o preEngineerServer) Execute(ctx context.Context, r bus.Request) (bus.Result, error) {
+	if r.Operation == "linear_write_charge" {
+		return budgetAnswer(r)
+	}
 	if r.Operation == "taskboard_access" && r.Args["engineer"] != nil {
 		return bus.Result{}, errors.New(`unsupported argument "engineer" for taskboard_access`)
 	}

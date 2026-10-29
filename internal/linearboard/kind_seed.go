@@ -76,6 +76,22 @@ const kindClash = "exists_in_workspace: a workspace project label has this name,
 
 // KindSeed previews or makes the project kind's labels.
 func (s *Service) KindSeed(ctx context.Context, scope bus.Request, in KindSeedInput) (KindSeedResult, error) {
+	// A session is refused these: only a person, in their own terminal.
+	if !(in.Confirm && scope.Session == "") {
+		return s.kindSeed(ctx, scope, in)
+	}
+	// A confirm writes through the person's own profile: the project's
+	// hourly budget counts it (FR8).
+	var out KindSeedResult
+	err := s.budgeted(ctx, scope, "admin", in.OperationID, func(ctx context.Context) error {
+		var e error
+		out, e = s.kindSeed(ctx, scope, in)
+		return e
+	})
+	return out, err
+}
+
+func (s *Service) kindSeed(ctx context.Context, scope bus.Request, in KindSeedInput) (KindSeedResult, error) {
 	var none KindSeedResult
 	if !operationPattern.MatchString(in.OperationID) || len(in.OperationID) > 100 {
 		return none, errors.New("operation_id requires 1–100 ASCII identifier characters (each label adds a suffix)")

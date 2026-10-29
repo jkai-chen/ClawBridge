@@ -10,6 +10,9 @@ import (
 type recordingAuthority struct{ got []bus.Request }
 
 func (a *recordingAuthority) Execute(_ context.Context, r bus.Request) (bus.Result, error) {
+	if r.Operation == "linear_write_charge" {
+		return budgetAnswer(r)
+	}
 	a.got = append(a.got, r)
 	return bus.Result{Data: map[string]any{"configured": false}}, nil
 }

@@ -588,21 +588,26 @@ CLAWBRIDGE_WATCH_INTERVAL=15m
   never overlap, and each runs within 50 seconds. The startup log says `watcher:
   ticking every 15m0s`, or `watcher: off (…)` with the reason. Without the Linear
   app, the watcher stays off and the server serves as before.
-- **Calls.** Each project spends at most 600 Linear calls an hour on the bus
-  budget; `CLAWBRIDGE_LINEAR_BUDGET` (old name `CLAWBRIDGE_WATCH_BUDGET`) sets
-  another, from 1 to 600 (anything else refuses to start). It covers every tick,
-  nudge and `operator health-run`, and the agent writes the server makes as the
-  app, for every project on the server; past it, writes wait in the server's
-  queue. The interval sets latency more than cost: each issue and intake source
+- **Calls.** Every Linear call is counted per project and hour on the bus, with
+  no ClawBridge cap by default (v0.3.9): Linear's own rate limit is respected
+  through the queue, each credential's pacer waiting out Linear's 429 and its
+  Retry-After, and a tick polls at most 100 issues. It covers every tick, nudge
+  and `operator health-run`, and the agent writes the server makes as the app.
+  The interval sets latency more than cost: each issue and intake source
   keeps its own polling schedule, and a tick with nothing due calls nothing. An
   intake source is next due 5 or 15 minutes after its read started, and a tick up
-  to 30 s early still polls it. A
-  project's owner can set that project's own budget with `clawbridge project
-  linear-budget set N`, which wins over the server's, up to
-  `CLAWBRIDGE_LINEAR_BUDGET_MAX` (default 2000, at most Linear's 5000 an hour for
-  the app). The server refuses to start when the ceiling is below the default
-  budget. The ceiling bounds each project, not their sum: several raised projects
-  can together pass Linear's limit, and then their writes queue.
+  to 30 s early still polls it.
+  - **An opt-in cap:** `CLAWBRIDGE_LINEAR_BUDGET`, 1 to 600, caps every project
+    (anything else refuses to start). `CLAWBRIDGE_WATCH_BUDGET` is its old,
+    deprecated name: **a server upgraded with `CLAWBRIDGE_WATCH_BUDGET=300` (or
+    the new name) still in its env keeps that cap**; remove the line for no cap.
+    Under a cap the server's jobs stop at it and app writes wait in the queue.
+  - A project's owner can set that project's own cap with `clawbridge project
+    linear-budget set N`, which wins over the server's, up to
+    `CLAWBRIDGE_LINEAR_BUDGET_MAX` (default 2000, at most Linear's 5000 an hour
+    for the app), and `clear` it. The server refuses to start when the ceiling
+    is below a server cap that is set. The ceiling bounds each project, not
+    their sum.
 - **Queued writes.** The server sends queued agent writes every 5 seconds as
   Linear and each project's budget allow (docs/linear.md, "Queued writes").
 - **Clients.** While the server's ticks for a project are fresh, a client

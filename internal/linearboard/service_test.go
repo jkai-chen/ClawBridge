@@ -34,6 +34,9 @@ type fakeAuthority struct {
 }
 
 func (a *fakeAuthority) Execute(_ context.Context, r bus.Request) (bus.Result, error) {
+	if r.Operation == "linear_write_charge" {
+		return budgetAnswer(r)
+	}
 	a.calls++
 	if r.Operation == "taskboard_access" {
 		a.accesses++

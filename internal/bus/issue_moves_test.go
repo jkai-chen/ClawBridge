@@ -339,11 +339,10 @@ func (h *harness) budgetUsed() int {
 	return n
 }
 
-// O2/P4: a move's estimated calls come from the project's hourly budget,
+// O2/P4: a move's estimated calls are counted in the project's hour,
 // charged with its reservation; a repeat isn't charged again; a family is
-// charged in full, so it is never split across the hour. No room refuses a
-// session's move with when to retry and records nothing; a person without
-// a session is charged past the limit and never refused (FR8 Q2).
+// charged in full. Nobody's move is refused for the budget (FR8 r3), past
+// an opt-in cap too.
 func TestIssueMoveChargesTheBudget(t *testing.T) {
 	h := movesHarness(t)
 	h.s.SetIssueFamilyMoveProven(true)
@@ -369,28 +368,23 @@ func TestIssueMoveChargesTheBudget(t *testing.T) {
 	if count(t, h.s.db, "linear_write_reservations") != 1 || h.budgetUsed() != 8 {
 		t.Fatal("an estimate under the floor left a trace or a charge")
 	}
-	// The coordinator, 12 left: a family needing 13 is refused whole,
-	// nothing recorded.
+	// FR8 r3: past the project's opt-in cap a session's family and move are
+	// reserved and charged, never refused, as a person's is.
 	h.pin("lane_pin_set", map[string]any{"expected_revision": 0, "kind": "session", "key": "c", "lane": "both"})
 	family["calls"] = 13
-	if e := h.errorOf("issue_move_reserve", "c", family); !strings.Contains(e, "12 of 20 calls left") || !strings.Contains(e, "retry after") {
-		t.Fatal("over the budget:", e)
+	if got := h.call("issue_move_reserve", "c", family).(map[string]any); got["state"] != "reserved" || h.budgetUsed() != 21 || count(t, h.s.db, "linear_write_reservations") != 4 {
+		t.Fatal("the family wasn't reserved and charged in full past the cap:", got, h.budgetUsed())
 	}
-	if count(t, h.s.db, "linear_write_reservations") != 1 || h.budgetUsed() != 8 {
-		t.Fatal("a refused family left a trace")
+	if got := h.call("issue_move_reserve", "c", moveArgs("m-2", teamOne, teamTwo)).(map[string]any); got["state"] != "reserved" || h.budgetUsed() != 29 {
+		t.Fatal("a session was refused past the cap:", got, h.budgetUsed())
 	}
-	family["calls"] = 12
-	h.call("issue_move_reserve", "c", family)
-	if h.budgetUsed() != 20 || count(t, h.s.db, "linear_write_reservations") != 4 {
-		t.Fatal("the family wasn't charged in full:", h.budgetUsed())
-	}
-	if e := h.errorOf("issue_move_reserve", "c", moveArgs("m-2", teamOne, teamTwo)); !strings.Contains(e, "nothing was sent") || count(t, h.s.db, "linear_write_reservations") != 4 {
-		t.Fatal("a session reserved past a spent budget:", e)
-	}
-	// A person past the limit is charged and reserved, never refused.
 	got := h.call("issue_move_reserve", "", moveArgs("m-3", teamOne, teamTwo)).(map[string]any)
-	if got["state"] != "reserved" || h.budgetUsed() != 28 || count(t, h.s.db, "linear_write_reservations") != 5 {
-		t.Fatal("a person was refused or not charged past the limit:", got, h.budgetUsed())
+	if got["state"] != "reserved" || h.budgetUsed() != 37 || count(t, h.s.db, "linear_write_reservations") != 6 {
+		t.Fatal("a person was refused or not charged past the cap:", got, h.budgetUsed())
+	}
+	// FR8's split: the people's moves and the coordinator session's family.
+	if people, agents := h.split(); people != 16 || agents != 21 {
+		t.Fatal("moves split", people, agents)
 	}
 }
 

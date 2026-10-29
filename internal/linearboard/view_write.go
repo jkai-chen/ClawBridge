@@ -144,6 +144,21 @@ func ScopeLine(teamID, teamName string, members int, known bool) string {
 
 // ViewWrite previews or makes one issue view write.
 func (s *Service) ViewWrite(ctx context.Context, scope bus.Request, in ViewWriteInput, key ViewKey) (ViewWriteResult, error) {
+	// A session is refused these: only a person, in their own terminal.
+	if !(in.Confirm && scope.Session == "") {
+		return s.viewWrite(ctx, scope, in, key)
+	}
+	// A confirm writes through the person's own profile: the project's hourly budget counts it (FR8).
+	var out ViewWriteResult
+	err := s.budgeted(ctx, scope, "view", in.OperationID, func(ctx context.Context) error {
+		var e error
+		out, e = s.viewWrite(ctx, scope, in, key)
+		return e
+	})
+	return out, err
+}
+
+func (s *Service) viewWrite(ctx context.Context, scope bus.Request, in ViewWriteInput, key ViewKey) (ViewWriteResult, error) {
 	var none ViewWriteResult
 	in.Name = strings.TrimSpace(in.Name)
 	if e := validateViewWrite(in); e != nil {

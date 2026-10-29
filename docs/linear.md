@@ -754,7 +754,8 @@ it:
 On a hosted server with the ClawBridge app, an agent write that can't go now waits in the server's queue instead of
 failing. A write is queued when:
 - Linear's rate limit kept it from being sent (`reason: linear_rate_limit`);
-- the project's hourly Linear budget is spent (`project_hourly_cap`): agent writes now count against it;
+- the project's opt-in hourly cap is spent (`project_hourly_cap`), only where its owner, the server or the watcher set
+  one: there is none by default (v0.3.9);
 - an earlier write on the same issue is still queued (`ordered_behind`). Writes on one issue go in the order they were
   asked for, and a later one never overtakes. Writes on different issues have no order: if one depends on another,
   such as a comment on an issue you are creating, wait for the first one's result.
@@ -854,27 +855,48 @@ line per cycle.
   newer activity, can be missed.
 - **Polling** backs off from every 5 minutes (recent activity) to hourly (quiet
   for a day); errors back off to hourly.
-- **Budget.** A project spends at most its hourly Linear budget (default 600),
-  counted on the bus so a restart or takeover cannot reset it. It covers the
-  watcher, project status and health, and agent writes made as the ClawBridge
-  app; past it, writes are queued ([Queued writes](#queued-writes)) and reads
-  are refused with when to retry. The watcher's own `--budget` (1 to 600)
-  applies when the project sets none. The project owner sets the project's own
-  with `clawbridge project linear-budget set N`, from 1 to the server's ceiling
-  (`CLAWBRIDGE_LINEAR_BUDGET_MAX`, default 2000); it wins over `--budget` and the
-  server's `CLAWBRIDGE_LINEAR_BUDGET` from the next call, and `project
-  linear-budget clear` removes it. The CLI says what share of the app's 5000 an
-  hour that is: other projects on the server share it, and the ceiling bounds
-  each project, not their sum. Any member reads it with `project linear-budget
-  show` (`budget_used` this hour, `budget_limit`, and `budget_source`
-  `project`, `watcher` or `default`). Each change is recorded in the project's
-  history. `watch-budget` is the old name.
+- **Linear calls, counted, with no ClawBridge cap by default (v0.3.9).** Every
+  Linear call made for a project is counted on the bus, per hour, so a restart
+  or takeover cannot reset it: the watcher, project status and health, the
+  agent writes the server makes as the app, and every write made with a
+  person's own profile (creates, updates, comments and relations, a
+  coordinator's project create, team adds, labels, initiatives and kinds,
+  project leads, published documents and views; moves with their
+  reservation). There is no ClawBridge limit by default; Linear's own rate
+  limit is respected through the queue: each credential's pacer waits out
+  Linear's 429 and its Retry-After, an app write that can't go waits in the
+  server's queue (`linear_rate_limit`), and a personal write answers Linear's
+  `rate_limited` with its retry time, nothing sent. A tick still polls at most
+  100 issues, so after a downtime the overdue ones are spread over ticks.
+  - **Nobody is refused for the count.** A person's write and an agent
+    session's are counted after their calls, the reads included, raised to the
+    fewest their kind makes; a write answered from the operation ledger makes
+    no call and counts nothing. A client that crashes between its count and its
+    ledger may count a retry again: an over-count, the safe way.
+  - **An opt-in cap** stays possible: the project owner's `clawbridge project
+    linear-budget set N` (1 to the server's ceiling, `CLAWBRIDGE_LINEAR_BUDGET_MAX`,
+    default 2000), the server's `CLAWBRIDGE_LINEAR_BUDGET` (1 to 600; its old,
+    deprecated name is `CLAWBRIDGE_WATCH_BUDGET`) or a client watcher's
+    `--budget`. Under one, the server's own jobs stop at it and app writes
+    queue (`project_hourly_cap`); personal writes and moves are still never
+    refused. `project linear-budget clear` removes the project's cap. The CLI
+    says what share of the app's 5000 an hour a cap is: other projects on the
+    server share it.
+  - **Reading it:** `project linear-budget show` (any member) gives
+    `budget_used` this hour, `budget_limit` (0 with no cap), `capped` and
+    `budget_source` (`project`, `watcher` or `default`); doctor's
+    `linear.budget`, the project overview's `linear_budget` (`capped`, `by`)
+    and, on a hosted server with the app, the Linear screen's header ("Linear:
+    N this hour (no cap)") split the hour between the app (the server's jobs
+    and app writes), people and agent sessions, as counts. Under a cap doctor
+    warns when agent sessions spent more than half of it. Each change is
+    recorded in the project's history. `watch-budget` is the old command name.
 - `clawbridge doctor` warns when assigned issues are watched but no watcher
   runs, and its `linear.watch` line shows the hour's calls used and the limit.
 - **On a hosted server with its own watcher** (`CLAWBRIDGE_WATCH_INTERVAL`,
   docs/operations/deployment.md), the server watches every bound project as the
-  ClawBridge app, and also applies pending claim markers, within the server's
-  budget (`CLAWBRIDGE_LINEAR_BUDGET`, default 600). A client `linear watch`
+  ClawBridge app, and also applies pending claim markers, paced by Linear's
+  rate limit (no cap unless `CLAWBRIDGE_LINEAR_BUDGET` sets one). A client `linear watch`
   is then refused until the server has not ticked for 10 minutes.
 
 ### Claim markers
@@ -983,7 +1005,7 @@ clawbridge linear subscribers backfill --since 2026-10-27 --apply
   operator has proven it (see the deployment guide); until then, `show` says `proven: false` and `on` is refused.
 - **Never a session.** Agents read the setting but can't change it.
 - **Budget.** Each issue costs one read, to check that it is the binding's and the people are its team's members,
-  plus one call per person. It comes from the project's hourly Linear budget, after the comment watch and markers,
+  plus one call per person. It is counted in the project's hour (and stops at an opt-in cap, after the comment watch and markers),
   at most 5 issues a pass. An issue outside the binding is skipped: outside its teams, or, for a project set,
   outside its projects (another binding's project in the same team is never touched). A person who is no longer an active member of the
   issue's team is left out.
@@ -1113,15 +1135,11 @@ Agents use the MCP tool `taskboard_issue_move_v2` (`id`, `team_id`,
   calls. A family adds its children's listing and each child's reads. A
   confirm repeats the reads, then makes one write and one read (and one per
   child).
-  - **The project's hourly Linear budget (the watch budget) pays for each
-    confirm.** It's charged with the server's record before anything reaches
-    Linear, and a family is charged in full, so it is never split across the
-    hour. A repeat of the same confirm isn't charged again.
-  - When the hour can't pay, a session's confirm (the coordinator's) is
-    refused with `rate_limited`, naming when to retry, and nothing is sent.
-  - A person confirming from their own terminal, with no session, is never
-    refused for budget, batches included: the move is charged past the
-    limit, and the background jobs back off for the rest of the hour.
+  - **Each confirm is counted in the project's hour** with the server's
+    record, before anything reaches Linear, a family in full. A repeat of the
+    same confirm isn't counted again. No confirm is refused for the count,
+    a session's or a person's, batches included, even past an opt-in cap
+    (v0.3.9); Linear's own `rate_limited` answers with its retry time.
 - **Linear config scope:** none. A move is an issue write inside bound teams.
 - **Audit.** History records `issue_move` `reserve` and the outcome, with the
   issue UUID, both teams, the old and new identifiers, who moved it (`owner`,
@@ -1896,12 +1914,10 @@ project owner or a lead (with no session) set one after the same preview
 - **With project flow.** A set waits while a flow move is in flight. When
   flow is on, a set puts the project on hold, so flow won't move it back,
   until `project-flow resume`. A refused set lifts the hold it put on.
-- **Cost.** It spends the project's hourly Linear budget (the watch budget),
-  charged before Linear is called: a read or a preview costs 6 calls (the
+- **Cost.** It is counted in the project's hour, before Linear is called: a read or a preview costs 6 calls (the
   project with its status list, and up to 5 issue pages); a confirmed set
   costs 8 (the read, the write and its read-back). A replay costs nothing.
-  Past the budget the answer is `rate_limited`. A project no watcher runs for
-  is charged against the default budget.
+  Past an opt-in cap the answer is `rate_limited`; there is none by default.
 - **Audit.** History records `project_status` `set_sent` and `set`, with the
   types, the status ID, the outcome and the operation ID, and the session
   that set it (or the person, without one). Status names are never recorded.

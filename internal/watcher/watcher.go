@@ -72,8 +72,9 @@ type Watcher struct {
 	Ledger          func(context.Context) linearboard.OperationLedger
 	LedgerDirectory string
 	Now             func() time.Time
-	// Budget is the Linear calls per hour each tick's and nudge's lease
-	// allows (CLAWBRIDGE_WATCH_BUDGET); 0 takes the bus default, 200.
+	// Budget is an opt-in cap on the Linear calls per hour each tick's and
+	// nudge's lease allows (CLAWBRIDGE_LINEAR_BUDGET); 0 is no cap, the
+	// default: Linear's own rate limit, through the pacer, is the brake.
 	Budget int
 
 	mu       sync.Mutex
@@ -282,6 +283,7 @@ func (w *Watcher) service(pid string) *linearboard.Service {
 	}
 	svc := linearboard.New(linearboard.Config{
 		Authority:       "server-watcher",
+		ServerCharged:   true,
 		Executor:        systemExecutor{w.Store, pid},
 		Connections:     appConnections{},
 		ProfileID:       appProfile,

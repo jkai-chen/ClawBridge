@@ -31,6 +31,9 @@ type setRecorder struct {
 }
 
 func (a *setRecorder) Execute(ctx context.Context, r bus.Request) (bus.Result, error) {
+	if r.Operation == "linear_write_charge" {
+		return budgetAnswer(r)
+	}
 	if r.Operation == "taskboard_set_v2" {
 		a.set = r.Args
 		return bus.Result{Source: "local-authority", Data: map[string]any{"revision": 2}}, nil

@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"slices"
 	"strings"
-	"time"
 )
 
 // An issue's move to another bound team (FR7, live/ISSUE-TEAM-MOVE-DESIGN.md
@@ -262,12 +261,10 @@ func (s *Store) reserveIssueMove(ctx context.Context, tx *transaction, wid, pid,
 	if floor := 2 + 2*len(children); calls < floor {
 		return nil, invalid(fmt.Sprintf("calls must be at least %d for a move of %d sub-issues", floor, len(children)))
 	}
-	// The move's Linear calls come from the project's hourly budget (FR8's
-	// first slice, r6 O2): charged before anything reaches Linear, a family
-	// in full, in the reservation's own transaction. No room refuses a
-	// session's move, sending nothing; a person without a session is never
-	// refused for budget (FR8 Q2), only charged, past the limit if need be.
-	// A repeat of a move already reserved is never charged again.
+	// The move's Linear calls are counted in the project's hour (FR8):
+	// charged with the reservation, a family in full, and never refused
+	// (no ClawBridge limit in v0.3.9; Linear's own rate limit is the
+	// brake). A repeat of a move already reserved is never charged again.
 	prior, err := query(ctx, tx, `SELECT state FROM linear_write_reservations WHERE project_id=? AND operation_id=?`, pid, op)
 	if err != nil {
 		return nil, err
@@ -277,10 +274,13 @@ func (s *Store) reserveIssueMove(ctx context.Context, tx *transaction, wid, pid,
 		if err != nil {
 			return nil, err
 		}
-		if actor != nil && budget.used+calls > budget.limit {
-			return nil, &serviceError{code: "rate_limited", cause: fmt.Errorf("the project's hourly Linear budget has %d of %d calls left, and this move needs %d; retry after %s; nothing was sent", max(budget.limit-budget.used, 0), budget.limit, calls, budget.resetAt.UTC().Format(time.RFC3339)), public: true}
+		// Through a personal profile: an agent session's, or a person's
+		// (FR8's split).
+		by := "people"
+		if actor != nil {
+			by = "agents"
 		}
-		if err = budget.charge(ctx, tx, pid, calls); err != nil {
+		if err = budget.chargeBy(ctx, tx, pid, calls, by); err != nil {
 			return nil, err
 		}
 	}

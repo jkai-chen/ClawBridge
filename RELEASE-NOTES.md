@@ -1,10 +1,10 @@
 # Unreleased
 
-**Schema 47 → 49.**
-- The server migrates to schema 49 on its first start: 48, the server drain's maintenance row and its instances'
+**Schema 47 → 50.**
+- The server migrates to schema 50 on its first start: 48, the server drain's maintenance row and its instances'
   reports; 49, the shared operation ledger's rows name their ClawBridge project and their person
-  (`linear_write_ledger.project_id`, `principal`, `acknowledged_at`, `pending`). Rows from before have neither and
-  aren't listed.
+  (`linear_write_ledger.project_id`, `principal`, `acknowledged_at`, `pending`; rows from before have neither and
+  aren't listed); 50, the hourly Linear count's split (people and agent sessions).
 - **One-way:** v0.3.8 refuses a database newer than schema 47. Take a dump before upgrading; to go back, restore it
   with the v0.3.8 image (docs/operations/deployment.md).
 
@@ -110,6 +110,18 @@
   hides one you checked in Linear (not one still being sent); a retry of the same operation ID still sends nothing. A
   ledger record now names its operation ID, its operation and its project, never a title or body; older records are
   counted, with the folder to clear. Linear config scope: none.
+- **No ClawBridge limit on Linear calls by default; Linear's own rate limit is respected through the queue.** A
+  project no longer has a 600-an-hour cap: every Linear call is still counted per hour (the watcher, project status
+  and health, app writes, and now every write made with a person's own profile, by its real calls), and each
+  credential's pacer waits out Linear's 429 and its Retry-After; a tick polls at most 100 issues. Nobody's write or
+  move is refused for the count: an agent session's and a person's are counted after. A cap stays opt-in (`project
+  linear-budget set N`, or the server's `CLAWBRIDGE_LINEAR_BUDGET`, whose old name `CLAWBRIDGE_WATCH_BUDGET` is
+  deprecated): **a server whose env still sets `CLAWBRIDGE_WATCH_BUDGET=300` keeps that cap until the line is
+  removed**, and `project linear-budget clear` removes a project's. Doctor's new `linear.budget` ("no ClawBridge cap"),
+  the project overview's `linear_budget` (`limit` 0, `capped` false, `source`), `project linear-budget show` and the
+  Linear screen's header ("(no cap)") split the hour between the app, people and agents, as counts. Schema 50.
+  Linear config scope: none.
+
 # ClawBridge v0.3.8 (released 29 Oct)
 
 **Schema 41 → 47.**

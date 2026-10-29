@@ -372,7 +372,7 @@ func (s *Store) chargeProjectStatus(ctx context.Context, tx *transaction, pid st
 	if err != nil {
 		return err
 	}
-	if b.used+calls > b.limit {
+	if b.spent(calls) {
 		return scoped(fmt.Sprintf("this project's Linear budget for the hour is spent (%d of %d calls used; this needs %d); try again at %s", b.used, b.limit, calls, b.resetAt.Format(time.RFC3339)), "rate_limited")
 	}
 	return b.charge(ctx, tx, pid, calls)
@@ -384,6 +384,10 @@ func (s *Store) chargeProjectStatus(ctx context.Context, tx *transaction, pid st
 type projectBudget struct {
 	hour        string
 	used, limit int
+	// people and agents are the hour's calls charged for personal-profile
+	// writes (FR8): a person's own, and an agent session's. The rest of
+	// used is the app's: the server's jobs and its app writes.
+	people, agents int
 	// source is where the limit comes from: "project" (its owner set it),
 	// "watcher" (the last watcher's) or "default" (the server's).
 	source  string
@@ -392,19 +396,29 @@ type projectBudget struct {
 }
 
 func (s *Store) projectBudget(ctx context.Context, tx *transaction, pid string) (projectBudget, error) {
+	return s.readProjectBudget(ctx, tx, pid, forUpdate(tx))
+}
+
+// readProjectBudget reads the budget, locking its row when lock says so;
+// a read-only caller (the overview) passes "".
+func (s *Store) readProjectBudget(ctx context.Context, tx *transaction, pid, lock string) (projectBudget, error) {
 	now, err := dbStamp(ctx, tx)
 	if err != nil {
 		return projectBudget{}, err
 	}
 	b := projectBudget{hour: now[:13], limit: watchDefaultBudget, source: "default", resetAt: at(now).Truncate(time.Hour).Add(time.Hour)}
-	rows, err := query(ctx, tx, `SELECT budget_hour,budget_used,budget_limit FROM watch_lease WHERE project_id=?`+forUpdate(tx), pid)
+	rows, err := query(ctx, tx, `SELECT budget_hour,budget_used,budget_limit,budget_people,budget_agents FROM watch_lease WHERE project_id=?`+lock, pid)
 	if err != nil {
 		return b, err
 	}
 	if len(rows) == 1 {
-		b.row, b.limit, b.source = true, asInt(rows[0]["budget_limit"]), "watcher"
+		b.row = true
+		if n := asInt(rows[0]["budget_limit"]); n > 0 {
+			b.limit, b.source = n, "watcher"
+		}
 		if str(rows[0], "budget_hour") == b.hour {
 			b.used = asInt(rows[0]["budget_used"])
+			b.people, b.agents = asInt(rows[0]["budget_people"]), asInt(rows[0]["budget_agents"])
 		}
 	}
 	if n, ok, e := watchBudgetOverride(ctx, tx, pid); e != nil {
@@ -421,6 +435,27 @@ type LinearBudget struct {
 	Limit    int       `json:"limit"`
 	Source   string    `json:"source"`
 	ResetsAt time.Time `json:"window_resets_at"`
+	// Capped is false when no cap is set, the default (the owner's rule
+	// for v0.3.9: Linear's own rate limit, through the pacer and the
+	// queues, is the brake); Limit is then 0.
+	Capped bool `json:"capped"`
+	// By splits the hour's calls between the app, people and agents
+	// (FR8): counts only, never who.
+	By LinearBudgetSplit `json:"by"`
+}
+
+// LinearBudgetSplit is who spent the hour's Linear calls: the app (the
+// server's jobs and app writes), people (their own writes, without a
+// session) and agents (sessions writing through a personal profile).
+type LinearBudgetSplit struct {
+	App    int `json:"app"`
+	People int `json:"people"`
+	Agents int `json:"agents"`
+}
+
+func (b projectBudget) view() LinearBudget {
+	return LinearBudget{Used: b.used, Limit: max(b.limit, 0), Source: b.source, ResetsAt: b.resetAt.UTC(), Capped: b.capped(),
+		By: LinearBudgetSplit{App: max(b.used-b.people-b.agents, 0), People: b.people, Agents: b.agents}}
 }
 
 // LinearBudgetOf reads a project's hourly Linear budget.
@@ -428,7 +463,7 @@ func (s *Store) LinearBudgetOf(ctx context.Context, pid string) (LinearBudget, e
 	var out LinearBudget
 	err := s.ledgerTx(ctx, func(tx *transaction) error {
 		b, err := s.projectBudget(ctx, tx, pid)
-		out = LinearBudget{Used: b.used, Limit: b.limit, Source: b.source, ResetsAt: b.resetAt.UTC()}
+		out = b.view()
 		return err
 	})
 	return out, err
@@ -437,12 +472,33 @@ func (s *Store) LinearBudgetOf(ctx context.Context, pid string) (LinearBudget, e
 // charge adds calls to the hour. A project no watcher ever ran for gets an
 // expired lease row to carry the hour's count, which the first watcher
 // then takes over.
+// capped reports a cap set: by the project's owner, the watcher's
+// --budget, or the server's CLAWBRIDGE_LINEAR_BUDGET. None is the default.
+func (b projectBudget) capped() bool { return b.limit > 0 }
+
+// spent reports a cap the hour has reached; never without a cap.
+func (b projectBudget) spent(calls int) bool { return b.capped() && b.used+calls > b.limit }
+
 func (b projectBudget) charge(ctx context.Context, tx *transaction, pid string, calls int) error {
+	return b.chargeBy(ctx, tx, pid, calls, "")
+}
+
+// chargeBy charges calls to the hour for the app (by ""), "people" or
+// "agents". A refund (negative calls) never takes a count below zero.
+func (b projectBudget) chargeBy(ctx context.Context, tx *transaction, pid string, calls int, by string) error {
+	people, agents := 0, 0
+	switch by {
+	case "people":
+		people = calls
+	case "agents":
+		agents = calls
+	}
 	if !b.row {
-		_, err := tx.ExecContext(ctx, `INSERT INTO watch_lease(project_id,session_id,lease_token,generation,expires_at,budget_hour,budget_used,budget_limit) VALUES(?,'','',0,'',?,?,?) ON CONFLICT(project_id) DO UPDATE SET budget_used=CASE WHEN watch_lease.budget_hour=excluded.budget_hour THEN watch_lease.budget_used+excluded.budget_used ELSE excluded.budget_used END,budget_hour=excluded.budget_hour`, pid, b.hour, calls, watchDefaultBudget)
+		calls, people, agents = max(calls, 0), max(people, 0), max(agents, 0)
+		_, err := tx.ExecContext(ctx, `INSERT INTO watch_lease(project_id,session_id,lease_token,generation,expires_at,budget_hour,budget_used,budget_limit,budget_people,budget_agents) VALUES(?,'','',0,'',?,?,?,?,?) ON CONFLICT(project_id) DO UPDATE SET budget_used=CASE WHEN watch_lease.budget_hour=excluded.budget_hour THEN watch_lease.budget_used+excluded.budget_used ELSE excluded.budget_used END,budget_people=CASE WHEN watch_lease.budget_hour=excluded.budget_hour THEN watch_lease.budget_people+excluded.budget_people ELSE excluded.budget_people END,budget_agents=CASE WHEN watch_lease.budget_hour=excluded.budget_hour THEN watch_lease.budget_agents+excluded.budget_agents ELSE excluded.budget_agents END,budget_hour=excluded.budget_hour`, pid, b.hour, calls, watchDefaultBudget, people, agents)
 		return err
 	}
-	_, err := tx.ExecContext(ctx, `UPDATE watch_lease SET budget_hour=?,budget_used=? WHERE project_id=?`, b.hour, b.used+calls, pid)
+	_, err := tx.ExecContext(ctx, `UPDATE watch_lease SET budget_hour=?,budget_used=?,budget_people=?,budget_agents=? WHERE project_id=?`, b.hour, max(b.used+calls, 0), max(b.people+people, 0), max(b.agents+agents, 0), pid)
 	return err
 }
 
@@ -459,7 +515,7 @@ func forUpdate(tx *transaction) string {
 func (s *Store) LinearBudgetRoom(ctx context.Context, pid string) (ok bool, used, limit int, resetAt time.Time, err error) {
 	err = s.ledgerTx(ctx, func(tx *transaction) error {
 		b, err := s.projectBudget(ctx, tx, pid)
-		ok, used, limit, resetAt = b.used < b.limit, b.used, b.limit, b.resetAt
+		ok, used, limit, resetAt = !b.spent(1), b.used, max(b.limit, 0), b.resetAt
 		return err
 	})
 	return ok, used, limit, resetAt, err

@@ -431,6 +431,9 @@ func TestReplyIsReservedAgainstItsThreadRoot(t *testing.T) {
 type oldServer struct{ *authorityV2 }
 
 func (o oldServer) Execute(ctx context.Context, r bus.Request) (bus.Result, error) {
+	if r.Operation == "linear_write_charge" {
+		return budgetAnswer(r)
+	}
 	if r.Operation == "taskboard_access" && r.Args["ledger"] != nil {
 		return bus.Result{}, errors.New(`unsupported argument "ledger" for taskboard_access`)
 	}

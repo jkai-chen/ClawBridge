@@ -25,7 +25,10 @@ const (
 // linearQueue is the project's queue and hourly budget from
 // linear_app_status.
 type linearQueue struct {
-	used, limit                    int
+	used, limit int
+	// people and agents are the hour's calls for writes through a
+	// personal profile (FR8); the rest are the app's.
+	people, agents                 int
 	source                         string
 	resetsAt                       time.Time
 	queued, sending, dead, expired int
@@ -59,6 +62,9 @@ func parseLinearQueue(data map[string]any) *linearQueue {
 		oldest: time.Duration(asCount(outbox["oldest_queued_age_s"])) * time.Second, waiting: text(outbox, "waiting"),
 	}
 	q.resetsAt, _ = time.Parse(time.RFC3339, text(budget, "window_resets_at"))
+	if by := mapData(budget["by"]); by != nil {
+		q.people, q.agents = asCount(by["people"]), asCount(by["agents"])
+	}
 	return q
 }
 
@@ -66,6 +72,12 @@ func parseLinearQueue(data map[string]any) *linearQueue {
 // (oldest 6 min)", coloured by doctor's thresholds.
 func linearQueueLine(q *linearQueue) string {
 	line := fmt.Sprintf("Linear: %d/%d this hour", q.used, q.limit)
+	if q.limit <= 0 {
+		line = fmt.Sprintf("Linear: %d this hour (no cap)", q.used)
+	}
+	if q.people+q.agents > 0 {
+		line += fmt.Sprintf(" (people %d, agents %d)", q.people, q.agents)
+	}
 	if n := q.queued + q.sending; n > 0 {
 		line += fmt.Sprintf(" · %d queued", n)
 		if q.queued > 0 {
@@ -82,7 +94,7 @@ func linearQueueLine(q *linearQueue) string {
 	switch {
 	case q.oldest >= queueFailAge || q.dead+q.expired > 0:
 		return errorStyle.Render(line)
-	case q.oldest >= queueWarnAge || q.uncertain > 0 || q.used >= q.limit:
+	case q.oldest >= queueWarnAge || q.uncertain > 0 || q.limit > 0 && q.used >= q.limit:
 		return warnStyle.Render(line)
 	}
 	return mutedStyle.Render(line)

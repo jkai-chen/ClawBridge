@@ -276,7 +276,7 @@ func parseLinear(command string, args []string, stderr io.Writer) (linearFlags, 
 		profile()
 	case "watch":
 		profile()
-		f.IntVar(&v.budget, "budget", 0, "Linear calls per hour this watcher may spend (1–600; default 200)")
+		f.IntVar(&v.budget, "budget", 0, "an opt-in cap on the Linear calls per hour this watcher may spend (1–600; default: no cap, paced by Linear's own rate limit)")
 		f.BoolVar(&v.once, "once", false, "run one cycle, report it and exit")
 	case "teams", "projects", "issues":
 		page()

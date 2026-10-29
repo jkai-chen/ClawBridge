@@ -32,7 +32,8 @@ CREATE INDEX linear_write_reservations_open ON linear_write_reservations(project
 // changed field names, never a member's ID, a name or a title (R5).
 var linearWriteKinds = map[string][]string{
 	"project_create":   {"kind_label_id"},
-	"issue_move":       {"from_team", "old_identifier"},
+	"issue_move":       {"from_team", "old_identifier", "children"},
+	"issue_move_child": {"parent", "from_team", "old_identifier"},
 	"project_team_add": {"changed", "unverified"},
 }
 

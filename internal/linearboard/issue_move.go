@@ -23,11 +23,15 @@ import (
 // Linear profile, reads the issue back by UUID and settles the reservation.
 // Nothing is retried.
 
+// errAlreadyInTeam: the issue is in the target team already.
+var errAlreadyInTeam = errors.New("the issue is already in that team")
+
 // moverV2 is a provider that can express and prove a team move.
 type moverV2 interface {
 	ValidateMoveV2(linearprovider.MoveInputV2) error
 	MoveV2(context.Context, linearprovider.MoveInputV2) (linearprovider.IssueV2, error)
 	SubIssues(context.Context, string) (int, error)
+	Children(context.Context, string, int) ([]linearprovider.IssueV2, error)
 }
 
 // MoveInputV2 is a move request: the issue and target team by UUID, and on
@@ -36,6 +40,9 @@ type MoveInputV2 struct {
 	IssueID, TeamID, OperationID string
 	Confirm                      bool
 	ExpectedPlanSHA256           string
+	// Family moves a parent with all its sub-issues: one write on the
+	// parent, whose children Linear moves with it (r5).
+	Family bool
 }
 
 // MoveLabelV2 is one label of the issue and the target team's label of the
@@ -63,7 +70,12 @@ type MovePlanV2 struct {
 	ProjectID  string        `json:"project_id,omitempty"`
 	Refusals   []string      `json:"refusals,omitempty"`
 	PlanSHA256 string        `json:"plan_sha256"`
-	Calls      int           `json:"calls"`
+	// Children is a family move's sub-issues, each planned as a single
+	// move would be.
+	Children []MoveChildV2 `json:"children,omitempty"`
+	// SubIssues is how many sub-issues Linear listed (at least).
+	SubIssues int `json:"sub_issues,omitempty"`
+	Calls     int `json:"calls"`
 	// what the digest and the read-back compare; never shown.
 	updatedAt string
 	current   linearprovider.IssueV2
@@ -81,6 +93,8 @@ type MoveResultV2 struct {
 	By            string     `json:"by,omitempty"`
 	Lane          string     `json:"lane,omitempty"`
 	Note          string     `json:"note,omitempty"`
+	// Children is a family's outcome per child.
+	Children []MoveChildResultV2 `json:"children,omitempty"`
 }
 
 // MoveIssueV2 previews a move, or confirms the one previewed.
@@ -163,7 +177,15 @@ func (s *Service) MoveIssueV2(ctx context.Context, scope bus.Request, in MoveInp
 	if e = mover.ValidateMoveV2(send); e != nil {
 		return out, fmt.Errorf("this Linear connection can't express the move; nothing was sent: %w", e)
 	}
-	reserved, e := s.moveCall(ctx, scope, "issue_move_reserve", map[string]any{"operation_id": in.OperationID, "issue_uuid": plan.IssueID, "from_team": plan.FromTeam, "to_team": plan.ToTeam, "plan_sha256": plan.PlanSHA256})
+	reserve := map[string]any{"operation_id": in.OperationID, "issue_uuid": plan.IssueID, "from_team": plan.FromTeam, "to_team": plan.ToTeam, "plan_sha256": plan.PlanSHA256, "calls": moveConfirmCalls(plan)}
+	if in.Family {
+		var kids []any
+		for _, c := range plan.Children {
+			kids = append(kids, c.IssueID)
+		}
+		reserve["children"] = kids
+	}
+	reserved, e := s.moveCall(ctx, scope, "issue_move_reserve", reserve)
 	if e != nil {
 		return out, fmt.Errorf("the move could not be reserved; nothing was sent: %w", e)
 	}
@@ -178,7 +200,21 @@ func (s *Service) MoveIssueV2(ctx context.Context, scope bus.Request, in MoveInp
 		return out, nil
 	}
 	settle := func(outcome, identifier string) error {
-		_, err := s.moveCall(ctx, scope, "issue_move_settle", map[string]any{"operation_id": in.OperationID, "outcome": outcome, "old_identifier": plan.Identifier, "new_identifier": identifier})
+		args := map[string]any{"operation_id": in.OperationID, "outcome": outcome, "old_identifier": plan.Identifier, "new_identifier": identifier}
+		if in.Family && outcome != "not_sent" {
+			if out.Children == nil {
+				// Nothing was read back: every child is uncertain.
+				for _, c := range plan.Children {
+					out.Children = append(out.Children, MoveChildResultV2{IssueID: c.IssueID, OldIdentifier: c.Identifier, Outcome: "uncertain", Unverified: []string{"read-back"}})
+				}
+			}
+			var kids []any
+			for _, c := range out.Children {
+				kids = append(kids, map[string]any{"issue_uuid": c.IssueID, "outcome": c.Outcome, "old_identifier": c.OldIdentifier, "new_identifier": c.NewIdentifier})
+			}
+			args["children"] = kids
+		}
+		_, err := s.moveCall(ctx, scope, "issue_move_settle", args)
 		return err
 	}
 	// The lane and the binding hold right up to the send.
@@ -208,18 +244,38 @@ func (s *Service) MoveIssueV2(ctx context.Context, scope bus.Request, in MoveInp
 		out.Unverified = []string{"read-back"}
 		out.Note = "the issue couldn't be read back after the move was sent; it may or may not have moved; read the issue in Linear; nothing is retried"
 		return out, errors.Join(sendErr, readErr, settle("uncertain", ""))
-	case sendErr != nil && definiteRefusal(sendErr) && back.TeamID == plan.FromTeam:
+	case sendErr != nil && definiteRefusal(sendErr) && back.TeamID == plan.FromTeam && (!in.Family || childrenStayed(ctx, p2, plan)):
 		out.Outcome = "not_sent"
 		out.Note = "Linear refused the move, and the issue is still in its team"
+		if in.Family {
+			out.Note = "Linear refused the move, and the parent and every child are still in their team"
+		}
 		return out, errors.Join(sendErr, settle("not_sent", ""))
 	}
 	out.Unverified = moveReadBackV2(plan, moved, back)
 	out.NewIdentifier = back.Identifier
 	out.Outcome = "accepted"
+	if in.Family {
+		var whole bool
+		out.Children, whole = familyReadBackV2(ctx, p2, mover, plan, back)
+		if !whole {
+			out.Unverified = append(out.Unverified, "family")
+		}
+		for _, c := range out.Children {
+			if c.Outcome != "accepted" && !slices.Contains(out.Unverified, "children") {
+				out.Unverified = append(out.Unverified, "children")
+			}
+		}
+	}
 	if len(out.Unverified) > 0 {
 		out.Outcome = "uncertain"
-		if sendErr != nil {
+		switch {
+		case in.Family:
+			out.Note = fmt.Sprintf("the family is uncertain and nothing is retried; read the issues in Linear. To move it back: clawbridge linear move %s --team %s --family, previewed first (whether that pulls back a child that didn't follow is unproven)", plan.IssueID, plan.FromTeam)
+		case sendErr != nil:
 			out.Note = "Linear's answer to the move was an error, and the read-back doesn't show the move as planned; read the issue in Linear; nothing is retried"
+		}
+		if sendErr != nil {
 			return out, errors.Join(sendErr, settle("uncertain", ""))
 		}
 	}
@@ -227,6 +283,29 @@ func (s *Service) MoveIssueV2(ctx context.Context, scope bus.Request, in MoveInp
 		return out, fmt.Errorf("the move was sent (%s) but not settled on the server: %w", out.Outcome, e)
 	}
 	return out, nil
+}
+
+// childrenStayed reads every child of a refused family back: not_sent
+// holds only when each one is still in the source team.
+func childrenStayed(ctx context.Context, p2 ProviderV2, plan MovePlanV2) bool {
+	for _, c := range plan.Children {
+		back, e := p2.IssueV2(ctx, c.IssueID)
+		if e != nil || back.TeamID != plan.FromTeam {
+			return false
+		}
+	}
+	return true
+}
+
+// moveConfirmCalls is what a confirm spends against the project's hourly
+// Linear budget (r6 O2): the plan's reads again, the write, its read-back,
+// and for a family each child's read-back and the re-listing.
+func moveConfirmCalls(plan MovePlanV2) int {
+	n := plan.Calls + 2
+	if len(plan.Children) > 0 {
+		n += len(plan.Children) + 1
+	}
+	return n
 }
 
 // moveWho says, in a preview, who may confirm this move.
@@ -280,7 +359,7 @@ func (s *Service) planMoveV2(ctx context.Context, p Provider, p2 ProviderV2, mov
 	plan.current, plan.updatedAt = current, current.UpdatedAt
 	plan.Identifier, plan.FromTeam, plan.ProjectID = current.Identifier, current.TeamID, current.ProjectID
 	if plan.FromTeam == plan.ToTeam {
-		return plan, errors.New("the issue is already in that team")
+		return plan, errAlreadyInTeam
 	}
 	for _, team := range []string{plan.FromTeam, plan.ToTeam} {
 		if !contains(b.LinearTeamIDs, team) || b.TeamAccess(team) != bus.TeamAccessWrite {
@@ -293,15 +372,19 @@ func (s *Service) planMoveV2(ctx context.Context, p Provider, p2 ProviderV2, mov
 	if e != nil {
 		return plan, e
 	}
-	if children > 0 {
-		refuse("the issue has sub-issues (at least %d); a parent moves with all its children only in a batch move", children)
+	plan.SubIssues = children
+	switch {
+	case children > 0 && !in.Family:
+		refuse("the issue has sub-issues (at least %d), which Linear moves with it; move the whole family with --family (family: true)", children)
+	case children == 0 && in.Family:
+		refuse("the issue has no sub-issues; move it without --family")
 	}
 	// Q4: no split family; a sub-issue moves only with its parent.
 	switch {
 	case !current.ParentKnown:
 		refuse("Linear's read didn't say whether the issue has a parent, so a move can't keep its family whole")
 	case current.ParentID != "" || current.ParentIdentifier != "":
-		refuse("the issue is a sub-issue; it moves only with its parent and all its siblings, in a batch move")
+		refuse("the issue is a sub-issue; it moves only with its family, named by its parent with --family")
 	}
 	// The project must include the target team.
 	if current.ProjectID != "" {
@@ -343,6 +426,11 @@ func (s *Service) planMoveV2(ctx context.Context, p Provider, p2 ProviderV2, mov
 		plan.Estimate = "none"
 	default:
 		plan.Estimate = "unchanged by ClawBridge (Linear's read didn't say)"
+	}
+	if in.Family && children > 0 {
+		if e = s.planFamilyV2(ctx, p, p2, mover, b, v, &plan); e != nil {
+			return plan, e
+		}
 	}
 	plan.PlanSHA256 = movePlanDigest(plan)
 	return plan, nil
@@ -471,7 +559,11 @@ func planMoveLabelsV2(ctx context.Context, p2 ProviderV2, v verifiedV2, b bus.Ta
 // mapping refuses a confirm.
 func movePlanDigest(plan MovePlanV2) string {
 	c := plan.current
-	raw, _ := json.Marshal([]any{plan.IssueID, plan.updatedAt, plan.FromTeam, plan.ToTeam, c.StateID, plan.ToStateID, plan.labelIDs, len(plan.names), c.ProjectID, c.ParentID, c.ParentIdentifier, c.AssigneeID, c.CycleSet, plan.Refusals != nil})
+	var kids []string
+	for _, k := range plan.Children {
+		kids = append(kids, childDigest(k))
+	}
+	raw, _ := json.Marshal([]any{plan.IssueID, plan.updatedAt, plan.FromTeam, plan.ToTeam, c.StateID, plan.ToStateID, plan.labelIDs, len(plan.names), c.ProjectID, c.ParentID, c.ParentIdentifier, c.AssigneeID, c.CycleSet, plan.Refusals != nil, kids})
 	sum := sha256.Sum256(raw)
 	return hex.EncodeToString(sum[:])
 }

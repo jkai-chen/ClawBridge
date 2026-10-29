@@ -13,6 +13,20 @@
   read again by UUID and that read is checked. A move is read back before it settles, also after an error answer:
   `accepted` when the read shows it as planned, `not_sent` only when Linear refused it and the issue is still in its
   team, else `uncertain`. No schema change. Linear config scope: none.
+- **Moving a family, and many issues at once.** Linear moves a parent's sub-issues with it, so `linear move ISSUE
+  --team TEAM --family` (MCP `family: true`) moves a parent with all of them: one write, on the parent. Without
+  `--family`, a parent is refused and named for it; a sub-issue alone is refused as before. Each child is planned as
+  a single move would be (state and labels mapped, at most 50 children, none already moved, in another team or
+  project, or with children of its own) and read back after, recorded per child on the server; a child that didn't
+  follow makes the family `uncertain`, with the move-back listed, and a refusal is `not_sent` only while the parent
+  and every child are still in their team. `linear move --file moves.json` (CLI only) previews up to 100 issues,
+  children counted, then moves them one by one and stops at the first that isn't `accepted`; the same
+  `--operation-id` resumes, and an `uncertain` item holds it until acknowledged (and, if it didn't move, until it is
+  moved on its own under a new operation ID). Every confirmed move, single or family, is charged to the project's
+  hourly Linear budget with its record, before anything is sent: no room answers a session `rate_limited` with when
+  to retry, while a person with no session is charged past the limit and never refused. Agents loop over the single
+  move instead. **Off until proven:** family moves also need `serve --issue-family-move-proven`
+  (`CLAWBRIDGE_ISSUE_FAMILY_MOVE_PROVEN=1`). No schema change. Linear config scope: none.
 
 ## Docs
 

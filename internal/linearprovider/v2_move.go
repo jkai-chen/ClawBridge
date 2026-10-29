@@ -156,3 +156,53 @@ func (p *Provider) SubIssues(ctx context.Context, parent string) (int, error) {
 	}
 	return len(rows), nil
 }
+
+// Children lists every issue Linear names under parent, paging
+// list_issues {parentId} to the end. More than max rows, or a listing that
+// can't be paged to its end, is an error: a family move needs every child
+// (FR7 r6 O8). The caller proves each row's parent itself.
+func (p *Provider) Children(ctx context.Context, parent string, max int) ([]IssueV2, error) {
+	if !ValidID(parent) || max < 1 {
+		return nil, fail("invalid")
+	}
+	var out []IssueV2
+	cursor := ""
+	for page := 0; page <= max/10+1; page++ {
+		args, e := pageArgs(PageOptions{Limit: 50, Cursor: cursor})
+		if e != nil {
+			return nil, e
+		}
+		m, e := p.v2Call(ctx, []string{"list_issues"}, append(args, a(parent, "parentId"))...)
+		if e != nil {
+			return nil, e
+		}
+		rows, next, complete, e := list(m, "issues")
+		if e != nil {
+			return nil, e
+		}
+		for _, row := range rows {
+			x, e := p.parseIssueV2(ctx, row)
+			if pe, ok := e.(*Error); ok && pe.Kind == "scope_metadata_missing" {
+				// Native rows carry a display id beside the uuid.
+				if uuid, idErr := id(row); idErr == nil {
+					x, e = p.IssueV2(ctx, uuid)
+				}
+			}
+			if e != nil {
+				return nil, e
+			}
+			out = append(out, x)
+			if len(out) > max {
+				return nil, fail("result_limit")
+			}
+		}
+		if complete {
+			return out, nil
+		}
+		if next == "" || next == cursor {
+			return nil, fail("pagination_unavailable")
+		}
+		cursor = next
+	}
+	return nil, fail("result_limit")
+}

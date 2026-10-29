@@ -1,6 +1,7 @@
 package bus
 
 import (
+	"fmt"
 	"slices"
 	"sort"
 	"strings"
@@ -10,7 +11,7 @@ import (
 const movedIssue = "e4000000-0000-4000-8000-000000000004"
 
 func moveArgs(op, from, to string) map[string]any {
-	return map[string]any{"operation_id": op, "issue_uuid": movedIssue, "from_team": from, "to_team": to, "plan_sha256": strings.Repeat("a", 64)}
+	return map[string]any{"operation_id": op, "issue_uuid": movedIssue, "from_team": from, "to_team": to, "plan_sha256": strings.Repeat("a", 64), "calls": 8}
 }
 
 // movesHarness is the creates harness (lanes "one" writes teamOne, "both"
@@ -184,5 +185,210 @@ func TestIssueMoveUpdatesEveryIdentifierStore(t *testing.T) {
 	sort.Strings(want)
 	if !slices.Equal(got, want) {
 		t.Fatalf("identifier columns %v, issueIdentifierStores rewrites %v", got, want)
+	}
+}
+
+const (
+	childOne = "e4000000-0000-4000-8000-000000000011"
+	childTwo = "e4000000-0000-4000-8000-000000000012"
+)
+
+func familyArgs(op string, children ...any) map[string]any {
+	a := moveArgs(op, teamOne, teamTwo)
+	a["children"] = children
+	return a
+}
+
+// A family needs its own proof; then the parent and each child are
+// reserved together, each child as its own row under an operation ID
+// derived from the family's; a repeat replays all of them.
+func TestIssueMoveFamilyReserve(t *testing.T) {
+	h := movesHarness(t)
+	if e := h.errorOf("issue_move_reserve", "", familyArgs("f-1", childOne)); !strings.Contains(e, "issue_family_move_unproven") {
+		t.Fatal("an unproven family reserved:", e)
+	}
+	h.s.SetIssueFamilyMoveProven(true)
+	for name, bad := range map[string][]any{"the parent": {movedIssue}, "twice": {childOne, childOne}, "not a UUID": {"OLD-2"}} {
+		if e := h.errorOf("issue_move_reserve", "", familyArgs("f-1", bad...)); e == "" {
+			t.Fatal("children", name, "reserved")
+		}
+	}
+	many := make([]any, maxFamilyChildren+1)
+	for i := range many {
+		many[i] = fmt.Sprintf("e5000000-0000-4000-8000-%012d", i)
+	}
+	if e := h.errorOf("issue_move_reserve", "", familyArgs("f-1", many...)); !strings.Contains(e, "at most") {
+		t.Fatal("too many children:", e)
+	}
+	got := h.call("issue_move_reserve", "", familyArgs("f-1", childTwo, childOne)).(map[string]any)
+	kids, _ := got["children"].([]map[string]any)
+	if got["state"] != "reserved" || len(kids) != 2 || kids[0]["issue_uuid"] != childOne || kids[1]["issue_uuid"] != childTwo || count(t, h.s.db, "linear_write_reservations") != 3 {
+		t.Fatal(got)
+	}
+	again := h.call("issue_move_reserve", "", familyArgs("f-1", childOne, childTwo)).(map[string]any)
+	if again["replay"] != true || count(t, h.s.db, "linear_write_reservations") != 3 {
+		t.Fatal("a repeat:", again)
+	}
+	if e := h.errorOf("issue_move_reserve", "", familyArgs("f-1", childOne)); !strings.Contains(e, "different Linear write") {
+		t.Fatal("the same operation with other children:", e)
+	}
+	// A long operation ID still gives each child a valid ID of at most 128.
+	long := strings.Repeat("x", 128)
+	h.call("issue_move_reserve", "", familyArgs(long, childOne))
+	var op string
+	if e := h.s.db.QueryRow(`SELECT operation_id FROM linear_write_reservations WHERE kind='issue_move_child' AND operation_id NOT LIKE 'f-1%'`).Scan(&op); e != nil || len(op) > 128 || !commentOperationID.MatchString(op) {
+		t.Fatal(op, e)
+	}
+}
+
+// A family settles with every reserved child named once: not_sent for the
+// parent leaves them all not_sent; accepted needs every child accepted;
+// an accepted child's identifier is rewritten like the parent's.
+func TestIssueMoveFamilySettle(t *testing.T) {
+	h := movesHarness(t)
+	h.s.SetIssueFamilyMoveProven(true)
+	var pid string
+	if e := h.s.db.QueryRow(`SELECT id FROM projects WHERE slug='p'`).Scan(&pid); e != nil {
+		t.Fatal(e)
+	}
+	if _, e := h.s.db.Exec(`INSERT INTO intake_queue(project_id,issue_uuid,issue_identifier,signals,trigger_cap,cap_set_by,state,created_at,updated_at) VALUES(?,?,'OLD-3','[]','notify','owner','queued','2026-10-28T12:00:00Z','2026-10-28T12:00:00Z')`, pid, childOne); e != nil {
+		t.Fatal(e)
+	}
+	h.call("issue_move_reserve", "", familyArgs("f-1", childOne, childTwo))
+	child := func(id, outcome, identifier string) map[string]any {
+		return map[string]any{"issue_uuid": id, "outcome": outcome, "old_identifier": "OLD-3", "new_identifier": identifier}
+	}
+	settle := func(outcome string, kids ...any) map[string]any {
+		return map[string]any{"operation_id": "f-1", "outcome": outcome, "old_identifier": "OLD-1", "new_identifier": "NEW-1", "children": kids}
+	}
+	for name, c := range map[string]struct {
+		args map[string]any
+		want string
+	}{
+		"one missing":     {settle("accepted", child(childOne, "accepted", "NEW-3")), "each of its reserved children once"},
+		"named twice":     {settle("accepted", child(childOne, "accepted", "NEW-3"), child(childOne, "accepted", "NEW-3")), "each of its reserved children once"},
+		"a stranger":      {settle("accepted", child(childOne, "accepted", "NEW-3"), child(movedIssue, "accepted", "NEW-4")), "each of its reserved children once"},
+		"accepted, short": {settle("accepted", child(childOne, "accepted", "NEW-3"), child(childTwo, "uncertain", "")), "only when every child is"},
+		"child not_sent":  {settle("uncertain", child(childOne, "accepted", "NEW-3"), child(childTwo, "not_sent", "")), "accepted or uncertain"},
+	} {
+		if e := h.errorOf("issue_move_settle", "", c.args); !strings.Contains(e, c.want) {
+			t.Fatal(name, e)
+		}
+	}
+	got := h.call("issue_move_settle", "", settle("uncertain", child(childOne, "accepted", "NEW-3"), child(childTwo, "uncertain", ""))).(map[string]any)
+	kids, _ := got["children"].([]map[string]any)
+	if got["state"] != "uncertain" || len(kids) != 2 || got["rows_updated"] != 1 {
+		t.Fatal(got)
+	}
+	var id string
+	if e := h.s.db.QueryRow(`SELECT issue_identifier FROM intake_queue WHERE issue_uuid=?`, childOne).Scan(&id); e != nil || id != "NEW-3" {
+		t.Fatal(id, e)
+	}
+	// A family not sent leaves every child not sent, and reopens whole.
+	h.call("issue_move_reserve", "", familyArgs("f-2", childOne))
+	h.call("issue_move_settle", "", map[string]any{"operation_id": "f-2", "outcome": "not_sent"})
+	var state string
+	if e := h.s.db.QueryRow(`SELECT state FROM linear_write_reservations WHERE kind='issue_move_child' AND subject=? AND operation_id LIKE 'f-2%'`, childOne).Scan(&state); e != nil || state != "not_sent" {
+		t.Fatal(state, e)
+	}
+	if again := h.call("issue_move_reserve", "", familyArgs("f-2", childOne)).(map[string]any); again["state"] != "reserved" {
+		t.Fatal("reopen:", again)
+	}
+	// A single move's settle can't name children.
+	h.call("issue_move_reserve", "", moveArgs("m-1", teamOne, teamTwo))
+	if e := h.errorOf("issue_move_settle", "", map[string]any{"operation_id": "m-1", "outcome": "uncertain", "children": []any{}}); !strings.Contains(e, "reserved no children") {
+		t.Fatal(e)
+	}
+}
+
+// A family under an operation ID too long to prefix its children's is
+// found again on a repeat and on its settle: the children's IDs come from
+// the operation's digest, the same every time.
+func TestIssueMoveFamilyLongOperationResumes(t *testing.T) {
+	h := movesHarness(t)
+	h.s.SetIssueFamilyMoveProven(true)
+	long := strings.Repeat("y", 128)
+	first := h.call("issue_move_reserve", "", familyArgs(long, childOne, childTwo)).(map[string]any)
+	again := h.call("issue_move_reserve", "", familyArgs(long, childOne, childTwo)).(map[string]any)
+	if again["replay"] != true || count(t, h.s.db, "linear_write_reservations") != 3 || len(first["children"].([]map[string]any)) != 2 {
+		t.Fatal(first, again)
+	}
+	kid := func(id string) map[string]any {
+		return map[string]any{"issue_uuid": id, "outcome": "accepted", "old_identifier": "OLD-3", "new_identifier": "NEW-3"}
+	}
+	got := h.call("issue_move_settle", "", map[string]any{"operation_id": long, "outcome": "accepted", "new_identifier": "NEW-1", "children": []any{kid(childOne), kid(childTwo)}}).(map[string]any)
+	if got["state"] != "accepted" || len(got["children"].([]map[string]any)) != 2 {
+		t.Fatal("the long family's children weren't found on settle:", got)
+	}
+	// Another long operation sharing the first 128 characters' prefix is a
+	// different family: none of its rows are the first one's.
+	other := strings.Repeat("y", 127) + "z"
+	h.call("issue_move_reserve", "", familyArgs(other, childOne))
+	if e := h.errorOf("issue_move_settle", "", map[string]any{"operation_id": other, "outcome": "accepted", "new_identifier": "NEW-1", "children": []any{kid(childOne), kid(childTwo)}}); !strings.Contains(e, "each of its reserved children once") {
+		t.Fatal("two long families mixed their children:", e)
+	}
+}
+
+func (h *harness) budgetUsed() int {
+	h.t.Helper()
+	var n int
+	if e := h.s.db.QueryRow(`SELECT COALESCE(SUM(budget_used),0) FROM watch_lease`).Scan(&n); e != nil {
+		h.t.Fatal(e)
+	}
+	return n
+}
+
+// O2/P4: a move's estimated calls come from the project's hourly budget,
+// charged with its reservation; a repeat isn't charged again; a family is
+// charged in full, so it is never split across the hour. No room refuses a
+// session's move with when to retry and records nothing; a person without
+// a session is charged past the limit and never refused (FR8 Q2).
+func TestIssueMoveChargesTheBudget(t *testing.T) {
+	h := movesHarness(t)
+	h.s.SetIssueFamilyMoveProven(true)
+	if e := h.errorOf("issue_move_reserve", "", map[string]any{"operation_id": "m-0", "issue_uuid": movedIssue, "from_team": teamOne, "to_team": teamTwo, "plan_sha256": strings.Repeat("a", 64)}); !strings.Contains(e, "calls must be") {
+		t.Fatal("no estimate:", e)
+	}
+	h.call("comment_watch_budget_set", "", map[string]any{"watch_budget": 20})
+	h.call("issue_move_reserve", "", moveArgs("m-1", teamOne, teamTwo))
+	if h.budgetUsed() != 8 {
+		t.Fatal("charged", h.budgetUsed())
+	}
+	h.call("issue_move_reserve", "", moveArgs("m-1", teamOne, teamTwo))
+	if h.budgetUsed() != 8 {
+		t.Fatal("a repeat was charged again:", h.budgetUsed())
+	}
+	// J1: the client's estimate has a family floor (the write, its
+	// read-back, each child's sub-issue read and read-back).
+	family := familyArgs("f-1", childOne, childTwo)
+	family["calls"] = 5
+	if e := h.errorOf("issue_move_reserve", "", family); !strings.Contains(e, "at least 6") {
+		t.Fatal("under the family floor:", e)
+	}
+	if count(t, h.s.db, "linear_write_reservations") != 1 || h.budgetUsed() != 8 {
+		t.Fatal("an estimate under the floor left a trace or a charge")
+	}
+	// The coordinator, 12 left: a family needing 13 is refused whole,
+	// nothing recorded.
+	h.pin("lane_pin_set", map[string]any{"expected_revision": 0, "kind": "session", "key": "c", "lane": "both"})
+	family["calls"] = 13
+	if e := h.errorOf("issue_move_reserve", "c", family); !strings.Contains(e, "12 of 20 calls left") || !strings.Contains(e, "retry after") {
+		t.Fatal("over the budget:", e)
+	}
+	if count(t, h.s.db, "linear_write_reservations") != 1 || h.budgetUsed() != 8 {
+		t.Fatal("a refused family left a trace")
+	}
+	family["calls"] = 12
+	h.call("issue_move_reserve", "c", family)
+	if h.budgetUsed() != 20 || count(t, h.s.db, "linear_write_reservations") != 4 {
+		t.Fatal("the family wasn't charged in full:", h.budgetUsed())
+	}
+	if e := h.errorOf("issue_move_reserve", "c", moveArgs("m-2", teamOne, teamTwo)); !strings.Contains(e, "nothing was sent") || count(t, h.s.db, "linear_write_reservations") != 4 {
+		t.Fatal("a session reserved past a spent budget:", e)
+	}
+	// A person past the limit is charged and reserved, never refused.
+	got := h.call("issue_move_reserve", "", moveArgs("m-3", teamOne, teamTwo)).(map[string]any)
+	if got["state"] != "reserved" || h.budgetUsed() != 28 || count(t, h.s.db, "linear_write_reservations") != 5 {
+		t.Fatal("a person was refused or not charged past the limit:", got, h.budgetUsed())
 	}
 }

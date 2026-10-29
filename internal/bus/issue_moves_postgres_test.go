@@ -39,7 +39,7 @@ func TestPostgresIssueMoves(t *testing.T) {
 	binding["linear_team_ids"] = []string{teamOne, teamTwo}
 	must("owner", Request{Operation: "taskboard_set_v2", Args: binding})
 	move := func(op string) map[string]any {
-		return map[string]any{"operation_id": op, "issue_uuid": movedIssue, "from_team": teamOne, "to_team": teamTwo, "plan_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}
+		return map[string]any{"operation_id": op, "issue_uuid": movedIssue, "from_team": teamOne, "to_team": teamTwo, "plan_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "calls": 8}
 	}
 	for _, role := range []string{"member", "reader"} {
 		if _, err := as(role, Request{Operation: "issue_move_reserve", Args: move("m-" + role)}); !refusedWith(err, "owner or a project lead") {
@@ -62,5 +62,54 @@ func TestPostgresIssueMoves(t *testing.T) {
 	var details string
 	if err := f.s.db.QueryRow(`SELECT details FROM history WHERE entity='issue_move' AND action='accepted'`).Scan(&details); err != nil || !strings.Contains(details, "NEW-2") {
 		t.Fatal(details, err)
+	}
+}
+
+// On the hosted authority a family under a long operation ID finds its
+// children again on a repeat and on its settle, and a neighbouring long
+// operation never shares them, whatever the database's collation: the
+// children are read by their exact operation IDs.
+func TestPostgresIssueMoveFamilyLongOperation(t *testing.T) {
+	f := newPGIdentityFixture(t)
+	f.s.SetIssueMoveProven(true)
+	f.s.SetIssueFamilyMoveProven(true)
+	key := newKey(t)
+	owner := newID("owner") + "@identity-test.example"
+	code := f.invite(f.owner, owner, "owner")["code"].(string)
+	if _, err := f.join(owner, code, key); err != nil {
+		t.Fatal(err)
+	}
+	must := func(r Request) map[string]any {
+		t.Helper()
+		r.Workspace, r.Project = f.workspace, "p"
+		out, err := f.asDevice(owner, keyID(t, key), r)
+		if err != nil {
+			t.Fatal(r.Operation, err)
+		}
+		m, _ := out.Data.(map[string]any)
+		return m
+	}
+	binding := taskboardArgsV2(0)
+	binding["linear_team_ids"] = []string{teamOne, teamTwo}
+	must(Request{Operation: "taskboard_set_v2", Args: binding})
+	long := strings.Repeat("y", 128)
+	// Under en_US collation ':' and ';' aren't neighbours, so a range over
+	// the children's IDs could take this one's rows too.
+	near := strings.Repeat("y", 127) + "z"
+	must(Request{Operation: "issue_move_reserve", Args: familyArgs(long, childOne, childTwo)})
+	must(Request{Operation: "issue_move_reserve", Args: familyArgs(near, childOne)})
+	if again := must(Request{Operation: "issue_move_reserve", Args: familyArgs(long, childOne, childTwo)}); again["replay"] != true {
+		t.Fatal(again)
+	}
+	kid := func(id string) map[string]any {
+		return map[string]any{"issue_uuid": id, "outcome": "accepted", "old_identifier": "OLD-3", "new_identifier": "NEW-3"}
+	}
+	got := must(Request{Operation: "issue_move_settle", Args: map[string]any{"operation_id": long, "outcome": "accepted", "new_identifier": "NEW-1", "children": []any{kid(childOne), kid(childTwo)}}})
+	if got["state"] != "accepted" {
+		t.Fatal(got)
+	}
+	got = must(Request{Operation: "issue_move_settle", Args: map[string]any{"operation_id": near, "outcome": "uncertain", "children": []any{map[string]any{"issue_uuid": childOne, "outcome": "uncertain"}}}})
+	if got["state"] != "uncertain" {
+		t.Fatal("the neighbouring family:", got)
 	}
 }

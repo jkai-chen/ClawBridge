@@ -241,8 +241,9 @@ To move an issue to another bound team, preview it with
 --team TEAM`). The preview maps the state and labels by name, clears the cycle,
 keeps the estimate, and lists anything that refuses the move: a label the
 target team lacks, no single target state, a project without the target team,
-or a parent or sub-issues (families move together only in a later batch
-command). Only the project owner or a project lead (the ClawBridge project
+or a sub-issue on its own. An issue with sub-issues moves as a family:
+`family: true`, naming the parent. Linear moves the children with it, and
+each is read back. Only the project owner or a project lead (the ClawBridge project
 role `lead`: [Which "lead"](../SKILL.md#which-lead)) in their own terminal, or the
 project's designated coordinator session for a move between its own lane's
 teams, confirms. A binding without lanes, or a coordinator with no lane, gives
@@ -257,10 +258,18 @@ As the coordinator:
   that tracks the work) the old and the new identifier. The old one
   keeps opening the issue in Linear.
 
+To move many issues, loop over the tool, one issue or family per call, in the
+order you were given:
+1. Preview, then confirm, each one.
+2. Stop at the first result that isn't `accepted`. Never skip an `uncertain`
+   one to go on; report it and the identifiers so far.
+3. Report each old and new identifier.
+
 A changed plan is refused, so preview again. An `uncertain` move is never sent
 again: read the issue first. A `not_sent` move is one Linear refused, with the
-issue still in its team: tell the human why before trying again. `issue_move_unproven` means the server's operator
-hasn't turned moves on yet; tell the human.
+issue (and, for a family, every child) still in its team: tell the human why
+before trying again. `issue_move_unproven` (or `issue_family_move_unproven`)
+means the server's operator hasn't turned those moves on yet; tell the human.
 
 A project includes the teams its issues may be in. To add a bound write team to
 a project of the binding, preview with `taskboard_project_add_team_v2`

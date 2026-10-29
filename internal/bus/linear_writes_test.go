@@ -38,11 +38,11 @@ func ledgerRows(t *testing.T, tx *transaction) int {
 // the subject and target only, never a member's ID, a name or a title.
 // Every kind the code writes is in the set.
 func TestLinearWriteKindsPinned(t *testing.T) {
-	want := map[string][]string{"project_create": {"kind_label_id"}, "issue_move": {"from_team", "old_identifier"}, "project_team_add": {"changed", "unverified"}}
+	want := map[string][]string{"project_create": {"kind_label_id"}, "issue_move": {"from_team", "old_identifier", "children"}, "issue_move_child": {"parent", "from_team", "old_identifier"}, "project_team_add": {"changed", "unverified"}}
 	if !reflect.DeepEqual(linearWriteKinds, want) {
 		t.Fatalf("the kinds changed: %v; pin the new kind's detail keys here", linearWriteKinds)
 	}
-	for _, kind := range []string{projectCreateKind, issueMoveKind, projectTeamAddKind} {
+	for _, kind := range []string{projectCreateKind, issueMoveKind, issueMoveChildKind, projectTeamAddKind} {
 		if _, ok := linearWriteKinds[kind]; !ok {
 			t.Fatal("the code writes an unlisted kind:", kind)
 		}

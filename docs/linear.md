@@ -980,11 +980,43 @@ Agents use the MCP tool `taskboard_issue_move_v2` (`id`, `team_id`,
   - **Project:** the issue stays in its project, which must include the
     target team. Otherwise add the team to the project first, or take the
     issue out of it.
-- **Families stay whole.** An issue with sub-issues is refused, because
-  Linear moves the sub-issues with their parent. A sub-issue is refused too.
+- **Families stay whole.** Linear moves a parent's sub-issues with it, so an
+  issue with sub-issues moves only as a family: `--family` (MCP
+  `family: true`), naming the parent. A sub-issue is refused on its own.
   Linear would let it move alone, but ClawBridge keeps a parent and its
-  children in one team: that is ClawBridge's rule, not a Linear limit. Moving
-  a whole family is a later batch command.
+  children in one team: that is ClawBridge's rule, not a Linear limit.
+  - The preview lists every child, up to 50, and plans each as a single move
+    would be: its state and labels mapped to the target team. It refuses the
+    family, naming the child, when a child is already in the target team, is in
+    another team or project than its parent, has sub-issues of its own, or
+    has a label or state the target can't take.
+  - The confirm sends one write, on the parent; no child is written. The
+    server records each child, and each child is read back: in the target
+    team, under a new identifier, still under the parent, with its planned
+    state and labels. Any child that didn't follow, or followed otherwise,
+    makes it `uncertain`, named per child. Nothing is retried, and the result
+    lists the move-back command.
+  - A family move needs a second operator flag, `serve
+    --issue-family-move-proven` (`CLAWBRIDGE_ISSUE_FAMILY_MOVE_PROVEN=1`),
+    beside the move flag. Until it's set the confirm is refused with
+    `issue_family_move_unproven`, and the preview works.
+- **Many issues at once (CLI).** `clawbridge linear move --file moves.json
+  --operation-id OP --profile ID`, with `{"team_id": UUID, "issues": [UUID,
+  …]}`, previews every issue together (a parent as its family). Children count
+  toward the batch's 100. Every refusal is listed, with one `plan_sha256` for
+  the batch.
+  - Confirm with `--confirm --expected-plan-sha256 SHA`: the issues move one by
+    one, each re-planned at its turn under `OP:<index>`, and the batch stops
+    at the first that isn't `accepted`. Nothing after it is sent.
+  - Run it again with the same `--operation-id` to resume: done issues answer
+    from the server's record. An issue already in the target team is read
+    back and reported. An `uncertain` one holds the batch until you've read it
+    in Linear and acknowledged it with `linear writes --ack OP:<index>`.
+    Acknowledged and already in the target team, it reads as moved. Still in
+    its old team, it refuses the batch: move it on its own with a new
+    operation ID, then resume the batch with the same `--operation-id`.
+  - Agents don't batch. They loop over the single move, one previewed and
+    confirmed issue or family per call.
 - **Who confirms.** The project owner or a project lead, from their own
   terminal with no session. A project lead here is the ClawBridge project role
   (`project role set PRINCIPAL lead`), not a team's lead in the team roles, a
@@ -1013,7 +1045,8 @@ Agents use the MCP tool `taskboard_issue_move_v2` (`id`, `team_id`,
   `accepted` only when the same issue is in the target team under a new
   identifier, with the planned state and labels, no cycle, and its assignee,
   project, parent, priority and estimate unchanged. Linear refusing the move
-  outright, with the issue still in its team, is `not_sent`. Anything else is
+  outright, with the issue (for a family, every child too) still in its team,
+  is `not_sent`. Anything else is
   `uncertain`, with the fields it couldn't prove; it is never sent again.
   The same operation ID answers from the record.
 - **Identifiers.** The result names the old and the new identifier. The old
@@ -1023,7 +1056,18 @@ Agents use the MCP tool `taskboard_issue_move_v2` (`id`, `team_id`,
   markers are keyed by the issue's UUID and stay as they are.
 - **Cost.** A preview reads the issue, its sub-issues, both teams' states,
   the target's labels, and the project when there is one: about 6 to 10
-  calls. A confirm repeats the reads, then makes one write and one read.
+  calls. A family adds its children's listing and each child's reads. A
+  confirm repeats the reads, then makes one write and one read (and one per
+  child).
+  - **The project's hourly Linear budget (the watch budget) pays for each
+    confirm.** It's charged with the server's record before anything reaches
+    Linear, and a family is charged in full, so it is never split across the
+    hour. A repeat of the same confirm isn't charged again.
+  - When the hour can't pay, a session's confirm (the coordinator's) is
+    refused with `rate_limited`, naming when to retry, and nothing is sent.
+  - A person confirming from their own terminal, with no session, is never
+    refused for budget, batches included: the move is charged past the
+    limit, and the background jobs back off for the rest of the hour.
 - **Linear config scope:** none. A move is an issue write inside bound teams.
 - **Audit.** History records `issue_move` `reserve` and the outcome, with the
   issue UUID, both teams, the old and new identifiers, who moved it (`owner`,

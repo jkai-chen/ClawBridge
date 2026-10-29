@@ -763,7 +763,7 @@ func (s *Service) proposeProject(ctx context.Context, scope bus.Request, b bus.T
 		return
 	}
 	projects := append(append([]string{}, b.LinearProjectIDs...), r.ID)
-	in := LinkInputV2{TeamIDs: b.LinearTeamIDs, DefaultTeamID: b.LinearDefaultTeamID, ProjectIDs: projects, ExpectedRevision: b.Revision}
+	in := LinkInputV2{TeamIDs: b.LinearTeamIDs, DefaultTeamID: b.LinearDefaultTeamID, ProjectIDs: projects, ExpectedRevision: b.Revision, TeamsWithoutProject: b.TeamsWithoutProject}
 	if closes == ClosesAgent {
 		in.Closes = map[string]string{r.ID: ClosesAgent}
 	}
@@ -778,6 +778,11 @@ func (s *Service) proposeProject(ctx context.Context, scope bus.Request, b bus.T
 		args = append(args, "--team "+t)
 	}
 	args = append(args, "--default-team "+b.LinearDefaultTeamID)
+	if p, ok := preview.(LinkPreviewV2); ok {
+		for _, t := range p.TeamsWithoutProject {
+			args = append(args, "--team-without-project "+t)
+		}
+	}
 	for _, p := range SortedTeams(projects) {
 		args = append(args, "--linear-project "+p)
 	}

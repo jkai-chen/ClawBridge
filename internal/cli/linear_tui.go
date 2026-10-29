@@ -91,6 +91,10 @@ func (s *linearTUISource) Do(ctx context.Context, r tui.LinearRequest) (tui.Line
 		data.Profiles = profiles
 		b, err := service.BindingV2(ctx, s.scope)
 		data.BindingV2 = &b
+		if err == nil && len(b.TeamsWithoutProject) > 0 {
+			// Best effort: without Linear the board line just omits them.
+			data.WithoutProject, _ = service.TeamsWithoutProjectV2(ctx, s.scope)
+		}
 		return err
 	}
 	switch r.Operation {

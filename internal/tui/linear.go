@@ -68,6 +68,9 @@ type LinearData struct {
 	ProjectStatus *ProjectStatus
 	// Views are the board's shared Linear views, by bound team.
 	Views []TeamViews
+	// WithoutProject are the binding's teams listed without a project, as
+	// Linear shows them now (best effort, with the binding).
+	WithoutProject []linearboard.TeamWithoutProject
 }
 type linearState struct {
 	// logoutAsk is the connection an x is waiting to log out, until y.
@@ -88,16 +91,18 @@ type linearState struct {
 	stored  map[string]string
 	holders map[string]issueHolder
 	// relinking says the wizard started from the linked board (U33).
-	relinking            bool
-	namesAt              string
-	role                 string
-	refreshNames         bool
-	namesNote            string
-	step                 string
-	profile              string
-	profiles             []linearconn.Profile
-	binding              bus.TaskboardBinding
-	bindingV2            *bus.TaskboardBindingV2
+	relinking    bool
+	namesAt      string
+	role         string
+	refreshNames bool
+	namesNote    string
+	step         string
+	profile      string
+	profiles     []linearconn.Profile
+	binding      bus.TaskboardBinding
+	bindingV2    *bus.TaskboardBindingV2
+	// withoutProject are the binding's teams listed without a project.
+	withoutProject       []linearboard.TeamWithoutProject
 	issueV2              *linearprovider.IssueV2
 	selectedProjects     []string
 	teams                []linearprovider.Team
@@ -157,9 +162,11 @@ func (m *Model) applyLinearBinding(data LinearData) {
 		value.LinearProjectIDs = append([]string{}, value.LinearProjectIDs...)
 		m.linear.bindingV2 = &value
 		m.linear.binding = bus.TaskboardBinding{} // no fabricated legacy team board
+		m.linear.withoutProject = append([]linearboard.TeamWithoutProject(nil), data.WithoutProject...)
 	} else {
 		m.linear.binding = data.Binding
 		m.linear.bindingV2 = nil
+		m.linear.withoutProject = nil
 	}
 }
 
@@ -1134,7 +1141,11 @@ func linearBoardLine(m Model) string {
 	if teamBoard {
 		return line + " · the team board"
 	}
-	return line + " · " + m.namedOrCounted(projects, "project", "projects")
+	line += " · " + m.namedOrCounted(projects, "project", "projects")
+	for _, t := range m.linear.withoutProject {
+		line += "\n" + terminalText(t.Label())
+	}
+	return line
 }
 
 // namedOrCounted lists IDs by name when every one has a name, else counts

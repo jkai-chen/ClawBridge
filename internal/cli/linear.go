@@ -180,7 +180,7 @@ type linearFlags struct {
 	supplied                                                                                                             map[string]bool
 	profile, name, access, cursor, project, defaultTeam, title, description, descriptionFile, state, operation, bodyFile string
 	teams                                                                                                                []string
-	readTeams, commentTeams, linkedTeams                                                                                 []string
+	readTeams, commentTeams, linkedTeams, withoutProject                                                                 []string
 	parentTeam                                                                                                           string
 	projects, labels, expectedLabels, addLabels, removeLabels                                                            []string
 	team, parent, assignee, relationType, relationAction, labelFilter                                                    string
@@ -306,6 +306,7 @@ func parseLinear(command string, args []string, stderr io.Writer) (linearFlags, 
 		f.Var((*repeatedIDs)(&v.readTeams), "read-team", "a team UUID agents read but never write (repeat)")
 		f.Var((*repeatedIDs)(&v.commentTeams), "comment-team", "a team UUID agents read and add comments to, nothing else (repeat)")
 		f.Var((*repeatedIDs)(&v.linkedTeams), "linked-team", "a team UUID agents see only as issues linked from their own (repeat)")
+		f.Var((*repeatedIDs)(&v.withoutProject), "team-without-project", "a write team (--team) no bound project carries yet; it reads nothing and takes no issue writes until one does (repeat)")
 		f.StringVar(&v.parentTeam, "parent-team", "", "the parent team UUID among the listed teams; every other one must be its sub-team in Linear")
 		f.Var((*repeatedIDs)(&v.lanes), "lane", "a lane: NAME=TEAM[,TEAM...], write teams a pinned session writes, the first its default (repeat up to 10)")
 		f.StringVar(&v.unpinned, "unpinned", "", "with --lane: the lane of a session with no pin, or read_only (the default)")
@@ -1152,7 +1153,7 @@ func runLinear(ctx context.Context, flags Config, args []string, stdout, stderr 
 	case "binding":
 		data, err = service.BindingV2(bounded, scope)
 	case "link":
-		in := linearboard.LinkInputV2{TeamIDs: v.teams, DefaultTeamID: v.defaultTeam, ProjectIDs: append([]string{}, v.projects...), ExpectedRevision: v.revision, TeamBoard: v.teamBoard, Confirm: v.confirm, MinimalPolicy: v.minimalPolicy, ParentTeamID: v.parentTeam, Unpinned: v.unpinned}
+		in := linearboard.LinkInputV2{TeamIDs: v.teams, DefaultTeamID: v.defaultTeam, ProjectIDs: append([]string{}, v.projects...), ExpectedRevision: v.revision, TeamBoard: v.teamBoard, Confirm: v.confirm, MinimalPolicy: v.minimalPolicy, ParentTeamID: v.parentTeam, Unpinned: v.unpinned, TeamsWithoutProject: v.withoutProject}
 		if in.Lanes, err = laneFlags(v.lanes); err != nil {
 			return err
 		}

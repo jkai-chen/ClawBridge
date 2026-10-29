@@ -598,7 +598,7 @@ var operationArgs = map[string]string{
 	"taskboard_get":               "instance",
 	"taskboard_get_v2":            "instance",
 	"comment_watch_status":        "",
-	"taskboard_set_v2":            "instance expected_revision mode linear_team_ids linear_default_team_id linear_project_ids linear_workspace_id closes_pending linear_team_names linear_project_names linear_other_teams linear_parent_team_id lanes unpinned",
+	"taskboard_set_v2":            "instance expected_revision mode linear_team_ids linear_default_team_id linear_project_ids linear_workspace_id closes_pending linear_team_names linear_project_names linear_other_teams linear_parent_team_id lanes unpinned teams_without_project",
 	"taskboard_names_set":         "instance expected_revision linear_team_names linear_project_names",
 	"taskboard_clear_v2":          "instance expected_revision repair",
 	"taskboard_access":            "instance ledger engineer lane_scope coordinator_scope",
@@ -878,7 +878,7 @@ func validateArgs(op string, a map[string]any) error {
 			if _, ok := intList(v, 1000); !ok {
 				return errors.New("lines must be an array of line numbers")
 			}
-		case "ids", "event_ids", "linear_team_ids", "linear_project_ids", "closes_pending", "scope_paths", "domains", "comment_ids", "signals", "roles", "pattern_ids", "issue_labels", "tools", "uses", "leases", "kinds", "label_ids", "user_ids", "project_teams", "changed", "unverified":
+		case "ids", "event_ids", "linear_team_ids", "linear_project_ids", "teams_without_project", "closes_pending", "scope_paths", "domains", "comment_ids", "signals", "roles", "pattern_ids", "issue_labels", "tools", "uses", "leases", "kinds", "label_ids", "user_ids", "project_teams", "changed", "unverified":
 			switch v.(type) {
 			case []string, []any:
 			default:

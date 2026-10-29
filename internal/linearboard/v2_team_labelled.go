@@ -64,6 +64,9 @@ func (s *Service) TeamLabelledV2(ctx context.Context, scope bus.Request, in Team
 	if e != nil {
 		return empty, e
 	}
+	if InertTeamV2(b, v, in.TeamID) {
+		return empty, withoutProjectError(in.TeamID)
+	}
 	p2, ok := p.(ProviderV2)
 	if !ok {
 		return empty, errors.New("native provider lacks V2 issue capability")

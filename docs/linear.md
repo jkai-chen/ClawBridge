@@ -310,6 +310,37 @@ the verified project/team pair. A multi-project create needs its explicit
 destination; a singleton can supply its sole project. Global `--project` still
 selects the ClawBridge scope; `--linear-project` selects the Linear destination.
 
+### A team no project carries yet
+
+A project set refuses a write team that none of its projects carries, so a mistyped or unrelated team is caught at
+link. To bind a new team before any project carries it, name it as such with `--team-without-project` (repeat it for
+more teams). It must also be a `--team`, and it can't be the default team:
+
+```sh
+clawbridge linear link --profile PROFILE_ID \
+  --team TEAM_UUID --team NEW_TEAM_UUID --default-team TEAM_UUID \
+  --team-without-project NEW_TEAM_UUID \
+  --linear-project PROJECT_UUID --expected-revision CURRENT_REVISION
+```
+
+The preview says "no bound project carries team T yet; it reads nothing and takes no issue writes until one does".
+The link's history entry names the list. Until a bound project carries the team, it is **inert**:
+- no issue of it is listed or read, and intake skips it;
+- every issue write in it is refused with `team_without_project`, and nothing is sent;
+- the existing team-level owner writes (labels, views) still work, and so does
+  [`project update --add-team`](#adding-a-team-to-a-project).
+
+Doctor and the TUI show it as "T: no project yet (inert)".
+
+Once a bound project carries the team (with `--add-team`, or in Linear), the next read finds the pair and the team
+works as an ordinary team. Nothing needs relinking. Its entry stays, harmless: doctor and the TUI show "stale entry",
+and the next `linear link` drops it. If a project later drops the team again in Linear, it goes back to inert; the
+binding isn't refused.
+
+**Compatibility.** A binding that lists such a team is binding version 4. A client older than this release refuses it
+with "mapping_version must be 2 or 3", so upgrade every client before linking with the flag. An older server refuses
+the link. Before downgrading the server below v0.3.9, relink without --team-without-project.
+
 ### A parent team, its sub-teams, and teams agents only read
 
 A binding can list more teams than the ones agents write. Each team has an access level:
@@ -1331,11 +1362,11 @@ clawbridge linear project team-adds                 # any member: the adds, and 
   one of its projects, and the team one of its write teams. A team board has no
   projects, so it is refused. A team already in the project is `already`, and
   nothing is sent.
-- **A brand-new team.** A project set links only teams that one of its
-  projects already carries, so a team the binding doesn't hold yet can't be
-  added this way. To add a new team, put it on one bound project in Linear
-  first, then link the binding again with the team; `--add-team` does the rest
-  for every later project.
+- **A brand-new team.** A team the binding doesn't hold yet can't be added
+  this way. Link it first with [`--team-without-project`](#a-team-no-project-carries-yet),
+  then `--add-team` adds it to a bound project, and the team works from the next
+  read. Or put it on one bound project in Linear, then link it as an ordinary
+  team.
 - **Who confirms.** Anyone may preview. The server decides who confirms:
   - the project owner or a lead, in their own terminal without a session;
   - the added team's own lead in the [team roles](#team-roles-project-owner-and-leads-for-their-teams):

@@ -136,11 +136,44 @@ func verifyBindingV2(ctx context.Context, p Provider, b bus.TaskboardBindingV2) 
 		}
 	}
 	for _, id := range teams {
-		if !covered[id] {
+		// A team the binding names as without a project may have no pair:
+		// it is inert until a bound project carries it (FR10 bootstrap).
+		if !covered[id] && !contains(b.TeamsWithoutProject, id) {
 			return out, errors.New("selected team is not represented by the allowed projects")
 		}
 	}
 	return out, nil
+}
+
+// hasPairV2: a verified pair holds the team.
+func hasPairV2(v verifiedV2, team string) bool {
+	for _, pair := range v.Pairs {
+		if pair.TeamID == team {
+			return true
+		}
+	}
+	return false
+}
+
+// teamWithoutProjectPrefix opens the refusal of an issue read or write in a
+// team listed without a project while no bound project carries it.
+const teamWithoutProjectPrefix = "team_without_project: "
+
+// withoutProjectError refuses an issue read or write in an inert team.
+func withoutProjectError(team string) error {
+	return outOfScopeError(teamWithoutProjectPrefix + "team " + team + " has no project yet; it reads nothing and takes no issue writes until a bound project carries it (project update --add-team); nothing was sent")
+}
+
+// InertTeamV2: the binding lists the team as without a project and no
+// verified pair holds it, so its issues are neither read nor written.
+func InertTeamV2(b bus.TaskboardBindingV2, v verifiedV2, team string) bool {
+	return b.Mode == "project_set" && contains(b.TeamsWithoutProject, team) && !hasPairV2(v, team)
+}
+
+// IsTeamWithoutProject reports the refusal of an inert team's issues.
+func IsTeamWithoutProject(e error) bool {
+	var outside outOfScopeError
+	return errors.As(e, &outside) && strings.HasPrefix(string(outside), teamWithoutProjectPrefix)
 }
 
 // teamProjectLister lists a team's projects, trashed ones included and marked.
@@ -237,6 +270,9 @@ func checkIssueV2(issue linearprovider.IssueV2, b bus.TaskboardBindingV2, v veri
 	if !linearprovider.ValidID(issue.ID) || !contains(b.LinearTeamIDs, issue.TeamID) {
 		return outOfScopeError("issue is outside the selected task-board scope")
 	}
+	if InertTeamV2(b, v, issue.TeamID) {
+		return withoutProjectError(issue.TeamID)
+	}
 	if b.Mode == "project_set" {
 		if !issue.ProjectKnown {
 			return errors.New("issue project context is unavailable")
@@ -260,6 +296,9 @@ func checkReadIssueV2(issue linearprovider.IssueV2, b bus.TaskboardBindingV2, v 
 			return outOfScopeError("linked_only: this binding shows the issue's team only as linked issues; nothing was read in full")
 		}
 		return outOfScopeError("issue is outside the selected task-board scope")
+	}
+	if InertTeamV2(b, v, issue.TeamID) {
+		return withoutProjectError(issue.TeamID)
 	}
 	if b.Mode == "project_set" {
 		if !issue.ProjectKnown {
@@ -370,13 +409,30 @@ func (s *Service) LinkV2(ctx context.Context, scope bus.Request, in LinkInputV2)
 			mapping.Unpinned = bus.LaneReadOnly
 		}
 	}
+	mapping.TeamsWithoutProject = nil
+	if len(in.TeamsWithoutProject) > 0 {
+		mapping.TeamsWithoutProject = SortedTeams(in.TeamsWithoutProject)
+	}
 	if mapping.CrossTeam() {
-		mapping.MappingVersion = 3
+		mapping.MappingVersion = mapping.WireVersion()
 	}
 	v, e := verifyBindingV2(ctx, p, mapping)
 	if e != nil {
 		return nil, e
 	}
+	// A team a bound project already carries is an ordinary team: the link
+	// drops its entry (this is how a relink tidies a stale one) and says so.
+	var withoutProject, kept []string
+	for _, id := range mapping.TeamsWithoutProject {
+		if hasPairV2(v, id) {
+			withoutProject = append(withoutProject, fmt.Sprintf("a bound project carries team %s; it is an ordinary team, and its entry is dropped", id))
+			continue
+		}
+		kept = append(kept, id)
+		withoutProject = append(withoutProject, fmt.Sprintf("no bound project carries team %s yet; it reads nothing and takes no issue writes until one does", id))
+	}
+	mapping.TeamsWithoutProject = kept
+	mapping.MappingVersion = mapping.WireVersion()
 	// The binding records the Linear workspace it was linked in, read from
 	// the connection itself, so a later identity (the ClawBridge app) can be
 	// checked against it.
@@ -417,7 +473,7 @@ func (s *Service) LinkV2(ctx context.Context, scope bus.Request, in LinkInputV2)
 		}
 	}
 	if !in.Confirm {
-		preview := LinkPreviewV2{Binding: b, DefaultTeamID: in.DefaultTeamID, Teams: v.Teams, Projects: v.Projects, TeamBoard: in.TeamBoard, LinearWorkspaceID: workspace, OtherTeams: mapping.LinearOtherTeams, ParentTeamID: mapping.LinearParentTeamID, Lanes: mapping.Lanes, Unpinned: mapping.Unpinned}
+		preview := LinkPreviewV2{Binding: b, DefaultTeamID: in.DefaultTeamID, Teams: v.Teams, Projects: v.Projects, TeamBoard: in.TeamBoard, LinearWorkspaceID: workspace, OtherTeams: mapping.LinearOtherTeams, ParentTeamID: mapping.LinearParentTeamID, Lanes: mapping.Lanes, Unpinned: mapping.Unpinned, TeamsWithoutProject: mapping.TeamsWithoutProject, WithoutProject: withoutProject}
 		linkClosesPreview(policy, in, &preview)
 		return preview, nil
 	}
@@ -457,8 +513,11 @@ func (s *Service) LinkV2(ctx context.Context, scope bus.Request, in LinkInputV2)
 	scope.Args["linear_project_ids"] = mapping.LinearProjectIDs
 	// Version 3's fields go only with a binding that uses them: an older
 	// server refuses the unknown arguments, so it never stores a binding it
-	// would read without its access levels.
-	if mapping.MappingVersion == 3 {
+	// would read without its access levels. Version 4's list likewise.
+	if len(mapping.TeamsWithoutProject) > 0 {
+		scope.Args["teams_without_project"] = mapping.TeamsWithoutProject
+	}
+	if mapping.MappingVersion >= 3 {
 		others := map[string]any{}
 		for id, access := range mapping.LinearOtherTeams {
 			others[id] = access
@@ -533,6 +592,18 @@ func ValidateLinkV2(in LinkInputV2) error {
 	}
 	if p := in.ParentTeamID; p != "" && !contains(in.TeamIDs, p) && in.OtherTeams[p] == "" {
 		return errors.New("the parent team must be one of the binding's teams")
+	}
+	seen := map[string]bool{}
+	for _, id := range in.TeamsWithoutProject {
+		switch {
+		case in.TeamBoard:
+			return errors.New("a team without a project is for a project set; a team board needs no project")
+		case seen[id] || !contains(in.TeamIDs, id):
+			return errors.New("a team without a project must also be a write team of the link (--team), named once")
+		case id == in.DefaultTeamID:
+			return errors.New("the default team needs a bound project; it can't be a team without a project")
+		}
+		seen[id] = true
 	}
 	if len(in.Lanes) > 0 || in.Unpinned != "" {
 		return bus.ValidateLanes(in.TeamIDs, in.Lanes, in.Unpinned)

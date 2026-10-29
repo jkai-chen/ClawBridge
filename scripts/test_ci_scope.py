@@ -43,6 +43,7 @@ class Scope(unittest.TestCase):
         self.assertEqual(run("internal/cli/linear.go")["windows"], "true")
         self.assertEqual(run("internal/notify/private_windows.go")["windows"], "true")
         self.assertEqual(run("internal/bus/store_windows.go")["windows"], "true")
+        self.assertEqual(run("internal/ctxwatch/proc_windows_arm64.go")["windows"], "true")
 
     def test_installers_run_both_platforms(self):
         got = run("scripts/install.ps1")
@@ -64,9 +65,11 @@ class Scope(unittest.TestCase):
         self.assertEqual(run("Dockerfile")["go"], "true")
 
 
-def go_deps(goos, *packages, tests=True):
+def go_deps(goos, *packages, tests=True, goarch=None):
     """The repository directories `go list -deps` names for packages."""
     env = dict(os.environ, GOOS=goos)
+    if goarch:
+        env["GOARCH"] = goarch
     args = ["go", "list", "-deps"] + (["-test"] if tests else []) + ["-f", "{{.ImportPath}}"] + list(packages)
     out = subprocess.run(args, cwd=ROOT, env=env, capture_output=True, text=True, check=True).stdout
     dirs = set()
@@ -85,8 +88,10 @@ class Dependencies(unittest.TestCase):
         packages = ["./internal/cli", "./internal/notify", "./internal/setup", "./internal/ctxwatch", "./internal/linearconn", "./integration"]
         if os.path.isdir(os.path.join(ROOT, "internal", "selfupdate")):
             packages.append("./internal/selfupdate")
-        missing = sorted(go_deps("windows", *packages) - set(ci_scope.WINDOWS_DIRS))
-        self.assertEqual(missing, [], "add these to WINDOWS_DIRS in scripts/ci_scope.py")
+        # Both Windows jobs: x64 and Windows on ARM.
+        for goarch in ("amd64", "arm64"):
+            missing = sorted(go_deps("windows", *packages, goarch=goarch) - set(ci_scope.WINDOWS_DIRS))
+            self.assertEqual(missing, [], f"GOARCH={goarch}: add these to WINDOWS_DIRS in scripts/ci_scope.py")
 
     def test_the_agentd_image_covers_its_dependencies(self):
         missing = sorted(go_deps("linux", "./cmd/clawbridge-agentd", tests=False) - set(ci_scope.AGENTD_DIRS))

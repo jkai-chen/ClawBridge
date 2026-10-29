@@ -2,7 +2,17 @@
 Set-StrictMode -Version 2.0
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'install.ps1')
-if ((Get-ClawBridgePlatform) -cne 'windows_amd64') { throw 'Native x64 fixture expected' }
+# Native Windows on x64 or ARM64 only: the platform the real detection reports is
+# the one the fixtures serve. $script:fakeMachine overrides the native machine for
+# the detection cases below; $null leaves the real detection in place.
+$nativePlatform = Get-ClawBridgePlatform
+if (@('windows_amd64', 'windows_arm64') -cnotcontains $nativePlatform) { throw 'Native x64 or ARM64 fixture expected' }
+$script:fakeMachine = $null
+$originalNativeMachine = ${function:Get-ClawBridgeNativeMachine}
+function Get-ClawBridgeNativeMachine {
+    if ($null -ne $script:fakeMachine) { return [int]$script:fakeMachine }
+    return (& $originalNativeMachine)
+}
 $fixtureRoot = Join-Path ([IO.Path]::GetTempPath()) ('clawbridge-installer-test-' + [Guid]::NewGuid().ToString('N'))
 $null = [IO.Directory]::CreateDirectory($fixtureRoot)
 $script:requests = New-Object 'Collections.Generic.List[string]'
@@ -28,7 +38,7 @@ function Invoke-ClawBridgeDownload([Uri]$Uri, [string]$OutFile, [long]$MaxBytes)
         return ($base + '/tag/v0.1.0')
     }
     if (-not $url.StartsWith($base + '/download/v0.1.0/', [StringComparison]::Ordinal)) { throw ('unbounded/unpinned URL ' + $url) }
-    $asset = 'clawbridge_v0.1.0_windows_amd64.exe'
+    $asset = 'clawbridge_v0.1.0_' + (Get-ClawBridgePlatform) + '.exe'
     if ($url.EndsWith('/SHA256SUMS')) {
         $entry = $script:digest + '  ' + $asset + "`n"
         switch ($script:mode) {
@@ -242,20 +252,65 @@ try {
     Expect-Failure { Install-ClawBridge -Version v0.1.0 -InstallDir 'relative' }
     Expect-Failure { Install-ClawBridge -Version v0.1.0 -InstallDir (Join-Path $fixtureRoot 'NUL') }
     Assert-True ($script:requests.Count -eq 0) 'invalid input accessed transport'
+    # Platform detection: the native machine (IsWow64Process2) decides, whatever
+    # the emulated process's variables say; the variables are only the fallback.
+    Assert-True ((ConvertTo-ClawBridgePlatform 0x8664) -ceq 'windows_amd64') 'x64 machine mapping failed'
+    Assert-True ((ConvertTo-ClawBridgePlatform 0xAA64) -ceq 'windows_arm64') 'ARM64 machine mapping failed'
+    foreach ($machine in @(0x14c, 0x1c4, 0, 0x200)) {
+        Expect-Failure { ConvertTo-ClawBridgePlatform $machine }
+    }
     $savedNative = $env:PROCESSOR_ARCHITEW6432
     $savedProcess = $env:PROCESSOR_ARCHITECTURE
     try {
-        $env:PROCESSOR_ARCHITEW6432 = 'ARM64'
+        # An x64 process emulated on ARM64 sees AMD64 and no PROCESSOR_ARCHITEW6432.
+        $env:PROCESSOR_ARCHITEW6432 = $null
         $env:PROCESSOR_ARCHITECTURE = 'AMD64'
+        $script:fakeMachine = 0xAA64
+        Assert-True ((Get-ClawBridgePlatform) -ceq 'windows_arm64') 'emulated x64 on ARM64 did not detect native ARM64'
+        $script:fakeMachine = 0x8664
+        $env:PROCESSOR_ARCHITECTURE = 'ARM64'
+        Assert-True ((Get-ClawBridgePlatform) -ceq 'windows_amd64') 'the native machine must win over the variables'
+        $script:fakeMachine = 0x14c
+        $env:PROCESSOR_ARCHITECTURE = 'AMD64'
+        Expect-Failure { Get-ClawBridgePlatform }
         Expect-Failure { Install-ClawBridge -Version v0.1.0 -InstallDir $destination }
         Assert-True ($script:requests.Count -eq 0) 'unsupported native architecture accessed transport'
+        # IsWow64Process2 unavailable (0): the variables decide.
+        $script:fakeMachine = 0
+        $env:PROCESSOR_ARCHITEW6432 = 'ARM64'
+        $env:PROCESSOR_ARCHITECTURE = 'AMD64'
+        Assert-True ((Get-ClawBridgePlatform) -ceq 'windows_arm64') 'fallback: 32-bit or x64 process on ARM64 failed'
+        $env:PROCESSOR_ARCHITEW6432 = $null
+        $env:PROCESSOR_ARCHITECTURE = 'ARM64'
+        Assert-True ((Get-ClawBridgePlatform) -ceq 'windows_arm64') 'fallback: native ARM64 process failed'
         $env:PROCESSOR_ARCHITEW6432 = 'AMD64'
         $env:PROCESSOR_ARCHITECTURE = 'x86'
         Assert-True ((Get-ClawBridgePlatform) -ceq 'windows_amd64') 'WOW64 native x64 detection failed'
+        $env:PROCESSOR_ARCHITEW6432 = $null
+        $env:PROCESSOR_ARCHITECTURE = 'AMD64'
+        Assert-True ((Get-ClawBridgePlatform) -ceq 'windows_amd64') 'fallback: native x64 failed'
+        $env:PROCESSOR_ARCHITECTURE = 'x86'
+        Expect-Failure { Get-ClawBridgePlatform }
+        Expect-Failure { Install-ClawBridge -Version v0.1.0 -InstallDir $destination }
+        $env:PROCESSOR_ARCHITECTURE = 'IA64'
+        Expect-Failure { Get-ClawBridgePlatform }
+        Assert-True ($script:requests.Count -eq 0) 'unsupported native architecture accessed transport'
+        # The asset follows the platform: each native platform downloads its own.
+        foreach ($case in @(@(0x8664, 'windows_amd64'), @(0xAA64, 'windows_arm64'))) {
+            $script:fakeMachine = $case[0]
+            $script:requests.Clear()
+            $platformDir = Join-Path $fixtureRoot ('platform-' + $case[1])
+            $null = Install-ClawBridge -Version v0.1.0 -InstallDir $platformDir -NoSkill -NoModifyPath
+            Assert-True (@($script:requests | Where-Object { $_.EndsWith('/clawbridge_v0.1.0_' + $case[1] + '.exe') }).Count -eq 1) ('the ' + $case[1] + ' asset was not the one downloaded')
+            Assert-True ([IO.File]::Exists((Join-Path $platformDir 'clawbridge.exe'))) ('install failed for ' + $case[1])
+            Assert-Cleanup
+        }
     } finally {
+        $script:fakeMachine = $null
         $env:PROCESSOR_ARCHITEW6432 = $savedNative
         $env:PROCESSOR_ARCHITECTURE = $savedProcess
     }
+    $script:requests.Clear()
     $script:mode = 'bad-latest'
     Expect-Failure { Install-ClawBridge -InstallDir $destination }
     Assert-True ($script:requests.Count -eq 1) 'bad latest downloaded a payload'

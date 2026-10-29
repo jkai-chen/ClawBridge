@@ -70,7 +70,7 @@ with tempfile.TemporaryDirectory(prefix="cb-release-clone-") as temporary:
     check((output/"existing-payload").read_bytes()==b"preserve")
     (output/"existing-payload").unlink()
     run(["bash", builder, "v1.2.3", str(output)], clone, extra={"GOOS":"windows", "GOARCH":"386", "CGO_ENABLED":"1", "GOAMD64":"v4"})
-    targets = [("darwin","amd64"),("darwin","arm64"),("linux","amd64"),("linux","arm64"),("windows","amd64")]
+    targets = [("darwin","amd64"),("darwin","arm64"),("linux","amd64"),("linux","arm64"),("windows","amd64"),("windows","arm64")]
     assets = {"clawbridge_v1.2.3_"+system+"_"+arch+(".exe" if system=="windows" else "") for system,arch in targets}
     check({p.name for p in output.iterdir()}==assets|{"install.sh","install.ps1","LICENSE","SOURCE-COMMIT.txt","SHA256SUMS"})
     check((output/"SOURCE-COMMIT.txt").read_text()==commit+"\n")
@@ -115,4 +115,4 @@ with tempfile.TemporaryDirectory(prefix="cb-release-clone-") as temporary:
     check(git("status","--porcelain").strip()==b"", "builder changed clone source")
     run(["bash",builder,"v1.2.3",str(output)], clone, ok=False)
     check((output/"SHA256SUMS").read_text()==expected)
-    print("PASS isolated clone/tag: 5 real targets, exact metadata/9 assets/8 digests, canonical+matchingtag+dirty+output refusal; native version only; builder executes no targets")
+    print("PASS isolated clone/tag: 6 real targets, exact metadata/10 assets/9 digests, canonical+matchingtag+dirty+output refusal; native version only; builder executes no targets")

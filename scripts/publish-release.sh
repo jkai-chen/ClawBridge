@@ -14,7 +14,7 @@ validate_assets() {
 import hashlib,pathlib,re,sys
 p=pathlib.Path(sys.argv[1]); version,commit=sys.argv[2:]
 names={'LICENSE','install.sh','install.ps1','SOURCE-COMMIT.txt'}
-names.update('clawbridge_'+version+'_'+target for target in ['darwin_amd64','darwin_arm64','linux_amd64','linux_arm64','windows_amd64.exe'])
+names.update('clawbridge_'+version+'_'+target for target in ['darwin_amd64','darwin_arm64','linux_amd64','linux_arm64','windows_amd64.exe','windows_arm64.exe'])
 assert {f.name for f in p.iterdir()}==names|{'SHA256SUMS'},'unexpected/missing assets'
 assert all(f.is_file() and not f.is_symlink() and f.stat().st_size for f in p.iterdir()),'nonregular/empty asset'
 assert (p/'SOURCE-COMMIT.txt').read_text()==commit+'\n','source marker mismatch'

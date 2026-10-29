@@ -6,7 +6,9 @@ $repository = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..\..'))
 . (Join-Path $repository 'scripts\install.ps1')
 $nativePlatform = ${function:Get-ClawBridgePlatform}
 if ([Environment]::OSVersion.Platform -ne [PlatformID]::Win32NT) { throw 'Native Windows is required for this acceptance probe' }
-if ((& $nativePlatform) -ne 'windows_amd64') { throw 'Native Windows x64 is required' }
+$realNativeMachine = ${function:Get-ClawBridgeNativeMachine}
+$hostPlatform = & $nativePlatform
+if (@('windows_amd64', 'windows_arm64') -cnotcontains $hostPlatform) { throw 'Native Windows x64 or ARM64 is required' }
 function Assert-Probe([bool]$Condition, [string]$Message) { if (-not $Condition) { throw $Message } }
 $fixture = Join-Path ([IO.Path]::GetTempPath()) ('cb-independent-release-' + [Guid]::NewGuid().ToString('N'))
 $oldLocal = $env:LOCALAPPDATA
@@ -59,7 +61,7 @@ try {
     $env:CB_PROBE_SKILL_EXIT = '0'
     $hash = [Security.Cryptography.SHA256]::Create()
     try { $script:Digest = ([BitConverter]::ToString($hash.ComputeHash($script:Payload))).Replace('-', '').ToLowerInvariant() } finally { $hash.Dispose() }
-    function Get-ClawBridgePlatform { return 'windows_amd64' }
+    function Get-ClawBridgePlatform { return $hostPlatform }
     function Invoke-ClawBridgeDownload([Uri]$Uri, [string]$OutFile, [long]$MaxBytes) {
         $url = $Uri.AbsoluteUri
         $null = $script:Calls.Add($url)
@@ -72,16 +74,16 @@ try {
         if (-not $url.StartsWith($base + '/download/v1.2.3/', [StringComparison]::Ordinal)) { throw 'Unpinned download' }
         if ($script:Mode -eq 'download-failure') { throw 'Injected transport failure' }
         if ($url.EndsWith('/SHA256SUMS')) {
-            $line = $script:Digest + '  clawbridge_v1.2.3_windows_amd64.exe' + "`n"
+            $line = $script:Digest + '  clawbridge_v1.2.3_' + $hostPlatform + '.exe' + "`n"
             switch ($script:Mode) {
                 'duplicate' { $line += $line }
-                'malformed' { $line = ('z' * 64) + '  clawbridge_v1.2.3_windows_amd64.exe' + "`n" }
+                'malformed' { $line = ('z' * 64) + '  clawbridge_v1.2.3_' + $hostPlatform + '.exe' + "`n" }
                 'absent' { $line = $script:Digest + '  other.exe' + "`n" }
                 'hostile' { $line += '$(Set-Content INJECTED unsafe)' + "`n" }
             }
             [IO.File]::WriteAllText($OutFile, $line, [Text.Encoding]::ASCII)
         } else {
-            if (-not $url.EndsWith('/clawbridge_v1.2.3_windows_amd64.exe')) { throw 'Wrong target' }
+            if (-not $url.EndsWith('/clawbridge_v1.2.3_' + $hostPlatform + '.exe')) { throw 'Wrong target' }
             $bytes = $script:Payload
             if ($script:Mode -eq 'empty') { $bytes = New-Object byte[] 0 }
             if ($script:Mode -eq 'mismatch') { $bytes = [Text.Encoding]::ASCII.GetBytes('WRONG') }
@@ -298,10 +300,26 @@ try {
         Assert-Probe ([IO.Path]::GetFullPath($resolved) -eq [IO.Path]::GetFullPath($pathExe)) ('This session still resolves another clawbridge: ' + $resolved)
     } finally { $env:PATH = $sessionPath }
     Assert-Probe ((Get-TestPath).Raw -ceq ($seed + ';' + $pathDir)) 'The user Path was not appended exactly once alongside a shadowing install'
-    # Architecture mapping test uses original production function, then restores env.
+    # Architecture mapping test uses the original production functions, then restores env.
+    # The native machine (IsWow64Process2) is forced unavailable so the variables decide.
+    function Get-ClawBridgeNativeMachine { return 0 }
     $env:PROCESSOR_ARCHITECTURE = 'x86'
     $env:PROCESSOR_ARCHITEW6432 = 'AMD64'
     Assert-Probe ((& $nativePlatform) -eq 'windows_amd64') '32-bit process x64 mapping failed'
+    $env:PROCESSOR_ARCHITECTURE = 'x86'
+    $env:PROCESSOR_ARCHITEW6432 = 'ARM64'
+    Assert-Probe ((& $nativePlatform) -eq 'windows_arm64') '32-bit process ARM64 mapping failed'
+    $env:PROCESSOR_ARCHITECTURE = 'AMD64'
+    $env:PROCESSOR_ARCHITEW6432 = $null
+    Assert-Probe ((& $nativePlatform) -eq 'windows_amd64') 'x64 process mapping failed'
+    function Get-ClawBridgeNativeMachine { return 0xAA64 }
+    Assert-Probe ((& $nativePlatform) -eq 'windows_arm64') 'x64 process emulated on ARM64 did not map to ARM64'
+    function Get-ClawBridgeNativeMachine { return 0x14c }
+    $mappingRefused = $false
+    try { $null = & $nativePlatform } catch { $mappingRefused = $true }
+    Assert-Probe $mappingRefused 'native x86 was not refused'
+    function Get-ClawBridgeNativeMachine { & $realNativeMachine }
+    Assert-Probe ((& $nativePlatform) -eq $hostPlatform) 'the real native machine disagrees with the host platform'
     Assert-Probe ((Get-UserPathState) -ceq $realUserPath) 'The real per-user Path changed'
     Write-Output 'PASS independent native Windows installer fixtures; platform mapping, latest pinning, preservation, real skill step once/never/warn-only, locked file and junction checks, persisted user PATH (kind, unexpanded, idempotent, opt-out) found by a fresh shell'
 } finally {

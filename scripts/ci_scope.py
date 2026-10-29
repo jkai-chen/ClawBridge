@@ -15,7 +15,8 @@ CODE = ["skills/*"]
 
 # The Go packages the Windows job's native tests build (cli, notify, setup,
 # ctxwatch, linearconn, selfupdate and integration, with their test
-# dependencies, for GOOS=windows). test_ci_scope.py fails when `go list
+# dependencies, for GOOS=windows on amd64 and arm64: the Windows on ARM job
+# runs the same tests). test_ci_scope.py fails when `go list
 # -deps` names a directory this list doesn't cover, so a new dependency
 # can't slip past the Windows job.
 WINDOWS_DIRS = [
@@ -37,7 +38,7 @@ RULES = {
     "node": ["dispatcher-agent/*"],
     "agentd": [d + "/*" for d in AGENTD_DIRS],
     "macos": ["scripts/install*", "scripts/test_install*"],
-    "windows": ["scripts/install*", "scripts/test_install*", "*_windows.go", "*_windows_test.go"]
+    "windows": ["scripts/install*", "scripts/test_install*", "*_windows.go", "*_windows_test.go", "*_windows_*.go"]
     + [d + "/*" for d in WINDOWS_DIRS],
 }
 

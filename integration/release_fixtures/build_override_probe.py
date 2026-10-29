@@ -54,7 +54,7 @@ class SourceOverride(unittest.TestCase):
                     if r.returncode:
                         self.assertEqual(raw,[],'rejection left executable payloads')
                     else:
-                        self.assertEqual(len(raw),5,'successful sanitized build missing targets')
+                        self.assertEqual(len(raw),6,'successful sanitized build missing targets')
             self.assertEqual(run(git+['status','--porcelain']).strip(),b'','builder mutated tracked source')
 
 if __name__=='__main__':unittest.main(verbosity=2)

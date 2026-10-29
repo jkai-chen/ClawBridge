@@ -168,6 +168,9 @@ settled with `clawbridge deadletters list|requeue|dismiss`: see
 The project owner designates the confirming session with
 `clawbridge --session OWNER_SESSION --instance INSTANCE project coordinator-set coord`.
 
+The Windows installer (`install.ps1`) installs `windows_amd64` or `windows_arm64` to match the
+machine, even from an emulated PowerShell.
+
 For MCP installation, `clawbridge mcp install --help` explains supported agents,
 pinned scope, explicit config paths and dry-run output. Install each agent session
 under a distinct entry name if configuring several entries in the same file.

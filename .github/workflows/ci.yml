@@ -8,7 +8,46 @@ on:
   workflow_call:
 permissions:
   contents: read
+# A newer push to a pull request cancels its older run. Every other event
+# (a push to main, a merge queue entry, a release's call, a manual run) has
+# its own group, so it is never cancelled and never waits behind another.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 jobs:
+  # Which jobs a pull request needs, from the files it changes. Every other
+  # event runs everything (full). A job skipped here reports "skipped",
+  # which the ruleset counts as passing; `linux` fails if this job didn't
+  # succeed, so a broken filter can't wave a pull request through.
+  changes:
+    if: ${{ github.event.repository.private == false }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      go: ${{ steps.scope.outputs.go }}
+      node: ${{ steps.scope.outputs.node }}
+      agentd: ${{ steps.scope.outputs.agentd }}
+      macos: ${{ steps.scope.outputs.macos }}
+      windows: ${{ steps.scope.outputs.windows }}
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        if: ${{ github.event_name == 'pull_request' }}
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - id: scope
+        env:
+          EVENT: ${{ github.event_name }}
+          BASE: ${{ github.event.pull_request.base.sha }}
+        run: |
+          set -euo pipefail
+          if [ "$EVENT" != pull_request ]; then
+            for k in go node agentd macos windows; do echo "$k=true" >> "$GITHUB_OUTPUT"; done
+            exit 0
+          fi
+          git diff --name-only "$BASE" HEAD > changed.txt
+          echo "Changed files:"; cat changed.txt
+          python3 scripts/ci_scope.py < changed.txt >> "$GITHUB_OUTPUT"
   # The Go suites run as parallel jobs; `linux`, the check the ruleset
   # requires, passes only when all of them pass. Test results are never
   # cached (-count=1); only modules and build output are, keyed on go.sum.
@@ -34,7 +73,8 @@ jobs:
   # dealt out in turn, disjoint and complete); every other package runs in
   # one job.
   race:
-    if: ${{ github.event.repository.private == false }}
+    needs: changes
+    if: ${{ github.event.repository.private == false && needs.changes.outputs.go == 'true' }}
     runs-on: ubuntu-latest
     timeout-minutes: 45
     strategy:
@@ -112,29 +152,38 @@ jobs:
       - run: python3 scripts/test_release.py
       - run: python3 scripts/test_publish.py
       - run: python3 scripts/test_shard.py
+      - run: python3 scripts/test_ci_scope.py
       - run: bash -n scripts/build-release.sh scripts/publish-release.sh
       - run: sh -n scripts/install.sh
       - run: sh -n deploy/agentd-check.sh deploy/agentd-check-test.sh
       # agentd's install check, against a correct install and each break,
       # in a disposable container (it creates users).
       - run: docker run --rm -v "$PWD/deploy:/deploy:ro" debian:bookworm-20261005-slim@sha256:7c7b2c966bc9ee8cedfeef67e0e279108992c77681fa595db4a9d65c06ccc587 sh /deploy/agentd-check-test.sh
-  # The required check: green only when every Go job above is.
+  # The required check: green only when the scope job and every Go job
+  # above passed; race may be skipped only when the scope said no Go
+  # changed (a docs-only pull request).
   linux:
     if: ${{ always() && github.event.repository.private == false }}
-    needs: [test, race, checks]
+    needs: [changes, test, race, checks]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
       - name: Every Go job passed
         env:
-          RESULTS: ${{ needs.test.result }} ${{ needs.race.result }} ${{ needs.checks.result }}
+          SCOPE: ${{ needs.changes.result }}
+          GO: ${{ needs.changes.outputs.go }}
+          RESULTS: ${{ needs.test.result }} ${{ needs.checks.result }}
+          RACE: ${{ needs.race.result }}
         run: |
-          echo "test, race, checks: $RESULTS"
+          echo "changes: $SCOPE (go=$GO); test, checks: $RESULTS; race: $RACE"
+          [ "$SCOPE" = success ] || { echo "::error::the scope job did not pass"; exit 1; }
           for r in $RESULTS; do
             [ "$r" = success ] || { echo "::error::a Go job did not pass ($RESULTS)"; exit 1; }
           done
+          [ "$RACE" = success ] || { [ "$RACE" = skipped ] && [ "$GO" = false ]; } || { echo "::error::race did not pass ($RACE)"; exit 1; }
   dispatcher-agent:
-    if: ${{ github.event.repository.private == false }}
+    needs: changes
+    if: ${{ github.event.repository.private == false && needs.changes.outputs.node == 'true' }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     defaults:
@@ -157,7 +206,8 @@ jobs:
       # No provider keys exist in this workflow; the tests use local fakes only.
       - run: npm test
   agentd-image:
-    if: ${{ github.event.repository.private == false }}
+    needs: changes
+    if: ${{ github.event.repository.private == false && needs.changes.outputs.agentd == 'true' }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -167,7 +217,8 @@ jobs:
       # The egress container's image, run with the fixed spec's hardening.
       - run: bash cmd/clawbridge-agentd/scripts/image-test.sh
   dispatcher-agent-container:
-    if: ${{ github.event.repository.private == false }}
+    needs: changes
+    if: ${{ github.event.repository.private == false && needs.changes.outputs.node == 'true' }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
     defaults:
@@ -184,7 +235,8 @@ jobs:
       # 1,000 cases in the hardened image: memory under 160 MiB, no egress beyond loopback, hardening in place.
       - run: bash scripts/container-test.sh
   macos-installer:
-    if: ${{ github.event.repository.private == false }}
+    needs: changes
+    if: ${{ github.event.repository.private == false && needs.changes.outputs.macos == 'true' }}
     runs-on: macos-latest
     timeout-minutes: 10
     steps:
@@ -193,7 +245,8 @@ jobs:
           persist-credentials: false
       - run: python3 scripts/test_install.py
   windows-installer:
-    if: ${{ github.event.repository.private == false }}
+    needs: changes
+    if: ${{ github.event.repository.private == false && needs.changes.outputs.windows == 'true' }}
     runs-on: windows-latest
     timeout-minutes: 10
     steps:

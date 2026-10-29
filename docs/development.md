@@ -76,6 +76,39 @@ tag, verifies uploaded bytes while the release is a draft, then publishes.
 Tests use temporary tagged repositories and fake GitHub clients. Running fixture
 tests does not authorize creating a tag, release or hosted CI run.
 
+## What CI runs for a pull request
+
+A pull request runs only what its files can affect. `scripts/ci_scope.py` reads
+the changed files in a first `changes` job, and its tests are in
+`scripts/test_ci_scope.py`:
+
+- **Always:** `changes`, `test` (the full suite on PostgreSQL), `checks` and
+  `linux`.
+- **The race shards** (`race (…)`, 7 jobs): any file that isn't
+  documentation (`docs/**`, any `*.md` outside `skills/`, `LICENSE`). The skill
+  is embedded in the binary, so `skills/**` is code.
+- **`dispatcher-agent` and `dispatcher-agent-container`:** `dispatcher-agent/**`.
+- **`agentd-image`:** the packages its image builds (`AGENTD_DIRS`).
+- **`macos-installer`:** `scripts/install*` or `scripts/test_install*`.
+- **`windows-installer`:** those, any `*_windows.go`, and every package its
+  native tests build for Windows (`WINDOWS_DIRS`: most of `internal/`, plus
+  `integration` and `skills`).
+
+`scripts/test_ci_scope.py` runs `go list -deps` for both jobs and fails when a
+package they build isn't in their list, so a new dependency can't slip past
+them.
+- **Everything:** a change to `.github/workflows/`, the scope script, or
+  `go.mod`/`go.sum`. A file no rule names counts as code.
+
+A job skipped this way reports `skipped`, which the ruleset counts as passing.
+`linux` fails unless `changes` passed, and race may be skipped only when no Go
+changed, so a broken filter can't let a pull request through. A push to `main`,
+a merge queue entry, a manual run and the release's call of CI run every job,
+whatever changed.
+
+A newer push to a pull request cancels the run of its older one. Runs for other
+events are never cancelled and never wait behind each other.
+
 ## Evidence
 
 Current workflow checks are defined in `.github/workflows/`. Historical reviewed

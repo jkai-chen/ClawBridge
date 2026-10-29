@@ -901,12 +901,33 @@ func linearWriteInput(command string, v linearFlags, pos []string) (linearboard.
 	return writeInput, nil
 }
 
+// linearInternalCommands are the names runLinear parses a two-word
+// command as, with the command to type instead.
+var linearInternalCommands = map[string]string{
+	"project-status":    "project status LINEAR_PROJECT [--suggest], or project status set LINEAR_PROJECT --type TYPE --operation-id ID",
+	"project-creates":   "project creates (or writes)",
+	"project-update":    "project update LINEAR_PROJECT --add-team TEAM",
+	"project-team-adds": "project team-adds",
+	"initiative-show":   "initiative show INITIATIVE",
+	"view-list":         "view list",
+	"view-show":         "view show VIEW",
+	"view-create":       "view create",
+	"view-update":       "view update VIEW",
+	"view-apply":        "view apply --file FILE",
+	"view-delete":       "view delete VIEW",
+}
+
 func runLinear(ctx context.Context, flags Config, args []string, stdout, stderr io.Writer) error {
 	if len(args) == 0 || len(args) == 1 && (args[0] == "--help" || args[0] == "-h" || args[0] == "help") {
 		_, err := io.WriteString(stdout, "clawbridge linear connect|import|profiles|status|logout|teams|projects|binding|link|seed-docs|unlink|names-refresh|context|issues|issue|states|labels|members|create|update|comment|relation|move|watch\nMove an issue to another bound team: move ISSUE_UUID --team UUID [--operation-id ID --confirm --expected-plan-sha256 SHA]; without --confirm it is a preview. The project owner or a project lead (the ClawBridge project role) confirms from their own terminal, or the coordinator session within its lane.\nProject owner only: label create|rename, project create [--kind NAME], initiative create|add-project, label-policy show|set, status-policy show|set, doc-policy set, health set|enable|disable, admin audit-replay.\nProject kinds (a project-label group such as Type): kind show (any member); kind set --values A,B,C [--group NAME] [--team UUID] --expected-revision N, then kind seed --operation-id ID --profile ID [--confirm] makes or adopts its project labels, and kind apply --file F --operation-id ID --profile ID [--confirm --canary] sets each project's kind (project owner, own terminal).\nA coordinator's projects: the project's designated coordinator session runs project create NAME --team UUID --kind NAME --operation-id ID in its lane's default team; project creates lists them and the unconfirmed ones (any member); project creates --ack OPERATION_ID (project owner, own terminal) clears one you checked in Linear.\nLinear writes that may have happened, of every kind (a create, a move, a team added; unsettled or uncertain): writes (any member); writes --ack OPERATION_ID (project owner, or the project lead who confirmed it; own terminal) clears one you checked in Linear, a family's with its sub-issues.\nLanes (a binding's --lane NAME=TEAM,…): lanes show (any member); lanes pin --pin-session NAME|--pin-principal EMAIL --lane NAME --expected-revision N [--confirm], lanes unpin … (project owner, own terminal).\nTeam roles (who leads each bound team; lead, engineer or reviewer): roles show (any member); roles person|lead|set ... --expected-revision N [--confirm] (project owner, own terminal); roles project-lead on|off and roles apply-leads set Linear project leads from them. linear roles --help for more.\nShown names: names-refresh (project owner or lead) stores the bound teams' and projects' current names, as Linear gives them to you.\nWho closes issues: closes show (any member); closes set (project owner or lead, never a session).\nProject status follows the work (status policy project_flow): project-flow resume --linear-project UUID (project owner or lead, never a session) clears a hold.\nProject health (any member): health show.\nWho hears of agents' issues (hosted, as the app): subscribers show (any member); subscribers on|off, owner on|off, add|remove LINEAR_USER_UUID, backfill --since DATE [--apply] (project owner or lead, never a session).\nLinear views (any member): view list [--team UUID] [--type issue|project], view show ID. Project owner, own terminal, with your Linear API key: view create --team UUID [--kind project]|update ID|delete ID|apply --file F [--adopt NAME].\nLinear documents (any member): doc list|get, initiative show, doc-policy show. Project owner or lead: doc publish FILE.\nYour name in agent markers: display-name set NAME|clear|capture --profile ID.\nYour Linear API key, for view writes (project owner, own terminal): key set|status|remove --profile ID.\nUse COMMAND --help for explicit flags. Token import accepts --token-stdin only.\n")
 		return err
 	}
 	command := args[0]
+	if spaced, internal := linearInternalCommands[command]; internal {
+		// A parse name, never a command: linear project-status used to
+		// fall through to an issue write ("write requires operation_id").
+		return fmt.Errorf("linear %s isn't a command; use linear %s", command, spaced)
+	}
 	if command == "roles" {
 		return runLinearRoles(ctx, flags, args[1:], stdout, stderr)
 	}
@@ -1504,8 +1525,10 @@ func runLinear(ctx context.Context, flags Config, args []string, stdout, stderr 
 		data, err = service.MoveIssueV2(bounded, scope, linearboard.MoveInputV2{IssueID: pos[0], TeamID: v.team, OperationID: v.operation, Confirm: v.confirm, ExpectedPlanSHA256: v.expectedSHA, Family: v.family})
 	case "relation":
 		data, err = service.RelationV2(bounded, scope, linearboard.RelationInputV2{OperationID: v.operation, Action: v.relationAction, Type: v.relationType, FromID: pos[0], ToID: pos[1]})
-	default:
+	case "create", "update", "comment":
 		data, err = service.WriteV2(bounded, scope, writeInput)
+	default:
+		return fmt.Errorf("unknown linear command %q; clawbridge linear --help lists them", command)
 	}
 	if err != nil {
 		var receipt *linearboard.ReceiptError

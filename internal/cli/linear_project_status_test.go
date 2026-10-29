@@ -149,3 +149,39 @@ func TestLinearProjectStatusDispatch(t *testing.T) {
 		}
 	}
 }
+
+// Every documented form reaches the project-status route (it stops only
+// at the missing project, past parsing); a parse name typed as a command
+// (linear project-status) is refused with the form to type, never sent on
+// as an issue write ("write requires operation_id").
+func TestLinearProjectStatusDocumentedForms(t *testing.T) {
+	// No config, no profile, no agent marker: nothing reaches a server.
+	isolated(t)
+	typing(t, false, "")
+	routed := "explicit existing ClawBridge workspace/project"
+	for _, args := range [][]string{
+		{"project", "status", statusProject},
+		{"project", "status", statusProject, "--suggest"},
+		{"project", "status", "set", statusProject, "--type", "started", "--operation-id", "op-1"},
+		{"project", "status", "set", statusProject, "--type", "completed", "--operation-id", "op-1", "--confirm", "--expected-status", statusProject, "--allow-open"},
+	} {
+		if err := runLinear(t.Context(), Config{}, args, &bytes.Buffer{}, &bytes.Buffer{}); err == nil || !strings.Contains(err.Error(), routed) {
+			t.Errorf("%v: %v", args, err)
+		}
+	}
+	for _, args := range [][]string{
+		{"project-status", statusProject},
+		{"project-status", statusProject, "--suggest", "--operation-id", "op-1"},
+		{"project-status", "status", statusProject},
+	} {
+		err := runLinear(t.Context(), Config{}, args, &bytes.Buffer{}, &bytes.Buffer{})
+		if err == nil || !strings.Contains(err.Error(), "isn't a command; use linear project status LINEAR_PROJECT") || strings.Contains(err.Error(), "operation_id") {
+			t.Errorf("%v: %v", args, err)
+		}
+	}
+	for name := range linearInternalCommands {
+		if err := runLinear(t.Context(), Config{}, []string{name}, &bytes.Buffer{}, &bytes.Buffer{}); err == nil || !strings.Contains(err.Error(), "isn't a command") {
+			t.Errorf("%s: %v", name, err)
+		}
+	}
+}

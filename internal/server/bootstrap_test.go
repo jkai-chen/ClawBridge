@@ -31,6 +31,24 @@ func TestBootstrapInviteRefusesANonTerminal(t *testing.T) {
 
 // --code-stdin refuses stdin without a code, and --force-stdout with it,
 // before it opens the database; it never echoes what it read.
+// --server names the URL in the printed join command; anything but a bare
+// origin is refused before Postgres is opened.
+func TestBootstrapInviteServerFlag(t *testing.T) {
+	t.Setenv("CLAWBRIDGE_DATABASE_URL", "postgres://unused.invalid/db")
+	t.Setenv("CLAWBRIDGE_BOOTSTRAP_OWNER", "owner@example.test")
+	for _, bad := range []string{"clawbridge.lan", "ftp://clawbridge.lan", "https://clawbridge.lan/path", "https://u@clawbridge.lan", "https://clawbridge.lan?x=1", "https://"} {
+		err := RunOperator(context.Background(), []string{"bootstrap-invite", "--workspace", "acme", "--server", bad, "--force-stdout"}, io.Discard)
+		if err == nil || !strings.Contains(err.Error(), "--server") {
+			t.Errorf("%q: %v", bad, err)
+		}
+	}
+	for _, good := range []string{"https://clawbridge.lan", "http://127.0.0.1:8443", "https://192.0.2.10/"} {
+		if !joinServerURL(good) {
+			t.Errorf("%q refused", good)
+		}
+	}
+}
+
 func TestBootstrapInviteCodeStdinRefuses(t *testing.T) {
 	t.Setenv("CLAWBRIDGE_DATABASE_URL", "postgres://unused.invalid/none")
 	t.Setenv("CLAWBRIDGE_BOOTSTRAP_OWNER", "owner@example.test")
@@ -84,7 +102,7 @@ func TestPostgresBootstrapInviteJoinsTheOwner(t *testing.T) {
 	stdoutIsTerminal = func(io.Writer) bool { return true }
 	t.Cleanup(func() { stdoutIsTerminal = func(w io.Writer) bool { return false } })
 	var tty bytes.Buffer
-	if err := RunOperator(context.Background(), []string{"bootstrap-invite", "--workspace", ws}, &tty); err != nil || !strings.Contains(tty.String(), "clawbridge join") || !strings.Contains(tty.String(), "secret") || strings.Contains(tty.String(), "--code") || !strings.Contains(tty.String(), "asks for the code") {
+	if err := RunOperator(context.Background(), []string{"bootstrap-invite", "--workspace", ws, "--server", "http://127.0.0.1:8443/"}, &tty); err != nil || !strings.Contains(tty.String(), "clawbridge join --server http://127.0.0.1:8443 --email "+owner+"\n") || !strings.Contains(tty.String(), "secret") || strings.Contains(tty.String(), "--code") || !strings.Contains(tty.String(), "asks for the code") {
 		t.Fatal(err, tty.String())
 	}
 

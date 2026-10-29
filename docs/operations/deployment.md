@@ -382,7 +382,8 @@ sudo docker compose --env-file /etc/clawbridge/clawbridge.env --project-name "$P
 - It prints a single-use code, valid for 24 hours, for the owner's email only. The
   owner then runs, on their own computer:
   `clawbridge join --server https://DOMAIN --email OWNER`, which asks for the code
-  without showing it. Never put the code on the command line (`--code`).
+  without showing it. Never put the code on the command line (`--code`). The command
+  prints that line for you; pass `--server https://DOMAIN` so it names your URL.
   (`clawbridge join` ships with the client in the same release.)
 - **The code is a secret.** Run the command in your own terminal session, not
   through an agent, and type the code yourself. The command refuses to print to

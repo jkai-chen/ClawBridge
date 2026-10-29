@@ -98,6 +98,16 @@
   connection, with the label listings uncharged; it now reads each team with one app GraphQL query for the whole
   needs-agent set, and every page is charged. A large binding's intake drops from about 14 s to about 1 s. If Linear
   refuses the set's filter, S1 reads one query per label for the rest of that pass. Linear config scope: none.
+- **Run the server on your own machine.** `deploy/local-host.sh up --owner EMAIL` builds and starts the server
+  for this machine only on `http://127.0.0.1:8443` (device sign-in, no Caddy, no Google settings), writes a private
+  env file once, and shows the owner's one-time code in the terminal; `up --lan HOST [--bind IP]` serves
+  `https://HOST` through Caddy's internal CA (`trust` exports its root), or a brought mkcert or Tailscale certificate
+  with `--cert`/`--key`. `deploy/compose.local.yaml` holds both shapes; `status`, `down`, `backup` and
+  `uninstall [--delete-data]` manage them. `deploy/backup-postgres.sh` writes to a local folder with
+  `CLAWBRIDGE_BACKUP_DIR` (14 days kept by default) and takes the Compose project and an override file as
+  parameters; the bucket path is unchanged. `operator bootstrap-invite --server URL` puts the server's real URL in
+  the join command it prints (it said `https://YOUR-DOMAIN`). Guide: docs/operations/local-host.md. No schema
+  change. Linear config scope: none.
 
 ## Install and upgrade
 

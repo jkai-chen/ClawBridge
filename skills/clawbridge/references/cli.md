@@ -47,6 +47,14 @@ invite link or code, a device-add link, or a CI key once: each is a secret. A
 dormant device is confirmed from another of the human's devices (`device
 confirm`), never from yours.
 
+A server the human runs on their own machine (`deploy/local-host.sh`,
+docs/operations/local-host.md) is a cloud server like any other: on that machine
+only it is `http://127.0.0.1:8443` (a numeric loopback, never `localhost`), on a
+local network `https://HOST`, whose certificate the human trusts in the OS store.
+Run its `up` and `uninstall` only when the human asks. Never run its
+`invite-owner`: the human runs it in their own terminal, because the owner's
+one-time code goes only there. Never read or relay the code.
+
 `sync` is the only operation that publishes a new mirror. It requires an online
 authorized snapshot and preserves the previous complete snapshot if it fails.
 Run it when the human asks and the transport is healthy; then report the returned

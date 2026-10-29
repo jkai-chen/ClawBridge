@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -144,8 +145,15 @@ func TestATickServesOnlyWhatItHasTimeFor(t *testing.T) {
 	e := setup(t)
 	ctx, cancel := context.WithTimeout(context.Background(), minProjectShare-time.Second)
 	defer cancel()
+	var logged []string
+	old := logf
+	logf = func(format string, args ...any) { logged = append(logged, fmt.Sprintf(format, args...)) }
+	t.Cleanup(func() { logf = old })
 	if got := e.w.Tick(ctx); len(got) != 0 {
 		t.Fatal("a project was started without time for it:", got)
+	}
+	if len(logged) != 1 || !strings.HasPrefix(logged[0], "watcher: tick: 1 project(s) wait for the next tick: ") {
+		t.Fatal("the deferred project wasn't logged:", logged)
 	}
 	var ticked int
 	e.queryRow(`SELECT count(*) FROM watch_ticks`, &ticked)

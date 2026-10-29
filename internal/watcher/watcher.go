@@ -164,11 +164,12 @@ func (w *Watcher) Tick(ctx context.Context) []ProjectTick {
 	out := []ProjectTick{}
 	// Health runs are capped per tick across all projects (HP-M3).
 	healthLeft := HealthRunsPerTick
-	for _, pid := range projects {
+	for i, pid := range projects {
 		share := w.projectShare(ctx, pid)
 		if deadline, ok := ctx.Deadline(); ok {
 			left := time.Until(deadline)
 			if left < minProjectShare {
+				logf("watcher: tick: %d project(s) wait for the next tick: %dms left, under %dms", len(projects)-i, left.Milliseconds(), minProjectShare.Milliseconds())
 				break
 			}
 			share = min(share, left)

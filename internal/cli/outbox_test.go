@@ -42,6 +42,10 @@ func TestOutboxCommands(t *testing.T) {
 			data = map[string]any{"workspace_id": "ws-cloud", "project_id": "prj-cloud"}
 		case "send":
 			if down.Load() {
+				// A Retry-After past the client's in-process window makes
+				// it queue after its first try, however slow the run is
+				// (-race), instead of on the call's deadline.
+				w.Header().Set("Retry-After", "30")
 				w.WriteHeader(503)
 				return
 			}
@@ -73,8 +77,7 @@ func TestOutboxCommands(t *testing.T) {
 		return value, diag.String(), err
 	}
 	down.Store(true)
-	// The call's deadline ends the in-process retries early.
-	out, diag, err := run(1500*time.Millisecond, "send", "peer", "the plan", "--operation-id", "op-1")
+	out, diag, err := run(10*time.Second, "send", "peer", "the plan", "--operation-id", "op-1")
 	if err != nil || out["source"] != "client_outbox" {
 		t.Fatal(out, err)
 	}

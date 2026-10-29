@@ -965,7 +965,13 @@ func (p *Provider) IssuesV2(ctx context.Context, q IssueQueryV2) (Page[IssueV2],
 		if e != nil {
 			return Page[IssueV2]{}, e
 		}
-		if x.TeamID != q.TeamID || (q.ProjectID != "" && x.ProjectID != q.ProjectID) {
+		// Linear lists another team's issues under a team filter: a parent
+		// team's filter includes its sub-teams', and a project that holds
+		// several teams lists them all. Such a row is the caller's to drop
+		// and count (FilteredOtherTeam); the board shows a row only on its
+		// own verified pair. A row outside the asked project is the
+		// provider escaping the filter.
+		if !ValidID(x.TeamID) || (q.ProjectID != "" && x.ProjectID != q.ProjectID) {
 			return Page[IssueV2]{}, fail("scope_mismatch")
 		}
 		if q.UpdatedAfter != "" {

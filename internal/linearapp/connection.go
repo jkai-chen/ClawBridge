@@ -115,23 +115,40 @@ func (a *App) GraphQL(ctx context.Context, query string, variables map[string]an
 		if res.StatusCode == http.StatusTooManyRequests {
 			return a.rateLimited(res.Header.Get("Retry-After"))
 		}
-		if res.StatusCode != http.StatusOK {
-			return fail("unavailable")
-		}
 		var envelope struct {
 			Data   json.RawMessage `json:"data"`
 			Errors []struct {
+				Message    string `json:"message"`
 				Extensions struct {
 					Code string `json:"code"`
+					Type string `json:"type"`
 				} `json:"extensions"`
 			} `json:"errors"`
 		}
-		if json.Unmarshal(raw, &envelope) != nil {
+		parsed := json.Unmarshal(raw, &envelope) == nil
+		if res.StatusCode != http.StatusOK {
+			// A 400 naming the query itself as invalid is query_invalid;
+			// any other status stays unavailable.
+			if res.StatusCode == http.StatusBadRequest && parsed {
+				for _, e := range envelope.Errors {
+					if queryRejected(e.Message, e.Extensions.Code, e.Extensions.Type) {
+						return fail("query_invalid")
+					}
+				}
+			}
+			return fail("unavailable")
+		}
+		if !parsed {
 			return fail("query_failed")
 		}
 		for _, e := range envelope.Errors {
 			if e.Extensions.Code == "RATELIMITED" {
 				return a.rateLimited(res.Header.Get("Retry-After"))
+			}
+		}
+		for _, e := range envelope.Errors {
+			if queryRejected(e.Message, e.Extensions.Code, e.Extensions.Type) {
+				return fail("query_invalid")
 			}
 		}
 		if len(envelope.Errors) > 0 || len(envelope.Data) == 0 {
@@ -142,6 +159,20 @@ func (a *App) GraphQL(ctx context.Context, query string, variables map[string]an
 		}
 		return nil
 	}
+}
+
+// queryRejected: Linear refused the query document or its variables (a
+// filter or argument its schema doesn't take), not the data or the token.
+// Only the error's code, type and a fixed message are compared; no Linear
+// text is kept.
+func queryRejected(message, code, kind string) bool {
+	switch {
+	case code == "GRAPHQL_VALIDATION_FAILED", code == "BAD_USER_INPUT", code == "GRAPHQL_PARSE_FAILED":
+		return true
+	case strings.EqualFold(kind, "graphql error"):
+		return true
+	}
+	return message == "Argument Validation Error"
 }
 
 // rateLimited is a read Linear, or the pacer, would not take now: nothing

@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"clawbridge/internal/bus"
+	"clawbridge/internal/linearapp"
 	"clawbridge/internal/linearboard"
 	"clawbridge/internal/linearprovider"
 )
@@ -66,7 +67,9 @@ type fakeLinear struct {
 	onLabelled func()
 	block      bool
 	onComments func(context.Context)
-	notes      int
+	// rowLabelsMore marks rows whose labels run past the read's page.
+	rowLabelsMore map[string]bool
+	notes         int
 	// healthIssues and activity answer project health's reads.
 	healthIssues []map[string]any
 	activity     map[string]map[string]any
@@ -114,6 +117,18 @@ type fakeLinear struct {
 	parents    map[string]string
 	teamLabels map[string][]linearprovider.Label
 	carries    map[string][]string
+	// refuseIn makes the app refuse the labelled read's set filter as an
+	// invalid query, as Linear would a filter its schema doesn't take.
+	// sinceIgnored makes it return rows updated before since anyway, and
+	// rowLabels, when set, are the label IDs a row shows, whatever it
+	// carries. updated sets a labelled row's updatedAt (default now).
+	refuseIn     bool
+	labelledErr  error
+	sinceIgnored bool
+	rowLabels    map[string][]string
+	updated      map[string]string
+	// projectTeams, when set, are each project's teams (default team).
+	projectTeams map[string][]string
 }
 
 func (f *fakeLinear) issue(id string) (linearprovider.IssueV2, error) {
@@ -147,6 +162,9 @@ func (p fakeProvider) GetTeam(_ context.Context, id string) (linearprovider.Team
 }
 func (p fakeProvider) GetProject(_ context.Context, id string) (linearprovider.Project, error) {
 	if p.f.projects[id] {
+		if teams, ok := p.f.projectTeams[id]; ok {
+			return linearprovider.Project{ID: id, Name: "P", TeamIDs: teams}, nil
+		}
 		return linearprovider.Project{ID: id, Name: "P", TeamIDs: []string{team}}, nil
 	}
 	return linearprovider.Project{}, errors.New("no projects")
@@ -298,6 +316,75 @@ func (a fakeApp) GraphQL(ctx context.Context, query string, vars map[string]any,
 			nodes = append(nodes, map[string]any{"id": id})
 		}
 		data = map[string]any{"issues": map[string]any{"nodes": nodes, "pageInfo": map[string]any{"hasNextPage": a.f.delegatedMore, "endCursor": "next"}}}
+	case labelledQuery, labelledOneQuery:
+		if a.f.onLabelled != nil {
+			a.f.onLabelled()
+		}
+		labels := []string{}
+		if query == labelledQuery {
+			if a.f.refuseIn {
+				return &linearapp.Error{Code: "query_invalid"}
+			}
+			if a.f.labelledErr != nil {
+				return a.f.labelledErr
+			}
+			labels = vars["labels"].([]string)
+		} else {
+			labels = []string{vars["label"].(string)}
+		}
+		since, err := time.Parse(time.RFC3339Nano, vars["since"].(string))
+		if err != nil {
+			return err
+		}
+		// Like Linear, the list is filtered by the queried team (a parent's
+		// filter may spill its sub-teams' and others' rows), the labels and
+		// updatedAt.
+		rows := []any{}
+		for _, id := range a.f.labelled {
+			i, _ := a.f.issue(id)
+			if i.TeamID != vars["team"] && !a.f.spill {
+				continue
+			}
+			carried := []string{labelNeeds}
+			if a.f.carries != nil {
+				carried = a.f.carries[id]
+			}
+			if !slices.ContainsFunc(carried, func(l string) bool { return slices.Contains(labels, l) }) {
+				continue
+			}
+			updated := time.Now().UTC().Format(time.RFC3339Nano)
+			if u, ok := a.f.updated[id]; ok {
+				updated = u
+			}
+			if at, _ := time.Parse(time.RFC3339Nano, updated); !at.After(since) && !a.f.sinceIgnored {
+				continue
+			}
+			if shown, ok := a.f.rowLabels[id]; ok {
+				carried = shown
+			}
+			nodes := []any{}
+			for _, l := range carried {
+				nodes = append(nodes, map[string]any{"id": l})
+			}
+			var project any
+			if i.ProjectID != "" && !a.f.unlisted[id] {
+				project = map[string]any{"id": i.ProjectID}
+			}
+			rows = append(rows, map[string]any{"id": id, "updatedAt": updated, "team": map[string]any{"id": i.TeamID}, "project": project, "labels": map[string]any{"nodes": nodes, "pageInfo": map[string]any{"hasNextPage": a.f.rowLabelsMore[id]}}})
+		}
+		info := map[string]any{"hasNextPage": false}
+		if n := a.f.labelledPage; n > 0 {
+			from := 0
+			if after, ok := vars["after"].(string); ok {
+				from, _ = strconv.Atoi(after)
+			}
+			total := len(rows)
+			rows = rows[from:min(from+n, total)]
+			if from+n < total {
+				info = map[string]any{"hasNextPage": true, "endCursor": strconv.Itoa(from + n)}
+			}
+		}
+		data = map[string]any{"issues": map[string]any{"nodes": rows, "pageInfo": info}}
 	case mentionsQuery:
 		data = map[string]any{"notifications": map[string]any{"nodes": a.f.mentions, "pageInfo": map[string]any{"hasNextPage": false}}}
 	case labelsQuery:
@@ -563,9 +650,10 @@ func TestIntakeS1SkipsAnotherTeamsRows(t *testing.T) {
 }
 
 // A bound sub-team's needs-agent set is its own copy and its bound
-// parent's label (CROSS-TEAM-BINDING §3.2): S1 reads the sub-team once per
-// label, so an issue carrying either is queued. A label of the cached set
-// that stops verifying (merged away in Linear) re-resolves the set once.
+// parent's label (CROSS-TEAM-BINDING §3.2): S1 reads the sub-team with one
+// query for the whole set, so an issue carrying either is queued. A label of
+// the cached set that is merged away in Linear just matches nothing: the
+// read stays readable and the rest of the set still reads.
 func TestIntakeS1ReadsTheSubTeamsLabelSet(t *testing.T) {
 	const subTeam = "abababab-abab-4bab-8bab-abababababab"
 	const copyNeeds = "cdcdcdcd-cdcd-4dcd-8dcd-cdcdcdcdcdcd"
@@ -600,7 +688,7 @@ func TestIntakeS1ReadsTheSubTeamsLabelSet(t *testing.T) {
 	e.f.carries = map[string][]string{subA: {labelNeeds}, subB: {labelNeeds}}
 	e.dueNow()
 	if tick = e.tick(); tick.Intake == nil || len(tick.Intake.Unreadable) != 0 || len(tick.Intake.NoLabel) != 0 {
-		t.Fatalf("the set was not re-resolved: %+v", tick.Intake)
+		t.Fatalf("a merged label failed the read: %+v", tick.Intake)
 	}
 }
 

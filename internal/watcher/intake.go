@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"clawbridge/internal/bus"
+	"clawbridge/internal/linearapp"
 	"clawbridge/internal/linearboard"
 	"clawbridge/internal/linearprovider"
 )
@@ -38,9 +39,16 @@ const (
 // newest first (probe I4): `first`, never `last`.
 const (
 	delegatedQuery = `query Delegated($app: ID!, $since: DateTimeOrDuration!, $after: String) { issues(first: 50, after: $after, filter: { delegate: { id: { eq: $app } }, updatedAt: { gt: $since } }) { nodes { id updatedAt } pageInfo { hasNextPage endCursor } } }`
-	historyQuery   = `query History($id: String!, $first: Int!, $after: String) { issue(id: $id) { history(first: $first, after: $after) { nodes { createdAt actorId botActor { id } addedLabelIds toDelegate { id } } pageInfo { hasNextPage endCursor } } } }`
-	labelsQuery    = `query IssueLabels($id: String!) { issue(id: $id) { id labels(first: 50) { nodes { id } pageInfo { hasNextPage } } } }`
-	mentionsQuery  = `query Mentions($first: Int!, $after: String) { notifications(first: $first, after: $after) { nodes { id type createdAt ... on IssueNotification { issue { id } actor { id } comment { id } } } pageInfo { hasNextPage endCursor } } }`
+	// labelledQuery is S1: a team's issues carrying any label of its
+	// needs-agent set, as labels.some (as view filters record a label
+	// collection). labelledOneQuery carries one label in the other shape
+	// Linear's label collection filter takes (labels.id), for when Linear
+	// refuses the first: between them, either shape serves.
+	labelledQuery    = `query Labelled($team: ID!, $labels: [ID!], $since: DateTimeOrDuration!, $after: String) { issues(first: 50, after: $after, filter: { team: { id: { eq: $team } }, labels: { some: { id: { in: $labels } } }, updatedAt: { gt: $since } }) { nodes { id updatedAt team { id } project { id } labels(first: 50) { nodes { id } pageInfo { hasNextPage } } } pageInfo { hasNextPage endCursor } } }`
+	labelledOneQuery = `query LabelledOne($team: ID!, $label: ID!, $since: DateTimeOrDuration!, $after: String) { issues(first: 50, after: $after, filter: { team: { id: { eq: $team } }, labels: { id: { eq: $label } }, updatedAt: { gt: $since } }) { nodes { id updatedAt team { id } project { id } labels(first: 50) { nodes { id } pageInfo { hasNextPage } } } pageInfo { hasNextPage endCursor } } }`
+	historyQuery     = `query History($id: String!, $first: Int!, $after: String) { issue(id: $id) { history(first: $first, after: $after) { nodes { createdAt actorId botActor { id } addedLabelIds toDelegate { id } } pageInfo { hasNextPage endCursor } } } }`
+	labelsQuery      = `query IssueLabels($id: String!) { issue(id: $id) { id labels(first: 50) { nodes { id } pageInfo { hasNextPage } } } }`
+	mentionsQuery    = `query Mentions($first: Int!, $after: String) { notifications(first: $first, after: $after) { nodes { id type createdAt ... on IssueNotification { issue { id } actor { id } comment { id } } } pageInfo { hasNextPage endCursor } } }`
 )
 
 // IntakePoll is what one tick's intake did for a project.
@@ -97,9 +105,14 @@ type intakeRun struct {
 	app   AppIdentity
 	state bus.IntakeState
 	poll  *IntakePoll
-	// resolved marks teams whose needs-agent set this run already resolved
-	// afresh after a label stopped verifying: once, then it stops.
-	resolved map[string]bool
+	// binding is the project's binding, read once per intake run for S1.
+	binding bus.TaskboardBindingV2
+	// inert are the binding's teams without a project, as Linear shows
+	// them, read once per run when a due team is listed so.
+	inert map[string]bool
+	// perLabel: Linear refused the needs-agent set's filter once this run,
+	// so S1 reads each team once per label for the rest of it.
+	perLabel bool
 }
 
 // intake polls the project's due intake sources under the watch lease and
@@ -119,7 +132,7 @@ func (w *Watcher) intake(ctx context.Context, svc *linearboard.Service, scope bu
 		poll.Unreadable = append(poll.Unreadable, "app_identity")
 		return poll, nil
 	}
-	run := &intakeRun{w: w, svc: svc, scope: scope, pid: pid, app: app, state: st, poll: poll, resolved: map[string]bool{}}
+	run := &intakeRun{w: w, svc: svc, scope: scope, pid: pid, app: app, state: st, poll: poll}
 	if st.RolesUnreadable {
 		poll.Unreadable = append(poll.Unreadable, "team_roles")
 	}
@@ -131,6 +144,7 @@ func (w *Watcher) intake(ctx context.Context, svc *linearboard.Service, scope bu
 	if enabled["S1"] {
 		b, err := svc.BindingV2(ctx, scope)
 		if err == nil {
+			run.binding = b
 			for _, team := range b.LinearTeamIDs {
 				sources = append(sources, intakeSource{"intake-s1", team, run.labelled})
 			}
@@ -231,15 +245,17 @@ func (r *intakeRun) source(ctx context.Context, source, subject string, read fun
 	_ = r.w.Store.IntakeCursorSet(ctx, r.pid, source, subject, polled, signal)
 }
 
-// labelled is S1: the team's issues carrying needs-agent, updated since.
-// It reads the team once per label of the needs-agent set (the team's own,
-// and its bound parent's, CROSS-TEAM-BINDING §3.2), across all its
-// projects, rather than one bound project at a time: a binding with many
-// projects would otherwise never finish within intakePages. An issue whose
-// project the page shows outside the binding is skipped unread; candidate
-// proves every other one.
+// labelled is S1: the team's issues carrying a label of its needs-agent
+// set (the team's own, and its bound parent's, CROSS-TEAM-BINDING §3.2),
+// updated since. It reads the team with one app GraphQL query for the whole
+// set, across all its projects, rather than one bound project or one label
+// at a time: a binding with many projects would otherwise never finish
+// within intakePages. Every row is proven locally as the provider read
+// proved it: the team's own, carrying a label of the set, updated after
+// since; a row whose project is outside the binding is skipped unread, and
+// candidate proves every other one.
 func (r *intakeRun) labelled(ctx context.Context, team string, since time.Time) (bool, bool, error) {
-	set, err := r.needsAgent(ctx, team, false)
+	set, err := r.needsAgent(ctx, team)
 	if err != nil {
 		return false, false, err
 	}
@@ -247,7 +263,17 @@ func (r *intakeRun) labelled(ctx context.Context, team string, since time.Time) 
 		r.poll.NoLabel = append(r.poll.NoLabel, team)
 		return false, true, nil
 	}
-	signal, complete := false, true
+	// A team without a project reads nothing until one carries it; its
+	// history then is not intake's, so the cursor moves on.
+	inert, err := r.inertTeam(ctx, team)
+	if err != nil {
+		return false, false, err
+	}
+	if inert {
+		r.poll.Inert = append(r.poll.Inert, team)
+		return false, true, nil
+	}
+	signal := false
 	seen := map[string]bool{}
 	carries := func(n historyEntry) bool {
 		for _, id := range set {
@@ -257,28 +283,18 @@ func (r *intakeRun) labelled(ctx context.Context, team string, since time.Time) 
 		}
 		return false
 	}
-	for i := 0; i < len(set); i++ {
-		done, err := r.labelledBy(ctx, team, set[i], set, since, seen, carries, &signal)
-		// A team without a project reads nothing until one carries it; its
-		// history then is not intake's, so the cursor moves on.
-		if linearboard.IsTeamWithoutProject(err) {
-			r.poll.Inert = append(r.poll.Inert, team)
-			return signal, true, nil
+	if !r.perLabel {
+		complete, err := r.labelledBy(ctx, team, set, set, since, seen, carries, &signal)
+		if err == nil || !linearapp.IsQueryInvalid(err) {
+			return signal, complete && err == nil, err
 		}
-		// A label Linear no longer verifies for the team (merged or
-		// removed): the set is resolved again once, then read afresh.
-		if errors.Is(err, linearboard.ErrLabelNotVerified) && !r.resolved[team] {
-			r.resolved[team] = true
-			if set, err = r.needsAgent(ctx, team, true); err != nil {
-				return signal, false, err
-			}
-			if len(set) == 0 {
-				r.poll.NoLabel = append(r.poll.NoLabel, team)
-				return signal, true, nil
-			}
-			i, complete = -1, true
-			continue
-		}
+		// Linear refused the set's filter: one query per label, for the
+		// rest of this intake run.
+		r.perLabel = true
+	}
+	complete := true
+	for _, label := range set {
+		done, err := r.labelledBy(ctx, team, []string{label}, set, since, seen, carries, &signal)
 		if err != nil {
 			return signal, false, err
 		}
@@ -287,45 +303,125 @@ func (r *intakeRun) labelled(ctx context.Context, team string, since time.Time) 
 	return signal, complete, nil
 }
 
-// labelledBy reads the team's issues carrying label, one of set; an issue
-// another label of the set already brought is not queued again.
-func (r *intakeRun) labelledBy(ctx context.Context, team, label string, set []string, since time.Time, seen map[string]bool, carries func(historyEntry) bool, signal *bool) (bool, error) {
-	cursor := ""
+// labelledBy pages the team's issues carrying one of labels (the whole set,
+// or one label of it when Linear refused the set's filter); an issue an
+// earlier page or label already brought is not counted or queued again.
+func (r *intakeRun) labelledBy(ctx context.Context, team string, labels, set []string, since time.Time, seen map[string]bool, carries func(historyEntry) bool, signal *bool) (bool, error) {
+	query, vars := labelledQuery, map[string]any{"team": team, "labels": labels, "since": since.UTC().Format(time.RFC3339Nano)}
+	if r.perLabel {
+		query, vars = labelledOneQuery, map[string]any{"team": team, "label": labels[0], "since": vars["since"]}
+	}
+	var after any
 	for page := 0; page < intakePages; page++ {
 		if page > 0 && deferred(ctx) {
 			return false, nil
 		}
+		var out struct {
+			Issues struct {
+				Nodes []struct {
+					ID        string `json:"id"`
+					UpdatedAt string `json:"updatedAt"`
+					Team      *struct {
+						ID string `json:"id"`
+					} `json:"team"`
+					Project *struct {
+						ID string `json:"id"`
+					} `json:"project"`
+					Labels struct {
+						Nodes []struct {
+							ID string `json:"id"`
+						} `json:"nodes"`
+						PageInfo pageInfo `json:"pageInfo"`
+					} `json:"labels"`
+				} `json:"nodes"`
+				PageInfo pageInfo `json:"pageInfo"`
+			} `json:"issues"`
+		}
+		vars["after"] = after
 		r.poll.Calls++
-		issues, err := r.svc.TeamLabelledV2(ctx, r.scope, linearboard.TeamLabelledInputV2{TeamID: team, LabelID: label, UpdatedAfter: since.UTC().Format(time.RFC3339Nano), Cursor: cursor, Limit: 50})
-		if err != nil {
+		if err := r.w.App.GraphQL(ctx, query, vars, &out); err != nil {
 			return false, err
 		}
-		for range issues.FilteredOtherTeam {
-			r.poll.skip("other_team")
-		}
-		for _, i := range issues.Items {
-			if seen[i.ID] {
+		for _, n := range out.Issues.Nodes {
+			if !linearprovider.ValidID(n.ID) {
+				return false, errors.New("the labelled read escaped the selected team")
+			}
+			if seen[n.ID] {
 				continue
 			}
-			seen[i.ID] = true
-			if i.OutOfBinding {
+			seen[n.ID] = true
+			if n.Team == nil || n.Team.ID != team {
+				// A sub-team's row under its parent's filter: a listed
+				// team's own read returns it; any other is dropped and
+				// counted.
+				if n.Team == nil || !contains(r.binding.LinearTeamIDs, n.Team.ID) {
+					r.poll.skip("other_team")
+				}
+				continue
+			}
+			if updated, ok := linearprovider.UpdatedAfterTime(n.UpdatedAt); !ok || updated.Before(since) {
+				return false, errors.New("the labelled read did not prove its updatedAt filter")
+			}
+			label := ""
+			for _, id := range set {
+				for _, l := range n.Labels.Nodes {
+					if label == "" && l.ID == id {
+						label = id
+					}
+				}
+			}
+			// A row whose labels run past one page may carry the set's label
+			// further on: candidate's own read decides it.
+			if label == "" && !n.Labels.PageInfo.HasNextPage {
+				r.poll.skip("no_label")
+				continue
+			}
+			if label == "" {
+				label = set[0]
+			}
+			// The row's project rules it out of a project set's binding;
+			// a row without one is left to candidate's read.
+			if r.binding.Mode == "project_set" && n.Project != nil && !contains(r.binding.LinearProjectIDs, n.Project.ID) {
 				r.poll.skip("not_in_binding")
 				continue
 			}
-			*signal = r.candidate(ctx, "S1", i.ID, carries, "", "", &attribution{kind: "label", target: label, set: set, since: since}) || *signal
+			*signal = r.candidate(ctx, "S1", n.ID, carries, "", "", &attribution{kind: "label", target: label, set: set, since: since}) || *signal
 		}
-		if issues.Complete {
+		if !out.Issues.PageInfo.HasNextPage {
 			return true, nil
 		}
-		cursor = issues.NextCursor
+		if out.Issues.PageInfo.EndCursor == "" || out.Issues.PageInfo.EndCursor == after {
+			return false, errors.New("the labelled read gave no next cursor")
+		}
+		after = out.Issues.PageInfo.EndCursor
 	}
 	return false, nil
 }
 
+// inertTeam: the binding lists the team without a project and no bound
+// project carries it (linearboard.InertTeamV2). Only a team the binding
+// lists so is read against Linear, once per intake run.
+func (r *intakeRun) inertTeam(ctx context.Context, team string) (bool, error) {
+	if r.binding.Mode != "project_set" || !contains(r.binding.TeamsWithoutProject, team) {
+		return false, nil
+	}
+	if r.inert == nil {
+		teams, err := r.svc.TeamsWithoutProjectV2(ctx, r.scope)
+		if err != nil {
+			return false, err
+		}
+		r.inert = map[string]bool{}
+		for _, t := range teams {
+			r.inert[t.TeamID] = t.Inert
+		}
+	}
+	return r.inert[team], nil
+}
+
 // needsAgent is the team's needs-agent label set (linearboard.LabelSetV2),
 // by exact name, cached for an hour; empty when there is none or a team
-// lists more than one. fresh drops the cached set first.
-func (r *intakeRun) needsAgent(ctx context.Context, team string, fresh bool) ([]string, error) {
+// lists more than one.
+func (r *intakeRun) needsAgent(ctx context.Context, team string) ([]string, error) {
 	now := r.w.now()
 	key := r.pid + "|" + team
 	r.w.mu.Lock()
@@ -334,7 +430,7 @@ func (r *intakeRun) needsAgent(ctx context.Context, team string, fresh bool) ([]
 	}
 	cached, ok := r.w.labels[key]
 	r.w.mu.Unlock()
-	if ok && !fresh && now.Sub(cached.checked) < labelCacheTTL {
+	if ok && now.Sub(cached.checked) < labelCacheTTL {
 		return cached.ids, nil
 	}
 	set, err := r.svc.LabelSetV2(ctx, r.scope, team, needsAgentLabel)

@@ -34,6 +34,7 @@ const (
 	awOtherOrg     = "b7000000-0000-4000-8000-0000000000b2"
 	awTeam         = "c7000000-0000-4000-8000-0000000000c1"
 	awOtherTeam    = "c7000000-0000-4000-8000-0000000000c2"
+	awCreatedIssue = "d7000000-0000-4000-8000-0000000000d7"
 	awIssue        = "d7000000-0000-4000-8000-0000000000d1"
 	awForeignIssue = "d7000000-0000-4000-8000-0000000000d2"
 	awComment      = "e7000000-0000-4000-8000-0000000000e1"
@@ -143,7 +144,7 @@ type awMCP struct {
 	saved    []map[string]any
 	comments []map[string]any
 	issues   map[string]string
-	// refuse is how many save_comment calls Linear answers 429 at HTTP,
+	// refuse is how many save_comment or save_issue calls Linear answers 429 at HTTP,
 	// before any tool runs.
 	refuse int
 	// onSave, if set, runs as each save_comment call starts.
@@ -176,6 +177,19 @@ func (m *awMCP) savedBodies() []string {
 func awSaveCommentTool(t *testing.T) *mcp.Tool {
 	t.Helper()
 	raw, err := os.ReadFile("../linearprovider/testdata/save-comment-20261022.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var tool mcp.Tool
+	if err = json.Unmarshal(raw, &tool); err != nil {
+		t.Fatal(err)
+	}
+	return &tool
+}
+
+func awSaveIssueTool(t *testing.T) *mcp.Tool {
+	t.Helper()
+	raw, err := os.ReadFile("../linearprovider/testdata/official-save-issue-20261022.json")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -236,6 +250,15 @@ func newAWMCP(t *testing.T) (*awMCP, *httptest.Server) {
 		}
 		return text(map[string]any{"id": identifier, "uuid": str(a, "id"), "teamId": team, "projectId": nil, "title": "synthetic", "status": "Backlog", "statusType": "backlog", "assignee": nil, "url": "https://linear.example/issue/" + identifier, "parentId": nil, "relations": map[string]any{"blocks": []any{}, "blockedBy": []any{}, "relatedTo": []any{}, "duplicateOf": nil}, "labels": []any{}, "assigneeId": nil}), nil
 	})
+	srv.AddTool(awSaveIssueTool(t), func(_ context.Context, req *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		a := args(req)
+		m.mu.Lock()
+		m.calls["save_issue"]++
+		m.issues[awCreatedIssue] = str(a, "team")
+		m.mu.Unlock()
+		// A create: the answer carries the new issue's identifier and UUID.
+		return text(map[string]any{"id": "SYN-7", "uuid": awCreatedIssue, "teamId": str(a, "team"), "projectId": nil, "title": str(a, "title"), "status": "Backlog", "statusType": "backlog", "assignee": nil, "url": "https://linear.example/issue/SYN-7", "parentId": nil, "relations": map[string]any{"blocks": []any{}, "blockedBy": []any{}, "relatedTo": []any{}, "duplicateOf": nil}, "labels": []any{}, "assigneeId": nil}), nil
+	})
 	srv.AddTool(awSaveCommentTool(t), func(_ context.Context, req *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		a := args(req)
 		m.mu.Lock()
@@ -280,7 +303,7 @@ func newAWMCP(t *testing.T) (*awMCP, *httptest.Server) {
 		r.Body = io.NopCloser(bytes.NewReader(body))
 		m.mu.Lock()
 		m.auths = append(m.auths, r.Header.Get("Authorization"))
-		refused := m.refuse > 0 && bytes.Contains(body, []byte(`"save_comment"`))
+		refused := m.refuse > 0 && (bytes.Contains(body, []byte(`"save_comment"`)) || bytes.Contains(body, []byte(`"save_issue"`)))
 		if refused {
 			m.refuse--
 		}

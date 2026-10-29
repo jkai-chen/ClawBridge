@@ -29,6 +29,9 @@
 
 ## Linear
 
+- **A queued Linear create's settled result carries the new issue's UUID.** `write-status`, the session's `linear-write`
+  message and the TUI queue show `issue ENG-88 (<uuid>)`, and `write-status` adds `result_identifier` and `result_id`, so
+  an agent can hand the issue on. No schema change. Linear config scope: none.
 - **A dispatcher domain's coordinator keeps the coordinator's Linear rights.** While the dispatcher is on, the project's
   coordinator is its system session, so no session could move an issue, add a team to a Linear project or create a
   project as the coordinator. Now each domain's coordinator session (`dispatcher domain coordinator DOMAIN SESSION`)

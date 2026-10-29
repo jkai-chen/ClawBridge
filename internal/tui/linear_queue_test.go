@@ -18,6 +18,7 @@ func queueView(t *testing.T, role string, mode Mode) (Model, *fakeAuthority) {
 		"linear_write_status": {Source: "server", Data: map[string]any{"writes": []any{
 			map[string]any{"operation_id": "op-1", "operation": "comment", "issue": "SYN-6", "state": "queued", "reason": "project_hourly_cap", "queued_at": "2026-10-27T09:40:00Z", "next_attempt_at": "2026-10-27T11:00:00Z", "position": float64(1)},
 			map[string]any{"operation_id": "op-0", "operation": "update", "issue": "SYN-5", "state": "done", "queued_at": "2026-10-27T09:00:00Z", "settled_at": "2026-10-27T09:05:00Z", "result": "issue SYN-5"},
+			map[string]any{"operation_id": "op-9", "operation": "create", "issue": "", "state": "done", "queued_at": "2026-10-27T09:10:00Z", "settled_at": "2026-10-27T09:15:00Z", "result": "issue ENG-88 (0b6c1f52-3a4d-4e8b-9c7a-5d2e1f0a9b34)", "result_identifier": "ENG-88", "result_id": "0b6c1f52-3a4d-4e8b-9c7a-5d2e1f0a9b34"},
 		}}},
 		"comment_watch_budget_set": {Source: "server", Data: map[string]any{}},
 	}}
@@ -60,7 +61,7 @@ func TestLinearShowsTheBudgetAndQueue(t *testing.T) {
 	}
 	m = do(m, "o")
 	view := Render(m)
-	for _, want := range []string{"Queued Linear writes", "comment · SYN-6 · queued (project_hourly_cap) · queued 20 min ago · next try", "update · SYN-5 · done · queued 60 min ago · issue SYN-5"} {
+	for _, want := range []string{"Queued Linear writes", "comment · SYN-6 · queued (project_hourly_cap) · queued 20 min ago · next try", "update · SYN-5 · done · queued 60 min ago · issue SYN-5", "create · new issue · done · queued 50 min ago · issue ENG-88 (0b6c1f52-3a4d-4e8b-9c7a-5d2e1f0a9b34)"} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("no %q in\n%s", want, view)
 		}

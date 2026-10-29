@@ -41,7 +41,10 @@ binary its version first, and refuses unless you pass `--allow-downgrade` (Windo
 `-AllowDowngrade`). A binary that doesn't report a release version, such as a source
 build, doesn't stop it.
 
-On Windows x64, download and run the PowerShell installer:
+On Windows (x64 or ARM64), download and run the PowerShell installer. It picks the release
+asset for the machine's native architecture, `windows_amd64` or `windows_arm64`, even when
+PowerShell itself runs emulated (an x64 PowerShell on a Windows on ARM machine installs the
+ARM64 build):
 
 ```powershell
 Invoke-WebRequest -Uri 'https://github.com/jkai-chen/ClawBridge/releases/latest/download/install.ps1' -OutFile "$env:TEMP\clawbridge-install.ps1"
@@ -99,7 +102,9 @@ the installer stops before reporting success and keeps the old binary. Close the
 agents running `clawbridge mcp` and any other `clawbridge` process, then run it
 again.
 
-Installer support is Windows PowerShell 5.1 and PowerShell 7 on Windows x64. Native
+Installer support is Windows PowerShell 5.1 and PowerShell 7 on Windows x64 and ARM64.
+On an ARM64 machine the `windows_arm64` binary runs natively; tools that are x64-only still
+work alongside it under Windows' x64 emulation. Native
 platform runtime acceptance is recorded in the
 [release review](archive/reviews/RELEASE-REVIEW.md).
 

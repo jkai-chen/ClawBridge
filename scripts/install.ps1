@@ -14,12 +14,55 @@ function Test-ClawBridgeVersion([string]$Value) {
     return $Value -cmatch '\Av(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\z'
 }
 
-function Get-ClawBridgePlatform {
-    if ([Environment]::OSVersion.Platform -ne [PlatformID]::Win32NT) { throw 'Windows x64 is required' }
+# IMAGE_FILE_MACHINE values: 0x8664 x64, 0xAA64 ARM64, 0x14c x86. 0 means unknown.
+# kernel32 IsWow64Process2 reports the machine Windows itself runs on, even for an
+# x64 or x86 process emulated on ARM64, where the environment variables only
+# describe the emulated process. It exists from Windows 10 1709; elsewhere (or if
+# it cannot be compiled) this returns 0 and the caller falls back to the variables.
+function Get-ClawBridgeNativeMachine {
+    try {
+        if (-not ('ClawBridge.NativeMachine' -as [type])) {
+            Add-Type -Namespace ClawBridge -Name NativeMachine -MemberDefinition @'
+[System.Runtime.InteropServices.DllImport("kernel32.dll")]
+public static extern System.IntPtr GetCurrentProcess();
+[System.Runtime.InteropServices.DllImport("kernel32.dll", SetLastError = true)]
+[return: System.Runtime.InteropServices.MarshalAs(System.Runtime.InteropServices.UnmanagedType.Bool)]
+public static extern bool IsWow64Process2(System.IntPtr process, out ushort processMachine, out ushort nativeMachine);
+'@
+        }
+        [uint16]$processMachine = 0
+        [uint16]$nativeMachine = 0
+        if (-not [ClawBridge.NativeMachine]::IsWow64Process2([ClawBridge.NativeMachine]::GetCurrentProcess(), [ref]$processMachine, [ref]$nativeMachine)) { return 0 }
+        return [int]$nativeMachine
+    } catch {
+        return 0
+    }
+}
+
+function Get-ClawBridgeEnvironmentMachine {
     $nativeArchitecture = $env:PROCESSOR_ARCHITEW6432
     if ([string]::IsNullOrEmpty($nativeArchitecture)) { $nativeArchitecture = $env:PROCESSOR_ARCHITECTURE }
-    if ($nativeArchitecture -ne 'AMD64') { throw 'Only native Windows x64 is supported' }
-    return 'windows_amd64'
+    switch ($nativeArchitecture) {
+        'AMD64' { return 0x8664 }
+        'ARM64' { return 0xAA64 }
+        'x86' { return 0x14c }
+        default { return 0 }
+    }
+}
+
+function ConvertTo-ClawBridgePlatform([int]$Machine) {
+    switch ($Machine) {
+        0x8664 { return 'windows_amd64' }
+        0xAA64 { return 'windows_arm64' }
+        default { throw 'Only native Windows x64 and ARM64 are supported' }
+    }
+}
+
+function Get-ClawBridgePlatform {
+    if ([Environment]::OSVersion.Platform -ne [PlatformID]::Win32NT) { throw 'Windows x64 or ARM64 is required' }
+    $machine = Get-ClawBridgeNativeMachine
+    if ($machine -eq 0) { $machine = Get-ClawBridgeEnvironmentMachine }
+    return ConvertTo-ClawBridgePlatform $machine
 }
 
 function Assert-ClawBridgePath([string]$Path) {
@@ -257,7 +300,7 @@ function Install-ClawBridge([string]$Version = '', [string]$InstallDir = '', [sw
         throw 'CLAWBRIDGE_VERIFY must be unset or "required"'
     }
     $platform = Get-ClawBridgePlatform
-    if ($platform -cne 'windows_amd64') { throw 'Unsupported platform' }
+    if (@('windows_amd64', 'windows_arm64') -cnotcontains $platform) { throw 'Unsupported platform' }
     if ($InstallDir -eq '') {
         if ([string]::IsNullOrEmpty($env:LOCALAPPDATA)) { throw 'LOCALAPPDATA is required' }
         $InstallDir = Join-Path $env:LOCALAPPDATA 'Programs\ClawBridge'
@@ -296,7 +339,7 @@ function Install-ClawBridge([string]$Version = '', [string]$InstallDir = '', [sw
                 throw ($Version + ' is older than the installed ' + $current + '; pass -AllowDowngrade to install it anyway')
             }
         }
-        $asset = 'clawbridge_' + $Version + '_windows_amd64.exe'
+        $asset = 'clawbridge_' + $Version + '_' + $platform + '.exe'
         $releaseUrl = $releaseBase + '/download/' + $Version
         $manifest = Join-Path $temporary 'SHA256SUMS'
         $null = Invoke-ClawBridgeDownload -Uri ($releaseUrl + '/SHA256SUMS') -OutFile $manifest -MaxBytes 1048576
@@ -309,7 +352,11 @@ function Install-ClawBridge([string]$Version = '', [string]$InstallDir = '', [sw
             if (-not $seen.Add($name)) { throw 'Duplicate checksum entry' }
             if ($name -ceq $asset) { $selected = $digest }
         }
-        if ($null -eq $selected) { throw 'Selected checksum entry is absent' }
+        if ($null -eq $selected) {
+            # Releases before Windows on ARM have no windows_arm64 asset.
+            if ($platform -ceq 'windows_arm64') { throw ('ClawBridge ' + $Version + ' has no Windows ARM64 build; install a later version') }
+            throw 'Selected checksum entry is absent'
+        }
         $binary = Join-Path $temporary 'binary'
         $null = Invoke-ClawBridgeDownload -Uri ($releaseUrl + '/' + $asset) -OutFile $binary -MaxBytes 536870912
         if ((Get-Item -LiteralPath $binary).Length -eq 0) { throw 'Downloaded binary is empty' }

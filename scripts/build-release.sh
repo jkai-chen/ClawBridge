@@ -28,7 +28,7 @@ esac
 [[ ! -e $release_output || ( -d $release_output && -z $(ls -A "$release_output") ) ]] || die 'output must be absent or empty'
 mkdir -p "$release_output"
 release_flags="-X clawbridge/internal/buildinfo.Version=$release_version -X clawbridge/internal/buildinfo.Commit=$release_commit -X clawbridge/internal/buildinfo.BuildTime=$release_time"
-for release_target in darwin/amd64 darwin/arm64 linux/amd64 linux/arm64 windows/amd64; do
+for release_target in darwin/amd64 darwin/arm64 linux/amd64 linux/arm64 windows/amd64 windows/arm64; do
   release_os=${release_target%/*}
   release_arch=${release_target#*/}
   release_name="clawbridge_${release_version}_${release_os}_${release_arch}"
@@ -42,7 +42,7 @@ python3 - "$release_output" <<'PY'
 import hashlib,pathlib,sys
 p=pathlib.Path(sys.argv[1])
 files=sorted(p.iterdir(),key=lambda f:f.name)
-assert len(files)==9 and all(f.is_file() for f in files)
+assert len(files)==10 and all(f.is_file() for f in files)
 (p/'SHA256SUMS').write_text(''.join(hashlib.sha256(f.read_bytes()).hexdigest()+'  '+f.name+'\n' for f in files),encoding='ascii')
 PY
 printf 'Built %s at %s into %s\n' "$release_version" "$release_commit" "$release_output"

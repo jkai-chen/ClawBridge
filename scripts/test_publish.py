@@ -67,7 +67,7 @@ class PublishTests(unittest.TestCase):
         commit = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=self.repo, text=True).strip()
         self.assets = self.root / "assets"
         self.assets.mkdir()
-        for name in ["LICENSE", "install.sh", "install.ps1", *["clawbridge_v0.1.0_" + t for t in ["darwin_amd64", "darwin_arm64", "linux_amd64", "linux_arm64", "windows_amd64.exe"]]]:
+        for name in ["LICENSE", "install.sh", "install.ps1", *["clawbridge_v0.1.0_" + t for t in ["darwin_amd64", "darwin_arm64", "linux_amd64", "linux_arm64", "windows_amd64.exe", "windows_arm64.exe"]]]:
             (self.assets / name).write_text("fixture bytes " + name)
         (self.assets / "SOURCE-COMMIT.txt").write_text(commit + "\n")
         (self.assets / "SHA256SUMS").write_text("".join(hashlib.sha256(p.read_bytes()).hexdigest() + "  " + p.name + "\n" for p in sorted(self.assets.iterdir())))

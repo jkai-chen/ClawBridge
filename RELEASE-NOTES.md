@@ -110,6 +110,8 @@
   version. It needs no profile or sign-in, and tells you when your hosted server runs an older release than the
   client now does. Windows renames the old binary aside. Running `clawbridge mcp` servers keep the old version until
   their session restarts (docs/installation.md, "Upgrade"). Linear config scope: none.
+- **Windows on ARM is supported.** Releases include `clawbridge_<version>_windows_arm64.exe`, and `install.ps1` picks
+  it on an ARM64 machine, even from an emulated x64 PowerShell. No schema change; Linear config scope: none.
 
 # ClawBridge v0.3.9.1 (server hotfix, deployed 29 Oct; no client release or tag)
 

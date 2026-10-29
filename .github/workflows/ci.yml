@@ -148,6 +148,8 @@ jobs:
           grep -q '^--- PASS: TestReleaseBuilderIndependent ' release-probes.txt
           grep -q '^--- PASS: TestReleaseBuilderRejectsExternalSourceOverrides ' release-probes.txt
       - run: go vet ./...
+      # Cross-compile check for the windows/arm64 release asset.
+      - run: GOOS=windows GOARCH=arm64 go vet ./...
       - run: python3 scripts/test_install.py
       - run: python3 scripts/test_release.py
       - run: python3 scripts/test_publish.py
@@ -304,6 +306,58 @@ jobs:
           go test ./internal/notify ./internal/setup ./internal/cli ./internal/ctxwatch -count=1
       # Also under the user profile, for the same reason.
       - name: Native Windows Codex wake-up adapter with a Go-built fake
+        if: ${{ !cancelled() }}
+        shell: pwsh
+        run: |
+          $env:TEMP = Join-Path $env:LOCALAPPDATA 'Temp'
+          $env:TMP = $env:TEMP
+          $null = New-Item -ItemType Directory -Force -Path $env:TEMP
+          go test ./integration -run '^TestNotificationCodexFakeSubprocess$' -count=1
+  # Native Windows on ARM (GitHub's hosted windows-11-arm runner for public repos).
+  # If the label is wrong or the runner is unavailable the job fails or stays queued
+  # and shows up red or pending; it is never skipped silently.
+  windows-arm-installer:
+    needs: changes
+    if: ${{ github.event.repository.private == false && needs.changes.outputs.windows == 'true' }}
+    runs-on: windows-11-arm
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5.5.0
+        with:
+          go-version-file: go.mod
+          cache: false
+      - name: Windows PowerShell 5.1 installer fixtures
+        if: ${{ !cancelled() }}
+        shell: powershell
+        run: .\scripts\test_install.ps1
+      - name: PowerShell 7 installer fixtures
+        if: ${{ !cancelled() }}
+        shell: pwsh
+        run: .\scripts\test_install.ps1
+      - name: Independent Windows PowerShell 5.1 installer probes
+        if: ${{ !cancelled() }}
+        shell: powershell
+        run: powershell -NoProfile -File integration/release_fixtures/install_windows_probe.ps1
+      - name: Independent PowerShell 7 installer probes
+        if: ${{ !cancelled() }}
+        shell: pwsh
+        run: pwsh -NoProfile -File integration/release_fixtures/install_windows_probe.ps1
+      # The last two steps, so a failure there never hides the installer steps.
+      # Under the user profile, as the x64 job does: the runner's own TEMP is
+      # outside it, with a different ACL.
+      - name: Native Windows ARM64 notify, setup, CLI and ctxwatch tests under the user profile
+        if: ${{ !cancelled() }}
+        shell: pwsh
+        run: |
+          $env:TEMP = Join-Path $env:LOCALAPPDATA 'Temp'
+          $env:TMP = $env:TEMP
+          $null = New-Item -ItemType Directory -Force -Path $env:TEMP
+          go test ./internal/notify ./internal/setup ./internal/cli ./internal/ctxwatch -count=1
+      # Also under the user profile, for the same reason.
+      - name: Native Windows ARM64 Codex wake-up adapter with a Go-built fake
         if: ${{ !cancelled() }}
         shell: pwsh
         run: |

@@ -44,6 +44,7 @@ Publish raw executables rather than extracting downloaded archives:
 - clawbridge_v0.1.0_linux_amd64
 - clawbridge_v0.1.0_linux_arm64
 - clawbridge_v0.1.0_windows_amd64.exe
+- clawbridge_v0.1.0_windows_arm64.exe
 - LICENSE (the MIT licence), install.sh, install.ps1, SOURCE-COMMIT.txt, SHA256SUMS
 
 Replace v0.1.0 with the exact release tag for later versions. SHA256SUMS contains
@@ -167,11 +168,12 @@ the fetched release manifest; it is not a separate publisher signature.
 ## Windows installer
 
 Ship scripts/install.ps1 (copied as release asset install.ps1), supporting Windows
-PowerShell 5.1 and PowerShell 7 on Windows x64. Parameters: -Version vX.Y.Z and
+PowerShell 5.1 and PowerShell 7 on Windows x64 and ARM64. Parameters: -Version vX.Y.Z and
 -InstallDir ABSOLUTE_PATH. Default destination is
 $env:LOCALAPPDATA\Programs\ClawBridge\clawbridge.exe. Reject unsupported native
 OS/architecture, invalid paths/tag/unknown parameters before network or mutation.
-Detect native x64 even under a 32-bit PowerShell process; do not claim ARM support.
+Detect the native architecture (x64 or ARM64) even under a 32-bit or emulated PowerShell process,
+through IsWow64Process2 with the environment variables as fallback, and pick the matching asset.
 
 The same latest-once/exact-tag, fixed HTTPS repository, bounded download, strict
 single checksum entry, no remote code execution, private staging, same-volume

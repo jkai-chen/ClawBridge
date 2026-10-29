@@ -1097,6 +1097,61 @@ the newer schema. Use the production restore procedure with a dump taken before
 the migration. Compose project and Caddy volumes stay in place throughout; never
 use `docker compose down -v`.
 
+### The published image (v0.3.6 and later)
+
+From v0.3.6, each release publishes the server image to
+`ghcr.io/jkai-chen/clawbridge`, for linux/amd64 and linux/arm64. The release's
+page names it by digest (its "Server image" section and its `IMAGE-DIGEST.txt`
+asset), never by tag. With it, an update needs no source on the VM and no build.
+The archive or checkout path above stays as the build-from-source fallback. The
+two paths use different compose files, so they can't mix. The image path needs
+Docker Compose v2.24 or later, for its `!reset`:
+
+- **Published image:** `-f compose.yaml -f compose.image.yaml`. Here `api` has no
+  `build:` and only pulls `CLAWBRIDGE_IMAGE`.
+- **From source:** `-f compose.yaml` alone, with `CLAWBRIDGE_IMAGE` unset.
+
+The steps, after the backup as above:
+
+1. **Set the image.** In the private env file, set
+   `CLAWBRIDGE_IMAGE=ghcr.io/jkai-chen/clawbridge@sha256:<digest>`, copied from
+   the release page.
+2. **Verify it.** On any machine with `gh`:
+
+   ```sh
+   gh attestation verify "oci://$CLAWBRIDGE_IMAGE" --repo jkai-chen/ClawBridge \
+     --signer-workflow jkai-chen/ClawBridge/.github/workflows/release.yml
+   ```
+
+3. **Pull and recreate `api`:**
+
+   ```sh
+   sudo docker compose --env-file /etc/clawbridge/clawbridge.env \
+     --project-name "${PROJECT:?set PROJECT first}" \
+     -f /opt/clawbridge/repo/deploy/compose.yaml \
+     -f /opt/clawbridge/repo/deploy/compose.image.yaml pull api
+   sudo docker compose --env-file /etc/clawbridge/clawbridge.env \
+     --project-name "${PROJECT:?set PROJECT first}" \
+     -f /opt/clawbridge/repo/deploy/compose.yaml \
+     -f /opt/clawbridge/repo/deploy/compose.image.yaml up -d --no-deps api
+   ```
+
+4. **Record and check.** Record the digest you deployed, and run the same checks
+   as above.
+
+**Rolling back.** For an application-only rollback, set `CLAWBRIDGE_IMAGE` back
+to the previous release's digest and repeat step 3. No source changes and nothing
+is rebuilt. Release images are never deleted or retagged, so every recorded
+digest stays pullable. Across a schema change the rule above still holds: never
+run an older image against a newer schema; restore the pre-migration dump.
+
+**What the image contains.** The image's binary is a build of the tagged commit,
+stamped like the release binaries. It is not the release archive's bytes:
+compare the digest, not a checksum. Until the package is public (a one-time
+owner step after the first release, docs/design/releases.md), pulling it needs a
+GitHub login: use the source path until then, or log the host in once with
+`docker login ghcr.io` and a token that has only `read:packages`.
+
 ### Updating a server on AWS
 
 An AWS server ([first deployment](first-deployment.md)) has no SSH: you work in a

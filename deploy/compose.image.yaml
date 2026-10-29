@@ -1,0 +1,11 @@
+# The published server image, pinned by digest, instead of a build from
+# source (docs/operations/deployment.md, "The published image"):
+#   docker compose -f compose.yaml -f compose.image.yaml pull api
+#   docker compose -f compose.yaml -f compose.image.yaml up -d --no-deps api
+# CLAWBRIDGE_IMAGE is ghcr.io/jkai-chen/clawbridge@sha256:…, the digest a
+# release names. build is reset, so this path can only pull that exact image.
+services:
+  api:
+    image: ${CLAWBRIDGE_IMAGE:?Set CLAWBRIDGE_IMAGE to ghcr.io/jkai-chen/clawbridge@sha256:<digest from the release>}
+    build: !reset null
+    pull_policy: missing

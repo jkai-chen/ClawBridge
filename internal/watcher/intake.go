@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"strings"
 	"time"
 
 	"clawbridge/internal/bus"
@@ -52,6 +53,17 @@ type IntakePoll struct {
 	// Truncated sources had more than intakePages pages; their cursor
 	// stays, so what was not reached is read again next poll.
 	Truncated []string `json:"truncated_sources,omitempty"`
+	// Trust counts how each proven actor was judged: "list" (the trusted
+	// list), "role" (team roles, eligible), "role_ineligible" (not an
+	// active, non-guest user) and "role_unverified" (the read failed).
+	Trust map[string]int `json:"trust,omitempty"`
+}
+
+func (p *IntakePoll) trust(how string) {
+	if p.Trust == nil {
+		p.Trust = map[string]int{}
+	}
+	p.Trust[how]++
 }
 
 func (p *IntakePoll) skip(why string) {
@@ -98,6 +110,9 @@ func (w *Watcher) intake(ctx context.Context, svc *linearboard.Service, scope bu
 		return poll, nil
 	}
 	run := &intakeRun{w: w, svc: svc, scope: scope, pid: pid, app: app, state: st, poll: poll, resolved: map[string]bool{}}
+	if st.RolesUnreadable {
+		poll.Unreadable = append(poll.Unreadable, "team_roles")
+	}
 	enabled := map[string]bool{}
 	for _, s := range st.Signals {
 		enabled[s] = true
@@ -434,9 +449,18 @@ func (r *intakeRun) candidate(ctx context.Context, signal, issueID string, match
 			}
 		}
 	}
-	// A bot, the app itself, or an unknown actor is never trusted; the app
-	// only when its write is credited to a trusted, linked person.
-	trusted := !bot && actor != "" && actor != r.app.AppUserID && r.state.Trusted[actor]
+	// A bot, the app itself, or an unknown actor is never trusted (by
+	// intake's actor class, §12 L2); otherwise the trusted list, then the
+	// team roles for the issue's team.
+	trusted := false
+	if !bot && actor != "" && actor != r.app.AppUserID {
+		trusted = r.state.Trusted[actor]
+		if trusted {
+			r.poll.trust("list")
+		} else {
+			trusted = r.trustedByRole(ctx, issue.TeamID, actor)
+		}
+	}
 	via := ""
 	if credit.Result == "credited" {
 		actor, trusted, via = credit.Actor, true, credit.Principal
@@ -542,6 +566,54 @@ func (r *intakeRun) transition(ctx context.Context, issue string, matches func(h
 		after = out.Issue.History.PageInfo.EndCursor
 	}
 	return historyEntry{}, false, nil
+}
+
+// userCheckTTL is how old a user's eligibility read may be when a role
+// credits them (T2').
+const userCheckTTL = 15 * time.Minute
+
+// userQuery reads one Linear user's active and guest flags.
+const userQuery = `query User($id: String!) { user(id: $id) { id active guest } }`
+
+// trustedByRole: the team roles trust actor for team's issues, and Linear
+// says, in a read no older than userCheckTTL, that they are an active,
+// non-guest user (T2'). A failed read only notifies, and isn't cached.
+func (r *intakeRun) trustedByRole(ctx context.Context, team, actor string) bool {
+	key := strings.ToLower(actor)
+	if !r.state.RoleTrusted[strings.ToLower(team)+"|"+key] {
+		return false
+	}
+	now := r.w.now()
+	r.w.mu.Lock()
+	cached, ok := r.w.users[key]
+	r.w.mu.Unlock()
+	if !ok || now.Sub(cached.checked) > userCheckTTL || now.Before(cached.checked) {
+		var out struct {
+			User *struct {
+				ID     string `json:"id"`
+				Active *bool  `json:"active"`
+				Guest  *bool  `json:"guest"`
+			} `json:"user"`
+		}
+		r.poll.Calls++
+		if err := r.w.App.GraphQL(ctx, userQuery, map[string]any{"id": actor}, &out); err != nil || out.User == nil || !strings.EqualFold(out.User.ID, actor) || out.User.Active == nil || out.User.Guest == nil {
+			r.poll.trust("role_unverified")
+			return false
+		}
+		cached = userCheck{eligible: *out.User.Active && !*out.User.Guest, checked: now}
+		r.w.mu.Lock()
+		if r.w.users == nil {
+			r.w.users = map[string]userCheck{}
+		}
+		r.w.users[key] = cached
+		r.w.mu.Unlock()
+	}
+	if !cached.eligible {
+		r.poll.trust("role_ineligible")
+		return false
+	}
+	r.poll.trust("role")
+	return true
 }
 
 func (w *Watcher) now() time.Time {

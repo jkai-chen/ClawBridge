@@ -47,9 +47,11 @@ type fakeLinear struct {
 	subscribeErr     error
 	subscribeClass   map[string]string
 	subscribed       []string
-	comments         []linearprovider.Comment
-	labelled         []string
-	delegated        []string
+	// users answers userQuery by Linear user ID; a missing one fails.
+	users     map[string]map[string]any
+	comments  []linearprovider.Comment
+	labelled  []string
+	delegated []string
 	// delegatedMore makes every delegated page say there is another.
 	delegatedMore bool
 	history       map[string][]map[string]any
@@ -267,6 +269,12 @@ func (a fakeApp) GraphQL(_ context.Context, query string, vars map[string]any, o
 	a.f.queries = append(a.f.queries, query)
 	var data any
 	switch query {
+	case userQuery:
+		u, ok := a.f.users[vars["id"].(string)]
+		if !ok {
+			return errors.New("user unreadable")
+		}
+		data = map[string]any{"user": u}
 	case historyQuery:
 		data = map[string]any{"issue": map[string]any{"history": map[string]any{"nodes": a.f.history[vars["id"].(string)], "pageInfo": map[string]any{"hasNextPage": false}}}}
 	case delegatedQuery:

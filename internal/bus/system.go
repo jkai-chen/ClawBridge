@@ -231,6 +231,15 @@ type IntakeState struct {
 	// source is due now.
 	Cursors map[string]IntakeCursor
 	Now     string
+	// RoleTrusted holds "team|linear user" for each person the team roles
+	// trust for that team's issues (TEAM-ROLE-MAPPING-DESIGN §6.3, T2'
+	// (a)): their mapping role is one of the policy's roles and their
+	// mapping teams include the bound team. The caller still proves the
+	// user an active, non-guest human (T2' (b)) before crediting them.
+	RoleTrusted map[string]bool
+	// RolesUnreadable: the team roles or the binding could not be read, so
+	// nobody is trusted by role this poll; the trusted list still applies.
+	RolesUnreadable bool
 }
 
 // IntakeCursor is one intake source's place: the time its last complete
@@ -262,6 +271,11 @@ func (s *Store) IntakeSystemState(ctx context.Context, pid string) (IntakeState,
 	}
 	for _, r := range trusted {
 		st.Trusted[str(r, "linear_user_id")] = true
+	}
+	// Role trust fails closed: an unreadable mapping or binding trusts
+	// nobody by role, and the explicit list still applies.
+	if st.RoleTrusted, err = s.intakeRoleTrusted(ctx, tx, pid, policy["roles"].([]string)); err != nil {
+		st.RoleTrusted, st.RolesUnreadable = map[string]bool{}, true
 	}
 	// A tick that starts a little early still polls a source due within
 	// the slack, rather than a whole tick later.

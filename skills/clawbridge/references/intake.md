@@ -26,6 +26,10 @@ label (or the mention) themselves. Never clear your environment's agent
 variables (`CLAUDECODE`, `CODEX_*`, `CLAWBRIDGE_SESSION`,
 `CLAWBRIDGE_INSTANCE`) to run a command as your user.
 
+A person whose team role (`linear roles show`) is lead or engineer for the
+issue's own team is trusted too, while Linear lists them as an active,
+non-guest user. A reviewer's signal only notifies.
+
 ## The coordinator session
 
 Intake is CLI-only (no MCP tools). As the project's designated coordinator

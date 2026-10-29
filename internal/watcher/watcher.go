@@ -79,6 +79,14 @@ type Watcher struct {
 	mu       sync.Mutex
 	services map[string]*linearboard.Service
 	labels   map[string]labelCache
+	// users caches each Linear user's eligibility for role trust (T2'
+	// (b)): a read no older than userCheckTTL.
+	users map[string]userCheck
+}
+
+type userCheck struct {
+	eligible bool
+	checked  time.Time
 }
 
 type labelCache struct {

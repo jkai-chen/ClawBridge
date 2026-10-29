@@ -113,6 +113,15 @@
   at team or workspace scope. **Rollback:** unset the coordinator designation (or the project kinds); the owner's
   create is unchanged.
 
+## Intake trusts by team role
+
+- **A signal from a person whose team role is lead or engineer for the issue's own team is trusted**, like one from
+  the trusted list. `clawbridge intake policy set --roles lead` narrows it to leads; a reviewer is never trusted by
+  role, and setting `reviewer` (or any other name) is refused. Each such author is also read from Linear, at most
+  15 minutes old, and trusted only as an active, non-guest user; a failed read only notifies, and a bot or app
+  never counts. Nothing changes until the owner sets the team roles. The poll reports `trust` counts. No schema
+  change. Linear config scope: none (it reads one user at a time).
+
 ## Team roles: telling project leads
 
 - **A `project-lead` notice waits for a session.** When ClawBridge sets someone's Linear project lead and they have no

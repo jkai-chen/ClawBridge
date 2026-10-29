@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
+	"sort"
 	"strings"
 )
 
@@ -75,6 +76,14 @@ func intakePolicy(ctx context.Context, tx *transaction, pid string) (map[string]
 		return nil, errors.New("stored intake policy is unreadable")
 	}
 	p["signals"], p["roles"], p["default"] = signals, roles, false
+	// A roles list stored before §6.3's check may hold a name it refuses
+	// now; role trust is then off (roleTrusted), and the policy says so.
+	for _, r := range roles {
+		if r != "lead" && r != "engineer" {
+			p["roles_note"] = fmt.Sprintf("role trust is off: the stored roles include %q, which intake no longer accepts; set them again with clawbridge intake policy set --roles lead,engineer (or lead)", r)
+			break
+		}
+	}
 	for _, k := range []string{"max_auto_per_hour", "offer_ttl_seconds", "max_offers", "s5_calls_per_hour", "out_of_binding_limit", "revision"} {
 		p[k] = asInt(p[k])
 	}
@@ -288,14 +297,23 @@ func (s *Store) setIntakePolicy(ctx context.Context, tx *transaction, pid string
 	}
 	if v, ok := a["roles"]; ok {
 		list, isArray, okList := stringList(v)
-		if !isArray || !okList || len(list) > 20 {
-			return nil, invalid("roles must be an array of at most 20 role names")
+		if !isArray || !okList {
+			return nil, invalid("roles must be an array of role names")
 		}
+		// The team roles whose people intake trusts (§6.3): lead and
+		// engineer, or lead alone. A reviewer raises findings and never
+		// authorises; an empty list is the default, both.
+		seen := map[string]bool{}
 		for _, role := range list {
-			if !roleNamePattern.MatchString(role) {
-				return nil, invalid("a role name is 1–64 letters, digits, '.', '_' or '-'")
+			if role == "reviewer" {
+				return nil, invalid("a reviewer is never trusted by role; roles is lead and engineer, or lead")
 			}
+			if role != "lead" && role != "engineer" || seen[role] {
+				return nil, invalid("roles is lead and engineer, or lead")
+			}
+			seen[role] = true
 		}
+		sort.Strings(list)
 		next["roles"] = list
 	}
 	for k, bounds := range map[string][2]int{"s5_calls_per_hour": {0, 200}, "out_of_binding_limit": {1, 1000}} {
@@ -430,6 +448,36 @@ func (s *Store) intakeEnqueue(ctx context.Context, tx *transaction, w map[string
 		}
 	}
 	return "queued", nil
+}
+
+// defaultIntakeRoles are the team roles intake trusts when the policy
+// names none (§6.3, the owner's Q3).
+var defaultIntakeRoles = []string{"engineer", "lead"}
+
+// intakeRoleTrusted is every (team, Linear user) the team roles trust for
+// intake under roles, each pair decided by roleTrusted. No mapping trusts
+// nobody.
+func (s *Store) intakeRoleTrusted(ctx context.Context, tx *transaction, pid string, roles []string) (map[string]bool, error) {
+	if len(roles) == 0 {
+		roles = defaultIntakeRoles
+	}
+	out := map[string]bool{}
+	m, revision, err := readTeamRoles(ctx, tx, pid)
+	if err != nil || revision == 0 {
+		return out, err
+	}
+	for _, p := range m.People {
+		for _, team := range p.Teams {
+			ok, _, err := s.roleTrusted(ctx, tx, pid, team, p.LinearUserID, roles)
+			if err != nil {
+				return nil, err
+			}
+			if ok {
+				out[strings.ToLower(team)+"|"+strings.ToLower(p.LinearUserID)] = true
+			}
+		}
+	}
+	return out, nil
 }
 
 func containsString(list []string, s string) bool {

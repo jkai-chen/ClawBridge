@@ -33,6 +33,8 @@ type attentionMsg struct {
 	at      time.Time
 	// intake is the project's intake summary, when it could be read.
 	intake string
+	// webhooks is the Linear webhook line, when any team has a secret.
+	webhooks string
 	// gatesOn and gatesOff name the server's PROVEN gates, for the
 	// project owner; gatesRead is false for anyone else.
 	gatesOn, gatesOff []string
@@ -137,6 +139,11 @@ func (m Model) loadAttention(requestID uint64) tea.Cmd {
 			}
 		}
 		if m.cfg.Project != "" {
+			if r, err := m.cfg.Executor.Execute(ctx, m.intakeRequest("webhook_status", map[string]any{})); err == nil && r.Source != "offline-mirror" {
+				out.webhooks = webhookSummary(mapData(r.Data), m.cfg.Now())
+			}
+		}
+		if m.cfg.Project != "" {
 			// Only the project owner's overview lists the PROVEN gates.
 			if r, err := m.cfg.Executor.Execute(ctx, m.intakeRequest("project_overview", map[string]any{})); err == nil && r.Source != "offline-mirror" {
 				out.gatesOn, out.gatesOff, out.gatesRead = bus.ProvenGatesOnOff(mapData(r.Data)["proven_gates"])
@@ -190,9 +197,9 @@ func (m Model) applyAttention(x attentionMsg) Model {
 			m.attention = append(m.attention, a)
 		}
 	}
-	m.intakeLine = ""
+	m.intakeLine, m.webhookLine = "", ""
 	if m.hasTab(ScreenLinear) {
-		m.intakeLine = x.intake
+		m.intakeLine, m.webhookLine = x.intake, x.webhooks
 	}
 	m.gatesOn, m.gatesOff, m.gatesRead = x.gatesOn, x.gatesOff, x.gatesRead
 	if rows := len(m.overviewRows()); m.selected >= rows {
@@ -261,14 +268,19 @@ func renderOverview(m Model) string {
 	default:
 		b.WriteString(mutedStyle.Render("  Checking…") + "\n")
 	}
+	if m.intakeLine != "" || m.webhookLine != "" {
+		b.WriteString("\nThis project\n")
+	}
 	if m.intakeLine != "" {
 		// The project's settings, linked: Enter opens them.
-		b.WriteString("\nThis project\n")
 		prefix := "  "
 		if m.selected == len(m.attention) {
 			prefix = accentStyle.Render("› ")
 		}
 		b.WriteString(prefix + m.intakeLine + "  " + mutedStyle.Render(keyHint(m, ScreenOverview, "tab:"+string(ScreenLinear))+" · Intake") + "\n")
+	}
+	if m.webhookLine != "" {
+		b.WriteString("  " + m.webhookLine + "\n")
 	}
 	b.WriteString("\n")
 	identity := firstNonempty(terminalText(m.identity.Principal), terminalText(m.cfg.Principal), "not signed in")
@@ -479,4 +491,60 @@ func (m Model) overviewRows() []string {
 		out = append(out, "intake")
 	}
 	return out
+}
+
+// webhookSummary is Overview's one line on Linear webhooks, or "" when no
+// team has a secret (the project has not opted in) or nothing could be read.
+func webhookSummary(status map[string]any, now time.Time) string {
+	configured, live, inert, missed := 0, 0, 0, 0
+	var last time.Time
+	for _, t := range records(status["teams"]) {
+		if c, _ := t["configured"].(bool); !c {
+			continue
+		}
+		configured++
+		switch text(t, "state") {
+		case "live":
+			live++
+		case "inert":
+			inert++
+		}
+		switch v := t["missed_24h"].(type) {
+		case int:
+			missed += v
+		case float64:
+			missed += int(v)
+		case interface{ Int64() (int64, error) }:
+			i, _ := v.Int64()
+			missed += int(i)
+		}
+		if at, err := time.Parse(time.RFC3339, text(t, "last_delivery_at")); err == nil && at.After(last) {
+			last = at
+		}
+	}
+	switch {
+	case configured == 0:
+		return ""
+	case inert == configured:
+		return "Webhooks: inert (not proven)"
+	}
+	line := fmt.Sprintf("Webhooks: %d/%d teams live", live, configured)
+	if !last.IsZero() {
+		line += " · last " + shortAgo(now, last)
+	}
+	return line + fmt.Sprintf(" · %d missed", missed)
+}
+
+// shortAgo is ago in the overview line's short form: "4m ago", "3h ago".
+func shortAgo(now, t time.Time) string {
+	d := now.Sub(t)
+	switch {
+	case d < time.Minute:
+		return "<1m ago"
+	case d < time.Hour:
+		return fmt.Sprintf("%dm ago", int(d/time.Minute))
+	case d < 24*time.Hour:
+		return fmt.Sprintf("%dh ago", int(d/time.Hour))
+	}
+	return t.UTC().Format("2006-01-02 15:04 UTC")
 }

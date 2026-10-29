@@ -67,6 +67,9 @@
   teams in `CLAWBRIDGE_LINEAR_WEBHOOK_SECRETS` (`TEAM_UUID=SECRET`, at most 2 per team; needs the Linear app; without
   it the route is a 404). The new `webhooks` gate (`CLAWBRIDGE_WEBHOOKS_PROVEN`, `serve --webhooks-proven`) is off
   until proven: deliveries are recorded inert and change nothing. Linear config scope: none.
+- `clawbridge doctor` has a `linear.webhooks` check (each bound team's webhook state, with one action per problem), and
+  the TUI overview a `Webhooks:` line under the intake line; "Proven Linear write gates" is now "Proven Linear gates".
+  Linear config scope: none.
 
 ## Terminal interface
 

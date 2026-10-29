@@ -22,7 +22,7 @@ func TestCheckProvenGates(t *testing.T) {
 		[]any{gate("project_flow", false), gate("issue_subscribers", true), gate("issue_move", true), gate("project_team_add", false)},
 	} {
 		c, _ := run(overviewExecutor{data: map[string]any{"proven_gates": gates}})
-		if c.ID != "linear.proven_gates" || c.Status != Pass || c.Message != "Proven gates: issue_subscribers, issue_move (off: project_flow, project_team_add)." {
+		if c.ID != "linear.proven_gates" || c.Title != "Proven Linear gates" || c.Status != Pass || c.Message != "Proven gates: issue_subscribers, issue_move (off: project_flow, project_team_add)." {
 			t.Fatal(c)
 		}
 	}

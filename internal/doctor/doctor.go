@@ -242,6 +242,7 @@ func Run(ctx context.Context, in Input, executor Executor) Report {
 	if in.LinearCapabilities != nil && resolutionOK && executor != nil {
 		checkTaskboardBinding(ctx, executor, wid, pid, add)
 		checkCommentWatch(ctx, executor, wid, pid, add)
+		checkLinearWebhooks(ctx, executor, wid, pid, add)
 		checkLabelPolicy(ctx, executor, wid, pid, add)
 		checkTeamRoles(ctx, executor, wid, pid, in.WorkspaceUsers, add)
 		checkTeamRolesDoc(ctx, wid, pid, in.TeamRolesDoc, add)
@@ -862,6 +863,97 @@ func checkCommentWatch(ctx context.Context, executor Executor, wid, pid string, 
 	}
 	add(watch)
 	add(markers)
+}
+
+// checkLinearWebhooks reports each bound team's Linear webhook state from
+// the read-only webhook_status op. Nothing is shown until some team has a
+// webhook secret: a project that has not opted in is not nagged. There is no
+// info level, so "inert until proven" is a pass whose message says so.
+func checkLinearWebhooks(ctx context.Context, executor Executor, wid, pid string, add func(Check)) {
+	check := Check{ID: "linear.webhooks", Title: "Linear webhooks"}
+	result, err := executor.Execute(ctx, bus.Request{Operation: "webhook_status", Workspace: wid, Project: pid, Args: map[string]any{}})
+	status, _ := result.Data.(map[string]any)
+	if err != nil && strings.Contains(err.Error(), "unsupported operation") {
+		// A server older than webhooks has none to report, and a project
+		// can't have opted in there: nothing to say.
+		return
+	}
+	if err != nil || status == nil {
+		check.Status = Warn
+		check.Message = "The webhook status could not be read (" + safeCode(err) + ")."
+		check.Action = "Run `clawbridge doctor` again; if it persists, check the server."
+		add(check)
+		return
+	}
+	n := func(key string) int {
+		switch v := status[key].(type) {
+		case int:
+			return v
+		case float64:
+			return int(v)
+		case interface{ Int64() (int64, error) }:
+			i, _ := v.Int64()
+			return int(i)
+		}
+		return 0
+	}
+	teams, _ := status["teams"].([]any)
+	var parts, actions []string
+	seen := map[string]bool{}
+	warn := func(action string) {
+		check.Status = Warn
+		if !seen[action] {
+			seen[action] = true
+			actions = append(actions, action)
+		}
+	}
+	configured, inert := 0, 0
+	for _, raw := range teams {
+		t, _ := raw.(map[string]any)
+		if t == nil {
+			continue
+		}
+		if c, _ := t["configured"].(bool); c {
+			configured++
+		}
+		id, _ := t["team_id"].(string)
+		state, _ := t["state"].(string)
+		parts = append(parts, id+" "+state)
+		switch state {
+		case "unconfigured":
+			warn("the server operator adds the team's webhook secret to CLAWBRIDGE_LINEAR_WEBHOOK_SECRETS (docs/operations/deployment.md)")
+		case "waiting_first":
+			warn("create or edit an issue in that team")
+		case "degraded":
+			warn("check the webhook in Linear")
+		case "inert":
+			inert++
+		}
+	}
+	if configured == 0 {
+		return
+	}
+	if n("signature_rejects_24h") > 0 {
+		parts = append(parts, fmt.Sprintf("%d signature rejects in 24 h", n("signature_rejects_24h")))
+		warn("a secret may be wrong or rotated")
+	}
+	if n("unbound_team_deliveries_24h") > 0 {
+		parts = append(parts, fmt.Sprintf("%d deliveries for an unbound team in 24 h", n("unbound_team_deliveries_24h")))
+		warn("delete that webhook in Linear")
+	}
+	if n("verified_throttled_24h") > 0 {
+		parts = append(parts, fmt.Sprintf("%d verified deliveries throttled in 24 h", n("verified_throttled_24h")))
+		warn("verified deliveries hit the server's ceiling; repeated 429s can get the webhook disabled in Linear: check it is still enabled")
+	}
+	if check.Status == "" {
+		check.Status = Pass
+		if inert > 0 {
+			parts = append(parts, "webhooks verified but inert until proven")
+		}
+	}
+	check.Message = "Webhooks: " + strings.Join(parts, "; ") + "."
+	check.Action = strings.Join(actions, "; ")
+	add(check)
 }
 
 // checkLinearApp shows who makes a hosted project's agent writes in Linear:
@@ -1616,7 +1708,7 @@ func checkProvenGates(ctx context.Context, executor Executor, wid, pid string, a
 	if err != nil || !ok {
 		return
 	}
-	check := Check{ID: "linear.proven_gates", Title: "Proven Linear write gates", Status: Pass}
+	check := Check{ID: "linear.proven_gates", Title: "Proven Linear gates", Status: Pass}
 	switch {
 	case len(on) == 0:
 		check.Message = fmt.Sprintf("Proven gates: none on (off: %s).", strings.Join(off, ", "))

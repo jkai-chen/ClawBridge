@@ -39,8 +39,10 @@ const (
 	modelAPIVersion = "1"
 	modelBodyBytes  = 256 << 10
 	// modelAuthFailures failed authentications in modelAuthWindow from an
-	// address, or for a token prefix, refuse its failures with 429 for
-	// modelLockout (§1). A valid token always gets through.
+	// address, or for a token prefix, lock it out for modelLockout (§1):
+	// its requests get 429 before the body is read or the token looked up
+	// (G9-2). A token that authenticated within modelLockout still gets
+	// through.
 	modelAuthFailures = 10
 	modelAuthWindow   = time.Minute
 	modelLockout      = 10 * time.Minute
@@ -115,6 +117,7 @@ func modelOK(w http.ResponseWriter, v any) {
 // for the grace after (E2).
 func newModelHandler(store ModelStore, hub *StreamHub, maxAgents int, now func() time.Time, nudge func(string), drain *Drain) http.Handler {
 	failures := &modelLockouts{now: now, keys: map[string]*lockoutState{}}
+	known := &recentTokens{now: now, seen: map[string]time.Time{}}
 	// Each authenticated token's calls: polls and renewals are well under
 	// these. Only calls that authenticated are counted, so random tokens
 	// can't fill the table.
@@ -141,7 +144,7 @@ func newModelHandler(store ModelStore, hub *StreamHub, maxAgents int, now func()
 			modelFail(w, 403, "unauthorized")
 			return
 		}
-		address := "ip:" + clientAddress(r)
+		address := "ip:" + addressKey(r)
 		token, ok := modelBearer(r)
 		tokenPrefix := "token:" + token[:min(len(token), 12)]
 		// A failure from a locked-out address or prefix gets 429; it is
@@ -167,6 +170,12 @@ func newModelHandler(store ModelStore, hub *StreamHub, maxAgents int, now func()
 		}
 		if !ok || !strings.HasPrefix(token, prefix) {
 			unauthorized()
+			return
+		}
+		// A locked-out address or prefix costs no body read and no lookup:
+		// only a token the server knows from its last calls passes (G9-2).
+		if (failures.locked(address) || failures.locked(tokenPrefix)) && !known.has(tokenKey(token)) {
+			modelFail(w, 429, "rate_limited")
 			return
 		}
 		limit := calls
@@ -218,6 +227,21 @@ func newModelHandler(store ModelStore, hub *StreamHub, maxAgents int, now func()
 		}
 		if err == nil || !errors.Is(err, bus.ErrModelUnauthorized) && !errors.Is(err, bus.ErrModelUnavailable) {
 			limit.record(tokenKey(token))
+		}
+		// Only a call the store answered proves the token: an argument or
+		// busy error comes before the lookup, so it must not make a guess
+		// known; a refused token is forgotten at once (G9-2).
+		switch {
+		case err == nil:
+			known.add(tokenKey(token))
+			// A credential the store just minted and handed out is known
+			// too: agents on one launcher share its address, and one dead
+			// agent that keeps failing must not lock out the next one.
+			for _, minted := range handedOut(out) {
+				known.add(tokenKey(minted))
+			}
+		case errors.Is(err, bus.ErrModelUnauthorized):
+			known.drop(tokenKey(token))
 		}
 		var refusal caseError
 		switch {
@@ -425,6 +449,32 @@ func modelBearer(r *http.Request) (string, bool) {
 	return fields[1], true
 }
 
+// handedOut are the credentials an answer hands out: the launcher's agent
+// credential (cba_), and the project tokens (cbm_) of agent/config and
+// agent/renew.
+func handedOut(out any) []string {
+	var tokens []string
+	projects := func(list []bus.ModelProjectToken) {
+		for _, p := range list {
+			if p.Token != "" {
+				tokens = append(tokens, p.Token)
+			}
+		}
+	}
+	switch v := out.(type) {
+	case bus.AgentConfig:
+		projects(v.Projects)
+	case map[string]any:
+		if c, ok := v["credential"].(string); ok && c != "" {
+			tokens = append(tokens, c)
+		}
+		if list, ok := v["projects"].([]bus.ModelProjectToken); ok {
+			projects(list)
+		}
+	}
+	return tokens
+}
+
 // tokenKey is a token's rate-limit key: its digest, never the token.
 // modelLockouts is the model API's failed-authentication lockout (§1).
 type modelLockouts struct {
@@ -524,6 +574,48 @@ func (t *tokenRate) record(key string) {
 	}
 	v.count++
 	t.seen[key] = v
+}
+
+// recentTokens remembers, by digest, the tokens that authenticated within
+// modelLockout, so a lockout can tell them from guesses without the store.
+// Like tokenRate it holds authenticated tokens only; when full of fresh
+// ones, a new token isn't remembered and waits out a lockout. It lives in
+// memory, so a restart empties it: until each agent's next successful call,
+// a lockout refuses it too.
+type recentTokens struct {
+	mu   sync.Mutex
+	now  func() time.Time
+	seen map[string]time.Time
+}
+
+func (r *recentTokens) add(key string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	now := r.now()
+	if _, ok := r.seen[key]; !ok && len(r.seen) >= modelLockoutKeys {
+		for k, at := range r.seen {
+			if now.Sub(at) >= modelLockout {
+				delete(r.seen, k)
+			}
+		}
+		if len(r.seen) >= modelLockoutKeys {
+			return
+		}
+	}
+	r.seen[key] = now
+}
+
+func (r *recentTokens) drop(key string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	delete(r.seen, key)
+}
+
+func (r *recentTokens) has(key string) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	at, ok := r.seen[key]
+	return ok && r.now().Sub(at) < modelLockout
 }
 
 func tokenKey(token string) string {

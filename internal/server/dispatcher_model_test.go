@@ -235,6 +235,10 @@ func TestModelEndpointsRefuse(t *testing.T) {
 			t.Fatal("authentication failures differ:", unauthorized)
 		}
 	}
+	// The launcher authenticates before the address locks out.
+	if status, body := e.do("GET", LauncherWantedPath, e.launcher, nil); status != 200 {
+		t.Fatal(status, body)
+	}
 	bad := "cbl_" + strings.Repeat("z", 43)
 	for range modelAuthFailures {
 		e.do("GET", LauncherWantedPath, bad, nil)
@@ -242,7 +246,8 @@ func TestModelEndpointsRefuse(t *testing.T) {
 	if status, body := e.do("GET", LauncherWantedPath, bad, nil); status != 429 || body["error"] != "rate_limited" {
 		t.Fatal("not limited after repeated failures:", status, body)
 	}
-	// A valid token from the locked-out address still gets through (R100-M1).
+	// A valid token from the locked-out address still gets through
+	// (R100-M1), once the server knows it (G9-2).
 	if status, body := e.do("GET", LauncherWantedPath, e.launcher, nil); status != 200 {
 		t.Fatal("a valid token was locked out:", status, body)
 	}

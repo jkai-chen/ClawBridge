@@ -756,7 +756,13 @@ CLAWBRIDGE_DISPATCHER_MODEL_MAX_AGENTS=2                  # optional, 1-20
   accepts it only over HTTPS, or from this machine, and mints at most 6
   credentials an hour per owner (429 past that). Each mint replaces the owner's
   running agent, and `clawbridge doctor` warns an owner whose agent got more
-  than 3 in a day. Create it on the host, straight into a new env file for agentd,
+  than 3 in a day. Ten failed authentications in a minute from one address (an
+  IPv6 /64) lock it out of the model API for 10 minutes, answered 429 before any
+  work; tokens that authenticated lately keep working. Agents on one host share
+  agentd's address, so a credential the server has just handed out (agentd's
+  mint for a restarted agent, and the project tokens its agent redeems) counts
+  as known: one revoked agent that keeps failing can't keep a restarted one
+  out. An agent stops when its own credential is refused. Create it on the host, straight into a new env file for agentd,
   as [agentd.md](agentd.md#the-launcher-token) shows: the api image runs as
   `nonroot` (uid 65532), so it writes into a one-run directory it owns, and root
   moves the file into place.

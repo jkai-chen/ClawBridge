@@ -114,6 +114,15 @@
   client now does. Windows renames the old binary aside. Running `clawbridge mcp` servers keep the old version until
   their session restarts (docs/installation.md, "Upgrade"). Linear config scope: none.
 
+## Dispatcher
+
+- **A locked-out address costs the model API nothing (G9-2).** After 10 failed authentications in a minute, an address
+  (an IPv6 client's /64) or token prefix gets 429 for 10 minutes before its request body is read or its token looked up.
+  Before, each refused attempt still cost a body read and a database transaction. A token that authenticated in the last
+  10 minutes, such as a running agent's, still gets through, and so does a credential the server has just handed out
+  (agentd's mint for a restarted agent, the project tokens its agent redeems), so a dead agent that keeps failing on
+  agentd's address can't keep the next one out; any other token new to the server waits out the lockout.
+
 # ClawBridge v0.3.9.1 (server hotfix, deployed 29 Oct; no client release or tag)
 
 A server-only hotfix to v0.3.9: no schema change and no client change.

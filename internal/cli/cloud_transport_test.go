@@ -36,7 +36,7 @@ func TestShellTransportUsesTheTargetsArgv(t *testing.T) {
 		if out, err := tr.run(context.Background(), factsScript(), nil); err != nil || string(out) != "ok" {
 			t.Fatalf("run = %q, %v", out, err)
 		}
-		want, _ := target.argv(`sudo -n sh -c '` + factsScript() + `'`)
+		want, _ := target.argv(tr.(shellTransport).sudo() + factsScript() + `'`)
 		if !reflect.DeepEqual(ran, want) {
 			t.Fatalf("run argv = %v, want %v", ran, want)
 		}
@@ -44,7 +44,7 @@ func TestShellTransportUsesTheTargetsArgv(t *testing.T) {
 		if err := tr.setSecret(context.Background(), "CLAWBRIDGE_OAUTH_CLIENT_SECRET", value, nil); err != nil {
 			t.Fatal(err)
 		}
-		want, _ = target.argv(`sudo -n sh -c '` + remoteSetScript("CLAWBRIDGE_OAUTH_CLIENT_SECRET", serverEnvFile) + `'`)
+		want, _ = target.argv(tr.(shellTransport).sudo() + remoteSetScript("CLAWBRIDGE_OAUTH_CLIENT_SECRET", serverEnvFile) + `'`)
 		if !reflect.DeepEqual(ran, want) || stdin != value+"\n" || strings.Contains(strings.Join(ran, " "), value) {
 			t.Fatalf("setSecret argv = %v stdin = %q", ran, stdin)
 		}
@@ -86,6 +86,12 @@ func wantSSH(host, command string) []string {
 // host facts alike.
 func TestSSHArgvOptions(t *testing.T) {
 	target := cloudTarget{host: "admin@bridge.example.test"}
+	if got := (shellTransport{target: target}).sudo(); got != `env LC_ALL=C sudo -n sh -c '` {
+		t.Fatalf("sudo over ssh: %q", got)
+	}
+	if got := (shellTransport{target: cloudTarget{vm: "v", project: "p", zone: "z"}}).sudo(); got != `sudo -n sh -c '` {
+		t.Fatalf("sudo over IAP: %q", got)
+	}
 	for _, script := range []string{factsScript(), hostFactsScript(), remoteSetScript("CLAWBRIDGE_OAUTH_CLIENT_SECRET", serverEnvFile)} {
 		got, err := target.argv(`sudo -n sh -c '` + script + `'`)
 		if err != nil || !reflect.DeepEqual(got, wantSSH("admin@bridge.example.test", `sudo -n sh -c '`+script+`'`)) {

@@ -5,11 +5,14 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"runtime"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -182,7 +185,8 @@ func TestCloudBootstrapRefusals(t *testing.T) {
 func TestCloudBootstrapInputs(t *testing.T) {
 	a, _ := stubBootstrap(t, "")
 	for _, args := range [][]string{
-		{"--ssh", "host", "--server", "https://cb.example.test", "--workspace", "acme"},
+		{"--ssh", "host", "--instance", ec2ID, "--region", "us-east-1", "--server", "https://cb.example.test", "--workspace", "acme"},
+		{"--ssh", "-oProxyCommand=x", "--server", "https://cb.example.test", "--workspace", "acme"},
 		{"--server", "https://cb.example.test", "--workspace", "acme"},
 		{"--instance", ec2ID, "--region", "us-east-1", "--workspace", "acme"},
 		{"--instance", ec2ID, "--region", "us-east-1", "--server", "https://cb.example.test"},
@@ -199,6 +203,66 @@ func TestCloudBootstrapInputs(t *testing.T) {
 	}
 	if len(a.calls) != 0 {
 		t.Fatal("ran aws:", a.ops())
+	}
+}
+
+// stubExchange answers the --ssh bootstrap with answer, or err after
+// writing stderr, and keeps each call.
+func stubExchange(t *testing.T, answer, stderr string, err error) *[]remoteRun {
+	t.Helper()
+	runs := &[]remoteRun{}
+	old := remoteExchange
+	t.Cleanup(func() { remoteExchange = old })
+	remoteExchange = func(_ context.Context, argv []string, stdin io.Reader, w io.Writer) ([]byte, error) {
+		b, _ := io.ReadAll(stdin)
+		*runs = append(*runs, remoteRun{argv: append(append([]string{}, argv...), "STDIN:"+string(b))})
+		_, _ = io.WriteString(w, stderr)
+		return []byte(answer), err
+	}
+	return runs
+}
+
+type exitStatus int
+
+func (e exitStatus) Error() string { return "exit status " + strconv.Itoa(int(e)) }
+func (e exitStatus) ExitCode() int { return int(e) }
+
+// Over plain SSH the code this process made goes only on ssh's stdin, to
+// the fixed script, never in argv or the output; the owner joins with it.
+func TestCloudBootstrapOverSSH(t *testing.T) {
+	a, joins := stubBootstrap(t, "")
+	runs := stubExchange(t, `invite {"invite_id":"inv_1","email":"owner@example.test","workspace":"acme","workspace_created":true,"expires_at":"2026-10-28T05:00:00Z"}`+"\n", "", nil)
+	args := []string{"--ssh", "admin@cb.example.test", "--server", "https://cb.example.test", "--workspace", "acme", "--email", "owner@example.test"}
+	out, err := bootstrap(args...)
+	if err != nil || len(*runs) != 1 || len(*joins) != 1 || len(a.calls) != 0 {
+		t.Fatalf("%v %s runs %d joins %d aws %v", err, out, len(*runs), len(*joins), a.ops())
+	}
+	code := (*joins)[0].Code
+	argv := (*runs)[0].argv
+	want := wantSSH("admin@cb.example.test", "env LC_ALL=C sudo -n sh -c '"+sshBootstrapScript("acme", "owner@example.test")+"'")
+	if !reflect.DeepEqual(argv[:len(argv)-1], want) || argv[len(argv)-1] != "STDIN:"+code+"\n" || !strings.HasPrefix(code, "CBJ-") {
+		t.Fatalf("argv %q", argv)
+	}
+	if strings.Contains(strings.Join(argv[:len(argv)-1], " ")+out, code) || (*joins)[0].Email != "owner@example.test" || !strings.Contains(out, `"device_id":"dev_1"`) {
+		t.Fatalf("code leaked or wrong join: %s %+v", out, (*joins)[0])
+	}
+	// Each failure has its advice, and nothing joins.
+	for name, c := range map[string]struct {
+		answer, stderr string
+		err            error
+		want           string
+	}{
+		"refused":   {"refused clawbridge: the owner has 3 pending invites; revoke one first\n", "", nil, "(pending_invites)"},
+		"no env":    {"", "", exitStatus(6), "COMPOSE_PROJECT_NAME"},
+		"host key":  {"", "Host key verification failed.\n", exitStatus(255), "fingerprint"},
+		"sudo":      {"", "sudo: a password is required\n", exitStatus(1), "passwordless sudo"},
+		"unreached": {"", "ssh: connect to host cb.example.test port 22: Connection refused\n", exitStatus(255), "may or may not exist"},
+	} {
+		_, joins = stubBootstrap(t, "")
+		stubExchange(t, c.answer, c.stderr, c.err)
+		if _, err = bootstrap(args...); err == nil || !strings.Contains(err.Error(), c.want) || len(*joins) != 0 {
+			t.Fatalf("%s: %v", name, err)
+		}
 	}
 }
 
@@ -347,5 +411,54 @@ func TestProbeUncertainJoinWritesTheProfile(t *testing.T) {
 	}
 	if n := len(f.exec.requests); n != 1 || f.exec.requests[0].Operation != "whoami" || f.exec.ids[0].Subject != lost.DeviceID {
 		t.Fatalf("%+v %+v", f.exec.ids, f.exec.requests)
+	}
+}
+
+// The --ssh script, run by sh with a fake docker: the code on its stdin
+// reaches bootstrap-invite --code-stdin, nothing else of stdin is read,
+// and a deployment that pulls the published image adds compose.image.yaml.
+func TestSSHBootstrapScript(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("POSIX shell")
+	}
+	dir := t.TempDir()
+	bin := filepath.Join(dir, "bin")
+	if err := os.Mkdir(bin, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	write := func(path, body string) {
+		t.Helper()
+		if err := os.WriteFile(path, []byte(body), 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write(filepath.Join(bin, "docker"), "#!/bin/sh\nprintf \"%s\\n\" \"$*\" > \"$CB_DIR/docker.argv\"\ncat > \"$CB_DIR/docker.stdin\"\necho '{\"invite_id\":\"inv_1\",\"email\":\"owner@example.test\"}'\n")
+	env := filepath.Join(dir, "clawbridge.env")
+	const code = "CBJ-ABCD-EFGH-JKMN-PQRS"
+	run := func(body string) (string, string, string) {
+		t.Helper()
+		write(env, body)
+		cmd := exec.Command("sh", "-c", sshBootstrapScriptFor("acme", "", env, "/opt/c/deploy/compose.yaml"))
+		cmd.Env = append(os.Environ(), "PATH="+bin+":/usr/bin:/bin", "CB_DIR="+dir)
+		cmd.Stdin = strings.NewReader(code + "\nsecond line never read\n")
+		out, err := cmd.Output()
+		if err != nil {
+			t.Fatal(err)
+		}
+		argv, _ := os.ReadFile(filepath.Join(dir, "docker.argv"))
+		stdin, _ := os.ReadFile(filepath.Join(dir, "docker.stdin"))
+		return string(out), strings.TrimSpace(string(argv)), string(stdin)
+	}
+	out, argv, stdin := run("COMPOSE_PROJECT_NAME=clawbridge\n")
+	if out != `invite {"invite_id":"inv_1","email":"owner@example.test"}`+"\n" || stdin != code+"\n" ||
+		argv != "compose --env-file "+env+" --project-name clawbridge -f /opt/c/deploy/compose.yaml run --rm --no-deps -T api operator bootstrap-invite --workspace acme --code-stdin" {
+		t.Fatalf("%q argv %q stdin %q", out, argv, stdin)
+	}
+	_, argv, _ = run("COMPOSE_PROJECT_NAME=clawbridge\nCLAWBRIDGE_IMAGE=ghcr.io/jkai-chen/clawbridge@sha256:" + strings.Repeat("ab", 32) + "\n")
+	if !strings.Contains(argv, "-f /opt/c/deploy/compose.yaml -f /opt/c/deploy/compose.image.yaml run") {
+		t.Fatalf("image: %q", argv)
+	}
+	if strings.Contains(sshBootstrapScript("acme", "o.w+n-er@example.test"), "'") {
+		t.Fatal("the script travels inside single quotes")
 	}
 }

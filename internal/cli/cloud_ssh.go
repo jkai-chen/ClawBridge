@@ -1,10 +1,12 @@
 package cli
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"io"
 	"net"
+	"os/exec"
 	"regexp"
 	"strconv"
 	"strings"
@@ -56,13 +58,50 @@ func (t *tail) Write(p []byte) (int, error) {
 	return len(p), nil
 }
 
-// teeStderr passes ssh's stderr on to the user and keeps its tail.
-func teeStderr(stderr io.Writer) (io.Writer, *tail) {
-	t := &tail{}
-	if stderr == nil {
-		return t, t
+// safeLines passes text on a line at a time with control and bidi
+// characters escaped (labelSafe): the remote side's stderr is untrusted.
+type safeLines struct {
+	w   io.Writer
+	buf []byte
+}
+
+func (s *safeLines) Write(p []byte) (int, error) {
+	s.buf = append(s.buf, p...)
+	for {
+		i := bytes.IndexByte(s.buf, '\n')
+		if i < 0 {
+			break
+		}
+		line := strings.TrimSuffix(string(s.buf[:i]), "\r")
+		s.buf = s.buf[i+1:]
+		if _, err := io.WriteString(s.w, labelSafe(line)+"\n"); err != nil {
+			return len(p), err
+		}
 	}
-	return io.MultiWriter(stderr, t), t
+	// A line with no end in sight is passed on in 4 KiB pieces.
+	if len(s.buf) > 4<<10 {
+		s.flush()
+	}
+	return len(p), nil
+}
+
+// flush writes what's left after the last newline.
+func (s *safeLines) flush() {
+	if len(s.buf) > 0 {
+		_, _ = io.WriteString(s.w, labelSafe(string(s.buf))+"\n")
+		s.buf = nil
+	}
+}
+
+// teeStderr passes ssh's stderr on to the user, escaped, and keeps its
+// tail; call done when the command has ended.
+func teeStderr(stderr io.Writer) (w io.Writer, t *tail, done func()) {
+	t = &tail{}
+	if stderr == nil {
+		return t, t, func() {}
+	}
+	s := &safeLines{w: stderr}
+	return io.MultiWriter(s, t), t, s.flush
 }
 
 // hostFactsScript is the fixed script infra runs on an SSH host, where no
@@ -101,6 +140,8 @@ type hostFacts struct {
 	env      string // "absent", "600:root", or another mode:owner
 	rootDisk bool
 	addrs    []net.IP
+	// seen are the facts whose line parsed; mount and free are required.
+	seen map[string]bool
 }
 
 var (
@@ -110,7 +151,7 @@ var (
 )
 
 func parseHostFacts(out []byte) hostFacts {
-	var h hostFacts
+	h := hostFacts{seen: map[string]bool{}}
 	for _, line := range strings.Split(string(out), "\n") {
 		f := strings.Fields(line)
 		if len(f) < 2 {
@@ -131,10 +172,12 @@ func parseHostFacts(out []byte) hostFacts {
 				h.compose[0], _ = strconv.Atoi(m[1])
 				h.compose[1], _ = strconv.Atoi(m[2])
 			}
-		case f[0] == "mount" && len(f) == 2:
-			h.mounted = f[1] != "none" && factDevice.MatchString(f[1])
+		case f[0] == "mount" && len(f) == 2 && (f[1] == "none" || factDevice.MatchString(f[1])):
+			h.mounted, h.seen["mount"] = f[1] != "none", true
 		case f[0] == "free" && len(f) == 2:
-			h.freeKiB, _ = strconv.ParseInt(f[1], 10, 64)
+			if n, err := strconv.ParseInt(f[1], 10, 64); err == nil && n >= 0 {
+				h.freeKiB, h.seen["free"] = n, true
+			}
 		case f[0] == "ntp" && len(f) == 2 && (f[1] == "yes" || f[1] == "no" || f[1] == "unknown"):
 			h.ntp = f[1]
 		case f[0] == "env" && len(f) == 2 && (f[1] == "absent" || factMode.MatchString(f[1])):
@@ -188,6 +231,8 @@ func sshInfra(ctx context.Context, p *cloudProbe) cloudResult {
 		return failed("infra", "docker_missing", dockerDocs)
 	case h.compose[0] < 2 || h.compose[0] == 2 && h.compose[1] < 24:
 		return failed("infra", "compose_too_old", "Docker Compose v2.24 or later is needed; "+dockerDocs)
+	case !h.seen["mount"] || !h.seen["free"]:
+		return failed("infra", "facts_incomplete", "the host did not report its data mount or free space (findmnt, df); check them on the host")
 	case h.env != "" && h.env != "absent" && h.env != "600:root":
 		return failed("infra", "env_file_mode", serverEnvFile+" must be mode 600, owned by root")
 	case !h.mounted && !h.rootDisk:
@@ -238,7 +283,8 @@ func resolvesHere(domain []string, host []net.IP) bool {
 // sshRun runs argv for the SSH route, naming a refused host key or a sudo
 // that wants a password.
 func sshRun(ctx context.Context, argv []string, stdin io.Reader, stderr io.Writer) ([]byte, error) {
-	w, t := teeStderr(stderr)
+	w, t, done := teeStderr(stderr)
+	defer done()
 	if stdin == nil {
 		out, err := remoteOutput(ctx, argv, w)
 		if err != nil {
@@ -251,4 +297,42 @@ func sshRun(ctx context.Context, argv []string, stdin io.Reader, stderr io.Write
 		err = sshFailure(err, t.b)
 	}
 	return nil, err
+}
+
+// remoteExchange runs argv with stdin and returns its output (64 KiB at
+// most); tests replace it.
+var remoteExchange = func(ctx context.Context, argv []string, stdin io.Reader, stderr io.Writer) ([]byte, error) {
+	var out bytes.Buffer
+	cmd := exec.CommandContext(ctx, argv[0], argv[1:]...)
+	cmd.Stdin, cmd.Stdout, cmd.Stderr = stdin, &limitedWriter{w: &out, n: 64 << 10}, stderr
+	err := cmd.Run()
+	return out.Bytes(), err
+}
+
+// exchange runs a fixed script over plain SSH with input on its stdin and
+// returns its output: a one-time code goes nowhere else.
+func (s shellTransport) exchange(ctx context.Context, script string, stdin io.Reader, stderr io.Writer) ([]byte, error) {
+	if s.target.host == "" {
+		return nil, errors.New("exchange runs over --ssh only")
+	}
+	argv, err := s.target.argv(s.sudo() + script + `'`)
+	if err != nil {
+		return nil, err
+	}
+	w, t, done := teeStderr(stderr)
+	defer done()
+	out, err := remoteExchange(ctx, argv, stdin, w)
+	if err != nil {
+		err = sshFailure(err, t.b)
+	}
+	return out, err
+}
+
+// exitCode is a failed command's exit status, or -1.
+func exitCode(err error) int {
+	var coded interface{ ExitCode() int }
+	if errors.As(err, &coded) {
+		return coded.ExitCode()
+	}
+	return -1
 }

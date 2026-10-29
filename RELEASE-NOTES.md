@@ -193,7 +193,14 @@
   host-key checking off or forward your agent, X11 or ports to the server.
   - **New reasons:** a host key ssh can't verify is `host_key_unknown`, and a sudo that wants a password is
     `sudo_needs_password`.
-  - **Also covers:** `cloud check` and `cloud secret set` alike.
+  - **Also covers:** `cloud check`, `cloud secret set` and `cloud bootstrap` alike.
+  - **What ssh prints** reaches your terminal with control and bidi characters escaped, and sudo runs in the C locale,
+    so its refusal reads the same in any language.
+- **`cloud bootstrap --ssh HOST` lets the owner in on a server you reach over SSH.**
+  - It makes the one-time code on your computer and sends it only on ssh's stdin to the server's
+    `operator bootstrap-invite --code-stdin`.
+  - It joins this device with the code, as `--instance` does on AWS.
+  - A server that pulls the published image (`CLAWBRIDGE_IMAGE`) bootstraps with `compose.image.yaml`.
 
 # ClawBridge v0.3.9.1 (server hotfix, deployed 29 Oct; no client release or tag)
 

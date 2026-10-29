@@ -43,6 +43,10 @@ type TaskboardBindingV2 struct {
 	// Unpinned is the lane of a session with no pin, or LaneReadOnly; ""
 	// when the binding has no lanes.
 	Unpinned string
+	// TeamsWithoutProject are write teams a project set binds before any
+	// bound project carries them (FR10 bootstrap). Such a team is inert
+	// until one does; once one does, the entry is harmless and stale.
+	TeamsWithoutProject []string
 }
 
 // Lane is a named set of write teams a pinned session writes.
@@ -110,7 +114,21 @@ func (b TaskboardBindingV2) ListedTeamIDs() []string {
 // CrossTeam: the binding uses version 3's fields, which a client that
 // reads only version 2 must refuse rather than ignore.
 func (b TaskboardBindingV2) CrossTeam() bool {
-	return len(b.LinearOtherTeams) > 0 || b.LinearParentTeamID != "" || len(b.Lanes) > 0
+	return len(b.LinearOtherTeams) > 0 || b.LinearParentTeamID != "" || len(b.Lanes) > 0 || len(b.TeamsWithoutProject) > 0
+}
+
+// WireVersion is the binding's mapping_version: 4 when it lists teams
+// without a project, which a client that reads only up to 3 must refuse
+// (it would refuse the binding as unrepresented, or half use it); 3 for
+// version 3's other fields; else 2.
+func (b TaskboardBindingV2) WireVersion() int {
+	switch {
+	case len(b.TeamsWithoutProject) > 0:
+		return 4
+	case b.CrossTeam():
+		return 3
+	}
+	return 2
 }
 
 func parseTaskboardMappingV2(a map[string]any) (TaskboardBindingV2, error) {
@@ -189,8 +207,42 @@ func parseCrossTeam(a map[string]any, b *TaskboardBindingV2) error {
 	if e := parseLanes(a, b); e != nil {
 		return e
 	}
+	if e := parseTeamsWithoutProject(a, b); e != nil {
+		return e
+	}
 	if b.CrossTeam() {
-		b.MappingVersion = 3
+		b.MappingVersion = b.WireVersion()
+	}
+	return nil
+}
+
+// parseTeamsWithoutProject reads version 4's teams_without_project: write
+// teams of a project set that no bound project need carry yet.
+func parseTeamsWithoutProject(a map[string]any, b *TaskboardBindingV2) error {
+	raw, ok := a["teams_without_project"]
+	if !ok || raw == nil {
+		return nil
+	}
+	ids, isArray, ok := stringList(raw)
+	if !isArray || !ok {
+		return errors.New("teams_without_project is a list of team IDs")
+	}
+	if len(ids) > 0 && b.Mode != "project_set" {
+		return errors.New("teams_without_project is for a project set; a team board has every write team without a project")
+	}
+	seen := map[string]bool{}
+	for _, id := range ids {
+		if seen[id] || !containsString(b.LinearTeamIDs, id) {
+			return errors.New("teams_without_project names distinct write teams of the binding")
+		}
+		seen[id] = true
+	}
+	if len(ids) > 0 && containsString(ids, b.LinearDefaultTeamID) {
+		return errors.New("the default team needs a bound project; it can't be a team without a project")
+	}
+	sort.Strings(ids)
+	if len(ids) > 0 {
+		b.TeamsWithoutProject = ids
 	}
 	return nil
 }
@@ -303,6 +355,10 @@ func mappingMapV2(b TaskboardBindingV2) map[string]any {
 		}
 		m["lanes"], m["unpinned"] = lanes, nullable(b.Unpinned)
 	}
+	// Version 4's field likewise goes only with a binding that uses it.
+	if len(b.TeamsWithoutProject) > 0 {
+		m["teams_without_project"] = append([]string(nil), b.TeamsWithoutProject...)
+	}
 	return m
 }
 func bindingMapV2(b TaskboardBindingV2) map[string]any {
@@ -311,8 +367,8 @@ func bindingMapV2(b TaskboardBindingV2) map[string]any {
 		mapping = mappingMapV2(b)
 	}
 	version := 2
-	if b.Configured && b.CrossTeam() {
-		version = 3
+	if b.Configured {
+		version = b.WireVersion()
 	}
 	return map[string]any{"workspace_id": b.WorkspaceID, "project_id": b.ProjectID, "configured": b.Configured, "revision": b.Revision, "mapping_version": version, "binding": mapping, "updated_at": nullable(b.UpdatedAt)}
 }
@@ -341,16 +397,19 @@ func ParseTaskboardBindingV2(v any) (TaskboardBindingV2, error) {
 	// reads only version 2 refuses it: ignoring access levels would let it
 	// write a team the binding only reads.
 	n, e := integer(m["mapping_version"])
-	if e != nil || n != 2 && n != 3 {
-		return b, errors.New("mapping_version must be 2 or 3")
+	if e != nil || n < 2 || n > 4 {
+		return b, errors.New("mapping_version must be 2, 3 or 4")
 	}
 	delete(m, "mapping_version")
 	var mapping TaskboardBindingV2
 	if configured, ok := m["configured"].(bool); ok && configured {
 		a, ok := m["binding"].(map[string]any)
 		fields := []string{"provider", "mode", "linear_team_ids", "linear_default_team_id", "linear_project_ids", "linear_workspace_id"}
-		if n == 3 {
+		if n >= 3 {
 			fields = append(fields, "linear_other_teams", "linear_parent_team_id", "lanes", "unpinned")
+		}
+		if n == 4 {
+			fields = append(fields, "teams_without_project")
 		}
 		if !ok || len(a) != len(fields) || a["provider"] != "linear" {
 			return b, errors.New("invalid V2 mapping")
@@ -364,7 +423,7 @@ func ParseTaskboardBindingV2(v any) (TaskboardBindingV2, error) {
 		if e != nil {
 			return b, e
 		}
-		if mapping.CrossTeam() != (n == 3) {
+		if mapping.WireVersion() != n {
 			return b, errors.New("mapping_version does not match the mapping")
 		}
 		old := TaskboardBinding{LinearTeamIDs: mapping.LinearTeamIDs, LinearDefaultTeamID: mapping.LinearDefaultTeamID, LinearWorkspaceID: mapping.LinearWorkspaceID}
@@ -381,8 +440,8 @@ func ParseTaskboardBindingV2(v any) (TaskboardBindingV2, error) {
 	b.UpdatedAt = old.UpdatedAt
 	b.Configured = old.Configured
 	b.MappingVersion = 2
-	if b.CrossTeam() {
-		b.MappingVersion = 3
+	if b.Configured {
+		b.MappingVersion = b.WireVersion()
 	}
 	return b, nil
 }
@@ -591,6 +650,9 @@ func (s *Store) taskboard(ctx context.Context, tx *transaction, wid, pid, role, 
 		pending = list
 		if len(pending) > 0 {
 			details["closes_pending"] = pending
+		}
+		if len(next.TeamsWithoutProject) > 0 {
+			details["teams_without_project"] = next.TeamsWithoutProject
 		}
 	}
 	if e = s.audit(ctx, tx, wid, pid, "", "taskboard", pid, op, details); e != nil {

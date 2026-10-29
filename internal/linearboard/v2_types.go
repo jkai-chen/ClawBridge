@@ -60,6 +60,9 @@ type LinkInputV2 struct {
 	// lane of a session with no pin, or read_only, the default (§3.1).
 	Lanes    []bus.Lane
 	Unpinned string
+	// TeamsWithoutProject are write teams no bound project carries yet;
+	// each stays inert until one does (FR10 bootstrap).
+	TeamsWithoutProject []string
 }
 type LinkPreviewV2 struct {
 	Binding       bus.TaskboardBindingV2   `json:"current"`
@@ -84,6 +87,10 @@ type LinkPreviewV2 struct {
 	// with no pin.
 	Lanes    []bus.Lane `json:"lanes,omitempty"`
 	Unpinned string     `json:"unpinned,omitempty"`
+	// TeamsWithoutProject are the link's teams no bound project carries
+	// yet, and WithoutProject says what that means for each.
+	TeamsWithoutProject []string `json:"teams_without_project,omitempty"`
+	WithoutProject      []string `json:"without_project,omitempty"`
 }
 
 // CommentsInputV2 opts an issue read into its comments. Since is a

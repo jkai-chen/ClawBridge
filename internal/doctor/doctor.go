@@ -154,6 +154,18 @@ type Input struct {
 	// LabelSets reads the bound teams' label sets through the personal
 	// Linear profile; reads only. Nil skips the check.
 	LabelSets func(context.Context) ([]LabelSet, error)
+	// TeamsWithoutProject reads the binding's teams listed without a
+	// project, each as Linear shows it now, through the personal Linear
+	// profile; reads only. Nil skips the check, and so does an empty list.
+	TeamsWithoutProject func(ctx context.Context, wid, pid string) ([]TeamWithoutProject, error)
+}
+
+// TeamWithoutProject is a team the binding lists without a project, by
+// its label in doctor's words ("T: no project yet (inert)"), and whether
+// it is still inert.
+type TeamWithoutProject struct {
+	Label string
+	Inert bool
 }
 
 // RolesDocState is the generated team roles document as doctor reports
@@ -229,6 +241,9 @@ func Run(ctx context.Context, in Input, executor Executor) Report {
 		checkTeamRolesDoc(ctx, wid, pid, in.TeamRolesDoc, add)
 		checkLinearWrites(ctx, executor, wid, pid, add)
 		checkProjectTeamAdds(ctx, executor, wid, pid, add)
+		if in.TeamsWithoutProject != nil {
+			checkTeamsWithoutProject(ctx, in.TeamsWithoutProject, wid, pid, add)
+		}
 		checkProvenGates(ctx, executor, wid, pid, add)
 		if in.LabelSets != nil {
 			checkLabelSets(ctx, in.LabelSets, add)
@@ -661,6 +676,36 @@ func checkTaskboardBinding(ctx context.Context, executor Executor, wid, pid stri
 		check.Status = Warn
 		check.Message = "The task board binding could not be read (" + safeCode(err) + ")."
 		check.Action = "Check project access; `clawbridge linear binding` shows the binding."
+	}
+	add(check)
+}
+
+// checkTeamsWithoutProject reports the teams a binding lists without a
+// project (FR10 bootstrap). An inert one is as linked; a stale one is
+// harmless, and the next link drops it. A binding that lists none adds
+// no check.
+func checkTeamsWithoutProject(ctx context.Context, read func(context.Context, string, string) ([]TeamWithoutProject, error), wid, pid string, add func(Check)) {
+	teams, err := read(ctx, wid, pid)
+	if err == nil && len(teams) == 0 {
+		return
+	}
+	check := Check{ID: "linear.teams_without_project", Title: "Teams without a project"}
+	if err != nil {
+		check.Status = Warn
+		check.Message = "The teams listed without a project could not be read (" + safeCode(err) + ")."
+		check.Action = "`clawbridge linear binding` shows the binding; `clawbridge linear issues` shows the refusal."
+		add(check)
+		return
+	}
+	labels, stale := []string{}, false
+	for _, t := range teams {
+		labels = append(labels, t.Label)
+		stale = stale || !t.Inert
+	}
+	check.Status = Pass
+	check.Message = strings.Join(labels, "; ") + "."
+	if stale {
+		check.Action = "Nothing is wrong: a team a bound project carries works as an ordinary team. The next `clawbridge linear link` drops its entry."
 	}
 	add(check)
 }

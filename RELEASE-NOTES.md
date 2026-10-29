@@ -72,12 +72,15 @@
   the TUI's Overview shows them as Proven gates and Not proven. The project overview gains `proven_gates` for the
   owner: the five gate names, each on or off, and nothing else of the server's settings. No schema change. Linear
   config scope: none.
-
-## Docs
-
-- **Adding a brand-new team to a project set.** docs/linear.md and the skill say the one step `--add-team` can't do: a
-  team the binding doesn't hold yet goes onto one bound project in Linear first, then the binding is linked again
-  with it; `--add-team` adds it to every later project. Docs only. Linear config scope: none.
+- **Bind a team before any project carries it.** `linear link --team-without-project TEAM` (repeatable) binds a write
+  team of a project set that none of its projects carries yet, so `project update --add-team` can add a brand-new team
+  without a step in Linear's UI. Until a bound project carries it, the team is inert: no issue of it is read, every
+  issue write in it is refused with `team_without_project` (nothing sent), and intake skips it. Doctor
+  (`linear.teams_without_project`) and the TUI show "T: no project yet (inert)". Once a project carries it, it works
+  from the next read with no relink; its entry shows as stale until the next link drops it. A team not named so is
+  still refused at link when no project carries it. Such a binding is version 4: a v0.3.8 client refuses it
+  ("mapping_version must be 2 or 3") rather than half use it, so upgrade every client first. Before downgrading the
+  server below v0.3.9, relink without --team-without-project. No schema change. Linear config scope: none.
 
 # ClawBridge v0.3.8 (released 29 Oct)
 

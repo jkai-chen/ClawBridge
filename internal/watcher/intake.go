@@ -44,12 +44,15 @@ const (
 
 // IntakePoll is what one tick's intake did for a project.
 type IntakePoll struct {
-	Queued     []string       `json:"queued,omitempty"`
-	Skipped    map[string]int `json:"skipped,omitempty"`
-	Calls      int            `json:"calls"`
-	Off        bool           `json:"off,omitempty"`
-	NoLabel    []string       `json:"no_label_teams,omitempty"`
-	Unreadable []string       `json:"unreadable_sources,omitempty"`
+	Queued  []string       `json:"queued,omitempty"`
+	Skipped map[string]int `json:"skipped,omitempty"`
+	Calls   int            `json:"calls"`
+	Off     bool           `json:"off,omitempty"`
+	NoLabel []string       `json:"no_label_teams,omitempty"`
+	// Inert are write teams listed without a project that no bound project
+	// carries yet: they read nothing, so they signal nothing.
+	Inert      []string `json:"inert_teams,omitempty"`
+	Unreadable []string `json:"unreadable_sources,omitempty"`
 	// Truncated sources had more than intakePages pages; their cursor
 	// stays, so what was not reached is read again next poll.
 	Truncated []string `json:"truncated_sources,omitempty"`
@@ -200,6 +203,12 @@ func (r *intakeRun) labelled(ctx context.Context, team string, since time.Time) 
 	}
 	for i := 0; i < len(set); i++ {
 		done, err := r.labelledBy(ctx, team, set[i], set, since, seen, carries, &signal)
+		// A team without a project reads nothing until one carries it; its
+		// history then is not intake's, so the cursor moves on.
+		if linearboard.IsTeamWithoutProject(err) {
+			r.poll.Inert = append(r.poll.Inert, team)
+			return signal, true, nil
+		}
 		// A label Linear no longer verifies for the team (merged or
 		// removed): the set is resolved again once, then read afresh.
 		if errors.Is(err, linearboard.ErrLabelNotVerified) && !r.resolved[team] {

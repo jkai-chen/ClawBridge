@@ -1425,6 +1425,17 @@ func collectDoctor(ctx context.Context, config Config, configPath string, existi
 					d, e := service.TeamRolesDocDrift(ctx, bus.Request{Workspace: wid, Project: pid, Args: map[string]any{"linear_authority": linearAuthority(config)}})
 					return doctor.RolesDocState{Published: d.Published, Pending: d.Pending, Edited: d.Edited, Archived: d.Archived, Unreadable: d.Unreadable, Revision: d.Revision, PublishedRevision: d.PublishedRevision, Replaced: d.Replaced}, e
 				}
+				in.TeamsWithoutProject = func(ctx context.Context, wid, pid string) ([]doctor.TeamWithoutProject, error) {
+					bounded, cancel := context.WithTimeout(ctx, 45*time.Second)
+					defer cancel()
+					service := newLinearService(directory, config.LinearProfile, manager, board, linearAuthority(config))
+					teams, e := service.TeamsWithoutProjectV2(bounded, bus.Request{Workspace: wid, Project: pid, Args: map[string]any{"linear_authority": linearAuthority(config)}})
+					out := []doctor.TeamWithoutProject{}
+					for _, t := range teams {
+						out = append(out, doctor.TeamWithoutProject{Label: t.Label(), Inert: t.Inert})
+					}
+					return out, e
+				}
 				in.LabelSets = func(ctx context.Context) ([]doctor.LabelSet, error) {
 					bounded, cancel := context.WithTimeout(ctx, 45*time.Second)
 					defer cancel()

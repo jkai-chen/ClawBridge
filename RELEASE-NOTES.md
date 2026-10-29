@@ -180,6 +180,21 @@
   isn't running yet, warns when the agents that may still start would leave less than 300 MiB for the server and its
   database, and says how to raise the cap on a bigger host.
 
+## Cloud and onboarding
+
+- **`cloud check infra --ssh HOST` checks a host with no cloud API to ask.**
+  - **Fails on:** the platform (64-bit Linux, amd64 or arm64), Docker with Compose v2.24 or later, the env file's mode,
+    the data volume, free space, the clock, DNS and 443. Each has its own reason.
+  - **Warns on:**
+    - a database the owner chose to keep on the root disk (`CLAWBRIDGE_DATA_ON_ROOT_DISK=1`);
+    - a domain whose addresses aren't on the host (normal behind NAT).
+  - Before, `infra` needed `--vm`.
+- **`--ssh` is safer.** It never prompts and never accepts a host key for you. Your `~/.ssh/config` can no longer turn
+  host-key checking off or forward your agent, X11 or ports to the server.
+  - **New reasons:** a host key ssh can't verify is `host_key_unknown`, and a sudo that wants a password is
+    `sudo_needs_password`.
+  - **Also covers:** `cloud check` and `cloud secret set` alike.
+
 # ClawBridge v0.3.9.1 (server hotfix, deployed 29 Oct; no client release or tag)
 
 A server-only hotfix to v0.3.9: no schema change and no client change.

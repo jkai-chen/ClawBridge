@@ -62,7 +62,7 @@ func TestCloudCheckInfra(t *testing.T) {
 	}{
 		"ready":               {infraProbe(), runningVM, staticIP, nil, []string{"203.0.113.7"}, nil, "/dev/sdb", nil, ""},
 		"also another IP":     {infraProbe(), runningVM, staticIP, nil, []string{"198.51.100.1", "203.0.113.7"}, nil, "/dev/sdb", nil, ""},
-		"no vm":               {&cloudProbe{server: "https://bridge.example.test", target: cloudTarget{host: "host"}}, runningVM, staticIP, nil, nil, nil, "", nil, "needs_vm"},
+		"no vm":               {&cloudProbe{server: "https://bridge.example.test"}, runningVM, staticIP, nil, nil, nil, "", nil, "needs_vm"},
 		"bad zone":            {&cloudProbe{target: cloudTarget{vm: "clawbridge-1", project: "example-project", zone: "x"}}, runningVM, staticIP, nil, nil, nil, "", nil, "needs_vm"},
 		"gcloud fails":        {infraProbe(), runningVM, staticIP, map[string]error{"compute instances": errors.New("x")}, nil, nil, "", nil, "vm_unreadable"},
 		"not json":            {infraProbe(), "ERROR", staticIP, nil, nil, nil, "", nil, "vm_unreadable"},

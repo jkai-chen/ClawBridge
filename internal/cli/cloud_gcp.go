@@ -62,6 +62,9 @@ func checkInfra(ctx context.Context, p *cloudProbe) cloudResult {
 	if t.onAWS() {
 		return awsInfra(ctx, p)
 	}
+	if t.host != "" {
+		return sshInfra(ctx, p)
+	}
 	if t.vm == "" {
 		return failed("infra", "needs_vm", "pass --vm NAME --project P --zone Z")
 	}

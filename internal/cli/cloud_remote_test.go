@@ -248,7 +248,7 @@ func TestCloudCheckServerOverSSH(t *testing.T) {
 	if err != nil || !reflect.DeepEqual(got, []cloudResult{{"server", "pass", "", ""}}) {
 		t.Fatalf("%+v %v", got, err)
 	}
-	want := []string{"ssh", "-T", "admin@bridge.example.test", `sudo -n sh -c '` + factsScript() + `'`}
+	want := wantSSH("admin@bridge.example.test", `sudo -n sh -c '`+factsScript()+`'`)
 	if len(*runs) != 1 || !reflect.DeepEqual((*runs)[0].argv, want) {
 		t.Fatalf("runs: %+v", *runs)
 	}

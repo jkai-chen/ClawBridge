@@ -64,3 +64,32 @@ func TestCloudTransportRefusesWhatArgvRefuses(t *testing.T) {
 		}
 	}
 }
+
+// wantSSH is the full --ssh argv, every option spelled out (ANY-VM M1): on
+// the command line they win over ~/.ssh/config, so a user's
+// StrictHostKeyChecking=no, ForwardAgent=yes, forwardings, LocalCommand or
+// RemoteCommand can't apply.
+func wantSSH(host, command string) []string {
+	return []string{"ssh", "-T",
+		"-o", "BatchMode=yes",
+		"-o", "ConnectTimeout=15",
+		"-o", "StrictHostKeyChecking=yes",
+		"-o", "ForwardAgent=no",
+		"-o", "ForwardX11=no",
+		"-o", "ClearAllForwardings=yes",
+		"-o", "PermitLocalCommand=no",
+		"-o", "RemoteCommand=none",
+		"--", host, command}
+}
+
+// The --ssh argv is exactly wantSSH's, for the facts, a secret and the
+// host facts alike.
+func TestSSHArgvOptions(t *testing.T) {
+	target := cloudTarget{host: "admin@bridge.example.test"}
+	for _, script := range []string{factsScript(), hostFactsScript(), remoteSetScript("CLAWBRIDGE_OAUTH_CLIENT_SECRET", serverEnvFile)} {
+		got, err := target.argv(`sudo -n sh -c '` + script + `'`)
+		if err != nil || !reflect.DeepEqual(got, wantSSH("admin@bridge.example.test", `sudo -n sh -c '`+script+`'`)) {
+			t.Fatalf("%v %v", got, err)
+		}
+	}
+}

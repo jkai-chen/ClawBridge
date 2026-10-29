@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"sort"
 	"strings"
 	"time"
 
@@ -56,6 +57,12 @@ type IntakePoll struct {
 	// Truncated sources had more than intakePages pages; their cursor
 	// stays, so what was not reached is read again next poll.
 	Truncated []string `json:"truncated_sources,omitempty"`
+	// Deferred sources weren't read, or stopped between pages, because the
+	// project's share had less than intakeRoom left; their cursor stays,
+	// and the next poll reads the oldest cursors first.
+	Deferred []string `json:"deferred_sources,omitempty"`
+	// TookMS is each signal's time (S1, S2, S3) in milliseconds.
+	TookMS map[string]int64 `json:"took_ms,omitempty"`
 	// Trust counts how each proven actor was judged: "list" (the trusted
 	// list), "role" (team roles, eligible), "role_ineligible" (not an
 	// active, non-guest user) and "role_unverified" (the read failed).
@@ -120,28 +127,64 @@ func (w *Watcher) intake(ctx context.Context, svc *linearboard.Service, scope bu
 	for _, s := range st.Signals {
 		enabled[s] = true
 	}
+	sources := []intakeSource{}
 	if enabled["S1"] {
 		b, err := svc.BindingV2(ctx, scope)
 		if err == nil {
 			for _, team := range b.LinearTeamIDs {
-				run.source(ctx, "intake-s1", team, run.labelled)
+				sources = append(sources, intakeSource{"intake-s1", team, run.labelled})
 			}
 		}
 	}
 	if enabled["S2"] {
-		run.source(ctx, "intake-s2", "app", run.delegated)
+		sources = append(sources, intakeSource{"intake-s2", "app", run.delegated})
 	}
 	if enabled["S3"] {
-		run.source(ctx, "intake-s3", "app", run.mentioned)
+		sources = append(sources, intakeSource{"intake-s3", "app", run.mentioned})
 	}
+	// The oldest cursors first, so a source a short share deferred is read
+	// before the ones that were, and none waits behind the same others
+	// every tick. A source with no cursor yet only starts one: first.
+	at := func(src intakeSource) string { return st.Cursors[src.source+"|"+src.subject].Time }
+	sort.SliceStable(sources, func(i, j int) bool { return at(sources[i]) < at(sources[j]) })
+	for _, src := range sources {
+		run.source(ctx, src.source, src.subject, src.read)
+	}
+	// The calls made are charged even when the share has run out.
+	cctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), intakeChargeTimeout)
+	defer cancel()
 	charge := map[string]any{"calls": poll.Calls}
 	for k, v := range fence {
 		charge[k] = v
 	}
-	if _, err = w.Store.ExecuteSystem(ctx, pid, bus.Request{Operation: "watch_charge", Args: charge}); err != nil {
+	if _, err = w.Store.ExecuteSystem(cctx, pid, bus.Request{Operation: "watch_charge", Args: charge}); err != nil {
 		return poll, err
 	}
 	return poll, nil
+}
+
+// intakeSource is one source to poll: S1 per team, S2, S3.
+type intakeSource struct {
+	source, subject string
+	read            func(ctx context.Context, subject string, since time.Time) (signal, complete bool, err error)
+}
+
+var (
+	// intakeRoom is the time a source, or its next page, needs left in
+	// the project's share to start: less, and it waits for the next poll
+	// with its cursor where it was, leaving the rest of the share to the
+	// steps after intake and the markers.
+	intakeRoom = 8 * time.Second
+	// intakeChargeTimeout bounds the charge of intake's calls once the
+	// share has run out.
+	intakeChargeTimeout = 5 * time.Second
+)
+
+// deferred reports whether ctx has too little left to start a source or
+// a page.
+func deferred(ctx context.Context) bool {
+	deadline, ok := ctx.Deadline()
+	return ok && time.Until(deadline) < intakeRoom
 }
 
 // source polls one intake source when it is due. Its first poll only
@@ -163,13 +206,26 @@ func (r *intakeRun) source(ctx context.Context, source, subject string, read fun
 	if err != nil {
 		return
 	}
+	if deferred(ctx) {
+		r.poll.Deferred = append(r.poll.Deferred, source)
+		return
+	}
+	start := time.Now()
 	signal, complete, err := read(ctx, subject, since.Add(-intakeLag))
+	if r.poll.TookMS == nil {
+		r.poll.TookMS = map[string]int64{}
+	}
+	r.poll.TookMS[strings.ToUpper(strings.TrimPrefix(source, "intake-"))] += time.Since(start).Milliseconds()
 	if err != nil {
 		r.poll.Unreadable = append(r.poll.Unreadable, source)
 		return
 	}
 	if !complete {
-		r.poll.Truncated = append(r.poll.Truncated, source)
+		if deferred(ctx) {
+			r.poll.Deferred = append(r.poll.Deferred, source)
+		} else {
+			r.poll.Truncated = append(r.poll.Truncated, source)
+		}
 		polled = cursor.Time
 	}
 	_ = r.w.Store.IntakeCursorSet(ctx, r.pid, source, subject, polled, signal)
@@ -236,6 +292,9 @@ func (r *intakeRun) labelled(ctx context.Context, team string, since time.Time) 
 func (r *intakeRun) labelledBy(ctx context.Context, team, label string, set []string, since time.Time, seen map[string]bool, carries func(historyEntry) bool, signal *bool) (bool, error) {
 	cursor := ""
 	for page := 0; page < intakePages; page++ {
+		if page > 0 && deferred(ctx) {
+			return false, nil
+		}
 		r.poll.Calls++
 		issues, err := r.svc.TeamLabelledV2(ctx, r.scope, linearboard.TeamLabelledInputV2{TeamID: team, LabelID: label, UpdatedAfter: since.UTC().Format(time.RFC3339Nano), Cursor: cursor, Limit: 50})
 		if err != nil {
@@ -298,6 +357,9 @@ func (r *intakeRun) delegated(ctx context.Context, _ string, since time.Time) (b
 	signal := false
 	var after any
 	for page := 0; page < intakePages; page++ {
+		if page > 0 && deferred(ctx) {
+			return signal, false, nil
+		}
 		var out struct {
 			Issues struct {
 				Nodes []struct {
@@ -328,6 +390,9 @@ func (r *intakeRun) mentioned(ctx context.Context, _ string, since time.Time) (b
 	signal := false
 	var after any
 	for page := 0; page < intakePages; page++ {
+		if page > 0 && deferred(ctx) {
+			return signal, false, nil
+		}
 		var out struct {
 			Notifications struct {
 				Nodes []struct {

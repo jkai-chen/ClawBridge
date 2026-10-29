@@ -1093,8 +1093,10 @@ parent with its sub-issues).
 - **Who confirms.** The project owner or a project lead, from their own
   terminal with no session. A project lead here is the ClawBridge project role
   (`project role set PRINCIPAL lead`), not a team's lead in the team roles, a
-  session's role, or a Linear project's lead. Or the project's designated coordinator session, when
-  both the issue's team and the target team are write teams of its own lane.
+  session's role, or a Linear project's lead. Or the project's designated
+  coordinator session (while the dispatcher is on, a domain's coordinator
+  session: [below](#while-the-dispatcher-is-on)), when both the issue's team
+  and the target team are write teams of its own lane.
   Every other session only previews, and asks a person. The server decides
   this, not the client.
 - **Off until proven.** A server confirms no move until its operator runs it
@@ -1294,9 +1296,29 @@ clawbridge linear project create NAME --team TEAM_UUID --operation-id ID [--kind
   project gets that kind's label in the same create. The kind's label must be
   seeded, and the kinds must belong to the create's team.
 
+### While the dispatcher is on
+
+With the dispatcher on, the project's designated coordinator is the
+dispatcher's system session, which makes no Linear writes. So each domain's
+coordinator session keeps the coordinator's Linear rights inside its own lane:
+confirming an issue's team move, adding a team to a Linear project, and
+creating a project. Every lane and team rule above applies unchanged, and the
+`taskboard_access` answer `coordinator_scope` is true for that session.
+Assignments and intake stay with the project's designated coordinator, which
+is the dispatcher. Project status is the domain coordinator's too, bounded by
+lane: it sets a Linear project's status only when every team the project
+carries is a write team of its own lane, and only once the operator has set
+`serve --project-status-domain-proven`
+([below](#reading-and-setting-a-projects-status-hosted-servers)).
+`clawbridge dispatcher domain coordinator DOMAIN SESSION --expected-revision N`
+changes who a domain's coordinator is;
+turning the dispatcher off ends these rights and restores the project's
+coordinator.
+
 ### A coordinator creates projects
 
-The project's designated coordinator session (`project coordinator-set`) may
+The project's designated coordinator session (`project coordinator-set`; while
+the dispatcher is on, a domain's coordinator session) may
 run `project create` too, in its own terminal and through its person's own
 Linear profile, never the ClawBridge app. Linear's own permissions still
 apply. Every other admin write stays the project owner's, and nothing in
@@ -1425,6 +1447,8 @@ clawbridge linear project team-adds                 # any member: the adds, and 
     Otherwise the add is `outside_lane`, because it would pull another lane's
     project into this one. In a binding without lanes, the coordinator adds no
     team.
+  - while the dispatcher is on, a domain's coordinator session
+    ([above](#while-the-dispatcher-is-on)), on the same terms.
 
   Every other session previews and asks. The write goes through the confirming
   person's own Linear profile, never the ClawBridge app, so Linear's own
@@ -1934,7 +1958,24 @@ project owner or a lead (with no session) set one after the same preview
   all closed, completed (canceled when every issue was canceled); one
   started, started; else planned. A partial read proposes nothing.
 - **Set (the designated coordinator session, or the project owner or a lead
-  without a session).** `--type` is backlog, planned, started, completed or
+  without a session).** While the dispatcher is on, a domain's coordinator
+  session sets too, but only a project whose teams are all write teams of its
+  own lane. The server reads the project's teams (up to 50) when it records the
+  set; a project with no teams, with a team outside the lane, or whose teams
+  were not read in full is refused with `outside_lane`, before anything is
+  sent to Linear. The project owner or a lead sets a cross-lane project's
+  status. **Off until proven:** Linear's project teams list is filtered by what
+  the app can see, so a private team the app isn't in may be missing with no
+  sign, and a project would look all-in-lane. Until the operator sets
+  `serve --project-status-domain-proven` (`CLAWBRIDGE_PROJECT_STATUS_DOMAIN_PROVEN=1`)
+  after the private-team probe
+  ([deployment](operations/deployment.md)), a domain coordinator's set is
+  refused at the begin with `project_status_domain_unproven` (forbidden) and
+  the project owner or a lead sets the status. The designated coordinator, the
+  owner, the leads and plain reads are unaffected. A plain read stays open to every session; a set preview runs the
+  same who-sets check (the designated coordinator, a domain's coordinator
+  session, or the owner or a lead without a session), and the lane bound
+  applies at the confirm. `--type` is backlog, planned, started, completed or
   canceled. It maps to the workspace's one unarchived status of that type;
   with none or several the answer is `ambiguous` and lists the statuses, and
   `--status-id` names one.
@@ -1942,7 +1983,7 @@ project owner or a lead (with no session) set one after the same preview
   status policy's `closes`). Where people close them, the default, no session
   sets them, the coordinator's included: the project owner or a lead does,
   in their own terminal with no session. Where agents close them, the
-  coordinator may too.
+  coordinator may too (a domain's coordinator, within its lane).
 - **Preview, then confirm.** A set without `--confirm` previews: the current
   status, the target, the issue counts, and the confirm command to run, with
   `--expected-status`, the status it saw. The confirm uses the same

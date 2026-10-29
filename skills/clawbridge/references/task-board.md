@@ -240,6 +240,14 @@ initiatives (`linear label create`, `linear initiative create|add-project`;
 labels from an approved list; CLI only), and projects, except the coordinator's
 below; when you need one, ask the coordinator.
 
+While the dispatcher is on, the project's coordinator is the dispatcher, but each
+domain's coordinator session (`dispatcher domain coordinator DOMAIN SESSION`)
+keeps the coordinator's Linear rights in its own lane: project creates, issue
+moves and team adds below. A domain coordinator also sets a project's status when
+every team the project carries is a write team of its lane, once the operator has proven private-team visibility
+(references/project-status.md).
+Assignments stay with the project's designated coordinator, the dispatcher.
+
 As the project's designated coordinator you may create a Linear project, in
 your own terminal: `clawbridge --session YOU --instance I linear project create
 NAME --team TEAM --kind KIND --operation-id ID --profile P`. Only in your lane's
@@ -260,7 +268,7 @@ or a sub-issue on its own. An issue with sub-issues moves as a family:
 `family: true`, naming the parent. Linear moves the children with it, and
 each is read back. Only the project owner or a project lead (the ClawBridge project
 role `lead`: [Which "lead"](../SKILL.md#which-lead)) in their own terminal, or the
-project's designated coordinator session for a move between its own lane's
+project's designated coordinator session (or a domain's, while the dispatcher is on) for a move between its own lane's
 teams, confirms. A binding without lanes, or a coordinator with no lane, gives
 the coordinator no move (`outside_lane`). Any other session previews and passes
 the plan to a person.

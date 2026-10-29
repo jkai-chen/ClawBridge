@@ -36,7 +36,7 @@ The person's Linear API key (`clawbridge linear key`) is theirs alone: never
 run `linear key`, never ask for the key, and never read it from a keychain or
 file; it refuses an agent's environment anyway.
 Read [references/project-status.md](references/project-status.md) before reading
-or setting a Linear project's status; only the designated coordinator sets it.
+or setting a Linear project's status; only the designated coordinator sets it (while the dispatcher is on, a domain's coordinator sets it for a project inside its lane).
 Use ClawBridge's native task-board tools when configured, otherwise the installed
 official Linear MCP/skill. Follow the explicit issue-to-session assignment and
 use ClawBridge for peer messages. Record your own assignment with

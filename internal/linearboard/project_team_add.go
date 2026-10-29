@@ -165,7 +165,7 @@ func (s *Service) addProjectTeam(ctx context.Context, scope bus.Request, in Proj
 	}
 	if access.SessionID != "" {
 		if !access.Coordinator {
-			return out, errors.New("only the project's coordinator session adds a team to a project; preview it and ask the project owner or a lead; nothing was sent")
+			return out, errors.New("only the project's coordinator session (or, while the dispatcher is on, a domain's) adds a team to a project; preview it and ask the project owner or a lead; nothing was sent")
 		}
 		if len(b.Lanes) == 0 {
 			return out, outsideLaneError("outside_lane: this binding has no lanes, so a coordinator adds no team to a project; nothing was sent")
@@ -280,7 +280,7 @@ func teamAddWho(b bus.TaskboardBindingV2, access bus.TaskboardAccess) string {
 	case access.SessionID == "":
 		return "Only the project owner, a lead, or the added team's own lead in the team roles confirms an add, from their own terminal, once the server's operator has proven team adds."
 	case access.Coordinator && len(b.Lanes) > 0:
-		return "As the project's coordinator you add only your lane's teams, to a project that already holds one, when your person or the owner asked for it."
+		return "As the project's coordinator (or, while the dispatcher is on, a domain's) you add only your lane's teams, to a project that already holds one, when your person or the owner asked for it."
 	default:
 		return "A session previews an add only; the project owner or a lead confirms it."
 	}

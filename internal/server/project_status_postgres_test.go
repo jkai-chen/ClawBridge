@@ -224,3 +224,98 @@ func TestPostgresProjectStatusUncertainIsNeverResent(t *testing.T) {
 		t.Fatal("an uncertain set was sent again")
 	}
 }
+
+// While the dispatcher is on, a domain's coordinator session sets a
+// project's status through the app when every team the project carries is
+// a write team of its lane; a cross-lane project, or a team list that
+// wasn't read in full, is refused at the claim before any Linear write.
+func TestPostgresProjectStatusDomainCoordinator(t *testing.T) {
+	f, fake := newPSFixture(t)
+	f.must(bus.Request{Operation: "taskboard_set_v2", Workspace: f.workspace, Project: "p", Session: awSession, Args: map[string]any{
+		"instance": awSession + "-i", "expected_revision": 2, "mode": "project_set",
+		"linear_team_ids": []string{awTeam, awOtherTeam}, "linear_default_team_id": awTeam,
+		"linear_project_ids": []string{pstProject}, "linear_workspace_id": awOrg,
+		"unpinned": "ai",
+		"lanes": []any{
+			map[string]any{"name": "ai", "write_team_ids": []any{awTeam}, "default_team_id": awTeam},
+			map[string]any{"name": "platform", "write_team_ids": []any{awOtherTeam}, "default_team_id": awOtherTeam},
+		},
+	}})
+	f.must(bus.Request{Operation: "register_session", Workspace: f.workspace, Project: "p", Session: "lead-ai", Args: map[string]any{"instance": "lead-ai-i", "role": "worker"}})
+	on := awJSON(t, f.must(bus.Request{Operation: "dispatcher_enable", Workspace: f.workspace, Project: "p", Args: map[string]any{"expected_revision": 0, "confirm": true}}).Data)
+	f.must(bus.Request{Operation: "dispatcher_domain_edit", Workspace: f.workspace, Project: "p", Args: map[string]any{"expected_revision": on["revision"], "domain": "all-work", "action": "coordinator", "target_session": "lead-ai"}})
+	set := func(session, op string) (map[string]any, error) {
+		return f.projectStatus("linear_app_project_status_set", session, psSetArgs("started", op, map[string]any{"confirm": true, "expected_status_id": pstPlanned}))
+	}
+	// Off until the operator has probed private-team visibility.
+	if _, err := set("lead-ai", "op-off"); err == nil || !strings.Contains(err.Error(), "project_status_domain_unproven") {
+		t.Fatal("the domain coordinator set the status before the probe:", err)
+	}
+	f.store.SetProjectStatusDomainProven(true)
+	// The project coordinator is the dispatcher now: the former one is
+	// refused, before Linear is read.
+	if _, err := set(awSession, "op-0"); err == nil || !strings.Contains(err.Error(), "a domain's coordinator session") {
+		t.Fatal("a session that is neither coordinator set the status:", err)
+	}
+	// Teams read in full, all in lane ai.
+	fake.facts.Teams = []string{awTeam}
+	out, err := set("lead-ai", "op-1")
+	if err != nil || out["state"] != "accepted" {
+		t.Fatal(out, err)
+	}
+	_, sent := fake.counts()
+	if sent != 1 {
+		t.Fatal("sent:", sent)
+	}
+	refuse := func(op string, teams []string, more bool) {
+		t.Helper()
+		fake.mu.Lock()
+		fake.facts.Status, fake.facts.Teams, fake.facts.TeamsMore = ProjectStatus{pstPlanned, "Planned", "planned"}, teams, more
+		fake.mu.Unlock()
+		if _, err := set("lead-ai", op); err == nil || !strings.Contains(err.Error(), "outside_lane") {
+			t.Fatal(op, "was not refused as outside_lane:", err)
+		}
+		if _, n := fake.counts(); n != sent {
+			t.Fatal(op, "reached Linear:", n)
+		}
+	}
+	refuse("op-2", []string{awTeam, awOtherTeam}, false)
+	refuse("op-3", []string{awTeam}, true)
+	refuse("op-4", nil, false)
+}
+
+// The app's project status read decodes the project's teams: lower-cased,
+// a next page marks the list partial, and a missing list is partial too.
+func TestPostgresProjectStatusReadDecodesTeams(t *testing.T) {
+	f, _ := newPSFixture(t)
+	reply := func(teams any) map[string]any {
+		project := map[string]any{"id": pstProject, "status": map[string]any{"id": pstPlanned, "name": "Planned", "type": "planned"}}
+		if teams != nil {
+			project["teams"] = teams
+		}
+		return map[string]any{"project": project, "projectStatuses": map[string]any{"nodes": []any{
+			map[string]any{"id": pstPlanned, "name": "Planned", "type": "planned", "archivedAt": nil},
+		}, "pageInfo": map[string]any{"hasNextPage": false}}}
+	}
+	upper := strings.ToUpper(awTeam)
+	for name, c := range map[string]struct {
+		teams any
+		want  []string
+		more  bool
+	}{
+		"teams lower-cased": {map[string]any{"nodes": []any{map[string]any{"id": upper}, map[string]any{"id": awOtherTeam}}, "pageInfo": map[string]any{"hasNextPage": false}}, []string{awTeam, awOtherTeam}, false},
+		"a next page":       {map[string]any{"nodes": []any{map[string]any{"id": awTeam}}, "pageInfo": map[string]any{"hasNextPage": true}}, []string{awTeam}, true},
+		"no teams field":    {nil, nil, true},
+	} {
+		f.api.mu.Lock()
+		f.api.projectStatus = reply(c.teams)
+		f.api.mu.Unlock()
+		got, err := appProjectStatus{f.writer}.read(context.Background(), pstProject)
+		if err != nil {
+			t.Fatal(name, err)
+		}
+		if got.TeamsMore != c.more || strings.Join(got.Teams, ",") != strings.Join(c.want, ",") || got.Status.ID != pstPlanned {
+			t.Fatal(name, got.Teams, got.TeamsMore, got.Status)
+		}
+	}
+}

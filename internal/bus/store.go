@@ -69,6 +69,11 @@ type Store struct {
 	// projectTeamAddProven is serve --project-team-add-proven: the operator
 	// ran the team-add probe, so a team is added to a project (FR10).
 	projectTeamAddProven bool
+	// projectStatusDomainProven is serve --project-status-domain-proven: the
+	// operator probed that the app's project.teams lists a private team the
+	// app isn't a member of, so a domain coordinator's status set may rely
+	// on the team list being whole.
+	projectStatusDomainProven bool
 	// issueFamilyMoveProven is serve --issue-family-move-proven: a family
 	// move (a parent with its sub-issues) may be confirmed (FR7 F1).
 	issueFamilyMoveProven bool
@@ -717,7 +722,7 @@ var operationArgs = map[string]string{
 	"project_flow_settle":         "instance lease_token generation linear_project seq outcome error calls",
 	"project_flow_resume":         "instance linear_project",
 	"project_status_begin":        "instance linear_project set to_type status_id expected_status_id operation_id confirm",
-	"project_status_claim":        "instance linear_project to_type status_id expected_status_id operation_id from_type to_status_id",
+	"project_status_claim":        "instance linear_project to_type status_id expected_status_id operation_id from_type to_status_id project_teams project_teams_more",
 	"project_status_settle":       "instance linear_project to_type status_id expected_status_id operation_id seq outcome error",
 	"doc_seed_get":                "instance parent_kind parent_id",
 	"doc_seed_put":                "instance parent_kind parent_id template template_version state seed_token expect_token document_id seeded_sha256",
@@ -897,7 +902,7 @@ func validateArgs(op string, a map[string]any) error {
 			default:
 				return errors.New("ids must be an array of strings")
 			}
-		case "unread_only", "queue", "on", "all", "resume", "allow_overlap", "allow_previous", "repair", "confirm", "forced", "force_new", "nudges_only", "egress_confirmed", "set", "enabled", "owner", "owner_missing", "replaced":
+		case "unread_only", "queue", "on", "all", "resume", "allow_overlap", "allow_previous", "repair", "confirm", "forced", "force_new", "nudges_only", "egress_confirmed", "set", "project_teams_more", "enabled", "owner", "owner_missing", "replaced":
 			if _, ok := v.(bool); !ok {
 				return fmt.Errorf("%s must be boolean", k)
 			}
@@ -1560,10 +1565,16 @@ func (s *Store) execute(ctx context.Context, tx *transaction, r Request) (any, e
 				}
 			}
 			// A client that asks learns whether the session is the
-			// project's active designated coordinator (FR5).
+			// project's active designated coordinator or, while the dispatcher is on,
+			// a domain's coordinator session (FR5).
 			if n, e := integer(a["coordinator_scope"]); e == nil && n == 1 {
-				if access.Coordinator, e = isProjectCoordinator(ctx, tx, pid, actor); e != nil {
-					return nil, e
+				// An unreadable dispatcher document grants nothing, but it
+				// doesn't fail the whole access check: every session asks.
+				if access.Coordinator, e = isLinearCoordinator(ctx, tx, pid, actor); e != nil {
+					if !errors.Is(e, errDispatcherUnreadable) {
+						return nil, e
+					}
+					access.Coordinator = false
 				}
 			}
 			out := accessMap(access)

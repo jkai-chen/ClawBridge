@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
+	"strings"
 	"time"
 )
 
@@ -88,7 +89,7 @@ func (s *Store) projectStatusOp(ctx context.Context, tx *transaction, wid, pid s
 			return nil, invalid("session is retired or moved; it cannot perform this operation")
 		}
 		if set {
-			if err = projectStatusSetter(p, projectRole, actor); err != nil {
+			if err = s.projectStatusSetter(ctx, tx, pid, p, projectRole, actor, r.Operation, a); err != nil {
 				return nil, err
 			}
 		}
@@ -150,18 +151,71 @@ func (s *Store) projectStatusOp(ctx context.Context, tx *transaction, wid, pid s
 	return s.claimProjectStatus(ctx, tx, wid, pid, lp, ns, id, hash, now, a, out)
 }
 
-// projectStatusSetter: the project's designated coordinator session, or
-// the project owner or a lead without a session. Any other session is
-// refused, an owner's or a lead's included.
-func projectStatusSetter(p map[string]any, projectRole string, actor map[string]any) error {
+// projectStatusSetter: the project's designated coordinator session,
+// unbounded, or the project owner or a lead without a session. While the
+// dispatcher is on, a domain's coordinator session sets too, for a project
+// whose teams are all write teams of its own lane: the teams are the
+// server's own Linear read, which only the claim carries, so begin lets a
+// domain coordinator through and the claim, before any Linear write,
+// enforces the bound. Any other session is refused, an owner's or a
+// lead's included.
+func (s *Store) projectStatusSetter(ctx context.Context, tx *transaction, pid string, p map[string]any, projectRole string, actor map[string]any, op string, a map[string]any) error {
 	if actor == nil {
 		if projectRole != "owner" && projectRole != "lead" {
 			return scoped("setting a Linear project's status needs the project owner or a lead", "forbidden")
 		}
 		return nil
 	}
-	if str(p, "coordinator_session") == "" || p["coordinator_session"] != actor["id"] {
-		return scoped("only the project's designated coordinator session sets a Linear project's status; other sessions read it", "forbidden")
+	// The designated coordinator seat, whoever holds it (the dispatcher's
+	// system session included), sets unbounded, as before.
+	if str(p, "coordinator_session") != "" && p["coordinator_session"] == actor["id"] {
+		return nil
+	}
+	ok, err := isLinearCoordinator(ctx, tx, pid, actor)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return scoped("only the project's designated coordinator session or, while the dispatcher is on, a domain's coordinator session (for a project whose teams are all in its lane) sets a Linear project's status; other sessions read it", "forbidden")
+	}
+	// Linear may leave a private team out of a project's team list with
+	// no sign, so the bound check below can't be trusted until the operator
+	// has probed that the app sees such a team.
+	if !s.projectStatusDomainProven {
+		return scoped("project_status_domain_unproven: a domain coordinator's status set waits for the operator to prove that the app sees a project's private teams (serve --project-status-domain-proven); the project owner or a lead sets the status", "forbidden")
+	}
+	if op != "project_status_claim" {
+		return nil
+	}
+	b, _, err := storedBinding(ctx, tx, pid)
+	if err != nil {
+		return err
+	}
+	if len(b.Lanes) == 0 {
+		return scoped("outside_lane: this binding has no lanes, so a coordinator sets no project's status; the project owner or a lead does", "forbidden")
+	}
+	lane, writes, _, err := s.sessionLane(ctx, tx, pid, actor)
+	if err != nil {
+		return err
+	}
+	if _, exists := b.Lane(lane); !exists {
+		return scoped("outside_lane: the coordinator session has no lane, so it sets no project's status; the project owner pins it with linear lanes pin", "forbidden")
+	}
+	teams, err := uuidList(a, "project_teams")
+	if err != nil {
+		return err
+	}
+	if more, _ := a["project_teams_more"].(bool); more || len(teams) == 0 {
+		return scoped(fmt.Sprintf("outside_lane: the project's teams weren't read in full, so a coordinator of lane %s can't tell they are all its own; the project owner or a lead sets its status", lane), "forbidden")
+	}
+	inLane := map[string]bool{}
+	for _, t := range writes {
+		inLane[strings.ToLower(t)] = true
+	}
+	for _, t := range teams {
+		if !inLane[strings.ToLower(t)] {
+			return scoped(fmt.Sprintf("outside_lane: the project carries team %s, which isn't a write team of lane %s; the project owner or a lead sets the status of a cross-lane project", t, lane), "forbidden")
+		}
 	}
 	return nil
 }

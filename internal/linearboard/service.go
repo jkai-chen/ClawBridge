@@ -247,7 +247,8 @@ func (s *Service) access(ctx context.Context, scope bus.Request) (bus.TaskboardA
 	scope.Args["engineer"] = 1
 	// The session's lane, when the binding has lanes (§3.1).
 	scope.Args["lane_scope"] = 1
-	// Whether the session is the project's designated coordinator (FR5).
+	// Whether the session is the project's designated coordinator or, while the
+	// dispatcher is on, a domain's coordinator session (FR5).
 	scope.Args["coordinator_scope"] = 1
 	result, err := s.cfg.Executor.Execute(ctx, scope)
 	// An older server refuses the optional arguments it doesn't know, one

@@ -167,12 +167,12 @@ func (s *Store) issueMoveMover(ctx context.Context, tx *transaction, pid, projec
 		}
 		return projectRole, "", nil
 	}
-	ok, err := isProjectCoordinator(ctx, tx, pid, actor)
+	ok, err := isLinearCoordinator(ctx, tx, pid, actor)
 	if err != nil {
 		return "", "", err
 	}
 	if !ok {
-		return "", "", scoped("only the project's designated coordinator session confirms an issue's team move; other sessions preview it and ask the project owner or a project lead", "forbidden")
+		return "", "", scoped("only the project's designated coordinator session or, while the dispatcher is on, a domain's coordinator session confirms an issue's team move; other sessions preview it and ask the project owner or a project lead", "forbidden")
 	}
 	if len(b.Lanes) == 0 {
 		return "", "", scoped("outside_lane: this binding has no lanes, so a coordinator confirms no team move; the project owner or a project lead confirms it", "forbidden")

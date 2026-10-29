@@ -2,7 +2,12 @@
 
 Read this when you are the project's designated coordinator session: `whoami`'s
 `project.coordinator_session` is your session's ID (the owner sets it with
-`project coordinator-set`). The other pages hold
+`project coordinator-set`). While the dispatcher is on, the dispatcher holds that
+role; the domain coordinator session
+(`dispatcher domain coordinator DOMAIN SESSION`) keeps the Linear moves, team
+adds and project creates in its own lane, and sets a project's status when every team the
+project carries is in its lane (once the operator has proven the server's private-team visibility), but holds no
+assignments. The other pages hold
 the mechanics. This one is the method: how a request becomes work, who decides,
 and how the team stays healthy.
 

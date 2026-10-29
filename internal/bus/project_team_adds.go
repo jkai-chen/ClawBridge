@@ -87,12 +87,12 @@ func (s *Store) projectTeamAdder(ctx context.Context, tx *transaction, pid, proj
 		}
 		return "", "", scoped("only the project owner, a lead, or the team's own lead in the team roles adds a team to a Linear project, from their own terminal; preview it and ask them", "forbidden")
 	}
-	ok, err := isProjectCoordinator(ctx, tx, pid, actor)
+	ok, err := isLinearCoordinator(ctx, tx, pid, actor)
 	if err != nil {
 		return "", "", err
 	}
 	if !ok {
-		return "", "", scoped("only the project's designated coordinator session adds a team to a Linear project; other sessions preview it and ask the project owner or a lead", "forbidden")
+		return "", "", scoped("only the project's designated coordinator session or, while the dispatcher is on, a domain's coordinator session adds a team to a Linear project; other sessions preview it and ask the project owner or a lead", "forbidden")
 	}
 	if len(b.Lanes) == 0 {
 		return "", "", scoped("outside_lane: this binding has no lanes, so a coordinator adds no team to a project; the project owner or a lead does", "forbidden")
@@ -344,3 +344,6 @@ func projectTeamAddsView(ctx context.Context, tx *transaction, pid string) (map[
 
 // SetProjectTeamAddProven is serve --project-team-add-proven.
 func (s *Store) SetProjectTeamAddProven(proven bool) { s.projectTeamAddProven = proven }
+
+// SetProjectStatusDomainProven is serve --project-status-domain-proven.
+func (s *Store) SetProjectStatusDomainProven(proven bool) { s.projectStatusDomainProven = proven }

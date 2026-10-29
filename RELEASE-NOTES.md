@@ -13,6 +13,21 @@
   (their tests use Go-built fakes instead of POSIX shell scripts); docs show a Windows watcher (pending the Windows
   probe). No schema change. Linear config scope: none.
 
+## Linear
+
+- **A dispatcher domain's coordinator keeps the coordinator's Linear rights.** While the dispatcher is on, the project's
+  coordinator is its system session, so no session could move an issue, add a team to a Linear project or create a
+  project as the coordinator. Now each domain's coordinator session (`dispatcher domain coordinator DOMAIN SESSION`)
+  does, inside its own lane (same lane and team checks as before), and `taskboard_access` `coordinator_scope` answers
+  true for it. Assignments and intake stay with the project's designated coordinator, the dispatcher.
+  Each domain's coordinator session also sets a Linear project's status, but only when every team the project carries
+  is a write team of its own lane (the server reads the teams at the claim; a cross-lane project, no teams or a partial
+  read is `outside_lane`). That status set waits for `serve --project-status-domain-proven`
+  (`CLAWBRIDGE_PROJECT_STATUS_DOMAIN_PROVEN=1`, off by default; set it only after the probe shows the app's
+  `project.teams` lists a private team the app isn't in): until then it is refused at the begin with
+  `project_status_domain_unproven`, and the project owner or a lead sets the status.
+  No schema change. Linear config scope: none.
+
 ## Terminal interface
 
 - **An open TUI sends what waits (FR11).** The TUI, left open, sends the writes waiting in this machine's outbox

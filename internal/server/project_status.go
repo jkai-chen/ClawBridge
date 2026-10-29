@@ -22,7 +22,7 @@ import (
 // The GraphQL reads, constant and read-only. Status names are free text
 // others write: they are only ever returned as JSON fields (M6).
 const (
-	projectStatusQuery         = `query ProjectStatus($id: String!) { project(id: $id) { id status { id name type } } projectStatuses(first: 50) { nodes { id name type archivedAt } pageInfo { hasNextPage } } }`
+	projectStatusQuery         = `query ProjectStatus($id: String!) { project(id: $id) { id status { id name type } teams(first: 50) { nodes { id } pageInfo { hasNextPage } } } projectStatuses(first: 50) { nodes { id name type archivedAt } pageInfo { hasNextPage } } }`
 	projectStatusIssuesQuery   = `query ProjectStatusIssues($id: ID!, $after: String) { issues(first: 100, after: $after, filter: { project: { id: { eq: $id } } }) { nodes { state { type } } pageInfo { hasNextPage endCursor } } }`
 	projectStatusReadBackQuery = `query ProjectStatusReadBack($id: String!) { project(id: $id) { id status { id type } } }`
 )
@@ -50,6 +50,11 @@ type projectStatusFacts struct {
 	// More is a status list past its first page: a type can't be mapped.
 	More   bool
 	Issues projectIssues
+	// Teams are the project's team IDs, lower-case, and TeamsMore is a
+	// team list past its first page: a lane-bounded set (a domain
+	// coordinator's) is refused on either an empty or a partial list.
+	Teams     []string
+	TeamsMore bool
 }
 
 var openIssueTypes = map[string]bool{"triage": true, "backlog": true, "unstarted": true, "started": true}
@@ -90,6 +95,14 @@ func (a appProjectStatus) read(ctx context.Context, lp string) (projectStatusFac
 		Project *struct {
 			ID     string  `json:"id"`
 			Status *status `json:"status"`
+			Teams  *struct {
+				Nodes []struct {
+					ID string `json:"id"`
+				} `json:"nodes"`
+				PageInfo struct {
+					HasNextPage bool `json:"hasNextPage"`
+				} `json:"pageInfo"`
+			} `json:"teams"`
 		} `json:"project"`
 		ProjectStatuses *struct {
 			Nodes    []status `json:"nodes"`
@@ -103,6 +116,14 @@ func (a appProjectStatus) read(ctx context.Context, lp string) (projectStatusFac
 		return projectStatusFacts{}, unreadable
 	}
 	f := projectStatusFacts{More: project.ProjectStatuses.PageInfo.HasNextPage, Issues: projectIssues{ByType: map[string]int{}}}
+	// A missing team list is a partial one: the bus refuses a bounded set.
+	f.TeamsMore = true
+	if t := project.Project.Teams; t != nil {
+		f.TeamsMore = t.PageInfo.HasNextPage
+		for _, n := range t.Nodes {
+			f.Teams = append(f.Teams, strings.ToLower(n.ID))
+		}
+	}
 	st := project.Project.Status
 	f.Status = ProjectStatus{strings.ToLower(st.ID), st.Name, st.Type}
 	for _, n := range project.ProjectStatuses.Nodes {
@@ -228,7 +249,9 @@ func suggestProjectStatus(n projectIssues) string {
 
 // projectStatus serves linear_app_project_status (read, any member or
 // session) and linear_app_project_status_set (the designated coordinator
-// session, or the project owner or a lead without a session).
+// session; while the dispatcher is on, a domain's coordinator session for a
+// project whose teams are all in its lane; or the project owner or a lead
+// without a session).
 func (w *AppWriter) projectStatus(parent context.Context, identity bus.Identity, r bus.Request) (bus.Result, error) {
 	allowed := projectStatusArgs[r.Operation]
 	for k := range r.Args {
@@ -355,7 +378,7 @@ func (w *AppWriter) projectStatus(parent context.Context, identity bus.Identity,
 	if needsAllowOpen && !allowOpen {
 		return bus.Result{}, bus.PublicError("conflict", "issues of this project are open (or not all were read); add allow_open to set it completed anyway")
 	}
-	claimed, err := step("project_status_claim", map[string]any{"from_type": f.Status.Type, "to_status_id": target.ID})
+	claimed, err := step("project_status_claim", map[string]any{"from_type": f.Status.Type, "to_status_id": target.ID, "project_teams": append([]string{}, f.Teams...), "project_teams_more": f.TeamsMore})
 	if err != nil {
 		return bus.Result{}, err
 	}

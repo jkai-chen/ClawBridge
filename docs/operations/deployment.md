@@ -432,6 +432,7 @@ COMPOSE_PROJECT_NAME=clawbridge
 # CLAWBRIDGE_ISSUE_MOVE_PROVEN=1
 # CLAWBRIDGE_ISSUE_FAMILY_MOVE_PROVEN=1
 # CLAWBRIDGE_PROJECT_TEAM_ADD_PROVEN=1
+# CLAWBRIDGE_PROJECT_STATUS_DOMAIN_PROVEN=1
 ```
 
 Use a random hexadecimal password so it can be interpolated safely into the
@@ -551,6 +552,16 @@ CLAWBRIDGE_LINEAR_APP_TOKEN_KEY=<32 random bytes, base64>
   Set that after one Sandbox family move through `clawbridge linear move`
   reads `accepted`, with its children carrying a team label and a state
   other than backlog.
+- **A domain coordinator's project status set is off until proven.** While the
+  dispatcher is on, a domain's coordinator session may set a Linear project's
+  status inside its lane, but is refused with `project_status_domain_unproven`
+  until the server runs with `serve --project-status-domain-proven` or
+  `CLAWBRIDGE_PROJECT_STATUS_DOMAIN_PROVEN=1` (the compose file passes it
+  through). Linear's `project.teams` is filtered by what the app can see, so a
+  private team may be missing with no sign. Probe it: with the app, read a
+  project that carries a private team the app isn't a member of, and check
+  whether that team appears in `teams`. Set the flag only if it does; if not,
+  leave it off. The designated coordinator, the owner and leads are unaffected.
 - **Team adds are off until proven.** Adding a team to a Linear project
   (`linear project update --add-team`, see [Linear](../linear.md)) is refused
   with `project_team_add_unproven` until the server runs with
@@ -561,9 +572,9 @@ CLAWBRIDGE_LINEAR_APP_TOKEN_KEY=<32 random bytes, base64>
   through the confirming person's own Linear profile, never the app.
 - **Which gates are on.** The project owner's `clawbridge doctor` reports them
   as `linear.proven_gates` ("Proven gates: issue_subscribers, issue_move (off:
-  project_flow, issue_family_move, project_team_add)."), and the TUI's
+  project_flow, issue_family_move, project_team_add, project_status_domain)."), and the TUI's
   Overview shows the same in two rows, Proven gates and Not proven. Both read
-  the project overview's `proven_gates`: the five gate names, each on or off,
+  the project overview's `proven_gates`: the six gate names, each on or off,
   and nothing else of the server's settings. Members don't see them.
 - **Timeouts.** A write the server makes can take up to a minute, and it
   finishes even if the client disconnects. Keep the proxy and load-balancer

@@ -241,7 +241,8 @@ func (s *Service) admin(ctx context.Context, scope bus.Request, in AdminInput) (
 	if e != nil {
 		return AdminResult{}, e
 	}
-	// The project's designated coordinator session may create a project,
+	// The project's designated coordinator session (while the dispatcher is on,
+	// a domain's) may create a project,
 	// in its lane's default team, with a kind (FR5); every other admin
 	// write stays the owner's.
 	coordinator := access.ProjectRole != "owner"

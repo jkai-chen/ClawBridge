@@ -10,6 +10,12 @@
   form (no POSIX shell). Doctor reports the hook form and the Claude Code version, and warns on Windows until the
   version is probed (pending the Windows probe). No schema change. Linear config scope: none.
 
+## Linear
+
+- **A family move's preview no longer shows a sub-issue count beside its children.** `sub_issues` is Linear's count of
+  one page (at most 10), so a family of 12 showed `sub_issues: 10` next to 12 planned children; a family's preview now
+  leaves it out, and its `children` list is the count. No logic change. Linear config scope: none.
+
 # ClawBridge v0.3.9 (released 29 Oct)
 
 **Schema 47 → 50.**

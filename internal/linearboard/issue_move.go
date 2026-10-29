@@ -73,7 +73,8 @@ type MovePlanV2 struct {
 	// Children is a family move's sub-issues, each planned as a single
 	// move would be.
 	Children []MoveChildV2 `json:"children,omitempty"`
-	// SubIssues is how many sub-issues Linear listed (at least).
+	// SubIssues is how many sub-issues Linear listed (at least: one
+	// page). A family's answer leaves it out: Children lists them all.
 	SubIssues int `json:"sub_issues,omitempty"`
 	Calls     int `json:"calls"`
 	// what the digest and the read-back compare; never shown.
@@ -144,6 +145,11 @@ func (s *Service) MoveIssueV2(ctx context.Context, scope bus.Request, in MoveInp
 		return out, e
 	}
 	out.Plan = plan
+	// A family's children are listed in full; Linear's sub-issue count is
+	// one page at most, so it would seem to disagree with them.
+	if len(out.Plan.Children) > 0 {
+		out.Plan.SubIssues = 0
+	}
 	if !in.Confirm {
 		out.Outcome = "preview"
 		out.Note = moveWho(b, access)

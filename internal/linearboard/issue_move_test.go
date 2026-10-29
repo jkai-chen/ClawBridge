@@ -2,6 +2,7 @@ package linearboard
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -541,6 +542,11 @@ func TestMoveFamilyPreviewThenConfirm(t *testing.T) {
 	r, e := s.family(t, scope, MoveInputV2{})
 	if e != nil || len(r.Plan.Refusals) != 0 || len(r.Plan.Children) != 2 || r.Plan.Children[0].ToStateID != moveReadyB || r.Plan.Children[1].Labels[0].ToID != moveBugB || p.writes != 0 {
 		t.Fatal(r, e)
+	}
+	// The children are the count: Linear's one-page sub-issue count isn't
+	// shown beside them.
+	if raw, _ := json.Marshal(r.Plan); strings.Contains(string(raw), `"sub_issues"`) {
+		t.Fatal("a family preview shows sub_issues beside its children:", string(raw))
 	}
 	got, e := s.family(t, scope, MoveInputV2{OperationID: "fam-1", Confirm: true, ExpectedPlanSHA256: r.Plan.PlanSHA256})
 	if e != nil || got.Outcome != "accepted" || len(got.Children) != 2 || got.Children[0].Outcome != "accepted" || got.Children[0].NewIdentifier != "NEW-C1" || got.Children[1].OldIdentifier != "OLD-3" {

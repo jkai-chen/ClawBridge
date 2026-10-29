@@ -164,9 +164,7 @@ func TestRefusesWhatIsNotTheUsersFile(t *testing.T) {
 	dir := t.TempDir()
 	real := write(t, claudeAssistant(5, ""))
 	link := filepath.Join(dir, "link.jsonl")
-	if err := os.Symlink(real, link); err != nil {
-		t.Fatal(err)
-	}
+	symlink(t, real, link)
 	for name, path := range map[string]string{"link": link, "directory": dir, "missing": filepath.Join(dir, "none.jsonl")} {
 		if _, err := Read(ClaudeCode, path); err == nil {
 			t.Fatalf("%s accepted", name)
@@ -192,7 +190,9 @@ func TestLoadBinding(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	good := `{"version":1,"agent":"claude-code","transcript":"/home/u/.claude/projects/p/s.jsonl","bound_at":"2026-10-26T10:00:00Z",` +
+	tr := jsonString(absPath("home", "u", ".claude", "projects", "p", "s.jsonl"))
+	t1 := jsonString(absPath("t.jsonl"))
+	good := `{"version":1,"agent":"claude-code","transcript":` + tr + `,"bound_at":"2026-10-26T10:00:00Z",` +
 		`"levels":{"warn_tokens":600000,"handover_tokens":650000},"handover_hint":"Update RESUME HERE."}`
 	put("worker-1", good, 0o600)
 	b, bound, err := LoadBinding(dir, "worker-1")
@@ -204,9 +204,9 @@ func TestLoadBinding(t *testing.T) {
 		mode os.FileMode
 	}{
 		"relative":      {`{"version":1,"agent":"codex","transcript":"rollout.jsonl"}`, 0o600},
-		"agent":         {`{"version":1,"agent":"cursor","transcript":"/t.jsonl"}`, 0o600},
-		"version":       {`{"version":2,"agent":"codex","transcript":"/t.jsonl"}`, 0o600},
-		"unknown field": {`{"version":1,"agent":"codex","transcript":"/t.jsonl","extra":true}`, 0o600},
+		"agent":         {`{"version":1,"agent":"cursor","transcript":` + t1 + `}`, 0o600},
+		"version":       {`{"version":2,"agent":"codex","transcript":` + t1 + `}`, 0o600},
+		"unknown field": {`{"version":1,"agent":"codex","transcript":` + t1 + `,"extra":true}`, 0o600},
 		"not json":      {`version=1`, 0o600},
 	}
 	if runtime.GOOS != "windows" {
@@ -221,9 +221,7 @@ func TestLoadBinding(t *testing.T) {
 			t.Fatalf("%s accepted", name)
 		}
 	}
-	if err := os.Symlink(filepath.Join(dir, "worker-1.json"), filepath.Join(dir, "linked.json")); err != nil {
-		t.Fatal(err)
-	}
+	symlink(t, filepath.Join(dir, "worker-1.json"), filepath.Join(dir, "linked.json"))
 	if _, _, err := LoadBinding(dir, "linked"); err == nil {
 		t.Fatal("a linked record was accepted")
 	}

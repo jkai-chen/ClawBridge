@@ -69,16 +69,12 @@ func TestClaudeTranscriptStaysUnderProjects(t *testing.T) {
 	// A configuration whose projects directory is a link elsewhere, as
 	// some profile managers set up, still binds its own transcripts.
 	linked := t.TempDir()
-	if err := os.Symlink(filepath.Join(config, "projects"), filepath.Join(linked, "projects")); err != nil {
-		t.Fatal(err)
-	}
+	symlink(t, filepath.Join(config, "projects"), filepath.Join(linked, "projects"))
 	if got, err := ClaudeTranscript(filepath.Join(linked, "projects", "p", "s.jsonl"), linked); err != nil || got != want {
 		t.Fatalf("through a linked projects directory: %q %v", got, err)
 	}
 	escape := filepath.Join(projects, "escape.jsonl")
-	if err := os.Symlink(outside, escape); err != nil {
-		t.Fatal(err)
-	}
+	symlink(t, outside, escape)
 	notJSONL := filepath.Join(projects, "s.txt")
 	if err := os.WriteFile(notJSONL, nil, 0o600); err != nil {
 		t.Fatal(err)
@@ -130,9 +126,7 @@ func TestCodexRollout(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(elsewhere, "rollout-x-"+other+".jsonl"), meta(other), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.Symlink(elsewhere, filepath.Join(home, "sessions", "linked")); err != nil {
-		t.Fatal(err)
-	}
+	symlink(t, elsewhere, filepath.Join(home, "sessions", "linked"))
 	for name, id := range map[string]string{"linked": other, "not an ID": "../" + thread, "unknown": "019a0000-0000-7000-8000-000000000001"} {
 		if got, err := CodexRollout(home, id); err == nil {
 			t.Fatalf("%s found %q", name, got)
@@ -145,7 +139,7 @@ func TestCodexRollout(t *testing.T) {
 
 func TestSaveBinding(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "context")
-	b := Binding{Agent: ClaudeCode, Transcript: "/x/t.jsonl", BoundAt: "2026-01-01T10:00:00Z", CompactTrigger: "auto"}
+	b := Binding{Agent: ClaudeCode, Transcript: absPath("x", "t.jsonl"), BoundAt: "2026-01-01T10:00:00Z", CompactTrigger: "auto"}
 	if err := SaveBinding(dir, "worker-1", b); err != nil {
 		t.Fatal(err)
 	}
@@ -162,9 +156,7 @@ func TestSaveBinding(t *testing.T) {
 		}
 	}
 	// A link where the record goes is refused, not replaced.
-	if err := os.Symlink(filepath.Join(dir, "worker-1.json"), filepath.Join(dir, "worker-2.json")); err != nil {
-		t.Fatal(err)
-	}
+	symlink(t, filepath.Join(dir, "worker-1.json"), filepath.Join(dir, "worker-2.json"))
 	if err := SaveBinding(dir, "worker-2", b); err == nil {
 		t.Fatal("wrote through a link")
 	}

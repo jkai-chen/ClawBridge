@@ -237,11 +237,11 @@ jobs:
       # Last, so a failure here never hides the installer and console steps.
       # Under the user profile, as for a real user: the runner's own TEMP is
       # outside it, with a different ACL.
-      - name: Native Windows notify, setup and CLI tests under the user profile
+      - name: Native Windows notify, setup, CLI and ctxwatch tests under the user profile
         if: ${{ !cancelled() }}
         shell: pwsh
         run: |
           $env:TEMP = Join-Path $env:LOCALAPPDATA 'Temp'
           $env:TMP = $env:TEMP
           $null = New-Item -ItemType Directory -Force -Path $env:TEMP
-          go test ./internal/notify ./internal/setup ./internal/cli -count=1
+          go test ./internal/notify ./internal/setup ./internal/cli ./internal/ctxwatch -count=1

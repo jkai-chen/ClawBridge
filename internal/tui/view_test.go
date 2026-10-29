@@ -72,3 +72,20 @@ func TestStatusLineShowsTheOutbox(t *testing.T) {
 		t.Fatal(line)
 	}
 }
+
+// While a profile has an outbox, the TUI redraws every few seconds, so the
+// status line's count follows the background drain (FR11); the tick keeps
+// itself going, and a profile without an outbox has none.
+func TestOutboxTickRedraws(t *testing.T) {
+	m := Model{cfg: Config{Mode: ModeCloud, OutboxWaiting: func() int { return 1 }}}
+	if m.outboxTick() == nil {
+		t.Fatal("no redraw scheduled with an outbox")
+	}
+	next, cmd := m.UpdateModel(outboxTickMsg{})
+	if cmd == nil || statusLine(next) != statusLine(m) {
+		t.Fatal("the tick didn't schedule the next one")
+	}
+	if (Model{}).outboxTick() != nil {
+		t.Fatal("a redraw scheduled without an outbox")
+	}
+}

@@ -18,36 +18,13 @@ import (
 // outboxClient is an executor with a client outbox: the hosted client.
 type outboxClient interface {
 	Outbox() *outbox.Store
-	DrainOutbox(context.Context, time.Duration) (outbox.Report, error)
-	OutboxKicks() <-chan struct{}
+	DrainOutboxWhile(context.Context, time.Duration)
 	PromoteAck(context.Context, bus.Request, string) (queued, pending bool, err error)
 }
 
-// outboxEvery is how often the drainer looks at a non-empty outbox; a
-// successful call wakes it sooner.
+// outboxEvery is how often the drainer (remote.Client.DrainOutboxWhile)
+// looks at a non-empty outbox; a successful call wakes it sooner.
 const outboxEvery = 5 * time.Second
-
-// drainOutbox sends the outbox's waiting writes until ctx ends.
-func drainOutbox(ctx context.Context, c outboxClient, every time.Duration) {
-	tick := time.NewTicker(every)
-	defer tick.Stop()
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-tick.C:
-		case <-c.OutboxKicks():
-		}
-		ob := c.Outbox()
-		if ob == nil {
-			continue
-		}
-		if st, err := ob.Status(ctx); err != nil || st.Waiting == 0 {
-			continue
-		}
-		c.DrainOutbox(ctx, 30*time.Second)
-	}
-}
 
 // outboxStatus is whoami's client_outbox: what waits on this machine, so
 // an agent that lost its context learns not to resend it.

@@ -15,6 +15,7 @@ import (
 	"testing"
 	"time"
 
+	"clawbridge/internal/bus"
 	"clawbridge/internal/faketool"
 	"clawbridge/internal/remote"
 )
@@ -84,8 +85,12 @@ func TestOutboxCommands(t *testing.T) {
 	if data := out["data"].(map[string]any); data["outcome"] != "queued_local" || data["operation_id"] != "op-1" {
 		t.Fatal(data)
 	}
-	if !strings.Contains(diag, "send op-1 is queued on this machine") {
+	if !strings.Contains(diag, "send op-1 is queued on this machine") || !strings.Contains(diag, "It goes with your next clawbridge command once the server is back, or now with `clawbridge outbox flush`") {
 		t.Fatal(diag)
+	}
+	// The hint is the CLI's: the result an agent reads doesn't carry it.
+	if msg, _ := out["data"].(map[string]any)["message"].(string); strings.Contains(msg, "next clawbridge command") {
+		t.Fatal(msg)
 	}
 	if info, e := os.Stat(filepath.Join(dir, "profile", "outbox.db")); e != nil || (runtime.GOOS != "windows" && info.Mode().Perm() != 0600) {
 		t.Fatal(info, e)
@@ -162,5 +167,51 @@ func TestRunClosesTheOutboxesAtTheOutermostEnd(t *testing.T) {
 	}
 	if _, e := ob.Status(context.Background()); e == nil {
 		t.Fatal("the outbox stayed open after the command")
+	}
+}
+
+// The TUI keeps sending what a deploy queued while it stays open (FR11):
+// with the server still away when it opens, the write goes once the server
+// is back, with no command run, and the count follows.
+func TestTUIOutboxDrainsWhileOpen(t *testing.T) {
+	var up atomic.Bool
+	var sent atomic.Int32
+	host := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !up.Load() {
+			w.WriteHeader(503)
+			return
+		}
+		sent.Add(1)
+		json.NewEncoder(w).Encode(map[string]any{"source": "server", "data": map[string]any{"id": "msg-1"}})
+	}))
+	defer host.Close()
+	before := tuiOutboxEvery
+	tuiOutboxEvery = 50 * time.Millisecond
+	t.Cleanup(func() { tuiOutboxEvery = before })
+	client, err := remote.NewWithTokenSource(remote.Config{URL: host.URL, Audience: "audience", Principal: "ada@example.test", CachePath: filepath.Join(t.TempDir(), "profile", "cache.db")}, remote.TokenSourceFunc(func(context.Context) (string, error) { return "synthetic-token", nil }))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { client.Outbox().Close() })
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	_, err = client.Execute(ctx, bus.Request{Operation: "send", Workspace: "ws_1", Project: "prj_1", Session: "worker", Args: map[string]any{"instance": "instance-1", "to": "peer", "body": "x", "operation_id": "op-1"}})
+	cancel()
+	if err != nil {
+		t.Fatal(err)
+	}
+	client.Outbox().SetNow(func() time.Time { return time.Now().Add(time.Hour) })
+	open, closeTUI := context.WithCancel(context.Background())
+	defer closeTUI()
+	waiting := tuiOutbox(open, client)
+	if waiting() != 1 {
+		t.Fatal("the TUI's count:", waiting())
+	}
+	up.Store(true)
+	deadline := time.Now().Add(10 * time.Second)
+	for waiting() != 0 && time.Now().Before(deadline) {
+		time.Sleep(20 * time.Millisecond)
+	}
+	if waiting() != 0 || sent.Load() != 1 {
+		t.Fatal("the open TUI didn't send the write:", waiting(), sent.Load())
 	}
 }

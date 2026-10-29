@@ -628,8 +628,11 @@ A mark-read has no operation ID, so its line names the messages it marks
 instead ("mark-read of MESSAGE_ID is queued…; don't run it again").
 
 It is sent, in order and exactly once, when the server answers again: by your
-agent's MCP server within seconds, by the next `clawbridge` command, or now with
-`clawbridge outbox flush`. Only those four kinds wait; a decision, handoff or
+agent's MCP server within seconds, by an open TUI within seconds, by the next
+`clawbridge` command, or now with `clawbridge outbox flush`. Nothing else sends it:
+if you wrote from the command line during a deploy and keep no agent or TUI open,
+run any `clawbridge` command afterwards (the queued line says so). After 24 hours
+waiting, a write becomes a dead letter instead (`clawbridge outbox retry ID`). Only those four kinds wait; a decision, handoff or
 coordinated message, session and assignment changes and Linear writes still fail
 at once, and say so.
 

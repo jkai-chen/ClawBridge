@@ -133,7 +133,7 @@ func NewServerWithOptions(store Executor, workspace, project, session, instance 
 			b.queue.close()
 		}()
 		if c, ok := store.(outboxClient); ok {
-			go drainOutbox(options.Context, c, outboxEvery)
+			go c.DrainOutboxWhile(options.Context, outboxEvery)
 		}
 		if options.ContextDir != "" {
 			go notify.ReportContext(options.Context, store, options.ContextDir, notify.ContextInterval, session)

@@ -13,6 +13,14 @@
   (their tests use Go-built fakes instead of POSIX shell scripts); docs show a Windows watcher (pending the Windows
   probe). No schema change. Linear config scope: none.
 
+## Terminal interface
+
+- **An open TUI sends what waits (FR11).** The TUI, left open, sends the writes waiting in this machine's outbox
+  within seconds of the server answering again, as an agent's MCP server does: every 5 s while any wait, and at once
+  after a successful call. Its status line's `outbox: N waiting` follows the count. A command line's queued notice now
+  says what sends the write: the next `clawbridge` command, or `clawbridge outbox flush`. No schema change. Linear
+  config scope: none.
+
 # ClawBridge v0.3.9 (released 29 Oct)
 
 **Schema 47 → 50.**

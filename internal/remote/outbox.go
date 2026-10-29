@@ -247,7 +247,9 @@ func (c *Client) queue(ctx context.Context, ob *outbox.Store, r bus.Request, why
 	op, _ := r.Args["operation_id"].(string)
 	message := fmt.Sprintf("%s; %s is queued on this machine (position %d) and will be sent when it's back; %s", why, queuedWhat(r, op), q.Position, queuedAdvice(op))
 	if outboxNotice != nil {
-		outboxNotice("clawbridge: " + message)
+		// Only a CLI command receives notices, and nothing of the CLI's
+		// runs in the background: say what sends the write (FR11).
+		outboxNotice("clawbridge: " + message + ". " + queuedSendsHint)
 	}
 	return bus.Result{Source: "client_outbox", Data: map[string]any{
 		"outcome":      "queued_local",
@@ -257,6 +259,10 @@ func (c *Client) queue(ctx context.Context, ob *outbox.Store, r bus.Request, why
 		"message":      message,
 	}}, nil
 }
+
+// queuedSendsHint tells a CLI user what sends a queued write: nothing
+// sends it in the background unless an agent's MCP server or a TUI runs.
+const queuedSendsHint = "It goes with your next clawbridge command once the server is back, or now with `clawbridge outbox flush`"
 
 // queuedNamed is how many messages a queued mark-read's notice names.
 const queuedNamed = 5
@@ -299,6 +305,32 @@ func queuedAdvice(op string) string {
 		return "don't run it again"
 	}
 	return "don't resend it with a new operation ID"
+}
+
+// DrainOutboxWhile sends the outbox's waiting writes until ctx ends, for a
+// long-lived client, an agent's MCP server or the TUI (FR11): it looks every interval while
+// anything waits, and at once after a successful call. Each drain runs up
+// to 30 s.
+func (c *Client) DrainOutboxWhile(ctx context.Context, every time.Duration) {
+	tick := time.NewTicker(every)
+	defer tick.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-tick.C:
+		case <-c.OutboxKicks():
+		}
+		// Looked up each turn: an outbox that couldn't open is tried again.
+		ob := c.Outbox()
+		if ob == nil {
+			continue
+		}
+		if st, err := ob.Status(ctx); err != nil || st.Waiting == 0 {
+			continue
+		}
+		c.DrainOutbox(ctx, 30*time.Second)
+	}
 }
 
 // kickOutbox wakes a drainer after a successful call, when writes may wait.

@@ -103,8 +103,14 @@ func (s *Store) projectOverview(ctx context.Context, tx *transaction, w, p map[s
 	if err != nil {
 		return nil, err
 	}
+	// A coordinator's Linear project creates, and the unconfirmed Linear
+	// writes of every kind (FR5); the read never sends the stale notice.
+	creates, err := projectCreatesView(ctx, tx, pid, now)
+	if err != nil {
+		return nil, err
+	}
 	out := map[string]any{"project": project, "coordinator": coord, "counts": counts, "sessions": rows,
-		"sessions_truncated": truncated, "linear": linear}
+		"sessions_truncated": truncated, "linear": linear, "project_creates": creates}
 	if role == "owner" {
 		if out["project_leads"], err = projectLeadCounts(ctx, tx, pid, now); err != nil {
 			return nil, err

@@ -147,7 +147,7 @@ func (s *Store) migrate() error {
 	if err = tx.QueryRow("PRAGMA user_version").Scan(&version); err != nil {
 		return err
 	}
-	if version > 46 {
+	if version > 47 {
 		return errors.New("database schema is newer than this ClawBridge binary")
 	}
 	if version == 0 {
@@ -395,6 +395,11 @@ func (s *Store) migrate() error {
 			return err
 		}
 	}
+	if version < 47 {
+		if _, err = tx.Exec(linearWritesSchema + `PRAGMA user_version=47;`); err != nil {
+			return err
+		}
+	}
 	return tx.Commit()
 }
 
@@ -578,7 +583,11 @@ var operationArgs = map[string]string{
 	"taskboard_set_v2":            "instance expected_revision mode linear_team_ids linear_default_team_id linear_project_ids linear_workspace_id closes_pending linear_team_names linear_project_names linear_other_teams linear_parent_team_id lanes unpinned",
 	"taskboard_names_set":         "instance expected_revision linear_team_names linear_project_names",
 	"taskboard_clear_v2":          "instance expected_revision repair",
-	"taskboard_access":            "instance ledger engineer lane_scope",
+	"taskboard_access":            "instance ledger engineer lane_scope coordinator_scope",
+	"project_create_reserve":      "instance operation_id team_id kind name_sha256",
+	"project_create_settle":       "instance operation_id outcome linear_project_id",
+	"project_create_list":         "instance",
+	"project_create_ack":          "instance operation_id",
 	"member_display_name_set":     "display_name if_unset",
 	"taskboard_set":               "instance expected_revision linear_team_ids linear_default_team_id linear_project_id linear_workspace_id",
 	"taskboard_clear":             "instance expected_revision repair",
@@ -732,7 +741,7 @@ func validateArgs(op string, a map[string]any) error {
 					return invalid(k + " must be an integer")
 				}
 			}
-		case "retention_days", "limit", "since_hours", "after", "expected_revision", "expected_binding_revision", "ledger", "lane_scope", "generation", "budget", "calls", "charged", "policy_revision", "engineer", "if_unset", "expires_days", "expires_hours", "expires_minutes", "device_idle_days", "delay_seconds", "seconds", "s5_calls_per_hour", "out_of_binding_limit", "template_version", "part_number", "part_count", "seq", "config_revision", "mapping_revision", "members_before", "members_after":
+		case "retention_days", "limit", "since_hours", "after", "expected_revision", "expected_binding_revision", "ledger", "lane_scope", "coordinator_scope", "generation", "budget", "calls", "charged", "policy_revision", "engineer", "if_unset", "expires_days", "expires_hours", "expires_minutes", "device_idle_days", "delay_seconds", "seconds", "s5_calls_per_hour", "out_of_binding_limit", "template_version", "part_number", "part_count", "seq", "config_revision", "mapping_revision", "members_before", "members_after":
 			if _, err := integer(v); err != nil {
 				return fmt.Errorf("%s: %w", k, err)
 			}
@@ -1399,6 +1408,9 @@ func (s *Store) execute(ctx context.Context, tx *transaction, r Request) (any, e
 	if lanePinOperation(r.Operation) {
 		return s.lanePinsOp(ctx, tx, wid, pid, projectRole, r)
 	}
+	if projectCreateOperation(r.Operation) {
+		return s.projectCreateOp(ctx, tx, w, p, projectRole, actor, r)
+	}
 	// Any project member may read the approved label list, with or
 	// without a session; setting it is the owner's (labelPolicyOp).
 	if r.Operation == "label_policy_get" {
@@ -1478,6 +1490,13 @@ func (s *Store) execute(ctx context.Context, tx *transaction, r Request) (any, e
 				}
 				if ok {
 					access.Lane, access.LaneWriteTeamIDs = lane, teams
+				}
+			}
+			// A client that asks learns whether the session is the
+			// project's active designated coordinator (FR5).
+			if n, e := integer(a["coordinator_scope"]); e == nil && n == 1 {
+				if access.Coordinator, e = isProjectCoordinator(ctx, tx, pid, actor); e != nil {
+					return nil, e
 				}
 			}
 			out := accessMap(access)

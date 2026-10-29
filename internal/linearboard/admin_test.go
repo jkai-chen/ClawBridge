@@ -34,14 +34,22 @@ type adminAuthority struct {
 	policyReads     int
 	afterPolicyRead func(int)
 	auditErr        error
+	// creates answers a coordinator's create (coordinator_projects_test.go).
+	creates *creates
 }
 
 func (a *adminAuthority) Execute(ctx context.Context, r bus.Request) (bus.Result, error) {
+	if a.creates != nil {
+		if result, ok, e := a.creates.execute(r); ok {
+			return result, e
+		}
+	}
 	switch r.Operation {
 	case "taskboard_access":
 		result, e := a.authorityV2.Execute(ctx, r)
 		access := result.Data.(bus.TaskboardAccess)
 		access.ProjectRole = a.role
+		access.Coordinator = a.creates != nil && a.creates.coordinator && r.Args["coordinator_scope"] == 1
 		result.Data = access
 		return result, e
 	case "label_policy_get":
@@ -89,6 +97,8 @@ type adminFake struct {
 	members          map[string]bool
 	// teamless makes label receipts leave the team out.
 	teamless bool
+	// createErr fails a project create after it was sent.
+	createErr error
 }
 
 func (p *adminFake) AdminReason() string      { return p.reason }
@@ -133,8 +143,11 @@ func (p *adminFake) RenameTeamLabel(_ context.Context, team, id, name string) (l
 	p.write("rename " + id + " " + name)
 	return linearprovider.AdminReceipt{ID: id, Name: name, TeamID: team}, nil
 }
-func (p *adminFake) CreateTeamProject(_ context.Context, team, name string) (linearprovider.AdminReceipt, error) {
-	p.write("project " + team + " " + name)
+func (p *adminFake) CreateTeamProject(_ context.Context, team, name string, labels ...string) (linearprovider.AdminReceipt, error) {
+	p.write(strings.TrimSpace("project " + team + " " + name + " " + strings.Join(labels, ",")))
+	if p.createErr != nil {
+		return linearprovider.AdminReceipt{}, p.createErr
+	}
 	p.projects[strings.ToLower(name)] = []linearprovider.ProjectListing{{Project: linearprovider.Project{ID: newProject, Name: name, TeamIDs: []string{team}}}}
 	p.providerV2.projects[newProject] = []string{team}
 	return linearprovider.AdminReceipt{ID: newProject, Name: name, TeamID: team}, nil

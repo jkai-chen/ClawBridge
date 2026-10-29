@@ -193,3 +193,44 @@ func TestAdminReasonPinsTheNativeSchemas(t *testing.T) {
 		}
 	}
 }
+
+// A project create with a kind's label sends it by ID in the same
+// save_project, and proves it on the new project by the label's carriers;
+// one the carriers don't show is reported unverified, never retried.
+func TestAdminProjectCreateWithLabel(t *testing.T) {
+	provider := func(answers map[string][]any) (*Provider, *scripted) {
+		tools := map[string]*mcp.Tool{}
+		for _, tl := range append(adminTools(t), kindApplyTools(t)...) {
+			tools[tl.Name] = tl
+		}
+		f := &scripted{fake: &fake{}, answers: answers}
+		for _, tl := range tools {
+			f.fake.tools = append(f.fake.tools, tl)
+		}
+		p, e := NewWithCaller(context.Background(), f)
+		if e != nil || p.AdminReason() != "" || p.ProjectKindApplyReason() != "" {
+			t.Fatal(e, p.AdminReason(), p.ProjectKindApplyReason())
+		}
+		return p, f
+	}
+	saved := map[string]any{"id": adminProjectA, "name": "Q4", "teams": []any{map[string]any{"id": tid}}}
+	carriers := map[string]any{"hasNextPage": false, "projects": []any{map[string]any{"uuid": adminProjectA}}}
+	p, f := provider(map[string][]any{"save_project": {saved}, "list_projects": {carriers}})
+	r, e := p.CreateTeamProject(context.Background(), tid, "Q4", pkLabel)
+	if e != nil || r.ID != adminProjectA || r.Unverified != nil {
+		t.Fatal(r, e)
+	}
+	if labels := f.args[0]["labels"]; !reflect.DeepEqual(labels, []string{pkLabel}) && !reflect.DeepEqual(labels, []any{pkLabel}) {
+		t.Fatal("the label wasn't sent:", f.args[0])
+	}
+	if f.calls[1] != "list_projects" || f.args[1]["label"] != pkLabel {
+		t.Fatal("the label wasn't proven:", f.calls, f.args)
+	}
+	p, _ = provider(map[string][]any{"save_project": {saved}, "list_projects": {map[string]any{"hasNextPage": false, "projects": []any{}}}})
+	if r, e = p.CreateTeamProject(context.Background(), tid, "Q4", pkLabel); e != nil || !reflect.DeepEqual(r.Unverified, []string{"labels"}) {
+		t.Fatal("an unproven label:", r, e)
+	}
+	if _, e = p.CreateTeamProject(context.Background(), tid, "Q4", "not-a-uuid"); e == nil {
+		t.Fatal("an invalid label was sent")
+	}
+}

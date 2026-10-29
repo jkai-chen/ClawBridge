@@ -1,5 +1,14 @@
 package bus
 
+// ledgerDowngradeSQLite returns a schema-47 database to schema 46's shape:
+// the Linear write reservations.
+const ledgerDowngradeSQLite = "DROP TABLE linear_write_reservations;\n"
+
+// ledgerDowngradePostgres is ledgerDowngradeSQLite for a Postgres schema.
+func ledgerDowngradePostgres(schema string) string {
+	return "DROP TABLE " + schema + ".linear_write_reservations;\n"
+}
+
 // lanesDowngradeSQLite returns a schema-46 database to schema 45's shape:
 // the lane pins.
 const lanesDowngradeSQLite = "DROP TABLE lane_pins_revision;\nDROP TABLE lane_pins;\n"

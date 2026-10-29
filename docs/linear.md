@@ -948,11 +948,13 @@ clawbridge linear subscribers backfill --since 2026-10-27 --apply
   spreads over hours. An issue already done is never queued again.
 - **The owner's email** goes only to Linear's subscribe call. History, doctor and logs never show it.
 
-## Labels and projects (project owner only)
+## Labels and projects (project owner; a coordinator creates projects in its own team)
 
 The ClawBridge project owner can create team labels and projects in Linear from
-the CLI. These commands are not MCP tools, so agents cannot call them; an agent
-that needs a label or project asks the coordinator.
+the CLI. These commands are not MCP tools. The project's designated coordinator
+session may also create a project, in its lane's default team only ("A
+coordinator creates projects" below); any other agent that needs a label or
+project asks the coordinator.
 
 - **Who.** Only the ClawBridge project owner, checked before any Linear call.
   They use your personal Linear profile, never the ClawBridge app.
@@ -1060,7 +1062,7 @@ who set it when.
 ```sh
 clawbridge linear label create NAME --team TEAM_UUID --operation-id ID
 clawbridge linear label rename OLD NEW --team TEAM_UUID --operation-id ID
-clawbridge linear project create NAME --team TEAM_UUID --operation-id ID
+clawbridge linear project create NAME --team TEAM_UUID --operation-id ID [--kind NAME]
 ```
 
 - **`label create`** creates a plain team label named exactly as in the list. It
@@ -1086,6 +1088,61 @@ clawbridge linear project create NAME --team TEAM_UUID --operation-id ID
   - in a project-set binding the result carries a `proposal`, the `linear link`
     preview with the new project added, and the `confirm_command` to run;
   - in a team board the project is already in scope, so there is no proposal.
+
+  With `--kind NAME`, one of the project kinds (`linear kind show`), the new
+  project gets that kind's label in the same create. The kind's label must be
+  seeded, and the kinds must belong to the create's team.
+
+### A coordinator creates projects
+
+The project's designated coordinator session (`project coordinator-set`) may
+run `project create` too, in its own terminal and through its person's own
+Linear profile, never the ClawBridge app. Linear's own permissions still
+apply. Every other admin write stays the project owner's, and nothing in
+ClawBridge archives or deletes a project.
+
+```sh
+clawbridge --session COORD --instance INSTANCE linear project create NAME \
+  --team TEAM_UUID --kind NAME --operation-id ID --profile PROFILE_ID
+clawbridge linear project creates                  # any member
+clawbridge linear project creates --ack OP_ID      # project owner, own terminal
+clawbridge linear writes [--ack OP_ID]             # the same, for every kind of write
+```
+
+- **Only its lane's default team.** With lanes, the team must be the default
+  team of the coordinator's lane; any other team, a shared parent included, is
+  refused as `outside_lane`. Without lanes, the binding's default team. A
+  coordinator with no lane (unpinned under `read_only`) creates nothing.
+- **A kind is required.** Until the project owner sets the project kinds and
+  seeds their labels, a coordinator's create is refused. The kind's label is
+  applied in the create, by its stored ID.
+- **The name** gets an agent issue's mention guard: no `@` mention, profile
+  link or `mention://` URL. `--closes` stays the owner's.
+- **No lead is set** yet: the result says so. The lead will come from the team
+  roles.
+- **The record comes first.** Before anything is sent, the server reserves the
+  create by its operation ID (the team, the kind and a SHA-256 of the name;
+  never the name). After Linear accepts, the reservation is settled with the
+  project's ID, and each active session of the project owner gets a
+  `project-created` message; history records the IDs. A retry with the same
+  operation ID reads the saved result back and settles again; it never creates
+  a second project. There is no daily cap.
+- **Unconfirmed creates.** A reservation unsettled after 10 minutes (a crash,
+  or an answer lost on the way back) may have created a project. The overview
+  (`project_creates.unconfirmed`), `linear project creates` and doctor's
+  `linear.project_creates` show it, each with its kind (`write`) and state: the
+  reservations are one ledger for every Linear write the server records first,
+  so later kinds of write show there too, and so does a write settled
+  `uncertain` (its read-back couldn't tell whether Linear took it; a settled
+  state never changes), and the owner's sessions get one
+  `project-create-unconfirmed` message, the first time a coordinator call or
+  `project creates` finds it; with no owner session active, the message waits.
+  Check the team's projects in Linear, then acknowledge it with
+  `linear writes --ack OP_ID` (the same as `project creates --ack`, for any kind).
+- **Kept 90 days.** A settled or acknowledged reservation is deleted 90 days
+  after it closed; an unacknowledged one 90 days after it was made.
+- The new project joins a project-set binding only when the owner or a lead
+  relinks, with the `confirm_command` the result prints.
 
 - **`initiative create NAME [--description TEXT]`** creates a workspace
   initiative, unless one with that name already exists, in which case it is

@@ -241,17 +241,28 @@ func (s *Service) access(ctx context.Context, scope bus.Request) (bus.TaskboardA
 	scope.Args["engineer"] = 1
 	// The session's lane, when the binding has lanes (§3.1).
 	scope.Args["lane_scope"] = 1
+	// Whether the session is the project's designated coordinator (FR5).
+	scope.Args["coordinator_scope"] = 1
 	result, err := s.cfg.Executor.Execute(ctx, scope)
 	// An older server refuses the optional arguments it doesn't know, one
 	// at a time: without "lane_scope" it names no lane, and a binding with lanes
-	// then refuses every write (checkLaneV2); a server older than v0.2.8
-	// names no engineer, and the marker omits it.
-	for _, optional := range []string{"lane_scope", "engineer", "lane_scope"} {
-		if err == nil || !strings.Contains(err.Error(), `unsupported argument "`+optional+`"`) {
-			continue
+	// then refuses every write (checkLaneV2); without "coordinator_scope" no
+	// session is the coordinator, so only the owner creates projects; a
+	// server older than v0.2.8 names no engineer, and the marker omits it.
+	optionals := []string{"coordinator_scope", "lane_scope", "engineer"}
+	for range optionals {
+		dropped := false
+		for _, optional := range optionals {
+			if err != nil && strings.Contains(err.Error(), `unsupported argument "`+optional+`"`) {
+				delete(scope.Args, optional)
+				result, err = s.cfg.Executor.Execute(ctx, scope)
+				dropped = true
+				break
+			}
 		}
-		delete(scope.Args, optional)
-		result, err = s.cfg.Executor.Execute(ctx, scope)
+		if !dropped {
+			break
+		}
 	}
 	if err != nil && strings.Contains(err.Error(), `unsupported argument "ledger"`) {
 		return bus.TaskboardAccess{}, errors.New("the ClawBridge server is older than this client and cannot record Linear comments; upgrade the server first (nothing was sent)")

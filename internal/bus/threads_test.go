@@ -227,7 +227,7 @@ func TestThreadsSchemaStampsExistingProjects(t *testing.T) {
 	h := &harness{t, s}
 	h.call("workspace_init", "", map[string]any{"mode": "local"})
 	h.call("project_create", "", map[string]any{"slug": "p"})
-	if _, err = s.db.Exec(lanesDowngradeSQLite + noticeDowngradeSQLite + leadDowngradeSQLite + rolesDowngradeSQLite + kindDowngradeSQLite + viewsDowngradeSQLite + queueDowngradeSQLite + `DROP INDEX history_entity; ALTER TABLE projects DROP COLUMN threads_from; PRAGMA user_version=33;`); err != nil {
+	if _, err = s.db.Exec(ledgerDowngradeSQLite + lanesDowngradeSQLite + noticeDowngradeSQLite + leadDowngradeSQLite + rolesDowngradeSQLite + kindDowngradeSQLite + viewsDowngradeSQLite + queueDowngradeSQLite + `DROP INDEX history_entity; ALTER TABLE projects DROP COLUMN threads_from; PRAGMA user_version=33;`); err != nil {
 		t.Fatal(err)
 	}
 	s.Close()
@@ -241,7 +241,7 @@ func TestThreadsSchemaStampsExistingProjects(t *testing.T) {
 	var version int
 	var from string
 	s.db.QueryRow(`PRAGMA user_version`).Scan(&version)
-	if err = s.db.QueryRow(`SELECT threads_from FROM projects WHERE slug='p'`).Scan(&from); err != nil || from != layout(at) || version != 46 {
+	if err = s.db.QueryRow(`SELECT threads_from FROM projects WHERE slug='p'`).Scan(&from); err != nil || from != layout(at) || version != 47 {
 		t.Fatal(from, version, err)
 	}
 	h = &harness{t, s}

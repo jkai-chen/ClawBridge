@@ -431,8 +431,17 @@ func TestDrainOutboxWhile(t *testing.T) {
 			if !slices.Contains(s.ops(), "send:op-1") {
 				t.Fatal("the drainer sent nothing:", s.ops())
 			}
-			if st, _ := client.Outbox().Status(context.Background()); st.Waiting != 0 {
-				t.Fatal(st)
+			// The server's answer comes before the drainer deletes the row:
+			// wait for the outbox to empty under the same deadline.
+			waiting := func() int {
+				st, _ := client.Outbox().Status(context.Background())
+				return st.Waiting
+			}
+			for waiting() != 0 && time.Now().Before(deadline) {
+				time.Sleep(10 * time.Millisecond)
+			}
+			if n := waiting(); n != 0 {
+				t.Fatal("the outbox still holds the sent write:", n)
 			}
 			cancel()
 			select {

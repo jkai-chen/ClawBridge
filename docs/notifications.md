@@ -111,6 +111,66 @@ clawbridge --session reviewer --instance INSTANCE notify --adapter command --sta
 Typing into a terminal while the agent is busy queues the line as its next
 prompt in most hosts; check yours before you rely on it.
 
+## Run the watcher on Windows
+
+The watcher is one foreground process with no shell, so it runs the same way on
+Windows. Whether a given host (a terminal, an agent app) actually wakes from the
+notice on Windows is pending the Windows probe; the adapters' own behaviour (the
+argv they run, the checkpoint) is tested on Windows in CI. Use absolute Windows
+paths and keep the state file under your own profile (for example
+`%LOCALAPPDATA%\ClawBridge`), which only you can read.
+
+Start it hidden, for your user only, in PowerShell (no administrator rights).
+`Start-Process` does not quote the elements of `-ArgumentList`, so wrap every
+value that can hold a space (your profile path, for one) in quotes yourself:
+
+```powershell
+$state = Join-Path $env:LOCALAPPDATA 'ClawBridge\reviewer-codex-notify.json'
+New-Item -ItemType Directory -Force -Path (Split-Path $state) | Out-Null
+Start-Process -WindowStyle Hidden -FilePath clawbridge -ArgumentList @(
+  '--session','reviewer','--instance','INSTANCE',
+  'notify','--adapter','codex','--thread','THREAD_UUID','--state',"`"$state`"")
+```
+
+For the command adapter, give the program and its arguments after `--`. The
+watcher passes each of them to the program as one argument, so a PowerShell
+script receives `{text}` as one value:
+
+```powershell
+$state = Join-Path $env:LOCALAPPDATA 'ClawBridge\reviewer-command-notify.json'
+Start-Process -WindowStyle Hidden -FilePath clawbridge -ArgumentList @(
+  '--session','reviewer','--instance','INSTANCE',
+  'notify','--adapter','command','--state',"`"$state`"",
+  '--','powershell.exe','-NoProfile','-File',"`"$env:LOCALAPPDATA\ClawBridge\wake.ps1`"",'{text}')
+```
+
+`wake.ps1` is yours: it receives the fixed notice as its first argument (and in
+`CLAWBRIDGE_NOTICE_TEXT`) and decides how to reach the agent. Stop the watcher
+from Task Manager, or stop just this one by its command line (other `clawbridge`
+processes, such as an agent's `clawbridge mcp`, keep running):
+
+```powershell
+Get-CimInstance Win32_Process -Filter "Name='clawbridge.exe'" |
+  Where-Object { $_.CommandLine -like '*--session reviewer *notify*' } |
+  ForEach-Object { Stop-Process -Id $_.ProcessId }
+```
+
+To start it at log on instead, register a task for the current user, which needs
+no administrator rights:
+
+```powershell
+$state = Join-Path $env:LOCALAPPDATA 'ClawBridge\reviewer-codex-notify.json'
+$action = New-ScheduledTaskAction -Execute 'clawbridge' -Argument "--session reviewer --instance INSTANCE notify --adapter codex --thread THREAD_UUID --state `"$state`""
+$trigger = New-ScheduledTaskTrigger -AtLogOn -User $env:USERNAME
+$settings = New-ScheduledTaskSettingsSet -Hidden
+Register-ScheduledTask -TaskName 'ClawBridge reviewer watcher' -Action $action -Trigger $trigger -Settings $settings -User $env:USERNAME
+```
+
+Use the full path to `clawbridge.exe` as `-Execute` if it is not on the PATH of
+the logon session. A task registered this way runs only while you are logged on;
+`-Hidden` hides it in Task Scheduler, and a console window may still show at log
+on (start it through `Start-Process -WindowStyle Hidden` if that matters).
+
 ## Agents: ack, the Stop hook and compaction
 
 An agent's MCP server takes the session's messages from the queue once the

@@ -9,6 +9,9 @@
 - **Windows hooks in exec form, and doctor's hook check.** On Windows, `mcp install` writes Claude Code hooks in exec
   form (no POSIX shell). Doctor reports the hook form and the Claude Code version, and warns on Windows until the
   version is probed (pending the Windows probe). No schema change. Linear config scope: none.
+- **Windows wake-up adapters are tested on Windows.** The Codex and command wake-up adapters are tested on Windows
+  (their tests use Go-built fakes instead of POSIX shell scripts); docs show a Windows watcher (pending the Windows
+  probe). No schema change. Linear config scope: none.
 
 # ClawBridge v0.3.9 (released 29 Oct)
 

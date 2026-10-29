@@ -10,12 +10,12 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
-	"runtime"
 	"strings"
 	"testing"
 	"time"
 
 	"clawbridge/internal/bus"
+	"clawbridge/internal/faketool"
 	"clawbridge/internal/notify"
 	"clawbridge/internal/remote"
 )
@@ -335,10 +335,7 @@ func notificationCodexConfig(t *testing.T) notify.Config {
 	c := notificationConfig(t)
 	c.Binding.Adapter = "codex"
 	c.Binding.Thread = "01234567-89ab-cdef-0123-456789abcdef"
-	c.CodexCommand = filepath.Join(t.TempDir(), "fake codex")
-	if err := os.WriteFile(c.CodexCommand, []byte("#!/bin/sh\nexit 91\n"), 0700); err != nil {
-		t.Fatal(err)
-	}
+	c.CodexCommand = faketool.Install(t, t.TempDir(), "fake codex", "exit:91")
 	// The injected runner is the only execution path. Never resolve the real CLI.
 	return c
 }
@@ -551,24 +548,12 @@ func TestNotificationPollAndHostCancellation(t *testing.T) {
 	}
 }
 func TestNotificationCodexFakeSubprocess(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("POSIX fake executable fixture; native Windows host adapter separately pending")
-	}
 	c := notificationCodexConfig(t)
 	t.Setenv("CODEX_HOME", t.TempDir())
 	log := filepath.Join(t.TempDir(), "exact argv log")
-	t.Setenv("CLAWBRIDGE_NOTIFICATION_FIXTURE_LOG", log)
-	script := `#!/bin/sh
-if [ "$#" = 2 ] && [ "$1" = queue ] && [ "$2" = --help ]; then
- printf '%s\n' 'queue --thread --message'
- exit 0
-fi
-printf '%s\000' "$@" > "$CLAWBRIDGE_NOTIFICATION_FIXTURE_LOG"
-printf '%s\n' 'synthetic-host-output-not-for-user'
-`
-	if err := os.WriteFile(c.CodexCommand, []byte(script), 0700); err != nil {
-		t.Fatal(err)
-	}
+	t.Setenv(faketool.LogEnv, log)
+	// A Go-built fake, so the test is the same on every OS (no POSIX shell).
+	c.CodexCommand = faketool.Install(t, t.TempDir(), "fake codex", "codex-queue")
 	c.Executor = notificationExecutorFunc(func(context.Context, bus.Request) (bus.Result, error) { return notificationPolicyResult(1, 3, 1), nil })
 	var out, diag bytes.Buffer
 	c.Output = &out

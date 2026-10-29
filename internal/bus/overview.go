@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net/url"
+	"sort"
 	"strings"
 	"time"
 )
@@ -234,8 +235,29 @@ func (s *Store) overviewLinear(ctx context.Context, tx *transaction, wid, pid st
 		}
 		projects = append(projects, row)
 	}
+	sp := map[string]any{"enabled": policy.Enabled, "revision": revision}
+	if policy.Enabled {
+		if missing := teamsMissingFromPolicy(b.LinearTeamIDs, policy); len(missing) > 0 {
+			sp["teams_missing"] = missing
+		}
+	}
 	return map[string]any{"configured": true, "revision": b.Revision, "mode": b.Mode, "teams": teams, "projects": projects,
-		"names_updated_at": namesAt, "status_policy": map[string]any{"enabled": policy.Enabled, "revision": revision}}, nil
+		"names_updated_at": namesAt, "status_policy": sp}, nil
+}
+
+// teamsMissingFromPolicy lists, sorted and as stored, the bound teams the
+// status policy has no entry for: the policy is a snapshot of the teams
+// bound when it was set, so a team bound later is missing until it is set
+// again. Keys of the policy are compared in lower case.
+func teamsMissingFromPolicy(teams []string, policy StatusPolicy) []string {
+	var missing []string
+	for _, id := range teams {
+		if _, ok := policy.Teams[strings.ToLower(id)]; !ok {
+			missing = append(missing, id)
+		}
+	}
+	sort.Strings(missing)
+	return missing
 }
 
 // publicRemote is a project's git remote without any user or password in

@@ -472,7 +472,7 @@ func parseLinear(command string, args []string, stderr io.Writer) (linearFlags, 
 		f.Int64Var(&v.revision, "expected-revision", -1, "set: the policy revision you last read")
 	case "status-policy":
 		profile()
-		f.StringVar(&v.policyFile, "file", "", "set: JSON file {\"enabled\": true, \"create\": NAME, \"claim\": NAME, \"release_done\": NAME, \"claim_from_triage\": false}")
+		f.StringVar(&v.policyFile, "file", "", "set: JSON file {\"enabled\": true, \"create\": NAME, \"claim\": NAME, \"release_done\": NAME, \"claim_from_triage\": false}. Keys you leave out of the file keep their current values; a key you include replaces them (\"closes\": {} clears every close rule)")
 		f.Int64Var(&v.revision, "expected-revision", -1, "set: the policy revision you last read")
 	case "project-flow":
 		f.StringVar(&v.project, "linear-project", "", "resume: the bound Linear project UUID whose status is held")
@@ -1480,9 +1480,18 @@ func runLinear(ctx context.Context, flags Config, args []string, stdout, stderr 
 		if e != nil {
 			return e
 		}
+		if e := refuseAgentCloseFile(flags, []byte(raw)); e != nil {
+			return e
+		}
 		data, err = service.SetStatusPolicyV2(bounded, scope, []byte(raw), v.revision, func(names map[string]string) error {
 			return confirmAgentCloses(flags, names, stderr)
 		})
+		if m, ok := data.(map[string]any); ok && err == nil {
+			// Keys the file left out kept their current values.
+			if keys, _ := m["kept"].([]string); len(keys) > 0 {
+				fmt.Fprintf(stderr, "Kept from revision %d: %s\n", v.revision, strings.Join(keys, ", "))
+			}
+		}
 	case "health":
 		if adminAction == "show" {
 			data, err = service.HealthV2(bounded, scope)

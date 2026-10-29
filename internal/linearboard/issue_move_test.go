@@ -791,3 +791,45 @@ func TestMoveBudget(t *testing.T) {
 		t.Fatal(done, e)
 	}
 }
+
+// A move into a bound team the enabled status policy has no entry for says
+// so in its answer's note, appended to a note already set; a team the
+// policy has, a disabled policy, or a policy that can't be read adds
+// nothing and never changes the move.
+func TestMoveNotesATeamMissingFromTheStatusPolicy(t *testing.T) {
+	note := otherTeamID + " is not in the status policy, so claims and done-releases there won't move its state: the project owner runs `clawbridge linear status-policy set` with the file {\"enabled\": true}"
+	confirm := func(status map[string]any, statusErr error) MoveResultV2 {
+		s, a, _, scope := moveTest(t)
+		a.status, a.statusErr = status, statusErr
+		plan := s.previewMove(t, scope).Plan
+		got, e := s.MoveIssueV2(context.Background(), scope, MoveInputV2{IssueID: issueID, TeamID: otherTeamID, OperationID: "mv-1", Confirm: true, ExpectedPlanSHA256: plan.PlanSHA256})
+		if e != nil || got.Outcome != "accepted" || got.NewIdentifier != "NEW-158" {
+			t.Fatal(got, e)
+		}
+		return got
+	}
+	enabled := func(teams map[string]any) map[string]any {
+		return map[string]any{"revision": 1, "enabled": true, "teams": teams}
+	}
+	if got := confirm(enabled(map[string]any{teamID: map[string]any{}}), nil); got.Note != note {
+		t.Fatalf("note = %q", got.Note)
+	}
+	if got := confirm(enabled(map[string]any{teamID: map[string]any{}, otherTeamID: map[string]any{}}), nil); got.Note != "" {
+		t.Fatal("a team in the policy was noted:", got.Note)
+	}
+	if got := confirm(map[string]any{"revision": 1, "enabled": false, "teams": map[string]any{}}, nil); got.Note != "" {
+		t.Fatal("a disabled policy was noted:", got.Note)
+	}
+	if got := confirm(nil, errors.New("down")); got.Note != "" {
+		t.Fatal("an unreadable policy was noted:", got.Note)
+	}
+	// A family that did not wholly follow already has a note: this is added.
+	s, a, p, scope := familyTest(t)
+	a.status = enabled(map[string]any{teamID: map[string]any{}})
+	r, _ := s.family(t, scope, MoveInputV2{})
+	p.stay = map[string]bool{moveKidTwo: true}
+	got, e := s.family(t, scope, MoveInputV2{OperationID: "fam-1", Confirm: true, ExpectedPlanSHA256: r.Plan.PlanSHA256})
+	if e != nil || !strings.Contains(got.Note, "--team "+teamID+" --family") || !strings.HasSuffix(got.Note, "; "+note) {
+		t.Fatal(got.Note, e)
+	}
+}

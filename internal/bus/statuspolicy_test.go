@@ -316,6 +316,20 @@ func TestStateSettleRecordsAnUnresolvedState(t *testing.T) {
 	}
 }
 
+// A bound team the policy lacks is its own skip reason.
+func TestStateSettleRecordsATeamNotInThePolicy(t *testing.T) {
+	w := newWatchHarness(t)
+	w.setStatusPolicy(0, sfPolicy(true))
+	w.assign("b", sfIssueNext)
+	id := w.assignmentID("b")
+	w.markersDue()
+	w.markerGo("c", id, "claim", "state")
+	w.markerSettle("c", id, "claim", "state", map[string]any{"outcome": "skipped", "skip_reason": "team_not_in_policy"})
+	if s, reason, _ := w.stateRow(id, "claim"); s != "skipped" || reason != "team_not_in_policy" {
+		t.Fatal(s, reason)
+	}
+}
+
 // A marker row is charged by the binding it must prove: one team and two
 // projects add three to each row.
 // A pass proves the binding once: the first row of a marker_due answer

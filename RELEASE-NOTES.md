@@ -121,6 +121,15 @@
   the project overview's `linear_budget` (`limit` 0, `capped` false, `source`), `project linear-budget show` and the
   Linear screen's header ("(no cap)") split the hour between the app, people and agents, as counts. Schema 50.
   Linear config scope: none.
+- **A team bound after the status policy was set is now named.** Doctor's `linear.status_policy` warns, a move into it
+  says so, and its skipped state moves record `team_not_in_policy` (before, claims and done-releases there silently left
+  the state alone). The project owner includes it with `clawbridge linear status-policy set` and the file
+  `{"enabled": true}`. Linear config scope: none (ClawBridge project config only).
+- **`status-policy set` keeps every key the file leaves out.** Closes, state names, `project_flow` and
+  `project_targets` are no longer reset by a file that doesn't mention them; before, re-running it with an older file
+  cleared every agent close rule and done state. A key you include still replaces the current value, and the answer
+  lists `kept`. From an agent's shell a file that names agent close rules is refused, and `closes set --agent` warns
+  when a team has no done state. Linear config scope: none (ClawBridge project config only).
 
 # ClawBridge v0.3.8 (released 29 Oct)
 

@@ -339,7 +339,7 @@ func markerStatePart(ctx context.Context, tx *transaction, pid, kind string) (st
 }
 
 // statusSkipReasons are the only words a skipped state part records.
-var statusSkipReasons = map[string]bool{"from_state": true, "team_unbound": true, "team_off": true, "target_unknown": true, "policy_off": true, "policy_changed": true, "state_unresolved": true}
+var statusSkipReasons = map[string]bool{"from_state": true, "team_unbound": true, "team_off": true, "team_not_in_policy": true, "target_unknown": true, "policy_off": true, "policy_changed": true, "state_unresolved": true}
 
 // stateGo hands out a state move. The policy must still be enabled and at
 // the revision the row froze (SF-M1); the applier checks the issue's team,
@@ -418,7 +418,7 @@ func (m markerCall) stateSettle(ctx context.Context, outcome string) (any, error
 	case "skipped":
 		reason = str(m.a, "skip_reason")
 		if !statusSkipReasons[reason] {
-			return nil, invalid("skip_reason must be from_state, team_unbound, team_off, target_unknown, policy_off or policy_changed")
+			return nil, invalid("skip_reason must be from_state, team_unbound, team_off, team_not_in_policy, target_unknown, policy_off, policy_changed or state_unresolved")
 		}
 		state = "skipped"
 	case "failed", "out_of_binding":

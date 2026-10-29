@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -214,5 +215,48 @@ func TestProjectOverviewShowsProvenGates(t *testing.T) {
 		if len(g) != 2 || fmt.Sprint(g["name"], " ", state) != want[i] {
 			t.Fatal(i, g)
 		}
+	}
+}
+
+// A bound team the status policy has no entry for is named under
+// status_policy.teams_missing, only while the policy is enabled; the key
+// is absent when nothing is missing.
+func TestOverviewNamesBoundTeamsMissingFromTheStatusPolicy(t *testing.T) {
+	policyOf := func(h *harness) map[string]any {
+		return h.overview("")["linear"].(map[string]any)["status_policy"].(map[string]any)
+	}
+	bind := func(h *harness, rev int, teams ...string) {
+		h.call("taskboard_set_v2", "", map[string]any{"expected_revision": rev, "mode": "team_board", "linear_team_ids": teams, "linear_default_team_id": teams[0], "linear_project_ids": []string{}})
+	}
+	h := newHarness(t)
+	bind(h, 0, sfTeam)
+	h.call("status_policy_set", "", map[string]any{"expected_revision": 0, "status_policy": sfPolicy(true)})
+	if p := policyOf(h); p["enabled"] != true {
+		t.Fatal(p)
+	} else if _, has := p["teams_missing"]; has {
+		t.Fatal("a team in the policy was named", p)
+	}
+	// A team bound after the policy was set is the one the policy lacks.
+	bind(h, 1, sfTeam, cpTwo, cpOne)
+	if got := policyOf(h)["teams_missing"]; !reflect.DeepEqual(got, []string{cpOne, cpTwo}) {
+		t.Fatalf("teams_missing = %v", got)
+	}
+	// A disabled policy moves nothing, so it names nothing.
+	h.call("status_policy_set", "", map[string]any{"expected_revision": 1, "status_policy": sfPolicy(false)})
+	if p := policyOf(h); p["enabled"] != false {
+		t.Fatal(p)
+	} else if _, has := p["teams_missing"]; has {
+		t.Fatal("a disabled policy named teams", p)
+	}
+}
+
+func TestTeamsMissingFromPolicyIgnoresCase(t *testing.T) {
+	policy := StatusPolicy{Enabled: true, Teams: map[string]StatusTeam{strings.ToLower(sfTeam): {}}}
+	got := teamsMissingFromPolicy([]string{strings.ToUpper(sfTeam), cpTwo, cpOne}, policy)
+	if !reflect.DeepEqual(got, []string{cpOne, cpTwo}) {
+		t.Fatal(got)
+	}
+	if got = teamsMissingFromPolicy([]string{cpOne}, StatusPolicy{}); len(got) != 1 {
+		t.Fatal("a nil Teams map lacks every team", got)
 	}
 }

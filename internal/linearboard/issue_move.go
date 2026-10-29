@@ -279,10 +279,31 @@ func (s *Service) MoveIssueV2(ctx context.Context, scope bus.Request, in MoveInp
 			return out, errors.Join(sendErr, settle("uncertain", ""))
 		}
 	}
+	if note := s.policyGapNote(ctx, scope, b, plan.ToTeam); note != "" {
+		if out.Note != "" {
+			out.Note += "; "
+		}
+		out.Note += note
+	}
 	if e = settle(out.Outcome, out.NewIdentifier); e != nil {
 		return out, fmt.Errorf("the move was sent (%s) but not settled on the server: %w", out.Outcome, e)
 	}
 	return out, nil
+}
+
+// policyGapNote says that the destination team is bound but missing from
+// an enabled status policy, so claims and done-releases there leave the
+// issue's state alone. It adds no Linear call, and a policy that can't be
+// read adds no note and never fails the move.
+func (s *Service) policyGapNote(ctx context.Context, scope bus.Request, b bus.TaskboardBindingV2, team string) string {
+	policy, e := s.statusPolicy(ctx, scope)
+	if e != nil || !policy.Enabled || !contains(b.LinearTeamIDs, team) {
+		return ""
+	}
+	if _, ok := policy.Teams[strings.ToLower(team)]; ok {
+		return ""
+	}
+	return team + " is not in the status policy, so claims and done-releases there won't move its state: the project owner runs `clawbridge linear status-policy set` with the file {\"enabled\": true}"
 }
 
 // childrenStayed reads every child of a refused family back: not_sent

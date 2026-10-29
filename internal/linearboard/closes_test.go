@@ -3,6 +3,7 @@ package linearboard
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"strings"
 	"testing"
@@ -309,5 +310,40 @@ func TestLinkMinimalPolicyProjectFlow(t *testing.T) {
 		if _, on := policy["project_flow"]; on != proven || (proven && policy["project_flow"] != true) {
 			t.Fatal("the minimal policy and its preview disagree on project flow:", proven, policy)
 		}
+	}
+}
+
+// closes set --agent warns, after the server accepted it, of each team the
+// status policy gives no done state; it never refuses, and a policy that
+// can't be read adds nothing.
+func TestSetClosesAgentWarnsOfTeamsWithoutDone(t *testing.T) {
+	withDone := map[string]any{"id": sfDone, "name": "Done", "type": "completed"}
+	policy := func(teams map[string]any) map[string]any {
+		return map[string]any{"revision": 4, "enabled": true, "teams": teams}
+	}
+	run := func(status map[string]any, statusErr error, closes string) map[string]any {
+		s, rec, _, scope, _ := closesTest(t, status)
+		rec.statusErr = statusErr
+		out, e := s.SetClosesV2(context.Background(), scope, projectA, closes, 4, ClosesViaTTY)
+		if e != nil {
+			t.Fatal(e)
+		}
+		m, _ := out.(map[string]any)
+		return m
+	}
+	const note = `agents close this project, but team(s) %s have no done state in the status policy: their done-releases stop at release_done; the project owner adds "done" with clawbridge linear status-policy set --file FILE (FILE {"enabled": true, "done": "NAME"})`
+	got := run(policy(map[string]any{teamID: map[string]any{"done": withDone}, otherTeamID: map[string]any{}}), nil, ClosesAgent)
+	if notes, _ := got["notes"].([]string); len(notes) != 1 || notes[0] != fmt.Sprintf(note, otherTeamID) || got["revision"] != 3 {
+		t.Fatal(got)
+	}
+	if got = run(policy(map[string]any{teamID: map[string]any{"done": withDone}, otherTeamID: map[string]any{"done": withDone}}), nil, ClosesAgent); got["notes"] != nil {
+		t.Fatal("every team has done:", got)
+	}
+	// Human rules need no done state, and read no policy.
+	if got = run(policy(map[string]any{teamID: map[string]any{}}), nil, ClosesHuman); got["notes"] != nil {
+		t.Fatal(got)
+	}
+	if got = run(nil, errors.New("down"), ClosesAgent); got["notes"] != nil || got["revision"] != 3 {
+		t.Fatal("an unreadable policy changed the answer:", got)
 	}
 }

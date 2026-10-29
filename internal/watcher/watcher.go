@@ -8,8 +8,10 @@ package watcher
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -25,6 +27,17 @@ const (
 	TickProjects    = 10
 	ProjectDeadline = 20 * time.Second
 )
+
+// watcherProofTTL is how long the watcher's read paths reuse a verified
+// binding: across ticks (at most 30 minutes apart), not only within one.
+// Verifying reads every team and its projects, a dozen calls or more on a
+// large binding, which a 60 s reuse paid again every tick. The proof is
+// keyed by the binding's revision and contents, so a relink misses; any
+// failed verify drops it; writes never use it.
+const watcherProofTTL = 20 * time.Minute
+
+// slowPassMS is a pass's time from which its steps' times are logged.
+const slowPassMS = 5000
 
 // App is the Linear app connection the watcher uses. The server's app
 // connection (internal/linearapp) is adapted to it.
@@ -106,6 +119,20 @@ type ProjectTick struct {
 	// Subscribers is the issue subscribers pass (ISSUE-SUBSCRIBERS-PLAN).
 	Subscribers *SubscribePass `json:"subscribers,omitempty"`
 	Error       string         `json:"error,omitempty"`
+	// TookMS is each step's time in milliseconds (comments, then the
+	// steps after it, then markers), so a slow project shows where its
+	// share went.
+	TookMS map[string]int64 `json:"took_ms,omitempty"`
+}
+
+// took records step's time since start, and returns now.
+func (t *ProjectTick) took(step string, start time.Time) time.Time {
+	now := time.Now()
+	if t.TookMS == nil {
+		t.TookMS = map[string]int64{}
+	}
+	t.TookMS[step] = now.Sub(start).Milliseconds()
+	return now
 }
 
 // Tick serves up to TickProjects projects, the longest since their last
@@ -139,6 +166,7 @@ func (w *Watcher) project(ctx context.Context, pid string, healthLeft int) Proje
 	tick := ProjectTick{ProjectID: pid}
 	svc := w.service(pid)
 	scope := bus.Request{Session: bus.SystemSessionName, Args: map[string]any{}}
+	mark := time.Now()
 	err := svc.Watch(ctx, scope, linearboard.WatchOptions{
 		Budget: w.Budget,
 		Once:   true,
@@ -148,29 +176,66 @@ func (w *Watcher) project(ctx context.Context, pid string, healthLeft int) Proje
 		},
 		// Intake, then health, then documents run after the comment
 		// watch and markers, within what the hour's budget leaves.
+		// Each step stands alone: one that fails is recorded and the next
+		// still runs, while the share lasts. Only a lost lease ends the
+		// pass, since every later step would be refused.
 		Within: func(ctx context.Context, fence map[string]any) error {
-			poll, err := w.intake(ctx, svc, scope, pid, fence)
-			tick.Intake = poll
-			if err != nil {
-				return err
+			mark = tick.took("comments", mark)
+			steps := []struct {
+				name string
+				run  func() error
+			}{
+				{"intake", func() (err error) { tick.Intake, err = w.intake(ctx, svc, scope, pid, fence); return err }},
+				{"subscribers", func() (err error) { tick.Subscribers, err = w.subscribers(ctx, svc, scope, pid, fence); return err }},
+				{"health", func() (err error) {
+					tick.Health, err = w.health(ctx, svc, scope, pid, fence, healthLeft, false)
+					return err
+				}},
+				{"docs", func() (err error) { tick.Docs, err = w.docs(ctx, svc, pid, fence); return err }},
+				{"dispatcher", func() (err error) { tick.Dispatch, err = w.dispatcher(ctx, pid, fence); return err }},
 			}
-			if tick.Subscribers, err = w.subscribers(ctx, svc, scope, pid, fence); err != nil {
-				return err
+			for _, step := range steps {
+				if ctx.Err() != nil {
+					tick.fail(ctx, ctx.Err())
+					return nil
+				}
+				err := step.run()
+				mark = tick.took(step.name, mark)
+				if err != nil {
+					if lostLease(err) {
+						return err
+					}
+					tick.fail(ctx, err)
+				}
 			}
-			if tick.Health, err = w.health(ctx, svc, scope, pid, fence, healthLeft, false); err != nil {
-				return err
-			}
-			if tick.Docs, err = w.docs(ctx, svc, pid, fence); err != nil {
-				return err
-			}
-			tick.Dispatch, err = w.dispatcher(ctx, pid, fence)
-			return err
+			return nil
 		},
 	})
+	tick.took("markers", mark)
 	if err != nil {
-		tick.Error = failureCode(err)
+		tick.fail(ctx, err)
 	}
 	return tick
+}
+
+// fail records a step's failure: the first one stands as the tick's error.
+// A failure once the share has run out is "deadline", however the step
+// reported it.
+func (t *ProjectTick) fail(ctx context.Context, err error) {
+	if t.Error != "" {
+		return
+	}
+	if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+		t.Error = "deadline"
+		return
+	}
+	t.Error = failureCode(err)
+}
+
+// lostLease: the watch lease is gone (a conflict), so the pass must stop.
+func lostLease(err error) bool {
+	var coded interface{ Code() string }
+	return errors.As(err, &coded) && coded.Code() == "conflict"
 }
 
 // Markers applies one project's due claim markers under the project's
@@ -206,7 +271,7 @@ func (w *Watcher) nudged(ctx context.Context, pid string, dispatch bool) Project
 		Within: func(ctx context.Context, fence map[string]any) error {
 			var err error
 			if tick.Health, err = w.health(ctx, svc, scope, pid, fence, 0, true); err != nil {
-				tick.Error = failureCode(err)
+				tick.fail(ctx, err)
 			}
 			if !dispatch {
 				return nil
@@ -220,7 +285,7 @@ func (w *Watcher) nudged(ctx context.Context, pid string, dispatch bool) Project
 		},
 	})
 	if err != nil {
-		tick.Error = failureCode(err)
+		tick.fail(ctx, err)
 	}
 	kind := "nudge"
 	if dispatch {
@@ -265,6 +330,17 @@ func logTick(pid, kind string, tick ProjectTick) {
 	if p := tick.Subscribers; p != nil && (p.Done+p.Skipped+p.Retry > 0 || p.Left > 0) {
 		logf("watcher: subscribers: project %s (%s): done %d, skipped %d, retry %d, left %d", pid, kind, p.Done, p.Skipped, p.Retry, p.Left)
 	}
+	// A slow pass says where its share went, by step.
+	parts, total := []string{}, int64(0)
+	for _, step := range []string{"comments", "intake", "subscribers", "health", "docs", "dispatcher", "markers"} {
+		if ms, ok := tick.TookMS[step]; ok {
+			parts = append(parts, fmt.Sprintf("%s %dms", step, ms))
+			total += ms
+		}
+	}
+	if total >= slowPassMS {
+		logf("watcher: %s: project %s took %dms: %s", kind, pid, total, strings.Join(parts, ", "))
+	}
 	if tick.Error != "" {
 		logf("watcher: %s: project %s failed: %s", kind, pid, tick.Error)
 	}
@@ -296,7 +372,7 @@ func (w *Watcher) service(pid string) *linearboard.Service {
 		IssueState: linearboard.GraphQLIssueState(w.App.GraphQL),
 	})
 	svc.KeepProviderOpen(linearboard.WatchProviderTTL)
-	svc.CacheReadBindingProof(linearboard.BindingProofTTL)
+	svc.CacheReadBindingProof(watcherProofTTL)
 	w.services[pid] = svc
 	return svc
 }

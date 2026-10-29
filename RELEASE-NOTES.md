@@ -51,6 +51,16 @@
   `scope_mismatch`, and the watcher's needs-agent intake (S1) would have failed the same way for a labelled sub-team
   issue. Such a row is now dropped and counted (`filtered_other_team`), as the board was built to; a row outside the
   asked project is still refused. No schema change. Linear config scope: none.
+- **A large project keeps its watcher ticks.** The comment watch polled due issues until the hour's budget ran out,
+  never the clock, so with a large budget (or none) and many watched issues it took a project's whole 20 s share of
+  the tick: intake, health and the rest were cut, and every tick failed as a bare `failed`. It now stops with 10 s of
+  the share left (`comments_stopped: deadline`) and the next tick goes on with the issues left due. Each later step
+  stands alone: one that fails is recorded and the next still runs. A share that runs out is recorded as `deadline`,
+  and a poll it cut still reports, so its calls are charged and the next tick doesn't redo the same work. Verifying a
+  binding whose projects hold several teams no longer reads each such project again: Linear may list its teams in
+  another order under each team. The watcher reuses a verified binding for 20 minutes, across ticks, for its reads (a
+  relink or a failed check drops it; writes always verify), and a pass that takes 5 s or more logs each step's time.
+  No schema change. Linear config scope: none.
 - **Doctor's `linear.writes` covers every recorded Linear write.** It names each project create, issue move or team
   add that may have happened unconfirmed (unsettled after 10 minutes, or settled `uncertain`) by kind and state, until
   the owner runs `clawbridge linear writes --ack`. The check was `linear.project_creates`: that ID stays in the

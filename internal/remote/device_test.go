@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -268,7 +269,7 @@ func TestJoinRefusals(t *testing.T) {
 	alias := strings.Replace(d.ts.URL, "127.0.0.1", "[::1]", 1)
 	if _, err := JoinServer(context.Background(), alias, nil); err == nil {
 		t.Log("no IPv6 loopback here")
-	} else if !strings.Contains(err.Error(), "public origin is "+d.ts.URL) && !strings.Contains(err.Error(), "cannot read") {
+	} else if !strings.Contains(err.Error(), "public origin is "+d.ts.URL) && !strings.Contains(err.Error(), "cannot read") && !strings.Contains(err.Error(), "cannot reach") {
 		t.Fatal(err)
 	}
 	origin, err := JoinServer(context.Background(), d.ts.URL, nil)
@@ -408,5 +409,26 @@ func TestDeviceRouteSyncsAndReadsItsMirror(t *testing.T) {
 	}
 	if r, err := device().Execute(ctx, inbox); err == nil {
 		t.Fatalf("another device read this device's mirror: %+v", r)
+	}
+}
+
+// A transport failure to the invite's server names the host, not OAuth; a
+// refused answer keeps the sign-in-settings wording.
+func TestJoinServerUnreachableNamesTheHost(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	addr := ln.Addr().String()
+	ln.Close()
+	_, err = JoinServer(context.Background(), "http://"+addr, nil)
+	want := "cannot reach " + addr + ": check the invite link's address and your network"
+	if err == nil || err.Error() != want {
+		t.Fatalf("got %v, want %q", err, want)
+	}
+	bad := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(500) }))
+	defer bad.Close()
+	if _, err := JoinServer(context.Background(), bad.URL, nil); err == nil || !strings.Contains(err.Error(), "cannot read the server's sign-in settings") {
+		t.Fatal(err)
 	}
 }

@@ -437,6 +437,12 @@ func checkConfig(config Config, add func(Check)) bool {
 	}
 	switch config.Mode {
 	case "local":
+		if config.DB == "" && config.Workspace == "" && config.Project == "" && config.Session == "" && config.Instance == "" && config.Server == "" {
+			check.Message = "No ClawBridge profile yet: run `clawbridge join` (with an invite) or `clawbridge` (guided setup)."
+			check.Action = "Run `clawbridge join` with an invite, or `clawbridge` for guided setup."
+			add(check)
+			return false
+		}
 		if config.DB == "" || config.Workspace == "" {
 			check.Message = "Local routing is incomplete: explicit database and workspace are required."
 			check.Action = "Run local setup or select the missing trusted route."

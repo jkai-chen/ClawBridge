@@ -51,6 +51,9 @@ func DiscoverOAuthClient(ctx context.Context, serverURL string, httpClient *http
 		if ctx != nil && ctx.Err() != nil {
 			return OAuthDiscovery{}, ctx.Err()
 		}
+		if isTransportFailure(err) {
+			return OAuthDiscovery{}, errUnreachable
+		}
 		return OAuthDiscovery{}, errors.New("cannot reach trusted server OAuth discovery; check the configured server and network")
 	}
 	defer response.Body.Close()
@@ -227,4 +230,21 @@ func strictJSONString(raw json.RawMessage) (string, bool) {
 	}
 	trimmed := bytes.TrimSpace(raw)
 	return value, len(trimmed) >= 2 && trimmed[0] == '"' && trimmed[len(trimmed)-1] == '"'
+}
+
+// errUnreachable marks a discovery request that never reached the server (DNS,
+// connection refused, timeout), as opposed to a TLS or answer problem.
+var errUnreachable = errors.New("cannot reach trusted server OAuth discovery; check the configured server and network")
+
+func isTransportFailure(err error) bool {
+	var dns *net.DNSError
+	if errors.As(err, &dns) {
+		return true
+	}
+	var op *net.OpError
+	if errors.As(err, &op) && op.Op == "dial" {
+		return true
+	}
+	var ne net.Error
+	return errors.As(err, &ne) && ne.Timeout()
 }

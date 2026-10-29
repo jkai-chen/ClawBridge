@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"clawbridge/internal/bus"
@@ -148,5 +149,28 @@ func TestPinnedClientConfigIsComparedExactly(t *testing.T) {
 	}
 	if entryMatches(entry, wrong) {
 		t.Fatal("different trusted client config accepted")
+	}
+}
+
+// A machine with no profile at all is pointed at join or guided setup; a
+// half-configured local profile keeps the local-setup message.
+func TestConfigCheckNoProfileYetPointsAtJoin(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.toml")
+	find := func(config Config) Check {
+		for _, c := range Run(context.Background(), Input{Config: config}, routeExecutor{}).Checks {
+			if c.ID == "config.trusted" {
+				return c
+			}
+		}
+		t.Fatal("no config.trusted check")
+		return Check{}
+	}
+	none := find(Config{Path: path, Present: true, Valid: true, Mode: "local"})
+	if none.Status != Fail || !strings.Contains(none.Message, "No ClawBridge profile yet: run `clawbridge join` (with an invite) or `clawbridge` (guided setup)") || strings.Contains(none.Message+none.Action, "local setup") {
+		t.Fatalf("%+v", none)
+	}
+	half := find(Config{Path: path, Present: true, Valid: true, Mode: "local", Workspace: "w"})
+	if !strings.Contains(half.Message, "Local routing is incomplete") || !strings.Contains(half.Action, "Run local setup") {
+		t.Fatalf("%+v", half)
 	}
 }

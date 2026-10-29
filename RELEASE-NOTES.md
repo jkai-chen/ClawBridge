@@ -40,6 +40,14 @@
   Linear write the server queued, held through the drain and sent once by the new server. Each write lands once and in
   order (docs/development.md).
 
+## Joining
+
+- **First-run messages point an invitee the right way.** Bare `clawbridge` with no terminal names the invite link form
+  (`clawbridge join`, paste the link) before the code form; `doctor` on a machine with no profile says "No ClawBridge
+  profile yet: run `clawbridge join` or `clawbridge`" instead of "Run local setup"; and a join to an unreachable server
+  says "cannot reach HOST: check the invite link's address and your network" instead of naming OAuth discovery. Text
+  only. Linear config scope: none.
+
 ## Linear
 
 - **Doctor's `linear.writes` covers every recorded Linear write.** It names each project create, issue move or team

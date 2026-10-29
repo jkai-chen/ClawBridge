@@ -79,6 +79,9 @@ func JoinServer(ctx context.Context, serverURL string, httpClient *http.Client) 
 	origin := Origin(u)
 	discovered, err := DiscoverOAuthClient(ctx, base, httpClient)
 	if err != nil {
+		if errors.Is(err, errUnreachable) {
+			return "", fmt.Errorf("cannot reach %s: check the invite link's address and your network", u.Host)
+		}
 		return "", fmt.Errorf("cannot read the server's sign-in settings: %w", err)
 	}
 	if discovered.AuthMethods == nil {

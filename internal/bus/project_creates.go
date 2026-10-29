@@ -42,6 +42,55 @@ func isProjectCoordinator(ctx context.Context, tx *transaction, pid string, acto
 	return str(p, "coordinator_session") != "" && p["coordinator_session"] == actor["id"], nil
 }
 
+// isLinearCoordinator reports whether actor holds the coordinator's Linear
+// rights (issue moves, project team adds, project creates) in the project.
+// It is true when either:
+//  1. isProjectCoordinator is true; or
+//  2. the dispatcher is enabled, the project's coordinator_session is the
+//     system dispatcher session, and actor, an active non-system session,
+//     is some domain's coordinator session (same ID and same owner
+//     principal as the domain records).
+//
+// While the dispatcher is on, no human session is the project coordinator,
+// so each domain's coordinator session keeps these rights, inside its own
+// lane: every call site still applies its own lane and team checks.
+// Assignment powers (coordinatorMay, intake) stay with the project's
+// designated coordinator (coordinator_session) alone, checked at those
+// sites; while the dispatcher is on, that is the dispatcher. Project status
+// is the designated coordinator's, unbounded, and a domain coordinator's,
+// bounded by lane at the claim (projectStatusSetter).
+// An unreadable domains document is an error, never a grant.
+func isLinearCoordinator(ctx context.Context, tx *transaction, pid string, actor map[string]any) (bool, error) {
+	if ok, err := isProjectCoordinator(ctx, tx, pid, actor); ok || err != nil {
+		return ok, err
+	}
+	if actor == nil || actor["status"] != "active" || actor["role"] == "system" || str(actor, "id") == "" {
+		return false, nil
+	}
+	// The dispatcher's seat first, so a project whose dispatcher is off never
+	// reads (or trips on) the dispatcher document.
+	seat, err := query(ctx, tx, `SELECT s.id FROM projects p JOIN sessions s ON s.id=p.coordinator_session WHERE p.id=? AND s.project_id=p.id AND s.role='system' AND s.name=?`, pid, DispatcherSessionName)
+	if err != nil {
+		return false, err
+	}
+	if len(seat) != 1 {
+		return false, nil
+	}
+	domains, meta, err := readDispatcher(ctx, tx, pid)
+	if err != nil {
+		return false, err
+	}
+	if meta["enabled"] != true {
+		return false, nil
+	}
+	for _, d := range domains.Domains {
+		if ref := d.CoordinatorSession; ref != nil && ref.ID == actor["id"] && ref.Principal != "" && ref.Principal == actor["owner_principal"] {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
 func (s *Store) projectCreateOp(ctx context.Context, tx *transaction, w, p map[string]any, projectRole string, actor map[string]any, r Request) (any, error) {
 	a := r.Args
 	if a == nil {
@@ -99,12 +148,12 @@ func (s *Store) projectCreateOp(ctx context.Context, tx *transaction, w, p map[s
 // binding's default team without lanes), with a seeded kind of that team.
 // A repeat with the same operation_id returns the same reservation.
 func (s *Store) reserveProjectCreate(ctx context.Context, tx *transaction, wid, pid string, actor, a map[string]any, op string, now time.Time) (any, error) {
-	ok, err := isProjectCoordinator(ctx, tx, pid, actor)
+	ok, err := isLinearCoordinator(ctx, tx, pid, actor)
 	if err != nil {
 		return nil, err
 	}
 	if !ok {
-		return nil, scoped("only the project's designated coordinator session may create a Linear project; the project owner creates one from their own terminal", "forbidden")
+		return nil, scoped("only the project's designated coordinator session or, while the dispatcher is on, a domain's coordinator session may create a Linear project; the project owner creates one from their own terminal", "forbidden")
 	}
 	team, err := lowerUUID(a, "team_id", true)
 	if err != nil {

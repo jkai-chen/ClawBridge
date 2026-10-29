@@ -162,7 +162,7 @@ func (s *Service) MoveIssueV2(ctx context.Context, scope bus.Request, in MoveInp
 	// refuse anyway.
 	if access.SessionID != "" {
 		if !access.Coordinator {
-			return out, errors.New("only the project's coordinator session confirms a team move; preview it and ask the project owner or a project lead; nothing was sent")
+			return out, errors.New("only the project's coordinator session (or, while the dispatcher is on, a domain's) confirms a team move; preview it and ask the project owner or a project lead; nothing was sent")
 		}
 		if len(b.Lanes) == 0 {
 			return out, outsideLaneError("outside_lane: this binding has no lanes, so a coordinator confirms no team move; nothing was sent")
@@ -335,7 +335,7 @@ func moveWho(b bus.TaskboardBindingV2, access bus.TaskboardAccess) string {
 	case access.SessionID == "":
 		return "Only the project owner or a project lead confirms a move, from their own terminal, once the server's operator has proven moves."
 	case access.Coordinator && len(b.Lanes) > 0:
-		return "As the project's coordinator you confirm a move between your lane's teams only, when your person or the owner asked for it."
+		return "As the project's coordinator (or, while the dispatcher is on, a domain's) you confirm a move between your lane's teams only, when your person or the owner asked for it."
 	default:
 		return "A session previews a move only; the project owner or a project lead confirms it."
 	}

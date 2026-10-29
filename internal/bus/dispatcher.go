@@ -324,6 +324,9 @@ func (s *Store) dispatcherResolve(ctx context.Context, tx *transaction, w map[st
 	return d, nil
 }
 
+// errDispatcherUnreadable is a stored domains document that doesn't parse.
+var errDispatcherUnreadable = errors.New("stored dispatcher domains are unreadable")
+
 // readDispatcher is the project's dispatcher policy row; with none, off,
 // rules mode, no domains, revision 0.
 func readDispatcher(ctx context.Context, tx *transaction, pid string) (DispatcherDomains, map[string]any, error) {
@@ -336,11 +339,11 @@ func readDispatcher(ctx context.Context, tx *transaction, pid string) (Dispatche
 	}
 	var stored any
 	if json.Unmarshal([]byte(str(rows[0], "domains")), &stored) != nil {
-		return DispatcherDomains{}, nil, errors.New("stored dispatcher domains are unreadable")
+		return DispatcherDomains{}, nil, errDispatcherUnreadable
 	}
 	d, err := ParseDispatcherDomains(stored)
 	if err != nil {
-		return DispatcherDomains{}, nil, errors.New("stored dispatcher domains are unreadable")
+		return DispatcherDomains{}, nil, errDispatcherUnreadable
 	}
 	return d, map[string]any{"revision": int64(asInt(rows[0]["revision"])), "enabled": asInt(rows[0]["enabled"]) == 1, "mode": str(rows[0], "mode"), "updated_at": rows[0]["updated_at"], "updated_by": rows[0]["updated_by_principal"]}, nil
 }

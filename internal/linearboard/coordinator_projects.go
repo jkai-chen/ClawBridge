@@ -12,7 +12,7 @@ import (
 )
 
 // A coordinator's project create (live/FR5-PLAN.md r1): the project's
-// designated coordinator session creates a Linear project in its lane's
+// designated coordinator session (while the dispatcher is on, a domain's) creates a Linear project in its lane's
 // default team, with a kind, through its person's own Linear profile. The
 // server reserves the create before any Linear call and the settle tells
 // the owner; delete and archive stay the owner's, in Linear.

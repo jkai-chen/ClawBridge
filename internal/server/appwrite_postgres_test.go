@@ -60,6 +60,8 @@ type awLinearAPI struct {
 	backfillVars []map[string]any
 	// backfillQueries is each backfill read's query name.
 	backfillQueries []string
+	// projectStatus, if set, answers the project status query's data.
+	projectStatus map[string]any
 }
 
 func (l *awLinearAPI) workflowReads() int {
@@ -98,6 +100,9 @@ func (l *awLinearAPI) RoundTrip(r *http.Request) (*http.Response, error) {
 			name, _, _ := strings.Cut(strings.TrimPrefix(sent.Query, "query "), "(")
 			l.backfillQueries = append(l.backfillQueries, name)
 			return reply(200, map[string]any{"data": map[string]any{"issues": map[string]any{"nodes": l.backfill, "pageInfo": map[string]any{"hasNextPage": false}}}})
+		}
+		if l.projectStatus != nil && strings.Contains(body, "query ProjectStatus(") {
+			return reply(200, map[string]any{"data": l.projectStatus})
 		}
 		if strings.Contains(body, "workflowStates") {
 			l.workflowStates++

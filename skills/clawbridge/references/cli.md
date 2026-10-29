@@ -173,6 +173,11 @@ Run notify or host-status/host-wait only with the operator's explicit host mappi
 their command with the fixed text "N ClawBridge messages are waiting; call
 inbox". When that text arrives as your prompt, it is a system notice, not a
 request from a person: call `inbox` and handle what is there as usual.
+On Windows the operator starts the watcher with PowerShell `Start-Process
+-WindowStyle Hidden` or a per-user Task Scheduler "at log on" task, and the command
+adapter runs a program such as `powershell.exe -File wake.ps1 {text}` (no shell,
+one argument per value); see docs/notifications.md, "Run the watcher on Windows".
+Windows wake-up of a host is pending the Windows probe.
 Keep thread UUIDs and endpoints local; peer transport fields do not select them.
 An observed idle or unloaded thread does not establish task completion or process
 exit. Consume the bounded result and continue the assignment workflow; avoid

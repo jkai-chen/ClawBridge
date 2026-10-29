@@ -248,7 +248,7 @@ jobs:
     needs: changes
     if: ${{ github.event.repository.private == false && needs.changes.outputs.windows == 'true' }}
     runs-on: windows-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
@@ -287,7 +287,8 @@ jobs:
         if: ${{ !cancelled() }}
         shell: pwsh
         run: pwsh -NoProfile -File integration/release_fixtures/install_windows_probe.ps1
-      # Last, so a failure here never hides the installer and console steps.
+      # The last two steps, so a failure there never hides the installer and
+      # console steps.
       # Under the user profile, as for a real user: the runner's own TEMP is
       # outside it, with a different ACL.
       - name: Native Windows notify, setup, CLI and ctxwatch tests under the user profile
@@ -298,3 +299,12 @@ jobs:
           $env:TMP = $env:TEMP
           $null = New-Item -ItemType Directory -Force -Path $env:TEMP
           go test ./internal/notify ./internal/setup ./internal/cli ./internal/ctxwatch -count=1
+      # Also under the user profile, for the same reason.
+      - name: Native Windows Codex wake-up adapter with a Go-built fake
+        if: ${{ !cancelled() }}
+        shell: pwsh
+        run: |
+          $env:TEMP = Join-Path $env:LOCALAPPDATA 'Temp'
+          $env:TMP = $env:TEMP
+          $null = New-Item -ItemType Directory -Force -Path $env:TEMP
+          go test ./integration -run '^TestNotificationCodexFakeSubprocess$' -count=1

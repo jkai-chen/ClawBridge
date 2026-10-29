@@ -125,6 +125,9 @@
 - **A former owner can delete their own model key.** `dispatcher_model_key_delete` needed the project owner role, like
   the rest of model setup, so a key-holder who was no longer an owner couldn't remove their sealed key. Any project role
   may now delete its own key, and only its own; setup, status and doctor stay the owner's.
+- **A project owner's `dispatcher show` includes their model setup.** A `model` block shows the project's model use,
+  the owner's provider and model, and their key's and agent's state. A new read-only `dispatcher_model_config` returns
+  the owner's own active and pending setups, never the key, for key rotation. Other members see neither.
 
 # ClawBridge v0.3.9.1 (server hotfix, deployed 29 Oct; no client release or tag)
 

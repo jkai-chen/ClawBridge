@@ -58,6 +58,10 @@ clawbridge dispatcher chat leads on|off --expected-revision N                 # 
 ```
 
 - **The revision** is `show`'s `revision` (0 the first time). Every change is recorded in the project's history.
+- **A project owner's `show`** also has `model`: the project's model use (`off`, `engine` in model mode, `advisor` when
+  it advises in rules mode), the owner's own provider and model (the active key's, else the pending one's), the key's
+  state (`active`, `pending_test` or `none`) and their agent (`running`, `offline` or `never_seen`). Other members don't
+  see it. The owner's full setup, never the key, is the read-only `dispatcher_model_config`, which key rotation uses.
 - **Domain owners:** a lead who owns a domain may trust their own sessions in it, which lets the dispatcher confirm
   their claims there once it is enabled. That is intended, and audited. A lead cannot create domains or change what a
   domain matches.

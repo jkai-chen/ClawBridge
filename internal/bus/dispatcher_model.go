@@ -262,7 +262,7 @@ func providerTarget(baseURL string) (string, error) {
 }
 
 func dispatcherModelOperation(op string) bool {
-	return op == "dispatcher_model_setup" || op == "dispatcher_model_status" || op == "dispatcher_model_key_delete" || op == "dispatcher_model_doctor"
+	return op == "dispatcher_model_setup" || op == "dispatcher_model_status" || op == "dispatcher_model_key_delete" || op == "dispatcher_model_doctor" || op == "dispatcher_model_config"
 }
 
 // dispatcherModelOp runs the owner's model setup commands (§11.1, §11.7),
@@ -291,6 +291,8 @@ func (s *Store) dispatcherModelOp(ctx context.Context, tx *transaction, w, p map
 		return s.modelSetupStatus(ctx, tx, nowRaw, revision)
 	case "dispatcher_model_doctor":
 		return s.modelDoctor(ctx, tx, w, p, nowRaw)
+	case "dispatcher_model_config":
+		return s.modelConfig(ctx, tx)
 	}
 	return s.modelKeyDelete(ctx, tx, w, p, nowRaw)
 }

@@ -692,3 +692,76 @@ func TestAgentCredentialMaxAge(t *testing.T) {
 		t.Fatal("doctor's mints:", holder)
 	}
 }
+
+// PR C2: the caller's own setup, pending then active, never the key or its
+// fingerprint.
+func TestModelConfigRead(t *testing.T) {
+	h := newModelHarness(t)
+	read := func() map[string]any {
+		h.t.Helper()
+		return h.call("dispatcher_model_config", "", map[string]any{}).(map[string]any)
+	}
+	if out := read(); out["active"] != nil || out["pending"] != nil {
+		t.Fatal("before setup:", out)
+	}
+	h.setup(nil)
+	out := read()
+	pending, _ := out["pending"].(map[string]any)
+	if out["active"] != nil || pending == nil || pending["provider_id"] != "anthropic" || pending["api"] != "anthropic-messages" || pending["base_url"] != "https://api.anthropic.com" ||
+		pending["model"] != "claude-test" || pending["egress_text_version"] != "v2" || pending["config_revision"] != 1 || pending["created_at"] == "" || pending["caps"].(map[string]any)["daily_tokens"] == nil {
+		t.Fatal("pending:", out)
+	}
+	if raw, _ := json.Marshal(out); leaks(string(raw)) || strings.Contains(string(raw), "fingerprint") || len(pending) != 8 {
+		t.Fatal("the config read says more than the config:", string(raw))
+	}
+	cred, cfg := h.start()
+	if err := h.s.AgentTestResult(h.ctx, cred, cfg.BindingSecret, 1, "active", ""); err != nil {
+		t.Fatal(err)
+	}
+	if out = read(); out["pending"] != nil || out["active"].(map[string]any)["config_revision"] != 1 {
+		t.Fatal("active:", out)
+	}
+	if _, err := h.s.Execute(h.ctx, h.request("dispatcher_model_config", "a", map[string]any{})); err == nil {
+		t.Fatal("a session read the owner's setup")
+	}
+}
+
+// PR C3: dispatcher_get adds the owner's model lines: use, provider and
+// model, key and agent.
+func TestDispatcherGetShowsTheOwnersModel(t *testing.T) {
+	c := newChatHarness(t)
+	exec := func(q string) {
+		c.t.Helper()
+		if _, err := c.s.db.Exec(q); err != nil {
+			c.t.Fatal(err)
+		}
+	}
+	view, err := c.as("", "dispatcher_get", map[string]any{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	m, _ := view["model"].(map[string]any)
+	if m == nil || m["use"] != "engine" || m["provider_id"] != "anthropic" || m["model"] != "claude-test" || m["key"] != "active" || m["agent"] != "running" {
+		t.Fatal("the owner's model:", view["model"])
+	}
+	// A rotation pending its test: the active key's provider and model still
+	// show.
+	rotation := setupArgs()
+	rotation["model"] = "claude-next"
+	if _, err = c.as("", "dispatcher_model_setup", rotation); err != nil {
+		t.Fatal(err)
+	}
+	if view, err = c.as("", "dispatcher_get", map[string]any{}); err != nil || view["model"].(map[string]any)["model"] != "claude-test" || view["model"].(map[string]any)["key"] != "active" {
+		t.Fatal("with a rotation pending:", view["model"], err)
+	}
+	exec(`UPDATE dispatcher_policies SET mode='rules',model='{"advise":true}'`)
+	exec(`UPDATE dispatcher_model_tokens SET last_used_at='2000-01-01T00:00:00.000000000Z'`)
+	if view, err = c.as("", "dispatcher_get", map[string]any{}); err != nil || view["model"].(map[string]any)["use"] != "advisor" || view["model"].(map[string]any)["agent"] != "offline" {
+		t.Fatal("advising, agent offline:", view["model"], err)
+	}
+	exec(`DELETE FROM dispatcher_model_keys`)
+	exec(`UPDATE dispatcher_policies SET enabled=0`)
+	if view, err = c.as("", "dispatcher_get", map[string]any{}); err != nil || view["model"].(map[string]any)["use"] != "off" || view["model"].(map[string]any)["key"] != "none" {
+		t.Fatal("off, no key:", view["model"], err)
+	}
+}

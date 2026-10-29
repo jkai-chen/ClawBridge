@@ -732,6 +732,7 @@ var operationArgs = map[string]string{
 	"dispatcher_model_tools":      "instance tools expected_revision confirm",
 	"dispatcher_escalations_list": "instance all limit",
 	"dispatcher_model_doctor":     "instance",
+	"dispatcher_model_config":     "instance",
 	"health_due":                  "instance lease_token generation limit nudges_only",
 	"health_force":                "instance lease_token generation linear_project force_new",
 	"health_report":               "instance lease_token generation linear_project calls error facts forced force_new flow nudge",
@@ -1053,7 +1054,7 @@ func (s *Store) ExecuteAs(ctx context.Context, principal string, r Request) (Res
 // inbox stamps deliveries, so those keep the locks.
 func pureRead(r Request) bool {
 	switch r.Operation {
-	case "snapshot", "inbox_status", "notification_status", "taskboard_get", "taskboard_get_v2", "taskboard_access", "list_projects", "list_members", "comment_watch_status", "webhook_status", "label_policy_get", "status_policy_get", "doc_policy_get", "dispatcher_get", "context_watch_get", "health_get", "doc_seed_get", "doc_publication_get", "invite_list", "device_list", "device_events", "user_list", "owner_transfer_get", "dispatcher_chat_show", "dispatcher_decisions_list", "dispatcher_escalations_list", "dispatcher_model_doctor", "project_overview":
+	case "snapshot", "inbox_status", "notification_status", "taskboard_get", "taskboard_get_v2", "taskboard_access", "list_projects", "list_members", "comment_watch_status", "webhook_status", "label_policy_get", "status_policy_get", "doc_policy_get", "dispatcher_get", "context_watch_get", "health_get", "doc_seed_get", "doc_publication_get", "invite_list", "device_list", "device_events", "user_list", "owner_transfer_get", "dispatcher_chat_show", "dispatcher_decisions_list", "dispatcher_escalations_list", "dispatcher_model_doctor", "project_overview", "dispatcher_model_config":
 		return true
 	case "list_sessions", "history", "whoami", "linear_comments_posted", "linear_comment_precheck", "intake_policy_get", "intake_trust_list", "intake_list", "linear_view_get", "linear_views_list", "project_kind_get", "team_roles_get", "lane_pins_get", "project_team_add_list":
 		// Naming a session with its instance makes it a heartbeat read: the
@@ -1534,7 +1535,13 @@ func (s *Store) execute(ctx context.Context, tx *transaction, r Request) (any, e
 		if r.Session == "" && str(a, "instance") != "" {
 			return nil, errors.New("instance requires session")
 		}
-		return dispatcherView(ctx, tx, pid)
+		view, err := dispatcherView(ctx, tx, pid)
+		if err != nil || projectRole != "owner" {
+			return view, err
+		}
+		// An owner also sees the model's use and their own setup (PR C3).
+		view["model"], err = s.ownerModelView(ctx, tx, pid)
+		return view, err
 	}
 	// Any project member may read the document policy, its deny patterns
 	// by ID only unless they may publish (docPolicyView).

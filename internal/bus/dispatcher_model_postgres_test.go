@@ -318,3 +318,31 @@ func TestPostgresModelKeyDeleteOwn(t *testing.T) {
 		}
 	}
 }
+
+// PR C2/C3 on the hosted authority: the owner reads their own setup and the
+// model lines, as pure reads; a member gets neither.
+func TestPostgresModelConfigAndShow(t *testing.T) {
+	f := newPGIdentityFixture(t)
+	seal, _ := NewModelSeal(bytes.Repeat([]byte{7}, 32), nil)
+	f.s.SetModelSeal(seal)
+	f.must(f.owner, "sub-owner", Request{Operation: "dispatcher_model_setup", Workspace: f.workspace, Project: "p", Args: map[string]any{"provider_id": "anthropic", "api": "anthropic-messages", "base_url": "https://api.anthropic.com", "model": "claude-test", "key": "sk-config-key-000000000000", "caps": map[string]any{"daily_tokens": 500000}, "egress_text_version": "v2", "egress_confirmed": true}})
+	member := newID("m") + "@identity-test.example"
+	f.member(member)
+	config := Request{Operation: "dispatcher_model_config", Workspace: f.workspace, Project: "p", Args: map[string]any{}}
+	show := Request{Operation: "dispatcher_get", Workspace: f.workspace, Project: "p", Args: map[string]any{}}
+	out := f.must(f.owner, "sub-owner", config).Data.(map[string]any)
+	if pending, _ := out["pending"].(map[string]any); pending == nil || pending["model"] != "claude-test" || out["active"] != nil {
+		t.Fatal("the owner's config:", out)
+	}
+	view := f.must(f.owner, "sub-owner", show).Data.(map[string]any)
+	if m, _ := view["model"].(map[string]any); m == nil || m["key"] != "pending_test" || m["use"] != "off" || m["agent"] != "never_seen" {
+		t.Fatal("the owner's model lines:", view["model"])
+	}
+	if _, err := f.as(member, "sub-member", config); err == nil || !strings.Contains(err.Error(), "owner") {
+		t.Fatal("a member read a setup:", err)
+	}
+	view = f.must(member, "sub-member", show).Data.(map[string]any)
+	if _, shown := view["model"]; shown {
+		t.Fatal("a member saw the model lines:", view["model"])
+	}
+}

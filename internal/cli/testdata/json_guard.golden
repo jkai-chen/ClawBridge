@@ -33,6 +33,6 @@
 ### update --session a --instance a-one --notes guarding
 {"source":"local-authority","data":{"account":"","agent_kind":"other","alive_state":null,"alive_until":null,"context_at":null,"context_backstop_at":null,"context_compactions":0,"context_handover_at":null,"context_handover_tokens":null,"context_level":null,"context_notified_at":null,"context_tokens":null,"context_warn_tokens":null,"context_window":null,"created_at":"<TIME>","host":"","id":"<ID>","instance":"a-one","last_seen":"<TIME>","liveness":"working","model":"","name":"a","notes":"guarding","notification_policy":"hold","owner_principal":"local:<USER>","presence":"active","project_id":"<ID>","role":"","stale":false,"status":"active","successor":null,"transport":{},"updated_at":"<TIME>"}}
 ### dispatcher show
-{"source":"local-authority","data":{"domains":[],"enabled":false,"label_overlaps":null,"mode":"rules","revision":0,"updated_at":null,"updated_by":null}}
+{"source":"local-authority","data":{"domains":[],"enabled":false,"label_overlaps":null,"mode":"rules","model":{"agent":"never_seen","key":"none","model":"","provider_id":"","use":"off"},"revision":0,"updated_at":null,"updated_by":null}}
 ### project context-watch show
 {"source":"local-authority","data":{"context_watch":{"enabled":false,"levels":[],"extra_recipients":[],"handover_hint":""},"revision":0,"updated_at":null,"updated_by":null}}

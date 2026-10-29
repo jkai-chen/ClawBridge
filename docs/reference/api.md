@@ -1089,6 +1089,11 @@ passes with the counts, or with "not bound". It warns when the bound transcript
 is unreadable or unsupported, or is past a warn or handover level the session
 has cached. It never fails.
 
+It also adds a `hooks` check, with or without a session, when ClawBridge's
+Claude Code hooks are installed: the form (`exec` or `shell`) and the Claude
+Code version, read with a short `claude --version`. On Windows with the exec
+form it warns that the hooks are pending the Windows probe. It never fails.
+
 ## Skill output
 
 `clawbridge skill install|status|uninstall` needs no configuration and returns

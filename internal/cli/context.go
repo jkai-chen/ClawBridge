@@ -7,8 +7,10 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"clawbridge/internal/ctxwatch"
 	"clawbridge/internal/doctor"
@@ -223,5 +225,70 @@ func doctorQueue(session string) doctor.QueueState {
 		st.Hold = &h
 	}
 	st.Err = err
+	return st
+}
+
+// hooksClaudeVersion runs `claude --version`; a variable so tests can replace it.
+var hooksClaudeVersion = func(ctx context.Context) (string, bool) {
+	path, err := exec.LookPath("claude")
+	if err != nil {
+		return "", false
+	}
+	bounded, cancel := context.WithTimeout(ctx, 3*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(bounded, path, "--version")
+	cmd.WaitDelay = time.Second
+	out, err := cmd.Output()
+	if err != nil {
+		return "", false
+	}
+	// "2.1.0 (Claude Code)": the first word.
+	if words := strings.Fields(string(out)); len(words) > 0 && len(words[0]) <= 40 {
+		return words[0], true
+	}
+	return "", false
+}
+
+// doctorHooks reads the form of the hooks installed in this project's local
+// and shared settings and the user's, and the Claude Code version. It never
+// fails or waits long: an unreadable file is reported, a missing or slow
+// claude is only an unknown version.
+func doctorHooks(ctx context.Context) doctor.HooksState {
+	st := doctor.HooksState{GOOS: contextGOOS}
+	var paths []string
+	if config, err := ctxwatch.ClaudeConfigDir(); err == nil {
+		paths = append(paths, filepath.Join(config, "settings.json"))
+	}
+	if root, _, err := projectRoot(); err == nil {
+		paths = append(paths, filepath.Join(root, ".claude", "settings.local.json"), filepath.Join(root, ".claude", "settings.json"))
+	}
+	forms := map[string]bool{}
+	for _, path := range paths {
+		form, err := ctxwatch.InstalledHookForm(path)
+		if err != nil {
+			st.Err = err
+			return st
+		}
+		if form == "" {
+			continue
+		}
+		st.Paths = append(st.Paths, path)
+		if form == "mixed" {
+			forms[ctxwatch.FormExec], forms[ctxwatch.FormShell] = true, true
+		} else {
+			forms[form] = true
+		}
+	}
+	switch {
+	case forms[ctxwatch.FormExec] && forms[ctxwatch.FormShell]:
+		st.Form = "mixed"
+	case forms[ctxwatch.FormExec]:
+		st.Form = ctxwatch.FormExec
+	case forms[ctxwatch.FormShell]:
+		st.Form = ctxwatch.FormShell
+	}
+	if st.Form != "" {
+		st.Version, _ = hooksClaudeVersion(ctx)
+	}
 	return st
 }

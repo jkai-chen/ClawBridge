@@ -4,7 +4,11 @@
 
 - **Hooks can find their agent process without a POSIX shell.** ctxwatch now has Windows process primitives (parent
   lookup guarded against reused PIDs, liveness) and derives the agent PID from the hook's parent, skipping a shell. It
-  is groundwork for Windows wake-up, pending the Windows probe; nothing is installed on Windows yet.
+  is the groundwork for Windows wake-up, which is pending the Windows probe. No schema change. Linear config scope:
+  none.
+- **Windows hooks in exec form, and doctor's hook check.** On Windows, `mcp install` writes Claude Code hooks in exec
+  form (no POSIX shell). Doctor reports the hook form and the Claude Code version, and warns on Windows until the
+  version is probed (pending the Windows probe). No schema change. Linear config scope: none.
 
 # ClawBridge v0.3.9 (released 29 Oct)
 

@@ -140,6 +140,9 @@ type Input struct {
 	// Queue reads this session's message queue state, locally; the counts
 	// are the server's. Nil skips the check.
 	Queue func() QueueState
+	// Hooks reads the Claude Code hooks installed here, locally. Nil skips
+	// the check.
+	Hooks func() HooksState
 	// Playbook reads the project playbook's state in this checkout, for the
 	// coordinator session. Nil skips the check.
 	Playbook func() playbook.State
@@ -289,6 +292,9 @@ func Run(ctx context.Context, in Input, executor Executor) Report {
 			queueExecutor = executor
 		}
 		checkQueue(ctx, in.Queue(), in.Config, queueExecutor, in.Now, add)
+	}
+	if in.Hooks != nil {
+		checkHooks(in.Hooks(), add)
 	}
 	if in.Playbook != nil && authorityOK {
 		checkPlaybook(ctx, in.Playbook, in.Config, executor, add)

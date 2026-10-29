@@ -80,3 +80,29 @@ func evictOldest(seen map[string]window, max int, now time.Time, period time.Dur
 		delete(seen, oldest)
 	}
 }
+
+// blocked reports whether key is over its limit this minute; it counts
+// nothing. With reject it limits refusals only, so a client's accepted
+// requests never spend its budget (FR14 C1).
+func (p *preauthLimiter) blocked(key string) bool {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	v, held := p.seen[key]
+	return held && p.now().Sub(v.start) < time.Minute && v.count >= p.perMinute
+}
+
+// reject counts one refusal of key.
+func (p *preauthLimiter) reject(key string) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	now := p.now()
+	v, held := p.seen[key]
+	if !held || now.Sub(v.start) >= time.Minute {
+		v = window{start: now}
+	}
+	if !held {
+		evictOldest(p.seen, preauthKeys, now, time.Minute)
+	}
+	v.count++
+	p.seen[key] = v
+}

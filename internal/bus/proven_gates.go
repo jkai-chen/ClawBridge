@@ -4,14 +4,16 @@ import "fmt"
 
 // The server's PROVEN gates, by name: each turns on a Linear write only
 // after its live probe proves the app may make it (serve --*-proven or
-// CLAWBRIDGE_*_PROVEN=1). The project owner's overview shows which are on,
+// CLAWBRIDGE_*_PROVEN=1). One guards an input instead: webhooks, off until
+// the webhook probe proves Linear's deliveries, records verified deliveries
+// inert, marking nothing. The project owner's overview shows which are on,
 // so doctor and the TUI can say why a write is refused as unproven. The
 // list is fixed; nothing else of the server's settings is shown.
 
 // ProvenGateNames are the gates in the order doctor and the TUI show them.
 // A gate the server reads must be named here (server test
 // TestEveryProvenGateIsShown).
-var ProvenGateNames = []string{"project_flow", "issue_subscribers", "issue_move", "issue_family_move", "project_team_add", "project_status_domain", "project_plan"}
+var ProvenGateNames = []string{"project_flow", "issue_subscribers", "issue_move", "issue_family_move", "project_team_add", "project_status_domain", "project_plan", "webhooks"}
 
 // provenGates lists every gate with whether it is on.
 func (s *Store) provenGates() []map[string]any {
@@ -23,6 +25,7 @@ func (s *Store) provenGates() []map[string]any {
 		"project_team_add":      s.projectTeamAddProven,
 		"project_status_domain": s.projectStatusDomainProven,
 		"project_plan":          s.projectPlanProven,
+		"webhooks":              s.webhooksProven,
 	}
 	gates := make([]map[string]any, 0, len(ProvenGateNames))
 	for _, name := range ProvenGateNames {

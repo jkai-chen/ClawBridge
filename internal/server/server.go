@@ -310,6 +310,9 @@ type HandlerOptions struct {
 	// (maintenance.go) and counts each request in flight; nil never
 	// drains.
 	Drain *Drain
+	// Webhook serves POST /linear/webhook (FR14); nil, or one without a
+	// secret or the app's OrgID, leaves it a 404 like an unknown path.
+	Webhook *WebhookOptions
 }
 
 // NewHandlerWithOptions also serves the send-only /mcp/intake endpoint when
@@ -333,6 +336,10 @@ func NewHandlerWithOptions(store Executor, verifier Verifier, o HandlerOptions) 
 	}
 	if o.TickVerifier != nil && o.Ticker != nil {
 		tick = newTickHandler(o.TickVerifier, o.Ticker, newPreauthLimiter(60, now))
+	}
+	var webhook http.Handler
+	if s, ok := store.(WebhookStore); ok && o.Webhook != nil && len(o.Webhook.Secrets) > 0 && o.Webhook.OrgID != nil {
+		webhook = newWebhookHandler(s, o.Webhook, now, o.Drain)
 	}
 	if s, ok := store.(ModelStore); ok {
 		model = newModelHandler(s, o.Streams, cmp.Or(o.ModelMaxAgents, defaultMaxAgents), now, o.NudgeProject, o.Drain)
@@ -448,6 +455,10 @@ func NewHandlerWithOptions(store Executor, verifier Verifier, o HandlerOptions) 
 		}
 		if r.URL.Path == LinearCallbackPath {
 			linearCallback(w, r)
+			return
+		}
+		if strings.HasPrefix(r.URL.Path, LinearWebhookPath) && len(r.URL.Path) > len(LinearWebhookPath) && webhook != nil {
+			webhook.ServeHTTP(w, r)
 			return
 		}
 		if r.URL.Path == "/v1/config" {
@@ -742,7 +753,20 @@ func Run(ctx context.Context, args []string) error {
 	store.SetProjectStatusDomainProven(settings.ProjectStatusDomainProven)
 	store.SetProjectPlanProven(settings.ProjectPlanProven)
 	store.SetIssueFamilyMoveProven(settings.IssueFamilyMoveProven)
+	store.SetWebhooksProven(settings.WebhooksProven)
 	writer, err := appWriter(store)
+	if err != nil {
+		return err
+	}
+	var orgID func(context.Context) (string, error)
+	if writer != nil && writer.App != nil {
+		app := writer.App
+		orgID = cachedOrgID(func(ctx context.Context) (string, error) {
+			id, err := app.Identity(ctx)
+			return id.LinearOrgID, err
+		}, time.Now)
+	}
+	webhook, err := webhookStartup(ctx, store, settings.WebhookSecrets, settings.WebhooksProven, orgID, time.Now())
 	if err != nil {
 		return err
 	}
@@ -766,7 +790,7 @@ func Run(ctx context.Context, args []string) error {
 	hub := NewStreamHub()
 	hub.maintenance = drain.Invalidate
 	drain.onStart, drain.onEnd = hub.StartDrain, hub.EndDrain
-	options := startWatcher(ctx, store, watch, HandlerOptions{OAuth: metadata, Writer: writer, Auth: auth, ModelMaxAgents: maxAgents, Drain: drain})
+	options := startWatcher(ctx, store, watch, HandlerOptions{OAuth: metadata, Writer: writer, Auth: auth, ModelMaxAgents: maxAgents, Drain: drain, Webhook: webhook})
 	// The message queue: the hub wakes the streams, the sweeper offers run-out
 	// leases again and makes dead letters.
 	options.Streams = hub
@@ -1122,6 +1146,15 @@ type ServeSettings struct {
 	// CLAWBRIDGE_ISSUE_FAMILY_MOVE_PROVEN=1, after the family probe. It
 	// needs IssueMoveProven as well.
 	IssueFamilyMoveProven bool
+	// WebhookSecrets are the Linear webhooks' signing secrets by lower-case
+	// team UUID, from CLAWBRIDGE_LINEAR_WEBHOOK_SECRETS only (never a flag,
+	// never logged).
+	WebhookSecrets map[string][]string
+	// WebhooksProven lets a verified webhook delivery mark watch cursors
+	// due (FR14): serve --webhooks-proven or CLAWBRIDGE_WEBHOOKS_PROVEN=1,
+	// after the webhook probe. Off, deliveries are verified and recorded
+	// inert.
+	WebhooksProven bool
 }
 
 // ParseServe reads serve's flags and the OAuth secrets from getenv. The
@@ -1143,6 +1176,7 @@ func ParseServe(args []string, getenv func(string) string) (ServeSettings, error
 	familyProven := f.Bool("issue-family-move-proven", false, "let a family move (a parent with its sub-issues) be confirmed; set only after the family probe proves it (also CLAWBRIDGE_ISSUE_FAMILY_MOVE_PROVEN=1)")
 	moveProven := f.Bool("issue-move-proven", false, "let an issue's team move be confirmed; set only after the move probe proves it (also CLAWBRIDGE_ISSUE_MOVE_PROVEN=1)")
 	planProven := f.Bool("project-plan-proven", false, "let the project owner, a lead, a team's lead or the coordinator set a Linear project's priority, target date and start date; set only after the plan probe proves it (also CLAWBRIDGE_PROJECT_PLAN_PROVEN=1)")
+	webhooksProven := f.Bool("webhooks-proven", false, "let verified Linear webhook deliveries mark watch cursors due; set only after the webhook probe proves them (also CLAWBRIDGE_WEBHOOKS_PROVEN=1)")
 	teamAddProven := f.Bool("project-team-add-proven", false, "let the project owner, a lead or the coordinator add a bound team to a Linear project; set only after the team-add probe proves it (also CLAWBRIDGE_PROJECT_TEAM_ADD_PROVEN=1)")
 	statusDomainProven := f.Bool("project-status-domain-proven", false, "let a dispatcher domain's coordinator set a Linear project's status inside its lane; set only after the probe shows the app's project teams list a private team the app isn't a member of (also CLAWBRIDGE_PROJECT_STATUS_DOMAIN_PROVEN=1)")
 	if err := f.Parse(args); err != nil {
@@ -1216,6 +1250,21 @@ func ParseServe(args []string, getenv func(string) string) (ServeSettings, error
 	case "0", "false":
 	default:
 		return ServeSettings{}, errors.New("CLAWBRIDGE_ISSUE_FAMILY_MOVE_PROVEN is 1 or 0")
+	}
+	out.WebhooksProven = *webhooksProven
+	switch v := getenv("CLAWBRIDGE_WEBHOOKS_PROVEN"); v {
+	case "":
+	case "1", "true":
+		out.WebhooksProven = true
+	case "0", "false":
+	default:
+		return ServeSettings{}, errors.New("CLAWBRIDGE_WEBHOOKS_PROVEN is 1 or 0")
+	}
+	if out.WebhookSecrets, err = parseWebhookSecrets(getenv("CLAWBRIDGE_LINEAR_WEBHOOK_SECRETS")); err != nil {
+		return ServeSettings{}, err
+	}
+	if len(out.WebhookSecrets) > 0 && getenv("CLAWBRIDGE_LINEAR_APP_CLIENT_ID") == "" && getenv("CLAWBRIDGE_LINEAR_APP_CLIENT_SECRET") == "" && getenv("CLAWBRIDGE_LINEAR_APP_TOKEN_KEY") == "" {
+		return ServeSettings{}, errors.New("CLAWBRIDGE_LINEAR_WEBHOOK_SECRETS needs the Linear app (CLAWBRIDGE_LINEAR_APP_*); configure it or unset the secrets")
 	}
 	if out.Auth.accepts(AuthDevice) {
 		if out.Auth.PublicOrigin, err = ParsePublicOrigin(*publicOrigin); err != nil {

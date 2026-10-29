@@ -49,6 +49,9 @@ services:
       CLAWBRIDGE_LINEAR_APP_CLIENT_ID: ${CLAWBRIDGE_LINEAR_APP_CLIENT_ID:-}
       CLAWBRIDGE_LINEAR_APP_CLIENT_SECRET: ${CLAWBRIDGE_LINEAR_APP_CLIENT_SECRET:-}
       CLAWBRIDGE_LINEAR_APP_TOKEN_KEY: ${CLAWBRIDGE_LINEAR_APP_TOKEN_KEY:-}
+      # Optional: the Linear webhooks' signing secrets, TEAM_UUID=SECRET,
+      # comma-separated, at most 2 per team; needs the Linear app.
+      CLAWBRIDGE_LINEAR_WEBHOOK_SECRETS: ${CLAWBRIDGE_LINEAR_WEBHOOK_SECRETS:-}
       # The server's own watcher (v0.3; docs/operations/deployment.md): off unless an
       # interval or the scheduler tick settings are set, and the Linear app
       # is configured.
@@ -70,6 +73,7 @@ services:
       CLAWBRIDGE_PROJECT_STATUS_DOMAIN_PROVEN: ${CLAWBRIDGE_PROJECT_STATUS_DOMAIN_PROVEN:-}
       CLAWBRIDGE_PROJECT_PLAN_PROVEN: ${CLAWBRIDGE_PROJECT_PLAN_PROVEN:-}
       CLAWBRIDGE_ISSUE_FAMILY_MOVE_PROVEN: ${CLAWBRIDGE_ISSUE_FAMILY_MOVE_PROVEN:-}
+      CLAWBRIDGE_WEBHOOKS_PROVEN: ${CLAWBRIDGE_WEBHOOKS_PROVEN:-}
       # Optional: the dispatcher model's key seal and agent cap
       # (docs/operations/deployment.md). Without the seal key, model setup
       # is off.

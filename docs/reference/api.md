@@ -672,11 +672,12 @@ already read through `list_sessions`, `taskboard_get_v2` and `status_policy_get`
   `agents` (sessions writing through a personal profile). Counts only; `capped`
   and `source` are stable machine fields. Doctor's `linear.budget` reads it;
   `linear_app_status`'s `budget` carries the same.
-- **`proven_gates`** (the project owner only): the server's six PROVEN gates
+- **`proven_gates`** (the project owner only): the server's eight PROVEN gates
   in a fixed order, `project_flow`, `issue_subscribers`, `issue_move`,
-  `issue_family_move`, `project_team_add` and `project_status_domain`, each `{"name", "on"}`. A write
-  behind a gate that is off is refused as unproven. Nothing else of the
-  server's settings is shown.
+  `issue_family_move`, `project_team_add`, `project_status_domain`, `project_plan` and `webhooks`, each
+  `{"name", "on"}`. A write behind a gate that is off is refused as unproven;
+  with `webhooks` off, verified Linear webhook deliveries are recorded inert.
+  Nothing else of the server's settings is shown.
   Doctor's `linear.proven_gates` and the TUI's Overview read it.
 
 It isn't in the offline mirror: when the server can't be reached the remote

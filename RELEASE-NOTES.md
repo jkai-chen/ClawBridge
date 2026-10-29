@@ -55,6 +55,11 @@
   `uncertain` (never sent again). Off until the operator sets `serve --project-plan-proven`
   (`CLAWBRIDGE_PROJECT_PLAN_PROVEN=1`); the preview always works. No schema change. Linear config scope: project.
 - Linear webhook deliveries are recorded (inert until the `webhooks` gate is proven). Linear config scope: none.
+- `POST /linear/webhook/TEAM_UUID` (each team's webhook URL names its team) verifies Linear's signed deliveries
+  (HMAC under that team's secrets, organization, team, a ±60 s window, then dedup on `Linear-Delivery`) for the
+  teams in `CLAWBRIDGE_LINEAR_WEBHOOK_SECRETS` (`TEAM_UUID=SECRET`, at most 2 per team; needs the Linear app; without
+  it the route is a 404). The new `webhooks` gate (`CLAWBRIDGE_WEBHOOKS_PROVEN`, `serve --webhooks-proven`) is off
+  until proven: deliveries are recorded inert and change nothing. Linear config scope: none.
 
 ## Terminal interface
 

@@ -151,6 +151,9 @@ type Input struct {
 	// through this person's own connection (the project owner's only). Nil
 	// skips the check.
 	TeamRolesDoc func(ctx context.Context, wid, pid string) (RolesDocState, error)
+	// IssueWrites reads the project's issue writes that may have reached
+	// Linear, from this machine's operation ledger and the server's.
+	IssueWrites func(ctx context.Context, wid, pid string) (IssueWritesState, error)
 	// LabelSets reads the bound teams' label sets through the personal
 	// Linear profile; reads only. Nil skips the check.
 	LabelSets func(context.Context) ([]LabelSet, error)
@@ -239,6 +242,7 @@ func Run(ctx context.Context, in Input, executor Executor) Report {
 		checkLabelPolicy(ctx, executor, wid, pid, add)
 		checkTeamRoles(ctx, executor, wid, pid, in.WorkspaceUsers, add)
 		checkTeamRolesDoc(ctx, wid, pid, in.TeamRolesDoc, add)
+		checkIssueWrites(ctx, wid, pid, in.IssueWrites, add)
 		checkLinearWrites(ctx, executor, wid, pid, add)
 		checkProjectTeamAdds(ctx, executor, wid, pid, add)
 		if in.TeamsWithoutProject != nil {
@@ -1572,5 +1576,52 @@ func checkProjectTeamAdds(ctx context.Context, executor Executor, wid, pid strin
 	check.Status = Warn
 	check.Message = fmt.Sprintf("%d team(s) added to Linear projects; Linear changed other fields with %d: %s.", added, changed, strings.Join(named, ", "))
 	check.Action = "Look at each project in Linear (ClawBridge sent only the team and never undoes what Linear changed), then the project owner runs `clawbridge linear writes --ack OPERATION_ID` for each."
+	add(check)
+}
+
+// IssueWritesState is what linear.issue_writes reads: the operation IDs
+// of uncertain issue writes, how many are still being sent, this machine's
+// older records that don't name their operation, and whether this
+// machine's list stopped at its limit.
+type IssueWritesState struct {
+	Uncertain     []string
+	InProgress    int
+	OlderLocal    int
+	OlderLocalHow string
+	LocalNote     string
+}
+
+// checkIssueWrites warns of issue writes that may have reached Linear
+// (B3): an uncertain one warns; this machine's older records, which name
+// no operation, only inform, with how to clear them.
+func checkIssueWrites(ctx context.Context, wid, pid string, read func(context.Context, string, string) (IssueWritesState, error), add func(Check)) {
+	if read == nil {
+		return
+	}
+	check := Check{ID: "linear.issue_writes", Title: "Uncertain issue writes", Status: Pass}
+	st, err := read(ctx, wid, pid)
+	if err != nil {
+		check.Status = Pass
+		check.Message = "The uncertain issue writes couldn't be read."
+		add(check)
+		return
+	}
+	switch {
+	case len(st.Uncertain) > 0:
+		check.Status = Warn
+		check.Message = fmt.Sprintf("%d issue writes may have reached Linear, unconfirmed: %s.", len(st.Uncertain), strings.Join(st.Uncertain, ", "))
+		check.Action = "Read each issue in Linear, then `clawbridge linear writes --ack OPERATION_ID`; a retry of the same operation ID never sends again."
+	case st.OlderLocal > 0:
+		check.Status = Pass
+		check.Message = st.OlderLocalHow + "."
+	default:
+		check.Message = "No issue write is uncertain."
+	}
+	if st.InProgress > 0 {
+		check.Message += fmt.Sprintf(" %d still being sent.", st.InProgress)
+	}
+	if st.LocalNote != "" {
+		check.Message += " This machine's records: " + st.LocalNote + "."
+	}
 	add(check)
 }

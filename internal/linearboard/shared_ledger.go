@@ -11,7 +11,9 @@ import (
 // implements it. Every call is one short transaction, so the shared ledger
 // never holds a lock while Linear is called.
 type LedgerStore interface {
-	LedgerInsert(ctx context.Context, namespace, operationID, record string) (string, bool, error)
+	// LedgerInsert also names the row's ClawBridge project and whose
+	// write it is, so an uncertain one can be listed (PR-B).
+	LedgerInsert(ctx context.Context, namespace, operationID, record, project, principal string) (string, bool, error)
 	LedgerGet(ctx context.Context, namespace, operationID string) (string, bool, error)
 	LedgerReplace(ctx context.Context, namespace, operationID, from, to string) error
 	LedgerDelete(ctx context.Context, namespace, operationID, record string) error
@@ -25,16 +27,24 @@ type LedgerStore interface {
 // record first (a second caller then finds it and dispatches nothing) and
 // settles it after, by compare-and-swap.
 func SharedLedger(store LedgerStore, now func() time.Time) func(context.Context) OperationLedger {
+	return SharedLedgerAs(store, now, "")
+}
+
+// SharedLedgerAs is SharedLedger for one verified principal's writes, so
+// that person can list and acknowledge their uncertain ones; the server's
+// own writes (the watcher's) have none and only the owner sees them.
+func SharedLedgerAs(store LedgerStore, now func() time.Time, who string) func(context.Context) OperationLedger {
 	if now == nil {
 		now = time.Now
 	}
-	return func(ctx context.Context) OperationLedger { return sharedLedger{ctx, store, now} }
+	return func(ctx context.Context) OperationLedger { return sharedLedger{ctx, store, now, who} }
 }
 
 type sharedLedger struct {
 	ctx   context.Context
 	store LedgerStore
 	now   func() time.Time
+	who   string
 }
 
 func (l sharedLedger) stamp() string { return l.now().UTC().Format(time.RFC3339Nano) }
@@ -94,14 +104,14 @@ func (l sharedLedger) find(namespace, operationID, hash string, matchPayload boo
 	return decodeRecord(raw, hash, l.now(), matchPayload)
 }
 
-func (l sharedLedger) write(namespace, operationID string, payload any, dispatch func() (any, error)) (any, error) {
+func (l sharedLedger) write(namespace, operationID string, meta ledgerMeta, payload any, dispatch func() (any, error)) (any, error) {
 	if !operationPattern.MatchString(operationID) {
 		return nil, errors.New("operation_id requires 1–128 ASCII identifier characters")
 	}
 	ns, hash := digest(namespace), digest(payload)
-	record := ledgerRecord{Version: 1, Digest: hash, State: "pending", UpdatedAt: l.stamp()}
+	record := ledgerRecord{OperationID: operationID, Operation: meta.Operation, ProjectID: meta.ProjectID, Version: 1, Digest: hash, State: "pending", UpdatedAt: l.stamp()}
 	pending := encodeRecord(record)
-	existing, created, err := l.store.LedgerInsert(l.ctx, ns, operationID, pending)
+	existing, created, err := l.store.LedgerInsert(l.ctx, ns, operationID, pending, meta.ProjectID, l.who)
 	if err != nil {
 		return nil, errors.New("cannot record the operation in the shared ledger; nothing was sent")
 	}

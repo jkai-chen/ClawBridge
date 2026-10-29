@@ -486,7 +486,7 @@ func parseLinear(command string, args []string, stderr io.Writer) (linearFlags, 
 		f.StringVar(&v.expectedSHA, "expected-plan-sha256", "", "--confirm: the plan_sha256 the preview showed")
 		min, max = 1, 1
 	case "project-creates":
-		f.StringVar(&v.ackCreate, "ack", "", "the operation ID of an unconfirmed Linear write, of any kind, you checked in Linear; a family's acknowledges its sub-issues' too (project owner, or the project lead who confirmed it; own terminal)")
+		f.StringVar(&v.ackCreate, "ack", "", "the operation ID of an unconfirmed Linear write, of any kind, you checked in Linear; a family's acknowledges its sub-issues' too (project owner, or the project lead who confirmed it; own terminal; your own uncertain issue writes too)")
 	case "project-status":
 		f.BoolVar(&v.suggest, "suggest", false, "status: also propose a status from the issue counts")
 		f.StringVar(&v.statusType, "type", "", "set: backlog, planned, started, completed or canceled")
@@ -919,7 +919,7 @@ var linearInternalCommands = map[string]string{
 
 func runLinear(ctx context.Context, flags Config, args []string, stdout, stderr io.Writer) error {
 	if len(args) == 0 || len(args) == 1 && (args[0] == "--help" || args[0] == "-h" || args[0] == "help") {
-		_, err := io.WriteString(stdout, "clawbridge linear connect|import|profiles|status|logout|teams|projects|binding|link|seed-docs|unlink|names-refresh|context|issues|issue|states|labels|members|create|update|comment|relation|move|watch\nMove an issue to another bound team: move ISSUE_UUID --team UUID [--operation-id ID --confirm --expected-plan-sha256 SHA]; without --confirm it is a preview. The project owner or a project lead (the ClawBridge project role) confirms from their own terminal, or the coordinator session within its lane.\nProject owner only: label create|rename, project create [--kind NAME], initiative create|add-project, label-policy show|set, status-policy show|set, doc-policy set, health set|enable|disable, admin audit-replay.\nProject kinds (a project-label group such as Type): kind show (any member); kind set --values A,B,C [--group NAME] [--team UUID] --expected-revision N, then kind seed --operation-id ID --profile ID [--confirm] makes or adopts its project labels, and kind apply --file F --operation-id ID --profile ID [--confirm --canary] sets each project's kind (project owner, own terminal).\nA coordinator's projects: the project's designated coordinator session runs project create NAME --team UUID --kind NAME --operation-id ID in its lane's default team; project creates lists them and the unconfirmed ones (any member); project creates --ack OPERATION_ID (project owner, own terminal) clears one you checked in Linear.\nLinear writes that may have happened, of every kind (a create, a move, a team added; unsettled or uncertain): writes (any member); writes --ack OPERATION_ID (project owner, or the project lead who confirmed it; own terminal) clears one you checked in Linear, a family's with its sub-issues.\nLanes (a binding's --lane NAME=TEAM,…): lanes show (any member); lanes pin --pin-session NAME|--pin-principal EMAIL --lane NAME --expected-revision N [--confirm], lanes unpin … (project owner, own terminal).\nTeam roles (who leads each bound team; lead, engineer or reviewer): roles show (any member); roles person|lead|set ... --expected-revision N [--confirm] (project owner, own terminal); roles project-lead on|off and roles apply-leads set Linear project leads from them. linear roles --help for more.\nShown names: names-refresh (project owner or lead) stores the bound teams' and projects' current names, as Linear gives them to you.\nWho closes issues: closes show (any member); closes set (project owner or lead, never a session).\nProject status follows the work (status policy project_flow): project-flow resume --linear-project UUID (project owner or lead, never a session) clears a hold.\nProject health (any member): health show.\nWho hears of agents' issues (hosted, as the app): subscribers show (any member); subscribers on|off, owner on|off, add|remove LINEAR_USER_UUID, backfill --since DATE [--apply] (project owner or lead, never a session).\nLinear views (any member): view list [--team UUID] [--type issue|project], view show ID. Project owner, own terminal, with your Linear API key: view create --team UUID [--kind project]|update ID|delete ID|apply --file F [--adopt NAME].\nLinear documents (any member): doc list|get, initiative show, doc-policy show. Project owner or lead: doc publish FILE.\nYour name in agent markers: display-name set NAME|clear|capture --profile ID.\nYour Linear API key, for view writes (project owner, own terminal): key set|status|remove --profile ID.\nUse COMMAND --help for explicit flags. Token import accepts --token-stdin only.\n")
+		_, err := io.WriteString(stdout, "clawbridge linear connect|import|profiles|status|logout|teams|projects|binding|link|seed-docs|unlink|names-refresh|context|issues|issue|states|labels|members|create|update|comment|relation|move|watch\nMove an issue to another bound team: move ISSUE_UUID --team UUID [--operation-id ID --confirm --expected-plan-sha256 SHA]; without --confirm it is a preview. The project owner or a project lead (the ClawBridge project role) confirms from their own terminal, or the coordinator session within its lane.\nProject owner only: label create|rename, project create [--kind NAME], initiative create|add-project, label-policy show|set, status-policy show|set, doc-policy set, health set|enable|disable, admin audit-replay.\nProject kinds (a project-label group such as Type): kind show (any member); kind set --values A,B,C [--group NAME] [--team UUID] --expected-revision N, then kind seed --operation-id ID --profile ID [--confirm] makes or adopts its project labels, and kind apply --file F --operation-id ID --profile ID [--confirm --canary] sets each project's kind (project owner, own terminal).\nA coordinator's projects: the project's designated coordinator session runs project create NAME --team UUID --kind NAME --operation-id ID in its lane's default team; project creates lists them and the unconfirmed ones (any member); project creates --ack OPERATION_ID (project owner, own terminal) clears one you checked in Linear.\nLinear writes that may have happened, of every kind (a create, a move, a team added; unsettled or uncertain), and issue writes (create, update, comment, relation) this machine or the server holds uncertain: writes (any member); writes --ack OPERATION_ID (project owner, or the project lead who confirmed it; own terminal; your own issue writes too) clears one you checked in Linear, a family's with its sub-issues.\nLanes (a binding's --lane NAME=TEAM,…): lanes show (any member); lanes pin --pin-session NAME|--pin-principal EMAIL --lane NAME --expected-revision N [--confirm], lanes unpin … (project owner, own terminal).\nTeam roles (who leads each bound team; lead, engineer or reviewer): roles show (any member); roles person|lead|set ... --expected-revision N [--confirm] (project owner, own terminal); roles project-lead on|off and roles apply-leads set Linear project leads from them. linear roles --help for more.\nShown names: names-refresh (project owner or lead) stores the bound teams' and projects' current names, as Linear gives them to you.\nWho closes issues: closes show (any member); closes set (project owner or lead, never a session).\nProject status follows the work (status policy project_flow): project-flow resume --linear-project UUID (project owner or lead, never a session) clears a hold.\nProject health (any member): health show.\nWho hears of agents' issues (hosted, as the app): subscribers show (any member); subscribers on|off, owner on|off, add|remove LINEAR_USER_UUID, backfill --since DATE [--apply] (project owner or lead, never a session).\nLinear views (any member): view list [--team UUID] [--type issue|project], view show ID. Project owner, own terminal, with your Linear API key: view create --team UUID [--kind project]|update ID|delete ID|apply --file F [--adopt NAME].\nLinear documents (any member): doc list|get, initiative show, doc-policy show. Project owner or lead: doc publish FILE.\nYour name in agent markers: display-name set NAME|clear|capture --profile ID.\nYour Linear API key, for view writes (project owner, own terminal): key set|status|remove --profile ID.\nUse COMMAND --help for explicit flags. Token import accepts --token-stdin only.\n")
 		return err
 	}
 	command := args[0]
@@ -932,6 +932,7 @@ func runLinear(ctx context.Context, flags Config, args []string, stdout, stderr 
 		return runLinearRoles(ctx, flags, args[1:], stdout, stderr)
 	}
 	parseArgs := args[1:]
+	writesView := command == "writes"
 	if command == "writes" {
 		// linear writes [--ack OP]: every kind of recorded Linear write
 		// that may have happened, the same list and ack as project creates.
@@ -1314,9 +1315,14 @@ func runLinear(ctx context.Context, flags Config, args []string, stdout, stderr 
 			break
 		}
 		if adminAction == "creates" {
-			if v.ackCreate != "" {
+			switch {
+			case writesView && v.ackCreate != "":
+				data, err = service.AckLinearWrite(bounded, scope, v.ackCreate)
+			case v.ackCreate != "":
 				data, err = service.AckProjectCreate(bounded, scope, v.ackCreate)
-			} else {
+			case writesView:
+				data, err = linearWritesView(bounded, service, scope)
+			default:
 				data, err = service.ProjectCreates(bounded, scope)
 			}
 			break
@@ -1705,4 +1711,29 @@ func subscribersSince(raw string) (string, error) {
 		return t.UTC().Format(time.RFC3339), nil
 	}
 	return "", errors.New("--since is a date (YYYY-MM-DD) or an RFC 3339 time")
+}
+
+// linearWritesView is `linear writes`: the server's recorded Linear writes
+// (project creates, moves, team adds) and the project's issue writes that
+// may have reached Linear, from this machine's ledger and the server's.
+func linearWritesView(ctx context.Context, service *linearboard.Service, scope bus.Request) (any, error) {
+	data, err := service.ProjectCreates(ctx, scope)
+	if err != nil {
+		return nil, err
+	}
+	out, _ := data.(map[string]any)
+	if out == nil {
+		out = map[string]any{}
+	}
+	issues, err := service.UncertainIssueWrites(ctx, scope)
+	if err != nil {
+		return nil, err
+	}
+	raw, _ := json.Marshal(issues)
+	var fields map[string]any
+	_ = json.Unmarshal(raw, &fields)
+	for k, v := range fields {
+		out[k] = v
+	}
+	return out, nil
 }

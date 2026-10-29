@@ -450,7 +450,7 @@ func (s *Service) sendView(ctx context.Context, scope bus.Request, b bus.Taskboa
 		}
 		return s.recordAccepted(ctx, scope, in.Action, replay, f), nil
 	}
-	receipt, e := l.write(namespace, in.OperationID, payload, func() (any, error) {
+	receipt, e := l.write(namespace, in.OperationID, ledgerMeta{"view_" + in.Action, b.ProjectID}, payload, func() (any, error) {
 		if e := s.unchangedV2(ctx, scope, b); e != nil {
 			return nil, authorityFailure(e)
 		}

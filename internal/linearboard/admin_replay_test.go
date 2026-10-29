@@ -89,13 +89,13 @@ func TestAdminAuditReplayRefusals(t *testing.T) {
 	s, a, _, scope := adminTest(t)
 	l := ledger{s.cfg.LedgerDirectory, s.cfg.Now}
 	namespace := digest([]string{s.cfg.Authority, "ws", "prj", "ses"})
-	if _, e := l.write(namespace, "pending-1", "payload", func() (any, error) { return nil, errors.New("connection reset") }); e == nil {
+	if _, e := l.write(namespace, "pending-1", ledgerMeta{}, "payload", func() (any, error) { return nil, errors.New("connection reset") }); e == nil {
 		t.Fatal("pending write succeeded")
 	}
-	if _, e := l.write(namespace, "refused-1", "payload", func() (any, error) { return nil, refusedBeforeDispatch(errors.New("binding changed")) }); e == nil {
+	if _, e := l.write(namespace, "refused-1", ledgerMeta{}, "payload", func() (any, error) { return nil, refusedBeforeDispatch(errors.New("binding changed")) }); e == nil {
 		t.Fatal("refused write succeeded")
 	}
-	if _, e := l.write(namespace, "issue-1", "payload", func() (any, error) { return map[string]any{"id": issueID}, nil }); e != nil {
+	if _, e := l.write(namespace, "issue-1", ledgerMeta{}, "payload", func() (any, error) { return map[string]any{"id": issueID}, nil }); e != nil {
 		t.Fatal(e)
 	}
 	for id, want := range map[string]string{
@@ -149,11 +149,11 @@ func TestAdminAuditReplayRefusesALockedRecord(t *testing.T) {
 func TestLedgerWriteRefusesAnotherPayloadForTheSameOperation(t *testing.T) {
 	s, _, _, _ := adminTest(t)
 	l := ledger{s.cfg.LedgerDirectory, s.cfg.Now}
-	if _, e := l.write("ns", "op-1", "payload-a", func() (any, error) { return map[string]any{"id": issueID}, nil }); e != nil {
+	if _, e := l.write("ns", "op-1", ledgerMeta{}, "payload-a", func() (any, error) { return map[string]any{"id": issueID}, nil }); e != nil {
 		t.Fatal(e)
 	}
 	dispatched := false
-	if _, e := l.write("ns", "op-1", "payload-b", func() (any, error) { dispatched = true; return map[string]any{"id": issueID}, nil }); e == nil || !strings.Contains(e.Error(), "different scoped payload") || dispatched {
+	if _, e := l.write("ns", "op-1", ledgerMeta{}, "payload-b", func() (any, error) { dispatched = true; return map[string]any{"id": issueID}, nil }); e == nil || !strings.Contains(e.Error(), "different scoped payload") || dispatched {
 		t.Fatal("another payload reused the operation", e, dispatched)
 	}
 	if r, ok, e := l.lookupAny("ns", "op-1"); e != nil || !ok || r == nil {

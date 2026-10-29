@@ -1,7 +1,10 @@
 # Unreleased
 
-**Schema 47 → 48.**
-- The server migrates to schema 48 on its first start: the server drain's maintenance row and its instances' reports.
+**Schema 47 → 49.**
+- The server migrates to schema 49 on its first start: 48, the server drain's maintenance row and its instances'
+  reports; 49, the shared operation ledger's rows name their ClawBridge project and their person
+  (`linear_write_ledger.project_id`, `principal`, `acknowledged_at`, `pending`). Rows from before have neither and
+  aren't listed.
 - **One-way:** v0.3.8 refuses a database newer than schema 47. Take a dump before upgrading; to go back, restore it
   with the v0.3.8 image (docs/operations/deployment.md).
 
@@ -93,7 +96,14 @@
   UUID` failed with "write requires operation_id". They now answer with the spaced form (`linear project status
   LINEAR_PROJECT [--suggest]`), and a command the dispatch doesn't know is refused as unknown. The documented forms are
   unchanged. Linear config scope: none.
-
+- **Uncertain issue writes are listed, and acknowledged.** An issue create, update, comment or relation that may have
+  reached Linear was held in the operation ledger, but nothing listed it: only the command's own answer said
+  `uncertain`. `clawbridge linear writes` now lists them under `issue_writes`, from this machine's ledger (every
+  session on it; the first 500 records) and from the server's (your own, or all for the project owner); doctor's
+  `linear.issue_writes` warns while one is listed, and the overview counts the server's. `linear writes --ack OP_ID`
+  hides one you checked in Linear (not one still being sent); a retry of the same operation ID still sends nothing. A
+  ledger record now names its operation ID, its operation and its project, never a title or body; older records are
+  counted, with the folder to clear. Linear config scope: none.
 # ClawBridge v0.3.8 (released 29 Oct)
 
 **Schema 41 → 47.**

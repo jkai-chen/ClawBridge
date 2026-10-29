@@ -16,18 +16,24 @@ type memLedgerStore struct {
 	records   map[string]string
 	unsettled map[string]bool
 	failNext  string
+	// scopes keeps each row's project and principal.
+	scopes map[string]string
 }
 
 func newMemLedgerStore() *memLedgerStore {
 	return &memLedgerStore{records: map[string]string{}, unsettled: map[string]bool{}}
 }
-func (m *memLedgerStore) LedgerInsert(_ context.Context, ns, op, record string) (string, bool, error) {
+func (m *memLedgerStore) LedgerInsert(_ context.Context, ns, op, record, project, who string) (string, bool, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if r, ok := m.records[ns+"/"+op]; ok {
 		return r, false, nil
 	}
 	m.records[ns+"/"+op] = record
+	if m.scopes == nil {
+		m.scopes = map[string]string{}
+	}
+	m.scopes[ns+"/"+op] = project + " " + who
 	return "", true, nil
 }
 func (m *memLedgerStore) LedgerGet(_ context.Context, ns, op string) (string, bool, error) {
@@ -93,16 +99,16 @@ func TestSharedLedgerAnswersLikeThePrivateLedger(t *testing.T) {
 			return func() (any, error) { sent++; return r, err }
 		}
 		// Accepted, then answered from the record without a second send.
-		if got, err := l.write("ns", "op-1", "p", send(receipt, nil)); err != nil || got == nil {
+		if got, err := l.write("ns", "op-1", ledgerMeta{}, "p", send(receipt, nil)); err != nil || got == nil {
 			t.Fatal(name, got, err)
 		}
-		if got, err := l.write("ns", "op-1", "p", send(nil, errors.New("must not run"))); err != nil || got.(map[string]any)["id"] != receipt["id"] || sent != 1 {
+		if got, err := l.write("ns", "op-1", ledgerMeta{}, "p", send(nil, errors.New("must not run"))); err != nil || got.(map[string]any)["id"] != receipt["id"] || sent != 1 {
 			t.Fatal(name, "accepted retry", got, err, sent)
 		}
 		if got, found, err := l.lookup("ns", "op-1", "p"); err != nil || !found || got.(map[string]any)["id"] != receipt["id"] {
 			t.Fatal(name, "lookup", got, found, err)
 		}
-		if _, err := l.write("ns", "op-1", "other", send(receipt, nil)); err == nil || !strings.Contains(err.Error(), "different scoped payload") {
+		if _, err := l.write("ns", "op-1", ledgerMeta{}, "other", send(receipt, nil)); err == nil || !strings.Contains(err.Error(), "different scoped payload") {
 			t.Fatal(name, "another payload under the same ID", err)
 		}
 		// A replay finds the record whatever its payload; a lookup does not.
@@ -117,7 +123,7 @@ func TestSharedLedgerAnswersLikeThePrivateLedger(t *testing.T) {
 		}
 		// Not dispatched: the ID stays free, and the error keeps its type.
 		var never notDispatchedError
-		if _, err := l.write("ns", "op-2", "p", send(nil, notDispatched(errors.New("timeout")))); !errors.As(err, &never) {
+		if _, err := l.write("ns", "op-2", ledgerMeta{}, "p", send(nil, notDispatched(errors.New("timeout")))); !errors.As(err, &never) {
 			t.Fatal(name, "not dispatched", err)
 		}
 		if _, found, _ := l.lookup("ns", "op-2", "p"); found {
@@ -125,19 +131,19 @@ func TestSharedLedgerAnswersLikeThePrivateLedger(t *testing.T) {
 		}
 		// Refused: recorded, and a retry is refused without sending.
 		var refused refusedBeforeDispatchError
-		if _, err := l.write("ns", "op-3", "p", send(nil, refusedBeforeDispatch(errors.New("binding changed")))); !errors.As(err, &refused) {
+		if _, err := l.write("ns", "op-3", ledgerMeta{}, "p", send(nil, refusedBeforeDispatch(errors.New("binding changed")))); !errors.As(err, &refused) {
 			t.Fatal(name, "refusal type", err)
 		}
 		before := sent
-		if _, err := l.write("ns", "op-3", "p", send(receipt, nil)); err == nil || !strings.Contains(err.Error(), "binding changed") || sent != before {
+		if _, err := l.write("ns", "op-3", ledgerMeta{}, "p", send(receipt, nil)); err == nil || !strings.Contains(err.Error(), "binding changed") || sent != before {
 			t.Fatal(name, "refusal not kept", err)
 		}
 		// Uncertain: stays pending, and a retry sends nothing.
-		if _, err := l.write("ns", "op-4", "p", send(nil, errors.New("connection reset"))); !IsUncertain(err) {
+		if _, err := l.write("ns", "op-4", ledgerMeta{}, "p", send(nil, errors.New("connection reset"))); !IsUncertain(err) {
 			t.Fatal(name, "uncertain type", err)
 		}
 		before = sent
-		if _, err := l.write("ns", "op-4", "p", send(receipt, nil)); !IsUncertain(err) || IsInProgress(err) || sent != before {
+		if _, err := l.write("ns", "op-4", ledgerMeta{}, "p", send(receipt, nil)); !IsUncertain(err) || IsInProgress(err) || sent != before {
 			t.Fatal(name, "uncertain operation re-sent or taken for in progress", err)
 		}
 		// Unsettled comments.
@@ -167,7 +173,7 @@ func TestSharedLedgerNeverDispatchesTwice(t *testing.T) {
 	inside, release := make(chan struct{}), make(chan struct{})
 	done := make(chan error, 1)
 	go func() {
-		_, err := l.write("ns", "op", "p", func() (any, error) {
+		_, err := l.write("ns", "op", ledgerMeta{}, "p", func() (any, error) {
 			close(inside)
 			<-release
 			return map[string]any{"kind": "comment", "outcome": "accepted", "id": "c1000000-0000-4000-8000-000000000001", "issue_id": issueID}, nil
@@ -176,7 +182,7 @@ func TestSharedLedgerNeverDispatchesTwice(t *testing.T) {
 	}()
 	<-inside
 	second := 0
-	if _, err := l.write("ns", "op", "p", func() (any, error) { second++; return nil, nil }); !IsInProgress(err) || IsUncertain(err) || second != 0 {
+	if _, err := l.write("ns", "op", ledgerMeta{}, "p", func() (any, error) { second++; return nil, nil }); !IsInProgress(err) || IsUncertain(err) || second != 0 {
 		t.Fatal("a concurrent retry dispatched, or was not told it is in progress", err, second)
 	}
 	if _, _, err := l.lookup("ns", "op", "p"); !IsInProgress(err) {
@@ -193,7 +199,7 @@ func TestSharedLedgerUnrecordedSettle(t *testing.T) {
 	store := newMemLedgerStore()
 	l := SharedLedger(store, nil)(context.Background())
 	store.failNext = "replace"
-	r, err := l.write("ns", "op", "p", func() (any, error) {
+	r, err := l.write("ns", "op", ledgerMeta{}, "p", func() (any, error) {
 		return map[string]any{"kind": "comment", "outcome": "accepted", "id": "c1000000-0000-4000-8000-000000000001", "issue_id": issueID}, nil
 	})
 	var re *ReceiptError
@@ -207,7 +213,7 @@ func TestSharedLedgerStalePendingIsUncertain(t *testing.T) {
 	now := time.Date(2026, 10, 23, 12, 0, 0, 0, time.UTC)
 	store := newMemLedgerStore()
 	l := SharedLedger(store, func() time.Time { return now })(context.Background())
-	store.LedgerInsert(context.Background(), digest("ns"), "op", encodeRecord(ledgerRecord{Version: 1, Digest: digest("p"), State: "pending", UpdatedAt: now.Format(time.RFC3339Nano)}))
+	store.LedgerInsert(context.Background(), digest("ns"), "op", encodeRecord(ledgerRecord{Version: 1, Digest: digest("p"), State: "pending", UpdatedAt: now.Format(time.RFC3339Nano)}), "", "")
 	if _, _, err := l.lookup("ns", "op", "p"); !IsInProgress(err) {
 		t.Fatal("young pending", err)
 	}
@@ -216,7 +222,25 @@ func TestSharedLedgerStalePendingIsUncertain(t *testing.T) {
 		t.Fatal("stale pending", err)
 	}
 	sent := 0
-	if _, err := l.write("ns", "op", "p", func() (any, error) { sent++; return nil, nil }); !IsUncertain(err) || sent != 0 {
+	if _, err := l.write("ns", "op", ledgerMeta{}, "p", func() (any, error) { sent++; return nil, nil }); !IsUncertain(err) || sent != 0 {
 		t.Fatal("stale pending re-sent", err)
+	}
+}
+
+// PR-B: a shared ledger row names its ClawBridge project and the person
+// whose write it is, and its record its operation, never the payload.
+func TestSharedLedgerRowNamesItsScope(t *testing.T) {
+	store := newMemLedgerStore()
+	l := SharedLedgerAs(store, nil, "person@example.test")(context.Background())
+	if _, err := l.write("ns", "op-1", ledgerMeta{"update", "prj"}, map[string]any{"title": "SYNTHETIC-zq81"}, func() (any, error) { return nil, errors.New("reset") }); !IsUncertain(err) {
+		t.Fatal(err)
+	}
+	key := digest("ns") + "/op-1"
+	if store.scopes[key] != "prj person@example.test" {
+		t.Fatal(store.scopes)
+	}
+	record := store.records[key]
+	if !strings.Contains(record, `"operation_id":"op-1"`) || !strings.Contains(record, `"operation":"update"`) || !strings.Contains(record, `"project_id":"prj"`) || strings.Contains(record, "SYNTHETIC") {
+		t.Fatal(record)
 	}
 }

@@ -12,10 +12,10 @@ func TestPostgresWriteLedgerRecords(t *testing.T) {
 	f := newPGIdentityFixture(t)
 	ctx := context.Background()
 	ns := digestOf(newID("ns"))
-	if _, created, err := f.s.LedgerInsert(ctx, ns, "op-1", "pending"); err != nil || !created {
+	if _, created, err := f.s.LedgerInsert(ctx, ns, "op-1", "pending", "", ""); err != nil || !created {
 		t.Fatal(created, err)
 	}
-	if existing, created, err := f.s.LedgerInsert(ctx, ns, "op-1", "other"); err != nil || created || existing != "pending" {
+	if existing, created, err := f.s.LedgerInsert(ctx, ns, "op-1", "other", "", ""); err != nil || created || existing != "pending" {
 		t.Fatal("a second insert replaced the record", existing, created, err)
 	}
 	if err := f.s.LedgerReplace(ctx, ns, "op-1", "stale", "accepted"); err == nil {
@@ -49,7 +49,7 @@ func TestPostgresWriteLedgerRecords(t *testing.T) {
 	if got, _ := f.s.LedgerUnsettled(ctx, ns, 10); strings.Join(got, ",") != "b" {
 		t.Fatal(got)
 	}
-	if _, _, err := f.s.LedgerInsert(ctx, "short", "op", "x"); err == nil {
+	if _, _, err := f.s.LedgerInsert(ctx, "short", "op", "x", "", ""); err == nil {
 		t.Fatal("an invalid namespace accepted")
 	}
 }

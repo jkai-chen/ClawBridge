@@ -307,7 +307,7 @@ func TestLinearViewsSchema38Upgrade(t *testing.T) {
 	defer s.Close()
 	h = &harness{t, s}
 	var version int
-	if err = s.db.QueryRow(`PRAGMA user_version`).Scan(&version); err != nil || version != 48 {
+	if err = s.db.QueryRow(`PRAGMA user_version`).Scan(&version); err != nil || version != 49 {
 		t.Fatal(version, err)
 	}
 	if after := h.call("linear_view_get", "", map[string]any{"view_id": lvView}); !reflect.DeepEqual(after, before) {

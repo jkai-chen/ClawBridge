@@ -152,13 +152,20 @@ func refusalError(reason string) error {
 }
 
 type ledgerRecord struct {
-	Outcome   string          `json:"outcome,omitempty"`
-	Version   int             `json:"version"`
-	Digest    string          `json:"digest"`
-	State     string          `json:"state"`
-	Receipt   json.RawMessage `json:"receipt,omitempty"`
-	Reason    string          `json:"reason,omitempty"`
-	UpdatedAt string          `json:"updated_at"`
+	// OperationID, Operation and ProjectID let a pending record be listed
+	// back (PR-B): the caller's ID, the operation's name and the
+	// ClawBridge project's ID, never a title, body or name. An older
+	// record has none of them.
+	OperationID string          `json:"operation_id,omitempty"`
+	Operation   string          `json:"operation,omitempty"`
+	ProjectID   string          `json:"project_id,omitempty"`
+	Outcome     string          `json:"outcome,omitempty"`
+	Version     int             `json:"version"`
+	Digest      string          `json:"digest"`
+	State       string          `json:"state"`
+	Receipt     json.RawMessage `json:"receipt,omitempty"`
+	Reason      string          `json:"reason,omitempty"`
+	UpdatedAt   string          `json:"updated_at"`
 }
 
 // OperationLedger records each write's operation ID before dispatch and its
@@ -166,7 +173,7 @@ type ledgerRecord struct {
 // (ledger) is one; a hosted server's shared ledger is another. It also keeps
 // the comments whose bus settle is still owed.
 type OperationLedger interface {
-	write(namespace, operationID string, payload any, dispatch func() (any, error)) (any, error)
+	write(namespace, operationID string, meta ledgerMeta, payload any, dispatch func() (any, error)) (any, error)
 	lookup(namespace, operationID string, payload any) (any, bool, error)
 	// lookupAny skips only the payload-digest check, for a replay of a
 	// recorded result.
@@ -176,6 +183,10 @@ type OperationLedger interface {
 	unsettled(namespace string, limit int) []string
 	peek(namespace, operationID string) (state, id string, ok bool)
 }
+
+// ledgerMeta names a write in its record, so an uncertain one can be
+// listed: the operation's name and the binding's ClawBridge project.
+type ledgerMeta struct{ Operation, ProjectID string }
 
 // operations is the service's operation ledger.
 func (s *Service) operations(ctx context.Context) OperationLedger {
@@ -200,7 +211,7 @@ func digest(v any) string {
 // or retried: process loss and unknown provider outcomes require operator readback.
 // The only exceptions are closure failures explicitly marked notDispatched
 // (record removed) or refusedBeforeDispatch (record made a terminal refusal).
-func (l ledger) write(profile, operationID string, payload any, dispatch func() (any, error)) (any, error) {
+func (l ledger) write(profile, operationID string, meta ledgerMeta, payload any, dispatch func() (any, error)) (any, error) {
 	if !operationPattern.MatchString(operationID) {
 		return nil, errors.New("operation_id requires 1–128 ASCII identifier characters")
 	}
@@ -239,7 +250,7 @@ func (l ledger) write(profile, operationID string, payload any, dispatch func() 
 		return nil, errors.New("cannot protect operation ledger lock")
 	}
 	hash := digest(payload)
-	record := ledgerRecord{Version: 1, Digest: hash, State: "pending", UpdatedAt: l.now().UTC().Format(time.RFC3339Nano)}
+	record := ledgerRecord{OperationID: operationID, Operation: meta.Operation, ProjectID: meta.ProjectID, Version: 1, Digest: hash, State: "pending", UpdatedAt: l.now().UTC().Format(time.RFC3339Nano)}
 	if receipt, exists, e := readLedger(path, hash, true); exists || e != nil {
 		return receipt, e
 	}
@@ -282,7 +293,12 @@ func (l ledger) write(profile, operationID string, payload any, dispatch func() 
 		if errors.Is(err, errBindingChangedAfterProviderError) {
 			message += "; the task-board binding also changed"
 		}
+		// As in the shared ledger, an uncertain record always keeps a
+		// reason, so it is never taken for one still being sent.
 		record.Reason = reason
+		if record.Reason == "" {
+			record.Reason = "uncertain"
+		}
 		record.UpdatedAt = l.now().UTC().Format(time.RFC3339Nano)
 		_ = saveLedger(path, record)
 		return nil, UncertainError{message}

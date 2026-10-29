@@ -46,14 +46,18 @@ func (s *Store) ledgerTx(ctx context.Context, fn func(*transaction) error) error
 }
 
 // LedgerInsert records record for an operation that has none and reports
-// created; for one that has a record, it returns that record instead.
-func (s *Store) LedgerInsert(ctx context.Context, namespace, operationID, record string) (string, bool, error) {
+// created; for one that has a record, it returns that record instead. The
+// row names its ClawBridge project and whose write it is (schema 49).
+func (s *Store) LedgerInsert(ctx context.Context, namespace, operationID, record, project, who string) (string, bool, error) {
 	if err := validLedgerKey(namespace, operationID); err != nil {
+		return "", false, err
+	}
+	if err := validLedgerScope(project, who); err != nil {
 		return "", false, err
 	}
 	existing, created := "", false
 	err := s.ledgerTx(ctx, func(tx *transaction) error {
-		r, err := tx.ExecContext(ctx, `INSERT INTO linear_write_ledger(namespace,operation_id,record,updated_at) VALUES(?,?,?,?) ON CONFLICT(namespace,operation_id) DO NOTHING`, namespace, operationID, record, stamp())
+		r, err := tx.ExecContext(ctx, `INSERT INTO linear_write_ledger(namespace,operation_id,record,updated_at,project_id,principal,pending) VALUES(?,?,?,?,?,?,?) ON CONFLICT(namespace,operation_id) DO NOTHING`, namespace, operationID, record, stamp(), project, who, recordPending(record))
 		if err != nil {
 			return err
 		}
@@ -85,12 +89,13 @@ func (s *Store) LedgerGet(ctx context.Context, namespace, operationID string) (s
 
 // LedgerReplace swaps an operation's record from from to to, only if it is
 // still from: the caller that wrote from is the only one that settles it.
+// The row stays pending only while the new record is (schema 49).
 func (s *Store) LedgerReplace(ctx context.Context, namespace, operationID, from, to string) error {
 	if err := validLedgerKey(namespace, operationID); err != nil {
 		return err
 	}
 	return s.ledgerTx(ctx, func(tx *transaction) error {
-		r, err := tx.ExecContext(ctx, `UPDATE linear_write_ledger SET record=?,updated_at=? WHERE namespace=? AND operation_id=? AND record=?`, to, stamp(), namespace, operationID, from)
+		r, err := tx.ExecContext(ctx, `UPDATE linear_write_ledger SET record=?,updated_at=?,pending=? WHERE namespace=? AND operation_id=? AND record=?`, to, stamp(), recordPending(to), namespace, operationID, from)
 		if err != nil {
 			return err
 		}

@@ -27,6 +27,11 @@
   to retry, while a person with no session is charged past the limit and never refused. Agents loop over the single
   move instead. **Off until proven:** family moves also need `serve --issue-family-move-proven`
   (`CLAWBRIDGE_ISSUE_FAMILY_MOVE_PROVEN=1`). No schema change. Linear config scope: none.
+- **Which PROVEN gates are on.** The project owner's `clawbridge doctor` reports the server's PROVEN gates as
+  `linear.proven_gates` ("Proven gates: issue_subscribers, issue_move (off: project_flow, project_team_add)."), and
+  the TUI's Overview shows them as Proven gates and Not proven. The project overview gains `proven_gates` for the
+  owner: the five gate names, each on or off, and nothing else of the server's settings. No schema change. Linear
+  config scope: none.
 
 ## Docs
 

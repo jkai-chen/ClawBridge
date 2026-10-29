@@ -71,6 +71,13 @@ func TestPostgresProjectLeadAccess(t *testing.T) {
 	if member, err := as("member", Request{Operation: "project_overview", Args: map[string]any{}}); err != nil || member.Data.(map[string]any)["project_leads"] != nil {
 		t.Fatal("a member sees the lead counts", member, err)
 	}
+	// The PROVEN gates are the owner's to see.
+	if gates, _ := mustOverview(t, as)["proven_gates"].([]map[string]any); len(gates) != len(ProvenGateNames) {
+		t.Fatal("the owner doesn't see the PROVEN gates", gates)
+	}
+	if member, err := as("member", Request{Operation: "project_overview", Args: map[string]any{}}); err != nil || member.Data.(map[string]any)["proven_gates"] != nil {
+		t.Fatal("a member sees the PROVEN gates", member, err)
+	}
 	// Delivered once, when they register a session; a second session gets
 	// nothing more.
 	for _, name := range []string{"member-s", "member-t"} {

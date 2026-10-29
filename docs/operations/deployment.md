@@ -559,6 +559,12 @@ CLAWBRIDGE_LINEAR_APP_TOKEN_KEY=<32 random bytes, base64>
   on a throwaway project, an add read back field by field shows the team added
   and the lead, members, status, dates and labels as they were. The write goes
   through the confirming person's own Linear profile, never the app.
+- **Which gates are on.** The project owner's `clawbridge doctor` reports
+  them as `linear.proven_gates` ("Proven gates: issue_subscribers, issue_move
+  (off: project_flow, project_team_add)."), and the TUI's Overview shows the
+  same in two rows, Proven gates and Not proven. Both read the project
+  overview's `proven_gates`: the five gate names, each on or off, and nothing
+  else of the server's settings. Members don't see them.
 - **Timeouts.** A write the server makes can take up to a minute, and it
   finishes even if the client disconnects. Keep the proxy and load-balancer
   timeouts for `/v1/execute` at 75 seconds or more.

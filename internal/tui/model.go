@@ -390,6 +390,10 @@ type Model struct {
 	// intakeLine is Overview's summary of the project's intake, a link
 	// to the Intake view (after the attention lines); "" when unread.
 	intakeLine string
+	// gatesOn and gatesOff are Overview's rows of the server's PROVEN
+	// gates, shown to the project owner only (gatesRead).
+	gatesOn, gatesOff []string
+	gatesRead         bool
 	// waiting is the no-project mode; waitingOwner whom to ask.
 	waiting      bool
 	waitingOwner string

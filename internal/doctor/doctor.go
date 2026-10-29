@@ -225,6 +225,7 @@ func Run(ctx context.Context, in Input, executor Executor) Report {
 		checkTeamRolesDoc(ctx, wid, pid, in.TeamRolesDoc, add)
 		checkLinearWrites(ctx, executor, wid, pid, add)
 		checkProjectTeamAdds(ctx, executor, wid, pid, add)
+		checkProvenGates(ctx, executor, wid, pid, add)
 		if in.LabelSets != nil {
 			checkLabelSets(ctx, in.LabelSets, add)
 		}
@@ -1437,6 +1438,29 @@ func checkLabelSets(ctx context.Context, read func(context.Context) ([]LabelSet,
 		check.Status = Warn
 		check.Message = strings.Join(gaps, "; ") + ". " + check.Message
 		check.Action = "A team with no needs-agent is never polled for it, and one with no agent-working gets no marker label. Create the label in the team or its bound parent, or remove the duplicate a team lists twice."
+	}
+	add(check)
+}
+
+// checkProvenGates names the server's PROVEN gates that are on and those
+// that are off: a Linear write behind an off gate is refused as unproven.
+// Only the project owner's overview lists them; for anyone else, or an
+// older server, the check is left out.
+func checkProvenGates(ctx context.Context, executor Executor, wid, pid string, add func(Check)) {
+	r, err := executor.Execute(ctx, bus.Request{Operation: "project_overview", Workspace: wid, Project: pid, Args: map[string]any{}})
+	m, _ := r.Data.(map[string]any)
+	on, off, ok := bus.ProvenGatesOnOff(m["proven_gates"])
+	if err != nil || !ok {
+		return
+	}
+	check := Check{ID: "linear.proven_gates", Title: "Proven Linear write gates", Status: Pass}
+	switch {
+	case len(on) == 0:
+		check.Message = fmt.Sprintf("Proven gates: none on (off: %s).", strings.Join(off, ", "))
+	case len(off) == 0:
+		check.Message = fmt.Sprintf("Proven gates: %s.", strings.Join(on, ", "))
+	default:
+		check.Message = fmt.Sprintf("Proven gates: %s (off: %s).", strings.Join(on, ", "), strings.Join(off, ", "))
 	}
 	add(check)
 }

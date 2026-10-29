@@ -19,6 +19,11 @@
   requests (was 5 s), and compose gives it 90 s. Older clients see a 503 as today. The first deploy of this release
   can't drain (the running server has no drain); later deploys can. Linear config scope: none.
 
+- **A large binding gets a larger share of each watcher tick.** A project's share is 20 s plus 2 s for each bound
+  team or Linear project past four, up to 40 s, and never more than the tick has left; a project the tick has under
+  15 s left for waits, first in line, for the next tick instead of starting a pass the tick would cut. A slow pass's
+  log line names its share (`took …ms of its …ms share`). Linear config scope: none.
+
 ## Messages survive a server deploy
 
 - **The client keeps what it couldn't send.** On a hosted server, a `send` or `reply` (kind message or reply, without

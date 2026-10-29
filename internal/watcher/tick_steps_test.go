@@ -88,8 +88,8 @@ func TestASlowPassLogsWhereItsShareWent(t *testing.T) {
 	old := logf
 	logf = func(format string, args ...any) { logged = append(logged, fmt.Sprintf(format, args...)) }
 	t.Cleanup(func() { logf = old })
-	logTick("p1", "tick", ProjectTick{TookMS: map[string]int64{"comments": 9000, "intake": 8000, "markers": 100}})
-	if len(logged) != 1 || logged[0] != "watcher: tick: project p1 took 17100ms: comments 9000ms, intake 8000ms, markers 100ms" {
+	logTick("p1", "tick", ProjectTick{ShareMS: 26000, TookMS: map[string]int64{"comments": 9000, "intake": 8000, "markers": 100}})
+	if len(logged) != 1 || logged[0] != "watcher: tick: project p1 took 17100ms of its 26000ms share: comments 9000ms, intake 8000ms, markers 100ms" {
 		t.Fatal(logged)
 	}
 	logged = nil
@@ -103,5 +103,59 @@ func TestASlowPassLogsWhereItsShareWent(t *testing.T) {
 func TestWatcherReusesTheBindingProofAcrossTicks(t *testing.T) {
 	if watcherProofTTL < 15*time.Minute {
 		t.Fatal("the proof expires before the next tick:", watcherProofTTL)
+	}
+}
+
+// A binding's share grows with its teams and projects, from ProjectDeadline
+// up to maxProjectShare.
+func TestAProjectsShareGrowsWithItsBinding(t *testing.T) {
+	for units, want := range map[int]time.Duration{0: ProjectDeadline, 4: ProjectDeadline, 5: ProjectDeadline + 2*time.Second, 8: ProjectDeadline + 8*time.Second, 14: maxProjectShare, 100: maxProjectShare} {
+		if got := shareFor(units); got != want {
+			t.Errorf("shareFor(%d) = %s, want %s", units, got, want)
+		}
+	}
+	e := setup(t)
+	if got := e.w.projectShare(context.Background(), e.pid); got != ProjectDeadline {
+		t.Fatal("one team:", got)
+	}
+	ids := []string{}
+	e.f.projects = map[string]bool{}
+	for i := 1; i <= 7; i++ {
+		ids = append(ids, linearProjectID(i))
+		e.f.projects[linearProjectID(i)] = true
+	}
+	if _, err := e.s.Execute(context.Background(), bus.Request{Operation: "taskboard_set_v2", Workspace: "w", Project: "p", Args: map[string]any{"expected_revision": 1, "mode": "project_set", "linear_team_ids": []string{team}, "linear_default_team_id": team, "linear_project_ids": ids}}); err != nil {
+		t.Fatal(err)
+	}
+	// One team and seven projects: four past the base.
+	if got := e.w.projectShare(context.Background(), e.pid); got != ProjectDeadline+4*shareStep {
+		t.Fatal("one team and seven projects:", got)
+	}
+	tick := e.tick()
+	if tick.ShareMS != (ProjectDeadline + 4*shareStep).Milliseconds() {
+		t.Fatal(tick.ShareMS)
+	}
+}
+
+// A tick gives a project no more than it has left, and serves none it has
+// less than minProjectShare left for: those aren't recorded as ticked, so
+// they come first next time.
+func TestATickServesOnlyWhatItHasTimeFor(t *testing.T) {
+	e := setup(t)
+	ctx, cancel := context.WithTimeout(context.Background(), minProjectShare-time.Second)
+	defer cancel()
+	if got := e.w.Tick(ctx); len(got) != 0 {
+		t.Fatal("a project was started without time for it:", got)
+	}
+	var ticked int
+	e.queryRow(`SELECT count(*) FROM watch_ticks`, &ticked)
+	if ticked != 0 {
+		t.Fatal("an unserved project was recorded as ticked")
+	}
+	ctx, cancel = context.WithTimeout(context.Background(), minProjectShare+time.Second)
+	defer cancel()
+	got := e.w.Tick(ctx)
+	if len(got) != 1 || got[0].ShareMS <= 0 || got[0].ShareMS > (minProjectShare+time.Second).Milliseconds() {
+		t.Fatal("the share wasn't cut to what the tick had left:", got)
 	}
 }

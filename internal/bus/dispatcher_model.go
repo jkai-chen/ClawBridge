@@ -265,11 +265,15 @@ func dispatcherModelOperation(op string) bool {
 	return op == "dispatcher_model_setup" || op == "dispatcher_model_status" || op == "dispatcher_model_key_delete" || op == "dispatcher_model_doctor"
 }
 
-// dispatcherModelOp runs the owner's model setup commands (§11.1, §11.7).
+// dispatcherModelOp runs the owner's model setup commands (§11.1, §11.7),
+// and any member's deletion of their own key.
 // The key is the caller's own, not the project's: the project names whose
 // owner may set it. Nothing here ever returns, records or reports the key.
 func (s *Store) dispatcherModelOp(ctx context.Context, tx *transaction, w, p map[string]any, projectRole string, r Request) (any, error) {
-	if projectRole != "owner" {
+	// Deleting your own key needs only a role in the project: it touches
+	// only the caller's rows, and a key-holder who is no longer an owner
+	// anywhere must still be able to remove it (R142-L6).
+	if projectRole != "owner" && r.Operation != "dispatcher_model_key_delete" {
 		return nil, errors.New("project owner permission required")
 	}
 	nowRaw, err := dbStamp(ctx, tx)

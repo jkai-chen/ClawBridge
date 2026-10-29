@@ -122,6 +122,9 @@
   10 minutes, such as a running agent's, still gets through, and so does a credential the server has just handed out
   (agentd's mint for a restarted agent, the project tokens its agent redeems), so a dead agent that keeps failing on
   agentd's address can't keep the next one out; any other token new to the server waits out the lockout.
+- **A former owner can delete their own model key.** `dispatcher_model_key_delete` needed the project owner role, like
+  the rest of model setup, so a key-holder who was no longer an owner couldn't remove their sealed key. Any project role
+  may now delete its own key, and only its own; setup, status and doctor stay the owner's.
 
 # ClawBridge v0.3.9.1 (server hotfix, deployed 29 Oct; no client release or tag)
 

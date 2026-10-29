@@ -8,6 +8,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/http"
+	"os"
 	"strconv"
 	"strings"
 
@@ -51,6 +53,9 @@ var wizardMCPInstall = func(ctx context.Context, path, agent, session, profile s
 }
 var wizardDoctor = func(ctx context.Context, path, profile string, args []string) (doctor.Report, error) {
 	var out bytes.Buffer
+	// The report is parsed, so ask for JSON whatever the terminal is: Run
+	// chose the human layout for a person at one.
+	ctx = clirender.WithMode(ctx, clirender.JSON)
 	err := runDoctorCommand(ctx, Config{ClientConfig: path, LinearProfile: profile}, args, &out, io.Discard)
 	var r doctor.Report
 	if json.Unmarshal(out.Bytes(), &r) != nil || r.Status == "" {
@@ -335,6 +340,38 @@ var dispatcherSkips = []struct{ text, outcome string }{
 	{"not from a session", "skipped: turn it on in your own terminal with no session"},
 }
 
+const dispatcherOwnerSkip = "skipped: the project owner sets the dispatcher"
+
+// dispatcherRefusal is the skip a refusal of show or the enable preview
+// means. The named refusals come first (a local server's errors keep their
+// text; a session's refusal is a 403 too); any other 403 is a member's: the
+// project owner's setting, with nothing to do later.
+func dispatcherRefusal(err error, later string) (outcome, hint string, ok bool) {
+	for _, s := range dispatcherSkips {
+		if strings.Contains(err.Error(), s.text) {
+			return s.outcome, later, true
+		}
+	}
+	if ownersSetting(err) {
+		return dispatcherOwnerSkip, "", true
+	}
+	return "", "", false
+}
+
+// ownersSetting reports a refusal that means the dispatcher is the project
+// owner's to set: a 403. The client doesn't know its project role (neither
+// the join nor whoami carries it), so the server's refusal tells a member.
+func ownersSetting(err error) bool {
+	var refused interface {
+		Rejection() (status int, code, message string)
+	}
+	if !errors.As(err, &refused) {
+		return false
+	}
+	status, code, _ := refused.Rejection()
+	return status == http.StatusForbidden || code == "forbidden"
+}
+
 // offerDispatcher is onboarding's last step: it shows a hosted project's
 // owner what the dispatcher does and the enable preview, and turns it on
 // in the rules engine only on a yes. It runs the explicit commands.
@@ -342,12 +379,23 @@ func offerDispatcher(ctx context.Context, path string, stdout io.Writer, yes fun
 	const name = "Dispatcher"
 	later := "clawbridge dispatcher show, then clawbridge dispatcher enable --expected-revision N --confirm"
 	const model = "model mode: after model setup, see docs/dispatcher.md (Model mode)"
-	if c, err := readConfig(path, false); err != nil || c.Mode != "cloud" {
+	c, err := readConfig(path, false)
+	if err != nil || c.Mode != "cloud" {
 		record(name, "skipped: the dispatcher runs on a hosted server", "")
+		return nil
+	}
+	// The server refuses the switch from a session with a bare 403 (its
+	// text isn't kept for a 403), so the client says so itself, first.
+	if c.Session != "" || os.Getenv("CLAWBRIDGE_SESSION") != "" {
+		record(name, "skipped: turn it on in your own terminal with no session", "")
 		return nil
 	}
 	shown, err := wizardDispatcher(ctx, path, []string{"show"})
 	if err != nil {
+		if outcome, hint, ok := dispatcherRefusal(err, later); ok {
+			record(name, outcome, hint)
+			return nil
+		}
 		record(name, failed(err), later)
 		return nil
 	}
@@ -362,11 +410,9 @@ func offerDispatcher(ctx context.Context, path string, stdout io.Writer, yes fun
 	later = "clawbridge dispatcher show, then clawbridge dispatcher enable --expected-revision " + clirender.Safe(revision) + " --confirm"
 	preview, err := wizardDispatcher(ctx, path, []string{"enable", "--engine", "rules", "--expected-revision", revision})
 	if err != nil {
-		for _, s := range dispatcherSkips {
-			if strings.Contains(err.Error(), s.text) {
-				record(name, s.outcome, later)
-				return nil
-			}
+		if outcome, hint, ok := dispatcherRefusal(err, later); ok {
+			record(name, outcome, hint)
+			return nil
 		}
 		record(name, failed(err), later)
 		return nil

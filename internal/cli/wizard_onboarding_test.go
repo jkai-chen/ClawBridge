@@ -11,8 +11,10 @@ import (
 	"strings"
 	"testing"
 
+	"clawbridge/internal/clirender"
 	"clawbridge/internal/doctor"
 	"clawbridge/internal/install"
+	"clawbridge/internal/remote"
 	"clawbridge/internal/skill"
 	"github.com/muesli/cancelreader"
 )
@@ -286,5 +288,74 @@ func TestWizardDispatcherRunsTheCommands(t *testing.T) {
 	_, err = runWizardDispatcher(context.Background(), path, []string{"enable", "--engine", "rules", "--expected-revision", "0"})
 	if err == nil || !strings.Contains(err.Error(), dispatcherSkips[1].text) {
 		t.Fatal("the unlinked refusal changed:", err)
+	}
+}
+
+// JR1: in a real terminal Run picks the human layout; the guided setup's
+// doctor step must still get the report as data.
+func TestWizardDoctorGetsTheReportInATerminal(t *testing.T) {
+	dir := isolated(t)
+	t.Setenv("HOME", dir)
+	path := filepath.Join(dir, "client.json")
+	if err := os.WriteFile(path, []byte("mode = \"local\"\n# A literal string: a Windows path's backslashes are no escapes.\ndb = '"+filepath.Join(dir, "db.sqlite")+"'\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	ctx := clirender.WithMode(context.Background(), clirender.Human) // what Run sets at a terminal
+	report, err := wizardDoctor(ctx, path, "", nil)
+	if err != nil && strings.Contains(err.Error(), "doctor returned no report") {
+		t.Fatal(err)
+	}
+	if report.Status == "" {
+		t.Fatalf("no report status (err %v)", err)
+	}
+}
+
+// JR2: a member is told the owner sets the dispatcher, not shown a 403.
+func TestOnboardingDispatcherForAMember(t *testing.T) {
+	dir := t.TempDir()
+	cloud := filepath.Join(dir, "cloud.toml")
+	if err := os.WriteFile(cloud, []byte("mode = \"cloud\"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	oldD := wizardDispatcher
+	t.Cleanup(func() { wizardDispatcher = oldD })
+	const want = "skipped: the project owner sets the dispatcher"
+	run := func(show, preview error) (outcome, later string, calls []string) {
+		wizardDispatcher = func(_ context.Context, _ string, args []string) (map[string]any, error) {
+			calls = append(calls, args[0])
+			if args[0] == "show" {
+				return map[string]any{"enabled": false, "revision": 3}, show
+			}
+			return map[string]any{"preview": true, "mode": "rules"}, preview
+		}
+		record := func(_, o, l string) { outcome, later = o, l }
+		yes := func(string) (bool, error) { return false, nil }
+		if err := offerDispatcher(context.Background(), cloud, io.Discard, yes, record, func(e error) string { return "failed: " + e.Error() }); err != nil {
+			t.Fatal(err)
+		}
+		return
+	}
+	forbidden := fmt.Errorf("dispatcher: %w", &remote.HTTPError{Status: 403, Code: "forbidden"})
+	if o, l, calls := run(forbidden, nil); o != want || l != "" || strings.Join(calls, ",") != "show" {
+		t.Fatalf("403 on show: %q %q %v", o, l, calls)
+	}
+	if o, l, calls := run(nil, forbidden); o != want || l != "" || strings.Join(calls, ",") != "show,enable" {
+		t.Fatalf("403 on the preview: %q %q %v", o, l, calls)
+	}
+	if o, _, calls := run(nil, nil); o != "offered, left off" || strings.Join(calls, ",") != "show,enable" {
+		t.Fatalf("owner: %q %v", o, calls)
+	}
+	// An owner inside a session is refused with a bare 403 too: the client
+	// knows its session and says so before any call (reviewer, #303).
+	t.Setenv("CLAWBRIDGE_SESSION", "worker")
+	if o, l, calls := run(forbidden, forbidden); o != "skipped: turn it on in your own terminal with no session" || l != "" || len(calls) != 0 {
+		t.Fatalf("in a session: %q %q %v", o, l, calls)
+	}
+	// A refusal whose text is kept (a local server) still names its reason
+	// before the 403 fallback.
+	t.Setenv("CLAWBRIDGE_SESSION", "")
+	named := fmt.Errorf("dispatcher: %w", &remote.HTTPError{Status: 403, Code: "forbidden", Message: "the dispatcher is turned on or off by the project owner, not from a session"})
+	if o, _, _ := run(nil, named); o != "skipped: turn it on in your own terminal with no session" {
+		t.Fatalf("named 403: %q", o)
 	}
 }

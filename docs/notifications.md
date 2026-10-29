@@ -138,11 +138,30 @@ in the project's `.claude/settings.local.json` (`--hooks none` leaves them out;
   start lifts the hold; until then its messages wait, and `clawbridge doctor`
   shows the hold.
 
+**Hook forms.** On macOS and Linux each hook is a POSIX shell command. On Windows
+there is no POSIX shell, so `mcp install` writes each hook in Claude Code's exec
+form: an entry with `command` (the absolute path of `clawbridge.exe`) and `args`
+(for example `hook stop --from-hook --hook-tag clawbridge-context-hook-v1`),
+which Claude Code runs with no shell. The tag only marks the entry as
+ClawBridge's, so a reinstall replaces it and an uninstall removes it, in either
+form. A shared settings file holds the form of the OS that last installed it, so a
+team on mixed systems should install the hooks per machine (local or user scope). The `project-shared` scope writes `clawbridge` instead of a path, so a
+shared hook runs whatever `clawbridge` the project folder or PATH resolves, the
+same trust boundary as any committed hook. The hooks on Windows are pending the
+Windows probe: they are written, but waking an agent through them is not yet
+confirmed.
+
 The Stop hook covers a busy agent. An idle one still needs the command adapter
 above to be woken.
 
 `clawbridge doctor` shows whether the session's MCP server holds the stream,
-and the session's unacked and dead counts. Details: [API reference, "Agents and
+and the session's unacked and dead counts. Its "Claude Code hooks" line says
+which form is installed (`exec` or `shell`) and the Claude Code version
+(`claude --version`, run with a short timeout; an unknown version never fails
+doctor). On Windows with the exec form it warns that the hooks are pending the
+Windows probe, until the version is on the list of probed versions; to help the
+probe, report your Claude Code version and whether a Stop hook held back a stop
+while mail was waiting. Details: [API reference, "Agents and
 the queue"](reference/api.md#agents-and-the-queue).
 
 ## Choose when to receive automatic notices

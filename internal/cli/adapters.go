@@ -151,10 +151,6 @@ func installHooks(h mcpInstallHooks, stderr io.Writer) error {
 	if h.scope == "none" {
 		return nil
 	}
-	if !h.explicit && contextGOOS == "windows" {
-		fmt.Fprintln(stderr, "the Claude Code hooks need a POSIX shell and were not installed on Windows")
-		return nil
-	}
 	err := applyHooks(h.scope, h.root, true, h.dryRun, h.confirmShared, stderr, stderr)
 	if err != nil && !h.explicit {
 		fmt.Fprintf(stderr, "the Claude Code hooks were not installed: %v; install them with clawbridge context hooks install\n", err)

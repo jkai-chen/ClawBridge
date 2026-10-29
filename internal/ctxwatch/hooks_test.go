@@ -9,7 +9,18 @@ import (
 	"testing"
 )
 
-var bin = absPath("opt", "claw bridge", "clawbridge")
+// exe is the suffix a Windows executable needs, which the exec form checks.
+var exe = func() string {
+	if runtime.GOOS == "windows" {
+		return ".exe"
+	}
+	return ""
+}()
+
+var bin = absPath("opt", "claw bridge", "clawbridge"+exe)
+
+// These tests check the POSIX text on every OS, so they plan for "linux";
+// the exec form is tested in hooks_exec_test.go.
 
 func TestHookCommand(t *testing.T) {
 	local, err := HookCommand(ScopeLocal, bin, "bind")
@@ -17,13 +28,7 @@ func TestHookCommand(t *testing.T) {
 		t.Fatalf("%q %v", local, err)
 	}
 	shared, err := HookCommand(ScopeProjectShared, "", "compacting")
-	if runtime.GOOS == "windows" {
-		// The POSIX hook text is unix-only; the Windows form is FR15 Task 3.
-		// Everything else here still runs.
-		if err != nil {
-			t.Fatal(err)
-		}
-	} else if err != nil || shared != "command -v clawbridge >/dev/null 2>&1 || exit 0; CLAWBRIDGE_AGENT_PID=$PPID clawbridge context compacting --from-hook "+HookMarker {
+	if err != nil || shared != "command -v clawbridge >/dev/null 2>&1 || exit 0; CLAWBRIDGE_AGENT_PID=$PPID clawbridge context compacting --from-hook "+HookMarker {
 		t.Fatalf("%q %v", shared, err)
 	}
 	for name, c := range map[string]struct{ scope, binary string }{
@@ -75,7 +80,7 @@ func settingsFile(t *testing.T, content string) string {
 
 func apply(t *testing.T, path, scope, binary string, install bool) HookChange {
 	t.Helper()
-	c, err := PlanHooks(path, scope, binary, install)
+	c, err := PlanHooksFor("linux", path, scope, binary, install)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -150,7 +155,7 @@ func TestInstallAndUninstallHooks(t *testing.T) {
 		t.Fatalf("reinstall changed:\n%s", c.Diff())
 	}
 	// A moved binary replaces the old entries rather than adding to them.
-	moved := absPath("usr", "local", "bin", "clawbridge")
+	moved := absPath("usr", "local", "bin", "clawbridge"+exe)
 	apply(t, path, ScopeLocal, moved, true)
 	data, _ = os.ReadFile(path)
 	if strings.Count(string(data), HookMarker) != 3 || strings.Contains(string(data), jsonEscaped(bin)) || !strings.Contains(string(data), jsonEscaped(moved)) {
@@ -170,7 +175,7 @@ func TestInstallAndUninstallHooks(t *testing.T) {
 
 func TestHooksOnANewFile(t *testing.T) {
 	path := settingsFile(t, "")
-	if c, err := PlanHooks(path, ScopeLocal, bin, false); err != nil || c.Changed() {
+	if c, err := PlanHooksFor("linux", path, ScopeLocal, bin, false); err != nil || c.Changed() {
 		t.Fatalf("uninstall without a file: %v %v", c.Changed(), err)
 	}
 	apply(t, path, ScopeProjectShared, "", true)
@@ -178,8 +183,7 @@ func TestHooksOnANewFile(t *testing.T) {
 		t.Fatalf("%v %v", info, err)
 	}
 	// The command is written as it runs, not with \u escapes.
-	// The POSIX hook text is unix-only; the Windows form is FR15 Task 3.
-	if data, _ := os.ReadFile(path); runtime.GOOS != "windows" && !strings.Contains(string(data), ">/dev/null 2>&1 || exit 0") {
+	if data, _ := os.ReadFile(path); !strings.Contains(string(data), ">/dev/null 2>&1 || exit 0") {
 		t.Fatalf("%s", data)
 	}
 	apply(t, path, ScopeLocal, "", false)
@@ -197,18 +201,18 @@ func TestHooksRefuseWhatTheyCantEdit(t *testing.T) {
 		"event object":  `{"hooks": {"SessionStart": {}}}`,
 		"trailing text": `{"a": 1} x`,
 	} {
-		if _, err := PlanHooks(settingsFile(t, content), ScopeLocal, bin, true); err == nil {
+		if _, err := PlanHooksFor("linux", settingsFile(t, content), ScopeLocal, bin, true); err == nil {
 			t.Fatalf("%s accepted", name)
 		}
 	}
 	real := settingsFile(t, "{}")
 	link := filepath.Join(t.TempDir(), "settings.json")
 	symlink(t, real, link)
-	if _, err := PlanHooks(link, ScopeLocal, bin, true); err == nil {
+	if _, err := PlanHooksFor("linux", link, ScopeLocal, bin, true); err == nil {
 		t.Fatal("a link was accepted")
 	}
 	// A file changed between reading and writing is not overwritten.
-	c, err := PlanHooks(real, ScopeLocal, bin, true)
+	c, err := PlanHooksFor("linux", real, ScopeLocal, bin, true)
 	if err != nil {
 		t.Fatal(err)
 	}

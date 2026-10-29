@@ -21,12 +21,22 @@ var contextStdin io.Reader = os.Stdin
 // contextGOOS is the platform the hooks would run on.
 var contextGOOS = runtime.GOOS
 
+// hookExecutable is the path of this clawbridge binary, for the hooks; a
+// variable so tests can name a Windows path on any OS.
+var hookExecutable = func() (string, error) {
+	exe, err := os.Executable()
+	if err == nil {
+		exe, err = filepath.EvalSymlinks(exe)
+	}
+	return exe, err
+}
+
 // compactReminder is printed to the agent by the SessionStart hook after a
 // compaction (§4.5); the cached handover hint follows it.
 const compactReminder = "You were just compacted. Re-read your handover note before acting; confirm any operation in flight."
 
 // sharedWarning is shown before the committed settings file is edited.
-const sharedWarning = "This file is committed: the hooks will run for every teammate who pulls it, as whatever `clawbridge` comes first on their PATH."
+const sharedWarning = "This file is committed: the hooks will run for every teammate who pulls it, as whatever `clawbridge` their project folder or PATH resolves, the same trust boundary as any committed hook."
 
 // runContextBind runs `context bind`. With --from-hook it is Claude Code's
 // SessionStart hook: it always succeeds, prints nothing but the reminder,
@@ -40,6 +50,7 @@ func runContextBind(ctx context.Context, args []string, stdout, stderr io.Writer
 	transcript := f.String("transcript", "", "a transcript path, with --agent")
 	thread := f.String("codex-thread", "", "a Codex thread ID")
 	fromHook := f.Bool("from-hook", false, "read Claude Code's hook input on stdin")
+	f.String("hook-tag", "", "marks the exec-form hook entry; ignored")
 	if err := f.Parse(args); err != nil {
 		return err
 	}
@@ -192,6 +203,7 @@ func runContextCompacting(ctx context.Context, args []string, stderr io.Writer) 
 	f.Usage = func() { fmt.Fprintln(stderr, contextUsage) }
 	session := f.String("session", os.Getenv("CLAWBRIDGE_SESSION"), "session name")
 	fromHook := f.Bool("from-hook", false, "read Claude Code's hook input on stdin")
+	f.String("hook-tag", "", "marks the exec-form hook entry; ignored")
 	if err := f.Parse(args); err != nil {
 		return err
 	}
@@ -246,10 +258,6 @@ func runContextHooks(args []string, stdout, stderr io.Writer) error {
 // The local and shared scopes are the settings of the project at root, or
 // with no root of the git work tree holding the current directory.
 func applyHooks(scope, root string, install, dryRun, confirmShared bool, stdout, stderr io.Writer) error {
-	// The hook commands are POSIX shell.
-	if install && contextGOOS == "windows" {
-		return errors.New("the hooks need a POSIX shell and are not installed on Windows; bind with `context bind --agent claude-code --transcript PATH`")
-	}
 	var path string
 	switch scope {
 	case ctxwatch.ScopeUser:
@@ -287,16 +295,13 @@ func applyHooks(scope, root string, install, dryRun, confirmShared bool, stdout,
 	}
 	binary := ""
 	if install && scope != ctxwatch.ScopeProjectShared {
-		exe, err := os.Executable()
-		if err == nil {
-			exe, err = filepath.EvalSymlinks(exe)
-		}
+		exe, err := hookExecutable()
 		if err != nil {
 			return errors.New("the path of this clawbridge binary is unknown")
 		}
 		binary = exe
 	}
-	change, err := ctxwatch.PlanHooks(path, scope, binary, install)
+	change, err := ctxwatch.PlanHooksFor(contextGOOS, path, scope, binary, install)
 	if err != nil {
 		return err
 	}

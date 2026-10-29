@@ -73,3 +73,19 @@ func TestHookAgentPIDUnsetIsTheParent(t *testing.T) {
 		t.Fatalf("HookAgentPID = %d, want the parent %d", got, want)
 	}
 }
+
+// On Windows a CLAWBRIDGE_AGENT_PID of 1 (Git Bash's $PPID) is ignored and the
+// agent is derived from the process tree; elsewhere the value is kept.
+func TestHookAgentPIDIgnoresPIDOneOnWindows(t *testing.T) {
+	t.Cleanup(func() { hookGOOS = runtime.GOOS })
+	t.Setenv("CLAWBRIDGE_AGENT_PID", "1")
+	hookGOOS = "windows"
+	want := wantParent()
+	if got := HookAgentPID(); got != want || got <= 1 {
+		t.Fatalf("on Windows HookAgentPID = %d, want the parent %d", got, want)
+	}
+	hookGOOS = "linux"
+	if got := HookAgentPID(); got != 1 {
+		t.Fatalf("off Windows HookAgentPID = %d, want 1", got)
+	}
+}

@@ -1364,6 +1364,8 @@ func collectDoctor(ctx context.Context, config Config, configPath string, existi
 		},
 		Skills: doctorSkills,
 	}
+	// The hook form and the Claude Code version don't depend on a session.
+	in.Hooks = func() doctor.HooksState { return doctorHooks(ctx) }
 	if config.Session != "" {
 		in.Context = func() doctor.ContextState { return doctorContext(config.Session) }
 		in.Queue = func() doctor.QueueState { return doctorQueue(config.Session) }

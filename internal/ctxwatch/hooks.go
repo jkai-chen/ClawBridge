@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"strings"
 )
 
@@ -80,6 +81,114 @@ func isOwnHook(command string) bool {
 	return false
 }
 
+// HookTag is the tag the exec-form hook carries as its last argument, where
+// the POSIX text carries HookMarker as a shell comment. The hook commands
+// accept it and ignore it.
+const HookTag = "clawbridge-context-hook-v1"
+
+// Hook forms, as doctor reports them.
+const (
+	FormShell = "shell"
+	FormExec  = "exec"
+)
+
+// hookArgs are the exec-form arguments for one subcommand.
+func hookArgs(sub string) ([]string, bool) {
+	words, ok := hookCommandWords[sub]
+	if !ok {
+		return nil, false
+	}
+	return append(strings.Fields(words), "--from-hook", "--hook-tag", HookTag), true
+}
+
+// isWindowsAbs says whether p is an absolute Windows path (a drive path or
+// a UNC path), whatever platform this runs on.
+func isWindowsAbs(p string) bool {
+	if len(p) >= 3 && (p[0]|0x20) >= 'a' && (p[0]|0x20) <= 'z' && p[1] == ':' && (p[2] == '\\' || p[2] == '/') {
+		return true
+	}
+	return len(p) > 2 && p[0] == '\\' && p[1] == '\\' && p[2] != '\\'
+}
+
+// windowsExe says whether p can be an exec-form hook's command: an absolute
+// path to an .exe with nothing in it that would end a JSON string or line.
+func windowsExe(p string) bool {
+	return isWindowsAbs(p) && strings.HasSuffix(strings.ToLower(p), ".exe") && !strings.ContainsAny(p, "\"\n\r\x00")
+}
+
+// HookEntry is the settings entry for one hook on goos. On Windows it is
+// Claude Code's exec form, a command and its arguments run with no shell;
+// elsewhere it is HookCommand's POSIX text.
+func HookEntry(goos, scope, binary, sub string) (map[string]any, error) {
+	if goos != "windows" {
+		command, err := HookCommand(scope, binary, sub)
+		if err != nil {
+			return nil, err
+		}
+		return map[string]any{"type": "command", "command": command, "timeout": hookTimeout}, nil
+	}
+	args, ok := hookArgs(sub)
+	if !ok {
+		return nil, fmt.Errorf("unknown hook %q", sub)
+	}
+	command := "clawbridge"
+	switch scope {
+	case ScopeProjectShared:
+	case ScopeLocal, ScopeUser:
+		if !windowsExe(binary) {
+			return nil, fmt.Errorf("the binary path %q can't be written into a hook", binary)
+		}
+		command = binary
+	default:
+		return nil, fmt.Errorf("unknown scope %q: want %s, %s or %s", scope, ScopeLocal, ScopeUser, ScopeProjectShared)
+	}
+	list := make([]any, len(args))
+	for i, a := range args {
+		list[i] = a
+	}
+	return map[string]any{"type": "command", "command": command, "args": list, "timeout": hookTimeout}, nil
+}
+
+// ownEntryKey identifies a hook entry by what it runs; "" when it is not
+// exactly one ClawBridge writes, in either form, for any binary path.
+func ownEntryKey(entry map[string]any) string {
+	command, ok := entry["command"].(string)
+	if !ok {
+		return ""
+	}
+	rawArgs, hasArgs := entry["args"]
+	if !hasArgs {
+		if isOwnHook(command) {
+			return command
+		}
+		return ""
+	}
+	list, ok := rawArgs.([]any)
+	if !ok || (command != "clawbridge" && !windowsExe(command)) {
+		return ""
+	}
+	got := make([]string, len(list))
+	for i, a := range list {
+		if got[i], ok = a.(string); !ok {
+			return ""
+		}
+	}
+	for _, e := range hookEvents {
+		if want, _ := hookArgs(e.sub); strings.Join(want, "\x00") == strings.Join(got, "\x00") {
+			return command + "\x00" + strings.Join(got, "\x00")
+		}
+	}
+	return ""
+}
+
+// entryForm is the form of a ClawBridge entry (see ownEntryKey).
+func entryForm(entry map[string]any) string {
+	if _, ok := entry["args"]; ok {
+		return FormExec
+	}
+	return FormShell
+}
+
 // HookChange is a settings file before and after an install or uninstall.
 type HookChange struct {
 	Path          string
@@ -96,6 +205,12 @@ func (c HookChange) Changed() bool { return !bytes.Equal(c.Before, c.After) }
 // settings and hooks are kept; only entries that are exactly ClawBridge's
 // are removed. Nothing is written.
 func PlanHooks(path, scope, binary string, install bool) (HookChange, error) {
+	return PlanHooksFor(runtime.GOOS, path, scope, binary, install)
+}
+
+// PlanHooksFor is PlanHooks writing the form of goos: Windows gets the exec
+// form. Removal recognises both forms whatever goos is.
+func PlanHooksFor(goos, path, scope, binary string, install bool) (HookChange, error) {
 	c := HookChange{Path: path}
 	settings := map[string]any{}
 	info, err := os.Lstat(path)
@@ -130,17 +245,15 @@ func PlanHooks(path, scope, binary string, install bool) (HookChange, error) {
 			return c, fmt.Errorf("the settings file %s: %s %v; fix it first", path, e.event, err)
 		}
 		if install {
-			command, err := HookCommand(scope, binary, e.sub)
+			entry, err := HookEntry(goos, scope, binary, e.sub)
 			if err != nil {
 				return c, err
 			}
-			if len(removed) == 1 && removed[0] == command {
+			if len(removed) == 1 && removed[0] == ownEntryKey(entry) {
 				// Already installed as it would be: left where it is.
 				continue
 			}
-			groups = append(groups, map[string]any{"hooks": []any{
-				map[string]any{"type": "command", "command": command, "timeout": hookTimeout},
-			}})
+			groups = append(groups, map[string]any{"hooks": []any{entry}})
 		}
 		if len(groups) == 0 {
 			delete(hooks, e.event)
@@ -173,7 +286,7 @@ func PlanHooks(path, scope, binary string, install bool) (HookChange, error) {
 }
 
 // withoutOwnHooks is an event's hook groups with ClawBridge's entries
-// removed, and any group they leave empty, plus the removed commands.
+// removed, and any group they leave empty, plus the removed entries' keys (ownEntryKey).
 func withoutOwnHooks(v any) (kept []any, removed []string, err error) {
 	if v == nil {
 		return nil, nil, nil
@@ -196,8 +309,8 @@ func withoutOwnHooks(v any) (kept []any, removed []string, err error) {
 		var left []any
 		for _, h := range entries {
 			if entry, ok := h.(map[string]any); ok {
-				if command, ok := entry["command"].(string); ok && isOwnHook(command) {
-					removed = append(removed, command)
+				if key := ownEntryKey(entry); key != "" {
+					removed = append(removed, key)
 					continue
 				}
 			}
@@ -320,4 +433,43 @@ func lines(b []byte) []string {
 		return nil
 	}
 	return strings.Split(s, "\n")
+}
+
+// InstalledHookForm is the form of the ClawBridge hooks in the settings file
+// at path: FormExec, FormShell, "mixed", or "" for none (or no file).
+func InstalledHookForm(path string) (string, error) {
+	data, err := os.ReadFile(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return "", nil
+	}
+	if err != nil {
+		return "", fmt.Errorf("the settings file %s is not readable", path)
+	}
+	var settings struct {
+		Hooks map[string][]struct {
+			Hooks []map[string]any `json:"hooks"`
+		} `json:"hooks"`
+	}
+	if json.Unmarshal(data, &settings) != nil {
+		return "", fmt.Errorf("the settings file %s is not readable JSON", path)
+	}
+	forms := map[string]bool{}
+	for _, groups := range settings.Hooks {
+		for _, g := range groups {
+			for _, h := range g.Hooks {
+				if ownEntryKey(h) != "" {
+					forms[entryForm(h)] = true
+				}
+			}
+		}
+	}
+	switch {
+	case forms[FormExec] && forms[FormShell]:
+		return "mixed", nil
+	case forms[FormExec]:
+		return FormExec, nil
+	case forms[FormShell]:
+		return FormShell, nil
+	}
+	return "", nil
 }

@@ -76,6 +76,7 @@ var doctorAnswers = map[string]doctorAnswer{
 	"auth.clock":                   {},
 	"context":                      {},
 	"queue":                        {},
+	"hooks":                        {},
 	"server.maintenance":           {},
 	"client.outbox":                {},
 	"coordinator.playbook":         {},

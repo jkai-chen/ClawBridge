@@ -246,7 +246,7 @@ func TestContextHooksCommand(t *testing.T) {
 
 	// The committed file needs the explicit confirmation.
 	out, err = runContextCmd(t, "hooks", "install", "--scope", "project-shared")
-	if err == nil || !strings.Contains(out, "every teammate") || !strings.Contains(out, "first on their PATH") {
+	if err == nil || !strings.Contains(out, "every teammate") || !strings.Contains(out, "project folder or PATH resolves") {
 		t.Fatalf("%q %v", out, err)
 	}
 	if _, err := os.Stat(shared); err == nil {
@@ -265,13 +265,31 @@ func TestContextHooksCommand(t *testing.T) {
 	if data, _ = os.ReadFile(filepath.Join(dir, "claude", "settings.json")); strings.Count(string(data), ctxwatch.HookMarker) != 3 {
 		t.Fatalf("%s", data)
 	}
+	// Windows gets the exec form, replacing the POSIX entries, and its
+	// uninstall removes them.
 	contextGOOS = "windows"
-	if _, err = runContextCmd(t, "hooks", "install", "--scope", "user"); err == nil || !strings.Contains(err.Error(), "POSIX shell") {
-		t.Fatalf("%v", err)
+	realExe := hookExecutable
+	hookExecutable = func() (string, error) { return `C:\Program Files\claw bridge\clawbridge.exe`, nil }
+	t.Cleanup(func() { hookExecutable = realExe })
+	winSettings := filepath.Join(dir, "claude", "settings.json")
+	if _, err = runContextCmd(t, "hooks", "install", "--scope", "user"); err != nil {
+		t.Fatalf("install on Windows: %v", err)
+	}
+	if data, _ = os.ReadFile(winSettings); strings.Contains(string(data), ctxwatch.HookMarker) || strings.Count(string(data), ctxwatch.HookTag) != 3 || !strings.Contains(string(data), `"--hook-tag"`) {
+		t.Fatalf("%s", data)
 	}
 	if _, err = runContextCmd(t, "hooks", "uninstall", "--scope", "user"); err != nil {
 		t.Fatalf("uninstall on Windows: %v", err)
 	}
+	if data, _ = os.ReadFile(winSettings); strings.Contains(string(data), ctxwatch.HookTag) {
+		t.Fatalf("%s", data)
+	}
+	// A path that can't be an exec-form command is refused, not written.
+	hookExecutable = func() (string, error) { return `C:\bin\"x\clawbridge.exe`, nil }
+	if _, err = runContextCmd(t, "hooks", "install", "--scope", "user"); err == nil {
+		t.Fatal("an unsafe path was written")
+	}
+	hookExecutable = realExe
 	contextGOOS = "linux"
 	for name, args := range map[string][]string{
 		"scope":  {"hooks", "install", "--scope", "project"},
@@ -343,11 +361,6 @@ func TestHookFixtures(t *testing.T) {
 // a nested `claude -p` shares CLAWBRIDGE_SESSION but not the parent's
 // transcript.
 func TestBindFromHookKeepsALiveAgentsBinding(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		// The hooks are POSIX shell and never installed on Windows, where
-		// ProcessAlive is false: there is no live agent to keep.
-		t.Skip("the context hooks are not installed on Windows")
-	}
 	dir := isolated(t)
 	config := filepath.Join(dir, "claude")
 	t.Setenv("CLAUDE_CONFIG_DIR", config)

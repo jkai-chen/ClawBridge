@@ -1,5 +1,7 @@
 # Unreleased
 
+# ClawBridge v0.3.9 (released 29 Oct)
+
 **Schema 47 → 50.**
 - The server migrates to schema 50 on its first start: 48, the server drain's maintenance row and its instances'
   reports; 49, the shared operation ledger's rows name their ClawBridge project and their person

@@ -100,7 +100,7 @@ func NewServerWithOptions(store Executor, workspace, project, session, instance 
 	add[registerInput](s, b, "register_session", "Register this configured session; routing roles do not grant permissions. Use resume only for explicit takeover; record the new instance before another resume.", false, false)
 	add[listInput](s, b, "list_sessions", "List sessions in the pinned project with their live assignments; filter by issue, scope_path or assignment_state to find slice owners.", true, false)
 	add[emptyInput](s, b, "project_overview", "Overview of the pinned project: its sessions (active first, at most 200) with the coordinator and each live assignment's issue identifier, counts over every session, and its Linear board's teams, projects and who closes each. No issue titles; read those with the taskboard tools.", true, true)
-	add[emptyInput](s, b, "team_roles_get", "The project's team roles: each bound Linear team's leads, and each person's role (lead, engineer or reviewer) and teams, by Linear user ID. Use it to route work to a team's lead; a role says who someone is, never what they may approve. Only the project owner changes it, in their own terminal.", true, true)
+	add[emptyInput](s, b, "team_roles_get", "The project's team roles: each bound Linear team's leads, and each person's role (lead, engineer or reviewer) and teams, by Linear user ID. Use it to route work to a team's lead; a role says who someone is, never what they may approve. Only a person changes it, in their own terminal, never a session: the project owner, or a team's lead for their own team (a lead's row must be linked to their ClawBridge account).", true, true)
 	add[sendInput](s, b, "send", "Send to a session, @all, or @role:ROLE. Reuse operation_id only for an identical retry.", false, true)
 	add[inboxInput](s, b, "inbox", "Read this session's inbox; fetching marks delivered, not read. unread_only defaults to true. A message offered to this session carries its lease: handle it, then ack it (or reply with ack=true). An unacked message is offered again when its lease runs out.", false, true)
 	add[inboxStatusInput](s, b, "inbox_status", "Inspect authoritative unread metadata without heartbeat, delivery, read or history writes.", true, true)
@@ -278,7 +278,7 @@ type releaseInput struct {
 	Outcome       string `json:"outcome,omitempty" jsonschema:"done when the work is finished, so a project status policy may move the issue on (e.g. to In Review); omit otherwise."`
 }
 type sendInput struct {
-	Coordination *bus.Coordination `json:"coordination,omitempty"`
+	Coordination *bus.Coordination `json:"coordination,omitempty" jsonschema:"Structured metadata for an assignment message: issue_id, assignment_revision and intent are all required. intent is one of request, accept, decline, clarify, progress, ready, blocked, handoff; accept, decline and clarify also need request_id (the request being answered). To ask the coordinator to confirm your assignment: {issue_id, assignment_revision, intent: request}."`
 	To           string            `json:"to"`
 	Body         string            `json:"body"`
 	OperationID  string            `json:"operation_id" jsonschema:"A caller-generated retry identifier; reuse only with an identical request."`
@@ -294,7 +294,7 @@ type markReadInput struct {
 	IDs []string `json:"ids"`
 }
 type replyInput struct {
-	Coordination *bus.Coordination `json:"coordination,omitempty"`
+	Coordination *bus.Coordination `json:"coordination,omitempty" jsonschema:"Structured metadata for an assignment message: issue_id, assignment_revision and intent are all required. intent is one of request, accept, decline, clarify, progress, ready, blocked, handoff; accept, decline and clarify also need request_id (the request being answered). To ask the coordinator to confirm your assignment: {issue_id, assignment_revision, intent: request}."`
 	MessageID    string            `json:"message_id"`
 	Body         string            `json:"body"`
 	OperationID  string            `json:"operation_id"`
@@ -310,7 +310,7 @@ type ackEntry struct {
 	LeaseID   string `json:"lease_id,omitempty" jsonschema:"The lease inbox showed; omit to use the one this server holds."`
 }
 type updateInput struct {
-	TargetSession string         `json:"target_session,omitempty" jsonschema:"Hosted lead/owner only: explicitly target another session; this does not change the calling actor."`
+	TargetSession string         `json:"target_session,omitempty" jsonschema:"Hosted only; the project owner or a project lead (the ClawBridge project role): explicitly target another session; this does not change the calling actor."`
 	Role          *string        `json:"role,omitempty"`
 	Model         *string        `json:"model,omitempty"`
 	Host          *string        `json:"host,omitempty"`
@@ -319,7 +319,7 @@ type updateInput struct {
 	Transport     map[string]any `json:"transport,omitempty"`
 }
 type retireInput struct {
-	TargetSession string `json:"target_session,omitempty" jsonschema:"Hosted lead/owner only: explicitly target another session; audit retains the calling actor."`
+	TargetSession string `json:"target_session,omitempty" jsonschema:"Hosted only; the project owner or a project lead (the ClawBridge project role): explicitly target another session; audit retains the calling actor."`
 	Successor     string `json:"successor,omitempty"`
 	Status        string `json:"status,omitempty"`
 	Outcome       string `json:"outcome,omitempty" jsonschema:"done when the work of the session's confirmed assignment is finished: the issue then moves on under the project's close rule."`

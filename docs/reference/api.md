@@ -94,7 +94,7 @@ requires its matching instance. Routing role is distinct from project permission
 | `update_session` | One or more role/model/host/account/notes/transport fields; hosted owners and leads may target_session (see below) |
 | `retire_session` | Optional successor and status retired/moved; hosted owners and leads may target_session (see below) |
 | `history` | Optional entity, key, limit, after |
-| `whoami` | No extra arguments; the session includes its live `assignment` and the project its `coordinator_session`. With no project and no session (a member with no project yet), it answers for the workspace alone: `principal` and `workspace`, with `project` and `session` null |
+| `whoami` | No extra arguments; the session includes its live `assignment` and the project its `coordinator_session`. With no project and no session (a member with no project yet), it answers for the workspace alone: `principal` and `workspace`, with `project` and `session` null. Through the MCP server on a hosted server it also carries `client_outbox` (`waiting`, `oldest_age_seconds`, `dead`): this machine's queued message writes |
 | `assignment_propose` | Own session only: optional issue_uuid (lowercase UUID), issue_identifier (needs issue_uuid), task_role, scope_repo (git remote), scope_paths (up to 32 patterns); needs an issue or a path. Replaces the session's live assignment and returns overlapping live assignments as `conflicts` |
 | `assignment_confirm` | Designated coordinator session: revision, optional target_session, allow_overlap. Refuses overlap with a confirmed assignment unless allow_overlap (audited as conflict_overridden) |
 | `assignment_release` | revision; optional target_session for the designated coordinator |
@@ -109,7 +109,7 @@ requires its matching instance. Routing role is distinct from project permission
 | `taskboard_set` | expected_revision, linear_team_ids, linear_default_team_id, linear_project_id (UUID/null); optional linear_workspace_id (UUID/null) |
 | `taskboard_clear` | expected_revision; authorized owner/lead; optional repair (project owner, unreadable binding only) |
 | `taskboard_get_v2` | Versioned shared mapping; optional current actor/instance |
-| `taskboard_set_v2` | expected_revision, mode, linear_team_ids, linear_default_team_id, linear_project_ids; optional nullable linear_workspace_id; optional linear_team_names and linear_project_names (ID→name objects, see [Linear names](#linear-names)); binding version 3: optional linear_other_teams (team ID→`read`, `comment` or `linked`), linear_parent_team_id, lanes (`[{name, write_team_ids, default_team_id}]`, at most 10, over write teams) and unpinned (`read_only`, the default, or a lane name) |
+| `taskboard_set_v2` | expected_revision, mode, linear_team_ids, linear_default_team_id, linear_project_ids; optional nullable linear_workspace_id; optional linear_team_names and linear_project_names (ID→name objects, see [Linear names](#linear-names)); binding version 3: optional linear_other_teams (team ID→`read`, `comment` or `linked`), linear_parent_team_id, lanes (`[{name, write_team_ids, default_team_id}]`, at most 10, over write teams) and unpinned (`read_only`, the default, or a lane name); binding version 4: optional teams_without_project (write team IDs of a project set that no bound project carries yet; each is inert, every issue write in it refused `team_without_project`, until a project carries it) |
 | `taskboard_names_set` | expected_revision (the binding's current one), linear_team_names and/or linear_project_names; authorized owner/lead; the revision doesn't move |
 | `taskboard_clear_v2` | expected_revision; authorized owner/lead; optional repair (project owner, unreadable binding only) |
 | `linear_write` | Hosted server with the ClawBridge Linear app only: instance, operation (comment, create, update, relation_add, relation_remove), args (exactly what the `taskboard_<operation>_v2` tool takes). The server makes the write as the app, with every scope check, the mention guard, the marker and its own shared operation ledger, and answers `{receipt, outcome?}`. Binding and admin operations and identity arguments are refused; a binding not pinned to the app's workspace is refused (`workspace_unpinned`, `workspace_mismatch`). An uncertain outcome is a 409 |
@@ -125,6 +125,11 @@ requires its matching instance. Routing role is distinct from project permission
 | `project_create_list` | Any project member: `created` (latest 20), `unconfirmed` (every recorded Linear write unsettled after 10 minutes or settled `uncertain`, not acknowledged, each with its kind as `write`, its `state`, and `subject` when it has one) and `keep_days` (90). Tells the owner's sessions once of each newly stale one |
 | `project_create_ack` | Project owner without a session (hosted: a person's own device key): `operation_id` of an unconfirmed Linear write of any kind, or of a team add settled with `changed` |
 | `linear_write_charge` | A write made through a person's own Linear profile, counted in the project's hourly Linear count after its calls (FR8): `operation_id`, `kind` (`create`, `update`, `comment`, `relation`, `project_create`, `project_team_add`, `document`, `project_lead`, `view`, `subscribe`, `admin`), `calls` (0–200, raised to the kind's floor). To people without a session, to agents with one; never refused, cap or not. Any project role but reader. Returns `charged`, `used`, `limit` (0 with no cap), `capped`, `window_resets_at` and `by` (`app`, `people`, `agents`). Moves and app writes never send it |
+| `issue_writes_uncertain` | Any project member: the project's uncertain issue writes (create, update, comment, relation) from the server's operation ledger, unacknowledged: the caller's own, or every one for the project owner. Optional `operation_id`, `cursor` (a listing's `next_cursor`). Returns `writes` (`operation_id`, `operation`, `reason`, `updated_at`; at most 100) and `next_cursor` when more remain |
+| `issue_writes_ack` | The write's own person or the project owner, never a session (hosted: from a person's own signed-in device): `operation_id`. Hides the write from the list; the record stays pending, so a retry of the same operation ID sends nothing. `not_found` when there is none of yours; `conflict` while it is still being sent. Returns `acknowledged` (rows) |
+| `issue_move_reserve` | The project owner or a project lead without a session, or the project's active designated coordinator session for a move between its own lane's teams (else `outside_lane`), before moving an issue to another team: `operation_id`, `issue_uuid`, `from_team`, `to_team`, `plan_sha256`, `calls` (the move's planned Linear calls, at least its kind's floor), and for a family `children` (the sub-issue UUIDs, at most 50). Refused with `issue_move_unproven` until `serve --issue-move-proven`, and a family with `issue_family_move_unproven` until `serve --issue-family-move-proven`. Its calls are counted in the project's hourly Linear count with the reservation (to people without a session, to agents with one), never refused for the count. Returns the reservation (`state`, `by`, `lane`, and the children's); a repeat returns it again (`replay`), a not-sent one reopens. History: IDs only |
+| `issue_move_settle` | The reservation's own session and principal, after the move's calls: `operation_id`, `outcome` (`accepted`, `uncertain` or `not_sent`), `old_identifier`, `new_identifier`, and for a family each reserved child once in `children`. An `uncertain` move is listed in the overview's `linear_writes` until the owner acknowledges it |
+| `issue_move_status` | The reservation's own session and principal: `operation_id`. Returns the move's record with `acknowledged`, or `state: none` |
 | `project_team_add_reserve` | The project owner or a lead without a session, or the project's active designated coordinator session for a write team of its lane to a project whose `project_teams` already hold one (else `outside_lane`), before adding a team to a Linear project: `operation_id`, `linear_project` (a project of the project-set binding), `team_id` (a bound write team), `project_teams` (the project's teams as read), `plan_sha256`. Refused with `project_team_add_unproven` until `serve --project-team-add-proven`. Returns the reservation (`by`, `lane`, `state`); a repeat returns it again (`replay`), a not-sent one reopens. History: IDs only |
 | `project_team_add_settle` | The caller that reserved: `operation_id`, `outcome` (`accepted`, `uncertain` or `not_sent`), and for `accepted` `changed`, the names of other fields Linear changed (shown as `accepted_with_changes`), and `unverified`, `lead` and/or `members` when a read left them out. A settled outcome never changes; a repeat is a replay |
 | `project_team_add_list` | Any project member: `added`, `with_changes` (not yet acknowledged with `project_create_ack`), `recent` (latest 20 settled adds) and `keep_days` (90). The overview carries it as `project_team_adds` |
@@ -236,8 +241,9 @@ Old processes are fenced. Retired names cannot be reused or silently forwarded.
 
 Hosted calls check workspace membership, project permission and actor ownership.
 Owner/lead/member can perform messaging and session mutations. Readers can use
-allowed discovery and own-session reads/receipts. Hosted lead/owner may target a
-peer's update/retirement while bound to their own actor; audit records the caller.
+allowed discovery and own-session reads/receipts. On a hosted server the project
+owner or a project lead (the ClawBridge project role) may target a peer's
+update/retirement while bound to their own actor; audit records the caller.
 Peer instance tokens are omitted from other principals' results.
 
 Session host/account labels and notes are descriptive. Presence becomes stale
@@ -573,7 +579,9 @@ claim that the authority itself authenticated to Linear or assigned an agent.
 Schema 4 adds a stored mapping version while preserving schema-3 mapping bytes
 and revision history. V2 results contain exactly workspace_id, project_id,
 configured, revision, mapping_version, binding and updated_at. The response
-mapping_version is 2. A configured binding contains provider, mode,
+mapping_version is 2, 3 when the binding uses version 3's fields (other teams,
+a parent team, lanes), and 4 when it lists `teams_without_project`: a client
+that reads only up to 3 refuses a version-4 binding rather than half use it. A configured binding contains provider, mode,
 linear_team_ids, linear_default_team_id, linear_project_ids and
 linear_workspace_id. Mode is team_board with no projects, or project_set with
 1–50 sorted unique project UUIDs. Teams remain bounded to 20. The native adapter
@@ -647,10 +655,13 @@ already read through `list_sessions`, `taskboard_get_v2` and `status_policy_get`
   `names_updated_at`, and `status_policy` (enabled, revision). A name is `""`
   when none is stored.
 - **`linear_writes`:** `unconfirmed`, every recorded Linear write of any kind
-  (`write`: `project_create`, `issue_move` or `project_team_add`) reserved more
+  (`write`: `project_create`, `issue_move`, `issue_move_child` (a family's
+  sub-issue, `OP:c:CHILD_UUID`) or `project_team_add`) reserved more
   than 10 minutes ago and never settled, or settled `uncertain`, until the
-  owner acknowledges it (`project_create_ack`), each with its `state`, `team_id`
-  and `subject`; and `keep_days`. Doctor's `linear.writes` reads it. Until
+  owner, or the project lead who confirmed a move, acknowledges it (`project_create_ack`), each with its `state`, `team_id`
+  and `subject`; `uncertain_issue_writes`, the count of uncertain issue writes
+  `issue_writes_uncertain` would list for the caller; and `keep_days`.
+  Doctor's `linear.writes` reads it. Until
   v0.3.10 the same list is also under `project_creates.unconfirmed`.
 - **`linear_budget`:** the project's hourly Linear count: `used`, `limit` (0
   with no cap, the default), `capped` (false with no cap), `source` (`project`,

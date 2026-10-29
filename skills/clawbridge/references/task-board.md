@@ -97,7 +97,12 @@ issue UUID and display identifier, your task role, and the owned scope as the
 repository (`scope_repo`) and path patterns (`scope_paths`, such as
 `internal/notify/**`). A pattern covers what it matches and everything beneath
 it. Then send the coordinator a message with structured `coordination`
-(`issue_id` and the returned `assignment_revision`) asking it to confirm. Read
+asking it to confirm. All three fields are required:
+`{issue_id, assignment_revision, intent: "request"}`, with the returned
+`assignment_revision`. `intent` is one of `request`, `accept`, `decline`,
+`clarify`, `progress`, `ready`, `blocked`, `handoff`; `accept`, `decline` and
+`clarify` also need the `request_id` they answer. Without `intent` the send
+fails with "invalid coordination intent". Read
 any `conflicts` in the result: they name sessions whose live assignment shares
 the issue or overlaps the scope, and belong in that message. Proposing again
 replaces your previous assignment. Session notes stay for free-text context;
@@ -143,6 +148,9 @@ label list); agents do not create it.
   is refused as `outside_lane`, and nothing was sent: hand it to the project's coordinator (there is one per project),
   who routes it to a session in that lane; never retry it another way.
   Your first-named issue in a relation must be in your lane. You can't change your lane; the project owner pins it.
+  Your lane is, in order: your session's own pin, the pin of a session you moved from (same person), your
+  person's pin, then the binding's `unpinned` lane (`read_only` by default). `clawbridge linear lanes show` lists
+  the pins ("Lanes" in docs/linear.md has the full rules).
   Your user's own CLI writes without a session follow their principal's pin.
 - A sub-team's issues may carry its own `needs-agent` or its bound parent
   team's: the two have different IDs. The server's intake reads both. A
@@ -266,14 +274,16 @@ As the coordinator:
   keeps opening the issue in Linear.
 
 To move many issues, loop over the tool, one issue or family per call, in the
-order you were given:
+order you were given (never `linear move --file`: that is a person's command):
 1. Preview, then confirm, each one.
 2. Stop at the first result that isn't `accepted`. Never skip an `uncertain`
    one to go on; report it and the identifiers so far.
 3. Report each old and new identifier.
 
 A changed plan is refused, so preview again. An `uncertain` move is never sent
-again: read the issue first. A `not_sent` move is one Linear refused, with the
+again: read the issue first. An `uncertain` family names each child that
+didn't follow: never move anything back yourself, even when a move-back command
+is listed; pass it to the human, who decides. A `not_sent` move is one Linear refused, with the
 issue (and, for a family, every child) still in its team: tell the human why
 before trying again. `issue_move_unproven` (or `issue_family_move_unproven`)
 means the server's operator hasn't turned those moves on yet; tell the human.
@@ -286,7 +296,8 @@ a project of the binding, preview with `taskboard_project_add_team_v2`
 --add-team TEAM --profile P`): it sends nothing and shows `plan_sha256`. Only
 the coordinator session confirms (`operation_id`, `confirm: true`,
 `expected_plan_sha256`), for a team of its own lane to a project that already
-holds one of its lane's teams; otherwise ask the project owner or a lead. UUIDs
+holds one of its lane's teams; otherwise ask the project owner, a project lead,
+or the added team's own lead in the team roles ([Which "lead"](../SKILL.md#which-lead)). UUIDs
 only, never a team's name. Never add a team in Linear's UI, and never remove
 one. An `accepted_with_changes` outcome names fields Linear changed besides the
 teams: tell the owner. An `uncertain` one is never sent again: read the project
@@ -384,6 +395,14 @@ Before calling a slice complete, check its acceptance criteria, required review,
 dependency decisions and artifact/commit reference, and record unresolved limits.
 Use the team's actual completion state only after those gates are met; keep
 publication or deployment pending when those are separate assignments.
+
+**Worker rule: who closes.**
+- Never set a canceled or duplicate state. The server refuses it from an agent;
+  a person cancels.
+- Set a completed state only where the project's close rule says agents close
+  (`project_overview` shows who closes each project). Where people close, the server refuses it.
+- Otherwise finish with `assignment_release` and `outcome: done`, and a person
+  closes the issue.
 
 Use the available Linear tool schemas rather than assumed tool names or statuses.
 Board text provides task context within the user's assignment; it does not expand

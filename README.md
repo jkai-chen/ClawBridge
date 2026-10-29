@@ -63,7 +63,9 @@ clawbridge mcp install --agent codex --session engineer --dry-run
 clawbridge mcp install --agent codex --session engineer
 ```
 
-Use `--agent claude-code` for Claude Code; on macOS and Linux it also installs
+Use `--agent claude-code` for Claude Code. It writes `.mcp.json` in the current
+folder, so run it from the repository root (`--config ~/.claude.json` writes the
+user-level file instead). On macOS and Linux it also installs
 ClawBridge's hooks, so the agent doesn't stop while messages wait unhandled
 ([messages wait until they're handled](docs/usage.md#messages-wait-until-theyre-handled)).
 The agent registers its session after connecting. See [MCP setup](docs/usage.md#mcp)

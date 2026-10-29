@@ -559,12 +559,12 @@ CLAWBRIDGE_LINEAR_APP_TOKEN_KEY=<32 random bytes, base64>
   on a throwaway project, an add read back field by field shows the team added
   and the lead, members, status, dates and labels as they were. The write goes
   through the confirming person's own Linear profile, never the app.
-- **Which gates are on.** The project owner's `clawbridge doctor` reports
-  them as `linear.proven_gates` ("Proven gates: issue_subscribers, issue_move
-  (off: project_flow, project_team_add)."), and the TUI's Overview shows the
-  same in two rows, Proven gates and Not proven. Both read the project
-  overview's `proven_gates`: the five gate names, each on or off, and nothing
-  else of the server's settings. Members don't see them.
+- **Which gates are on.** The project owner's `clawbridge doctor` reports them
+  as `linear.proven_gates` ("Proven gates: issue_subscribers, issue_move (off:
+  project_flow, issue_family_move, project_team_add)."), and the TUI's
+  Overview shows the same in two rows, Proven gates and Not proven. Both read
+  the project overview's `proven_gates`: the five gate names, each on or off,
+  and nothing else of the server's settings. Members don't see them.
 - **Timeouts.** A write the server makes can take up to a minute, and it
   finishes even if the client disconnects. Keep the proxy and load-balancer
   timeouts for `/v1/execute` at 75 seconds or more.
@@ -893,6 +893,20 @@ Nothing here is configured; what it costs and how to watch it:
 
 ## Update and rollback
 
+**v0.3.9 (schema 47 → 50): one-way, and four things to check.**
+- **Schema.** v0.3.9 migrates to schema 50 on its first start (48 the server drain, 49 the
+  shared ledger's project and principal, 50 the hourly Linear count's split). v0.3.8 refuses
+  the upgraded database: take a dump first, and to go back restore it with the v0.3.8 image.
+- **The first deploy can't drain.** The running v0.3.8 server has no drain, so skip
+  `operator maintenance start` this once (the command says so); later deploys drain.
+- **No ClawBridge cap on Linear calls by default.** A server whose env still sets
+  `CLAWBRIDGE_LINEAR_BUDGET` or its deprecated old name `CLAWBRIDGE_WATCH_BUDGET` (for example
+  `=300`) keeps that cap: remove the line for no cap. A project's own cap stays until its owner
+  runs `clawbridge project linear-budget clear`.
+- **Teams bound before a project carries them** (`linear link --team-without-project`) make a
+  version-4 binding, which a v0.3.8 client refuses: upgrade every client first. Before
+  downgrading the server, relink without `--team-without-project`.
+
 **v0.2.5 (schema 7): upgrade the server before the clients.** A v0.2.5 server
 refuses every Linear write from an older client ("upgrade ClawBridge (v0.2.5 or
 later)"), and a v0.2.5 client gets "unsupported argument" from an older server.
@@ -914,8 +928,10 @@ docker compose ... run --rm --no-deps api operator maintenance start --reason "d
 ```
 
 - **What the servers do.** Every server answers each write with 503 `maintenance` and `Retry-After` (at most 30 s)
-  before any transaction, so nothing is written and nothing waits on a lock. Reads still answer, so doctor, the TUI and
-  agents' inbox reads keep working; a read records no heartbeat. Open streams get `event: maintenance` with
+  before any transaction, so nothing is written and nothing waits on a lock. Pure reads still answer: doctor, the TUI,
+  `sessions` and `inbox_status`; a read records no heartbeat. The CLI's `inbox` (it stamps deliveries) and `status
+  MESSAGE_ID` are refused like writes until the swap, and an MCP agent's consume, a lease write, waits out the
+  `Retry-After`. Open streams get `event: maintenance` with
   `retry_after`, then `bye`; a new stream or `stream_ticket` gets the 503. The watcher, its ticks and nudges, the
   sweeper, the Linear write outbox (queued app writes wait) and the dispatcher model start nothing new (the model
   API answers `server_busy`); what they began finishes.
@@ -939,8 +955,10 @@ docker compose ... run --rm --no-deps api operator maintenance start --reason "d
   `Retry-After`; doctor shows `server.maintenance` (docs/usage.md, "Messages while the server is away"). Older
   clients see a plain 503 and tell their human to retry with the same operation ID.
 - **Which image runs it.** Run it after `build api`: the new image's `maintenance` command opens any schema that has
-  the drain (42 or later), older or newer than its own, and touches only the drain's tables. The running server must
-  have the drain itself, so the first deploy of a schema-42 release skips this step, and the command says so.
+  the drain (48 or later), older or newer than its own, and touches only the drain's tables. The running server must
+  have the drain itself, so the first deploy of a schema-48 release skips this step, and the command says so.
+- **Right after the swap,** `maintenance show` can list the old server as live and not drained for about 15 s, its
+  liveness window. That's harmless once maintenance is off; it isn't a second server running.
 - **Shutdown.** On SIGTERM `serve` waits up to 75 s for what's in flight, and compose gives the API 90 s
   (`stop_grace_period`). A drained server has nothing in flight and stops at once.
 

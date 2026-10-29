@@ -5,6 +5,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/charmbracelet/lipgloss"
 
@@ -204,5 +205,38 @@ func TestOverviewShowsProvenGatesToTheOwner(t *testing.T) {
 	member := map[string]bus.Result{"project_overview": {Source: "server", Data: map[string]any{"project": map[string]any{}}}}
 	if view = Render(overviewFor(t, ModeCloud, false, passing, member, nil, true)); strings.Contains(view, "Proven gates") {
 		t.Fatalf("a member sees the gates row\n%s", view)
+	}
+}
+
+// D4: one line under the intake line, in three forms; none when no team
+// has a secret or the server is older.
+func TestOverviewShowsTheWebhookLine(t *testing.T) {
+	team := func(state string, configured bool, last string, missed int) map[string]any {
+		return map[string]any{"team_id": "t", "state": state, "configured": configured, "last_delivery_at": last, "missed_24h": missed}
+	}
+	status := func(teams ...map[string]any) map[string]bus.Result {
+		list := []any{}
+		for _, t := range teams {
+			list = append(list, t)
+		}
+		return map[string]bus.Result{"webhook_status": {Source: "server", Data: map[string]any{"teams": list}}}
+	}
+	now := time.Now().UTC()
+	recent := now.Add(-4*time.Minute - 5*time.Second).Format(time.RFC3339)
+	for name, c := range map[string]struct {
+		results map[string]bus.Result
+		errs    map[string]error
+		want    string
+	}{
+		"live": {status(team("live", true, recent, 0), team("live", true, "", 0), team("waiting_first", true, "", 0)), nil,
+			"Webhooks: 2/3 teams live · last 4m ago · 0 missed"},
+		"inert": {status(team("inert", true, recent, 0), team("inert", true, "", 0)), nil, "Webhooks: inert (not proven)"},
+		"none":  {status(team("unconfigured", false, "", 0)), nil, ""},
+		"older": {nil, map[string]error{"webhook_status": errors.New("invalid: unsupported operation")}, ""},
+	} {
+		view := Render(overviewFor(t, ModeCloud, false, passing, c.results, c.errs, true))
+		if c.want == "" && strings.Contains(view, "Webhooks:") || c.want != "" && !strings.Contains(view, c.want) {
+			t.Errorf("%s: want %q in\n%s", name, c.want, view)
+		}
 	}
 }

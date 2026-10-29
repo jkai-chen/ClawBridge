@@ -99,6 +99,7 @@ var doctorAnswers = map[string]doctorAnswer{
 	"linear.outbox":                {},
 	"linear.instances":             {},
 	"linear.watch":                 {},
+	"linear.webhooks":              {},
 	"dispatcher.model.agent":       {},
 	"dispatcher.model.capacity":    {},
 	"dispatcher.model.key":         {},

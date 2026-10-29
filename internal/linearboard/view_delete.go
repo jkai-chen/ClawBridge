@@ -49,6 +49,22 @@ type ViewDeleteResult struct {
 
 // ViewDelete previews or deletes one view ClawBridge wrote.
 func (s *Service) ViewDelete(ctx context.Context, scope bus.Request, in ViewDeleteInput, key ViewKey) (ViewDeleteResult, error) {
+	// A session is refused these: only a person, in their own terminal.
+	if !(in.Confirm && scope.Session == "") {
+		return s.viewDelete(ctx, scope, in, key)
+	}
+	// A confirm writes through the person's own profile: the project's
+	// hourly budget counts it (FR8).
+	var out ViewDeleteResult
+	err := s.budgeted(ctx, scope, "view", in.OperationID, func(ctx context.Context) error {
+		var e error
+		out, e = s.viewDelete(ctx, scope, in, key)
+		return e
+	})
+	return out, err
+}
+
+func (s *Service) viewDelete(ctx context.Context, scope bus.Request, in ViewDeleteInput, key ViewKey) (ViewDeleteResult, error) {
 	var none ViewDeleteResult
 	if !linearprovider.ValidID(in.ViewID) {
 		return none, errors.New("a delete names its view by ID")

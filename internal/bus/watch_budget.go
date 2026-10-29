@@ -30,10 +30,11 @@ func watchBudgetOverride(ctx context.Context, tx *transaction, pid string) (int,
 	return asInt(rows[0]["watch_budget"]), true, nil
 }
 
-// LinearBudgetDefault is a project's hourly Linear calls when neither its
-// owner nor the operator set one; agent writes count against it (owner
-// decision Q4).
-const LinearBudgetDefault = 600
+// LinearBudgetDefault is a project's hourly Linear cap when neither its
+// owner, the watcher nor the operator set one: none (0). The owner's rule
+// for v0.3.9: no ClawBridge limit by default; Linear's own rate limit is
+// respected through the pacer and the queues. The calls are still counted.
+const LinearBudgetDefault = 0
 
 // LinearBudgetCeiling is how far an owner may raise a project's cap when
 // the operator sets no CLAWBRIDGE_LINEAR_BUDGET_MAX (R2).

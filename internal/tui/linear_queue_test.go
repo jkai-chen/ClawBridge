@@ -112,6 +112,8 @@ func TestLinearLocalHasNoQueue(t *testing.T) {
 	}
 }
 
+// The header splits the hour when people or agent sessions spent any of
+// it through their own profiles (FR8).
 func TestLinearQueueLine(t *testing.T) {
 	for name, c := range map[string]struct {
 		q    linearQueue
@@ -121,6 +123,8 @@ func TestLinearQueueLine(t *testing.T) {
 		"sending":   {linearQueue{used: 10, limit: 600, sending: 1}, "· 1 queued (o: queue)"},
 		"given up":  {linearQueue{used: 10, limit: 600, dead: 1, expired: 1}, "· 2 given up today"},
 		"uncertain": {linearQueue{used: 10, limit: 600, uncertain: 1}, "· 1 uncertain"},
+		"split":     {linearQueue{used: 40, limit: 600, people: 10, agents: 20}, "Linear: 40/600 this hour (people 10, agents 20) (o: queue)"},
+		"no cap":    {linearQueue{used: 40, people: 10, agents: 20}, "Linear: 40 this hour (no cap) (people 10, agents 20) (o: queue)"},
 	} {
 		if got := linearQueueLine(&c.q); !strings.Contains(got, c.text) {
 			t.Errorf("%s: %q", name, got)

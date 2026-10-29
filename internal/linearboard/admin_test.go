@@ -39,6 +39,9 @@ type adminAuthority struct {
 }
 
 func (a *adminAuthority) Execute(ctx context.Context, r bus.Request) (bus.Result, error) {
+	if r.Operation == "linear_write_charge" {
+		return budgetAnswer(r)
+	}
 	if a.creates != nil {
 		if result, ok, e := a.creates.execute(r); ok {
 			return result, e
@@ -457,6 +460,9 @@ func TestLabelCreateReadsAHostedPolicyRevision(t *testing.T) {
 type numberAuthority struct{ *adminAuthority }
 
 func (n numberAuthority) Execute(ctx context.Context, r bus.Request) (bus.Result, error) {
+	if r.Operation == "linear_write_charge" {
+		return budgetAnswer(r)
+	}
 	out, e := n.adminAuthority.Execute(ctx, r)
 	if m, ok := out.Data.(map[string]any); ok && r.Operation == "label_policy_get" {
 		m["revision"] = json.Number(fmt.Sprint(m["revision"]))

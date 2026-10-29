@@ -83,7 +83,7 @@ func (c commentCall) docWatchDue(ctx context.Context) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	if budget-used-watchConnectCalls-1 < 1 {
+	if budget > 0 && budget-used-watchConnectCalls-1 < 1 {
 		return map[string]any{"action": "none", "reason": "budget"}, nil
 	}
 	if _, _, err = c.charge(ctx, lease, 1); err != nil {

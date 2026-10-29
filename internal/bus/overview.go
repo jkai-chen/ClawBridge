@@ -124,8 +124,14 @@ func (s *Store) projectOverview(ctx context.Context, tx *transaction, w, p map[s
 	if writes["uncertain_issue_writes"], err = s.uncertainIssueWrites(ctx, tx, pid, role, now); err != nil {
 		return nil, err
 	}
+	// The hour's Linear budget and who spent it: the app, people and
+	// agents (FR8), counts only.
+	budget, err := s.readProjectBudget(ctx, tx, pid, "")
+	if err != nil {
+		return nil, err
+	}
 	out := map[string]any{"project": project, "coordinator": coord, "counts": counts, "sessions": rows,
-		"sessions_truncated": truncated, "linear": linear, "linear_writes": writes, "project_creates": creates, "project_team_adds": teamAdds}
+		"sessions_truncated": truncated, "linear": linear, "linear_writes": writes, "linear_budget": budget.view(), "project_creates": creates, "project_team_adds": teamAdds}
 	if role == "owner" {
 		if out["project_leads"], err = projectLeadCounts(ctx, tx, pid, now); err != nil {
 			return nil, err

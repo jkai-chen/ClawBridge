@@ -102,6 +102,20 @@ type docWriterV2 interface {
 
 // PublishV2 previews, or with Confirm carries out, a publish.
 func (s *Service) PublishV2(ctx context.Context, scope bus.Request, in PublishInput) (PublishResult, error) {
+	if !(in.Confirm) {
+		return s.publishV2(ctx, scope, in)
+	}
+	// A confirm writes through the person's own profile: the project's hourly budget counts it (FR8).
+	var out PublishResult
+	err := s.budgeted(ctx, scope, "document", in.OperationID, func(ctx context.Context) error {
+		var e error
+		out, e = s.publishV2(ctx, scope, in)
+		return e
+	})
+	return out, err
+}
+
+func (s *Service) publishV2(ctx context.Context, scope bus.Request, in PublishInput) (PublishResult, error) {
 	out := PublishResult{ParentKind: in.ParentKind, ParentID: in.ParentID, Limit: docpublish.MaxContent, Parts: []PublishPartResult{}}
 	if !publishOperationID.MatchString(in.OperationID) {
 		return out, errors.New("a publish needs --operation-id (1–128 of A-Z, a-z, 0-9, . _ -)")

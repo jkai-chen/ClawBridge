@@ -91,6 +91,7 @@ var doctorAnswers = map[string]doctorAnswer{
 	"linear.project_team_adds":     {},
 	"linear.teams_without_project": {},
 	"linear.proven_gates":          {},
+	"linear.budget":                {},
 	"linear.markers":               {},
 	"linear.outbox":                {},
 	"linear.instances":             {},

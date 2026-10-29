@@ -31,6 +31,9 @@ type appServer struct {
 }
 
 func (a *appServer) Execute(ctx context.Context, r bus.Request) (bus.Result, error) {
+	if r.Operation == "linear_write_charge" {
+		return budgetAnswer(r)
+	}
 	switch r.Operation {
 	case "linear_app_status":
 		a.statuses++
@@ -300,6 +303,9 @@ func TestAppAuthoredCommentsReadAsClawBridges(t *testing.T) {
 type v1App struct{ *fakeAuthority }
 
 func (v v1App) Execute(ctx context.Context, r bus.Request) (bus.Result, error) {
+	if r.Operation == "linear_write_charge" {
+		return budgetAnswer(r)
+	}
 	if r.Operation == "linear_app_status" {
 		return appOn()
 	}

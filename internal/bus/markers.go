@@ -592,7 +592,7 @@ func (c commentCall) markerDue(ctx context.Context) (any, error) {
 		if s := str(row, "state_state"); s == "pending" || s == "in_flight" {
 			calls += MarkerStateCalls
 		}
-		if used+cost+calls > budget {
+		if budget > 0 && used+cost+calls > budget {
 			stopped = "budget"
 			break
 		}
@@ -722,8 +722,14 @@ func watchStatus(ctx context.Context, tx *transaction, pid string) (any, error) 
 	switch {
 	case set:
 		out["watch_budget"], out["budget_limit"], out["budget_source"] = override, override, "project"
-	case len(lease) == 1:
+	case len(lease) == 1 && asInt(lease[0]["budget_limit"]) > 0:
 		out["budget_limit"], out["budget_source"] = asInt(lease[0]["budget_limit"]), "watcher"
+	}
+	// No cap is the default (FR8 r3): Linear's own rate limit, through the
+	// pacer and the queues, is the brake.
+	out["capped"] = asInt(out["budget_limit"]) > 0
+	if out["capped"] == false {
+		out["budget"] = "no cap: Linear's own rate limit is respected through the queue"
 	}
 	// The calls this hour: the watcher's, health and status reads, and
 	// agent writes.

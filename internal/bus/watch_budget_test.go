@@ -18,7 +18,8 @@ func TestProjectWatchBudget(t *testing.T) {
 		t.Fatal("no lease, no override:", got)
 	}
 	w := newWatchHarness(t)
-	if got := status(w.harness); got["budget_source"] != "watcher" || got["budget_limit"] != LinearBudgetDefault || got["watch_budget"] != nil {
+	// A watcher that asked for no cap leaves the default: no cap (FR8 r3).
+	if got := status(w.harness); got["budget_source"] != "default" || got["budget_limit"] != 0 || got["capped"] != false || got["watch_budget"] != nil || !strings.HasPrefix(got["budget"].(string), "no cap") {
 		t.Fatal("the watcher's default:", got)
 	}
 	set := w.call("comment_watch_budget_set", "", map[string]any{"watch_budget": 5}).(map[string]any)

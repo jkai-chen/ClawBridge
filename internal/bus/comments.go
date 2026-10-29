@@ -30,13 +30,16 @@ CREATE TABLE assignment_markers(assignment_id TEXT NOT NULL,phase TEXT NOT NULL 
 `
 
 const (
-	commentCapPerHour   = 3
-	youngPending        = 10 * time.Minute
-	watchLag            = 10 * time.Minute
-	watchLeaseTTL       = 3 * time.Minute
-	watchInactiveKeep   = 24 * time.Hour
-	watchDefaultBudget  = LinearBudgetDefault
-	watchMaxBudget      = 600
+	commentCapPerHour  = 3
+	youngPending       = 10 * time.Minute
+	watchLag           = 10 * time.Minute
+	watchLeaseTTL      = 3 * time.Minute
+	watchInactiveKeep  = 24 * time.Hour
+	watchDefaultBudget = LinearBudgetDefault
+	watchMaxBudget     = 600
+	// watchTickIssues bounds one tick's due issues, independent of any
+	// budget (FR8 r3).
+	watchTickIssues     = 100
 	watchConnectCalls   = 2
 	maxReportedComments = 100
 	// serverTickFresh is how long after the server watcher's last good tick
@@ -662,7 +665,7 @@ func (c commentCall) lease(ctx context.Context) (any, error) {
 		if str(row, "budget_hour") != hour {
 			used = 0
 		}
-		if _, err = c.tx.ExecContext(ctx, `UPDATE watch_lease SET session_id=?,lease_token=?,generation=?,expires_at=?,budget_hour=?,budget_used=?,budget_limit=? WHERE project_id=?`, c.sid, token, gen, expires, hour, used, budget, c.pid); err != nil {
+		if _, err = c.tx.ExecContext(ctx, `UPDATE watch_lease SET session_id=?,lease_token=?,generation=?,expires_at=?,budget_people=CASE WHEN budget_hour=? THEN budget_people ELSE 0 END,budget_agents=CASE WHEN budget_hour=? THEN budget_agents ELSE 0 END,budget_hour=?,budget_used=?,budget_limit=? WHERE project_id=?`, c.sid, token, gen, expires, hour, hour, hour, used, budget, c.pid); err != nil {
 			return nil, err
 		}
 		return view(token, gen, map[string]any{"budget_limit": limit, "budget_used": used, "budget_hour": hour}), nil
@@ -697,7 +700,7 @@ func (c commentCall) charge(ctx context.Context, lease map[string]any, calls int
 		used = 0
 	}
 	limit = asInt(lease["budget_limit"])
-	_, err = c.tx.ExecContext(ctx, `UPDATE watch_lease SET budget_hour=?,budget_used=? WHERE project_id=?`, hour, used, c.pid)
+	_, err = c.tx.ExecContext(ctx, `UPDATE watch_lease SET budget_people=CASE WHEN budget_hour=? THEN budget_people ELSE 0 END,budget_agents=CASE WHEN budget_hour=? THEN budget_agents ELSE 0 END,budget_hour=?,budget_used=? WHERE project_id=?`, hour, hour, hour, used, c.pid)
 	return used, limit, err
 }
 
@@ -717,7 +720,13 @@ func (c commentCall) due(ctx context.Context) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	room := limit - used - watchConnectCalls
+	// A tick polls at most watchTickIssues issues, cap or not: after a
+	// downtime every overdue issue is due at once. A cap, when set, takes
+	// its room out of that.
+	room := watchTickIssues
+	if limit > 0 {
+		room = min(room, limit-used-watchConnectCalls)
+	}
 	if room < 0 {
 		room = 0
 	}
@@ -737,7 +746,7 @@ func (c commentCall) due(ctx context.Context) (any, error) {
 			issues = append(issues, map[string]any{"issue_uuid": row["subject"], "issue_identifier": row["issue_identifier"], "since": layout(at(str(row, "cursor_time")).Add(-watchLag)), "watch_started_at": row["watch_started_at"]})
 		}
 	}
-	return map[string]any{"issues": issues, "budget_used": used, "budget_limit": limit, "budget_exhausted": len(issues) == 0 && limit-used < watchConnectCalls+1}, nil
+	return map[string]any{"issues": issues, "budget_used": used, "budget_limit": limit, "budget_exhausted": limit > 0 && len(issues) == 0 && limit-used < watchConnectCalls+1}, nil
 }
 
 type reportedComment struct {

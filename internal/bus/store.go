@@ -159,7 +159,7 @@ func (s *Store) migrate() error {
 	if err = tx.QueryRow("PRAGMA user_version").Scan(&version); err != nil {
 		return err
 	}
-	if version > writeLedgerScopeSchemaVersion {
+	if version > linearBudgetSchemaVersion {
 		return errors.New("database schema is newer than this ClawBridge binary")
 	}
 	if version == 0 {
@@ -423,6 +423,11 @@ func (s *Store) migrate() error {
 			return err
 		}
 	}
+	if version < linearBudgetSchemaVersion {
+		if _, err = tx.Exec(linearBudgetSchema + fmt.Sprintf(`PRAGMA user_version=%d;`, linearBudgetSchemaVersion)); err != nil {
+			return err
+		}
+	}
 	return tx.Commit()
 }
 
@@ -614,6 +619,7 @@ var operationArgs = map[string]string{
 	"issue_writes_uncertain":      "instance operation_id cursor",
 	"issue_writes_ack":            "operation_id",
 	"issue_move_reserve":          "instance operation_id issue_uuid from_team to_team plan_sha256 children calls",
+	"linear_write_charge":         "instance operation_id kind calls",
 	"issue_move_settle":           "instance operation_id outcome old_identifier new_identifier children",
 	"issue_move_status":           "instance operation_id",
 	"project_team_add_reserve":    "instance operation_id linear_project team_id project_teams plan_sha256",
@@ -1465,6 +1471,9 @@ func (s *Store) execute(ctx context.Context, tx *transaction, r Request) (any, e
 	}
 	if issueMoveOperation(r.Operation) {
 		return s.issueMoveOp(ctx, tx, wid, pid, projectRole, actor, r)
+	}
+	if linearBudgetOperation(r.Operation) {
+		return s.linearWriteCharge(ctx, tx, pid, projectRole, actor, r)
 	}
 	if projectTeamAddOperation(r.Operation) {
 		return s.projectTeamAddOp(ctx, tx, wid, pid, projectRole, actor, r)

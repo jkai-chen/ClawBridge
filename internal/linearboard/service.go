@@ -55,6 +55,10 @@ type Config struct {
 	// to the server as linear_write when the server offers the ClawBridge
 	// Linear app.
 	AppRoute bool
+	// ServerCharged is set for the server's own services, which write as
+	// the ClawBridge app: the server charges their calls to the project's
+	// hourly budget itself, so they are never budgeted again (FR8).
+	ServerCharged bool
 	// IssueState, when set, reads an issue's current workflow state ID and
 	// team from an authoritative source: on a hosted server, the Linear
 	// app's GraphQL. Linear's MCP issue read names the state without its
@@ -589,6 +593,18 @@ func (s *Service) Write(ctx context.Context, scope bus.Request, in WriteInput) (
 		}
 		return nil, err
 	}
+	// The person's own profile writes it: the project's hourly budget
+	// counts it (FR8).
+	var out any
+	err := s.budgeted(ctx, scope, in.Operation, in.OperationID, func(ctx context.Context) error {
+		var e error
+		out, e = s.writeV1(ctx, scope, in)
+		return e
+	})
+	return out, err
+}
+
+func (s *Service) writeV1(ctx context.Context, scope bus.Request, in WriteInput) (any, error) {
 	b, err := s.binding(ctx, scope)
 	if err != nil {
 		return nil, err

@@ -17,6 +17,9 @@ import (
 type liveOnly struct{ Executor }
 
 func (e liveOnly) Execute(ctx context.Context, r bus.Request) (bus.Result, error) {
+	if r.Operation == "linear_write_charge" {
+		return budgetAnswer(r)
+	}
 	if err := ctx.Err(); err != nil {
 		return bus.Result{}, err
 	}
@@ -221,6 +224,9 @@ type failing struct {
 }
 
 func (f failing) Execute(ctx context.Context, r bus.Request) (bus.Result, error) {
+	if r.Operation == "linear_write_charge" {
+		return budgetAnswer(r)
+	}
 	if r.Operation == f.op {
 		return bus.Result{}, fmt.Errorf("%s unavailable", f.op)
 	}
@@ -316,6 +322,9 @@ func TestMarkerPassKeepsABudgetStop(t *testing.T) {
 type limitlessBus struct{ Executor }
 
 func (o limitlessBus) Execute(ctx context.Context, r bus.Request) (bus.Result, error) {
+	if r.Operation == "linear_write_charge" {
+		return budgetAnswer(r)
+	}
 	if _, ok := r.Args["limit"]; ok && r.Operation == "marker_due" {
 		return bus.Result{}, bus.PublicError("invalid", "invalid request")
 	}
@@ -348,6 +357,9 @@ type asks struct {
 }
 
 func (a asks) Execute(ctx context.Context, r bus.Request) (bus.Result, error) {
+	if r.Operation == "linear_write_charge" {
+		return budgetAnswer(r)
+	}
 	if r.Operation == a.op {
 		*a.n++
 	}

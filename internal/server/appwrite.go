@@ -116,13 +116,14 @@ func (w *AppWriter) service(ctx context.Context, identity bus.Identity) (*linear
 		now = time.Now
 	}
 	return linearboard.New(linearboard.Config{
-		Authority:   "hosted-app",
-		Executor:    identityExecutor{w.Store, identity},
-		Connections: appConnections{id.LinearOrgID},
-		ProfileID:   "app:" + id.LinearOrgID,
-		Ledger:      linearboard.SharedLedgerAs(w.Store, now, identity.Principal),
-		Workspace:   id.LinearOrgID,
-		Now:         now,
+		Authority:     "hosted-app",
+		ServerCharged: true,
+		Executor:      identityExecutor{w.Store, identity},
+		Connections:   appConnections{id.LinearOrgID},
+		ProfileID:     "app:" + id.LinearOrgID,
+		Ledger:        linearboard.SharedLedgerAs(w.Store, now, identity.Principal),
+		Workspace:     id.LinearOrgID,
+		Now:           now,
 		Open: func(ctx context.Context, _ *http.Client, readonly bool) (linearboard.Provider, error) {
 			return w.App.Provider(ctx, readonly)
 		},

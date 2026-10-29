@@ -53,6 +53,9 @@ type authorityV2 struct {
 }
 
 func (a *authorityV2) Execute(_ context.Context, r bus.Request) (bus.Result, error) {
+	if r.Operation == "linear_write_charge" {
+		return budgetAnswer(r)
+	}
 	if r.Operation == "taskboard_access" {
 		a.accesses++
 		if a.afterAccess != nil {

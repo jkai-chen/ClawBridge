@@ -148,6 +148,9 @@ type moveAuthority struct {
 }
 
 func (a *moveAuthority) Execute(ctx context.Context, r bus.Request) (bus.Result, error) {
+	if r.Operation == "linear_write_charge" {
+		return budgetAnswer(r)
+	}
 	switch r.Operation {
 	case "taskboard_access":
 		result, e := a.authorityV2.Execute(ctx, r)

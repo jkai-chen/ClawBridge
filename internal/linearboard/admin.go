@@ -208,6 +208,22 @@ func (s *Service) Admin(ctx context.Context, scope bus.Request, in AdminInput) (
 	if e := ValidateAdmin(in); e != nil {
 		return AdminResult{}, e
 	}
+	// Through the person's own profile: the project's hourly budget counts
+	// it (FR8).
+	kind := "admin"
+	if in.Kind == "project_create" {
+		kind = "project_create"
+	}
+	var out AdminResult
+	e := s.budgeted(ctx, scope, kind, in.OperationID, func(ctx context.Context) error {
+		var e error
+		out, e = s.admin(ctx, scope, in)
+		return e
+	})
+	return out, e
+}
+
+func (s *Service) admin(ctx context.Context, scope bus.Request, in AdminInput) (AdminResult, error) {
 	b, e := s.BindingV2(ctx, scope)
 	if e != nil {
 		return AdminResult{}, e

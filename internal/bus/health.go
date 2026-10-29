@@ -524,7 +524,12 @@ func (c commentCall) healthDue(ctx context.Context) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	room := (budget - used - watchConnectCalls - 1) / HealthMaxCalls
+	// Without a cap (the default) the tick's limit bounds the daily runs,
+	// and flowNudgeRunsPerPass the nudged ones.
+	room := limit + flowNudgeRunsPerPass
+	if budget > 0 {
+		room = (budget - used - watchConnectCalls - 1) / HealthMaxCalls
+	}
 	if room < limit {
 		limit = room
 	}
@@ -648,7 +653,7 @@ func (c commentCall) healthForce(ctx context.Context) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	if budget-used-watchConnectCalls-1 < HealthMaxCalls {
+	if budget > 0 && budget-used-watchConnectCalls-1 < HealthMaxCalls {
 		return nil, scoped(fmt.Sprintf("the hour's Linear call budget cannot pay a health run now (%d of %d calls used); try again at %s, or raise it with project linear-budget set", used, budget, c.now.UTC().Truncate(time.Hour).Add(time.Hour).Format(time.RFC3339)), "rate_limited")
 	}
 	if _, _, err = c.charge(ctx, map[string]any{"budget_used": used, "budget_hour": layout(c.now)[:13], "budget_limit": budget}, HealthMaxCalls); err != nil {

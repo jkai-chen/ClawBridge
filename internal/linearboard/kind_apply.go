@@ -135,6 +135,22 @@ func (c countingApplier) ProjectLabelNames(ctx context.Context, project string) 
 
 // KindApply previews or applies the mapping file.
 func (s *Service) KindApply(ctx context.Context, scope bus.Request, in KindApplyInput) (KindApplyResult, error) {
+	// A session is refused these: only a person, in their own terminal.
+	if !(in.Confirm && scope.Session == "") {
+		return s.kindApply(ctx, scope, in)
+	}
+	// A confirm writes through the person's own profile: the project's
+	// hourly budget counts it (FR8).
+	var out KindApplyResult
+	err := s.budgeted(ctx, scope, "admin", in.OperationID, func(ctx context.Context) error {
+		var e error
+		out, e = s.kindApply(ctx, scope, in)
+		return e
+	})
+	return out, err
+}
+
+func (s *Service) kindApply(ctx context.Context, scope bus.Request, in KindApplyInput) (KindApplyResult, error) {
 	var none KindApplyResult
 	if !operationPattern.MatchString(in.OperationID) || len(in.OperationID) > 100 {
 		return none, errors.New("operation_id requires 1–100 ASCII identifier characters (each project adds a suffix)")

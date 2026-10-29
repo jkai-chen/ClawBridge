@@ -21,6 +21,9 @@ type closesRecorder struct {
 }
 
 func (a *closesRecorder) Execute(ctx context.Context, r bus.Request) (bus.Result, error) {
+	if r.Operation == "linear_write_charge" {
+		return budgetAnswer(r)
+	}
 	switch r.Operation {
 	case "taskboard_set_v2":
 		a.ops = append(a.ops, r.Operation)

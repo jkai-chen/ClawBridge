@@ -69,8 +69,22 @@ type ProjectTeamAddResult struct {
 }
 
 // AddProjectTeam previews adding a team to a project, or confirms the add
-// previewed.
+// previewed. A confirm counts against the project's hourly budget (FR8):
+// the add, and its snapshot reads before and after.
 func (s *Service) AddProjectTeam(ctx context.Context, scope bus.Request, in ProjectTeamAddInput) (ProjectTeamAddResult, error) {
+	if !in.Confirm || in.OperationID == "" {
+		return s.addProjectTeam(ctx, scope, in)
+	}
+	var out ProjectTeamAddResult
+	err := s.budgeted(ctx, scope, "project_team_add", in.OperationID, func(ctx context.Context) error {
+		var e error
+		out, e = s.addProjectTeam(ctx, scope, in)
+		return e
+	})
+	return out, err
+}
+
+func (s *Service) addProjectTeam(ctx context.Context, scope bus.Request, in ProjectTeamAddInput) (ProjectTeamAddResult, error) {
 	var out ProjectTeamAddResult
 	// R1: only UUIDs; Linear's addTeams would resolve a name itself.
 	if !linearprovider.ValidID(in.ProjectID) || !linearprovider.ValidID(in.TeamID) {

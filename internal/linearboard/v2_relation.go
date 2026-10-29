@@ -37,6 +37,18 @@ func (s *Service) RelationV2(ctx context.Context, scope bus.Request, in Relation
 		}
 		return s.appWrite(ctx, scope, "relation_"+in.Action, map[string]any{"operation_id": in.OperationID, "type": in.Type, "from_id": in.FromID, "to_id": in.ToID})
 	}
+	// The person's own profile writes it: the project's hourly budget
+	// counts it (FR8).
+	var out any
+	e = s.budgeted(ctx, scope, "relation", in.OperationID, func(ctx context.Context) error {
+		var e error
+		out, e = s.relationV2Personal(ctx, scope, in)
+		return e
+	})
+	return out, e
+}
+
+func (s *Service) relationV2Personal(ctx context.Context, scope bus.Request, in RelationInputV2) (any, error) {
 	b, e := s.BindingV2(ctx, scope)
 	if e != nil {
 		return nil, e

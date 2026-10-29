@@ -338,3 +338,30 @@ func TestTransportCountsSentCalls(t *testing.T) {
 		t.Fatal("counted", n.Load(), "sent", len(f.sent))
 	}
 }
+
+// FR8 r3: with no ClawBridge budget the pacer is the brake. Linear's 429
+// with a Retry-After holds the credential: a tick that goes on to poll its
+// other issues (100 reads) gets them answered here as unsent 429s naming
+// the time, and Linear sees only the first call; nothing spins.
+func TestA429HoldsATickWithoutABudget(t *testing.T) {
+	p, c := fakePacer(5000)
+	f := &fakeLinear{answers: []*http.Response{{StatusCode: 429, Header: headers("Retry-After", "30"), Body: io.NopCloser(strings.NewReader(`{"errors":[{"extensions":{"code":"RATELIMITED"}}]}`))}}}
+	tr := Transport{Base: f, Pacer: p}
+	ctx := WithKind(context.Background(), Read)
+	start := c.at
+	for i := 0; i < 100; i++ {
+		res, err := tr.RoundTrip(post(t, ctx, "https://api.linear.app/graphql"))
+		if err != nil || res.StatusCode != 429 {
+			t.Fatal(i, res, err)
+		}
+		if i > 0 && (res.Header.Get(PacedHeader) != "1" || res.Header.Get("Retry-After") == "") {
+			t.Fatal("a held read was not answered here:", i, res.Header)
+		}
+	}
+	if len(f.sent) != 1 {
+		t.Fatal("Linear saw", len(f.sent), "calls during its Retry-After")
+	}
+	if waited := c.at.Sub(start); waited > Bounds[Read] {
+		t.Fatal("the tick waited", waited)
+	}
+}

@@ -249,6 +249,7 @@ func Run(ctx context.Context, in Input, executor Executor) Report {
 			checkTeamsWithoutProject(ctx, in.TeamsWithoutProject, wid, pid, add)
 		}
 		checkProvenGates(ctx, executor, wid, pid, add)
+		checkLinearBudget(ctx, executor, wid, pid, add)
 		if in.LabelSets != nil {
 			checkLabelSets(ctx, in.LabelSets, add)
 		}
@@ -763,7 +764,11 @@ func checkCommentWatch(ctx context.Context, executor Executor, wid, pid string, 
 	case status["budget_source"] == "project":
 		watch.Message += fmt.Sprintf(" This hour %d of the project's own budget of %d Linear calls are used.", n("budget_used"), n("watch_budget"))
 	case status["budget_limit"] != nil:
-		watch.Message += fmt.Sprintf(" This hour %d of %d Linear calls are used.", n("budget_used"), n("budget_limit"))
+		if n("budget_limit") > 0 {
+			watch.Message += fmt.Sprintf(" This hour %d of %d Linear calls are used.", n("budget_used"), n("budget_limit"))
+		} else {
+			watch.Message += fmt.Sprintf(" This hour %d Linear calls were made, with no ClawBridge cap.", n("budget_used"))
+		}
 	}
 	markers.Status = Pass
 	markers.Message = "Claim markers are applied. Session names are shown in Linear claim comments: name sessions by role, never with personal data."
@@ -1491,6 +1496,42 @@ func checkLabelSets(ctx context.Context, read func(context.Context) ([]LabelSet,
 		check.Status = Warn
 		check.Message = strings.Join(gaps, "; ") + ". " + check.Message
 		check.Action = "A team with no needs-agent is never polled for it, and one with no agent-working gets no marker label. Create the label in the team or its bound parent, or remove the duplicate a team lists twice."
+	}
+	add(check)
+}
+
+// checkLinearBudget says how much of the project's hourly Linear budget is
+// used, and by whom: the app (the server's jobs and app writes), people
+// (their own writes) and agent sessions writing through a personal profile
+// (FR8). It warns, never fails, when agent sessions spent more than half
+// the hour: a session looping on writes. Counts only, never who.
+func checkLinearBudget(ctx context.Context, executor Executor, wid, pid string, add func(Check)) {
+	r, err := executor.Execute(ctx, bus.Request{Operation: "project_overview", Workspace: wid, Project: pid, Args: map[string]any{}})
+	m, _ := r.Data.(map[string]any)
+	if err != nil || m["linear_budget"] == nil {
+		// An older server splits nothing.
+		return
+	}
+	var b bus.LinearBudget
+	switch v := m["linear_budget"].(type) {
+	case bus.LinearBudget:
+		b = v
+	default:
+		raw, e := json.Marshal(v)
+		if e != nil || json.Unmarshal(raw, &b) != nil {
+			return
+		}
+	}
+	check := Check{ID: "linear.budget", Title: "Hourly Linear budget", Status: Pass}
+	if !b.Capped || b.Limit <= 0 {
+		check.Message = fmt.Sprintf("This hour %d Linear calls were made, with no ClawBridge cap; Linear's own rate limit is respected through the queue: the app %d, people %d, agent sessions %d.", b.Used, b.By.App, b.By.People, b.By.Agents)
+		add(check)
+		return
+	}
+	check.Message = fmt.Sprintf("This hour %d of %d Linear calls are used: the app %d, people %d, agent sessions %d.", b.Used, b.Limit, b.By.App, b.By.People, b.By.Agents)
+	if b.By.Agents*2 > b.Limit {
+		check.Status = Warn
+		check.Action = "Agent sessions spent more than half the hour's opt-in cap through their people's profiles; check what they're writing. Their writes are counted, never refused; the server's own jobs stop at the cap until the hour rolls."
 	}
 	add(check)
 }

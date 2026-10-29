@@ -376,7 +376,7 @@ func (c commentCall) subscribeDue(ctx context.Context) (any, error) {
 			break
 		}
 		calls := SubscribeRowCalls(people)
-		if used+cost+calls > budget {
+		if budget > 0 && used+cost+calls > budget {
 			stopped = "budget"
 			break
 		}

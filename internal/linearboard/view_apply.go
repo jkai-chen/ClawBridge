@@ -138,6 +138,22 @@ func entryOperationID(base string, e viewSetEntry) string {
 // ViewApply previews or applies a view-set file. Any refused entry refuses
 // the whole confirm before anything is sent.
 func (s *Service) ViewApply(ctx context.Context, scope bus.Request, in ViewApplyInput, key ViewKey) (ViewApplyResult, error) {
+	// A session is refused these: only a person, in their own terminal.
+	if !(in.Confirm && scope.Session == "") {
+		return s.viewApply(ctx, scope, in, key)
+	}
+	// A confirm writes through the person's own profile: the project's
+	// hourly budget counts it (FR8).
+	var out ViewApplyResult
+	err := s.budgeted(ctx, scope, "view", in.OperationID, func(ctx context.Context) error {
+		var e error
+		out, e = s.viewApply(ctx, scope, in, key)
+		return e
+	})
+	return out, err
+}
+
+func (s *Service) viewApply(ctx context.Context, scope bus.Request, in ViewApplyInput, key ViewKey) (ViewApplyResult, error) {
 	var none ViewApplyResult
 	entries, e := parseViewSet(in.File)
 	if e != nil {

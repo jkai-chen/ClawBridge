@@ -78,6 +78,21 @@ type seedRow struct {
 // SeedDocs plans the guide documents for the project's binding and, with
 // in.Confirm, creates, settles or updates them.
 func (s *Service) SeedDocs(ctx context.Context, scope bus.Request, in SeedInput) (SeedResult, error) {
+	if !(in.Confirm) {
+		return s.seedDocs(ctx, scope, in)
+	}
+	// A confirm writes through the person's own profile: the project's
+	// hourly budget counts it (FR8).
+	var out SeedResult
+	err := s.budgeted(ctx, scope, "document", "", func(ctx context.Context) error {
+		var e error
+		out, e = s.seedDocs(ctx, scope, in)
+		return e
+	})
+	return out, err
+}
+
+func (s *Service) seedDocs(ctx context.Context, scope bus.Request, in SeedInput) (SeedResult, error) {
 	b, e := s.BindingV2(ctx, scope)
 	if e != nil {
 		return SeedResult{}, e

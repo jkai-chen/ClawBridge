@@ -256,7 +256,7 @@ func (w *Watcher) dispatchCharge(ctx context.Context, pid string, fence map[stri
 	m, _ := r.Data.(map[string]any)
 	used, _ := m["budget_used"].(int)
 	limit, _ := m["budget_limit"].(int)
-	if limit-used <= dispatchReserve {
+	if limit > 0 && limit-used <= dispatchReserve {
 		return false
 	}
 	args["calls"] = 1

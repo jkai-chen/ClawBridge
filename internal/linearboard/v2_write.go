@@ -275,7 +275,21 @@ func (s *Service) WriteV2(ctx context.Context, scope bus.Request, in WriteInputV
 			}
 			return s.appWrite(ctx, scope, in.Operation, writeArgsV2(in))
 		}
+		// Through the person's own profile: the project's hourly budget
+		// counts it (FR8).
+		var out any
+		err := s.budgeted(ctx, scope, in.Operation, in.OperationID, func(ctx context.Context) error {
+			var e error
+			out, e = s.writeV2Personal(ctx, scope, in)
+			return e
+		})
+		return out, err
 	}
+	return s.writeV2Personal(ctx, scope, in)
+}
+
+// writeV2Personal is WriteV2 through the person's own Linear profile.
+func (s *Service) writeV2Personal(ctx context.Context, scope bus.Request, in WriteInputV2) (any, error) {
 	if in.Labels.Present {
 		in.Labels.Value, _ = sortedUniqueIDs(in.Labels.Value, 100)
 	}

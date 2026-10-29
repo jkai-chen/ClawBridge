@@ -21,6 +21,9 @@ type storeAuthority struct {
 }
 
 func (a *storeAuthority) Execute(ctx context.Context, r bus.Request) (bus.Result, error) {
+	if r.Operation == "linear_write_charge" {
+		return budgetAnswer(r)
+	}
 	if r.Operation == "linear_admin_audit" && a.failNext {
 		a.failNext = false
 		return bus.Result{}, errors.New("authority unavailable")

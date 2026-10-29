@@ -32,6 +32,9 @@ type viewAuthority struct {
 }
 
 func (a *viewAuthority) Execute(ctx context.Context, r bus.Request) (bus.Result, error) {
+	if r.Operation == "linear_write_charge" {
+		return budgetAnswer(r)
+	}
 	switch r.Operation {
 	case "linear_views_list":
 		views := []any{}

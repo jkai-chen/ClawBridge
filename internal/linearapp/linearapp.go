@@ -87,6 +87,13 @@ func RetryAt(err error) (time.Time, bool) {
 	return time.Time{}, false
 }
 
+// IsQueryInvalid reports a query Linear refused as invalid (query_invalid):
+// a caller may retry with a simpler query shape.
+func IsQueryInvalid(err error) bool {
+	var e *Error
+	return errors.As(err, &e) && e.Code == "query_invalid"
+}
+
 func fail(code string) error { return &Error{Code: code} }
 
 // Store keeps the sealed token; *bus.Store implements it on a hosted server.

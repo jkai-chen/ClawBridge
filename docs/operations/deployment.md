@@ -632,18 +632,20 @@ CLAWBRIDGE_WATCH_INTERVAL=15m
   cursor first and starts a source, or its next page, only with 5 s of the share
   left; one it can't start keeps its cursor and goes first next tick
   (`deferred_sources`), so a project with many teams and projects catches up
-  over a few ticks instead of failing. The share is split so every part gets
-  time, in any share a pass starts with (20 s or more): the comment watch stops
-  polling with 15 s left (so it polls for at least 5 s); intake and the steps
-  after it run until 9 s are left (at least 6 s, enough to start intake); the
-  claim markers get the last 9 s, what a marker pass needs to apply a row. These
-  come from the marker pass's own reserve and row room and intake's room, so
-  they can't drift apart. A step that fails is recorded and the next still runs;
-  a share that runs out is recorded as `deadline`. A pass of 5 s or more logs
-  each step's time and its share (`watcher: tick: project … took …ms of its …ms
-  share: comments …, intake …ms (S1 …ms, S2 …ms, S3 …ms), …`). The watcher's
-  reads reuse a verified binding for 20 minutes, across ticks; a relink or a
-  failed check drops it, and writes always verify.
+  over a few ticks instead of failing. S1, the needs-agent label, reads each
+  bound team with one app GraphQL query for the team's whole needs-agent set, as
+  S2 and S3 read with one query each, and every page is charged. The share is
+  split so every part gets time, in any share a pass starts with (20 s or more):
+  the comment watch stops polling with 15 s left (so it polls for at least 5 s);
+  intake and the steps after it run until 9 s are left (at least 6 s, enough to
+  start intake); the claim markers get the last 9 s, what a marker pass needs to
+  apply a row. These come from the marker pass's own reserve and row room and
+  intake's room, so they can't drift apart. A step that fails is recorded and
+  the next still runs; a share that runs out is recorded as `deadline`. A pass
+  of 5 s or more logs each step's time and its share (`watcher: tick: project …
+  took …ms of its …ms share: comments …, intake …ms (S1 …ms, S2 …ms, S3 …ms),
+  …`). The watcher's reads reuse a verified binding for 20 minutes, across
+  ticks; a relink or a failed check drops it, and writes always verify.
 - **Queued writes.** The server sends queued agent writes every 5 seconds as
   Linear and each project's budget allow (docs/linear.md, "Queued writes").
 - **Clients.** While the server's ticks for a project are fresh, a client

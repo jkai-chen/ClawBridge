@@ -44,6 +44,10 @@
   left (intake starts a source or page with 5 s), and the markers get the last 9 s, what a marker pass needs to apply a
   row. In v0.3.9.1 the markers got 3 s and stopped as `deadline` without applying anything (a nudge applied them).
   Linear config scope: none.
+- **Intake's needs-agent read is one query per team.** S1 read each bound team once per label through Linear's MCP
+  connection, with the label listings uncharged; it now reads each team with one app GraphQL query for the whole
+  needs-agent set, and every page is charged. A large binding's intake drops from about 14 s to about 1 s. If Linear
+  refuses the set's filter, S1 reads one query per label for the rest of that pass. Linear config scope: none.
 
 # ClawBridge v0.3.9.1 (server hotfix, deployed 29 Oct; no client release or tag)
 

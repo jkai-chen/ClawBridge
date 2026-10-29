@@ -2,6 +2,8 @@ package linearapp
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"strings"
@@ -125,5 +127,38 @@ func TestMintViewerIsARead(t *testing.T) {
 	a, _ := New(Config{ClientID: "client-viewer-" + t.Name(), Secret: secret, Key: key, Store: &memStore{live: map[string]int{}}, HTTP: &http.Client{Transport: v}})
 	if _, _, err := a.Token(context.Background()); err != nil || v.viewers != 2 {
 		t.Fatal("the mint's viewer read was not sent once more:", err, v.viewers)
+	}
+}
+
+// A query Linear refuses as invalid (its filter or an argument) is
+// query_invalid, in a 400 or a 200, with no Linear text; any other error
+// stays what it was.
+func TestGraphQLInvalidQueryIsTyped(t *testing.T) {
+	now := time.Date(2026, 10, 28, 12, 0, 0, 0, time.UTC)
+	for i, c := range []struct {
+		status int
+		body   string
+		want   string
+	}{
+		{400, `{"errors":[{"message":"Field \"in\" is not defined by type","extensions":{"code":"GRAPHQL_VALIDATION_FAILED","type":"graphql error"}}]}`, "query_invalid"},
+		{400, `{"errors":[{"message":"x","extensions":{"type":"graphql error"}}]}`, "query_invalid"},
+		{400, `{"errors":[{"message":"Argument Validation Error","extensions":{"type":"invalid input"}}]}`, "query_invalid"},
+		{200, `{"data":null,"errors":[{"message":"x","extensions":{"code":"BAD_USER_INPUT"}}]}`, "query_invalid"},
+		{400, `{"errors":[{"message":"Invalid scope","extensions":{"type":"forbidden"}}]}`, "unavailable"},
+		{400, `not json`, "unavailable"},
+		{500, `{"errors":[{"message":"x","extensions":{"code":"GRAPHQL_VALIDATION_FAILED"}}]}`, "unavailable"},
+		{200, `{"data":null,"errors":[{"message":"Entity not found","extensions":{"type":"invalid input"}}]}`, "query_failed"},
+	} {
+		g := &limitedGQL{linear: &linear{app: true}, answers: []limitedAnswer{{status: c.status, body: c.body}}}
+		a, _ := New(Config{ClientID: fmt.Sprintf("client-invalid-%d-%s", i, t.Name()), Secret: secret, Key: key, Store: &memStore{live: map[string]int{}}, HTTP: &http.Client{Transport: g}, Now: func() time.Time { return now }})
+		var out struct{ Issue struct{ ID string } }
+		err := a.GraphQL(context.Background(), `{ issue(id: "x") { id } }`, nil, &out)
+		var e *Error
+		if !errors.As(err, &e) || e.Code != c.want || IsQueryInvalid(err) != (c.want == "query_invalid") {
+			t.Fatal(c.status, c.body, err)
+		}
+		if strings.Contains(err.Error(), "defined") || strings.Contains(err.Error(), "Validation") {
+			t.Fatal("Linear's text leaked:", err)
+		}
 	}
 }

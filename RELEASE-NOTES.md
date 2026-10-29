@@ -111,6 +111,12 @@
   parameters; the bucket path is unchanged. `operator bootstrap-invite --server URL` puts the server's real URL in
   the join command it prints (it said `https://YOUR-DOMAIN`). Guide: docs/operations/local-host.md. No schema
   change. Linear config scope: none.
+- **`clawbridge cloud check --local`** checks a server you run on your own machine with `deploy/local-host.sh`
+  (`--local-dir DIR`, default `$CLAWBRIDGE_LOCAL_DIR` or `~/.clawbridge-server`; the URL comes from its env file when
+  `--server` is left out). It reads the env file's settings and its Compose project's containers on this machine,
+  `infra` passes as `not_applicable`, a new `trust` check (`--local` only) fails `untrusted_ca` when this machine
+  doesn't trust the https certificate, and `backups` warns when the newest dump in `DIR/backups` is over 26 hours old
+  or has no checksum. Remote checks are unchanged. No schema change. Linear config scope: none.
 
 ## Install and upgrade
 

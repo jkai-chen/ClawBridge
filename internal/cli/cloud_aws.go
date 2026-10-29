@@ -318,6 +318,8 @@ func (ssmTransport) describe() string {
 // facts script: the advice follows the route the user took.
 func (p *cloudProbe) remoteFailure(check string, err error) cloudResult {
 	switch {
+	case p.target.local:
+		return failed(check, "local_unreadable", "could not read the local server's env file or list its containers; check "+p.target.localDir+" and that Docker runs")
 	case errors.Is(err, errCloudAuth):
 		return failed(check, "cloud_auth", accountMsg)
 	case p.target.instance != "":

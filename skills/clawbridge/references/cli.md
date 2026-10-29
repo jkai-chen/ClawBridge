@@ -55,6 +55,15 @@ Run its `up` and `uninstall` only when the human asks. Never run its
 `invite-owner`: the human runs it in their own terminal, because the owner's
 one-time code goes only there. Never read or relay the code.
 
+Check such a server with `clawbridge cloud check --local [--local-dir DIR]`:
+server (health, env file, containers), trust (the https certificate against this
+machine's trust store, `--local` only), version, workspace, linear-app and backups
+(the newest dump in `DIR/backups`, under 26 hours old). `infra` is `pass` with
+reason `not_applicable`. A failed `trust` with `untrusted_ca` is the human's to
+fix: `deploy/local-host.sh trust` changes the machine's trust store, so do not run
+it yourself. The check reads no secret and writes nothing. On native Windows it is
+refused: run it inside WSL.
+
 `sync` is the only operation that publishes a new mirror. It requires an online
 authorized snapshot and preserves the previous complete snapshot if it fails.
 Run it when the human asks and the transport is healthy; then report the returned

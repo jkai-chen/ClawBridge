@@ -56,6 +56,9 @@ type gcpInstance struct {
 // the data path, and TCP 443 answers.
 func checkInfra(ctx context.Context, p *cloudProbe) cloudResult {
 	t := p.target
+	if t.local {
+		return cloudResult{Check: "infra", Status: "pass", Reason: "not_applicable", Advice: "a server on this machine has no cloud infrastructure to check"}
+	}
 	if t.onAWS() {
 		return awsInfra(ctx, p)
 	}
@@ -132,6 +135,9 @@ func checkInfra(ctx context.Context, p *cloudProbe) cloudResult {
 // checkBackups: the newest complete dump and checksum pair in the bucket is
 // under 26 hours old.
 func checkBackups(ctx context.Context, p *cloudProbe) cloudResult {
+	if p.target.local {
+		return checkLocalBackups(p.target.localDir)
+	}
 	if p.target.onAWS() {
 		return awsBackups(ctx, p)
 	}

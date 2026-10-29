@@ -341,6 +341,17 @@ full restore.
 
 The env file must be the one the backup was taken with, or the Linear app's stored tokens are unreadable.
 
+## Checking it
+
+```sh
+clawbridge cloud check all --local
+```
+
+It checks this machine's server from the same env file: health, settings and containers (`server`), the
+certificate against this machine's trust store in shape B (`trust`), version, workspace, the Linear app, and
+whether the newest backup is under 26 hours old (`backups`). It reads no secret and changes nothing. On Windows,
+run it inside WSL. The [`cloud check` reference](../reference/api.md) lists every check and its reasons.
+
 ## Upgrades
 
 ```sh

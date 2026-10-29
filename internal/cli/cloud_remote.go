@@ -21,7 +21,12 @@ import (
 // cloudTarget is the user's own route to the server's shell: their SSH,
 // gcloud over IAP, or an EC2 instance over SSM with their AWS CLI profile.
 // ClawBridge holds no credential of its own.
-type cloudTarget struct{ host, vm, project, zone, instance, region, profile, account string }
+type cloudTarget struct {
+	host, vm, project, zone, instance, region, profile, account string
+	// local is the server on this machine (deploy/local-host.sh), in localDir.
+	local    bool
+	localDir string
+}
 
 func bindTarget(f *flag.FlagSet, t *cloudTarget) {
 	f.StringVar(&t.host, "ssh", "", "SSH host of the server (any VM)")
@@ -124,11 +129,19 @@ var composeServices = []string{"api", "caddy", "db"}
 // prints nothing else from it.
 func factsScript() string { return factsScriptFor(serverEnvFile) }
 
-func factsScriptFor(path string) string {
+func factsScriptFor(path string) string { return factsScriptWith(path, true) }
+
+// factsScriptWith is the facts script; the data-disk line is the remote
+// server's, so a server on this machine leaves it out.
+func factsScriptWith(path string, withMount bool) string {
+	mount := `echo "mount $(findmnt -n -o SOURCE ` + dataMount + ` || echo none)"`
+	if !withMount {
+		mount = `true`
+	}
 	keys := append(append(append(append([]string{}, requiredSettings...), googleSettings...), appSettings...), authSetting)
 	return strings.Join([]string{
 		`f=` + path,
-		`echo "mount $(findmnt -n -o SOURCE ` + dataMount + ` || echo none)"`,
+		mount,
 		`if [ ! -r "$f" ]; then echo "env missing"; exit 0; fi`,
 		`for k in ` + strings.Join(keys, " ") + `; do echo "count $k $(grep -c "^$k=." "$f")"; done`,
 		`a=$(sed -n "s/^` + authSetting + `=//p" "$f" | tail -n 1 | tr -d " \r\042\047")`,
@@ -178,6 +191,18 @@ func (p *cloudProbe) facts(ctx context.Context) (remoteFacts, error) {
 		return p.remote, p.remoteErr
 	}
 	p.factsDone = true
+	if p.target.local {
+		var out []byte
+		script, err := localFactsScript(p.target.localDir)
+		if err == nil {
+			out, err = remoteOutput(ctx, []string{"sh", "-c", script}, p.stderr)
+		}
+		if err == nil {
+			p.remote = parseFacts(out)
+		}
+		p.remoteErr = err
+		return p.remote, err
+	}
 	tr, err := p.target.transport()
 	if err == nil {
 		var out []byte
@@ -239,9 +264,11 @@ func checkSettings(f remoteFacts) cloudResult {
 	return cloudResult{Check: "server", Status: "pass"}
 }
 
-func checkServices(f remoteFacts) cloudResult {
+func checkServices(f remoteFacts) cloudResult { return checkServicesOf(f, composeServices) }
+
+func checkServicesOf(f remoteFacts, services []string) cloudResult {
 	var down []string
-	for _, s := range composeServices {
+	for _, s := range services {
 		// Every container of the service must be up: a crashed replica
 		// is not hidden by a healthy one.
 		states := f.services[s]
@@ -337,7 +364,7 @@ func checkLinearApp(ctx context.Context, p *cloudProbe) cloudResult {
 		return failed("linear-app", "teams_hidden", fmt.Sprintf("a Linear admin adds the app to %d bound team(s): %s", len(hidden), strings.Join(hidden, ", ")))
 	}
 	result := cloudResult{Check: "linear-app", Status: "pass"}
-	if !p.target.remote() {
+	if !p.target.remote() && !p.target.local {
 		result.Advice = "entries not counted: pass --ssh, --vm or --instance to check them too"
 	}
 	return result

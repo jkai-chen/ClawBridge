@@ -784,9 +784,10 @@ the exact tagged commit. Extra version arguments fail before state access.
 
 ## Cloud check and secret entry
 
-`clawbridge cloud check [infra|server|version|workspace|linear-app|backups|all]
+`clawbridge cloud check [infra|server|trust|version|workspace|linear-app|backups|all]
 [--server URL] [--client-config PATH] [--ssh HOST | --vm NAME --project P --zone Z |
---instance ID --region R [--profile P] [--account N]] [--bucket NAME] [--json]`
+--instance ID --region R [--profile P] [--account N] | --local [--local-dir DIR]]
+[--bucket NAME] [--json]`
 probes an own server during onboarding. Each
 check passes, warns or fails with a fixed reason code and one line of advice;
 `--json` returns source=cloud_check with a list of `{check, status, reason,
@@ -797,10 +798,37 @@ advice}`, otherwise a table. The exit status is non-zero when any check fails.
 | `infra` (Google Cloud) | with `--vm`: the VM is running; its external IP is a reserved static address in use; the server's domain resolves to that IP; a non-boot disk is attached and mounted at `/var/lib/clawbridge-postgres` (`findmnt`, over the target); last, TCP 443 answers, which it does only once the server runs | `needs_vm`, `vm_unreadable`, `vm_not_running`, `no_external_ip`, `ip_not_static`, `no_server`, `dns_mismatch`, `no_data_disk`, `ssh_failed`, `data_not_mounted`, `port_closed` |
 | `infra` (AWS) | with `--instance` and `--region`: the instance is running; its public IP is an Elastic IP associated with it; the domain resolves to that IP; a non-root EBS volume is attached and encrypted; its security groups let in tcp/443 and nothing else; SSM sees it online; the data volume is mounted (over SSM); last, TCP 443 answers | `needs_instance`, `cloud_auth`, `vm_unreadable`, `vm_not_running`, `no_external_ip`, `ip_not_static`, `no_server`, `dns_mismatch`, `no_data_disk`, `data_disk_unencrypted`, `ssh_port_open`, `extra_ingress`, `ssm_offline`, `parameters_unreadable`, `secret_left_behind`, `ssm_failed`, `data_not_mounted`, `port_closed` |
 | `server` | `GET /healthz` over HTTPS (plain HTTP only to loopback) answers 200 `{"status":"ok"}`, without following redirects; with a target, also every required setting of `deploy/compose.yaml` is set once in the env file; Google sign-in's five settings are all set unless `CLAWBRIDGE_AUTH=device`; the deployment's `api`, `caddy` and `db` containers run (`db` healthy); and the running server's `/v1/config` `auth_methods` match `CLAWBRIDGE_AUTH` (unset is `google`) | `no_server`, `invalid_url`, `dns`, `tls`, `unreachable`, `http_status`, `not_clawbridge`, `ssh_failed`, `env_missing`, `setting_missing`, `setting_invalid`, `setting_duplicate`, `service_down`, `config_unreadable`, `auth_mismatch` |
+| `trust` (`--local` only) | an https server URL completes a TLS handshake against this machine's trust store; plain http to loopback is `pass` with reason `not_applicable` | `env_missing`, `setting_invalid`, `untrusted_ca`, `invalid_url`, `dns`, `tls`, `unreachable` |
 | `version` | the server's release equals the client's; a dev build on either side warns `dev_build` | `server_too_old`, `version_mismatch` |
 | `workspace` | `whoami` with the configured cloud profile shows the signed-in principal owns the workspace | `no_config`, `not_cloud`, `other_server`, `not_signed_in`, `no_workspace`, `whoami_failed`, `not_owner` |
 | `backups` | with `--bucket` and `--project` (Google Cloud Storage), or `--bucket` and `--region` (S3): the newest complete dump and checksum pair under `postgres/daily/` is under 26 hours old | `needs_bucket`, `needs_project`, `needs_region`, `cloud_auth`, `bucket_unreadable`, `no_backup`, `backup_stale` |
 | `linear-app` | with a target, the app's three entries are set once each; the server reports the app configured, its binding readable, and every bound team visible to it | `ssh_failed`, `app_settings_missing`, `not_configured`, `status_unreadable`, `binding_unreadable`, `teams_hidden`, and the `workspace` sign-in reasons |
+
+**`--local`** checks the server that `deploy/local-host.sh` runs on this machine
+(docs/operations/local-host.md); it excludes `--ssh`, `--vm`, `--instance`, `--project`,
+`--zone`, `--region`, `--profile`, `--account` and `--bucket`. `--local-dir DIR` is the script's
+folder (default `$CLAWBRIDGE_LOCAL_DIR`, else `~/.clawbridge-server`). Without `--server` the
+URL comes from the env file (`CLAWBRIDGE_LOCAL_SHAPE`, `CLAWBRIDGE_LOCAL_PORT`,
+`CLAWBRIDGE_DOMAIN`, and whether `CLAWBRIDGE_TLS_CERT` is set: nothing else is read):
+`http://127.0.0.1:PORT` for shape A, `https://DOMAIN` for shape B (a host name or IPv4 address,
+as the script accepts); when the file is missing or names no usable address, `server` and
+`trust` fail `env_missing` or `setting_invalid`. The facts script runs on this machine (`sh -c`,
+no sudo, no data-disk line), so on native Windows `--local` is refused: run it inside WSL, where
+the script runs the server.
+Differences from the table:
+
+- `infra` is not a failure: it passes with reason `not_applicable`, as `trust` does for plain
+  http. No `skip` status exists, so JSON consumers keep the three statuses `pass`, `warn` and
+  `fail`.
+- `server` counts the three required settings once each (Google sign-in's five do not apply: the
+  local stack signs in with device keys, and `/v1/config` must say so), and the `api` and `db`
+  containers run, with `caddy` too in shape B (`caddy-cert` instead when the env file sets
+  `CLAWBRIDGE_TLS_CERT`, your own certificate). Extra reasons: `local_unreadable`.
+- `linear-app` does not count the entries (as without a target).
+- `backups` needs no `--bucket`: the newest complete `STAMP.dump` and `STAMP.sha256` pair in
+  `DIR/backups` is under 26 hours old. It **warns** (does not fail) with `backup_stale` or
+  `no_backup` (none, or a dump without its checksum), and fails `backups_unreadable` if the
+  folder cannot be read.
 
 The server URL is `--server` or the configured one. The target (`--ssh HOST`, or
 `--vm NAME --project P --zone Z` over IAP) is the user's own route to the server's

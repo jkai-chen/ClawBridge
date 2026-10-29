@@ -19,7 +19,7 @@ func TestIssueSubscribersSchema40StartsLinkedBoardsOff(t *testing.T) {
 	h.call("project_create", "", map[string]any{"slug": "p"})
 	h.call("project_create", "", map[string]any{"slug": "later"})
 	h.link(0, []string{cpOne})
-	if _, err = s.db.Exec(budgetDowngradeSQLite + maintenanceDowngradeSQLite + ledgerDowngradeSQLite + lanesDowngradeSQLite + noticeDowngradeSQLite + leadDowngradeSQLite + rolesDowngradeSQLite + kindDowngradeSQLite + `PRAGMA user_version=38;`); err != nil {
+	if _, err = s.db.Exec(webhookDowngradeSQLite + budgetDowngradeSQLite + maintenanceDowngradeSQLite + ledgerDowngradeSQLite + lanesDowngradeSQLite + noticeDowngradeSQLite + leadDowngradeSQLite + rolesDowngradeSQLite + kindDowngradeSQLite + `PRAGMA user_version=38;`); err != nil {
 		t.Fatal(err)
 	}
 	s.Close()

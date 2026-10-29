@@ -334,7 +334,9 @@ func (s *Store) IntakeCursorSet(ctx context.Context, pid, source, subject, polle
 	if len(rows) == 0 {
 		_, err = tx.ExecContext(ctx, `INSERT INTO watch_cursors(project_id,source,subject,cursor_time,watch_started_at,next_poll_at,last_activity_at,updated_at) VALUES(?,?,?,?,?,?,?,?)`, pid, source, subject, polled, polled, next, nullable(activity), now)
 	} else {
-		_, err = tx.ExecContext(ctx, `UPDATE watch_cursors SET cursor_time=?,next_poll_at=?,last_activity_at=?,failures=0,last_error='',updated_at=? WHERE project_id=? AND source=? AND subject=?`, polled, next, nullable(activity), now, pid, source, subject)
+		// A webhook hint after the read's start keeps the source due
+		// (FR14 §6 P3): the read may have missed its event.
+		_, err = tx.ExecContext(ctx, `UPDATE watch_cursors SET cursor_time=?,next_poll_at=CASE WHEN hinted_at>? THEN ? ELSE ? END,last_activity_at=?,failures=0,last_error='',updated_at=? WHERE project_id=? AND source=? AND subject=?`, polled, layout(from), now, next, nullable(activity), now, pid, source, subject)
 	}
 	if err != nil {
 		return err

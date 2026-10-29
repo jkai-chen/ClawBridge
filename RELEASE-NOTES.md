@@ -119,6 +119,12 @@ A server-only hotfix to v0.3.9: no schema change and no client change.
   slow intake used to starve. A slow pass's log line splits intake by signal (`intake …ms (S1 …ms, S2 …ms, S3 …ms)`).
   Linear config scope: none.
 
+## Linear
+
+- **A family move's preview no longer shows a sub-issue count beside its children.** `sub_issues` is Linear's count of
+  one page (at most 10), so a family of 12 showed `sub_issues: 10` next to 12 planned children; a family's preview now
+  leaves it out, and its `children` list is the count. No logic change. Linear config scope: none.
+
 # ClawBridge v0.3.9 (released 29 Oct)
 
 **Schema 47 → 50.**

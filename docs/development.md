@@ -26,9 +26,18 @@ integration/run-postgres.sh go test -race ./... -count=1
 The message queue's chaos suite runs under the `chaos` build tag, against real
 PostgreSQL: API crashes (its database backends terminated mid-transaction), a
 killed LISTEN connection, a stalled network, a consumer killed mid-handle, and
-a compaction cycle. CI runs these short cases. The soak (10k messages over 50
-sessions, consumers killed at random) runs nightly and on demand in the "Chaos
-soak" workflow; a failed run prints `CHAOS_SEED`, which replays its kills:
+a compaction cycle. The zero-loss deploy has its own cases
+(`TestChaosZeroLoss*`, each in a schema of its own, since a maintenance is the
+whole database's): a server killed after its commit and before its answer, or
+mid-transaction; a drain then a swap to a second serving process, with 100 sends
+from 3 sessions; a client killed mid-drain and two drainers on one profile; an
+ack, and a reply carrying one, that wait past their lease (acked, dead, expired,
+an instance change); a stream through a maintenance, with no gap in the
+recipient's sequence; and a Linear write the server queued, held through the
+drain and sent once by the new server. Their clients are hosted clients with an
+outbox. CI runs these short cases. The soak (10k messages over 50 sessions,
+consumers killed at random) runs nightly and on demand in the "Chaos soak"
+workflow; a failed run prints `CHAOS_SEED`, which replays its kills:
 
 ```sh
 integration/run-postgres.sh go test -tags chaos ./internal/server -run '^TestChaos' -short -count=1
@@ -37,7 +46,10 @@ CHAOS_SEED=N CHAOS_MESSAGES=1000 integration/run-postgres.sh go test -tags chaos
 
 The chaos API runs in the test process: a crash closes its connections at once
 and terminates its Postgres backends, but the operating system's own socket
-teardown of a killed process isn't exercised.
+teardown of a killed process isn't exercised. In the zero-loss cases, a proxy in
+front of the servers stands in for the load balancer and drops the answers a
+dead server never sent; a consumer checks for a waiting ack the way the MCP
+server does (`PromoteAck`), rather than running the MCP server itself.
 
 The wrapper creates a unique loopback-only PostgreSQL container, supplies its DSN
 through the test environment and removes its container/anonymous volume on exit.

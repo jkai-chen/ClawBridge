@@ -34,6 +34,11 @@
   `server.maintenance` with when it ends (servers mark reads they serve during a drain with
   `ClawBridge-Maintenance-Until`). The server's refusal of a session's earlier instance now names it. No schema change.
   Linear config scope: none.
+- **Chaos cases for a deploy.** CI's chaos job also runs the zero-loss cases against real PostgreSQL: a server killed
+  after its commit or mid-transaction, a drain then a swap with 100 sends from 3 sessions, a client killed mid-drain,
+  two drainers on one profile, acks and replies that wait past their lease, a stream through a maintenance, and a
+  Linear write the server queued, held through the drain and sent once by the new server. Each write lands once and in
+  order (docs/development.md).
 
 ## Linear
 

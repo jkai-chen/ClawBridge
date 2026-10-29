@@ -902,7 +902,7 @@ verified backup timestamp. Never delete the only Postgres volume with
 
 ### Draining before the swap
 
-From schema 42 on, a deploy drains the running server before it swaps the API, so the swap cuts nothing in flight:
+From schema 48 on, a deploy drains the running server before it swaps the API, so the swap cuts nothing in flight:
 
 ```sh
 docker compose ... run --rm --no-deps api operator maintenance start --reason "deploy $TAG" --wait 90s --confirm

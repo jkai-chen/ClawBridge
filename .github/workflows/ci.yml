@@ -94,7 +94,8 @@ jobs:
           cache: true
           cache-dependency-path: go.sum
       # The message queue's chaos cases (crashes, a killed LISTEN, a network
-      # stall, a compaction); the 10k soak runs in chaos.yml.
+      # stall, a compaction) and the zero-loss deploy's (a swap mid-send, a
+      # drain then a swap, the client outbox); the 10k soak runs in chaos.yml.
       - name: Message queue chaos cases with real disposable PostgreSQL
         run: bash integration/run-postgres.sh go test -tags chaos ./internal/server -run '^TestChaos' -short -count=1 -timeout 10m
       # The release builder probes cross-build in a subprocess, so they run

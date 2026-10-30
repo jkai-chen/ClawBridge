@@ -1659,6 +1659,18 @@ func safeCode(err error) string {
 			return coded.Code()
 		}
 	}
+	// A server's refusal carries its code, one of a fixed set the client
+	// keeps; its text names none of the words below.
+	var refused interface {
+		Rejection() (status int, code, message string)
+	}
+	if errors.As(err, &refused) {
+		switch _, code, _ := refused.Rejection(); code {
+		case "forbidden", "not_found", "conflict", "invalid", "rate_limited", "unavailable",
+			"unauthenticated", "device_auth_failed", "clock_skew", "maintenance", "binding_unreadable", "in_progress":
+			return code
+		}
+	}
 	text := strings.ToLower(err.Error())
 	switch {
 	case strings.Contains(text, "permission") || strings.Contains(text, "membership") || strings.Contains(text, "authorized"):

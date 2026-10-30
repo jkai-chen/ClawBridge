@@ -229,7 +229,12 @@ The Stop hook covers a busy agent. An idle one still needs the command adapter
 above to be woken.
 
 `clawbridge doctor` shows whether the session's MCP server holds the stream,
-and the session's unacked and dead counts. Its "Claude Code hooks" line says
+and the session's unacked and dead counts. It reads the counts as the
+session's instance from its MCP server's record on this machine, or from
+`--instance` without one; when the server refuses, the queue line names the
+reason (`invalid`: that instance isn't the session's current one, so pass the
+current `--instance` from its `whoami` or restart its MCP server; `forbidden`:
+the session is another person's) instead of a bare "rejected". Its "Claude Code hooks" line says
 which form is installed (`exec` or `shell`) and the Claude Code version
 (`claude --version`, run with a short timeout; an unknown version never fails
 doctor). On Windows with the exec form it warns that the hooks are pending the

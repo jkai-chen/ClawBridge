@@ -79,3 +79,47 @@ func TestCheckQueue(t *testing.T) {
 		}
 	}
 }
+
+// refusal is a server's refusal as the remote client reports it: a status
+// and a code, with text that names none of the words safeCode looks for.
+type refusal struct {
+	status int
+	code   string
+}
+
+func (r refusal) Error() string { return "cloud request rejected; no write queued" }
+func (r refusal) Rejection() (int, string, string) {
+	return r.status, r.code, ""
+}
+
+// A refused queue read names the server's code, not "rejected", and says
+// what to pass: the instance and where it came from, or the owner.
+func TestCheckQueueRefusalSaysWhatToPass(t *testing.T) {
+	now := time.Date(2026, 10, 28, 0, 0, 0, 0, time.UTC)
+	config := Config{Workspace: "w", Project: "p", Session: "agent", Instance: "configured"}
+	record := &ctxwatch.QueueRecord{Session: "agent", Instance: "inst-1", Stream: "stream", UpdatedAt: now.Format(time.RFC3339)}
+	for _, tc := range []struct {
+		state QueueState
+		err   error
+		says  []string
+	}{
+		{QueueState{Session: "agent", Record: record}, refusal{400, "invalid"}, []string{"read: invalid.", "instance inst-1 (from the MCP server's record)", "--instance"}},
+		{QueueState{Session: "agent"}, refusal{400, "invalid"}, []string{"instance configured (from this run's --instance)"}},
+		{QueueState{Session: "agent", Record: record}, refusal{403, "forbidden"}, []string{"read: forbidden.", "another principal"}},
+		{QueueState{Session: "agent", Record: record}, refusal{404, "not_found"}, []string{"read: not_found.", "no session agent"}},
+		{QueueState{Session: "agent", Record: record}, refusal{401, "unauthenticated"}, []string{"read: unauthenticated.", "Sign in again"}},
+		{QueueState{Session: "agent", Record: record}, refusal{418, "teapot"}, []string{"read: rejected."}},
+		{QueueState{Session: "agent", Record: record}, refusal{500, ""}, []string{"read: rejected."}},
+	} {
+		var got []Check
+		checkQueue(context.Background(), tc.state, config, &queueCounts{err: tc.err}, now, func(c Check) { got = append(got, c) })
+		if len(got) != 1 || got[0].Status != Warn {
+			t.Fatalf("%v: %+v", tc.err, got)
+		}
+		for _, s := range tc.says {
+			if !strings.Contains(got[0].Message+" "+got[0].Action, s) {
+				t.Fatalf("%s: %q / %q lacks %q", tc.err.(refusal).code, got[0].Message, got[0].Action, s)
+			}
+		}
+	}
+}

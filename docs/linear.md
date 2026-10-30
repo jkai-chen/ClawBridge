@@ -1051,6 +1051,24 @@ clawbridge linear subscribers backfill --since 2026-10-27 --apply
   spreads over hours. An issue already done is never queued again.
 - **The owner's email** goes only to Linear's subscribe call. History, doctor and logs never show it.
 
+### Linear webhooks (hosted servers)
+
+A hosted server can take Linear's webhook deliveries for each bound write team, so a label or a comment reaches it
+within a minute instead of at the next poll. ClawBridge creates no webhook and changes no Linear setting: the project
+owner creates one webhook per bound write team in Linear's UI, and the server's operator sets its signing secret.
+
+```sh
+clawbridge linear webhook-setup [--project SLUG]   # read-only, any member
+```
+
+- **What it prints,** for each bound write team: its name, the exact URL to enter
+  (`https://SERVER/linear/webhook/TEAM_UUID`), the resource types (Issues, Comments), "choose this team, not All
+  public teams", and the webhook's state on the server. Then the env line's shape with `<secret>` in place of each
+  secret: it never prints a secret.
+- **The secret.** Linear shows each webhook's signing secret. Set it in `/etc/clawbridge/clawbridge.env` in your own
+  terminal, never through an agent; the operator then recreates the API.
+- **Until proven,** the server records deliveries and changes nothing (see the deployment guide).
+
 ### Moving an issue to another team
 
 An issue can move to another write team of the same binding, for example from

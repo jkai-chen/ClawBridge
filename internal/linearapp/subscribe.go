@@ -30,7 +30,28 @@ func (a *App) SubscribeIssue(ctx context.Context, issueID, email, userID string)
 	} else {
 		variables["user"] = strings.ToLower(userID)
 	}
-	body, err := json.Marshal(map[string]any{"query": issueSubscribeMutation, "variables": variables})
+	return a.fixedMutation(ctx, issueSubscribeMutation, variables, "issueSubscribe", "subscribed")
+}
+
+// issueArchiveMutation archives one issue: the webhook probe's own, made
+// moments before (FR14 §9 P1). Linear's MCP has no archive tool.
+const issueArchiveMutation = `mutation Archive($id: String!) { issueArchive(id: $id) { success } }`
+
+// ArchiveIssue archives one issue as the app. Its answer is a class:
+// archived, scope, not_found, refused, token_rejected or unavailable.
+func (a *App) ArchiveIssue(ctx context.Context, issueID string) (string, error) {
+	if !validUUID(issueID) {
+		return "", fail("invalid")
+	}
+	return a.fixedMutation(ctx, issueArchiveMutation, map[string]any{"id": strings.ToLower(issueID)}, "issueArchive", "archived")
+}
+
+// fixedMutation sends one of the app's fixed GraphQL mutations and answers
+// ok when Linear reports data.field.success, else a class: never Linear's
+// text. A 401 re-mints the token once and sends again; each mutation here
+// changes nothing when sent twice.
+func (a *App) fixedMutation(ctx context.Context, mutation string, variables map[string]any, field, ok string) (string, error) {
+	body, err := json.Marshal(map[string]any{"query": mutation, "variables": variables})
 	if err != nil {
 		return "", fail("invalid")
 	}
@@ -60,11 +81,11 @@ func (a *App) SubscribeIssue(ctx context.Context, issueID, email, userID string)
 			}
 			continue
 		}
-		return classifySubscribe(res.StatusCode, raw), nil
+		return classifyMutation(res.StatusCode, raw, field, ok), nil
 	}
 }
 
-func classifySubscribe(status int, raw []byte) string {
+func classifyMutation(status int, raw []byte, field, ok string) string {
 	switch {
 	case status == http.StatusUnauthorized:
 		return "token_rejected"
@@ -72,10 +93,8 @@ func classifySubscribe(status int, raw []byte) string {
 		return "unavailable"
 	}
 	var envelope struct {
-		Data struct {
-			IssueSubscribe *struct {
-				Success bool `json:"success"`
-			} `json:"issueSubscribe"`
+		Data map[string]*struct {
+			Success bool `json:"success"`
 		} `json:"data"`
 		Errors []struct {
 			Message    string         `json:"message"`
@@ -85,8 +104,8 @@ func classifySubscribe(status int, raw []byte) string {
 	if json.Unmarshal(raw, &envelope) != nil {
 		return "unavailable"
 	}
-	if s := envelope.Data.IssueSubscribe; s != nil && s.Success && len(envelope.Errors) == 0 {
-		return "subscribed"
+	if s := envelope.Data[field]; s != nil && s.Success && len(envelope.Errors) == 0 {
+		return ok
 	}
 	words := []string{}
 	for _, e := range envelope.Errors {

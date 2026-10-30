@@ -237,9 +237,9 @@ ssh HOST 'for k in POSTGRES_PASSWORD CLAWBRIDGE_DOMAIN CLAWBRIDGE_BOOTSTRAP_OWNE
 
 ## 6. Install the server
 
-**Other containers.** The Docker mount guard below restarts Docker, which
-restarts every container on this machine. Show them first and get the user's
-yes:
+**Other containers.** The Docker mount guard below restarts Docker when it is
+new or changed, which restarts every container on this machine. Show them first
+and get the user's yes:
 
 ```sh
 ssh HOST 'sudo -n docker ps -a --format "{{.Names}} {{.Status}}"'
@@ -251,22 +251,36 @@ volume mounted:
 
 ```sh
 set -e
-install -d -o root -g root -m 0755 /etc/systemd/system/docker.service.d
-install -o root -g root -m 0644 \
-  /opt/clawbridge/repo/deploy/systemd/docker.service.d/10-clawbridge-postgres-mount.conf \
-  /etc/systemd/system/docker.service.d/10-clawbridge-postgres-mount.conf
-systemctl daemon-reload
-systemctl restart docker
+src=/opt/clawbridge/repo/deploy/systemd/docker.service.d/10-clawbridge-postgres-mount.conf
+dst=/etc/systemd/system/docker.service.d/10-clawbridge-postgres-mount.conf
+if ! cmp -s "$src" "$dst"; then
+  install -d -o root -g root -m 0755 /etc/systemd/system/docker.service.d
+  install -o root -g root -m 0644 "$src" "$dst"
+  systemctl daemon-reload
+  systemctl restart docker
+fi
 systemctl is-active docker
 ```
 
-**The stack and the backup timer:**
+**The stack and the backup timer.** On a first install nothing is running yet.
+If the server already runs (this playbook run again, to repair or upgrade it),
+the block drains it first, as deployment.md's "Draining before the swap" does:
+writes get `503 maintenance` and clients queue them, nothing in flight is cut,
+and the new API ends the maintenance when it starts. The drain must print
+`drained`; if it prints `not drained after 90s`, the block stops before `up`:
+stop and ask (rule 5), and `operator maintenance end --confirm` (the same `run`
+line) lifts it.
 
 ```sh
 set -e
 mkdir -p /var/lib/clawbridge-postgres/data
-docker compose --env-file /etc/clawbridge/clawbridge.env --project-name clawbridge \
-  -f /opt/clawbridge/repo/deploy/compose.yaml up -d --build
+dc() { docker compose --env-file /etc/clawbridge/clawbridge.env --project-name clawbridge \
+  -f /opt/clawbridge/repo/deploy/compose.yaml "$@"; }
+if [ -n "$(dc ps -q api)" ]; then
+  dc build api
+  dc run --rm --no-deps api operator maintenance start --reason "playbook re-run" --wait 90s --confirm
+fi
+dc up -d --build
 install -d -o root -g root -m 0755 /usr/local/libexec/clawbridge
 install -o root -g root -m 0755 /opt/clawbridge/repo/deploy/backup-postgres.sh \
   /usr/local/libexec/clawbridge/backup-postgres.sh

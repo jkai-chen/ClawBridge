@@ -64,6 +64,8 @@ computer. Upgrading from v0.3.x: docs/upgrading-to-1.0.md.
   gate, `CLAWBRIDGE_AUTH=device` on the current version (rollback: `google,device`), then the v1.0 deploy and
   removing the OAuth settings. It names v1.0's start-up refusal and its message for a Google token. Linear config
   scope: none.
+- Two leftovers of Google sign-in are gone from the docs: a stream request is signed like any other (no ID token), and
+  docs/development.md speaks of cloud acceptance rather than Google's. Linear config scope: none.
 
 ## Fixes
 

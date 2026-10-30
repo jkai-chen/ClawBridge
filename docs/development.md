@@ -14,7 +14,7 @@ go vet ./...
 
 Tests use isolated databases, configuration and fake transports. PostgreSQL and
 opt-in live checks report skips when their prerequisites are absent. An ordinary
-suite pass therefore does not establish real hosted or Google acceptance.
+suite pass therefore does not establish real hosted or cloud acceptance.
 
 For actual disposable PostgreSQL coverage, run the existing wrapper with Docker:
 

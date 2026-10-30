@@ -470,7 +470,7 @@ local clients poll.
    once, within 60 s, for the same account (and device), workspace, project,
    session, instance and mode.
 2. Open `GET /v1/stream?workspace=W&project=P&session=S&mode=consume|observe`,
-   signed or with the ID token like any request, with the ticket in the
+   signed like any request, with the ticket in the
    `ClawBridge-Stream-Ticket` header. The response is `text/event-stream`.
 
 The URL never carries a secret, because access logs keep it. A URL with

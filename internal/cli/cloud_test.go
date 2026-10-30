@@ -447,6 +447,7 @@ func TestRemoteSetScript(t *testing.T) {
 func TestSecretKeysArePinned(t *testing.T) {
 	want := map[string]bool{
 		"CLAWBRIDGE_LINEAR_APP_CLIENT_ID": true, "CLAWBRIDGE_LINEAR_APP_CLIENT_SECRET": true,
+		"CLAWBRIDGE_BACKUP_ACCESS_KEY_ID": true, "CLAWBRIDGE_BACKUP_SECRET_ACCESS_KEY": true,
 	}
 	if !reflect.DeepEqual(secretKeys, want) {
 		t.Fatalf("secret set keys: %v", secretKeys)

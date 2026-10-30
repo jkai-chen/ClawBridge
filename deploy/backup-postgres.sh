@@ -29,6 +29,19 @@ fail() {
 	exit 1
 }
 
+# --list prints the store's backup object names (postgres/daily/), nothing
+# else, and touches neither the database nor its disk: cloud check backups
+# runs it over SSH on a host with no cloud API to ask.
+mode=backup
+case "${1:-}" in
+	"") ;;
+	--list) mode=list ;;
+	*) fail "usage: backup-postgres.sh [--list]" ;;
+esac
+# --list names a bucket's objects; a local folder is listed with ls.
+[ "$mode" = backup ] || [ -z "$backup_dir" ] ||
+	fail "--list reads a bucket: CLAWBRIDGE_BACKUP_DIR is a local folder, so list it with ls"
+
 env_file=${CLAWBRIDGE_ENV_FILE:-/etc/clawbridge/clawbridge.env}
 deploy_dir=${CLAWBRIDGE_DEPLOY_DIR:-/opt/clawbridge/repo}
 compose_file=$deploy_dir/deploy/compose.yaml
@@ -128,16 +141,63 @@ else
 		fail "private environment must define CLAWBRIDGE_BACKUP_URL or CLAWBRIDGE_BACKUP_BUCKET exactly once"
 	store=gcs
 fi
+# An S3-compatible store off this host (ANY-VM-PLAN §4):
+# CLAWBRIDGE_BACKUP_ENDPOINT is https://HOST or https://HOST:PORT and
+# nothing else, and the store's own key comes from the env file (set with
+# clawbridge cloud secret set). Its uploads run in the aws-cli image pinned
+# by digest, so the host needs no aws CLI. Without it, s3:// is AWS S3 with
+# the instance's role, as before.
+endpoint=
+if [ "$(count_env_key CLAWBRIDGE_BACKUP_ENDPOINT)" -gt 0 ]; then
+	[ "$store" = s3 ] ||
+		fail "CLAWBRIDGE_BACKUP_ENDPOINT goes with an s3:// CLAWBRIDGE_BACKUP_URL, not a gs:// one or CLAWBRIDGE_BACKUP_DIR"
+	endpoint=$(read_env_value CLAWBRIDGE_BACKUP_ENDPOINT) ||
+		fail "private environment must define CLAWBRIDGE_BACKUP_ENDPOINT exactly once"
+	case "$endpoint" in
+		https://*) endpoint_host=${endpoint#https://} ;;
+		*) fail "CLAWBRIDGE_BACKUP_ENDPOINT must be an https:// URL" ;;
+	esac
+	endpoint_host=${endpoint_host%/}
+	case "$endpoint_host" in
+		"" | *[!A-Za-z0-9.:-]* | .* | -* | *:*:* | *: | :*)
+			fail "CLAWBRIDGE_BACKUP_ENDPOINT must be https://HOST or https://HOST:PORT, with no user, path, query or fragment"
+			;;
+	esac
+	endpoint_name=${endpoint_host%:*}
+	case "$endpoint_name" in
+		localhost | *.localhost | 127.* | 0.*)
+			fail "CLAWBRIDGE_BACKUP_ENDPOINT is this host: a backup must leave it"
+			;;
+	esac
+	access_key=$(read_env_value CLAWBRIDGE_BACKUP_ACCESS_KEY_ID) ||
+		fail "private environment must define CLAWBRIDGE_BACKUP_ACCESS_KEY_ID exactly once with CLAWBRIDGE_BACKUP_ENDPOINT"
+	secret_key=$(read_env_value CLAWBRIDGE_BACKUP_SECRET_ACCESS_KEY) ||
+		fail "private environment must define CLAWBRIDGE_BACKUP_SECRET_ACCESS_KEY exactly once with CLAWBRIDGE_BACKUP_ENDPOINT"
+	for key_value in "$access_key" "$secret_key"; do
+		case "$key_value" in
+			"" | *[!A-Za-z0-9/+=._-]*)
+				fail "the backup store's key holds characters a key never has"
+				;;
+		esac
+	done
+fi
 if [ "$store" = s3 ]; then
 	region=$(read_env_value CLAWBRIDGE_BACKUP_REGION) ||
 		fail "private environment must define CLAWBRIDGE_BACKUP_REGION exactly once for an s3:// backup"
-	case "$region" in
-		[a-z][a-z]-*-[0-9]) ;; # us-east-1, eu-west-3, us-gov-west-1
-		*) fail "CLAWBRIDGE_BACKUP_REGION is not an AWS region" ;;
-	esac
-	case "$region" in
-		*[!a-z0-9-]* | *--*) fail "CLAWBRIDGE_BACKUP_REGION is not an AWS region" ;;
-	esac
+	if [ -n "$endpoint" ]; then
+		# The store's own region name: auto, us-west-004, fr-par.
+		case "$region" in
+			"" | *[!a-z0-9-]* | -* | *-) fail "CLAWBRIDGE_BACKUP_REGION is not a region name" ;;
+		esac
+	else
+		case "$region" in
+			[a-z][a-z]-*-[0-9]) ;; # us-east-1, eu-west-3, us-gov-west-1
+			*) fail "CLAWBRIDGE_BACKUP_REGION is not an AWS region" ;;
+		esac
+		case "$region" in
+			*[!a-z0-9-]* | *--*) fail "CLAWBRIDGE_BACKUP_REGION is not an AWS region" ;;
+		esac
+	fi
 fi
 if [ "$store" != dir ]; then
 	data_path=$(read_env_value CLAWBRIDGE_POSTGRES_DATA_PATH) ||
@@ -185,30 +245,117 @@ else
 		gcs) store_command=gcloud ;;
 		s3) store_command=aws ;;
 	esac
-	for command_name in docker "$store_command" mountpoint mktemp date awk sha256sum sleep; do
+	# An endpoint's uploads run in the aws-cli image: no aws on the host.
+	[ -z "$endpoint" ] || store_command=docker
+	commands="docker $store_command mktemp awk"
+	[ "$mode" = list ] || commands="$commands mountpoint date sha256sum sleep"
+	for command_name in $commands; do
 		command -v "$command_name" >/dev/null 2>&1 ||
 			fail "required command is unavailable: $command_name"
 	done
 	sha256_of() { sha256sum "$1"; }
+fi
 
+# aws_image is amazon/aws-cli 2.37.11, pinned by its multi-arch index
+# digest; refresh it with the other image pins before each cut.
+aws_image=amazon/aws-cli@sha256:d55d5b391f1cc0d428a05eb07408bb1a730d7df9f656008f1117ed5e13b0c083
+work_dir=
+cred_dir=
+cleanup() {
+	if [ -n "$work_dir" ] && [ -d "$work_dir" ]; then
+		rm -rf "$work_dir"
+	fi
+	if [ -n "$cred_dir" ] && [ -d "$cred_dir" ]; then
+		rm -rf "$cred_dir"
+	fi
+}
+trap cleanup 0
+trap 'exit 129' 1
+trap 'exit 130' 2
+trap 'exit 143' 15
+
+if [ -n "$endpoint" ]; then
+	# The endpoint must not be this host, whatever its name says: a backup
+	# that stays here dies with it.
+	endpoint_addrs=$(getent ahosts "$endpoint_name" | awk '{print $1}' | sort -u) && [ -n "$endpoint_addrs" ] ||
+		fail "the backup endpoint's host does not resolve"
+	own_addrs=
+	if command -v ip >/dev/null 2>&1; then
+		own_addrs=$(ip -o addr show | awk '{print $4}' | cut -d/ -f1)
+	fi
+	for address in $endpoint_addrs; do
+		case "$address" in
+			127.* | ::1 | 0.* | :: | ::ffff:127.* | ::ffff:0.*) fail "the backup endpoint resolves to loopback: a backup must leave this host" ;;
+			fe80:* | FE80:*) fail "the backup endpoint resolves to a link-local address: a backup must leave this host" ;;
+		esac
+		for own in $own_addrs; do
+			[ "$address" != "$own" ] ||
+				fail "the backup endpoint resolves to this host: a backup must leave it"
+		done
+	done
+	# The key goes to the container in an env file on tmpfs, root's alone,
+	# removed on exit: never in argv, and never on disk.
+	cred_dir=$(mktemp -d /run/clawbridge-backup.XXXXXX) ||
+		fail "cannot create a private directory under /run for the backup store's key"
+	printf 'AWS_ACCESS_KEY_ID=%s\nAWS_SECRET_ACCESS_KEY=%s\n' "$access_key" "$secret_key" >"$cred_dir/aws.env"
+	unset access_key secret_key key_value
+fi
+
+# aws_run runs the aws CLI in its pinned image against the endpoint, with
+# the run's work directory read-only at /backup.
+aws_run() {
+	docker run --rm --env-file "$cred_dir/aws.env" ${work_dir:+-v "$work_dir:/backup:ro"} \
+		"$aws_image" --endpoint-url "$endpoint" --region "$region" "$@"
+}
+
+if [ "$mode" = list ]; then
+	# Names only, and only names a backup has. A store that can't be read
+	# fails, so an empty answer means no backup, never no access.
+	case "$store" in
+		gcs) names=$(gcloud storage ls "gs://$bucket/postgres/daily/") || fail "cannot list the backup store" ;;
+		s3)
+			if [ -n "$endpoint" ]; then
+				keys=$(aws_run s3api list-objects-v2 --bucket "$bucket" --prefix postgres/daily/ --query "Contents[].Key" --output text) ||
+					fail "cannot list the backup store"
+			else
+				keys=$(aws s3api list-objects-v2 --region "$region" --bucket "$bucket" --prefix postgres/daily/ --query "Contents[].Key" --output text) ||
+					fail "cannot list the backup store"
+			fi
+			names=$(printf '%s\n' "$keys" | tr '\t' '\n' | awk -v base="s3://$bucket/" 'NF {print base $1}')
+			;;
+	esac
+	printf '%s\n' "$names" | grep -E '/postgres/daily/[0-9]{8}T[0-9]{6}Z\.(dump|sha256)$' || true
+	exit 0
+fi
+
+if [ "$store" != dir ]; then
 	mountpoint -q "$postgres_mount" ||
 		fail "Postgres persistent disk is not mounted at $postgres_mount"
 	[ -d "$postgres_data" ] ||
 		fail "Postgres data directory is missing at $postgres_data"
 fi
 
-# The Compose files: compose.yaml, and the override when one is given.
-set -- -f "$compose_file"
-[ -z "$compose_override" ] || set -- "$@" -f "$compose_override"
+# compose runs the deployment's Compose project on compose.yaml, then
+# compose.image.yaml when the server pulls the published image
+# (CLAWBRIDGE_IMAGE), as cloud bootstrap does, then the override when one
+# is given. Each file is put in front of the Compose arguments, last first.
+compose() {
+	[ -z "$compose_override" ] || set -- -f "$compose_override" "$@"
+	if [ "$(count_env_key CLAWBRIDGE_IMAGE)" -gt 0 ]; then
+		set -- -f "$deploy_dir/deploy/compose.image.yaml" "$@"
+	fi
+	docker compose \
+		--project-name "$compose_project" \
+		--project-directory "$deploy_dir/deploy" \
+		--env-file "$env_file" \
+		-f "$compose_file" \
+		"$@"
+}
 
 wait_for_db() {
 	attempt=1
 	while [ "$attempt" -le 60 ]; do
-		if docker compose \
-			--project-name "$compose_project" \
-			--project-directory "$deploy_dir/deploy" \
-			--env-file "$env_file" \
-			"$@" \
+		if compose \
 			exec -T db pg_isready \
 			--username=clawbridge \
 			--dbname=clawbridge >/dev/null 2>&1; then
@@ -220,19 +367,8 @@ wait_for_db() {
 	return 1
 }
 
-wait_for_db "$@" ||
+wait_for_db ||
 	fail "Postgres did not become ready for backup within 120 seconds"
-
-work_dir=
-cleanup() {
-	if [ -n "$work_dir" ] && [ -d "$work_dir" ]; then
-		rm -rf "$work_dir"
-	fi
-}
-trap cleanup 0
-trap 'exit 129' 1
-trap 'exit 130' 2
-trap 'exit 143' 15
 
 work_dir=$(mktemp -d "${TMPDIR:-/tmp}/clawbridge-postgres-backup.XXXXXX") ||
 	fail "cannot create secure temporary directory"
@@ -243,11 +379,7 @@ checksum_name=$timestamp.sha256
 dump_file=$work_dir/$dump_name
 checksum_file=$work_dir/$checksum_name
 
-docker compose \
-	--project-name "$compose_project" \
-	--project-directory "$deploy_dir/deploy" \
-	--env-file "$env_file" \
-	"$@" \
+compose \
 	exec -T db pg_dump \
 	--username=clawbridge \
 	--dbname=clawbridge \
@@ -259,11 +391,7 @@ docker compose \
 [ -s "$dump_file" ] ||
 	fail "pg_dump produced an empty archive"
 
-docker compose \
-	--project-name "$compose_project" \
-	--project-directory "$deploy_dir/deploy" \
-	--env-file "$env_file" \
-	"$@" \
+compose \
 	exec -T db pg_restore --list <"$dump_file" >/dev/null ||
 	fail "custom-format archive validation failed"
 
@@ -291,7 +419,11 @@ case "$store" in
 		;;
 	s3)
 		object_base=s3://$bucket/postgres/daily/$timestamp
-		upload() { aws s3 cp --only-show-errors --region "$region" "$1" "$2" >/dev/null; }
+		if [ -n "$endpoint" ]; then
+			upload() { aws_run s3 cp --only-show-errors "/backup/${1##*/}" "$2" >/dev/null; }
+		else
+			upload() { aws s3 cp --only-show-errors --region "$region" "$1" "$2" >/dev/null; }
+		fi
 		;;
 esac
 upload "$dump_file" "$object_base.dump" ||

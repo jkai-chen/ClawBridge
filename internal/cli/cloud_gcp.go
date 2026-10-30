@@ -144,6 +144,9 @@ func checkBackups(ctx context.Context, p *cloudProbe) cloudResult {
 	if p.target.onAWS() {
 		return awsBackups(ctx, p)
 	}
+	if p.target.host != "" {
+		return sshBackups(ctx, p)
+	}
 	if p.bucket == "" || !bucketPattern.MatchString(p.bucket) {
 		return failed("backups", "needs_bucket", "pass --bucket NAME (the CLAWBRIDGE_BACKUP_BUCKET)")
 	}

@@ -385,6 +385,10 @@ var newCloudExecutor = func(c Config) (cloudExecutor, error) {
 var secretKeys = map[string]bool{
 	"CLAWBRIDGE_LINEAR_APP_CLIENT_ID":     true,
 	"CLAWBRIDGE_LINEAR_APP_CLIENT_SECRET": true,
+	// An S3-compatible backup store's key, on a server reached over SSH
+	// (ANY-VM-PLAN §4): it may put and list, never delete.
+	"CLAWBRIDGE_BACKUP_ACCESS_KEY_ID":     true,
+	"CLAWBRIDGE_BACKUP_SECRET_ACCESS_KEY": true,
 }
 
 const serverEnvFile = "/etc/clawbridge/clawbridge.env"

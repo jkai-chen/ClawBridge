@@ -308,6 +308,7 @@ func TestClassify(t *testing.T) {
 		{&HTTPError{Status: 503, Code: "rejected"}, true, outbox.Transient, "unavailable"},
 		{errors.New("cloud transport unavailable"), true, outbox.Transient, "unavailable"},
 		{&HTTPError{Status: 403, Code: "forbidden"}, false, outbox.Refused, "forbidden"},
+		{&HTTPError{Status: 401, Code: "device_auth_failed"}, false, outbox.Refused, "device_auth_failed"},
 		{&HTTPError{Status: 404, Code: "not_found"}, false, outbox.Refused, "not_found"},
 		{&HTTPError{Status: 400, Code: "invalid", Message: "session instance mismatch; pass the instance returned by register"}, false, outbox.Refused, outbox.ClassInstance},
 		{errors.New("invalid authoritative cloud response"), false, outbox.Refused, "invalid_response"},

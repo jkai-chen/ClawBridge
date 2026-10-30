@@ -339,6 +339,33 @@ func TestDeviceSkewRetriesOnlyOnce(t *testing.T) {
 	}
 }
 
+// The server's one device sign-in failure is surfaced by its code and its
+// message, and is not mistaken for a clock to correct: one call, no retry.
+func TestDeviceAuthFailedIsSurfaced(t *testing.T) {
+	key, _, _ := devicesign.NewKey()
+	var calls int
+	var mu sync.Mutex
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		mu.Lock()
+		calls++
+		mu.Unlock()
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(401)
+		_, _ = w.Write([]byte(`{"error":{"code":"device_auth_failed","message":"device authentication failed"}}`))
+	}))
+	defer ts.Close()
+	u, _ := url.Parse(ts.URL)
+	c, err := NewWithSigner(Config{URL: ts.URL, Principal: "ada@example.com", CachePath: "/tmp/x"}, devicesign.NewSigner(key, Origin(u), 0, time.Time{}), ts.Client())
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = c.Execute(context.Background(), bus.Request{Operation: "whoami", Workspace: "acme", Project: "p"})
+	var refused *HTTPError
+	if !errors.As(err, &refused) || refused.Status != 401 || refused.Code != "device_auth_failed" || refused.Message != "device authentication failed" || calls != 1 {
+		t.Fatal(calls, err)
+	}
+}
+
 func TestJoinServerRefusesAnotherOrigin(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")

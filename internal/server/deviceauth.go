@@ -133,6 +133,19 @@ func deviceRefused(message, kind string) *authFailure {
 	return &authFailure{status: 401, code: "unauthenticated", message: message, kind: kind}
 }
 
+// deviceAuthFailed is the one answer to a device sign-in that didn't prove a
+// key: kind tells the log which, never the caller.
+func deviceAuthFailed(kind string) *authFailure {
+	return &authFailure{status: 401, code: "device_auth_failed", message: "device authentication failed", kind: kind}
+}
+
+// unknownDeviceKey is a fixed public key (the RFC 8032 test vector 1), which
+// an unknown device's signature is checked against.
+var unknownDeviceKey = ed25519.PublicKey{
+	0xd7, 0x5a, 0x98, 0x01, 0x82, 0xb1, 0x0a, 0xb7, 0xd5, 0x4b, 0xfe, 0xd3, 0xc9, 0x64, 0x07, 0x3a,
+	0x0e, 0xe1, 0x72, 0xf3, 0xda, 0xa6, 0x23, 0x25, 0xaf, 0x02, 0x1a, 0x68, 0xf7, 0x07, 0x51, 0x1a,
+}
+
 func (d deviceAuthenticator) Authenticate(ctx context.Context, r *http.Request, credentials string, body []byte) (bus.Identity, *authFailure) {
 	// 1. The header parses, and the target is the one canonical spelling.
 	h, ok := parseDeviceHeader(credentials)
@@ -142,20 +155,26 @@ func (d deviceAuthenticator) Authenticate(ctx context.Context, r *http.Request, 
 	if !canonicalTarget(r.RequestURI) {
 		return bus.Identity{}, deviceRefused("the request target must be written in its one canonical form", "device_target")
 	}
-	// 2. The device exists.
+	// 2. The device exists, and its key signed the request. An unknown
+	// device, a wrong key and a mangled request answer alike, and before
+	// anything else: the clock, a revocation and the server's time are
+	// told only to a caller who proved the key, so an unsigned caller
+	// can't probe for a device ID. An unknown device still verifies
+	// against a fixed key, so the work is comparable.
 	device, err := d.cache.get(ctx, d.store, h.device)
 	if err != nil {
-		return bus.Identity{}, deviceRefused("device signature verification failed", "device_unknown")
+		_ = ed25519.Verify(unknownDeviceKey, devicekey.RequestBase(r.Method, d.origin, r.RequestURI, h.tsText, h.nonce, body), h.sig)
+		return bus.Identity{}, deviceAuthFailed("device_unknown")
+	}
+	// The signature covers the method, the configured origin, the raw
+	// target, the timestamp, the nonce and the body.
+	if !ed25519.Verify(device.PublicKey, devicekey.RequestBase(r.Method, d.origin, r.RequestURI, h.tsText, h.nonce, body), h.sig) {
+		return bus.Identity{}, deviceAuthFailed("device_signature")
 	}
 	// 3. The clock: a refusal carries the server's time for one corrected
 	// retry (§7).
 	if skew := d.now().Sub(time.Unix(h.ts, 0)); skew > clockSkew || skew < -clockSkew {
 		return bus.Identity{}, &authFailure{status: 401, code: "clock_skew", message: "the request time is more than 300 s from the server's; correct by server_time and retry once", kind: "clock_skew", serverTime: true}
-	}
-	// 4. The signature covers the method, the configured origin, the raw
-	// target, the timestamp, the nonce and the body.
-	if !ed25519.Verify(device.PublicKey, devicekey.RequestBase(r.Method, d.origin, r.RequestURI, h.tsText, h.nonce, body), h.sig) {
-		return bus.Identity{}, deviceRefused("device signature verification failed", "device_signature")
 	}
 	// The key is proven, so its holder may learn it was revoked.
 	if !device.Live {

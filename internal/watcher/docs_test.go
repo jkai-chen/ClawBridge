@@ -21,6 +21,7 @@ const (
 
 func (p fakeProvider) DocumentsUpdatedSince(_ context.Context, since, _ string) (linearprovider.Page[linearprovider.DocRef], error) {
 	p.f.events = append(p.f.events, "docs-list")
+	p.f.providerDocLists++
 	return linearprovider.Page[linearprovider.DocRef]{Items: p.f.docRefs, Complete: !p.f.docMore, NextCursor: map[bool]string{true: "more"}[p.f.docMore]}, nil
 }
 func (p fakeProvider) GetDocument(_ context.Context, id string) (linearprovider.Document, error) {
@@ -127,5 +128,83 @@ func TestDocWatchOneCallPerTickAndPublishedEdits(t *testing.T) {
 	}
 	if !found {
 		t.Fatal("the edit was not flagged")
+	}
+}
+
+// docCursor is the project's document list cursor.
+func (e *env) docCursor() string {
+	e.t.Helper()
+	var at string
+	e.queryRow(`SELECT cursor_time FROM watch_cursors WHERE source='doc-workspace' AND subject=''`, &at)
+	return at
+}
+
+// The list is one app query, not the provider's list. A page with more
+// behind it keeps the cursor; a full one moves it.
+func TestDocWatchListsThroughTheApp(t *testing.T) {
+	e := setup(t)
+	e.docPolicy()
+	e.tick()
+	e.f.docRefs = []linearprovider.DocRef{{ID: docTeam, UpdatedAt: "2026-10-26T10:00:00Z", TeamID: team}}
+	e.f.docMore = true
+	start := e.docCursor()
+	e.dueNow()
+	from := len(e.f.queries)
+	if tick := e.tick(); tick.Docs == nil || tick.Docs.Action != "list" || tick.Docs.Error != "" {
+		t.Fatal(tick.Docs)
+	}
+	if queries(e, from, documentsQuery) != 1 || e.f.providerDocLists != 0 {
+		t.Fatalf("%d app queries, %d provider lists", queries(e, from, documentsQuery), e.f.providerDocLists)
+	}
+	if e.docCursor() != start {
+		t.Fatal("a page with more behind it moved the cursor")
+	}
+	e.f.docMore = false
+	e.dueNow()
+	e.tick()
+	if e.docCursor() == start {
+		t.Fatal("a full page left the cursor")
+	}
+}
+
+// When Linear refuses the query, the list goes through the provider, for
+// the rest of the process: the app isn't asked again.
+func TestDocWatchFallsBackToTheProvider(t *testing.T) {
+	e := setup(t)
+	e.docPolicy()
+	e.tick()
+	e.f.docRefs = []linearprovider.DocRef{{ID: docTeam, UpdatedAt: "2026-10-26T10:00:00Z", TeamID: team}}
+	e.f.refuseDocs = true
+	for i := range 2 {
+		e.dueNow()
+		from := len(e.f.queries)
+		tick := e.tick()
+		if tick.Docs == nil || tick.Docs.Action != "list" || tick.Docs.Error != "" || e.f.providerDocLists != i+1 {
+			t.Fatalf("tick %d: %+v, %d provider lists", i, tick.Docs, e.f.providerDocLists)
+		}
+		if want := map[int]int{0: 1, 1: 0}[i]; queries(e, from, documentsQuery) != want {
+			t.Fatalf("tick %d asked the app %d times", i, queries(e, from, documentsQuery))
+		}
+	}
+}
+
+// A row whose ID or parent isn't a Linear ID fails the list, which tells
+// nothing and keeps the cursor.
+func TestDocWatchAppRowsAreChecked(t *testing.T) {
+	for name, ref := range map[string]linearprovider.DocRef{
+		"id":     {ID: "not-an-id", UpdatedAt: "2026-10-26T10:00:00Z", TeamID: team},
+		"parent": {ID: docTeam, UpdatedAt: "2026-10-26T10:00:00Z", TeamID: "team-1"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			e := setup(t)
+			e.docPolicy()
+			e.tick()
+			e.f.docRefs = []linearprovider.DocRef{ref}
+			start := e.docCursor()
+			e.dueNow()
+			if tick := e.tick(); tick.Docs == nil || tick.Docs.Error != "list_failed" || e.docCursor() != start {
+				t.Fatal(tick.Docs, e.docCursor(), start)
+			}
+		})
 	}
 }

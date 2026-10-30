@@ -57,6 +57,10 @@
   the overview's `linear_budget` carries `kinds` and `last_hour`, doctor's `linear.budget` names the top three when the
   app spent more than half the hour, and the watcher's hourly log line ends `, top: KIND N, …`. Names and counts only.
   Schema 51 → 52 (additive, no backfill). Linear config scope: none.
+- The document watch lists the documents changed since its cursor with one app query instead of the provider's
+  `list_documents`: the same one charged call every 5 minutes at most, about 0.1–0.3 s instead of 1–2 s. A page with
+  more behind it still keeps the cursor. If Linear refuses the query, the list goes through the provider for the rest
+  of the server's run. Linear config scope: none.
 
 ## Docs
 

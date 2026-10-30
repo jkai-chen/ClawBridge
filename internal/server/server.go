@@ -15,6 +15,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"runtime/debug"
 	"slices"
 	"strings"
 	"sync"
@@ -55,6 +56,27 @@ type IdentityExecutor interface {
 }
 
 var _ IdentityExecutor = (*bus.Store)(nil)
+
+// wroteHeader notes whether a response has started, so a panic after that
+// writes no second status. It passes Flush and Unwrap through for streams.
+type wroteHeader struct {
+	http.ResponseWriter
+	wrote bool
+}
+
+func (w *wroteHeader) WriteHeader(code int) {
+	w.wrote = true
+	w.ResponseWriter.WriteHeader(code)
+}
+func (w *wroteHeader) Write(b []byte) (int, error) {
+	w.wrote = true
+	return w.ResponseWriter.Write(b)
+}
+func (w *wroteHeader) Flush() {
+	w.wrote = true
+	http.NewResponseController(w.ResponseWriter).Flush()
+}
+func (w *wroteHeader) Unwrap() http.ResponseWriter { return w.ResponseWriter }
 
 type errorBody struct {
 	Error struct {
@@ -284,6 +306,25 @@ func NewHandlerWithOptions(store Executor, verifier Verifier, o HandlerOptions) 
 		return o.Drain.Check(ctx)
 	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		tracked := &wroteHeader{ResponseWriter: w}
+		w = tracked
+		defer func() {
+			v := recover()
+			if v == nil {
+				return
+			}
+			if v == http.ErrAbortHandler {
+				panic(v)
+			}
+			// A panic value can be built from a token, header or body, so
+			// only its type is logged, with the method and the path (never
+			// the query). The stack prints frame names, file:line and
+			// argument words (hex), never string contents.
+			log.Printf("clawbridge: panic serving %s %q: %T\n%s", r.Method, r.URL.Path, v, debug.Stack())
+			if !tracked.wrote {
+				fail(w, 500, "internal", publicMessage("internal"))
+			}
+		}()
 		// The client's address and scheme, read once: every per-IP limit
 		// and the plain-HTTP check use these (S2).
 		r = o.TrustedProxies.apply(r)

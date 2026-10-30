@@ -155,6 +155,7 @@ jobs:
       - run: python3 scripts/test_publish.py
       - run: python3 scripts/test_shard.py
       - run: python3 scripts/test_ci_scope.py
+      - run: python3 scripts/test_check_pr_text.py
       - run: bash -n scripts/build-release.sh scripts/publish-release.sh scripts/check-image.sh
       - run: sh -n scripts/install.sh
       - run: sh -n deploy/agentd-check.sh deploy/agentd-check-test.sh deploy/local-host.sh deploy/backup-postgres.sh

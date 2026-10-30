@@ -112,6 +112,18 @@ whatever changed.
 A newer push to a pull request cancels the run of its older one. Runs for other
 events are never cancelled and never wait behind each other.
 
+## PR and commit text
+
+The `pr-text` workflow (`scripts/check_pr_text.py`, tests in
+`scripts/test_check_pr_text.py`) reads a pull request's title, body and commit
+messages and fails on a secret (Linear, GitHub, `sk-`, AWS, Slack, Google and
+private-key patterns, and ClawBridge `cbl_`, `cba_`, `cbm_` and `cbi_` tokens),
+a home-directory path that names a real account (placeholders such as `/Users/you`
+pass) or a machine's `.local` address, and an AI co-author or "Generated
+with" line. It prints which text and rule matched, with the match masked. A hit
+means edit the PR text; the check re-runs on edit. For a commit message, reword
+the commit and push.
+
 ## Evidence
 
 Current workflow checks are defined in `.github/workflows/`. Historical reviewed

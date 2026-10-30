@@ -764,6 +764,10 @@ already read through `list_sessions`, `taskboard_get_v2` and `status_policy_get`
   `coordinator` and its live `assignment` (state, issue_identifier, issue_uuid,
   task_role, scope_repo, scope_paths) or null. No issue title: the bus stores
   none, and the TUI reads titles through the viewer's own Linear connection.
+- **`newest_joins`:** the newest three sessions registered in the last day,
+  newest first, each `name`, `display_name` (the owner's recorded display name,
+  or "a member"; never a principal or email), `agent_kind` and `created_at`.
+  The TUI's Overview shows them under This project.
 - **`linear`:** `{"configured": false}` when unlinked; `{"configured": true,
   "unreadable": true}` when the binding can't be read (the op still answers).
   Otherwise `revision`, `mode`, `teams` (id, name, default), `projects` (id,

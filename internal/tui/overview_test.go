@@ -240,3 +240,26 @@ func TestOverviewShowsTheWebhookLine(t *testing.T) {
 		}
 	}
 }
+
+// FR23: the project's newest joins of the last day, under This project,
+// one to a row; none when the overview lists none.
+func TestOverviewShowsNewestJoins(t *testing.T) {
+	now := time.Now().UTC()
+	joins := []any{
+		map[string]any{"name": "fresh", "display_name": "Grace Hopper", "agent_kind": "claude-code", "created_at": now.Add(-4*time.Minute - 5*time.Second).Format(time.RFC3339Nano)},
+		map[string]any{"name": "older", "display_name": "a member", "agent_kind": "codex", "created_at": now.Add(-3*time.Hour - time.Minute).Format(time.RFC3339Nano)},
+	}
+	with := map[string]bus.Result{"project_overview": {Source: "server", Data: map[string]any{"newest_joins": joins}}}
+	view := Render(overviewFor(t, ModeCloud, false, passing, with, nil, true))
+	if !strings.Contains(view, "This project") || !strings.Contains(view, "  Newest joins: fresh (Grace Hopper, claude-code, 4m ago)") || !strings.Contains(view, "\n│                 older (a member, codex, 3h ago)") {
+		t.Fatalf("no newest joins line in\n%s", view)
+	}
+	for name, results := range map[string]map[string]bus.Result{
+		"none":  {"project_overview": {Source: "server", Data: map[string]any{"newest_joins": []any{}}}},
+		"older": {"project_overview": {Source: "server", Data: map[string]any{"project": map[string]any{}}}},
+	} {
+		if view := Render(overviewFor(t, ModeCloud, false, passing, results, nil, true)); strings.Contains(view, "Newest joins") {
+			t.Fatalf("%s: a newest joins line in\n%s", name, view)
+		}
+	}
+}

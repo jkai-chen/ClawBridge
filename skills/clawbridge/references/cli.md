@@ -141,6 +141,12 @@ judgement of a bound Linear project, from Linear facts, when it isn't posted to
 Linear as a project update. They report, never instruct.
 `clawbridge linear health show` lists the latest run and post of each project.
 
+A coordinator session may receive a `session-joined` message when a session
+registers under a new name: "Session NAME joined: DISPLAY NAME's KIND agent,
+lane LANE (SOURCE)." (or "no lanes"). It is sent by the new session, and reports,
+never instructs: greet or brief the session if your project's rules say so.
+Each member's registrations send at most 5 an hour.
+
 A coordinator session may also receive a `close-policy` message when a Linear
 project joins the board: people close its issues unless the project owner or a
 project lead (the project role) decides otherwise, or the policy already lets agents close it. It reports,

@@ -103,6 +103,17 @@
   to pass: the session's current `--instance` (and where the refused one came from), or the person to run it as. No
   schema change. Linear config scope: none.
 
+## Sessions
+
+- **The coordinator hears when a session joins.** A registration under a new name sends the project's coordinator
+  (with the dispatcher as coordinator, whoever its notices go to) one `session-joined` message from the new session,
+  in the registration's transaction: the session's name, the member's display name ("a member" when none is
+  recorded; never an email), the agent kind, and its lane with where the lane came from, or "no lanes". Registering
+  a name again, resuming, or a refused or retired name sends nothing. Each member's registrations send at most 5 a
+  project an hour; past that the registration still succeeds and history records `join_notice_suppressed`. The
+  TUI's Overview lists the newest three joins of the last day under This project, and `project_overview` carries
+  them as `newest_joins`. Linear config scope: none. No schema change.
+
 # ClawBridge v0.3.12 (released 30 Oct)
 
 **Schema 51 → 52.**

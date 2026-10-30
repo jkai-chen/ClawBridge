@@ -395,6 +395,9 @@ type Model struct {
 	intakeLine string
 	// webhookLine is Overview's Linear webhook summary, if any.
 	webhookLine string
+	// joinsLine is Overview's newest joins of the last day (FR23), if
+	// any.
+	joinsLine string
 	// gatesOn and gatesOff are Overview's rows of the server's PROVEN
 	// gates, shown to the project owner only (gatesRead).
 	gatesOn, gatesOff []string

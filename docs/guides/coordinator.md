@@ -15,7 +15,8 @@ clawbridge --session OWNER_SESSION --instance INSTANCE project coordinator-set c
 From then on, `whoami` shows that session's ID as the project's
 `coordinator_session`. It alone confirms or releases other sessions' assignments
 ([your first task](../usage.md#your-first-task-claim-and-release)), and it
-receives intake, dead-letter and context notices.
+receives intake, dead-letter, context and `session-joined` notices (a session
+registered under a new name: who, which agent kind and which lane).
 
 ## What it does
 

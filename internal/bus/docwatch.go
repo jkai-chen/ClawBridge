@@ -148,8 +148,10 @@ func (c commentCall) docWatchScope(ctx context.Context) (docWatchScope, error) {
 // docWatchReport records one list: in-scope documents changed since the
 // last notice are told to the coordinator, and an issue's documents to the
 // sessions holding the issue. A document ClawBridge published is queued to
-// be read back. A complete list moves the cursor to this poll; a truncated
-// or failed one leaves it, so nothing is skipped.
+// be read back. A complete list moves the cursor to this poll; a failed one
+// leaves it, so nothing is skipped. A truncated one moves it only to
+// advance_to, when the watcher read the oldest changes first and every
+// change up to that time was in the list; otherwise it stays.
 func (c commentCall) docWatchReport(ctx context.Context) (any, error) {
 	if _, err := c.fence(ctx); err != nil {
 		return nil, err
@@ -248,12 +250,40 @@ func (c commentCall) docWatchReport(ctx context.Context) (any, error) {
 		}
 	}
 	complete, _ := c.a["complete"].(bool)
+	to := ""
 	if complete {
-		if _, err = c.tx.ExecContext(ctx, `UPDATE watch_cursors SET cursor_time=?,failures=0,last_error='',updated_at=? WHERE project_id=? AND source=? AND subject=''`, polled, nowRaw, c.pid, docWorkspaceKey); err != nil {
-			return nil, err
+		to = polled
+	} else if advance := str(c.a, "advance_to"); advance != "" {
+		at, err := time.Parse(time.RFC3339Nano, advance)
+		if err != nil {
+			return nil, invalid("advance_to must be a time")
+		}
+		// Forward only, and never past this poll.
+		if at := layout(at.UTC()); at < polled {
+			to = at
 		}
 	}
-	return map[string]any{"told": told, "dropped": dropped, "verify_queued": queued, "cursor_moved": complete}, nil
+	moved := false
+	if to != "" {
+		res, err := c.tx.ExecContext(ctx, `UPDATE watch_cursors SET cursor_time=?,failures=0,last_error='',updated_at=? WHERE project_id=? AND source=? AND subject='' AND cursor_time<?`, to, nowRaw, c.pid, docWorkspaceKey, to)
+		if err != nil {
+			return nil, err
+		}
+		n, _ := res.RowsAffected()
+		moved = n == 1
+	}
+	out := map[string]any{"told": told, "dropped": dropped, "verify_queued": queued, "cursor_moved": moved}
+	// A truncated list that asked to move and couldn't: more than a page
+	// changed within the list's precision, so later polls read the same
+	// page. It is told, never silent. A move past this poll (Linear's clock
+	// ahead of ours) is only held back, not stalled.
+	if !complete && to != "" && !moved {
+		if _, err = c.tx.ExecContext(ctx, `UPDATE watch_cursors SET last_error='burst_stalled',updated_at=? WHERE project_id=? AND source=? AND subject=''`, nowRaw, c.pid, docWorkspaceKey); err != nil {
+			return nil, err
+		}
+		out["stalled"] = true
+	}
+	return out, nil
 }
 
 // docVerifyReport records one published document's read-back: content that

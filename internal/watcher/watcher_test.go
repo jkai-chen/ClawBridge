@@ -88,9 +88,17 @@ type fakeLinear struct {
 	// providerDocLists counts the provider's document lists.
 	refuseDocs       bool
 	providerDocLists int
-	docMore          bool
-	docContent       map[string]string
-	events           []string
+	// docSince makes the app's list keep only documents changed after the
+	// query's since, as Linear does; docAscending orders it oldest first;
+	// docEnds records the end each list read asked for.
+	docSince     bool
+	docAscending bool
+	docEnds      []string
+	// docLastAsFirst makes the app answer last as if it were first.
+	docLastAsFirst bool
+	docMore        bool
+	docContent     map[string]string
+	events         []string
 	// dispatchIssues answers the dispatcher's issue facts read.
 	dispatchIssues map[string]any
 	// Project flow: projectStatus is the project's status ID, statuses the
@@ -468,8 +476,46 @@ func (a fakeApp) GraphQL(ctx context.Context, query string, vars map[string]any,
 		if a.f.refuseDocs {
 			return &linearapp.Error{Code: "query_invalid"}
 		}
+		// Like Linear: one ordered list (newest first, or oldest first
+		// with docAscending), first or last of it; docSince filters by the
+		// query's since.
+		refs := slices.Clone(a.f.docRefs)
+		if a.f.docSince {
+			since, err := time.Parse(time.RFC3339, vars["since"].(string))
+			if err != nil {
+				return err
+			}
+			refs = slices.DeleteFunc(refs, func(d linearprovider.DocRef) bool {
+				at, _ := time.Parse(time.RFC3339Nano, d.UpdatedAt)
+				return !at.After(since)
+			})
+		}
+		slices.SortStableFunc(refs, func(x, y linearprovider.DocRef) int {
+			xt, _ := time.Parse(time.RFC3339Nano, x.UpdatedAt)
+			yt, _ := time.Parse(time.RFC3339Nano, y.UpdatedAt)
+			if a.f.docAscending {
+				return xt.Compare(yt)
+			}
+			return yt.Compare(xt)
+		})
+		n := len(refs)
+		info := map[string]any{"hasNextPage": false, "hasPreviousPage": false}
+		if last, ok := vars["last"].(int); ok && a.f.docLastAsFirst {
+			// A server that serves last as first: the first rows, cut at
+			// the end after them.
+			refs = refs[:min(last, n)]
+			info["hasNextPage"] = a.f.docMore || n > last
+		} else if ok {
+			refs = refs[max(n-last, 0):]
+			info["hasPreviousPage"] = a.f.docMore || n > last
+		} else {
+			first := vars["first"].(int)
+			refs = refs[:min(first, n)]
+			info["hasNextPage"] = a.f.docMore || n > first
+		}
+		a.f.docEnds = append(a.f.docEnds, map[bool]string{true: "last", false: "first"}[vars["last"] != nil])
 		nodes := []any{}
-		for _, d := range a.f.docRefs {
+		for _, d := range refs {
 			ref := func(id string) any {
 				if id == "" {
 					return nil
@@ -478,7 +524,7 @@ func (a fakeApp) GraphQL(ctx context.Context, query string, vars map[string]any,
 			}
 			nodes = append(nodes, map[string]any{"id": d.ID, "updatedAt": d.UpdatedAt, "team": ref(d.TeamID), "project": ref(d.ProjectID), "initiative": ref(d.InitiativeID), "issue": ref(d.IssueID)})
 		}
-		data = map[string]any{"documents": map[string]any{"nodes": nodes, "pageInfo": map[string]any{"hasNextPage": a.f.docMore, "endCursor": nil}}}
+		data = map[string]any{"documents": map[string]any{"nodes": nodes, "pageInfo": info}}
 	case mentionsQuery:
 		data = map[string]any{"notifications": map[string]any{"nodes": a.f.mentions, "pageInfo": map[string]any{"hasNextPage": false}}}
 	case labelsQuery:

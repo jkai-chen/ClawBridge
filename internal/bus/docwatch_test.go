@@ -3,6 +3,7 @@ package bus
 import (
 	"strings"
 	"testing"
+	"time"
 )
 
 const (
@@ -171,5 +172,48 @@ func TestDocWatchVerifiesPublishedDocuments(t *testing.T) {
 	}
 	if next := h.docDue(); next["action"] != "list" {
 		t.Fatal("the queue was not cleared", next)
+	}
+}
+
+// A truncated list's advance_to moves the cursor forward only, never past
+// the poll; a complete list still moves it to the poll; a malformed one is
+// refused.
+func TestDocWatchReportAdvancesATruncatedList(t *testing.T) {
+	h := newDocWatch(t)
+	h.sys("doc_watch_due", map[string]any{})
+	due := h.docDue()
+	cursor := func() string {
+		var at string
+		if e := h.s.db.QueryRow(`SELECT cursor_time FROM watch_cursors WHERE source='doc-workspace'`).Scan(&at); e != nil {
+			t.Fatal(e)
+		}
+		return at
+	}
+	start := cursor()
+	polled, err := time.Parse(timestampLayout, due["polled_at"].(string))
+	if err != nil {
+		t.Fatal(err)
+	}
+	report := func(advance string) map[string]any {
+		return h.sys("doc_watch_report", map[string]any{"polled_at": due["polled_at"], "documents": []any{}, "complete": false, "advance_to": advance})
+	}
+	started, _ := time.Parse(timestampLayout, start)
+	// Backwards, and past the poll: nothing moves. Backwards is a stall;
+	// past the poll is Linear's clock ahead of ours, held back, not stalled.
+	if r := report(started.Add(-time.Minute).Format(time.RFC3339Nano)); r["cursor_moved"] != false || r["stalled"] != true || cursor() != start {
+		t.Fatal("backwards", r, cursor())
+	}
+	if r := report(polled.Add(time.Second).Format(time.RFC3339Nano)); r["cursor_moved"] != false || r["stalled"] != nil || cursor() != start {
+		t.Fatal("past the poll", r, cursor())
+	}
+	mid := started.Add(polled.Sub(started) / 2)
+	if r := report(mid.Format(time.RFC3339Nano)); r["cursor_moved"] != true || cursor() != layout(mid) {
+		t.Fatal(r, cursor())
+	}
+	if _, err := h.sysErr("doc_watch_report", map[string]any{"polled_at": due["polled_at"], "documents": []any{}, "advance_to": "yesterday"}); err == nil {
+		t.Fatal("a malformed advance_to was taken")
+	}
+	if r := h.sys("doc_watch_report", map[string]any{"polled_at": due["polled_at"], "documents": []any{}, "complete": true, "advance_to": mid.Format(time.RFC3339Nano)}); r["cursor_moved"] != true || cursor() != due["polled_at"] {
+		t.Fatal("a complete list didn't move to its poll", r, cursor())
 	}
 }

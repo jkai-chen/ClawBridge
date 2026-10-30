@@ -22,7 +22,8 @@ of this stage. Preserve prior acceptance evidence and the old v0.2.0 candidate.
 Use Linear's official remote MCP service natively from Go, with the existing
 pinned SDK. ClawBridge supplies setup, scoped task-board actions and the agent
 workflow; Linear supplies issues, dependencies, projects and workflow states.
-No task-claim engine, webhook service or background model launcher is introduced.
+No task-claim engine or background model launcher is introduced. Linear's signed webhook deliveries
+(hosted servers, optional) are only a doorbell that makes the watcher's poll run sooner; the poll stays the record.
 
 There are three distinct bindings:
 

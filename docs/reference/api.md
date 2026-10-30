@@ -114,6 +114,7 @@ requires its matching instance. Routing role is distinct from project permission
 | `taskboard_clear_v2` | expected_revision; authorized owner/lead; optional repair (project owner, unreadable binding only) |
 | `linear_write` | Hosted server with the ClawBridge Linear app only: instance, operation (comment, create, update, relation_add, relation_remove), args (exactly what the `taskboard_<operation>_v2` tool takes). The server makes the write as the app, with every scope check, the mention guard, the marker and its own shared operation ledger, and answers `{receipt, outcome?}`. Binding and admin operations and identity arguments are refused; a binding not pinned to the app's workspace is refused (`workspace_unpinned`, `workspace_mismatch`). An uncertain outcome is a 409 |
 | `linear_app_status` | Hosted server with the app: `app_user_id`, `linear_org_id` and, for a project, `teams_visible` per bound team (read as the app) |
+| `webhook_status` | Any project member, session optional: each bound write team's Linear webhook state and the last 24 hours' counts, and the server-wide rejects (below). No secret and no text |
 | `label_policy_get` | Any project member, session optional: the approved Linear label list (`revision`, `labels`, `renames`, `updated_by`, `updated_at`; revision 0 when unset) |
 | `project_kind_get` | Any project member, session optional: the project kind setting (`revision`, `team_id`, `scope` `team`, `group_name`, `group_label_id`, `values` `[{name, label_id?}]`, `seeded`, `team_bound`) |
 | `project_kind_set` | Project owner without a session (hosted: a person's own device key): `expected_revision`, `kinds` (1–20 names), optional `group_name` (default `Type`) and `team_id` (a bound team; default the binding's default team). Scope is team only. Schema 39 |
@@ -712,6 +713,51 @@ The version-2 coordination and version-3 settings upgrades are described in
 the [project-set upgrade](../operations/backup-and-recovery.md#linear-project-set-upgrade)
 covers schema 4.
 
+### The Linear webhook route
+
+`POST /linear/webhook/<team UUID>` (the team's lower-case UUID) is where Linear posts a signed webhook delivery for one
+bound write team. It is not a ClawBridge API call: it takes no envelope or sign-in, only Linear's `Linear-Signature`
+(an HMAC of the body with the team's secret). It exists only when the server has the Linear app and at least one
+secret in `CLAWBRIDGE_LINEAR_WEBHOOK_SECRETS`; otherwise every path under it is 404. The setup is in
+[deployment](../operations/deployment.md#linear-webhooks-optional) and [Linear](../linear.md#linear-webhooks-hosted-servers).
+
+The body must be `application/json` and at most 1 MiB. A delivery is checked against the path team's secrets only,
+and an unknown team is answered exactly as a bad signature. The answers:
+
+| Status | Code | When |
+| --- | --- | --- |
+| 200 | (empty body) | recorded; also a repeated delivery (one row) and an event the server ignores |
+| 400 | `bad_payload` | verified, but not a Linear webhook payload |
+| 400 | `invalid` | the body could not be read |
+| 401 | `signature` | no signature, a bad one, or a team with no secret |
+| 401 | `org_mismatch` | verified, but from another Linear organization |
+| 401 | `team_mismatch` | verified, but the payload's team is not the path's team |
+| 401 | `stale` | verified, but its `webhookTimestamp` is more than 60 seconds from the server's clock |
+| 404 | | the bare `/linear/webhook`, or no secrets are set |
+| 405 | `method_not_allowed` | not a POST |
+| 413 | `too_large` | over 1 MiB, refused before any HMAC |
+| 415 | `unsupported_media_type` | not `application/json` |
+| 429 | `rate_limited` | the address had 30 refused requests in a minute |
+| 429 | `verified_throttled` | over 600 verified deliveries in a minute for the server; `Retry-After: 60` |
+| 503 | `maintenance` | the operator is draining ([Maintenance](#maintenance)); `Retry-After` |
+| 503 | `unavailable` | the app's identity or the record was unavailable; `Retry-After: 5`; Linear retries |
+
+Only refusals made before the signature is verified (content type, size, read, signature) count against an address's
+30 a minute; `stale`, `org_mismatch`, `team_mismatch` and `bad_payload` come from Linear after the HMAC and never
+429. Whatever the gate, a verified delivery is recorded as IDs, kind, times, the names of the changed fields and its
+size, never text. Refusal counts are kept in memory and written once a minute, so a crash can lose up to a minute of
+them. The dedup key is `Linear-Delivery` when it is a single UUID, otherwise `sha256:` and the body's hash.
+
+`webhook_status` reads it back: `teams`, one entry per bound write team (`team_id`, `configured`, `state`,
+`last_delivery_at`, `deliveries_24h`, `rejects_24h` (counts by reason: `signature`, `too_large`, `stale`, `org_mismatch`,
+`team_mismatch`, `rate_limited`, `verified_throttled`, `bad_payload`; only those above zero), `missed_24h` and
+`last_missed_at`); and the server-wide `signature_rejects_24h`, `too_large_24h`, `verified_throttled_24h` and
+`unbound_team_deliveries_24h`. `state` is `unconfigured` (no secret), `inert` (the `webhooks` gate is off),
+`waiting_first` (the gate is on, but no delivery has come since the secret was configured), `degraded` (a miss in the last 24 hours) or
+`live`. The project owner's answer also has `unbound_teams`, the IDs of teams that delivered to the server without being
+bound to any project; other roles never see it. Doctor's `linear.webhooks`, `clawbridge linear webhook-setup` and the
+TUI's `Webhooks:` line read it.
+
 ### Maintenance
 
 While the operator drains the servers for a deploy (`operator maintenance start`,
@@ -726,7 +772,7 @@ written: retry the same request, with the same `operation_id`, after `Retry-Afte
 consumers pause. Pure reads (`snapshot`, `list_sessions`, `whoami`, `inbox_status`, `taskboard_get_v2`, `history`
 and the other reads that take no lock) still answer, and record no heartbeat while it lasts; `heartbeat` answers
 `renewed: false`. A stream gets `event: maintenance` and `bye`; a new stream or `stream_ticket` gets the 503.
-`/v1/join` answers the same 503, `/mcp/intake` a JSON-RPC error at 503 with `Retry-After`, the dispatcher model API
+`/v1/join` answers the same 503, `POST /linear/webhook/<team UUID>` the same `maintenance` 503 (Linear retries), `/mcp/intake` a JSON-RPC error at 503 with `Retry-After`, the dispatcher model API
 `503 {"error": "server_busy", "retry_after": N}`, and the watcher's tick endpoint `{"paused": true}`. `/healthz`,
 `/v1/config` and the static pages answer as usual. The model API and the server's own workers stay paused 90 s after
 maintenance ends. A pure read served during maintenance carries `ClawBridge-Maintenance-Until: <RFC 3339 UTC>`, when

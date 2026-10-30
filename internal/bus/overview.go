@@ -247,8 +247,18 @@ func (s *Store) overviewLinear(ctx context.Context, tx *transaction, wid, pid st
 			sp["teams_missing"] = missing
 		}
 	}
+	// State moves skipped this week that a notice told of, as doctor counts
+	// them, by the database's clock as doctor's are.
+	nowRaw, err := dbStamp(ctx, tx)
+	if err != nil {
+		return nil, err
+	}
+	skipped, _, err := markerStateSkips(ctx, tx, pid, at(nowRaw))
+	if err != nil {
+		return nil, err
+	}
 	return map[string]any{"configured": true, "revision": b.Revision, "mode": b.Mode, "teams": teams, "projects": projects,
-		"names_updated_at": namesAt, "status_policy": sp}, nil
+		"names_updated_at": namesAt, "status_policy": sp, "markers_state_skipped": skipped}, nil
 }
 
 // teamsMissingFromPolicy lists, sorted and as stored, the bound teams the

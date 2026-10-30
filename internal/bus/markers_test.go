@@ -428,3 +428,150 @@ func TestMarkerCommentSettleNeedsItsOwnAttemptOrTheWindow(t *testing.T) {
 		t.Fatal(out)
 	}
 }
+
+func (w *watchHarness) markerStatus(session string, a map[string]any) []any {
+	w.t.Helper()
+	return w.call("marker_status", session, a).(map[string]any)["markers"].([]any)
+}
+
+// marker_status reads an issue's or an assignment's marker rows, newest
+// first, from a session or the person's own terminal, and takes exactly
+// one of the two.
+func TestMarkerStatusReadsByIssueOrAssignment(t *testing.T) {
+	w := newWatchHarness(t)
+	w.setStatusPolicy(0, sfPolicy(true))
+	w.assign("b", sfIssueNext)
+	id := w.skipMarker("b", "from_state")
+	w.call("assignment_release", "b", map[string]any{"revision": w.live("b")["revision"], "outcome": "done"})
+	for _, session := range []string{"a", ""} {
+		for _, a := range []map[string]any{{"issue_uuid": strings.ToUpper(sfIssueNext)}, {"assignment_id": id}} {
+			rows := w.markerStatus(session, a)
+			if len(rows) != 2 {
+				t.Fatal(session, a, rows)
+			}
+			close, claim := rows[0].(map[string]any), rows[1].(map[string]any)
+			if close["phase"] != "close" || close["state_state"] != "pending" || close["summary"] != "comment waiting_on_claim, label pending, state pending" {
+				t.Fatal("close", close)
+			}
+			if claim["phase"] != "claim" || claim["assignment_id"] != id || claim["issue_uuid"] != sfIssueNext || claim["issue_identifier"] != "FIX-1" ||
+				claim["comment_state"] != "pending" || claim["label_state"] != "pending" || claim["state_state"] != "skipped" || claim["state_skip_reason"] != "from_state" ||
+				claim["state_target"] != "" || claim["state_landed"] != "" || claim["created_at"] == "" || claim["updated_at"] == "" ||
+				claim["summary"] != "not moved to In Progress: someone else had moved the issue, so it was left as it is; set it yourself if right" {
+				t.Fatal("claim", claim)
+			}
+		}
+	}
+	// By the identifier the assignments recorded, with no Linear read: every
+	// assignment that recorded it, here the harness's first too.
+	for _, session := range []string{"a", ""} {
+		rows := w.markerStatus(session, map[string]any{"issue_identifier": "FIX-1"})
+		issues := map[string]int{}
+		for _, r := range rows {
+			row := r.(map[string]any)
+			if row["issue_identifier"] != "FIX-1" {
+				t.Fatal(row)
+			}
+			issues[row["issue_uuid"].(string)]++
+		}
+		if len(rows) != 3 || issues[sfIssueNext] != 2 || rows[1].(map[string]any)["state_skip_reason"] != "from_state" {
+			t.Fatal(session, rows)
+		}
+	}
+	if rows := w.markerStatus("a", map[string]any{"issue_identifier": "FIX-404"}); len(rows) != 0 {
+		t.Fatal(rows)
+	}
+	if rows := w.markerStatus("a", map[string]any{"assignment_id": "asg_none"}); len(rows) != 0 {
+		t.Fatal(rows)
+	}
+	for name, a := range map[string]map[string]any{
+		"both":    {"issue_uuid": sfIssueNext, "assignment_id": id},
+		"neither": {},
+		"bad":     {"issue_uuid": "FIX-1"},
+		"bad key": {"issue_identifier": "FIX 1"},
+		"key+id":  {"issue_identifier": "FIX-1", "issue_uuid": sfIssueNext},
+		"key+asg": {"issue_identifier": "FIX-1", "assignment_id": id},
+		"extra":   {"issue_uuid": sfIssueNext, "phase": "claim"},
+	} {
+		if _, err := w.s.Execute(context.Background(), w.request("marker_status", "a", a)); err == nil {
+			t.Fatal(name, "was accepted")
+		}
+	}
+	if _, err := w.s.Execute(context.Background(), w.request("marker_status", "", map[string]any{"issue_uuid": sfIssueNext, "instance": "a-instance"})); err == nil || !strings.Contains(err.Error(), "instance requires session") {
+		t.Fatal(err)
+	}
+}
+
+// The identifier matches whatever case either side uses.
+func TestMarkerStatusMatchesTheIdentifierInAnyCase(t *testing.T) {
+	w := newWatchHarness(t)
+	w.assign("b", sfIssueNext)
+	if rows := w.markerStatus("", map[string]any{"issue_identifier": "fix-1"}); len(rows) == 0 || rows[0].(map[string]any)["issue_identifier"] != "FIX-1" {
+		t.Fatal(rows)
+	}
+	w.release("b")
+	w.propose("b", map[string]any{"issue_uuid": sfIssueOther, "issue_identifier": "fix-2"})
+	w.call("assignment_confirm", "c", map[string]any{"target_session": "b", "revision": w.live("b")["revision"]})
+	rows := w.markerStatus("", map[string]any{"issue_identifier": "FIX-2"})
+	if len(rows) != 1 || rows[0].(map[string]any)["issue_uuid"] != sfIssueOther || rows[0].(map[string]any)["issue_identifier"] != "fix-2" {
+		t.Fatal(rows)
+	}
+}
+
+// At most markerStatusRows rows, the newest first.
+func TestMarkerStatusKeepsTheNewestRows(t *testing.T) {
+	w := newWatchHarness(t)
+	for i := 0; i < markerStatusRows/2+1; i++ {
+		w.release("a")
+		w.assign("a", watchIssue)
+	}
+	rows := w.markerStatus("", map[string]any{"issue_uuid": watchIssue})
+	if len(rows) != markerStatusRows {
+		t.Fatal(len(rows))
+	}
+	newest := rows[0].(map[string]any)
+	if newest["assignment_id"] != w.assignmentID("a") || newest["phase"] != "claim" {
+		t.Fatal(newest)
+	}
+	for i := 1; i < len(rows); i++ {
+		if rows[i-1].(map[string]any)["updated_at"].(string) < rows[i].(map[string]any)["updated_at"].(string) {
+			t.Fatal("not newest first at", i)
+		}
+	}
+}
+
+// Doctor and the overview count the week's state skips a notice tells of,
+// and doctor names the newest; configured skips and older ones don't count.
+func TestMarkerStateSkipCounts(t *testing.T) {
+	w := newWatchHarness(t)
+	w.link(0, []string{cpOne})
+	w.setStatusPolicy(0, sfPolicy(true))
+	count := func() (int, any, any) {
+		t.Helper()
+		st := w.call("comment_watch_status", "", map[string]any{}).(map[string]any)
+		return st["markers_state_skipped"].(int), st["markers_state_skipped_newest"], w.overview("")["linear"].(map[string]any)["markers_state_skipped"]
+	}
+	if n, newest, overview := count(); n != 0 || newest != nil || overview != 0 {
+		t.Fatal(n, newest, overview)
+	}
+	w.assign("b", sfIssueNext)
+	w.skipMarker("b", "team_off")
+	if n, _, _ := count(); n != 0 {
+		t.Fatal("a configured skip counted:", n)
+	}
+	w.release("b")
+	w.assign("b", sfIssueNext)
+	w.skipMarker("b", "from_state")
+	n, newest, overview := count()
+	if n != 1 || overview != 1 {
+		t.Fatal(n, overview)
+	}
+	if got := newest.(map[string]any); got["issue_uuid"] != sfIssueNext || got["reason"] != "from_state" {
+		t.Fatal(got)
+	}
+	if _, err := w.s.db.Exec(`UPDATE assignment_markers SET updated_at=? WHERE state_skip_reason='from_state'`, layout(time.Now().Add(-8*24*time.Hour))); err != nil {
+		t.Fatal(err)
+	}
+	if n, newest, overview := count(); n != 0 || newest != nil || overview != 0 {
+		t.Fatal("an old skip counted:", n, newest, overview)
+	}
+}

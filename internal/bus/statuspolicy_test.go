@@ -4,6 +4,7 @@ import (
 	"context"
 	"strings"
 	"testing"
+	"time"
 )
 
 const (
@@ -14,6 +15,11 @@ const (
 	sfReview    = "22222222-2222-4222-8222-2222222222b4"
 	sfDone      = "22222222-2222-4222-8222-2222222222b5"
 	sfIssueNext = "00000000-0000-4000-8000-0000000000f2"
+	// A second team and issues for the skip notices.
+	sfOtherTeam     = "11111111-1111-4111-8111-111111111112"
+	sfOtherProgress = "22222222-2222-4222-8222-2222222222c3"
+	sfIssueOther    = "00000000-0000-4000-8000-0000000000f3"
+	sfIssueThird    = "00000000-0000-4000-8000-0000000000f4"
 )
 
 func sfPolicy(enabled bool) map[string]any {
@@ -487,5 +493,299 @@ func TestMarkerSpentIsRefusedToALeaseHoldingMember(t *testing.T) {
 	id := w.assignmentID("a")
 	if _, err := w.s.Execute(context.Background(), w.request("marker_spent", "c", w.fenced(map[string]any{"assignment_id": id, "phase": "claim", "calls": 0, "charged": 8}))); err == nil {
 		t.Fatal("a member's watcher reconciled a marker")
+	}
+}
+
+// skipMarker settles a session's claim move as skipped with reason.
+func (w *watchHarness) skipMarker(session, reason string) string {
+	w.t.Helper()
+	id := w.assignmentID(session)
+	w.markersDue()
+	if g := w.markerGo("c", id, "claim", "state"); g["action"] != "move" {
+		w.t.Fatal(g)
+	}
+	w.markerSettle("c", id, "claim", "state", map[string]any{"outcome": "skipped", "skip_reason": reason})
+	return id
+}
+
+// markerNotices are the skip notices a session received, oldest first.
+func (w *watchHarness) markerNotices(session string) []string {
+	w.t.Helper()
+	rows, err := w.s.db.Query(`SELECT m.body FROM messages m JOIN deliveries d ON d.message_id=m.id WHERE m.kind='linear-write' AND d.recipient_id=? AND (m.body LIKE 'Your % marker on %' OR m.body LIKE 'A % marker on %') ORDER BY m.created_at,m.id`, w.sessionID(session))
+	if err != nil {
+		w.t.Fatal(err)
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var body string
+		if err = rows.Scan(&body); err != nil {
+			w.t.Fatal(err)
+		}
+		out = append(out, body)
+	}
+	return out
+}
+
+// The summary names the target from the stored policy, else the policy's
+// state, and says why for every skip reason; a row that wasn't skipped
+// says how its parts stand.
+func TestMarkerSummaryForEveryReason(t *testing.T) {
+	policy, err := ParseStatusPolicy(sfPolicy(true))
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]string{
+		"from_state":         "someone else had moved the issue, so it was left as it is; set it yourself if right",
+		"team_unbound":       "the issue's team isn't bound to this project",
+		"team_off":           "the status policy doesn't move this team's issues",
+		"team_not_in_policy": "the status policy doesn't move this team's issues",
+		"target_unknown":     "the target state couldn't be found in Linear; check the status policy",
+		"state_unresolved":   "the issue's current state couldn't be read, so it was left as it is; check it in Linear",
+		"policy_off":         "the status policy is off",
+		"policy_changed":     "the status policy changed after the move was planned",
+	}
+	if len(want) != len(statusSkipReasons) {
+		t.Fatal("a skip reason has no summary test")
+	}
+	for reason, why := range want {
+		claim, close := "In Progress", "In Review"
+		if reason == "policy_changed" {
+			// The policy now may not target what was planned: no name.
+			claim, close = "the policy's state", "the policy's state"
+		}
+		row := map[string]any{"phase": "claim", "state_state": "skipped", "state_skip_reason": reason}
+		if got := markerSummary(row, policy); got != "not moved to "+claim+": "+why {
+			t.Errorf("%s: %q", reason, got)
+		}
+		row["phase"] = "close"
+		if got := markerSummary(row, policy); got != "not moved to "+close+": "+why {
+			t.Errorf("%s close: %q", reason, got)
+		}
+		if got := markerSummary(row, StatusPolicy{}); got != "not moved to the policy's state: "+why {
+			t.Errorf("%s without a policy: %q", reason, got)
+		}
+	}
+	// A close in a project agents close goes on to done; two teams whose
+	// targets differ name none.
+	p := sfPolicy(true)
+	team := p["teams"].(map[string]any)[sfTeam].(map[string]any)
+	team["done"] = map[string]any{"id": sfDone, "name": "Done", "type": "completed"}
+	p["closes"] = map[string]any{cpOne: "agent"}
+	other := map[string]any{"claim": map[string]any{"id": sfOtherProgress, "name": "Doing", "type": "started"}, "workflow": map[string]any{sfOtherProgress: "started"}}
+	agent, err := ParseStatusPolicy(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	close := map[string]any{"phase": "close", "state_state": "skipped", "state_skip_reason": "from_state", "issue_project_id": cpOne}
+	if got := markerSummary(close, agent); !strings.HasPrefix(got, "not moved to Done: ") {
+		t.Fatal(got)
+	}
+	p["teams"].(map[string]any)[sfOtherTeam] = other
+	two, err := ParseStatusPolicy(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := markerSummary(map[string]any{"phase": "claim", "state_state": "skipped", "state_skip_reason": "from_state"}, two); !strings.HasPrefix(got, "not moved to the policy's state: ") {
+		t.Fatal(got)
+	}
+	// A changed policy names a recorded target only.
+	changed := map[string]any{"phase": "claim", "state_state": "skipped", "state_skip_reason": "policy_changed"}
+	if got := markerSummary(changed, policy); got != "not moved to the policy's state: the status policy changed after the move was planned" {
+		t.Fatal(got)
+	}
+	changed["state_target"] = sfProgress
+	if got := markerSummary(changed, policy); !strings.HasPrefix(got, "not moved to In Progress: ") {
+		t.Fatal(got)
+	}
+	// A recorded target is named by its ID.
+	if got := markerSummary(map[string]any{"phase": "claim", "state_state": "skipped", "state_skip_reason": "from_state", "state_target": sfOtherProgress}, two); !strings.HasPrefix(got, "not moved to Doing: ") {
+		t.Fatal(got)
+	}
+	for _, c := range []struct {
+		row  map[string]any
+		want string
+	}{
+		{map[string]any{"comment_state": "done", "label_state": "done", "state_state": "done", "state_target": sfProgress, "state_landed": sfProgress}, "comment done, label done, state done (moved)"},
+		{map[string]any{"comment_state": "done", "label_state": "no_label", "state_state": "done", "state_target": sfProgress, "state_landed": sfReview}, "comment done, label no_label, state done (another state stood)"},
+		{map[string]any{"comment_state": "pending", "label_state": "pending", "state_state": "off"}, "comment pending, label pending, state off"},
+	} {
+		if got := markerSummary(c.row, policy); got != c.want {
+			t.Errorf("%q, want %q", got, c.want)
+		}
+	}
+}
+
+// A skip a person may act on is told once, in the settle that records it:
+// to the assignee, by identifier, with the read to run.
+func TestStateSkipNoticeOnTheTransitionOnly(t *testing.T) {
+	w := newWatchHarness(t)
+	w.setStatusPolicy(0, sfPolicy(true))
+	w.assign("b", sfIssueNext)
+	id := w.skipMarker("b", "from_state")
+	want := "Your claim marker on FIX-1 didn't move the issue: not moved to In Progress: someone else had moved the issue, so it was left as it is; set it yourself if right. Details: clawbridge assignment markers --issue FIX-1"
+	if got := w.markerNotices("b"); len(got) != 1 || got[0] != want {
+		t.Fatalf("%q", got)
+	}
+	// A replayed settle is refused and sends nothing.
+	if _, err := w.s.Execute(context.Background(), w.request("marker_settle", "c", map[string]any{"assignment_id": id, "phase": "claim", "part": "state", "outcome": "skipped", "skip_reason": "from_state"})); err == nil {
+		t.Fatal("a replayed settle was accepted")
+	}
+	if got := w.markerNotices("b"); len(got) != 1 {
+		t.Fatalf("replayed: %q", got)
+	}
+	if got := w.markerNotices("c"); len(got) != 0 {
+		t.Fatalf("the coordinator heard of an assignee's skip: %q", got)
+	}
+	// A configured skip sends nothing.
+	w.release("b")
+	w.assign("b", sfIssueNext)
+	w.skipMarker("b", "team_off")
+	if got := w.markerNotices("b"); len(got) != 1 {
+		t.Fatalf("a configured skip was told: %q", got)
+	}
+	// The server's own policy_changed skip is told too, for the release.
+	w.markersDue()
+	w.markerGo("c", w.assignmentID("b"), "claim", "state")
+	w.call("assignment_release", "b", map[string]any{"revision": w.live("b")["revision"], "outcome": "done"})
+	w.setStatusPolicy(1, sfPolicy(true))
+	w.markersDue()
+	if g := w.markerGo("c", w.assignmentID2("b"), "close", "state"); g["reason"] != "policy_changed" {
+		t.Fatal(g)
+	}
+	got := w.markerNotices("b")
+	if len(got) != 2 || got[1] != "Your release marker on FIX-1 didn't move the issue: not moved to the policy's state: the status policy changed after the move was planned. Details: clawbridge assignment markers --issue FIX-1" {
+		t.Fatalf("%q", got)
+	}
+	if n := len(w.historyRows("assignment_marker")); n != 2 {
+		t.Fatal("audited notices:", n)
+	}
+}
+
+// A coordinator notice routes by the issue's Linear project's domain. An
+// unreadable dispatcher document tells nobody, yet the move still settles
+// as skipped, and the audit says notice_error.
+func TestStateSkipNoticeRoutesByDomainAndSurvivesAnUnreadableDispatcher(t *testing.T) {
+	w := newWatchHarness(t)
+	move := skew(t)
+	w.call("taskboard_set_v2", "a", taskboardArgsV2(0, projectOne, projectTwo))
+	w.call("label_policy_set", "a", map[string]any{"expected_revision": 0, "label_policy": map[string]any{"labels": []any{"payments", "platform"}}})
+	w.setStatusPolicy(0, sfPolicy(true))
+	var pid string
+	if err := w.s.db.QueryRow(`SELECT id FROM projects WHERE slug='p'`).Scan(&pid); err != nil {
+		t.Fatal(err)
+	}
+	w.dispatcherSessions(pid)
+	platform := paymentsDomain(w.principal())
+	platform["id"], platform["name"] = "platform", "Platform"
+	platform["match"] = map[string]any{"linear_projects": []any{projectTwo}, "labels": []any{"platform"}}
+	platform["coordinator_session"] = map[string]any{"name": "b"}
+	w.call("dispatcher_domains_set", "a", map[string]any{"expected_revision": 0, "dispatcher_domains": map[string]any{"domains": []any{paymentsDomain(w.principal()), platform}}})
+	sql := func(q string, args ...any) {
+		t.Helper()
+		if _, err := w.s.db.Exec(q, args...); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var domains string
+	if err := w.s.db.QueryRow(`SELECT domains FROM dispatcher_policies WHERE project_id=?`, pid).Scan(&domains); err != nil {
+		t.Fatal(err)
+	}
+	skipGone := func(session, issue string) {
+		t.Helper()
+		sql(`UPDATE projects SET coordinator_session=(SELECT id FROM sessions WHERE name='c' AND project_id=?) WHERE id=?`, pid, pid)
+		w.call("register_session", session, map[string]any{"instance": session + "-instance", "role": "worker"})
+		w.propose(session, map[string]any{"issue_uuid": issue, "issue_identifier": "FIX-9", "issue_project_id": projectTwo})
+		w.call("assignment_confirm", "c", map[string]any{"target_session": session, "revision": w.live(session)["revision"]})
+		id := w.assignmentID(session)
+		sql(`UPDATE sessions SET status='retired' WHERE id=?`, w.sessionID(session))
+		sql(`UPDATE projects SET coordinator_session=(SELECT id FROM sessions WHERE name='clawbridge-dispatcher' AND project_id=?) WHERE id=?`, pid, pid)
+		w.markersDue()
+		w.markerGo("c", id, "claim", "state")
+		w.markerSettle("c", id, "claim", "state", map[string]any{"outcome": "skipped", "skip_reason": "from_state"})
+		var state string
+		if err := w.s.db.QueryRow(`SELECT state_state FROM assignment_markers WHERE assignment_id=? AND phase='claim'`, id).Scan(&state); err != nil || state != "skipped" {
+			t.Fatal(state, err)
+		}
+	}
+	sent := func() int {
+		t.Helper()
+		var n int
+		if err := w.s.db.QueryRow(`SELECT COUNT(*) FROM messages WHERE kind='linear-write' AND body LIKE '% marker on FIX-9 %'`).Scan(&n); err != nil {
+			t.Fatal(err)
+		}
+		return n
+	}
+	sql(`UPDATE dispatcher_policies SET domains='not json' WHERE project_id=?`, pid)
+	skipGone("d", sfIssueNext)
+	audits := w.historyRows("assignment_marker")
+	if sent() != 0 || len(audits) != 1 || !strings.Contains(str(audits[0], "details"), `"notice_error":true`) || !strings.Contains(str(audits[0], "details"), `"coordinator":false`) {
+		t.Fatal(sent(), audits)
+	}
+	sql(`UPDATE dispatcher_policies SET domains=? WHERE project_id=?`, domains, pid)
+	move(time.Minute)
+	skipGone("e", sfIssueOther)
+	if b, c := w.markerNotices("b"), w.markerNotices("c"); len(b) != 1 || len(c) != 0 || !strings.HasPrefix(b[0], "A claim marker on FIX-9 didn't move the issue") {
+		t.Fatalf("platform's coordinator %q, payments' %q", b, c)
+	}
+	errs := 0
+	for _, a := range w.historyRows("assignment_marker") {
+		if strings.Contains(str(a, "details"), "notice_error") {
+			errs++
+		}
+	}
+	if audits = w.historyRows("assignment_marker"); len(audits) != 2 || errs != 1 {
+		t.Fatal(audits)
+	}
+}
+
+// assignmentID2 is a session's newest assignment, released or not.
+func (w *watchHarness) assignmentID2(session string) string {
+	w.t.Helper()
+	var id string
+	if e := w.s.db.QueryRow(`SELECT id FROM session_assignments WHERE session_id=? ORDER BY proposed_at DESC,id DESC LIMIT 1`, w.sessionID(session)).Scan(&id); e != nil {
+		w.t.Fatal(e)
+	}
+	return id
+}
+
+// Without an active assignee the coordinator is told, at most once in ten
+// minutes per project; the UUID names an issue with no identifier.
+func TestStateSkipNoticeFallsBackToTheCoordinator(t *testing.T) {
+	w := newWatchHarness(t)
+	move := skew(t)
+	w.setStatusPolicy(0, sfPolicy(true))
+	skipGone := func(session, issue, reason string) {
+		t.Helper()
+		w.call("register_session", session, map[string]any{"instance": session + "-instance", "role": "worker"})
+		w.propose(session, map[string]any{"issue_uuid": issue})
+		w.call("assignment_confirm", "c", map[string]any{"target_session": session, "revision": w.live(session)["revision"]})
+		id := w.assignmentID(session)
+		if _, err := w.s.db.Exec(`UPDATE sessions SET status='retired' WHERE id=?`, w.sessionID(session)); err != nil {
+			t.Fatal(err)
+		}
+		w.markersDue()
+		w.markerGo("c", id, "claim", "state")
+		w.markerSettle("c", id, "claim", "state", map[string]any{"outcome": "skipped", "skip_reason": reason})
+	}
+	skipGone("d", sfIssueNext, "target_unknown")
+	want := "A claim marker on " + sfIssueNext + " didn't move the issue: not moved to In Progress: the target state couldn't be found in Linear; check the status policy. Details: clawbridge assignment markers --issue " + sfIssueNext
+	if got := w.markerNotices("c"); len(got) != 1 || got[0] != want {
+		t.Fatalf("%q", got)
+	}
+	// A second within ten minutes is recorded, not sent; past them it is.
+	move(5 * time.Minute)
+	skipGone("e", sfIssueOther, "state_unresolved")
+	if got := w.markerNotices("c"); len(got) != 1 {
+		t.Fatalf("the rate limit didn't hold: %q", got)
+	}
+	move(6 * time.Minute)
+	skipGone("f", sfIssueThird, "from_state")
+	if got := w.markerNotices("c"); len(got) != 2 || !strings.Contains(got[1], sfIssueThird) {
+		t.Fatalf("%q", got)
+	}
+	audits := w.historyRows("assignment_marker")
+	if len(audits) != 3 {
+		t.Fatal("every skip is audited:", len(audits))
 	}
 }

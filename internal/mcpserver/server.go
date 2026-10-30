@@ -139,6 +139,7 @@ func NewServerWithOptions(store Executor, workspace, project, session, instance 
 	add[proposeInput](s, b, "assignment_propose", "Propose this session's own assignment (Linear issue, task role, repository path patterns), replacing its previous one. It describes ownership, is not a lock and grants no rights; tell the coordinator with a coordination message.", false, false)
 	add[confirmInput](s, b, "assignment_confirm", "Designated coordinator session only: confirm a session's proposed assignment at the revision you reviewed. Overlap with a confirmed assignment is refused unless allow_overlap.", false, false)
 	add[releaseInput](s, b, "assignment_release", "Release this session's assignment, or as the designated coordinator another session's, at its current revision.", false, false)
+	add[markersInput](s, b, "assignment_markers", "Read the claim and release markers of one issue (issue_uuid, or issue_identifier such as ABC-12 as the assignment recorded it; no Linear read) or one assignment (assignment_id), exactly one: the newest 20, newest first, with each part's state (comment, label, state), why a state move was skipped (state_skip_reason) and a one-line summary. The output is typed fields only (states, reasons, IDs and times), never Linear text. Check it when a release or claim didn't move the issue, before assuming a bug.", true, true)
 	add[historyInput](s, b, "history", "Read the pinned project's append-only audit trail.", true, false)
 	add[emptyInput](s, b, "whoami", "Show pinned scope, session identity, principal provenance, and storage mode.", true, false)
 	add[statusInput](s, b, "message_status", "Inspect delivery/read metadata for a message sent by this session.", true, false)
@@ -224,8 +225,18 @@ func add[In any](s *mcp.Server, b *binding, operation, description string, readO
 			b.queue.want()
 			b.queue.replyAck(args)
 		}
-		result, err := b.store.Execute(ctx, bus.Request{Operation: operation, Workspace: b.workspace, Project: b.project, Session: b.session, Args: args})
+		op := operation
+		if operation == "assignment_markers" {
+			op = "marker_status"
+		}
+		result, err := b.store.Execute(ctx, bus.Request{Operation: op, Workspace: b.workspace, Project: b.project, Session: b.session, Args: args})
 		if err != nil {
+			if op == "marker_status" && strings.Contains(err.Error(), `unsupported operation "marker_status"`) {
+				return nil, bus.Result{}, errors.New("the ClawBridge server is older than this client and has no marker read; upgrade the server")
+			}
+			if op == "marker_status" && strings.Contains(err.Error(), `unsupported argument "issue_identifier"`) {
+				return nil, bus.Result{}, errors.New("this server reads markers by issue UUID or assignment only; pass the issue UUID")
+			}
 			return nil, bus.Result{}, err
 		}
 		switch operation {
@@ -295,6 +306,11 @@ type proposeInput struct {
 	TaskRole        string   `json:"task_role,omitempty"`
 	ScopeRepo       string   `json:"scope_repo,omitempty" jsonschema:"Git remote of the owned repository."`
 	ScopePaths      []string `json:"scope_paths,omitempty" jsonschema:"Up to 32 repository-relative path patterns; a pattern covers what it matches and everything beneath, and ** is allowed only whole or as a final /**."`
+}
+type markersInput struct {
+	IssueUUID       string `json:"issue_uuid,omitempty" jsonschema:"The Linear issue UUID. Give exactly one of issue_uuid, issue_identifier and assignment_id."`
+	IssueIdentifier string `json:"issue_identifier,omitempty" jsonschema:"The issue's display identifier, such as ABC-12, as its assignment recorded it; matched by the server, no Linear read."`
+	AssignmentID    string `json:"assignment_id,omitempty" jsonschema:"An assignment's ID."`
 }
 type confirmInput struct {
 	TargetSession string `json:"target_session,omitempty" jsonschema:"The session whose assignment to confirm; omit for this session."`

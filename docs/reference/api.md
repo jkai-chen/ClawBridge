@@ -98,6 +98,7 @@ requires its matching instance. Routing role is distinct from project permission
 | `assignment_propose` | Own session only: optional issue_uuid (lowercase UUID), issue_identifier (stored with issue_uuid; alone, the CLI with `--linear-profile` and an MCP server with a Linear connection resolve it by a Linear read to the UUID and the current identifier, and refuse a stale one; the server itself still requires issue_uuid), task_role, scope_repo (git remote), scope_paths (up to 32 patterns); needs an issue or a path. Replaces the session's live assignment and returns overlapping live assignments as `conflicts` |
 | `assignment_confirm` | Designated coordinator session: revision, optional target_session, allow_overlap. Refuses overlap with a confirmed assignment unless allow_overlap (audited as conflict_overridden) |
 | `assignment_release` | revision; optional target_session for the designated coordinator |
+| `marker_status` | Any project role, session optional (a session gives its instance): issue_uuid, issue_identifier or assignment_id, exactly one. The newest 20 claim and release marker rows, with each part's state and why a state move was skipped (see [Claim markers](#claim-markers)) |
 | `coordinator_set` | Owner, or lead for its own and member/reader sessions: target_session, or empty to clear |
 | `message_status` | message_id; sender-only receipt metadata |
 | `project_threads` | Project owner, sessionless: optional limit (1–100, default 50), before (the previous page's `next`). See [the project's threads](#the-projects-threads) |
@@ -176,7 +177,8 @@ mirror does not include assignments.
 MCP exposes register_session, list_sessions, send, inbox, inbox_status,
 notification_status, set_notification_policy, mark_read, reply, update_session,
 retire_session, assignment_propose, assignment_confirm, assignment_release,
-history, whoami, message_status and project_overview (read only). Their
+history, whoami, message_status, project_overview (read only) and
+assignment_markers (read only; the `marker_status` operation). Their
 schemas restrict caller routing/instance overrides. Administrative operations
 remain outside the MCP tool list.
 
@@ -189,8 +191,8 @@ administration remains in CLI/TUI. See [Linear setup](../linear.md).
 
 The L2 native adapter adds eleven versioned tools: binding, context, issues,
 issue, create, update, comment, labels, members, relation_add and relation_remove,
-each named `taskboard_<operation>_v2`. It advertises 35 tools in total; a V1-only
-adapter retains 24 and an unconfigured adapter retains 17. Prefer the advertised
+each named `taskboard_<operation>_v2`. It advertises 47 tools in total; a V1-only
+adapter retains 28 and an unconfigured adapter retains 21. Prefer the advertised
 V2 family for new board calls. Initialization and listing do not access Linear.
 Every write's title, description and comment body is refused before dispatch
 when it mentions anyone in Linear: any `@` mention (email addresses aside), a
@@ -711,8 +713,10 @@ already read through `list_sessions`, `taskboard_get_v2` and `status_policy_get`
   "unreadable": true}` when the binding can't be read (the op still answers).
   Otherwise `revision`, `mode`, `teams` (id, name, default), `projects` (id,
   name, `closes` human or agent, and `health` when health posts are on),
-  `names_updated_at`, and `status_policy` (enabled, revision). A name is `""`
-  when none is stored.
+  `names_updated_at`, `status_policy` (enabled, revision), and
+  `markers_state_skipped`, the state moves skipped in the last 7 days that
+  told someone (see [Claim markers](#claim-markers)). A name is `""` when none
+  is stored.
 - **`linear_writes`:** `unconfirmed`, every recorded Linear write of any kind
   (`write`: `project_create`, `issue_move`, `issue_move_child` (a family's
   sub-issue, `OP:c:CHILD_UUID`) or `project_team_add`) reserved more
@@ -740,6 +744,55 @@ already read through `list_sessions`, `taskboard_get_v2` and `status_policy_get`
 It isn't in the offline mirror: when the server can't be reached the remote
 client answers "project overview unavailable offline: the server could not
 be reached".
+
+## Claim markers
+
+`marker_status` (CLI `clawbridge assignment markers`, MCP `assignment_markers`)
+reads the claim and release markers of one issue or one assignment. Any project
+member may read it, with or without a session; it is a pure read, also served
+in maintenance.
+
+- **Request:** `issue_uuid` (a Linear UUID, any case), `issue_identifier` or
+  `assignment_id`, exactly one; an empty string counts as absent.
+  `issue_identifier` (such as `ENG-1`) matches the identifier the issue's
+  assignments recorded, in any case, with no Linear read: every assignment that
+  recorded it.
+  Otherwise `invalid`: "marker_status takes issue_uuid, issue_identifier or
+  assignment_id, exactly one", "issue_uuid must be a Linear UUID",
+  "issue_identifier must be a short display identifier such as ABC-12" or
+  "assignment_id must be an assignment's ID". `instance` only with a session.
+- **Answer:** `{"markers": [...]}`, at most 20 rows, newest first (by
+  `updated_at`). An unknown issue, identifier or assignment gives `[]`. Each row's fields
+  are strings: `assignment_id`, `phase` (`claim` or `close`, a release),
+  `issue_uuid`, `issue_identifier` (`""` when the assignment had none),
+  `comment_state`, `label_state`, `state_state`, `state_skip_reason` (see
+  [the reasons](../linear.md#status-policy-project-owner-only)), `state_target`,
+  `state_landed`, `created_at`, `updated_at` and `summary`. The summary is one
+  line: `not moved to TARGET: WHY` for a skipped move, else `comment X, label
+  Y, state Z` (a done state reads `done (moved)`, or `done (another state
+  stood)` when a person's state stood). Typed fields only: no Linear text.
+- **CLI:** `clawbridge assignment markers --issue ISSUE_UUID|IDENTIFIER |
+  --assignment ID [--json]`. Text shows one line per row: the phase (`claim` or
+  `release`), when it last changed, and the summary; `--json` gives the answer
+  as it is. An identifier such as `ENG-1` is sent as `issue_identifier`, a UUID
+  as `issue_uuid`; no Linear read and no `--linear-profile`.
+- **MCP:** `assignment_markers` takes `issue_uuid`, `issue_identifier` or
+  `assignment_id`, exactly one. Read only.
+- **Doctor:** `comment_watch_status` carries `markers_state_skipped`, the
+  state moves skipped in the last 7 days for `from_state`, `target_unknown`,
+  `state_unresolved` or `policy_changed` (the reasons that send a notice), and
+  `markers_state_skipped_newest` (`{issue_uuid, reason}` of the newest, or
+  null). Doctor's `linear.marker_skips` warns when the count is over 0: "N state
+  moves skipped in the last 7 days (newest: ISSUE, REASON); see clawbridge
+  assignment markers --issue ISSUE". It is absent at 0.
+- **An older server** answers `unsupported operation "marker_status"`; the CLI
+  and the MCP tool say "the ClawBridge server is older than this client and has
+  no marker read; upgrade the server", and doctor shows no line. A server whose
+  read takes no `issue_identifier` answers `unsupported argument
+  "issue_identifier"`; they say "this server reads markers by issue UUID or
+  assignment only; pass the issue UUID". It isn't in the
+  offline mirror: when the server can't be reached the remote client answers
+  "the claim markers are unavailable offline: the server could not be reached".
 
 ## Hosted routes and failures
 

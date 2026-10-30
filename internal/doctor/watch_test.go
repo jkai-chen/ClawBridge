@@ -56,3 +56,42 @@ func TestDoctorReportsTheCommentWatchAndMarkers(t *testing.T) {
 		}
 	}
 }
+
+// A state move skipped this week is a warning line of its own, naming the
+// newest; none is a pass with no line, and an older server's report has
+// no count and so no line.
+func TestDoctorReportsSkippedStateMoves(t *testing.T) {
+	issue := "00000000-0000-4000-8000-000000000001"
+	base := func(extra map[string]any) map[string]any {
+		s := map[string]any{"watched_issues": 1, "watcher_live": true}
+		for k, v := range extra {
+			s[k] = v
+		}
+		return s
+	}
+	for name, c := range map[string]struct {
+		status map[string]any
+		want   string
+	}{
+		"skipped":      {base(map[string]any{"markers_state_skipped": 3, "markers_state_skipped_newest": map[string]any{"issue_uuid": issue, "reason": "from_state"}}), "3 state moves skipped in the last 7 days (newest: " + issue + ", from_state); see clawbridge assignment markers --issue " + issue},
+		"from JSON":    {base(map[string]any{"markers_state_skipped": float64(1), "markers_state_skipped_newest": map[string]any{"issue_uuid": issue, "reason": "policy_changed"}}), "1 state moves skipped in the last 7 days (newest: " + issue + ", policy_changed); see clawbridge assignment markers --issue " + issue},
+		"none":         {base(map[string]any{"markers_state_skipped": 0, "markers_state_skipped_newest": nil}), ""},
+		"older server": {base(nil), ""},
+	} {
+		var checks []Check
+		checkCommentWatch(context.Background(), statusExecutor{status: c.status}, "w", "p", func(check Check) { checks = append(checks, check) })
+		if c.want == "" {
+			if len(checks) != 2 || checks[1].Status != Pass {
+				t.Errorf("%s: %+v", name, checks)
+			}
+			continue
+		}
+		if len(checks) != 3 || checks[1].Status != Pass {
+			t.Errorf("%s: %+v", name, checks)
+			continue
+		}
+		if s := checks[2]; s.ID != "linear.marker_skips" || s.Title != "Linear state moves" || s.Status != Warn || s.Message != c.want {
+			t.Errorf("%s: %+v", name, s)
+		}
+	}
+}

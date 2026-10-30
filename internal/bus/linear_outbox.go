@@ -444,10 +444,7 @@ func (s *Store) OutboxNotify(ctx context.Context, id string, now time.Time) erro
 		return nil
 	}
 	wid, pid := str(p, "workspace_id"), w.ProjectID
-	if err = s.ensureSystemSession(ctx, tx, wid, pid); err != nil {
-		return err
-	}
-	sys, err := one(ctx, tx, `SELECT id FROM sessions WHERE project_id=? AND role='system' AND name=?`, pid, SystemSessionName)
+	sys, err := s.systemSessionID(ctx, tx, wid, pid)
 	if err != nil {
 		return err
 	}
@@ -477,33 +474,53 @@ func (s *Store) OutboxNotify(ctx context.Context, id string, now time.Time) erro
 			}
 		}
 	}
-	if len(recipients) > 0 {
-		body := outboxNotice(w)
-		w2, err := one(ctx, tx, `SELECT retention_days FROM workspaces WHERE id=?`, wid)
-		if err != nil {
-			return err
-		}
-		retention := asInt(w2["retention_days"])
-		if retention < 1 {
-			retention = 30
-		}
-		msg, names := newID("msg_"), []string{}
-		for _, r := range recipients {
-			names = append(names, str(r, "name"))
-		}
-		if _, err = tx.ExecContext(ctx, `INSERT INTO messages(id,project_id,source_project_id,sender_id,address,thread_id,reply_to,kind,body,created_at,expires_at,created_by_principal,operation_id,payload_hash,coordination) VALUES(?,?,?,?,?,?,NULL,'linear-write',?,?,?,?,?,?,NULL)`, msg, pid, pid, str(sys, "id"), strings.Join(names, ","), msg, body, layout(now), layout(now.AddDate(0, 0, retention)), systemPrincipal, newID("lwn_"), digestOf(body)); err != nil {
-			return err
-		}
-		if err = insertDeliveries(ctx, tx, pid, msg, recipientIDsOf(recipients)); err != nil {
-			return err
-		}
+	if err = linearWriteNotice(ctx, tx, wid, pid, sys, recipients, outboxNotice(w), newID("lwn_"), now); err != nil {
+		return err
 	}
 	scoped := *s
 	scoped.principal = systemPrincipal
-	if err = scoped.audit(ctx, tx, wid, pid, str(sys, "id"), "linear_write", w.OperationID, w.State, map[string]any{"operation": w.Operation, "issue": w.Issue, "reason": w.Reason, "recipient_count": len(recipients), "coordinator": coordinator}); err != nil {
+	if err = scoped.audit(ctx, tx, wid, pid, sys, "linear_write", w.OperationID, w.State, map[string]any{"operation": w.Operation, "issue": w.Issue, "reason": w.Reason, "recipient_count": len(recipients), "coordinator": coordinator}); err != nil {
 		return err
 	}
 	return tx.Commit()
+}
+
+// systemSessionID is the project's system session, created if it has none.
+func (s *Store) systemSessionID(ctx context.Context, tx *transaction, wid, pid string) (string, error) {
+	if err := s.ensureSystemSession(ctx, tx, wid, pid); err != nil {
+		return "", err
+	}
+	sys, err := one(ctx, tx, `SELECT id FROM sessions WHERE project_id=? AND role='system' AND name=?`, pid, SystemSessionName)
+	if err != nil {
+		return "", err
+	}
+	return str(sys, "id"), nil
+}
+
+// linearWriteNotice sends body as one linear-write message from the
+// system session sys to recipients, kept for the workspace's retention.
+// With no recipients it sends nothing. The outbox's notices and a skipped
+// marker move's both go through it.
+func linearWriteNotice(ctx context.Context, tx *transaction, wid, pid, sys string, recipients []map[string]any, body, operationID string, now time.Time) error {
+	if len(recipients) == 0 {
+		return nil
+	}
+	w, err := one(ctx, tx, `SELECT retention_days FROM workspaces WHERE id=?`, wid)
+	if err != nil {
+		return err
+	}
+	retention := asInt(w["retention_days"])
+	if retention < 1 {
+		retention = 30
+	}
+	msg, names := newID("msg_"), []string{}
+	for _, r := range recipients {
+		names = append(names, str(r, "name"))
+	}
+	if _, err = tx.ExecContext(ctx, `INSERT INTO messages(id,project_id,source_project_id,sender_id,address,thread_id,reply_to,kind,body,created_at,expires_at,created_by_principal,operation_id,payload_hash,coordination) VALUES(?,?,?,?,?,?,NULL,'linear-write',?,?,?,?,?,?,NULL)`, msg, pid, pid, sys, strings.Join(names, ","), msg, body, layout(now), layout(now.AddDate(0, 0, retention)), systemPrincipal, operationID, digestOf(body)); err != nil {
+		return err
+	}
+	return insertDeliveries(ctx, tx, pid, msg, recipientIDsOf(recipients))
 }
 
 func (s *Store) outboxNotifyRow(ctx context.Context, id string) (rows []map[string]any, err error) {

@@ -775,6 +775,10 @@ func (c *Client) binding(r bus.Request) mirror.Binding {
 // reached: the overview is read from the authority only.
 var ErrOverviewOffline = errors.New("project overview unavailable offline: the server could not be reached")
 
+// ErrMarkersOffline is marker_status's answer when the server can't be
+// reached: marker states are read from the authority only.
+var ErrMarkersOffline = errors.New("the claim markers are unavailable offline: the server could not be reached")
+
 // ErrThreadsOffline answers a thread read when the server can't be
 // reached: the project's threads are read from the authority only.
 var ErrThreadsOffline = errors.New("the project's threads are unavailable offline: the server could not be reached")
@@ -810,6 +814,9 @@ func (c *Client) answer(ctx context.Context, r bus.Request, result bus.Result, u
 	if unavailable && r.Operation == "project_overview" {
 		// A summary read from the authority, never mirrored: say so plainly.
 		return bus.Result{}, ErrOverviewOffline
+	}
+	if unavailable && r.Operation == "marker_status" {
+		return bus.Result{}, ErrMarkersOffline
 	}
 	if unavailable && mirror.Readable(r.Operation) && c.config.CachePath != "" && c.config.Principal != "" {
 		cached, e := mirror.Offline(ctx, c.config.CachePath, c.binding(r), r)

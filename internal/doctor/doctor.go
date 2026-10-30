@@ -863,6 +863,18 @@ func checkCommentWatch(ctx context.Context, executor Executor, wid, pid string, 
 	}
 	add(watch)
 	add(markers)
+	// State moves skipped this week for a reason someone may act on. None,
+	// or an older server without the count, says nothing.
+	if k := n("markers_state_skipped"); k > 0 {
+		skips := Check{ID: "linear.marker_skips", Title: "Linear state moves", Status: Warn,
+			Message: fmt.Sprintf("%d state moves skipped in the last 7 days", k)}
+		newest, _ := status["markers_state_skipped_newest"].(map[string]any)
+		if issue, _ := newest["issue_uuid"].(string); issue != "" {
+			reason, _ := newest["reason"].(string)
+			skips.Message += fmt.Sprintf(" (newest: %s, %s); see clawbridge assignment markers --issue %s", issue, reason, issue)
+		}
+		add(skips)
+	}
 }
 
 // checkLinearWebhooks reports each bound team's Linear webhook state from

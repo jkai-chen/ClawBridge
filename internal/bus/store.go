@@ -678,6 +678,7 @@ var operationArgs = map[string]string{
 	"marker_settle":               "instance lease_token generation assignment_id phase part outcome comment_id created_at via error state_target state_landed skip_reason",
 	"marker_due":                  "instance lease_token generation limit",
 	"marker_spent":                "instance lease_token generation assignment_id phase calls charged",
+	"marker_status":               "instance issue_uuid issue_identifier assignment_id",
 	"label_policy_get":            "instance",
 	"status_policy_get":           "instance",
 	"status_policy_set":           "instance expected_revision status_policy via",
@@ -1054,7 +1055,7 @@ func (s *Store) ExecuteAs(ctx context.Context, principal string, r Request) (Res
 // inbox stamps deliveries, so those keep the locks.
 func pureRead(r Request) bool {
 	switch r.Operation {
-	case "snapshot", "inbox_status", "notification_status", "taskboard_get", "taskboard_get_v2", "taskboard_access", "list_projects", "list_members", "comment_watch_status", "webhook_status", "label_policy_get", "status_policy_get", "doc_policy_get", "dispatcher_get", "context_watch_get", "health_get", "doc_seed_get", "doc_publication_get", "invite_list", "device_list", "device_events", "user_list", "owner_transfer_get", "dispatcher_chat_show", "dispatcher_decisions_list", "dispatcher_escalations_list", "dispatcher_model_doctor", "project_overview", "dispatcher_model_config":
+	case "snapshot", "inbox_status", "notification_status", "taskboard_get", "taskboard_get_v2", "taskboard_access", "list_projects", "list_members", "comment_watch_status", "webhook_status", "label_policy_get", "status_policy_get", "doc_policy_get", "dispatcher_get", "context_watch_get", "health_get", "doc_seed_get", "doc_publication_get", "invite_list", "device_list", "device_events", "user_list", "owner_transfer_get", "dispatcher_chat_show", "dispatcher_decisions_list", "dispatcher_escalations_list", "dispatcher_model_doctor", "project_overview", "dispatcher_model_config", "marker_status":
 		return true
 	case "list_sessions", "history", "whoami", "linear_comments_posted", "linear_comment_precheck", "intake_policy_get", "intake_trust_list", "intake_list", "linear_view_get", "linear_views_list", "project_kind_get", "team_roles_get", "lane_pins_get", "project_team_add_list":
 		// Naming a session with its instance makes it a heartbeat read: the
@@ -1470,6 +1471,14 @@ func (s *Store) execute(ctx context.Context, tx *transaction, r Request) (any, e
 			return nil, errors.New("instance requires session")
 		}
 		return s.projectOverview(ctx, tx, w, p, projectRole)
+	}
+	// Any project member may read an issue's or an assignment's claim
+	// markers, with or without a session.
+	if r.Operation == "marker_status" {
+		if r.Session == "" && str(a, "instance") != "" {
+			return nil, errors.New("instance requires session")
+		}
+		return markerStatus(ctx, tx, pid, a)
 	}
 	if linearViewOperation(r.Operation) {
 		return s.linearViewsOp(ctx, tx, wid, pid, projectRole, r)

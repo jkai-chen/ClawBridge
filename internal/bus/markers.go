@@ -5,6 +5,8 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"sort"
+	"strings"
 	"time"
 )
 
@@ -665,6 +667,66 @@ func (c commentCall) markerRowCost(ctx context.Context) (int, error) {
 	return MarkerRowCalls(len(b.LinearTeamIDs), len(b.LinearProjectIDs)), nil
 }
 
+// markerStatusRows is how many marker rows marker_status returns.
+const markerStatusRows = 20
+
+// markerStatus reads the marker rows of one issue or one assignment, the
+// newest first: each part's state, why a move was skipped, and a plain
+// line. Any member may read it, with or without a session; it names no
+// Linear text.
+func markerStatus(ctx context.Context, tx *transaction, pid string, a map[string]any) (any, error) {
+	given := func(k string) bool { return a[k] != nil && a[k] != "" }
+	byIssue, byIdentifier, byAssignment := given("issue_uuid"), given("issue_identifier"), given("assignment_id")
+	n := 0
+	for _, b := range []bool{byIssue, byIdentifier, byAssignment} {
+		if b {
+			n++
+		}
+	}
+	if n != 1 {
+		return nil, invalid("marker_status takes issue_uuid, issue_identifier or assignment_id, exactly one")
+	}
+	where, key := `m.issue_uuid=?`, ""
+	switch {
+	case byIssue:
+		issue, err := lowerUUID(a, "issue_uuid", true)
+		if err != nil {
+			return nil, err
+		}
+		key = issue
+	case byIdentifier:
+		// The identifier the assignment recorded: no Linear read.
+		key = str(a, "issue_identifier")
+		if !issueIdentifierPattern.MatchString(key) {
+			return nil, invalid("issue_identifier must be a short display identifier such as ABC-12")
+		}
+		where = `UPPER(a.issue_identifier)=UPPER(?)`
+	default:
+		key = str(a, "assignment_id")
+		if key == "" || len(key) > 128 {
+			return nil, invalid("assignment_id must be an assignment's ID")
+		}
+		where = `m.assignment_id=?`
+	}
+	rows, err := query(ctx, tx, `SELECT `+markerRowColumns+` WHERE m.project_id=? AND `+where+` ORDER BY m.updated_at DESC,m.assignment_id,m.phase LIMIT ?`, pid, key, markerStatusRows)
+	if err != nil {
+		return nil, err
+	}
+	policy, err := markerPolicy(ctx, tx, pid)
+	if err != nil {
+		return nil, err
+	}
+	markers := []any{}
+	for _, row := range rows {
+		out := map[string]any{"summary": markerSummary(row, policy)}
+		for _, k := range []string{"assignment_id", "phase", "issue_uuid", "issue_identifier", "comment_state", "label_state", "state_state", "state_skip_reason", "state_target", "state_landed", "created_at", "updated_at"} {
+			out[k] = str(row, k)
+		}
+		markers = append(markers, out)
+	}
+	return map[string]any{"markers": markers}, nil
+}
+
 // watchStatus is what doctor reports about the project's comment watch and
 // claim markers. It reads only, and names no Linear text.
 func watchStatus(ctx context.Context, tx *transaction, pid string) (any, error) {
@@ -707,6 +769,13 @@ func watchStatus(ctx context.Context, tx *transaction, pid string) (any, error) 
 		return nil, err
 	}
 	out["markers_oldest_pending"] = nullable(str(oldest[0], "at"))
+	// State moves skipped this week for a reason someone may act on (the
+	// ones a notice tells of), and the newest of them.
+	skipped, newest, err := markerStateSkips(ctx, tx, pid, at(nowRaw))
+	if err != nil {
+		return nil, err
+	}
+	out["markers_state_skipped"], out["markers_state_skipped_newest"] = skipped, newest
 	lease, err := query(ctx, tx, `SELECT expires_at,budget_hour,budget_used,budget_limit FROM watch_lease WHERE project_id=?`, pid)
 	if err != nil {
 		return nil, err
@@ -738,4 +807,33 @@ func watchStatus(ctx context.Context, tx *transaction, pid string) (any, error) 
 		out["budget_used"] = asInt(lease[0]["budget_used"])
 	}
 	return out, nil
+}
+
+// markerStateSkipWindow is how far back the skip counts look.
+const markerStateSkipWindow = 7 * 24 * time.Hour
+
+// markerStateSkips counts the project's state parts skipped in the last
+// markerStateSkipWindow for a reason a notice tells of, with the newest
+// one's issue and reason, or nil.
+func markerStateSkips(ctx context.Context, tx *transaction, pid string, now time.Time) (int, any, error) {
+	reasons := make([]string, 0, len(markerNoticeReasons))
+	for r := range markerNoticeReasons {
+		reasons = append(reasons, r)
+	}
+	sort.Strings(reasons)
+	in := strings.TrimSuffix(strings.Repeat("?,", len(reasons)), ",")
+	args := []any{pid, layout(now.Add(-markerStateSkipWindow))}
+	for _, r := range reasons {
+		args = append(args, r)
+	}
+	where := `assignment_markers WHERE project_id=? AND state_state='skipped' AND updated_at>=? AND state_skip_reason IN (` + in + `)`
+	n, err := one(ctx, tx, `SELECT COUNT(*) AS n FROM `+where, args...)
+	if err != nil || asInt(n["n"]) == 0 {
+		return 0, nil, err
+	}
+	newest, err := one(ctx, tx, `SELECT issue_uuid,state_skip_reason FROM `+where+` ORDER BY updated_at DESC,assignment_id,phase LIMIT 1`, args...)
+	if err != nil {
+		return 0, nil, err
+	}
+	return asInt(n["n"]), map[string]any{"issue_uuid": str(newest, "issue_uuid"), "reason": str(newest, "state_skip_reason")}, nil
 }

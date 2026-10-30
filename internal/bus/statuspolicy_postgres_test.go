@@ -2,6 +2,7 @@ package bus
 
 import (
 	"context"
+	"strings"
 	"testing"
 )
 
@@ -65,5 +66,132 @@ func TestPostgresStatusPolicyMovesAClaimAndADoneRelease(t *testing.T) {
 	}
 	if g = in("marker_go", "coord", map[string]any{"assignment_id": race, "phase": "close", "part": "state"}); g["action"] != "move" || g["claim_state"] != "superseded" || g["claim_policy_revision"] != int64(1) || g["policy_revision"] != int64(1) {
 		t.Fatal(g)
+	}
+}
+
+// A skipped move on Postgres: the assignee is told once, any member reads
+// the row with or without a session, a reader too, and without an active
+// assignee the coordinator is told at most once in ten minutes.
+func TestPostgresMarkerSkipNoticeAndStatus(t *testing.T) {
+	f := newPGIdentityFixture(t)
+	ctx := context.Background()
+	f.worker("coord")
+	in := func(op, session string, a map[string]any) map[string]any {
+		t.Helper()
+		r, err := f.in(op, session, a)
+		if err != nil {
+			t.Fatal(op, err)
+		}
+		return r.Data.(map[string]any)
+	}
+	in("coordinator_set", "coord", map[string]any{"target_session": "coord"})
+	if _, err := f.in("status_policy_set", "coord", map[string]any{"expected_revision": 0, "status_policy": sfPolicy(true)}); err != nil {
+		t.Fatal(err)
+	}
+	notices := func(session string) []string {
+		t.Helper()
+		rows, err := f.s.db.QueryContext(ctx, `SELECT m.body FROM messages m JOIN deliveries d ON d.message_id=m.id JOIN sessions s ON s.id=d.recipient_id JOIN projects p ON p.id=s.project_id JOIN workspaces w ON w.id=p.workspace_id WHERE w.name=$1 AND s.name=$2 AND m.kind='linear-write' ORDER BY m.created_at,m.id`, f.workspace, session)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer rows.Close()
+		var out []string
+		for rows.Next() {
+			var body string
+			if err = rows.Scan(&body); err != nil {
+				t.Fatal(err)
+			}
+			out = append(out, body)
+		}
+		return out
+	}
+	skip := func(session, issue, identifier, reason string) string {
+		t.Helper()
+		f.worker(session)
+		a := map[string]any{"issue_uuid": issue}
+		if identifier != "" {
+			a["issue_identifier"] = identifier
+		}
+		view := in("assignment_propose", session, a)["assignment"].(map[string]any)
+		in("assignment_confirm", "coord", map[string]any{"target_session": session, "revision": view["revision"]})
+		id := view["id"].(string)
+		if _, err := f.s.db.ExecContext(ctx, `UPDATE assignment_markers SET next_attempt_at='2000-01-01T00:00:00.000000000Z' WHERE assignment_id=$1`, id); err != nil {
+			t.Fatal(err)
+		}
+		if g := in("marker_go", "coord", map[string]any{"assignment_id": id, "phase": "claim", "part": "state"}); g["action"] != "move" {
+			t.Fatal(g)
+		}
+		in("marker_settle", "coord", map[string]any{"assignment_id": id, "phase": "claim", "part": "state", "outcome": "skipped", "skip_reason": reason})
+		return id
+	}
+	id := skip("w", watchIssue, "FIX-1", "from_state")
+	want := "Your claim marker on FIX-1 didn't move the issue: not moved to In Progress: someone else had moved the issue, so it was left as it is; set it yourself if right. Details: clawbridge assignment markers --issue FIX-1"
+	if got := notices("w"); len(got) != 1 || got[0] != want {
+		t.Fatalf("%q", got)
+	}
+	if _, err := f.in("marker_settle", "coord", map[string]any{"assignment_id": id, "phase": "claim", "part": "state", "outcome": "skipped", "skip_reason": "from_state"}); err == nil {
+		t.Fatal("a replayed settle was accepted")
+	}
+	if got := notices("w"); len(got) != 1 {
+		t.Fatalf("replayed: %q", got)
+	}
+	// The read, from a session, the owner's terminal and a reader's.
+	reader := newID("r") + "@identity-test.example"
+	f.role(reader, "reader")
+	for _, r := range []struct {
+		principal, subject, session string
+		a                           map[string]any
+	}{
+		{f.owner, "sub-owner", "w", map[string]any{"issue_uuid": watchIssue, "instance": "w-i"}},
+		{f.owner, "sub-owner", "", map[string]any{"assignment_id": id}},
+		{reader, "sub-" + reader, "", map[string]any{"issue_uuid": watchIssue}},
+		{reader, "sub-" + reader, "", map[string]any{"issue_identifier": "FIX-1"}},
+	} {
+		out, err := f.as(r.principal, r.subject, Request{Operation: "marker_status", Workspace: f.workspace, Project: "p", Session: r.session, Args: r.a})
+		if err != nil {
+			t.Fatal(r.principal, err)
+		}
+		rows := out.Data.(map[string]any)["markers"].([]any)
+		if len(rows) != 1 || rows[0].(map[string]any)["state_skip_reason"] != "from_state" || rows[0].(map[string]any)["summary"] != "not moved to In Progress: someone else had moved the issue, so it was left as it is; set it yourself if right" {
+			t.Fatal(rows)
+		}
+	}
+	if _, err := f.as(f.owner, "sub-owner", Request{Operation: "marker_status", Workspace: f.workspace, Project: "p", Args: map[string]any{"issue_uuid": watchIssue, "assignment_id": id}}); err == nil {
+		t.Fatal("both were accepted")
+	}
+	// Without an active assignee, the coordinator, rate limited.
+	retire := func(session string) {
+		t.Helper()
+		if _, err := f.s.db.ExecContext(ctx, `UPDATE sessions SET status='retired' WHERE name=$1 AND project_id=(SELECT p.id FROM projects p JOIN workspaces w ON w.id=p.workspace_id WHERE w.name=$2 AND p.slug='p')`, session, f.workspace); err != nil {
+			t.Fatal(err)
+		}
+	}
+	f.worker("x")
+	f.worker("y")
+	for _, session := range []string{"x", "y"} {
+		view := in("assignment_propose", session, map[string]any{"issue_uuid": map[string]string{"x": sfIssueNext, "y": sfIssueOther}[session]})["assignment"].(map[string]any)
+		in("assignment_confirm", "coord", map[string]any{"target_session": session, "revision": view["revision"]})
+		if _, err := f.s.db.ExecContext(ctx, `UPDATE assignment_markers SET next_attempt_at='2000-01-01T00:00:00.000000000Z' WHERE assignment_id=$1`, view["id"]); err != nil {
+			t.Fatal(err)
+		}
+		retire(session)
+		in("marker_go", "coord", map[string]any{"assignment_id": view["id"], "phase": "claim", "part": "state"})
+		in("marker_settle", "coord", map[string]any{"assignment_id": view["id"], "phase": "claim", "part": "state", "outcome": "skipped", "skip_reason": "policy_changed"})
+	}
+	if got := notices("coord"); len(got) != 1 || !strings.HasPrefix(got[0], "A claim marker on "+sfIssueNext+" didn't") || !strings.Contains(got[0], "on "+sfIssueNext+" didn't move the issue: not moved to the policy's state: the status policy changed after the move was planned. Details: clawbridge assignment markers --issue "+sfIssueNext) {
+		t.Fatalf("%q", got)
+	}
+	var audited int
+	if err := f.s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM history h JOIN workspaces w ON w.id=h.workspace_id WHERE w.name=$1 AND h.entity='assignment_marker' AND h.action='state_skipped'`, f.workspace).Scan(&audited); err != nil || audited != 3 {
+		t.Fatal(audited, err)
+	}
+	// Doctor counts the three, and names the newest.
+	r, err := f.as(f.owner, "sub-owner", Request{Operation: "comment_watch_status", Workspace: f.workspace, Project: "p", Args: map[string]any{}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	st := r.Data.(map[string]any)
+	if st["markers_state_skipped"] != 3 || st["markers_state_skipped_newest"].(map[string]any)["issue_uuid"] != sfIssueOther {
+		t.Fatal(st)
 	}
 }

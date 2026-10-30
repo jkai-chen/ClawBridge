@@ -25,6 +25,16 @@
   refusal says where the lane came from. An incomplete `linear issues` page names its team and the teams that follow
   (`page_team`, `remaining_teams`, and a text footer), and the MCP instructions say how to give shell `clawbridge`
   commands the server's scope. No schema change. Linear config scope: none.
+- **A skipped state move is visible.** When a claim or release marker leaves the issue's state alone (someone had
+  moved it, the target state can't be found, its current state can't be read, or the policy changed), the assignee's
+  session is told once, or the coordinator when that session has ended: "Your release marker on ENG-1 didn't move the
+  issue: not moved to In Review: someone else had moved the issue, so it was left as it is; set it yourself if right.
+  Details: clawbridge assignment markers --issue ENG-1".
+  `clawbridge assignment markers --issue ISSUE_UUID|IDENTIFIER | --assignment ID` (MCP `assignment_markers`) shows
+  each claim and release marker, newest first, with its state and why a move was skipped; doctor's
+  `linear.marker_skips` warns with the last 7 days' count and the newest; the project overview's Linear block counts
+  them. A skip a policy setting causes is shown, not sent. An older server says it needs an upgrade. No schema change.
+  Linear config scope: none.
 
 ## Docs
 

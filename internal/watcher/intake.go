@@ -48,7 +48,11 @@ const (
 	labelledOneQuery = `query LabelledOne($team: ID!, $label: ID!, $since: DateTimeOrDuration!, $after: String) { issues(first: 50, after: $after, filter: { team: { id: { eq: $team } }, labels: { id: { eq: $label } }, updatedAt: { gt: $since } }) { nodes { id updatedAt team { id } project { id } labels(first: 50) { nodes { id } pageInfo { hasNextPage } } } pageInfo { hasNextPage endCursor } } }`
 	historyQuery     = `query History($id: String!, $first: Int!, $after: String) { issue(id: $id) { history(first: $first, after: $after) { nodes { createdAt actorId botActor { id } addedLabelIds toDelegate { id } } pageInfo { hasNextPage endCursor } } } }`
 	labelsQuery      = `query IssueLabels($id: String!) { issue(id: $id) { id labels(first: 50) { nodes { id } pageInfo { hasNextPage } } } }`
-	mentionsQuery    = `query Mentions($first: Int!, $after: String) { notifications(first: $first, after: $after) { nodes { id type createdAt ... on IssueNotification { issue { id } actor { id } comment { id } } } pageInfo { hasNextPage endCursor } } }`
+	// needsAgentQuery is a team's needs-agent label set through the app:
+	// the labels of the name that the team, its parent and the workspace
+	// hold, as LabelSetV2 lists them through the team's label listings.
+	needsAgentQuery = `query NeedsAgent($team: String!, $name: String!) { team(id: $team) { id labels(first: 50, filter: { name: { eq: $name } }) { nodes { id name isGroup archivedAt team { id } } pageInfo { hasNextPage } } parent { id labels(first: 50, filter: { name: { eq: $name } }) { nodes { id name isGroup archivedAt team { id } } pageInfo { hasNextPage } } } } issueLabels(first: 50, filter: { name: { eq: $name }, team: { null: true } }) { nodes { id name isGroup archivedAt team { id } } pageInfo { hasNextPage } } }`
+	mentionsQuery   = `query Mentions($first: Int!, $after: String) { notifications(first: $first, after: $after) { nodes { id type createdAt ... on IssueNotification { issue { id } actor { id } comment { id } } } pageInfo { hasNextPage endCursor } } }`
 )
 
 // IntakePoll is what one tick's intake did for a project.
@@ -113,6 +117,9 @@ type intakeRun struct {
 	// perLabel: Linear refused the needs-agent set's filter once this run,
 	// so S1 reads each team once per label for the rest of it.
 	perLabel bool
+	// mcpLabels: Linear refused needsAgentQuery once this run, so the
+	// needs-agent sets are resolved through LabelSetV2 for the rest of it.
+	mcpLabels bool
 }
 
 // intake polls the project's due intake sources under the watch lease and
@@ -433,18 +440,103 @@ func (r *intakeRun) needsAgent(ctx context.Context, team string) ([]string, erro
 	if ok && now.Sub(cached.checked) < labelCacheTTL {
 		return cached.ids, nil
 	}
-	set, err := r.svc.LabelSetV2(ctx, r.scope, team, needsAgentLabel)
-	r.poll.Calls += set.Calls
-	switch {
-	case errors.Is(err, linearboard.ErrLabelAmbiguous), errors.Is(err, linearboard.ErrLabelWalk):
-		set.IDs = nil
-	case err != nil:
+	ids, read, err := r.needsAgentApp(ctx, team)
+	if err != nil {
 		return nil, err
 	}
+	if !read {
+		set, err := r.svc.LabelSetV2(ctx, r.scope, team, needsAgentLabel)
+		r.poll.Calls += set.Calls
+		switch {
+		case errors.Is(err, linearboard.ErrLabelAmbiguous), errors.Is(err, linearboard.ErrLabelWalk):
+			set.IDs = nil
+		case err != nil:
+			return nil, err
+		}
+		ids = set.IDs
+	}
 	r.w.mu.Lock()
-	r.w.labels[key] = labelCache{ids: set.IDs, checked: now}
+	r.w.labels[key] = labelCache{ids: ids, checked: now}
 	r.w.mu.Unlock()
-	return set.IDs, nil
+	return ids, nil
+}
+
+type labelNode struct {
+	ID         string  `json:"id"`
+	Name       string  `json:"name"`
+	IsGroup    bool    `json:"isGroup"`
+	ArchivedAt *string `json:"archivedAt"`
+	Team       *struct {
+		ID string `json:"id"`
+	} `json:"team"`
+}
+
+type labelList struct {
+	Nodes    []labelNode `json:"nodes"`
+	PageInfo pageInfo    `json:"pageInfo"`
+}
+
+// named are the list's labels of the needs-agent name held by team ("" for
+// the workspace's), not archived and not groups; more is a list cut off.
+func (l labelList) named(team string) (ids []string, more bool) {
+	for _, n := range l.Nodes {
+		owner := ""
+		if n.Team != nil {
+			owner = n.Team.ID
+		}
+		if n.Name == needsAgentLabel && !n.IsGroup && n.ArchivedAt == nil && linearprovider.ValidID(n.ID) && owner == team {
+			ids = append(ids, n.ID)
+		}
+	}
+	return ids, l.PageInfo.HasNextPage
+}
+
+// needsAgentApp reads the team's needs-agent set with one app query, under
+// LabelSetV2's rules: the team's own label and the workspace's, then its
+// parent's when the binding reads the parent; a listing with more than one
+// label of the name, or cut off, gives no set. read is false when the app
+// can't serve it (Linear refused the query, or the app can't see the team),
+// and LabelSetV2 is asked instead.
+func (r *intakeRun) needsAgentApp(ctx context.Context, team string) (ids []string, read bool, err error) {
+	if r.mcpLabels {
+		return nil, false, nil
+	}
+	var out struct {
+		Team *struct {
+			ID     string    `json:"id"`
+			Labels labelList `json:"labels"`
+			Parent *struct {
+				ID     string    `json:"id"`
+				Labels labelList `json:"labels"`
+			} `json:"parent"`
+		} `json:"team"`
+		IssueLabels labelList `json:"issueLabels"`
+	}
+	r.poll.Calls++
+	if err = r.w.App.GraphQL(ctx, needsAgentQuery, map[string]any{"team": team, "name": needsAgentLabel}, &out); err != nil {
+		if linearapp.IsQueryInvalid(err) {
+			r.mcpLabels = true
+			return nil, false, nil
+		}
+		return nil, false, err
+	}
+	if out.Team == nil || out.Team.ID != team {
+		return nil, false, nil
+	}
+	workspace, wsMore := out.IssueLabels.named("")
+	own, ownMore := out.Team.Labels.named(team)
+	if wsMore || ownMore || len(own)+len(workspace) > 1 {
+		return nil, true, nil
+	}
+	ids = append(own, workspace...)
+	if p := out.Team.Parent; p != nil && p.ID != team && r.binding.TeamReadable(p.ID) {
+		parent, more := p.Labels.named(p.ID)
+		if more || len(parent)+len(workspace) > 1 {
+			return nil, true, nil
+		}
+		ids = append(ids, parent...)
+	}
+	return ids, true, nil
 }
 
 // delegated is S2: issues delegated to the app, updated since (probe I1:

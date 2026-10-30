@@ -129,6 +129,43 @@ type fakeLinear struct {
 	updated      map[string]string
 	// projectTeams, when set, are each project's teams (default team).
 	projectTeams map[string][]string
+	// refuseLabelSet makes the app refuse needsAgentQuery as an invalid
+	// query, and labelSetErr fail it; hiddenTeams are teams the app can't
+	// see, and answerAs answers a team's query about another.
+	refuseLabelSet bool
+	labelSetErr    error
+	hiddenTeams    map[string]bool
+	answerAs       map[string]string
+	// labelSets are the sets each team's labelled read last asked for;
+	// labelListings counts the provider's label listing pages.
+	labelSets     map[string][]string
+	labelListings int
+}
+
+// labelNodes are the team's labels as the app's GraphQL shows them, from
+// the same lists the provider's label listing returns: a team's own, or
+// the workspace's (Global) when team is "".
+func (f *fakeLinear) labelNodes(listing, team string) map[string]any {
+	items := []linearprovider.Label{{ID: labelNeeds, Name: needsAgentLabel, TeamID: listing, EligibilityKnown: true}}
+	if f.teamLabels != nil {
+		items = f.teamLabels[listing]
+	}
+	nodes := []any{}
+	for _, l := range items {
+		if l.Global != (team == "") || (!l.Global && l.TeamID != team) {
+			continue
+		}
+		var owner any
+		if !l.Global {
+			owner = map[string]any{"id": l.TeamID}
+		}
+		var archived any
+		if l.Archived {
+			archived = "2026-01-01T00:00:00.000Z"
+		}
+		nodes = append(nodes, map[string]any{"id": l.ID, "name": l.Name, "isGroup": l.Group, "archivedAt": archived, "team": owner})
+	}
+	return map[string]any{"nodes": nodes, "pageInfo": map[string]any{"hasNextPage": false}}
 }
 
 func (f *fakeLinear) issue(id string) (linearprovider.IssueV2, error) {
@@ -247,6 +284,7 @@ func (p fakeProvider) IssuesV2(_ context.Context, q linearprovider.IssueQueryV2)
 	return out, nil
 }
 func (p fakeProvider) Labels(_ context.Context, t string, _ linearprovider.PageOptions) (linearprovider.Page[linearprovider.Label], error) {
+	p.f.labelListings++
 	if p.f.teamLabels != nil {
 		return linearprovider.Page[linearprovider.Label]{Items: p.f.teamLabels[t], Complete: true}, nil
 	}
@@ -329,6 +367,10 @@ func (a fakeApp) GraphQL(ctx context.Context, query string, vars map[string]any,
 				return a.f.labelledErr
 			}
 			labels = vars["labels"].([]string)
+			if a.f.labelSets == nil {
+				a.f.labelSets = map[string][]string{}
+			}
+			a.f.labelSets[vars["team"].(string)] = slices.Clone(labels)
 		} else {
 			labels = []string{vars["label"].(string)}
 		}
@@ -385,6 +427,38 @@ func (a fakeApp) GraphQL(ctx context.Context, query string, vars map[string]any,
 			}
 		}
 		data = map[string]any{"issues": map[string]any{"nodes": rows, "pageInfo": info}}
+	case needsAgentQuery:
+		if a.f.refuseLabelSet {
+			return &linearapp.Error{Code: "query_invalid"}
+		}
+		if a.f.labelSetErr != nil {
+			return a.f.labelSetErr
+		}
+		t := vars["team"].(string)
+		if as, ok := a.f.answerAs[t]; ok {
+			t = as
+		}
+		var node any
+		if !a.f.hiddenTeams[t] {
+			n := map[string]any{"id": t, "labels": a.f.labelNodes(t, t), "parent": nil}
+			if p := a.f.parents[t]; p != "" {
+				n["parent"] = map[string]any{"id": p, "labels": a.f.labelNodes(p, p)}
+			}
+			node = n
+		}
+		workspace := a.f.labelNodes(t, "")
+		if p := a.f.parents[t]; p != "" {
+			seen := map[string]bool{}
+			nodes := []any{}
+			for _, n := range append(workspace["nodes"].([]any), a.f.labelNodes(p, "")["nodes"].([]any)...) {
+				if id := n.(map[string]any)["id"].(string); !seen[id] {
+					seen[id] = true
+					nodes = append(nodes, n)
+				}
+			}
+			workspace["nodes"] = nodes
+		}
+		data = map[string]any{"team": node, "issueLabels": workspace}
 	case mentionsQuery:
 		data = map[string]any{"notifications": map[string]any{"nodes": a.f.mentions, "pageInfo": map[string]any{"hasNextPage": false}}}
 	case labelsQuery:

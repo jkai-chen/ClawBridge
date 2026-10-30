@@ -320,3 +320,147 @@ func TestIntakeS1ChargesEveryPage(t *testing.T) {
 		t.Fatalf("calls %+v for %d pages", tick.Intake, pages)
 	}
 }
+
+// labelSetsBy runs one intake tick with every team due and the label cache
+// empty, the needs-agent sets read through the app's query or, refused,
+// through LabelSetV2; it returns the set each team's labelled read asked
+// for, the teams with none, and the provider's label listing pages.
+func labelSetsBy(e *env, mcp bool) (map[string][]string, []string, int) {
+	e.t.Helper()
+	e.w.labels = nil
+	e.f.refuseLabelSet = mcp
+	e.f.labelSets, e.f.labelListings = nil, 0
+	e.dueNow()
+	tick := e.tick()
+	if tick.Intake == nil || len(tick.Intake.Unreadable) != 0 {
+		e.t.Fatalf("intake: %+v", tick.Intake)
+	}
+	return e.f.labelSets, slices.Sorted(slices.Values(tick.Intake.NoLabel)), e.f.labelListings
+}
+
+// The app's query gives each team the set LabelSetV2 gives, under its
+// rules, with no label listing through the provider: a sub-team's own
+// label and its bound parent's; a workspace label once; a team with a
+// workspace label and its own of the name, or two of its own, none; an
+// archived label, a group, another name's spelling and an unbound
+// parent's label left out.
+func TestNeedsAgentSetThroughTheAppMatchesLabelSetV2(t *testing.T) {
+	needs := func(id, t string) linearprovider.Label {
+		return linearprovider.Label{ID: id, Name: needsAgentLabel, TeamID: t, EligibilityKnown: true}
+	}
+	workspace := linearprovider.Label{ID: "b1000000-0000-4000-8000-0000000000aa", Name: needsAgentLabel, Global: true, EligibilityKnown: true}
+	other := "b1000000-0000-4000-8000-0000000000bb"
+	cases := map[string]struct {
+		labels  map[string][]linearprovider.Label
+		parents map[string]string
+		want    map[string][]string
+		none    []string
+	}{
+		"own and parent's": {
+			want: map[string][]string{team: {labelNeeds}, gqlSub1: {gqlLabel1, labelNeeds}, gqlSub2: {gqlLabel2, labelNeeds}},
+		},
+		"workspace label": {
+			labels: map[string][]linearprovider.Label{team: {workspace}, gqlSub1: {workspace}, gqlSub2: {needs(gqlLabel2, gqlSub2), workspace}},
+			want:   map[string][]string{team: {workspace.ID}, gqlSub1: {workspace.ID}},
+			none:   []string{gqlSub2},
+		},
+		"two of the team's own": {
+			labels: map[string][]linearprovider.Label{team: {needs(labelNeeds, team)}, gqlSub1: {needs(gqlLabel1, gqlSub1), needs(other, gqlSub1)}, gqlSub2: {needs(gqlLabel2, gqlSub2)}},
+			want:   map[string][]string{team: {labelNeeds}, gqlSub2: {gqlLabel2, labelNeeds}},
+			none:   []string{gqlSub1},
+		},
+		"two of the parent's": {
+			labels: map[string][]linearprovider.Label{team: {needs(labelNeeds, team), needs(other, team)}, gqlSub1: {needs(gqlLabel1, gqlSub1)}, gqlSub2: {needs(gqlLabel2, gqlSub2)}},
+			want:   map[string][]string{},
+			none:   slices.Sorted(slices.Values([]string{gqlSub1, gqlSub2, team})),
+		},
+		"archived, group and other spellings": {
+			labels: map[string][]linearprovider.Label{
+				team:    {needs(labelNeeds, team), {ID: other, Name: "Needs-Agent", TeamID: team, EligibilityKnown: true}},
+				gqlSub1: {{ID: gqlLabel1, Name: needsAgentLabel, TeamID: gqlSub1, Archived: true, EligibilityKnown: true}, {ID: gqlLabelX, Name: needsAgentLabel, TeamID: gqlSub1, Group: true}},
+				gqlSub2: {needs(gqlLabel2, gqlSub2)},
+			},
+			want: map[string][]string{team: {labelNeeds}, gqlSub1: {labelNeeds}, gqlSub2: {gqlLabel2, labelNeeds}},
+		},
+		"unbound parent": {
+			labels:  map[string][]linearprovider.Label{team: {needs(labelNeeds, team)}, gqlSub1: {needs(gqlLabel1, gqlSub1)}, gqlSub2: {needs(gqlLabel2, gqlSub2)}, gqlUnbound: {needs(other, gqlUnbound)}},
+			parents: map[string]string{gqlSub1: gqlUnbound, gqlSub2: team},
+			want:    map[string][]string{team: {labelNeeds}, gqlSub1: {gqlLabel1}, gqlSub2: {gqlLabel2, labelNeeds}},
+		},
+	}
+	for name, c := range cases {
+		t.Run(name, func(t *testing.T) {
+			e, _, _ := s1Fixture(t)
+			if c.labels != nil {
+				e.f.teamLabels = c.labels
+			}
+			if c.parents != nil {
+				e.f.parents = c.parents
+			}
+			mcpSets, mcpNone, listings := labelSetsBy(e, true)
+			if listings == 0 || !maps.EqualFunc(mcpSets, c.want, slices.Equal) || !slices.Equal(mcpNone, c.none) {
+				t.Fatalf("LabelSetV2 gave %v, none %v; the case wants %v, none %v", mcpSets, mcpNone, c.want, c.none)
+			}
+			from := len(e.f.queries)
+			appSets, appNone, listings := labelSetsBy(e, false)
+			if !maps.EqualFunc(appSets, mcpSets, slices.Equal) || !slices.Equal(appNone, mcpNone) {
+				t.Fatalf("the app gave %v, none %v; LabelSetV2 %v, none %v", appSets, appNone, mcpSets, mcpNone)
+			}
+			if listings != 0 || queries(e, from, needsAgentQuery) != 3 {
+				t.Fatalf("%d provider label pages and %d app label queries for 3 teams", listings, queries(e, from, needsAgentQuery))
+			}
+		})
+	}
+}
+
+// When Linear refuses the query, the run resolves the rest of its sets
+// through LabelSetV2 without asking the app again; a team the app can't
+// see is resolved through LabelSetV2 alone.
+func TestNeedsAgentSetFallsBackToLabelSetV2(t *testing.T) {
+	e, _, sets := s1Fixture(t)
+	from := len(e.f.queries)
+	got, none, listings := labelSetsBy(e, true)
+	if !maps.EqualFunc(got, sets, slices.Equal) || len(none) != 0 || listings == 0 || queries(e, from, needsAgentQuery) != 1 {
+		t.Fatalf("refused: sets %v none %v, %d listings, %d app queries", got, none, listings, queries(e, from, needsAgentQuery))
+	}
+	e.f.hiddenTeams = map[string]bool{gqlSub1: true}
+	got, none, listings = labelSetsBy(e, false)
+	if !maps.EqualFunc(got, sets, slices.Equal) || len(none) != 0 || listings == 0 {
+		t.Fatalf("hidden team: sets %v none %v, %d listings", got, none, listings)
+	}
+	// An answer about another team than the one asked is no answer.
+	e.f.hiddenTeams, e.f.answerAs = nil, map[string]string{gqlSub2: team}
+	got, none, listings = labelSetsBy(e, false)
+	if !maps.EqualFunc(got, sets, slices.Equal) || len(none) != 0 || listings == 0 {
+		t.Fatalf("another team's answer: sets %v none %v, %d listings", got, none, listings)
+	}
+}
+
+// Another error from the app is the team's source unreadable, as for the
+// labelled read; nothing falls back.
+func TestNeedsAgentSetOtherErrorIsUnreadable(t *testing.T) {
+	e, _, _ := s1Fixture(t)
+	e.w.labels = nil
+	e.f.labelSetErr = &linearapp.Error{Code: "query_failed"}
+	e.f.labelListings = 0
+	tick := e.tick()
+	if tick.Intake == nil || !slices.Contains(tick.Intake.Unreadable, "intake-s1") || e.f.labelListings != 0 {
+		t.Fatalf("intake: %+v, %d listings", tick.Intake, e.f.labelListings)
+	}
+}
+
+// The query's pages are charged: once the candidates are queued, a tick
+// with the cache empty charges one call per team more than one with it
+// warm.
+func TestNeedsAgentSetQueriesAreCharged(t *testing.T) {
+	e, _, _ := s1Fixture(t)
+	e.tick()
+	e.dueNow()
+	warm := e.tick()
+	e.w.labels = nil
+	e.dueNow()
+	cold := e.tick()
+	if cold.Intake == nil || warm.Intake == nil || cold.Intake.Calls-warm.Intake.Calls != 3 {
+		t.Fatalf("cold %+v warm %+v", cold.Intake, warm.Intake)
+	}
+}

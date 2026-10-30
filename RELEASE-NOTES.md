@@ -35,6 +35,11 @@
   `linear.marker_skips` warns with the last 7 days' count and the newest; the project overview's Linear block counts
   them. A skip a policy setting causes is shown, not sent. An older server says it needs an upgrade. No schema change.
   Linear config scope: none.
+- Intake resolves a team's `needs-agent` label set (its own label, its bound parent's, a workspace one) with one app
+  query instead of the provider's label listings, under the same rules (exact name, no archived label or group, none
+  when a listing holds two); the hourly refresh drops from several seconds to one call, and every call is charged. If
+  Linear refuses the query, or the app can't see the team, the set comes from the label listings as before. Linear
+  config scope: none.
 
 ## Docs
 

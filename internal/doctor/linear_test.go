@@ -41,19 +41,45 @@ func TestLinearInstalledProfileMatchesDoctorExactly(t *testing.T) {
 						t.Fatal("matching native profile rejected", check)
 					}
 				})
-				if profile != "" {
-					for _, wrong := range []string{"", "lin_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"} {
-						expected.LinearProfile = wrong
-						checkMCP(expected, func(check Check) {
-							if check.Status != Fail {
-								t.Fatal("changed or omitted native profile accepted", check)
-							}
-						})
-					}
+				if profile == "" {
+					expected.LinearProfile = "lin_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+					checkMCP(expected, func(check Check) {
+						if check.Status != Fail {
+							t.Fatal("an entry without the expected profile accepted", check)
+						}
+					})
+				} else {
+					// Doctor without a profile takes the entry's own.
+					expected.LinearProfile = ""
+					checkMCP(expected, func(check Check) {
+						if check.Status != Pass {
+							t.Fatal("the entry's own profile rejected", check)
+						}
+					})
+					expected.LinearProfile = "lin_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+					checkMCP(expected, func(check Check) {
+						if check.Status != Fail || !strings.Contains(check.Message, "Linear profile "+profile+", expected "+expected.LinearProfile) {
+							t.Fatal("changed native profile accepted or unexplained", check)
+						}
+					})
 				}
 				after, err := os.ReadFile(path)
 				if err != nil || !bytes.Equal(before, after) {
 					t.Fatal("doctor modified selected config", err)
+				}
+				if profile != "" {
+					// A malformed profile is no profile, whatever doctor has.
+					if err := os.WriteFile(path, bytes.ReplaceAll(before, []byte(profile), []byte("lin bad/value")), 0600); err != nil {
+						t.Fatal(err)
+					}
+					for _, own := range []string{"", profile} {
+						expected.LinearProfile = own
+						checkMCP(expected, func(check Check) {
+							if check.Status != Fail || strings.Contains(check.Message, "bad") {
+								t.Fatal("malformed native profile accepted or echoed", check)
+							}
+						})
+					}
 				}
 			})
 		}

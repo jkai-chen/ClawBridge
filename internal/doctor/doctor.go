@@ -1373,8 +1373,27 @@ func checkMCP(mcp MCPConfig, add func(Check)) {
 		add(check)
 		return
 	}
+	// Without a profile of its own, doctor takes the entry's: the install's
+	// --linear-profile isn't kept anywhere doctor reads. The entry must then
+	// equal, argument for argument, the one the installer writes with it.
+	profile, pinned := installedLinearProfile(entry)
+	adopted := false
+	if mcp.LinearProfile == "" && pinned {
+		withProfile := mcp
+		withProfile.LinearProfile = profile
+		if candidate, err := expectedMCPEntry(withProfile); err == nil {
+			expected, adopted = candidate, true
+		}
+	}
 	if !entryMatches(entry, expected) {
 		check.Message = "The installed MCP entry conflicts with the expected project, session, mode or credential route."
+		if mcp.LinearProfile != "" && pinned && profile != mcp.LinearProfile {
+			withProfile := mcp
+			withProfile.LinearProfile = profile
+			if candidate, err := expectedMCPEntry(withProfile); err == nil && entryMatches(entry, candidate) {
+				check.Message = "The installed MCP entry has Linear profile " + profile + ", expected " + mcp.LinearProfile + "."
+			}
+		}
 		check.Action = "Inspect the entry and reinstall with the intended exact scope and a distinct entry name if needed; doctor made no change."
 		add(check)
 		return
@@ -1395,6 +1414,10 @@ func checkMCP(mcp MCPConfig, add func(Check)) {
 	}
 	check.Status = Pass
 	check.Message = "The installed MCP entry matches the expected authority, scope and credential route."
+	if adopted {
+		// Never silently: the profile the entry pins is named.
+		check.Message += " It uses the Linear profile " + profile + " it was installed with; check another with --mcp-linear-profile."
+	}
 	add(check)
 }
 
@@ -1439,8 +1462,25 @@ func parseMCPEntry(agent, name string, raw []byte) (map[string]any, bool, error)
 	return entry, true, nil
 }
 
+// linearProfileID is the shape of a personal Linear profile ID, as the
+// installer and the global --linear-profile flag accept it.
+var linearProfileID = regexp.MustCompile(`^[A-Za-z0-9._-]{1,128}$`)
+
+// installedLinearProfile is the well-formed value of the entry's one
+// --linear-profile argument; a malformed one is not a profile.
+func installedLinearProfile(entry map[string]any) (string, bool) {
+	args, _ := entry["args"].([]any)
+	for i := 0; i+1 < len(args); i++ {
+		if flag, _ := args[i].(string); flag == "--linear-profile" {
+			profile, ok := args[i+1].(string)
+			return profile, ok && linearProfileID.MatchString(profile)
+		}
+	}
+	return "", false
+}
+
 func expectedMCPEntry(mcp MCPConfig) (map[string]any, error) {
-	if mcp.LinearProfile != "" && !regexp.MustCompile(`^[A-Za-z0-9._-]{1,128}$`).MatchString(mcp.LinearProfile) {
+	if mcp.LinearProfile != "" && !linearProfileID.MatchString(mcp.LinearProfile) {
 		return nil, errors.New("invalid personal Linear profile ID")
 	}
 	if mcp.Workspace == "" || mcp.Project == "" || mcp.Session == "" {

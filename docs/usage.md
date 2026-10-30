@@ -307,7 +307,10 @@ edit; `--client-config` selects the trusted ClawBridge profile. Without an expli
 agent file, Codex uses `$CODEX_HOME/config.toml` or `~/.codex/config.toml`; Claude
 Code uses `.mcp.json` in the current directory. Conflicting entries fail; unrelated
 entries survive an atomic, backed-up update. Distinct `--name` values allow
-multiple scoped entries in one file.
+multiple scoped entries in one file. An entry installed with `--linear-profile` keeps the
+profile in its arguments; `doctor` checks it against `--mcp-linear-profile ID`
+(or `--linear-profile ID`) when given, and otherwise accepts the entry's own
+well-formed profile and names it in the check.
 
 Installation writes configuration and does not start an agent. Cloud entries pin
 the trusted client-config path and safe routing metadata. The MCP process needs

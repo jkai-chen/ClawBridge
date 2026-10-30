@@ -107,6 +107,7 @@ func TestPhase4AdapterPreflightHasNoSideEffects(t *testing.T) {
 		{"--client-config", "/a", "--client-config", "/b", "whoami"},
 		{"doctor", "--mcp-name", "clawbridge"},
 		{"doctor", "--mcp-agent", "codex"},
+		{"doctor", "--mcp-agent", "codex", "--mcp-config", "c.toml", "--mcp-session", "s", "--mcp-linear-profile", "bad value"},
 		{"tui", "--screen", "invalid"},
 		{"setup", "join", "--workspace", "w", "--project", "p"},
 	} {

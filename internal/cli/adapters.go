@@ -169,13 +169,14 @@ func mcpSelection(c Config, path, agent, target, name, session, instance string)
 }
 
 func runDoctorCommand(ctx context.Context, flags Config, args []string, stdout, stderr io.Writer) error {
-	var agent, target, session, name, instance string
+	var agent, target, session, name, instance, profile string
 	f, err := commandFlags("doctor", args, stderr, func(f *flag.FlagSet) {
 		f.StringVar(&agent, "mcp-agent", "", "codex or claude-code")
 		f.StringVar(&target, "mcp-config", "", "agent config path")
 		f.StringVar(&session, "mcp-session", "", "independent installed session")
 		f.StringVar(&name, "mcp-name", "clawbridge", "entry name")
 		f.StringVar(&instance, "mcp-instance", "", "installed session instance")
+		f.StringVar(&profile, "mcp-linear-profile", "", "the installed entry's Linear profile (default: the entry's own)")
 	})
 	if errors.Is(err, flag.ErrHelp) {
 		return nil
@@ -183,7 +184,10 @@ func runDoctorCommand(ctx context.Context, flags Config, args []string, stdout, 
 	if err != nil {
 		return err
 	}
-	selected := agent != "" || target != "" || session != "" || instance != "" || name != "clawbridge"
+	if profile != "" && !validLinearProfile(profile) {
+		return errors.New("invalid personal Linear profile ID")
+	}
+	selected := agent != "" || target != "" || session != "" || instance != "" || profile != "" || name != "clawbridge"
 	f.Visit(func(*flag.Flag) { selected = true })
 	if selected && (agent == "" || target == "" || session == "") {
 		return errors.New("doctor requires --mcp-agent, --mcp-config and --mcp-session together")
@@ -202,7 +206,11 @@ func runDoctorCommand(ctx context.Context, flags Config, args []string, stdout, 
 		return err
 	}
 	if selected {
-		return runDoctor(ctx, c, path, stdout, mcpSelection(c, path, agent, target, name, session, instance))
+		mcp := mcpSelection(c, path, agent, target, name, session, instance)
+		if profile != "" {
+			mcp.LinearProfile = profile
+		}
+		return runDoctor(ctx, c, path, stdout, mcp)
 	}
 	return runDoctor(ctx, c, path, stdout)
 }

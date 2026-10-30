@@ -130,6 +130,9 @@ type Watcher struct {
 	// budgets are each project's hour of Linear calls, as this process's
 	// passes saw it (noteBudget).
 	budgets map[string]*budgetHour
+	// docsByProvider: Linear refused the app's document list once, so the
+	// document watch lists through the provider for the rest of the process.
+	docsByProvider bool
 }
 
 type userCheck struct {

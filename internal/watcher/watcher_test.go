@@ -83,10 +83,14 @@ type fakeLinear struct {
 	statusErr   error
 	// docRefs, docMore and docContent answer the document watch; events
 	// records the order of comment and document reads.
-	docRefs    []linearprovider.DocRef
-	docMore    bool
-	docContent map[string]string
-	events     []string
+	docRefs []linearprovider.DocRef
+	// refuseDocs makes the app refuse documentsQuery as an invalid query;
+	// providerDocLists counts the provider's document lists.
+	refuseDocs       bool
+	providerDocLists int
+	docMore          bool
+	docContent       map[string]string
+	events           []string
 	// dispatchIssues answers the dispatcher's issue facts read.
 	dispatchIssues map[string]any
 	// Project flow: projectStatus is the project's status ID, statuses the
@@ -459,6 +463,22 @@ func (a fakeApp) GraphQL(ctx context.Context, query string, vars map[string]any,
 			workspace["nodes"] = nodes
 		}
 		data = map[string]any{"team": node, "issueLabels": workspace}
+	case documentsQuery:
+		a.f.events = append(a.f.events, "docs-list")
+		if a.f.refuseDocs {
+			return &linearapp.Error{Code: "query_invalid"}
+		}
+		nodes := []any{}
+		for _, d := range a.f.docRefs {
+			ref := func(id string) any {
+				if id == "" {
+					return nil
+				}
+				return map[string]any{"id": id}
+			}
+			nodes = append(nodes, map[string]any{"id": d.ID, "updatedAt": d.UpdatedAt, "team": ref(d.TeamID), "project": ref(d.ProjectID), "initiative": ref(d.InitiativeID), "issue": ref(d.IssueID)})
+		}
+		data = map[string]any{"documents": map[string]any{"nodes": nodes, "pageInfo": map[string]any{"hasNextPage": a.f.docMore, "endCursor": nil}}}
 	case mentionsQuery:
 		data = map[string]any{"notifications": map[string]any{"nodes": a.f.mentions, "pageInfo": map[string]any{"hasNextPage": false}}}
 	case labelsQuery:

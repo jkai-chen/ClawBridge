@@ -1,12 +1,21 @@
 package watcher
 
 import (
+	"cmp"
 	"context"
+	"errors"
 	"time"
 
 	"clawbridge/internal/bus"
+	"clawbridge/internal/linearapp"
 	"clawbridge/internal/linearboard"
+	"clawbridge/internal/linearprovider"
 )
+
+// documentsQuery is the list through the app: the documents changed since,
+// workspace-wide, archived ones too, with their parents and never their
+// content, as the provider's list_documents reads them.
+const documentsQuery = `query Documents($since: DateTimeOrDuration!) { documents(first: 50, includeArchived: true, orderBy: updatedAt, filter: { updatedAt: { gt: $since } }) { nodes { id updatedAt team { id } project { id } initiative { id } issue { id } } pageInfo { hasNextPage endCursor } } }`
 
 // Document change notices (live/LINEAR-DOCS-DESIGN.md §4): after the
 // comment watch, markers, intake and health, a tick makes the one
@@ -63,7 +72,7 @@ func (w *Watcher) docs(ctx context.Context, svc *linearboard.Service, pid string
 	if t, e := time.Parse(time.RFC3339Nano, since); e == nil {
 		since = t.UTC().Format(time.RFC3339)
 	}
-	if page, e := svc.DocumentsChangedSince(ctx, since); e != nil {
+	if page, e := w.documentsChanged(ctx, svc, since); e != nil {
 		report["error"] = "list_failed"
 	} else {
 		list := []any{}
@@ -85,4 +94,75 @@ func (w *Watcher) docs(ctx context.Context, svc *linearboard.Service, pid string
 	}
 	poll.Error, _ = report["error"].(string)
 	return poll, nil
+}
+
+// documentsChanged is the list call: one app query, or, once Linear has
+// refused the query, the provider's list for the rest of this process.
+func (w *Watcher) documentsChanged(ctx context.Context, svc *linearboard.Service, since string) (linearprovider.Page[linearprovider.DocRef], error) {
+	w.mu.Lock()
+	provider := w.docsByProvider
+	w.mu.Unlock()
+	if !provider {
+		page, err := w.documentsByApp(ctx, since)
+		if !linearapp.IsQueryInvalid(err) {
+			return page, err
+		}
+		w.mu.Lock()
+		w.docsByProvider = true
+		w.mu.Unlock()
+	}
+	return svc.DocumentsChangedSince(ctx, since)
+}
+
+type idRef struct {
+	ID string `json:"id"`
+}
+
+func (r *idRef) id() (string, error) {
+	if r == nil {
+		return "", nil
+	}
+	if !linearprovider.ValidID(r.ID) {
+		return "", errors.New("a document's parent is not a Linear ID")
+	}
+	return r.ID, nil
+}
+
+func (w *Watcher) documentsByApp(ctx context.Context, since string) (linearprovider.Page[linearprovider.DocRef], error) {
+	var out struct {
+		Documents struct {
+			Nodes []struct {
+				ID         string `json:"id"`
+				UpdatedAt  string `json:"updatedAt"`
+				Team       *idRef `json:"team"`
+				Project    *idRef `json:"project"`
+				Initiative *idRef `json:"initiative"`
+				Issue      *idRef `json:"issue"`
+			} `json:"nodes"`
+			PageInfo pageInfo `json:"pageInfo"`
+		} `json:"documents"`
+	}
+	if err := w.App.GraphQL(ctx, documentsQuery, map[string]any{"since": since}, &out); err != nil {
+		return linearprovider.Page[linearprovider.DocRef]{}, err
+	}
+	// A page with more behind it must say so with its cursor, or the bus
+	// would read it as complete and move past what it hasn't seen.
+	page := linearprovider.Page[linearprovider.DocRef]{Complete: !out.Documents.PageInfo.HasNextPage}
+	if !page.Complete {
+		page.NextCursor = cmp.Or(out.Documents.PageInfo.EndCursor, "more")
+	}
+	for _, n := range out.Documents.Nodes {
+		if !linearprovider.ValidID(n.ID) {
+			return linearprovider.Page[linearprovider.DocRef]{}, errors.New("a document's ID is not a Linear ID")
+		}
+		ref := linearprovider.DocRef{ID: n.ID, UpdatedAt: n.UpdatedAt}
+		var err error
+		for dst, r := range map[*string]*idRef{&ref.TeamID: n.Team, &ref.ProjectID: n.Project, &ref.InitiativeID: n.Initiative, &ref.IssueID: n.Issue} {
+			if *dst, err = r.id(); err != nil {
+				return linearprovider.Page[linearprovider.DocRef]{}, err
+			}
+		}
+		page.Items = append(page.Items, ref)
+	}
+	return page, nil
 }

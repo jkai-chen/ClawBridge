@@ -19,6 +19,10 @@ clawbridge --version
 clawbridge
 ```
 
+The installer needs `curl` and `sha256sum` (or `shasum`). Most desktops have
+both; a minimal Linux image or container may not, so install them first (on
+Debian or Ubuntu: `sudo apt-get install -y curl ca-certificates`).
+
 The `export` line lasts for this shell only; add it to `~/.zshrc` or `~/.bashrc`
 so new terminals find `clawbridge`. `clawbridge --version` prints JSON like
 `{"source":"build","data":{"version":"vX.Y.Z",...}}` with the installed release.

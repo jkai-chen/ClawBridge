@@ -49,6 +49,10 @@ jobs:
         with:
           go-version-file: go.mod
           cache: false
+      # A reachable vulnerability in the code or the Go standard library
+      # fails the release before anything is built or published.
+      - name: Check for reachable Go vulnerabilities
+        run: go run golang.org/x/vuln/cmd/govulncheck@v1.9.0 ./...
       - name: Build exact tagged source
         env:
           RELEASE_TAG: ${{ github.ref_name }}

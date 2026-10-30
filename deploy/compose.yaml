@@ -1,6 +1,7 @@
+# Pinned by digest, tag kept for reading; refresh: docs/operations/deployment.md, "Refreshing the base image digests".
 services:
   db:
-    image: postgres:17-alpine
+    image: postgres:17-alpine@sha256:266d3c257594e195b309ae9d1805e54c788f1d7b375f56bf6c367aac6c917e7b
     environment:
       POSTGRES_DB: clawbridge
       POSTGRES_USER: clawbridge
@@ -98,7 +99,7 @@ services:
     stop_grace_period: 90s
 
   caddy:
-    image: caddy:2.10-alpine
+    image: caddy:2.10-alpine@sha256:4c6e91c6ed0e2fa03efd5b44747b625fec79bc9cd06ac5235a779726618e530d
     command:
       - caddy
       - reverse-proxy

@@ -4,6 +4,8 @@
 #   docker compose -f compose.yaml -f compose.image.yaml up -d --no-deps api
 # CLAWBRIDGE_IMAGE is ghcr.io/jkai-chen/clawbridge@sha256:…, the digest a
 # release names. build is reset, so this path can only pull that exact image.
+# compose.yaml's postgres and caddy images are pinned by digest too; refresh:
+# docs/operations/deployment.md, "Refreshing the base image digests".
 services:
   api:
     image: ${CLAWBRIDGE_IMAGE:?Set CLAWBRIDGE_IMAGE to ghcr.io/jkai-chen/clawbridge@sha256:<digest from the release>}

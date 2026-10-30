@@ -1,3 +1,4 @@
+# Pinned by digest, tag kept for reading; refresh: docs/operations/deployment.md, "Refreshing the base image digests".
 # Runs ClawBridge on your own machine, layered on compose.yaml:
 #
 #   docker compose -f deploy/compose.yaml -f deploy/compose.local.yaml ...
@@ -65,7 +66,7 @@ services:
   # needs no CA or ACME state, so Caddy's data and config live in its tmpfs.
   caddy-cert:
     profiles: [lan-cert]
-    image: caddy:2.10-alpine
+    image: caddy:2.10-alpine@sha256:4c6e91c6ed0e2fa03efd5b44747b625fec79bc9cd06ac5235a779726618e530d
     user: ${CLAWBRIDGE_LOCAL_UID:-0}:${CLAWBRIDGE_LOCAL_GID:-0}
     sysctls:
       net.ipv4.ip_unprivileged_port_start: 443

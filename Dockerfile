@@ -3,7 +3,7 @@
 # cut: scripts/check-image.sh bases --strict (docs/design/releases.md).
 # The build stage runs on the builder's platform and cross-compiles, and the
 # final stage has no RUN, so an arm64 image needs no emulation.
-FROM --platform=$BUILDPLATFORM golang:1.26-alpine@sha256:a2012b4a1d1f9f7e9f44e0d39b805a901e856b1dd80b4e6ee4338db547050308 AS build
+FROM --platform=$BUILDPLATFORM golang:1.26.10-alpine@sha256:a2012b4a1d1f9f7e9f44e0d39b805a901e856b1dd80b4e6ee4338db547050308 AS build
 ARG TARGETOS
 ARG TARGETARCH
 # The release workflow stamps the tag, its commit and the commit's time,

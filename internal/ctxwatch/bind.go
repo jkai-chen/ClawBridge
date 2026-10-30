@@ -15,15 +15,17 @@ import (
 )
 
 // SaveBinding writes session's binding record under dir, atomically and
-// private to the user. The directory is created 0700 when missing; an
-// existing record that is a link or not private is refused, not replaced.
+// private to the user. The directory is created 0700 when missing (on
+// Windows, private by ACL); an existing record that is a link or not private
+// is refused, not replaced. On Windows one this user owns is replaced
+// whatever its ACL, and the new one is private (bindingReplaceable).
 func SaveBinding(dir, session string, b Binding) error {
 	path, err := BindingPath(dir, session)
 	if err != nil {
 		return err
 	}
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return fmt.Errorf("the context directory %s could not be created", dir)
+	if err := MakeContextDir(dir); err != nil {
+		return err
 	}
 	if info, err := os.Lstat(dir); err != nil || !info.IsDir() {
 		return fmt.Errorf("the context directory %s is not a directory", dir)
@@ -32,8 +34,8 @@ func SaveBinding(dir, session string, b Binding) error {
 		if !info.Mode().IsRegular() {
 			return fmt.Errorf("the binding record %s is not a regular file", path)
 		}
-		if err := privateToUser(info); err != nil {
-			return fmt.Errorf("the binding record %s %s", path, err)
+		if err := bindingReplaceable(path, info); err != nil {
+			return privacyError("binding record", path, err, "the binding record %s %s")
 		}
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return fmt.Errorf("the binding record %s is not readable", path)
@@ -49,7 +51,10 @@ func SaveBinding(dir, session string, b Binding) error {
 	}
 	name := tmp.Name()
 	defer os.Remove(name)
-	err = tmp.Chmod(0o600)
+	err = makePrivate(name)
+	if err == nil {
+		err = tmp.Chmod(0o600)
+	}
 	if err == nil {
 		_, err = tmp.Write(append(data, '\n'))
 	}

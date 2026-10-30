@@ -85,8 +85,8 @@ func TestQueueRecordRacesTheStat(t *testing.T) {
 		t.Fatal(ok, err)
 	}
 	if runtime.GOOS == "windows" {
-		// Windows has no mode bits: a record is private by the profile's ACL,
-		// so no swap for a looser mode exists to catch.
+		// Windows has no mode bits: a swap for a broader ACL is
+		// TestWindowsBroadRecordSwappedInAfterTheStatIsRefused.
 		return
 	}
 	if err := SaveQueueRecord(dir, r); err != nil {

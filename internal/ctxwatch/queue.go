@@ -68,7 +68,7 @@ func SaveQueueRecord(dir string, r QueueRecord) error {
 	if err != nil {
 		return err
 	}
-	return writePrivate(dir, path, data)
+	return writePrivate("queue record", dir, path, data)
 }
 
 // RemoveQueueRecord removes session's record when it is still the one
@@ -87,7 +87,7 @@ func LoadQueueRecord(dir, session string) (QueueRecord, bool, error) {
 	if err != nil {
 		return QueueRecord{}, false, err
 	}
-	data, ok, err := readPrivate(path)
+	data, ok, err := readPrivate("queue record", path)
 	if err != nil || !ok {
 		return QueueRecord{}, false, err
 	}
@@ -158,7 +158,7 @@ func SaveCompactionHold(dir, session string, h CompactionHold) error {
 	if err != nil {
 		return err
 	}
-	return writePrivate(dir, path, data)
+	return writePrivate("compaction hold", dir, path, data)
 }
 
 // LoadCompactionHold reads session's mark, if any.
@@ -167,7 +167,7 @@ func LoadCompactionHold(dir, session string) (CompactionHold, bool) {
 	if err != nil {
 		return CompactionHold{}, false
 	}
-	data, ok, err := readPrivate(path)
+	data, ok, err := readPrivate("compaction hold", path)
 	if err != nil || !ok {
 		return CompactionHold{}, false
 	}
@@ -199,7 +199,7 @@ func LoadStopMark(dir, session string) (StopMark, bool) {
 	if err != nil {
 		return StopMark{}, false
 	}
-	data, ok, err := readPrivate(path)
+	data, ok, err := readPrivate("stop mark", path)
 	if err != nil || !ok {
 		return StopMark{}, false
 	}
@@ -220,16 +220,17 @@ func SaveStopMark(dir, session string, m StopMark) error {
 	if err != nil {
 		return err
 	}
-	return writePrivate(dir, path, data)
+	return writePrivate("stop mark", dir, path, data)
 }
 
 // afterStat runs between readPrivate's stat and its open; tests remove or
 // replace the file there.
 var afterStat = func() {}
 
-// readPrivate reads a small record: a regular file, not a link, owned by
-// this user and readable by nobody else.
-func readPrivate(path string) ([]byte, bool, error) {
+// readPrivate reads a small record, of kind (for its errors): a regular
+// file, not a link, owned by this user and readable by nobody else (on
+// Windows, by its owner and DACL). A record that fails the check is refused.
+func readPrivate(kind, path string) ([]byte, bool, error) {
 	info, err := os.Lstat(path)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil, false, nil
@@ -237,8 +238,8 @@ func readPrivate(path string) ([]byte, bool, error) {
 	if err != nil || !info.Mode().IsRegular() {
 		return nil, false, fmt.Errorf("%s is not a regular file", path)
 	}
-	if err := privateToUser(info); err != nil {
-		return nil, false, fmt.Errorf("%s %s", path, err)
+	if err := privateToUser(path, info); err != nil {
+		return nil, false, privacyError(kind, path, err, "%s %s")
 	}
 	afterStat()
 	f, err := openNoFollow(path)
@@ -254,8 +255,8 @@ func readPrivate(path string) ([]byte, bool, error) {
 	if info, err = f.Stat(); err != nil || !info.Mode().IsRegular() {
 		return nil, false, fmt.Errorf("%s is not a regular file", path)
 	}
-	if err := privateToUser(info); err != nil {
-		return nil, false, fmt.Errorf("%s %s", path, err)
+	if err := openedPrivate(f, path, info); err != nil {
+		return nil, false, privacyError(kind, path, err, "%s %s")
 	}
 	data, err := io.ReadAll(io.LimitReader(f, 256<<10))
 	if err != nil {
@@ -264,13 +265,21 @@ func readPrivate(path string) ([]byte, bool, error) {
 	return data, true, nil
 }
 
-// writePrivate replaces path with data, 0600, through a rename.
-func writePrivate(dir, path string, data []byte) error {
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return fmt.Errorf("the context directory %s could not be created", dir)
+// writePrivate replaces path, a record of kind, with data, 0600, through a
+// rename. On Windows the temp file is made private (owner and DACL) before
+// the rename, which keeps it; an existing record this user owns is replaced
+// whatever its ACL, and one anyone else owns is refused (recordReplaceable).
+func writePrivate(kind, dir, path string, data []byte) error {
+	if err := MakeContextDir(dir); err != nil {
+		return err
 	}
-	if info, err := os.Lstat(path); err == nil && !info.Mode().IsRegular() {
-		return fmt.Errorf("%s is not a regular file", path)
+	if info, err := os.Lstat(path); err == nil {
+		if !info.Mode().IsRegular() {
+			return fmt.Errorf("%s is not a regular file", path)
+		}
+		if err := recordReplaceable(path, info); err != nil {
+			return privacyError(kind, path, err, "%s %s")
+		}
 	}
 	tmp, err := os.CreateTemp(dir, ".record-*")
 	if err != nil {
@@ -278,7 +287,10 @@ func writePrivate(dir, path string, data []byte) error {
 	}
 	name := tmp.Name()
 	defer os.Remove(name)
-	err = tmp.Chmod(0o600)
+	err = makePrivate(name)
+	if err == nil {
+		err = tmp.Chmod(0o600)
+	}
 	if err == nil {
 		_, err = tmp.Write(append(data, '\n'))
 	}

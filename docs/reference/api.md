@@ -558,6 +558,17 @@ An agent's MCP server is its consumer of the queue.
   under 3 minutes old, a private regular file, and its MCP server is alive and
   the child of the hook's own agent process. A hosted record's server must be
   the configured one.
+- **Privacy on Windows:** with no file modes there, every context record (this
+  one, the binding record, the compaction hold and the Stop hook's mark) is owned
+  by the user with an ACL that lets only the user in, and so is the `context`
+  directory when ClawBridge creates it (or finds the user's own with a broader
+  ACL). Every read checks the owner and the ACL: a record whose
+  ACL lets in anyone but the user, SYSTEM and Administrators, or that another
+  user owns, is refused (the error names the record; delete it). The user
+  profile's own ACL passes, so older records there keep working, and a writer
+  replaces the user's own record that has a broader ACL with a private one. A
+  record an elevated (administrator) session created is refused by a
+  non-elevated one: run elevated, or delete it.
 - **Stop hook** (`clawbridge hook stop --from-hook`, Claude Code's `Stop`):
   with unacked messages it blocks the stop with
   `{"decision":"block","reason":"N ClawBridge messages are waiting: call inbox, handle them, then ack"}`.
@@ -1207,8 +1218,9 @@ notices go through the server ([context watching](#context-watching-on-the-serve
 - **Which transcript:**
   - with `--session` (default `CLAWBRIDGE_SESSION`), the one in that session's
     binding record, `<state home>/context/<session>.json`. That record is private
-    (0600, owned by the user, not a link), and a session without one shows
-    "not bound";
+    (0600, owned by the user, not a link; on Windows, by its owner and ACL, as
+    for the [queue record](#agents-and-the-queue)), and a session without one
+    shows "not bound";
   - with `--agent` and `--transcript`, the one named.
 - **What is read:** a regular file owned by the user, never through a link, and
   only its last 4 MiB. A line over 1 MiB is skipped.

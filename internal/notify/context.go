@@ -87,7 +87,7 @@ func (r *contextReporter) tick(ctx context.Context, req bus.Request) {
 		return
 	}
 	if r.lock == nil {
-		if os.MkdirAll(r.dir, 0o700) != nil {
+		if ctxwatch.MakeContextDir(r.dir) != nil {
 			return
 		}
 		f, held, err := ctxwatch.TryLock(strings.TrimSuffix(path, ".json") + ".lock")

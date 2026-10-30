@@ -79,14 +79,21 @@ func LoadBinding(dir, session string) (Binding, bool, error) {
 	if err != nil || !info.Mode().IsRegular() {
 		return Binding{}, false, fmt.Errorf("the binding record %s is not a regular file", path)
 	}
-	if err := privateToUser(info); err != nil {
-		return Binding{}, false, fmt.Errorf("the binding record %s %s", path, err)
+	if err := privateToUser(path, info); err != nil {
+		return Binding{}, false, privacyError("binding record", path, err, "the binding record %s %s")
 	}
 	f, err := openNoFollow(path)
 	if err != nil {
 		return Binding{}, false, fmt.Errorf("the binding record %s is not readable", path)
 	}
 	defer f.Close()
+	// A rename since the stat can put another file there; check the one opened.
+	if info, err = f.Stat(); err != nil || !info.Mode().IsRegular() {
+		return Binding{}, false, fmt.Errorf("the binding record %s is not a regular file", path)
+	}
+	if err := openedPrivate(f, path, info); err != nil {
+		return Binding{}, false, privacyError("binding record", path, err, "the binding record %s %s")
+	}
 	data, err := io.ReadAll(io.LimitReader(f, 64<<10))
 	if err != nil {
 		return Binding{}, false, fmt.Errorf("the binding record %s is not readable", path)

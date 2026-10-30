@@ -96,10 +96,11 @@ func (w *waker) wait(ctx context.Context, c Config) error {
 	}
 }
 
-// noticeText is the only text the command adapter is ever given to show or
-// type (M6): fixed words and a count, never a sender, subject or body, so
-// no member can type into an idle agent's terminal.
-func noticeText(waiting int64) string {
+// NoticeText is the only text the command adapter is ever given to show or
+// type (M6), and the only content the channel server pushes (FR26): fixed
+// words and a count, never a sender, subject or body, so no member can type
+// into an idle agent's terminal or prompt it.
+func NoticeText(waiting int64) string {
 	if waiting == 1 {
 		return "1 ClawBridge message is waiting; call inbox"
 	}
@@ -155,7 +156,7 @@ func resolveCommand(argv []string) ([]string, error) {
 // place of each {text} argument and in CLAWBRIDGE_NOTICE_TEXT, the count in
 // CLAWBRIDGE_NOTICE_COUNT, and the event's IDs as JSON on stdin.
 func commandHint(ctx context.Context, c Config, e Event) error {
-	text := noticeText(e.UnreadCount)
+	text := NoticeText(e.UnreadCount)
 	argv := make([]string, len(c.Binding.Command))
 	for i, a := range c.Binding.Command {
 		argv[i] = strings.ReplaceAll(a, TextPlaceholder, text)

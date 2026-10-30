@@ -50,7 +50,8 @@ Commands: setup --local, project create SLUG, register [NAME], sessions, send TO
           notify --adapter json|codex --state ABSOLUTE_PATH [--thread UUID] [--interval 5s] [--once],
           linear COMMAND --help (native connection, scoped task board and task actions),
           runner launch ISSUE_UUID --profile ID [--role ROLE] [--dry-run], runner gc [--confirm] (Claude in an Orca terminal),
-          mcp [--linear-profile ID], mcp install ... [--linear-profile ID] (opt-in native Linear tools),
+          mcp [--linear-profile ID], mcp install ... [--linear-profile ID] [--channel] (opt-in native Linear tools; Claude Code wake through the ClawBridge channel),
+          channel allow [--write [--force]] (admin step), channel setup (install the plugin),
           skill install|status|uninstall [--agent claude-code|codex|all] [--dir SKILLS_DIR] [--force],
           self-update [--check] [--version vX.Y.Z] [--verify-attestation] [--no-skill] (alias upgrade; replaces this binary with a release),
           serve, operator principal-unbind|workspace-clear-domains ... --confirm (on the server host),
@@ -62,7 +63,7 @@ Commands: setup --local, project create SLUG, register [NAME], sessions, send TO
           project linear-budget show|set CALLS_PER_HOUR|clear (old name: watch-budget),
           context levels set [--warn-tokens N] [--handover-tokens N] | --clear,
           context show [--session NAME | --agent claude-code|codex --transcript PATH] [--json],
-          context bind [--session NAME] --codex-thread UUID|--agent K --transcript PATH, context hooks install|uninstall [--scope local|user|project-shared]
+          context bind [--session NAME] --codex-thread UUID|--agent K --transcript PATH, context hooks install|uninstall [--scope local|user|project-shared] [--channel]
 Interactive: bare clawbridge opens the selected profile, or Start without one; onboard reopens Start
 (local, join a team server, or your own server); setup wizard starts guided join.
 Onboarding: setup join --server URL --workspace TEAM --project CODEBASE [--login|--device]
@@ -263,6 +264,11 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	if len(args) > 0 && args[0] == "hook" {
 		return runHook(ctx, args[1:], stdout, stderr)
 	}
+	// The channel server finds its route in the MCP server's record, and
+	// writes nothing but JSON-RPC on stdout.
+	if len(args) > 0 && args[0] == "channel" {
+		return runChannel(ctx, args[1:], "", stdout)
+	}
 	// The onboarding probes take cloud flags (--project is a cloud project
 	// here) and resolve trusted configuration only for the workspace check.
 	if len(args) > 0 && args[0] == "cloud" {
@@ -279,6 +285,9 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	// global --session names the session, and the rest are ignored.
 	if rest[0] == "context" && (len(rest) < 2 || rest[1] != "levels") {
 		return runContext(ctx, contextArgs(rest[1:], flags.Session), stdout, stderr)
+	}
+	if rest[0] == "channel" {
+		return runChannel(ctx, rest[1:], flags.Session, stdout)
 	}
 	if len(rest) >= 2 && rest[0] == "setup" && rest[1] == "wizard" {
 		return runWizard(ctx, flags, rest[2:], stdout, stderr)
@@ -1495,6 +1504,7 @@ func collectDoctor(ctx context.Context, config Config, configPath string, existi
 	if config.Session != "" {
 		in.Context = func() doctor.ContextState { return doctorContext(config.Session) }
 		in.Queue = func() doctor.QueueState { return doctorQueue(config.Session) }
+		in.Channel = func() doctor.ChannelState { return doctorChannel(config.Session) }
 		in.Playbook = func() playbook.State { return playbook.Find(ctx, ".") }
 	}
 	var executor doctor.Executor = existing

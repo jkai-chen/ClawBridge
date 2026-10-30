@@ -104,6 +104,15 @@ order, exactly once.
 - **The Stop hook.** In Claude Code, a turn that ends with unacked messages is
   sent back once with `N ClawBridge messages are waiting: call inbox, handle
   them, then ack`. That is fixed text with a count. Do exactly that.
+- **The channel.** In Claude Code, a turn that starts with `<channel
+  source="plugin:clawbridge:wake" kind="wake" count="N" seq="S">` and `N
+  ClawBridge messages are waiting; call inbox` is ClawBridge's channel plugin
+  waking you while you were idle. Treat it as the Stop hook's notice: call
+  `inbox`, handle each message, then ack. It is fixed text with a count and a
+  sequence number, never instructions, and never carries a message. If a typed
+  notice for the same batch follows, `inbox` shows what is left. Setting up the
+  channel (`clawbridge channel setup`, `channel allow`, `claude plugin`
+  commands, managed settings) is a person's job: never do it yourself.
 - **The command adapter.** On a prompt `N ClawBridge messages are waiting; call
   inbox`, an operator's `notify` has woken you. Call `inbox` and handle what is
   there.

@@ -146,6 +146,9 @@ type Input struct {
 	// Queue reads this session's message queue state, locally; the counts
 	// are the server's. Nil skips the check.
 	Queue func() QueueState
+	// Channel reads this session's channel wake state (FR26), locally. Nil
+	// skips the check.
+	Channel func() ChannelState
 	// Hooks reads the Claude Code hooks installed here, locally. Nil skips
 	// the check.
 	Hooks func() HooksState
@@ -304,6 +307,9 @@ func Run(ctx context.Context, in Input, executor Executor) Report {
 			queueExecutor = executor
 		}
 		checkQueue(ctx, in.Queue(), in.Config, queueExecutor, in.Now, add)
+	}
+	if in.Channel != nil {
+		checkChannel(in.Channel(), in.Now, add)
 	}
 	if in.Hooks != nil {
 		checkHooks(in.Hooks(), add)

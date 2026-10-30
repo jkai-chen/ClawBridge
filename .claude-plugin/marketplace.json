@@ -1,0 +1,17 @@
+{
+  "name": "clawbridge",
+  "owner": {
+    "name": "ClawBridge"
+  },
+  "metadata": {
+    "description": "ClawBridge's Claude Code plugins."
+  },
+  "plugins": [
+    {
+      "name": "clawbridge",
+      "source": "./plugins/clawbridge",
+      "description": "Wakes an idle Claude Code agent when ClawBridge messages wait for its session, through a channel that carries only a fixed notice and counts.",
+      "license": "MIT"
+    }
+  ]
+}

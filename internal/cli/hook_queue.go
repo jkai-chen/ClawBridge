@@ -78,18 +78,62 @@ func hookRecord(session string) (string, ctxwatch.QueueRecord, bool) {
 	return dir, r, ok
 }
 
-// runHook runs `clawbridge hook stop --from-hook`.
+const hookUsage = `usage: clawbridge hook stop --from-hook (Claude Code's Stop hook, installed by mcp install)
+       clawbridge hook turn --from-hook (its UserPromptSubmit hook, installed by mcp install --channel)`
+
+// runHook runs `clawbridge hook stop|turn --from-hook`.
 func runHook(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	// The exec form (Windows) ends with --hook-tag TAG, which only marks the
 	// entry as ClawBridge's.
 	if len(args) == 4 && args[2] == "--hook-tag" {
 		args = args[:2]
 	}
-	if len(args) != 2 || args[0] != "stop" || args[1] != "--from-hook" {
-		return errors.New("usage: clawbridge hook stop --from-hook (Claude Code's Stop hook, installed by mcp install)")
+	if len(args) != 2 || (args[0] != "stop" && args[0] != "turn") || args[1] != "--from-hook" {
+		return errors.New(hookUsage)
+	}
+	if args[0] == "turn" {
+		// Claude Code adds a UserPromptSubmit hook's stdout to the model's
+		// context: this one never writes there.
+		turnHook(os.Getenv("CLAWBRIDGE_SESSION"))
+		return nil
 	}
 	stopHook(ctx, os.Getenv("CLAWBRIDGE_SESSION"), stdout)
 	return nil
+}
+
+// hookFault, when set, runs at the start of the turn and Stop hooks: tests
+// use it to make a hook panic.
+var hookFault func()
+
+// recoverHook keeps a hook's panic from becoming its exit status: for
+// UserPromptSubmit, exit 2 would block the prompt and erase it.
+func recoverHook() { _ = recover() }
+
+// turnHook is the UserPromptSubmit hook (FR26): it marks that the agent
+// started a turn, so the channel server wakes only an idle agent, and,
+// when our channel's push started it, which push, the one proof of its
+// delivery. The session is the agent's own MCP server record's, checked
+// against the agent's process as the Stop hook checks it, so a nested
+// claude that inherited CLAWBRIDGE_SESSION marks nothing. Any run of the
+// hook marks a start, even with input it can't read (a huge paste); only
+// the seq needs a readable prompt. The prompt is read only to be matched;
+// it is never kept, written or printed. It fails silently and never
+// panics out.
+func turnHook(session string) {
+	defer recoverHook()
+	if hookFault != nil {
+		hookFault()
+	}
+	seq, _ := ctxwatch.ReadTurnInput(contextStdin)
+	dir, r, ok := hookRecord(session)
+	if !ok {
+		return
+	}
+	now := queueHookNow()
+	if seq > 0 && ctxwatch.MarkChannelTurn(dir, r.Session, seq, now) == nil {
+		return
+	}
+	_ = ctxwatch.MarkTurnStarted(dir, r.Session, now)
 }
 
 // stopReason is the only text the Stop hook gives the agent: fixed words
@@ -107,13 +151,29 @@ func stopReason(waiting int64) string {
 // blocks while the agent already continues from a Stop hook, nor for a
 // session whose policy isn't accept, nor for any instance but the MCP
 // server's own (M5).
+//
+// Unless it blocks, it marks the agent's turn ended (FR26): a blocked stop
+// continues the turn, and its own later Stop (stop_hook_active) ends it.
 func stopHook(ctx context.Context, session string, stdout io.Writer) {
+	defer recoverHook()
+	if hookFault != nil {
+		hookFault()
+	}
 	in, ok := ctxwatch.ReadHookInput(contextStdin)
-	if !ok || in.StopHookActive {
+	if !ok {
 		return
 	}
 	dir, r, ok := hookRecord(session)
 	if !ok {
+		return
+	}
+	blocked := false
+	defer func() {
+		if !blocked {
+			_ = ctxwatch.MarkTurnEnded(dir, r.Session, queueHookNow())
+		}
+	}()
+	if in.StopHookActive {
 		return
 	}
 	bounded, cancel := context.WithTimeout(ctx, stopHookTimeout)
@@ -142,7 +202,9 @@ func stopHook(ctx context.Context, session string, stdout io.Writer) {
 		return
 	}
 	out, _ := json.Marshal(map[string]string{"decision": "block", "reason": stopReason(unacked)})
-	fmt.Fprintln(stdout, string(out))
+	if _, err := fmt.Fprintln(stdout, string(out)); err == nil {
+		blocked = true
+	}
 }
 
 // number reads a count from a local result (int64) or a hosted one

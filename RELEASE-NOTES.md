@@ -1,5 +1,21 @@
 # Unreleased
 
+## Notifications
+
+- **An idle Claude Code agent can wake by itself through a channel (opt-in, per session).** ClawBridge's repository is
+  now a Claude Code marketplace with one plugin, `clawbridge@clawbridge`, whose server (`clawbridge channel serve`)
+  pushes a turn into an idle session when its messages wait: only `N ClawBridge messages are waiting; call inbox` and
+  counts, never a message, at most once a minute, and never into a running turn. Set up: `clawbridge channel setup` in
+  a plain terminal (or the two `claude plugin` commands), the admin step once per machine (`sudo clawbridge channel
+  allow --write`, a machine-wide managed-settings drop-in that also lists Anthropic's four official channel plugins,
+  written only after a person types `yes` at a terminal), `clawbridge mcp install --agent claude-code --session NAME
+  --channel` (adds a UserPromptSubmit turn hook; refused for Codex), then `claude --channels
+  plugin:clawbridge@clawbridge` with the session exported. A push counts only when the session's own channel turn is
+  seen; until then, or after 120 s without one, the notify adapter keeps typing, and it stands down only while the
+  channel is confirmed. `doctor` shows `mcp.channel` (`active`, `unconfirmed`, `inactive: REASON` or `fallback:
+  REASON`) with the next step. Needs a claude.ai or Console login; Bedrock, Vertex and Foundry stay on the notifier.
+  docs/notifications.md. No schema change. Linear config scope: none.
+
 # ClawBridge v0.3.13 (released 30 Oct)
 
 **Schema 53 → 54.**

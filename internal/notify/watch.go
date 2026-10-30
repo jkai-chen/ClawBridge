@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"clawbridge/internal/bus"
+	"clawbridge/internal/ctxwatch"
 )
 
 type Event struct {
@@ -144,11 +145,13 @@ func Run(ctx context.Context, c Config) error {
 		wake = startWaker(streamCtx, s, c.Binding)
 	}
 	backoff := time.Second
+	// skipped is the newest batch left to the channel, said once.
+	var skipped int64
 	for {
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
-		err = once(ctx, c, path, f, &state)
+		err = once(ctx, c, path, f, &state, &skipped)
 		if err != nil {
 			if c.Once || IsPermanent(err) || ctx.Err() != nil {
 				return err
@@ -171,7 +174,20 @@ func Run(ctx context.Context, c Config) error {
 		}
 	}
 }
-func once(ctx context.Context, c Config, path string, f *checkpointFile, state *checkpoint) error {
+
+// channelHasIt says whether the session's Claude Code channel wakes the
+// agent instead of a typed hint (FR26): its server's record is fresh, the
+// server alive, and a push of its was confirmed. The record is the one of
+// the binding's session, as CLAWBRIDGE_SESSION names it.
+func channelHasIt(c Config) bool {
+	if c.ContextDir == "" {
+		return false
+	}
+	st, ok, err := ctxwatch.LoadChannelState(c.ContextDir, c.Binding.Session)
+	return err == nil && ok && ctxwatch.ChannelSkipsTyping(st, time.Now())
+}
+
+func once(ctx context.Context, c Config, path string, f *checkpointFile, state *checkpoint, skipped *int64) error {
 	b := c.Binding
 	if state.Scope.valid() {
 		b.Workspace = state.Scope.WorkspaceID
@@ -204,6 +220,23 @@ func once(ctx context.Context, c Config, path string, f *checkpointFile, state *
 		return nil
 	}
 	e := event(c.Binding, s)
+	// A confirmed channel wakes the agent: no typed hint as well. The
+	// checkpoint stays where it is, so if the channel falls back the same
+	// batch is still hinted. A dropped push shows only when the channel
+	// server demotes itself, 120 s after it; with its 60 s between pushes
+	// and, on an observe stream that has nothing more to say, this loop's
+	// 60 s safety re-poll, a batch may wait up to about 4 minutes longer
+	// than with typing alone.
+	if c.Binding.Adapter != "json" && channelHasIt(c) {
+		if *skipped == s.LatestSequence {
+			return nil
+		}
+		*skipped = s.LatestSequence
+		if err = json.NewEncoder(c.Diagnostics).Encode(map[string]any{"source": "notifier", "data": map[string]any{"type": "hint_skipped", "reason": "channel", "event_id": e.EventID, "session_id": e.SessionID}}); err != nil {
+			return Permanent(errors.New("diagnostic output failed"))
+		}
+		return nil
+	}
 	switch c.Binding.Adapter {
 	case "command":
 		if err = commandHint(ctx, c, e); err != nil {

@@ -242,6 +242,10 @@ func runContextHooks(args []string, stdout, stderr io.Writer) error {
 	scope := f.String("scope", ctxwatch.ScopeLocal, "local, user or project-shared")
 	confirmShared := f.Bool("confirm-shared", false, "confirm editing the committed .claude/settings.json")
 	dryRun := f.Bool("dry-run", false, "show the change without making it")
+	channel := new(bool)
+	if install {
+		channel = f.Bool("channel", false, "also install the turn hook the ClawBridge channel needs (FR26)")
+	}
 	if err := f.Parse(args[1:]); err != nil {
 		return err
 	}
@@ -251,13 +255,19 @@ func runContextHooks(args []string, stdout, stderr io.Writer) error {
 	if *agent != ctxwatch.ClaudeCode {
 		return fmt.Errorf("hooks are for %s only; bind a Codex session with `context bind --codex-thread`", ctxwatch.ClaudeCode)
 	}
-	return applyHooks(*scope, "", install, *dryRun, *confirmShared, stdout, stderr)
+	return applyHooksWith(*scope, "", install, *dryRun, *confirmShared, *channel, stdout, stderr)
 }
 
 // applyHooks installs or removes ClawBridge's Claude Code hooks at scope.
 // The local and shared scopes are the settings of the project at root, or
 // with no root of the git work tree holding the current directory.
 func applyHooks(scope, root string, install, dryRun, confirmShared bool, stdout, stderr io.Writer) error {
+	return applyHooksWith(scope, root, install, dryRun, confirmShared, false, stdout, stderr)
+}
+
+// applyHooksWith is applyHooks that, with channel, also installs the turn
+// hook (FR26).
+func applyHooksWith(scope, root string, install, dryRun, confirmShared, channel bool, stdout, stderr io.Writer) error {
 	var path string
 	switch scope {
 	case ctxwatch.ScopeUser:
@@ -301,7 +311,7 @@ func applyHooks(scope, root string, install, dryRun, confirmShared bool, stdout,
 		}
 		binary = exe
 	}
-	change, err := ctxwatch.PlanHooksFor(contextGOOS, path, scope, binary, install)
+	change, err := ctxwatch.PlanHooksWith(contextGOOS, path, scope, binary, install, channel)
 	if err != nil {
 		return err
 	}

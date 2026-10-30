@@ -14,6 +14,9 @@ candidate evidence remains dated in the archive.
 
 - A subscribed MCP client receives changes to `clawbridge://inbox/status`. Its
   host decides whether to display that notice or start an agent turn.
+- An idle Claude Code session can be woken through ClawBridge's
+  [channel plugin](#wake-an-idle-agent-through-a-channel-claude-code), which
+  starts a turn carrying only a fixed notice and counts.
 - A foreground watcher emits JSON events for a host integration, queues a
   fixed inbox-check notice into an explicitly selected existing Codex thread, or
   runs a command you choose with a fixed notice (for example, to type it into an
@@ -110,6 +113,240 @@ clawbridge --session reviewer --instance INSTANCE notify --adapter command --sta
 
 Typing into a terminal while the agent is busy queues the line as its next
 prompt in most hosts; check yours before you rely on it.
+
+## Wake an idle agent through a channel (Claude Code)
+
+An idle Claude Code session can start a turn by itself when ClawBridge
+messages wait for it, with no watcher typing into its terminal. ClawBridge's
+Claude Code plugin runs a small server, `clawbridge channel serve`, that
+pushes a notice into the session through Claude Code's
+[channels](https://code.claude.com/docs/en/channels). The turn it starts
+carries only fixed text and counts:
+
+```text
+<channel source="plugin:clawbridge:wake" kind="wake" count="2" seq="41">
+2 ClawBridge messages are waiting; call inbox
+</channel>
+```
+
+(`1 ClawBridge message is waiting; call inbox` for one.) No sender, subject or
+body ever reaches it: the agent reads its messages with `inbox`, as always. It is
+off by default, per session, and the [command adapter](#command-adapter-wake-an-idle-terminal)
+keeps running beside it as the fallback.
+
+**Requirements.**
+
+- Claude Code with channels, a research preview.
+- A claude.ai or Console login. Bedrock, Vertex and Foundry don't deliver
+  channel events, so those sessions stay on the notifier.
+- A custom `ANTHROPIC_BASE_URL` is untested: the channel stays `unconfirmed`
+  until a push is proven, so the notifier keeps typing.
+- macOS or Linux. On Windows the channel stays `unconfirmed` (it can't read the
+  agent's command line), and the hooks are pending the Windows probe.
+
+### Set it up
+
+1. **Install the plugin**, once per person, in a plain terminal:
+
+   ```sh
+   clawbridge channel setup
+   ```
+
+   It shows the two commands still missing, asks, and runs them only on yes. It
+   refuses to run in an agent's pane (where `CLAWBRIDGE_SESSION` or
+   `CLAWBRIDGE_INSTANCE` is set), or with `--session`. You can run the commands
+   yourself instead:
+
+   ```sh
+   claude plugin marketplace add jkai-chen/ClawBridge
+   claude plugin install clawbridge@clawbridge --scope user
+   ```
+
+2. **Allowlist the plugin, once per machine, as an administrator.** Claude Code
+   takes a channel only from a plugin on its allowlist, and a user setting can't
+   add one: it takes a managed-settings file. `clawbridge channel allow` shows the
+   file and the warnings below; with `--write`, run as root, it writes it:
+
+   ```sh
+   clawbridge channel allow
+   sudo clawbridge channel allow --write
+   ```
+
+   If `sudo` can't find `clawbridge` on its own `PATH`, give the path:
+   `sudo "$(command -v clawbridge)" channel allow --write`. On Windows, run
+   `clawbridge channel allow --write` in a terminal run as administrator. ClawBridge
+   never raises its own privileges. `--write` needs a person at a terminal: it
+   restates that the file is machine-wide and writes only after you type `yes`
+   (`--force` doesn't skip that), and without a terminal it writes nothing.
+   Agents must never run it.
+   The file is `managed-settings.d/50-clawbridge-channels.json` in Claude Code's
+   managed-settings folder:
+
+   | OS | File |
+   | --- | --- |
+   | macOS | `/Library/Application Support/ClaudeCode/managed-settings.d/50-clawbridge-channels.json` |
+   | Linux and WSL | `/etc/claude-code/managed-settings.d/50-clawbridge-channels.json` |
+   | Windows | `C:\Program Files\ClaudeCode\managed-settings.d\50-clawbridge-channels.json` |
+
+   ```json
+   {
+     "channelsEnabled": true,
+     "allowedChannelPlugins": [
+       {
+         "marketplace": "clawbridge",
+         "plugin": "clawbridge"
+       },
+       {
+         "marketplace": "claude-plugins-official",
+         "plugin": "discord"
+       },
+       {
+         "marketplace": "claude-plugins-official",
+         "plugin": "telegram"
+       },
+       {
+         "marketplace": "claude-plugins-official",
+         "plugin": "fakechat"
+       },
+       {
+         "marketplace": "claude-plugins-official",
+         "plugin": "imessage"
+       }
+     ]
+   }
+   ```
+
+   Before you write it:
+
+   - **It is machine-wide:** it applies to every Claude Code user on this machine.
+   - **It replaces Anthropic's default channel list** unless another managed
+     list exists (the lists from all managed documents add up). So it also lists
+     Anthropic's four official channel plugins, which would stop working on this
+     machine otherwise.
+   - **Anthropic may change its default list later,** and this file won't follow:
+     if Anthropic adds an official channel plugin, add it to the file yourself
+     (or with a newer ClawBridge's `channel allow --write --force`), or it stays
+     blocked on this machine.
+   - **To undo it,** delete the file (`sudo rm` it, or as administrator on
+     Windows). Rerunning `--write` changes nothing when the file is already in
+     place; a different file there is shown as a diff and replaced only with
+     `--force`.
+   - **MDM or claude.ai organisation settings may take precedence over the
+     file.** On a machine managed that way, or on claude.ai Team or Enterprise,
+     an admin lists the plugin (`"marketplace": "clawbridge", "plugin":
+     "clawbridge"`) and enables channels there instead. ClawBridge can't see
+     those settings, so `mcp install` and `doctor` may still name this step.
+
+3. **Ask for the channel when you install the session's MCP entry:**
+
+   ```sh
+   clawbridge mcp install --agent claude-code --session api-worker-2 --channel
+   ```
+
+   `--channel` adds one more hook, a UserPromptSubmit hook (`clawbridge hook
+   turn`), to the Stop, PreCompact and SessionStart hooks. It doesn't change the
+   MCP entry. It then lists, on stderr, the setup steps still missing and the
+   launch line; it reads Claude Code's settings but never edits them, and it
+   never runs `claude`. It is refused for `--agent codex` (Codex has no
+   channels; it keeps the notify adapter) and with `--hooks none`.
+
+4. **Launch Claude Code with the channel,** the session's name and instance
+   exported in that shell:
+
+   ```sh
+   CLAWBRIDGE_SESSION=api-worker-2 CLAWBRIDGE_INSTANCE=api-worker-2-pane claude --channels plugin:clawbridge@clawbridge
+   ```
+
+   Add the session's usual flags. The plugin's server takes the session from
+   `CLAWBRIDGE_SESSION`; without it, it answers Claude Code and does nothing.
+   Two sessions in one folder each get their own pane with their own exported
+   pair. The plugin's server is started in every Claude Code session where the
+   plugin is enabled, but pushes only where `--channels` names it.
+
+### How it decides to push
+
+The channel server reads the session's counts the way the Stop hook does,
+through the session's own MCP server record on this machine: the observe stream
+on a hosted server, otherwise a poll every 30 s. Until that MCP server knows its
+instance (from `--instance`, or after `register_session`), there is no record and
+the channel is `inactive`. It pushes when all of these hold:
+
+- messages are unacked, the policy is `accept`, and no compaction hold is set;
+- the newest message is newer than the last push and than what the Stop hook
+  already told the agent;
+- **the agent is idle.** The turn hook marks a turn's start and the Stop hook
+  its end, so nothing is pushed into a running turn: the Stop hook covers that
+  turn's end. A turn started over 10 minutes ago without an end counts as idle,
+  because Claude Code runs no Stop hook when you press Esc. Another tool's
+  blocking Stop hook may make a turn that continues read as ended;
+- a burst of messages is coalesced (3 s) into one push, and at most one push
+  goes out a minute.
+
+**Confirmation.** Claude Code never acknowledges a push. A push counts as
+delivered only when the session's own channel turn carrying the same `seq` is
+seen (the turn hook reads only that number from it). No such turn within 120 s
+puts the channel in `fallback`; a later confirmed push makes it `active` again.
+A typed notice can't confirm it. An `active` channel whose server can't read the
+counts for over 60 s (its database or hosted server unreachable) can't push
+either, so it goes to `fallback: counts unreadable for over 60 s`; once it reads
+them again, it needs a newly confirmed push to be `active`.
+
+**The notifier keeps running.** Keep the [command
+adapter](#command-adapter-wake-an-idle-terminal) (or the Codex adapter) running
+for the session as before. It skips typing only while the channel is confirmed
+`active` (a fresh record from a live channel server), and then never marks the
+skipped batch handled: when the channel falls back, it types that batch. Until
+the first confirmed push, a batch may get both a channel turn and a typed line;
+both say "call inbox". When a push is silently dropped, the wake can take about 4
+minutes (120 s to fall back, the 60 s between pushes, and the notifier's minute
+re-check). After a turn you interrupt with Esc, the wake can take up to 10
+minutes from that turn's start: the turn counts as running until then, so the
+channel doesn't push, and while the channel is `active` the notifier doesn't
+type either.
+
+**Sessions started with `--mcp-config FILE --strict-mcp-config`.** Claude Code
+2.1.314 doesn't start a plugin's servers under `--strict-mcp-config` (checked
+with `scripts/e2e/channel-wake.sh --strict`): such a session has no channel and
+stays on the notifier. To give it a channel, drop `--strict-mcp-config`; its
+`--mcp-config` entry still brings the ClawBridge tools, and the plugin brings the
+channel. A server named only in `--mcp-config` can't be a channel itself.
+
+**Limits.**
+
+- **One channel record per session name.** A second instance of the same
+  session may be silenced by the first one's confirmed channel: its notifier
+  skips typing too.
+- **A batch the Stop hook already announced gets no idle wake** while the
+  channel is `active`: the channel doesn't push a message the Stop hook already
+  told the agent about, and the notifier stands down. If the agent goes on
+  without reading its inbox, those messages wait for a newer one (or for the
+  channel to leave `active`).
+- **Removing only the turn hook** takes an uninstall, then an install without
+  `--channel`: a plain reinstall keeps the hook.
+- **Going back to an older ClawBridge:** first run `clawbridge context hooks
+  uninstall` (with the same `--scope`) with this version, then install the hooks
+  again with the older one. An older binary doesn't know the turn hook: it can't
+  remove it, and every prompt then shows a hook error (the prompt still goes
+  through). To undo the whole channel setup, also run `claude plugin uninstall
+  clawbridge@clawbridge`, `claude plugin marketplace remove clawbridge`, and
+  delete the managed-settings file (step 2), and launch Claude Code without
+  `--channels`.
+- **Codex has no channels;** its sessions keep the notify adapters.
+
+**Check it.** `clawbridge --session NAME doctor` shows a `mcp.channel` line with
+exactly one of these:
+
+| State | Meaning |
+| --- | --- |
+| `active` | A push was confirmed by the session's own channel turn; the notifier stands down |
+| `unconfirmed` | The channel may work, but no push is confirmed yet; the notifier still types until one is |
+| `inactive: REASON` | It can't work: for example not launched with `--channels`, the plugin not installed, not allowlisted, a third-party provider, no MCP server record, or a stale record. A warning when the session asked for a channel (its turn hook is installed), a pass otherwise |
+| `fallback: REASON` | A push went unanswered for 120 s, or the channel server couldn't read the session's counts for over 60 s; the notifier types again. A warning |
+
+Its action names the next step: the plugin install, the admin allow step, or a
+relaunch with `--channels` and `CLAWBRIDGE_SESSION` exported. It shows no prompt
+or message. The record is `<session>.channel.json` under `~/.clawbridge/context`
+(`$CLAWBRIDGE_HOME/context`).
 
 ## Run the watcher on Windows
 
@@ -226,7 +463,8 @@ Windows probe: they are written, but waking an agent through them is not yet
 confirmed.
 
 The Stop hook covers a busy agent. An idle one still needs the command adapter
-above to be woken.
+above, or a [channel](#wake-an-idle-agent-through-a-channel-claude-code), to be
+woken.
 
 `clawbridge doctor` shows whether the session's MCP server holds the stream,
 and the session's unacked and dead counts. It reads the counts as the

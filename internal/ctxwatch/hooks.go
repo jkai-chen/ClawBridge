@@ -32,15 +32,20 @@ const hookTimeout = 5
 
 // hookEvents are the Claude Code events hooked, with the subcommand each
 // runs. Stop is the message queue's (MESSAGE-QUEUE-DESIGN §5): it keeps an
-// agent from going idle on unhandled mail.
-var hookEvents = []struct{ event, sub string }{
-	{"SessionStart", "bind"},
-	{"PreCompact", "compacting"},
-	{"Stop", "stop"},
+// agent from going idle on unhandled mail. UserPromptSubmit is the channel's
+// (FR26): it marks a turn's start, and is installed only when asked for.
+var hookEvents = []struct {
+	event, sub string
+	channel    bool
+}{
+	{"SessionStart", "bind", false},
+	{"PreCompact", "compacting", false},
+	{"Stop", "stop", false},
+	{"UserPromptSubmit", "turn", true},
 }
 
 // hookCommandWords are the clawbridge words each subcommand runs.
-var hookCommandWords = map[string]string{"bind": "context bind", "compacting": "context compacting", "stop": "hook stop"}
+var hookCommandWords = map[string]string{"bind": "context bind", "compacting": "context compacting", "stop": "hook stop", "turn": "hook turn"}
 
 // HookCommand is the command text for one hook. In the local and user
 // scopes it runs binary, an absolute path, and does nothing when that is
@@ -64,7 +69,7 @@ func HookCommand(scope, binary, sub string) (string, error) {
 	return "", fmt.Errorf("unknown scope %q: want %s, %s or %s", scope, ScopeLocal, ScopeUser, ScopeProjectShared)
 }
 
-var ownHookPattern = regexp.MustCompile(`^\[ -x '([^'\n\r]+)' \] \|\| exit 0; ` + regexp.QuoteMeta(agentPID) + `'([^'\n\r]+)' (context bind|context compacting|hook stop) --from-hook ` +
+var ownHookPattern = regexp.MustCompile(`^\[ -x '([^'\n\r]+)' \] \|\| exit 0; ` + regexp.QuoteMeta(agentPID) + `'([^'\n\r]+)' (context bind|context compacting|hook stop|hook turn) --from-hook ` +
 	regexp.QuoteMeta(HookMarker) + `$`)
 
 // isOwnHook says whether command is exactly a text HookCommand writes, in
@@ -211,6 +216,14 @@ func PlanHooks(path, scope, binary string, install bool) (HookChange, error) {
 // PlanHooksFor is PlanHooks writing the form of goos: Windows gets the exec
 // form. Removal recognises both forms whatever goos is.
 func PlanHooksFor(goos, path, scope, binary string, install bool) (HookChange, error) {
+	return PlanHooksWith(goos, path, scope, binary, install, false)
+}
+
+// PlanHooksWith is PlanHooksFor that, with channel, also installs the turn
+// hook the channel needs (FR26). An install without channel adds no turn
+// hook but keeps one already there, rewritten for binary; an uninstall
+// removes it either way.
+func PlanHooksWith(goos, path, scope, binary string, install, channel bool) (HookChange, error) {
 	c := HookChange{Path: path}
 	settings := map[string]any{}
 	info, err := os.Lstat(path)
@@ -244,7 +257,7 @@ func PlanHooksFor(goos, path, scope, binary string, install bool) (HookChange, e
 		if err != nil {
 			return c, fmt.Errorf("the settings file %s: %s %v; fix it first", path, e.event, err)
 		}
-		if install {
+		if install && (!e.channel || channel || len(removed) > 0) {
 			entry, err := HookEntry(goos, scope, binary, e.sub)
 			if err != nil {
 				return c, err
@@ -472,4 +485,38 @@ func InstalledHookForm(path string) (string, error) {
 		return FormShell, nil
 	}
 	return "", nil
+}
+
+// TurnHookInstalled says whether the settings file at path holds
+// ClawBridge's UserPromptSubmit turn hook, in either form: the hook
+// `mcp install --channel` adds, so a session that has it asked for the
+// channel (FR26). A missing file holds none.
+func TurnHookInstalled(path string) (bool, error) {
+	data, err := os.ReadFile(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("the settings file %s is not readable", path)
+	}
+	var settings struct {
+		Hooks map[string][]struct {
+			Hooks []map[string]any `json:"hooks"`
+		} `json:"hooks"`
+	}
+	if json.Unmarshal(data, &settings) != nil {
+		return false, fmt.Errorf("the settings file %s is not readable JSON", path)
+	}
+	for _, g := range settings.Hooks["UserPromptSubmit"] {
+		for _, h := range g.Hooks {
+			key := ownEntryKey(h)
+			if key == "" {
+				continue
+			}
+			if strings.Contains(key, "\x00hook\x00turn\x00") || strings.Contains(key, " hook turn --from-hook ") {
+				return true, nil
+			}
+		}
+	}
+	return false, nil
 }

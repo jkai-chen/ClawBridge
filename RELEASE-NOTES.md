@@ -29,6 +29,12 @@
   offered the update with `linear seed-docs --update`. Linear config scope: none.
 - The README and the installation guide say what the installer needs (`curl`, and `sha256sum` or `shasum`) and how to
   get `curl` on a minimal Linux image, found on a fresh-Linux walkthrough (G8). Linear config scope: none.
+- **Removing Google sign-in (v1.0)**: `docs/operations/google-sign-in-removal.md` is the order to move a server and
+  every member to device keys before v1.0, which accepts device keys only: current clients, a device for every
+  active member, the owner's check (`user list`, `device list --member`), a device-signed `whoami` per member as the
+  gate, `CLAWBRIDGE_AUTH=device` on the current version (rollback: `google,device`), then the v1.0 deploy and
+  removing the OAuth settings. It names v1.0's start-up refusal and its message for a Google token. Linear config
+  scope: none.
 
 ## Fixes
 

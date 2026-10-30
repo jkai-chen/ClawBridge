@@ -1,5 +1,7 @@
 # Unreleased
 
+# ClawBridge v0.3.11 (released 30 Oct)
+
 v0.3.10 was deployed (server) but its client release failed to publish; v0.3.11 is the same code plus the publish fix.
 
 **Schema 50 → 51.**

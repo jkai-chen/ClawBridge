@@ -193,7 +193,7 @@ func TestQueueHooksActOnlyForTheirAgent(t *testing.T) {
 		}
 	}
 	// A record readable by others is not trusted. Windows has no file modes;
-	// the record is protected by the user profile folder's ACL.
+	// there the record's ACL is checked (ctxwatch's private_windows_test.go).
 	if err := ctxwatch.SaveQueueRecord(dir, record); err != nil {
 		t.Fatal(err)
 	}

@@ -70,7 +70,7 @@ func SaveChannelState(dir, session string, st ChannelState) error {
 	if err != nil {
 		return err
 	}
-	return writePrivate(dir, path, data)
+	return writePrivate("channel record", dir, path, data)
 }
 
 // LoadChannelState reads session's channel record. A missing one is not an
@@ -80,7 +80,7 @@ func LoadChannelState(dir, session string) (ChannelState, bool, error) {
 	if err != nil {
 		return ChannelState{}, false, err
 	}
-	data, ok, err := readPrivate(path)
+	data, ok, err := readPrivate("channel record", path)
 	if err != nil || !ok {
 		return ChannelState{}, false, err
 	}
@@ -134,7 +134,7 @@ func LoadTurn(dir, session string) (TurnRecord, bool) {
 	if err != nil {
 		return TurnRecord{}, false
 	}
-	data, ok, err := readPrivate(path)
+	data, ok, err := readPrivate("turn record", path)
 	if err != nil || !ok {
 		return TurnRecord{}, false
 	}
@@ -178,7 +178,7 @@ func markTurn(dir, session string, mark func(*TurnRecord)) error {
 	if err != nil {
 		return err
 	}
-	return writePrivate(dir, path, data)
+	return writePrivate("turn record", dir, path, data)
 }
 
 // Idle says whether the agent is between turns at now: no turn record, no

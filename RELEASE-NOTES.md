@@ -158,6 +158,16 @@
   `pr-text` CI check refuses secrets, machine paths and AI attribution lines in a PR's title, body and commits.
   Linear config scope: none.
 
+- **Windows: context records are private by ACL, and checked on read.** The per-session records under the state
+  home's `context` directory (the queue record the hooks act on, the binding, the compaction hold and the Stop hook's
+  mark) are now written owned by the user with an ACL that lets only the user in, as is the directory ClawBridge
+  creates for them. Every read checks the owner and the ACL and refuses a record that lets in anyone but the user,
+  SYSTEM and Administrators, or that another user owns, so with a state home outside the user profile another local
+  user can no longer plant a false Stop block or a database route. Records under the profile's default ACL keep
+  working, and the next write replaces the user's own broader one with a private one; a refused record's error names
+  it and says to delete it. macOS and Linux are unchanged (0600, owner-checked). Windows wake-up through the hooks is
+  still pending the Windows probe. No schema change. Linear config scope: none.
+
 # ClawBridge v0.3.13 (released 30 Oct)
 
 **Schema 53 → 54.**

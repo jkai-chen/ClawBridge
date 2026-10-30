@@ -1,12 +1,14 @@
 # First deployment
 
 This guide takes a team from nothing to its own running ClawBridge server, a
-first project and the Linear app, on **Google Cloud** or **AWS**. It is the
+first project and the Linear app, on **Google Cloud**, **AWS** or **a Linux
+server you already have**, reached over your own SSH. It is the
 written path behind Start's "Set up my own server" (`clawbridge onboard`, choice
-3, which then asks where: Google Cloud, AWS, or this machine or your LAN), for
-people who do the steps themselves rather than hand them to a coding agent. The
-third answer runs the server with Docker on your own machine, with no cloud; its
-guide is [local hosting](local-host.md), and its playbook
+3, which then asks where: Google Cloud, AWS, this machine or your LAN, or a
+server you already have), for people who do the steps themselves rather than
+hand them to a coding agent. The "this machine or your LAN" answer runs the
+server with Docker on your own machine, with no cloud; its guide is
+[local hosting](local-host.md), and its playbook
 `clawbridge skill install --playbook local`.
 
 It follows a fixed sequence of steps. A step is done when its check passes, never
@@ -29,30 +31,38 @@ cost table and the checks for each step:
   Compute Engine VM reached over IAP, and its backups go to Cloud Storage.
 - AWS: `clawbridge skill install --playbook aws`. The server is an EC2 instance
   reached over SSM, with no SSH, and its backups go to S3.
+- Your own server: `clawbridge skill install --playbook vm`. The server is a
+  Linux host you reach over your own SSH, and its backups go to S3-compatible
+  storage off the host.
 
-No cloud account? To run the server on a computer you already have, for yourself or
+No cloud account and no server to reach over SSH? To run the server on this computer, for yourself or
 for a team on one network, see [Running the server on your own machine](local-host.md).
 
-A playbook for any VM with Docker comes later. This guide names what each step
+This guide names what each step
 needs and links to the [deployment guide](deployment.md) for the server itself.
 
 Examples use `example.com` and `my-team`, and:
 - **Google Cloud:** a project named `example-project`, in zone `europe-west1-b`;
 - **AWS:** account `123456789012`, region `eu-west-1`, an AWS CLI profile named
-  `clawbridge-onboarding` and an instance `i-0123456789abcdef0`.
+  `clawbridge-onboarding` and an instance `i-0123456789abcdef0`;
+- **your own server:** an SSH host `admin@203.0.113.7`, and a backup store at
+  `https://s3.eu-central-003.example.com`.
 
 ## Which cloud
 
-Both run the same server. The table shows what differs.
+All three run the same server. The table shows what differs.
 
-| | Google Cloud | AWS |
-|---|---|---|
-| Server | a Compute Engine VM | an EC2 instance (Amazon Linux 2023, arm64) |
-| Your admin access | SSH through IAP, as your Google account | SSM, as your named AWS CLI profile, with no SSH port at all |
-| Your CLI | `gcloud`, with a named configuration | AWS CLI v2, with a named profile you set up (`aws configure sso --profile clawbridge-onboarding`) |
-| Backups | a Cloud Storage bucket | an S3 bucket |
-| Where you run it | wherever `gcloud` runs | macOS, Linux or WSL (the AWS route reads its requests from `/dev/stdin`); on Windows, [set up WSL first](../installation.md#windows-set-up-wsl-for-the-aws-route) |
-| Monthly estimate | about $15–30 | about $19 (`t4g.small`) or $31.50 (`t4g.medium`) |
+| | Google Cloud | AWS | Your own server |
+|---|---|---|---|
+| Server | a Compute Engine VM | an EC2 instance (Amazon Linux 2023, arm64) | your Linux host, amd64 or arm64, with Docker Engine and Compose v2.24 or later already installed |
+| Your admin access | SSH through IAP, as your Google account | SSM, as your named AWS CLI profile, with no SSH port at all | your own SSH, with key-based login as a user with passwordless sudo |
+| Your CLI | `gcloud`, with a named configuration | AWS CLI v2, with a named profile you set up (`aws configure sso --profile clawbridge-onboarding`) | `ssh`, with your own `~/.ssh/config` |
+| Backups | a Cloud Storage bucket | an S3 bucket | S3-compatible storage off the host (Backblaze B2, Cloudflare R2, S3 and the like), with a key that can't delete |
+| Where you run it | wherever `gcloud` runs | macOS, Linux or WSL (the AWS route reads its requests from `/dev/stdin`); on Windows, [set up WSL first](../installation.md#windows-set-up-wsl-for-the-aws-route) | wherever `ssh` runs |
+| Monthly estimate | about $15–30 | about $19 (`t4g.small`) or $31.50 (`t4g.medium`) | your host's own cost, plus the backup store (often free under 10 GB) |
+
+**Your own server** is not yet verified end to end on a live non-GCP/AWS host; the
+steps are tested with a fake SSH transport.
 
 ClawBridge never creates or edits your CLI profile or configuration, and never
 reads `~/.aws` or the gcloud credential store.
@@ -60,14 +70,16 @@ reads `~/.aws` or the gcloud credential store.
 ## Rules that hold throughout
 
 - **Name everything explicitly.** Every cloud command names the project, region
-  and zone on Google Cloud, and `--profile` and `--region` on AWS. Never rely on
+  and zone on Google Cloud, `--profile` and `--region` on AWS, and the host
+  (`--ssh HOST`) on your own server. Never rely on
   a CLI's default project, profile or region.
 - **Cost first.** Before creating anything billable, write down the itemised
   monthly estimate: the VM type, disk size, static IP, egress assumption and
   backup storage. The estimate is yours to approve; anything added later needs a
   new estimate.
 - **Secrets are generated on the server, or entered by you.** Database passwords
-  and token keys are generated on the server (`openssl rand`) straight into the
+  and token keys are generated on the server (`clawbridge cloud env init`, or
+  `openssl rand`) straight into the
   root-only environment file and never printed. Secrets you hold, such as the
   Linear app's client secret, are entered with `clawbridge cloud secret set KEY`.
   It reads the value with hidden input, so it never appears in a command line, a
@@ -101,6 +113,15 @@ example with `aws configure sso --profile clawbridge-onboarding`.
 - **For provisioning:** this needs more (EC2, IAM and S3 create calls), which
   the AWS playbook names.
 
+On your own server you need, before anything else:
+- **The host:** 64-bit Linux, amd64 or arm64, with a public address.
+- **Packages:** Docker Engine with the Compose plugin, v2.24 or later, and `git`.
+  Neither ClawBridge nor its playbook installs Docker, upgrades the OS or
+  changes SSH or sudo; the preflight names what's missing.
+- **Access:** key-based SSH as a user with passwordless sudo (`sudo -n`). Connect
+  once with plain `ssh HOST` and compare the host key's fingerprint with your
+  provider's console: ClawBridge never accepts a host key for you.
+
 ## 2. Estimate the cost
 
 A small server is enough for a team. The playbooks carry a fixed estimate table
@@ -110,6 +131,9 @@ per size and cloud.
   $31.50, with the encrypted data volume, Elastic IP and S3 backups. Other
   regions cost up to about 25% more. The Elastic IP is billed while allocated,
   even with the instance stopped.
+- **Your own server:** the host's cost is yours already. The backup store is the
+  new bill: about 5 GB is free on B2 and R2, about $0.12 a month on S3, and at
+  least about $7 on Wasabi.
 
 ## 3. Provision
 
@@ -145,6 +169,24 @@ Create, with the names recorded as you go:
     Beside it goes the AWS-managed `AmazonSSMManagedInstanceCore` for the SSM
     agent.
 
+**On your own server** there is no server to create. Prepare it:
+- **The address:** a DNS `A` (or `AAAA`) record for the domain pointing at the
+  host's public address.
+- **The firewall:** TCP 443 in, in your provider's console and on the host.
+  Before enabling a host firewall such as ufw, allow the SSH port your session
+  actually uses (`echo "$SSH_CONNECTION" | cut -d " " -f 4` on the host), never
+  an assumed 22: blocking it locks you out of your own machine.
+- **A data disk:** a separate block volume mounted at
+  `/var/lib/clawbridge-postgres`, by UUID in `/etc/fstab`, as on the clouds.
+  Many small servers have none: then add `CLAWBRIDGE_DATA_ON_ROOT_DISK=1` to the
+  env file to keep the database on the root disk by your stated choice. The
+  infra check then warns `data_on_root_disk` instead of failing, and a
+  reinstall of the OS means a restore from the off-host backups.
+- **A backup bucket** in S3-compatible storage off the host, with a key for the
+  host that may put and list, never delete, and versioning or a lock on the
+  bucket. The table per store is in
+  [backup and recovery](backup-and-recovery.md).
+
 Done when the infra check fails only with `data_not_mounted`. The next step
 mounts the volume.
 
@@ -153,7 +195,14 @@ mounts the volume.
 clawbridge cloud check infra --vm clawbridge-1 --project example-project --zone europe-west1-b --server https://clawbridge.example.com
 # AWS
 clawbridge cloud check infra --instance i-0123456789abcdef0 --region eu-west-1 --profile clawbridge-onboarding --account 123456789012 --server https://clawbridge.example.com
+# Your own server
+clawbridge cloud check infra --ssh admin@203.0.113.7 --server https://clawbridge.example.com
 ```
+
+On your own server, the check reads the host itself: the platform, Docker and
+Compose, the env file's mode, the data mount and its free space, the clock, DNS
+and 443. A domain whose addresses aren't on the host (normal behind 1:1 NAT) is
+a `warn`, which passes.
 
 On AWS, `ssm_offline` is normal for a few minutes right after the instance
 starts: it has no public IP until the Elastic IP is associated, so it can't
@@ -164,6 +213,13 @@ reach SSM. Wait and run the check again before counting it as a failure.
 Format and mount the data volume (a new volume only), install Docker and the
 Compose plugin, and check out the release. Done when the same infra check fails
 only with `port_closed`: nothing listens on 443 until the server is installed.
+
+**On your own server,** Docker is already there. Check out the release's tag at
+`/opt/clawbridge/repo` and compare its commit, `git -C /opt/clawbridge/repo
+rev-parse HEAD` on the host, with the release's `SOURCE-COMMIT.txt`, verified on
+your own computer with `gh attestation verify` (see
+[verify a download](../installation.md#verify-a-download)). A tag can be moved,
+so the clone alone proves nothing.
 
 ## 5. Sign-in
 
@@ -187,6 +243,18 @@ obtains the TLS certificate for the domain.
 The backup timer uploads with the instance role (see
 [backup and recovery](backup-and-recovery.md)).
 
+**On your own server:** run `clawbridge cloud env init --ssh admin@203.0.113.7`
+before the first `compose up`; it makes the database password on the host and
+prints only its name. Then add the settings, including the backup store:
+- `CLAWBRIDGE_BACKUP_URL=s3://BUCKET`;
+- `CLAWBRIDGE_BACKUP_REGION`, the store's own region name (`auto` on R2);
+- `CLAWBRIDGE_BACKUP_ENDPOINT=https://s3.eu-central-003.example.com`.
+
+The store's key is yours to enter, with `cloud secret set
+CLAWBRIDGE_BACKUP_ACCESS_KEY_ID --ssh admin@203.0.113.7` and the same for
+`CLAWBRIDGE_BACKUP_SECRET_ACCESS_KEY`. The backup uploads in the pinned aws-cli
+image, so the host needs no `aws` CLI.
+
 Done when:
 
 ```sh
@@ -194,6 +262,8 @@ Done when:
 clawbridge cloud check infra server version --server https://clawbridge.example.com --vm clawbridge-1 --project example-project --zone europe-west1-b
 # AWS
 clawbridge cloud check infra server version --server https://clawbridge.example.com --instance i-0123456789abcdef0 --region eu-west-1 --profile clawbridge-onboarding --account 123456789012
+# Your own server, with the first backup run
+clawbridge cloud check infra server version backups --server https://clawbridge.example.com --ssh admin@203.0.113.7
 ```
 
 - `server` passes when HTTPS answers with a valid certificate and the server
@@ -215,7 +285,8 @@ one-time code, which also creates the workspace:
    `clawbridge project create SLUG`; once you've created it, the view opens on it.
 
 **On a server you reach over SSH:** one command on your own computer does both
-steps. The code goes only on ssh's stdin:
+steps. The code goes only on ssh's stdin. `clawbridge onboard`'s hand-over for
+your own server offers to run it for you once the checks pass:
 
 ```sh
 clawbridge cloud bootstrap --ssh admin@clawbridge.example.com \

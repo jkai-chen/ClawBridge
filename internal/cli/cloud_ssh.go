@@ -249,7 +249,7 @@ func sshInfra(ctx context.Context, p *cloudProbe) cloudResult {
 	}
 	// Last: nothing answers on 443 until the server is installed.
 	if dialTCP(ctx, net.JoinHostPort(domain, "443")) != nil {
-		return failed("infra", "port_closed", "TCP 443 does not answer; open 80 and 443 in the firewall and start the server")
+		return failed("infra", "port_closed", "TCP 443 does not answer; open it in the firewall (443 only; Caddy serves no plain HTTP) and start the server")
 	}
 	var reasons, advice []string
 	if !h.mounted {

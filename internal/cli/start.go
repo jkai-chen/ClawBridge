@@ -22,7 +22,7 @@ Linear issues, and work as a team. Pick how you want to start:
 
   1. Just this machine     Local messaging between agents on this computer. No server, no account.
   2. Join a team server    Someone invited you (a server address and an invite code).
-  3. Set up my own server  Host ClawBridge for your team (a small cloud VM, about $15–30/month, or this machine).
+  3. Set up my own server  Host ClawBridge for your team (a small cloud VM, about $15–30/month, this machine, or your own server).
 `
 
 // startCommands is what Start prints without a terminal: the command behind
@@ -38,14 +38,14 @@ Run clawbridge onboard in a terminal to choose interactively, or clawbridge help
 
 const ownServerText = `
 Your own server, in order. Each step is done when its check passes:
-  1. Choose the cloud, project, region and domain.
+  1. Choose the cloud (Google Cloud, AWS, or a server you already have over SSH), region and domain.
   2. See the cost estimate and say yes.
   3. Provision the VM, IP, disk, firewall, DNS and backups.
   4. Install the server (env file, secrets generated on the VM, TLS).   clawbridge cloud check server version
   5. Create the workspace and join it: clawbridge cloud bootstrap.       clawbridge cloud check workspace
   6. The first project, the Linear app, invites, and the dispatcher offer.
 To do it yourself, follow docs/operations/first-deployment.md and run the check after each step. With
-Claude Code or Codex installed, clawbridge onboard can hand the Google Cloud steps to your agent instead.
+Claude Code or Codex installed, clawbridge onboard can hand the steps to your agent instead.
 Secrets you hold are entered with clawbridge cloud secret set KEY, never through an agent.
 On this machine or your LAN instead (no cloud): see docs/operations/local-host.md (deploy/local-host.sh up).
 `

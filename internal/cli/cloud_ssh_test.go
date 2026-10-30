@@ -267,3 +267,18 @@ func TestCloudCheckBackupsOverSSH(t *testing.T) {
 		}
 	}
 }
+
+// The vm playbook's agent reaches the host with exactly ClawBridge's own
+// ssh options, so a user's ~/.ssh/config can't loosen the agent's ssh
+// either.
+func TestVMPlaybookUsesTheSSHOptions(t *testing.T) {
+	raw, err := os.ReadFile(filepath.Join("..", "..", "skills", "clawbridge-provision-vm", "references", "commands.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A Windows checkout may give the doc CRLF line endings.
+	want := "ssh -T " + strings.Join(sshOptions, " ") + " HOST COMMAND"
+	if !strings.Contains(strings.ReplaceAll(string(raw), "\r\n", "\n"), "```sh\n"+want+"\n```") {
+		t.Fatalf("commands.md does not give: %s", want)
+	}
+}

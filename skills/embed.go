@@ -23,3 +23,9 @@ var ProvisionAWS embed.FS
 //
 //go:embed clawbridge-provision-local
 var ProvisionLocal embed.FS
+
+// ProvisionVM holds the playbook for a server the user already has,
+// reached over SSH.
+//
+//go:embed clawbridge-provision-vm
+var ProvisionVM embed.FS

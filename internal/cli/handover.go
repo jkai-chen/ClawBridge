@@ -46,6 +46,10 @@ type onboardingState struct {
 	Shape     string `json:"shape,omitempty"`
 	Workspace string `json:"workspace,omitempty"`
 	Bind      string `json:"bind,omitempty"`
+	// The SSH route only: the host as the user's ssh reaches it, and the
+	// backup store's S3 endpoint.
+	Host     string `json:"host,omitempty"`
+	Endpoint string `json:"endpoint,omitempty"`
 }
 
 const gcloudConfiguration = "clawbridge-onboarding"
@@ -246,6 +250,8 @@ func validInputs(s *onboardingState) error {
 			return errors.New("the saved progress for this machine names a LAN host or address")
 		}
 		questions = localQuestions(s.Shape)
+	case "ssh":
+		questions = sshQuestions()
 	default:
 		return errors.New("the saved progress names an unknown cloud; remove it to start over")
 	}
@@ -264,6 +270,15 @@ What your agent will do: load the clawbridge-provision-gcp playbook and follow i
 creates a VM, a static IP, a data disk, firewall rules, a backup bucket and a service account, after
 showing you the cost and getting your yes, then installs the server.
 `
+	if cloud == "ssh" {
+		what = `
+What your agent will do: load the clawbridge-provision-vm playbook and follow it on the host you named.
+It runs commands on that machine over your ssh, as a user with passwordless sudo, so as root: it
+prepares the data volume, the firewall (keeping your SSH port open) and the release checkout, then
+installs the server. It never installs Docker or changes SSH or sudo. With sudo it could read the
+server's env file and its secrets; the playbook forbids it, and you approve each command.
+`
+	}
 	if cloud == "aws" {
 		what = `
 What your agent will do: load the clawbridge-provision-aws playbook and follow it in your account. It
@@ -299,6 +314,9 @@ func (s *onboardingState) summary() string {
 	}
 	if s.Cloud == "aws" {
 		return "AWS account " + clirender.Safe(s.Account) + ", domain " + clirender.Safe(s.Domain) + ", step " + clirender.Safe(s.Step)
+	}
+	if s.Cloud == "ssh" {
+		return "host " + clirender.Safe(s.Host) + ", domain " + clirender.Safe(s.Domain) + ", step " + clirender.Safe(s.Step)
 	}
 	return "project " + clirender.Safe(s.Project) + ", domain " + clirender.Safe(s.Domain) + ", step " + clirender.Safe(s.Step)
 }
@@ -336,11 +354,11 @@ func startOwnServer(ctx context.Context, prompt *wizardPrompt, path string, stdo
 		}
 	}
 	if state == nil {
-		cloud, err := askUntil(prompt.ask, stdout, "Where? 1. Google Cloud 2. AWS 3. This machine or my LAN (no cloud) [1]: ", func(a string) (string, error) {
+		cloud, err := askUntil(prompt.ask, stdout, "Where? 1. Google Cloud 2. AWS 3. This machine or my LAN (no cloud) 4. A server I already have (SSH and Docker) [1]: ", func(a string) (string, error) {
 			if v, ok := pick(a, "1", cloudChoices); ok {
 				return v, nil
 			}
-			return "", errors.New("choose 1, 2 or 3")
+			return "", errors.New("choose 1, 2, 3 or 4")
 		})
 		if err != nil {
 			return err
@@ -358,6 +376,8 @@ func startOwnServer(ctx context.Context, prompt *wizardPrompt, path string, stdo
 				return errAWSOnWindows
 			}
 			state, err = askAWSInputs(ctx, prompt, stdout)
+		case "ssh":
+			state, err = askSSHInputs(prompt, stdout)
 		default:
 			state, err = askInputs(ctx, prompt, stdout)
 		}
@@ -454,6 +474,8 @@ func handOver(ctx context.Context, s *onboardingState, bin, skillAgent, path str
 		return handOverAWS(ctx, s, bin, skillAgent, path, stdout, stderr)
 	case "local":
 		return handOverLocal(ctx, s, bin, skillAgent, path, stdout, stderr)
+	case "ssh":
+		return handOverSSH(ctx, s, bin, skillAgent, path, stdout, stderr)
 	}
 	if err := installPlaybook("gcp", skillAgent); err != nil {
 		return fmt.Errorf("the playbook could not be installed for the agent: %w", err)
@@ -548,9 +570,9 @@ func finishSignin(ctx context.Context, s *onboardingState, prompt *wizardPrompt,
 		_, err = io.WriteString(stdout, text)
 		return err
 	}
-	// cloud bootstrap runs over SSM, so only on AWS for now; on Google
-	// Cloud the owner runs the written step.
-	if s.Cloud == "aws" {
+	// cloud bootstrap runs over SSM on AWS and over SSH on your own server;
+	// on Google Cloud the owner runs the written step.
+	if s.Cloud == "aws" || s.Cloud == "ssh" {
 		done, err := offerBootstrap(ctx, s, prompt, path, stdout, stderr)
 		if err != nil {
 			return err
@@ -562,6 +584,8 @@ func finishSignin(ctx context.Context, s *onboardingState, prompt *wizardPrompt,
 	playbook, checks := "clawbridge-provision-gcp", fmt.Sprintf("  clawbridge cloud check workspace\n  clawbridge cloud check backups --bucket %s --project %s\n", s.Bucket, s.Project)
 	if s.Cloud == "aws" {
 		playbook, checks = "clawbridge-provision-aws", signinChecks(s)
+	} else if s.Cloud == "ssh" {
+		playbook, checks = "clawbridge-provision-vm", signinChecks(s)
 	}
 	_, err := fmt.Fprintf(stdout, `
 The server is up. Last step, in your own terminal (not your agent's): create the workspace as its owner,
@@ -626,6 +650,9 @@ func firstProject(ctx context.Context, prompt *wizardPrompt, path string, stdout
 }
 
 func signinChecks(s *onboardingState) string {
+	if s.Cloud == "ssh" {
+		return fmt.Sprintf("  clawbridge cloud check workspace\n  clawbridge cloud check backups --ssh %s --server https://%s\n", s.Host, s.Domain)
+	}
 	return fmt.Sprintf("  clawbridge cloud check workspace\n  clawbridge cloud check backups --bucket %s --region %s --profile %s\n",
 		s.Bucket, s.Region, s.Profile)
 }
@@ -667,8 +694,11 @@ func offerBootstrap(ctx context.Context, s *onboardingState, prompt *wizardPromp
 	if a := strings.ToLower(answer); a != "y" && a != "yes" {
 		return false, nil
 	}
-	err = cloudBootstrap(ctx, []string{"--instance", s.Instance, "--region", s.Region, "--profile", s.Profile,
-		"--account", s.Account, "--server", server, "--workspace", workspace, "--email", s.Owner, "--client-config", path}, stdout, stderr)
+	route := []string{"--instance", s.Instance, "--region", s.Region, "--profile", s.Profile, "--account", s.Account}
+	if s.Cloud == "ssh" {
+		route = []string{"--ssh", s.Host}
+	}
+	err = cloudBootstrap(ctx, append(route, "--server", server, "--workspace", workspace, "--email", s.Owner, "--client-config", path), stdout, stderr)
 	if ctx.Err() != nil {
 		return false, ctx.Err()
 	}

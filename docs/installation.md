@@ -290,6 +290,12 @@ cloud)". It hands `deploy/local-host.sh up` to your agent with the
 in any cloud, and runs on macOS, Linux or WSL
 ([local hosting](operations/local-host.md)).
 
+Its fourth answer, "A server I already have (SSH and Docker)", hands a Linux
+server you reach with your own `ssh` to your agent with the `--playbook vm`
+skill. It needs no cloud CLI: the server needs Docker and a user with
+passwordless sudo, and its backups go to S3-compatible storage off the host
+([first-deployment guide](operations/first-deployment.md)).
+
 ## Windows: set up WSL for the AWS route
 
 The AWS route needs a Linux shell, so on Windows it runs in WSL (Windows

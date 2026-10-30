@@ -845,10 +845,20 @@ func checkCommentWatch(ctx context.Context, executor Executor, wid, pid string, 
 		return 0
 	}
 	live, _ := status["watcher_live"].(bool)
+	serverLive, _ := status["server_watch_live"].(bool)
+	serverTicks, _ := status["server_watch_ticks"].(bool)
 	watch.Status = Pass
 	watch.Message = fmt.Sprintf("%d assigned issues are watched for new Linear comments.", n("watched_issues"))
+	if !live && serverLive {
+		// The server's watcher holds the lease only during a tick.
+		watch.Message = fmt.Sprintf("%d assigned issues are watched for new Linear comments by the server's watcher (last good tick %s).", n("watched_issues"), status["server_watch_last_ok"])
+	}
 	switch {
-	case n("watched_issues") > 0 && !live:
+	case n("watched_issues") > 0 && !live && !serverLive && serverTicks:
+		watch.Status = Warn
+		watch.Message = fmt.Sprintf("%d assigned issues are watched, but the server's watcher has had no good tick in the last hour (last good tick: %v): no one is told of new comments.", n("watched_issues"), orNever(status["server_watch_last_ok"]))
+		watch.Action = "Check the server's log for `watcher:` lines and `clawbridge cloud check server`; or run `clawbridge linear watch` on one host of this project."
+	case n("watched_issues") > 0 && !live && !serverLive:
 		watch.Status = Warn
 		watch.Message = fmt.Sprintf("%d assigned issues are watched, but no comment watcher is running: no one is told of new comments.", n("watched_issues"))
 		watch.Action = "Run `clawbridge linear watch` on one host of this project, normally the coordinator's."
@@ -1971,4 +1981,12 @@ func checkIssueWrites(ctx context.Context, wid, pid string, read func(context.Co
 		check.Message += " This machine's records: " + st.LocalNote + "."
 	}
 	add(check)
+}
+
+// orNever is a status time, or "never" when there is none.
+func orNever(v any) any {
+	if v == nil || v == "" {
+		return "never"
+	}
+	return v
 }

@@ -45,6 +45,12 @@ const (
 	// serverTickFresh is how long after the server watcher's last good tick
 	// a client watcher stays refused (IN-M2).
 	serverTickFresh = 10 * time.Minute
+	// serverWatchStale is how long after the server watcher's last good
+	// tick the project counts as unwatched: twice the longest tick
+	// interval (CLAWBRIDGE_WATCH_INTERVAL, at most 30 minutes). Between
+	// ticks its lease has lapsed, so watcher_live alone would say no one
+	// watches.
+	serverWatchStale = time.Hour
 )
 
 var (

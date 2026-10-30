@@ -77,6 +77,13 @@ computer. Upgrading from v0.3.x: docs/upgrading-to-1.0.md.
   `queue --thread --message` stops it; a check that times out or fails to run is retried with the watcher's backoff,
   logged once as `codex_probe_retrying`, and no notice goes out until it passes. No schema change. Linear config
   scope: none.
+- **Doctor no longer warns "no comment watcher is running" between a hosted server's watcher ticks.** The server's
+  watcher holds the project's watch lease only during a tick (3 minutes), while ticks come every
+  `CLAWBRIDGE_WATCH_INTERVAL` (up to 30), so `linear.watch` warned most of the time while the server watched on
+  schedule. `comment_watch_status` now also carries the server watcher's last good tick (`server_watch_last_ok`,
+  `server_watch_live`), and doctor counts the project as watched while that tick is under an hour old. It warns when
+  the server's watcher has had no good tick in the last hour. docs/linear.md, docs/reference/api.md. No schema change.
+  Linear config scope: none.
 
 ## Sign-in
 

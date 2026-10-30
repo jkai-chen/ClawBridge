@@ -875,7 +875,11 @@ in maintenance.
   as `issue_uuid`; no Linear read and no `--linear-profile`.
 - **MCP:** `assignment_markers` takes `issue_uuid`, `issue_identifier` or
   `assignment_id`, exactly one. Read only.
-- **Doctor:** `comment_watch_status` carries `markers_state_skipped`, the
+- **Doctor:** `comment_watch_status` carries `watcher_live` (a watch lease is
+  held now), and for the server's own watcher `server_watch_ticks` (it has
+  ticked this project), `server_watch_last_ok` (its last good tick, or null)
+  and `server_watch_live` (that tick is under an hour old). Doctor's
+  `linear.watch` counts the project as watched when either is live. It also carries `markers_state_skipped`, the
   state moves skipped in the last 7 days for `from_state`, `target_unknown`,
   `state_unresolved` or `policy_changed` (the reasons that send a notice), and
   `markers_state_skipped_newest` (`{issue_uuid, reason}` of the newest, or

@@ -1049,6 +1049,14 @@ flags:`)
 				}
 			}
 		}
+		switch op {
+		case "dispatcher_enable", "dispatcher_model_advise", "dispatcher_model_tools":
+			// --confirm reaches the bus, which previews without it. The
+			// generic flag pass leaves confirm out.
+			if f.Lookup("confirm").Value.(flag.Getter).Get().(bool) {
+				a["confirm"] = true
+			}
+		}
 		if op == "dispatcher_model_key_delete" && !f.Lookup("confirm").Value.(flag.Getter).Get().(bool) {
 			return errors.New("dispatcher model key delete deletes your model key: your agent stops, and the model goes off in every project of yours. Add --confirm to do it")
 		}

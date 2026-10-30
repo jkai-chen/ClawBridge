@@ -122,6 +122,17 @@ func TestCLIDispatcherAdvise(t *testing.T) {
 	if e := Run(context.Background(), []string{"dispatcher", "model", "tools", "set", "ask_session", "--expected-revision", "1"}, &out, &errs); e != nil || !strings.Contains(out.String(), `"preview":true`) || !strings.Contains(out.String(), `"opt_in_tools":["ask_session"]`) {
 		t.Fatal(e, out.String(), errs.String())
 	}
+	// --confirm reaches the server and makes the change: the revision moves.
+	out.Reset()
+	if e := Run(context.Background(), []string{"dispatcher", "model", "tools", "set", "ask_session", "--expected-revision", "1", "--confirm"}, &out, &errs); e != nil || strings.Contains(out.String(), `"preview":true`) || !strings.Contains(out.String(), `"revision":2`) {
+		t.Fatal("tools set --confirm:", e, out.String(), errs.String())
+	}
+	out.Reset()
+	// Advice confirmed without a model setup is refused by the server: the
+	// confirm got there (a preview would have answered instead).
+	if e := Run(context.Background(), []string{"dispatcher", "model", "advise", "on", "--expected-revision", "2", "--confirm"}, &out, &errs); e == nil || !strings.Contains(e.Error(), "model setup") || strings.Contains(out.String(), `"preview":true`) {
+		t.Fatal("advise --confirm:", e, out.String(), errs.String())
+	}
 	out.Reset()
 	if e := Run(context.Background(), []string{"dispatcher", "escalations", "--all"}, &out, &errs); e != nil || !strings.Contains(out.String(), `It idles.]52;c;ZXZpbA== done`) || strings.Contains(out.String(), `\u001b`) || strings.Contains(out.String(), "\u202e") {
 		t.Fatal(e, out.String(), errs.String())

@@ -1943,10 +1943,11 @@ issue: see [who closes an issue](#who-closes-an-issue).
   `closes set`).
 - **Keys you leave out keep their current values; keys you include replace
   them.** This holds for `closes`, `create`, `claim`, `release_done`, `done`,
-  `claim_from_triage`, `project_flow` and `project_targets`; `enabled` is always
-  required. So `"closes": {}` clears every close rule, `"done": ""` clears every
-  done state, and `"project_flow": false` turns project flow off, while a file
-  without those keys changes none of them. A kept state is looked up by its ID in
+  `claim_from_triage`, `project_flow`, `project_targets` and
+  `agent_may_cancel_kinds` (see [setting who may cancel](#setting-who-may-cancel));
+  `enabled` is always required. So `"closes": {}` clears every close rule, `"done":
+  ""` clears every done state, and `"project_flow": false` turns project flow off,
+  while a file without those keys changes none of them. A kept state is looked up by its ID in
   each team's workflow, then once by its stored name; if neither is found the
   set is refused (a kept `done` instead leaves that team without one, and the
   answer says so). A newly bound team takes a kept state by name only when every
@@ -2199,6 +2200,51 @@ that. A project that joins while the policy already says agents close it (a
 rule set while it wasn't bound, such as one kept from before it left) gets one
 notice too, saying so. There's no notice with no policy or a disabled one, nor
 for a project the same link sets with `--closes`.
+
+### Setting who may cancel
+
+Agents never cancel an issue or mark it Duplicate. The status policy's
+`agent_may_cancel_kinds` records the project kinds (values of the project's
+kind setting, from `clawbridge linear kind set`) in whose Linear projects the
+project owner allows it. Empty, the default, means agents never cancel.
+
+Until the enforcement ships, agents still never cancel; the setting only records the choice.
+
+The project owner or a lead sets it, in their own terminal, never from a
+session or an agent (a TUI control follows). Any member can read it.
+
+```sh
+clawbridge linear cancel-kinds show
+clawbridge linear cancel-kinds set --kinds Engineering[,Research] --expected-revision N
+clawbridge linear cancel-kinds set --none --expected-revision N
+```
+
+`N` is the status policy revision from `cancel-kinds show`, which also lists
+the project's kinds and says the rule in one line.
+
+- **Letting agents cancel (`--kinds`) is typed by a person.** It shows what the
+  list allows, then asks you to type the kind names, comma-separated, exactly
+  as shown. It is refused when stdin isn't a terminal, with `--session`, or when
+  the environment says an agent runs it (`CLAUDECODE`, any `CODEX_*`,
+  `CLAWBRIDGE_SESSION`, `CLAWBRIDGE_INSTANCE`). `--none` asks nothing.
+- **Kinds only.** Each name must be one of the project's kinds (matched ignoring
+  case, stored as the kind setting spells it). With no kind setting, `set` is
+  refused: set the project kinds first with `clawbridge linear kind set`. It
+  needs a status policy too.
+- **A policy file keeps it.** `status-policy set --file` keeps the list when the
+  file leaves `"agent_may_cancel_kinds"` out, and clears it with `[]`. A file
+  that adds a kind is refused: adding one is typed with `cancel-kinds set`. The
+  CLI refuses a file that lists any kind under `--session` or an agent's
+  environment, and the server refuses any session that changes the list.
+- **The coordinator is told.** A change sends the coordinator one
+  `close-policy` notice, such as "Agents may now cancel or mark Duplicate
+  issues in projects of kind Engineering" or "Agents no longer cancel issues in
+  this project". The audit records how many kinds were listed before and after,
+  and how the change was confirmed (`via`).
+- **Doctor.** `linear.cancel_kinds` says "Agents never cancel issues." or
+  "Agents may cancel or mark Duplicate in projects of kind Engineering.", and
+  warns when a listed kind is no longer one of the project's kinds, or the
+  project has no kind setting.
 
 ### Project status follows the work (hosted servers)
 

@@ -256,6 +256,32 @@ func (s *Store) overviewLinear(ctx context.Context, tx *transaction, wid, pid st
 			sp["teams_missing"] = missing
 		}
 	}
+	// AGENT-CANCEL R10: who may cancel, and the listed kinds the kind
+	// setting no longer has, for doctor's line.
+	sp["agent_may_cancel_kinds"] = append([]string{}, policy.AgentMayCancelKinds...)
+	if len(policy.AgentMayCancelKinds) > 0 {
+		setting, err := readProjectKind(ctx, tx, pid)
+		if err != nil {
+			return nil, err
+		}
+		values, _ := setting["values"].([]ProjectKindValue)
+		if len(values) == 0 {
+			sp["cancel_kinds_no_setting"] = true
+		}
+		unknown := []string{}
+		for _, name := range policy.AgentMayCancelKinds {
+			found := false
+			for _, v := range values {
+				found = found || strings.EqualFold(v.Name, name)
+			}
+			if !found {
+				unknown = append(unknown, name)
+			}
+		}
+		if len(values) > 0 && len(unknown) > 0 {
+			sp["cancel_kinds_unknown"] = unknown
+		}
+	}
 	// State moves skipped this week that a notice told of, as doctor counts
 	// them, by the database's clock as doctor's are.
 	nowRaw, err := dbStamp(ctx, tx)

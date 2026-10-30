@@ -78,6 +78,13 @@
   that fails now says why the key store failed (for example that the login collection is locked), in a fixed phrase that
   repeats nothing the store said, and a hard-linked connection file is refused. No schema change. Linear config scope:
   none.
+- Who may cancel: `clawbridge linear cancel-kinds show` and `cancel-kinds set --kinds A[,B]|--none
+  --expected-revision N` record the project kinds in whose Linear projects agents may cancel or mark Duplicate
+  an issue (status policy `agent_may_cancel_kinds`, op `status_cancel_kinds_set`). Only a person sets it: the
+  project owner or a lead, typing the kind names in their own terminal, never a session or an agent. Doctor's
+  `linear.cancel_kinds` says the rule. It has no effect on agents yet: they still never cancel. No schema
+  change. An older client's `status-policy set` doesn't know the key and so clears the list (the safe direction):
+  set it again with `cancel-kinds set`. Linear config scope: none (ClawBridge status policy only).
 
 ## Operations
 

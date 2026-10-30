@@ -69,6 +69,9 @@ func confirmAgentCloses(flags Config, names map[string]string, stderr io.Writer)
 // closes is a person's decision, and a file that leaves "closes" out keeps
 // the current rules. It runs before anything is sent.
 func refuseAgentCloseFile(flags Config, raw []byte) error {
+	if err := refuseAgentCancelFile(flags, raw); err != nil {
+		return err
+	}
 	var file map[string]json.RawMessage
 	if json.Unmarshal(raw, &file) != nil {
 		return nil

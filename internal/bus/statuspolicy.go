@@ -48,6 +48,11 @@ type StatusPolicy struct {
 	// type; without one it is the lowest-position unarchived status of
 	// that type, read each run.
 	ProjectTargets *ProjectTargets `json:"project_targets,omitempty"`
+	// AgentMayCancelKinds are the project kinds (values of the project's
+	// kind setting, by name) in whose Linear projects agents may cancel
+	// or mark Duplicate an issue. Empty, agents never cancel. Only a
+	// person sets it (status_cancel_kinds_set).
+	AgentMayCancelKinds []string `json:"agent_may_cancel_kinds,omitempty"`
 }
 
 // ProjectTargets are project status IDs, checked against Linear's status
@@ -99,7 +104,7 @@ func ParseStatusPolicy(v any) (StatusPolicy, error) {
 	dec := json.NewDecoder(bytes.NewReader(raw))
 	dec.DisallowUnknownFields()
 	if dec.Decode(&p) != nil || dec.Decode(new(any)) != io.EOF {
-		return StatusPolicy{}, invalid("status policy must be {\"enabled\", \"claim_from_triage\", \"teams\": {team: {create, claim, release_done, done, workflow}}, \"closes\": {project: agent|human}, \"project_flow\", \"project_targets\": {started, completed}}")
+		return StatusPolicy{}, invalid("status policy must be {\"enabled\", \"claim_from_triage\", \"teams\": {team: {create, claim, release_done, done, workflow}}, \"closes\": {project: agent|human}, \"project_flow\", \"project_targets\": {started, completed}, \"agent_may_cancel_kinds\": [kind names]}")
 	}
 	if p.Teams == nil {
 		p.Teams = map[string]StatusTeam{}
@@ -160,7 +165,32 @@ func ParseStatusPolicy(v any) (StatusPolicy, error) {
 			}
 		}
 	}
+	if p.AgentMayCancelKinds, err = cancelKindNames(p.AgentMayCancelKinds); err != nil {
+		return StatusPolicy{}, err
+	}
 	return p, nil
+}
+
+// cancelKindNames are kind names as a policy keeps them: trimmed, each
+// once whatever its case (the first spelling stays), at most the kind
+// setting's cap, and none for an empty list.
+func cancelKindNames(names []string) ([]string, error) {
+	var out []string
+	seen := map[string]bool{}
+	for _, name := range names {
+		name = strings.TrimSpace(name)
+		if !LinearNameOK(name) {
+			return nil, invalid("agent_may_cancel_kinds names kinds of 1 to 80 characters with no control or direction characters")
+		}
+		if key := strings.ToLower(name); !seen[key] {
+			seen[key] = true
+			out = append(out, name)
+		}
+	}
+	if len(out) > maxKindValues {
+		return nil, invalid(fmt.Sprintf("agent_may_cancel_kinds names at most %d kinds", maxKindValues))
+	}
+	return out, nil
 }
 
 func statusPolicyOperation(op string) bool { return op == "status_policy_set" }
@@ -204,6 +234,16 @@ func (s *Store) statusPolicyOp(ctx context.Context, tx *transaction, w, p map[st
 	// whichever command writes it.
 	if loosened := closesLoosened(stored, policy); len(loosened) > 0 && !closesTyped(via) {
 		return nil, invalid("letting agents close issues is confirmed at a terminal, by typing each project's name (" + strings.Join(loosened, ", ") + ")")
+	}
+	// AGENT-CANCEL R2: who may cancel is a person's to set, as who closes.
+	if actor != nil && !cancelKindsEqual(stored.AgentMayCancelKinds, policy.AgentMayCancelKinds) {
+		return nil, errors.New("a session can never change who may cancel issues; the project owner runs status-policy set without --session")
+	}
+	if added := cancelKindsAdded(stored.AgentMayCancelKinds, policy.AgentMayCancelKinds); len(added) > 0 && !closesTyped(via) {
+		return nil, invalid("letting agents cancel issues is confirmed at a terminal, by typing each kind's name (" + strings.Join(added, ", ") + ")")
+	}
+	if policy.AgentMayCancelKinds, err = canonicalCancelKinds(ctx, tx, pid, stored.AgentMayCancelKinds, policy.AgentMayCancelKinds); err != nil {
+		return nil, err
 	}
 	// A4 L5: project flow is turned on only where the operator has proven
 	// it; a policy that already has it on may still be edited.
@@ -289,6 +329,9 @@ func statusPolicyView(ctx context.Context, tx *transaction, pid string, proven b
 	}
 	if policy.ProjectTargets != nil {
 		out["project_targets"] = policy.ProjectTargets
+	}
+	if len(policy.AgentMayCancelKinds) > 0 {
+		out["agent_may_cancel_kinds"] = policy.AgentMayCancelKinds
 	}
 	// Whether project flow may be turned on here (A4 L5), so a client can
 	// say so before it offers it.

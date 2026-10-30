@@ -260,6 +260,7 @@ func Run(ctx context.Context, in Input, executor Executor) Report {
 			checkTeamsWithoutProject(ctx, in.TeamsWithoutProject, wid, pid, add)
 		}
 		checkStatusPolicyTeams(ctx, executor, wid, pid, add)
+		checkCancelKinds(ctx, executor, wid, pid, add)
 		checkProvenGates(ctx, executor, wid, pid, add)
 		checkLinearBudget(ctx, executor, wid, pid, add)
 		if in.LabelSets != nil {
@@ -813,6 +814,49 @@ func checkStatusPolicyTeams(ctx context.Context, executor Executor, wid, pid str
 	add(Check{ID: "linear.status_policy", Title: "Status policy teams", Status: Warn,
 		Message: "Bound team(s) " + strings.Join(labels, ", ") + " are not in the status policy: claims and done-releases there don't move the issue's state.",
 		Action:  "The project owner runs `clawbridge linear status-policy set --file FILE --expected-revision N` with FILE `{\"enabled\": true}`: it reads every bound team's states again and keeps every other key as it is."})
+}
+
+// checkCancelKinds says who may cancel issues (AGENT-CANCEL R10): agents
+// never, or in projects of the kinds listed. A listed kind the project's
+// kind setting no longer has, or no kind setting at all, is a warning. An
+// older server's overview (no field) adds no check.
+func checkCancelKinds(ctx context.Context, executor Executor, wid, pid string, add func(Check)) {
+	r, err := executor.Execute(ctx, bus.Request{Operation: "project_overview", Workspace: wid, Project: pid, Args: map[string]any{}})
+	m, _ := r.Data.(map[string]any)
+	linear, _ := m["linear"].(map[string]any)
+	policy, _ := linear["status_policy"].(map[string]any)
+	if err != nil || policy == nil || policy["agent_may_cancel_kinds"] == nil {
+		return
+	}
+	kinds, unknown := stringList(policy["agent_may_cancel_kinds"]), stringList(policy["cancel_kinds_unknown"])
+	check := Check{ID: "linear.cancel_kinds", Title: "Who may cancel issues", Status: Pass, Message: bus.CancelKindsLine(kinds)}
+	switch {
+	case len(kinds) > 0 && policy["cancel_kinds_no_setting"] == true:
+		check.Status = Warn
+		check.Message += " This project has no kind setting, so no project is of those kinds."
+		check.Action = "The project owner sets the kinds with `clawbridge linear kind set`, or the owner or a lead clears the list with `clawbridge linear cancel-kinds set --none --expected-revision N`."
+	case len(unknown) > 0:
+		check.Status = Warn
+		check.Message += " " + strings.Join(unknown, ", ") + " is no longer a kind of this project."
+		check.Action = "The project owner or a lead sets the list again from the current kinds: `clawbridge linear cancel-kinds show`, then `clawbridge linear cancel-kinds set --kinds A[,B]|--none --expected-revision N`."
+	}
+	add(check)
+}
+
+// stringList reads a list of strings from a local (typed) or remote
+// (decoded) answer.
+func stringList(v any) []string {
+	switch list := v.(type) {
+	case []string:
+		return list
+	case []any:
+		out := []string{}
+		for _, x := range list {
+			out = append(out, fmt.Sprint(x))
+		}
+		return out
+	}
+	return nil
 }
 
 // checkCommentWatch reports the project's comment watcher and claim

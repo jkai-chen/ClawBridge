@@ -3,18 +3,17 @@ package agentd
 import (
 	"bytes"
 	"context"
-	"crypto/tls"
-	"crypto/x509"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
-	"net"
 	"net/http"
 	"net/url"
 	"regexp"
 	"strings"
 	"time"
+
+	"clawbridge/internal/transporterr"
 )
 
 // launcherClient is Server over the ClawBridge launcher endpoints (§11.8),
@@ -109,24 +108,7 @@ func (c *launcherClient) call(ctx context.Context, method, path string, body, ou
 // a log tells a DNS or TLS problem from a timeout without echoing the raw
 // error.
 func transportReason(err error) string {
-	var dns *net.DNSError
-	var cert *tls.CertificateVerificationError
-	var record tls.RecordHeaderError
-	var alert tls.AlertError
-	var unknownAuthority x509.UnknownAuthorityError
-	var hostname x509.HostnameError
-	var invalid x509.CertificateInvalidError
-	var ne net.Error
-	switch {
-	case errors.As(err, &dns):
-		return "dns"
-	case errors.As(err, &cert), errors.As(err, &record), errors.As(err, &alert),
-		errors.As(err, &unknownAuthority), errors.As(err, &hostname), errors.As(err, &invalid):
-		return "tls"
-	case errors.Is(err, context.DeadlineExceeded), errors.As(err, &ne) && ne.Timeout():
-		return "timeout"
-	}
-	return "unreachable"
+	return transporterr.Classify(err).Reason()
 }
 
 func (c *launcherClient) Wanted(ctx context.Context) ([]Wanted, int, error) {

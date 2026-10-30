@@ -3,8 +3,6 @@ package cli
 import (
 	"bufio"
 	"context"
-	"crypto/tls"
-	"crypto/x509"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -27,6 +25,7 @@ import (
 	"clawbridge/internal/buildinfo"
 	"clawbridge/internal/bus"
 	"clawbridge/internal/remote"
+	"clawbridge/internal/transporterr"
 )
 
 // The own-server onboarding probes (live/ONBOARDING-DESIGN.md §4). A check
@@ -261,19 +260,7 @@ var transportAdvice = map[string]string{
 }
 
 func transportReason(err error) string {
-	var dns *net.DNSError
-	var verify *tls.CertificateVerificationError
-	var header tls.RecordHeaderError
-	var unknown x509.UnknownAuthorityError
-	var host x509.HostnameError
-	var invalid x509.CertificateInvalidError
-	switch {
-	case errors.As(err, &dns):
-		return "dns"
-	case errors.As(err, &verify), errors.As(err, &header), errors.As(err, &unknown), errors.As(err, &host), errors.As(err, &invalid):
-		return "tls"
-	}
-	return "unreachable"
+	return transporterr.Classify(err).CoarseReason()
 }
 
 const serverUnchecked = "settings and services not checked: pass --ssh or --vm to check them too"

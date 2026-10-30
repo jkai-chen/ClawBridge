@@ -33,6 +33,12 @@
   reachable finding fails the release. The PostgreSQL and Caddy images in the compose files are pinned by digest (the
   tag is kept); `docs/operations/deployment.md` says how and when to refresh them. Linear config scope: none.
 
+## Internals
+
+- One `internal/transporterr` package now classifies a failed request (DNS, TLS, timeout, dial) for the cloud
+  checks, the launcher client and OAuth discovery, replacing three copies; each keeps its own answers. Linear config
+  scope: none.
+
 # ClawBridge v0.3.11 (released 30 Oct)
 
 v0.3.10 was deployed (server) but its client release failed to publish; v0.3.11 is the same code plus the publish fix.

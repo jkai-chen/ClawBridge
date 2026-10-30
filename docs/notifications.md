@@ -343,6 +343,14 @@ exactly one of these:
 | `inactive: REASON` | It can't work: for example not launched with `--channels`, the plugin not installed, not allowlisted, a third-party provider, no MCP server record, or a stale record. A warning when the session asked for a channel (its turn hook is installed), a pass otherwise |
 | `fallback: REASON` | A push went unanswered for 120 s, or the channel server couldn't read the session's counts for over 60 s; the notifier types again. A warning |
 
+Every line with a record also says whether the notifier stands down ("The
+notifier stands down while the channel is active.") or keeps typing hints (until
+a push is confirmed, while `unconfirmed`). If the session was launched with
+`--dangerously-load-development-channels` instead of `--channels` (a flag for
+local development only), the line is a warning, whatever the state, and the
+action is to relaunch with `--channels plugin:clawbridge@clawbridge` after the
+admin step.
+
 Its action names the next step: the plugin install, the admin allow step, or a
 relaunch with `--channels` and `CLAWBRIDGE_SESSION` exported. It shows no prompt
 or message. The record is `<session>.channel.json` under `~/.clawbridge/context`

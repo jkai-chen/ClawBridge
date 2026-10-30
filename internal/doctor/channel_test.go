@@ -41,7 +41,7 @@ func TestCheckChannel(t *testing.T) {
 		}), Pass, "active: ", ""},
 		{"unconfirmed", with(ready, func(s *ChannelState) {
 			s.Record = record(ctxwatch.ChannelUnconfirmed, ctxwatch.ChannelReasonUnconfirmed, alive, time.Second)
-		}), Pass, "unconfirmed: no push confirmed yet. The notifier still types the notice until the first confirmed push.", ""},
+		}), Pass, "unconfirmed: no push confirmed yet. The notifier keeps typing hints until a push is confirmed.", ""},
 		{"unconfirmed, custom endpoint", with(ready, func(s *ChannelState) {
 			s.Record = record(ctxwatch.ChannelUnconfirmed, ctxwatch.ChannelReasonCustomEndpoint, alive, time.Second)
 		}), Pass, "unconfirmed: custom ANTHROPIC_BASE_URL", ""},
@@ -148,4 +148,59 @@ func hasCheck(r Report, id string) bool {
 		}
 	}
 	return false
+}
+
+// Doctor says whether the notifier stands down, and warns when the session
+// was launched with the development flag, whatever the state.
+func TestCheckChannelNotifierAndDevFlag(t *testing.T) {
+	now := time.Date(2026, 10, 30, 12, 0, 0, 0, time.UTC)
+	rec := func(state string, dev bool, age time.Duration) *ctxwatch.ChannelState {
+		r := &ctxwatch.ChannelState{Version: 1, PID: os.Getpid(), ParentPID: 1, State: state, UpdatedAt: now.Add(-age).Format(time.RFC3339), DevChannels: dev}
+		if state == ctxwatch.ChannelActive {
+			r.ConfirmedAt = now.Add(-time.Minute).Format(time.RFC3339)
+		}
+		return r
+	}
+	const (
+		stands = "The notifier stands down while the channel is active."
+		keeps  = "The notifier keeps typing hints until a push is confirmed."
+		types  = "The notifier keeps typing hints."
+		devMsg = "launched with --dangerously-load-development-channels, which is for local development only"
+		devAct = "Relaunch with --channels plugin:clawbridge@clawbridge after the admin step (clawbridge channel allow)"
+	)
+	for _, tc := range []struct {
+		name   string
+		r      *ctxwatch.ChannelState
+		status string
+		dev    bool
+		says   string
+	}{
+		{"dev flag, active", rec(ctxwatch.ChannelActive, true, time.Second), Warn, true, stands},
+		{"dev flag, unconfirmed", rec(ctxwatch.ChannelUnconfirmed, true, time.Second), Warn, true, keeps},
+		{"dev flag, stale", rec(ctxwatch.ChannelActive, true, 91*time.Second), Warn, true, "the notifier keeps typing the notice."},
+		{"no dev flag, active", rec(ctxwatch.ChannelActive, false, time.Second), Pass, false, stands},
+		{"no dev flag, unconfirmed", rec(ctxwatch.ChannelUnconfirmed, false, time.Second), Pass, false, keeps},
+		{"no dev flag, stale", rec(ctxwatch.ChannelActive, false, 91*time.Second), Warn, false, "the notifier keeps typing the notice."},
+		{"no dev flag, inactive", rec(ctxwatch.ChannelInactive, false, time.Second), Warn, false, "the notifier keeps typing the notice."},
+	} {
+		var got []Check
+		checkChannel(ChannelState{Session: "agent", Asked: true, Marketplace: true, Enabled: true, Allowlisted: true, Record: tc.r}, now, func(c Check) { got = append(got, c) })
+		c := got[0]
+		if c.Status != tc.status || strings.Count(strings.ToLower(c.Message), "the notifier ") != 1 || !strings.Contains(c.Message, tc.says) {
+			t.Errorf("%s: %s %q", tc.name, c.Status, c.Message)
+		}
+		if has := strings.Contains(c.Message, devMsg); has != tc.dev {
+			t.Errorf("%s: dev warning %v in %q", tc.name, has, c.Message)
+		}
+		if has := strings.Contains(c.Action, devAct); has != tc.dev {
+			t.Errorf("%s: dev action %v in %q", tc.name, has, c.Action)
+		}
+	}
+	// A session that didn't ask for a channel, with a stale record: the
+	// notifier types, and nothing waits on a push.
+	var got []Check
+	checkChannel(ChannelState{Session: "agent", Marketplace: true, Enabled: true, Allowlisted: true, Record: rec(ctxwatch.ChannelActive, false, 91*time.Second)}, now, func(c Check) { got = append(got, c) })
+	if c := got[0]; strings.Count(strings.ToLower(c.Message), "the notifier ") != 1 || !strings.HasSuffix(c.Message, types) {
+		t.Errorf("not asked, stale: %s %q", c.Status, c.Message)
+	}
 }

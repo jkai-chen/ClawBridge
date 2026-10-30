@@ -155,7 +155,11 @@ func Notification(unacked, latestSeq int64) []byte {
 // precondition is what can be seen of Claude Code before any push: whether
 // the channel can work here at all, and the reason given until a push is
 // confirmed.
-type precondition struct{ state, reason string }
+type precondition struct {
+	state, reason string
+	// dev says our plugin is named only through the development flag.
+	dev bool
+}
 
 // preconditions reads them: a third-party provider drops channel events;
 // the agent must name our plugin in --channels (or the development flag
@@ -163,32 +167,35 @@ type precondition struct{ state, reason string }
 func preconditions(c Config) precondition {
 	for _, k := range []string{"CLAUDE_CODE_USE_BEDROCK", "CLAUDE_CODE_USE_VERTEX", "CLAUDE_CODE_USE_FOUNDRY"} {
 		if v := strings.ToLower(envValue(c.Getenv, k)); v != "" && v != "0" && v != "false" {
-			return precondition{ctxwatch.ChannelInactive, reasonProvider}
+			return precondition{state: ctxwatch.ChannelInactive, reason: reasonProvider}
 		}
 	}
 	if c.GOOS == "windows" {
-		return precondition{ctxwatch.ChannelUnconfirmed, reasonNoArgv}
+		return precondition{state: ctxwatch.ChannelUnconfirmed, reason: reasonNoArgv}
 	}
 	args, err := c.ParentArgs(c.ParentPID)
 	if err != nil || args == "" {
-		return precondition{ctxwatch.ChannelUnconfirmed, reasonNoArgv}
+		return precondition{state: ctxwatch.ChannelUnconfirmed, reason: reasonNoArgv}
 	}
-	if !namesChannel(args) {
-		return precondition{ctxwatch.ChannelInactive, reasonNotLaunched}
+	real, dev := channelFlags(args)
+	if !real && !dev {
+		return precondition{state: ctxwatch.ChannelInactive, reason: reasonNotLaunched}
 	}
+	dev = dev && !real
 	if envValue(c.Getenv, "ANTHROPIC_BASE_URL") != "" {
-		return precondition{ctxwatch.ChannelUnconfirmed, reasonCustomEndpoint}
+		return precondition{ctxwatch.ChannelUnconfirmed, reasonCustomEndpoint, dev}
 	}
-	return precondition{ctxwatch.ChannelUnconfirmed, reasonUnconfirmed}
+	return precondition{ctxwatch.ChannelUnconfirmed, reasonUnconfirmed, dev}
 }
 
-// namesChannel says whether a command line names our plugin among the
-// values of --channels (or --dangerously-load-development-channels):
-// space- or comma-separated, up to the next flag.
-func namesChannel(args string) bool {
+// channelFlags says whether a command line names our plugin among the
+// values of --channels, and whether among those of
+// --dangerously-load-development-channels: space- or comma-separated, up
+// to the next flag.
+func channelFlags(args string) (real, dev bool) {
 	fields := strings.Fields(args)
 	for i, f := range fields {
-		for _, flag := range []string{"--channels", "--dangerously-load-development-channels"} {
+		for k, flag := range []string{"--channels", "--dangerously-load-development-channels"} {
 			var values []string
 			switch {
 			case f == flag:
@@ -204,13 +211,17 @@ func namesChannel(args string) bool {
 			for _, v := range values {
 				for _, name := range strings.Split(v, ",") {
 					if name == PluginChannel {
-						return true
+						if k == 0 {
+							real = true
+						} else {
+							dev = true
+						}
 					}
 				}
 			}
 		}
 	}
-	return false
+	return real, dev
 }
 
 // watcher follows one session's queue and pushes the wakes. Only its own
@@ -481,7 +492,7 @@ func (w *watcher) state() (string, string) {
 
 // write saves the record on a change, every pollEvery, or when forced.
 func (w *watcher) write(now time.Time, state, reason string, force bool) {
-	st := ctxwatch.ChannelState{Version: 1, PID: w.c.PID, ParentPID: w.c.ParentPID, State: state, Reason: reason, LastPushSeq: w.pushedSeq}
+	st := ctxwatch.ChannelState{Version: 1, PID: w.c.PID, ParentPID: w.c.ParentPID, State: state, Reason: reason, LastPushSeq: w.pushedSeq, DevChannels: w.pre.dev}
 	if !w.pushedAt.IsZero() {
 		st.LastPushAt = w.pushedAt.UTC().Format(time.RFC3339Nano)
 	}

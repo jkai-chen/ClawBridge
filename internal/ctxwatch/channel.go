@@ -36,6 +36,9 @@ type ChannelState struct {
 	LastPushAt  string `json:"last_push_at,omitempty"`
 	ConfirmedAt string `json:"confirmed_at,omitempty"`
 	UpdatedAt   string `json:"updated_at"`
+	// DevChannels says our plugin is named only through the development
+	// flag (--dangerously-load-development-channels), not --channels.
+	DevChannels bool `json:"dev_channels,omitempty"`
 }
 
 // The reasons a channel record gives, word for word: the channel server

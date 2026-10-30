@@ -112,6 +112,9 @@ func (r *Runner) remove(l Launch, proven bool) (bool, string) {
 		})
 		_ = os.RemoveAll(l.Cache)
 	}
+	if l.Clone != "" {
+		_ = os.RemoveAll(filepath.Dir(SelfTestScript(l.Clone)))
+	}
 	_ = os.RemoveAll(filepath.Join(r.StateDir, "sessions", l.Session))
 	// A self-test the owner ran by hand leaves its planted files behind.
 	if home, err := r.home(); err == nil {

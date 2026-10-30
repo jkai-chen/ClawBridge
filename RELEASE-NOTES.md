@@ -216,6 +216,12 @@ computer. Upgrading from v0.3.x: docs/upgrading-to-1.0.md.
 - **`runner fetch` also refuses a clone that sets `extensions.worktreeConfig` or has a `config.worktree`** (G9 S4-01).
   With that extension git reads `.git/config.worktree` as well, so an agent could hide `core.hooksPath` or
   `core.fsmonitor` there from the pre-fetch check. docs/runner.md. Linear config scope: none.
+- **The runner's agent asks before each Bash command** (G9 S4-03). Claude Code runs sandboxed Bash without a prompt
+  by default, which docs/runner.md's "you approve commands" didn't account for. The generated settings now set
+  `autoAllowBashIfSandboxed: false`; only the git reads and commits and the session's self-test are pre-approved (the
+  self-test now lives in `<work>/<session>.selftest`, which Bash can't write, and `git … --output` is denied). An
+  unattended run opts in with `"auto_allow_bash": true` in the runner's settings, and the launch result shows
+  `bash_approval` (`ask` or `auto`). docs/runner.md. Linear config scope: none.
 
 # ClawBridge v0.3.13 (released 30 Oct)
 

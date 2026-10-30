@@ -201,8 +201,13 @@ func TestTUIOutboxDrainsWhileOpen(t *testing.T) {
 	}
 	client.Outbox().SetNow(func() time.Time { return time.Now().Add(time.Hour) })
 	open, closeTUI := context.WithCancel(context.Background())
-	defer closeTUI()
-	waiting := tuiOutbox(open, client)
+	waiting, stopped := tuiOutbox(open, client)
+	// The drain loop ends with the test: a later test's command sets the
+	// outbox notice it reads.
+	defer func() {
+		closeTUI()
+		stopped()
+	}()
 	if waiting() != 1 {
 		t.Fatal("the TUI's count:", waiting())
 	}

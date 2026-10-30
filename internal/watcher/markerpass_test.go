@@ -24,6 +24,17 @@ func (e *env) queueMarkers(n int) {
 	e.sql(`UPDATE assignment_markers SET next_attempt_at='2000-01-01T00:00:00.000000000Z'`)
 }
 
+// awayFromTheHour waits, at most a minute, until the next UTC hour is more
+// than a minute away: the bus charges a pass to the hour of its own clock,
+// so a test that sets the hour's budget must not run across it.
+func awayFromTheHour(t *testing.T) {
+	t.Helper()
+	now := time.Now().UTC()
+	if left := now.Truncate(time.Hour).Add(time.Hour).Sub(now); left <= time.Minute {
+		time.Sleep(left + time.Second)
+	}
+}
+
 func (e *env) budgetUsed() int {
 	e.t.Helper()
 	var used int
@@ -46,10 +57,14 @@ func TestTickSurvivesTonightsMarkerQueue(t *testing.T) {
 	if due < 4 {
 		t.Fatal("queue:", due)
 	}
-	// Slow Linear: every read or write the fake answers takes 3 s.
-	clock := time.Now()
+	// Slow Linear: every read or write the fake answers takes 3 s. The
+	// clock starts at this hour's first minute, so its steps never reach the
+	// next hour, whose first pass would log the hour's budget (a third log
+	// line) and start a new budget.
+	awayFromTheHour(t)
+	clock := time.Now().UTC().Truncate(time.Hour).Add(time.Minute)
 	e.w.Now = func() time.Time { clock = clock.Add(time.Second); return clock }
-	e.sql(`UPDATE watch_lease SET budget_used=budget_limit-60, budget_hour=?`, time.Now().UTC().Format("2006-01-02T15"))
+	e.sql(`UPDATE watch_lease SET budget_used=budget_limit-60, budget_hour=?`, clock.Format("2006-01-02T15"))
 	e.dueNow()
 	before := e.budgetUsed()
 	logged := []string{}

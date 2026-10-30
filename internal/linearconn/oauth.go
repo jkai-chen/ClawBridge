@@ -90,10 +90,17 @@ func (m *Manager) Connect(ctx context.Context, o ConnectOptions) (Profile, error
 	if m.config.Verify == nil {
 		return Profile{}, problem("provider verification unavailable")
 	}
+	var existing *Profile
 	if o.ProfileID != "" {
-		if _, e := m.Status(ctx, o.ProfileID); e != nil {
+		p, e := m.Status(ctx, o.ProfileID)
+		if e != nil {
 			return Profile{}, e
 		}
+		existing = &p
+	}
+	store, e := m.newStore(ctx, o.KeyStore, existing)
+	if e != nil {
+		return Profile{}, e
 	}
 	ctx, cancel := context.WithTimeout(ctx, 3*time.Minute)
 	defer cancel()
@@ -146,7 +153,7 @@ func (m *Manager) Connect(ctx context.Context, o ConnectOptions) (Profile, error
 	if token.RefreshToken != "" && !validToken(token.RefreshToken) {
 		return Profile{}, problem("invalid refresh credential")
 	}
-	return m.commit(ctx, o.Name, o.ProfileID, o.Access, credential{Version: 1, Token: *token, ClientID: registration.ClientID, RedirectURL: redirect, Scopes: scopes})
+	return m.commit(ctx, o.Name, o.ProfileID, o.Access, store, credential{Version: 1, Token: *token, ClientID: registration.ClientID, RedirectURL: redirect, Scopes: scopes})
 }
 
 func loopback(state string, present func(string) error) (string, auth.AuthorizationCodeFetcher, func(), error) {

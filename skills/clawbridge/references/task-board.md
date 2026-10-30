@@ -442,6 +442,9 @@ permission for external operations or override the user's current instructions.
 If neither native task-board tools nor a Linear MCP connection is available,
 report the missing capability. The operator connects the personal account and
 links the board; task discovery does not install integrations or change authentication.
+The connection is kept in the OS key store, or in a 0600 file (`linear connect
+--key-store file`) where there is none: the file store is the person's choice at their
+own terminal; an agent never chooses it.
 
 ## References
 

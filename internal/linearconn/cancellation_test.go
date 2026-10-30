@@ -43,7 +43,7 @@ func TestLinearCancelledRefreshWaitersReturnBeforeRefreshAndNeverDispatch(t *tes
 	if err != nil {
 		t.Fatal(err)
 	}
-	c, err := m.readCredential(p.ID)
+	c, err := m.readFrom(StoreKeyring, p.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -51,7 +51,7 @@ func TestLinearCancelledRefreshWaitersReturnBeforeRefreshAndNeverDispatch(t *tes
 	c.ClientID = "public-client"
 	c.Token.RefreshToken = "old-refresh"
 	c.Token.Expiry = time.Unix(1, 0)
-	if err = m.writeCredential(p.ID, c); err != nil {
+	if err = m.writeTo(StoreKeyring, p.ID, c); err != nil {
 		t.Fatal(err)
 	}
 	client, err := m.HTTPClient(context.Background(), p.ID)
@@ -86,7 +86,7 @@ func TestLinearCancelledRefreshWaitersReturnBeforeRefreshAndNeverDispatch(t *tes
 		"status": func(ctx context.Context) error { _, e := m.Status(ctx, p.ID); return e },
 		"logout": func(ctx context.Context) error { return m.Logout(ctx, p.ID) },
 		"replacement commit": func(ctx context.Context) error {
-			_, e := m.commit(ctx, "changed", p.ID, Write, credential{Version: 1, Imported: true, Token: oauth2.Token{AccessToken: "replacement", TokenType: "Bearer"}})
+			_, e := m.commit(ctx, "changed", p.ID, Write, StoreKeyring, credential{Version: 1, Imported: true, Token: oauth2.Token{AccessToken: "replacement", TokenType: "Bearer"}})
 			return e
 		},
 	}
@@ -129,7 +129,7 @@ func TestLinearCancelledRefreshWaitersReturnBeforeRefreshAndNeverDispatch(t *tes
 	if cancelledDispatch.Load() != 0 || providerCalls.Load() != 1 || mutations.Load() != 1 {
 		t.Fatal("unexpected dispatch/refresh counts", cancelledDispatch.Load(), providerCalls.Load(), mutations.Load())
 	}
-	stored, err := m.readCredential(p.ID)
+	stored, err := m.readFrom(StoreKeyring, p.ID)
 	if err != nil || stored.Token.RefreshToken != "rotated" {
 		t.Fatal("original rotation not preserved", err)
 	}

@@ -38,8 +38,10 @@ create it in Linear and then select it here.
 
 The board mapping is shared by the ClawBridge project. Each teammate connects
 their own Linear account and independently verifies access to the selected teams
-and projects. Credentials stay in that person's native keyring. No Orca, Node or
-another teammate's host is required.
+and projects. Credentials stay in that person's native keyring, or in a private
+file they chose for a machine without one ([where your connection is
+kept](#where-your-connection-is-kept)). No Orca, Node or another teammate's host is
+required.
 
 `linear link` records the Linear workspace the binding belongs to, read from
 Linear (`get_workspace`) and shown in the preview as `linear_workspace_id`. A
@@ -52,7 +54,7 @@ unpinned; ClawBridge never invents an ID from a display name.
 
 | Setting | Owner and location |
 | --- | --- |
-| Personal Linear connection | Each teammate; credentials in their native keyring |
+| Personal Linear connection | Each teammate; credentials in their native keyring, or a 0600 file they chose |
 | Allowed teams and selected project(s) | ClawBridge project owner/lead; shared authority settings |
 | Issue slice, session and assignment revision | Coordinator; the Linear issue's Current agent block |
 
@@ -89,6 +91,44 @@ substitute `--linear-project PROJECT_UUID` for `--team-board`; repeat `--team`
 for each allowed team. Only a project owner/lead can save the shared mapping.
 Explicit `--workspace` and `--project` flags select a different existing
 ClawBridge scope; those flags never create it.
+
+### Where your connection is kept
+
+By default `linear connect` keeps the connection (its OAuth tokens) in the OS key
+store, as the [device key](sign-in.md#device-keys-the-os-key-store-or-a-file) is: the
+macOS Keychain, Windows Credential Manager, or the Secret Service on Linux. A
+machine with **no key store** (WSL, a headless Linux server, a container) can keep
+it in a **file** instead:
+
+```sh
+clawbridge linear connect --name "Work" --access read --key-store file
+```
+
+- **Where:** a plain file under `~/.clawbridge/linear/connections/`, mode `0600`, in
+  a `0700` directory. ClawBridge refuses to read or write it if its mode is wider or
+  another user owns it, and refuses a state directory on a Windows drive (WSL's
+  `/mnt/c`), where no file can be private: keep ClawBridge's state in the Linux home.
+- **What that means:** **anyone who can read the file as you can act as you in
+  Linear.** `linear connect` warns before it opens the browser. Use it on machines
+  only you can log in to.
+- **Never a fallback.** Without `--key-store file`, a missing key store is an error
+  that names `--key-store file`; nothing goes to a file unless you chose it. The
+  guided setup detects a missing key store, explains this, and asks before using a
+  file. `linear import` takes `--key-store file` too.
+- **It sticks.** The profile records its store in a small `PROFILE.store` file beside
+  the connection's (`profiles.json` is unchanged, so an older ClawBridge still reads
+  it): refreshes rewrite the file (still `0600`), and `linear logout` deletes both.
+  A profile recorded as a file never falls back to the keyring: a missing file is an
+  error naming its path. Connecting the profile again (`--profile ID`) keeps its
+  store unless you pass `--key-store`.
+- **Before rolling back** to v0.3.12 or older, log out every profile that uses the
+  file store (`linear logout --profile ID`), or delete `~/.clawbridge/linear/connections/`:
+  an older version's logout leaves the file behind.
+- **The TUI** connects with the keyring; without one, connect from the CLI with
+  `--key-store file`.
+- **Seeing it.** `linear status --profile ID` shows `key_store`; `doctor
+  --linear-profile ID` shows the store, and for a file checks that it is readable
+  and `0600` (check `linear.connection`).
 
 ### Guide documents for the team
 
@@ -2823,7 +2863,9 @@ another administrator's selection. An outage leaves the mapping intact.
 Headless users can use the explicit no-browser OAuth URL with an arranged loopback
 route, or import their own token/API key through stdin. Secrets never belong in
 arguments, repository configuration, issue text or agent prompts. There is no
-plaintext fallback when the native secure store is unavailable.
+plaintext fallback when the native secure store is unavailable: a file store is only
+ever your explicit `--key-store file` ([where your connection is
+kept](#where-your-connection-is-kept)).
 
 `linear connect --no-browser` prints the authorization URL instead of opening a
 browser. Complete its numeric-loopback callback on the same machine or an

@@ -35,6 +35,19 @@ type Profile struct {
 	AccountLabel   string `json:"account_label,omitempty"`
 	WorkspaceID    string `json:"workspace_id,omitempty"`
 	WorkspaceLabel string `json:"workspace_label,omitempty"`
+	// KeyStore is where the connection's credential is kept, read from the
+	// profile's store record beside its file (empty: the OS key store). It
+	// is never in profiles.json, which keeps main's schema, so an older
+	// binary still reads the index.
+	KeyStore string `json:"-"`
+}
+
+// Store names the store the profile's credential is kept in.
+func (p Profile) Store() string {
+	if p.KeyStore == StoreFile {
+		return StoreFile
+	}
+	return StoreKeyring
 }
 
 // Identity contains only provider-verified, safe display metadata. An unavailable
@@ -63,6 +76,10 @@ type Config struct {
 	HTTPClient *http.Client
 	Verify     func(context.Context, *http.Client, Access) (Identity, error)
 	Now        func() time.Time
+	// KeyringCheck, when set, says before an authorization whether the OS
+	// key store can take a new credential, so a missing one is named
+	// before the browser opens rather than after.
+	KeyringCheck func(context.Context) error
 }
 
 type ConnectOptions struct {
@@ -77,6 +94,10 @@ type ConnectOptions struct {
 	// Ordinary callers leave both unset to use the bounded loopback listener.
 	FetchCode   auth.AuthorizationCodeFetcher
 	RedirectURL string
+	// KeyStore is where the credential goes: StoreKeyring or StoreFile.
+	// Empty keeps a reconnected profile's store, and is the keyring for a
+	// new one.
+	KeyStore string
 }
 
 // Error is a Linear connection failure. Kind is a stable code; Detail, when

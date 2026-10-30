@@ -64,6 +64,20 @@
   `doctor --mcp-linear-profile P` (or `--linear-profile P`) checks for that exact one, and a different profile fails
   with "Linear profile P, expected Q". The rest of the entry is still compared exactly. No schema change. Linear config
   scope: none.
+- **Your Linear connection can be a file, so WSL needs no keyring.** `linear connect` (and `linear import`) take
+  `--key-store keyring|file`, as `join` does for the device key: `file` keeps the connection's tokens in a 0600 file
+  under `~/.clawbridge/linear/connections/`, in a 0700 directory, and warns that anyone who can read it as you can act
+  as you in Linear. It is refused when its mode is wider, another user owns it, or the state directory is on a Windows
+  drive (`/mnt/…`). The profile records its store in a `PROFILE.store` file beside it (`profiles.json` is unchanged, so
+  v0.3.12 still reads it), so refreshes rewrite the file atomically and `linear logout` deletes both; profiles without a
+  record keep the keyring, and a recorded file that is missing is an error, never a keyring fallback. The TUI's connect
+  uses the keyring. Before rolling back to v0.3.12 or older, log out every profile that uses the file store, or delete
+  `~/.clawbridge/linear/connections/`: the older version's logout leaves the file behind. A missing key store is an
+  error naming `--key-store file`, never a silent fallback, and the guided setup asks before using a file. `linear
+  status` shows `key_store`, and doctor's new `linear.connection` check names the store and checks the file. A key store
+  that fails now says why the key store failed (for example that the login collection is locked), in a fixed phrase that
+  repeats nothing the store said, and a hard-linked connection file is refused. No schema change. Linear config scope:
+  none.
 
 ## Operations
 

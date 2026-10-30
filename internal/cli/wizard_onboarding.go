@@ -23,9 +23,9 @@ import (
 // Each onboarding step runs the same code as its explicit command.
 var wizardSkillTargets = func() ([]skill.Target, error) { return skill.Targets("", "") }
 var wizardSkillInstall = func(targets []skill.Target) ([]skill.Result, error) { return skill.Install(targets, false) }
-var wizardLinearConnect = func(ctx context.Context, path, name, access string, stderr io.Writer) (string, error) {
+var wizardLinearConnect = func(ctx context.Context, path, name, access, store string, stderr io.Writer) (string, error) {
 	var out bytes.Buffer
-	if err := runLinear(ctx, Config{ClientConfig: path}, []string{"connect", "--name", name, "--access", access}, &out, stderr); err != nil {
+	if err := runLinear(ctx, Config{ClientConfig: path}, []string{"connect", "--name", name, "--access", access, "--key-store", store}, &out, stderr); err != nil {
 		return "", err
 	}
 	var result struct {
@@ -200,13 +200,17 @@ func runOnboarding(ctx context.Context, path string, stdout, stderr io.Writer) (
 			record("Linear", "skipped", linearLater)
 		} else if access != "read" && access != "write" {
 			record("Linear", "skipped: choose read or write", linearLater)
+		} else if store, e := wizardLinearStore(ctx, ask, stdout); e != nil {
+			return e
+		} else if store == "" {
+			record("Linear", "skipped: no system key store", "unlock or start a key store, or clawbridge linear connect --name NAME --access read --key-store file, then clawbridge doctor --linear-profile PROFILE_ID")
 		} else {
 			// No wizard reader may share stdin with the browser sign-in.
 			if e = prompt.close(); e != nil {
 				return e
 			}
 			fmt.Fprintln(stdout, "Opening Linear sign-in in your browser…")
-			profile, e = wizardLinearConnect(ctx, path, name, access, stderr)
+			profile, e = wizardLinearConnect(ctx, path, name, access, store, stderr)
 			if ctx.Err() != nil {
 				return ctx.Err()
 			}
@@ -464,4 +468,27 @@ func doctorSummary(r doctor.Report) string {
 		return r.Status
 	}
 	return clirender.Safe(r.Status + " (" + strings.Join(issues, "; ") + ")")
+}
+
+// wizardLinearStore is where the Linear connection is kept: the system key
+// store, or, where there is none, a file once the person says yes, as the
+// device key's is. Empty means no.
+func wizardLinearStore(ctx context.Context, ask func(string, string) (string, error), stdout io.Writer) (string, error) {
+	e := wizardKeyStore(ctx)
+	if e == nil {
+		return linearconn.StoreKeyring, nil
+	}
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
+	// Headless Linux, WSL or a container: no system key store.
+	fmt.Fprintf(stdout, "This machine has no system key store (%s).\nClawBridge can keep the Linear connection in a plain file under ~/.clawbridge/linear, readable only by you. But %s.\n", clirender.Safe(e.Error()), linearconn.FileWarning)
+	answer, err := ask("Keep the Linear connection in a file? [y/N]: ", "")
+	if err != nil {
+		return "", err
+	}
+	if a := strings.ToLower(answer); a != "y" && a != "yes" {
+		return "", nil
+	}
+	return linearconn.StoreFile, nil
 }

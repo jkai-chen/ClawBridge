@@ -244,7 +244,7 @@ func TestLinearOAuthPKCEDCRAndRefreshRotation(t *testing.T) {
 			t.Errorf("dispatch[%d]=%s", i, v)
 		}
 	}
-	c, e := m.readCredential(p.ID)
+	c, e := m.readFrom(StoreKeyring, p.ID)
 	if e != nil || c.Token.RefreshToken != "refresh-new" {
 		t.Fatal("rotation not saved", e)
 	}
@@ -262,12 +262,12 @@ func TestLinearRefreshSaveFailurePreventsDispatchAndImportNeverRefreshes(t *test
 	if e != nil {
 		t.Fatal(e)
 	}
-	c, _ := m.readCredential(p.ID)
+	c, _ := m.readFrom(StoreKeyring, p.ID)
 	c.Token.Expiry = time.Unix(1, 0)
 	c.Token.RefreshToken = "refresh"
 	c.ClientID = "client"
 	c.Imported = false
-	if e = m.writeCredential(p.ID, c); e != nil {
+	if e = m.writeTo(StoreKeyring, p.ID, c); e != nil {
 		t.Fatal(e)
 	}
 	client, e := m.HTTPClient(context.Background(), p.ID)
@@ -283,7 +283,7 @@ func TestLinearRefreshSaveFailurePreventsDispatchAndImportNeverRefreshes(t *test
 	}
 	m.config.Store.(*memoryStore).fail = false
 	c.Imported = true
-	if e = m.writeCredential(p.ID, c); e != nil {
+	if e = m.writeTo(StoreKeyring, p.ID, c); e != nil {
 		t.Fatal(e)
 	}
 	if _, e = client.Get(Endpoint(Read)); e == nil {

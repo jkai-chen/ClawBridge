@@ -165,35 +165,42 @@ func (m *Manager) save(x index) error {
 	if e != nil || len(b) > maxFile {
 		return problem("profile limit exceeded")
 	}
-	f, e := os.CreateTemp(d, ".profiles-*")
+	return writePrivate(d, "profiles.json", "profile storage", b)
+}
+
+// writePrivate replaces d/name with b through a private temporary file,
+// synced and renamed into place. A failure names what, never b.
+func writePrivate(d, name, what string, b []byte) error {
+	p := filepath.Join(d, name)
+	f, e := os.CreateTemp(d, "."+strings.TrimSuffix(name, ".json")+"-*")
 	if e != nil {
-		return problem("profile storage unavailable")
+		return problem(what + " unavailable")
 	}
 	defer os.Remove(f.Name())
 	if e = makePrivate(f.Name()); e != nil {
 		f.Close()
-		return problem("cannot protect profile storage")
+		return problem("cannot protect " + what)
 	}
 	if e = privatePath(f.Name(), false); e != nil {
 		f.Close()
-		return problem("unsafe staged profile storage")
+		return problem("unsafe staged " + what)
 	}
 	if _, e = f.Write(b); e != nil {
 		f.Close()
-		return problem("profile storage unavailable")
+		return problem(what + " unavailable")
 	}
 	if e = f.Sync(); e != nil {
 		f.Close()
-		return problem("profile storage unavailable")
+		return problem(what + " unavailable")
 	}
 	if e = f.Close(); e != nil {
-		return problem("profile storage unavailable")
+		return problem(what + " unavailable")
 	}
 	if e = os.Rename(f.Name(), p); e != nil {
-		return problem("profile storage unavailable")
+		return problem(what + " unavailable")
 	}
 	if e = syncDirectory(d); e != nil {
-		return problem("profile storage durability uncertain")
+		return problem(what + " durability uncertain")
 	}
 	return nil
 }
@@ -206,6 +213,12 @@ func (m *Manager) Profiles() ([]Profile, error) {
 	mu.Lock()
 	defer mu.Unlock()
 	x, e := m.load()
+	for i := range x.Profiles {
+		// Best effort for a listing: Status reports an unreadable record.
+		if store, err := m.recorded(x.Profiles[i].ID); err == nil && store == StoreFile {
+			x.Profiles[i].KeyStore = StoreFile
+		}
+	}
 	return x.Profiles, e
 }
 func (m *Manager) profile(id string) (Profile, error) {
@@ -218,6 +231,13 @@ func (m *Manager) profile(id string) (Profile, error) {
 	}
 	for _, p := range x.Profiles {
 		if p.ID == id {
+			store, e := m.recorded(id)
+			if e != nil {
+				return Profile{}, e
+			}
+			if store == StoreFile {
+				p.KeyStore = StoreFile
+			}
 			return p, nil
 		}
 	}
@@ -243,16 +263,27 @@ func (m *Manager) Status(ctx context.Context, id string) (Profile, error) {
 	if e != nil {
 		return Profile{}, e
 	}
-	_, e = m.readCredential(id)
+	_, e = m.readFrom(p.Store(), id)
 	if err := ctx.Err(); err != nil {
 		return Profile{}, err
 	}
 	return p, e
 }
-func (m *Manager) readCredential(id string) (credential, error) {
-	raw, e := m.config.Store.Get(Service, id)
-	if e != nil {
-		return credential{}, problem("secure credential unavailable")
+
+func (m *Manager) readFrom(store, id string) (credential, error) {
+	var raw string
+	if store == StoreFile {
+		v, e := m.fileGet(id)
+		if e != nil {
+			return credential{}, e
+		}
+		raw = v
+	} else {
+		v, e := m.config.Store.Get(Service, id)
+		if e != nil {
+			return credential{}, &Error{Kind: "secure credential unavailable", Detail: keyStoreSaid(e)}
+		}
+		raw = v
 	}
 	if len(raw) > maxFile {
 		return credential{}, problem("invalid secure credential")
@@ -268,18 +299,67 @@ func (m *Manager) readCredential(id string) (credential, error) {
 func validToken(s string) bool {
 	return s != "" && len(s) <= 16384 && !strings.ContainsFunc(s, func(r rune) bool { return unicode.IsSpace(r) || unicode.IsControl(r) })
 }
-func (m *Manager) writeCredential(id string, c credential) error {
+
+func (m *Manager) writeTo(store, id string, c credential) error {
 	b, e := json.Marshal(c)
 	if e != nil || len(b) > maxFile {
 		return problem("invalid secure credential")
 	}
-	if m.config.Store.Set(Service, id, string(b)) != nil {
-		return problem("secure credential storage failed")
+	if store == StoreFile {
+		return m.fileSet(id, string(b))
+	}
+	if e = m.config.Store.Set(Service, id, string(b)); e != nil {
+		return &Error{Kind: "secure credential storage failed", Detail: keyringDetail(e)}
 	}
 	return nil
 }
 
-func (m *Manager) commit(ctx context.Context, name, id string, access Access, c credential) (Profile, error) {
+// deleteFrom removes a credential; one already gone is not an error.
+func (m *Manager) deleteFrom(store, id string) error {
+	if store == StoreFile {
+		return m.fileDelete(id)
+	}
+	if e := m.config.Store.Delete(Service, id); e != nil && !errors.Is(e, keyring.ErrNotFound) {
+		return &Error{Kind: "secure credential deletion failed", Detail: keyStoreSaid(e)}
+	}
+	return nil
+}
+
+// newStore is where a new or reconnected credential goes: the store asked
+// for, else a reconnected profile's own, else the keyring. It is checked
+// before anything is asked of Linear or the person, and a missing OS key
+// store is named with the way out: nothing falls back to a file.
+func (m *Manager) newStore(ctx context.Context, asked string, existing *Profile) (string, error) {
+	store := asked
+	if store != "" && !ValidStore(store) {
+		return "", &Error{Kind: "invalid connection parameters", Detail: "--key-store is keyring or file"}
+	}
+	if store == "" && existing != nil {
+		store = existing.Store()
+	}
+	if store == "" {
+		store = StoreKeyring
+	}
+	switch store {
+	case StoreFile:
+		if e := m.fileStoreUsable(); e != nil {
+			return "", e
+		}
+	case StoreKeyring:
+		if m.config.KeyringCheck == nil {
+			break
+		}
+		if missing := m.config.KeyringCheck(ctx); missing != nil {
+			if e := ctx.Err(); e != nil {
+				return "", e
+			}
+			return "", &Error{Kind: "secure credential storage failed", Detail: keyringDetail(errNoSecretService)}
+		}
+	}
+	return store, nil
+}
+
+func (m *Manager) commit(ctx context.Context, name, id string, access Access, store string, c credential) (Profile, error) {
 	if !validAccess(access) || name == "" || !safeText(name, 128) {
 		return Profile{}, problem("invalid profile parameters")
 	}
@@ -302,6 +382,9 @@ func (m *Manager) commit(ctx context.Context, name, id string, access Access, c 
 		id = "lin_" + hex.EncodeToString(b[:])
 	}
 	p := Profile{ID: id, Name: name, Access: access, AccountLabel: identity.AccountLabel, WorkspaceID: identity.WorkspaceID, WorkspaceLabel: identity.WorkspaceLabel}
+	if store == StoreFile {
+		p.KeyStore = StoreFile
+	}
 	if !validProfile(p) {
 		return Profile{}, problem("invalid verified profile metadata")
 	}
@@ -333,8 +416,12 @@ func (m *Manager) commit(ctx context.Context, name, id string, access Access, c 
 		}
 	}
 	var old credential
+	oldStore := ""
 	if found >= 0 {
-		old, e = m.readCredential(id)
+		if oldStore, e = m.recorded(id); e != nil {
+			return Profile{}, e
+		}
+		old, e = m.readFrom(oldStore, id)
 		if e != nil {
 			return Profile{}, e
 		}
@@ -345,7 +432,16 @@ func (m *Manager) commit(ctx context.Context, name, id string, access Access, c 
 	if e = ctx.Err(); e != nil {
 		return Profile{}, e
 	}
-	if e = m.writeCredential(id, c); e != nil {
+	if store == StoreFile && oldStore != StoreFile {
+		// The record goes first: a file credential is never unrecorded.
+		if e = m.record(id); e != nil {
+			return Profile{}, e
+		}
+	}
+	if e = m.writeTo(store, id, c); e != nil {
+		if store == StoreFile && oldStore != StoreFile {
+			_ = m.unrecord(id)
+		}
 		return Profile{}, e
 	}
 	if found < 0 {
@@ -354,12 +450,24 @@ func (m *Manager) commit(ctx context.Context, name, id string, access Access, c 
 		x.Profiles[found] = p
 	}
 	if e = m.save(x); e != nil {
-		if found >= 0 {
-			_ = m.writeCredential(id, old)
+		if oldStore == store {
+			_ = m.writeTo(store, id, old)
 		} else {
-			_ = m.config.Store.Delete(Service, id)
+			_ = m.deleteFrom(store, id)
+			if store == StoreFile {
+				_ = m.unrecord(id)
+			}
 		}
 		return Profile{}, e
+	}
+	if oldStore != "" && oldStore != store {
+		// Moved to another store: the old copy goes, the file's record
+		// first, so the profile reads its new store. A failure leaves the
+		// old copy unused.
+		if oldStore == StoreFile && m.unrecord(id) != nil {
+			return Profile{}, problem("connection store record removal failed")
+		}
+		_ = m.deleteFrom(oldStore, id)
 	}
 	return p, nil
 }
@@ -369,10 +477,19 @@ func (m *Manager) commit(ctx context.Context, name, id string, access Access, c 
 // Readers must be finite or caller-unblocked: Import never starts a detached read
 // goroutine around an unowned blocking Reader.
 func (m *Manager) Import(ctx context.Context, name string, access Access, r io.Reader) (Profile, error) {
+	return m.ImportTo(ctx, name, access, "", r)
+}
+
+// ImportTo is Import into store: StoreKeyring (or empty) or StoreFile.
+func (m *Manager) ImportTo(ctx context.Context, name string, access Access, store string, r io.Reader) (Profile, error) {
 	if !validAccess(access) || name == "" || !safeText(name, 128) || r == nil {
 		return Profile{}, problem("invalid profile parameters")
 	}
 	if e := ctx.Err(); e != nil {
+		return Profile{}, e
+	}
+	store, e := m.newStore(ctx, store, nil)
+	if e != nil {
 		return Profile{}, e
 	}
 	if c, ok := r.(io.ReadCloser); ok {
@@ -393,7 +510,7 @@ func (m *Manager) Import(ctx context.Context, name string, access Access, r io.R
 	if len(b) > 16384 || !validToken(token) {
 		return Profile{}, problem("invalid token input")
 	}
-	return m.commit(ctx, name, "", access, credential{Version: 1, Token: oauth2.Token{AccessToken: token, TokenType: "Bearer"}, Imported: true})
+	return m.commit(ctx, name, "", access, store, credential{Version: 1, Token: oauth2.Token{AccessToken: token, TokenType: "Bearer"}, Imported: true})
 }
 func (m *Manager) Logout(ctx context.Context, id string) error {
 	if e := ctx.Err(); e != nil {
@@ -434,8 +551,15 @@ func (m *Manager) Logout(ctx context.Context, id string) error {
 	}
 	// A credential already missing from the store is already logged out; the
 	// profile must still be removable.
-	if e = m.config.Store.Delete(Service, id); e != nil && !errors.Is(e, keyring.ErrNotFound) {
-		return problem("secure credential deletion failed")
+	store, e := m.recorded(id)
+	if e != nil {
+		return e
+	}
+	if e = m.deleteFrom(store, id); e != nil {
+		return e
+	}
+	if e = m.unrecord(id); e != nil {
+		return e
 	}
 	x.Profiles = append(x.Profiles[:at], x.Profiles[at+1:]...)
 	return m.save(x)

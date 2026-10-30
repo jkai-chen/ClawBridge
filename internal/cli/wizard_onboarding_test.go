@@ -14,6 +14,7 @@ import (
 	"clawbridge/internal/clirender"
 	"clawbridge/internal/doctor"
 	"clawbridge/internal/install"
+	"clawbridge/internal/linearconn"
 	"clawbridge/internal/remote"
 	"clawbridge/internal/skill"
 	"github.com/muesli/cancelreader"
@@ -60,11 +61,11 @@ func newOnboardingRun(t *testing.T, answers string) *onboardingRun {
 		o.calls = append(o.calls, "skill")
 		return nil, fail("skill")
 	}
-	wizardLinearConnect = func(_ context.Context, path, name, access string, _ io.Writer) (string, error) {
+	wizardLinearConnect = func(_ context.Context, path, name, access, store string, _ io.Writer) (string, error) {
 		if !o.r.closed {
 			t.Fatal("terminal input shared with the Linear sign-in")
 		}
-		o.calls = append(o.calls, "linear:"+name+":"+access)
+		o.calls = append(o.calls, "linear:"+name+":"+access+storeCall(store))
 		return "lin_synthetic", fail("linear")
 	}
 	wizardMCPInstall = func(_ context.Context, path, agent, session, profile string, dryRun bool, _ io.Writer) (install.Result, error) {
@@ -148,6 +149,43 @@ func TestGuidedOnboardingReportsFailuresAndContinues(t *testing.T) {
 	for _, want := range []string{"- Agent skill: failed: synthetic skill failure", "- Linear: failed: synthetic linear failure", "- MCP for Claude Code: failed: synthetic mcp-preview failure", "- Doctor: failed: synthetic doctor failure"} {
 		if !strings.Contains(o.out.String(), want) {
 			t.Fatalf("output lacks %q:\n%s", want, o.out.String())
+		}
+	}
+}
+
+// storeCall marks a Linear connection kept anywhere but the keyring.
+func storeCall(store string) string {
+	if store == linearconn.StoreKeyring {
+		return ""
+	}
+	return ":" + store
+}
+
+// Without a system key store, the Linear step says what a file means and
+// keeps the connection in one only on a yes, as the device key's step does.
+func TestGuidedOnboardingOffersAFileForLinearWithoutAKeyStore(t *testing.T) {
+	for _, c := range []struct {
+		answer string
+		calls  []string
+		want   string
+	}{
+		{"y", []string{"keyring", "join", "linear:Work:read:file", "doctor:lin_synthetic:", "doctor:lin_synthetic:"}, "- Linear: connected (read access, profile lin_synthetic)"},
+		{"n", []string{"keyring", "join", "doctor::"}, "- Linear: skipped: no system key store"},
+	} {
+		o := newOnboardingRun(t, "n\ny\nWork\nread\n"+c.answer+"\nn\nn\n")
+		wizardKeyStore = func(context.Context) error { return errors.New("Linux Secret Service is unavailable") }
+		if err := o.run(); err != nil {
+			t.Fatal(err)
+		}
+		o.want(c.calls...)
+		out := o.out.String()
+		for _, want := range []string{c.want, "This machine has no system key store (Linux Secret Service is unavailable).", linearconn.FileWarning, "Keep the Linear connection in a file? [y/N]"} {
+			if !strings.Contains(out, want) {
+				t.Fatalf("%s: output lacks %q:\n%s", c.answer, want, out)
+			}
+		}
+		if c.answer == "n" && !strings.Contains(out, "--key-store file") {
+			t.Fatalf("the skip doesn't name --key-store file:\n%s", out)
 		}
 	}
 }

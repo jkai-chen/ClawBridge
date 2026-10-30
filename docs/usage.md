@@ -31,6 +31,9 @@ warning. Connect an agent with
 your defaults. For Claude Code it also installs ClawBridge's hooks in the project's
 `.claude/settings.local.json`, including the Stop hook that keeps the agent from going idle on unacked mail
 (`--hooks none` to leave them out; [notifications](notifications.md#agents-ack-the-stop-hook-and-compaction)).
+Add `--channel` to also install the turn hook that lets an idle Claude Code session be woken through
+ClawBridge's channel plugin; it lists the plugin and admin steps still missing
+([wake an idle agent through a channel](notifications.md#wake-an-idle-agent-through-a-channel-claude-code)).
 
 For an isolated local bus, for example in tests, set `CLAWBRIDGE_DB`, `CLAWBRIDGE_WORKSPACE` and
 `CLAWBRIDGE_PROJECT` instead.
@@ -300,7 +303,9 @@ clawbridge mcp install --agent codex --session codex-engineer
 clawbridge doctor --mcp-agent codex --mcp-config /absolute/path/to/codex/config.toml --mcp-session codex-engineer
 ```
 
-Use `--agent claude-code` for Claude Code. It writes `.mcp.json` in the current
+Use `--agent claude-code` for Claude Code (`--channel` adds the channel wake's
+turn hook: [notifications](notifications.md#wake-an-idle-agent-through-a-channel-claude-code);
+Codex refuses it). It writes `.mcp.json` in the current
 folder, so run it from the repository root; `--config ~/.claude.json` writes the
 user-level file instead. `--config` selects the agent file to
 edit; `--client-config` selects the trusted ClawBridge profile. Without an explicit

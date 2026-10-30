@@ -21,7 +21,7 @@ CODE = ["skills/*"]
 # can't slip past the Windows job.
 WINDOWS_DIRS = [
     "integration", "skills",
-    "internal/auth", "internal/buildinfo", "internal/bus", "internal/cli", "internal/clirender",
+    "internal/auth", "internal/buildinfo", "internal/bus", "internal/channel", "internal/cli", "internal/clirender",
     "internal/ctxwatch", "internal/devicekey", "internal/devicesign", "internal/dispatch",
     "internal/dispatchermodel", "internal/docpublish", "internal/docseed", "internal/doctor",
     "internal/faketool", "internal/hostobserve", "internal/install", "internal/linearapp",

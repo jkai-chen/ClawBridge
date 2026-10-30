@@ -119,6 +119,35 @@ func ReadHookInput(r io.Reader) (HookInput, bool) {
 	return in, true
 }
 
+// ReadTurnInput reads a UserPromptSubmit hook's JSON input and says which
+// push of our channel started the turn: its seq, or 0 for any other prompt
+// (FR26). It reports false when the input is not usable, as ReadHookInput
+// does. The prompt is read only to be matched by ChannelTurnSeq: it is
+// never returned, kept or written anywhere.
+func ReadTurnInput(r io.Reader) (int64, bool) {
+	data, err := io.ReadAll(io.LimitReader(r, maxHookInput+1))
+	if err != nil || len(data) > maxHookInput {
+		return 0, false
+	}
+	var raw struct {
+		SessionID      any `json:"session_id"`
+		TranscriptPath any `json:"transcript_path"`
+		Prompt         any `json:"prompt"`
+	}
+	if json.Unmarshal(data, &raw) != nil {
+		return 0, false
+	}
+	if id, _ := raw.SessionID.(string); id == "" {
+		return 0, false
+	}
+	if path, _ := raw.TranscriptPath.(string); path == "" {
+		return 0, false
+	}
+	prompt, _ := raw.Prompt.(string)
+	seq, _ := ChannelTurnSeq(prompt)
+	return seq, true
+}
+
 // ClaudeConfigDir is CLAUDE_CONFIG_DIR, or ~/.claude.
 func ClaudeConfigDir() (string, error) {
 	if dir := os.Getenv("CLAUDE_CONFIG_DIR"); dir != "" {

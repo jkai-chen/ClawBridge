@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"clawbridge/internal/channel"
 	"clawbridge/internal/ctxwatch"
 	"clawbridge/internal/doctor"
 )
@@ -28,9 +29,10 @@ const contextUsage = `usage:
       Bind the session to its transcript: a Codex thread's rollout under
       CODEX_HOME, or the file named.
   clawbridge context hooks install|uninstall [--scope local|user|project-shared]
-      [--confirm-shared] [--dry-run]
+      [--confirm-shared] [--dry-run] [--channel]
       Claude Code hooks that bind the session when it starts and note each
-      compaction. local (the default) is the project's
+      compaction; install --channel adds the turn hook the ClawBridge
+      channel needs, and uninstall removes it too. local (the default) is the project's
       .claude/settings.local.json, refused when git tracks it; user is your
       own settings.json; project-shared is the committed .claude/settings.json
       and needs --confirm-shared. The change is shown before it is written,
@@ -237,6 +239,48 @@ func doctorQueue(session string) doctor.QueueState {
 	}
 	if h, held := ctxwatch.LoadCompactionHold(dir, session); held {
 		st.Hold = &h
+	}
+	st.Err = err
+	return st
+}
+
+// doctorChannel reads, without writing anything, the session's channel
+// record, whether this project's or the user's settings hold the turn hook,
+// the plugin's state and the machine's allowlist (FR26).
+func doctorChannel(session string) doctor.ChannelState {
+	st := doctor.ChannelState{Session: session, GOOS: channelGOOS}
+	var paths []string
+	config, configErr := ctxwatch.ClaudeConfigDir()
+	if configErr == nil {
+		paths = append(paths, filepath.Join(config, "settings.json"))
+	}
+	project, _, rootErr := projectRoot()
+	if rootErr == nil {
+		paths = append(paths, filepath.Join(project, ".claude", "settings.local.json"), filepath.Join(project, ".claude", "settings.json"))
+	} else {
+		project = ""
+	}
+	for _, path := range paths {
+		if asked, err := ctxwatch.TurnHookInstalled(path); err == nil && asked {
+			st.Asked = true
+		}
+	}
+	if configErr == nil {
+		plugin := channel.DetectPlugin(config, project)
+		st.Marketplace, st.Enabled = plugin.Marketplace, plugin.Enabled
+	}
+	st.Allowlisted, _, st.AllowErr = channel.AllowlistedIn(channelManagedDir())
+	dir, err := contextDir()
+	if err != nil {
+		st.Err = err
+		return st
+	}
+	if path, e := ctxwatch.BindingPath(dir, session); e == nil {
+		st.Path = strings.TrimSuffix(path, ".json") + ".channel.json"
+	}
+	r, ok, err := ctxwatch.LoadChannelState(dir, session)
+	if ok {
+		st.Record = &r
 	}
 	st.Err = err
 	return st

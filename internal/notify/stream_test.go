@@ -168,8 +168,8 @@ func TestNotifyCommandAdapterGivesFixedTextOnly(t *testing.T) {
 	if json.Unmarshal(stdin, &e) != nil || e["type"] != "inbox_changed" || e["session_id"] != "ses-id" || e["latest_sequence"] != float64(9) || len(e) != 7 {
 		t.Fatal(string(stdin))
 	}
-	if noticeText(1) != "1 ClawBridge message is waiting; call inbox" {
-		t.Fatal(noticeText(1))
+	if NoticeText(1) != "1 ClawBridge message is waiting; call inbox" {
+		t.Fatal(NoticeText(1))
 	}
 	// A failed command doesn't advance the checkpoint.
 	c.StatePath = filepath.Join(t.TempDir(), "again.json")

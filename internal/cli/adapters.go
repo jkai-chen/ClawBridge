@@ -39,6 +39,7 @@ func runInstall(ctx context.Context, flags Config, args []string, stdout, stderr
 	if err != nil {
 		return err
 	}
+	hooks.session, hooks.instance = c.Session, c.Instance
 	inherited := []string{}
 	for _, item := range []struct{ name, value string }{
 		{"linear-profile", flags.LinearProfile}, {"db", c.DB}, {"workspace", c.Workspace}, {"project", c.Project}, {"session", c.Session}, {"instance", c.Instance}, {"mode", c.Mode},
@@ -66,6 +67,10 @@ type mcpInstallHooks struct {
 	scope, root           string
 	explicit              bool
 	dryRun, confirmShared bool
+	// channel adds the turn hook and lists the channel's setup steps
+	// (FR26), for the session and instance installed.
+	channel           bool
+	session, instance string
 }
 
 // installHookFlags takes --hooks and --confirm-shared from mcp install's
@@ -99,6 +104,9 @@ func installHookFlags(args []string) ([]string, mcpInstallHooks, error) {
 		case strings.HasPrefix(args[i], "-") && name == "confirm-shared":
 			h.confirmShared = !inline || value == "true"
 			continue
+		case strings.HasPrefix(args[i], "-") && name == "channel":
+			h.channel = !inline || value == "true"
+			continue
 		case strings.HasPrefix(args[i], "-") && (name == "agent" || name == "config"):
 			rest = append(rest, args[i])
 			v := value
@@ -123,6 +131,15 @@ func installHookFlags(args []string) ([]string, mcpInstallHooks, error) {
 	default:
 		return nil, h, fmt.Errorf("--hooks must be local, user, project-shared or none, not %q", h.scope)
 	}
+	if h.channel && agent == "codex" {
+		return nil, h, errors.New("Codex has no channels; it keeps the notify adapter")
+	}
+	if h.channel && agent != ctxwatch.ClaudeCode {
+		return nil, h, errors.New("--channel is for --agent claude-code")
+	}
+	if h.channel && h.explicit && h.scope == "none" {
+		return nil, h, errors.New("--channel needs the hooks: it adds the turn hook, so drop --hooks none")
+	}
 	if agent != ctxwatch.ClaudeCode {
 		if h.explicit && h.scope != "none" {
 			return nil, h, errors.New("--hooks is for --agent claude-code")
@@ -146,17 +163,30 @@ func installHookFlags(args []string) ([]string, mcpInstallHooks, error) {
 
 // installHooks installs the hooks after the MCP entry, reporting on
 // standard error so the installer's JSON stays alone on standard output.
-// A default install that can't add them says so and leaves the entry.
+// A default install that can't add them says so and leaves the entry; one
+// asked for with --channel fails, since the channel needs its turn hook.
+// With --channel it then lists the channel's setup still to do, read only:
+// the MCP entry itself is the same with or without it.
 func installHooks(h mcpInstallHooks, stderr io.Writer) error {
 	if h.scope == "none" {
 		return nil
 	}
-	err := applyHooks(h.scope, h.root, true, h.dryRun, h.confirmShared, stderr, stderr)
-	if err != nil && !h.explicit {
+	err := applyHooksWith(h.scope, h.root, true, h.dryRun, h.confirmShared, h.channel, stderr, stderr)
+	if err != nil && !h.explicit && !h.channel {
 		fmt.Fprintf(stderr, "the Claude Code hooks were not installed: %v; install them with clawbridge context hooks install\n", err)
 		return nil
 	}
-	return err
+	if err != nil {
+		return err
+	}
+	if h.channel {
+		instance := h.instance
+		if instance == "" {
+			instance = "<instance>"
+		}
+		writeChannelSteps(stderr, h.root, h.session, instance)
+	}
+	return nil
 }
 
 func mcpSelection(c Config, path, agent, target, name, session, instance string) doctor.MCPConfig {

@@ -1,0 +1,7 @@
+{
+  "name": "clawbridge",
+  "description": "Wakes an idle Claude Code agent when ClawBridge messages wait for its session, through a channel that carries only a fixed notice and counts. Runs the installed clawbridge binary; it holds no code.",
+  "homepage": "https://github.com/jkai-chen/ClawBridge/blob/main/docs/notifications.md#wake-an-idle-agent-through-a-channel-claude-code",
+  "repository": "https://github.com/jkai-chen/ClawBridge",
+  "license": "MIT"
+}

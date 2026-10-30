@@ -249,6 +249,20 @@ file refuses the uninstall; `--force` moves it to such a backup instead of
 deleting it. It refuses, even with `--force`, when the marker is untrusted or the
 folder holds links.
 
+## Claude Code channel plugin (optional)
+
+To let an idle Claude Code session be woken through a channel, install
+ClawBridge's plugin (`clawbridge channel setup`, in a plain terminal) and
+allowlist it once per machine. The allow step writes a managed-settings file
+that applies to every Claude Code user on the machine, so it needs an
+administrator: `sudo clawbridge channel allow --write` on macOS, and on Linux and
+WSL, where the file is under `/etc/claude-code/managed-settings.d/` (inside WSL,
+for a Claude Code run there); on Windows, `clawbridge channel allow --write` in a
+terminal run as administrator, for `C:\Program Files\ClaudeCode\`. It writes
+only after a person types `yes` at that terminal; agents never run it. Without the
+admin step the notifier keeps waking the session. Read the warnings first:
+[wake an idle agent through a channel](notifications.md#wake-an-idle-agent-through-a-channel-claude-code).
+
 ## Setting up your own server
 
 `clawbridge onboard` (Start's "Set up my own server") and the

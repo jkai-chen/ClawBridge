@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "wake": {
+      "command": "clawbridge",
+      "args": ["channel", "serve"],
+      "env": {
+        "CLAWBRIDGE_SESSION": "${CLAWBRIDGE_SESSION:-}",
+        "MCP_PROTOCOL_NEGOTIATION": "legacy"
+      }
+    }
+  }
+}

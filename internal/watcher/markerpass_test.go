@@ -24,22 +24,33 @@ func (e *env) queueMarkers(n int) {
 	e.sql(`UPDATE assignment_markers SET next_attempt_at='2000-01-01T00:00:00.000000000Z'`)
 }
 
-// awayFromTheHour waits, at most a minute, until the next UTC hour is more
-// than a minute away: the bus charges a pass to the hour of its own clock,
-// so a test that sets the hour's budget must not run across it.
-func awayFromTheHour(t *testing.T) {
-	t.Helper()
-	now := time.Now().UTC()
-	if left := now.Truncate(time.Hour).Add(time.Hour).Sub(now); left <= time.Minute {
-		time.Sleep(left + time.Second)
-	}
-}
-
 func (e *env) budgetUsed() int {
 	e.t.Helper()
-	var used int
-	e.queryRow(`SELECT budget_used FROM watch_lease`, &used)
+	used, _ := e.budgetHour()
 	return used
+}
+
+// budgetHour is the lease's budget and the hour it counts: the bus charges
+// by its own wall clock, so a test can see the hour roll over mid-pass.
+func (e *env) budgetHour() (int, string) {
+	e.t.Helper()
+	var used int
+	var hour string
+	e.queryRow(`SELECT budget_used, budget_hour FROM watch_lease`, &used, &hour)
+	return used, hour
+}
+
+// markerLines drops the hourly budget line a new hour's first pass logs
+// (logBudgetHour), which this test doesn't check: under CI load it can run
+// across an hour however it starts.
+func markerLines(logged []string) []string {
+	var out []string
+	for _, line := range logged {
+		if !strings.HasPrefix(line, "watcher: budget: ") {
+			out = append(out, line)
+		}
+	}
+	return out
 }
 
 // The live miss's shape: twenty bound Linear
@@ -58,10 +69,9 @@ func TestTickSurvivesTonightsMarkerQueue(t *testing.T) {
 		t.Fatal("queue:", due)
 	}
 	// Slow Linear: every read or write the fake answers takes 3 s. The
-	// clock starts at this hour's first minute, so its steps never reach the
-	// next hour, whose first pass would log the hour's budget (a third log
-	// line) and start a new budget.
-	awayFromTheHour(t)
+	// clock starts at this hour's first minute. The bus still charges by
+	// its own wall clock, so the checks below allow for a new hour starting
+	// mid-test (its budget line, its fresh budget).
 	clock := time.Now().UTC().Truncate(time.Hour).Add(time.Minute)
 	e.w.Now = func() time.Time { clock = clock.Add(time.Second); return clock }
 	e.sql(`UPDATE watch_lease SET budget_used=budget_limit-60, budget_hour=?`, clock.Format("2006-01-02T15"))
@@ -82,14 +92,17 @@ func TestTickSurvivesTonightsMarkerQueue(t *testing.T) {
 	// The rows not started give their charge back: across a markers-only
 	// pass, the budget moves by exactly the pass's net charge.
 	e.queueMarkers(2)
-	before = e.budgetUsed()
+	before, hourBefore := e.budgetHour()
 	pass := e.w.Markers(context.Background(), e.pid)
 	if pass.Error != "" || pass.Comments == nil || pass.Comments.MarkersLeft == 0 {
 		t.Fatalf("the nudge pass left nothing to refund: %+v", pass)
 	}
-	if spent := e.budgetUsed() - before; spent != pass.Comments.MarkersCharged {
-		t.Fatal("the budget kept charges for rows never applied:", spent, "net", pass.Comments.MarkersCharged)
+	// A new hour starts the budget again, so the difference only means
+	// something within one hour.
+	if after, hourAfter := e.budgetHour(); hourAfter == hourBefore && after-before != pass.Comments.MarkersCharged {
+		t.Fatal("the budget kept charges for rows never applied:", after-before, "net", pass.Comments.MarkersCharged)
 	}
+	logged = markerLines(logged)
 	if len(logged) != 2 || !strings.HasPrefix(logged[0], "watcher: markers: project "+e.pid+" (tick): applied ") || !strings.Contains(logged[0], "stopped "+c.MarkersStopped) || !strings.HasPrefix(logged[1], "watcher: markers: project "+e.pid+" (nudge): applied ") {
 		t.Fatal("log:", logged)
 	}

@@ -202,3 +202,13 @@ func TestAppWriterRefusesWithoutAMembershipCheck(t *testing.T) {
 		}
 	}
 }
+
+// Every app-route write is charged as app_write.<operation>, a kind of the
+// bus's closed set.
+func TestAppWriteOperationsAreChargeKinds(t *testing.T) {
+	for op := range appWriteOperations {
+		if !bus.KnownLinearCallKind("app_write." + op) {
+			t.Errorf("app_write.%s is not a charge kind", op)
+		}
+	}
+}

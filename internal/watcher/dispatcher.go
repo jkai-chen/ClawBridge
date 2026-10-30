@@ -245,7 +245,7 @@ func appProject(c dispatch.Case, source string) string {
 // dispatchCharge pays one authoritative read from the hour's budget, only
 // while the comment watch keeps its reserve.
 func (w *Watcher) dispatchCharge(ctx context.Context, pid string, fence map[string]any) bool {
-	args := map[string]any{"calls": 0}
+	args := map[string]any{"calls": 0, "kind": "watch.dispatcher"}
 	for k, v := range fence {
 		args[k] = v
 	}

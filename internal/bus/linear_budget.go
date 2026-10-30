@@ -79,7 +79,7 @@ func (s *Store) linearWriteCharge(ctx context.Context, tx *transaction, pid, pro
 	if actor != nil {
 		by = "agents"
 	}
-	if err = budget.chargeBy(ctx, tx, pid, count, by); err != nil {
+	if err = budget.chargeBy(ctx, tx, pid, count, by, "profile."+kind); err != nil {
 		return nil, err
 	}
 	budget.used += count

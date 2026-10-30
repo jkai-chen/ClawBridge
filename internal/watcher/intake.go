@@ -174,7 +174,7 @@ func (w *Watcher) intake(ctx context.Context, svc *linearboard.Service, scope bu
 	// The calls made are charged even when the share has run out.
 	cctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), intakeChargeTimeout)
 	defer cancel()
-	charge := map[string]any{"calls": poll.Calls}
+	charge := map[string]any{"calls": poll.Calls, "kind": "watch.intake"}
 	for k, v := range fence {
 		charge[k] = v
 	}

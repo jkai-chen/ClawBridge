@@ -152,7 +152,9 @@ func (s *Store) commentOp(ctx context.Context, tx *transaction, w, p map[string]
 		if err != nil || calls < 0 || calls > 1000 {
 			return nil, invalid("calls must be 0–1000")
 		}
-		used, limit, err := c.charge(ctx, lease, calls)
+		// kind is the watcher's job (intake, dispatcher): a watch kind
+		// of the set, else watch.other, as for an older watcher.
+		used, limit, err := c.charge(ctx, lease, calls, watchChargeKind(c.a["kind"]))
 		if err != nil {
 			return nil, err
 		}
@@ -688,8 +690,9 @@ func (c commentCall) lease(ctx context.Context) (any, error) {
 	return nil, invalid("action must be acquire, renew or release")
 }
 
-// charge rolls the lease's budget hour and adds calls (negative refunds).
-func (c commentCall) charge(ctx context.Context, lease map[string]any, calls int) (used, limit int, err error) {
+// charge rolls the lease's budget hour and adds calls (negative refunds),
+// and records them to kind's row.
+func (c commentCall) charge(ctx context.Context, lease map[string]any, calls int, kind string) (used, limit int, err error) {
 	hour := layout(c.now)[:13]
 	used = asInt(lease["budget_used"])
 	if str(lease, "budget_hour") != hour {
@@ -700,6 +703,9 @@ func (c commentCall) charge(ctx context.Context, lease map[string]any, calls int
 		used = 0
 	}
 	limit = asInt(lease["budget_limit"])
+	if err = recordCallKind(ctx, c.tx, c.pid, hour, kind, calls); err != nil {
+		return used, limit, err
+	}
 	_, err = c.tx.ExecContext(ctx, `UPDATE watch_lease SET budget_people=CASE WHEN budget_hour=? THEN budget_people ELSE 0 END,budget_agents=CASE WHEN budget_hour=? THEN budget_agents ELSE 0 END,budget_hour=?,budget_used=? WHERE project_id=?`, hour, hour, hour, used, c.pid)
 	return used, limit, err
 }
@@ -712,7 +718,7 @@ func (c commentCall) due(ctx context.Context) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	used, limit, err := c.charge(ctx, lease, 0)
+	used, limit, err := c.charge(ctx, lease, 0, "watch.comments")
 	if err != nil {
 		return nil, err
 	}
@@ -737,7 +743,7 @@ func (c commentCall) due(ctx context.Context) (any, error) {
 	}
 	issues := []any{}
 	if len(rows) > 0 {
-		if used, limit, err = c.charge(ctx, map[string]any{"budget_used": used, "budget_hour": layout(c.now)[:13], "budget_limit": limit}, len(rows)+watchConnectCalls); err != nil {
+		if used, limit, err = c.charge(ctx, map[string]any{"budget_used": used, "budget_hour": layout(c.now)[:13], "budget_limit": limit}, len(rows)+watchConnectCalls, "watch.comments"); err != nil {
 			return nil, err
 		}
 		polled := layout(c.now)
@@ -843,7 +849,7 @@ func (c commentCall) report(ctx context.Context) (any, error) {
 	if err != nil {
 		return nil, scopedError(err, "this issue is not watched in this project", "not_found")
 	}
-	used, _, err := c.charge(ctx, lease, calls-1)
+	used, _, err := c.charge(ctx, lease, calls-1, "watch.comments")
 	if err != nil {
 		return nil, err
 	}

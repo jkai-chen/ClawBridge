@@ -574,8 +574,13 @@ type budgetHour struct {
 func (w *Watcher) noteBudget(pid string, tick ProjectTick) {
 	hour := w.now().UTC().Format("2006-01-02T15")
 	w.mu.Lock()
-	defer w.mu.Unlock()
-	w.rollBudgets(hour)
+	ended := w.rollBudgets(hour)
+	defer func() {
+		// The ended hours' top kinds are read from the store, so they
+		// are logged without the lock.
+		w.mu.Unlock()
+		w.logBudgets(ended)
+	}()
 	c := tick.Comments
 	if c == nil {
 		return
@@ -609,23 +614,76 @@ func (w *Watcher) noteBudget(pid string, tick ProjectTick) {
 	b.deferred = max(b.deferred, deferred)
 }
 
-// rollBudgets logs and forgets every project's hour before hour, in
-// project order. The caller holds w.mu.
-func (w *Watcher) rollBudgets(hour string) {
-	ended := []string{}
+// endedBudget is a project's hour that has ended, to be logged.
+type endedBudget struct {
+	pid string
+	budgetHour
+}
+
+// rollBudgets forgets every project's hour before hour and returns them,
+// in project order. The caller holds w.mu.
+func (w *Watcher) rollBudgets(hour string) []endedBudget {
+	var ended []endedBudget
 	for pid, b := range w.budgets {
 		if b.hour != hour {
-			ended = append(ended, pid)
+			ended = append(ended, endedBudget{pid: pid, budgetHour: *b})
+			delete(w.budgets, pid)
 		}
 	}
-	sort.Strings(ended)
-	for _, pid := range ended {
-		b := w.budgets[pid]
+	sort.Slice(ended, func(i, j int) bool { return ended[i].pid < ended[j].pid })
+	return ended
+}
+
+// budgetKindsStore is the store's calls by kind in an hour, when it keeps
+// them (the bus's, schema 52).
+type budgetKindsStore interface {
+	LinearBudgetKindsAt(ctx context.Context, pid, hour string) ([]bus.LinearBudgetKind, error)
+}
+
+var _ budgetKindsStore = (*bus.Store)(nil)
+
+// budgetKindsTimeout bounds the reads of the ended hours' kinds, all of
+// them together.
+const budgetKindsTimeout = 5 * time.Second
+
+// logBudgets logs each ended hour, with its top three kinds when the store
+// can say; codes and counts only. The caller doesn't hold w.mu.
+func (w *Watcher) logBudgets(ended []endedBudget) {
+	kinds, _ := w.Store.(budgetKindsStore)
+	if len(ended) == 0 {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), budgetKindsTimeout)
+	defer cancel()
+	for _, b := range ended {
 		limit := "none"
 		if b.limit > 0 {
 			limit = strconv.Itoa(b.limit)
 		}
-		logf("watcher: budget: project %s hour %s: used %d of %s, refused %d passes, deferred %d", pid, b.hour[len(b.hour)-2:], b.used, limit, b.refused, b.deferred)
-		delete(w.budgets, pid)
+		top := ""
+		if kinds != nil {
+			if got, err := kinds.LinearBudgetKindsAt(ctx, b.pid, b.hour); err == nil {
+				top = topBudgetKinds(got, 3)
+			}
+		}
+		logf("watcher: budget: project %s hour %s: used %d of %s, refused %d passes, deferred %d%s", b.pid, b.hour[len(b.hour)-2:], b.used, limit, b.refused, b.deferred, top)
 	}
+}
+
+// topBudgetKinds is ", top: KIND N, KIND N, …" for the first n kinds with
+// calls (they come the most first), or "" when there are none.
+func topBudgetKinds(kinds []bus.LinearBudgetKind, n int) string {
+	var parts []string
+	for _, k := range kinds {
+		if len(parts) == n {
+			break
+		}
+		if k.Calls > 0 {
+			parts = append(parts, fmt.Sprintf("%s %d", k.Kind, k.Calls))
+		}
+	}
+	if len(parts) == 0 {
+		return ""
+	}
+	return ", top: " + strings.Join(parts, ", ")
 }

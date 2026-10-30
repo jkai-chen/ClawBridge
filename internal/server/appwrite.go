@@ -211,7 +211,7 @@ func (w *AppWriter) send(parent context.Context, identity bus.Identity, r bus.Re
 		var calls atomic.Int64
 		ctx = linearpace.WithCounter(ctx, &calls)
 		defer func() {
-			if err := w.Store.ChargeLinearBudget(context.WithoutCancel(parent), project, int(calls.Load())); err != nil {
+			if err := w.Store.ChargeLinearBudget(context.WithoutCancel(parent), project, int(calls.Load()), "app_write."+operation); err != nil {
 				log.Printf("clawbridge: linear budget: charge failed")
 			}
 		}()

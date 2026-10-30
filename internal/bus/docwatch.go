@@ -79,14 +79,14 @@ func (c commentCall) docWatchDue(ctx context.Context) (any, error) {
 	if str(rows[0], "next_poll_at") > nowRaw {
 		return map[string]any{"action": "none", "reason": "not_due"}, nil
 	}
-	used, budget, err := c.charge(ctx, lease, 0)
+	used, budget, err := c.charge(ctx, lease, 0, "watch.docs")
 	if err != nil {
 		return nil, err
 	}
 	if budget > 0 && budget-used-watchConnectCalls-1 < 1 {
 		return map[string]any{"action": "none", "reason": "budget"}, nil
 	}
-	if _, _, err = c.charge(ctx, lease, 1); err != nil {
+	if _, _, err = c.charge(ctx, lease, 1, "watch.docs"); err != nil {
 		return nil, err
 	}
 	if _, err = c.tx.ExecContext(ctx, `UPDATE watch_cursors SET next_poll_at=?,polled_at=?,updated_at=? WHERE project_id=? AND source=? AND subject=''`, layout(c.now.Add(docPollEvery)), nowRaw, nowRaw, c.pid, docWorkspaceKey); err != nil {

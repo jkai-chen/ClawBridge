@@ -731,7 +731,10 @@ already read through `list_sessions`, `taskboard_get_v2` and `status_policy_get`
   with no cap, the default), `capped` (false with no cap), `source` (`project`,
   `watcher` or `default`), `window_resets_at`, and `by`, the hour's calls of
   the app (the server's jobs and app writes), `people` (their own writes) and
-  `agents` (sessions writing through a personal profile). Counts only; `capped`
+  `agents` (sessions writing through a personal profile); `kinds`, the hour's
+  calls by the job that made them, the most first, each `{"kind", "calls",
+  "events"}` (`events` counts the charges); and `last_hour`, `{"hour", "kinds"}`
+  for the previous hour. Both are left out when empty. Counts only; `capped`
   and `source` are stable machine fields. Doctor's `linear.budget` reads it;
   `linear_app_status`'s `budget` carries the same.
 - **`proven_gates`** (the project owner only): the server's eight PROVEN gates

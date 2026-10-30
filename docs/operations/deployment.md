@@ -773,6 +773,19 @@ CLAWBRIDGE_WATCH_INTERVAL=15m
     deprecated name: **a server upgraded with `CLAWBRIDGE_WATCH_BUDGET=300` (or
     the new name) still in its env keeps that cap**; remove the line for no cap.
     Under a cap the server's jobs stop at it and app writes wait in the queue.
+  - **By kind** (schema 52): each charge also names the job that made its
+    calls, from a closed set: `watch.comments`, `watch.markers`,
+    `watch.health`, `watch.flow`, `watch.docs`, `watch.subscribers`,
+    `watch.intake`, `watch.dispatcher` (and `watch.other`), `project_status`,
+    `issue_move`, `operator.health`, `app_write.<operation>` for the app-route
+    writes and `profile.<kind>` for writes through a personal profile. Each
+    kind keeps its calls and its charges (`events`), so calls per event is the
+    cost of one, for this hour and the previous one. See it in `clawbridge
+    project linear-budget show` (a `By kind` line, the top six), doctor's
+    `linear.budget` (the top three when the app spent more than half the hour),
+    the overview's `linear_budget` (`kinds`, `last_hour`) and the hourly log
+    line below (`top:`). It holds kind names and counts only, never an issue
+    or who.
   - A project's owner can set that project's own cap with `clawbridge project
     linear-budget set N`, which wins over the server's, up to
     `CLAWBRIDGE_LINEAR_BUDGET_MAX` (default 2000, at most Linear's 5000 an hour
@@ -809,9 +822,10 @@ CLAWBRIDGE_WATCH_INTERVAL=15m
   - **The hour, in the log.** After each UTC hour, the first tick or nudge
     logs one line per project the server watched in it: `watcher: budget:
     project ID hour HH: used N of L, refused P passes, deferred D` (`of none`
-    with no cap). `refused` counts the passes a cap stopped, and `deferred` is
-    the most due issues and marker rows any one pass left for later. It holds
-    no issue data. The counts live in the server process, so the hour a server
+    with no cap), then `, top: KIND N, …` with the hour's top three kinds
+    when the bus has them. `refused` counts the passes a cap stopped, and
+    `deferred` is the most due issues and marker rows any one pass left for
+    later. It holds no issue data. The counts live in the server process, so the hour a server
     stops or restarts in is not logged.
 - **Queued writes.** The server sends queued agent writes every 5 seconds as
   Linear and each project's budget allow (docs/linear.md, "Queued writes").

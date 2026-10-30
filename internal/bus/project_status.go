@@ -429,7 +429,7 @@ func (s *Store) chargeProjectStatus(ctx context.Context, tx *transaction, pid st
 	if b.spent(calls) {
 		return scoped(fmt.Sprintf("this project's Linear budget for the hour is spent (%d of %d calls used; this needs %d); try again at %s", b.used, b.limit, calls, b.resetAt.Format(time.RFC3339)), "rate_limited")
 	}
-	return b.charge(ctx, tx, pid, calls)
+	return b.charge(ctx, tx, pid, calls, "project_status")
 }
 
 // projectBudget is a project's hourly Linear budget at the database's now:
@@ -496,6 +496,10 @@ type LinearBudget struct {
 	// By splits the hour's calls between the app, people and agents
 	// (FR8): counts only, never who.
 	By LinearBudgetSplit `json:"by"`
+	// Kinds are the hour's calls by the job that made them, the most
+	// first; LastHour is the previous hour's. Names and counts only.
+	Kinds    []LinearBudgetKind `json:"kinds,omitempty"`
+	LastHour *LinearBudgetHour  `json:"last_hour,omitempty"`
 }
 
 // LinearBudgetSplit is who spent the hour's Linear calls: the app (the
@@ -517,7 +521,10 @@ func (s *Store) LinearBudgetOf(ctx context.Context, pid string) (LinearBudget, e
 	var out LinearBudget
 	err := s.ledgerTx(ctx, func(tx *transaction) error {
 		b, err := s.projectBudget(ctx, tx, pid)
-		out = b.view()
+		if err != nil {
+			return err
+		}
+		out, err = budgetView(ctx, tx, pid, b)
 		return err
 	})
 	return out, err
@@ -533,13 +540,17 @@ func (b projectBudget) capped() bool { return b.limit > 0 }
 // spent reports a cap the hour has reached; never without a cap.
 func (b projectBudget) spent(calls int) bool { return b.capped() && b.used+calls > b.limit }
 
-func (b projectBudget) charge(ctx context.Context, tx *transaction, pid string, calls int) error {
-	return b.chargeBy(ctx, tx, pid, calls, "")
+func (b projectBudget) charge(ctx context.Context, tx *transaction, pid string, calls int, kind string) error {
+	return b.chargeBy(ctx, tx, pid, calls, "", kind)
 }
 
 // chargeBy charges calls to the hour for the app (by ""), "people" or
-// "agents". A refund (negative calls) never takes a count below zero.
-func (b projectBudget) chargeBy(ctx context.Context, tx *transaction, pid string, calls int, by string) error {
+// "agents", and to kind's row. A refund (negative calls) never takes a
+// count below zero.
+func (b projectBudget) chargeBy(ctx context.Context, tx *transaction, pid string, calls int, by, kind string) error {
+	if err := recordCallKind(ctx, tx, pid, b.hour, kind, calls); err != nil {
+		return err
+	}
 	people, agents := 0, 0
 	switch by {
 	case "people":
@@ -575,17 +586,22 @@ func (s *Store) LinearBudgetRoom(ctx context.Context, pid string) (ok bool, used
 	return ok, used, limit, resetAt, err
 }
 
-// ChargeLinearBudget charges calls a write made to its project's hour. It
-// never refuses: the write was already admitted, and its calls were made.
-func (s *Store) ChargeLinearBudget(ctx context.Context, pid string, calls int) error {
+// ChargeLinearBudget charges calls a write made to its project's hour, as
+// kind (app_write.<operation>). It never refuses: the write was already
+// admitted, and its calls were made.
+func (s *Store) ChargeLinearBudget(ctx context.Context, pid string, calls int, kind string) error {
 	if calls <= 0 {
 		return nil
 	}
 	return s.ledgerTx(ctx, func(tx *transaction) error {
-		b, err := s.projectBudget(ctx, tx, pid)
-		if err != nil {
-			return err
-		}
-		return b.charge(ctx, tx, pid, calls)
+		return s.chargeLinearBudget(ctx, tx, pid, calls, kind)
 	})
+}
+
+func (s *Store) chargeLinearBudget(ctx context.Context, tx *transaction, pid string, calls int, kind string) error {
+	b, err := s.projectBudget(ctx, tx, pid)
+	if err != nil {
+		return err
+	}
+	return b.charge(ctx, tx, pid, calls, kind)
 }

@@ -1,5 +1,15 @@
 package bus
 
+// budgetKindsDowngradeSQLite returns a linearBudgetKindsSchemaVersion
+// database to the shape before it: the hour's calls by kind.
+const budgetKindsDowngradeSQLite = "DROP TABLE linear_budget_kinds;\n"
+
+// budgetKindsDowngradePostgres is budgetKindsDowngradeSQLite for a
+// Postgres schema.
+func budgetKindsDowngradePostgres(schema string) string {
+	return "DROP TABLE " + schema + ".linear_budget_kinds;\n"
+}
+
 // webhookDowngradeSQLite returns a webhookSchemaVersion database to the
 // shape before it: the webhook deliveries, team states, counters and
 // cursor hints. The chain that uses it sets the version.

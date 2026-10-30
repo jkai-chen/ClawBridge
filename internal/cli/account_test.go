@@ -146,6 +146,19 @@ func run(args ...string) (string, error) {
 	return out.String(), err
 }
 
+// G9 S2-01: a code given with --code works, with a warning that it is in
+// shell history and process lists.
+func TestJoinWarnsAboutACodeOnTheCommandLine(t *testing.T) {
+	f := newJoinFixture(t)
+	var out, errOut bytes.Buffer
+	if err := Run(context.Background(), []string{"--server", f.url, "join", "--email", "ada@example.com", "--code", "CBJ-4K7P-WQ9D-2MXH-T6RB"}, &out, &errOut); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(errOut.String(), "warning: the invite code was on the command line") || strings.Contains(errOut.String(), "CBJ-4K7P") {
+		t.Fatal(errOut.String())
+	}
+}
+
 func TestJoinWritesADeviceProfileThatSigns(t *testing.T) {
 	f := newJoinFixture(t)
 	out, err := run("--server", f.url, "join", "--email", "Ada@Example.com", "--code", "cbj 4k7p wq9d 2mxh t6rb", "--label", "Ada's laptop")

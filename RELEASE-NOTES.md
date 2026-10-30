@@ -231,6 +231,9 @@ computer. Upgrading from v0.3.x: docs/upgrading-to-1.0.md.
 - **`runner fetch`'s token scan no longer skips an added line that begins `++ `** (G9 S4-04). In the patch such a line
   reads `+++ `, which the scan took for a file header; a `+++ ` line now names the file only before a file's first
   hunk. Linear config scope: none.
+- **`clawbridge join --code` warns that the code is on the command line** (G9 S2-01): shell history and other users'
+  process lists can see it. It still works once; leaving out `--code` asks for it unechoed (or reads it from stdin).
+  docs/sign-in.md. Linear config scope: none.
 
 # ClawBridge v0.3.13 (released 30 Oct)
 

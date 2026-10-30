@@ -845,6 +845,11 @@ func runDeviceJoin(ctx context.Context, flags Config, args []string, stdin io.Re
 	if *store, err = newKeyStore(*store, flags.KeyStore); err != nil {
 		return err
 	}
+	// G9 S2-01: --code still works, but the code is then in shell history
+	// and process lists; say so, and how to keep it out next time.
+	if *code != "" && *email != "" {
+		fmt.Fprintln(stderr, "warning: the invite code was on the command line, where shell history and other users' process lists can see it; it works once, but next time leave out --code to type it unechoed (or pipe it on stdin)")
+	}
 	terminal := stdin == os.Stdin && stdinTerminal()
 	lines := bufio.NewReader(stdin)
 	// secret reads the link or code: unechoed at a terminal, else a line of

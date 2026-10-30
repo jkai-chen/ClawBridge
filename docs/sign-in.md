@@ -115,7 +115,8 @@ clawbridge --project api whoami      # identity_provenance: device-key
   loopback address for development.
 - **With the code instead:** `clawbridge --server URL join --email EMAIL` asks
   for the code (or the link). `--code` exists for scripts, but don't use it by
-  hand.
+  hand: the code lands in shell history and process lists, and `join` warns
+  when it's given there.
 - **Where it goes.** `join` writes the profile (`~/.clawbridge/config.toml`, or
   the one `--client-config` names) to sign with the new key. The label is just a
   name, and defaults to the computer's name.

@@ -100,7 +100,7 @@ func (a *chaosAPI) start() {
 	}
 	a.drain = drain
 	go hub.Listen(ctx, a.dsn())
-	go runSweeper(ctx, store, 200*time.Millisecond, drain)
+	go runSweeper(ctx, store, 200*time.Millisecond, drain, nil)
 	addr := a.addr
 	if addr == "" {
 		addr = "127.0.0.1:0"

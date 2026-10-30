@@ -36,6 +36,9 @@ type fakeCommentLedger struct {
 	leases                 []map[string]any
 	reports, settleMatches []map[string]any
 	reportErr              error
+	// refuseTeamID answers a report that names team_id as an older
+	// server does.
+	refuseTeamID bool
 	// prechecks records linear_comment_precheck; precheckRefuse fails it.
 	prechecks      []map[string]any
 	precheckRefuse error
@@ -103,6 +106,9 @@ func (f *fakeCommentLedger) execute(r bus.Request) (bus.Result, error) {
 		return bus.Result{Source: "local-authority", Data: map[string]any{"issues": due, "budget_used": 3, "budget_limit": 200, "budget_exhausted": false}}, nil
 	case "comment_watch_report":
 		f.reports = append(f.reports, r.Args)
+		if _, ok := r.Args["team_id"]; ok && f.refuseTeamID {
+			return bus.Result{}, errors.New(`unsupported argument "team_id" for comment_watch_report`)
+		}
 		if f.reportErr != nil {
 			return bus.Result{}, f.reportErr
 		}

@@ -326,6 +326,12 @@ func (s *Store) IntakeCursorSet(ctx context.Context, pid, source, subject, polle
 	if activity != "" && activity > layout(at(now).Add(-time.Hour)) {
 		wait = 5 * time.Minute
 	}
+	// While the source's webhooks are live, hourly (FR14 §6 P4).
+	if live, e := s.intakeSourceLive(ctx, tx, pid, source, subject, at(now)); e != nil {
+		return e
+	} else if live {
+		wait = webhookLiveWait
+	}
 	from := at(now)
 	if p := at(polled); !p.IsZero() && p.Before(from) {
 		from = p

@@ -388,13 +388,13 @@ func TestDrainPausesWorkers(t *testing.T) {
 	sweeps := &countingSweeper{}
 	ctxSweep, cancel := context.WithCancel(ctx)
 	go func() { time.Sleep(50 * time.Millisecond); cancel() }()
-	runSweeper(ctxSweep, sweeps, 5*time.Millisecond, d)
+	runSweeper(ctxSweep, sweeps, 5*time.Millisecond, d, nil)
 	if sweeps.count() != 0 {
 		t.Fatal("swept in maintenance")
 	}
 	ctxSweep, cancel = context.WithCancel(ctx)
 	go func() { time.Sleep(20 * time.Millisecond); cancel() }()
-	runSweeper(ctxSweep, sweeps, 5*time.Millisecond, nil)
+	runSweeper(ctxSweep, sweeps, 5*time.Millisecond, nil, nil)
 	if sweeps.count() == 0 {
 		t.Fatal("no drain must sweep")
 	}

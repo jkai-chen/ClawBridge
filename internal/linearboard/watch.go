@@ -1,14 +1,16 @@
 package linearboard
 
 import (
-	"clawbridge/internal/bus"
-	"clawbridge/internal/linearconn"
-	"clawbridge/internal/linearprovider"
 	"context"
 	"errors"
 	"net/http"
 	"sort"
+	"strings"
 	"time"
+
+	"clawbridge/internal/bus"
+	"clawbridge/internal/linearconn"
+	"clawbridge/internal/linearprovider"
 )
 
 // WatchInterval is how often the comment watcher wakes; the bus decides
@@ -53,6 +55,9 @@ type WatchOptions struct {
 	// markers: a pass with a deadline stops polling comments with
 	// CommentStop(StepsRoom) left.
 	StepsRoom time.Duration
+	// NoMarkers runs the comment sweep and poll, then Within, but applies
+	// no claim markers (a webhook pass, FR14): the ticks and nudges do.
+	NoMarkers bool
 }
 
 // WatchCycle is what one watch cycle did. Held names the issues whose poll
@@ -167,7 +172,7 @@ func (s *Service) Watch(ctx context.Context, scope bus.Request, opts WatchOption
 				return err
 			}
 		}
-		if !opts.MarkersOnly && !opts.WithinOnly {
+		if !opts.MarkersOnly && !opts.WithinOnly && !opts.NoMarkers {
 			// The hotfix (live/MARKER-PASS-HOTFIX.md): a tick's markers come
 			// last, in the time the other steps leave, so they can never
 			// starve the comment watch; nudge passes drain the rest in
@@ -297,6 +302,11 @@ func (s *Service) watchCycle(ctx context.Context, scope bus.Request, lease *watc
 		// next pass doesn't find the same budget and redo the same work.
 		rctx, cancel := reportContext(ctx)
 		out, err := s.commentLedger(rctx, scope, "comment_watch_report", lease.fence(report))
+		if err != nil && report["team_id"] != nil && strings.Contains(err.Error(), `unsupported argument "team_id"`) {
+			// A server older than webhook misses takes no team.
+			delete(report, "team_id")
+			out, err = s.commentLedger(rctx, scope, "comment_watch_report", lease.fence(report))
+		}
 		cancel()
 		if err != nil {
 			var coded interface{ Code() string }
@@ -567,6 +577,11 @@ func (s *Service) pollIssue(ctx context.Context, scope bus.Request, lease *watch
 		comments = append(comments, item)
 	}
 	report["comments"] = comments
+	// The issue's team, from this same read: the bus counts a notified
+	// comment's webhook miss against it (FR14 §6 P5). No extra call.
+	if team := strings.ToLower(read.TeamID); linearprovider.ValidID(team) {
+		report["team_id"] = team
+	}
 	return report
 }
 

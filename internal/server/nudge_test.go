@@ -43,6 +43,12 @@ func (p *passes) Fallback(ctx context.Context, pid string) any {
 	return p.Markers(ctx, "fallback:"+pid)
 }
 
+// Webhook records a webhook pass as "webhook:" and the project.
+func (p *passes) Webhook(ctx context.Context, pid string) error {
+	p.Markers(ctx, "webhook:"+pid)
+	return nil
+}
+
 func (p *passes) count() int {
 	p.mu.Lock()
 	defer p.mu.Unlock()

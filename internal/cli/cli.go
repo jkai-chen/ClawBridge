@@ -1538,6 +1538,21 @@ func collectDoctor(ctx context.Context, config Config, configPath string, existi
 				return linearCapabilities(bounded, manager, config.LinearProfile)
 			}
 			in.LinearAPIKey = func() (string, bool) { return linearKeys(directory).Recorded(config.LinearProfile) }
+			in.LinearProfileID = config.LinearProfile
+			in.LinearConnection = func(ctx context.Context) (string, error) {
+				bounded, cancel := context.WithTimeout(ctx, 10*time.Second)
+				defer cancel()
+				profile, e := manager.Status(bounded, config.LinearProfile)
+				if e != nil {
+					// The store a profile records, even when the credential
+					// can't be read; unknown when the record can't be either.
+					if store, err := manager.RecordedStore(config.LinearProfile); err == nil {
+						return store, e
+					}
+					return "unknown", e
+				}
+				return profile.Store(), nil
+			}
 			if board, ok := executor.(linearboard.Executor); ok {
 				in.WorkspaceUsers = func(ctx context.Context, wid, pid string) ([]linearprovider.WorkspaceUser, error) {
 					service := newLinearService(directory, config.LinearProfile, manager, board, linearAuthority(config))

@@ -65,7 +65,7 @@ func wizardHooks(t *testing.T, input string) *wizardReader {
 	// unless a test says otherwise; it never writes without a stub.
 	wizardSkillTargets = func() ([]skill.Target, error) { return nil, errors.New("no agents") }
 	wizardSkillInstall = func([]skill.Target) ([]skill.Result, error) { t.Fatal("unexpected skill install"); return nil, nil }
-	wizardLinearConnect = func(context.Context, string, string, string, io.Writer) (string, error) {
+	wizardLinearConnect = func(context.Context, string, string, string, string, io.Writer) (string, error) {
 		t.Fatal("unexpected Linear connection")
 		return "", nil
 	}

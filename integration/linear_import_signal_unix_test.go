@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -19,19 +20,32 @@ func TestL1CLIImportSIGINTWithOpenStdinExitsWithoutEOF(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer w.Close()
-	cmd := exec.Command(p.binary, "linear", "import", "--name", "canceled-pipe-fixture", "--token-stdin")
-	cmd.Dir = p.dir
 	emptyPath := filepath.Join(t.TempDir(), "empty-path")
 	if err := os.Mkdir(emptyPath, 0700); err != nil {
 		t.Fatal(err)
 	}
+	env := []string{}
 	for _, v := range p.env {
 		if strings.HasPrefix(v, "HOME=") || strings.HasPrefix(v, "PATH=") || strings.HasPrefix(v, "XDG_") || strings.HasPrefix(v, "DBUS_") {
 			continue
 		}
-		cmd.Env = append(cmd.Env, v)
+		env = append(env, v)
 	}
-	cmd.Env = append(cmd.Env, "HOME="+filepath.Join(p.dir, "private-home"), "XDG_CONFIG_HOME="+filepath.Join(p.dir, "private-xdg"), "PATH="+emptyPath, "DBUS_SESSION_BUS_ADDRESS=unix:path="+filepath.Join(p.dir, "absent-bus"))
+	env = append(env, "HOME="+filepath.Join(p.dir, "private-home"), "XDG_CONFIG_HOME="+filepath.Join(p.dir, "private-xdg"), "PATH="+emptyPath, "DBUS_SESSION_BUS_ADDRESS=unix:path="+filepath.Join(p.dir, "absent-bus"))
+	if runtime.GOOS == "linux" {
+		// With no Secret Service, the keyring is refused before stdin is
+		// read, naming the file store: never a silent fallback.
+		refused := exec.Command(p.binary, "linear", "import", "--name", "no-keyring-fixture", "--token-stdin")
+		refused.Dir, refused.Env, refused.Stdin = p.dir, env, strings.NewReader("")
+		out, err := refused.CombinedOutput()
+		if err == nil || !strings.Contains(string(out), "--key-store file") {
+			t.Fatalf("a missing key store did not name the file store: %v %s", err, out)
+		}
+	}
+	// The file store needs no key store, so the import reaches stdin.
+	cmd := exec.Command(p.binary, "linear", "import", "--name", "canceled-pipe-fixture", "--token-stdin", "--key-store", "file")
+	cmd.Dir = p.dir
+	cmd.Env = env
 	cmd.Stdin = r
 	var output bytes.Buffer
 	cmd.Stdout = &output

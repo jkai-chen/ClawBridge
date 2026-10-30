@@ -128,6 +128,12 @@ type Input struct {
 	// the provider's negotiated capabilities from its advertised tool list.
 	// It performs no Linear write. Nil skips the Linear section.
 	LinearCapabilities func(context.Context) (linearprovider.Capabilities, error)
+	// LinearConnection reads the personal Linear profile's credential from
+	// its store, locally, and names the store: keyring or file. Nil skips
+	// the check.
+	LinearConnection func(context.Context) (store string, err error)
+	// LinearProfileID is the profile LinearConnection reads.
+	LinearProfileID string
 	// LinearAPIKey says whether the profile has a Linear API key saved, and
 	// in which store, from its marker: doctor never reads the key. Nil skips
 	// the check.
@@ -276,6 +282,9 @@ func Run(ctx context.Context, in Input, executor Executor) Report {
 		}
 		checkMCP(mcp, add)
 	}
+	if in.LinearConnection != nil {
+		checkLinearConnection(ctx, in.LinearProfileID, in.LinearConnection, add)
+	}
 	if in.LinearCapabilities != nil {
 		checkLinearCapabilities(ctx, in.LinearCapabilities, add)
 	}
@@ -344,6 +353,27 @@ func checkLinearCapabilities(ctx context.Context, read func(context.Context) (li
 			check.Message += " Off because " + strings.Join(off, "; ") + "."
 		}
 		check.Action = "Commands that need an off capability are refused until it returns; report a provider schema change to the coordinator."
+	}
+	add(check)
+}
+
+// checkLinearConnection reports which store the personal Linear connection
+// is kept in, and whether it can be read from there, as auth.device does
+// for the device key. A file must be 0600 in a 0700 directory. Linear is
+// optional, so a connection that can't be read is a warning.
+func checkLinearConnection(ctx context.Context, profile string, read func(context.Context) (string, error), add func(Check)) {
+	check := Check{ID: "linear.connection", Title: "Linear connection", Status: Pass}
+	store, err := read(ctx)
+	if err != nil {
+		check.Status = Warn
+		check.Message = "The Linear connection " + profile + " (" + store + ") can't be used: " + err.Error()
+		check.Action = "Unlock the key store or fix the connection file's mode; on a machine without a key store, connect again with `clawbridge linear connect --key-store file`."
+		add(check)
+		return
+	}
+	check.Message = "The Linear connection " + profile + " is readable from its " + store + " store."
+	if store == "file" {
+		check.Message += " It is a plain file, 0600: anyone who can read it as you can act as you in Linear."
 	}
 	add(check)
 }

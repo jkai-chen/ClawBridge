@@ -64,6 +64,9 @@ var doctorAnswers = map[string]doctorAnswer{
 	"skill.version": {
 		warn: "Your agents' ClawBridge skill needs attention.",
 	},
+	"linear.connection": {
+		warn: "Your Linear connection can't be read from its store.",
+	},
 	"linear.capabilities": {
 		pass: "Your Linear connection works.",
 		warn: "Your Linear connection couldn't be checked, or some of what it can do is off.",

@@ -312,10 +312,13 @@ Explorer it is under `\\wsl$\Ubuntu\home\<you>`. Keep your work in the WSL home,
 not under `/mnt/c`: Windows drives are slow from WSL, and files there can't be
 made private to your user, which ClawBridge's state files must be.
 
-**Credentials.** Windows Credential Manager doesn't reach into WSL. Sign-in needs
-a Secret Service in WSL, as [Linux and WSL credentials](#linux-and-wsl-credentials)
-describes. For device sign-in, a WSL install without one can keep its device
-key in a private file instead (`join --key-store file`).
+**Credentials.** Windows Credential Manager doesn't reach into WSL. With device
+sign-in, a keyring is no longer required for anything: a WSL install without a
+Secret Service can keep its device key (`join --key-store file`), its Linear
+connection (`linear connect --key-store file`) and its Linear API key (`linear key
+set --key-store file`) each in a private file, by your explicit choice. Google
+sign-in still needs a Secret Service in WSL, as [Linux and WSL
+credentials](#linux-and-wsl-credentials) describes.
 
 ## Build from source
 
@@ -341,6 +344,12 @@ the same Secret Service by default, but a machine without one can keep the key i
 0600 file instead (`join --key-store file`). Read
 [what that means](sign-in.md#device-keys-the-os-key-store-or-a-file) first.
 
+The personal Linear connection (`linear connect`) does the same: the Secret Service
+by default, or with `--key-store file` a 0600 file under `~/.clawbridge/linear/`, which
+anyone who can read it as you can use to act as you in Linear. ClawBridge refuses
+it on a Windows drive (`/mnt/c`); keep its state in the Linux home. Read [where your
+connection is kept](linear.md#where-your-connection-is-kept) first.
+
 To inspect the current session without starting a service or accessing a token:
 
 ```sh
@@ -354,3 +363,21 @@ or SSH session in which the keyring was available, and run ClawBridge there.
 An already-authorized profile can run `whoami` again from that session; do not
 rejoin merely to repair the D-Bus environment. ClawBridge does not start services,
 provision a keyring, capture a keyring password, or fall back to plaintext storage.
+
+**Which keyring ClawBridge writes to.** ClawBridge saves into the keyring named
+`login` when one exists, and only otherwise into the keyring the `default` alias
+points to. `secret-tool` uses the `default` alias, so `secret-tool store` can work
+while ClawBridge fails, when `login` exists but is locked. A failed save says why
+the key store failed, in one of a fixed set of phrases (for example "the login
+collection is locked"); nothing the store said, and no credential, is repeated.
+To check `login`:
+
+```sh
+busctl --user get-property org.freedesktop.secrets \
+  /org/freedesktop/secrets/collection/login org.freedesktop.Secret.Collection Locked
+```
+
+`b true` means it is locked: unlock it in the session ClawBridge runs in (with
+GNOME Keyring, `gnome-keyring-daemon --replace --unlock --components=secrets`
+reads its password from standard input), and make sure only one keyring daemon
+serves your session. Or connect with `--key-store file` and skip the keyring.

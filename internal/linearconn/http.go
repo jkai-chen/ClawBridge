@@ -145,7 +145,7 @@ func (m *Manager) accessToken(ctx context.Context, id string, expectedAccess Acc
 	if p.Access != expectedAccess {
 		return "", problem("profile access changed; reopen connection")
 	}
-	c, e := m.readCredential(id)
+	c, e := m.readFrom(p.Store(), id)
 	if e != nil {
 		return "", e
 	}
@@ -183,7 +183,7 @@ func (m *Manager) accessToken(ctx context.Context, id string, expectedAccess Acc
 		return "", problem("invalid token response")
 	}
 	c.Token = *next
-	if e = m.writeCredential(id, c); e != nil {
+	if e = m.writeTo(p.Store(), id, c); e != nil {
 		return "", e
 	}
 	return next.AccessToken, nil

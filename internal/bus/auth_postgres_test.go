@@ -186,7 +186,7 @@ func TestPostgresInviteRules(t *testing.T) {
 }
 
 // A join binds the key and applies the grants once; every failure answers
-// the same, and the fifth burns the invite.
+// the same, and the fifth failure with the invite's code burns it.
 func TestPostgresJoin(t *testing.T) {
 	f := newPGIdentityFixture(t)
 	ada := newID("ada") + "@identity-test.example"
@@ -219,19 +219,20 @@ func TestPostgresJoin(t *testing.T) {
 		t.Fatal("expired:", err)
 	}
 
-	// Five wrong codes burn it, and the right one then fails too.
+	// Five failed joins with the right code burn it (here a key already
+	// bound), and the right code then fails even with a fresh key.
 	cara := newID("cara") + "@identity-test.example"
 	out = f.invite(f.owner, cara, "member")
 	cid := out["invite_id"].(string)
 	for i := 0; i < 4; i++ {
-		if _, err = f.join(cara, devicekey.NewCode(), newKey(t)); err != ErrInvalidInvite {
+		if _, err = f.join(cara, out["code"].(string), key); err != ErrInvalidInvite {
 			t.Fatal(err)
 		}
 	}
-	if f.inviteRow(cid)["revoked_at"] != nil {
-		t.Fatal("burnt after four")
+	if row := f.inviteRow(cid); row["revoked_at"] != nil || row["failed_attempts"] != int64(4) || f.failReason(cid) != "key_in_use" {
+		t.Fatal("burnt after four, or not charged", row)
 	}
-	if _, err = f.join(cara, devicekey.NewCode(), newKey(t)); err != ErrInvalidInvite {
+	if _, err = f.join(cara, out["code"].(string), key); err != ErrInvalidInvite {
 		t.Fatal(err)
 	}
 	if row := f.inviteRow(cid); row["revoke_reason"] != "attempts" || f.audited("invite_burnt", cid) != 1 {
@@ -253,6 +254,49 @@ func TestPostgresJoin(t *testing.T) {
 	for _, v := range list["invites"].([]any) {
 		if row := v.(map[string]any); row["invite_id"] == cid && row["status"] != "burnt" {
 			t.Fatal(row)
+		}
+	}
+}
+
+// Someone who knows only an email can't burn or charge its invites (S5-01):
+// wrong codes with their own keys leave a member invite, an owner's
+// recovery invite and an operator bootstrap invite pending and uncharged,
+// and each then joins with its code.
+func TestPostgresStrangerCannotBurnInvites(t *testing.T) {
+	f := newPGIdentityFixture(t)
+	ada := newID("ada") + "@identity-test.example"
+	member := f.invite(f.owner, ada, "member")
+	bob := newID("bob") + "@identity-test.example"
+	f.member(bob)
+	recovery, err := f.auth(f.owner, "invite_create", map[string]any{"email": bob, "purpose": "recovery"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	boot := newID("boot") + "@identity-test.example"
+	bootstrap, err := f.s.OperatorBootstrapInvite(context.Background(), newID("bootws"), boot, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	cases := []struct {
+		email  string
+		invite map[string]any
+	}{{ada, member}, {bob, recovery}, {boot, bootstrap}}
+	for _, c := range cases {
+		for i := 0; i < inviteMaxAttempts+2; i++ {
+			if _, err = f.join(c.email, devicekey.NewCode(), newKey(t)); err != ErrInvalidInvite {
+				t.Fatal("a wrong code:", c.email, err)
+			}
+		}
+	}
+	for _, c := range cases {
+		id := c.invite["invite_id"].(string)
+		row := f.inviteRow(id)
+		if inviteStatus(row, stamp()) != "pending" || row["failed_attempts"] != int64(0) || f.audited("invite_join_failed", id) != 0 || f.audited("invite_burnt", id) != 0 {
+			t.Fatal("a stranger's guesses charged the invite:", c.email, row)
+		}
+		key := newKey(t)
+		if joined, err := f.join(c.email, c.invite["code"].(string), key); err != nil || joined["device_id"] != keyID(t, key) {
+			t.Fatal("the invitee couldn't join after a stranger's guesses:", c.email, joined, err)
 		}
 	}
 }

@@ -80,10 +80,12 @@ the invitee can pipe to `clawbridge join --yes`. ClawBridge sends no email:
 - **Shown once.** The code is never stored or logged; `invite list` shows each
   invite's status (`pending`, `used`, `expired`, `revoked` or `burnt`) but never
   the code. A lost code means a new invite.
-- **Five wrong tries burn it.** After five failed joins against one invite, it is
-  `burnt`, and `invite list` says when. Anyone who knows the email can burn its
-  invites by guessing, so a burnt invite is a nuisance, not a break-in: issue
-  another.
+- **A wrong code never counts against it.** Only a failed join that gives the
+  invite's own code counts: expired, a domain the allow-list refuses, a key
+  already in use and the like. Five of those burn it, and `invite list` shows it
+  `burnt` and when; issue another. Someone who knows only the email can't burn
+  or lock out an invite: wrong codes charge nothing, and joins are limited per
+  client address, never per email.
 - **Limits.** A workspace has at most 20 pending invites, and an email at most 3.
   The workspace's domain allow-list, if set, applies to the invited email.
 - **An existing member** isn't invited again: they add a device themselves

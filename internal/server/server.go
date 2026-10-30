@@ -232,7 +232,7 @@ func NewHandlerWithOptions(store Executor, verifier Verifier, o HandlerOptions) 
 	var join http.Handler
 	if o.Auth.accepts(AuthDevice) && o.Auth.Devices != nil && o.Auth.PublicOrigin != "" {
 		authenticators = append(authenticators, deviceAuthenticator{origin: o.Auth.PublicOrigin, store: o.Auth.Devices, cache: cache, now: now})
-		join = &joinHandler{origin: o.Auth.PublicOrigin, store: o.Auth.Devices, byAddress: newCounter(joinPerAddress, time.Hour, now), byEmail: newCounter(joinPerEmail, time.Hour, now), failures: failures, now: now, invalidMsg: bus.ErrInvalidInvite.Error()}
+		join = &joinHandler{origin: o.Auth.PublicOrigin, store: o.Auth.Devices, byAddress: newCounter(joinPerAddress, time.Hour, now), failures: failures, now: now, invalidMsg: bus.ErrInvalidInvite.Error()}
 	}
 	// /v1/config names the sign-in method and the origin only when device
 	// sign-in is on.

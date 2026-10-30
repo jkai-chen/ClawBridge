@@ -431,8 +431,9 @@ func keyStoreOK(v string) bool { return v == "keyring" || v == "file" || v == "e
 
 // Join consumes an invite for its email with the code, and binds the
 // device key, in one transaction: single use, bound to the email, burnt
-// after five failures, under the workspace's allow-list (§3, §4). Every
-// failure is ErrInvalidInvite; the failed attempts it charges are kept.
+// after five failures with its code, under the workspace's allow-list (§3,
+// §4). Every failure is ErrInvalidInvite; the failed attempts it charges
+// are kept, and a wrong code charges none.
 func (s *Store) Join(ctx context.Context, in JoinRequest) (map[string]any, error) {
 	if !s.postgres {
 		return nil, errors.New("join is only available on the hosted authority")
@@ -481,15 +482,12 @@ func (s *Store) Join(ctx context.Context, in JoinRequest) (map[string]any, error
 	}
 	now := stamp()
 	if match == nil {
-		// A wrong code charges each live invite for the email, so guessing
-		// burns them rather than trying forever (AU-L2).
-		live := []map[string]any{}
-		for _, row := range pending {
-			if row["expires_at"].(string) > now {
-				live = append(live, row)
-			}
-		}
-		return fail(live, "wrong_code")
+		// A wrong code charges no invite (AU-L2, S5-01). Whoever sends it
+		// can't name an invite, and only the email is needed to send it, so
+		// charging would let a stranger burn the invitee's, the owner's
+		// recovery and the bootstrap invites. Guessing is held off by the
+		// code's 80 bits and the per-address join limit instead.
+		return fail(nil, "wrong_code")
 	}
 	charged := []map[string]any{match}
 	if match["expires_at"].(string) <= now {

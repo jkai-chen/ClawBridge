@@ -44,7 +44,6 @@ const (
 	maxDeviceHeader   = 1024
 	failedAuthPerMin  = 60
 	joinPerAddress    = 10
-	joinPerEmail      = 5
 	maxJoinBody       = 8 << 10
 	authFailureLogged = time.Hour
 )
@@ -443,12 +442,13 @@ func ParsePublicOrigin(raw string) (string, error) {
 }
 
 // joinHandler serves POST /v1/join (§4): unauthenticated, rate-limited per
-// address and email, and every failure answers alike after a time floor.
+// address, and every failure answers alike after a time floor. It has no
+// per-email limit: the email is the caller's to choose, so a stranger could
+// spend it and lock the invitee out (S5-01).
 type joinHandler struct {
 	origin     string
 	store      DeviceStore
 	byAddress  *counter
-	byEmail    *counter
 	failures   *failureLog
 	now        func() time.Time
 	invalidMsg string
@@ -514,9 +514,6 @@ func (j *joinHandler) join(w http.ResponseWriter, r *http.Request) (int, joinAns
 	var in joinBody
 	if decoder.Decode(&in) != nil || decoder.More() {
 		return 400, joinAnswer{err: &authFailure{status: 400, code: "invalid", message: "invalid join request JSON"}}
-	}
-	if !j.byEmail.add(strings.ToLower(strings.TrimSpace(in.Email))) {
-		return 429, joinAnswer{err: &authFailure{status: 429, code: "rate_limited", message: "too many join attempts; try again later"}}
 	}
 	ts, err := strconv.ParseInt(in.TS, 10, 64)
 	if err != nil {

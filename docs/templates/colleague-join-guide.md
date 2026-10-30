@@ -18,7 +18,7 @@ Linear file store). About 20 minutes.
 - **The invite link and the server address** OWNER sent you
   (`https://clawbridge.example.test`). The link works once, only for your email, and
   expires 72 hours after it was made (at most 7 days). Treat it like a password: paste
-  it only into ClawBridge. Five wrong tries burn it.
+  it only into ClawBridge. Five failed joins with it (expired, a key already in use…) burn it.
 - **Claude Code and/or Codex** installed where you'll run them (on WSL, inside Ubuntu).
 
 ## Variant A: macOS or Linux

@@ -480,10 +480,14 @@ func (f *deviceFixture) postJoin(body, address string) *httptest.ResponseRecorde
 }
 
 // Join checks the proof before the store, answers every failure alike after
-// the time floor, and is limited per address and per email.
+// the time floor, logs refusals per address, and is limited per address but
+// never per email.
 func TestJoinEndpoint(t *testing.T) {
 	joinFloor = 40 * time.Millisecond
 	t.Cleanup(func() { joinFloor = 250 * time.Millisecond })
+	var logs bytes.Buffer
+	log.SetOutput(&logs)
+	t.Cleanup(func() { log.SetOutput(os.Stderr) })
 	f := newDeviceFixture(t)
 	_, priv, _ := ed25519.GenerateKey(nil)
 	code := devicekey.NewCode()
@@ -521,22 +525,44 @@ func TestJoinEndpoint(t *testing.T) {
 	if w = f.send(http.MethodGet, "/v1/join", "", ""); w.Code != 405 {
 		t.Fatal("GET join:", w.Code)
 	}
-	// Ten per address an hour, five per email.
+	// A refusal is logged for its address and kind: the forged proof never
+	// reached the store, the store refused the other.
+	for _, want := range []string{"refused sign-in from 198.51.100.2: join_proof", "refused sign-in from 198.51.100.3: join_invite"} {
+		if !strings.Contains(logs.String(), want) {
+			t.Fatalf("not logged %q:\n%s", want, logs.String())
+		}
+	}
+	// A stranger's wrong-code joins for one email, from many addresses, never
+	// lock out the invitee: the email is the caller's to choose, so nothing is
+	// counted by it (S5-01).
+	stranger := 3 * joinPerAddress
+	for i := 0; i < stranger; i++ {
+		_, junk, _ := ed25519.GenerateKey(nil)
+		if w = f.postJoin(f.joinBody("eve@example.com", devicekey.NewCode(), f.now.Unix(), junk), fmt.Sprintf("192.0.2.%d", i+1)); w.Code != 403 {
+			t.Fatal("a stranger's wrong code:", i, w.Code, w.Body.String())
+		}
+	}
+	for i := 0; i < stranger; i++ {
+		if want := fmt.Sprintf("refused sign-in from 192.0.2.%d: join_invite", i+1); !strings.Contains(logs.String(), want) {
+			t.Fatal("not logged:", want)
+		}
+	}
+	f.store.joinErr = nil
+	if w = f.postJoin(f.joinBody("EVE@example.com", code, f.now.Unix(), priv), "198.51.100.20"); w.Code != 200 {
+		t.Fatal("the invitee was locked out by a stranger's guesses:", w.Code, w.Body.String())
+	}
+	// Ten joins per address an hour, counted before anything is read; the
+	// eleventh never reaches the store.
 	for i := 0; i < joinPerAddress; i++ {
 		f.postJoin(f.joinBody(fmt.Sprintf("u%d@example.com", i), code, f.now.Unix(), priv), "198.51.100.9")
 	}
-	if w = f.postJoin(f.joinBody("dan@example.com", code, f.now.Unix(), priv), "198.51.100.9"); w.Code != 429 {
-		t.Fatal("per-address limit:", w.Code)
-	}
-	for i := 0; i < joinPerEmail; i++ {
-		f.postJoin(f.joinBody("eve@example.com", code, f.now.Unix(), priv), fmt.Sprintf("192.0.2.%d", i+1))
-	}
-	if w = f.postJoin(f.joinBody("EVE@example.com", code, f.now.Unix(), priv), "192.0.2.99"); w.Code != 429 {
-		t.Fatal("per-email limit:", w.Code)
+	joins := len(f.store.joins)
+	if w = f.postJoin(f.joinBody("dan@example.com", code, f.now.Unix(), priv), "198.51.100.9"); w.Code != 429 || errorCode(t, w) != "rate_limited" || len(f.store.joins) != joins {
+		t.Fatal("per-address limit:", w.Code, w.Body.String())
 	}
 	f.now = f.now.Add(time.Hour)
-	if w = f.postJoin(f.joinBody("eve@example.com", code, f.now.Unix(), priv), "192.0.2.99"); w.Code == 429 {
-		t.Fatal("the limit outlived its hour")
+	if w = f.postJoin(f.joinBody("dan@example.com", code, f.now.Unix(), priv), "198.51.100.9"); w.Code != 200 {
+		t.Fatal("the limit outlived its hour:", w.Code)
 	}
 }
 

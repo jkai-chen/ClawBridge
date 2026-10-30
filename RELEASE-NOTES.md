@@ -198,6 +198,14 @@ computer. Upgrading from v0.3.x: docs/upgrading-to-1.0.md.
   build and pinning its image ID still works. agentd's image now cross-compiles its arm64 binary.
   docs/operations/agentd.md, docs/design/releases.md. No schema change. Linear config scope: none.
 
+- **A stranger who knows an email can no longer burn or lock out its invites.** A join with a wrong code now charges
+  no invite; before, it charged every live invite for that email, so five guesses with a self-made key burnt a
+  member's invite, an owner's recovery invite or the operator's bootstrap invite. Five failed joins that give an
+  invite's own code (expired, a refused domain, a key already in use…) still burn that invite. `POST /v1/join` drops
+  its limit of 5 an hour per email, which anyone could spend to lock the invitee out; the limit of 10 an hour per
+  client address, the code's 80 bits and the per-address refusal log stay. docs/sign-in.md.
+  No schema change. Linear config scope: none.
+
 # ClawBridge v0.3.13 (released 30 Oct)
 
 **Schema 53 → 54.**

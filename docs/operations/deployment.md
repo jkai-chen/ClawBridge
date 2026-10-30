@@ -368,8 +368,12 @@ still names it refuses to start rather than serve half-configured:
   the device in every request, so a revocation takes effect at once on every
   replica.
 - **Rate limits** (in memory, per process): `POST /v1/join` allows 10 attempts an
-  hour per client address and 5 per email; failed sign-ins are limited to 60 a minute
-  per address. `/mcp/intake` allows 1,200 requests a minute per address, and the
+  hour per client address, with no per-email limit (a stranger could spend one and
+  lock the invitee out); failed sign-ins are limited to 60 a minute
+  per address. A wrong invite code doesn't show in `invite list` (it charges no
+  invite); to see someone guessing, look in the server log for `refused sign-in
+  from ADDRESS: join_invite` (or `join_proof`), logged at most hourly per address
+  and kind. `/mcp/intake` allows 1,200 requests a minute per address, and the
   watcher's tick endpoint 60, both counted before any token is checked. An IPv6
   client counts as its /64. These per-address tables are separate from the
   signed-in users' limits and bounded; when one is full it forgets its oldest entry

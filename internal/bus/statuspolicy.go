@@ -372,6 +372,9 @@ func (m markerCall) stateGo(ctx context.Context, out func(string) map[string]any
 		if _, err = m.tx.ExecContext(ctx, `UPDATE assignment_markers SET state_state='skipped',state_skip_reason=?,updated_at=? WHERE assignment_id=? AND phase=?`, reason, layout(m.now), m.assignment, m.phase); err != nil {
 			return nil, err
 		}
+		if err = m.skipNotice(ctx, reason); err != nil {
+			return nil, err
+		}
 		o := out("none")
 		o["state"], o["reason"] = "skipped", reason
 		return o, nil
@@ -449,6 +452,11 @@ func (m markerCall) stateSettle(ctx context.Context, outcome string) (any, error
 	if _, err := m.tx.ExecContext(ctx, `UPDATE assignment_markers SET state_state=?,state_target=?,state_landed=?,state_skip_reason=?,attempts=?,next_attempt_at=?,last_error=?,updated_at=? WHERE assignment_id=? AND phase=?`, state, target, landed, reason, attempts, next, failure, now, m.assignment, m.phase); err != nil {
 		return nil, err
 	}
+	if state == "skipped" {
+		if err := m.skipNotice(ctx, reason); err != nil {
+			return nil, err
+		}
+	}
 	if state == "done" {
 		// A4: the move ClawBridge just made may move its project (SF4-M2).
 		if err := m.askFlowNudge(ctx, landed); err != nil {
@@ -456,4 +464,187 @@ func (m markerCall) stateSettle(ctx context.Context, outcome string) (any, error
 		}
 	}
 	return map[string]any{"assignment_id": m.assignment, "phase": m.phase, "part": m.part, "state": state, "next_attempt_at": next}, nil
+}
+
+// markerSkipWhy says, in plain words, why a skipped state part left the
+// issue as it was. marker_status and the skip notice share it, and the
+// from_state words are the docs' too.
+var markerSkipWhy = map[string]string{
+	"from_state":         "someone else had moved the issue, so it was left as it is; set it yourself if right",
+	"team_unbound":       "the issue's team isn't bound to this project",
+	"team_off":           "the status policy doesn't move this team's issues",
+	"team_not_in_policy": "the status policy doesn't move this team's issues",
+	"target_unknown":     "the target state couldn't be found in Linear; check the status policy",
+	"state_unresolved":   "the issue's current state couldn't be read, so it was left as it is; check it in Linear",
+	"policy_off":         "the status policy is off",
+	"policy_changed":     "the status policy changed after the move was planned",
+}
+
+// markerNoticeReasons are the skips a person may need to act on: the
+// assignee, else the coordinator, hears of them. A configured skip (a team
+// left out, the policy off) is shown by marker_status only.
+var markerNoticeReasons = map[string]bool{"from_state": true, "target_unknown": true, "state_unresolved": true, "policy_changed": true}
+
+// markerTarget is the name of the state a marker row's move went to, or
+// would have, as the stored policy names it: the recorded target, else the
+// one name every team's target for the phase shares, unless the policy has
+// changed since the move was planned. The server never stores the issue's
+// team, so targets that differ by team name none.
+func markerTarget(row map[string]any, policy StatusPolicy) string {
+	if id := str(row, "state_target"); id != "" {
+		for _, t := range policy.Teams {
+			for _, s := range []*StatusState{t.Create, t.Claim, t.ReleaseDone, t.Done} {
+				if s != nil && s.ID == id {
+					return s.Name
+				}
+			}
+		}
+		return ""
+	}
+	// The policy changed after the move was planned: its target now may not
+	// be the one planned.
+	if str(row, "state_skip_reason") == "policy_changed" {
+		return ""
+	}
+	name := ""
+	for _, t := range policy.Teams {
+		target := t.Claim
+		if str(row, "phase") == "close" {
+			target = t.ReleaseDone
+			if t.Done != nil && policy.AgentCloses(str(row, "issue_project_id")) {
+				target = t.Done
+			}
+		}
+		if target == nil {
+			continue
+		}
+		if name != "" && name != target.Name {
+			return ""
+		}
+		name = target.Name
+	}
+	return name
+}
+
+// markerSummary is one marker row in one plain line: why a skipped move
+// didn't happen, else how its three parts stand.
+func markerSummary(row map[string]any, policy StatusPolicy) string {
+	state := str(row, "state_state")
+	if state == "skipped" {
+		target := markerTarget(row, policy)
+		if target == "" {
+			target = "the policy's state"
+		}
+		why, ok := markerSkipWhy[str(row, "state_skip_reason")]
+		if !ok {
+			why = "skipped"
+		}
+		return "not moved to " + target + ": " + why
+	}
+	if state == "done" {
+		if str(row, "state_landed") == str(row, "state_target") {
+			state += " (moved)"
+		} else {
+			state += " (another state stood)"
+		}
+	}
+	return "comment " + str(row, "comment_state") + ", label " + str(row, "label_state") + ", state " + state
+}
+
+// markerRowColumns are the columns marker_status and the skip notice read:
+// the row's typed fields, with the assignment's issue identifier and
+// Linear project. Never a note's text.
+const markerRowColumns = `m.assignment_id,m.phase,m.issue_uuid,m.comment_state,m.label_state,m.state_state,m.state_skip_reason,m.state_target,m.state_landed,m.created_at,m.updated_at,COALESCE(a.issue_identifier,'') AS issue_identifier,COALESCE(a.issue_project_id,'') AS issue_project_id,a.session_id AS assignee FROM assignment_markers m LEFT JOIN session_assignments a ON a.id=m.assignment_id AND a.project_id=m.project_id`
+
+// markerPolicy is the stored policy as marker_status names states from it:
+// an unreadable one names none.
+func markerPolicy(ctx context.Context, tx *transaction, pid string) (StatusPolicy, error) {
+	policy, _, err := readStatusPolicy(ctx, tx, pid)
+	if errors.Is(err, errStatusPolicyUnreadable) {
+		return StatusPolicy{}, nil
+	}
+	return policy, err
+}
+
+// skipNotice tells a person that this row's state part was just skipped
+// for a reason they may need to act on, in the transaction that recorded
+// the skip: the part leaves pending or in flight once, so it is sent
+// once. It goes to the assignee's session while it is active, else to the
+// coordinator, who hears of these at most once in outboxDeadEvery per
+// project, as of dead writes.
+func (m markerCall) skipNotice(ctx context.Context, reason string) error {
+	if !markerNoticeReasons[reason] {
+		return nil
+	}
+	row, err := one(ctx, m.tx, `SELECT `+markerRowColumns+` WHERE m.project_id=? AND m.assignment_id=? AND m.phase=?`, m.pid, m.assignment, m.phase)
+	if err != nil {
+		return err
+	}
+	policy, err := markerPolicy(ctx, m.tx, m.pid)
+	if err != nil {
+		return err
+	}
+	sys, err := m.s.systemSessionID(ctx, m.tx, m.wid, m.pid)
+	if err != nil {
+		return err
+	}
+	recipients, err := query(ctx, m.tx, `SELECT id,name FROM sessions WHERE project_id=? AND id=? AND status='active' AND role<>'system'`, m.pid, str(row, "assignee"))
+	if err != nil {
+		return err
+	}
+	coordinator, noticeErr := false, false
+	if len(recipients) == 0 {
+		// The audit below stores its details as compact JSON text (asJSON,
+		// a TEXT column on both stores), so a coordinator notice's row holds
+		// exactly "coordinator":true; OutboxNotify matches dead writes the
+		// same way.
+		told, err := query(ctx, m.tx, `SELECT 1 FROM history WHERE project_id=? AND entity='assignment_marker' AND action='state_skipped' AND changed_at>=? AND details LIKE '%"coordinator":true%'`, m.pid, layout(m.now.Add(-outboxDeadEvery)))
+		if err != nil {
+			return err
+		}
+		if len(told) == 0 {
+			// Routed by the issue's Linear project, as other coordinator
+			// notices are. An unreadable dispatcher document must not fail
+			// the settle (the row would stay in flight and read Linear
+			// again every pass): nobody is told, and the audit says so. A
+			// database error still fails it.
+			if recipients, err = m.s.coordinatorTargets(ctx, m.tx, m.pid, str(row, "issue_project_id"), nil); err != nil {
+				if !errors.Is(err, errDispatcherUnreadable) {
+					return err
+				}
+				recipients, noticeErr = nil, true
+			}
+			coordinator = len(recipients) > 0
+		}
+	}
+	if err = linearWriteNotice(ctx, m.tx, m.wid, m.pid, sys, recipients, markerSkipNotice(row, policy, coordinator), newID("lmn_"), m.now); err != nil {
+		return err
+	}
+	scoped := *m.s
+	scoped.principal = systemPrincipal
+	details := map[string]any{"phase": m.phase, "issue": str(row, "issue_uuid"), "reason": reason, "recipient_count": len(recipients), "coordinator": coordinator}
+	if noticeErr {
+		details["notice_error"] = true
+	}
+	return scoped.audit(ctx, m.tx, m.wid, m.pid, sys, "assignment_marker", m.assignment, "state_skipped", details)
+}
+
+// markerSkipNotice is a skipped move's notice: typed fields only, naming
+// the issue by its identifier when the assignment has one. The assignee
+// reads "Your claim marker"; the coordinator, told in its place, "A claim
+// marker".
+func markerSkipNotice(row map[string]any, policy StatusPolicy, coordinator bool) string {
+	issue := str(row, "issue_identifier")
+	if issue == "" {
+		issue = str(row, "issue_uuid")
+	}
+	phase := "claim"
+	if str(row, "phase") == "close" {
+		phase = "release"
+	}
+	whose := "Your "
+	if coordinator {
+		whose = "A "
+	}
+	return whose + phase + " marker on " + issue + " didn't move the issue: " + markerSummary(row, policy) + ". Details: clawbridge assignment markers --issue " + issue
 }

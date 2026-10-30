@@ -49,7 +49,9 @@ or read roles from it; use `team_roles_get`. Linear project leads (`linear roles
 `apply-leads`, `project create --lead`) are the project owner's to set, never a session's. Agents never set a canceled or duplicate state; set a completed state only
 where the project's close rule says agents close, else release with
 `assignment_release` outcome `done` and a person closes
-([task-board.md](references/task-board.md#resume-and-close)). Find a slice's owner with `list_sessions` filtered by `issue` or
+([task-board.md](references/task-board.md#resume-and-close)). A release that
+didn't move the issue tells you; check `assignment markers` (MCP
+`assignment_markers`) before assuming a bug. Find a slice's owner with `list_sessions` filtered by `issue` or
 `scope_path`. Issues labelled `needs-agent` ask for agent attention; only the
 coordinator lists them, and the label is never approval or an assignment.
 Read [references/intake.md](references/intake.md) on an `intake` message, or

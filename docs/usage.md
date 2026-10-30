@@ -457,6 +457,11 @@ clawbridge --session eng --instance eng-1 assignment release --revision REV --ou
 - **With it,** a status policy may move the issue on, and who closes it follows
   the project's close rule (see
   [the status policy](linear.md#status-policy-project-owner-only)).
+- **When the issue didn't move,** `clawbridge assignment markers --issue SHOP-1`
+  (or `--issue ISSUE_UUID`) shows each marker's state and why the move was
+  skipped, with no Linear read. A skip someone may act on, such as a person
+  having moved the issue, is also sent to the session (see
+  [the status policy](linear.md#status-policy-project-owner-only)).
 - **The coordinator** can release another session's work the same way, naming it:
   `assignment release eng --revision REV`.
 - **Retiring a session releases its work too.** From v0.3.5, retiring one that

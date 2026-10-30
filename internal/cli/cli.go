@@ -43,6 +43,7 @@ Commands: setup --local, project create SLUG, register [NAME], sessions, send TO
           deadletters list [--target-session NAME|@all], deadletters requeue|dismiss MESSAGE_ID [--target-session NAME],
           assignment propose [--issue-uuid UUID] [--issue-identifier ID] [--task-role ROLE] [--scope-repo REMOTE] [--scope-path PATTERN]...,
           assignment confirm TARGET_SESSION --revision REV [--allow-overlap], assignment release [TARGET_SESSION] --revision REV,
+          assignment markers --issue ISSUE_UUID|IDENTIFIER | --assignment ID,
           project coordinator-set SESSION, project coordinator-clear,
           sessions [--issue ID] [--scope-path PATH] [--assignment-state proposed|confirmed],
           host-status|host-wait --adapter codex --endpoint unix:///absolute/socket --thread UUID,
@@ -729,13 +730,14 @@ flags:`)
 		}
 	case "assignment":
 		if len(rest) == 0 {
-			return errors.New("usage: assignment propose|confirm|release ...")
+			return errors.New("usage: assignment propose|confirm|release|markers ...")
 		}
 		// The positional argument names a session, never an assignment ID.
 		synopsis := map[string]string{
 			"propose": "usage: clawbridge assignment propose [flags]\n  Proposes an assignment for your own session.",
 			"confirm": "usage: clawbridge assignment confirm TARGET_SESSION --revision REV [--allow-overlap]\n  TARGET_SESSION is the name or ID of the session whose proposed assignment\n  you confirm, not an assignment ID; only the coordinator session confirms.",
 			"release": "usage: clawbridge assignment release [TARGET_SESSION] --revision REV [--outcome done]\n  TARGET_SESSION is the name or ID of the session whose assignment you\n  release, not an assignment ID; omit it to release your own. --outcome done\n  says the work is finished: a project status policy may then move the issue on.",
+			"markers": "usage: clawbridge assignment markers --issue ISSUE_UUID|IDENTIFIER | --assignment ID [--json]\n  Shows the claim and release markers of one issue or one assignment, newest\n  first: each part's state and, when a state move was skipped, why. ISSUE is\n  the issue's UUID or its identifier as the assignment recorded it, such as\n  ENG-1; no Linear read is made.",
 		}
 		if text, ok := synopsis[rest[0]]; ok {
 			f.Usage = func() {
@@ -761,8 +763,12 @@ flags:`)
 			arityMax = 1
 			stringArg("revision", "the assignment's current revision")
 			stringArg("outcome", "done when the work is finished; omit otherwise")
+		case "markers":
+			op = "marker_status"
+			stringArg("issue", "Linear issue UUID, or its identifier such as ENG-1 as the assignment recorded it")
+			stringArg("assignment", "an assignment's ID")
 		default:
-			return errors.New("usage: assignment propose|confirm|release ...")
+			return errors.New("usage: assignment propose|confirm|release|markers ...")
 		}
 		rest = rest[1:]
 	case "send":
@@ -1085,6 +1091,11 @@ flags:`)
 			a["scope_paths"] = v
 			delete(a, "scope_path")
 		}
+		if op == "marker_status" {
+			if e := markerArgs(a); e != nil {
+				return e
+			}
+		}
 	case "status":
 		a["message_id"] = pos[0]
 	case "intake":
@@ -1202,7 +1213,7 @@ flags:`)
 	}
 	if config.Instance != "" {
 		switch op {
-		case "register_session", "list_sessions", "history", "send", "reply", "inbox", "inbox_status", "notification_status", "set_notification_policy", "mark_read", "update_session", "retire_session", "whoami", "message_status", "project_role_set", "project_role_revoke", "purge_expired", "assignment_propose", "assignment_confirm", "assignment_release", "coordinator_set", "intake_policy_get", "intake_policy_set", "intake_trust_add", "intake_trust_remove", "intake_trust_list", "intake_token_create", "intake_token_list", "intake_token_revoke", "intake_list", "intake_dismiss", "intake_rearm", "context_levels_set", "deadletters_list", "deadletters_requeue", "deadletters_dismiss":
+		case "register_session", "list_sessions", "history", "send", "reply", "inbox", "inbox_status", "notification_status", "set_notification_policy", "mark_read", "update_session", "retire_session", "whoami", "message_status", "project_role_set", "project_role_revoke", "purge_expired", "assignment_propose", "assignment_confirm", "assignment_release", "coordinator_set", "intake_policy_get", "intake_policy_set", "intake_trust_add", "intake_trust_remove", "intake_trust_list", "intake_token_create", "intake_token_list", "intake_token_revoke", "intake_list", "intake_dismiss", "intake_rearm", "context_levels_set", "deadletters_list", "deadletters_requeue", "deadletters_dismiss", "marker_status":
 			a["instance"] = config.Instance
 		}
 	}
@@ -1263,6 +1274,9 @@ flags:`)
 	}
 	if err != nil {
 		secret.discard()
+		if op == "marker_status" {
+			return markerStatusError(err)
+		}
 		if op == "retire_session" && strings.Contains(err.Error(), "holds the confirmed assignment") {
 			return retireAgain(err, config.Session, config.Instance, rest)
 		}

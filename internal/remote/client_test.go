@@ -103,6 +103,11 @@ func TestScopedSyncOutageAndDefinitiveDenials(t *testing.T) {
 	if _, err = client.Execute(ctx, overview); !errors.Is(err, ErrOverviewOffline) {
 		t.Fatalf("offline overview: %v", err)
 	}
+	// So are the claim markers.
+	markers := bus.Request{Operation: "marker_status", Workspace: wid, Project: pid, Args: map[string]any{"issue_uuid": "00000000-0000-4000-8000-000000000001"}}
+	if _, err = client.Execute(ctx, markers); !errors.Is(err, ErrMarkersOffline) {
+		t.Fatalf("offline markers: %v", err)
+	}
 	// The project's threads are read from the authority only: offline it
 	// says so, and never reads as a failed write.
 	for _, op := range []string{"project_threads", "project_thread"} {

@@ -111,6 +111,10 @@ clawbridge sessions --issue ABC-12
 clawbridge sessions --scope-path internal/notify/watch.go --assignment-state confirmed
 clawbridge --session reviewer --instance INSTANCE assignment release --revision REVISION
 clawbridge --session reviewer --instance INSTANCE assignment release --revision REVISION --outcome done
+# what each claim or release marker did, newest first (no Linear read):
+clawbridge --session reviewer --instance INSTANCE assignment markers --issue ABC-12
+clawbridge assignment markers --issue ISSUE_UUID
+clawbridge assignment markers --assignment ASSIGNMENT_ID --json
 ```
 
 Release with `--outcome done` only when the work is finished. A project status
@@ -128,6 +132,18 @@ project lead (the project role) decides otherwise, or the policy already lets ag
 never instructs. Who closes is a person's decision: never run
 `clawbridge linear closes set`, `link --closes`, or a `status-policy set` whose
 file includes `closes` (leave closes out: the current rules are kept); pass the message to the human.
+
+A claim or release whose state move was skipped tells you: a `linear-write`
+message, "Your release marker on ABC-12 didn't move the issue: not moved to
+TARGET: WHY. Details: clawbridge assignment markers --issue ABC-12". It is sent
+for `from_state` (someone else had moved the issue), `target_unknown`,
+`state_unresolved` and `policy_changed`; if your session has ended, the
+coordinator hears it, as "A release marker on ABC-12 ...". `assignment markers`
+(MCP `assignment_markers`, which takes `issue_uuid`, `issue_identifier` or
+`assignment_id`) shows each row's phase, time and summary; `--json` adds
+`state_skip_reason`. Doctor's `linear.marker_skips` counts the week's skips. A
+skip is not a bug: the bus assignment stands. Tell the person when the issue's
+state needs a hand.
 
 A state that didn't move after a release in a newly bound team is usually the
 status policy not including that team yet (skip reason `team_not_in_policy`,

@@ -1892,6 +1892,44 @@ issue: see [who closes an issue](#who-closes-an-issue).
   and retried like its note and label (see [claim markers](#claim-markers)). A
   move is applied only while the policy is enabled at the revision it had when
   the claim or release happened. A changed policy skips it.
+- **A skipped move is visible.** A move that leaves the issue where it is
+  isn't an error: the confirm or release stands, and the marker records why
+  (`state_skip_reason`). The summary reads `not moved to TARGET: WHY`. TARGET is
+  the state's name in the stored policy; it reads "the policy's state" when the
+  bound teams' targets have different names, or the policy changed since.
+
+  | Reason | When | WHY, as the summary says it | Notice |
+  | --- | --- | --- | --- |
+  | `from_state` | The issue isn't in a state the move starts from: someone moved it | someone else had moved the issue, so it was left as it is; set it yourself if right | yes |
+  | `target_unknown` | The target state isn't in the team's stored workflow | the target state couldn't be found in Linear; check the status policy | yes |
+  | `state_unresolved` | The issue's current state can't be told (see above) | the issue's current state couldn't be read, so it was left as it is; check it in Linear | yes |
+  | `policy_changed` | The policy's revision changed after the claim or release | the status policy changed after the move was planned | yes |
+  | `policy_off` | The policy is off | the status policy is off | no |
+  | `team_unbound` | The issue's team isn't bound to the project | the issue's team isn't bound to this project | no |
+  | `team_not_in_policy` | The team was bound after the policy was set | the status policy doesn't move this team's issues | no |
+  | `team_off` | The policy has no target for this move in the team | the status policy doesn't move this team's issues | no |
+
+  - **Who is told.** For the four reasons marked yes, the assignee's session
+    gets one `linear-write` message from the project's system session, when
+    the move is skipped and never again:
+    `Your release marker on ENG-1 didn't move the issue: not moved to In Review: someone else had moved the issue, so it was left as it is; set it yourself if right. Details: clawbridge assignment markers --issue ENG-1`.
+    When the assignee's session is no longer active, the project's coordinator
+    is told instead, at most once every 10 minutes per project; its copy starts
+    `A release marker on ENG-1` (or `A claim marker`). With the dispatcher as
+    coordinator, it goes to the domain of the issue's Linear project, as other
+    coordinator notices do. If the dispatcher's domains can't be read, nobody
+    is told; the move still settles as skipped, and the audit records
+    `notice_error`. The other
+    reasons follow from how the owner set the policy and the binding: they are
+    shown, never sent.
+  - **Where it shows.** `clawbridge assignment markers --issue ENG-1` (or
+    `--issue ISSUE_UUID`, or `--assignment ID`; MCP `assignment_markers`) lists
+    the issue's claim and release markers, newest first: the phase, when it
+    last changed, and the summary. `--json` adds each part's state, the skip
+    reason, the target and the state that landed. Doctor's `linear.marker_skips`
+    warns when the last 7 days had any skip that tells someone, naming the
+    newest; the project overview's `linear` block counts them
+    (`markers_state_skipped`).
 - **Soon after a confirm or release.** A hosted server whose watcher runs on its
   own clock (`CLAWBRIDGE_WATCH_INTERVAL`) applies that project's markers within
   seconds of a confirm or release, instead of at the next tick: a markers-only

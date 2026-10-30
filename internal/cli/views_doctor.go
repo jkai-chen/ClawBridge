@@ -96,6 +96,7 @@ var doctorAnswers = map[string]doctorAnswer{
 	"linear.proven_gates":          {},
 	"linear.budget":                {},
 	"linear.markers":               {},
+	"linear.marker_skips":          {},
 	"linear.outbox":                {},
 	"linear.instances":             {},
 	"linear.watch":                 {},

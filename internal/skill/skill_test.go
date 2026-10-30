@@ -779,3 +779,35 @@ func TestVMPlaybookMatchesTheRules(t *testing.T) {
 		t.Fatal("SKILL.md does not say a sudo agent could read the env file")
 	}
 }
+
+// The vm playbook takes the published image only when it verified, and
+// fails closed to a source build: its rules say so, and its start block
+// adds the image file only when the env file names an image.
+func TestVMPlaybookImagePathFailsClosed(t *testing.T) {
+	text, err := fs.ReadFile(bundled["clawbridge-provision-vm"], "clawbridge-provision-vm/references/commands.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(text)
+	for _, want := range []string{
+		"gh attestation verify \"oci://$(cat release-vX.Y.Z/IMAGE-DIGEST.txt)\"",
+		"Compose prints 2.24 or later",
+		"**never set\n`CLAWBRIDGE_IMAGE`**",
+		// The image line is owned by each run: dropped, then set only when
+		// this run's image verified; it is never in the kept settings.
+		"sed -i '/^CLAWBRIDGE_IMAGE=/d' \"$f\"",
+		"if [ -n \"$IMAGE\" ]; then printf 'CLAWBRIDGE_IMAGE=%s\\n' \"$IMAGE\" >> \"$f\"; echo \"set CLAWBRIDGE_IMAGE\"; else echo \"removed CLAWBRIDGE_IMAGE\"; fi",
+		"grep -q '^CLAWBRIDGE_IMAGE=.' \"$env\" && image=\"-f /opt/clawbridge/repo/deploy/compose.image.yaml\"",
+		"if [ -n \"$image\" ]; then dc pull api; else dc build api; fi",
+	} {
+		if !strings.Contains(s, want) {
+			t.Errorf("the vm playbook lacks %q", want)
+		}
+	}
+	// The kept settings never carry it, so a stale image can't survive.
+	for _, block := range strings.Split(s, "```") {
+		if strings.Contains(block, "for kv in") && strings.Contains(block, "CLAWBRIDGE_IMAGE") {
+			t.Errorf("the kept settings list the image line:\n%s", block)
+		}
+	}
+}

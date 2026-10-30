@@ -92,8 +92,10 @@ clawbridge runner fetch <session>
 object checked (`transfer.fsckObjects`).
 - **Before it runs,** the fetch refuses a clone whose `.git` isn't a plain
   directory, borrows objects (`objects/info/alternates`, `commondir`), or whose
-  config sets `core.hooksPath`, `core.fsmonitor` or any include. git reads the
-  config itself, without following includes.
+  config sets `core.hooksPath`, `core.fsmonitor`, any include or
+  `extensions.worktreeConfig`, or that has a `config.worktree` (git would read
+  settings from it that the check doesn't see). git reads the config itself,
+  without following includes.
 - **The branch** first lands under `refs/clawbridge-runner/<session>`. Every line
   its commits add, removed again or not, is scanned for token shapes, and a
   merge's own changes count too: GitHub, AWS, Slack, Google, Linear,

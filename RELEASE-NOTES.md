@@ -213,6 +213,9 @@ computer. Upgrading from v0.3.x: docs/upgrading-to-1.0.md.
   its limit of 5 an hour per email, which anyone could spend to lock the invitee out; the limit of 10 an hour per
   client address, the code's 80 bits and the per-address refusal log stay. docs/sign-in.md.
   No schema change. Linear config scope: none.
+- **`runner fetch` also refuses a clone that sets `extensions.worktreeConfig` or has a `config.worktree`** (G9 S4-01).
+  With that extension git reads `.git/config.worktree` as well, so an agent could hide `core.hooksPath` or
+  `core.fsmonitor` there from the pre-fetch check. docs/runner.md. Linear config scope: none.
 
 # ClawBridge v0.3.13 (released 30 Oct)
 

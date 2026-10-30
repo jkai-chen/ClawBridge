@@ -999,6 +999,18 @@ func TestFetchRefusesAnUnsafeClone(t *testing.T) {
 		"fsmonitor":  {appendConfig("[Core]\n\tFSMonitor = /tmp/evil\n"), appendConfig(""), "core.fsmonitor"},
 		"include":    {appendConfig("[include]\n\tpath = /tmp/evil\n"), appendConfig(""), "include.path"},
 		"include if": {appendConfig("[includeIf \"gitdir:/\"]\n\tpath = /tmp/evil\n"), appendConfig(""), "includeif."},
+		// G9 S4-01: the extension makes git read config.worktree, which
+		// the config list above never sees.
+		"worktree config": {func() {
+			appendConfig("[core]\n\trepositoryformatversion = 1\n[extensions]\n\tworktreeConfig = true\n")()
+			_ = os.WriteFile(filepath.Join(gitDir, "config.worktree"), []byte("[core]\n\thooksPath = /tmp/evil\n"), 0o644)
+		}, func() {
+			appendConfig("")()
+			_ = os.Remove(filepath.Join(gitDir, "config.worktree"))
+		}, "extensions.worktreeconfig"},
+		"config.worktree alone": {func() {
+			_ = os.WriteFile(filepath.Join(gitDir, "config.worktree"), []byte("[core]\n\tfsmonitor = /tmp/evil\n"), 0o644)
+		}, func() { _ = os.Remove(filepath.Join(gitDir, "config.worktree")) }, "has a config.worktree"},
 		"alternates": {func() {
 			_ = os.WriteFile(filepath.Join(gitDir, "objects", "info", "alternates"), []byte(e.repo+"/.git/objects\n"), 0o644)
 		}, func() { _ = os.Remove(filepath.Join(gitDir, "objects", "info", "alternates")) }, "alternates"},

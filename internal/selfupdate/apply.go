@@ -109,11 +109,12 @@ func apply(ctx context.Context, p Plan, o Options) (Result, error) {
 
 	// 4. The build provenance, when asked.
 	res := Result{From: p.Current, To: p.Target, Destination: dest, SHA256: sum, Attestation: "not_checked"}
-	if o.Attest {
-		if err := attest(ctx, o, staged, p.Target); err != nil {
+	if o.Attest || o.RequireBundle {
+		method, err := provenance(ctx, o, base, staged, p.Asset, sum, p.Target)
+		if err != nil {
 			return Result{}, err
 		}
-		res.Attestation = "verified"
+		res.Attestation, res.AttestationMethod = "verified", method
 	}
 
 	// 5. The smoke test: the staged binary says it is the target.
@@ -173,6 +174,50 @@ func download(ctx context.Context, o Options, url string, w io.Writer) (string, 
 		return "", n, err
 	}
 	return hex.EncodeToString(h.Sum(nil)), n, nil
+}
+
+// verifyBundle checks a provenance bundle (a test replaces it, since its
+// fake assets have no real bundle).
+var verifyBundle = verifyProvenance
+
+// provenance verifies the staged asset's build provenance and returns the
+// method: "bundle" when the release has PROVENANCE.sigstore.json, checked
+// in-process; "gh" for a release without one (before v0.3.13), unless
+// RequireBundle. Any other failure to fetch the bundle installs nothing.
+func provenance(ctx context.Context, o Options, base, staged, asset, sum, version string) (string, error) {
+	fail := fmt.Sprintf("the build provenance of %s could not be verified (%s); nothing was installed", version, provenanceAsset)
+	bundleJSON, err := fetchBundle(ctx, o, base+provenanceAsset)
+	if isNotFound(err) {
+		if o.RequireBundle {
+			return "", fmt.Errorf("%s: the release has no provenance bundle", fail)
+		}
+		return "gh", attest(ctx, o, staged, version)
+	}
+	if err != nil {
+		return "", fmt.Errorf("%s: %w", fail, err)
+	}
+	tm, err := trustedMaterial(ctx)
+	if err != nil {
+		return "", fmt.Errorf("%s: %w", fail, err)
+	}
+	if err := verifyBundle(bundleJSON, asset, sum, version, tm); err != nil {
+		return "", fmt.Errorf("%s: %w", fail, err)
+	}
+	return "bundle", nil
+}
+
+// fetchBundle downloads the provenance bundle, at most maxBundle bytes.
+func fetchBundle(ctx context.Context, o Options, url string) ([]byte, error) {
+	resp, err := get(ctx, o, url)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	var buf bytes.Buffer
+	if _, err := copyLimited(&buf, resp.Body, maxBundle); err != nil {
+		return nil, err
+	}
+	return buf.Bytes(), nil
 }
 
 func attest(ctx context.Context, o Options, staged, version string) error {

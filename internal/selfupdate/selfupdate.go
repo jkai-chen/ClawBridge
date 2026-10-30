@@ -2,7 +2,8 @@
 // from GitHub, with the install scripts' checks (FR12, live/FR12-PLAN.md):
 // the latest release from the /releases/latest redirect (a canonical tag
 // only), the asset's digest from the release's SHA256SUMS (exactly one valid
-// line), the build provenance with gh when asked, and a smoke run of the new
+// line), the build provenance when asked (the release's Sigstore bundle,
+// in-process, or gh for releases without one), and a smoke run of the new
 // binary before it replaces anything. Downloaded bytes are data: nothing
 // runs before its digest matched.
 package selfupdate
@@ -30,9 +31,15 @@ type Options struct {
 	Version string
 	// GOOS and GOARCH pick the asset (default runtime's).
 	GOOS, GOARCH string
-	// Attest checks the build provenance with gh (--verify-attestation, or
-	// CLAWBRIDGE_VERIFY=required): gh missing or failing installs nothing.
+	// Attest checks the build provenance (--verify-attestation, or
+	// CLAWBRIDGE_VERIFY=required): in-process against the release's
+	// PROVENANCE.sigstore.json, or with gh for a release without one. Any
+	// failure installs nothing.
 	Attest bool
+	// RequireBundle checks the provenance as Attest does, but a release
+	// without PROVENANCE.sigstore.json is a failure, not a fallback to gh
+	// (automatic updates).
+	RequireBundle bool
 	// BaseURL is the releases page (default DefaultBaseURL).
 	BaseURL string
 	// AllowedHosts are the hosts a request or a redirect may reach (default
@@ -83,6 +90,9 @@ type Result struct {
 	SHA256      string `json:"sha256"`
 	// Attestation is "verified", or "not_checked" without Options.Attest.
 	Attestation string `json:"attestation"`
+	// AttestationMethod is how it was verified: "bundle" (the release's
+	// Sigstore bundle, in-process) or "gh"; "" when not checked.
+	AttestationMethod string `json:"attestation_method,omitempty"`
 	// Aside is where Windows set the old binary (it stays while a running
 	// clawbridge mcp maps it); "" elsewhere.
 	Aside string `json:"aside,omitempty"`

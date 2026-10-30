@@ -17,6 +17,8 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+
+	"github.com/sigstore/sigstore-go/pkg/root"
 )
 
 const testHost = "127.0.0.1"
@@ -137,9 +139,13 @@ type env struct {
 // takes the Windows path on any OS.
 func newEnv(t *testing.T) *env {
 	t.Helper()
-	oldOS := hostOS
-	t.Cleanup(func() { hostOS = oldOS })
+	oldOS, oldRoot, oldVerify := hostOS, trustedMaterial, verifyBundle
+	t.Cleanup(func() { hostOS, trustedMaterial, verifyBundle = oldOS, oldRoot, oldVerify })
 	hostOS = "linux"
+	// The testdata trusted root, never Sigstore's TUF.
+	trustedMaterial = func(context.Context) (root.TrustedMaterial, error) {
+		return root.NewTrustedRootFromPath(filepath.Join("testdata", "trusted_root.json"))
+	}
 	gh := newFakeGitHub(t)
 	gh.latest = "/releases/tag/v1.3.0"
 	asset := gh.release("v1.3.0")
@@ -515,8 +521,8 @@ func TestApplyAttestation(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if res.Attestation != "verified" {
-			t.Errorf("attestation = %q", res.Attestation)
+		if res.Attestation != "verified" || res.AttestationMethod != "gh" {
+			t.Errorf("attestation = %q by %q, want verified by gh (the release has no bundle)", res.Attestation, res.AttestationMethod)
 		}
 		if len(e.runner.calls) != 2 {
 			t.Fatalf("calls = %q, want gh then the smoke test", e.runner.calls)

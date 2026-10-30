@@ -48,7 +48,8 @@ Publish raw executables rather than extracting downloaded archives:
 - LICENSE (the MIT licence), install.sh, install.ps1, SOURCE-COMMIT.txt, SHA256SUMS
 - PROVENANCE.sigstore.json: the Sigstore bundle of the assets' build-provenance
   attestation, outside SHA256SUMS (it attests SHA256SUMS too). A client verifies
-  an asset with it and no API call or token (FR24 automatic updates).
+  an asset with it and no API call or token: `self-update --verify-attestation`
+  does, in-process (FR24).
 - MANUAL-UPDATE-REQUIRED, only when the release's notes carry the marker (below):
   automatic updates never install that release.
 
@@ -238,8 +239,12 @@ linux/amd64 and linux/arm64, built from the repository's `Dockerfile` in the sam
     `bundle-path`) is published as `PROVENANCE.sigstore.json`. Before any release
     exists, `publish-release.sh` checks that the bundle is a signed in-toto SLSA
     v1 statement whose subjects are exactly the assets in SHA256SUMS plus
-    SHA256SUMS, by digest. It checks the uploaded bundle the same way after
-    download.
+    SHA256SUMS, by digest. It then verifies the bundle's signature as a client
+    would, `gh attestation verify <linux_amd64 asset> --bundle
+    PROVENANCE.sigstore.json --repo jkai-chen/ClawBridge --signer-workflow
+    jkai-chen/ClawBridge/.github/workflows/release.yml --source-ref
+    refs/tags/<version>`, and a failure stops before anything is created. It
+    checks the uploaded bundle the same way after download.
   - **Dry run in CI.** `scripts/test_publish.py` runs `publish-release.sh` on a fake
     tag with a fake `gh` in every PR and main CI run. It asserts the exact uploaded
     asset list (with and without the marker), the bundle's subjects, and the

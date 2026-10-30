@@ -48,6 +48,13 @@ if args[0]=='api':
  else:
   if mode=='api-failure':sys.exit(1)
   if mode=='existing':print('123')
+elif args[:2]==['attestation','verify'] and pathlib.Path(args[2]).parent.name=='upload':
+ # The tag-push run: the bundle's signature on one asset, before anything is
+ # created. publish-draft's check of the downloaded draft is below.
+ upload=pathlib.Path(args[2]).parent
+ assert args==['attestation','verify',str(upload/'clawbridge_v0.1.0_linux_amd64'),'--bundle',str(upload/'PROVENANCE.sigstore.json'),'--repo','jkai-chen/ClawBridge','--signer-workflow','jkai-chen/ClawBridge/.github/workflows/release.yml','--source-ref','refs/tags/v0.1.0','--source-digest',(upload/'SOURCE-COMMIT.txt').read_text().strip(),'--predicate-type','https://slsa.dev/provenance/v1','--deny-self-hosted-runners'],args
+ assert upload.name=='upload' and (upload/'PROVENANCE.sigstore.json').is_file(),args
+ if mode=='attestation-failure':sys.exit(1)
 elif args[:2]==['release','create']:
  assert '--draft' in args and '--verify-tag' in args
  assert '--notes-file' in args
@@ -215,7 +222,7 @@ class PublishTests(unittest.TestCase):
         # Mutable checkout text must not replace the notes at the exact tag.
         (self.repo / "RELEASE-NOTES.md").write_text("uncommitted notes must not publish\n")
         calls = self.publish(ok=True)
-        self.assertEqual([c[:2] for c in calls[1:]], [["release", "create"], ["release", "upload"], ["release", "download"], ["release", "view"], ["api", "--paginate"], ["release", "edit"]])
+        self.assertEqual([c[:2] for c in calls], [["attestation", "verify"], ["api", "--paginate"], ["release", "create"], ["release", "upload"], ["release", "download"], ["release", "view"], ["api", "--paginate"], ["release", "edit"]])
         self.assertEqual((self.root / "published").read_text(), "true")
         # The dry run's asset list: exactly the release's assets, the bundle
         # byte for byte, and no manual-update marker for ordinary notes.
@@ -298,6 +305,13 @@ class PublishTests(unittest.TestCase):
 
     def test_prereleases_drafts_and_noncanonical_tags_are_ignored(self):
         self.assertEqual(self.publish_latest([("v0.2.0", False, True), ("v0.3.0", True, False), ("v0.4.0-rc1", False, False), ("nightly", False, False), ("v0.0.1", False, False)]), "true")
+
+    def test_a_bundle_that_does_not_verify_never_creates(self):
+        calls = self.publish("attestation-failure")
+        self.assertEqual([c[:2] for c in calls], [["attestation", "verify"]])
+        self.assertFalse((self.root / "draft").exists())
+        self.assertFalse((self.root / "remote").exists())
+        self.assertFalse((self.root / "published").exists())
 
     def test_failed_latest_query_leaves_only_draft(self):
         calls = self.publish("latest-api-failure")
@@ -448,6 +462,18 @@ class PublishTests(unittest.TestCase):
         state.update(change)
         (self.root / "release.json").write_text(json.dumps(state))
 
+    def test_the_tag_run_verifies_the_bundle_with_publish_drafts_identity(self):
+        # The same identity publish-draft demands: release.yml at this tag and
+        # commit, SLSA v1, a GitHub-hosted runner.
+        calls = self.publish(ok=True)
+        commit = subprocess.check_output(["git", "rev-parse", "v0.1.0^{commit}"], cwd=self.repo, text=True).strip()
+        verify = calls[0]
+        self.assertEqual(verify[:2], ["attestation", "verify"])
+        self.assertTrue(verify[2].endswith("/upload/clawbridge_v0.1.0_linux_amd64"), verify[2])
+        self.assertEqual(verify[3], "--bundle")
+        self.assertTrue(verify[4].endswith("/upload/PROVENANCE.sigstore.json"), verify[4])
+        self.assertEqual(verify[5:], ["--repo", "jkai-chen/ClawBridge", "--signer-workflow", "jkai-chen/ClawBridge/.github/workflows/release.yml", "--source-ref", "refs/tags/v0.1.0", "--source-digest", commit, "--predicate-type", "https://slsa.dev/provenance/v1", "--deny-self-hosted-runners"])
+
     def test_the_hold_stops_at_the_verified_draft(self):
         self.write_bundle()
         self.env["RELEASE_HOLD_DRAFT"] = "true"
@@ -455,7 +481,7 @@ class PublishTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertEqual(result.stdout.strip().splitlines()[-1], "held as draft: v0.1.0; image " + IMAGE + "; publish with the publish-draft workflow")
         calls = [json.loads(line) for line in (self.root / "calls").read_text().splitlines()]
-        self.assertEqual([c[:2] for c in calls[1:]], [["release", "create"], ["release", "upload"], ["release", "download"], ["release", "view"]])
+        self.assertEqual([c[:2] for c in calls], [["attestation", "verify"], ["api", "--paginate"], ["release", "create"], ["release", "upload"], ["release", "download"], ["release", "view"]])
         self.assertEqual(self.remote(), PUBLISHED)
         self.assertTrue((self.root / "draft").exists())
         self.assertFalse((self.root / "published").exists())

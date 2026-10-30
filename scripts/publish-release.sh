@@ -188,6 +188,11 @@ case $release_manual in
   *) echo 'could not read the manual-update marker; nothing was created' >&2; exit 1 ;;
 esac
 validate_assets "$release_upload" "$release_extras"
+# The bundle's signature, as a client checks it: Sigstore's chain and log, the
+# release workflow at this tag and commit on a GitHub-hosted runner, SLSA v1,
+# and one asset's digest: the identity publish-draft demands too. A bundle that
+# would not verify stops here, before anything is created.
+gh attestation verify "$release_upload/clawbridge_${release_version}_linux_amd64" --bundle "$release_upload/PROVENANCE.sigstore.json" --repo jkai-chen/ClawBridge --signer-workflow jkai-chen/ClawBridge/.github/workflows/release.yml --source-ref "refs/tags/$release_version" --source-digest "$release_commit" --predicate-type https://slsa.dev/provenance/v1 --deny-self-hosted-runners || { echo 'the provenance bundle does not verify; nothing was created' >&2; exit 1; }
 # Listing drafts as well as published releases distinguishes absence from an API
 # failure and refuses existing drafts, too. A failed query stops before creation.
 release_existing=$(gh api --paginate 'repos/jkai-chen/ClawBridge/releases?per_page=100' --jq ".[] | select(.tag_name == \"$release_version\") | .id")

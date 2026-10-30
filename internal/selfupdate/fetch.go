@@ -121,9 +121,24 @@ func get(ctx context.Context, o Options, raw string) (*http.Response, error) {
 	}
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
 		resp.Body.Close()
-		return nil, fmt.Errorf("GET %s: %s", req.URL.Redacted(), resp.Status)
+		return nil, &statusError{url: req.URL.Redacted(), code: resp.StatusCode, status: resp.Status}
 	}
 	return resp, nil
+}
+
+// statusError is a GET answered with a status outside 2xx.
+type statusError struct {
+	url    string
+	code   int
+	status string
+}
+
+func (e *statusError) Error() string { return fmt.Sprintf("GET %s: %s", e.url, e.status) }
+
+// isNotFound reports whether err is a GET answered 404.
+func isNotFound(err error) bool {
+	var se *statusError
+	return errors.As(err, &se) && se.code == http.StatusNotFound
 }
 
 var errTooLarge = errors.New("larger than allowed")

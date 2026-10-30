@@ -228,6 +228,9 @@ computer. Upgrading from v0.3.x: docs/upgrading-to-1.0.md.
   `CLAUDE_CODE_OAUTH_TOKEN`. The scrub turns Bash auto-allow off, so an `auto_allow_bash` launch runs without it and is
   refused while one of those is set (sign claude in with its own login instead). docs/runner.md. Linear config scope:
   none.
+- **`runner fetch`'s token scan no longer skips an added line that begins `++ `** (G9 S4-04). In the patch such a line
+  reads `+++ `, which the scan took for a file header; a `+++ ` line now names the file only before a file's first
+  hunk. Linear config scope: none.
 
 # ClawBridge v0.3.13 (released 30 Oct)
 

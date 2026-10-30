@@ -333,7 +333,8 @@ The server accepts Google ID tokens, ClawBridge device keys, or both. The
 mode is `CLAWBRIDGE_AUTH` in the environment file, passed to `serve --auth`.
 Moving people to device keys has an order: upgrade the clients and give everyone a
 device before setting `device`. See
-[Turning device sign-in on](../sign-in.md#turning-device-sign-in-on).
+[Turning device sign-in on](../sign-in.md#turning-device-sign-in-on). v1.0 removes Google sign-in: switch to
+`device` first, in the order of [Removing Google sign-in](google-sign-in-removal.md).
 
 | `CLAWBRIDGE_AUTH` | Accepts | Needs |
 | --- | --- | --- |

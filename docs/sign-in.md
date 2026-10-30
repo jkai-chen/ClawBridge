@@ -328,6 +328,10 @@ The Compose form and the details are in
 
 ## Turning device sign-in on
 
+> **v1.0 removes Google sign-in.** Before upgrading to v1.0, every server must run with `CLAWBRIDGE_AUTH=device`:
+> follow [Removing Google sign-in](operations/google-sign-in-removal.md), which adds a per-member gate to the steps
+> below.
+
 The server's sign-in methods are `CLAWBRIDGE_AUTH` in its environment file
 (`serve --auth`):
 

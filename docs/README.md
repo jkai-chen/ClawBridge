@@ -9,6 +9,8 @@
 - [Signing in with invites and device keys](sign-in.md): invites, joining, device
   keys, members, ownership, turning it on, and troubleshooting (the client side from
   v0.3.5)
+- [Removing Google sign-in (v1.0)](operations/google-sign-in-removal.md): the order to move a server and every member
+  to device keys before v1.0, with the gate and rollback
 - [Your first task: claim and release](usage.md#your-first-task-claim-and-release)
 - [Inbox notifications and Codex wake-up](notifications.md)
 - [Native Linear task boards](linear.md)

@@ -26,6 +26,13 @@
   issue's deliveries do) in the Linear guide, and the skill's note that notices can come faster, are still untrusted,
   and never involve an agent with a secret. Linear config scope: none.
 
+## Security
+
+- Builds move from Go 1.26.0 to Go 1.26.10, which fixes reachable standard-library vulnerabilities in TLS, X.509,
+  HTTP and HTTP/2, `net/textproto` and `html/template`. CI and the release now run `govulncheck` (pinned), and a
+  reachable finding fails the release. The PostgreSQL and Caddy images in the compose files are pinned by digest (the
+  tag is kept); `docs/operations/deployment.md` says how and when to refresh them. Linear config scope: none.
+
 # ClawBridge v0.3.11 (released 30 Oct)
 
 v0.3.10 was deployed (server) but its client release failed to publish; v0.3.11 is the same code plus the publish fix.

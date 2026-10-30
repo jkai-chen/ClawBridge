@@ -1239,6 +1239,27 @@ the newer schema. Use the production restore procedure with a dump taken before
 the migration. Compose project and Caddy volumes stay in place throughout; never
 use `docker compose down -v`.
 
+### Refreshing the base image digests
+
+`deploy/compose.yaml` and `deploy/compose.local.yaml` name the PostgreSQL and
+Caddy images by tag and by digest (`caddy:2.10-alpine@sha256:...`). The tag is for
+reading; Docker pulls the digest, so a moved or replaced tag changes nothing on
+your host. The digest is the multi-arch index, so amd64 and arm64 hosts both
+resolve it. Refresh the digests with each release, and at once for a security
+advisory on either image (the same tag then names a patched build). Look up the
+current index digest, without pulling anything:
+
+```sh
+docker buildx imagetools inspect postgres:17-alpine | grep '^Digest:'
+docker buildx imagetools inspect caddy:2.10-alpine | grep '^Digest:'
+```
+
+Replace the `sha256:` part after the tag in every `image:` line that uses that
+image (`db` and `caddy` in `compose.yaml`; `caddy-cert` in `compose.local.yaml`,
+whose `caddy` takes its image from `compose.yaml`), keep the tag, and check the files with
+`docker compose -f deploy/compose.yaml config --quiet`. A new tag (a new PostgreSQL
+major version, a new Caddy minor) is a deliberate change, not a refresh.
+
 ### The published image (v0.3.6 and later)
 
 From v0.3.6, each release publishes the server image to

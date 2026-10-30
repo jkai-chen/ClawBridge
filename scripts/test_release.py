@@ -25,7 +25,7 @@ class ReleaseTests(unittest.TestCase):
             target = cls.repo / name
             target.parent.mkdir(parents=True, exist_ok=True)
             shutil.copyfile(ROOT / name, target)
-        (cls.repo / "go.mod").write_text("module clawbridge\n\ngo 1.26.0\n")
+        (cls.repo / "go.mod").write_text("module clawbridge\n\ngo 1.26.10\n")
         main = cls.repo / "cmd/clawbridge/main.go"
         main.parent.mkdir(parents=True)
         main.write_text('package main\nimport("encoding/json";"os";"clawbridge/internal/buildinfo")\nfunc main(){json.NewEncoder(os.Stdout).Encode(buildinfo.Current())}\n')

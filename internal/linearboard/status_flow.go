@@ -37,6 +37,10 @@ type StatusPolicyFile struct {
 	// project status ID.
 	ProjectFlow    *bool               `json:"project_flow"`
 	ProjectTargets *bus.ProjectTargets `json:"project_targets"`
+	// AgentMayCancelKinds are the project kinds in whose projects agents
+	// may cancel. A file may keep or shrink the list; adding a kind is
+	// typed by a person with linear cancel-kinds set.
+	AgentMayCancelKinds []string `json:"agent_may_cancel_kinds"`
 }
 
 // StatusPolicyV2 reads the project's status policy.
@@ -66,7 +70,7 @@ func (s *Service) SetStatusPolicyV2(ctx context.Context, scope bus.Request, raw 
 	dec := json.NewDecoder(bytes.NewReader(raw))
 	dec.DisallowUnknownFields()
 	if dec.Decode(&file) != nil || dec.Decode(new(any)) != io.EOF || file.Enabled == nil {
-		return nil, errors.New(`the status policy file must be {"enabled": true|false, "claim_from_triage", "create", "claim", "release_done", "done"} with state names, "closes": {"<Linear project UUID>": "agent"|"human"}, "project_flow": true|false, and "project_targets": {"started": "<project status UUID>", "completed": "<project status UUID>"}`)
+		return nil, errors.New(`the status policy file must be {"enabled": true|false, "claim_from_triage", "create", "claim", "release_done", "done"} with state names, "closes": {"<Linear project UUID>": "agent"|"human"}, "project_flow": true|false, "project_targets": {"started": "<project status UUID>", "completed": "<project status UUID>"}, and "agent_may_cancel_kinds": [kind names]`)
 	}
 	// Keys match as the decoder matches them, ignoring case.
 	var keys map[string]json.RawMessage
@@ -91,6 +95,17 @@ func (s *Service) SetStatusPolicyV2(ctx context.Context, scope bus.Request, raw 
 	}
 	kept := map[string]bool{}
 	notes := []string{}
+	// Who may cancel (AGENT-CANCEL R2): a file keeps or shrinks the list,
+	// and is refused, before anything is asked or sent, if it adds a kind.
+	cancel := cur.AgentMayCancelKinds
+	if has("agent_may_cancel_kinds") {
+		cancel = file.AgentMayCancelKinds
+		if added := cancelKindsAdded(cur.AgentMayCancelKinds, cancel); len(added) > 0 {
+			return nil, fmt.Errorf("the file adds %s to agent_may_cancel_kinds: letting agents cancel is confirmed by typing the kind names, with clawbridge linear cancel-kinds set; leave the key out (the current list is kept) or list only kinds already set. Nothing was set", strings.Join(added, ", "))
+		}
+	} else if len(cancel) > 0 {
+		kept["agent_may_cancel_kinds"] = true
+	}
 	closes := map[string]any{}
 	agents := false
 	source := file.Closes
@@ -246,6 +261,9 @@ func (s *Service) SetStatusPolicyV2(ctx context.Context, scope bus.Request, raw 
 	if t := targets; t != nil {
 		policy["project_targets"] = map[string]any{"started": strings.ToLower(t.Started), "completed": strings.ToLower(t.Completed)}
 	}
+	if len(cancel) > 0 {
+		policy["agent_may_cancel_kinds"] = cancel
+	}
 	if _, e = bus.ParseStatusPolicy(policy); e != nil {
 		return nil, e
 	}
@@ -377,11 +395,12 @@ func decodeStatusPolicy(v any) (bus.StatusPolicy, error) {
 		Closes          map[string]string         `json:"closes"`
 		ProjectFlow     bool                      `json:"project_flow"`
 		ProjectTargets  *bus.ProjectTargets       `json:"project_targets"`
+		CancelKinds     []string                  `json:"agent_may_cancel_kinds"`
 	}
 	if json.Unmarshal(raw, &view) != nil {
 		return bus.StatusPolicy{}, errors.New("the status policy is unreadable")
 	}
-	return bus.StatusPolicy{Enabled: view.Enabled, ClaimFromTriage: view.ClaimFromTriage, Teams: view.Teams, Closes: view.Closes, ProjectFlow: view.ProjectFlow, ProjectTargets: view.ProjectTargets}, nil
+	return bus.StatusPolicy{Enabled: view.Enabled, ClaimFromTriage: view.ClaimFromTriage, Teams: view.Teams, Closes: view.Closes, ProjectFlow: view.ProjectFlow, ProjectTargets: view.ProjectTargets, AgentMayCancelKinds: view.CancelKinds}, nil
 }
 
 // createState is the policy's create state for team, or "" when the policy

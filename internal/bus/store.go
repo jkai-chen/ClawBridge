@@ -699,6 +699,7 @@ var operationArgs = map[string]string{
 	"status_policy_get":            "instance",
 	"status_policy_set":            "instance expected_revision status_policy via",
 	"status_closes_set":            "instance expected_revision linear_project closes via",
+	"status_cancel_kinds_set":      "instance expected_revision kinds via",
 	"doc_policy_get":               "instance",
 	"dispatcher_get":               "instance",
 	"context_watch_get":            "instance",
@@ -1745,6 +1746,12 @@ func (s *Store) execute(ctx context.Context, tx *transaction, r Request) (any, e
 			return nil, invalid("instance requires session")
 		}
 		return s.statusClosesOp(ctx, tx, wid, pid, projectRole, actor, r)
+	}
+	if statusCancelKindsOperation(r.Operation) {
+		if actor == nil && str(a, "instance") != "" {
+			return nil, invalid("instance requires session")
+		}
+		return s.statusCancelKindsOp(ctx, tx, wid, pid, projectRole, actor, r)
 	}
 	if actor == nil && watchBudgetOperation(r.Operation) {
 		if str(a, "instance") != "" {

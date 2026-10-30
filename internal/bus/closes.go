@@ -163,20 +163,9 @@ func (s *Store) closePolicyNotices(ctx context.Context, tx *transaction, wid, pi
 	if err != nil || !policy.Enabled {
 		return err
 	}
-	retention := 30
-	if w, e := one(ctx, tx, `SELECT retention_days FROM workspaces WHERE id=?`, wid); e == nil && asInt(w["retention_days"]) > 0 {
-		retention = asInt(w["retention_days"])
-	}
 	for _, p := range added {
 		who, listed := policy.Closes[p]
 		if containsString(pending, p) || listed && who != "agent" {
-			continue
-		}
-		coordinator, err := s.coordinatorTargets(ctx, tx, pid, p, nil)
-		if err != nil {
-			return err
-		}
-		if len(coordinator) == 0 {
 			continue
 		}
 		body := fmt.Sprintf("Linear project %s joined this project's board. Its issues are closed by people (the default). The project owner or a lead can let agents close them: clawbridge linear closes set --linear-project %s --agent --expected-revision N (N from clawbridge linear closes show).\n%s", p, p, closePolicyLine)
@@ -185,13 +174,27 @@ func (s *Store) closePolicyNotices(ctx context.Context, tx *transaction, wid, pi
 			// such as one kept from before it left.
 			body = fmt.Sprintf("Linear project %s joined this project's board, and the status policy already says agents close its issues: a rule set while it wasn't on the board, such as one kept from before it left. The project owner or a lead can return it to people: clawbridge linear closes set --linear-project %s --human --expected-revision N (N from clawbridge linear closes show).\n%s", p, p, closePolicyLine)
 		}
-		id, to := newID("msg_"), coordinator[0]
-		if _, err = tx.ExecContext(ctx, `INSERT INTO messages(id,project_id,source_project_id,sender_id,address,thread_id,reply_to,kind,body,created_at,expires_at,created_by_principal,operation_id,payload_hash,coordination) VALUES(?,?,?,?,?,?,NULL,'close-policy',?,?,?,?,?,?,NULL)`, id, pid, pid, to["id"], str(to, "name"), id, body, now, layout(at(now).AddDate(0, 0, retention)), s.principal, newID("closes_"), digestOf(body)); err != nil {
-			return err
-		}
-		if err = insertDeliveries(ctx, tx, pid, id, []string{str(to, "id")}); err != nil {
+		if err = s.closePolicyMessage(ctx, tx, wid, pid, p, body, now); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+// closePolicyMessage sends one close-policy notice to the coordinator the
+// Linear project routes to (any project's, for ""); with none, nothing.
+func (s *Store) closePolicyMessage(ctx context.Context, tx *transaction, wid, pid, linearProject, body, now string) error {
+	coordinator, err := s.coordinatorTargets(ctx, tx, pid, linearProject, nil)
+	if err != nil || len(coordinator) == 0 {
+		return err
+	}
+	retention := 30
+	if w, e := one(ctx, tx, `SELECT retention_days FROM workspaces WHERE id=?`, wid); e == nil && asInt(w["retention_days"]) > 0 {
+		retention = asInt(w["retention_days"])
+	}
+	id, to := newID("msg_"), coordinator[0]
+	if _, err = tx.ExecContext(ctx, `INSERT INTO messages(id,project_id,source_project_id,sender_id,address,thread_id,reply_to,kind,body,created_at,expires_at,created_by_principal,operation_id,payload_hash,coordination) VALUES(?,?,?,?,?,?,NULL,'close-policy',?,?,?,?,?,?,NULL)`, id, pid, pid, to["id"], str(to, "name"), id, body, now, layout(at(now).AddDate(0, 0, retention)), s.principal, newID("closes_"), digestOf(body)); err != nil {
+		return err
+	}
+	return insertDeliveries(ctx, tx, pid, id, []string{str(to, "id")})
 }

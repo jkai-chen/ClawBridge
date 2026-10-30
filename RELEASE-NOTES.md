@@ -84,6 +84,8 @@
   `webhook_status` in the API reference, what webhooks change in intake and the comment watch (and what a moved
   issue's deliveries do) in the Linear guide, and the skill's note that notices can come faster, are still untrusted,
   and never involve an agent with a secret. Linear config scope: none.
+- The release process lists what is checked before each cut: the base image digests, and the playbooks' cost tables
+  against the providers' current prices (docs/design/releases.md, "Before each cut"). Linear config scope: none.
 
 ## Security
 

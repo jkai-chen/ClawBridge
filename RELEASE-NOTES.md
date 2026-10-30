@@ -77,6 +77,16 @@
   device key (device-route entries are unaffected). No schema change.
   Linear config scope: none.
 
+## Operations
+
+- **A release can be held as a verified draft and published later, without a rebuild.** With the repository variable
+  `RELEASE_HOLD_DRAFT=true`, a tag-push release run builds, pushes and attests the image and assets, verifies the
+  draft and stops there (`held as draft: <tag>; image <digest>; …`); the new `publish-draft` workflow (dispatched from
+  the tag, under the same `release` approval) validates that draft's own assets again (asset set, SHA256SUMS, source
+  commit, bundle subjects, provenance signature, image digest format, manual-update marker) and publishes it with
+  the body the tag-push run wrote, so the published bytes are the deployed and soaked ones. Any other value of the variable fails the run before anything is created. The v1.0
+  hold, soak and publish checklist is in docs/design/releases.md. No schema change. Linear config scope: none.
+
 # ClawBridge v0.3.13 (released 30 Oct)
 
 **Schema 53 → 54.**

@@ -27,6 +27,8 @@
   per session) and waking an idle agent (the Stop hook,
   `notify --adapter command`, and a Claude Code channel with `mcp install --channel`). An untouched seeded document is
   offered the update with `linear seed-docs --update`. Linear config scope: none.
+- The README and the installation guide say what the installer needs (`curl`, and `sha256sum` or `shasum`) and how to
+  get `curl` on a minimal Linux image, found on a fresh-Linux walkthrough (G8). Linear config scope: none.
 
 ## Fixes
 

@@ -5,7 +5,10 @@ carries versioned binaries, installers and SHA256 checksums. Source builds remai
 available below. In the pinned examples, replace `vX.Y.Z` with a release tag.
 
 For macOS or Linux, the installer selects Intel/AMD64 or ARM64, verifies the
-release checksum and installs into `~/.local/bin`:
+release checksum and installs into `~/.local/bin`. It needs `curl` and
+`sha256sum` (or `shasum`), and stops naming whichever is missing; a minimal Linux
+image may lack `curl` (on Debian or Ubuntu: `sudo apt-get install -y curl
+ca-certificates`).
 
 ```sh
 curl --fail --silent --show-error --location --proto '=https' --proto-redir '=https' \

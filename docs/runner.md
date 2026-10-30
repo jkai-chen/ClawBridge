@@ -114,7 +114,17 @@ The settings passed with `--settings` take precedence over the repository's own
 `.claude` settings, and a deny rule wins at every level.
 
 - **Permission mode:** default (you approve edits and commands). Bypass mode and
-  auto mode are both disabled. Git status, diff, log, show, add and commit are pre-approved.
+  auto mode are both disabled. Git status, diff, log, show, add and commit are pre-approved,
+  and so is the self-test (below), exactly as the session's first step runs it.
+  The script is in `<work>/<session>.selftest`, which Bash can read but not write
+  and the file tools are denied, so nothing in the session can change what that
+  rule runs. Git commands that would write a file with `--output` are denied.
+  - **Bash asks too.** Claude Code would run sandboxed Bash without asking, so the
+    settings turn that off (`autoAllowBashIfSandboxed: false`): you approve each
+    command. For an unattended run, opt in with `"auto_allow_bash": true` in the
+    runner's settings; sandboxed Bash then runs without asking, still inside the
+    sandbox and its deny rules. The launch result shows which applies
+    (`bash_approval`: `ask` or `auto`).
   Denied:
   - git push, remote, config and credential; `gh`; `ssh`; `security`; the
     `clawbridge` CLI (the agent uses the ClawBridge MCP tools instead);

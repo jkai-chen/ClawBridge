@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -353,9 +354,10 @@ func TestLaunchSettingsAndModel(t *testing.T) {
 			t.Fatal("not denied:", want)
 		}
 	}
-	// Bash reads nothing in the home directory but the clone and its
-	// cache; the file tools are denied every known credential location.
-	if len(s.Sandbox.Filesystem.DenyRead) != 1 || s.Sandbox.Filesystem.DenyRead[0] != "~/" || !contains(s.Sandbox.Filesystem.AllowRead, p.Clone) || !contains(s.Sandbox.Filesystem.AllowRead, p.Cache) || len(s.Sandbox.Filesystem.AllowRead) != 2 {
+	// Bash reads nothing in the home directory but the clone, its cache
+	// and its self-test; the file tools are denied every known credential
+	// location.
+	if len(s.Sandbox.Filesystem.DenyRead) != 1 || s.Sandbox.Filesystem.DenyRead[0] != "~/" || !contains(s.Sandbox.Filesystem.AllowRead, p.Clone) || !contains(s.Sandbox.Filesystem.AllowRead, p.Cache) || !contains(s.Sandbox.Filesystem.AllowRead, filepath.Dir(SelfTestScript(p.Clone))) || len(s.Sandbox.Filesystem.AllowRead) != 3 {
 		t.Fatal("filesystem", s.Sandbox.Filesystem)
 	}
 	for _, path := range DeniedPaths {
@@ -571,6 +573,9 @@ func TestGCRemovesOnlyFinishedClones(t *testing.T) {
 		if _, err = os.Stat(filepath.Dir(p.SettingsFile)); err == nil {
 			t.Fatal("session files kept:", p.Session)
 		}
+		if _, err = os.Stat(filepath.Dir(SelfTestScript(p.Clone))); err == nil {
+			t.Fatal("self-test kept:", p.Session)
+		}
 	}
 	for _, branch := range []string{"agent/fix-1", "agent/fix-7"} {
 		if _, err = execGit(e.repo, "rev-parse", "--verify", "--quiet", "refs/heads/"+branch); err == nil {
@@ -756,7 +761,7 @@ func TestLaunchSelfTest(t *testing.T) {
 	if p.SelfTest != "passed" || len(e.closed) != 0 {
 		t.Fatal(p, e.closed)
 	}
-	script, _ := os.ReadFile(filepath.Join(p.Cache, "selftest.sh"))
+	script, _ := os.ReadFile(SelfTestScript(p.Clone))
 	if !strings.Contains(string(script), "ls '"+filepath.Join(e.r.Home, ".ssh")+"'") || strings.Contains(string(script), ".aws") {
 		t.Fatal("the self-test does not try exactly the locations that exist:\n" + string(script))
 	}
@@ -787,7 +792,7 @@ func TestSelfTestProvesTheDefaultDeny(t *testing.T) {
 		return all
 	}
 	p := e.launch("checkout-engineer-1", "FIX-1")
-	script, _ := os.ReadFile(filepath.Join(p.Cache, "selftest.sh"))
+	script, _ := os.ReadFile(SelfTestScript(p.Clone))
 	if p.SelfTest != "passed" || strings.Count(string(script), ".clawbridge-selftest-checkout-engineer-1-") != 2 || len(planted()) != 0 {
 		t.Fatal("planted files", p.SelfTest, planted(), string(script))
 	}
@@ -811,7 +816,7 @@ func TestSelfTestPlantsInALinkedWorktreesGitDir(t *testing.T) {
 	if err != nil || p.SelfTest != "passed" {
 		t.Fatal(p, err)
 	}
-	script, _ := os.ReadFile(filepath.Join(p.Cache, "selftest.sh"))
+	script, _ := os.ReadFile(SelfTestScript(p.Clone))
 	if !strings.Contains(string(script), filepath.Join(".git", "worktrees", "linked", ".clawbridge-selftest-")) {
 		t.Fatal("no sentinel in the worktree's git directory:\n" + string(script))
 	}
@@ -946,6 +951,58 @@ func TestLaunchStripsCredentialsFromTheClonesOrigin(t *testing.T) {
 	config, _ := os.ReadFile(filepath.Join(p.Clone, ".git", "config"))
 	if strings.Contains(string(config), "ghp_") || strings.Contains(string(config), "user:") {
 		t.Fatal("the clone's config carries the credential")
+	}
+}
+
+// G9 S4-03: Claude Code runs sandboxed Bash without a prompt unless
+// autoAllowBashIfSandboxed is false, so the settings say false unless the
+// owner opts in; the self-test, the session's first step, is the one
+// command allowed without asking, and the launch says which it is.
+func TestAgentSettingsAskBeforeBash(t *testing.T) {
+	sandbox := func(s Settings) map[string]any {
+		return AgentSettings(s, "/owner", "/clone", "/cache", "", nil, false)["sandbox"].(map[string]any)
+	}
+	if v, ok := sandbox(Settings{})["autoAllowBashIfSandboxed"]; !ok || v != false {
+		t.Fatal("auto-allow not off by default:", v, ok)
+	}
+	if v := sandbox(Settings{AutoAllowBash: true})["autoAllowBashIfSandboxed"]; v != true {
+		t.Fatal("auto_allow_bash not honoured:", v)
+	}
+	settings := AgentSettings(Settings{}, "/owner", "/clone", "/cache", "", nil, false)
+	permissions := settings["permissions"].(map[string]any)
+	allow, deny := permissions["allow"].([]string), permissions["deny"].([]string)
+	if want := "Bash(sh '/clone.selftest/selftest.sh' .)"; !slices.Contains(allow, want) {
+		t.Fatal("self-test not allowed:", allow)
+	}
+	if !strings.Contains(StartPrompt("FIX-1", "u", "b", SelfTestScript("/clone")), "sh '/clone.selftest/selftest.sh' .") {
+		t.Fatal("the allow rule no longer matches the prompt's command")
+	}
+	// A command that runs without asking must be one nothing in the
+	// session can rewrite: the script is in no directory Bash writes (its
+	// clone, its cache, allowWrite) and the file tools are denied it.
+	dir := filepath.Dir(SelfTestScript("/clone"))
+	fsys := settings["sandbox"].(map[string]any)["filesystem"].(map[string]any)
+	for _, w := range append([]string{"/clone", "/cache"}, fsys["allowWrite"].([]string)...) {
+		if dir == w || strings.HasPrefix(dir, w+"/") {
+			t.Fatal("the self-test is under a writable path:", w)
+		}
+	}
+	if !slices.Contains(fsys["allowRead"].([]string), dir) {
+		t.Fatal("the sandbox can't read the self-test:", fsys["allowRead"])
+	}
+	for _, want := range []string{"Edit(//clone.selftest/**)", "Bash(git *--output*)"} {
+		if !slices.Contains(deny, want) {
+			t.Fatal("not denied:", want, deny)
+		}
+	}
+	e := newEnv(t)
+	for want, auto := range map[string]bool{"ask": false, "auto": true} {
+		dry := e.spec("checkout-engineer-1", issueIdent)
+		dry.DryRun = true
+		dry.Settings.AutoAllowBash = auto
+		if p, err := e.r.Launch(dry); err != nil || p.BashApproval != want {
+			t.Fatal(want, p.BashApproval, err)
+		}
 	}
 }
 

@@ -53,6 +53,10 @@ type Settings struct {
 	// DeniedExtra are more paths the file tools are denied, such as the
 	// owner's private repositories; Bash already cannot read them.
 	DeniedExtra []string `json:"denied_extra,omitempty"`
+	// AutoAllowBash lets sandboxed Bash run without asking the person,
+	// for unattended runs. Off by default: the person approves each
+	// command, as default mode says (G9 S4-03).
+	AutoAllowBash bool `json:"auto_allow_bash,omitempty"`
 }
 
 // AgentConfig is one agent CLI's settings.

@@ -53,8 +53,19 @@ type Prepared struct {
 	// SelfTest is "passed" once the session's sandbox self-test reported
 	// every credential location unreadable.
 	SelfTest string `json:"sandbox_self_test,omitempty"`
-	DryRun   bool   `json:"dry_run,omitempty"`
-	Note     string `json:"note,omitempty"`
+	// BashApproval is "ask" (the person approves each Bash command) or
+	// "auto" (auto_allow_bash: sandboxed Bash runs without asking).
+	BashApproval string `json:"bash_approval"`
+	DryRun       bool   `json:"dry_run,omitempty"`
+	Note         string `json:"note,omitempty"`
+}
+
+// SelfTestScript is where a launch writes the session's self-test: beside
+// the clone, readable in the sandbox but never writable, since its exact
+// command runs without asking (G9 S4-03 review). The cache, which Bash
+// writes, keeps only the report.
+func SelfTestScript(clone string) string {
+	return filepath.Join(clone+".selftest", "selftest.sh")
 }
 
 // StartPrompt names the issue by its IDs only, never its text (§2.5).
@@ -99,7 +110,10 @@ func AgentSettings(s Settings, ownerRepo, clone, cache, goModCache string, pushH
 	// sandbox refuses hooks, but .git/config is otherwise guarded only by
 	// an approval prompt, so neither is offered.
 	deny = append(deny, "Edit(/"+filepath.ToSlash(clone)+"/.git/**)", "Bash(* .git/*)")
-	readable := []string{clone, cache}
+	// The self-test runs without asking, so nothing may change it; and a
+	// pre-approved git read may not write a file with --output.
+	deny = append(deny, "Edit(/"+filepath.ToSlash(filepath.Dir(SelfTestScript(clone)))+"/**)", "Bash(git *--output*)")
+	readable := []string{clone, cache, filepath.Dir(SelfTestScript(clone))}
 	if goModCache != "" {
 		readable = append(readable, goModCache)
 	}
@@ -130,6 +144,9 @@ func AgentSettings(s Settings, ownerRepo, clone, cache, goModCache string, pushH
 			"allow": []string{
 				"Bash(git status *)", "Bash(git diff *)", "Bash(git log *)", "Bash(git show *)",
 				"Bash(git add *)", "Bash(git commit *)",
+				// The self-test, the session's first step, exactly as
+				// StartPrompt asks for it.
+				"Bash(sh " + quote(SelfTestScript(clone)) + " .)",
 			},
 			"deny": deny,
 		},
@@ -140,6 +157,10 @@ func AgentSettings(s Settings, ownerRepo, clone, cache, goModCache string, pushH
 			"enabled":                  true,
 			"failIfUnavailable":        true,
 			"allowUnsandboxedCommands": false,
+			// Claude Code runs sandboxed Bash without a prompt unless this
+			// is false; the person approves each command unless the
+			// owner opted in (G9 S4-03).
+			"autoAllowBashIfSandboxed": s.AutoAllowBash,
 			// Bash writes in the clone (its working directory), its
 			// temporary directory and the session's cache.
 			// Bash reads nothing in the home directory but the clone, its
@@ -336,13 +357,17 @@ func (r *Runner) Launch(spec Spec) (Prepared, error) {
 	}
 	dir := filepath.Join(r.StateDir, "sessions", spec.Session)
 	p := Prepared{Session: spec.Session, Clone: filepath.Join(spec.Settings.WorkDir, spec.Session), Cache: filepath.Join(spec.Settings.WorkDir, spec.Session+".cache"), Branch: branch, Base: full, SettingsFile: filepath.Join(dir, "settings.json"), MCPFile: filepath.Join(dir, "mcp.json"), DryRun: spec.DryRun, ClaudeVersion: strings.Fields(line)[0], Note: note}
+	p.BashApproval = "ask"
+	if spec.Settings.AutoAllowBash {
+		p.BashApproval = "auto"
+	}
 	script := filepath.Join(dir, "launch.sh")
 	p.Command = Command(p.Clone, script)
 	p.Fetch = "clawbridge runner fetch " + spec.Session
 	if spec.DryRun {
 		return p, nil
 	}
-	for _, path := range []string{p.Clone, p.Cache} {
+	for _, path := range []string{p.Clone, p.Cache, filepath.Dir(SelfTestScript(p.Clone))} {
 		if _, err = os.Stat(path); err == nil {
 			return Prepared{}, fmt.Errorf("%s already exists", path)
 		}
@@ -376,6 +401,9 @@ func (r *Runner) Launch(spec Spec) (Prepared, error) {
 	if err = os.MkdirAll(p.Cache, 0o700); err != nil {
 		return p, err
 	}
+	if err = os.MkdirAll(filepath.Dir(SelfTestScript(p.Clone)), 0o700); err != nil {
+		return p, err
+	}
 	settings, _ := json.MarshalIndent(AgentSettings(spec.Settings, repo, p.Clone, p.Cache, spec.GoModCache, pushHosts(urls), spec.LinearWrites), "", " ")
 	environ := r.environ()
 	entry := map[string]any{}
@@ -390,13 +418,13 @@ func (r *Runner) Launch(spec Spec) (Prepared, error) {
 	if _, err = rand.Read(canary); err != nil {
 		return p, err
 	}
-	launch := LaunchScript(hex.EncodeToString(canary), p.SettingsFile, p.MCPFile, spec.Settings.Model, StartPrompt(spec.Identifier, spec.IssueID, branch, filepath.Join(p.Cache, "selftest.sh")))
+	launch := LaunchScript(hex.EncodeToString(canary), p.SettingsFile, p.MCPFile, spec.Settings.Model, StartPrompt(spec.Identifier, spec.IssueID, branch, SelfTestScript(p.Clone)))
 	for path, data := range map[string][]byte{p.SettingsFile: append(settings, '\n'), p.MCPFile: append(mcp, '\n'), script: []byte(launch)} {
 		if err = writePrivate(path, data); err != nil {
 			return p, err
 		}
 	}
-	sentinels, planted, err := r.selfTest(p.Cache, repo, spec.Session)
+	sentinels, planted, err := r.selfTest(p.Cache, SelfTestScript(p.Clone), repo, spec.Session)
 	if err != nil {
 		removeAll(planted)
 		return p, err
@@ -435,7 +463,7 @@ func sentinelPrefix(session string) string { return ".clawbridge-selftest-" + se
 // checkout when that is under it: no rule names them, so only the
 // sandbox's default deny refuses them. It returns the IDs with what each
 // stands for, and the planted files.
-func (r *Runner) selfTest(cache, repo, session string) (map[string]string, []string, error) {
+func (r *Runner) selfTest(cache, scriptPath, repo, session string) (map[string]string, []string, error) {
 	var lines, planted []string
 	sentinels := map[string]string{}
 	try := func(id, label, path string, dir bool) {
@@ -492,7 +520,7 @@ func (r *Runner) selfTest(cache, repo, session string) (map[string]string, []str
 	lines = append(lines, `if [ -n "${`+canaryVar+`+x}" ]; then echo READ env; else echo DENIED env; fi`)
 	result := filepath.Join(cache, "selftest.result")
 	script := "#!/bin/sh\n# ClawBridge runner sandbox self-test: each line tries to read one credential location or planted file.\n{\n" + strings.Join(lines, "\n") + "\necho DONE\n} > " + quote(result+".tmp") + " && mv " + quote(result+".tmp") + " " + quote(result) + "\necho 'Self-test done.'\n"
-	if err := os.WriteFile(filepath.Join(cache, "selftest.sh"), []byte(script), 0o600); err != nil {
+	if err := os.WriteFile(scriptPath, []byte(script), 0o600); err != nil {
 		return nil, planted, err
 	}
 	return sentinels, planted, nil

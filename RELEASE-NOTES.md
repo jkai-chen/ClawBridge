@@ -1,5 +1,7 @@
 # Unreleased
 
+# ClawBridge v0.3.12 (released 30 Oct)
+
 **Schema 51 → 52.**
 - The server migrates to schema 52 on its first start: `linear_budget_kinds`, each project's Linear calls and charges
   by kind for the current and previous hour (kind names and counts only). Additive, no backfill.

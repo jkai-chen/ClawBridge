@@ -133,7 +133,7 @@ func (s *Service) viewDelete(ctx context.Context, scope bus.Request, in ViewDele
 		}
 		return s.forgetDeleted(ctx, scope, replay), nil
 	}
-	receipt, e := l.write(namespace, in.OperationID, ledgerMeta{"view_delete", b.ProjectID}, payload, func() (any, error) {
+	receipt, e := l.write(namespace, in.OperationID, ledgerMeta{Operation: "view_delete", ProjectID: b.ProjectID}, payload, func() (any, error) {
 		// A view changed in Linear since ClawBridge wrote it is someone's
 		// work now: it isn't deleted. One already gone is decided below.
 		cur, e := key.View(ctx, in.ViewID)

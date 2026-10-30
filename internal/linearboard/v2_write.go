@@ -659,7 +659,7 @@ func (s *Service) writeV2Personal(ctx context.Context, scope bus.Request, in Wri
 	if e = s.unchangedV2(ctx, scope, b); e != nil {
 		return nil, e
 	}
-	return l.write(namespace, in.OperationID, ledgerMeta{in.Operation, b.ProjectID}, payload, func() (any, error) {
+	return l.write(namespace, in.OperationID, ledgerMeta{Operation: in.Operation, ProjectID: b.ProjectID, IssueID: in.IssueID, MarkerPart: markerPart(in)}, payload, func() (any, error) {
 		if e := s.unchangedV2(ctx, scope, b); e != nil {
 			return nil, authorityFailure(e)
 		}

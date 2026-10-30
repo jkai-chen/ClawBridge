@@ -113,7 +113,7 @@ func TestL2ActualSchema3MigrationPreservesOriginalRecords(t *testing.T) {
 			if _, err := db.Exec(strings.ReplaceAll(string(dump), "__LOCAL_PRINCIPAL__", principal)); err != nil {
 				t.Fatal(err)
 			}
-			wantVersion := 52
+			wantVersion := 53
 			switch scenario {
 			case "failed_ddl_rolls_back":
 				// An existing conflicting column forces the migration transaction to fail.
@@ -122,10 +122,10 @@ func TestL2ActualSchema3MigrationPreservesOriginalRecords(t *testing.T) {
 				}
 				wantVersion = 3
 			case "newer_schema_refused":
-				if _, err := db.Exec(`PRAGMA user_version=53`); err != nil {
+				if _, err := db.Exec(`PRAGMA user_version=54`); err != nil {
 					t.Fatal(err)
 				}
-				wantVersion = 53
+				wantVersion = 54
 			}
 			before := l2OriginalRows(t, db, nil)
 			store, openErr := bus.Open(path)

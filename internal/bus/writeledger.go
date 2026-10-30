@@ -87,6 +87,12 @@ func (s *Store) LedgerGet(ctx context.Context, namespace, operationID string) (s
 	return record, found, err
 }
 
+// ledgerReplace settles a record by compare-and-swap on the record alone.
+// It never reads acknowledged_at: a record a marker's reread acknowledged
+// still takes the late outcome of the server that sent it, and applied
+// wins (schema 53).
+const ledgerReplace = `UPDATE linear_write_ledger SET record=?,updated_at=?,pending=? WHERE namespace=? AND operation_id=? AND record=?`
+
 // LedgerReplace swaps an operation's record from from to to, only if it is
 // still from: the caller that wrote from is the only one that settles it.
 // The row stays pending only while the new record is (schema 49).
@@ -95,7 +101,7 @@ func (s *Store) LedgerReplace(ctx context.Context, namespace, operationID, from,
 		return err
 	}
 	return s.ledgerTx(ctx, func(tx *transaction) error {
-		r, err := tx.ExecContext(ctx, `UPDATE linear_write_ledger SET record=?,updated_at=?,pending=? WHERE namespace=? AND operation_id=? AND record=?`, to, stamp(), recordPending(to), namespace, operationID, from)
+		r, err := tx.ExecContext(ctx, ledgerReplace, to, stamp(), recordPending(to), namespace, operationID, from)
 		if err != nil {
 			return err
 		}

@@ -24,7 +24,7 @@ const uncertainProject = "p-1"
 func uncertainCreate(t *testing.T, l ledger, ns, op string) {
 	t.Helper()
 	payload := map[string]any{"title": "SYNTHETIC-TITLE-zq81", "body": "SYNTHETIC-BODY-zq81"}
-	if _, err := l.write(ns, op, ledgerMeta{"create", uncertainProject}, payload, func() (any, error) {
+	if _, err := l.write(ns, op, ledgerMeta{Operation: "create", ProjectID: uncertainProject}, payload, func() (any, error) {
 		return nil, &linearprovider.Error{Kind: "scope_metadata_missing"}
 	}); !IsUncertain(err) {
 		t.Fatal("not uncertain:", err)
@@ -71,7 +71,7 @@ func TestLocalUncertainWritesListAndAck(t *testing.T) {
 	l := ledger{dir, func() time.Time { return now }}
 	uncertainCreate(t, l, "ns-a", "op-1")
 	uncertainCreate(t, l, "ns-b", "op-2") // another session on this machine
-	if _, err := l.write("ns-a", "op-3", ledgerMeta{"update", "p-other"}, "x", func() (any, error) { return nil, errors.New("reset") }); !IsUncertain(err) {
+	if _, err := l.write("ns-a", "op-3", ledgerMeta{Operation: "update", ProjectID: "p-other"}, "x", func() (any, error) { return nil, errors.New("reset") }); !IsUncertain(err) {
 		t.Fatal(err)
 	}
 	// A crashed send: pending with no reason, young, then old.
@@ -105,7 +105,7 @@ func TestLocalUncertainWritesListAndAck(t *testing.T) {
 			t.Fatal("an acknowledged write is still listed")
 		}
 	}
-	if _, err := l.write("ns-a", "op-1", ledgerMeta{"create", uncertainProject}, map[string]any{"title": "SYNTHETIC-TITLE-zq81", "body": "SYNTHETIC-BODY-zq81"}, func() (any, error) {
+	if _, err := l.write("ns-a", "op-1", ledgerMeta{Operation: "create", ProjectID: uncertainProject}, map[string]any{"title": "SYNTHETIC-TITLE-zq81", "body": "SYNTHETIC-BODY-zq81"}, func() (any, error) {
 		t.Fatal("an acknowledged write was sent again")
 		return nil, nil
 	}); !IsUncertain(err) {
@@ -183,7 +183,7 @@ func TestLinearWritesListAndAckIssueWrites(t *testing.T) {
 	s.cfg.Executor = w
 	l := ledger{s.cfg.LedgerDirectory, time.Now}
 	for _, op := range []string{"op-1", "op-both"} {
-		if _, err := l.write("ns", op, ledgerMeta{"create", "prj"}, "x", func() (any, error) { return nil, errors.New("reset") }); !IsUncertain(err) {
+		if _, err := l.write("ns", op, ledgerMeta{Operation: "create", ProjectID: "prj"}, "x", func() (any, error) { return nil, errors.New("reset") }); !IsUncertain(err) {
 			t.Fatal(err)
 		}
 	}

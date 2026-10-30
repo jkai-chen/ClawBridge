@@ -2,6 +2,8 @@ package bus
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"strings"
 	"testing"
 )
@@ -193,5 +195,73 @@ func TestPostgresMarkerSkipNoticeAndStatus(t *testing.T) {
 	st := r.Data.(map[string]any)
 	if st["markers_state_skipped"] != 3 || st["markers_state_skipped_newest"].(map[string]any)["issue_uuid"] != sfIssueOther {
 		t.Fatal(st)
+	}
+}
+
+// A marker's reread acknowledges its earlier attempt's record in the
+// shared ledger on Postgres, and the late outcome of the server that sent
+// it still lands after: applied wins.
+func TestPostgresMarkerRereadAcksTheEarlierAttempt(t *testing.T) {
+	f := newPGIdentityFixture(t)
+	ctx := context.Background()
+	f.worker("coord")
+	f.worker("w")
+	in := func(op, session string, a map[string]any) map[string]any {
+		t.Helper()
+		r, err := f.in(op, session, a)
+		if err != nil {
+			t.Fatal(op, err)
+		}
+		return r.Data.(map[string]any)
+	}
+	in("coordinator_set", "coord", map[string]any{"target_session": "coord"})
+	if _, err := f.in("status_policy_set", "w", map[string]any{"expected_revision": 0, "status_policy": sfPolicy(true)}); err != nil {
+		t.Fatal(err)
+	}
+	view := in("assignment_propose", "w", map[string]any{"issue_uuid": watchIssue, "issue_identifier": "FIX-1"})["assignment"].(map[string]any)
+	in("assignment_confirm", "coord", map[string]any{"target_session": "w", "revision": view["revision"]})
+	id := view["id"].(string)
+	var pid string
+	if err := f.s.db.QueryRowContext(ctx, `SELECT project_id FROM assignment_markers WHERE assignment_id=$1`, id).Scan(&pid); err != nil {
+		t.Fatal(err)
+	}
+	due := func() {
+		t.Helper()
+		if _, err := f.s.db.ExecContext(ctx, `UPDATE assignment_markers SET next_attempt_at='2000-01-01T00:00:00.000000000Z' WHERE assignment_id=$1`, id); err != nil {
+			t.Fatal(err)
+		}
+		if g := in("marker_go", "coord", map[string]any{"assignment_id": id, "phase": "claim", "part": "state"}); g["action"] != "move" {
+			t.Fatal(g)
+		}
+	}
+	// The fixture's database outlives a run: each run has its own row.
+	sum := sha256.Sum256([]byte(newID("run")))
+	ns := hex.EncodeToString(sum[:])
+	op := "marker-" + ns[:16]
+	record := `{"operation_id":"` + op + `","operation":"update","project_id":"` + pid + `","version":1,"digest":"` + strings.Repeat("a", 64) + `","state":"pending","reason":"timeout","updated_at":"2026-10-29T06:00:00Z","issue_id":"` + watchIssue + `","marker_part":"state"}`
+	if _, created, err := f.s.LedgerInsert(ctx, ns, op, record, pid, ""); err != nil || !created {
+		t.Fatal(created, err)
+	}
+	due()
+	in("marker_settle", "coord", map[string]any{"assignment_id": id, "phase": "claim", "part": "state", "outcome": "uncertain", "operation_id": op})
+	due()
+	if r := in("marker_settle", "coord", map[string]any{"assignment_id": id, "phase": "claim", "part": "state", "outcome": "done", "state_target": sfProgress, "state_landed": sfProgress}); r["operations_acknowledged"] != 1 {
+		t.Fatal(r)
+	}
+	var by, at string
+	var pending int
+	if err := f.s.db.QueryRowContext(ctx, `SELECT acknowledged_by,acknowledged_at,pending FROM linear_write_ledger WHERE namespace=$1 AND operation_id=$2`, ns, op).Scan(&by, &at, &pending); err != nil || by != "reread" || at == "" || pending != 1 {
+		t.Fatal(by, at, pending, err)
+	}
+	applied := strings.Replace(strings.Replace(record, `"state":"pending"`, `"state":"accepted"`, 1), `"reason":"timeout",`, "", 1)
+	if err := f.s.LedgerReplace(ctx, ns, op, record, applied); err != nil {
+		t.Fatal("the late outcome was refused:", err)
+	}
+	if got, _, err := f.s.LedgerGet(ctx, ns, op); err != nil || got != applied {
+		t.Fatal(got, err)
+	}
+	var audits int
+	if err := f.s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM history WHERE entity='linear_write_ledger' AND entity_key=$1 AND action='acknowledged'`, op).Scan(&audits); err != nil || audits != 1 {
+		t.Fatal(audits, err)
 	}
 }

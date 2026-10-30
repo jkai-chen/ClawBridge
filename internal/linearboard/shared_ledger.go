@@ -109,7 +109,7 @@ func (l sharedLedger) write(namespace, operationID string, meta ledgerMeta, payl
 		return nil, errors.New("operation_id requires 1–128 ASCII identifier characters")
 	}
 	ns, hash := digest(namespace), digest(payload)
-	record := ledgerRecord{OperationID: operationID, Operation: meta.Operation, ProjectID: meta.ProjectID, Version: 1, Digest: hash, State: "pending", UpdatedAt: l.stamp()}
+	record := ledgerRecord{OperationID: operationID, Operation: meta.Operation, ProjectID: meta.ProjectID, IssueID: meta.IssueID, MarkerPart: meta.MarkerPart, Version: 1, Digest: hash, State: "pending", UpdatedAt: l.stamp()}
 	pending := encodeRecord(record)
 	existing, created, err := l.store.LedgerInsert(l.ctx, ns, operationID, pending, meta.ProjectID, l.who)
 	if err != nil {

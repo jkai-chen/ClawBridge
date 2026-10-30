@@ -173,7 +173,7 @@ func (s *Store) migrate() error {
 	if err = tx.QueryRow("PRAGMA user_version").Scan(&version); err != nil {
 		return err
 	}
-	if version > linearBudgetKindsSchemaVersion {
+	if version > markerOperationsSchemaVersion {
 		return errors.New("database schema is newer than this ClawBridge binary")
 	}
 	if version == 0 {
@@ -452,6 +452,11 @@ func (s *Store) migrate() error {
 			return err
 		}
 	}
+	if version < markerOperationsSchemaVersion {
+		if _, err = tx.Exec(markerOperationsSchema + fmt.Sprintf(`PRAGMA user_version=%d;`, markerOperationsSchemaVersion)); err != nil {
+			return err
+		}
+	}
 	return tx.Commit()
 }
 
@@ -681,7 +686,7 @@ var operationArgs = map[string]string{
 	"comment_watch_due":           "instance lease_token generation",
 	"comment_watch_report":        "instance lease_token generation issue_uuid team_id calls error comments",
 	"marker_go":                   "instance lease_token generation assignment_id phase part",
-	"marker_settle":               "instance lease_token generation assignment_id phase part outcome comment_id created_at via error state_target state_landed skip_reason",
+	"marker_settle":               "instance lease_token generation assignment_id phase part outcome comment_id created_at via error state_target state_landed skip_reason operation_id",
 	"marker_due":                  "instance lease_token generation limit",
 	"marker_spent":                "instance lease_token generation assignment_id phase calls charged",
 	"marker_status":               "instance issue_uuid issue_identifier assignment_id",

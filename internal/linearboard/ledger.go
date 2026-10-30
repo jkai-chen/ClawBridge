@@ -166,6 +166,13 @@ type ledgerRecord struct {
 	Receipt     json.RawMessage `json:"receipt,omitempty"`
 	Reason      string          `json:"reason,omitempty"`
 	UpdatedAt   string          `json:"updated_at"`
+
+	// IssueID and MarkerPart let the bus close a claim marker's earlier
+	// attempt once a reread proved its outcome: the issue's UUID, and
+	// which marker part (comment, label or state) made the write. Only
+	// the shared ledger records them; an older record has neither.
+	IssueID    string `json:"issue_id,omitempty"`
+	MarkerPart string `json:"marker_part,omitempty"`
 }
 
 // OperationLedger records each write's operation ID before dispatch and its
@@ -185,8 +192,9 @@ type OperationLedger interface {
 }
 
 // ledgerMeta names a write in its record, so an uncertain one can be
-// listed: the operation's name and the binding's ClawBridge project.
-type ledgerMeta struct{ Operation, ProjectID string }
+// listed: the operation's name and the binding's ClawBridge project. An
+// issue write also names its issue, and a marker's write its part.
+type ledgerMeta struct{ Operation, ProjectID, IssueID, MarkerPart string }
 
 // operations is the service's operation ledger.
 func (s *Service) operations(ctx context.Context) OperationLedger {
@@ -250,6 +258,9 @@ func (l ledger) write(profile, operationID string, meta ledgerMeta, payload any,
 		return nil, errors.New("cannot protect operation ledger lock")
 	}
 	hash := digest(payload)
+	// The private ledger leaves out the issue and the marker part: only the
+	// bus reads them, from the shared ledger, and an older client's strict
+	// decoder would refuse a record that has them.
 	record := ledgerRecord{OperationID: operationID, Operation: meta.Operation, ProjectID: meta.ProjectID, Version: 1, Digest: hash, State: "pending", UpdatedAt: l.now().UTC().Format(time.RFC3339Nano)}
 	if receipt, exists, e := readLedger(path, hash, true); exists || e != nil {
 		return receipt, e

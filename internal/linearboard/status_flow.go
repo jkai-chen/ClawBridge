@@ -548,13 +548,18 @@ func (s *Service) stateMove(ctx context.Context, scope bus.Request, issue, kind 
 		return skip("from_state")
 	}
 	state := target.ID
-	_, e = s.WriteV2(ctx, scope, WriteInputV2{WriteInput: WriteInput{Operation: "update", OperationID: markerOperation(), IssueID: issue, StateID: &state}, marker: true})
+	op := markerOperation()
+	_, e = s.WriteV2(ctx, scope, WriteInputV2{WriteInput: WriteInput{Operation: "update", OperationID: op, IssueID: issue, StateID: &state}, marker: true})
 	if e == nil {
 		return done(target.ID)
 	}
+	// A failed send settles with its operation ID, so the bus can close
+	// its ledger record once a reread proves the move's outcome: this
+	// attempt's own reread below, or a later attempt's.
+	sent := map[string]any{"operation_id": op}
 	outcome := markerFailure(e)
 	if outcome != "uncertain" {
-		return outcome, nil, e
+		return outcome, sent, e
 	}
 	after, re := s.IssueV2(ctx, scope, issue)
 	landed := ""
@@ -563,11 +568,13 @@ func (s *Service) stateMove(ctx context.Context, scope bus.Request, issue, kind 
 	}
 	switch {
 	case re != nil || landed == "":
-		return "uncertain", nil, e
+		return "uncertain", sent, e
 	case landed == target.ID, landed != before:
-		return done(landed)
+		outcome, extra, err := done(landed)
+		extra["operation_id"] = op
+		return outcome, extra, err
 	}
-	return "uncertain", nil, e
+	return "uncertain", sent, e
 }
 
 // issueStateQuery reads an issue's state ID and team, read-only.

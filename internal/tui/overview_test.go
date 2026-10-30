@@ -290,3 +290,31 @@ func TestOverviewShowsNewestJoins(t *testing.T) {
 		}
 	}
 }
+
+// A note (info) is counted only when there is one, sorts after the
+// warnings and before the passes, and Enter on it goes nowhere.
+func TestDoctorShowsInfoAsANote(t *testing.T) {
+	m := screenFixtures(t)[ScreenDoctor]
+	if strings.Contains(renderDoctor(m), "info") {
+		t.Fatal("an info count with no notes")
+	}
+	m.checks = append(m.checks, Check{ID: "linear.binding.note", Title: "A note", Status: Info})
+	if view := renderDoctor(m); !strings.Contains(view, " · 1 info") || !strings.Contains(view, "INFO") {
+		t.Fatalf("no info count or mark:\n%s", view)
+	}
+	rows := doctorRows(m)
+	if last := rows[len(rows)-1]; last.Status != Info {
+		t.Fatal("the note isn't after the warnings with the passes folded:", rows)
+	}
+	m.selected = len(rows) - 1
+	if after := do(m, "enter"); after.screen != ScreenDoctor {
+		t.Fatal("enter on a note moved to", after.screen)
+	}
+	m = do(m, "p")
+	rows = doctorRows(m)
+	for i, c := range rows {
+		if c.Status == Info && (i == 0 || rows[i-1].Status == Pass) {
+			t.Fatal("the note sorts with or after the passes:", rows)
+		}
+	}
+}

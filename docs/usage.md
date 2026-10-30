@@ -307,10 +307,25 @@ profile in its arguments; `doctor` checks it against `--mcp-linear-profile ID`
 (or `--linear-profile ID`) when given, and otherwise accepts the entry's own
 well-formed profile and names it in the check.
 
+`doctor` requires the entry's authority to be the one it checks: mode, workspace,
+project, session, server, credential source and principal, and the instance when
+`--mcp-instance` is given. The details the install chose for itself, the profile file
+(`--client-config`), the cache, the device and its key store, and the instance when
+none is given, are taken from the entry when well-formed (an absolute clean path, a
+device ID, `keyring`, `file` or `env`), and the passing check names each one that
+isn't doctor's own: an entry installed from another profile file still passes. A
+device or key store taken that way must work here: its key must be in that store on
+this machine (doctor loads it, signs nothing), or the check fails naming the device
+and the store; the passing check says that which member the device signs as isn't
+checked, since doctor makes no server call for an entry. A
+malformed one fails naming it; a mismatch names each flag that differs, with both
+values except for principals and credential settings.
+
 `doctor` checks an entry only when given all three of `--mcp-agent`, `--mcp-config`
 and `--mcp-session` (plus `--mcp-instance` and `--mcp-name` when the entry has
 them); one or two of them is an error, and none leaves `mcp.entries` at "No agent
-MCP configuration paths were selected". A session started with `claude
+MCP configuration paths were selected", a warning, or `info` on a machine with no
+Claude Code or Codex configuration. A session started with `claude
 --mcp-config FILE` (several sessions sharing a folder, each with its own file) is
 checked the same way, with that file:
 
@@ -401,7 +416,11 @@ PASS Authority health: Your workspace answers.
      The cloud authority is reachable and returned 3 visible project(s).
 ```
 
-It exits 1 when a check fails and 0 otherwise, warnings included. With `--json`
+A check can also be `info` (`NOTE` at a terminal): a note, not a problem, such as
+`mcp.entries` and `skill.version` on a machine with no Claude Code or Codex set up.
+The counts add `· N info` only when there are notes.
+
+It exits 1 when a check fails and 0 otherwise, warnings and notes included. With `--json`
 (and on a pipe, or in an agent's shell) the report is the JSON it always was:
 each check's `id`, `title`, `status`, `message`, `path` and `action`.
 

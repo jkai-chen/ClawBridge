@@ -67,7 +67,13 @@ func TestDoctorCLIValidatesTrustedRouteReadOnly(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	env := append(append([]string{}, p.env...), "CLAWBRIDGE_HOME="+home)
+	// An agent is set up (its configuration directory exists), so with no
+	// entry selected mcp.entries warns rather than notes: not the machine's.
+	agentHome := filepath.Join(p.dir, "agent-home")
+	if err := os.MkdirAll(agentHome, 0700); err != nil {
+		t.Fatal(err)
+	}
+	env := append(append([]string{}, p.env...), "CLAUDE_CONFIG_DIR="+agentHome, "CODEX_HOME="+agentHome, "CLAWBRIDGE_HOME="+home)
 	cmd := exec.Command(p.binary, "doctor")
 	cmd.Dir = p.dir
 	cmd.Env = env

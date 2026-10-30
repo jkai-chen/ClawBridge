@@ -3,7 +3,8 @@ ClawBridge · ws_1 › prj_1 › engineer › Doctor › Help  cloud
 
 ╭──────────────────────────────────────────────────────────────────────────────╮
 │ Help · Doctor                                                                │
-│ Checks of this profile, the server and the project: pass, warn or fail.      │
+│ Checks of this profile, the server and the project: pass, warn or fail, and  │
+│ info for a note.                                                             │
 │                                                                              │
 │ This screen                                                                  │
 │   Enter      go to its screen                                                │

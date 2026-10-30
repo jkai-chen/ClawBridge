@@ -175,7 +175,9 @@ earlier ones:
    folder, so run it from the repository root. To write the user-level file
    instead, pass `--config ~/.claude.json`.
 4. **Doctor.** Runs `clawbridge doctor` once for each MCP entry it configured,
-   and shows its result. It should show no fail.
+   and shows its result. It should show no fail. On a machine with no Claude
+   Code or Codex set up, the agent skill and MCP entry checks are notes (`info`),
+   not warnings, and the summary leaves them out.
 5. **The dispatcher (owners of a hosted project).** If you own the project, its
    task board is linked and the dispatcher is off, it says in one line what the
    dispatcher does, shows what turning it on changes (its coordinator, sessions

@@ -456,11 +456,12 @@ func capabilitySummary(r doctor.Report) string {
 	return "capabilities not reported"
 }
 
-// doctorSummary names the overall status and every check that did not pass.
+// doctorSummary names the overall status and every check that warned or
+// failed; a note (info) is no issue.
 func doctorSummary(r doctor.Report) string {
 	issues := []string{}
 	for _, c := range r.Checks {
-		if c.Status != doctor.Pass {
+		if c.Status != doctor.Pass && c.Status != doctor.Info {
 			issues = append(issues, c.Status+" "+c.Title)
 		}
 	}

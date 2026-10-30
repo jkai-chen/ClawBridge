@@ -218,7 +218,7 @@ own label of that name, plus its parent's when the parent team is also bound. Th
 
 When checking that installation with `doctor` (its MCP agent/config/session
 selection), doctor takes the entry's own Linear profile and names it in the
-`mcp.entries` check; pass `--mcp-linear-profile ID` (or `--linear-profile ID`) to
+entry's check (`mcp.AGENT.NAME`); pass `--mcp-linear-profile ID` (or `--linear-profile ID`) to
 require that exact one. Before v0.3.13, doctor without a profile failed such an
 entry as a conflict.
 

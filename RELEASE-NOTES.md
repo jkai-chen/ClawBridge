@@ -222,6 +222,12 @@ computer. Upgrading from v0.3.x: docs/upgrading-to-1.0.md.
   self-test now lives in `<work>/<session>.selftest`, which Bash can't write, and `git … --output` is denied). An
   unattended run opts in with `"auto_allow_bash": true` in the runner's settings, and the launch result shows
   `bash_approval` (`ask` or `auto`). docs/runner.md. Linear config scope: none.
+- **claude's API key or sign-in token no longer reaches the runner agent's Bash** (G9 S4-02). The launch sets
+  `CLAUDE_CODE_SUBPROCESS_ENV_SCRUB=1`, so claude strips credentials from its Bash, hooks and MCP server, and the
+  sandbox self-test now fails a session whose Bash can see `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN` or
+  `CLAUDE_CODE_OAUTH_TOKEN`. The scrub turns Bash auto-allow off, so an `auto_allow_bash` launch runs without it and is
+  refused while one of those is set (sign claude in with its own login instead). docs/runner.md. Linear config scope:
+  none.
 
 # ClawBridge v0.3.13 (released 30 Oct)
 

@@ -778,7 +778,8 @@ CLAWBRIDGE_WATCH_INTERVAL=15m
     `watch.health`, `watch.flow`, `watch.docs`, `watch.subscribers`,
     `watch.intake`, `watch.dispatcher` (and `watch.other`), `project_status`,
     `issue_move`, `operator.health`, `app_write.<operation>` for the app-route
-    writes and `profile.<kind>` for writes through a personal profile. Each
+    writes, `app_read.history` for issue history reads (the app's, charged to
+    the caller) and `profile.<kind>` for writes through a personal profile. Each
     kind keeps its calls and its charges (`events`), so calls per event is the
     cost of one, for this hour and the previous one. See it in `clawbridge
     project linear-budget show` (a `By kind` line, the top six), doctor's

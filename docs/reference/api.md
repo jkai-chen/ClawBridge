@@ -115,6 +115,7 @@ requires its matching instance. Routing role is distinct from project permission
 | `taskboard_clear_v2` | expected_revision; authorized owner/lead; optional repair (project owner, unreadable binding only) |
 | `linear_write` | Hosted server with the ClawBridge Linear app only: instance, operation (comment, create, update, relation_add, relation_remove), args (exactly what the `taskboard_<operation>_v2` tool takes). The server makes the write as the app, with every scope check, the mention guard, the marker and its own shared operation ledger, and answers `{receipt, outcome?}`. Binding and admin operations and identity arguments are refused; a binding not pinned to the app's workspace is refused (`workspace_unpinned`, `workspace_mismatch`). An uncertain outcome is a 409 |
 | `linear_app_status` | Hosted server with the app: `app_user_id`, `linear_org_id` and, for a project, `teams_visible` per bound team (read as the app) |
+| `linear_issue_history` | Hosted server with the app (FR21); any project role, from a session (`instance`) or as the person: `issue_uuid` (a canonical lower-case UUID the client already proved in its own scope), optional `limit` (1–50, default 20) and `cursor` (a page's `next_cursor`, up to 8192 characters). The server reads the issue's team and project as the app and checks them against the binding (the board's out-of-scope refusals), then one page of the issue's history: `{issue_uuid, limit, has_more, next_cursor?, entries}`, newest first, typed fields only (see [issue history](#issue-history) below). At most 3 Linear queries a request; the calls made are charged to the caller as kind `read` in the project's hourly Linear count. Without the app, or on a local store: `app_unavailable: issue history needs the ClawBridge Linear app on the server` |
 | `webhook_status` | Any project member, session optional: each bound write team's Linear webhook state and the last 24 hours' counts, and the server-wide rejects (below). No secret and no text |
 | `label_policy_get` | Any project member, session optional: the approved Linear label list (`revision`, `labels`, `renames`, `updated_by`, `updated_at`; revision 0 when unset) |
 | `project_kind_get` | Any project member, session optional: the project kind setting (`revision`, `team_id`, `scope` `team`, `group_name`, `group_label_id`, `values` `[{name, label_id?}]`, `seeded`, `team_bound`) |
@@ -126,7 +127,7 @@ requires its matching instance. Routing role is distinct from project permission
 | `project_create_settle` | The session that reserved: `operation_id`, `outcome` `created` with `linear_project_id` (tells each active session of the project owner, `owner_sessions_told`; a repeat is a `replay`, another ID a conflict) or `not_sent` |
 | `project_create_list` | Any project member: `created` (latest 20), `unconfirmed` (every recorded Linear write unsettled after 10 minutes or settled `uncertain`, not acknowledged, each with its kind as `write`, its `state`, and `subject` when it has one) and `keep_days` (90). Tells the owner's sessions once of each newly stale one |
 | `project_create_ack` | Project owner without a session (hosted: a person's own device key): `operation_id` of an unconfirmed Linear write of any kind, or of a team add settled with `changed` |
-| `linear_write_charge` | A write made through a person's own Linear profile, counted in the project's hourly Linear count after its calls (FR8): `operation_id`, `kind` (`create`, `update`, `comment`, `relation`, `project_create`, `project_team_add`, `document`, `project_lead`, `view`, `subscribe`, `admin`), `calls` (0–200, raised to the kind's floor). To people without a session, to agents with one; never refused, cap or not. Any project role but reader. Returns `charged`, `used`, `limit` (0 with no cap), `capped`, `window_resets_at` and `by` (`app`, `people`, `agents`). Moves and app writes never send it |
+| `linear_write_charge` | A write made through a person's own Linear profile, counted in the project's hourly Linear count after its calls (FR8): `operation_id`, `kind` (`create`, `update`, `comment`, `relation`, `project_create`, `project_team_add`, `document`, `project_lead`, `view`, `subscribe`, `admin`, `read`), `calls` (0–200, raised to the kind's floor). To people without a session, to agents with one; never refused, cap or not. Any project role but reader; a reader may charge kind `read` only (the server charges an issue history read with it). Returns `charged`, `used`, `limit` (0 with no cap), `capped`, `window_resets_at` and `by` (`app`, `people`, `agents`). Moves and app writes never send it |
 | `issue_writes_uncertain` | Any project member: the project's uncertain issue writes (create, update, comment, relation) from the server's operation ledger, unacknowledged: the caller's own, or every one for the project owner. Optional `operation_id`, `cursor` (a listing's `next_cursor`). Returns `writes` (`operation_id`, `operation`, `reason`, `updated_at`; at most 100) and `next_cursor` when more remain |
 | `issue_writes_ack` | The write's own person or the project owner, never a session (hosted: from a person's own signed-in device): `operation_id`. Hides the write from the list; the record stays pending, so a retry of the same operation ID sends nothing. `not_found` when there is none of yours; `conflict` while it is still being sent. Returns `acknowledged` (rows) |
 | `issue_move_reserve` | The project owner or a project lead without a session, or the project's active designated coordinator session (or, while the dispatcher is on, a domain's coordinator session) for a move between its own lane's teams (else `outside_lane`), before moving an issue to another team: `operation_id`, `issue_uuid`, `from_team`, `to_team`, `plan_sha256`, `calls` (the move's planned Linear calls, at least its kind's floor), and for a family `children` (the sub-issue UUIDs, at most 50). Refused with `issue_move_unproven` until `serve --issue-move-proven`, and a family with `issue_family_move_unproven` until `serve --issue-family-move-proven`. Its calls are counted in the project's hourly Linear count with the reservation (to people without a session, to agents with one), never refused for the count. Returns the reservation (`state`, `by`, `lane`, and the children's); a repeat returns it again (`replay`), a not-sent one reopens. History: IDs only |
@@ -191,7 +192,7 @@ administration remains in CLI/TUI. See [Linear setup](../linear.md).
 
 The L2 native adapter adds eleven versioned tools: binding, context, issues,
 issue, create, update, comment, labels, members, relation_add and relation_remove,
-each named `taskboard_<operation>_v2`. It advertises 47 tools in total; a V1-only
+each named `taskboard_<operation>_v2`. It advertises 48 tools in total; a V1-only
 adapter retains 28 and an unconfigured adapter retains 21. Prefer the advertised
 V2 family for new board calls. Initialization and listing do not access Linear.
 Every write's title, description and comment body is refused before dispatch
@@ -247,6 +248,49 @@ lists `labels_added` and `labels_removed`, or reports `observed_unchanged`.
 The [L2 contract](../design/linear-migration.md) defines the closed schemas and
 scope rules; [L2 review](../archive/reviews/LINEAR-L2-REVIEW.md) records acceptance
 progress and native capability limits.
+
+### Issue history
+
+`taskboard_issue_history_v2` (read-only; CLI `clawbridge linear issue history ISSUE
+[--limit N] [--cursor C]`) reads who changed an issue, newest first, through the hosted
+server's `linear_issue_history` (FR21). It takes `id` (a UUID or a display identifier such
+as `ENG-88`), `limit` (1–50, default 20) and `cursor` (the previous page's `next_cursor`),
+nothing else. The issue is first read through your Linear profile and judged against the
+binding exactly as `taskboard_issue_v2` reads it, which also resolves an identifier; only the
+proven UUID goes to the server, which checks the issue's team and project against the binding
+again, as the app, before it reads any history. Linear's MCP tools read no history, so a
+server without the ClawBridge Linear app (or a local store) refuses with `app_unavailable`,
+and an older server with `the ClawBridge server is older than this client and has no issue
+history read; upgrade the server`.
+
+The answer is `issue_uuid`, `identifier` (from the client's read), `limit`, `has_more`,
+`next_cursor` (only with `has_more: true`) and `entries`. Each entry has:
+
+- `at`: UTC RFC 3339;
+- `actor`: `{kind, id, name}`, `kind` one of `user` (a Linear user), `integration` (a bot
+  actor, or a Linear app user that is not ClawBridge's, such as GitHub), `app` (ClawBridge's own
+  app, named `ClawBridge app`) and `system` (Linear names no one; no `id` or `name`). A person is
+  named by the display name ClawBridge stores for the member linked to that Linear user, else
+  Linear's display name, else the user ID; never an email (a name holding an `@` is never shown);
+- the changes it made, each present only when it changed: `state` (`{id, name, type}`),
+  `assignee` (`{id, name}`), `team` (`{id, key}`), `project` (`{id, name}`) and `parent`
+  (`{id, identifier}`), each as `{from, to}` with `null` for none; `priority` as `{from, to}`
+  in Linear's numbers (0 none, 1 urgent, 2 high, 3 medium, 4 low), only when Linear names
+  both and they differ; `labels` as `{added, removed}` (`{id, name}`, or `{id}` alone for a
+  label the app can't read); `archived: true` and `trashed: true`, only when true (Linear
+  may send `false` on any entry, so `false` is never shown, and a restore is not told
+  apart). One entry can carry several;
+- `other: true` instead, when none of these remains (a title or description edit, say).
+
+Never a title, description or comment text. The server's cursor is bound to the issue, the
+ClawBridge project and the binding revision: a relink invalidates it (`invalid_cursor`). One
+request asks Linear at most 3 times (it needs 2: the issue's team and project, then the page);
+every call that reaches Linear (the app's identity when read afresh and any re-send included) is
+charged to the caller (`agents` with a session, `people` without) as kind `read`, after the
+request, answered or refused. A Linear rate limit is `rate_limited` with its retry time. The
+CLI prints one line per entry, `TIME ACTOR: CHANGE[; CHANGE…]` (`2026-10-30 03:12Z
+integration GitHub: state In Progress → Todo`), then `next: --cursor C` when more follow;
+`--json` gives the page.
 
 ## Identity and lifecycle
 

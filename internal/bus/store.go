@@ -645,6 +645,7 @@ var operationArgs = map[string]string{
 	"issue_writes_ack":            "operation_id",
 	"issue_move_reserve":          "instance operation_id issue_uuid from_team to_team plan_sha256 children calls",
 	"linear_write_charge":         "instance operation_id kind calls",
+	"linear_issue_history":        "instance issue_uuid limit cursor",
 	"issue_move_settle":           "instance operation_id outcome old_identifier new_identifier children",
 	"issue_move_status":           "instance operation_id",
 	"project_team_add_reserve":    "instance operation_id linear_project team_id project_teams plan_sha256",
@@ -1519,6 +1520,11 @@ func (s *Store) execute(ctx context.Context, tx *transaction, r Request) (any, e
 	}
 	if linearBudgetOperation(r.Operation) {
 		return s.linearWriteCharge(ctx, tx, pid, projectRole, actor, r)
+	}
+	// An issue's history is read as the hosted server's Linear app, which
+	// answers it before the bus (FR21); a store reached directly has none.
+	if r.Operation == "linear_issue_history" {
+		return nil, invalid(IssueHistoryAppUnavailable)
 	}
 	if projectTeamAddOperation(r.Operation) {
 		return s.projectTeamAddOp(ctx, tx, wid, pid, projectRole, actor, r)

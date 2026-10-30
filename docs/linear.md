@@ -761,6 +761,49 @@ app**. Your personal profile still reads, but never writes:
   - which bound teams the app cannot see, where writes would fail. A private
     team needs the app as a member.
 
+### Who changed an issue (hosted servers)
+
+`clawbridge linear issue history ISSUE [--limit N] [--cursor C]` (MCP
+`taskboard_issue_history_v2`) shows who changed an issue and what they changed, newest
+first: a person, an integration such as GitHub, or ClawBridge's own app. Any project role
+may read it, from a session or as yourself.
+
+```text
+2026-10-30 03:12Z integration GitHub: state In Progress → Todo
+2026-10-30 02:58Z app ClawBridge app: assignee none → Ben Example; labels +Bug -Feature
+2026-10-29 17:40Z user Ada Example: priority none → high; parent none → ENG-1
+2026-10-29 17:39Z user Ada Example: other change
+next: --cursor eyJ2IjoxLCJpc3N1ZSI6…
+```
+
+- **It needs the ClawBridge Linear app on the server.** Linear's MCP tools read no history,
+  so the hosted server reads it as the app. A server without the app, and a local
+  ClawBridge, refuse with `app_unavailable: issue history needs the ClawBridge Linear app on
+  the server`. An older server says it has no issue history read: upgrade the server.
+- **Scope, twice.** `ISSUE` is the UUID or an identifier such as `ENG-88`. Your profile
+  reads the issue first, as `linear issue` does, so an issue outside the binding is refused
+  the same way; then the server checks the issue's team and project against the binding
+  again, as the app, before it reads any history.
+- **What it shows.** Each line is the time (UTC, to the minute), who (`user`,
+  `integration`, `app` for ClawBridge's own app, or `system` when Linear names no one) and
+  the changes: state, assignee, labels (`+` added, `-` removed; an ID for a label the app
+  can't read), team, project, priority (when it really changed), parent, archived and
+  trashed (only when it was archived or trashed; a restore isn't shown). A change to
+  anything else, such as the title or description, reads `other change`. Never a title, a
+  description or comment text.
+- **Names, never emails.** A person is shown by the display name ClawBridge stores for the
+  member the project links to that Linear user (through the team roles or the trusted
+  intake list; the name `linear connect` or `linear display-name set` records), else their
+  Linear display name, else their Linear user ID. A name holding an `@` is never shown.
+- **Limits.** `--limit` is 1–50 entries a page (default 20). When more follow, the last
+  line is `next: --cursor C`; pass it for older entries. A cursor belongs to that issue
+  and the binding's revision: after a relink, read again without one. `--json` prints the
+  page as data (`entries`, `has_more`, `next_cursor`).
+- **It is charged as a read.** The server asks Linear at most 3 times for one page, and the
+  calls it makes count in the project's hourly Linear count, to agents for a session's
+  read and to people for yours, like writes; it is never refused for the count. Your
+  profile's own read of the issue is paced as usual.
+
 ### Linear's rate limits
 
 Linear limits each credential with a leaky bucket of requests and of query complexity an hour: an OAuth app user
@@ -909,7 +952,7 @@ line per cycle.
   person's own profile (creates, updates, comments and relations, a
   coordinator's project create, team adds, labels, initiatives and kinds,
   project leads, published documents and views; moves with their
-  reservation). There is no ClawBridge limit by default; Linear's own rate
+  reservation), and issue history reads (as the app, charged to the caller). There is no ClawBridge limit by default; Linear's own rate
   limit is respected through the queue: each credential's pacer waits out
   Linear's 429 and its Retry-After, an app write that can't go waits in the
   server's queue (`linear_rate_limit`), and a personal write answers Linear's

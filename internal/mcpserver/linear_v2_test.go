@@ -44,7 +44,7 @@ func TestLinearMCPV2InitializationGuidanceIsAdditiveWithoutIO(t *testing.T) {
 		}
 	}
 	tools, err := newSession.ListTools(ctx, nil)
-	if err != nil || len(tools.Tools) != 47 || v1.count() != 0 || v2.count() != 0 {
+	if err != nil || len(tools.Tools) != 48 || v1.count() != 0 || v2.count() != 0 {
 		t.Fatal("initialization/list changed tools or performed provider IO", err)
 	}
 }
@@ -53,7 +53,7 @@ func TestLinearMCPV2ClosedNullablePinnedTools(t *testing.T) {
 	p := &recordingBoardV2{recordingBoard: recordingBoard{data: map[string]any{"ok": true}}}
 	ctx, cs := boardSession(t, p)
 	listed, err := cs.ListTools(ctx, nil)
-	if err != nil || len(listed.Tools) != 47 || p.count() != 0 {
+	if err != nil || len(listed.Tools) != 48 || p.count() != 0 {
 		t.Fatalf("native list: %v %d calls=%d", err, len(listed.Tools), p.count())
 	}
 	tools := map[string]*mcp.Tool{}

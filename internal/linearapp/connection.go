@@ -152,7 +152,11 @@ func (a *App) GraphQL(ctx context.Context, query string, variables map[string]an
 			}
 		}
 		if len(envelope.Errors) > 0 || len(envelope.Data) == 0 {
-			return fail("query_failed")
+			missing := len(envelope.Errors) > 0
+			for _, e := range envelope.Errors {
+				missing = missing && entityNotFound(e.Message, e.Extensions.Code)
+			}
+			return &Error{Code: "query_failed", NotFound: missing}
 		}
 		if json.Unmarshal(envelope.Data, out) != nil {
 			return fail("invalid_response")
@@ -173,6 +177,12 @@ func queryRejected(message, code, kind string) bool {
 		return true
 	}
 	return message == "Argument Validation Error"
+}
+
+// entityNotFound: Linear could not find, or would not show the app, an
+// entity the query named. Only a fixed prefix and a code are compared.
+func entityNotFound(message, code string) bool {
+	return strings.HasPrefix(message, "Entity not found") || code == "ENTITY_NOT_FOUND"
 }
 
 // rateLimited is a read Linear, or the pacer, would not take now: nothing

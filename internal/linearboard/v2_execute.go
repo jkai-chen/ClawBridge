@@ -12,7 +12,7 @@ import (
 // ExecuteV2 is the closed native adapter used by additive, scope-pinned MCP tools.
 func (s *Service) ExecuteV2(ctx context.Context, scope bus.Request, operation string, args map[string]any) (_ any, err error) {
 	defer func() { s.settle(err) }()
-	allowed := map[string][]string{"doc_list": {"parent_kind", "parent_id", "cursor", "limit"}, "doc_get": {"id", "max_bytes"}, "binding": {}, "context": {}, "issues": {"limit", "cursor", "label_id", "updated_after", "view_id"}, "issue": {"id", "resolve_labels", "comments", "comments_since"}, "labels": {"team_id", "limit", "cursor"}, "views": {"team_id", "kind", "limit", "cursor"}, "members": {"team_id", "limit", "cursor"}, "create": {"title", "description", "state_id", "operation_id", "team_id", "project_id", "label_ids", "parent_id", "assignee_id", "priority", "due_date"}, "update": {"id", "title", "description", "state_id", "operation_id", "project_id", "label_ids", "expected_label_ids", "add_label_ids", "remove_label_ids", "expected_title", "expected_description_sha256", "parent_id", "assignee_id", "priority", "due_date"}, "comment": {"id", "body", "operation_id", "parent_id", "in_response_to"}, "relation_add": {"from_id", "to_id", "type", "operation_id"}, "relation_remove": {"from_id", "to_id", "type", "operation_id"}, "project_status": {"linear_project", "suggest"}, "project_status_set": {"linear_project", "type", "status_id", "operation_id", "confirm", "expected_status_id", "allow_open"}, "issue_move": {"id", "team_id", "operation_id", "confirm", "expected_plan_sha256", "family"}, "project_add_team": {"linear_project", "team_id", "operation_id", "confirm", "expected_plan_sha256"}, "project_plan": {"linear_project", "priority", "target_date", "start_date", "operation_id", "confirm", "expected_plan_sha256"}}
+	allowed := map[string][]string{"doc_list": {"parent_kind", "parent_id", "cursor", "limit"}, "doc_get": {"id", "max_bytes"}, "binding": {}, "context": {}, "issues": {"limit", "cursor", "label_id", "updated_after", "view_id"}, "issue": {"id", "resolve_labels", "comments", "comments_since"}, "issue_history": {"id", "limit", "cursor"}, "labels": {"team_id", "limit", "cursor"}, "views": {"team_id", "kind", "limit", "cursor"}, "members": {"team_id", "limit", "cursor"}, "create": {"title", "description", "state_id", "operation_id", "team_id", "project_id", "label_ids", "parent_id", "assignee_id", "priority", "due_date"}, "update": {"id", "title", "description", "state_id", "operation_id", "project_id", "label_ids", "expected_label_ids", "add_label_ids", "remove_label_ids", "expected_title", "expected_description_sha256", "parent_id", "assignee_id", "priority", "due_date"}, "comment": {"id", "body", "operation_id", "parent_id", "in_response_to"}, "relation_add": {"from_id", "to_id", "type", "operation_id"}, "relation_remove": {"from_id", "to_id", "type", "operation_id"}, "project_status": {"linear_project", "suggest"}, "project_status_set": {"linear_project", "type", "status_id", "operation_id", "confirm", "expected_status_id", "allow_open"}, "issue_move": {"id", "team_id", "operation_id", "confirm", "expected_plan_sha256", "family"}, "project_add_team": {"linear_project", "team_id", "operation_id", "confirm", "expected_plan_sha256"}, "project_plan": {"linear_project", "priority", "target_date", "start_date", "operation_id", "confirm", "expected_plan_sha256"}}
 	keys, ok := allowed[operation]
 	if !ok {
 		return nil, errors.New("unsupported task-board V2 operation")
@@ -112,6 +112,12 @@ func (s *Service) ExecuteV2(ctx context.Context, scope bus.Request, operation st
 			return s.IssueV2ResolvedLabels(ctx, scope, text("id"))
 		}
 		return s.IssueV2(ctx, scope, text("id"))
+	case "issue_history":
+		in := IssueHistoryInputV2{Cursor: text("cursor")}
+		if _, ok := args["limit"]; ok {
+			in.Limit = limit
+		}
+		return s.IssueHistoryV2(ctx, scope, text("id"), in)
 	case "views":
 		return s.ViewsV2(ctx, scope, text("team_id"), text("kind"), limit, text("cursor"))
 	case "labels":

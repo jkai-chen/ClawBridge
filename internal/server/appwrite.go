@@ -138,9 +138,14 @@ func (w *AppWriter) service(ctx context.Context, identity bus.Identity) (*linear
 // Execute serves linear_write and linear_app_status for a verified caller.
 func (w *AppWriter) Execute(parent context.Context, identity bus.Identity, r bus.Request) (bus.Result, error) {
 	if w == nil || w.App == nil {
+		if r.Operation == "linear_issue_history" {
+			return bus.Result{}, appRefusal(bus.IssueHistoryAppUnavailable)
+		}
 		return bus.Result{}, appRefusal("app_unavailable: this server has no ClawBridge Linear app configured")
 	}
 	switch r.Operation {
+	case "linear_issue_history":
+		return w.issueHistory(parent, identity, r)
 	case "linear_app_status":
 		return w.status(parent, identity, r)
 	case "linear_app_states":

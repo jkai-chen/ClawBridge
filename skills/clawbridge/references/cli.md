@@ -117,6 +117,21 @@ clawbridge assignment markers --issue ISSUE_UUID
 clawbridge assignment markers --assignment ASSIGNMENT_ID --json
 ```
 
+Who changed an issue, newest first (a hosted server with the ClawBridge Linear app; any
+project role). Read it before asking a person who moved an issue:
+
+```sh
+clawbridge --session reviewer --instance INSTANCE linear issue history ABC-12 --profile PROFILE_ID
+# 2026-10-30 03:12Z integration GitHub: state In Progress → Todo
+# next: --cursor C   (pass --cursor C for older entries; --limit 1–50, default 20)
+```
+
+Each line is `TIME ACTOR: CHANGE[; CHANGE…]`; `--json` gives the entries' typed fields.
+Actors are `user`, `integration`, `app` (ClawBridge's own app) or `system`, named by their
+ClawBridge or Linear display name or ID, never an email. A server without the app refuses
+with `app_unavailable`; an older one says to upgrade it. Each read counts in the project's
+hourly Linear count.
+
 Release with `--outcome done` only when the work is finished. A project status
 policy may then move the issue on, for example to In Review. Never move an issue
 to Done yourself unless the review is complete.

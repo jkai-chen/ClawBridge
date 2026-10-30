@@ -162,3 +162,31 @@ func TestGraphQLInvalidQueryIsTyped(t *testing.T) {
 		}
 	}
 }
+
+// Only Linear's entity-not-found is marked not found; any other failed
+// query is not, and no Linear text is kept either way.
+func TestGraphQLEntityNotFoundIsMarked(t *testing.T) {
+	now := time.Date(2026, 10, 30, 12, 0, 0, 0, time.UTC)
+	for i, c := range []struct {
+		body     string
+		notFound bool
+	}{
+		{`{"data":null,"errors":[{"message":"Entity not found: Issue","extensions":{"type":"invalid input","code":"INPUT_ERROR"}}]}`, true},
+		{`{"data":null,"errors":[{"message":"x","extensions":{"code":"ENTITY_NOT_FOUND"}}]}`, true},
+		{`{"data":null,"errors":[{"message":"Internal server error","extensions":{"type":"internal"}}]}`, false},
+		{`{"data":null,"errors":[{"message":"Entity not found: Issue"},{"message":"Something else"}]}`, false},
+		{`{"errors":[]}`, false},
+	} {
+		g := &limitedGQL{linear: &linear{app: true}, answers: []limitedAnswer{{status: 200, body: c.body}}}
+		a, _ := New(Config{ClientID: fmt.Sprintf("client-missing-%d-%s", i, t.Name()), Secret: secret, Key: key, Store: &memStore{live: map[string]int{}}, HTTP: &http.Client{Transport: g}, Now: func() time.Time { return now }})
+		var out struct{ Issue *struct{ ID string } }
+		err := a.GraphQL(context.Background(), `{ issue(id: "x") { id } }`, nil, &out)
+		var e *Error
+		if !errors.As(err, &e) || e.Code != "query_failed" || IsNotFound(err) != c.notFound {
+			t.Fatal(c.body, err)
+		}
+		if strings.Contains(err.Error(), "Entity") || strings.Contains(err.Error(), "Internal") {
+			t.Fatal("Linear's text leaked:", err)
+		}
+	}
+}

@@ -73,6 +73,16 @@ const (
 type Error struct {
 	Code    string
 	RetryAt time.Time
+	// NotFound marks a query_failed whose every error is Linear's
+	// entity-not-found: the entity is missing or hidden from the app. No
+	// Linear text is kept.
+	NotFound bool
+}
+
+// IsNotFound reports a query Linear answered with entity-not-found only.
+func IsNotFound(err error) bool {
+	var e *Error
+	return errors.As(err, &e) && e.Code == "query_failed" && e.NotFound
 }
 
 func (e *Error) Error() string { return "Linear app: " + e.Code }

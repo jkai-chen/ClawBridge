@@ -811,6 +811,11 @@ func (c *Client) answer(ctx context.Context, r bus.Request, result bus.Result, u
 		}
 		return bus.Result{}, err
 	}
+	if unavailable && r.Operation == "linear_issue_history" {
+		// A read the server makes as the ClawBridge app: never mirrored,
+		// and it writes nothing to Linear.
+		return bus.Result{}, fmt.Errorf("the issue's history could not be read: the ClawBridge server could not be reached or could not read Linear; nothing was written; retry: %w", err)
+	}
 	if unavailable && r.Operation == "project_overview" {
 		// A summary read from the authority, never mirrored: say so plainly.
 		return bus.Result{}, ErrOverviewOffline

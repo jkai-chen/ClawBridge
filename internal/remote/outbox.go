@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"clawbridge/internal/bus"
@@ -31,12 +32,26 @@ var queueAfter = 15 * time.Second
 var drainFirst = 2 * time.Second
 
 // outboxNotice receives one line when a write is queued or a stored write
-// is sent; the CLI prints it, an MCP server leaves it unset.
-var outboxNotice func(string)
+// is sent; the CLI prints it, an MCP server leaves it unset. A drain loop
+// may read it while a command sets it, so it is atomic.
+var outboxNotice atomic.Pointer[func(string)]
 
 // SetOutboxNotice sets (or, with nil, clears) the receiver of this
 // process's outbox lines.
-func SetOutboxNotice(f func(string)) { outboxNotice = f }
+func SetOutboxNotice(f func(string)) {
+	if f == nil {
+		outboxNotice.Store(nil)
+		return
+	}
+	outboxNotice.Store(&f)
+}
+
+// notifyOutbox hands one line to the receiver set, if any.
+func notifyOutbox(line string) {
+	if f := outboxNotice.Load(); f != nil {
+		(*f)(line)
+	}
+}
 
 // opened is every outbox this process opened, for CloseOutboxes.
 var opened struct {
@@ -125,8 +140,8 @@ func (c *Client) drain(ctx context.Context, ob *outbox.Store, only *outbox.Key, 
 	bounded, cancel := context.WithTimeout(ctx, budget)
 	defer cancel()
 	report, err := ob.Drain(bounded, c.config.URL, c.scope(), only, c.attempt)
-	if report.Sent > 0 && outboxNotice != nil {
-		outboxNotice(fmt.Sprintf("clawbridge: sent %d queued write(s) from this machine's outbox; %d still waiting", report.Sent, report.Waiting))
+	if report.Sent > 0 {
+		notifyOutbox(fmt.Sprintf("clawbridge: sent %d queued write(s) from this machine's outbox; %d still waiting", report.Sent, report.Waiting))
 	}
 	return report, err
 }
@@ -267,11 +282,9 @@ func (c *Client) queue(ctx context.Context, ob *outbox.Store, r bus.Request, why
 	}
 	op, _ := r.Args["operation_id"].(string)
 	message := fmt.Sprintf("%s; %s is queued on this machine (position %d) and will be sent when it's back; %s", why, queuedWhat(r, op), q.Position, queuedAdvice(op))
-	if outboxNotice != nil {
-		// Only a CLI command receives notices, and nothing of the CLI's
-		// runs in the background: say what sends the write (FR11).
-		outboxNotice("clawbridge: " + message + ". " + queuedSendsHint)
-	}
+	// Only a CLI command receives notices, and nothing of the CLI's runs
+	// in the background: say what sends the write (FR11).
+	notifyOutbox("clawbridge: " + message + ". " + queuedSendsHint)
 	return bus.Result{Source: "client_outbox", Data: map[string]any{
 		"outcome":      "queued_local",
 		"operation":    r.Operation,

@@ -116,11 +116,16 @@ var tuiOutboxEvery = 5 * time.Second
 
 // tuiOutbox sends what waits before the TUI opens, keeps sending it while
 // the TUI runs (FR11), and counts what waits, for its status line. All of
-// it stops with ctx.
-func tuiOutbox(ctx context.Context, client *remote.Client) func() int {
+// it stops with ctx; stopped waits for the sending to end, so nothing of
+// it outlives the TUI.
+func tuiOutbox(ctx context.Context, client *remote.Client) (count func() int, stopped func()) {
 	drainBeforeCommand(ctx, client)
-	go client.DrainOutboxWhile(ctx, tuiOutboxEvery)
-	return func() int { return outboxCount(ctx, client) }
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		client.DrainOutboxWhile(ctx, tuiOutboxEvery)
+	}()
+	return func() int { return outboxCount(ctx, client) }, func() { <-done }
 }
 
 // drainBeforeCommand sends what waits in the outbox, briefly, before a

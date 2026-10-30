@@ -283,7 +283,12 @@ func runTUI(ctx context.Context, flags Config, args []string, stdout, stderr io.
 		client, err = remote.New(remoteConfig(c))
 		if err == nil {
 			executor = client
-			outboxWaiting = tuiOutbox(bounded, client)
+			var outboxStopped func()
+			outboxWaiting, outboxStopped = tuiOutbox(bounded, client)
+			defer func() {
+				cancel()
+				outboxStopped()
+			}()
 		}
 	} else {
 		var store *bus.Store

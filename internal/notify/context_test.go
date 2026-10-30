@@ -243,6 +243,38 @@ func TestReportContextNeedsABoundReadableTranscript(t *testing.T) {
 	}
 }
 
+// A session the hook bound before its transcript was written has no level
+// yet: nothing is reported, until the transcript is there.
+func TestReportContextWaitsForAnUnwrittenTranscript(t *testing.T) {
+	config := t.TempDir()
+	t.Setenv("CLAUDE_CONFIG_DIR", config)
+	project := filepath.Join(config, "projects", "p")
+	if err := os.MkdirAll(project, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	transcript, err := ctxwatch.ClaudeTranscript(filepath.Join(project, "s.jsonl"), config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f := newReportFixture(t)
+	f.transcript = transcript
+	if err := ctxwatch.SaveBinding(f.dir, "worker-1", ctxwatch.Binding{Agent: ctxwatch.ClaudeCode, Transcript: transcript, BoundAt: "2026-01-01T09:00:00Z", ClaudeSessionID: "s"}); err != nil {
+		t.Fatal(err)
+	}
+	e := &fakeReports{}
+	r := f.reporter(e)
+	defer r.release()
+	r.tick(context.Background(), reportRequest)
+	if e.count() != 0 {
+		t.Fatalf("reported %+v", e.last())
+	}
+	f.write(1500)
+	r.tick(context.Background(), reportRequest)
+	if e.count() != 1 || e.last()["tokens"] != int64(1500) {
+		t.Fatalf("%d reports", e.count())
+	}
+}
+
 // ReportContext runs the reporter on its interval until ctx ends.
 func TestReportContextLoop(t *testing.T) {
 	f := newReportFixture(t)

@@ -85,8 +85,68 @@ func TestClaudeTranscriptStaysUnderProjects(t *testing.T) {
 		"dot-dot":      filepath.Join(projects, "..", "..", "..", filepath.Base(filepath.Dir(outside)), "s.jsonl"),
 		"relative":     "projects/p/s.jsonl",
 		"not jsonl":    notJSONL,
-		"missing":      filepath.Join(projects, "none.jsonl"),
+		"missing out":  filepath.Join(filepath.Dir(outside), "none.jsonl"),
 		"the root":     filepath.Join(config, "projects"),
+	} {
+		if got, err := ClaudeTranscript(path, config); err == nil {
+			t.Fatalf("%s accepted: %q", name, got)
+		}
+	}
+}
+
+// A new session's transcript is bound before Claude Code writes it, at the
+// path resolving the file gives once it is written.
+func TestClaudeTranscriptNotWrittenYet(t *testing.T) {
+	config := t.TempDir()
+	projects := filepath.Join(config, "projects", "p")
+	if err := os.MkdirAll(projects, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	linked := t.TempDir()
+	symlink(t, filepath.Join(config, "projects"), filepath.Join(linked, "projects"))
+	for name, path := range map[string]string{
+		"in its project":          filepath.Join(projects, "new.jsonl"),
+		"in a new project":        filepath.Join(config, "projects", "q", "new.jsonl"),
+		"through a linked config": filepath.Join(linked, "projects", "r", "new.jsonl"),
+	} {
+		got, err := ClaudeTranscript(path, config)
+		if name == "through a linked config" {
+			got, err = ClaudeTranscript(path, linked)
+		}
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, nil, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if want, _ := filepath.EvalSymlinks(path); got != want {
+			t.Fatalf("%s: bound %q, written at %q", name, got, want)
+		}
+	}
+	outside := t.TempDir()
+	symlink(t, filepath.Join(outside, "none.jsonl"), filepath.Join(projects, "dangling.jsonl"))
+	symlink(t, filepath.Join(outside, "none"), filepath.Join(projects, "dangling"))
+	symlink(t, outside, filepath.Join(projects, "out"))
+	if err := os.WriteFile(filepath.Join(projects, "file"), nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// A project that is a file, not a directory: the walk up meets ENOTDIR.
+	if err := os.WriteFile(filepath.Join(config, "projects", "f"), nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for name, path := range map[string]string{
+		"in a project that is a file": filepath.Join(config, "projects", "f", "new.jsonl"),
+		"outside":                     filepath.Join(outside, "new.jsonl"),
+		"through a link out":          filepath.Join(projects, "out", "new.jsonl"),
+		"a link to nowhere":           filepath.Join(projects, "dangling.jsonl"),
+		"under a link to nowhere":     filepath.Join(projects, "dangling", "new.jsonl"),
+		"under a file":                filepath.Join(projects, "file", "new.jsonl"),
+		"not jsonl":                   filepath.Join(projects, "new.txt"),
+		"dot-dot":                     filepath.Join(projects, "q") + string(filepath.Separator) + ".." + string(filepath.Separator) + "new.jsonl",
+		"no projects":                 filepath.Join(t.TempDir(), "projects", "p", "new.jsonl"),
 	} {
 		if got, err := ClaudeTranscript(path, config); err == nil {
 			t.Fatalf("%s accepted: %q", name, got)
@@ -165,5 +225,90 @@ func TestSaveBinding(t *testing.T) {
 	}
 	if entries, _ := os.ReadDir(dir); len(entries) != 2 {
 		t.Fatalf("left %d entries", len(entries))
+	}
+}
+
+// A binding the hook made before its transcript was written reads as no
+// level yet, and is checked again at each read: what is at the path, or a
+// directory on it, may since have become a link. The reader's own Claude
+// Code configuration doesn't matter.
+func TestReadBoundChecksAgain(t *testing.T) {
+	config := t.TempDir()
+	t.Setenv("CLAUDE_CONFIG_DIR", config)
+	projects := filepath.Join(config, "projects")
+	project := filepath.Join(projects, "p")
+	sibling := filepath.Join(projects, "q")
+	for _, dir := range []string{project, sibling} {
+		if err := os.MkdirAll(dir, 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	path := filepath.Join(project, "s.jsonl")
+	canonical, err := ClaudeTranscript(path, config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b := Binding{Agent: ClaudeCode, Transcript: canonical, ClaudeSessionID: "s"}
+	if r, err := ReadBound(b); err != nil || r != (Reading{Agent: ClaudeCode, Status: StatusOK, NotWritten: true}) {
+		t.Fatalf("%+v %v", r, err)
+	}
+
+	usage := []byte(claudeAssistant(5000, "") + "\n")
+	outside := filepath.Join(t.TempDir(), "s.jsonl")
+	for _, p := range []string{outside, filepath.Join(sibling, "s.jsonl"), filepath.Join(sibling, "other.jsonl")} {
+		if err := os.WriteFile(p, usage, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	refused := func(name string) {
+		t.Helper()
+		if r, err := ReadBound(b); err == nil {
+			t.Fatalf("%s read: %+v", name, r)
+		}
+	}
+	// A link at the path, out of the projects directory or within it.
+	symlink(t, outside, canonical)
+	refused("a link out")
+	os.Remove(canonical)
+	symlink(t, filepath.Join(sibling, "other.jsonl"), canonical)
+	refused("a link within")
+	os.Remove(canonical)
+	// The project's directory replaced by a link, out or to another project.
+	moved := project + ".moved"
+	if err := os.Rename(project, moved); err != nil {
+		t.Fatal(err)
+	}
+	symlink(t, filepath.Dir(outside), project)
+	refused("a linked directory out")
+	os.Remove(project)
+	symlink(t, sibling, project)
+	refused("a linked directory within")
+	os.Remove(project)
+	if err := os.Rename(moved, project); err != nil {
+		t.Fatal(err)
+	}
+
+	// Read from a process with another Claude Code configuration (doctor
+	// in a plain shell, say), it still reads: the hook vouched for the path.
+	t.Setenv("CLAUDE_CONFIG_DIR", t.TempDir())
+	if r, err := ReadBound(b); err != nil || !r.NotWritten {
+		t.Fatalf("under another configuration, not written: %+v %v", r, err)
+	}
+	if err := os.WriteFile(canonical, usage, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if r, err := ReadBound(b); err != nil || r.Status != StatusOK || r.NotWritten || r.Tokens != 6010 {
+		t.Fatalf("under another configuration: %+v %v", r, err)
+	}
+	t.Setenv("CLAUDE_CONFIG_DIR", config)
+	if r, err := ReadBound(b); err != nil || r.Status != StatusOK || r.NotWritten || r.Tokens != 6010 {
+		t.Fatalf("%+v %v", r, err)
+	}
+	// A binding made by hand is read as before, wherever it points.
+	if r, err := ReadBound(Binding{Agent: ClaudeCode, Transcript: outside}); err != nil || r.Tokens != 6010 {
+		t.Fatalf("%+v %v", r, err)
+	}
+	if _, err := ReadBound(Binding{Agent: ClaudeCode, Transcript: filepath.Join(filepath.Dir(outside), "gone.jsonl")}); err == nil {
+		t.Fatal("a missing transcript bound by hand read")
 	}
 }

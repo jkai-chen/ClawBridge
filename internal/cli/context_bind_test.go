@@ -14,6 +14,7 @@ import (
 	"testing"
 
 	"clawbridge/internal/ctxwatch"
+	"clawbridge/internal/doctor"
 )
 
 // hookRun runs a context hook command with input on stdin.
@@ -141,6 +142,53 @@ func TestBindFromHook(t *testing.T) {
 	hookRun(t, hookInput(other, `,"source":"clear"`), "bind", "--from-hook")
 	if b, _ = loadTestBinding(t, "worker-1"); b.CompactingAt != "" || b.HandoverHint == "" {
 		t.Fatalf("%+v", b)
+	}
+}
+
+// Claude Code runs a new session's SessionStart hook before it writes the
+// transcript, and on a project's first session before it makes the
+// project's directory: the hook binds it all the same, at the path the file
+// resolves to once written, so the PreCompact hook still finds it.
+func TestBindFromHookBeforeTheTranscriptIsWritten(t *testing.T) {
+	dir := isolated(t)
+	config := filepath.Join(dir, "claude")
+	t.Setenv("CLAUDE_CONFIG_DIR", config)
+	if err := os.MkdirAll(filepath.Join(config, "projects"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	transcript := filepath.Join(config, "projects", "p", "s.jsonl")
+	t.Setenv("CLAWBRIDGE_SESSION", "worker-1")
+	if out := hookRun(t, hookInput(transcript, `,"source":"startup"`), "bind", "--from-hook"); out != "" {
+		t.Fatalf("startup printed %q", out)
+	}
+	b, bound := loadTestBinding(t, "worker-1")
+	if !bound || b.Agent != ctxwatch.ClaudeCode || b.ClaudeSessionID == "" {
+		t.Fatalf("%+v %v", b, bound)
+	}
+	// Before the first model call: no level, and nothing wrong.
+	if out, err := runContextCmd(t, "show"); err != nil || !strings.Contains(out, "no model call yet") {
+		t.Fatalf("%q %v", out, err)
+	}
+	c := doctorContextCheck(t, "worker-1")
+	if c.Status != doctor.Pass || !strings.Contains(c.Message, "Context unknown until the next model call") {
+		t.Fatalf("%+v", c)
+	}
+
+	if err := os.MkdirAll(filepath.Dir(transcript), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(transcript, []byte(`{"type":"assistant","sessionId":"s","timestamp":"2026-10-26T10:00:00Z","message":{"model":"m","usage":{"input_tokens":7000}}}`+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if canonical, _ := filepath.EvalSymlinks(transcript); b.Transcript != canonical {
+		t.Fatalf("bound %q, written at %q", b.Transcript, canonical)
+	}
+	hookRun(t, hookInput(transcript, `,"hook_event_name":"PreCompact","trigger":"auto"`), "compacting", "--from-hook")
+	if b, _ = loadTestBinding(t, "worker-1"); b.CompactTrigger != "auto" {
+		t.Fatalf("PreCompact missed the binding: %+v", b)
+	}
+	if out, err := runContextCmd(t, "show"); err != nil || !strings.Contains(out, "context: 7k tokens") {
+		t.Fatalf("%q %v", out, err)
 	}
 }
 

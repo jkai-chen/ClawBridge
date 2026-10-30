@@ -104,8 +104,8 @@ func (r *contextReporter) tick(ctx context.Context, req bus.Request) {
 	if err != nil || !bound {
 		return
 	}
-	reading, err := ctxwatch.Read(b.Agent, b.Transcript)
-	if err != nil || reading.Status != ctxwatch.StatusOK {
+	reading, err := ctxwatch.ReadBound(b)
+	if err != nil || reading.Status != ctxwatch.StatusOK || reading.NotWritten {
 		return
 	}
 	count, seen := b.ReportedCompactions, b.SeenCompactionAt

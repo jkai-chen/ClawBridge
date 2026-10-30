@@ -15,6 +15,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"time"
 )
 
@@ -63,6 +64,9 @@ type Reading struct {
 	WrittenAt string `json:"written_at"`
 	// Partial says only the transcript's last 4 MiB were read.
 	Partial bool `json:"partial"`
+	// NotWritten says the bound transcript doesn't exist yet: a session
+	// before its first model call, with no level to report.
+	NotWritten bool `json:"not_written,omitempty"`
 }
 
 // parser consumes a transcript's lines, in order, and fills a Reading.
@@ -99,6 +103,32 @@ func Read(agent, path string) (Reading, error) {
 	}
 	p.finish(&r)
 	return r, nil
+}
+
+// ReadBound reads the transcript b is bound to. A Claude Code binding the
+// hook made is checked again first: the path must still resolve to itself,
+// so a link put at it, or in place of a directory on it, since it was bound
+// is refused. Claude Code's configuration is not checked again: the hook
+// found the path under its projects directory, and a path that still
+// resolves to itself can't have left it, while the reading process (doctor,
+// say) may see another CLAUDE_CONFIG_DIR. Such a transcript not written yet
+// reads as NotWritten, with no usage. Any other binding is read as it was
+// bound.
+func ReadBound(b Binding) (Reading, error) {
+	if b.Agent != ClaudeCode || b.ClaudeSessionID == "" {
+		return Read(b.Agent, b.Transcript)
+	}
+	canonical, err := canonicalTranscript(b.Transcript)
+	if err != nil || filepath.Ext(canonical) != ".jsonl" {
+		return Reading{}, fmt.Errorf("the bound transcript %s is not readable", b.Transcript)
+	}
+	if canonical != b.Transcript {
+		return Reading{}, fmt.Errorf("the bound transcript %s now leads elsewhere through a link", b.Transcript)
+	}
+	if _, err := os.Lstat(b.Transcript); errors.Is(err, os.ErrNotExist) {
+		return Reading{Agent: ClaudeCode, Status: StatusOK, NotWritten: true}, nil
+	}
+	return Read(ClaudeCode, b.Transcript)
 }
 
 // eachLine calls fn with each line of r, without its newline. With

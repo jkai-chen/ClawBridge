@@ -107,7 +107,9 @@ func runContext(ctx context.Context, args []string, stdout, stderr io.Writer) er
 	if f.NArg() != 0 || (*transcript == "") != (*agent == "") {
 		return errors.New(contextUsage)
 	}
-	if *transcript == "" {
+	var r ctxwatch.Reading
+	path := *transcript
+	if path == "" {
 		if *session == "" {
 			return errors.New("name the session with --session (or CLAWBRIDGE_SESSION), or a transcript with --agent and --transcript")
 		}
@@ -126,15 +128,19 @@ func runContext(ctx context.Context, args []string, stdout, stderr io.Writer) er
 			_, err := fmt.Fprintf(stdout, "context: %s is not bound to a transcript\n", *session)
 			return err
 		}
-		*agent, *transcript = b.Agent, b.Transcript
-	}
-	path, err := filepath.Abs(*transcript)
-	if err != nil {
-		return err
-	}
-	r, err := ctxwatch.Read(*agent, path)
-	if err != nil {
-		return err
+		// A binding is read as it was bound, and checked again (ReadBound).
+		path = b.Transcript
+		if r, err = ctxwatch.ReadBound(b); err != nil {
+			return err
+		}
+	} else {
+		var err error
+		if path, err = filepath.Abs(path); err != nil {
+			return err
+		}
+		if r, err = ctxwatch.Read(*agent, path); err != nil {
+			return err
+		}
 	}
 	if *asJSON {
 		return emit(ctx, stdout, "context_show", struct {
@@ -142,7 +148,7 @@ func runContext(ctx context.Context, args []string, stdout, stderr io.Writer) er
 			Transcript string `json:"transcript"`
 		}{r, path})
 	}
-	_, err = fmt.Fprintln(stdout, describeReading(r)+"\ntranscript: "+path)
+	_, err := fmt.Fprintln(stdout, describeReading(r)+"\ntranscript: "+path)
 	return err
 }
 
@@ -200,7 +206,7 @@ func doctorContext(session string) doctor.ContextState {
 	}
 	if err == nil && st.Bound {
 		st.Transcript, st.Levels = b.Transcript, b.Levels
-		st.Reading, err = ctxwatch.Read(b.Agent, b.Transcript)
+		st.Reading, err = ctxwatch.ReadBound(b)
 	}
 	st.Err = err
 	return st

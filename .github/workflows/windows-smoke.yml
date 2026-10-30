@@ -1,0 +1,152 @@
+name: Windows smoke
+# Dispatch only: the v1.0 G8 Windows check on real x64 and ARM64 runners
+# (docs/design/releases.md, "Releasing v1.0 (hold, soak, publish)").
+#   With draft=vX.Y.Z: the held draft's own Windows binaries (provenance and
+#   SHA256SUMS checked) run through scripts/windows_smoke.ps1, and the draft's
+#   own install.ps1 installs the published pin version as a real download.
+#     gh workflow run windows-smoke.yml -f draft=v1.0.0 -f expect=v1.0.0
+#   With no draft: install.ps1 from releases/latest installs (with
+#   CLAWBRIDGE_VERIFY=required), and the installed binary runs the smoke.
+#     gh workflow run windows-smoke.yml -f expect=v1.0.0
+on:
+  workflow_dispatch:
+    inputs:
+      draft:
+        description: A held draft's tag (v1.0.0) whose own assets are tested; empty installs from releases/latest
+        required: false
+        default: ''
+        type: string
+      expect:
+        description: The version the tested binary must report, such as v1.0.0
+        required: true
+        type: string
+      pin:
+        description: With a draft, the published version its install.ps1 installs
+        required: false
+        default: v0.3.13
+        type: string
+permissions:
+  contents: read
+concurrency:
+  group: windows-smoke
+  cancel-in-progress: false
+jobs:
+  # Only this job holds a write token: GitHub lists a draft's assets only to a
+  # token with push access. It runs no repository code and only downloads.
+  fetch-draft:
+    if: ${{ inputs.draft != '' && github.event.repository.private == false && github.repository == 'jkai-chen/ClawBridge' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+      attestations: read
+    steps:
+      - name: Download and check the draft's Windows assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: jkai-chen/ClawBridge
+          DRAFT: ${{ inputs.draft }}
+          EXPECT: ${{ inputs.expect }}
+          PIN: ${{ inputs.pin }}
+        run: |
+          canonical='^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$'
+          for v in "$DRAFT" "$EXPECT" "$PIN"; do [[ $v =~ $canonical ]] || { echo "::error::not a canonical version: $v"; exit 1; }; done
+          [[ $(gh release view "$DRAFT" --json isDraft --jq .isDraft) == true ]] || { echo "::error::$DRAFT is not a draft"; exit 1; }
+          mkdir draft
+          gh release download "$DRAFT" --dir draft --pattern "clawbridge_${DRAFT}_windows_*.exe" --pattern install.ps1 --pattern SHA256SUMS
+          cd draft
+          grep -E "  (clawbridge_${DRAFT}_windows_(amd64|arm64)\.exe|install\.ps1)\$" SHA256SUMS > windows.sums
+          [[ $(wc -l < windows.sums) == 3 ]] || { echo '::error::SHA256SUMS does not list both Windows binaries and install.ps1'; exit 1; }
+          sha256sum --check --strict windows.sums
+          for exe in clawbridge_"$DRAFT"_windows_*.exe; do
+            gh attestation verify "$exe" --repo jkai-chen/ClawBridge --signer-workflow jkai-chen/ClawBridge/.github/workflows/release.yml --source-ref "refs/tags/$DRAFT" --predicate-type https://slsa.dev/provenance/v1
+          done
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: draft-windows
+          path: draft/
+          retention-days: 1
+          if-no-files-found: error
+  windows:
+    needs: fetch-draft
+    # Runs after a successful fetch, or with no draft (fetch skipped).
+    if: ${{ !cancelled() && github.event.repository.private == false && github.repository == 'jkai-chen/ClawBridge' && (needs.fetch-draft.result == 'success' || (inputs.draft == '' && needs.fetch-draft.result == 'skipped')) }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: windows-latest
+            arch: amd64
+          - runner: windows-11-arm
+            arch: arm64
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - if: ${{ inputs.draft != '' }}
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: draft-windows
+          path: ${{ runner.temp }}/draft
+      # Under the user profile, as for a real user (as in ci.yml).
+      - name: Temporary directories under the user profile
+        shell: pwsh
+        run: |
+          $temp = Join-Path $env:LOCALAPPDATA 'Temp'
+          $null = New-Item -ItemType Directory -Force -Path $temp
+          "TEMP=$temp" >> $env:GITHUB_ENV
+          "TMP=$temp" >> $env:GITHUB_ENV
+      - name: Draft binary smoke
+        if: ${{ inputs.draft != '' }}
+        shell: pwsh
+        env:
+          DRAFT: ${{ inputs.draft }}
+          EXPECT: ${{ inputs.expect }}
+          ARCH: ${{ matrix.arch }}
+        run: |
+          $dir = Join-Path $env:RUNNER_TEMP 'draft'
+          $exe = Join-Path $dir ('clawbridge_' + $env:DRAFT + '_windows_' + $env:ARCH + '.exe')
+          # Checked again after the artifact hop.
+          $line = Get-Content -LiteralPath (Join-Path $dir 'windows.sums') | Where-Object { $_.EndsWith('  ' + (Split-Path -Leaf $exe)) }
+          if ($null -eq $line) { throw 'No SHA256SUMS line for ' + $exe }
+          $want = $line.Split(' ')[0]
+          $got = (Get-FileHash -Algorithm SHA256 -LiteralPath $exe).Hash.ToLowerInvariant()
+          if ($got -cne $want) { throw ('SHA256 mismatch for ' + $exe) }
+          & .\scripts\windows_smoke.ps1 -Exe $exe -Expect $env:EXPECT
+      # Windows PowerShell 5.1, as most users run the installer.
+      - name: Draft install.ps1 installs the published pin version
+        if: ${{ inputs.draft != '' }}
+        shell: powershell
+        # The provenance branch too, so Sunday shows each runner has gh.
+        env:
+          PIN: ${{ inputs.pin }}
+          GH_TOKEN: ${{ github.token }}
+          CLAWBRIDGE_VERIFY: required
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $installer = Join-Path $env:RUNNER_TEMP 'draft\install.ps1'
+          $target = Join-Path $env:RUNNER_TEMP 'pin-bin'
+          powershell -NoProfile -ExecutionPolicy Bypass -File $installer -Version $env:PIN -InstallDir $target -NoModifyPath -NoSkill
+          if ($LASTEXITCODE -ne 0) { throw 'install.ps1 failed' }
+          $out = (& (Join-Path $target 'clawbridge.exe') version | Out-String)
+          if (($out | ConvertFrom-Json).data.version -cne $env:PIN) { throw ('installed binary reports ' + $out) }
+          Write-Output ('install.ps1 installed ' + $env:PIN)
+      - name: Install from releases/latest, then smoke
+        if: ${{ inputs.draft == '' }}
+        shell: powershell
+        env:
+          EXPECT: ${{ inputs.expect }}
+          GH_TOKEN: ${{ github.token }}
+          CLAWBRIDGE_VERIFY: required
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if ($env:EXPECT -cnotmatch '^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$') { throw 'expect is not a canonical version' }
+          $installer = Join-Path $env:RUNNER_TEMP 'install.ps1'
+          Invoke-WebRequest -UseBasicParsing -Uri 'https://github.com/jkai-chen/ClawBridge/releases/latest/download/install.ps1' -OutFile $installer
+          $target = Join-Path $env:RUNNER_TEMP 'latest-bin'
+          powershell -NoProfile -ExecutionPolicy Bypass -File $installer -InstallDir $target -NoModifyPath -NoSkill
+          if ($LASTEXITCODE -ne 0) { throw 'install.ps1 failed' }
+          pwsh -NoProfile -File .\scripts\windows_smoke.ps1 -Exe (Join-Path $target 'clawbridge.exe') -Expect $env:EXPECT
+          if ($LASTEXITCODE -ne 0) { throw 'smoke failed' }

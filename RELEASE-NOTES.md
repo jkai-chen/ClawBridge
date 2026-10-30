@@ -109,6 +109,12 @@
   `forbidden`, `not_found`, `unauthenticated`, …) on every line that reads the server, and the queue line says what
   to pass: the session's current `--instance` (and where the refused one came from), or the person to run it as. No
   schema change. Linear config scope: none.
+- **Each release publishes its provenance bundle, and can mark a manual update.** A release now carries
+  `PROVENANCE.sigstore.json`, the Sigstore bundle of its assets' build-provenance attestation, so a client can verify a
+  binary with no GitHub API call or token (groundwork for opt-in automatic updates). A release whose notes start a line
+  with `**Manual update required.**` also carries `MANUAL-UPDATE-REQUIRED`, and automatic updates will skip it. The
+  publish step checks the bundle attests exactly the release's assets before anything is created. Linear config scope:
+  none.
 
 ## Sessions
 

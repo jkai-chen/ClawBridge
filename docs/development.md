@@ -72,7 +72,10 @@ those narrower properties.
 The release builder requires a clean exact canonical version tag and emits five
 CGO-disabled executables, installers, SOURCE-COMMIT.txt and SHA256SUMS. It clears
 caller Go environment overrides. The publisher reads release notes from the exact
-tag, verifies uploaded bytes while the release is a draft, then publishes.
+tag, verifies uploaded bytes while the release is a draft, then publishes. It
+also uploads the assets' attestation bundle (`PROVENANCE.sigstore.json`), and
+`MANUAL-UPDATE-REQUIRED` when the release's top section of RELEASE-NOTES.md has a
+line starting `**Manual update required.**` (docs/design/releases.md).
 Tests use temporary tagged repositories and fake GitHub clients. Running fixture
 tests does not authorize creating a tag, release or hosted CI run.
 

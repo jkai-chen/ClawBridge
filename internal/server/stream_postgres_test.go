@@ -407,6 +407,78 @@ func TestPostgresStreamRevoked(t *testing.T) {
 	b.must(5*time.Second, "revoked")
 }
 
+// G9 S5-03: a stream opened by a device-key-signed client (a signed GET plus
+// a stream ticket, no Bearer token) closes with revoked when that device is
+// revoked through the handler, which wakes every stream; and a new signed
+// request from the device is then refused.
+func TestPostgresDeviceStreamRevoked(t *testing.T) {
+	joinFloor = time.Millisecond
+	t.Cleanup(func() { joinFloor = 250 * time.Millisecond })
+	f := newSTFixture(t, StreamLimits{Reread: time.Hour}, bus.QueueLimits{})
+	ada := awUnique("ada") + "@stream-test.example"
+	invite := f.do(f.owner, bus.Request{Operation: "invite_create", Workspace: f.workspace, Args: map[string]any{"email": ada, "grants": map[string]any{"p": "member"}}})
+	d := newPGDeviceClient(t, f.store)
+	d.handler = NewHandlerWithOptions(f.store, nil, HandlerOptions{Streams: f.hub, Auth: AuthOptions{Methods: []string{AuthDevice}, PublicOrigin: testOrigin, Devices: f.store}, Now: time.Now})
+	host := httptest.NewServer(d.handler)
+	t.Cleanup(host.Close)
+	if w := d.postJoin(d.joinBody(ada, invite.(map[string]any)["code"].(string), d.now.Unix(), d.priv), "198.51.100.21"); w.Code != 200 {
+		t.Fatal(w.Code, w.Body.String())
+	}
+	// Every request is signed over the origin the device was told, and sent
+	// to the test host.
+	call := func(method, target, body string, header ...string) *http.Response {
+		t.Helper()
+		req, _ := http.NewRequest(method, host.URL+target, strings.NewReader(body))
+		req.Header.Set("Authorization", d.header(signed{method: method, target: target, body: body}))
+		for i := 0; i+1 < len(header); i += 2 {
+			req.Header.Set(header[i], header[i+1])
+		}
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return resp
+	}
+	execute := func(r bus.Request) *http.Response {
+		t.Helper()
+		body, _ := json.Marshal(r)
+		return call(http.MethodPost, "/v1/execute", string(body))
+	}
+	reg := execute(bus.Request{Operation: "register_session", Workspace: f.workspace, Project: "p", Session: "d", Args: map[string]any{"instance": "d-inst", "role": "worker"}})
+	reg.Body.Close()
+	if reg.StatusCode != 200 {
+		t.Fatal(reg.Status)
+	}
+	tk := execute(bus.Request{Operation: "stream_ticket", Workspace: f.workspace, Project: "p", Session: "d", Args: map[string]any{"instance": "d-inst", "mode": "observe"}})
+	var ticket struct{ Data struct{ Ticket string } }
+	if err := json.NewDecoder(tk.Body).Decode(&ticket); err != nil || tk.StatusCode != 200 || ticket.Data.Ticket == "" {
+		t.Fatal(tk.Status, err)
+	}
+	tk.Body.Close()
+	target := StreamPath + "?" + url.Values{"workspace": {f.workspace}, "project": {"p"}, "session": {"d"}, "mode": {"observe"}}.Encode()
+	resp := call(http.MethodGet, target, "", StreamTicketHeader, ticket.Data.Ticket)
+	if resp.StatusCode != 200 || resp.Header.Get("Content-Type") != "text/event-stream" {
+		t.Fatal(resp.Status)
+	}
+	s := readSSE(t, resp)
+	s.must(5*time.Second, "status")
+	// The device revokes itself through the handler.
+	rev := execute(bus.Request{Operation: "device_revoke", Workspace: f.workspace, Args: map[string]any{"device_id": d.id}})
+	rev.Body.Close()
+	if rev.StatusCode != 200 {
+		t.Fatal(rev.Status)
+	}
+	s.must(5*time.Second, "revoked")
+	if e, _ := s.next(2 * time.Second); e.name != "closed" {
+		t.Fatal(e)
+	}
+	again := execute(bus.Request{Operation: "whoami", Workspace: f.workspace, Project: "p"})
+	again.Body.Close()
+	if again.StatusCode != 401 {
+		t.Fatal("a revoked device signed in:", again.Status)
+	}
+}
+
 // The stream's intervals: pings keep it open past the server's read and
 // write timeouts, and it says bye at its lifetime.
 func TestPostgresStreamLifetime(t *testing.T) {

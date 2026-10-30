@@ -199,9 +199,19 @@ if [ "$store" = s3 ]; then
 		esac
 	fi
 fi
+# The owner's stated choice to keep the database on the root disk
+# (CLAWBRIDGE_DATA_ON_ROOT_DISK=1, which cloud check infra reports as a
+# warning): then the data path need not be a mountpoint. A local folder
+# guards no data disk, so it reads neither key.
+on_root_disk=0
 if [ "$store" != dir ]; then
 	data_path=$(read_env_value CLAWBRIDGE_POSTGRES_DATA_PATH) ||
 		fail "private environment must define CLAWBRIDGE_POSTGRES_DATA_PATH exactly once"
+	if [ "$(count_env_key CLAWBRIDGE_DATA_ON_ROOT_DISK)" -gt 0 ]; then
+		[ "$(read_env_value CLAWBRIDGE_DATA_ON_ROOT_DISK)" = 1 ] ||
+			fail "CLAWBRIDGE_DATA_ON_ROOT_DISK must be 1, once, when set"
+		on_root_disk=1
+	fi
 fi
 if [ -n "${CLAWBRIDGE_COMPOSE_PROJECT:-}" ]; then
 	compose_project=$CLAWBRIDGE_COMPOSE_PROJECT
@@ -329,8 +339,8 @@ if [ "$mode" = list ]; then
 fi
 
 if [ "$store" != dir ]; then
-	mountpoint -q "$postgres_mount" ||
-		fail "Postgres persistent disk is not mounted at $postgres_mount"
+	[ "$on_root_disk" = 1 ] || mountpoint -q "$postgres_mount" ||
+		fail "Postgres persistent disk is not mounted at $postgres_mount (or state CLAWBRIDGE_DATA_ON_ROOT_DISK=1)"
 	[ -d "$postgres_data" ] ||
 		fail "Postgres data directory is missing at $postgres_data"
 fi

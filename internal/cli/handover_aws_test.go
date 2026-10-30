@@ -172,7 +172,7 @@ func TestValidAWSInputs(t *testing.T) {
 // The cloud answer picks a path by number or name, and refuses anything else
 // rather than falling back to Google Cloud.
 func TestHandoverCloudAnswer(t *testing.T) {
-	for answer, want := range map[string]string{"aws": "Your AWS choices", "AWS": "Your AWS choices", "gcp": "Your Google Cloud choices", "1": "Your Google Cloud choices"} {
+	for answer, want := range map[string]string{"aws": "Your AWS choices", "AWS": "Your AWS choices", "gcp": "Your Google Cloud choices", "1": "Your Google Cloud choices", "4": "Your server and backup store", "ssh": "Your server and backup store"} {
 		isolated(t)
 		// Blank answers after the choice: the inputs are then refused.
 		wizardHooks(t, "3\n"+answer+"\n"+strings.Repeat("\n", 10))
@@ -182,13 +182,13 @@ func TestHandoverCloudAnswer(t *testing.T) {
 			t.Fatalf("%s: %v %s", answer, err, out.String())
 		}
 	}
-	for _, answer := range []string{"4", "azure", "2x"} {
+	for _, answer := range []string{"5", "azure", "2x"} {
 		home := isolated(t)
 		wizardHooks(t, "3\n"+answer+"\n")
 		h, _ := awsHandoverStub(t)
 		var out bytes.Buffer
 		err := Run(context.Background(), []string{"onboard"}, &out, io.Discard)
-		if err == nil || !strings.Contains(err.Error(), "choose 1, 2 or 3") || h.ran != nil || strings.Contains(out.String(), "choices") {
+		if err == nil || !strings.Contains(err.Error(), "choose 1, 2, 3 or 4") || h.ran != nil || strings.Contains(out.String(), "choices") {
 			t.Fatalf("%s: %v %s", answer, err, out.String())
 		}
 		if _, err := os.Stat(filepath.Join(home, "state", "onboarding")); !os.IsNotExist(err) {

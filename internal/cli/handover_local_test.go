@@ -49,7 +49,7 @@ func TestLocalHandoverSolo(t *testing.T) {
 	if err := Run(context.Background(), []string{"onboard"}, &out, io.Discard); err != nil {
 		t.Fatal(err, out.String())
 	}
-	for _, want := range []string{"Where? 1. Google Cloud 2. AWS 3. This machine or my LAN (no cloud) [1]: ",
+	for _, want := range []string{"Where? 1. Google Cloud 2. AWS 3. This machine or my LAN (no cloud) 4. A server I already have (SSH and Docker) [1]: ",
 		"Who uses it? 1. Just me, on this machine 2. My team, on our LAN [1]: ", "Workspace name [my-team]: ",
 		"clawbridge-provision-local", "It creates no cloud resources and costs nothing"} {
 		if !strings.Contains(out.String(), want) {
@@ -314,7 +314,7 @@ func TestLocalNoAgentNamesTheGuide(t *testing.T) {
 		!strings.Contains(out.String(), "On this machine or your LAN instead (no cloud): see docs/operations/local-host.md (deploy/local-host.sh up).") {
 		t.Fatal(err, out.String())
 	}
-	if !strings.Contains(startText, "or this machine).") || !strings.Contains(startCommands, "docs/operations/local-host.md") {
+	if !strings.Contains(startText, "this machine, or your own server).") || !strings.Contains(startCommands, "docs/operations/local-host.md") {
 		t.Fatal(startText + startCommands)
 	}
 }

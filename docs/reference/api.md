@@ -1126,8 +1126,10 @@ pass one. No check reads a secret or writes anything.
 `clawbridge cloud secret set KEY (--ssh HOST | --vm NAME --project P --zone Z |
 --instance ID --region R [--profile P] [--account N]) [--value-stdin]` writes one server setting the user holds, so it never passes
 through an agent. KEY is `CLAWBRIDGE_LINEAR_APP_CLIENT_ID` or
-`CLAWBRIDGE_LINEAR_APP_CLIENT_SECRET` (the two OAuth client secrets went with
-Google sign-in in v1.0). The value is read from a hidden prompt, or
+`CLAWBRIDGE_LINEAR_APP_CLIENT_SECRET`, or an S3-compatible backup store's
+`CLAWBRIDGE_BACKUP_ACCESS_KEY_ID` and `CLAWBRIDGE_BACKUP_SECRET_ACCESS_KEY` (the
+two OAuth client secrets went with Google sign-in in v1.0). The value is read
+from a hidden prompt, or
 from a pipe with `--value-stdin`; it must be one line of printable ASCII without
 whitespace, quotes, `$`, `#`, backslash or backtick, at most 4096 bytes. It
 travels on stdin over the user's own `ssh -T HOST` or `gcloud compute ssh …
@@ -1181,6 +1183,19 @@ AWS CLI, or whose role cannot read its parameter, gets an error saying so.
 
 With `--account`, the profile's account is checked before the value is asked
 for.
+
+`clawbridge cloud env init [KEY...] (--ssh HOST | --vm NAME --project P --zone Z |
+--instance ID --region R [--profile P] [--account N])` makes the server's
+generated secrets on the server, so no agent composes the shell line that would.
+A fixed script, run as root over the same route, creates
+`/etc/clawbridge/clawbridge.env` 0600, root-owned, if it is absent, and adds
+`POSTGRES_PASSWORD` (32 random bytes as hex) plus each named KEY,
+`CLAWBRIDGE_LINEAR_APP_TOKEN_KEY` or `CLAWBRIDGE_MODEL_KEY_SEAL_KEY` (32 random
+bytes as base64), that has no line yet. It never replaces a value; it refuses an
+empty `KEY=` line, and a link or anything but a regular file, before writing.
+The result is source=cloud_env with `{added: [...], kept: [...]}`, key names only.
+Run it before the first `compose up`: a new database password doesn't match a
+database that already exists.
 
 ## Context reading
 
@@ -1421,15 +1436,17 @@ a folder aside; any refused target also makes the command exit nonzero.
 
 `--playbook gcp` acts on the Google Cloud provisioning playbook
 (`clawbridge-provision-gcp`), `--playbook aws` on the AWS one
-(`clawbridge-provision-aws`), and `--playbook local` on the one for a server on
-this machine or the LAN (`clawbridge-provision-local`, which runs
-`deploy/local-host.sh up` and creates no cloud resource), instead of the main
-skill. Each installs beside the
+(`clawbridge-provision-aws`), `--playbook vm` on the one for a Linux server
+the user already has, reached over their own SSH (`clawbridge-provision-vm`),
+and `--playbook local` on the one for a server on this machine or the LAN
+(`clawbridge-provision-local`, which runs `deploy/local-host.sh up` and creates
+no cloud resource), instead of the main skill. Each installs beside the
 main skill, in the same agent folders, and is managed on its own. A coding agent
 loads one to provision a server in the user's own Google Cloud project or AWS
 account, step by step, under its hard rules, with `clawbridge cloud check`
 deciding each step. On AWS the instance is reached over SSM only (no SSH), with
-the user's own AWS CLI profile.
+the user's own AWS CLI profile. On the user's own server, every command goes
+through their `ssh` with ClawBridge's options, as a user with passwordless sudo.
 
 Historical per-increment Go adapter contracts, reviewed hashes and evidence are
 preserved under [the archive](../archive/README.md).

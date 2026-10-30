@@ -1,0 +1,4 @@
+interface:
+  display_name: "ClawBridge on your own server"
+  short_description: "Install a ClawBridge server on a Linux host you reach over SSH"
+  default_prompt: "Use $clawbridge-provision-vm to set up my ClawBridge server on my own Linux host, following its hard rules."

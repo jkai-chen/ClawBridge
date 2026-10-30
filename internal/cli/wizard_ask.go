@@ -44,7 +44,7 @@ func askUntil(ask func(string) (string, error), out io.Writer, question string, 
 // The numbered questions' choices. A word means one choice only, or the
 // answer would depend on map order (TestPickWordsAreUnique).
 var (
-	cloudChoices = map[string][]string{"gcp": {"1", "gcp"}, "aws": {"2", "aws"}, "local": {"3", "local"}}
+	cloudChoices = map[string][]string{"gcp": {"1", "gcp"}, "aws": {"2", "aws"}, "local": {"3", "local"}, "ssh": {"4", "ssh"}}
 	shapeChoices = map[string][]string{"solo": {"1", "solo"}, "lan": {"2", "lan"}}
 )
 

@@ -797,7 +797,8 @@ app**. Your personal profile still reads, but never writes:
   appears to be accepted but the edge is not created (seen in practice; a
   controlled probe will confirm), so when the app's current token was not
   granted `write` the server refuses `relation add` and `relation remove` up
-  front (`capability_unavailable`) and sends nothing. If it cannot get a token
+  front (`capability_unavailable`) and sends nothing; `cancel` and `duplicate`
+  too, before their comment. If it cannot get a token
   to check, it refuses with that error.
 - **No fallback.** When the server offers the app, a failed write is reported
   and is never retried with your own Linear account. If the client cannot tell
@@ -1975,7 +1976,9 @@ issue: see [who closes an issue](#who-closes-an-issue).
     that name has no `done`: its done-releases stop at `release_done`, and the
     answer to `set` names each such team when any project is closed by agents;
   - `closes` names projects of this board's binding, each `agent` or `human`;
-  - nothing is ever moved to a canceled state.
+  - the policy never moves anything to a canceled state (an agent cancels only
+    with `linear cancel` or `linear duplicate`; see [when agents cancel or mark
+    Duplicate](#when-agents-cancel-or-mark-duplicate)).
 - **Create:** an agent's create without `--state` lands in `create` for its
   team, whichever route it takes. An explicit `--state` is kept.
 - **Claim:** a confirmed claim moves the issue to `claim`, only from a backlog
@@ -2067,20 +2070,26 @@ without a session is never refused here.
 | --- | --- | --- |
 | A release with `--outcome done` | moves on to the team's `done` | stops at `release_done`, as before |
 | An agent's `--state` to a completed state | allowed, if every project the write touches is closed by agents | refused before anything is sent, naming the project |
-| An agent's `--state` to a canceled or duplicate state | refused | refused |
+| An agent's `--state` to a canceled or duplicate state | refused: agents use `linear cancel` / `linear duplicate` | refused: agents use `linear cancel` / `linear duplicate` |
+| An agent's `linear cancel` / `linear duplicate` | allowed where a person allowed the project's kind (see [below](#when-agents-cancel-or-mark-duplicate)) | the same: who closes doesn't decide it |
 | An agent moving an issue under way into a project agents close | (n/a) | refused before anything is sent, naming the project |
 
 - **When it applies.** The completed-state and project-move rules apply only
   when the project's status policy exists and has `"enabled": true`. With no
   policy, or `"enabled": false`, agents may set completed states and move issues
   between projects as before: close protection requires a status policy.
-- **Canceled is the exception.** From v0.3.3, agents and automation never set a
-  canceled state, or Linear's Duplicate state, which closes an issue the same
-  way, wherever ClawBridge can tell the state's type, with a policy or without.
-  On a hosted server it always can (the ClawBridge Linear app reads it), so on
-  a hosted server agents can't cancel any issue. The one gap: a local setup
-  whose Linear status list doesn't report types, with no enabled policy, can't
-  tell, and lets the write through. A person cancels issues as before.
+- **Canceled is the exception.** Agents and automation never set a canceled
+  state, or Linear's Duplicate state, which closes an issue the same way, with
+  a plain update (`--state`, `taskboard_update_v2`), wherever ClawBridge can
+  tell the state's type, with a policy or without. The refusal points to the
+  one way an agent cancels: `linear cancel` and `linear duplicate`
+  (`taskboard_cancel_v2`, `taskboard_duplicate_v2`), only where a person
+  allowed the project's kind ([when agents cancel or mark
+  Duplicate](#when-agents-cancel-or-mark-duplicate)). On a hosted server the
+  type is always known (the ClawBridge Linear app reads it). The one gap: a
+  local setup whose Linear status list doesn't report types, with no enabled
+  policy, can't tell, and lets the plain update through. A person cancels
+  issues as before.
 - **Both projects count.** An agent's update that sets a completed state needs
   both the issue's current project and its destination to be closed by agents.
   An issue in no project is a person's to close.
@@ -2203,12 +2212,12 @@ for a project the same link sets with `--closes`.
 
 ### Setting who may cancel
 
-Agents never cancel an issue or mark it Duplicate. The status policy's
-`agent_may_cancel_kinds` records the project kinds (values of the project's
-kind setting, from `clawbridge linear kind set`) in whose Linear projects the
-project owner allows it. Empty, the default, means agents never cancel.
-
-Until the enforcement ships, agents still never cancel; the setting only records the choice.
+Agents cancel an issue or mark it Duplicate only where a person allowed it.
+The status policy's `agent_may_cancel_kinds` lists the project kinds (values of
+the project's kind setting, from `clawbridge linear kind set`) in whose Linear
+projects agents may. Empty, the default, means agents never cancel. How an
+agent then does it: [when agents cancel or mark
+Duplicate](#when-agents-cancel-or-mark-duplicate).
 
 The project owner or a lead sets it, in their own terminal, never from a
 session or an agent (a TUI control follows). Any member can read it.
@@ -2245,6 +2254,66 @@ the project's kinds and says the rule in one line.
   "Agents may cancel or mark Duplicate in projects of kind Engineering.", and
   warns when a listed kind is no longer one of the project's kinds, or the
   project has no kind setting.
+
+### When agents cancel or mark Duplicate
+
+An agent cancels an issue, or marks it Duplicate of another, with these two
+commands (MCP `taskboard_cancel_v2`, `taskboard_duplicate_v2`), never with
+`--state`:
+
+```sh
+clawbridge linear cancel ISSUE_UUID --reason "superseded by the new design" \
+  --profile PROFILE_ID --operation-id OPERATION_ID
+clawbridge linear duplicate ISSUE_UUID --of ORIGINAL_UUID [--reason TEXT] \
+  --profile PROFILE_ID --operation-id OPERATION_ID
+```
+
+- **Only where a person allowed the kind.** The issue's Linear project must be
+  of a kind `agent_may_cancel_kinds` lists ([setting who may
+  cancel](#setting-who-may-cancel)), under an enabled status policy; else
+  `cancel_off` (nothing listed, or no enabled policy) or `kind_not_allowed`.
+- **The kind is Linear's, read at the time.** The server reads the project's
+  labels as its ClawBridge Linear app, once per cancel, uncached: the kind is
+  the one label in the kind group whose ID is one of the kind setting's labels
+  (`linear kind seed`). No such label, two of them, a read that fails, an issue
+  in no project, or a project the binding doesn't list is `kind_unknown`.
+- **Hosted servers with the app only.** On your own Linear profile the kind
+  would be the agent's own claim, so a session's cancel or duplicate is refused
+  there: "agents cancel only through the ClawBridge Linear app on a hosted
+  server; nothing was sent".
+- **Never re-opened, never a closed issue.** The issue must be in a triage,
+  backlog, unstarted or started state (`from_state_closed` otherwise;
+  `state_unknown` when its type can't be told). The binding's write scope and
+  the session's lane hold as for any write.
+- **A cancel carries a reason** (1–2000 characters), posted first as a comment
+  "Canceled: REASON" with the agent marker; then the issue moves to the team's
+  one state of type canceled (never its Duplicate state), else the one of them
+  named Canceled, else it is refused (`target_ambiguous`) before anything is
+  sent.
+- **A duplicate names its original** (`--of`, `duplicate_of_required` without
+  it): another issue in the binding (a comment team's is enough), not
+  completed or canceled (`duplicate_target_closed`). The optional reason is
+  posted as "Duplicate of ISSUE2: REASON"; then the duplicate edge is added (the
+  one way ClawBridge makes one: `relation add` refuses the type), and when
+  Linear hasn't moved the issue itself, it moves to the team's one Duplicate
+  state, else its canceled state.
+- **A retry completes, never repeats.** Each step has its own ledger entry
+  (`OPERATION_ID:comment`, `:relation`, `:state`), so `--operation-id` is at
+  most 119 characters. Run the same command again after a failure: what was
+  done is not sent again, and what wasn't is.
+- **The coordinator is told.** After an agent's cancel the server records it
+  (history `issue_canceled` or `issue_duplicated`, with IDs and the reason's
+  length) and sends an `agent-cancel` notice to the coordinator and to the
+  issue's assignee session: "ENG-42 canceled by agent session NAME: REASON", or
+  "ENG-42 marked Duplicate of ENG-7 by agent session NAME". A record that fails
+  never undoes the cancel; the answer then says `recorded: false`.
+- **Then release without an outcome.** The answer's `next` says so: `clawbridge
+  assignment release --revision REV` (MCP `assignment_release` with no
+  outcome). The issue stays canceled. A release with `--outcome done` would
+  find it canceled and leave it (`from_state`).
+- **A person** (no session) may use both commands anywhere the binding lets
+  them write, without the kind check, but never on a completed or canceled
+  issue.
 
 ### Project status follows the work (hosted servers)
 

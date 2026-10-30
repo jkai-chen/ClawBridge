@@ -12,8 +12,7 @@ import (
 
 // AGENT-CANCEL R2-R3 (live/AGENT-CANCEL-PLAN.md): the project kinds in
 // whose Linear projects agents may cancel or mark Duplicate an issue. The
-// CLI and the TUI set it through the same op; until the enforcement ships
-// it only records the choice.
+// CLI and the TUI set it through the same op; agent_cancel.go enforces it.
 
 // CancelKindsView is cancel-kinds show: the list, the status policy's
 // revision a set names, and the project's kinds to choose from.

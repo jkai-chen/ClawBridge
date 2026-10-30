@@ -25,7 +25,7 @@ const otherCallKind = "watch.other"
 
 // appWriteCallOps are the app-route writes (server/appwrite.go's
 // appWriteOperations); each is charged as app_write.<op>.
-var appWriteCallOps = []string{"comment", "create", "update", "relation_add", "relation_remove"}
+var appWriteCallOps = []string{"comment", "create", "update", "relation_add", "relation_remove", "cancel", "duplicate"}
 
 // linearCallKinds is the closed set of kinds a charge may name, so a typo
 // can't make a new one.

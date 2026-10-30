@@ -191,7 +191,13 @@ func relationEvidenceV2(ctx context.Context, p ProviderV2, b bus.TaskboardBindin
 		return nil, false, errors.New("relation target identity changed")
 	}
 	v = admitIssueV2(v, b, to)
-	if e = checkIssueV2(to, b, v); e != nil {
+	// A duplicate's original may be any issue the binding lets agents
+	// comment on; a plain edge joins two write teams' issues.
+	toScope := checkIssueV2
+	if in.Type == "duplicate" {
+		toScope = checkCommentIssueV2
+	}
+	if e = toScope(to, b, v); e != nil {
 		return nil, false, e
 	}
 	// Native edges may name an endpoint only by display identifier; resolve it
@@ -258,7 +264,9 @@ func relationEvidenceV2(ctx context.Context, p ProviderV2, b bus.TaskboardBindin
 			}
 		}
 	}
-	if !observed {
+	// A duplicate edge is negotiated by the provider itself before
+	// anything is sent (capability_unavailable when no tool takes it).
+	if !observed && in.Type != "duplicate" {
 		c, e := caps.get(ctx)
 		if e != nil {
 			return nil, false, e

@@ -10,10 +10,17 @@ import (
 )
 
 func normalizeRelationV2(in RelationInputV2) (RelationInputV2, error) {
-	if !operationPattern.MatchString(in.OperationID) || (in.Action != "add" && in.Action != "remove") || !linearprovider.ValidID(in.FromID) || !linearprovider.ValidID(in.ToID) || in.FromID == in.ToID {
+	validID := operationPattern.MatchString(in.OperationID) || (in.duplicateStep && stepOperationPattern.MatchString(in.OperationID))
+	if !validID || (in.Action != "add" && in.Action != "remove") || !linearprovider.ValidID(in.FromID) || !linearprovider.ValidID(in.ToID) || in.FromID == in.ToID {
 		return in, errors.New("relation requires one explicit action, operation ID and distinct issue UUIDs")
 	}
 	in.source = in.FromID
+	// A duplicate edge (from the duplicate, to the original) is made only
+	// by the duplicate operation, with its checks; never added or removed
+	// as a plain relation.
+	if in.Type == "duplicate" && in.duplicateStep && in.Action == "add" {
+		return in, nil
+	}
 	if in.Type == "blocked-by" {
 		in.FromID, in.ToID = in.ToID, in.FromID
 		in.Type = "blocks"
@@ -165,6 +172,13 @@ func (s *Service) relationV2Personal(ctx context.Context, scope bus.Request, in 
 		// reading it back: an added edge must be visible, and a removed one
 		// must have been visible before and be gone now (native relation
 		// lists are visible, not complete, so absence alone proves nothing).
+		if !r.Confirmed && in.Type == "duplicate" {
+			// No issue read shows a duplicate edge, so it cannot be read
+			// back: the duplicate operation reads the issue's state after.
+			receipt.ID = r.ID
+			receipt.Unverified = []string{"relation"}
+			return s.postReceiptV2(ctx, scope, b, receipt)
+		}
 		if !r.Confirmed {
 			after, observedAfter, e := relationEvidenceV2(ctx, p2, b, v, caps, in, nil)
 			if e != nil || !(observedAfter || (in.Action == "remove" && existing != nil && after == nil)) {

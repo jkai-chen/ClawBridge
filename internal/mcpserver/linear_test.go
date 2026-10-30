@@ -34,7 +34,7 @@ func (p *recordingBoard) Execute(ctx context.Context, r bus.Request, op string, 
 	// Reads get 45 seconds; a V2 write gets the app's write budget.
 	bounded := ok && time.Until(deadline) <= 45*time.Second
 	switch op {
-	case "v2/create", "v2/update", "v2/comment", "v2/relation_add", "v2/relation_remove", "v2/project_status_set", "v2/issue_move", "v2/project_plan":
+	case "v2/create", "v2/update", "v2/comment", "v2/relation_add", "v2/relation_remove", "v2/cancel", "v2/duplicate", "v2/project_status_set", "v2/issue_move", "v2/project_plan":
 		bounded = ok && time.Until(deadline) > 45*time.Second && time.Until(deadline) <= linearboard.WriteTimeout
 	}
 	p.calls = append(p.calls, boardCall{r, op, args, bounded})

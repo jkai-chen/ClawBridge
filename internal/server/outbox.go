@@ -95,7 +95,7 @@ func (q outboxRequest) request() bus.Request {
 func orderKey(operation string, args map[string]any) (key, issue string) {
 	s := func(k string) string { v, _ := args[k].(string); return v }
 	switch operation {
-	case "comment", "update":
+	case "comment", "update", "cancel", "duplicate":
 		return "issue:" + s("id"), s("id")
 	case "relation_add", "relation_remove":
 		return "issue:" + s("from_id"), s("from_id")

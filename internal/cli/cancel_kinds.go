@@ -18,10 +18,6 @@ import (
 // projects of a kind is a person's decision, typed at a terminal, as who
 // closes is (confirmAgentCloses).
 
-// cancelKindsPending is said with every preview until the enforcement
-// ships.
-const cancelKindsPending = "Until the enforcement ships, agents still never cancel; the setting only records the choice."
-
 // confirmCancelKinds shows what the list allows and asks the person to
 // type the kind names, comma-separated, exactly as shown.
 func confirmCancelKinds(flags Config, kinds []string, stderr io.Writer) error {
@@ -35,7 +31,7 @@ func confirmCancelKinds(flags Config, kinds []string, stderr io.Writer) error {
 		return errors.New("letting agents cancel issues is confirmed at a terminal by typing the kind names; stdin is not a terminal")
 	}
 	want := strings.Join(kinds, ", ")
-	fmt.Fprintf(stderr, "Agents will be allowed to cancel or mark Duplicate issues in the Linear projects of kind %s (projects of these kinds), without a person.\n%s\nType the kind names, comma-separated, to confirm (%s): ", want, cancelKindsPending, want)
+	fmt.Fprintf(stderr, "Agents will be allowed to cancel or mark Duplicate issues in the Linear projects of kind %s (projects of these kinds), without a person, each with a reason or the original issue.\nType the kind names, comma-separated, to confirm (%s): ", want, want)
 	line, err := bufio.NewReader(closesStdin).ReadString('\n')
 	if err != nil && line == "" {
 		return errors.New("no confirmation was typed; nothing was changed")

@@ -52,7 +52,10 @@ lead, not a project role: [Which "lead"](#which-lead)); a role
 says who someone is, never what they may approve, and people (never sessions) change roles. The Linear
 document "Team roles (ClawBridge)" is generated for people to read: never edit it
 or read roles from it; use `team_roles_get`. Linear project leads (`linear roles project-lead`,
-`apply-leads`, `project create --lead`) are the project owner's to set, never a session's. Agents never set a canceled or duplicate state; set a completed state only
+`apply-leads`, `project create --lead`) are the project owner's to set, never a session's. Agents never cancel or mark Duplicate EXCEPT with `taskboard_cancel_v2`
+(a reason) or `taskboard_duplicate_v2` (the original issue), and only in
+projects of a kind the project owner or a lead allowed; never re-open an issue
+or touch a completed one; then release without an outcome. Set a completed state only
 where the project's close rule says agents close, else release with
 `assignment_release` outcome `done` and a person closes
 ([task-board.md](references/task-board.md#resume-and-close)). A release that

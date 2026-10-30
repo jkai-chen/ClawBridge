@@ -82,9 +82,16 @@
   --expected-revision N` record the project kinds in whose Linear projects agents may cancel or mark Duplicate
   an issue (status policy `agent_may_cancel_kinds`, op `status_cancel_kinds_set`). Only a person sets it: the
   project owner or a lead, typing the kind names in their own terminal, never a session or an agent. Doctor's
-  `linear.cancel_kinds` says the rule. It has no effect on agents yet: they still never cancel. No schema
-  change. An older client's `status-policy set` doesn't know the key and so clears the list (the safe direction):
-  set it again with `cancel-kinds set`. Linear config scope: none (ClawBridge status policy only).
+  `linear.cancel_kinds` says the rule. No schema change. An older client's `status-policy set` doesn't know the
+  key and so clears the list (the safe direction): set it again with `cancel-kinds set`. Linear config scope: none
+  (ClawBridge status policy only).
+- Agents cancel or mark Duplicate where a person allowed the project's kind: `clawbridge linear cancel ISSUE
+  --reason TEXT` and `linear duplicate ISSUE --of ISSUE2 [--reason TEXT]` (MCP `taskboard_cancel_v2`,
+  `taskboard_duplicate_v2`), only through a hosted server's ClawBridge Linear app, which reads the project's kind from
+  Linear; a reason comment (or the duplicate edge), then the canceled or Duplicate state, never from a closed issue;
+  the coordinator and the assignee get an `agent-cancel` notice. A plain `--state` to a canceled state stays refused.
+  No schema change. Linear config scope: issue state, comments and the duplicate relation on bound issues only; no
+  Linear settings change.
 
 ## Operations
 

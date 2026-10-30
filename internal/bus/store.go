@@ -700,6 +700,7 @@ var operationArgs = map[string]string{
 	"status_policy_set":            "instance expected_revision status_policy via",
 	"status_closes_set":            "instance expected_revision linear_project closes via",
 	"status_cancel_kinds_set":      "instance expected_revision kinds via",
+	"agent_cancel_record":          "instance operation_id issue identifier action duplicate_of reason linear_project kind",
 	"doc_policy_get":               "instance",
 	"dispatcher_get":               "instance",
 	"context_watch_get":            "instance",
@@ -1795,6 +1796,11 @@ func (s *Store) execute(ctx context.Context, tx *transaction, r Request) (any, e
 			return nil, invalid("instance requires session")
 		}
 		return s.projectFlowResumeOp(ctx, tx, w["id"].(string), p["id"].(string), projectRole, actor, r)
+	}
+	// The server records an agent's cancel it made as the app; never a
+	// client's.
+	if agentCancelOperation(r.Operation) {
+		return s.agentCancelRecordOp(ctx, tx, wid, pid, actor, r)
 	}
 	// The server's own steps around reading and setting a Linear
 	// project's status as the app; never a client's.

@@ -77,6 +77,12 @@ type Config struct {
 	// app, its organisation and the token, so a re-minted token never
 	// reuses what an older one proved. A "" answer verifies in full.
 	WriteIdentity func() string
+	// ProjectKindLabels, when set, reads a Linear project's labels with
+	// their groups from Linear itself: on a hosted server, the Linear
+	// app's GraphQL, read once per cancel. Only there may an agent cancel
+	// or mark Duplicate (AGENT-CANCEL R4); where it is nil, a session's
+	// cancel or duplicate is refused.
+	ProjectKindLabels func(ctx context.Context, project string) ([]ProjectLabelRef, error)
 }
 type Service struct {
 	cfg Config

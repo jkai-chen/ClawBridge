@@ -89,7 +89,7 @@ func TestAgentClosesOnlyWhereThePolicySaysAgent(t *testing.T) {
 	refusedNaming(t, "human project", cgUpdate(s, scope, ptrV2(sfDone), nil), p, projectB, "people close")
 	for name, state := range map[string]string{"canceled": cgCanceled, "duplicate": cgDuplicate} {
 		s, _, p, scope = closeTest(t, projectA, sfProgress)
-		refusedNaming(t, name, cgUpdate(s, scope, ptrV2(state), nil), p, "never cancel")
+		refusedNaming(t, name, cgUpdate(s, scope, ptrV2(state), nil), p, "taskboard_cancel_v2", "allowed the project's kind")
 	}
 	// An issue in no project is a person's to close.
 	s, _, p, scope = closeTest(t, "", sfProgress)
@@ -184,7 +184,7 @@ func TestWithoutAPolicyOnlyCanceledIsRefused(t *testing.T) {
 		}
 		for name, state := range map[string]string{"canceled": cgCanceled, "duplicate": cgDuplicate} {
 			s, p, scope = fresh(projectA, sfProgress)
-			refusedNaming(t, name, cgUpdate(s, scope, ptrV2(state), nil), p, "never cancel")
+			refusedNaming(t, name, cgUpdate(s, scope, ptrV2(state), nil), p, "taskboard_cancel_v2", "allowed the project's kind")
 		}
 		s, p, scope = fresh(projectA, sfProgress)
 		if err := cgUpdate(s, scope, ptrV2(cgUntyped), nil); err != nil || len(p.updated) != 1 {
@@ -227,7 +227,7 @@ func TestV1WriteRefusesAnAgentsCancel(t *testing.T) {
 	a.statusPolicy = map[string]any{"revision": 0, "enabled": false, "teams": map[string]any{}}
 	s.cfg.StateType = func(context.Context, string, string) (string, error) { return "canceled", nil }
 	_, err := s.Write(context.Background(), scope, WriteInput{Operation: "update", OperationID: "op-v1-cancel", IssueID: issueID, StateID: ptrV2(issueID)})
-	if err == nil || !strings.Contains(err.Error(), "never cancel") {
+	if err == nil || !strings.Contains(err.Error(), "taskboard_cancel_v2") {
 		t.Fatal(err)
 	}
 }

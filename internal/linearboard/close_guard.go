@@ -14,7 +14,8 @@ import (
 
 // Who closes an issue (A2, live/STATUS-FLOW-DESIGN.md §9). An agent's write
 // (a session's, or automation's) never sets a canceled state where its type
-// is known, policy or not. Under an enabled status policy it also sets a
+// is known, policy or not, except through the cancel and duplicate
+// operations (agent_cancel.go). Under an enabled status policy it also sets a
 // completed state only in a project the policy says agents close, and
 // never moves a started issue from a project people close into one agents
 // close. A person's write without a session is never refused here. It
@@ -23,6 +24,11 @@ import (
 // errStateTypeUnknown refuses an agent's state write under an enabled
 // policy when no source knows the state's type.
 var errStateTypeUnknown = errors.New("cannot verify the workflow state's type, so the status policy cannot be applied; nothing was sent. The project owner sets the status policy again")
+
+// errAgentCancelUpdate refuses an agent's plain update to a canceled or
+// duplicate state: an agent cancels only with the cancel and duplicate
+// operations, where a person allowed the project's kind.
+var errAgentCancelUpdate = errors.New("agents cancel or mark Duplicate only with taskboard_cancel_v2 / taskboard_duplicate_v2 (clawbridge linear cancel|duplicate), where a person allowed the project's kind. Nothing was sent")
 
 // errStateTypeUnread is a failed type read, told without the reader's own
 // text.
@@ -79,8 +85,10 @@ func (s *Service) closeGuard(ctx context.Context, scope bus.Request, in WriteInp
 		if e != nil {
 			return errStateTypeUnread
 		}
-		if kind == "canceled" {
-			return errors.New("agents and automation never cancel an issue (a canceled or duplicate state); a person does. Nothing was sent")
+		// A cancel or duplicate made its own checks (agent_cancel.go);
+		// any other write by an agent to such a state is refused.
+		if kind == "canceled" && !in.cancelStep {
+			return errAgentCancelUpdate
 		}
 		if !policy.Enabled {
 			return nil

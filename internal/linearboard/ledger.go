@@ -20,6 +20,17 @@ import (
 
 var operationPattern = regexp.MustCompile(`\A[A-Za-z0-9._-]{1,128}\z`)
 
+// stepOperationPattern is one step of a cancel or duplicate: the caller's
+// operation ID, which never holds a colon, and the step's name. Only those
+// operations make one, so no caller's own ID ever names a step.
+var stepOperationPattern = regexp.MustCompile(`\A[A-Za-z0-9._-]{1,119}:(?:comment|relation|state)\z`)
+
+// ledgerKey reports an operation ID the ledgers keep: a caller's, or a
+// cancel's or duplicate's step.
+func ledgerKey(id string) bool {
+	return operationPattern.MatchString(id) || stepOperationPattern.MatchString(id)
+}
+
 // errBindingChangedAfterProviderError is context for an uncertain provider
 // outcome. It is deliberately not a ReceiptError: a binding change observed
 // after a provider error must never replace the uncertain result.
@@ -220,7 +231,7 @@ func digest(v any) string {
 // The only exceptions are closure failures explicitly marked notDispatched
 // (record removed) or refusedBeforeDispatch (record made a terminal refusal).
 func (l ledger) write(profile, operationID string, meta ledgerMeta, payload any, dispatch func() (any, error)) (any, error) {
-	if !operationPattern.MatchString(operationID) {
+	if !ledgerKey(operationID) {
 		return nil, errors.New("operation_id requires 1–128 ASCII identifier characters")
 	}
 	if !filepath.IsAbs(l.dir) {
@@ -497,7 +508,7 @@ func (l ledger) lookupAny(profile, id string) (any, bool, error) {
 }
 
 func (l ledger) find(profile, id, hash string, matchPayload bool) (any, bool, error) {
-	if !operationPattern.MatchString(id) || !filepath.IsAbs(l.dir) {
+	if !ledgerKey(id) || !filepath.IsAbs(l.dir) {
 		return nil, false, errors.New("invalid operation ledger selection")
 	}
 	directory := filepath.Join(l.dir, digest(profile))

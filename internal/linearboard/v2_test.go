@@ -53,6 +53,11 @@ type authorityV2 struct {
 	lane      string
 	laneTeams []string
 	laneFrom  string
+	// kind is what project_kind_get answers; records are the
+	// agent_cancel_record calls, failed with recordErr.
+	kind      map[string]any
+	records   []map[string]any
+	recordErr error
 }
 
 func (a *authorityV2) Execute(_ context.Context, r bus.Request) (bus.Result, error) {
@@ -103,6 +108,13 @@ func (a *authorityV2) Execute(_ context.Context, r bus.Request) (bus.Result, err
 	if r.Operation == "status_policy_set" {
 		a.statusSet = r.Args
 		return bus.Result{Source: "local-authority", Data: map[string]any{"revision": 1}}, nil
+	}
+	if r.Operation == "project_kind_get" && a.kind != nil {
+		return bus.Result{Source: "local-authority", Data: a.kind}, nil
+	}
+	if r.Operation == "agent_cancel_record" {
+		a.records = append(a.records, r.Args)
+		return bus.Result{Source: "local-authority", Data: map[string]any{"recorded": true}}, a.recordErr
 	}
 	if r.Operation == "doc_policy_get" {
 		return bus.Result{Source: "local-authority", Data: map[string]any{"revision": 1, "initiatives": append([]string{}, a.initiatives...)}}, nil

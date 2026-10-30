@@ -44,7 +44,7 @@ func TestLinearMCPV2InitializationGuidanceIsAdditiveWithoutIO(t *testing.T) {
 		}
 	}
 	tools, err := newSession.ListTools(ctx, nil)
-	if err != nil || len(tools.Tools) != 48 || v1.count() != 0 || v2.count() != 0 {
+	if err != nil || len(tools.Tools) != 50 || v1.count() != 0 || v2.count() != 0 {
 		t.Fatal("initialization/list changed tools or performed provider IO", err)
 	}
 }
@@ -53,7 +53,7 @@ func TestLinearMCPV2ClosedNullablePinnedTools(t *testing.T) {
 	p := &recordingBoardV2{recordingBoard: recordingBoard{data: map[string]any{"ok": true}}}
 	ctx, cs := boardSession(t, p)
 	listed, err := cs.ListTools(ctx, nil)
-	if err != nil || len(listed.Tools) != 48 || p.count() != 0 {
+	if err != nil || len(listed.Tools) != 50 || p.count() != 0 {
 		t.Fatalf("native list: %v %d calls=%d", err, len(listed.Tools), p.count())
 	}
 	tools := map[string]*mcp.Tool{}
@@ -81,6 +81,8 @@ func TestLinearMCPV2ClosedNullablePinnedTools(t *testing.T) {
 		{"project_status", map[string]any{"linear_project": id, "suggest": true}, true},
 		{"project_status_set", map[string]any{"linear_project": id, "type": "started", "operation_id": "status-1", "confirm": true, "expected_status_id": to}, false},
 		{"issue_move", map[string]any{"id": id, "team_id": to, "operation_id": "move-1", "confirm": true, "expected_plan_sha256": strings.Repeat("a", 64)}, false},
+		{"cancel", map[string]any{"id": id, "reason": "superseded", "operation_id": "cancel-1"}, false},
+		{"duplicate", map[string]any{"id": id, "duplicate_of": to, "operation_id": "dup-1"}, false},
 	}
 	for _, tc := range cases {
 		tool := tools["taskboard_"+tc.op+"_v2"]
@@ -326,4 +328,47 @@ func TestIssueMoveToolTakesNoSourceTeam(t *testing.T) {
 		return
 	}
 	t.Fatal("no taskboard_issue_move_v2")
+}
+
+// AGENT-CANCEL: the cancel and duplicate tools say the rule, require what
+// each needs, and leave room in operation_id for the steps' suffixes.
+func TestCancelAndDuplicateToolsStateTheRule(t *testing.T) {
+	p := &recordingBoardV2{recordingBoard: recordingBoard{data: map[string]any{"ok": true}}}
+	ctx, cs := boardSession(t, p)
+	listed, err := cs.ListTools(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tool := range listed.Tools {
+		if tool.Name != "taskboard_cancel_v2" && tool.Name != "taskboard_duplicate_v2" {
+			continue
+		}
+		if !strings.Contains(tool.Description, "a person (the project owner or a lead) allowed") || !strings.Contains(tool.Description, "only with this tool") {
+			t.Fatal(tool.Name, tool.Description)
+		}
+		raw, _ := json.Marshal(tool.InputSchema)
+		var schema struct {
+			Required   []string                  `json:"required"`
+			Properties map[string]map[string]any `json:"properties"`
+		}
+		_ = json.Unmarshal(raw, &schema)
+		want := []any{"operation_id", "id", "reason"}
+		if tool.Name == "taskboard_duplicate_v2" {
+			want = []any{"operation_id", "id", "duplicate_of"}
+		}
+		got := []any{}
+		for _, r := range schema.Required {
+			got = append(got, r)
+		}
+		if !reflect.DeepEqual(got, want) || schema.Properties["operation_id"]["maxLength"] != float64(119) {
+			t.Fatal(tool.Name, string(raw))
+		}
+	}
+	const id = "11111111-1111-4111-8111-111111111111"
+	if result, e := cs.CallTool(ctx, &mcp.CallToolParams{Name: "taskboard_cancel_v2", Arguments: map[string]any{"id": id, "operation_id": "c"}}); e == nil && !result.IsError {
+		t.Fatal("a cancel without a reason reached the board")
+	}
+	if p.count() != 0 {
+		t.Fatal("calls", p.count())
+	}
 }

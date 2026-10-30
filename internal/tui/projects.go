@@ -39,6 +39,11 @@ type boardSummary struct {
 	Teams      []boardName
 	Projects   []boardName
 	NamesAt    string
+	// CancelKinds are the project kinds in which agents may cancel
+	// (status_policy.agent_may_cancel_kinds); CancelKindsRead is false for
+	// a server that doesn't report them.
+	CancelKinds     []string
+	CancelKindsRead bool
 }
 
 type boardName struct {
@@ -58,6 +63,11 @@ func parseProjectOverview(data map[string]any) projectOverview {
 	o.Truncated = boolean(data, "sessions_truncated")
 	if l := mapData(data["linear"]); l != nil {
 		o.Linear = boardSummary{Configured: boolean(l, "configured"), Unreadable: boolean(l, "unreadable"), Mode: text(l, "mode"), NamesAt: text(l, "names_updated_at")}
+		if sp := mapData(l["status_policy"]); sp != nil {
+			if _, ok := sp["agent_may_cancel_kinds"]; ok {
+				o.Linear.CancelKinds, o.Linear.CancelKindsRead = stringsOf(sp["agent_may_cancel_kinds"]), true
+			}
+		}
 		for _, t := range records(l["teams"]) {
 			o.Linear.Teams = append(o.Linear.Teams, boardName{ID: text(t, "id"), Name: text(t, "name"), Default: boolean(t, "default")})
 		}
@@ -255,6 +265,9 @@ func renderProjectDetail(m Model, p ProjectRow) string {
 			line("", "the team board")
 		} else {
 			line("", "projects "+firstNonempty(boardNames(l.Projects), "-"))
+		}
+		if l.CancelKindsRead {
+			line("Cancelling", terminalText(bus.CancelKindsLine(l.CancelKinds)))
 		}
 		if t, err := time.Parse(time.RFC3339Nano, l.NamesAt); err == nil {
 			b.WriteString(mutedStyle.Render(fmt.Sprintf("%-12s names as of %s", "", ago(m.cfg.Now(), t))) + "\n")

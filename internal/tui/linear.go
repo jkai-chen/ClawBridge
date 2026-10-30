@@ -39,6 +39,9 @@ type LinearRequest struct {
 	AllowOpen, Suggest                                     bool
 	// Roles is a team roles change (roles-set).
 	Roles *RolesChange
+	// CancelKinds is a who-may-cancel change (cancel-kinds-set); the
+	// read (cancel-kinds) leaves it nil.
+	CancelKinds *CancelKindsChange
 }
 type LinearData struct {
 	// Roles is the team roles read, RolesSet a change's answer.
@@ -71,6 +74,9 @@ type LinearData struct {
 	// WithoutProject are the binding's teams listed without a project, as
 	// Linear shows them now (best effort, with the binding).
 	WithoutProject []linearboard.TeamWithoutProject
+	// CancelKindsView is who may cancel, with the project's kinds, as a
+	// read or a change answers it.
+	CancelKindsView *linearboard.CancelKindsView
 }
 type linearState struct {
 	// logoutAsk is the connection an x is waiting to log out, until y.
@@ -316,6 +322,9 @@ func (m Model) linearRefresh() (Model, tea.Cmd) {
 	case "roles":
 		m.linear.refreshNames = false
 		return m.rolesLoad()
+	case "cancel":
+		m.linear.refreshNames = false
+		return m.cancelLoad()
 	default:
 		request.Operation = "profiles"
 	}
@@ -480,6 +489,8 @@ func (m Model) linearRows() []string {
 		return m.viewRows()
 	case "roles":
 		return m.rolesRows()
+	case "cancel":
+		return m.cancel.view.Kinds
 	}
 	return rows
 }
@@ -544,7 +555,7 @@ func (m Model) linearStep() string {
 // linearPrevious is the step Esc goes back to from each step.
 var linearPrevious = map[string]string{
 	"teams": "profiles", "default": "teams", "projects": "default", "preview": "projects",
-	"tasks": "profiles", "details": "tasks", "unlink": "tasks", "intake": "tasks", "status": "tasks", "views": "tasks", "roles": "tasks",
+	"tasks": "profiles", "details": "tasks", "unlink": "tasks", "intake": "tasks", "status": "tasks", "views": "tasks", "roles": "tasks", "cancel": "tasks",
 	"writes": "profiles",
 }
 
@@ -585,6 +596,9 @@ func (m Model) linearKey(key string) (Model, tea.Cmd) {
 	}
 	if m.linear.step == "status" {
 		return m.projectStatusKey(key)
+	}
+	if m.linear.step == "cancel" {
+		return m.cancelKey(key)
 	}
 	// U35: Space toggles, here as on the teams: who closes the
 	// highlighted project.
@@ -928,6 +942,9 @@ func renderLinear(m Model) string {
 	if m.linear.step == "roles" {
 		return strings.TrimRight(b.String()+renderRoles(m), "\n")
 	}
+	if m.linear.step == "cancel" {
+		return strings.TrimRight(b.String()+renderCancelKinds(m), "\n")
+	}
 	if m.linear.step == "views" {
 		return strings.TrimRight(b.String()+renderViews(m), "\n")
 	}
@@ -1097,6 +1114,8 @@ func linearStepTitle(m Model) string {
 		return "Shared views: the board's teams' Linear views"
 	case "roles":
 		return "Team roles: who leads each team, and who engineers and reviews"
+	case "cancel":
+		return "Who may cancel: the project kinds in which agents may cancel issues"
 	}
 	if m.linearConfigured() {
 		return "Your Linear connections"

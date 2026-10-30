@@ -92,6 +92,9 @@
   the coordinator and the assignee get an `agent-cancel` notice. A plain `--state` to a canceled state stays refused.
   No schema change. Linear config scope: issue state, comments and the duplicate relation on bound issues only; no
   Linear settings change.
+- The TUI sets who may cancel too: `C` on the Linear screen lists the project's kinds with a switch each, previews the
+  result, and has the person type the kind names when a kind is added (the same rule as the CLI); the Projects view
+  shows the line. Refused with `--session` or under an agent. Linear config scope: none (ClawBridge status policy only).
 
 ## Operations
 

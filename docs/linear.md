@@ -2219,8 +2219,8 @@ projects agents may. Empty, the default, means agents never cancel. How an
 agent then does it: [when agents cancel or mark
 Duplicate](#when-agents-cancel-or-mark-duplicate).
 
-The project owner or a lead sets it, in their own terminal, never from a
-session or an agent (a TUI control follows). Any member can read it.
+The project owner or a lead sets it, in their own terminal or the TUI, never
+from a session or an agent. Any member can read it.
 
 ```sh
 clawbridge linear cancel-kinds show
@@ -2236,6 +2236,14 @@ the project's kinds and says the rule in one line.
   as shown. It is refused when stdin isn't a terminal, with `--session`, or when
   the environment says an agent runs it (`CLAUDECODE`, any `CODEX_*`,
   `CLAWBRIDGE_SESSION`, `CLAWBRIDGE_INSTANCE`). `--none` asks nothing.
+- **In the TUI**, press `C` on the Linear screen's board. It lists the project's
+  kinds; Space switches whether agents may cancel or mark Duplicate in a kind,
+  and Enter previews the result. Adding a kind asks you to type the kind names,
+  comma-separated, exactly as shown; only removing kinds asks `y`. It is refused
+  in a TUI opened with `--session` or run under an agent, and a project with no
+  kinds says to set them with `clawbridge linear kind set`. A change made
+  meanwhile by someone else is read again and nothing is applied. The Projects
+  screen's project view shows the same line.
 - **Kinds only.** Each name must be one of the project's kinds (matched ignoring
   case, stored as the kind setting spells it). With no kind setting, `set` is
   refused: set the project kinds first with `clawbridge linear kind set`. It

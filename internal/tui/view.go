@@ -401,6 +401,9 @@ func renderInput(m Model) string {
 	if m.inputMode == inputLinearClosesName && len(m.linear.typing) > 0 {
 		return warnStyle.Render("Type "+terminalText(fmt.Sprintf("%q", m.linear.typing[0].Name))+" to let agents close its issues; Esc cancels") + "\n> " + terminalText(m.draft) + "█"
 	}
+	if m.inputMode == inputLinearCancelKinds && m.cancel.ask != nil {
+		return warnStyle.Render("Type "+terminalText(fmt.Sprintf("%q", strings.Join(m.cancel.ask.kinds, ", ")))+" to let agents cancel in those kinds; Esc cancels") + "\n> " + terminalText(m.draft) + "█"
+	}
 	if m.confirming && m.account.pending != nil {
 		return warnStyle.Render("Type "+terminalText(m.account.pending.phrase)+" to confirm; Esc cancels") + "\n> " + terminalText(m.confirm) + "█"
 	}

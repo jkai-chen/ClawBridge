@@ -329,6 +329,7 @@ type Model struct {
 	linearCancel context.CancelFunc
 	account      accountState
 	modelSetup   modelSetupState
+	cancel       cancelState // the Linear screen's who-may-cancel view
 	cfg          Config
 
 	screen Screen
@@ -436,6 +437,9 @@ const (
 	inputAccountLabel
 	inputAccountTransfer
 	inputLinearClosesName
+	// inputLinearCancelKinds takes the kind names agents may cancel in
+	// before a change that adds one is saved.
+	inputLinearCancelKinds
 	// inputLinearUnlink takes the project's slug before an unlink
 	// (TUI-UX-AUDIT U34).
 	inputLinearUnlink
@@ -556,6 +560,8 @@ func (m Model) UpdateModel(msg tea.Msg) (Model, tea.Cmd) {
 		return m.applyRoles(x), nil
 	case rolesSetMsg:
 		return m.applyRolesSet(x)
+	case cancelMsg:
+		return m.applyCancel(x)
 	case projectStatusLoadedMsg:
 		return m.applyProjectStatus(x), nil
 	case projectStatusDoneMsg:
@@ -1465,6 +1471,9 @@ func (m Model) updateKey(msg tea.KeyMsg) (Model, tea.Cmd) {
 	if m.screen == ScreenLinear && m.linear.step == "roles" && (m.roles.ask != nil || m.roles.picking != "") {
 		return m.rolesModalKey(key)
 	}
+	if m.screen == ScreenLinear && m.linear.step == "cancel" && m.cancel.ask != nil && !m.cancel.ask.typed {
+		return m.cancelModalKey(key)
+	}
 	if m.screen == ScreenLinear && m.linear.step == "status" && (m.projectStatus.ask != nil || m.projectStatus.picking) {
 		return m.projectStatusModalKey(key)
 	}
@@ -1523,6 +1532,9 @@ func (m Model) updateEditor(key string, runes []rune) (Model, tea.Cmd) {
 		}
 		if m.inputMode == inputLinearUnlink {
 			return m.linearUnlinkTyped()
+		}
+		if m.inputMode == inputLinearCancelKinds {
+			return m.cancelTyped()
 		}
 		if m.inputMode == inputLinearBudget {
 			return m.linearBudgetTyped()

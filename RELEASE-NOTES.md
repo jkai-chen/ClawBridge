@@ -1,5 +1,12 @@
 # Unreleased
 
+**Schema 53 → 54.**
+- The server migrates to schema 54 on its first start: `dispatcher_decisions.kind` (older rows get `judgement` or
+  `rules` from their engine), the escalation payload and answer columns, `dispatcher_cases.attempt` in the case
+  subject index (the index is rebuilt), and an index of escalations by reason. Additive, with a backfill of the kind.
+- **One-way:** a server on schema 53 refuses a database on schema 54. Take a dump before upgrading; to go back,
+  restore it with the previous image (docs/operations/deployment.md).
+
 **Schema 52 → 53.**
 - The server migrates to schema 53 on its first start: `assignment_markers.state_operations` and `label_operations`
   (each marker part's last five uncertain or failed attempts, operation IDs only) and
@@ -12,6 +19,19 @@
 - **`--confirm` reaches the server for `dispatcher enable`, `dispatcher model advise` and `dispatcher model tools set`.**
   The command line dropped it, so these commands only ever showed their preview and changed nothing; with `--confirm`
   they now make the change (or give the server's refusal). No schema change. Linear config scope: none.
+- **The dispatcher's model has a loop budget.** The model judges each issue at most 3 times in 24 hours by default,
+  counted across all of the issue's claims and revisions. Past that, a claim gets no model case: the rules decide it
+  (`model_fallback:loop_budget`), a `budget_skip` is recorded once per claim revision, and a person is told once per
+  issue per window (reason `loop_budget`). The owner sets it with `clawbridge dispatcher model budget N
+  --expected-revision R [--confirm]`, 0 (no cap) to 100, a preview first. Every control action in `dispatcher decisions`
+  now has a kind (`judgement`, `rules`, `escalation`, `budget_skip`, `setting_change`), filtered with `--kind K`; a
+  rules decision made past the budget shows `over_budget: true`, and older rows get `judgement` or `rules` from their
+  engine. Escalations now carry a structured payload (a kind, a fixed question, options, an advisory suggestion and a
+  timeout) in `dispatcher escalations`, and the owner or a lead records an answer with `clawbridge dispatcher escalation
+  answer ESCALATION_ID OPTION`, which resolves the escalation but never confirms or releases the claim; the message is
+  unchanged. The owner or a lead asks the model to judge a pending claim again with `clawbridge dispatcher model rejudge
+  PROPOSAL_ID --expected-revision REV`, which resets the issue's loop budget, allows exactly one more model case on that
+  revision, and is recorded as a `setting_change`; a session never can. Schema 53 → 54. Linear config scope: none.
 
 ## Linear
 

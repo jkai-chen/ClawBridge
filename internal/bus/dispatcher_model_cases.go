@@ -500,8 +500,11 @@ func caseView(row map[string]any, nowRaw string) (map[string]any, error) {
 // dispatcher session (d5): the facts the tick read, the guardrails'
 // permitted set and the policy revision it read them under. The bus adds
 // the session's and holders' facts itself, with principals as refs. It is
-// idempotent per subject revision: a revision that ever had a case gets
-// no other (D5-M1).
+// idempotent per subject revision and attempt: a revision that ever had a
+// case gets no other (D5-M1) until a person asks the model to judge it
+// again (R5). A decide case for an issue past its loop budget is
+// refused over_budget, before anything is stored but the skip and the
+// person's notice (R1).
 func (s *Store) dispatcherCaseOpen(ctx context.Context, tx *transaction, pid string, a map[string]any) (any, error) {
 	subject, revision := str(a, "subject_id"), str(a, "subject_revision")
 	policyRevision, err := integer(a["policy_revision"])
@@ -539,6 +542,33 @@ func (s *Store) dispatcherCaseOpen(ctx context.Context, tx *transaction, pid str
 		return map[string]any{"opened": false, "reason": "proposal_changed"}, nil
 	}
 	p := live[0]
+	// The attempt this open is for (attempt in the subject index): a
+	// decide case's is how many times a person asked the model to judge
+	// this revision again (R5), so each re-judge allows one more case.
+	attempt := 0
+	if kind == "decide" {
+		if attempt, err = claimAttempt(ctx, tx, pid, subject, revision); err != nil {
+			return nil, err
+		}
+	}
+	// A repeat open answers as before and records nothing, the budget's
+	// skip included.
+	existing, err := query(ctx, tx, `SELECT 1 FROM dispatcher_cases WHERE project_id=? AND kind=? AND subject_id=? AND subject_revision=? AND attempt=?`, pid, kind, subject, revision, attempt)
+	if err != nil {
+		return nil, err
+	}
+	if len(existing) > 0 {
+		return map[string]any{"opened": false, "reason": "case_exists"}, nil
+	}
+	if kind == "decide" {
+		over, err := s.loopBudgetStop(ctx, tx, nil, pid, str(a, "domain"), p)
+		if err != nil {
+			return nil, err
+		}
+		if over {
+			return map[string]any{"opened": false, "reason": "over_budget"}, nil
+		}
+	}
 	ref, err := principalRef(ctx, tx, pid, str(p, "owner_principal"), nowRaw)
 	if err != nil {
 		return nil, err
@@ -596,8 +626,8 @@ func (s *Store) dispatcherCaseOpen(ctx context.Context, tx *transaction, pid str
 	permittedJSON, _ := json.Marshal(permitted)
 	reasonsJSON, _ := json.Marshal(reasons)
 	id := newID("case_")
-	res, err := tx.ExecContext(ctx, `INSERT INTO dispatcher_cases(id,project_id,kind,subject_type,subject_id,subject_revision,policy_revision,permitted,reason_codes,facts,untrusted,facts_source,app_project_id,domain,deadline,created_at) VALUES(?,?,?,'proposal',?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(project_id,kind,subject_id,subject_revision) DO NOTHING`,
-		id, pid, kind, subject, revision, policyRevision, string(permittedJSON), string(reasonsJSON), string(factsJSON), untrusted, str(a, "facts_source"), str(a, "app_project_id"), str(a, "domain"), layout(at(nowRaw).Add(time.Duration(deadline)*time.Second)), nowRaw)
+	res, err := tx.ExecContext(ctx, `INSERT INTO dispatcher_cases(id,project_id,kind,subject_type,subject_id,subject_revision,attempt,policy_revision,permitted,reason_codes,facts,untrusted,facts_source,app_project_id,domain,deadline,created_at) VALUES(?,?,?,'proposal',?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(project_id,kind,subject_id,subject_revision,attempt) DO NOTHING`,
+		id, pid, kind, subject, revision, attempt, policyRevision, string(permittedJSON), string(reasonsJSON), string(factsJSON), untrusted, str(a, "facts_source"), str(a, "app_project_id"), str(a, "domain"), layout(at(nowRaw).Add(time.Duration(deadline)*time.Second)), nowRaw)
 	if err != nil {
 		return nil, err
 	}
@@ -784,7 +814,7 @@ func (s *Store) dispatcherCaseRead(ctx context.Context, tx *transaction, pid str
 		if hours < 1 || hours > 168 || limit < 1 || limit > maxDecisionsListed {
 			return caseRefusal("invalid_argument"), nil
 		}
-		log, err := decisionLog(ctx, tx, pid, nowRaw, hours, limit)
+		log, err := decisionLog(ctx, tx, pid, nowRaw, hours, limit, "", true)
 		if err != nil {
 			return nil, err
 		}

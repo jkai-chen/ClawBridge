@@ -55,7 +55,7 @@ var testUsage = map[string]any{"input_tokens": int64(1200), "output_tokens": int
 
 func (e *env) decision() (engine, action, explanation string) {
 	e.t.Helper()
-	e.queryRow(`SELECT engine,action,explanation FROM dispatcher_decisions ORDER BY created_at DESC LIMIT 1`, &engine, &action, &explanation)
+	e.queryRow(`SELECT engine,action,explanation FROM dispatcher_decisions WHERE kind IN ('rules','judgement') ORDER BY created_at DESC LIMIT 1`, &engine, &action, &explanation)
 	return
 }
 

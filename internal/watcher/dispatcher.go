@@ -27,6 +27,10 @@ import (
 // expired, or a model wait), since a subject revision gets one model case
 // (D5-M1); each such record says model_fallback and why.
 //
+// A claim whose issue has used the model's loop budget (its judgements in
+// 24 hours) gets no case: the rules decide it with model_fallback:loop_budget,
+// and the bus records the skip and tells a person once per issue.
+//
 // In rules mode with the model as the advisor (d7), the rules decide as
 // always; an escalation they record goes out at once, and with an agent
 // available the claim then gets an advise case, with the same facts.
@@ -64,6 +68,7 @@ type dispatchCase struct {
 	Waits           int      `json:"waits"`
 	AgeSeconds      int      `json:"age_seconds"`
 	ModelCase       string   `json:"model_case"`
+	OverBudget      bool     `json:"over_budget"`
 }
 
 func (w *Watcher) dispatcher(ctx context.Context, pid string, fence map[string]any) (*DispatchRun, error) {
@@ -107,6 +112,8 @@ func (w *Watcher) dispatcher(ctx context.Context, pid string, fence map[string]a
 				continue
 			case dc.ModelCase != "":
 				fallback = strings.TrimPrefix(dc.ModelCase, "closed:")
+			case dc.OverBudget:
+				fallback = "loop_budget"
 			case due.Model != "available":
 				fallback = due.Model
 			}
@@ -131,16 +138,22 @@ func (w *Watcher) dispatcher(ctx context.Context, pid string, fence map[string]a
 			// Without the authoritative read the model couldn't confirm:
 			// the rules wait for it, and the model gets the claim later.
 			if !readFailed {
-				opened, err := w.openModelCase(ctx, pid, "decide", due.PolicyRevision, dc, c, source, text, dispatch.Rules(c, false, dc.Waits, age).Domain)
+				opened, why, err := w.openModelCase(ctx, pid, "decide", due.PolicyRevision, dc, c, source, text, dispatch.Rules(c, false, dc.Waits, age).Domain)
 				if err != nil {
 					return run, err
 				}
 				if opened {
 					run.Opened++
 				}
-				continue
+				// The bus's own count found the budget used since the due
+				// read: the rules decide now.
+				if why != "over_budget" {
+					continue
+				}
+				fallback = "loop_budget"
+			} else {
+				fallback = "facts_unavailable"
 			}
-			fallback = "facts_unavailable"
 		}
 		proposal, action, reason := dispatch.Run(c, readFailed, dc.Waits, age)
 		guardrail := "permitted"
@@ -151,7 +164,7 @@ func (w *Watcher) dispatcher(ctx context.Context, pid string, fence map[string]a
 			"subject_id": dc.SubjectID, "subject_revision": dc.SubjectRevision, "policy_revision": due.PolicyRevision,
 			"engine": "rules", "proposal": string(proposal.Action), "reason_code": reason, "guardrail": guardrail,
 			"action": string(action), "domain": proposal.Domain, "facts_source": source, "app_project_id": appProject(c, source),
-			"explanation": modelFallback(fallback),
+			"explanation": modelFallback(fallback), "over_budget": fallback == "loop_budget",
 		}})
 		if err != nil {
 			return run, err
@@ -166,7 +179,7 @@ func (w *Watcher) dispatcher(ctx context.Context, pid string, fence map[string]a
 		// escalation it misses gets none (Q14). The decision is already
 		// recorded, so a failure is logged and the tick goes on (R132-L3).
 		if advise && taken == string(dispatch.Escalate) {
-			opened, err := w.openModelCase(ctx, pid, "advise", due.PolicyRevision, dc, c, source, text, proposal.Domain)
+			opened, _, err := w.openModelCase(ctx, pid, "advise", due.PolicyRevision, dc, c, source, text, proposal.Domain)
 			if err != nil {
 				logf("dispatcher: project %s: no advise case for %s: %v", pid, dc.SubjectID, err)
 			}
@@ -190,8 +203,8 @@ func modelFallback(why string) string {
 // openModelCase opens the claim's decide or advise case: the issue's facts (state
 // only from the app's read), the domains it matches and how, the
 // guardrails' permitted set, and the issue's text only when this tick read
-// it (Q8).
-func (w *Watcher) openModelCase(ctx context.Context, pid, kind string, policyRevision int64, dc dispatchCase, c dispatch.Case, source string, text *IssueText, domain string) (bool, error) {
+// it (Q8). Not opened, it says why.
+func (w *Watcher) openModelCase(ctx context.Context, pid, kind string, policyRevision int64, dc dispatchCase, c dispatch.Case, source string, text *IssueText, domain string) (bool, string, error) {
 	state := "unknown"
 	if c.Issue.Authoritative {
 		state = c.Issue.StateType
@@ -228,10 +241,11 @@ func (w *Watcher) openModelCase(ctx context.Context, pid, kind string, policyRev
 	}
 	out, err := w.Store.ExecuteDispatcher(ctx, pid, bus.DispatcherSessionName, bus.Request{Operation: "dispatcher_case_open", Args: args})
 	if err != nil {
-		return false, err
+		return false, "", err
 	}
 	m, _ := out.Data.(map[string]any)
-	return m["opened"] == true, nil
+	why, _ := m["reason"].(string)
+	return m["opened"] == true, why, nil
 }
 
 // appProject is the issue's project as the app read it, or "".

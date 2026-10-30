@@ -51,10 +51,13 @@ clawbridge dispatcher domain untrust DOMAIN SESSION --expected-revision N
 clawbridge dispatcher domain coordinator DOMAIN SESSION --expected-revision N
 clawbridge dispatcher enable [--engine rules|model] --expected-revision N [--confirm]   # project owner
 clawbridge dispatcher disable --expected-revision N                                     # project owner
-clawbridge dispatcher decisions [--since-hours 24] [--limit 50]               # project owner or lead
+clawbridge dispatcher decisions [--since-hours 24] [--limit 50] [--kind K]    # project owner or lead
 clawbridge dispatcher chat "QUESTION"                                          # model mode; see Chat
 clawbridge dispatcher chat show [CASE]
 clawbridge dispatcher chat leads on|off --expected-revision N                 # project owner
+clawbridge dispatcher escalations [--all] [--limit 50]                        # project owner or lead
+clawbridge dispatcher escalation answer ESCALATION_ID OPTION                  # project owner or lead; see Escalations
+clawbridge dispatcher model rejudge PROPOSAL_ID --expected-revision REV       # project owner or lead; see Model mode
 ```
 
 - **The revision** is `show`'s `revision` (0 the first time). Every change is recorded in the project's history.
@@ -62,9 +65,58 @@ clawbridge dispatcher chat leads on|off --expected-revision N                 # 
   it advises in rules mode), the owner's own provider and model (the active key's, else the pending one's), the key's
   state (`active`, `pending_test` or `none`) and their agent (`running`, `offline` or `never_seen`). Other members don't
   see it. The owner's full setup, never the key, is the read-only `dispatcher_model_config`, which key rotation uses.
+- **The decision log** (`dispatcher decisions`) lists every control action, each with its `kind`:
+  - `judgement`: the model decided a claim;
+  - `rules`: the rules decided a claim;
+  - `escalation`: a person was told about a claim;
+  - `budget_skip`: a claim got no model case because its issue used the loop budget (see Model mode);
+  - `setting_change`: an owner changed a setting the log tracks, such as the loop budget, or a person asked the model
+    to judge a claim again (`budget_reset` on the issue, `rejudge` on the claim).
+
+  `--kind K` keeps one kind. Rows from before schema 54 are `judgement` or `rules`, from their engine. A person's
+  answer to an escalation is an `escalation` row too, with reason `answered` and explanation `answer:OPTION`.
 - **Domain owners:** a lead who owns a domain may trust their own sessions in it, which lets the dispatcher confirm
   their claims there once it is enabled. That is intended, and audited. A lead cannot create domains or change what a
   domain matches.
+
+## Escalations
+
+When the dispatcher can't decide a claim, it tells a person in a fixed message (see
+[The dispatcher's sessions](#the-dispatchers-sessions)). From schema 54 each new escalation also carries a structured
+payload, which `clawbridge dispatcher escalations` shows. The message itself is unchanged.
+- **`kind`**, from the escalation's reason:
+  - `approval`: an engine would confirm, and a guardrail asks a person first (the facts aren't the app's own read,
+    the session isn't active, or the policy changed);
+  - `decision`: the engine couldn't decide (the loop budget, the model uncertain or abstaining, no domain, more than
+    one, a label only, the facts unavailable, a stale session);
+  - `escalation`: a trust or policy refusal (an untrusted session, an overlap, a closed issue, not one project domain);
+  - `other`: any other reason.
+- **`question`**: a fixed sentence per kind, naming only the session and the issue's identifier, such as
+  `Should eng's claim of ABC-12 be confirmed?`. It never holds issue text.
+- **`options`**: `confirm` (Confirm the claim) and `release` (Release the claim), plus `wait` (Leave it for now) for
+  `decision` and `escalation`.
+- **`suggested`**: the option the engine's own action stands for (a rules or model confirm the guardrails stopped,
+  say), or the model's recommendation once one is recorded; empty when there is none. It is advice: nothing applies it.
+- **`timeout_at`**: when the escalation was made plus the domain's `stale_after_hours`, or 24 hours without one.
+  Nothing happens at the timeout yet; it says how long the question is meant to wait.
+
+Escalations from before schema 54 have none of these fields.
+
+**Answering.** `clawbridge dispatcher escalation answer ESCALATION_ID OPTION` records your answer:
+- It is the project owner's or a lead's, in their own terminal. It is refused with `--session`, under an agent's
+  environment (Claude Code, Codex or a ClawBridge session), and by the server for any session. An agent never answers
+  an escalation.
+- The option must be one of the escalation's; an escalation without options (from before schema 54) takes no answer:
+  act with `assignment confirm` or `assignment release`.
+- It sets the answer, who gave it and when, marks the escalation resolved, audits it, and records an `escalation`
+  decision. The same answer again returns the stored one; a different one is refused as a conflict.
+- **It doesn't act on the claim.** Answering `confirm` or `release` prints the command to run, such as
+  `clawbridge assignment confirm eng --revision R`; the claim stays pending until you run it. If the claim has
+  already moved on (confirmed, released or re-proposed), the answer is recorded and no command is printed.
+- An answered escalation gets no more model advice and can't be routed with `route_notice`; the claim stays pending
+  until the person acts.
+- `dispatcher escalations` shows the answer, `answered_by` and `answered_at`. It lists the escalations whose claim is
+  still pending, answered or not; `--all` adds the rest.
 
 ## Turning it on and off
 
@@ -140,6 +192,9 @@ Status: in a release, on main (not released yet), in review, or planned.
 | A guided `dispatcher model setup` in the CLI, with the provider's model list | v0.3.6 |
 | The same setup in the TUI (the Dispatcher screen, `6`) | v0.3.6 |
 | `dispatcher model key rotate`, and how the model is used on the Dispatcher screen | in review |
+| The loop budget (`dispatcher model budget`) and decision kinds (`dispatcher decisions --kind`) | in review |
+| Structured escalations and `dispatcher escalation answer` | in review |
+| Judging again (`dispatcher model rejudge`) | in review |
 | CI against a real rootless Docker daemon, one model agent by default, and agentd's measured cost in `doctor` | in review |
 | Deployment of the launcher | planned |
 
@@ -241,11 +296,50 @@ one keeps running until the new test passes.
   - The dispatcher session carries it out after the same checks a rules decision gets: the claim, the policy, the
     session, the holders and the domain's trust are rechecked in the same transaction.
   - Anything that changed is recorded as `superseded`, and nothing is done.
-- **One model attempt per claim revision.** Once a case closes (decided, abstained, expired, or closed for want of an
-  agent), the rules decide that revision, recorded as `model_fallback` with the reason.
+- **One model attempt per claim revision**, until a person asks for another (see Judging again). Once a case closes
+  (decided, abstained, expired, or closed for want of an agent), the rules decide that revision, recorded as
+  `model_fallback` with the reason.
   - A model `wait` also hands the claim to the rules.
   - With no agent available, the rules decide at once.
   - A claim whose case an agent has taken is left to that agent until the deadline.
+- **The loop budget.** The model judges each issue at most 3 times in 24 hours by default, across all of the issue's
+  claims and their revisions, so a claim that keeps coming back can't keep the model busy.
+  - Every model decision counts, whatever it chose and whether it stood. Abstains and expired cases don't count, and
+    neither does a case that is still open: several claims on one issue can each have a case open at once, so the
+    budget can be passed by the cases already open when it is reached.
+  - Past the budget, a claim gets no case: the rules decide it at once, recorded as `model_fallback:loop_budget`, and
+    `dispatcher decisions` shows it with `over_budget: true`.
+  - The bus records a `budget_skip` once per claim revision, and escalates with reason `loop_budget`, through the
+    usual chain, at most once per issue in 24 hours: a second over-budget stretch inside that window gets no new
+    notice.
+  - The rules still decide the claim as usual, so when they escalate it, their own notice (with their own reason)
+    goes out too: two notices about one claim in the same tick are expected.
+  - The owner sets it with `clawbridge dispatcher model budget N --expected-revision R`, from 0 (no cap) to 100: a
+    preview first, then `--confirm`. The change is audited and logged as a `setting_change`.
+- **Judging again.** `clawbridge dispatcher model rejudge PROPOSAL_ID --expected-revision REV` asks the model to judge a
+  pending claim once more, typically after a `loop_budget` notice or an escalation. The `loop_budget` notice itself
+  is the fixed escalation text and names only `assignment confirm` and `release`; judging again is this command.
+  - It is the project owner's or a lead's, in their own terminal. It is refused with `--session`, under an agent's
+    environment, and by the server for any session. An agent or the model never judges again, and nothing else
+    resets a budget.
+  - `REV` is the claim's revision you saw (`dispatcher escalations` shows it). The claim must still be pending at it,
+    else it is a conflict: the claim has moved on. It needs the dispatcher on in model mode and a claim with an issue.
+  - It resets the loop budget of the claim's issue: the count starts again from now. It also allows one more model case
+    on the same revision, even if the model or the rules already decided it, for example by escalating. The waits the
+    rules count for the claim start again from the re-judge too.
+  - The `budget_skip` row is recorded once per claim revision, a re-judge included: if the same revision goes over the
+    budget again after a re-judge, no second `budget_skip` is written, though the `loop_budget` notice goes out again.
+  - One re-judge allows exactly one more case. Its result names the `attempt` (1 for the first re-judge, 2 for the
+    second, and so on), and the dispatcher's next tick opens that case. A second re-judge before the model has had
+    that case, or while the model is on it, is refused as a conflict. Once the case closes, the claim gets no other
+    until the next re-judge.
+  - If the dispatcher's tick had already read the claim as over the budget when you re-judged, its rules decision is
+    recorded as `superseded` (`budget_reset`) and nothing is done; the next tick opens the model's case.
+  - It leaves the claim's `loop_budget` escalation as it was: `dispatcher escalations` still lists it while the claim
+    is pending. Answer it, or leave it.
+  - There is no preview: the command is the decision. It is audited and recorded as two `setting_change` decisions,
+    `budget_reset` on the issue and `rejudge` on the claim, each with explanation `by:PRINCIPAL`. Your `dispatcher
+    decisions` shows the principal; the model's `list_decisions` shows the project's opaque ref for it instead.
 - **Latency.** An abstain or a missed deadline asks the watcher for an early pass, so the rules decide within about a
   minute. Without the in-process watcher clock, or when an agent stops mid-case, the worst case is the deadline plus
   the watch interval.

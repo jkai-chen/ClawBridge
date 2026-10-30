@@ -85,6 +85,12 @@ func TestCLIDispatcherChat(t *testing.T) {
 		t.Fatal(e, out.String())
 	}
 	rejectCLI(t, "dispatcher", "decisions", "--limit", "51")
+	// --kind keeps one kind of control action; another word is refused.
+	out.Reset()
+	if e := Run(context.Background(), []string{"dispatcher", "decisions", "--kind", "setting_change"}, &out, &errs); e != nil || !strings.Contains(out.String(), `"data":[]`) {
+		t.Fatal(e, out.String())
+	}
+	rejectCLI(t, "dispatcher", "decisions", "--kind", "advice")
 }
 
 // dispatcher model advise takes on or off and the revision; tools set takes
@@ -119,22 +125,169 @@ func TestCLIDispatcherAdvise(t *testing.T) {
 		}
 	}
 	var out, errs bytes.Buffer
-	if e := Run(context.Background(), []string{"dispatcher", "model", "tools", "set", "ask_session", "--expected-revision", "1"}, &out, &errs); e != nil || !strings.Contains(out.String(), `"preview":true`) || !strings.Contains(out.String(), `"opt_in_tools":["ask_session"]`) {
+	// model budget N: the project owner's, never with --session or from
+	// an agent's shell.
+	env := closesEnv
+	t.Cleanup(func() { closesEnv = env })
+	closesEnv = func() []string { return []string{"HOME=/x"} }
+	if e := Run(context.Background(), []string{"--session", "eng", "dispatcher", "model", "budget", "0", "--expected-revision", "1", "--confirm"}, &out, &errs); e == nil || !strings.Contains(e.Error(), "never set with --session") {
+		t.Fatal("--session:", e)
+	}
+	for _, marker := range []string{"CLAUDECODE=1", "CLAWBRIDGE_SESSION=eng"} {
+		closesEnv = func() []string { return []string{marker} }
+		if e := Run(context.Background(), []string{"dispatcher", "model", "budget", "0", "--expected-revision", "1", "--confirm"}, &out, &errs); e == nil || !strings.Contains(e.Error(), "says an agent runs this command") {
+			t.Fatal(marker, e)
+		}
+	}
+	closesEnv = func() []string { return []string{"HOME=/x"} }
+	if out.Len() != 0 {
+		t.Fatal("a refusal wrote:", out.String())
+	}
+	// model budget N: 0 to 100, with the revision; a preview first.
+	rejectCLI(t, "dispatcher", "model", "budget", "5")
+	rejectCLI(t, "dispatcher", "model", "budget", "101", "--expected-revision", "1")
+	rejectCLI(t, "dispatcher", "model", "budget", "-1", "--expected-revision", "1")
+	rejectCLI(t, "dispatcher", "model", "budget", "many", "--expected-revision", "1")
+	rejectCLI(t, "dispatcher", "model", "budget", "--expected-revision", "1")
+	if e := Run(context.Background(), []string{"dispatcher", "model", "budget", "5", "--expected-revision", "1"}, &out, &errs); e != nil || !strings.Contains(out.String(), `"preview":true`) || !strings.Contains(out.String(), `"model_judgement_budget":5`) {
+		t.Fatal(e, out.String(), errs.String())
+	}
+	out.Reset()
+	if e := Run(context.Background(), []string{"dispatcher", "model", "budget", "0", "--expected-revision", "1", "--confirm"}, &out, &errs); e != nil || !strings.Contains(out.String(), `"revision":2`) {
+		t.Fatal(e, out.String(), errs.String())
+	}
+	out.Reset()
+	if e := Run(context.Background(), []string{"dispatcher", "decisions", "--kind", "setting_change"}, &out, &errs); e != nil || !strings.Contains(out.String(), `"explanation":"budget:0"`) {
+		t.Fatal(e, out.String(), errs.String())
+	}
+	out.Reset()
+	if e := Run(context.Background(), []string{"dispatcher", "model", "tools", "set", "ask_session", "--expected-revision", "2"}, &out, &errs); e != nil || !strings.Contains(out.String(), `"preview":true`) || !strings.Contains(out.String(), `"opt_in_tools":["ask_session"]`) {
 		t.Fatal(e, out.String(), errs.String())
 	}
 	// --confirm reaches the server and makes the change: the revision moves.
 	out.Reset()
-	if e := Run(context.Background(), []string{"dispatcher", "model", "tools", "set", "ask_session", "--expected-revision", "1", "--confirm"}, &out, &errs); e != nil || strings.Contains(out.String(), `"preview":true`) || !strings.Contains(out.String(), `"revision":2`) {
+	if e := Run(context.Background(), []string{"dispatcher", "model", "tools", "set", "ask_session", "--expected-revision", "2", "--confirm"}, &out, &errs); e != nil || strings.Contains(out.String(), `"preview":true`) || !strings.Contains(out.String(), `"revision":3`) {
 		t.Fatal("tools set --confirm:", e, out.String(), errs.String())
 	}
 	out.Reset()
 	// Advice confirmed without a model setup is refused by the server: the
 	// confirm got there (a preview would have answered instead).
-	if e := Run(context.Background(), []string{"dispatcher", "model", "advise", "on", "--expected-revision", "2", "--confirm"}, &out, &errs); e == nil || !strings.Contains(e.Error(), "model setup") || strings.Contains(out.String(), `"preview":true`) {
+	if e := Run(context.Background(), []string{"dispatcher", "model", "advise", "on", "--expected-revision", "3", "--confirm"}, &out, &errs); e == nil || !strings.Contains(e.Error(), "model setup") || strings.Contains(out.String(), `"preview":true`) {
 		t.Fatal("advise --confirm:", e, out.String(), errs.String())
 	}
 	out.Reset()
 	if e := Run(context.Background(), []string{"dispatcher", "escalations", "--all"}, &out, &errs); e != nil || !strings.Contains(out.String(), `It idles.]52;c;ZXZpbA== done`) || strings.Contains(out.String(), `\u001b`) || strings.Contains(out.String(), "\u202e") {
 		t.Fatal(e, out.String(), errs.String())
+	}
+}
+
+// R4: dispatcher escalation answer takes the escalation and an option, is
+// refused with --session or under an agent's environment, and records the
+// answer without acting on the claim.
+func TestCLIDispatcherEscalationAnswer(t *testing.T) {
+	dir := isolated(t)
+	db := filepath.Join(dir, "bus.db")
+	t.Setenv("CLAWBRIDGE_DB", db)
+	invoke(t, "setup", "--local", "--workspace", "w")
+	invoke(t, "project", "create", "p")
+	t.Setenv("CLAWBRIDGE_PROJECT", "p")
+	raw, err := sql.Open("sqlite", db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer raw.Close()
+	var pid string
+	if err = raw.QueryRow(`SELECT id FROM projects`).Scan(&pid); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = raw.Exec(`INSERT INTO dispatcher_escalations(id,project_id,subject_type,subject_id,subject_revision,reason_code,recipients,state,delivered,created_at,updated_at,kind,question,options,suggested,timeout_at) VALUES('esc_1',?,'proposal','asg_1','1','ambiguous','[]','open',0,'2026-01-01T00:00:00.000000000Z','2026-01-01T00:00:00.000000000Z','decision','What should happen?','[{"id":"confirm","label":"Confirm the claim"},{"id":"release","label":"Release the claim"},{"id":"wait","label":"Leave it for now"}]','','2026-01-02T00:00:00.000000000Z')`, pid); err != nil {
+		t.Fatal(err)
+	}
+	env := closesEnv
+	t.Cleanup(func() { closesEnv = env })
+	closesEnv = func() []string { return []string{"HOME=/x"} }
+	rejectCLI(t, "dispatcher", "escalation", "answer", "esc_1")
+	rejectCLI(t, "dispatcher", "escalation", "answer", "esc_1", "wait", "extra")
+	var out, errs bytes.Buffer
+	if e := Run(context.Background(), []string{"--session", "eng", "dispatcher", "escalation", "answer", "esc_1", "wait"}, &out, &errs); e == nil || !strings.Contains(e.Error(), "never done with --session") {
+		t.Fatal("--session:", e)
+	}
+	for _, marker := range []string{"CLAUDECODE=1", "CLAWBRIDGE_SESSION=eng"} {
+		closesEnv = func() []string { return []string{marker} }
+		if e := Run(context.Background(), []string{"dispatcher", "escalation", "answer", "esc_1", "wait"}, &out, &errs); e == nil || !strings.Contains(e.Error(), "says an agent runs this command") {
+			t.Fatal(marker, e)
+		}
+	}
+	closesEnv = func() []string { return []string{"HOME=/x"} }
+	if out.Len() != 0 {
+		t.Fatal("a refusal wrote:", out.String())
+	}
+	rejectCLI(t, "dispatcher", "escalation", "answer", "esc_1", "maybe")
+	answered := invoke(t, "dispatcher", "escalation", "answer", "esc_1", "wait")
+	if answered["answer"] != "wait" || answered["state"] != "resolved" || answered["note"] != "recorded; the claim has moved on since this escalation" {
+		t.Fatal(answered)
+	}
+	if e := Run(context.Background(), []string{"dispatcher", "escalations", "--all"}, &out, &errs); e != nil || !strings.Contains(out.String(), `"answer":"wait"`) || !strings.Contains(out.String(), `"question":"What should happen?"`) {
+		t.Fatal(e, out.String(), errs.String())
+	}
+}
+
+// R5: judging again is a person's command: no --session, no agent shell, a
+// proposal and the revision seen; it answers with the next attempt.
+func TestCLIDispatcherRejudge(t *testing.T) {
+	dir := isolated(t)
+	db := filepath.Join(dir, "bus.db")
+	t.Setenv("CLAWBRIDGE_DB", db)
+	invoke(t, "setup", "--local", "--workspace", "w")
+	invoke(t, "project", "create", "p")
+	t.Setenv("CLAWBRIDGE_PROJECT", "p")
+	invoke(t, "register", "eng", "--instance", "eng-i")
+	proposed := invoke(t, "--session", "eng", "--instance", "eng-i", "assignment", "propose", "--issue-uuid", "0d0d0d0d-0d0d-4d0d-8d0d-0d0d0d0d0d0d", "--issue-identifier", "SYN-4", "--task-role", "engineer")
+	claim := proposed["assignment"].(map[string]any)
+	id, revision := claim["id"].(string), claim["revision"].(string)
+	raw, err := sql.Open("sqlite", db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer raw.Close()
+	if _, err = raw.Exec(`INSERT INTO dispatcher_policies(project_id,revision,enabled,mode,domains,updated_at,updated_by_principal) SELECT id,1,1,'model','{"domains":[]}','2026-01-01T00:00:00Z','x' FROM projects`); err != nil {
+		t.Fatal(err)
+	}
+	env := closesEnv
+	t.Cleanup(func() { closesEnv = env })
+	closesEnv = func() []string { return []string{"HOME=/x"} }
+	rejectCLI(t, "dispatcher", "model", "rejudge", id)
+	rejectCLI(t, "dispatcher", "model", "rejudge", "--expected-revision", revision)
+	rejectCLI(t, "dispatcher", "model", "rejudge", id, "extra", "--expected-revision", revision)
+	var out, errs bytes.Buffer
+	if e := Run(context.Background(), []string{"--session", "eng", "dispatcher", "model", "rejudge", id, "--expected-revision", revision}, &out, &errs); e == nil || !strings.Contains(e.Error(), "never done with --session") {
+		t.Fatal("--session:", e)
+	}
+	for _, marker := range []string{"CLAUDECODE=1", "CLAWBRIDGE_SESSION=eng"} {
+		closesEnv = func() []string { return []string{marker} }
+		if e := Run(context.Background(), []string{"dispatcher", "model", "rejudge", id, "--expected-revision", revision}, &out, &errs); e == nil || !strings.Contains(e.Error(), "says an agent runs this command") {
+			t.Fatal(marker, e)
+		}
+	}
+	closesEnv = func() []string { return []string{"HOME=/x"} }
+	if out.Len() != 0 {
+		t.Fatal("a refusal wrote:", out.String())
+	}
+	var n int
+	if err = raw.QueryRow(`SELECT COUNT(*) FROM dispatcher_decisions`).Scan(&n); err != nil || n != 0 {
+		t.Fatal("a refusal recorded", n, err)
+	}
+	rejectCLI(t, "dispatcher", "model", "rejudge", id, "--expected-revision", "rev_other")
+	got := invoke(t, "dispatcher", "model", "rejudge", id, "--expected-revision", revision)
+	if got["rejudge"] != true || got["proposal_id"] != id || got["revision"] != revision || got["attempt"] != float64(1) || !strings.Contains(got["note"].(string), "next tick") {
+		t.Fatal(got)
+	}
+	// Both name who asked: in local mode, the local principal.
+	who, _ := invoke(t, "whoami")["principal"].(string)
+	if !strings.HasPrefix(who, "local:") {
+		t.Fatal("whoami:", who)
+	}
+	if err = raw.QueryRow(`SELECT COUNT(*) FROM dispatcher_decisions WHERE kind='setting_change' AND reason_code IN ('budget_reset','rejudge') AND explanation=?`, "by:"+who).Scan(&n); err != nil || n != 2 {
+		t.Fatal("decisions:", n, err)
 	}
 }

@@ -11,6 +11,23 @@ assignments. The other pages hold
 the mechanics. This one is the method: how a request becomes work, who decides,
 and how the team stays healthy.
 
+A dispatcher notice is an escalation: a claim needs a person. Reason
+`loop_budget` means the dispatcher's model already judged that issue its budget's
+worth of times in 24 hours (3 by default), so the rules decided the claim and the
+model won't look at it again in that window: check why the issue keeps coming
+back, and confirm or release the claim with the commands the notice names. The
+project owner or a lead reads every control action with `dispatcher decisions
+[--kind judgement|rules|escalation|budget_skip|setting_change]`; the owner sets
+the budget with `dispatcher model budget N --expected-revision R` (0 is no cap).
+An escalation may carry a question with options (`dispatcher escalations`); only
+the project owner or a lead answers it, in their own terminal, with `dispatcher
+escalation answer`. An agent never answers an escalation, even when it can see
+one: the CLI and the server refuse it. An answer doesn't confirm or release
+anything; the person still runs `assignment confirm` or `release`. Likewise only
+the owner or a lead asks the model to judge a claim again (`dispatcher model
+rejudge`), which resets the issue's loop budget: an agent never re-judges, and
+never asks for one as if it were the person.
+
 ## The project's playbook
 
 A project may keep its own rules in `docs/COORDINATOR.md`, in its repository.

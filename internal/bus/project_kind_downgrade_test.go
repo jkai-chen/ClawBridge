@@ -11,6 +11,18 @@ func markerOperationsDowngradePostgres(schema string) string {
 	return "ALTER TABLE " + schema + ".assignment_markers DROP COLUMN state_operations;\nALTER TABLE " + schema + ".assignment_markers DROP COLUMN label_operations;\nALTER TABLE " + schema + ".linear_write_ledger DROP COLUMN acknowledged_by;\n"
 }
 
+// loopBudgetDowngradeSQLite returns a loopBudgetSchemaVersion database to
+// the shape before it: the decision kinds, the escalation payload and the
+// case attempts, with the subject index as it was.
+const loopBudgetDowngradeSQLite = "DROP INDEX dispatcher_escalations_reason;\nDROP INDEX dispatcher_decisions_kind;\nALTER TABLE dispatcher_decisions DROP COLUMN kind;\nALTER TABLE dispatcher_escalations DROP COLUMN kind;\nALTER TABLE dispatcher_escalations DROP COLUMN question;\nALTER TABLE dispatcher_escalations DROP COLUMN options;\nALTER TABLE dispatcher_escalations DROP COLUMN suggested;\nALTER TABLE dispatcher_escalations DROP COLUMN timeout_at;\nALTER TABLE dispatcher_escalations DROP COLUMN answer;\nALTER TABLE dispatcher_escalations DROP COLUMN answered_by;\nALTER TABLE dispatcher_escalations DROP COLUMN answered_at;\nDROP INDEX dispatcher_cases_subject;\nALTER TABLE dispatcher_cases DROP COLUMN attempt;\nCREATE UNIQUE INDEX dispatcher_cases_subject ON dispatcher_cases(project_id,kind,subject_id,subject_revision);\n"
+
+// loopBudgetDowngradePostgres is loopBudgetDowngradeSQLite for a Postgres
+// schema.
+func loopBudgetDowngradePostgres(schema string) string {
+	q := schema + "."
+	return "DROP INDEX " + q + "dispatcher_escalations_reason;\nDROP INDEX " + q + "dispatcher_decisions_kind;\nALTER TABLE " + q + "dispatcher_decisions DROP COLUMN kind;\nALTER TABLE " + q + "dispatcher_escalations DROP COLUMN kind, DROP COLUMN question, DROP COLUMN options, DROP COLUMN suggested, DROP COLUMN timeout_at, DROP COLUMN answer, DROP COLUMN answered_by, DROP COLUMN answered_at;\nDROP INDEX " + q + "dispatcher_cases_subject;\nALTER TABLE " + q + "dispatcher_cases DROP COLUMN attempt;\nCREATE UNIQUE INDEX dispatcher_cases_subject ON " + q + "dispatcher_cases(project_id,kind,subject_id,subject_revision);\n"
+}
+
 // budgetKindsDowngradeSQLite returns a linearBudgetKindsSchemaVersion
 // database to the shape before it: the hour's calls by kind.
 const budgetKindsDowngradeSQLite = "DROP TABLE linear_budget_kinds;\n"

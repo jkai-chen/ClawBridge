@@ -8,6 +8,8 @@
       "engine": "model",
       "explanation": "",
       "guardrail": "permitted",
+      "kind": "judgement",
+      "over_budget": false,
       "reason_code": "proposal_changed",
       "subject": {
         "id": "asg_cccccccccccccccccccccccccccccccc",
@@ -21,6 +23,8 @@
       "engine": "model",
       "explanation": "The session was just seen.",
       "guardrail": "permitted",
+      "kind": "judgement",
+      "over_budget": false,
       "reason_code": "uncertain",
       "subject": {
         "id": "asg_cccccccccccccccccccccccccccccccc",

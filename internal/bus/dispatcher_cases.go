@@ -33,8 +33,11 @@ func isDispatcher(actor map[string]any) bool {
 // proposals, oldest first, that have no final decision at their revision,
 // with the facts the bus holds. A wait or a superseded decision is not
 // final: the claim is decided again next tick, so a transient change (a
-// sleeping laptop, a policy edited mid-tick) never stalls it silently. With
-// the dispatcher off, none.
+// sleeping laptop, a policy edited mid-tick) never stalls it silently. Nor
+// is a decision from before the revision's latest re-judge, and the waits
+// the rules count start again from it (R5). With
+// the dispatcher off, none. In model mode each carries its issue's loop
+// budget: over_budget, and budget_left (-1 with no cap).
 func (s *Store) dispatcherCasesDue(ctx context.Context, tx *transaction, pid string) (any, error) {
 	d, meta, err := readDispatcher(ctx, tx, pid)
 	if err != nil {
@@ -44,7 +47,11 @@ func (s *Store) dispatcherCasesDue(ctx context.Context, tx *transaction, pid str
 	if err != nil {
 		return nil, err
 	}
-	out := map[string]any{"enabled": meta["enabled"], "policy_revision": meta["revision"], "domains": d.Domains, "cases": []any{}, "mode": meta["mode"], "model": "", "model_use": use}
+	settings, _, err := readModelSettings(ctx, tx, pid)
+	if err != nil {
+		return nil, err
+	}
+	out := map[string]any{"enabled": meta["enabled"], "policy_revision": meta["revision"], "domains": d.Domains, "cases": []any{}, "mode": meta["mode"], "model": "", "model_use": use, "judgement_budget": settings.judgementBudget()}
 	nowRaw, err := dbStamp(ctx, tx)
 	if err != nil {
 		return nil, err
@@ -78,18 +85,23 @@ func (s *Store) dispatcherCasesDue(ctx context.Context, tx *transaction, pid str
 	}
 	rows, err := query(ctx, tx, `SELECT a.id,a.revision,a.issue_uuid,a.issue_identifier,a.issue_project_id,a.issue_labels,a.proposed_at,s.id AS session_id,s.name AS session_name,s.owner_principal,s.status,s.last_seen,s.alive_until,s.alive_state,
 		(SELECT COUNT(*) FROM session_assignments h WHERE h.project_id=a.project_id AND h.state='confirmed' AND h.issue_uuid=a.issue_uuid AND h.issue_uuid<>'' AND h.session_id<>a.session_id) AS holders,
-		(SELECT COUNT(*) FROM dispatcher_decisions w WHERE w.project_id=a.project_id AND w.subject_id=a.id AND w.subject_revision=a.revision AND w.action='wait') AS waits,
-		(SELECT CASE WHEN c.closed_at IS NOT NULL THEN 'closed:'||c.outcome WHEN c.lease_key IS NOT NULL THEN 'leased' ELSE 'open' END FROM dispatcher_cases c WHERE c.project_id=a.project_id AND c.kind='decide' AND c.subject_id=a.id AND c.subject_revision=a.revision) AS model_case,
-		(SELECT c.result FROM dispatcher_cases c WHERE c.project_id=a.project_id AND c.kind='decide' AND c.subject_id=a.id AND c.subject_revision=a.revision) AS model_result
+		(SELECT COUNT(*) FROM dispatcher_decisions w WHERE w.project_id=a.project_id AND w.subject_id=a.id AND w.subject_revision=a.revision AND w.action='wait' AND w.created_at>`+rejudgedAtSQL("a.project_id", "a.id", "a.revision")+`) AS waits,
+		(SELECT CASE WHEN c.closed_at IS NOT NULL THEN 'closed:'||c.outcome WHEN c.lease_key IS NOT NULL THEN 'leased' ELSE 'open' END FROM dispatcher_cases c WHERE c.project_id=a.project_id AND c.kind='decide' AND c.subject_id=a.id AND c.subject_revision=a.revision AND c.attempt=`+rejudgeCountSQL("a.project_id", "a.id", "a.revision")+`) AS model_case,
+		(SELECT c.result FROM dispatcher_cases c WHERE c.project_id=a.project_id AND c.kind='decide' AND c.subject_id=a.id AND c.subject_revision=a.revision AND c.attempt=`+rejudgeCountSQL("a.project_id", "a.id", "a.revision")+`) AS model_result
 		FROM session_assignments a JOIN sessions s ON s.id=a.session_id AND s.project_id=a.project_id
 		WHERE a.project_id=? AND a.state='proposed' AND s.role<>'system'
-		AND NOT EXISTS (SELECT 1 FROM dispatcher_decisions f WHERE f.project_id=a.project_id AND f.subject_id=a.id AND f.subject_revision=a.revision AND f.action NOT IN ('wait','superseded'))
+		AND NOT `+finalDecisionSQL("a.project_id", "a.id", "a.revision")+`
 		ORDER BY a.proposed_at,a.id LIMIT ?`, pid, dispatcherCasesPerTick)
 	if err != nil {
 		return nil, err
 	}
 	now := at(nowRaw)
 	cases := []any{}
+	type budgetState struct {
+		over bool
+		left int
+	}
+	budgets := map[string]budgetState{}
 	for _, r := range rows {
 		presence, absent := "active", time.Duration(0)
 		if seen, e := time.Parse(timestampLayout, str(r, "last_seen")); e == nil && now.Sub(seen) > staleAfter {
@@ -116,10 +128,22 @@ func (s *Store) dispatcherCasesDue(ctx context.Context, tx *transaction, pid str
 			// cases carry their domain's stale_after_hours.
 			"liveness": liveness(r, now, defaultStaleAfterHour),
 			"holders":  asInt(r["holders"]), "waits": asInt(r["waits"]), "age_seconds": int(age / time.Second),
-			// The claim's model case at this revision: "" (none), open,
-			// leased, or closed:<why>.
+			// The claim's model case at this revision and its current
+			// attempt (R5): "" (none), open, leased, or closed:<why>.
 			"model_case": modelCaseState(str(r, "model_case"), str(r, "model_result")),
 		})
+		if use == "engine" {
+			issue := str(r, "issue_uuid")
+			b, seen := budgets[issue]
+			if !seen {
+				if b.over, b.left, err = overBudget(ctx, tx, pid, issue, nowRaw); err != nil {
+					return nil, err
+				}
+				budgets[issue] = b
+			}
+			c := cases[len(cases)-1].(map[string]any)
+			c["over_budget"], c["budget_left"] = b.over, b.left
+		}
 	}
 	out["cases"] = cases
 	return out, nil
@@ -135,6 +159,10 @@ func (s *Store) dispatcherRecord(ctx context.Context, tx *transaction, w, p, act
 	subject, revision := str(a, "subject_id"), str(a, "subject_revision")
 	action, proposal, reason := str(a, "action"), str(a, "proposal"), str(a, "reason_code")
 	engine := str(a, "engine")
+	kind := "rules"
+	if engine == "model" {
+		kind = "judgement"
+	}
 	if !dispatcherActions[action] || subject == "" || revision == "" || (engine != "rules" && engine != "model") || reason == "" || len(reason) > 96 {
 		return nil, invalid("dispatcher_decision_record needs a subject, its revision, an engine, a reason code and an action of confirm, decline, wait or escalate")
 	}
@@ -208,7 +236,23 @@ func (s *Store) dispatcherRecord(ctx context.Context, tx *transaction, w, p, act
 	if err != nil {
 		return nil, err
 	}
-	out := map[string]any{"subject_id": subject, "action": taken, "reason_code": reason}
+	out := map[string]any{}
+	// The rules deciding a claim past its issue's loop budget (R1): the
+	// skip and the person's notice are recorded once, on the bus's own
+	// count. A count no longer over (a person's re-judge, R5, landed since
+	// the due read) supersedes the decision, so the next tick gives the
+	// model its case instead.
+	if a["over_budget"] == true && engine == "rules" && len(live) == 1 && str(live[0], "state") == "proposed" && str(live[0], "revision") == revision {
+		over, err := s.loopBudgetStop(ctx, tx, w, pid, str(a, "domain"), live[0])
+		if err != nil {
+			return nil, err
+		}
+		out["over_budget"] = over
+		if !over && taken != "superseded" {
+			superseded("budget_reset")
+		}
+	}
+	out["subject_id"], out["action"], out["reason_code"] = subject, taken, reason
 	switch taken {
 	case "confirm", "decline":
 		op := Request{Operation: "assignment_confirm", Args: map[string]any{"target_session": str(live[0], "session_id"), "revision": revision}}
@@ -221,14 +265,14 @@ func (s *Store) dispatcherRecord(ctx context.Context, tx *transaction, w, p, act
 		}
 		out["result"] = result
 	case "escalate":
-		recipients, delivered, err := s.dispatcherEscalate(ctx, tx, w, pid, domains, str(a, "domain"), live[0], reason)
+		recipients, delivered, err := s.dispatcherEscalate(ctx, tx, w, pid, domains, str(a, "domain"), live[0], reason, proposal)
 		if err != nil {
 			return nil, err
 		}
 		out["recipients"], out["delivered"] = recipients, delivered
 	}
-	if _, err = tx.ExecContext(ctx, `INSERT INTO dispatcher_decisions(id,project_id,subject_type,subject_id,subject_revision,domain,facts_source,engine,proposal,reason_code,explanation,guardrail,action,policy_revision,created_at) VALUES(?,?,'proposal',?,?,?,?,?,?,?,?,?,?,?,?)`,
-		newID("dcs_"), pid, subject, revision, str(a, "domain"), str(a, "facts_source"), engine, proposal, reason, trimTo(str(a, "explanation"), 280), str(a, "guardrail"), taken, policyRevision, nowRaw); err != nil {
+	if _, err = tx.ExecContext(ctx, `INSERT INTO dispatcher_decisions(id,project_id,subject_type,subject_id,subject_revision,domain,facts_source,engine,proposal,reason_code,explanation,guardrail,action,policy_revision,created_at,kind) VALUES(?,?,'proposal',?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		newID("dcs_"), pid, subject, revision, str(a, "domain"), str(a, "facts_source"), engine, proposal, reason, trimTo(str(a, "explanation"), 280), str(a, "guardrail"), taken, policyRevision, nowRaw, kind); err != nil {
 		return nil, err
 	}
 	if taken != "wait" {
@@ -249,8 +293,12 @@ func trimTo(s string, n int) string {
 // dispatcherEscalate tells a person: the domain's coordinator session when
 // active, else another active session of the domain's owner, else the
 // project owner's and leads' active sessions; with none, the escalation is
-// stored undelivered for dispatcher escalations. It never grants.
-func (s *Store) dispatcherEscalate(ctx context.Context, tx *transaction, w map[string]any, pid string, domains DispatcherDomains, domainID string, proposal map[string]any, reason string) ([]string, bool, error) {
+// stored undelivered for dispatcher escalations. Each is also a decision of
+// kind escalation. It carries a structured payload (its kind, a fixed
+// question, the options, the option the engine's own action stands for in
+// engineAction, and a timeout); the message stays the fixed text. It never
+// grants.
+func (s *Store) dispatcherEscalate(ctx context.Context, tx *transaction, w map[string]any, pid string, domains DispatcherDomains, domainID string, proposal map[string]any, reason, engineAction string) ([]string, bool, error) {
 	var dom *DispatcherDomain
 	for i := range domains.Domains {
 		if domains.Domains[i].ID == domainID {
@@ -265,6 +313,11 @@ func (s *Store) dispatcherEscalate(ctx context.Context, tx *transaction, w map[s
 	if err != nil {
 		return nil, false, err
 	}
+	payload, err := buildEscalationPayload(proposal, reason, engineAction, dom, nowRaw)
+	if err != nil {
+		return nil, false, err
+	}
+	options, _ := json.Marshal(payload.Options)
 	body := escalationBody(proposal, reason, domainID)
 	names := []string{}
 	retention := asInt(w["retention_days"])
@@ -291,8 +344,12 @@ func (s *Store) dispatcherEscalate(ctx context.Context, tx *transaction, w map[s
 	if len(names) > 0 {
 		delivered = 1
 	}
-	if _, err = tx.ExecContext(ctx, `INSERT INTO dispatcher_escalations(id,project_id,subject_type,subject_id,subject_revision,domain,reason_code,recipients,state,delivered,created_at,updated_at) VALUES(?,?,'proposal',?,?,?,?,?,'open',?,?,?)`,
-		newID("esc_"), pid, str(proposal, "id"), str(proposal, "revision"), domainID, reason, string(recipients), delivered, nowRaw, nowRaw); err != nil {
+	if _, err = tx.ExecContext(ctx, `INSERT INTO dispatcher_escalations(id,project_id,subject_type,subject_id,subject_revision,domain,reason_code,recipients,state,delivered,created_at,updated_at,kind,question,options,suggested,timeout_at) VALUES(?,?,'proposal',?,?,?,?,?,'open',?,?,?,?,?,?,?,?)`,
+		newID("esc_"), pid, str(proposal, "id"), str(proposal, "revision"), domainID, reason, string(recipients), delivered, nowRaw, nowRaw,
+		payload.Kind, payload.Question, string(options), payload.Suggested, payload.TimeoutAt); err != nil {
+		return nil, false, err
+	}
+	if err = controlDecision(ctx, tx, pid, "escalation", "proposal", str(proposal, "id"), str(proposal, "revision"), domainID, reason, "", "escalate", nowRaw); err != nil {
 		return nil, false, err
 	}
 	return names, len(names) > 0, nil

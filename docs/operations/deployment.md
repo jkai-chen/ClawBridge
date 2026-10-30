@@ -1018,17 +1018,24 @@ starting if the exact directory is not a mountpoint. This prevents Postgres from
 silently creating a new database under the boot filesystem.
 
 ```sh
-sudo install -d -o root -g root -m 0755 /etc/systemd/system/docker.service.d
-sudo install -o root -g root -m 0644 \
-  /opt/clawbridge/repo/deploy/systemd/docker.service.d/10-clawbridge-postgres-mount.conf \
-  /etc/systemd/system/docker.service.d/10-clawbridge-postgres-mount.conf
-sudo systemctl daemon-reload
-sudo systemctl restart docker
+src=/opt/clawbridge/repo/deploy/systemd/docker.service.d/10-clawbridge-postgres-mount.conf
+dst=/etc/systemd/system/docker.service.d/10-clawbridge-postgres-mount.conf
+# Restarting Docker restarts every container: only when the guard is new or changed.
+if ! sudo cmp -s "$src" "$dst"; then
+  sudo install -d -o root -g root -m 0755 /etc/systemd/system/docker.service.d
+  sudo install -o root -g root -m 0644 "$src" "$dst"
+  sudo systemctl daemon-reload
+  sudo systemctl restart docker
+fi
 sudo systemctl is-active docker
 sudo docker compose --env-file /etc/clawbridge/clawbridge.env \
   --project-name "${PROJECT:?set PROJECT first}" \
   -f /opt/clawbridge/repo/deploy/compose.yaml up -d
 ```
+
+This block is for a first install. On a server that already runs, the guard is
+in place, so Docker isn't restarted; to start a new version there, follow
+[Draining before the swap](#draining-before-the-swap) instead of the last line.
 
 At this point Docker must start only while `/var/lib/clawbridge-postgres` is
 mounted. If it is absent after a reboot, attach or restore the disk, verify

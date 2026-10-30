@@ -176,8 +176,11 @@ own label of that name, plus its parent's when the parent team is also bound. Th
 - `doctor` (with `--linear-profile`) shows each bound team's two sets as `linear.labels`, and warns when a team has
   no `needs-agent`, or no `agent-working` to apply.
 
-When checking that installation with `doctor`, pass the same `--linear-profile`
-alongside its MCP agent/config/session selection so the expected routes agree.
+When checking that installation with `doctor` (its MCP agent/config/session
+selection), doctor takes the entry's own Linear profile and names it in the
+`mcp.entries` check; pass `--mcp-linear-profile ID` (or `--linear-profile ID`) to
+require that exact one. Before v0.3.13, doctor without a profile failed such an
+entry as a conflict.
 
 Optional native capabilities can switch off on their own when Linear changes a
 tool schema. With `--linear-profile`, `doctor` adds a `linear.capabilities` check

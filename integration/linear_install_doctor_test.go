@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"clawbridge/internal/doctor"
@@ -85,8 +86,10 @@ func TestL1InstallerDoctorLinearProfileExactRoute(t *testing.T) {
 						selection := l1MCPSelection(o)
 						selection.LinearProfile = ""
 						report := doctor.Run(context.Background(), doctor.Input{MCPConfigs: []doctor.MCPConfig{selection}}, nil)
-						if l1InstalledCheck(t, report, agent, "clawbridge").Status != doctor.Fail {
-							t.Fatal("doctor silently ignored installed opt-in profile")
+						// Without a profile of its own, doctor takes the
+						// entry's and says so: never silently.
+						if check := l1InstalledCheck(t, report, agent, "clawbridge"); check.Status != doctor.Pass || !strings.Contains(check.Message, "Linear profile "+profile) {
+							t.Fatal("doctor did not name the installed opt-in profile", check)
 						}
 					}
 					after, err := os.ReadFile(o.Config)
@@ -132,12 +135,16 @@ func TestL1CLIInstalledLinearProfileDoctorSelection(t *testing.T) {
 					t.Fatalf("doctor did not emit report: %v runErr=%v", err, runErr)
 				}
 				check := l1InstalledCheck(t, report, agent, "clawbridge")
+				// No profile selected: doctor takes the entry's own.
 				want := doctor.Fail
-				if selected == l1ProfileID {
+				if selected == l1ProfileID || selected == "" {
 					want = doctor.Pass
 				}
 				if check.Status != want {
 					t.Fatalf("CLI lost/misvalidated native profile: selected=%q check=%s want=%s", selected, check.Status, want)
+				}
+				if selected == "" && !strings.Contains(check.Message, "Linear profile "+l1ProfileID) {
+					t.Fatal("doctor did not name the installed opt-in profile", check.Message)
 				}
 				if selected == l1ProfileID && runErr != nil {
 					t.Fatalf("correct installed native route made local doctor fail: %v", runErr)

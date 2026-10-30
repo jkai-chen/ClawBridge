@@ -58,6 +58,12 @@
   outside the binding is refused before anything is sent, a move just before sending is caught by the issue's
   re-read, and any failed write verifies the whole binding again next time. A create also reads its team's workflow
   states and labels once instead of twice (Linear checks their IDs on save). Linear config scope: none.
+- **`doctor` accepts an MCP entry installed with `--linear-profile`.** `mcp install --linear-profile P` pins the profile
+  in the entry, but doctor without a Linear profile of its own expected none and failed the entry as a conflict. This
+  reverses that rule: doctor now takes the entry's own well-formed profile when it has none, and names it in the check;
+  `doctor --mcp-linear-profile P` (or `--linear-profile P`) checks for that exact one, and a different profile fails
+  with "Linear profile P, expected Q". The rest of the entry is still compared exactly. No schema change. Linear config
+  scope: none.
 
 ## Operations
 

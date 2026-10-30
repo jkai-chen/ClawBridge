@@ -262,7 +262,9 @@ clawbridge dispatcher enable --expected-revision N --confirm
 
 Use `--agent claude-code` for Claude Code (run it from the repository root: it
 writes `.mcp.json` in the current folder), a distinct `--session` per agent, and
-omit `--linear-profile` without a Linear connection. Add `--device` to
+omit `--linear-profile` without a Linear connection. Doctor's MCP check accepts
+the entry's own Linear profile; add `--mcp-linear-profile PROFILE_ID` to require
+that exact one. Add `--device` to
 `setup join` on a headless machine. See [usage](usage.md) for profiles and MCP
 details, and [Linear](linear.md) for boards.
 

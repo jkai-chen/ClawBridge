@@ -453,7 +453,10 @@ COMPOSE_PROJECT_NAME=clawbridge
 ```
 
 Use a random hexadecimal password so it can be interpolated safely into the
-Postgres URL; `openssl rand -hex 32` makes one. `CLAWBRIDGE_BOOTSTRAP_OWNER` is
+Postgres URL; `openssl rand -hex 32` makes one. Or `clawbridge cloud env init`,
+with your route to the server (`--ssh HOST`, `--vm` or `--instance`), adds it on
+the server and prints only its name; run it before the first `compose up`, since
+a new password doesn't match a database that already exists. `CLAWBRIDGE_BOOTSTRAP_OWNER` is
 the verified identity that will run `clawbridge setup --cloud` once and become
 the workspace owner: normally your own Google account's email, the one you sign
 in with. Install the environment file as

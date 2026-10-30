@@ -40,6 +40,7 @@ const cloudUsage = `clawbridge cloud check [infra|server|trust|version|workspace
 clawbridge cloud secret set KEY (--ssh HOST | --vm NAME --project P --zone Z |
                             --instance ID --region R [--profile P] [--account N]) [--value-stdin]
 ` + cloudBootstrapUsage + `
+` + cloudEnvUsage + `
 
 With --local the server runs on this machine (deploy/local-host.sh): the checks read its
 env file and containers here, infra is not applicable, the trust check (--local only)
@@ -102,6 +103,8 @@ func runCloud(ctx context.Context, args []string, stdout, stderr io.Writer) erro
 		return runCloudSecretSet(ctx, args[2:], stdout, stderr)
 	case args[0] == "bootstrap":
 		return runCloudBootstrap(ctx, args[1:], stdout, stderr)
+	case args[0] == "env":
+		return runCloudEnv(ctx, args[1:], stdout, stderr)
 	}
 	return errors.New("unknown cloud command; see clawbridge cloud --help")
 }

@@ -204,8 +204,21 @@ another process, and every call still checks the profile first. Read tools also
 reuse a verified board binding (its Linear teams and projects) for up to 60
 seconds, as long as the binding itself hasn't changed and no tool call failed in
 between; a read can therefore see a team or project change in Linear up to a
-minute late. Write tools always verify the binding against Linear. CLI commands
-connect and verify once per command as before.
+minute late. CLI commands connect and verify once per command as before.
+
+Issue writes (create, update, comment and relations, through the ClawBridge
+app on a hosted server or through the MCP server's own profile) verify the
+binding's teams against Linear at most once a minute: each listed team's
+`get_team` and its parent are reused for up to 60 seconds, for the same binding
+revision, Linear workspace and token. The binding's projects are never reused.
+Instead every write checks its own target in Linear: an update, comment or
+relation checks the team and project of the issue it has just read (both must
+be in the binding), and a create, or an update that moves an issue to another
+project, reads that project once (`get_project`) and needs it in the target
+team. A target outside the binding is refused and nothing is sent. The issue
+is read again just before sending, so a move in between is refused too. Any
+failed or refused write drops the reused teams, and the next write verifies
+the whole binding again.
 
 Verifying a project-set binding reads each allowed team once, then that team's
 project list once (`list_projects`, trashed projects included and marked, 50

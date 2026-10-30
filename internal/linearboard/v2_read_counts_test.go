@@ -11,7 +11,7 @@ import (
 
 // readCounts is what one board command costs on the fake: Linear reads by
 // kind, and capability computations (each re-derives every tool schema).
-type readCounts struct{ labelPages, teams, projects, issues, capabilities int }
+type readCounts struct{ labelPages, statuses, teams, projects, issues, capabilities int }
 
 type countingV2 struct {
 	*providerV2
@@ -21,6 +21,10 @@ type countingV2 struct {
 func (p countingV2) Labels(ctx context.Context, team string, o linearprovider.PageOptions) (linearprovider.Page[linearprovider.Label], error) {
 	p.n.labelPages++
 	return p.providerV2.Labels(ctx, team, o)
+}
+func (p countingV2) Statuses(ctx context.Context, team string) ([]linearprovider.Status, error) {
+	p.n.statuses++
+	return p.providerV2.Statuses(ctx, team)
 }
 func (p countingV2) GetTeam(ctx context.Context, id string) (linearprovider.Team, error) {
 	p.n.teams++
@@ -39,10 +43,15 @@ func (p countingV2) Capabilities(ctx context.Context) (linearprovider.Capabiliti
 	return p.providerV2.Capabilities(ctx)
 }
 
+// countStateID is a workflow state of the default team on the fake.
+const countStateID = "99999999-9999-4999-8999-999999999999"
+
 // The reads each write command costs on the fake (2 teams, 2 projects in
 // the binding). The numbers are the evidence for the efficiency work: one
 // label walk per phase for any number of labels, one binding verification per
-// command, and one capability computation per relation command.
+// command, and one capability computation per relation command. A create
+// reads its team's labels and states once, before the ledger write; an
+// update and a relation add still read their issues again inside it.
 func TestLinearV2WriteCommandReadCounts(t *testing.T) {
 	for name, c := range map[string]struct {
 		run  func(*Service, *providerV2, bus.Request) error
@@ -55,6 +64,23 @@ func TestLinearV2WriteCommandReadCounts(t *testing.T) {
 			_, e := s.WriteV2(context.Background(), scope, deltaV2("count-labels", []string{labelA, memberA}, nil))
 			return e
 		}, readCounts{labelPages: 2, teams: 2, projects: 2, issues: 2, capabilities: 1}},
+		"create with a state and labels": {func(s *Service, p *providerV2, scope bus.Request) error {
+			p.labels = []linearprovider.Label{{ID: labelA, TeamID: teamID, EligibilityKnown: true}}
+			p.statuses = []linearprovider.Status{{ID: countStateID, TeamID: teamID, Name: "Todo"}}
+			title := "count create"
+			in := WriteInputV2{WriteInput: WriteInput{Operation: "create", OperationID: "count-create", Title: &title, StateID: ptrV2(countStateID)}, Project: linearprovider.Field[*string]{Present: true, Value: ptrV2(projectA)}, Labels: linearprovider.Field[[]string]{Present: true, Value: []string{labelA}}}
+			_, e := s.WriteV2(context.Background(), scope, in)
+			return e
+		}, readCounts{labelPages: 1, statuses: 1, teams: 2, projects: 2, capabilities: 1}},
+		"update": {func(s *Service, p *providerV2, scope bus.Request) error {
+			_, e := s.WriteV2(context.Background(), scope, WriteInputV2{WriteInput: WriteInput{Operation: "update", OperationID: "count-update", IssueID: issueID, Title: ptrV2("count update")}})
+			return e
+		}, readCounts{teams: 2, projects: 2, issues: 2, capabilities: 1}},
+		"update with a state": {func(s *Service, p *providerV2, scope bus.Request) error {
+			p.statuses = []linearprovider.Status{{ID: countStateID, TeamID: teamID, Name: "Todo"}}
+			_, e := s.WriteV2(context.Background(), scope, WriteInputV2{WriteInput: WriteInput{Operation: "update", OperationID: "count-update-state", IssueID: issueID, StateID: ptrV2(countStateID)}})
+			return e
+		}, readCounts{statuses: 2, teams: 2, projects: 2, issues: 2, capabilities: 1}},
 		"relation add read back": {func(s *Service, p *providerV2, scope bus.Request) error {
 			p.unconfirmedEdges = true
 			p.issues[parentA] = linearprovider.IssueV2{Issue: linearprovider.Issue{ID: parentA, TeamID: otherTeamID, ProjectID: projectB}, ProjectKnown: true, RelationsKnown: true}

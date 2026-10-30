@@ -50,6 +50,10 @@ type AppWriter struct {
 
 	typesOnce sync.Once
 	types     *linearboard.StateTypeCache
+	// proofs keeps the team half of app writes' binding proofs, shared by
+	// requests (linearboard.WriteTeamProofs).
+	proofsOnce sync.Once
+	proofs     *linearboard.WriteTeamProofs
 	// attributionFailures counts the app writes whose intake attribution
 	// this process failed to record; linear_app_status reports it.
 	attributionFailures atomic.Int64
@@ -65,6 +69,12 @@ func (w *AppWriter) stateTypes() *linearboard.StateTypeCache {
 		w.types = linearboard.NewStateTypeCache(linearboard.GraphQLStateTypes(w.App.GraphQL), stateTypeTTL, w.Now)
 	})
 	return w.types
+}
+
+// writeProofs is the app writes' team proof cache.
+func (w *AppWriter) writeProofs() *linearboard.WriteTeamProofs {
+	w.proofsOnce.Do(func() { w.proofs = linearboard.NewWriteTeamProofs() })
+	return w.proofs
 }
 
 func appRefusal(message string) error { return bus.PublicError("invalid", message) }
@@ -143,8 +153,10 @@ func (w *AppWriter) serviceWith(ctx context.Context, identity bus.Identity, leas
 			}
 			return w.App.Provider(ctx, readonly)
 		},
-		IssueState: linearboard.GraphQLIssueState(w.App.GraphQL),
-		StateType:  w.stateTypes().Type,
+		IssueState:    linearboard.GraphQLIssueState(w.App.GraphQL),
+		StateType:     w.stateTypes().Type,
+		WriteProofs:   w.writeProofs(),
+		WriteIdentity: w.App.TokenKey,
 	}), id, nil
 }
 

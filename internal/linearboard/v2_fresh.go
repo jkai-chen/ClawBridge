@@ -13,9 +13,13 @@ import (
 // not a provider CAS: a visible intervening scope/eligibility change is refused.
 // refreshWriteProofV2 re-reads, inside the operation lock, every Linear fact
 // the write depends on: the issue, its labels, the assignee, the parent and
-// the state. It reuses the same command's binding verification v (team and
-// project structure, read moments earlier at preflight); the ClawBridge
-// binding revision itself is re-checked around this call by unchangedV2.
+// the state (a create's team lists excepted, see below). It reuses the same
+// command's binding verification v (team and project structure, read
+// moments earlier at preflight, or a kept team proof with the pair of the
+// target checked at preflight); the ClawBridge binding revision itself is
+// re-checked around this call by unchangedV2. The re-read issue must still
+// be in the team and project the preflight checked, so a move between the
+// two reads stops the write.
 func (s *Service) refreshWriteProofV2(ctx context.Context, p Provider, p2 ProviderV2, b bus.TaskboardBindingV2, v verifiedV2, in WriteInputV2, team, project string, original linearprovider.IssueV2, legacy bool, plan labelPlanV2) error {
 	var e error
 	if in.Operation != "create" {
@@ -85,10 +89,17 @@ func (s *Service) refreshWriteProofV2(ctx context.Context, p Provider, p2 Provid
 	if e = writeScopeV2(in)(linearprovider.IssueV2{Issue: linearprovider.Issue{ID: "00000000-0000-0000-0000-000000000000", TeamID: team, ProjectID: project}, ProjectKnown: true}, b, v); e != nil {
 		return e
 	}
+	// A create's team lists (its labels and workflow states) were read
+	// moments ago, before the ledger write, for the same team the create
+	// names, and are not read again here. Linear validates state and label
+	// IDs on save, so a list gone stale meanwhile fails the write and can't
+	// leak scope. Every other operation's target team comes from the issue
+	// re-read above, so its lists are read again.
+	reread := in.Operation != "create"
 	for i, labels := range [][]string{in.Labels.Value, in.AddLabels} {
 		// A marker's add was proven eligible by name in this held
 		// operation moments ago (markerLabel).
-		if len(labels) == 0 || i == 1 && in.marker {
+		if !reread || len(labels) == 0 || i == 1 && in.marker {
 			continue
 		}
 		found, e := findTeamLabelsV2(ctx, p2, labelTeamsV2(v, b, team), labels)
@@ -115,7 +126,7 @@ func (s *Service) refreshWriteProofV2(ctx context.Context, p Provider, p2 Provid
 			return e
 		}
 	}
-	if in.StateID != nil {
+	if in.StateID != nil && reread {
 		states, e := p.Statuses(ctx, team)
 		if e != nil {
 			return e
@@ -165,6 +176,10 @@ func relationEvidenceV2(ctx context.Context, p ProviderV2, b bus.TaskboardBindin
 	if from.ID != in.FromID {
 		return nil, false, errors.New("relation source identity changed")
 	}
+	// Both ends are the relation's targets, checked on every read: on a
+	// kept team proof, each end's own team and project must be the
+	// binding's (admitIssueV2).
+	v = admitIssueV2(v, b, from)
 	if e = checkIssueV2(from, b, v); e != nil {
 		return nil, false, e
 	}
@@ -175,6 +190,7 @@ func relationEvidenceV2(ctx context.Context, p ProviderV2, b bus.TaskboardBindin
 	if to.ID != in.ToID {
 		return nil, false, errors.New("relation target identity changed")
 	}
+	v = admitIssueV2(v, b, to)
 	if e = checkIssueV2(to, b, v); e != nil {
 		return nil, false, e
 	}

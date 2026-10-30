@@ -15,9 +15,18 @@ import (
 const BindingProofTTL = 60 * time.Second
 
 // bindingProofCache holds the last verified binding for read commands only.
-// Writes and links never consult it and always verify against Linear. An entry
-// is keyed by the profile and the full binding digest, so any binding change
-// (revision, mode, teams, projects) misses, and any failed command drops it.
+// Links never consult it and always verify against Linear. Issue writes never
+// consult it either; they keep their own, narrower proof (write_proof.go):
+// the team list may be reused for 60 s, and the write's target is checked
+// every write. A write's target is its issue's team and project, read from
+// Linear in the write, or a create's (or a move's) project, read with one
+// get_project; a target outside the bound teams and projects is refused
+// before anything is sent. That keeps the write in scope although the
+// project half is not re-proven: a project moved to an unbound team inside
+// the 60 s shows in the target read, and the in-lock re-read of the issue
+// catches a move between that check and the save. An entry here is keyed by
+// the profile and the full binding digest, so any binding change (revision,
+// mode, teams, projects) misses, and any failed command drops it.
 type bindingProofCache struct {
 	ttl time.Duration
 	mu  sync.Mutex

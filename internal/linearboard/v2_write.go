@@ -295,7 +295,7 @@ func (s *Service) WriteV2(ctx context.Context, scope bus.Request, in WriteInputV
 }
 
 // writeV2Personal is WriteV2 through the person's own Linear profile.
-func (s *Service) writeV2Personal(ctx context.Context, scope bus.Request, in WriteInputV2) (any, error) {
+func (s *Service) writeV2Personal(ctx context.Context, scope bus.Request, in WriteInputV2) (_ any, err error) {
 	if in.Labels.Present {
 		in.Labels.Value, _ = sortedUniqueIDs(in.Labels.Value, 100)
 	}
@@ -382,10 +382,17 @@ func (s *Service) writeV2Personal(ctx context.Context, scope bus.Request, in Wri
 	if profile.Access != linearconn.Write {
 		return nil, errors.New("personal Linear profile is read-only; reconnect explicitly with write access")
 	}
-	v, e := s.proveBinding(ctx, p, b)
+	v, drop, e := s.proveWriteBinding(ctx, p, b, profile)
 	if e != nil {
 		return nil, e
 	}
+	// Any failed write, a refused target among them, drops a kept team
+	// proof: the next write on the binding verifies it in full.
+	defer func() {
+		if err != nil {
+			drop()
+		}
+	}()
 	var p2 ProviderV2
 	var caps linearprovider.Capabilities
 	if !legacy {
@@ -418,6 +425,9 @@ func (s *Service) writeV2Personal(ctx context.Context, scope bus.Request, in Wri
 		if current.ID != in.IssueID {
 			return nil, errors.New("issue identity changed")
 		}
+		// The issue is this write's target: on a kept team proof, its own
+		// team and project must be the binding's (admitIssueV2).
+		v = admitIssueV2(v, b, current)
 		if e = writeScopeV2(in)(current, b, v); e != nil {
 			return nil, e
 		}
@@ -470,6 +480,11 @@ func (s *Service) writeV2Personal(ctx context.Context, scope bus.Request, in Wri
 	effective := linearprovider.IssueV2{Issue: linearprovider.Issue{ID: in.IssueID, TeamID: team, ProjectID: project}, ProjectKnown: true}
 	if in.Operation == "create" {
 		effective.ID = "00000000-0000-0000-0000-000000000000"
+	}
+	// A destination project no issue read showed (a create's, or an
+	// update's move) is read once on a kept team proof (admitProjectV2).
+	if v, e = admitProjectV2(ctx, p, v, b, team, project); e != nil {
+		return nil, e
 	}
 	if e = writeScopeV2(in)(effective, b, v); e != nil {
 		return nil, e
@@ -889,6 +904,7 @@ func verifyParentV2(ctx context.Context, p ProviderV2, b bus.TaskboardBindingV2,
 		if seen[issue.ID] || (issue.Identifier != "" && seen[issue.Identifier]) {
 			return first, errors.New("parent hierarchy contains a self-reference or cycle")
 		}
+		v = admitIssueV2(v, b, issue)
 		seen[parent], seen[issue.ID] = true, true
 		if issue.Identifier != "" {
 			seen[issue.Identifier] = true

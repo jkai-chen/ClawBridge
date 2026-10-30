@@ -47,6 +47,9 @@ elif args[:2]==['release','create']:
  assert '\n\nThe full release notes: https://github.com/jkai-chen/ClawBridge/blob/v0.1.0/RELEASE-NOTES.md\n\n## Server image\n' in notes,notes
  assert '`'+os.environ['FIXTURE_IMAGE']+'`' in notes and 'gh attestation verify oci://'+os.environ['FIXTURE_IMAGE'] in notes,notes
  (p/'draft').write_text('draft')
+ # The release as gh release view reports it: a draft of this tag, targeting
+ # the default branch by name.
+ (p/'release.json').write_text(json.dumps({'isDraft':True,'tagName':args[2],'targetCommitish':'main'}))
 elif args[:2]==['release','upload']:
  assert (p/'draft').exists() and '--clobber' not in args
  remote=p/'remote';remote.mkdir()
@@ -57,12 +60,28 @@ elif args[:2]==['release','download']:
  for src in (p/'remote').iterdir():shutil.copyfile(src,out/src.name)
  if mode=='download-mismatch':(out/'install.sh').write_text('corrupt')
  if mode=='extra-asset':(out/'extra').write_text('unexpected')
-elif args[:2]==['release','view']:print('true')
+elif args[:2]==['release','view']:
+ # A missing release fails, as gh does; tests edit release.json to stand
+ # for a published release or another tag's.
+ if not (p/'release.json').exists():sys.exit('release not found')
+ release=json.loads((p/'release.json').read_text());query=args[args.index('--jq')+1]
+ if query=='.isDraft':print(json.dumps(release['isDraft']))
+ else:
+  assert query=='"\\(.isDraft) \\(.tagName) \\(.targetCommitish)"',query
+  print(json.dumps(release['isDraft']),release['tagName'],release['targetCommitish'])
+elif args[:2]==['attestation','verify']:
+ # Stands in for Sigstore: a bundle verifies only when it carries the
+ # fixture's signature, which stands for release.yml's at this tag.
+ bundle=json.loads(pathlib.Path(args[args.index('--bundle')+1]).read_text())
+ if mode=='attest-failure' or bundle['dsseEnvelope']['signatures']!=[{'sig':'c3ludGhldGlj'}]:sys.exit('verification failed')
 elif args[:2]==['release','edit']:
  assert '--draft=false' in args
  latest=[a for a in args if a.startswith('--latest')]
  assert latest in (['--latest=true'],['--latest=false']),latest
  (p/'published').write_text(latest[0].split('=')[1])
+ if '--notes-file' in args:(p/'published-notes').write_text(pathlib.Path(args[args.index('--notes-file')+1]).read_text())
+ release=json.loads((p/'release.json').read_text());release['isDraft']=False
+ (p/'release.json').write_text(json.dumps(release))
 else:raise RuntimeError(args)
 '''
 
@@ -117,7 +136,7 @@ class PublishTests(unittest.TestCase):
         """Forget an earlier publish in this test: the fake's remote, draft,
         release and calls."""
         shutil.rmtree(self.root / "remote", ignore_errors=True)
-        for f in ["draft", "published", "calls"]:
+        for f in ["draft", "published", "published-notes", "calls", "release.json"]:
             (self.root / f).unlink(missing_ok=True)
 
     def retag(self, notes):
@@ -291,6 +310,287 @@ class PublishTests(unittest.TestCase):
         self.env["GITHUB_EVENT_NAME"] = "push"
         (self.assets / "unexpected").write_text("extra")
         self.assertEqual(self.publish(), [])
+
+    # The hold (RELEASE_HOLD_DRAFT) and publish-draft, for v1.0's soak: the
+    # tag-push run stops at the verified draft, and a later dispatch publishes
+    # that same draft.
+
+    def hold(self):
+        """A tag-push run with the hold: the fake's remote then holds the
+        draft as the release workflow left it, and its calls are forgotten."""
+        self.env["RELEASE_HOLD_DRAFT"] = "true"
+        self.publish(ok=True)
+        del self.env["RELEASE_HOLD_DRAFT"]
+        (self.root / "calls").unlink()
+
+    def publish_draft(self, ok=False, version="v0.1.0", **env):
+        """The publish-draft workflow's run: a dispatch from the tag, with no
+        assets, digest or bundle of its own."""
+        run_env = dict(self.env, GITHUB_EVENT_NAME="workflow_dispatch", PUBLISH_MODE="ok")
+        for name in ["IMAGE_DIGEST", "PROVENANCE_BUNDLE", "FIXTURE_IMAGE"]:
+            run_env.pop(name, None)
+        run_env.update(env)
+        result = subprocess.run(["bash", str(ROOT / "scripts/publish-release.sh"), "--publish-draft", version], cwd=self.repo, env=run_env, capture_output=True, text=True)
+        self.assertEqual(result.returncode == 0, ok, result.stdout + result.stderr)
+        calls = [json.loads(line) for line in (self.root / "calls").read_text().splitlines()] if (self.root / "calls").exists() else []
+        return calls, result
+
+    def release_state(self, **change):
+        state = json.loads((self.root / "release.json").read_text())
+        state.update(change)
+        (self.root / "release.json").write_text(json.dumps(state))
+
+    def test_the_hold_stops_at_the_verified_draft(self):
+        self.write_bundle()
+        self.env["RELEASE_HOLD_DRAFT"] = "true"
+        result = subprocess.run(["bash", str(ROOT / "scripts/publish-release.sh"), "v0.1.0", str(self.assets)], cwd=self.repo, env=dict(self.env, PUBLISH_MODE="ok"), capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(result.stdout.strip().splitlines()[-1], "held as draft: v0.1.0; image " + IMAGE + "; publish with the publish-draft workflow")
+        calls = [json.loads(line) for line in (self.root / "calls").read_text().splitlines()]
+        self.assertEqual([c[:2] for c in calls[1:]], [["release", "create"], ["release", "upload"], ["release", "download"], ["release", "view"]])
+        self.assertEqual(self.remote(), PUBLISHED)
+        self.assertTrue((self.root / "draft").exists())
+        self.assertFalse((self.root / "published").exists())
+        self.assertTrue(json.loads((self.root / "release.json").read_text())["isDraft"])
+
+    def test_no_hold_publishes_as_before(self):
+        for value in ["false", ""]:
+            with self.subTest(value=value):
+                self.reset()
+                self.env["RELEASE_HOLD_DRAFT"] = value
+                calls = self.publish(ok=True)
+                self.assertEqual([c[:2] for c in calls][-1], ["release", "edit"])
+                self.assertEqual((self.root / "published").read_text(), "true")
+
+    def test_a_bad_hold_value_never_contacts_gh(self):
+        for value in ["TRUE", "True", "yes", "1", " true", "true\n", "flase"]:
+            with self.subTest(value=value):
+                self.env["RELEASE_HOLD_DRAFT"] = value
+                self.assertEqual(self.publish(), [])
+                calls, result = self.publish_draft()
+                self.assertEqual(calls, [])
+                self.assertIn("RELEASE_HOLD_DRAFT must be true, false or empty", result.stderr)
+
+    def test_publish_draft_publishes_the_held_draft(self):
+        self.hold()
+        held = {name: (self.root / "remote" / name).read_bytes() for name in self.remote()}
+        calls, result = self.publish_draft(ok=True)
+        self.assertEqual([c[:2] for c in calls], [["release", "view"], ["release", "download"], ["attestation", "verify"], ["api", "--paginate"], ["release", "edit"]])
+        self.assertEqual((self.root / "published").read_text(), "true")
+        self.assertIn("published v0.1.0; image " + IMAGE, result.stdout)
+        # The body published is the one the tag-push run wrote, set again.
+        self.assertEqual((self.root / "published-notes").read_text(), (self.root / "notes").read_text())
+        # The same bytes: nothing was created, uploaded or replaced.
+        self.assertEqual({name: (self.root / "remote" / name).read_bytes() for name in self.remote()}, held)
+
+    def test_publish_draft_verifies_the_provenance_signature(self):
+        self.hold()
+        calls, _ = self.publish_draft(ok=True)
+        commit = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=self.repo, text=True).strip()
+        verify = [c for c in calls if c[:2] == ["attestation", "verify"]]
+        self.assertEqual(len(verify), 1)
+        args = verify[0]
+        self.assertEqual(Path(args[2]).name, "SHA256SUMS")
+        self.assertEqual(Path(args[args.index("--bundle") + 1]).name, "PROVENANCE.sigstore.json")
+        self.assertEqual(Path(args[2]).parent, Path(args[args.index("--bundle") + 1]).parent)
+        self.assertEqual(args[3:], ["--bundle", args[4], "--repo", "jkai-chen/ClawBridge", "--signer-workflow", "jkai-chen/ClawBridge/.github/workflows/release.yml", "--source-ref", "refs/tags/v0.1.0", "--source-digest", commit, "--predicate-type", "https://slsa.dev/provenance/v1", "--deny-self-hosted-runners"])
+
+    def test_publish_draft_refuses_a_bundle_that_does_not_verify(self):
+        # A forged bundle: the subjects match a swapped binary, SHA256SUMS is
+        # redone, but the signature is not release.yml's.
+        self.hold()
+        (self.root / "remote" / BINARIES[0]).write_text("swapped binary")
+        self.resign_remote()
+        bundle = json.loads((self.root / "remote" / "PROVENANCE.sigstore.json").read_text())
+        bundle["dsseEnvelope"]["signatures"] = [{"sig": "Zm9yZ2Vk"}]
+        (self.root / "remote" / "PROVENANCE.sigstore.json").write_text(json.dumps(bundle))
+        calls, result = self.publish_draft()
+        self.assertEqual([c[:2] for c in calls], [["release", "view"], ["release", "download"], ["attestation", "verify"]])
+        self.assertIn("provenance does not verify", result.stderr)
+        self.assertFalse((self.root / "published").exists())
+        # A failing verification of an untouched draft refuses as well.
+        self.reset()
+        self.hold()
+        calls, _ = self.publish_draft(PUBLISH_MODE="attest-failure")
+        self.assertNotIn(["release", "edit"], [c[:2] for c in calls])
+        self.assertFalse((self.root / "published").exists())
+
+    def test_only_publish_draft_sets_the_body_on_publication(self):
+        calls = self.publish(ok=True)
+        self.assertNotIn("--notes-file", [c for c in calls if c[:2] == ["release", "edit"]][0])
+        self.assertFalse((self.root / "published-notes").exists())
+        self.reset()
+        self.retag("# Unreleased\n\n- the held release\n\n# ClawBridge v0.0.1\n")
+        self.hold()
+        self.publish_draft(ok=True)
+        notes = (self.root / "published-notes").read_text()
+        self.assertEqual(notes, release_body.release_body("# Unreleased\n\n- the held release\n\n# ClawBridge v0.0.1\n", "v0.1.0", IMAGE))
+
+    def test_publish_draft_decides_latest_like_a_tag_push(self):
+        self.hold()
+        self.env["PUBLISH_RELEASES"] = json.dumps([{"tag_name": "v0.10.0", "draft": False, "prerelease": False}])
+        self.publish_draft(ok=True)
+        self.assertEqual((self.root / "published").read_text(), "false")
+
+    def test_publish_draft_refuses_anything_but_a_draft_of_the_tag(self):
+        cases = {
+            "published": dict(isDraft=False),
+            "another tag": dict(tagName="v0.1.1"),
+            "another commit": dict(targetCommitish="0" * 40),
+        }
+        for name, change in cases.items():
+            with self.subTest(name):
+                self.reset()
+                self.hold()
+                self.release_state(**change)
+                calls, _ = self.publish_draft()
+                self.assertEqual([c[:2] for c in calls], [["release", "view"]])
+                self.assertFalse((self.root / "published").exists())
+        with self.subTest("no release"):
+            self.reset()
+            calls, result = self.publish_draft()
+            self.assertEqual([c[:2] for c in calls], [["release", "view"]])
+            self.assertIn("no release v0.1.0 to publish", result.stderr)
+
+    def test_publish_draft_accepts_a_draft_targeting_the_tagged_commit(self):
+        self.hold()
+        commit = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=self.repo, text=True).strip()
+        self.release_state(targetCommitish=commit)
+        self.publish_draft(ok=True)
+
+    def test_publish_draft_once_published_refuses_again(self):
+        self.hold()
+        self.publish_draft(ok=True)
+        (self.root / "calls").unlink()
+        calls, result = self.publish_draft()
+        self.assertEqual([c[:2] for c in calls], [["release", "view"]])
+        self.assertIn("is not a draft", result.stderr)
+
+    def test_publish_draft_validates_the_remote_assets(self):
+        cases = {
+            "tampered binary": lambda r: (r / BINARIES[2]).write_text("tampered"),
+            "missing provenance": lambda r: (r / "PROVENANCE.sigstore.json").unlink(),
+            "missing asset": lambda r: (r / "install.ps1").unlink(),
+            "extra asset": lambda r: (r / "extra").write_text("unexpected"),
+            "unexpected manual marker": lambda r: (r / "MANUAL-UPDATE-REQUIRED").write_text("v0.1.0 needs a manual update\n"),
+        }
+        for name, change in cases.items():
+            with self.subTest(name):
+                self.reset()
+                self.hold()
+                change(self.root / "remote")
+                calls, _ = self.publish_draft()
+                self.assertEqual([c[:2] for c in calls], [["release", "view"], ["release", "download"]])
+                self.assertFalse((self.root / "published").exists())
+
+    def resign_remote(self):
+        """Make the fake's remote self-consistent again after an edit:
+        SHA256SUMS and the bundle cover its files as they are now, so only the
+        check under test can refuse it."""
+        remote = self.root / "remote"
+        sums = "".join(hashlib.sha256(p.read_bytes()).hexdigest() + "  " + p.name + "\n" for p in sorted(remote.iterdir()) if p.name not in {"SHA256SUMS", "PROVENANCE.sigstore.json", "MANUAL-UPDATE-REQUIRED"})
+        (remote / "SHA256SUMS").write_text(sums)
+        subjects = {p.name: hashlib.sha256(p.read_bytes()).hexdigest() for p in remote.iterdir() if p.name not in {"PROVENANCE.sigstore.json", "MANUAL-UPDATE-REQUIRED"}}
+        bundle = json.loads((remote / "PROVENANCE.sigstore.json").read_text())
+        statement = json.loads(base64.b64decode(bundle["dsseEnvelope"]["payload"]))
+        statement["subject"] = [{"name": n, "digest": {"sha256": d}} for n, d in sorted(subjects.items())]
+        bundle["dsseEnvelope"]["payload"] = base64.b64encode(json.dumps(statement).encode()).decode()
+        (remote / "PROVENANCE.sigstore.json").write_text(json.dumps(bundle))
+
+    def test_publish_draft_requires_a_strict_image_digest(self):
+        # Each draft is otherwise consistent, so the format check alone refuses.
+        for text in ["\n", IMAGE.upper() + "\n", IMAGE.replace("jkai-chen", "other") + "\n", IMAGE[:-2] + "\n", IMAGE + "0\n", "docker.io/jkai-chen/clawbridge@" + DIGEST + "\n", " " + IMAGE + "\n", IMAGE.replace("sha256:", "sha512:") + "\n"]:
+            with self.subTest(text=text):
+                self.reset()
+                self.hold()
+                (self.root / "remote" / "IMAGE-DIGEST.txt").write_text(text)
+                self.resign_remote()
+                calls, result = self.publish_draft()
+                self.assertEqual([c[:2] for c in calls], [["release", "view"], ["release", "download"]])
+                self.assertIn("does not name a ClawBridge image digest", result.stderr)
+                self.assertFalse((self.root / "published").exists())
+        # A trailing byte after the line is refused by the exact-text check.
+        for text in [IMAGE, IMAGE + "\n\n"]:
+            with self.subTest(text=text):
+                self.reset()
+                self.hold()
+                (self.root / "remote" / "IMAGE-DIGEST.txt").write_text(text)
+                self.resign_remote()
+                calls, _ = self.publish_draft()
+                self.assertNotIn(["release", "edit"], [c[:2] for c in calls])
+        with self.subTest("missing"):
+            self.reset()
+            self.hold()
+            (self.root / "remote" / "IMAGE-DIGEST.txt").unlink()
+            calls, result = self.publish_draft()
+            self.assertIn("no IMAGE-DIGEST.txt", result.stderr)
+            self.assertNotIn(["release", "edit"], [c[:2] for c in calls])
+        # The control: the same resigning of an untouched draft publishes.
+        self.reset()
+        self.hold()
+        self.resign_remote()
+        self.publish_draft(ok=True)
+
+    def test_publish_draft_checks_the_image_the_draft_names(self):
+        # A consistent draft (SHA256SUMS and bundle redone) for another image
+        # still publishes only that image: the body names the draft's digest,
+        # never one from this run. The message reports it.
+        self.env["IMAGE_DIGEST"] = "sha256:" + "cd" * 32
+        self.env["FIXTURE_IMAGE"] = "ghcr.io/jkai-chen/clawbridge@sha256:" + "cd" * 32
+        (self.assets / "IMAGE-DIGEST.txt").write_text(self.env["FIXTURE_IMAGE"] + "\n")
+        (self.assets / "SHA256SUMS").write_text("".join(hashlib.sha256(p.read_bytes()).hexdigest() + "  " + p.name + "\n" for p in sorted(self.assets.iterdir()) if p.name != "SHA256SUMS"))
+        self.hold()
+        _, result = self.publish_draft(ok=True)
+        self.assertIn("image " + self.env["FIXTURE_IMAGE"], result.stdout)
+
+    def test_the_manual_marker_is_required_in_the_draft_iff_the_notes_carry_it(self):
+        self.retag("# Unreleased\n\n**Manual update required.** Google sign-in is gone; sign in again with GitHub.\n\n- a bullet\n\n# ClawBridge v0.0.1\n")
+        self.hold()
+        self.assertIn("MANUAL-UPDATE-REQUIRED", self.remote())
+        self.publish_draft(ok=True)
+        for name, change in {
+            "missing": lambda m: m.unlink(),
+            "changed": lambda m: m.write_text("v0.1.0 needs a manual update (clawbridge self-update); see its release notes.\nsomething else\n"),
+        }.items():
+            with self.subTest(name):
+                self.reset()
+                self.hold()
+                change(self.root / "remote" / "MANUAL-UPDATE-REQUIRED")
+                calls, _ = self.publish_draft()
+                self.assertNotIn(["release", "edit"], [c[:2] for c in calls])
+                self.assertFalse((self.root / "published").exists())
+
+    def test_publish_draft_outside_its_dispatch_never_contacts_gh(self):
+        self.hold()
+        # At the tag, so only the context refuses each of these.
+        cases = {
+            "tag push": dict(GITHUB_EVENT_NAME="push"),
+            "a schedule": dict(GITHUB_EVENT_NAME="schedule"),
+            "dispatched from main": dict(GITHUB_REF="refs/heads/main"),
+            "another repository": dict(GITHUB_REPOSITORY="someone/ClawBridge"),
+            "not in Actions": dict(GITHUB_ACTIONS="false"),
+        }
+        for name, env in cases.items():
+            with self.subTest(name):
+                calls, result = self.publish_draft(**env)
+                self.assertEqual(calls, [])
+                self.assertIn("dispatch-from-tag CI context", result.stderr)
+        with self.subTest("HEAD past the tag"):
+            subprocess.run(["git", "commit", "-q", "--allow-empty", "-m", "after the tag"], cwd=self.repo, env=self.env, check=True, capture_output=True)
+            calls, result = self.publish_draft()
+            self.assertEqual(calls, [])
+            self.assertIn("not the tagged commit", result.stderr)
+        subprocess.run(["git", "checkout", "-q", "v0.1.0"], cwd=self.repo, env=self.env, check=True, capture_output=True)
+        for version in ["v0.1", "0.1.0", "v0.1.0-rc1", "v01.1.0", "v0.1.0\n"]:
+            with self.subTest(version=version):
+                calls, _ = self.publish_draft(version=version, GITHUB_REF="refs/tags/" + version)
+                self.assertEqual(calls, [])
+        with self.subTest("missing argument"):
+            result = subprocess.run(["bash", str(ROOT / "scripts/publish-release.sh"), "--publish-draft"], cwd=self.repo, env=dict(self.env, GITHUB_EVENT_NAME="workflow_dispatch"), capture_output=True, text=True)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertFalse((self.root / "calls").exists())
+        # Back at the tag, the same dispatch publishes.
+        self.publish_draft(ok=True)
 
 
 class ReleaseBodyTests(unittest.TestCase):

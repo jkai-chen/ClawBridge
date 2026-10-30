@@ -93,6 +93,40 @@ root recovery, never a partial published release. No arbitrary workflow-dispatch
 ref can publish. Avoid long-lived credentials or third-party release actions;
 GitHub's job token and gh CLI are sufficient. Use short artifact retention.
 
+The release workflows:
+
+- `.github/workflows/release.yml`, on a `v*.*.*` tag push: checks, build, then the
+  publish job (image, attestations, `scripts/publish-release.sh VERSION DIR`).
+- `.github/workflows/publish-draft.yml`, dispatched by hand with input `version`:
+  publishes a draft that release.yml held, with no rebuild and no upload. It runs
+  under the same `release` environment, checks out the tag, requires its commit on
+  `main`, and runs `scripts/publish-release.sh --publish-draft VERSION`. That
+  refuses anything but a dispatch from the tag itself (`--ref VERSION`) at the
+  tagged commit, then anything but a draft of exactly that tag, then validates the
+  draft's own assets as the tag-push run did: the asset set, SHA256SUMS,
+  SOURCE-COMMIT.txt, the bundle's subjects, an `IMAGE-DIGEST.txt` of exactly
+  `ghcr.io/jkai-chen/clawbridge@sha256:<64 hex>`, and `MANUAL-UPDATE-REQUIRED`
+  present (and as the tagged notes make it) exactly when those notes carry the
+  marker. Then the bundle's signature: `gh attestation verify SHA256SUMS --bundle
+  PROVENANCE.sigstore.json` must show release.yml's signature for this tag
+  (`--signer-workflow`, `--source-ref refs/tags/VERSION`), at the tagged commit
+  (`--source-digest`), SLSA v1 provenance, on a GitHub-hosted runner
+  (`--deny-self-hosted-runners`). SHA256SUMS is one of the attested subjects and
+  covers every other asset, so a draft edited by anyone with contents:write, even
+  with a consistent SHA256SUMS and a forged bundle, is refused. Only then does it
+  decide Latest and publish, as a tag push does, setting the body again from the
+  tagged notes and the draft's image as the tag-push run wrote it, so an edited
+  draft body is not published. A dispatch can publish only a draft that a
+  tag-push run made; it never builds or uploads.
+
+The repository variable `RELEASE_HOLD_DRAFT` (Settings → Secrets and variables →
+Actions → Variables, or `gh variable set`) is passed to the publish step of
+release.yml. `true` ends the run at the verified draft with `held as draft:
+<tag>; image <image>; publish with the publish-draft workflow`; unset, empty or
+`false` publishes in the same run, as before. Any other value fails the run before
+anything is created. The image is pushed and attested either way; a draft is not
+`releases/latest`, so installers and `self-update` do not see a held release.
+
 Before anything builds, the release workflow requires the tagged commit to be an
 ancestor of `main` (`git merge-base --is-ancestor` after fetching `main`), and
 the publish job checks it again just before publishing. A tag on a commit that
@@ -273,6 +307,45 @@ Two checks, each a separate PR when it changes anything, merged before the tag:
   the providers' current list prices for the regions and sizes they name. A row that moved by more than about 10%, or
   a size the provider retired, is updated in all of them so they agree. The PR says which prices were checked and
   on what date; a table nobody could check says so in its PR rather than changing silently.
+
+## Releasing v1.0 (hold, soak, publish)
+
+v1.0.0 is tagged once, held as a draft, soaked on its own image, and published
+after the gate review. Nothing is rebuilt or restamped between the soak and the
+publication: **the published bytes are the soaked bytes**, binaries and image
+alike, and the binaries and the image report v1.0.0 from the start.
+
+Sunday, at the freeze:
+
+1. Set the hold: `gh variable set RELEASE_HOLD_DRAFT --body true`.
+2. Tag v1.0.0 at the freeze commit and push the tag.
+3. Approve the `release` environment when the run asks.
+4. The run ends with `held as draft: v1.0.0; image ghcr.io/jkai-chen/clawbridge@sha256:…;
+   publish with the publish-draft workflow`. The draft is not public and not Latest.
+5. The tester reads the image from the draft's `IMAGE-DIGEST.txt`
+   (`gh release download v1.0.0 --pattern IMAGE-DIGEST.txt`) and, before deploying it,
+   verifies the image's attestation:
+
+   ```sh
+   gh attestation verify oci://ghcr.io/jkai-chen/clawbridge@sha256:<digest> --repo jkai-chen/ClawBridge \
+     --signer-workflow jkai-chen/ClawBridge/.github/workflows/release.yml \
+     --source-ref refs/tags/v1.0.0 --predicate-type https://slsa.dev/provenance/v1
+   ```
+
+   Then the tester deploys that digest, and the 24 h soak starts.
+
+Monday, after the gate review:
+
+1. Dispatch publish-draft from the tag: `gh workflow run publish-draft.yml --ref
+   v1.0.0 -f version=v1.0.0`.
+2. Approve the `release` environment.
+3. The run validates the draft again and publishes it; v1.0.0 becomes Latest.
+4. **Then unset the hold:** `gh variable delete RELEASE_HOLD_DRAFT`, so the next tag
+   publishes in its own run again.
+
+If the soak fails: fix it, then cut **v1.0.1** the same way, with the hold still
+set (preferred). Delete the v1.0.0 tag, its draft and its GHCR tag only if v1.0.0
+was never published; a published release is never deleted or replaced.
 
 ## Independent acceptance and publication
 

@@ -1,0 +1,44 @@
+name: Publish a held draft
+# Publishes a release that a tag-push run held as a verified draft
+# (RELEASE_HOLD_DRAFT=true), with no rebuild and no upload: the published bytes
+# are the ones deployed and soaked. Dispatch it from the tag itself:
+#   gh workflow run publish-draft.yml --ref v1.0.0 -f version=v1.0.0
+# See "Releasing v1.0 (hold, soak, publish)" in docs/design/releases.md.
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: The held release's tag, such as v1.0.0
+        required: true
+        type: string
+permissions:
+  contents: read
+concurrency:
+  group: publish-${{ inputs.version }}
+  cancel-in-progress: false
+jobs:
+  publish:
+    if: ${{ github.event.repository.private == false && github.repository == 'jkai-chen/ClawBridge' }}
+    # The same required reviewers as a release's publish job.
+    environment: release
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: refs/tags/${{ inputs.version }}
+          fetch-depth: 0
+          persist-credentials: false
+      # As in release.yml, after the approval wait, against main as it is now.
+      - name: Require the tagged commit on main
+        run: |
+          git fetch --no-tags origin +refs/heads/main:refs/remotes/origin/main
+          commit=$(git rev-parse HEAD)
+          git merge-base --is-ancestor "$commit" refs/remotes/origin/main || { echo "::error::$commit is not an ancestor of origin/main"; exit 1; }
+      - name: Validate the held draft again, then publish it
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ inputs.version }}
+        run: bash scripts/publish-release.sh --publish-draft "$VERSION"

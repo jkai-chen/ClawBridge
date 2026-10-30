@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -90,22 +91,28 @@ func TestContextShow(t *testing.T) {
 	}
 }
 
+// doctorContextCheck is doctor's context check for session.
+func doctorContextCheck(t *testing.T, session string) doctor.Check {
+	t.Helper()
+	var checks []doctor.Check
+	r := doctor.Run(context.Background(), doctor.Input{Context: func() doctor.ContextState { return doctorContext(session) }}, nil)
+	for _, c := range r.Checks {
+		if c.ID == "context" {
+			checks = append(checks, c)
+		}
+	}
+	if len(checks) != 1 {
+		t.Fatalf("%d context checks", len(checks))
+	}
+	return checks[0]
+}
+
 func TestDoctorContext(t *testing.T) {
 	claude := fixture(t, "claude-code.jsonl")
 	isolated(t)
 	check := func(session string) doctor.Check {
 		t.Helper()
-		var checks []doctor.Check
-		r := doctor.Run(context.Background(), doctor.Input{Context: func() doctor.ContextState { return doctorContext(session) }}, nil)
-		for _, c := range r.Checks {
-			if c.ID == "context" {
-				checks = append(checks, c)
-			}
-		}
-		if len(checks) != 1 {
-			t.Fatalf("%d context checks", len(checks))
-		}
-		return checks[0]
+		return doctorContextCheck(t, session)
 	}
 	if c := check("worker-1"); c.Status != doctor.Pass || !strings.Contains(c.Message, "not bound") {
 		t.Fatalf("%+v", c)
@@ -159,5 +166,67 @@ func TestDescribeReading(t *testing.T) {
 		if got := describeReading(r); got != want {
 			t.Fatalf("got %q, want %q", got, want)
 		}
+	}
+}
+
+// ReadBound trusts a hook binding's transcript only because the binding
+// record is private: a record others can read, or a link in its place, is
+// refused before the transcript it names is read, and doctor says so.
+func TestDoctorRefusesAnUntrustedBindingRecord(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("record ownership and mode are not checked on Windows")
+	}
+	isolated(t)
+	dir, err := contextDir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	// A readable transcript outside any projects directory, whose count
+	// would show if it were read.
+	outside := filepath.Join(t.TempDir(), "s.jsonl")
+	if err := os.WriteFile(outside, []byte(`{"type":"assistant","sessionId":"s","timestamp":"2026-10-26T10:00:00Z","message":{"model":"m","usage":{"input_tokens":4242}}}`+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	outside, _ = filepath.EvalSymlinks(outside)
+	data, _ := json.Marshal(ctxwatch.Binding{Version: 1, Agent: ctxwatch.ClaudeCode, Transcript: outside, BoundAt: "2026-10-26T10:00:00Z", ClaudeSessionID: "s"})
+	record := filepath.Join(dir, "worker-1.json")
+	if err := os.WriteFile(record, data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(record, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	c := doctorContextCheck(t, "worker-1")
+	if c.Status != doctor.Warn || !strings.Contains(c.Message, "readable by other users") || strings.Contains(c.Message, "4242") {
+		t.Fatalf("a record readable by others: %+v", c)
+	}
+	// A link in the record's place, to a private record elsewhere.
+	private := filepath.Join(t.TempDir(), "record.json")
+	if err := os.WriteFile(private, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(record); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(private, record); err != nil {
+		t.Fatal(err)
+	}
+	c = doctorContextCheck(t, "worker-1")
+	if c.Status != doctor.Warn || !strings.Contains(c.Message, "not a regular file") || strings.Contains(c.Message, "4242") {
+		t.Fatalf("a linked record: %+v", c)
+	}
+	// The same record, private and in place, is read: the refusals above
+	// were the record's.
+	if err := os.Remove(record); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(record, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if c = doctorContextCheck(t, "worker-1"); c.Status != doctor.Pass || !strings.Contains(c.Message, "4242 tokens in use") {
+		t.Fatalf("a private record: %+v", c)
 	}
 }

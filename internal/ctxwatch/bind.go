@@ -162,13 +162,15 @@ func ClaudeConfigDir() (string, error) {
 
 // ClaudeTranscript canonicalises a transcript path a hook named (absolute,
 // links resolved) and accepts it only as a .jsonl file under configDir's
-// projects directory (CW-L2).
+// projects directory (CW-L2). A transcript not written yet is accepted too:
+// Claude Code runs a new session's SessionStart hook before it creates the
+// file.
 func ClaudeTranscript(path, configDir string) (string, error) {
 	refused := errors.New("the hook's transcript is not under Claude Code's projects directory")
 	if !filepath.IsAbs(path) {
 		return "", refused
 	}
-	resolved, err := filepath.EvalSymlinks(path)
+	resolved, err := canonicalTranscript(path)
 	if err != nil {
 		return "", refused
 	}
@@ -182,6 +184,56 @@ func ClaudeTranscript(path, configDir string) (string, error) {
 		return "", refused
 	}
 	return resolved, nil
+}
+
+// canonicalTranscript is path with its links resolved, or, for a file not
+// written yet, the path it will have (unwritten).
+func canonicalTranscript(path string) (string, error) {
+	resolved, err := filepath.EvalSymlinks(path)
+	if err != nil {
+		return unwritten(path)
+	}
+	return resolved, nil
+}
+
+// unwritten canonicalises the path of a file that doesn't exist yet: the
+// nearest directory above it that exists, links resolved, and the names
+// below that kept, which is what resolving the file gives once it is
+// written under plain directories. A new project's directory may not exist
+// yet either. Only a missing file qualifies: a link to nowhere, or any
+// other error, is refused.
+func unwritten(path string) (string, error) {
+	missing := errors.New("not a file still to be written")
+	if filepath.Clean(path) != filepath.FromSlash(path) || filepath.Ext(path) != ".jsonl" {
+		return "", missing
+	}
+	path = filepath.Clean(path)
+	dir, rest := filepath.Dir(path), filepath.Base(path)
+	if _, err := os.Lstat(path); !errors.Is(err, os.ErrNotExist) {
+		return "", missing
+	}
+	for {
+		_, err := os.Lstat(dir)
+		if err == nil {
+			// The nearest one that exists must be a directory (or a link to
+			// one): on Windows a path under a file reads as missing, not as
+			// ENOTDIR, so the walk can reach that file.
+			if info, err := os.Stat(dir); err != nil || !info.IsDir() {
+				return "", missing
+			}
+			break
+		}
+		parent := filepath.Dir(dir)
+		if !errors.Is(err, os.ErrNotExist) || parent == dir {
+			return "", missing
+		}
+		dir, rest = parent, filepath.Join(filepath.Base(dir), rest)
+	}
+	resolved, err := filepath.EvalSymlinks(dir)
+	if err != nil {
+		return "", missing
+	}
+	return filepath.Join(resolved, rest), nil
 }
 
 // CodexHome is CODEX_HOME, or ~/.codex.

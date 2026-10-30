@@ -1206,7 +1206,9 @@ notices go through the server ([context watching](#context-watching-on-the-serve
   - `compactions` and `last_compaction_at`, within the part read, with
     `partial` true when only the tail was read: the session then had at least
     that many compactions;
-  - `usage_at` and `written_at`.
+  - `usage_at` and `written_at`;
+  - `not_written: true` for a session the hook bound before Claude Code wrote
+    its transcript: `tokens` 0, no level yet.
 - **Unknown formats:** a transcript the reader doesn't recognise, or whose
   usage isn't in a known form, reads as `status: unsupported` with a fixed
   `reason`, never as a guess.
@@ -1268,7 +1270,19 @@ the queue's steps call the server through the MCP server's record, as above.
   `transcript_path` as strings, or without `CLAWBRIDGE_SESSION`, they bind
   nothing and print nothing.
 - The transcript must resolve, links included, to a `.jsonl` file under
-  `<CLAUDE_CONFIG_DIR>/projects/`.
+  `<CLAUDE_CONFIG_DIR>/projects/`. Claude Code runs a new session's
+  `SessionStart` before it writes the file (and, on a project's first session,
+  before it makes the project's directory), so a transcript not written yet
+  binds too, at the path it will have: the session is watched from its start.
+  Until the file exists the session reads as before its first model call (no
+  level, nothing reported, `doctor` passes with "Context unknown until the
+  next model call").
+- Each read of a binding the hook made checks the transcript again: it must
+  still resolve to the very path bound. A link put at that path, or in place
+  of a directory on it, since it was bound is refused, and `doctor` warns.
+  The reading process's own `CLAUDE_CONFIG_DIR` doesn't matter: the hook
+  checked the path was under `projects/`, and a path that still resolves to
+  itself can't have left it.
 - The binding remembers the Claude Code session and process that bound it.
   Another session takes it over only once that process has exited, or when
   it is the same process under a new session (`/clear`, `/resume`). So a nested `claude -p` in the same

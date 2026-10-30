@@ -28,6 +28,17 @@
   `notify --adapter command`, and a Claude Code channel with `mcp install --channel`). An untouched seeded document is
   offered the update with `linear seed-docs --update`. Linear config scope: none.
 
+## Fixes
+
+- **A new Claude Code session is watched from its start.** Claude Code runs a fresh session's `SessionStart` hook
+  before it writes the transcript, and `context bind --from-hook` refused a file that wasn't there, so nothing was
+  bound until the first compaction or resume: no context levels, no warning before compaction, no handover hint and
+  no context line in `doctor` until then. The hook now binds a transcript not written yet (and a new project's
+  directory not made yet) at the path the file will have, under `<CLAUDE_CONFIG_DIR>/projects/` as before; until
+  the file exists the session reads as before its first model call and nothing is reported. Each read of a
+  hook-made binding checks the transcript again, so a link put at its path or on a directory above it since is
+  refused. docs/reference/api.md. No schema change. Linear config scope: none.
+
 # ClawBridge v0.3.13 (released 30 Oct)
 
 **Schema 53 → 54.**

@@ -141,7 +141,12 @@ func (s *Store) projectOverview(ctx context.Context, tx *transaction, w, p map[s
 	if err != nil {
 		return nil, err
 	}
-	out := map[string]any{"project": project, "coordinator": coord, "counts": counts, "sessions": rows,
+	// The newest sessions registered in the last day (FR23).
+	joins, err := s.newestJoins(ctx, tx, w["id"].(string), pid, now)
+	if err != nil {
+		return nil, err
+	}
+	out := map[string]any{"project": project, "coordinator": coord, "counts": counts, "sessions": rows, "newest_joins": joins,
 		"sessions_truncated": truncated, "linear": linear, "linear_writes": writes, "linear_budget": budget, "project_creates": creates, "project_team_adds": teamAdds, "project_plans": plans}
 	if role == "owner" {
 		if out["project_leads"], err = projectLeadCounts(ctx, tx, pid, now); err != nil {

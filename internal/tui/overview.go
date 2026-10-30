@@ -35,6 +35,9 @@ type attentionMsg struct {
 	intake string
 	// webhooks is the Linear webhook line, when any team has a secret.
 	webhooks string
+	// joins is the newest joins line, when a session registered in the
+	// last day.
+	joins string
 	// gatesOn and gatesOff name the server's PROVEN gates, for the
 	// project owner; gatesRead is false for anyone else.
 	gatesOn, gatesOff []string
@@ -144,9 +147,11 @@ func (m Model) loadAttention(requestID uint64) tea.Cmd {
 			}
 		}
 		if m.cfg.Project != "" {
-			// Only the project owner's overview lists the PROVEN gates.
+			// Only the project owner's overview lists the PROVEN gates;
+			// every reader's lists the newest joins.
 			if r, err := m.cfg.Executor.Execute(ctx, m.intakeRequest("project_overview", map[string]any{})); err == nil && r.Source != "offline-mirror" {
 				out.gatesOn, out.gatesOff, out.gatesRead = bus.ProvenGatesOnOff(mapData(r.Data)["proven_gates"])
+				out.joins = joinsSummary(mapData(r.Data)["newest_joins"], m.cfg.Now())
 			}
 		}
 		if m.cfg.Project != "" {
@@ -202,6 +207,7 @@ func (m Model) applyAttention(x attentionMsg) Model {
 		m.intakeLine, m.webhookLine = x.intake, x.webhooks
 	}
 	m.gatesOn, m.gatesOff, m.gatesRead = x.gatesOn, x.gatesOff, x.gatesRead
+	m.joinsLine = x.joins
 	if rows := len(m.overviewRows()); m.selected >= rows {
 		m.selected = max(0, rows-1)
 	}
@@ -268,7 +274,7 @@ func renderOverview(m Model) string {
 	default:
 		b.WriteString(mutedStyle.Render("  Checking…") + "\n")
 	}
-	if m.intakeLine != "" || m.webhookLine != "" {
+	if m.intakeLine != "" || m.webhookLine != "" || m.joinsLine != "" {
 		b.WriteString("\nThis project\n")
 	}
 	if m.intakeLine != "" {
@@ -281,6 +287,11 @@ func renderOverview(m Model) string {
 	}
 	if m.webhookLine != "" {
 		b.WriteString("  " + m.webhookLine + "\n")
+	}
+	if m.joinsLine != "" {
+		for _, line := range strings.Split(m.joinsLine, "\n") {
+			b.WriteString("  " + line + "\n")
+		}
 	}
 	b.WriteString("\n")
 	identity := firstNonempty(terminalText(m.identity.Principal), terminalText(m.cfg.Principal), "not signed in")
@@ -533,6 +544,25 @@ func webhookSummary(status map[string]any, now time.Time) string {
 		line += " · last " + shortAgo(now, last)
 	}
 	return line + fmt.Sprintf(" · %d missed", missed)
+}
+
+// joinsSummary is Overview's newest joins line: each session registered
+// in the last day, newest first, with its owner's display name, agent kind
+// and age, one to a row so it fits 80 columns; "" when there are none or
+// the server is older.
+func joinsSummary(v any, now time.Time) string {
+	var parts []string
+	for _, j := range records(v) {
+		when := ""
+		if at, err := time.Parse(time.RFC3339Nano, text(j, "created_at")); err == nil {
+			when = ", " + shortAgo(now, at)
+		}
+		parts = append(parts, fmt.Sprintf("%s (%s, %s%s)", clip(terminalText(text(j, "name")), 24), clip(terminalText(firstNonempty(text(j, "display_name"), "a member")), 24), terminalText(text(j, "agent_kind")), when))
+	}
+	if len(parts) == 0 {
+		return ""
+	}
+	return "Newest joins: " + strings.Join(parts, "\n"+strings.Repeat(" ", len("Newest joins: ")))
 }
 
 // shortAgo is ago in the overview line's short form: "4m ago", "3h ago".

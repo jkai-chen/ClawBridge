@@ -338,7 +338,15 @@ The agent calls `register_session` before actor operations; the process retains
 the returned instance. To resume an existing active session, explicitly start
 with its recorded `--instance`, then call registration with `resume: true`.
 Record the new instance: resumption fences the previous one. Retired names stay
-retired. Retiring a session that holds a confirmed assignment asks first: say
+retired. A registration under a new name sends the project's coordinator (with
+the dispatcher as coordinator, whoever coordinator notices go to) one
+`session-joined` message from the new session: "Session NAME joined: DISPLAY
+NAME's KIND agent, lane LANE (SOURCE)." or "..., no lanes." The display name is
+the member's recorded one, or "a member"; never an email. Registering a name
+again, resuming or a refused name sends nothing, and so does a registration with
+no coordinator. Each member sends at most 5 such notices a project an hour; past
+that the registration still succeeds, and history records
+`join_notice_suppressed`. Retiring a session that holds a confirmed assignment asks first: say
 `--outcome done` if its work is finished (the issue moves on as a done release
 does), or `--confirm` to release it as it is (see docs/linear.md, Done). Stale presence after 15 minutes does not establish that a process died.
 On a hosted server, `whoami`, `list_sessions` and `history` that name the session

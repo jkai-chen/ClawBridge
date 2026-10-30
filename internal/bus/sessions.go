@@ -93,7 +93,15 @@ func (s *Store) register(ctx context.Context, tx *transaction, wid, pid string, 
 	if err = s.audit(ctx, tx, wid, pid, id, "session", id, "registered", map[string]any{"name": r.Session, "instance": instance, "role": str(a, "role")}); err != nil {
 		return nil, err
 	}
-	return one(ctx, tx, `SELECT * FROM sessions WHERE id=? AND project_id=?`, id, pid)
+	row, err := one(ctx, tx, `SELECT * FROM sessions WHERE id=? AND project_id=?`, id, pid)
+	if err != nil {
+		return nil, err
+	}
+	// FR23: only a new name tells the coordinator, in this transaction.
+	if err = s.sessionJoined(ctx, tx, wid, pid, row); err != nil {
+		return nil, err
+	}
+	return row, nil
 }
 func (s *Store) update(ctx context.Context, tx *transaction, wid, pid string, actor map[string]any, a map[string]any) (any, error) {
 	if err := metadata(a); err != nil {

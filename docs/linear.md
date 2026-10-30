@@ -884,7 +884,13 @@ line per cycle.
   is skipped. A comment that becomes visible more than 10 minutes late, after
   newer activity, can be missed.
 - **Polling** backs off from every 5 minutes (recent activity) to hourly (quiet
-  for a day); errors back off to hourly.
+  for a day); errors back off to hourly. With Linear webhooks live for every
+  team the project binds
+  ([Linear webhooks](#linear-webhooks-hosted-servers)), the comment watch polls
+  hourly as a safety net, and a delivery for a watched issue's comment brings
+  its poll within about a minute. A hint never cuts a back-off short: a watch
+  waiting out an error, or a 429 or auth failure of any of the project's comment
+  watches, polls when its back-off ends.
 - **Linear calls, counted, with no ClawBridge cap by default (v0.3.9).** Every
   Linear call made for a project is counted on the bus, per hour, so a restart
   or takeover cannot reset it: the watcher, project status and health, the
@@ -1053,9 +1059,16 @@ clawbridge linear subscribers backfill --since 2026-10-27 --apply
 
 ### Linear webhooks (hosted servers)
 
-A hosted server can take Linear's webhook deliveries for each bound write team, so a label or a comment reaches it
-within a minute instead of at the next poll. ClawBridge creates no webhook and changes no Linear setting: the project
-owner creates one webhook per bound write team in Linear's UI, and the server's operator sets its signing secret.
+A hosted server can take Linear's webhook deliveries for each bound write team,
+so a label or a comment reaches it within about a minute instead of at the next
+poll. A delivery is a doorbell only: it marks the project's watch cursors due,
+the poll then reads Linear as usual, and the poll stays the record of progress.
+ClawBridge creates no webhook and changes no Linear setting: the project owner
+creates one webhook per bound write team in Linear's UI, and the server's
+operator sets its signing secret. Setup, the probe, rotation and the doctor's
+states are in [the deployment guide](operations/deployment.md#linear-webhooks-optional).
+A server on a LAN can't receive them (Linear needs a public https URL); polling
+still works.
 
 ```sh
 clawbridge linear webhook-setup [--project SLUG]   # read-only, any member
@@ -1066,8 +1079,26 @@ clawbridge linear webhook-setup [--project SLUG]   # read-only, any member
   public teams", and the webhook's state on the server. Then the env line's shape with `<secret>` in place of each
   secret: it never prints a secret.
 - **The secret.** Linear shows each webhook's signing secret. Set it in `/etc/clawbridge/clawbridge.env` in your own
-  terminal, never through an agent; the operator then recreates the API.
-- **Until proven,** the server records deliveries and changes nothing (see the deployment guide).
+  terminal, never through an agent; the operator then recreates the API. No agent or session handles a secret;
+  the operator's probe reads it from the server's own environment.
+- **Until proven,** the server records deliveries and changes nothing (the `webhooks` gate; see the deployment guide).
+- **A live team.** A team is live once the gate is on and its webhook has delivered since, with no miss in 24 h.
+  A live team's `needs-agent` poll (S1) runs hourly instead of every 5 or 15 minutes, as a safety net. The
+  delegation and mention polls (S2, S3) and the comment watches poll hourly only when every team the project binds
+  is live.
+- **What a delivery does.** A new or changed issue marks the team's `needs-agent` poll (S1) and the delegation poll
+  (S2); a new comment marks the mention poll (S3) and the commented issue's comment watch. Other events are
+  recorded and ignored. A project whose intake is off is not marked for intake. A delivery's text is never kept or
+  read: only its IDs, kind, times and the names of the changed fields.
+- **Misses and the 24 h degrade.** If a poll finds an intake candidate more than 10 minutes after Linear's own time for
+  it (a history entry or a notification) while the team was live, that is a miss. The team goes `degraded` and polls
+  on the usual cadence for 24 h, and `clawbridge doctor` says to check the webhook in Linear. A comment found late
+  is not counted, because the watcher doesn't know which team the issue is in when it notifies. When a server's drain
+  ends, every live team's cursors are marked due once.
+- **A moved issue.** A delivery marks the cursors of the team its payload names. When an issue moves from one bound
+  team to another, the old team's webhook delivers for the old team: nothing new is found there. The new team's webhook
+  delivers for the new team, and a bound new team's cursors are marked. A delivery for a team the project doesn't bind
+  is recorded and counted (`unbound_team`) and marks nothing.
 
 ### Moving an issue to another team
 
@@ -2476,7 +2507,10 @@ Options: `--team` or `--initiative` instead of `--linear-project`; `--title`
 Linear can tell ClawBridge that an issue needs an agent. ClawBridge queues the issue and, by default, tells the
 project's coordinator session, which then routes it.
 
-**Signals.** Each signal is polled by the server's own watcher, at no Linear Agent cost:
+**Signals.** Each signal is polled by the server's own watcher, at no Linear Agent cost. They reach it
+within seconds with Linear webhooks (once the gate is on and the team is live), and are polled hourly as a
+safety net; without webhooks, the poll finds them on its usual cadence
+([Linear webhooks](#linear-webhooks-hosted-servers)):
 - **S1:** a person adds the `needs-agent` label (one label of that exact name per team; a sub-team's issue may carry
   its own or its bound parent's, and the watcher reads both). The watcher reads each
   bound team's labelled issues in one query, across all its projects, and queues only those in the project's

@@ -371,8 +371,9 @@ Nothing in either shape needs an inbound public address. Some things need more t
 - **Colleagues off your network** need a tunnel to it, which is optional and up to you: Tailscale (B3 above), or
   Cloudflare Tunnel with a domain of your own. ClawBridge sets up neither.
 - **Linear works on a LAN.** The server's watcher polls Linear (outbound only), and the Linear app's callback
-  page (`ORIGIN/linear/callback`) only has to open in the browser of the person installing the app. Inbound
-  Linear webhooks, which would need a public URL, don't exist yet (FR14).
+  page (`ORIGIN/linear/callback`) only has to open in the browser of the person installing the app. Linear
+  webhooks need a public https URL Linear can reach ([deployment](deployment.md#linear-webhooks-optional)), so
+  a LAN-only server can't receive them; polling still works, on its usual cadence.
 - **Dispatcher agents (agentd)** reach the server through an egress proxy that allows public addresses only,
   and never loopback, so they can't use shape A. With shape B, list the server's address with
   `CLAWBRIDGE_EGRESS_PRIVATE_SERVER=HOST:PORT`, and read [Installing clawbridge-agentd](agentd.md) first.

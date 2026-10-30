@@ -17,6 +17,15 @@
 - Doctor's `linear.webhooks` actions name `clawbridge linear webhook-setup` for an unconfigured team, and say a
   degraded team polls on its usual cadence until 24 h after the miss. Linear config scope: none.
 
+## Docs
+
+- Linear webhooks as shipped: one deployment section for the owner and operator (a team webhook per bound write team,
+  the secrets line, rotation, the gate, the probe, the post-deploy check that each webhook is still enabled, the
+  doctor's states, and redacting the secrets from any `docker compose config` render), the route's answers and
+  `webhook_status` in the API reference, what webhooks change in intake and the comment watch (and what a moved
+  issue's deliveries do) in the Linear guide, and the skill's note that notices can come faster, are still untrusted,
+  and never involve an agent with a secret. Linear config scope: none.
+
 # ClawBridge v0.3.11 (released 30 Oct)
 
 v0.3.10 was deployed (server) but its client release failed to publish; v0.3.11 is the same code plus the publish fix.

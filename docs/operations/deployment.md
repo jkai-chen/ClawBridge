@@ -441,6 +441,9 @@ COMPOSE_PROJECT_NAME=clawbridge
 # CLAWBRIDGE_PROJECT_TEAM_ADD_PROVEN=1
 # CLAWBRIDGE_PROJECT_STATUS_DOMAIN_PROVEN=1
 # CLAWBRIDGE_PROJECT_PLAN_PROVEN=1
+# CLAWBRIDGE_WEBHOOKS_PROVEN=1
+# Optional: Linear webhook signing secrets (below); this is only the line's shape.
+# CLAWBRIDGE_LINEAR_WEBHOOK_SECRETS=<team UUID>=<secret>
 ```
 
 Use a random hexadecimal password so it can be interpolated safely into the
@@ -450,7 +453,8 @@ the workspace owner: normally your own Google account's email, the one you sign
 in with. Install the environment file as
 `/etc/clawbridge/clawbridge.env`, owned by `root:root` with mode `0600`. This file
 is a deployment secret, not a ClawBridge message. Docker configuration rendering
-may include its value; keep rendered config and logs private.
+may include its values; keep rendered config and logs private, and redact the
+webhook secrets from any render you share ([Linear webhooks](#linear-webhooks-optional)).
 
 The two OAuth client IDs must match the Desktop-app and TVs/Limited Input devices
 clients in the Google project. Their matching Google installed-app application
@@ -587,54 +591,16 @@ CLAWBRIDGE_LINEAR_APP_TOKEN_KEY=<32 random bytes, base64>
   the fields as sent, and what Linear does with a date held at a quarter's
   precision. The preview works without it, and the write goes through the
   confirming person's own Linear profile, never the app.
-- **Linear webhooks are off until proven.** ClawBridge writes no Linear
-  configuration: the owner creates one webhook per bound write team in
-  Linear's UI. `clawbridge linear webhook-setup [--project SLUG]` (read-only,
-  any member) prints, for each team, its name, its URL
-  (`https://CLAWBRIDGE_DOMAIN/linear/webhook/TEAM_UUID`), the resource types
-  (Issues, Comments) and "choose this team, not All public teams", and the env
-  line's shape, `CLAWBRIDGE_LINEAR_WEBHOOK_SECRETS=<team UUID>=<secret>`. Set
-  the secrets in `/etc/clawbridge/clawbridge.env` in your own terminal, never
-  through an agent, and recreate the API. Deliveries are then recorded inert
-  until the server runs with `serve --webhooks-proven` or
-  `CLAWBRIDGE_WEBHOOKS_PROVEN=1`. Set that only after the webhook probe passes,
-  on a probe-only team bound to a probe-only project:
-
-  ```sh
-  ... run --rm --no-deps api operator linear-webhook-probe --confirm --team UUID
-  ... run --rm --no-deps api operator linear-webhook-probe --confirm --team UUID --forged --public-origin https://HOST
-  ```
-
-  - **The round trip:** as the app, one issue in the team, a comment, the
-    `needs-agent` label added and removed, and the issue archived; then up to 2
-    minutes for their deliveries. It also tries Linear's read-only `webhooks`
-    query once and records whether it works without admin rights; nothing
-    depends on that.
-    Keep the probe team quiet for the run: no other edit in it during the
-    2-minute wait. Deliveries carry no issue ID the probe can match, so they
-    are matched to its events by event type, `updatedFrom` keys and order.
-    The `Linear-Delivery` header is recorded, not required: without it the
-    route dedups on the body's hash.
-  - **`--forged`** writes nothing to Linear. From the host it POSTs to the public
-    route an unsigned body, one signed with a random key, one signed 10 minutes
-    ago, one naming another team, and one over 1 MiB, which must be refused
-    401 `signature`, 401 `signature`, 401 `stale`, 401 `team_mismatch` and 413;
-    then one good body twice under one `Linear-Delivery`, which must be one
-    row. It waits about 70 seconds for the refusal counters, which the route
-    flushes once a minute, and checks each was counted. The team's secret comes
-    from the server's own environment, never an argument.
-  - **What it prints:** classes only: whether the `Linear-Delivery` header came,
-    the field shapes, the `updatedFrom` key names, the largest payload, the
-    timestamp skew, the webhooks query's answer, and per event whether it was
-    delivered. Never a secret, body, ID or text, except the probe issue's ID
-    when its archive failed, so the owner archives it by hand.
-  - It never mints; the token rules are as above.
+- **Linear webhooks are off until proven.** Verified deliveries are recorded
+  and change nothing until the server runs with `serve --webhooks-proven` or
+  `CLAWBRIDGE_WEBHOOKS_PROVEN=1` (the compose file passes it through). Set it
+  only after the webhook probe passes: see [Linear webhooks](#linear-webhooks-optional).
 - **Which gates are on.** The project owner's `clawbridge doctor` reports them
   as `linear.proven_gates` ("Proven gates: issue_subscribers, issue_move (off:
   project_flow, issue_family_move, project_team_add, project_status_domain,
-  project_plan)."), and the TUI's Overview shows the same in two rows, Proven
+  project_plan, webhooks)."), and the TUI's Overview shows the same in two rows, Proven
   gates and Not proven. Both read the project overview's `proven_gates`: the
-  seven gate names, each on or off, and nothing else of the server's settings.
+  eight gate names, each on or off, and nothing else of the server's settings.
   Members don't see them.
 - **Timeouts.** A write the server makes can take up to a minute, and it
   finishes even if the client disconnects. Keep the proxy and load-balancer
@@ -644,6 +610,134 @@ CLAWBRIDGE_LINEAR_APP_TOKEN_KEY=<32 random bytes, base64>
   (`app_unavailable`) rather than made with someone's personal account.
 - **Who may write.** With app writes, a member's ClawBridge role alone
   authorises their Linear writes. To offboard someone, revoke their role.
+
+### Linear webhooks (optional)
+
+Webhooks let Linear tell the server at once that an issue or a comment changed,
+so the watcher reads it within about a minute instead of at its next poll. A
+delivery is only a doorbell: it marks the cursors due and the poll still reads
+Linear and records progress. Without webhooks, polling works as before. They
+need the Linear app above, and a public https URL Linear can reach.
+
+ClawBridge writes no Linear configuration. The project owner creates the
+webhooks in Linear's UI, and the operator sets the secrets.
+
+1. **Create one webhook per bound write team.** Run
+   `clawbridge linear webhook-setup [--project SLUG]` (read-only, any member).
+   For each team it prints the name, the URL
+   (`https://CLAWBRIDGE_DOMAIN/linear/webhook/TEAM_UUID`, the team's lower-case
+   UUID), the resource types (Issues and Comments), "choose this team, not All
+   public teams", and the webhook's state on the server. In Linear (Settings,
+   API, Webhooks, New webhook), make one webhook for each team, with that URL.
+   Never use "All public teams": a delivery whose payload names another team
+   than its URL is refused `team_mismatch`. Linear then shows the webhook's
+   signing secret.
+2. **Set the secrets in your own terminal,** never through an agent, in
+   `/etc/clawbridge/clawbridge.env`:
+
+   ```text
+   CLAWBRIDGE_LINEAR_WEBHOOK_SECRETS=<team UUID>=<secret>[,<team UUID>=<secret>...]
+   ```
+
+   Each secret is 16 to 256 printable ASCII characters with no space or comma,
+   and names one team. A team may hold 2 secrets (a rotation) and the line 32.
+   The server refuses to start on a bad entry or without the Linear app, and
+   names the entry, never its value. Then recreate the API. With no secrets
+   there is no route at all: every path answers 404.
+3. **Check the state.** `webhook-setup` and `clawbridge doctor` show each team
+   as `inert` until the gate is on (below).
+4. **Prove it, then turn the gate on.** Use a probe-only team bound to a
+   probe-only project, with its webhook and secret set as above:
+
+   ```sh
+   ... run --rm --no-deps api operator linear-webhook-probe --confirm --team UUID
+   ... run --rm --no-deps api operator linear-webhook-probe --confirm --team UUID --forged --public-origin https://HOST
+   ```
+
+   - **The round trip (P1):** as the app, one issue in the team, a comment, the
+     `needs-agent` label added and removed, and the issue archived; then up to
+     2 minutes for their deliveries. It also tries Linear's read-only
+     `webhooks` query once and records whether it works without admin rights;
+     nothing depends on that. Keep the probe team quiet for the run: no other
+     edit in it during the wait. Deliveries carry no issue ID the probe can
+     match, so it matches them to its events by event type, `updatedFrom` keys
+     and order. The `Linear-Delivery` header is recorded, not required: without
+     it the route dedups on the body's hash.
+   - **`--forged` (P2, P3a)** writes nothing to Linear. From the host it POSTs
+     to the route an unsigned body, one signed with a random key, one signed 10
+     minutes ago, one naming another team, and one over 1 MiB, which must be
+     refused 401 `signature`, 401 `signature`, 401 `stale`, 401
+     `team_mismatch` and 413; then one good body twice under one
+     `Linear-Delivery`, which must be one row. It waits about 70 seconds for the
+     refusal counters (see below) and checks each was counted. The team's
+     secret comes from the server's own environment, never an argument, so run
+     it with `run`, as above.
+   - `--public-origin` is the origin the probe POSTs to. If the container
+     can't reach its own public hostname, use
+     `--public-origin http://127.0.0.1:API_PORT` (http is accepted for a
+     loopback host only).
+   - **What it prints:** classes only: whether the `Linear-Delivery` header
+     came, the field shapes, the `updatedFrom` key names, the largest payload,
+     the timestamp skew, the webhooks query's answer, and per event whether it
+     was delivered. Never a secret, body, ID or text, except the probe issue's
+     ID when its archive failed, so you archive it by hand.
+   - It never mints; the token rules above apply.
+
+   When both pass, set `CLAWBRIDGE_WEBHOOKS_PROVEN=1` (or run `serve
+   --webhooks-proven`) and recreate the API. Deliveries then mark the project's
+   cursors due, and a team goes `live` on its first delivery after that.
+5. **After each deploy,** check in Linear that each webhook is still enabled.
+   Linear may disable a webhook after repeated failures. A drain's 503s
+   (`maintenance`, [API reference](../reference/api.md#the-linear-webhook-route))
+   are retried by Linear, and the server asks each live team's cursors to poll
+   once when the drain ends, but a webhook Linear has switched off sends
+   nothing, and only `clawbridge doctor` ("check the webhook in Linear") or a
+   silent team tells you.
+
+**Rotation.** Rotate a secret in steps, so no delivery fails. Create a second
+webhook for the team in Linear (or regenerate the secret), and put **both**
+secrets for the team in the line (`<team UUID>=<old>,<team UUID>=<new>`; at
+most 2 per team; the route checks each every time). Recreate the API. Once
+Linear sends only with the new secret, delete the old webhook, remove the old
+entry from the line and recreate the API again. `clawbridge doctor` warns of
+signature rejects while a secret is wrong.
+
+**What the server keeps.** For each verified delivery: its ID, team, kind,
+times, the names (never values) of the changed fields, and its size, for 7
+days; never a title, comment or other text. Refusal counts are kept in memory
+and written once a minute, so up to a minute of them can be lost if the server
+crashes. A delivery that is recorded is written at once.
+
+**Doctor's `linear.webhooks` check** appears once some team has a secret, and
+shows each bound write team's state:
+
+| State | Means | Do |
+| --- | --- | --- |
+| `unconfigured` | the team is bound, but no secret for it | add its secret to the line, recreate the API |
+| `inert` | verified deliveries, gate off | pass the probe, turn the gate on |
+| `waiting_first` | gate on, no delivery since | create or edit an issue in that team |
+| `live` | delivering, no miss in 24 h | nothing |
+| `degraded` | a poll found an event more than 10 minutes late in the last 24 h | check the webhook in Linear; the team polls on its usual cadence for 24 h |
+
+It also warns about signature rejects in 24 h (a secret may be wrong or
+rotated), deliveries for a team that isn't bound (delete that webhook in
+Linear), and throttled verified deliveries (repeated 429s can get a webhook
+disabled: check it is still enabled). The TUI's Overview shows one `Webhooks:`
+line.
+
+**Keep the secrets out of what you share.** Docker's rendered configuration
+includes the environment, so redact the secrets from any render you show, send
+or paste:
+
+```sh
+docker compose config | sed -E 's/(CLAWBRIDGE_LINEAR_WEBHOOK_SECRETS: ).*/\1<redacted>/'
+```
+
+In runbooks and reviews, compare the environment file by key names only (`cut
+-d= -f1`), never its values. To check that no secret has slipped into a repo,
+run `grep -rn 'CLAWBRIDGE_LINEAR_WEBHOOK_SECRETS' docs deploy | grep -v redact`.
+Every hit should be the key's name or the env line's shape with `<secret>`,
+never a value.
 
 ### The server watcher (optional, v0.3)
 

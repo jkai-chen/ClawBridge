@@ -203,7 +203,9 @@ clawbridge --session coordinator --instance COORDINATOR_INSTANCE --linear-profil
 
 ### 7. Run the comment watch
 
-One watcher per ClawBridge project, normally on the coordinator's machine:
+On a hosted server with the ClawBridge Linear app, the server's watcher reads the
+bound projects' comments; you don't run one yourself. On a local setup, run one
+watcher per ClawBridge project, normally on the coordinator's machine:
 
 ```sh
 clawbridge linear watch --profile PROFILE_ID
@@ -218,7 +220,11 @@ clawbridge linear watch --profile PROFILE_ID
 2. Send them the link to the **Product Review** initiative page and the
    [reviewer quickstart](reviewer-quickstart.md).
 
-They don't need a ClawBridge account, a terminal or an agent.
+They don't need a ClawBridge account, a terminal or an agent. Reviewers who want to work through Claude or ChatGPT
+can use the [Linear reviewer skill](https://github.com/jkai-chen/clawbridge-reviewer-skill): Linear's official
+connector with their own Linear account, the same one-topic-per-comment rules, and `needs-agent` to flag an issue (a
+reviewer's flag notifies the coordinator; see its
+[for-teams guide](https://github.com/jkai-chen/clawbridge-reviewer-skill/blob/main/docs/for-teams.md)).
 
 ### Optional: a saved view
 

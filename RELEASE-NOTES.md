@@ -96,6 +96,22 @@
   result, and has the person type the kind names when a kind is added (the same rule as the CLI); the Projects view
   shows the line. Refused with `--session` or under an agent. Linear config scope: none (ClawBridge status policy only).
 
+## Docs
+
+- **Onboarding templates and guides as shipped in v0.3.9–v0.3.13.** A new colleague join guide to copy and fill
+  (`docs/templates/colleague-join-guide.md`): macOS/Linux, native Windows (install.ps1, exec-form hooks) and WSL
+  (the Linux build inside Ubuntu, `--key-store file` for the device key and, from v0.3.13, the Linear connection;
+  the keyring `login` collection and one-daemon traps on older versions), the guided setup's five steps, one MCP
+  entry per agent session, shell commands that pass the session's scope, `notify --adapter command` for Orca and
+  tmux, and the owner's checklist after someone joins (team role `--link`, lane pin, dispatcher domain, who closes,
+  who may cancel). The coordinator guide covers session-joined notices, marker skips, `assignment markers`,
+  uncertain writes and `linear issue history`. The seeded Linear developer and reviewer guides (template version 2)
+  describe the status moves, skipped moves, and agents canceling or marking Duplicate only where a person allowed the
+  project's kind; an untouched seeded document is offered the update. Linear config scope: none.
+- The reviewer guides link the [Linear reviewer skill](https://github.com/jkai-chen/clawbridge-reviewer-skill), a
+  separate MIT repository for reviewers who work through Claude or ChatGPT with Linear's official connector and their
+  own Linear account (comments, thread replies and the `needs-agent` label only). Linear config scope: none.
+
 ## Operations
 
 - **Re-running a provisioning playbook on a running server no longer cuts it off.** The AWS and Google Cloud playbooks'

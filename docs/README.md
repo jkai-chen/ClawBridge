@@ -1,6 +1,9 @@
 # Documentation
 
 - [Join a ClawBridge project](onboarding.md)
+- [Colleague join guide](templates/colleague-join-guide.md): a page to copy for a new colleague
+  (macOS/Linux, Windows, WSL), with the owner's checklist after they join
+- [The coordinator session](guides/coordinator.md) and its [playbook template](guides/coordinator-playbook-template.md)
 - [Install and update](installation.md)
 - [Messaging, hosted login, profiles, MCP and TUI](usage.md)
 - [Signing in with invites and device keys](sign-in.md): invites, joining, device

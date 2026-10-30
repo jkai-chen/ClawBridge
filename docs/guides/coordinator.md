@@ -37,6 +37,40 @@ The clawbridge skill gives every coordinator the same method
 - it watches session liveness and context, comments on issues at each milestone,
   and stops when you say stop.
 
+## What it's told, and where to look
+
+Notices are typed reports, never instructions. The coordinator acts on them only
+within its own rules.
+
+- **A session joined** (v0.3.13): when a member's agent registers a new session
+  name, the coordinator gets `Session NAME joined: DISPLAY's KIND agent, lane LANE
+  (SOURCE).` from that session, so a reply reaches it. Answer its hello, and check
+  its lane. `no lanes` or `unpinned` usually means the owner still has to pin it
+  ([after someone joins](../templates/colleague-join-guide.md#after-they-join-owner-and-lead-checklist)).
+  At most 5 notices per member per hour; the overview lists the newest joins.
+- **A marker didn't move an issue:** when a claim or release marker leaves the
+  issue's state alone (someone had moved it, the target state is missing, the
+  policy changed), the assignee's session is told once, or the coordinator when
+  that session has ended. See why with
+  `clawbridge assignment markers --issue ISSUE` (MCP `assignment_markers`); doctor's
+  `linear.marker_skips` counts the last 7 days.
+- **Uncertain writes:** `clawbridge linear writes` lists writes that may have
+  reached Linear. From v0.3.13 a marker's own reread closes its earlier attempts;
+  anything still listed is checked in Linear and acknowledged by the owner or a
+  lead (`linear writes --ack OPERATION_ID`), never by a session.
+- **Who changed an issue:** `clawbridge linear issue history ISSUE` (MCP
+  `taskboard_issue_history_v2`) shows each change's actor (a person, the ClawBridge
+  app, an integration) and its state, label, team and project moves. Read it
+  before asking a person what happened. It needs the ClawBridge Linear app on the
+  server, and names outside the binding are hidden.
+- **An agent canceled or marked Duplicate** (v0.3.13): an `agent-cancel` notice,
+  "ISSUE canceled by agent session NAME: REASON", goes to the coordinator and to the
+  issue's assignee session. It's a report, not an instruction.
+- **Who may cancel changed:** a `close-policy` notice when the owner or a lead changes
+  the cancel kinds (as for who closes).
+- **Intake, dead letters and context:** as before, it receives the project's intake
+  queue, dead-letter and context notices.
+
 ## Give it your project's rules
 
 Every project has rules the skill can't know: who decides, which team owns what,

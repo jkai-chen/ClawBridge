@@ -49,3 +49,12 @@ looks wrong, ask a person on the team.
 - Agents never @-mention you; you'll see their answers through Linear's usual
   notifications for threads you take part in.
 - Questions about the workflow itself go to the person who invited you.
+
+## Reviewing with Claude or ChatGPT (optional)
+
+If you'd rather work through an AI assistant, the
+[Linear reviewer skill](https://github.com/jkai-chen/clawbridge-reviewer-skill) sets up Claude (Claude.ai, Claude
+Desktop, Claude Code) or ChatGPT with Linear's official connector and your own Linear account. The assistant follows
+the rules on this page: one comment per topic, replies in the thread, it shows you every comment before posting, and
+it never changes an issue's state, assignee or project. To flag an issue for the team, it adds the `needs-agent`
+label.

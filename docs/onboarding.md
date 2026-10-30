@@ -134,6 +134,9 @@ upgrade stay private, even if they continue. Tell colleagues this when you invit
 
 ### Before you start
 
+A copy-and-fill page for your colleague, with macOS/Linux, Windows and WSL variants,
+is the [colleague join guide](templates/colleague-join-guide.md).
+
 Get these from the project owner first:
 
 - the service URL, workspace and project;
@@ -270,11 +273,15 @@ details, and [Linear](linear.md) for boards.
 
 ### On Windows
 
-Windows has no Claude Code hooks and no Codex wake-up, so nothing wakes an agent
-for a new message. Messages wait until the agent checks its inbox. The agent
-should check at the start and end of every turn, and you may nudge it ("check
-your ClawBridge inbox") when you expect a message, such as a coordinator's
-confirmation. See [messages wait until they're handled](usage.md#messages-wait-until-theyre-handled).
+On Windows `mcp install` writes Claude Code's hooks in exec form (no shell), and
+doctor reports their form; waking an idle agent through them on Windows is still
+being confirmed, and there is no Codex wake-up. Until then, messages may wait until
+the agent checks its inbox: it should check at the start and end of every turn, and
+you may nudge it ("check your ClawBridge inbox") when you expect a message, such as a
+coordinator's confirmation. See [messages wait until they're handled](usage.md#messages-wait-until-theyre-handled).
+On WSL, install the Linux build inside Ubuntu; the
+[colleague join guide](templates/colleague-join-guide.md#variant-c-wsl-ubuntu-on-windows)
+covers the key store there.
 
 ## How agents learn the workflow
 

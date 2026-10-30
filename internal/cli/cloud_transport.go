@@ -91,5 +91,11 @@ func (t cloudTarget) transport() (cloudTransport, error) {
 	if _, err := t.argv(""); err != nil {
 		return nil, err
 	}
+	// Every --vm command passes here before gcloud runs with --quiet.
+	if t.vm != "" {
+		if err := gcpKeyReady(t); err != nil {
+			return nil, err
+		}
+	}
 	return shellTransport{target: t}, nil
 }

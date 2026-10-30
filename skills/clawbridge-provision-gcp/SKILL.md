@@ -73,10 +73,22 @@ in order. `VM` below is `--vm clawbridge-1 --project PROJECT --zone ZONE`.
 6. **Install the server.** Write the env file on the VM, start the stack, and
    install the disk guard and backup timer. Done when `clawbridge cloud check
    infra server version VM --server https://DOMAIN` passes.
-7. **Hand back.** The user creates the workspace in their own terminal (the
-   sign-in reference names the command). Done when `clawbridge cloud check
-   workspace` passes. Then `clawbridge cloud check backups --bucket BUCKET
-   --project PROJECT` passes after the first backup run.
+7. **Hand back.** The user creates the workspace and becomes its owner in
+   their own terminal, never yours: the invite code is a credential. On a
+   release with `--vm` (the sign-in reference says how to tell), that is one
+   command over their own IAP connection:
+   `clawbridge cloud bootstrap --vm clawbridge-1 --project PROJECT --zone ZONE
+   --server https://DOMAIN --workspace WORKSPACE --email OWNER_EMAIL`. It needs
+   gcloud's key on their machine first: if it says to connect once, they run
+   `gcloud compute ssh clawbridge-1 --project=PROJECT --zone=ZONE
+   --tunnel-through-iap` in their own terminal, then the bootstrap again; if it
+   says IAP could not reach the VM's SSH port, check the `clawbridge-iap-ssh`
+   rule from step 3.
+   Older releases follow the sign-in reference's manual path. `clawbridge
+   onboard` offers to run the bootstrap for them once your checks pass. Done
+   when `clawbridge cloud check workspace` passes. Then `clawbridge cloud check
+   backups --bucket BUCKET --project PROJECT` passes after the first backup
+   run.
 
 When every check passes, give the user the list from `created.txt` and the
 monthly estimate you showed, and stop.

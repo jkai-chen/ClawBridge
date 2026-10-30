@@ -243,6 +243,7 @@ func factsOutput(f remoteFacts) string {
 }
 
 func TestCloudCheckServerOverSSH(t *testing.T) {
+	withGcpKey(t, t.TempDir())
 	isolated(t)
 	withVersion(t, "1.2.3")
 	url := healthServer(t, 200, `{"status":"ok","version":"1.2.3"}`)

@@ -139,6 +139,17 @@
 - The own-server playbook (`clawbridge-provision-vm`) pulls the release's published server image when its attestation
   verifies on your machine (`gh attestation verify`) and the host's Compose is 2.24 or later; anything else fails
   closed to a build from the checked-out source, and it says which and why.
+- **`cloud bootstrap --vm NAME --project P --zone Z` lets the owner in on Google Cloud** over your own `gcloud compute
+  ssh --tunnel-through-iap`, with the code only on that session's stdin, as `--ssh` does. `clawbridge onboard`'s Google
+  Cloud hand-over now offers it too.
+  - **Keys:** every IAP call (`cloud check`, `cloud secret set`, `cloud bootstrap`) passes `--ssh-key-expire-after=1h`,
+    so a key gcloud writes to metadata without OS Login expires within the hour. The bootstrap warns in one line when
+    OS Login is off, naming project-wide or the VM's own metadata.
+  - **IAP's firewall:** a missing rule for 35.235.240.0/20 on tcp:22 is named as such.
+  - **No prompts:** gcloud runs with `--quiet`, so nothing can read the code from stdin, and it refuses until you've
+    connected once with `gcloud compute ssh` in your own terminal (which makes your key). `cloud secret set --vm`
+    and `cloud check --vm` too.
+  - The first connection trusts the VM's host key as gcloud records it.
 
 ## Security
 

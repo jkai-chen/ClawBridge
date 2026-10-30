@@ -47,6 +47,7 @@ func infraProbe() *cloudProbe {
 }
 
 func TestCloudCheckInfra(t *testing.T) {
+	withGcpKey(t, t.TempDir())
 	mounted := allSet()
 	mounted.mount = "/dev/sdb"
 	for name, c := range map[string]struct {

@@ -66,7 +66,7 @@ func (t cloudTarget) argv(remoteCommand string) ([]string, error) {
 		if !vmPattern.MatchString(t.vm) || !projectPattern.MatchString(t.project) || !zonePattern.MatchString(t.zone) {
 			return nil, errors.New("--vm, --project and --zone must all be valid Compute Engine names")
 		}
-		return []string{"gcloud", "compute", "ssh", t.vm, "--project", t.project, "--zone", t.zone, "--tunnel-through-iap", "--command", remoteCommand}, nil
+		return []string{"gcloud", "compute", "ssh", t.vm, "--project", t.project, "--zone", t.zone, "--tunnel-through-iap", "--quiet", gcpKeyExpiry, "--command", remoteCommand}, nil
 	}
 	return nil, errors.New("the server is reached with --ssh HOST, or --vm NAME --project P --zone Z")
 }

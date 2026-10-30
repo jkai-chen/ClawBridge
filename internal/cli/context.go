@@ -61,6 +61,20 @@ func contextDirOrEmpty() string {
 	return dir
 }
 
+// contextArgs are a context subcommand's arguments with a global --session
+// passed on to the subcommands that take one; the subcommand's own
+// --session, parsed later, still wins.
+func contextArgs(args []string, session string) []string {
+	if session == "" || len(args) == 0 {
+		return args
+	}
+	switch args[0] {
+	case "show", "bind", "compacting":
+		return append([]string{args[0], "--session", session}, args[1:]...)
+	}
+	return args
+}
+
 // runContext runs `clawbridge context …`. It reads local files only, so it
 // needs no configuration or route.
 func runContext(ctx context.Context, args []string, stdout, stderr io.Writer) error {

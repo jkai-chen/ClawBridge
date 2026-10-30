@@ -471,3 +471,47 @@ func TestHooksInstallWarnsWhenNotIgnored(t *testing.T) {
 		t.Fatal("warned about an ignored file")
 	}
 }
+
+// Global flags before `context` (the form an agent's shell often has) reach
+// the same local commands: a global --session names the session, the
+// subcommand's own wins, and the rest are ignored. An unknown subcommand
+// prints the context usage, not the levels one.
+func TestContextAfterGlobalFlags(t *testing.T) {
+	claude := fixture(t, "claude-code.jsonl")
+	isolated(t)
+	run := func(args ...string) (string, error) {
+		var out bytes.Buffer
+		err := Run(context.Background(), args, &out, io.Discard)
+		return out.String(), err
+	}
+	globals := []string{"--workspace", "pilot", "--project", "example", "--instance", "pane-1"}
+	out, err := run(append(append([]string{}, globals...), "--session", "worker-g", "context", "bind", "--agent", "claude-code", "--transcript", claude)...)
+	if err != nil || !strings.Contains(out, "bound worker-g") {
+		t.Fatalf("global --session before bind: %q %v", out, err)
+	}
+	if b, _ := loadTestBinding(t, "worker-g"); b.Transcript == "" {
+		t.Fatalf("%+v", b)
+	}
+	out, err = run(append(append([]string{}, globals...), "context", "bind", "--session", "worker-h", "--agent", "claude-code", "--transcript", claude)...)
+	if err != nil || !strings.Contains(out, "bound worker-h") {
+		t.Fatalf("--session after bind: %q %v", out, err)
+	}
+	out, err = run(append(append([]string{}, globals...), "--session", "worker-g", "context", "show")...)
+	if err != nil || !strings.Contains(out, "context: 43k tokens") {
+		t.Fatalf("global --session before show: %q %v", out, err)
+	}
+	// The subcommand's own --session wins over the global one.
+	out, err = run(append(append([]string{}, globals...), "--session", "worker-g", "context", "show", "--session", "nobody")...)
+	if err != nil || out != "context: nobody is not bound to a transcript\n" {
+		t.Fatalf("subcommand --session: %q %v", out, err)
+	}
+	for _, args := range [][]string{
+		append(append([]string{}, globals...), "context", "frobnicate"),
+		append(append([]string{}, globals...), "context"),
+		{"context", "frobnicate"},
+	} {
+		if _, err = run(args...); err == nil || err.Error() != contextUsage {
+			t.Fatalf("%v: %v", args, err)
+		}
+	}
+}

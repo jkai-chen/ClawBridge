@@ -275,6 +275,11 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	if len(rest) == 0 {
 		return runStartup(ctx, flags, args, stdout, stderr)
 	}
+	// Context watching after global flags reads the same local files: a
+	// global --session names the session, and the rest are ignored.
+	if rest[0] == "context" && (len(rest) < 2 || rest[1] != "levels") {
+		return runContext(ctx, contextArgs(rest[1:], flags.Session), stdout, stderr)
+	}
 	if len(rest) >= 2 && rest[0] == "setup" && rest[1] == "wizard" {
 		return runWizard(ctx, flags, rest[2:], stdout, stderr)
 	}
@@ -877,9 +882,9 @@ flags:`)
 		f.Bool("confirm", false, "confirm releasing this address from its bound Google account")
 		f.Bool("allow-previous", false, "let the released account bind again, for an unbind made by mistake")
 	case "context":
-		// Only `context levels set` reaches here; see above.
+		// Only `context levels …` reaches here; see above.
 		if len(rest) < 2 || rest[1] != "set" {
-			return errors.New("usage: context levels set [--warn-tokens N] [--handover-tokens N] | --clear")
+			return errors.New(contextUsage)
 		}
 		op, rest = "context_levels_set", rest[2:]
 		f.Int64("warn-tokens", 0, "this session's own warn level, below the project's")

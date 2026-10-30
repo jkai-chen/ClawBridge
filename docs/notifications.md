@@ -198,6 +198,20 @@ in the project's `.claude/settings.local.json` (`--hooks none` leaves them out;
   start lifts the hold; until then its messages wait, and `clawbridge doctor`
   shows the hold.
 
+**Relaunching Claude Code by hand.** The hooks name the session from
+`CLAWBRIDGE_SESSION` in Claude Code's own environment; without it they bind
+nothing, and `doctor` says the session is "not bound to a transcript". When you
+start or resume Claude Code yourself (`claude --resume …`) rather than from the
+launcher that set it, export it first, in that shell:
+
+```sh
+export CLAWBRIDGE_SESSION=api-worker-2 CLAWBRIDGE_INSTANCE=api-worker-2-pane
+claude --resume
+```
+
+Any session start binds once it is set: a fresh start, a resume, `/clear` or
+`/compact`. The hook command also needs `clawbridge` on that shell's `PATH`.
+
 **Hook forms.** On macOS and Linux each hook is a POSIX shell command. On Windows
 there is no POSIX shell, so `mcp install` writes each hook in Claude Code's exec
 form: an entry with `command` (the absolute path of `clawbridge.exe`) and `args`

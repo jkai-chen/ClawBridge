@@ -85,6 +85,13 @@
   start step drains a server that is already up (`operator maintenance start --wait 90s`, as an upgrade does) before
   `compose up`, and stops if it doesn't drain; a first install is unchanged. The disk guard (deployment.md, which
   the playbooks follow) restarts Docker only when the guard is new or changed, since that restarts every container.
+- **`context bind` and `context show` work after global flags.** `clawbridge --workspace W --project P --session S
+  context bind …` (or `show`) printed the `context levels set` usage and did nothing; only the environment-variable
+  form worked. They now run as without the flags: a global `--session` names the session (the subcommand's own
+  `--session` still wins), and the other global flags are ignored, since context watching reads local files only.
+  An unknown `context` subcommand prints the context usage. The docs and the skill now say to export
+  `CLAWBRIDGE_SESSION` (and `CLAWBRIDGE_INSTANCE`) before relaunching Claude Code by hand, or its hooks bind nothing.
+  No schema change. Linear config scope: none.
 
 # ClawBridge v0.3.12 (released 30 Oct)
 

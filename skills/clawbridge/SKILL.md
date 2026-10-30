@@ -98,7 +98,9 @@ health.
    `--session` (the values the server's instructions name) and the server's
    `--instance`, or export `CLAWBRIDGE_WORKSPACE`, `CLAWBRIDGE_PROJECT`,
    `CLAWBRIDGE_SESSION` and `CLAWBRIDGE_INSTANCE`; otherwise they use the checkout's
-   `.clawbridge.toml` or `~/.clawbridge/config.toml`. `clawbridge linear context`
+   `.clawbridge.toml` or `~/.clawbridge/config.toml`. Relaunching Claude Code by hand
+   (`claude --resume`), export `CLAWBRIDGE_SESSION` and `CLAWBRIDGE_INSTANCE` in that
+   shell first: the context hooks bind only a session they can name. `clawbridge linear context`
    shows the scope a shell command used and where each value came from
    ([references/cli.md](references/cli.md#shell-commands-and-the-mcp-servers-scope)). Call
    `register_session` when starting a new session, then `whoami` to confirm the

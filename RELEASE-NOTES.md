@@ -27,6 +27,11 @@
   part); a late outcome from the server that sent it still lands. A part keeps its newest five attempts; an older one
   stays listed for `linear writes --ack`. The server's ledger records now name the issue's UUID and, for a marker,
   its part. Schema 52 → 53 (additive, no backfill). Linear config scope: none.
+- An agent write the server makes as the ClawBridge Linear app reuses the MCP session of an earlier one for up to 2
+  minutes idle, so each write after the first in that window costs about 4 fewer Linear calls (no handshake, no tool
+  list). A failed write, any failed call, a 401 or a re-minted token closes the session; a kept session Linear has
+  forgotten is reopened once inside the write. The tool list is still read and checked on every open, and every call,
+  a reopen's included, is charged to the write that made it. Linear config scope: none.
 
 # ClawBridge v0.3.12 (released 30 Oct)
 

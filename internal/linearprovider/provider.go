@@ -3,6 +3,7 @@
 package linearprovider
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -41,6 +42,9 @@ type Error struct {
 	// never its title, description or other text. It is unchecked against any
 	// binding, so a caller must scope-check it before saying anything about it.
 	Returned *IssueV2
+	// gone marks a call Linear refused because it no longer knows the
+	// session (HTTP 404 on a session ID): the tool never ran.
+	gone bool
 }
 
 func (e *Error) Error() string { return "Linear provider: " + e.Detail() }
@@ -94,6 +98,9 @@ type Provider struct {
 	// session then, so the next call reopens it first. The cut call itself
 	// is never sent again.
 	stale atomic.Bool
+	// revive, set by Reused, reopens a kept session whose first call in a
+	// new command failed unsent; it is cleared by that first call.
+	revive func(context.Context) (*Provider, error)
 }
 type PageOptions struct {
 	Limit  int
@@ -762,7 +769,77 @@ func (p *Provider) call(ctx context.Context, names []string, args ...arg) (map[s
 	}
 	return p.invoke(ctx, chosen, values)
 }
+
+// Reused marks a kept session handed to a new command (the server's app
+// writes keep one for a short while). If that command's first call fails
+// unsent, or on a session Linear no longer knows, reopen opens a fresh
+// connection, which reads the tool list again, and the call is sent once
+// more on it. That is the only retry: any later failure is the call's own.
+func (p *Provider) Reused(reopen func(context.Context) (*Provider, error)) {
+	p.revive = reopen
+}
+
+// Broken reports whether a call on this connection failed or missed a
+// capability since it opened, so it must not serve another command.
+func (p *Provider) Broken() bool { return p.broken.Load() }
+
 func (p *Provider) invoke(ctx context.Context, chosen string, values map[string]any) (map[string]any, error) {
+	revive := p.revive
+	p.revive = nil
+	out, e := p.invokeTracked(ctx, chosen, values)
+	if e == nil || revive == nil || !staleSession(e) {
+		return out, e
+	}
+	if p.renew(ctx, revive, chosen) != nil {
+		// Nothing was sent: the first failure says so.
+		return nil, e
+	}
+	return p.invokeTracked(ctx, chosen, values)
+}
+
+// staleSession is a failure that proves the call never ran and points at
+// the kept session itself: Linear forgot it, refused the token (401), or
+// the request failed before its headers were written. A rate limit or a
+// 403 is not the session's fault, so it is not retried.
+func staleSession(e error) bool {
+	var pe *Error
+	if !errors.As(e, &pe) {
+		return false
+	}
+	return pe.gone || pe.NotSent && (pe.Kind == "unavailable" || pe.Kind == "unauthorized" && pe.Status == http.StatusUnauthorized)
+}
+
+// renew replaces a kept session with a fresh one from reopen, closing the
+// old. The call's tool must be in the new tool list with the same schema,
+// or the arguments negotiated for it are not sent.
+func (p *Provider) renew(ctx context.Context, reopen func(context.Context) (*Provider, error), chosen string) error {
+	fresh, e := reopen(ctx)
+	if e != nil {
+		return e
+	}
+	if !sameTool(p.tools[chosen], fresh.tools[chosen]) {
+		fresh.Close()
+		return fail("capability_unavailable")
+	}
+	if p.closer != nil {
+		p.closer.Close()
+	}
+	p.caller, p.closer, p.tools, p.capHits, p.reopen = fresh.caller, fresh.closer, fresh.tools, fresh.capHits, fresh.reopen
+	p.stale.Store(false)
+	p.broken.Store(false)
+	return nil
+}
+
+func sameTool(a, b *mcp.Tool) bool {
+	if a == nil || b == nil {
+		return false
+	}
+	x, e1 := json.Marshal(a.InputSchema)
+	y, e2 := json.Marshal(b.InputSchema)
+	return e1 == nil && e2 == nil && bytes.Equal(x, y)
+}
+
+func (p *Provider) invokeTracked(ctx context.Context, chosen string, values map[string]any) (map[string]any, error) {
 	if p.stale.Load() {
 		// Reopen before sending; a failed reopen sent nothing.
 		if e := p.reopenSession(ctx); e != nil {
@@ -849,6 +926,9 @@ func (p *Provider) invokeOnce(ctx context.Context, chosen string, values map[str
 		if errors.As(e, &transport) {
 			copied := *transport
 			return nil, &copied
+		}
+		if errors.Is(e, mcp.ErrSessionMissing) {
+			return nil, &Error{Kind: "unavailable", gone: true}
 		}
 		return nil, fail("unavailable")
 	}

@@ -134,8 +134,11 @@ func (s *Service) open(ctx context.Context) (linearconn.Profile, Provider, func(
 	return s.connect(ctx, false)
 }
 
-// openForWrite always opens a fresh connection, so a write negotiates against
-// Linear's current tool schemas rather than a kept tools/list.
+// openForWrite never reuses a read's kept connection: a write negotiates
+// against the tool schemas read, and checked, on every open. The server's
+// app writes are the one exception to a fresh open: Config.Open may hand
+// them a session an earlier app write opened within the last two minutes,
+// with the tool list read when that session opened.
 func (s *Service) openForWrite(ctx context.Context) (linearconn.Profile, Provider, func(), error) {
 	return s.connect(ctx, true)
 }

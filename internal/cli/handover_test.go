@@ -28,6 +28,7 @@ type handoverStub struct {
 	checkConfig          string
 	checks               [][]string
 	checkFn              func(args []string) error // when set, replaces checkErr
+	checkOut             string                    // what the checks print
 }
 
 // stubHandover replaces every outside effect of the hand-over: no real
@@ -68,6 +69,7 @@ func stubHandover(t *testing.T) *handoverStub {
 	runHandoverChecks = func(_ context.Context, args []string, stdout, _ io.Writer) error {
 		h.checked = args
 		h.checks = append(h.checks, args)
+		_, _ = io.WriteString(stdout, h.checkOut)
 		if h.checkFn != nil {
 			return h.checkFn(args)
 		}

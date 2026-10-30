@@ -120,7 +120,7 @@ func TestPlaybookInstallsBesideTheSkill(t *testing.T) {
 	if states, err := Status(main); err != nil || !states[0].Current {
 		t.Fatalf("the main skill changed: %+v %v", states, err)
 	}
-	if err := RunWithIO([]string{"install", "--playbook", "azure", "--dir", parent}, &out, &errs); err == nil || !strings.Contains(err.Error(), "--playbook must be gcp, aws or local") {
+	if err := RunWithIO([]string{"install", "--playbook", "azure", "--dir", parent}, &out, &errs); err == nil || !strings.Contains(err.Error(), "--playbook must be gcp, aws, local or vm") {
 		t.Fatal(err)
 	}
 	// The AWS playbook installs and uninstalls the same way, on its own.
@@ -131,6 +131,16 @@ func TestPlaybookInstallsBesideTheSkill(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := RunWithIO([]string{"uninstall", "--playbook", "aws", "--dir", parent}, &out, &errs); err != nil {
+		t.Fatal(err, errs.String())
+	}
+	// So does the playbook for a server the user already has.
+	if err := RunWithIO([]string{"install", "--playbook", "vm", "--dir", parent}, &out, &errs); err != nil {
+		t.Fatal(err, errs.String())
+	}
+	if _, err := os.Stat(filepath.Join(parent, "clawbridge-provision-vm", "references", "signin.md")); err != nil {
+		t.Fatal(err)
+	}
+	if err := RunWithIO([]string{"uninstall", "--playbook", "vm", "--dir", parent}, &out, &errs); err != nil {
 		t.Fatal(err, errs.String())
 	}
 	if _, err := TargetsFor("unknown", "", parent); err == nil {
@@ -711,5 +721,61 @@ func TestDeploymentGuardBlockRestartsDockerOnlyWhenNew(t *testing.T) {
 	}
 	if found == 0 {
 		t.Fatal("deployment.md's disk-guard block moved")
+	}
+}
+
+// The playbook for a server the user already has keeps the same six rules,
+// its first bound to the host, and carries the review's musts: ClawBridge's
+// own ssh options, the generated secrets through cloud env init, the SSH
+// port this session uses before any firewall, and the clone's commit
+// checked against the attested SOURCE-COMMIT.txt.
+func TestVMPlaybookMatchesTheRules(t *testing.T) {
+	read := func(parts ...string) string {
+		raw, err := os.ReadFile(filepath.Join(append([]string{"..", ".."}, parts...)...))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(raw)
+	}
+	skill := read("skills", "clawbridge-provision-vm", "SKILL.md")
+	rules := skill[strings.Index(skill, "## Hard rules"):]
+	rules = rules[:strings.Index(rules[3:], "\n## ")+3]
+	var titles []string
+	for _, line := range strings.Split(rules, "\n") {
+		if len(line) > 3 && line[0] >= '1' && line[0] <= '6' && strings.HasPrefix(line[1:], ". **") {
+			titles = append(titles, line[:strings.Index(line[4:], "**")+6])
+		}
+	}
+	want := []string{"1. **Explicit host.**", "2. **Cost first.**", "3. **Secrets stay out of your hands.**",
+		"4. **Ask before every delete.**", "5. **Stop on mismatch.**", "6. **The check decides.**"}
+	if strings.Join(titles, "|") != strings.Join(want, "|") {
+		t.Fatalf("hard rules: %q", titles)
+	}
+	commands := read("skills", "clawbridge-provision-vm", "references", "commands.md")
+	for _, must := range []string{
+		"ssh -T -o BatchMode=yes -o ConnectTimeout=15 -o StrictHostKeyChecking=yes -o ForwardAgent=no -o ForwardX11=no -o ClearAllForwardings=yes -o PermitLocalCommand=no -o RemoteCommand=none HOST",
+		"clawbridge cloud env init --ssh HOST",
+		"before the first\n`compose up`",
+		`echo "$SSH_CONNECTION" | cut -d " " -f 4`,
+		"  ufw allow SSH_PORT/tcp\n  ufw allow 443/tcp\n  ufw show added\n  ufw --force enable",
+		"git -C /opt/clawbridge/repo rev-parse HEAD",
+		"gh attestation verify release-vX.Y.Z/SOURCE-COMMIT.txt",
+		"clawbridge cloud secret set CLAWBRIDGE_BACKUP_SECRET_ACCESS_KEY --ssh HOST",
+		"without `deleteFiles`",
+		"CLAWBRIDGE_DATA_ON_ROOT_DISK=1",
+		"clawbridge cloud check infra server version backups --ssh HOST --server https://DOMAIN",
+	} {
+		if !strings.Contains(commands, must) {
+			t.Fatalf("commands.md is missing: %s", must)
+		}
+	}
+	// Never a value: no command reads the env file but a count.
+	for _, line := range strings.Split(skill+commands, "\n") {
+		if strings.Contains(line, "clawbridge.env") && (strings.Contains(line, "cat ") || strings.Contains(line, "grep ") && !strings.Contains(line, "grep -c") && !strings.Contains(line, `grep -q "^$k="`)) {
+			t.Fatalf("reads the env file: %s", line)
+		}
+	}
+	if !strings.Contains(skill, "**could** read the server's env file") {
+		t.Fatal("SKILL.md does not say a sudo agent could read the env file")
 	}
 }

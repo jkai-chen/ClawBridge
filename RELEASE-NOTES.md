@@ -22,6 +22,29 @@
     runs this command instead of composing a shell line.
   - Run it before the first `compose up`: a new `POSTGRES_PASSWORD` doesn't match a database that already exists.
   - It refuses an env file that is a link.
+- **The database on the root disk, by your stated choice, now backs up.** With `CLAWBRIDGE_DATA_ON_ROOT_DISK=1` the
+  backup no longer refuses because the data path isn't a separate mount.
+
+## Onboarding
+
+- **Onboarding's fourth answer: a server you already have.** `clawbridge onboard` → "Set up my own server" now asks
+  "Where? 1. Google Cloud 2. AWS 3. This machine or my LAN (no cloud) 4. A server I already have (SSH and Docker)".
+  - **The inputs:** the SSH host, the domain, the owner, and the S3-compatible backup store (endpoint, bucket and
+    region), none of them secret.
+  - **The hand-over:** your agent gets the new `clawbridge-provision-vm` playbook (`skill install --playbook vm`), with
+    the host as its scope. The controls text says plainly that it runs commands there as root, and could read the
+    server's env file; the playbook forbids it, and you approve each command.
+  - **The playbook:**
+    - it confirms the host first;
+    - it formats a data volume only with your yes naming the device;
+    - before enabling a firewall it allows the SSH port this session actually uses;
+    - it checks the clone's commit against the release's attested `SOURCE-COMMIT.txt`;
+    - it makes the generated secrets with `cloud env init`.
+  - **After the agent:** ClawBridge itself runs `cloud check infra server version backups --ssh HOST`. Then it asks you
+    to confirm the backup key can't delete, and prints a summary: host, domain, backup store, key scope and every
+    `warn` line. It then offers `cloud bootstrap --ssh`.
+  - docs/operations/first-deployment.md covers the route for doing it yourself.
+  - **Not yet verified end to end** on a live non-GCP/AWS host; the steps are tested with a fake SSH transport.
 
 # ClawBridge v0.3.13 (released 30 Oct)
 

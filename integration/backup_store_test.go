@@ -361,6 +361,8 @@ func TestBackupEndpointConfigurationFailsClosed(t *testing.T) {
 		"no key id":        {store("https://s3.example.test", keys[1]), "CLAWBRIDGE_BACKUP_ACCESS_KEY_ID exactly once"},
 		"no secret":        {store("https://s3.example.test", keys[0]), "CLAWBRIDGE_BACKUP_SECRET_ACCESS_KEY exactly once"},
 		"odd key":          {store("https://s3.example.test", "CLAWBRIDGE_BACKUP_ACCESS_KEY_ID=AKIA EXAMPLE", keys[1]), "characters a key never has"},
+		"root disk not 1":  {append(store("https://s3.example.test", keys...), "CLAWBRIDGE_DATA_ON_ROOT_DISK=yes"), "CLAWBRIDGE_DATA_ON_ROOT_DISK must be 1"},
+		"root disk twice":  {append(store("https://s3.example.test", keys...), "CLAWBRIDGE_DATA_ON_ROOT_DISK=1", "CLAWBRIDGE_DATA_ON_ROOT_DISK=1"), "CLAWBRIDGE_DATA_ON_ROOT_DISK must be 1"},
 		"bad region":       {[]string{"CLAWBRIDGE_BACKUP_URL=s3://backups", "CLAWBRIDGE_BACKUP_REGION=Auto;x", "CLAWBRIDGE_BACKUP_ENDPOINT=https://s3.example.test", keys[0], keys[1]}, "not a region name"},
 	} {
 		out, ran := runBackupWith(t, c.env...)
@@ -416,6 +418,7 @@ func TestBackupEndpointCommands(t *testing.T) {
 		`grep -E '/postgres/daily/[0-9]{8}T[0-9]{6}Z\.(dump|sha256)$'`,
 		`fail "cannot list the backup store"`,
 		`set -- -f "$deploy_dir/deploy/compose.image.yaml" "$@"`,
+		`[ "$on_root_disk" = 1 ] || mountpoint -q "$postgres_mount" ||`,
 		`127.* | ::1 | 0.* | :: | ::ffff:127.* | ::ffff:0.*) fail "the backup endpoint resolves to loopback`,
 		`fe80:* | FE80:*) fail "the backup endpoint resolves to a link-local address`,
 	} {
@@ -473,5 +476,14 @@ func TestBackupCredentialDirectoryRemovedOnExit(t *testing.T) {
 		if _, err := os.Stat(credDir); !os.IsNotExist(err) {
 			t.Fatalf("%s: the key's directory is still there (%v): %s", name, err, out)
 		}
+	}
+}
+
+// A local folder guards no data disk, so it never reads the root-disk key:
+// a value a server would refuse doesn't fail a local backup.
+func TestBackupLocalFolderIgnoresTheRootDiskKey(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "backups")
+	if out, err, ran := runLocalBackup(t, dir, []string{"CLAWBRIDGE_DATA_ON_ROOT_DISK=yes"}); err != nil {
+		t.Fatalf("local backup with a root-disk key: %v\n%s\n%s", err, out, ran)
 	}
 }

@@ -859,7 +859,7 @@ func openServingStore(ctx context.Context, dsn, owner string) (*bus.Store, error
 // cannot sign in: their own address moved to a new Google account, or a
 // workspace allow-list refuses every account.
 func RunOperator(ctx context.Context, args []string, stdout io.Writer) error {
-	const usage = "usage: clawbridge operator principal-unbind EMAIL --confirm [--allow-previous] | workspace-clear-domains WORKSPACE --confirm | linear-app-probe --confirm [--project UUID] [--p8 [--dry-run] [--allow-member UUID] | --health-order | --project-status [--dry-run] [--allow-member UUID]] | linear-app-probe --rate-headers --confirm | linear-app-probe --confirm --subscribe --issue UUID --team UUID (--email OWNER | --email-stdin) [--user UUID] [--dry-run] | linear-app-doc-probe --confirm | health-run --project UUID --confirm [--force-new | --delete UPDATE_ID] | bootstrap-invite --workspace NAME [--force-stdout | --code-stdin [--expect-owner EMAIL]] [--database-url-env NAME] | launcher-token create --out PATH [--print] | launcher-token revoke ID | model-seal-key rotate [--confirm [--delete-unreadable]] | maintenance start --reason TEXT [--ttl 15m] (--wait DURATION | --no-wait) --confirm | maintenance end --confirm | maintenance show"
+	const usage = "usage: clawbridge operator principal-unbind EMAIL --confirm [--allow-previous] | workspace-clear-domains WORKSPACE --confirm | linear-app-probe --confirm [--project UUID] [--p8 [--dry-run] [--allow-member UUID] | --health-order | --project-status [--dry-run] [--allow-member UUID]] | linear-app-probe --rate-headers --confirm | linear-app-probe --confirm --subscribe --issue UUID --team UUID (--email OWNER | --email-stdin) [--user UUID] [--dry-run] | linear-app-doc-probe --confirm | linear-webhook-probe --confirm --team UUID [--forged --public-origin https://HOST] | health-run --project UUID --confirm [--force-new | --delete UPDATE_ID] | bootstrap-invite --workspace NAME [--force-stdout | --code-stdin [--expect-owner EMAIL]] [--database-url-env NAME] | launcher-token create --out PATH [--print] | launcher-token revoke ID | model-seal-key rotate [--confirm [--delete-unreadable]] | maintenance start --reason TEXT [--ttl 15m] (--wait DURATION | --no-wait) --confirm | maintenance end --confirm | maintenance show"
 	if len(args) > 0 && args[0] == "bootstrap-invite" {
 		return runBootstrapInvite(ctx, args[1:], stdout)
 	}
@@ -871,6 +871,9 @@ func RunOperator(ctx context.Context, args []string, stdout io.Writer) error {
 	}
 	if len(args) > 0 && args[0] == "maintenance" {
 		return runMaintenance(ctx, args[1:], stdout)
+	}
+	if len(args) > 0 && args[0] == "linear-webhook-probe" {
+		return runLinearWebhookProbe(ctx, args[1:], stdout)
 	}
 	if len(args) == 0 || (args[0] != "principal-unbind" && args[0] != "workspace-clear-domains" && args[0] != "linear-app-probe" && args[0] != "linear-app-doc-probe" && args[0] != "health-run") {
 		return errors.New(usage)

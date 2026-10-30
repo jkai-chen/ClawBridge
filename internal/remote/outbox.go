@@ -56,6 +56,27 @@ func CloseOutboxes() {
 	opened.stores = nil
 }
 
+// CloseOutbox closes this client's outbox, if it opened one, and leaves the
+// process's others open: a command that made its own client and ends
+// before its Run does (a nested one, or a test calling it directly) frees
+// its file at once, which Windows needs to remove it. A write after it
+// fails as without an outbox.
+func (c *Client) CloseOutbox() {
+	s := c.outboxStore.Swap(nil)
+	if s == nil {
+		return
+	}
+	opened.Lock()
+	for i, o := range opened.stores {
+		if o == s {
+			opened.stores = append(opened.stores[:i], opened.stores[i+1:]...)
+			break
+		}
+	}
+	opened.Unlock()
+	s.Close()
+}
+
 // outbox is the profile's outbox, or nil: switched off, no profile cache
 // to sit beside, or unopenable (a write then fails fast, as before).
 func (c *Client) outbox() *outbox.Store {

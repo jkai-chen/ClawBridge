@@ -7,6 +7,13 @@
   candidate or a notified comment a poll finds more than 10 minutes late counts as a miss for its issue's team (read
   by the poll itself) and puts that team back on the usual cadence for 24 h; a drain's end marks every live team's
   cursors due once. Linear config scope: none.
+- `clawbridge linear webhook-setup [--project SLUG]` (read-only) prints, for each bound write team, the team webhook
+  the owner creates in Linear's UI: the team, its URL, Issues and Comments, "choose this team, not All public teams",
+  and the env line's shape with `<secret>`. The host operator's `operator linear-webhook-probe --confirm --team UUID`
+  proves the deliveries on a probe-only team (one issue, a comment, `needs-agent` added and removed, archived; up to
+  2 minutes for their deliveries), and `--forged --public-origin https://HOST` checks that forged, expired, other-team
+  and oversize bodies are refused and counted and a repeated delivery is one row. Both print classes only. Linear
+  config scope: none (the owner creates team webhooks in Linear's UI).
 
 # ClawBridge v0.3.11 (released 30 Oct)
 

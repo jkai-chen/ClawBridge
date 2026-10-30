@@ -479,3 +479,36 @@ func TestDrainOutboxWhileWithoutAnOutbox(t *testing.T) {
 		t.Fatal("the drainer didn't stop with its context")
 	}
 }
+
+// A client closes its own outbox and no other: a command that ends before
+// its Run (a nested one) frees its file at once and leaves the outer
+// command's outbox open.
+func TestClientCloseOutboxClosesOnlyItsOwn(t *testing.T) {
+	s := newOutboxServer(t)
+	mine, _ := outboxClient(t, s)
+	other, _ := outboxClient(t, s)
+	ob, keep := mine.Outbox(), other.Outbox()
+	if ob == nil || keep == nil {
+		t.Fatal("no outbox")
+	}
+	mine.CloseOutbox()
+	if _, err := ob.Status(context.Background()); err == nil || !strings.Contains(err.Error(), "closed") {
+		t.Fatal("the outbox is still open:", err)
+	}
+	if mine.Outbox() != nil {
+		t.Fatal("a closed outbox is still handed out")
+	}
+	if _, err := keep.Status(context.Background()); err != nil {
+		t.Fatal("another client's outbox was closed:", err)
+	}
+	opened.Lock()
+	for _, o := range opened.stores {
+		if o == ob {
+			opened.Unlock()
+			t.Fatal("the closed outbox is still listed")
+		}
+	}
+	opened.Unlock()
+	mine.CloseOutbox() // a second close does nothing
+	CloseOutboxes()
+}

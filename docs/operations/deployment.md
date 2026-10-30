@@ -587,6 +587,48 @@ CLAWBRIDGE_LINEAR_APP_TOKEN_KEY=<32 random bytes, base64>
   the fields as sent, and what Linear does with a date held at a quarter's
   precision. The preview works without it, and the write goes through the
   confirming person's own Linear profile, never the app.
+- **Linear webhooks are off until proven.** ClawBridge writes no Linear
+  configuration: the owner creates one webhook per bound write team in
+  Linear's UI. `clawbridge linear webhook-setup [--project SLUG]` (read-only,
+  any member) prints, for each team, its name, its URL
+  (`https://CLAWBRIDGE_DOMAIN/linear/webhook/TEAM_UUID`), the resource types
+  (Issues, Comments) and "choose this team, not All public teams", and the env
+  line's shape, `CLAWBRIDGE_LINEAR_WEBHOOK_SECRETS=<team UUID>=<secret>`. Set
+  the secrets in `/etc/clawbridge/clawbridge.env` in your own terminal, never
+  through an agent, and recreate the API. Deliveries are then recorded inert
+  until the server runs with `serve --webhooks-proven` or
+  `CLAWBRIDGE_WEBHOOKS_PROVEN=1`. Set that only after the webhook probe passes,
+  on a probe-only team bound to a probe-only project:
+
+  ```sh
+  ... run --rm --no-deps api operator linear-webhook-probe --confirm --team UUID
+  ... run --rm --no-deps api operator linear-webhook-probe --confirm --team UUID --forged --public-origin https://HOST
+  ```
+
+  - **The round trip:** as the app, one issue in the team, a comment, the
+    `needs-agent` label added and removed, and the issue archived; then up to 2
+    minutes for their deliveries. It also tries Linear's read-only `webhooks`
+    query once and records whether it works without admin rights; nothing
+    depends on that.
+    Keep the probe team quiet for the run: no other edit in it during the
+    2-minute wait. Deliveries carry no issue ID the probe can match, so they
+    are matched to its events by event type, `updatedFrom` keys and order.
+    The `Linear-Delivery` header is recorded, not required: without it the
+    route dedups on the body's hash.
+  - **`--forged`** writes nothing to Linear. From the host it POSTs to the public
+    route an unsigned body, one signed with a random key, one signed 10 minutes
+    ago, one naming another team, and one over 1 MiB, which must be refused
+    401 `signature`, 401 `signature`, 401 `stale`, 401 `team_mismatch` and 413;
+    then one good body twice under one `Linear-Delivery`, which must be one
+    row. It waits about 70 seconds for the refusal counters, which the route
+    flushes once a minute, and checks each was counted. The team's secret comes
+    from the server's own environment, never an argument.
+  - **What it prints:** classes only: whether the `Linear-Delivery` header came,
+    the field shapes, the `updatedFrom` key names, the largest payload, the
+    timestamp skew, the webhooks query's answer, and per event whether it was
+    delivered. Never a secret, body, ID or text, except the probe issue's ID
+    when its archive failed, so the owner archives it by hand.
+  - It never mints; the token rules are as above.
 - **Which gates are on.** The project owner's `clawbridge doctor` reports them
   as `linear.proven_gates` ("Proven gates: issue_subscribers, issue_move (off:
   project_flow, issue_family_move, project_team_add, project_status_domain,

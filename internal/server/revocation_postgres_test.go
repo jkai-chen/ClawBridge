@@ -49,6 +49,45 @@ func newRVFixture(t *testing.T, listen bool) *rvFixture {
 	if dsn == "" {
 		t.Skip("reviewer supplies disposable Postgres DSN")
 	}
+	return newRVFixtureIn(t, listen, dsn)
+}
+
+// ownPostgresDatabase creates a database for one test on dsn's server and
+// returns its DSN; it is dropped when the test ends. NOTIFY is per
+// database, so a test that counts notifications needs its own: on the
+// shared one, any other test's access change (this package's or another
+// running at once) notifies the same channel.
+func ownPostgresDatabase(t *testing.T, dsn string) string {
+	t.Helper()
+	admin, err := sql.Open("pgx", dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer admin.Close()
+	name := "cb_" + strings.ReplaceAll(awUnique("notify"), "-", "_")
+	if _, err = admin.Exec(`CREATE DATABASE ` + pgx.Identifier{name}.Sanitize()); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		admin, err := sql.Open("pgx", dsn)
+		if err != nil {
+			t.Error(err)
+			return
+		}
+		defer admin.Close()
+		if _, err = admin.Exec(`DROP DATABASE IF EXISTS ` + pgx.Identifier{name}.Sanitize() + ` WITH (FORCE)`); err != nil {
+			t.Error(err)
+		}
+	})
+	if u, err := url.Parse(dsn); err == nil && (u.Scheme == "postgres" || u.Scheme == "postgresql") {
+		u.Path = "/" + name
+		return u.String()
+	}
+	return dsn + " dbname=" + name
+}
+
+func newRVFixtureIn(t *testing.T, listen bool, dsn string) *rvFixture {
+	t.Helper()
 	f := &rvFixture{t: t, dsn: dsn, owner: awUnique("owner") + "@revoke-test.example", member: awUnique("member") + "@revoke-test.example", workspace: awUnique("rvws")}
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
@@ -206,7 +245,12 @@ func TestAccessChangeWakesTheRevokingServerWithoutListen(t *testing.T) {
 // The notify carries nothing, a rolled-back change sends none, and one
 // change sends one.
 func TestPostgresAccessNotifyIsEmptyAndTransactional(t *testing.T) {
-	f := newRVFixture(t, true)
+	dsn := os.Getenv("CLAWBRIDGE_TEST_POSTGRES_DSN")
+	if dsn == "" {
+		t.Skip("reviewer supplies disposable Postgres DSN")
+	}
+	// Its own database: the test counts every notification on the channel.
+	f := newRVFixtureIn(t, true, ownPostgresDatabase(t, dsn))
 	conn, err := pgx.Connect(context.Background(), f.dsn)
 	if err != nil {
 		t.Fatal(err)

@@ -799,9 +799,14 @@ next: --cursor eyJ2IjoxLCJpc3N1ZSI6…
   line is `next: --cursor C`; pass it for older entries. A cursor belongs to that issue
   and the binding's revision: after a relink, read again without one. `--json` prints the
   page as data (`entries`, `has_more`, `next_cursor`).
-- **It is charged as a read.** The server asks Linear at most 3 times for one page, and the
-  calls it makes count in the project's hourly Linear count, to agents for a session's
-  read and to people for yours, like writes; it is never refused for the count. Your
+- **Only the binding's teams and projects are named.** A team the binding doesn't list,
+  or a project that isn't one of the binding's (a team board binds none, so every project
+  there), shows as `(outside this project's binding)` (`{"outside": true}` in `--json`),
+  with no ID, key or name. A parent issue's identifier is shown as Linear gives it.
+- **It is charged as a read, by the server.** The server asks Linear at most 3 times for
+  one page, and the calls it makes count in the project's hourly Linear count as
+  `app_read.history`, to agents for a session's read and to people for yours, like writes;
+  it is never refused for the count. The server makes this charge itself; no client can. Your
   profile's own read of the issue is paced as usual.
 
 ### Linear's rate limits

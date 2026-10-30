@@ -28,22 +28,14 @@ ALTER TABLE watch_lease ADD COLUMN budget_agents INTEGER NOT NULL DEFAULT 0;
 `
 
 // linearWriteCallFloor is the fewest calls each kind of write makes: the
-// write, and its read-back where it always reads back. read is the one
-// read charged this way: the hosted server's app read of an issue's
-// history (FR21), counted under the person or session that asked, like
-// their writes.
+// write, and its read-back where it always reads back.
 var linearWriteCallFloor = map[string]int{
 	"create": 2, "update": 2, "comment": 2, "relation": 2, "project_create": 2, "project_team_add": 2, "project_plan": 2,
-	"document": 2, "project_lead": 1, "view": 1, "subscribe": 1, "admin": 1, "read": 1,
+	"document": 2, "project_lead": 1, "view": 1, "subscribe": 1, "admin": 1,
 }
 
 // linearWriteCallCeiling bounds one operation's count.
 const linearWriteCallCeiling = 200
-
-// LinearReadCallCeiling bounds one read charge: an issue history request
-// asks Linear at most 3 times, 6 with re-sends. A reader may send the
-// charge itself, so it can add no more than a history read would.
-const LinearReadCallCeiling = 6
 
 func linearBudgetOperation(op string) bool { return op == "linear_write_charge" }
 
@@ -55,18 +47,17 @@ func (s *Store) linearWriteCharge(ctx context.Context, tx *transaction, pid, pro
 	if r.Session == "" && str(a, "instance") != "" {
 		return nil, invalid("instance requires session")
 	}
-	kind := str(a, "kind")
-	// A reader may read, so their reads count too; only writes need more.
-	if projectRole == "reader" && kind != "read" {
+	if projectRole == "reader" {
 		return nil, errors.New("project member permission required")
 	}
 	op := str(a, "operation_id")
 	if !commentOperationID.MatchString(op) {
 		return nil, invalid("operation_id must be 1–128 letters, digits, '.', '_', ':' or '-'")
 	}
+	kind := str(a, "kind")
 	floor, ok := linearWriteCallFloor[kind]
 	if !ok {
-		return nil, invalid("kind must be one of create, update, comment, relation, project_create, project_team_add, project_plan, document, project_lead, view, subscribe, admin or read")
+		return nil, invalid("kind must be one of create, update, comment, relation, project_create, project_team_add, project_plan, document, project_lead, view, subscribe or admin")
 	}
 	calls := 0
 	if v, ok := a["calls"]; ok {
@@ -79,9 +70,6 @@ func (s *Store) linearWriteCharge(ctx context.Context, tx *transaction, pid, pro
 	if calls < 0 || calls > linearWriteCallCeiling {
 		return nil, invalid(fmt.Sprintf("calls must be 0–%d", linearWriteCallCeiling))
 	}
-	if kind == "read" && calls > LinearReadCallCeiling {
-		return nil, invalid(fmt.Sprintf("a read charges 0–%d calls", LinearReadCallCeiling))
-	}
 	count := max(calls, floor)
 	budget, err := s.projectBudget(ctx, tx, pid)
 	if err != nil {
@@ -91,14 +79,7 @@ func (s *Store) linearWriteCharge(ctx context.Context, tx *transaction, pid, pro
 	if actor != nil {
 		by = "agents"
 	}
-	if kind == "read" {
-		// An issue history read is the server's app read, made under the
-		// caller: never a profile's.
-		err = budget.chargeBy(ctx, tx, pid, count, by, "app_read.history")
-	} else {
-		err = budget.chargeBy(ctx, tx, pid, count, by, "profile."+kind)
-	}
-	if err != nil {
+	if err = budget.chargeBy(ctx, tx, pid, count, by, "profile."+kind); err != nil {
 		return nil, err
 	}
 	budget.used += count

@@ -158,7 +158,7 @@ func TestHistoryActorKindsAndNames(t *testing.T) {
 	f.data = historyData(`{"createdAt":"2026-10-30T10:00:00Z","fromAssignee":{"id":"`+hAda+`","displayName":"ada"},"toAssignee":{"id":"`+hMail+`","displayName":"x@example.com"}}`, false, "")
 	page, _ = ReadIssueHistory(context.Background(), f.run, hIssue, 20, "")
 	e := page.Entries(hApp, stored)[0]
-	if e.Actor.Kind != "system" || *e.Assignee.From != (HistoryNamed{hAda, "Ada Example"}) || *e.Assignee.To != (HistoryNamed{hMail, hMail}) {
+	if e.Actor.Kind != "system" || *e.Assignee.From != (HistoryNamed{ID: hAda, Name: "Ada Example"}) || *e.Assignee.To != (HistoryNamed{ID: hMail, Name: hMail}) {
 		t.Fatal(e.Actor, e.Assignee.From, e.Assignee.To)
 	}
 }
@@ -237,5 +237,23 @@ func TestHistoryRefusesAPageOutOfOrder(t *testing.T) {
 	}
 	if strings.Contains(issueHistoryQuery, "orderBy") {
 		t.Fatal("the history read names an order")
+	}
+}
+
+// A side outside the binding goes on the wire as {"outside":true} only;
+// any other keeps its ID and key or name, and reads back the same.
+func TestHistoryOutsideSideShape(t *testing.T) {
+	c := HistoryChange[HistoryTeam]{From: &HistoryTeam{ID: "t1", Key: "ENG", Outside: true}, To: &HistoryTeam{ID: "t2", Key: "OPS"}}
+	got, _ := json.Marshal(c)
+	if string(got) != `{"from":{"outside":true},"to":{"id":"t2","key":"OPS"}}` {
+		t.Fatal(string(got))
+	}
+	p := HistoryChange[HistoryNamed]{From: &HistoryNamed{ID: "p1", Name: "Launch"}, To: &HistoryNamed{ID: "p2", Name: "Secret", Outside: true}}
+	if got, _ = json.Marshal(p); string(got) != `{"from":{"id":"p1","name":"Launch"},"to":{"outside":true}}` {
+		t.Fatal(string(got))
+	}
+	var back HistoryChange[HistoryNamed]
+	if err := json.Unmarshal(got, &back); err != nil || *back.From != (HistoryNamed{ID: "p1", Name: "Launch"}) || *back.To != (HistoryNamed{Outside: true}) {
+		t.Fatal(back, err)
 	}
 }

@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -42,6 +43,12 @@ func (f *awFixture) budget() bus.LinearBudget {
 		f.t.Fatal(err)
 	}
 	return b
+}
+
+// historyKind: the hour's app_read.history calls are calls, and the only
+// kind charged.
+func historyKind(b bus.LinearBudget, calls int) bool {
+	return len(b.Kinds) == 1 && b.Kinds[0].Kind == "app_read.history" && b.Kinds[0].Calls == calls
 }
 
 // End to end on Postgres: an issue's history is read as the app, its
@@ -91,8 +98,9 @@ func TestPostgresIssueHistoryAsTheApp(t *testing.T) {
 	if v := f.api.historyVars[0]; v["first"] != float64(3) || v["after"] != nil {
 		t.Fatal(v)
 	}
-	// Charged under the session: to agents.
-	if b := f.budget(); b.By.Agents != calls || b.By.People != 0 {
+	// Charged by the server under the session: to agents, as the app's
+	// history read.
+	if b := f.budget(); b.By.Agents != calls || b.By.People != 0 || !historyKind(b, calls) {
 		t.Fatal("charge", b, calls)
 	}
 	// The next page, as the person: Linear's cursor goes back to Linear,
@@ -105,7 +113,7 @@ func TestPostgresIssueHistoryAsTheApp(t *testing.T) {
 	if v := f.api.historyVars[1]; v["after"] != awHistoryLinear || v["first"] != float64(20) {
 		t.Fatal(v)
 	}
-	if b := f.budget(); b.By.People != second || b.By.Agents != calls {
+	if b := f.budget(); b.By.People != second || b.By.Agents != calls || !historyKind(b, calls+second) {
 		t.Fatal("charge", b, second)
 	}
 	// The cursor is for this issue only: refused before Linear.
@@ -150,7 +158,9 @@ func TestPostgresIssueHistoryAsTheApp(t *testing.T) {
 	}
 }
 
-// A project set: the pair must be one of the binding's projects.
+// A project set: the pair must be one of the binding's projects, and the
+// history names no team or project outside the binding: those sides read
+// as outside, with no ID, key or name.
 func TestPostgresIssueHistoryProjectSetPair(t *testing.T) {
 	f := newAWFixture(t, awOrg)
 	bound := "e7000000-0000-4000-8000-0000000000e1"
@@ -160,14 +170,26 @@ func TestPostgresIssueHistoryProjectSetPair(t *testing.T) {
 		"instance": awSession + "-i", "expected_revision": revision, "mode": "project_set",
 		"linear_team_ids": []string{awTeam}, "linear_default_team_id": awTeam, "linear_project_ids": []string{bound}, "linear_workspace_id": awOrg,
 	}})
+	foreign := "e7000000-0000-4000-8000-0000000000e2"
 	f.api.issues = map[string]awHistoryIssue{
-		awIssue:        {team: awTeam, project: bound, nodes: []any{}},
-		awForeignIssue: {team: awTeam, project: "e7000000-0000-4000-8000-0000000000e2", nodes: []any{}},
+		awIssue: {team: awTeam, project: bound, nodes: []any{
+			map[string]any{"createdAt": "2026-10-30T10:00:00Z", "fromTeam": map[string]any{"id": awOtherTeam, "key": "SEC"}, "toTeam": map[string]any{"id": awTeam, "key": "ENG"},
+				"fromProject": map[string]any{"id": foreign, "name": "Secret Example"}, "toProject": map[string]any{"id": bound, "name": "Launch"}},
+		}},
+		awForeignIssue: {team: awTeam, project: foreign, nodes: []any{}},
 	}
-	if out, err := f.history(f.identity(), "", "", map[string]any{"issue_uuid": awIssue}); err != nil || out["has_more"] != false {
+	out, err := f.history(f.identity(), "", "", map[string]any{"issue_uuid": awIssue})
+	if err != nil || out["has_more"] != false {
 		t.Fatal(out, err)
 	}
-	_, err := f.history(f.identity(), "", "", map[string]any{"issue_uuid": awForeignIssue})
+	entry := out["entries"].([]any)[0].(map[string]any)
+	raw, _ := json.Marshal(entry)
+	if !strings.Contains(string(raw), `"team":{"from":{"outside":true},"to":{"id":"`+awTeam+`","key":"ENG"}}`) ||
+		!strings.Contains(string(raw), `"project":{"from":{"outside":true},"to":{"id":"`+bound+`","name":"Launch"}}`) ||
+		strings.Contains(string(raw), awOtherTeam) || strings.Contains(string(raw), "SEC") || strings.Contains(string(raw), foreign) || strings.Contains(string(raw), "Secret") {
+		t.Fatal("outside the binding:", string(raw))
+	}
+	_, err = f.history(f.identity(), "", "", map[string]any{"issue_uuid": awForeignIssue})
 	refusedWith(t, err, "invalid", "pair is outside the verified scope")
 }
 
@@ -244,4 +266,23 @@ func TestPostgresIssueHistoryRemintAndFailures(t *testing.T) {
 	}
 	_, err = f.history(f.identity(), "", "", map[string]any{"issue_uuid": awMissingIssue})
 	refusedWith(t, err, "invalid", "no issue UUID in this binding")
+}
+
+// A request whose re-mints and re-sends made more than historyChargeCap
+// counted calls is charged exactly the cap, to whoever asked.
+func TestPostgresIssueHistoryChargeIsCapped(t *testing.T) {
+	f := newAWFixture(t, awOrg)
+	access := f.must(bus.Request{Operation: "taskboard_access", Workspace: f.workspace, Project: "p", Args: map[string]any{"ledger": 1}})
+	pid := access.Data.(map[string]any)["project_id"].(string)
+	var calls atomic.Int64
+	calls.Store(historyChargeCap + 3)
+	f.writer.chargeHistory(context.Background(), pid, false, &calls)
+	if b := f.budget(); b.By.People != historyChargeCap || !historyKind(b, historyChargeCap) {
+		t.Fatalf("charged %+v; want exactly %d", b, historyChargeCap)
+	}
+	calls.Store(historyChargeCap + 3)
+	f.writer.chargeHistory(context.Background(), pid, true, &calls)
+	if b := f.budget(); b.By.Agents != historyChargeCap || !historyKind(b, 2*historyChargeCap) {
+		t.Fatalf("charged %+v; want %d to agents", b, historyChargeCap)
+	}
 }

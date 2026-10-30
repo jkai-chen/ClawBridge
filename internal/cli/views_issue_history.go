@@ -64,7 +64,14 @@ func historyLine(e linearapp.HistoryEntry) string {
 // them; an entry with none is "other change".
 func historyChanges(e linearapp.HistoryEntry) []string {
 	var out []string
-	pair := func(field, from, to string) { out = append(out, field+" "+from+" → "+to) }
+	pair := func(field, from, to string) {
+		// A move between two places the binding doesn't cover says only that.
+		if from == historyOutside && to == historyOutside {
+			out = append(out, field+" changed outside this project's binding")
+			return
+		}
+		out = append(out, field+" "+from+" → "+to)
+	}
 	if c := e.State; c != nil {
 		name := func(s *linearapp.HistoryState) string {
 			if s == nil {
@@ -89,8 +96,11 @@ func historyChanges(e linearapp.HistoryEntry) []string {
 	}
 	if c := e.Team; c != nil {
 		key := func(t *linearapp.HistoryTeam) string {
-			if t == nil {
+			switch {
+			case t == nil:
 				return "none"
+			case t.Outside:
+				return historyOutside
 			}
 			return firstNonEmpty(t.Key, t.ID)
 		}
@@ -125,9 +135,16 @@ func historyChanges(e linearapp.HistoryEntry) []string {
 	return out
 }
 
+// historyOutside is a team or project side the server hid: it is outside
+// the project's binding.
+const historyOutside = "(outside this project's binding)"
+
 func historyNamed(n *linearapp.HistoryNamed) string {
-	if n == nil {
+	switch {
+	case n == nil:
 		return "none"
+	case n.Outside:
+		return historyOutside
 	}
 	return firstNonEmpty(n.Name, n.ID)
 }

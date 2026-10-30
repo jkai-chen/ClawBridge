@@ -6,7 +6,8 @@ import (
 )
 
 // On the hosted authority a member's own write and an agent session's are
-// counted after their calls, a reader charges only reads, and the overview
+// counted after their calls, a reader charges nothing, no one charges a
+// read (the server charges issue history itself), and the overview
 // splits the hour, with no cap.
 func TestPostgresLinearWriteCharge(t *testing.T) {
 	f := newPGIdentityFixture(t)
@@ -28,13 +29,13 @@ func TestPostgresLinearWriteCharge(t *testing.T) {
 	if _, err := as("reader", Request{Operation: "linear_write_charge", Args: charge("r-1", "create", 2)}); !refusedWith(err, "member permission") {
 		t.Fatal("a reader charged:", err)
 	}
-	// A reader may read an issue's history (FR21): its read is counted.
-	if _, err := as("reader", Request{Operation: "linear_write_charge", Args: charge("r-2", "read", 2)}); err != nil {
-		t.Fatal("a reader's read was not charged:", err)
+	// A read charge is no client's: refused for a reader as any charge is,
+	// and for a member as an unknown kind.
+	if _, err := as("reader", Request{Operation: "linear_write_charge", Args: charge("r-2", "read", 2)}); !refusedWith(err, "member permission") {
+		t.Fatal("a reader charged a read:", err)
 	}
-	// Sent directly, a read charge is capped as a history read is.
-	if _, err := as("reader", Request{Operation: "linear_write_charge", Args: charge("r-3", "read", 7)}); err == nil || !strings.Contains(err.Error(), "a read charges 0–6 calls") {
-		t.Fatal("a reader charged past a read's ceiling:", err)
+	if _, err := as("member", Request{Operation: "linear_write_charge", Args: charge("m-0", "read", 2)}); err == nil || !strings.Contains(err.Error(), "kind must be one of") {
+		t.Fatal("a member charged a read:", err)
 	}
 	if _, err := as("member", Request{Operation: "linear_write_charge", Args: charge("m-1", "comment", 3)}); err != nil {
 		t.Fatal(err)
@@ -54,7 +55,7 @@ func TestPostgresLinearWriteCharge(t *testing.T) {
 		t.Fatal(err)
 	}
 	b := overview.Data.(map[string]any)["linear_budget"].(LinearBudget)
-	if b.Used != 11 || b.By.People != 5 || b.By.Agents != 6 || b.By.App != 0 || b.Capped || b.Limit != 0 {
+	if b.Used != 9 || b.By.People != 3 || b.By.Agents != 6 || b.By.App != 0 || b.Capped || b.Limit != 0 {
 		t.Fatal(b)
 	}
 }

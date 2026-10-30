@@ -1,6 +1,7 @@
 package bus
 
 import (
+	"context"
 	"strings"
 	"testing"
 )
@@ -23,26 +24,31 @@ func TestLocalStoreRefusesIssueHistory(t *testing.T) {
 	}
 }
 
-// The server's history read is charged as kind read, under the caller:
-// people without a session, agents with one.
-func TestLinearReadChargeCountsPerCaller(t *testing.T) {
+// The server's history read is charged by the server alone, through
+// ChargeLinearBudgetBy, as app_read.history under the caller: people
+// without a session, agents with one. Any other by is refused, and no
+// client can send the charge: linear_write_charge takes no read kind.
+// (ChargeLinearBudgetBy's ledger is the hosted one: the Postgres tests
+// charge through it end to end.)
+func TestLinearReadChargeIsTheServers(t *testing.T) {
 	h := newHarness(t)
-	if got := h.call("linear_write_charge", "", charge("r-1", "read", 0)).(map[string]any); got["charged"] != 1 {
-		t.Fatal("under the floor:", got)
-	}
-	h.call("linear_write_charge", "a", charge("r-2", "read", 3))
-	if people, agents := h.split(); people != 1 || agents != 3 || h.budgetUsed() != 4 {
+	h.appChargeBy(2, "people", "app_read.history")
+	h.appChargeBy(3, "agents", "app_read.history")
+	if people, agents := h.split(); people != 2 || agents != 3 || h.budgetUsed() != 5 {
 		t.Fatal(people, agents, h.budgetUsed())
 	}
-	// A read charges at most 6 calls (3 queries with re-sends): a direct
-	// charge adds no more than a history read would, and more is refused
-	// with nothing counted. Writes keep their own ceiling.
-	h.call("linear_write_charge", "", charge("r-3", "read", 6))
-	if e := h.errorOf("linear_write_charge", "", charge("r-4", "read", 7)); !strings.Contains(e, "a read charges 0–6 calls") {
-		t.Fatal(e)
+	ctx, pid := context.Background(), h.projectID()
+	for _, by := range []string{"", "app", "People"} {
+		if err := h.s.ChargeLinearBudgetBy(ctx, pid, 1, by, "app_read.history"); err == nil || !strings.Contains(err.Error(), "want people or agents") {
+			t.Fatal("charged by", by, err)
+		}
 	}
-	if people, _ := h.split(); people != 7 || h.budgetUsed() != 10 {
-		t.Fatal(people, h.budgetUsed())
+	for _, session := range []string{"", "a"} {
+		if e := h.errorOf("linear_write_charge", session, charge("r-"+session, "read", 1)); !strings.Contains(e, "kind must be one of") || strings.Contains(e, "read") {
+			t.Fatal(session, e)
+		}
 	}
-	h.call("linear_write_charge", "", charge("w-1", "comment", 7))
+	if h.budgetUsed() != 5 {
+		t.Fatal("a refused read charge counted:", h.budgetUsed())
+	}
 }

@@ -2,6 +2,7 @@ package linearapp
 
 import (
 	"context"
+	"encoding/json"
 	"strings"
 	"time"
 )
@@ -223,16 +224,44 @@ type HistoryState struct {
 	Type string `json:"type"`
 }
 
-// HistoryNamed is a user, label or project.
+// HistoryNamed is a user, label or project. Outside is a project outside
+// the project's binding, whose ID and name the server hid: it reads as
+// {"outside":true} only.
 type HistoryNamed struct {
-	ID   string `json:"id"`
-	Name string `json:"name"`
+	ID      string `json:"id"`
+	Name    string `json:"name"`
+	Outside bool   `json:"outside,omitempty"`
 }
 
-// HistoryTeam is a team.
+// HistoryTeam is a team. Outside is a team outside the project's binding,
+// whose ID and key the server hid: it reads as {"outside":true} only.
 type HistoryTeam struct {
-	ID  string `json:"id"`
-	Key string `json:"key"`
+	ID      string `json:"id"`
+	Key     string `json:"key"`
+	Outside bool   `json:"outside,omitempty"`
+}
+
+// outsideJSON is a side outside the binding, as it goes on the wire.
+var outsideJSON = []byte(`{"outside":true}`)
+
+// MarshalJSON writes an outside project as {"outside":true}, with no ID
+// or name; any other as before.
+func (n HistoryNamed) MarshalJSON() ([]byte, error) {
+	if n.Outside {
+		return outsideJSON, nil
+	}
+	type plain HistoryNamed
+	return json.Marshal(plain(n))
+}
+
+// MarshalJSON writes an outside team as {"outside":true}, with no ID or
+// key; any other as before.
+func (t HistoryTeam) MarshalJSON() ([]byte, error) {
+	if t.Outside {
+		return outsideJSON, nil
+	}
+	type plain HistoryTeam
+	return json.Marshal(plain(t))
 }
 
 // HistoryParent is a parent issue.

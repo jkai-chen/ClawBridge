@@ -460,7 +460,10 @@ COMPOSE_PROJECT_NAME=clawbridge
 ```
 
 Use a random hexadecimal password so it can be interpolated safely into the
-Postgres URL; `openssl rand -hex 32` makes one. `CLAWBRIDGE_BOOTSTRAP_OWNER` is
+Postgres URL; `openssl rand -hex 32` makes one. Or `clawbridge cloud env init`,
+with your route to the server (`--ssh HOST`, `--vm` or `--instance`), adds it on
+the server and prints only its name; run it before the first `compose up`, since
+a new password doesn't match a database that already exists. `CLAWBRIDGE_BOOTSTRAP_OWNER` is
 the email that becomes the workspace owner: normally your own. It joins with the
 [bootstrap invite](#letting-the-owner-in-operator-bootstrap-invite). Install the environment file as
 `/etc/clawbridge/clawbridge.env`, owned by `root:root` with mode `0600`. This file

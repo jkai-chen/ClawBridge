@@ -105,6 +105,14 @@
   - **Image path:** the backup's Compose commands add `compose.image.yaml` when the server pulls the published image,
     before a local host's override file.
   - **A local folder** (`CLAWBRIDGE_BACKUP_DIR`) takes neither an endpoint nor `--list`, and says so.
+- **`cloud env init` makes the server's generated secrets on the server.**
+  - It works over `--ssh HOST`, `--vm` or `--instance`.
+  - It runs a fixed script that creates `/etc/clawbridge/clawbridge.env` (0600, root) if absent and adds
+    `POSTGRES_PASSWORD`, plus `CLAWBRIDGE_LINEAR_APP_TOKEN_KEY` or `CLAWBRIDGE_MODEL_KEY_SEAL_KEY` when you name them.
+  - It never replaces an existing value and prints only which keys it added or kept. An agent following a playbook
+    runs this command instead of composing a shell line.
+  - Run it before the first `compose up`: a new `POSTGRES_PASSWORD` doesn't match a database that already exists.
+  - It refuses an env file that is a link.
 
 # ClawBridge v0.3.13 (released 30 Oct)
 

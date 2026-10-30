@@ -254,6 +254,40 @@ jobs:
           persist-credentials: false
       # The egress container's image, run with the fixed spec's hardening.
       - run: bash cmd/clawbridge-agentd/scripts/image-test.sh
+  # The two images the release publishes besides the server's, built for
+  # both platforms as release.yml builds them, with nothing pushed: a
+  # release tag is never the first run of these builds (G9-4). Not
+  # required; it runs when either image's sources or a workflow change.
+  release-images:
+    needs: changes
+    if: ${{ github.event.repository.private == false && (needs.changes.outputs.node == 'true' || needs.changes.outputs.agentd == 'true') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      # The same emulator, binfmt image and builder as release.yml.
+      - uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
+        with:
+          image: docker.io/tonistiigi/binfmt:qemu-v10.2.3@sha256:400a4873b838d1b89194d982c45e5fb3cda4593fbfd7e08a02e76b03b21166f0
+          platforms: arm64
+      - uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0
+      - name: Build the agentd image for both platforms
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
+        with:
+          context: .
+          file: cmd/clawbridge-agentd/Dockerfile
+          platforms: linux/amd64,linux/arm64
+          push: false
+          provenance: false
+      - name: Build the dispatcher agent image for both platforms
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
+        with:
+          context: dispatcher-agent
+          platforms: linux/amd64,linux/arm64
+          push: false
+          provenance: false
   agentd-rootless:
     if: ${{ github.event.repository.private == false }}
     runs-on: ubuntu-latest

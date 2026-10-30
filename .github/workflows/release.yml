@@ -70,18 +70,23 @@ jobs:
     # approval; see docs/design/releases.md for the one-time repository setting.
     environment: release
     runs-on: ubuntu-latest
-    # The two-platform image build, push and attestation run after the
-    # approval, besides the assets.
-    timeout-minutes: 30
+    # The three two-platform image builds, pushes and attestations run after
+    # the approval, besides the assets. The dispatcher agent's arm64 image
+    # runs npm and its RUN steps under QEMU, many times slower than native;
+    # 60 minutes leaves room for that on top of the server and agentd images
+    # (cross-compiled, a few minutes each) without letting a hung build hold
+    # the release environment for the default six hours.
+    timeout-minutes: 60
     permissions:
       contents: write
-      # The server image goes to ghcr.io/jkai-chen/clawbridge with this
+      # The server, agentd and dispatcher agent images go to
+      # ghcr.io/jkai-chen/clawbridge{,-agentd,-dispatcher-agent} with this
       # job's GITHUB_TOKEN; only this job may write packages.
       packages: write
       # Build provenance (G9-10): a keyless Sigstore certificate for this
       # workflow run signs one statement per asset and for the image,
       # recorded in GitHub's attestation store and the public transparency
-      # log.
+      # log. Each image is attested on its own.
       id-token: write
       attestations: write
     steps:
@@ -99,12 +104,12 @@ jobs:
         run: |
           git fetch --no-tags origin +refs/heads/main:refs/remotes/origin/main
           git merge-base --is-ancestor "$GITHUB_SHA" refs/remotes/origin/main || { echo "::error::$GITHUB_SHA is not an ancestor of origin/main"; exit 1; }
-      # The image tag moves only while no release exists for this tag, draft
-      # or published, checked before login and push; publish-release.sh
+      # The image tags move only while no release exists for this tag, draft
+      # or published, checked before login and every push; publish-release.sh
       # refuses an existing release too. A run that failed before its draft
-      # can be re-run: builds aren't byte-reproducible, so the re-run pushes a
-      # new digest, which the release then names, and the first one stays
-      # orphaned with its attestation.
+      # can be re-run: builds aren't byte-reproducible, so the re-run pushes
+      # new digests, which the release then names, and the first ones stay
+      # orphaned with their attestations.
       - name: Refuse an existing release before the image tag moves
         env:
           GH_TOKEN: ${{ github.token }}
@@ -120,6 +125,14 @@ jobs:
         run: |
           echo "build_time=$(TZ=UTC0 git show -s --format=%cd --date=format-local:%Y-%m-%dT%H:%M:%SZ "$GITHUB_SHA")" >> "$GITHUB_OUTPUT"
           echo "epoch=$(git show -s --format=%ct "$GITHUB_SHA")" >> "$GITHUB_OUTPUT"
+      # The dispatcher agent's arm64 stages RUN npm and rm, so that image
+      # needs an arm64 emulator; the server and agentd images cross-compile
+      # and need none. The binfmt image is pinned by index digest, as the
+      # Dockerfiles' bases are, not left at :latest.
+      - uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
+        with:
+          image: docker.io/tonistiigi/binfmt:qemu-v10.2.3@sha256:400a4873b838d1b89194d982c45e5fb3cda4593fbfd7e08a02e76b03b21166f0
+          platforms: arm64
       - uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0
       - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
         with:
@@ -156,16 +169,73 @@ jobs:
           subject-name: ghcr.io/jkai-chen/clawbridge
           subject-digest: ${{ steps.image.outputs.digest }}
           push-to-registry: true
-      # The digest becomes an asset, in SHA256SUMS and attested with the
-      # others, before anything is public.
-      - name: Record the image digest as an asset
+      # agentd's image, which is also the egress container's: agentd starts
+      # `clawbridge-agentd egress` from it. Built the same way as the server
+      # image; its Dockerfile declares no build args, so none are passed.
+      - name: Build and push the agentd (egress) image
+        id: agentd-image
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
+        env:
+          SOURCE_DATE_EPOCH: ${{ steps.stamp.outputs.epoch }}
+        with:
+          context: .
+          file: cmd/clawbridge-agentd/Dockerfile
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ghcr.io/jkai-chen/clawbridge-agentd:${{ github.ref_name }}
+          labels: |
+            org.opencontainers.image.source=https://github.com/jkai-chen/ClawBridge
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.version=${{ github.ref_name }}
+          provenance: false
+          sbom: true
+      - name: Attest the agentd image's build provenance
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-name: ghcr.io/jkai-chen/clawbridge-agentd
+          subject-digest: ${{ steps.agentd-image.outputs.digest }}
+          push-to-registry: true
+      # The dispatcher agent's image, from its own directory (its Dockerfile
+      # copies only that tree). No build args, as above.
+      - name: Build and push the dispatcher agent image
+        id: agent-image
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
+        env:
+          SOURCE_DATE_EPOCH: ${{ steps.stamp.outputs.epoch }}
+        with:
+          context: dispatcher-agent
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ghcr.io/jkai-chen/clawbridge-dispatcher-agent:${{ github.ref_name }}
+          labels: |
+            org.opencontainers.image.source=https://github.com/jkai-chen/ClawBridge
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.version=${{ github.ref_name }}
+          provenance: false
+          sbom: true
+      - name: Attest the dispatcher agent image's build provenance
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-name: ghcr.io/jkai-chen/clawbridge-dispatcher-agent
+          subject-digest: ${{ steps.agent-image.outputs.digest }}
+          push-to-registry: true
+      # The digests become assets, in SHA256SUMS and attested with the
+      # others, before anything is public: a deploy pins all three images
+      # from the release.
+      - name: Record the image digests as assets
         env:
           IMAGE_DIGEST: ${{ steps.image.outputs.digest }}
+          AGENTD_IMAGE_DIGEST: ${{ steps.agentd-image.outputs.digest }}
+          AGENT_IMAGE_DIGEST: ${{ steps.agent-image.outputs.digest }}
         run: |
-          [[ $IMAGE_DIGEST =~ ^sha256:[0-9a-f]{64}$ ]] || { echo "::error::unexpected image digest"; exit 1; }
+          for digest in "$IMAGE_DIGEST" "$AGENTD_IMAGE_DIGEST" "$AGENT_IMAGE_DIGEST"; do
+            [[ $digest =~ ^sha256:[0-9a-f]{64}$ ]] || { echo "::error::unexpected image digest"; exit 1; }
+          done
           cd "$RUNNER_TEMP/release-assets"
           printf 'ghcr.io/jkai-chen/clawbridge@%s\n' "$IMAGE_DIGEST" > IMAGE-DIGEST.txt
-          sha256sum IMAGE-DIGEST.txt >> SHA256SUMS
+          printf 'ghcr.io/jkai-chen/clawbridge-agentd@%s\n' "$AGENTD_IMAGE_DIGEST" > AGENTD-IMAGE-DIGEST.txt
+          printf 'ghcr.io/jkai-chen/clawbridge-dispatcher-agent@%s\n' "$AGENT_IMAGE_DIGEST" > AGENT-IMAGE-DIGEST.txt
+          sha256sum IMAGE-DIGEST.txt AGENTD-IMAGE-DIGEST.txt AGENT-IMAGE-DIGEST.txt >> SHA256SUMS
       # Attested before publication, so no published asset is ever without
       # its provenance. `gh attestation verify ASSET --repo
       # jkai-chen/ClawBridge` checks one, and the installers do with
@@ -184,6 +254,8 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ github.ref_name }}
           IMAGE_DIGEST: ${{ steps.image.outputs.digest }}
+          AGENTD_IMAGE_DIGEST: ${{ steps.agentd-image.outputs.digest }}
+          AGENT_IMAGE_DIGEST: ${{ steps.agent-image.outputs.digest }}
           PROVENANCE_BUNDLE: ${{ steps.attest-assets.outputs.bundle-path }}
           # true stops at the verified draft, for publish-draft.yml to publish
           # later (docs/design/releases.md); unset or false publishes now.

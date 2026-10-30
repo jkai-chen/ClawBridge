@@ -1,12 +1,14 @@
 #!/usr/bin/env python3
 """The GitHub release body: the release's own top section of RELEASE-NOTES.md,
-a link to the full notes at the tag, and the server image.
+a link to the full notes at the tag, the server image, and the two images
+agentd deploys.
 
 publish-release.sh writes the body with it, and test_publish.py checks the
 current RELEASE-NOTES.md with it in every PR and main CI run, so a body too long
 for GitHub fails long before a tag.
 
-    release_body.py NOTES OUT VERSION IMAGE   write the body, or exit non-zero
+    release_body.py NOTES OUT VERSION IMAGE [AGENTD_IMAGE AGENT_IMAGE]
+        write the body, or exit non-zero
     release_body.py --manual NOTES OUT VERSION
         write the MANUAL-UPDATE-REQUIRED asset when the release's top section
         carries the marker line (exit 0), or exit 3 when it carries none
@@ -56,11 +58,22 @@ def manual_asset(line, version):
     return version + " needs a manual update (clawbridge self-update); see its release notes.\n" + line[:2000] + "\n"
 
 
-def release_body(notes, version, image):
+def verify_line(image):
+    return "`gh attestation verify oci://" + image + " --repo jkai-chen/ClawBridge --signer-workflow jkai-chen/ClawBridge/.github/workflows/release.yml`"
+
+
+def release_body(notes, version, image, agentd_image=None, agent_image=None):
     body = top_section(notes).rstrip("\n") + "\n\n"
     body += "The full release notes: https://github.com/jkai-chen/ClawBridge/blob/" + version + "/RELEASE-NOTES.md\n\n"
     body += "## Server image\n\n`" + image + "` (linux/amd64, linux/arm64). Pin it by this digest; check it with\n"
-    body += "`gh attestation verify oci://" + image + " --repo jkai-chen/ClawBridge --signer-workflow jkai-chen/ClawBridge/.github/workflows/release.yml`.\n"
+    body += verify_line(image) + ".\n"
+    # The images agentd deploys (docs/operations/agentd.md), pinned and
+    # checked the same way; their digests are also the release's
+    # AGENTD-IMAGE-DIGEST.txt and AGENT-IMAGE-DIGEST.txt assets.
+    if agentd_image and agent_image:
+        body += "\n## Agent images\n\nFor agentd (linux/amd64, linux/arm64), pinned by digest and checked the same way:\n\n"
+        body += "- agentd and its egress container: `" + agentd_image + "`; " + verify_line(agentd_image) + "\n"
+        body += "- the dispatcher agent: `" + agent_image + "`; " + verify_line(agent_image) + "\n"
     return body
 
 
@@ -79,11 +92,12 @@ def main(argv):
             sys.exit(3)
         pathlib.Path(out).write_text(manual_asset(line, version), encoding="utf-8")
         return
-    if len(argv) != 5:
+    if len(argv) not in (5, 7):
         sys.exit(__doc__)
-    notes, out, version, image = argv[1:]
+    notes, out, version, image = argv[1:5]
+    agents = argv[5:7]
     try:
-        body = check(release_body(pathlib.Path(notes).read_text(encoding="utf-8"), version, image))
+        body = check(release_body(pathlib.Path(notes).read_text(encoding="utf-8"), version, image, *agents))
     except ValueError as e:
         sys.exit(str(e) + "; nothing was created")
     pathlib.Path(out).write_text(body, encoding="utf-8")

@@ -19,9 +19,17 @@ ROOT = Path(__file__).resolve().parent.parent
 BINARIES = ["clawbridge_v0.1.0_" + t for t in ["darwin_amd64", "darwin_arm64", "linux_amd64", "linux_arm64", "windows_amd64.exe", "windows_arm64.exe"]]
 # Every asset a release publishes: the attested ones, SHA256SUMS, and the
 # attestation bundle (FR24).
-PUBLISHED = {"LICENSE", "install.sh", "install.ps1", "SOURCE-COMMIT.txt", "IMAGE-DIGEST.txt", "SHA256SUMS", "PROVENANCE.sigstore.json", *BINARIES}
+PUBLISHED = {"LICENSE", "install.sh", "install.ps1", "SOURCE-COMMIT.txt", "IMAGE-DIGEST.txt", "AGENTD-IMAGE-DIGEST.txt", "AGENT-IMAGE-DIGEST.txt", "SHA256SUMS", "PROVENANCE.sigstore.json", *BINARIES}
 DIGEST = "sha256:" + "ab" * 32
 IMAGE = "ghcr.io/jkai-chen/clawbridge@" + DIGEST
+# The agentd (egress) and dispatcher agent images: each an env the workflow
+# passes, its digest asset and the line that asset must hold.
+AGENTD_DIGEST = "sha256:" + "12" * 32
+AGENT_DIGEST = "sha256:" + "34" * 32
+IMAGE_ASSETS = {
+    "AGENTD_IMAGE_DIGEST": ("AGENTD-IMAGE-DIGEST.txt", "ghcr.io/jkai-chen/clawbridge-agentd@" + AGENTD_DIGEST),
+    "AGENT_IMAGE_DIGEST": ("AGENT-IMAGE-DIGEST.txt", "ghcr.io/jkai-chen/clawbridge-dispatcher-agent@" + AGENT_DIGEST),
+}
 GH = r'''#!PYTHON
 import json,os,pathlib,shutil,sys
 # The checks below are asserts; PYTHONOPTIMIZE would strip them silently.
@@ -46,6 +54,10 @@ elif args[:2]==['release','create']:
  # the workflow pushed.
  assert '\n\nThe full release notes: https://github.com/jkai-chen/ClawBridge/blob/v0.1.0/RELEASE-NOTES.md\n\n## Server image\n' in notes,notes
  assert '`'+os.environ['FIXTURE_IMAGE']+'`' in notes and 'gh attestation verify oci://'+os.environ['FIXTURE_IMAGE'] in notes,notes
+ # Then the two images agentd deploys, each with its own verify line.
+ for name,var in (('clawbridge-agentd','AGENTD_IMAGE_DIGEST'),('clawbridge-dispatcher-agent','AGENT_IMAGE_DIGEST')):
+  ref='ghcr.io/jkai-chen/'+name+'@'+os.environ[var]
+  assert '`'+ref+'`' in notes and 'gh attestation verify oci://'+ref in notes,notes
  (p/'draft').write_text('draft')
  # The release as gh release view reports it: a draft of this tag, targeting
  # the default branch by name.
@@ -96,7 +108,7 @@ class PublishTests(unittest.TestCase):
         (self.repo / "marker").write_text("isolated tag fixture")
         (self.repo / "RELEASE-NOTES.md").write_text("Tagged release fixture notes\n")
         self.env = os.environ.copy()
-        self.env.update(GIT_AUTHOR_NAME="Fixture", GIT_AUTHOR_EMAIL="fixture@example.test", GIT_COMMITTER_NAME="Fixture", GIT_COMMITTER_EMAIL="fixture@example.test", GITHUB_ACTIONS="true", GITHUB_EVENT_NAME="push", GITHUB_REF="refs/tags/v0.1.0", GITHUB_REPOSITORY="jkai-chen/ClawBridge", PUBLISH_FIXTURE=str(self.root), IMAGE_DIGEST=DIGEST, FIXTURE_IMAGE=IMAGE)
+        self.env.update(GIT_AUTHOR_NAME="Fixture", GIT_AUTHOR_EMAIL="fixture@example.test", GIT_COMMITTER_NAME="Fixture", GIT_COMMITTER_EMAIL="fixture@example.test", GITHUB_ACTIONS="true", GITHUB_EVENT_NAME="push", GITHUB_REF="refs/tags/v0.1.0", GITHUB_REPOSITORY="jkai-chen/ClawBridge", PUBLISH_FIXTURE=str(self.root), IMAGE_DIGEST=DIGEST, AGENTD_IMAGE_DIGEST=AGENTD_DIGEST, AGENT_IMAGE_DIGEST=AGENT_DIGEST, FIXTURE_IMAGE=IMAGE)
         for args in [("init", "-q"), ("add", "."), ("commit", "-qm", "fixture"), ("tag", "v0.1.0")]:
             subprocess.run(["git", *args], cwd=self.repo, env=self.env, check=True, capture_output=True)
         commit = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=self.repo, text=True).strip()
@@ -106,6 +118,8 @@ class PublishTests(unittest.TestCase):
             (self.assets / name).write_text("fixture bytes " + name)
         (self.assets / "SOURCE-COMMIT.txt").write_text(commit + "\n")
         (self.assets / "IMAGE-DIGEST.txt").write_text(IMAGE + "\n")
+        for name, line in IMAGE_ASSETS.values():
+            (self.assets / name).write_text(line + "\n")
         (self.assets / "SHA256SUMS").write_text("".join(hashlib.sha256(p.read_bytes()).hexdigest() + "  " + p.name + "\n" for p in sorted(self.assets.iterdir())))
         stub = self.root / "gh"
         stub.write_text(GH.replace("#!PYTHON", "#!" + sys.executable))
@@ -304,6 +318,76 @@ class PublishTests(unittest.TestCase):
         self.env["IMAGE_DIGEST"] = "sha256:" + "cd" * 32
         self.assertEqual(self.publish(), [])
 
+    def test_missing_or_malformed_agent_image_digests_never_contact_gh(self):
+        for env in IMAGE_ASSETS:
+            for digest in [None, "", "sha256:" + "12" * 31, "sha512:" + "12" * 32, "sha256:" + "AB" * 32, AGENTD_DIGEST + "\n"]:
+                with self.subTest(env=env, digest=digest):
+                    environment = dict(self.env)
+                    if digest is None:
+                        environment.pop(env)
+                    else:
+                        environment[env] = digest
+                    result = subprocess.run(["bash", str(ROOT / "scripts/publish-release.sh"), "v0.1.0", str(self.assets)], cwd=self.repo, env=environment, capture_output=True, text=True)
+                    self.assertNotEqual(result.returncode, 0)
+                    self.assertIn("requires the pushed", result.stderr)
+                    self.assertIn("(" + env + ")", result.stderr)
+                    self.assertFalse((self.root / "calls").exists())
+
+    def test_agent_image_assets_must_name_the_pushed_digests(self):
+        for env, (name, line) in IMAGE_ASSETS.items():
+            # The workflow pushed another digest than the asset names.
+            with self.subTest(env=env, case="other pushed digest"):
+                self.reset()
+                self.assertEqual(self.publish_with({env: "sha256:" + "cd" * 32}), [])
+            # The asset names another image or digest, or the line is
+            # malformed, with SHA256SUMS and the bundle matching it.
+            for content in [line.replace("@sha256:", "@sha256:0"), IMAGE + "\n", line, line + "\n\n", line.replace("ghcr.io/", "docker.io/") + "\n"]:
+                with self.subTest(env=env, content=content):
+                    self.reset()
+                    original = (self.assets / name).read_text()
+                    (self.assets / name).write_text(content)
+                    self.rehash()
+                    try:
+                        self.assertEqual(self.publish(), [])
+                        self.assertFalse((self.root / "draft").exists())
+                    finally:
+                        (self.assets / name).write_text(original)
+                        self.rehash()
+        # A swapped pair: each asset holds the other's image.
+        with self.subTest(case="swapped"):
+            self.reset()
+            self.assertEqual(self.publish_with({"AGENTD_IMAGE_DIGEST": AGENT_DIGEST, "AGENT_IMAGE_DIGEST": AGENTD_DIGEST}), [])
+        # And the fixture itself still publishes.
+        self.reset()
+        self.publish(ok=True)
+        for name, line in IMAGE_ASSETS.values():
+            self.assertEqual((self.root / "remote" / name).read_text(), line + "\n")
+
+    def test_a_missing_agent_image_asset_never_contacts_gh(self):
+        for name, _ in IMAGE_ASSETS.values():
+            with self.subTest(name=name):
+                self.reset()
+                original = (self.assets / name).read_text()
+                (self.assets / name).unlink()
+                self.rehash()
+                try:
+                    self.assertEqual(self.publish(), [])
+                finally:
+                    (self.assets / name).write_text(original)
+                    self.rehash()
+
+    def publish_with(self, env):
+        saved = {k: self.env[k] for k in env}
+        self.env.update(env)
+        try:
+            return self.publish()
+        finally:
+            self.env.update(saved)
+
+    def rehash(self):
+        """Rewrite SHA256SUMS for the assets as they are now."""
+        (self.assets / "SHA256SUMS").write_text("".join(hashlib.sha256(p.read_bytes()).hexdigest() + "  " + p.name + "\n" for p in sorted(self.assets.iterdir()) if p.name != "SHA256SUMS"))
+
     def test_dispatch_and_bad_local_payload_never_contact_gh(self):
         self.env["GITHUB_EVENT_NAME"] = "workflow_dispatch"
         self.assertEqual(self.publish(), [])
@@ -424,7 +508,8 @@ class PublishTests(unittest.TestCase):
         self.hold()
         self.publish_draft(ok=True)
         notes = (self.root / "published-notes").read_text()
-        self.assertEqual(notes, release_body.release_body("# Unreleased\n\n- the held release\n\n# ClawBridge v0.0.1\n", "v0.1.0", IMAGE))
+        # The body is set again from the draft's own digest assets, all three images.
+        self.assertEqual(notes, release_body.release_body("# Unreleased\n\n- the held release\n\n# ClawBridge v0.0.1\n", "v0.1.0", IMAGE, "ghcr.io/jkai-chen/clawbridge-agentd@" + AGENTD_DIGEST, "ghcr.io/jkai-chen/clawbridge-dispatcher-agent@" + AGENT_DIGEST))
 
     def test_publish_draft_decides_latest_like_a_tag_push(self):
         self.hold()
@@ -531,6 +616,34 @@ class PublishTests(unittest.TestCase):
         self.resign_remote()
         self.publish_draft(ok=True)
 
+    def test_publish_draft_requires_strict_agent_image_digests(self):
+        # The two agent digest assets are read from the draft and checked like
+        # the server image's: a swapped, foreign or missing one never publishes.
+        agentd = "ghcr.io/jkai-chen/clawbridge-agentd@" + AGENTD_DIGEST
+        agent = "ghcr.io/jkai-chen/clawbridge-dispatcher-agent@" + AGENT_DIGEST
+        for name, text, says in [
+            ("AGENTD-IMAGE-DIGEST.txt", agent + "\n", "does not name an agentd image digest"),
+            ("AGENTD-IMAGE-DIGEST.txt", agentd.replace("jkai-chen", "other") + "\n", "does not name an agentd image digest"),
+            ("AGENT-IMAGE-DIGEST.txt", agentd + "\n", "does not name a dispatcher agent image digest"),
+            ("AGENT-IMAGE-DIGEST.txt", agent.replace("sha256:", "sha512:") + "\n", "does not name a dispatcher agent image digest"),
+        ]:
+            with self.subTest(name=name, text=text):
+                self.reset()
+                self.hold()
+                (self.root / "remote" / name).write_text(text)
+                self.resign_remote()
+                calls, result = self.publish_draft()
+                self.assertIn(says, result.stderr)
+                self.assertNotIn(["release", "edit"], [c[:2] for c in calls])
+        for name in ["AGENTD-IMAGE-DIGEST.txt", "AGENT-IMAGE-DIGEST.txt"]:
+            with self.subTest(missing=name):
+                self.reset()
+                self.hold()
+                (self.root / "remote" / name).unlink()
+                calls, result = self.publish_draft()
+                self.assertIn("no AGENTD-IMAGE-DIGEST.txt or AGENT-IMAGE-DIGEST.txt", result.stderr)
+                self.assertNotIn(["release", "edit"], [c[:2] for c in calls])
+
     def test_publish_draft_checks_the_image_the_draft_names(self):
         # A consistent draft (SHA256SUMS and bundle redone) for another image
         # still publishes only that image: the body names the draft's digest,
@@ -603,6 +716,17 @@ class ReleaseBodyTests(unittest.TestCase):
         self.assertIn("https://github.com/jkai-chen/ClawBridge/blob/v9.9.9/RELEASE-NOTES.md", body)
         self.assertIn("## Server image\n\n`" + IMAGE + "`", body)
         self.assertNotIn("v0.1.0", body)
+
+    def test_the_body_names_the_agent_images_when_given(self):
+        agentd = "ghcr.io/jkai-chen/clawbridge-agentd@" + AGENTD_DIGEST
+        agent = "ghcr.io/jkai-chen/clawbridge-dispatcher-agent@" + AGENT_DIGEST
+        body = release_body.release_body("# Unreleased\n- a\n# ClawBridge v0.1.0\n", "v9.9.9", IMAGE, agentd, agent)
+        self.assertIn("\n## Agent images\n", body)
+        for ref in (agentd, agent):
+            self.assertIn("`" + ref + "`", body)
+            self.assertIn("gh attestation verify oci://" + ref + " --repo jkai-chen/ClawBridge", body)
+        self.assertLess(body.index("## Server image"), body.index("## Agent images"))
+        self.assertNotIn("## Agent images", release_body.release_body("# Unreleased\n- a\n", "v9.9.9", IMAGE))
 
     def test_manual_line_reads_this_release_only(self):
         self.assertEqual(release_body.manual_line("# Unreleased\n**Manual update required.** why\n# ClawBridge v1\n"), "**Manual update required.** why")

@@ -185,6 +185,15 @@ computer. Upgrading from v0.3.x: docs/upgrading-to-1.0.md.
   it and says to delete it. macOS and Linux are unchanged (0600, owner-checked). Windows wake-up through the hooks is
   still pending the Windows probe. No schema change. Linear config scope: none.
 
+- **Releases publish and attest the agent and egress images.** Besides the server image, each release now pushes
+  `ghcr.io/jkai-chen/clawbridge-dispatcher-agent:vX.Y.Z` and `ghcr.io/jkai-chen/clawbridge-agentd:vX.Y.Z` (the
+  egress container's image too), two platforms each, with a build-provenance attestation per image, and records
+  their digests as the attested assets `AGENT-IMAGE-DIGEST.txt` and `AGENTD-IMAGE-DIGEST.txt`; the publish step
+  refuses a release whose assets don't name exactly the pushed digests. A deploy pins `CLAWBRIDGE_AGENT_IMAGE` and
+  `CLAWBRIDGE_EGRESS_IMAGE` to those `name@sha256:…` lines after `gh attestation verify oci://…`; loading an offline
+  build and pinning its image ID still works. agentd's image now cross-compiles its arm64 binary.
+  docs/operations/agentd.md, docs/design/releases.md. No schema change. Linear config scope: none.
+
 # ClawBridge v0.3.13 (released 30 Oct)
 
 **Schema 53 → 54.**

@@ -58,6 +58,9 @@ type modelSettings struct {
 	// OptInTools are the owner's opt-in tools (d7).
 	Advise     bool     `json:"advise"`
 	OptInTools []string `json:"opt_in_tools"`
+	// JudgementBudget is the model's judgements per issue in 24 hours;
+	// absent is the default, 0 no cap (dispatcher_loop_budget.go).
+	JudgementBudget *int `json:"model_judgement_budget,omitempty"`
 }
 
 func readModelSettings(ctx context.Context, tx *transaction, pid string) (modelSettings, map[string]any, error) {
@@ -166,7 +169,11 @@ func (s *Store) dispatcherChatOp(ctx context.Context, tx *transaction, w, p map[
 		if hours < 1 || hours > 168 || limit < 1 || limit > maxDecisionsListed {
 			return nil, invalid("since_hours is 1 to 168 and limit 1 to 50")
 		}
-		return decisionLog(ctx, tx, pid, nowRaw, hours, limit)
+		kind := str(r.Args, "kind")
+		if kind != "" && !decisionKinds[kind] {
+			return nil, invalid("kind is judgement, rules, escalation, budget_skip or setting_change")
+		}
+		return decisionLog(ctx, tx, pid, nowRaw, hours, limit, kind, false)
 	}
 	return s.chatAsk(ctx, tx, w, p, settings, nowRaw, r.Args)
 }
@@ -326,10 +333,22 @@ func (s *Store) chatLeads(ctx context.Context, tx *transaction, w, p map[string]
 
 // decisionLog is pid's decision log, newest first: what an owner or lead
 // reads with dispatcher decisions, and the model with list_decisions in a
-// chat (D6-L4). A model decision names its case.
-func decisionLog(ctx context.Context, tx *transaction, pid, nowRaw string, hours, limit int) ([]any, error) {
-	rows, err := query(ctx, tx, `SELECT d.subject_type,d.subject_id,d.engine,d.action,d.reason_code,d.explanation,d.guardrail,d.created_at,(SELECT c.id FROM dispatcher_cases c WHERE c.project_id=d.project_id AND c.kind='decide' AND c.subject_id=d.subject_id AND c.subject_revision=d.subject_revision) AS case_id FROM dispatcher_decisions d WHERE d.project_id=? AND d.created_at>=? ORDER BY d.created_at DESC,d.id DESC LIMIT ?`,
-		pid, layout(at(nowRaw).Add(-time.Duration(hours)*time.Hour)), limit)
+// chat (D6-L4). A model decision names its case: a decision row stores
+// none, so it is the latest attempt's case opened by the time of the
+// decision (R5). Each has its kind, and
+// kind, when given, keeps only that one. A rules decision on a claim past
+// its issue's loop budget is over_budget.
+//
+// For the model (forModel), a person named in an explanation (a re-judge's
+// by:PRINCIPAL) is the project's opaque ref instead, so no email reaches
+// the model (D5-L3).
+func decisionLog(ctx context.Context, tx *transaction, pid, nowRaw string, hours, limit int, kind string, forModel bool) ([]any, error) {
+	where, args := "", []any{pid, layout(at(nowRaw).Add(-time.Duration(hours) * time.Hour))}
+	if kind != "" {
+		where, args = " AND d.kind=?", append(args, kind)
+	}
+	rows, err := query(ctx, tx, `SELECT d.subject_type,d.subject_id,d.kind,d.engine,d.action,d.reason_code,d.explanation,d.guardrail,d.created_at,(SELECT c.id FROM dispatcher_cases c WHERE c.project_id=d.project_id AND c.kind='decide' AND c.subject_id=d.subject_id AND c.subject_revision=d.subject_revision AND c.created_at<=d.created_at ORDER BY c.attempt DESC LIMIT 1) AS case_id FROM dispatcher_decisions d WHERE d.project_id=? AND d.created_at>=?`+where+` ORDER BY d.created_at DESC,d.id DESC LIMIT ?`,
+		append(args, limit)...)
 	if err != nil {
 		return nil, err
 	}
@@ -339,10 +358,19 @@ func decisionLog(ctx context.Context, tx *transaction, pid, nowRaw string, hours
 		if str(d, "engine") == "model" && str(d, "case_id") != "" {
 			caseID = str(d, "case_id")
 		}
+		explanation := str(d, "explanation")
+		if principal, named := strings.CutPrefix(explanation, "by:"); forModel && named && principal != "" && str(d, "kind") == "setting_change" {
+			ref, err := principalRef(ctx, tx, pid, principal, nowRaw)
+			if err != nil {
+				return nil, err
+			}
+			explanation = "by:" + ref
+		}
 		out = append(out, map[string]any{
 			"case_id": caseID, "subject": map[string]any{"type": str(d, "subject_type"), "id": str(d, "subject_id")},
+			"kind": str(d, "kind"), "over_budget": str(d, "kind") == "rules" && str(d, "explanation") == "model_fallback:loop_budget" && str(d, "action") != "superseded",
 			"engine": str(d, "engine"), "action": str(d, "action"), "reason_code": str(d, "reason_code"),
-			"explanation": str(d, "explanation"), "guardrail": str(d, "guardrail"), "created_at": at(str(d, "created_at")).Format(time.RFC3339),
+			"explanation": explanation, "guardrail": str(d, "guardrail"), "created_at": at(str(d, "created_at")).Format(time.RFC3339),
 		})
 	}
 	return out, nil

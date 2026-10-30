@@ -98,6 +98,10 @@ func TestAdviseRecommends(t *testing.T) {
 	if len(list) != 1 || rec["action"] != "decline" || rec["models_note_not_checked"] != note || list[0]["claim_pending"] != true {
 		t.Fatal("dispatcher escalations:", list)
 	}
+	// The recommendation is the suggested option (R4): shown, never applied.
+	if list[0]["kind"] != "escalation" || list[0]["suggested"] != "release" {
+		t.Fatal("the suggestion:", list[0])
+	}
 	if _, err = e.s.Execute(context.Background(), bus.Request{Operation: "dispatcher_escalations_list", Workspace: "w", Project: "p", Session: "coord", Args: map[string]any{"instance": e.insts["coord"]}}); err == nil {
 		t.Fatal("a session read the model's notes")
 	}

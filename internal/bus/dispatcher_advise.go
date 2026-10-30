@@ -62,7 +62,7 @@ const askFooter = "\nThis is an automatic question from the ClawBridge dispatche
 
 func dispatcherAdviseOperation(op string) bool {
 	switch op {
-	case "dispatcher_model_advise", "dispatcher_model_tools", "dispatcher_escalations_list":
+	case "dispatcher_model_advise", "dispatcher_model_tools", "dispatcher_model_budget", "dispatcher_escalations_list", "dispatcher_escalation_answer", "dispatcher_model_rejudge":
 		return true
 	}
 	return false
@@ -175,8 +175,8 @@ func modelCapPreview(ctx context.Context, tx *transaction, owner, pid string) (m
 	return map[string]any{"model_projects": len(all) + 1, "served": maxModelProjects, "served_by": "project id, first ones"}, nil
 }
 
-// dispatcherAdviseOp runs the owner's advise and tools switches and the
-// escalations read. They are a person's CLI commands, never a session's.
+// dispatcherAdviseOp runs the owner's advise and tools switches, the loop
+// budget, the escalations read and answer, and judge again. They are a person's CLI commands, never a session's.
 func (s *Store) dispatcherAdviseOp(ctx context.Context, tx *transaction, w, p map[string]any, projectRole string, r Request) (any, error) {
 	pid := str(p, "id")
 	if r.Operation == "dispatcher_escalations_list" {
@@ -184,6 +184,12 @@ func (s *Store) dispatcherAdviseOp(ctx context.Context, tx *transaction, w, p ma
 			return nil, errors.New("project owner or lead permission required")
 		}
 		return escalationsList(ctx, tx, pid, r.Args["all"] == true, asInt(r.Args["limit"]))
+	}
+	if r.Operation == "dispatcher_escalation_answer" {
+		return s.escalationAnswer(ctx, tx, w, p, projectRole, r)
+	}
+	if r.Operation == "dispatcher_model_rejudge" {
+		return s.rejudge(ctx, tx, w, p, projectRole, r)
 	}
 	if projectRole != "owner" {
 		return nil, errors.New("project owner permission required")
@@ -273,6 +279,14 @@ func (s *Store) dispatcherAdviseOp(ctx context.Context, tx *transaction, w, p ma
 		preview = map[string]any{"opt_in_tools": chosen,
 			"acts_without_a_person": "route_notice sends an escalation's fixed text to a domain you configured; ask_session sends a session one fixed-template question"}
 		raw["opt_in_tools"], details["opt_in_tools"] = chosen, chosen
+	case "dispatcher_model_budget":
+		budget, err := integer(a["budget"])
+		if err != nil || a["budget"] == nil || budget < 0 || budget > maxJudgementBudget {
+			return nil, invalid("dispatcher_model_budget requires budget, 0 to 100 (0 is no cap)")
+		}
+		preview = map[string]any{"model_judgement_budget": budget, "was": settings.judgementBudget(),
+			"counts": "the model's judgements per issue in 24 hours, across its proposals; past it the rules decide and a person is told once"}
+		raw["model_judgement_budget"], details["model_judgement_budget"] = budget, budget
 	}
 	if a["confirm"] != true {
 		preview["preview"] = true
@@ -302,6 +316,12 @@ func (s *Store) dispatcherAdviseOp(ctx context.Context, tx *transaction, w, p ma
 	if err = s.audit(ctx, tx, str(w, "id"), pid, "", "dispatcher_policy", pid, r.Operation, details); err != nil {
 		return nil, err
 	}
+	if budget, ok := details["model_judgement_budget"].(int); ok {
+		// A control action of its own in the decision log (R3).
+		if err = controlDecision(ctx, tx, pid, "setting_change", "project", pid, "", "", "budget_set", fmt.Sprintf("budget:%d", budget), "none", nowRaw); err != nil {
+			return nil, err
+		}
+	}
 	preview["revision"] = revision
 	return preview, nil
 }
@@ -314,9 +334,9 @@ func escalationsList(ctx context.Context, tx *transaction, pid string, all bool,
 	if limit < 1 || limit > maxEscalationsListed {
 		limit = maxEscalationsListed
 	}
-	// Nothing resolves an escalation row: a person decides the claim. So
-	// the default is the escalations whose claim is still pending at its
-	// revision (R132-L2).
+	// Answering resolves an escalation row but not its claim: a person
+	// still decides the claim. So the default is the escalations whose
+	// claim is still pending at its revision, answered or not (R132-L2).
 	where := " AND a.state='proposed' AND a.revision=e.subject_revision"
 	if all {
 		where = ""
@@ -339,6 +359,19 @@ func escalationsList(ctx context.Context, tx *transaction, pid string, all bool,
 			_ = json.Unmarshal([]byte(raw), &rec)
 			item["recommendation"] = map[string]any{"action": rec["action"], "reason_code": rec["reason_code"],
 				"models_note_not_checked": rec["explanation"], "case_id": rec["case_id"]}
+		}
+		// The payload (R4), on rows that carry one; older rows keep their
+		// shape.
+		if kind := str(r, "kind"); kind != "" {
+			item["kind"], item["question"], item["options"] = kind, str(r, "question"), escalationOptions(r)
+			item["suggested"] = str(r, "suggested")
+			if t := str(r, "timeout_at"); t != "" {
+				item["timeout_at"] = at(t).Format(time.RFC3339)
+			}
+		}
+		item["state"] = str(r, "state")
+		if answer := str(r, "answer"); answer != "" {
+			item["answer"], item["answered_by"], item["answered_at"] = answer, str(r, "answered_by"), at(str(r, "answered_at")).Format(time.RFC3339)
 		}
 		out = append(out, item)
 	}
@@ -419,7 +452,7 @@ func (s *Store) recommendOutcome(ctx context.Context, tx *transaction, w map[str
 	var facts map[string]any
 	_ = json.Unmarshal([]byte(str(c, "facts")), &facts)
 	esc, _ := facts["escalation"].(map[string]any)
-	rows, err := query(ctx, tx, `SELECT e.recipients,a.issue_identifier,s.name AS session_name FROM dispatcher_escalations e JOIN session_assignments a ON a.project_id=e.project_id AND a.id=e.subject_id JOIN sessions s ON s.id=a.session_id AND s.project_id=a.project_id WHERE e.project_id=? AND e.id=?`, pid, str(esc, "id"))
+	rows, err := query(ctx, tx, `SELECT e.recipients,e.options,a.issue_identifier,s.name AS session_name FROM dispatcher_escalations e JOIN session_assignments a ON a.project_id=e.project_id AND a.id=e.subject_id JOIN sessions s ON s.id=a.session_id AND s.project_id=a.project_id WHERE e.project_id=? AND e.id=?`, pid, str(esc, "id"))
 	if err != nil {
 		return nil, "", err
 	}
@@ -429,6 +462,13 @@ func (s *Store) recommendOutcome(ctx context.Context, tx *transaction, w map[str
 	rec, _ := json.Marshal(map[string]any{"action": str(a, "action"), "reason_code": str(a, "reason_code"), "explanation": str(a, "explanation"), "case_id": str(c, "id")})
 	if _, err = tx.ExecContext(ctx, `UPDATE dispatcher_escalations SET recommendation=?,recommended_at=?,updated_at=? WHERE project_id=? AND id=?`, string(rec), nowRaw, nowRaw, pid, str(esc, "id")); err != nil {
 		return nil, "", err
+	}
+	// The recommendation becomes the suggested option, when the row has
+	// options and the action stands for one of them: shown, never applied.
+	if id := optionForAction(str(a, "action")); id != "" && slices.Contains(optionIDs(escalationOptions(rows[0])), id) {
+		if _, err = tx.ExecContext(ctx, `UPDATE dispatcher_escalations SET suggested=? WHERE project_id=? AND id=?`, id, pid, str(esc, "id")); err != nil {
+			return nil, "", err
+		}
 	}
 	pending, err := pendingAt(ctx, tx, pid, str(c, "subject_id"), str(c, "subject_revision"))
 	if err != nil {

@@ -636,7 +636,7 @@ flags:`)
 	case "dispatcher":
 		// The dispatcher's policy: any member reads it; the owner sets the
 		// domains; a domain's owner edits its trust list and coordinator.
-		usage := errors.New("usage: dispatcher show; dispatcher enable [--engine rules|model] --expected-revision N [--confirm]; dispatcher disable --expected-revision N; dispatcher domains set --file FILE --expected-revision N; dispatcher domain trust|untrust|coordinator DOMAIN SESSION --expected-revision N; dispatcher decisions [--since-hours N] [--limit N]; dispatcher chat \"QUESTION\"; dispatcher chat show [CASE]; dispatcher chat leads on|off --expected-revision N; dispatcher model advise on|off --expected-revision N [--confirm]; dispatcher model tools set [route_notice] [ask_session] --expected-revision N [--confirm]; dispatcher model setup [--provider ID --model M [--base-url URL] --key-stdin --daily-tokens N [--caps K=V,…] --confirm-egress]; dispatcher model status; dispatcher model key rotate [--key-stdin] [--confirm-egress]; dispatcher model key delete --confirm; dispatcher escalations [--all] [--limit N]")
+		usage := errors.New("usage: dispatcher show; dispatcher enable [--engine rules|model] --expected-revision N [--confirm]; dispatcher disable --expected-revision N; dispatcher domains set --file FILE --expected-revision N; dispatcher domain trust|untrust|coordinator DOMAIN SESSION --expected-revision N; dispatcher decisions [--since-hours N] [--limit N] [--kind K]; dispatcher chat \"QUESTION\"; dispatcher chat show [CASE]; dispatcher chat leads on|off --expected-revision N; dispatcher model advise on|off --expected-revision N [--confirm]; dispatcher model tools set [route_notice] [ask_session] --expected-revision N [--confirm]; dispatcher model budget N --expected-revision N [--confirm]; dispatcher model setup [--provider ID --model M [--base-url URL] --key-stdin --daily-tokens N [--caps K=V,…] --confirm-egress]; dispatcher model status; dispatcher model key rotate [--key-stdin] [--confirm-egress]; dispatcher model key delete --confirm; dispatcher escalations [--all] [--limit N]; dispatcher escalation answer ESCALATION_ID OPTION; dispatcher model rejudge PROPOSAL_ID --expected-revision REV")
 		switch {
 		case len(rest) >= 1 && rest[0] == "show":
 			op, rest = "dispatcher_get", rest[1:]
@@ -655,6 +655,7 @@ flags:`)
 			op, rest = "dispatcher_decisions_list", rest[1:]
 			f.Int("since-hours", 24, "how far back to read, 1 to 168 hours")
 			f.Int("limit", 50, "at most this many decisions, 1 to 50")
+			stringArg("kind", "only this kind: judgement, rules, escalation, budget_skip or setting_change")
 		case len(rest) >= 2 && rest[0] == "chat" && rest[1] == "show":
 			op, rest = "dispatcher_chat_show", rest[2:]
 			arityMax = 1
@@ -672,6 +673,20 @@ flags:`)
 			op, rest = "dispatcher_model_advise", rest[2:]
 			f.Bool("confirm", false, "make the change; without it, show what it means")
 			f.Int64("expected-revision", -1, "the dispatcher policy revision you last read")
+			arityMin, arityMax = 1, 1
+		case len(rest) >= 2 && rest[0] == "model" && rest[1] == "budget":
+			// The model's judgements per issue in 24 hours: the owner, in
+			// their own terminal, a preview first.
+			op, rest = "dispatcher_model_budget", rest[2:]
+			f.Bool("confirm", false, "make the change; without it, show what it means")
+			f.Int64("expected-revision", -1, "the dispatcher policy revision you last read")
+			arityMin, arityMax = 1, 1
+		case len(rest) >= 2 && rest[0] == "model" && rest[1] == "rejudge":
+			// A person asks the model to judge a pending claim again: it
+			// resets the issue's loop budget and allows one more case. The
+			// command is the explicit act, so there is no preview.
+			op, rest = "dispatcher_model_rejudge", rest[2:]
+			stringArg("expected-revision", "the claim's revision you saw (dispatcher escalations prints it)")
 			arityMin, arityMax = 1, 1
 		case len(rest) >= 2 && rest[0] == "model" && rest[1] == "setup":
 			// The owner's model setup (§11.1). A key is never an argument:
@@ -716,6 +731,10 @@ flags:`)
 			op, rest = "dispatcher_escalations_list", rest[1:]
 			f.Bool("all", false, "include escalations whose claim was already decided")
 			f.Int("limit", 50, "at most this many, 1 to 50")
+		case len(rest) >= 2 && rest[0] == "escalation" && rest[1] == "answer":
+			// A person's answer to an escalation: recorded, never acted on.
+			op, rest = "dispatcher_escalation_answer", rest[2:]
+			arityMin, arityMax = 2, 2
 		case len(rest) >= 2 && rest[0] == "domains" && rest[1] == "set":
 			op, rest = "dispatcher_domains_set", rest[2:]
 			f.String("file", "", "the domains document, JSON: {\"domains\": [...]}")
@@ -1036,12 +1055,28 @@ flags:`)
 				return errors.New("usage: dispatcher model advise on|off --expected-revision N [--confirm]")
 			}
 			a["on"] = pos[0] == "on"
+		case "dispatcher_model_budget":
+			n, err := strconv.Atoi(pos[0])
+			if err != nil || n < 0 || n > 100 {
+				return errors.New("usage: dispatcher model budget N --expected-revision N [--confirm], N from 0 (no cap) to 100")
+			}
+			a["budget"] = n
 		case "dispatcher_model_tools":
 			tools := []any{}
 			for _, t := range pos {
 				tools = append(tools, t)
 			}
 			a["tools"] = tools
+		case "dispatcher_escalation_answer":
+			a["escalation_id"], a["option"] = pos[0], pos[1]
+		case "dispatcher_model_rejudge":
+			// The claim's revision is a string, unlike the policy's.
+			revision, _ := a["expected_revision"].(string)
+			delete(a, "expected_revision")
+			if revision == "" {
+				return errors.New("usage: dispatcher model rejudge PROPOSAL_ID --expected-revision REV, the claim's revision you saw")
+			}
+			a["proposal_id"], a["revision"] = pos[0], revision
 		case "dispatcher_decisions_list":
 			for k, v := range map[string]int{"since_hours": 24, "limit": 50} {
 				if a[k] == nil {
@@ -1050,7 +1085,7 @@ flags:`)
 			}
 		}
 		switch op {
-		case "dispatcher_enable", "dispatcher_model_advise", "dispatcher_model_tools":
+		case "dispatcher_enable", "dispatcher_model_advise", "dispatcher_model_tools", "dispatcher_model_budget":
 			// --confirm reaches the bus, which previews without it. The
 			// generic flag pass leaves confirm out.
 			if f.Lookup("confirm").Value.(flag.Getter).Get().(bool) {
@@ -1061,7 +1096,7 @@ flags:`)
 			return errors.New("dispatcher model key delete deletes your model key: your agent stops, and the model goes off in every project of yours. Add --confirm to do it")
 		}
 		switch op {
-		case "dispatcher_get", "dispatcher_decisions_list", "dispatcher_chat_ask", "dispatcher_chat_show", "dispatcher_escalations_list",
+		case "dispatcher_get", "dispatcher_decisions_list", "dispatcher_chat_ask", "dispatcher_chat_show", "dispatcher_escalations_list", "dispatcher_escalation_answer", "dispatcher_model_rejudge",
 			"dispatcher_model_setup", "dispatcher_model_doctor", "dispatcher_model_key_delete", "dispatcher_model_key_rotate":
 		default:
 			if v, _ := a["expected_revision"].(int64); v < 0 || a["expected_revision"] == nil {
@@ -1237,6 +1272,42 @@ flags:`)
 		}
 		if marker := agentMarker(closesEnv()); marker != "" {
 			return fmt.Errorf("reading the project's threads is the project owner's, and %s says an agent runs this command; run it yourself in your own terminal", marker)
+		}
+		config.Session = ""
+	}
+	if op == "dispatcher_escalation_answer" {
+		// Answering an escalation is a person's decision, as who closes
+		// issues is. The server refuses any session; the agent check here is
+		// best effort, as an agent can clear its environment.
+		if flags.Session != "" {
+			return errors.New("answering an escalation is never done with --session; the project owner or a lead runs it in their own terminal")
+		}
+		if marker := agentMarker(closesEnv()); marker != "" {
+			return fmt.Errorf("answering an escalation is a person's decision, and %s says an agent runs this command; run it yourself in a terminal", marker)
+		}
+		config.Session = ""
+	}
+	if op == "dispatcher_model_budget" {
+		// So is the loop budget: 0 lifts the cap on the model's judgements.
+		// The server refuses any session; the agent check is best effort.
+		if flags.Session != "" {
+			return errors.New("the loop budget is never set with --session; the project owner sets it in their own terminal")
+		}
+		if marker := agentMarker(closesEnv()); marker != "" {
+			return fmt.Errorf("the loop budget is the project owner's decision, and %s says an agent runs this command; run it yourself in a terminal", marker)
+		}
+		config.Session = ""
+	}
+	if op == "dispatcher_model_rejudge" {
+		// Judging again resets an issue's loop budget: a person's
+		// decision, never an agent's (R5). The server refuses any session;
+		// the agent check here is best effort, as an agent can clear its
+		// environment.
+		if flags.Session != "" {
+			return errors.New("judging again is never done with --session; the project owner or a lead runs it in their own terminal")
+		}
+		if marker := agentMarker(closesEnv()); marker != "" {
+			return fmt.Errorf("judging again is a person's decision, and %s says an agent runs this command; run it yourself in a terminal", marker)
 		}
 		config.Session = ""
 	}

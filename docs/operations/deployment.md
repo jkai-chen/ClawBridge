@@ -418,6 +418,21 @@ sudo docker compose --env-file /etc/clawbridge/clawbridge.env --project-name "$P
     --account ACCOUNT_ID --server https://DOMAIN --workspace WORKSPACE --email OWNER
   ```
 
+  On Google Cloud, `cloud bootstrap --vm NAME --project PROJECT_ID --zone ZONE
+  --server https://DOMAIN --workspace WORKSPACE --email OWNER` does the same over
+  the user's own `gcloud compute ssh --tunnel-through-iap --quiet`, with the code
+  on its stdin. It refuses before sending anything unless gcloud already has the
+  user's key (`~/.ssh/google_compute_engine`, from connecting once in their own
+  terminal), so `--quiet` never makes a key without a passphrase; `cloud secret
+  set --vm` and `cloud check --vm` do the same. Every IAP call ClawBridge makes passes `--ssh-key-expire-after=1h`, so a
+  key gcloud adds to metadata without OS Login expires within the hour; the
+  bootstrap warns, in one line, when OS Login is off and where the key may land
+  (a false alarm when the organization enforces OS Login with
+  `constraints/compute.requireOsLogin`, whatever the metadata says).
+  The first connection trusts the VM's host key as gcloud records it
+  (`~/.ssh/google_compute_known_hosts`). IAP needs a firewall rule allowing
+  35.235.240.0/20 on tcp:22; without one, the command says so.
+
   On a host you reach over plain SSH, `cloud bootstrap --ssh HOST --server
   https://DOMAIN --workspace WORKSPACE --email OWNER` does the same, with the code
   on ssh's stdin to a fixed script, never in any command. It uses the same ssh

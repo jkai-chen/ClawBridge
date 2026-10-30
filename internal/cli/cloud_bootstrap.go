@@ -22,14 +22,17 @@ import (
 // makes the one-time owner invite's code and hands it to the server's
 // `operator bootstrap-invite --code-stdin`: on AWS through a short-lived
 // SecureString (as cloud secret set does), so it is in no command's
-// parameters or SSM history; over plain SSH on ssh's stdin. It joins with
+// parameters or SSM history; over plain SSH, or gcloud compute ssh over
+// IAP on Google Cloud, on that session's stdin. It joins with
 // the code in memory. The server stores only its salted hash; the code is
 // never printed.
 
-const cloudBootstrapUsage = `clawbridge cloud bootstrap (--ssh HOST | --instance ID --region R [--profile P] [--account N])
+const cloudBootstrapUsage = `clawbridge cloud bootstrap (--ssh HOST | --vm NAME --project P --zone Z | --instance ID --region R [--profile P] [--account N])
                           --server URL --workspace NAME [--email OWNER] [--label L]
                           [--key-store keyring|file]
                           [--client-config PATH]`
+
+const bootstrapRoute = "cloud bootstrap needs the server's route: --ssh HOST, --vm NAME --project P --zone Z on Google Cloud, or --instance ID and --region on AWS"
 
 // bootstrapComposeFile is the deployment's Compose file on the instance, as
 // the AWS playbook checks it out.
@@ -55,8 +58,7 @@ func runCloudBootstrap(ctx context.Context, args []string, stdout, stderr io.Wri
 	var target cloudTarget
 	f := flag.NewFlagSet("cloud bootstrap", flag.ContinueOnError)
 	f.SetOutput(stderr)
-	bindAWSTarget(f, &target)
-	f.StringVar(&target.host, "ssh", "", "SSH host of the server (any VM)")
+	bindTarget(f, &target)
 	server := f.String("server", "", "the server's public URL (its --public-origin)")
 	workspace := f.String("workspace", "", "the workspace to create, owned by the server's CLAWBRIDGE_BOOTSTRAP_OWNER")
 	label := f.String("label", "", "this device's label (default: this machine's name)")
@@ -76,8 +78,8 @@ func runCloudBootstrap(ctx context.Context, args []string, stdout, stderr io.Wri
 	switch {
 	case f.NArg() != 0:
 		return errors.New("usage: " + cloudBootstrapUsage)
-	case target.instance == "" && target.host == "":
-		return errors.New("cloud bootstrap needs the server's route: --ssh HOST, or --instance ID and --region on AWS")
+	case !target.remote():
+		return errors.New(bootstrapRoute)
 	case *server == "":
 		return errors.New("cloud bootstrap needs --server, the server's public URL")
 	case !bootstrapWorkspace(*workspace):
@@ -93,10 +95,15 @@ func runCloudBootstrap(ctx context.Context, args []string, stdout, stderr io.Wri
 	}
 	tr, err := target.transport()
 	if err != nil {
-		return err
+		return errors.New("cloud bootstrap did not run: " + err.Error())
 	}
 	code := devicekey.NewCode()
 	if sh, ok := tr.(shellTransport); ok {
+		if target.vm != "" {
+			if note := osLoginNote(ctx, target); note != "" {
+				fmt.Fprintln(stderr, note)
+			}
+		}
 		out, err := sh.exchange(ctx, sshBootstrapScript(*workspace, *owner), strings.NewReader(code+"\n"), stderr)
 		if err != nil {
 			advice := sh.describe() + "; the invite may or may not exist, so run cloud bootstrap again (a second invite does no harm)"
@@ -105,6 +112,8 @@ func runCloudBootstrap(ctx context.Context, args []string, stdout, stderr io.Wri
 				advice = hostKeyAdvice
 			case errors.Is(err, errSudoPassword):
 				advice = sudoAdvice
+			case errors.Is(err, errIAPFirewall):
+				advice = iapFirewallAdvice
 			case exitCode(err) == 6:
 				advice = "the server has no " + serverEnvFile + " naming COMPOSE_PROJECT_NAME; install the server first"
 			}
@@ -114,7 +123,7 @@ func runCloudBootstrap(ctx context.Context, args []string, stdout, stderr io.Wri
 	}
 	ssm, ok := tr.(ssmTransport)
 	if !ok {
-		return errors.New("cloud bootstrap needs the server's route: --ssh HOST, or --instance ID and --region on AWS")
+		return errors.New(bootstrapRoute)
 	}
 	out, err := ssm.throughParameter(ctx, "bootstrap-code", code, "cloud bootstrap",
 		"the server did not answer in time, so the invite may or may not exist; run cloud bootstrap again (a second invite does no harm)",

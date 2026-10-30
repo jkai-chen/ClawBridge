@@ -272,6 +272,7 @@ func TestCloudSecretSetSendsTheValueOnStdinOnly(t *testing.T) {
 	const value = "lin_synthetic-secret_0123"
 	key := "CLAWBRIDGE_LINEAR_APP_CLIENT_SECRET"
 	script := `sudo -n sh -c '` + remoteSetScript(key, serverEnvFile) + `'`
+	withGcpKey(t, t.TempDir())
 	for name, c := range map[string]struct {
 		args     []string
 		terminal bool
@@ -280,7 +281,7 @@ func TestCloudSecretSetSendsTheValueOnStdinOnly(t *testing.T) {
 		"ssh, hidden prompt": {[]string{key, "--ssh", "admin@bridge.example.test"}, true,
 			wantSSH("admin@bridge.example.test", "env LC_ALL=C "+script)},
 		"gcloud, piped": {[]string{key, "--vm", "clawbridge-1", "--project", "example-project", "--zone", "europe-west1-b", "--value-stdin"}, false,
-			[]string{"gcloud", "compute", "ssh", "clawbridge-1", "--project", "example-project", "--zone", "europe-west1-b", "--tunnel-through-iap", "--command", script}},
+			[]string{"gcloud", "compute", "ssh", "clawbridge-1", "--project", "example-project", "--zone", "europe-west1-b", "--tunnel-through-iap", "--quiet", "--ssh-key-expire-after=1h", "--command", script}},
 	} {
 		calls := stubSecretIO(t, value+"\n", c.terminal, nil)
 		out, err := secretSet(c.args...)

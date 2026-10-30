@@ -4,6 +4,19 @@ The server signs people in with device keys only: since v1.0 Google sign-in is
 removed, and a server whose env file still names it refuses to start. The server
 needs no Google OAuth client and no sign-in secret.
 
+Check that the user's ClawBridge can bootstrap a Compute Engine VM, on their
+machine:
+
+```sh
+clawbridge cloud bootstrap --help
+```
+
+- **It lists `--vm`:** use step 7 below.
+- **It doesn't:** the user's ClawBridge is too old. Ask them to update it
+  (`clawbridge self-update`), or use the manual step 7 below.
+
+Then:
+
 - **Env file (step 6):** leave `CLAWBRIDGE_AUTH` unset, or set it to `device`.
   Never set `google`, `CLAWBRIDGE_AUDIENCE` or any `CLAWBRIDGE_OAUTH_*` entry:
   `google` stops the server, and the old Google settings are ignored with a
@@ -13,16 +26,25 @@ needs no Google OAuth client and no sign-in secret.
   their first device:
 
   ```sh
-  clawbridge cloud bootstrap VM --workspace my-team --email OWNER_EMAIL
+  clawbridge cloud bootstrap --vm clawbridge-1 --project PROJECT --zone ZONE \
+    --server https://DOMAIN --workspace my-team --email OWNER_EMAIL
   ```
 
-  It runs the server's one-time owner invite over the user's own SSH and joins
-  with it directly, so the invite code is never printed. When the onboarding
-  TUI resumes after your hand-over, it runs this for the user. Never run the
-  invite yourself, in any form: its code is a credential. If it fails, the user
-  runs it again; a code that was issued expires in 24 hours.
+  It makes the one-time owner invite's code on the user's machine, sends it
+  only on the stdin of their own `gcloud compute ssh --tunnel-through-iap` to
+  the server, and joins with it, so the code is never on screen or in a
+  command line. It needs gcloud's own key on the user's machine: if it says to
+  connect once, the user runs `gcloud compute ssh clawbridge-1 --project=PROJECT
+  --zone=ZONE --tunnel-through-iap` in their own terminal, then runs it again.
+  When your hand-over ends and its checks pass, `clawbridge onboard` offers to
+  run this for the user.
+- **Manual step 7** (a release without `--vm`): on the VM, over the user's own
+  `gcloud compute ssh clawbridge-1 --project=PROJECT --zone=ZONE
+  --tunnel-through-iap`, they run the `operator bootstrap-invite --workspace
+  my-team` command from docs/operations/deployment.md ("Letting the owner in:
+  `operator bootstrap-invite`"); then, on their own computer, `clawbridge
+  --server https://DOMAIN join --email OWNER_EMAIL`, which asks for the code.
 
-If `clawbridge cloud bootstrap --help` doesn't list `--vm`, the user's
-ClawBridge is too old: ask them to update it (`clawbridge self-update`). A host
-operator can also let the owner in by hand with `operator bootstrap-invite`; see
-docs/operations/deployment.md.
+Never run the invite yourself, in any form, and never ask for the code: it is
+a credential. If it fails, the user runs it again; a code that was issued
+expires in 24 hours.

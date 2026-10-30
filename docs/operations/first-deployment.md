@@ -293,6 +293,34 @@ clawbridge cloud bootstrap --ssh admin@clawbridge.example.com \
   --server https://clawbridge.example.com --workspace my-team --email OWNER
 ```
 
+**On Google Cloud:** one command on your own computer does both steps, over
+your own `gcloud compute ssh` through IAP. The code goes only on that session's
+stdin. `clawbridge onboard`'s Google Cloud hand-over offers to run it for you
+once the checks pass:
+
+```sh
+clawbridge cloud bootstrap --vm clawbridge-1 --project PROJECT_ID --zone ZONE \
+  --server https://clawbridge.example.com --workspace my-team --email OWNER
+```
+
+- **Connect once first:** ClawBridge runs gcloud with `--quiet`, so no prompt can
+  read the code from stdin. So gcloud must already have your key
+  (`~/.ssh/google_compute_engine`): run `gcloud compute ssh clawbridge-1 --project
+  PROJECT_ID --zone ZONE --tunnel-through-iap` once in your own terminal, where it
+  makes the key and can ask you for a passphrase. Without it, the command refuses
+  before sending anything.
+- **Your SSH key:** with OS Login on (`enable-oslogin=TRUE`), gcloud uses your OS
+  Login profile. Without it, gcloud may add your key to the project's metadata,
+  which every VM in the project trusts, or to the VM's own when the VM blocks
+  project-wide keys. ClawBridge passes `--ssh-key-expire-after=1h`, so that key
+  expires within the hour, and prints a one-line warning naming where it went.
+  The warning reads the metadata only: if your organization enforces OS Login
+  (`constraints/compute.requireOsLogin`), it is a false alarm. Prefer OS Login.
+- **The host key:** the first connection trusts the VM's key as gcloud records it
+  in `~/.ssh/google_compute_known_hosts` (trust on first use); later ones check it.
+- **IAP's firewall rule:** IAP reaches the VM from 35.235.240.0/20 on tcp:22. If no
+  rule allows that, the command says so instead of printing gcloud's error.
+
 **On AWS:** the server host is reached over SSM, not SSH, so one command on your
 own computer does both steps:
 

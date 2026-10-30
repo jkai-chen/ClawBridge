@@ -570,16 +570,14 @@ func finishSignin(ctx context.Context, s *onboardingState, prompt *wizardPrompt,
 		_, err = io.WriteString(stdout, text)
 		return err
 	}
-	// cloud bootstrap runs over SSM on AWS and over SSH on your own server;
-	// on Google Cloud the owner runs the written step.
-	if s.Cloud == "aws" || s.Cloud == "ssh" {
-		done, err := offerBootstrap(ctx, s, prompt, path, stdout, stderr)
-		if err != nil {
-			return err
-		}
-		if done {
-			return firstProject(ctx, prompt, path, stdout, stderr)
-		}
+	// cloud bootstrap runs over SSM on AWS, over IAP on Google Cloud and over
+	// SSH on your own server.
+	done, err := offerBootstrap(ctx, s, prompt, path, stdout, stderr)
+	if err != nil {
+		return err
+	}
+	if done {
+		return firstProject(ctx, prompt, path, stdout, stderr)
 	}
 	playbook, checks := "clawbridge-provision-gcp", fmt.Sprintf("  clawbridge cloud check workspace\n  clawbridge cloud check backups --bucket %s --project %s\n", s.Bucket, s.Project)
 	if s.Cloud == "aws" {
@@ -587,7 +585,7 @@ func finishSignin(ctx context.Context, s *onboardingState, prompt *wizardPrompt,
 	} else if s.Cloud == "ssh" {
 		playbook, checks = "clawbridge-provision-vm", signinChecks(s)
 	}
-	_, err := fmt.Fprintf(stdout, `
+	_, err = fmt.Fprintf(stdout, `
 The server is up. Last step, in your own terminal (not your agent's): create the workspace as its owner,
 following the sign-in section of the %s skill (references/signin.md). Then check:
 
@@ -650,11 +648,14 @@ func firstProject(ctx context.Context, prompt *wizardPrompt, path string, stdout
 }
 
 func signinChecks(s *onboardingState) string {
-	if s.Cloud == "ssh" {
+	switch s.Cloud {
+	case "ssh":
 		return fmt.Sprintf("  clawbridge cloud check workspace\n  clawbridge cloud check backups --ssh %s --server https://%s\n", s.Host, s.Domain)
+	case "aws":
+		return fmt.Sprintf("  clawbridge cloud check workspace\n  clawbridge cloud check backups --bucket %s --region %s --profile %s\n",
+			s.Bucket, s.Region, s.Profile)
 	}
-	return fmt.Sprintf("  clawbridge cloud check workspace\n  clawbridge cloud check backups --bucket %s --region %s --profile %s\n",
-		s.Bucket, s.Region, s.Profile)
+	return fmt.Sprintf("  clawbridge cloud check workspace\n  clawbridge cloud check backups --bucket %s --project %s\n", s.Bucket, s.Project)
 }
 
 // cloudBootstrap is the in-process `clawbridge cloud bootstrap`.
@@ -665,6 +666,19 @@ var cloudBootstrap = runCloudBootstrap
 // was printed; otherwise the caller prints the written step. Ended input,
 // like any other answer but yes, is a no.
 func offerBootstrap(ctx context.Context, s *onboardingState, prompt *wizardPrompt, path string, stdout, stderr io.Writer) (done bool, err error) {
+	var route []string
+	switch s.Cloud {
+	case "ssh":
+		route = []string{"--ssh", s.Host}
+	case "aws":
+		route = []string{"--instance", s.Instance, "--region", s.Region, "--profile", s.Profile, "--account", s.Account}
+	case "gcp":
+		// The GCP playbook always names its VM clawbridge-1.
+		route = []string{"--vm", "clawbridge-1", "--project", s.Project, "--zone", s.Zone}
+	default:
+		// A cloud with no bootstrap route gets no offer, only the written step.
+		return false, nil
+	}
 	server := "https://" + s.Domain
 	if methods, err := wizardMethods(ctx, server); err != nil || !slices.Contains(methods, "device") {
 		return false, ctx.Err()
@@ -693,10 +707,6 @@ func offerBootstrap(ctx context.Context, s *onboardingState, prompt *wizardPromp
 	}
 	if a := strings.ToLower(answer); a != "y" && a != "yes" {
 		return false, nil
-	}
-	route := []string{"--instance", s.Instance, "--region", s.Region, "--profile", s.Profile, "--account", s.Account}
-	if s.Cloud == "ssh" {
-		route = []string{"--ssh", s.Host}
 	}
 	err = cloudBootstrap(ctx, append(route, "--server", server, "--workspace", workspace, "--email", s.Owner, "--client-config", path), stdout, stderr)
 	if ctx.Err() != nil {

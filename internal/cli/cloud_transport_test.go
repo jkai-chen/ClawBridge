@@ -13,6 +13,7 @@ import (
 func TestShellTransportUsesTheTargetsArgv(t *testing.T) {
 	oldOut, oldRun := remoteOutput, runRemote
 	t.Cleanup(func() { remoteOutput, runRemote = oldOut, oldRun })
+	withGcpKey(t, t.TempDir())
 	for _, target := range []cloudTarget{
 		{host: "admin@bridge.example.test"},
 		{vm: "clawbridge-1", project: "example-project", zone: "europe-west1-b"},

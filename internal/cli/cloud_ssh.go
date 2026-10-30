@@ -309,12 +309,10 @@ var remoteExchange = func(ctx context.Context, argv []string, stdin io.Reader, s
 	return out.Bytes(), err
 }
 
-// exchange runs a fixed script over plain SSH with input on its stdin and
-// returns its output: a one-time code goes nowhere else.
+// exchange runs a fixed script over plain SSH, or gcloud compute ssh over
+// IAP, with input on its stdin and returns its output: a one-time code goes
+// nowhere else.
 func (s shellTransport) exchange(ctx context.Context, script string, stdin io.Reader, stderr io.Writer) ([]byte, error) {
-	if s.target.host == "" {
-		return nil, errors.New("exchange runs over --ssh only")
-	}
 	argv, err := s.target.argv(s.sudo() + script + `'`)
 	if err != nil {
 		return nil, err
@@ -322,7 +320,9 @@ func (s shellTransport) exchange(ctx context.Context, script string, stdin io.Re
 	w, t, done := teeStderr(stderr)
 	defer done()
 	out, err := remoteExchange(ctx, argv, stdin, w)
-	if err != nil {
+	if err != nil && s.target.vm != "" {
+		err = gcpFailure(err, t.b)
+	} else if err != nil {
 		err = sshFailure(err, t.b)
 	}
 	return out, err

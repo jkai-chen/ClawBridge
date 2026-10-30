@@ -317,11 +317,24 @@ skipping its `/etc/fstab` and symlink parts, which this playbook already did.
 It makes Docker start only with the data volume mounted, and installs the daily
 backup timer. The backup uploads to S3 with the instance's role.
 
-**Start the stack:**
+**Start the stack.** On a first install nothing is running yet. If the server
+already runs (this playbook run again, to repair or upgrade it), the block
+drains it first, as deployment.md's "Draining before the swap" does: writes get
+`503 maintenance` and clients queue them, nothing in flight is cut, and the new
+API ends the maintenance when it starts. The drain must print `drained`; if it
+prints `not drained after 90s`, the block stops before `up`: stop and ask
+(rule 5), and `operator maintenance end --confirm` (the same `run` line) lifts
+it.
 
 ```sh
-docker compose --env-file /etc/clawbridge/clawbridge.env --project-name clawbridge \
-  -f /opt/clawbridge/repo/deploy/compose.yaml up -d --build
+set -e
+dc() { docker compose --env-file /etc/clawbridge/clawbridge.env --project-name clawbridge \
+  -f /opt/clawbridge/repo/deploy/compose.yaml "$@"; }
+if [ -n "$(dc ps -q api)" ]; then
+  dc build api
+  dc run --rm --no-deps api operator maintenance start --reason "playbook re-run" --wait 90s --confirm
+fi
+dc up -d --build
 ```
 
 Caddy obtains the certificate within a minute or two, once DNS points at the

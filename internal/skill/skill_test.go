@@ -643,3 +643,73 @@ func TestLocalPlaybook(t *testing.T) {
 		}
 	}
 }
+
+// A playbook block that starts the stack drains a running server first:
+// run again on a live host, a plain up would cut what is in flight. Every
+// bundled skill's sh block with a Compose up must check for a running API
+// and drain it (operator maintenance start --wait) before the up.
+func TestPlaybooksDrainARunningServerBeforeUp(t *testing.T) {
+	blocks := 0
+	for name, files := range bundled {
+		err := fs.WalkDir(files, ".", func(path string, d fs.DirEntry, err error) error {
+			if err != nil || d.IsDir() || !strings.HasSuffix(path, ".md") {
+				return err
+			}
+			text, err := fs.ReadFile(files, path)
+			if err != nil {
+				return err
+			}
+			parts := strings.Split(string(text), "```")
+			for i := 1; i < len(parts); i += 2 {
+				block := parts[i]
+				up := strings.Index(block, " up -d")
+				if !strings.HasPrefix(block, "sh\n") || !strings.Contains(block, "docker compose") || up < 0 {
+					continue
+				}
+				blocks++
+				// Restarting Docker restarts the server too: only when the
+				// mount guard is new or changed.
+				if restart := strings.Index(block, "systemctl restart docker"); restart >= 0 {
+					if guard := strings.Index(block, "cmp -s"); guard < 0 || guard > restart {
+						t.Errorf("%s/%s: a block restarts Docker unconditionally:\n%s", name, path, block)
+					}
+				}
+				check, drain := strings.Index(block, "ps -q api"), strings.Index(block, "operator maintenance start")
+				if check < 0 || drain < 0 || drain > up || check > drain || !strings.Contains(block, "--wait") || !strings.Contains(block, "set -e") {
+					t.Errorf("%s/%s: a block starts the stack without draining a running server first:\n%s", name, path, block)
+				}
+			}
+			return nil
+		})
+		if err != nil {
+			t.Fatal(name, err)
+		}
+	}
+	if blocks < 2 {
+		t.Fatal("found", blocks, "blocks that start the stack; the playbooks moved")
+	}
+}
+
+// deployment.md's disk-guard block, which the AWS and Google Cloud
+// playbooks follow, restarts Docker only when the guard is new or changed.
+func TestDeploymentGuardBlockRestartsDockerOnlyWhenNew(t *testing.T) {
+	text, err := os.ReadFile(filepath.Join("..", "..", "docs", "operations", "deployment.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := 0
+	parts := strings.Split(string(text), "```")
+	for i := 1; i < len(parts); i += 2 {
+		restart := strings.Index(parts[i], "systemctl restart docker")
+		if restart < 0 || !strings.Contains(parts[i], "10-clawbridge-postgres-mount.conf") {
+			continue
+		}
+		found++
+		if guard := strings.Index(parts[i], "cmp -s"); guard < 0 || guard > restart {
+			t.Errorf("deployment.md restarts Docker unconditionally:\n%s", parts[i])
+		}
+	}
+	if found == 0 {
+		t.Fatal("deployment.md's disk-guard block moved")
+	}
+}

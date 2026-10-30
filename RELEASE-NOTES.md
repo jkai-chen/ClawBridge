@@ -39,6 +39,13 @@
   re-read, and any failed write verifies the whole binding again next time. A create also reads its team's workflow
   states and labels once instead of twice (Linear checks their IDs on save). Linear config scope: none.
 
+## Operations
+
+- **Re-running a provisioning playbook on a running server no longer cuts it off.** The AWS and Google Cloud playbooks'
+  start step drains a server that is already up (`operator maintenance start --wait 90s`, as an upgrade does) before
+  `compose up`, and stops if it doesn't drain; a first install is unchanged. The disk guard (deployment.md, which
+  the playbooks follow) restarts Docker only when the guard is new or changed, since that restarts every container.
+
 # ClawBridge v0.3.12 (released 30 Oct)
 
 **Schema 51 → 52.**

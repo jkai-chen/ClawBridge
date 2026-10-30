@@ -22,33 +22,21 @@ import (
 	"clawbridge/internal/server"
 )
 
-const (
-	deploymentBrowserClient = "deployment-browser.apps.googleusercontent.com"
-	deploymentBrowserSecret = "deployment-browser-public-app-secret"
-	deploymentDeviceClient  = "deployment-device.apps.googleusercontent.com"
-	deploymentDeviceSecret  = "deployment-device-public-app-secret"
-)
-
 func TestDeploymentPublicConfigAndUnauthenticatedAPIContract(t *testing.T) {
 	var verifierCalls, executorCalls atomic.Int32
-	handler := server.NewHandlerWithOAuthMetadata(
+	var handler http.Handler
+	httpServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { handler.ServeHTTP(w, r) }))
+	defer httpServer.Close()
+	// The handler serve builds: device keys at the public origin, no
+	// verifier.
+	handler = server.NewHandlerWithOptions(
 		deploymentExecutorFunc(func(context.Context, string, bus.Request) (bus.Result, error) {
 			executorCalls.Add(1)
 			return bus.Result{}, errors.New("unauthenticated deployment request reached the executor")
 		}),
-		server.VerifierFunc(func(context.Context, string) (server.Identity, error) {
-			verifierCalls.Add(1)
-			return server.Identity{}, errors.New("missing bearer token reached the verifier")
-		}),
-		server.OAuthMetadata{
-			BrowserClientID:     deploymentBrowserClient,
-			BrowserClientSecret: deploymentBrowserSecret,
-			DeviceClientID:      deploymentDeviceClient,
-			DeviceClientSecret:  deploymentDeviceSecret,
-		},
+		nil,
+		server.HandlerOptions{Auth: server.AuthOptions{Methods: []string{server.AuthDevice}, PublicOrigin: httpServer.URL, Devices: noDeploymentDevices{}}},
 	)
-	httpServer := httptest.NewServer(handler)
-	defer httpServer.Close()
 
 	assertDeploymentHTTPContract(t, httpServer.URL, httpServer.Client())
 	if verifierCalls.Load() != 0 {
@@ -81,24 +69,23 @@ func TestDeploymentLiveHTTPSContract(t *testing.T) {
 
 func assertDeploymentHTTPContract(t *testing.T, baseURL string, client *http.Client) {
 	t.Helper()
-	assertDeploymentHTTPContractWithExpected(t, baseURL, client, map[string]string{
-		"browser_client_id":     deploymentBrowserClient,
-		"browser_client_secret": deploymentBrowserSecret,
-		"device_client_id":      deploymentDeviceClient,
-		"device_client_secret":  deploymentDeviceSecret,
-	})
+	assertDeploymentHTTPContractWithExpected(t, baseURL, client, baseURL)
 }
 
 func assertDeploymentLiveHTTPContract(t *testing.T, baseURL string, client *http.Client) {
 	t.Helper()
-	assertDeploymentHTTPContractWithExpected(t, baseURL, client, nil)
+	assertDeploymentHTTPContractWithExpected(t, baseURL, client, baseURL)
 }
 
+// assertDeploymentHTTPContractWithExpected checks a v1.0 server's public
+// answers: /v1/config names device sign-in at origin and carries no OAuth
+// client (its four keys stay, empty, for v0.3 clients), and /v1/execute
+// refuses a missing credential and a Bearer (Google ID) token alike.
 func assertDeploymentHTTPContractWithExpected(
 	t *testing.T,
 	baseURL string,
 	client *http.Client,
-	want map[string]string,
+	origin string,
 ) {
 	t.Helper()
 	configResponse, err := client.Get(baseURL + "/v1/config")
@@ -119,80 +106,66 @@ func assertDeploymentHTTPContractWithExpected(
 	if cacheControl := configResponse.Header.Get("Cache-Control"); cacheControl != "no-store" {
 		t.Fatalf("GET /v1/config cache control=%q", cacheControl)
 	}
-	var fields map[string]json.RawMessage
+	var config struct {
+		BrowserClientID     *string  `json:"browser_client_id"`
+		BrowserClientSecret *string  `json:"browser_client_secret"`
+		DeviceClientID      *string  `json:"device_client_id"`
+		DeviceClientSecret  *string  `json:"device_client_secret"`
+		AuthMethods         []string `json:"auth_methods"`
+		PublicOrigin        string   `json:"public_origin"`
+	}
 	decoder := json.NewDecoder(bytes.NewReader(configBody))
-	if err := decoder.Decode(&fields); err != nil {
-		t.Fatalf("GET /v1/config is not JSON: %v", err)
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&config); err != nil {
+		t.Fatalf("GET /v1/config is not the v1.0 object: %v", err)
 	}
-	if trailing, err := decoder.Token(); err != io.EOF || trailing != nil {
-		t.Fatalf("GET /v1/config has trailing content")
-	}
-	// Exactly the four installed-app fields: a Google-only server names no
-	// sign-in methods, so a v0.3.3 client's parser accepts it.
-	if len(fields) != 4 {
-		t.Fatal("GET /v1/config field count is not exactly four")
-	}
-	values := make(map[string]string, len(fields))
-	for key := range map[string]struct{}{
-		"browser_client_id":     {},
-		"browser_client_secret": {},
-		"device_client_id":      {},
-		"device_client_secret":  {},
-	} {
-		raw, ok := fields[key]
-		if !ok {
-			t.Fatalf("GET /v1/config omitted %s", key)
+	for name, v := range map[string]*string{"browser_client_id": config.BrowserClientID, "browser_client_secret": config.BrowserClientSecret, "device_client_id": config.DeviceClientID, "device_client_secret": config.DeviceClientSecret} {
+		if v == nil || *v != "" {
+			t.Fatalf("GET /v1/config %s is missing or carries an OAuth client", name)
 		}
-		var value string
-		if err := json.Unmarshal(raw, &value); err != nil || value == "" {
-			t.Fatalf("GET /v1/config %s is not a non-empty string", key)
+	}
+	if strings.Join(config.AuthMethods, ",") != "device" || config.PublicOrigin != origin {
+		t.Fatalf("GET /v1/config sign-in: %v %q", config.AuthMethods, config.PublicOrigin)
+	}
+	for _, header := range []string{"", "Bearer eyJhbGciOiJSUzI1NiJ9.e30.c2ln"} {
+		request, err := http.NewRequest(http.MethodPost, baseURL+"/v1/execute", strings.NewReader(`{"operation":"whoami"}`))
+		if err != nil {
+			t.Fatal(err)
 		}
-		values[key] = value
-	}
-	if want != nil {
-		for key, wantValue := range want {
-			if values[key] != wantValue {
-				t.Fatalf("GET /v1/config %s is invalid or cross-paired", key)
-			}
+		request.Header.Set("Content-Type", "application/json")
+		if header != "" {
+			request.Header.Set("Authorization", header)
 		}
-	} else if !strings.HasSuffix(values["browser_client_id"], ".apps.googleusercontent.com") ||
-		!strings.HasSuffix(values["device_client_id"], ".apps.googleusercontent.com") {
-		t.Fatal("GET /v1/config contains a non-Google client ID")
+		response, err := client.Do(request)
+		if err != nil {
+			t.Fatalf("POST /v1/execute: %v", err)
+		}
+		body, readErr := io.ReadAll(io.LimitReader(response.Body, 64<<10))
+		response.Body.Close()
+		if readErr != nil {
+			t.Fatal(readErr)
+		}
+		var refused struct {
+			Error struct{ Code, Message string } `json:"error"`
+		}
+		if response.StatusCode != http.StatusUnauthorized || json.Unmarshal(body, &refused) != nil || refused.Error.Code != "unauthenticated" {
+			t.Fatalf("POST /v1/execute with %q: %d %s", header, response.StatusCode, body)
+		}
+		if header != "" && refused.Error.Message != server.BearerRefused {
+			t.Fatalf("a Bearer token was refused without the removal notice: %s", body)
+		}
 	}
-	if bytes.Contains(bytes.ToLower(configBody), []byte("oauth_client_secret")) ||
-		bytes.Contains(bytes.ToLower(configBody), []byte("token")) ||
-		bytes.Contains(bytes.ToLower(configBody), []byte("refresh")) {
-		t.Fatal("GET /v1/config exposed a non-contract credential field")
-	}
+}
 
-	request, err := http.NewRequest(http.MethodPost, baseURL+"/v1/execute", strings.NewReader(`{"operation":"whoami"}`))
-	if err != nil {
-		t.Fatal(err)
-	}
-	request.Header.Set("Content-Type", "application/json")
-	response, err := client.Do(request)
-	if err != nil {
-		t.Fatalf("unauthenticated POST /v1/execute: %v", err)
-	}
-	body, readErr := io.ReadAll(io.LimitReader(response.Body, 64<<10))
-	response.Body.Close()
-	if readErr != nil {
-		t.Fatalf("read unauthenticated /v1/execute: %v", readErr)
-	}
-	if response.StatusCode != http.StatusUnauthorized {
-		t.Fatalf("unauthenticated POST /v1/execute status=%d, want 401", response.StatusCode)
-	}
-	var errorResponse struct {
-		Error struct {
-			Code string `json:"code"`
-		} `json:"error"`
-	}
-	if err := json.Unmarshal(body, &errorResponse); err != nil {
-		t.Fatalf("parse unauthenticated /v1/execute response: %v", err)
-	}
-	if errorResponse.Error.Code != "unauthenticated" {
-		t.Fatal("unauthenticated /v1/execute response did not use error.code=unauthenticated")
-	}
+// noDeploymentDevices is a device store that holds none.
+type noDeploymentDevices struct{}
+
+func (noDeploymentDevices) DeviceByID(context.Context, string) (bus.Device, error) {
+	return bus.Device{}, errors.New("none")
+}
+func (noDeploymentDevices) UseNonce(context.Context, string, string, string) error { return nil }
+func (noDeploymentDevices) Join(context.Context, bus.JoinRequest) (map[string]any, error) {
+	return nil, bus.ErrInvalidInvite
 }
 
 type deploymentExecutorFunc func(context.Context, string, bus.Request) (bus.Result, error)

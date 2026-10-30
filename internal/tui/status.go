@@ -80,7 +80,7 @@ func describeError(raw string) (what, rest string) {
 		"502 ", "503 ", "504 ", "bad gateway", "service unavailable", "gateway timeout", "upstream connect", "unexpected eof"):
 		return "The server can't be reached.", raw
 	case has("401 ", "unauthenticated", "device_auth_failed", "not signed in", "sign in again", "credential expired", "token expired"):
-		return "You're signed out. Run clawbridge login.", raw
+		return "You're signed out. Ask an owner for an invite (or a recovery invite) and run clawbridge join.", raw
 	case has("403 ", "forbidden", "permission denied", "not allowed", "not permitted"):
 		return "You don't have permission for this.", raw
 	}

@@ -81,7 +81,7 @@ func TestJoinCodePromptTakesTheLink(t *testing.T) {
 
 // invite and device add print the link with the code; --out writes the link.
 func TestInvitePrintsTheLink(t *testing.T) {
-	googleProfile(t)
+	cloudProfile(t)
 	onTerminal(t)
 	r := &accountRecorder{data: map[string]any{"code": "CBJ-4K7P-WQ9D-2MXH-T6RB", "email": "ada@example.com", "invite_id": "inv_1"}}
 	withAccountRecorder(t, r)
@@ -120,7 +120,7 @@ func TestJoinLinkChecksR159(t *testing.T) {
 }
 
 func TestInviteSaysWhyThereIsNoLink(t *testing.T) {
-	path := googleProfile(t)
+	path := cloudProfile(t)
 	b, _ := os.ReadFile(path)
 	if err := os.WriteFile(path, []byte(strings.Replace(string(b), "https://cb.example.test", "http://cb.example.test", 1)), 0o600); err != nil {
 		t.Fatal(err)

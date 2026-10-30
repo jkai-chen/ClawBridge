@@ -66,12 +66,13 @@ func TestStartLocalRefusesABadProjectName(t *testing.T) {
 // Join hands over to the existing guided join, which reads its own answers.
 func TestStartJoin(t *testing.T) {
 	isolated(t)
-	wizardHooks(t, "2\nhttps://service.test\nws\nprj\ndevice\nn\n")
+	wizardHooks(t, "2\nhttps://service.test\nada@example.com\n\nn\n")
+	wizardMethods = func(context.Context, string) ([]string, error) { return []string{"device"}, nil }
 	var out bytes.Buffer
 	if err := Run(context.Background(), nil, &out, io.Discard); err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"a project is one codebase", "Join an existing ClawBridge service", "Canceled; no credentials or configuration changed."} {
+	for _, want := range []string{"a project is one codebase", "Join an existing ClawBridge service", "Canceled; no key or configuration changed."} {
 		if !strings.Contains(out.String(), want) {
 			t.Fatalf("missing %q in %s", want, out.String())
 		}

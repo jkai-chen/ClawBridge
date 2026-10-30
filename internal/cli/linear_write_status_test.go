@@ -6,21 +6,16 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
-	"os"
 	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
-
-	"clawbridge/internal/faketool"
 )
 
 // linear write-status asks the server for your writes, one by its
 // operation_id, or with --project-wide the project's whole queue.
 func TestLinearWriteStatusAsksTheServer(t *testing.T) {
 	dir := isolated(t)
-	faketool.Install(t, dir, "gcloud", "print:synthetic-cli-token")
-	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
 	principal := "service@example.test"
 	var mu sync.Mutex
 	var asked []map[string]any
@@ -48,9 +43,10 @@ func TestLinearWriteStatusAsksTheServer(t *testing.T) {
 		json.NewEncoder(w).Encode(map[string]any{"source": "server", "data": data})
 	}))
 	defer host.Close()
-	for k, v := range map[string]string{"MODE": "cloud", "SERVER": host.URL, "AUDIENCE": "test-audience", "ACCOUNT": "human@example.test", "IMPERSONATE_SERVICE_ACCOUNT": principal, "PRINCIPAL": principal, "CACHE": filepath.Join(dir, "mirror.db"), "WORKSPACE": "w", "PROJECT": "p"} {
+	for k, v := range map[string]string{"MODE": "cloud", "SERVER": host.URL, "PRINCIPAL": principal, "CACHE": filepath.Join(dir, "mirror.db"), "WORKSPACE": "w", "PROJECT": "p"} {
 		t.Setenv("CLAWBRIDGE_"+k, v)
 	}
+	useDeviceRoute(t, host.URL)
 	for _, args := range [][]string{{}, {"op-1"}, {"--project-wide"}} {
 		var out, diag bytes.Buffer
 		if err := Run(context.Background(), append([]string{"linear", "write-status"}, args...), &out, &diag); err != nil || !strings.Contains(out.String(), "op-1") {

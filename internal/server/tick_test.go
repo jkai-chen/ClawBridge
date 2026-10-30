@@ -124,6 +124,36 @@ func TestTickEndpoint(t *testing.T) {
 	}
 }
 
+// v1.0 removed Google sign-in but kept the scheduler's OIDC tick: on a
+// device-only server the scheduler's token still ticks, and the same token
+// signs nobody in on /v1/execute.
+func TestTickVerifiesOnADeviceOnlyServer(t *testing.T) {
+	ticker := &countTicks{ticks: make(chan struct{}, 4)}
+	host := httptest.NewServer(NewHandlerWithOptions(&fakeIntake{}, nil, HandlerOptions{TickVerifier: tickCheck{"scheduler-token"}, Ticker: ticker,
+		Auth: AuthOptions{Methods: []string{AuthDevice}, PublicOrigin: "https://cb.example.test", Devices: &fakeDevices{}}}))
+	defer host.Close()
+	post := func(path string) (int, string) {
+		req, _ := http.NewRequest(http.MethodPost, host.URL+path, strings.NewReader(`{"operation":"whoami"}`))
+		req.Header.Set("Authorization", "Bearer scheduler-token")
+		res, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer res.Body.Close()
+		b, _ := io.ReadAll(res.Body)
+		return res.StatusCode, string(b)
+	}
+	if code, _ := post(TickPath); code != http.StatusAccepted {
+		t.Fatal("the scheduler's tick was refused on a device-only server:", code)
+	}
+	if n := ticker.count(time.Second); n != 1 {
+		t.Fatal("the scheduler did not tick", n)
+	}
+	if code, body := post("/v1/execute"); code != 401 || !strings.Contains(body, BearerRefused) {
+		t.Fatal("the scheduler's token was taken as a sign-in:", code, body)
+	}
+}
+
 func TestWatchSettings(t *testing.T) {
 	env := func(kv ...string) func(string) string {
 		m := map[string]string{}
@@ -208,6 +238,28 @@ func TestWatcherStaysOffWithoutTheApp(t *testing.T) {
 	opts := startWatcher(context.Background(), nil, watchSettings{interval: time.Minute}, HandlerOptions{})
 	if opts.Ticker != nil || opts.TickVerifier != nil {
 		t.Fatal("a watcher started without the app")
+	}
+}
+
+// The scheduler's OIDC tick survives Google sign-in's removal (v1.0): with
+// the tick settings the watcher serves the endpoint behind the Google tick
+// verifier, for that audience and service account only.
+func TestWatcherWiresTheSchedulerTickVerifier(t *testing.T) {
+	saved := NewWatcher
+	defer func() { NewWatcher = saved }()
+	NewWatcher = func(context.Context, *bus.Store, *linearapp.App) (Ticker, error) {
+		return &countTicks{ticks: make(chan struct{}, 1)}, nil
+	}
+	settings, err := readWatchSettings(func(k string) string {
+		return map[string]string{"CLAWBRIDGE_TICK_AUDIENCE": "https://cb.example.test" + TickPath, "CLAWBRIDGE_TICK_SERVICE_ACCOUNT": "scheduler@example-project.iam.gserviceaccount.com"}[k]
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	opts := startWatcher(context.Background(), nil, settings, HandlerOptions{Writer: &AppWriter{App: &linearapp.App{}}, Auth: AuthOptions{Methods: []string{AuthDevice}}})
+	v, ok := opts.TickVerifier.(*GoogleTickVerifier)
+	if !ok || opts.Ticker == nil || v.audience != "https://cb.example.test"+TickPath || v.serviceAccount != "scheduler@example-project.iam.gserviceaccount.com" {
+		t.Fatalf("the tick endpoint is off: %#v %v", opts.TickVerifier, opts.Ticker)
 	}
 }
 

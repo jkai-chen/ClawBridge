@@ -16,7 +16,7 @@ import (
 	"clawbridge/internal/server"
 )
 
-func TestOAuthDiscoveryStrictContract(t *testing.T) {
+func TestSignInDiscoveryStrictContract(t *testing.T) {
 	valid := `{"browser_client_id":"browser-client.apps.googleusercontent.com","browser_client_secret":"synthetic-browser-client-credential","device_client_id":"device-client.apps.googleusercontent.com","device_client_secret":"synthetic-device-client-credential"}`
 	for _, tc := range []struct {
 		name   string
@@ -26,9 +26,6 @@ func TestOAuthDiscoveryStrictContract(t *testing.T) {
 		{"empty", http.StatusOK, ""},
 		{"array", http.StatusOK, `[]`},
 		{"null", http.StatusOK, `null`},
-		{"missing-field", http.StatusOK, `{"browser_client_id":"browser-client.apps.googleusercontent.com"}`},
-		{"missing-browser-secret", http.StatusOK, `{"browser_client_id":"browser-client.apps.googleusercontent.com","device_client_id":"device-client.apps.googleusercontent.com","device_client_secret":"synthetic-device-client-credential"}`},
-		{"missing-device-secret", http.StatusOK, `{"browser_client_id":"browser-client.apps.googleusercontent.com","browser_client_secret":"synthetic-browser-client-credential","device_client_id":"device-client.apps.googleusercontent.com"}`},
 		{"unknown-field", http.StatusOK, `{"browser_client_id":"browser-client.apps.googleusercontent.com","browser_client_secret":"synthetic-browser-client-credential","device_client_id":"device-client.apps.googleusercontent.com","device_client_secret":"synthetic-device-client-credential","audience":"audience"}`},
 		{"duplicate-browser-id", http.StatusOK, `{"browser_client_id":"first.apps.googleusercontent.com","browser_client_id":"second.apps.googleusercontent.com","browser_client_secret":"synthetic-browser-client-credential","device_client_id":"device-client.apps.googleusercontent.com","device_client_secret":"synthetic-device-client-credential"}`},
 		{"duplicate-browser-secret", http.StatusOK, `{"browser_client_id":"browser-client.apps.googleusercontent.com","browser_client_secret":"first","browser_client_secret":"second","device_client_id":"device-client.apps.googleusercontent.com","device_client_secret":"synthetic-device-client-credential"}`},
@@ -49,7 +46,7 @@ func TestOAuthDiscoveryStrictContract(t *testing.T) {
 				_, _ = w.Write([]byte(tc.body))
 			}))
 			defer server.Close()
-			if _, err := DiscoverOAuthClient(context.Background(), server.URL, nil); err == nil {
+			if _, err := DiscoverSignIn(context.Background(), server.URL, nil); err == nil {
 				t.Fatalf("accepted invalid discovery: %s", tc.body)
 			} else if strings.Contains(err.Error(), "synthetic-") {
 				t.Fatalf("discovery error echoed installed-app credential material: %v", err)
@@ -58,36 +55,33 @@ func TestOAuthDiscoveryStrictContract(t *testing.T) {
 	}
 }
 
-func TestOAuthDiscoveryRequiresStrictJSONContentType(t *testing.T) {
+func TestSignInDiscoveryRequiresStrictJSONContentType(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "text/plain")
 		_, _ = w.Write([]byte(`{"browser_client_id":"browser","browser_client_secret":"synthetic-browser-client-credential","device_client_id":"device","device_client_secret":"synthetic-device-client-credential"}`))
 	}))
 	defer server.Close()
-	if _, err := DiscoverOAuthClient(context.Background(), server.URL, nil); err == nil {
+	if _, err := DiscoverSignIn(context.Background(), server.URL, nil); err == nil {
 		t.Fatal("accepted non-JSON discovery response")
 	}
 }
 
-func TestOAuthDiscoveryReturnsCompleteInstalledAppBundle(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "application/json; charset=utf-8")
-		_, _ = w.Write([]byte(`{"browser_client_id":"browser-client.apps.googleusercontent.com","browser_client_secret":"synthetic-browser-client-credential","device_client_id":"device-client.apps.googleusercontent.com","device_client_secret":"synthetic-device-client-credential"}`))
-	}))
-	defer server.Close()
-	got, err := DiscoverOAuthClient(context.Background(), server.URL, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got.BrowserClientID != "browser-client.apps.googleusercontent.com" ||
-		got.BrowserClientSecret != "synthetic-browser-client-credential" ||
-		got.DeviceClientID != "device-client.apps.googleusercontent.com" ||
-		got.DeviceClientSecret != "synthetic-device-client-credential" {
-		t.Fatalf("unexpected installed-app bundle: %#v", got)
+// A server older than v1.0 still sends Google sign-in's OAuth client; it is
+// read past and never kept, and a v1.0 server's empty keys are the same.
+func TestSignInDiscoveryIgnoresTheOldOAuthClient(t *testing.T) {
+	for _, body := range []string{
+		`{"browser_client_id":"browser-client.example.test","browser_client_secret":"synthetic-browser-client-credential","device_client_id":"device-client.example.test","device_client_secret":"synthetic-device-client-credential","auth_methods":["google","device"],"public_origin":"https://cb.example.test"}`,
+		`{"browser_client_id":"","browser_client_secret":"","device_client_id":"","device_client_secret":"","auth_methods":["device"],"public_origin":"https://cb.example.test"}`,
+		`{"auth_methods":["device"],"public_origin":"https://cb.example.test"}`,
+	} {
+		got, err := parseSignInDiscovery([]byte(body))
+		if err != nil || !strings.Contains(fmt.Sprint(got.AuthMethods), "device") || got.PublicOrigin != "https://cb.example.test" || strings.Contains(fmt.Sprintf("%#v", got), "synthetic") {
+			t.Fatalf("%s: %#v %v", body, got, err)
+		}
 	}
 }
 
-func TestOAuthDiscoveryRefusesRedirects(t *testing.T) {
+func TestSignInDiscoveryRefusesRedirects(t *testing.T) {
 	var followed atomic.Bool
 	target := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
 		followed.Store(true)
@@ -97,7 +91,7 @@ func TestOAuthDiscoveryRefusesRedirects(t *testing.T) {
 		http.Redirect(w, r, target.URL+"/v1/config", http.StatusTemporaryRedirect)
 	}))
 	defer redirect.Close()
-	if _, err := DiscoverOAuthClient(context.Background(), redirect.URL, nil); err == nil {
+	if _, err := DiscoverSignIn(context.Background(), redirect.URL, nil); err == nil {
 		t.Fatal("discovery followed or accepted a redirect")
 	}
 	if followed.Load() {
@@ -105,20 +99,20 @@ func TestOAuthDiscoveryRefusesRedirects(t *testing.T) {
 	}
 }
 
-func TestOAuthDiscoveryRejectsOversizedBody(t *testing.T) {
+func TestSignInDiscoveryRejectsOversizedBody(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"browser_client_id":"`))
-		_, _ = w.Write([]byte(strings.Repeat("x", maxOAuthDiscoveryResponse)))
+		_, _ = w.Write([]byte(strings.Repeat("x", maxSignInDiscoveryResponse)))
 		_, _ = w.Write([]byte(`","browser_client_secret":"synthetic","device_client_id":"device","device_client_secret":"synthetic"}`))
 	}))
 	defer server.Close()
-	if _, err := DiscoverOAuthClient(context.Background(), server.URL, nil); err == nil || !strings.Contains(err.Error(), "safety limit") {
+	if _, err := DiscoverSignIn(context.Background(), server.URL, nil); err == nil || !strings.Contains(err.Error(), "safety limit") {
 		t.Fatalf("oversized discovery response: %v", err)
 	}
 }
 
-func TestOAuthDiscoveryHTTPSOnlyExceptNumericLoopback(t *testing.T) {
+func TestSignInDiscoveryHTTPSOnlyExceptNumericLoopback(t *testing.T) {
 	for _, raw := range []string{
 		"http://localhost:8080",
 		"http://example.test",
@@ -140,7 +134,7 @@ func TestOAuthDiscoveryHTTPSOnlyExceptNumericLoopback(t *testing.T) {
 	}
 }
 
-func TestOAuthDiscoveryDoesNotEchoUntrustedBody(t *testing.T) {
+func TestSignInDiscoveryDoesNotEchoUntrustedBody(t *testing.T) {
 	const secret = "synthetic-client-secret"
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -148,13 +142,13 @@ func TestOAuthDiscoveryDoesNotEchoUntrustedBody(t *testing.T) {
 		_, _ = w.Write([]byte(`{"oauth_client_secret":"` + secret + `"}`))
 	}))
 	defer server.Close()
-	_, err := DiscoverOAuthClient(context.Background(), server.URL, nil)
+	_, err := DiscoverSignIn(context.Background(), server.URL, nil)
 	if err == nil || strings.Contains(err.Error(), secret) || strings.Contains(err.Error(), server.URL) {
 		t.Fatalf("discovery error exposed response or URL: %v", err)
 	}
 }
 
-func TestOAuthDiscoveryTimeoutIsBounded(t *testing.T) {
+func TestSignInDiscoveryTimeoutIsBounded(t *testing.T) {
 	client := discoveryHTTPClient(&http.Client{Timeout: 0})
 	if client.Timeout <= 0 || client.Timeout > 10*time.Second {
 		t.Fatalf("discovery timeout=%s", client.Timeout)
@@ -164,71 +158,39 @@ func TestOAuthDiscoveryTimeoutIsBounded(t *testing.T) {
 	}
 }
 
-// The server's own /v1/config answer, with the sign-in fields it adds,
-// passes the strict parser (a v-next server broke login when it didn't).
-func TestOAuthDiscoveryReadsTheServersSignInFields(t *testing.T) {
-	metadata := server.OAuthMetadata{
-		BrowserClientID: "browser-client.apps.googleusercontent.com", BrowserClientSecret: "synthetic-browser-client-credential",
-		DeviceClientID: "device-client.apps.googleusercontent.com", DeviceClientSecret: "synthetic-device-client-credential",
+// The server's own /v1/config answer passes this client's parser, and the
+// parser of v0.3.4 to v0.3.13 clients, which needs the four (now empty)
+// OAuth keys before it reads the sign-in fields.
+func TestSignInDiscoveryReadsTheServersSignInFields(t *testing.T) {
+	handler := server.NewHandlerWithOptions(nil, nil, server.HandlerOptions{Auth: server.AuthOptions{Methods: []string{server.AuthDevice}, PublicOrigin: "https://cb.example.test", Devices: noDevices{}}})
+	ts := httptest.NewServer(handler)
+	defer ts.Close()
+	got, err := DiscoverSignIn(context.Background(), ts.URL, nil)
+	if err != nil || fmt.Sprint(got.AuthMethods) != "[device]" || got.PublicOrigin != "https://cb.example.test" {
+		t.Fatalf("%#v %v", got, err)
 	}
-	for _, c := range []struct {
-		name   string
-		auth   server.AuthOptions
-		want   string
-		origin string
-	}{
-		{"google only", server.AuthOptions{}, "[]", ""},
-		{"google and device", server.AuthOptions{Methods: []string{server.AuthGoogle, server.AuthDevice}, PublicOrigin: "https://cb.example.test", Devices: noDevices{}}, "[google device]", "https://cb.example.test"},
-	} {
-		t.Run(c.name, func(t *testing.T) {
-			handler := server.NewHandlerWithOptions(nil, nil, server.HandlerOptions{OAuth: metadata, Auth: c.auth})
-			ts := httptest.NewServer(handler)
-			defer ts.Close()
-			got, err := DiscoverOAuthClient(context.Background(), ts.URL, nil)
-			if err != nil {
-				t.Fatal(err)
-			}
-			// A v0.3.3 client's parser takes exactly the four OAuth
-			// strings; a Google-only server must still answer just those.
-			raw, _ := http.Get(ts.URL + "/v1/config")
-			var fields map[string]any
-			_ = json.NewDecoder(raw.Body).Decode(&fields)
-			raw.Body.Close()
-			if old := v033Accepts(fields); old != (c.want == "[]") {
-				t.Fatalf("v0.3.3 parser accepts=%v for %v", old, fields)
-			}
-			if got.BrowserClientID != metadata.BrowserClientID || got.DeviceClientSecret != metadata.DeviceClientSecret || fmt.Sprint(got.AuthMethods) != c.want || got.PublicOrigin != c.origin {
-				t.Fatalf("%#v", got)
-			}
-		})
+	raw, _ := http.Get(ts.URL + "/v1/config")
+	var fields map[string]any
+	_ = json.NewDecoder(raw.Body).Decode(&fields)
+	raw.Body.Close()
+	for _, k := range []string{"browser_client_id", "browser_client_secret", "device_client_id", "device_client_secret"} {
+		if v, ok := fields[k].(string); !ok || v != "" {
+			t.Fatalf("%s = %#v: a v0.3 client can't parse the answer, or it carries an OAuth client", k, fields[k])
+		}
 	}
 	base := `{"browser_client_id":"b","browser_client_secret":"bs","device_client_id":"d","device_client_secret":"ds"`
 	for name, body := range map[string]string{
-		"methods not an array":   base + `,"auth_methods":"google"}`,
-		"a method not a string":  base + `,"auth_methods":[1]}`,
-		"an empty method":        base + `,"auth_methods":[""]}`,
-		"origin not a string":    base + `,"public_origin":1}`,
-		"methods twice":          base + `,"auth_methods":["google"],"auth_methods":["device"]}`,
-		"an OAuth field missing": `{"browser_client_id":"b","browser_client_secret":"bs","device_client_id":"d","auth_methods":["google"],"public_origin":"x"}`,
+		"methods not an array":  base + `,"auth_methods":"device"}`,
+		"a method not a string": base + `,"auth_methods":[1]}`,
+		"an empty method":       base + `,"auth_methods":[""]}`,
+		"origin not a string":   base + `,"public_origin":1}`,
+		"methods twice":         base + `,"auth_methods":["device"],"auth_methods":["device"]}`,
+		"an OAuth key a number": `{"browser_client_id":1,"auth_methods":["device"]}`,
 	} {
-		if _, err := parseOAuthDiscovery([]byte(body)); err == nil {
+		if _, err := parseSignInDiscovery([]byte(body)); err == nil {
 			t.Errorf("%s: accepted", name)
 		}
 	}
-}
-
-// v033Accepts is v0.3.3's discovery contract: exactly the four OAuth
-// fields, each a string.
-func v033Accepts(fields map[string]any) bool {
-	if len(fields) != 4 {
-		return false
-	}
-	for _, k := range []string{"browser_client_id", "browser_client_secret", "device_client_id", "device_client_secret"} {
-		if _, ok := fields[k].(string); !ok {
-			return false
-		}
-	}
-	return true
 }
 
 // noDevices is a device store that holds none.

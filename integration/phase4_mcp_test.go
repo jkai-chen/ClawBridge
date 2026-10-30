@@ -20,15 +20,15 @@ import (
 	"clawbridge/internal/install"
 )
 
-// This exercises real installed argv and stdio/HTTP transports with a fake
-// gcloud executable. It does not exercise Google or an OS credential store.
+// This exercises real installed argv and stdio/HTTP transports with a
+// device key in the file store. It does not exercise an OS credential store.
 func TestPhase4InstalledFreshProcessAndSelectedDoctor(t *testing.T) {
 	p := newProcessFixture(t)
 	dir := t.TempDir()
 	var mu sync.Mutex
 	var requests []bus.Request
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/v1/execute" || r.Header.Get("Authorization") != "Bearer synthetic-P4-transport-token" {
+		if r.URL.Path != "/v1/execute" || !strings.HasPrefix(r.Header.Get("Authorization"), "ClawBridge-Device ") {
 			t.Error("unexpected transport path or auth header (values suppressed)")
 			w.WriteHeader(401)
 			return
@@ -49,7 +49,7 @@ func TestPhase4InstalledFreshProcessAndSelectedDoctor(t *testing.T) {
 		case "list_projects":
 			data = map[string]any{"projects": []map[string]any{{"id": "prj_pinned", "slug": "project"}}}
 		case "whoami":
-			data = map[string]any{"principal": "agent@project.iam.gserviceaccount.com", "online": true, "verified": true, "storage_mode": "cloud", "identity_provenance": "google-id-token", "workspace": map[string]any{"id": "ws_pinned"}, "project": map[string]any{"id": "prj_pinned"}}
+			data = map[string]any{"principal": "agent@project.iam.gserviceaccount.com", "online": true, "verified": true, "storage_mode": "cloud", "identity_provenance": "device-key", "workspace": map[string]any{"id": "ws_pinned"}, "project": map[string]any{"id": "prj_pinned"}}
 		case "notification_status":
 			// doctor's queue check: a pure read, with the queue's counts.
 			if req.Args["queue"] != true {
@@ -70,11 +70,8 @@ func TestPhase4InstalledFreshProcessAndSelectedDoctor(t *testing.T) {
 	}))
 	defer server.Close()
 	config := filepath.Join(dir, "trusted.toml")
-	raw := []byte("mode='cloud'\nserver=" + quoteTOML(server.URL) + "\naudience='test-audience'\ncredential_source='gcloud'\naccount='human@example.test'\nimpersonate_service_account='agent@project.iam.gserviceaccount.com'\nprincipal='agent@project.iam.gserviceaccount.com'\nworkspace='ws_pinned'\nproject='prj_pinned'\nsession='operator'\ninstance='operator-instance'\ncache=" + quoteTOML(filepath.Join(dir, "mirror.db")) + "\n")
+	raw := []byte("mode='cloud'\nserver=" + quoteTOML(server.URL) + "\n" + fileDeviceRoute(t, filepath.Join(dir, "state"), server.URL) + "principal='agent@project.iam.gserviceaccount.com'\nworkspace='ws_pinned'\nproject='prj_pinned'\nsession='operator'\ninstance='operator-instance'\ncache=" + quoteTOML(filepath.Join(dir, "mirror.db")) + "\n")
 	if err := os.WriteFile(config, raw, 0600); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(dir, "gcloud"), []byte("#!/bin/sh\nprintf '%s' 'synthetic-P4-transport-token'\n"), 0700); err != nil {
 		t.Fatal(err)
 	}
 	agentConfig := filepath.Join(dir, "agent.json")

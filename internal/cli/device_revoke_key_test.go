@@ -75,7 +75,7 @@ func TestDeviceRevokeOfThisDeviceHandlesItsLocalKey(t *testing.T) {
 
 // Through the command: only a successful revoke of this device reaches it.
 func TestDeviceRevokeCommandOffersTheKeyOnlyForThisDevice(t *testing.T) {
-	path := googleProfile(t)
+	path := cloudProfile(t)
 	_ = path
 	t.Setenv("CLAWBRIDGE_CREDENTIAL_SOURCE", "device")
 	t.Setenv("CLAWBRIDGE_DEVICE_ID", "dev_self")

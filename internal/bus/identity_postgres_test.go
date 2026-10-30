@@ -222,12 +222,12 @@ func TestPostgresWorkspaceDomainAllowList(t *testing.T) {
 		t.Fatal("listed domain refused", err)
 	}
 	for _, hd := range []string{"other.example", ""} {
-		if _, err := f.asHD(member, hd, f.list()); !refusedWith(err, "allowed Google Workspace domains") {
+		if _, err := f.asHD(member, hd, f.list()); !refusedWith(err, "in its allowed domains") {
 			t.Fatalf("account from %q admitted: %v", hd, err)
 		}
 	}
 	// A member refused by the allow-list writes no binding or event.
-	if _, err := f.asHD(stranger, "other.example", f.list()); !refusedWith(err, "allowed Google Workspace domains") {
+	if _, err := f.asHD(stranger, "other.example", f.list()); !refusedWith(err, "in its allowed domains") {
 		t.Fatal(err)
 	}
 	if n := f.count(`SELECT COUNT(*) FROM principal_subjects WHERE principal=$1`, stranger) + f.count(`SELECT COUNT(*) FROM principal_events WHERE principal=$1`, stranger); n != 0 {
@@ -270,7 +270,7 @@ func TestPostgresWorkspaceDomainAllowList(t *testing.T) {
 	}
 	// The only match is refused by its allow-list: the member learns it is
 	// refused (forbidden), not that nothing matched.
-	if _, err := resolve("other.example", f.workspace); !refusedWith(err, "allowed Google Workspace domains") {
+	if _, err := resolve("other.example", f.workspace); !refusedWith(err, "in its allowed domains") {
 		t.Fatal("a refused workspace resolved, or its refusal read as not found", err)
 	}
 	if n := f.count(`SELECT COUNT(*) FROM principal_subjects WHERE principal=$1 AND subject='sub-'||$1`, member); n != 1 {
@@ -287,7 +287,7 @@ func TestPostgresWorkspaceDomainAllowList(t *testing.T) {
 		r.Workspace = f.workspace
 		return f.s.ExecuteAsIdentity(ctx, Identity{Principal: f.owner, Issuer: GoogleIssuer, Subject: "sub-owner", HostedDomain: "new.example"}, r)
 	}
-	if _, err = moved(f.list()); !refusedWith(err, "allowed Google Workspace domains") {
+	if _, err = moved(f.list()); !refusedWith(err, "in its allowed domains") {
 		t.Fatal("owner from another domain admitted", err)
 	}
 	if _, err = moved(Request{Operation: "workspace_set_domains", Args: map[string]any{"domains": []any{"new.example"}}}); err != nil {
@@ -301,7 +301,7 @@ func TestPostgresWorkspaceDomainAllowList(t *testing.T) {
 	if _, err = f.s.db.ExecContext(ctx, `UPDATE workspaces SET allowed_domains='null' WHERE name=$1`, f.workspace); err != nil {
 		t.Fatal(err)
 	}
-	if _, err = f.asHD(member, "corp.example", f.list()); !refusedWith(err, "allowed Google Workspace domains") {
+	if _, err = f.asHD(member, "corp.example", f.list()); !refusedWith(err, "in its allowed domains") {
 		t.Fatal("a null allow-list admitted a member", err)
 	}
 	operator, err := OpenPostgresOperator(ctx, os.Getenv("CLAWBRIDGE_TEST_POSTGRES_DSN"))
@@ -352,7 +352,7 @@ func TestPostgresDomainRestrictionAppliesToWritesWaitingOnTheLock(t *testing.T) 
 	if err = setter.Commit(); err != nil {
 		t.Fatal(err)
 	}
-	if err = <-done; !refusedWith(err, "allowed Google Workspace domains") {
+	if err = <-done; !refusedWith(err, "in its allowed domains") {
 		t.Fatal("a write that waited on the lock committed under the old allow-list", err)
 	}
 }
@@ -596,7 +596,7 @@ func TestPostgresResolveWithASessionSeesANarrowedAllowList(t *testing.T) {
 	if err = setter.Commit(); err != nil {
 		t.Fatal(err)
 	}
-	if err = <-done; !refusedWith(err, "allowed Google Workspace domains") {
+	if err = <-done; !refusedWith(err, "in its allowed domains") {
 		t.Fatal("resolve with a session passed a restriction recorded while it waited", err)
 	}
 	if seen() != before {

@@ -41,11 +41,11 @@ reopens it at any time):
 
 1. **Just this machine:** local messaging between your agents, with no server or
    account ([local messaging](docs/usage.md#local-messaging)).
-2. **Join a team server:** have its HTTPS address ready, and either an invite
-   from its owner (a code from v0.3.5, a link from v0.3.6) or, where
-   the server still offers Google sign-in, the workspace, project and the Google
-   account the owner authorized.
-   [Joining a project](docs/onboarding.md) walks through both. If the owner hasn't
+2. **Join a team server:** have its HTTPS address ready, and an invite from its
+   owner (a link, or a code). Your computer then signs in with its own device
+   key, the only sign-in since v1.0 removed Google's
+   ([signing in](docs/sign-in.md)). [Joining a project](docs/onboarding.md) walks
+   through it. If the owner hasn't
    given you a project yet, ClawBridge opens on "Waiting for a project" and takes
    you to it once it's granted.
 3. **Set up my own server:** on Google Cloud, on AWS, or on this machine or
@@ -84,7 +84,7 @@ for profiles and resumption.
 
 - [Join a ClawBridge project](docs/onboarding.md)
 - [Install and update](docs/installation.md)
-- [Messaging, hosted login, MCP and TUI](docs/usage.md)
+- [Messaging, hosted sign-in, MCP and TUI](docs/usage.md)
 - [Signing in with invites and device keys](docs/sign-in.md) (the client side from v0.3.5)
 - [Your first task: claim and release](docs/usage.md#your-first-task-claim-and-release)
 - [Inbox notifications and Codex wake-up](docs/notifications.md)
@@ -110,8 +110,8 @@ a published client does not upgrade your hosted service.
 
 ## Linux credential storage
 
-OAuth requires an unlocked Linux Secret Service keyring on the same user D-Bus
-session as ClawBridge, including WSL/SSH. Device sign-in uses the same keyring.
+Device sign-in keeps its key in an unlocked Linux Secret Service keyring on the
+same user D-Bus session as ClawBridge, including WSL/SSH, or, by choice, in a file.
 See [Linux credentials](docs/installation.md#linux-and-wsl-credentials) for checks
 and recovery.
 

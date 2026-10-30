@@ -45,7 +45,9 @@ const accountUsage = `usage:
   clawbridge device list [--member EMAIL] | device revoke DEVICE_ID [--reason TEXT] | device label DEVICE_ID LABEL
   clawbridge device add [--expires 15m]       (a link for another device of yours, at most 24h; join with it there)
   clawbridge device add --ci NAME --grant PROJECT=reader|member [--grant ...]... --expires 30d [--label LABEL]
-  clawbridge device enroll [--label LABEL] [--key-store keyring|file]   (signed in with Google: no invite)
+  clawbridge device enroll   (removed in v1.0 with Google sign-in: a new machine joins with an invite: ask
+      an owner for an invite (or a recovery invite) and run clawbridge join; see
+      docs/operations/google-sign-in-removal.md)
   clawbridge device events [--all] | device ack EVENT_ID... | device ack --all
       Devices added to, revoked from, re-confirmed on or going dormant on your account (every member's,
       for the workspace owner), shown on this device until it acknowledges them. Any command run here
@@ -151,6 +153,11 @@ func runAccount(ctx context.Context, flags Config, command string, args []string
 	if len(args) == 0 || args[0] == "--help" || args[0] == "-h" || args[0] == "help" {
 		_, err := fmt.Fprintln(stdout, accountUsage)
 		return err
+	}
+	// device enroll added a key while signed in with Google, removed in
+	// v1.0; another machine of yours joins with an invite instead.
+	if command == "device" && args[0] == "enroll" {
+		return googleCommandRemoved("device enroll")
 	}
 	config, _, err := resolveConfig(ctx, flags)
 	if err != nil {
@@ -323,8 +330,6 @@ func runAccount(ctx context.Context, flags Config, command string, args []string
 			}
 			a["event_ids"] = ids
 		}
-	case "device enroll":
-		return runEnroll(ctx, config, f, args, stdout)
 	case "user list":
 		op = "user_list"
 		if _, err = parseAccountFlags(f, args, 0, 0); err != nil {
@@ -573,93 +578,6 @@ func printDeviceEvents(stderr io.Writer) func([]map[string]any) {
 	}
 }
 
-// runEnroll adds a device key to this machine while signed in with Google:
-// no invite, the verified Google account is the proof (§10). The profile
-// then signs with the key; the Google credential stays until logout.
-func runEnroll(ctx context.Context, config Config, f *flag.FlagSet, args []string, stdout io.Writer) error {
-	label := f.String("label", "", "the device's label (default: this machine's name)")
-	store := f.String("key-store", "", "where the key is kept: keyring (the default), or file")
-	_, err := parseAccountFlags(f, args, 0, 0)
-	if err != nil {
-		return err
-	}
-	if config.CredentialSource == remote.CredentialSourceDevice {
-		return errors.New("this profile already signs with device " + config.DeviceID)
-	}
-	// R85-H1: Run reads --key-store as the global flag.
-	if *store, err = newKeyStore(*store, config.KeyStore); err != nil {
-		return err
-	}
-	name, err := deviceLabel(*label)
-	if err != nil {
-		return err
-	}
-	home, err := stateHome()
-	if err != nil {
-		return err
-	}
-	// R85-M1: the server must take device keys at this very origin, or the
-	// profile would switch to a route every request then fails on.
-	origin, err := enrollServer(ctx, config.Server, nil)
-	if err != nil {
-		return err
-	}
-	u, _ := url.Parse(origin)
-	executor, err := newAccountExecutor(config)
-	if err != nil {
-		return err
-	}
-	key, id, err := newDeviceKey()
-	if err != nil {
-		return err
-	}
-	where := devicesign.Location{Store: *store, Host: u.Host, Home: home, DeviceID: id}
-	if err = devicesign.Save(where, key); err != nil {
-		return err
-	}
-	result, err := executor.Execute(ctx, bus.Request{Operation: "device_enroll", Workspace: config.Workspace, Args: map[string]any{
-		"public_key": devicekey.EncodePublicKey(key.Public().(ed25519.PublicKey)), "label": name, "key_store": *store,
-	}})
-	if err != nil {
-		var refused *remote.HTTPError
-		// Refused, or never sent because the Google credential failed
-		// first (R85-L2): the key is no device's, so it goes.
-		if errors.As(err, &refused) || remote.IsCredentialFailure(err) {
-			_ = devicesign.Delete(where)
-			return err
-		}
-		return fmt.Errorf("the enrolment's outcome is unknown; the key for %s was kept in its store: %w", id, err)
-	}
-	data, _ := result.Data.(map[string]any)
-	if data == nil || data["device_id"] != id {
-		return fmt.Errorf("the server's answer names another device; the key for %s was kept in its store and the profile was not changed", id)
-	}
-	route := map[string]any{"credential_source": remote.CredentialSourceDevice, "device_id": id, "key_store": *store}
-	// R85-M1: one signed read with the new key before the profile uses it.
-	signed := config
-	signed.CredentialSource, signed.DeviceID, signed.KeyStore = remote.CredentialSourceDevice, id, *store
-	check, err := newAccountExecutor(signed)
-	if err == nil {
-		_, err = check.Execute(ctx, bus.Request{Operation: "device_list", Workspace: config.Workspace, Args: map[string]any{}})
-	}
-	if err != nil {
-		return fmt.Errorf("device %s was enrolled, but a request signed with it failed, so the profile still signs with Google (revoke the device with clawbridge device revoke %s): %w", id, id, err)
-	}
-	if err = writeDeviceRoute(config.ClientConfig, route); err != nil {
-		return fmt.Errorf("device %s was enrolled but the profile could not be updated; set %s in it by hand: %w", id, routeValues(route), err)
-	}
-	out := map[string]any{"enrolled": true, "device_id": id, "label": name, "key_store": *store, "principal": config.Principal,
-		"note": "This profile now signs with the device key. The Google credential stays until clawbridge logout."}
-	if *store == devicesign.StoreFile {
-		out["warning"] = devicesign.FileWarning
-	}
-	return emit(ctx, stdout, "device_enroll", map[string]any{"source": "client", "data": out})
-}
-
-// enrollServer checks, sending nothing signed, that the server takes device
-// keys at its public origin; a test replaces it.
-var enrollServer = remote.JoinServer
-
 // newKeyStore is where a new key is kept: the command's --key-store, or
 // the global one Run takes it as, or keyring.
 func newKeyStore(local, global string) (string, error) {
@@ -844,7 +762,8 @@ func joinConfigPath(path string) (string, error) {
 // joinableProfile reads the profile a join will write and refuses one that
 // routes elsewhere: a local workspace, another server, or a device already
 // joined (a device belongs to one workspace, so another workspace gets its
-// own profile). A Google profile of the same server may switch to the key.
+// own profile). A profile of the same server that signed in with Google
+// (before v1.0) switches to the key.
 func joinableProfile(path, origin string) (map[string]any, error) {
 	values := map[string]any{}
 	b, err := os.ReadFile(path)

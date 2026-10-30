@@ -13,7 +13,6 @@ import (
 	"testing"
 
 	"clawbridge/internal/clirender"
-	"clawbridge/internal/faketool"
 )
 
 // Synthetic teams: one with a stored name, one without.
@@ -69,12 +68,11 @@ func webhookSetupEnv(t *testing.T, server string) {
 	t.Helper()
 	dir := isolated(t)
 	t.Setenv("HOME", dir)
-	faketool.Install(t, dir, "gcloud", "print:synthetic-cli-token")
-	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
 	principal := "service@example.test"
-	for k, v := range map[string]string{"MODE": "cloud", "SERVER": server, "AUDIENCE": "test-audience", "ACCOUNT": "human@example.test", "IMPERSONATE_SERVICE_ACCOUNT": principal, "PRINCIPAL": principal, "CACHE": filepath.Join(dir, "mirror.db"), "WORKSPACE": "w", "PROJECT": "p"} {
+	for k, v := range map[string]string{"MODE": "cloud", "SERVER": server, "PRINCIPAL": principal, "CACHE": filepath.Join(dir, "mirror.db"), "WORKSPACE": "w", "PROJECT": "p"} {
 		t.Setenv("CLAWBRIDGE_"+k, v)
 	}
+	useDeviceRoute(t, server)
 }
 
 const webhookSetupGoldenJSON = `{"source":"linear","data":{"teams":[` +

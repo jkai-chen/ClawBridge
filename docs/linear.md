@@ -930,7 +930,7 @@ The answer is not an error. MCP returns it as the tool's result, and the CLI pri
   issue). Any settled issue write whose receipt has both (a create, an update, an unchanged read-back) carries the
   two fields; comments and results from before carry neither.
 - **At send time every check runs again**, as for a write made then: your session is still active, your project role
-  may still write, the device that asked is still live (or your Google account still bound to your address), and the
+  may still write, the device that asked is still live, and the
   binding and the issue's team still hold, and your session's lane, as pinned now, still writes that team. If one
   fails, the write fails and nothing is sent; a revoked device or a released account fails it as `identity_revoked`,
   and a lane that no longer takes the team as `outside_lane`.
@@ -2846,7 +2846,7 @@ safety net; without webhooks, the poll finds them on its usual cadence
   to a trusted person only when all of these hold:
   - **they are linked:** their trusted-list entry is linked to their ClawBridge principal (below), and that principal
     is still a member of the project;
-  - **it was their own terminal:** the write was signed by their own device key (not a Google sign-in, not a CI
+  - **it was their own terminal:** the write was signed by their own device key (not a CI
     device), with no `--session`, from a shell with no agent's environment (`CLAUDECODE`, `CODEX_*`,
     `CLAWBRIDGE_SESSION`, `CLAWBRIDGE_INSTANCE`);
   - **it was the only one:** it is the only app write of that label (or that comment) on the issue from 2 minutes

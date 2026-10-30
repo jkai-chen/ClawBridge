@@ -23,11 +23,13 @@ import (
 // ClawBridge's own sign-in on the server (live/AUTH-INVITE-DESIGN.md §4, §5,
 // §7, §8): requests signed by a device key, and the join that binds one.
 
-// The sign-in methods a server accepts (§10).
-const (
-	AuthGoogle = "google"
-	AuthDevice = "device"
-)
+// AuthDevice is the one sign-in method a server accepts since v1.0
+// removed Google sign-in.
+const AuthDevice = "device"
+
+// BearerRefused answers a Bearer credential (a Google ID token from a
+// client older than v1.0); the swap runbook quotes it.
+const BearerRefused = "Google sign-in was removed; this server accepts device keys only: ask an owner for an invite (or a recovery invite) and run clawbridge join; see docs/operations/google-sign-in-removal.md"
 
 // DeviceScheme is the Authorization scheme of a device-signed request.
 const DeviceScheme = "ClawBridge-Device"
@@ -62,7 +64,8 @@ var _ DeviceStore = (*bus.Store)(nil)
 
 // AuthOptions choose how /v1/execute proves its caller.
 type AuthOptions struct {
-	// Methods are the accepted sign-in methods; empty means Google only.
+	// Methods are the accepted sign-in methods: device, which empty means
+	// too.
 	Methods []string
 	// PublicOrigin is the server's configured origin (serve --public-origin),
 	// which device signatures and join proofs cover. It is never read from
@@ -74,7 +77,7 @@ type AuthOptions struct {
 
 func (o AuthOptions) accepts(method string) bool {
 	if len(o.Methods) == 0 {
-		return method == AuthGoogle
+		return method == AuthDevice
 	}
 	for _, m := range o.Methods {
 		if m == method {
@@ -92,6 +95,9 @@ type authFailure struct {
 	// input.
 	kind       string
 	serverTime bool
+	// uncounted keeps the refusal out of the per-address failed sign-in
+	// limit; it is still logged.
+	uncounted bool
 }
 
 // Authenticator proves a request's caller from its Authorization
@@ -103,18 +109,23 @@ type Authenticator interface {
 	Authenticate(ctx context.Context, r *http.Request, credentials string, body []byte) (bus.Identity, *authFailure)
 }
 
-// googleAuthenticator accepts a Google ID token as a Bearer credential.
-type googleAuthenticator struct{ verifier Verifier }
+// bearerAuthenticator answers the Bearer scheme. A served request never
+// signs in with one: Run configures no verifier, so it is refused with
+// BearerRefused. Tests and embedded hosts may inject a verifier.
+type bearerAuthenticator struct{ verifier Verifier }
 
-func (googleAuthenticator) Scheme() string { return "Bearer" }
+func (bearerAuthenticator) Scheme() string { return "Bearer" }
 
-func (g googleAuthenticator) Authenticate(ctx context.Context, _ *http.Request, credentials string, _ []byte) (bus.Identity, *authFailure) {
-	if g.verifier == nil || credentials == "" || strings.ContainsAny(credentials, " \t") || len(credentials) > 16384 {
-		return bus.Identity{}, &authFailure{status: 401, code: "unauthenticated", message: "a valid Google ID token is required", kind: "google_token"}
+func (g bearerAuthenticator) Authenticate(ctx context.Context, _ *http.Request, credentials string, _ []byte) (bus.Identity, *authFailure) {
+	if g.verifier == nil {
+		return bus.Identity{}, &authFailure{status: 401, code: "unauthenticated", message: BearerRefused, kind: "bearer_removed", uncounted: true}
+	}
+	if credentials == "" || strings.ContainsAny(credentials, " \t") || len(credentials) > 16384 {
+		return bus.Identity{}, &authFailure{status: 401, code: "unauthenticated", message: "a valid bearer token is required", kind: "bearer_token"}
 	}
 	identity, err := g.verifier.Verify(ctx, credentials)
 	if err != nil || !principal.Valid(identity.Principal) || identity.Subject == "" {
-		return bus.Identity{}, &authFailure{status: 401, code: "unauthenticated", message: "Google identity verification failed", kind: "google_token"}
+		return bus.Identity{}, &authFailure{status: 401, code: "unauthenticated", message: "identity verification failed", kind: "bearer_token"}
 	}
 	return bus.Identity{Principal: identity.Principal, Issuer: bus.GoogleIssuer, Subject: identity.Subject, HostedDomain: identity.HostedDomain, Expires: identity.Expires}, nil
 }

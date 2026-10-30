@@ -69,13 +69,13 @@ func TestStartLocalAsksToOpenClawBridge(t *testing.T) {
 // or workspace is asked for again, not reported after every question.
 func TestWizardChecksEachAnswer(t *testing.T) {
 	isolated(t)
-	wizardHooks(t, "\nhttps://service.test\n\nws\nprj\nsomething\n2\nn\n")
+	wizardHooks(t, "\nhttps://service.test\nnot-an-email\nada@example.com\n\nn\n")
+	wizardMethods = func(context.Context, string) ([]string, error) { return []string{"device"}, nil }
 	var out bytes.Buffer
 	if err := Run(context.Background(), []string{"setup", "wizard"}, &out, io.Discard); err != nil {
 		t.Fatal(err, out.String())
 	}
-	for _, want := range []string{"the service URL is required", "the workspace is required", "choose 1 or 2. Try again.",
-		"2. show a code to enter on another device", "Sign-in: a code on another device", "Canceled; no credentials"} {
+	for _, want := range []string{"the service URL is required", "that isn't an email address", "Canceled; no key or configuration changed."} {
 		if !strings.Contains(out.String(), want) {
 			t.Fatalf("missing %q:\n%s", want, out.String())
 		}
@@ -253,7 +253,7 @@ func TestDispatcherPreviewViewTakesOnlyAPreview(t *testing.T) {
 // Each numbered question's words name one choice, in lower case, since pick
 // lowers the answer and walks a map.
 func TestPickWordsAreUnique(t *testing.T) {
-	for name, choices := range map[string]map[string][]string{"cloud": cloudChoices, "shape": shapeChoices, "join": joinChoices, "sign-in": signInChoices} {
+	for name, choices := range map[string]map[string][]string{"cloud": cloudChoices, "shape": shapeChoices} {
 		seen := map[string]string{}
 		for value, words := range choices {
 			for _, w := range words {

@@ -7,25 +7,21 @@ installs ClawBridge and runs one guided setup. Examples use placeholders such as
 
 ## For the project owner
 
-The service must already be deployed ([deployment](operations/deployment.md)) and
-initialized once with `clawbridge setup --cloud`, run by the identity named in the
-server's `CLAWBRIDGE_BOOTSTRAP_OWNER` (normally the owner's own Google account);
-it becomes the workspace owner. Then create the project and grant access:
+The service must already be deployed ([deployment](operations/deployment.md)),
+and the owner named in the server's `CLAWBRIDGE_BOOTSTRAP_OWNER` must have joined
+with the host operator's bootstrap invite
+([letting the owner in](operations/deployment.md#letting-the-owner-in-operator-bootstrap-invite));
+that email is the workspace owner. Then create the project and invite people:
 
 ```sh
 clawbridge project create checkout --name "Checkout"
 ```
 
-### Invite (recommended when the server takes device keys)
+### Invite
 
-> The client commands below (`invite`, `join`) come with v0.3.5, and invite
-> links with v0.3.6; with v0.3.5, give the code and the server's URL.
-> See [signing in with invites](sign-in.md).
-
-On a server whose `CLAWBRIDGE_AUTH` is `device` or `google,device`
-([sign-in methods](operations/deployment.md#sign-in-methods)), this is the simpler
-route: one link, no Google test users, and no Google account needed. Invite them by
-email with their roles:
+People sign in with invites and device keys, the only sign-in since v1.0 removed
+Google's ([signing in with invites](sign-in.md)). Invite them by email with their
+roles:
 
 ```sh
 clawbridge invite --email colleague@example.test --grant checkout=member
@@ -33,37 +29,24 @@ clawbridge invite list
 clawbridge invite revoke inv_...
 ```
 
-- `invite` prints a one-time invite link once (with v0.3.5, a code). ClawBridge
-  sends no email: give the colleague the link (or the code and the service URL)
-  yourself, over a channel you would trust with a password.
+- `invite` prints a one-time invite link once. ClawBridge sends no email: give the
+  colleague the link (or the code and the service URL) yourself, over a channel
+  you would trust with a password.
 - They join with `clawbridge join`, which asks for the link without showing it; with
   a code, `clawbridge --server URL join --email colleague@example.test`. The guided
-  setup's "I have an invite code" takes either.
+  setup's invite step takes either.
 - An invite with no `--grant` lets them in with no project: their terminal view waits
   on "Waiting for a project" until you grant one with
   `clawbridge --project checkout project role set colleague@example.test member`.
 - The code expires (72 hours by default, `--expires`); `invite list` shows each
   invite's status, never the code. A lost or burnt code means a new invite.
-- On a device-only server, the Google steps in the next section (test users, a Google
-  email) don't apply.
 
 The details are in [invites and the one-time code](sign-in.md#invites-and-the-one-time-code).
 
-### Google sign-in
-
-Use this route when the server signs people in with Google. Grant the colleague a
-project role for the Google email they will sign in with:
-
-```sh
-clawbridge project role-set colleague@example.test member
-```
-
 Project roles are `owner`, `lead`, `member` and `reader`. A `lead` can also administer
 the sessions of members and readers and save the shared Linear board mapping
-(`clawbridge linear link`, see [Linear](linear.md)). Use the colleague's verified
-Google email.
-
-To withdraw access:
+(`clawbridge linear link`, see [Linear](linear.md)). A member's roles change with
+`clawbridge project role-set EMAIL ROLE`. To withdraw access:
 
 ```sh
 clawbridge project role-revoke colleague@example.test
@@ -73,20 +56,9 @@ Revocation retires that person's active sessions in the project and removes
 their workspace membership once they hold no project role. The workspace owner
 cannot be revoked, and owners cannot revoke themselves.
 
-Send the colleague three values: the service URL, the workspace and the project.
-
-For Google sign-in, before the colleague starts, also make sure that:
-
-- **Google can sign them in.** If the service's Google OAuth consent screen is
-  in *Testing* (Google Cloud console, OAuth consent screen, publishing status),
-  only listed test users can sign in: add the colleague's Google account as a
-  test user. A consent screen *In production* needs no list.
-- **They hold a ClawBridge role** (`project role-set`, above) for the exact
-  Google email they will sign in with.
-
-Whichever route you use, if the project uses a Linear board, invite them to the Linear
-workspace and to every team the project's board is bound to (`clawbridge linear binding`
-shows them). Their own Linear connection can only see what their Linear account can.
+If the project uses a Linear board, invite them to the Linear workspace and to every
+team the project's board is bound to (`clawbridge linear binding` shows them). Their
+own Linear connection can only see what their Linear account can.
 
 ### On a board with lanes and team roles
 
@@ -139,16 +111,10 @@ is the [colleague join guide](templates/colleague-join-guide.md).
 
 Get these from the project owner first:
 
-- the service URL, workspace and project;
-- confirmation that your Google account has a project role (and, if the
-  owner's Google sign-in is still in testing, that you were added as a test
-  user);
+- an invite link (or the service URL and an invite code, with the email it was
+  issued for);
 - for the Linear board: an invitation to the Linear workspace and its bound
   teams.
-
-Sign in with the Google account the owner granted, from the start. Newer
-servers tie your email to the first Google account that signs in with it; a
-different account later is refused until the owner rebinds it.
 
 ### 1. Install
 
@@ -166,33 +132,19 @@ clawbridge
 ```
 
 On first launch this opens the guided setup (`clawbridge setup wizard` opens it
-again later). It asks for the service URL, workspace and project and how to sign
-in (open a browser here, or show a code to enter on another device, for SSH and
-headless machines). Each answer is checked as you give it; a wrong one is asked
-again with the reason, up to three times. It then shows your answers, and asks
-`Continue with sign-in and save after verified join? [y/N]`;
-anything but `y` cancels without changing anything. It then signs you in with
-Google, verifies your membership, and saves the trusted route. Your Google
-account must already have the role from the owner; joining does not grant it.
-
-When the server takes device keys, the guided setup asks first how you sign in:
-**I have an invite code** or, when the server still offers it, **Sign in with
-Google**. It asks for the email the invite was issued for (leave it empty with
-a link) and a name for this device, shows your answers, and asks to continue;
-only then does it ask for the link or the code, which isn't echoed. It makes this
-device's key, joins, and saves the profile, then picks your project. With
-several, it lists them numbered and you pick one. If the owner hasn't granted you
-a project yet, the profile is still saved, and the terminal view opens on
-**Waiting for a project**: it names the owner to ask, checks again every 30
-seconds, and opens your project once it's yours. On a machine with no system key
-store, such as headless Linux, it explains that the key would be a plain file
-only you can read, and asks before using one.
-
-Browser sign-in opens your default browser and also prints the sign-in URL. If
-that browser is signed in to a different Google account, open the URL in another
-browser profile on the same computer instead (it must be this computer: the
-sign-in returns to a local address). On macOS the sign-in is kept in the
-Keychain, and macOS may ask you to allow access.
+again later). It asks for the service URL, then the email the invite was issued
+for (leave it empty with a link) and a name for this device. Each answer is
+checked as you give it; a wrong one is asked again with the reason, up to three
+times. It shows your answers and asks to continue; anything but `y` cancels
+without changing anything. Only then does it ask for the link or the code, which
+isn't echoed. It makes this device's key, joins, and saves the profile, then
+picks your project. With several, it lists them numbered and you pick one. If the
+owner hasn't granted you a project yet, the profile is still saved, and the
+terminal view opens on **Waiting for a project**: it names the owner to ask,
+checks again every 30 seconds, and opens your project once it's yours. On a
+machine with no system key store, such as headless Linux, it explains that the key
+would be a plain file only you can read, and asks before using one. On macOS the
+key is kept in the Keychain, and macOS may ask you to allow access.
 
 Run the setup from a plain terminal. Inside an agent or multi-account tool (for
 example an Orca agent shell), `CLAUDE_CONFIG_DIR` and `CODEX_HOME` may point at
@@ -210,8 +162,8 @@ earlier ones:
    in the browser, with read access unless you choose write (write lets your
    agents create and update issues). Agents that take work (claim, comment,
    update) need `--access write`; read is the default. Then it checks it with
-   `clawbridge doctor --linear-profile`. As with Google, the sign-in URL is
-   printed too, for another browser profile on this computer. The connection and
+   `clawbridge doctor --linear-profile`. The sign-in URL is printed too, for
+   another browser profile on this computer. The connection and
    its credentials are yours; nobody else's account is used.
 3. **MCP for each agent.** Asks for a session name, shows the entry it would
    write (the file, the command and its arguments) as a dry run, and writes it
@@ -251,7 +203,6 @@ The same setup without prompts, for automation or to redo one step:
 ```sh
 clawbridge join                                                     # an invite link: paste it when asked
 clawbridge --server https://clawbridge.example.test join --email colleague@example.test   # an invite code
-clawbridge setup join --server https://clawbridge.example.test --workspace team --project checkout   # Google sign-in
 clawbridge skill install
 clawbridge linear connect --name "Work" --access read
 clawbridge doctor --linear-profile PROFILE_ID
@@ -267,8 +218,9 @@ Use `--agent claude-code` for Claude Code (run it from the repository root: it
 writes `.mcp.json` in the current folder), a distinct `--session` per agent, and
 omit `--linear-profile` without a Linear connection. Doctor's MCP check accepts
 the entry's own Linear profile; add `--mcp-linear-profile PROFILE_ID` to require
-that exact one. Add `--device` to
-`setup join` on a headless machine. See [usage](usage.md) for profiles and MCP
+that exact one. On a headless machine, join with `--key-store file` after reading
+[what that means](sign-in.md#device-keys-the-os-key-store-or-a-file). See
+[usage](usage.md) for profiles and MCP
 details, and [Linear](linear.md) for boards.
 
 ### On Windows

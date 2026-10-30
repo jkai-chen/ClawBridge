@@ -39,7 +39,7 @@ func TestAuditDoctorEnvironmentContract(t *testing.T) {
 
 func checkAuditMCPEnvironment(t *testing.T, field string, value any, wantPass bool) {
 	t.Helper()
-	o := oauthInstallOptions(t)
+	o := deviceInstallOptions(t)
 	installed, err := install.Install(o)
 	if err != nil {
 		t.Fatal(err)
@@ -61,10 +61,9 @@ func checkAuditMCPEnvironment(t *testing.T, field string, value any, wantPass bo
 		MCPConfigs: []doctor.MCPConfig{{
 			Agent: o.Agent, Name: "clawbridge", Path: o.Config,
 			Workspace: o.Workspace, Project: o.Project, Session: o.Session, Instance: o.Instance,
-			Mode: o.Mode, Server: o.Server, Audience: o.Audience,
+			Mode: o.Mode, Server: o.Server,
 			Principal: o.Principal, Cache: o.Cache, CredentialSource: o.CredentialSource,
-			OAuthClientID: o.OAuthClientID, OAuthDeviceClientID: o.OAuthDeviceClientID,
-			OAuthKeyringService: o.OAuthKeyringService,
+			DeviceID: o.DeviceID, KeyStore: o.KeyStore,
 		}},
 	}, routingExecutor{})
 	encoded, _ := json.Marshal(report)

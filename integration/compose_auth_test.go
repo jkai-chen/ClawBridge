@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"clawbridge/internal/server"
@@ -37,11 +38,10 @@ func renderAPI(t *testing.T, env map[string]string) ([]string, map[string]string
 	return api.Command[1:], api.Environment
 }
 
-// The sign-in mode compose starts the server in: the live deployment (an
-// audience, no CLAWBRIDGE_AUTH) stays Google only, a fresh install with
-// CLAWBRIDGE_AUTH=device needs no Google setting at all, and a Google
-// deployment missing an OAuth setting fails at startup rather than falling
-// back to device keys.
+// The sign-in mode compose starts the server in (v1.0): device keys by
+// default; google in CLAWBRIDGE_AUTH refuses the start with the swap
+// runbook's text; Google sign-in's five old settings, still in an env file,
+// never reach the server's argv or environment.
 func TestComposeAuthMode(t *testing.T) {
 	if _, err := exec.LookPath("docker"); err != nil {
 		t.Skip("docker CLI is unavailable")
@@ -52,9 +52,9 @@ func TestComposeAuthMode(t *testing.T) {
 		"CLAWBRIDGE_DOMAIN":          "clawbridge.example.test",
 	}
 	google := map[string]string{
-		"CLAWBRIDGE_AUDIENCE":                   "browser-client.apps.googleusercontent.com,device-client.apps.googleusercontent.com",
-		"CLAWBRIDGE_OAUTH_CLIENT_ID":            "browser-client.apps.googleusercontent.com",
-		"CLAWBRIDGE_OAUTH_DEVICE_CLIENT_ID":     "device-client.apps.googleusercontent.com",
+		"CLAWBRIDGE_AUDIENCE":                   "browser-client.example.test",
+		"CLAWBRIDGE_OAUTH_CLIENT_ID":            "browser-client.example.test",
+		"CLAWBRIDGE_OAUTH_DEVICE_CLIENT_ID":     "device-client.example.test",
 		"CLAWBRIDGE_OAUTH_CLIENT_SECRET":        "synthetic-compose-browser-app-credential",
 		"CLAWBRIDGE_OAUTH_DEVICE_CLIENT_SECRET": "synthetic-compose-device-app-credential",
 	}
@@ -69,29 +69,31 @@ func TestComposeAuthMode(t *testing.T) {
 	}
 	parse := func(env map[string]string) (server.ServeSettings, error) {
 		args, environment := renderAPI(t, env)
+		for _, a := range args {
+			if strings.Contains(a, "example.test") && !strings.Contains(a, "clawbridge.example.test") && a != "owner@example.test" || strings.HasPrefix(a, "--audience") || strings.HasPrefix(a, "--oauth") {
+				t.Fatalf("a Google sign-in setting reached serve's argv: %q", args)
+			}
+		}
+		for k := range google {
+			if _, ok := environment[k]; ok {
+				t.Fatalf("%s reached the server's environment", k)
+			}
+		}
 		return server.ParseServe(args, func(k string) string { return environment[k] })
 	}
-
-	// Today's deployment: unchanged, Google only.
-	live, err := parse(with(base, google))
-	if err != nil || fmt.Sprint(live.Auth.Methods) != "[google]" {
-		t.Fatalf("the live deployment's mode changed: %v %v", live.Auth.Methods, err)
+	for name, env := range map[string]map[string]string{
+		"default":         base,
+		"explicit":        with(base, map[string]string{"CLAWBRIDGE_AUTH": "device"}),
+		"leftover google": with(base, google),
+	} {
+		settings, err := parse(env)
+		if err != nil || fmt.Sprint(settings.Auth.Methods) != "[device]" || settings.Auth.PublicOrigin != "https://clawbridge.example.test" {
+			t.Fatalf("%s: %+v %v", name, settings.Auth, err)
+		}
 	}
-	// A fresh device-only install renders with no Google setting.
-	fresh, err := parse(with(base, map[string]string{"CLAWBRIDGE_AUTH": "device"}))
-	if err != nil || fmt.Sprint(fresh.Auth.Methods) != "[device]" || fresh.Auth.PublicOrigin != "https://clawbridge.example.test" {
-		t.Fatalf("device-only install: %+v %v", fresh.Auth, err)
-	}
-	both, err := parse(with(base, google, map[string]string{"CLAWBRIDGE_AUTH": "google,device"}))
-	if err != nil || fmt.Sprint(both.Auth.Methods) != "[google device]" {
-		t.Fatalf("google,device: %+v %v", both.Auth, err)
-	}
-	// A Google deployment missing any one setting refuses to start.
-	for name := range google {
-		broken := with(base, google)
-		delete(broken, name)
-		if _, err = parse(broken); err == nil {
-			t.Errorf("Google sign-in started without %s", name)
+	for _, auth := range []string{"google", "google,device"} {
+		if _, err := parse(with(base, google, map[string]string{"CLAWBRIDGE_AUTH": auth})); err == nil || err.Error() != server.GoogleAuthRefused {
+			t.Errorf("CLAWBRIDGE_AUTH=%s: %v", auth, err)
 		}
 	}
 }

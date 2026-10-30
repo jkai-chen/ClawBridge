@@ -4,9 +4,9 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -14,7 +14,10 @@ import (
 	"testing"
 	"time"
 
+	"clawbridge/internal/devicesign"
 	"clawbridge/internal/faketool"
+	"clawbridge/internal/remote"
+	"github.com/zalando/go-keyring"
 )
 
 func isolated(t *testing.T) string {
@@ -22,9 +25,7 @@ func isolated(t *testing.T) string {
 	dir := t.TempDir()
 	for _, k := range []string{
 		"DB", "WORKSPACE", "PROJECT", "SESSION", "INSTANCE", "CONFIG", "MODE", "SERVER",
-		"AUDIENCE", "ACCOUNT", "IMPERSONATE_SERVICE_ACCOUNT", "PRINCIPAL", "CACHE",
-		"CREDENTIAL_SOURCE", "CREDENTIALS_FILE", "OAUTH_CLIENT_ID", "OAUTH_CLIENT_SECRET",
-		"OAUTH_DEVICE_CLIENT_ID", "OAUTH_DEVICE_CLIENT_SECRET", "OAUTH_KEYRING_SERVICE", "DEVICE_ID", "KEY_STORE",
+		"PRINCIPAL", "CACHE", "CREDENTIAL_SOURCE", "DEVICE_ID", "KEY_STORE",
 	} {
 		t.Setenv("CLAWBRIDGE_"+k, "")
 	}
@@ -200,11 +201,11 @@ func TestRepoCannotInjectCloudCredentialRouting(t *testing.T) {
 	if e := os.MkdirAll(home, 0700); e != nil {
 		t.Fatal(e)
 	}
-	trusted := "mode='cloud'\nserver='https://trusted.example'\naudience='trusted-audience'\naccount='human@example.test'\nimpersonate_service_account='service@example.test'\nprincipal='service@example.test'\ncache='trusted-cache.db'\n"
+	trusted := "mode='cloud'\nserver='https://trusted.example'\nprincipal='alice@example.test'\ncache='trusted-cache.db'\ncredential_source='device'\ndevice_id='dev_abcdefghjkmnpqrstvwxyz0123'\nkey_store='keyring'\n"
 	if e := os.WriteFile(filepath.Join(home, "config.toml"), []byte(trusted), 0600); e != nil {
 		t.Fatal(e)
 	}
-	untrusted := "workspace='repo-w'\nproject='repo-p'\nmode='cloud'\nserver='https://evil.example'\naudience='evil-audience'\naccount='evil@example.test'\nimpersonate_service_account='evil@example.test'\nprincipal='evil@example.test'\ncache='evil.db'\ncredential_source='oauth'\noauth_client_id='evil-client'\noauth_client_secret='synthetic-repo-browser-credential'\noauth_device_client_id='evil-device-client'\noauth_device_client_secret='synthetic-repo-device-credential'\n"
+	untrusted := "workspace='repo-w'\nproject='repo-p'\nmode='cloud'\nserver='https://evil.example'\nprincipal='evil@example.test'\ncache='evil.db'\ncredential_source='device'\ndevice_id='dev_zzzzzzzzzzzzzzzzzzzzzzzzzz'\nkey_store='file'\n"
 	if e := os.WriteFile(filepath.Join(dir, ".clawbridge.toml"), []byte(untrusted), 0600); e != nil {
 		t.Fatal(e)
 	}
@@ -212,20 +213,12 @@ func TestRepoCannotInjectCloudCredentialRouting(t *testing.T) {
 	if e != nil {
 		t.Fatal(e)
 	}
-	if c.Server != "https://trusted.example" || c.Audience != "trusted-audience" || c.Account != "human@example.test" || c.ImpersonateServiceAccount != "service@example.test" || c.Principal != "service@example.test" || c.Cache != filepath.Join(home, "trusted-cache.db") {
+	if c.Server != "https://trusted.example" || c.Principal != "alice@example.test" || c.Cache != filepath.Join(home, "trusted-cache.db") ||
+		c.DeviceID != "dev_abcdefghjkmnpqrstvwxyz0123" || c.KeyStore != "keyring" {
 		t.Fatalf("repository redirected credential routing: %#v", c)
-	}
-	if c.CredentialSource != "" || c.OAuthClientID != "" || c.OAuthClientSecret != "" ||
-		c.OAuthDeviceClientID != "" || c.OAuthDeviceClientSecret != "" {
-		t.Fatalf("repository injected OAuth routing or installed-app credentials: %#v", c)
 	}
 	if c.Workspace != "repo-w" || c.Project != "repo-p" {
 		t.Fatal("repository scope selection lost")
-	}
-	t.Setenv("CLAWBRIDGE_AUDIENCE", "env-audience")
-	c, _, e = resolveConfig(context.Background(), Config{Audience: "flag-audience"})
-	if e != nil || c.Audience != "flag-audience" {
-		t.Fatal("flag/env credential precedence failed", e)
 	}
 }
 
@@ -255,9 +248,7 @@ func TestRepositoryModeCannotSwitchTrustedAuthority(t *testing.T) {
 	if config.Workspace != "repo-workspace" || config.Project != "repo-project" {
 		t.Fatalf("repository scope selection was lost: %#v", config)
 	}
-	if config.Server != "" || config.Audience != "" || config.CredentialSource != "" ||
-		config.OAuthClientID != "" || config.OAuthClientSecret != "" ||
-		config.OAuthDeviceClientID != "" || config.OAuthDeviceClientSecret != "" {
+	if config.Server != "" || config.CredentialSource != "" {
 		t.Fatalf("repository injected trusted cloud routing: %#v", config)
 	}
 
@@ -280,41 +271,6 @@ func TestRepositoryModeCannotSwitchTrustedAuthority(t *testing.T) {
 	}
 }
 
-func TestOAuthDeviceCredentialFlagsAndEnvironmentRemainTrusted(t *testing.T) {
-	dir := isolated(t)
-	home := filepath.Join(dir, "state")
-	if err := os.MkdirAll(home, 0700); err != nil {
-		t.Fatal(err)
-	}
-	trusted := "mode='cloud'\nserver='https://trusted.example.test'\nprincipal='alice@example.test'\ncache='cache.db'\ncredential_source='oauth'\n"
-	if err := os.WriteFile(filepath.Join(home, "config.toml"), []byte(trusted), 0600); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("CLAWBRIDGE_OAUTH_CLIENT_ID", "browser-client.apps.googleusercontent.com")
-	t.Setenv("CLAWBRIDGE_OAUTH_CLIENT_SECRET", "synthetic-env-browser-credential")
-	t.Setenv("CLAWBRIDGE_OAUTH_DEVICE_CLIENT_ID", "device-client.apps.googleusercontent.com")
-	t.Setenv("CLAWBRIDGE_OAUTH_DEVICE_CLIENT_SECRET", "synthetic-env-device-credential")
-	flags, rest, err := extractGlobals([]string{
-		"--oauth-device-client-secret", "synthetic-flag-device-credential",
-		"login", "--device",
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if strings.Join(rest, " ") != "login --device" {
-		t.Fatalf("credential flag leaked into command arguments: %#v", rest)
-	}
-	config, _, err := resolveLoginConfig(context.Background(), flags, true)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if config.OAuthDeviceClientID != "device-client.apps.googleusercontent.com" ||
-		config.OAuthDeviceClientSecret != "synthetic-flag-device-credential" ||
-		config.OAuthClientSecret != "synthetic-env-browser-credential" {
-		t.Fatal("OAuth credential precedence failed")
-	}
-}
-
 func TestServeDoesNotReadConfigOrOpenLocalDatabase(t *testing.T) {
 	dir := isolated(t)
 	path := filepath.Join(dir, "bad.toml")
@@ -326,7 +282,7 @@ func TestServeDoesNotReadConfigOrOpenLocalDatabase(t *testing.T) {
 	t.Setenv("CLAWBRIDGE_OAUTH_CLIENT_SECRET", "synthetic-browser")
 	t.Setenv("CLAWBRIDGE_OAUTH_DEVICE_CLIENT_SECRET", "synthetic-device")
 	var out, diagnostics bytes.Buffer
-	e := Run(context.Background(), []string{"serve", "--audience", "desktop-client.apps.googleusercontent.com,device-client.apps.googleusercontent.com", "--oauth-client-id", "desktop-client.apps.googleusercontent.com", "--oauth-device-client-id", "device-client.apps.googleusercontent.com", "--bootstrap-owner", "owner@example.test"}, &out, &diagnostics)
+	e := Run(context.Background(), []string{"serve", "--auth", "device", "--public-origin", "https://cb.example.test", "--bootstrap-owner", "owner@example.test"}, &out, &diagnostics)
 	if e == nil || !strings.Contains(e.Error(), "Postgres connection") {
 		t.Fatal("serve did not delegate before config resolution", e)
 	}
@@ -336,13 +292,12 @@ func TestServeDoesNotReadConfigOrOpenLocalDatabase(t *testing.T) {
 }
 func TestCloudCLIAndExplicitSyncUseRemoteOnly(t *testing.T) {
 	dir := isolated(t)
-	faketool.Install(t, dir, "gcloud", "print:synthetic-cli-token")
-	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	keyring.MockInit()
 	principal := "service@example.test"
 	now := time.Now().UTC().Format(time.RFC3339Nano)
 	host := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Header.Get("Authorization") != "Bearer synthetic-cli-token" {
-			t.Error("missing synthetic token")
+		if !strings.HasPrefix(r.Header.Get("Authorization"), "ClawBridge-Device ") {
+			t.Error("the request is not device-signed")
 		}
 		var req struct {
 			Operation, Workspace, Project, Session string
@@ -358,7 +313,7 @@ func TestCloudCLIAndExplicitSyncUseRemoteOnly(t *testing.T) {
 		case "whoami":
 			data = map[string]any{"principal": principal, "verified": true, "storage_mode": "cloud"}
 		case "snapshot":
-			data = map[string]any{"workspace": map[string]any{"id": "ws-cloud", "name": "w"}, "project": map[string]any{"id": "prj-cloud", "workspace_id": "ws-cloud", "slug": "p"}, "session": map[string]any{"id": "ses-cloud", "name": "a", "project_id": "prj-cloud", "instance": "cloud-inst", "owner_principal": principal}, "principal": principal, "verified": true, "storage_mode": "cloud", "identity_provenance": "google-id-token", "snapshot_at": now, "sessions": []any{}, "messages": []any{}, "sent_messages": []any{}, "events": []any{}}
+			data = map[string]any{"workspace": map[string]any{"id": "ws-cloud", "name": "w"}, "project": map[string]any{"id": "prj-cloud", "workspace_id": "ws-cloud", "slug": "p"}, "session": map[string]any{"id": "ses-cloud", "name": "a", "project_id": "prj-cloud", "instance": "cloud-inst", "owner_principal": principal}, "principal": principal, "verified": true, "storage_mode": "cloud", "identity_provenance": "device-key", "snapshot_at": now, "sessions": []any{}, "messages": []any{}, "sent_messages": []any{}, "events": []any{}}
 		default:
 			t.Errorf("unexpected cloud operation %s", req.Operation)
 		}
@@ -366,7 +321,15 @@ func TestCloudCLIAndExplicitSyncUseRemoteOnly(t *testing.T) {
 		json.NewEncoder(w).Encode(map[string]any{"source": "server", "data": data})
 	}))
 	defer host.Close()
-	for k, v := range map[string]string{"MODE": "cloud", "SERVER": host.URL, "AUDIENCE": "test-audience", "ACCOUNT": "human@example.test", "IMPERSONATE_SERVICE_ACCOUNT": principal, "PRINCIPAL": principal, "CACHE": filepath.Join(dir, "mirror.db"), "WORKSPACE": "w", "PROJECT": "p", "SESSION": "a", "INSTANCE": "cloud-inst"} {
+	key, id, err := devicesign.NewKey()
+	if err != nil {
+		t.Fatal(err)
+	}
+	u, _ := url.Parse(host.URL)
+	if err = devicesign.Save(devicesign.Location{Store: devicesign.StoreKeyring, Host: u.Host, DeviceID: id}, key); err != nil {
+		t.Fatal(err)
+	}
+	for k, v := range map[string]string{"MODE": "cloud", "SERVER": host.URL, "CREDENTIAL_SOURCE": "device", "DEVICE_ID": id, "KEY_STORE": "keyring", "PRINCIPAL": principal, "CACHE": filepath.Join(dir, "mirror.db"), "WORKSPACE": "w", "PROJECT": "p", "SESSION": "a", "INSTANCE": "cloud-inst"} {
 		t.Setenv("CLAWBRIDGE_"+k, v)
 	}
 	run := func(command string) map[string]any {
@@ -405,66 +368,28 @@ func TestCloudInstallerRequiresExplicitSourceAndNeverForwardsSecret(t *testing.T
 	base := []string{
 		"mcp", "install", "--agent", "claude-code", "--config", configPath,
 		"--command", command, "--mode", "cloud", "--server", "https://server.example.test",
-		"--audience", "desktop-client.apps.googleusercontent.com", "--principal", "alice@example.test",
+		"--principal", "alice@example.test",
 		"--cache", filepath.Join(dir, "cache.db"), "--workspace", "w",
 		"--project", "p", "--session", "alice",
 	}
 	var out, diagnostics bytes.Buffer
 	err := Run(context.Background(), base, &out, &diagnostics)
-	if err == nil || !strings.Contains(err.Error(), "explicit credential source") {
+	if err == nil || err.Error() != remote.GoogleRouteRemoved {
 		t.Fatalf("cloud installer inferred a credential source: %v", err)
 	}
-	oauthArgs := append([]string{}, base...)
-	oauthArgs = append(oauthArgs,
-		"--credential-source", "oauth",
-		"--oauth-client-id", "desktop-client.apps.googleusercontent.com",
-		"--oauth-client-secret", "synthetic-browser-client-credential",
-		"--oauth-device-client-id", "device-client.apps.googleusercontent.com",
-		"--oauth-device-client-secret", "synthetic-device-client-credential",
-		"--oauth-keyring-service", "review-keyring",
-		"--dry-run",
-	)
-	originalStdout := os.Stdout
-	readOutput, writeOutput, pipeErr := os.Pipe()
-	if pipeErr != nil {
-		t.Fatal(pipeErr)
-	}
-	os.Stdout = writeOutput
-	t.Cleanup(func() { os.Stdout = originalStdout })
-	if err = Run(context.Background(), oauthArgs, &out, &diagnostics); err != nil {
-		writeOutput.Close()
-		readOutput.Close()
-		t.Fatal(err)
-	}
-	if err = writeOutput.Close(); err != nil {
-		readOutput.Close()
-		t.Fatal(err)
-	}
-	installOutput, err := io.ReadAll(readOutput)
-	if err != nil {
-		readOutput.Close()
-		t.Fatal(err)
-	}
-	readOutput.Close()
-	for _, forbidden := range []string{
-		"oauth_client_secret", "oauth-client-secret", "synthetic-browser-client-credential",
-		"oauth_device_client_secret", "oauth-device-client-secret", "synthetic-device-client-credential",
-		"browser_client_secret", "device_client_secret", "refresh_token", "id_token", "access_token",
-	} {
-		if bytes.Contains(installOutput, []byte(forbidden)) {
-			t.Fatalf("installer output contains forbidden credential field %q: %s", forbidden, installOutput)
+	// Google sign-in's flags are refused (v1.0), never echoed.
+	for _, flag := range []string{"--oauth-client-id", "--oauth-client-secret", "--oauth-device-client-secret", "--audience"} {
+		args := append(append([]string{}, base...), "--credential-source", "oauth", flag, "synthetic-browser-client-credential", "--dry-run")
+		err = Run(context.Background(), args, &out, &diagnostics)
+		if err == nil || !strings.Contains(err.Error(), "removed in v1.0") || strings.Contains(err.Error()+out.String()+diagnostics.String(), "synthetic-") {
+			t.Fatalf("%s: %v", flag, err)
 		}
 	}
-	raw, err := os.ReadFile(configPath)
-	if err == nil {
-		t.Fatalf("default-output installer unexpectedly touched stdout fixture: %s", raw)
-	}
-	for _, forbidden := range []string{"oauth_client_secret", "oauth-client-secret", "refresh_token", "id_token", "access_token"} {
-		if strings.Contains(diagnostics.String(), forbidden) {
-			t.Fatalf("installer diagnostics contains forbidden credential field %q", forbidden)
-		}
+	if _, err = os.Stat(configPath); err == nil {
+		t.Fatal("a refused install wrote the agent's config")
 	}
 }
+
 func TestCLIProjectRoleRevokeReachesHostedOperation(t *testing.T) {
 	isolated(t)
 	invoke(t, "setup", "--local", "--workspace", "w")

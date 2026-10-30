@@ -43,9 +43,7 @@ func runInstall(ctx context.Context, flags Config, args []string, stdout, stderr
 	inherited := []string{}
 	for _, item := range []struct{ name, value string }{
 		{"linear-profile", flags.LinearProfile}, {"db", c.DB}, {"workspace", c.Workspace}, {"project", c.Project}, {"session", c.Session}, {"instance", c.Instance}, {"mode", c.Mode},
-		{"server", c.Server}, {"audience", c.Audience}, {"account", c.Account}, {"impersonate-service-account", c.ImpersonateServiceAccount},
-		{"principal", c.Principal}, {"cache", c.Cache}, {"credential-source", c.CredentialSource}, {"credentials-file", c.CredentialsFile},
-		{"oauth-client-id", c.OAuthClientID}, {"oauth-device-client-id", c.OAuthDeviceClientID}, {"oauth-keyring-service", c.OAuthKeyringService},
+		{"server", c.Server}, {"principal", c.Principal}, {"cache", c.Cache}, {"credential-source", c.CredentialSource},
 		{"device-id", c.DeviceID}, {"key-store", c.KeyStore},
 	} {
 		if item.value != "" {
@@ -195,7 +193,7 @@ func mcpSelection(c Config, path, agent, target, name, session, instance string)
 			return path
 		}
 		return ""
-	}(), Agent: agent, Name: name, Path: target, DB: c.DB, Workspace: c.Workspace, Project: c.Project, Session: session, Instance: instance, Mode: c.Mode, Server: c.Server, Audience: c.Audience, Account: c.Account, ImpersonateServiceAccount: c.ImpersonateServiceAccount, Principal: c.Principal, Cache: c.Cache, CredentialSource: c.CredentialSource, CredentialsFile: c.CredentialsFile, OAuthClientID: c.OAuthClientID, OAuthDeviceClientID: c.OAuthDeviceClientID, OAuthKeyringService: c.OAuthKeyringService, DeviceID: c.DeviceID, KeyStore: c.KeyStore}
+	}(), Agent: agent, Name: name, Path: target, DB: c.DB, Workspace: c.Workspace, Project: c.Project, Session: session, Instance: instance, Mode: c.Mode, Server: c.Server, Principal: c.Principal, Cache: c.Cache, CredentialSource: c.CredentialSource, DeviceID: c.DeviceID, KeyStore: c.KeyStore}
 }
 
 func runDoctorCommand(ctx context.Context, flags Config, args []string, stdout, stderr io.Writer) error {
@@ -368,7 +366,7 @@ func runTUI(ctx context.Context, flags Config, args []string, stdout, stderr io.
 		}
 		found = slug
 		return nil
-	}, Linear: linearSource, Executor: executor, OutboxWaiting: outboxWaiting, Mode: tui.Mode(c.Mode), Workspace: c.Workspace, Project: c.Project, Session: c.Session, Instance: c.Instance, AgentMarker: agentMarker(closesEnv()), Server: c.Server, Audience: c.Audience, Principal: c.Principal, DeviceID: c.DeviceID, Context: bounded, InitialScreen: tui.Screen(screen), CloudInfo: info,
+	}, Linear: linearSource, Executor: executor, OutboxWaiting: outboxWaiting, Mode: tui.Mode(c.Mode), Workspace: c.Workspace, Project: c.Project, Session: c.Session, Instance: c.Instance, AgentMarker: agentMarker(closesEnv()), Server: c.Server, Principal: c.Principal, DeviceID: c.DeviceID, Context: bounded, InitialScreen: tui.Screen(screen), CloudInfo: info,
 		Doctor: tui.DoctorFunc(func(ctx context.Context) ([]tui.Check, error) {
 			report, e := collectDoctor(ctx, c, path, executor)
 			if e != nil {

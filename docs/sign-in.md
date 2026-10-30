@@ -1,8 +1,9 @@
 # Signing in with invites and device keys
 
-A hosted ClawBridge server can let people in without a Google account: an owner
-invites them by email, they join with a one-time code, and from then on their
-computer signs every request with its own **device key**.
+A hosted ClawBridge server lets people in with invites: an owner invites them by
+email, they join with a one-time code, and from then on their computer signs every
+request with its own **device key**. Since v1.0 this is the only way to sign in:
+Google sign-in was removed ([Removing Google sign-in](operations/google-sign-in-removal.md)).
 
 > **Which release.**
 > - **The server side shipped in v0.3.4:** `serve --auth`, `/v1/join`, signed requests,
@@ -15,6 +16,8 @@ computer signs every request with its own **device key**.
 > - **v0.3.6 adds** the invite link, the short-lived
 >   `device add` link, new-device alerts and dormant devices; its server and
 >   client come together.
+> - **v1.0 removes Google sign-in**: device keys are the only sign-in, on the
+>   server and the client ([Device keys only](#turning-device-sign-in-on)).
 >
 > A v0.3.4 client can't join a server with device keys: install v0.3.5 or later
 > first ([install and update](installation.md)).
@@ -26,7 +29,7 @@ computer signs every request with its own **device key**.
 - [Your devices](#your-devices)
 - [Members and ownership](#members-and-ownership)
 - [The operator's bootstrap invite](#the-operators-bootstrap-invite)
-- [Turning device sign-in on](#turning-device-sign-in-on)
+- [Device keys only (v1.0)](#turning-device-sign-in-on)
 - [Troubleshooting](#troubleshooting)
 
 ## How it works
@@ -43,8 +46,8 @@ computer signs every request with its own **device key**.
 - **One workspace per device.** A device belongs to the workspace whose invite
   admitted it, and signs only there. To join a second workspace, join again into
   another profile (`--client-config`); that makes a second key.
-- **Google can still be used**, if the server offers it. Your Google sign-in and
-  your devices are the same person to ClawBridge: the same email, roles and sessions.
+- **Your email is you.** Every device of yours is the same person to
+  ClawBridge: the same email, roles and sessions.
 
 ## Invites and the one-time code
 
@@ -123,9 +126,14 @@ clawbridge --project api whoami      # identity_provenance: device-key
   profile is still saved and the TUI opens on **Waiting for a project**, which
   names the owner to ask and opens your project as soon as it's granted
   ([the terminal interface](usage.md#terminal-interface)).
-- **Already signed in with Google?** `clawbridge device enroll` adds a key to this
-  computer with no invite. Your verified Google account is the proof. The profile
-  then signs with the key, and the Google sign-in stays until `clawbridge logout`.
+- **A profile from before v1.0 that signed in with Google** is refused ("this
+  profile signs in with Google, which was removed in v1.0"). Join with an invite
+  into the same profile: `join` switches it to the new key. Its old Google settings
+  are ignored with a warning; remove them from the file. The first time v1.0 reads
+  such a profile, it deletes the old Google credential from the OS keychain.
+- **`clawbridge device enroll`** added a key while signed in with Google. Since
+  v1.0 it refuses: another computer of yours joins with `device add`'s link, or
+  an owner's invite.
 
 ## Device keys: the OS key store or a file
 
@@ -154,9 +162,6 @@ clawbridge --server https://clawbridge.example.com join --email ada@example.com 
   using a file.
 - **Seeing it.** `whoami` and `doctor` show which store a profile uses. `doctor`
   checks that the key is readable and the file's mode is `0600`.
-
-(Google sign-in, unlike device keys, always needs the OS key store; see
-[Linux and WSL credentials](installation.md#linux-and-wsl-credentials).)
 
 **CI** gets its own device rather than anyone's key: `clawbridge device add --ci
 NAME --grant PROJECT=member --expires 30d` prints the key once, as
@@ -190,8 +195,8 @@ clawbridge device add                        # a 15-minute link for another comp
 
 ### New-device alerts
 
-When a device is added to your account (by an invite, `device add`, recovery or
-`device enroll`) or one of your devices is revoked, your **other** devices hear of
+When a device is added to your account (by an invite, `device add` or recovery)
+or one of your devices is revoked, your **other** devices hear of
 it, and so do the workspace owner's:
 
 ```text
@@ -214,7 +219,6 @@ New device "Ada's desktop" (dev_9k2…) joined ada@example.com at 2026-10-27 14:
 - **Not you?** Revoke the device from any other one of yours, then tell the
   workspace owner. A revoke is an alert too, so a stolen device can't quietly revoke
   your others.
-- Alerts need a device-key sign-in; a Google sign-in has no device to alert.
 - **The owner's coordinator session** hears of every event too: one `security`
   message in each project whose coordinator session the main owner registered
   (never one another person runs). It names the user, the device's ID, what
@@ -243,7 +247,7 @@ many and needs `--confirm`.
   ask the workspace owner`.
 - **Who confirms:** another device of the same user, or the **main owner** only, who
   names the member with `--member`. A project owner can't. Either way it's signed by a
-  live human device: a Google sign-in or a CI key can't confirm. An owner whose devices
+  live human device: a CI key can't confirm. An owner whose devices
   are all dormant recovers with a bootstrap invite, as for lost devices. Confirming is an alert to
   the user's other devices and the owner's ("re-confirmed by …"), and is audited.
   `w` on the TUI's Account screen does the same; `x` still revokes.
@@ -307,8 +311,7 @@ clawbridge owner decline | owner cancel
 
 ## The operator's bootstrap invite
 
-On a server that takes device keys only, nobody can sign in until the owner has a
-device. The host operator lets the owner in with a one-time code, run on the
+On a new server, nobody can sign in until the owner has a device. The host operator lets the owner in with a one-time code, run on the
 server host in your own terminal:
 
 ```sh
@@ -324,55 +327,56 @@ clawbridge operator bootstrap-invite --workspace WORKSPACE
   unless given `--force-stdout`.
 
 The Compose form and the details are in
-[Deployment: letting the owner in without Google](operations/deployment.md#letting-the-owner-in-without-google-operator-bootstrap-invite).
+[Deployment: letting the owner in](operations/deployment.md#letting-the-owner-in-operator-bootstrap-invite).
 
 ## Turning device sign-in on
 
-> **v1.0 removes Google sign-in.** Before upgrading to v1.0, every server must run with `CLAWBRIDGE_AUTH=device`:
-> follow [Removing Google sign-in](operations/google-sign-in-removal.md), which adds a per-member gate to the steps
-> below.
+**Since v1.0 a server takes device keys only.** `CLAWBRIDGE_AUTH` in its
+environment file (`serve --auth`) is `device`, or unset, which is `device` too:
 
-The server's sign-in methods are `CLAWBRIDGE_AUTH` in its environment file
-(`serve --auth`):
-
-| `CLAWBRIDGE_AUTH` | Accepts |
+| `CLAWBRIDGE_AUTH` | Since v1.0 |
 | --- | --- |
-| unset or `google` | Google sign-in only (the default, unchanged on upgrade) |
-| `google,device` | Google and device keys |
-| `device` | device keys only |
+| unset or `device` | device keys |
+| `google` or `google,device` | the server refuses to start (below) |
 
 Device keys need `CLAWBRIDGE_DOMAIN`, the server's public origin. The
 [deployment guide](operations/deployment.md) has every setting.
 
-**Upgrade the clients first, then switch.**
+**Coming from Google sign-in?** Move every member to a device key while the
+server still runs the release before v1.0, then upgrade: follow
+[Removing Google sign-in](operations/google-sign-in-removal.md). A v1.0 server
+that still names Google refuses to start, so nothing is served half-configured:
 
-1. **Upgrade the server,** and keep `google`, or go to `google,device`. Nobody is
-   locked out: Google keeps working, and clients that know device keys can join or
-   enrol.
-2. **Upgrade every member's client** to the release with `join` and
-   `device enroll`.
-3. **Give every member a device.** Members signed in with Google run
-   `clawbridge device enroll`; new people join with an invite. Check with
-   `clawbridge user list` that each member has an active device, and that you do.
-4. **Only then set `device`.** From then on the server refuses Google tokens
-   everywhere. An old client, or a profile still on Google, gets "a
-   ClawBridge-Device signature is required; this server accepts device keys only",
-   and `device enroll` is refused too.
+```text
+clawbridge serve: Google sign-in was removed in v1.0; set CLAWBRIDGE_AUTH=device after every member has an active device (docs/operations/google-sign-in-removal.md#before-you-switch)
+```
 
-**Set `device` too early?** If members are locked out, set `CLAWBRIDGE_AUTH` back
-to `google,device` and recreate the `api` container. Nothing stored is touched, and
-Google sign-in works again at once. An owner with no device can also be let in
-with the [bootstrap invite](#the-operators-bootstrap-invite).
+- **`--audience` and the OAuth client flags** with a value are refused the same
+  way; with an empty value (a compose file from before v1.0) they are ignored.
+- **Any spelling of `google`** refuses: comma- or space-separated, any case, in
+  `--auth` or `CLAWBRIDGE_AUTH`.
+- **Google sign-in's five old settings** (`CLAWBRIDGE_AUDIENCE` and the four
+  `CLAWBRIDGE_OAUTH_*`) left in the environment are ignored, with one warning at
+  start; remove them from the env file. `clawbridge cloud check server` warns
+  about them too.
+- **A client still sending a Google token** (one older than v1.0, or a profile
+  never moved to a device) is refused with `unauthenticated`:
+  "Google sign-in was removed; this server accepts device keys only: ask an owner
+  for an invite (or a recovery invite) and run clawbridge join; see
+  docs/operations/google-sign-in-removal.md".
+- **`login`, `logout`, `setup join` and `device enroll`** were Google sign-in's
+  commands. On a v1.0 client they exit 2 and say to join with an invite.
 
-The other way round, a new client against a server older than device sign-in says
-"this server doesn't support invites; sign in with clawbridge login".
+A new client against a server older than device sign-in says "this server
+doesn't support invites: it runs a ClawBridge older than device sign-in; ask its
+owner to upgrade it".
 
 After changing `CLAWBRIDGE_AUTH`, recreate the `api` container so it reads the
 file, then check:
 
 ```sh
 clawbridge cloud check server --ssh HOST      # fails auth_mismatch until the running server matches
-curl -s https://clawbridge.example.com/v1/config    # auth_methods, public_origin
+curl -s https://clawbridge.example.com/v1/config    # auth_methods ["device"], public_origin
 ```
 
 ## Troubleshooting
@@ -415,6 +419,9 @@ curl -s https://clawbridge.example.com/v1/config    # auth_methods, public_origi
   reads the file only when the `api` container is created, so recreate it
   (`docker compose … up -d --no-deps api`, see the
   [deployment guide](operations/deployment.md)) and check again.
+- **"this profile signs in with Google, which was removed in v1.0".** The
+  profile predates v1.0. Ask an owner for an invite (or a recovery invite) and run
+  `clawbridge join`; it switches this profile to a device key.
 - **"this profile already signs as device …".** A profile holds one device. To join
   another workspace, or the same one again from scratch, use another profile:
   `--client-config /absolute/path/other.toml`.

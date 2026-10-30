@@ -646,7 +646,7 @@ type intakeRecordingStore struct {
 func TestDrainRefusesJoinAndIntake(t *testing.T) {
 	d, _, _ := newTestDrain(on(drainStart, 10*time.Second))
 	store := &intakeRecordingStore{}
-	host := httptest.NewServer(NewHandlerWithOptions(store, drainVerifier, HandlerOptions{Drain: d, Auth: AuthOptions{Methods: []string{AuthGoogle, AuthDevice}, PublicOrigin: "https://cb.example.com", Devices: store}}))
+	host := httptest.NewServer(NewHandlerWithOptions(store, drainVerifier, HandlerOptions{Drain: d, Auth: AuthOptions{Methods: []string{AuthDevice}, PublicOrigin: "https://cb.example.com", Devices: store}}))
 	defer host.Close()
 	join := drainPost(t, host.URL+"/v1/join", `{}`)
 	var got errorBody

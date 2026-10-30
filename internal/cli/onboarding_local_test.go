@@ -69,7 +69,7 @@ func TestSetupCloudOnACleanHome(t *testing.T) {
 	isolated(t)
 	clearRouteEnv(t)
 	var out, errs bytes.Buffer
-	err := Run(context.Background(), []string{"--server", "https://clawbridge.invalid", "--audience", "aud", "setup", "--cloud", "--name", "w"}, &out, &errs)
+	err := Run(context.Background(), []string{"--server", "https://clawbridge.invalid", "setup", "--cloud", "--name", "w"}, &out, &errs)
 	if err == nil || strings.Contains(err.Error(), "conflicts with configured storage mode") || strings.Contains(err.Error(), "mode=cloud") {
 		t.Fatal("setup --cloud did not get past the mode check:", err)
 	}
@@ -77,7 +77,7 @@ func TestSetupCloudOnACleanHome(t *testing.T) {
 	out.Reset()
 	errs.Reset()
 	_ = Run(context.Background(), []string{"setup", "--help"}, &out, &errs)
-	if help := out.String() + errs.String(); !strings.Contains(help, "--server URL --audience AUDIENCE") || !strings.Contains(help, "--project") {
+	if help := out.String() + errs.String(); !strings.Contains(help, "setup --cloud --name WORKSPACE") || !strings.Contains(help, "--project") {
 		t.Fatal(help)
 	}
 }

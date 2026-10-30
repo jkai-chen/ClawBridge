@@ -209,8 +209,8 @@ func TestDescribeError(t *testing.T) {
 	for raw, want := range map[string]string{
 		"dial tcp 10.0.0.1:443: connect: connection refused": "The server can't be reached.",
 		unavailable.Error():                            "The server can't be reached.",
-		"remote: 401 Unauthorized: credential expired": "You're signed out. Run clawbridge login.",
-		"cloud request rejected (401, device_auth_failed): device authentication failed; no write queued": "You're signed out. Run clawbridge login.",
+		"remote: 401 Unauthorized: credential expired": "You're signed out. Ask an owner for an invite (or a recovery invite) and run clawbridge join.",
+		"cloud request rejected (401, device_auth_failed): device authentication failed; no write queued": "You're signed out. Ask an owner for an invite (or a recovery invite) and run clawbridge join.",
 		"remote: 403 Forbidden: owner permission required":                                                "You don't have permission for this.",
 		"remote: 403 owner only":                              "You don't have permission for this.",
 		"unsupported operation list_projects":                 "The server doesn't offer this. Check that the ClawBridge client and server versions match.",

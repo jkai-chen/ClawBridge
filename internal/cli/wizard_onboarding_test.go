@@ -20,7 +20,9 @@ import (
 	"github.com/muesli/cancelreader"
 )
 
-const joinAnswers = "https://service.test\nws\nprj\ndevice\ny\n"
+// joinAnswers join with an invite: the URL, the email, the default device
+// name and a yes; the code is read apart.
+const joinAnswers = "https://service.test\nada@example.com\n\ny\n"
 
 // onboardingRun joins through the wizard with stubbed boundaries and then
 // answers the onboarding questions. It returns the boundary calls and output.
@@ -34,9 +36,14 @@ type onboardingRun struct {
 }
 
 func newOnboardingRun(t *testing.T, answers string) *onboardingRun {
+	return newOnboardingRunAfter(t, joinAnswers, answers)
+}
+
+// newOnboardingRunAfter is newOnboardingRun with its own join answers.
+func newOnboardingRunAfter(t *testing.T, join, answers string) *onboardingRun {
 	isolated(t)
 	o := &onboardingRun{t: t, path: filepath.Join(t.TempDir(), "client.toml"), failOn: map[string]bool{}}
-	o.r = wizardHooks(t, joinAnswers+answers)
+	o.r = wizardHooks(t, join+answers)
 	opened := wizardInput
 	wizardInput = func() (cancelreader.CancelReader, error) { o.r.closed = false; return opened() }
 	fail := func(name string) error {
@@ -45,11 +52,15 @@ func newOnboardingRun(t *testing.T, answers string) *onboardingRun {
 		}
 		return nil
 	}
-	wizardKeyring = func(context.Context) error { o.calls = append(o.calls, "keyring"); return nil }
-	wizardJoin = func(_ context.Context, c Config, _ []string, _, _ io.Writer) error {
+	wizardMethods = func(context.Context, string) ([]string, error) { return []string{"device"}, nil }
+	wizardKeyStore = func(context.Context) error { return nil }
+	wizardInviteCode = func() (string, error) { return wizardCode, nil }
+	wizardDeviceJoin = func(_ context.Context, p JoinParams) (JoinResult, error) {
 		o.calls = append(o.calls, "join")
-		return os.WriteFile(c.ClientConfig, []byte("published-route"), 0600)
+		route := "mode='cloud'\nserver='" + p.Server + "'\nworkspace='ws'\nprincipal='" + p.Email + "'\ncredential_source='device'\ndevice_id='dev_1'\nkey_store='keyring'\n"
+		return JoinResult{DeviceID: "dev_1", Principal: p.Email, Workspace: "ws", KeyStore: p.KeyStore, ConfigPath: p.ConfigPath}, os.WriteFile(p.ConfigPath, []byte(route), 0600)
 	}
+	wizardProjects = func(context.Context, string) ([]string, error) { return []string{"prj"}, nil }
 	wizardTUI = func(context.Context, Config, io.Writer, io.Writer) error {
 		o.calls = append(o.calls, "tui")
 		return nil
@@ -102,7 +113,7 @@ func TestGuidedOnboardingRunsEachConfirmedStepInOrder(t *testing.T) {
 	if err := o.run(); err != nil {
 		t.Fatal(err, o.out.String())
 	}
-	o.want("keyring", "join", "skill", "linear:Work:read", "doctor:lin_synthetic:",
+	o.want("join", "skill", "linear:Work:read", "doctor:lin_synthetic:",
 		"mcp-preview:claude-code:eng:lin_synthetic", "mcp-write:claude-code:eng:lin_synthetic",
 		"mcp-preview:codex:cx:lin_synthetic", "mcp-write:codex:cx:lin_synthetic",
 		"doctor:lin_synthetic:--mcp-agent claude-code --mcp-config /synthetic/claude-code.json --mcp-session eng",
@@ -128,7 +139,7 @@ func TestGuidedOnboardingWritesNothingWithoutAYes(t *testing.T) {
 	if err := o.run(); err != nil {
 		t.Fatal(err)
 	}
-	o.want("keyring", "join", "mcp-preview:claude-code:eng:", "doctor::", "tui")
+	o.want("join", "mcp-preview:claude-code:eng:", "doctor::", "tui")
 	for _, want := range []string{"later: clawbridge skill install", "later: clawbridge linear connect", "later: clawbridge mcp install --agent claude-code", "later: clawbridge mcp install --agent codex"} {
 		if !strings.Contains(o.out.String(), want) {
 			t.Fatalf("output lacks %q:\n%s", want, o.out.String())
@@ -145,7 +156,7 @@ func TestGuidedOnboardingReportsFailuresAndContinues(t *testing.T) {
 		t.Fatal(err)
 	}
 	// A failed Linear connection pins no profile; a failed preview writes nothing.
-	o.want("keyring", "join", "skill", "linear:Linear:write", "mcp-preview:claude-code:eng:", "doctor::")
+	o.want("join", "skill", "linear:Linear:write", "mcp-preview:claude-code:eng:", "doctor::")
 	for _, want := range []string{"- Agent skill: failed: synthetic skill failure", "- Linear: failed: synthetic linear failure", "- MCP for Claude Code: failed: synthetic mcp-preview failure", "- Doctor: failed: synthetic doctor failure"} {
 		if !strings.Contains(o.out.String(), want) {
 			t.Fatalf("output lacks %q:\n%s", want, o.out.String())
@@ -169,10 +180,12 @@ func TestGuidedOnboardingOffersAFileForLinearWithoutAKeyStore(t *testing.T) {
 		calls  []string
 		want   string
 	}{
-		{"y", []string{"keyring", "join", "linear:Work:read:file", "doctor:lin_synthetic:", "doctor:lin_synthetic:"}, "- Linear: connected (read access, profile lin_synthetic)"},
-		{"n", []string{"keyring", "join", "doctor::"}, "- Linear: skipped: no system key store"},
+		{"y", []string{"join", "linear:Work:read:file", "doctor:lin_synthetic:", "doctor:lin_synthetic:"}, "- Linear: connected (read access, profile lin_synthetic)"},
+		{"n", []string{"join", "doctor::"}, "- Linear: skipped: no system key store"},
 	} {
-		o := newOnboardingRun(t, "n\ny\nWork\nread\n"+c.answer+"\nn\nn\n")
+		// The join keeps its device key in a file too: a yes before the
+		// summary's.
+		o := newOnboardingRunAfter(t, "https://service.test\nada@example.com\n\ny\ny\n", "n\ny\nWork\nread\n"+c.answer+"\nn\nn\n")
 		wizardKeyStore = func(context.Context) error { return errors.New("Linux Secret Service is unavailable") }
 		if err := o.run(); err != nil {
 			t.Fatal(err)
@@ -196,7 +209,7 @@ func TestGuidedOnboardingRejectsAnUnknownAccessAndSkipsAfterInputEnds(t *testing
 		t.Fatal(err)
 	}
 	// "admin" is neither read nor write; input then ends at the session name.
-	o.want("keyring", "join", "doctor::")
+	o.want("join", "doctor::")
 	for _, want := range []string{"- Linear: skipped: choose read or write", "- MCP for Claude Code: skipped", "- MCP for Codex: skipped", "Input ended; the remaining steps were skipped."} {
 		if !strings.Contains(o.out.String(), want) {
 			t.Fatalf("output lacks %q:\n%s", want, o.out.String())
@@ -210,7 +223,7 @@ func TestGuidedOnboardingWithoutAgentsOffersCommands(t *testing.T) {
 	if err := o.run(); err != nil {
 		t.Fatal(err)
 	}
-	o.want("keyring", "join", "doctor::")
+	o.want("join", "doctor::")
 	for _, want := range []string{"- Agent skill: skipped: no Claude Code or Codex configuration found", "- MCP: skipped: no Claude Code or Codex configuration found"} {
 		if !strings.Contains(o.out.String(), want) {
 			t.Fatalf("output lacks %q:\n%s", want, o.out.String())

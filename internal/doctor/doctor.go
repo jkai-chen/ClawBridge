@@ -41,38 +41,25 @@ type Executor interface {
 	ResolveProject(context.Context, string, string, string) (string, string, error)
 }
 
-// TokenSource validates the selected hosted credential route by minting an
-// ephemeral token. Doctor never retains or renders the returned token.
-type TokenSource interface {
-	Token(context.Context) (string, error)
-}
-
 // Config is a plain, importable view of trusted routing. Doctor treats these as
 // already resolved values and labels their source; it does not implement CLI
 // config precedence.
 type Config struct {
-	Path                      string `json:"path"`
-	Present                   bool   `json:"present"`
-	Valid                     bool   `json:"valid"`
-	Mode                      string `json:"mode"`
-	DB                        string `json:"db"`
-	Workspace                 string `json:"workspace"`
-	Project                   string `json:"project"`
-	Session                   string `json:"session"`
-	Instance                  string `json:"instance"`
-	Server                    string `json:"server"`
-	Audience                  string `json:"audience"`
-	Account                   string `json:"account"`
-	ImpersonateServiceAccount string `json:"impersonate_service_account"`
-	Principal                 string `json:"principal"`
-	Cache                     string `json:"cache"`
-	CredentialSource          string `json:"credential_source"`
-	CredentialsFile           string `json:"credentials_file,omitempty"`
-	OAuthClientID             string `json:"oauth_client_id,omitempty"`
-	OAuthDeviceClientID       string `json:"oauth_device_client_id,omitempty"`
-	OAuthKeyringService       string `json:"oauth_keyring_service,omitempty"`
-	DeviceID                  string `json:"device_id,omitempty"`
-	KeyStore                  string `json:"key_store,omitempty"`
+	Path             string `json:"path"`
+	Present          bool   `json:"present"`
+	Valid            bool   `json:"valid"`
+	Mode             string `json:"mode"`
+	DB               string `json:"db"`
+	Workspace        string `json:"workspace"`
+	Project          string `json:"project"`
+	Session          string `json:"session"`
+	Instance         string `json:"instance"`
+	Server           string `json:"server"`
+	Principal        string `json:"principal"`
+	Cache            string `json:"cache"`
+	CredentialSource string `json:"credential_source"`
+	DeviceID         string `json:"device_id,omitempty"`
+	KeyStore         string `json:"key_store,omitempty"`
 }
 
 // Device is what the client found of a device route's key: Err is why it
@@ -87,30 +74,23 @@ type Device struct {
 // MCPConfig identifies one installed-client configuration and the expected
 // ClawBridge entry. Doctor reads these paths and never repairs them.
 type MCPConfig struct {
-	LinearProfile             string `json:"linear_profile,omitempty"`
-	ClientConfig              string `json:"client_config,omitempty"`
-	Agent                     string `json:"agent"`
-	Name                      string `json:"name"`
-	Path                      string `json:"path"`
-	DB                        string `json:"db"`
-	Workspace                 string `json:"workspace"`
-	Project                   string `json:"project"`
-	Session                   string `json:"session"`
-	Instance                  string `json:"instance"`
-	Mode                      string `json:"mode"`
-	Server                    string `json:"server"`
-	Audience                  string `json:"audience"`
-	Account                   string `json:"account"`
-	ImpersonateServiceAccount string `json:"impersonate_service_account"`
-	Principal                 string `json:"principal"`
-	Cache                     string `json:"cache"`
-	CredentialSource          string `json:"credential_source"`
-	CredentialsFile           string `json:"credentials_file,omitempty"`
-	OAuthClientID             string `json:"oauth_client_id,omitempty"`
-	OAuthDeviceClientID       string `json:"oauth_device_client_id,omitempty"`
-	OAuthKeyringService       string `json:"oauth_keyring_service,omitempty"`
-	DeviceID                  string `json:"device_id,omitempty"`
-	KeyStore                  string `json:"key_store,omitempty"`
+	LinearProfile    string `json:"linear_profile,omitempty"`
+	ClientConfig     string `json:"client_config,omitempty"`
+	Agent            string `json:"agent"`
+	Name             string `json:"name"`
+	Path             string `json:"path"`
+	DB               string `json:"db"`
+	Workspace        string `json:"workspace"`
+	Project          string `json:"project"`
+	Session          string `json:"session"`
+	Instance         string `json:"instance"`
+	Mode             string `json:"mode"`
+	Server           string `json:"server"`
+	Principal        string `json:"principal"`
+	Cache            string `json:"cache"`
+	CredentialSource string `json:"credential_source"`
+	DeviceID         string `json:"device_id,omitempty"`
+	KeyStore         string `json:"key_store,omitempty"`
 }
 
 // Input controls deterministic diagnostics. Now and MirrorStaleAfter are
@@ -120,7 +100,6 @@ type Input struct {
 	GitRemote        string
 	Now              time.Time
 	MirrorStaleAfter time.Duration
-	TokenSource      TokenSource
 	// Device describes a device route's key; nil for any other route.
 	Device     *Device
 	MCPConfigs []MCPConfig
@@ -502,16 +481,11 @@ func checkConfig(config Config, add func(Check)) bool {
 		}
 	case "cloud":
 		if _, err := remote.ValidateRoute(remote.Config{
-			URL: config.Server, Audience: config.Audience, Account: config.Account,
-			ImpersonateServiceAccount: config.ImpersonateServiceAccount,
-			Principal:                 config.Principal, CachePath: config.Cache,
-			CredentialSource: config.CredentialSource, CredentialsFile: config.CredentialsFile,
-			OAuthClientID: config.OAuthClientID, OAuthDeviceClientID: config.OAuthDeviceClientID,
-			OAuthKeyringService: config.OAuthKeyringService,
-			DeviceID:            config.DeviceID, KeyStore: config.KeyStore,
+			URL: config.Server, Principal: config.Principal, CachePath: config.Cache,
+			CredentialSource: config.CredentialSource, DeviceID: config.DeviceID, KeyStore: config.KeyStore,
 		}); err != nil {
 			check.Message = "Cloud credential routing is incomplete or inconsistent."
-			check.Action = "Rerun authenticated cloud join or select one complete explicit oauth, gcloud, ADC or device route."
+			check.Action = "Join with an invite (clawbridge join); a device key is the only sign-in."
 			add(check)
 			return false
 		}
@@ -597,40 +571,16 @@ func checkCredentials(ctx context.Context, in Input, configOK bool, add func(Che
 		checkDevice(in, add)
 		return
 	}
-	check := Check{ID: "auth.token-selection", Title: "Google token selection", Status: Fail}
+	// A device key is the only sign-in since v1.0 removed Google's.
+	check := Check{ID: "auth.token-selection", Title: "Sign-in", Status: Fail}
 	if in.Config.Mode == "local" {
 		check.Status = Pass
-		check.Message = "Local mode does not use Google credentials."
+		check.Message = "Local mode signs nothing in."
 		add(check)
 		return
 	}
-	if in.Config.Mode != "cloud" || !configOK {
-		check.Message = "Google token routing cannot be selected from incomplete cloud configuration."
-		check.Action = "Complete trusted cloud routing before authenticating."
-		add(check)
-		return
-	}
-	if in.TokenSource == nil {
-		check.Message = "No explicit Google token source is configured."
-		check.Action = "Select the initiating account, audience and impersonation service account."
-		add(check)
-		return
-	}
-	token, err := in.TokenSource.Token(ctx)
-	if err != nil {
-		check.Message = "The selected Google credential route could not mint an audience-bound token."
-		check.Action = "Reauthenticate the explicit account and verify token-creation IAM; credentials were not printed."
-		add(check)
-		return
-	}
-	if token == "" || len(token) > 16384 || strings.ContainsAny(token, " \r\n\t") {
-		check.Message = "The credential source returned invalid token material."
-		check.Action = "Reauthenticate the explicit account; credentials were not printed."
-		add(check)
-		return
-	}
-	check.Status = Pass
-	check.Message = "The explicit " + in.Config.CredentialSource + " credential route produced a token."
+	check.Message = "This profile signs in with Google, which was removed in v1.0."
+	check.Action = "Ask an owner for an invite (or a recovery invite) and run clawbridge join; see docs/operations/google-sign-in-removal.md."
 	add(check)
 }
 
@@ -1358,7 +1308,7 @@ func checkMirror(ctx context.Context, in Input, wid, pid string, resolved bool, 
 		return
 	}
 	snapshot, err := mirror.Load(ctx, in.Config.Cache, mirror.Binding{
-		Server: in.Config.Server, Audience: remote.MirrorAudience(in.Config.Audience, in.Config.CredentialSource, in.Config.DeviceID), Principal: in.Config.Principal,
+		Server: in.Config.Server, Audience: remote.MirrorAudience("", in.Config.CredentialSource, in.Config.DeviceID), Principal: in.Config.Principal,
 		Workspace: wid, Project: pid, Session: in.Config.Session, Instance: in.Config.Instance,
 	})
 	if err != nil {
@@ -1585,38 +1535,13 @@ func expectedMCPEntry(mcp MCPConfig) (map[string]any, error) {
 			return nil, errors.New("absolute cache path required")
 		}
 		route, err := remote.ValidateRoute(remote.Config{
-			URL: mcp.Server, Audience: mcp.Audience, Account: mcp.Account,
-			ImpersonateServiceAccount: mcp.ImpersonateServiceAccount,
-			Principal:                 mcp.Principal, CachePath: mcp.Cache,
-			CredentialSource: mcp.CredentialSource, CredentialsFile: mcp.CredentialsFile,
-			OAuthClientID: mcp.OAuthClientID, OAuthDeviceClientID: mcp.OAuthDeviceClientID,
-			OAuthKeyringService: mcp.OAuthKeyringService,
-			DeviceID:            mcp.DeviceID, KeyStore: mcp.KeyStore,
+			URL: mcp.Server, Principal: mcp.Principal, CachePath: mcp.Cache,
+			CredentialSource: mcp.CredentialSource, DeviceID: mcp.DeviceID, KeyStore: mcp.KeyStore,
 		})
 		if err != nil {
 			return nil, err
 		}
-		if route.CredentialSource == remote.CredentialSourceDevice {
-			args = append(args, "--server", route.URL, "--credential-source", route.CredentialSource)
-		} else {
-			args = append(args, "--server", route.URL, "--audience", route.Audience, "--credential-source", route.CredentialSource)
-		}
-		switch route.CredentialSource {
-		case remote.CredentialSourceDevice:
-			args = append(args, "--device-id", route.DeviceID, "--key-store", route.KeyStore)
-		case remote.CredentialSourceGcloud:
-			args = append(args, "--account", route.Account, "--impersonate-service-account", route.ImpersonateServiceAccount)
-		case remote.CredentialSourceADC:
-			args = append(args, "--credentials-file", route.CredentialsFile, "--account", route.Account, "--impersonate-service-account", route.ImpersonateServiceAccount)
-		case remote.CredentialSourceOAuth:
-			args = append(args, "--oauth-client-id", route.OAuthClientID)
-			if route.OAuthDeviceClientID != "" {
-				args = append(args, "--oauth-device-client-id", route.OAuthDeviceClientID)
-			}
-			if route.OAuthKeyringService != "" {
-				args = append(args, "--oauth-keyring-service", route.OAuthKeyringService)
-			}
-		}
+		args = append(args, "--server", route.URL, "--credential-source", route.CredentialSource, "--device-id", route.DeviceID, "--key-store", route.KeyStore)
 		args = append(args, "--principal", route.Principal, "--cache", route.CachePath)
 	default:
 		return nil, errors.New("mode required")

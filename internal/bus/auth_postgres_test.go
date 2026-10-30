@@ -343,9 +343,10 @@ func TestPostgresDevicesAndRecovery(t *testing.T) {
 	if _, err = f.asDevice(ada, keyID(t, fresh), f.list()); err != nil {
 		t.Fatal(err)
 	}
-	// Enrolling needs a Google sign-in, not a device.
+	// Enrolling needed a Google sign-in (removed in v1.0): a device is told
+	// how a new machine joins.
 	enroll := Request{Operation: "device_enroll", Workspace: f.workspace, Args: map[string]any{"public_key": newKey(t), "label": "work", "key_store": "keyring"}}
-	if _, err = f.asDevice(ada, keyID(t, fresh), enroll); !refusedWith(err, "Google") {
+	if _, err = f.asDevice(ada, keyID(t, fresh), enroll); !refusedWith(err, "Google sign-in was removed in v1.0; a new machine joins with an invite") {
 		t.Fatal("a device enrolled a device:", err)
 	}
 	if _, err = f.as(f.owner, "sub-owner", enroll); err != nil {

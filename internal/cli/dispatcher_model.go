@@ -266,6 +266,9 @@ func sendModelSetup(ctx context.Context, exec dispatchermodel.Exec, request disp
 type ExitCodeError struct {
 	Code int
 	Err  error
+	// Whole says the message already names its command, so it is printed
+	// as is, without "clawbridge:" in front.
+	Whole bool
 }
 
 func (e *ExitCodeError) Error() string { return e.Err.Error() }

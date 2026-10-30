@@ -8,8 +8,8 @@ description: "Coordinate coding agents through ClawBridge: find Linear slice own
 Use the installed ClawBridge MCP tools when available; otherwise use its CLI.
 Read [references/cli.md](references/cli.md) for CLI setup, resumption, or a missing
 MCP binding. Read [references/recovery.md](references/recovery.md) when a request
-fails or a peer retires. ClawBridge supports local mode and an explicitly trusted,
-Google-authenticated cloud mode. Cloud clients may use a project-scoped read-only
+fails or a peer retires. ClawBridge supports local mode and an explicitly trusted
+cloud mode, signed with the human's device key. Cloud clients may use a project-scoped read-only
 mirror during a transport or service outage.
 
 ## Start here (a newly joined agent)
@@ -179,7 +179,7 @@ the recorded instance and call `register_session` with `resume: true` to rotate
 the instance and fence the previous process; record the returned new instance.
 Use a new name for a replacement
 of a retired session. Inspect existing scheduled jobs, if any, before recreating
-them. An instance distinguishes runs; it is not a Google credential.
+them. An instance distinguishes runs; it is not a credential.
 
 ## Fail explicitly
 

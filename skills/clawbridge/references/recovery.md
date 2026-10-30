@@ -32,7 +32,7 @@
 | Your person shows you a stopped `linear move --file` | It's a person's command; you loop over the single move instead. An `uncertain` item waits until the project owner, or the project lead who confirmed it, acknowledges it (`linear writes --ack OP:<index>`); one acknowledged but still in its old team is moved on its own under a new operation ID, then the batch is re-run with the same `--operation-id` |
 | `outcome: uncertain` on an issue create, update, comment or relation | It may have reached Linear. Never send it again under a new operation ID; tell the human, who reads the issue in Linear. `clawbridge linear writes` lists it (`issue_writes`) until they run `linear writes --ack OP_ID` from their own terminal |
 | `rate_limited`: Linear's own rate limit has no room (or a cap the project's owner opted into is spent; there is none by default) | Nothing was sent. Wait until the retry time the answer gives, then retry the same operation ID and payload. Never switch to the app profile, or any other route, to get around it |
-| `identity_revoked`: a queued write whose session, role, device or Google account no longer holds at send time | Nothing was sent. Tell the human; a later write is a new decision, with a new operation ID |
+| `identity_revoked`: a queued write whose session, role or device no longer holds at send time | Nothing was sent. Tell the human; a later write is a new decision, with a new operation ID |
 | `linked_only`: a full read of a team the binding lists only as linked | Nothing was read. That team isn't yours to read in full; ask the coordinator for the context you need |
 | Database contention | Retry within a reasonable bound using the same operation ID for the same send; report persistent failure |
 

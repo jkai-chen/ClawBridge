@@ -1,17 +1,13 @@
 package integration
 
 import (
-	"bytes"
 	"context"
 	"errors"
-	"os"
-	"path/filepath"
 	"reflect"
 	"strings"
 	"sync"
 	"testing"
 
-	"clawbridge/internal/bus"
 	"clawbridge/internal/setup"
 )
 
@@ -172,191 +168,6 @@ func TestSetupRejectsMissingExplicitProjectAndCost(t *testing.T) {
 			mutate(&input)
 			if plan, err := setup.BuildPlan(input); err == nil {
 				t.Fatalf("missing %s accepted: %+v", name, plan)
-			}
-		})
-	}
-}
-
-type joinExecutor struct {
-	mu         sync.Mutex
-	resolve    [][4]string
-	requests   []bus.Request
-	resolveID  [2]string
-	resolveErr error
-	result     bus.Result
-	execErr    error
-}
-
-func (e *joinExecutor) ResolveProject(_ context.Context, workspace, project, remote string) (string, string, error) {
-	e.mu.Lock()
-	defer e.mu.Unlock()
-	e.resolve = append(e.resolve, [4]string{workspace, project, remote, ""})
-	return e.resolveID[0], e.resolveID[1], e.resolveErr
-}
-
-func (e *joinExecutor) Execute(_ context.Context, req bus.Request) (bus.Result, error) {
-	e.mu.Lock()
-	defer e.mu.Unlock()
-	e.requests = append(e.requests, req)
-	return e.result, e.execErr
-}
-
-func (e *joinExecutor) operations() []string {
-	e.mu.Lock()
-	defer e.mu.Unlock()
-	out := make([]string, len(e.requests))
-	for i, req := range e.requests {
-		out[i] = req.Operation
-	}
-	return out
-}
-
-func joinInput(path string) setup.JoinInput {
-	return setup.JoinInput{
-		ConfigPath: path, Workspace: "workspace", Project: "project",
-		Session: "session", Instance: "instance",
-		Server: "https://bus.example.test", Audience: "https://audience.example.test",
-		Account:                   "person@example.test",
-		ImpersonateServiceAccount: "client@example.test.iam.gserviceaccount.com",
-		Principal:                 "client@example.test.iam.gserviceaccount.com",
-		Cache:                     filepath.Join(filepath.Dir(path), "cache.db"),
-		CredentialSource:          "gcloud",
-	}
-}
-
-func verifiedWhoami(wid, pid string, input setup.JoinInput) bus.Result {
-	return bus.Result{Source: "server", Data: map[string]any{
-		"workspace":           map[string]any{"id": wid},
-		"project":             map[string]any{"id": pid},
-		"principal":           strings.ToLower(input.Principal),
-		"identity_provenance": "google-id-token", "verified": true,
-		"storage_mode": "cloud", "online": true,
-	}}
-}
-
-func TestSetupJoinAuthorizesBeforeAtomicTrustedConfigWrite(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "config.toml")
-	original := []byte("mode = \"cloud\"\nunrelated = \"preserve-me\"\n")
-	if err := os.WriteFile(path, original, 0600); err != nil {
-		t.Fatal(err)
-	}
-	input := joinInput(path)
-	ctx := context.Background()
-
-	for name, configure := range map[string]func(*joinExecutor){
-		"resolve-denied": func(e *joinExecutor) { e.resolveErr = errors.New("forbidden: no membership") },
-		"whoami-denied": func(e *joinExecutor) {
-			e.resolveID = [2]string{"ws_immutable", "prj_immutable"}
-			e.execErr = errors.New("forbidden: no membership")
-		},
-		"unverified": func(e *joinExecutor) {
-			e.resolveID = [2]string{"ws_immutable", "prj_immutable"}
-			e.result = bus.Result{Source: "server", Data: map[string]any{
-				"workspace": map[string]any{"id": "ws_immutable"},
-				"project":   map[string]any{"id": "prj_immutable"},
-				"principal": input.Principal, "verified": false,
-				"storage_mode": "cloud", "online": true,
-			}}
-		},
-	} {
-		t.Run(name, func(t *testing.T) {
-			exec := &joinExecutor{}
-			configure(exec)
-			if _, err := setup.Join(ctx, input, exec); err == nil {
-				t.Fatal("failed/denied join succeeded")
-			}
-			got, err := os.ReadFile(path)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if !bytes.Equal(got, original) {
-				t.Fatalf("failed join changed config:\n%s", got)
-			}
-			for _, operation := range exec.operations() {
-				if operation != "whoami" {
-					t.Fatalf("join invoked mutating/unexpected operation %q", operation)
-				}
-			}
-		})
-	}
-
-	exec := &joinExecutor{resolveID: [2]string{"ws_immutable", "prj_immutable"}}
-	exec.result = verifiedWhoami(exec.resolveID[0], exec.resolveID[1], input)
-	result, err := setup.Join(ctx, input, exec)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !result.Changed || result.Workspace != "ws_immutable" || result.Project != "prj_immutable" {
-		t.Fatalf("join result does not prove immutable scope: %+v", result)
-	}
-	if got := exec.operations(); len(got) != 1 || got[0] != "whoami" {
-		t.Fatalf("successful join operations=%v, want only whoami", got)
-	}
-	raw, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, required := range []string{
-		`mode = 'cloud'`, `workspace = 'ws_immutable'`, `project = 'prj_immutable'`,
-		`server = 'https://bus.example.test'`, `audience = 'https://audience.example.test'`,
-		`unrelated = 'preserve-me'`, `session = 'session'`, `instance = 'instance'`,
-	} {
-		if !strings.Contains(string(raw), required) {
-			t.Fatalf("trusted config omits %s:\n%s", required, raw)
-		}
-	}
-	info, err := os.Stat(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if info.Mode().Perm() != 0600 {
-		t.Fatalf("trusted config mode=%o, want 600", info.Mode().Perm())
-	}
-
-	before := append([]byte(nil), raw...)
-	again, err := setup.Join(ctx, input, exec)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if again.Changed {
-		t.Fatal("identical join rewriting config was reported as changed")
-	}
-	after, _ := os.ReadFile(path)
-	if !bytes.Equal(before, after) {
-		t.Fatal("idempotent join rewrote config bytes")
-	}
-}
-
-func TestSetupADeniedJoinPreservesMalformedAndLocalTrustedConfig(t *testing.T) {
-	dir := t.TempDir()
-	input := joinInput(filepath.Join(dir, "config.toml"))
-	input.ConfigPath = filepath.Join(dir, "config.toml")
-	exec := &joinExecutor{resolveID: [2]string{"ws", "prj"}}
-	exec.result = verifiedWhoami("ws", "prj", input)
-	for name, original := range map[string][]byte{
-		"malformed": []byte("not valid = ["),
-		"local":     []byte("mode = \"local\"\n"),
-	} {
-		t.Run(name, func(t *testing.T) {
-			path := filepath.Join(dir, name+".toml")
-			input.ConfigPath = path
-			if err := os.WriteFile(path, original, 0644); err != nil {
-				t.Fatal(err)
-			}
-			if _, err := setup.Join(context.Background(), input, exec); err == nil {
-				t.Fatalf("join accepted %s trusted config", name)
-			}
-			got, err := os.ReadFile(path)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if !bytes.Equal(got, original) {
-				t.Fatalf("failed %s join changed bytes:\n%s", name, got)
-			}
-			info, _ := os.Stat(path)
-			if info.Mode().Perm() != 0644 {
-				t.Fatalf("failed join changed config permissions to %o", info.Mode().Perm())
 			}
 		})
 	}

@@ -338,7 +338,7 @@ func Offline(ctx context.Context, path string, b Binding, r bus.Request) (bus.Re
 	var data map[string]any
 	switch r.Operation {
 	case "whoami":
-		data = map[string]any{"workspace": s.Data["workspace"], "project": s.Data["project"], "session": s.Data["session"], "principal": s.Binding.Principal, "verified": false, "identity_provenance": "cached-google-id-token", "storage_mode": "offline-mirror", "online": false}
+		data = map[string]any{"workspace": s.Data["workspace"], "project": s.Data["project"], "session": s.Data["session"], "principal": s.Binding.Principal, "verified": false, "identity_provenance": "cached-sign-in", "storage_mode": "offline-mirror", "online": false}
 		if b.Session == "" {
 			data["session"] = nil
 		}

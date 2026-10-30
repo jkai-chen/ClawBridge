@@ -62,34 +62,21 @@ same compiled CLI and real MCP stdio. No tests write real agent configuration.
     restore VM/disk, a read-only database and application query proving that row
     survived, and deletion of only the disposable restore resources. Automated
     tests never create cloud resources.
-17. **OAuth discovery/login:** use loopback HTTP fixtures and temporary homes to
-    prove an explicit applicable client ID skips discovery; otherwise browser or
-    device login requests exactly `GET <trusted-server>/v1/config`. Reject
-    redirects, insecure non-loopback URLs, malformed/duplicate/unknown/non-string
-    or trailing JSON, oversized or timed-out responses, non-2xx status and an
-    empty applicable ID or secret before acquisition. On synthetic success,
-    browser login promotes the matching browser ID/audience/secret while
-    preserving explicitly configured device values; device login promotes the
-    matching device client ID/audience/secret and removes the displaced Desktop
-    secret; keychain/config write failures roll back; and repeated logout remains
-    idempotent. The public config response contains exactly
-    `browser_client_id`, `browser_client_secret`, `device_client_id` and
-    `device_client_secret`, with matching non-empty values and no other field.
-    Treat the two installed-app credentials as public only at the discovery
-    boundary: CLI/doctor output, provider errors, installer results and MCP
-    argv/environment must not repeat either secret.
-18. **Live OAuth client compatibility:** against an explicitly supplied HTTPS
-    deployment, discover the exact four public installed-app credential fields
-    and submit dummy device-code and authorization-code grants with each client's
-    matching secret. Both grants must be rejected for the dummy grant itself,
-    rather than for a missing or mismatched client secret. Separately, run the
-    built CLI with a temporary home/config and a `PATH` where `gcloud` is absent.
-    Discovery and device-code acquisition must reach Google polling without using
-    gcloud or exposing the public app credentials in output. Human consent,
-    refresh-token storage, real OS keychain behavior and Caddy deployment evidence
-    stay in separate rows.
+17. **Sign-in is device keys only (v1.0):** Google sign-in was removed. A
+    served Bearer credential is refused with `unauthenticated` and the swap
+    runbook's text (docs/operations/google-sign-in-removal.md); a `serve` start
+    naming `google` in `--auth`, or passing `--audience` or an OAuth client
+    flag, exits 2 with its own text before the database; Google sign-in's five
+    old settings in the environment are ignored with one warning that prints no
+    value; `GET /v1/config` names `device` and the public origin, with the four
+    old OAuth keys present and empty for v0.3 clients. On the client, `login`,
+    `logout`, `setup join` and `device enroll` exit 2 pointing at an invite and
+    `clawbridge join`; a profile still on `oauth`, `gcloud` or `adc` is refused
+    the same way, its old keys load with one warning, and the refresh token a
+    Google sign-in kept in the OS keychain is deleted once. The scheduler's OIDC
+    tick still verifies on a device-only server.
 
 Live Claude/Codex conformance remains a separate result: protocol simulation alone
-cannot prove either agent loaded and used this server. Live Google authentication,
-IAM and cloud recovery must also remain distinct from synthetic fixtures unless
+cannot prove either agent loaded and used this server. Live IAM and cloud
+recovery must also remain distinct from synthetic fixtures unless
 the owner independently performs and records those checks.

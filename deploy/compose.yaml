@@ -24,27 +24,19 @@ services:
       - serve
       - --listen
       - 0.0.0.0:8080
-      # Sign-in methods: google (the default, and what an existing deployment
-      # keeps), device, or google,device. With google, serve refuses to start
-      # unless the audience and all four OAuth settings below are set.
+      # Sign-in: device keys, the only method since v1.0 removed Google
+      # sign-in. CLAWBRIDGE_AUTH=google (or google,device) refuses to start:
+      # docs/operations/google-sign-in-removal.md.
       - --auth
-      - ${CLAWBRIDGE_AUTH:-google}
+      - ${CLAWBRIDGE_AUTH:-device}
       - --public-origin
       - https://${CLAWBRIDGE_DOMAIN:?Set the public DNS name for ClawBridge}
-      - --audience
-      - ${CLAWBRIDGE_AUDIENCE:-}
       - --bootstrap-owner
       - ${CLAWBRIDGE_BOOTSTRAP_OWNER:?Select the verified bootstrap principal}
-      - --oauth-client-id
-      - ${CLAWBRIDGE_OAUTH_CLIENT_ID:-}
-      - --oauth-device-client-id
-      - ${CLAWBRIDGE_OAUTH_DEVICE_CLIENT_ID:-}
     environment:
       # Read by `operator bootstrap-invite`.
       CLAWBRIDGE_BOOTSTRAP_OWNER: ${CLAWBRIDGE_BOOTSTRAP_OWNER:?Select the verified bootstrap principal}
       CLAWBRIDGE_DATABASE_URL: postgres://clawbridge:${POSTGRES_PASSWORD:?Set a private random database password}@db:5432/clawbridge?sslmode=disable
-      CLAWBRIDGE_OAUTH_CLIENT_SECRET: ${CLAWBRIDGE_OAUTH_CLIENT_SECRET:-}
-      CLAWBRIDGE_OAUTH_DEVICE_CLIENT_SECRET: ${CLAWBRIDGE_OAUTH_DEVICE_CLIENT_SECRET:-}
       # Optional: the ClawBridge Linear app (docs/operations/deployment.md).
       # Left empty, the server starts without app writes.
       CLAWBRIDGE_LINEAR_APP_CLIENT_ID: ${CLAWBRIDGE_LINEAR_APP_CLIENT_ID:-}

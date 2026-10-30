@@ -17,14 +17,16 @@ import (
 	"clawbridge/internal/install"
 )
 
-func TestPhase4CLIInstallerPinsTrustedOAuthWithoutSecrets(t *testing.T) {
+func TestPhase4CLIInstallerPinsTrustedRouteWithoutSecrets(t *testing.T) {
 	p := newProcessFixture(t)
 	dir := t.TempDir()
 	path := filepath.Join(dir, "trusted.toml")
 	target := filepath.Join(dir, "agent.json")
 	const browserSecret = "synthetic-P4-browser-secret"
 	const deviceSecret = "synthetic-P4-device-secret"
-	raw := []byte("mode='cloud'\nserver='https://bus.example.test'\naudience='browser.apps.googleusercontent.com'\ncredential_source='oauth'\noauth_client_id='browser.apps.googleusercontent.com'\noauth_client_secret='" + browserSecret + "'\noauth_device_client_id='device.apps.googleusercontent.com'\noauth_device_client_secret='" + deviceSecret + "'\nprincipal='member@example.test'\nworkspace='ws_test'\nproject='prj_test'\nsession='operator'\ninstance='operator-instance'\ncache=" + quoteTOML(filepath.Join(dir, "cache.db")) + "\n")
+	// A device route that still carries Google sign-in's old secrets
+	// (unused since v1.0): they are never installed or shown.
+	raw := []byte("mode='cloud'\nserver='https://bus.example.test'\ncredential_source='device'\ndevice_id='dev_abcdefghjkmnpqrstvwxyz0123'\nkey_store='keyring'\noauth_client_secret='" + browserSecret + "'\noauth_device_client_secret='" + deviceSecret + "'\nprincipal='member@example.test'\nworkspace='ws_test'\nproject='prj_test'\nsession='operator'\ninstance='operator-instance'\ncache=" + quoteTOML(filepath.Join(dir, "cache.db")) + "\n")
 	if err := os.WriteFile(path, raw, 0600); err != nil {
 		t.Fatal(err)
 	}
@@ -60,19 +62,19 @@ func TestPhase4CLIInstallerPinsTrustedOAuthWithoutSecrets(t *testing.T) {
 			continue
 		}
 		if err != nil {
-			t.Fatalf("install inherited OAuth route: %v: %s", err, all)
+			t.Fatalf("install inherited the trusted route: %v: %s", err, all)
 		}
 		var result install.Result
 		if err := json.Unmarshal(out, &result); err != nil {
 			t.Fatal(err)
 		}
 		encoded, _ := json.Marshal(result.Entry)
-		for _, want := range []string{path, "distinct-agent", "ws_test", "prj_test", "cloud", "oauth"} {
+		for _, want := range []string{path, "distinct-agent", "ws_test", "prj_test", "cloud", "device", "dev_abcdefghjkmnpqrstvwxyz0123"} {
 			if !strings.Contains(string(encoded), want) {
 				t.Errorf("installed route omitted %q", want)
 			}
 		}
-		for _, forbidden := range []string{"operator-instance", "--oauth-client-secret", "--oauth-device-client-secret", "--db"} {
+		for _, forbidden := range []string{"operator-instance", "oauth", "--audience", "--db"} {
 			if strings.Contains(string(encoded), forbidden) {
 				t.Errorf("installed route contains forbidden %q", forbidden)
 			}
@@ -104,13 +106,11 @@ func TestPhase4CLIRejectsBeforeAuthorityOrStorage(t *testing.T) {
 		{"relative-config", []string{"--client-config", "relative.toml", "whoami"}, "absolute", false},
 		{"empty-config", []string{"--client-config=", "whoami"}, "nonempty", false},
 		{"duplicate-config", []string{"--client-config", "/first.toml", "whoami", "--client-config", "/second.toml"}, "once", false},
-		{"missing-explicit-server", []string{"setup", "join", "--workspace", "w", "--project", "p"}, "explicit", false},
-		{"missing-explicit-workspace", []string{"setup", "join", "--server", srv.URL, "--project", "p"}, "explicit", false},
-		{"missing-explicit-project", []string{"setup", "join", "--server", srv.URL, "--workspace", "w"}, "explicit", false},
-		{"conflicting-acquisition", []string{"setup", "join", "--login", "--device", "--server", srv.URL, "--workspace", "w", "--project", "p"}, "either", false},
-		{"actor-without-instance", []string{"setup", "join", "--server", srv.URL, "--workspace", "w", "--project", "p", "--session", "actor"}, "together", false},
-		{"join-positional", []string{"setup", "join", "unrequested", "--server", srv.URL, "--workspace", "w", "--project", "p"}, "flags only", false},
-		{"join-help", []string{"setup", "join", "--help"}, "", true},
+		// setup join was Google sign-in's join (removed in v1.0): refused
+		// with how to join instead, before any request.
+		{"setup-join-removed", []string{"setup", "join", "--server", srv.URL, "--workspace", "w", "--project", "p"}, "clawbridge join", false},
+		{"setup-join-help", []string{"setup", "join", "--help"}, "removed in v1.0", false},
+		{"login-removed", []string{"login"}, "clawbridge join", false},
 		{"tui-help", []string{"tui", "--help"}, "", true},
 		{"tui-nonterminal", []string{"tui"}, "terminal", false},
 		{"doctor-partial-selection", []string{"doctor", "--mcp-agent", "codex"}, "", false},

@@ -18,7 +18,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	"clawbridge/internal/auth"
 	"clawbridge/internal/buildinfo"
 	"clawbridge/internal/bus"
 	"clawbridge/internal/clirender"
@@ -66,27 +65,22 @@ Commands: setup --local, project create SLUG, register [NAME], sessions, send TO
           context bind [--session NAME] --codex-thread UUID|--agent K --transcript PATH, context hooks install|uninstall [--scope local|user|project-shared] [--channel]
 Interactive: bare clawbridge opens the selected profile, or Start without one; onboard reopens Start
 (local, join a team server, or your own server); setup wizard starts guided join.
-Onboarding: setup join --server URL --workspace TEAM --project CODEBASE [--login|--device]
-setup --cloud initializes an existing service only; no infrastructure is created.
+Onboarding: join (with an invite link or code from a workspace owner; sign-in is a device key on this machine)
 Global: --client-config /absolute/path/config.toml (trusted route; not agent --config)
-Commands: login [--device|--use-gcloud], logout,
-          join --email EMAIL (with --server URL: join a hosted workspace with an invite; asks for the code),
+Commands: join --email EMAIL (with --server URL: join a hosted workspace with an invite; asks for the code),
           invite, device, user, owner, workspace (accounts on a hosted workspace; each takes --help)
-Cloud flags: --mode cloud --server URL --audience AUDIENCE [--credential-source oauth|gcloud|adc|device] [--oauth-client-id ID --oauth-client-secret CREDENTIAL --oauth-device-client-id ID --oauth-device-client-secret CREDENTIAL] [--principal EMAIL] [--cache PATH]
+Cloud flags: --mode cloud --server URL --credential-source device --device-id ID --key-store keyring|file|env [--principal EMAIL] [--cache PATH]
 Results are laid out for people at a terminal and are JSON with source otherwise: on a pipe, in an agent's shell, with --json
 or CLAWBRIDGE_OUTPUT=json (--json=false or CLAWBRIDGE_OUTPUT=human asks for the layout). Scripts and agents: pass --json.
 See docs/reference/api.md for command flags and isolated test environment variables.
 `
 
-var (
-	browserLoginStaged   = auth.BrowserLoginStaged
-	deviceLoginStaged    = auth.DeviceLoginStaged
-	loginCredentialStore = func(service string) auth.Store {
-		return auth.KeyringStore{Service: service}
-	}
-	writeLoginConfig   = writeCredentialSourceConfig
-	discoverLoginOAuth = remote.DiscoverOAuthClient
-)
+// removedGoogleFlags were Google sign-in's global flags (v1.0 removed it).
+var removedGoogleFlags = map[string]bool{
+	"audience": true, "impersonate-service-account": true, "credentials-file": true,
+	"oauth-client-id": true, "oauth-client-secret": true, "oauth-device-client-id": true,
+	"oauth-device-client-secret": true, "oauth-keyring-service": true,
+}
 
 // extractGlobals permits global flags before or after commands without swallowing
 // flag-looking message bodies: use -- to mark the remainder as positional text.
@@ -96,14 +90,9 @@ func extractGlobals(args []string) (Config, []string, error) {
 	targets := map[string]*string{
 		"linear-profile": &c.LinearProfile, "client-config": &c.ClientConfig, "db": &c.DB, "workspace": &c.Workspace, "project": &c.Project,
 		"session": &c.Session, "instance": &c.Instance, "server": &c.Server,
-		"audience": &c.Audience, "account": &c.Account,
-		"impersonate-service-account": &c.ImpersonateServiceAccount,
-		"principal":                   &c.Principal, "cache": &c.Cache, "mode": &c.Mode,
-		"credential-source": &c.CredentialSource, "credentials-file": &c.CredentialsFile,
-		"oauth-client-id": &c.OAuthClientID, "oauth-client-secret": &c.OAuthClientSecret,
-		"oauth-device-client-id": &c.OAuthDeviceClientID, "oauth-device-client-secret": &c.OAuthDeviceClientSecret,
-		"oauth-keyring-service": &c.OAuthKeyringService,
-		"device-id":             &c.DeviceID, "key-store": &c.KeyStore,
+		"principal": &c.Principal, "cache": &c.Cache, "mode": &c.Mode,
+		"credential-source": &c.CredentialSource,
+		"device-id":         &c.DeviceID, "key-store": &c.KeyStore,
 	}
 	for i := 0; i < len(args); i++ {
 		arg := args[i]
@@ -130,6 +119,9 @@ func extractGlobals(args []string) (Config, []string, error) {
 				c.JSONFlag = strconv.FormatBool(b)
 			}
 			continue
+		}
+		if removedGoogleFlags[name] {
+			return c, nil, fmt.Errorf("--%s was for Google sign-in, removed in v1.0: ask an owner for an invite (or a recovery invite) and run clawbridge join; see docs/operations/google-sign-in-removal.md", name)
 		}
 		dest, ok := targets[name]
 		if !ok {
@@ -249,7 +241,14 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	}
 	// A server invocation has its own operator flags and never opens local state.
 	if len(args) > 0 && args[0] == "serve" {
-		return server.Run(ctx, args[1:])
+		err := server.Run(ctx, args[1:])
+		// A start that still names Google sign-in exits 2 with the
+		// runbook's own text.
+		var refused *server.StartRefused
+		if errors.As(err, &refused) {
+			return &ExitCodeError{Code: 2, Err: err, Whole: true}
+		}
+		return err
 	}
 	if len(args) > 0 && args[0] == "operator" {
 		return server.RunOperator(ctx, args[1:], stdout)
@@ -293,7 +292,7 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		return runWizard(ctx, flags, rest[2:], stdout, stderr)
 	}
 	if len(rest) >= 2 && rest[0] == "setup" && rest[1] == "join" {
-		return runJoin(ctx, flags, rest[2:], stdout, stderr)
+		return googleCommandRemoved("setup join")
 	}
 	if rest[0] == "onboard" {
 		return runOnboard(ctx, flags, rest[1:], stdout, stderr)
@@ -336,107 +335,10 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	case "invite", "device", "user", "owner", "workspace":
 		return runAccount(ctx, flags, rest[0], rest[1:], stdout, stderr)
 	}
+	// Google sign-in was removed in v1.0: its commands say how to join
+	// instead (docs/operations/google-sign-in-removal.md).
 	if rest[0] == "login" || rest[0] == "logout" {
-		command := rest[0]
-		commandArgs := rest[1:]
-		f := flag.NewFlagSet(command, flag.ContinueOnError)
-		f.SetOutput(stderr)
-		device := f.Bool("device", false, "sign in with a code on another device")
-		useGcloud := f.Bool("use-gcloud", false, "try the complete explicit gcloud route, then browser OAuth")
-		ordered, err := interspersedFlags(f, commandArgs)
-		if err != nil {
-			if errors.Is(err, flag.ErrHelp) {
-				return nil
-			}
-			return err
-		}
-		if err = f.Parse(ordered); err != nil {
-			if errors.Is(err, flag.ErrHelp) {
-				return nil
-			}
-			return err
-		}
-		if f.NArg() != 0 {
-			return fmt.Errorf("%s accepts flags only", command)
-		}
-		var config Config
-		var configPath string
-		if command == "login" && *useGcloud {
-			// A gcloud probe is a separate, explicitly selected route. It may
-			// borrow server/audience/scope from trusted config but cannot inherit
-			// OAuth client material, and an OAuth fallback cannot inherit the
-			// gcloud account/impersonation fields used only for that probe.
-			gcloudConfig, _, gcloudErr := resolveConfigVariant(ctx, flags, func(c Config) Config {
-				c.CredentialsFile = ""
-				c.OAuthClientID = ""
-				c.OAuthClientSecret = ""
-				c.OAuthDeviceClientID = ""
-				c.OAuthDeviceClientSecret = ""
-				c.OAuthKeyringService = ""
-				return c
-			})
-			if gcloudErr == nil {
-				source := &remote.GcloudTokenSource{
-					Account: gcloudConfig.Account, Audience: gcloudConfig.Audience,
-					ImpersonateServiceAccount: gcloudConfig.ImpersonateServiceAccount,
-				}
-				if _, probeErr := source.Token(ctx); probeErr == nil {
-					return emit(ctx, stdout, "login", map[string]any{
-						"credential_source": "gcloud", "principal": gcloudConfig.ImpersonateServiceAccount,
-					})
-				}
-			}
-			config, configPath, err = resolveConfigVariantMode(ctx, flags, func(c Config) Config {
-				c.CredentialSource = "oauth"
-				c.Account = ""
-				c.ImpersonateServiceAccount = ""
-				c.CredentialsFile = ""
-				return c
-			}, true, *device)
-			if err != nil {
-				return fmt.Errorf("gcloud was unavailable and browser OAuth fallback is not valid: %w", err)
-			}
-		} else {
-			if command == "login" {
-				config, configPath, err = resolveLoginConfig(ctx, flags, *device)
-			} else {
-				config, configPath, err = resolveConfig(ctx, flags)
-			}
-			if err != nil {
-				return err
-			}
-		}
-		if command == "logout" {
-			if *device || *useGcloud {
-				return errors.New("logout accepts only global configuration flags")
-			}
-			if config.OAuthClientID == "" {
-				return errors.New("no OAuth client is configured; logout cannot identify a keychain entry")
-			}
-			if err = auth.Logout(ctx, loginCredentialStore(config.OAuthKeyringService), config.OAuthClientID); err != nil {
-				return err
-			}
-			return emit(ctx, stdout, "logout", map[string]any{"logged_out": true, "client_id": config.OAuthClientID})
-		}
-		if *device && *useGcloud {
-			return errors.New("login accepts either --device or --use-gcloud, not both")
-		}
-		config, transaction, err := acquireOAuth(ctx, config, *device, stderr)
-		if err != nil {
-			return err
-		}
-		if err = writeLoginConfig(configPath, config); err != nil {
-			rollbackErr := transaction.Rollback(ctx)
-			if rollbackErr != nil {
-				return fmt.Errorf("login credential staged but trusted config write and keychain rollback both failed; prior configuration remains effective and login must be retried: %w", err)
-			}
-			return fmt.Errorf("login did not complete because trusted config update failed; prior configuration and keychain state were preserved: %w", err)
-		}
-		transaction.Commit()
-		return emit(ctx, stdout, "login", map[string]any{
-			"logged_in": true, "credential_source": "oauth",
-			"principal": config.Principal, "oauth_client_id": config.OAuthClientID,
-		})
+		return googleCommandRemoved(rest[0])
 	}
 	// Dispatch only from the command position; recipient names and message bodies
 	// may themselves be literal command words such as "mcp install".
@@ -485,10 +387,11 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
       Starts a local workspace on this machine. --project saves PROJECT as the
       default; create it with clawbridge project create PROJECT. Without it,
       the first project you create becomes the default.
-  clawbridge --server URL --audience AUDIENCE [--oauth-client-id ID --oauth-client-secret SECRET
-             --oauth-device-client-id ID --oauth-device-client-secret SECRET] setup --cloud --name WORKSPACE
-      Initializes a workspace on your own hosted server, as its bootstrap owner.
-      The routing flags come before "setup"; they are saved for later commands.
+  clawbridge setup --cloud --name WORKSPACE
+      Initializes a workspace on your own hosted server, as its bootstrap owner,
+      from a profile that signs with a device key. A new server's owner usually
+      joins with the host operator's bootstrap invite instead, which creates the
+      workspace (docs/operations/deployment.md).
 flags:`)
 			f.PrintDefaults()
 		}
@@ -878,17 +781,17 @@ flags:`)
 	case "purge-expired":
 		op = "purge_expired"
 	case "workspace-domains":
-		// Workspace owner only: accept only accounts managed by these Google
-		// Workspace domains, or clear the list to accept any member's account.
+		// Workspace owner only: accept only members whose email is in these
+		// domains, or clear the list to accept any member's email domain.
 		op = "workspace_set_domains"
 		arityMax = 20
-		f.Bool("clear", false, "clear the list, so any member's Google account is accepted")
+		f.Bool("clear", false, "clear the list, so any member's email domain is accepted")
 	case "principal-unbind":
-		// Server owner only: release an address from its Google account so
-		// the next sign-in with it binds the account that now holds it.
+		// Server owner only: release an address from its principal binding
+		// (made by Google sign-in before v1.0).
 		op = "principal_unbind"
 		arityMin, arityMax = 1, 1
-		f.Bool("confirm", false, "confirm releasing this address from its bound Google account")
+		f.Bool("confirm", false, "confirm releasing this address from its principal binding (made by Google sign-in before v1.0)")
 		f.Bool("allow-previous", false, "let the released account bind again, for an unbind made by mistake")
 	case "context":
 		// Only `context levels …` reaches here; see above.
@@ -938,9 +841,6 @@ flags:`)
 	if v, ok := a["session_account"]; ok {
 		a["account"] = v
 		delete(a, "session_account")
-	}
-	if config.Mode == "local" && (command == "register" || command == "update") && flags.Account != "" {
-		a["account"] = flags.Account
 	}
 	if command == "setup" {
 		local := f.Lookup("local").Value.(flag.Getter).Get().(bool)
@@ -1034,7 +934,7 @@ flags:`)
 		a["domains"] = append([]string{}, pos...)
 	case "principal-unbind":
 		if confirm := f.Lookup("confirm").Value.(flag.Getter).Get().(bool); !confirm {
-			return errors.New("principal-unbind releases an address from its Google account; repeat with --confirm")
+			return errors.New("principal-unbind releases an address from its principal binding (made by Google sign-in before v1.0); repeat with --confirm")
 		}
 		a["principal"] = pos[0]
 	case "retire":
@@ -1489,13 +1389,9 @@ func collectDoctor(ctx context.Context, config Config, configPath string, existi
 			Path: configPath, Present: true, Valid: true,
 			Mode: config.Mode, DB: config.DB, Workspace: config.Workspace,
 			Project: config.Project, Session: config.Session, Instance: config.Instance,
-			Server: config.Server, Audience: config.Audience,
-			Account: config.Account, ImpersonateServiceAccount: config.ImpersonateServiceAccount,
-			Principal: config.Principal, Cache: config.Cache,
-			CredentialSource: config.CredentialSource, CredentialsFile: config.CredentialsFile,
-			OAuthClientID: config.OAuthClientID, OAuthDeviceClientID: config.OAuthDeviceClientID,
-			OAuthKeyringService: config.OAuthKeyringService,
-			DeviceID:            config.DeviceID, KeyStore: config.KeyStore,
+			Server: config.Server, Principal: config.Principal, Cache: config.Cache,
+			CredentialSource: config.CredentialSource,
+			DeviceID:         config.DeviceID, KeyStore: config.KeyStore,
 		},
 		Skills: doctorSkills,
 	}
@@ -1521,18 +1417,6 @@ func collectDoctor(ctx context.Context, config Config, configPath string, existi
 			}
 		} else if in.Device.Err == nil {
 			in.Device.Err = err
-		}
-	} else if config.Mode == "cloud" {
-		routeConfig := remoteConfig(config)
-		tokens, err := remote.NewTokenSource(ctx, routeConfig)
-		if err == nil {
-			in.TokenSource = tokens
-			if executor == nil {
-				client, e := remote.NewWithTokenSource(routeConfig, tokens)
-				if e == nil {
-					executor = client
-				}
-			}
 		}
 	} else if executor == nil {
 		store, err := bus.Open(config.DB)

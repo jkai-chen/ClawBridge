@@ -8,8 +8,9 @@ deliveries and an append-only audit history. Session and message IDs are immutab
 
 The CLI, stdio MCP server and terminal UI use the same scoped application API.
 Local mode uses SQLite and attributes calls to the OS user. Hosted mode uses
-PostgreSQL behind an HTTPS API that verifies Google identity before applying
-workspace membership, project permissions and session-instance checks.
+PostgreSQL behind an HTTPS API that verifies each request's device-key signature
+before applying workspace membership, project permissions and session-instance
+checks. (Google sign-in was removed in v1.0.)
 
 A session's routing role describes its work. Project permissions determine what
 it can do. Explicit session instances fence old processes after a resumption;
@@ -57,9 +58,10 @@ fails fast.
 
 ## Credentials and configuration
 
-Trusted client configuration selects the authority, principal, credential backend
-and cache. Repository configuration supplies scope only. OAuth refresh credentials
-stay in the native keychain; access and ID tokens stay in memory. MCP entries
+Trusted client configuration selects the authority, principal, device key and
+cache. Repository configuration supplies scope only. The device's private key
+stays in the native key store (or a 0600 file, by choice) and never leaves the
+machine; each request is signed with it. MCP entries
 contain the trusted config path and safe routing values, rather than credentials.
 
 ## Task ownership

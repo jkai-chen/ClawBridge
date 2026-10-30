@@ -29,8 +29,8 @@ func withVersion(t *testing.T, v string) {
 
 func healthServer(t *testing.T, status int, body string) string {
 	t.Helper()
-	// A Google-only server leaves auth_methods out.
-	return configServer(t, status, body, `{"browser_client_id":"id"}`)
+	// A v1.0 server: device keys only.
+	return configServer(t, status, body, `{"auth_methods":["device"]}`)
 }
 
 // configServer is healthServer that also answers /v1/config with config.
@@ -447,7 +447,6 @@ func TestRemoteSetScript(t *testing.T) {
 func TestSecretKeysArePinned(t *testing.T) {
 	want := map[string]bool{
 		"CLAWBRIDGE_LINEAR_APP_CLIENT_ID": true, "CLAWBRIDGE_LINEAR_APP_CLIENT_SECRET": true,
-		"CLAWBRIDGE_OAUTH_CLIENT_SECRET": true, "CLAWBRIDGE_OAUTH_DEVICE_CLIENT_SECRET": true,
 	}
 	if !reflect.DeepEqual(secretKeys, want) {
 		t.Fatalf("secret set keys: %v", secretKeys)

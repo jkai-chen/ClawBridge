@@ -4,6 +4,10 @@ Owner request, 21 October 2026: installed users type `clawbridge`, rather than
 assembling onboarding flags. This increment reuses Phase 4 join and TUI; it does
 not introduce infrastructure provisioning or another credential backend.
 
+> **Since v1.0** Google sign-in is removed: the guided join takes an invite and
+> makes a device key ([signing in](../sign-in.md)). The OAuth wording below is
+> this design's history.
+
 ## Entry and routing
 
 - Bare `clawbridge` in an interactive terminal checks the selected trusted config.

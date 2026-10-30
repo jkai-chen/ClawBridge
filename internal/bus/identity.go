@@ -426,7 +426,7 @@ func (s *Store) domainGate(raw any) error {
 }
 
 func errDomainRefused() error {
-	return &serviceError{code: "forbidden", cause: errors.New("this workspace accepts only accounts managed by its allowed Google Workspace domains"), public: true}
+	return &serviceError{code: "forbidden", cause: errors.New("this workspace accepts only members whose email is in its allowed domains"), public: true}
 }
 
 // admittedUnderLock re-checks, under the workspace lock the caller holds,
@@ -491,7 +491,7 @@ func (s *Store) setWorkspaceDomains(ctx context.Context, tx *transaction, w map[
 		return nil, invalid("at most 20 allowed domains")
 	}
 	if len(clean) > 0 && (s.hostedDomain == "" || !seen[s.hostedDomain]) {
-		return nil, invalid("the allowed domains must include your own account's Google Workspace domain")
+		return nil, invalid("the allowed domains must include your own email's domain")
 	}
 	return s.writeWorkspaceDomains(ctx, tx, w["id"].(string), clean)
 }

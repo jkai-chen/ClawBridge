@@ -282,13 +282,19 @@ func checkServer(ctx context.Context, p *cloudProbe) cloudResult {
 	if err != nil {
 		return p.remoteFailure("server", err)
 	}
-	if r = checkSettings(f); r.Status != "pass" {
-		return r
+	// A warning (Google sign-in's leftover settings) lets the other
+	// checks run, and is the answer when they pass.
+	settings := checkSettings(f)
+	if settings.Status == "fail" {
+		return settings
 	}
 	if r = checkServices(f); r.Status != "pass" {
 		return r
 	}
-	return p.checkAuthMode(ctx, f.auth)
+	if r = p.checkAuthMode(ctx, f.auth); r.Status != "pass" {
+		return r
+	}
+	return settings
 }
 
 // checkAuthMode compares the env file's sign-in methods with the running
@@ -312,8 +318,8 @@ func (p *cloudProbe) checkAuthMode(ctx context.Context, mode string) cloudResult
 	if resp.StatusCode != http.StatusOK || json.NewDecoder(io.LimitReader(resp.Body, 64<<10)).Decode(&body) != nil {
 		return failed("server", "config_unreadable", "GET /v1/config did not answer; check the server's logs")
 	}
-	// A Google-only server leaves auth_methods out; a server too old to
-	// report them fails the version check.
+	// A server from before v1.0 with Google sign-in only leaves
+	// auth_methods out.
 	got := []string{"google"}
 	if body.AuthMethods != nil {
 		got = slices.Sorted(slices.Values(*body.AuthMethods))
@@ -354,7 +360,7 @@ func checkWorkspace(ctx context.Context, p *cloudProbe) cloudResult {
 	}
 	result, err := client.Execute(ctx, bus.Request{Operation: "whoami", Workspace: workspace, Project: project, Args: map[string]any{}})
 	if err != nil {
-		return failed("workspace", "whoami_failed", "run clawbridge login, then retry")
+		return failed("workspace", "whoami_failed", "join with an invite (clawbridge join), then retry")
 	}
 	data, _ := result.Data.(map[string]any)
 	w, _ := data["workspace"].(map[string]any)
@@ -379,10 +385,6 @@ var newCloudExecutor = func(c Config) (cloudExecutor, error) {
 var secretKeys = map[string]bool{
 	"CLAWBRIDGE_LINEAR_APP_CLIENT_ID":     true,
 	"CLAWBRIDGE_LINEAR_APP_CLIENT_SECRET": true,
-	// Removed with Google sign-in (v0.5): until then a deployment that
-	// still signs in with Google needs its two OAuth client secrets.
-	"CLAWBRIDGE_OAUTH_CLIENT_SECRET":        true,
-	"CLAWBRIDGE_OAUTH_DEVICE_CLIENT_SECRET": true,
 }
 
 const serverEnvFile = "/etc/clawbridge/clawbridge.env"

@@ -41,30 +41,3 @@ func TestLaunchBrowserReportsOnlyWhatItKnows(t *testing.T) {
 		t.Fatal("canceled wait not reported as unknown", opened, err)
 	}
 }
-
-func TestSignInShowsTheURLWhenTheLaunchIsNotConfirmed(t *testing.T) {
-	original := browserWait
-	t.Cleanup(func() { browserWait = original })
-	browserWait = 100 * time.Millisecond
-	var shown []string
-	show := func(u string) { shown = append(shown, u) }
-	fakeOpener(t, "sleep:5s")
-	if err := openBrowser(context.Background(), "https://accounts.example.test/auth", show); err != nil || len(shown) != 1 {
-		t.Fatal("unconfirmed launch did not show the URL", err, shown)
-	}
-	browserWait = 10 * time.Second // let even a slow-starting opener report its failure
-	fakeOpener(t, "exit:3")
-	if err := openBrowser(context.Background(), "https://accounts.example.test/auth", show); err != nil || len(shown) != 2 {
-		t.Fatal("failed launch did not fall back to showing the URL", err, shown)
-	}
-	if err := openBrowser(context.Background(), "https://accounts.example.test/auth", nil); err == nil {
-		t.Fatal("failed launch without a way to show the URL was not an error")
-	}
-	fakeOpener(t, "exit:0")
-	if err := openBrowser(context.Background(), "https://accounts.example.test/auth", show); err != nil || len(shown) != 2 {
-		t.Fatal("confirmed launch still showed the URL", err, shown)
-	}
-	if err := openBrowser(context.Background(), "http://insecure.example.test", show); err == nil {
-		t.Fatal("non-https sign-in URL opened")
-	}
-}

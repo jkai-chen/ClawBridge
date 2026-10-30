@@ -385,7 +385,7 @@ The project owner can read the project's messages, agents' included; each read i
 
 - **Who:** the project's owner (the workspace owner or a project `owner`), with no session: a request naming a
   session or an instance is `forbidden`. On the hosted authority the request must be signed by a person's device
-  key: a Google bearer, a CI device and the dispatcher's or the system's executor are `forbidden`.
+  key: a CI device and the dispatcher's or the system's executor are `forbidden`.
 - **Scope:** messages with this `project_id` that haven't expired, from `readable_from` on: the schema's migration
   time for a project that existed then, else the project's `created_at`. A thread is in scope only if its root is.
   Conversations started before that date stay private, even if they continue.
@@ -512,8 +512,7 @@ event: replaced | revoked | bye      (then the server closes)
   ownership transfer, an account unbind or a narrower domain allow-list wakes
   every stream on every server at once (through `cb_access`). A re-registered
   session's old stream closes the same way.
-- **A stream lives at most 30 minutes**, and no longer than a Google ID
-  token's expiry. Then it sends `bye`, as it does when the server shuts down
+- **A stream lives at most 30 minutes**. Then it sends `bye`, as it does when the server shuts down
   or the database is unavailable, and the client reconnects, which signs in
   again.
 - **One account holds at most 8 streams** of any mode on a server; the next
@@ -883,10 +882,15 @@ in maintenance.
 
 ## Hosted routes and failures
 
-`POST /v1/execute` accepts the request envelope and verifies the configured Google
-ID-token audience, signature, issuer, expiry and verified email. The service
-then enforces its own membership/project policy. `GET /v1/config` exposes only the
-configured installed-app OAuth discovery fields. `GET /healthz` checks process
+`POST /v1/execute` accepts the request envelope and verifies its
+`ClawBridge-Device` signature against the configured public origin (since v1.0,
+the only sign-in; a `Bearer` credential, a Google ID token from an older client,
+is refused with `unauthenticated`: "Google sign-in was removed; this server
+accepts device keys only: ask an owner for an invite (or a recovery invite) and
+run clawbridge join; see docs/operations/google-sign-in-removal.md"). The service
+then enforces its own membership/project policy. `GET /v1/config` exposes the
+sign-in method (`auth_methods`, `["device"]`) and `public_origin`, with the four
+old OAuth keys present and empty for clients older than v1.0. `GET /healthz` checks process
 health rather than certifying database or user access; it answers
 `{"status":"ok","version":"…"}` with the server's release.
 `GET /linear/callback` is the ClawBridge Linear app's redirect URL: a static
@@ -1049,7 +1053,7 @@ advice}`, otherwise a table. The exit status is non-zero when any check fails.
 | `infra` (Google Cloud) | with `--vm`: the VM is running; its external IP is a reserved static address in use; the server's domain resolves to that IP; a non-boot disk is attached and mounted at `/var/lib/clawbridge-postgres` (`findmnt`, over the target); last, TCP 443 answers, which it does only once the server runs | `needs_vm`, `vm_unreadable`, `vm_not_running`, `no_external_ip`, `ip_not_static`, `no_server`, `dns_mismatch`, `no_data_disk`, `ssh_failed`, `data_not_mounted`, `port_closed` |
 | `infra` (AWS) | with `--instance` and `--region`: the instance is running; its public IP is an Elastic IP associated with it; the domain resolves to that IP; a non-root EBS volume is attached and encrypted; its security groups let in tcp/443 and nothing else; SSM sees it online; the data volume is mounted (over SSM); last, TCP 443 answers | `needs_instance`, `cloud_auth`, `vm_unreadable`, `vm_not_running`, `no_external_ip`, `ip_not_static`, `no_server`, `dns_mismatch`, `no_data_disk`, `data_disk_unencrypted`, `ssh_port_open`, `extra_ingress`, `ssm_offline`, `parameters_unreadable`, `secret_left_behind`, `ssm_failed`, `data_not_mounted`, `port_closed` |
 | `infra` (any host over SSH) | with `--ssh`: 64-bit Linux, amd64 or arm64; Docker with Compose v2.24 or later; the env file, once it exists, mode 600 and owned by root; a separate volume mounted at `/var/lib/clawbridge-postgres`, or the owner's stated `CLAWBRIDGE_DATA_ON_ROOT_DISK=1` in the env file (a warning, `data_on_root_disk`); at least 10 GiB free there; the clock NTP-synchronised; the domain resolves; last, TCP 443 answers. A domain whose addresses are none of the host's own (normal behind 1:1 NAT) warns `dns_not_this_host`, and an unreadable clock warns `clock_unknown`: there is no cloud API to ask, and the 443 dial and `server`'s certificate prove the record | `no_server`, `needs_host`, `ssh_failed`, `host_key_unknown`, `sudo_needs_password`, `unsupported_platform`, `docker_missing`, `compose_too_old`, `env_file_mode`, `facts_incomplete`, `data_not_mounted`, `data_disk_full`, `clock_unsynced`, `dns_unresolved`, `port_closed` |
-| `server` | `GET /healthz` over HTTPS (plain HTTP only to loopback) answers 200 `{"status":"ok"}`, without following redirects; with a target, also every required setting of `deploy/compose.yaml` is set once in the env file; Google sign-in's five settings are all set unless `CLAWBRIDGE_AUTH=device`; the deployment's `api`, `caddy` and `db` containers run (`db` healthy); and the running server's `/v1/config` `auth_methods` match `CLAWBRIDGE_AUTH` (unset is `google`) | `no_server`, `invalid_url`, `dns`, `tls`, `unreachable`, `http_status`, `not_clawbridge`, `ssh_failed`, `host_key_unknown`, `sudo_needs_password`, `env_missing`, `setting_missing`, `setting_invalid`, `setting_duplicate`, `service_down`, `config_unreadable`, `auth_mismatch` |
+| `server` | `GET /healthz` over HTTPS (plain HTTP only to loopback) answers 200 `{"status":"ok"}`, without following redirects; with a target, also every required setting of `deploy/compose.yaml` is set once in the env file; `CLAWBRIDGE_AUTH` is unset or `device` (`google` fails, since v1.0 refuses it); the deployment's `api`, `caddy` and `db` containers run (`db` healthy); and the running server's `/v1/config` `auth_methods` is `device`. It warns (`google_settings_unused`) when any of Google sign-in's five old settings (`CLAWBRIDGE_AUDIENCE`, `CLAWBRIDGE_OAUTH_*`) is still in the env file | `no_server`, `invalid_url`, `dns`, `tls`, `unreachable`, `http_status`, `not_clawbridge`, `ssh_failed`, `host_key_unknown`, `sudo_needs_password`, `env_missing`, `setting_missing`, `setting_invalid`, `setting_duplicate`, `service_down`, `config_unreadable`, `auth_mismatch`, `google_settings_unused` (warn) |
 | `trust` (`--local` only) | an https server URL completes a TLS handshake against this machine's trust store; plain http to loopback is `pass` with reason `not_applicable` | `env_missing`, `setting_invalid`, `untrusted_ca`, `invalid_url`, `dns`, `tls`, `unreachable` |
 | `version` | the server's release equals the client's; a dev build on either side warns `dev_build` | `server_too_old`, `version_mismatch` |
 | `workspace` | `whoami` with the configured cloud profile shows the signed-in principal owns the workspace | `no_config`, `not_cloud`, `other_server`, `not_signed_in`, `no_workspace`, `whoami_failed`, `not_owner` |
@@ -1072,8 +1076,8 @@ Differences from the table:
 - `infra` is not a failure: it passes with reason `not_applicable`, as `trust` does for plain
   http. No `skip` status exists, so JSON consumers keep the three statuses `pass`, `warn` and
   `fail`.
-- `server` counts the three required settings once each (Google sign-in's five do not apply: the
-  local stack signs in with device keys, and `/v1/config` must say so), and the `api` and `db`
+- `server` counts the three required settings once each (the local stack signs in with device
+  keys, and `/v1/config` must say so), and the `api` and `db`
   containers run, with `caddy` too in shape B (`caddy-cert` instead when the env file sets
   `CLAWBRIDGE_TLS_CERT`, your own certificate). Extra reasons: `local_unreadable`.
 - `linear-app` does not count the entries (as without a target).
@@ -1122,10 +1126,8 @@ pass one. No check reads a secret or writes anything.
 `clawbridge cloud secret set KEY (--ssh HOST | --vm NAME --project P --zone Z |
 --instance ID --region R [--profile P] [--account N]) [--value-stdin]` writes one server setting the user holds, so it never passes
 through an agent. KEY is `CLAWBRIDGE_LINEAR_APP_CLIENT_ID` or
-`CLAWBRIDGE_LINEAR_APP_CLIENT_SECRET`, or, for a deployment that still signs in
-with Google, `CLAWBRIDGE_OAUTH_CLIENT_SECRET` or
-`CLAWBRIDGE_OAUTH_DEVICE_CLIENT_SECRET` (these two are removed with Google sign-in
-in v0.5). The value is read from a hidden prompt, or
+`CLAWBRIDGE_LINEAR_APP_CLIENT_SECRET` (the two OAuth client secrets went with
+Google sign-in in v1.0). The value is read from a hidden prompt, or
 from a pipe with `--value-stdin`; it must be one line of printable ASCII without
 whitespace, quotes, `$`, `#`, backslash or backtick, at most 4096 bytes. It
 travels on stdin over the user's own `ssh -T HOST` or `gcloud compute ssh …

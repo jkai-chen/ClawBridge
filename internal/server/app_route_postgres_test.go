@@ -34,7 +34,7 @@ func TestPostgresClientWritesThroughTheApp(t *testing.T) {
 	verifier := VerifierFunc(func(context.Context, string) (Identity, error) {
 		return Identity{Principal: f.owner, Subject: "sub-owner"}, nil
 	})
-	host := httptest.NewServer(NewHandlerWithApp(f.store, verifier, OAuthMetadata{}, f.writer))
+	host := httptest.NewServer(NewHandlerWithApp(f.store, verifier, f.writer))
 	defer host.Close()
 	client, err := remote.NewWithTokenSource(remote.Config{URL: host.URL, Audience: "audience", Principal: f.owner, CachePath: filepath.Join(t.TempDir(), "cache.db")}, remote.TokenSourceFunc(func(context.Context) (string, error) { return "synthetic-token", nil }))
 	if err != nil {

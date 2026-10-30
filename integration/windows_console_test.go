@@ -53,29 +53,26 @@ func TestWindowsGuidedSetupConsoleInput(t *testing.T) {
 	c.send("https://example.invalid")
 	c.expect("https://example.invalid", "typed text was not echoed")
 	c.send("\r")
-	// The service can't be reached, so both ways in are offered: "2" is Google.
-	c.expect("Choose 1 or 2", "Enter did not complete the prompt")
-	c.send("2\r")
-	c.expect("Workspace:", "the sign-in choice did not lead to the Google prompts")
-	// "wq", Backspace, "s-alpha" must answer "ws-alpha".
-	c.send("wq\x7fs-alpha\r")
-	c.expect("Project:", "Enter did not complete the workspace prompt")
-	c.send("p-alpha\r")
-	c.expect("show a code to enter on another device", "Enter did not complete the project prompt")
-	c.expect("Choose 1 or 2", "the sign-in choice did not prompt")
-	// "device" picks the code; a Backspace stored as a byte would be asked
-	// again instead, and the summary below would never come.
-	c.send("devicx\x7fe\r")
+	// The service can't be reached, so the invite is tried anyway: the only
+	// way in since v1.0 removed Google sign-in.
+	c.expect("trying an invite anyway", "Enter did not complete the prompt")
+	c.expect("Email the invite was issued for", "the invite path did not ask for the email")
+	// "adq", Backspace, "a@example.test" must answer "ada@example.test"; a
+	// Backspace stored as a byte would fail the email check and ask again.
+	c.send("adq\x7fa@example.test\r")
+	c.expect("Name for this device", "Enter did not complete the email prompt")
+	// "laptoq", Backspace, "p" must answer "laptop".
+	c.send("laptoq\x7fp\r")
 	// The wizard's own summary shows the answers it received.
-	c.expect("Workspace: ws-alpha", "Backspace did not edit the workspace answer")
-	c.expect("Sign-in: a code on another device", "Backspace did not edit the sign-in answer")
-	c.expect("Continue with sign-in", "the confirmation prompt did not appear")
+	c.expect("Email: ada@example.test", "Backspace did not edit the email answer")
+	c.expect("This device: laptop", "Backspace did not edit the device name")
+	c.expect("Continue, then paste the invite link or code?", "the confirmation prompt did not appear")
 	c.send("\x03")
 	if code := c.wait(15 * time.Second); code == 0 {
 		t.Fatal("Ctrl+C at the confirmation prompt did not cancel the guided setup")
 	}
-	if strings.Contains(c.text(), squash("ClawBridge keeps your sign-in")) {
-		t.Fatal("Ctrl+C was ignored: the guided setup continued to sign-in")
+	if strings.Contains(c.text(), squash("Invite link or code")) {
+		t.Fatal("Ctrl+C was ignored: the guided setup went on to ask for the code")
 	}
 	if _, err := os.Lstat(config); !os.IsNotExist(err) {
 		t.Fatal("a canceled guided setup wrote the client config", err)

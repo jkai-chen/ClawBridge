@@ -114,9 +114,9 @@ platform runtime acceptance is recorded in the
 Apart from `skill install`, and asking an already installed binary for its version,
 installation does not run ClawBridge, and it never
 signs in or changes a ClawBridge configuration. Running `clawbridge` opens your saved
-profile or first-run guided setup. Linux/WSL still requires an existing working
-Secret Service session for OAuth, as described under Linux and WSL credentials below. No gcloud installation is
-needed for browser/device OAuth. Binaries carry build provenance (below) but are not
+profile or first-run guided setup. On Linux/WSL a device key goes in an existing,
+working Secret Service session, or a file by your choice, as described under Linux
+and WSL credentials below. No gcloud installation is needed to sign in. Binaries carry build provenance (below) but are not
 code-signed; macOS notarization and Windows installer packages are separate future
 distribution options.
 
@@ -333,9 +333,7 @@ made private to your user, which ClawBridge's state files must be.
 sign-in, a keyring is no longer required for anything: a WSL install without a
 Secret Service can keep its device key (`join --key-store file`), its Linear
 connection (`linear connect --key-store file`) and its Linear API key (`linear key
-set --key-store file`) each in a private file, by your explicit choice. Google
-sign-in still needs a Secret Service in WSL, as [Linux and WSL
-credentials](#linux-and-wsl-credentials) describes.
+set --key-store file`) each in a private file, by your explicit choice.
 
 ## Build from source
 
@@ -350,15 +348,11 @@ bin/clawbridge --help
 
 ## Linux and WSL credentials
 
-OAuth refresh tokens use Linux Secret Service, not plaintext files. The
-ClawBridge process and the unlocked keyring must share the same user D-Bus
-session. This also applies to WSL and headless SSH: device sign-in changes the
-Google consent flow; it does **not** remove the native credential-store
-prerequisite. Windows Credential Manager is not automatically bridged into WSL.
-
-Device keys, from [signing in with an invite](sign-in.md) (the client side from v0.3.5), use
-the same Secret Service by default, but a machine without one can keep the key in a
-0600 file instead (`join --key-store file`). Read
+Device keys, from [signing in with an invite](sign-in.md), use Linux Secret
+Service by default. The ClawBridge process and the unlocked keyring must share the
+same user D-Bus session. This also applies to WSL and headless SSH. Windows
+Credential Manager is not automatically bridged into WSL. A machine without a
+Secret Service can keep the key in a 0600 file instead (`join --key-store file`). Read
 [what that means](sign-in.md#device-keys-the-os-key-store-or-a-file) first.
 
 The personal Linear connection (`linear connect`) does the same: the Secret Service

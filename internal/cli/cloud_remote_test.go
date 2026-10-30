@@ -143,7 +143,7 @@ func allSet() remoteFacts {
 	f := remoteFacts{counts: map[string]int{}, services: map[string][]string{
 		"db": {"running Up 1 hour (healthy)"}, "api": {"running Up 1 hour"}, "caddy": {"running Up 1 hour"},
 	}}
-	for _, k := range append(append(append([]string{}, requiredSettings...), googleSettings...), appSettings...) {
+	for _, k := range append(append([]string{}, requiredSettings...), appSettings...) {
 		f.counts[k] = 1
 	}
 	return f
@@ -154,39 +154,31 @@ func TestSettingsAndServices(t *testing.T) {
 		edit   func(*remoteFacts)
 		reason string
 	}{
-		"healthy":        {func(*remoteFacts) {}, ""},
-		"no env file":    {func(f *remoteFacts) { f.envMissing = true }, "env_missing"},
-		"missing":        {func(f *remoteFacts) { f.counts["CLAWBRIDGE_DOMAIN"] = 0 }, "setting_missing"},
-		"never counted":  {func(f *remoteFacts) { delete(f.counts, "POSTGRES_PASSWORD") }, "setting_missing"},
-		"twice":          {func(f *remoteFacts) { f.counts["CLAWBRIDGE_AUDIENCE"] = 2 }, "setting_duplicate"},
-		"google partial": {func(f *remoteFacts) { f.counts["CLAWBRIDGE_OAUTH_CLIENT_SECRET"] = 0 }, "setting_missing"},
-		"device only": {func(f *remoteFacts) {
-			f.auth = "device"
+		"healthy":       {func(*remoteFacts) {}, ""},
+		"no env file":   {func(f *remoteFacts) { f.envMissing = true }, "env_missing"},
+		"missing":       {func(f *remoteFacts) { f.counts["CLAWBRIDGE_DOMAIN"] = 0 }, "setting_missing"},
+		"never counted": {func(f *remoteFacts) { delete(f.counts, "POSTGRES_PASSWORD") }, "setting_missing"},
+		"twice":         {func(f *remoteFacts) { f.counts["CLAWBRIDGE_DOMAIN"] = 2 }, "setting_duplicate"},
+		"device only":   {func(f *remoteFacts) { f.auth = "device" }, ""},
+		// v1.0: unset is device; google refuses the server's start.
+		"auth unset":  {func(f *remoteFacts) { f.auth = "" }, ""},
+		"auth google": {func(f *remoteFacts) { f.auth = "google" }, "setting_invalid"},
+		"auth both":   {func(f *remoteFacts) { f.auth = "google,device" }, "setting_invalid"},
+		// Google sign-in's old settings left in the env file: a warning.
+		"a google setting left": {func(f *remoteFacts) { f.counts["CLAWBRIDGE_OAUTH_CLIENT_SECRET"] = 1 }, "google_settings_unused"},
+		"all five left, twice": {func(f *remoteFacts) {
 			for _, k := range googleSettings {
-				f.counts[k] = 0
+				f.counts[k] = 2
 			}
-		}, ""},
-		// R67-L1: no Google settings, but Google sign-in still on.
-		"no google, auth unset": {func(f *remoteFacts) {
-			for _, k := range googleSettings {
-				f.counts[k] = 0
-			}
-		}, "setting_missing"},
-		"no google, auth both": {func(f *remoteFacts) {
-			f.auth = "google,device"
-			for _, k := range googleSettings {
-				f.counts[k] = 0
-			}
-		}, "setting_missing"},
-		"device with google set": {func(f *remoteFacts) { f.auth = "device" }, ""},
-		"auth invalid":           {func(f *remoteFacts) { f.auth = "invalid" }, "setting_invalid"},
-		"auth twice":             {func(f *remoteFacts) { f.counts["CLAWBRIDGE_AUTH"] = 2 }, "setting_duplicate"},
-		"api absent":             {func(f *remoteFacts) { delete(f.services, "api") }, "service_down"},
-		"caddy exited":           {func(f *remoteFacts) { f.services["caddy"] = []string{"exited Exited (1) 2 minutes ago"} }, "service_down"},
-		"db no health":           {func(f *remoteFacts) { f.services["db"] = []string{"running Up 1 hour"} }, "service_down"},
-		"db starting":            {func(f *remoteFacts) { f.services["db"] = []string{"running Up 3 seconds (health: starting)"} }, "service_down"},
-		"api starting":           {func(f *remoteFacts) { f.services["api"] = []string{"running Up 2 seconds (health: starting)"} }, "service_down"},
-		"api unhealthy":          {func(f *remoteFacts) { f.services["api"] = []string{"running Up 1 hour (unhealthy)"} }, "service_down"},
+		}, "google_settings_unused"},
+		"auth invalid":  {func(f *remoteFacts) { f.auth = "invalid" }, "setting_invalid"},
+		"auth twice":    {func(f *remoteFacts) { f.counts["CLAWBRIDGE_AUTH"] = 2 }, "setting_duplicate"},
+		"api absent":    {func(f *remoteFacts) { delete(f.services, "api") }, "service_down"},
+		"caddy exited":  {func(f *remoteFacts) { f.services["caddy"] = []string{"exited Exited (1) 2 minutes ago"} }, "service_down"},
+		"db no health":  {func(f *remoteFacts) { f.services["db"] = []string{"running Up 1 hour"} }, "service_down"},
+		"db starting":   {func(f *remoteFacts) { f.services["db"] = []string{"running Up 3 seconds (health: starting)"} }, "service_down"},
+		"api starting":  {func(f *remoteFacts) { f.services["api"] = []string{"running Up 2 seconds (health: starting)"} }, "service_down"},
+		"api unhealthy": {func(f *remoteFacts) { f.services["api"] = []string{"running Up 1 hour (unhealthy)"} }, "service_down"},
 		"a crashed replica": {func(f *remoteFacts) {
 			f.services["api"] = append([]string{"exited Exited (2) 1 minute ago"}, f.services["api"]...)
 		}, "service_down"},
@@ -203,8 +195,19 @@ func TestSettingsAndServices(t *testing.T) {
 			t.Fatalf("%s: %+v", name, r)
 		}
 	}
-	// The advice names the keys and services, never a value.
+	// The texts the swap runbook quotes.
 	f := allSet()
+	f.auth = "google,device"
+	if r := checkSettings(f); r.Advice != "Google sign-in was removed in v1.0; set CLAWBRIDGE_AUTH=device after every member has an active device (docs/operations/google-sign-in-removal.md#before-you-switch)" {
+		t.Fatal(r.Advice)
+	}
+	f = allSet()
+	f.counts["CLAWBRIDGE_AUDIENCE"] = 1
+	if r := checkSettings(f); r.Status != "warn" || r.Advice != "Google sign-in settings are set but unused since v1.0 (CLAWBRIDGE_AUDIENCE, CLAWBRIDGE_OAUTH_*); remove them from the env file" {
+		t.Fatal(r)
+	}
+	// The advice names the keys and services, never a value.
+	f = allSet()
 	f.counts["CLAWBRIDGE_DOMAIN"], f.counts["POSTGRES_PASSWORD"] = 0, 0
 	if r := checkSettings(f); r.Advice != "set in the env file: CLAWBRIDGE_DOMAIN, POSTGRES_PASSWORD" {
 		t.Fatal(r.Advice)
@@ -356,20 +359,23 @@ func TestCloudCheckAuthMode(t *testing.T) {
 	health := `{"status":"ok","version":"1.2.3"}`
 	device := allSet()
 	device.auth = "device"
-	both := allSet()
-	both.auth = "google,device"
+	leftover := allSet()
+	leftover.counts["CLAWBRIDGE_OAUTH_CLIENT_ID"] = 1
 	for name, c := range map[string]struct {
 		facts  remoteFacts
 		config string
 		reason string
 	}{
-		"unset is google":           {allSet(), `{"auth_methods":["google"]}`, ""},
+		"unset is device":           {allSet(), `{"auth_methods":["device"]}`, ""},
+		"env device, server device": {device, `{"auth_methods":["device"]}`, ""},
 		"env device, server google": {device, `{"auth_methods":["google"]}`, "auth_mismatch"},
-		"env google, server both":   {allSet(), `{"auth_methods":["google","device"]}`, "auth_mismatch"},
-		"order does not matter":     {both, `{"auth_methods":["device","google"]}`, ""},
-		"google-only server":        {allSet(), `{"browser_client_id":"x"}`, ""},
+		"env device, server both":   {device, `{"auth_methods":["google","device"]}`, "auth_mismatch"},
 		"env device, google-only":   {device, `{"browser_client_id":"x"}`, "auth_mismatch"},
-		"config unavailable":        {allSet(), "", "config_unreadable"},
+		// The leftover settings' warning is the answer once the rest
+		// passes.
+		"leftover settings":  {leftover, `{"auth_methods":["device"]}`, "google_settings_unused"},
+		"leftover, mismatch": {leftover, `{"auth_methods":["google"]}`, "auth_mismatch"},
+		"config unavailable": {allSet(), "", "config_unreadable"},
 	} {
 		stubRemote(t, factsOutput(c.facts), nil)
 		got, _ := cloudCheck(t, "server", "--server", configServer(t, 200, health, c.config), "--ssh", "admin@bridge.example.test")

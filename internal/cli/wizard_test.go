@@ -2,16 +2,12 @@ package cli
 
 import (
 	"bytes"
-	"clawbridge/internal/auth"
 	"clawbridge/internal/doctor"
 	"clawbridge/internal/install"
-	"clawbridge/internal/remote"
-	"clawbridge/internal/setup"
 	"clawbridge/internal/skill"
 	"context"
 	"errors"
 	"io"
-	"net/http"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -33,22 +29,18 @@ func (r *wizardReader) Cancel() bool { return true }
 func (r *wizardReader) Close() error { r.closed = true; return r.closeErr }
 func wizardHooks(t *testing.T, input string) *wizardReader {
 	t.Helper()
-	a, b, c, d, e := wizardTerminal, wizardInput, wizardKeyring, wizardJoin, wizardTUI
-	t.Cleanup(func() { wizardTerminal, wizardInput, wizardKeyring, wizardJoin, wizardTUI = a, b, c, d, e })
+	a, b, e := wizardTerminal, wizardInput, wizardTUI
+	t.Cleanup(func() { wizardTerminal, wizardInput, wizardTUI = a, b, e })
 	r := &wizardReader{Reader: strings.NewReader(input)}
 	wizardTerminal = func(io.Writer) error { return nil }
 	wizardInput = func() (cancelreader.CancelReader, error) { return r, nil }
-	wizardKeyring = func(context.Context) error { t.Fatal("unexpected keyring access"); return nil }
-	wizardJoin = func(context.Context, Config, []string, io.Writer, io.Writer) error {
-		t.Fatal("unexpected join")
-		return nil
-	}
 	wizardTUI = func(context.Context, Config, io.Writer, io.Writer) error { t.Fatal("unexpected TUI"); return nil }
 	k, l, m, n, o := wizardMethods, wizardKeyStore, wizardInviteCode, wizardDeviceJoin, wizardProjects
 	t.Cleanup(func() {
 		wizardMethods, wizardKeyStore, wizardInviteCode, wizardDeviceJoin, wizardProjects = k, l, m, n, o
 	})
-	// A server that advertises no methods is one before device sign-in.
+	// A server that advertises no methods is one before device sign-in,
+	// which the wizard can't join.
 	wizardMethods = func(context.Context, string) ([]string, error) { return nil, nil }
 	wizardKeyStore = func(context.Context) error { return nil }
 	wizardInviteCode = func() (string, error) { t.Fatal("unexpected invite code read"); return "", nil }
@@ -99,7 +91,7 @@ func TestGuidedNonTTYAndHelpHaveNoEffects(t *testing.T) {
 			t.Fatalf("accepted commandless globals: %v", args)
 		}
 	}
-	if err := Run(context.Background(), []string{"setup", "wizard"}, io.Discard, io.Discard); err == nil || !strings.Contains(err.Error(), "setup join") {
+	if err := Run(context.Background(), []string{"setup", "wizard"}, io.Discard, io.Discard); err == nil || !strings.Contains(err.Error(), "clawbridge join") {
 		t.Fatalf("TTY gate: %v", err)
 	}
 }
@@ -115,59 +107,6 @@ func TestGuidedDeclineEOFAndInvalidTargetDoNotAcquire(t *testing.T) {
 				t.Fatal("invalid URL displayed")
 			}
 		})
-	}
-}
-
-func TestGuidedHandoffClosesReaderAndPreservesPublishedRouteOnTUIFailure(t *testing.T) {
-	isolated(t)
-	path := filepath.Join(t.TempDir(), "client.toml")
-	// After the join's own input: Linear no, then yes to opening ClawBridge.
-	r := wizardHooks(t, "https://service.test\nws\nprj\ndevice\ny\nTUI-INPUT\n\n")
-	calls := []string{}
-	wizardKeyring = func(context.Context) error {
-		if !r.closed {
-			t.Fatal("input not released before acquisition")
-		}
-		calls = append(calls, "keyring")
-		return nil
-	}
-	wizardJoin = func(ctx context.Context, c Config, args []string, out, errout io.Writer) error {
-		calls = append(calls, "join")
-		if c.Server != "https://service.test" || c.Session != "" || c.Instance != "" || c.CredentialSource != "oauth" || strings.Join(args, "") != "--device" {
-			t.Fatalf("candidate: %+v %v", c, args)
-		}
-		if guided, _ := ctx.Value(guidedRouteKey{}).(bool); !guided {
-			t.Fatal("missing isolation")
-		}
-		rest := make([]byte, len("TUI-INPUT"))
-		if _, err := io.ReadFull(r.Reader, rest); err != nil || string(rest) != "TUI-INPUT" {
-			t.Fatalf("wizard consumed TUI input: %q", rest)
-		}
-		return os.WriteFile(c.ClientConfig, []byte("published-route"), 0600)
-	}
-	wizardTUI = func(_ context.Context, c Config, _, _ io.Writer) error {
-		calls = append(calls, "tui")
-		if c.ClientConfig != path {
-			t.Fatal("selector lost")
-		}
-		return errors.New("synthetic TUI failure")
-	}
-	var out bytes.Buffer
-	err := Run(context.Background(), []string{"--client-config", path, "setup", "wizard"}, &out, io.Discard)
-	// The note says where the sign-in is kept; it must never claim the store
-	// was checked or is ready.
-	if strings.Contains(out.String(), "availability checked") || strings.Contains(out.String(), "ready") || !strings.Contains(out.String(), credentialStoreNote(runtime.GOOS)) {
-		t.Fatalf("misleading credential-store status: %q", out.String())
-	}
-	if err == nil || !strings.Contains(err.Error(), "everything is saved, but ClawBridge didn't open") {
-		t.Fatalf("untruthful failure: %v", err)
-	}
-	if strings.Join(calls, ",") != "keyring,join,tui" {
-		t.Fatal(calls)
-	}
-	raw, _ := os.ReadFile(path)
-	if string(raw) != "published-route" {
-		t.Fatal("published route lost")
 	}
 }
 
@@ -254,60 +193,6 @@ func TestGuidedCancelReleasesBlockedInput(t *testing.T) {
 	}
 }
 
-func TestGuidedResolverIgnoresInheritedAuthorityAndActors(t *testing.T) {
-	isolated(t)
-	path := filepath.Join(t.TempDir(), "client.toml")
-	for _, key := range []string{"MODE", "SERVER", "AUDIENCE", "ACCOUNT", "IMPERSONATE_SERVICE_ACCOUNT", "PRINCIPAL", "CACHE", "CREDENTIAL_SOURCE", "CREDENTIALS_FILE", "SESSION", "INSTANCE", "OAUTH_CLIENT_ID", "OAUTH_CLIENT_SECRET"} {
-		t.Setenv("CLAWBRIDGE_"+key, "malicious")
-	}
-	ctx := context.WithValue(context.Background(), guidedRouteKey{}, true)
-	c, _, err := resolveLoginConfig(ctx, Config{ClientConfig: path, Mode: "cloud", CredentialSource: "oauth", Server: "https://selected.test", Workspace: "ws", Project: "prj"}, false)
-	if err != nil || c.Server != "https://selected.test" || c.Session != "" || c.Instance != "" || c.OAuthClientID != "" || c.Account != "" || c.Principal != "" || c.Cache != "" {
-		t.Fatalf("isolation failed: %v %+v", err, c)
-	}
-}
-
-func TestGuidedUsesExistingJoinTransaction(t *testing.T) {
-	isolated(t)
-	path := filepath.Join(t.TempDir(), "client.toml")
-	wizardHooks(t, "https://service.test\nworkspace\nproject\ndevice\ny\n")
-	wizardJoin = runJoin
-	store := &loginMemoryStore{}
-	installLoginTestHooks(t, store, auth.Credential{Principal: "human@example.test", RefreshToken: "synthetic-refresh"})
-	discoverLoginOAuth = func(context.Context, string, *http.Client) (remote.OAuthDiscovery, error) {
-		return remote.OAuthDiscovery{BrowserClientID: "desktop", BrowserClientSecret: "synthetic-desktop", DeviceClientID: "device", DeviceClientSecret: "synthetic-device"}, nil
-	}
-	old := newJoinExecutor
-	t.Cleanup(func() { newJoinExecutor = old })
-	newJoinExecutor = func(c Config) (setup.Executor, error) { return phase4Executor{c, path, false, t}, nil }
-	wizardKeyring = func(context.Context) error { return nil }
-	wizardTUI = func(_ context.Context, c Config, _, _ io.Writer) error {
-		raw, err := os.ReadFile(c.ClientConfig)
-		if err != nil || !strings.Contains(string(raw), "ws_join") || len(store.values) != 1 {
-			t.Fatal("TUI before committed join")
-		}
-		return nil
-	}
-	var out bytes.Buffer
-	if err := Run(context.Background(), []string{"--client-config", path, "setup", "wizard"}, &out, io.Discard); err != nil {
-		t.Fatal(err)
-	}
-	if strings.Contains(out.String(), "synthetic-") || strings.Contains(out.String(), `"joined"`) {
-		t.Fatal("wizard leaked credential or automation JSON")
-	}
-}
-
-func TestGuidedKeyringFailurePrecedesAcquisitionAndSafeSummary(t *testing.T) {
-	isolated(t)
-	wizardHooks(t, "https://service.test\nws\x1b[2J\nprj\ndevice\ny\n")
-	wizardKeyring = func(context.Context) error { return errors.New("native store unavailable") }
-	var out bytes.Buffer
-	err := Run(context.Background(), []string{"setup", "wizard"}, &out, io.Discard)
-	if err == nil || strings.Contains(out.String(), "\x1b") {
-		t.Fatalf("unsafe preflight: %v %q", err, out.String())
-	}
-}
-
 type closeOnlyWizardReader struct {
 	entered, release chan struct{}
 	once             sync.Once
@@ -343,30 +228,5 @@ func TestGuidedCancelFalseClosesReaderBeforeWaiting(t *testing.T) {
 		}
 	case <-time.After(time.Second):
 		t.Fatal("Cancel false left blocked read")
-	}
-}
-
-func TestGuidedCloseFailureBlocksCredentialAndAuthorityHandoff(t *testing.T) {
-	for _, answer := range []string{"y", "n"} {
-		t.Run(answer, func(t *testing.T) {
-			isolated(t)
-			path := filepath.Join(t.TempDir(), "client.toml")
-			r := wizardHooks(t, "https://service.test\nws\nprj\ndevice\n"+answer+"\n")
-			r.closeErr = errors.New("synthetic close failure with private-native-detail")
-			var out bytes.Buffer
-			err := Run(context.Background(), []string{"--client-config", path, "setup", "wizard"}, &out, io.Discard)
-			if err == nil || !strings.Contains(err.Error(), "terminal input cleanup failed") || strings.Contains(err.Error(), "private-native-detail") {
-				t.Fatalf("unsafe close result: %v", err)
-			}
-			if !r.closed {
-				t.Fatal("close not attempted")
-			}
-			if _, e := os.Stat(path); !os.IsNotExist(e) {
-				t.Fatal("route touched")
-			}
-			if strings.Contains(out.String(), "Join completed") {
-				t.Fatal("success printed despite close failure")
-			}
-		})
 	}
 }

@@ -101,8 +101,7 @@ clawbridge project thread MESSAGE_ID       # one thread, oldest first, with who 
   act: `--session` is refused, and so is a request naming a session. ClawBridge also refuses when it can tell an
   agent runs the command (`CLAUDECODE`, `CODEX_*`, `CLAWBRIDGE_SESSION` or `CLAWBRIDGE_INSTANCE` is set). That check
   is best effort.
-- **On a hosted server, only from a person's own signed-in device.** A Google sign-in, a CI device and the dispatcher are
-  refused.
+- **On a hosted server, only from a person's own signed-in device.** A CI device and the dispatcher are refused.
 - **Conversations started before the upgrade stay private, even if they continue.** Each result's `readable_from` is
   that date: the upgrade's time for a project that existed then, the project's creation for a newer one. A thread is
   readable only if its first message was sent from that date on.
@@ -116,23 +115,10 @@ clawbridge project thread MESSAGE_ID       # one thread, oldest first, with who 
 
 
 Run `clawbridge` in an interactive terminal. On first launch, provide the existing
-service's HTTPS address, workspace and project, choose how to sign in (open a
-browser here, or show a code to enter on another device), and confirm. Each
-answer is checked as you give it, and a wrong one is asked again. Later launches open the saved profile's TUI. Your Google account
-must already have membership; joining does not grant it or create infrastructure.
-
-For explicit commands:
-
-```sh
-clawbridge setup join --server https://SERVICE --workspace TEAM --project CODEBASE
-clawbridge whoami
-```
-
-Browser OAuth uses a loopback callback and PKCE. Add `--device` for headless/SSH
-approval from another device. No gcloud installation is needed for either path.
-A complete existing OAuth route reuses its keychain credential; `--login` requests
-a fresh browser sign-in. A failed join preserves the previous trusted route.
-Joining does not register an agent session.
+service's HTTPS address and the invite the owner gave you, and confirm ([join with
+an invite](#join-with-an-invite)). Each answer is checked as you give it, and a
+wrong one is asked again. Later launches open the saved profile's TUI. Joining
+does not create infrastructure, and does not register an agent session.
 `clawbridge whoami` works before any project is shared with you: it shows who you
 are and the workspace, with `Project: none`.
 
@@ -142,18 +128,19 @@ incomplete or damaged is never overwritten: bare `clawbridge` says what is wrong
 `clawbridge onboard`. Bare noninteractive invocation
 prints help; automation uses explicit commands.
 
-`clawbridge login`, `login --device`, `logout` and `doctor` operate on the selected
-trusted route. Logout removes that route's OAuth keychain entry. It does not
-revoke unrelated Google credentials or change MCP configuration. Linux/WSL
-requires the [existing D-Bus/keyring session](installation.md#linux-and-wsl-credentials).
+Google sign-in was removed in v1.0: `clawbridge login`, `logout`, `setup join` and
+`device enroll` exit 2 and say to join with an invite, and a profile that still
+signs in with Google is refused the same way
+([Removing Google sign-in](operations/google-sign-in-removal.md)). Linux/WSL keeps
+device keys in the [existing D-Bus/keyring session](installation.md#linux-and-wsl-credentials).
 
 ## Join with an invite
 
 The [sign-in guide](sign-in.md) covers invites, device keys, members, ownership,
-turning device sign-in on, and troubleshooting in full.
+the device-only server, and troubleshooting in full.
 
-A server that takes device keys (`serve --auth device` or `google,device`) needs
-no Google account. An owner invites you and gives you an invite link
+Every hosted server signs people in with device keys (since v1.0). An owner
+invites you and gives you an invite link
 (`https://SERVICE/join#cbj1.…`), and you join:
 
 ```sh
@@ -168,8 +155,7 @@ when piped (with `--yes`). It never takes the link on the command line, which is
 kept in shell history and shown in other users' process lists. With the code and
 the server's URL instead, `clawbridge --server https://SERVICE join --email
 EMAIL` asks for the code. In a terminal, bare `clawbridge` (or
-`clawbridge setup wizard`) does the same with prompts: choose "I have an invite
-code" (offered when the server takes device keys), then give the email and a name
+`clawbridge setup wizard`) does the same with prompts: give the email and a name
 for this device. The code is asked last, unechoed, after you confirm.
 
 - **The key:** `join` makes this device's key, keeps it in the OS key store, and
@@ -183,11 +169,11 @@ for this device. The code is asked last, unechoed, after you confirm.
   `~/.clawbridge/device/`, and anyone who can read it as you can act as you.
 - **One workspace per device:** a device belongs to the workspace that admitted
   it. To join a second workspace, use another profile (`--client-config`).
-- **Already signed in with Google?** `clawbridge device enroll` adds a key to
-  this machine, with no invite. It first checks that the server takes device
-  keys at the profile's server URL (its public origin), and makes one request
-  signed with the new key before the profile switches to it. The profile then
-  signs with the key; the Google credential stays until `logout`.
+- **A profile from before v1.0 that signed in with Google:** join with an invite
+  into it (`--client-config` names it, if it isn't the default); `join` switches it
+  to the new key. Its old Google settings load with a one-line warning until you
+  remove them, and the old Google credential is deleted from the OS keychain the
+  first time v1.0 reads the profile.
 
 Accounts on a hosted workspace (each command takes `--help`):
 
@@ -257,7 +243,7 @@ project = "clawbridge"
 ```
 
 Repository configuration may provide only db/workspace/project/session/instance.
-Authority mode, server, audience, credentials, principal and cache come from
+Authority mode, server, the device key route, principal and cache come from
 trusted routing. A repository cannot switch your local client to a cloud server.
 
 Each value comes from the last of these that sets it:
@@ -528,7 +514,8 @@ Run in an interactive terminal.
   - `OK`: it worked, for example "OK  Sent to engineer-backend." It stays
     through the reload the action starts.
   - `ERROR`: it failed, named in words ("The server can't be reached.", "You're
-    signed out. Run clawbridge login.", "You don't have permission for this.")
+    signed out. Ask an owner for an invite (or a recovery invite) and run clawbridge
+    join.", "You don't have permission for this.")
     with the raw error after it.
   - `NOTE`: something to know, for example why a key did nothing.
   - `…`: it is working, for example "Loading…".

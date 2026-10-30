@@ -760,11 +760,12 @@ func (s *Store) labelDevice(ctx context.Context, tx *transaction, w map[string]a
 	return deviceView(row, w, stamp()), nil
 }
 
-// enrollDevice adds a device key for a caller signed in with Google, with no
-// invite: the verified Google account is the proof (§10).
+// enrollDevice added a device key for a caller signed in with Google, with
+// no invite (§10). Since v1.0 no served request carries a Google identity,
+// so a caller is told how a new machine joins instead.
 func (s *Store) enrollDevice(ctx context.Context, tx *transaction, w map[string]any, a map[string]any) (any, error) {
 	if s.identity == nil || s.identity.Issuer != GoogleIssuer {
-		return nil, refused("enrolling a device needs a Google sign-in; ask an owner for an invite")
+		return nil, refused("Google sign-in was removed in v1.0; a new machine joins with an invite: ask an owner for an invite (or a recovery invite) and run clawbridge join; see docs/operations/google-sign-in-removal.md")
 	}
 	pub, err := devicekey.ParsePublicKey(str(a, "public_key"))
 	if err != nil {

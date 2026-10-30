@@ -37,5 +37,7 @@ func TestMain(m *testing.M) {
 	dir := filepath.Join(os.TempDir(), "clawbridge-cli-test-no-claude-"+strconv.Itoa(os.Getpid()))
 	os.Setenv("CLAUDE_CONFIG_DIR", dir)
 	hooksClaudeVersion = func(context.Context) (string, bool) { return "", false }
+	// No test deletes from the developer's own OS keychain.
+	deleteLegacyCredential = func(context.Context, string, string) (bool, error) { return false, nil }
 	faketool.Main(m)
 }

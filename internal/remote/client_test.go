@@ -9,7 +9,6 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -17,7 +16,6 @@ import (
 
 	"clawbridge/internal/bus"
 	"clawbridge/internal/mirror"
-	"golang.org/x/oauth2"
 )
 
 // An issue's history is a read the server makes as the app (FR21): a
@@ -189,219 +187,20 @@ func TestURLAndRedirectCredentialBoundary(t *testing.T) {
 	}
 }
 
-func TestCredentialSourceSelectionAndConstraints(t *testing.T) {
-	ctx := context.Background()
-	dir := t.TempDir()
-	credentialFile := filepath.Join(dir, "application_default_credentials.json")
-	if err := os.WriteFile(credentialFile, []byte(`{
-		"type": "authorized_user",
-		"client_id": "test.apps.googleusercontent.com",
-		"client_secret": "not-a-real-secret",
-		"refresh_token": "not-a-real-refresh-token"
-	}`), 0600); err != nil {
-		t.Fatal(err)
-	}
-	base := Config{
-		URL:                       "http://127.0.0.1:1",
-		Audience:                  "https://bus.example.test",
-		Principal:                 "service@example.test",
-		CachePath:                 filepath.Join(dir, "cache.db"),
-		Account:                   "human@example.test",
-		ImpersonateServiceAccount: "agent@example.iam.gserviceaccount.com",
-		CredentialsFile:           credentialFile,
-	}
-
-	for _, source := range []string{"", CredentialSourceGcloud} {
-		config := base
-		config.CredentialSource = source
-		config.CredentialsFile = ""
-		tokens, err := credentialTokenSource(ctx, config)
-		if err != nil {
-			t.Fatalf("source %q: %v", source, err)
+// v1.0 removed Google sign-in: a route that still names oauth, gcloud or
+// adc, or none (which was gcloud), is refused with how to join instead.
+func TestGoogleRoutesRemoved(t *testing.T) {
+	for _, source := range []string{"", "oauth", "gcloud", "adc", "metadata"} {
+		c := Config{URL: "https://cb.example.test", Principal: "alice@example.test", CachePath: filepath.Join(t.TempDir(), "cache.db"), CredentialSource: source}
+		if _, err := ValidateRoute(c); err == nil || err.Error() != GoogleRouteRemoved {
+			t.Errorf("ValidateRoute %q: %v", source, err)
 		}
-		if _, ok := tokens.(*GcloudTokenSource); !ok {
-			t.Fatalf("source %q selected %T, want gcloud", source, tokens)
+		if _, err := New(c); err == nil || !strings.Contains(err.Error(), GoogleRouteRemoved) {
+			t.Errorf("New %q: %v", source, err)
 		}
 	}
-
-	config := base
-	config.CredentialSource = CredentialSourceADC
-	tokens, err := credentialTokenSource(ctx, config)
-	if err != nil {
-		t.Fatalf("ADC authorized-user construction: %v", err)
-	}
-	if _, ok := tokens.(*ADCTokenSource); !ok {
-		t.Fatalf("ADC selected %T", tokens)
-	}
-
-	invalid := base
-	invalid.CredentialSource = "metadata"
-	if _, err = credentialTokenSource(ctx, invalid); err == nil || !strings.Contains(err.Error(), "oauth, gcloud, adc or device") {
-		t.Fatalf("unknown source accepted: %v", err)
-	}
-	invalid = base
-	invalid.CredentialSource = CredentialSourceGcloud
-	if _, err = credentialTokenSource(ctx, invalid); err == nil || !strings.Contains(err.Error(), "cannot be combined with ADC or OAuth") {
-		t.Fatalf("gcloud accepted credentials file: %v", err)
-	}
-	invalid = base
-	invalid.CredentialSource = CredentialSourceGcloud
-	invalid.CredentialsFile = ""
-	invalid.OAuthDeviceClientSecret = "synthetic-device-client-credential"
-	if _, err = credentialTokenSource(ctx, invalid); err == nil || !strings.Contains(err.Error(), "cannot be combined with ADC or OAuth") {
-		t.Fatalf("gcloud accepted an inactive OAuth device credential: %v", err)
-	}
-}
-
-func TestOAuthRouteRequiresAudienceToEqualActiveClient(t *testing.T) {
-	base := Config{
-		URL: "http://127.0.0.1:1", Principal: "alice@example.test",
-		CachePath: filepath.Join(t.TempDir(), "cache.db"), CredentialSource: CredentialSourceOAuth,
-		OAuthClientID: "active-client.apps.googleusercontent.com",
-		Audience:      "other-client.apps.googleusercontent.com",
-	}
-	if _, err := ValidateRoute(base); err == nil || !strings.Contains(err.Error(), "audience must equal") {
-		t.Fatalf("mismatched OAuth audience/client accepted: %v", err)
-	}
-	base.Audience = base.OAuthClientID
-	if _, err := ValidateRoute(base); err != nil {
-		t.Fatalf("matching OAuth audience/client rejected: %v", err)
-	}
-	base.OAuthClientSecret = "synthetic-browser-client-credential"
-	base.OAuthDeviceClientSecret = "synthetic-device-client-credential"
-	public := base.PublicRoute()
-	encoded, err := json.Marshal(public)
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, secret := range []string{"synthetic-browser-client-credential", "synthetic-device-client-credential"} {
-		if bytes.Contains(encoded, []byte(secret)) {
-			t.Fatalf("public route exposed an installed-app credential: %s", encoded)
-		}
-	}
-}
-
-func TestADCRejectsUnsafePathsAndCredentialTypes(t *testing.T) {
-	dir := t.TempDir()
-	missing := filepath.Join(dir, "missing.json")
-	directory := filepath.Join(dir, "credentials-dir")
-	if err := os.Mkdir(directory, 0700); err != nil {
-		t.Fatal(err)
-	}
-	wrongType := filepath.Join(dir, "service-account.json")
-	if err := os.WriteFile(wrongType, []byte(`{
-		"type": "service_account",
-		"client_email": "unused@example.test",
-		"private_key": "not-a-real-key"
-	}`), 0600); err != nil {
-		t.Fatal(err)
-	}
-
-	base := Config{
-		URL:                       "http://127.0.0.1:1",
-		Audience:                  "https://bus.example.test",
-		Account:                   "human@example.test",
-		ImpersonateServiceAccount: "agent@example.iam.gserviceaccount.com",
-		CredentialSource:          CredentialSourceADC,
-	}
-	for _, tc := range []struct {
-		name   string
-		mutate func(*Config)
-	}{
-		{"relative", func(c *Config) { c.CredentialsFile = "credentials.json" }},
-		{"missing", func(c *Config) { c.CredentialsFile = missing }},
-		{"directory", func(c *Config) { c.CredentialsFile = directory }},
-		{"missing-audience", func(c *Config) { c.CredentialsFile = wrongType; c.Audience = "" }},
-		{"missing-account", func(c *Config) { c.CredentialsFile = wrongType; c.Account = "" }},
-		{"missing-target", func(c *Config) { c.CredentialsFile = wrongType; c.ImpersonateServiceAccount = "" }},
-		{"self-impersonation", func(c *Config) { c.CredentialsFile = wrongType; c.Account = c.ImpersonateServiceAccount }},
-		{"wrong-type", func(c *Config) { c.CredentialsFile = wrongType }},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			config := base
-			tc.mutate(&config)
-			_, err := New(config)
-			if err == nil {
-				t.Fatal("unsafe ADC configuration was accepted")
-			}
-			var credential *credentialError
-			if !errors.As(err, &credential) {
-				t.Fatalf("ADC setup failure lost credential classification: %v", err)
-			}
-			for _, secret := range []string{"not-a-real-key", "not-a-real-refresh-token", "not-a-real-secret"} {
-				if strings.Contains(err.Error(), secret) {
-					t.Fatalf("ADC setup error exposed credential material")
-				}
-			}
-		})
-	}
-}
-
-type failingTokenSource struct{ err error }
-
-func (f failingTokenSource) Token() (*oauth2.Token, error) { return nil, f.err }
-
-func TestADCCredentialFailureDoesNotFallBackToMirror(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "cache.db")
-	client, err := NewWithTokenSource(Config{
-		URL:                       "http://127.0.0.1:1",
-		Audience:                  "audience",
-		Account:                   "human@example.test",
-		ImpersonateServiceAccount: "agent@example.iam.gserviceaccount.com",
-		CredentialsFile:           filepath.Join(t.TempDir(), "authorized-user.json"),
-		Principal:                 "alice@example.test",
-		CachePath:                 path,
-		CredentialSource:          CredentialSourceADC,
-	}, &ADCTokenSource{source: failingTokenSource{err: errors.New("synthetic ADC refresh failure")}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	_, err = client.Execute(context.Background(), bus.Request{
-		Operation: "inbox", Workspace: "w", Project: "p", Session: "worker",
-		Args: map[string]any{"instance": "instance-1"},
-	})
-	if err == nil {
-		t.Fatal("synthetic ADC failure unexpectedly succeeded")
-	}
-	var credential *credentialError
-	if !errors.As(err, &credential) {
-		t.Fatalf("ADC refresh failure was not classified as a credential error: %v", err)
-	}
-	if strings.Contains(err.Error(), "mirror") {
-		t.Fatalf("ADC credential failure consulted the mirror: %v", err)
-	}
-	if strings.Contains(err.Error(), "synthetic ADC refresh failure") {
-		t.Fatalf("ADC library error was exposed: %v", err)
-	}
-	if _, statErr := os.Stat(path); !os.IsNotExist(statErr) {
-		t.Fatalf("ADC credential failure created or touched mirror: %v", statErr)
-	}
-}
-
-func TestGcloudUsesExplicitAccountAudienceAndImpersonation(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("POSIX test executable")
-	}
-	dir := t.TempDir()
-	capture := filepath.Join(dir, "args")
-	script := "#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$CLAWBRIDGE_TEST_CAPTURE\"\nprintf '%s' 'synthetic-token'\n"
-	if err := os.WriteFile(filepath.Join(dir, "gcloud"), []byte(script), 0700); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
-	t.Setenv("CLAWBRIDGE_TEST_CAPTURE", capture)
-	source := &GcloudTokenSource{Account: "human@example.test", Audience: "https://bus.example.test", ImpersonateServiceAccount: "agent@example.iam.gserviceaccount.com"}
-	if _, err := source.Token(context.Background()); err != nil {
-		t.Fatal(err)
-	}
-	args, _ := os.ReadFile(capture)
-	for _, want := range []string{"--account\nhuman@example.test", "--audiences\nhttps://bus.example.test", "--impersonate-service-account\nagent@example.iam.gserviceaccount.com", "--include-email"} {
-		if !strings.Contains(string(args), want) {
-			t.Fatalf("missing explicit routing %s", want)
-		}
-	}
-	if _, err := (&GcloudTokenSource{Account: "human@example.test", Audience: "aud"}).Token(context.Background()); err == nil {
-		t.Fatal("generic development token path accepted")
+	if GoogleRouteRemoved != "this profile signs in with Google, which was removed in v1.0: ask an owner for an invite (or a recovery invite) and run clawbridge join; see docs/operations/google-sign-in-removal.md" {
+		t.Fatal(GoogleRouteRemoved)
 	}
 }
 

@@ -23,7 +23,7 @@ func l1InstalledCheck(t *testing.T, report doctor.Report, agent, name string) do
 	return doctor.Check{}
 }
 func l1MCPSelection(o install.Options) doctor.MCPConfig {
-	return doctor.MCPConfig{LinearProfile: o.LinearProfile, ClientConfig: o.ClientConfig, Agent: o.Agent, Name: "clawbridge", Path: o.Config, DB: o.DB, Workspace: o.Workspace, Project: o.Project, Session: o.Session, Instance: o.Instance, Mode: o.Mode, Server: o.Server, Audience: o.Audience, Account: o.Account, ImpersonateServiceAccount: o.ImpersonateServiceAccount, Principal: o.Principal, Cache: o.Cache, CredentialSource: o.CredentialSource, CredentialsFile: o.CredentialsFile, OAuthClientID: o.OAuthClientID, OAuthDeviceClientID: o.OAuthDeviceClientID, OAuthKeyringService: o.OAuthKeyringService}
+	return doctor.MCPConfig{LinearProfile: o.LinearProfile, ClientConfig: o.ClientConfig, Agent: o.Agent, Name: "clawbridge", Path: o.Config, DB: o.DB, Workspace: o.Workspace, Project: o.Project, Session: o.Session, Instance: o.Instance, Mode: o.Mode, Server: o.Server, Principal: o.Principal, Cache: o.Cache, CredentialSource: o.CredentialSource, DeviceID: o.DeviceID, KeyStore: o.KeyStore}
 }
 
 func TestL1InstallerDoctorLinearProfileExactRoute(t *testing.T) {
@@ -35,7 +35,7 @@ func TestL1InstallerDoctorLinearProfileExactRoute(t *testing.T) {
 					label = "legacy-no-profile"
 				}
 				t.Run(agent+"/"+mode+"/"+label, func(t *testing.T) {
-					o := oauthInstallOptions(t)
+					o := deviceInstallOptions(t)
 					o.Agent = agent
 					if agent == "codex" {
 						o.Config = filepath.Join(filepath.Dir(o.Config), "codex.toml")

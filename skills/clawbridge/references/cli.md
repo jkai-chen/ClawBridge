@@ -32,20 +32,23 @@ source=server           authoritative hosted service
 source=offline-mirror   stale read-only project snapshot
 ```
 
-Cloud requires an explicit `mode=cloud` plus trusted server and audience routing
+Cloud requires an explicit `mode=cloud` plus a trusted server and device key route
 from flags, environment, or the user's trusted config. Repository configuration
 may select project scope but cannot redirect credentials or choose the server,
-audience, account, impersonating service account, principal, or cache path. Do
-not infer or alter these routing values; ask the human to correct trusted
-configuration.
+device, key store, principal, or cache path. Do not infer or alter these routing
+values; ask the human to correct trusted configuration.
 
-A cloud profile may sign with a device key (`credential_source = "device"`) instead
-of Google: it has no audience, and the key stays in the human's key store, never
+A cloud profile signs with a device key (`credential_source = "device"`), the only
+sign-in since v1.0 removed Google's. The key stays in the human's key store, never
 in agent configuration. `join`, `device`, `invite`, `user` and `owner` manage the
 human's account and devices; run them only when the human asks. They show an
 invite link or code, a device-add link, or a CI key once: each is a secret. A
 dormant device is confirmed from another of the human's devices (`device
-confirm`), never from yours.
+confirm`), never from yours. `login`, `logout`, `setup join` and `device enroll`
+were Google sign-in's: they now exit 2 and say to join with an invite. A refusal
+that says Google sign-in was removed, or that the profile signs in with Google,
+is the human's to fix with an owner's invite and `clawbridge join`
+(docs/operations/google-sign-in-removal.md); never retry it.
 
 A server the human runs on their own machine (`deploy/local-host.sh`,
 docs/operations/local-host.md) is a cloud server like any other: on that machine

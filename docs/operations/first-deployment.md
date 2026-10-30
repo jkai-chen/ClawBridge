@@ -16,7 +16,7 @@ change nothing:
 ```sh
 clawbridge cloud check infra              # after the server is provisioned
 clawbridge cloud check server version     # after the server is installed
-clawbridge cloud check workspace          # after setup --cloud
+clawbridge cloud check workspace          # after the owner joins
 clawbridge cloud check backups            # after the first backup run
 ```
 
@@ -167,23 +167,10 @@ only with `port_closed`: nothing listens on 443 until the server is installed.
 
 ## 5. Sign-in
 
-Choose how people sign in. `CLAWBRIDGE_AUTH` in the server's env file sets it
-([sign-in methods](deployment.md#sign-in-methods)).
-- **Google sign-in** (the default, `google`): the server verifies Google sign-in.
-  Create the Google OAuth consent screen and two OAuth clients, one Desktop app and
-  one TVs and Limited Input device. They are described under
-  [Google identity](deployment.md#google-identity) and
-  [private configuration](deployment.md#private-configuration).
-- **Device sign-in** (`device`, or `google,device` for both): people join with an
-  invite code and their computer's own key, and a device-only server needs no Google
-  OAuth client.
-  - **What is released:** the server side shipped in v0.3.4, and the client
-    commands that join and invite (`clawbridge join`, `invite`) in v0.3.5.
-  - See [signing in with invites and device keys](../sign-in.md).
-
-**On AWS:** Google sign-in needs those clients in a Google Cloud project you own,
-even though the server runs on AWS. Their two client secrets go to the server
-with `cloud secret set`, as in step 9.
+People sign in with an invite code and their computer's own key: device sign-in,
+the only one since v1.0 ([sign-in methods](deployment.md#sign-in-methods)). The
+server needs no Google OAuth client and no sign-in secret: leave `CLAWBRIDGE_AUTH`
+unset (it is `device`). See [signing in with invites and device keys](../sign-in.md).
 
 ## 6. Install the server
 
@@ -215,26 +202,17 @@ clawbridge cloud check infra server version --server https://clawbridge.example.
 
 ## 7. Create the workspace
 
-The identity named in `CLAWBRIDGE_BOOTSTRAP_OWNER` signs in and initializes the
-workspace once:
-
-```sh
-clawbridge --server https://clawbridge.example.com --audience AUDIENCE setup --cloud --name my-team
-```
-
-**With device sign-in** (device-only, so no Google sign-in to run `setup --cloud`
-with): the host operator lets the owner in with a one-time code instead.
+The host operator lets the owner named in `CLAWBRIDGE_BOOTSTRAP_OWNER` in with a
+one-time code, which also creates the workspace:
 1. On the server host, in your own terminal (never through an agent), run
    `operator bootstrap-invite --workspace my-team`. It creates the workspace, owned
    by `CLAWBRIDGE_BOOTSTRAP_OWNER`, and prints a single-use code valid for 24 hours.
    The command is under
-   [letting the owner in without Google](deployment.md#letting-the-owner-in-without-google-operator-bootstrap-invite).
+   [letting the owner in](deployment.md#letting-the-owner-in-operator-bootstrap-invite).
 2. On your own computer: `clawbridge --server https://clawbridge.example.com join
    --email OWNER`, which asks for the code without showing it. The workspace has no
    project yet, so the terminal view opens on **Waiting for a project** and shows
    `clawbridge project create SLUG`; once you've created it, the view opens on it.
-
-`operator bootstrap-invite` shipped in v0.3.4, and `clawbridge join` in v0.3.5.
 
 **On a server you reach over SSH:** one command on your own computer does both
 steps. The code goes only on ssh's stdin:
@@ -260,8 +238,7 @@ with `clawbridge onboard`'s AWS hand-over, it offers to run this for you once th
 checks pass (or when you run `clawbridge onboard` again and resume), and then goes on
 to the first project (section 8) and offers to open ClawBridge. `cloud bootstrap`,
 and onboarding's offer to run it, came with v0.3.5; going on to the first project
-and offering to open ClawBridge, with v0.3.6. The server must be on v0.3.5 or
-later; with an older release, use Google sign-in on AWS.
+and offering to open ClawBridge, with v0.3.6.
 
 Done when `clawbridge cloud check workspace` passes: you are signed in, and you
 own the workspace.

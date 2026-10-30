@@ -106,7 +106,7 @@ func newRVFixtureIn(t *testing.T, listen bool, dsn string) *rvFixture {
 		if listen {
 			go f.hubs[i].Listen(ctx, dsn)
 		}
-		f.hosts[i] = httptest.NewServer(NewHandlerWithOptions(store, verifier, HandlerOptions{Streams: f.hubs[i], Auth: AuthOptions{Methods: []string{AuthGoogle, AuthDevice}, PublicOrigin: rvOrigin, Devices: store}}))
+		f.hosts[i] = httptest.NewServer(NewHandlerWithOptions(store, verifier, HandlerOptions{Streams: f.hubs[i], Auth: AuthOptions{Methods: []string{AuthDevice}, PublicOrigin: rvOrigin, Devices: store}}))
 		t.Cleanup(f.hosts[i].Close)
 		t.Cleanup(f.hubs[i].Close)
 	}

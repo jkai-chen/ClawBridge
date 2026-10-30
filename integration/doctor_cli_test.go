@@ -24,8 +24,8 @@ func TestDoctorCLIValidatesTrustedRouteReadOnly(t *testing.T) {
 			http.NotFound(w, r)
 			return
 		}
-		if r.Header.Get("Authorization") != "Bearer synthetic-doctor-token" {
-			t.Errorf("doctor forwarded an unexpected authorization header")
+		if !strings.HasPrefix(r.Header.Get("Authorization"), "ClawBridge-Device ") {
+			t.Errorf("doctor's request is not device-signed")
 			w.WriteHeader(http.StatusUnauthorized)
 			return
 		}
@@ -54,11 +54,8 @@ func TestDoctorCLIValidatesTrustedRouteReadOnly(t *testing.T) {
 	const unrelatedSentinel = "synthetic-unrelated-config-secret"
 	configText := "mode = 'cloud'\n" +
 		"server = " + quoteTOML(authority.URL) + "\n" +
-		"audience = 'https://audience.example.test'\n" +
-		"credential_source = 'gcloud'\n" +
-		"account = 'human@example.test'\n" +
-		"impersonate_service_account = 'agent@project.iam.gserviceaccount.com'\n" +
-		"principal = 'agent@project.iam.gserviceaccount.com'\n" +
+		fileDeviceRoute(t, home, authority.URL) +
+		"principal = 'agent@example.test'\n" +
 		"cache = " + quoteTOML(filepath.Join(home, "missing-mirror.db")) + "\n" +
 		"workspace = 'workspace'\nproject = 'project'\n" +
 		"unrelated_secret = " + quoteTOML(unrelatedSentinel) + "\n"
@@ -70,20 +67,7 @@ func TestDoctorCLIValidatesTrustedRouteReadOnly(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	binDir := filepath.Join(p.dir, "fake-bin")
-	if err := os.MkdirAll(binDir, 0700); err != nil {
-		t.Fatal(err)
-	}
-	gcloudLog := filepath.Join(p.dir, "gcloud-doctor-args.log")
-	gcloud := "#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$CLAWBRIDGE_TEST_GCLOUD_LOG\"\nprintf 'synthetic-doctor-token\\n'\n"
-	if err := os.WriteFile(filepath.Join(binDir, "gcloud"), []byte(gcloud), 0700); err != nil {
-		t.Fatal(err)
-	}
-	env := append(append([]string{}, p.env...),
-		"CLAWBRIDGE_HOME="+home,
-		"PATH="+binDir+string(os.PathListSeparator)+os.Getenv("PATH"),
-		"CLAWBRIDGE_TEST_GCLOUD_LOG="+gcloudLog,
-	)
+	env := append(append([]string{}, p.env...), "CLAWBRIDGE_HOME="+home)
 	cmd := exec.Command(p.binary, "doctor")
 	cmd.Dir = p.dir
 	cmd.Env = env
@@ -103,7 +87,7 @@ func TestDoctorCLIValidatesTrustedRouteReadOnly(t *testing.T) {
 	}{
 		{"config.trusted", doctor.Pass},
 		{"authority.health", doctor.Pass},
-		{"auth.token-selection", doctor.Pass},
+		{"auth.device", doctor.Pass},
 		{"project.resolution", doctor.Pass},
 		{"mirror.freshness", doctor.Warn},
 		{"mcp.entries", doctor.Warn},
@@ -136,18 +120,9 @@ func TestDoctorCLIValidatesTrustedRouteReadOnly(t *testing.T) {
 		t.Fatal("doctor modified trusted configuration")
 	}
 	combined := stdout.String() + stderr.String()
-	for _, sensitive := range []string{"synthetic-doctor-token", unrelatedSentinel} {
+	for _, sensitive := range []string{unrelatedSentinel} {
 		if strings.Contains(combined, sensitive) {
 			t.Fatalf("doctor output echoed sensitive sentinel %q: %s", sensitive, combined)
-		}
-	}
-	args, err := os.ReadFile(gcloudLog)
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, want := range []string{"auth\n", "print-identity-token\n", "--audiences\nhttps://audience.example.test\n", "--impersonate-service-account\nagent@project.iam.gserviceaccount.com\n"} {
-		if !strings.Contains(string(args), want) {
-			t.Errorf("gcloud route omitted %q: %s", want, args)
 		}
 	}
 }

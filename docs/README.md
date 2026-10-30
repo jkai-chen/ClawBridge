@@ -5,7 +5,7 @@
   (macOS/Linux, Windows, WSL), with the owner's checklist after they join
 - [The coordinator session](guides/coordinator.md) and its [playbook template](guides/coordinator-playbook-template.md)
 - [Install and update](installation.md)
-- [Messaging, hosted login, profiles, MCP and TUI](usage.md)
+- [Messaging, hosted sign-in, profiles, MCP and TUI](usage.md)
 - [Signing in with invites and device keys](sign-in.md): invites, joining, device
   keys, members, ownership, turning it on, and troubleshooting (the client side from
   v0.3.5)

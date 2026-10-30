@@ -153,7 +153,7 @@ func (c *Client) StreamOnce(ctx context.Context, scope StreamScope, opts StreamO
 	token := ""
 	if c.signer == nil {
 		if token, err = c.tokens.Token(ctx); err != nil {
-			return false, asCredentialError(err, "cannot acquire the configured ClawBridge credential; run login again")
+			return false, asCredentialError(err, "cannot acquire the configured ClawBridge credential")
 		}
 	}
 	target := StreamPath + "?" + url.Values{"workspace": {scope.Workspace}, "project": {scope.Project}, "session": {scope.Session}, "mode": {scope.Mode}}.Encode()

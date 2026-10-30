@@ -30,8 +30,7 @@ Linear issues, and work as a team. Pick how you want to start:
 const startCommands = `
 Without a terminal, run the command for your choice:
   1. clawbridge setup --local --name WORKSPACE --project PROJECT, then clawbridge project create PROJECT
-  2. with an invite link: clawbridge join (paste the link); with an invite code: clawbridge --server URL join --email EMAIL (asks for the code);
-     with Google sign-in: clawbridge setup join --server URL --workspace TEAM --project CODEBASE [--device]
+  2. with an invite link: clawbridge join (paste the link); with an invite code: clawbridge --server URL join --email EMAIL (asks for the code)
   3. see docs/operations/first-deployment.md (a cloud VM) or docs/operations/local-host.md (this machine or your LAN);
      check each step with clawbridge cloud check
 Run clawbridge onboard in a terminal to choose interactively, or clawbridge help for every command.
@@ -43,7 +42,7 @@ Your own server, in order. Each step is done when its check passes:
   2. See the cost estimate and say yes.
   3. Provision the VM, IP, disk, firewall, DNS and backups.
   4. Install the server (env file, secrets generated on the VM, TLS).   clawbridge cloud check server version
-  5. Sign in and create the workspace: clawbridge setup --cloud.         clawbridge cloud check workspace
+  5. Create the workspace and join it: clawbridge cloud bootstrap.       clawbridge cloud check workspace
   6. The first project, the Linear app, invites, and the dispatcher offer.
 To do it yourself, follow docs/operations/first-deployment.md and run the check after each step. With
 Claude Code or Codex installed, clawbridge onboard can hand the Google Cloud steps to your agent instead.

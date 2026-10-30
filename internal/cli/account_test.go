@@ -328,13 +328,15 @@ func (r *accountRecorder) Execute(_ context.Context, req bus.Request) (bus.Resul
 	return bus.Result{Source: "server", Data: data}, nil
 }
 
-func googleProfile(t *testing.T) string {
+// cloudProfile is a hosted profile that signs with a device key; account
+// tests replace its executor.
+func cloudProfile(t *testing.T) string {
 	t.Helper()
 	isolated(t)
 	home, _ := stateHome()
 	path := filepath.Join(home, "config.toml")
 	_ = os.MkdirAll(home, 0o700)
-	body := "mode = \"cloud\"\nserver = \"https://cb.example.test\"\naudience = \"c.apps\"\nworkspace = \"acme\"\nprincipal = \"ada@example.com\"\ncache = \"cache.db\"\ncredential_source = \"oauth\"\noauth_client_id = \"c.apps\"\noauth_client_secret = \"s\"\n"
+	body := "mode = \"cloud\"\nserver = \"https://cb.example.test\"\nworkspace = \"acme\"\nprincipal = \"ada@example.com\"\ncache = \"cache.db\"\ncredential_source = \"device\"\ndevice_id = \"dev_abcdefghjkmnpqrstvwxyz0123\"\nkey_store = \"keyring\"\n"
 	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -349,7 +351,7 @@ func withAccountRecorder(t *testing.T, r *accountRecorder) {
 }
 
 func TestAccountCommandsMapToTheBus(t *testing.T) {
-	googleProfile(t)
+	cloudProfile(t)
 	onTerminal(t)
 	for _, c := range []struct {
 		args []string
@@ -420,7 +422,7 @@ func TestAccountCommandsMapToTheBus(t *testing.T) {
 }
 
 func TestCIDeviceKeyIsShownOnceAndOnlyItsPublicHalfSent(t *testing.T) {
-	googleProfile(t)
+	cloudProfile(t)
 	onTerminal(t)
 	r := &accountRecorder{data: map[string]any{"principal": "ci:deploy@acme"}}
 	withAccountRecorder(t, r)
@@ -446,68 +448,6 @@ func TestCIDeviceKeyIsShownOnceAndOnlyItsPublicHalfSent(t *testing.T) {
 	id := devicekey.ID(key.Public().(ed25519.PublicKey))
 	if got, err := devicesign.Load(devicesign.Location{Store: devicesign.StoreEnv, DeviceID: id}); err != nil || !got.Equal(key) {
 		t.Fatal(err)
-	}
-}
-
-func TestEnrollSwitchesTheProfileToTheKey(t *testing.T) {
-	path := googleProfile(t)
-	keyring.MockInit()
-	var made []string
-	old := newDeviceKey
-	newDeviceKey = func() (ed25519.PrivateKey, string, error) {
-		k, id, err := old()
-		made = append(made, id)
-		return k, id, err
-	}
-	t.Cleanup(func() { newDeviceKey = old })
-	serverOK(t)
-	refused := &accountRecorder{err: &remote.HTTPError{Status: 403, Code: "forbidden", Message: "enrolling a device needs a Google sign-in"}}
-	withAccountRecorder(t, refused)
-	if _, err := run("device", "enroll", "--label", "laptop"); err == nil {
-		t.Fatal("a refused enrolment passed")
-	}
-	if _, err := devicesign.Load(devicesign.Location{Store: devicesign.StoreKeyring, Host: "cb.example.test", DeviceID: made[0]}); !errors.Is(err, devicesign.ErrNoKey) {
-		t.Fatal("a refused enrolment kept its key:", err)
-	}
-	if profile(t, path)["credential_source"] != "oauth" {
-		t.Fatal("a refused enrolment changed the profile")
-	}
-	r := &accountRecorder{}
-	withAccountRecorder(t, r)
-	out, err := run("device", "enroll", "--label", "laptop")
-	if err != nil {
-		t.Fatal(err)
-	}
-	a := r.requests[0].Args
-	if r.requests[0].Operation != "device_enroll" || a["label"] != "laptop" || a["key_store"] != "keyring" || !strings.Contains(out, made[1]) {
-		t.Fatal(a, out)
-	}
-	// R85-M1: one signed read with the new key before the profile uses it.
-	if len(r.requests) != 2 || r.requests[1].Operation != "device_list" {
-		t.Fatal("the profile switched without a signed request:", r.requests)
-	}
-	p := profile(t, path)
-	if p["credential_source"] != "device" || p["device_id"] != made[1] || p["key_store"] != "keyring" || p["oauth_client_id"] != "c.apps" {
-		t.Fatal("the profile after enrolment:", p)
-	}
-	if _, err = devicesign.Load(devicesign.Location{Store: devicesign.StoreKeyring, Host: "cb.example.test", DeviceID: made[1]}); err != nil {
-		t.Fatal(err)
-	}
-	// The device profile resolves without an audience, refuses Google
-	// login, and enrolling again is refused.
-	c, _, err := resolveConfig(context.Background(), Config{})
-	if err != nil || c.CredentialSource != "device" || c.DeviceID != made[1] {
-		t.Fatal(c, err)
-	}
-	if _, _, err = resolveLoginConfig(context.Background(), Config{}, false); err == nil || !strings.Contains(err.Error(), "--credential-source oauth") {
-		t.Fatal("logged in with Google over a device profile:", err)
-	}
-	if _, err = run("device", "enroll"); err == nil || !strings.Contains(err.Error(), "already signs") {
-		t.Fatal(err)
-	}
-	// Switching back to Google is one flag: the old settings were kept.
-	if c, _, err = resolveConfig(context.Background(), Config{CredentialSource: "oauth"}); err != nil || c.OAuthClientID != "c.apps" {
-		t.Fatal(c, err)
 	}
 }
 
@@ -573,59 +513,6 @@ func TestDoctorChecksTheDeviceKey(t *testing.T) {
 	}
 }
 
-// serverOK answers enroll's server check as a server taking device keys at
-// the profile's origin.
-func serverOK(t *testing.T) {
-	t.Helper()
-	old := enrollServer
-	enrollServer = func(context.Context, string, *http.Client) (string, error) { return "https://cb.example.test", nil }
-	t.Cleanup(func() { enrollServer = old })
-}
-
-// R85-M1, R85-H1, R85-L2: enroll checks the server before making a key,
-// keeps the Google route when a signed request fails, takes --key-store
-// through Run, and drops a key a failed Google credential never sent.
-func TestEnrollChecksTheServerAndTheKeyFirst(t *testing.T) {
-	path := googleProfile(t)
-	keyring.MockInit()
-	var made []string
-	old := newDeviceKey
-	newDeviceKey = func() (ed25519.PrivateKey, string, error) {
-		k, id, err := old()
-		made = append(made, id)
-		return k, id, err
-	}
-	t.Cleanup(func() { newDeviceKey = old })
-	oldServer := enrollServer
-	enrollServer = func(context.Context, string, *http.Client) (string, error) {
-		return "", errors.New("this server doesn't accept device keys; ask its owner, or sign in with clawbridge login")
-	}
-	r := &accountRecorder{}
-	withAccountRecorder(t, r)
-	if _, err := run("device", "enroll"); err == nil || !strings.Contains(err.Error(), "doesn't accept device keys") || len(made) != 0 || len(r.requests) != 0 {
-		t.Fatal("enrolled on a server without device keys:", err, made, r.requests)
-	}
-	enrollServer = oldServer
-	serverOK(t)
-	r.failOp = "device_list"
-	if _, err := run("device", "enroll"); err == nil || !strings.Contains(err.Error(), "still signs with Google") || profile(t, path)["credential_source"] != "oauth" {
-		t.Fatal("the profile switched to a key whose request failed:", err)
-	}
-	google := &accountRecorder{err: remote.CredentialFailure(errors.New("token expired"))}
-	withAccountRecorder(t, google)
-	if _, err := run("device", "enroll"); err == nil {
-		t.Fatal("enrolled without a Google credential")
-	}
-	if _, err := devicesign.Load(devicesign.Location{Store: devicesign.StoreKeyring, Host: "cb.example.test", DeviceID: made[len(made)-1]}); !errors.Is(err, devicesign.ErrNoKey) {
-		t.Fatal("a key never sent was kept:", err)
-	}
-	ok := &accountRecorder{}
-	withAccountRecorder(t, ok)
-	if out, err := run("device", "enroll", "--key-store", "file"); err != nil || !strings.Contains(out, `"key_store":"file"`) || ok.requests[0].Args["key_store"] != "file" || profile(t, path)["key_store"] != "file" {
-		t.Fatal("--key-store file through Run:", err, out)
-	}
-}
-
 // R85-L3: an answer naming another device is uncertain: the key stays.
 func TestAJoinAnswerForAnotherDeviceKeepsTheKey(t *testing.T) {
 	f := newJoinFixture(t)
@@ -686,7 +573,7 @@ func TestDeviceEventLineEscapesTheLabel(t *testing.T) {
 	if strings.Contains(other, "New device") || !strings.Contains(other, `of ada@example.com: dormant soon`) || strings.ContainsAny(other, "\x1b\u202e\u009b") || !strings.Contains(other, "[dve_3]") {
 		t.Fatalf("%q", other)
 	}
-	googleProfile(t)
+	cloudProfile(t)
 	r := &accountRecorder{data: map[string]any{"devices": []any{map[string]any{"label": evil}}}}
 	withAccountRecorder(t, r)
 	out, err := run("device", "list")

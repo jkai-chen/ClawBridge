@@ -2,14 +2,12 @@ package cli
 
 import (
 	"bytes"
-	"cmp"
 	"context"
 	"errors"
 	"flag"
 	"fmt"
 	"io"
 	"os/exec"
-	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -101,16 +99,15 @@ func (l *limitedWriter) Write(p []byte) (int, error) {
 // keeps the list equal to deploy/compose.yaml.
 var requiredSettings = []string{"CLAWBRIDGE_BOOTSTRAP_OWNER", "CLAWBRIDGE_DOMAIN", "POSTGRES_PASSWORD"}
 
-// googleSettings are Google sign-in's five entries: all or none. A
-// deployment with Google sign-in on (CLAWBRIDGE_AUTH unset, google or
-// google,device) needs all five, and serve refuses to start without them;
-// a device-only one (CLAWBRIDGE_AUTH=device) needs none.
+// googleSettings were Google sign-in's five entries. Since v1.0 serve
+// ignores them; one still in the env file is a warning, never a failure.
 var googleSettings = []string{
 	"CLAWBRIDGE_AUDIENCE", "CLAWBRIDGE_OAUTH_CLIENT_ID", "CLAWBRIDGE_OAUTH_CLIENT_SECRET",
 	"CLAWBRIDGE_OAUTH_DEVICE_CLIENT_ID", "CLAWBRIDGE_OAUTH_DEVICE_CLIENT_SECRET",
 }
 
-// authSetting chooses the sign-in methods. Unset, compose passes google.
+// authSetting chooses the sign-in method: device, which unset is too.
+// google refuses the server's start since v1.0.
 const authSetting = "CLAWBRIDGE_AUTH"
 
 // appSettings are the Linear app's three entries: all or none.
@@ -223,7 +220,7 @@ func checkSettings(f remoteFacts) cloudResult {
 	if f.envMissing {
 		return failed("server", "env_missing", serverEnvFile+" is missing; write the private configuration")
 	}
-	var missing, twice, google, noGoogle []string
+	var missing, twice, google []string
 	if f.counts[authSetting] > 1 {
 		twice = append(twice, authSetting)
 	}
@@ -236,30 +233,24 @@ func checkSettings(f remoteFacts) cloudResult {
 		}
 	}
 	for _, k := range googleSettings {
-		switch n := f.counts[k]; {
-		case n == 0:
-			noGoogle = append(noGoogle, k)
-		case n > 1:
-			twice = append(twice, k)
-		default:
+		if f.counts[k] > 0 {
 			google = append(google, k)
 		}
 	}
-	if len(google) > 0 && len(noGoogle) > 0 {
-		return failed("server", "setting_missing", "Google sign-in needs all five settings; set in the env file: "+strings.Join(noGoogle, ", ")+" (or remove them all and set CLAWBRIDGE_AUTH=device)")
+	if strings.Contains(strings.ToLower(f.auth), "google") {
+		return failed("server", "setting_invalid", "Google sign-in was removed in v1.0; set "+authSetting+"=device after every member has an active device (docs/operations/google-sign-in-removal.md#before-you-switch)")
 	}
-	methods, ok := authModeMethods(f.auth)
-	if !ok {
-		return failed("server", "setting_invalid", authSetting+" must be google, device or google,device")
-	}
-	if len(google) == 0 && slices.Contains(methods, "google") {
-		return failed("server", "setting_missing", "Google sign-in is on ("+authSetting+" is "+cmp.Or(f.auth, "unset, so google")+") but none of its five settings is set; set them all, or set "+authSetting+"=device for device sign-in only")
+	if _, ok := authModeMethods(f.auth); !ok {
+		return failed("server", "setting_invalid", authSetting+" must be device")
 	}
 	if len(missing) > 0 {
 		return failed("server", "setting_missing", "set in the env file: "+strings.Join(missing, ", "))
 	}
 	if len(twice) > 0 {
 		return failed("server", "setting_duplicate", "set once only in the env file: "+strings.Join(twice, ", "))
+	}
+	if len(google) > 0 {
+		return cloudResult{Check: "server", Status: "warn", Reason: "google_settings_unused", Advice: "Google sign-in settings are set but unused since v1.0 (CLAWBRIDGE_AUDIENCE, CLAWBRIDGE_OAUTH_*); remove them from the env file"}
 	}
 	return cloudResult{Check: "server", Status: "pass"}
 }
@@ -308,7 +299,7 @@ func (p *cloudProbe) cloudSession(ctx context.Context, check string) (cloudExecu
 	}
 	client, err := newCloudExecutor(p.config)
 	if err != nil {
-		return fail("not_signed_in", "run clawbridge login")
+		return fail("not_signed_in", "join with an invite: clawbridge join")
 	}
 	workspace, project, err := client.ResolveProject(ctx, p.config.Workspace, p.config.Project, "")
 	if err != nil {
@@ -370,16 +361,11 @@ func checkLinearApp(ctx context.Context, p *cloudProbe) cloudResult {
 	return result
 }
 
-// authModeMethods reads CLAWBRIDGE_AUTH as serve does: its sign-in methods,
-// sorted; unset is compose's google.
+// authModeMethods reads CLAWBRIDGE_AUTH as serve does: device, which unset
+// is too.
 func authModeMethods(mode string) ([]string, bool) {
-	var methods []string
-	for _, m := range strings.Split(cmp.Or(mode, "google"), ",") {
-		if (m != "google" && m != "device") || slices.Contains(methods, m) {
-			return nil, false
-		}
-		methods = append(methods, m)
+	if mode != "" && mode != "device" {
+		return nil, false
 	}
-	slices.Sort(methods)
-	return methods, true
+	return []string{"device"}, true
 }

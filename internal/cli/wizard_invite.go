@@ -26,7 +26,7 @@ import (
 // Adapter seams keep the server, the key store and the terminal out of tests.
 var (
 	wizardMethods = func(ctx context.Context, server string) ([]string, error) {
-		discovered, err := remote.DiscoverOAuthClient(ctx, server, nil)
+		discovered, err := remote.DiscoverSignIn(ctx, server, nil)
 		return discovered.AuthMethods, err
 	}
 	wizardKeyStore   = auth.CheckNativeAvailability
@@ -62,29 +62,14 @@ var (
 	}
 )
 
-// wizardSignIn asks how to sign in when the server takes device keys. It
-// reports whether the person has an invite code.
-func wizardSignIn(ask func(string) (string, error), methods []string, stdout io.Writer) (bool, error) {
-	device := slices.Contains(methods, "device")
-	// A server older than device sign-in advertises nothing: Google.
-	google := methods == nil || slices.Contains(methods, "google")
-	switch {
-	case device && google:
-		fmt.Fprintln(stdout, "How do you sign in?\n  1. I have an invite code\n  2. Sign in with Google")
-		answer, err := askUntil(ask, stdout, "Choose 1 or 2 [1]: ", func(a string) (string, error) {
-			if v, ok := pick(a, "1", joinChoices); ok {
-				return v, nil
-			}
-			return "", errors.New("choose 1 or 2")
-		})
-		return answer == "invite", err
-	case device:
-		fmt.Fprintln(stdout, "This server signs in with an invite code.")
-		return true, nil
-	case google:
-		return false, nil
+// wizardSignIn checks that the server takes device keys, the only sign-in
+// since v1.0 removed Google's.
+func wizardSignIn(methods []string, stdout io.Writer) error {
+	if !slices.Contains(methods, "device") {
+		return errors.New("this server doesn't take device keys: it runs a ClawBridge older than device sign-in; ask its owner to upgrade it")
 	}
-	return false, errors.New("this server offers no sign-in this client supports; update clawbridge")
+	fmt.Fprintln(stdout, "This server signs in with an invite code.")
+	return nil
 }
 
 // wizardInvite joins with an invite. Nothing is written before the person

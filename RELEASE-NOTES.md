@@ -1,5 +1,7 @@
 # Unreleased
 
+**Manual update required.** Google sign-in is removed: a client before this release can't sign in to this server with Google, and this server won't start while `CLAWBRIDGE_AUTH` names `google`; move every member to a device key first (docs/operations/google-sign-in-removal.md), then update each client with `clawbridge self-update`.
+
 ## Notifications
 
 - **An idle Claude Code agent can wake by itself through a channel (opt-in, per session).** ClawBridge's repository is
@@ -46,6 +48,29 @@
   the file exists the session reads as before its first model call and nothing is reported. Each read of a
   hook-made binding checks the transcript again, so a link put at its path or on a directory above it since is
   refused. docs/reference/api.md. No schema change. Linear config scope: none.
+
+## Sign-in
+
+- **Google sign-in is removed; device keys are the only sign-in.** Removed: the Google OAuth sign-in (`clawbridge
+  login`, `logout`, `setup join` and `device enroll` now exit 2 and say to ask an owner for an invite and run
+  `clawbridge join`), its OS keychain entry (deleted once, best effort, the first time a profile that names it is
+  read), the OAuth and gcloud/ADC credential routes with their flags and profile keys (old profile keys load with a
+  one-line warning; a profile still on `oauth`, `gcloud` or `adc` is refused with how to join), `serve --audience` and
+  the OAuth client flags, and the OAuth client in `/v1/config` (its four keys stay, empty, for older clients). Kept:
+  Google Cloud for onboarding and hosting with your own `gcloud`, and the scheduler tick's OIDC verifier
+  (`CLAWBRIDGE_TICK_AUDIENCE`). A server with `google` in `CLAWBRIDGE_AUTH` or `serve --auth` refuses to start (exit 2:
+  "clawbridge serve: Google sign-in was removed in v1.0; set CLAWBRIDGE_AUTH=device after every member has an active
+  device …"), whatever the spelling (comma or space, any case, `--auth` or `CLAWBRIDGE_AUTH`), as does one passed
+  `--audience` or an OAuth client flag with a value; with an empty value (an older compose file's) they are ignored.
+  `CLAWBRIDGE_AUDIENCE` and `CLAWBRIDGE_OAUTH_*` left in its environment are ignored with one warning, and `cloud check
+  server` warns while the env file has them. A Bearer (Google ID token) request is refused with `unauthenticated` and
+  how to join, and never counts toward the address's failed sign-in limit. A profile moved to a device key before this
+  release keeps its notification state (its binding is unchanged). `deploy/compose.yaml` now defaults
+  `CLAWBRIDGE_AUTH` to `device` and passes none of the five old Google settings (`cloud check server` warns while the
+  env file still has them); the hosted swap to `device` happens before this deploy. An agent MCP entry
+  installed on a Google route now stops with the same message; re-run `clawbridge mcp install` after joining with a
+  device key (device-route entries are unaffected). No schema change.
+  Linear config scope: none.
 
 # ClawBridge v0.3.13 (released 30 Oct)
 

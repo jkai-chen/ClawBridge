@@ -3,7 +3,8 @@
 The checked-in deployment runs the API, PostgreSQL and Caddy with Docker Compose.
 It joins existing cloud resources; the repository does not provision them.
 Only Caddy exposes TCP 443. The API and database use an internal network; the API
-and Caddy also need egress for Google signing certificates and TLS operations.
+and Caddy also need egress for TLS operations (and the API, with the scheduler
+tick, for Google's signing certificates).
 
 Choose the deployment project, VM/zone, DNS, persistent data disk, private
 configuration, backup bucket and administrative access path for your environment.
@@ -27,26 +28,29 @@ see the [first-deployment guide](first-deployment.md).
 Historical pilot resource names and observations are in the
 [deployment archive](../archive/reviews/deployment-pilot.md).
 
-## Google identity
+## Identity
 
-End users sign in with browser OAuth and loopback PKCE, or device authorization
-on headless machines. The client stores only a refresh
-credential in the native OS keychain and mints a short-lived, audience-bound ID
-token. The server verifies signature, issuer, audience, expiry and verified email,
-then independently enforces ClawBridge membership and project roles. Agents do
-not receive the refresh credential or minted token. A project owner grants
+People sign in with **device keys** ([Signing in](../sign-in.md)): an owner
+invites them, they join with a one-time code, and their computer signs every
+request with its own key, kept in the OS key store (or a file, by choice). Since
+v1.0 this is the only sign-in: Google sign-in was removed
+([Removing Google sign-in](google-sign-in-removal.md)). The server verifies each
+request's signature, then independently enforces ClawBridge membership and
+project roles. Agents never receive the key. A project owner grants
 access with `clawbridge project role-set EMAIL ROLE` and withdraws it with
 `clawbridge project role-revoke EMAIL`: revocation retires that person's active
 sessions in the project, and removes workspace membership once they hold no
 project role. The workspace owner cannot be revoked, and owners cannot revoke
-themselves. Joining an existing workspace
-does not require gcloud.
+themselves. Joining an existing workspace does not require gcloud.
 
-### Account binding
+### Account binding (before v1.0)
 
-The server binds each email principal to the Google account (the token's
-`sub`) of its first request that passes the membership check, and refuses any
-other account for that address with `forbidden`. Refusals are audited in
+Before v1.0, a server with Google sign-in bound each email principal to the
+Google account (the token's `sub`) of its first request that passed the
+membership check, and refused any
+other account for that address with `forbidden`. v1.0 signs in with device keys
+only, so no new binding is made; the stored ones stay, and these commands still
+manage them. Refusals are audited in
 `principal_events` by a hash of the account, at most once per account and
 kind each hour; a caller who is not a member is refused before binding and
 writes nothing. When an address legitimately moves to a new Google account, the
@@ -78,8 +82,9 @@ sudo docker compose --env-file /etc/clawbridge/clawbridge.env \
 
 ### Workspace domain allow-list
 
-A workspace owner can accept only accounts managed by named Google Workspace
-domains (the token's `hd` claim):
+A workspace owner can accept only members whose email is in named domains (a
+device's domain is its email's, checked when it is invited, when it joins and on
+every request):
 
 ```sh
 clawbridge workspace-domains example.com corp.example --workspace TEAM
@@ -87,8 +92,8 @@ clawbridge workspace-domains --clear --workspace TEAM
 ```
 
 The list holds at most 20 domains and must include the owner's own domain.
-With a list set, a member whose account has another domain, or none (a
-consumer Google account), is refused with `forbidden` and writes no binding.
+With a list set, a member whose email has another domain is refused with
+`forbidden`.
 Two exceptions:
 
 - The workspace owner may always change or clear the list, even when the list
@@ -317,42 +322,48 @@ post it made:
   the update on Linear and deletes it.
 - It never mints; the token rules are as above.
 
-Explicit gcloud or authorized-user ADC with service-account impersonation are
-operator alternatives. Their audited principal is the service account in the
-verified token; sharing that account shares its application identity. Configure
-the initiating account, target account and audience explicitly.
-
-Configure workspace membership and project permissions separately from Google
-sign-in. Provisioning the VM, database, OAuth clients and IAM grants is an operator
-workflow outside client onboarding. The service validates Google ID tokens;
-IAP-signed HTTP assertions are outside its implemented identity path.
+Configure workspace membership and project permissions with invites and roles.
+Provisioning the VM, database and IAM grants is an operator workflow outside
+client onboarding. IAP-signed HTTP assertions are outside the server's identity
+path.
 
 ## Sign-in methods
 
-The server accepts Google ID tokens, ClawBridge device keys, or both. The
-mode is `CLAWBRIDGE_AUTH` in the environment file, passed to `serve --auth`.
-Moving people to device keys has an order: upgrade the clients and give everyone a
-device before setting `device`. See
-[Turning device sign-in on](../sign-in.md#turning-device-sign-in-on). v1.0 removes Google sign-in: switch to
-`device` first, in the order of [Removing Google sign-in](google-sign-in-removal.md).
+The server signs people in with ClawBridge device keys only (v1.0). The mode is
+`CLAWBRIDGE_AUTH` in the environment file, passed to `serve --auth` (serve also
+reads `CLAWBRIDGE_AUTH` itself when `--auth` isn't given): `device`, or unset,
+which is `device` too. Any value naming `google` (comma- or space-separated, any
+case) refuses the start. Google sign-in was removed in v1.0; a server that
+still names it refuses to start rather than serve half-configured:
 
-| `CLAWBRIDGE_AUTH` | Accepts | Needs |
-| --- | --- | --- |
-| unset or `google` | Google sign-in only | `CLAWBRIDGE_AUDIENCE` and all four OAuth settings |
-| `google,device` | Google and device keys | the Google settings, and `CLAWBRIDGE_DOMAIN` |
-| `device` | device keys only | `CLAWBRIDGE_DOMAIN`; no Google setting |
+| Setting | Since v1.0 |
+| --- | --- |
+| `CLAWBRIDGE_AUTH` unset or `device` | device keys; needs `CLAWBRIDGE_DOMAIN` |
+| `CLAWBRIDGE_AUTH=google` or `google,device` | exit 2: `clawbridge serve: Google sign-in was removed in v1.0; set CLAWBRIDGE_AUTH=device after every member has an active device (docs/operations/google-sign-in-removal.md#before-you-switch)` |
+| `serve --audience` (or an OAuth client flag) with a value | exit 2: `clawbridge serve: --audience was for Google sign-in, removed in v1.0 (docs/operations/google-sign-in-removal.md#before-you-switch)` |
+| the same flags with an empty value (a compose file from before v1.0 passes them so) | treated as absent, silently |
+| `CLAWBRIDGE_AUDIENCE`, `CLAWBRIDGE_OAUTH_*` left in the env file | ignored; Compose no longer passes them (`cloud check server` warns while the env file has them), and a server started with them in its own environment logs one warning, values never printed: `Google sign-in settings are set but unused since v1.0 (CLAWBRIDGE_AUDIENCE, CLAWBRIDGE_OAUTH_*); remove them from the env file` |
 
-- **An existing deployment keeps Google sign-in unchanged.** The default is
-  `google` when `CLAWBRIDGE_AUTH` is unset. The Google settings may now be empty in
-  Compose, but whenever Google sign-in is on, `serve` refuses to start unless the
-  audience and all four OAuth settings are present. A Google deployment missing one
-  stops; it never falls back to device keys.
+- **Coming from Google sign-in:** move every member to a device key and switch to
+  `device` on the release before v1.0, then upgrade, in the order of
+  [Removing Google sign-in](google-sign-in-removal.md). After the v1.0 deploy,
+  remove the five Google settings from the env file; `clawbridge cloud check
+  server` warns while any is there.
+- **A request with a Bearer token** (a Google ID token from an older client) is
+  refused with `unauthenticated`: "Google sign-in was removed; this server accepts
+  device keys only: ask an owner for an invite (or a recovery invite) and run
+  clawbridge join; see docs/operations/google-sign-in-removal.md".
+- **The scheduler tick is not sign-in.** `CLAWBRIDGE_TICK_AUDIENCE` and
+  `CLAWBRIDGE_TICK_SERVICE_ACCOUNT` still verify Cloud Scheduler's OIDC token on
+  the tick endpoint ([the server watcher](#the-server-watcher-optional-v03)); that
+  token signs nobody in.
 - **Device keys sign requests against the public origin**, `https://` plus
   `CLAWBRIDGE_DOMAIN`. The origin is configuration, never read from `Host` or
   `X-Forwarded-*`. Changing the domain invalidates nothing stored, but every client
   must then use the new origin.
-- `GET /v1/config` shows the effective mode as `auth_methods` and the origin as
-  `public_origin`.
+- `GET /v1/config` shows the effective mode as `auth_methods` (`["device"]`) and
+  the origin as `public_origin`. Its four old OAuth keys are still there, empty,
+  so a client older than v1.0 can read the answer.
 - A device's key is cached for 30 seconds per server process. The database re-checks
   the device in every request, so a revocation takes effect at once on every
   replica.
@@ -368,9 +379,9 @@ device before setting `device`. See
 - **The client address** these limits count is the connection's peer, or, when the
   peer is a [trusted proxy](#trusted-proxies), the client that proxy names.
 
-### Letting the owner in without Google: `operator bootstrap-invite`
+### Letting the owner in: `operator bootstrap-invite`
 
-On a device-only deployment no one can sign in until the owner has a device. The
+On a new deployment no one can sign in until the owner has a device. The
 host operator lets the bootstrap owner in with a one-time code. The same command
 recovers an owner who has lost every device.
 
@@ -427,14 +438,9 @@ Set these in a private, access-restricted environment file outside version contr
 ```text
 POSTGRES_PASSWORD=<random hexadecimal password>
 CLAWBRIDGE_DOMAIN=clawbridge.example.com
-CLAWBRIDGE_AUDIENCE=DESKTOP_CLIENT_ID.apps.googleusercontent.com,DEVICE_CLIENT_ID.apps.googleusercontent.com
-CLAWBRIDGE_OAUTH_CLIENT_ID=DESKTOP_CLIENT_ID.apps.googleusercontent.com
-CLAWBRIDGE_OAUTH_DEVICE_CLIENT_ID=DEVICE_CLIENT_ID.apps.googleusercontent.com
-CLAWBRIDGE_OAUTH_CLIENT_SECRET=DESKTOP_CLIENT_INSTALLED_APP_CREDENTIAL
-CLAWBRIDGE_OAUTH_DEVICE_CLIENT_SECRET=DEVICE_CLIENT_INSTALLED_APP_CREDENTIAL
 CLAWBRIDGE_BOOTSTRAP_OWNER=you@example.com
-# Optional: google (the default), device, or google,device; see "Sign-in methods".
-# CLAWBRIDGE_AUTH=google
+# Optional: device (the default and the only method since v1.0); see "Sign-in methods".
+# CLAWBRIDGE_AUTH=device
 CLAWBRIDGE_POSTGRES_DATA_PATH=/var/lib/clawbridge-postgres/data
 CLAWBRIDGE_BACKUP_BUCKET=private-clawbridge-backup-bucket
 COMPOSE_PROJECT_NAME=clawbridge
@@ -455,24 +461,12 @@ COMPOSE_PROJECT_NAME=clawbridge
 
 Use a random hexadecimal password so it can be interpolated safely into the
 Postgres URL; `openssl rand -hex 32` makes one. `CLAWBRIDGE_BOOTSTRAP_OWNER` is
-the verified identity that will run `clawbridge setup --cloud` once and become
-the workspace owner: normally your own Google account's email, the one you sign
-in with. Install the environment file as
+the email that becomes the workspace owner: normally your own. It joins with the
+[bootstrap invite](#letting-the-owner-in-operator-bootstrap-invite). Install the environment file as
 `/etc/clawbridge/clawbridge.env`, owned by `root:root` with mode `0600`. This file
 is a deployment secret, not a ClawBridge message. Docker configuration rendering
 may include its values; keep rendered config and logs private, and redact the
 webhook secrets from any render you share ([Linear webhooks](#linear-webhooks-optional)).
-
-The two OAuth client IDs must match the Desktop-app and TVs/Limited Input devices
-clients in the Google project. Their matching Google installed-app application
-credentials are supplied only through the two `*_CLIENT_SECRET` environment
-entries shown above, never through the Compose command or any server flag. Both
-IDs must appear exactly in `CLAWBRIDGE_AUDIENCE`; the server rejects an omitted
-audience match, an unmatched credential or duplicate roles. Google treats native
-application credentials as non-confidential after distribution, and the two
-credentials are intentionally exposed with the IDs at the public `/v1/config`
-discovery endpoint. They must still not appear in logs, error output,
-MCP/installer arguments or agent configuration.
 
 ### The ClawBridge Linear app (optional)
 
@@ -868,14 +862,14 @@ Allow public ingress only on TCP 443. Do not publish API, Postgres, port 80 or t
 Caddy admin port. Caddy obtains the initial certificate with TLS-ALPN over TCP
 443 and `--disable-redirects` prevents an HTTP listener that cannot be reached.
 Its separate egress network needs DNS, HTTPS and OCSP reachability; restrict egress
-only if the selected firewall still permits those certificate and Google paths.
-The VM needs outbound access to container registries, ACME, OCSP and Google's
-token-signing certificate endpoints.
+only if the selected firewall still permits those certificate paths.
+The VM needs outbound access to container registries, ACME and OCSP, and, with
+the scheduler tick, Google's token-signing certificate endpoints.
 
 For an ingress firewall that allows only TCP 443, the operator must also permit
 SSH/IAP through the separately reviewed administrative path; this repository does
 not open SSH itself. TCP 443 exposes only Caddy. `/v1/config` is intentionally
-public; `/v1/execute` continues to require a verified Google bearer token.
+public; `/v1/execute` requires a request signed by a live device key.
 `/healthz` checks only the API process; Compose service health and external
 monitoring must be configured separately. If DNS, TCP 443 or the egress path is
 wrong, Caddy cannot obtain a certificate and HTTPS clients fail even if the API
@@ -1084,16 +1078,16 @@ token, client secret or credential file contents.
 
 ## HTTPS and operator access
 
-Configure ClawBridge's server URL as `https://CLAWBRIDGE_DOMAIN` and a server audience set containing the
-client route's selected audience. The four installed-app
-discovery values are available at `https://CLAWBRIDGE_DOMAIN/v1/config`. Every
-application request still needs its own verified Google ID token; DNS or TLS
-access alone is not per-request identity.
+Configure ClawBridge's server URL as `https://CLAWBRIDGE_DOMAIN`; it is also
+the public origin every device signature covers. The sign-in settings are
+available at `https://CLAWBRIDGE_DOMAIN/v1/config`. Every application request
+still needs its own device signature; DNS or TLS access alone is not per-request
+identity.
 
 Use an explicit administrative access path for shell access and disk maintenance.
 The application no longer needs an IAP tunnel to its loopback API for normal
-clients. The VM needs an approved egress path for image retrieval, ACME and
-Google signing-key refresh. Include static-address, disk, egress and registry
+clients. The VM needs an approved egress path for image retrieval and ACME (and,
+with the scheduler tick, Google signing-key refresh). Include static-address, disk, egress and registry
 implications in the cost estimate.
 
 ### Trusted proxies

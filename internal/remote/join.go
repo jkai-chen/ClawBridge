@@ -53,7 +53,7 @@ type JoinedWorkspace struct {
 var ErrJoinUncertain = errors.New("the server's answer to the join was lost; the device may or may not have been added")
 
 // ErrInvitesUnsupported is a server without device sign-in.
-var ErrInvitesUnsupported = errors.New("this server doesn't support invites; sign in with clawbridge login")
+var ErrInvitesUnsupported = errors.New("this server doesn't support invites: it runs a ClawBridge older than device sign-in; ask its owner to upgrade it")
 
 // JoinError is a join the server refused: nothing was added.
 type JoinError struct {
@@ -77,7 +77,7 @@ func JoinServer(ctx context.Context, serverURL string, httpClient *http.Client) 
 	}
 	u, _ := url.Parse(base)
 	origin := Origin(u)
-	discovered, err := DiscoverOAuthClient(ctx, base, httpClient)
+	discovered, err := DiscoverSignIn(ctx, base, httpClient)
 	if err != nil {
 		if errors.Is(err, errUnreachable) {
 			return "", fmt.Errorf("cannot reach %s: check the invite link's address and your network", u.Host)
@@ -88,7 +88,7 @@ func JoinServer(ctx context.Context, serverURL string, httpClient *http.Client) 
 		return "", ErrInvitesUnsupported
 	}
 	if !slices.Contains(discovered.AuthMethods, "device") || discovered.PublicOrigin == "" {
-		return "", errors.New("this server doesn't accept device keys; ask its owner, or sign in with clawbridge login")
+		return "", errors.New("this server doesn't accept device keys; ask its owner")
 	}
 	if discovered.PublicOrigin != origin {
 		return "", fmt.Errorf("this server's public origin is %s; join with --server %s", discovered.PublicOrigin, discovered.PublicOrigin)

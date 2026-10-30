@@ -1,6 +1,7 @@
 package server
 
 import (
+	"bytes"
 	"context"
 	"crypto/ed25519"
 	"crypto/rand"
@@ -8,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -109,7 +111,7 @@ func newDeviceFixture(t *testing.T, methods ...string) *deviceFixture {
 	f.store = &fakeDevices{devices: map[string]bus.Device{f.id: {ID: f.id, Principal: "ada@example.com", Kind: "device", PublicKey: pub, Live: true}}, nonces: map[string]bool{}}
 	f.exec = &identityRecorder{}
 	if len(methods) == 0 {
-		methods = []string{AuthGoogle, AuthDevice}
+		methods = []string{AuthDevice}
 	}
 	verifier := VerifierFunc(func(_ context.Context, token string) (Identity, error) {
 		if token != "good-google-token" {
@@ -200,7 +202,8 @@ func TestDeviceSignedRequestIsTheDevicesIdentity(t *testing.T) {
 	if out.Data["identity_provenance"] != "device-key" || out.Data["device_id"] != f.id {
 		t.Fatal(out.Data)
 	}
-	// Google still signs in alongside.
+	// A verifier a Go caller injects (tests, embedded hosts) still answers
+	// Bearer alongside.
 	if w = f.send(http.MethodPost, "/v1/execute", whoami, "Bearer good-google-token"); w.Code != 200 || f.exec.ids[1].Issuer != bus.GoogleIssuer {
 		t.Fatal(w.Code, w.Body.String())
 	}
@@ -378,54 +381,42 @@ func TestDeviceCache(t *testing.T) {
 	}
 }
 
-// --auth chooses what is accepted, and /v1/config says so.
-func TestAuthMethods(t *testing.T) {
-	device := newDeviceFixture(t, AuthDevice)
-	if w := device.send(http.MethodPost, "/v1/execute", whoami, "Bearer good-google-token"); w.Code != 401 || !strings.Contains(w.Body.String(), "device keys only") {
-		t.Fatal("--auth device took a Google token:", w.Code, w.Body.String())
-	}
-	if w := device.do("/v1/execute", whoami); w.Code != 200 {
-		t.Fatal(w.Code)
-	}
-	google := newDeviceFixture(t, AuthGoogle)
-	if w := google.do("/v1/execute", whoami); w.Code != 401 {
-		t.Fatal("--auth google took a device signature:", w.Code)
-	}
-	if w := google.send(http.MethodPost, "/v1/join", "{}", ""); w.Code != 404 {
-		t.Fatal("--auth google serves join:", w.Code)
-	}
-	w := device.send(http.MethodGet, "/v1/config", "", "")
-	var config map[string]any
-	_ = json.Unmarshal(w.Body.Bytes(), &config)
-	if fmt.Sprint(config["auth_methods"]) != "[device]" || config["public_origin"] != testOrigin {
-		t.Fatal(config)
-	}
-	// A Google-only server names no methods and no origin (R78-H1).
-	w = google.send(http.MethodGet, "/v1/config", "", "")
-	config = nil
-	_ = json.Unmarshal(w.Body.Bytes(), &config)
-	if _, ok := config["auth_methods"]; ok || len(config) != 4 {
-		t.Fatal("a Google-only server advertised sign-in methods:", config)
-	}
-	both := newDeviceFixture(t, AuthGoogle, AuthDevice)
-	w = both.send(http.MethodGet, "/v1/config", "", "")
-	config = nil
-	_ = json.Unmarshal(w.Body.Bytes(), &config)
-	if fmt.Sprint(config["auth_methods"]) != "[google device]" || config["public_origin"] != testOrigin {
-		t.Fatal(config)
-	}
-	for in, want := range map[string]string{"": "error", "google": "[google]", "device": "[device]", "google,device": "[google device]", " device , google ": "[device google]", "google,google": "error", "saml": "error"} {
-		methods, err := authMethods(in, false, false)
-		if got := fmt.Sprint(methods); (err != nil && want != "error") || (err == nil && got != want) {
-			t.Errorf("--auth %q: %v %v", in, methods, err)
+// A served request signs in with a device key only (v1.0): a Bearer
+// credential, a Google ID token from an older client, is refused with the
+// runbook's text, and /v1/config names device alone.
+func TestBearerRefusedDeviceSignedServed(t *testing.T) {
+	f := newDeviceFixture(t, AuthDevice)
+	// The server Run builds: no verifier.
+	f.handler = NewHandlerWithOptions(f.exec, nil, HandlerOptions{Auth: AuthOptions{Methods: []string{AuthDevice}, PublicOrigin: testOrigin, Devices: f.store}, Now: func() time.Time { return f.now }})
+	for _, header := range []string{"Bearer eyJhbGciOiJSUzI1NiJ9.e30.c2ln", "bearer good-google-token", "Bearer "} {
+		w := f.send(http.MethodPost, "/v1/execute", whoami, header)
+		var b struct {
+			Error struct{ Code, Message string }
+		}
+		if w.Code != 401 || json.Unmarshal(w.Body.Bytes(), &b) != nil || b.Error.Code != "unauthenticated" ||
+			b.Error.Message != "Google sign-in was removed; this server accepts device keys only: ask an owner for an invite (or a recovery invite) and run clawbridge join; see docs/operations/google-sign-in-removal.md" {
+			t.Fatalf("%q: %d %s", header, w.Code, w.Body.String())
 		}
 	}
-	for _, c := range []struct {
-		audience, origin bool
-		want             string
-	}{{true, false, "[google]"}, {false, true, "[device]"}, {true, true, "[google device]"}} {
-		if methods, _ := authMethods("", c.audience, c.origin); fmt.Sprint(methods) != c.want {
-			t.Errorf("default with audience=%v origin=%v: %v", c.audience, c.origin, methods)
+	if len(f.exec.ids) != 0 {
+		t.Fatal("a Bearer request reached the authority:", f.exec.ids)
+	}
+	if w := f.do("/v1/execute", whoami); w.Code != 200 || len(f.exec.ids) != 1 || f.exec.ids[0].Issuer != bus.DeviceIssuer {
+		t.Fatal("a device-signed request was not served:", w.Code, w.Body.String())
+	}
+	if w := f.send(http.MethodPost, "/v1/execute", whoami, ""); w.Code != 401 || !strings.Contains(w.Body.String(), "device keys only") {
+		t.Fatal(w.Code, w.Body.String())
+	}
+	w := f.send(http.MethodGet, "/v1/config", "", "")
+	var config map[string]any
+	_ = json.Unmarshal(w.Body.Bytes(), &config)
+	if fmt.Sprint(config["auth_methods"]) != "[device]" || config["public_origin"] != testOrigin || config["browser_client_id"] != "" || config["device_client_id"] != "" {
+		t.Fatal(config)
+	}
+	for in, want := range map[string]string{"": "[device]", "device": "[device]", " device ": "[device]", "google": "error", "google,device": "error", "device,device": "error", "saml": "error"} {
+		methods, err := authMethods(in)
+		if got := fmt.Sprint(methods); (err != nil && want != "error") || (err == nil && got != want) {
+			t.Errorf("--auth %q: %v %v", in, methods, err)
 		}
 	}
 	for in, want := range map[string]string{"https://CB.example.com": "https://cb.example.com", "https://cb.example.com:8443/": "https://cb.example.com:8443", "http://127.0.0.1:8080": "http://127.0.0.1:8080", "http://cb.example.com": "", "https://cb.example.com/x": "", "https://u@cb.example.com": "", "https://cb.example.com?a": "", "cb.example.com": ""} {
@@ -449,6 +440,29 @@ func TestFailedAuthLimiter(t *testing.T) {
 	f.now = f.now.Add(time.Minute)
 	if w := f.do("/v1/execute", whoami); w.Code != 200 {
 		t.Fatal("still limited:", w.Code)
+	}
+}
+
+// A Bearer token from an old client is refused but never locks out its
+// address: device users behind the same NAT keep signing in. The refusal
+// is still logged.
+func TestBearerRefusalsDontLockOutTheAddress(t *testing.T) {
+	f := newDeviceFixture(t)
+	// The server Run builds: no verifier.
+	f.handler = NewHandlerWithOptions(f.exec, nil, HandlerOptions{Auth: AuthOptions{Methods: []string{AuthDevice}, PublicOrigin: testOrigin, Devices: f.store}, Now: func() time.Time { return f.now }})
+	var logged bytes.Buffer
+	log.SetOutput(&logged)
+	defer log.SetOutput(os.Stderr)
+	for i := 0; i <= failedAuthPerMin; i++ {
+		if w := f.send(http.MethodPost, "/v1/execute", whoami, "Bearer eyJhbGciOiJSUzI1NiJ9.e30.c2ln"); w.Code != 401 || errorCode(t, w) != "unauthenticated" {
+			t.Fatalf("Bearer %d: %d %s", i, w.Code, w.Body.String())
+		}
+	}
+	if w := f.do("/v1/execute", whoami); w.Code != 200 {
+		t.Fatal("a device behind the same address was locked out:", w.Code, w.Body.String())
+	}
+	if !strings.Contains(logged.String(), "bearer_removed") {
+		t.Fatalf("the Bearer refusal wasn't logged: %q", logged.String())
 	}
 }
 
@@ -599,7 +613,7 @@ func TestDeviceAnswerCarriesPendingEvents(t *testing.T) {
 	exec := &countingRecorder{}
 	f.handler = NewHandlerWithOptions(exec, VerifierFunc(func(_ context.Context, token string) (Identity, error) {
 		return Identity{Principal: "bob@example.com", Subject: "g-bob"}, nil
-	}), HandlerOptions{Auth: AuthOptions{Methods: []string{AuthGoogle, AuthDevice}, PublicOrigin: testOrigin, Devices: f.store}, Now: func() time.Time { return f.now }})
+	}), HandlerOptions{Auth: AuthOptions{Methods: []string{AuthDevice}, PublicOrigin: testOrigin, Devices: f.store}, Now: func() time.Time { return f.now }})
 	w := f.do("/v1/execute", whoami)
 	var out struct {
 		Pending *int `json:"pending_device_events"`

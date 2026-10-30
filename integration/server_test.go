@@ -3,17 +3,9 @@ package integration
 import (
 	"bytes"
 	"context"
-	"crypto"
-	"crypto/ecdsa"
-	"crypto/elliptic"
-	"crypto/rand"
-	"crypto/rsa"
-	"crypto/sha256"
-	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"io"
-	"math/big"
 	"net/http"
 	"net/http/httptest"
 	"reflect"
@@ -115,103 +107,6 @@ func TestServerAuthenticationAndRequestBoundary(t *testing.T) {
 				}
 			}
 		}
-	}
-}
-
-// Uses the production GoogleVerifier and Google's official validation library,
-// with a locally generated signing key served by an intercepted certificate fetch.
-// This is crypto/claim validation evidence, never a live Google-issued credential.
-func TestServerGoogleVerifierSyntheticCrypto(t *testing.T) {
-	key, err := rsa.GenerateKey(rand.Reader, 2048)
-	if err != nil {
-		t.Fatal(err)
-	}
-	ecKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	if err != nil {
-		t.Fatal(err)
-	}
-	b64 := base64.RawURLEncoding.EncodeToString
-	jwks, _ := json.Marshal(map[string]any{"keys": []any{map[string]any{"kid": "review-key", "kty": "RSA", "alg": "RS256", "use": "sig", "n": b64(key.N.Bytes()), "e": b64(big.NewInt(int64(key.E)).Bytes())}, map[string]any{"kid": "review-ec-key", "kty": "EC", "alg": "ES256", "use": "sig", "crv": "P-256", "x": b64(ecKey.X.FillBytes(make([]byte, 32))), "y": b64(ecKey.Y.FillBytes(make([]byte, 32)))}}})
-	original := http.DefaultTransport
-	http.DefaultTransport = transportFunc(func(req *http.Request) (*http.Response, error) {
-		if req.URL.String() != "https://www.googleapis.com/oauth2/v3/certs" && req.URL.String() != "https://www.gstatic.com/iap/verify/public_key-jwk" {
-			return nil, errors.New("unexpected network request in isolated crypto test")
-		}
-		return &http.Response{StatusCode: 200, Header: http.Header{"Content-Type": []string{"application/json"}, "Cache-Control": []string{"public, max-age=3600"}}, Body: io.NopCloser(bytes.NewReader(jwks)), Request: req}, nil
-	})
-	t.Cleanup(func() { http.DefaultTransport = original })
-	audience := "https://clawbridge.example.test"
-	verifier, err := server.NewGoogleVerifier(context.Background(), audience)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := server.NewGoogleVerifier(context.Background(), ""); err == nil {
-		t.Fatal("empty production audience allowed")
-	}
-	claims := func(tokenAudience string) map[string]any {
-		return map[string]any{"iss": "https://accounts.google.com", "aud": tokenAudience, "sub": pgSubject(pgPrincipal("alice")), "exp": time.Now().Add(time.Hour).Unix(), "iat": time.Now().Unix(), "email": pgPrincipal("alice"), "email_verified": true}
-	}
-	token := func(c map[string]any, alg string) string {
-		kid := "review-key"
-		if alg == "ES256" {
-			kid = "review-ec-key"
-		}
-		head, _ := json.Marshal(map[string]any{"alg": alg, "kid": kid, "typ": "JWT"})
-		payload, _ := json.Marshal(c)
-		unsigned := b64(head) + "." + b64(payload)
-		if alg != "RS256" {
-			return unsigned + "." + b64([]byte{1})
-		}
-		digest := sha256.Sum256([]byte(unsigned))
-		signature, err := rsa.SignPKCS1v15(rand.Reader, key, crypto.SHA256, digest[:])
-		if err != nil {
-			t.Fatal(err)
-		}
-		return unsigned + "." + b64(signature)
-	}
-	identity, err := verifier.Verify(context.Background(), token(claims(audience), "RS256"))
-	if err != nil || identity.Principal != pgPrincipal("alice") {
-		t.Fatalf("production verifier rejected valid synthetic signed fixture: %v %+v", err, identity)
-	}
-	for _, tc := range []struct {
-		name, key string
-		value     any
-	}{{"wrong-audience", "aud", "wrong"}, {"wrong-issuer", "iss", "https://evil.example.test"}, {"expired", "exp", time.Now().Add(-time.Hour).Unix()}, {"unverified-email", "email_verified", false}, {"missing-subject", "sub", ""}} {
-		t.Run(tc.name, func(t *testing.T) {
-			c := claims(audience)
-			c[tc.key] = tc.value
-			if _, err := verifier.Verify(context.Background(), token(c, "RS256")); err == nil {
-				t.Fatal("invalid token accepted")
-			}
-		})
-	}
-	for _, alg := range []string{"none", "HS256", "ES256"} {
-		t.Run("invalid-"+alg, func(t *testing.T) {
-			defer func() {
-				if p := recover(); p != nil {
-					t.Errorf("malformed token panics production verifier: %v", p)
-				}
-			}()
-			if _, err := verifier.Verify(context.Background(), token(claims(audience), alg)); err == nil {
-				t.Fatal("invalid signature/algorithm accepted")
-			}
-		})
-	}
-
-	desktopAudience := "desktop-client.apps.googleusercontent.com"
-	deviceAudience := "device-client.apps.googleusercontent.com"
-	multiVerifier, err := server.NewGoogleVerifierForAudiences(context.Background(), []string{desktopAudience, deviceAudience})
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, tokenAudience := range []string{desktopAudience, deviceAudience} {
-		identity, err := multiVerifier.Verify(context.Background(), token(claims(tokenAudience), "RS256"))
-		if err != nil || identity.Principal != pgPrincipal("alice") {
-			t.Fatalf("multi-audience verifier rejected configured audience %q: %v %+v", tokenAudience, err, identity)
-		}
-	}
-	if _, err := multiVerifier.Verify(context.Background(), token(claims("unlisted-client.apps.googleusercontent.com"), "RS256")); err == nil {
-		t.Fatal("multi-audience verifier accepted an unlisted audience")
 	}
 }
 

@@ -39,7 +39,7 @@ func onTerminal(t *testing.T) {
 // created; --out writes it to a new 0600 file, never over an existing one,
 // and stdout carries no secret.
 func TestAccountSecretsGoToATerminalOrANewFile(t *testing.T) {
-	googleProfile(t)
+	cloudProfile(t)
 	for _, args := range [][]string{
 		{"invite", "--email", "bob@example.com"},
 		{"device", "add"},

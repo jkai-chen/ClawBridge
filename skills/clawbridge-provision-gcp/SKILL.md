@@ -24,8 +24,8 @@ Say these six rules to the user in your first message, then follow them.
    changed needs a new yes.
 3. **Secrets stay out of your hands.** Generate database passwords and keys
    **on the VM**, straight into the root-only env file, with commands that
-   print nothing. When a step needs a secret the user holds (an OAuth client
-   secret, the Linear app's credentials), stop and ask the user to run
+   print nothing. When a step needs a secret the user holds (the Linear app's
+   credentials), stop and ask the user to run
    `clawbridge cloud secret set KEY` in their own terminal. To check the env
    file, only count: `sudo grep -c '^KEY=.' /etc/clawbridge/clawbridge.env`.
 4. **Ask before every delete.** Delete, stop, resize or replace a resource only
@@ -68,8 +68,8 @@ in order. `VM` below is `--vm clawbridge-1 --project PROJECT --zone ZONE`.
 4. **Prepare the VM.** Format and mount the data disk (new disk only), install
    Docker, check out the release. Done when the same infra check fails only
    with `port_closed` (nothing listens on 443 until step 6).
-5. **Sign-in.** Read [references/signin.md](references/signin.md) and follow the
-   path for the release.
+5. **Sign-in.** Read [references/signin.md](references/signin.md): device keys
+   only, with no Google OAuth client (v1.0).
 6. **Install the server.** Write the env file on the VM, start the stack, and
    install the disk guard and backup timer. Done when `clawbridge cloud check
    infra server version VM --server https://DOMAIN` passes.

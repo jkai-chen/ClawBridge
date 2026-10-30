@@ -247,12 +247,6 @@ func TestDeviceRequestSendsTheTargetItSigned(t *testing.T) {
 
 func TestJoinRefusals(t *testing.T) {
 	key, _, _ := devicesign.NewKey()
-	google := newDeviceServer(t, server.AuthGoogle)
-	// A Google-only server names no methods (so v0.3.3 clients parse it),
-	// which reads as no invites.
-	if _, err := JoinServer(context.Background(), google.ts.URL, nil); !errors.Is(err, ErrInvitesUnsupported) {
-		t.Fatal("a Google-only server:", err)
-	}
 	old := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"browser_client_id":"b","browser_client_secret":"bs","device_client_id":"d","device_client_secret":"ds"}`))

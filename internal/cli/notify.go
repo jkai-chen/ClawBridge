@@ -88,13 +88,11 @@ func runNotify(ctx context.Context, flags Config, args []string, stdout, stderr 
 	principal := c.Principal
 	var route any
 	if c.Mode == "cloud" {
-		if principal == "" {
-			principal = c.Account
-		}
-		if principal == "" {
-			principal = "oauth:" + c.OAuthClientID
-		}
-		cloud := []string{"cloud", c.Server, c.Audience, c.CredentialSource, c.Principal, c.Account, c.ImpersonateServiceAccount, c.OAuthClientID, c.OAuthKeyringService, c.CredentialsFile}
+		// Google sign-in's old settings (removed in v1.0) keep their places,
+		// with the values a profile still holds, so a route migrated to a
+		// device key keeps its state binding (option a: no reset).
+		g := readLegacyRoute(c.ClientConfig)
+		cloud := []string{"cloud", c.Server, g.audience, c.CredentialSource, c.Principal, g.account, g.impersonate, g.oauthClientID, g.keyringService, g.credentialsFile}
 		if c.CredentialSource == "device" {
 			// Appended only for a device route, so every other route's
 			// state binding is unchanged.

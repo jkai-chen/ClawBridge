@@ -49,8 +49,9 @@ func TestGuidedStartupPTYBeforeAcquisition(t *testing.T) {
 				t.Fatal(err)
 			}
 			// Start's "2" leads to the guided join. The service can't be
-			// reached, so both ways in are offered: "2" is Google.
-			input := "2\nhttps://selected.invalid\n2\nws\nprj\ndevice\n\n"
+			// reached, so the invite is tried anyway: an email, the default
+			// device name, then no.
+			input := "2\nhttps://selected.invalid\nada@example.com\n\n\n"
 			if kind == "invalid-url" {
 				input = "2\nhttps://user:unsafe-url-sentinel@selected.invalid\nws\nprj\ndevice\ny\n"
 			}
@@ -76,7 +77,7 @@ func TestGuidedStartupPTYBeforeAcquisition(t *testing.T) {
 				t.Fatal(err)
 			}
 			if kind == "decline" {
-				if got.Code != 0 || !strings.Contains(got.Output, "Canceled; no credentials") || !strings.Contains(got.Output, "Service: https://selected.invalid") {
+				if got.Code != 0 || !strings.Contains(got.Output, "Canceled;") || !strings.Contains(got.Output, "trying an invite anyway") {
 					t.Fatalf("decline: %+v", got)
 				}
 			} else if got.Code == 0 {

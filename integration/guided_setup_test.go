@@ -73,8 +73,8 @@ func TestGuidedStartupNonterminalBoundaries(t *testing.T) {
 			if tc.usage && !strings.Contains(strings.ToLower(string(out)), "clawbridge") && !strings.Contains(strings.ToLower(string(out)), "usage of setup wizard") {
 				t.Error("usage/help missing")
 			}
-			if tc.name == "wizard-nonterminal" && (!strings.Contains(strings.ToLower(string(out)), "terminal") || !strings.Contains(string(out), "setup join")) {
-				t.Error("nonterminal wizard lacks terminal/setup-join guidance")
+			if tc.name == "wizard-nonterminal" && (!strings.Contains(strings.ToLower(string(out)), "terminal") || !strings.Contains(string(out), "clawbridge join")) {
+				t.Error("nonterminal wizard lacks terminal/join guidance")
 			}
 			if strings.Contains(string(out), "synthetic-secret-must-not-echo") {
 				t.Error("config content reflected")

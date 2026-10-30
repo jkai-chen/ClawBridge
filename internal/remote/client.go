@@ -11,48 +11,35 @@ import (
 	"net"
 	"net/http"
 	"net/url"
-	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
 
-	"clawbridge/internal/auth"
 	"clawbridge/internal/bus"
 	"clawbridge/internal/devicekey"
 	"clawbridge/internal/devicesign"
 	"clawbridge/internal/mirror"
 	"clawbridge/internal/outbox"
-	"golang.org/x/oauth2"
-	"google.golang.org/api/impersonate"
-	"google.golang.org/api/option"
 )
 
-const (
-	CredentialSourceGcloud = "gcloud"
-	CredentialSourceADC    = "adc"
-	CredentialSourceOAuth  = "oauth"
-	// CredentialSourceDevice signs each request with this device's key
-	// (live/AUTH-INVITE-DESIGN.md §5): there is no bearer token.
-	CredentialSourceDevice = "device"
-)
+// CredentialSourceDevice signs each request with this device's key
+// (live/AUTH-INVITE-DESIGN.md §5): there is no bearer token. It is the only
+// credential source since v1.0 removed Google sign-in (oauth, gcloud, adc).
+const CredentialSourceDevice = "device"
+
+// GoogleRouteRemoved answers a profile that still signs in with Google.
+const GoogleRouteRemoved = "this profile signs in with Google, which was removed in v1.0: ask an owner for an invite (or a recovery invite) and run clawbridge join; see docs/operations/google-sign-in-removal.md"
 
 type Config struct {
-	URL                       string
-	Audience                  string
-	Account                   string
-	ImpersonateServiceAccount string
-	Principal                 string
-	CachePath                 string
-	CredentialSource          string
-	CredentialsFile           string
-	OAuthClientID             string
-	OAuthDeviceClientID       string
-	OAuthClientSecret         string
-	OAuthDeviceClientSecret   string
-	OAuthKeyringService       string
+	URL string
+	// Audience labels a client built over an injected token source (tests
+	// and embedded hosts); a device route never uses it.
+	Audience         string
+	Principal        string
+	CachePath        string
+	CredentialSource string
 	// DeviceID and KeyStore select a device route's key; KeyHome is the
 	// state directory a file key lives under.
 	DeviceID string
@@ -69,36 +56,22 @@ type Config struct {
 // client. It intentionally cannot carry OAuth secrets, refresh tokens,
 // credential-file contents or minted tokens.
 type Route struct {
-	URL                       string
-	Audience                  string
-	Account                   string
-	ImpersonateServiceAccount string
-	Principal                 string
-	CachePath                 string
-	CredentialSource          string
-	CredentialsFile           string
-	OAuthClientID             string
-	OAuthDeviceClientID       string
-	OAuthKeyringService       string
-	DeviceID                  string
-	KeyStore                  string
+	URL              string
+	Principal        string
+	CachePath        string
+	CredentialSource string
+	DeviceID         string
+	KeyStore         string
 }
 
 func (c Config) PublicRoute() Route {
 	return Route{
-		URL:                       c.URL,
-		Audience:                  c.Audience,
-		Account:                   c.Account,
-		ImpersonateServiceAccount: c.ImpersonateServiceAccount,
-		Principal:                 c.Principal,
-		CachePath:                 c.CachePath,
-		CredentialSource:          c.CredentialSource,
-		CredentialsFile:           c.CredentialsFile,
-		OAuthClientID:             c.OAuthClientID,
-		OAuthDeviceClientID:       c.OAuthDeviceClientID,
-		OAuthKeyringService:       c.OAuthKeyringService,
-		DeviceID:                  c.DeviceID,
-		KeyStore:                  c.KeyStore,
+		URL:              c.URL,
+		Principal:        c.Principal,
+		CachePath:        c.CachePath,
+		CredentialSource: c.CredentialSource,
+		DeviceID:         c.DeviceID,
+		KeyStore:         c.KeyStore,
 	}
 }
 
@@ -142,91 +115,6 @@ func asCredentialError(err error, message string) error {
 	return &credentialError{errors.New(message)}
 }
 
-type wrappedOAuthTokenSource struct {
-	source TokenSource
-}
-
-func (s *wrappedOAuthTokenSource) Token(ctx context.Context) (string, error) {
-	if s == nil || s.source == nil {
-		return "", &credentialError{errors.New("OAuth token source is not configured")}
-	}
-	token, err := s.source.Token(ctx)
-	if err != nil {
-		if ctx != nil && ctx.Err() != nil {
-			return "", ctx.Err()
-		}
-		return "", asCredentialError(err, "cannot refresh or validate the ClawBridge OAuth credential; run login again")
-	}
-	return token, nil
-}
-
-// GcloudTokenSource never persists tokens. Its explicit selection avoids silently
-// borrowing the default project/account or misattributing a shared service account.
-type GcloudTokenSource struct {
-	Account, Audience, ImpersonateServiceAccount string
-	mu                                           sync.Mutex
-	token                                        string
-	until                                        time.Time
-}
-
-func (s *GcloudTokenSource) Token(ctx context.Context) (string, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.token != "" && time.Now().Before(s.until) {
-		return s.token, nil
-	}
-	if s.Account == "" || s.Audience == "" {
-		return "", &credentialError{errors.New("select an explicit Google account and audience before cloud requests")}
-	}
-	if s.ImpersonateServiceAccount == "" {
-		return "", &credentialError{errors.New("audience-bound gcloud credentials require an explicitly selected impersonation service account; generic human development tokens are unsupported")}
-	}
-	if s.Account == s.ImpersonateServiceAccount {
-		return "", &credentialError{errors.New("self-impersonation is not supported; select the initiating human or workload account")}
-	}
-	args := []string{"auth", "print-identity-token", "--quiet", "--account", s.Account, "--audiences", s.Audience, "--impersonate-service-account", s.ImpersonateServiceAccount, "--include-email"}
-	bounded, cancel := context.WithTimeout(ctx, 12*time.Second)
-	defer cancel()
-	cmd := exec.CommandContext(bounded, "gcloud", args...)
-	var stderr bytes.Buffer
-	cmd.Stderr = &stderr
-	raw, err := cmd.Output()
-	if err != nil {
-		return "", &credentialError{errors.New("cannot obtain an audience-bound Google token; check account login, explicit impersonation permission and connectivity (no credentials logged)")}
-	}
-	token := strings.TrimSpace(string(raw))
-	if len(token) == 0 || len(token) > 16384 || strings.ContainsAny(token, " \r\n\t") {
-		return "", &credentialError{errors.New("gcloud returned an invalid token")}
-	}
-	s.token = token
-	s.until = time.Now().Add(4 * time.Minute)
-	return token, nil
-}
-
-// ADCTokenSource obtains an audience-bound ID token by impersonating the
-// explicitly selected service account with authorized-user ADC as base
-// credentials. Errors are deliberately sanitized and definitive.
-type ADCTokenSource struct {
-	source oauth2.TokenSource
-}
-
-func (s *ADCTokenSource) Token(ctx context.Context) (string, error) {
-	if s == nil || s.source == nil {
-		return "", &credentialError{errors.New("authorized-user ADC token source is not configured")}
-	}
-	if ctx != nil && ctx.Err() != nil {
-		return "", ctx.Err()
-	}
-	token, err := s.source.Token()
-	if err != nil {
-		return "", &credentialError{errors.New("cannot obtain an audience-bound Google token from authorized-user ADC; reauthenticate the credential and verify explicit impersonation permission (no credentials logged)")}
-	}
-	if token == nil || token.AccessToken == "" || len(token.AccessToken) > 16384 || strings.ContainsAny(token.AccessToken, " \r\n\t") {
-		return "", &credentialError{errors.New("authorized-user ADC returned an invalid identity token")}
-	}
-	return token.AccessToken, nil
-}
-
 type Client struct {
 	config     Config
 	tokens     TokenSource
@@ -245,55 +133,11 @@ type Client struct {
 }
 
 func New(c Config) (*Client, error) {
-	if c.CredentialSource == CredentialSourceDevice {
-		signer, err := NewDeviceSigner(c)
-		if err != nil {
-			return nil, err
-		}
-		return NewWithSigner(c, signer, &http.Client{Timeout: 20 * time.Second})
-	}
-	tokens, err := credentialTokenSource(context.Background(), c)
+	signer, err := NewDeviceSigner(c)
 	if err != nil {
 		return nil, err
 	}
-	return NewWithTokenSource(c, tokens)
-}
-
-// NewTokenSource constructs the explicit credential backend for diagnostics.
-// It does not contact the ClawBridge server and never returns or renders token
-// material.
-func NewTokenSource(ctx context.Context, c Config) (TokenSource, error) {
-	return credentialTokenSource(ctx, c)
-}
-
-func credentialTokenSource(ctx context.Context, c Config) (TokenSource, error) {
-	source, err := ValidateRoute(c)
-	if err != nil {
-		return nil, &credentialError{err}
-	}
-	switch source.CredentialSource {
-	case CredentialSourceGcloud:
-		return &GcloudTokenSource{Account: source.Account, Audience: source.Audience, ImpersonateServiceAccount: source.ImpersonateServiceAccount}, nil
-	case CredentialSourceADC:
-		return newADCTokenSource(ctx, source)
-	case CredentialSourceDevice:
-		return nil, &credentialError{errors.New("a device route signs each request; it has no token source")}
-	case CredentialSourceOAuth:
-		if c.Audience != source.OAuthClientID {
-			return nil, &credentialError{errors.New("OAuth audience must equal the active OAuth client ID; run login again")}
-		}
-		tokens, err := auth.NewTokenSource(ctx, auth.Config{
-			ClientID:          source.OAuthClientID,
-			ClientSecret:      c.OAuthClientSecret,
-			ExpectedPrincipal: source.Principal,
-			Store:             auth.KeyringStore{Service: source.OAuthKeyringService},
-		})
-		if err != nil {
-			return nil, asCredentialError(err, "cannot load or validate the ClawBridge OAuth credential; run login again")
-		}
-		return &wrappedOAuthTokenSource{source: tokens}, nil
-	}
-	return nil, errors.New("credential source must be oauth, gcloud, adc or device")
+	return NewWithSigner(c, signer, &http.Client{Timeout: 20 * time.Second})
 }
 
 // NewDeviceSigner loads a device route's key from its store and signs for
@@ -320,128 +164,33 @@ func NewDeviceSigner(c Config) (*devicesign.Signer, error) {
 // Origin is a server URL's origin, as device signatures cover it.
 func Origin(u *url.URL) string { return strings.ToLower(u.Scheme + "://" + u.Host) }
 
-func newADCTokenSource(ctx context.Context, c Config) (TokenSource, error) {
-	if ctx == nil {
-		ctx = context.Background()
-	}
-	if c.Audience == "" {
-		return nil, &credentialError{errors.New("authorized-user ADC requires an explicit audience")}
-	}
-	if c.Account == "" {
-		return nil, &credentialError{errors.New("authorized-user ADC requires an explicit initiating account")}
-	}
-	if c.ImpersonateServiceAccount == "" {
-		return nil, &credentialError{errors.New("authorized-user ADC requires an explicit impersonation service account")}
-	}
-	if c.Account == c.ImpersonateServiceAccount {
-		return nil, &credentialError{errors.New("self-impersonation is not supported; select the initiating user and a distinct controlled service account")}
-	}
-	if c.CredentialsFile == "" || !filepath.IsAbs(c.CredentialsFile) {
-		return nil, &credentialError{errors.New("authorized-user ADC requires an absolute credentials file path")}
-	}
-	info, err := os.Stat(c.CredentialsFile)
-	if err != nil || !info.Mode().IsRegular() {
-		return nil, &credentialError{errors.New("authorized-user ADC credentials file must be an existing regular file; file contents were not logged")}
-	}
-	if info.Size() > 4<<20 {
-		return nil, &credentialError{errors.New("authorized-user ADC credentials file exceeds the safety limit")}
-	}
-	raw, err := os.ReadFile(c.CredentialsFile)
-	if err != nil {
-		return nil, &credentialError{errors.New("cannot read authorized-user ADC credentials file; file contents were not logged")}
-	}
-	var credentialType struct {
-		Type string `json:"type"`
-	}
-	if json.Unmarshal(raw, &credentialType) != nil || credentialType.Type != string(option.AuthorizedUser) {
-		return nil, &credentialError{errors.New("ADC credentials file must contain authorized-user credentials; file contents were not logged")}
-	}
-	source, err := impersonate.IDTokenSource(ctx, impersonate.IDTokenConfig{
-		Audience:        c.Audience,
-		TargetPrincipal: c.ImpersonateServiceAccount,
-		IncludeEmail:    true,
-	}, option.WithAuthCredentialsFile(option.AuthorizedUser, c.CredentialsFile))
-	if err != nil {
-		return nil, &credentialError{errors.New("cannot load authorized-user ADC credentials or configure impersonation; verify the credential type and file permissions (no file contents logged)")}
-	}
-	return &ADCTokenSource{source: source}, nil
-}
-
-// ValidateRoute applies the single explicit credential-source policy used by
-// the runtime and diagnostic/installer surfaces. There is no default source and
-// no cross-source fallback.
+// ValidateRoute checks a device route, the only credential source. A
+// profile that still names a Google source (oauth, gcloud, adc, or none,
+// which was gcloud) is refused with GoogleRouteRemoved.
 func ValidateRoute(c Config) (Config, error) {
-	source := c.CredentialSource
-	if source == "" {
-		// Phase 2 pilot compatibility: only a missing value selects gcloud.
-		source = CredentialSourceGcloud
+	if c.CredentialSource != CredentialSourceDevice {
+		return Config{}, errors.New(GoogleRouteRemoved)
 	}
-	switch source {
-	case CredentialSourceGcloud:
-		if c.Account == "" || c.Audience == "" || c.ImpersonateServiceAccount == "" {
-			return Config{}, errors.New("gcloud credential source requires explicit account, audience and impersonation service account")
-		}
-		if c.Account == c.ImpersonateServiceAccount {
-			return Config{}, errors.New("self-impersonation is not supported")
-		}
-		if c.CredentialsFile != "" || c.OAuthClientID != "" || c.OAuthDeviceClientID != "" ||
-			c.OAuthClientSecret != "" || c.OAuthDeviceClientSecret != "" || c.OAuthKeyringService != "" {
-			return Config{}, errors.New("gcloud credential source cannot be combined with ADC or OAuth settings")
-		}
-	case CredentialSourceADC:
-		if c.Account == "" || c.Audience == "" || c.ImpersonateServiceAccount == "" || c.CredentialsFile == "" {
-			return Config{}, errors.New("ADC credential source requires an explicit account, audience, impersonation service account and credentials file")
-		}
-		if c.Account == c.ImpersonateServiceAccount {
-			return Config{}, errors.New("self-impersonation is not supported")
-		}
-		if c.OAuthClientID != "" || c.OAuthDeviceClientID != "" || c.OAuthClientSecret != "" ||
-			c.OAuthDeviceClientSecret != "" || c.OAuthKeyringService != "" {
-			return Config{}, errors.New("ADC credential source cannot be combined with OAuth client settings")
-		}
-	case CredentialSourceDevice:
-		// Google settings left in the profile are inert here: they let
-		// logout find the old credential, and a switch back.
-		if !devicekey.ValidID(c.DeviceID) {
-			return Config{}, errors.New("device credential source requires this device's ID")
-		}
-		if !devicesign.ValidStore(c.KeyStore) {
-			return Config{}, errors.New("device credential source requires key_store keyring, file or env")
-		}
-		u, err := url.Parse(c.URL)
-		if err != nil || u.Host == "" || (u.Path != "" && u.Path != "/") || u.RawQuery != "" || u.Fragment != "" || u.User != nil {
-			return Config{}, errors.New("a device route's server URL must be the server's origin, with no path")
-		}
-		if c.URL == "" || c.Principal == "" || c.CachePath == "" {
-			return Config{}, errors.New("cloud credential routing requires server URL, expected principal and an explicit cache path")
-		}
-		c.URL = strings.TrimRight(c.URL, "/")
-		return c, nil
-	case CredentialSourceOAuth:
-		if c.OAuthClientID == "" {
-			return Config{}, errors.New("OAuth credential source requires an explicit client ID")
-		}
-		if c.Audience != c.OAuthClientID {
-			return Config{}, errors.New("OAuth audience must equal the active OAuth client ID")
-		}
-		if c.Account != "" || c.ImpersonateServiceAccount != "" || c.CredentialsFile != "" {
-			return Config{}, errors.New("OAuth credential source cannot be combined with gcloud account, impersonation or credentials-file settings")
-		}
-	default:
-		return Config{}, errors.New("explicit credential source must be oauth, gcloud, adc or device; no fallback is available")
+	if !devicekey.ValidID(c.DeviceID) {
+		return Config{}, errors.New("device credential source requires this device's ID")
 	}
-	if c.URL == "" || c.Audience == "" || c.Principal == "" {
-		return Config{}, errors.New("cloud credential routing requires server URL, audience and expected principal")
+	if !devicesign.ValidStore(c.KeyStore) {
+		return Config{}, errors.New("device credential source requires key_store keyring, file or env")
 	}
-	if c.CachePath == "" {
-		return Config{}, errors.New("cloud credential routing requires an explicit cache path")
+	u, err := url.Parse(c.URL)
+	if err != nil || u.Host == "" || (u.Path != "" && u.Path != "/") || u.RawQuery != "" || u.Fragment != "" || u.User != nil {
+		return Config{}, errors.New("a device route's server URL must be the server's origin, with no path")
 	}
-	c.CredentialSource = source
+	if c.URL == "" || c.Principal == "" || c.CachePath == "" {
+		return Config{}, errors.New("cloud credential routing requires server URL, expected principal and an explicit cache path")
+	}
+	c.URL = strings.TrimRight(c.URL, "/")
 	return c, nil
 }
 
-// NewWithTokenSource accepts an alternative credential adapter without changing
-// server authentication. Tests can supply synthetic tokens to a test verifier.
+// NewWithTokenSource sends an injected bearer token: tests and embedded hosts
+// pair it with a server's injected verifier. A served ClawBridge refuses
+// Bearer since v1.0, so no route of a profile uses it.
 func NewWithTokenSource(c Config, tokens TokenSource) (*Client, error) {
 	return NewWithHTTPClient(c, tokens, &http.Client{Timeout: 20 * time.Second})
 }
@@ -469,14 +218,8 @@ func NewWithSigner(c Config, signer *devicesign.Signer, httpClient *http.Client)
 
 func newClient(c Config, tokens TokenSource, signer *devicesign.Signer, httpClient *http.Client) (*Client, error) {
 	// A signer was built from a validated route, or given by a caller that
-	// holds the key; the origin check below binds it to this server.
-	if c.CredentialSource != "" && signer == nil {
-		var err error
-		c, err = ValidateRoute(c)
-		if err != nil {
-			return nil, err
-		}
-	}
+	// holds the key; the origin check below binds it to this server. An
+	// injected token source is a test's or embedded host's own.
 	u, err := url.Parse(c.URL)
 	if err != nil || u.Host == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" {
 		return nil, errors.New("invalid cloud server URL")
@@ -553,7 +296,7 @@ func (c *Client) call(ctx context.Context, r bus.Request) (bus.Result, bool, err
 			if errors.As(err, &credential) {
 				return bus.Result{}, false, err
 			}
-			return bus.Result{}, false, asCredentialError(err, "cannot acquire the configured ClawBridge credential; run login again")
+			return bus.Result{}, false, asCredentialError(err, "cannot acquire the configured ClawBridge credential")
 		}
 		if len(token) == 0 || len(token) > 16384 || strings.ContainsAny(token, " \r\n\t") {
 			return bus.Result{}, false, errors.New("invalid identity token from credential source")

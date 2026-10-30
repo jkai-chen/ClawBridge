@@ -66,10 +66,10 @@ func TestComposePublicHTTPSAndPersistenceContract(t *testing.T) {
 	env := append([]string{}, os.Environ()...)
 	env = append(env,
 		"POSTGRES_PASSWORD=review-only-database-password",
-		"CLAWBRIDGE_AUDIENCE=browser-client.apps.googleusercontent.com,device-client.apps.googleusercontent.com",
+		"CLAWBRIDGE_AUDIENCE=browser-client.example.test",
 		"CLAWBRIDGE_BOOTSTRAP_OWNER=owner@example.test",
-		"CLAWBRIDGE_OAUTH_CLIENT_ID=browser-client.apps.googleusercontent.com",
-		"CLAWBRIDGE_OAUTH_DEVICE_CLIENT_ID=device-client.apps.googleusercontent.com",
+		"CLAWBRIDGE_OAUTH_CLIENT_ID=browser-client.example.test",
+		"CLAWBRIDGE_OAUTH_DEVICE_CLIENT_ID=device-client.example.test",
 		"CLAWBRIDGE_OAUTH_CLIENT_SECRET="+browserClientSecret,
 		"CLAWBRIDGE_OAUTH_DEVICE_CLIENT_SECRET="+deviceClientSecret,
 		"CLAWBRIDGE_DOMAIN=clawbridge.example.test",
@@ -99,11 +99,12 @@ func TestComposePublicHTTPSAndPersistenceContract(t *testing.T) {
 	assertNetworks(t, compose.Services["db"].Networks, "db", "backend")
 	assertNetworks(t, compose.Services["api"].Networks, "api", "backend", "egress")
 	assertNetworks(t, compose.Services["caddy"].Networks, "caddy", "backend", "egress")
-	if got := compose.Services["api"].Environment["CLAWBRIDGE_OAUTH_CLIENT_SECRET"]; got != browserClientSecret {
-		t.Fatal("API browser OAuth app credential was not sourced from its matching environment variable")
-	}
-	if got := compose.Services["api"].Environment["CLAWBRIDGE_OAUTH_DEVICE_CLIENT_SECRET"]; got != deviceClientSecret {
-		t.Fatal("API device OAuth app credential was not sourced from its matching environment variable")
+	// Google sign-in's old settings (removed in v1.0), still in an env
+	// file, never reach the API.
+	for _, name := range []string{"CLAWBRIDGE_AUDIENCE", "CLAWBRIDGE_OAUTH_CLIENT_ID", "CLAWBRIDGE_OAUTH_CLIENT_SECRET", "CLAWBRIDGE_OAUTH_DEVICE_CLIENT_ID", "CLAWBRIDGE_OAUTH_DEVICE_CLIENT_SECRET"} {
+		if _, ok := compose.Services["api"].Environment[name]; ok {
+			t.Fatalf("API environment carries %s", name)
+		}
 	}
 	// The Linear app is optional: each entry reaches the API, and an unset
 	// one renders empty rather than failing the render.
@@ -148,10 +149,8 @@ func TestComposePublicHTTPSAndPersistenceContract(t *testing.T) {
 			t.Fatalf("%s command or argv contains an installed-app OAuth credential", serviceName)
 		}
 		encodedEnvironment, _ := json.Marshal(service.Environment)
-		if serviceName != "api" &&
-			(strings.Contains(string(encodedEnvironment), browserClientSecret) ||
-				strings.Contains(string(encodedEnvironment), deviceClientSecret) ||
-				strings.Contains(string(encodedEnvironment), linearAppSecret)) {
+		if strings.Contains(string(encodedEnvironment), browserClientSecret) || strings.Contains(string(encodedEnvironment), deviceClientSecret) ||
+			(serviceName != "api" && strings.Contains(string(encodedEnvironment), linearAppSecret)) {
 			t.Fatalf("%s environment contains an unrelated installed-app OAuth credential", serviceName)
 		}
 	}
@@ -207,10 +206,10 @@ func TestComposePublicHTTPSAndPersistenceContract(t *testing.T) {
 	defaultEnv := append([]string{}, os.Environ()...)
 	defaultEnv = append(defaultEnv,
 		"POSTGRES_PASSWORD=review-only-database-password",
-		"CLAWBRIDGE_AUDIENCE=browser-client.apps.googleusercontent.com,device-client.apps.googleusercontent.com",
+		"CLAWBRIDGE_AUDIENCE=browser-client.example.test",
 		"CLAWBRIDGE_BOOTSTRAP_OWNER=owner@example.test",
-		"CLAWBRIDGE_OAUTH_CLIENT_ID=browser-client.apps.googleusercontent.com",
-		"CLAWBRIDGE_OAUTH_DEVICE_CLIENT_ID=device-client.apps.googleusercontent.com",
+		"CLAWBRIDGE_OAUTH_CLIENT_ID=browser-client.example.test",
+		"CLAWBRIDGE_OAUTH_DEVICE_CLIENT_ID=device-client.example.test",
 		"CLAWBRIDGE_OAUTH_CLIENT_SECRET="+browserClientSecret,
 		"CLAWBRIDGE_OAUTH_DEVICE_CLIENT_SECRET="+deviceClientSecret,
 		"CLAWBRIDGE_DOMAIN=clawbridge.example.test",

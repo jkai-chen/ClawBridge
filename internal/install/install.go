@@ -19,15 +19,14 @@ import (
 )
 
 type Options struct {
-	LinearProfile                                                                string
-	ClientConfig                                                                 string
-	Agent, Config, Command, Name                                                 string
-	DB, Workspace, Project, Session, Instance                                    string
-	Mode, Server, Audience, Account, ImpersonateServiceAccount, Principal, Cache string
-	CredentialSource, CredentialsFile, OAuthClientID                             string
-	OAuthDeviceClientID, OAuthKeyringService                                     string
-	DeviceID, KeyStore                                                           string
-	DryRun                                                                       bool
+	LinearProfile                             string
+	ClientConfig                              string
+	Agent, Config, Command, Name              string
+	DB, Workspace, Project, Session, Instance string
+	Mode, Server, Principal, Cache            string
+	CredentialSource                          string
+	DeviceID, KeyStore                        string
+	DryRun                                    bool
 }
 
 type Result struct {
@@ -61,16 +60,9 @@ func RunWithIO(args []string, stdout, stderr io.Writer) error {
 	f.StringVar(&o.Instance, "instance", "", "explicit instance to resume (optional)")
 	f.StringVar(&o.Mode, "mode", "", "local or cloud (inferred from --server)")
 	f.StringVar(&o.Server, "server", "", "trusted cloud server URL")
-	f.StringVar(&o.Audience, "audience", "", "Google ID-token audience")
-	f.StringVar(&o.Account, "account", "", "explicit initiating Google account")
-	f.StringVar(&o.ImpersonateServiceAccount, "impersonate-service-account", "", "explicit audience-bound service identity")
 	f.StringVar(&o.Principal, "principal", "", "expected verified principal for scoped offline reads")
 	f.StringVar(&o.Cache, "cache", "", "cloud mirror path")
-	f.StringVar(&o.CredentialSource, "credential-source", "", "explicit oauth, gcloud or adc backend")
-	f.StringVar(&o.CredentialsFile, "credentials-file", "", "explicit authorized-user ADC file")
-	f.StringVar(&o.OAuthClientID, "oauth-client-id", "", "active OAuth Desktop client ID")
-	f.StringVar(&o.OAuthDeviceClientID, "oauth-device-client-id", "", "separate device-flow OAuth client ID")
-	f.StringVar(&o.OAuthKeyringService, "oauth-keyring-service", "", "OS keychain service name")
+	f.StringVar(&o.CredentialSource, "credential-source", "", "device, the only credential source")
 	f.StringVar(&o.DeviceID, "device-id", "", "this device's ID, for the device credential source")
 	f.StringVar(&o.KeyStore, "key-store", "", "where the device key is kept: keyring, file or env")
 	f.BoolVar(&o.DryRun, "dry-run", false, "preview the entry without writing files")
@@ -171,8 +163,7 @@ func Install(o Options) (Result, error) {
 	argv := []string{"mcp", "--mode", o.Mode, "--workspace", o.Workspace, "--project", o.Project, "--session", o.Session}
 	switch o.Mode {
 	case "local":
-		if o.Server != "" || o.Audience != "" || o.Account != "" || o.ImpersonateServiceAccount != "" || o.Principal != "" || o.Cache != "" ||
-			o.CredentialSource != "" || o.CredentialsFile != "" || o.OAuthClientID != "" || o.OAuthDeviceClientID != "" || o.OAuthKeyringService != "" || o.DeviceID != "" || o.KeyStore != "" {
+		if o.Server != "" || o.Principal != "" || o.Cache != "" || o.CredentialSource != "" || o.DeviceID != "" || o.KeyStore != "" {
 			return r, errors.New("cloud credential routing cannot be supplied for a local MCP entry")
 		}
 		argv = append(argv, "--db", db)
@@ -196,41 +187,13 @@ func Install(o Options) (Result, error) {
 			return r, e
 		}
 		route, e := remote.ValidateRoute(remote.Config{
-			URL: o.Server, Audience: o.Audience, Account: o.Account,
-			ImpersonateServiceAccount: o.ImpersonateServiceAccount,
-			Principal:                 o.Principal, CachePath: cache,
-			CredentialSource: o.CredentialSource, CredentialsFile: o.CredentialsFile,
-			OAuthClientID: o.OAuthClientID, OAuthDeviceClientID: o.OAuthDeviceClientID,
-			OAuthKeyringService: o.OAuthKeyringService,
-			DeviceID:            o.DeviceID, KeyStore: o.KeyStore,
+			URL: o.Server, Principal: o.Principal, CachePath: cache,
+			CredentialSource: o.CredentialSource, DeviceID: o.DeviceID, KeyStore: o.KeyStore,
 		})
 		if e != nil {
 			return r, e
 		}
-		if route.CredentialSource == remote.CredentialSourceDevice {
-			argv = append(argv, "--server", route.URL, "--credential-source", route.CredentialSource)
-		} else {
-			argv = append(argv, "--server", route.URL, "--audience", route.Audience, "--credential-source", route.CredentialSource)
-		}
-		switch route.CredentialSource {
-		case remote.CredentialSourceDevice:
-			argv = append(argv, "--device-id", route.DeviceID, "--key-store", route.KeyStore)
-		case remote.CredentialSourceGcloud:
-			argv = append(argv, "--account", route.Account, "--impersonate-service-account", route.ImpersonateServiceAccount)
-		case remote.CredentialSourceADC:
-			if !filepath.IsAbs(route.CredentialsFile) {
-				return r, errors.New("ADC credentials file must be an absolute path")
-			}
-			argv = append(argv, "--credentials-file", route.CredentialsFile, "--account", route.Account, "--impersonate-service-account", route.ImpersonateServiceAccount)
-		case remote.CredentialSourceOAuth:
-			argv = append(argv, "--oauth-client-id", route.OAuthClientID)
-			if route.OAuthDeviceClientID != "" {
-				argv = append(argv, "--oauth-device-client-id", route.OAuthDeviceClientID)
-			}
-			if route.OAuthKeyringService != "" {
-				argv = append(argv, "--oauth-keyring-service", route.OAuthKeyringService)
-			}
-		}
+		argv = append(argv, "--server", route.URL, "--credential-source", route.CredentialSource, "--device-id", route.DeviceID, "--key-store", route.KeyStore)
 		argv = append(argv, "--principal", route.Principal, "--cache", route.CachePath)
 	default:
 		return r, errors.New("MCP installation mode must be local or cloud")

@@ -171,8 +171,9 @@ func playbookLine(pb map[string]any) string {
 // provenanceWords names how the caller was proven; any other value is
 // shown as the server sent it.
 var provenanceWords = map[string]string{
-	"google-id-token":          "Google sign-in",
+	"google-id-token":          "Google sign-in (before v1.0)",
 	"device-key":               "this device's key",
+	"cached-sign-in":           "the last sign-in, offline",
 	"local-os-user-unverified": "the local OS user",
 }
 

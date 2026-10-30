@@ -267,11 +267,6 @@ func TestRemoteURLAndRedirectBoundary(t *testing.T) {
 	if forwarded.Load() != 0 {
 		t.Fatal("bearer-bearing request followed redirect")
 	}
-	for _, source := range []*remote.GcloudTokenSource{{Account: "human@example.test", Audience: "aud"}, {Account: "same@example.test", Audience: "aud", ImpersonateServiceAccount: "same@example.test"}} {
-		if _, err := source.Token(context.Background()); err == nil {
-			t.Fatal("unsupported default/human/self-impersonation flow accepted")
-		}
-	}
 	// Failure messages must not echo bearer or remote response secrets.
 	noisy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(403)
@@ -281,44 +276,5 @@ func TestRemoteURLAndRedirectBoundary(t *testing.T) {
 	_, err := mustRemote(t, remote.Config{URL: noisy.URL, Audience: "aud"}).Execute(context.Background(), bus.Request{Operation: "whoami"})
 	if err == nil || strings.Contains(err.Error(), "synthetic-bob") || strings.Contains(err.Error(), "postgres://") {
 		t.Fatalf("unsafe client error: %v", err)
-	}
-}
-
-func TestGcloudTokenSourceExplicitArgumentsAndNoEcho(t *testing.T) {
-	dir := t.TempDir()
-	log := filepath.Join(dir, "calls.txt")
-	fake := filepath.Join(dir, "gcloud")
-	script := "#!/bin/sh\nprintf '%s\\n' \"$@\" >> \"$CLAWBRIDGE_TEST_GCLOUD_LOG\"\nprintf 'synthetic-token-from-test\\n'\n"
-	if err := os.WriteFile(fake, []byte(script), 0700); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
-	t.Setenv("CLAWBRIDGE_TEST_GCLOUD_LOG", log)
-	source := &remote.GcloudTokenSource{Account: "human@example.test", Audience: "https://audience.example.test", ImpersonateServiceAccount: "agent@project.iam.gserviceaccount.com"}
-	token, err := source.Token(context.Background())
-	if err != nil || token != "synthetic-token-from-test" {
-		t.Fatalf("test token process failed: %v", err)
-	}
-	before, err := os.ReadFile(log)
-	if err != nil {
-		t.Fatal(err)
-	}
-	expected := []string{"auth", "print-identity-token", "--quiet", "--account", "human@example.test", "--audiences", "https://audience.example.test", "--impersonate-service-account", "agent@project.iam.gserviceaccount.com", "--include-email"}
-	if strings.Join(expected, "\n")+"\n" != string(before) {
-		t.Fatalf("unexpected gcloud credential routing: %s", before)
-	}
-	if _, err := source.Token(context.Background()); err != nil {
-		t.Fatal(err)
-	}
-	after, _ := os.ReadFile(log)
-	if !bytes.Equal(before, after) {
-		t.Fatal("token cache redundantly invoked gcloud")
-	}
-	if err := os.WriteFile(fake, []byte("#!/bin/sh\nprintf 'stderr-private-fixture-secret' >&2\nexit 1\n"), 0700); err != nil {
-		t.Fatal(err)
-	}
-	failing := &remote.GcloudTokenSource{Account: "human@example.test", Audience: "aud", ImpersonateServiceAccount: "agent@project.iam.gserviceaccount.com"}
-	if _, err := failing.Token(context.Background()); err == nil || strings.Contains(err.Error(), "stderr-private-fixture-secret") {
-		t.Fatalf("credential subprocess failure unsafe: %v", err)
 	}
 }

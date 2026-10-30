@@ -16,7 +16,6 @@ import (
 	"time"
 
 	"clawbridge/internal/bus"
-	"clawbridge/internal/faketool"
 	"clawbridge/internal/remote"
 )
 
@@ -25,8 +24,6 @@ import (
 // and drop asks for the word.
 func TestOutboxCommands(t *testing.T) {
 	dir := isolated(t)
-	faketool.Install(t, dir, "gcloud", "print:synthetic-cli-token")
-	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
 	principal := "service@example.test"
 	var down atomic.Bool
 	var mu sync.Mutex
@@ -60,9 +57,10 @@ func TestOutboxCommands(t *testing.T) {
 		json.NewEncoder(w).Encode(map[string]any{"source": "server", "data": data})
 	}))
 	defer host.Close()
-	for k, v := range map[string]string{"MODE": "cloud", "SERVER": host.URL, "AUDIENCE": "test-audience", "ACCOUNT": "human@example.test", "IMPERSONATE_SERVICE_ACCOUNT": principal, "PRINCIPAL": principal, "CACHE": filepath.Join(dir, "profile", "mirror.db"), "WORKSPACE": "w", "PROJECT": "p", "SESSION": "a", "INSTANCE": "cloud-inst"} {
+	for k, v := range map[string]string{"MODE": "cloud", "SERVER": host.URL, "PRINCIPAL": principal, "CACHE": filepath.Join(dir, "profile", "mirror.db"), "WORKSPACE": "w", "PROJECT": "p", "SESSION": "a", "INSTANCE": "cloud-inst"} {
 		t.Setenv("CLAWBRIDGE_"+k, v)
 	}
+	useDeviceRoute(t, host.URL)
 	run := func(timeout time.Duration, args ...string) (map[string]any, string, error) {
 		t.Helper()
 		ctx, cancel := context.WithTimeout(context.Background(), timeout)
@@ -134,9 +132,10 @@ func TestOutboxCommands(t *testing.T) {
 func TestOutboxCommandKillSwitch(t *testing.T) {
 	dir := isolated(t)
 	t.Setenv("CLAWBRIDGE_CLIENT_OUTBOX", "off")
-	for k, v := range map[string]string{"MODE": "cloud", "SERVER": "https://bus.example.test", "AUDIENCE": "test-audience", "PRINCIPAL": "service@example.test", "CACHE": filepath.Join(dir, "mirror.db"), "ACCOUNT": "human@example.test", "IMPERSONATE_SERVICE_ACCOUNT": "service@example.test"} {
+	for k, v := range map[string]string{"MODE": "cloud", "SERVER": "https://bus.example.test", "PRINCIPAL": "service@example.test", "CACHE": filepath.Join(dir, "mirror.db")} {
 		t.Setenv("CLAWBRIDGE_"+k, v)
 	}
+	useDeviceRoute(t, "https://bus.example.test")
 	var out, diag bytes.Buffer
 	if err := Run(context.Background(), []string{"outbox", "list"}, &out, &diag); err == nil || !strings.Contains(err.Error(), "the client outbox is off") {
 		t.Fatal(err)

@@ -101,7 +101,7 @@ func (w *inviteWizard) profile() map[string]any {
 // project saved beside the device route, onboarding and the TUI.
 func TestWizardJoinsWithAnInviteCode(t *testing.T) {
 	// After the code: Linear no, then yes to opening ClawBridge.
-	w := newInviteWizard(t, "https://service.test\n1\nada@example.com\nAda's laptop\ny\nn\n\n", "google", "device")
+	w := newInviteWizard(t, "https://service.test\nada@example.com\nAda's laptop\ny\nn\n\n", "google", "device")
 	out, err := w.run()
 	if err != nil {
 		t.Fatal(err, out)
@@ -113,7 +113,7 @@ func TestWizardJoinsWithAnInviteCode(t *testing.T) {
 	if p.Server != "https://service.test" || p.Email != "ada@example.com" || p.Code != wizardCode || p.Label != "Ada's laptop" || p.KeyStore != devicesign.StoreKeyring || p.ConfigPath != w.path {
 		t.Fatalf("%+v", p)
 	}
-	for _, want := range []string{"1. I have an invite code", "2. Sign in with Google", "Email: ada@example.com", "Key: the system key store", "not shown as you type", "Joined workspace pilot as ada@example.com", "Project: api"} {
+	for _, want := range []string{"signs in with an invite code", "Email: ada@example.com", "Key: the system key store", "not shown as you type", "Joined workspace pilot as ada@example.com", "Project: api"} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("output missing %q:\n%s", want, out)
 		}
@@ -130,27 +130,26 @@ func TestWizardJoinsWithAnInviteCode(t *testing.T) {
 	}
 }
 
-// A server that takes only device keys goes straight to the invite; one
-// that takes both still offers Google, which keeps the old path.
+// Every server that takes device keys goes straight to the invite (v1.0
+// removed Google sign-in); one that takes none can't be joined.
 func TestWizardOffersOnlyWhatTheServerTakes(t *testing.T) {
-	w := newInviteWizard(t, "https://service.test\nada@example.com\n\nn\n", "device")
-	out, err := w.run()
-	if err != nil || strings.Contains(out, "Sign in with Google") || !strings.Contains(out, "signs in with an invite code") || len(w.joined) != 0 || w.codeRead {
-		t.Fatal(err, out)
+	for _, methods := range [][]string{{"device"}, {"google", "device"}} {
+		w := newInviteWizard(t, "https://service.test\nada@example.com\n\nn\n", methods...)
+		out, err := w.run()
+		if err != nil || strings.Contains(out, "Google") || !strings.Contains(out, "signs in with an invite code") || len(w.joined) != 0 || w.codeRead {
+			t.Fatal(methods, err, out)
+		}
 	}
-	w = newInviteWizard(t, "https://service.test\n2\nws\nprj\ndevice\nn\n", "google", "device")
-	out, err = w.run()
-	if err != nil || !strings.Contains(out, "Sign-in: a code on another device") || !strings.Contains(out, "Canceled; no credentials or configuration changed.") || len(w.joined) != 0 {
-		t.Fatal(err, out)
+	for _, methods := range [][]string{{"saml"}, {"google"}, nil} {
+		w := newInviteWizard(t, "https://service.test\n", methods...)
+		if _, err := w.run(); err == nil || !strings.Contains(err.Error(), "doesn't take device keys") {
+			t.Fatal(methods, err)
+		}
 	}
-	w = newInviteWizard(t, "https://service.test\n", "saml")
-	if _, err = w.run(); err == nil || !strings.Contains(err.Error(), "no sign-in this client supports") {
-		t.Fatal(err)
-	}
-	// Settings that can't be read offer both ways in.
-	w = newInviteWizard(t, "https://service.test\n2\nws\nprj\ndevice\nn\n")
+	// Settings that can't be read: the invite is tried anyway.
+	w := newInviteWizard(t, "https://service.test\nada@example.com\n\nn\n")
 	wizardMethods = func(context.Context, string) ([]string, error) { return nil, errors.New("unreachable") }
-	if out, err = w.run(); err != nil || !strings.Contains(out, "Couldn't read the service's sign-in settings (unreachable)") || !strings.Contains(out, "1. I have an invite code") || !strings.Contains(out, "Canceled; no credentials") {
+	if out, err := w.run(); err != nil || !strings.Contains(out, "Couldn't read the service's sign-in settings (unreachable); trying an invite anyway") || !strings.Contains(out, "Canceled; no key or configuration changed.") {
 		t.Fatal(err, out)
 	}
 }
@@ -158,7 +157,7 @@ func TestWizardOffersOnlyWhatTheServerTakes(t *testing.T) {
 // Without a system key store, the wizard explains the file store and asks;
 // a no changes nothing, and a yes joins with the key in a file.
 func TestWizardAsksBeforeAFileKeyStore(t *testing.T) {
-	w := newInviteWizard(t, "https://service.test\n1\nada@example.com\n\nn\n", "google", "device")
+	w := newInviteWizard(t, "https://service.test\nada@example.com\n\nn\n", "google", "device")
 	wizardKeyStore = func(context.Context) error { return errors.New("Linux Secret Service is unavailable") }
 	out, err := w.run()
 	if err != nil || !strings.Contains(out, devicesign.FileWarning) || !strings.Contains(out, "Canceled; nothing was changed") || w.codeRead || len(w.joined) != 0 {
@@ -167,7 +166,7 @@ func TestWizardAsksBeforeAFileKeyStore(t *testing.T) {
 	if _, e := os.Stat(w.path); !errors.Is(e, os.ErrNotExist) {
 		t.Fatal("a profile was written")
 	}
-	w = newInviteWizard(t, "https://service.test\n1\nada@example.com\n\ny\ny\n", "google", "device")
+	w = newInviteWizard(t, "https://service.test\nada@example.com\n\ny\ny\n", "google", "device")
 	wizardKeyStore = func(context.Context) error { return errors.New("Linux Secret Service is unavailable") }
 	out, err = w.run()
 	if err != nil || len(w.joined) != 1 || w.joined[0].KeyStore != devicesign.StoreFile || !strings.Contains(out, "Key: a file (0600)") || !strings.Contains(out, "Note: "+devicesign.FileWarning) {
@@ -177,12 +176,12 @@ func TestWizardAsksBeforeAFileKeyStore(t *testing.T) {
 
 // A no at the summary reads no code and joins nothing.
 func TestWizardInviteDeclineChangesNothing(t *testing.T) {
-	w := newInviteWizard(t, "https://service.test\n1\nada@example.com\n\nn\n", "google", "device")
+	w := newInviteWizard(t, "https://service.test\nada@example.com\n\nn\n", "google", "device")
 	out, err := w.run()
 	if err != nil || w.codeRead || len(w.joined) != 0 || !strings.Contains(out, "Canceled; no key or configuration changed.") {
 		t.Fatal(err, out)
 	}
-	w = newInviteWizard(t, "https://service.test\n1\nnot-an-email\n", "device", "google")
+	w = newInviteWizard(t, "https://service.test\nnot-an-email\n", "device", "google")
 	if _, err = w.run(); err == nil || w.codeRead {
 		t.Fatal(err)
 	}
@@ -193,27 +192,27 @@ func TestWizardInviteDeclineChangesNothing(t *testing.T) {
 func TestWizardInviteProjectChoice(t *testing.T) {
 	// A numbered list: a number or a slug picks; a wrong answer asks again.
 	for answer, want := range map[string]string{"2": "web", "web": "web", "": "api", "3\nother\n2": "web"} {
-		w := newInviteWizard(t, "https://service.test\n1\nada@example.com\n\ny\n"+answer+"\nn\n\n", "device", "google")
+		w := newInviteWizard(t, "https://service.test\nada@example.com\n\ny\n"+answer+"\nn\n\n", "device", "google")
 		w.projects = []string{"api", "web"}
 		out, err := w.run()
 		if err != nil || w.profile()["project"] != want || !strings.Contains(out, "Your projects:\n  1. api\n  2. web\n") || !w.tui {
 			t.Fatalf("%q: %v %s", answer, err, out)
 		}
 	}
-	w := newInviteWizard(t, "https://service.test\n1\nada@example.com\n\ny\nother\n0\n9\n", "device", "google")
+	w := newInviteWizard(t, "https://service.test\nada@example.com\n\ny\nother\n0\n9\n", "device", "google")
 	w.projects = []string{"api", "web"}
 	if _, err := w.run(); err == nil || !strings.Contains(err.Error(), "choose a number from 1 to 2") || w.tui {
 		t.Fatal(err)
 	}
 	// U47: with none, the profile is kept, the person is told what it waits
 	// for, and ClawBridge opens on its waiting screen (PR D); not an error.
-	w = newInviteWizard(t, "https://service.test\n1\nada@example.com\n\ny\n\n", "device", "google")
+	w = newInviteWizard(t, "https://service.test\nada@example.com\n\ny\n\n", "device", "google")
 	w.projects = nil
 	out, err := w.run()
 	if err != nil || !strings.Contains(out, "no project in this workspace yet") || !strings.Contains(out, "waiting screen") || !w.tui || w.profile()["project"] != nil || w.profile()["workspace"] != "pilot" {
 		t.Fatal(err, out)
 	}
-	w = newInviteWizard(t, "https://service.test\n1\nada@example.com\n\ny\n", "device", "google")
+	w = newInviteWizard(t, "https://service.test\nada@example.com\n\ny\n", "device", "google")
 	wizardProjects = func(context.Context, string) ([]string, error) { return nil, errors.New("401") }
 	if _, err = w.run(); err == nil || !strings.Contains(err.Error(), "signed with the new key failed") || w.tui {
 		t.Fatal(err)
@@ -223,7 +222,7 @@ func TestWizardInviteProjectChoice(t *testing.T) {
 // A lost join answer is the join's own error, which says the key was kept;
 // nothing after it runs.
 func TestWizardInviteUncertainJoinStops(t *testing.T) {
-	w := newInviteWizard(t, "https://service.test\n1\nada@example.com\n\ny\n", "device", "google")
+	w := newInviteWizard(t, "https://service.test\nada@example.com\n\ny\n", "device", "google")
 	wizardDeviceJoin = func(context.Context, JoinParams) (JoinResult, error) {
 		return JoinResult{}, &JoinUncertainError{DeviceID: "dev_1"}
 	}
@@ -291,7 +290,7 @@ func TestTUIOpensTheAccountScreen(t *testing.T) {
 
 // R108-L3: a failed code read says why.
 func TestWizardInviteCodeReadFailureIsShown(t *testing.T) {
-	w := newInviteWizard(t, "https://service.test\n1\nada@example.com\n\ny\n", "device", "google")
+	w := newInviteWizard(t, "https://service.test\nada@example.com\n\ny\n", "device", "google")
 	wizardInviteCode = func() (string, error) { return "", errors.New("inappropriate ioctl for device") }
 	if _, err := w.run(); err == nil || !strings.Contains(err.Error(), "inappropriate ioctl") || len(w.joined) != 0 {
 		t.Fatal(err)
@@ -306,7 +305,7 @@ func TestWizardTakesAnInviteLink(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	w := newInviteWizard(t, "https://service.test\n1\n\nAda's laptop\ny\n", "google", "device")
+	w := newInviteWizard(t, "https://service.test\n\nAda's laptop\ny\n", "google", "device")
 	wizardInviteCode = func() (string, error) { return link, nil }
 	out, err := w.run()
 	if err != nil || len(w.joined) != 1 || w.joined[0].Email != "ada@example.com" || w.joined[0].Code != "CBJ-"+strings.ReplaceAll(strings.TrimPrefix(wizardCode, "CBJ-"), "-", "") || !strings.Contains(out, "Email: (from the invite link)") || strings.Contains(out, "CBJ-") {
@@ -314,9 +313,9 @@ func TestWizardTakesAnInviteLink(t *testing.T) {
 	}
 	other, _ := devicekey.FormatLink("https://elsewhere.test", "pilot", "ada@example.com", wizardCode)
 	for _, c := range []struct{ input, link, want string }{
-		{"https://service.test\n1\n\n\ny\n", other, "for https://elsewhere.test"},
-		{"https://service.test\n1\nbob@example.com\n\ny\n", link, "for ada@example.com, not bob@example.com"},
-		{"https://service.test\n1\n\n\ny\n", wizardCode, "paste the whole invite link"},
+		{"https://service.test\n\n\ny\n", other, "for https://elsewhere.test"},
+		{"https://service.test\nbob@example.com\n\ny\n", link, "for ada@example.com, not bob@example.com"},
+		{"https://service.test\n\n\ny\n", wizardCode, "paste the whole invite link"},
 	} {
 		w = newInviteWizard(t, c.input, "google", "device")
 		pasted := c.link

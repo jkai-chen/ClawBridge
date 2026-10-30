@@ -14,7 +14,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	"clawbridge/internal/auth"
 	"clawbridge/internal/clirender"
 	"clawbridge/internal/setup"
 	"github.com/muesli/cancelreader"
@@ -38,8 +37,6 @@ func newWizardInput(goos string, stdin *os.File) (cancelreader.CancelReader, err
 	return cancelreader.NewReader(stdin)
 }
 
-var wizardKeyring = auth.CheckNativeAvailability
-var wizardJoin = runJoin
 var wizardTUI = func(ctx context.Context, c Config, out, errout io.Writer) error {
 	return runTUI(ctx, c, nil, out, errout)
 }
@@ -118,7 +115,7 @@ func runStartup(ctx context.Context, flags Config, args []string, stdout, stderr
 		}
 	}
 	if len(missing) > 0 && !waiting {
-		return fmt.Errorf("your ClawBridge settings at %s are incomplete (missing: %s). Move the file aside and run clawbridge onboard to set up again, or join with clawbridge setup join", shown, strings.Join(missing, ", "))
+		return fmt.Errorf("your ClawBridge settings at %s are incomplete (missing: %s). Move the file aside and run clawbridge onboard to set up again, or join with an invite: clawbridge join", shown, strings.Join(missing, ", "))
 	}
 	return wizardTUI(context.WithValue(ctx, guidedRouteKey{}, true), Config{ClientConfig: path}, stdout, stderr)
 }
@@ -148,13 +145,13 @@ func runWizard(ctx context.Context, flags Config, args []string, stdout, stderr 
 		return errors.New("setup wizard accepts only --client-config; enter routing in the prompts")
 	}
 	if wizardTerminal(stdout) != nil {
-		return errors.New("setup wizard requires terminal stdin and stdout; use setup join with explicit flags for automation")
+		return errors.New("setup wizard requires terminal stdin and stdout; use clawbridge join for automation")
 	}
 	path, err := selectedClientPath(flags)
 	if err != nil {
 		return err
 	}
-	prompt, err := newWizardPrompt(ctx, stdout, "guided terminal input cleanup failed; no OAuth acquisition or join was started, restore the terminal before retrying")
+	prompt, err := newWizardPrompt(ctx, stdout, "guided terminal input cleanup failed; no join was started, restore the terminal before retrying")
 	if err != nil {
 		return err
 	}
@@ -180,79 +177,13 @@ func runWizard(ctx context.Context, flags Config, args []string, stdout, stderr 
 	}
 	methods, e := wizardMethods(ctx, url)
 	if e != nil {
-		// Each way in reports its own failure once chosen; nothing is
-		// written before the confirmation.
-		fmt.Fprintf(stdout, "Couldn't read the service's sign-in settings (%s); both ways in are offered.\n", clirender.Safe(e.Error()))
-		methods = []string{"device", "google"}
-	}
-	invite, e := wizardSignIn(ask, methods, stdout)
-	if e != nil {
-		return e
-	}
-	if invite {
-		return wizardInvite(ctx, prompt, path, url, stdout, stderr)
-	}
-	required := func(what string) func(string) (string, error) {
-		return func(a string) (string, error) {
-			if a == "" {
-				return "", errors.New("the " + what + " is required")
-			}
-			return a, nil
-		}
-	}
-	workspace, err := askUntil(ask, stdout, "Workspace: ", required("workspace"))
-	if err != nil {
+		// The join reports its own failure; nothing is written before
+		// the confirmation.
+		fmt.Fprintf(stdout, "Couldn't read the service's sign-in settings (%s); trying an invite anyway.\n", clirender.Safe(e.Error()))
+	} else if err = wizardSignIn(methods, stdout); err != nil {
 		return err
 	}
-	project, err := askUntil(ask, stdout, "Project: ", required("project"))
-	if err != nil {
-		return err
-	}
-	// U49: "device" here was OAuth's device flow, not a device key.
-	fmt.Fprintln(stdout, "Sign in:\n  1. open a browser here\n  2. show a code to enter on another device (for SSH)")
-	flow, err := askUntil(ask, stdout, "Choose 1 or 2 [1]: ", func(a string) (string, error) {
-		if v, ok := pick(a, "1", signInChoices); ok {
-			return v, nil
-		}
-		return "", errors.New("choose 1 or 2")
-	})
-	if err != nil {
-		return err
-	}
-	how := map[string]string{"browser": "a browser here", "device": "a code on another device"}[flow]
-	fmt.Fprintf(stdout, "Service: %s\nWorkspace: %s\nProject: %s\nConfig: %s\nSign-in: %s\n", clirender.Safe(url), clirender.Safe(workspace), clirender.Safe(project), clirender.Safe(path), how)
-	answer, err := ask("Continue with sign-in and save after verified join? [y/N]: ")
-	if err != nil {
-		return err
-	}
-	if answer != "y" && answer != "yes" {
-		fmt.Fprintln(stdout, "Canceled; no credentials or configuration changed.")
-		return nil
-	}
-	if err = ctx.Err(); err != nil {
-		return err
-	}
-	if err = prompt.close(); err != nil {
-		return err
-	} // No wizard reader survives into acquisition or the TUI.
-	if err = wizardKeyring(ctx); err != nil {
-		return err
-	}
-	fmt.Fprintln(stdout, credentialStoreNote(runtime.GOOS))
-	candidate := Config{ClientConfig: path, Mode: "cloud", CredentialSource: "oauth", Server: url, Workspace: workspace, Project: project}
-	joinArgs := []string{"--login"}
-	if flow == "device" {
-		joinArgs = []string{"--device"}
-	}
-	isolated := context.WithValue(ctx, guidedRouteKey{}, true)
-	if err = wizardJoin(isolated, candidate, joinArgs, io.Discard, stderr); err != nil {
-		return err
-	}
-	fmt.Fprintln(stdout, "Join completed and trusted route saved.")
-	if err = runOnboarding(isolated, path, stdout, stderr); err != nil {
-		return fmt.Errorf("join completed; saved route preserved, but guided setup stopped: %w", err)
-	}
-	return openNow(isolated, path, stdout, stderr)
+	return wizardInvite(ctx, prompt, path, url, stdout, stderr)
 }
 
 // wizardPrompt reads answers from a cancellable terminal reader. Close it
@@ -342,13 +273,4 @@ func readWizardLine(r io.Reader) (string, error) {
 		}
 	}
 	return "", errors.New("guided input exceeds 4096 bytes")
-}
-
-// credentialStoreNote says, in plain words, where the sign-in is kept and that
-// the system may ask first.
-func credentialStoreNote(goos string) string {
-	if goos == "darwin" {
-		return "ClawBridge keeps your sign-in in the macOS Keychain. macOS may ask you to allow access; choose Allow or Always Allow."
-	}
-	return "ClawBridge keeps your sign-in in your system's credential store. You may be asked to unlock it or allow access."
 }

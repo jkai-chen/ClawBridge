@@ -19,7 +19,9 @@ import (
 	"clawbridge/internal/install"
 )
 
-func oauthInstallOptions(t *testing.T) install.Options {
+// deviceInstallOptions is a cloud MCP entry's device route, the only
+// sign-in since v1.0.
+func deviceInstallOptions(t *testing.T) install.Options {
 	t.Helper()
 	dir := t.TempDir()
 	command := filepath.Join(dir, "clawbridge")
@@ -31,17 +33,14 @@ func oauthInstallOptions(t *testing.T) install.Options {
 		Command: command, DB: filepath.Join(dir, "local.db"),
 		Mode: "cloud", Workspace: "workspace-id", Project: "project-id",
 		Session: "reviewer", Instance: "reviewer-instance",
-		Server: "https://clawbridge.example.test", Audience: "browser-client.apps.googleusercontent.com",
+		Server:    "https://clawbridge.example.test",
 		Principal: "reviewer@example.test", Cache: filepath.Join(dir, "mirror.db"),
-		CredentialSource:    "oauth",
-		OAuthClientID:       "browser-client.apps.googleusercontent.com",
-		OAuthDeviceClientID: "device-client.apps.googleusercontent.com",
-		OAuthKeyringService: "clawbridge-review-keychain",
+		CredentialSource: "device", DeviceID: "dev_abcdefghjkmnpqrstvwxyz0123", KeyStore: "keyring",
 	}
 }
 
-func TestOAuthInstallerUsesSafeRouteAndDoctorAcceptsIt(t *testing.T) {
-	o := oauthInstallOptions(t)
+func TestDeviceInstallerUsesSafeRouteAndDoctorAcceptsIt(t *testing.T) {
+	o := deviceInstallOptions(t)
 	result, err := install.Install(o)
 	if err != nil {
 		t.Fatal(err)
@@ -55,24 +54,20 @@ func TestOAuthInstallerUsesSafeRouteAndDoctorAcceptsIt(t *testing.T) {
 		"--workspace", "workspace-id", "--project", "project-id",
 		"--session", "reviewer",
 		"--server", "https://clawbridge.example.test",
-		"--audience", "browser-client.apps.googleusercontent.com",
-		"--credential-source", "oauth",
-		"--oauth-client-id", "browser-client.apps.googleusercontent.com",
-		"--oauth-device-client-id", "device-client.apps.googleusercontent.com",
-		"--oauth-keyring-service", "clawbridge-review-keychain",
+		"--credential-source", "device",
+		"--device-id", "dev_abcdefghjkmnpqrstvwxyz0123", "--key-store", "keyring",
 		"--principal", "reviewer@example.test",
 		"--cache", o.Cache,
 		"--instance", "reviewer-instance",
 	}
 	if strings.Join(args, "\x00") != strings.Join(want, "\x00") {
-		t.Fatalf("installed OAuth argv:\n got %q\nwant %q", args, want)
+		t.Fatalf("installed device argv:\n got %q\nwant %q", args, want)
 	}
 	for _, forbidden := range []string{
-		"--oauth-client-secret", "synthetic-client-secret",
-		"--account", "--impersonate-service-account", "--credentials-file", "--db",
+		"--oauth", "--audience", "--account", "--impersonate-service-account", "--credentials-file", "--db",
 	} {
 		if strings.Contains(strings.Join(args, "\x00"), forbidden) {
-			t.Fatalf("OAuth argv contains %q: %v", forbidden, args)
+			t.Fatalf("device argv contains %q: %v", forbidden, args)
 		}
 	}
 
@@ -83,12 +78,8 @@ func TestOAuthInstallerUsesSafeRouteAndDoctorAcceptsIt(t *testing.T) {
 			Workspace: "workspace-id", Project: "project-id",
 			Session: "reviewer", Instance: "reviewer-instance",
 			Server:    "https://clawbridge.example.test",
-			Audience:  "browser-client.apps.googleusercontent.com",
 			Principal: "reviewer@example.test", Cache: o.Cache,
-			CredentialSource:    "oauth",
-			OAuthClientID:       "browser-client.apps.googleusercontent.com",
-			OAuthDeviceClientID: "device-client.apps.googleusercontent.com",
-			OAuthKeyringService: "clawbridge-review-keychain",
+			CredentialSource: "device", DeviceID: "dev_abcdefghjkmnpqrstvwxyz0123", KeyStore: "keyring",
 		},
 		Now: testDoctorTime(),
 		MCPConfigs: []doctor.MCPConfig{{
@@ -96,12 +87,8 @@ func TestOAuthInstallerUsesSafeRouteAndDoctorAcceptsIt(t *testing.T) {
 			Workspace: "workspace-id", Project: "project-id",
 			Session: "reviewer", Instance: "reviewer-instance",
 			Mode: "cloud", Server: "https://clawbridge.example.test",
-			Audience:  "browser-client.apps.googleusercontent.com",
 			Principal: "reviewer@example.test", Cache: o.Cache,
-			CredentialSource:    "oauth",
-			OAuthClientID:       "browser-client.apps.googleusercontent.com",
-			OAuthDeviceClientID: "device-client.apps.googleusercontent.com",
-			OAuthKeyringService: "clawbridge-review-keychain",
+			CredentialSource: "device", DeviceID: "dev_abcdefghjkmnpqrstvwxyz0123", KeyStore: "keyring",
 		}},
 	}, routingExecutor{})
 	for _, check := range report.Checks {
@@ -130,28 +117,19 @@ func testDoctorTime() time.Time {
 	return time.Date(2026, 10, 20, 20, 0, 0, 0, time.UTC)
 }
 
-func TestOAuthInstallerRejectsSecretAndCrossBackendFields(t *testing.T) {
-	for name, mutate := range map[string]func(*install.Options){
-		"gcloud-account": func(o *install.Options) {
-			o.Account = "human@example.test"
-		},
-		"credentials-file": func(o *install.Options) {
-			o.CredentialsFile = filepath.Join(t.TempDir(), "credentials.json")
-		},
-	} {
-		t.Run(name, func(t *testing.T) {
-			o := oauthInstallOptions(t)
-			mutate(&o)
-			_, err := install.Install(o)
-			if err == nil {
-				t.Fatal("cross-backend field was accepted")
-			}
-		})
+// A Google route (v1.0 removed it) is never installed.
+func TestInstallerRejectsGoogleRoutes(t *testing.T) {
+	for _, source := range []string{"oauth", "gcloud", "adc", ""} {
+		o := deviceInstallOptions(t)
+		o.CredentialSource, o.DeviceID, o.KeyStore = source, "", ""
+		if _, err := install.Install(o); err == nil {
+			t.Fatalf("a %q route was installed", source)
+		}
 	}
 }
 
-func TestInstalledOAuthEntryHasOnlyExplicitEnvironment(t *testing.T) {
-	o := oauthInstallOptions(t)
+func TestInstalledEntryHasOnlyExplicitEnvironment(t *testing.T) {
+	o := deviceInstallOptions(t)
 	result, err := install.Install(o)
 	if err != nil {
 		t.Fatal(err)
@@ -188,9 +166,7 @@ func TestPhase3CommandOutputsAndTempArtifactsDoNotLeakSecrets(t *testing.T) {
 		"principal = 'reviewer@example.test'\n" +
 		"cache = 'mirror.db'\n" +
 		"credential_source = 'oauth'\n" +
-		"oauth_client_id = 'browser-client.apps.googleusercontent.com'\n" +
 		"oauth_client_secret = " + fmt.Sprintf("%q", clientSecret) + "\n" +
-		"oauth_device_client_id = 'device-client.apps.googleusercontent.com'\n" +
 		"oauth_device_client_secret = " + fmt.Sprintf("%q", deviceClientSecret) + "\n" +
 		"account = 'must-fail-cross-backend@example.test'\n" +
 		"unrelated_secret = " + fmt.Sprintf("%q", configSecret) + "\n"
@@ -224,9 +200,9 @@ func TestPhase3CommandOutputsAndTempArtifactsDoNotLeakSecrets(t *testing.T) {
 		}
 	}
 
-	// Installer JSON and argv must carry the safe OAuth route without either the
-	// trusted client secret or unrelated repository/home content.
-	o := oauthInstallOptions(t)
+	// Installer JSON and argv must carry the safe device route without either
+	// the old client secrets or unrelated repository/home content.
+	o := deviceInstallOptions(t)
 	o.Config = filepath.Join(p.dir, "scan-mcp.json")
 	installResult, err := install.Install(o)
 	if err != nil {
@@ -242,13 +218,13 @@ func TestPhase3CommandOutputsAndTempArtifactsDoNotLeakSecrets(t *testing.T) {
 	if strings.Contains(string(argvJSON), "oauth-client-secret") ||
 		bytes.Contains(argvJSON, []byte(clientSecret)) ||
 		bytes.Contains(argvJSON, []byte(deviceClientSecret)) {
-		t.Fatalf("installed argv contains OAuth client secret material: %s", argvJSON)
+		t.Fatalf("installed argv contains client secret material: %s", argvJSON)
 	}
 	if _, ok := installResult.Entry["env"]; ok {
-		t.Fatalf("installed OAuth entry unexpectedly contains environment: %v", installResult.Entry["env"])
+		t.Fatalf("installed entry unexpectedly contains environment: %v", installResult.Entry["env"])
 	}
 
-	// A malformed ADC route is rejected without exposing its file contents.
+	// An ADC route (removed in v1.0) is refused without reading its file.
 	adcPath := filepath.Join(home, "adc.json")
 	if err := os.WriteFile(adcPath, []byte("{\"type\":\"service_account\",\"private_key\":\""+adcSecret+"\"}\n"), 0600); err != nil {
 		t.Fatal(err)

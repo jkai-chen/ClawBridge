@@ -15,66 +15,60 @@ import (
 	"clawbridge/internal/transporterr"
 )
 
-const maxOAuthDiscoveryResponse = 16 << 10
+const maxSignInDiscoveryResponse = 16 << 10
 
-// OAuthDiscovery is the installed-app metadata returned by GET /v1/config.
-// Google treats installed-app client credentials as distributed application
-// identifiers rather than confidential server secrets.
-type OAuthDiscovery struct {
-	BrowserClientID     string
-	BrowserClientSecret string
-	DeviceClientID      string
-	DeviceClientSecret  string
-	// AuthMethods are the sign-in methods the server accepts (google,
-	// device); nil from a server older than device sign-in.
+// SignInDiscovery is a server's sign-in settings, from GET /v1/config.
+type SignInDiscovery struct {
+	// AuthMethods are the sign-in methods the server accepts (device, and
+	// google before v1.0); nil from a server older than device sign-in.
 	AuthMethods []string
 	// PublicOrigin is the origin device signatures cover; empty when the
 	// server has none configured.
 	PublicOrigin string
 }
 
-// DiscoverOAuthClient retrieves the public OAuth client metadata from the
-// explicitly trusted cloud server. The server URL is revalidated here so this
-// function cannot be repurposed as a general-purpose HTTP client.
-func DiscoverOAuthClient(ctx context.Context, serverURL string, httpClient *http.Client) (OAuthDiscovery, error) {
+// DiscoverSignIn retrieves the public sign-in settings from the explicitly
+// trusted cloud server. The server URL is revalidated here so this function
+// cannot be repurposed as a general-purpose HTTP client.
+func DiscoverSignIn(ctx context.Context, serverURL string, httpClient *http.Client) (SignInDiscovery, error) {
 	base, err := validateDiscoveryServerURL(serverURL)
 	if err != nil {
-		return OAuthDiscovery{}, err
+		return SignInDiscovery{}, err
 	}
 	client := discoveryHTTPClient(httpClient)
 	endpoint := base + "/v1/config"
 	request, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
 	if err != nil {
-		return OAuthDiscovery{}, errors.New("cannot construct OAuth discovery request")
+		return SignInDiscovery{}, errors.New("cannot construct sign-in discovery request")
 	}
 	request.Header.Set("Accept", "application/json")
 	response, err := client.Do(request)
 	if err != nil {
 		if ctx != nil && ctx.Err() != nil {
-			return OAuthDiscovery{}, ctx.Err()
+			return SignInDiscovery{}, ctx.Err()
 		}
 		if isTransportFailure(err) {
-			return OAuthDiscovery{}, errUnreachable
+			return SignInDiscovery{}, errUnreachable
 		}
-		return OAuthDiscovery{}, errors.New("cannot reach trusted server OAuth discovery; check the configured server and network")
+		return SignInDiscovery{}, errors.New("cannot reach trusted server sign-in discovery; check the configured server and network")
 	}
 	defer response.Body.Close()
 	if response.StatusCode < 200 || response.StatusCode > 299 {
-		return OAuthDiscovery{}, errors.New("trusted server OAuth discovery returned a non-success status")
+		return SignInDiscovery{}, errors.New("trusted server sign-in discovery returned a non-success status")
 	}
 	if !strings.HasPrefix(strings.ToLower(response.Header.Get("Content-Type")), "application/json") {
-		return OAuthDiscovery{}, errors.New("trusted server OAuth discovery did not return JSON")
+		return SignInDiscovery{}, errors.New("trusted server sign-in discovery did not return JSON")
 	}
-	raw, err := io.ReadAll(io.LimitReader(response.Body, maxOAuthDiscoveryResponse+1))
+	raw, err := io.ReadAll(io.LimitReader(response.Body, maxSignInDiscoveryResponse+1))
 	if err != nil {
-		return OAuthDiscovery{}, errors.New("cannot read trusted server OAuth discovery response")
+		return SignInDiscovery{}, errors.New("cannot read trusted server sign-in discovery response")
 	}
-	if len(raw) > maxOAuthDiscoveryResponse {
-		return OAuthDiscovery{}, errors.New("trusted server OAuth discovery response exceeds the safety limit")
+	if len(raw) > maxSignInDiscoveryResponse {
+		return SignInDiscovery{}, errors.New("trusted server sign-in discovery response exceeds the safety limit")
 	}
-	discovery, err := parseOAuthDiscovery(raw)
+	discovery, err := parseSignInDiscovery(raw)
 	if err != nil {
-		return OAuthDiscovery{}, err
+		return SignInDiscovery{}, err
 	}
 	return discovery, nil
 }
@@ -97,108 +91,75 @@ func validateDiscoveryServerURL(raw string) (string, error) {
 	parsed, err := url.Parse(raw)
 	if err != nil || parsed.Host == "" || parsed.User != nil || parsed.RawQuery != "" ||
 		parsed.Fragment != "" || parsed.RawPath != "" || (parsed.Path != "" && parsed.Path != "/") {
-		return "", errors.New("trusted server URL is invalid for OAuth discovery")
+		return "", errors.New("trusted server URL is invalid for sign-in discovery")
 	}
 	host := parsed.Hostname()
 	ip := net.ParseIP(host)
 	loopback := ip != nil && ip.IsLoopback()
 	if parsed.Scheme != "https" && !(parsed.Scheme == "http" && loopback) {
-		return "", errors.New("OAuth discovery requires HTTPS; HTTP is permitted only for numeric loopback")
+		return "", errors.New("sign-in discovery requires HTTPS; HTTP is permitted only for numeric loopback")
 	}
 	return strings.TrimRight(parsed.String(), "/"), nil
 }
 
-func parseOAuthDiscovery(raw []byte) (OAuthDiscovery, error) {
+func parseSignInDiscovery(raw []byte) (SignInDiscovery, error) {
 	decoder := json.NewDecoder(bytes.NewReader(raw))
 	decoder.UseNumber()
 	first, err := decoder.Token()
 	if err != nil || first != json.Delim('{') {
-		return OAuthDiscovery{}, errors.New("trusted server OAuth discovery response is not a JSON object")
+		return SignInDiscovery{}, errors.New("trusted server sign-in discovery response is not a JSON object")
 	}
 	seen := make(map[string]struct{}, 6)
-	var browserID, browserSecret, deviceID, deviceSecret, publicOrigin string
+	var publicOrigin string
 	var methods []string
 	for decoder.More() {
 		keyToken, err := decoder.Token()
 		if err != nil {
-			return OAuthDiscovery{}, errors.New("trusted server OAuth discovery response contains an invalid field name")
+			return SignInDiscovery{}, errors.New("trusted server sign-in discovery response contains an invalid field name")
 		}
 		key, ok := keyToken.(string)
 		if !ok {
-			return OAuthDiscovery{}, errors.New("trusted server OAuth discovery response contains an invalid field name")
+			return SignInDiscovery{}, errors.New("trusted server sign-in discovery response contains an invalid field name")
 		}
 		if _, duplicate := seen[key]; duplicate {
-			return OAuthDiscovery{}, errors.New("trusted server OAuth discovery response contains a duplicate field")
+			return SignInDiscovery{}, errors.New("trusted server sign-in discovery response contains a duplicate field")
 		}
 		seen[key] = struct{}{}
 		var value json.RawMessage
 		if err := decoder.Decode(&value); err != nil {
-			return OAuthDiscovery{}, errors.New("trusted server OAuth discovery response contains an invalid field value")
+			return SignInDiscovery{}, errors.New("trusted server sign-in discovery response contains an invalid field value")
 		}
 		switch key {
-		case "browser_client_id":
-			browserID, ok = strictJSONString(value)
-			if !ok {
-				return OAuthDiscovery{}, errors.New("trusted server OAuth discovery browser_client_id is missing or invalid")
-			}
-		case "browser_client_secret":
-			browserSecret, ok = strictJSONString(value)
-			if !ok {
-				return OAuthDiscovery{}, errors.New("trusted server OAuth discovery browser_client_secret is missing or invalid")
-			}
-		case "device_client_id":
-			deviceID, ok = strictJSONString(value)
-			if !ok {
-				return OAuthDiscovery{}, errors.New("trusted server OAuth discovery device_client_id is missing or invalid")
-			}
-		case "device_client_secret":
-			deviceSecret, ok = strictJSONString(value)
-			if !ok {
-				return OAuthDiscovery{}, errors.New("trusted server OAuth discovery device_client_secret is missing or invalid")
+		case "browser_client_id", "browser_client_secret", "device_client_id", "device_client_secret":
+			// Google sign-in's OAuth client, from a server older than
+			// v1.0 (and empty from a v1.0 one): unused.
+			if _, ok = strictJSONString(value); !ok {
+				return SignInDiscovery{}, errors.New("trusted server sign-in discovery " + key + " is invalid")
 			}
 		case "auth_methods":
 			methods, ok = strictJSONStrings(value)
 			if !ok {
-				return OAuthDiscovery{}, errors.New("trusted server OAuth discovery auth_methods is invalid")
+				return SignInDiscovery{}, errors.New("trusted server sign-in discovery auth_methods is invalid")
 			}
 		case "public_origin":
 			publicOrigin, ok = strictJSONString(value)
 			if !ok {
-				return OAuthDiscovery{}, errors.New("trusted server OAuth discovery public_origin is invalid")
+				return SignInDiscovery{}, errors.New("trusted server sign-in discovery public_origin is invalid")
 			}
 		default:
-			return OAuthDiscovery{}, errors.New("trusted server OAuth discovery response contains an unknown field")
+			return SignInDiscovery{}, errors.New("trusted server sign-in discovery response contains an unknown field")
 		}
 	}
 	closing, err := decoder.Token()
 	if err != nil || closing != json.Delim('}') {
-		return OAuthDiscovery{}, errors.New("trusted server OAuth discovery response is not a complete JSON object")
+		return SignInDiscovery{}, errors.New("trusted server sign-in discovery response is not a complete JSON object")
 	}
 	if trailing, err := decoder.Token(); err != io.EOF {
-		return OAuthDiscovery{}, errors.New("trusted server OAuth discovery response has trailing content")
+		return SignInDiscovery{}, errors.New("trusted server sign-in discovery response has trailing content")
 	} else if trailing != nil {
-		return OAuthDiscovery{}, errors.New("trusted server OAuth discovery response has trailing content")
+		return SignInDiscovery{}, errors.New("trusted server sign-in discovery response has trailing content")
 	}
-	if _, ok := seen["browser_client_id"]; !ok {
-		return OAuthDiscovery{}, errors.New("trusted server OAuth discovery browser_client_id is missing or invalid")
-	}
-	if _, ok := seen["browser_client_secret"]; !ok {
-		return OAuthDiscovery{}, errors.New("trusted server OAuth discovery browser_client_secret is missing or invalid")
-	}
-	if _, ok := seen["device_client_id"]; !ok {
-		return OAuthDiscovery{}, errors.New("trusted server OAuth discovery device_client_id is missing or invalid")
-	}
-	if _, ok := seen["device_client_secret"]; !ok {
-		return OAuthDiscovery{}, errors.New("trusted server OAuth discovery device_client_secret is missing or invalid")
-	}
-	return OAuthDiscovery{
-		BrowserClientID:     browserID,
-		BrowserClientSecret: browserSecret,
-		DeviceClientID:      deviceID,
-		DeviceClientSecret:  deviceSecret,
-		AuthMethods:         methods,
-		PublicOrigin:        publicOrigin,
-	}, nil
+	return SignInDiscovery{AuthMethods: methods, PublicOrigin: publicOrigin}, nil
 }
 
 // strictJSONStrings reads an array of at most 8 short strings.
@@ -236,7 +197,7 @@ func strictJSONString(raw json.RawMessage) (string, bool) {
 
 // errUnreachable marks a discovery request that never reached the server (DNS,
 // connection refused, timeout), as opposed to a TLS or answer problem.
-var errUnreachable = errors.New("cannot reach trusted server OAuth discovery; check the configured server and network")
+var errUnreachable = errors.New("cannot reach trusted server sign-in discovery; check the configured server and network")
 
 func isTransportFailure(err error) bool {
 	return transporterr.Classify(err).NoConnection()

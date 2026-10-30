@@ -178,7 +178,7 @@ func TestLocalServicesFollowTheShape(t *testing.T) {
 	}
 	// The running server must sign in with device keys.
 	stubRemote(t, factsOutput(localFacts("lan")), nil)
-	google := healthServer(t, 200, `{"status":"ok","version":"1.2.3"}`)
+	google := configServer(t, 200, `{"status":"ok","version":"1.2.3"}`, `{"browser_client_id":"id"}`)
 	if got, _ = cloudCheck(t, "server", "--server", google, "--local", "--local-dir", dir); got[0].Reason != "auth_mismatch" {
 		t.Fatalf("%+v", got)
 	}

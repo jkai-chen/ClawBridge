@@ -41,7 +41,7 @@ var doctorAnswers = map[string]doctorAnswer{
 	},
 	// A pass can be "not used here" (local mode): it keeps its message.
 	"auth.token-selection": {
-		fail: "Your Google sign-in doesn't work.",
+		fail: "This profile still signs in with Google, which was removed in v1.0.",
 	},
 	"auth.device": {
 		fail: "This device's key can't be used.",

@@ -12,7 +12,6 @@ import (
 	"sync"
 	"testing"
 
-	"clawbridge/internal/faketool"
 	"clawbridge/internal/linearconn"
 	"clawbridge/internal/linearprovider"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -45,8 +44,6 @@ func TestLinearDisplayNameRecordsTheMembersName(t *testing.T) {
 		t.Fatal(err)
 	}
 	dir := isolated(t)
-	faketool.Install(t, dir, "gcloud", "print:synthetic-cli-token")
-	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
 	principal := "service@example.test"
 	var mu sync.Mutex
 	var sets []map[string]any
@@ -78,9 +75,10 @@ func TestLinearDisplayNameRecordsTheMembersName(t *testing.T) {
 		json.NewEncoder(w).Encode(map[string]any{"source": "server", "data": data})
 	}))
 	defer host.Close()
-	for k, v := range map[string]string{"MODE": "cloud", "SERVER": host.URL, "AUDIENCE": "test-audience", "ACCOUNT": "human@example.test", "IMPERSONATE_SERVICE_ACCOUNT": principal, "PRINCIPAL": principal, "CACHE": filepath.Join(dir, "mirror.db"), "WORKSPACE": "w", "PROJECT": "p"} {
+	for k, v := range map[string]string{"MODE": "cloud", "SERVER": host.URL, "PRINCIPAL": principal, "CACHE": filepath.Join(dir, "mirror.db"), "WORKSPACE": "w", "PROJECT": "p"} {
 		t.Setenv("CLAWBRIDGE_"+k, v)
 	}
+	useDeviceRoute(t, host.URL)
 	secrets := &statusSecrets{values: map[string]string{}}
 	previousManager, previousOpen := newLinearManager, openLinearProvider
 	t.Cleanup(func() { newLinearManager, openLinearProvider = previousManager, previousOpen })

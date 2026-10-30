@@ -13,7 +13,6 @@ import (
 	"time"
 
 	"clawbridge/internal/bus"
-	"google.golang.org/api/idtoken"
 )
 
 type boundExecutor struct{ got *bus.Identity }
@@ -76,22 +75,6 @@ func TestServingStoreRunsRequestsOnlyWithTheVerifiedAccount(t *testing.T) {
 	defer store.Close()
 	if _, err = store.ExecuteAs(context.Background(), "owner@serving-test.example", bus.Request{Operation: "list_projects", Workspace: "w"}); err == nil || !strings.Contains(err.Error(), "ExecuteAsIdentity") {
 		t.Fatal("served store ran a request without the account binding", err)
-	}
-}
-
-func TestVerifiedIdentityCarriesTheNormalHostedDomain(t *testing.T) {
-	now := time.Now()
-	payload := &idtoken.Payload{Issuer: "accounts.google.com", Audience: "aud", Subject: "sub", Expires: now.Add(time.Hour).Unix(), Claims: map[string]any{"email": "a@corp.example", "email_verified": true, "hd": " Corp.Example. "}}
-	for hd, want := range map[any]string{" Corp.Example. ": "corp.example", "not a domain": "", 42: ""} {
-		payload.Claims["hd"] = hd
-		id, err := verifiedIdentity(payload, "aud", now)
-		if err != nil || id.HostedDomain != want {
-			t.Fatal(hd, id, err)
-		}
-	}
-	delete(payload.Claims, "hd")
-	if id, err := verifiedIdentity(payload, "aud", now); err != nil || id.HostedDomain != "" {
-		t.Fatal("consumer account given a domain", id, err)
 	}
 }
 

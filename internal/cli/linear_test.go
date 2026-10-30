@@ -57,7 +57,7 @@ func TestLinearBodyFilesAndExplicitEmptyDescription(t *testing.T) {
 }
 
 func TestLinearAuthorityCanonicalRoutes(t *testing.T) {
-	base := Config{Mode: "cloud", Server: "https://EXAMPLE.test/", Audience: "a", Principal: "Owner@Example.Test"}
+	base := Config{Mode: "cloud", Server: "https://EXAMPLE.test/", Principal: "Owner@Example.Test"}
 	a := linearAuthority(base)
 	base.Server = "https://example.test"
 	base.Principal = "owner@example.test"

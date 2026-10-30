@@ -275,7 +275,7 @@ func TestQueueRouteRefusesAnotherServer(t *testing.T) {
 	isolated(t)
 	t.Setenv("CLAWBRIDGE_MODE", "cloud")
 	t.Setenv("CLAWBRIDGE_SERVER", "https://configured.example.test")
-	t.Setenv("CLAWBRIDGE_AUDIENCE", "audience")
+	useDeviceRoute(t, "https://configured.example.test")
 	_, _, err := openQueueRoute(context.Background(), ctxwatch.QueueRecord{Server: "https://elsewhere.example.test"})
 	if err == nil || !strings.Contains(err.Error(), "not the MCP server's") {
 		t.Fatal("a record's server was used without being the configured one", err)

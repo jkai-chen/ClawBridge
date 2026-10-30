@@ -89,6 +89,9 @@ computer. Upgrading from v0.3.x: docs/upgrading-to-1.0.md.
   `server_watch_live`), and doctor counts the project as watched while that tick is under an hour old. It warns when
   the server's watcher has had no good tick in the last hour. docs/linear.md, docs/reference/api.md. No schema change.
   Linear config scope: none.
+- **The terminal interface's Overview no longer lists a hosted server's items for a local workspace:** the dispatcher
+  model as needing attention, the intake line, and the PROVEN gate list, which a local user can't act on (found on
+  the G8 fresh-Linux walkthrough). docs/usage.md. Linear config scope: none.
 
 ## Sign-in
 

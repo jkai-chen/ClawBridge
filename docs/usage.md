@@ -538,7 +538,8 @@ or warning Doctor checks, an unlinked Linear board, an ownership offer, unused
 invites, the dispatcher's model for a project owner), each with its tab; Enter goes
 there. Under "This project", the project's intake in a line ("Intake: notify · 1 trusted
 · 0 queued"); Enter opens its view. Below it: who you're signed in as, the server, and
-the workspace and project.
+the workspace and project. A local workspace has no intake, webhooks, PROVEN gates or
+dispatcher model (they are a hosted server's), so its Overview shows none of them.
 
 Intake (`n` on the Linear screen once a board is linked) shows which Linear signals ask
 for an agent (the mode, and S1 the needs-agent label, S2 delegating to the app, S3

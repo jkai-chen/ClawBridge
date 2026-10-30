@@ -189,6 +189,33 @@ func TestDoctorLongMessageStaysInTheFrame(t *testing.T) {
 // The project owner's Overview names the server's PROVEN gates that are
 // on and those that are off; a member, whose overview has none, sees no
 // row.
+// G8: a local workspace has no Linear intake, webhooks, PROVEN gates or
+// dispatcher model, so its Overview lists none of them, whatever the
+// authority answers; the same answers show in cloud mode.
+func TestLocalOverviewHidesHostedOnlyItems(t *testing.T) {
+	answers := map[string]bus.Result{
+		"project_overview":        {Source: "local-authority", Data: map[string]any{"proven_gates": []any{map[string]any{"name": "project_flow", "on": false}}}},
+		"intake_policy_get":       {Source: "local-authority", Data: map[string]any{"mode": "notify"}},
+		"intake_trust_list":       {Source: "local-authority", Data: []any{}},
+		"intake_list":             {Source: "local-authority", Data: []any{}},
+		"webhook_status":          {Source: "local-authority", Data: map[string]any{"teams": []any{map[string]any{"team_id": "t", "state": "live", "configured": true}}}},
+		"dispatcher_model_doctor": {Source: "local-authority", Data: map[string]any{"model_on": false}},
+	}
+	hostedOnly := []string{"Proven gates", "Not proven", "Intake:", "The dispatcher's model isn't set up"}
+	view := Render(overviewFor(t, ModeLocal, false, passing, answers, nil, false))
+	for _, item := range hostedOnly {
+		if strings.Contains(view, item) {
+			t.Fatalf("local mode lists %q\n%s", item, view)
+		}
+	}
+	view = Render(overviewFor(t, ModeCloud, false, passing, answers, nil, false))
+	for _, item := range []string{"Proven gates", "Intake:", "The dispatcher's model isn't set up"} {
+		if !strings.Contains(view, item) {
+			t.Fatalf("cloud mode lacks %q\n%s", item, view)
+		}
+	}
+}
+
 func TestOverviewShowsProvenGatesToTheOwner(t *testing.T) {
 	gates := []any{
 		map[string]any{"name": "project_flow", "on": false},

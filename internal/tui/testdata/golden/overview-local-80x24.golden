@@ -5,10 +5,7 @@ ClawBridge · pilot › core › engineer  local
 │ Overview                                                                     │
 │                                                                              │
 │ Needs attention                                                              │
-│ › The dispatcher's model isn't set up (optional)  6 Dispatcher               │
-│                                                                              │
-│ This project                                                                 │
-│   Intake: notify · 0 trusted · 0 queued  5 Linear · Intake                   │
+│   Nothing needs you.                                                         │
 │                                                                              │
 │ Signed in       human@example.test (Google, verified)                        │
 │ Server          online                                                       │
@@ -19,4 +16,4 @@ ClawBridge · pilot › core › engineer  local
 │ Sessions · 1 active                                                          │
 │   engineer                 active     codex                                  │
 ╰──────────────────────────────────────────────────────────────────────────────╯
-Enter go there · ? help · q quit
+? help · q quit

@@ -127,7 +127,11 @@ func (m Model) loadAttention(requestID uint64) tea.Cmd {
 				out.items = append(out.items, attentionItem{Text: plural(pending, "invite is", "invites are") + " waiting to be used", Screen: ScreenAccount})
 			}
 		}
-		if m.cfg.Project != "" {
+		// A local workspace has no Linear intake, webhooks, PROVEN gates or
+		// dispatcher model: those are a hosted server's, so local mode's
+		// Overview doesn't list them (G8).
+		hosted := m.cfg.Mode != ModeLocal
+		if m.cfg.Project != "" && hosted {
 			// The project's intake in a line, a link to its view:
 			// what's set and what waits, for any member.
 			read := func(op string, args map[string]any) (any, bool) {
@@ -141,7 +145,7 @@ func (m Model) loadAttention(requestID uint64) tea.Cmd {
 				out.intake = intakeSummary(mapData(policy), len(records(trusted)), len(records(queued)))
 			}
 		}
-		if m.cfg.Project != "" {
+		if m.cfg.Project != "" && hosted {
 			if r, err := m.cfg.Executor.Execute(ctx, m.intakeRequest("webhook_status", map[string]any{})); err == nil && r.Source != "offline-mirror" {
 				out.webhooks = webhookSummary(mapData(r.Data), m.cfg.Now())
 			}
@@ -150,11 +154,13 @@ func (m Model) loadAttention(requestID uint64) tea.Cmd {
 			// Only the project owner's overview lists the PROVEN gates;
 			// every reader's lists the newest joins.
 			if r, err := m.cfg.Executor.Execute(ctx, m.intakeRequest("project_overview", map[string]any{})); err == nil && r.Source != "offline-mirror" {
-				out.gatesOn, out.gatesOff, out.gatesRead = bus.ProvenGatesOnOff(mapData(r.Data)["proven_gates"])
+				if hosted {
+					out.gatesOn, out.gatesOff, out.gatesRead = bus.ProvenGatesOnOff(mapData(r.Data)["proven_gates"])
+				}
 				out.joins = joinsSummary(mapData(r.Data)["newest_joins"], m.cfg.Now())
 			}
 		}
-		if m.cfg.Project != "" {
+		if m.cfg.Project != "" && hosted {
 			// Only a project owner may read it; anyone else is told
 			// nothing here.
 			if s, err := m.modelExec()(ctx, "dispatcher_model_doctor", map[string]any{}); err == nil && s != nil {

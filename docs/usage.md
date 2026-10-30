@@ -312,6 +312,18 @@ profile in its arguments; `doctor` checks it against `--mcp-linear-profile ID`
 (or `--linear-profile ID`) when given, and otherwise accepts the entry's own
 well-formed profile and names it in the check.
 
+`doctor` checks an entry only when given all three of `--mcp-agent`, `--mcp-config`
+and `--mcp-session` (plus `--mcp-instance` and `--mcp-name` when the entry has
+them); one or two of them is an error, and none leaves `mcp.entries` at "No agent
+MCP configuration paths were selected". A session started with `claude
+--mcp-config FILE` (several sessions sharing a folder, each with its own file) is
+checked the same way, with that file:
+
+```sh
+clawbridge doctor --mcp-agent claude-code --mcp-config /absolute/path/ada-claude.mcp.json \
+  --mcp-session ada-claude --mcp-instance INSTANCE
+```
+
 Installation writes configuration and does not start an agent. Cloud entries pin
 the trusted client-config path and safe routing metadata. The MCP process needs
 that file and the same user's native keychain; tokens are not put in its argv.

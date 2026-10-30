@@ -314,7 +314,7 @@ func Run(ctx context.Context, in Input, executor Executor) Report {
 		add(Check{
 			ID: "mcp.entries", Title: "Installed MCP entries", Status: Warn,
 			Message: "No agent MCP configuration paths were selected for inspection.",
-			Action:  "Pass explicit temporary or installed paths when an MCP entry should be checked.",
+			Action:  "To check an entry, pass all three of --mcp-agent claude-code|codex, --mcp-config PATH (an agent's settings, or the file given to claude --mcp-config) and --mcp-session NAME, plus --mcp-instance and --mcp-name when the entry has them.",
 		})
 	}
 	report.Status = aggregate(report.Checks)

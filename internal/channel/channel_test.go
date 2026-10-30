@@ -128,7 +128,7 @@ func newHarness(t *testing.T) *harness {
 			}), func() {}, nil
 		},
 	}
-	h.w = newWatcher(c.withDefaults(), "agent", precondition{ctxwatch.ChannelUnconfirmed, reasonUnconfirmed}, func(line []byte) error {
+	h.w = newWatcher(c.withDefaults(), "agent", precondition{state: ctxwatch.ChannelUnconfirmed, reason: reasonUnconfirmed}, func(line []byte) error {
 		h.cur = h.cur.Add(h.sendDelay)
 		h.pushes = append(h.pushes, append([]byte(nil), line...))
 		return nil
@@ -662,7 +662,7 @@ func TestPreconditions(t *testing.T) {
 // A state that can't work never pushes, and says why.
 func TestInactivePreconditionNeverPushes(t *testing.T) {
 	h := newHarness(t)
-	h.w.pre = precondition{ctxwatch.ChannelInactive, "third-party provider"}
+	h.w.pre = precondition{state: ctxwatch.ChannelInactive, reason: "third-party provider"}
 	h.set("accept", 2, 7)
 	h.at(0, true)
 	h.at(5*time.Second, false)
@@ -911,5 +911,34 @@ func TestServePushesAfterInitialized(t *testing.T) {
 	}
 	for line := range lines {
 		t.Fatal("more output:", line)
+	}
+}
+
+// The record says when our plugin is named only through the development
+// flag.
+func TestPreconditionsDevFlag(t *testing.T) {
+	for name, c := range map[string]struct {
+		args string
+		dev  bool
+	}{
+		"channels only":        {"claude --channels plugin:clawbridge@clawbridge", false},
+		"channels, equals":     {"claude --channels=plugin:clawbridge@clawbridge", false},
+		"dev only":             {"claude --dangerously-load-development-channels plugin:clawbridge@clawbridge", true},
+		"dev only, equals":     {"claude --dangerously-load-development-channels=plugin:clawbridge@clawbridge", true},
+		"dev only, comma list": {"claude --dangerously-load-development-channels=plugin:other@x,plugin:clawbridge@clawbridge", true},
+		"both":                 {"claude --dangerously-load-development-channels plugin:clawbridge@clawbridge --channels plugin:clawbridge@clawbridge", false},
+		"dev names another":    {"claude --dangerously-load-development-channels plugin:other@x --channels plugin:clawbridge@clawbridge", false},
+	} {
+		cfg := Config{GOOS: "linux", ParentPID: 99, Getenv: func(string) string { return "" }, ParentArgs: func(int) (string, error) { return c.args, nil }}
+		if got := preconditions(cfg); got.state != ctxwatch.ChannelUnconfirmed || got.dev != c.dev {
+			t.Fatal(name, got)
+		}
+		h := newHarness(t)
+		h.w.pre = preconditions(cfg)
+		h.set("accept", 2, 7)
+		h.at(0, true)
+		if got := h.state().DevChannels; got != c.dev {
+			t.Fatal(name, "record", got)
+		}
 	}
 }

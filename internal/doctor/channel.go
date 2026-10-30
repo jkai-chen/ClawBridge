@@ -1,6 +1,7 @@
 package doctor
 
 import (
+	"strings"
 	"time"
 
 	"clawbridge/internal/ctxwatch"
@@ -35,6 +36,7 @@ type ChannelState struct {
 // The channel's next steps, as doctor's actions name them.
 const (
 	channelInstallAction = "Install the plugin in a plain terminal: clawbridge channel setup (or claude plugin marketplace add jkai-chen/ClawBridge, then claude plugin install clawbridge@clawbridge --scope user)."
+	channelDevAction     = "Relaunch with --channels plugin:clawbridge@clawbridge after the admin step (clawbridge channel allow)."
 	channelLaunchAction  = "Relaunch the agent with its session exported: CLAWBRIDGE_SESSION=SESSION CLAWBRIDGE_INSTANCE=INSTANCE claude --channels plugin:clawbridge@clawbridge"
 )
 
@@ -102,9 +104,9 @@ func checkChannel(s ChannelState, now time.Time, add func(Check)) {
 		if r.ConfirmedAt != "" {
 			c.Message += " at " + r.ConfirmedAt
 		}
-		c.Message += ". The notifier stands down while it stays so."
+		c.Message += "."
 	case r.State == ctxwatch.ChannelUnconfirmed:
-		c.Message = "unconfirmed: " + channelReason(r.Reason) + ". The notifier still types the notice until the first confirmed push."
+		c.Message = "unconfirmed: " + channelReason(r.Reason) + "."
 		if reason, action := setup(); reason != "" {
 			c.Message += " Pushes may be dropped: " + reason + "."
 			c.Action = action
@@ -130,6 +132,23 @@ func checkChannel(s ChannelState, now time.Time, add func(Check)) {
 			action = "Start the agent with its ClawBridge MCP entry (clawbridge mcp install) and the session's CLAWBRIDGE_SESSION and CLAWBRIDGE_INSTANCE exported."
 		}
 		inactive(reason, action)
+	}
+	if r != nil && s.Err == nil {
+		if r.DevChannels {
+			c.Status = Warn
+			c.Message += " The session was launched with --dangerously-load-development-channels, which is for local development only."
+			c.Action = channelDevAction
+		}
+		switch {
+		case strings.Contains(strings.ToLower(c.Message), "the notifier "):
+			// The state's own sentence already says what the notifier does.
+		case ctxwatch.ChannelSkipsTyping(*r, now):
+			c.Message += " The notifier stands down while the channel is active."
+		case r.State == ctxwatch.ChannelUnconfirmed:
+			c.Message += " The notifier keeps typing hints until a push is confirmed."
+		default:
+			c.Message += " The notifier keeps typing hints."
+		}
 	}
 	add(c)
 }

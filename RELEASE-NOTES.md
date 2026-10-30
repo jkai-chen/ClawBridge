@@ -18,6 +18,11 @@
   REASON`) with the next step. Needs a claude.ai or Console login; Bedrock, Vertex and Foundry stay on the notifier.
   docs/notifications.md. No schema change. Linear config scope: none.
 
+- **`doctor` shows whether the notifier stands down on the channel, and warns about the development flag.** The
+  `mcp.channel` line now says whether the notifier stands down or keeps typing hints, and is a warning when the session
+  was launched with `--dangerously-load-development-channels` (for local development only) instead of `--channels`,
+  with the relaunch step. No schema change. Linear config scope: none.
+
 ## Docs
 
 - The seeded Linear guides are at template 3. The reviewer guide adds how to flag an issue for the team with the

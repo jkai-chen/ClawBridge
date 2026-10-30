@@ -110,6 +110,12 @@ func (appConnections) HTTPClient(context.Context, string) (*http.Client, error) 
 }
 
 func (w *AppWriter) service(ctx context.Context, identity bus.Identity) (*linearboard.Service, linearapp.Identity, error) {
+	return w.serviceWith(ctx, identity, nil)
+}
+
+// serviceWith is service whose connections come from lease: an app write's
+// sessions, kept between writes. Without a lease each opens afresh.
+func (w *AppWriter) serviceWith(ctx context.Context, identity bus.Identity, lease *linearapp.Lease) (*linearboard.Service, linearapp.Identity, error) {
 	id, err := w.App.Identity(ctx)
 	if err != nil {
 		return nil, id, bus.PublicError("unavailable", "the ClawBridge Linear app is unavailable")
@@ -128,6 +134,13 @@ func (w *AppWriter) service(ctx context.Context, identity bus.Identity) (*linear
 		Workspace:     id.LinearOrgID,
 		Now:           now,
 		Open: func(ctx context.Context, _ *http.Client, readonly bool) (linearboard.Provider, error) {
+			if lease != nil {
+				p, err := lease.Provider(ctx, readonly)
+				if err != nil {
+					return nil, err
+				}
+				return p, nil
+			}
 			return w.App.Provider(ctx, readonly)
 		},
 		IssueState: linearboard.GraphQLIssueState(w.App.GraphQL),
@@ -221,13 +234,18 @@ func (w *AppWriter) send(parent context.Context, identity bus.Identity, r bus.Re
 			}
 		}()
 	}
-	service, _, err := w.service(ctx, identity)
+	// The write's MCP session may be one an earlier write kept (up to
+	// linearapp.SessionIdle); its calls are counted under this write's
+	// ctx all the same. A failed write closes the sessions it used.
+	lease := w.App.WriteSessions().Lease()
+	service, _, err := w.serviceWith(ctx, identity, lease)
 	if err != nil {
 		return nil, err
 	}
 	instance, _ := r.Args["instance"].(string)
 	scope := bus.Request{Workspace: r.Workspace, Project: r.Project, Session: r.Session, Args: map[string]any{"instance": instance}}
 	data, err := service.ExecuteV2(ctx, scope, operation, args)
+	lease.Release(err == nil)
 	if err != nil {
 		// A failed write may mean the workflow changed: read types afresh.
 		w.stateTypes().Drop()

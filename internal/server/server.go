@@ -830,6 +830,11 @@ func Run(ctx context.Context, args []string) error {
 	// stream clears its own deadlines.
 	srv := &http.Server{Addr: settings.Listen, Handler: NewHandlerWithOptions(store, verifier, options), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 20 * time.Second, WriteTimeout: 80 * time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 24 << 10}
 	srv.RegisterOnShutdown(options.Streams.Close)
+	// The app's kept write sessions close when serve returns, after the
+	// writes in flight have finished.
+	if writer != nil && writer.App != nil {
+		defer writer.App.WriteSessions().Close()
+	}
 	result := make(chan error, 1)
 	go func() { result <- srv.ListenAndServe() }()
 	select {

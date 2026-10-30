@@ -764,6 +764,10 @@ CLAWBRIDGE_WATCH_INTERVAL=15m
   through the queue, each credential's pacer waiting out Linear's 429 and its
   Retry-After, and a tick polls at most 100 issues. It covers every tick, nudge
   and `operator health-run`, and the agent writes the server makes as the app.
+  An app write reuses the MCP session of an earlier app write for up to 2
+  minutes idle (one session per app token; a failed write or call, a 401 or a
+  re-minted token closes it), so a write after the first in that window costs
+  about 4 calls fewer: the handshake and tool list are paid once per session.
   The interval sets latency more than cost: each issue and intake source
   keeps its own polling schedule, and a tick with nothing due calls nothing. An
   intake source is next due 5 or 15 minutes after its read started, and a tick up

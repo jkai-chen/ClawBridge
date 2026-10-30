@@ -370,6 +370,9 @@ func newAWMCP(t *testing.T) (*awMCP, *httptest.Server) {
 		r.Body = io.NopCloser(bytes.NewReader(body))
 		m.mu.Lock()
 		m.auths = append(m.auths, r.Header.Get("Authorization"))
+		if bytes.Contains(body, []byte(`"method":"initialize"`)) {
+			m.calls["initialize"]++
+		}
 		refused := m.refuse > 0 && (bytes.Contains(body, []byte(`"save_comment"`)) || bytes.Contains(body, []byte(`"save_issue"`)))
 		if refused {
 			m.refuse--
@@ -453,6 +456,7 @@ func newAWFixture(t *testing.T, pin any) *awFixture {
 		t.Fatal(app, err)
 	}
 	f.writer = &AppWriter{App: app, Store: store}
+	t.Cleanup(app.WriteSessions().Close)
 	return f
 }
 
@@ -525,6 +529,33 @@ func TestPostgresAppWriteCommentAsTheApp(t *testing.T) {
 	}
 	if f.api.mints != 1 {
 		t.Fatal("the app token was minted", f.api.mints, "times")
+	}
+}
+
+// Two app writes within the idle time share one MCP session (one
+// initialize); a refused write closes it, so the next write opens another.
+func TestPostgresAppWritesKeepOneMCPSession(t *testing.T) {
+	f := newAWFixture(t, awOrg)
+	comment := func(id, operation string) error {
+		_, err := f.write("comment", map[string]any{"id": id, "body": "kept " + operation, "operation_id": operation})
+		return err
+	}
+	for _, operation := range []string{"e2e-keep-1", "e2e-keep-2"} {
+		if err := comment(awIssue, operation); err != nil {
+			t.Fatal(operation, err)
+		}
+	}
+	if n := f.mcp.count("initialize"); n != 1 || f.mcp.count("save_comment") != 2 {
+		t.Fatal("two writes opened", n, "sessions")
+	}
+	if err := comment(awForeignIssue, "e2e-keep-refused"); err == nil {
+		t.Fatal("a comment outside the bound team was accepted")
+	}
+	if err := comment(awIssue, "e2e-keep-3"); err != nil {
+		t.Fatal(err)
+	}
+	if n := f.mcp.count("initialize"); n != 2 {
+		t.Fatal("the write after a refused one reused its session:", n, "sessions")
 	}
 }
 

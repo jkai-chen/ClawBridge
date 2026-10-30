@@ -157,6 +157,9 @@ type App struct {
 	// backoffUntil stops minting after too many.
 	lost         int
 	backoffUntil time.Time
+	// sessions keeps write sessions between writes (WriteSessions).
+	sessionsOnce sync.Once
+	sessions     *Sessions
 }
 
 // New checks the configuration. A missing ID, secret or key leaves the app

@@ -379,7 +379,9 @@ sudo docker compose --env-file /etc/clawbridge/clawbridge.env --project-name "$P
 
 - It creates `WORKSPACE`, owned by `CLAWBRIDGE_BOOTSTRAP_OWNER`, if it doesn't
   exist. For an existing workspace it refuses unless the bootstrap owner owns it.
-- It prints a single-use code, valid for 24 hours, for the owner's email only. The
+- It prints a single-use code, valid for 24 hours, for the owner's email only. A new owner code revokes any
+  earlier one still pending for that workspace (in the same transaction, audited) and prints only how many,
+  never a code; used, expired and other-role invites are untouched. The
   owner then runs, on their own computer:
   `clawbridge join --server https://DOMAIN --email OWNER`, which asks for the code
   without showing it. Never put the code on the command line (`--code`). The command

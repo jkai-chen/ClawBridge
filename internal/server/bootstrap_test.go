@@ -106,6 +106,24 @@ func TestPostgresBootstrapInviteJoinsTheOwner(t *testing.T) {
 		t.Fatal(err, tty.String())
 	}
 
+	ttyCode := regexp.MustCompile(`CBJ-[0-9A-Z]{4}-[0-9A-Z]{4}-[0-9A-Z]{4}-[0-9A-Z]{4}`).FindString(tty.String())
+	store, err := openServingStore(context.Background(), dsn, owner)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { store.Close() })
+	f := newPGDeviceClient(t, store)
+	// The second code replaced the first: the piped one is refused.
+	if w := f.postJoin(f.joinBody(owner, strings.TrimSpace(code), f.now.Unix(), f.priv), "198.51.100.30"); w.Code == 200 {
+		t.Fatal("a superseded owner code joined")
+	}
+	if !strings.Contains(tty.String(), "Revoked 1 earlier owner code(s).") {
+		t.Fatal("the terminal output does not report the revoked earlier code:", tty.String())
+	}
+	if w := f.postJoin(f.joinBody(owner, ttyCode, f.now.Unix(), f.priv), "198.51.100.32"); w.Code != 200 {
+		t.Fatal(w.Code, w.Body.String())
+	}
+
 	// cloud bootstrap's way: the code it made, on stdin; one JSON line
 	// back, without it, to any output.
 	mine := devicekey.NewCode()
@@ -121,14 +139,8 @@ func TestPostgresBootstrapInviteJoinsTheOwner(t *testing.T) {
 		t.Fatal(err, given.String())
 	}
 
-	store, err := openServingStore(context.Background(), dsn, owner)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { store.Close() })
-	f := newPGDeviceClient(t, store)
-	if w := f.postJoin(f.joinBody(owner, strings.TrimSpace(code), f.now.Unix(), f.priv), "198.51.100.30"); w.Code != 200 {
-		t.Fatal(w.Code, w.Body.String())
+	if invite["revoked_earlier"] != float64(0) {
+		t.Fatal("nothing pending was left to revoke:", given.String())
 	}
 	// The given code joins too, as the owner's second device.
 	second := newPGDeviceClient(t, store)

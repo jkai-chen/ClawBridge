@@ -80,7 +80,8 @@ It asks for the code without showing it. Type it yourself.
   and tells you to run `deploy/local-host.sh invite-owner` in your own terminal. Use the same command if the code
   expires (24 hours) before the owner joins.
 - **Only once.** A later `up` finds the workspace the owner already owns and makes no new code; it says so.
-  `invite-owner` always makes one, which is also how an owner who lost every device gets back in.
+  `invite-owner` always makes one, which is also how an owner who lost every device gets back in. A new owner
+  code revokes any earlier one still pending, so only the newest works.
 
 ## Shape B: your local network
 
@@ -173,10 +174,14 @@ the root's name and SHA-1 thumbprint; for Caddy's, the name is `Caddy Local Auth
 
 | Where the client runs | Command |
 |---|---|
-| macOS | `security delete-certificate -Z SHA1 ~/Library/Keychains/login.keychain-db`, or by name: `security delete-certificate -c "Caddy Local Authority - 2026 ECC Root" ~/Library/Keychains/login.keychain-db` |
+| macOS | `sudo security remove-trusted-cert -d clawbridge-local-root.crt`, then `security delete-certificate -Z SHA1 ~/Library/Keychains/login.keychain-db` (or by name: `security delete-certificate -c "Caddy Local Authority - 2026 ECC Root" ~/Library/Keychains/login.keychain-db`) |
 | Debian, Ubuntu | `sudo rm /usr/local/share/ca-certificates/clawbridge-local-root.crt && sudo update-ca-certificates --fresh` |
 | Fedora, RHEL | `sudo rm /etc/pki/ca-trust/source/anchors/clawbridge-local-root.crt && sudo update-ca-trust` |
 | Windows | `certutil -user -delstore Root "Caddy Local Authority - 2026 ECC Root"` (or the serial number), or in PowerShell `Remove-Item Cert:\CurrentUser\Root\THUMBPRINT` |
+
+On macOS, `trust` set the trust in the admin domain (`-d`), so the first command removes it from the same
+domain (it asks for your password) before the second deletes the certificate. `remove-trusted-cert` reads the
+certificate file: keep `clawbridge-local-root.crt`, or run `deploy/local-host.sh trust` again to get it back.
 
 ### Firewalls
 

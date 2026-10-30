@@ -39,6 +39,14 @@
   checks, the launcher client and OAuth discovery, replacing three copies; each keeps its own answers. Linear config
   scope: none.
 
+## Operations
+
+- **Local host:** `operator bootstrap-invite` (and `deploy/local-host.sh invite-owner`) now revokes every earlier owner
+  code of the same workspace that is still pending, in the same transaction and audited, and prints only how many;
+  used, expired and other-role invites stay. On macOS, the printed and documented untrust steps first remove the admin
+  trust setting (`sudo security remove-trusted-cert -d clawbridge-local-root.crt`), then delete the certificate.
+  Linear config scope: none.
+
 # ClawBridge v0.3.11 (released 30 Oct)
 
 v0.3.10 was deployed (server) but its client release failed to publish; v0.3.11 is the same code plus the publish fix.

@@ -718,7 +718,7 @@ var operationArgs = map[string]string{
 	"dispatcher_enable":           "instance expected_revision mode confirm",
 	"dispatcher_disable":          "instance expected_revision",
 	"doc_watch_due":               "instance lease_token generation",
-	"doc_watch_report":            "instance lease_token generation polled_at documents complete error",
+	"doc_watch_report":            "instance lease_token generation polled_at documents complete advance_to error",
 	"doc_verify_report":           "instance lease_token generation document_id content_sha256 error",
 	"doc_publication_get":         "instance parent_kind parent_id source_path",
 	"doc_publication_put":         "instance parent_kind parent_id source_path part_number part_count generation state publish_token expect_token document_id published_sha256 source_commit source_sha256",

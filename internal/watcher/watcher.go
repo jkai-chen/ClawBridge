@@ -133,6 +133,9 @@ type Watcher struct {
 	// docsByProvider: Linear refused the app's document list once, so the
 	// document watch lists through the provider for the rest of the process.
 	docsByProvider bool
+	// docsFirst: a cut-off page showed the app's document list is oldest
+	// first, so its oldest end is read with first, not last.
+	docsFirst bool
 }
 
 type userCheck struct {

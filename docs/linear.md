@@ -2494,8 +2494,15 @@ tells the project when a Linear document in its scope changes.
   the documents changed since the last poll, without their content, or one
   read-back. It runs after the comment watch, claim markers, intake and project
   health, and only when the hour's budget keeps the comment watch's reserve.
-- **History is never replayed.** The first poll only starts the cursor. A list
-  with more changes than one page leaves the cursor and tells nothing twice.
+- **History is never replayed.** The first poll only starts the cursor. The list
+  reads the oldest 50 changes first (it tells which end of Linear's list it got
+  from the page's own order), so a burst of more is told over several
+  polls (50 a poll, one poll every five minutes), each moving the cursor past
+  what it read, to the millisecond; nothing is told twice. More than 50 changes
+  in one millisecond can't move it, and the poll reports `burst_stalled`. (If
+  Linear refuses the app's list, the
+  provider's newest-first page is used instead, and a burst of more than 50
+  leaves the cursor until it is smaller.)
   Everything outside the project's scope is dropped without being stored.
 - **Retention.** The per-document records that keep a change from being told
   twice, and read-backs still failing, are dropped with the comment watch's

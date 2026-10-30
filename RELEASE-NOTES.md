@@ -61,6 +61,11 @@
   `list_documents`: the same one charged call every 5 minutes at most, about 0.1–0.3 s instead of 1–2 s. A page with
   more behind it still keeps the cursor. If Linear refuses the query, the list goes through the provider for the rest
   of the server's run. Linear config scope: none.
+- A burst of more than 50 changed documents is no longer stuck: the document watch reads the oldest 50 changes first
+  (whichever way Linear orders the list: it reads which end it got from the page's own order) and moves its cursor
+  past them (to a millisecond below the newest it read, so a change in the same millisecond
+  isn't skipped), so every change is told, 50 per five-minute poll. More than 50 in one millisecond can't move it,
+  and the poll reports `burst_stalled`. Linear config scope: none.
 
 ## Docs
 

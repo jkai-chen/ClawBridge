@@ -365,7 +365,11 @@ or message. The record is `<session>.channel.json` under `~/.clawbridge/context`
 The watcher is one foreground process with no shell, so it runs the same way on
 Windows. Whether a given host (a terminal, an agent app) actually wakes from the
 notice on Windows is pending the Windows probe; the adapters' own behaviour (the
-argv they run, the checkpoint) is tested on Windows in CI. Use absolute Windows
+argv they run, the checkpoint) is tested on Windows in CI. CI also drives the real
+built `clawbridge.exe` through the wake path on native Windows (x64 and ARM): the
+hooks as `mcp install` writes them, the Stop hook holding back a stop while a
+message waits and allowing it once acked, and the command notifier running once
+per batch; a run with Claude Code on a real Windows desktop is still pending. Use absolute Windows
 paths and keep the state file under your own profile (for example
 `%LOCALAPPDATA%\ClawBridge`), which only you can read.
 

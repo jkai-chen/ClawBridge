@@ -401,7 +401,7 @@ jobs:
         if: ${{ !cancelled() }}
         shell: pwsh
         run: pwsh -NoProfile -File integration/release_fixtures/install_windows_probe.ps1
-      # The last two steps, so a failure there never hides the installer and
+      # The last three steps, so a failure there never hides the installer and
       # console steps.
       # Under the user profile, as for a real user: the runner's own TEMP is
       # outside it, with a different ACL.
@@ -422,6 +422,21 @@ jobs:
           $env:TMP = $env:TEMP
           $null = New-Item -ItemType Directory -Force -Path $env:TEMP
           go test ./integration -run '^TestNotificationCodexFakeSubprocess$' -count=1
+      # The real built binary through the agent wake path, as Claude Code
+      # drives it here: mcp install's exec-form hooks, the Stop hook holding
+      # back a stop while mail waits, the command notifier firing once. Under
+      # the user profile too.
+      - name: Native Windows wake path end to end (real binary, installed hooks, command notifier)
+        if: ${{ !cancelled() }}
+        # New: it doesn't fail the job yet. This comes off after about five green
+        # main runs (a post-freeze follow-up).
+        continue-on-error: true
+        shell: pwsh
+        run: |
+          $env:TEMP = Join-Path $env:LOCALAPPDATA 'Temp'
+          $env:TMP = $env:TEMP
+          $null = New-Item -ItemType Directory -Force -Path $env:TEMP
+          go test ./integration -run '^TestWakePathEndToEnd$' -count=1 -v
   # Native Windows on ARM (GitHub's hosted windows-11-arm runner for public repos).
   # If the label is wrong or the runner is unavailable the job fails or stays queued
   # and shows up red or pending; it is never skipped silently.
@@ -454,7 +469,7 @@ jobs:
         if: ${{ !cancelled() }}
         shell: pwsh
         run: pwsh -NoProfile -File integration/release_fixtures/install_windows_probe.ps1
-      # The last two steps, so a failure there never hides the installer steps.
+      # The last three steps, so a failure there never hides the installer steps.
       # Under the user profile, as the x64 job does: the runner's own TEMP is
       # outside it, with a different ACL.
       - name: Native Windows ARM64 notify, setup, CLI and ctxwatch tests under the user profile
@@ -474,3 +489,18 @@ jobs:
           $env:TMP = $env:TEMP
           $null = New-Item -ItemType Directory -Force -Path $env:TEMP
           go test ./integration -run '^TestNotificationCodexFakeSubprocess$' -count=1
+      # The real built binary through the agent wake path, as Claude Code
+      # drives it here: mcp install's exec-form hooks, the Stop hook holding
+      # back a stop while mail waits, the command notifier firing once. Under
+      # the user profile too.
+      - name: Native Windows ARM64 wake path end to end (real binary, installed hooks, command notifier)
+        if: ${{ !cancelled() }}
+        # New: it doesn't fail the job yet. This comes off after about five green
+        # main runs (a post-freeze follow-up).
+        continue-on-error: true
+        shell: pwsh
+        run: |
+          $env:TEMP = Join-Path $env:LOCALAPPDATA 'Temp'
+          $env:TMP = $env:TEMP
+          $null = New-Item -ItemType Directory -Force -Path $env:TEMP
+          go test ./integration -run '^TestWakePathEndToEnd$' -count=1 -v

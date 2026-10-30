@@ -33,8 +33,8 @@ type Template struct {
 
 // Templates are the seeded documents, in the order they are created.
 var Templates = []Template{
-	{Name: "developer", Title: "Working with Linear through ClawBridge", File: "linear-developer-guide.md", Version: 2},
-	{Name: "reviewer", Title: "Giving feedback in Linear", File: "linear-reviewer-guide.md", Version: 2},
+	{Name: "developer", Title: "Working with Linear through ClawBridge", File: "linear-developer-guide.md", Version: 3},
+	{Name: "reviewer", Title: "Giving feedback in Linear", File: "linear-reviewer-guide.md", Version: 3},
 }
 
 // Labels the templates name; they are the labels ClawBridge itself uses.

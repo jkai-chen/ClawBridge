@@ -9,6 +9,24 @@ This team's Linear board is linked to a ClawBridge project. ClawBridge lets AI c
 
 The project owner then links your team role and pins your lane. Until then your agents may read the board but not write it (`outside_lane`).
 
+## After you join
+
+- Run `clawbridge doctor` and fix anything it flags.
+- Check with the project owner that your team role is linked and your lane is pinned (`clawbridge linear lanes show`).
+- Start your first agent session and have it say hello to the coordinator: the coordinator is told when a new session joins, and its answer confirms your agent can send and receive.
+
+## Running agent sessions
+
+- **One MCP entry per session.** The guided setup adds each session's entry to the folder's `.mcp.json` (`clawbridge mcp install --agent claude-code --session NAME`, with your project's flags).
+- **Relaunching by hand.** Before you start Claude Code yourself, export the session's name and instance, so ClawBridge's hooks bind to the right session: `export CLAWBRIDGE_SESSION=NAME CLAWBRIDGE_INSTANCE=INSTANCE`.
+- **Two sessions in one folder.** Each entry belongs to one session, so give each session its own file and launch Claude Code with it: `clawbridge mcp install --agent claude-code --session NAME --config /absolute/path/NAME.mcp.json`, then `claude --mcp-config /absolute/path/NAME.mcp.json --strict-mcp-config` (with that session's `CLAWBRIDGE_SESSION` exported). Check it with `clawbridge doctor --mcp-agent claude-code --mcp-config /absolute/path/NAME.mcp.json --mcp-session NAME`. A session launched with `--strict-mcp-config` can't use channel wake and keeps the command adapter; for channel wake with two sessions in one folder, see docs/notifications.md.
+
+## Waking an idle agent
+
+- **A busy agent** finishes its turn with its messages handled: ClawBridge's Stop hook sends the turn back once while messages wait unacknowledged.
+- **An idle agent** (waiting for your next prompt) has nothing running that notices new messages. `clawbridge --session NAME --instance INSTANCE notify --adapter command --state /absolute/private/NAME-notify.json -- PROGRAM {text}` runs a command you choose when messages arrive, such as one that types "N ClawBridge messages are waiting; call inbox" into the agent's terminal (`tmux send-keys`, or your terminal app's own command). It only ever passes that fixed text, never a message's content.
+- An idle Claude Code session can also wake by itself through a Claude Code channel (`mcp install --channel`; see docs/notifications.md); the command adapter stays the fallback and covers other agents.
+
 ## How an issue is claimed
 
 - An agent session proposes an issue as its assignment, and the coordinator (or the dispatcher) confirms it. One session holds an issue at a time.
@@ -24,7 +42,7 @@ The project owner then links your team role and pins your lane. Until then your 
 
 ## Asking for an agent
 
-If your team uses ClawBridge intake, you can ask for an agent on an issue by adding the {{.NeedsAgentLabel}} label, by delegating the issue to the ClawBridge app, or by mentioning the app in a comment. ClawBridge queues the issue and tells the coordinator. A person decides which session takes it.
+If your team uses ClawBridge intake, you can ask for an agent on an issue by adding the {{.NeedsAgentLabel}} label, by delegating the issue to the ClawBridge app, or by mentioning the app in a comment. ClawBridge queues the issue and tells the coordinator. A person decides which session takes it. A mention typed through an AI assistant's Linear connector may be stored as plain text; use the label there.
 
 ## Comments
 

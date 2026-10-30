@@ -92,6 +92,10 @@
   An unknown `context` subcommand prints the context usage. The docs and the skill now say to export
   `CLAWBRIDGE_SESSION` (and `CLAWBRIDGE_INSTANCE`) before relaunching Claude Code by hand, or its hooks bind nothing.
   No schema change. Linear config scope: none.
+- **`doctor`'s "No agent MCP configuration paths were selected" says how to select one.** Its action now names all
+  three flags a check needs (`--mcp-agent`, `--mcp-config`, `--mcp-session`, plus `--mcp-instance` and `--mcp-name`),
+  and that a file given to `claude --mcp-config` is checked the same way; docs/usage.md shows the command. One or two
+  of the flags is still an error. No schema change. Linear config scope: none.
 
 # ClawBridge v0.3.12 (released 30 Oct)
 

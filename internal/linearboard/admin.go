@@ -374,7 +374,7 @@ func (s *Service) admin(ctx context.Context, scope bus.Request, in AdminInput) (
 		return AdminResult{}, e
 	}
 	dispatching = true
-	out, e := l.write(namespace, in.OperationID, ledgerMeta{in.Kind, b.ProjectID}, payload, func() (any, error) {
+	out, e := l.write(namespace, in.OperationID, ledgerMeta{Operation: in.Kind, ProjectID: b.ProjectID}, payload, func() (any, error) {
 		if e := s.unchangedV2(ctx, scope, b); e != nil {
 			return nil, authorityFailure(e)
 		}

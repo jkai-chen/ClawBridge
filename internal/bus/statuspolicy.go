@@ -463,7 +463,11 @@ func (m markerCall) stateSettle(ctx context.Context, outcome string) (any, error
 			return nil, err
 		}
 	}
-	return map[string]any{"assignment_id": m.assignment, "phase": m.phase, "part": m.part, "state": state, "next_attempt_at": next}, nil
+	out := map[string]any{"assignment_id": m.assignment, "phase": m.phase, "part": m.part, "state": state, "next_attempt_at": next}
+	if err := m.settleOperations(ctx, outcome, state, out); err != nil {
+		return nil, err
+	}
+	return out, nil
 }
 
 // markerSkipWhy says, in plain words, why a skipped state part left the

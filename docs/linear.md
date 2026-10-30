@@ -255,8 +255,15 @@ can't be acknowledged until its outcome is in, and isn't counted. An ID that nam
 recorded one (a project create, move or team add) is refused, naming both. A
 record written before v0.3.9 names no operation or project: doctor counts
 those and names the folder that holds them, to delete once checked in Linear.
+A claim or close marker's uncertain state move or label write acknowledges
+itself (since schema 53): once a later attempt reads the issue and finds the
+move or label in place, or someone else moved the issue, the server
+acknowledges the earlier attempts' records (`acknowledged_by` `reread` or
+`reread_skipped`, with an audit row). It keeps a part's last five attempts; an
+older one stays listed for `--ack`.
 A record holds the operation ID, the operation and the ClawBridge project's
-ID, never a title, body or name. A still-uncertain write's message names a safe failure code, such as
+ID, and in the server's ledger the issue's UUID and a marker's part, never a
+title, body or name. A still-uncertain write's message names a safe failure code, such as
 `provider_rejected` with Linear's code (`RATELIMITED`) or `unavailable`, never
 Linear's message text. A write that provably never reached Linear (a network
 failure before the request was sent, or Linear's HTTP layer answering 429, 401

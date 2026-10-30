@@ -85,7 +85,14 @@ func (s *Service) markerPart(ctx context.Context, scope bus.Request, args map[st
 			sctx, cancel = context.WithTimeout(context.WithoutCancel(ctx), markerSettleTimeout)
 			defer cancel()
 		}
-		if _, err := s.commentLedger(sctx, scope, "marker_settle", a); err != nil {
+		_, err := s.commentLedger(sctx, scope, "marker_settle", a)
+		if err != nil && a["operation_id"] != nil && strings.Contains(err.Error(), `unsupported argument "operation_id"`) {
+			// A server older than schema 53 keeps no attempts: the part
+			// settles as before, and its record waits for a person's ack.
+			delete(a, "operation_id")
+			_, err = s.commentLedger(sctx, scope, "marker_settle", a)
+		}
+		if err != nil {
 			return outcome, err
 		}
 		return outcome, failure
@@ -147,7 +154,8 @@ func (s *Service) markerPart(ctx context.Context, scope bus.Request, args map[st
 			}
 			return settle(outcome, nil, err)
 		}
-		in := WriteInputV2{WriteInput: WriteInput{Operation: "update", OperationID: markerOperation(), IssueID: issue}, marker: true}
+		op := markerOperation()
+		in := WriteInputV2{WriteInput: WriteInput{Operation: "update", OperationID: op, IssueID: issue}, marker: true}
 		// Added: the team's own label, else its parent's. Removed: every
 		// one of the set the issue carries (CROSS-TEAM-BINDING §3.2).
 		if action == "add" {
@@ -156,7 +164,9 @@ func (s *Service) markerPart(ctx context.Context, scope bus.Request, args map[st
 			in.RemoveLabels = set.IDs
 		}
 		if _, err = s.WriteV2(ctx, scope, in); err != nil {
-			return settle(markerFailure(err), nil, err)
+			// The attempt's operation ID, so the bus can close its ledger
+			// record once a later attempt proves the label's outcome.
+			return settle(markerFailure(err), map[string]any{"operation_id": op}, err)
 		}
 		return settle("done", nil, nil)
 	}
@@ -240,6 +250,21 @@ func markerOperation() string {
 	var b [8]byte
 	_, _ = rand.Read(b[:])
 	return "marker-" + hex.EncodeToString(b[:])
+}
+
+// markerPart is the marker part a write is for, recorded in its ledger
+// record: comment, state (an update that moves the issue) or label
+// (any other update), or "" for a write that is no marker's.
+func markerPart(in WriteInputV2) string {
+	switch {
+	case !in.marker:
+		return ""
+	case in.Operation == "comment":
+		return "comment"
+	case in.StateID != nil:
+		return "state"
+	}
+	return "label"
 }
 
 // markerFailure is how a failed apply settles: out_of_binding, failed when

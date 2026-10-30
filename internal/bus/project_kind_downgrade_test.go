@@ -1,5 +1,16 @@
 package bus
 
+// markerOperationsDowngradeSQLite returns a markerOperationsSchemaVersion
+// database to the shape before it: the marker parts' attempts and who
+// acknowledged a ledger row.
+const markerOperationsDowngradeSQLite = "ALTER TABLE assignment_markers DROP COLUMN state_operations;\nALTER TABLE assignment_markers DROP COLUMN label_operations;\nALTER TABLE linear_write_ledger DROP COLUMN acknowledged_by;\n"
+
+// markerOperationsDowngradePostgres is markerOperationsDowngradeSQLite for
+// a Postgres schema.
+func markerOperationsDowngradePostgres(schema string) string {
+	return "ALTER TABLE " + schema + ".assignment_markers DROP COLUMN state_operations;\nALTER TABLE " + schema + ".assignment_markers DROP COLUMN label_operations;\nALTER TABLE " + schema + ".linear_write_ledger DROP COLUMN acknowledged_by;\n"
+}
+
 // budgetKindsDowngradeSQLite returns a linearBudgetKindsSchemaVersion
 // database to the shape before it: the hour's calls by kind.
 const budgetKindsDowngradeSQLite = "DROP TABLE linear_budget_kinds;\n"

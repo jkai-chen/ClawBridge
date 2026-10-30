@@ -232,7 +232,7 @@ func TestSharedLedgerStalePendingIsUncertain(t *testing.T) {
 func TestSharedLedgerRowNamesItsScope(t *testing.T) {
 	store := newMemLedgerStore()
 	l := SharedLedgerAs(store, nil, "person@example.test")(context.Background())
-	if _, err := l.write("ns", "op-1", ledgerMeta{"update", "prj"}, map[string]any{"title": "SYNTHETIC-zq81"}, func() (any, error) { return nil, errors.New("reset") }); !IsUncertain(err) {
+	if _, err := l.write("ns", "op-1", ledgerMeta{Operation: "update", ProjectID: "prj"}, map[string]any{"title": "SYNTHETIC-zq81"}, func() (any, error) { return nil, errors.New("reset") }); !IsUncertain(err) {
 		t.Fatal(err)
 	}
 	key := digest("ns") + "/op-1"

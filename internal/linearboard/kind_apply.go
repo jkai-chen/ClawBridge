@@ -509,7 +509,7 @@ func (s *Service) applyKind(ctx context.Context, l OperationLedger, namespace, p
 		SettingRevision int64
 		Labels, Sent    []string
 	}{1, "kind_apply", s.cfg.ProfileID, entry.Project, set.team, set.revision, entry.Labels, sent}
-	receipt, err := l.write(namespace, entry.OperationID, ledgerMeta{"kind_apply", pid}, payload, func() (any, error) {
+	receipt, err := l.write(namespace, entry.OperationID, ledgerMeta{Operation: "kind_apply", ProjectID: pid}, payload, func() (any, error) {
 		now, e := readProjectLabelSet(ctx, labels, rows, entry.Project, stored, entry.KindLabel, map[string][]string{})
 		if e != nil || !slices.Equal(now, entry.Labels) {
 			return nil, refusedBeforeDispatch(errors.New("the project's labels changed since the preview; preview again"))

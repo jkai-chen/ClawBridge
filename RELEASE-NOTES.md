@@ -1,5 +1,12 @@
 # Unreleased
 
+**Schema 52 → 53.**
+- The server migrates to schema 53 on its first start: `assignment_markers.state_operations` and `label_operations`
+  (each marker part's last five uncertain or failed attempts, operation IDs only) and
+  `linear_write_ledger.acknowledged_by` (`reread` or `reread_skipped` for a marker's reread). Additive, no backfill.
+- **One-way:** v0.3.12 refuses a database newer than schema 52. Take a dump before upgrading; to go back, restore it
+  with the v0.3.12 image (docs/operations/deployment.md).
+
 ## Dispatcher
 
 - **`--confirm` reaches the server for `dispatcher enable`, `dispatcher model advise` and `dispatcher model tools set`.**
@@ -11,6 +18,15 @@
 - Issue history hides the names of teams and projects outside the project's binding (`outside`), and its
   reads are charged by the server only; `linear_write_charge` no longer takes `read`. Linear config scope:
   none.
+- A claim or close marker's state move or label write that may have reached Linear no longer stays listed as an
+  uncertain issue write once a later attempt's reread settles the part: when the move or label is found in place
+  (done) or someone else moved the issue (skipped), the earlier attempts' records in the server's ledger are
+  acknowledged by reread (`acknowledged_by` `reread` or `reread_skipped`, one `acknowledged` audit row each with
+  reason `accepted_by_reread`), so `linear writes` and doctor's `linear.issue_writes` stop listing them. Only a
+  record still pending is touched, and only one that is this marker part's own attempt (same project, issue and
+  part); a late outcome from the server that sent it still lands. A part keeps its newest five attempts; an older one
+  stays listed for `linear writes --ack`. The server's ledger records now name the issue's UUID and, for a marker,
+  its part. Schema 52 → 53 (additive, no backfill). Linear config scope: none.
 
 # ClawBridge v0.3.12 (released 30 Oct)
 

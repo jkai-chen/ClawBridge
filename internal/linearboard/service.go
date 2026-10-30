@@ -697,7 +697,7 @@ func (s *Service) writeV1(ctx context.Context, scope bus.Request, in WriteInput)
 	if in.Operation == "comment" {
 		s.sweepComments(ctx, scope, l, namespace)
 	}
-	return l.write(namespace, in.OperationID, ledgerMeta{in.Operation, b.ProjectID}, ledgerPayload, func() (any, error) {
+	return l.write(namespace, in.OperationID, ledgerMeta{Operation: in.Operation, ProjectID: b.ProjectID, IssueID: in.IssueID}, ledgerPayload, func() (any, error) {
 		// Last revision check occurs after obtaining the private per-operation lock.
 		if e := s.unchanged(ctx, scope, b); e != nil {
 			return nil, authorityFailure(e)

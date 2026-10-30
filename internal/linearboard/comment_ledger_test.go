@@ -56,6 +56,9 @@ type fakeCommentLedger struct {
 	markersLeft    int
 	markersStopped string
 	onGo           func(map[string]any)
+	// refuseOperationID answers a marker_settle that names operation_id
+	// as a server older than schema 53 does.
+	refuseOperationID bool
 }
 
 func (f *fakeCommentLedger) execute(r bus.Request) (bus.Result, error) {
@@ -134,6 +137,9 @@ func (f *fakeCommentLedger) execute(r bus.Request) (bus.Result, error) {
 		}
 		return bus.Result{Source: "local-authority", Data: g}, nil
 	case "marker_settle":
+		if _, named := r.Args["operation_id"]; named && f.refuseOperationID {
+			return bus.Result{}, errors.New(`unsupported argument "operation_id" for marker_settle`)
+		}
 		f.markerSettles = append(f.markerSettles, r.Args)
 		if r.Args["outcome"] == "absent" {
 			return bus.Result{Source: "local-authority", Data: f.gos["absent"]}, nil

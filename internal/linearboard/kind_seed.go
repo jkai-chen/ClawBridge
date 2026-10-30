@@ -393,7 +393,7 @@ func (s *Service) sendKindSeed(ctx context.Context, b bus.TaskboardBindingV2, ac
 			Team, Name, Parent string
 			SettingRevision    int64
 		}{1, "kind_label", s.cfg.ProfileID, set.team, e.Name, parent, set.revision}
-		receipt, err := l.write(namespace, kindOperationID(base, role, e.Name), ledgerMeta{"kind_label", b.ProjectID}, payload, func() (any, error) {
+		receipt, err := l.write(namespace, kindOperationID(base, role, e.Name), ledgerMeta{Operation: "kind_label", ProjectID: b.ProjectID}, payload, func() (any, error) {
 			var id string
 			var err error
 			if parent == "" {

@@ -103,7 +103,7 @@ func (s *Service) relationV2Personal(ctx context.Context, scope bus.Request, in 
 	if e = s.unchangedV2(ctx, scope, b); e != nil {
 		return nil, e
 	}
-	return l.write(namespace, in.OperationID, ledgerMeta{"relation_" + in.Action, b.ProjectID}, payload, func() (any, error) {
+	return l.write(namespace, in.OperationID, ledgerMeta{Operation: "relation_" + in.Action, ProjectID: b.ProjectID}, payload, func() (any, error) {
 		if e := s.unchangedV2(ctx, scope, b); e != nil {
 			return nil, authorityFailure(e)
 		}

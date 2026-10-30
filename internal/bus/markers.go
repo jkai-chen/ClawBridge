@@ -540,7 +540,11 @@ func (c commentCall) markerSettle(ctx context.Context) (any, error) {
 	if _, err = c.tx.ExecContext(ctx, `UPDATE assignment_markers SET `+column+`=?,attempts=?,next_attempt_at=?,last_error=?,updated_at=? WHERE assignment_id=? AND phase=?`, state, attempts, next, failure, now, m.assignment, m.phase); err != nil {
 		return nil, err
 	}
-	return map[string]any{"assignment_id": m.assignment, "phase": m.phase, "part": m.part, "state": state, "next_attempt_at": next}, nil
+	out := map[string]any{"assignment_id": m.assignment, "phase": m.phase, "part": m.part, "state": state, "next_attempt_at": next}
+	if err = m.settleOperations(ctx, outcome, state, out); err != nil {
+		return nil, err
+	}
+	return out, nil
 }
 
 // markerDue hands the watcher the marker rows to apply, at most limit

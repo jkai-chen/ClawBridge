@@ -52,6 +52,16 @@ Run it inside the repository's checkout, or pass `--repo PATH`.
      `SSH_AUTH_SOCK` and `CLAWBRIDGE_*` never reach it, and neither do the variables
      of a Claude Code session you launch it from (its messaging socket and token
      included).
+   - **claude's key or token stays with claude.** Bash could otherwise read it and
+     send it with a request to an allowed registry, so the launch sets
+     `CLAUDE_CODE_SUBPROCESS_ENV_SCRUB=1`: claude strips credentials from the
+     environment of its Bash, hooks and MCP server, and keeps its own. The
+     self-test (below) proves Bash can't see `ANTHROPIC_API_KEY`,
+     `ANTHROPIC_AUTH_TOKEN` or `CLAUDE_CODE_OAUTH_TOKEN`. The scrub also turns
+     Claude Code's Bash auto-allow off, so a launch with `"auto_allow_bash": true`
+     runs without it, and is refused while any of those three is set: sign claude
+     in with its own login (kept in the keychain, which Bash can't read) for
+     unattended runs.
    - **Bedrock and Vertex:** the switches (`CLAUDE_CODE_USE_BEDROCK`,
      `CLAUDE_CODE_USE_VERTEX`) are passed, but their cloud credentials (`AWS_*`,
      `GOOGLE_*`, `CLOUD_ML_REGION`, ...) are not. A Bedrock or Vertex setup won't sign in
@@ -175,7 +185,8 @@ The settings passed with `--settings` take precedence over the repository's own
   the launch plants directly in your home directory, and one in your checkout's
   git directory (in a linked worktree, the one its `.git` file names) when that
   is under your home. No rule names those files, so only the
-  sandbox's default deny refuses them. The launch waits for the report (three
+  sandbox's default deny refuses them. It also checks that Bash's environment
+  has none of claude's credentials. The launch waits for the report (three
   minutes at most). One READ, a malformed report, or none at all closes the
   terminal and retires the session before it does any work. The planted files
   are removed once the report is in.

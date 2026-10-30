@@ -34,6 +34,23 @@ var agentEnv = []string{
 	"CLAUDE_CODE_USE_BEDROCK", "CLAUDE_CODE_USE_VERTEX",
 }
 
+// claudeCredentialVars are claude's own credentials among agentEnv. claude
+// needs them, but its Bash would inherit them and the sandbox lets Bash
+// reach the allowed registries, so the launch has claude scrub them from
+// its children (CLAUDE_CODE_SUBPROCESS_ENV_SCRUB) and the self-test proves
+// Bash can't see them (G9 S4-02).
+var claudeCredentialVars = []string{"ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "CLAUDE_CODE_OAUTH_TOKEN"}
+
+// setIn reports whether environ (KEY=value entries) sets name.
+func setIn(environ []string, name string) bool {
+	for _, kv := range environ {
+		if strings.HasPrefix(kv, name+"=") {
+			return true
+		}
+	}
+	return false
+}
+
 // canaryVar is set by the launch script before it clears the environment;
 // the self-test proves the session can't see it.
 const canaryVar = "CLAWBRIDGE_RUNNER_CANARY"
@@ -41,12 +58,17 @@ const canaryVar = "CLAWBRIDGE_RUNNER_CANARY"
 // LaunchScript starts the session's claude with only the allow-listed
 // environment. Names are written into the script, never values: /bin/sh
 // expands each one in the terminal that runs it, and one that isn't set
-// is left out.
-func LaunchScript(canary, settingsFile, mcpFile, model, prompt string) string {
+// is left out. scrub has claude strip credentials from its children's
+// environment; it also turns Claude Code's Bash auto-allow off, so a launch
+// with auto_allow_bash passes false.
+func LaunchScript(canary, settingsFile, mcpFile, model, prompt string, scrub bool) string {
 	var b strings.Builder
 	b.WriteString("#!/bin/sh\n# ClawBridge runner: start the session's claude with an allow-listed environment.\n")
 	b.WriteString(canaryVar + "=" + quote(canary) + "\nexport " + canaryVar + "\n")
 	b.WriteString("exec env -i")
+	if scrub {
+		b.WriteString(" CLAUDE_CODE_SUBPROCESS_ENV_SCRUB=1")
+	}
 	for _, n := range agentEnv {
 		fmt.Fprintf(&b, ` ${%s+"%s=$%s"}`, n, n, n)
 	}

@@ -360,6 +360,14 @@ func (r *Runner) Launch(spec Spec) (Prepared, error) {
 	p.BashApproval = "ask"
 	if spec.Settings.AutoAllowBash {
 		p.BashApproval = "auto"
+		// The scrub would turn auto-allow off, so an unattended session
+		// runs without it: claude's credential may not be in its
+		// environment then, where Bash could read it (G9 S4-02).
+		for _, name := range claudeCredentialVars {
+			if setIn(r.environ(), name) {
+				return Prepared{}, fmt.Errorf("auto_allow_bash: %s is set, and the session's Bash could read it; sign claude in with its own login instead, or turn auto_allow_bash off", name)
+			}
+		}
 	}
 	script := filepath.Join(dir, "launch.sh")
 	p.Command = Command(p.Clone, script)
@@ -418,7 +426,7 @@ func (r *Runner) Launch(spec Spec) (Prepared, error) {
 	if _, err = rand.Read(canary); err != nil {
 		return p, err
 	}
-	launch := LaunchScript(hex.EncodeToString(canary), p.SettingsFile, p.MCPFile, spec.Settings.Model, StartPrompt(spec.Identifier, spec.IssueID, branch, SelfTestScript(p.Clone)))
+	launch := LaunchScript(hex.EncodeToString(canary), p.SettingsFile, p.MCPFile, spec.Settings.Model, StartPrompt(spec.Identifier, spec.IssueID, branch, SelfTestScript(p.Clone)), !spec.Settings.AutoAllowBash)
 	for path, data := range map[string][]byte{p.SettingsFile: append(settings, '\n'), p.MCPFile: append(mcp, '\n'), script: []byte(launch)} {
 		if err = writePrivate(path, data); err != nil {
 			return p, err
@@ -518,6 +526,13 @@ func (r *Runner) selfTest(cache, scriptPath, repo, session string) (map[string]s
 	// environment; the session must not see it.
 	sentinels["env"] = "a variable from the shell that started it"
 	lines = append(lines, `if [ -n "${`+canaryVar+`+x}" ]; then echo READ env; else echo DENIED env; fi`)
+	// G9 S4-02: claude's own credentials are scrubbed from its Bash.
+	sentinels["credentials"] = "claude's API key or sign-in token in Bash's environment"
+	set := ""
+	for _, name := range claudeCredentialVars {
+		set += "${" + name + "+x}"
+	}
+	lines = append(lines, `if [ -n "`+set+`" ]; then echo READ credentials; else echo DENIED credentials; fi`)
 	result := filepath.Join(cache, "selftest.result")
 	script := "#!/bin/sh\n# ClawBridge runner sandbox self-test: each line tries to read one credential location or planted file.\n{\n" + strings.Join(lines, "\n") + "\necho DONE\n} > " + quote(result+".tmp") + " && mv " + quote(result+".tmp") + " " + quote(result) + "\necho 'Self-test done.'\n"
 	if err := os.WriteFile(scriptPath, []byte(script), 0o600); err != nil {

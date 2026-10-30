@@ -52,6 +52,9 @@ type env struct {
 	// envLeak runs the launch script with its environment kept, as a
 	// script that failed to clear it would.
 	envLeak bool
+	// noScrub runs the launch script without its credential scrub, as a
+	// claude that ignored it would.
+	noScrub bool
 	// namedOnly refuses every read but of the planted files, as a sandbox
 	// that denies only the paths its rules name would.
 	namedOnly bool
@@ -83,13 +86,15 @@ func newEnv(t *testing.T) *env {
 	e.git(e.repo, "remote", "set-head", "origin", "main")
 	home := filepath.Join(root, "home")
 	// A fake claude: it records the environment the launch script gave it,
-	// then runs the self-test its prompt names, as the session's first step.
+	// then runs the self-test its prompt names, as the session's first step,
+	// with its own credentials scrubbed when the launch asks, as claude does.
 	fake := filepath.Join(root, "fake-claude")
 	if err := os.MkdirAll(fake, 0o755); err != nil {
 		t.Fatal(err)
 	}
 	e.claudeEnv = filepath.Join(root, "claude.env")
 	claude := "#!/bin/sh\nenv > '" + e.claudeEnv + "'\n" +
+		`if [ "$CLAUDE_CODE_SUBPROCESS_ENV_SCRUB" = 1 ]; then unset ANTHROPIC_API_KEY ANTHROPIC_AUTH_TOKEN CLAUDE_CODE_OAUTH_TOKEN; fi` + "\n" +
 		`for a in "$@"; do p=$(printf '%s' "$a" | sed -n "s/.*sh '\([^']*selftest\.sh\)'.*/\1/p"); if [ -n "$p" ]; then exec sh "$p"; fi; done` + "\n"
 	if err := os.WriteFile(filepath.Join(fake, "claude"), []byte(claude), 0o755); err != nil {
 		t.Fatal(err)
@@ -123,10 +128,17 @@ func newEnv(t *testing.T) *env {
 		// token, as an owner's shell may (G9-5).
 		if m := launchScriptPath.FindStringSubmatch(command); m != nil && !e.silent {
 			script := m[1]
-			if e.envLeak {
+			if e.envLeak || e.noScrub {
 				raw, _ := os.ReadFile(script)
 				script = filepath.Join(t.TempDir(), "leaky.sh")
-				_ = os.WriteFile(script, []byte(strings.Replace(string(raw), "exec env -i ", "exec env ", 1)), 0o600)
+				text := string(raw)
+				if e.envLeak {
+					text = strings.Replace(text, "exec env -i ", "exec env ", 1)
+				}
+				if e.noScrub {
+					text = strings.Replace(text, " CLAUDE_CODE_SUBPROCESS_ENV_SCRUB=1", "", 1)
+				}
+				_ = os.WriteFile(script, []byte(text), 0o600)
 			}
 			cmd := exec.Command("/bin/sh", script)
 			tail := e.denyBin + ":/usr/bin:/bin"
@@ -887,7 +899,7 @@ func TestCheckSelfTestNamesEveryRead(t *testing.T) {
 // session's own variables, its messaging credential least of all
 // (R141-M1).
 func TestLaunchScriptAllowListsTheEnvironment(t *testing.T) {
-	script := LaunchScript("c0ffee", "/s/settings.json", "/s/mcp.json", "", "go")
+	script := LaunchScript("c0ffee", "/s/settings.json", "/s/mcp.json", "", "go", true)
 	for _, want := range []string{`${PATH+"PATH=$PATH"}`, `${HOME+"HOME=$HOME"}`, `${ANTHROPIC_API_KEY+"ANTHROPIC_API_KEY=$ANTHROPIC_API_KEY"}`, `${CLAUDE_CONFIG_DIR+"CLAUDE_CONFIG_DIR=$CLAUDE_CONFIG_DIR"}`, canaryVar + "='c0ffee'", "exec env -i "} {
 		if !strings.Contains(script, want) {
 			t.Fatalf("script lacks %q:\n%s", want, script)
@@ -996,6 +1008,7 @@ func TestAgentSettingsAskBeforeBash(t *testing.T) {
 		}
 	}
 	e := newEnv(t)
+	e.r.Environ = withoutCredentials
 	for want, auto := range map[string]bool{"ask": false, "auto": true} {
 		dry := e.spec("checkout-engineer-1", issueIdent)
 		dry.DryRun = true
@@ -1159,6 +1172,48 @@ func TestLaunchProvesTheEnvironmentIsCleared(t *testing.T) {
 	_, err := e.r.Launch(e.spec("checkout-engineer-2", "FIX-2"))
 	if err == nil || !strings.Contains(err.Error(), "a variable from the shell that started it") {
 		t.Fatal("a session that saw the shell's environment was not stopped:", err)
+	}
+}
+
+// withoutCredentials is this process's environment without claude's
+// credentials, which the machine running the tests may hold.
+func withoutCredentials() []string {
+	var out []string
+	for _, kv := range os.Environ() {
+		if !slices.ContainsFunc(claudeCredentialVars, func(n string) bool { return strings.HasPrefix(kv, n+"=") }) {
+			out = append(out, kv)
+		}
+	}
+	return out
+}
+
+// G9 S4-02: claude's own credentials reach claude but not its Bash. The
+// launch has claude scrub them (CLAUDE_CODE_SUBPROCESS_ENV_SCRUB), and a
+// session whose Bash still sees one fails its self-test. The scrub turns
+// Bash auto-allow off, so an auto_allow_bash launch goes without it and is
+// refused while a credential is in the environment.
+func TestLaunchKeepsClaudesCredentialsFromBash(t *testing.T) {
+	if s := LaunchScript("c", "/s", "/m", "", "go", true); !strings.Contains(s, "exec env -i CLAUDE_CODE_SUBPROCESS_ENV_SCRUB=1 ") {
+		t.Fatal("no scrub:", s)
+	}
+	if s := LaunchScript("c", "/s", "/m", "", "go", false); strings.Contains(s, "SCRUB") {
+		t.Fatal("scrub with auto-allow:", s)
+	}
+	e := newEnv(t)
+	e.launch("checkout-engineer-1", "FIX-1")
+	e.noScrub = true
+	_, err := e.r.Launch(e.spec("checkout-engineer-2", "FIX-2"))
+	if err == nil || !strings.Contains(err.Error(), "API key or sign-in token") {
+		t.Fatal("a session whose Bash saw claude's key was not stopped:", err)
+	}
+	e.noScrub = false
+	auto := e.spec("checkout-engineer-3", "FIX-3")
+	auto.Settings.AutoAllowBash = true
+	for _, name := range claudeCredentialVars {
+		e.r.Environ = func() []string { return append(withoutCredentials(), name+"=x") }
+		if _, err := e.r.Launch(auto); err == nil || !strings.Contains(err.Error(), name+" is set") {
+			t.Fatal(name, err)
+		}
 	}
 }
 

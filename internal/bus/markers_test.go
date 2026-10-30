@@ -333,6 +333,25 @@ func TestWatchStatusReportsWatcherAndMarkerDrift(t *testing.T) {
 	if s["close_label_drift"] != 1 || s["markers_pending"] != 2 || s["watcher_live"] != false || s["markers_oldest_pending"] != old {
 		t.Fatal("drift not reported:", s)
 	}
+	// The server's watcher: no ticks, a good tick under an hour ago, and
+	// one only older (its lease has lapsed between ticks either way).
+	if s["server_watch_ticks"] != false || s["server_watch_live"] != false || s["server_watch_last_ok"] != nil {
+		t.Fatal("server watcher without ticks:", s)
+	}
+	recent := layout(time.Now().Add(-40 * time.Minute))
+	if _, e := w.s.db.Exec(`INSERT INTO watch_ticks(project_id,last_tick_at,last_ok_at) SELECT id,?,? FROM projects`, recent, recent); e != nil {
+		t.Fatal(e)
+	}
+	if s = status(); s["server_watch_ticks"] != true || s["server_watch_live"] != true || s["server_watch_last_ok"] != recent {
+		t.Fatal("a recent good tick:", s)
+	}
+	stale := layout(time.Now().Add(-61 * time.Minute))
+	if _, e := w.s.db.Exec(`UPDATE watch_ticks SET last_tick_at=?,last_ok_at=?`, layout(time.Now()), stale); e != nil {
+		t.Fatal(e)
+	}
+	if s = status(); s["server_watch_live"] != false || s["server_watch_last_ok"] != stale {
+		t.Fatal("ticks failing for an hour:", s)
+	}
 	// Another confirmed assignment on the issue keeps the label rightly.
 	w.assign("b", watchIssue)
 	if s = status(); s["close_label_drift"] != 0 {

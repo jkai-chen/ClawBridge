@@ -29,15 +29,21 @@ func TestDoctorReportsTheCommentWatchAndMarkers(t *testing.T) {
 		watch, marker string
 		text          string
 	}{
-		"healthy":           {quiet, nil, Pass, Pass, "name sessions by role"},
-		"no watcher":        {map[string]any{"watched_issues": 2, "watcher_live": false}, nil, Warn, Pass, "no comment watcher is running"},
-		"nobody to notify":  {map[string]any{"watched_issues": 1, "watcher_live": true, "no_recipient": 1, "held_issues": 1}, nil, Warn, Pass, "held, not dropped"},
-		"missing label":     {map[string]any{"watched_issues": 1, "watcher_live": true, "markers_no_label": 1}, nil, Pass, Warn, "agent-working label"},
-		"stale markers":     {map[string]any{"watched_issues": 1, "watcher_live": true, "markers_pending": 3, "markers_oldest_pending": "2026-10-23T10:00:00Z"}, nil, Pass, Warn, "3 markers pending"},
-		"close label drift": {map[string]any{"watched_issues": 0, "watcher_live": false, "close_label_drift": 1}, nil, Pass, Warn, "may still show agent-working"},
-		"project budget":    {map[string]any{"watched_issues": 2, "watcher_live": true, "watch_budget": 120, "budget_limit": 120, "budget_source": "project", "budget_used": 37}, nil, Pass, Pass, "37 of the project's own budget of 120 Linear calls"},
-		"server budget":     {map[string]any{"watched_issues": 2, "watcher_live": true, "budget_limit": 600, "budget_source": "default", "budget_used": 12}, nil, Pass, Pass, "12 of 600 Linear calls are used"},
-		"older server":      {nil, codedError{"invalid", "unsupported operation"}, Warn, Warn, "upgrade the server"},
+		"healthy":    {quiet, nil, Pass, Pass, "name sessions by role"},
+		"no watcher": {map[string]any{"watched_issues": 2, "watcher_live": false}, nil, Warn, Pass, "no comment watcher is running"},
+		// Between the server watcher's ticks its lease has lapsed; its last
+		// good tick says it still watches. One with no good tick in an hour
+		// is a stall, said as such.
+		"server between ticks": {map[string]any{"watched_issues": 2, "watcher_live": false, "server_watch_ticks": true, "server_watch_live": true, "server_watch_last_ok": "2026-10-30T20:00:00Z"}, nil, Pass, Pass, "by the server's watcher (last good tick 2026-10-30T20:00:00Z)"},
+		"server stalled":       {map[string]any{"watched_issues": 2, "watcher_live": false, "server_watch_ticks": true, "server_watch_live": false, "server_watch_last_ok": "2026-10-30T18:00:00Z"}, nil, Warn, Pass, "no good tick in the last hour (last good tick: 2026-10-30T18:00:00Z)"},
+		"server never ok":      {map[string]any{"watched_issues": 2, "watcher_live": false, "server_watch_ticks": true, "server_watch_live": false, "server_watch_last_ok": nil}, nil, Warn, Pass, "last good tick: never"},
+		"nobody to notify":     {map[string]any{"watched_issues": 1, "watcher_live": true, "no_recipient": 1, "held_issues": 1}, nil, Warn, Pass, "held, not dropped"},
+		"missing label":        {map[string]any{"watched_issues": 1, "watcher_live": true, "markers_no_label": 1}, nil, Pass, Warn, "agent-working label"},
+		"stale markers":        {map[string]any{"watched_issues": 1, "watcher_live": true, "markers_pending": 3, "markers_oldest_pending": "2026-10-23T10:00:00Z"}, nil, Pass, Warn, "3 markers pending"},
+		"close label drift":    {map[string]any{"watched_issues": 0, "watcher_live": false, "close_label_drift": 1}, nil, Pass, Warn, "may still show agent-working"},
+		"project budget":       {map[string]any{"watched_issues": 2, "watcher_live": true, "watch_budget": 120, "budget_limit": 120, "budget_source": "project", "budget_used": 37}, nil, Pass, Pass, "37 of the project's own budget of 120 Linear calls"},
+		"server budget":        {map[string]any{"watched_issues": 2, "watcher_live": true, "budget_limit": 600, "budget_source": "default", "budget_used": 12}, nil, Pass, Pass, "12 of 600 Linear calls are used"},
+		"older server":         {nil, codedError{"invalid", "unsupported operation"}, Warn, Warn, "upgrade the server"},
 	} {
 		var checks []Check
 		checkCommentWatch(context.Background(), statusExecutor{status: c.status, err: c.err}, "w", "p", func(check Check) { checks = append(checks, check) })

@@ -785,6 +785,19 @@ func watchStatus(ctx context.Context, tx *transaction, pid string) (any, error) 
 		return nil, err
 	}
 	out["watcher_live"] = len(lease) == 1 && str(lease[0], "expires_at") > nowRaw
+	// The server's own watcher holds the lease only during a tick; between
+	// ticks its last good tick says it is still watching.
+	ticks, err := query(ctx, tx, `SELECT last_tick_at,last_ok_at FROM watch_ticks WHERE project_id=?`, pid)
+	if err != nil {
+		return nil, err
+	}
+	out["server_watch_ticks"], out["server_watch_live"], out["server_watch_last_ok"] = false, false, nil
+	if len(ticks) == 1 {
+		ok := str(ticks[0], "last_ok_at")
+		out["server_watch_ticks"] = true
+		out["server_watch_last_ok"] = nullable(ok)
+		out["server_watch_live"] = ok != "" && ok > layout(at(nowRaw).Add(-serverWatchStale))
+	}
 	// The hourly budget: the project's own when its owner set one, else
 	// what the last watcher asked for (the server's or a client's budget).
 	override, set, err := watchBudgetOverride(ctx, tx, pid)

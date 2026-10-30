@@ -1057,6 +1057,11 @@ line per cycle.
     and counts only. Each change is recorded in the project's history. `watch-budget` is the old command name.
 - `clawbridge doctor` warns when assigned issues are watched but no watcher
   runs, and its `linear.watch` line shows the hour's calls used and the limit.
+  A hosted server's own watcher holds the watch only during a tick, so between
+  ticks doctor counts the project as watched while the server's last good tick
+  is under an hour old (twice the longest interval), and says so with that
+  tick's time. With no good tick in the last hour it warns that the server's
+  watcher has stalled.
 - **On a hosted server with its own watcher** (`CLAWBRIDGE_WATCH_INTERVAL`,
   docs/operations/deployment.md), the server watches every bound project as the
   ClawBridge app, and also applies pending claim markers, paced by Linear's

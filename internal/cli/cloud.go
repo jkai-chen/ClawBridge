@@ -383,6 +383,10 @@ var secretKeys = map[string]bool{
 	// still signs in with Google needs its two OAuth client secrets.
 	"CLAWBRIDGE_OAUTH_CLIENT_SECRET":        true,
 	"CLAWBRIDGE_OAUTH_DEVICE_CLIENT_SECRET": true,
+	// An S3-compatible backup store's key, on a server reached over SSH
+	// (ANY-VM-PLAN §4): it may put and list, never delete.
+	"CLAWBRIDGE_BACKUP_ACCESS_KEY_ID":     true,
+	"CLAWBRIDGE_BACKUP_SECRET_ACCESS_KEY": true,
 }
 
 const serverEnvFile = "/etc/clawbridge/clawbridge.env"

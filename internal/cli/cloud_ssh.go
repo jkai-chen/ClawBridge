@@ -336,3 +336,35 @@ func exitCode(err error) int {
 	}
 	return -1
 }
+
+// backupListScript runs the deployment's own backup script in its list
+// mode, with the host's own store and key: it prints object names only.
+const backupListScript = `exec sh /opt/clawbridge/repo/deploy/backup-postgres.sh --list`
+
+// sshBackups is backups for a host reached over plain SSH: the host lists
+// its store with its own key, so this machine needs none, and the newest
+// complete pair must be under 26 hours old. Only names that are a
+// backup's, parsed strictly, count.
+func sshBackups(ctx context.Context, p *cloudProbe) cloudResult {
+	tr, err := p.target.transport()
+	if err != nil {
+		return failed("backups", "needs_host", "pass --ssh HOST")
+	}
+	out, err := tr.run(ctx, backupListScript, p.stderr)
+	switch {
+	case errors.Is(err, errHostKey), errors.Is(err, errSudoPassword):
+		return p.remoteFailure("backups", err)
+	case err != nil:
+		return failed("backups", "bucket_unreadable", "the host could not list its backup store; run sudo sh /opt/clawbridge/repo/deploy/backup-postgres.sh --list there to see why")
+	}
+	var names []string
+	for _, line := range strings.Split(string(out), "\n") {
+		if line = strings.TrimSpace(line); backupName.MatchString(line) {
+			names = append(names, line)
+		}
+	}
+	return newestBackup(names)
+}
+
+// backupName is one object name the list mode prints, nothing else.
+var backupName = regexp.MustCompile(`^(gs|s3)://[A-Za-z0-9._-]{1,222}/postgres/daily/[0-9]{8}T[0-9]{6}Z\.(dump|sha256)$`)

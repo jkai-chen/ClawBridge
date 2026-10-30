@@ -1,5 +1,20 @@
 # Unreleased
 
+## Operations
+
+- **Backups to S3-compatible storage off the host.**
+  - **Settings:** `CLAWBRIDGE_BACKUP_ENDPOINT`, `https://HOST[:PORT]` and nothing else, never this host. With it, the
+    store's own region name and its key, which you set with `cloud secret set`.
+  - **How it uploads:** with the `aws-cli` image pinned by digest. The key goes in an env file on `/run`, never on a
+    command line or on disk.
+  - **The key's rights:** put and list only, with versioning or a lock on the bucket.
+    docs/operations/backup-and-recovery.md has the table per store, and the restore drill uses a separate read-only
+    key on your own machine.
+  - **The check:** `cloud check backups --ssh HOST` lists the store on the host, so your machine needs no key.
+  - **Image path:** the backup's Compose commands add `compose.image.yaml` when the server pulls the published image,
+    before a local host's override file.
+  - **A local folder** (`CLAWBRIDGE_BACKUP_DIR`) takes neither an endpoint nor `--list`, and says so.
+
 # ClawBridge v0.3.13 (released 30 Oct)
 
 **Schema 53 → 54.**

@@ -217,3 +217,53 @@ func TestSafeLinesFlushesALongLine(t *testing.T) {
 		t.Fatalf("%d written, %d kept", out.Len(), len(s.buf))
 	}
 }
+
+// backups over SSH: the host lists its own store with its own key; only
+// names that are a backup's count, and the newest complete pair must be
+// under 26 hours old.
+func TestCloudCheckBackupsOverSSH(t *testing.T) {
+	probe := func() *cloudProbe {
+		return &cloudProbe{server: "https://bridge.example.test", target: cloudTarget{host: "admin@bridge.example.test"}, stderr: io.Discard}
+	}
+	const base = "s3://clawbridge-backups/postgres/daily/"
+	for name, c := range map[string]struct {
+		out    string
+		err    error
+		reason string
+	}{
+		"fresh pair":  {base + "20261026T020000Z.dump\n" + base + "20261026T020000Z.sha256\n", nil, ""},
+		"no checksum": {base + "20261026T020000Z.dump\n", nil, "no_backup"},
+		"empty":       {"", nil, "no_backup"},
+		"stale":       {base + "20261024T020000Z.dump\n" + base + "20261024T020000Z.sha256\n", nil, "backup_stale"},
+		"hostile":     {"x " + base + "20261026T020000Z.dump\n" + "x " + base + "20261026T020000Z.sha256\n" + base + "20261026T020000Z.sha256 \x1b[2J\n" + base + "../20261026T020000Z.dump\n", nil, "no_backup"},
+		"unreadable":  {"", errors.New("exit status 1"), "bucket_unreadable"},
+	} {
+		stubCloud(t, &gcloudStub{}, nil, nil)
+		runs := stubRemote(t, c.out, c.err)
+		got := checkBackups(context.Background(), probe())
+		if got.Check != "backups" || got.Reason != c.reason || (c.reason == "") != (got.Status == "pass") {
+			t.Fatalf("%s: %+v", name, got)
+		}
+		if len(*runs) != 1 || !reflect.DeepEqual((*runs)[0].argv, wantSSH("admin@bridge.example.test", `env LC_ALL=C sudo -n sh -c '`+backupListScript+`'`)) {
+			t.Fatalf("%s: %+v", name, *runs)
+		}
+	}
+	// What ssh says names the failure here too.
+	old := remoteOutput
+	t.Cleanup(func() { remoteOutput = old })
+	remoteOutput = func(_ context.Context, _ []string, w io.Writer) ([]byte, error) {
+		_, _ = io.WriteString(w, "Host key verification failed.\n")
+		return nil, errors.New("exit status 255")
+	}
+	if got := checkBackups(context.Background(), probe()); got.Reason != "host_key_unknown" {
+		t.Fatalf("%+v", got)
+	}
+	if strings.Contains(backupListScript, "'") {
+		t.Fatal("the script travels inside single quotes")
+	}
+	for _, key := range []string{"CLAWBRIDGE_BACKUP_ACCESS_KEY_ID", "CLAWBRIDGE_BACKUP_SECRET_ACCESS_KEY"} {
+		if !secretKeys[key] {
+			t.Fatal(key, "is not settable")
+		}
+	}
+}

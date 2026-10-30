@@ -2,23 +2,31 @@
 # Checks the server image's Dockerfile and build, with no registry writes.
 #   bases [--strict]  each FROM is pinned by a multi-arch index digest; a pin
 #                     behind its tag is reported (an error with --strict, the
-#                     release checklist's refresh step)
+#                     release checklist's refresh step). The backup script's
+#                     aws_image is pinned the same way (by index digest; its
+#                     version is chosen, so it isn't compared with a tag)
 #   arch              builds linux/amd64 and linux/arm64 and checks that each
 #                     binary and each base's packages are that architecture
 set -euo pipefail
 cd "$(dirname "$0")/.."
 die() { echo "check-image: $*" >&2; exit 1; }
 
+# indexed REF: REF is pinned by digest, and that digest is a multi-arch index.
+indexed() {
+  local ref=$1 kind
+  [[ $ref == *@sha256:* ]] || die "image not pinned by digest: $ref"
+  kind=$(docker buildx imagetools inspect --raw "$ref" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("mediaType",""))')
+  case $kind in
+    application/vnd.oci.image.index.v1+json|application/vnd.docker.distribution.manifest.list.v2+json) ;;
+    *) die "image pinned by a platform manifest, not an index: $ref ($kind)" ;;
+  esac
+}
+
 bases() {
-  local strict=${1:-} stale=0 ref name digest kind current
+  local strict=${1:-} stale=0 ref name digest current aws
   while read -r ref; do
-    [[ $ref == *@sha256:* ]] || die "base not pinned by digest: $ref"
+    indexed "$ref"
     name=${ref%@*} digest=${ref#*@}
-    kind=$(docker buildx imagetools inspect --raw "$ref" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("mediaType",""))')
-    case $kind in
-      application/vnd.oci.image.index.v1+json|application/vnd.docker.distribution.manifest.list.v2+json) ;;
-      *) die "base pinned by a platform manifest, not an index: $ref ($kind)" ;;
-    esac
     current=$(docker buildx imagetools inspect --format '{{json .Manifest}}' "$name" | python3 -c 'import json,sys; print(json.load(sys.stdin)["digest"])')
     if [[ $current != "$digest" ]]; then
       echo "check-image: $name has moved to $current" >&2
@@ -26,7 +34,10 @@ bases() {
     fi
   done < <(sed -n 's/^FROM \(--platform=[^ ]* \)\{0,1\}\([^ ]*\).*/\2/p' Dockerfile)
   [[ $stale == 0 || $strict != --strict ]] || die 'refresh the base digests before the cut'
-  echo 'check-image: bases pinned by index digest'
+  aws=$(sed -n 's/^aws_image=//p' deploy/backup-postgres.sh)
+  [[ -n $aws ]] || die 'no aws_image in deploy/backup-postgres.sh'
+  indexed "$aws"
+  echo 'check-image: bases and the backup aws_image pinned by index digest'
 }
 
 arch() {

@@ -192,7 +192,9 @@ linux/amd64 and linux/arm64, built from the repository's `Dockerfile` in the sam
   - Both bases are pinned by their multi-arch index digest.
   - Before each cut, run `bash scripts/check-image.sh bases --strict`. It fails when a base has moved; refresh the
     digest (`docker buildx imagetools inspect <tag>` prints the index digest) in its own PR.
-  - CI runs `check-image.sh bases` and `arch` on every PR. `arch` builds both platforms and checks each binary and
+  - `bases` also checks the backup script's `aws_image` (deploy/backup-postgres.sh): pinned by a multi-arch index digest,
+    like the bases. Its version is chosen on purpose, so it isn't compared with a tag; bump it by hand.
+  - CI runs `check-image.sh bases` and `arch` on every PR that changes code. `arch` builds both platforms and checks each binary and
     each base's packages.
 - **The package's visibility (owner, one-time, after the first push):**
   - The first push creates the package private, so its tag exists before anyone can pull it. That is harmless, since

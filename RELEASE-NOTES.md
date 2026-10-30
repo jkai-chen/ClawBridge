@@ -1,5 +1,7 @@
 # Unreleased
 
+v0.3.10 was deployed (server) but its client release failed to publish; v0.3.11 is the same code plus the publish fix.
+
 **Schema 50 → 51.**
 - The server migrates to schema 51 on its first start: the Linear webhook deliveries (IDs, kinds, times, changed-field
   names and sizes only, never values or text; kept 7 days), each team's webhook state and hourly counters, and
@@ -146,6 +148,11 @@
   their session restarts (docs/installation.md, "Upgrade"). Linear config scope: none.
 - **Windows on ARM is supported.** Releases include `clawbridge_<version>_windows_arm64.exe`, and `install.ps1` picks
   it on an ARM64 machine, even from an emulated x64 PowerShell. No schema change; Linear config scope: none.
+- **A release publishes with its own notes.** The GitHub release body is now that release's top section of
+  RELEASE-NOTES.md, a link to the full notes at its tag, and the server image, instead of the whole file, which had
+  grown past GitHub's 125000-character limit and failed v0.3.10's publish. The body is checked at 120000 characters
+  before any release is created, and every PR and main CI run checks today's RELEASE-NOTES.md the same way
+  (`scripts/release_body.py`). Linear config scope: none.
 
 ## Dispatcher
 

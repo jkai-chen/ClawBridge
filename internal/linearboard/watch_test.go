@@ -126,6 +126,25 @@ func TestWatchSettlesABodyMatchBeforeReporting(t *testing.T) {
 	}
 }
 
+// The poll names the issue's team, for the bus's webhook misses; a server
+// older than that refuses the argument, and the report is sent again
+// without it.
+func TestWatchReportNamesTheTeamAndFallsBackWithoutIt(t *testing.T) {
+	_, a, err := watchOnce(t, nil, commentRow(humanComment, "q", time.Now()))
+	if err != nil || len(a.comments.reports) != 1 || a.comments.reports[0]["team_id"] == nil {
+		t.Fatal("no team named:", err, a.comments.reports)
+	}
+	_, a, err = watchOnce(t, func(_ *Service, a *authorityV2) { a.comments.refuseTeamID = true }, commentRow(humanComment, "q", time.Now()))
+	if err != nil || len(a.comments.reports) != 2 || a.comments.reports[1]["team_id"] != nil {
+		t.Fatal("no fallback without the team:", err, a.comments.reports)
+	}	// Any other failure, a transport error say, is never sent again
+	// without the team.
+	_, a, _ = watchOnce(t, func(_ *Service, a *authorityV2) { a.comments.reportErr = errors.New("connection reset") }, commentRow(humanComment, "q", time.Now()))
+	if len(a.comments.reports) != 1 {
+		t.Fatal("a transport error was retried:", a.comments.reports)
+	}
+}
+
 // A lost lease ends the watcher.
 func TestWatchStopsWhenTheLeaseIsLost(t *testing.T) {
 	_, _, err := watchOnce(t, func(_ *Service, a *authorityV2) { a.comments.reportErr = conflict{} }, commentRow(humanComment, "q", time.Now()))

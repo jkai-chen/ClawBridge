@@ -1,5 +1,13 @@
 # Unreleased
 
+## Linear
+
+- With the `webhooks` gate on, a live team (configured, delivering, no miss in 24 h) polls hourly instead of every
+  5 or 15 minutes, and a delivery brings its project's comment watch and intake within about a minute. An intake
+  candidate or a notified comment a poll finds more than 10 minutes late counts as a miss for its issue's team (read
+  by the poll itself) and puts that team back on the usual cadence for 24 h; a drain's end marks every live team's
+  cursors due once. Linear config scope: none.
+
 # ClawBridge v0.3.11 (released 30 Oct)
 
 v0.3.10 was deployed (server) but its client release failed to publish; v0.3.11 is the same code plus the publish fix.

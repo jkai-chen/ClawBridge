@@ -649,10 +649,26 @@ func (r *intakeRun) candidate(ctx context.Context, signal, issueID string, match
 		r.poll.skip("queue_failed")
 	case result == "queued":
 		r.poll.Queued = append(r.poll.Queued, issue.ID)
+		r.miss(ctx, issue.TeamID, at)
 	default:
 		r.poll.skip(result)
 	}
 	return true
+}
+
+// miss counts a queued candidate as a webhook miss for its team when its
+// Linear time is old (FR14 §6 P5); the bus decides. A candidate with no
+// Linear time (S1 credited by its attribution alone) or no team is not
+// counted. A failed count costs the candidate nothing.
+func (r *intakeRun) miss(ctx context.Context, team, linearAt string) {
+	if team == "" || linearAt == "" {
+		return
+	}
+	t, err := time.Parse(time.RFC3339Nano, linearAt)
+	if err != nil {
+		return
+	}
+	_, _ = r.w.Store.WebhookMiss(ctx, team, t, r.w.now())
 }
 
 // labelOn proves one of labels (a needs-agent set, W2) is on the issue now, by ID: from the board's read

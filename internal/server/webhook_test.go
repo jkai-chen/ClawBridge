@@ -1177,7 +1177,7 @@ func TestSweeperPurgesWebhooks(t *testing.T) {
 	s := &purgingSweeps{}
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
-	go func() { runSweeper(ctx, s, 2*time.Millisecond, nil); close(done) }()
+	go func() { runSweeper(ctx, s, 2*time.Millisecond, nil, nil); close(done) }()
 	deadline := time.Now().Add(2 * time.Second)
 	for s.sweepCount() < 5 && time.Now().Before(deadline) {
 		time.Sleep(2 * time.Millisecond)

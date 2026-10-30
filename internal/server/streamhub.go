@@ -321,8 +321,9 @@ const webhookPurgeEvery = time.Hour
 // sweep is one transaction under the sweeper's lock, so with several
 // replicas one sweeps and the others skip (L2). What it changes notifies
 // the streams through the hub.
-// A draining server sweeps nothing: a sweep re-offers leases.
-func runSweeper(ctx context.Context, store deliverySweeper, every time.Duration, drain *Drain) {
+// A draining server sweeps nothing: a sweep re-offers leases. flush, when
+// set, writes the webhook route's due counters each sweep.
+func runSweeper(ctx context.Context, store deliverySweeper, every time.Duration, drain *Drain, flush func(context.Context)) {
 	tick := time.NewTicker(every)
 	defer tick.Stop()
 	purger, purges := store.(webhookPurger)
@@ -338,6 +339,10 @@ func runSweeper(ctx context.Context, store deliverySweeper, every time.Duration,
 				if _, err := purger.PurgeWebhooks(ctx, purged); err != nil && ctx.Err() == nil {
 					log.Print("sweeper: webhook purge failed; retrying in an hour")
 				}
+			}
+			// The webhook route's counters, when a minute is up.
+			if flush != nil {
+				flush(ctx)
 			}
 			done()
 		}

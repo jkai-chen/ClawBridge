@@ -96,6 +96,9 @@ type Store interface {
 	IntakeEnqueueSystem(ctx context.Context, projectID string, ev bus.IntakeEvent) (string, error)
 	IntakeAttribution(ctx context.Context, projectID, issue, kind, target string, from, to time.Time) (bus.AttributionCredit, error)
 	ExecuteDispatcher(ctx context.Context, projectID, session string, r bus.Request) (bus.Result, error)
+	// WebhookMiss counts an event a poll found that the team's webhook
+	// should have rung for (FR14 §6 P5).
+	WebhookMiss(ctx context.Context, team string, linearAt, foundAt time.Time) (bool, error)
 }
 
 // Watcher serves ticks. One Watcher lives for its server process: it keeps
@@ -363,6 +366,57 @@ func (w *Watcher) nudged(ctx context.Context, pid string, dispatch bool) Project
 		kind = "fallback"
 	}
 	logTick(pid, kind, tick)
+	return tick
+}
+
+// Webhook is a webhook's pass of one project (FR14): its comment watch,
+// then its intake, under the project's lease and budget like a tick's,
+// soon after a verified delivery marked its cursors due. It runs no
+// markers, subscribers, health, documents or dispatcher, and doesn't count
+// as the project's tick. Only the cursors the bus says are due are read.
+func (w *Watcher) Webhook(ctx context.Context, pid string) error {
+	tick := w.webhook(ctx, pid)
+	if tick.Error != "" {
+		return errors.New(tick.Error)
+	}
+	return nil
+}
+
+func (w *Watcher) webhook(ctx context.Context, pid string) ProjectTick {
+	ctx, cancel := context.WithTimeout(ctx, nudgeDeadline)
+	defer cancel()
+	tick := ProjectTick{ProjectID: pid}
+	scope := bus.Request{Session: bus.SystemSessionName, Args: map[string]any{}}
+	svc := w.service(pid)
+	mark := time.Now()
+	err := svc.Watch(ctx, scope, linearboard.WatchOptions{
+		Budget: w.Budget,
+		Once:   true,
+		// The comment poll leaves intake its room, as a tick's does.
+		StepsRoom: stepsRoom,
+		NoMarkers: true,
+		Within: func(ctx context.Context, fence map[string]any) error {
+			mark = tick.took("comments", mark)
+			var err error
+			tick.Intake, err = w.intake(ctx, svc, scope, pid, fence)
+			tick.took("intake", mark)
+			if err != nil {
+				if lostLease(err) {
+					return err
+				}
+				tick.fail(ctx, err)
+			}
+			return nil
+		},
+		Cycle: func(c linearboard.WatchCycle) error {
+			tick.Comments = &c
+			return nil
+		},
+	})
+	if err != nil {
+		tick.fail(ctx, err)
+	}
+	logTick(pid, "webhook", tick)
 	return tick
 }
 

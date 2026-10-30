@@ -828,6 +828,12 @@ func (c commentCall) report(ctx context.Context) (any, error) {
 	if err != nil {
 		return nil, err
 	}
+	// The issue's team, from the poll's own read of the issue: a notified
+	// comment's webhook miss is its (FR14 §6 P5).
+	team, err := lowerUUID(c.a, "team_id", false)
+	if err != nil {
+		return nil, err
+	}
 	if failure != "" && len(comments) > 0 {
 		return nil, invalid("a failed poll carries no comments")
 	}
@@ -893,8 +899,17 @@ func (c commentCall) report(ctx context.Context) (any, error) {
 		}
 		activity = layout(fresh[len(fresh)-1].created)
 		out["notified"], out["message_id"] = ids, message
+		if err = c.commentMisses(ctx, team, fresh); err != nil {
+			return nil, err
+		}
 	}
-	next, err := c.nextPoll(ctx, issue, activity)
+	// After the misses, so one counted here already puts the watch back
+	// on today's cadence.
+	live, err := c.s.webhookProjectLiveTx(ctx, c.tx, c.pid, c.now)
+	if err != nil {
+		return nil, err
+	}
+	next, err := c.nextPoll(ctx, issue, activity, live)
 	if err != nil {
 		return nil, err
 	}
@@ -910,13 +925,34 @@ func (c commentCall) report(ctx context.Context) (any, error) {
 	return withBudget(out, nil)
 }
 
+// commentMisses counts each notified comment more than 10 minutes old as
+// a webhook miss for the issue's team, in the report's own transaction,
+// when that team is one of the project's bound write teams (a report can
+// degrade no other) and was live at the comment's time. A report without a
+// team counts nothing.
+func (c commentCall) commentMisses(ctx context.Context, team string, notified []reportedComment) error {
+	if team == "" || !c.s.webhooksProven {
+		return nil
+	}
+	teams, err := boundTeams(ctx, c.tx, c.pid)
+	if err != nil || !containsString(teams, team) {
+		return err
+	}
+	for _, cm := range notified {
+		if _, err = c.s.webhookMissTx(ctx, c.tx, team, cm.created, c.now); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // nextPoll backs off a quiet issue: 5 minutes after recent activity (a human
 // comment, or a session's own comment awaiting its answer), 15 within a day,
-// otherwise hourly. ClawBridge's claim and close notes (marker comments)
+// otherwise hourly; hourly too while the project's webhooks are live. ClawBridge's claim and close notes (marker comments)
 // await no answer, so they never hold an issue on the 5-minute cadence:
 // they did for an hour after every claim and release, most of the
 // watcher's fixed Linear calls.
-func (c commentCall) nextPoll(ctx context.Context, issue, activity string) (string, error) {
+func (c commentCall) nextPoll(ctx context.Context, issue, activity string, live bool) (string, error) {
 	hourAgo := layout(c.now.Add(-time.Hour))
 	ours, err := query(ctx, c.tx, `SELECT 1 FROM linear_comment_ledger WHERE workspace_id=? AND issue_uuid=? AND marker_key='' AND state<>'failed' AND reserved_at>?`, c.wid, issue, hourAgo)
 	if err != nil {
@@ -928,6 +964,11 @@ func (c commentCall) nextPoll(ctx context.Context, issue, activity string) (stri
 		wait = 5 * time.Minute
 	case activity != "" && activity > layout(c.now.Add(-24*time.Hour)):
 		wait = 15 * time.Minute
+	}
+	// Comment cursors carry no team: hourly only while every bound write
+	// team's webhook is live (FR14 §6 P4, Q14); the report reads it once.
+	if live {
+		wait = webhookLiveWait
 	}
 	return layout(c.now.Add(wait)), nil
 }

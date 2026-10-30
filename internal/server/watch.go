@@ -28,8 +28,9 @@ var NewWatcher = func(_ context.Context, store *bus.Store, app *linearapp.App) (
 type watcherApp struct{ app *linearapp.App }
 
 var (
-	_ watcher.App = watcherApp{}
-	_ Ticker      = watcherTicker{}
+	_ watcher.App  = watcherApp{}
+	_ Ticker       = watcherTicker{}
+	_ markerPasser = watcherTicker{}
 )
 
 func (a watcherApp) Open(ctx context.Context, readonly bool) (linearboard.Provider, error) {
@@ -66,6 +67,9 @@ func (t watcherTicker) Markers(ctx context.Context, pid string) any { return t.w
 
 // Fallback is a fallback nudge's pass: markers, then the dispatcher.
 func (t watcherTicker) Fallback(ctx context.Context, pid string) any { return t.w.Fallback(ctx, pid) }
+
+// Webhook is a webhook nudge's pass: the comment watch, then intake.
+func (t watcherTicker) Webhook(ctx context.Context, pid string) error { return t.w.Webhook(ctx, pid) }
 
 // watchSettings is the watcher's environment.
 type watchSettings struct {
@@ -207,6 +211,10 @@ func startWatcher(ctx context.Context, store *bus.Store, w watchSettings, opts H
 			ticker.after = n.Ticked
 			go n.run(ctx)
 			opts.Nudge, opts.NudgeProject = n.Nudge, n.NudgeProject
+			// A verified delivery's projects get a webhook pass (FR14).
+			if opts.Webhook != nil {
+				opts.Webhook.Nudge = n.NudgeWebhook
+			}
 		}
 		go runWatchLoop(ctx, ticker, w.interval)
 		log.Printf("watcher: ticking every %s", w.interval)

@@ -420,6 +420,15 @@ func (s *Store) WebhookTeamLive(ctx context.Context, team string, t time.Time) (
 		return false, err
 	}
 	defer tx.Rollback()
+	return s.webhookTeamLiveTx(ctx, tx, team, t)
+}
+
+// webhookTeamLiveTx is WebhookTeamLive inside tx. With the gate off it
+// reads nothing.
+func (s *Store) webhookTeamLiveTx(ctx context.Context, tx *transaction, team string, t time.Time) (bool, error) {
+	if !s.webhooksProven {
+		return false, nil
+	}
 	w, err := readWebhookTeam(ctx, tx, team)
 	if err != nil {
 		return false, err
@@ -431,11 +440,142 @@ func (s *Store) WebhookTeamLive(ctx context.Context, team string, t time.Time) (
 	return w.missed == "" || w.missed <= layout(t.Add(-webhookDegrade)), nil
 }
 
+// webhookLiveWait is an intake source's or a comment watch's wait while
+// the webhooks it depends on are live (§6 P4).
+const webhookLiveWait = 60 * time.Minute
+
+// boundTeams are the project's bound write teams, lower-cased; none
+// without a readable binding.
+func boundTeams(ctx context.Context, tx *transaction, pid string) ([]string, error) {
+	rows, err := query(ctx, tx, `SELECT mapping FROM taskboard_bindings WHERE project_id=? AND mapping IS NOT NULL`, pid)
+	if err != nil || len(rows) != 1 {
+		return nil, err
+	}
+	var m struct {
+		Teams []string `json:"linear_team_ids"`
+	}
+	if json.Unmarshal([]byte(str(rows[0], "mapping")), &m) != nil {
+		return nil, nil
+	}
+	out := make([]string, 0, len(m.Teams))
+	for _, t := range m.Teams {
+		out = append(out, strings.ToLower(t))
+	}
+	return out, nil
+}
+
+// webhookProjectLiveTx reports whether every bound write team of the
+// project is live at t (Q14); a project with none is not.
+func (s *Store) webhookProjectLiveTx(ctx context.Context, tx *transaction, pid string, t time.Time) (bool, error) {
+	if !s.webhooksProven {
+		return false, nil
+	}
+	teams, err := boundTeams(ctx, tx, pid)
+	if err != nil || len(teams) == 0 {
+		return false, err
+	}
+	for _, team := range teams {
+		if live, e := s.webhookTeamLiveTx(ctx, tx, team, t); e != nil || !live {
+			return false, e
+		}
+	}
+	return true, nil
+}
+
+// intakeSourceLive reports whether an intake source's webhooks are live at
+// t: S1's own team, or for a subject app source every bound write team.
+func (s *Store) intakeSourceLive(ctx context.Context, tx *transaction, pid, source, subject string, t time.Time) (bool, error) {
+	if !s.webhooksProven {
+		return false, nil
+	}
+	if source == "intake-s1" {
+		return s.webhookTeamLiveTx(ctx, tx, subject, t)
+	}
+	if subject == "app" {
+		return s.webhookProjectLiveTx(ctx, tx, pid, t)
+	}
+	return false, nil
+}
+
+// WebhookCatchUp marks every live team's cursors due once after a drain
+// (§6 P6): each of its projects' intake sources (unless intake is off) and
+// active comment watches, with WebhookRecord's not-backing-off rule. It
+// returns the projects whose cursors moved, for the nudge. With the gate
+// off it marks nothing.
+func (s *Store) WebhookCatchUp(ctx context.Context, now time.Time) ([]string, error) {
+	if !s.webhooksProven {
+		return nil, nil
+	}
+	tx, err := s.beginIntake(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback()
+	stamp := layout(now)
+	teams, err := query(ctx, tx, `SELECT team_id FROM webhook_teams WHERE configured_at IS NOT NULL ORDER BY team_id`)
+	if err != nil {
+		return nil, err
+	}
+	mark := func(cond, q string, args ...any) (int, error) {
+		rows, e := query(ctx, tx, `UPDATE watch_cursors SET hinted_at=?,next_poll_at=CASE WHEN failures=0 AND last_error=''`+cond+` THEN ? ELSE next_poll_at END WHERE `+q+` RETURNING next_poll_at`, append([]any{stamp}, args...)...)
+		moved := 0
+		for _, r := range rows {
+			if str(r, "next_poll_at") == stamp {
+				moved++
+			}
+		}
+		return moved, e
+	}
+	listed := map[string]bool{}
+	out := []string{}
+	for _, row := range teams {
+		team := str(row, "team_id")
+		live, e := s.webhookTeamLiveTx(ctx, tx, team, now)
+		if e != nil {
+			return nil, e
+		}
+		if !live {
+			continue
+		}
+		projects, e := projectsForTeam(ctx, tx, team)
+		if e != nil {
+			return nil, e
+		}
+		for _, pid := range projects {
+			moved := 0
+			policy, e := intakePolicy(ctx, tx, pid)
+			if e != nil {
+				return nil, e
+			}
+			if str(policy, "mode") != "off" {
+				for _, c := range [][2]string{{"intake-s1", team}, {"intake-s2", "app"}, {"intake-s3", "app"}} {
+					n, e := mark("", `project_id=? AND source=? AND subject=?`, stamp, pid, c[0], c[1])
+					if e != nil {
+						return nil, e
+					}
+					moved += n
+				}
+			}
+			n, e := mark(` AND NOT EXISTS (SELECT 1 FROM watch_cursors f WHERE f.project_id=watch_cursors.project_id AND f.source='comments' AND f.last_error IN ('rate_limited','auth') AND f.next_poll_at>?)`, `project_id=? AND source='comments' AND active_until IS NULL`, stamp, stamp, pid)
+			if e != nil {
+				return nil, e
+			}
+			moved += n
+			if moved > 0 && !listed[pid] {
+				listed[pid] = true
+				out = append(out, pid)
+			}
+		}
+	}
+	sort.Strings(out)
+	return out, tx.Commit()
+}
+
 // WebhookMiss counts an event a poll found (queued, or notified) that the
 // team's webhook should have rung for: older than 10 minutes when found,
 // and from a time the team was live. It reports whether it counted.
 func (s *Store) WebhookMiss(ctx context.Context, team string, linearAt, foundAt time.Time) (bool, error) {
-	if foundAt.Sub(linearAt) <= webhookMissAge {
+	if !s.webhooksProven || foundAt.Sub(linearAt) <= webhookMissAge {
 		return false, nil
 	}
 	tx, err := s.beginIntake(ctx)
@@ -443,6 +583,18 @@ func (s *Store) WebhookMiss(ctx context.Context, team string, linearAt, foundAt 
 		return false, err
 	}
 	defer tx.Rollback()
+	counted, err := s.webhookMissTx(ctx, tx, team, linearAt, foundAt)
+	if err != nil || !counted {
+		return false, err
+	}
+	return true, tx.Commit()
+}
+
+// webhookMissTx is WebhookMiss inside tx, under the same rules.
+func (s *Store) webhookMissTx(ctx context.Context, tx *transaction, team string, linearAt, foundAt time.Time) (bool, error) {
+	if !s.webhooksProven || foundAt.Sub(linearAt) <= webhookMissAge {
+		return false, nil
+	}
 	w, err := readWebhookTeam(ctx, tx, team)
 	if err != nil {
 		return false, err
@@ -457,7 +609,7 @@ func (s *Store) WebhookMiss(ctx context.Context, team string, linearAt, foundAt 
 	if err = webhookCount(ctx, tx, team, "missed", 1, foundAt); err != nil {
 		return false, err
 	}
-	return true, tx.Commit()
+	return true, nil
 }
 
 // PurgeWebhooks deletes deliveries and counters older than the retention.

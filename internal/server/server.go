@@ -789,14 +789,26 @@ func Run(ctx context.Context, args []string) error {
 	store.SetQuiet(drain.Quiet)
 	hub := NewStreamHub()
 	hub.maintenance = drain.Invalidate
-	drain.onStart, drain.onEnd = hub.StartDrain, hub.EndDrain
+	drain.onStart = hub.StartDrain
 	options := startWatcher(ctx, store, watch, HandlerOptions{OAuth: metadata, Writer: writer, Auth: auth, ModelMaxAgents: maxAgents, Drain: drain, Webhook: webhook})
+	// A drain's end also catches up the live webhook teams (FR14 §6 P6);
+	// drain.Run starts below, so onEnd is set before it can run.
+	drain.onEnd = webhookDrainEnd(hub.EndDrain, store, func() func(string) {
+		if webhook == nil {
+			return nil
+		}
+		return webhook.Nudge
+	}, time.Now)
+	var flushWebhooks func(context.Context)
+	if webhook != nil && webhook.flush != nil {
+		flushWebhooks = webhook.flush.FlushCounts
+	}
 	// The message queue: the hub wakes the streams, the sweeper offers run-out
 	// leases again and makes dead letters.
 	options.Streams = hub
 	go hub.ListenAs(ctx, dsn, store.InstanceName())
 	go drain.Run(ctx)
-	go runSweeper(ctx, store, sweepEvery, drain)
+	go runSweeper(ctx, store, sweepEvery, drain, flushWebhooks)
 	// The Linear write outbox: queued app writes are sent as Linear and the
 	// project's cap allow; it sends nothing while the server drains.
 	if writer != nil && store.OutboxAvailable() {

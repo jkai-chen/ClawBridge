@@ -82,6 +82,34 @@ type WebhookOptions struct {
 	// Nudge asks for an early pass of a project whose cursors a delivery
 	// marked; nil sends none. It runs after the answer and never blocks it.
 	Nudge func(projectID string)
+	// flush is where the route registers its counter flush, for the
+	// sweeper; nil registers nothing.
+	flush *webhookFlush
+}
+
+// webhookFlush hands the route's in-memory counters to the sweeper, which
+// flushes them even when no later request does: a lone refusal reaches the
+// database within about a minute.
+type webhookFlush struct {
+	mu sync.Mutex
+	h  *webhookHandler
+}
+
+func (f *webhookFlush) set(h *webhookHandler) {
+	f.mu.Lock()
+	f.h = h
+	f.mu.Unlock()
+}
+
+// FlushCounts flushes the route's counters when they are due; before the
+// route exists it does nothing.
+func (f *webhookFlush) FlushCounts(ctx context.Context) {
+	f.mu.Lock()
+	h := f.h
+	f.mu.Unlock()
+	if h != nil {
+		h.FlushCounts(ctx)
+	}
 }
 
 // webhookMAC makes the HMAC a signature is checked with; tests count it.
@@ -121,6 +149,9 @@ func newWebhookHandler(store WebhookStore, o *WebhookOptions, now func() time.Ti
 		for _, s := range list {
 			h.secrets[strings.ToLower(team)] = append(h.secrets[strings.ToLower(team)], []byte(s))
 		}
+	}
+	if o.flush != nil {
+		o.flush.set(h)
 	}
 	return h
 }
@@ -325,6 +356,20 @@ func (h *webhookHandler) tally(team, reason string) {
 	}
 }
 
+// FlushCounts flushes the counters a minute after the last flush, when
+// there are any and no flush runs: the sweeper's call (FR14 T3).
+func (h *webhookHandler) FlushCounts(ctx context.Context) {
+	h.mu.Lock()
+	due := !h.flushing && len(h.counts) > 0 && h.now().Sub(h.flushedAt) >= webhookFlushEvery
+	if due {
+		h.flushing = true
+	}
+	h.mu.Unlock()
+	if due {
+		h.flushCounts(ctx)
+	}
+}
+
 // flushCounts writes the counters, one call per team and reason. What a
 // failed write held is lost: they are 24-hour warning counters.
 func (h *webhookHandler) flushCounts(ctx context.Context) {
@@ -509,5 +554,39 @@ func webhookStartup(ctx context.Context, store webhookStartStore, secrets map[st
 	if len(teams) == 0 {
 		return nil, nil
 	}
-	return &WebhookOptions{Secrets: secrets, OrgID: orgID}, nil
+	return &WebhookOptions{Secrets: secrets, OrgID: orgID, flush: &webhookFlush{}}, nil
+}
+
+// webhookCatchUpStore is what a drain's end records and marks.
+type webhookCatchUpStore interface {
+	WebhookDrainEnded(ctx context.Context, now time.Time) error
+	WebhookCatchUp(ctx context.Context, now time.Time) ([]string, error)
+}
+
+// webhookDrainEnd is drain.onEnd (§6 P6): it wakes the streams (endDrain),
+// records the drain's end, so no miss counts for an event of the drain,
+// marks every live team's cursors due once, and nudges each project the
+// catch-up moved. nudge is read at the end, since the watcher starts after
+// the drain is wired; with none the next tick polls the due cursors. The
+// marks bound a refused delivery's delay to the resume grace and a pass.
+func webhookDrainEnd(endDrain func(), store webhookCatchUpStore, nudge func() func(string), now func() time.Time) func() {
+	return func() {
+		endDrain()
+		ctx, cancel := context.WithTimeout(context.Background(), webhookTimeout)
+		defer cancel()
+		at := now()
+		if err := store.WebhookDrainEnded(ctx, at); err != nil {
+			log.Print("linear webhooks: the drain's end could not be recorded")
+		}
+		projects, err := store.WebhookCatchUp(ctx, at)
+		if err != nil {
+			log.Print("linear webhooks: the drain's catch-up failed; the next polls catch up")
+			return
+		}
+		if send := nudge(); send != nil {
+			for _, pid := range projects {
+				send(pid)
+			}
+		}
+	}
 }

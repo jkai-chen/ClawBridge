@@ -429,8 +429,16 @@ Use the team's actual completion state only after those gates are met; keep
 publication or deployment pending when those are separate assignments.
 
 **Worker rule: who closes.**
-- Never set a canceled or duplicate state. The server refuses it from an agent;
-  a person cancels.
+- Never set a canceled or duplicate state with an update. Cancel only with
+  `taskboard_cancel_v2` (`clawbridge linear cancel ISSUE --reason TEXT`), with a
+  reason; mark Duplicate only with `taskboard_duplicate_v2` (`clawbridge linear
+  duplicate ISSUE --of ISSUE2`), naming the open original. Both work only in
+  Linear projects of a kind the project owner or a lead allowed (`linear
+  cancel-kinds show`), through a hosted server with the ClawBridge Linear app;
+  anywhere else they are refused and a person cancels. Never re-open an issue,
+  never touch a completed or canceled one. Then release with
+  `assignment_release` and no outcome: the state stays Canceled. A retry with
+  the same `operation_id` completes a half-done one and never posts twice.
 - Set a completed state only where the project's close rule says agents close
   (`project_overview` shows who closes each project). Where people close, the server refuses it.
 - Otherwise finish with `assignment_release` and `outcome: done`, and a person

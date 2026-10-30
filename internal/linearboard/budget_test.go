@@ -111,6 +111,14 @@ func TestEveryAgentWriteToolIsBudgeted(t *testing.T) {
 			_, e := s.ExecuteV2(context.Background(), scope, "relation_remove", map[string]any{"from_id": issueID, "to_id": otherIssue, "type": "blocks", "operation_id": "op-taskboard_relation_remove_v2"})
 			return e
 		}},
+		"taskboard_cancel_v2": {"update", func(s *Service) error {
+			_, e := s.ExecuteV2(context.Background(), scope, "cancel", map[string]any{"id": issueID, "reason": "r", "operation_id": "op-taskboard_cancel_v2"})
+			return e
+		}},
+		"taskboard_duplicate_v2": {"update", func(s *Service) error {
+			_, e := s.ExecuteV2(context.Background(), scope, "duplicate", map[string]any{"id": issueID, "duplicate_of": otherIssue, "operation_id": "op-taskboard_duplicate_v2"})
+			return e
+		}},
 		"taskboard_project_add_team_v2": {"project_team_add", func(s *Service) error {
 			_, e := s.ExecuteV2(context.Background(), scope, "project_add_team", map[string]any{"linear_project": projectA, "team_id": teamID, "operation_id": "op-taskboard_project_add_team_v2", "confirm": true, "expected_plan_sha256": strings.Repeat("a", 64)})
 			return e

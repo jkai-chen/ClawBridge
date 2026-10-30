@@ -171,12 +171,20 @@ type WriteInputV2 struct {
 	// exact text, already reserved by marker_go, and label adds are always
 	// sent.
 	marker bool
+	// cancelStep is set only by a cancel or duplicate (agent_cancel.go)
+	// for its own steps: its operation ID is a step's, and a session's
+	// state write to a canceled or duplicate state passes the close guard,
+	// whose checks the operation already made. No argument sets it.
+	cancelStep bool
 }
 type RelationInputV2 struct {
 	OperationID, Action, Type, FromID, ToID string
 	// source is the caller's own end, its first argument, before
 	// normalization swaps or sorts the ends; a lane checks it on add.
 	source string
+	// duplicateStep is set only by a duplicate (agent_cancel.go) for its
+	// relation: the one way a duplicate edge is made.
+	duplicateStep bool
 }
 type ReceiptV2 struct {
 	Kind       string  `json:"kind"`

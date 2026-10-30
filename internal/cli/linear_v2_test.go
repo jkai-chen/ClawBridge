@@ -423,3 +423,33 @@ func TestLinearMoveParses(t *testing.T) {
 		t.Fatal(out.String(), err)
 	}
 }
+
+// AGENT-CANCEL: linear cancel takes a reason, linear duplicate the
+// original issue; both an operation ID short enough for their steps.
+func TestLinearCancelAndDuplicateFlags(t *testing.T) {
+	const issue = "11111111-1111-4111-8111-111111111111"
+	const original = "22222222-2222-4222-8222-222222222222"
+	v, pos, err := parseLinear("cancel", []string{issue, "--profile", "native", "--operation-id", "c-1", "--reason", "superseded"}, &bytes.Buffer{})
+	if err != nil || pos[0] != issue || v.cancelReason != "superseded" {
+		t.Fatal(v, pos, err)
+	}
+	v, pos, err = parseLinear("duplicate", []string{issue, "--profile", "native", "--operation-id", "d-1", "--of", original}, &bytes.Buffer{})
+	if err != nil || pos[0] != issue || v.duplicateOf != original || v.cancelReason != "" {
+		t.Fatal(v, pos, err)
+	}
+	for name, c := range map[string]struct {
+		command string
+		args    []string
+	}{
+		"no reason":    {"cancel", []string{issue, "--profile", "native", "--operation-id", "c-1"}},
+		"no of":        {"duplicate", []string{issue, "--profile", "native", "--operation-id", "d-1"}},
+		"of not uuid":  {"duplicate", []string{issue, "--profile", "native", "--operation-id", "d-1", "--of", "ENG-1"}},
+		"no operation": {"cancel", []string{issue, "--profile", "native", "--reason", "r"}},
+		"long op":      {"cancel", []string{issue, "--profile", "native", "--reason", "r", "--operation-id", strings.Repeat("o", 120)}},
+		"cancel --of":  {"cancel", []string{issue, "--profile", "native", "--reason", "r", "--operation-id", "c-1", "--of", original}},
+	} {
+		if _, _, err := parseLinear(c.command, c.args, &bytes.Buffer{}); err == nil {
+			t.Fatal(name, "accepted")
+		}
+	}
+}

@@ -101,7 +101,7 @@ func (s *Store) writeLedgerOp(ctx context.Context, tx *transaction, wid, pid, pr
 		a = map[string]any{}
 	}
 	op := str(a, "operation_id")
-	if op != "" && !ledgerOperationID.MatchString(op) {
+	if op != "" && !ledgerKeyID(op) {
 		return nil, invalid("operation_id must be 1–128 letters, digits, '.', '_' or '-'")
 	}
 	switch r.Operation {

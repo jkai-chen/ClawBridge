@@ -107,7 +107,8 @@ func TestRelationWritesNeedTheWriteScope(t *testing.T) {
 			return ok, err
 		}
 	}
-	for _, operation := range []string{"relation_add", "relation_remove"} {
+	// A cancel or duplicate meets it too, before its comment is posted.
+	for _, operation := range []string{"relation_add", "relation_remove", "cancel", "duplicate"} {
 		err := relationScope(ctx, operation, granted(false, nil))
 		if code, status := serviceError(err); code != "invalid" || status != 400 || !strings.HasPrefix(responseMessage(code, err), "capability_unavailable:") {
 			t.Fatal(operation, code, status, err)
@@ -209,6 +210,19 @@ func TestAppWriteOperationsAreChargeKinds(t *testing.T) {
 	for op := range appWriteOperations {
 		if !bus.KnownLinearCallKind("app_write." + op) {
 			t.Errorf("app_write.%s is not a charge kind", op)
+		}
+	}
+}
+
+// AGENT-CANCEL: linear_write runs the cancel and duplicate operations,
+// queued in their issue's order.
+func TestCancelAndDuplicateAreAppWrites(t *testing.T) {
+	for _, op := range []string{"cancel", "duplicate"} {
+		if !appWriteOperations[op] {
+			t.Fatal(op, "is not an app write")
+		}
+		if key, issue := orderKey(op, map[string]any{"id": "i-1"}); key != "issue:i-1" || issue != "i-1" {
+			t.Fatal(op, key, issue)
 		}
 	}
 }

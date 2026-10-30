@@ -185,7 +185,7 @@ func (l ledger) unsettled(namespace string, limit int) []string {
 		}
 		raw, err := os.ReadFile(path)
 		op := string(raw)
-		if err != nil || !operationPattern.MatchString(op) || digest(op)+".settle" != name {
+		if err != nil || !ledgerKey(op) || digest(op)+".settle" != name {
 			continue
 		}
 		out = append(out, op)

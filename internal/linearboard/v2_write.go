@@ -119,7 +119,7 @@ func textGuardV2(in WriteInputV2, current linearprovider.IssueV2) error {
 	return nil
 }
 func ValidateWriteV2(in WriteInputV2) error {
-	if !operationPattern.MatchString(in.OperationID) {
+	if !operationPattern.MatchString(in.OperationID) && !(in.cancelStep && stepOperationPattern.MatchString(in.OperationID)) {
 		return errors.New("write requires operation_id")
 	}
 	if e := mentionGuard(in.Title, in.Description, &in.Body); e != nil {

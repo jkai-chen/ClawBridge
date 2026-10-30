@@ -1431,7 +1431,9 @@ func validRelation(kind, from, to string) bool {
 	return (kind == "blocks" || kind == "related") && ValidID(from) && ValidID(to) && from != to
 }
 func (p *Provider) Relation(ctx context.Context, in RelationInput) (RelationReceipt, error) {
-	if !validRelation(in.Type, in.FromID, in.ToID) || (in.Action != "add" && in.Action != "remove") {
+	// A duplicate edge is only added (board: the duplicate operation).
+	duplicate := in.Type == "duplicate" && in.Action == "add" && ValidID(in.FromID) && ValidID(in.ToID) && in.FromID != in.ToID
+	if !(validRelation(in.Type, in.FromID, in.ToID) || duplicate) || (in.Action != "add" && in.Action != "remove") {
 		return RelationReceipt{}, fail("invalid")
 	}
 	if in.Type == "related" && in.FromID > in.ToID {

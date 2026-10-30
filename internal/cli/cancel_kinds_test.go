@@ -72,7 +72,7 @@ func TestCLICancelKindsShowAndSet(t *testing.T) {
 	if got, err = cancelKindsRun(t, stderr, "set", "--kinds", "research,engineering", "--expected-revision", "1"); err != nil || got["revision"] != float64(2) {
 		t.Fatal(got, err)
 	}
-	if p := stderr.String(); !strings.Contains(p, "projects of kind Research, Engineering") || !strings.Contains(p, cancelKindsPending) {
+	if p := stderr.String(); !strings.Contains(p, "projects of kind Research, Engineering") || strings.Contains(p, "Until the enforcement ships") {
 		t.Fatal("preview:", p)
 	}
 	if got, _ = cancelKindsRun(t, nil, "show"); got["line"] != "Agents may cancel or mark Duplicate in projects of kind Research, Engineering." {

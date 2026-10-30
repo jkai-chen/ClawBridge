@@ -18,6 +18,12 @@ func validReceiptV2(raw []byte) bool {
 	if r.Outcome != "accepted" && r.Outcome != "observed_unchanged" {
 		return false
 	}
+	// A duplicate edge (agent_cancel.go) is only ever added, and no read
+	// shows it, so its receipt may name it unverified.
+	duplicate := r.Kind == "edge" && r.Type == "duplicate" && r.Action == "add"
+	if duplicate && r.Unverified != nil {
+		return len(r.Unverified) == 1 && r.Unverified[0] == "relation" && r.Outcome == "accepted" && validEdgeV2(r)
+	}
 	fields := map[string]bool{}
 	for _, f := range r.Unverified {
 		if fields[f] || (f != "labels" && f != "assignee" && f != "parent" && f != "state" && f != "priority") {
@@ -47,7 +53,11 @@ func validReceiptV2(raw []byte) bool {
 	case "comment":
 		return r.Outcome == "accepted" && linearprovider.ValidID(r.ID) && linearprovider.ValidID(r.IssueID) && r.TeamID == "" && r.ProjectID == nil && r.Action == "" && r.Type == "" && r.FromID == "" && r.ToID == ""
 	case "edge":
-		return (r.ID == "" || linearprovider.ValidID(r.ID)) && (r.Action == "add" || r.Action == "remove") && (r.Type == "blocks" || r.Type == "related") && linearprovider.ValidID(r.FromID) && linearprovider.ValidID(r.ToID) && r.FromID != r.ToID && (r.Type != "related" || r.FromID < r.ToID) && r.TeamID == "" && r.ProjectID == nil && r.IssueID == ""
+		return (r.Type != "duplicate" || duplicate) && validEdgeV2(r)
 	}
 	return false
+}
+
+func validEdgeV2(r ReceiptV2) bool {
+	return (r.ID == "" || linearprovider.ValidID(r.ID)) && (r.Action == "add" || r.Action == "remove") && (r.Type == "blocks" || r.Type == "related" || r.Type == "duplicate") && linearprovider.ValidID(r.FromID) && linearprovider.ValidID(r.ToID) && r.FromID != r.ToID && (r.Type != "related" || r.FromID < r.ToID) && r.TeamID == "" && r.ProjectID == nil && r.IssueID == ""
 }

@@ -243,7 +243,7 @@ func (s *Service) serverUncertain(ctx context.Context, scope bus.Request, op str
 	for _, raw := range rows {
 		row, _ := raw.(map[string]any)
 		id, _ := row["operation_id"].(string)
-		if !operationPattern.MatchString(id) {
+		if !ledgerKey(id) {
 			continue
 		}
 		operation, _ := row["operation"].(string)
@@ -260,7 +260,7 @@ func (s *Service) serverUncertain(ctx context.Context, scope bus.Request, op str
 // checked. An ID that names both a recorded Linear write (a project
 // create, move or team add) and an issue write is refused, naming both.
 func (s *Service) AckLinearWrite(ctx context.Context, scope bus.Request, op string) (any, error) {
-	if !operationPattern.MatchString(op) {
+	if !ledgerKey(op) {
 		return nil, errors.New("--ack takes the write's operation ID")
 	}
 	if scope.Session != "" {

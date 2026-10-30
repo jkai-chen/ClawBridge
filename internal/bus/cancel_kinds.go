@@ -12,7 +12,7 @@ import (
 // whose Linear projects agents may cancel or mark Duplicate an issue. It is
 // set as who closes is: by the project owner or a lead, never by a
 // session, and letting agents cancel is typed at a terminal or in the TUI.
-// Until the enforcement ships the setting only records the choice.
+// The board enforces it when an agent cancels (linearboard/agent_cancel.go).
 
 func statusCancelKindsOperation(op string) bool { return op == "status_cancel_kinds_set" }
 

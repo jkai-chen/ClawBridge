@@ -27,7 +27,7 @@ const appWriteTimeout = 60 * time.Second
 
 // appWriteOperations are the only board operations linear_write runs: the
 // agent writes. Binding and admin operations never run as the app.
-var appWriteOperations = map[string]bool{"comment": true, "create": true, "update": true, "relation_add": true, "relation_remove": true}
+var appWriteOperations = map[string]bool{"comment": true, "create": true, "update": true, "relation_add": true, "relation_remove": true, "cancel": true, "duplicate": true}
 
 // identityArgs are refused in linear_write's arguments: the server alone
 // chooses the identity a write uses.
@@ -81,10 +81,12 @@ func appRefusal(message string) error { return bus.PublicError("invalid", messag
 
 // relationScope refuses a relation write the app's token may not make:
 // Linear answers it with success and drops the edge, so without the write
-// scope nothing is sent. has reads the token's actual grant; when it cannot,
-// the write is refused with its error.
+// scope nothing is sent. A cancel or duplicate needs it too, before its
+// comment is posted, so none is left half done. has reads the token's
+// actual grant; when it cannot, the write is refused with its error.
 func relationScope(ctx context.Context, operation string, has func(context.Context, string) (bool, error)) error {
-	if operation != "relation_add" && operation != "relation_remove" {
+	what := map[string]string{"relation_add": "add or remove issue relations", "relation_remove": "add or remove issue relations", "cancel": "cancel issues", "duplicate": "mark issues Duplicate"}[operation]
+	if what == "" {
 		return nil
 	}
 	ok, err := has(ctx, "write")
@@ -92,7 +94,7 @@ func relationScope(ctx context.Context, operation string, has func(context.Conte
 		return err
 	}
 	if !ok {
-		return appRefusal("capability_unavailable: this server's ClawBridge Linear app has no write scope, so it cannot add or remove issue relations; nothing was sent to Linear")
+		return appRefusal("capability_unavailable: this server's ClawBridge Linear app has no write scope, so it cannot " + what + "; nothing was sent to Linear")
 	}
 	return nil
 }
@@ -104,6 +106,11 @@ type identityExecutor struct {
 }
 
 func (e identityExecutor) Execute(ctx context.Context, r bus.Request) (bus.Result, error) {
+	// The board records an agent's cancel through the bus as the server's
+	// own step, which no client's request can be.
+	if r.Operation == "agent_cancel_record" {
+		ctx = bus.WithAppStep(ctx)
+	}
 	result, err := e.store.ExecuteAsIdentity(ctx, e.identity, r)
 	result.Source = "server"
 	return result, err
@@ -157,6 +164,9 @@ func (w *AppWriter) serviceWith(ctx context.Context, identity bus.Identity, leas
 		StateType:     w.stateTypes().Type,
 		WriteProofs:   w.writeProofs(),
 		WriteIdentity: w.App.TokenKey,
+		// Only here, as the app, is a project's kind read from Linear, so
+		// only here may an agent cancel (AGENT-CANCEL R4).
+		ProjectKindLabels: linearboard.GraphQLProjectKindLabels(w.App.GraphQL),
 	}), id, nil
 }
 
@@ -196,7 +206,7 @@ func (w *AppWriter) Execute(parent context.Context, identity bus.Identity, r bus
 	queue, _ := r.Args["accept_queued"].(bool)
 	operation, _ := r.Args["operation"].(string)
 	if !appWriteOperations[operation] {
-		return bus.Result{}, appRefusal("linear_write runs comment, create, update, relation_add or relation_remove only; binding and admin operations never run as the app")
+		return bus.Result{}, appRefusal("linear_write runs comment, create, update, relation_add, relation_remove, cancel or duplicate only; binding and admin operations never run as the app")
 	}
 	args, ok := r.Args["args"].(map[string]any)
 	if !ok {
@@ -338,6 +348,12 @@ func (w *AppWriter) attribute(ctx context.Context, identity bus.Identity, r bus.
 		receipt = *v
 	case linearprovider.Receipt:
 		receipt = linearboard.ReceiptV2{Kind: "comment", ID: v.ID, IssueID: v.IssueID}
+	case linearboard.CancelResultV2:
+		// A cancel's or duplicate's reason is a comment the app posted.
+		if v.CommentID == "" {
+			return
+		}
+		receipt, operation = linearboard.ReceiptV2{Kind: "comment", ID: v.CommentID, IssueID: v.IssueID}, "comment"
 	case map[string]any:
 		id, _ := v["id"].(string)
 		receipt = linearboard.ReceiptV2{Kind: "issue", ID: id}

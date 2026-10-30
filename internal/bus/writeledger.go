@@ -19,10 +19,20 @@ CREATE TABLE linear_write_unsettled(namespace TEXT NOT NULL,operation_id TEXT NO
 var (
 	ledgerNamespace   = regexp.MustCompile(`^[0-9a-f]{64}$`)
 	ledgerOperationID = regexp.MustCompile(`^[A-Za-z0-9._-]{1,128}$`)
+	// ledgerStepID is one step of an agent cancel or duplicate (the
+	// board's stepOperationPattern): the caller's ID, which never holds a
+	// colon, and the step.
+	ledgerStepID = regexp.MustCompile(`^[A-Za-z0-9._-]{1,119}:(?:comment|relation|state)$`)
 )
 
+// ledgerKeyID reports an operation ID the ledger keeps: a caller's, or a
+// cancel's or duplicate's step.
+func ledgerKeyID(id string) bool {
+	return ledgerOperationID.MatchString(id) || ledgerStepID.MatchString(id)
+}
+
 func validLedgerKey(namespace, operationID string) error {
-	if !ledgerNamespace.MatchString(namespace) || !ledgerOperationID.MatchString(operationID) {
+	if !ledgerNamespace.MatchString(namespace) || !ledgerKeyID(operationID) {
 		return invalid("invalid operation ledger key")
 	}
 	return nil

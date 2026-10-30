@@ -28,7 +28,8 @@ func (n *nativeLinear) CallTool(_ context.Context, p *mcp.CallToolParams) (*mcp.
 	var result map[string]any
 	switch p.Name {
 	case "save_issue":
-		for _, to := range args["blocks"].([]string) {
+		blocks, _ := args["blocks"].([]string)
+		for _, to := range blocks {
 			n.blocks = append(n.blocks, to)
 		}
 		result = map[string]any{"id": "SYN-6", "uuid": iid}

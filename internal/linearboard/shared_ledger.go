@@ -91,7 +91,7 @@ func (l sharedLedger) lookupAny(namespace, operationID string) (any, bool, error
 }
 
 func (l sharedLedger) find(namespace, operationID, hash string, matchPayload bool) (any, bool, error) {
-	if !operationPattern.MatchString(operationID) {
+	if !ledgerKey(operationID) {
 		return nil, false, errors.New("invalid operation ledger selection")
 	}
 	raw, found, err := l.store.LedgerGet(l.ctx, digest(namespace), operationID)
@@ -105,7 +105,7 @@ func (l sharedLedger) find(namespace, operationID, hash string, matchPayload boo
 }
 
 func (l sharedLedger) write(namespace, operationID string, meta ledgerMeta, payload any, dispatch func() (any, error)) (any, error) {
-	if !operationPattern.MatchString(operationID) {
+	if !ledgerKey(operationID) {
 		return nil, errors.New("operation_id requires 1–128 ASCII identifier characters")
 	}
 	ns, hash := digest(namespace), digest(payload)
@@ -200,7 +200,7 @@ func (l sharedLedger) unsettled(namespace string, limit int) []string {
 	}
 	out := []string{}
 	for _, op := range ops {
-		if operationPattern.MatchString(op) {
+		if ledgerKey(op) {
 			out = append(out, op)
 		}
 	}

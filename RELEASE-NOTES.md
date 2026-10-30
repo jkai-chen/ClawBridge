@@ -14,6 +14,8 @@
   2 minutes for their deliveries), and `--forged --public-origin https://HOST` checks that forged, expired, other-team
   and oversize bodies are refused and counted and a repeated delivery is one row. Both print classes only. Linear
   config scope: none (the owner creates team webhooks in Linear's UI).
+- Doctor's `linear.webhooks` actions name `clawbridge linear webhook-setup` for an unconfigured team, and say a
+  degraded team polls on its usual cadence until 24 h after the miss. Linear config scope: none.
 
 # ClawBridge v0.3.11 (released 30 Oct)
 

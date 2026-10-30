@@ -49,9 +49,9 @@ func TestDoctorReportsLinearWebhooks(t *testing.T) {
 	}{
 		"every team live": {whStatus(nil, whTeam("t1", "live", true), whTeam("t2", "live", true)), nil, Pass, "live"},
 		"unconfigured team": {whStatus(nil, whTeam("t1", "live", true), whTeam("t2", "unconfigured", false)), nil, Warn,
-			"the server operator adds the team's webhook secret to CLAWBRIDGE_LINEAR_WEBHOOK_SECRETS (docs/operations/deployment.md)"},
+			"run `clawbridge linear webhook-setup` for the webhook to create in Linear; the server operator adds its secret to CLAWBRIDGE_LINEAR_WEBHOOK_SECRETS (docs/operations/deployment.md)"},
 		"waiting first": {whStatus(nil, whTeam("t1", "waiting_first", true)), nil, Warn, "create or edit an issue in that team"},
-		"degraded":      {whStatus(nil, whTeam("t1", "degraded", true)), nil, Warn, "check the webhook in Linear"},
+		"degraded":      {whStatus(nil, whTeam("t1", "degraded", true)), nil, Warn, "check the webhook in Linear; until 24 h after the miss the team polls on its usual cadence, not hourly"},
 		"signature rejects": {whStatus(map[string]any{"signature_rejects_24h": 3}, whTeam("t1", "live", true)), nil, Warn,
 			"a secret may be wrong or rotated"},
 		"unbound deliveries": {whStatus(map[string]any{"unbound_team_deliveries_24h": 2}, whTeam("t1", "live", true)), nil, Warn,

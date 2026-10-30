@@ -921,11 +921,11 @@ func checkLinearWebhooks(ctx context.Context, executor Executor, wid, pid string
 		parts = append(parts, id+" "+state)
 		switch state {
 		case "unconfigured":
-			warn("the server operator adds the team's webhook secret to CLAWBRIDGE_LINEAR_WEBHOOK_SECRETS (docs/operations/deployment.md)")
+			warn("run `clawbridge linear webhook-setup` for the webhook to create in Linear; the server operator adds its secret to CLAWBRIDGE_LINEAR_WEBHOOK_SECRETS (docs/operations/deployment.md)")
 		case "waiting_first":
 			warn("create or edit an issue in that team")
 		case "degraded":
-			warn("check the webhook in Linear")
+			warn("check the webhook in Linear; until 24 h after the miss the team polls on its usual cadence, not hourly")
 		case "inert":
 			inert++
 		}

@@ -102,9 +102,16 @@ func (r *Runner) checkClone(clone string) error {
 	}
 	for _, name := range strings.Fields(names) {
 		name = strings.ToLower(name)
-		if name == "core.hookspath" || name == "core.fsmonitor" || strings.HasPrefix(name, "include.") || strings.HasPrefix(name, "includeif.") {
+		// extensions.worktreeConfig makes git also read config.worktree,
+		// which this list never sees (G9 S4-01).
+		if name == "core.hookspath" || name == "core.fsmonitor" || strings.HasPrefix(name, "include.") || strings.HasPrefix(name, "includeif.") || name == "extensions.worktreeconfig" {
 			return refuse("config sets " + name)
 		}
+	}
+	// A config.worktree is read only with that extension, refused above;
+	// one on its own is refused too, so nothing depends on that rule.
+	if _, err := os.Lstat(filepath.Join(gitDir, "config.worktree")); !errors.Is(err, os.ErrNotExist) {
+		return refuse("has a config.worktree")
 	}
 	return nil
 }

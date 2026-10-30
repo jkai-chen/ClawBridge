@@ -903,6 +903,10 @@ An owner's model provider key is stored sealed, and handed only to that owner's
 agent container, which `clawbridge-agentd` starts on the host. The server side
 ships here; nothing runs an agent until agentd is installed with a launcher token.
 Installing agentd, its rootless Docker and its units is in [agentd.md](agentd.md).
+Each release also publishes the agent's and agentd's (egress) images, attested,
+with their digests in the assets `AGENT-IMAGE-DIGEST.txt` and
+`AGENTD-IMAGE-DIGEST.txt`; agentd pins them in that `name@sha256:…` form, and an
+image built and loaded offline is pinned by its ID instead (agentd.md).
 
 ```sh
 CLAWBRIDGE_MODEL_KEY_SEAL_KEY=<32 random bytes, base64>   # generate it on the host: agentd.md, "The seal key"

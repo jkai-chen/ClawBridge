@@ -115,8 +115,9 @@ Its Docker access is root-equivalent, so it is kept small, and it is fenced in b
 ## The fixed spec
 
 The spec is compiled in. The server says which owner refs should run, never how.
-- **Image:** pinned by digest (`CLAWBRIDGE_AGENT_IMAGE=name@sha256:…`), or by image ID (`sha256:…`). A deploy loads
-  the images with `docker load`, which keeps no repo digest, so it pins them by ID. A tag alone is refused.
+- **Image:** pinned by digest (`CLAWBRIDGE_AGENT_IMAGE=name@sha256:…`), or by image ID (`sha256:…`). A deploy pulls
+  the release's attested images and pins their digests (`AGENT-IMAGE-DIGEST.txt`, `AGENTD-IMAGE-DIGEST.txt`); one
+  that loads its own build with `docker load`, which keeps no repo digest, pins it by ID. A tag alone is refused.
 - **Filesystem:** read-only root, with a tmpfs `/tmp` (`noexec,nosuid`, 8 MiB).
 - **Privileges:** the image's non-root `node` user, no capabilities, `no-new-privileges`.
 - **Limits:** 64 pids, 160 MiB of memory with no swap, half a CPU.
@@ -198,8 +199,8 @@ Next:
 - **The server's launcher endpoints**, being built server-side. Until they exist, `run` logs a failed round every 30
   seconds and starts nothing.
 - **Deploy:** the units, `delegate.conf` and the install check are in `deploy/systemd/agentd/` and
-  `deploy/agentd-check.sh`, and the steps in `docs/operations/agentd.md`. The deploy also loads the pinned image
-  into the rootless daemon, because the proxy allows no pull. The first deploy on a real host is next.
+  `deploy/agentd-check.sh`, and the steps in `docs/operations/agentd.md`. The deploy also pulls (or loads) the pinned
+  images into the rootless daemon directly, because the proxy allows no pull. The first deploy on a real host is next.
 - **Real-daemon tests:** in CI, against a real rootless daemon. A create through the proxy is refused. With the
   proxy bypassed, a container still can't read a root-owned file on the host. Also, what the fake daemon can't
   show:

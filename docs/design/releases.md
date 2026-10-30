@@ -105,7 +105,9 @@ The release workflows:
   tagged commit, then anything but a draft of exactly that tag, then validates the
   draft's own assets as the tag-push run did: the asset set, SHA256SUMS,
   SOURCE-COMMIT.txt, the bundle's subjects, an `IMAGE-DIGEST.txt` of exactly
-  `ghcr.io/jkai-chen/clawbridge@sha256:<64 hex>`, and `MANUAL-UPDATE-REQUIRED`
+  `ghcr.io/jkai-chen/clawbridge@sha256:<64 hex>` (and `AGENTD-IMAGE-DIGEST.txt` and
+  `AGENT-IMAGE-DIGEST.txt` of exactly their image's, which the body then names),
+  and `MANUAL-UPDATE-REQUIRED`
   present (and as the tagged notes make it) exactly when those notes carry the
   marker. Then the bundle's signature: `gh attestation verify SHA256SUMS --bundle
   PROVENANCE.sigstore.json` must show release.yml's signature for this tag
@@ -187,6 +189,31 @@ linux/amd64 and linux/arm64, built from the repository's `Dockerfile` in the sam
      and its `gh attestation verify` command to the release body.
 - **Re-runs:** builds aren't byte-reproducible, so a re-run after a failure before the draft pushes a new digest,
   which is the one the release names. The first digest stays orphaned, with its attestation.
+- **The agent images.** The same job, after the server image and the same release check, builds, pushes and attests
+  two more images the same way (two platforms, one tag per release, never `latest`, BuildKit's SBOM, no build args):
+
+  | Image | Built from | Digest asset |
+  | --- | --- | --- |
+  | `ghcr.io/jkai-chen/clawbridge-agentd:vX.Y.Z`: agentd's image, which is also the egress container's | `cmd/clawbridge-agentd/Dockerfile`, context the repository root | `AGENTD-IMAGE-DIGEST.txt` |
+  | `ghcr.io/jkai-chen/clawbridge-dispatcher-agent:vX.Y.Z`: the dispatcher agent | `dispatcher-agent/` | `AGENT-IMAGE-DIGEST.txt` |
+
+  Each digest asset holds one line, `ghcr.io/jkai-chen/<name>@sha256:…`, is in SHA256SUMS and is attested with the
+  other assets. `publish-release.sh` refuses to run without both digests (`AGENTD_IMAGE_DIGEST`,
+  `AGENT_IMAGE_DIGEST`) and checks each asset names exactly its pushed digest, before the draft and again after
+  download. The release body names them too, in an "Agent images" section after the server image's, each with its
+  `gh attestation verify` command.
+  The agent's arm64 image runs its npm and RUN steps under QEMU, so the job's timeout is 60 minutes; agentd's
+  image cross-compiles, as the server's does.
+- **Verifying an image.** Take the digest from the release's asset (`IMAGE-DIGEST.txt`, `AGENTD-IMAGE-DIGEST.txt` or
+  `AGENT-IMAGE-DIGEST.txt`), and on any machine with `gh`:
+
+  ```sh
+  gh attestation verify oci://ghcr.io/jkai-chen/clawbridge-agentd@sha256:<digest> --repo jkai-chen/ClawBridge \
+    --signer-workflow jkai-chen/ClawBridge/.github/workflows/release.yml
+  ```
+
+  The same command, with the other name, verifies the server or the agent image. A deploy pins each by that digest
+  (operations/agentd.md for the two agent images).
 - **Tags and notes:**
   - Each release has exactly one tag. There is never a `latest`, and nothing is retagged or deleted.
   - The release body is not the whole RELEASE-NOTES.md (GitHub refuses a body of 125000 characters or more): it is the
@@ -212,8 +239,8 @@ linux/amd64 and linux/arm64, built from the repository's `Dockerfile` in the sam
     tag with a fake `gh` in every PR and main CI run. It asserts the exact uploaded
     asset list (with and without the marker), the bundle's subjects, and the
     body's size, so the one-shot publish path is exercised before a tag.
-  - RELEASE-NOTES.md never carries the digest: the tagged notes are part of what is built. The release body and
-    `IMAGE-DIGEST.txt` do.
+  - RELEASE-NOTES.md never carries the digests: the tagged notes are part of what is built. The release body and
+    the three digest assets do.
 - **What the image is:**
   - Its binary is stamped with the tag, the commit and the commit's time, the same as the release binaries.
   - It is still its own build of that commit, not the binaries' bytes.
@@ -235,6 +262,8 @@ linux/amd64 and linux/arm64, built from the repository's `Dockerfile` in the sam
     the digest is attested, but it means a failed release can leave a private `vX.Y.Z` image behind.
   - Then: github.com → your profile → Packages → `clawbridge` → Package settings → Danger Zone → Change visibility
     → Public.
+  - **Maintainer note:** `clawbridge-agentd` and `clawbridge-dispatcher-agent` are new packages from the first
+    release that pushes them: set each public and check it is linked to `jkai-chen/ClawBridge` once, the same way.
   - Check that "Repository source" shows `jkai-chen/ClawBridge`. The image's `org.opencontainers.image.source`
     label links it.
   - Until it is public, deployments use the build-from-source path, or log the host in with `docker login ghcr.io`
@@ -330,6 +359,19 @@ Sunday, at the freeze:
 
    ```sh
    gh attestation verify oci://ghcr.io/jkai-chen/clawbridge@sha256:<digest> --repo jkai-chen/ClawBridge \
+     --signer-workflow jkai-chen/ClawBridge/.github/workflows/release.yml \
+     --source-ref refs/tags/v1.0.0 --predicate-type https://slsa.dev/provenance/v1
+   ```
+
+   If agentd's images are deployed too (they stay stopped through the soak), read
+   `AGENTD-IMAGE-DIGEST.txt` and `AGENT-IMAGE-DIGEST.txt` the same way and verify each
+   before loading it, with the same flags:
+
+   ```sh
+   gh attestation verify oci://ghcr.io/jkai-chen/clawbridge-agentd@sha256:<digest> --repo jkai-chen/ClawBridge \
+     --signer-workflow jkai-chen/ClawBridge/.github/workflows/release.yml \
+     --source-ref refs/tags/v1.0.0 --predicate-type https://slsa.dev/provenance/v1
+   gh attestation verify oci://ghcr.io/jkai-chen/clawbridge-dispatcher-agent@sha256:<digest> --repo jkai-chen/ClawBridge \
      --signer-workflow jkai-chen/ClawBridge/.github/workflows/release.yml \
      --source-ref refs/tags/v1.0.0 --predicate-type https://slsa.dev/provenance/v1
    ```

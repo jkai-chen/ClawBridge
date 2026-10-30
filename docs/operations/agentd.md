@@ -34,10 +34,16 @@ The repository's files: `deploy/systemd/agentd/` (the two units, `delegate.conf`
 - **Disk.** At least 2 GiB free under `/home` for the rootless daemon's images and logs.
 - **The server's address** must be public HTTPS: the agents reach it through the egress proxy, which allows public
   addresses only, unless it is listed with `CLAWBRIDGE_EGRESS_PRIVATE_SERVER` (the README).
-- **The images,** built from the release's commit on another machine:
-  - the agent: `docker build -t clawbridge-dispatcher-agent dispatcher-agent`;
-  - agentd's (for the egress proxy): `docker build -f cmd/clawbridge-agentd/Dockerfile -t clawbridge-agentd .`;
-  - `docker save` each, copy the tarballs to the host, and compare their SHA-256 there.
+- **The images,** the agent's and agentd's (agentd's is also the egress proxy's). Either:
+  - **published (the default):** each release publishes both, attested, and names their digests in its assets
+    `AGENT-IMAGE-DIGEST.txt` (`ghcr.io/jkai-chen/clawbridge-dispatcher-agent@sha256:…`) and `AGENTD-IMAGE-DIGEST.txt`
+    (`ghcr.io/jkai-chen/clawbridge-agentd@sha256:…`). Verify each on any machine with `gh`:
+    `gh attestation verify oci://<that line> --repo jkai-chen/ClawBridge --signer-workflow
+    jkai-chen/ClawBridge/.github/workflows/release.yml` (docs/design/releases.md);
+  - **or built offline,** from the release's commit on another machine:
+    - the agent: `docker build -t clawbridge-dispatcher-agent dispatcher-agent`;
+    - agentd's: `docker build -f cmd/clawbridge-agentd/Dockerfile -t clawbridge-agentd .`;
+    - `docker save` each, copy the tarballs to the host, and compare their SHA-256 there.
 - **The binary:** `CGO_ENABLED=0 go build -trimpath -o clawbridge-agentd ./cmd/clawbridge-agentd`, copied and checked
   the same way.
 
@@ -83,17 +89,32 @@ Do not pass `--skip-iptables`: the owner networks and the egress network rely on
 `~cbagent/.config/docker/daemon.json`, set `default-address-pools` outside `172.30.0.0/16` and `172.31.255.0/28`,
 which agentd allocates, for example `[{"base":"10.213.0.0/16","size":24}]`, then restart cbagent's `docker` unit.
 
-**Load the images** into that daemon directly (the proxy allows no pull or load), and note their IDs. Every Docker
-command for cbagent's daemon names it, as `cbdocker` below; a bare `docker` is the root daemon's:
+**Put the images** into that daemon directly (the proxy allows no pull or load). Every Docker command for cbagent's
+daemon names it, as `cbdocker` below; a bare `docker` is the root daemon's:
 
 ```sh
 cbdocker() { sudo -u cbagent DOCKER_HOST="unix:///run/user/$(id -u cbagent)/docker.sock" docker "$@"; }
-cbdocker load -i clawbridge-dispatcher-agent.tar
-cbdocker load -i clawbridge-agentd.tar
-cbdocker image inspect --format '{{.Id}}' clawbridge-dispatcher-agent clawbridge-agentd
 ```
 
-Pin them by these IDs (`sha256:…`): an image loaded this way has no repo digest. Delete the tarballs afterwards.
+- **Published images:** pull each by the exact line of its digest asset, and pin that line as it is
+  (`CLAWBRIDGE_AGENT_IMAGE=ghcr.io/jkai-chen/clawbridge-dispatcher-agent@sha256:…`,
+  `CLAWBRIDGE_EGRESS_IMAGE=ghcr.io/jkai-chen/clawbridge-agentd@sha256:…`; agentd accepts `name@sha256:…`):
+
+  ```sh
+  cbdocker pull "$(cat AGENT-IMAGE-DIGEST.txt)"
+  cbdocker pull "$(cat AGENTD-IMAGE-DIGEST.txt)"
+  ```
+
+  The pull needs the host to reach `ghcr.io`, and the packages to be public (until then, `cbdocker login ghcr.io`
+  with a token that has only `read:packages`).
+- **Built offline:** load the tarballs, and pin the images by their IDs (`sha256:…`): an image loaded this way has no
+  repo digest. Delete the tarballs afterwards.
+
+  ```sh
+  cbdocker load -i clawbridge-dispatcher-agent.tar
+  cbdocker load -i clawbridge-agentd.tar
+  cbdocker image inspect --format '{{.Id}}' clawbridge-dispatcher-agent clawbridge-agentd
+  ```
 
 ## 2. The binary, the env files and the units
 
@@ -104,8 +125,8 @@ sudo install -d -o root -g root -m 0700 /etc/clawbridge-agentd
 sudo install -d -o cbagentd -g cbagentd -m 0755 /var/lib/clawbridge-agentd/policy
 ```
 
-- `/etc/clawbridge-agentd/proxy.env`, root **0644**, from `proxy.env.example`: the server URL, both image IDs and the
-  policy directory. No secret.
+- `/etc/clawbridge-agentd/proxy.env`, root **0644**, from `proxy.env.example`: the server URL, both images (digest
+  lines or IDs) and the policy directory. No secret.
 - `/etc/clawbridge-agentd/agentd.env`, root **0600**, from `agentd.env.example`: the same four values, plus the
   proxy's socket. The two files must agree, or the proxy refuses agentd's creates.
 - `/etc/clawbridge-agentd/launcher.env`: written by the next section, never by hand.

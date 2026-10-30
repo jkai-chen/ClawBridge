@@ -31,6 +31,12 @@ if [[ $release_mode == release ]]; then
   # before this script runs.
   [[ ${IMAGE_DIGEST:-} =~ ^sha256:[0-9a-f]{64}$ ]] || { echo 'publication requires the pushed image digest (IMAGE_DIGEST)' >&2; exit 1; }
   release_image="ghcr.io/jkai-chen/clawbridge@$IMAGE_DIGEST"
+  # The agentd (egress) and dispatcher agent images, pushed and attested the
+  # same way: a deploy pins all three from the release's assets.
+  [[ ${AGENTD_IMAGE_DIGEST:-} =~ ^sha256:[0-9a-f]{64}$ ]] || { echo 'publication requires the pushed agentd image digest (AGENTD_IMAGE_DIGEST)' >&2; exit 1; }
+  release_agentd_image="ghcr.io/jkai-chen/clawbridge-agentd@$AGENTD_IMAGE_DIGEST"
+  [[ ${AGENT_IMAGE_DIGEST:-} =~ ^sha256:[0-9a-f]{64}$ ]] || { echo 'publication requires the pushed dispatcher agent image digest (AGENT_IMAGE_DIGEST)' >&2; exit 1; }
+  release_agent_image="ghcr.io/jkai-chen/clawbridge-dispatcher-agent@$AGENT_IMAGE_DIGEST"
   # The Sigstore bundle of the assets' attestation (FR24): published as an asset
   # so a client verifies provenance with no API call and no token.
   [[ -f ${PROVENANCE_BUNDLE:-} && ! -L ${PROVENANCE_BUNDLE:-} ]] || { echo 'publication requires the assets attestation bundle (PROVENANCE_BUNDLE)' >&2; exit 1; }
@@ -45,17 +51,19 @@ release_commit=$(git rev-parse --verify "refs/tags/$release_version^{commit}")
 # validate_assets DIR EXTRAS: DIR holds exactly the attested assets, SHA256SUMS
 # and EXTRAS (space-separated names outside SHA256SUMS; each checked below).
 validate_assets() {
-  python3 - "$1" "$release_version" "$release_commit" "$release_image" "$2" <<'PY'
+  python3 - "$1" "$release_version" "$release_commit" "$release_image" "$release_agentd_image" "$release_agent_image" "$2" <<'PY'
 import base64,hashlib,json,pathlib,re,sys
-p=pathlib.Path(sys.argv[1]); version,commit,image,extras=sys.argv[2:]
+p=pathlib.Path(sys.argv[1]); version,commit,image,agentd_image,agent_image,extras=sys.argv[2:]
 extras=set(extras.split())
-names={'LICENSE','install.sh','install.ps1','SOURCE-COMMIT.txt','IMAGE-DIGEST.txt'}
+names={'LICENSE','install.sh','install.ps1','SOURCE-COMMIT.txt','IMAGE-DIGEST.txt','AGENTD-IMAGE-DIGEST.txt','AGENT-IMAGE-DIGEST.txt'}
 names.update('clawbridge_'+version+'_'+target for target in ['darwin_amd64','darwin_arm64','linux_amd64','linux_arm64','windows_amd64.exe','windows_arm64.exe'])
 assert extras<={'PROVENANCE.sigstore.json','MANUAL-UPDATE-REQUIRED'},'unknown extra asset'
 assert {f.name for f in p.iterdir()}==names|{'SHA256SUMS'}|extras,'unexpected/missing assets'
 assert all(f.is_file() and not f.is_symlink() and f.stat().st_size for f in p.iterdir()),'nonregular/empty asset'
 assert (p/'SOURCE-COMMIT.txt').read_text()==commit+'\n','source marker mismatch'
 assert (p/'IMAGE-DIGEST.txt').read_text()==image+'\n','image digest mismatch'
+assert (p/'AGENTD-IMAGE-DIGEST.txt').read_text()==agentd_image+'\n','agentd image digest mismatch'
+assert (p/'AGENT-IMAGE-DIGEST.txt').read_text()==agent_image+'\n','dispatcher agent image digest mismatch'
 seen={}
 for line in (p/'SHA256SUMS').read_text().splitlines():
  m=re.fullmatch(r'([0-9a-f]{64})  ([A-Za-z0-9_.-]+)',line)
@@ -126,6 +134,12 @@ if [[ $release_mode == publish-draft ]]; then
   [[ -f $release_verify/download/IMAGE-DIGEST.txt ]] || { echo 'the draft has no IMAGE-DIGEST.txt' >&2; exit 1; }
   release_image=$(head -c 200 "$release_verify/download/IMAGE-DIGEST.txt")
   [[ $release_image =~ ^ghcr\.io/jkai-chen/clawbridge@sha256:[0-9a-f]{64}$ ]] || { echo "the draft's IMAGE-DIGEST.txt does not name a ClawBridge image digest" >&2; exit 1; }
+  # And the two agent images, from their own digest assets.
+  [[ -f $release_verify/download/AGENTD-IMAGE-DIGEST.txt && -f $release_verify/download/AGENT-IMAGE-DIGEST.txt ]] || { echo 'the draft has no AGENTD-IMAGE-DIGEST.txt or AGENT-IMAGE-DIGEST.txt' >&2; exit 1; }
+  release_agentd_image=$(head -c 200 "$release_verify/download/AGENTD-IMAGE-DIGEST.txt")
+  [[ $release_agentd_image =~ ^ghcr\.io/jkai-chen/clawbridge-agentd@sha256:[0-9a-f]{64}$ ]] || { echo "the draft's AGENTD-IMAGE-DIGEST.txt does not name an agentd image digest" >&2; exit 1; }
+  release_agent_image=$(head -c 200 "$release_verify/download/AGENT-IMAGE-DIGEST.txt")
+  [[ $release_agent_image =~ ^ghcr\.io/jkai-chen/clawbridge-dispatcher-agent@sha256:[0-9a-f]{64}$ ]] || { echo "the draft's AGENT-IMAGE-DIGEST.txt does not name a dispatcher agent image digest" >&2; exit 1; }
   release_extras=PROVENANCE.sigstore.json
   release_manual=0
   python3 "$(dirname "$0")/release_body.py" --manual "$release_verify/all-notes.md" "$release_verify/MANUAL-UPDATE-REQUIRED" "$release_version" || release_manual=$?
@@ -146,7 +160,7 @@ if [[ $release_mode == publish-draft ]]; then
   gh attestation verify "$release_verify/download/SHA256SUMS" --bundle "$release_verify/download/PROVENANCE.sigstore.json" --repo jkai-chen/ClawBridge --signer-workflow jkai-chen/ClawBridge/.github/workflows/release.yml --source-ref "refs/tags/$release_version" --source-digest "$release_commit" --predicate-type https://slsa.dev/provenance/v1 --deny-self-hosted-runners || { echo "the draft's provenance does not verify; nothing was changed" >&2; exit 1; }
   # The body is set again as the tag-push run wrote it, from the tagged notes
   # and the draft's verified image, so an edited draft body is not published.
-  python3 "$(dirname "$0")/release_body.py" "$release_verify/all-notes.md" "$release_verify/notes.md" "$release_version" "$release_image"
+  python3 "$(dirname "$0")/release_body.py" "$release_verify/all-notes.md" "$release_verify/notes.md" "$release_version" "$release_image" "$release_agentd_image" "$release_agent_image"
   publish_release "$release_verify/notes.md"
   echo "published $release_version; image $release_image"
   exit 0
@@ -156,7 +170,7 @@ validate_assets "$release_assets" ""
 # to the full notes at the tag, and the image the workflow pushed: the image
 # digest can't be in the tagged notes, which are part of what was built. A body
 # GitHub would refuse fails here, before anything is created.
-python3 "$(dirname "$0")/release_body.py" "$release_verify/all-notes.md" "$release_verify/notes.md" "$release_version" "$release_image"
+python3 "$(dirname "$0")/release_body.py" "$release_verify/all-notes.md" "$release_verify/notes.md" "$release_version" "$release_image" "$release_agentd_image" "$release_agent_image"
 # What is uploaded: the attested assets, the bundle, and the manual-update
 # marker when the release's notes carry one (release_body.py --manual), which
 # auto-updates refuse to install (FR24).

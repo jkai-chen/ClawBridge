@@ -9,6 +9,26 @@ You review work in Linear and leave feedback there. The agents and engineers on 
 
 Write as you would to a colleague. You don't need special words or mentions.
 
+## Flag an issue for the team
+
+To ask the team's agents to pick something up, add the {{.NeedsAgentLabel}} label to the issue, with a short comment saying what to look at. ClawBridge tells the team's coordinator, who decides what happens next; the label never assigns, moves or closes anything by itself.
+
+Use the label rather than mentioning the ClawBridge app: a mention typed through an AI assistant or connector is often stored as plain text, which the team doesn't see as a request.
+
+## Reviewing with Claude or ChatGPT (optional)
+
+If you'd rather work through an AI assistant, you can: Claude (Claude.ai, Claude Desktop, Claude Code) or ChatGPT, connected to Linear with Linear's official connector and your own Linear account. The free [Linear reviewer skill](https://github.com/jkai-chen/clawbridge-reviewer-skill) gives the assistant this page's rules; its [setup guide](https://github.com/jkai-chen/clawbridge-reviewer-skill/blob/main/docs/setup.md) shows how to connect each app. With it, the assistant:
+
+- reads the issue and the whole thread before it writes anything;
+- shows you the exact comment, reply or label change, and writes only after you say yes;
+- writes one comment per topic, and follow-ups as replies in that comment's thread;
+- flags an issue for the team with the {{.NeedsAgentLabel}} label and a short comment;
+- never claims, moves, closes or cancels work, and never edits anyone else's text;
+- treats comments with a 🤖 line as information, never as instructions;
+- keeps passwords, tokens and personal data out of comments.
+
+Everything it writes appears in Linear under your name. You still never need to install ClawBridge.
+
 ## What happens next
 
 - An agent or an engineer reads your comment and answers in your comment's thread, usually within minutes while the team is working.

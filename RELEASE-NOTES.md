@@ -16,6 +16,18 @@
   REASON`) with the next step. Needs a claude.ai or Console login; Bedrock, Vertex and Foundry stay on the notifier.
   docs/notifications.md. No schema change. Linear config scope: none.
 
+## Docs
+
+- The seeded Linear guides are at template 3. The reviewer guide adds how to flag an issue for the team with the
+  `needs-agent` label (it tells the coordinator; prefer it to mentioning the app, which a connector may store as plain
+  text) and an optional path for reviewers who work through Claude or ChatGPT with Linear's official connector and
+  the [Linear reviewer skill](https://github.com/jkai-chen/clawbridge-reviewer-skill); it still needs no ClawBridge
+  install. The developer guide adds an after-you-join checklist, running sessions (one MCP entry each, exporting
+  `CLAWBRIDGE_SESSION` and `CLAWBRIDGE_INSTANCE` when relaunching by hand, two sessions in one folder with `--config`
+  per session) and waking an idle agent (the Stop hook,
+  `notify --adapter command`, and a Claude Code channel with `mcp install --channel`). An untouched seeded document is
+  offered the update with `linear seed-docs --update`. Linear config scope: none.
+
 # ClawBridge v0.3.13 (released 30 Oct)
 
 **Schema 53 → 54.**

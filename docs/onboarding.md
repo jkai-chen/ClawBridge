@@ -305,3 +305,6 @@ People who only review features need no ClawBridge setup at all: they comment in
 Linear. To set up that workflow for your team, see
 [product reviews with ClawBridge and Linear](guides/product-reviewers.md), and
 give reviewers the [reviewer quickstart](guides/reviewer-quickstart.md).
+Reviewers who prefer an AI assistant can use Claude or ChatGPT with Linear's official
+connector and the [Linear reviewer skill](https://github.com/jkai-chen/clawbridge-reviewer-skill);
+they flag an issue for the team with the `needs-agent` label, which tells the coordinator.

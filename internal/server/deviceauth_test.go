@@ -31,8 +31,11 @@ type fakeDevices struct {
 	lookups int
 	joins   []bus.JoinRequest
 	joinErr error
-	// dormant devices are refused at the nonce, as the bus does (§17.4).
+	// dormant devices are refused at the nonce, as the bus does (§17.4);
+	// revoked ones are refused before that, whatever DeviceByID said, as
+	// the authority's own check does after another server's revoke.
 	dormant map[string]bool
+	revoked map[string]bool
 }
 
 func (f *fakeDevices) DeviceByID(_ context.Context, id string) (bus.Device, error) {
@@ -46,9 +49,12 @@ func (f *fakeDevices) DeviceByID(_ context.Context, id string) (bus.Device, erro
 	return d, nil
 }
 
-func (f *fakeDevices) UseNonce(_ context.Context, device, nonce string) error {
+func (f *fakeDevices) UseNonce(_ context.Context, device, _, nonce string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if f.revoked[device] {
+		return bus.ErrDeviceRevoked
+	}
 	if f.dormant[device] {
 		return &bus.DormantError{Device: device, Days: 90}
 	}
@@ -304,6 +310,26 @@ func TestDeviceRequestRefusals(t *testing.T) {
 	f.now = f.now.Add(deviceCacheTTL)
 	if w := f.do("/v1/execute", whoami); w.Code != 401 || !strings.Contains(w.Body.String(), "revoked") {
 		t.Fatal("revoked device:", w.Code, w.Body.String())
+	}
+}
+
+// A device this server still caches as live, revoked on another server,
+// is refused as revoked at once: the authority's check comes before the
+// nonce, so it isn't told it is dormant either.
+func TestDeviceRevokedElsewhereIsRefusedAtOnce(t *testing.T) {
+	f := newDeviceFixture(t)
+	if w := f.do("/v1/execute", whoami); w.Code != 200 {
+		t.Fatal("live device:", w.Code, w.Body.String())
+	}
+	f.store.revoked = map[string]bool{f.id: true}
+	f.store.dormant = map[string]bool{f.id: true}
+	w := f.do("/v1/execute", whoami)
+	var b struct {
+		Error struct{ Code, Message string } `json:"error"`
+	}
+	_ = json.Unmarshal(w.Body.Bytes(), &b)
+	if w.Code != 401 || b.Error.Code != "unauthenticated" || b.Error.Message != "this device was revoked or has expired; ask an owner for an invite" {
+		t.Fatal("revoked elsewhere:", w.Code, w.Body.String())
 	}
 }
 

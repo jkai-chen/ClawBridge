@@ -348,15 +348,6 @@ func (s *stream) write(text string) bool {
 	return s.rc.Flush() == nil
 }
 
-// revokesAccess is an operation that can take a stream's access away.
-func revokesAccess(operation string) bool {
-	switch operation {
-	case "device_revoke", "user_revoke", "project_role_revoke", "retire_session", "owner_transfer_respond":
-		return true
-	}
-	return false
-}
-
 func newConsumerID() string {
 	b := make([]byte, 16)
 	_, _ = rand.Read(b)

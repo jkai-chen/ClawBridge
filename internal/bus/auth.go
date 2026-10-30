@@ -70,6 +70,10 @@ var ErrInvalidInvite = &serviceError{code: "forbidden", cause: errors.New("inval
 // within the nonce lifetime.
 var ErrNonceReused = &serviceError{code: "forbidden", cause: errors.New("request nonce already used"), public: true}
 
+// ErrDeviceRevoked is a signed request from a device that is revoked,
+// expired or no longer its principal's.
+var ErrDeviceRevoked = &serviceError{code: "forbidden", cause: errors.New("this device was revoked or has expired; ask an owner for an invite"), public: true}
+
 func refused(message string) error {
 	return &serviceError{code: "forbidden", cause: errors.New(message), public: true}
 }
@@ -591,6 +595,11 @@ func (s *Store) Join(ctx context.Context, in JoinRequest) (map[string]any, error
 		if err = js.revokedDeviceEvents(ctx, tx, wid, email, revoked, "recovery", match["created_by"].(string), deviceID); err != nil {
 			return nil, err
 		}
+		if len(revoked) > 0 {
+			if err = accessChanged(ctx, tx); err != nil {
+				return nil, err
+			}
+		}
 	}
 	route := map[string]string{"user": "invite", "device": "device_add", "recovery": "recovery"}[purpose]
 	issuedBy, _ := match["issued_device"].(string)
@@ -1109,12 +1118,15 @@ func (s *Store) DeviceByID(ctx context.Context, id string) (Device, error) {
 	return d, nil
 }
 
-// UseNonce records a verified request's nonce for its device, refusing one
-// already used (ErrNonceReused) or a dormant device (*DormantError, before
-// its use is stamped, so it stays dormant), and stamps the device's last
-// use at most once a minute, then writes its workspace's due dormancy
-// warnings. The nonce must already be checked (16-64 bytes, AU-L4).
-func (s *Store) UseNonce(ctx context.Context, deviceID, nonce string) error {
+// UseNonce records a verified request's nonce for its device, refusing a
+// device that is no longer live and principal's (ErrDeviceRevoked, before
+// anything else, so a revoked device writes nothing on any server), a
+// dormant device (*DormantError, before its use is stamped, so it stays
+// dormant) or a nonce already used (ErrNonceReused), and stamps the
+// device's last use at most once a minute, then writes its workspace's due
+// dormancy warnings. The nonce must already be checked (16-64 bytes,
+// AU-L4).
+func (s *Store) UseNonce(ctx context.Context, deviceID, principal, nonce string) error {
 	raw, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return errors.New("authority unavailable")
@@ -1122,6 +1134,13 @@ func (s *Store) UseNonce(ctx context.Context, deviceID, nonce string) error {
 	tx := &transaction{Tx: raw, postgres: s.postgres}
 	defer tx.Rollback()
 	now := hostClock().UTC()
+	live, err := deviceLive(ctx, tx, deviceID, normalPrincipal(principal))
+	if err != nil {
+		return err
+	}
+	if !live {
+		return ErrDeviceRevoked
+	}
 	if err = checkDormant(ctx, tx, deviceID, now); err != nil {
 		return err
 	}
@@ -1165,19 +1184,32 @@ func purgeNonces(ctx context.Context, tx *transaction) (int64, error) {
 	return res.RowsAffected()
 }
 
+// liveDeviceSQL counts a device that is still live and still principal's:
+// the one test liveDevice, UseNonce and IdentityLive share, so a device
+// signing in and the request it signs are never judged apart.
+const liveDeviceSQL = `SELECT COUNT(*) FROM devices WHERE device_id=? AND principal=? AND revoked_at IS NULL AND (expires_at IS NULL OR expires_at>?)`
+
+// deviceLive reports whether device is live and principal's (liveDeviceSQL).
+func deviceLive(ctx context.Context, tx *transaction, device, principal string) (bool, error) {
+	var n int
+	err := tx.QueryRowContext(ctx, liveDeviceSQL, device, principal, stamp()).Scan(&n)
+	return n == 1, err
+}
+
 // liveDevice checks, inside a request, that a device identity's device is
 // still live and still the principal's.
 func liveDevice(ctx context.Context, tx *transaction, id Identity, workspace string) error {
 	if workspace == "" {
 		return refused("a device key signs only within its workspace")
 	}
-	var n int
-	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM devices WHERE device_id=? AND principal=? AND revoked_at IS NULL AND (expires_at IS NULL OR expires_at>?)`, id.Subject, id.Principal, stamp()).Scan(&n); err != nil {
+	live, err := deviceLive(ctx, tx, id.Subject, id.Principal)
+	if err != nil {
 		return err
 	}
-	if n != 1 {
+	if !live {
 		return refused("this device was revoked or has expired; ask an owner for an invite")
 	}
+	var n int
 	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM devices WHERE device_id=? AND workspace_id=?`, id.Subject, workspace).Scan(&n); err != nil {
 		return err
 	}

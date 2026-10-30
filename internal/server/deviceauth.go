@@ -54,7 +54,7 @@ var joinFloor = 250 * time.Millisecond
 // DeviceStore is what device sign-in needs from the hosted authority.
 type DeviceStore interface {
 	DeviceByID(context.Context, string) (bus.Device, error)
-	UseNonce(context.Context, string, string) error
+	UseNonce(ctx context.Context, device, principal, nonce string) error
 	Join(context.Context, bus.JoinRequest) (map[string]any, error)
 }
 
@@ -180,8 +180,12 @@ func (d deviceAuthenticator) Authenticate(ctx context.Context, r *http.Request, 
 	if !device.Live {
 		return bus.Identity{}, deviceRefused("this device was revoked or has expired; ask an owner for an invite", "device_revoked")
 	}
-	// 5. The nonce is unused for this device, and the device isn't dormant.
-	if err = d.store.UseNonce(ctx, device.ID, h.nonce); err != nil {
+	// 5. The device is still live on the authority, whatever this server
+	// cached; then it isn't dormant and the nonce is unused.
+	if err = d.store.UseNonce(ctx, device.ID, device.Principal, h.nonce); err != nil {
+		if errors.Is(err, bus.ErrDeviceRevoked) {
+			return bus.Identity{}, deviceRefused("this device was revoked or has expired; ask an owner for an invite", "device_revoked")
+		}
 		if errors.Is(err, bus.ErrNonceReused) {
 			return bus.Identity{}, deviceRefused("request nonce already used", "device_nonce")
 		}
@@ -282,9 +286,10 @@ func canonicalTarget(target string) bool {
 
 func upperHex(c byte) bool { return ('0' <= c && c <= '9') || ('A' <= c && c <= 'F') }
 
-// deviceCache keeps a device's key and status for 30 s (§5). The bus
-// re-checks the device in every request's transaction, so a revocation
-// binds at once on every replica; the cache only saves the key lookup.
+// deviceCache keeps a device's key and status for 30 s (§5). UseNonce and
+// the bus, in every request's transaction, re-check that the device is
+// live, so a revocation binds at once on every replica; the cache only
+// saves the key lookup. Every replica clears it on an AccessChannel notify.
 type deviceCache struct {
 	mu      sync.Mutex
 	entries map[string]cachedDevice
@@ -320,17 +325,11 @@ func (c *deviceCache) get(ctx context.Context, store DeviceStore, id string) (bu
 	return device, nil
 }
 
-// clear forgets every device, after a request on this server revoked any.
+// clear forgets every device, after a change that took access away.
 func (c *deviceCache) clear() {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.entries = map[string]cachedDevice{}
-}
-
-// revokesDevices reports whether a successful operation may have revoked a
-// device, so this server's cache forgets them.
-func revokesDevices(operation string) bool {
-	return operation == "device_revoke" || operation == "user_revoke"
 }
 
 // counter limits events per key within a fixed window, in memory per

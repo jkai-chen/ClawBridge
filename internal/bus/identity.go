@@ -137,7 +137,7 @@ func (s *Store) IdentityLive(ctx context.Context, id Identity) (bool, error) {
 	q := `SELECT COUNT(*) FROM principal_subjects WHERE principal=? AND issuer=? AND subject=?`
 	args := []any{normalPrincipal(id.Principal), id.Issuer, id.Subject}
 	if id.Issuer == DeviceIssuer {
-		q = `SELECT COUNT(*) FROM devices WHERE device_id=? AND principal=? AND revoked_at IS NULL AND (expires_at IS NULL OR expires_at>?)`
+		q = liveDeviceSQL
 		args = []any{id.Subject, normalPrincipal(id.Principal), stamp()}
 	}
 	var n int
@@ -329,6 +329,9 @@ func (s *Store) OperatorUnbindPrincipal(ctx context.Context, principal string, a
 	defer tx.Rollback()
 	out, err := unbindSubject(ctx, tx, principal, allowPrevious, OperatorPrincipal)
 	if err != nil {
+		return nil, err
+	}
+	if err = accessChanged(ctx, tx); err != nil {
 		return nil, err
 	}
 	if err = tx.Commit(); err != nil {

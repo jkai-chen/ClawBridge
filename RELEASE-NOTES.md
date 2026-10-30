@@ -72,6 +72,12 @@
   `compose up`, and stops if it doesn't drain; a first install is unchanged. The disk guard (deployment.md, which
   the playbooks follow) restarts Docker only when the guard is new or changed, since that restarts every container.
 
+## Docs
+
+- The reviewer guides link the [Linear reviewer skill](https://github.com/jkai-chen/clawbridge-reviewer-skill), a
+  separate MIT repository for reviewers who work through Claude or ChatGPT with Linear's official connector and their
+  own Linear account (comments, thread replies and the `needs-agent` label only). Linear config scope: none.
+
 # ClawBridge v0.3.12 (released 30 Oct)
 
 **Schema 51 → 52.**

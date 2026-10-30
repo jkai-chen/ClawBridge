@@ -62,7 +62,8 @@ func intakeServer(t *testing.T) (*fakeIntake, *httptest.Server) {
 	prove := func(context.Context, string, string, string) (bus.IntakeIssue, error) {
 		return bus.IntakeIssue{UUID: "00000000-0000-4000-8000-0000000000b1"}, nil
 	}
-	host := httptest.NewServer(NewHandlerWithOptions(store, verifier, HandlerOptions{IntakeProver: prove}))
+	// The test server's peer is loopback: it stands for the bundled proxy.
+	host := httptest.NewServer(NewHandlerWithOptions(store, verifier, HandlerOptions{IntakeProver: prove, TrustedProxies: mustProxies(t, "127.0.0.1")}))
 	t.Cleanup(host.Close)
 	return store, host
 }
@@ -130,24 +131,33 @@ func TestIntakeEndpointHasOneTypedTool(t *testing.T) {
 	}
 }
 
-// IN-L2: behind a private proxy the limit is keyed on the client the proxy
-// saw; a public peer cannot choose its bucket with a forwarded header.
+// IN-L2: behind a trusted proxy the limit is keyed on the client the proxy
+// saw; any other peer, a loopback or private one included (S2), cannot
+// choose its bucket with a forwarded header.
 func TestIntakeClientAddress(t *testing.T) {
-	for _, c := range []struct{ peer, forwarded, want string }{
-		{"203.0.113.9:4000", "", "203.0.113.9"},
-		{"203.0.113.9:4000", "198.51.100.1", "203.0.113.9"},
-		{"172.18.0.5:4000", "", "172.18.0.5"},
-		{"172.18.0.5:4000", "198.51.100.1", "198.51.100.1"},
-		{"172.18.0.5:4000", "10.0.0.1, 198.51.100.2", "198.51.100.2"},
-		{"127.0.0.1:4000", "198.51.100.3", "198.51.100.3"},
-		{"172.18.0.5:4000", "not-an-ip", "172.18.0.5"},
+	trusted := mustProxies(t, "172.18.0.5, 127.0.0.1")
+	for _, c := range []struct {
+		proxies         *TrustedProxies
+		peer, forwarded string
+		want            string
+	}{
+		{trusted, "203.0.113.9:4000", "", "203.0.113.9"},
+		{trusted, "203.0.113.9:4000", "198.51.100.1", "203.0.113.9"},
+		{trusted, "172.18.0.5:4000", "", "172.18.0.5"},
+		{trusted, "172.18.0.5:4000", "198.51.100.1", "198.51.100.1"},
+		{trusted, "172.18.0.5:4000", "10.0.0.1, 198.51.100.2", "198.51.100.2"},
+		{trusted, "127.0.0.1:4000", "198.51.100.3", "198.51.100.3"},
+		{trusted, "172.18.0.5:4000", "not-an-ip", "172.18.0.5"},
+		{trusted, "172.18.0.6:4000", "198.51.100.1", "172.18.0.6"},
+		{nil, "172.18.0.5:4000", "198.51.100.1", "172.18.0.5"},
+		{nil, "127.0.0.1:4000", "198.51.100.3", "127.0.0.1"},
 	} {
 		r := httptest.NewRequest("POST", IntakePath, nil)
 		r.RemoteAddr = c.peer
 		if c.forwarded != "" {
 			r.Header.Set("X-Forwarded-For", c.forwarded)
 		}
-		if got := clientAddress(r); got != c.want {
+		if got := clientAddress(c.proxies.apply(r)); got != c.want {
 			t.Errorf("%s via %q: got %s, want %s", c.peer, c.forwarded, got, c.want)
 		}
 	}

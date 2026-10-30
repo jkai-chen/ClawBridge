@@ -37,6 +37,12 @@
   can't learn which device IDs exist. The server's time (`clock_skew` with `server_time`) and the revoked answer
   go only to a request whose signature verifies. Older clients show the 401 with the message; the one corrected
   retry for a skewed clock is unchanged. Linear config scope: none.
+- The server reads `X-Forwarded-For` and `X-Forwarded-Proto` only from a trusted proxy: `CLAWBRIDGE_TRUSTED_PROXIES`
+  (or `serve --trusted-proxies`), comma-separated IPs, CIDRs or host names; unset trusts none, so a loopback or
+  private peer that skips the proxy can no longer pick its rate-limit address or claim https. The compose files trust
+  their own Caddy (`caddy-backend`, its name on the internal network only; nothing in local shape A). A server behind its own reverse proxy must set it, such as
+  `127.0.0.1`, or every client counts as the proxy's address (and, for a proxy on another address than loopback,
+  model and launcher requests are refused as plain http). Linear config scope: none.
 
 ## Internals
 

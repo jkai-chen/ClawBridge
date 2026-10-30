@@ -17,7 +17,7 @@ func TestAddressKey(t *testing.T) {
 		if forwarded != "" {
 			r.Header.Set("X-Forwarded-For", forwarded)
 		}
-		return addressKey(r)
+		return addressKey(mustProxies(t, "172.18.0.5").apply(r))
 	}
 	for _, c := range []struct{ peer, forwarded, want string }{
 		{"203.0.113.9:4000", "", "203.0.113.9"},
@@ -101,6 +101,28 @@ func TestIntakeFloodLeavesPrincipalsAlone(t *testing.T) {
 	}
 	if limited != 1 {
 		t.Fatal("one /64 is one client:", limited)
+	}
+}
+
+// S2: with no trusted proxy configured (the binary's default), a Docker
+// neighbour rotating X-Forwarded-For through the handler is one client.
+func TestUntrustedPeerCannotRotateItsBucket(t *testing.T) {
+	store := &fakeIntake{}
+	handler := NewHandlerWithOptions(store, nil, HandlerOptions{})
+	limited := 0
+	for i := range 1201 {
+		r := httptest.NewRequest("POST", IntakePath, strings.NewReader(`{}`))
+		r.RemoteAddr = "172.18.0.7:4000"
+		r.Header.Set("X-Forwarded-For", fmt.Sprintf("198.51.%d.%d", i>>8, i&0xff))
+		r.Header.Set("Authorization", "Bearer cbi_bad")
+		w := httptest.NewRecorder()
+		handler.ServeHTTP(w, r)
+		if w.Code == http.StatusTooManyRequests {
+			limited++
+		}
+	}
+	if limited != 1 {
+		t.Fatal("the neighbour chose its own buckets:", limited)
 	}
 }
 

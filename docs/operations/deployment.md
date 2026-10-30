@@ -364,6 +364,8 @@ device before setting `device`. See
   rather than refuse a new address, so traffic that never signs in can't lock anyone
   out. A refused sign-in is logged at most once an hour per address and kind, never
   with the request's credentials.
+- **The client address** these limits count is the connection's peer, or, when the
+  peer is a [trusted proxy](#trusted-proxies), the client that proxy names.
 
 ### Letting the owner in without Google: `operator bootstrap-invite`
 
@@ -446,6 +448,8 @@ COMPOSE_PROJECT_NAME=clawbridge
 # CLAWBRIDGE_WEBHOOKS_PROVEN=1
 # Optional: Linear webhook signing secrets (below); this is only the line's shape.
 # CLAWBRIDGE_LINEAR_WEBHOOK_SECRETS=<team UUID>=<secret>
+# Optional: the proxies whose forwarded headers count; compose's default is caddy-backend (see "Trusted proxies").
+# CLAWBRIDGE_TRUSTED_PROXIES=caddy-backend
 ```
 
 Use a random hexadecimal password so it can be interpolated safely into the
@@ -1056,6 +1060,35 @@ clients. The VM needs an approved egress path for image retrieval, ACME and
 Google signing-key refresh. Include static-address, disk, egress and registry
 implications in the cost estimate.
 
+### Trusted proxies
+
+The server reads `X-Forwarded-For` (the client's address) and `X-Forwarded-Proto` (whether the client used
+https) only from a peer named in `CLAWBRIDGE_TRUSTED_PROXIES`, or `serve --trusted-proxies`, which wins when both
+are set. Any other peer's forwarded headers are ignored, a loopback or private one's too: a process that reaches
+the API around the proxy (a container on the compose network, a program on the VM) is limited by its own address
+and can't claim https.
+
+- **The list** is comma-separated; each entry is an IP (`127.0.0.1`), a CIDR (`172.18.0.0/16`) or a host name
+  (`caddy-backend`). A host name counts for all its A and AAAA addresses, looked up through the system resolver and
+  cached for 30 seconds. A lookup that fails after a good one keeps the last addresses and tries again after 5
+  seconds, so a DNS hiccup never drops the proxy; a name that has never resolved trusts nothing. Failures are
+  logged once per lookup, never per request. A malformed entry stops `serve` at startup, naming the entry.
+- **From a trusted proxy** the client is the rightmost `X-Forwarded-For` entry and the scheme the rightmost
+  `X-Forwarded-Proto` entry, the ones that proxy wrote. A trusted proxy that sends neither is the client itself,
+  over its own connection's scheme.
+- **Unset or empty trusts no peer.** That is the binary's default. `deploy/compose.yaml` sets
+  `CLAWBRIDGE_TRUSTED_PROXIES` to `caddy-backend`, its own proxy service's name on the internal `backend` network
+  only, unless the environment file sets it. The API and Caddy share two networks, and Docker's DNS answers a shared
+  name with one network's address only, so Caddy reaches the API as `api-backend` and is trusted as
+  `caddy-backend`: both names exist on `backend` alone, which keeps the address Caddy connects from and the one the
+  API trusts the same. The local shapes trust their Caddy in shape B and nothing in shape A
+  ([local host](local-host.md)).
+- **Upgrading a server behind its own reverse proxy** (any VM that runs `serve` without this repository's compose
+  file, with nginx or Caddy on the host): set `CLAWBRIDGE_TRUSTED_PROXIES` to that proxy's address as the API sees
+  it, such as `127.0.0.1`. Without it, every client counts as the proxy's address for the per-address limits,
+  so one busy client can rate-limit everyone; and when the proxy reaches the API from another address than
+  loopback (another host or container), every model and launcher request through it is refused as plain http.
+
 ## The message queue
 
 The server pushes each session's messages and keeps them until they are acked
@@ -1300,6 +1333,14 @@ The steps, after the backup as above:
      -f /opt/clawbridge/repo/deploy/compose.yaml \
      -f /opt/clawbridge/repo/deploy/compose.image.yaml up -d --no-deps api
    ```
+
+   **Upgrading to v0.3.12, or whenever `compose.yaml` changes the `caddy`
+   service:** recreate `caddy` with `api` (`up -d --no-deps api caddy`). v0.3.12
+   gives Caddy its backend-only name `caddy-backend` and points it at
+   `api-backend` ([trusted proxies](#trusted-proxies)); with `api` alone, the old
+   Caddy has no `caddy-backend`, the API trusts no proxy, every client shares
+   Caddy's rate-limit address, and model and launcher requests are refused as
+   plain http.
 
 4. **Record and check.** Record the digest you deployed, and run the same checks
    as above.

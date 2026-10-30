@@ -72,7 +72,8 @@ func newModelEnv(t *testing.T) *modelEnv {
 	if _, e.launcher, err = store.OperatorLauncherTokenCreate(ctx); err != nil {
 		t.Fatal(err)
 	}
-	e.host = httptest.NewServer(NewHandlerWithOptions(store, nil, HandlerOptions{ModelMaxAgents: 3}))
+	// The test server's peer is loopback: it stands for the bundled proxy.
+	e.host = httptest.NewServer(NewHandlerWithOptions(store, nil, HandlerOptions{ModelMaxAgents: 3, TrustedProxies: mustProxies(t, "127.0.0.1")}))
 	t.Cleanup(e.host.Close)
 	return e
 }

@@ -3,7 +3,6 @@ package server
 import (
 	"context"
 	"errors"
-	"net"
 	"net/http"
 	"strings"
 
@@ -108,27 +107,14 @@ func newIntakeHandler(store IntakeStore, prove IssueProver, ips *preauthLimiter)
 	})
 }
 
-// clientAddress is the address the per-IP intake limit is keyed on (IN-L2):
-// the peer, or, when the peer is a proxy on a private or loopback address
-// (Caddy in the compose deployment), the client that proxy saw, the
-// rightmost X-Forwarded-For entry. A public peer's header is ignored, so a
-// client cannot choose its own bucket.
+// clientAddress is the address the per-IP limits are keyed on (IN-L2):
+// the peer, or, when the peer is a trusted proxy (S2; Caddy in the compose
+// deployment), the client that proxy saw, the rightmost X-Forwarded-For
+// entry. Any other peer's header is ignored, so a client cannot choose its
+// own bucket. The handler reads it once (TrustedProxies.apply).
 func clientAddress(r *http.Request) string {
-	host, _, err := net.SplitHostPort(r.RemoteAddr)
-	if err != nil {
-		host = r.RemoteAddr
+	if v, ok := r.Context().Value(forwardedKey{}).(forwarded); ok {
+		return v.address
 	}
-	peer := net.ParseIP(host)
-	if peer == nil || !(peer.IsLoopback() || peer.IsPrivate()) {
-		return host
-	}
-	values := r.Header.Values("X-Forwarded-For")
-	if len(values) == 0 {
-		return host
-	}
-	entries := strings.Split(values[len(values)-1], ",")
-	if ip := net.ParseIP(strings.TrimSpace(entries[len(entries)-1])); ip != nil {
-		return ip.String()
-	}
-	return host
+	return peerHost(r)
 }

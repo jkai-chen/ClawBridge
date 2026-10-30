@@ -3,6 +3,7 @@ package integration
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -10,6 +11,8 @@ import (
 	"sort"
 	"strings"
 	"testing"
+
+	"clawbridge/internal/server"
 )
 
 type renderedCompose struct {
@@ -111,6 +114,33 @@ func TestComposePublicHTTPSAndPersistenceContract(t *testing.T) {
 		if got, ok := compose.Services["api"].Environment[name]; !ok || got != "" {
 			t.Fatalf("API %s must be passed through and default to empty: %q %v", name, got, ok)
 		}
+	}
+	// S2: the API trusts forwarded headers from its own Caddy only, and
+	// serve accepts the default.
+	if got := compose.Services["api"].Environment["CLAWBRIDGE_TRUSTED_PROXIES"]; got != "caddy-backend" {
+		t.Fatalf("API CLAWBRIDGE_TRUSTED_PROXIES must default to the caddy service: %q", got)
+	}
+	// api and caddy share two networks; Docker's DNS answers a shared name
+	// with one network's address, so the trusted name and Caddy's upstream
+	// exist on backend alone, and the address Caddy connects from is the
+	// trusted one.
+	for service, alias := range map[string]string{"api": "api-backend", "caddy": "caddy-backend"} {
+		networks := compose.Services[service].Networks
+		if n, _ := networks["backend"].(map[string]any); fmt.Sprint(n["aliases"]) != "["+alias+"]" {
+			t.Fatalf("%s must answer to %s on backend: %v", service, alias, networks["backend"])
+		}
+		if n, _ := networks["egress"].(map[string]any); n != nil && n["aliases"] != nil {
+			t.Fatalf("%s must have no alias on egress: %v", service, networks["egress"])
+		}
+	}
+	if !containsAll(compose.Services["caddy"].Command, "api-backend:8080") {
+		t.Fatalf("Caddy must reach the API by its backend-only name: %#v", compose.Services["caddy"].Command)
+	}
+	if _, ok := compose.Services["caddy"]; !ok {
+		t.Fatal("the trusted proxy names a service that does not exist")
+	}
+	if _, err := server.ParseTrustedProxies(compose.Services["api"].Environment["CLAWBRIDGE_TRUSTED_PROXIES"]); err != nil {
+		t.Fatal(err)
 	}
 	for serviceName, service := range compose.Services {
 		joinedCommand := strings.Join(service.Command, "\x00")

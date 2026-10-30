@@ -74,6 +74,9 @@ type WatchCycle struct {
 	// pass's later steps their time; the issues not polled stay due, so the
 	// next pass goes on with them.
 	CommentsStopped string `json:"comments_stopped,omitempty"`
+	// Deferred counts the due issues the hour's budget left for later
+	// (0 from a server before v0.3.12).
+	Deferred int `json:"deferred,omitempty"`
 	// Markers are the claim markers this cycle applied, first.
 	Markers []MarkerApply `json:"markers,omitempty"`
 	// MarkersReadOnly is set when the watcher's Linear profile cannot
@@ -273,6 +276,7 @@ func (s *Service) watchCycle(ctx context.Context, scope bus.Request, lease *watc
 	}
 	cycle.BudgetUsed, cycle.BudgetLimit = number(due["budget_used"]), number(due["budget_limit"])
 	cycle.BudgetExhausted, _ = due["budget_exhausted"].(bool)
+	cycle.Deferred = number(due["deferred"])
 	issues, _ := due["issues"].([]any)
 	for _, raw := range issues {
 		if lease.overBudget(s.cfg.Now(), 0, cycle.BudgetLimit) {

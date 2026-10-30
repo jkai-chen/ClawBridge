@@ -11,6 +11,8 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -125,6 +127,9 @@ type Watcher struct {
 	// users caches each Linear user's eligibility for role trust (T2'
 	// (b)): a read no older than userCheckTTL.
 	users map[string]userCheck
+	// budgets are each project's hour of Linear calls, as this process's
+	// passes saw it (noteBudget).
+	budgets map[string]*budgetHour
 }
 
 type userCheck struct {
@@ -194,6 +199,7 @@ func (w *Watcher) Tick(ctx context.Context) []ProjectTick {
 		cancel()
 		tick.ShareMS = share.Milliseconds()
 		logTick(pid, "tick", tick)
+		w.noteBudget(pid, tick)
 		// Nudged runs have their own allowance in the bus (R101-L2).
 		for _, run := range tick.Health {
 			if run.Nudge == "" {
@@ -366,6 +372,7 @@ func (w *Watcher) nudged(ctx context.Context, pid string, dispatch bool) Project
 		kind = "fallback"
 	}
 	logTick(pid, kind, tick)
+	w.noteBudget(pid, tick)
 	return tick
 }
 
@@ -417,6 +424,7 @@ func (w *Watcher) webhook(ctx context.Context, pid string) ProjectTick {
 		tick.fail(ctx, err)
 	}
 	logTick(pid, "webhook", tick)
+	w.noteBudget(pid, tick)
 	return tick
 }
 
@@ -551,4 +559,73 @@ func failureCode(err error) string {
 		return "deadline"
 	}
 	return "failed"
+}
+
+// budgetHour is one project's comment-watch budget in one UTC hour, as the
+// passes of this process saw it.
+type budgetHour struct {
+	hour                           string // 2006-01-02T15
+	used, limit, refused, deferred int
+}
+
+// noteBudget records a pass's use of the hour's budget, after logging each
+// project whose hour has ended: a log line per project and hour that needs
+// no owner sign-in to read, and names no issue.
+func (w *Watcher) noteBudget(pid string, tick ProjectTick) {
+	hour := w.now().UTC().Format("2006-01-02T15")
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.rollBudgets(hour)
+	c := tick.Comments
+	if c == nil {
+		return
+	}
+	if w.budgets == nil {
+		w.budgets = map[string]*budgetHour{}
+	}
+	b := w.budgets[pid]
+	if b == nil {
+		b = &budgetHour{hour: hour}
+		w.budgets[pid] = b
+	}
+	// The hour's count only grows, and a markers-only nudge reads none, so
+	// the most any pass read holds; the cap is the last one read (0: none).
+	if c.BudgetUsed > b.used {
+		b.used = c.BudgetUsed
+	}
+	if c.BudgetUsed > 0 || c.BudgetLimit > 0 {
+		b.limit = c.BudgetLimit
+	}
+	// A pass the budget stopped, in its comment watch or its markers.
+	if c.BudgetExhausted || c.MarkersStopped == "budget" {
+		b.refused++
+	}
+	// What one pass left for later; the same issue left by several passes
+	// counts once, so the hour keeps the most any pass left.
+	deferred := c.Deferred
+	if c.MarkersStopped == "budget" {
+		deferred += c.MarkersLeft
+	}
+	b.deferred = max(b.deferred, deferred)
+}
+
+// rollBudgets logs and forgets every project's hour before hour, in
+// project order. The caller holds w.mu.
+func (w *Watcher) rollBudgets(hour string) {
+	ended := []string{}
+	for pid, b := range w.budgets {
+		if b.hour != hour {
+			ended = append(ended, pid)
+		}
+	}
+	sort.Strings(ended)
+	for _, pid := range ended {
+		b := w.budgets[pid]
+		limit := "none"
+		if b.limit > 0 {
+			limit = strconv.Itoa(b.limit)
+		}
+		logf("watcher: budget: project %s hour %s: used %d of %s, refused %d passes, deferred %d", pid, b.hour[len(b.hour)-2:], b.used, limit, b.refused, b.deferred)
+		delete(w.budgets, pid)
+	}
 }

@@ -339,7 +339,7 @@ func TestCommentWatchBudgetIsChargedBeforeTheReads(t *testing.T) {
 		t.Fatal(e)
 	}
 	due := w.call("comment_watch_due", "c", w.fenced(map[string]any{})).(map[string]any)
-	if len(due["issues"].([]any)) != 1 || due["budget_used"] != 3 {
+	if len(due["issues"].([]any)) != 1 || due["budget_used"] != 3 || due["deferred"] != 1 {
 		t.Fatal("budget not enforced up front:", due)
 	}
 	// The cycle's report is refused after a takeover; its calls stay charged.

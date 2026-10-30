@@ -110,7 +110,9 @@ func (r *linearImportReader) Read(p []byte) (int, error) {
 					return 0, r.ctx.Err()
 				case <-r.done:
 					timer.Stop()
-					return 0, os.ErrClosed
+					// A cancel closes the reader too, so both channels can be
+					// ready: report the cancel, as stopped does.
+					return 0, r.stopped()
 				case <-timer.C:
 				}
 				continue

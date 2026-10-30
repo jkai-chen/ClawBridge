@@ -28,7 +28,7 @@ type QueueState struct {
 func checkQueue(ctx context.Context, s QueueState, config Config, executor Executor, now time.Time, add func(Check)) {
 	c := Check{ID: "queue", Title: "Message queue", Status: Pass, Path: s.Path}
 	var notes []string
-	instance := config.Instance
+	instance, from := config.Instance, "this run's --instance"
 	switch {
 	case s.Err != nil:
 		c.Status = Warn
@@ -37,7 +37,7 @@ func checkQueue(ctx context.Context, s QueueState, config Config, executor Execu
 		notes = append(notes, fmt.Sprintf("No MCP server of session %s is running on this machine.", s.Session))
 	default:
 		r := s.Record
-		instance = r.Instance
+		instance, from = r.Instance, "the MCP server's record"
 		at, err := time.Parse(time.RFC3339, r.UpdatedAt)
 		switch {
 		case err != nil || now.Sub(at) > ctxwatch.QueueRecordFresh:
@@ -74,7 +74,18 @@ func checkQueue(ctx context.Context, s QueueState, config Config, executor Execu
 		switch {
 		case err != nil:
 			c.Status = Warn
-			notes = append(notes, "The server's queue counts couldn't be read: "+safeCode(err)+".")
+			code := safeCode(err)
+			notes = append(notes, "The server's queue counts couldn't be read: "+code+".")
+			switch code {
+			case "invalid":
+				c.Action = "The server refused session " + config.Session + " with instance " + instance + " (from " + from + "): run doctor with the session's current --instance (its whoami shows it), or restart its MCP server so its record names the current one."
+			case "forbidden":
+				c.Action = "Session " + config.Session + " belongs to another principal: run doctor as the person who registered it."
+			case "not_found":
+				c.Action = "The server has no session " + config.Session + " in this project: check --session and --project."
+			case "unauthenticated", "device_auth_failed", "clock_skew":
+				c.Action = "Sign in again on this machine (the auth checks above say how), then run doctor again."
+			}
 		case json.Unmarshal(raw, &status) != nil || status.Unacked == nil || status.Dead == nil:
 			notes = append(notes, "The server has no message queue.")
 		default:

@@ -96,6 +96,12 @@
   three flags a check needs (`--mcp-agent`, `--mcp-config`, `--mcp-session`, plus `--mcp-instance` and `--mcp-name`),
   and that a file given to `claude --mcp-config` is checked the same way; docs/usage.md shows the command. One or two
   of the flags is still an error. No schema change. Linear config scope: none.
+- **`doctor` names why the server refused a read.** A server's refusal (an instance that isn't the session's current
+  one, another person's session, a sign-in that failed) showed in doctor as a bare "rejected", because the client's
+  error carries its code but no keyword doctor looked for. Doctor now shows the server's own code (`invalid`,
+  `forbidden`, `not_found`, `unauthenticated`, …) on every line that reads the server, and the queue line says what
+  to pass: the session's current `--instance` (and where the refused one came from), or the person to run it as. No
+  schema change. Linear config scope: none.
 
 # ClawBridge v0.3.12 (released 30 Oct)
 

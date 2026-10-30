@@ -16,11 +16,12 @@ CODE = ["skills/*"]
 # The Go packages the Windows job's native tests build (cli, notify, setup,
 # ctxwatch, linearconn, selfupdate and integration, with their test
 # dependencies, for GOOS=windows on amd64 and arm64: the Windows on ARM job
-# runs the same tests). test_ci_scope.py fails when `go list
+# runs the same tests), and cmd/clawbridge, the binary the integration tests
+# build and run there. test_ci_scope.py fails when `go list
 # -deps` names a directory this list doesn't cover, so a new dependency
 # can't slip past the Windows job.
 WINDOWS_DIRS = [
-    "integration", "skills",
+    "cmd/clawbridge", "integration", "skills",
     "internal/auth", "internal/buildinfo", "internal/bus", "internal/channel", "internal/cli", "internal/clirender",
     "internal/ctxwatch", "internal/devicekey", "internal/devicesign", "internal/dispatch",
     "internal/dispatchermodel", "internal/docpublish", "internal/docseed", "internal/doctor",

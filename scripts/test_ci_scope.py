@@ -28,7 +28,8 @@ class Scope(unittest.TestCase):
                          {"go": "false", "node": "false", "agentd": "false", "macos": "false", "windows": "false"})
 
     def test_a_change_outside_every_platform_runs_go_only(self):
-        self.assertEqual(run("cmd/clawbridge/main.go"),
+        # cmd/clawbridge is Windows' now: its integration tests build it there.
+        self.assertEqual(run("cmd/example/main.go"),
                          {"go": "true", "node": "false", "agentd": "false", "macos": "false", "windows": "false"})
 
     def test_the_skill_is_code(self):
@@ -44,6 +45,8 @@ class Scope(unittest.TestCase):
         self.assertEqual(run("internal/notify/private_windows.go")["windows"], "true")
         self.assertEqual(run("internal/bus/store_windows.go")["windows"], "true")
         self.assertEqual(run("internal/ctxwatch/proc_windows_arm64.go")["windows"], "true")
+        self.assertEqual(run("cmd/clawbridge/main.go")["windows"], "true")
+        self.assertEqual(run("integration/wake_path_test.go")["windows"], "true")
 
     def test_installers_run_both_platforms(self):
         got = run("scripts/install.ps1")
@@ -85,7 +88,8 @@ class Dependencies(unittest.TestCase):
     """A job's path rule must cover every package its tests build."""
 
     def test_the_windows_job_covers_its_dependencies(self):
-        packages = ["./internal/cli", "./internal/notify", "./internal/setup", "./internal/ctxwatch", "./internal/linearconn", "./integration"]
+        # The integration tests also build and run ./cmd/clawbridge there.
+        packages = ["./cmd/clawbridge", "./internal/cli", "./internal/notify", "./internal/setup", "./internal/ctxwatch", "./internal/linearconn", "./integration"]
         if os.path.isdir(os.path.join(ROOT, "internal", "selfupdate")):
             packages.append("./internal/selfupdate")
         # Both Windows jobs: x64 and Windows on ARM.

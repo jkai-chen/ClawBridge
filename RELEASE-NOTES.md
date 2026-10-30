@@ -45,6 +45,14 @@ computer. Upgrading from v0.3.x: docs/upgrading-to-1.0.md.
   was launched with `--dangerously-load-development-channels` (for local development only) instead of `--channels`,
   with the relaunch step. No schema change. Linear config scope: none.
 
+- **CI drives the real binary through the agent wake path on native Windows (x64 and ARM).** A new integration test
+  builds `clawbridge`, runs `mcp install --agent claude-code` into a scratch project, starts the MCP server from the
+  entry it wrote, and runs the installed Stop hook as Claude Code does (the exec form's argv on Windows, the shell text
+  elsewhere): it allows a stop with no mail, blocks with the fixed notice (never a message) while one waits, and allows
+  again once it is acked; the command notifier runs its program once per new batch. It runs with the other integration
+  tests and as its own step in both Windows CI jobs. A run with Claude Code on a real Windows desktop is still pending.
+  No schema change. Linear config scope: none.
+
 ## Docs
 
 - The seeded Linear guides are at template 3. The reviewer guide adds how to flag an issue for the team with the

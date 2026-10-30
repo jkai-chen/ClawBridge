@@ -32,6 +32,25 @@ func (h *harness) appCharge(calls int, kind string) {
 	}
 }
 
+// appChargeBy is ChargeLinearBudgetBy's charge in a local store's
+// transaction, as appCharge is ChargeLinearBudget's.
+func (h *harness) appChargeBy(calls int, by, kind string) {
+	h.t.Helper()
+	ctx := context.Background()
+	pid := h.projectID()
+	raw, err := h.s.db.BeginTx(ctx, nil)
+	if err != nil {
+		h.t.Fatal(err)
+	}
+	defer raw.Rollback()
+	if err = h.s.chargeLinearBudgetBy(ctx, &transaction{Tx: raw}, pid, calls, by, kind); err != nil {
+		h.t.Fatal(err)
+	}
+	if err = raw.Commit(); err != nil {
+		h.t.Fatal(err)
+	}
+}
+
 // kindRows is every row of the table, as "hour kind calls/events".
 func (h *harness) kindRows() []string {
 	h.t.Helper()
@@ -84,13 +103,17 @@ func TestLinearBudgetKindsSplitTheHour(t *testing.T) {
 	}
 }
 
-// An issue history read is charged as the app's read, app_read.history,
-// never as a profile's: profile.read is no kind at all.
+// An issue history read is charged by the server as the app's read,
+// app_read.history, and the overview names it; never as a profile's:
+// profile.read is no kind at all.
 func TestIssueHistoryReadIsChargedAsAnAppRead(t *testing.T) {
 	w := newWatchHarness(t)
-	w.call("linear_write_charge", "", charge("h-1", "read", 3))
+	w.appChargeBy(3, "agents", "app_read.history")
 	b := w.overview("")["linear_budget"].(LinearBudget)
 	want := []LinearBudgetKind{{Kind: "app_read.history", Calls: 3, Events: 1}}
+	if b.By.Agents != 3 || b.By.People != 0 || b.By.App != 0 {
+		t.Fatal(b.By)
+	}
 	if !reflect.DeepEqual(b.Kinds, want) {
 		t.Fatalf("%+v", b.Kinds)
 	}
@@ -188,7 +211,7 @@ func TestWatchChargeNamesItsKind(t *testing.T) {
 // Every kind a charge names in the bus and the server is in the set: a
 // literal kind, or a prefix (app_write., profile.) some kind has.
 func TestEveryChargeKindIsInTheSet(t *testing.T) {
-	call := regexp.MustCompile(`\.(charge|chargeBy|ChargeLinearBudget)\(ctx|recordCallKind\(ctx`)
+	call := regexp.MustCompile(`\.(charge|chargeBy|ChargeLinearBudget|ChargeLinearBudgetBy)\(ctx|recordCallKind\(ctx`)
 	literal := regexp.MustCompile(`^"([a-z_.]+)"(\s*\+\s*\w+)?$`)
 	allowed := map[string]bool{"kind": true, `watchChargeKind(c.a["kind"])`: true}
 	found := 0

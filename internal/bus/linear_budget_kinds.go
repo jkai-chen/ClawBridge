@@ -41,11 +41,6 @@ var linearCallKinds = func() map[string]bool {
 		out["app_write."+op] = true
 	}
 	for kind := range linearWriteCallFloor {
-		// A read charge is the app's issue history read (app_read.history),
-		// not a profile's.
-		if kind == "read" {
-			continue
-		}
 		out["profile."+kind] = true
 	}
 	return out

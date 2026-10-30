@@ -3,9 +3,7 @@ package server
 import (
 	"bytes"
 	"context"
-	"crypto/rand"
 	"encoding/base64"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"io"
@@ -31,6 +29,11 @@ import (
 // historyCallCap bounds the GraphQL calls one request asks for: the scope
 // read and one history page, with one to spare.
 const historyCallCap = 3
+
+// historyChargeCap bounds one request's charge: its GraphQL calls with a
+// re-send each (a token re-mint or a 429 inside App.GraphQL). A request
+// that made more is charged the cap, never nothing.
+const historyChargeCap = 2 * historyCallCap
 
 // historyTimeout bounds one request. It stays below the remote client's
 // 20-second HTTP timeout, so the client hears the server's answer (and the
@@ -244,14 +247,16 @@ func (w *AppWriter) issueHistory(parent context.Context, identity bus.Identity, 
 	}
 	// Any project role may read, from a session (its instance checked) or
 	// as the person.
-	if _, err := w.access(ctx, identity, r); err != nil {
+	access, err := w.access(ctx, identity, r)
+	if err != nil {
 		return bus.Result{}, err
 	}
 	// Every Linear call from here on is counted, and charged under the
-	// caller once the request is done, answered or not.
+	// caller once the request is done, answered or not: the project is
+	// known now, before any Linear call.
 	var calls atomic.Int64
 	ctx = linearpace.WithCounter(ctx, &calls)
-	defer w.chargeHistory(context.WithoutCancel(parent), identity, r, &calls)
+	defer w.chargeHistory(context.WithoutCancel(parent), access.ProjectID, r.Session != "", &calls)
 	service, id, err := w.service(ctx, identity)
 	if err != nil {
 		return bus.Result{}, err
@@ -295,7 +300,7 @@ func (w *AppWriter) issueHistory(parent context.Context, identity bus.Identity, 
 		// Linear's names stand in for ClawBridge's.
 		names = map[string]string{}
 	}
-	out := map[string]any{"issue_uuid": issue, "limit": limit, "entries": page.Entries(id.AppUserID, names), "has_more": false}
+	out := map[string]any{"issue_uuid": issue, "limit": limit, "entries": historyOutside(b, page.Entries(id.AppUserID, names)), "has_more": false}
 	if page.HasNextPage {
 		next, err := encodeHistoryCursor(historyCursor{Issue: issue, Project: b.ProjectID, Revision: b.Revision, After: page.EndCursor})
 		if err != nil {
@@ -306,25 +311,61 @@ func (w *AppWriter) issueHistory(parent context.Context, identity bus.Identity, 
 	return bus.Result{Data: out}, nil
 }
 
+// historyOutside hides the teams and projects outside the binding: a team
+// side whose team the binding doesn't list, or a project side whose
+// project isn't one of the binding's (a team board binds none), reads as
+// outside, with no ID, key or name. In-binding sides and every other field
+// stand; a parent is not checked, since the read doesn't give its team.
+func historyOutside(b bus.TaskboardBindingV2, entries []linearapp.HistoryEntry) []linearapp.HistoryEntry {
+	teams, projects := b.ListedTeamIDs(), b.LinearProjectIDs
+	team := func(t *linearapp.HistoryTeam) *linearapp.HistoryTeam {
+		if t == nil || containsFold(teams, t.ID) {
+			return t
+		}
+		return &linearapp.HistoryTeam{Outside: true}
+	}
+	project := func(p *linearapp.HistoryNamed) *linearapp.HistoryNamed {
+		if p == nil || containsFold(projects, p.ID) {
+			return p
+		}
+		return &linearapp.HistoryNamed{Outside: true}
+	}
+	for i := range entries {
+		if c := entries[i].Team; c != nil {
+			entries[i].Team = &linearapp.HistoryChange[linearapp.HistoryTeam]{From: team(c.From), To: team(c.To)}
+		}
+		if c := entries[i].Project; c != nil {
+			entries[i].Project = &linearapp.HistoryChange[linearapp.HistoryNamed]{From: project(c.From), To: project(c.To)}
+		}
+	}
+	return entries
+}
+
+// containsFold matches IDs ignoring case on purpose: Linear's UUIDs are
+// lower case, but a binding may have stored one as typed.
+func containsFold(list []string, id string) bool {
+	for _, x := range list {
+		if id != "" && strings.EqualFold(x, id) {
+			return true
+		}
+	}
+	return false
+}
+
 // chargeHistory counts the request's Linear calls into the project's hour
-// under the caller: to agents from a session, else to people, as their
-// writes are. A charge that fails is logged; the read stands.
-func (w *AppWriter) chargeHistory(ctx context.Context, identity bus.Identity, r bus.Request, calls *atomic.Int64) {
+// under the caller, as app_read.history: to agents from a session, else to
+// people, as their writes are. The charge is the server's alone; no client
+// can send it. A charge that fails is logged; the read stands.
+func (w *AppWriter) chargeHistory(ctx context.Context, pid string, session bool, calls *atomic.Int64) {
 	n := calls.Load()
 	if n <= 0 {
 		return
 	}
-	// The bus refuses a read charge over its ceiling; a request that made
-	// more (re-mints and re-sends) is charged the ceiling, never nothing.
-	n = min(n, bus.LinearReadCallCeiling)
-	id := make([]byte, 8)
-	_, _ = rand.Read(id)
-	instance, _ := r.Args["instance"].(string)
-	args := map[string]any{"operation_id": "issue-history-" + hex.EncodeToString(id), "kind": "read", "calls": n}
-	if r.Session != "" {
-		args["instance"] = instance
+	by := "people"
+	if session {
+		by = "agents"
 	}
-	if _, err := (identityExecutor{w.Store, identity}).Execute(ctx, bus.Request{Operation: "linear_write_charge", Workspace: r.Workspace, Project: r.Project, Session: r.Session, Args: args}); err != nil {
+	if err := w.Store.ChargeLinearBudgetBy(ctx, pid, int(min(n, historyChargeCap)), by, "app_read.history"); err != nil {
 		log.Printf("clawbridge: linear budget: issue history charge failed")
 	}
 }

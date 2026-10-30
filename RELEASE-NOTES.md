@@ -6,6 +6,12 @@
   The command line dropped it, so these commands only ever showed their preview and changed nothing; with `--confirm`
   they now make the change (or give the server's refusal). No schema change. Linear config scope: none.
 
+## Linear
+
+- Issue history hides the names of teams and projects outside the project's binding (`outside`), and its
+  reads are charged by the server only; `linear_write_charge` no longer takes `read`. Linear config scope:
+  none.
+
 # ClawBridge v0.3.12 (released 30 Oct)
 
 **Schema 51 → 52.**

@@ -194,3 +194,38 @@ func TestLinearIssueHistoryOutOfScopeNamesTheScope(t *testing.T) {
 		t.Fatalf("got %v (asked %q)\nwant %s", err, asked, want)
 	}
 }
+
+// A team or project side outside the project's binding comes from the
+// server as {"outside":true}: the text names it so, and the JSON keeps it
+// with no ID, key or name.
+func TestLinearIssueHistoryOutsideSides(t *testing.T) {
+	raw := `{"issue_uuid":"d7000000-0000-4000-8000-0000000000d1","identifier":"ENG-1","limit":20,"has_more":false,"entries":[` +
+		`{"at":"2026-10-29T10:00:00Z","actor":{"kind":"user","id":"b1","name":"Ada Example"},` +
+		`"team":{"from":{"id":"t1","key":"ENG"},"to":{"outside":true}},"project":{"from":{"outside":true},"to":null}}]}`
+	var page linearboard.IssueHistoryPageV2
+	if err := json.Unmarshal([]byte(raw), &page); err != nil {
+		t.Fatal(err)
+	}
+	var out bytes.Buffer
+	if err := clirender.Write(&out, clirender.Human, "linear_issue_history", bus.Result{Source: "linear", Data: page}); err != nil {
+		t.Fatal(err)
+	}
+	want := "2026-10-29 10:00Z user Ada Example: team ENG → (outside this project's binding); project (outside this project's binding) → none\n"
+	if out.String() != want {
+		t.Fatalf("got\n%s\nwant\n%s", out.String(), want)
+	}
+	back, _ := json.Marshal(page.Entries[0])
+	if !strings.Contains(string(back), `"team":{"from":{"id":"t1","key":"ENG"},"to":{"outside":true}},"project":{"from":{"outside":true},"to":null}`) {
+		t.Fatal(string(back))
+	}
+	// A move between two places outside the binding says only that.
+	page.Entries[0].Team.From = &linearapp.HistoryTeam{Outside: true}
+	page.Entries[0].Project = nil
+	out.Reset()
+	if err := clirender.Write(&out, clirender.Human, "linear_issue_history", bus.Result{Source: "linear", Data: page}); err != nil {
+		t.Fatal(err)
+	}
+	if want = "2026-10-29 10:00Z user Ada Example: team changed outside this project's binding\n"; out.String() != want {
+		t.Fatalf("got\n%s\nwant\n%s", out.String(), want)
+	}
+}

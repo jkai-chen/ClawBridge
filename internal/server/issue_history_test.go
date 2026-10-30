@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"encoding/base64"
+	"encoding/json"
 	"strings"
 	"testing"
 
@@ -205,5 +206,59 @@ func TestHistoryCallCapCountsLogicalCalls(t *testing.T) {
 	}
 	if err := gql(context.Background(), "query Q { x }", nil, nil); err != errHistoryCalls || sent != historyCallCap {
 		t.Fatal("a fourth call went:", err, sent)
+	}
+}
+
+// A team or project side outside the binding reads as outside, with no
+// ID, key or name; in-binding sides and every other field stand. A team
+// board binds no projects, so every project side is outside there.
+func TestHistoryHidesNamesOutsideTheBinding(t *testing.T) {
+	team := func(id, key string) *linearapp.HistoryTeam { return &linearapp.HistoryTeam{ID: id, Key: key} }
+	project := func(id, name string) *linearapp.HistoryNamed { return &linearapp.HistoryNamed{ID: id, Name: name} }
+	outsideTeam, outsideProject := &linearapp.HistoryTeam{Outside: true}, &linearapp.HistoryNamed{Outside: true}
+	entries := func() []linearapp.HistoryEntry {
+		return []linearapp.HistoryEntry{
+			{Actor: linearapp.HistoryActor{Kind: "user", ID: "b1", Name: "Ada"},
+				Team:     &linearapp.HistoryChange[linearapp.HistoryTeam]{From: team(ihOther, "SEC"), To: team(strings.ToUpper(ihTeam), "ENG")},
+				Project:  &linearapp.HistoryChange[linearapp.HistoryNamed]{From: project(ihOtherLP, "Secret"), To: project(ihLP, "Launch")},
+				Assignee: &linearapp.HistoryChange[linearapp.HistoryNamed]{To: project("b2", "Ben")},
+				Parent:   &linearapp.HistoryChange[linearapp.HistoryParent]{To: &linearapp.HistoryParent{ID: "d9", Identifier: "SEC-1"}}},
+			{Actor: linearapp.HistoryActor{Kind: "system"},
+				Team: &linearapp.HistoryChange[linearapp.HistoryTeam]{From: team(ihRead, "OPS"), To: team(ihLinked, "LNK")}},
+			{Actor: linearapp.HistoryActor{Kind: "system"}, Project: &linearapp.HistoryChange[linearapp.HistoryNamed]{To: project(ihLP, "Launch")}},
+		}
+	}
+	set := bus.TaskboardBindingV2{Mode: "project_set", LinearTeamIDs: []string{ihTeam}, LinearProjectIDs: []string{ihLP}}
+	got := historyOutside(set, entries())
+	if e := got[0]; *e.Team.From != *outsideTeam || *e.Team.To != *team(strings.ToUpper(ihTeam), "ENG") ||
+		*e.Project.From != *outsideProject || *e.Project.To != *project(ihLP, "Launch") ||
+		*e.Assignee.To != *project("b2", "Ben") || e.Parent.To.Identifier != "SEC-1" || e.Actor.Name != "Ada" {
+		t.Fatalf("%+v", e)
+	}
+	if e := got[1]; *e.Team.From != *outsideTeam || *e.Team.To != *outsideTeam {
+		t.Fatalf("a set's unlisted teams: %+v %+v", e.Team.From, e.Team.To)
+	}
+	if e := got[2]; e.Project.From != nil || *e.Project.To != *project(ihLP, "Launch") {
+		t.Fatalf("%+v", e.Project)
+	}
+	// A team board: its listed teams (write, read and linked) stand; it
+	// binds no projects, so every project name is hidden.
+	board := bus.TaskboardBindingV2{Mode: "team_board", LinearTeamIDs: []string{ihTeam}, LinearOtherTeams: map[string]string{ihRead: bus.TeamAccessRead, ihLinked: bus.TeamAccessLinked}}
+	got = historyOutside(board, entries())
+	if e := got[1]; *e.Team.From != *team(ihRead, "OPS") || *e.Team.To != *team(ihLinked, "LNK") {
+		t.Fatalf("listed teams: %+v %+v", e.Team.From, e.Team.To)
+	}
+	if *got[0].Team.From != *outsideTeam || *got[0].Project.From != *outsideProject || *got[0].Project.To != *outsideProject || *got[2].Project.To != *outsideProject {
+		t.Fatalf("a team board's projects: %+v %+v", got[0].Project, got[2].Project)
+	}
+	// On the wire: no ID, key or name.
+	raw, _ := json.Marshal(got[0])
+	for _, hidden := range []string{ihOther, "SEC\"", ihOtherLP, "Secret", ihLP, "Launch"} {
+		if strings.Contains(string(raw), hidden) {
+			t.Fatal("shown:", hidden, string(raw))
+		}
+	}
+	if !strings.Contains(string(raw), `"team":{"from":{"outside":true},"to":{"id":"`+strings.ToUpper(ihTeam)+`","key":"ENG"}},"project":{"from":{"outside":true},"to":{"outside":true}}`) {
+		t.Fatal(string(raw))
 	}
 }

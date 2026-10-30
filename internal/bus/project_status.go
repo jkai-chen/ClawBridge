@@ -598,6 +598,31 @@ func (s *Store) ChargeLinearBudget(ctx context.Context, pid string, calls int, k
 	})
 }
 
+// ChargeLinearBudgetBy charges calls the server made for a person (by
+// "people") or a session (by "agents") to its project's hour, as kind: an
+// app read made under the caller, such as an issue's history
+// (app_read.history). Like ChargeLinearBudget it never refuses for the
+// hour; any other by is refused.
+func (s *Store) ChargeLinearBudgetBy(ctx context.Context, pid string, calls int, by, kind string) error {
+	if by != "people" && by != "agents" {
+		return fmt.Errorf("linear budget: charge by %q: want people or agents", by)
+	}
+	if calls <= 0 {
+		return nil
+	}
+	return s.ledgerTx(ctx, func(tx *transaction) error {
+		return s.chargeLinearBudgetBy(ctx, tx, pid, calls, by, kind)
+	})
+}
+
+func (s *Store) chargeLinearBudgetBy(ctx context.Context, tx *transaction, pid string, calls int, by, kind string) error {
+	b, err := s.projectBudget(ctx, tx, pid)
+	if err != nil {
+		return err
+	}
+	return b.chargeBy(ctx, tx, pid, calls, by, kind)
+}
+
 func (s *Store) chargeLinearBudget(ctx context.Context, tx *transaction, pid string, calls int, kind string) error {
 	b, err := s.projectBudget(ctx, tx, pid)
 	if err != nil {

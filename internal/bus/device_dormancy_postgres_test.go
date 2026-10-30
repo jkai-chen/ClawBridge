@@ -23,7 +23,7 @@ func (c *dormancyClock) at(d time.Duration) { c.now = c.base.Add(d) }
 
 // use is one signed request's nonce: what the server records for it.
 func (f *pgIdentityFixture) use(device string) error {
-	return f.s.UseNonce(context.Background(), device, newID("nonce-"))
+	return f.s.UseNonce(context.Background(), device, f.principalOf(device), newID("nonce-"))
 }
 
 func (f *pgIdentityFixture) dormancyEvents(principal, device, about, kind string) []map[string]any {

@@ -533,27 +533,95 @@ func TestPostgresOwnerTransfer(t *testing.T) {
 	}
 }
 
+// joinedDevices are n devices of a new member, joined with an invite and
+// then device invites.
+func (f *pgIdentityFixture) joinedDevices(n int) (string, []string) {
+	f.t.Helper()
+	who := newID("dev") + "@identity-test.example"
+	key := newKey(f.t)
+	if _, err := f.join(who, f.invite(f.owner, who, "member")["code"].(string), key); err != nil {
+		f.t.Fatal(err)
+	}
+	devices := []string{keyID(f.t, key)}
+	for len(devices) < n {
+		devices = append(devices, f.deviceInvite(who, devices[0]))
+	}
+	return who, devices
+}
+
 // A nonce is used once per device; expired ones are swept.
 func TestPostgresDeviceNonces(t *testing.T) {
 	f := newPGIdentityFixture(t)
-	dev := newID("dev_")
+	who, devices := f.joinedDevices(2)
+	dev := devices[0]
 	ctx := context.Background()
-	if err := f.s.UseNonce(ctx, dev, "n1"); err != nil {
+	if err := f.s.UseNonce(ctx, dev, who, "n1"); err != nil {
 		t.Fatal(err)
 	}
-	if err := f.s.UseNonce(ctx, dev, "n1"); !errors.Is(err, ErrNonceReused) {
+	if err := f.s.UseNonce(ctx, dev, who, "n1"); !errors.Is(err, ErrNonceReused) {
 		t.Fatal("a nonce was used twice:", err)
 	}
-	if err := f.s.UseNonce(ctx, newID("dev_"), "n1"); err != nil {
+	if err := f.s.UseNonce(ctx, devices[1], who, "n1"); err != nil {
 		t.Fatal("another device's nonce collided:", err)
 	}
 	f.exec(`UPDATE device_nonces SET expires_at=? WHERE device_id=?`, "2000-01-01T00:00:00.000000000Z", dev)
-	if err := f.s.UseNonce(ctx, dev, "n2"); err != nil {
+	if err := f.s.UseNonce(ctx, dev, who, "n2"); err != nil {
 		t.Fatal(err)
 	}
 	if f.count(`SELECT COUNT(*) FROM device_nonces WHERE device_id=$1`, dev) != 1 {
 		t.Fatal("the expired nonce was not swept")
 	}
+}
+
+// UseNonce and a request's own transaction judge a device by one test:
+// a live device passes both, and an expired one, a revoked one or one
+// signing as another principal fails both. A device that fails writes
+// nothing (no nonce, no use stamped), and is told it is revoked before it
+// is told it is dormant or that its nonce was used.
+func TestPostgresUseNonceRefusesADeviceNoLongerLive(t *testing.T) {
+	f := newPGIdentityFixture(t)
+	who, devices := f.joinedDevices(3)
+	live, expired, revoked := devices[0], devices[1], devices[2]
+	ctx := context.Background()
+	whoami := Request{Operation: "list_projects", Workspace: f.workspace}
+	nonces := func(device string) int {
+		return f.count(`SELECT COUNT(*) FROM device_nonces WHERE device_id=$1`, device)
+	}
+	same := func(device, principal string, want error) {
+		t.Helper()
+		err := f.s.UseNonce(ctx, device, principal, newID("nonce-"))
+		if !errors.Is(err, want) && !(want == nil && err == nil) {
+			t.Fatalf("UseNonce(%s): %v, want %v", device, err, want)
+		}
+		_, err = f.asDevice(principal, device, whoami)
+		if (err == nil) != (want == nil) || (err != nil && !strings.Contains(err.Error(), "revoked or has expired")) {
+			t.Fatalf("the request's own check on %s: %v, want refused: %v", device, err, want != nil)
+		}
+	}
+	same(live, who, nil)
+	if err := f.s.UseNonce(ctx, revoked, who, "replayed"); err != nil {
+		t.Fatal(err)
+	}
+	f.exec(`UPDATE devices SET expires_at=? WHERE device_id=?`, "2000-01-01T00:00:00.000000000Z", expired)
+	same(expired, who, ErrDeviceRevoked)
+	same(live, f.owner, ErrDeviceRevoked)
+
+	// Revoked, and dormant too, its last use long ago: revoked comes first,
+	// a replayed nonce is answered revoked, and nothing is written.
+	if _, err := f.asDevice(who, live, Request{Operation: "device_revoke", Workspace: f.workspace, Args: map[string]any{"device_id": revoked}}); err != nil {
+		t.Fatal(err)
+	}
+	f.exec(`UPDATE devices SET created_at=?,last_used_at=? WHERE device_id=?`, "2000-01-01T00:00:00.000000000Z", "2000-01-01T00:00:00.000000000Z", revoked)
+	before := nonces(revoked)
+	for _, nonce := range []string{"replayed", newID("nonce-")} {
+		if err := f.s.UseNonce(ctx, revoked, who, nonce); !errors.Is(err, ErrDeviceRevoked) {
+			t.Fatalf("a revoked, dormant device's nonce %q: %v", nonce, err)
+		}
+	}
+	if used, _ := f.deviceUse(revoked); nonces(revoked) != before || used != "2000-01-01T00:00:00.000000000Z" {
+		t.Fatalf("a revoked device wrote: %d nonces (was %d), last used %s", nonces(revoked), before, used)
+	}
+	same(revoked, who, ErrDeviceRevoked)
 }
 
 // other makes a second workspace on the same server, owned by f.owner, with

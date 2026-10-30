@@ -433,9 +433,10 @@ event: replaced | revoked | bye      (then the server closes)
   at the ticket's instance, the principal still a project member, the device
   live, the account bound. A stream reads when its queue changes and every
   30 s besides. A refused read closes the stream with `revoked` before
-  anything more is leased; a revoke, a member's removal or a retired session
-  wakes every stream at once. A re-registered session's old stream closes the
-  same way.
+  anything more is leased; a revoke, a member's removal, a retired session, an
+  ownership transfer, an account unbind or a narrower domain allow-list wakes
+  every stream on every server at once (through `cb_access`). A re-registered
+  session's old stream closes the same way.
 - **A stream lives at most 30 minutes**, and no longer than a Google ID
   token's expiry. Then it sends `bye`, as it does when the server shuts down
   or the database is unavailable, and the client reconnects, which signs in

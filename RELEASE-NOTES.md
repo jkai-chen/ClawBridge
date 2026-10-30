@@ -82,6 +82,15 @@
   trust setting (`sudo security remove-trusted-cert -d clawbridge-local-root.crt`), then delete the certificate.
   Linear config scope: none.
 
+## Sign-in
+
+- A device revoked on one server is refused as revoked by every server on its next request, before anything is
+  written for it (no nonce, no last-use stamp, no dormancy warning), even while another server still has it cached.
+  A change that takes access away (a device revoke, a member's removal, a project role revoke, a retired session, an
+  ownership transfer, an account unbind or a narrower domain allow-list) also notifies every server through Postgres
+  (`cb_access`, empty payload), which forgets its cached devices and closes the streams that lost access within
+  seconds instead of at their next 30 s re-read. No schema change. Linear config scope: none.
+
 # ClawBridge v0.3.11 (released 30 Oct)
 
 v0.3.10 was deployed (server) but its client release failed to publish; v0.3.11 is the same code plus the publish fix.

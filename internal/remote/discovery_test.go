@@ -237,7 +237,7 @@ type noDevices struct{}
 func (noDevices) DeviceByID(context.Context, string) (bus.Device, error) {
 	return bus.Device{}, errors.New("none")
 }
-func (noDevices) UseNonce(context.Context, string, string) error { return nil }
+func (noDevices) UseNonce(context.Context, string, string, string) error { return nil }
 func (noDevices) Join(context.Context, bus.JoinRequest) (map[string]any, error) {
 	return nil, bus.ErrInvalidInvite
 }

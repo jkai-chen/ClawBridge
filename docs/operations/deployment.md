@@ -1096,8 +1096,11 @@ The server pushes each session's messages and keeps them until they are acked
 Nothing here is configured; what it costs and how to watch it:
 
 - **Connections.** Each server process holds one extra Postgres connection,
-  which LISTENs on `cb_delivery`, `cb_consumer` and `cb_case`. If it drops, the
-  server reconnects and re-reads every open stream. Each stream also re-reads
+  which LISTENs on `cb_delivery`, `cb_consumer`, `cb_case`, `cb_maintenance` and
+  `cb_access`. A change that takes access away (a revoke, a member's removal, an
+  unbind) notifies `cb_access` with an empty payload, and every server forgets the
+  devices it cached and re-authorizes its streams. If the connection drops, the
+  server reconnects, does the same, and re-reads every open stream. Each stream also re-reads
   every 30 s, so a lost notification delays a message at most that long and
   never loses it. The dispatcher's `cases/next` waits on `cb_case`, and still
   checks every 5 s.

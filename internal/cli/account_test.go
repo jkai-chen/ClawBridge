@@ -47,7 +47,7 @@ func (m *joinDevices) DeviceByID(_ context.Context, id string) (bus.Device, erro
 	return d, nil
 }
 
-func (m *joinDevices) UseNonce(_ context.Context, device, nonce string) error {
+func (m *joinDevices) UseNonce(_ context.Context, device, _, nonce string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.nonces[device+" "+nonce] {

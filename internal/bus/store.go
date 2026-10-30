@@ -1200,6 +1200,11 @@ func (s *Store) executeRequest(ctx context.Context, r Request) (Result, error) {
 	if err != nil {
 		return Result{}, misclassifiedRead(tx, r, err)
 	}
+	if TakesAccess(r.Operation) {
+		if err = accessChanged(ctx, tx); err != nil {
+			return Result{}, err
+		}
+	}
 	if err = tx.Commit(); err != nil {
 		return Result{}, errors.New("authority commit failed; no write queued")
 	}

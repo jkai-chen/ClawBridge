@@ -354,6 +354,9 @@ func NewHandlerWithOptions(store Executor, verifier Verifier, o HandlerOptions) 
 	failures := &failureLog{now: now, last: map[string]time.Time{}}
 	failedAuth := newCounter(failedAuthPerMin, time.Minute, now)
 	cache := newDeviceCache(now)
+	if o.Streams != nil {
+		o.Streams.onAccess(cache.clear)
+	}
 	var authenticators []Authenticator
 	var join http.Handler
 	if o.Auth.accepts(AuthGoogle) {
@@ -607,13 +610,16 @@ func NewHandlerWithOptions(store Executor, verifier Verifier, o HandlerOptions) 
 				result.PendingDeviceEvents = &n
 			}
 		}
-		if revokesDevices(request.Operation) {
+		// A change that took access away: this server forgets its cached
+		// devices and wakes its streams now, as every replica does on the
+		// change's AccessChannel notify. Each woken stream re-authorizes,
+		// so the streams this took access from close now, not at their
+		// next re-read.
+		if bus.TakesAccess(request.Operation) {
 			cache.clear()
-		}
-		// Each woken stream re-authorizes, so the streams this took access
-		// from close now, not at their next re-read.
-		if o.Streams != nil && revokesAccess(request.Operation) {
-			o.Streams.WakeAll()
+			if o.Streams != nil {
+				o.Streams.WakeAll()
+			}
 		}
 		// The confirm or release has committed: its marker rows are due now.
 		if o.Nudge != nil && (request.Operation == "assignment_confirm" || request.Operation == "assignment_release") {

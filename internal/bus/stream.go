@@ -101,6 +101,35 @@ func (s *Store) RedeemStreamTicket(ctx context.Context, id Identity, ticket stri
 // replica's older consume stream for that session is replaced.
 const ConsumerChannel = "cb_consumer"
 
+// AccessChannel is the Postgres channel a change that takes access away
+// notifies (TakesAccess, a recovery join that revokes devices, an
+// operator's unbind), with an empty payload: listeners can read it, so it
+// names no device or principal. Every replica then forgets its cached
+// devices and wakes its streams, each of which re-authorizes. NOTIFY is
+// transactional, so a rolled-back change wakes no one, and repeats in one
+// transaction arrive once.
+const AccessChannel = "cb_access"
+
+// TakesAccess is an operation that can take a device's, an account's or a
+// session's access away, so its commit notifies AccessChannel.
+func TakesAccess(operation string) bool {
+	switch operation {
+	case "device_revoke", "user_revoke", "project_role_revoke", "retire_session", "owner_transfer_respond", "principal_unbind", "workspace_set_domains":
+		return true
+	}
+	return false
+}
+
+// accessChanged notifies AccessChannel in tx; a local store has no
+// listeners.
+func accessChanged(ctx context.Context, tx *transaction) error {
+	if !tx.postgres {
+		return nil
+	}
+	_, err := tx.ExecContext(ctx, `SELECT pg_notify(?,'')`, AccessChannel)
+	return err
+}
+
 // CaseChannel is the Postgres channel a new dispatcher case notifies, with
 // the project's ID: the model's cases/next long-polls wait on it instead of
 // re-reading every second (MESSAGE-QUEUE-DESIGN §4). It says only "look".

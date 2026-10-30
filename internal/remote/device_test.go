@@ -45,7 +45,7 @@ func (m *memDevices) DeviceByID(_ context.Context, id string) (bus.Device, error
 	return d, nil
 }
 
-func (m *memDevices) UseNonce(_ context.Context, device, nonce string) error {
+func (m *memDevices) UseNonce(_ context.Context, device, _, nonce string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.nonces[device+" "+nonce] {

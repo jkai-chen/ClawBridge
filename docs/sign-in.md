@@ -177,7 +177,9 @@ clawbridge device add                        # a 15-minute link for another comp
   link for your own email, good for 15 minutes (`--expires` up to `24h`); on the
   new computer, run `clawbridge join` and paste it. The link works only while the
   computer that made it is still an active device of yours.
-- **Revoking** takes effect at once, on every server replica. Revoking the device
+- **Revoking** takes effect at once, on every server replica: the device's next
+  request anywhere is refused as revoked, and its open streams on any server close
+  within a few seconds. Revoking the device
   you're on stops this profile working.
 - **In the TUI:** the Account screen (`7`) lists your devices. `a` makes the code
   for another device after you type `add`, `l` labels, and `x` revokes after you

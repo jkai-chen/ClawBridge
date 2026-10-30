@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"log"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -35,6 +36,11 @@ type StreamHub struct {
 	retry    int
 	// maintenance, when set, gets each notify on bus.MaintenanceChannel.
 	maintenance func()
+	// access holds one AccessChannel notify not yet applied, so a burst
+	// of them (a bulk revoke) is applied once; forget are the device
+	// caches of this server's handlers, cleared when it is.
+	access chan struct{}
+	forget []func()
 }
 
 // streamSub is one stream's subscription to its session's queue.
@@ -49,7 +55,40 @@ type streamSub struct {
 }
 
 func NewStreamHub() *StreamHub {
-	return &StreamHub{subs: map[string]map[*streamSub]struct{}{}, closing: make(chan struct{}), open: map[string]int{}, cases: map[*streamSub]struct{}{}, draining: make(chan struct{})}
+	return &StreamHub{subs: map[string]map[*streamSub]struct{}{}, closing: make(chan struct{}), open: map[string]int{}, cases: map[*streamSub]struct{}{}, draining: make(chan struct{}), access: make(chan struct{}, 1)}
+}
+
+// onAccess adds a device cache's clear to what an access change runs.
+func (h *StreamHub) onAccess(forget func()) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.forget = append(h.forget, forget)
+}
+
+// accessChanged forgets every cached device, then wakes every stream, each
+// of which re-authorizes: after an AccessChannel notify, and on each
+// (re)connect, which catches up on any notify missed while down.
+func (h *StreamHub) accessChanged() {
+	h.mu.Lock()
+	forget := slices.Clone(h.forget)
+	h.mu.Unlock()
+	for _, f := range forget {
+		f()
+	}
+	h.WakeAll()
+}
+
+// applyAccess applies the pending AccessChannel notify, one at a time,
+// until ctx ends.
+func (h *StreamHub) applyAccess(ctx context.Context) {
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-h.access:
+			h.accessChanged()
+		}
+	}
 }
 
 // drainSignal is the channel a stream watches for a drain, with its
@@ -217,6 +256,11 @@ func (h *StreamHub) notified(channel, payload string) {
 		if h.maintenance != nil {
 			h.maintenance()
 		}
+	case bus.AccessChannel:
+		select {
+		case h.access <- struct{}{}:
+		default:
+		}
 	case bus.ConsumerChannel:
 		if i := strings.LastIndexByte(payload, ':'); i > 0 {
 			h.takeover(payload[:i], payload[i+1:])
@@ -244,6 +288,7 @@ func (h *StreamHub) Listen(ctx context.Context, dsn string) {
 // DSN sets one), so the always-open listener counts as that server
 // (bus.LiveServerInstances), not as an unnamed client.
 func (h *StreamHub) ListenAs(ctx context.Context, dsn, name string) {
+	go h.applyAccess(ctx)
 	backoff := time.Second
 	for ctx.Err() == nil {
 		err := h.listenOnce(ctx, dsn, name)
@@ -281,12 +326,12 @@ func (h *StreamHub) listenOnce(ctx context.Context, dsn, name string) error {
 		return err
 	}
 	defer conn.Close(context.Background())
-	for _, channel := range []string{bus.DeliveryChannel, bus.ConsumerChannel, bus.CaseChannel, bus.MaintenanceChannel} {
+	for _, channel := range []string{bus.DeliveryChannel, bus.ConsumerChannel, bus.CaseChannel, bus.MaintenanceChannel, bus.AccessChannel} {
 		if _, err = conn.Exec(ctx, "LISTEN "+pgx.Identifier{channel}.Sanitize()); err != nil {
 			return err
 		}
 	}
-	h.WakeAll()
+	h.accessChanged()
 	// Notifies missed while the listener was down: re-read the row too.
 	if h.maintenance != nil {
 		h.maintenance()

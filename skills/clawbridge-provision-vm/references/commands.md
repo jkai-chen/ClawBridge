@@ -180,6 +180,28 @@ clone's `rev-parse HEAD` must be the same commit. Without `gh`, compare the last
 two and tell the user the attestation wasn't checked. Any difference: stop
 (rule 5).
 
+**The server image.** Each release publishes the server image, named by digest
+in its `IMAGE-DIGEST.txt`, so the host pulls it instead of building. With `gh`,
+verify it the same way, on the user's machine:
+
+```sh
+gh release download vX.Y.Z --repo jkai-chen/ClawBridge --pattern IMAGE-DIGEST.txt --dir release-vX.Y.Z
+gh attestation verify "oci://$(cat release-vX.Y.Z/IMAGE-DIGEST.txt)" --repo jkai-chen/ClawBridge \
+  --signer-workflow jkai-chen/ClawBridge/.github/workflows/release.yml
+cat release-vX.Y.Z/IMAGE-DIGEST.txt
+ssh HOST 'docker compose version --short'
+```
+
+Use the image (`IMAGE` below is the file's one line,
+`ghcr.io/jkai-chen/clawbridge@sha256:` and 64 hex digits) only when all of these
+hold: the download and `gh attestation verify` both exit 0, the line has exactly
+that form, and Compose prints 2.24 or later (the image file needs its
+`!reset`). Anything else fails closed: no `gh`, a verify error, a missing or
+malformed file, or an older Compose (say `2.20.2`) means **never set
+`CLAWBRIDGE_IMAGE`**, and the server builds from the checked-out source, which
+works the same. Tell the user which path it takes and why. Record
+`image IMAGE` or `image: built from source (REASON)` in `created.txt`.
+
 Done when `clawbridge cloud check infra --ssh HOST --server https://DOMAIN`
 fails only with `port_closed`.
 
@@ -219,6 +241,19 @@ do
   k=${kv%%=*}
   if grep -q "^$k=" "$f"; then echo "kept $k"; else printf '%s\n' "$kv" >> "$f"; echo "added $k"; fi
 done
+```
+
+**The image line** is this run's, never kept from an earlier one: an upgrade
+must not pull the previous release, and a run that fails closed must build. On
+every run, set `IMAGE=` to the verified line from step 3 ("The server image"),
+or leave it empty when the image didn't verify:
+
+```sh
+set -e
+f=/etc/clawbridge/clawbridge.env
+IMAGE=
+sed -i '/^CLAWBRIDGE_IMAGE=/d' "$f"
+if [ -n "$IMAGE" ]; then printf 'CLAWBRIDGE_IMAGE=%s\n' "$IMAGE" >> "$f"; echo "set CLAWBRIDGE_IMAGE"; else echo "removed CLAWBRIDGE_IMAGE"; fi
 ```
 
 **The backup store's key** is the user's secret. Stop and ask them to run, in
@@ -269,18 +304,23 @@ writes get `503 maintenance` and clients queue them, nothing in flight is cut,
 and the new API ends the maintenance when it starts. The drain must print
 `drained`; if it prints `not drained after 90s`, the block stops before `up`:
 stop and ask (rule 5), and `operator maintenance end --confirm` (the same `run`
-line) lifts it.
+line) lifts it. With `CLAWBRIDGE_IMAGE` in the env file the block pulls that
+image (adding `compose.image.yaml`); without it, it builds from the checkout.
+Either happens before the drain, so the server is paused only for the swap.
 
 ```sh
 set -e
 mkdir -p /var/lib/clawbridge-postgres/data
-dc() { docker compose --env-file /etc/clawbridge/clawbridge.env --project-name clawbridge \
-  -f /opt/clawbridge/repo/deploy/compose.yaml "$@"; }
+env=/etc/clawbridge/clawbridge.env
+image=
+grep -q '^CLAWBRIDGE_IMAGE=.' "$env" && image="-f /opt/clawbridge/repo/deploy/compose.image.yaml"
+dc() { docker compose --env-file "$env" --project-name clawbridge \
+  -f /opt/clawbridge/repo/deploy/compose.yaml $image "$@"; }
+if [ -n "$image" ]; then dc pull api; else dc build api; fi
 if [ -n "$(dc ps -q api)" ]; then
-  dc build api
   dc run --rm --no-deps api operator maintenance start --reason "playbook re-run" --wait 90s --confirm
 fi
-dc up -d --build
+dc up -d
 install -d -o root -g root -m 0755 /usr/local/libexec/clawbridge
 install -o root -g root -m 0755 /opt/clawbridge/repo/deploy/backup-postgres.sh \
   /usr/local/libexec/clawbridge/backup-postgres.sh

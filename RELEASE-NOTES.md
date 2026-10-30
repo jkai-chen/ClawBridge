@@ -136,6 +136,9 @@
     `warn` line. It then offers `cloud bootstrap --ssh`.
   - docs/operations/first-deployment.md covers the route for doing it yourself.
   - **Not yet verified end to end** on a live non-GCP/AWS host; the steps are tested with a fake SSH transport.
+- The own-server playbook (`clawbridge-provision-vm`) pulls the release's published server image when its attestation
+  verifies on your machine (`gh attestation verify`) and the host's Compose is 2.24 or later; anything else fails
+  closed to a build from the checked-out source, and it says which and why.
 
 ## Security
 

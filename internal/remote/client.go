@@ -586,7 +586,7 @@ func (c *Client) call(ctx context.Context, r bus.Request) (bus.Result, bool, err
 		}
 		if json.Unmarshal(encoded, &body) == nil {
 			switch body.Error.Code {
-			case "unauthenticated", "forbidden", "invalid", "conflict", "not_found", "rate_limited", "unavailable", "binding_unreadable", "in_progress", "clock_skew":
+			case "unauthenticated", "forbidden", "invalid", "conflict", "not_found", "rate_limited", "unavailable", "binding_unreadable", "in_progress", "clock_skew", "device_auth_failed":
 				code = body.Error.Code
 			case "maintenance":
 				if status == http.StatusServiceUnavailable {

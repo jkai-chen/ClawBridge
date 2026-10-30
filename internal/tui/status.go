@@ -79,7 +79,7 @@ func describeError(raw string) (what, rest string) {
 	case has("connection refused", "no such host", "i/o timeout", "deadline exceeded", "network is unreachable",
 		"502 ", "503 ", "504 ", "bad gateway", "service unavailable", "gateway timeout", "upstream connect", "unexpected eof"):
 		return "The server can't be reached.", raw
-	case has("401 ", "unauthenticated", "not signed in", "sign in again", "credential expired", "token expired"):
+	case has("401 ", "unauthenticated", "device_auth_failed", "not signed in", "sign in again", "credential expired", "token expired"):
 		return "You're signed out. Run clawbridge login.", raw
 	case has("403 ", "forbidden", "permission denied", "not allowed", "not permitted"):
 		return "You don't have permission for this.", raw

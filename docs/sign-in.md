@@ -393,7 +393,14 @@ curl -s https://clawbridge.example.com/v1/config    # auth_methods, public_origi
 - **"this device was revoked or has expired; ask an owner for an invite".** This
   device can no longer sign. Join again with a new invite; for another of your
   devices, `device add` makes the code.
-- **"the request time is more than 300 s from the server's".** The clock is off.
+- **"device authentication failed" (`device_auth_failed`).** The server could not
+  verify the request's signature: the device ID is unknown to it, or the key is not
+  that device's, or the request was altered. It answers the same in every case, so
+  that nobody without the key can learn which device IDs exist. Check that the
+  profile is signed in to this server (`clawbridge doctor`); join again if the
+  device was removed. An older server says `unauthenticated` instead.
+- **"the request time is more than 300 s from the server's".** The clock is off
+  (the server says so only to a request whose signature verifies).
   The client corrects once by the server's time, and the correction lapses after 24
   hours; `doctor` shows it. Over an hour off is refused: fix the system clock
   (enable network time).

@@ -698,6 +698,16 @@ health rather than certifying database or user access; it answers
 page saying the app is installed. The server uses client credentials, so the page
 exchanges nothing, ignores its query string and never logs it.
 
+A request signed by a device key (`Authorization: ClawBridge-Device v1 …`) is checked in this order: the header,
+the canonical request target, the device, the signature, the clock (300 s), then revocation, nonce and dormancy. A
+header or target that does not parse is `401 unauthenticated`. An unknown device and a signature that does not verify
+(including one with a skewed time) are one answer, `401 device_auth_failed` ("device authentication failed", no
+`server_time`), so a caller without the key can't tell which device IDs exist. Only a request whose signature
+verifies can be answered `401 clock_skew` (with `server_time`, for one corrected retry), the revoked or expired
+answer, `request nonce already used` or the dormant answer. A server that predates `device_auth_failed` answers
+`unauthenticated`; clients treat both alike. The server's log keeps the reason (unknown device, signature, clock)
+apart, at most hourly per address; it is never in a response.
+
 Definitive authentication, authorization, validation and fencing failures are
 returned directly. Only transport/service outages may permit supported reads
 from an explicitly synchronized, bound mirror. The client's outbox (below) keeps

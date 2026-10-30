@@ -32,6 +32,11 @@
   HTTP and HTTP/2, `net/textproto` and `html/template`. CI and the release now run `govulncheck` (pinned), and a
   reachable finding fails the release. The PostgreSQL and Caddy images in the compose files are pinned by digest (the
   tag is kept); `docs/operations/deployment.md` says how and when to refresh them. Linear config scope: none.
+- A failed device sign-in now returns one answer, `401 device_auth_failed` ("device authentication failed"), whether
+  the device ID is unknown, the signature is wrong or the time is off with a wrong signature, so an unsigned caller
+  can't learn which device IDs exist. The server's time (`clock_skew` with `server_time`) and the revoked answer
+  go only to a request whose signature verifies. Older clients show the 401 with the message; the one corrected
+  retry for a skewed clock is unchanged. Linear config scope: none.
 
 ## Internals
 

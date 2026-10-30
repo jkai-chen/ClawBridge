@@ -604,3 +604,63 @@ func TestJoinPageIsStatic(t *testing.T) {
 		t.Fatal(w.Code)
 	}
 }
+
+// An unsigned caller can't tell an unknown device ID from a known one: an
+// unknown device, a bad signature and a skewed time with a bad signature
+// all answer alike, byte for byte, with no server time. Only a valid
+// signature earns the clock correction or the revoked answer.
+func TestDeviceAuthFailuresAnswerAlike(t *testing.T) {
+	f := newDeviceFixture(t)
+	other, otherPriv, _ := ed25519.GenerateKey(nil)
+	unknown := *f
+	unknown.priv, unknown.id = otherPriv, devicekey.ID(other)
+	skewed := f.now.Unix() + 3600
+	cases := map[string]*httptest.ResponseRecorder{
+		"unknown, valid ts":         unknown.send(http.MethodPost, "/v1/execute", whoami, unknown.header(signed{target: "/v1/execute", body: whoami})),
+		"unknown, skewed ts":        unknown.send(http.MethodPost, "/v1/execute", whoami, unknown.header(signed{target: "/v1/execute", body: whoami, ts: skewed})),
+		"known, bad sig":            f.send(http.MethodPost, "/v1/execute", whoami, f.header(signed{target: "/v1/execute", body: `{"operation":"x"}`})),
+		"known, bad sig, skewed ts": f.send(http.MethodPost, "/v1/execute", whoami, f.header(signed{target: "/v1/execute", body: `{"operation":"x"}`, ts: skewed})),
+	}
+	var want *httptest.ResponseRecorder
+	for name, w := range cases {
+		if w.Code != 401 || errorCode(t, w) != "device_auth_failed" || strings.Contains(w.Body.String(), "server_time") {
+			t.Fatalf("%s: %d %s", name, w.Code, w.Body.String())
+		}
+		if want == nil {
+			want = w
+			continue
+		}
+		if w.Body.String() != want.Body.String() || fmt.Sprint(w.Header()) != fmt.Sprint(want.Header()) {
+			t.Fatalf("%s answers differently:\n%d %v %s\nvs\n%d %v %s", name, w.Code, w.Header(), w.Body.String(), want.Code, want.Header(), want.Body.String())
+		}
+	}
+	// The log keeps the reasons apart; the answer never carries them.
+	for _, kind := range []string{"device_unknown", "device_signature", "clock_skew"} {
+		if strings.Contains(want.Body.String(), kind) {
+			t.Fatal("the answer names", kind)
+		}
+	}
+}
+
+// A valid signature with a skewed time still gets the clock correction.
+func TestDeviceSkewIsToldOnlyAfterTheSignature(t *testing.T) {
+	f := newDeviceFixture(t)
+	w := f.send(http.MethodPost, "/v1/execute", whoami, f.header(signed{target: "/v1/execute", body: whoami, ts: f.now.Unix() - 3600}))
+	if w.Code != 401 || errorCode(t, w) != "clock_skew" || !strings.Contains(w.Body.String(), `"server_time":`+strconv.FormatInt(f.now.Unix(), 10)) {
+		t.Fatal(w.Code, w.Body.String())
+	}
+}
+
+// A revoked device is told so only with a valid signature; with a bad one
+// it gets the common answer.
+func TestRevokedDeviceIsToldOnlyAfterTheSignature(t *testing.T) {
+	f := newDeviceFixture(t)
+	f.store.devices[f.id] = bus.Device{ID: f.id, Principal: "ada@example.com", PublicKey: f.store.devices[f.id].PublicKey, Live: false}
+	if w := f.do("/v1/execute", whoami); w.Code != 401 || !strings.Contains(w.Body.String(), "revoked") {
+		t.Fatal(w.Code, w.Body.String())
+	}
+	w := f.send(http.MethodPost, "/v1/execute", whoami, f.header(signed{target: "/v1/execute", body: `{"operation":"x"}`}))
+	if w.Code != 401 || errorCode(t, w) != "device_auth_failed" || strings.Contains(w.Body.String(), "revoked") {
+		t.Fatal(w.Code, w.Body.String())
+	}
+}

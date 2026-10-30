@@ -1,0 +1,30 @@
+name: pr-text
+
+# A pull request's title, body and commit messages carry no secret, machine
+# path or AI attribution line (scripts/check_pr_text.py). Never
+# pull_request_target: this runs the PR's own checkout with a read-only token.
+on:
+  pull_request:
+    types: [opened, edited, reopened, synchronize]
+
+permissions:
+  contents: read
+
+jobs:
+  pr-text:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      # The title and body reach the script only through env: never
+      # interpolated into the shell line.
+      - name: Check the PR text
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_BODY: ${{ github.event.pull_request.body }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: git log --format=%B "$BASE_SHA..$HEAD_SHA" | python3 -I scripts/check_pr_text.py

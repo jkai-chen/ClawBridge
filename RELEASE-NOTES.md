@@ -137,6 +137,13 @@
   - docs/operations/first-deployment.md covers the route for doing it yourself.
   - **Not yet verified end to end** on a live non-GCP/AWS host; the steps are tested with a fake SSH transport.
 
+## Security
+
+- **A crash in the server no longer logs what the request carried, and PR text is checked for secrets.** A panic in a
+  request handler logs only its method, path and the panic's type (never its value) and answers the standard 500; a new
+  `pr-text` CI check refuses secrets, machine paths and AI attribution lines in a PR's title, body and commits.
+  Linear config scope: none.
+
 # ClawBridge v0.3.13 (released 30 Oct)
 
 **Schema 53 → 54.**

@@ -520,7 +520,7 @@ func (c commentCall) healthDue(ctx context.Context) (any, error) {
 	if err != nil || limit < 0 || limit > healthRunsPerTick {
 		return nil, invalid(fmt.Sprintf("limit must be 0–%d", healthRunsPerTick))
 	}
-	used, budget, err := c.charge(ctx, lease, 0)
+	used, budget, err := c.charge(ctx, lease, 0, "watch.health")
 	if err != nil {
 		return nil, err
 	}
@@ -567,7 +567,9 @@ func (c commentCall) healthDue(ctx context.Context) (any, error) {
 		}
 		rows = nil
 	}
-	cost := 0
+	// A run that reads for health is health's; a flow-only run and a
+	// nudged one are project flow's.
+	cost, flowCost := 0, 0
 	for _, r := range rows {
 		if len(runs) == limit {
 			break
@@ -595,7 +597,7 @@ func (c commentCall) healthDue(ctx context.Context) (any, error) {
 				break
 			}
 			runs = append(runs, map[string]any{"linear_project": lp, "health": false, "flow": true})
-			cost += FlowReadCalls
+			flowCost += FlowReadCalls
 		}
 	}
 	// Nudged runs come after the daily ones, which read the same and more,
@@ -609,10 +611,13 @@ func (c commentCall) healthDue(ctx context.Context) (any, error) {
 		if err != nil {
 			return nil, err
 		}
-		runs, cost = append(runs, nudged...), cost+more
+		runs, flowCost = append(runs, nudged...), flowCost+more
 	}
 	if len(runs) > 0 {
-		if _, _, err = c.charge(ctx, map[string]any{"budget_used": used, "budget_hour": layout(c.now)[:13], "budget_limit": budget}, cost); err != nil {
+		if used, _, err = c.charge(ctx, map[string]any{"budget_used": used, "budget_hour": layout(c.now)[:13], "budget_limit": budget}, cost, "watch.health"); err != nil {
+			return nil, err
+		}
+		if _, _, err = c.charge(ctx, map[string]any{"budget_used": used, "budget_hour": layout(c.now)[:13], "budget_limit": budget}, flowCost, "watch.flow"); err != nil {
 			return nil, err
 		}
 	}
@@ -649,14 +654,14 @@ func (c commentCall) healthForce(ctx context.Context) (any, error) {
 	if !policy.Post {
 		return nil, scoped("a forced health run needs the project's health policy to post; set post first", "forbidden")
 	}
-	used, budget, err := c.charge(ctx, lease, 0)
+	used, budget, err := c.charge(ctx, lease, 0, "watch.health")
 	if err != nil {
 		return nil, err
 	}
 	if budget > 0 && budget-used-watchConnectCalls-1 < HealthMaxCalls {
 		return nil, scoped(fmt.Sprintf("the hour's Linear call budget cannot pay a health run now (%d of %d calls used); try again at %s, or raise it with project linear-budget set", used, budget, c.now.UTC().Truncate(time.Hour).Add(time.Hour).Format(time.RFC3339)), "rate_limited")
 	}
-	if _, _, err = c.charge(ctx, map[string]any{"budget_used": used, "budget_hour": layout(c.now)[:13], "budget_limit": budget}, HealthMaxCalls); err != nil {
+	if _, _, err = c.charge(ctx, map[string]any{"budget_used": used, "budget_hour": layout(c.now)[:13], "budget_limit": budget}, HealthMaxCalls, "watch.health"); err != nil {
 		return nil, err
 	}
 	if err = c.operatorAudit(ctx, lp, "run_forced", map[string]any{"force_new": forceNew}); err != nil {
@@ -774,19 +779,21 @@ func (c commentCall) healthReport(ctx context.Context) (any, error) {
 	switch {
 	case !flow && nudge != "":
 		// Flow was turned off after the nudge was handed out.
-		_, _, err = c.charge(ctx, lease, calls-flowNudgeCalls(nudge))
+		_, _, err = c.charge(ctx, lease, calls-flowNudgeCalls(nudge), "watch.flow")
 		return map[string]any{"flow": "off"}, err
 	case !healthOn && !flow:
 		return nil, scoped("project health and project flow are both off for that Linear project", "not_found")
 	}
-	charged := FlowReadCalls
+	// The run's difference goes to the kind it was charged as: health's
+	// when it read for health, else project flow's.
+	charged, kind := FlowReadCalls, "watch.flow"
 	switch {
 	case nudge != "":
 		charged = flowNudgeCalls(nudge)
 	case healthOn:
-		charged = HealthMaxCalls
+		charged, kind = HealthMaxCalls, "watch.health"
 	}
-	if _, _, err = c.charge(ctx, lease, calls-charged); err != nil {
+	if _, _, err = c.charge(ctx, lease, calls-charged, kind); err != nil {
 		return nil, err
 	}
 	code := str(c.a, "error")
@@ -1093,7 +1100,7 @@ func (c commentCall) healthPostSettle(ctx context.Context) (any, error) {
 	if str(row, "state") != "pending" {
 		return map[string]any{"state": str(row, "state")}, nil
 	}
-	if _, _, err = c.charge(ctx, lease, 1); err != nil {
+	if _, _, err = c.charge(ctx, lease, 1, "watch.health"); err != nil {
 		return nil, err
 	}
 	code := str(c.a, "error")

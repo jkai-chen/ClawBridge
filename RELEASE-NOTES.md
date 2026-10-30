@@ -1,5 +1,11 @@
 # Unreleased
 
+**Schema 51 → 52.**
+- The server migrates to schema 52 on its first start: `linear_budget_kinds`, each project's Linear calls and charges
+  by kind for the current and previous hour (kind names and counts only). Additive, no backfill.
+- **One-way:** v0.3.11 refuses a database newer than schema 51. Take a dump before upgrading; to go back, restore it
+  with the v0.3.11 image (docs/operations/deployment.md).
+
 ## Linear
 
 - With the `webhooks` gate on, a live team (configured, delivering, no miss in 24 h) polls hourly instead of every
@@ -45,6 +51,12 @@
   deferred D` (`of none` with no cap, the default). `refused` counts the passes a cap stopped; `deferred` is the most
   due issues and claim-marker rows any one pass left for later. Anyone reading the server's log can see it, with no
   sign-in. Linear config scope: none.
+- Each project's hourly Linear calls are split by kind: every charge names the job that made it (`watch.comments`,
+  `watch.health`, `app_write.update`, `profile.create`, `issue_move`, …, from a closed set), with its calls and its
+  charges, so calls per charge is the cost of one. `project linear-budget show` adds a `By kind` line (the top six),
+  the overview's `linear_budget` carries `kinds` and `last_hour`, doctor's `linear.budget` names the top three when the
+  app spent more than half the hour, and the watcher's hourly log line ends `, top: KIND N, …`. Names and counts only.
+  Schema 51 → 52 (additive, no backfill). Linear config scope: none.
 
 ## Docs
 

@@ -51,7 +51,7 @@ func TestPostgresWatchStatusShowsBudgetUsed(t *testing.T) {
 	if err := f.s.db.QueryRow(`SELECT id FROM projects WHERE workspace_id=(SELECT id FROM workspaces WHERE name=$1) AND slug='p'`, f.workspace).Scan(&pid); err != nil {
 		t.Fatal(err)
 	}
-	if err := f.s.ChargeLinearBudget(ctx, pid, 7); err != nil {
+	if err := f.s.ChargeLinearBudget(ctx, pid, 7, "app_write.update"); err != nil {
 		t.Fatal(err)
 	}
 	if got := status(); got["budget_used"] != 7 {
@@ -60,6 +60,22 @@ func TestPostgresWatchStatusShowsBudgetUsed(t *testing.T) {
 	b, err := f.s.LinearBudgetOf(ctx, pid)
 	if err != nil || b.Used != 7 || b.Limit != 0 || b.Capped || b.Source != "default" || !b.ResetsAt.After(time.Now()) {
 		t.Fatalf("%+v %v", b, err)
+	}
+	// The write's calls are its kind's, one event; a second adds to it.
+	if err = f.s.ChargeLinearBudget(ctx, pid, 9, "app_write.comment"); err != nil {
+		t.Fatal(err)
+	}
+	if err = f.s.ChargeLinearBudget(ctx, pid, 9, "app_write.comment"); err != nil {
+		t.Fatal(err)
+	}
+	if b, err = f.s.LinearBudgetOf(ctx, pid); err != nil || b.Used != 25 || len(b.Kinds) != 2 || b.Kinds[0] != (LinearBudgetKind{Kind: "app_write.comment", Calls: 18, Events: 2}) || b.Kinds[1] != (LinearBudgetKind{Kind: "app_write.update", Calls: 7, Events: 1}) {
+		t.Fatalf("by kind: %+v %v", b, err)
+	}
+	if got := status(); len(got["kinds"].([]LinearBudgetKind)) != 2 {
+		t.Fatal("status lacks the kinds:", got)
+	}
+	if kinds, err := f.s.LinearBudgetKindsAt(ctx, pid, b.ResetsAt.Add(-time.Hour).Format("2006-01-02T15")); err != nil || len(kinds) != 2 {
+		t.Fatal(kinds, err)
 	}
 	f.must(f.owner, "sub-owner", Request{Operation: "comment_watch_budget_set", Workspace: f.workspace, Project: "p", Args: map[string]any{"watch_budget": 50}})
 	if b, err = f.s.LinearBudgetOf(ctx, pid); err != nil || b.Limit != 50 || !b.Capped || b.Source != "project" {

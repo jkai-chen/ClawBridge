@@ -280,7 +280,7 @@ func (s *Store) reserveIssueMove(ctx context.Context, tx *transaction, wid, pid,
 		if actor != nil {
 			by = "agents"
 		}
-		if err = budget.chargeBy(ctx, tx, pid, calls, by); err != nil {
+		if err = budget.chargeBy(ctx, tx, pid, calls, by, "issue_move"); err != nil {
 			return nil, err
 		}
 	}

@@ -1697,16 +1697,30 @@ func checkLinearBudget(ctx context.Context, executor Executor, wid, pid string, 
 	}
 	check := Check{ID: "linear.budget", Title: "Hourly Linear budget", Status: Pass}
 	if !b.Capped || b.Limit <= 0 {
-		check.Message = fmt.Sprintf("This hour %d Linear calls were made, with no ClawBridge cap; Linear's own rate limit is respected through the queue: the app %d, people %d, agent sessions %d.", b.Used, b.By.App, b.By.People, b.By.Agents)
+		check.Message = fmt.Sprintf("This hour %d Linear calls were made, with no ClawBridge cap; Linear's own rate limit is respected through the queue: the app %d, people %d, agent sessions %d.", b.Used, b.By.App, b.By.People, b.By.Agents) + budgetTopKinds(b)
 		add(check)
 		return
 	}
-	check.Message = fmt.Sprintf("This hour %d of %d Linear calls are used: the app %d, people %d, agent sessions %d.", b.Used, b.Limit, b.By.App, b.By.People, b.By.Agents)
+	check.Message = fmt.Sprintf("This hour %d of %d Linear calls are used: the app %d, people %d, agent sessions %d.", b.Used, b.Limit, b.By.App, b.By.People, b.By.Agents) + budgetTopKinds(b)
 	if b.By.Agents*2 > b.Limit {
 		check.Status = Warn
 		check.Action = "Agent sessions spent more than half the hour's opt-in cap through their people's profiles; check what they're writing. Their writes are counted, never refused; the server's own jobs stop at the cap until the hour rolls."
 	}
 	add(check)
+}
+
+// budgetTopKinds names the hour's top three kinds when the app spent more
+// than half of it, so the job behind the app's calls is named: " Most
+// calls: KIND N, …". "" otherwise, or from an older server.
+func budgetTopKinds(b bus.LinearBudget) string {
+	if b.By.App*2 <= b.Used || len(b.Kinds) == 0 {
+		return ""
+	}
+	var parts []string
+	for _, k := range b.Kinds[:min(3, len(b.Kinds))] {
+		parts = append(parts, fmt.Sprintf("%s %d", k.Kind, k.Calls))
+	}
+	return " Most calls: " + strings.Join(parts, ", ") + "."
 }
 
 // checkProvenGates names the server's PROVEN gates that are on and those

@@ -931,13 +931,18 @@ line per cycle.
     server share it.
   - **Reading it:** `project linear-budget show` (any member) gives
     `budget_used` this hour, `budget_limit` (0 with no cap), `capped` and
-    `budget_source` (`project`, `watcher` or `default`); doctor's
-    `linear.budget`, the project overview's `linear_budget` (`capped`, `by`)
+    `budget_source` (`project`, `watcher` or `default`), then `kinds` and
+    `last_hour`: the hour's calls by the job that made them (`watch.comments`,
+    `app_write.update`, `profile.create`, …), each with its calls and its
+    charges, shown at a terminal as one `By kind` line, `watch.comments 40
+    (12), app_write.update 32 (2), …` (the top six; the number in brackets is
+    the charges); doctor's `linear.budget`, the project overview's `linear_budget` (`capped`, `by`)
     and, on a hosted server with the app, the Linear screen's header ("Linear:
     N this hour (no cap)") split the hour between the app (the server's jobs
     and app writes), people and agent sessions, as counts. Under a cap doctor
-    warns when agent sessions spent more than half of it. Each change is
-    recorded in the project's history. `watch-budget` is the old command name.
+    warns when agent sessions spent more than half of it. When the app spent
+    more than half the hour, doctor names its top three kinds. Kinds are names
+    and counts only. Each change is recorded in the project's history. `watch-budget` is the old command name.
 - `clawbridge doctor` warns when assigned issues are watched but no watcher
   runs, and its `linear.watch` line shows the hour's calls used and the limit.
 - **On a hosted server with its own watcher** (`CLAWBRIDGE_WATCH_INTERVAL`,

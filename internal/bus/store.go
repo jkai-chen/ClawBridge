@@ -173,7 +173,7 @@ func (s *Store) migrate() error {
 	if err = tx.QueryRow("PRAGMA user_version").Scan(&version); err != nil {
 		return err
 	}
-	if version > webhookSchemaVersion {
+	if version > linearBudgetKindsSchemaVersion {
 		return errors.New("database schema is newer than this ClawBridge binary")
 	}
 	if version == 0 {
@@ -444,6 +444,11 @@ func (s *Store) migrate() error {
 	}
 	if version < webhookSchemaVersion {
 		if _, err = tx.Exec(webhookSchema + fmt.Sprintf(`PRAGMA user_version=%d;`, webhookSchemaVersion)); err != nil {
+			return err
+		}
+	}
+	if version < linearBudgetKindsSchemaVersion {
+		if _, err = tx.Exec(linearBudgetKindsSchema + fmt.Sprintf(`PRAGMA user_version=%d;`, linearBudgetKindsSchemaVersion)); err != nil {
 			return err
 		}
 	}
@@ -747,7 +752,7 @@ var operationArgs = map[string]string{
 	"doc_seed_put":                "instance parent_kind parent_id template template_version state seed_token expect_token document_id seeded_sha256",
 	"label_policy_set":            "instance expected_revision label_policy",
 	"linear_admin_audit":          "instance kind outcome operation_id linear_team_id linear_id linear_project_id name previous_name policy_revision",
-	"watch_charge":                "instance lease_token generation calls",
+	"watch_charge":                "instance lease_token generation calls kind",
 	"intake_policy_get":           "instance",
 	"intake_policy_set":           "instance expected_revision mode signals roles s5_calls_per_hour out_of_binding_limit",
 	"intake_trust_add":            "instance linear_user_id principal link_email",

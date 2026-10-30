@@ -419,7 +419,7 @@ func (c commentCall) projectFlowSettle(ctx context.Context) (any, error) {
 	if str(row, "state") != "pending" {
 		return map[string]any{"state": str(row, "state")}, nil
 	}
-	if _, _, err = c.charge(ctx, lease, calls); err != nil {
+	if _, _, err = c.charge(ctx, lease, calls, "watch.flow"); err != nil {
 		return nil, err
 	}
 	code := str(c.a, "error")

@@ -327,7 +327,7 @@ func (c commentCall) subscribeCharge(ctx context.Context) (any, error) {
 	if err != nil || len(rows) == 0 {
 		return map[string]any{"charged": 0}, err
 	}
-	used, limit, err := c.charge(ctx, rows[0], calls)
+	used, limit, err := c.charge(ctx, rows[0], calls, "watch.subscribers")
 	if err != nil {
 		return nil, err
 	}
@@ -349,7 +349,7 @@ func (c commentCall) subscribeDue(ctx context.Context) (any, error) {
 	if !p.effectiveOn {
 		return map[string]any{"rows": []any{}, "left": 0, "stopped": "off"}, nil
 	}
-	used, budget, err := c.charge(ctx, lease, 0)
+	used, budget, err := c.charge(ctx, lease, 0, "watch.subscribers")
 	if err != nil {
 		return nil, err
 	}
@@ -388,7 +388,7 @@ func (c commentCall) subscribeDue(ctx context.Context) (any, error) {
 		out = append(out, item)
 	}
 	if cost > 0 {
-		if _, _, err = c.charge(ctx, map[string]any{"budget_used": used, "budget_hour": layout(c.now)[:13], "budget_limit": budget}, cost); err != nil {
+		if _, _, err = c.charge(ctx, map[string]any{"budget_used": used, "budget_hour": layout(c.now)[:13], "budget_limit": budget}, cost, "watch.subscribers"); err != nil {
 			return nil, err
 		}
 	}
@@ -450,7 +450,7 @@ func (c commentCall) subscribeSettle(ctx context.Context) (any, error) {
 			return nil, err
 		}
 	}
-	used, limit, err := c.charge(ctx, lease, calls-charged)
+	used, limit, err := c.charge(ctx, lease, calls-charged, "watch.subscribers")
 	if err != nil {
 		return nil, err
 	}

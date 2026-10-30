@@ -127,8 +127,16 @@ func (s *Store) OperatorForcedHealthPostDeleted(ctx context.Context, post Health
 		return errors.New("that post's row changed meanwhile; its delete is not recorded")
 	}
 	hour := nowRaw[:13]
-	if _, err = tx.ExecContext(ctx, `UPDATE watch_lease SET budget_used=CASE WHEN budget_hour=? THEN budget_used+? ELSE ? END,budget_people=CASE WHEN budget_hour=? THEN budget_people ELSE 0 END,budget_agents=CASE WHEN budget_hour=? THEN budget_agents ELSE 0 END,budget_hour=? WHERE project_id=?`, hour, HealthPostDeleteCalls, HealthPostDeleteCalls, hour, hour, hour, post.ProjectID); err != nil {
+	charged, err := tx.ExecContext(ctx, `UPDATE watch_lease SET budget_used=CASE WHEN budget_hour=? THEN budget_used+? ELSE ? END,budget_people=CASE WHEN budget_hour=? THEN budget_people ELSE 0 END,budget_agents=CASE WHEN budget_hour=? THEN budget_agents ELSE 0 END,budget_hour=? WHERE project_id=?`, hour, HealthPostDeleteCalls, HealthPostDeleteCalls, hour, hour, hour, post.ProjectID)
+	if err != nil {
 		return errors.New("authority unavailable")
+	}
+	// Its kind's row, only when the hour was charged: a project no watcher
+	// ever ran for has no lease row to charge.
+	if n, _ := charged.RowsAffected(); n == 1 {
+		if err = recordCallKind(ctx, tx, post.ProjectID, hour, "operator.health", HealthPostDeleteCalls); err != nil {
+			return errors.New("authority unavailable")
+		}
 	}
 	scoped := *s
 	scoped.principal = OperatorPrincipal

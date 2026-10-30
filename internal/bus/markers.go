@@ -564,7 +564,7 @@ func (c commentCall) markerDue(ctx context.Context) (any, error) {
 		}
 		limit = n
 	}
-	used, budget, err := c.charge(ctx, lease, 0)
+	used, budget, err := c.charge(ctx, lease, 0, "watch.markers")
 	if err != nil {
 		return nil, err
 	}
@@ -602,7 +602,7 @@ func (c commentCall) markerDue(ctx context.Context) (any, error) {
 		markers = append(markers, map[string]any{"assignment_id": row["assignment_id"], "phase": row["phase"], "issue_uuid": row["issue_uuid"], "charged": calls})
 	}
 	if len(markers) > 0 {
-		if _, _, err = c.charge(ctx, map[string]any{"budget_used": used, "budget_hour": layout(c.now)[:13], "budget_limit": budget}, cost); err != nil {
+		if _, _, err = c.charge(ctx, map[string]any{"budget_used": used, "budget_hour": layout(c.now)[:13], "budget_limit": budget}, cost, "watch.markers"); err != nil {
 			return nil, err
 		}
 	}
@@ -642,7 +642,7 @@ func (c commentCall) markerSpent(ctx context.Context) (any, error) {
 	if most += MarkerStateCalls; charged > most {
 		charged = most
 	}
-	used, limit, err := c.charge(ctx, lease, calls-charged)
+	used, limit, err := c.charge(ctx, lease, calls-charged, "watch.markers")
 	if err != nil {
 		return nil, err
 	}
@@ -805,6 +805,22 @@ func watchStatus(ctx context.Context, tx *transaction, pid string) (any, error) 
 	out["budget_used"] = 0
 	if len(lease) == 1 && str(lease[0], "budget_hour") == nowRaw[:13] {
 		out["budget_used"] = asInt(lease[0]["budget_used"])
+	}
+	// The hour's calls by kind, and the previous hour's: names and counts.
+	kinds, err := budgetKinds(ctx, tx, pid, nowRaw[:13])
+	if err != nil {
+		return nil, err
+	}
+	if len(kinds) > 0 {
+		out["kinds"] = kinds
+	}
+	if prev, ok := previousHour(nowRaw[:13]); ok {
+		if kinds, err = budgetKinds(ctx, tx, pid, prev); err != nil {
+			return nil, err
+		}
+		if len(kinds) > 0 {
+			out["last_hour"] = LinearBudgetHour{Hour: prev, Kinds: kinds}
+		}
 	}
 	return out, nil
 }

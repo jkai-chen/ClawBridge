@@ -82,6 +82,10 @@ It asks for the code without showing it. Type it yourself.
 - **Only once.** A later `up` finds the workspace the owner already owns and makes no new code; it says so.
   `invite-owner` always makes one, which is also how an owner who lost every device gets back in. A new owner
   code revokes any earlier one still pending, so only the newest works.
+- **No proxy, so no forwarded headers.** Shape A trusts no peer's `X-Forwarded-For` or `X-Forwarded-Proto`
+  (`CLAWBRIDGE_TRUSTED_PROXIES` is empty): a program on this machine, or a container beside the API, is limited by
+  its own address and can't claim https. Shape B trusts its Caddy only (`caddy-backend`). See
+  [Trusted proxies](deployment.md#trusted-proxies).
 
 ## Shape B: your local network
 

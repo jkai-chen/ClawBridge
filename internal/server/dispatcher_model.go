@@ -416,26 +416,11 @@ func serveModel(ctx context.Context, store ModelStore, r *http.Request, token st
 }
 
 // plainRemote reports a request that reached the server over plain HTTP
-// from another machine. Behind the bundled proxy (a loopback or private
-// peer) the scheme is the proxy's X-Forwarded-Proto; otherwise it is the
-// connection's own.
+// from another machine. Behind a trusted proxy the scheme is the proxy's
+// X-Forwarded-Proto; otherwise it is the connection's own (S2).
 func plainRemote(r *http.Request) bool {
-	scheme := "http"
-	if r.TLS != nil {
-		scheme = "https"
-	}
-	host, _, err := net.SplitHostPort(r.RemoteAddr)
-	if err != nil {
-		host = r.RemoteAddr
-	}
-	if peer := net.ParseIP(host); peer != nil && (peer.IsLoopback() || peer.IsPrivate()) {
-		if values := r.Header.Values("X-Forwarded-Proto"); len(values) > 0 {
-			entries := strings.Split(values[len(values)-1], ",")
-			scheme = strings.ToLower(strings.TrimSpace(entries[len(entries)-1]))
-		}
-	}
 	client := net.ParseIP(clientAddress(r))
-	return scheme != "https" && (client == nil || !client.IsLoopback())
+	return requestScheme(r) != "https" && (client == nil || !client.IsLoopback())
 }
 
 // modelBearer is the request's one Bearer credential, at most 256 bytes.

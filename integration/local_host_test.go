@@ -381,6 +381,10 @@ func TestComposeLocalShapes(t *testing.T) {
 	if v := findVolumeMount(doc.Services["db"].Volumes, "/var/lib/postgresql/data"); v == nil || v.Type != "volume" || v.Source != "postgres-data" {
 		t.Fatalf("db volume: %+v", v)
 	}
+	// S2: solo has no proxy, so it trusts no peer's forwarded headers.
+	if got, ok := api.Environment["CLAWBRIDGE_TRUSTED_PROXIES"]; !ok || got != "" {
+		t.Fatalf("solo trusts a proxy: %q %v", got, ok)
+	}
 	// The token key waits for the Linear app: serve refuses a key alone.
 	if got, ok := api.Environment["CLAWBRIDGE_LINEAR_APP_TOKEN_KEY"]; !ok || got != "" {
 		t.Fatalf("token key passed without the app: %q", got)
@@ -404,6 +408,9 @@ func TestComposeLocalShapes(t *testing.T) {
 	settings, err = server.ParseServe(api.Command[1:], func(k string) string { return api.Environment[k] })
 	if err != nil || fmt.Sprint(settings.Auth.Methods) != "[device]" || settings.Auth.PublicOrigin != "https://clawbridge.lan" {
 		t.Fatalf("lan serve settings: %+v %v", settings.Auth, err)
+	}
+	if got := api.Environment["CLAWBRIDGE_TRUSTED_PROXIES"]; got != "caddy-backend" {
+		t.Fatalf("lan trusted proxies: %q", got)
 	}
 	caddy := doc.Services["caddy"]
 	// A Caddyfile from CLAWBRIDGE_DOMAIN, with default_sni for clients that
@@ -445,6 +452,21 @@ func TestComposeLocalShapes(t *testing.T) {
 		t.Fatalf("lan-cert services: %v", names)
 	}
 	cc := doc.Services["caddy-cert"]
+	// The api trusts caddy-backend; caddy-cert answers to that name on
+	// backend only, and reaches the api by its backend-only name, so the
+	// address it connects from is the one trusted.
+	if got := doc.Services["api"].Environment["CLAWBRIDGE_TRUSTED_PROXIES"]; got != "caddy-backend" {
+		t.Fatalf("lan-cert trusted proxies: %q", got)
+	}
+	if n, _ := cc.Networks["backend"].(map[string]any); fmt.Sprint(n["aliases"]) != "[caddy-backend]" {
+		t.Fatalf("caddy-cert on backend: %v", cc.Networks["backend"])
+	}
+	if n, _ := cc.Networks["egress"].(map[string]any); n != nil && n["aliases"] != nil {
+		t.Fatalf("caddy-cert on egress: %v", cc.Networks["egress"])
+	}
+	if len(cc.Command) != 1 || !strings.Contains(cc.Command[0], "reverse_proxy api-backend:8080") {
+		t.Fatalf("caddy-cert must reach the api over backend: %q", cc.Command)
+	}
 	for target, source := range map[string]string{"/run/clawbridge-tls/cert.pem": filepath.Join(cert, "tls", "cert.pem"), "/run/clawbridge-tls/key.pem": filepath.Join(cert, "tls", "key.pem")} {
 		if v := findVolumeMount(cc.Volumes, target); v == nil || v.Source != source {
 			t.Fatalf("%s mount: %+v", target, v)

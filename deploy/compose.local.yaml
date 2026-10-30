@@ -35,6 +35,11 @@ services:
       # file a person backs up already holds it. serve refuses a key with no
       # app, so it is passed on only once the app's client ID is set.
       CLAWBRIDGE_LINEAR_APP_TOKEN_KEY: ${CLAWBRIDGE_LINEAR_APP_CLIENT_ID:+${CLAWBRIDGE_LINEAR_APP_TOKEN_KEY}}
+      # lan's Caddy (caddy, or caddy-cert, which answers to the same
+      # backend-only name) is the one proxy whose forwarded headers count.
+      # solo has no proxy and no CLAWBRIDGE_PUBLIC_ORIGIN in its env file:
+      # it trusts none.
+      CLAWBRIDGE_TRUSTED_PROXIES: ${CLAWBRIDGE_TRUSTED_PROXIES:-${CLAWBRIDGE_PUBLIC_ORIGIN:+caddy-backend}}
     # Loopback only, in both shapes: solo's clients use it, and in lan it is
     # the host's own health check. Never a LAN address.
     ports: !override
@@ -50,7 +55,7 @@ services:
     entrypoint: [/bin/sh, -c]
     command: !override
       - |
-        printf '{\n\tauto_https disable_redirects\n\tlocal_certs\n\tdefault_sni %s\n}\n%s {\n\treverse_proxy api:8080\n}\n' "$$CLAWBRIDGE_DOMAIN" "$$CLAWBRIDGE_DOMAIN" >/tmp/Caddyfile &&
+        printf '{\n\tauto_https disable_redirects\n\tlocal_certs\n\tdefault_sni %s\n}\n%s {\n\treverse_proxy api-backend:8080\n}\n' "$$CLAWBRIDGE_DOMAIN" "$$CLAWBRIDGE_DOMAIN" >/tmp/Caddyfile &&
         exec caddy run --config /tmp/Caddyfile --adapter caddyfile
     environment:
       CLAWBRIDGE_DOMAIN: ${CLAWBRIDGE_DOMAIN:?Set the name or address clients use}
@@ -73,7 +78,7 @@ services:
     entrypoint: [/bin/sh, -c]
     command:
       - |
-        printf '{\n\tauto_https disable_redirects\n\tdefault_sni %s\n}\n%s {\n\ttls /run/clawbridge-tls/cert.pem /run/clawbridge-tls/key.pem\n\treverse_proxy api:8080\n}\n' "$$CLAWBRIDGE_DOMAIN" "$$CLAWBRIDGE_DOMAIN" >/tmp/Caddyfile &&
+        printf '{\n\tauto_https disable_redirects\n\tdefault_sni %s\n}\n%s {\n\ttls /run/clawbridge-tls/cert.pem /run/clawbridge-tls/key.pem\n\treverse_proxy api-backend:8080\n}\n' "$$CLAWBRIDGE_DOMAIN" "$$CLAWBRIDGE_DOMAIN" >/tmp/Caddyfile &&
         exec caddy run --config /tmp/Caddyfile --adapter caddyfile
     environment:
       CLAWBRIDGE_DOMAIN: ${CLAWBRIDGE_DOMAIN:?Set the name or address clients use}
@@ -98,7 +103,10 @@ services:
     # it in the bounding set, even as a non-root user.
     cap_add:
       - NET_BIND_SERVICE
+    # Like compose.yaml's caddy: it answers to caddy-backend on backend
+    # only, the name the api trusts as its proxy (see compose.yaml's api).
     networks:
-      - backend
-      - egress
+      backend:
+        aliases: [caddy-backend]
+      egress: {}
     restart: unless-stopped

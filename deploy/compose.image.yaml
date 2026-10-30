@@ -2,6 +2,8 @@
 # source (docs/operations/deployment.md, "The published image"):
 #   docker compose -f compose.yaml -f compose.image.yaml pull api
 #   docker compose -f compose.yaml -f compose.image.yaml up -d --no-deps api
+# (add caddy when compose.yaml's caddy changed, as in v0.3.12: see
+# docs/operations/deployment.md, the published-image upgrade steps)
 # CLAWBRIDGE_IMAGE is ghcr.io/jkai-chen/clawbridge@sha256:…, the digest a
 # release names. build is reset, so this path can only pull that exact image.
 # compose.yaml's postgres and caddy images are pinned by digest too; refresh:

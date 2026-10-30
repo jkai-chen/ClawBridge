@@ -69,7 +69,8 @@ func newCaseEnv(t *testing.T) (*modelEnv, string, string, func() []string) {
 	if _, e.launcher, err = store.OperatorLauncherTokenCreate(ctx); err != nil {
 		t.Fatal(err)
 	}
-	e.host = httptest.NewServer(NewHandlerWithOptions(store, nil, HandlerOptions{ModelMaxAgents: 3, NudgeProject: func(p string) {
+	// The test server's peer is loopback: it stands for the bundled proxy.
+	e.host = httptest.NewServer(NewHandlerWithOptions(store, nil, HandlerOptions{ModelMaxAgents: 3, TrustedProxies: mustProxies(t, "127.0.0.1"), NudgeProject: func(p string) {
 		mu.Lock()
 		defer mu.Unlock()
 		nudged = append(nudged, p)
@@ -217,21 +218,34 @@ func TestModelCasesOnePoll(t *testing.T) {
 
 // A project token or agent credential travels only over HTTPS or from this
 // machine: a proxied plain-HTTP request from elsewhere is refused before
-// the token is looked at.
+// the token is looked at. Only a trusted proxy's X-Forwarded-Proto counts
+// (S2): a loopback peer without trust is this machine over its own
+// connection, whatever it claims.
 func TestModelPlainHTTPRefused(t *testing.T) {
+	trusted := mustProxies(t, "10.0.0.2, 127.0.0.1")
 	for _, c := range []struct {
+		proxies     *TrustedProxies
+		peer        string
 		proto, from string
 		refused     bool
-	}{{"http", "203.0.113.9", true}, {"https", "203.0.113.9", false}, {"http", "", false}} {
+	}{
+		{trusted, "10.0.0.2:4000", "http", "203.0.113.9", true},
+		{trusted, "10.0.0.2:4000", "https", "203.0.113.9", false},
+		{trusted, "127.0.0.1:4000", "http", "", false},
+		{trusted, "127.0.0.1:4000", "https", "", false},
+		// Not the proxy: its headers are ignored, so the connection's
+		// scheme (http) and its own address decide.
+		{nil, "127.0.0.1:4000", "https", "203.0.113.9", false},
+		{nil, "10.0.0.2:4000", "https", "203.0.113.9", true},
+		{mustProxies(t, "10.0.0.3"), "10.0.0.2:4000", "https", "", true},
+	} {
 		req := httptest.NewRequest("GET", ModelHelloPath, nil)
-		req.RemoteAddr = "10.0.0.2:4000"
+		req.RemoteAddr = c.peer
 		req.Header.Set("X-Forwarded-Proto", c.proto)
 		if c.from != "" {
 			req.Header.Set("X-Forwarded-For", c.from)
-		} else {
-			req.RemoteAddr = "127.0.0.1:4000"
 		}
-		if got := plainRemote(req); got != c.refused {
+		if got := plainRemote(c.proxies.apply(req)); got != c.refused {
 			t.Fatal(c, got)
 		}
 	}

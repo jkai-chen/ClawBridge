@@ -313,6 +313,9 @@ type HandlerOptions struct {
 	// Webhook serves POST /linear/webhook (FR14); nil, or one without a
 	// secret or the app's OrgID, leaves it a 404 like an unknown path.
 	Webhook *WebhookOptions
+	// TrustedProxies are the peers whose forwarded headers name the
+	// client and its scheme (S2); nil trusts none.
+	TrustedProxies *TrustedProxies
 }
 
 // NewHandlerWithOptions also serves the send-only /mcp/intake endpoint when
@@ -433,6 +436,9 @@ func NewHandlerWithOptions(store Executor, verifier Verifier, o HandlerOptions) 
 		return o.Drain.Check(ctx)
 	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// The client's address and scheme, read once: every per-IP limit
+		// and the plain-HTTP check use these (S2).
+		r = o.TrustedProxies.apply(r)
 		w.Header().Set("Cache-Control", "no-store")
 		if r.URL.Path == StreamPath && stream != nil {
 			// A stream is never in flight: a drain closes it.
@@ -790,7 +796,7 @@ func Run(ctx context.Context, args []string) error {
 	hub := NewStreamHub()
 	hub.maintenance = drain.Invalidate
 	drain.onStart = hub.StartDrain
-	options := startWatcher(ctx, store, watch, HandlerOptions{OAuth: metadata, Writer: writer, Auth: auth, ModelMaxAgents: maxAgents, Drain: drain, Webhook: webhook})
+	options := startWatcher(ctx, store, watch, HandlerOptions{OAuth: metadata, Writer: writer, Auth: auth, ModelMaxAgents: maxAgents, Drain: drain, Webhook: webhook, TrustedProxies: settings.TrustedProxies})
 	// A drain's end also catches up the live webhook teams (FR14 §6 P6);
 	// drain.Run starts below, so onEnd is set before it can run.
 	drain.onEnd = webhookDrainEnd(hub.EndDrain, store, func() func(string) {
@@ -1170,6 +1176,10 @@ type ServeSettings struct {
 	// after the webhook probe. Off, deliveries are verified and recorded
 	// inert.
 	WebhooksProven bool
+	// TrustedProxies are the peers whose X-Forwarded-For and
+	// X-Forwarded-Proto count (S2): serve --trusted-proxies, else
+	// CLAWBRIDGE_TRUSTED_PROXIES. Unset trusts no peer.
+	TrustedProxies *TrustedProxies
 }
 
 // ParseServe reads serve's flags and the OAuth secrets from getenv. The
@@ -1193,6 +1203,7 @@ func ParseServe(args []string, getenv func(string) string) (ServeSettings, error
 	planProven := f.Bool("project-plan-proven", false, "let the project owner, a lead, a team's lead or the coordinator set a Linear project's priority, target date and start date; set only after the plan probe proves it (also CLAWBRIDGE_PROJECT_PLAN_PROVEN=1)")
 	webhooksProven := f.Bool("webhooks-proven", false, "let verified Linear webhook deliveries mark watch cursors due; set only after the webhook probe proves them (also CLAWBRIDGE_WEBHOOKS_PROVEN=1)")
 	teamAddProven := f.Bool("project-team-add-proven", false, "let the project owner, a lead or the coordinator add a bound team to a Linear project; set only after the team-add probe proves it (also CLAWBRIDGE_PROJECT_TEAM_ADD_PROVEN=1)")
+	trustedProxies := f.String("trusted-proxies", "", "comma-separated IPs, CIDRs or host names of the reverse proxies whose X-Forwarded-For and X-Forwarded-Proto count; unset trusts none (also CLAWBRIDGE_TRUSTED_PROXIES)")
 	statusDomainProven := f.Bool("project-status-domain-proven", false, "let a dispatcher domain's coordinator set a Linear project's status inside its lane; set only after the probe shows the app's project teams list a private team the app isn't a member of (also CLAWBRIDGE_PROJECT_STATUS_DOMAIN_PROVEN=1)")
 	if err := f.Parse(args); err != nil {
 		return ServeSettings{}, err
@@ -1274,6 +1285,13 @@ func ParseServe(args []string, getenv func(string) string) (ServeSettings, error
 	case "0", "false":
 	default:
 		return ServeSettings{}, errors.New("CLAWBRIDGE_WEBHOOKS_PROVEN is 1 or 0")
+	}
+	proxiesSource, proxiesValue := "--trusted-proxies", *trustedProxies
+	if strings.TrimSpace(proxiesValue) == "" {
+		proxiesSource, proxiesValue = "CLAWBRIDGE_TRUSTED_PROXIES", getenv("CLAWBRIDGE_TRUSTED_PROXIES")
+	}
+	if out.TrustedProxies, err = ParseTrustedProxies(proxiesValue); err != nil {
+		return ServeSettings{}, fmt.Errorf("%s: %w", proxiesSource, err)
 	}
 	if out.WebhookSecrets, err = parseWebhookSecrets(getenv("CLAWBRIDGE_LINEAR_WEBHOOK_SECRETS")); err != nil {
 		return ServeSettings{}, err

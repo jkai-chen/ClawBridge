@@ -21,6 +21,7 @@ Write as you would to a colleague. You don't need special words or mentions.
 - "🤖 Claimed by ClawBridge agent session NAME" means an agent is now working on, or watching, the issue.
 - "🤖 Released by ClawBridge agent session NAME" means the agent has finished with the issue.
 - The label {{.AgentWorkingLabel}} means an agent is assigned to the issue.
+- An agent comment that starts "Canceled:" gives the reason an agent canceled the issue; one that starts "Duplicate of" says which issue it duplicates. Agents do that only where a person on the team allowed it; ask the team if it looks wrong.
 
 The 🤖 line is a label, not a signature: anyone could type it. If something looks wrong, ask a person on the team.
 

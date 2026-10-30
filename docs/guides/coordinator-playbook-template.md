@@ -58,6 +58,17 @@ of every turn ([what the coordinator does](coordinator.md)).
   handover at 650k; sessions save their state at the warning.
 - New sessions start with the permissions their role needs, nothing wider.
 
+## New members
+
+- Dana sends each new colleague the join guide (copied from ClawBridge's
+  `docs/templates/colleague-join-guide.md`), with their lane and invite.
+- When `coord` gets a session-joined notice, it answers the hello, checks the lane,
+  and tells Dana if the session is unpinned or has no team role yet.
+- `coord` never pins lanes, sets roles, or changes who closes or who may cancel:
+  those are Dana's, from her own terminal.
+- Agents cancel or mark Duplicate only in projects of kind `Engineering`, as Dana set
+  it; anywhere else `coord` asks Dana.
+
 ## Reporting
 
 - A comment on the issue at each milestone: merged, failed review, released,

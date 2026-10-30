@@ -104,7 +104,7 @@ requires its matching instance. Routing role is distinct from project permission
 | `project_thread` | Project owner, sessionless: thread_id; optional limit (1–200, default 100), after (a sequence) |
 | `resolve_project` | Explicit project or optional git_remote fallback |
 | `taskboard_get` | Shared Linear mapping; optional current actor/instance |
-| `taskboard_access` | Own effective project-write capability; ledger (must be 1); optional actor/instance; optional engineer (1 returns the engineer agent markers name); optional lane_scope (1 returns the session's lane, when the binding has lanes); optional coordinator_scope (1 returns `coordinator: true` when the session is the project's active designated coordinator or, while the dispatcher is on, a domain's coordinator session) |
+| `taskboard_access` | Own effective project-write capability; ledger (must be 1); optional actor/instance; optional engineer (1 returns the engineer agent markers name); optional lane_scope (1 returns the session's lane, when the binding has lanes); optional lane_from (1, with lane_scope, also returns where that lane came from); optional coordinator_scope (1 returns `coordinator: true` when the session is the project's active designated coordinator or, while the dispatcher is on, a domain's coordinator session) |
 | `member_display_name_set` | Hosted only, the caller's own name in the workspace for agent markers: display_name (up to 200 characters, no `@`, stored stripped of mentions, links and Markdown; empty clears it); optional if_unset (1 keeps a name already recorded). Answers `{display_name, engineer, kept}`. Audited |
 | `taskboard_set` | expected_revision, linear_team_ids, linear_default_team_id, linear_project_id (UUID/null); optional linear_workspace_id (UUID/null) |
 | `taskboard_clear` | expected_revision; authorized owner/lead; optional repair (project owner, unreadable binding only) |
@@ -213,7 +213,17 @@ capability flags and, for any that are off, a `reasons` entry explaining why.
 `taskboard_update_v2` requires `expected_label_ids` whenever it sends
 `label_ids`: the complete label set last read, refused on mismatch.
 `taskboard_issues_v2` accepts `updated_after`, an absolute RFC 3339 time;
-rows updated earlier refuse the page.
+rows updated earlier refuse the page. It reads one verified (team, project) pair
+of the binding per page, so the first page holds the first team's issues only.
+When the listing walks more than one pair, an incomplete page adds `page_team`
+(its team's key, or the team ID when Linear gave no key) and `remaining_teams`
+(the distinct keys of the pairs after it, in walk order, without the page's own
+team; left out when none follow). A complete page and a one-pair listing have neither.
+The server's instructions say that shell `clawbridge` commands don't inherit its
+workspace, project and session, and name the server's own values as
+`--workspace`, `--project` and `--session` (the instance only as "this server's
+--instance", never its value). `taskboard_context_v2` has no `scope`; that is the
+CLI's.
 `taskboard_issue_v2` takes `id` as a UUID or a display identifier such as `ENG-88`
 (resolved by a Linear read and refused when stale or outside the binding), and accepts `resolve_labels: true` to prove label IDs when Linear
 returns label names only, and returns `description_sha256`, the SHA-256 of the
@@ -570,7 +580,10 @@ lanes, it adds `lane` (the lane's name, or `read_only`) and
 `lane_write_team_ids` (the write teams the session writes; empty when
 read-only): its own pin while it belongs to the principal pinned, else a pin
 of the session it moved from under the same principal, else its principal's
-pin, else the binding's `unpinned`. With `coordinator_scope: 1`, it adds
+pin, else the binding's `unpinned`. With `lane_from: 1` as well, it adds
+`lane_from`, which of those found the lane: `session_pin`, `moved_session_pin`,
+`principal_pin` or `unpinned`. A server older than this field refuses the
+argument; the client then drops it and asks again. With `coordinator_scope: 1`, it adds
 `coordinator: true` when the session is the project's active designated
 coordinator (never the dispatcher's system session). Native issue writes require both an
 allowed ClawBridge role and personal Linear write capability. A supplied actor
@@ -630,6 +643,48 @@ IDs.
   names.
 - **Staleness:** a rename in Linear shows the old name until the next link or
   refresh. The overview's `names_updated_at` says when they were set.
+
+### Linear CLI scope
+
+The CLI says which ClawBridge scope a `clawbridge linear` command used, because a
+shell command may take its project from a config file the caller didn't expect.
+Each scope value comes from the last layer that sets it: the config file
+(`~/.clawbridge/config.toml`, or `--client-config`/`CLAWBRIDGE_CONFIG`), the
+checkout's `.clawbridge.toml` (only without an explicit config file), the
+`CLAWBRIDGE_*` environment (not on the guided route), then flags.
+
+- **`linear context`** adds `scope`, an object keyed `workspace`, `project`,
+  `session` and `instance`, each `{value, from}`. `from` is `flag`, `env
+  CLAWBRIDGE_WORKSPACE` (or `_PROJECT`, `_SESSION`, `_INSTANCE`), `.clawbridge.toml at
+  PATH` or `config file PATH`, with an absolute path. A field no layer set is left
+  out. The instance has `from` only, never its value.
+- **`linear binding`** prints the same scope to stderr, one `scope: FIELD VALUE (from
+  SOURCE)` line per field (the instance as `set`). Its stdout JSON is unchanged. It accepts
+  `--profile`, checked and otherwise unused: the binding is ClawBridge's own record,
+  read without a Linear call.
+- **An out-of-scope refusal** keeps its text and adds `; this used workspace W and
+  project P (project from SOURCE); pass --workspace and --project, or set
+  CLAWBRIDGE_WORKSPACE and CLAWBRIDGE_PROJECT, to use another`. With the project from
+  a flag it adds only `; this used workspace W and project P`; with no recorded
+  source, the advice without the parenthetical. W and P are the names as configured,
+  or the resolved IDs when none were. An identifier Linear can't find (`no issue ENG-88 in
+  this binding`) counts as out of scope. In cloud mode a refusal the server itself
+  produces arrives as plain text and gets no suffix; the client's own read checks,
+  the ones agents meet, have it. `linear roles` has no such refusal and no suffix.
+- **An `outside_lane` refusal** adds where the lane came from: ` (lane from the
+  session's pin)`, ` (lane from a pin of the session it moved from)`, ` (lane from
+  your own pin as a person)` or ` (lane from the binding's unpinned setting)`, from
+  `taskboard_access`'s `lane_from` (nothing from an older server). With no session in
+  the call it also adds `; this call named no session: pass --session, or set
+  CLAWBRIDGE_SESSION`. `; nothing was sent` stays last.
+- **Lanes only gate writes.** `linear issue` and `linear issues` read the project's
+  whole binding; a lane never narrows a read.
+- **`linear issues`** carries `page_team` and `remaining_teams` as
+  `taskboard_issues_v2` does. Its text layout (not `--json`) ends an incomplete
+  multi-team page with `page of team ENG; more teams follow: OPS, WEB; pass --cursor
+  NEXT to continue`, leaving out the middle part when no other team follows. A page
+  never names its own team among those that follow. `linear view issues` also returns
+  `page_team` and `remaining_teams` in its JSON, but has no text footer.
 
 ## Project overview
 

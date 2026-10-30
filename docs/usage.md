@@ -257,6 +257,26 @@ Repository configuration may provide only db/workspace/project/session/instance.
 Authority mode, server, audience, credentials, principal and cache come from
 trusted routing. A repository cannot switch your local client to a cloud server.
 
+Each value comes from the last of these that sets it:
+
+1. the config file: `~/.clawbridge/config.toml`, or the file `--client-config` or
+   `CLAWBRIDGE_CONFIG` names;
+2. the checkout's `.clawbridge.toml`, only when no config file was named explicitly;
+3. the `CLAWBRIDGE_*` environment variables (`CLAWBRIDGE_WORKSPACE`,
+   `CLAWBRIDGE_PROJECT`, `CLAWBRIDGE_SESSION`, `CLAWBRIDGE_INSTANCE` and the rest),
+   except in the guided setup, which ignores them;
+4. flags.
+
+`clawbridge linear context --json` shows the workspace, project, session and
+instance it used, each with where it came from (`scope`; the instance's source
+only, never its value), and `clawbridge linear binding` prints the same to stderr.
+
+An agent's shell doesn't inherit its MCP server's scope: `mcp install` sets the
+server's own flags and nothing for the shell. A shell `clawbridge` command falls
+back to the files above, which may name another project. The server's
+instructions name its workspace, project and session; pass them as flags with
+the server's `--instance`, or export the four `CLAWBRIDGE_*` variables.
+
 Without a project selector, a registered normalized Git remote can resolve it.
 Missing or ambiguous projects fail; they are not silently created. Sessions are
 unique within a project. Prefer immutable IDs when naming a specific recipient.

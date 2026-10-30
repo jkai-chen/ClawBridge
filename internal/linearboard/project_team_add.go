@@ -170,7 +170,7 @@ func (s *Service) addProjectTeam(ctx context.Context, scope bus.Request, in Proj
 		if len(b.Lanes) == 0 {
 			return out, outsideLaneError("outside_lane: this binding has no lanes, so a coordinator adds no team to a project; nothing was sent")
 		}
-		if e = checkLaneV2(b, access, in.TeamID); e != nil {
+		if e = checkLaneV2(b, access, scope.Session, in.TeamID); e != nil {
 			return out, e
 		}
 		if !slices.ContainsFunc(plan.Teams, func(t string) bool { return contains(access.LaneWriteTeamIDs, t) }) {

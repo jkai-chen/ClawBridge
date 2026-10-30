@@ -25,6 +25,10 @@ type TaskboardAccess struct {
 	// lane.
 	Lane             string   `json:"lane,omitempty"`
 	LaneWriteTeamIDs []string `json:"lane_write_team_ids,omitempty"`
+	// LaneFrom names where the server found Lane (LaneFromSessionPin and
+	// the rest), when the client also asked (lane_from: 1); empty from an
+	// older server.
+	LaneFrom string `json:"lane_from,omitempty"`
 	// Coordinator is true when the client asked (coordinator_scope: 1) and
 	// the session is the project's active designated coordinator.
 	Coordinator bool `json:"coordinator,omitempty"`
@@ -37,6 +41,9 @@ func accessMap(a TaskboardAccess) map[string]any {
 	}
 	if a.LaneWriteTeamIDs != nil {
 		m["lane"], m["lane_write_team_ids"] = a.Lane, append([]string{}, a.LaneWriteTeamIDs...)
+		if a.LaneFrom != "" {
+			m["lane_from"] = a.LaneFrom
+		}
 	}
 	if a.Coordinator {
 		m["coordinator"] = true
@@ -87,6 +94,19 @@ func ParseTaskboardAccess(v any) (TaskboardAccess, error) {
 			ids = []string{}
 		}
 		a.Lane, a.LaneWriteTeamIDs = name, ids
+	}
+	if v, present := m["lane_from"]; present {
+		from, _ := v.(string)
+		switch from {
+		case LaneFromSessionPin, LaneFromMovedSessionPin, LaneFromPrincipalPin, LaneFromUnpinned:
+		default:
+			return a, errors.New("invalid access lane source")
+		}
+		if !lane {
+			return a, errors.New("an access lane source comes with its lane")
+		}
+		extra++
+		a.LaneFrom = from
 	}
 	if v, present := m["coordinator"]; present {
 		if v != true || m["session_id"] == nil {

@@ -277,7 +277,12 @@ func parseLinear(command string, args []string, stderr io.Writer) (linearFlags, 
 		f.StringVar(&v.name, "name", "", "new personal connection label")
 		f.StringVar(&v.access, "access", "read", "read or write")
 		f.BoolVar(&v.tokenStdin, "token-stdin", false, "read imported token only from stdin")
-	case "profiles", "binding":
+	case "profiles":
+	case "binding":
+		// Accepted so a wrapper can pass one flag set to every linear
+		// read: the binding is ClawBridge's own record, read without a
+		// Linear call, so the profile is checked and otherwise unused.
+		f.StringVar(&v.profile, "profile", "", "accepted and checked, otherwise unused: the binding is ClawBridge's own record, read without a Linear call")
 	case "status", "logout", "context", "names-refresh":
 		profile()
 	case "watch":
@@ -777,12 +782,19 @@ func readLinearFile(path string) (string, error) {
 	return string(data), nil
 }
 func linearExecutor(ctx context.Context, flags Config) (linearboard.Executor, func(), bus.Request, error) {
+	executor, cleanup, scope, _, err := linearExecutorConfig(ctx, flags)
+	return executor, cleanup, scope, err
+}
+
+// linearExecutorConfig is linearExecutor that also returns the resolved
+// configuration, whose Sources say where the scope came from.
+func linearExecutorConfig(ctx context.Context, flags Config) (linearboard.Executor, func(), bus.Request, Config, error) {
 	c, _, err := resolveConfig(ctx, flags)
 	if err != nil {
-		return nil, nil, bus.Request{}, err
+		return nil, nil, bus.Request{}, Config{}, err
 	}
 	if c.Workspace == "" || c.Project == "" {
-		return nil, nil, bus.Request{}, errors.New("task-board actions require explicit existing ClawBridge workspace/project")
+		return nil, nil, bus.Request{}, Config{}, errors.New("task-board actions require explicit existing ClawBridge workspace/project")
 	}
 	var executor interface {
 		Execute(context.Context, bus.Request) (bus.Result, error)
@@ -809,18 +821,84 @@ func linearExecutor(ctx context.Context, flags Config) (linearboard.Executor, fu
 		}
 	}
 	if err != nil {
-		return nil, nil, bus.Request{}, err
+		return nil, nil, bus.Request{}, Config{}, err
 	}
 	workspace, project, err := executor.ResolveProject(ctx, c.Workspace, c.Project, "")
 	if err != nil {
 		cleanup()
-		return nil, nil, bus.Request{}, err
+		return nil, nil, bus.Request{}, Config{}, err
 	}
 	scope := bus.Request{Workspace: workspace, Project: project, Session: c.Session, Args: map[string]any{"linear_authority": linearAuthority(c)}}
 	if c.Instance != "" {
 		scope.Args["instance"] = c.Instance
 	}
-	return executor, cleanup, scope, nil
+	return executor, cleanup, scope, c, nil
+}
+
+// scopeNames are the workspace and project as configured, or the resolved
+// IDs when the configuration named none.
+func scopeNames(c Config, scope bus.Request) (string, string) {
+	workspace, project := c.Workspace, c.Project
+	if workspace == "" {
+		workspace = scope.Workspace
+	}
+	if project == "" {
+		project = scope.Project
+	}
+	return workspace, project
+}
+
+// explainOutOfScope appends to a refusal of something the binding doesn't
+// cover the workspace and project it was read against, and, unless a flag
+// chose the project, where the project came from: a default from a config
+// file reads like a lane problem otherwise. The refusal stays first and
+// unchanged, and IsOutOfScope still holds.
+func explainOutOfScope(err error, c Config, scope bus.Request) error {
+	if !linearboard.IsOutOfScope(err) {
+		return err
+	}
+	workspace, project := scopeNames(c, scope)
+	suffix := "; this used workspace " + workspace + " and project " + project
+	switch from := c.Sources["project"]; from {
+	case "flag":
+	case "":
+		suffix += "; pass --workspace and --project, or set CLAWBRIDGE_WORKSPACE and CLAWBRIDGE_PROJECT, to use another"
+	default:
+		suffix += " (project from " + from + "); pass --workspace and --project, or set CLAWBRIDGE_WORKSPACE and CLAWBRIDGE_PROJECT, to use another"
+	}
+	return fmt.Errorf("%w%s", err, suffix)
+}
+
+// linearScopeView is the scope the CLI used for linear context, each value
+// with its source. The instance carries its source only: it is a secret.
+func linearScopeView(c Config, scope bus.Request) map[string]linearboard.ScopeValueV2 {
+	workspace, project := scopeNames(c, scope)
+	values := map[string]string{"workspace": workspace, "project": project, "session": c.Session}
+	view := map[string]linearboard.ScopeValueV2{}
+	for _, f := range scopeSourceFields {
+		from, ok := c.Sources[f.name]
+		if !ok {
+			continue
+		}
+		view[f.name] = linearboard.ScopeValueV2{Value: values[f.name], From: from}
+	}
+	return view
+}
+
+// writeScopeLines prints the scope view to w, one line per field, the
+// instance as "set" only.
+func writeScopeLines(w io.Writer, view map[string]linearboard.ScopeValueV2) {
+	for _, f := range scopeSourceFields {
+		s, ok := view[f.name]
+		if !ok {
+			continue
+		}
+		value := s.Value
+		if f.name == "instance" {
+			value = "set"
+		}
+		_, _ = fmt.Fprintf(w, "scope: %s %s (from %s)\n", f.name, value, s.From)
+	}
 }
 func newLinearService(directory, profile string, manager *linearconn.Manager, executor linearboard.Executor, authority ...string) *linearboard.Service {
 	route := ""
@@ -955,7 +1033,7 @@ var linearInternalCommands = map[string]string{
 	"view-delete":       "view delete VIEW",
 }
 
-func runLinear(ctx context.Context, flags Config, args []string, stdout, stderr io.Writer) error {
+func runLinear(ctx context.Context, flags Config, args []string, stdout, stderr io.Writer) (err error) {
 	if len(args) == 0 || len(args) == 1 && (args[0] == "--help" || args[0] == "-h" || args[0] == "help") {
 		_, err := io.WriteString(stdout, "clawbridge linear connect|import|profiles|status|logout|teams|projects|binding|link|seed-docs|unlink|names-refresh|context|issues|issue|states|labels|members|create|update|comment|relation|move|watch|webhook-setup\nMove an issue to another bound team: move ISSUE_UUID --team UUID [--operation-id ID --confirm --expected-plan-sha256 SHA]; without --confirm it is a preview. The project owner or a project lead (the ClawBridge project role) confirms from their own terminal, or the coordinator session within its lane.\nA Linear project's priority and dates: project update PROJECT_UUID [--priority P] [--target-date D|--clear-target-date] [--start-date D|--clear-start-date] --operation-id ID [--confirm --expected-plan-sha256 SHA]; without --confirm it is a preview. The project owner, a project lead or a team's lead in the team roles confirms from their own terminal, or the coordinator session (or a session of a team's lead) within its lane; anyone else previews and asks.\nProject owner only: label create|rename, project create [--kind NAME], initiative create|add-project, label-policy show|set, status-policy show|set, doc-policy set, health set|enable|disable, admin audit-replay.\nProject kinds (a project-label group such as Type): kind show (any member); kind set --values A,B,C [--group NAME] [--team UUID] --expected-revision N, then kind seed --operation-id ID --profile ID [--confirm] makes or adopts its project labels, and kind apply --file F --operation-id ID --profile ID [--confirm --canary] sets each project's kind (project owner, own terminal).\nA coordinator's projects: the project's designated coordinator session (while the dispatcher is on, a domain's) runs project create NAME --team UUID --kind NAME --operation-id ID in its lane's default team; project creates lists them and the unconfirmed ones (any member); project creates --ack OPERATION_ID (project owner, own terminal) clears one you checked in Linear.\nLinear writes that may have happened, of every kind (a create, a move, a team added; unsettled or uncertain), and issue writes (create, update, comment, relation) this machine or the server holds uncertain: writes (any member); writes --ack OPERATION_ID (project owner, or the project lead who confirmed it; own terminal; your own issue writes too) clears one you checked in Linear, a family's with its sub-issues.\nLanes (a binding's --lane NAME=TEAM,…): lanes show (any member); lanes pin --pin-session NAME|--pin-principal EMAIL --lane NAME --expected-revision N [--confirm], lanes unpin … (project owner, own terminal).\nTeam roles (who leads each bound team; lead, engineer or reviewer): roles show (any member); roles person|lead|set ... --expected-revision N [--confirm] (project owner, own terminal); roles project-lead on|off and roles apply-leads set Linear project leads from them. linear roles --help for more.\nShown names: names-refresh (project owner or lead) stores the bound teams' and projects' current names, as Linear gives them to you.\nWho closes issues: closes show (any member); closes set (project owner or lead, never a session).\nProject status follows the work (status policy project_flow): project-flow resume --linear-project UUID (project owner or lead, never a session) clears a hold.\nProject health (any member): health show.\nLinear webhooks (hosted; read-only): webhook-setup [--project SLUG] prints, for each bound write team, the team webhook the owner creates in Linear's UI (its URL, Issues and Comments, this team only) and the env line's shape with <secret>.\nWho hears of agents' issues (hosted, as the app): subscribers show (any member); subscribers on|off, owner on|off, add|remove LINEAR_USER_UUID, backfill --since DATE [--apply] (project owner or lead, never a session).\nLinear views (any member): view list [--team UUID] [--type issue|project], view show ID. Project owner, own terminal, with your Linear API key: view create --team UUID [--kind project]|update ID|delete ID|apply --file F [--adopt NAME].\nLinear documents (any member): doc list|get, initiative show, doc-policy show. Project owner or lead: doc publish FILE.\nYour name in agent markers: display-name set NAME|clear|capture --profile ID.\nYour Linear API key, for view writes (project owner, own terminal): key set|status|remove --profile ID.\nUse COMMAND --help for explicit flags. Token import accepts --token-stdin only.\n")
 		return err
@@ -1194,11 +1272,16 @@ func runLinear(ctx context.Context, flags Config, args []string, stdout, stderr 
 		}
 		return emit(page)
 	}
-	executor, closeExecutor, scope, err := linearExecutor(bounded, flags)
+	executor, closeExecutor, scope, resolved, err := linearExecutorConfig(bounded, flags)
 	if err != nil {
 		return err
 	}
 	defer closeExecutor()
+	// Every linear command's out-of-scope refusal names the scope it used.
+	// used is a copy: the scope as resolved, before any case changes it
+	// (a view write clears the session).
+	used := scope
+	defer func() { err = explainOutOfScope(err, resolved, used) }()
 	service := newLinearService(directory, v.profile, manager, executor, scope.Args["linear_authority"].(string))
 	var data any
 	switch command {
@@ -1214,6 +1297,8 @@ func runLinear(ctx context.Context, flags Config, args []string, stdout, stderr 
 		r, err = executor.Execute(bounded, bus.Request{Operation: "linear_write_status", Workspace: scope.Workspace, Project: scope.Project, Session: scope.Session, Args: args})
 		data = r.Data
 	case "binding":
+		// The scope goes to stderr, so the binding JSON stays as it was.
+		writeScopeLines(stderr, linearScopeView(resolved, scope))
 		data, err = service.BindingV2(bounded, scope)
 	case "link":
 		in := linearboard.LinkInputV2{TeamIDs: v.teams, DefaultTeamID: v.defaultTeam, ProjectIDs: append([]string{}, v.projects...), ExpectedRevision: v.revision, TeamBoard: v.teamBoard, Confirm: v.confirm, MinimalPolicy: v.minimalPolicy, ParentTeamID: v.parentTeam, Unpinned: v.unpinned, TeamsWithoutProject: v.withoutProject}
@@ -1258,7 +1343,10 @@ func runLinear(ctx context.Context, flags Config, args []string, stdout, stderr 
 			data, err = service.UnlinkV2(bounded, scope, v.revision, v.confirm)
 		}
 	case "context":
-		data, err = service.ContextV2(bounded, scope)
+		var out linearboard.ContextV2
+		out, err = service.ContextV2(bounded, scope)
+		out.Scope = linearScopeView(resolved, scope)
+		data = out
 	case "names-refresh":
 		data, err = service.RefreshNamesV2(bounded, scope)
 	case "issues":

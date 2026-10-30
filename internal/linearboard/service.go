@@ -247,6 +247,8 @@ func (s *Service) access(ctx context.Context, scope bus.Request) (bus.TaskboardA
 	scope.Args["engineer"] = 1
 	// The session's lane, when the binding has lanes (§3.1).
 	scope.Args["lane_scope"] = 1
+	// And where the lane came from, so an outside_lane refusal names it.
+	scope.Args["lane_from"] = 1
 	// Whether the session is the project's designated coordinator or, while the
 	// dispatcher is on, a domain's coordinator session (FR5).
 	scope.Args["coordinator_scope"] = 1
@@ -255,8 +257,9 @@ func (s *Service) access(ctx context.Context, scope bus.Request) (bus.TaskboardA
 	// at a time: without "lane_scope" it names no lane, and a binding with lanes
 	// then refuses every write (checkLaneV2); without "coordinator_scope" no
 	// session is the coordinator, so only the owner creates projects; a
-	// server older than v0.2.8 names no engineer, and the marker omits it.
-	optionals := []string{"coordinator_scope", "lane_scope", "engineer"}
+	// server older than v0.2.8 names no engineer, and the marker omits it;
+	// without "lane_from" an outside_lane refusal names no lane source.
+	optionals := []string{"coordinator_scope", "lane_scope", "lane_from", "engineer"}
 	for range optionals {
 		dropped := false
 		for _, optional := range optionals {

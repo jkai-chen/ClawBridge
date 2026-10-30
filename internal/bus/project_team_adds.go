@@ -97,7 +97,7 @@ func (s *Store) projectTeamAdder(ctx context.Context, tx *transaction, pid, proj
 	if len(b.Lanes) == 0 {
 		return "", "", scoped("outside_lane: this binding has no lanes, so a coordinator adds no team to a project; the project owner or a lead does", "forbidden")
 	}
-	lane, _, _, err := s.sessionLane(ctx, tx, pid, actor)
+	lane, _, _, _, err := s.sessionLane(ctx, tx, pid, actor)
 	if err != nil {
 		return "", "", err
 	}

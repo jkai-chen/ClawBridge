@@ -2,6 +2,7 @@ package linearboard
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 
@@ -53,6 +54,83 @@ func TestLaneWritesOnlyItsTeams(t *testing.T) {
 	}
 	if e = create("n-in", teamID, projectA); e != nil || len(p.created) != 1 {
 		t.Fatal("a create in the lane refused:", e)
+	}
+}
+
+// An outside_lane refusal names where the server found the lane, after the
+// lane clause; the client asks for the source alongside the lane.
+func TestLaneRefusalNamesTheLaneSource(t *testing.T) {
+	wrong := "outside_lane: team " + otherTeamID + " is written by lane far; you are in lane near"
+	none := "outside_lane: team " + teamID + " is written by lane near; this session has no lane (unpinned sessions are read-only, or its pinned lane is gone)"
+	for from, want := range map[string]string{
+		bus.LaneFromSessionPin:      wrong + " (lane from the session's pin); nothing was sent",
+		bus.LaneFromMovedSessionPin: wrong + " (lane from a pin of the session it moved from); nothing was sent",
+		bus.LaneFromPrincipalPin:    wrong + " (lane from your own pin as a person); nothing was sent",
+	} {
+		s, a, p, scope := lanesV2(t, "near", teamID)
+		a.laneFrom = from
+		if e := update(s, scope, "out", otherIssue); e == nil || e.Error() != want || p.writes != 0 {
+			t.Fatal(from, e)
+		}
+		if a.accessArgs["lane_from"] != 1 || a.accessArgs["lane_scope"] != 1 {
+			t.Fatal("the lane source was never asked for:", a.accessArgs)
+		}
+	}
+	s, a, p, scope := lanesV2(t, bus.LaneReadOnly)
+	a.laneFrom = bus.LaneFromUnpinned
+	if e := update(s, scope, "ro", issueID); e == nil || e.Error() != none+" (lane from the binding's unpinned setting); nothing was sent" || p.writes != 0 {
+		t.Fatal("unpinned:", e)
+	}
+}
+
+// A call that named no session is told how to name one, after the lane
+// source; "nothing was sent" stays last.
+func TestLaneRefusalWithoutASession(t *testing.T) {
+	s, a, p, scope := lanesV2(t, bus.LaneReadOnly)
+	a.actor, a.name, a.laneFrom = "", "", bus.LaneFromUnpinned
+	scope.Session, scope.Args = "", map[string]any{}
+	want := "outside_lane: team " + teamID + " is written by lane near; this session has no lane (unpinned sessions are read-only, or its pinned lane is gone) (lane from the binding's unpinned setting); this call named no session: pass --session, or set CLAWBRIDGE_SESSION; nothing was sent"
+	if e := update(s, scope, "ro", issueID); e == nil || e.Error() != want || p.writes != 0 {
+		t.Fatal(e)
+	}
+	b := bus.TaskboardBindingV2{LinearTeamIDs: []string{teamID, otherTeamID}, Lanes: []bus.Lane{{Name: "near", WriteTeamIDs: []string{teamID}, DefaultTeamID: teamID}}}
+	access := bus.TaskboardAccess{Lane: "near", LaneWriteTeamIDs: []string{teamID}, LaneFrom: bus.LaneFromPrincipalPin}
+	want = "outside_lane: no lane writes team " + otherTeamID + "; you are in lane near (lane from your own pin as a person); this call named no session: pass --session, or set CLAWBRIDGE_SESSION; nothing was sent"
+	if e := checkLaneV2(b, access, "", otherTeamID); e == nil || e.Error() != want {
+		t.Fatal(e)
+	}
+}
+
+// v0311Server is a v0.3.11 server: it refuses lane_from as an argument it
+// doesn't know and names no lane source.
+type v0311Server struct{ *authorityV2 }
+
+func (o v0311Server) Execute(ctx context.Context, r bus.Request) (bus.Result, error) {
+	if r.Operation == "taskboard_access" && r.Args["lane_from"] != nil {
+		return bus.Result{}, errors.New(`unsupported argument "lane_from" for taskboard_access`)
+	}
+	return o.authorityV2.Execute(ctx, r)
+}
+
+// Against a v0.3.11 server the client drops lane_from, and a refusal reads
+// as it does today.
+func TestLaneRefusalFromAnOlderServer(t *testing.T) {
+	s, a, p, scope := lanesV2(t, "near", teamID)
+	a.laneFrom = bus.LaneFromSessionPin
+	s.cfg.Executor = v0311Server{a}
+	if e := update(s, scope, "in", issueID); e != nil || p.writes != 1 {
+		t.Fatal("the lane's own team refused:", e)
+	}
+	if _, asked := a.accessArgs["lane_from"]; asked || a.accessArgs["lane_scope"] != 1 {
+		t.Fatal("lane_from kept, or the lane dropped:", a.accessArgs)
+	}
+	if e := update(s, scope, "out", otherIssue); e == nil || e.Error() != "outside_lane: team "+otherTeamID+" is written by lane far; you are in lane near; nothing was sent" || p.writes != 1 {
+		t.Fatal("not today's text:", e)
+	}
+	s, a, _, scope = lanesV2(t, bus.LaneReadOnly)
+	s.cfg.Executor = v0311Server{a}
+	if e := update(s, scope, "ro", issueID); e == nil || e.Error() != "outside_lane: team "+teamID+" is written by lane near; this session has no lane (unpinned sessions are read-only, or its pinned lane is gone); nothing was sent" {
+		t.Fatal("not today's read-only text:", e)
 	}
 }
 

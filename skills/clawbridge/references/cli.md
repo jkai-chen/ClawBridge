@@ -76,6 +76,10 @@ Supply `--db`, `--workspace`, `--project`, `--session`, and `--instance`, or use
 corresponding `CLAWBRIDGE_*` environment variables. Repository scope can be set in
 `.clawbridge.toml`; explicit selection takes precedence. Resolve a missing or
 ambiguous project with the human's known project configuration rather than guessing.
+Each value comes from the last that sets it: the config file
+(`~/.clawbridge/config.toml`, or the one `--client-config` or `CLAWBRIDGE_CONFIG`
+names), then the checkout's `.clawbridge.toml` (only without an explicit config
+file), then `CLAWBRIDGE_*` variables (not in guided setup), then flags.
 
 Register a new, uniquely named session and record its returned instance:
 
@@ -184,6 +188,33 @@ chooses where. The Stop hook sends a turn back once when messages wait unacked.
 On Windows the hooks are written in Claude Code's exec form (`command` plus
 `args`, no shell), pending the Windows probe; `clawbridge doctor` shows the hook
 form and the Claude Code version.
+
+## Shell commands and the MCP server's scope
+
+Shell clawbridge commands don't inherit your MCP server's workspace, project and
+session: `mcp install` sets the server's flags, not your shell. Pass `--workspace W
+--project P --session S` (the server's instructions name them) and the server's
+`--instance`, or export `CLAWBRIDGE_WORKSPACE`, `CLAWBRIDGE_PROJECT`,
+`CLAWBRIDGE_SESSION` and `CLAWBRIDGE_INSTANCE`. Otherwise a command uses the
+checkout's `.clawbridge.toml` or `~/.clawbridge/config.toml`, which may name another
+project.
+
+- `clawbridge linear context --json` shows the scope it used as `scope`: for each of
+  `workspace`, `project`, `session` and `instance`, its `value` and `from` (`flag`,
+  `env CLAWBRIDGE_PROJECT` and the like, `.clawbridge.toml at PATH` or `config file
+  PATH`). The instance has `from` only. `clawbridge linear binding` prints the same
+  lines to stderr and takes `--profile` like the other linear reads.
+- An issue outside the task-board scope is refused with the scope added: `; this used
+  workspace W and project P (project from SOURCE); pass --workspace and --project, or
+  set CLAWBRIDGE_WORKSPACE and CLAWBRIDGE_PROJECT, to use another`. Read it before
+  you suspect your lane.
+- Lanes only gate writes. `linear issue` and `linear issues` read the project's whole
+  binding. An `outside_lane` refusal says where your lane came from, such as `(lane
+  from the session's pin)`, and with no session in the call adds `; this call named no
+  session: pass --session, or set CLAWBRIDGE_SESSION`.
+- `linear issues` reads one (team, project) pair per page, so the first page shows
+  the first team only. An incomplete page names its team (`page_team`) and the teams
+  still to come (`remaining_teams`); follow `next_cursor` until `complete` is true.
 
 ## Updating ClawBridge
 

@@ -106,6 +106,11 @@ type Page[T any] struct {
 	// FilteredOtherTeam counts rows of another team that the provider
 	// returned and that were dropped unshown (an issue listing only).
 	FilteredOtherTeam int `json:"filtered_other_team,omitempty"`
+	// PageTeam and RemainingTeams say, on an incomplete binding issue
+	// listing, whose team this page holds and which teams' pages follow,
+	// as team keys in walk order (an issue listing only).
+	PageTeam       string   `json:"page_team,omitempty"`
+	RemainingTeams []string `json:"remaining_teams,omitempty"`
 }
 type Team struct {
 	ID   string `json:"id"`

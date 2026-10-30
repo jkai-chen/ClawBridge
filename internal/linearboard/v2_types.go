@@ -31,6 +31,17 @@ type ContextV2 struct {
 	// has lanes and the call names a session (§3.1), so an agent knows
 	// before it tries.
 	Lane *LaneViewV2 `json:"lane,omitempty"`
+	// Scope is the ClawBridge scope the CLI used and where each value came
+	// from, keyed workspace, project, session and instance (the instance
+	// with its source only, never its value). The MCP tool leaves it empty.
+	Scope map[string]ScopeValueV2 `json:"scope,omitempty"`
+}
+
+// ScopeValueV2 is one scope value and the layer that supplied it: flag,
+// env NAME, .clawbridge.toml at PATH or config file PATH.
+type ScopeValueV2 struct {
+	Value string `json:"value,omitempty"`
+	From  string `json:"from"`
 }
 
 // LaneViewV2 is a session's lane: its name, or read_only, and the write

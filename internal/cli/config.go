@@ -45,6 +45,34 @@ type Config struct {
 	KeyStore           string `toml:"key_store"`
 	ClockOffsetSeconds int64  `toml:"clock_offset_seconds"`
 	ClockOffsetAt      string `toml:"clock_offset_at"`
+	// Sources names, for workspace, project, session and instance, the
+	// layer that last set each: "flag", "env CLAWBRIDGE_PROJECT" (the
+	// field's own variable), ".clawbridge.toml at PATH" or "config file
+	// PATH". A field no layer set has no entry. Never written to a config
+	// file, and overlay never copies it.
+	Sources map[string]string `toml:"-"`
+}
+
+// scopeSourceFields are the scope fields whose source Config.Sources
+// records, each with its environment variable.
+var scopeSourceFields = [...]struct {
+	name, env string
+	value     func(Config) string
+}{
+	{"workspace", "CLAWBRIDGE_WORKSPACE", func(c Config) string { return c.Workspace }},
+	{"project", "CLAWBRIDGE_PROJECT", func(c Config) string { return c.Project }},
+	{"session", "CLAWBRIDGE_SESSION", func(c Config) string { return c.Session }},
+	{"instance", "CLAWBRIDGE_INSTANCE", func(c Config) string { return c.Instance }},
+}
+
+// noteSources records source for each scope field layer sets: a later
+// layer replaces an earlier one's, as overlay does.
+func noteSources(sources map[string]string, layer Config, source func(env string) string) {
+	for _, f := range scopeSourceFields {
+		if f.value(layer) != "" {
+			sources[f.name] = source(f.env)
+		}
+	}
 }
 
 func stateHome() (string, error) {
@@ -213,6 +241,13 @@ func resolveConfigVariantMode(ctx context.Context, flags Config, variant func(Co
 	}
 	path := filepath.Join(home, "config.toml")
 	base := Config{}
+	sources := map[string]string{}
+	fromFile := func(file string) func(string) string {
+		if abs, e := filepath.Abs(file); e == nil {
+			file = abs
+		}
+		return func(string) string { return "config file " + file }
+	}
 	if explicit := firstConfigPath(flags.ClientConfig, os.Getenv("CLAWBRIDGE_CONFIG")); explicit != "" {
 		path = explicit
 		c, e := readConfig(path, false)
@@ -220,11 +255,13 @@ func resolveConfigVariantMode(ctx context.Context, flags Config, variant func(Co
 			return Config{}, "", e
 		}
 		base = overlay(base, c)
+		noteSources(sources, c, fromFile(path))
 	} else {
 		base, err = readConfig(path, false)
 		if err != nil {
 			return Config{}, "", err
 		}
+		noteSources(sources, base, fromFile(path))
 		root := checkoutRoot(ctx)
 		warnIgnoredRepoConfig(root)
 		if root != "" {
@@ -253,6 +290,8 @@ func resolveConfigVariantMode(ctx context.Context, flags Config, variant func(Co
 			repo.KeyStore = ""
 			repo.ClockOffsetSeconds, repo.ClockOffsetAt = 0, ""
 			base = overlay(base, repo)
+			repoPath := filepath.Join(root, ".clawbridge.toml")
+			noteSources(sources, repo, func(string) string { return ".clawbridge.toml at " + repoPath })
 		}
 	}
 	env := Config{
@@ -274,6 +313,9 @@ func resolveConfigVariantMode(ctx context.Context, flags Config, variant func(Co
 		env = Config{}
 	}
 	base = overlay(overlay(base, env), flags)
+	noteSources(sources, env, func(name string) string { return "env " + name })
+	noteSources(sources, flags, func(string) string { return "flag" })
+	base.Sources = sources
 	if variant != nil {
 		base = variant(base)
 	}

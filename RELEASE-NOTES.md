@@ -19,6 +19,12 @@
 - A done-release now closes an issue whose claim was skipped because the status policy didn't move the team's issues
   then (the team's flow was off), from backlog or unstarted only; before, the issue stayed in Todo. Linear config
   scope: none (state moves on the bound team's issues per the existing policy).
+- **Linear commands say which project and lane they used.** An out-of-scope refusal adds the workspace and project
+  it used and where the project came from; `linear context` shows the scope and each value's source; `linear binding`
+  prints it to stderr and takes `--profile`; `taskboard_access` returns `lane_from` on request, so an `outside_lane`
+  refusal says where the lane came from. An incomplete `linear issues` page names its team and the teams that follow
+  (`page_team`, `remaining_teams`, and a text footer), and the MCP instructions say how to give shell `clawbridge`
+  commands the server's scope. No schema change. Linear config scope: none.
 
 ## Docs
 

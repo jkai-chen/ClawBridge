@@ -86,7 +86,7 @@ func TestIssueRefRefusesAStaleIdentifierNamingTheCurrentOne(t *testing.T) {
 func TestIssueRefNotFound(t *testing.T) {
 	for _, code := range []string{"NOT_FOUND", "ENTITY_NOT_FOUND"} {
 		_, _, ref := refTest(t, &linearprovider.Error{Kind: "provider_rejected", LinearCode: code})
-		if _, _, e := ref("ENG-88"); e == nil || e.Error() != "no issue ENG-88 in this binding" {
+		if _, _, e := ref("ENG-88"); e == nil || e.Error() != "no issue ENG-88 in this binding" || !IsOutOfScope(e) {
 			t.Fatal(code, e)
 		}
 	}

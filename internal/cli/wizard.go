@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"reflect"
 	"runtime"
 	"strings"
 	"sync/atomic"
@@ -143,7 +144,7 @@ func runWizard(ctx context.Context, flags Config, args []string, stdout, stderr 
 	if err != nil {
 		return err
 	}
-	if flags != (Config{ClientConfig: flags.ClientConfig}) {
+	if !reflect.DeepEqual(flags, Config{ClientConfig: flags.ClientConfig}) {
 		return errors.New("setup wizard accepts only --client-config; enter routing in the prompts")
 	}
 	if wizardTerminal(stdout) != nil {

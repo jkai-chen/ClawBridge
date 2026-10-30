@@ -477,7 +477,7 @@ func (s *Service) writeV2Personal(ctx context.Context, scope bus.Request, in Wri
 	// A session writes only its lane's teams; a marker is ClawBridge's own
 	// bookkeeping on a claim, not the session's write.
 	if !in.marker {
-		if e = checkLaneV2(b, access, team); e != nil {
+		if e = checkLaneV2(b, access, scope.Session, team); e != nil {
 			return nil, e
 		}
 	}

@@ -46,6 +46,11 @@ Publish raw executables rather than extracting downloaded archives:
 - clawbridge_v0.1.0_windows_amd64.exe
 - clawbridge_v0.1.0_windows_arm64.exe
 - LICENSE (the MIT licence), install.sh, install.ps1, SOURCE-COMMIT.txt, SHA256SUMS
+- PROVENANCE.sigstore.json: the Sigstore bundle of the assets' build-provenance
+  attestation, outside SHA256SUMS (it attests SHA256SUMS too). A client verifies
+  an asset with it and no API call or token (FR24 automatic updates).
+- MANUAL-UPDATE-REQUIRED, only when the release's notes carry the marker (below):
+  automatic updates never install that release.
 
 Replace v0.1.0 with the exact release tag for later versions. SHA256SUMS contains
 one lowercase SHA256 and two spaces plus the exact basename for every other
@@ -155,6 +160,24 @@ linux/amd64 and linux/arm64, built from the repository's `Dockerfile` in the sam
     server image. `scripts/release_body.py` builds it, and refuses one over 120000 characters before any release
     exists. Every PR and main CI run checks today's notes the same way (`scripts/test_publish.py`), so an oversize
     section fails long before a tag.
+  - **Manual-update marker.** A release whose client change needs a person's
+    attention, such as a sign-in method going away, starts a line of its top
+    section with `**Manual update required.**`, followed by the reason. Only a
+    line start counts, outside code fences and in this release's section only.
+    `publish-release.sh` then adds the asset `MANUAL-UPDATE-REQUIRED`, which
+    holds the version and that line, and automatic updates (`self-update --auto`)
+    skip the release, while a manual `self-update` still installs it. Leave the
+    marker out otherwise; it holds every auto-updating client back.
+  - **Provenance bundle.** The assets' attestation bundle (attest-build-provenance's
+    `bundle-path`) is published as `PROVENANCE.sigstore.json`. Before any release
+    exists, `publish-release.sh` checks that the bundle is a signed in-toto SLSA
+    v1 statement whose subjects are exactly the assets in SHA256SUMS plus
+    SHA256SUMS, by digest. It checks the uploaded bundle the same way after
+    download.
+  - **Dry run in CI.** `scripts/test_publish.py` runs `publish-release.sh` on a fake
+    tag with a fake `gh` in every PR and main CI run. It asserts the exact uploaded
+    asset list (with and without the marker), the bundle's subjects, and the
+    body's size, so the one-shot publish path is exercised before a tag.
   - RELEASE-NOTES.md never carries the digest: the tagged notes are part of what is built. The release body and
     `IMAGE-DIGEST.txt` do.
 - **What the image is:**

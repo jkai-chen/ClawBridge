@@ -7,6 +7,9 @@ current RELEASE-NOTES.md with it in every PR and main CI run, so a body too long
 for GitHub fails long before a tag.
 
     release_body.py NOTES OUT VERSION IMAGE   write the body, or exit non-zero
+    release_body.py --manual NOTES OUT VERSION
+        write the MANUAL-UPDATE-REQUIRED asset when the release's top section
+        carries the marker line (exit 0), or exit 3 when it carries none
 """
 import pathlib
 import sys
@@ -29,6 +32,30 @@ def top_section(notes):
     return "".join(top)
 
 
+# A release whose top section has a line starting with this marker needs a
+# manual update: automatic updates (FR24) never install it. Release authors
+# add it, with the reason, for a breaking client change such as a sign-in
+# method going away.
+MANUAL_MARKER = "**Manual update required.**"
+
+
+def manual_line(notes):
+    """The marker line of the release's top section, outside code fences, or
+    None."""
+    fence = False
+    for line in top_section(notes).splitlines():
+        if line.startswith("```"):
+            fence = not fence
+        elif not fence and line.startswith(MANUAL_MARKER):
+            return line.strip()
+    return None
+
+
+def manual_asset(line, version):
+    """The MANUAL-UPDATE-REQUIRED asset's text: plain, short, the reason."""
+    return version + " needs a manual update (clawbridge self-update); see its release notes.\n" + line[:2000] + "\n"
+
+
 def release_body(notes, version, image):
     body = top_section(notes).rstrip("\n") + "\n\n"
     body += "The full release notes: https://github.com/jkai-chen/ClawBridge/blob/" + version + "/RELEASE-NOTES.md\n\n"
@@ -45,6 +72,13 @@ def check(body):
 
 
 def main(argv):
+    if len(argv) == 5 and argv[1] == "--manual":
+        notes, out, version = argv[2:]
+        line = manual_line(pathlib.Path(notes).read_text(encoding="utf-8"))
+        if line is None:
+            sys.exit(3)
+        pathlib.Path(out).write_text(manual_asset(line, version), encoding="utf-8")
+        return
     if len(argv) != 5:
         sys.exit(__doc__)
     notes, out, version, image = argv[1:]

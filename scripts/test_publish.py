@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Publication transaction fixture: a fake gh transport, never a real release."""
+import base64
 import hashlib
 import json
 import os
@@ -15,6 +16,10 @@ sys.dont_write_bytecode = True
 import release_body  # noqa: E402
 
 ROOT = Path(__file__).resolve().parent.parent
+BINARIES = ["clawbridge_v0.1.0_" + t for t in ["darwin_amd64", "darwin_arm64", "linux_amd64", "linux_arm64", "windows_amd64.exe", "windows_arm64.exe"]]
+# Every asset a release publishes: the attested ones, SHA256SUMS, and the
+# attestation bundle (FR24).
+PUBLISHED = {"LICENSE", "install.sh", "install.ps1", "SOURCE-COMMIT.txt", "IMAGE-DIGEST.txt", "SHA256SUMS", "PROVENANCE.sigstore.json", *BINARIES}
 DIGEST = "sha256:" + "ab" * 32
 IMAGE = "ghcr.io/jkai-chen/clawbridge@" + DIGEST
 GH = r'''#!PYTHON
@@ -78,7 +83,7 @@ class PublishTests(unittest.TestCase):
         commit = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=self.repo, text=True).strip()
         self.assets = self.root / "assets"
         self.assets.mkdir()
-        for name in ["LICENSE", "install.sh", "install.ps1", *["clawbridge_v0.1.0_" + t for t in ["darwin_amd64", "darwin_arm64", "linux_amd64", "linux_arm64", "windows_amd64.exe", "windows_arm64.exe"]]]:
+        for name in ["LICENSE", "install.sh", "install.ps1", *BINARIES]:
             (self.assets / name).write_text("fixture bytes " + name)
         (self.assets / "SOURCE-COMMIT.txt").write_text(commit + "\n")
         (self.assets / "IMAGE-DIGEST.txt").write_text(IMAGE + "\n")
@@ -87,6 +92,33 @@ class PublishTests(unittest.TestCase):
         stub.write_text(GH.replace("#!PYTHON", "#!" + sys.executable))
         stub.chmod(0o755)
         self.env["PATH"] = str(self.root) + os.pathsep + self.env["PATH"]
+        self.bundle = self.root / "bundle.json"
+        self.env["PROVENANCE_BUNDLE"] = str(self.bundle)
+        # Tests that hand-craft the bundle set this to False.
+        self.fresh_bundle = True
+
+    def write_bundle(self, change=None, predicate="https://slsa.dev/provenance/v1", payload_type="application/vnd.in-toto+json", signatures=({"sig": "c3ludGhldGlj"},)):
+        """A Sigstore-shaped bundle whose in-toto statement names every
+        attested asset and SHA256SUMS by digest, as attest-build-provenance
+        writes it; change edits the subject map first, and the keywords
+        replace the statement's or envelope's fields."""
+        subjects = {p.name: hashlib.sha256(p.read_bytes()).hexdigest() for p in self.assets.iterdir()}
+        if change:
+            change(subjects)
+        statement = {"_type": "https://in-toto.io/Statement/v1", "subject": [{"name": n, "digest": {"sha256": d}} for n, d in sorted(subjects.items())], "predicateType": predicate, "predicate": {}}
+        bundle = {"mediaType": "application/vnd.dev.sigstore.bundle.v0.3+json", "verificationMaterial": {}, "dsseEnvelope": {"payload": base64.b64encode(json.dumps(statement).encode()).decode(), "payloadType": payload_type, "signatures": list(signatures)}}
+        self.bundle.write_text(json.dumps(bundle))
+        self.fresh_bundle = False
+
+    def remote(self):
+        return {p.name for p in (self.root / "remote").iterdir()}
+
+    def reset(self):
+        """Forget an earlier publish in this test: the fake's remote, draft,
+        release and calls."""
+        shutil.rmtree(self.root / "remote", ignore_errors=True)
+        for f in ["draft", "published", "calls"]:
+            (self.root / f).unlink(missing_ok=True)
 
     def retag(self, notes):
         """Commit notes as RELEASE-NOTES.md and move the tag and the source
@@ -115,6 +147,9 @@ class PublishTests(unittest.TestCase):
         self.assertNotIn(["release", "create"], [c[:2] for c in calls])
 
     def publish(self, mode="ok", ok=False):
+        if self.fresh_bundle:
+            self.write_bundle()
+            self.fresh_bundle = True
         result = subprocess.run(["bash", str(ROOT / "scripts/publish-release.sh"), "v0.1.0", str(self.assets)], cwd=self.repo, env=dict(self.env, PUBLISH_MODE=mode), capture_output=True, text=True)
         self.assertEqual(result.returncode == 0, ok, result.stdout + result.stderr)
         return [json.loads(line) for line in (self.root / "calls").read_text().splitlines()] if (self.root / "calls").exists() else []
@@ -125,6 +160,70 @@ class PublishTests(unittest.TestCase):
         calls = self.publish(ok=True)
         self.assertEqual([c[:2] for c in calls[1:]], [["release", "create"], ["release", "upload"], ["release", "download"], ["release", "view"], ["api", "--paginate"], ["release", "edit"]])
         self.assertEqual((self.root / "published").read_text(), "true")
+        # The dry run's asset list: exactly the release's assets, the bundle
+        # byte for byte, and no manual-update marker for ordinary notes.
+        self.assertEqual(self.remote(), PUBLISHED)
+        self.assertEqual((self.root / "remote" / "PROVENANCE.sigstore.json").read_bytes(), self.bundle.read_bytes())
+        self.assertLess(len((self.root / "notes").read_text()), release_body.MAX_BODY)
+
+    def test_no_bundle_never_contacts_gh(self):
+        self.env.pop("PROVENANCE_BUNDLE")
+        result = subprocess.run(["bash", str(ROOT / "scripts/publish-release.sh"), "v0.1.0", str(self.assets)], cwd=self.repo, env=self.env, capture_output=True, text=True)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("requires the assets attestation bundle", result.stderr)
+        self.assertFalse((self.root / "calls").exists())
+
+    def test_a_bundle_that_does_not_attest_the_assets_never_creates(self):
+        changes = {
+            "wrong digest": lambda m: m.update({BINARIES[0]: "00" * 32}),
+            "missing asset": lambda m: m.pop("install.sh"),
+            "extra subject": lambda m: m.update({"other": "11" * 32}),
+            "no SHA256SUMS": lambda m: m.pop("SHA256SUMS"),
+        }
+        for name, change in changes.items():
+            with self.subTest(name):
+                self.reset()
+                self.write_bundle(change)
+                self.assertEqual(self.publish(), [])
+                self.assertFalse((self.root / "draft").exists())
+        envelopes = {
+            "SLSA v0.2 predicate": dict(predicate="https://slsa.dev/provenance/v0.2"),
+            "SBOM predicate": dict(predicate="https://spdx.dev/Document/v2.3"),
+            "not in-toto": dict(payload_type="application/json"),
+            "unsigned": dict(signatures=()),
+        }
+        for name, fields in envelopes.items():
+            with self.subTest(name):
+                self.reset()
+                self.write_bundle(**fields)
+                self.assertEqual(self.publish(), [])
+        for bad in ['{"mediaType": "text/plain"}', "not json"]:
+            with self.subTest(bad):
+                self.reset()
+                self.bundle.write_text(bad)
+                self.fresh_bundle = False
+                self.assertEqual(self.publish(), [])
+
+    def test_a_manual_update_marker_publishes_its_asset(self):
+        self.retag("# Unreleased\n\n**Manual update required.** Google sign-in is gone; sign in again with GitHub.\n\n- a bullet\n\n# ClawBridge v0.0.1\n")
+        self.publish(ok=True)
+        self.assertEqual(self.remote(), PUBLISHED | {"MANUAL-UPDATE-REQUIRED"})
+        text = (self.root / "remote" / "MANUAL-UPDATE-REQUIRED").read_text()
+        self.assertTrue(text.startswith("v0.1.0 needs a manual update"), text)
+        self.assertIn("Google sign-in is gone", text)
+
+    def test_the_marker_counts_only_at_a_line_start_in_this_release(self):
+        cases = {
+            "an older release": "# Unreleased\n\n- a\n\n# ClawBridge v0.0.1\n\n**Manual update required.** old\n",
+            "a code fence": "# Unreleased\n\n```md\n**Manual update required.** an example\n```\n",
+            "mid-line": "# Unreleased\n\n- auto-updates skip a release marked `**Manual update required.**`\n",
+        }
+        for name, notes in cases.items():
+            with self.subTest(name):
+                self.retag(notes)
+                self.reset()
+                self.publish(ok=True)
+                self.assertEqual(self.remote(), PUBLISHED)
 
     def publish_latest(self, releases):
         self.env["PUBLISH_RELEASES"] = json.dumps([{"tag_name": tag, "draft": draft, "prerelease": prerelease} for tag, draft, prerelease in releases])
@@ -204,6 +303,10 @@ class ReleaseBodyTests(unittest.TestCase):
         self.assertIn("https://github.com/jkai-chen/ClawBridge/blob/v9.9.9/RELEASE-NOTES.md", body)
         self.assertIn("## Server image\n\n`" + IMAGE + "`", body)
         self.assertNotIn("v0.1.0", body)
+
+    def test_manual_line_reads_this_release_only(self):
+        self.assertEqual(release_body.manual_line("# Unreleased\n**Manual update required.** why\n# ClawBridge v1\n"), "**Manual update required.** why")
+        self.assertIsNone(release_body.manual_line("# Unreleased\n- a\n# ClawBridge v1\n**Manual update required.** old\n"))
 
     def test_the_repositorys_notes_fit_a_release_body(self):
         # The guard that runs in every PR and main CI: today's RELEASE-NOTES.md

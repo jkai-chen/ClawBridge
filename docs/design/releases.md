@@ -240,6 +240,17 @@ unexpanded %VARIABLES%; -NoModifyPath opts out and prints the manual step. Never
 change the system PATH or a PowerShell profile.
 Existing configuration and Credential Manager entries stay untouched.
 
+## Before each cut
+
+Two checks, each a separate PR when it changes anything, merged before the tag:
+
+- **Base images:** `bash scripts/check-image.sh bases --strict` (see [The server image](#the-server-image)).
+- **Cost tables:** the playbooks' monthly estimates (`skills/clawbridge-provision-*/references/cost.md`, and the
+  summary in [first-deployment.md §2](../operations/first-deployment.md#2-estimate-the-cost)) are checked against
+  the providers' current list prices for the regions and sizes they name. A row that moved by more than about 10%, or
+  a size the provider retired, is updated in all of them so they agree. The PR says which prices were checked and
+  on what date; a table nobody could check says so in its PR rather than changing silently.
+
 ## Independent acceptance and publication
 
 Test version output against malformed/inaccessible route input and isolated

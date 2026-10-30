@@ -20,6 +20,32 @@ import (
 	"golang.org/x/oauth2"
 )
 
+// An issue's history is a read the server makes as the app (FR21): a
+// server that is unavailable for it, or can't be reached, never reads as a
+// failed write, and nothing is mirrored.
+func TestRemoteIssueHistoryUnavailable(t *testing.T) {
+	ctx := context.Background()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusServiceUnavailable)
+	}))
+	defer server.Close()
+	config := Config{URL: server.URL, Audience: "audience", Principal: "alice@example.test", CachePath: filepath.Join(t.TempDir(), "cache.db")}
+	client, err := NewWithTokenSource(config, TokenSourceFunc(func(context.Context) (string, error) { return "synthetic-token", nil }))
+	if err != nil {
+		t.Fatal(err)
+	}
+	history := bus.Request{Operation: "linear_issue_history", Workspace: "ws_1", Project: "prj_1", Args: map[string]any{"issue_uuid": "d7000000-0000-4000-8000-0000000000d1"}}
+	_, err = client.Execute(ctx, history)
+	var httpErr *HTTPError
+	if err == nil || !strings.HasPrefix(err.Error(), "the issue's history could not be read: the ClawBridge server could not be reached or could not read Linear; nothing was written; retry") || strings.Contains(err.Error(), "cloud write failed") || !errors.As(err, &httpErr) || httpErr.Status != 503 {
+		t.Fatalf("unavailable history: %v", err)
+	}
+	server.Close()
+	if _, err = client.Execute(ctx, history); err == nil || !strings.HasPrefix(err.Error(), "the issue's history could not be read") {
+		t.Fatalf("unreachable history: %v", err)
+	}
+}
+
 func TestScopedSyncOutageAndDefinitiveDenials(t *testing.T) {
 	ctx := context.Background()
 	var status atomic.Int64

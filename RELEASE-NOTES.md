@@ -66,6 +66,15 @@
   past them (to a millisecond below the newest it read, so a change in the same millisecond
   isn't skipped), so every change is told, 50 per five-minute poll. More than 50 in one millisecond can't move it,
   and the poll reports `burst_stalled`. Linear config scope: none.
+- **Issue history: who changed an issue.** `clawbridge linear issue history ISSUE [--limit N] [--cursor C]` and the
+  read-only MCP tool `taskboard_issue_history_v2` show who changed an issue and what, newest first: a person, an
+  integration such as GitHub, or ClawBridge's own app, with the state, assignee, labels, team, project, priority,
+  parent, archived and trashed changes (anything else reads `other change`). Typed fields only, never a title,
+  description or comment text; people are named by their ClawBridge or Linear display name or their ID, never an
+  email. The issue is checked in your scope first (UUID or identifier, as `linear issue`), then again by the server.
+  It needs the ClawBridge Linear app on the hosted server (`app_unavailable` without it; an older server says to
+  upgrade), reads 1–50 entries a page (default 20) with at most 3 Linear queries, and is charged to the caller as a
+  read in the project's hourly Linear count. Linear config scope: none.
 
 ## Docs
 

@@ -587,7 +587,7 @@ func NewHandlerWithOptions(store Executor, verifier Verifier, o HandlerOptions) 
 		var result bus.Result
 		var err error
 		request = planReserveRequest(r.Context(), writer, request)
-		if request.Operation == "linear_write" || request.Operation == "linear_app_status" || request.Operation == "linear_app_states" || request.Operation == "linear_app_project_status" || request.Operation == "linear_app_project_status_set" || request.Operation == "linear_app_subscribers_backfill" || request.Operation == "linear_write_status" {
+		if request.Operation == "linear_write" || request.Operation == "linear_app_status" || request.Operation == "linear_app_states" || request.Operation == "linear_app_project_status" || request.Operation == "linear_app_project_status_set" || request.Operation == "linear_app_subscribers_backfill" || request.Operation == "linear_write_status" || request.Operation == "linear_issue_history" {
 			result, err = writer.Execute(r.Context(), verified, request)
 		} else if bound, ok := store.(IdentityExecutor); ok {
 			result, err = bound.ExecuteAsIdentity(ctx, verified, request)

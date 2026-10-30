@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -63,6 +64,35 @@ type awLinearAPI struct {
 	backfillQueries []string
 	// projectStatus, if set, answers the project status query's data.
 	projectStatus map[string]any
+	// graphqlCalls counts every GraphQL request; issues answers the issue
+	// history reads (FR21) by issue, and historyVars records what the
+	// history read was asked.
+	graphqlCalls int
+	issues       map[string]awHistoryIssue
+	historyVars  []map[string]any
+	// unauthorizedHistory answers that many history page reads with a 401,
+	// as Linear does for a token it has revoked.
+	unauthorizedHistory int
+}
+
+// awHistoryIssue is an issue the history reads answer: its scope and one
+// history page.
+type awHistoryIssue struct {
+	team, project string
+	nodes         []any
+	more          bool
+	end           string
+	// broken answers with a failure that is not entity-not-found.
+	broken bool
+	// movedTo, when set, is the team the history read answers: the issue
+	// moved between the scope read and the history read.
+	movedTo string
+}
+
+func (l *awLinearAPI) graphqlCount() int {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.graphqlCalls
 }
 
 func (l *awLinearAPI) workflowReads() int {
@@ -86,10 +116,47 @@ func (l *awLinearAPI) RoundTrip(r *http.Request) (*http.Response, error) {
 	switch r.URL.String() {
 	case "https://api.linear.app/oauth/token":
 		l.mints++
-		return reply(200, map[string]any{"access_token": awToken, "token_type": "Bearer", "expires_in": 2591999, "scope": "read write comments:create issues:create app:assignable app:mentionable"})
+		// A re-mint gets a new token; the first is awToken.
+		token := awToken
+		if l.mints > 1 {
+			token = fmt.Sprintf("%s-%d", awToken, l.mints)
+		}
+		return reply(200, map[string]any{"access_token": token, "token_type": "Bearer", "expires_in": 2591999, "scope": "read write comments:create issues:create app:assignable app:mentionable"})
 	case "https://api.linear.app/graphql":
-		if r.Header.Get("Authorization") != "Bearer "+awToken {
+		l.graphqlCalls++
+		if !strings.HasPrefix(r.Header.Get("Authorization"), "Bearer "+awToken) {
 			return reply(401, map[string]any{})
+		}
+		if l.unauthorizedHistory > 0 && strings.Contains(body, "query IssueHistory(") {
+			l.unauthorizedHistory--
+			return reply(401, map[string]any{})
+		}
+		if strings.Contains(body, "query IssueHistory") {
+			var sent struct {
+				Query     string
+				Variables map[string]any
+			}
+			_ = json.Unmarshal([]byte(body), &sent)
+			id, _ := sent.Variables["id"].(string)
+			issue, known := l.issues[id]
+			if known && issue.broken {
+				return reply(200, map[string]any{"data": nil, "errors": []any{map[string]any{"message": "Internal server error", "extensions": map[string]any{"type": "internal"}}}})
+			}
+			if !known {
+				return reply(200, map[string]any{"data": nil, "errors": []any{map[string]any{"message": "Entity not found", "extensions": map[string]any{"type": "invalid input"}}}})
+			}
+			node := map[string]any{"id": id, "team": map[string]any{"id": issue.team}, "project": nil}
+			if issue.project != "" {
+				node["project"] = map[string]any{"id": issue.project}
+			}
+			if strings.Contains(sent.Query, "history(") {
+				if issue.movedTo != "" {
+					node["team"] = map[string]any{"id": issue.movedTo}
+				}
+				l.historyVars = append(l.historyVars, sent.Variables)
+				node["history"] = map[string]any{"nodes": issue.nodes, "pageInfo": map[string]any{"hasNextPage": issue.more, "endCursor": issue.end}}
+			}
+			return reply(200, map[string]any{"data": map[string]any{"issue": node}})
 		}
 		if strings.Contains(body, "query Backfill") {
 			var sent struct {

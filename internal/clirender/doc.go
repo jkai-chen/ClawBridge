@@ -77,6 +77,7 @@ const (
 	bSection
 	bText
 	bDetail
+	bWhole
 )
 
 type block struct {
@@ -171,6 +172,12 @@ func (d *Doc) Note(s string) {
 // Text is a plain line.
 func (d *Doc) Text(s string) {
 	d.blocks = append(d.blocks, block{kind: bText, text: Safe(s), indent: d.indent})
+}
+
+// Whole is a plain line printed whole, never wrapped, so a token in it
+// (a cursor, say) copies in one piece.
+func (d *Doc) Whole(s string) {
+	d.blocks = append(d.blocks, block{kind: bWhole, text: Safe(s), indent: d.indent})
 }
 
 // Secret is a secret printed once, alone on its line and whole: never

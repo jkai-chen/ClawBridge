@@ -33,7 +33,7 @@ var linearCallKinds = func() map[string]bool {
 	out := map[string]bool{}
 	for _, k := range []string{
 		"watch.comments", "watch.markers", "watch.health", "watch.flow", "watch.docs", "watch.subscribers", "watch.intake", "watch.dispatcher", otherCallKind,
-		"project_status", "issue_move", "operator.health",
+		"project_status", "issue_move", "operator.health", "app_read.history",
 	} {
 		out[k] = true
 	}
@@ -41,6 +41,11 @@ var linearCallKinds = func() map[string]bool {
 		out["app_write."+op] = true
 	}
 	for kind := range linearWriteCallFloor {
+		// A read charge is the app's issue history read (app_read.history),
+		// not a profile's.
+		if kind == "read" {
+			continue
+		}
 		out["profile."+kind] = true
 	}
 	return out

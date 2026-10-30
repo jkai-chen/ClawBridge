@@ -52,6 +52,8 @@ acceptance criteria, parent/sub-issues, dependencies, related issues and relevan
 decisions. Resolve the canonical issue UUID and authorized Linear workspace;
 `linear issue ENG-123` and `taskboard_issue_v2 {id: "ENG-123"}` read by identifier, resolved by a Linear
 read and refused when Linear now returns another identifier (use that one, or the UUID); writes take the UUID.
+To learn who moved or changed the issue, read `taskboard_issue_history_v2 {id}` (`linear
+issue history ISSUE`) before asking anyone: newest first, typed fields only.
 Display identifiers such as ENG-123 can change when an issue moves teams (see
 "Change issue structure"; claims and intake follow the new identifier).
 Check the configured team and project separately: a team is not a project, and

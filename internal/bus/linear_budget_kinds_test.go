@@ -84,6 +84,21 @@ func TestLinearBudgetKindsSplitTheHour(t *testing.T) {
 	}
 }
 
+// An issue history read is charged as the app's read, app_read.history,
+// never as a profile's: profile.read is no kind at all.
+func TestIssueHistoryReadIsChargedAsAnAppRead(t *testing.T) {
+	w := newWatchHarness(t)
+	w.call("linear_write_charge", "", charge("h-1", "read", 3))
+	b := w.overview("")["linear_budget"].(LinearBudget)
+	want := []LinearBudgetKind{{Kind: "app_read.history", Calls: 3, Events: 1}}
+	if !reflect.DeepEqual(b.Kinds, want) {
+		t.Fatalf("%+v", b.Kinds)
+	}
+	if KnownLinearCallKind("profile.read") || !KnownLinearCallKind("app_read.history") {
+		t.Fatal("the read's kind")
+	}
+}
+
 // A read (0) records nothing; a refund lowers a kind's calls, never below
 // zero, and is no event; an unknown kind is counted as watch.other.
 func TestLinearBudgetKindsReadsAndRefunds(t *testing.T) {

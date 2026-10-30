@@ -36,16 +36,12 @@ validate_assets "$release_assets"
 release_verify=$(mktemp -d)
 trap 'rm -rf -- "$release_verify"' EXIT
 # Notes come from the tagged tree, never conversation/history or a mutable file.
-git show "$release_commit:RELEASE-NOTES.md" > "$release_verify/notes.md"
-# The image digest can't be in the tagged notes, which are part of what was
-# built; the release body names it.
-cat >> "$release_verify/notes.md" <<EOF_IMAGE
-
-## Server image
-
-\`$release_image\` (linux/amd64, linux/arm64). Pin it by this digest; check it with
-\`gh attestation verify oci://$release_image --repo jkai-chen/ClawBridge --signer-workflow jkai-chen/ClawBridge/.github/workflows/release.yml\`.
-EOF_IMAGE
+# The body (scripts/release_body.py) is this release's own top section, a link
+# to the full notes at the tag, and the image the workflow pushed: the image
+# digest can't be in the tagged notes, which are part of what was built. A body
+# GitHub would refuse fails here, before anything is created.
+git show "$release_commit:RELEASE-NOTES.md" > "$release_verify/all-notes.md"
+python3 "$(dirname "$0")/release_body.py" "$release_verify/all-notes.md" "$release_verify/notes.md" "$release_version" "$release_image"
 # Listing drafts as well as published releases distinguishes absence from an API
 # failure and refuses existing drafts, too. A failed query stops before creation.
 release_existing=$(gh api --paginate 'repos/jkai-chen/ClawBridge/releases?per_page=100' --jq ".[] | select(.tag_name == \"$release_version\") | .id")

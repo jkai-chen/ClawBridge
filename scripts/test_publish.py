@@ -10,6 +10,10 @@ import sys
 import tempfile
 import unittest
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+sys.dont_write_bytecode = True
+import release_body  # noqa: E402
+
 ROOT = Path(__file__).resolve().parent.parent
 DIGEST = "sha256:" + "ab" * 32
 IMAGE = "ghcr.io/jkai-chen/clawbridge@" + DIGEST
@@ -32,8 +36,10 @@ elif args[:2]==['release','create']:
  assert '--draft' in args and '--verify-tag' in args
  assert '--notes-file' in args
  notes=pathlib.Path(args[args.index('--notes-file')+1]).read_text()
- # The tagged notes, then the image the workflow pushed.
- assert notes.startswith('Tagged release fixture notes\n\n## Server image\n'),notes
+ (p/'notes').write_text(notes)
+ # The tagged notes' top section, the link to the full notes, then the image
+ # the workflow pushed.
+ assert '\n\nThe full release notes: https://github.com/jkai-chen/ClawBridge/blob/v0.1.0/RELEASE-NOTES.md\n\n## Server image\n' in notes,notes
  assert '`'+os.environ['FIXTURE_IMAGE']+'`' in notes and 'gh attestation verify oci://'+os.environ['FIXTURE_IMAGE'] in notes,notes
  (p/'draft').write_text('draft')
 elif args[:2]==['release','upload']:
@@ -81,6 +87,32 @@ class PublishTests(unittest.TestCase):
         stub.write_text(GH.replace("#!PYTHON", "#!" + sys.executable))
         stub.chmod(0o755)
         self.env["PATH"] = str(self.root) + os.pathsep + self.env["PATH"]
+
+    def retag(self, notes):
+        """Commit notes as RELEASE-NOTES.md and move the tag and the source
+        marker to that commit."""
+        (self.repo / "RELEASE-NOTES.md").write_text(notes)
+        for args in [("add", "."), ("commit", "-qm", "notes"), ("tag", "-f", "v0.1.0")]:
+            subprocess.run(["git", *args], cwd=self.repo, env=self.env, check=True, capture_output=True)
+        commit = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=self.repo, text=True).strip()
+        (self.assets / "SOURCE-COMMIT.txt").write_text(commit + "\n")
+        (self.assets / "SHA256SUMS").write_text("".join(hashlib.sha256(p.read_bytes()).hexdigest() + "  " + p.name + "\n" for p in sorted(self.assets.iterdir()) if p.name != "SHA256SUMS"))
+
+    def test_the_body_is_the_top_section_of_a_long_file(self):
+        # v0.3.10's failure: the whole file was the body, over GitHub's limit.
+        older = "".join("# ClawBridge v0.0.%d (released)\n\n- " % i + "x" * 2000 + "\n\n" for i in range(80))
+        self.retag("# Unreleased\n\n## Linear\n\n- the new bullet\n\n" + older)
+        self.publish(ok=True)
+        notes = (self.root / "notes").read_text()
+        self.assertTrue(notes.startswith("# Unreleased\n\n## Linear\n\n- the new bullet\n\nThe full release notes: "), notes[:200])
+        self.assertNotIn("v0.0.1 (released)", notes)
+        self.assertIn("## Server image", notes)
+        self.assertLess(len(notes), release_body.MAX_BODY)
+
+    def test_a_top_section_too_long_fails_before_any_release(self):
+        self.retag("# Unreleased\n\n- " + "y" * (release_body.MAX_BODY + 10) + "\n\n# ClawBridge v0.0.1\n")
+        calls = self.publish()
+        self.assertNotIn(["release", "create"], [c[:2] for c in calls])
 
     def publish(self, mode="ok", ok=False):
         result = subprocess.run(["bash", str(ROOT / "scripts/publish-release.sh"), "v0.1.0", str(self.assets)], cwd=self.repo, env=dict(self.env, PUBLISH_MODE=mode), capture_output=True, text=True)
@@ -160,6 +192,24 @@ class PublishTests(unittest.TestCase):
         self.env["GITHUB_EVENT_NAME"] = "push"
         (self.assets / "unexpected").write_text("extra")
         self.assertEqual(self.publish(), [])
+
+
+class ReleaseBodyTests(unittest.TestCase):
+    def test_top_section_stops_at_the_next_release_outside_a_fence(self):
+        notes = "# Unreleased\n\n```sh\n# a shell comment, not a heading\n```\n- a\n\n# ClawBridge v0.1.0\n- old\n"
+        self.assertEqual(release_body.top_section(notes), "# Unreleased\n\n```sh\n# a shell comment, not a heading\n```\n- a\n\n")
+
+    def test_the_body_has_the_link_and_the_image(self):
+        body = release_body.release_body("# Unreleased\n- a\n# ClawBridge v0.1.0\n", "v9.9.9", IMAGE)
+        self.assertIn("https://github.com/jkai-chen/ClawBridge/blob/v9.9.9/RELEASE-NOTES.md", body)
+        self.assertIn("## Server image\n\n`" + IMAGE + "`", body)
+        self.assertNotIn("v0.1.0", body)
+
+    def test_the_repositorys_notes_fit_a_release_body(self):
+        # The guard that runs in every PR and main CI: today's RELEASE-NOTES.md
+        # makes a body GitHub takes, long before any tag.
+        notes = (ROOT / "RELEASE-NOTES.md").read_text(encoding="utf-8")
+        release_body.check(release_body.release_body(notes, "v0.0.0", IMAGE))
 
 
 if __name__ == "__main__":

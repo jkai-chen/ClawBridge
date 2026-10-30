@@ -150,6 +150,11 @@ linux/amd64 and linux/arm64, built from the repository's `Dockerfile` in the sam
   which is the one the release names. The first digest stays orphaned, with its attestation.
 - **Tags and notes:**
   - Each release has exactly one tag. There is never a `latest`, and nothing is retagged or deleted.
+  - The release body is not the whole RELEASE-NOTES.md (GitHub refuses a body of 125000 characters or more): it is the
+    release's own top section, up to the next top-level `# ` heading, then a link to the full notes at the tag, then the
+    server image. `scripts/release_body.py` builds it, and refuses one over 120000 characters before any release
+    exists. Every PR and main CI run checks today's notes the same way (`scripts/test_publish.py`), so an oversize
+    section fails long before a tag.
   - RELEASE-NOTES.md never carries the digest: the tagged notes are part of what is built. The release body and
     `IMAGE-DIGEST.txt` do.
 - **What the image is:**

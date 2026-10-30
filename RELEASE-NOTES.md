@@ -1,5 +1,11 @@
 # Unreleased
 
+## Dispatcher
+
+- **`--confirm` reaches the server for `dispatcher enable`, `dispatcher model advise` and `dispatcher model tools set`.**
+  The command line dropped it, so these commands only ever showed their preview and changed nothing; with `--confirm`
+  they now make the change (or give the server's refusal). No schema change. Linear config scope: none.
+
 # ClawBridge v0.3.12 (released 30 Oct)
 
 **Schema 51 → 52.**

@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"clawbridge/internal/bus"
 )
 
 // dispatcher show reads the policy, off by default; domains set takes a
@@ -146,5 +148,46 @@ func TestCLIContextLevelsSet(t *testing.T) {
 	// The local context commands still need no server.
 	if out, err := runContextCmd(t, "show", "--session", "eng"); err != nil || !strings.Contains(out, "not bound") {
 		t.Fatalf("%q %v", out, err)
+	}
+}
+
+// dispatcher enable previews without --confirm and, with it, turns the
+// dispatcher on: the server saw the confirm, so the policy's revision and
+// state move.
+func TestCLIDispatcherEnableConfirms(t *testing.T) {
+	dir := isolated(t)
+	db := filepath.Join(dir, "cb.db")
+	t.Setenv("CLAWBRIDGE_DB", db)
+	invoke(t, "setup", "--local", "--workspace", "w")
+	invoke(t, "project", "create", "p")
+	t.Setenv("CLAWBRIDGE_PROJECT", "p")
+	s, err := bus.Open(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	team := "1111aaaa-1111-4111-8111-111111111111"
+	if _, err = s.Execute(context.Background(), bus.Request{Operation: "taskboard_set_v2", Workspace: "w", Project: "p", Args: map[string]any{"expected_revision": 0, "mode": "project_set", "linear_team_ids": []string{team}, "linear_default_team_id": team, "linear_project_ids": []string{"3333aaaa-3333-4333-8333-333333333331"}}}); err != nil {
+		t.Fatal(err)
+	}
+	s.Close()
+	run := func(args ...string) string {
+		t.Helper()
+		var out, errs bytes.Buffer
+		if e := Run(context.Background(), args, &out, &errs); e != nil {
+			t.Fatal(args, e, errs.String())
+		}
+		return out.String()
+	}
+	if got := run("dispatcher", "enable", "--engine", "rules", "--expected-revision", "0"); !strings.Contains(got, `"preview":true`) {
+		t.Fatal("without --confirm, not a preview:", got)
+	}
+	if got := run("dispatcher", "show"); !strings.Contains(got, `"enabled":false`) {
+		t.Fatal("a preview turned it on:", got)
+	}
+	if got := run("dispatcher", "enable", "--engine", "rules", "--expected-revision", "0", "--confirm"); strings.Contains(got, `"preview":true`) {
+		t.Fatal("--confirm still previewed:", got)
+	}
+	if got := run("dispatcher", "show"); !strings.Contains(got, `"enabled":true`) || strings.Contains(got, `"revision":0,`) {
+		t.Fatal("not enabled:", got)
 	}
 }

@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
+	"strings"
 
 	"clawbridge/internal/bus"
 	"clawbridge/internal/docseed"
@@ -51,6 +53,25 @@ func tuiClosesAllowed(scope bus.Request, in linearboard.LinkInputV2) error {
 		}
 		if marker := agentMarker(closesEnv()); marker != "" {
 			return fmt.Errorf("letting agents close issues is a person's decision, and %s says an agent runs this TUI; nothing was changed", marker)
+		}
+	}
+	return nil
+}
+
+// tuiCancelKindsAllowed refuses, before anything is sent, a who-may-cancel
+// change from a TUI bound to a session, or one that lets agents cancel in
+// more kinds from a TUI run under an agent's environment: who may cancel
+// is a person's decision. Removing kinds is never an agent's escalation.
+func tuiCancelKindsAllowed(scope bus.Request, current, next []string) error {
+	if scope.Session != "" {
+		return errors.New("who may cancel is never set with a session; open the TUI without --session to change it. Nothing was changed")
+	}
+	for _, kind := range next {
+		if slices.ContainsFunc(current, func(k string) bool { return strings.EqualFold(k, kind) }) {
+			continue
+		}
+		if marker := agentMarker(closesEnv()); marker != "" {
+			return fmt.Errorf("letting agents cancel issues is a person's decision, and %s says an agent runs this TUI; run the TUI yourself. Nothing was changed", marker)
 		}
 	}
 	return nil
@@ -160,6 +181,33 @@ func (s *linearTUISource) Do(ctx context.Context, r tui.LinearRequest) (tui.Line
 			data.Preview = string(raw)
 		}
 		return data, err
+	case "cancel-kinds", "cancel-kinds-set":
+		view, err := service.CancelKindsV2(ctx, s.scope)
+		if err != nil {
+			return data, err
+		}
+		if r.Operation == "cancel-kinds-set" {
+			if r.CancelKinds == nil {
+				return data, errors.New("no who-may-cancel change was given")
+			}
+			if err = tuiCancelKindsAllowed(s.scope, view.CancelKinds, r.CancelKinds.Kinds); err != nil {
+				return data, err
+			}
+			// Kinds reach here typed by the person in the TUI; an empty
+			// list asks nothing, as cancel-kinds set --none.
+			via := linearboard.ClosesViaTUI
+			if len(r.CancelKinds.Kinds) == 0 {
+				via = linearboard.ClosesViaCLI
+			}
+			if _, err = service.SetCancelKindsV2(ctx, s.scope, r.CancelKinds.Kinds, r.CancelKinds.Revision, via); err != nil {
+				return data, err
+			}
+			if view, err = service.CancelKindsV2(ctx, s.scope); err != nil {
+				return data, err
+			}
+		}
+		data.CancelKindsView = &view
+		return data, nil
 	case "names-refresh":
 		_, err := service.RefreshNamesV2(ctx, s.scope)
 		return data, err

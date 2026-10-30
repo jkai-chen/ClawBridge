@@ -14,6 +14,7 @@ ClawBridge · ws_1 › prj_1 › engineer › Linear › Help  cloud
 │   g          suggest a status (not now)                                                                              │
 │   o          queued writes (not now)                                                                                 │
 │   b          set the budget (not now)                                                                                │
+│   C          who may cancel (not now)                                                                                │
 │   d          show IDs (not now)                                                                                      │
 │   +          connect                                                                                                 │
 │   w          connect with write                                                                                      │

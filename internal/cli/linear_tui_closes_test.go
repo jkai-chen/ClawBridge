@@ -79,3 +79,32 @@ func TestNeedsAgentLabelsByTheWatchersRule(t *testing.T) {
 		t.Fatal("a duplicate:", n)
 	}
 }
+
+// Who may cancel in the TUI: a session never sets it, an agent's TUI may
+// only take kinds away, and a person's TUI sets what it likes.
+func TestTUICancelKindsNeedsAPersonWithoutASession(t *testing.T) {
+	old := closesEnv
+	t.Cleanup(func() { closesEnv = old })
+	closesEnv = func() []string { return nil }
+	current := []string{"Research", "Engineering"}
+	if err := tuiCancelKindsAllowed(bus.Request{}, current, []string{"Research", "ops"}); err != nil {
+		t.Fatal(err)
+	}
+	for _, next := range [][]string{{"Research"}, nil} {
+		if err := tuiCancelKindsAllowed(bus.Request{Session: "eng"}, current, next); err == nil || !strings.Contains(err.Error(), "never set with a session") {
+			t.Fatal(next, err)
+		}
+	}
+	for _, marker := range []string{"CLAUDECODE=1", "CODEX_HOME=/x", "CLAWBRIDGE_SESSION=eng"} {
+		closesEnv = func() []string { return []string{"PATH=/bin", marker} }
+		if err := tuiCancelKindsAllowed(bus.Request{}, current, []string{"Research", "Ops"}); err == nil || !strings.Contains(err.Error(), "agent runs this TUI") || !strings.Contains(err.Error(), "run the TUI yourself") {
+			t.Fatal(marker, err)
+		}
+		// Taking kinds away, even renamed in case, is never an escalation.
+		for _, next := range [][]string{{"research"}, {}, nil} {
+			if err := tuiCancelKindsAllowed(bus.Request{}, current, next); err != nil {
+				t.Fatal(marker, next, err)
+			}
+		}
+	}
+}

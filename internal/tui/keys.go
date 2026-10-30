@@ -252,10 +252,12 @@ var linearBindings = []Binding{
 			return "unlink"
 		case "status":
 			return "set its status"
+		case "cancel":
+			return "preview"
 		}
 		return "next"
 	}, When: func(m Model) bool {
-		return m.linearStep() != "intake" && m.linearStep() != "views" && m.linearStep() != "roles" && (m.linearStep() != "status" || (m.projectStatus.loaded && m.projectStatus.canEdit))
+		return m.linearStep() != "intake" && m.linearStep() != "views" && m.linearStep() != "roles" && (m.linearStep() != "cancel" || cancelKeysOn(m)) && (m.linearStep() != "status" || (m.projectStatus.loaded && m.projectStatus.canEdit))
 	}, Action: linearKeyAction},
 	{ID: "select", Keys: []string{" "}, Labeler: func(m Model) string {
 		switch m.linearStep() {
@@ -263,11 +265,13 @@ var linearBindings = []Binding{
 			return "people or agents close"
 		case "intake":
 			return "switch"
+		case "cancel":
+			return "agents may cancel"
 		}
 		return "select"
 	}, When: func(m Model) bool {
 		return m.linearStep() == "teams" || m.linearStep() == "preview" || (m.linearStep() == "projects" && m.linear.bindingV2 != nil) ||
-			(intakeEditable(m) && intakeOn(m, "mode", "signal"))
+			(intakeEditable(m) && intakeOn(m, "mode", "signal")) || cancelKeysOn(m)
 	}, Action: linearKeyAction},
 	{ID: "intake", Keys: []string{"n"}, Label: "Intake", When: func(m Model) bool { return m.linearConfigured() && linearAt("profiles", "tasks", "details")(m) }, Action: func(m Model, _ string) (Model, tea.Cmd) { return m.openIntake() }},
 	{ID: "project-status", Keys: []string{"p"}, Label: "project status", When: func(m Model) bool {
@@ -284,6 +288,9 @@ var linearBindings = []Binding{
 	}, Action: linearKeyAction},
 	{ID: "queue", Keys: []string{"o"}, Label: "queued writes", When: func(m Model) bool { return m.linear.queue != nil && linearAt("profiles", "tasks", "details")(m) }, Action: func(m Model, _ string) (Model, tea.Cmd) { return m.openLinearWrites() }},
 	{ID: "budget", Keys: []string{"b"}, Label: "set the budget", When: func(m Model) bool { return m.canSetLinearBudget() && linearAt("profiles", "writes")(m) }, Action: func(m Model, _ string) (Model, tea.Cmd) { return m.beginLinearBudget(), nil }},
+	{ID: "cancel-kinds", Keys: []string{"C"}, Label: "who may cancel", When: func(m Model) bool {
+		return m.linearConfigured() && linearAt("profiles", "tasks", "details")(m)
+	}, Action: func(m Model, _ string) (Model, tea.Cmd) { return m.openCancelKinds() }},
 	{ID: "ids", Keys: []string{"d"}, Labeler: func(m Model) string {
 		if m.linear.showIDs {
 			return "hide IDs"
@@ -437,6 +444,9 @@ func footerText(m Model) string {
 	}
 	if m.screen == ScreenLinear && m.linear.step == "intake" && m.intake.picking {
 		return "↑↓ member · Enter trust them · Esc close"
+	}
+	if m.screen == ScreenLinear && m.linear.step == "cancel" && m.cancel.ask != nil && !m.cancel.ask.typed {
+		return "y store it · any other key keeps things as they are"
 	}
 	if m.screen == ScreenLinear && m.linear.step == "status" && m.projectStatus.ask != nil {
 		return "y do it · any other key keeps things as they are"

@@ -27,7 +27,7 @@ The flags are read up to `--` only: a message body after `--` is never taken for
 `--json` placed before `--` is read as the flag, so put such a body after `--`.
 
 The JSON is the contract: byte for byte what earlier releases printed, `{"source": …, "data": …}`, with a test that
-fails on any change. Scripts and agents pass `--json`. The human layout (aligned fields, tables, PASS/WARN/FAIL lines,
+fails on any change. Scripts and agents pass `--json`. The human layout (aligned fields, tables, PASS/WARN/FAIL/NOTE lines,
 data from outside escaped) is for people, and may change between releases. Errors and notices go to stderr in both
 formats, unchanged. A secret (an invite code or link, a CI device key, an intake token) is printed once in either,
 alone on its own line in the layout so it copies whole.

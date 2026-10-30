@@ -141,6 +141,23 @@ computer. Upgrading from v0.3.x: docs/upgrading-to-1.0.md.
   each kind of Linear failure once a minute per operation: kind, operation, Linear's HTTP status and whether it was
   sent, never a token or text. docs/linear.md. No schema change. Linear config scope: none.
 
+- **`doctor` accepts a working MCP entry installed from another profile, says how an entry differs, and notes a
+  machine with no agent as info.** Doctor rebuilt an entry's whole argument list from the profile it resolved itself,
+  so an entry installed with `--client-config` or `CLAWBRIDGE_CONFIG` (another profile file, or the same one at
+  another path) failed as "conflicts with the expected project, session, mode or credential route" though it worked.
+  The entry's authority (mode, workspace, project, session, server, credential source, principal, and the instance
+  when `--mcp-instance` is given) must still be the one checked; its own `--client-config`, `--cache`, `--device-id`,
+  `--key-store`, and `--instance` when none is given, are now taken from the entry when well-formed, as its
+  `--linear-profile` already was, and named in the passing check; a device or key store taken that way must have the
+  device's key in that store on this machine, or the check fails naming them, and the check says the device's member
+  isn't checked (doctor makes no server call for an entry). A malformed one fails naming it, and a mismatch
+  names each flag that differs (with both values, except for principals and credential settings). On a machine with
+  no Claude Code or Codex set up and no `--mcp-*` flags, `mcp.entries` and `skill.version` are `info`, a new status
+  that is not a problem: the report stays `pass` and doctor exits 0; the human summary and the TUI count notes
+  (`· N info`) only when there are some, and the setup wizard's summary leaves them out. Flags given for an entry
+  that's absent, or an agent set up without the skill, still warn. docs/usage.md. No schema change. Linear config
+  scope: none.
+
 ## Operations
 
 - **A release can be held as a verified draft and published later, without a rebuild.** With the repository variable

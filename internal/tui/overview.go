@@ -358,7 +358,7 @@ func renderOverview(m Model) string {
 // doctorRows are the checks in the order shown: failures, then warnings,
 // then the passes, which are folded unless asked for (U38).
 func doctorRows(m Model) []Check {
-	rank := map[Status]int{Fail: 0, Warn: 1, Pass: 2}
+	rank := map[Status]int{Fail: 0, Warn: 1, Info: 2, Pass: 3}
 	out := append([]Check(nil), m.checks...)
 	sort.SliceStable(out, func(i, j int) bool { return rank[out[i].Status] < rank[out[j].Status] })
 	if !m.doctorPasses {
@@ -398,6 +398,9 @@ func renderDoctor(m Model) string {
 		counts[check.Status]++
 	}
 	b.WriteString(fmt.Sprintf("%d fail · %d warn · %d pass", counts[Fail], counts[Warn], counts[Pass]))
+	if counts[Info] > 0 {
+		b.WriteString(fmt.Sprintf(" · %d info", counts[Info]))
+	}
 	if !m.checksAt.IsZero() {
 		b.WriteString(mutedStyle.Render(" · checked " + ago(m.cfg.Now(), m.checksAt)))
 	}
@@ -414,6 +417,8 @@ func renderDoctor(m Model) string {
 			mark = passStyle.Render(mark)
 		case Warn:
 			mark = warnStyle.Render(mark)
+		case Info:
+			mark = mutedStyle.Render(mark)
 		default:
 			mark = errorStyle.Render(mark)
 		}
@@ -426,7 +431,7 @@ func renderDoctor(m Model) string {
 			line, detail = line+": "+detail, ""
 		}
 		b.WriteString(prefix + mark + "  " + line)
-		if s := checkScreen(check.ID); s != "" && m.hasTab(s) && check.Status != Pass && i == m.selected {
+		if s := checkScreen(check.ID); s != "" && m.hasTab(s) && check.Status != Pass && check.Status != Info && i == m.selected {
 			b.WriteString(mutedStyle.Render("  Enter: " + title(s)))
 		}
 		b.WriteString("\n")
@@ -480,7 +485,7 @@ var overviewBindings = []Binding{
 var doctorBindings = []Binding{
 	{ID: "open", Keys: []string{"enter"}, Label: "go to its screen", When: func(m Model) bool {
 		c, ok := m.selectedCheck()
-		return ok && checkScreen(c.ID) != "" && m.hasTab(checkScreen(c.ID)) && c.Status != Pass
+		return ok && checkScreen(c.ID) != "" && m.hasTab(checkScreen(c.ID)) && c.Status != Pass && c.Status != Info
 	}, Action: func(m Model, _ string) (Model, tea.Cmd) {
 		c, _ := m.selectedCheck()
 		return m.Show(checkScreen(c.ID))

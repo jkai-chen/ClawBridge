@@ -2,11 +2,13 @@ package cli
 
 import (
 	"clawbridge/internal/ctxwatch"
+	"clawbridge/internal/devicesign"
 	"context"
 	"errors"
 	"flag"
 	"fmt"
 	"io"
+	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -187,8 +189,23 @@ func installHooks(h mcpInstallHooks, stderr io.Writer) error {
 	return nil
 }
 
+// entryDeviceKey loads a device's key from store, as the entry's MCP server
+// would at start, to say whether it is there; the key is never used.
+func entryDeviceKey(store, server, deviceID string) error {
+	u, err := url.Parse(server)
+	if err != nil || u.Host == "" {
+		return errors.New("the entry's server URL has no host")
+	}
+	home, err := stateHome()
+	if err != nil {
+		return err
+	}
+	_, err = devicesign.Load(devicesign.Location{Store: store, Host: u.Host, Home: home, DeviceID: deviceID})
+	return err
+}
+
 func mcpSelection(c Config, path, agent, target, name, session, instance string) doctor.MCPConfig {
-	return doctor.MCPConfig{LinearProfile: c.LinearProfile, ClientConfig: func() string {
+	return doctor.MCPConfig{DeviceKey: entryDeviceKey, LinearProfile: c.LinearProfile, ClientConfig: func() string {
 		if c.Mode == "cloud" {
 			return path
 		}

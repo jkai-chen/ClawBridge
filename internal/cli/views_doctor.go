@@ -12,7 +12,7 @@ import (
 // paths, versions, hosts) and is shown under the answer, never parsed;
 // --json still carries it unchanged. An empty answer keeps the message on
 // the line: it already reads as one.
-type doctorAnswer struct{ pass, warn, fail string }
+type doctorAnswer struct{ pass, warn, fail, info string }
 
 func (a doctorAnswer) in(status string) string {
 	switch status {
@@ -22,6 +22,8 @@ func (a doctorAnswer) in(status string) string {
 		return a.warn
 	case doctor.Fail:
 		return a.fail
+	case doctor.Info:
+		return a.info
 	}
 	return ""
 }
@@ -55,6 +57,7 @@ var doctorAnswers = map[string]doctorAnswer{
 	},
 	"mcp.entries": {
 		warn: "No agent's ClawBridge connection was checked.",
+		info: "No agent is set up here, so no ClawBridge connection was checked.",
 	},
 	"mcp.entry": {
 		pass: "This agent is connected to ClawBridge.",
@@ -63,6 +66,7 @@ var doctorAnswers = map[string]doctorAnswer{
 	},
 	"skill.version": {
 		warn: "Your agents' ClawBridge skill needs attention.",
+		info: "No agent is set up here, so no skill was checked.",
 	},
 	"linear.connection": {
 		warn: "Your Linear connection can't be read from its store.",

@@ -4,8 +4,10 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -56,10 +58,48 @@ func TestMCPScopeAndCredentialRouteAreComparedExactly(t *testing.T) {
 			t.Fatalf("matching device route rejected: %+v", check)
 		}
 	})
+	// The device and key store are the entry's own route details: a doctor
+	// that resolved another profile takes them from the entry, and says so.
+	for name, tc := range map[string]struct {
+		mutate func(*MCPConfig)
+		named  string
+	}{
+		"other-device":    {func(c *MCPConfig) { c.DeviceID = "dev_zzzzzzzzzzzzzzzzzzzzzzzzzz" }, "--device-id dev_abcdefghjkmnpqrstvwxyz0123"},
+		"other-key-store": {func(c *MCPConfig) { c.KeyStore = "file" }, "--key-store keyring"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			changed := config
+			tc.mutate(&changed)
+			var asked []string
+			changed.DeviceKey = func(store, server, device string) error { asked = append(asked, store, server, device); return nil }
+			checkMCP(changed, func(check Check) {
+				if check.Status != Pass || !strings.Contains(check.Message, "It keeps the "+tc.named+" it was installed with") || !strings.Contains(check.Message, "Its device key is in that store; which member the device signs as is not checked here.") {
+					t.Fatalf("the entry's own detail was not taken and named: %+v", check)
+				}
+			})
+			if want := []string{"keyring", "https://server.example.test", "dev_abcdefghjkmnpqrstvwxyz0123"}; !reflect.DeepEqual(asked, want) {
+				t.Fatalf("checked the key at %v, want the entry's %v", asked, want)
+			}
+			// Taken only when it works: no key for that device here fails.
+			changed.DeviceKey = func(string, string, string) error {
+				return errors.New("this device's key is not in its store; join again with an invite")
+			}
+			checkMCP(changed, func(check Check) {
+				if check.Status != Fail || !strings.Contains(check.Message, "device dev_abcdefghjkmnpqrstvwxyz0123 has no usable key in its keyring store") {
+					t.Fatalf("an entry whose device has no key here passed: %+v", check)
+				}
+			})
+			// Without a key check (a caller that gives none), it says so.
+			changed.DeviceKey = nil
+			checkMCP(changed, func(check Check) {
+				if check.Status != Pass || !strings.Contains(check.Message, "Its device key was not checked here, nor which member the device signs as.") {
+					t.Fatalf("an unchecked key not said: %+v", check)
+				}
+			})
+		})
+	}
 	for name, mutate := range map[string]func(*MCPConfig){
 		"google-backend":  func(c *MCPConfig) { c.CredentialSource, c.DeviceID, c.KeyStore = "oauth", "", "" },
-		"wrong-device":    func(c *MCPConfig) { c.DeviceID = "dev_zzzzzzzzzzzzzzzzzzzzzzzzzz" },
-		"wrong-key-store": func(c *MCPConfig) { c.KeyStore = "file" },
 		"wrong-principal": func(c *MCPConfig) { c.Principal = "bob@example.test" },
 	} {
 		t.Run(name, func(t *testing.T) {

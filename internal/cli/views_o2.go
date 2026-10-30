@@ -229,9 +229,13 @@ func doctorView(v any) (clirender.Doc, bool) {
 		counts[c.Status]++
 	}
 	var d clirender.Doc
-	d.Title(fmt.Sprintf("Doctor: %d pass · %d warn · %d fail", counts[doctor.Pass], counts[doctor.Warn], counts[doctor.Fail]))
-	// Failures first, then warnings, then passes; each group in report order.
-	order := map[string]int{doctor.Fail: 0, doctor.Warn: 1, doctor.Pass: 2}
+	title := fmt.Sprintf("Doctor: %d pass · %d warn · %d fail", counts[doctor.Pass], counts[doctor.Warn], counts[doctor.Fail])
+	if counts[doctor.Info] > 0 {
+		title += fmt.Sprintf(" · %d info", counts[doctor.Info])
+	}
+	d.Title(title)
+	// Failures first, then warnings, notes and passes; each group in report order.
+	order := map[string]int{doctor.Fail: 0, doctor.Warn: 1, doctor.Info: 2, doctor.Pass: 3}
 	checks := append([]doctor.Check(nil), report.Checks...)
 	sort.SliceStable(checks, func(i, j int) bool { return order[checks[i].Status] < order[checks[j].Status] })
 	for _, c := range checks {

@@ -264,10 +264,15 @@ func TestDeviceInstalledEntryMatchesDoctor(t *testing.T) {
 			t.Fatal("the installed device entry rejected:", check)
 		}
 	})
-	for _, wrong := range []MCPConfig{func() MCPConfig { e := expected; e.DeviceID = "dev_bbbbbbbbbbbbbbbbbbbbbbbbbb"; return e }(), func() MCPConfig { e := expected; e.KeyStore = "file"; return e }()} {
-		checkMCP(wrong, func(check Check) {
-			if check.Status != Fail {
-				t.Fatal("a changed device route accepted:", check)
+	// The device and its key store are the install's own: doctor, resolving
+	// another profile's, takes the entry's and names them.
+	for flag, other := range map[string]MCPConfig{
+		"--device-id dev_abcdefghjkmnpqrstvwxyz0123": func() MCPConfig { e := expected; e.DeviceID = "dev_bbbbbbbbbbbbbbbbbbbbbbbbbb"; return e }(),
+		"--key-store keyring":                        func() MCPConfig { e := expected; e.KeyStore = "file"; return e }(),
+	} {
+		checkMCP(other, func(check Check) {
+			if check.Status != Pass || !strings.Contains(check.Message, "It keeps the "+flag+" it was installed with.") {
+				t.Fatal("the entry's own device route rejected or not named:", check)
 			}
 		})
 	}

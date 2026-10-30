@@ -493,7 +493,7 @@ var screenAbout = map[Screen]string{
 	ScreenLinear:   "The project's Linear board: your personal Linear connection, and the board this project is linked to. Task ownership comes from the coordinator's issue assignment; selecting a row never claims or completes work. In Intake (n), only a needs-agent label, delegation or mention a trusted person makes in Linear itself counts; signals made through ClawBridge run as the app and are never trusted. Project status (p) reads each Linear project's status through the server's ClawBridge app, which costs the project's Linear budget; a project owner or lead, in a TUI opened without a session, sets one after the server's preview. Shared views (v) lists the board's teams' Linear views with your Linear connection, read-only; a project owner writes them in their own terminal with clawbridge linear view create, update and delete.",
 	ScreenAccount:  "Your devices and the workspace's members and invites. Anything that revokes or mints a code asks you to type a word first.",
 	ScreenModel:    "The dispatcher's model: the provider, model and key it uses, and its caps.",
-	ScreenDoctor:   "Checks of this profile, the server and the project: pass, warn or fail.",
+	ScreenDoctor:   "Checks of this profile, the server and the project: pass, warn or fail, and info for a note.",
 	ScreenCloud:    "Setting up a server. Nothing is created or changed until you confirm.",
 }
 

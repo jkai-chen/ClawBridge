@@ -61,6 +61,8 @@ const (
 	Pass Status = "pass"
 	Warn Status = "warn"
 	Fail Status = "fail"
+	// Info is a note, not a problem (doctor.Info).
+	Info Status = "info"
 )
 
 // Check is one diagnostic result. Detail and Fix must be safe to display: the

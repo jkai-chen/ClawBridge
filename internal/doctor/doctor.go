@@ -18,8 +18,11 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 
 	"clawbridge/internal/bus"
+	"clawbridge/internal/devicekey"
+	"clawbridge/internal/devicesign"
 	"clawbridge/internal/linearprovider"
 	"clawbridge/internal/mirror"
 	"clawbridge/internal/playbook"
@@ -32,6 +35,10 @@ const (
 	Pass = "pass"
 	Warn = "warn"
 	Fail = "fail"
+	// Info is a note, not a problem: something doctor had nothing to check,
+	// such as the agent skill where no agent is set up. It never changes
+	// the report's status or the exit code.
+	Info = "info"
 )
 
 // Executor is the shared application boundary. Doctor only invokes nonmutating
@@ -74,23 +81,27 @@ type Device struct {
 // MCPConfig identifies one installed-client configuration and the expected
 // ClawBridge entry. Doctor reads these paths and never repairs them.
 type MCPConfig struct {
-	LinearProfile    string `json:"linear_profile,omitempty"`
-	ClientConfig     string `json:"client_config,omitempty"`
-	Agent            string `json:"agent"`
-	Name             string `json:"name"`
-	Path             string `json:"path"`
-	DB               string `json:"db"`
-	Workspace        string `json:"workspace"`
-	Project          string `json:"project"`
-	Session          string `json:"session"`
-	Instance         string `json:"instance"`
-	Mode             string `json:"mode"`
-	Server           string `json:"server"`
-	Principal        string `json:"principal"`
-	Cache            string `json:"cache"`
-	CredentialSource string `json:"credential_source"`
-	DeviceID         string `json:"device_id,omitempty"`
-	KeyStore         string `json:"key_store,omitempty"`
+	// DeviceKey, when set, says whether a device's key is in a store on
+	// this machine (loaded, never used to sign). Doctor asks it for a device
+	// or key store taken from the entry, which its own route didn't check.
+	DeviceKey        func(store, server, deviceID string) error `json:"-"`
+	LinearProfile    string                                     `json:"linear_profile,omitempty"`
+	ClientConfig     string                                     `json:"client_config,omitempty"`
+	Agent            string                                     `json:"agent"`
+	Name             string                                     `json:"name"`
+	Path             string                                     `json:"path"`
+	DB               string                                     `json:"db"`
+	Workspace        string                                     `json:"workspace"`
+	Project          string                                     `json:"project"`
+	Session          string                                     `json:"session"`
+	Instance         string                                     `json:"instance"`
+	Mode             string                                     `json:"mode"`
+	Server           string                                     `json:"server"`
+	Principal        string                                     `json:"principal"`
+	Cache            string                                     `json:"cache"`
+	CredentialSource string                                     `json:"credential_source"`
+	DeviceID         string                                     `json:"device_id,omitempty"`
+	KeyStore         string                                     `json:"key_store,omitempty"`
 }
 
 // Input controls deterministic diagnostics. Now and MirrorStaleAfter are
@@ -274,8 +285,12 @@ func Run(ctx context.Context, in Input, executor Executor) Report {
 	if in.LinearAPIKey != nil {
 		checkLinearAPIKey(in.LinearAPIKey, add)
 	}
+	// No agent set up here: no Claude Code or Codex configuration found.
+	noAgent := false
 	if in.Skills != nil {
-		checkSkills(in.Skills, add)
+		states, err := in.Skills()
+		noAgent = err == nil && len(states) == 0
+		checkSkills(func() ([]skill.State, error) { return states, err }, add)
 	}
 	if in.Context != nil {
 		checkContext(in.Context(), add)
@@ -297,11 +312,17 @@ func Run(ctx context.Context, in Input, executor Executor) Report {
 		checkPlaybook(ctx, in.Playbook, in.Config, executor, add)
 	}
 	if len(in.MCPConfigs) == 0 {
-		add(Check{
+		check := Check{
 			ID: "mcp.entries", Title: "Installed MCP entries", Status: Warn,
 			Message: "No agent MCP configuration paths were selected for inspection.",
 			Action:  "To check an entry, pass all three of --mcp-agent claude-code|codex, --mcp-config PATH (an agent's settings, or the file given to claude --mcp-config) and --mcp-session NAME, plus --mcp-instance and --mcp-name when the entry has them.",
-		})
+		}
+		if noAgent {
+			// Nothing was asked for, and there is no agent to have an entry.
+			check.Status = Info
+			check.Message += " No Claude Code or Codex configuration was found here."
+		}
+		add(check)
 	}
 	report.Status = aggregate(report.Checks)
 	return report
@@ -379,8 +400,9 @@ func checkLinearAPIKey(saved func() (string, bool), add func(Check)) {
 	add(check)
 }
 
-// checkSkills warns when no agent skill is installed, or when an installed
-// one is not the skill this binary carries.
+// checkSkills warns when an agent set up here has no skill, or when an
+// installed one is not the skill this binary carries; with no agent set up
+// it is only a note.
 func checkSkills(read func() ([]skill.State, error), add func(Check)) {
 	check := Check{ID: "skill.version", Title: "Agent skill", Status: Pass}
 	states, err := read()
@@ -388,6 +410,14 @@ func checkSkills(read func() ([]skill.State, error), add func(Check)) {
 		check.Status = Warn
 		check.Message = "Agent skill installations could not be read."
 		check.Action = "Run `clawbridge skill status` for details."
+		add(check)
+		return
+	}
+	if len(states) == 0 {
+		// No agent set up: nothing to install the skill for, which isn't a problem.
+		check.Status = Info
+		check.Message = "No Claude Code or Codex configuration was found here, so no agent skill was checked."
+		check.Action = "After setting up Claude Code or Codex, run `clawbridge skill install`."
 		add(check)
 		return
 	}
@@ -1413,20 +1443,29 @@ func checkMCP(mcp MCPConfig, add func(Check)) {
 		add(check)
 		return
 	}
-	// Without a profile of its own, doctor takes the entry's: the install's
-	// --linear-profile isn't kept anywhere doctor reads. The entry must then
-	// equal, argument for argument, the one the installer writes with it.
+	// The entry's authority (mode, scope, session, instance, server,
+	// credential source, principal) must be the one doctor was asked to
+	// check. Its local route details, which the install chose and doctor
+	// can't know better (the Linear profile when doctor has none, the
+	// profile file, the cache, the device and its key store), are taken
+	// from the entry when well-formed; the entry must then equal, argument
+	// for argument, the one the installer writes with them.
 	profile, pinned := installedLinearProfile(entry)
+	withEntry, adoptedDetails, malformed := adoptEntryLocal(mcp, entry)
+	if malformed != "" {
+		check.Message = "The installed MCP entry has a malformed " + malformed + "."
+		check.Action = "Reinstall the entry with the intended route; doctor made no change."
+		add(check)
+		return
+	}
 	adopted := false
-	if mcp.LinearProfile == "" && pinned {
-		withProfile := mcp
-		withProfile.LinearProfile = profile
-		if candidate, err := expectedMCPEntry(withProfile); err == nil {
-			expected, adopted = candidate, true
-		}
+	if candidate, err := expectedMCPEntry(withEntry); err == nil {
+		expected, adopted = candidate, mcp.LinearProfile == "" && pinned
+	} else {
+		adoptedDetails = nil
 	}
 	if !entryMatches(entry, expected) {
-		check.Message = "The installed MCP entry conflicts with the expected project, session, mode or credential route."
+		check.Message = "The installed MCP entry conflicts with the expected route: it " + entryDifferences(entry, expected) + "."
 		if mcp.LinearProfile != "" && pinned && profile != mcp.LinearProfile {
 			withProfile := mcp
 			withProfile.LinearProfile = profile
@@ -1452,13 +1491,244 @@ func checkMCP(mcp MCPConfig, add func(Check)) {
 		add(check)
 		return
 	}
+	// A device or key store taken from the entry is doctor's to check: its
+	// key must be in that store here, or the entry can't sign.
+	ownDevice := false
+	for _, d := range adoptedDetails {
+		if strings.HasPrefix(d, "--device-id ") || strings.HasPrefix(d, "--key-store ") {
+			ownDevice = true
+		}
+	}
+	if ownDevice && mcp.DeviceKey != nil {
+		if err := mcp.DeviceKey(withEntry.KeyStore, withEntry.Server, withEntry.DeviceID); err != nil {
+			check.Message = "The installed MCP entry's device " + withEntry.DeviceID + " has no usable key in its " + withEntry.KeyStore + " store on this machine: " + err.Error()
+			check.Action = "Use the device this machine joined with, or join this machine with an invite and reinstall the entry; doctor made no change."
+			add(check)
+			return
+		}
+	}
 	check.Status = Pass
 	check.Message = "The installed MCP entry matches the expected authority, scope and credential route."
 	if adopted {
 		// Never silently: the profile the entry pins is named.
 		check.Message += " It uses the Linear profile " + profile + " it was installed with; check another with --mcp-linear-profile."
 	}
+	if len(adoptedDetails) > 0 {
+		// Nor the other details taken from the entry.
+		check.Message += " It keeps the " + strings.Join(adoptedDetails, ", ") + " it was installed with."
+	}
+	if ownDevice {
+		// Doctor makes no server call for an entry: which member that
+		// device signs as is not checked here.
+		if mcp.DeviceKey == nil {
+			check.Message += " Its device key was not checked here, nor which member the device signs as."
+		} else {
+			check.Message += " Its device key is in that store; which member the device signs as is not checked here."
+		}
+	}
 	add(check)
+}
+
+// instanceName is the shape of a session instance (bus namePattern).
+var instanceName = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$`)
+
+// adoptEntryLocal takes from the entry the route details that are local to
+// its install: the Linear profile and the instance when doctor has none of
+// its own, and on a cloud
+// route the profile file, the cache, and on a device route the device ID
+// and key store. Each must be well-formed; malformed names the first that
+// isn't. adopted describes each taken value that differs from doctor's own
+// (the Linear profile is named by the caller). Authority is never taken.
+func adoptEntryLocal(mcp MCPConfig, entry map[string]any) (out MCPConfig, adopted []string, malformed string) {
+	out = mcp
+	values := entryFlagValues(entry)
+	take := func(flag string, current *string, valid func(string) bool, describe bool) bool {
+		value, ok := values[flag]
+		if !ok {
+			return true
+		}
+		if !valid(value) {
+			malformed = flag
+			return false
+		}
+		if value != *current {
+			if describe {
+				adopted = append(adopted, flag+" "+value)
+			}
+			*current = value
+		}
+		return true
+	}
+	absolute := func(p string) bool {
+		return filepath.IsAbs(p) && filepath.Clean(p) == p && !strings.ContainsFunc(p, unicode.IsControl)
+	}
+	if mcp.LinearProfile == "" && !take("--linear-profile", &out.LinearProfile, linearProfileID.MatchString, false) {
+		return mcp, nil, malformed
+	}
+	// An instance is checked when doctor is given one, else the entry's.
+	if mcp.Instance == "" && !take("--instance", &out.Instance, instanceName.MatchString, true) {
+		return mcp, nil, malformed
+	}
+	mode := mcp.Mode
+	if mode == "" && mcp.Server != "" {
+		mode = "cloud"
+	}
+	if mode != "cloud" {
+		return out, adopted, ""
+	}
+	if !take("--cache", &out.Cache, absolute, true) {
+		return mcp, nil, malformed
+	}
+	if mcp.ClientConfig != "" && !take("--client-config", &out.ClientConfig, absolute, true) {
+		return mcp, nil, malformed
+	}
+	if mcp.CredentialSource == remote.CredentialSourceDevice {
+		if !take("--device-id", &out.DeviceID, devicekey.ValidID, true) ||
+			!take("--key-store", &out.KeyStore, devicesign.ValidStore, true) {
+			return mcp, nil, malformed
+		}
+	}
+	return out, adopted, ""
+}
+
+// entryFlagValues maps each flag the entry's argument list gives exactly
+// once, as --flag value, to its string value. A repeated flag, or one with
+// a value that isn't a string, is left out: it is never adopted.
+func entryFlagValues(entry map[string]any) map[string]string {
+	args, _ := entry["args"].([]any)
+	values, seen := map[string]string{}, map[string]int{}
+	for i := 1; i+1 < len(args); i += 2 {
+		flag, ok := args[i].(string)
+		if !ok || !strings.HasPrefix(flag, "--") {
+			return map[string]string{}
+		}
+		seen[flag]++
+		if value, ok := args[i+1].(string); ok {
+			values[flag] = value
+		}
+	}
+	for flag, n := range seen {
+		if n > 1 {
+			delete(values, flag)
+		}
+	}
+	return values
+}
+
+// printableEntryFlags are the flags whose values a doctor message may show:
+// modes, scope, IDs, URLs and paths. Never a principal, or anything
+// unknown (an old entry's Google settings among them).
+var printableEntryFlags = map[string]bool{
+	"--mode": true, "--workspace": true, "--project": true, "--session": true, "--instance": true,
+	"--server": true, "--credential-source": true, "--cache": true, "--client-config": true,
+	"--key-store": true, "--device-id": true, "--linear-profile": true, "--db": true,
+}
+
+var entryFlagName = regexp.MustCompile(`^--[a-z][a-z-]{0,63}$`)
+
+// plainEntryValue is a value with no space, control or quoting character,
+// of a printable length: one a message can show as it is.
+var plainEntryValue = regexp.MustCompile(`^[A-Za-z0-9._:/@+-]{1,256}$`)
+
+// printableEntryValue says whether a doctor message may show value as the
+// flag's: the flag's values are printable, and this one is well-formed for
+// it, so a malformed or hostile value is never echoed.
+func printableEntryValue(flag, value string) bool {
+	if !printableEntryFlags[flag] {
+		return false
+	}
+	switch flag {
+	case "--cache", "--client-config", "--db":
+		// A path may have spaces; never a control character.
+		return filepath.IsAbs(value) && len(value) <= 1024 && !strings.ContainsFunc(value, unicode.IsControl)
+	}
+	if !plainEntryValue.MatchString(value) {
+		return false
+	}
+	switch flag {
+	case "--linear-profile":
+		return linearProfileID.MatchString(value)
+	case "--device-id":
+		return devicekey.ValidID(value)
+	case "--key-store":
+		return devicesign.ValidStore(value)
+	}
+	return true
+}
+
+// entryDifferences says how an entry that doesn't match differs from the
+// expected one, as a phrase following "it": the flags that differ, are
+// missing or are extra, with both values only where printable.
+func entryDifferences(actual, expected map[string]any) string {
+	environment := map[string]any{"args": expected["args"]}
+	for _, key := range []string{"env", "env_vars"} {
+		if value, ok := actual[key]; ok {
+			environment[key] = value
+		}
+	}
+	if !entryMatches(environment, expected) {
+		return "passes a credential or route setting through its environment"
+	}
+	if value, ok := actual["type"]; ok && value != "stdio" {
+		return "is not a stdio server"
+	}
+	actualArgs, ok := actual["args"].([]any)
+	if !ok || len(actualArgs) == 0 || fmt.Sprint(actualArgs[0]) != "mcp" {
+		return "does not run clawbridge mcp"
+	}
+	expectedArgs, _ := expected["args"].([]any)
+	type pair struct {
+		flag, value string
+	}
+	parse := func(args []any) ([]pair, bool) {
+		pairs := []pair{}
+		if len(args)%2 != 1 {
+			return nil, false
+		}
+		for i := 1; i+1 < len(args); i += 2 {
+			flag, ok := args[i].(string)
+			if !ok || !entryFlagName.MatchString(flag) {
+				return nil, false
+			}
+			pairs = append(pairs, pair{flag, fmt.Sprint(args[i+1])})
+		}
+		return pairs, true
+	}
+	got, ok := parse(actualArgs)
+	if !ok {
+		return "has an argument list that isn't --flag value pairs"
+	}
+	want, _ := parse(expectedArgs)
+	gotValues, wantValues := map[string][]string{}, map[string]string{}
+	for _, p := range got {
+		gotValues[p.flag] = append(gotValues[p.flag], p.value)
+	}
+	for _, p := range want {
+		wantValues[p.flag] = p.value
+	}
+	differences := []string{}
+	for _, p := range want {
+		values := gotValues[p.flag]
+		switch {
+		case len(values) == 0:
+			differences = append(differences, "lacks "+p.flag)
+		case len(values) > 1:
+			differences = append(differences, "repeats "+p.flag)
+		case values[0] != p.value && printableEntryValue(p.flag, values[0]) && printableEntryValue(p.flag, p.value):
+			differences = append(differences, "differs in "+p.flag+" (entry "+values[0]+", expected "+p.value+")")
+		case values[0] != p.value:
+			differences = append(differences, "differs in "+p.flag)
+		}
+	}
+	for _, p := range got {
+		if _, ok := wantValues[p.flag]; !ok && !slices.Contains(differences, "has an unexpected "+p.flag) {
+			differences = append(differences, "has an unexpected "+p.flag)
+		}
+	}
+	if len(differences) == 0 {
+		return "lists its arguments in another order than the installer writes them"
+	}
+	return strings.Join(differences, "; ")
 }
 
 func parseMCPEntry(agent, name string, raw []byte) (map[string]any, bool, error) {

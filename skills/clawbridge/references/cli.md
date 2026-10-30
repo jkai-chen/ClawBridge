@@ -17,6 +17,8 @@ wrong. Each check has an `id`, a `status`, a `message` and often an `action`:
   command still succeeds.
 - `fail`: a required check failed; the command exits nonzero. Report the check's
   `id`, `message` and `action` to the human; don't work around it.
+- `info`: a note, not a problem, such as no agent set up on this machine. It
+  never changes the report's status.
 
 The report's own `status` is the worst check's. Read the JSON; the human
 layout words the same checks for people and may change.

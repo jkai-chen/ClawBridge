@@ -321,6 +321,8 @@ func TestDoneReleaseReachesDoneOnlyInAnAgentProject(t *testing.T) {
 		{"agent project without done", projectA, sfProgress, false, nil, sfReview},
 		{"overtaken claim, agent project", projectA, sfBacklog, true, 1, sfDone},
 		{"overtaken claim, policy changed", projectA, sfBacklog, true, 2, ""},
+		{"skipped claim, agent project", projectA, sfTodo, true, "skipped", sfDone},
+		{"skipped claim, human project", projectB, sfTodo, true, "skipped", sfReview},
 		{"from release_done", projectA, sfReview, true, nil, ""},
 	} {
 		s, a, p, scope := stateTest(t, "release_done", c.current, policy(c.done), false)
@@ -331,6 +333,12 @@ func TestDoneReleaseReachesDoneOnlyInAnAgentProject(t *testing.T) {
 		if c.claimRevision != nil {
 			a.comments.gos["state"]["claim_state"] = "superseded"
 			a.comments.gos["state"]["claim_policy_revision"] = c.claimRevision
+		}
+		if c.claimRevision == "skipped" {
+			a.comments.gos["state"]["claim_state"] = "skipped"
+			a.comments.gos["state"]["claim_skip_reason"] = "team_off"
+			a.comments.gos["state"]["claim_policy_revision"] = 1
+			a.comments.gos["state"]["policy_revision"] = 2
 		}
 		s.ApplyMarker(context.Background(), scope, "asg_1", "close", nil)
 		m := stateMoves(p)

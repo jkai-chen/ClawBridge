@@ -446,12 +446,21 @@ func (s *Service) issueStateID(ctx context.Context, scope bus.Request, issue lin
 	return found, nil
 }
 
-// claimOvertaken reports a release move whose claim move never ran: the bus
-// superseded it because the release came first (A1), and the claim froze
-// the same policy revision as this move (A1-L1). A bus that predates A1
-// sends neither, so the release keeps the exact rule.
+// claimOvertaken reports a release move whose claim move never ran, so the
+// issue may still sit where the claim would have moved it from. Two cases:
+// the bus superseded the claim because the release came first (A1), and the
+// claim froze the same policy revision as this move (A1-L1); or the claim
+// was skipped because the team's flow was off then (team_off,
+// team_not_in_policy or policy_off), where the revisions differ by nature:
+// the policy was turned on after the claim was skipped. Any other claim
+// outcome, and a bus that predates both (no claim_skip_reason), keeps the
+// exact rule.
 func claimOvertaken(g map[string]any) bool {
 	state, _ := g["claim_state"].(string)
+	if state == "skipped" {
+		reason, _ := g["claim_skip_reason"].(string)
+		return reason == "team_off" || reason == "team_not_in_policy" || reason == "policy_off"
+	}
 	claim, ok := policyRevision(g["claim_policy_revision"])
 	move, same := policyRevision(g["policy_revision"])
 	return state == "superseded" && ok && same && claim == move
@@ -467,7 +476,8 @@ func inClaimFromSet(kindOf string, policy bus.StatusPolicy) bool {
 // read again, its team must be bound and in the policy (a bound team the policy lacks is skipped as team_not_in_policy), the target in that
 // team's workflow, and the current state in the move's "from" set (a claim
 // from the claim's from-set; a release only from exactly the claim state,
-// or from the claim's from-set too when its claim was overtaken). A move
+// or from the claim's from-set too when its claim was overtaken or skipped
+// because the team's flow was off). A move
 // already in place is done (SF-L5). After a failed send the issue is read
 // once more: the target is done, an unchanged state is retried, and any
 // other state is what landed, never sent again (SF-L3).

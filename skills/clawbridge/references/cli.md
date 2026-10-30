@@ -126,11 +126,14 @@ never instructs. Who closes is a person's decision: never run
 file includes `closes` (leave closes out: the current rules are kept); pass the message to the human.
 
 A state that didn't move after a release in a newly bound team is usually the
-status policy not including that team yet (skip reason `team_not_in_policy`;
-doctor's `linear.status_policy` warns). Tell the project owner: they run
+status policy not including that team yet (skip reason `team_not_in_policy`,
+"the status policy doesn't move this team's issues"; doctor's
+`linear.status_policy` warns). Tell the project owner: they run
 `status-policy set` with the file `{"enabled": true}`, which reads every bound
 team again and keeps every other key (closes, done states) as it is. Never run
-it yourself.
+it yourself. Once the policy includes the team, a later done-release still
+closes an issue whose claim was skipped for that reason, if the issue is in
+backlog or unstarted.
 
 Where the status policy lets project status follow the work, a coordinator may
 also receive `project-done` (every issue closed, and people finish the project),

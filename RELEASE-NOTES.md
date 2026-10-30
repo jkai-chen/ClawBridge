@@ -16,6 +16,9 @@
   config scope: none (the owner creates team webhooks in Linear's UI).
 - Doctor's `linear.webhooks` actions name `clawbridge linear webhook-setup` for an unconfigured team, and say a
   degraded team polls on its usual cadence until 24 h after the miss. Linear config scope: none.
+- A done-release now closes an issue whose claim was skipped because the status policy didn't move the team's issues
+  then (the team's flow was off), from backlog or unstarted only; before, the issue stayed in Todo. Linear config
+  scope: none (state moves on the bound team's issues per the existing policy).
 
 ## Docs
 

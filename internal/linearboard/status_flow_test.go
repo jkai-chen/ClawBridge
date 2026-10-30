@@ -541,3 +541,49 @@ func TestSetStatusPolicyCarriesProjectFlow(t *testing.T) {
 		t.Fatal("project flow on without asking")
 	}
 }
+
+// A release after a claim SKIPPED because the team's flow was off then (the
+// policy turned the team on later, so its revision is higher) may move from
+// the claim's from-set; no other skip reason does, nor an older bus.
+func TestReleaseAfterASkippedClaimMovesFromTheClaimsFromSet(t *testing.T) {
+	const sfCanceled = "c1000000-0000-4000-8000-0000000000a7"
+	for _, c := range []struct {
+		name, current, skipReason string
+		moved, done               bool
+	}{
+		{"team_off, backlog", sfBacklog, "team_off", true, false},
+		{"team_off, todo", sfTodo, "team_off", true, false},
+		{"team_not_in_policy, todo", sfTodo, "team_not_in_policy", true, false},
+		{"policy_off, todo", sfTodo, "policy_off", true, false},
+		{"team_off, the claim state", sfProgress, "team_off", true, false},
+		{"another started state", sfQA, "team_off", false, false},
+		{"canceled", sfCanceled, "team_off", false, false},
+		{"completed", sfDone, "team_off", false, false},
+		{"from_state", sfTodo, "from_state", false, false},
+		{"team_unbound", sfTodo, "team_unbound", false, false},
+		{"target_unknown", sfTodo, "target_unknown", false, false},
+		{"policy_changed", sfTodo, "policy_changed", false, false},
+		{"state_unresolved", sfTodo, "state_unresolved", false, false},
+		{"an older bus", sfTodo, "", false, false},
+	} {
+		policy := sfPolicy()
+		team := policy.Teams[teamID]
+		team.Workflow[sfCanceled] = "canceled"
+		s, a, p, scope := stateTest(t, "release_done", c.current, policy, false)
+		p.statuses = append(append([]linearprovider.Status{}, sfStates...), linearprovider.Status{ID: sfCanceled, Name: "Canceled", TeamID: teamID, Type: "canceled"})
+		a.comments.gos["state"]["claim_state"] = "skipped"
+		a.comments.gos["state"]["claim_policy_revision"] = 1
+		a.comments.gos["state"]["policy_revision"] = 2
+		if c.skipReason != "" {
+			a.comments.gos["state"]["claim_skip_reason"] = c.skipReason
+		}
+		s.ApplyMarker(context.Background(), scope, "asg_1", "close", nil)
+		got := settled(a, "state")
+		if m := stateMoves(p); (len(m) == 1) != c.moved || (c.moved && (m[0] != sfReview || got["outcome"] != "done" || got["state_landed"] != sfReview)) {
+			t.Fatal(c.name, m, got)
+		}
+		if !c.moved && (len(stateMoves(p)) != 0 || got["skip_reason"] != "from_state") {
+			t.Fatal(c.name, got)
+		}
+	}
+}

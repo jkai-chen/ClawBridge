@@ -1923,8 +1923,14 @@ without a session is never refused here.
   hasn't started yet is unaffected.
 - **Done only forward.** A done-release reaches `done` only from exactly the
   `claim` state, or from where the claim would have moved it when the release
-  overtook its claim under an unchanged policy. It never moves an issue from
-  `release_done`, or from any other state a person chose.
+  overtook its claim under an unchanged policy, or when the claim was skipped
+  because the status policy didn't move this team's issues then (skip reason
+  `team_off`, `team_not_in_policy` or `policy_off`; the policy may have been
+  turned on since) and the issue is still in backlog or unstarted (triage only
+  if the policy allows it). It never moves an issue from `release_done`, from
+  any other state a person chose, or from completed or canceled; then the skip
+  reads "someone else had moved the issue, so it was left as it is; set it
+  yourself if right".
 - **Knowing a state's type.** In order: Linear's status list (its own type,
   so Duplicate counts as canceled), the policy's stored workflow, then on a
   hosted server the ClawBridge Linear app's read, kept per team for 60 seconds.

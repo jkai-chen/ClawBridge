@@ -389,6 +389,11 @@ func (m markerCall) stateGo(ctx context.Context, out func(string) map[string]any
 		if m.claim != nil {
 			o["claim_state"] = str(m.claim, "state_state")
 			o["claim_policy_revision"] = int64(asInt(m.claim["state_policy_revision"]))
+			// A skipped claim says why: a release may move from the claim's
+			// from-set when the team's flow was off at the claim.
+			if r := str(m.claim, "state_skip_reason"); r != "" {
+				o["claim_skip_reason"] = r
+			}
 		}
 	}
 	o["policy"], o["policy_revision"] = policy, revision

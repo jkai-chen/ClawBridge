@@ -756,6 +756,14 @@ func TestScanPatchPatterns(t *testing.T) {
 			t.Fatal("a removed or context line counted", line)
 		}
 	}
+	// G9 S4-04: an added line that begins "++ " is "+++ " in the patch.
+	added := "diff --git a/f b/f\n--- a/f\n+++ b/f\n@@ -0,0 +1 @@\n+++ ghp_" + strings.Repeat("x", 36) + "\n"
+	if hits := ScanPatch(added); len(hits) != 1 || hits[0].File != "f" {
+		t.Fatal("an added line beginning ++ was taken for a header:", hits)
+	}
+	if hits := ScanPatch(added + "diff --git a/g b/g\n--- a/g\n+++ b/g\n@@ -0,0 +1 @@\n+clean\n"); len(hits) != 1 || hits[0].File != "f" {
+		t.Fatal("the next file's header was misread:", hits)
+	}
 	if hits := ScanPatch("+++ b/f\n+just some text with gh_ and AKIA in it\n+_authToken=${NPM_TOKEN}\n+see Authorization: Bearer <token>\n+npm_install_it\n"); len(hits) != 0 {
 		t.Fatal("false positive", hits)
 	}

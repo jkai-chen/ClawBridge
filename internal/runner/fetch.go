@@ -39,8 +39,18 @@ func ScanPatch(patch string) []Hit {
 	var hits []Hit
 	seen := map[Hit]bool{}
 	file := ""
+	// A "+++ " line names the file only in a file's header, before its
+	// first hunk; inside a hunk it is an added line that begins "++ "
+	// (G9 S4-04).
+	header := true
 	for _, line := range strings.Split(patch, "\n") {
-		if strings.HasPrefix(line, "+++ ") {
+		switch {
+		case strings.HasPrefix(line, "diff "):
+			header = true
+		case strings.HasPrefix(line, "@@"):
+			header = false
+		}
+		if header && strings.HasPrefix(line, "+++ ") {
 			file = strings.TrimPrefix(strings.TrimPrefix(line, "+++ "), "b/")
 			continue
 		}

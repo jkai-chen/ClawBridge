@@ -1189,7 +1189,8 @@ func liveDevice(ctx context.Context, tx *transaction, id Identity, workspace str
 
 // OperatorBootstrapInvite is the host operator's way in when no device can
 // sign in yet: a fresh server with device sign-in only, or an owner who has
-// lost every device. It creates the workspace for owner if it doesn't exist
+// lost every device. A new code revokes every earlier pending one for the
+// workspace and reports only how many. It creates the workspace for owner if it doesn't exist
 // (as workspace_init would for the bootstrap owner), then issues a 24 h
 // recovery invite for owner alone, from operator:local. Its code is shown
 // once, to the caller. A caller that made the code itself passes it as code
@@ -1245,6 +1246,24 @@ func (s *Store) OperatorBootstrapInvite(ctx context.Context, workspace, owner, c
 	if _, err = tx.ExecContext(ctx, `SELECT pg_advisory_xact_lock(hashtextextended(?,0))`, "workspace:"+wid); err != nil {
 		return nil, errors.New("workspace is busy or the authority is unavailable; nothing changed")
 	}
+	// An owner who lost every device can't revoke an old code, so a new owner
+	// bootstrap code (a recovery invite from the operator) replaces every
+	// earlier pending one of this workspace; used, expired and other invites stay.
+	old, err := query(ctx, tx, `SELECT invite_id,email FROM invites WHERE workspace_id=? AND purpose='recovery' AND created_by=? AND used_at IS NULL AND revoked_at IS NULL AND expires_at>?`, wid, OperatorPrincipal, stamp())
+	if err != nil {
+		return nil, err
+	}
+	op := *s
+	op.principal = OperatorPrincipal
+	for _, row := range old {
+		oldID := str(row, "invite_id")
+		if _, err = tx.ExecContext(ctx, `UPDATE invites SET revoked_at=?,revoke_reason='superseded' WHERE invite_id=?`, stamp(), oldID); err != nil {
+			return nil, err
+		}
+		if err = op.audit(ctx, tx, wid, "", "", "invite", oldID, "invite_revoked", map[string]any{"invite_id": oldID, "email": row["email"], "reason": "superseded by a new owner bootstrap invite"}); err != nil {
+			return nil, err
+		}
+	}
 	var mine int
 	if err = tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM invites WHERE workspace_id=? AND email=? AND used_at IS NULL AND revoked_at IS NULL AND expires_at>?`, wid, owner, stamp()).Scan(&mine); err != nil {
 		return nil, err
@@ -1261,8 +1280,6 @@ func (s *Store) OperatorBootstrapInvite(ctx context.Context, workspace, owner, c
 	if _, err = tx.ExecContext(ctx, `INSERT INTO invites(invite_id,workspace_id,email,code_sha256,purpose,grants,revoke_others,created_by,created_at,expires_at) VALUES(?,?,?,?,'recovery','{}',0,?,?,?)`, id, wid, owner, devicekey.CodeHash(id, normal), OperatorPrincipal, stamp(), expires); err != nil {
 		return nil, err
 	}
-	op := *s
-	op.principal = OperatorPrincipal
 	shown := map[string]any{"invite_id": id, "email": owner, "purpose": "recovery", "expires_at": expires, "workspace": w["name"], "workspace_created": created, "via": "operator bootstrap-invite"}
 	if err = op.audit(ctx, tx, wid, "", "", "invite", id, "invite_created", shown); err != nil {
 		return nil, err
@@ -1270,7 +1287,7 @@ func (s *Store) OperatorBootstrapInvite(ctx context.Context, workspace, owner, c
 	if err = tx.Commit(); err != nil {
 		return nil, errors.New("authority commit failed")
 	}
-	out := map[string]any{}
+	out := map[string]any{"revoked_earlier": len(old)}
 	if !given {
 		out["code"] = code
 	}

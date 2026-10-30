@@ -7,6 +7,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"clawbridge/internal/devicekey"
 )
@@ -938,5 +939,47 @@ func TestPostgresIdentityLiveFollowsTheDevice(t *testing.T) {
 	}
 	if live, err := f.s.IdentityLive(ctx, id); err != nil || live {
 		t.Fatal("a revoked device is live:", live, err)
+	}
+}
+
+// A new owner bootstrap invite revokes the workspace's earlier pending ones,
+// and only those: another workspace's, a member's and a used one stay.
+func TestPostgresBootstrapInviteSupersedesEarlierOwnerCodes(t *testing.T) {
+	f := newPGIdentityFixture(t)
+	ctx := context.Background()
+	owner := newID("boot") + "@identity-test.example"
+	ws := newID("bootws")
+	first, err := f.s.OperatorBootstrapInvite(ctx, ws, owner, "")
+	if err != nil || first["revoked_earlier"] != 0 {
+		t.Fatal(first, err)
+	}
+	// Another workspace with the same owner email keeps its pending code.
+	otherWS := newID("bootws")
+	elsewhere, err := f.s.OperatorBootstrapInvite(ctx, otherWS, owner, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A member invite in the first workspace is not an owner code.
+	memberInvite := "inv_member_" + newID("m")
+	f.exec(`INSERT INTO invites(invite_id,workspace_id,email,code_sha256,purpose,grants,revoke_others,created_by,created_at,expires_at) SELECT ?,id,?,?,'device','{}',0,?,?,? FROM workspaces WHERE name=?`,
+		memberInvite, "member@identity-test.example", "x", owner, stamp(), future(24*time.Hour), ws)
+	second, err := f.s.OperatorBootstrapInvite(ctx, ws, owner, "")
+	if err != nil || second["revoked_earlier"] != 1 {
+		t.Fatal(second, err)
+	}
+	if row := f.inviteRow(first["invite_id"].(string)); row["revoked_at"] == nil || f.audited("invite_revoked", first["invite_id"].(string)) != 1 {
+		t.Fatal("the earlier owner code is still live:", row)
+	}
+	if _, err = f.join(owner, first["code"].(string), newKey(t)); err == nil {
+		t.Fatal("the superseded owner code still joined")
+	}
+	if row := f.inviteRow(elsewhere["invite_id"].(string)); row["revoked_at"] != nil {
+		t.Fatal("another workspace's owner code was revoked")
+	}
+	if f.inviteRow(memberInvite)["revoked_at"] != nil {
+		t.Fatal("a member invite was revoked")
+	}
+	if _, err = f.join(owner, second["code"].(string), newKey(t)); err != nil {
+		t.Fatal("the newest owner code does not join:", err)
 	}
 }

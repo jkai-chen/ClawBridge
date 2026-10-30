@@ -607,7 +607,9 @@ A client inside WSL uses the Linux store; a client on the Windows side uses the 
 Then: clawbridge join --server https://$(read_env CLAWBRIDGE_DOMAIN) --email EMAIL
 
 To stop trusting it later (each computer keeps trusting it until you do):
-  macOS:          security delete-certificate -Z $sha1 ~/Library/Keychains/login.keychain-db
+  macOS:          sudo security remove-trusted-cert -d clawbridge-local-root.crt && security delete-certificate -Z $sha1 ~/Library/Keychains/login.keychain-db
+                  (the first command removes the admin trust setting that "trust" added, and needs the certificate
+                  file: keep clawbridge-local-root.crt, or run "$0 trust" again to get it)
   Debian/Ubuntu:  sudo rm /usr/local/share/ca-certificates/clawbridge-local-root.crt && sudo update-ca-certificates --fresh
   Fedora/RHEL:    sudo rm /etc/pki/ca-trust/source/anchors/clawbridge-local-root.crt && sudo update-ca-trust
   Windows:        certutil -user -delstore Root "$cn"

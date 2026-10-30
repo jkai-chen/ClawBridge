@@ -1,5 +1,7 @@
 # Unreleased
 
+# ClawBridge v0.3.13 (released 30 Oct)
+
 **Schema 53 → 54.**
 - The server migrates to schema 54 on its first start: `dispatcher_decisions.kind` (older rows get `judgement` or
   `rules` from their engine), the escalation payload and answer columns, `dispatcher_cases.attempt` in the case

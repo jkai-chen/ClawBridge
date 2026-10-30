@@ -806,6 +806,13 @@ CLAWBRIDGE_WATCH_INTERVAL=15m
   took …ms of its …ms share: comments …, intake …ms (S1 …ms, S2 …ms, S3 …ms),
   …`). The watcher's reads reuse a verified binding for 20 minutes, across
   ticks; a relink or a failed check drops it, and writes always verify.
+  - **The hour, in the log.** After each UTC hour, the first tick or nudge
+    logs one line per project the server watched in it: `watcher: budget:
+    project ID hour HH: used N of L, refused P passes, deferred D` (`of none`
+    with no cap). `refused` counts the passes a cap stopped, and `deferred` is
+    the most due issues and marker rows any one pass left for later. It holds
+    no issue data. The counts live in the server process, so the hour a server
+    stops or restarts in is not logged.
 - **Queued writes.** The server sends queued agent writes every 5 seconds as
   Linear and each project's budget allow (docs/linear.md, "Queued writes").
 - **Clients.** While the server's ticks for a project are fresh, a client

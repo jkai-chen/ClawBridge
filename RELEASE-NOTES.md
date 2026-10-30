@@ -40,6 +40,11 @@
   when a listing holds two); the hourly refresh drops from several seconds to one call, and every call is charged. If
   Linear refuses the query, or the app can't see the team, the set comes from the label listings as before. Linear
   config scope: none.
+- The server watcher logs each project's hour of Linear calls. After each UTC hour, the first tick or nudge logs one
+  line per project, with codes and counts only: `watcher: budget: project ID hour HH: used N of L, refused P passes,
+  deferred D` (`of none` with no cap, the default). `refused` counts the passes a cap stopped; `deferred` is the most
+  due issues and claim-marker rows any one pass left for later. Anyone reading the server's log can see it, with no
+  sign-in. Linear config scope: none.
 
 ## Docs
 

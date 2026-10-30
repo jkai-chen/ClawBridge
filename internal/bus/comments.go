@@ -730,8 +730,10 @@ func (c commentCall) due(ctx context.Context) (any, error) {
 	if room < 0 {
 		room = 0
 	}
+	// deferred counts the due issues the hour's budget leaves for later.
+	deferred := 0
 	if len(rows) > room {
-		rows = rows[:room]
+		rows, deferred = rows[:room], len(rows)-room
 	}
 	issues := []any{}
 	if len(rows) > 0 {
@@ -746,7 +748,7 @@ func (c commentCall) due(ctx context.Context) (any, error) {
 			issues = append(issues, map[string]any{"issue_uuid": row["subject"], "issue_identifier": row["issue_identifier"], "since": layout(at(str(row, "cursor_time")).Add(-watchLag)), "watch_started_at": row["watch_started_at"]})
 		}
 	}
-	return map[string]any{"issues": issues, "budget_used": used, "budget_limit": limit, "budget_exhausted": limit > 0 && len(issues) == 0 && limit-used < watchConnectCalls+1}, nil
+	return map[string]any{"issues": issues, "budget_used": used, "budget_limit": limit, "budget_exhausted": limit > 0 && len(issues) == 0 && limit-used < watchConnectCalls+1, "deferred": deferred}, nil
 }
 
 type reportedComment struct {

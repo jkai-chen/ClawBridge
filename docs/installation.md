@@ -181,9 +181,22 @@ clawbridge self-update --version vX.Y.Z
   `--version vX.Y.Z` is the explicit consent; without it, a latest release older than the
   running version is refused. A development build must name its release with `--version`.
 - **Attestation.** `--verify-attestation`, or `CLAWBRIDGE_VERIFY=required` as for the
-  installers, also runs `gh attestation verify` on the download; `gh` must be on PATH and
-  signed in, and a binary that fails is not installed. Without it the output says
-  `build provenance: not checked`.
+  installers, also checks the download's build provenance, and a binary that fails is not
+  installed. Without it the output says `build provenance: not checked`.
+  - **v0.3.13 and later** publish the provenance as the release asset
+    `PROVENANCE.sigstore.json`, and the client verifies it in-process, with no `gh`, API
+    call or token: the Sigstore certificate and transparency-log entry, the release
+    workflow at exactly that tag, the binary's name and SHA-256, and SLSA provenance v1.
+    The output says `build provenance: verified (the release's Sigstore bundle, checked
+    in-process)`.
+  - **The trusted root** is Sigstore's public-good root, fetched with TUF from
+    `tuf-repo-cdn.sigstore.dev` and cached in your user cache directory
+    (`clawbridge/sigstore-tuf`). Offline, the cached root is used while its signed
+    metadata is still valid (about a week after the last fetch); otherwise nothing is
+    installed.
+  - **Older releases** have no bundle, so the client runs `gh attestation verify` as
+    before; `gh` must be on PATH and signed in. Any failure to fetch the bundle other than
+    "not found" installs nothing rather than falling back.
 - **The skill.** Afterwards the new binary runs `clawbridge skill install`; a failure only
   warns. `--no-skill` skips it.
 - **Agent shells.** Upgrading is a person's decision. When an agent's environment

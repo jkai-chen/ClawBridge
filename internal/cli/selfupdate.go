@@ -105,7 +105,7 @@ func runSelfUpdate(ctx context.Context, args []string, stdout, stderr io.Writer)
 	f.Usage = func() { fmt.Fprintln(stderr, selfUpdateUsage) }
 	check := f.Bool("check", false, "report the running and latest versions; change nothing")
 	version := f.String("version", "", "install this release (vX.Y.Z); the only way to go to an older one")
-	verify := f.Bool("verify-attestation", false, "check the build provenance with gh; install nothing if it fails")
+	verify := f.Bool("verify-attestation", false, "check the build provenance (the release's Sigstore bundle, or gh before v0.3.13); install nothing if it fails")
 	noSkill := f.Bool("no-skill", false, "do not re-run skill install afterwards")
 	f.Bool("json", true, "return JSON (the default output format)")
 	if err := f.Parse(args); err != nil {
@@ -175,10 +175,15 @@ func runSelfUpdate(ctx context.Context, args []string, stdout, stderr io.Writer)
 	}
 	fmt.Fprintf(stderr, "updated %s → %s at %s\n", result.From, result.To, result.Destination)
 	fmt.Fprintf(stderr, "sha256 %s\n", result.SHA256)
-	if result.Attestation == "verified" {
+	switch {
+	case result.Attestation == "verified" && result.AttestationMethod == "bundle":
+		fmt.Fprintln(stderr, "build provenance: verified (the release's Sigstore bundle, checked in-process)")
+	case result.Attestation == "verified" && result.AttestationMethod == "gh":
+		fmt.Fprintln(stderr, "build provenance: verified (gh attestation verify)")
+	case result.Attestation == "verified":
 		fmt.Fprintln(stderr, "build provenance: verified")
-	} else {
-		fmt.Fprintln(stderr, "build provenance: not checked (add --verify-attestation; needs gh)")
+	default:
+		fmt.Fprintln(stderr, "build provenance: not checked (add --verify-attestation)")
 	}
 	if result.Aside != "" {
 		fmt.Fprintf(stderr, "the old binary is at %s until running clawbridge processes exit\n", result.Aside)

@@ -266,7 +266,7 @@ func TestSelfUpdateReportAndSkillRerun(t *testing.T) {
 	for _, want := range []string{
 		"updated v0.3.9 → v0.3.10 at /opt/fake/clawbridge",
 		"sha256 " + f.result.SHA256,
-		"build provenance: not checked (add --verify-attestation; needs gh)",
+		"build provenance: not checked (add --verify-attestation)",
 		"agents' running MCP servers (clawbridge mcp) keep the old version until their session restarts",
 	} {
 		if !strings.Contains(stderr, want) {
@@ -283,12 +283,22 @@ func TestSelfUpdateReportAndSkillRerun(t *testing.T) {
 
 	// Verified, with the Windows aside.
 	f = &suFake{plan: updatePlan(), result: updateResult()}
-	f.result.Attestation, f.result.Aside = "verified", `C:\Temp\clawbridge-previous-1.exe.old`
+	f.result.Attestation, f.result.AttestationMethod, f.result.Aside = "verified", "bundle", `C:\Temp\clawbridge-previous-1.exe.old`
 	fakeSelfUpdate(t, "v0.3.9", f)
 	typing(t, true, "")
 	_, stderr, _ = runSU(t, "self-update", "--verify-attestation")
-	if !strings.Contains(stderr, "build provenance: verified") || strings.Contains(stderr, "not checked") ||
+	if !strings.Contains(stderr, "build provenance: verified (the release's Sigstore bundle, checked in-process)") || strings.Contains(stderr, "not checked") ||
 		!strings.Contains(stderr, `the old binary is at C:\Temp\clawbridge-previous-1.exe.old until running clawbridge processes exit`) {
+		t.Fatal(stderr)
+	}
+
+	// Verified with gh, for a release without the bundle.
+	f = &suFake{plan: updatePlan(), result: updateResult()}
+	f.result.Attestation, f.result.AttestationMethod = "verified", "gh"
+	fakeSelfUpdate(t, "v0.3.9", f)
+	typing(t, true, "")
+	_, stderr, _ = runSU(t, "self-update", "--verify-attestation")
+	if !strings.Contains(stderr, "build provenance: verified (gh attestation verify)") {
 		t.Fatal(stderr)
 	}
 

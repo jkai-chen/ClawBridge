@@ -136,6 +136,14 @@ computer. Upgrading from v0.3.x: docs/upgrading-to-1.0.md.
   release body unless the tagged notes' first line is `# ClawBridge VERSION (released DATE)` for the version being
   released; `# Unreleased`, another version's heading or a heading without a date stops it before anything is
   created, with what to rename. No schema change. Linear config scope: none.
+- **`self-update --verify-attestation` checks the provenance itself, with no gh.** For a release that carries
+  `PROVENANCE.sigstore.json` (v0.3.13 and later) the client verifies the bundle in-process with sigstore-go: the
+  Sigstore certificate chain and transparency log against the public-good trusted root (fetched by TUF from
+  `tuf-repo-cdn.sigstore.dev` and cached; offline it uses the cache while it is valid, otherwise it installs nothing),
+  the release workflow at exactly the target tag, the downloaded binary's name and SHA-256 as a subject, and SLSA
+  provenance v1. An older release without the bundle still uses `gh attestation verify`; any other failure to fetch
+  the bundle installs nothing. The output says which method verified it. The publish step now also runs
+  `gh attestation verify --bundle` on one asset before it creates the release. Linear config scope: none.
 
 ## Onboarding
 

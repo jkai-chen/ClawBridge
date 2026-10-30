@@ -18,8 +18,10 @@ func (e outsideLaneError) Error() string { return string(e) }
 // without lanes, and a team that isn't a write team (a comment team takes
 // comments from every lane; the scope checks refuse the rest), pass. With
 // lanes, the server must have named the session's lane: a client never
-// guesses one.
-func checkLaneV2(b bus.TaskboardBindingV2, access bus.TaskboardAccess, team string) error {
+// guesses one. A refusal names where the lane came from when the server
+// said, and, when the call named no session (session is the request's),
+// how to name one.
+func checkLaneV2(b bus.TaskboardBindingV2, access bus.TaskboardAccess, session, team string) error {
 	if len(b.Lanes) == 0 || b.TeamAccess(team) != bus.TeamAccessWrite {
 		return nil
 	}
@@ -39,10 +41,24 @@ func checkLaneV2(b bus.TaskboardBindingV2, access bus.TaskboardAccess, team stri
 	if len(writers) > 0 {
 		by = "team " + team + " is written by lane " + strings.Join(writers, ", ")
 	}
-	if access.Lane == bus.LaneReadOnly || len(access.LaneWriteTeamIDs) == 0 {
-		return outsideLaneError("outside_lane: " + by + "; this session has no lane (unpinned sessions are read-only, or its pinned lane is gone); nothing was sent")
+	from := laneFromText[access.LaneFrom]
+	hint := ""
+	if session == "" {
+		hint = "; this call named no session: pass --session, or set CLAWBRIDGE_SESSION"
 	}
-	return outsideLaneError("outside_lane: " + by + "; you are in lane " + access.Lane + "; nothing was sent")
+	if access.Lane == bus.LaneReadOnly || len(access.LaneWriteTeamIDs) == 0 {
+		return outsideLaneError("outside_lane: " + by + "; this session has no lane (unpinned sessions are read-only, or its pinned lane is gone)" + from + hint + "; nothing was sent")
+	}
+	return outsideLaneError("outside_lane: " + by + "; you are in lane " + access.Lane + from + hint + "; nothing was sent")
+}
+
+// laneFromText says, in a refusal, where the server found the lane; an
+// older server names no source, and the refusal says nothing of it.
+var laneFromText = map[string]string{
+	bus.LaneFromSessionPin:      " (lane from the session's pin)",
+	bus.LaneFromMovedSessionPin: " (lane from a pin of the session it moved from)",
+	bus.LaneFromPrincipalPin:    " (lane from your own pin as a person)",
+	bus.LaneFromUnpinned:        " (lane from the binding's unpinned setting)",
 }
 
 // sameLaneV2: the lane a write was checked against still holds inside the

@@ -173,7 +173,7 @@ func (s *Store) reserveProjectCreate(ctx context.Context, tx *transaction, wid, 
 	}
 	home, lane := b.LinearDefaultTeamID, ""
 	if len(b.Lanes) > 0 {
-		if lane, _, _, err = s.sessionLane(ctx, tx, pid, actor); err != nil {
+		if lane, _, _, _, err = s.sessionLane(ctx, tx, pid, actor); err != nil {
 			return nil, err
 		}
 		l, exists := b.Lane(lane)

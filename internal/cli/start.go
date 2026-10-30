@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"reflect"
 	"regexp"
 	"strings"
 
@@ -71,7 +72,7 @@ func runOnboard(ctx context.Context, flags Config, args []string, stdout, stderr
 		}
 		return err
 	}
-	if flags != (Config{ClientConfig: flags.ClientConfig}) {
+	if !reflect.DeepEqual(flags, Config{ClientConfig: flags.ClientConfig}) {
 		return errors.New("onboard accepts only --client-config; enter the rest in the prompts")
 	}
 	path, err := selectedClientPath(flags)

@@ -135,7 +135,7 @@ func (s *Store) projectPlanConfirmer(ctx context.Context, tx *transaction, pid, 
 	if len(b.Lanes) == 0 {
 		return "", "", "", scoped("outside_lane: this binding has no lanes, so a session sets no project plan; the project owner, a lead or a team's lead does, in their own terminal", "forbidden")
 	}
-	name, _, _, err := s.sessionLane(ctx, tx, pid, actor)
+	name, _, _, _, err := s.sessionLane(ctx, tx, pid, actor)
 	if err != nil {
 		return "", "", "", err
 	}

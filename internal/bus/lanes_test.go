@@ -136,6 +136,18 @@ func (h *harness) lane(session string) (string, []string, bool) {
 	return access.Lane, access.LaneWriteTeamIDs, access.LaneWriteTeamIDs != nil
 }
 
+// laneFrom is where the server found session's lane, asked for alongside
+// the lane (lane_from: 1).
+func (h *harness) laneFrom(session string) string {
+	h.t.Helper()
+	out := h.call("taskboard_access", session, map[string]any{"ledger": 1, "lane_scope": 1, "lane_from": 1}).(map[string]any)
+	access, e := ParseTaskboardAccess(out)
+	if e != nil {
+		h.t.Fatal(e)
+	}
+	return access.LaneFrom
+}
+
 // A session's lane: its own pin, then a pin of the session it moved from
 // under the same principal, then its principal's pin, then unpinned. A
 // session pin binds the principal it was set for (X1).
@@ -148,6 +160,9 @@ func TestSessionLaneResolution(t *testing.T) {
 	if _, _, named := h.lane("a"); named {
 		t.Fatal("a binding without lanes named a lane")
 	}
+	if from := h.laneFrom("a"); from != "" {
+		t.Fatal("a binding without lanes named a lane source:", from)
+	}
 	h.call("taskboard_set_v2", "a", taskboardArgsLanes(1))
 	// Unpinned: read_only by default, no write team.
 	if lane, teams, named := h.lane("a"); !named || lane != LaneReadOnly || len(teams) != 0 {
@@ -157,6 +172,20 @@ func TestSessionLaneResolution(t *testing.T) {
 	out := h.call("taskboard_access", "a", map[string]any{"ledger": 1}).(map[string]any)
 	if _, present := out["lane"]; present {
 		t.Fatal("a lane without lane_scope:", out)
+	}
+	if from := h.laneFrom("a"); from != LaneFromUnpinned {
+		t.Fatal("unpinned source:", from)
+	}
+	// A v0.3.11 client asks for the lane but not its source, and gets no
+	// lane_from.
+	out = h.call("taskboard_access", "a", map[string]any{"ledger": 1, "lane_scope": 1}).(map[string]any)
+	if _, present := out["lane_from"]; present || out["lane"] != LaneReadOnly {
+		t.Fatal("lane_from without the ask:", out)
+	}
+	// lane_from alone names nothing.
+	out = h.call("taskboard_access", "a", map[string]any{"ledger": 1, "lane_from": 1}).(map[string]any)
+	if _, present := out["lane_from"]; present {
+		t.Fatal("lane_from without lane_scope:", out)
 	}
 	owner := h.principal()
 	// Sessionless: the principal's pin, then unpinned.
@@ -170,9 +199,15 @@ func TestSessionLaneResolution(t *testing.T) {
 	if lane, teams, _ := h.lane("a"); lane != "both" || len(teams) != 2 {
 		t.Fatal("principal pin:", lane, teams)
 	}
+	if from, sessionless := h.laneFrom("a"), h.laneFrom(""); from != LaneFromPrincipalPin || sessionless != LaneFromPrincipalPin {
+		t.Fatal("principal pin source:", from, sessionless)
+	}
 	h.pin("lane_pin_set", map[string]any{"expected_revision": 1, "kind": "session", "key": "a", "lane": "one"})
 	if lane, teams, _ := h.lane("a"); lane != "one" || len(teams) != 1 || teams[0] != teamOne {
 		t.Fatal("session pin first:", lane, teams)
+	}
+	if from := h.laneFrom("a"); from != LaneFromSessionPin {
+		t.Fatal("session pin source:", from)
 	}
 	// X1: a pin set for another principal's session of the name doesn't
 	// pass to this one.
@@ -193,11 +228,17 @@ func TestSessionLaneResolution(t *testing.T) {
 	if lane, _, _ := h.lane("d"); lane != "one" {
 		t.Fatal("successor:", lane)
 	}
+	if from := h.laneFrom("d"); from != LaneFromMovedSessionPin {
+		t.Fatal("successor source:", from)
+	}
 	if _, e := h.s.db.Exec(`UPDATE sessions SET owner_principal='other@example.com' WHERE name='a'`); e != nil {
 		t.Fatal(e)
 	}
 	if lane, _, _ := h.lane("d"); lane != LaneReadOnly {
 		t.Fatal("a successor inherited across principals:", lane)
+	}
+	if from := h.laneFrom("d"); from != LaneFromUnpinned {
+		t.Fatal("a successor's source across principals:", from)
 	}
 	// unpinned may be a lane; a pin to a lane the binding dropped leaves
 	// the session read-only.
@@ -214,6 +255,10 @@ func TestSessionLaneResolution(t *testing.T) {
 	h.call("taskboard_set_v2", "b", a)
 	if lane, teams, _ := h.lane("b"); lane != "one" || len(teams) != 0 {
 		t.Fatal("a vanished lane:", lane, teams)
+	}
+	// The pin still names where the lane came from.
+	if from := h.laneFrom("b"); from != LaneFromSessionPin {
+		t.Fatal("a vanished lane's source:", from)
 	}
 }
 
@@ -307,6 +352,22 @@ func TestTaskboardAccessParserChecksTheLane(t *testing.T) {
 	if a, e := ParseTaskboardAccess(base()); e != nil || a.LaneWriteTeamIDs != nil {
 		t.Fatal("no lane:", a, e)
 	}
+	// A lane's source is optional: a v0.3.11 server names none.
+	if a, e := ParseTaskboardAccess(good); e != nil || a.LaneFrom != "" {
+		t.Fatal("a v0.3.11 lane:", a, e)
+	}
+	for _, from := range []string{LaneFromSessionPin, LaneFromMovedSessionPin, LaneFromPrincipalPin, LaneFromUnpinned} {
+		m := base()
+		m["lane"], m["lane_write_team_ids"], m["lane_from"] = "one", []any{teamOne}, from
+		a, e := ParseTaskboardAccess(m)
+		if e != nil || a.LaneFrom != from {
+			t.Fatal(from, a, e)
+		}
+		raw, _ := json.Marshal(a)
+		if back, e := ParseTaskboardAccess(json.RawMessage(raw)); e != nil || back.LaneFrom != from {
+			t.Fatal("round trip:", from, back, e)
+		}
+	}
 	for name, change := range map[string]func(map[string]any){
 		"lane alone":  func(m map[string]any) { m["lane"] = "one" },
 		"teams alone": func(m map[string]any) { m["lane_write_team_ids"] = []any{teamOne} },
@@ -314,6 +375,11 @@ func TestTaskboardAccessParserChecksTheLane(t *testing.T) {
 		"bad team":    func(m map[string]any) { m["lane"], m["lane_write_team_ids"] = "one", []any{"FIX"} },
 		"not a list":  func(m map[string]any) { m["lane"], m["lane_write_team_ids"] = "one", teamOne },
 		"extra field": func(m map[string]any) { m["lane"], m["lane_write_team_ids"], m["more"] = "one", []any{teamOne}, 1 },
+		"bad source": func(m map[string]any) {
+			m["lane"], m["lane_write_team_ids"], m["lane_from"] = "one", []any{teamOne}, "binding"
+		},
+		"source not a string": func(m map[string]any) { m["lane"], m["lane_write_team_ids"], m["lane_from"] = "one", []any{teamOne}, 1 },
+		"source alone":        func(m map[string]any) { m["lane_from"] = LaneFromUnpinned },
 	} {
 		m := base()
 		change(m)

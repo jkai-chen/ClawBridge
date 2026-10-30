@@ -199,22 +199,32 @@ func readLanePins(ctx context.Context, tx *transaction, pid string) (map[string]
 	return map[string]any{"revision": revision, "pins": pins}, nil
 }
 
+// Where sessionLane found a lane, which taskboard_access names as
+// lane_from to a client that asks.
+const (
+	LaneFromSessionPin      = "session_pin"
+	LaneFromMovedSessionPin = "moved_session_pin"
+	LaneFromPrincipalPin    = "principal_pin"
+	LaneFromUnpinned        = "unpinned"
+)
+
 // sessionLane resolves a session's lane (or, for a sessionless caller,
 // one with only owner_principal, its principal's): its own pin while its principal is
 // the pin's, else a pin of a session it moved from under the same
 // principal, else its principal's pin, else the binding's unpinned
-// setting. ok is false when the binding has no lanes. A pin naming a lane
-// the binding no longer has leaves the session read-only.
-func (s *Store) sessionLane(ctx context.Context, tx *transaction, pid string, actor map[string]any) (lane string, teams []string, ok bool, err error) {
+// setting; from names which. ok is false when the binding has no lanes. A
+// pin naming a lane the binding no longer has leaves the session
+// read-only, and from still names that pin.
+func (s *Store) sessionLane(ctx context.Context, tx *transaction, pid string, actor map[string]any) (lane string, teams []string, from string, ok bool, err error) {
 	b, _, err := storedBinding(ctx, tx, pid)
 	var refused *serviceError
 	if errors.As(err, &refused) {
 		// An unreadable binding has no lanes; every write is refused
 		// elsewhere (bindingUnreadable).
-		return "", nil, false, nil
+		return "", nil, "", false, nil
 	}
 	if err != nil || len(b.Lanes) == 0 {
-		return "", nil, false, err
+		return "", nil, "", false, err
 	}
 	owner := str(actor, "owner_principal")
 	pin := func(kind, key string) (string, bool, error) {
@@ -228,14 +238,18 @@ func (s *Store) sessionLane(ctx context.Context, tx *transaction, pid string, ac
 	found := false
 	for hop := 0; hop <= maxSuccessorHops && !found; hop++ {
 		if lane, found, err = pin("session", name); err != nil {
-			return "", nil, false, err
+			return "", nil, "", false, err
 		}
 		if found {
+			from = LaneFromSessionPin
+			if hop > 0 {
+				from = LaneFromMovedSessionPin
+			}
 			break
 		}
 		prev, err := query(ctx, tx, `SELECT id,name FROM sessions WHERE project_id=? AND successor=? AND status='moved' AND owner_principal=?`, pid, id, owner)
 		if err != nil {
-			return "", nil, false, err
+			return "", nil, "", false, err
 		}
 		if len(prev) != 1 {
 			break
@@ -244,15 +258,18 @@ func (s *Store) sessionLane(ctx context.Context, tx *transaction, pid string, ac
 	}
 	if !found {
 		if lane, found, err = pin("principal", owner); err != nil {
-			return "", nil, false, err
+			return "", nil, "", false, err
+		}
+		if found {
+			from = LaneFromPrincipalPin
 		}
 	}
 	if !found {
-		lane = b.Unpinned
+		lane, from = b.Unpinned, LaneFromUnpinned
 	}
 	l, exists := b.Lane(lane)
 	if !exists {
-		return lane, []string{}, true, nil
+		return lane, []string{}, from, true, nil
 	}
-	return lane, append([]string{}, l.WriteTeamIDs...), true, nil
+	return lane, append([]string{}, l.WriteTeamIDs...), from, true, nil
 }

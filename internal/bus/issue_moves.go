@@ -177,7 +177,7 @@ func (s *Store) issueMoveMover(ctx context.Context, tx *transaction, pid, projec
 	if len(b.Lanes) == 0 {
 		return "", "", scoped("outside_lane: this binding has no lanes, so a coordinator confirms no team move; the project owner or a project lead confirms it", "forbidden")
 	}
-	lane, _, _, err := s.sessionLane(ctx, tx, pid, actor)
+	lane, _, _, _, err := s.sessionLane(ctx, tx, pid, actor)
 	if err != nil {
 		return "", "", err
 	}

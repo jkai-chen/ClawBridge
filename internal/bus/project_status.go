@@ -194,7 +194,7 @@ func (s *Store) projectStatusSetter(ctx context.Context, tx *transaction, pid st
 	if len(b.Lanes) == 0 {
 		return scoped("outside_lane: this binding has no lanes, so a coordinator sets no project's status; the project owner or a lead does", "forbidden")
 	}
-	lane, writes, _, err := s.sessionLane(ctx, tx, pid, actor)
+	lane, writes, _, _, err := s.sessionLane(ctx, tx, pid, actor)
 	if err != nil {
 		return err
 	}

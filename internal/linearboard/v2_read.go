@@ -807,7 +807,7 @@ func (s *Service) IssuesV2(ctx context.Context, scope bus.Request, in IssuesInpu
 	if len(pairs) == 0 {
 		return empty, errors.New("no verified issue pair")
 	}
-	pair := pairs[c.Pair]
+	at, pair := c.Pair, pairs[c.Pair]
 	page, e := p2.IssuesV2(ctx, linearprovider.IssueQueryV2{IssueQuery: linearprovider.IssueQuery{TeamID: pair.TeamID, ProjectID: pair.ProjectID, Limit: in.Limit, Cursor: c.Provider}, LabelID: in.LabelID, UpdatedAfter: in.UpdatedAfter})
 	if e != nil {
 		return empty, e
@@ -892,13 +892,39 @@ func (s *Service) IssuesV2(ctx context.Context, scope bus.Request, in IssuesInpu
 	}
 	page.NextCursor = ""
 	page.Complete = c.Pair >= len(pairs)
+	page.PageTeam, page.RemainingTeams = "", nil
 	if !page.Complete {
 		page.NextCursor, e = encodeCursorV2(c)
 		if e != nil {
 			return empty, e
 		}
 	}
+	if !page.Complete && len(pairs) > 1 {
+		// A page holds one pair's issues, so the first page shows only
+		// the first team; name the teams still to come. A one-pair
+		// listing's page stays as it was.
+		page.PageTeam = teamKeyV2(v.Teams, pair.TeamID)
+		// The page's own team isn't one that follows: a project set walks
+		// project by project, so the same team comes back on a later pair.
+		named := map[string]bool{page.PageTeam: true}
+		for _, later := range pairs[at+1:] {
+			if k := teamKeyV2(v.Teams, later.TeamID); !named[k] {
+				named[k] = true
+				page.RemainingTeams = append(page.RemainingTeams, k)
+			}
+		}
+	}
 	return page, nil
+}
+
+// teamKeyV2 is a verified team's key, or its ID when Linear gave none.
+func teamKeyV2(teams []linearprovider.Team, id string) string {
+	for _, t := range teams {
+		if t.ID == id && t.Key != "" {
+			return t.Key
+		}
+	}
+	return id
 }
 func (s *Service) IssueV2(ctx context.Context, scope bus.Request, id string) (linearprovider.IssueV2, error) {
 	issue, _, e := s.issueV2(ctx, scope, id, false, nil)
@@ -999,7 +1025,9 @@ func (s *Service) readRefV2(ctx context.Context, p ProviderV2, b bus.TaskboardBi
 		case pe.Kind == "scope_mismatch":
 			returned = pe.Returned
 		case pe.Kind == "provider_rejected" && strings.Contains(pe.LinearCode, "NOT_FOUND"):
-			return empty, fmt.Errorf("no issue %s in this binding", ref)
+			// Out of scope, so the CLI names the project it used: a stale
+			// default project reads like a missing issue otherwise.
+			return empty, outOfScopeError("no issue " + ref + " in this binding")
 		default:
 			return empty, e
 		}

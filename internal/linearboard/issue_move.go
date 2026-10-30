@@ -174,7 +174,7 @@ func (s *Service) MoveIssueV2(ctx context.Context, scope bus.Request, in MoveInp
 			return out, outsideLaneError("outside_lane: this binding has no lanes, so a coordinator confirms no team move; nothing was sent")
 		}
 		for _, team := range []string{plan.FromTeam, plan.ToTeam} {
-			if e = checkLaneV2(b, access, team); e != nil {
+			if e = checkLaneV2(b, access, scope.Session, team); e != nil {
 				return out, e
 			}
 		}

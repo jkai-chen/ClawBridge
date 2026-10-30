@@ -85,7 +85,14 @@ health.
 
 1. Use the workspace, project and unique session name supplied by the human or
    existing session configuration. A new session name is a short role slug
-   (`api-worker-2`), never a person's name or anything secret: Linear shows it (ClawBridge names the person behind you itself). MCP pins these at startup. Call
+   (`api-worker-2`), never a person's name or anything secret: Linear shows it (ClawBridge names the person behind you itself). MCP pins these at startup.
+   Shell `clawbridge` commands don't inherit them: pass `--workspace`, `--project`,
+   `--session` (the values the server's instructions name) and the server's
+   `--instance`, or export `CLAWBRIDGE_WORKSPACE`, `CLAWBRIDGE_PROJECT`,
+   `CLAWBRIDGE_SESSION` and `CLAWBRIDGE_INSTANCE`; otherwise they use the checkout's
+   `.clawbridge.toml` or `~/.clawbridge/config.toml`. `clawbridge linear context`
+   shows the scope a shell command used and where each value came from
+   ([references/cli.md](references/cli.md#shell-commands-and-the-mcp-servers-scope)). Call
    `register_session` when starting a new session, then `whoami` to confirm the
    binding and identity provenance. A routing role such as `lead` describes mail
    routing; it does not grant administrative permissions ([Which "lead"](#which-lead)).

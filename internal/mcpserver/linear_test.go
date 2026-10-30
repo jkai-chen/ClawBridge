@@ -157,6 +157,24 @@ func TestLinearMCPNoInventedReceiptOnOrdinaryError(t *testing.T) {
 	}
 }
 
+// The instructions tell the agent how to give its shell's clawbridge
+// commands this server's scope, with the server's own values: never the
+// instance, and without a value the server lacks.
+func TestInstructionsSayHowToScopeShellCommands(t *testing.T) {
+	_, cs := boardSession(t, nil)
+	text := cs.InitializeResult().Instructions
+	want := "Shell clawbridge commands don't inherit this server's workspace, project and session: pass --workspace pinned-workspace --project pinned-project --session pinned-actor and this server's --instance, or export CLAWBRIDGE_WORKSPACE, CLAWBRIDGE_PROJECT, CLAWBRIDGE_SESSION and CLAWBRIDGE_INSTANCE; otherwise they use the checkout's .clawbridge.toml or ~/.clawbridge/config.toml."
+	if !strings.Contains(text, want) || strings.Contains(text, "pinned-instance") {
+		t.Fatalf("instructions:\n%s", text)
+	}
+	if got := shellScopeSentence("ws-example", "prj_example", ""); !strings.Contains(got, "pass --workspace ws-example --project prj_example and this server's --instance,") || strings.Contains(got, "--session ") {
+		t.Fatal("no session:", got)
+	}
+	if got := shellScopeSentence("", "", ""); !strings.Contains(got, ": pass this server's --instance, or export") {
+		t.Fatal("no scope:", got)
+	}
+}
+
 func TestLinearMCPInitializationSuppliesOptInWorkflowWithoutProviderIO(t *testing.T) {
 	_, legacy := boardSession(t, nil)
 	legacyText := legacy.InitializeResult().Instructions

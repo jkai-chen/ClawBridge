@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -47,9 +48,11 @@ type authorityV2 struct {
 	// role is the project role taskboard_access reports; member when empty.
 	role string
 	// lane and laneTeams are the session's lane taskboard_access names when
-	// asked (lane_scope: 1); none when laneTeams is nil.
+	// asked (lane_scope: 1); none when laneTeams is nil. laneFrom is where
+	// it came from, named when also asked (lane_from: 1).
 	lane      string
 	laneTeams []string
+	laneFrom  string
 }
 
 func (a *authorityV2) Execute(_ context.Context, r bus.Request) (bus.Result, error) {
@@ -71,6 +74,9 @@ func (a *authorityV2) Execute(_ context.Context, r bus.Request) (bus.Result, err
 		}
 		if r.Args["lane_scope"] == 1 && a.laneTeams != nil {
 			access.Lane, access.LaneWriteTeamIDs = a.lane, a.laneTeams
+			if r.Args["lane_from"] == 1 {
+				access.LaneFrom = a.laneFrom
+			}
 		}
 		return bus.Result{Source: "local-authority", Data: access}, nil
 	}
@@ -145,6 +151,8 @@ type providerV2 struct {
 	landed string
 	// parents are the teams' parent teams, as get_team's parentId.
 	parents map[string]string
+	// keys are the teams' keys, as get_team's key; "" when unset.
+	keys map[string]string
 }
 
 func (p *providerV2) named(i linearprovider.IssueV2) linearprovider.IssueV2 {
@@ -182,6 +190,7 @@ func (p *providerV2) GetTeam(ctx context.Context, id string) (linearprovider.Tea
 	p.tools++
 	t, e := p.fakeProvider.GetTeam(ctx, id)
 	t.ParentID = p.parents[id]
+	t.Key = p.keys[id]
 	return t, e
 }
 func (p *providerV2) GetProject(_ context.Context, id string) (linearprovider.Project, error) {
@@ -364,6 +373,69 @@ func TestLinearV2PairPaginationUsesOnePageIncludingEmptyContinuation(t *testing.
 	a.b.Revision++
 	if _, e := s.IssuesV2(context.Background(), scope, IssuesInputV2{Limit: 10, Cursor: "invalid"}); e == nil {
 		t.Fatal("invalid cursor accepted")
+	}
+}
+
+// A page holds one pair's issues, so an incomplete page names its team
+// and the teams whose pages follow, by key (the ID when Linear gave none);
+// the last page names none.
+func TestLinearV2IssuePagesNameTheirTeamAndTheTeamsAfter(t *testing.T) {
+	s, _, p, scope := testV2(t)
+	p.keys = map[string]string{teamID: "ENG"}
+	p.pages = []linearprovider.Page[linearprovider.IssueV2]{{NextCursor: "next-page"}, {Complete: true}, {NextCursor: "next-other"}, {Complete: true}}
+	want := []struct {
+		team      string
+		remaining []string
+	}{{"ENG", []string{otherTeamID}}, {"ENG", []string{otherTeamID}}, {otherTeamID, nil}, {"", nil}}
+	cursor := ""
+	for n, w := range want {
+		page, e := s.IssuesV2(context.Background(), scope, IssuesInputV2{Limit: 10, Cursor: cursor})
+		if e != nil {
+			t.Fatal(e)
+		}
+		if page.PageTeam != w.team || !reflect.DeepEqual(page.RemainingTeams, w.remaining) || page.Complete != (n == len(want)-1) {
+			t.Fatal(n, page.PageTeam, page.RemainingTeams, page.Complete)
+		}
+		cursor = page.NextCursor
+	}
+	// A one-pair binding's page is what it was: no team fields in its JSON.
+	s, a, p, scope := testV2(t)
+	a.b.LinearTeamIDs, a.b.LinearProjectIDs = []string{teamID}, []string{projectA}
+	p.pages = []linearprovider.Page[linearprovider.IssueV2]{{NextCursor: "next-page"}}
+	page, e := s.IssuesV2(context.Background(), scope, IssuesInputV2{Limit: 10})
+	if e != nil || page.Complete {
+		t.Fatal(page, e)
+	}
+	raw, e := json.Marshal(page)
+	if e != nil || strings.Contains(string(raw), "page_team") || strings.Contains(string(raw), "remaining_teams") {
+		t.Fatal("a one-pair page gained the team fields:", string(raw))
+	}
+}
+
+// Two projects on both teams walk project by project, (A,ENG), (A,OPS),
+// (B,ENG), (B,OPS): a page never names its own team as one that follows.
+func TestLinearV2IssuePagesLeaveTheirOwnTeamOutOfTheTeamsAfter(t *testing.T) {
+	s, _, p, scope := testV2(t)
+	p.keys = map[string]string{teamID: "ENG", otherTeamID: "OPS"}
+	p.projects = map[string][]string{projectA: {teamID, otherTeamID}, projectB: {teamID, otherTeamID}}
+	p.pages = []linearprovider.Page[linearprovider.IssueV2]{{Complete: true}, {Complete: true}, {Complete: true}}
+	want := []struct {
+		team      string
+		remaining []string
+	}{{"ENG", []string{"OPS"}}, {"OPS", []string{"ENG"}}, {"ENG", []string{"OPS"}}}
+	cursor := ""
+	for n, w := range want {
+		page, e := s.IssuesV2(context.Background(), scope, IssuesInputV2{Limit: 10, Cursor: cursor})
+		if e != nil {
+			t.Fatal(e)
+		}
+		if page.Complete || page.PageTeam != w.team || !reflect.DeepEqual(page.RemainingTeams, w.remaining) {
+			t.Fatal(n, page.PageTeam, page.RemainingTeams, page.Complete, p.queries)
+		}
+		cursor = page.NextCursor
+	}
+	if q := p.queries; len(q) != 3 || q[0].ProjectID != projectA || q[1].TeamID != otherTeamID || q[2].ProjectID != projectB || q[2].TeamID != teamID {
+		t.Fatal("walk order:", q)
 	}
 }
 

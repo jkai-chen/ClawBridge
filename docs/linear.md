@@ -148,6 +148,13 @@ when starting a direct `clawbridge mcp` process. The original task-board tools a
 `taskboard_binding`, `taskboard_context`, `taskboard_issues`, `taskboard_issue`,
 `taskboard_create`, `taskboard_update` and `taskboard_comment`. Tools pin the
 process's profile/project; tool arguments cannot choose another account or board.
+
+`linear issues` reads one (team, project) pair of the binding per page, so the first page shows the first team only.
+An incomplete page names its team and the teams still to come (`page_team`, `remaining_teams`); the text layout ends
+with `page of team ENG; more teams follow: OPS; pass --cursor NEXT to continue`. A refusal of an issue outside the
+task-board scope names the workspace and project it used and where the project came from; `linear context` shows the
+whole scope. A shell command doesn't inherit an MCP server's scope ([API reference](reference/api.md#linear-cli-scope)).
+
 **Sub-teams.** Linear can list a sub-team's issues under its parent team. An issue listing only ever shows issues of
 the pair it is reading (a bound team, and in a project set a bound project with that team). A row of another bound
 team on a verified pair is shown when the listing reaches that pair, never twice. Any other row (a team the binding
@@ -449,6 +456,10 @@ anything is sent:
 - an unpinned session's write when `--unpinned` is `read_only`;
 - a relation added from an issue outside the lane (the issue you name first is yours); a relation removed whose
   stored "from" end, as Linear reports it, is outside the lane.
+
+The refusal also says where the lane came from, such as "(lane from the session's pin)", and, when the call named no
+session, "this call named no session: pass --session, or set CLAWBRIDGE_SESSION". Lanes never narrow a read:
+`linear issue` and `linear issues` read the whole binding.
 
 The lane is checked again inside the write lock: a pin changed meanwhile stops the write. Comment teams take comments
 from every lane. ClawBridge's own markers and server-side writes (intake, status moves) aren't a session's writes, so

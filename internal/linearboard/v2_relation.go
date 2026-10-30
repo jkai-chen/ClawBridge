@@ -94,7 +94,7 @@ func (s *Service) relationV2Personal(ctx context.Context, scope bus.Request, in 
 	caps := &commandCapsV2{p: p2}
 	var lane func(string) error
 	if len(b.Lanes) > 0 {
-		lane = func(team string) error { return checkLaneV2(b, access, team) }
+		lane = func(team string) error { return checkLaneV2(b, access, scope.Session, team) }
 	}
 	_, _, e = relationEvidenceV2(ctx, p2, b, v, caps, in, lane)
 	if e != nil {

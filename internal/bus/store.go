@@ -631,7 +631,7 @@ var operationArgs = map[string]string{
 	"taskboard_set_v2":            "instance expected_revision mode linear_team_ids linear_default_team_id linear_project_ids linear_workspace_id closes_pending linear_team_names linear_project_names linear_other_teams linear_parent_team_id lanes unpinned teams_without_project",
 	"taskboard_names_set":         "instance expected_revision linear_team_names linear_project_names",
 	"taskboard_clear_v2":          "instance expected_revision repair",
-	"taskboard_access":            "instance ledger engineer lane_scope coordinator_scope",
+	"taskboard_access":            "instance ledger engineer lane_scope lane_from coordinator_scope",
 	"project_create_reserve":      "instance operation_id team_id kind name_sha256",
 	"project_create_settle":       "instance operation_id outcome linear_project_id",
 	"project_create_list":         "instance",
@@ -801,7 +801,7 @@ func validateArgs(op string, a map[string]any) error {
 					return invalid(k + " must be an integer")
 				}
 			}
-		case "retention_days", "limit", "since_hours", "after", "expected_revision", "expected_binding_revision", "ledger", "lane_scope", "coordinator_scope", "generation", "budget", "calls", "charged", "policy_revision", "engineer", "if_unset", "expires_days", "expires_hours", "expires_minutes", "device_idle_days", "delay_seconds", "seconds", "s5_calls_per_hour", "out_of_binding_limit", "template_version", "part_number", "part_count", "seq", "config_revision", "mapping_revision", "members_before", "members_after":
+		case "retention_days", "limit", "since_hours", "after", "expected_revision", "expected_binding_revision", "ledger", "lane_scope", "lane_from", "coordinator_scope", "generation", "budget", "calls", "charged", "policy_revision", "engineer", "if_unset", "expires_days", "expires_hours", "expires_minutes", "device_idle_days", "delay_seconds", "seconds", "s5_calls_per_hour", "out_of_binding_limit", "template_version", "part_number", "part_count", "seq", "config_revision", "mapping_revision", "members_before", "members_after":
 			if _, err := integer(v); err != nil {
 				return fmt.Errorf("%s: %w", k, err)
 			}
@@ -1586,12 +1586,17 @@ func (s *Store) execute(ctx context.Context, tx *transaction, r Request) (any, e
 				if who == nil {
 					who = map[string]any{"owner_principal": s.principal}
 				}
-				lane, teams, ok, e := s.sessionLane(ctx, tx, pid, who)
+				lane, teams, from, ok, e := s.sessionLane(ctx, tx, pid, who)
 				if e != nil {
 					return nil, e
 				}
 				if ok {
 					access.Lane, access.LaneWriteTeamIDs = lane, teams
+					// A client that also asks learns where the lane came
+					// from; an older client never sees the field.
+					if n, e := integer(a["lane_from"]); e == nil && n == 1 {
+						access.LaneFrom = from
+					}
 				}
 			}
 			// A client that asks learns whether the session is the

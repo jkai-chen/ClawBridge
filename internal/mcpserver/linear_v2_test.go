@@ -30,6 +30,14 @@ func TestLinearMCPV2InitializationGuidanceIsAdditiveWithoutIO(t *testing.T) {
 	if strings.Contains(defaultText, "Native Linear V2") || strings.Contains(oldText, "Native Linear V2") || !strings.HasPrefix(newText, oldText+"\n\n") {
 		t.Fatal("V2 guidance altered default/V1 instructions")
 	}
+	// Every variant carries the shell-scope sentence once, in the default
+	// text, so V2 guidance alone still only appends.
+	shell := shellScopeSentence("pinned-workspace", "pinned-project", "pinned-actor")
+	for _, text := range []string{defaultText, oldText, newText} {
+		if !strings.HasPrefix(text, defaultText) || strings.Count(text, shell) != 1 {
+			t.Fatal("shell-scope sentence missing or variants diverge:", text)
+		}
+	}
 	for _, required := range []string{"advertised *_v2 family", "project-set boards and new board calls", "exact operation IDs and payloads", "unsupported_mapping", "explicit capability limit"} {
 		if !strings.Contains(newText[len(oldText):], required) {
 			t.Fatal("missing V2 guidance", required)

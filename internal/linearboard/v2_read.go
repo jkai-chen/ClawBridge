@@ -22,6 +22,10 @@ type verifiedV2 struct {
 	Pairs    []pairV2
 	Teams    []linearprovider.Team
 	Projects []linearprovider.Project
+	// Targets is set on a write's reused team proof (write_proof.go): the
+	// project half was not proven, so a project-set pair is admitted only by
+	// the write's own target, read from Linear in this write.
+	Targets bool
 }
 
 func (s *Service) BindingV2(ctx context.Context, scope bus.Request) (bus.TaskboardBindingV2, error) {
@@ -68,34 +72,58 @@ func (s *Service) unchangedV2(ctx context.Context, scope bus.Request, b bus.Task
 	return nil
 }
 func verifyBindingV2(ctx context.Context, p Provider, b bus.TaskboardBindingV2) (verifiedV2, error) {
-	var out verifiedV2
 	if !b.Configured {
-		return out, errors.New("task-board is not linked")
+		return verifiedV2{}, errors.New("task-board is not linked")
 	}
-	// Every listed team is verified live; only readable ones (write, read,
-	// comment) have pairs, since a linked team is never listed.
-	var teams []string
+	teams, e := verifyBindingTeamsV2(ctx, p, b)
+	if e != nil {
+		return verifiedV2{}, e
+	}
+	return verifyBindingProjectsV2(ctx, p, b, teams)
+}
+
+// verifyBindingTeamsV2 is the team half of the binding proof: every listed
+// team is verified live, and its parent relation with it.
+func verifyBindingTeamsV2(ctx context.Context, p Provider, b bus.TaskboardBindingV2) ([]linearprovider.Team, error) {
+	var out []linearprovider.Team
 	for _, id := range b.ListedTeamIDs() {
 		team, e := p.GetTeam(ctx, id)
 		if e != nil {
-			return out, e
+			return nil, e
 		}
 		if team.ID != id {
-			return out, errors.New("Linear team access or identity changed")
+			return nil, errors.New("Linear team access or identity changed")
 		}
-		out.Teams = append(out.Teams, team)
-		if b.TeamReadable(id) {
-			teams = append(teams, id)
-		}
+		out = append(out, team)
 	}
 	// The parent is Linear's: every other listed team must be its child.
 	if parent := b.LinearParentTeamID; parent != "" {
-		for _, team := range out.Teams {
+		for _, team := range out {
 			if team.ID != parent && team.ParentID != parent {
-				return out, fmt.Errorf("Linear doesn't report team %s as a sub-team of the binding's parent team", team.ID)
+				return nil, fmt.Errorf("Linear doesn't report team %s as a sub-team of the binding's parent team", team.ID)
 			}
 		}
 	}
+	return out, nil
+}
+
+// readableTeamsV2 are the verified teams that have pairs: the readable
+// ones (write, read, comment), since a linked team is never listed.
+func readableTeamsV2(b bus.TaskboardBindingV2, verified []linearprovider.Team) []string {
+	var teams []string
+	for _, team := range verified {
+		if b.TeamReadable(team.ID) {
+			teams = append(teams, team.ID)
+		}
+	}
+	return teams
+}
+
+// verifyBindingProjectsV2 completes the proof from its verified teams: a
+// team board's pairs are its teams; a project set's are read from Linear.
+func verifyBindingProjectsV2(ctx context.Context, p Provider, b bus.TaskboardBindingV2, verified []linearprovider.Team) (verifiedV2, error) {
+	out := verifiedV2{Teams: verified}
+	teams := readableTeamsV2(b, verified)
 	if b.Mode == "team_board" {
 		for _, id := range teams {
 			out.Pairs = append(out.Pairs, pairV2{TeamID: id})

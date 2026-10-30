@@ -32,6 +32,12 @@
   list). A failed write, any failed call, a 401 or a re-minted token closes the session; a kept session Linear has
   forgotten is reopened once inside the write. The tool list is still read and checked on every open, and every call,
   a reopen's included, is charged to the write that made it. Linear config scope: none.
+- **Agent writes cost fewer Linear calls.** An agent write re-verifies its binding's teams at most once a minute (per
+  binding revision and token) and checks its own target on every write: the team and project of the issue it reads,
+  or the project a create names (one `get_project`). That is 5 to 6 fewer calls per write after the first. A target
+  outside the binding is refused before anything is sent, a move just before sending is caught by the issue's
+  re-read, and any failed write verifies the whole binding again next time. A create also reads its team's workflow
+  states and labels once instead of twice (Linear checks their IDs on save). Linear config scope: none.
 
 # ClawBridge v0.3.12 (released 30 Oct)
 

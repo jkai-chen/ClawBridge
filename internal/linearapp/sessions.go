@@ -61,17 +61,6 @@ func (a *App) WriteSessions() *Sessions {
 	return a.sessions
 }
 
-// tokenKey is the identity of the token in use, "" when none is held: a
-// session opened under one key is never handed out under another.
-func (a *App) tokenKey() string {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	if a.token == "" {
-		return ""
-	}
-	return a.cfg.ClientID + "/" + a.identity.LinearOrgID + "/" + a.sha
-}
-
 // Close closes every kept session and keeps none from now on: the
 // server's shutdown.
 func (s *Sessions) Close() {
@@ -193,7 +182,7 @@ func (l *Lease) Provider(ctx context.Context, readonly bool) (*Leased, error) {
 	if _, _, err := l.s.app.Token(ctx); err != nil {
 		return nil, err
 	}
-	key := l.s.app.tokenKey()
+	key := l.s.app.TokenKey()
 	s := l.s
 	s.mu.Lock()
 	closing := s.expire(key)
@@ -207,7 +196,7 @@ func (l *Lease) Provider(ctx context.Context, readonly bool) (*Leased, error) {
 	if c != nil {
 		c.p.Reused(func(ctx context.Context) (*linearprovider.Provider, error) {
 			p, err := s.open(ctx)
-			c.key = s.app.tokenKey()
+			c.key = s.app.TokenKey()
 			return p, err
 		})
 	} else {
@@ -246,7 +235,7 @@ func (l *Lease) Release(ok bool) {
 	}
 	l.held, l.spare = nil, nil
 	l.mu.Unlock()
-	key := l.s.app.tokenKey()
+	key := l.s.app.TokenKey()
 	s := l.s
 	var closing []*session
 	s.mu.Lock()

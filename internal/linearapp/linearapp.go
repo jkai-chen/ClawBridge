@@ -330,6 +330,18 @@ func (a *App) Token(ctx context.Context) (string, Identity, error) {
 	return a.token, a.identity, nil
 }
 
+// TokenKey names the token in use, "" when none is held: the app, its
+// Linear organisation and the token's own hash, so neither a write session
+// nor a binding proof one token opened is reused under a re-minted one.
+func (a *App) TokenKey() string {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.token == "" {
+		return ""
+	}
+	return a.cfg.ClientID + "/" + a.identity.LinearOrgID + "/" + a.sha
+}
+
 // Remint replaces a token Linear refused (401). Only the token that failed
 // is replaced: when another instance already published a newer one, that
 // one is used, so a rotation never hands back the dead token.

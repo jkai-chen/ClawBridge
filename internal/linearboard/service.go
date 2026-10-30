@@ -69,6 +69,14 @@ type Config struct {
 	// Linear app's GraphQL behind a StateTypeCache. An agent's state write
 	// is decided by it when neither the policy nor the status list knows.
 	StateType func(ctx context.Context, team, state string) (string, error)
+	// WriteProofs, when set, lets issue writes reuse the team half of their
+	// binding proof (WriteTeamProofs): on a hosted server, one cache that
+	// the services of all app writes share.
+	WriteProofs *WriteTeamProofs
+	// WriteIdentity, when set, names the Linear token writes run with: the
+	// app, its organisation and the token, so a re-minted token never
+	// reuses what an older one proved. A "" answer verifies in full.
+	WriteIdentity func() string
 }
 type Service struct {
 	cfg Config
@@ -78,7 +86,9 @@ type Service struct {
 	app        *appRoute
 	pool       *providerPool
 	proofs     *bindingProofCache
-	held       *heldOperation
+	// writeProofs keeps issue writes' team proofs (write_proof.go).
+	writeProofs *WriteTeamProofs
+	held        *heldOperation
 	// retryMaintenance retries a write a draining server refused, once.
 	retryMaintenance bool
 }
@@ -92,7 +102,7 @@ func New(c Config) *Service {
 			return linearprovider.New(ctx, h, ro)
 		}
 	}
-	return &Service{cfg: c, app: &appRoute{}, stateReads: &atomic.Int64{}}
+	return &Service{cfg: c, app: &appRoute{}, stateReads: &atomic.Int64{}, writeProofs: c.WriteProofs}
 }
 
 type Context struct {

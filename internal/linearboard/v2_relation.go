@@ -48,7 +48,7 @@ func (s *Service) RelationV2(ctx context.Context, scope bus.Request, in Relation
 	return out, e
 }
 
-func (s *Service) relationV2Personal(ctx context.Context, scope bus.Request, in RelationInputV2) (any, error) {
+func (s *Service) relationV2Personal(ctx context.Context, scope bus.Request, in RelationInputV2) (_ any, err error) {
 	b, e := s.BindingV2(ctx, scope)
 	if e != nil {
 		return nil, e
@@ -83,10 +83,15 @@ func (s *Service) relationV2Personal(ctx context.Context, scope bus.Request, in 
 	if profile.Access != linearconn.Write {
 		return nil, errors.New("personal Linear profile is read-only")
 	}
-	v, e := verifyBindingV2(ctx, p, b)
+	v, drop, e := s.proveWriteBinding(ctx, p, b, profile)
 	if e != nil {
 		return nil, e
 	}
+	defer func() {
+		if err != nil {
+			drop()
+		}
+	}()
 	p2, ok := p.(ProviderV2)
 	if !ok {
 		return nil, errors.New("native provider lacks safe one-edge relation capability")
@@ -118,7 +123,8 @@ func (s *Service) relationV2Personal(ctx context.Context, scope bus.Request, in 
 			return nil, refusedBeforeDispatch(errLaneChanged)
 		}
 		// The same command's binding verification is reused; both issues and
-		// their edges are re-read here, and unchangedV2 re-checks the binding.
+		// their edges are re-read here, and each end's team and project
+		// checked again, and unchangedV2 re-checks the binding.
 		existing, observed, e := relationEvidenceV2(ctx, p2, b, v, caps, in, lane)
 		if e != nil {
 			return nil, proofFailure(e)

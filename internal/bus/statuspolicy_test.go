@@ -253,6 +253,38 @@ func TestCloseMoveCarriesTheClaimsOutcome(t *testing.T) {
 	}
 }
 
+// A release after a claim skipped because the team's flow was off carries
+// the claim's skip reason, so the applier may move from the claim's
+// from-set; a claim that never skipped carries none.
+func TestCloseMoveCarriesTheClaimsSkipReason(t *testing.T) {
+	w := newWatchHarness(t)
+	w.setStatusPolicy(0, sfPolicy(true))
+	for _, reason := range []string{"team_off", "team_not_in_policy", "policy_off", "from_state"} {
+		w.assign("b", sfIssueNext)
+		id := w.assignmentID("b")
+		w.markersDue()
+		w.markerGo("c", id, "claim", "state")
+		w.markerSettle("c", id, "claim", "state", map[string]any{"outcome": "skipped", "skip_reason": reason})
+		w.call("assignment_release", "b", map[string]any{"revision": w.live("b")["revision"], "outcome": "done"})
+		w.markersDue()
+		if g := w.markerGo("c", id, "close", "state"); g["action"] != "move" || g["claim_state"] != "skipped" || g["claim_skip_reason"] != reason {
+			t.Fatal(reason, g)
+		}
+	}
+	w.assign("b", sfIssueNext)
+	id := w.assignmentID("b")
+	w.markersDue()
+	w.markerGo("c", id, "claim", "state")
+	w.markerSettle("c", id, "claim", "state", map[string]any{"outcome": "done", "state_target": sfProgress, "state_landed": sfProgress})
+	w.call("assignment_release", "b", map[string]any{"revision": w.live("b")["revision"], "outcome": "done"})
+	w.markersDue()
+	if g := w.markerGo("c", id, "close", "state"); g["action"] != "move" {
+		t.Fatal(g)
+	} else if _, ok := g["claim_skip_reason"]; ok {
+		t.Fatal("a landed claim carries a skip reason", g)
+	}
+}
+
 func TestStateSettleRules(t *testing.T) {
 	w := newWatchHarness(t)
 	w.setStatusPolicy(0, sfPolicy(true))

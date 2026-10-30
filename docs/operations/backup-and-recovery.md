@@ -90,6 +90,44 @@ The env file names the store in one of two ways, never both:
 
 A missing, duplicated or malformed setting stops the runner before it dumps anything.
 
+### S3-compatible storage (a server you reach over SSH)
+
+On a host that is neither Google Cloud nor AWS, backups go to S3-compatible object storage **off the host**. A copy on
+the same host or disk isn't a backup, so a server's runner never writes one there. (A server on your own machine
+backs up to a local folder instead, with `CLAWBRIDGE_BACKUP_DIR`; see [its guide](local-host.md#backups), which says
+to copy that folder elsewhere. That mode takes no endpoint and no `--list`.) Set:
+
+- `CLAWBRIDGE_BACKUP_URL=s3://BUCKET`;
+- `CLAWBRIDGE_BACKUP_REGION`: the store's own region name (`auto`, `us-west-004`, `fr-par`, …);
+- `CLAWBRIDGE_BACKUP_ENDPOINT`: `https://HOST` or `https://HOST:PORT`, with no user, path, query or fragment. A
+  name or address that is this host, or loopback, is refused;
+- `CLAWBRIDGE_BACKUP_ACCESS_KEY_ID` and `CLAWBRIDGE_BACKUP_SECRET_ACCESS_KEY`: the store's key, which you type with
+  `clawbridge cloud secret set KEY --ssh HOST`, never through an agent.
+
+How the runner uses them:
+- It uploads with the `amazon/aws-cli` image, pinned by its index digest in the script, so the host needs no `aws`
+  CLI.
+- The key reaches the container in an env file in a private directory under `/run` (tmpfs), which is removed when the
+  run ends. It is never on a command line or on disk.
+- `backup-postgres.sh --list` prints the backup object names only. `clawbridge cloud check backups --ssh HOST` runs it
+  on the host with the host's key, so your own machine needs no key for the check.
+
+**The host's key may put and list, never delete.** A host compromise is the main reason for an off-host backup. A key
+that can delete or overwrite would let an attacker erase the backups too. So:
+
+| Store | The host's key | And turn on | Retention |
+|---|---|---|---|
+| Backblaze B2 | an application key for this one bucket with `listFiles` and `writeFiles`, without `deleteFiles` | the bucket keeps all versions (B2's default); Object Lock if your account has it | B2 keeps every version until a rule removes it: add a lifecycle rule on `postgres/daily/` that hides files after 30 days and deletes hidden ones after 1; a lock period of at least 30 days |
+| Cloudflare R2 | R2's object read & write token can delete, so it can't be scoped to put-only | a bucket lock rule on `postgres/` with a retention period, so nothing under it can be deleted or replaced before it ends | an object lifecycle rule deleting `postgres/daily/` objects after 30 days; a lock period of at least 30 days |
+| AWS S3, Wasabi, MinIO and other stores with S3 bucket policies | a policy allowing only `s3:PutObject` and `s3:ListBucket` on this bucket | versioning, so an overwrite keeps the earlier version; Object Lock where offered | `deploy/s3-lifecycle.json` (below) where the store accepts lifecycle rules, otherwise the store's own retention setting; a lock period of at least 30 days |
+
+If your store can neither scope a key this way nor lock or version the bucket, it doesn't meet this requirement:
+choose another. `cloud check backups` can't see a key's rights, so the onboarding hand-over asks you to confirm them.
+
+The runner refuses an endpoint that is this host, loopback or link-local. It can't tell an endpoint on the same LAN or
+in the same data centre from a distant one, and such a store may share the host's failure domain (power, network,
+provider account): pick one in another location.
+
 The runner executes:
 
 ```text
@@ -191,6 +229,10 @@ gcloud storage cp \
 # or Amazon S3 (BUCKET from CLAWBRIDGE_BACKUP_URL=s3://BUCKET, REGION from CLAWBRIDGE_BACKUP_REGION):
 #   aws s3 cp --region "$REGION" "s3://${BUCKET}/postgres/daily/${STAMP}.dump" "$DRILL_DIR/${STAMP}.dump"
 #   aws s3 cp --region "$REGION" "s3://${BUCKET}/postgres/daily/${STAMP}.sha256" "$DRILL_DIR/${STAMP}.sha256"
+# or S3-compatible storage, on your own machine with a separate READ-ONLY key
+# (never the host's; ENDPOINT from CLAWBRIDGE_BACKUP_ENDPOINT):
+#   aws s3 cp --endpoint-url "$ENDPOINT" --region "$REGION" "s3://${BUCKET}/postgres/daily/${STAMP}.dump" "$DRILL_DIR/${STAMP}.dump"
+#   aws s3 cp --endpoint-url "$ENDPOINT" --region "$REGION" "s3://${BUCKET}/postgres/daily/${STAMP}.sha256" "$DRILL_DIR/${STAMP}.sha256"
 (cd "$DRILL_DIR" && sha256sum -c "${STAMP}.sha256")
 
 docker run -d --rm --name "$CONTAINER" --network none \

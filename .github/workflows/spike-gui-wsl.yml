@@ -1,0 +1,48 @@
+# SPIKE (live/GUI-P1-SPIKE.md Q3/Q4): throwaway, spike branch only.
+# A Windows host starts gui-backend inside WSL with the design's fixed
+# login-shell string, syncs past rc noise, and makes RPC and PTY round trips.
+name: spike-gui-wsl
+on:
+  push:
+    branches: [spike/gui-p1]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  wsl-launch:
+    runs-on: windows-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Build the Linux backend and the Windows probe
+        shell: bash
+        run: |
+          GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -o clawbridge-linux ./cmd/clawbridge
+          go build -o guiprobe.exe ./spike/guiprobe
+      - uses: Vampire/setup-wsl@v4
+        with:
+          distribution: Ubuntu-24.04
+      - name: Install the backend in WSL, with a noisy login profile and a stand-in claude
+        shell: wsl-bash {0}
+        run: |
+          set -eu
+          mkdir -p ~/.local/bin
+          cp clawbridge-linux ~/.local/bin/clawbridge
+          chmod +x ~/.local/bin/clawbridge
+          printf '#!/bin/sh\necho "fake-claude ready"\nwhile IFS= read -r l; do echo "fake-claude got: $l"; done\n' > ~/.local/bin/claude
+          chmod +x ~/.local/bin/claude
+          # PATH only from the login profile, plus junk on stdout (GUI-DESIGN H2).
+          printf 'echo "motd: welcome to the spike"\necho "nvm: using node v22"\nexport PATH="$HOME/.local/bin:$PATH"\n' >> ~/.profile
+          printf 'echo "bashrc junk"\n' >> ~/.bashrc
+          mkdir -p ~/proj && cd ~/proj
+          ~/.local/bin/clawbridge setup --local --workspace w >/dev/null
+          ~/.local/bin/clawbridge project create p >/dev/null
+          echo "login shell: $(getent passwd "$(id -un)" | cut -d: -f7)"
+      - name: Probe from Windows through wsl.exe
+        shell: pwsh
+        run: |
+          ./guiprobe.exe -wsl Ubuntu-24.04 -pty claude
+          if ($LASTEXITCODE -ne 0) { exit 1 }

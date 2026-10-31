@@ -58,6 +58,9 @@ try {
     Assert-NoPanic $out 'doctor'
     Assert-Smoke ($out.Trim() -ne '') 'doctor printed nothing'
     Assert-Smoke ($code -eq 0 -or $code -eq 1) ('doctor exited ' + $code + ': ' + $out)
+    # Accepted: reset it, or a caller that runs this script inline (the draft
+    # step) ends with doctor's exit code.
+    $global:LASTEXITCODE = 0
     Write-Output ('doctor: exit ' + $code)
     # Off a terminal doctor prints its report as one JSON line: one line per
     # check here; anything else is shown as it came.

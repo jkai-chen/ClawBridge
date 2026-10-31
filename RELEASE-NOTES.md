@@ -1,3 +1,9 @@
+# Unreleased
+
+## Fixes
+
+- Linear intake: an issue whose history shows no entry at all is credited to its creator only when it was last changed within a minute of its creation. A lagging history can no longer pass another person's label for the creator's; such an issue is queued untrusted.
+
 # ClawBridge v1.0.0 (released 2 Nov)
 
 **ClawBridge 1.0.** Someone who isn't the project's owner can install ClawBridge, set up a server (on their own

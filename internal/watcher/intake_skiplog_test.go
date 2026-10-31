@@ -409,6 +409,69 @@ func TestIntakeS1LaggingOtherActorBeatsTheCreator(t *testing.T) {
 	}
 }
 
+// agedCreatorEnv is creatorEnv with the issue created gap before its last
+// update (the fake serves it as updated just now).
+func agedCreatorEnv(t *testing.T, gap time.Duration) (*env, *time.Time) {
+	t.Helper()
+	e, clock := creatorEnv(t, trustedUser)
+	e.f.createdAt = time.Now().Add(-gap).UTC().Format(time.RFC3339Nano)
+	return e, clock
+}
+
+// A trusted creator makes the issue and a stranger adds the label minutes
+// later, but the stranger's entry is still missing when the window ends: the
+// empty history proves nothing, so the issue is queued untrusted, no actor,
+// and not credited to the creator.
+func TestIntakeS1EmptyHistoryAfterQuietBoundIsUntrusted(t *testing.T) {
+	lines := logCapture(t)
+	e, clock := agedCreatorEnv(t, 3*time.Minute)
+	passes(e, clock, 4, 4*time.Minute)
+	r := rowFor(e, issueA)
+	if r == nil || r["trigger_cap"] != "notify" || len(e.queue()) != 1 {
+		t.Fatal(e.queue(), lines())
+	}
+	want := "watcher: intake: project " + e.pid + " S1 FIX-" + issueA[:1] + " queued untrusted: creator_unproven (empty_history)"
+	if got := intakeLines(lines(), "queued untrusted: creator_unproven"); len(got) != 1 || got[0] != want {
+		t.Fatalf("want %q, got %q", want, got)
+	}
+	if got := intakeLines(lines(), "queued: creator"); len(got) != 0 {
+		t.Fatal(got)
+	}
+}
+
+// The label 30 seconds after creation, with no entry: the WEB-8 shape, still
+// credited to the trusted creator.
+func TestIntakeS1EmptyHistoryWithinQuietBoundIsTrusted(t *testing.T) {
+	e, clock := agedCreatorEnv(t, 30*time.Second)
+	passes(e, clock, 4, 4*time.Minute)
+	if r := rowFor(e, issueA); r == nil || r["trigger_cap"] != "auto" || len(e.queue()) != 1 {
+		t.Fatal(e.queue())
+	}
+}
+
+// Just past the bound (61 s) an empty history is untrusted; just inside (59 s)
+// it is credited.
+func TestIntakeS1EmptyHistoryQuietBoundEdge(t *testing.T) {
+	for gap, want := range map[time.Duration]string{61 * time.Second: "notify", 59 * time.Second: "auto"} {
+		e, clock := agedCreatorEnv(t, gap)
+		passes(e, clock, 4, 4*time.Minute)
+		if r := rowFor(e, issueA); r == nil || r["trigger_cap"] != want {
+			t.Fatal(gap, want, e.queue())
+		}
+	}
+}
+
+// With entries, all the creator's, the bound does not apply: an issue changed
+// minutes after creation is credited to its trusted creator as before.
+func TestIntakeS1CreatorEntriesIgnoreQuietBound(t *testing.T) {
+	e, clock := agedCreatorEnv(t, 3*time.Minute)
+	e.f.history[issueA] = []map[string]any{entry(time.Now().UTC().Format(time.RFC3339Nano), trustedUser, map[string]any{"addedLabelIds": []string{}})}
+	passes(e, clock, 4, 4*time.Minute)
+	if r := rowFor(e, issueA); r == nil || r["trigger_cap"] != "auto" || len(e.queue()) != 1 {
+		t.Fatal(e.queue())
+	}
+}
+
 // No creator proof: an old issue, a cut-off history, a creator that is the
 // app or an integration, a bot's entry, or another actor's entry without the
 // label. Nothing is queued, trusted or not.

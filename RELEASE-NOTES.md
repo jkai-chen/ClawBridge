@@ -98,6 +98,13 @@ computer. Upgrading from v0.3.x: docs/upgrading-to-1.0.md.
 - The README no longer calls the binaries plainly unsigned (each release has a build attestation, linked), says the hooks are installed on Windows too (not yet proven on a desktop), and links the 1.0 upgrade guide; the 1.0 notes lead with the sign-in change. The reviewer quickstart lists every reason a release note can give and the project health note. The first-deployment guide gives the Google Cloud estimate the playbook's table carries ($21.50 or $34), names the env file's required settings, makes every generated key with `cloud env init` (the Linear app's token key too), says to recreate the api after adding settings, invites colleagues with `clawbridge invite` (the only way in since v1.0), and fixes a broken link. The local-hosting guide creates the first project before inviting, updates a release-tag checkout, says how to trust mkcert's root and how to turn on the Linear app, and points to the `clawbridge-provision-local` playbook. Linear config scope: none.
 - Two leftovers of Google sign-in are gone from the docs: a stream request is signed like any other (no ID token), and
   docs/development.md speaks of cloud acceptance rather than Google's. Linear config scope: none.
+- **The docs and skills as shipped in 1.0 (G7 pass).** The dispatcher page lists what each release brought and model
+  mode's known limit; the runner page names the self-test's path and `auto_allow_bash`; the install page says the
+  in-process provenance check is a 1.0 client's; upgrading to 1.0 says what to do while 1.0 is held as a draft; the
+  Google Cloud and AWS playbooks set `CLAWBRIDGE_AUTH=device` explicitly, since a release before 1.0 defaults it to
+  `google`; the API reference lists `linear_unavailable`; agentd's images and S3-compatible backups say they come
+  with 1.0; Windows hooks are described as written but not yet proven; stale "planned", "in review" and
+  "source-checkout" wording is gone, and a broken anchor is fixed. Linear config scope: none.
 
 ## Fixes
 

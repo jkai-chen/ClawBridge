@@ -1,14 +1,9 @@
 # Inbox notifications and agent wake-up
 
-This source-checkout feature follows v0.1.0. Build the updated client; cloud use
-also requires the matching updated service. Published v0.1.0 binaries and services
-do not implement `inbox_status` or the watcher. Updating a local client does not
-upgrade your hosted service.
-
-Recipient wake policy and local host observation are implemented source additions
-described by the [coordination contract](design/coordination.md).
-Use matching policy-aware client and service builds; earlier notification-only
-candidate evidence remains dated in the archive.
+Notifications need a client and a server that both support them: updating a local
+client does not upgrade your hosted server, and `clawbridge doctor` shows both versions.
+Recipient wake policy and local host observation are described by the
+[coordination contract](design/coordination.md).
 
 ## Choose the delivery path
 

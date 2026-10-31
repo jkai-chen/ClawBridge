@@ -27,6 +27,11 @@ own machine, and for the members who use it. It covers:
 
 ## The order
 
+**1.0 is published a few days after it is cut.** Until the release is published, the installer and
+`clawbridge self-update` still give the release before it, and the 1.0 image and its `IMAGE-DIGEST.txt` are not
+available yet. Steps 1 and 2 need nothing from 1.0: do them now, and steps 3 to 5 once 1.0 is published
+([releases](https://github.com/jkai-chen/ClawBridge/releases)).
+
 Members move first, then the server's setting, then the server's version. A 1.0 server never accepts Google, so
 nobody can be moved to a device key after the upgrade by signing in with Google.
 

@@ -17,7 +17,8 @@ the account's history, and the bootstrap's one-time owner invite is a
 credential, so it never runs over plain `send-command`. The server must run the
 same release or newer: its `operator bootstrap-invite` takes the code.
 
-- **Env file (step 6):** leave `CLAWBRIDGE_AUTH` unset, or set it to `device`.
+- **Env file (step 6):** `CLAWBRIDGE_AUTH=device`, set explicitly in the settings block: a release before 1.0
+  defaults it to `google`, which needs Google settings this playbook doesn't create.
   Never set `google`, `CLAWBRIDGE_AUDIENCE` or any `CLAWBRIDGE_OAUTH_*` entry:
   `google` stops the server, and the old Google settings are ignored with a
   warning (`clawbridge cloud check server` warns while one is there). The

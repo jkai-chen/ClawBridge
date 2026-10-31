@@ -126,9 +126,9 @@ The settings passed with `--settings` take precedence over the repository's own
 - **Permission mode:** default (you approve edits and commands). Bypass mode and
   auto mode are both disabled. Git status, diff, log, show, add and commit are pre-approved,
   and so is the self-test (below), exactly as the session's first step runs it.
-  The script is in `<work>/<session>.selftest`, which Bash can read but not write
-  and the file tools are denied, so nothing in the session can change what that
-  rule runs. Git commands that would write a file with `--output` are denied.
+  The script is `<work>/<session>.selftest/selftest.sh`, in a directory Bash can
+  read but not write and the file tools are denied, so nothing in the session can
+  change what that rule runs. Git commands that would write a file with `--output` are denied.
   - **Bash asks too.** Claude Code would run sandboxed Bash without asking, so the
     settings turn that off (`autoAllowBashIfSandboxed: false`): you approve each
     command. For an unattended run, opt in with `"auto_allow_bash": true` in the
@@ -208,7 +208,7 @@ The settings passed with `--settings` take precedence over the repository's own
   own section.
 
 ```json
-{"agents": {"claude": {"model": ""}}, "allowed_domains": ["proxy.golang.org", "sum.golang.org"], "max_retained": 10, "work_dir": "~/clawbridge-runs"}
+{"agents": {"claude": {"model": ""}}, "allowed_domains": ["proxy.golang.org", "sum.golang.org"], "max_retained": 10, "work_dir": "~/clawbridge-runs", "auto_allow_bash": false}
 ```
 
 The work directory must be outside every denied path: the sandbox has to be able

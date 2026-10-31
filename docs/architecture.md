@@ -29,7 +29,7 @@ blanks bodies while retaining message identity and retry tombstones.
 
 ## Notifications
 
-The source-checkout notification feature reads authoritative inbox metadata without
+The notification feature reads authoritative inbox metadata without
 stamping delivery, reading, presence or audit. A subscribed MCP client receives
 resource-change notices. A separately started watcher can emit JSON events or
 queue a fixed inbox-check hint to an explicitly selected Codex thread. The host
@@ -39,8 +39,7 @@ Polling is bounded and opt-in. The checkpoint coalesces arrivals and survives
 restart. An uncertain queue outcome can duplicate a hint; durable inbox/read
 metadata remains the processing record. See [notifications](notifications.md).
 
-The source-checkout [coordination increment](design/coordination.md)
-adds recipient policy to automatic notices and a separate local host observer.
+The [coordination design](design/coordination.md) adds recipient policy to automatic notices and a separate local host observer.
 Host observations never substitute for bus presence, message receipts or task
 acceptance. Optional issue/revision message metadata remains descriptive; Linear
 and coordinator decisions determine current ownership.

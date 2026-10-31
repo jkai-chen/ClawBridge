@@ -16,6 +16,9 @@
 - [Your first task: claim and release](usage.md#your-first-task-claim-and-release)
 - [Inbox notifications and Codex wake-up](notifications.md)
 - [Native Linear task boards](linear.md)
+- [The dispatcher](dispatcher.md): an optional coordinator for a hosted project's claims and notices
+- [The runner](runner.md): launching an agent session in its own sandboxed clone
+- [agentd](operations/agentd.md): the launcher for the dispatcher's model agents
 - [Product reviews with ClawBridge and Linear](guides/product-reviewers.md) and the
   [reviewer quickstart](guides/reviewer-quickstart.md)
 - [Architecture](architecture.md)

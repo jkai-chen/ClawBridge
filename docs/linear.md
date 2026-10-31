@@ -12,7 +12,7 @@ were exercised separately. Native label eligibility is a supported capability
 ## Connect and choose a board
 
 Cloud users need the matching service before using the Linear view or linking a
-shared board: schema 3 for L1, schema 4 for L2. Personal CLI connection/profile
+shared board (schema 3 for L1, schema 4 for L2; any current server has both). Personal CLI connection/profile
 commands work separately.
 Follow the [backup and recovery guide](operations/backup-and-recovery.md) before
 upgrading a store; updating the client alone does not upgrade a hosted service.
@@ -375,7 +375,7 @@ it automatically. Discover each tool's advertised input schema before a write.
 
 ## L2 project sets and issue structure
 
-Use this section only with the matching L2 client and schema-4 service. Personal
+This section needs an L2 client and a schema-4 service (any current one). Personal
 connection commands remain separate from the authority upgrade. An older service
 fails explicitly; updating a client does not update the service. L1 team-board and
 single-project mappings retain their old representation. An older client cannot
@@ -626,8 +626,8 @@ started with a Linear profile (`mcp install --linear-profile`); otherwise it sti
   - `comments_output_order` is `asc`: the returned comments are sorted oldest
     first, by the later of `created_at` and `updated_at`, then by `id`.
   - `comments_order_direction` is deprecated: it repeats
-    `comments_walk_direction` for v0.2.3 callers (which saw `unproven`), and
-    will be removed no earlier than v0.3. Read `comments_walk_direction`.
+    `comments_walk_direction` for v0.2.3 callers (which saw `unproven`), and is
+    kept for them. Read `comments_walk_direction`.
   - `comments_truncated: true` means pages may remain unread. While the walk is
     `desc`, a truncated read is missing the oldest comments, never the newest.
 - **Stopping early.** A read with `--comments-since` stops paging after the
@@ -794,8 +794,7 @@ relation) goes to the server, which makes it in Linear **as the ClawBridge
 app**. Your personal profile still reads, but never writes:
 
 - **Relations need the app's `write` scope.** Without it, a relation write
-  appears to be accepted but the edge is not created (seen in practice; a
-  controlled probe will confirm), so when the app's current token was not
+  appears to be accepted but the edge is not created (seen in practice), so when the app's current token was not
   granted `write` the server refuses `relation add` and `relation remove` up
   front (`capability_unavailable`) and sends nothing; `cancel` and `duplicate`
   too, before their comment. If it cannot get a token
@@ -1112,7 +1111,7 @@ ended.
 | Update `--expect-label UUID` (repeat) or `--expect-no-labels` | Required with `--label` or `--clear-labels`: the complete label set the issue had when you last read it. A mismatch refuses the update; nothing is sent |
 | Update `--expect-title TEXT` | Optional with `--title`: the title you last read. A different current title refuses the update; nothing is sent |
 | Update `--add-label UUID` / `--remove-label UUID` (repeat, up to 20 each) | Add or remove single labels without replacing the set; not with `--label`/`--clear-labels`. An added label needs the same eligibility proof as a replacement. Each label's membership is checked first, through Linear's list filtered by the label UUID: a label already in the requested state is not sent (`observed_unchanged` when nothing else changes), an add with unknown membership is still sent (Linear only appends), and a removal with unknown membership is refused. A membership change before dispatch refuses the operation. Native receipts name labels only, so afterwards each label is checked again through the same filter. That list can lag a write by a few seconds, so a label not in the requested state is asked again after 2 s and after 4 s more, and only one still not in it makes the write uncertain; and a check that cannot answer leaves `labels` under `unverified` |
-| Update `--expect-description-sha256 HEX` | Optional with `--description`: the `description_sha256` from your last `linear issue` read. A different current description refuses the update; nothing is sent. Planned to become required in v0.2.2 |
+| Update `--expect-description-sha256 HEX` | Optional with `--description`: the `description_sha256` from your last `linear issue` read. A different current description refuses the update; nothing is sent. Still optional. |
 | `--parent UUID` | Scoped, acyclic parent in the child's own team and project; a parent in another team or project is refused |
 | `--assignee UUID` | Explicit eligible team member; no agent claim or permission change |
 | `--priority none\|urgent\|high\|medium\|low` (or `0`–`4`) | Linear's priority, on create or update: 0 none, 1 urgent, 2 high, 3 medium, 4 low (`normal` is medium). Sent only when the Linear tool takes a priority on both create and update; otherwise refused and nothing is sent. The returned issue is checked: another priority makes the write uncertain, and a priority Linear doesn't report is listed under `unverified` |
@@ -1573,7 +1572,7 @@ clawbridge linear writes [--ack OP_ID]             # the same, for every kind of
   or an answer lost on the way back) may have created a project. The overview
   (`linear_writes.unconfirmed`), `linear writes` and doctor's `linear.writes`
   show it (the check was `linear.project_creates` before v0.3.9, which its
-  `aliases` still name for one release, as the overview still lists them under
+  `aliases` still name, as the overview still lists them under
   `project_creates.unconfirmed`), each with its kind (`write`) and state: the
   reservations are one ledger for every Linear write the server records first,
   so later kinds of write show there too, and so does a write settled
@@ -1921,8 +1920,8 @@ The TUI's Linear screen has the same view and changes (`R`; see the
     through `apply-leads`.
   - **Linear configuration:** a project's lead in a bound team, and the project membership Linear adds with it.
     Nothing at team or workspace scope.
-- **Intake trusts by role** (below, [Issue intake](#issue-intake-v03)). Dispatcher
-  routing comes later. Each is off until you turn it on.
+- **Intake trusts by role** (below, [Issue intake](#issue-intake-v03)). Each is off
+  until you turn it on.
 
 ## Status policy (project owner only)
 

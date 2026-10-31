@@ -810,6 +810,14 @@ app**. Your personal profile still reads, but never writes:
     `--operation-id`. Retry it shortly.
   - An uncertain outcome means the write may have reached Linear. Inspect
     Linear before retrying.
+  - `linear_unavailable` (HTTP 503) means Linear itself was down and nothing
+    was sent: "Linear is unavailable; nothing was sent; safe to retry with the
+    same operation ID", with "after N" when Linear said how long. A write
+    waiting in the client's queue is kept and sent again later. Linear limiting
+    the app's requests is `rate_limited` (429), said the same way. The server
+    logs each kind of Linear failure once a minute per operation (the kind,
+    the operation, Linear's HTTP status and whether it was sent), never a
+    token or any text the write carried.
   - Retrying the same `--operation-id` returns the recorded outcome and never
     sends twice: the server keeps one shared operation ledger.
 - **Operation IDs from before the upgrade.** An `--operation-id` this client

@@ -102,6 +102,14 @@ computer. Upgrading from v0.3.x: docs/upgrading-to-1.0.md.
 - **The terminal interface's Overview no longer lists a hosted server's items for a local workspace:** the dispatcher
   model as needing attention, the intake line, and the PROVEN gate list, which a local user can't act on (found on
   the G8 fresh-Linux walkthrough). docs/usage.md. Linear config scope: none.
+- **An app write while Linear is down answers 503 `linear_unavailable`, not 400 `invalid`.** In tonight's Linear
+  outage the server refused agents' writes as bad requests. When the write provably never reached Linear, the answer
+  is now "Linear is unavailable; nothing was sent; safe to retry with the same operation ID" (with "after N" when
+  Linear said), and Linear limiting the app is `rate_limited` (429), said the same way; an uncertain write stays
+  `conflict`. Clients from this release show that message, never call it uncertain, and keep a queued write to send
+  again. Older clients see an uncertain 503 and keep the operation ID for an identical retry. The server also logs
+  each kind of Linear failure once a minute per operation: kind, operation, Linear's HTTP status and whether it was
+  sent, never a token or text. docs/linear.md. No schema change. Linear config scope: none.
 
 ## Sign-in
 

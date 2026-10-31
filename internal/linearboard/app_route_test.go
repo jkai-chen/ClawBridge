@@ -176,6 +176,13 @@ func TestAppWriteAnswersKeepTheirTypes(t *testing.T) {
 		"refused": {func() (bus.Result, error) {
 			return bus.Result{}, &remote.HTTPError{Status: 400, Code: "invalid", Message: "workspace_unpinned"}
 		}, func(_ any, e error) bool { return e != nil && !IsUncertain(e) && !IsInProgress(e) }},
+		// Linear down: the server proved nothing was sent, so it is a
+		// refusal, never uncertain, and says so.
+		"linear down": {func() (bus.Result, error) {
+			return bus.Result{}, &remote.HTTPError{Status: 503, Code: "linear_unavailable", Message: "Linear is unavailable; nothing was sent; safe to retry with the same operation ID"}
+		}, func(_ any, e error) bool {
+			return e != nil && !IsUncertain(e) && !IsInProgress(e) && strings.Contains(e.Error(), "Linear is unavailable; nothing was sent")
+		}},
 		"server down": {func() (bus.Result, error) {
 			return bus.Result{}, &remote.HTTPError{Status: 503, Code: "unavailable"}
 		}, func(_ any, e error) bool { return IsUncertain(e) }},

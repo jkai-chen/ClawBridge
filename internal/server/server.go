@@ -562,7 +562,7 @@ func serviceError(err error) (string, int) {
 			return c, 409
 		case "rate_limited":
 			return c, 429
-		case "unavailable":
+		case "unavailable", "linear_unavailable":
 			return c, 503
 		case "invalid":
 			return c, 400
@@ -580,7 +580,7 @@ func serviceError(err error) (string, int) {
 // own message when the bus marked it as written for the caller; every other failure, including
 // database and unknown errors, gets only the generic text for its code.
 func responseMessage(code string, err error) string {
-	if code == "invalid" || code == "binding_unreadable" || code == "rate_limited" || code == "conflict" || code == "in_progress" {
+	if code == "invalid" || code == "binding_unreadable" || code == "rate_limited" || code == "conflict" || code == "in_progress" || code == "linear_unavailable" {
 		if message, ok := bus.PublicMessage(err); ok {
 			if safe, ok := bus.SafePublicText(message); ok {
 				return safe
@@ -605,6 +605,8 @@ func publicMessage(code string) string {
 		return "request rate limit reached; no write queued"
 	case "unavailable":
 		return "authoritative service unavailable; outcome may be uncertain, no write queued"
+	case "linear_unavailable":
+		return "Linear is unavailable; nothing was sent; safe to retry with the same operation ID"
 	default:
 		return "request rejected; verify scope, session instance and operation arguments; no write queued"
 	}

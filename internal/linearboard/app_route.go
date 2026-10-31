@@ -167,6 +167,10 @@ func (s *Service) appWrite(ctx context.Context, scope bus.Request, operation str
 		case status < 500:
 			// Refused before anything reached Linear.
 			return nil, err
+		case status == http.StatusServiceUnavailable && code == "linear_unavailable":
+			// Linear itself is down, and the server proved nothing was
+			// sent: a refusal like the ones above, safe to retry.
+			return nil, err
 		}
 	}
 	if err != nil {

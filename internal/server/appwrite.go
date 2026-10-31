@@ -7,6 +7,8 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -47,6 +49,11 @@ type AppWriter struct {
 	// PlanTeams reads a Linear project's teams for a domain coordinator's
 	// project plan; nil reads them through App (tests replace it).
 	PlanTeams func(ctx context.Context, lp string) ([]string, bool, error)
+
+	// failuresLogged is when each kind of Linear failure was last logged
+	// for each operation (logProviderFailure).
+	failuresMu     sync.Mutex
+	failuresLogged map[string]time.Time
 
 	typesOnce sync.Once
 	types     *linearboard.StateTypeCache
@@ -222,7 +229,9 @@ func (w *AppWriter) Execute(parent context.Context, identity bus.Identity, r bus
 	if w.Store != nil && w.Store.OutboxAvailable() {
 		return w.queueable(parent, identity, r, operation, args, queue)
 	}
-	return w.answer(w.send(parent, identity, r, operation, args, ""))
+	data, err := w.send(parent, identity, r, operation, args, "")
+	w.logProviderFailure(operation, err)
+	return w.answer(data, err)
 }
 
 // send runs one write as identity: the membership and scope checks, then
@@ -488,7 +497,79 @@ func writeError(err error) error {
 	if linearboard.IsUncertain(err) {
 		return bus.PublicError("conflict", message)
 	}
+	// Linear itself down or limiting, and proven never sent (the board's
+	// never-dispatched wrapper, or the provider's NotSent): the caller may
+	// retry with the same operation ID. Not a bad request. A provider error
+	// without that proof (a failed tool call may have reached Linear) keeps
+	// the old answer: "nothing was sent" is said only when it is known.
+	var pe *linearprovider.Error
+	if errors.As(err, &pe) && (linearboard.NotDispatched(err) || pe.NotSent) {
+		after := ""
+		if pe.RetryAfter != "" {
+			after = " after " + pe.RetryAfter
+		}
+		switch pe.Kind {
+		case "unavailable":
+			return bus.PublicError("linear_unavailable", "Linear is unavailable; nothing was sent; safe to retry with the same operation ID"+after)
+		case "rate_limited":
+			return bus.PublicError("rate_limited", "Linear is limiting the ClawBridge app's requests; nothing was sent; retry with the same operation ID"+after)
+		}
+	}
 	return bus.PublicError("invalid", message)
+}
+
+// providerFailureEvery is how often one kind of Linear failure is logged
+// for one write operation.
+const providerFailureEvery = time.Minute
+
+// safeLogWord is a value the provider failure log line may carry as is.
+var safeLogWord = regexp.MustCompile(`^[a-z_]{1,40}$`)
+
+// logProviderFailure logs a failed app write's Linear failure, at most
+// once a minute per kind and operation: the kind, the operation, Linear's
+// HTTP status when known and whether it was sent. Never a token, a body
+// or an issue's text.
+func (w *AppWriter) logProviderFailure(operation string, err error) {
+	if err == nil {
+		return
+	}
+	kind, status, notSent := "", 0, false
+	var pe *linearprovider.Error
+	switch {
+	case errors.As(err, &pe):
+		kind, status, notSent = pe.Kind, pe.Status, pe.NotSent
+	case linearboard.IsUncertain(err):
+		kind = "uncertain"
+	default:
+		return
+	}
+	if !safeLogWord.MatchString(kind) {
+		kind = "other"
+	}
+	if !safeLogWord.MatchString(operation) {
+		operation = "other"
+	}
+	now := time.Now
+	if w.Now != nil {
+		now = w.Now
+	}
+	key := kind + " " + operation
+	w.failuresMu.Lock()
+	if w.failuresLogged == nil {
+		w.failuresLogged = map[string]time.Time{}
+	}
+	at, seen := w.failuresLogged[key]
+	if seen && now().Sub(at) < providerFailureEvery {
+		w.failuresMu.Unlock()
+		return
+	}
+	w.failuresLogged[key] = now()
+	w.failuresMu.Unlock()
+	upstream := "unknown"
+	if status != 0 {
+		upstream = strconv.Itoa(status)
+	}
+	log.Printf("clawbridge: linear app write failed: kind=%s operation=%s upstream_status=%s not_sent=%t (logged at most once a minute per kind and operation)", kind, operation, upstream, notSent)
 }
 
 // status reports the app's identity and, for the caller's project, which

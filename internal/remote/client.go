@@ -275,6 +275,12 @@ func (e *HTTPError) Error() string {
 	if e.Code == "maintenance" {
 		return fmt.Sprintf("the server is in maintenance; nothing was sent; retry after %d s with the same operation ID; no write queued", max(1, int(e.RetryAfter/time.Second)))
 	}
+	if e.Code == "linear_unavailable" {
+		if e.Message != "" {
+			return e.Message + "; no write queued"
+		}
+		return "Linear is unavailable; nothing was sent; safe to retry with the same operation ID; no write queued"
+	}
 	if e.Message != "" {
 		return fmt.Sprintf("cloud request rejected (%d, %s): %s; no write queued", e.Status, e.Code, e.Message)
 	}
@@ -331,12 +337,12 @@ func (c *Client) call(ctx context.Context, r bus.Request) (bus.Result, bool, err
 			switch body.Error.Code {
 			case "unauthenticated", "forbidden", "invalid", "conflict", "not_found", "rate_limited", "unavailable", "binding_unreadable", "in_progress", "clock_skew", "device_auth_failed":
 				code = body.Error.Code
-			case "maintenance":
+			case "maintenance", "linear_unavailable":
 				if status == http.StatusServiceUnavailable {
 					code = body.Error.Code
 				}
 			}
-			if (status == http.StatusBadRequest && code == "invalid") || (status == http.StatusConflict && (code == "binding_unreadable" || code == "conflict" || code == "in_progress")) || (status == http.StatusTooManyRequests && code == "rate_limited") || (status == http.StatusUnauthorized && c.signer != nil) {
+			if (status == http.StatusBadRequest && code == "invalid") || (status == http.StatusConflict && (code == "binding_unreadable" || code == "conflict" || code == "in_progress")) || (status == http.StatusTooManyRequests && code == "rate_limited") || (status == http.StatusServiceUnavailable && code == "linear_unavailable") || (status == http.StatusUnauthorized && c.signer != nil) {
 				message, _ = bus.SafePublicText(body.Error.Message)
 			}
 		}
@@ -344,9 +350,10 @@ func (c *Client) call(ctx context.Context, r bus.Request) (bus.Result, bool, err
 		if code == "maintenance" {
 			c.maintenanceUntil.Store(time.Now().Add(max(failure.RetryAfter, time.Second)).UnixNano())
 		}
-		// A server in maintenance refused before doing anything: that is
+		// A server in maintenance refused before doing anything, and one
+		// whose Linear is down proved its write never reached Linear: both
 		// definitive (nothing was sent), not an uncertain outage (§2.4).
-		return bus.Result{}, code != "maintenance" && (status == 502 || status == 503 || status == 504), failure
+		return bus.Result{}, code != "maintenance" && code != "linear_unavailable" && (status == 502 || status == 503 || status == 504), failure
 	}
 	var result bus.Result
 	decoder := json.NewDecoder(bytes.NewReader(encoded))

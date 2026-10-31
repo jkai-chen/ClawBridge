@@ -60,7 +60,18 @@ func (e notDispatchedError) Unwrap() []error {
 	}
 	return []error{e.err, e.cause}
 }
-func notDispatched(err error) error                { return notDispatchedError{err: err} }
+func notDispatched(err error) error { return notDispatchedError{err: err} }
+
+// NotDispatched reports a failure the board proved never reached Linear:
+// the ledger removed its pending record, so the same operation ID may be
+// sent again.
+func NotDispatched(err error) bool { var never notDispatchedError; return errors.As(err, &never) }
+
+// NeverDispatched wraps cause as a failure proven never sent to Linear,
+// as the ledger does; for a host or test that holds that proof itself.
+func NeverDispatched(cause error) error {
+	return notDispatchedError{fmt.Errorf("nothing was sent to Linear (%s); retry with the same operation_id", cmp.Or(safeFailure(cause), "unavailable")), cause}
+}
 func (e refusedBeforeDispatchError) Error() string { return e.err.Error() }
 func (e refusedBeforeDispatchError) Unwrap() error { return e.err }
 func refusedBeforeDispatch(err error) error        { return refusedBeforeDispatchError{err} }

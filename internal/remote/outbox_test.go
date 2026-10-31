@@ -52,6 +52,10 @@ func newOutboxServer(t *testing.T) *outboxServer {
 			w.WriteHeader(503)
 			w.Write([]byte(`{"error":{"code":"maintenance","message":"the server is in maintenance; retry after 1 s"}}`))
 			return
+		case "linear_down":
+			w.WriteHeader(503)
+			w.Write([]byte(`{"error":{"code":"linear_unavailable","message":"Linear is unavailable; nothing was sent; safe to retry with the same operation ID"}}`))
+			return
 		case "refuse":
 			w.WriteHeader(400)
 			w.Write([]byte(`{"error":{"code":"invalid","message":"session instance mismatch; pass the instance returned by register"}}`))
@@ -200,6 +204,26 @@ func TestOutboxDrainsBeforeANewWrite(t *testing.T) {
 	}
 }
 
+// Linear down: the server proved nothing was sent, so the answer is
+// definitive (not an uncertain outage) and says so plainly, and a queued
+// write waits to replay rather than being dropped as refused.
+func TestLinearUnavailableIsDefinitiveAndRetried(t *testing.T) {
+	s := newOutboxServer(t)
+	client, _ := outboxClient(t, s)
+	s.mode.Store("linear_down")
+	_, transient, err := client.call(context.Background(), bus.Request{Operation: "linear_write", Workspace: "ws_1", Project: "prj_1", Args: map[string]any{}})
+	var httpErr *HTTPError
+	if transient || !errors.As(err, &httpErr) || httpErr.Code != "linear_unavailable" {
+		t.Fatal(transient, err)
+	}
+	if got := err.Error(); got != "Linear is unavailable; nothing was sent; safe to retry with the same operation ID; no write queued" {
+		t.Fatal(got)
+	}
+	if got := classify(context.Background(), bus.Result{}, transient, err); got.Kind != outbox.Transient || got.Class != "linear_unavailable" {
+		t.Fatal("a queued write was not kept for replay:", got)
+	}
+}
+
 // §2.4: a maintenance refusal is definitive (nothing was sent): a write
 // that never queues gets it as an error that says when to retry; a
 // queueable write waits Retry-After, then queues.
@@ -305,6 +329,7 @@ func TestClassify(t *testing.T) {
 		{nil, false, outbox.Accepted, ""},
 		{CredentialFailure(errors.New("x")), false, outbox.NoCredential, "unauthenticated"},
 		{&HTTPError{Status: 503, Code: "maintenance", RetryAfter: 3 * time.Second}, false, outbox.Maintenance, "maintenance"},
+		{&HTTPError{Status: 503, Code: "linear_unavailable"}, false, outbox.Transient, "linear_unavailable"},
 		{&HTTPError{Status: 503, Code: "rejected"}, true, outbox.Transient, "unavailable"},
 		{errors.New("cloud transport unavailable"), true, outbox.Transient, "unavailable"},
 		{&HTTPError{Status: 403, Code: "forbidden"}, false, outbox.Refused, "forbidden"},

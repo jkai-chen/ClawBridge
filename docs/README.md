@@ -9,6 +9,8 @@
 - [Signing in with invites and device keys](sign-in.md): invites, joining, device
   keys, members, ownership, turning it on, and troubleshooting (the client side from
   v0.3.5)
+- [Upgrading to ClawBridge 1.0](upgrading-to-1.0.md): what changes, the order for a server you run, how to check every
+  member is ready, and rollback
 - [Removing Google sign-in (v1.0)](operations/google-sign-in-removal.md): the order to move a server and every member
   to device keys before v1.0, with the gate and rollback
 - [Your first task: claim and release](usage.md#your-first-task-claim-and-release)

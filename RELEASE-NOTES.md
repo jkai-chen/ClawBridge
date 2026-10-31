@@ -1,6 +1,23 @@
 # Unreleased
 
+**ClawBridge 1.0.** Someone who isn't the project's owner can install ClawBridge, set up a server (on their own
+machine, a VM they already have, Google Cloud or AWS), invite a colleague and run agents on Linear with it, without
+help and without anything specific to one team. Sign-in is the person's own: an invite, then a key that stays on their
+computer. Upgrading from v0.3.x: docs/upgrading-to-1.0.md.
+
 **Manual update required.** Google sign-in is removed: a client before this release can't sign in to this server with Google, and this server won't start while `CLAWBRIDGE_AUTH` names `google`; move every member to a device key first (docs/operations/google-sign-in-removal.md), then update each client with `clawbridge self-update`.
+
+## Known limits in 1.0
+
+- **Linear webhooks are off by default.** Intake works by polling, as in v0.3.x. Webhook delivery is built and
+  recorded, but it stays behind its gate until it has been proven on a live Linear workspace.
+- **Waking an idle agent on native Windows is not yet proven on real hardware.** It is tested in CI on Windows runners
+  with a stand-in agent, and the Windows hooks are covered. A real Claude Code or Codex session waking on a Windows
+  desktop has not been observed yet.
+- **The dispatcher's model mode is not yet proven on a hosted server.** Rules mode runs on hosted. Model mode is
+  tested against a stand-in model provider; a real provider key on a hosted server has not been run yet.
+- **The Google Cloud and AWS setup routes were rehearsed, not run end to end on a fresh account.** Each step is tested; a first
+  deployment on a new cloud account may still find a gap: please report it.
 
 ## Notifications
 

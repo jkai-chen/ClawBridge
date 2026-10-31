@@ -132,8 +132,8 @@ func TestPostgresGoogleRemovedOwnerToMember(t *testing.T) {
 	// The hosted owner's first project is the profile's default, as a local
 	// one's is (first-deployment step 7): whoami needs no --project, and a
 	// second project does not replace it.
-	if raw, _ := os.ReadFile(ownerProfile); !strings.Contains(strings.ReplaceAll(string(raw), "'", `"`), `project = "p"`) {
-		t.Fatal("the first project is not the hosted profile's default:\n" + string(raw))
+	if got := profileProject(t, ownerProfile); got != "p" {
+		t.Fatalf("the hosted profile's default project is %q, want p", got)
 	}
 	if _, err = run("--client-config", ownerProfile, "whoami"); err != nil {
 		t.Fatal("whoami without --project:", err)
@@ -141,8 +141,8 @@ func TestPostgresGoogleRemovedOwnerToMember(t *testing.T) {
 	if _, err = run("--client-config", ownerProfile, "project", "create", "p2"); err != nil {
 		t.Fatal(err)
 	}
-	if raw, _ := os.ReadFile(ownerProfile); strings.Contains(string(raw), "p2") {
-		t.Fatal("a second project replaced the default:\n" + string(raw))
+	if got := profileProject(t, ownerProfile); got != "p" {
+		t.Fatalf("a second project replaced the default: %q", got)
 	}
 	ada := pgUnique("ada") + "@device-cli.example"
 	onTerminal(t)

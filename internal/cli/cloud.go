@@ -25,6 +25,7 @@ import (
 	"clawbridge/internal/buildinfo"
 	"clawbridge/internal/bus"
 	"clawbridge/internal/remote"
+	"clawbridge/internal/server"
 	"clawbridge/internal/transporterr"
 )
 
@@ -392,6 +393,10 @@ var secretKeys = map[string]bool{
 	// (ANY-VM-PLAN §4): it may put and list, never delete.
 	"CLAWBRIDGE_BACKUP_ACCESS_KEY_ID":     true,
 	"CLAWBRIDGE_BACKUP_SECRET_ACCESS_KEY": true,
+	// The Linear webhooks' signing secrets, TEAM_UUID=SECRET[,…]
+	// (docs/operations/deployment.md, "Linear webhooks"): the whole line, so
+	// adding a team re-enters every entry.
+	"CLAWBRIDGE_LINEAR_WEBHOOK_SECRETS": true,
 }
 
 const serverEnvFile = "/etc/clawbridge/clawbridge.env"
@@ -513,6 +518,12 @@ func runCloudSecretSet(ctx context.Context, args []string, stdout, stderr io.Wri
 	value, err := secretValue(raw)
 	if err != nil {
 		return err
+	}
+	// A line serve would refuse to start with never reaches the env file.
+	if key == "CLAWBRIDGE_LINEAR_WEBHOOK_SECRETS" {
+		if err = server.CheckWebhookSecrets(value); err != nil {
+			return err
+		}
 	}
 	if err = tr.setSecret(ctx, key, value, stderr); err != nil {
 		advice := tr.describe()

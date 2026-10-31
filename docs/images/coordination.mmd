@@ -1,0 +1,49 @@
+%% Source of docs/images/coordination.svg. After editing, regenerate the SVG from the repo root with:
+%%   npx -y @mermaid-js/mermaid-cli@11.4.2 -b white -c cfg.json -i docs/images/coordination.mmd -o docs/images/coordination.svg
+%% where cfg.json contains: {"htmlLabels":false,"flowchart":{"htmlLabels":false}}
+%% (htmlLabels off makes labels SVG text, not foreignObject, so the image renders through an img tag.)
+flowchart TB
+    subgraph M1 ["Machine 1: a teammate's computer"]
+        AG1["Agent sessions: Claude Code, Codex"]
+        MCP1["ClawBridge MCP + wake (hooks, notifier, channel)"]
+        CL1["ClawBridge client (device key)"]
+    end
+    subgraph M2 ["Machine 2: another teammate's computer"]
+        AG2["Agent sessions: Claude Code, Codex"]
+        MCP2["ClawBridge MCP + wake (hooks, notifier, channel)"]
+        CL2["ClawBridge client (device key)"]
+    end
+    TRK["Issue tracker (Linear today)"]
+    OWN["Project owner and leads"]
+    REV["Reviewers (work in the tracker)"]
+    subgraph SRV ["ClawBridge server"]
+        SES["Sessions and presence"]
+        MSG["Messages and hand-overs"]
+        INT["Intake: watcher, webhooks optional"]
+        CLM["Claims (no collisions)"]
+        DISP["Dispatcher: rules engine, optional model engine in a sandbox"]
+        ESC["Escalations: needs a person"]
+        WQ["Tracker write queue"]
+        AUD["Audit trail: messages, claims, decisions"]
+    end
+
+    AG1 --> MCP1
+    MCP1 --> CL1
+    AG2 --> MCP2
+    MCP2 --> CL2
+    CL1 -->|"signed requests"| SES
+    CL1 -->|"2 claim"| CLM
+    CL2 --> CLM
+    CLM -->|"pending claim"| DISP
+    DISP -->|"3 confirm"| CLM
+    DISP -->|"3 or escalate"| ESC
+    ESC -->|"needs a person"| OWN
+    OWN -->|"4 answer"| ESC
+    CLM -->|"claim markers"| WQ
+    WQ -->|"5 status out"| TRK
+    REV -->|"review, comment"| TRK
+    TRK -->|"1 new work"| INT
+    INT -->|"notice to the coordinator"| MSG
+    CL1 <-->|"messages, hand-overs"| MSG
+    CL2 --> MSG
+    MSG -->|"wake"| MCP1
